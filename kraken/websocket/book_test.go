@@ -115,6 +115,53 @@ func TestBookAll(t *testing.T) {
 	})
 }
 
+func TestBookUpdate(t *testing.T) {
+	Convey("Given two Level3 orders at one price", t, func() {
+		managed := NewBook(t.Context())
+		managed.Create("BTC/USD", 32)
+		event := &callback.Event[*sdk.WebSocketMessage]{
+			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+		}
+		price := decimal.NewFromInt64(100)
+		at := time.Unix(1_700_008_000, 0).UTC()
+		payload := &kraken.Level3{Data: []kraken.Level3Data{{
+			Symbol: "BTC/USD",
+			Bids: []kraken.Level3Order{
+				{
+					Event: "add", OrderID: "bid-one", LimitPrice: price,
+					OrderQty: decimal.NewFromInt64(3), Timestamp: at,
+				},
+				{
+					Event: "add", OrderID: "bid-two", LimitPrice: price,
+					OrderQty: decimal.NewFromInt64(2), Timestamp: at,
+				},
+			},
+		}}}
+		So(managed.Update(event, payload), ShouldBeNil)
+
+		Convey("Deleting orders should remove their actual queued quantity", func() {
+			deletion := func(orderID string) *kraken.Level3 {
+				return &kraken.Level3{Data: []kraken.Level3Data{{
+					Symbol: "BTC/USD",
+					Bids: []kraken.Level3Order{{
+						Event: "delete", OrderID: orderID,
+						LimitPrice: price, Timestamp: at.Add(time.Second),
+					}},
+				}}}
+			}
+
+			So(managed.Update(event, deletion("bid-one")), ShouldBeNil)
+			book := managed.Get("BTC/USD")
+			So(book.Bids.Levels, ShouldHaveLength, 1)
+			So(book.BestBid().Quantity.Float64(), ShouldEqual, 2.0)
+
+			So(managed.Update(event, deletion("bid-two")), ShouldBeNil)
+			book = managed.Get("BTC/USD")
+			So(book.Bids.Levels, ShouldBeEmpty)
+		})
+	})
+}
+
 func BenchmarkBookAll(b *testing.B) {
 	managed := NewBook(b.Context())
 	managed.Create("BTC/USD", 256)
@@ -143,5 +190,35 @@ func BenchmarkBookAll(b *testing.B) {
 
 	for b.Loop() {
 		managed.All()
+	}
+}
+
+func BenchmarkBookUpdate(b *testing.B) {
+	managed := NewBook(b.Context())
+	managed.Create("BTC/USD", 32)
+	event := &callback.Event[*sdk.WebSocketMessage]{
+		Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+	}
+	price := decimal.NewFromInt64(100)
+	quantity := decimal.NewFromInt64(1)
+	at := time.Unix(1_700_008_000, 0).UTC()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = managed.Update(event, &kraken.Level3{Data: []kraken.Level3Data{{
+			Symbol: "BTC/USD",
+			Bids: []kraken.Level3Order{{
+				Event: "add", OrderID: "bid-one", LimitPrice: price,
+				OrderQty: quantity, Timestamp: at,
+			}},
+		}}})
+		_ = managed.Update(event, &kraken.Level3{Data: []kraken.Level3Data{{
+			Symbol: "BTC/USD",
+			Bids: []kraken.Level3Order{{
+				Event: "delete", OrderID: "bid-one", LimitPrice: price,
+				Timestamp: at.Add(time.Second),
+			}},
+		}}})
 	}
 }

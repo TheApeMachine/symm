@@ -10,7 +10,7 @@ import (
 
 func TestAppendMeasurements(t *testing.T) {
 	Convey("Given concurrent signal publications", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		var waitGroup sync.WaitGroup
 
 		Convey("When many goroutines publish the same source-symbol row", func() {

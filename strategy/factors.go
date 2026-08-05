@@ -203,15 +203,19 @@ func regimeExit(thesis *types.Thesis, symbol string) string {
 	spectral, spectralReady := rawMetric(
 		hawkes, types.MetricSpectralRadius, types.SideNone,
 	)
+
 	sellDescendants, sellDescendantsReady := rawMetric(
 		hawkes, types.MetricTotalDescendants, types.SideSell,
 	)
+
 	buyDescendants, buyDescendantsReady := rawMetric(
 		hawkes, types.MetricTotalDescendants, types.SideBuy,
 	)
+
 	sellIntensity, sellIntensityReady := rawMetric(
 		hawkes, types.MetricConditionalIntensity, types.SideSell,
 	)
+
 	buyIntensity, buyIntensityReady := rawMetric(
 		hawkes, types.MetricConditionalIntensity, types.SideBuy,
 	)
@@ -331,29 +335,19 @@ func rawMetric(
 /*
 estimateImpact derives market impact from measured depth thinning or scarcity.
 */
-func estimateImpact(thesis *types.Thesis, symbol string, spread *decimal.Decimal) *decimal.Decimal {
+func estimateImpact(
+	thesis *types.Thesis, symbol string, spread *decimal.Decimal,
+) *decimal.Decimal {
 	if spread == nil || spread.Sign() <= 0 {
 		return decimal.NewFromInt64(0)
 	}
 
 	impactRatio := 0.05
 
-	if thesis != nil && thesis.Measurements != nil {
-		loadMeasurements := func(source types.SourceType) []*types.Measurement {
-			if val, ok := thesis.Measurements.Load(source); ok {
-				if ms, ok := val.([]*types.Measurement); ok {
-					return ms
-				}
-			}
-			if val, ok := thesis.Measurements.Load(string(source)); ok {
-				if ms, ok := val.([]*types.Measurement); ok {
-					return ms
-				}
-			}
-			return nil
-		}
+	rows, ok := thesis.Measurements.Load(types.SourceLiquidity)
 
-		for _, measurement := range loadMeasurements(types.SourceLiquidity) {
+	if ok && rows != nil {
+		for _, measurement := range rows.([]*types.Measurement) {
 			if measurement != nil && measurement.Symbol == symbol {
 				scarcity := getMetricValue(measurement, string(types.MetricKey(types.MetricScarcityScore, types.SideNone)))
 				if scarcity > 0 {
@@ -361,8 +355,12 @@ func estimateImpact(thesis *types.Thesis, symbol string, spread *decimal.Decimal
 				}
 			}
 		}
+	}
 
-		for _, measurement := range loadMeasurements(types.SourceDepthFlow) {
+	rows, ok = thesis.Measurements.Load(types.SourceDepthFlow)
+
+	if ok && rows != nil {
+		for _, measurement := range rows.([]*types.Measurement) {
 			if measurement != nil && measurement.Symbol == symbol {
 				thin := getMetricValue(measurement, string(types.MetricKey(types.MetricThinScore, types.SideNone)))
 				if thin > 0 {
@@ -397,10 +395,6 @@ The second return distinguishes "nothing cancelled" from "no reading", so the
 regulator can tell an all-clear from silence.
 */
 func hollowPressure(thesis *types.Thesis, symbol string) (float64, bool) {
-	if thesis == nil || thesis.Measurements == nil {
-		return 0, false
-	}
-
 	pressure := 0.0
 	observed := false
 
@@ -571,99 +565,24 @@ func getCausalHistoryRows(thesis *types.Thesis, symbol string) [][]float64 {
 	return nil
 }
 
-func loadResonanceFloat(row map[string]any, key string) (float64, bool) {
-	raw, found := row[key]
-
-	if !found {
-		return 0, false
-	}
-
-	value, ok := raw.(float64)
-
-	if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0, false
-	}
-
-	return value, true
-}
-
-func resonanceRow(thesis *types.Thesis, symbol string) (map[string]any, bool) {
+func resonanceReading(thesis *types.Thesis, symbol string) (types.ResonanceReading, bool) {
 	if thesis == nil || thesis.Resonance == nil || symbol == "" {
-		return nil, false
+		return types.ResonanceReading{}, false
 	}
 
 	raw, found := thesis.Resonance.Load(symbol)
 
-	if !found {
-		return nil, false
+	if !found || raw == nil {
+		return types.ResonanceReading{}, false
 	}
 
-	row, ok := raw.(map[string]any)
+	reading, ok := raw.(types.ResonanceReading)
 
 	if !ok {
-		return nil, false
+		return types.ResonanceReading{}, false
 	}
 
-	return row, true
-}
-
-func accumulatedReturn(curve []float64, surviving []float64) float64 {
-	total := 0.0
-	reference := 0.0
-
-	if len(surviving) > 0 {
-		reference = surviving[0]
-	}
-
-	for index, step := range curve {
-		if math.IsNaN(step) || math.IsInf(step, 0) {
-			continue
-		}
-
-		weight := 1.0
-
-		if index < len(surviving) && reference > 0 {
-			weight = math.Min(1, surviving[index]/reference)
-		}
-
-		if weight <= 0 {
-			break
-		}
-
-		total += step * weight
-	}
-
-	return total
-}
-
-func retention(row map[string]any, curveLength int) []float64 {
-	if raw, found := row["forwardRetention"]; found {
-		if surviving, ok := raw.([]float64); ok && len(surviving) == curveLength {
-			return surviving
-		}
-	}
-
-	surviving := make([]float64, curveLength)
-
-	for index := range surviving {
-		surviving[index] = 1
-	}
-
-	return surviving
-}
-
-func horizon(row map[string]any, curveLength int) int {
-	if raw, found := row["activeHorizon"]; found {
-		if active, ok := raw.(int); ok && active > 0 {
-			return active
-		}
-	}
-
-	if curveLength > 0 {
-		return curveLength
-	}
-
-	return 1
+	return reading, true
 }
 
 func getFloat(m map[string]any, key string) float64 {

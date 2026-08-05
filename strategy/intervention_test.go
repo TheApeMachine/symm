@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -81,25 +82,49 @@ func causalHistory(rows int, treatment float64) [][]float64 {
 	return history
 }
 
+func interventionForecast(
+	t *testing.T,
+	treatment float64,
+	horizon int,
+) *types.ResonanceForecast {
+	curve := make([]float64, horizon)
+	retention := make([]float64, horizon)
+
+	for index := range horizon {
+		curve[index] = treatment
+		retention[index] = 1
+	}
+
+	forecast, err := types.NewResonanceForecast(
+		curve, retention, horizon, 0.75,
+	)
+
+	So(err, ShouldBeNil)
+
+	return forecast
+}
+
 func TestStrategyStateInterventionLevel(t *testing.T) {
 	Convey("Given a candidate whose forecast is a fraction of its price", t, func() {
+		forecast := interventionForecast(t, 0.0015, 5)
 		state := strategy.StrategyState{
 			Symbol:        "SIM1/USD",
 			Energy:        0.4,
 			Surprise:      0.2,
 			Treatment:     0.0015,
+			Forecast:      forecast,
 			RoundTripCost: 0.0008,
 			HoldDiscount:  0.8,
-			MaxSteps:      5,
 		}
 
 		Convey("It should intervene at the level each action commits the position to", func() {
 			// Entering commits to the forecast the candidate was priced on.
 			So(state.GetInterventionLevel(strategy.ActionEnter), ShouldEqual, 0.0015)
 
-			// A hold child carries the propagated forecast that the rollout
-			// credited when it constructed that state.
-			held := state.ApplyAction(strategy.ActionHold).(strategy.StrategyState)
+			// A hold child carries the next supported step after entry, adjusted
+			// by the propagation evidence applied to that generation.
+			entered := state.ApplyAction(strategy.ActionEnter).(strategy.StrategyState)
+			held := entered.ApplyAction(strategy.ActionHold).(strategy.StrategyState)
 			So(held.GetInterventionLevel(strategy.ActionHold), ShouldAlmostEqual, 0.0012)
 
 			// Standing aside and completing a rollout both commit to no forecast.
@@ -150,9 +175,9 @@ func TestSearchInterventionLevels(t *testing.T) {
 			Energy:        0.4,
 			Surprise:      0.2,
 			Treatment:     treatment,
+			Forecast:      interventionForecast(t, treatment, 5),
 			RoundTripCost: 0.0004,
 			HoldDiscount:  0.8,
-			MaxSteps:      5,
 		}
 
 		action, err := search.Search(root, 50, causalHistory(16, treatment))

@@ -42,7 +42,7 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		solver.inferStructuralEdges(types.NewThesis(), graph)
+		solver.inferStructuralEdges(types.NewThesis(nil), graph)
 
 		Convey("Every intervention conditions every do-expectation", func() {
 			conditionEdges := 0
@@ -89,7 +89,7 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		solver.inferStructuralEdges(types.NewThesis(), graph)
+		solver.inferStructuralEdges(types.NewThesis(nil), graph)
 
 		Convey("It omits zero-confidence pair edges while retaining evidence-bearing edges", func() {
 			counts := make(map[RelationType]int)
@@ -109,7 +109,7 @@ func TestInferStructuralEdges(t *testing.T) {
 func TestExtractCausalNodes(t *testing.T) {
 	Convey("Given causal outputs with Pearl confidence", t, func() {
 		at := time.Unix(1, 0).UTC()
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.At = at
 		thesis.Causal.Store("BTC/USD", map[string]any{
 			"doExpectation": 0.25,
@@ -125,6 +125,41 @@ func TestExtractCausalNodes(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(node.Confidence, ShouldEqual, 0.37)
+		})
+	})
+}
+
+func TestExtractResonanceNodes(t *testing.T) {
+	Convey("Given a confidence-supported multi-step resonance forecast", t, func() {
+		at := time.Unix(1, 0).UTC()
+		forecast, err := types.NewResonanceForecast(
+			[]float64{0.01, 0.02}, []float64{1, 0.5}, 2, 0.4,
+		)
+		So(err, ShouldBeNil)
+
+		thesis := types.NewThesis(nil)
+		thesis.At = at
+		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
+			Symbol:   "BTC/USD",
+			At:       at,
+			Surprise: 0.25,
+			Forecast: forecast,
+			ForecastValidity: types.MeasurementValidity{
+				State: types.ValidityValid, Readiness: types.ReadinessForecast,
+			},
+		})
+		graph := NewGraph(at)
+		solver := NewSolver(nil, nil)
+
+		solver.extractResonanceNodes(thesis, graph)
+
+		Convey("It should publish the full-horizon return at measured confidence", func() {
+			node, found := graph.Nodes["res:BTC/USD:forecast"]
+
+			So(found, ShouldBeTrue)
+			So(node.Value, ShouldEqual, forecast.ExpectedReturn)
+			So(node.Value, ShouldNotEqual, forecast.Curve[0])
+			So(node.Confidence, ShouldEqual, forecast.Confidence)
 		})
 	})
 }
@@ -161,7 +196,7 @@ func TestPublish(t *testing.T) {
 			At:         at,
 		})
 
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		solver.publish(thesis, graph)
 
 		Convey("It should publish the edges alongside the nodes", func() {
@@ -236,7 +271,7 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 	}
 
 	solver := NewSolver(nil, nil)
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 
 	b.ReportAllocs()
 
@@ -251,7 +286,7 @@ func BenchmarkPublish(b *testing.B) {
 	at := time.Unix(1, 0).UTC()
 	ui := make(chan []byte, 1)
 	solver := NewSolver(ui, nil)
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	thesis.At = at
 	graph := NewGraph(at)
 

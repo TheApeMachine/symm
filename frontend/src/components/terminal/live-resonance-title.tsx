@@ -5,11 +5,11 @@ export const LiveResonanceTitle = () => (
 		{({ ref, className }) => (
 			<span ref={ref} className={className}>
 				K
-				<span data-paint="activeHorizon" data-paint-format=".0f">
+				<span data-paint="forecast.supportedHorizon" data-paint-format=".0f">
 					—
 				</span>
 				{" · confidence "}
-				<span data-paint="confidence" data-paint-format=".0%">
+				<span data-paint="forecast.confidence" data-paint-format=".0%">
 					—
 				</span>
 			</span>

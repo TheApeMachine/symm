@@ -41,12 +41,19 @@ func TestMarketTransition(t *testing.T) {
 		defer market.Close()
 
 		Convey("When transitioning one symbol to FastPump", func() {
+			market.Tick()
+			peerBefore := market.latest["SIM2/USD"].Timestamp
 			err := market.Transition("SIM1/USD", types.FastPump)
 
 			So(err, ShouldBeNil)
 			So(market.State, ShouldEqual, types.FastPump)
 			So(market.generators["SIM1/USD"].IgnitionArmed(), ShouldBeTrue)
 			So(market.generators["SIM2/USD"].IgnitionArmed(), ShouldBeFalse)
+			So(market.latest["SIM2/USD"].Timestamp.After(peerBefore), ShouldBeTrue)
+			liveBook := market.private.Book("SIM1/USD")
+			So(liveBook, ShouldNotBeNil)
+			So(liveBook.Bids.Levels, ShouldHaveLength, 1)
+			So(liveBook.Asks.Levels, ShouldHaveLength, 1)
 
 			pumped := market.generators["SIM1/USD"].Step()
 			baseline := market.generators["SIM2/USD"].Step()

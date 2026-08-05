@@ -55,11 +55,11 @@ func TestMeasure(t *testing.T) {
 		futureTicker := cvdTicker(109, 111, base.Add(3*time.Second))
 		trade := cvdTrade(71, "buy", 101, base.Add(2*time.Second))
 
-		causalCut := types.NewThesis()
+		causalCut := types.NewThesis(nil)
 		causalCut.Tickers.Store("BTC/USD", causalTicker)
 		So(signal.Measure(causalCut), ShouldBeEmpty)
 
-		futureCut := types.NewThesis()
+		futureCut := types.NewThesis(nil)
 		futureCut.Tickers.Store("BTC/USD", futureTicker)
 		futureCut.Trades.Store(int64(71), trade)
 		measurements := signal.Measure(futureCut)
@@ -112,7 +112,7 @@ func TestMeasure(t *testing.T) {
 		}
 		base := time.Unix(1_700_003_300, 0).UTC()
 		trade := cvdTrade(72, "sell", 100, base)
-		futureCut := types.NewThesis()
+		futureCut := types.NewThesis(nil)
 		futureCut.Tickers.Store("BTC/USD", cvdTicker(99, 101, base.Add(time.Second)))
 		futureCut.Trades.Store(int64(72), trade)
 
@@ -120,7 +120,7 @@ func TestMeasure(t *testing.T) {
 			So(signal.Measure(futureCut), ShouldBeEmpty)
 			So(signal.seenTrade(trade), ShouldBeFalse)
 
-			causalCut := types.NewThesis()
+			causalCut := types.NewThesis(nil)
 			causalCut.Tickers.Store("BTC/USD", cvdTicker(98, 100, base))
 			causalCut.Trades.Store(int64(72), trade)
 			So(signal.Measure(causalCut), ShouldHaveLength, 1)
@@ -181,7 +181,7 @@ func BenchmarkCVDMeasurements(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		_ = signal.cvdMeasurements(row, output, 4)
 	}
 }

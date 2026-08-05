@@ -72,8 +72,13 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		conn.WriteMessage(websocket.TextMessage, hub.balance.Wallet())
-		conn.WriteMessage(websocket.TextMessage, hub.desk.PublishPositions())
+		if hub.balance != nil {
+			conn.WriteMessage(websocket.TextMessage, hub.balance.Wallet())
+		}
+
+		if hub.desk != nil {
+			conn.WriteMessage(websocket.TextMessage, hub.desk.PublishPositions())
+		}
 
 		for {
 			select {

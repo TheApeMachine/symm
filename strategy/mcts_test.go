@@ -1,24 +1,48 @@
 package strategy
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
 
+func testStrategyForecast(testingContext testing.TB, curve []float64) *types.ResonanceForecast {
+	testingContext.Helper()
+	retention := make([]float64, len(curve))
+
+	for index := range retention {
+		retention[index] = 1
+	}
+
+	forecast, err := types.NewResonanceForecast(
+		curve, retention, len(curve), 0.75,
+	)
+
+	So(err, ShouldBeNil)
+
+	return forecast
+}
+
 func TestStrategyStateTrace(t *testing.T) {
 	Convey("Given the root state passed to causal MCTS", t, func() {
 		forecastHorizon := 7
+		forecastCurve := make([]float64, forecastHorizon)
+
+		for index := range forecastCurve {
+			forecastCurve[index] = 0.004
+		}
+
 		state := StrategyState{
 			Symbol:               "BTC/USD",
 			Energy:               0.2,
 			Surprise:             0.01,
 			Treatment:            0.004,
+			Forecast:             testStrategyForecast(t, forecastCurve),
 			RoundTripCost:        0.0015,
 			HoldDiscount:         0.8,
 			HawkesSpectralRadius: 0.6,
-			MaxSteps:             forecastHorizon,
 		}
 
 		Convey("It should expose the exact state and a searchable history", func() {
@@ -90,50 +114,89 @@ func TestStrategyStateHoldPropagation(t *testing.T) {
 }
 
 func TestStrategyStateApplyAction(t *testing.T) {
-	Convey("Given a held trajectory with live survival and propagation", t, func() {
+	Convey("Given a multi-step trajectory with live survival and propagation", t, func() {
+		forecast, err := types.NewResonanceForecast(
+			[]float64{0.004, 0.006, -0.004},
+			[]float64{1, 0.75, 0.5},
+			3,
+			0.75,
+		)
+		So(err, ShouldBeNil)
 		state := StrategyState{
-			Treatment:            0.004,
+			Treatment:            forecast.Curve[0],
+			Forecast:             forecast,
+			RoundTripCost:        0.001,
 			HoldDiscount:         0.6,
 			HawkesSpectralRadius: 0.8,
-			MaxSteps:             7,
-			IsHolding:            true,
+		}
+
+		entered := state.ApplyAction(ActionEnter).(StrategyState)
+		next := entered.ApplyAction(ActionHold).(StrategyState)
+
+		Convey("Each hold should consume its own supported curve step", func() {
+			secondStep, present := forecast.Step(1)
+			So(present, ShouldBeTrue)
+			propagated := secondStep * state.holdPropagation()
+			So(next.Treatment, ShouldAlmostEqual, propagated)
+			So(next.Reward, ShouldAlmostEqual,
+				forecast.Curve[0]-state.RoundTripCost+propagated)
+			So(next.GetInterventionLevel(ActionHold), ShouldAlmostEqual, propagated)
+
+			Convey("A later negative step should not repeat the positive first step", func() {
+				second := next.ApplyAction(ActionHold).(StrategyState)
+				thirdStep, present := forecast.Step(2)
+				So(present, ShouldBeTrue)
+				expectedThird := thirdStep * math.Pow(state.holdPropagation(), 2)
+
+				So(second.Treatment, ShouldAlmostEqual, expectedThird)
+				So(second.Treatment, ShouldBeLessThan, 0)
+				So(second.Reward, ShouldAlmostEqual,
+					forecast.Curve[0]-state.RoundTripCost+propagated+expectedThird)
+			})
+		})
+	})
+
+	Convey("Given a forecast without the step requested by a rollout", t, func() {
+		forecast := testStrategyForecast(t, []float64{0.004, 0.006})
+		forecast.Curve = forecast.Curve[:1]
+		state := StrategyState{
+			Treatment: 0.004,
+			Forecast:  forecast,
+			Reward:    0.003,
+			Step:      1,
+			IsHolding: true,
 		}
 
 		next := state.ApplyAction(ActionHold).(StrategyState)
 
-		Convey("Holding should credit the same propagated forecast used by intervention", func() {
-			propagated := 0.004 * 0.6 * (1 + 0.8)
-			So(next.Treatment, ShouldAlmostEqual, propagated)
-			So(next.Reward, ShouldAlmostEqual, propagated)
-			So(next.GetInterventionLevel(ActionHold), ShouldAlmostEqual, propagated)
-
-			Convey("A second hold should compound the reflexive transition", func() {
-				second := next.ApplyAction(ActionHold).(StrategyState)
-				So(second.Treatment, ShouldAlmostEqual,
-					propagated*state.holdPropagation())
-				So(second.Reward, ShouldAlmostEqual,
-					propagated+propagated*state.holdPropagation())
-			})
+		Convey("It should close the unsupported rollout without fabricating return", func() {
+			So(next.IsTerminal(), ShouldBeTrue)
+			So(next.Reward, ShouldEqual, state.Reward)
+			So(next.Treatment, ShouldEqual, state.Treatment)
 		})
 	})
 }
 
 func BenchmarkStrategyStateTrace(b *testing.B) {
 	forecastHorizon := 7
+	forecastCurve := make([]float64, forecastHorizon)
+
+	for index := range forecastCurve {
+		forecastCurve[index] = 0.004
+	}
+
 	state := StrategyState{
 		Symbol:               "BTC/USD",
 		Energy:               0.2,
 		Surprise:             0.01,
 		Treatment:            0.004,
+		Forecast:             testStrategyForecast(b, forecastCurve),
 		RoundTripCost:        0.0015,
 		HoldDiscount:         0.8,
 		HawkesSpectralRadius: 0.6,
-		MaxSteps:             forecastHorizon,
 	}
 
-	b.ResetTimer()
-
-	for range b.N {
+	for b.Loop() {
 		_ = state.Trace(
 			mctsMinimumCausalRows,
 			mctsMinimumCausalRows,
@@ -154,17 +217,24 @@ func BenchmarkStrategyStateHoldPropagation(b *testing.B) {
 }
 
 func BenchmarkStrategyAction(b *testing.B) {
-	for range b.N {
+	for b.Loop() {
 		_ = strategyAction(ActionCompleteTrajectory)
 	}
 }
 
 func BenchmarkStrategyStateApplyAction(b *testing.B) {
+	forecastCurve := make([]float64, 7)
+
+	for index := range forecastCurve {
+		forecastCurve[index] = 0.004
+	}
+
 	state := StrategyState{
 		Treatment:            0.004,
+		Forecast:             testStrategyForecast(b, forecastCurve),
 		HoldDiscount:         0.6,
 		HawkesSpectralRadius: 0.8,
-		MaxSteps:             7,
+		Step:                 1,
 		IsHolding:            true,
 	}
 

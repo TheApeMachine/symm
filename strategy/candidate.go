@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -23,31 +24,10 @@ type candidate struct {
 	ExpectedFees   *decimal.Decimal
 	ExpectedSpread *decimal.Decimal
 	ExpectedImpact *decimal.Decimal
-	/*
-		TrajectoryTreatment is the first resonance forward-curve step. The causal
-		history's treatment column is built from that exact quantity, while
-		ExpectedReturn is the accumulated curve converted to quote currency for
-		valuation. Keeping them separate prevents MCTS from intervening with a
-		multi-step total against a model fitted on one-step predictions.
-	*/
-	TrajectoryTreatment float64
-	Uncertainty         float64
-	Confidence          float64
-	HorizonSteps        int
-	Epoch               uint64
-}
-
-/*
-projectedReturn converts the resonance rollout's accumulated log return into a
-simple return.
-
-The rollout is already the price forecast. Structural signals may corroborate
-or contradict that forecast elsewhere in the evaluator, but multiplying the
-log return by their unrelated scores turns evidence strength into fictional
-price movement and can exponentiate a small forecast into an impossible one.
-*/
-func projectedReturn(curve, surviving []float64) float64 {
-	return math.Expm1(accumulatedReturn(curve, surviving))
+	Forecast       *types.ResonanceForecast
+	Uncertainty    float64
+	Confidence     float64
+	Epoch          uint64
 }
 
 /*

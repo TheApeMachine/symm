@@ -117,6 +117,13 @@ func (book *Book) Update(
 			continue
 		}
 
+		if payload.Type == "snapshot" {
+			symbolBook = book.manager.CreateBook(
+				data.Symbol,
+				symbolBook.MaxDepth,
+			)
+		}
+
 		book.pruneNilLevels(symbolBook)
 
 		for sideIndex, level3data := range []*[]kraken.Level3Order{&data.Bids, &data.Asks} {
@@ -177,7 +184,22 @@ func (book *Book) Update(
 					continue
 				}
 
-				if symbolSide.Levels[price] == nil {
+				level := symbolSide.Levels[price]
+
+				if level == nil {
+					continue
+				}
+
+				var removed *decimal.Decimal
+
+				for _, queued := range level.Queue() {
+					if queued.ID == order.OrderID && queued.Quantity != nil {
+						removed = decimal.NewFromInt64(0).Sub(queued.Quantity)
+						break
+					}
+				}
+
+				if removed == nil {
 					continue
 				}
 
@@ -185,7 +207,7 @@ func (book *Book) Update(
 					Direction: direction,
 					ID:        order.OrderID,
 					Price:     order.LimitPrice,
-					Quantity:  decimal.NewFromInt64(0),
+					Quantity:  removed,
 					Timestamp: order.Timestamp,
 					Silent:    true,
 				})

@@ -41,13 +41,13 @@ type StrategyState struct {
 	// quantity in the causal history's treatment column. RoundTripCost is the
 	// modelled friction of entering and exiting on the same fractional scale.
 	Treatment            float64
+	Forecast             *types.ResonanceForecast
 	RoundTripCost        float64
 	HoldDiscount         float64
 	HawkesSpectralRadius float64
 
 	Reward    float64 // Target / PnL
 	Step      int
-	MaxSteps  int
 	IsHolding bool
 }
 
@@ -58,6 +58,12 @@ The mutable result fields are filled by the evaluator after Search returns.
 func (strategyState StrategyState) Trace(
 	causalRows, minimumRows, iterations int,
 ) types.DecisionMCTSTrace {
+	horizonSteps := 0
+
+	if strategyState.Forecast != nil {
+		horizonSteps = strategyState.Forecast.SupportedHorizon
+	}
+
 	return types.DecisionMCTSTrace{
 		Energy:               strategyState.Energy,
 		Surprise:             strategyState.Surprise,
@@ -69,7 +75,7 @@ func (strategyState StrategyState) Trace(
 		CausalRows:           causalRows,
 		MinimumCausalRows:    minimumRows,
 		Iterations:           iterations,
-		HorizonSteps:         strategyState.MaxSteps,
+		HorizonSteps:         horizonSteps,
 		Searchable:           causalRows >= minimumRows,
 	}
 }
@@ -129,7 +135,8 @@ func (strategyState StrategyState) holdPropagation() float64 {
 }
 
 func (strategyState StrategyState) IsTerminal() bool {
-	return strategyState.Step >= strategyState.MaxSteps ||
+	return strategyState.Forecast == nil ||
+		strategyState.Step >= strategyState.Forecast.SupportedHorizon ||
 		(strategyState.IsHolding && strategyState.Treatment < strategyState.reversalFraction())
 }
 
@@ -147,6 +154,19 @@ func (strategyState StrategyState) GetPossibleActions() []float64 {
 
 func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 	next := strategyState
+
+	if strategyState.IsTerminal() {
+		return next
+	}
+
+	forecastStep, supported := strategyState.Forecast.Step(strategyState.Step)
+
+	if !supported {
+		next.Step = strategyState.Forecast.SupportedHorizon
+
+		return next
+	}
+
 	next.Step++
 
 	switch action {
@@ -156,13 +176,17 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 		// anything. The cost is the candidate's own modelled friction rather
 		// than a constant, so a wide or expensive market prices itself out
 		// instead of being judged against a figure taken from some other one.
+		next.Treatment = forecastStep
 		next.IsHolding = true
-		next.Reward += strategyState.Treatment - strategyState.RoundTripCost
+		next.Reward += next.Treatment - strategyState.RoundTripCost
 	case ActionHold:
-		// Each hold advances one Hawkes generation. The propagated treatment is
-		// installed on the next state so repeated holds decay or expand
-		// geometrically instead of receiving the same scalar credit every step.
-		next.Treatment = strategyState.Treatment * strategyState.holdPropagation()
+		/*
+			Each hold reads the next confidence-supported curve step rather than
+			reusing the first prediction. Exhaustion/Hawkes propagation still prices
+			how much of that step survives through the corresponding generation.
+		*/
+		next.Treatment = forecastStep *
+			math.Pow(strategyState.holdPropagation(), float64(strategyState.Step))
 		next.Reward += next.Treatment
 	case ActionCompleteTrajectory:
 		// The round trip was already charged on entry, so exiting adds

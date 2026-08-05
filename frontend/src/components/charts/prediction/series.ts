@@ -129,7 +129,9 @@ band, along with the calibration evidence that determines readiness.
 */
 const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 	const latest = frames.at(-1);
-	const expected = frames.map((frame) => finiteNumber(frame.expectedReturn));
+	const expected = frames.map((frame) =>
+		finiteNumber(frame.forecast?.expectedReturn),
+	);
 	const uncertainty = frames.map((frame) => finiteNumber(frame.uncertainty));
 
 	return {
@@ -146,12 +148,13 @@ const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 				? null
 				: value - spread;
 		}),
-		latestExpected: finiteNumber(latest?.expectedReturn),
+		latestExpected: finiteNumber(latest?.forecast?.expectedReturn),
 		latestUncertainty: finiteNumber(latest?.uncertainty),
 		mse: finiteNumber(latest?.incrementalMSE),
 		skillLowerBound: finiteNumber(latest?.incrementalSkillLowerBound),
 		samples: finiteNumber(latest?.calibrationSamples),
-		ready: latest?.returnReady === true,
+		ready:
+			latest?.forecastValidity?.state === "valid" && latest.forecast !== undefined,
 	};
 };
 

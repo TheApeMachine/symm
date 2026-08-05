@@ -3,14 +3,20 @@ package resonance
 import (
 	"time"
 
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
 )
 
+/*
+symbolState holds per-symbol predictive coding and adaptive state, delegating
+normalization, error calibration, and learning rate pacing to nomagique primitives.
+*/
 type symbolState struct {
 	manifold      *learning.ResonanceManifold
-	alphaCtrl     *AlphaController
-	confidence    *errorCalibrator
-	featureScale  map[string]*featureNormalizer
+	alphaCtrl     *learning.PaceController
+	confidence    *probability.Calibrator
+	featureScale  map[string]*adaptive.Standardizer
 	alpha         float64
 	featureSchema []string
 	input         []float64
@@ -21,12 +27,17 @@ type symbolState struct {
 	horizonReach  int
 }
 
+/*
+newSymbolState instantiates a fresh symbolState initialized with nomagique primitives.
+*/
 func newSymbolState(initialAlpha float64) *symbolState {
 	return &symbolState{
-		alpha:        initialAlpha,
-		alphaCtrl:    NewAlphaController(initialAlpha, minAlpha, maxAlpha),
-		confidence:   newErrorCalibrator(),
-		featureScale: make(map[string]*featureNormalizer),
+		alpha: initialAlpha,
+		alphaCtrl: learning.NewPaceController(learning.PaceConfig{
+			InitialAlpha: initialAlpha,
+		}),
+		confidence:   probability.NewCalibrator(),
+		featureScale: make(map[string]*adaptive.Standardizer),
 		horizonReach: 1,
 	}
 }

@@ -42,6 +42,7 @@ type resonanceTrace struct {
 	energy     float64
 	samples    uint64
 	horizon    int
+	returnVal  float64
 	curve      []float64
 	retention  []float64
 }
@@ -109,62 +110,24 @@ func readResonance(thesis *types.Thesis, symbol string) (resonanceTrace, bool) {
 		return resonanceTrace{}, false
 	}
 
-	row, ok := rowRaw.(map[string]any)
+	row, ok := rowRaw.(types.ResonanceReading)
 
-	if !ok {
-		return resonanceTrace{}, false
-	}
-
-	read := func(key string) (float64, bool) {
-		raw, found := row[key]
-
-		if !found {
-			return 0, false
-		}
-
-		value, ok := raw.(float64)
-
-		return value, ok
-	}
-
-	alpha, hasAlpha := read("alpha")
-	confidence, hasConfidence := read("confidence")
-	surprise, hasSurprise := read("surprise")
-	energy, hasEnergy := read("energy")
-
-	if !hasAlpha || !hasConfidence || !hasSurprise || !hasEnergy {
+	if !ok || row.Forecast == nil ||
+		row.ForecastValidity.State != types.ValidityValid ||
+		row.Forecast.Validate() != nil {
 		return resonanceTrace{}, false
 	}
 
 	trace := resonanceTrace{
-		alpha:      alpha,
-		confidence: confidence,
-		surprise:   surprise,
-		energy:     energy,
-	}
-
-	if raw, found := row["samples"]; found {
-		if samples, ok := raw.(uint64); ok {
-			trace.samples = samples
-		}
-	}
-
-	if raw, found := row["activeHorizon"]; found {
-		if horizon, ok := raw.(int); ok {
-			trace.horizon = horizon
-		}
-	}
-
-	if raw, found := row["forwardCurve"]; found {
-		if curve, ok := raw.([]float64); ok {
-			trace.curve = slices.Clone(curve)
-		}
-	}
-
-	if raw, found := row["forwardRetention"]; found {
-		if retention, ok := raw.([]float64); ok {
-			trace.retention = slices.Clone(retention)
-		}
+		alpha:      row.Alpha,
+		confidence: row.Forecast.Confidence,
+		surprise:   row.Surprise,
+		energy:     row.Energy,
+		samples:    row.Samples,
+		horizon:    row.Forecast.SupportedHorizon,
+		returnVal:  row.Forecast.ExpectedReturn,
+		curve:      slices.Clone(row.Forecast.Curve),
+		retention:  slices.Clone(row.Forecast.Retention),
 	}
 
 	return trace, true
@@ -218,7 +181,7 @@ func simulationSymbols() []*testtypes.Symbol {
 }
 
 func resonanceInput(market *tests.Market) *types.Thesis {
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 
 	for source, measurements := range market.Measurements() {
 		thesis.Measurements.Store(types.SourceType(source), measurements)

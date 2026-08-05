@@ -14,12 +14,18 @@ const frames: ResonanceFrame[] = Array.from({ length: 1024 }, (_, index) => ({
 			Math.cos(index + layerIndex + dimension),
 		),
 	})),
-	expectedReturn: Math.sin(index) / 100,
+	forecast: {
+		forwardCurve: [Math.sin(index) / 100],
+		forwardRetention: [1],
+		supportedHorizon: 1,
+		expectedReturn: Math.sin(index) / 100,
+		confidence: 0.75,
+	},
+	forecastValidity: { state: "valid" as const, readiness: "forecast" },
 	uncertainty: Math.abs(Math.cos(index)) / 100,
 	incrementalMSE: 0.001,
 	incrementalSkillLowerBound: 0.0001,
 	calibrationSamples: index,
-	returnReady: true,
 }));
 
 describe("predictive-coding chart", () => {

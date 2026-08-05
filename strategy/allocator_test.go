@@ -32,7 +32,7 @@ func TestAllocatorAllocate(t *testing.T) {
 		)
 
 		Convey("An entry decision should be sized and marked ready", func() {
-			thesis := types.NewThesis()
+			thesis := types.NewThesis(nil)
 			thesis.Decisions = []types.Decision{{
 				ID:     uuid.NewString(),
 				Action: types.ActionEnter,
@@ -52,7 +52,7 @@ func TestAllocatorAllocate(t *testing.T) {
 		})
 
 		Convey("A sized entry should carry the geometry it was sized under", func() {
-			thesis := types.NewThesis()
+			thesis := types.NewThesis(nil)
 			thesis.Decisions = []types.Decision{{
 				ID:     uuid.NewString(),
 				Action: types.ActionEnter,
@@ -81,7 +81,7 @@ func TestAllocatorAllocate(t *testing.T) {
 		})
 
 		Convey("A risk distance the budget cannot carry should shrink the quantity", func() {
-			thesis := types.NewThesis()
+			thesis := types.NewThesis(nil)
 			thesis.Decisions = []types.Decision{{
 				ID:     uuid.NewString(),
 				Action: types.ActionEnter,
@@ -97,7 +97,7 @@ func TestAllocatorAllocate(t *testing.T) {
 				case where an unchanged size would turn every stopped trade into
 				a proportionally larger loss.
 			*/
-			wide := types.NewThesis()
+			wide := types.NewThesis(nil)
 			wide.Decisions = []types.Decision{{
 				ID:             uuid.NewString(),
 				Action:         types.ActionEnter,
@@ -124,7 +124,7 @@ func TestAllocatorAllocate(t *testing.T) {
 		})
 
 		Convey("An unconfigured pair should be rejected in place", func() {
-			thesis := types.NewThesis()
+			thesis := types.NewThesis(nil)
 			thesis.Decisions = []types.Decision{{
 				ID:     uuid.NewString(),
 				Action: types.ActionEnter,
@@ -139,7 +139,7 @@ func TestAllocatorAllocate(t *testing.T) {
 		})
 
 		Convey("A published flow haircut should reduce notional before risk sizing", func() {
-			clean := types.NewThesis()
+			clean := types.NewThesis(nil)
 			clean.Decisions = []types.Decision{{
 				ID:               uuid.NewString(),
 				Action:           types.ActionEnter,
@@ -149,7 +149,7 @@ func TestAllocatorAllocate(t *testing.T) {
 			}}
 			So(allocator.Allocate(clean), ShouldBeNil)
 
-			reduced := types.NewThesis()
+			reduced := types.NewThesis(nil)
 			reduced.Decisions = []types.Decision{{
 				ID:                      uuid.NewString(),
 				Action:                  types.ActionEnter,
@@ -192,7 +192,7 @@ func BenchmarkAllocatorAllocate(b *testing.B) {
 		market.Desk,
 	)
 
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	thesis.Decisions = []types.Decision{{
 		ID:     uuid.NewString(),
 		Action: types.ActionEnter,

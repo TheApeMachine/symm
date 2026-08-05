@@ -52,7 +52,7 @@ func TestMeasure(t *testing.T) {
 			books:     books,
 			lastTrade: make(map[string]tradeCursor),
 		}
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		base := time.Unix(1_700_002_200, 0).UTC()
 		var measurements []*types.Measurement
 
@@ -154,7 +154,7 @@ func pumpdumpBook(symbol string, bid, ask float64, at time.Time) *spotbook.Book 
 func BenchmarkNormalizedIgnitionEvidence(b *testing.B) {
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		_ = normalizedIgnitionEvidence(1.25, true)
 	}
 }

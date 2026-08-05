@@ -36,7 +36,7 @@ func measurementFor(
 func TestMeasure(t *testing.T) {
 	Convey("Given a causal multi-leg return cohort", t, func() {
 		signal := &Signal{observations: make(map[string]returnObservation)}
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		start := time.Unix(1_700_000_000, 0).UTC()
 
 		firstLeg := []kraken.TickerData{
@@ -84,7 +84,7 @@ func TestMeasure(t *testing.T) {
 
 	Convey("Given a cohort with real cadence but no return dispersion", t, func() {
 		signal := &Signal{observations: make(map[string]returnObservation)}
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		start := time.Unix(1_700_000_100, 0).UTC()
 		thesis.Tickers = tickerMap([]kraken.TickerData{
 			ticker("AAA/USD", 100, start),
@@ -126,7 +126,7 @@ func BenchmarkSentimentStatistics(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		_ = sentimentStatistics(peers)
 	}
 }

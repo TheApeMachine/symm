@@ -88,8 +88,16 @@ func TestUnifiedUtility(t *testing.T) {
 }
 
 func TestGetCausalHistoryRows(t *testing.T) {
+	Convey("Given an empty thesis or missing causal entry", t, func() {
+		thesis := types.NewThesis(nil)
+
+		Convey("It should return nil when the symbol entry is not present", func() {
+			So(getCausalHistoryRows(thesis, "BTC/USD"), ShouldBeNil)
+		})
+	})
+
 	Convey("Given a causal output without aligned history", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Causal.Store("BTC/USD", map[string]any{
 			"intervention":  0.2,
 			"doExpectation": 0.1,
@@ -101,7 +109,7 @@ func TestGetCausalHistoryRows(t *testing.T) {
 	})
 
 	Convey("Given aligned causal history", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		rows := [][]float64{{0.1, 0.2, 0.3, 0.4}}
 		thesis.Causal.Store("BTC/USD", map[string]any{"historyRows": rows})
 
@@ -111,39 +119,9 @@ func TestGetCausalHistoryRows(t *testing.T) {
 	})
 }
 
-func TestProjectedReturn(t *testing.T) {
-	Convey("Given the ZRO resonance rollout observed in the paper run", t, func() {
-		curve := []float64{
-			0.0002459297267317184, 0.00024366941030828297,
-			0.00024525064080171835, 0.00024909273459577756,
-			0.0002540490272959324, 0.0002595214621685936,
-			0.00026521743482255344, 0.00027094679624451665,
-			0.00027657830320614, 0.00028201653462815593,
-			0.00028719244808729917,
-		}
-		surviving := []float64{
-			0.9055048878804701, 0.8974399798115656,
-			0.9093932877015342, 0.9296458889374464,
-			0.9536892103079515, 0.9792906095758916,
-			1.0053454119173224, 1.0311457162739686,
-			1.0562061772730253, 1.080184430729682,
-			1.1028428817730502,
-		}
-
-		Convey("It should preserve the rollout magnitude instead of exponentiating signal scores", func() {
-			projected := projectedReturn(curve, surviving)
-
-			So(projected, ShouldAlmostEqual,
-				math.Expm1(accumulatedReturn(curve, surviving)), 1e-12)
-			So(projected, ShouldBeGreaterThan, 0.002)
-			So(projected, ShouldBeLessThan, 0.004)
-		})
-	})
-}
-
 func TestEstimateImpact(t *testing.T) {
 	Convey("Given market spread and scarcity measurements", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		symbol := "BTC/USD"
 		spread := decimal.NewFromFloat64(10.0)
 
@@ -172,7 +150,7 @@ func TestEstimateImpact(t *testing.T) {
 
 func TestExhaustionHoldDiscount(t *testing.T) {
 	Convey("Given valid long-side exhaustion output", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 
 		thesis.Measurements.Store(types.SourceExhaustion, []*types.Measurement{{
 			Source: types.SourceExhaustion,
@@ -218,7 +196,7 @@ func TestExhaustionHoldDiscount(t *testing.T) {
 
 func TestHawkesSpectralRadius(t *testing.T) {
 	Convey("Given an identified stationary Hawkes fit", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
 			Symbol: "BTC/USD",
@@ -254,7 +232,7 @@ func TestHawkesSpectralRadius(t *testing.T) {
 
 func TestRegimeExit(t *testing.T) {
 	Convey("Given a valid empirically scaled pump-dump reading", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{{
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
@@ -286,7 +264,7 @@ func TestRegimeExit(t *testing.T) {
 	})
 
 	Convey("Given a fitted seller-dominant Hawkes process", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
 			Symbol: "BTC/USD",
@@ -312,7 +290,7 @@ func TestRegimeExit(t *testing.T) {
 
 func TestAllocationHaircut(t *testing.T) {
 	Convey("Given valid executable-liquidity and toxicity evidence", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -403,17 +381,8 @@ func BenchmarkUnifiedUtility(b *testing.B) {
 	}
 }
 
-func BenchmarkProjectedReturn(b *testing.B) {
-	curve := []float64{0.00024, 0.00025, 0.00026, 0.00027, 0.00028}
-	surviving := []float64{0.9, 0.92, 0.95, 0.98, 1.0}
-
-	for b.Loop() {
-		_ = projectedReturn(curve, surviving)
-	}
-}
-
 func BenchmarkAllocationHaircut(b *testing.B) {
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 		Source: types.SourceLiquidity,
 		Symbol: "BTC/USD",
@@ -449,7 +418,7 @@ func BenchmarkAllocationHaircut(b *testing.B) {
 }
 
 func BenchmarkHawkesSpectralRadius(b *testing.B) {
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 		Source: types.SourceHawkes,
 		Symbol: "BTC/USD",

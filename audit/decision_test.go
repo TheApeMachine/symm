@@ -67,7 +67,7 @@ func pricedDecision(at time.Time) types.Decision {
 
 func TestDecisionEvents(t *testing.T) {
 	Convey("Given a completed decision cycle with retained signal history", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Tick = 12
 		decisionAt := time.Unix(100, 0).UTC()
 		thesis.Decisions = []types.Decision{pricedDecision(decisionAt)}
@@ -120,7 +120,7 @@ func TestDecisionEvents(t *testing.T) {
 	})
 
 	Convey("Given a rejection caused by unavailable allocation evidence", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Tick = 9
 		decisionAt := time.Unix(200, 0).UTC()
 		decision := pricedDecision(decisionAt)
@@ -153,7 +153,7 @@ func TestDecisionEvents(t *testing.T) {
 	})
 
 	Convey("Given a continuation deferral with no forecast timestamp", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Tick = 21
 		thesis.At = time.Unix(250, 0).UTC()
 		thesis.Decisions = []types.Decision{{
@@ -188,7 +188,7 @@ func TestDecisionEvents(t *testing.T) {
 	})
 
 	Convey("Given a continuation forecast without an MCTS trace", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Tick = 30
 		decisionAt := time.Unix(275, 0).UTC()
 		decision := pricedDecision(decisionAt)
@@ -219,7 +219,7 @@ func TestRecordDecisionCycle(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "audit.jsonl")
 		recorder, err := NewRecorder(path)
 		So(err, ShouldBeNil)
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Tick = 3
 		decisionAt := time.Unix(300, 0).UTC()
 		thesis.Decisions = []types.Decision{pricedDecision(decisionAt)}
@@ -245,6 +245,8 @@ func TestRecordDecisionCycle(t *testing.T) {
 				So(decoded["channel"], ShouldEqual, "analysis")
 			}
 
+			So(scanner.Err(), ShouldBeNil)
+
 			So(categories, ShouldResemble, []string{
 				string(CategoryDecisionContext),
 				string(CategoryForecastIssued),
@@ -255,7 +257,7 @@ func TestRecordDecisionCycle(t *testing.T) {
 }
 
 func BenchmarkDecisionEvents(b *testing.B) {
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	thesis.Tick = 100
 	decisionAt := time.Unix(1_000, 0).UTC()
 	thesis.Decisions = []types.Decision{pricedDecision(decisionAt)}

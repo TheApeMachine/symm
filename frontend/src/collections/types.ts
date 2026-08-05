@@ -257,6 +257,20 @@ export type ResonanceLayer = {
 	temporal?: boolean;
 };
 
+export type ResonanceForecast = {
+	forwardCurve: number[];
+	forwardRetention: number[];
+	supportedHorizon: number;
+	expectedReturn: number;
+	confidence: number;
+};
+
+export type ForecastValidity = {
+	state: "valid" | "provisional" | "invalid";
+	readiness: string;
+	reason?: string;
+};
+
 /*
 ResonanceFrame mirrors the backend ResonanceOutcome wire payload.
 */
@@ -270,10 +284,9 @@ export type ResonanceFrame = Record<string, unknown> & {
 	layers?: ResonanceLayer[];
 	energy?: number;
 	surprise?: number;
-	confidence?: number;
 	targetSymbol?: string;
-	expectedReturn?: number;
-	returnReady?: boolean;
+	forecast?: ResonanceForecast;
+	forecastValidity?: ForecastValidity;
 	incrementalMSE?: number;
 	incrementalSkillLowerBound?: number;
 	uncertainty?: number;

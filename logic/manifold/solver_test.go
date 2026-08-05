@@ -18,7 +18,7 @@ import (
 
 func TestUpdate(t *testing.T) {
 	Convey("Given a valid tick with no manifold carriers", t, func() {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		solver := &Solver{}
 
 		err := solver.Update(thesis)
@@ -46,7 +46,7 @@ func TestUpdate(t *testing.T) {
 			residency: len(symbols) * 2,
 			binui:     frames,
 		}
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.At = time.Unix(1, 0).UTC()
 		measurements := make([]*types.Measurement, 0, len(symbols))
 
@@ -349,7 +349,7 @@ func BenchmarkUpdate(b *testing.B) {
 		tokenizer: NewTokenizer(config, symbols),
 		residency: config.Grid.X * config.Grid.Y * config.Grid.Z / 32,
 	}
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	measurements := make([]*types.Measurement, 0, len(symbols))
 
 	for index, symbol := range symbols {

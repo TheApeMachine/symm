@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"runtime"
 	"sync"
 	"testing"
@@ -8,6 +9,41 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+func TestReadinessStamp(t *testing.T) {
+	Convey("Given readiness publishing to the dashboard channel", t, func() {
+		ui := make(chan []byte, 1)
+		readiness := NewReadiness(ui)
+		stamped := make(chan struct{})
+
+		go func() {
+			readiness.Stamp(SourcePumpDump)
+			close(stamped)
+		}()
+
+		select {
+		case <-stamped:
+		case <-time.After(time.Second):
+			t.Fatal("readiness stamp blocked while publishing its snapshot")
+		}
+
+		var frame struct {
+			Readiness Readiness `json:"readiness"`
+		}
+
+		select {
+		case payload := <-ui:
+			So(json.Unmarshal(payload, &frame), ShouldBeNil)
+		case <-time.After(time.Second):
+			t.Fatal("readiness stamp did not publish a dashboard frame")
+		}
+
+		Convey("It should publish the completed stamp without re-entering its mutex", func() {
+			So(frame.Readiness.PumpDump, ShouldBeTrue)
+			So(readiness.Snapshot().PumpDump, ShouldBeTrue)
+		})
+	})
+}
 
 func storeAllSignalMeasurements(thesis *Thesis, stampAt time.Time) {
 	for _, source := range thesisSignalSources {
@@ -27,7 +63,7 @@ func stampAllSignals(readiness *Readiness) {
 
 func TestThesisReadiness(t *testing.T) {
 	Convey("Given signal stages stamping readiness concurrently", t, func() {
-		readiness := NewReadiness()
+		readiness := NewReadiness(nil)
 		start := make(chan struct{})
 		measured := make(chan struct{})
 		var stamps sync.WaitGroup
@@ -60,7 +96,7 @@ func TestThesisReadiness(t *testing.T) {
 	})
 
 	Convey("Given every pre-decision stage stamp", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		stampAt := time.Unix(1, 0).UTC()
 
 		storeAllSignalMeasurements(thesis, stampAt)
@@ -89,7 +125,7 @@ func TestThesisReadiness(t *testing.T) {
 	})
 
 	Convey("Given a stage that ran but produced no output", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		stampAt := time.Unix(1, 0).UTC()
 
 		storeAllSignalMeasurements(thesis, stampAt)
@@ -114,7 +150,7 @@ func TestThesisReadiness(t *testing.T) {
 	})
 
 	Convey("Given a pipeline missing one stage's stamp", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		stampAt := time.Unix(1, 0).UTC()
 
 		storeAllSignalMeasurements(thesis, stampAt)
@@ -136,7 +172,7 @@ func TestThesisReadiness(t *testing.T) {
 	})
 
 	Convey("Given only some signal measurements", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		stampAt := time.Unix(1, 0).UTC()
 
 		for _, source := range thesisSignalSources[:2] {
@@ -156,7 +192,7 @@ func TestThesisReadiness(t *testing.T) {
 
 func TestPrepareNextEvaluation(t *testing.T) {
 	Convey("Given a thesis with epoch state and retained cycle evidence", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		thesis.Tick = 77
 		thesis.Measurements.Store(SourceCVD, []*Measurement{{Source: SourceCVD, Symbol: "BTC/USD"}})
 		thesis.Graphs.Store("BTC/USD", "graph")
@@ -212,7 +248,7 @@ func TestPrepareNextEvaluation(t *testing.T) {
 
 func TestCloseCycle(t *testing.T) {
 	Convey("Given a thesis whose completed decision set has been emitted", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		stampAt := time.Unix(1, 0).UTC()
 		thesis.Measurements.Store(SourceCVD, []*Measurement{{
 			Source: SourceCVD, Symbol: "BTC/USD", At: stampAt,
@@ -234,7 +270,7 @@ func TestCloseCycle(t *testing.T) {
 
 func TestNoteLifecycle(t *testing.T) {
 	Convey("Given a thesis phase transition", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		at := time.Unix(1, 0).UTC()
 		thesis.NoteLifecycle("BTC/USD", LifecycleEntered, at)
 
@@ -247,7 +283,7 @@ func TestNoteLifecycle(t *testing.T) {
 }
 
 func BenchmarkNoteLifecycle(b *testing.B) {
-	thesis := NewThesis()
+	thesis := NewThesis(nil)
 	at := time.Unix(1, 0).UTC()
 
 	b.ReportAllocs()
@@ -258,7 +294,7 @@ func BenchmarkNoteLifecycle(b *testing.B) {
 }
 
 func BenchmarkPrepareNextEvaluation(b *testing.B) {
-	thesis := NewThesis()
+	thesis := NewThesis(nil)
 
 	b.ReportAllocs()
 
@@ -271,7 +307,7 @@ func BenchmarkPrepareNextEvaluation(b *testing.B) {
 BenchmarkMeasurements measures the locked shared-Thesis signal publish path.
 */
 func BenchmarkMeasurements(b *testing.B) {
-	thesis := NewThesis()
+	thesis := NewThesis(nil)
 	row := &Measurement{Source: SourceCVD, Symbol: "BTC/USD", At: time.Unix(1, 0)}
 
 	b.ReportAllocs()

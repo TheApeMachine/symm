@@ -163,7 +163,13 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		to tell a tick that judged the market and stood down from one that never
 		got to judge it at all.
 	*/
-	thesis.Readiness.Decisions = len(thesis.Decisions) > 0
+	terminalDecision := slices.ContainsFunc(
+		thesis.Decisions,
+		func(decision types.Decision) bool {
+			return decision.Action != types.ActionNothing
+		},
+	)
+	thesis.Readiness.Decisions = terminalDecision
 
 	/*
 		Every decision leaving the planner carries a durable identifier, which
@@ -176,9 +182,8 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		thesis.Decisions[index].ArbitrationRound = thesis.Tick
 	}
 
-	if !thesis.Readiness.Decisions {
+	if len(thesis.Decisions) == 0 {
 		planner.complete(thesis, true, "no_decision")
-		thesis.PrepareNextEvaluation()
 
 		return thesis
 	}
@@ -187,11 +192,17 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		errnie.Error(audit.RecordDecisionCycle(planner.recorder, thesis))
 	}
 
+	if !terminalDecision {
+		planner.complete(thesis, true, "deferred")
+
+		return thesis
+	}
+
 	planner.complete(thesis, true, "decisions")
 	planner.publish(thesis)
 
-	// Subscribers receive their own copy because the decision slice is an
-	// epoch-scoped working result and is cleared before the next evaluation.
+	// Subscribers receive their own copy because closing the completed decision
+	// cycle clears the Thesis immediately after emission.
 	decisions := slices.Clone(thesis.Decisions)
 
 	planner.subscribers.Range(func(key, value any) bool {

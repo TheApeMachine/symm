@@ -336,17 +336,16 @@ func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) 
 
 	thesis.Resonance.Range(func(key, value any) bool {
 		symbol, symbolOK := key.(string)
-		row, rowOK := value.(map[string]any)
+		reading, readingOK := value.(types.ResonanceReading)
 
-		if !symbolOK || !rowOK || symbol == "" {
+		if !symbolOK || !readingOK || symbol == "" || reading.Forecast == nil ||
+			reading.ForecastValidity.State != types.ValidityValid {
 			return true
 		}
 
-		surprise, _ := row["surprise"].(float64)
-		predValue := 0.0
-
-		if curve, ok := row["forwardCurve"].([]float64); ok && len(curve) > 0 {
-			predValue = curve[0]
+		if err := reading.Forecast.Validate(); err != nil ||
+			math.IsNaN(reading.Surprise) || math.IsInf(reading.Surprise, 0) {
+			return true
 		}
 
 		graph.AddNode(&Node{
@@ -354,8 +353,8 @@ func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) 
 			Symbol:     symbol,
 			Source:     "resonance",
 			Kind:       "resonance",
-			Value:      surprise,
-			Confidence: 1.0,
+			Value:      reading.Surprise,
+			Confidence: reading.Forecast.Confidence,
 			At:         thesis.At,
 		})
 
@@ -364,8 +363,8 @@ func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) 
 			Symbol:     symbol,
 			Source:     "resonance",
 			Kind:       "resonance",
-			Value:      predValue,
-			Confidence: 1.0,
+			Value:      reading.Forecast.ExpectedReturn,
+			Confidence: reading.Forecast.Confidence,
 			At:         thesis.At,
 		})
 

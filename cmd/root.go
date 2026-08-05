@@ -3,7 +3,6 @@ package cmd
 import (
 	"embed"
 	"fmt"
-	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"runtime"
 	"strings"
 
-	pyroscope "github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -34,15 +32,15 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := pyroscope.Start(pyroscope.Config{
-				ApplicationName: "symm.theapemachine.app",
-				ServerAddress:   "http://localhost:4040",
-				Logger:          pyroscope.StandardLogger,
-			})
+			// _, err := pyroscope.Start(pyroscope.Config{
+			// 	ApplicationName: "symm.theapemachine.app",
+			// 	ServerAddress:   "http://localhost:4040",
+			// 	Logger:          pyroscope.StandardLogger,
+			// })
 
-			if err != nil {
-				log.Fatalf("error starting pyroscope profiler: %v", err)
-			}
+			// if err != nil {
+			// 	log.Fatalf("error starting pyroscope profiler: %v", err)
+			// }
 
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetString("system.log.level"),
@@ -51,8 +49,9 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			thesis := types.NewThesis()
-			system := Boot(cmd.Context(), thesis, nil, nil)
+			uiChannel := make(chan []byte, 1024)
+			thesis := types.NewThesis(uiChannel)
+			system := Boot(cmd.Context(), thesis, nil, nil, uiChannel)
 
 			if system == nil {
 				return errnie.Error(fmt.Errorf("failed to boot symm"))

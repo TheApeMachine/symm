@@ -2,10 +2,10 @@ package signal
 
 import (
 	"encoding/json"
-	"fmt"
 	"iter"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +50,10 @@ type Generator struct {
 	lowPrice  float64
 	currTime  time.Time
 	sequence  int64
+	l3Bid     float64
+	l3Ask     float64
+	l3BidQty  float64
+	l3AskQty  float64
 }
 
 func NewGenerator(symbol string, startPrice float64, seed int64) *Generator {
@@ -211,14 +215,37 @@ func (generator *Generator) Step() testtypes.Sample {
 	halfSpread := actualSpread / 2.0
 	bid := math.Trunc((generator.midPrice-halfSpread)*100) / 100
 	ask := math.Trunc((generator.midPrice+halfSpread)*100) / 100
-	last := bid + (generator.rng.Float64() * (ask - bid))
+	aggressorSide := profile.AggressorSide
+
+	if aggressorSide == "" {
+		aggressorSide = "buy"
+
+		if deltaPct+impulse < 0 {
+			aggressorSide = "sell"
+		}
+	}
+
+	last := ask
+
+	if aggressorSide == "sell" {
+		last = bid
+	}
 
 	// 4. Calculate Asymmetric Quantities
-	bidQty := profile.BaseQty * profile.BidAskAsymmetry * (0.8 + 0.4*generator.rng.Float64())
-	askQty := profile.BaseQty * (1.0 / profile.BidAskAsymmetry) * (0.8 + 0.4*generator.rng.Float64())
+	bidJitter := testtypes.QuantityJitterMinimum +
+		(testtypes.QuantityJitterMaximum-testtypes.QuantityJitterMinimum)*
+			generator.rng.Float64()
+	askJitter := testtypes.QuantityJitterMinimum +
+		(testtypes.QuantityJitterMaximum-testtypes.QuantityJitterMinimum)*
+			generator.rng.Float64()
+	bidQty := profile.BaseQty * profile.BidAskAsymmetry * bidJitter
+	askQty := profile.BaseQty * (1.0 / profile.BidAskAsymmetry) * askJitter
 
 	// 5. Volume & Cumulative VWAP
-	stepVolume := profile.BaseQty * profile.VolumeScale * (0.5 + generator.rng.Float64())
+	volumeJitter := testtypes.VolumeJitterMinimum +
+		(testtypes.VolumeJitterMaximum-testtypes.VolumeJitterMinimum)*
+			generator.rng.Float64()
+	stepVolume := profile.BaseQty * profile.VolumeScale * volumeJitter
 
 	/*
 		Volume leads price into an ignition, so the burst multiplies executed
@@ -249,20 +276,21 @@ func (generator *Generator) Step() testtypes.Sample {
 	changePct := (change / generator.openPrice) * 100.0
 
 	return testtypes.Sample{
-		Symbol:     generator.symbol,
-		Bid:        bid,
-		BidQty:     math.Round(bidQty*100) / 100,
-		Ask:        ask,
-		AskQty:     math.Round(askQty*100) / 100,
-		Last:       math.Round(last*100) / 100,
-		Volume:     math.Round(generator.cumVolume*100) / 100,
-		StepVolume: math.Round(stepVolume*100) / 100,
-		VWAP:       math.Round(vwap*100) / 100,
-		Low:        math.Round(generator.lowPrice*100) / 100,
-		High:       math.Round(generator.highPrice*100) / 100,
-		Change:     math.Round(change*100) / 100,
-		ChangePct:  math.Round(changePct*100) / 100,
-		Timestamp:  generator.currTime,
+		Symbol:        generator.symbol,
+		AggressorSide: aggressorSide,
+		Bid:           bid,
+		BidQty:        math.Round(bidQty*100) / 100,
+		Ask:           ask,
+		AskQty:        math.Round(askQty*100) / 100,
+		Last:          math.Round(last*100) / 100,
+		Volume:        math.Round(generator.cumVolume*100) / 100,
+		StepVolume:    math.Round(stepVolume*100) / 100,
+		VWAP:          math.Round(vwap*100) / 100,
+		Low:           math.Round(generator.lowPrice*100) / 100,
+		High:          math.Round(generator.highPrice*100) / 100,
+		Change:        math.Round(change*100) / 100,
+		ChangePct:     math.Round(changePct*100) / 100,
+		Timestamp:     generator.currTime,
 	}
 }
 
@@ -305,6 +333,7 @@ func (generator *Generator) Render(template []byte, sample testtypes.Sample) []b
 	}
 
 	channel, _ := wire["channel"].(string)
+	wireType, _ := wire["type"].(string)
 	stamp := sample.Timestamp.Format(time.RFC3339Nano)
 	generator.sequence++
 
@@ -322,26 +351,68 @@ func (generator *Generator) Render(template []byte, sample testtypes.Sample) []b
 					"price": sample.Ask, "qty": sample.AskQty,
 				}}
 			case "level3":
-				row["bids"] = []any{map[string]any{
-					"order_id":    fmt.Sprintf("OBID-%09d", generator.sequence),
+				if wireType == "snapshot" {
+					generator.l3Bid = 0
+					generator.l3Ask = 0
+				}
+
+				orderSymbol := strings.NewReplacer("/", "-", ".", "-").
+					Replace(sample.Symbol)
+				bidOrders := make([]any, 0, 2)
+				askOrders := make([]any, 0, 2)
+				bidEvent := "add"
+				askEvent := "add"
+
+				if generator.l3Bid > 0 && generator.l3Bid != sample.Bid {
+					bidOrders = append(bidOrders, map[string]any{
+						"event":       "delete",
+						"order_id":    "OBID-" + orderSymbol,
+						"limit_price": generator.l3Bid,
+						"order_qty":   generator.l3BidQty,
+						"timestamp":   stamp,
+					})
+				}
+
+				if generator.l3Ask > 0 && generator.l3Ask != sample.Ask {
+					askOrders = append(askOrders, map[string]any{
+						"event":       "delete",
+						"order_id":    "OASK-" + orderSymbol,
+						"limit_price": generator.l3Ask,
+						"order_qty":   generator.l3AskQty,
+						"timestamp":   stamp,
+					})
+				}
+
+				if generator.l3Bid == sample.Bid {
+					bidEvent = "modify"
+				}
+
+				if generator.l3Ask == sample.Ask {
+					askEvent = "modify"
+				}
+
+				bidOrders = append(bidOrders, map[string]any{
+					"event":       bidEvent,
+					"order_id":    "OBID-" + orderSymbol,
 					"limit_price": sample.Bid,
 					"order_qty":   sample.BidQty,
 					"timestamp":   stamp,
-				}}
-				row["asks"] = []any{map[string]any{
-					"order_id":    fmt.Sprintf("OASK-%09d", generator.sequence),
+				})
+				askOrders = append(askOrders, map[string]any{
+					"event":       askEvent,
+					"order_id":    "OASK-" + orderSymbol,
 					"limit_price": sample.Ask,
 					"order_qty":   sample.AskQty,
 					"timestamp":   stamp,
-				}}
+				})
+				row["bids"] = bidOrders
+				row["asks"] = askOrders
+				generator.l3Bid = sample.Bid
+				generator.l3Ask = sample.Ask
+				generator.l3BidQty = sample.BidQty
+				generator.l3AskQty = sample.AskQty
 			case "trade":
-				side := "buy"
-
-				if sample.Last < sample.VWAP {
-					side = "sell"
-				}
-
-				row["side"] = side
+				row["side"] = sample.AggressorSide
 				row["price"] = sample.Last
 
 				/*
@@ -371,7 +442,9 @@ func (generator *Generator) Render(template []byte, sample testtypes.Sample) []b
 		}
 	}
 
-	wire["type"] = "update"
+	if wireType != "snapshot" {
+		wire["type"] = "update"
+	}
 	payload, err := json.Marshal(wire)
 
 	if err != nil {

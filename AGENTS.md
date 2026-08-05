@@ -77,14 +77,14 @@ func WithTransaction(db *sql.DB, f func(tx *sql.Tx)) func() {
 		So(err, ShouldBeNil)
 
 		Reset(func() {
-			/* Verify that the transaction is alive by executing a command */
+			// Verify that the transaction is alive by executing a command.
 			_, err := tx.Exec("SELECT 1")
 			So(err, ShouldBeNil)
 
 			tx.Rollback()
 		})
 
-		/* Here we invoke the actual test-closure and provide the transaction */
+		// Here we invoke the actual test-closure and provide the transaction.
 		f(tx)
 	}
 }
@@ -159,3 +159,5 @@ PLEASE DO NOT TRY TO SOLVE EVERY ISSUE BY LOOKING AT GIT HISTORY.
 THERE IS A REASON IT IS CALLED HISTORY, AND IT IS RARELY THE WAY
 FORWARD, EVEN IF TECHNICALLY AN OLDER SOLUTION WOULD WORK AND "SOLVE"
 AN ISSUE, IT WAS OBVIOUSLY REJECTED FOR A REASON.
+
+`/**/` style comments only for top-level structures, inline comments use `//`. 

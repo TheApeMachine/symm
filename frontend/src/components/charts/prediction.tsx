@@ -15,7 +15,7 @@ const ScalarDiagnostics = () => (
 						confidence
 					</div>
 					<div
-						data-paint="confidence"
+						data-paint="forecast.confidence"
 						data-paint-format=".1%"
 						className="mt-0.5 font-mono text-[11px] text-(--up)"
 					>
@@ -27,7 +27,7 @@ const ScalarDiagnostics = () => (
 						horizon
 					</div>
 					<div
-						data-paint="activeHorizon"
+						data-paint="forecast.supportedHorizon"
 						data-paint-format=".0f"
 						data-paint-suffix=" ticks"
 						className="mt-0.5 font-mono text-[11px] text-(--f2)"
@@ -83,7 +83,7 @@ const VectorLane = ({
 	color,
 	scale,
 }: {
-	select: "latent" | "forwardCurve";
+	select: "latent" | "forecast.forwardCurve";
 	label: string;
 	meta: string;
 	color: string;
@@ -140,7 +140,7 @@ export const TerminalPredictionChart = () => (
 			color="bg-(--info)"
 		/>
 		<VectorLane
-			select="forwardCurve"
+			select="forecast.forwardCurve"
 			label="Forward return curve"
 			meta="dynamic recurrent rollout · t+1 → t+k"
 			color="bg-(--acc)"

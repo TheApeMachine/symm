@@ -11,7 +11,7 @@ import (
 
 func TestAppendTicker(t *testing.T) {
 	Convey("Given ticker observations arriving across symbols", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		base := time.Unix(1_700_005_000, 0).UTC()
 		thesis.AppendTicker(kraken.TickerData{
 			Symbol: "ETH/USD", Timestamp: base.Add(2 * time.Second),
@@ -37,7 +37,7 @@ func TestAppendTicker(t *testing.T) {
 	})
 
 	Convey("Given concurrent ticker writers", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		base := time.Unix(1_700_005_100, 0).UTC()
 		var waitGroup sync.WaitGroup
 
@@ -63,7 +63,7 @@ func TestAppendTicker(t *testing.T) {
 
 func TestAppendTrade(t *testing.T) {
 	Convey("Given trades arriving outside timestamp order", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		base := time.Unix(1_700_005_200, 0).UTC()
 		thesis.AppendTrade(kraken.TradeData{
 			Symbol: "BTC/USD", TradeID: 102, Timestamp: base.Add(time.Second),
@@ -87,7 +87,7 @@ func TestAppendTrade(t *testing.T) {
 
 func TestMarketCloseCycle(t *testing.T) {
 	Convey("Given retained market history from a completed decision cycle", t, func() {
-		thesis := NewThesis()
+		thesis := NewThesis(nil)
 		at := time.Unix(1_700_005_300, 0).UTC()
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: at})
 		thesis.AppendTrade(kraken.TradeData{
@@ -105,7 +105,7 @@ func TestMarketCloseCycle(t *testing.T) {
 }
 
 func BenchmarkAppendTicker(b *testing.B) {
-	thesis := NewThesis()
+	thesis := NewThesis(nil)
 	ticker := kraken.TickerData{
 		Symbol: "BTC/USD", Timestamp: time.Unix(1_700_005_400, 0).UTC(),
 	}
@@ -117,7 +117,7 @@ func BenchmarkAppendTicker(b *testing.B) {
 }
 
 func BenchmarkAppendTrade(b *testing.B) {
-	thesis := NewThesis()
+	thesis := NewThesis(nil)
 	trade := kraken.TradeData{
 		Symbol: "BTC/USD", TradeID: 401,
 		Timestamp: time.Unix(1_700_005_500, 0).UTC(),

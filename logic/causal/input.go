@@ -156,74 +156,45 @@ func (solver *Solver) buildCausalInput(
 		return causalInput{}, false
 	}
 
-	resonance, ok := resonanceRaw.(map[string]any)
+	resonance, ok := resonanceRaw.(types.ResonanceReading)
 
-	if !ok {
+	if !ok || resonance.Forecast == nil ||
+		resonance.ForecastValidity.State != types.ValidityValid {
 		return causalInput{}, false
 	}
 
-	energyRaw, hasEnergy := resonance["energy"]
-	surpriseRaw, hasSurprise := resonance["surprise"]
-
-	if !hasEnergy && !hasSurprise {
+	if err := resonance.Forecast.Validate(); err != nil {
 		return causalInput{}, false
 	}
 
-	energy, _ := energyRaw.(float64)
-	surprise, _ := surpriseRaw.(float64)
-	taskPrediction := solver.taskPrediction(resonance)
+	taskPrediction, predictionReady := resonance.Forecast.Step(0)
 	realizedReturn := target.sum / float64(target.count)
 
-	if math.IsNaN(realizedReturn) || math.IsInf(realizedReturn, 0) {
+	if !predictionReady || math.IsNaN(resonance.Energy) ||
+		math.IsInf(resonance.Energy, 0) || math.IsNaN(resonance.Surprise) ||
+		math.IsInf(resonance.Surprise, 0) || math.IsNaN(realizedReturn) ||
+		math.IsInf(realizedReturn, 0) {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"causal: dropped non-finite realized return",
+			"causal: dropped invalid resonance or realized return evidence",
 			nil,
 		))
 
 		return causalInput{}, false
 	}
 
-	energy = solver.finiteOrZero(energy)
-	surprise = solver.finiteOrZero(surprise)
-	taskPrediction = solver.finiteOrZero(taskPrediction)
-
 	return causalInput{
 		symbol: symbol,
 		row: []float64{
-			energy,
-			surprise,
+			resonance.Energy,
+			resonance.Surprise,
 			taskPrediction,
 			realizedReturn,
 		},
 		intervention: taskPrediction,
-		contagion:    surprise,
-		condition:    energy,
+		contagion:    resonance.Surprise,
+		condition:    resonance.Energy,
 	}, true
-}
-
-func (solver *Solver) taskPrediction(resonance map[string]any) float64 {
-	curveRaw, found := resonance["forwardCurve"]
-
-	if !found {
-		return 0
-	}
-
-	curve, ok := curveRaw.([]float64)
-
-	if !ok || len(curve) == 0 {
-		return 0
-	}
-
-	return curve[0]
-}
-
-func (solver *Solver) finiteOrZero(value float64) float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-
-	return value
 }
 
 /*

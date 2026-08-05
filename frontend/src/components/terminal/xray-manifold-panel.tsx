@@ -75,7 +75,7 @@ export const XrayManifoldPanel = () => {
 						<div className="flex justify-between gap-3">
 							<span className="text-(--f3)">horizon</span>
 							<Typography.Span
-								data-paint="activeHorizon"
+								data-paint="forecast.supportedHorizon"
 								data-paint-absent="—"
 								data-paint-suffix=" ticks"
 								className="text-right text-(--f1)"
@@ -96,7 +96,7 @@ export const XrayManifoldPanel = () => {
 						<div className="flex justify-between gap-3">
 							<span className="text-(--f3)">fwd return</span>
 							<Typography.Span
-								data-paint="expectedReturn"
+								data-paint="forecast.expectedReturn"
 								data-paint-absent="—"
 								data-paint-format=".5f"
 								className="text-right text-(--f1)"
@@ -113,7 +113,7 @@ export const XrayManifoldPanel = () => {
 						<div className="mb-1 flex justify-between text-[10px]">
 							<span className="text-(--f3)">predictive confidence</span>
 							<Typography.Span
-								data-paint="confidence"
+								data-paint="forecast.confidence"
 								data-paint-absent="—"
 								data-paint-format=".1%"
 								className="font-mono text-(--f1)"

@@ -453,28 +453,6 @@ func admissibleParticle(particle pfluid.Particle, config pfluid.Config) bool {
 	return particle.Omega >= config.OmegaMin && particle.Omega <= config.OmegaMax
 }
 
-func batchEnvelope(particles []pfluid.Particle) (float32, float32, float32) {
-	maxBatchMass := float32(0)
-	maxBatchHeat := float32(0)
-	maxBatchEnergy := float32(0)
-
-	for _, particle := range particles {
-		if particle.Mass > maxBatchMass {
-			maxBatchMass = particle.Mass
-		}
-
-		if particle.Heat > maxBatchHeat {
-			maxBatchHeat = particle.Heat
-		}
-
-		if particle.Energy > maxBatchEnergy {
-			maxBatchEnergy = particle.Energy
-		}
-	}
-
-	return maxBatchMass, maxBatchHeat, maxBatchEnergy
-}
-
 func (solver *Solver) rejectBatch(
 	symbol string,
 	at time.Time,

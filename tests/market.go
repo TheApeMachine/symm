@@ -53,13 +53,16 @@ type Market struct {
 	Desk         *broker.Desk
 	Planner      *strategy.Planner
 	Analyzer     *logic.Analyzer
+	capture      *thesisCapture
 	generators   map[string]*signal.Generator
+	latest       map[string]testtypes.Sample
 	decisions    []types.Decision
 	measurements map[string][]*types.Measurement
 	filled       map[string]struct{}
 	autoFill     bool
 	primed       bool
 	decisionMu   sync.Mutex
+	sampleMu     sync.RWMutex
 }
 
 /*
@@ -181,8 +184,9 @@ func newMarket(
 		Level3:     NewConn(ctx),
 		Symbols:    symbols,
 		State:      testtypes.Baseline,
-		Thesis:     types.NewThesis(),
+		Thesis:     types.NewThesis(nil),
 		generators: make(map[string]*signal.Generator, len(symbols)),
+		latest:     make(map[string]testtypes.Sample, len(symbols)),
 		filled:     make(map[string]struct{}),
 	}
 
@@ -221,13 +225,15 @@ func newMarket(
 	market.private.Level3Client = market.Level3.Client
 
 	market.system = cmd.Boot(
-		ctx, market.Thesis, market.public, market.private,
+		ctx, market.Thesis, market.public, market.private, nil,
 	)
 
 	market.collectDecisions()
 	market.Desk = market.system.Desk
 	market.Planner = market.system.Planner
 	market.Analyzer = market.system.Analyzer
+	market.capture = newThesisCapture(market.Planner)
+	market.Analyzer.AttachEvaluator(market.capture)
 
 	return market
 }
@@ -295,13 +301,83 @@ func (market *Market) Transition(
 	}
 
 	market.State = state
+	market.capture.Enable(symbol)
 	generator.SetState(state, testtypes.MomentumMap[state])
 
 	for generator.PrecursorPending() {
-		market.tickGenerator(generator)
+		market.Tick()
 	}
 
-	return nil
+	return market.waitForTransitionThesis(symbol)
+}
+
+/*
+TransitionThesis returns the last analyzed precursor Thesis captured before the
+real planner consumed it.
+*/
+func (market *Market) TransitionThesis() *types.Thesis {
+	return market.capture.Snapshot()
+}
+
+func (market *Market) waitForTransitionThesis(symbol string) error {
+	market.sampleMu.RLock()
+	published := market.latest[symbol]
+	market.sampleMu.RUnlock()
+
+	actorCapacity := viper.GetInt("system.actor.buffer")
+
+	if actorCapacity < 1 {
+		actorCapacity = 64
+	}
+
+	for range actorCapacity {
+		snapshot := market.TransitionThesis()
+
+		if snapshot != nil {
+			latest, found := snapshot.LatestTicker(symbol)
+			measuredAt := latestMeasurementAt(
+				snapshot, types.SourcePumpDump, symbol,
+			)
+
+			if found && !latest.Timestamp.Before(published.Timestamp) &&
+				!measuredAt.Before(published.Timestamp) {
+				return nil
+			}
+		}
+
+		time.Sleep(tickInterval)
+	}
+
+	return fmt.Errorf("market: precursor Thesis did not reach %s", published.Timestamp)
+}
+
+func latestMeasurementAt(
+	thesis *types.Thesis,
+	source types.SourceType,
+	symbol string,
+) time.Time {
+	stored, found := thesis.Measurements.Load(source)
+
+	if !found {
+		return time.Time{}
+	}
+
+	rows, ok := stored.([]*types.Measurement)
+
+	if !ok {
+		return time.Time{}
+	}
+
+	var latest time.Time
+
+	for _, measurement := range rows {
+		if measurement != nil && measurement.Symbol == symbol &&
+			measurement.At.After(latest) {
+			latest = measurement.At
+		}
+	}
+
+	return latest
 }
 
 /*
@@ -313,19 +389,9 @@ because the result should come from the code that is currently being tested.
 func (market *Market) Tick() {
 	for _, symbol := range market.Symbols {
 		generator := market.generators[symbol.Pair]
-		market.publish(generator)
+		_ = market.publish(generator)
 	}
 
-	market.settleTick()
-}
-
-/*
-tickGenerator publishes one precursor observation for the symbol currently
-transitioning. Other symbols retain their last baseline observation, and any
-already armed regime remains unsampled until the caller advances the market.
-*/
-func (market *Market) tickGenerator(generator *signal.Generator) {
-	market.publish(generator)
 	market.settleTick()
 }
 
@@ -333,8 +399,11 @@ func (market *Market) tickGenerator(generator *signal.Generator) {
 publish samples one coherent venue state and sends it through every real
 WebSocket channel consumed by the production stack.
 */
-func (market *Market) publish(generator *signal.Generator) {
+func (market *Market) publish(generator *signal.Generator) testtypes.Sample {
 	sample := generator.Step()
+	market.sampleMu.Lock()
+	market.latest[sample.Symbol] = sample
+	market.sampleMu.Unlock()
 
 	market.Public.Publish(
 		"ticker",
@@ -344,14 +413,75 @@ func (market *Market) publish(generator *signal.Generator) {
 		"book",
 		book.NewFixture(book.UPDATE, 1, generator).Render(sample),
 	)
+	market.Level3.Publish(
+		"level3",
+		level3.NewFixture(level3.SNAPSHOT, 1, generator).Render(sample),
+	)
+	market.waitForBook(sample)
 	market.Public.Publish(
 		"trade",
 		trade.NewFixture(trade.UPDATE, 1, generator).Render(sample),
 	)
-	market.Level3.Publish(
-		"level3",
-		level3.NewFixture(level3.UPDATE, 1, generator).Render(sample),
-	)
+
+	return sample
+}
+
+/*
+waitForBook preserves venue causality between a depth update and a trade at
+that depth. Conn confirms frame dispatch, while the production book callback
+may still be applying it; the simulated trade must not overtake that work.
+*/
+func (market *Market) waitForBook(sample testtypes.Sample) {
+	actorCapacity := viper.GetInt("system.actor.buffer")
+	var observedBid float64
+	var observedAsk float64
+	var bidLevels int
+	var askLevels int
+
+	if actorCapacity < 1 {
+		actorCapacity = 64
+	}
+
+	for range actorCapacity {
+		liveBook := market.private.Book(sample.Symbol)
+
+		if liveBook != nil {
+			bidLevels = len(liveBook.Bids.Levels)
+			askLevels = len(liveBook.Asks.Levels)
+			bid := liveBook.BestBid()
+			ask := liveBook.BestAsk()
+
+			if bid != nil {
+				observedBid = bid.Price.Float64()
+			}
+
+			if ask != nil {
+				observedAsk = ask.Price.Float64()
+			}
+
+			if bid != nil && ask != nil &&
+				bid.Price.Float64() == sample.Bid &&
+				ask.Price.Float64() == sample.Ask &&
+				!bid.Timestamp.Before(sample.Timestamp) &&
+				!ask.Timestamp.Before(sample.Timestamp) {
+				return
+			}
+		}
+
+		time.Sleep(tickInterval)
+	}
+
+	panic(fmt.Errorf(
+		"market: live book did not reach %s at %s: want %g/%g, got %g/%g across %d/%d levels",
+		sample.Symbol,
+		sample.Timestamp,
+		sample.Bid,
+		sample.Ask,
+		observedBid,
+		observedAsk,
+		bidLevels,
+		askLevels,
+	))
 }
 
 func (market *Market) settleTick() {

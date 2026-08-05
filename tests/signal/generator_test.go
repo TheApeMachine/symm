@@ -53,11 +53,15 @@ func TestGeneratorStep(t *testing.T) {
 
 	Convey("Given a FastPump transition", t, func() {
 		generator := NewGenerator("SIM1/USD", 100.0, 42)
+		profile := testtypes.DefaultProfiles[testtypes.FastPump]
 		generator.SetState(testtypes.FastPump, testtypes.MomentumMap[testtypes.FastPump])
 
 		for generator.PrecursorPending() {
 			sample := generator.Step()
-			So(sample.ChangePct, ShouldBeLessThan, 1.0)
+			So(sample.ChangePct,
+				ShouldBeLessThan, profile.IgnitionMove*100.0)
+			So(sample.AggressorSide, ShouldEqual, profile.AggressorSide)
+			So(sample.Last, ShouldEqual, sample.Ask)
 		}
 
 		Convey("It should leave the full ignition armed for the next sample", func() {
@@ -65,7 +69,8 @@ func TestGeneratorStep(t *testing.T) {
 
 			ignition := generator.Step()
 
-			So(ignition.ChangePct, ShouldBeGreaterThan, 25.0)
+			So(ignition.ChangePct,
+				ShouldBeGreaterThanOrEqualTo, profile.IgnitionMove*100.0)
 			So(generator.IgnitionArmed(), ShouldBeFalse)
 		})
 	})
@@ -126,6 +131,7 @@ func TestGeneratorRender(t *testing.T) {
 		tradeFrame := struct {
 			Data []struct {
 				Symbol    string  `json:"symbol"`
+				Side      string  `json:"side"`
 				Price     float64 `json:"price"`
 				Qty       float64 `json:"qty"`
 				Timestamp string  `json:"timestamp"`
@@ -136,11 +142,15 @@ func TestGeneratorRender(t *testing.T) {
 				Symbol    string `json:"symbol"`
 				Timestamp string `json:"timestamp"`
 				Bids      []struct {
+					Event     string  `json:"event"`
+					OrderID   string  `json:"order_id"`
 					Price     float64 `json:"limit_price"`
 					Qty       float64 `json:"order_qty"`
 					Timestamp string  `json:"timestamp"`
 				} `json:"bids"`
 				Asks []struct {
+					Event     string  `json:"event"`
+					OrderID   string  `json:"order_id"`
 					Price     float64 `json:"limit_price"`
 					Qty       float64 `json:"order_qty"`
 					Timestamp string  `json:"timestamp"`
@@ -199,6 +209,7 @@ func TestGeneratorRender(t *testing.T) {
 		So(level3Frame.Data[0].Asks[0].Qty, ShouldEqual, sample.AskQty)
 		So(tradeFrame.Data[0].Price, ShouldEqual, sample.Last)
 		So(tradeFrame.Data[0].Qty, ShouldEqual, sample.StepVolume)
+		So(tradeFrame.Data[0].Side, ShouldEqual, sample.AggressorSide)
 		So(tradeFrame.Data[0].Price, ShouldBeGreaterThanOrEqualTo, sample.Bid)
 		So(tradeFrame.Data[0].Price, ShouldBeLessThanOrEqualTo, sample.Ask)
 		So(tickerFrame.Data[0].Last, ShouldEqual, tradeFrame.Data[0].Price)
@@ -206,6 +217,21 @@ func TestGeneratorRender(t *testing.T) {
 
 		So(generator.currTime, ShouldEqual, marketTime)
 		So(generator.midPrice, ShouldEqual, marketPrice)
+
+		nextFrame := level3Frame
+		next := generator.Step()
+		err = json.Unmarshal(generator.Render(
+			[]byte(`{"channel":"level3","data":[{}]}`), next,
+		), &nextFrame)
+		So(err, ShouldBeNil)
+		nextBid := nextFrame.Data[0].Bids[len(nextFrame.Data[0].Bids)-1]
+		nextAsk := nextFrame.Data[0].Asks[len(nextFrame.Data[0].Asks)-1]
+		So(nextBid.Event, ShouldBeIn, "add", "modify")
+		So(nextAsk.Event, ShouldBeIn, "add", "modify")
+		So(nextBid.OrderID,
+			ShouldEqual, level3Frame.Data[0].Bids[0].OrderID)
+		So(nextAsk.OrderID,
+			ShouldEqual, level3Frame.Data[0].Asks[0].OrderID)
 	})
 }
 

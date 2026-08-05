@@ -45,7 +45,7 @@ func measurementFor(
 func TestMeasure(t *testing.T) {
 	Convey("Given a multi-leg executable-depth cohort", t, func() {
 		signal := &Signal{observations: make(map[string]liquidityObservation)}
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		start := time.Unix(1_700_000_000, 0).UTC()
 		firstLeg := []kraken.TickerData{
 			ticker("THIN/USD", 100, 1, 10, start),
@@ -99,7 +99,7 @@ func TestMeasure(t *testing.T) {
 
 	Convey("Given valid executable depth but missing reported turnover", t, func() {
 		signal := &Signal{observations: make(map[string]liquidityObservation)}
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		start := time.Unix(1_700_000_050, 0).UTC()
 
 		for leg := range 2 {
@@ -151,7 +151,7 @@ func tickerMap(rows []kraken.TickerData) *sync.Map {
 
 func BenchmarkMeasure(b *testing.B) {
 	signal := &Signal{observations: make(map[string]liquidityObservation)}
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	start := time.Unix(1_700_000_100, 0).UTC()
 
 	b.ReportAllocs()

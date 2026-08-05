@@ -55,41 +55,79 @@ func TestPlannerUpdate(t *testing.T) {
 		}))
 	})
 
-	Convey("Given consecutive evaluated epochs without a decision", t, func() {
+	Convey("Given repeated complete planner passes without a decision", t, func() {
 		symbols := []*testtypes.Symbol{
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should retain canonical evidence and independently reset readiness", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("It should retain canonical evidence and the completed readiness set", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			thesis := market.Thesis
 			base := time.Unix(1_700_006_000, 0).UTC()
 			thesis.NoteLifecycle("SIM1/USD", types.LifecycleManaging, base)
+			stampPlannerReadiness(thesis)
 
-			for epoch := range 2 {
-				observedAt := base.Add(time.Duration(epoch) * time.Second)
+			for pass := range 2 {
+				observedAt := base.Add(time.Duration(pass) * time.Second)
 				thesis.AppendTicker(kraken.TickerData{
 					Symbol: "SIM1/USD", Timestamp: observedAt,
 				})
 				thesis.AppendTrade(kraken.TradeData{
-					Symbol: "SIM1/USD", TradeID: int64(epoch + 1),
+					Symbol: "SIM1/USD", TradeID: int64(pass + 1),
 					Timestamp: observedAt,
 				})
 				thesis.AppendMeasurements(types.SourceCVD, &types.Measurement{
 					Source: types.SourceCVD, Symbol: "SIM1/USD", At: observedAt,
 				})
-				stampPlannerReadiness(thesis)
 
 				market.Planner.Update(thesis)
 
-				So(thesis.MarketTickers(), ShouldHaveLength, epoch+1)
-				So(thesis.MarketTrades(), ShouldHaveLength, epoch+1)
-				So(thesis.Series("SIM1/USD"), ShouldHaveLength, epoch+1)
-				So(thesis.Readiness.SignalsMeasured(), ShouldBeFalse)
+				So(thesis.MarketTickers(), ShouldHaveLength, pass+1)
+				So(thesis.MarketTrades(), ShouldHaveLength, pass+1)
+				So(thesis.Series("SIM1/USD"), ShouldHaveLength, pass+1)
+				So(thesis.Readiness.Complete(), ShouldBeTrue)
 			}
 
 			phase, found := thesis.Lifecycle.Load("SIM1/USD")
 			So(found, ShouldBeTrue)
 			So(phase, ShouldEqual, types.LifecycleManaging)
+		}))
+	})
+
+	Convey("Given a deferred opportunity evaluation", t, func() {
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		}
+
+		Convey("It should retain evidence until an actionable decision exists", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			thesis := market.Thesis
+			observedAt := time.Unix(1_700_006_050, 0).UTC()
+			thesis.AppendTicker(kraken.TickerData{
+				Symbol: "SIM1/USD", Timestamp: observedAt,
+			})
+			thesis.AppendTrade(kraken.TradeData{
+				Symbol: "SIM1/USD", TradeID: 1, Timestamp: observedAt,
+			})
+			thesis.AppendMeasurements(types.SourcePumpDump, &types.Measurement{
+				Source: types.SourcePumpDump, Symbol: "SIM1/USD", At: observedAt,
+			})
+			thesis.Decisions = []types.Decision{{
+				Action: types.ActionNothing, Symbol: "SIM1/USD", At: observedAt,
+			}}
+			stampPlannerReadiness(thesis)
+
+			market.Planner.Update(thesis)
+
+			So(thesis.MarketTickers(), ShouldHaveLength, 1)
+			So(thesis.MarketTrades(), ShouldHaveLength, 1)
+			So(thesis.Series("SIM1/USD"), ShouldHaveLength, 1)
+			So(thesis.Decisions, ShouldNotBeEmpty)
+			So(slices.ContainsFunc(
+				thesis.Decisions,
+				func(decision types.Decision) bool {
+					return decision.Action != types.ActionNothing
+				},
+			), ShouldBeFalse)
+			So(thesis.Readiness.Complete(), ShouldBeTrue)
 		}))
 	})
 
@@ -111,10 +149,16 @@ func TestPlannerUpdate(t *testing.T) {
 				Source: types.SourceCVD, Symbol: "SIM1/USD", At: observedAt,
 			})
 			thesis.NoteLifecycle("SIM1/USD", types.LifecycleManaging, observedAt)
+			stampPlannerReadiness(thesis)
+
+			market.Planner.Update(thesis)
+			So(thesis.Decisions, ShouldBeEmpty)
+			So(thesis.Readiness.Complete(), ShouldBeTrue)
+			So(market.Thesis, ShouldEqual, thesis)
+
 			thesis.Decisions = []types.Decision{{
 				Action: types.ActionHold, Symbol: "SIM1/USD", At: observedAt,
 			}}
-			stampPlannerReadiness(thesis)
 			subscription := market.Planner.Subscribe(
 				"cycle-close-test", types.NewSubscription[any](),
 			)

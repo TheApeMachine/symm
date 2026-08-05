@@ -1,20 +1,14 @@
 package broker_test
 
 import (
-	"bytes"
 	"errors"
-	"os"
 	"slices"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/phuslu/log"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
 	testtypes "github.com/theapemachine/symm/tests/types"
@@ -162,113 +156,18 @@ func TestDeskExecute(t *testing.T) {
 	})
 }
 
-func TestDeskRecover(t *testing.T) {
-	Convey("Given wallet inventory and its acquisition history at boot", t, func() {
-		tradingModel := viper.GetString("trading.model")
-		apiKey, hadAPIKey := os.LookupEnv("KRAKEN_API_KEY")
-		apiSecret, hadAPISecret := os.LookupEnv("KRAKEN_API_SECRET")
+func BenchmarkDeskExecute(b *testing.B) {
+	symbols := []*testtypes.Symbol{
+		testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+	}
 
-		viper.Set("trading.model", "real")
-		_ = os.Setenv("KRAKEN_API_KEY", "fixture-key")
-		_ = os.Setenv("KRAKEN_API_SECRET", "Zml4dHVyZS1zZWNyZXQ=")
+	market := tests.NewMarket(b.Context(), symbols)
+	defer market.Close()
 
-		defer func() {
-			viper.Set("trading.model", tradingModel)
+	market.Tick()
+	decision := entryDecision(market, symbols[0].Pair)
 
-			if hadAPIKey {
-				_ = os.Setenv("KRAKEN_API_KEY", apiKey)
-			} else {
-				_ = os.Unsetenv("KRAKEN_API_KEY")
-			}
-
-			if hadAPISecret {
-				_ = os.Setenv("KRAKEN_API_SECRET", apiSecret)
-			} else {
-				_ = os.Unsetenv("KRAKEN_API_SECRET")
-			}
-		}()
-
-		symbols := []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
-			testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
-		}
-		entryAt := time.Now().UTC().Add(-time.Hour)
-		market := tests.NewMarketWithAccount(
-			t.Context(),
-			symbols,
-			map[string]string{"USD": "150", "SIM2": "2"},
-			map[string]spot.Trade{
-				"entry": {
-					Pair:   "sim2usd",
-					Time:   decimal.NewFromFloat64(float64(entryAt.UnixNano()) / 1e9),
-					Type:   "buy",
-					Cost:   decimal.NewFromInt64(300),
-					Fee:    decimal.NewFromFloat64(0.78),
-					Volume: decimal.NewFromInt64(3),
-				},
-				"partial-exit": {
-					Pair:   "sim2usd",
-					Time:   decimal.NewFromFloat64(float64(entryAt.Add(time.Minute).UnixNano()) / 1e9),
-					Type:   "sell",
-					Cost:   decimal.NewFromInt64(100),
-					Fee:    decimal.NewFromFloat64(0.26),
-					Volume: decimal.NewFromInt64(1),
-				},
-			},
-		)
-		logs := &bytes.Buffer{}
-		originalWriter := log.DefaultLogger.Writer
-		log.DefaultLogger.Writer = log.IOWriter{Writer: logs}
-
-		defer func() {
-			market.Close()
-			log.DefaultLogger.Writer = originalWriter
-		}()
-
-		Convey("The desk should adopt the known lot immediately and let the first ticker take over its mark", func() {
-			positions := slices.Collect(market.Desk.Positions())
-
-			So(positions, ShouldHaveLength, 1)
-			So(market.Desk.OpenPositions(), ShouldEqual, 1)
-			So(positions[0].ID, ShouldEqual, "recovered:SIM2/USD")
-			So(positions[0].Status, ShouldEqual, types.OPEN)
-			So(positions[0].Holding.Symbol, ShouldEqual, "SIM2/USD")
-			So(positions[0].Holding.Qty.Cmp(decimal.NewFromInt64(2)), ShouldEqual, 0)
-			So(positions[0].Holding.SellableQty.Cmp(decimal.NewFromInt64(2)), ShouldEqual, 0)
-			So(positions[0].Holding.EntryPrice.Float64(), ShouldEqual, 100.0)
-			So(positions[0].Holding.EntryFee.Float64(), ShouldAlmostEqual, 0.52, 1e-8)
-			So(positions[0].Holding.EntryAt, ShouldNotBeNil)
-			So(positions[0].Holding.Mark, ShouldNotBeNil)
-			So(positions[0].Holding.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
-			So(positions[0].Holding.Stoploss, ShouldNotBeNil)
-			So(positions[0].Holding.Stoploss.Entry.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
-			So(positions[0].Holding.Stoploss.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
-
-			/*
-				Recovery runs before anything has priced the symbol, so the lot
-				is adopted without a floor rather than with one invented from a
-				book nobody has seen. The alternative is a boundary drawn from
-				tick granularity alone, which on a liquid pair lands a fraction
-				of a percent under the entry and stops the recovered lot out on
-				the first tick that prices it.
-			*/
-			So(positions[0].Holding.Stoploss.Floor, ShouldBeNil)
-
-			market.Tick()
-			positions = slices.Collect(market.Desk.Positions())
-
-			So(market.Desk.Price().Tick("sim2usd"), ShouldNotBeNil)
-			So(positions[0].Holding.EntryPrice.Float64(), ShouldEqual, 100.0)
-			So(positions[0].Holding.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldNotEqual, 0)
-			So(positions[0].Holding.Stoploss.Entry.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)
-			So(positions[0].Holding.Stoploss.Mark.Cmp(positions[0].Holding.Mark), ShouldEqual, 0)
-
-			// The first ticker is what makes the lot defensible: geometry is
-			// adopted from the book it finally has.
-			So(positions[0].Holding.Stoploss.Plan.Present, ShouldBeTrue)
-			So(positions[0].Holding.Stoploss.Floor, ShouldNotBeNil)
-			So(positions[0].Holding.Stoploss.HardFloor.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, -1)
-			So(bytes.Contains(logs.Bytes(), []byte("ticker not found")), ShouldBeFalse)
-		})
-	})
+	for b.Loop() {
+		_ = market.Desk.Execute([]types.Decision{decision})
+	}
 }

@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	"math"
 	"sync"
 	"time"
 
@@ -113,17 +112,29 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		usableRows := usableCausalRows(causalRows)
 		holdDiscount, discountReady := exhaustionHoldDiscount(thesis, symbol)
 		spectralRadius, propagationReady := hawkesSpectralRadius(thesis, symbol)
+		firstStep, firstStepReady := forecast.Forecast.Step(0)
+
+		if !firstStepReady {
+			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+				forecast, 0, "forecast_curve_unavailable",
+				"confidence-supported forecast has no first step",
+				nil,
+			))
+
+			continue
+		}
+
 		rootState := StrategyState{
 			Symbol:               symbol,
 			Energy:               forecast.Uncertainty,
 			Surprise:             forecast.FractionOf(forecast.ExpectedImpact),
-			Treatment:            forecast.TrajectoryTreatment,
+			Treatment:            firstStep,
+			Forecast:             forecast.Forecast,
 			RoundTripCost:        forecast.RoundTripFraction(),
 			HoldDiscount:         holdDiscount,
 			HawkesSpectralRadius: spectralRadius,
 			Reward:               0.0,
 			Step:                 0,
-			MaxSteps:             forecast.HorizonSteps,
 			IsHolding:            false,
 		}
 
@@ -473,30 +484,24 @@ func (evaluator Evaluator) candidate(
 		return candidate{}, false
 	}
 
-	row, ok := resonanceRow(thesis, symbol)
+	reading, ok := resonanceReading(thesis, symbol)
+
+	if !ok || reading.Forecast == nil ||
+		reading.ForecastValidity.State != types.ValidityValid {
+		return candidate{}, false
+	}
+
+	if err := reading.Forecast.Validate(); err != nil {
+		return candidate{}, false
+	}
+
+	_, ok = reading.Forecast.Step(0)
 
 	if !ok {
 		return candidate{}, false
 	}
 
-	curve, ok := row["forwardCurve"].([]float64)
-
-	if !ok || len(curve) == 0 {
-		return candidate{}, false
-	}
-
-	activeHorizon := horizon(row, len(curve))
-	trajectoryTreatment := curve[0]
-
-	if math.IsNaN(trajectoryTreatment) || math.IsInf(trajectoryTreatment, 0) {
-		return candidate{}, false
-	}
-
-	expectedReturn := projectedReturn(curve, retention(row, len(curve)))
-
-	if math.IsNaN(expectedReturn) || math.IsInf(expectedReturn, 0) {
-		return candidate{}, false
-	}
+	expectedReturn := reading.Forecast.ExpectedReturn
 
 	tick := evaluator.price.Tick(symbol)
 
@@ -520,23 +525,21 @@ func (evaluator Evaluator) candidate(
 	spread := decimal.NewFromFloat64(ask - bid)
 	impact := estimateImpact(thesis, symbol, spread)
 
-	confidence, _ := loadResonanceFloat(row, "confidence")
-	surprise, _ := loadResonanceFloat(row, "surprise")
 	fees := reference.SetScale(8).Mul(fee.SetScale(8)).Mul(decimal.NewFromInt64(2))
 
 	return candidate{
-		Symbol:              symbol,
-		At:                  thesis.At,
-		ExpectedReturn:      reference.SetScale(8).Mul(decimal.NewFromFloat64(expectedReturn)),
-		ReferencePrice:      reference,
-		ExpectedFees:        fees,
-		ExpectedSpread:      spread,
-		ExpectedImpact:      impact,
-		TrajectoryTreatment: trajectoryTreatment,
-		Uncertainty:         surprise,
-		Confidence:          math.Max(0, math.Min(1, confidence)),
-		HorizonSteps:        activeHorizon,
-		Epoch:               uint64(thesis.Tick) + uint64(activeHorizon),
+		Symbol:         symbol,
+		At:             thesis.At,
+		ExpectedReturn: reference.SetScale(8).Mul(decimal.NewFromFloat64(expectedReturn)),
+		ReferencePrice: reference,
+		ExpectedFees:   fees,
+		ExpectedSpread: spread,
+		ExpectedImpact: impact,
+		Forecast:       reading.Forecast,
+		Uncertainty:    reading.Surprise,
+		Confidence:     reading.Forecast.Confidence,
+		Epoch: uint64(thesis.Tick) +
+			uint64(reading.Forecast.SupportedHorizon),
 	}, true
 }
 

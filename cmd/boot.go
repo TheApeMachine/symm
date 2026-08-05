@@ -69,6 +69,7 @@ func Boot(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
+	uiChannel chan []byte,
 ) *System {
 	/*
 		Boot is unusable without configuration, so load it here when the
@@ -82,7 +83,6 @@ func Boot(
 		}
 	}
 
-	uiChannel := make(chan []byte, 1024)
 	manifoldChannel := make(chan []byte, 1024)
 	auditPath := filepath.Join(utils.ResolveDataPath(), "runtime-audit.jsonl")
 

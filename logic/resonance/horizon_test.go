@@ -23,7 +23,7 @@ func driveSolver(ticks int) *Solver {
 	normalized := 0.5
 
 	for tick := range ticks {
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -49,12 +49,6 @@ func driveSolver(ticks int) *Solver {
 TestHorizonExtendsWhilePrecisionHolds pins the behaviour the predictive coding
 stage exists to provide: a forecast window that grows as far as the head can
 support and gives way when it cannot.
-
-A window fixed at one step makes the whole rollout dead weight, and a window
-fixed at its ceiling claims reach the head never earned. Both were live at
-different points: the ceiling was multiplied by an uncalibrated confidence that
-evaluated to approximately zero, so the horizon was one on essentially every
-tick regardless of how well the network was predicting.
 */
 func TestHorizonExtendsWhilePrecisionHolds(t *testing.T) {
 	Convey("Given a head fed resolvable epochs until its precision settles", t, func() {
@@ -77,13 +71,7 @@ func TestHorizonExtendsWhilePrecisionHolds(t *testing.T) {
 		})
 
 		Convey("Then the published horizon does not outrun that reach", func() {
-			/*
-				Reach is what the head earned; the published horizon is that
-				reach after retention and confidence have capped it. Temporal
-				contraction may honestly reduce even a fully confident rollout
-				to one step, so earned reach is an upper bound, not a promise.
-			*/
-			horizon := solver.horizonFor(state, 1.0)
+			horizon, _ := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
 
 			So(horizon, ShouldBeGreaterThanOrEqualTo, 1)
 			So(horizon, ShouldBeLessThanOrEqualTo, state.horizonReach)
@@ -104,7 +92,7 @@ func TestHorizonConfidenceCapsReach(t *testing.T) {
 		Convey("Then middling confidence caps the earned reach itself", func() {
 			reach := state.horizonReach
 			confidence := 0.4
-			horizon := solver.horizonFor(state, confidence)
+			horizon, _ := state.manifold.DynamicHorizon(confidence, reach, solver.maxHorizon)
 			confidenceCap := max(1, int(float64(reach)*confidence))
 
 			So(horizon, ShouldBeLessThan, reach)
@@ -117,10 +105,6 @@ func TestHorizonConfidenceCapsReach(t *testing.T) {
 /*
 TestHorizonRetractsFasterThanItGrows pins the asymmetry between earning reach
 and losing it.
-
-Claiming reach the head cannot support prices trades off a forecast that was
-never made, while claiming too little only forgoes edge. The controller must
-therefore give ground faster than it takes it.
 */
 func TestHorizonRetractsFasterThanItGrows(t *testing.T) {
 	Convey("Given a solver holding its full reach", t, func() {
@@ -128,14 +112,12 @@ func TestHorizonRetractsFasterThanItGrows(t *testing.T) {
 		state := solver.state("BTC/USD")
 		state.horizonReach = solver.maxHorizon
 
-		growthTicks := solver.maxHorizon / horizonGrowthStep
+		growthTicks := solver.maxHorizon
 		retractionTicks := 0
 
 		for state.horizonReach > 1 {
-			state.horizonReach = max(1, int(
-				float64(state.horizonReach)*horizonRetractionFactor,
-			))
-
+			_, newReach := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
+			state.horizonReach = newReach
 			retractionTicks++
 
 			So(retractionTicks, ShouldBeLessThan, 100)
@@ -163,8 +145,9 @@ func TestHorizonStartsShortWithoutSamples(t *testing.T) {
 
 		Convey("Then it claims the shortest horizon", func() {
 			So(hasPrecision, ShouldBeFalse)
-			So(solver.horizonFor(state, 1.0), ShouldEqual, 1)
-			So(state.horizonReach, ShouldEqual, 1)
+			horizon, newReach := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
+			So(horizon, ShouldEqual, 1)
+			So(newReach, ShouldEqual, 1)
 		})
 	})
 }

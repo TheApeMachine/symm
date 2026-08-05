@@ -17,7 +17,7 @@ func TestExtractFeatures(t *testing.T) {
 	Convey("Given measurements with raw and normalized metric values", t, func() {
 		normalized := 0.25
 		notFinite := math.Inf(1)
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -49,7 +49,7 @@ func TestExtractFeatures(t *testing.T) {
 
 	Convey("Given a relative reading whose peer rotates", t, func() {
 		normalized := 0.5
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 
 		reading := func(peer string) *types.Measurement {
 			return &types.Measurement{
@@ -95,7 +95,7 @@ func TestUpdate(t *testing.T) {
 	Convey("Given normalized predictive-coding features", t, func() {
 		first := 0.25
 		second := -0.5
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -119,16 +119,11 @@ func TestUpdate(t *testing.T) {
 			rowRaw, found := thesis.Resonance.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 
-			row, ok := rowRaw.(map[string]any)
+			row, ok := rowRaw.(types.ResonanceReading)
 			So(ok, ShouldBeTrue)
 
 			state := solver.state("BTC/USD")
 			featureCount := float64(len(state.featureSchema))
-			surprise, surpriseOK := row["surprise"]
-			energy, energyOK := row["energy"]
-
-			So(surpriseOK, ShouldBeTrue)
-			So(energyOK, ShouldBeTrue)
 
 			/*
 				Surprise is an L2 norm over the input dimensions, so it grows as
@@ -138,7 +133,7 @@ func TestUpdate(t *testing.T) {
 				the units of what it normalizes, or the reading still carries the
 				size of the schema.
 			*/
-			So(surprise, ShouldAlmostEqual,
+			So(row.Surprise, ShouldAlmostEqual,
 				state.manifold.ReconstructionError()/math.Sqrt(featureCount))
 
 			/*
@@ -148,11 +143,13 @@ func TestUpdate(t *testing.T) {
 				move whenever the controller retuned alpha with no change in how
 				well the network predicts.
 			*/
-			So(energy, ShouldAlmostEqual,
+			So(row.Energy, ShouldAlmostEqual,
 				state.manifold.PredictionEnergy()/featureCount)
 		})
 
-		Convey("Then the next market epoch produces a visible forward return curve", func() {
+		Convey("Then unsupported latent retention stays explicitly unavailable", func() {
+			first = 0.5
+			second = -0.25
 			thesis.Tickers.Store("BTC/USD", kraken.TickerData{
 				Symbol:    "BTC/USD",
 				Bid:       decimal.NewFromFloat64(100),
@@ -161,27 +158,32 @@ func TestUpdate(t *testing.T) {
 			})
 
 			err = solver.Update(thesis)
+			So(err, ShouldBeNil)
+
+			first = 0.75
+			second = 0
+			thesis.Tickers.Store("BTC/USD", kraken.TickerData{
+				Symbol:    "BTC/USD",
+				Bid:       decimal.NewFromFloat64(102),
+				Ask:       decimal.NewFromFloat64(104),
+				Timestamp: time.Unix(3, 0),
+			})
+
+			err = solver.Update(thesis)
 			rowRaw, found := thesis.Resonance.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 
-			row, ok := rowRaw.(map[string]any)
+			row, ok := rowRaw.(types.ResonanceReading)
 			So(ok, ShouldBeTrue)
 
-			curve, curveOK := row["forwardCurve"]
-			horizon, horizonOK := row["activeHorizon"]
-			expectedReturn, expectedReturnOK := row["expectedReturn"]
-			returnReady, returnReadyOK := row["returnReady"]
 			state := solver.state("BTC/USD")
 
 			So(err, ShouldBeNil)
-			So(curveOK, ShouldBeTrue)
-			So(horizonOK, ShouldBeTrue)
-			So(expectedReturnOK, ShouldBeTrue)
-			So(returnReadyOK, ShouldBeTrue)
-			So(curve, ShouldHaveLength, horizon.(int))
-			So(returnReady, ShouldEqual, true)
-			So(expectedReturn, ShouldEqual, curve.([]float64)[0])
-			So(state.targetSamples, ShouldEqual, 1)
+			So(row.ForecastValidity.State, ShouldEqual, types.ValidityInvalid)
+			So(row.ForecastValidity.Readiness, ShouldEqual, types.ReadinessModel)
+			So(row.ForecastValidity.Reason, ShouldNotBeBlank)
+			So(row.Forecast, ShouldBeNil)
+			So(state.targetSamples, ShouldEqual, 2)
 		})
 	})
 }
@@ -191,7 +193,7 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 		normalized := 0.25
 		solver := NewSolver(make(chan []byte, 1), nil)
 
-		first := types.NewThesis()
+		first := types.NewThesis(nil)
 		first.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -210,7 +212,7 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 		So(solver.state("BTC/USD").pendingAt.IsZero(), ShouldBeFalse)
 
 		Convey("Then a later tick on a different target symbol must not train the same head sample", func() {
-			second := types.NewThesis()
+			second := types.NewThesis(nil)
 			second.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 				Source: types.SourceLiquidity,
 				Symbol: "ETH/USD",
@@ -233,9 +235,9 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 			rowRaw, found := second.Resonance.Load("ETH/USD")
 			So(found, ShouldBeTrue)
 
-			row, ok := rowRaw.(map[string]any)
+			row, ok := rowRaw.(types.ResonanceReading)
 			So(ok, ShouldBeTrue)
-			So(row["targetSymbol"], ShouldEqual, "ETH/USD")
+			So(row.TargetSymbol, ShouldEqual, "ETH/USD")
 		})
 	})
 }
@@ -248,7 +250,7 @@ or merely competes with Gonum's own parallel matrix work.
 func BenchmarkUpdate(b *testing.B) {
 	const featureCount = 48
 
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	solver := NewSolver(nil, nil)
 	symbols := []string{"SIM1/USD", "SIM2/USD"}
 

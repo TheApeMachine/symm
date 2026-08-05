@@ -18,12 +18,18 @@ describe("predictiveCodingSeries", () => {
 					{ state: [1, 2], prediction: [1, 0] },
 					{ state: [5, 12], prediction: [0, 0] },
 				],
-				expectedReturn: 0.012,
+				forecast: {
+					forwardCurve: [0.012],
+					forwardRetention: [1],
+					supportedHorizon: 1,
+					expectedReturn: 0.012,
+					confidence: 0.75,
+				},
+				forecastValidity: { state: "valid", readiness: "forecast" },
 				uncertainty: 0.004,
 				incrementalMSE: 0.0002,
 				incrementalSkillLowerBound: 0.0001,
 				calibrationSamples: 21,
-				returnReady: true,
 			},
 		];
 
@@ -63,7 +69,14 @@ describe("predictiveCodingSeries", () => {
 					{ state: [1], prediction: [0] },
 					{ state: [1], prediction: [0] },
 				],
-				expectedReturn: 0.01,
+				forecast: {
+					forwardCurve: [0.01],
+					forwardRetention: [1],
+					supportedHorizon: 1,
+					expectedReturn: 0.01,
+					confidence: 0.5,
+				},
+				forecastValidity: { state: "valid", readiness: "forecast" },
 			},
 			{
 				source: "resonance",

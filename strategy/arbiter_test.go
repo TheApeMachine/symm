@@ -39,7 +39,7 @@ func TestArbiterArbitrate(t *testing.T) {
 		So(market.Desk.OpenSlots(false), ShouldEqual, 0)
 		So(market.Desk.OpenSlots(true), ShouldEqual, 2)
 
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Decisions = []types.Decision{{
 			ID:                uuid.NewString(),
 			Action:            types.ActionEnter,
@@ -58,7 +58,7 @@ func TestArbiterArbitrate(t *testing.T) {
 		So(thesis.Decisions[0].AllocationClass, ShouldNotEqual, "reserved")
 
 		Convey("An upstream strategy exit should be suppressed", func() {
-			exitThesis := types.NewThesis()
+			exitThesis := types.NewThesis(nil)
 			exitThesis.Decisions = []types.Decision{{
 				Action:           types.ActionExit,
 				Symbol:           market.Symbols[0].Pair,
@@ -103,7 +103,7 @@ func TestArbiterArbitrate(t *testing.T) {
 
 		So(market.Desk.OpenSlots(true), ShouldEqual, 0)
 
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		thesis.Decisions = []types.Decision{{
 			ID:                uuid.NewString(),
 			Action:            types.ActionEnter,
@@ -167,7 +167,7 @@ func TestArbiterArbitrate(t *testing.T) {
 		}
 
 		Convey("A weaker challenger should wait for a stoploss to free a slot", func() {
-			thesis := types.NewThesis()
+			thesis := types.NewThesis(nil)
 			thesis.Decisions = append(decisions, types.Decision{
 				ID:               uuid.NewString(),
 				Action:           types.ActionEnter,
@@ -196,7 +196,7 @@ func TestArbiterArbitrate(t *testing.T) {
 		})
 
 		Convey("Even a stronger challenger should not liquidate an incumbent", func() {
-			thesis := types.NewThesis()
+			thesis := types.NewThesis(nil)
 			thesis.Decisions = append(decisions, types.Decision{
 				ID:               uuid.NewString(),
 				Action:           types.ActionEnter,

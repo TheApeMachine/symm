@@ -60,7 +60,7 @@ export const Engine = () => (
 			)}
 		</Component>
 
-		<Component registerKey="strategy">
+		<Component registerKey="readiness">
 			{({ ref }) => (
 				<Flex.Column ref={ref}>
 					<Row label="phase">
@@ -83,7 +83,7 @@ export const Engine = () => (
 									key={gate}
 									variant="disabled"
 									title={gate}
-									data-set={`readiness.${gate}`}
+									data-set={gate}
 									data-set-scale="bool-color"
 									data-target="style.background"
 								/>

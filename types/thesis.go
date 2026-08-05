@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/datura"
 )
 
 var thesisSignalSources = []SourceType{
@@ -31,6 +33,7 @@ legitimately produced nothing read as never having run.
 */
 type Readiness struct {
 	mu          sync.RWMutex
+	ui          chan []byte
 	Correlation bool `json:"correlation"`
 	CVD         bool `json:"cvd"`
 	DepthFlow   bool `json:"depth_flow"`
@@ -51,8 +54,10 @@ type Readiness struct {
 	Cognition   bool `json:"cognition"`
 }
 
-func NewReadiness() Readiness {
-	return Readiness{}
+func NewReadiness(ui chan []byte) Readiness {
+	return Readiness{
+		ui: ui,
+	}
 }
 
 /*
@@ -84,16 +89,21 @@ func (readiness *Readiness) Stamp(source SourceType) {
 	case SourceToxicity:
 		readiness.Toxicity = true
 	}
+
+	if readiness.ui != nil {
+		select {
+		case readiness.ui <- datura.NewMap(
+			"readiness", readiness,
+		).MarshalAndFree():
+		default:
+		}
+	}
 }
 
 func (readiness *Readiness) SignalsMeasured() bool {
 	readiness.mu.RLock()
 	defer readiness.mu.RUnlock()
 
-	return readiness.signalsMeasured()
-}
-
-func (readiness *Readiness) signalsMeasured() bool {
 	return readiness.Correlation &&
 		readiness.CVD &&
 		readiness.DepthFlow &&
@@ -120,7 +130,7 @@ func (readiness *Readiness) Complete() bool {
 	readiness.mu.RLock()
 	defer readiness.mu.RUnlock()
 
-	return readiness.signalsMeasured() &&
+	return readiness.SignalsMeasured() &&
 		readiness.Manifold &&
 		readiness.Resonance &&
 		readiness.Causal &&
@@ -137,6 +147,10 @@ func (readiness *Readiness) Snapshot() *Readiness {
 	readiness.mu.RLock()
 	defer readiness.mu.RUnlock()
 
+	return readiness.snapshot()
+}
+
+func (readiness *Readiness) snapshot() *Readiness {
 	return &Readiness{
 		Correlation: readiness.Correlation,
 		CVD:         readiness.CVD,
@@ -239,7 +253,7 @@ type Thesis struct {
 /*
 NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
-func NewThesis() *Thesis {
+func NewThesis(ui chan []byte) *Thesis {
 	return &Thesis{
 		Status:       READY,
 		At:           time.Now().UTC(),
@@ -257,7 +271,7 @@ func NewThesis() *Thesis {
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
 		Causal:       &sync.Map{},
-		Readiness:    NewReadiness(),
+		Readiness:    NewReadiness(ui),
 	}
 }
 

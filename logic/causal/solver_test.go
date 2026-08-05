@@ -13,7 +13,7 @@ import (
 func TestStore(t *testing.T) {
 	convey.Convey("Given one failed symbol and one resolved symbol", t, func() {
 		solver := NewSolver(nil, nil)
-		thesis := types.NewThesis()
+		thesis := types.NewThesis(nil)
 		output := map[string]any{"effect": 0.5}
 		solver.appendHistory("GOOD/USD", []float64{0.1, 0.2, 0.3, 0.4})
 		results := []causalResult{
@@ -78,7 +78,7 @@ func TestHistoryRows(t *testing.T) {
 
 func BenchmarkUpdate(b *testing.B) {
 	solver := NewSolver(nil, nil)
-	thesis := types.NewThesis()
+	thesis := types.NewThesis(nil)
 	measurements := make([]*types.Measurement, 0, 640)
 
 	for index := range 640 {
@@ -91,11 +91,12 @@ func BenchmarkUpdate(b *testing.B) {
 				"return": {Raw: float64(index) / float64(len(measurements)+1)},
 			},
 		})
-		thesis.Resonance.Store(symbol, map[string]any{
-			"energy":       float64(index),
-			"surprise":     float64(index) / float64(index+1),
-			"forwardCurve": []float64{float64(index) / float64(index+1)},
-		})
+		thesis.Resonance.Store(symbol, testResonanceReading(
+			&testing.T{},
+			float64(index),
+			float64(index)/float64(index+1),
+			[]float64{float64(index) / float64(index+1)},
+		))
 	}
 
 	thesis.Measurements.Store(types.SourceLiquidity, measurements)

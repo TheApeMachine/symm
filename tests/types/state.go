@@ -3,7 +3,55 @@ package types
 import (
 	"math"
 	"time"
+
+	coretypes "github.com/theapemachine/symm/types"
 )
+
+const (
+	QuantityJitterMinimum  = 0.8
+	QuantityJitterMaximum  = 1.2
+	VolumeJitterMinimum    = 0.5
+	VolumeJitterMaximum    = 1.5
+	EmpiricalRatioBaseline = 1.0
+	PositiveEvidenceFloor  = 0.0
+)
+
+/*
+PrecursorMetricExpectation declares evidence the regime is designed to
+produce before its discontinuous event is sampled. The normalized floor is a
+domain boundary owned by the fixture profile, not an assertion invented by an
+integration test.
+*/
+type PrecursorMetricExpectation struct {
+	Metric            coretypes.MetricType
+	Side              coretypes.MeasurementSide
+	MinimumNormalized float64
+}
+
+/*
+PrecursorContract is the analytical contract paired with a generated regime.
+It names only decision-facing evidence that the profile deliberately creates.
+*/
+type PrecursorContract struct {
+	MinimumObservations int
+	Metrics             []PrecursorMetricExpectation
+	Categories          []coretypes.CategoryType
+}
+
+/*
+PrecursorExpectation resolves the profile contract into bounds implied by the
+same quantity jitter used by Generator. This keeps generation and assertions
+on one source of truth.
+*/
+type PrecursorExpectation struct {
+	MinimumStepVolume          float64
+	MaximumBaselineStepVolume  float64
+	MinimumBidQuantity         float64
+	MaximumBaselineBidQuantity float64
+	MaximumAskQuantity         float64
+	MinimumBaselineAskQuantity float64
+	Contract                   PrecursorContract
+}
 
 type MarketState int
 
@@ -48,22 +96,23 @@ var MomentumMap = map[MarketState]float64{
 
 // Sample represents a fully populated market ticker payload point.
 type Sample struct {
-	Symbol    string    `json:"symbol"`
-	Bid       float64   `json:"bid"`
-	BidQty    float64   `json:"bid_qty"`
-	Ask       float64   `json:"ask"`
-	AskQty    float64   `json:"ask_qty"`
-	Last      float64   `json:"last"`
-	Volume    float64   `json:"volume"`
+	Symbol        string  `json:"symbol"`
+	AggressorSide string  `json:"-"`
+	Bid           float64 `json:"bid"`
+	BidQty        float64 `json:"bid_qty"`
+	Ask           float64 `json:"ask"`
+	AskQty        float64 `json:"ask_qty"`
+	Last          float64 `json:"last"`
+	Volume        float64 `json:"volume"`
 	// StepVolume is the quantity executed in this step alone, as opposed to
 	// Volume, which is the cumulative traded quantity the ticker reports.
-	StepVolume float64 `json:"step_volume"`
-	VWAP      float64   `json:"vwap"`
-	Low       float64   `json:"low"`
-	High      float64   `json:"high"`
-	Change    float64   `json:"change"`
-	ChangePct float64   `json:"change_pct"`
-	Timestamp time.Time `json:"timestamp"`
+	StepVolume float64   `json:"step_volume"`
+	VWAP       float64   `json:"vwap"`
+	Low        float64   `json:"low"`
+	High       float64   `json:"high"`
+	Change     float64   `json:"change"`
+	ChangePct  float64   `json:"change_pct"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 // RegimeProfile controls the physical behavior of the ticker parameters.
@@ -75,6 +124,7 @@ type RegimeProfile struct {
 	BaseQty         float64       // Average order size base
 	VolumeScale     float64       // Trade volume surge factor
 	Cadence         time.Duration // Time interval step between ticks
+	AggressorSide   string        // Explicit taker intent when the regime owns flow direction
 
 	/*
 		IgnitionMove is the fraction the price gaps in a single step when the
@@ -88,6 +138,31 @@ type RegimeProfile struct {
 	IgnitionMove   float64
 	IgnitionVolume float64
 	IgnitionDecay  float64
+	Precursor      PrecursorContract
+}
+
+/*
+PrecursorExpectation derives observable precursor bounds from this profile
+and the baseline it is leaving.
+*/
+func (profile RegimeProfile) PrecursorExpectation(
+	baseline RegimeProfile,
+) PrecursorExpectation {
+	return PrecursorExpectation{
+		MinimumStepVolume: profile.BaseQty * profile.VolumeScale *
+			VolumeJitterMinimum,
+		MaximumBaselineStepVolume: baseline.BaseQty * baseline.VolumeScale *
+			VolumeJitterMaximum,
+		MinimumBidQuantity: profile.BaseQty * profile.BidAskAsymmetry *
+			QuantityJitterMinimum,
+		MaximumBaselineBidQuantity: baseline.BaseQty * baseline.BidAskAsymmetry *
+			QuantityJitterMaximum,
+		MaximumAskQuantity: profile.BaseQty / profile.BidAskAsymmetry *
+			QuantityJitterMaximum,
+		MinimumBaselineAskQuantity: baseline.BaseQty / baseline.BidAskAsymmetry *
+			QuantityJitterMinimum,
+		Contract: profile.Precursor,
+	}
 }
 
 /*
@@ -113,6 +188,7 @@ func Blend(source, target RegimeProfile, progress float64) RegimeProfile {
 		Cadence: time.Duration(geolerp(
 			float64(source.Cadence), float64(target.Cadence), progress,
 		)),
+		AggressorSide: target.AggressorSide,
 
 		/*
 			Ignition describes how the target regime is entered, so it is
@@ -121,6 +197,7 @@ func Blend(source, target RegimeProfile, progress float64) RegimeProfile {
 		IgnitionMove:   target.IgnitionMove,
 		IgnitionVolume: target.IgnitionVolume,
 		IgnitionDecay:  target.IgnitionDecay,
+		Precursor:      target.Precursor,
 	}
 }
 
@@ -159,15 +236,35 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 	*/
 	FastPump: {
 		Drift:           0.8,
-		Volatility:      0.12,
+		Volatility:      0.04,
 		SpreadScale:     0.8,
-		BidAskAsymmetry: 4.5,
+		BidAskAsymmetry: 8.0,
 		BaseQty:         500.0,
 		VolumeScale:     5.0,
 		Cadence:         20 * time.Millisecond,
+		AggressorSide:   "buy",
 		IgnitionMove:    0.30,
 		IgnitionVolume:  8.0,
 		IgnitionDecay:   0.6,
+		Precursor: PrecursorContract{
+			MinimumObservations: 2,
+			Metrics: []PrecursorMetricExpectation{
+				{
+					Metric:            coretypes.MetricIgnition,
+					Side:              coretypes.SideBuy,
+					MinimumNormalized: EmpiricalRatioBaseline,
+				},
+				{
+					Metric:            coretypes.MetricCompression,
+					Side:              coretypes.SideBuy,
+					MinimumNormalized: PositiveEvidenceFloor,
+				},
+			},
+			Categories: []coretypes.CategoryType{
+				coretypes.VerticalIgnition,
+				coretypes.CoiledCompression,
+			},
+		},
 	},
 	FastDump: {
 		Drift:           -0.8,
@@ -177,6 +274,7 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		BaseQty:         600.0,
 		VolumeScale:     6.0,
 		Cadence:         15 * time.Millisecond,
+		AggressorSide:   "sell",
 		IgnitionMove:    -0.20,
 		IgnitionVolume:  9.0,
 		IgnitionDecay:   0.6,
