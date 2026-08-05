@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/types"
 )
@@ -172,6 +173,46 @@ func hawkesSpectralRadius(thesis *types.Thesis, symbol string) (float64, bool) {
 	}
 
 	return spectralRadius, true
+}
+
+/*
+ignitionPrecursor answers whether this symbol is winding up a long-side
+ignition, using the same model-owned baselines regimeExit reads for the short
+side.
+
+Presence of a category is not the question. The category solver names a vertical
+ignition wherever the shape is present at all, so a quiet market carries the name
+with a strength near its own noise while a real one carries it an order of
+magnitude higher, and a rule keyed on the name alone admits both. Measured across
+one pumping symbol and two baseline ones, ignition read 7.25 against 0.65 and
+0.00, and compression 0.49 against 0.00 and 0.00, while every one of the three
+was labelled a vertical ignition.
+
+So it is the readings that decide. Ignition is normalised against the symbol's
+own empirical baseline, which makes the unit a measured statement that this
+market is doing something it does not ordinarily do rather than a threshold
+anybody chose, and it has to dominate the opposing side to be directional at all.
+Compression is the coil that separates a wind-up from a move already spent.
+*/
+func ignitionPrecursor(thesis *types.Thesis, symbol string) bool {
+	pump, ok := latestMeasurement(thesis, symbol, types.SourcePumpDump)
+
+	if !ok || pump.Validity.State != types.ValidityValid {
+		return false
+	}
+
+	buy, buyReady := rawMetric(pump, types.MetricIgnition, types.SideBuy)
+	sell, sellReady := rawMetric(pump, types.MetricIgnition, types.SideSell)
+
+	if !buyReady || !sellReady || buy <= 1 || buy <= sell {
+		return false
+	}
+
+	compression, compressionReady := rawMetric(
+		pump, types.MetricCompression, types.SideBuy,
+	)
+
+	return compressionReady && compression > 0
 }
 
 /*
@@ -555,6 +596,12 @@ func getCausalHistoryRows(thesis *types.Thesis, symbol string) [][]float64 {
 	m, ok := val.(map[string]any)
 
 	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"causal history invalid: expected map[string]any",
+			nil,
+		))
+
 		return nil
 	}
 

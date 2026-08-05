@@ -24,7 +24,9 @@ func testResonanceReading(
 		curve, retention, len(curve), 0.75,
 	)
 
-	convey.So(err, convey.ShouldBeNil)
+	if err != nil {
+		panic(err)
+	}
 
 	return types.ResonanceReading{
 		Energy: energy, Surprise: surprise, Forecast: forecast,

@@ -83,7 +83,6 @@ func causalHistory(rows int, treatment float64) [][]float64 {
 }
 
 func interventionForecast(
-	t *testing.T,
 	treatment float64,
 	horizon int,
 ) *types.ResonanceForecast {
@@ -106,7 +105,7 @@ func interventionForecast(
 
 func TestStrategyStateInterventionLevel(t *testing.T) {
 	Convey("Given a candidate whose forecast is a fraction of its price", t, func() {
-		forecast := interventionForecast(t, 0.0015, 5)
+		forecast := interventionForecast(0.0015, 5)
 		state := strategy.StrategyState{
 			Symbol:        "SIM1/USD",
 			Energy:        0.4,
@@ -175,7 +174,7 @@ func TestSearchInterventionLevels(t *testing.T) {
 			Energy:        0.4,
 			Surprise:      0.2,
 			Treatment:     treatment,
-			Forecast:      interventionForecast(t, treatment, 5),
+			Forecast:      interventionForecast(treatment, 5),
 			RoundTripCost: 0.0004,
 			HoldDiscount:  0.8,
 		}

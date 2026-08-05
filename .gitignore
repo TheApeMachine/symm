@@ -29,3 +29,5 @@ qodana.yaml
 .idea/workspace.xml
 .kilo/
 .playwright-mcp/
+.cache/
+.tmp/

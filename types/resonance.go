@@ -17,8 +17,8 @@ step after applying that retention. Confidence has already capped the horizon;
 it is not a second multiplier on ExpectedReturn.
 */
 type ResonanceForecast struct {
-	Curve            []float64 `json:"curve"`
-	Retention        []float64 `json:"retention"`
+	Curve            []float64 `json:"forwardCurve"`
+	Retention        []float64 `json:"forwardRetention"`
 	SupportedHorizon int       `json:"supportedHorizon"`
 	ExpectedReturn   float64   `json:"expectedReturn"`
 	Confidence       float64   `json:"confidence"`

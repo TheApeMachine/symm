@@ -29,9 +29,9 @@ import (
 )
 
 const (
-	// tickInterval paces the simulated feed so each Tick is one the stack
-	// actually processed. It is the shortest gap at which the analyzer keeps
-	// up with the generator on the machines this suite runs on.
+	// tickInterval is how often the feed re-checks whether the stack has caught
+	// up with it. Whether it has is observed rather than assumed, so this only
+	// decides the granularity of the wait.
 	tickInterval = 10 * time.Millisecond
 )
 
@@ -232,7 +232,13 @@ func newMarket(
 	market.Desk = market.system.Desk
 	market.Planner = market.system.Planner
 	market.Analyzer = market.system.Analyzer
-	market.capture = newThesisCapture(market.Planner)
+	pairs := make([]string, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		pairs = append(pairs, symbol.Pair)
+	}
+
+	market.capture = newThesisCapture(market.Planner, pairs)
 	market.Analyzer.AttachEvaluator(market.capture)
 
 	return market
@@ -489,13 +495,62 @@ func (market *Market) settleTick() {
 	/*
 		Answer pending orders before the processing pause so the execution and
 		this tick's market frames can both reach the desk before the next tick.
-		Publishing is asynchronous, so without pausing here the loop feeding the
-		market outruns the stages consuming it and a test measures a pipeline
-		that never got to run.
 	*/
 	market.fillPending()
-	time.Sleep(tickInterval)
+	market.waitForPass()
 	market.retainMeasurements()
+}
+
+/*
+waitForPass holds the feed until the stack has analyzed what this tick published.
+
+A feed that runs ahead of its consumer is not a faster market, it is one the
+stack never sees as separate observations. The analyzer publishes a thesis once
+every signal has measured, so every tick sent while a pass is still running is
+folded into the next one, and a stage that learns a sample per pass then learns
+from a batch that was never a moment in this market.
+
+That is what the tick counts in this harness are counting, so a tick is not
+settled until it has become one. The bound is what keeps a stack that stops
+analyzing a failing test rather than a hanging one; the assertions on what the
+stack produced are what report it.
+*/
+func (market *Market) waitForPass() {
+	actorCapacity := viper.GetInt("system.actor.buffer")
+
+	if actorCapacity < 1 {
+		actorCapacity = 64
+	}
+
+	for range actorCapacity {
+		time.Sleep(tickInterval)
+
+		if market.analyzed() {
+			return
+		}
+	}
+}
+
+/*
+analyzed answers whether every symbol's most recently published sample has
+reached an analyzed thesis.
+
+Counting passes would not answer it. A pass already running when a tick is
+published completes without containing it, so a feed that waited for the next
+pass could move on having never been observed — and with the feed and the stack
+in lockstep there is no backlog left to carry it into a later one.
+*/
+func (market *Market) analyzed() bool {
+	market.sampleMu.RLock()
+	defer market.sampleMu.RUnlock()
+
+	for symbol, sample := range market.latest {
+		if market.capture.Observed(symbol).Before(sample.Timestamp) {
+			return false
+		}
+	}
+
+	return true
 }
 
 /*

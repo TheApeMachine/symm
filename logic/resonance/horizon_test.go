@@ -108,7 +108,7 @@ and losing it.
 */
 func TestHorizonRetractsFasterThanItGrows(t *testing.T) {
 	Convey("Given a solver holding its full reach", t, func() {
-		solver := NewSolver(make(chan []byte, 1), nil)
+		solver := driveSolver(400)
 		state := solver.state("BTC/USD")
 		state.horizonReach = solver.maxHorizon
 

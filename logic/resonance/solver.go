@@ -3,6 +3,7 @@ package resonance
 import (
 	"math"
 	"runtime"
+	"slices"
 	"sort"
 	"time"
 
@@ -78,7 +79,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	thesis.Resonance.Clear()
 
 	if len(featureSets) == 0 {
-		thesis.Readiness.Resonance = true
 		return nil
 	}
 
@@ -174,9 +174,44 @@ func (solver *Solver) updateSymbol(
 	}
 
 	state.input = input
+	informative := false
 
 	for featureIndex, featureKey := range state.featureSchema {
 		input[featureIndex] = features[featureKey]
+
+		if input[featureIndex] != 0 {
+			informative = true
+		}
+	}
+
+	/*
+		A standardizer answers zero until it has the moments to score against,
+		so a vector that is entirely zero is the absence of a reading rather
+		than a market that measured zero on all counts.
+
+		Settling on it drives the latent state to the origin, which makes the
+		rollout retention zero and publishes the forecast as invalid; learning
+		from it spends a resolved return sample teaching the return head that
+		no input predicts a real move. Both are wrong about a stage that is
+		simply still warming, so the reading says so and waits.
+	*/
+	if !informative {
+		thesis.Resonance.Store(symbol, types.ResonanceReading{
+			Stage:        "resonance",
+			Source:       types.SourceResonance,
+			Symbol:       symbol,
+			TargetSymbol: symbol,
+			At:           thesis.At,
+			Alpha:        state.alpha,
+			Samples:      state.targetSamples,
+			ForecastValidity: types.MeasurementValidity{
+				State:     types.ValidityProvisional,
+				Readiness: types.ReadinessModel,
+				Reason:    "resonance features have no standardizable scale yet",
+			},
+		})
+
+		return nil
 	}
 
 	midpoint, targetAt, targetReady := solver.returnTarget(thesis, symbol)
@@ -256,8 +291,7 @@ func (solver *Solver) updateSymbol(
 	}
 
 	if targetReady && (state.pendingAt.IsZero() || !targetAt.Before(state.pendingAt)) {
-		state.input = state.pendingInput[:0]
-		state.pendingInput = input
+		state.pendingInput = slices.Clone(input)
 		state.pendingMid = midpoint
 		state.pendingAt = targetAt
 	}
@@ -435,7 +469,7 @@ func (solver *Solver) learnReturn(state *symbolState, midpoint float64, at time.
 			nil,
 		))
 
-		state.pendingInput = state.pendingInput[:0]
+		state.pendingInput = nil
 		state.pendingAt = time.Time{}
 
 		return nil
@@ -450,7 +484,7 @@ func (solver *Solver) learnReturn(state *symbolState, midpoint float64, at time.
 			nil,
 		))
 
-		state.pendingInput = state.pendingInput[:0]
+		state.pendingInput = nil
 		state.pendingAt = time.Time{}
 
 		return nil

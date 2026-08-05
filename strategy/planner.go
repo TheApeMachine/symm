@@ -184,6 +184,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 
 	if len(thesis.Decisions) == 0 {
 		planner.complete(thesis, true, "no_decision")
+		thesis.PrepareNextEvaluation()
 
 		return thesis
 	}
@@ -194,6 +195,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 
 	if !terminalDecision {
 		planner.complete(thesis, true, "deferred")
+		thesis.PrepareNextEvaluation()
 
 		return thesis
 	}

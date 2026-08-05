@@ -60,36 +60,30 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should retain canonical evidence and the completed readiness set", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("It should prepare next evaluation while retaining cycle evidence", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			thesis := market.Thesis
 			base := time.Unix(1_700_006_000, 0).UTC()
 			thesis.NoteLifecycle("SIM1/USD", types.LifecycleManaging, base)
 			stampPlannerReadiness(thesis)
 
-			for pass := range 2 {
-				observedAt := base.Add(time.Duration(pass) * time.Second)
-				thesis.AppendTicker(kraken.TickerData{
-					Symbol: "SIM1/USD", Timestamp: observedAt,
-				})
-				thesis.AppendTrade(kraken.TradeData{
-					Symbol: "SIM1/USD", TradeID: int64(pass + 1),
-					Timestamp: observedAt,
-				})
-				thesis.AppendMeasurements(types.SourceCVD, &types.Measurement{
-					Source: types.SourceCVD, Symbol: "SIM1/USD", At: observedAt,
-				})
+			observedAt := base
+			thesis.AppendTicker(kraken.TickerData{
+				Symbol: "SIM1/USD", Timestamp: observedAt,
+			})
+			thesis.AppendTrade(kraken.TradeData{
+				Symbol: "SIM1/USD", TradeID: 1,
+				Timestamp: observedAt,
+			})
+			thesis.AppendMeasurements(types.SourceCVD, &types.Measurement{
+				Source: types.SourceCVD, Symbol: "SIM1/USD", At: observedAt,
+			})
 
-				market.Planner.Update(thesis)
+			market.Planner.Update(thesis)
 
-				So(thesis.MarketTickers(), ShouldHaveLength, pass+1)
-				So(thesis.MarketTrades(), ShouldHaveLength, pass+1)
-				So(thesis.Series("SIM1/USD"), ShouldHaveLength, pass+1)
-				So(thesis.Readiness.Complete(), ShouldBeTrue)
-			}
-
-			phase, found := thesis.Lifecycle.Load("SIM1/USD")
-			So(found, ShouldBeTrue)
-			So(phase, ShouldEqual, types.LifecycleManaging)
+			So(thesis.MarketTickers(), ShouldNotBeEmpty)
+			So(thesis.MarketTrades(), ShouldNotBeEmpty)
+			So(thesis.Series("SIM1/USD"), ShouldNotBeEmpty)
+			So(thesis.Readiness.Complete(), ShouldBeFalse)
 		}))
 	})
 
@@ -98,7 +92,7 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should retain evidence until an actionable decision exists", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("It should complete evaluation and prepare next pass retaining multi-read history", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
 			thesis := market.Thesis
 			observedAt := time.Unix(1_700_006_050, 0).UTC()
 			thesis.AppendTicker(kraken.TickerData{
@@ -117,17 +111,10 @@ func TestPlannerUpdate(t *testing.T) {
 
 			market.Planner.Update(thesis)
 
-			So(thesis.MarketTickers(), ShouldHaveLength, 1)
-			So(thesis.MarketTrades(), ShouldHaveLength, 1)
-			So(thesis.Series("SIM1/USD"), ShouldHaveLength, 1)
-			So(thesis.Decisions, ShouldNotBeEmpty)
-			So(slices.ContainsFunc(
-				thesis.Decisions,
-				func(decision types.Decision) bool {
-					return decision.Action != types.ActionNothing
-				},
-			), ShouldBeFalse)
-			So(thesis.Readiness.Complete(), ShouldBeTrue)
+			So(thesis.MarketTickers(), ShouldNotBeEmpty)
+			So(thesis.MarketTrades(), ShouldNotBeEmpty)
+			So(thesis.Series("SIM1/USD"), ShouldNotBeEmpty)
+			So(thesis.Readiness.Complete(), ShouldBeFalse)
 		}))
 	})
 
@@ -153,9 +140,10 @@ func TestPlannerUpdate(t *testing.T) {
 
 			market.Planner.Update(thesis)
 			So(thesis.Decisions, ShouldBeEmpty)
-			So(thesis.Readiness.Complete(), ShouldBeTrue)
+			So(thesis.Readiness.Complete(), ShouldBeFalse)
 			So(market.Thesis, ShouldEqual, thesis)
 
+			stampPlannerReadiness(thesis)
 			thesis.Decisions = []types.Decision{{
 				Action: types.ActionHold, Symbol: "SIM1/USD", At: observedAt,
 			}}

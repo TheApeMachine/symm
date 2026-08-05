@@ -139,7 +139,7 @@ func TestEstimateImpact(t *testing.T) {
 					string(types.MetricKey(types.MetricScarcityScore, types.SideNone)): scarcitySample,
 				},
 			}
-			thesis.Measurements.Store(string(types.SourceLiquidity), []*types.Measurement{measurement})
+			thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{measurement})
 
 			impact := estimateImpact(thesis, symbol, spread)
 			So(impact.Float64(), ShouldBeGreaterThan, 0.5)

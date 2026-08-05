@@ -142,12 +142,18 @@ func (solver *Solver) measure(input causalInput) causalResult {
 		}
 	}
 
-	if !ready {
-		return causalResult{symbol: input.symbol}
+	outMap := map[string]any{
+		"ready": ready,
+	}
+
+	if ready {
+		outMap = output.Outputs()
+		outMap["ready"] = true
 	}
 
 	return causalResult{
-		symbol: input.symbol, output: output.Outputs(),
+		symbol: input.symbol,
+		output: outMap,
 	}
 }
 
@@ -162,7 +168,7 @@ func (solver *Solver) store(thesis *types.Thesis, results []causalResult) bool {
 		}
 
 		if result.output == nil {
-			continue
+			result.output = make(map[string]any)
 		}
 
 		result.output["historyRows"] = solver.historyRows(result.symbol)

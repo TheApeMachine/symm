@@ -9,7 +9,25 @@ import (
 )
 
 /*
-eventBuffer owns one symbol's append-only observations for a decision cycle.
+EvidenceRetention is how many of a symbol's most recent observations one
+evidence stream keeps.
+
+A decision cycle ends when the planner emits a decision, and a stack that is
+correctly declining to trade never ends one. Without a bound the buffers would
+then hold every observation the process ever saw, and because each pass re-reads
+the whole stream the analyzer would slow in proportion to its own uptime: the
+measured cost per pass rose from 124ms over 33 observations to 532ms over 1269
+across a single short run, which starves exactly the models whose readings the
+decision was waiting on.
+
+The bound matches the empirical baselines the signals score against
+(signals.pumpdump.baselineCapacity), because the window a reading is judged in
+is the same length as the window it was fitted in.
+*/
+const EvidenceRetention = 128
+
+/*
+eventBuffer owns the most recent EvidenceRetention observations for one symbol.
 */
 type eventBuffer[Event any] struct {
 	mu     sync.RWMutex
@@ -19,6 +37,11 @@ type eventBuffer[Event any] struct {
 func (buffer *eventBuffer[Event]) Append(event Event) {
 	buffer.mu.Lock()
 	buffer.events = append(buffer.events, event)
+
+	if overflow := len(buffer.events) - EvidenceRetention; overflow > 0 {
+		buffer.events = slices.Delete(buffer.events, 0, overflow)
+	}
+
 	buffer.mu.Unlock()
 }
 

@@ -11,24 +11,29 @@ import (
 )
 
 func TestStore(t *testing.T) {
-	convey.Convey("Given one failed symbol and one resolved symbol", t, func() {
+	convey.Convey("Given one failed symbol, one warming symbol, and one resolved symbol", t, func() {
 		solver := NewSolver(nil, nil)
 		thesis := types.NewThesis(nil)
 		output := map[string]any{"effect": 0.5}
 		solver.appendHistory("GOOD/USD", []float64{0.1, 0.2, 0.3, 0.4})
+		solver.appendHistory("WARM/USD", []float64{0.5, 0.6, 0.7, 0.8})
 		results := []causalResult{
 			{symbol: "BAD/USD", err: errors.New("bad symbol")},
 			{symbol: "GOOD/USD", output: output},
+			{symbol: "WARM/USD", output: nil},
 		}
 
-		convey.Convey("It should skip the failure without dropping the resolved symbol", func() {
+		convey.Convey("It should skip the failure and persist history rows for all valid symbols", func() {
 			resolved := solver.store(thesis, results)
 			stored, found := thesis.Causal.Load("GOOD/USD")
+			warmStored, warmFound := thesis.Causal.Load("WARM/USD")
 			_, failedStored := thesis.Causal.Load("BAD/USD")
 
 			convey.So(resolved, convey.ShouldBeTrue)
 			convey.So(found, convey.ShouldBeTrue)
 			convey.So(stored, convey.ShouldResemble, output)
+			convey.So(warmFound, convey.ShouldBeTrue)
+			convey.So(warmStored.(map[string]any)["historyRows"], convey.ShouldResemble, [][]float64{{0.5, 0.6, 0.7, 0.8}})
 			convey.So(failedStored, convey.ShouldBeFalse)
 			convey.So(output["historyRows"], convey.ShouldResemble, [][]float64{{0.1, 0.2, 0.3, 0.4}})
 		})

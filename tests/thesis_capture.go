@@ -3,6 +3,7 @@ package tests
 import (
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
@@ -18,10 +19,34 @@ type thesisCapture struct {
 	planner *strategy.Planner
 	symbol  string
 	latest  *types.Thesis
+	symbols []string
+	/*
+		observed is the newest ticker each symbol carried into an analyzed
+		thesis. Counting passes would not answer the question the feed is
+		asking: a pass already running when a tick was published completes
+		without containing it, so the feed has to compare what the stack
+		analyzed against what it sent rather than how often it analyzed.
+	*/
+	observed map[string]time.Time
 }
 
-func newThesisCapture(planner *strategy.Planner) *thesisCapture {
-	return &thesisCapture{planner: planner}
+func newThesisCapture(planner *strategy.Planner, symbols []string) *thesisCapture {
+	return &thesisCapture{
+		planner:  planner,
+		symbols:  symbols,
+		observed: map[string]time.Time{},
+	}
+}
+
+/*
+Observed reports the newest ticker for one symbol that has reached an analyzed
+thesis, and the zero time while none has.
+*/
+func (capture *thesisCapture) Observed(symbol string) time.Time {
+	capture.mu.RLock()
+	defer capture.mu.RUnlock()
+
+	return capture.observed[symbol]
 }
 
 func (capture *thesisCapture) Enable(symbol string) {
@@ -37,6 +62,14 @@ func (capture *thesisCapture) Update(thesis *types.Thesis) *types.Thesis {
 	if capture.symbol != "" {
 		if _, found := thesis.LatestTicker(capture.symbol); found {
 			capture.latest = cloneThesisEvidence(thesis)
+		}
+	}
+
+	for _, symbol := range capture.symbols {
+		ticker, found := thesis.LatestTicker(symbol)
+
+		if found && ticker.Timestamp.After(capture.observed[symbol]) {
+			capture.observed[symbol] = ticker.Timestamp
 		}
 	}
 

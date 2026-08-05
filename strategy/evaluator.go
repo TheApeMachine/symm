@@ -219,7 +219,29 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			forecast.Uncertainty,
 		)
 
-		if utility <= 0 {
+		opportunity := highVelocityOpportunity(thesis, symbol)
+
+		/*
+			The forecast is fitted on realized returns, so a discontinuity is
+			the one thing it cannot price: the gap it would have to predict is
+			by construction absent from everything it was fitted on, and its
+			estimate over a step is not a statement about a move that has not
+			happened in the record.
+
+			So a measured ignition wind-up is what the entry is taken on, and
+			all three of the remaining terms have to hold. The precursor is the
+			claim, in readings scored against the symbol's own baseline rather
+			than in the name of a category that quiet markets also carry. The
+			opportunity gate is the disqualification, because exhaustion, spoof
+			and thinning readings each describe a wind-up that is not one. And
+			the forecast keeps a veto over dissent rather than over silence: an
+			expected return pointing the other way is the one thing the model
+			can say about a gap it cannot see, and it stops the entry.
+		*/
+		structural := ignitionPrecursor(thesis, symbol) && opportunity &&
+			forecast.ExpectedReturn != nil && forecast.ExpectedReturn.Sign() >= 0
+
+		if utility <= 0 && !structural {
 			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
 				forecast, utility, "non_positive_utility",
 				"executable utility does not clear trading costs",
@@ -229,7 +251,20 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			continue
 		}
 
-		if (mctsErr == nil && recommendedAction == ActionEnter) || !searchable {
+		priced := utility > 0 &&
+			((mctsErr == nil && recommendedAction == ActionEnter) || !searchable)
+
+		if !priced && !structural {
+			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+				forecast, utility, "mcts_rejected",
+				"causal MCTS trajectory search did not select entry action",
+				trace,
+			))
+
+			continue
+		}
+
+		{
 			adverse := adverseSelection(thesis, forecast)
 			haircut, haircutReason, haircutReady := allocationHaircut(
 				thesis, forecast, adverse,
@@ -245,11 +280,14 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 				continue
 			}
 
-			opportunity := highVelocityOpportunity(thesis, symbol)
-			cause := "causal_mcts_entry"
-			reason := "causal MCTS search recommended entry trajectory"
+			cause := "opportunity_entry"
+			reason := "recognized high-velocity precursor entered on structure the return forecast cannot price"
 
-			if !searchable {
+			switch {
+			case priced && searchable:
+				cause = "causal_mcts_entry"
+				reason = "causal MCTS search recommended entry trajectory"
+			case priced:
 				cause = "utility_entry"
 				reason = "positive executable utility accepted before causal history reached the MCTS minimum"
 			}
@@ -285,15 +323,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 				Reason:            reason,
 				Trace:             trace,
 			})
-
-			continue
 		}
-
-		thesis.Decisions = append(thesis.Decisions, evaluator.reject(
-			forecast, utility, "mcts_rejected",
-			"causal MCTS trajectory search did not select entry action",
-			trace,
-		))
 	}
 }
 
