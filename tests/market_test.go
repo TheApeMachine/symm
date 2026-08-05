@@ -42,11 +42,15 @@ func TestMarketTransition(t *testing.T) {
 
 		Convey("When transitioning one symbol to FastPump", func() {
 			err := market.Transition("SIM1/USD", types.FastPump)
-			pumped := market.generators["SIM1/USD"].Step()
-			baseline := market.generators["SIM2/USD"].Step()
 
 			So(err, ShouldBeNil)
 			So(market.State, ShouldEqual, types.FastPump)
+			So(market.generators["SIM1/USD"].IgnitionArmed(), ShouldBeTrue)
+			So(market.generators["SIM2/USD"].IgnitionArmed(), ShouldBeFalse)
+
+			pumped := market.generators["SIM1/USD"].Step()
+			baseline := market.generators["SIM2/USD"].Step()
+
 			So(pumped.ChangePct, ShouldBeGreaterThan, baseline.ChangePct)
 		})
 

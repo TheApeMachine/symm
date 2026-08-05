@@ -58,6 +58,7 @@ type Market struct {
 	measurements map[string][]*types.Measurement
 	filled       map[string]struct{}
 	autoFill     bool
+	primed       bool
 	decisionMu   sync.Mutex
 }
 
@@ -279,8 +280,26 @@ func (market *Market) Transition(
 		return fmt.Errorf("market: cannot transition unknown symbol %q", symbol)
 	}
 
+	if !market.primed {
+		baselineSamples := viper.GetInt("signals.pumpdump.baselineCapacity")
+
+		if baselineSamples <= 0 {
+			return fmt.Errorf("market: positive empirical baseline capacity required")
+		}
+
+		for range baselineSamples {
+			market.Tick()
+		}
+
+		market.primed = true
+	}
+
 	market.State = state
 	generator.SetState(state, testtypes.MomentumMap[state])
+
+	for generator.PrecursorPending() {
+		market.tickGenerator(generator)
+	}
 
 	return nil
 }
@@ -294,25 +313,48 @@ because the result should come from the code that is currently being tested.
 func (market *Market) Tick() {
 	for _, symbol := range market.Symbols {
 		generator := market.generators[symbol.Pair]
-		sample := generator.Step()
-
-		market.Public.Publish(
-			"ticker",
-			ticker.NewFixture(ticker.UPDATE, 1, generator).Render(sample),
-		)
-		market.Public.Publish(
-			"book",
-			book.NewFixture(book.UPDATE, 1, generator).Render(sample),
-		)
-		market.Public.Publish(
-			"trade",
-			trade.NewFixture(trade.UPDATE, 1, generator).Render(sample),
-		)
-		market.Level3.Publish(
-			"level3",
-			level3.NewFixture(level3.UPDATE, 1, generator).Render(sample),
-		)
+		market.publish(generator)
 	}
+
+	market.settleTick()
+}
+
+/*
+tickGenerator publishes one precursor observation for the symbol currently
+transitioning. Other symbols retain their last baseline observation, and any
+already armed regime remains unsampled until the caller advances the market.
+*/
+func (market *Market) tickGenerator(generator *signal.Generator) {
+	market.publish(generator)
+	market.settleTick()
+}
+
+/*
+publish samples one coherent venue state and sends it through every real
+WebSocket channel consumed by the production stack.
+*/
+func (market *Market) publish(generator *signal.Generator) {
+	sample := generator.Step()
+
+	market.Public.Publish(
+		"ticker",
+		ticker.NewFixture(ticker.UPDATE, 1, generator).Render(sample),
+	)
+	market.Public.Publish(
+		"book",
+		book.NewFixture(book.UPDATE, 1, generator).Render(sample),
+	)
+	market.Public.Publish(
+		"trade",
+		trade.NewFixture(trade.UPDATE, 1, generator).Render(sample),
+	)
+	market.Level3.Publish(
+		"level3",
+		level3.NewFixture(level3.UPDATE, 1, generator).Render(sample),
+	)
+}
+
+func (market *Market) settleTick() {
 
 	/*
 		Answer pending orders before the processing pause so the execution and

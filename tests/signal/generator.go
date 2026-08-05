@@ -35,8 +35,9 @@ type Generator struct {
 	progress      float64
 
 	/*
-		burst is the unspent fraction of the ignition impulse that opened the
-		current regime, decaying towards zero over subsequent steps.
+		burst is the unspent fraction of the ignition impulse that opens the
+		current regime. It remains fully armed while the blended precursor is
+		sampled, then decays only after the first ignition sample.
 	*/
 	burst float64
 
@@ -116,11 +117,34 @@ func (generator *Generator) SetState(state testtypes.MarketState, momentum ...fl
 	generator.momentum = speed
 	generator.progress = 0
 
-	/*
-		Entering the regime fires its ignition impulse, so the first step
-		gaps rather than easing in.
-	*/
+	// The transition samples its blended precursor before this impulse fires.
 	generator.burst = 1.0
+}
+
+/*
+PrecursorPending reports whether Step will still sample the blended approach
+to the target regime. Once it becomes false, any configured ignition remains
+fully armed and unsampled for the following Step.
+*/
+func (generator *Generator) PrecursorPending() bool {
+	generator.mu.RLock()
+	defer generator.mu.RUnlock()
+
+	return generator.progress < 1.0
+}
+
+/*
+IgnitionArmed reports whether the target regime's discontinuous price and
+volume event has not yet been sampled.
+*/
+func (generator *Generator) IgnitionArmed() bool {
+	generator.mu.RLock()
+	defer generator.mu.RUnlock()
+
+	profile := generator.profiles[generator.targetState]
+
+	return generator.progress >= 1.0 && generator.burst == 1.0 &&
+		profile.IgnitionMove != 0
 }
 
 /*
@@ -147,7 +171,9 @@ func (generator *Generator) Step() testtypes.Sample {
 		a market that is part way between the two regimes rather than
 		snapping from one set of parameters to the other.
 	*/
-	if generator.progress < 1.0 {
+	precursor := generator.progress < 1.0
+
+	if precursor {
 		generator.progress = math.Min(1.0, generator.progress+
 			generator.momentum/baselineTransitionTicks,
 		)
@@ -164,12 +190,18 @@ func (generator *Generator) Step() testtypes.Sample {
 	deltaPct := (profile.Drift * dt * 0.01) + (profile.Volatility * math.Sqrt(dt) * noise * 0.01)
 
 	/*
-		The ignition impulse gaps the price on the step the regime is entered
-		and decays before subsequent steps, which keeps the first bar dominant
-		while retaining a fading continuation tail.
+		The blended approach is the observable precursor: spread, flow, and
+		volume migrate into their target regime without leaking the future gap.
+		The first post-transition sample receives the full configured ignition;
+		only its continuation tail decays.
 	*/
-	generator.burst *= profile.IgnitionDecay
-	impulse := profile.IgnitionMove * generator.burst
+	impulse := 0.0
+
+	if !precursor && generator.burst > 0 {
+		impulse = profile.IgnitionMove * generator.burst
+		generator.burst *= profile.IgnitionDecay
+	}
+
 	generator.midPrice = math.Max(0.01, generator.midPrice*(1.0+deltaPct+impulse))
 
 	// 3. Dynamic Spread & Bid/Ask Construction
@@ -192,8 +224,9 @@ func (generator *Generator) Step() testtypes.Sample {
 		Volume leads price into an ignition, so the burst multiplies executed
 		quantity on the same step the gap prints, then decays with it.
 	*/
-	if generator.burst > 0 && profile.IgnitionVolume > 1 {
-		stepVolume *= 1.0 + (profile.IgnitionVolume-1.0)*generator.burst
+	if impulse != 0 && profile.IgnitionVolume > 1 {
+		impulseFraction := math.Abs(impulse / profile.IgnitionMove)
+		stepVolume *= 1.0 + (profile.IgnitionVolume-1.0)*impulseFraction
 	}
 
 	if generator.burst < 0.001 {

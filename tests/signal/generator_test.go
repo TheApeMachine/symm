@@ -29,6 +29,8 @@ func TestGeneratorSetState(t *testing.T) {
 			generator.SetState(testtypes.FastPump)
 
 			So(generator.targetState, ShouldEqual, testtypes.FastPump)
+			So(generator.PrecursorPending(), ShouldBeTrue)
+			So(generator.IgnitionArmed(), ShouldBeFalse)
 		})
 	})
 }
@@ -46,6 +48,25 @@ func TestGeneratorStep(t *testing.T) {
 			So(sample.Last, ShouldBeGreaterThan, 0)
 			So(sample.Volume, ShouldBeGreaterThan, 0)
 			So(sample.VWAP, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a FastPump transition", t, func() {
+		generator := NewGenerator("SIM1/USD", 100.0, 42)
+		generator.SetState(testtypes.FastPump, testtypes.MomentumMap[testtypes.FastPump])
+
+		for generator.PrecursorPending() {
+			sample := generator.Step()
+			So(sample.ChangePct, ShouldBeLessThan, 1.0)
+		}
+
+		Convey("It should leave the full ignition armed for the next sample", func() {
+			So(generator.IgnitionArmed(), ShouldBeTrue)
+
+			ignition := generator.Step()
+
+			So(ignition.ChangePct, ShouldBeGreaterThan, 25.0)
+			So(generator.IgnitionArmed(), ShouldBeFalse)
 		})
 	})
 }

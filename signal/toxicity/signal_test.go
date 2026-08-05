@@ -152,7 +152,7 @@ func BenchmarkToxicityMeasurement(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		_ = toxicityMeasurement("BTC/USD", previous, current, trades)
 	}
 }

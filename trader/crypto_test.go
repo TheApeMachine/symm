@@ -88,15 +88,25 @@ func TestIntegration(t *testing.T) {
 			Convey("When the market is transitioned to a fast pump", func() {
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
 
-				Convey("Then the market should be in a fast pump state", func() {
+				Convey("Then the planner should enter before ignition is sampled", func() {
 					decisions := market.Decisions()
+					var entry *types.Decision
 
-					for _, decision := range decisions {
-						if decision.Symbol == "SIM1/USD" {
-							So(decision.Action, ShouldEqual, "BUY")
-							So(decision.Stoploss.Symbol, ShouldEqual, "SIM1/USD")
+					for index := range decisions {
+						decision := &decisions[index]
+
+						if decision.Symbol == "SIM1/USD" &&
+							decision.Action == types.ActionEnter {
+							entry = decision
+							break
 						}
 					}
+
+					So(decisions, ShouldNotBeEmpty)
+					So(entry, ShouldNotBeNil)
+					So(entry.Risk.Present, ShouldBeTrue)
+					So(entry.ProposedQuantity, ShouldNotBeNil)
+					So(entry.ProposedQuantity.Sign(), ShouldEqual, 1)
 				})
 			})
 		}),
