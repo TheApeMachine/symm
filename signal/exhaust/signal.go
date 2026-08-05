@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -31,7 +32,7 @@ type Signal struct {
 	status        types.Status
 	ctx           context.Context
 	cancel        context.CancelFunc
-	api           *websocket.API
+	books         websocket.BookSource
 	instrument    *broker.Instrument
 	planner       *strategy.Planner
 	sample        *algorithm.DecaySample
@@ -60,6 +61,8 @@ type bookObservation struct {
 	at      time.Time
 }
 
+const maximumDecayCategory = 4
+
 /*
 NewSignal constructs the market-wide exhaustion observer. Position inventory is
 deliberately absent: the signal measures both hypothetical exit sides, leaving
@@ -67,7 +70,7 @@ the consumer to select the side matching its position.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	books websocket.BookSource,
 	instrument *broker.Instrument,
 	planner *strategy.Planner,
 	ui chan []byte,
@@ -79,7 +82,7 @@ func NewSignal(
 		status:        types.INITIALIZING,
 		ctx:           ctx,
 		cancel:        cancel,
-		api:           api,
+		books:         books,
 		instrument:    instrument,
 		planner:       planner,
 		sample:        algorithm.NewDecaySample(),
@@ -135,9 +138,9 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.Measurements.Store(
+						thesis.AppendMeasurements(
 							types.SourceExhaustion,
-							measurements,
+							measurements...,
 						)
 
 						thesis.Readiness.Stamp(types.SourceExhaustion)
@@ -151,25 +154,25 @@ func (signal *Signal) run() {
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	trades := thesis.MarketTrades()
-	books := thesis.Books
 
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 	bookObservations := make([]bookObservation, 0)
 
-	books.Range(func(_, value any) bool {
-		managed, ok := value.(*spotbook.Book)
+	if signal.books == nil {
+		return measurements
+	}
 
-		if !ok {
-			return true
+	for _, symbol := range thesis.MarketSymbols() {
+		managed := signal.books.Book(symbol)
+
+		if managed != nil {
+			bookObservations = append(bookObservations, bookObservation{
+				managed: managed,
+				at:      managedBookObservedAt(managed),
+			})
 		}
-
-		bookObservations = append(bookObservations, bookObservation{
-			managed: managed,
-			at:      managedBookObservedAt(managed),
-		})
-		return true
-	})
+	}
 
 	sort.SliceStable(bookObservations, func(leftIndex, rightIndex int) bool {
 		left := bookObservations[leftIndex]
@@ -523,100 +526,106 @@ func (signal *Signal) frame(
 	output equation.DecayOutput,
 	maturity float64,
 ) []*types.Measurement {
+	metrics, normalized := normalizedDecayMetrics(output)
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
 	}
+
+	if !normalized {
+		validity.State = types.ValidityInvalid
+		validity.Reason = "decay normalization contract violated"
+	}
+
 	measurement := &types.Measurement{
 		Source:   types.SourceExhaustion,
 		Symbol:   symbol,
 		At:       at,
 		Maturity: maturity,
 		Validity: validity,
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricMechanical, types.SideBuy): {Raw: output.Long.Mechanical,
-				Normalized: types.NormalizeFinite(output.Long.Mechanical),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricThermal, types.SideBuy): {
-				Raw:        output.Long.Thermal,
-				Normalized: types.NormalizeFinite(output.Long.Thermal),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricFragile, types.SideBuy): {
-				Raw:        output.Long.Fragile,
-				Normalized: types.NormalizeFinite(output.Long.Fragile),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricReversal, types.SideBuy): {
-				Raw:        output.Long.Reversal,
-				Normalized: types.NormalizeFinite(output.Long.Reversal),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricUrgency, types.SideBuy): {
-				Raw:        output.Long.Urgency,
-				Normalized: types.NormalizeFinite(output.Long.Urgency),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricStrength, types.SideBuy): {
-				Raw:        output.Long.Strength,
-				Normalized: types.NormalizeFinite(output.Long.Strength),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricValue, types.SideBuy): {
-				Raw:        output.Long.Value,
-				Normalized: types.NormalizeFinite(output.Long.Value),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricCategory, types.SideBuy): {
-				Raw:        output.Long.Category,
-				Normalized: types.NormalizeFinite(output.Long.Category),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricMechanical, types.SideSell): {
-				Raw:        output.Short.Mechanical,
-				Normalized: types.NormalizeFinite(output.Short.Mechanical),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricThermal, types.SideSell): {
-				Raw:        output.Short.Thermal,
-				Normalized: types.NormalizeFinite(output.Short.Thermal),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricFragile, types.SideSell): {
-				Raw:        output.Short.Fragile,
-				Normalized: types.NormalizeFinite(output.Short.Fragile),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricReversal, types.SideSell): {
-				Raw:        output.Short.Reversal,
-				Normalized: types.NormalizeFinite(output.Short.Reversal),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricUrgency, types.SideSell): {
-				Raw:        output.Short.Urgency,
-				Normalized: types.NormalizeFinite(output.Short.Urgency),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricStrength, types.SideSell): {
-				Raw:        output.Short.Strength,
-				Normalized: types.NormalizeFinite(output.Short.Strength),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricValue, types.SideSell): {
-				Raw:        output.Short.Value,
-				Normalized: types.NormalizeFinite(output.Short.Value),
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricCategory, types.SideSell): {
-				Raw:        output.Short.Category,
-				Normalized: types.NormalizeFinite(output.Short.Category),
-				Unit:       types.UnitDimensionless,
-			},
-		},
+		Metrics:  metrics,
 	}
 
 	return []*types.Measurement{measurement}
+}
+
+/*
+normalizedDecayMetrics accepts the probability margins emitted by Decay in
+[0, 1]. Category is a nominal family identifier, so it deliberately has no
+scalar normalization; treating its integer code as magnitude would invent an
+ordering between mechanical, fragile, thermal, and reversal exhaustion.
+*/
+func normalizedDecayMetrics(
+	output equation.DecayOutput,
+) (map[string]types.MetricSample, bool) {
+	type reading struct {
+		metric types.MetricType
+		side   types.MeasurementSide
+		raw    float64
+	}
+
+	readings := []reading{
+		{types.MetricMechanical, types.SideBuy, output.Long.Mechanical},
+		{types.MetricThermal, types.SideBuy, output.Long.Thermal},
+		{types.MetricFragile, types.SideBuy, output.Long.Fragile},
+		{types.MetricReversal, types.SideBuy, output.Long.Reversal},
+		{types.MetricUrgency, types.SideBuy, output.Long.Urgency},
+		{types.MetricStrength, types.SideBuy, output.Long.Strength},
+		{types.MetricValue, types.SideBuy, output.Long.Value},
+		{types.MetricCategory, types.SideBuy, output.Long.Category},
+		{types.MetricMechanical, types.SideSell, output.Short.Mechanical},
+		{types.MetricThermal, types.SideSell, output.Short.Thermal},
+		{types.MetricFragile, types.SideSell, output.Short.Fragile},
+		{types.MetricReversal, types.SideSell, output.Short.Reversal},
+		{types.MetricUrgency, types.SideSell, output.Short.Urgency},
+		{types.MetricStrength, types.SideSell, output.Short.Strength},
+		{types.MetricValue, types.SideSell, output.Short.Value},
+		{types.MetricCategory, types.SideSell, output.Short.Category},
+	}
+	metrics := make(map[string]types.MetricSample, len(readings))
+	valid := true
+
+	for _, item := range readings {
+		sample := types.MetricSample{Raw: item.raw, Unit: types.UnitDimensionless}
+
+		if item.metric == types.MetricCategory {
+			if !validDecayCategory(item.raw) {
+				valid = false
+			}
+
+			metrics[types.MetricKey(item.metric, item.side)] = sample
+			continue
+		}
+
+		sample.Normalized = normalizedDecayScore(item.raw)
+
+		if sample.Normalized == nil {
+			valid = false
+		}
+
+		metrics[types.MetricKey(item.metric, item.side)] = sample
+	}
+
+	return metrics, valid
+}
+
+func normalizedDecayScore(raw float64) *float64 {
+	if math.IsNaN(raw) || math.IsInf(raw, 0) || raw < 0 || raw > 1 {
+		return nil
+	}
+
+	value := raw
+
+	return &value
+}
+
+func validDecayCategory(raw float64) bool {
+	return finiteDecay(raw) && raw >= 0 && raw <= maximumDecayCategory &&
+		raw == math.Trunc(raw)
+}
+
+func finiteDecay(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 /*

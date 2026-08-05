@@ -53,15 +53,15 @@ func NewHolding(
 		ctx:           ctx,
 		cancel:        cancel,
 		Symbol:        symbol,
-		Qty:           decision.ProposedQuantity.Copy(),
-		SellableQty:   decision.ProposedQuantity.Copy(),
-		Mark:          decision.Mark.Copy(),
+		Qty:           decision.ProposedQuantity,
+		SellableQty:   decision.ProposedQuantity,
+		Mark:          decision.Mark,
 		Status:        PENDING,
 		ReservationID: decision.ReservationID,
 		IsOpportunity: decision.Opportunity,
 		EntryAt:       decision.EntryAt,
-		EntryPrice:    decision.EntryPrice.Copy(),
-		EntryFee:      decision.EntryFee.Copy(),
+		EntryPrice:    decision.EntryPrice,
+		EntryFee:      decision.EntryFee,
 		Stoploss: NewStoploss(
 			ctx,
 			symbol,
@@ -114,7 +114,7 @@ func (holding *Holding) Update(
 	holding.Mark = ticker.Bid
 
 	if holding.Stoploss != nil && holding.Stoploss.ProfitLine != nil {
-		holding.ProfitThreshold = holding.Stoploss.ProfitLine.Copy()
+		holding.ProfitThreshold = holding.Stoploss.ProfitLine
 	}
 
 	return nil
@@ -134,7 +134,7 @@ func (holding *Holding) Observe(evidence StopEvidence) {
 	holding.Stoploss.Observe(evidence)
 
 	if holding.Stoploss.ProfitLine != nil {
-		holding.ProfitThreshold = holding.Stoploss.ProfitLine.Copy()
+		holding.ProfitThreshold = holding.Stoploss.ProfitLine
 	}
 }
 

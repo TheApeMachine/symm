@@ -35,14 +35,28 @@ func TestMarketTransition(t *testing.T) {
 	Convey("Given a market in Baseline state", t, func() {
 		symbols := []*types.Symbol{
 			types.NewSymbol("SIM1/USD", 100.0, 42),
+			types.NewSymbol("SIM2/USD", 100.0, 1337),
 		}
 		market := NewMarket(t.Context(), symbols)
 		defer market.Close()
 
-		Convey("When transitioning to FastPump", func() {
-			market.Transition(types.FastPump)
+		Convey("When transitioning one symbol to FastPump", func() {
+			err := market.Transition("SIM1/USD", types.FastPump)
+			pumped := market.generators["SIM1/USD"].Step()
+			baseline := market.generators["SIM2/USD"].Step()
 
+			So(err, ShouldBeNil)
 			So(market.State, ShouldEqual, types.FastPump)
+			So(pumped.ChangePct, ShouldBeGreaterThan, baseline.ChangePct)
+		})
+
+		Convey("When transitioning an unknown symbol", func() {
+			err := market.Transition("UNKNOWN/USD", types.FastPump)
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldEqual,
+				`market: cannot transition unknown symbol "UNKNOWN/USD"`)
+			So(market.State, ShouldEqual, types.Baseline)
 		})
 	})
 }
@@ -92,7 +106,7 @@ func TestMarketWithAutoFill(t *testing.T) {
 		So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
 		So(position.Holding.Stoploss.Mark.Cmp(position.Holding.Mark), ShouldEqual, 0)
 		So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
-		estimatedEntryPrice := position.Holding.EntryPrice.Copy()
+		estimatedEntryPrice := position.Holding.EntryPrice
 
 		market.Tick()
 		market.Tick()
@@ -107,9 +121,24 @@ func TestMarketWithAutoFill(t *testing.T) {
 		So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
 		So(position.Holding.Stoploss.Mark.Cmp(position.Holding.Mark), ShouldEqual, 0)
 
+		entryNoiseLimit := position.Holding.Stoploss.Plan.EntryNoiseBand.Mul(
+			decimal.NewFromFloat64(position.Holding.Stoploss.Plan.Multiples.Risk),
+		)
 		market.Desk.ApplyEvidence(coretypes.StopEvidence{
 			Symbol:     position.Holding.Symbol,
-			RegimeExit: coretypes.TriggerPumpDumpSellIgnition,
+			Spread:     entryNoiseLimit.Sub(position.Holding.Stoploss.Plan.TickSize),
+			ObservedAt: time.Now().UTC(),
+			Present:    true,
+		})
+		market.Tick()
+		positions = slices.Collect(market.Desk.Positions())
+		position = positions[0]
+		So(position.Status, ShouldEqual, coretypes.OPEN)
+		So(position.Holding.Stoploss.TriggerReason, ShouldBeBlank)
+
+		market.Desk.ApplyEvidence(coretypes.StopEvidence{
+			Symbol:     position.Holding.Symbol,
+			Spread:     entryNoiseLimit.Add(position.Holding.Stoploss.Plan.TickSize),
 			ObservedAt: time.Now().UTC(),
 			Present:    true,
 		})
@@ -118,6 +147,8 @@ func TestMarketWithAutoFill(t *testing.T) {
 		positions = slices.Collect(market.Desk.Positions())
 		So(positions, ShouldHaveLength, 1)
 		position = positions[0]
+		So(position.Holding.Stoploss.TriggerReason, ShouldEqual,
+			coretypes.TriggerExecutionNoiseRegime)
 		So(position.ExitOrder.ClOrdId, ShouldNotBeBlank)
 		So(position.ExitOrder.Volume, ShouldEqual, "0.25")
 

@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -95,9 +96,9 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.Measurements.Store(
+						thesis.AppendMeasurements(
 							types.SourceCorrelation,
-							measurements,
+							measurements...,
 						)
 
 						thesis.Readiness.Stamp(types.SourceCorrelation)
@@ -166,49 +167,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			continue
 		}
 
+		metrics, normalizationReady := correlationMetrics(scores)
+		measurementValidity := validity
+
+		if !normalizationReady {
+			measurementValidity.State = types.ValidityInvalid
+			measurementValidity.Reason = "correlation normalization contract violated"
+		}
+
 		measurement := &types.Measurement{
 			Source:   types.SourceCorrelation,
 			Symbol:   symbol,
 			At:       at,
-			Validity: validity,
-			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricCorrelation, types.SideNone): {
-					Raw:  scores["correlation"],
-					Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricSigned, types.SideNone): {
-					Raw:  scores["signed"],
-					Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricRelativeEnergy, types.SideNone): {
-					Raw:  scores["relativeEnergy"],
-					Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricHerdScore, types.SideNone): {
-					Raw:  scores["herdScore"],
-					Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricAlphaScore, types.SideNone): {
-					Raw:  scores["alphaScore"],
-					Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricNoiseScore, types.SideNone): {
-					Raw:  scores["noiseScore"],
-					Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricStressScore, types.SideNone): {
-					Raw:  scores["stressScore"],
-					Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricPeakScore, types.SideNone): {
-					Raw:  scores["peakScore"],
-					Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricStrength, types.SideNone): {
-					Raw:  scores["strength"],
-					Unit: types.UnitDimensionless,
-				},
-			},
+			Validity: measurementValidity,
+			Metrics:  metrics,
 		}
 
 		measurements = append(measurements, measurement)
@@ -225,6 +197,96 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	return measurements
+}
+
+/*
+correlationMetrics validates the equation-defined normalized domains. Pair
+correlation and category scores are bounded, signed correlation retains its
+direction, and relative energy is already a symbol/peer-energy ratio.
+*/
+func correlationMetrics(
+	scores map[string]float64,
+) (map[string]types.MetricSample, bool) {
+	type reading struct {
+		name   string
+		metric types.MetricType
+	}
+
+	readings := []reading{
+		{"correlation", types.MetricCorrelation},
+		{"signed", types.MetricSigned},
+		{"relativeEnergy", types.MetricRelativeEnergy},
+		{"herdScore", types.MetricHerdScore},
+		{"alphaScore", types.MetricAlphaScore},
+		{"noiseScore", types.MetricNoiseScore},
+		{"stressScore", types.MetricStressScore},
+		{"peakScore", types.MetricPeakScore},
+		{"strength", types.MetricStrength},
+	}
+	metrics := make(map[string]types.MetricSample, len(readings))
+	valid := true
+
+	for _, item := range readings {
+		raw, exists := scores[item.name]
+		normalized := normalizedCorrelationMetric(item.metric, raw)
+
+		if !exists || normalized == nil {
+			valid = false
+		}
+
+		metrics[types.MetricKey(item.metric, types.SideNone)] = types.MetricSample{
+			Raw:        raw,
+			Normalized: normalized,
+			Unit:       types.UnitDimensionless,
+		}
+	}
+
+	return metrics, valid
+}
+
+func normalizedCorrelationMetric(metric types.MetricType, raw float64) *float64 {
+	if math.IsNaN(raw) || math.IsInf(raw, 0) {
+		return nil
+	}
+
+	if metric == types.MetricSigned {
+		if raw < -1 || raw > 1 {
+			return nil
+		}
+
+		value := raw
+
+		return &value
+	}
+
+	if metric == types.MetricRelativeEnergy {
+		if raw <= 0 {
+			return nil
+		}
+
+		value := raw
+
+		return &value
+	}
+
+	switch metric {
+	case types.MetricCorrelation,
+		types.MetricHerdScore,
+		types.MetricAlphaScore,
+		types.MetricNoiseScore,
+		types.MetricStressScore,
+		types.MetricPeakScore,
+		types.MetricStrength:
+		if raw < 0 || raw > 1 {
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	value := raw
+
+	return &value
 }
 
 /*

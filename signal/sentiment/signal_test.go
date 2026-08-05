@@ -71,10 +71,37 @@ func TestMeasure(t *testing.T) {
 			So(breadth, ShouldAlmostEqual, -1.0/3.0, 1e-12)
 			So(leader.Metrics[types.MetricKey(types.MetricLeaderEvidence, types.SideNone)].Raw, ShouldBeGreaterThan, 0)
 			So(leader.Metrics[types.MetricKey(types.MetricDivergentScore, types.SideNone)].Raw, ShouldBeGreaterThan, 0)
+			So(leader.Sample(types.MetricChange, types.SideNone).Normalized,
+				ShouldNotBeNil)
+			So(*leader.Sample(types.MetricBreadth, types.SideNone).Normalized,
+				ShouldAlmostEqual, -1.0/3.0, 1e-12)
 		})
 
 		Convey("It should reject repeated latest-value cache entries", func() {
 			So(signal.Measure(thesis), ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given a cohort with real cadence but no return dispersion", t, func() {
+		signal := &Signal{observations: make(map[string]returnObservation)}
+		thesis := types.NewThesis()
+		start := time.Unix(1_700_000_100, 0).UTC()
+		thesis.Tickers = tickerMap([]kraken.TickerData{
+			ticker("AAA/USD", 100, start),
+			ticker("BBB/USD", 100, start),
+		})
+		So(signal.Measure(thesis), ShouldBeEmpty)
+		thesis.Tickers = tickerMap([]kraken.TickerData{
+			ticker("AAA/USD", 100, start.Add(time.Second)),
+			ticker("BBB/USD", 100, start.Add(time.Second)),
+		})
+		measurements := signal.Measure(thesis)
+
+		Convey("It should not fabricate normalized zeroes without a scale", func() {
+			So(measurements, ShouldHaveLength, 2)
+			So(measurements[0].Validity.State, ShouldEqual, types.ValidityProvisional)
+			So(measurements[0].Sample(types.MetricChange, types.SideNone).Normalized,
+				ShouldBeNil)
 		})
 	})
 }
@@ -87,4 +114,19 @@ func tickerMap(rows []kraken.TickerData) *sync.Map {
 	}
 
 	return values
+}
+
+func BenchmarkSentimentStatistics(b *testing.B) {
+	peers := []sentimentPeer{
+		{symbol: "AAA/USD", observation: returnObservation{change: 0.03}},
+		{symbol: "BBB/USD", observation: returnObservation{change: 0.01}},
+		{symbol: "CCC/USD", observation: returnObservation{change: -0.02}},
+		{symbol: "DDD/USD", observation: returnObservation{change: 0.015}},
+	}
+
+	b.ReportAllocs()
+
+	for range b.N {
+		_ = sentimentStatistics(peers)
+	}
 }

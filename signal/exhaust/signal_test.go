@@ -114,8 +114,12 @@ func TestFrame(t *testing.T) {
 		signal := &Signal{}
 		at := time.Unix(1_700_001_200, 0).UTC()
 		measurements := signal.frame("BTC/USD", at, equation.DecayOutput{
-			Long:  equation.DecaySideOutput{Thermal: 0.4, Value: 0.4, Strength: 0.4},
-			Short: equation.DecaySideOutput{Mechanical: 0.2, Value: 0.2, Strength: 0.2},
+			Long: equation.DecaySideOutput{
+				Thermal: 0.4, Value: 0.4, Strength: 0.4, Category: 3,
+			},
+			Short: equation.DecaySideOutput{
+				Mechanical: 0.2, Value: 0.2, Strength: 0.2, Category: 1,
+			},
 		}, 0.75)
 
 		Convey("It should preserve both side families under the existing metric keys", func() {
@@ -126,6 +130,10 @@ func TestFrame(t *testing.T) {
 				ShouldAlmostEqual, 0.4, 1e-12)
 			So(measurement.Sample(types.MetricMechanical, types.SideSell).Raw,
 				ShouldAlmostEqual, 0.2, 1e-12)
+			So(*measurement.Sample(types.MetricThermal, types.SideBuy).Normalized,
+				ShouldAlmostEqual, 0.4, 1e-12)
+			So(measurement.Sample(types.MetricCategory, types.SideBuy).Normalized,
+				ShouldBeNil)
 
 			for _, sample := range measurement.Metrics {
 				So(sample.Unit, ShouldEqual, types.UnitDimensionless)
@@ -156,5 +164,26 @@ func exhaustBookAt(
 		Asks: []flow.BookLevel{
 			{Price: askPrice, Ticks: int64(askPrice), Quantity: askQuantity},
 		},
+	}
+}
+
+func BenchmarkFrame(b *testing.B) {
+	signal := &Signal{}
+	at := time.Unix(1_700_001_300, 0).UTC()
+	output := equation.DecayOutput{
+		Long: equation.DecaySideOutput{
+			Mechanical: 0.2, Fragile: 0.3, Thermal: 0.4, Reversal: 0.1,
+			Urgency: 0.3, Strength: 0.3, Value: 0.3, Category: 3,
+		},
+		Short: equation.DecaySideOutput{
+			Mechanical: 0.1, Fragile: 0.2, Thermal: 0.3, Reversal: 0.4,
+			Urgency: 0.3, Strength: 0.3, Value: 0.3, Category: 4,
+		},
+	}
+
+	b.ReportAllocs()
+
+	for range b.N {
+		_ = signal.frame("BTC/USD", at, output, 1)
 	}
 }

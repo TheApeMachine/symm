@@ -11,7 +11,7 @@ system:
     level: debug
   actor:
     retry_max: 21
-    buffer: 1024
+    buffer: 128
   websocket:
     channel:
       # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
@@ -83,6 +83,6 @@ trading:
 
 signals:
   depthflow:
-    sampleSize: 4096
+    sampleSize: 128
   pumpdump:
-    baselineCapacity: 4096
+    baselineCapacity: 128

@@ -119,6 +119,26 @@ func TestFrame(t *testing.T) {
 			So(measurement.Maturity, ShouldEqual, 0.8)
 			So(measurement.Sample(types.MetricThinScore, types.SideNone).Raw,
 				ShouldAlmostEqual, 0.3, 1e-12)
+			So(*measurement.Sample(types.MetricThinScore, types.SideNone).Normalized,
+				ShouldAlmostEqual, 0.3, 1e-12)
+		})
+	})
+
+	Convey("Given the full domain contrast between opposite book imbalances", t, func() {
+		measurement := (&Signal{}).frame(
+			"BTC/USD",
+			time.Unix(1_700_000_400, 0).UTC(),
+			equation.BookflowOutput{
+				Value: 1.5, Strength: 1.5, SpoofScore: 1.5, Category: 2, Ready: true,
+			},
+			1,
+		)[0]
+
+		Convey("It should scale spoof evidence by the maximum possible contrast", func() {
+			So(*measurement.Sample(types.MetricSpoofScore, types.SideNone).Normalized,
+				ShouldAlmostEqual, 0.75, 1e-12)
+			So(*measurement.Sample(types.MetricStrength, types.SideNone).Normalized,
+				ShouldAlmostEqual, 0.75, 1e-12)
 		})
 	})
 }
@@ -145,5 +165,19 @@ func depthflowBookInput(bidQuantity, askQuantity float64) flow.BookInput {
 			{Price: 101, Ticks: 101, Quantity: askQuantity},
 			{Price: 102, Ticks: 102, Quantity: askQuantity},
 		},
+	}
+}
+
+func BenchmarkFrame(b *testing.B) {
+	signal := &Signal{}
+	at := time.Unix(1_700_000_500, 0).UTC()
+	output := equation.BookflowOutput{
+		Value: 0.7, Strength: 0.7, LoadedScore: 0.7, Category: 1, Ready: true,
+	}
+
+	b.ReportAllocs()
+
+	for range b.N {
+		_ = signal.frame("BTC/USD", at, output, 1)
 	}
 }

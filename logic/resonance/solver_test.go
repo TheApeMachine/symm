@@ -1,6 +1,7 @@
 package resonance
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 func TestExtractFeatures(t *testing.T) {
@@ -236,4 +238,57 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 			So(row["targetSymbol"], ShouldEqual, "ETH/USD")
 		})
 	})
+}
+
+/*
+BenchmarkUpdate measures the two-symbol resonance pass at the feature width
+observed in the full tick profile. It exposes whether per-symbol fan-out helps
+or merely competes with Gonum's own parallel matrix work.
+*/
+func BenchmarkUpdate(b *testing.B) {
+	const featureCount = 48
+
+	thesis := types.NewThesis()
+	solver := NewSolver(nil, nil)
+	symbols := []string{"SIM1/USD", "SIM2/USD"}
+
+	for symbolIndex, symbol := range symbols {
+		metrics := make(map[string]types.MetricSample, featureCount)
+
+		for featureIndex := range featureCount {
+			normalized := float64(featureIndex+symbolIndex) / featureCount
+			metrics[fmt.Sprintf("feature_%d", featureIndex)] = types.MetricSample{
+				Normalized: &normalized,
+			}
+		}
+
+		thesis.Measurements.Store(types.SourceLiquidity, append(
+			utils.Measurements(thesis, types.SourceLiquidity),
+			&types.Measurement{
+				Source:  types.SourceLiquidity,
+				Symbol:  symbol,
+				Metrics: metrics,
+			},
+		))
+	}
+
+	epoch := int64(1)
+	b.ResetTimer()
+
+	for b.Loop() {
+		for _, symbol := range symbols {
+			thesis.Tickers.Store(symbol, kraken.TickerData{
+				Symbol:    symbol,
+				Bid:       decimal.NewFromFloat64(99),
+				Ask:       decimal.NewFromFloat64(101),
+				Timestamp: time.Unix(epoch, 0),
+			})
+		}
+
+		if err := solver.Update(thesis); err != nil {
+			b.Fatal(err)
+		}
+
+		epoch++
+	}
 }

@@ -1,6 +1,8 @@
 package strategy
 
 import (
+	"math"
+
 	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/types"
@@ -16,7 +18,6 @@ const (
 
 	mctsMinimumCausalRows = 12
 	mctsSearchIterations  = 50
-	mctsHorizonSteps      = 5
 )
 
 /*
@@ -36,12 +37,13 @@ type StrategyState struct {
 
 	Surprise float64 // Control 2
 
-	// Treatment is the forecast return as a fraction of the reference price,
-	// and RoundTripCost is the modelled friction of entering and exiting on
-	// the same scale.
-	Treatment     float64
-	RoundTripCost float64
-	HoldDiscount  float64
+	// Treatment is the resonance model's first forward-curve step, exactly the
+	// quantity in the causal history's treatment column. RoundTripCost is the
+	// modelled friction of entering and exiting on the same fractional scale.
+	Treatment            float64
+	RoundTripCost        float64
+	HoldDiscount         float64
+	HawkesSpectralRadius float64
 
 	Reward    float64 // Target / PnL
 	Step      int
@@ -57,16 +59,18 @@ func (strategyState StrategyState) Trace(
 	causalRows, minimumRows, iterations int,
 ) types.DecisionMCTSTrace {
 	return types.DecisionMCTSTrace{
-		Energy:            strategyState.Energy,
-		Surprise:          strategyState.Surprise,
-		Treatment:         strategyState.Treatment,
-		RoundTripCost:     strategyState.RoundTripCost,
-		HoldDiscount:      strategyState.HoldDiscount,
-		CausalRows:        causalRows,
-		MinimumCausalRows: minimumRows,
-		Iterations:        iterations,
-		HorizonSteps:      strategyState.MaxSteps,
-		Searchable:        causalRows >= minimumRows,
+		Energy:               strategyState.Energy,
+		Surprise:             strategyState.Surprise,
+		Treatment:            strategyState.Treatment,
+		RoundTripCost:        strategyState.RoundTripCost,
+		HoldDiscount:         strategyState.HoldDiscount,
+		HawkesSpectralRadius: strategyState.HawkesSpectralRadius,
+		HoldPropagation:      strategyState.holdPropagation(),
+		CausalRows:           causalRows,
+		MinimumCausalRows:    minimumRows,
+		Iterations:           iterations,
+		HorizonSteps:         strategyState.MaxSteps,
+		Searchable:           causalRows >= minimumRows,
 	}
 }
 
@@ -97,6 +101,31 @@ adverse move at all.
 */
 func (strategyState StrategyState) reversalFraction() float64 {
 	return -2.0 * strategyState.RoundTripCost
+}
+
+/*
+holdPropagation combines the exhaustion survival probability with the expected
+population carried into the next Hawkes generation. For branching matrix
+spectral radius rho, one parent plus its expected first-generation offspring is
+1+rho. Applying that population to the signed forecast lets a reflexive path
+expand when propagation outweighs exhaustion, while the fitted model remains
+stationary and the model-derived rollout horizon keeps the search finite.
+*/
+func (strategyState StrategyState) holdPropagation() float64 {
+	if strategyState.HoldDiscount <= 0 || strategyState.HoldDiscount >= 1 ||
+		strategyState.HawkesSpectralRadius < 0 ||
+		strategyState.HawkesSpectralRadius >= 1 {
+		return 0
+	}
+
+	propagation := strategyState.HoldDiscount *
+		(1 + strategyState.HawkesSpectralRadius)
+
+	if math.IsNaN(propagation) || math.IsInf(propagation, 0) {
+		return 0
+	}
+
+	return propagation
 }
 
 func (strategyState StrategyState) IsTerminal() bool {
@@ -130,9 +159,11 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 		next.IsHolding = true
 		next.Reward += strategyState.Treatment - strategyState.RoundTripCost
 	case ActionHold:
-		// A held forecast decays toward the horizon it was drawn for, so a
-		// further step of holding is worth less than the forecast claims.
-		next.Reward += strategyState.Treatment * strategyState.HoldDiscount
+		// Each hold advances one Hawkes generation. The propagated treatment is
+		// installed on the next state so repeated holds decay or expand
+		// geometrically instead of receiving the same scalar credit every step.
+		next.Treatment = strategyState.Treatment * strategyState.holdPropagation()
+		next.Reward += next.Treatment
 	case ActionCompleteTrajectory:
 		// The round trip was already charged on entry, so exiting adds
 		// nothing further. Charging it again would make every completed
@@ -161,18 +192,17 @@ the model was fitted on. The answer to that question is an extrapolation, and it
 arrives scaled far above the UCT terms it is added to, so it decides selection by
 itself.
 
-Each action instead names the forecast level it actually commits to: entering
-takes the candidate's own expected return, holding takes what a further step of
-it is worth after decay, and standing aside or completing a rollout takes
+Each action instead names the forecast level it committed to in this state.
+ApplyAction has already advanced a held treatment through its next Hawkes
+generation before MCTS constructs the child node, so both entry and hold expose
+the state's treatment directly. Standing aside or completing a rollout takes
 nothing. Those are levels the treatment column genuinely carries, so the
 interventional expectation is read from inside the model's support.
 */
 func (strategyState StrategyState) GetInterventionLevel(action float64) float64 {
 	switch action {
-	case ActionEnter:
+	case ActionEnter, ActionHold:
 		return strategyState.Treatment
-	case ActionHold:
-		return strategyState.Treatment * strategyState.HoldDiscount
 	default:
 		return 0.0
 	}

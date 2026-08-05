@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"context"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -31,7 +32,7 @@ type Signal struct {
 	status        types.Status
 	ctx           context.Context
 	cancel        context.CancelFunc
-	api           *websocket.API
+	books         websocket.BookSource
 	instrument    *broker.Instrument
 	planner       *strategy.Planner
 	sample        *flow.Sample
@@ -66,7 +67,7 @@ trade observations in each central market cut.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	books websocket.BookSource,
 	instrument *broker.Instrument,
 	planner *strategy.Planner,
 	ui chan []byte,
@@ -89,7 +90,7 @@ func NewSignal(
 		status:        types.INITIALIZING,
 		ctx:           ctx,
 		cancel:        cancel,
-		api:           api,
+		books:         books,
 		instrument:    instrument,
 		planner:       planner,
 		sample:        sample,
@@ -145,9 +146,9 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.Measurements.Store(
+						thesis.AppendMeasurements(
 							types.SourceDepthFlow,
-							measurements,
+							measurements...,
 						)
 
 						thesis.Readiness.Stamp(types.SourceDepthFlow)
@@ -161,25 +162,25 @@ func (signal *Signal) run() {
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	trades := thesis.MarketTrades()
-	books := thesis.Books
 
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 	bookObservations := make([]bookObservation, 0)
 
-	books.Range(func(_, value any) bool {
-		managed, ok := value.(*spotbook.Book)
+	if signal.books == nil {
+		return measurements
+	}
 
-		if !ok {
-			return true
+	for _, symbol := range thesis.MarketSymbols() {
+		managed := signal.books.Book(symbol)
+
+		if managed != nil {
+			bookObservations = append(bookObservations, bookObservation{
+				managed: managed,
+				at:      managedBookObservedAt(managed),
+			})
 		}
-
-		bookObservations = append(bookObservations, bookObservation{
-			managed: managed,
-			at:      managedBookObservedAt(managed),
-		})
-		return true
-	})
+	}
 
 	sort.SliceStable(bookObservations, func(leftIndex, rightIndex int) bool {
 		left := bookObservations[leftIndex]
@@ -531,10 +532,23 @@ func (signal *Signal) frame(
 	output equation.BookflowOutput,
 	maturity float64,
 ) []*types.Measurement {
+	loaded := normalizedBookflowScore(types.MetricLoadedScore, output.LoadedScore, output.Category)
+	spoof := normalizedBookflowScore(types.MetricSpoofScore, output.SpoofScore, output.Category)
+	thin := normalizedBookflowScore(types.MetricThinScore, output.ThinScore, output.Category)
+	neutral := normalizedBookflowScore(types.MetricNeutralScore, output.NeutralScore, output.Category)
+	strength := normalizedBookflowScore(types.MetricStrength, output.Strength, output.Category)
+	value := normalizedBookflowScore(types.MetricValue, output.Value, output.Category)
 	validity := types.MeasurementValidity{
 		State:     types.ValidityValid,
 		Readiness: types.ReadinessObservation,
 	}
+
+	if loaded == nil || spoof == nil || thin == nil || neutral == nil ||
+		strength == nil || value == nil {
+		validity.State = types.ValidityInvalid
+		validity.Reason = "book-flow normalization contract violated"
+	}
+
 	measurement := &types.Measurement{
 		Source:   types.SourceDepthFlow,
 		Symbol:   symbol,
@@ -544,38 +558,93 @@ func (signal *Signal) frame(
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricLoadedScore, types.SideNone): {
 				Raw:        output.LoadedScore,
-				Normalized: types.NormalizeFinite(output.LoadedScore),
+				Normalized: loaded,
 				Unit:       types.UnitDimensionless,
 			},
 			types.MetricKey(types.MetricSpoofScore, types.SideNone): {
 				Raw:        output.SpoofScore,
-				Normalized: types.NormalizeFinite(output.SpoofScore),
+				Normalized: spoof,
 				Unit:       types.UnitDimensionless,
 			},
 			types.MetricKey(types.MetricThinScore, types.SideNone): {
 				Raw:        output.ThinScore,
-				Normalized: types.NormalizeFinite(output.ThinScore),
+				Normalized: thin,
 				Unit:       types.UnitDimensionless,
 			},
 			types.MetricKey(types.MetricNeutralScore, types.SideNone): {
 				Raw:        output.NeutralScore,
-				Normalized: types.NormalizeFinite(output.NeutralScore),
+				Normalized: neutral,
 				Unit:       types.UnitDimensionless,
 			},
 			types.MetricKey(types.MetricStrength, types.SideNone): {
 				Raw:        output.Strength,
-				Normalized: types.NormalizeFinite(output.Strength),
+				Normalized: strength,
 				Unit:       types.UnitDimensionless,
 			},
 			types.MetricKey(types.MetricValue, types.SideNone): {
 				Raw:        output.Value,
-				Normalized: types.NormalizeFinite(output.Value),
+				Normalized: value,
 				Unit:       types.UnitDimensionless,
 			},
 		},
 	}
 
 	return []*types.Measurement{measurement}
+}
+
+const (
+	bookflowSpoofCategory    = 2.0
+	maxBookImbalanceContrast = 2.0
+)
+
+/*
+normalizedBookflowScore preserves the equation's bounded depth fractions. A
+spoof score is the absolute difference of two imbalances in [-1, 1], so its
+domain-derived maximum contrast is two; the winning strength/value use that
+same scale only for the spoof category.
+*/
+func normalizedBookflowScore(
+	metric types.MetricType,
+	raw float64,
+	category float64,
+) *float64 {
+	if math.IsNaN(raw) || math.IsInf(raw, 0) || raw < 0 {
+		return nil
+	}
+
+	value := raw
+
+	switch metric {
+	case types.MetricSpoofScore:
+		if raw > maxBookImbalanceContrast {
+			return nil
+		}
+
+		value = raw / maxBookImbalanceContrast
+	case types.MetricStrength, types.MetricValue:
+		if category == bookflowSpoofCategory {
+			if raw > maxBookImbalanceContrast {
+				return nil
+			}
+
+			value = raw / maxBookImbalanceContrast
+			break
+		}
+
+		if raw > 1 {
+			return nil
+		}
+	case types.MetricLoadedScore,
+		types.MetricThinScore,
+		types.MetricNeutralScore:
+		if raw > 1 {
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	return &value
 }
 
 /*

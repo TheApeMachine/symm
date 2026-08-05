@@ -87,14 +87,14 @@ func TestPricePnL(t *testing.T) {
 			market.Desk.Price().Update(&kraken.TickerData{
 				Symbol: symbols[0].Pair,
 				Bid:    bid,
-				Ask:    bid.Copy(),
+				Ask:    bid,
 			})
 			holding := &types.Holding{
 				Symbol:     symbols[0].Pair,
 				Qty:        decimal.NewFromFloat64(0.4),
 				EntryPrice: entryPrice,
 				EntryFee:   entryFee,
-				Mark:       bid.Copy(),
+				Mark:       bid,
 			}
 
 			pair := kraken.InstrumentPair{

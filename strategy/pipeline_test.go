@@ -110,7 +110,9 @@ func TestStrategyPipelineOnPump(t *testing.T) {
 			peakOpenPositions = max(peakOpenPositions, market.Desk.OpenPositions())
 		}
 
-		market.Transition(testtypes.FastPump)
+		for _, symbol := range market.Symbols {
+			So(market.Transition(symbol.Pair, testtypes.FastPump), ShouldBeNil)
+		}
 
 		for range 256 {
 			market.Tick()

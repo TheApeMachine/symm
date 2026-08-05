@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/structure"
@@ -166,7 +167,7 @@ func TestRecorderWriteFailureRecordsOperationalMetric(t *testing.T) {
 /*
 TestRecorderOverflowRecordsLoss proves a saturated hot-path ring remains
 non-blocking while the single consumer writes one authoritative aggregate row
-for the diagnostic events that could not enter the ring.
+for the operational events that could not enter the ring.
 */
 func TestRecorderOverflowRecordsLoss(t *testing.T) {
 	convey.Convey("Given a recorder whose ring is already saturated", t, func() {
@@ -194,6 +195,7 @@ func TestRecorderOverflowRecordsLoss(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 
 		convey.Convey("Then the persisted timeline declares the loss", func() {
+			convey.So(string(rows), convey.ShouldContainSubstring, `"channel":"operational"`)
 			convey.So(string(rows), convey.ShouldContainSubstring, `"type":"audit_overflow"`)
 			convey.So(string(rows), convey.ShouldContainSubstring, `"dropped":1`)
 		})
@@ -209,17 +211,16 @@ func BenchmarkRecorderWrite(b *testing.B) {
 	}
 
 	event := map[string]any{
-		"channel": "measurements",
-		"type":    "measurements",
-		"value": map[string]any{
-			"Source":     "depthflow",
-			"Symbol":     "ETH/USD",
-			"Price":      1608.695,
-			"Strength":   0.2453732233965164,
-			"Volume":     0.0,
-			"Spread":     0.45,
-			"Confidence": 0.8,
-			"Surprise":   1.2,
+		"channel": "analysis",
+		"type":    CategoryDecisionContext,
+		"value": DecisionContext{
+			DecisionID: "decision-1",
+			Symbol:     "ETH/USD",
+			At:         time.Unix(1, 0).UTC(),
+			Tick:       17,
+			Action:     types.ActionNothing,
+			Cause:      "non_positive_utility",
+			Reason:     "executable utility did not clear costs",
 		},
 	}
 

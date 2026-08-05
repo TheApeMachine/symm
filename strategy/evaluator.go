@@ -112,17 +112,19 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		cognition := getCognition(thesis, symbol)
 		usableRows := usableCausalRows(causalRows)
 		holdDiscount, discountReady := exhaustionHoldDiscount(thesis, symbol)
+		spectralRadius, propagationReady := hawkesSpectralRadius(thesis, symbol)
 		rootState := StrategyState{
-			Symbol:        symbol,
-			Energy:        forecast.Uncertainty,
-			Surprise:      forecast.FractionOf(forecast.ExpectedImpact),
-			Treatment:     forecast.FractionOf(forecast.ExpectedReturn),
-			RoundTripCost: forecast.RoundTripFraction(),
-			HoldDiscount:  holdDiscount,
-			Reward:        0.0,
-			Step:          0,
-			MaxSteps:      mctsHorizonSteps,
-			IsHolding:     false,
+			Symbol:               symbol,
+			Energy:               forecast.Uncertainty,
+			Surprise:             forecast.FractionOf(forecast.ExpectedImpact),
+			Treatment:            forecast.TrajectoryTreatment,
+			RoundTripCost:        forecast.RoundTripFraction(),
+			HoldDiscount:         holdDiscount,
+			HawkesSpectralRadius: spectralRadius,
+			Reward:               0.0,
+			Step:                 0,
+			MaxSteps:             forecast.HorizonSteps,
+			IsHolding:            false,
 		}
 
 		causalWeight := causalFactor(doExpectation, uplift, noise, causalReady)
@@ -149,6 +151,16 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
 				forecast, 0, "hold_discount_unavailable",
 				"valid long-side exhaustion decay is required for trajectory search",
+				trace,
+			))
+
+			continue
+		}
+
+		if trace.MCTS.Searchable && !propagationReady {
+			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+				forecast, 0, "hawkes_propagation_unavailable",
+				"a valid fitted Hawkes spectral radius is required for trajectory search",
 				trace,
 			))
 
@@ -254,7 +266,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 				OpportunityMargin: utility,
 				CognitiveLead:     cognition.LookaheadScore,
 				BasinConfidence:   cognition.Confidence,
-				ReferencePrice:    forecast.ReferencePrice.Copy(),
+				ReferencePrice:    forecast.ReferencePrice,
 				ValidThroughEpoch: forecast.Epoch,
 				ForecastSource:    string(types.SourceResonance),
 				ForecastEpoch:     forecast.Epoch,
@@ -392,7 +404,7 @@ func (evaluator Evaluator) ManageContinuation(
 			OpportunityMargin: holdUtility + exitCostFraction,
 			CognitiveLead:     cognition.LookaheadScore,
 			BasinConfidence:   cognition.Confidence,
-			ReferencePrice:    forecast.ReferencePrice.Copy(),
+			ReferencePrice:    forecast.ReferencePrice,
 			ValidThroughEpoch: forecast.Epoch,
 			ForecastSource:    string(types.SourceResonance),
 			ForecastEpoch:     forecast.Epoch,
@@ -473,6 +485,13 @@ func (evaluator Evaluator) candidate(
 		return candidate{}, false
 	}
 
+	activeHorizon := horizon(row, len(curve))
+	trajectoryTreatment := curve[0]
+
+	if math.IsNaN(trajectoryTreatment) || math.IsInf(trajectoryTreatment, 0) {
+		return candidate{}, false
+	}
+
 	expectedReturn := projectedReturn(curve, retention(row, len(curve)))
 
 	if math.IsNaN(expectedReturn) || math.IsInf(expectedReturn, 0) {
@@ -506,16 +525,18 @@ func (evaluator Evaluator) candidate(
 	fees := reference.SetScale(8).Mul(fee.SetScale(8)).Mul(decimal.NewFromInt64(2))
 
 	return candidate{
-		Symbol:         symbol,
-		At:             thesis.At,
-		ExpectedReturn: reference.SetScale(8).Mul(decimal.NewFromFloat64(expectedReturn)),
-		ReferencePrice: reference,
-		ExpectedFees:   fees,
-		ExpectedSpread: spread,
-		ExpectedImpact: impact,
-		Uncertainty:    surprise,
-		Confidence:     math.Max(0, math.Min(1, confidence)),
-		Epoch:          uint64(thesis.Tick) + horizon(row, len(curve)),
+		Symbol:              symbol,
+		At:                  thesis.At,
+		ExpectedReturn:      reference.SetScale(8).Mul(decimal.NewFromFloat64(expectedReturn)),
+		ReferencePrice:      reference,
+		ExpectedFees:        fees,
+		ExpectedSpread:      spread,
+		ExpectedImpact:      impact,
+		TrajectoryTreatment: trajectoryTreatment,
+		Uncertainty:         surprise,
+		Confidence:          math.Max(0, math.Min(1, confidence)),
+		HorizonSteps:        activeHorizon,
+		Epoch:               uint64(thesis.Tick) + uint64(activeHorizon),
 	}, true
 }
 
@@ -531,7 +552,7 @@ func (evaluator Evaluator) reject(
 		At:                forecast.At,
 		Utility:           utility,
 		Alternatives:      map[string]float64{"enter": utility, "nothing": 0},
-		ReferencePrice:    forecast.ReferencePrice.Copy(),
+		ReferencePrice:    forecast.ReferencePrice,
 		ValidThroughEpoch: forecast.Epoch,
 		ForecastSource:    string(types.SourceResonance),
 		ForecastEpoch:     forecast.Epoch,

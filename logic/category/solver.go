@@ -3,7 +3,6 @@ package category
 import (
 	"math"
 	"strings"
-	"sync"
 
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -23,7 +22,6 @@ tick. A category is a hypothesis about what the market is doing, and each
 metric that carries affinity is typed evidence for or against it.
 */
 type Solver struct {
-	mu       sync.Mutex
 	mapper   *Mapper
 	api      *websocket.API
 	recorder *audit.Recorder
@@ -74,9 +72,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	if thesis == nil {
 		return nil
 	}
-
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
 
 	symbols := thesis.Symbols()
 	categories := make(map[string][]types.Category, len(symbols))

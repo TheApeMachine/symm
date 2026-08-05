@@ -204,10 +204,9 @@ func (analyzer *Analyzer) process(in any) {
 		}
 	}
 
-	// Evaluate on this goroutine rather than handing the thesis to one of
-	// its own. The evaluator ends a cycle by clearing the evidence it just
-	// spent, so running it concurrently would let it reset the thesis out
-	// from under the next signal pass that is already writing to it.
+	// Evaluate on this goroutine rather than handing the thesis to one of its
+	// own. The evaluator prepares the next epoch's readiness and derived
+	// snapshots, so those writes must remain ordered after this solver pass.
 	if analyzer.evaluator != nil {
 		analyzer.evaluator.Update(thesis)
 	}

@@ -422,8 +422,8 @@ func (desk *Desk) recoveredPosition(
 	position.Status = types.OPEN
 	position.entryTerminal = true
 	position.Holding.Asset = asset
-	position.Holding.Qty = quantity.Copy()
-	position.Holding.SellableQty = quantity.Copy()
+	position.Holding.Qty = quantity
+	position.Holding.SellableQty = quantity
 	position.Holding.EntryAt = &entryAt
 	position.Holding.Status = types.OPEN
 	position.Holding.Stoploss.BindRecovered()
@@ -742,9 +742,9 @@ func (desk *Desk) enter(decision types.Decision) error {
 		))
 	}
 
-	decision.EntryPrice = tick.Ask.Copy()
+	decision.EntryPrice = tick.Ask
 	decision.EntryFee = entryFee
-	decision.Mark = tick.Bid.Copy()
+	decision.Mark = tick.Bid
 
 	/*
 		An entry without stop geometry is refused rather than fitted with some.

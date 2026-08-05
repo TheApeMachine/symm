@@ -105,9 +105,9 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.Measurements.Store(
+						thesis.AppendMeasurements(
 							types.SourceSentiment,
-							measurements,
+							measurements...,
 						)
 
 						thesis.Readiness.Stamp(types.SourceSentiment)
@@ -152,6 +152,14 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		validity.Reason = appendReason(validity.Reason, "cohort cadence unavailable")
 	}
 
+	if !statistics.scaleReady {
+		validity.State = types.ValidityProvisional
+		validity.Reason = appendReason(
+			validity.Reason,
+			"peer return magnitude scale unavailable",
+		)
+	}
+
 	scale := types.ScaleReference{Kind: types.ScaleObservationWindow}
 
 	for _, peer := range peers {
@@ -190,60 +198,35 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			statistics.surge,
 			math.Max(peerDivergenceScore, statistics.slump),
 		)
+		metrics, normalized := sentimentMetrics(
+			map[types.MetricType]float64{
+				types.MetricChange:         change,
+				types.MetricBreadth:        statistics.breadth,
+				types.MetricLeaderStrength: leaderStrength,
+				types.MetricLeaderEvidence: leaderEvidence,
+				types.MetricRelativeLead:   relativeLead,
+				types.MetricSurgeScore:     statistics.surge,
+				types.MetricDivergentScore: peerDivergenceScore,
+				types.MetricSlumpScore:     statistics.slump,
+				types.MetricStrength:       strength,
+			},
+			statistics.magnitudeBaseline,
+			validity.State == types.ValidityValid,
+		)
+		measurementValidity := validity
+
+		if validity.State == types.ValidityValid && !normalized {
+			measurementValidity.State = types.ValidityInvalid
+			measurementValidity.Reason = "sentiment normalization contract violated"
+		}
 
 		measurement := &types.Measurement{
 			Source:   types.SourceSentiment,
 			Symbol:   peer.symbol,
 			At:       peer.observation.at,
-			Validity: validity,
+			Validity: measurementValidity,
 			Scale:    scale,
-			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricChange, types.SideNone): {
-					Raw:        change,
-					Normalized: types.NormalizeFinite(change),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricBreadth, types.SideNone): {
-					Raw:        statistics.breadth,
-					Normalized: types.NormalizeSigned(statistics.breadth),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricLeaderStrength, types.SideNone): {
-					Raw:        leaderStrength,
-					Normalized: types.NormalizeFinite(leaderStrength),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricLeaderEvidence, types.SideNone): {
-					Raw:        leaderEvidence,
-					Normalized: types.NormalizeFinite(leaderEvidence),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricRelativeLead, types.SideNone): {
-					Raw:        relativeLead,
-					Normalized: types.NormalizeFinite(relativeLead),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricSurgeScore, types.SideNone): {
-					Raw:        statistics.surge,
-					Normalized: types.NormalizeFinite(statistics.surge),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricDivergentScore, types.SideNone): {
-					Raw:        peerDivergenceScore,
-					Normalized: types.NormalizeFinite(peerDivergenceScore),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricSlumpScore, types.SideNone): {
-					Raw:        statistics.slump,
-					Normalized: types.NormalizeFinite(statistics.slump),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricStrength, types.SideNone): {
-					Raw:        strength,
-					Normalized: types.NormalizeFinite(strength),
-					Unit:       types.UnitDimensionless,
-				},
-			},
+			Metrics:  metrics,
 		}
 
 		measurements = append(measurements, measurement)
@@ -266,14 +249,16 @@ type sentimentPeer struct {
 }
 
 type sentimentSummary struct {
-	leader          string
-	leaderMagnitude float64
-	leaderEvidence  float64
-	relativeLead    float64
-	breadth         float64
-	surge           float64
-	slump           float64
-	divergence      float64
+	leader            string
+	leaderMagnitude   float64
+	leaderEvidence    float64
+	relativeLead      float64
+	breadth           float64
+	surge             float64
+	slump             float64
+	divergence        float64
+	magnitudeBaseline float64
+	scaleReady        bool
 }
 
 func (signal *Signal) ingest(rows []kraken.TickerData) bool {
@@ -396,6 +381,8 @@ func sentimentStatistics(peers []sentimentPeer) sentimentSummary {
 	medianMagnitude, hasMedianMagnitude := statistic.MedianOf(magnitudes)
 
 	if hasMedianChange && hasMedianMagnitude && medianMagnitude > 0 {
+		summary.magnitudeBaseline = medianMagnitude
+		summary.scaleReady = true
 		agreement := float64(max(advances, declines)) / float64(len(peers))
 		summary.surge = math.Max(0, medianChange) * agreement / medianMagnitude
 		summary.slump = math.Max(0, -medianChange) * agreement / medianMagnitude
@@ -458,6 +445,83 @@ func sentimentStatistics(peers []sentimentPeer) sentimentSummary {
 	}
 
 	return summary
+}
+
+/*
+sentimentMetrics normalizes raw log returns and leader magnitude by the current
+cohort's median absolute return. Breadth and the remaining evidence scores are
+already signed or unsigned cohort fractions derived from that same cut.
+*/
+func sentimentMetrics(
+	readings map[types.MetricType]float64,
+	magnitudeBaseline float64,
+	ready bool,
+) (map[string]types.MetricSample, bool) {
+	metrics := make(map[string]types.MetricSample, len(readings))
+	valid := ready
+
+	for metric, raw := range readings {
+		sample := types.MetricSample{Raw: raw, Unit: types.UnitDimensionless}
+
+		if ready {
+			sample.Normalized = normalizedSentimentMetric(
+				metric,
+				raw,
+				magnitudeBaseline,
+			)
+
+			if sample.Normalized == nil {
+				valid = false
+			}
+		}
+
+		metrics[types.MetricKey(metric, types.SideNone)] = sample
+	}
+
+	return metrics, valid
+}
+
+func normalizedSentimentMetric(
+	metric types.MetricType,
+	raw float64,
+	magnitudeBaseline float64,
+) *float64 {
+	if math.IsNaN(raw) || math.IsInf(raw, 0) {
+		return nil
+	}
+
+	if metric == types.MetricChange || metric == types.MetricLeaderStrength {
+		if magnitudeBaseline <= 0 || math.IsNaN(magnitudeBaseline) ||
+			math.IsInf(magnitudeBaseline, 0) {
+			return nil
+		}
+
+		value := raw / magnitudeBaseline
+
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+
+		return &value
+	}
+
+	if metric == types.MetricBreadth {
+		if raw < -1 || raw > 1 {
+			return nil
+		}
+
+		value := raw
+
+		return &value
+	}
+
+	if raw < 0 || raw > 1 {
+		return nil
+	}
+
+	value := raw
+
+	return &value
 }
 
 func appendReason(reason, addition string) string {

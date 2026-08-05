@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"math"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -383,7 +384,12 @@ func (evaluator Evaluator) finishEpisode(
 		the in-process model refuse to count them.
 	*/
 	errnie.Error(audit.Record(
-		evaluator.recorder, "passage", episode.record(id, outcome, labelled),
+		evaluator.recorder,
+		audit.ForecastOutcome{
+			ResolvedAt: time.Now().UTC(),
+			Provenance: "strategy/passage",
+			Episode:    episode.record(id, outcome, labelled),
+		},
 	))
 
 	if !labelled || evaluator.passage == nil {

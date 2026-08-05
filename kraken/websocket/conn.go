@@ -45,6 +45,13 @@ type Conn interface {
 	Close()
 }
 
+/*
+BookSource exposes the authoritative live Level 3 cache to measurement stages.
+*/
+type BookSource interface {
+	Book(string) *book.Book
+}
+
 type Callback[T any] struct {
 	Channel      string
 	Subscription types.Subscription[T]

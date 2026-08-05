@@ -258,29 +258,100 @@ func buildScoreMeasurement(
 		peer = anchor
 	}
 
+	validity := types.ObservationValidity(evidenceCount)
+	normalize := validity.State == types.ValidityValid
+
 	measurement := &types.Measurement{
 		Source:   types.SourceLeadLag,
 		Symbol:   symbol,
 		Peer:     peer,
 		At:       at,
-		Validity: types.ObservationValidity(evidenceCount),
+		Validity: validity,
 		Metrics:  make(map[string]types.MetricSample, len(readings)+1),
 	}
 
 	for _, item := range readings {
-		measurement.Metrics[types.MetricKey(item.metric, types.SideNone)] = types.MetricSample{
+		sample := types.MetricSample{
 			Raw:  item.raw,
 			Unit: types.UnitDimensionless,
 		}
+
+		if normalize {
+			sample.Normalized = normalizedLeadLag(item.metric, item.raw)
+
+			if sample.Normalized == nil {
+				measurement.Validity.State = types.ValidityInvalid
+				measurement.Validity.Reason = "lead-lag normalization contract violated"
+			}
+		}
+
+		measurement.Metrics[types.MetricKey(item.metric, types.SideNone)] = sample
 	}
 
-	measurement.Metrics[types.MetricKey(types.MetricSignedLagDirection, types.SideNone)] = types.MetricSample{
-		Raw:        selected.lagDirection,
-		Normalized: types.NormalizeFinite(selected.lagDirection),
-		Unit:       types.UnitDimensionless,
+	direction := types.MetricSample{
+		Raw:  selected.lagDirection,
+		Unit: types.UnitDimensionless,
 	}
+
+	if normalize {
+		direction.Normalized = normalizedLeadLag(
+			types.MetricSignedLagDirection,
+			selected.lagDirection,
+		)
+
+		if direction.Normalized == nil {
+			measurement.Validity.State = types.ValidityInvalid
+			measurement.Validity.Reason = "lead-lag normalization contract violated"
+		}
+	}
+
+	measurement.Metrics[types.MetricKey(
+		types.MetricSignedLagDirection,
+		types.SideNone,
+	)] = direction
 
 	return measurement
+}
+
+/*
+normalizedLeadLag validates the domains established by the lead-lag equations:
+correlations and direction are signed, while support, lag fraction, evidence
+weights, and strength are bounded fractions.
+*/
+func normalizedLeadLag(metric types.MetricType, raw float64) *float64 {
+	if math.IsNaN(raw) || math.IsInf(raw, 0) {
+		return nil
+	}
+
+	switch metric {
+	case types.MetricSignedCorrelation,
+		types.MetricSignedContempCorrelation,
+		types.MetricSignedLagCorrelation:
+		if raw < -1 || raw > 1 {
+			return nil
+		}
+	case types.MetricSignedLagDirection:
+		if raw != -1 && raw != 0 && raw != 1 {
+			return nil
+		}
+	case types.MetricCorrelation,
+		types.MetricLagFraction,
+		types.MetricSampleSupport,
+		types.MetricInefficient,
+		types.MetricSync,
+		types.MetricDecoupled,
+		types.MetricStall,
+		types.MetricStrength:
+		if raw < 0 || raw > 1 {
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	value := raw
+
+	return &value
 }
 
 /*
@@ -325,21 +396,57 @@ func (signal *Signal) provisional(
 		Symbol:   symbol,
 		At:       at,
 		Validity: validity,
-		Metrics:  make(map[string]types.MetricSample, 12),
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricCorrelation, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSignedCorrelation, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSignedContempCorrelation, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSignedLagCorrelation, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricLagFraction, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSampleSupport, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricInefficient, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSync, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricDecoupled, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStall, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStrength, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSignedLagDirection, types.SideNone): {
+				Raw:  0,
+				Unit: types.UnitDimensionless,
+			},
+		},
 	}
-
-	measurement.Metrics[types.MetricKey(types.MetricCorrelation, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricSignedCorrelation, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricSignedContempCorrelation, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricSignedLagCorrelation, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricLagFraction, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricSampleSupport, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricInefficient, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricSync, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricDecoupled, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricStall, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricSignedLagDirection, types.SideNone)] = types.MetricSample{Raw: 0, Unit: types.UnitDimensionless}
 
 	return measurement
 }

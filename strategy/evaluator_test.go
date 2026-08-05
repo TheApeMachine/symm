@@ -216,6 +216,42 @@ func TestExhaustionHoldDiscount(t *testing.T) {
 	})
 }
 
+func TestHawkesSpectralRadius(t *testing.T) {
+	Convey("Given an identified stationary Hawkes fit", t, func() {
+		thesis := types.NewThesis()
+		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
+			Source: types.SourceHawkes,
+			Symbol: "BTC/USD",
+			Validity: types.MeasurementValidity{
+				State:     types.ValidityProvisional,
+				Readiness: types.ReadinessModel,
+			},
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricSpectralRadius, types.SideNone): {Raw: 0.85},
+			},
+		}})
+
+		Convey("It should expose the fitted branching spectral radius", func() {
+			spectralRadius, ready := hawkesSpectralRadius(thesis, "BTC/USD")
+			So(ready, ShouldBeTrue)
+			So(spectralRadius, ShouldAlmostEqual, 0.85)
+		})
+
+		Convey("It should refuse a non-stationary fit", func() {
+			measurement, found := latestMeasurement(
+				thesis, "BTC/USD", types.SourceHawkes,
+			)
+			So(found, ShouldBeTrue)
+			measurement.Metrics[types.MetricKey(
+				types.MetricSpectralRadius, types.SideNone,
+			)] = types.MetricSample{Raw: 1}
+
+			_, ready := hawkesSpectralRadius(thesis, "BTC/USD")
+			So(ready, ShouldBeFalse)
+		})
+	})
+}
+
 func TestRegimeExit(t *testing.T) {
 	Convey("Given a valid empirically scaled pump-dump reading", t, func() {
 		thesis := types.NewThesis()
@@ -309,11 +345,11 @@ func TestAllocationHaircut(t *testing.T) {
 			decimal.NewFromFloat64(0.1),
 		)
 
-		Convey("It should publish the exact penalty and its measured causes", func() {
+		Convey("It should apply only the largest penalty and publish the shared gate", func() {
 			So(ready, ShouldBeTrue)
-			So(haircut, ShouldAlmostEqual, 1.4/2.4, 1e-12)
+			So(haircut, ShouldAlmostEqual, 0.5/1.5, 1e-12)
 			So(reason, ShouldEqual,
-				"executable-depth scarcity + toxicity + adverse selection")
+				"overlap max: executable-depth scarcity + toxicity + adverse selection")
 		})
 
 		Convey("It should refuse to size without toxicity evidence", func() {
@@ -409,5 +445,24 @@ func BenchmarkAllocationHaircut(b *testing.B) {
 
 	for b.Loop() {
 		_, _, _ = allocationHaircut(thesis, forecast, adverse)
+	}
+}
+
+func BenchmarkHawkesSpectralRadius(b *testing.B) {
+	thesis := types.NewThesis()
+	thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
+		Source: types.SourceHawkes,
+		Symbol: "BTC/USD",
+		Validity: types.MeasurementValidity{
+			State:     types.ValidityProvisional,
+			Readiness: types.ReadinessModel,
+		},
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricSpectralRadius, types.SideNone): {Raw: 0.85},
+		},
+	}})
+
+	for b.Loop() {
+		_, _ = hawkesSpectralRadius(thesis, "BTC/USD")
 	}
 }

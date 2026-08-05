@@ -97,9 +97,10 @@ func TestStrategyStateInterventionLevel(t *testing.T) {
 			// Entering commits to the forecast the candidate was priced on.
 			So(state.GetInterventionLevel(strategy.ActionEnter), ShouldEqual, 0.0015)
 
-			// A further step of holding is worth the decayed forecast, which is
-			// exactly what the rollout credits the position with.
-			So(state.GetInterventionLevel(strategy.ActionHold), ShouldAlmostEqual, 0.0012)
+			// A hold child carries the propagated forecast that the rollout
+			// credited when it constructed that state.
+			held := state.ApplyAction(strategy.ActionHold).(strategy.StrategyState)
+			So(held.GetInterventionLevel(strategy.ActionHold), ShouldAlmostEqual, 0.0012)
 
 			// Standing aside and completing a rollout both commit to no forecast.
 			So(state.GetInterventionLevel(strategy.ActionNothing), ShouldEqual, 0.0)
@@ -172,9 +173,17 @@ func TestSearchInterventionLevels(t *testing.T) {
 
 		Convey("It should only ever intervene at levels the treatment column carries", func() {
 			permitted := map[float64]bool{
-				0.0:                           true,
-				treatment:                     true,
-				treatment * root.HoldDiscount: true,
+				0.0:       true,
+				treatment: true,
+			}
+			trajectory := root.ApplyAction(strategy.ActionEnter).(strategy.StrategyState)
+			permitted[trajectory.GetInterventionLevel(strategy.ActionEnter)] = true
+
+			for !trajectory.IsTerminal() {
+				trajectory = trajectory.ApplyAction(
+					strategy.ActionHold,
+				).(strategy.StrategyState)
+				permitted[trajectory.GetInterventionLevel(strategy.ActionHold)] = true
 			}
 
 			for _, level := range engine.levels() {

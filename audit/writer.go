@@ -18,7 +18,7 @@ import (
 /*
 recorderCapacity is the lock-free ring depth. Power of two per MPMCRing's
 contract. A full ring drops the event rather than stalling the producer, so
-diagnostic recording can never apply backpressure to the hot path.
+audit recording can never apply backpressure to the hot path.
 */
 const recorderCapacity = 1 << 16
 
@@ -153,7 +153,7 @@ func (recorder *Recorder) drain() {
 		}
 
 		payload, err := sonic.Marshal(map[string]any{
-			"channel": "diagnostic",
+			"channel": "operational",
 			"type":    "audit_overflow",
 			"value": map[string]any{
 				"dropped": pendingDropped,

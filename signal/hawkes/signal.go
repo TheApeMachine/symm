@@ -113,9 +113,9 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.Measurements.Store(
+						thesis.AppendMeasurements(
 							types.SourceHawkes,
-							measurements,
+							measurements...,
 						)
 
 						thesis.Readiness.Stamp(types.SourceHawkes)

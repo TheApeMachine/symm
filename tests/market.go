@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"slices"
 	"sync"
@@ -61,8 +62,8 @@ type Market struct {
 }
 
 /*
-retainMeasurements copies the current tick's signal readings aside before the
-planner clears them.
+retainMeasurements copies the current cycle's signal readings aside so tests
+can inspect them after a completed decision closes the Thesis evidence cycle.
 */
 func (market *Market) retainMeasurements() {
 	market.decisionMu.Lock()
@@ -88,12 +89,9 @@ func (market *Market) retainMeasurements() {
 }
 
 /*
-Decisions returns every decision the planner has published so far.
-
-The planner clears the thesis at the end of each evaluated tick, so the
-decisions on it are gone by the time a test could read them. Collecting them
-from the planner's own subscription instead is the only way to see the whole
-run rather than whichever tick happened to be in flight.
+Decisions returns every decision the planner has published so far. Collecting
+the emitted copy preserves completed decision sets after their Thesis cycle has
+closed.
 */
 func (market *Market) Decisions() []types.Decision {
 	market.decisionMu.Lock()
@@ -235,11 +233,8 @@ func newMarket(
 
 /*
 Measurements flattens the measurements the signals have written, so assertions
-can inspect them as an ordinary map.
-
-Readings seen on earlier ticks are retained, because the thesis is cleared once
-a tick is evaluated and a signal that reported throughout the run would
-otherwise appear only if it happened to publish on the very last one.
+can inspect them as an ordinary map. The harness copy also keeps completed
+cycles available after decision emission closes the live Thesis cycle.
 */
 func (market *Market) Measurements() map[string][]*types.Measurement {
 	measurements := map[string][]*types.Measurement{}
@@ -270,16 +265,24 @@ func (market *Market) Measurements() map[string][]*types.Measurement {
 }
 
 /*
-Transition into another market state. This should not be an instance regime
-shift, instead it should take a realistic amount of ticks to move from one
-state into another. This is meant to simulate an actual market regime shift.
+Transition moves one symbol into another market state. This should not be an
+instant regime shift; the selected generator takes a realistic number of ticks
+to move from one state into another.
 */
-func (market *Market) Transition(state testtypes.MarketState) {
-	market.State = state
+func (market *Market) Transition(
+	symbol string,
+	state testtypes.MarketState,
+) error {
+	generator, ok := market.generators[symbol]
 
-	for _, generator := range market.generators {
-		generator.SetState(state, testtypes.MomentumMap[state])
+	if !ok {
+		return fmt.Errorf("market: cannot transition unknown symbol %q", symbol)
 	}
+
+	market.State = state
+	generator.SetState(state, testtypes.MomentumMap[state])
+
+	return nil
 }
 
 /*
@@ -312,14 +315,14 @@ func (market *Market) Tick() {
 	}
 
 	/*
-		Publishing is asynchronous, so without pausing here the loop feeding
-		the market outruns the stages consuming it and a test measures a
-		pipeline that never got to run. This paces the feed to something a
-		live venue could plausibly deliver.
+		Answer pending orders before the processing pause so the execution and
+		this tick's market frames can both reach the desk before the next tick.
+		Publishing is asynchronous, so without pausing here the loop feeding the
+		market outruns the stages consuming it and a test measures a pipeline
+		that never got to run.
 	*/
-	time.Sleep(tickInterval)
-
 	market.fillPending()
+	time.Sleep(tickInterval)
 	market.retainMeasurements()
 }
 

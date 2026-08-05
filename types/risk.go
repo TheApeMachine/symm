@@ -34,6 +34,12 @@ placed on an invented distance is worse than one that does not move.
 type RiskPlan struct {
 	Present bool `json:"present"`
 	/*
+		EntryNoiseBand is the crossing-cost band observed when the lot was sized.
+		It never changes: the live NoiseBand is compared against it to determine
+		whether the execution regime has left the one the allocation admitted.
+	*/
+	EntryNoiseBand *decimal.Decimal `json:"entry_noise_band"`
+	/*
 		NoiseBand is one execution-noise band, per unit: what a taker crossing
 		costs right now in spread plus modeled depth impact. It is the unit
 		every other distance here is stated in, because a move smaller than one
@@ -306,19 +312,20 @@ func NewRiskPlan(inputs RiskInputs) RiskPlan {
 	}
 
 	return RiskPlan{
-		Present:       true,
-		NoiseBand:     noiseBand,
-		RiskDistance:  riskDistance,
-		TrailDistance: largest(multiply(noiseBand, multiples.Trail), minimumBand),
-		ArmBuffer:     armBuffer,
-		LockBuffer:    lockBuffer,
-		MinEdge:       largest(multiply(noiseBand, multiples.MinEdge), tick),
-		MaxLoss:       scaled(inputs.MaxLoss),
-		ExitFeeRate:   scaled(inputs.ExitFeeRate),
-		EntryFeeRate:  scaled(inputs.EntryFeeRate),
-		TickSize:      tick,
-		ConfirmMarks:  confirmMarks,
-		Multiples:     multiples,
+		Present:        true,
+		EntryNoiseBand: noiseBand,
+		NoiseBand:      noiseBand,
+		RiskDistance:   riskDistance,
+		TrailDistance:  largest(multiply(noiseBand, multiples.Trail), minimumBand),
+		ArmBuffer:      armBuffer,
+		LockBuffer:     lockBuffer,
+		MinEdge:        largest(multiply(noiseBand, multiples.MinEdge), tick),
+		MaxLoss:        scaled(inputs.MaxLoss),
+		ExitFeeRate:    scaled(inputs.ExitFeeRate),
+		EntryFeeRate:   scaled(inputs.EntryFeeRate),
+		TickSize:       tick,
+		ConfirmMarks:   confirmMarks,
+		Multiples:      multiples,
 	}
 }
 

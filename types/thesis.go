@@ -5,8 +5,6 @@ import (
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/theapemachine/symm/kraken"
 )
 
 var thesisSignalSources = []SourceType{
@@ -135,11 +133,11 @@ func (readiness *Readiness) Complete() bool {
 Snapshot copies the stage stamps for audit and wire payloads without exposing
 the mutex used by concurrently running signals.
 */
-func (readiness *Readiness) Snapshot() Readiness {
+func (readiness *Readiness) Snapshot() *Readiness {
 	readiness.mu.RLock()
 	defer readiness.mu.RUnlock()
 
-	return Readiness{
+	return &Readiness{
 		Correlation: readiness.Correlation,
 		CVD:         readiness.CVD,
 		DepthFlow:   readiness.DepthFlow,
@@ -162,7 +160,7 @@ func (readiness *Readiness) Snapshot() Readiness {
 }
 
 /*
-Reset clears every stage stamp for the next thesis cycle.
+Reset clears every stage stamp for the next evaluation epoch.
 */
 func (readiness *Readiness) Reset() {
 	readiness.mu.Lock()
@@ -211,30 +209,31 @@ const (
 )
 
 /*
-Thesis is the durable lifecycle record from entry through post-mortem. It keeps
-decisions, lifecycle, and findings; each market cut replaces per-tick evidence
-in place so the object does not grow without bound.
+Thesis owns canonical evidence across every evaluated epoch that contributes to
+one decision. It closes only after the planner emits the completed decision set;
+broker execution and settlement continue in their own lifecycle.
 */
 type Thesis struct {
 	Readiness
-	Status       Status                `json:"status"`
-	Tick         int64                 `json:"tick"`
-	At           time.Time             `json:"at"`
-	CrossSection *CrossSection         `json:"crossSection"`
-	Measurements *sync.Map             `json:"-"`
-	Tickers      *sync.Map             `json:"-"`
-	Trades       *sync.Map             `json:"-"`
-	Books        *sync.Map             `json:"-"`
-	Graphs       *sync.Map             `json:"-"`
-	Decisions    []Decision            `json:"decisions"`
-	Lifecycle    *sync.Map             `json:"lifecycle"`
-	Findings     []Finding             `json:"findings"`
-	Hypotheses   []Hypothesis          `json:"hypotheses"`
-	Categories   map[string][]Category `json:"categories"`
-	Manifold     *sync.Map             `json:"-"`
-	Cognition    *sync.Map             `json:"-"`
-	Resonance    *sync.Map             `json:"-"`
-	Causal       *sync.Map             `json:"-"`
+	marketMu      sync.RWMutex
+	measurementMu sync.RWMutex
+	Status        Status                `json:"status"`
+	Tick          int64                 `json:"tick"`
+	At            time.Time             `json:"at"`
+	CrossSection  *CrossSection         `json:"crossSection"`
+	Measurements  *sync.Map             `json:"-"`
+	Tickers       *sync.Map             `json:"-"`
+	Trades        *sync.Map             `json:"-"`
+	Graphs        *sync.Map             `json:"-"`
+	Decisions     []Decision            `json:"decisions"`
+	Lifecycle     *sync.Map             `json:"lifecycle"`
+	Findings      []Finding             `json:"findings"`
+	Hypotheses    []Hypothesis          `json:"hypotheses"`
+	Categories    map[string][]Category `json:"categories"`
+	Manifold      *sync.Map             `json:"-"`
+	Cognition     *sync.Map             `json:"-"`
+	Resonance     *sync.Map             `json:"-"`
+	Causal        *sync.Map             `json:"-"`
 }
 
 /*
@@ -254,7 +253,6 @@ func NewThesis() *Thesis {
 		Measurements: &sync.Map{},
 		Tickers:      &sync.Map{},
 		Trades:       &sync.Map{},
-		Books:        &sync.Map{},
 		Manifold:     &sync.Map{},
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
@@ -264,22 +262,17 @@ func NewThesis() *Thesis {
 }
 
 /*
-Reset clears transient per-cycle evidence after decisions are produced while
-keeping the durable lifecycle record alive for the next thesis cycle.
+PrepareNextEvaluation clears only the working state whose meaning is limited to
+one evaluated market epoch. Canonical market observations, measurements, and
+lifecycle evidence remain available for the complete decision cycle.
 */
-func (thesis *Thesis) Reset() *Thesis {
+func (thesis *Thesis) PrepareNextEvaluation() *Thesis {
 	if thesis == nil {
 		return nil
 	}
 
 	thesis.At = time.Now().UTC()
-
-	// Tick is the monotonic count of evaluated ticks and deliberately
-	// survives a reset; zeroing it would restart the sequence every time
-	// the evidence is cleared.
 	thesis.CrossSection = NewCrossSection()
-	thesis.Measurements.Clear()
-	thesis.Books.Clear()
 	thesis.Graphs.Clear()
 	thesis.Manifold.Clear()
 	thesis.Cognition.Clear()
@@ -287,55 +280,37 @@ func (thesis *Thesis) Reset() *Thesis {
 	thesis.Causal.Clear()
 	thesis.Readiness.Reset()
 	thesis.Decisions = make([]Decision, 0)
-	thesis.Findings = make([]Finding, 0)
-	thesis.Hypotheses = make([]Hypothesis, 0)
 	thesis.Categories = make(map[string][]Category)
 
 	return thesis
 }
 
-func (thesis *Thesis) Market() (
-	[]kraken.TickerData,
-	[]kraken.TradeData,
-	*sync.Map,
-) {
-	return thesis.MarketTickers(), thesis.MarketTrades(), thesis.Books
-}
+/*
+CloseCycle clears retained evidence after the planner has emitted the completed
+decision set. Decision emission is the terminal boundary; order settlement is
+a separate broker lifecycle and does not extend this evidence cycle.
+*/
+func (thesis *Thesis) CloseCycle() *Thesis {
+	if thesis == nil {
+		return nil
+	}
 
-func (thesis *Thesis) MarketTickers() []kraken.TickerData {
-	tickers := make([]kraken.TickerData, 0)
+	thesis.PrepareNextEvaluation()
 
-	thesis.Tickers.Range(func(_, value any) bool {
-		if ticker, ok := value.(kraken.TickerData); ok {
-			tickers = append(tickers, ticker)
-		}
+	thesis.marketMu.Lock()
+	thesis.Tickers.Clear()
+	thesis.Trades.Clear()
+	thesis.marketMu.Unlock()
 
-		return true
-	})
+	thesis.measurementMu.Lock()
+	thesis.Measurements.Clear()
+	thesis.measurementMu.Unlock()
 
-	slices.SortFunc(tickers, func(left, right kraken.TickerData) int {
-		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
-	})
+	thesis.Lifecycle.Clear()
+	thesis.Findings = make([]Finding, 0)
+	thesis.Hypotheses = make([]Hypothesis, 0)
 
-	return tickers
-}
-
-func (thesis *Thesis) MarketTrades() []kraken.TradeData {
-	trades := make([]kraken.TradeData, 0)
-
-	thesis.Trades.Range(func(_, value any) bool {
-		if trade, ok := value.(kraken.TradeData); ok {
-			trades = append(trades, trade)
-		}
-
-		return true
-	})
-
-	slices.SortStableFunc(trades, func(left, right kraken.TradeData) int {
-		return cmp.Compare(left.Timestamp.UnixNano(), right.Timestamp.UnixNano())
-	})
-
-	return trades
+	return thesis
 }
 
 /*

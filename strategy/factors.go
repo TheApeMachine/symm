@@ -150,6 +150,31 @@ func exhaustionHoldDiscount(thesis *types.Thesis, symbol string) (float64, bool)
 }
 
 /*
+hawkesSpectralRadius reads the fitted branching matrix's spectral radius for
+the symbol. The Hawkes estimator is stationary by contract, so one is excluded:
+a value at or above it is not a stronger reading from this model but a fit that
+violates the model whose output strategy is consuming.
+*/
+func hawkesSpectralRadius(thesis *types.Thesis, symbol string) (float64, bool) {
+	measurement, ok := latestMeasurement(thesis, symbol, types.SourceHawkes)
+
+	if !ok || measurement.Validity.State == types.ValidityInvalid ||
+		measurement.Validity.Readiness != types.ReadinessModel {
+		return 0, false
+	}
+
+	spectralRadius, ok := rawMetric(
+		measurement, types.MetricSpectralRadius, types.SideNone,
+	)
+
+	if !ok || spectralRadius < 0 || spectralRadius >= 1 {
+		return 0, false
+	}
+
+	return spectralRadius, true
+}
+
+/*
 regimeExit names a structural long-position invalidation using the signal
 families that already model directional ignition and self-exciting cascades.
 Both comparisons use model-owned baselines: ignition must exceed its empirical
@@ -203,9 +228,12 @@ func regimeExit(thesis *types.Thesis, symbol string) string {
 }
 
 /*
-allocationHaircut combines like-scaled risk ratios as penalty odds. Dividing
-the odds by one plus themselves yields the exact fraction of pre-risk notional
-removed, without treating any one signal as a hidden veto.
+allocationHaircut gates overlapping microstructure warnings through their
+largest penalty odds. Scarcity, hollowing, and adverse selection can all be
+different observations of one withdrawal of executable liquidity; adding their
+odds would count that one cause repeatedly. The reason retains every live input
+so the overlap gate remains observable even though only its maximum reaches
+the allocator.
 */
 func allocationHaircut(
 	thesis *types.Thesis,
@@ -243,7 +271,7 @@ func allocationHaircut(
 		return 0, "", false
 	}
 
-	penalty := scarcity + hollow + informed
+	penalty := math.Max(scarcity, math.Max(hollow, informed))
 	reasons := make([]string, 0, 3)
 
 	if scarcity > 0 {
@@ -262,7 +290,8 @@ func allocationHaircut(
 		return 0, "clean executable liquidity and order flow", true
 	}
 
-	return penalty / (1 + penalty), strings.Join(reasons, " + "), true
+	return penalty / (1 + penalty),
+		"overlap max: " + strings.Join(reasons, " + "), true
 }
 
 func latestMeasurement(
@@ -623,15 +652,15 @@ func retention(row map[string]any, curveLength int) []float64 {
 	return surviving
 }
 
-func horizon(row map[string]any, curveLength int) uint64 {
+func horizon(row map[string]any, curveLength int) int {
 	if raw, found := row["activeHorizon"]; found {
 		if active, ok := raw.(int); ok && active > 0 {
-			return uint64(active)
+			return active
 		}
 	}
 
 	if curveLength > 0 {
-		return uint64(curveLength)
+		return curveLength
 	}
 
 	return 1

@@ -3,14 +3,40 @@ package strategy_test
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
+
+func stampPlannerReadiness(thesis *types.Thesis) {
+	for _, source := range []types.SourceType{
+		types.SourceCorrelation,
+		types.SourceCVD,
+		types.SourceDepthFlow,
+		types.SourceExhaustion,
+		types.SourceHawkes,
+		types.SourceLeadLag,
+		types.SourceLiquidity,
+		types.SourcePumpDump,
+		types.SourceSentiment,
+		types.SourceToxicity,
+	} {
+		thesis.Readiness.Stamp(source)
+	}
+
+	thesis.Readiness.Manifold = true
+	thesis.Readiness.Resonance = true
+	thesis.Readiness.Causal = true
+	thesis.Readiness.Graph = true
+	thesis.Readiness.Categories = true
+	thesis.Readiness.Cognition = true
+}
 
 func TestPlannerUpdate(t *testing.T) {
 	Convey("Given a thesis that is not yet ready for strategy evaluation", t, func() {
@@ -26,6 +52,83 @@ func TestPlannerUpdate(t *testing.T) {
 
 			market.Planner.Update(market.Thesis)
 			So(market.Thesis.Tick, ShouldEqual, before+2)
+		}))
+	})
+
+	Convey("Given consecutive evaluated epochs without a decision", t, func() {
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		}
+
+		Convey("It should retain canonical evidence and independently reset readiness", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			thesis := market.Thesis
+			base := time.Unix(1_700_006_000, 0).UTC()
+			thesis.NoteLifecycle("SIM1/USD", types.LifecycleManaging, base)
+
+			for epoch := range 2 {
+				observedAt := base.Add(time.Duration(epoch) * time.Second)
+				thesis.AppendTicker(kraken.TickerData{
+					Symbol: "SIM1/USD", Timestamp: observedAt,
+				})
+				thesis.AppendTrade(kraken.TradeData{
+					Symbol: "SIM1/USD", TradeID: int64(epoch + 1),
+					Timestamp: observedAt,
+				})
+				thesis.AppendMeasurements(types.SourceCVD, &types.Measurement{
+					Source: types.SourceCVD, Symbol: "SIM1/USD", At: observedAt,
+				})
+				stampPlannerReadiness(thesis)
+
+				market.Planner.Update(thesis)
+
+				So(thesis.MarketTickers(), ShouldHaveLength, epoch+1)
+				So(thesis.MarketTrades(), ShouldHaveLength, epoch+1)
+				So(thesis.Series("SIM1/USD"), ShouldHaveLength, epoch+1)
+				So(thesis.Readiness.SignalsMeasured(), ShouldBeFalse)
+			}
+
+			phase, found := thesis.Lifecycle.Load("SIM1/USD")
+			So(found, ShouldBeTrue)
+			So(phase, ShouldEqual, types.LifecycleManaging)
+		}))
+	})
+
+	Convey("Given a completed decision set", t, func() {
+		symbols := []*testtypes.Symbol{
+			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
+		}
+
+		Convey("It should emit the decisions before closing canonical history", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+			thesis := market.Thesis
+			observedAt := time.Unix(1_700_006_100, 0).UTC()
+			thesis.AppendTicker(kraken.TickerData{
+				Symbol: "SIM1/USD", Timestamp: observedAt,
+			})
+			thesis.AppendTrade(kraken.TradeData{
+				Symbol: "SIM1/USD", TradeID: 1, Timestamp: observedAt,
+			})
+			thesis.AppendMeasurements(types.SourceCVD, &types.Measurement{
+				Source: types.SourceCVD, Symbol: "SIM1/USD", At: observedAt,
+			})
+			thesis.NoteLifecycle("SIM1/USD", types.LifecycleManaging, observedAt)
+			thesis.Decisions = []types.Decision{{
+				Action: types.ActionHold, Symbol: "SIM1/USD", At: observedAt,
+			}}
+			stampPlannerReadiness(thesis)
+			subscription := market.Planner.Subscribe(
+				"cycle-close-test", types.NewSubscription[any](),
+			)
+
+			market.Planner.Update(thesis)
+
+			emitted := (<-subscription.Channel).([]types.Decision)
+			So(emitted, ShouldHaveLength, 1)
+			So(emitted[0].ValidID(), ShouldBeTrue)
+			So(thesis.MarketTickers(), ShouldBeEmpty)
+			So(thesis.MarketTrades(), ShouldBeEmpty)
+			So(thesis.Series("SIM1/USD"), ShouldBeEmpty)
+			_, foundLifecycle := thesis.Lifecycle.Load("SIM1/USD")
+			So(foundLifecycle, ShouldBeFalse)
 		}))
 	})
 }
@@ -44,7 +147,9 @@ func TestPlannerPumpEntry(t *testing.T) {
 			market.Tick()
 		}
 
-		market.Transition(testtypes.FastPump)
+		for _, symbol := range market.Symbols {
+			So(market.Transition(symbol.Pair, testtypes.FastPump), ShouldBeNil)
+		}
 
 		for range 256 {
 			market.Tick()
@@ -134,7 +239,9 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 			market.Tick()
 		}
 
-		market.Transition(testtypes.FastPump)
+		for _, symbol := range market.Symbols {
+			So(market.Transition(symbol.Pair, testtypes.FastPump), ShouldBeNil)
+		}
 
 		for range 256 {
 			market.Tick()
@@ -232,7 +339,9 @@ func TestPlannerPumpReversal(t *testing.T) {
 			market.Tick()
 		}
 
-		market.Transition(testtypes.FastPump)
+		for _, symbol := range market.Symbols {
+			So(market.Transition(symbol.Pair, testtypes.FastPump), ShouldBeNil)
+		}
 
 		for range 64 {
 			market.Tick()
@@ -258,7 +367,9 @@ func TestPlannerPumpReversal(t *testing.T) {
 		So(position.Holding.SellableQty.Cmp(entryQuantity), ShouldEqual, 0)
 
 		reversalDecisionOffset := len(market.Decisions())
-		market.Transition(testtypes.FastDump)
+		for _, symbol := range market.Symbols {
+			So(market.Transition(symbol.Pair, testtypes.FastDump), ShouldBeNil)
+		}
 
 		for range 256 {
 			market.Tick()

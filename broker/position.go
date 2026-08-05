@@ -323,45 +323,19 @@ func (position *Position) auditStops() {
 	stoploss := position.Holding.Stoploss
 
 	for _, transition := range stoploss.DrainTransitions() {
-		row := map[string]any{
-			"position":        position.ID,
-			"symbol":          position.pair.Symbol,
-			"seq":             transition.Seq,
-			"at":              transition.At,
-			"reason":          transition.Reason,
-			"phase":           transition.Phase,
-			"status":          transition.Status,
-			"armed":           transition.ProfitArmed,
-			"trigger":         transition.TriggerReason,
-			"mark":            transition.Mark,
-			"floor":           transition.Floor,
-			"hard_floor":      transition.HardFloor,
-			"profit_line":     transition.ProfitLine,
-			"break_even_line": transition.BreakEvenLine,
-			"profit_failsafe": transition.ProfitFailSafe,
-			"profit_floor":    transition.ProfitFloor,
-			"trail_floor":     transition.TrailFloor,
-			"arm_line":        transition.ArmLine,
-			"peak":            transition.Peak,
-			"entry":           transition.Entry,
-			"qty":             transition.Qty,
-			"entry_fee":       transition.EntryFee,
-			"risk":            transition.RiskDistance,
-			"trail":           transition.TrailDistance,
-			"noise_band":      transition.NoiseBand,
-			"worst_case_loss": transition.WorstCaseLoss,
-			"max_adverse":     transition.MaxAdverse,
-			"max_favorable":   transition.MaxFavorable,
-			"basis_confirmed": transition.BasisConfirmed,
-			"depth_limited":   transition.DepthLimited,
+		event := audit.ExecutionLifecycle{
+			PositionID: position.ID,
+			Symbol:     position.pair.Symbol,
+			Kind:       audit.ExecutionStopTransition,
+			Transition: transition,
 		}
 
 		if transition.Status == types.TRIGGERED {
-			row["stop_order_id"] = position.stopOrderID
-			row["exit_attempt"] = position.exitAttempt
+			event.StopOrderID = position.stopOrderID
+			event.ExitAttempt = position.exitAttempt
 		}
 
-		errnie.Error(audit.Record(position.recorder, "stop", row))
+		errnie.Error(audit.Record(position.recorder, event))
 	}
 }
 
@@ -482,7 +456,7 @@ func (position *Position) adoptExit(orderID string, order spot.Order) {
 	position.exitCumQty = decimal.NewFromInt64(0)
 
 	if order.VolumeExecuted != nil {
-		position.exitCumQty = order.VolumeExecuted.Copy()
+		position.exitCumQty = order.VolumeExecuted
 	}
 
 	position.exitAttempt = 1
@@ -590,12 +564,12 @@ func (position *Position) applyEntryFill(row kraken.ExecutionData) {
 
 	firstFill := position.entryCumQty.Sign() == 0
 	delta := row.CumQty.Sub(position.entryCumQty)
-	position.entryCumQty = row.CumQty.Copy()
+	position.entryCumQty = row.CumQty
 
 	if row.AvgPrice != nil {
-		position.Holding.EntryPrice = row.AvgPrice.Copy()
-		position.Holding.ExitPrice = row.AvgPrice.Copy()
-		position.Holding.Mark = row.AvgPrice.Copy()
+		position.Holding.EntryPrice = row.AvgPrice
+		position.Holding.ExitPrice = row.AvgPrice
+		position.Holding.Mark = row.AvgPrice
 	}
 
 	if position.Holding.EntryAt == nil {
@@ -604,18 +578,18 @@ func (position *Position) applyEntryFill(row kraken.ExecutionData) {
 	}
 
 	if row.FeeUsdEquiv != nil && firstFill {
-		position.Holding.EntryFee = row.FeeUsdEquiv.Copy()
+		position.Holding.EntryFee = row.FeeUsdEquiv
 	}
 
 	if row.FeeUsdEquiv != nil && !firstFill {
 		position.Holding.EntryFee = position.Holding.EntryFee.Add(row.FeeUsdEquiv)
 	}
 
-	position.Holding.Qty = row.CumQty.Copy()
+	position.Holding.Qty = row.CumQty
 	wasEmpty := position.Holding.SellableQty.Sign() == 0
 
 	if wasEmpty {
-		position.Holding.SellableQty = delta.Copy()
+		position.Holding.SellableQty = delta
 	}
 
 	if !wasEmpty {
@@ -670,7 +644,7 @@ func (position *Position) applyExitFill(row kraken.ExecutionData) {
 	}
 
 	delta := row.CumQty.Sub(position.exitCumQty)
-	remaining := position.Holding.SellableQty.Copy()
+	remaining := position.Holding.SellableQty
 
 	if delta.Cmp(remaining) > 0 {
 		errnie.Error(errnie.Err(
@@ -681,15 +655,15 @@ func (position *Position) applyExitFill(row kraken.ExecutionData) {
 		return
 	}
 
-	position.exitCumQty = row.CumQty.Copy()
+	position.exitCumQty = row.CumQty
 	position.Holding.SellableQty = remaining.Sub(delta)
 
 	if row.AvgPrice != nil {
-		position.Holding.ExitPrice = row.AvgPrice.Copy()
+		position.Holding.ExitPrice = row.AvgPrice
 	}
 
 	if row.FeeUsdEquiv != nil && position.Holding.ExitFee == nil {
-		position.Holding.ExitFee = row.FeeUsdEquiv.Copy()
+		position.Holding.ExitFee = row.FeeUsdEquiv
 		return
 	}
 

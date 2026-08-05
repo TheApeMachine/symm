@@ -188,7 +188,7 @@ func Boot(
 		utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
 		utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
 		utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
 	} {
 		errnie.Info(fmt.Sprintf("%s signal reported to be ready", signal.Name()))
 		signalSubscriptions[signal.Name()] = signal.Subscribe(signal.Name(), types.NewSubscription[any]())

@@ -109,19 +109,21 @@ and whether it ran. The search package currently returns only its robust-child
 root action, so no invented child visits or rewards are exposed here.
 */
 type DecisionMCTSTrace struct {
-	Energy            float64 `json:"energy"`
-	Surprise          float64 `json:"surprise"`
-	Treatment         float64 `json:"treatment"`
-	RoundTripCost     float64 `json:"roundTripCost"`
-	HoldDiscount      float64 `json:"holdDiscount"`
-	CausalRows        int     `json:"causalRows"`
-	MinimumCausalRows int     `json:"minimumCausalRows"`
-	Iterations        int     `json:"iterations"`
-	HorizonSteps      int     `json:"horizonSteps"`
-	Searchable        bool    `json:"searchable"`
-	Attempted         bool    `json:"attempted"`
-	RecommendedAction Action  `json:"recommendedAction,omitempty"`
-	Error             string  `json:"error,omitempty"`
+	Energy               float64 `json:"energy"`
+	Surprise             float64 `json:"surprise"`
+	Treatment            float64 `json:"treatment"`
+	RoundTripCost        float64 `json:"roundTripCost"`
+	HoldDiscount         float64 `json:"holdDiscount"`
+	HawkesSpectralRadius float64 `json:"hawkesSpectralRadius"`
+	HoldPropagation      float64 `json:"holdPropagation"`
+	CausalRows           int     `json:"causalRows"`
+	MinimumCausalRows    int     `json:"minimumCausalRows"`
+	Iterations           int     `json:"iterations"`
+	HorizonSteps         int     `json:"horizonSteps"`
+	Searchable           bool    `json:"searchable"`
+	Attempted            bool    `json:"attempted"`
+	RecommendedAction    Action  `json:"recommendedAction,omitempty"`
+	Error                string  `json:"error,omitempty"`
 }
 
 /*

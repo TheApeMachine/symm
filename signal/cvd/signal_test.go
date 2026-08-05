@@ -75,16 +75,29 @@ func TestMeasure(t *testing.T) {
 				ShouldEqual, types.UnitQuoteCurrency)
 
 			for _, metric := range []types.MetricType{
-				types.MetricAbsorption,
-				types.MetricDrive,
 				types.MetricBalance,
-				types.MetricStarvation,
 				types.MetricStrength,
 				types.MetricNetFraction,
 			} {
 				So(measurement.Sample(metric, types.SideNone).Unit,
 					ShouldEqual, types.UnitDimensionless)
+				So(measurement.Sample(metric, types.SideNone).Normalized,
+					ShouldNotBeNil)
 			}
+
+			for _, metric := range []types.MetricType{
+				types.MetricAbsorption,
+				types.MetricDrive,
+				types.MetricStarvation,
+			} {
+				So(measurement.Sample(metric, types.SideNone).Normalized,
+					ShouldBeNil)
+			}
+
+			net := measurement.Sample(types.MetricNet, types.SideNone)
+			So(net.Normalized, ShouldNotBeNil)
+			So(*net.Normalized, ShouldAlmostEqual,
+				measurement.Sample(types.MetricNetFraction, types.SideNone).Raw, 1e-12)
 
 			So(signal.Measure(futureCut), ShouldBeEmpty)
 		})
@@ -116,6 +129,30 @@ func TestMeasure(t *testing.T) {
 	})
 }
 
+func TestCVDMeasurements(t *testing.T) {
+	Convey("Given multi-observation aggressor and price-response evidence", t, func() {
+		measurement := (&Signal{}).cvdMeasurements(
+			cvdTrade(1, "sell", 100, time.Unix(1_700_003_400, 0).UTC()),
+			equation.FlowOutput{
+				Absorption: 0.2, Drive: 0.3, Balance: 0.5, Starvation: 0,
+				Value: 0.5, Net: -25, NetFraction: 0.25,
+			},
+			4,
+		)[0]
+
+		Convey("It should normalize every defined flow family and signed net", func() {
+			So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
+
+			for _, sample := range measurement.Metrics {
+				So(sample.Normalized, ShouldNotBeNil)
+			}
+
+			So(*measurement.Sample(types.MetricNet, types.SideNone).Normalized,
+				ShouldAlmostEqual, -0.25, 1e-12)
+		})
+	})
+}
+
 func cvdTicker(bid, ask float64, at time.Time) kraken.TickerData {
 	return kraken.TickerData{
 		Symbol: "BTC/USD", Bid: decimal.NewFromFloat64(bid),
@@ -127,5 +164,24 @@ func cvdTrade(id int64, side string, price float64, at time.Time) kraken.TradeDa
 	return kraken.TradeData{
 		Symbol: "BTC/USD", Side: side, Price: *decimal.NewFromFloat64(price),
 		Qty: 2, TradeID: id, Timestamp: at,
+	}
+}
+
+func BenchmarkCVDMeasurements(b *testing.B) {
+	signal := &Signal{}
+	row := cvdTrade(1, "sell", 100, time.Unix(1_700_003_500, 0).UTC())
+	output := equation.FlowOutput{
+		Absorption:  0.2,
+		Drive:       0.3,
+		Balance:     0.5,
+		Value:       0.5,
+		Net:         -25,
+		NetFraction: 0.25,
+	}
+
+	b.ReportAllocs()
+
+	for range b.N {
+		_ = signal.cvdMeasurements(row, output, 4)
 	}
 }

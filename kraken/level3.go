@@ -127,11 +127,11 @@ monetary value or retain the trailing zeroes Kraken includes in its L3 checksum.
 */
 func (order *Level3Order) UnmarshalJSON(data []byte) error {
 	wire := struct {
-		Event      string          `json:"event,omitempty"`
-		OrderID    string          `json:"order_id"`
-		LimitPrice json.RawMessage `json:"limit_price"`
-		OrderQty   json.RawMessage `json:"order_qty"`
-		Timestamp  time.Time       `json:"timestamp"`
+		Event      string                 `json:"event,omitempty"`
+		OrderID    string                 `json:"order_id"`
+		LimitPrice sonic.NoCopyRawMessage `json:"limit_price"`
+		OrderQty   sonic.NoCopyRawMessage `json:"order_qty"`
+		Timestamp  time.Time              `json:"timestamp"`
 	}{}
 
 	if err := sonic.Unmarshal(data, &wire); err != nil {
@@ -176,7 +176,7 @@ func (order Level3Order) ChecksumOrderQty() string {
 }
 
 func parseLevel3Decimal(
-	raw json.RawMessage,
+	raw []byte,
 ) (*decimal.Decimal, string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, "", nil

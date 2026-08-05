@@ -158,7 +158,7 @@ func (price *Price) RiskPlan(pair kraken.InstrumentPair) types.RiskPlan {
 	return types.NewRiskPlan(types.RiskInputs{
 		ReferencePrice: tick.Bid,
 		Spread:         spread,
-		TickSize:       size.Copy(),
+		TickSize:       &size,
 		ExitFeeRate:    feeRate,
 		Multiples:      types.DefaultRiskMultiples(),
 	})
@@ -196,16 +196,16 @@ func (price *Price) ExecutableMark(
 	}
 
 	if quantity == nil || quantity.Sign() <= 0 {
-		return tick.Bid.Copy(), false
+		return tick.Bid, false
 	}
 
 	size := quantity.Float64()
 
 	if size <= 0 || tick.BidQty >= size {
-		return tick.Bid.Copy(), false
+		return tick.Bid, false
 	}
 
-	return tick.Bid.Copy(), true
+	return tick.Bid, true
 }
 
 /*

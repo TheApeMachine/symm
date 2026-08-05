@@ -91,6 +91,7 @@ func TestStoplossGeometry(t *testing.T) {
 		stoploss, plan := fixtureEntry()
 
 		Convey("The derived lines should be ordered and separated", func() {
+			So(plan.EntryNoiseBand.Cmp(plan.NoiseBand), ShouldEqual, 0)
 			So(stoploss.HardFloor.Cmp(stoploss.Entry), ShouldEqual, -1)
 			So(stoploss.ProfitLine.Cmp(stoploss.Entry), ShouldEqual, 1)
 			So(stoploss.ProfitFloor.Cmp(stoploss.ProfitLine), ShouldEqual, 1)
@@ -237,7 +238,7 @@ func TestStoplossDepthLimitedMarks(t *testing.T) {
 		stoploss, _ := fixtureEntry()
 
 		observe(stoploss, 100.20, false)
-		peak := stoploss.Peak.Copy()
+		peak := stoploss.Peak
 
 		Convey("A high on liquidity that cannot take the lot builds no geometry", func() {
 			stoploss.Observe(types.StopEvidence{
@@ -271,7 +272,7 @@ func TestStoplossDepthLimitedMarks(t *testing.T) {
 		Convey("A protected floor breach should still be confirmed", func() {
 			armed := stoploss.ArmLine.Add(stoploss.Plan.TickSize)
 			observe(stoploss, armed.Float64(), false)
-			floor := stoploss.Floor.Copy()
+			floor := stoploss.Floor
 
 			for range stoploss.Plan.ConfirmMarks {
 				stoploss.Observe(types.StopEvidence{
@@ -299,7 +300,7 @@ func TestStoplossEvidenceFreshness(t *testing.T) {
 			ObservedAt:     time.Now().UTC(),
 			Present:        true,
 		})
-		widened := stoploss.Plan.TrailDistance.Copy()
+		widened := stoploss.Plan.TrailDistance
 
 		Convey("A stale reading should not change the trail", func() {
 			stoploss.Observe(types.StopEvidence{
@@ -318,7 +319,7 @@ func TestStoplossEvidenceFreshness(t *testing.T) {
 
 func TestStoplossObserve(t *testing.T) {
 	Convey("Given a filled lot above its hard risk floor", t, func() {
-		stoploss, _ := fixtureEntry()
+		stoploss, plan := fixtureEntry()
 
 		Convey("A current structural regime exit should bypass the frozen floor", func() {
 			stoploss.Observe(types.StopEvidence{
@@ -340,6 +341,46 @@ func TestStoplossObserve(t *testing.T) {
 				ExecutableMark: decimal.NewFromFloat64(100.20),
 				ObservedAt:     time.Now().UTC().Add(-time.Hour),
 				RegimeExit:     types.TriggerHawkesSellCascade,
+				Present:        true,
+			})
+
+			So(stoploss.Status, ShouldEqual, types.ARMED)
+			So(stoploss.TriggerReason, ShouldBeBlank)
+		})
+
+		Convey("A live crossing band beyond the entry risk multiple should exit", func() {
+			entryNoiseLimit := stoploss.Plan.EntryNoiseBand.Mul(
+				decimal.NewFromFloat64(stoploss.Plan.Multiples.Risk),
+			)
+			riskDistance := stoploss.Plan.RiskDistance
+
+			stoploss.Observe(types.StopEvidence{
+				Symbol:         fixtureSymbol,
+				ExecutableMark: decimal.NewFromFloat64(100.20),
+				Spread:         entryNoiseLimit.Add(stoploss.Plan.TickSize),
+				ObservedAt:     time.Now().UTC(),
+				Present:        true,
+			})
+
+			So(stoploss.Status, ShouldEqual, types.TRIGGERED)
+			So(stoploss.TriggerReason, ShouldEqual,
+				types.TriggerExecutionNoiseRegime)
+			So(stoploss.Mark.Cmp(stoploss.HardFloor), ShouldEqual, 1)
+			So(stoploss.Plan.EntryNoiseBand.Cmp(plan.EntryNoiseBand), ShouldEqual, 0)
+			So(stoploss.Plan.NoiseBand.Cmp(entryNoiseLimit), ShouldEqual, 1)
+			So(stoploss.Plan.RiskDistance.Cmp(riskDistance), ShouldEqual, 0)
+		})
+
+		Convey("A live crossing band inside the entry risk multiple should not exit", func() {
+			entryNoiseLimit := stoploss.Plan.EntryNoiseBand.Mul(
+				decimal.NewFromFloat64(stoploss.Plan.Multiples.Risk),
+			)
+
+			stoploss.Observe(types.StopEvidence{
+				Symbol:         fixtureSymbol,
+				ExecutableMark: decimal.NewFromFloat64(100.20),
+				Spread:         entryNoiseLimit.Sub(stoploss.Plan.TickSize),
+				ObservedAt:     time.Now().UTC(),
 				Present:        true,
 			})
 
@@ -433,7 +474,7 @@ func TestStoplossProfitProtection(t *testing.T) {
 				Present:        true,
 			})
 
-			previousFloor := stoploss.Floor.Copy()
+			previousFloor := stoploss.Floor
 			pullbackDistance := plan.TrailDistance.Div(decimal.NewFromInt64(2))
 
 			for range 4 {
@@ -444,7 +485,7 @@ func TestStoplossProfitProtection(t *testing.T) {
 				So(stoploss.Floor.Cmp(previousFloor), ShouldEqual, 1)
 				So(stoploss.Floor.Cmp(stoploss.ProfitLine), ShouldEqual, 1)
 
-				ratchetedFloor := stoploss.Floor.Copy()
+				ratchetedFloor := stoploss.Floor
 				observe(stoploss, peak.Sub(pullbackDistance).Float64(), false)
 
 				So(stoploss.Status, ShouldEqual, types.ARMED)
@@ -457,7 +498,7 @@ func TestStoplossProfitProtection(t *testing.T) {
 			observe(stoploss, 101.20, false)
 			So(stoploss.ProfitArmed, ShouldBeTrue)
 
-			floor := stoploss.Floor.Copy()
+			floor := stoploss.Floor
 			observe(stoploss, floor.Sub(decimal.NewFromFloat64(0.30)).Float64(), false)
 
 			So(stoploss.Status, ShouldEqual, types.ARMED)
@@ -512,11 +553,11 @@ func TestStoplossMonotonicity(t *testing.T) {
 				}
 
 				if stoploss.Floor != nil {
-					previousFloor = stoploss.Floor.Copy()
+					previousFloor = stoploss.Floor
 				}
 
 				if stoploss.Peak != nil {
-					previousPeak = stoploss.Peak.Copy()
+					previousPeak = stoploss.Peak
 				}
 			}
 		})
@@ -528,7 +569,7 @@ func TestStoplossRetreatingQuote(t *testing.T) {
 		stoploss, _ := fixtureEntry()
 
 		observe(stoploss, 100.50, false)
-		peak := stoploss.Peak.Copy()
+		peak := stoploss.Peak
 
 		Convey("The hollow quote should not record a peak", func() {
 			observe(stoploss, 101.50, true)
@@ -660,7 +701,7 @@ func TestStoplossTransitionAudit(t *testing.T) {
 
 				So(reasons, ShouldContain, "profit_armed")
 
-				floor := stoploss.Floor.Copy()
+				floor := stoploss.Floor
 
 				for range plan.ConfirmMarks {
 					observe(stoploss, floor.Sub(decimal.NewFromFloat64(0.05)).Float64(), false)
@@ -709,7 +750,7 @@ func TestStoplossRebindFill(t *testing.T) {
 			plan,
 		)
 
-		estimated := stoploss.ProfitLine.Copy()
+		estimated := stoploss.ProfitLine
 
 		Convey("A fill worse than the estimate should raise the profit line", func() {
 			stoploss.RebindFill(types.Fill{

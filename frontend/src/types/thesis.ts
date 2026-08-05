@@ -24,6 +24,8 @@ export type DecisionTrace = {
 		treatment: number;
 		roundTripCost: number;
 		holdDiscount: number;
+		hawkesSpectralRadius: number;
+		holdPropagation: number;
 		causalRows: number;
 		minimumCausalRows: number;
 		iterations: number;

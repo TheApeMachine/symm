@@ -21,10 +21,10 @@ actually realise right now, and whether that price is trustworthy enough to
 move the stop's geometry.
 
 It carries only what the regulator consumes. Forecast return, causal uplift and
-cognition confidence used to be declared here and were never read, because the
-decision they belong to — is this thesis still alive — is made by
-ManageContinuation, which has all of it in hand already and can act on it
-through the ordinary decision path. Duplicating those numbers into the stop
+cognition confidence used to be declared here and were never read. Structural
+regime invalidation and live execution cost remain because they answer a
+different question: whether the market in which the frozen loss geometry was
+admitted still exists. Duplicating ordinary continuation scores into the stop
 would give two layers a vote on the same question with no way to reconcile
 them.
 

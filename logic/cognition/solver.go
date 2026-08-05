@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 )
@@ -58,7 +57,7 @@ type Solver struct {
 const categoryTokenSeparator = "\x1f"
 
 /*
-NewSolver returns a new cognition solver bound to a radix tree and audit recorder.
+NewSolver returns a new cognition solver bound to a radix tree.
 */
 func NewSolver(
 	tree *dmt.Tree,
@@ -254,13 +253,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		thesis.Cognition.Store(symbol, cognition)
-
-		// 9. Audit Recording
-		if solver.recorder != nil {
-			errnie.Error(audit.Record(
-				solver.recorder, "predictive", cognition,
-			))
-		}
 	}
 
 	thesis.Readiness.Cognition = true

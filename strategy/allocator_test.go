@@ -90,7 +90,7 @@ func TestAllocatorAllocate(t *testing.T) {
 			}}
 
 			So(allocator.Allocate(thesis), ShouldBeNil)
-			unconstrained := thesis.Decisions[0].ProposedQuantity.Copy()
+			unconstrained := thesis.Decisions[0].ProposedQuantity
 
 			/*
 				A wide expected spread widens the boundary, which is exactly the

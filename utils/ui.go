@@ -6,8 +6,9 @@ import (
 )
 
 /*
-Publish is a convenience function to send data to the frontend,
-and takes care of marshalling and channel saturation.
+Publish sends replaceable dashboard state without letting an absent or slow UI
+consume the market-data path. A full buffered channel is normal backpressure,
+so that frame is freed before serialization and the trading path continues.
 */
 func Publish(ui chan []byte, data datura.Map[any]) {
 	if data == nil || ui == nil {
@@ -39,10 +40,19 @@ func Publish(ui chan []byte, data datura.Map[any]) {
 		return
 	}
 
+	if capacity := cap(ui); capacity > 0 && len(ui) == capacity {
+		data.Free()
+		return
+	}
+
 	select {
 	case ui <- data.MarshalAndFree():
 		return
 	default:
+		if cap(ui) > 0 {
+			return
+		}
+
 		errnie.Error(errnie.Err(
 			errnie.TooManyRequests,
 			"UI channel is saturated",

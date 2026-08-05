@@ -43,6 +43,8 @@ type liquidityObservation struct {
 	cadence         time.Duration
 }
 
+const minimumLiquidityCohort = 3
+
 /*
 NewSignal creates liquidity measurement state for central market cuts so each
 tick can compare executable liquidity across the observed cohort.
@@ -106,9 +108,9 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.Measurements.Store(
+						thesis.AppendMeasurements(
 							types.SourceLiquidity,
-							measurements,
+							measurements...,
 						)
 
 						thesis.Readiness.Stamp(types.SourceLiquidity)
@@ -155,6 +157,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		scale.From = scale.Through.Add(-freshness)
 	}
 
+	cohortDepthMedian, depthCohortReady := liquidityCohortMedian(peers, true)
+	cohortNotionalMedian, notionalCohortReady := liquidityCohortMedian(peers, false)
+
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
@@ -164,6 +169,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		depthMedian, depthOK := statistic.MedianOf(depthPeers)
 		peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
 		notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
+		reportedNotional := peer.observation.quoteNotional
+		reportedReady := len(notionalPeers) >= 2 && hasNotionalMedian &&
+			notionalMedian > 0 && reportedNotional > 0 && notionalCohortReady
 		validity := types.MeasurementValidity{
 			State:     types.ValidityValid,
 			Readiness: types.ReadinessObservation,
@@ -191,6 +199,14 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			validity.Reason = appendReason(validity.Reason, "cohort cadence unavailable")
 		}
 
+		if !reportedReady {
+			validity.State = types.ValidityProvisional
+			validity.Reason = appendReason(
+				validity.Reason,
+				"peer reported-volume median unavailable",
+			)
+		}
+
 		relativeDepth := 0.0
 		scarcity := 0.0
 		median := 0.0
@@ -207,11 +223,38 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			}
 		}
 
-		reportedNotional := peer.observation.quoteNotional
 		reportedMedian := 0.0
 
 		if hasNotionalMedian && notionalMedian > 0 {
 			reportedMedian = notionalMedian
+		}
+
+		var normalizedDepth *float64
+		var normalizedRelativeDepth *float64
+		var normalizedScarcity *float64
+		var normalizedDepthMedian *float64
+		var normalizedReportedNotional *float64
+		var normalizedReportedMedian *float64
+
+		if peerReady && cadenceReady && executableDepth > 0 && depthCohortReady {
+			normalizedDepth = normalizedLiquidityRatio(executableDepth, depthMedian)
+			normalizedRelativeDepth = normalizedRelativeLiquidity(relativeDepth)
+			normalizedScarcity = normalizedLiquidityScore(scarcity)
+			normalizedDepthMedian = normalizedLiquidityRatio(
+				depthMedian,
+				cohortDepthMedian,
+			)
+		}
+
+		if reportedReady && cadenceReady {
+			normalizedReportedNotional = normalizedLiquidityRatio(
+				reportedNotional,
+				notionalMedian,
+			)
+			normalizedReportedMedian = normalizedLiquidityRatio(
+				notionalMedian,
+				cohortNotionalMedian,
+			)
 		}
 
 		measurement := &types.Measurement{
@@ -223,30 +266,33 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone): {
 					Raw:        executableDepth,
-					Normalized: types.NormalizeRatio(executableDepth, median),
+					Normalized: normalizedDepth,
 					Unit:       types.UnitQuoteCurrency,
 				},
 				types.MetricKey(types.MetricRelativeTouchDepth, types.SideNone): {
 					Raw:        relativeDepth,
-					Normalized: types.NormalizeFinite(relativeDepth),
+					Normalized: normalizedRelativeDepth,
 					Unit:       types.UnitDimensionless,
 				},
 				types.MetricKey(types.MetricScarcityScore, types.SideNone): {
 					Raw:        scarcity,
-					Normalized: types.NormalizeFinite(scarcity),
+					Normalized: normalizedScarcity,
 					Unit:       types.UnitDimensionless,
 				},
 				types.MetricKey(types.MetricExecutableTouchDepthMedian, types.SideNone): {
-					Raw:  median,
-					Unit: types.UnitQuoteCurrency,
+					Raw:        median,
+					Normalized: normalizedDepthMedian,
+					Unit:       types.UnitQuoteCurrency,
 				},
 				types.MetricKey(types.MetricReportedVolumeNotional, types.SideNone): {
-					Raw:  reportedNotional,
-					Unit: types.UnitQuoteCurrency,
+					Raw:        reportedNotional,
+					Normalized: normalizedReportedNotional,
+					Unit:       types.UnitQuoteCurrency,
 				},
 				types.MetricKey(types.MetricReportedVolumeNotionalMedian, types.SideNone): {
-					Raw:  reportedMedian,
-					Unit: types.UnitQuoteCurrency,
+					Raw:        reportedMedian,
+					Normalized: normalizedReportedMedian,
+					Unit:       types.UnitQuoteCurrency,
 				},
 			},
 		}
@@ -265,6 +311,77 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	return measurements
+}
+
+/*
+normalizedRelativeLiquidity validates a ratio that already carries its real
+leave-one-out executable-depth denominator.
+*/
+func normalizedRelativeLiquidity(raw float64) *float64 {
+	if raw < 0 || math.IsNaN(raw) || math.IsInf(raw, 0) {
+		return nil
+	}
+
+	value := raw
+
+	return &value
+}
+
+/*
+liquidityCohortMedian derives the common cross-sectional scale used to make
+each leave-one-out median itself comparable. It reads only the current cohort;
+no normalization history is retained here.
+*/
+func liquidityCohortMedian(
+	peers []liquidityPeer,
+	depth bool,
+) (float64, bool) {
+	values := make([]float64, 0, len(peers))
+
+	for _, peer := range peers {
+		value := peer.observation.quoteNotional
+
+		if depth {
+			value = peer.observation.executableDepth
+		}
+
+		if value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+			values = append(values, value)
+		}
+	}
+
+	median, ready := statistic.MedianOf(values)
+
+	return median, ready && len(values) >= minimumLiquidityCohort && median > 0
+}
+
+/*
+normalizedLiquidityRatio uses a positive executable cohort baseline. Zero is
+accepted only as a measured numerator; a missing or malformed scale stays nil.
+*/
+func normalizedLiquidityRatio(raw, baseline float64) *float64 {
+	if raw < 0 || baseline <= 0 || math.IsNaN(raw) || math.IsInf(raw, 0) ||
+		math.IsNaN(baseline) || math.IsInf(baseline, 0) {
+		return nil
+	}
+
+	value := raw / baseline
+
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil
+	}
+
+	return &value
+}
+
+func normalizedLiquidityScore(raw float64) *float64 {
+	if raw < 0 || raw > 1 || math.IsNaN(raw) || math.IsInf(raw, 0) {
+		return nil
+	}
+
+	value := raw
+
+	return &value
 }
 
 type liquidityPeer struct {

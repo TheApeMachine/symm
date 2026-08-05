@@ -31,10 +31,9 @@ physics fluid metrics, and predictive coding resonance predictions.
 */
 type Solver struct {
 	recorder *audit.Recorder
-	mu       sync.RWMutex
-	pearls   map[string]*algorithm.Pearl
-	regimes  map[string]*causal.Regime
-	history  map[string][][]float64
+	pearls   *sync.Map
+	regimes  *sync.Map
+	history  *sync.Map
 	config   algorithm.PearlConfig
 	ui       chan []byte
 }
@@ -46,7 +45,7 @@ type causalResult struct {
 }
 
 /*
-NewSolver creates a typed causal solver wired to audit recording.
+NewSolver creates a typed causal solver.
 Default layout (4-column row):
   - Col 0: Control 1 (Resonance System Energy)
   - Col 1: Control 2 (Resonance Surprise / Anomaly)
@@ -63,9 +62,9 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 
 	solver := &Solver{
 		recorder: recorder,
-		pearls:   make(map[string]*algorithm.Pearl),
-		regimes:  make(map[string]*causal.Regime),
-		history:  make(map[string][][]float64),
+		pearls:   &sync.Map{},
+		regimes:  &sync.Map{},
+		history:  &sync.Map{},
 		config:   defaultConfig,
 		ui:       ui,
 	}
@@ -101,7 +100,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	})
 
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "causal: parallel evaluation failed", err,
+		))
 	}
 
 	solver.store(thesis, results)
@@ -118,10 +119,16 @@ func (solver *Solver) measure(input causalInput) causalResult {
 		Rows:      [][]float64{input.row},
 		Contagion: input.contagion,
 	})
+
 	inverted := err == nil && regimeOut.RawInverted > 0
+
 	output, ready, err := solver.getPearl(input.symbol).Measure(algorithm.PearlInput{
-		Key: input.symbol, Row: input.row, Inverted: inverted,
-		Contagion: input.contagion, Condition: input.condition, Intervention: input.intervention,
+		Key:          input.symbol,
+		Row:          input.row,
+		Inverted:     inverted,
+		Contagion:    input.contagion,
+		Condition:    input.condition,
+		Intervention: input.intervention,
 	})
 
 	if err != nil {
@@ -139,7 +146,9 @@ func (solver *Solver) measure(input causalInput) causalResult {
 		return causalResult{symbol: input.symbol}
 	}
 
-	return causalResult{symbol: input.symbol, output: output.Outputs()}
+	return causalResult{
+		symbol: input.symbol, output: output.Outputs(),
+	}
 }
 
 func (solver *Solver) store(thesis *types.Thesis, results []causalResult) bool {
@@ -159,22 +168,15 @@ func (solver *Solver) store(thesis *types.Thesis, results []causalResult) bool {
 		result.output["historyRows"] = solver.historyRows(result.symbol)
 		thesis.Causal.Store(result.symbol, result.output)
 		resolved = true
-
-		if solver.recorder != nil {
-			result.output["symbol"] = result.symbol
-			result.output["stage"] = "causal"
-			errnie.Error(audit.Record(solver.recorder, "predictive", result.output))
-		}
 	}
 
 	return resolved
 }
 
 func (solver *Solver) appendHistory(symbol string, row []float64) {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
-	rows := append(solver.history[symbol], append([]float64(nil), row...))
+	stored, _ := solver.history.LoadOrStore(symbol, [][]float64{})
+	rows := stored.([][]float64)
+	rows = append(rows, append([]float64(nil), row...))
 	rowWidth := len(row)
 	capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
 
@@ -182,21 +184,19 @@ func (solver *Solver) appendHistory(symbol string, row []float64) {
 		rows = rows[len(rows)-capacity:]
 	}
 
-	solver.history[symbol] = rows
+	solver.history.Store(symbol, rows)
 }
 
 func (solver *Solver) historyRows(symbol string) [][]float64 {
-	solver.mu.RLock()
-	defer solver.mu.RUnlock()
+	stored, _ := solver.history.LoadOrStore(symbol, [][]float64{})
+	rows := stored.([][]float64)
+	copied := make([][]float64, len(rows))
 
-	stored := solver.history[symbol]
-	rows := make([][]float64, len(stored))
-
-	for index, row := range stored {
-		rows[index] = append([]float64(nil), row...)
+	for index, row := range rows {
+		copied[index] = append([]float64(nil), row...)
 	}
 
-	return rows
+	return copied
 }
 
 /*
@@ -237,43 +237,39 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 getPearl lazily gets or creates a Pearl causal evaluator per symbol.
 */
 func (solver *Solver) getPearl(symbol string) *algorithm.Pearl {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
+	p, ok := solver.pearls.Load(symbol)
 
-	p, ok := solver.pearls[symbol]
 	if !ok {
 		p = algorithm.NewPearl(solver.config)
-		solver.pearls[symbol] = p
+		solver.pearls.Store(symbol, p)
 	}
-	return p
+
+	return p.(*algorithm.Pearl)
 }
 
 /*
 getRegime lazily gets or creates a Regime selector per symbol.
 */
 func (solver *Solver) getRegime(symbol string) *causal.Regime {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
+	r, ok := solver.regimes.Load(symbol)
 
-	r, ok := solver.regimes[symbol]
 	if !ok {
 		r = causal.NewRegime(causal.RegimeConfig{
 			Target:         solver.config.Target,
 			ConditionLeft:  0,
 			ConditionRight: 1,
 		})
-		solver.regimes[symbol] = r
+
+		solver.regimes.Store(symbol, r)
 	}
-	return r
+
+	return r.(*causal.Regime)
 }
 
 /*
 Close cleans up the solver instance.
 */
 func (solver *Solver) Close() error {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
 	solver.history = nil
 	return nil
 }

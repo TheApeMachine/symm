@@ -13,6 +13,7 @@ type symbolState struct {
 	featureScale  map[string]*featureNormalizer
 	alpha         float64
 	featureSchema []string
+	input         []float64
 	pendingInput  []float64
 	pendingMid    float64
 	pendingAt     time.Time

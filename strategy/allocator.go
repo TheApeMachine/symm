@@ -191,7 +191,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		the loop is not allowed a smaller risk boundary purely because earlier
 		entries had already spent the cash.
 	*/
-	riskBudget := budget.Copy()
+	riskBudget := budget
 
 	/*
 		riskPool is what the whole account may still lose, after what the open
@@ -331,7 +331,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 
 		decision.ProposedQuantity = qty
 		decision.ProposedNotional = cost
-		decision.ReferencePrice = referencePrice.Copy()
+		decision.ReferencePrice = referencePrice
 		decision.Risk = plan
 		decision.Reason = "sized from transaction budget, flow haircut, and risk distance"
 
@@ -423,11 +423,11 @@ the price increment because a pair can quote one without the other.
 */
 func tickSize(pair kraken.InstrumentPair) *decimal.Decimal {
 	if pair.TickSize.Sign() > 0 {
-		return pair.TickSize.Copy()
+		return &pair.TickSize
 	}
 
 	if pair.PriceIncrement.Sign() > 0 {
-		return pair.PriceIncrement.Copy()
+		return &pair.PriceIncrement
 	}
 
 	return nil

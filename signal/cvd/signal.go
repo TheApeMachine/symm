@@ -23,19 +23,18 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	status         types.Status
-	ctx            context.Context
-	cancel         context.CancelFunc
-	api            *websocket.API
-	sample         *algorithm.TradeFlowSample
-	flow           *equation.Flow
-	midpoints      map[string][]midpointObservation
-	planner        *strategy.Planner
-	ui             chan []byte
-	subscriptions  map[string]*types.Subscription[any]
-	subscribers    *sync.Map
-	subscriptionMu sync.Mutex
-	lastTrade      map[string]tradeCursor
+	status        types.Status
+	ctx           context.Context
+	cancel        context.CancelFunc
+	api           *websocket.API
+	sample        *algorithm.TradeFlowSample
+	flow          *equation.Flow
+	midpoints     map[string][]midpointObservation
+	planner       *strategy.Planner
+	ui            chan []byte
+	subscriptions map[string]*types.Subscription[any]
+	subscribers   *sync.Map
+	lastTrade     map[string]tradeCursor
 }
 
 type tradeCursor struct {
@@ -47,6 +46,8 @@ type midpointObservation struct {
 	at    time.Time
 	price float64
 }
+
+const minimumPriceResponseObservations = 2
 
 /*
 NewSignal creates the CVD perspective with independent rolling state for each
@@ -126,9 +127,9 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.Measurements.Store(
+						thesis.AppendMeasurements(
 							types.SourceCVD,
-							measurements,
+							measurements...,
 						)
 
 						thesis.Readiness.Stamp(types.SourceCVD)
@@ -351,22 +352,130 @@ func (signal *Signal) cvdMeasurements(
 	output equation.FlowOutput,
 	evidenceCount int,
 ) []*types.Measurement {
+	absorption := normalizedFlowMetric(
+		types.MetricAbsorption, output.Absorption, evidenceCount,
+	)
+	drive := normalizedFlowMetric(types.MetricDrive, output.Drive, evidenceCount)
+	balance := normalizedFlowMetric(types.MetricBalance, output.Balance, evidenceCount)
+	starvation := normalizedFlowMetric(
+		types.MetricStarvation, output.Starvation, evidenceCount,
+	)
+	strength := normalizedFlowMetric(types.MetricStrength, output.Value, evidenceCount)
+	netFraction := normalizedFlowMetric(
+		types.MetricNetFraction, output.NetFraction, evidenceCount,
+	)
+	net := normalizedSignedNet(output.Net, output.NetFraction, evidenceCount)
+	validity := types.ObservationValidity(evidenceCount)
+
+	if validity.State == types.ValidityValid &&
+		(absorption == nil || drive == nil || balance == nil || starvation == nil ||
+			strength == nil || netFraction == nil || net == nil) {
+		validity.State = types.ValidityInvalid
+		validity.Reason = "flow normalization contract violated"
+	}
+
 	measurement := &types.Measurement{
 		Source:   types.SourceCVD,
 		Symbol:   row.Symbol,
 		At:       row.Timestamp,
-		Validity: types.ObservationValidity(evidenceCount),
-		Metrics:  make(map[string]types.MetricSample, 7),
+		Validity: validity,
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricAbsorption, types.SideNone): {
+				Raw:        output.Absorption,
+				Normalized: absorption,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricDrive, types.SideNone): {
+				Raw:        output.Drive,
+				Normalized: drive,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricBalance, types.SideNone): {
+				Raw:        output.Balance,
+				Normalized: balance,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStarvation, types.SideNone): {
+				Raw:        output.Starvation,
+				Normalized: starvation,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStrength, types.SideNone): {
+				Raw:        output.Value,
+				Normalized: strength,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricNetFraction, types.SideNone): {
+				Raw:        output.NetFraction,
+				Normalized: netFraction,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricNet, types.SideNone): {
+				Raw:        output.Net,
+				Normalized: net,
+				Unit:       types.UnitQuoteCurrency,
+			},
+		},
 	}
-	measurement.Metrics[types.MetricKey(types.MetricAbsorption, types.SideNone)] = types.MetricSample{Raw: output.Absorption, Normalized: types.NormalizeFinite(output.Absorption), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricDrive, types.SideNone)] = types.MetricSample{Raw: output.Drive, Normalized: types.NormalizeFinite(output.Drive), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricBalance, types.SideNone)] = types.MetricSample{Raw: output.Balance, Normalized: types.NormalizeFinite(output.Balance), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricStarvation, types.SideNone)] = types.MetricSample{Raw: output.Starvation, Normalized: types.NormalizeFinite(output.Starvation), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricStrength, types.SideNone)] = types.MetricSample{Raw: output.Value, Normalized: types.NormalizeFinite(output.Value), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricNetFraction, types.SideNone)] = types.MetricSample{Raw: output.NetFraction, Normalized: types.NormalizeFinite(output.NetFraction), Unit: types.UnitDimensionless}
-	measurement.Metrics[types.MetricKey(types.MetricNet, types.SideNone)] = types.MetricSample{Raw: output.Net, Unit: types.UnitQuoteCurrency}
 
 	return []*types.Measurement{measurement}
+}
+
+/*
+normalizedFlowMetric accepts only the bounded fractions produced by Flow.
+Price-response families need at least two response prices; balance, strength,
+and net fraction are defined by the first observed aggressor split.
+*/
+func normalizedFlowMetric(
+	metric types.MetricType,
+	raw float64,
+	evidenceCount int,
+) *float64 {
+	if math.IsNaN(raw) || math.IsInf(raw, 0) || raw < 0 || raw > 1 {
+		return nil
+	}
+
+	if evidenceCount <= 0 {
+		return nil
+	}
+
+	if evidenceCount < minimumPriceResponseObservations &&
+		(metric == types.MetricAbsorption || metric == types.MetricDrive ||
+			metric == types.MetricStarvation) {
+		return nil
+	}
+
+	value := raw
+
+	return &value
+}
+
+/*
+normalizedSignedNet restores direction to Flow's gross-notional fraction. The
+raw quote-currency net remains available while the normalized reading is the
+signed share of actually executed gross notional.
+*/
+func normalizedSignedNet(raw, netFraction float64, evidenceCount int) *float64 {
+	if evidenceCount <= 0 {
+		return nil
+	}
+
+	if math.IsNaN(raw) || math.IsInf(raw, 0) || netFraction < 0 || netFraction > 1 ||
+		math.IsNaN(netFraction) || math.IsInf(netFraction, 0) {
+		return nil
+	}
+
+	if raw == 0 && netFraction != 0 {
+		return nil
+	}
+
+	value := math.Copysign(netFraction, raw)
+
+	if raw == 0 {
+		value = 0
+	}
+
+	return &value
 }
 
 /*

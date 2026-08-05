@@ -93,15 +93,15 @@ func NewPaperTradeBalanceFromMap(model datura.Map[any]) *TradeBalanceResult {
 	tradeBalance := equity.Sub(unrealized)
 
 	return &TradeBalanceResult{
-		EquivalentBalance: equity.Copy(),
+		EquivalentBalance: equity,
 		TradeBalance:      tradeBalance,
 		MarginAmount:      decimal.NewFromInt64(0),
 		UnrealizedPnL:     unrealized,
 		CostBasis:         decimal.NewFromInt64(0),
 		Valuation:         decimal.NewFromInt64(0),
 		Equity:            equity,
-		FreeMargin:        equity.Copy(),
-		MarginFreeOrders:  equity.Copy(),
+		FreeMargin:        equity,
+		MarginFreeOrders:  equity,
 		UnexecutedValue:   decimal.NewFromInt64(0),
 	}
 }

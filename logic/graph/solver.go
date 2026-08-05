@@ -3,7 +3,6 @@ package graph
 import (
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -168,12 +167,11 @@ into a Directed Knowledge Graph for the Strategy package.
 type Solver struct {
 	recorder       *audit.Recorder
 	staleThreshold time.Duration
-	mu             sync.RWMutex
 	ui             chan []byte
 }
 
 /*
-NewSolver creates a graph solver wired to audit recordingraph.
+NewSolver creates a graph solver.
 Default stale threshold: 5 seconds.
 */
 func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
@@ -199,9 +197,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
 	graph := NewGraph(thesis.At)
 
 	// 1. Extract and register all non-measurement nodes from Thesis
@@ -216,20 +211,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	// 3. Store compiled Graph into thesis.Graphs
 	thesis.Graphs.Store("market_graph", graph)
 	thesis.Readiness.Graph = true
-
-	// 4. Record audit snapshot
-	if solver.recorder != nil {
-		err := audit.Record(solver.recorder, "predictive", map[string]any{
-			"stage":     "graph",
-			"nodeCount": len(graph.Nodes),
-			"edgeCount": len(graph.Edges),
-			"at":        graph.At,
-		})
-
-		if err != nil {
-			return err
-		}
-	}
 
 	solver.publish(thesis, graph)
 
@@ -690,7 +671,5 @@ func RelationOpposingRelation(_, _ string) RelationType {
 Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
 	return nil
 }

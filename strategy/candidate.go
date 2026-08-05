@@ -23,9 +23,18 @@ type candidate struct {
 	ExpectedFees   *decimal.Decimal
 	ExpectedSpread *decimal.Decimal
 	ExpectedImpact *decimal.Decimal
-	Uncertainty    float64
-	Confidence     float64
-	Epoch          uint64
+	/*
+		TrajectoryTreatment is the first resonance forward-curve step. The causal
+		history's treatment column is built from that exact quantity, while
+		ExpectedReturn is the accumulated curve converted to quote currency for
+		valuation. Keeping them separate prevents MCTS from intervening with a
+		multi-step total against a model fitted on one-step predictions.
+	*/
+	TrajectoryTreatment float64
+	Uncertainty         float64
+	Confidence          float64
+	HorizonSteps        int
+	Epoch               uint64
 }
 
 /*

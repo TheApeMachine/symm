@@ -366,3 +366,10 @@ func (conn *Conn) Close() {
 		server.Close()
 	}
 }
+
+func (conn *Conn) Accepted() *websocket.Conn {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	return conn.accepted
+}

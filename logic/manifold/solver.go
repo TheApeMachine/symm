@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"sync"
+	"sort"
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -27,8 +26,7 @@ Symbols contribute observations to the same gas and wave fields; they are not
 split into independent simulations that cannot interfere.
 */
 type Solver struct {
-	mu        sync.Mutex
-	api       *websocket.API
+	books     websocket.BookSource
 	config    pfluid.Config
 	domain    *pfluid.Domain
 	recorder  *audit.Recorder
@@ -88,7 +86,7 @@ func NewSolver(
 	}
 
 	return &Solver{
-		api:       api,
+		books:     api,
 		config:    config,
 		domain:    domain,
 		recorder:  recorder,
@@ -122,50 +120,57 @@ func newDomain(config pfluid.Config) (*pfluid.Domain, error) {
 
 /*
 Update appends tokenized book samples for every changed Hawkes epoch, then
-always advances the shared domain once for this tick and publishes symbol views
-of that physical state. Inject is Hawkes-gated; the step is not.
+advances the shared domain once for the complete tick.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis == nil || thesis.Books == nil {
+	if thesis == nil {
 		return nil
 	}
-
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
 
 	solver.maybeRebase(thesis.At)
 
 	attempted := false
-	stepped := false
+	stepSymbol := ""
+	focus := types.Focus()
 	var updateErr error
+	hawkesRows := utils.Measurements(thesis, types.SourceHawkes)
+	symbolSet := make(map[string]struct{})
 
-	thesis.Books.Range(func(key, value any) bool {
-		book, ok := value.(*book.Book)
+	for _, measurement := range hawkesRows {
+		if measurement != nil && measurement.Symbol != "" {
+			symbolSet[measurement.Symbol] = struct{}{}
+		}
+	}
 
-		if !ok {
-			return true
+	symbols := make([]string, 0, len(symbolSet))
+
+	for symbol := range symbolSet {
+		symbols = append(symbols, symbol)
+	}
+
+	sort.Strings(symbols)
+
+	for _, name := range symbols {
+		if solver.books == nil {
+			break
 		}
 
-		name, ok := key.(string)
+		managed := solver.books.Book(name)
 
-		if !ok {
-			return true
+		if managed == nil {
+			continue
 		}
 
-		hawkes := utils.ForSymbol(utils.Measurements(thesis, types.SourceHawkes), name)
-
-		if len(hawkes) == 0 {
-			return true
-		}
+		hawkes := utils.ForSymbol(hawkesRows, name)
 
 		bidOrders := make([]*mgrbook.Order, 0)
 		askOrders := make([]*mgrbook.Order, 0)
 
-		for _, level := range book.Bids.Levels {
+		for _, level := range managed.Bids.Levels {
 			bidOrders = append(bidOrders, level.Queue()...)
 		}
 
-		for _, level := range book.Asks.Levels {
+		for _, level := range managed.Asks.Levels {
 			askOrders = append(askOrders, level.Queue()...)
 		}
 
@@ -179,7 +184,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		particles, contentIDs, err := solver.tokenizer.NewBatch(
 			bidOrders,
 			askOrders,
-			book.Midpoint().Float64(),
+			managed.Midpoint().Float64(),
 			buyIntensity,
 			sellIntensity,
 			name,
@@ -192,35 +197,34 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				err,
 			))
 
-			return false
+			break
 		}
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
-			return true
+			continue
 		}
 
 		originalBatchParticles := len(particles)
 		particles, contentIDs, droppedParticles := solver.filterBatch(particles, contentIDs)
 
 		if droppedParticles > 0 && solver.recorder != nil {
-			errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
-				"stage":                      "manifold",
-				"symbol":                     name,
-				"at":                         thesis.At,
-				"status":                     "filtered",
-				"dropped_particles":          droppedParticles,
-				"original_batch_particles":   originalBatchParticles,
-				"retained_batch_particles":   len(particles),
-				"buy_conditional_intensity":  buyIntensity,
-				"sell_conditional_intensity": sellIntensity,
+			errnie.Error(audit.Record(solver.recorder, audit.ModelValidation{
+				Component: "manifold",
+				Symbol:    name,
+				At:        thesis.At,
+				Status:    "filtered",
+				Reason:    "invalid_particle",
+				Observed:  originalBatchParticles,
+				Retained:  len(particles),
+				Dropped:   droppedParticles,
 			}))
 		}
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
-			return true
+			continue
 		}
 
-		batchStart, err := solver.domain.Append(particles, contentIDs)
+		_, err = solver.domain.Append(particles, contentIDs)
 
 		if err != nil {
 			updateErr = errnie.Error(errnie.Err(
@@ -232,60 +236,38 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				err,
 			))
 
-			return false
+			break
 		}
 
-		batchEnd := batchStart + len(particles) - 1
-		maxBatchMass, maxBatchHeat, maxBatchEnergy := batchEnvelope(particles)
 		solver.turnover += len(particles)
-
-		solver.evict()
-
-		/*
-			A step that fails is one symbol's reading lost, not the tick. The
-			domain is shared by the whole universe, so aborting here would let
-			a single numerically awkward book silence every other symbol and
-			stop the desk from deciding at all.
-		*/
 		attempted = true
 
-		if err = solver.Step(name, thesis.At); err != nil {
-			if solver.recorder != nil {
-				errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
-					"stage":                      "manifold",
-					"symbol":                     name,
-					"at":                         thesis.At,
-					"status":                     "failed",
-					"error":                      err.Error(),
-					"resident_particles":         solver.domain.ParticleCount(),
-					"batch_particles":            len(particles),
-					"batch_start":                batchStart,
-					"batch_end":                  batchEnd,
-					"max_batch_mass":             maxBatchMass,
-					"max_batch_heat":             maxBatchHeat,
-					"max_batch_energy":           maxBatchEnergy,
-					"buy_conditional_intensity":  buyIntensity,
-					"sell_conditional_intensity": sellIntensity,
-				}))
-			}
-
-			solver.rejectBatch(name, thesis.At, batchStart, len(particles), err)
-			return true
+		if stepSymbol == "" || name == focus {
+			stepSymbol = name
 		}
-
-		stepped = true
-
-		return true
-	})
+	}
 
 	if updateErr != nil {
+		if attempted {
+			solver.resetDomain(stepSymbol, updateErr)
+		}
+
 		return updateErr
 	}
 
-	if !attempted || stepped {
+	if !attempted {
 		thesis.Readiness.Manifold = true
+		return nil
 	}
 
+	solver.evict()
+
+	if err := solver.Step(stepSymbol, thesis.At); err != nil {
+		solver.resetDomain(stepSymbol, err)
+		return nil
+	}
+
+	thesis.Readiness.Manifold = true
 	return nil
 }
 
@@ -344,7 +326,7 @@ func (solver *Solver) evict() {
 }
 
 func (solver *Solver) Step(symbol string, at time.Time) error {
-	diagnostics, err := solver.domain.Advance()
+	_, err := solver.domain.Advance()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -413,15 +395,6 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 		).MarshalAndFree():
 		default:
 		}
-	}
-
-	if solver.recorder != nil {
-		errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
-			"stage":  "manifold",
-			"symbol": symbol,
-			"at":     at,
-			"value":  diagnostics,
-		}))
 	}
 
 	return nil
@@ -542,16 +515,16 @@ func (solver *Solver) rejectBatch(
 	solver.turnover = max(solver.turnover-batchParticles, 0)
 
 	if solver.recorder != nil {
-		errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", map[string]any{
-			"stage":              "manifold",
-			"symbol":             symbol,
-			"at":                 at,
-			"status":             "rejected",
-			"reason":             "failed_step",
-			"error":              cause.Error(),
-			"batch_start":        batchStart,
-			"batch_particles":    batchParticles,
-			"resident_particles": solver.domain.ParticleCount(),
+		errnie.Error(audit.Record(solver.recorder, audit.ModelValidation{
+			Component:  "manifold",
+			Symbol:     symbol,
+			At:         at,
+			Status:     "rejected",
+			Reason:     "failed_step",
+			Error:      cause.Error(),
+			Resident:   solver.domain.ParticleCount(),
+			BatchStart: batchStart,
+			BatchSize:  batchParticles,
 		}))
 	}
 }
@@ -600,22 +573,37 @@ func (solver *Solver) recreateDomain(
 	solver.domain = domain
 	solver.turnover = 0
 
-	payload := map[string]any{
-		"stage":  "manifold",
-		"status": "recreated",
-		"reason": reason,
+	validationAt := at
+
+	if validationAt.IsZero() {
+		validationAt = time.Now().UTC()
 	}
 
-	if !at.IsZero() {
-		payload["at"] = at
+	event := audit.ModelValidation{
+		Component: "manifold",
+		At:        validationAt,
+		Status:    "recreated",
+		Reason:    reason,
 	}
 
-	for key, value := range extra {
-		payload[key] = value
+	if symbol, ok := extra["symbol"].(string); ok {
+		event.Symbol = symbol
+	}
+
+	if resident, ok := extra["resident_particles"].(int); ok {
+		event.Resident = resident
+	}
+
+	if turnover, ok := extra["turnover_particles"].(int); ok {
+		event.Observed = turnover
+	}
+
+	if capacity, ok := extra["residency"].(int); ok {
+		event.Capacity = capacity
 	}
 
 	if cause != nil {
-		payload["error"] = cause.Error()
+		event.Error = cause.Error()
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf("reset manifold domain after failed step for %v", extra["symbol"]),
@@ -624,12 +612,8 @@ func (solver *Solver) recreateDomain(
 	}
 
 	if solver.recorder != nil {
-		errnie.Error(audit.Record(recorderOrNil(solver.recorder), "predictive", payload))
+		errnie.Error(audit.Record(solver.recorder, event))
 	}
-}
-
-func recorderOrNil(recorder *audit.Recorder) *audit.Recorder {
-	return recorder
 }
 
 /*
@@ -639,9 +623,6 @@ func (solver *Solver) Close() error {
 	if solver == nil {
 		return nil
 	}
-
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
 
 	if solver.domain == nil {
 		return nil

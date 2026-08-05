@@ -108,27 +108,21 @@ func (crypto *Crypto) run() {
 			case trade := <-crypto.subscriptions["trade"].Channel:
 				crypto.onTrade(trade)
 			case decisions := <-crypto.subscriptions["decisions"].Channel:
-				if !crypto.decisionsReady(decisions) {
-					continue
-				}
-
 				typedDecisions, ok := decisions.([]types.Decision)
 
 				if !ok {
 					continue
 				}
-				if crypto.desk != nil {
-					go func() {
-						if err := crypto.desk.Execute(typedDecisions); err != nil {
-							errnie.Error(errnie.Err(
-								errnie.Internal,
-								"crypto: failed to execute decision round",
-								err,
-							))
-						}
-					}()
-				}
 
+				go func() {
+					if err := crypto.desk.Execute(typedDecisions); err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Internal,
+							"crypto: failed to execute decision round",
+							err,
+						))
+					}
+				}()
 			}
 		}
 	}()
@@ -148,15 +142,9 @@ func (crypto *Crypto) onTicker(data any) {
 	}
 
 	for _, ticker := range typedTickers.Data {
-		crypto.thesis.Tickers.Store(ticker.Symbol, ticker)
-		crypto.storeBook(ticker.Symbol)
+		crypto.thesis.AppendTicker(ticker)
 
-		// The broker prices every order off its own ticker cache, so the same
-		// tick has to reach it here. Without this the price surface stays
-		// empty and nothing downstream can be marked, sized, or costed.
-		if crypto.desk != nil {
-			crypto.desk.Price().Update(&ticker)
-		}
+		crypto.desk.Price().Update(&ticker)
 	}
 
 	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
@@ -176,41 +164,10 @@ func (crypto *Crypto) onTrade(data any) {
 	}
 
 	for _, trade := range typedTrades.Data {
-		crypto.thesis.Trades.Store(trade.Symbol, trade)
-		crypto.storeBook(trade.Symbol)
+		crypto.thesis.AppendTrade(trade)
 	}
 
 	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
-}
-
-func (crypto *Crypto) storeBook(symbol string) {
-	if symbol == "" || crypto.api == nil || crypto.thesis == nil || crypto.thesis.Books == nil {
-		return
-	}
-
-	book := crypto.api.Book(symbol)
-
-	if book == nil {
-		return
-	}
-
-	crypto.thesis.Books.Store(symbol, book)
-}
-
-func (crypto *Crypto) decisionsReady(decisions any) bool {
-	typedDecisions, ok := decisions.([]types.Decision)
-
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"crypto: unexpected decisions payload type",
-			nil,
-		))
-
-		return false
-	}
-
-	return len(typedDecisions) > 0
 }
 
 func (crypto *Crypto) Close() (err error) {

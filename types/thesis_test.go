@@ -154,12 +154,11 @@ func TestThesisReadiness(t *testing.T) {
 	})
 }
 
-func TestThesisReset(t *testing.T) {
-	Convey("Given a thesis with transient cycle state", t, func() {
+func TestPrepareNextEvaluation(t *testing.T) {
+	Convey("Given a thesis with epoch state and retained cycle evidence", t, func() {
 		thesis := NewThesis()
 		thesis.Tick = 77
 		thesis.Measurements.Store(SourceCVD, []*Measurement{{Source: SourceCVD, Symbol: "BTC/USD"}})
-		thesis.Books.Store("BTC/USD", "book")
 		thesis.Graphs.Store("BTC/USD", "graph")
 		thesis.Decisions = []Decision{{}}
 		thesis.Findings = []Finding{{}}
@@ -170,24 +169,22 @@ func TestThesisReset(t *testing.T) {
 		thesis.Resonance.Store("BTC/USD", "resonance")
 		thesis.Causal.Store("BTC/USD", "causal")
 		thesis.Lifecycle.Store("BTC/USD", LifecycleManaging)
+		stampAllSignals(&thesis.Readiness)
+		thesis.Readiness.Manifold = true
 
-		resetAt := thesis.Reset().At
+		preparedAt := thesis.PrepareNextEvaluation().At
 
-		Convey("It should clear transient evidence and keep lifecycle state", func() {
-			// Tick counts evaluated cycles and is lifecycle, not evidence.
+		Convey("It should clear only epoch state", func() {
 			So(thesis.Tick, ShouldEqual, 77)
 			So(thesis.CrossSection, ShouldNotBeNil)
-			So(resetAt.IsZero(), ShouldBeFalse)
+			So(preparedAt.IsZero(), ShouldBeFalse)
 			So(len(thesis.Decisions), ShouldEqual, 0)
-			So(len(thesis.Findings), ShouldEqual, 0)
-			So(len(thesis.Hypotheses), ShouldEqual, 0)
+			So(len(thesis.Findings), ShouldEqual, 1)
+			So(len(thesis.Hypotheses), ShouldEqual, 1)
 			So(len(thesis.Categories), ShouldEqual, 0)
 
 			_, foundMeasurement := thesis.Measurements.Load(SourceCVD)
-			So(foundMeasurement, ShouldBeFalse)
-
-			_, foundBook := thesis.Books.Load("BTC/USD")
-			So(foundBook, ShouldBeFalse)
+			So(foundMeasurement, ShouldBeTrue)
 
 			_, foundGraph := thesis.Graphs.Load("BTC/USD")
 			So(foundGraph, ShouldBeFalse)
@@ -213,42 +210,24 @@ func TestThesisReset(t *testing.T) {
 	})
 }
 
-/*
-TestThesisAppendMeasurementsConcurrent proves independent signal actors can
-replace the same source-symbol row in the shared Thesis without corrupting the
-direct measurement map. The Thesis stores current evidence, not an append-only
-history, so one row survives for this identity.
-*/
-func TestThesisAppendMeasurementsConcurrent(t *testing.T) {
-	Convey("Given concurrent signal publications", t, func() {
+func TestCloseCycle(t *testing.T) {
+	Convey("Given a thesis whose completed decision set has been emitted", t, func() {
 		thesis := NewThesis()
-		var wg sync.WaitGroup
+		stampAt := time.Unix(1, 0).UTC()
+		thesis.Measurements.Store(SourceCVD, []*Measurement{{
+			Source: SourceCVD, Symbol: "BTC/USD", At: stampAt,
+		}})
+		thesis.Findings = []Finding{{}}
+		thesis.Hypotheses = []Hypothesis{{}}
+		thesis.NoteLifecycle("BTC/USD", LifecycleManaging, stampAt)
 
-		Convey("When many goroutines publish the same source-symbol row", func() {
-			for index := range 128 {
-				wg.Go(func() {
-					thesis.Measurements.Store(SourceCVD, []*Measurement{{
-						Source: SourceCVD,
-						Symbol: "BTC/USD",
-						At:     time.Unix(int64(index), 0).UTC(),
-					}})
-				})
-			}
-
-			wg.Wait()
-			count := 0
-			thesis.Measurements.Range(func(_, value any) bool {
-				for _, m := range value.([]*Measurement) {
-					if m != nil {
-						count++
-					}
-				}
-				return true
-			})
-
-			Convey("Then the current row is retained without map corruption", func() {
-				So(count, ShouldEqual, 1)
-			})
+		Convey("It should clear evidence without waiting for order settlement", func() {
+			So(thesis.CloseCycle(), ShouldEqual, thesis)
+			So(thesis.Series("BTC/USD"), ShouldBeEmpty)
+			So(thesis.Findings, ShouldBeEmpty)
+			So(thesis.Hypotheses, ShouldBeEmpty)
+			_, foundLifecycle := thesis.Lifecycle.Load("BTC/USD")
+			So(foundLifecycle, ShouldBeFalse)
 		})
 	})
 }
@@ -275,6 +254,16 @@ func BenchmarkNoteLifecycle(b *testing.B) {
 
 	for b.Loop() {
 		thesis.NoteLifecycle("BTC/USD", LifecycleManaging, at)
+	}
+}
+
+func BenchmarkPrepareNextEvaluation(b *testing.B) {
+	thesis := NewThesis()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		thesis.PrepareNextEvaluation()
 	}
 }
 

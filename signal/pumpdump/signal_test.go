@@ -46,8 +46,10 @@ func TestSeenTrade(t *testing.T) {
 func TestMeasure(t *testing.T) {
 	Convey("Given a multi-leg directional replay with causal quote evidence", t, func() {
 		viper.Set("signals.pumpdump.baselineCapacity", 128)
+		books := &pumpdumpBookSource{books: make(map[string]*spotbook.Book)}
 		signal := &Signal{
 			algo:      equation.NewIgnition(128),
+			books:     books,
 			lastTrade: make(map[string]tradeCursor),
 		}
 		thesis := types.NewThesis()
@@ -56,10 +58,14 @@ func TestMeasure(t *testing.T) {
 
 		for index, price := range []float64{100, 101, 100, 102, 101, 104} {
 			at := base.Add(time.Duration(index) * time.Second)
-			thesis.Books.Store("BTC/USD", pumpdumpBook("BTC/USD", price-0.5, price+0.5, at))
-			thesis.Trades.Store(index, pumpdumpTrade(int64(index+1), price, at))
+			books.books["BTC/USD"] = pumpdumpBook(
+				"BTC/USD",
+				price-0.5,
+				price+0.5,
+				at,
+			)
+			thesis.AppendTrade(pumpdumpTrade(int64(index+1), price, at))
 			measurements = signal.Measure(thesis)
-			thesis.Trades.Delete(index)
 		}
 
 		Convey("It preserves legacy keys and publishes both dimensionless directional families", func() {
@@ -70,6 +76,8 @@ func TestMeasure(t *testing.T) {
 				ShouldEqual, types.UnitDimensionless)
 			So(measurement.Sample(types.MetricSpread, types.SideNone).Unit,
 				ShouldEqual, types.UnitQuoteCurrency)
+			So(*measurement.Sample(types.MetricSpread, types.SideNone).Normalized,
+				ShouldAlmostEqual, 1.0/104.0, 1e-12)
 			So(measurement.Sample(types.MetricPrecursor, types.SideBuy).Raw,
 				ShouldBeGreaterThan, 0)
 			So(measurement.Sample(types.MetricPrecursor, types.SideSell).Raw,
@@ -89,9 +97,35 @@ func TestMeasure(t *testing.T) {
 					ShouldEqual, types.UnitDimensionless)
 				So(measurement.Sample(metric, types.SideNone).Unit,
 					ShouldEqual, types.UnitDimensionless)
+				So(measurement.Sample(metric, types.SideNone).Normalized,
+					ShouldNotBeNil)
 			}
 		})
 	})
+}
+
+func TestNormalizedIgnitionEvidence(t *testing.T) {
+	Convey("Given an ignition score before its empirical baseline is ready", t, func() {
+		Convey("It should leave the normalized value absent", func() {
+			So(normalizedIgnitionEvidence(0, false), ShouldBeNil)
+		})
+	})
+
+	Convey("Given a ready empirical score that is genuinely zero", t, func() {
+		Convey("It should retain zero as measured evidence", func() {
+			value := normalizedIgnitionEvidence(0, true)
+			So(value, ShouldNotBeNil)
+			So(*value, ShouldEqual, 0.0)
+		})
+	})
+}
+
+type pumpdumpBookSource struct {
+	books map[string]*spotbook.Book
+}
+
+func (source *pumpdumpBookSource) Book(symbol string) *spotbook.Book {
+	return source.books[symbol]
 }
 
 func pumpdumpTrade(id int64, price float64, at time.Time) kraken.TradeData {
@@ -115,4 +149,12 @@ func pumpdumpBook(symbol string, bid, ask float64, at time.Time) *spotbook.Book 
 	})
 
 	return managed
+}
+
+func BenchmarkNormalizedIgnitionEvidence(b *testing.B) {
+	b.ReportAllocs()
+
+	for range b.N {
+		_ = normalizedIgnitionEvidence(1.25, true)
+	}
 }

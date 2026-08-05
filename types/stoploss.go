@@ -22,8 +22,8 @@ const (
 	// PhaseDiscovery is an open lot that has not yet earned anything worth
 	// protecting. Peaks are recorded and the noise band is tracked, but the
 	// trailing floor is not allowed to end the trade — only the hard risk
-	// boundary is. Forecasts and structural evidence remain diagnostic while
-	// the position is open; they have no authority to liquidate it.
+	// boundary or a live regime circuit breaker may. Ordinary forecast revisions
+	// remain diagnostic while the position is open.
 	PhaseDiscovery StopPhase = "discovery"
 	// PhaseProtected is a lot that has traded far enough above its profit line
 	// for the giveback floor to arm. From here the floor can only rise.
@@ -50,6 +50,9 @@ const (
 	// TriggerHawkesSellCascade is a self-exciting sell process expected to
 	// produce at least one descendant per sell parent.
 	TriggerHawkesSellCascade = "hawkes_sell_cascade"
+	// TriggerExecutionNoiseRegime fires when one live crossing band exceeds
+	// the configured number of entry bands used to place the hard floor.
+	TriggerExecutionNoiseRegime = "execution_noise_regime"
 )
 
 /*
@@ -94,6 +97,7 @@ type StopTransition struct {
 	EntryFee       *decimal.Decimal `json:"entry_fee"`
 	RiskDistance   *decimal.Decimal `json:"risk_distance"`
 	TrailDistance  *decimal.Decimal `json:"trail_distance"`
+	EntryNoiseBand *decimal.Decimal `json:"entry_noise_band"`
 	NoiseBand      *decimal.Decimal `json:"noise_band"`
 	WorstCaseLoss  *decimal.Decimal `json:"worst_case_loss"`
 	MaxAdverse     *decimal.Decimal `json:"max_adverse"`
@@ -116,11 +120,11 @@ type Fill struct {
 /*
 Stoploss regulates one open lot.
 
-It owns exactly two exits. The hard floor is the maximum loss and fires on
-sight. The protected floor is the profit the position has already earned and
-fires only on a breach that holds. Forecast decay, structural reversal, and an
-ordinary drawdown remain diagnostic; they do not have a path to the sell
-transport.
+It owns two price exits and two regime circuit breakers. The hard floor is the
+maximum loss and fires on sight. The protected floor is the profit the position
+has already earned and fires only on a breach that holds. A validated structural
+break or an execution-noise band that has outgrown the entry regime exits before
+either price line; ordinary forecast decay and drawdown remain diagnostic.
 
 Both Peak and Floor are monotonic. A peak once reached was reachable, and
 protection once armed is not handed back because volatility later widened.
@@ -232,6 +236,7 @@ type StopSnapshot struct {
 	ProfitFloor    *decimal.Decimal `json:"profit_floor"`
 	ArmLine        *decimal.Decimal `json:"arm_line"`
 	RiskDistance   *decimal.Decimal `json:"risk_distance"`
+	EntryNoiseBand *decimal.Decimal `json:"entry_noise_band"`
 	NoiseBand      *decimal.Decimal `json:"noise_band"`
 	WorstCaseLoss  *decimal.Decimal `json:"worst_case_loss"`
 	MaxAdverse     *decimal.Decimal `json:"max_adverse"`
@@ -269,6 +274,7 @@ func (stoploss *Stoploss) Snapshot() StopSnapshot {
 		ProfitFloor:    copyDecimal(stoploss.ProfitFloor),
 		ArmLine:        copyDecimal(stoploss.ArmLine),
 		RiskDistance:   copyDecimal(stoploss.Plan.RiskDistance),
+		EntryNoiseBand: copyDecimal(stoploss.Plan.EntryNoiseBand),
 		NoiseBand:      copyDecimal(stoploss.Plan.NoiseBand),
 		WorstCaseLoss:  stoploss.worstCaseLoss(),
 		MaxAdverse:     copyDecimal(stoploss.MaxAdverse),
@@ -285,7 +291,7 @@ func copyDecimal(value *decimal.Decimal) *decimal.Decimal {
 		return nil
 	}
 
-	return value.Copy()
+	return value
 }
 
 /*
@@ -509,12 +515,20 @@ func (stoploss *Stoploss) Observe(evidence StopEvidence) {
 	*/
 	trustGeometry := !evidence.DepthLimited
 	now := time.Now().UTC()
+	noiseRegimeBroken := false
 
 	stoploss.Mark = mark
 	stoploss.DepthLimited = evidence.DepthLimited
 
 	if evidence.Fresh(now) {
 		stoploss.Plan = stoploss.Plan.Refresh(evidence.Spread, evidence.Impact)
+		entryNoiseLimit := multiply(
+			stoploss.Plan.EntryNoiseBand,
+			stoploss.Plan.Multiples.Risk,
+		)
+		noiseRegimeBroken = entryNoiseLimit != nil &&
+			stoploss.Plan.NoiseBand != nil &&
+			stoploss.Plan.NoiseBand.Cmp(entryNoiseLimit) > 0
 	}
 
 	stoploss.observeExcursion(mark, trustGeometry)
@@ -524,12 +538,17 @@ func (stoploss *Stoploss) Observe(evidence StopEvidence) {
 		return
 	}
 
+	if noiseRegimeBroken {
+		stoploss.trigger(TriggerExecutionNoiseRegime)
+		return
+	}
+
 	// A hollow quote is a price nothing could have been sold into, so it
 	// records no peak — but it is still a mark, and the floors below still
 	// judge it.
 	if trustGeometry && evidence.GeometryValidAt(now) &&
 		(stoploss.Peak == nil || mark.Cmp(stoploss.Peak) > 0) {
-		stoploss.Peak = mark.Copy()
+		stoploss.Peak = mark
 		stoploss.TrailFloor = floorToTick(
 			subtract(stoploss.Peak, stoploss.Plan.TrailDistance),
 			stoploss.Plan.TickSize,
@@ -584,12 +603,12 @@ func (stoploss *Stoploss) observeExcursion(mark *decimal.Decimal, trusted bool) 
 		Div(stoploss.Plan.RiskDistance)
 
 	if stoploss.MaxAdverse == nil || excursion.Cmp(stoploss.MaxAdverse) < 0 {
-		stoploss.MaxAdverse = excursion.Copy()
+		stoploss.MaxAdverse = excursion
 	}
 
 	if trusted && (stoploss.MaxFavorable == nil ||
 		excursion.Cmp(stoploss.MaxFavorable) > 0) {
-		stoploss.MaxFavorable = excursion.Copy()
+		stoploss.MaxFavorable = excursion
 	}
 }
 
@@ -735,7 +754,7 @@ func (stoploss *Stoploss) liquidationLine(edge *decimal.Decimal) *decimal.Decima
 		cost = cost.Add(edge.SetScale(riskScale).Mul(quantity))
 	}
 
-	proceeds := quantity.Copy()
+	proceeds := quantity
 
 	if rate := stoploss.Plan.ExitFeeRate; rate != nil &&
 		rate.Sign() > 0 && rate.Cmp(decimal.NewFromInt64(1).SetScale(riskScale)) < 0 {
@@ -824,6 +843,7 @@ func (stoploss *Stoploss) record(reason string) {
 		EntryFee:       copyDecimal(stoploss.EntryFee),
 		RiskDistance:   copyDecimal(stoploss.Plan.RiskDistance),
 		TrailDistance:  copyDecimal(stoploss.Plan.TrailDistance),
+		EntryNoiseBand: copyDecimal(stoploss.Plan.EntryNoiseBand),
 		NoiseBand:      copyDecimal(stoploss.Plan.NoiseBand),
 		WorstCaseLoss:  stoploss.worstCaseLoss(),
 		MaxAdverse:     copyDecimal(stoploss.MaxAdverse),

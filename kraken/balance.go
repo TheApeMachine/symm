@@ -197,15 +197,15 @@ func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
 	zero := decimal.NewFromInt64(0)
 
 	return TradeBalanceResult{
-		EquivalentBalance: currentValue.Copy(),
+		EquivalentBalance: currentValue,
 		TradeBalance:      tradeBalance,
-		MarginAmount:      zero.Copy(),
+		MarginAmount:      zero,
 		UnrealizedPnL:     unrealizedPnL,
-		CostBasis:         zero.Copy(),
-		Valuation:         zero.Copy(),
+		CostBasis:         zero,
+		Valuation:         zero,
 		Equity:            currentValue,
-		FreeMargin:        currentValue.Copy(),
-		MarginFreeOrders:  currentValue.Copy(),
-		UnexecutedValue:   zero.Copy(),
+		FreeMargin:        currentValue,
+		MarginFreeOrders:  currentValue,
+		UnexecutedValue:   zero,
 	}
 }

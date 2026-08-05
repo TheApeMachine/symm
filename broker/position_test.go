@@ -14,6 +14,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
@@ -375,15 +376,18 @@ func stopRows(t *testing.T, positionID string) []map[string]any {
 	for scanner.Scan() {
 		var row map[string]any
 
-		if json.Unmarshal(scanner.Bytes(), &row) != nil || row["type"] != "stop" {
+		if json.Unmarshal(scanner.Bytes(), &row) != nil ||
+			row["type"] != string(audit.CategoryExecutionLifecycle) {
 			continue
 		}
 
 		value, ok := row["value"].(map[string]any)
 
-		if ok && value["position"] == positionID {
-			rows = append(rows, value)
+		if !ok || value["position_id"] != positionID {
+			continue
 		}
+
+		rows = append(rows, value)
 	}
 
 	return rows
@@ -425,7 +429,9 @@ func TestPositionStopAudit(t *testing.T) {
 			reasons := make([]string, 0, len(rows))
 
 			for _, row := range rows {
-				reason, _ := row["reason"].(string)
+				transition, ok := row["transition"].(map[string]any)
+				So(ok, ShouldBeTrue)
+				reason, _ := transition["reason"].(string)
 				reasons = append(reasons, reason)
 
 				/*
@@ -435,10 +441,10 @@ func TestPositionStopAudit(t *testing.T) {
 					before loss — cannot be answered from the file.
 				*/
 				So(row["symbol"], ShouldEqual, symbols[0].Pair)
-				So(row["hard_floor"], ShouldNotBeNil)
-				So(row["profit_line"], ShouldNotBeNil)
-				So(row["mark"], ShouldNotBeNil)
-				So(row["phase"], ShouldNotBeNil)
+				So(transition["hard_floor"], ShouldNotBeNil)
+				So(transition["profit_line"], ShouldNotBeNil)
+				So(transition["mark"], ShouldNotBeNil)
+				So(transition["phase"], ShouldNotBeNil)
 			}
 
 			/*

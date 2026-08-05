@@ -23,6 +23,7 @@ export type RiskMultiples = {
 
 export type RiskPlan = {
 	present: boolean;
+	entry_noise_band: number | string | null;
 	noise_band: number | string | null;
 	risk_distance: number | string | null;
 	trail_distance: number | string | null;

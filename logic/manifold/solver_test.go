@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
@@ -23,6 +25,71 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should stamp the completed empty pass", func() {
 			So(err, ShouldBeNil)
+			So(thesis.Readiness.Manifold, ShouldBeTrue)
+		})
+	})
+
+	Convey("Given two symbols contributing to the shared manifold", t, func() {
+		config := pfluid.DefaultConfig()
+		domain, err := newDomain(config)
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+
+		symbols := []string{"BTC/USD", "ETH/USD"}
+		frames := make(chan []byte, len(symbols))
+		books := &manifoldBookSource{books: make(map[string]*mgrbook.Book)}
+		solver := &Solver{
+			books:     books,
+			config:    config,
+			domain:    domain,
+			tokenizer: NewTokenizer(config, symbols),
+			residency: len(symbols) * 2,
+			binui:     frames,
+		}
+		thesis := types.NewThesis()
+		thesis.At = time.Unix(1, 0).UTC()
+		measurements := make([]*types.Measurement, 0, len(symbols))
+
+		for index, symbol := range symbols {
+			managed := mgrbook.New()
+			managed.Name = symbol
+			managed.NoBookCrossing = false
+			managed.Update(&mgrbook.UpdateOptions{
+				Direction: mgrbook.Bid,
+				ID:        symbol + "-bid",
+				Price:     decimal.NewFromInt64(99),
+				Quantity:  decimal.NewFromInt64(1),
+				Timestamp: thesis.At.Add(time.Duration(index) * time.Second),
+			})
+			managed.Update(&mgrbook.UpdateOptions{
+				Direction: mgrbook.Ask,
+				ID:        symbol + "-ask",
+				Price:     decimal.NewFromInt64(101),
+				Quantity:  decimal.NewFromInt64(1),
+				Timestamp: thesis.At.Add(time.Duration(index+1) * time.Second),
+			})
+			books.books[symbol] = managed
+			measurements = append(measurements, &types.Measurement{
+				Source: types.SourceHawkes,
+				Symbol: symbol,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricConditionalIntensity, types.SideBuy): {
+						Raw: 1,
+					},
+					types.MetricKey(types.MetricConditionalIntensity, types.SideSell): {
+						Raw: 1,
+					},
+				},
+			})
+		}
+
+		thesis.Measurements.Store(types.SourceHawkes, measurements)
+		err = solver.Update(thesis)
+
+		Convey("It should advance and publish the shared domain once", func() {
+			So(err, ShouldBeNil)
+			So(len(frames), ShouldEqual, 1)
+			So(domain.ParticleCount(), ShouldEqual, len(symbols)*2)
 			So(thesis.Readiness.Manifold, ShouldBeTrue)
 		})
 	})
@@ -253,4 +320,80 @@ func TestFilterBatch(t *testing.T) {
 			So(filteredParticles[0].Energy, ShouldEqual, float32(1))
 		})
 	})
+}
+
+type manifoldBookSource struct {
+	books map[string]*mgrbook.Book
+}
+
+func (source *manifoldBookSource) Book(symbol string) *mgrbook.Book {
+	return source.books[symbol]
+}
+
+func BenchmarkUpdate(b *testing.B) {
+	config := pfluid.DefaultConfig()
+	domain, err := newDomain(config)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer domain.Close()
+
+	symbols := []string{"BTC/USD", "ETH/USD"}
+	books := &manifoldBookSource{books: make(map[string]*mgrbook.Book)}
+	solver := &Solver{
+		books:     books,
+		config:    config,
+		domain:    domain,
+		tokenizer: NewTokenizer(config, symbols),
+		residency: config.Grid.X * config.Grid.Y * config.Grid.Z / 32,
+	}
+	thesis := types.NewThesis()
+	measurements := make([]*types.Measurement, 0, len(symbols))
+
+	for index, symbol := range symbols {
+		managed := mgrbook.New()
+		managed.Name = symbol
+		managed.NoBookCrossing = false
+		managed.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Bid,
+			ID:        symbol + "-bid",
+			Price:     decimal.NewFromInt64(99),
+			Quantity:  decimal.NewFromInt64(1),
+			Timestamp: time.Unix(int64(index+1), 0).UTC(),
+		})
+		managed.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Ask,
+			ID:        symbol + "-ask",
+			Price:     decimal.NewFromInt64(101),
+			Quantity:  decimal.NewFromInt64(1),
+			Timestamp: time.Unix(int64(index+2), 0).UTC(),
+		})
+		books.books[symbol] = managed
+		measurements = append(measurements, &types.Measurement{
+			Source: types.SourceHawkes,
+			Symbol: symbol,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricConditionalIntensity, types.SideBuy): {
+					Raw: 1,
+				},
+				types.MetricKey(types.MetricConditionalIntensity, types.SideSell): {
+					Raw: 1,
+				},
+			},
+		})
+	}
+
+	thesis.Measurements.Store(types.SourceHawkes, measurements)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		thesis.At = time.Now().UTC()
+
+		if err = solver.Update(thesis); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

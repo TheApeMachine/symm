@@ -81,9 +81,9 @@ func NewPlanner(
 AttachAnalyzer registers the planner as the analyzer's evaluator.
 
 The planner runs inline on the analyzer's goroutine rather than consuming a
-thesis subscription of its own. Update ends a cycle by resetting the thesis,
-and doing that concurrently with the analyzer's next pass would clear evidence
-while it is still being written.
+thesis subscription of its own. Update prepares the next evaluation epoch on
+that same goroutine so readiness and derived snapshots cannot be cleared while
+the analyzer is still writing them.
 */
 func (planner *Planner) AttachAnalyzer(analyzer *logic.Analyzer) {
 	if analyzer == nil {
@@ -125,10 +125,6 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 	}
 
 	thesis.Tick++
-
-	errnie.Error(audit.Phase(
-		planner.recorder, thesis.Tick, "decide_begin", nil,
-	))
 
 	if thesis.Status != types.READY {
 		planner.complete(thesis, false, "status_not_ready")
@@ -182,30 +178,20 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 
 	if !thesis.Readiness.Decisions {
 		planner.complete(thesis, true, "no_decision")
-
-		// The tick was evaluated and produced nothing, so its evidence has
-		// been spent. Carrying it forward would let one tick's readings
-		// accumulate into the next and blur every trend drawn from them.
-		thesis.Reset()
+		thesis.PrepareNextEvaluation()
 
 		return thesis
 	}
 
 	if planner.recorder != nil {
-		errnie.Error(audit.Record(planner.recorder, "decision", map[string]any{
-			"tick":       thesis.Tick,
-			"at":         thesis.At,
-			"decisions":  thesis.Decisions,
-			"categories": thesis.Categories,
-		}))
+		errnie.Error(audit.RecordDecisionCycle(planner.recorder, thesis))
 	}
 
 	planner.complete(thesis, true, "decisions")
 	planner.publish(thesis)
 
-	// Subscribers receive their own copy, because the reset below empties
-	// the slice this thesis holds and would otherwise clear the decisions
-	// out from under whoever is still acting on them.
+	// Subscribers receive their own copy because the decision slice is an
+	// epoch-scoped working result and is cleared before the next evaluation.
 	decisions := slices.Clone(thesis.Decisions)
 
 	planner.subscribers.Range(func(key, value any) bool {
@@ -218,7 +204,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		return true
 	})
 
-	thesis.Reset()
+	thesis.CloseCycle()
 
 	return thesis
 }
@@ -233,18 +219,6 @@ func (planner *Planner) complete(
 	}
 
 	readiness := thesis.Readiness.Snapshot()
-
-	errnie.Error(audit.Phase(
-		planner.recorder,
-		thesis.Tick,
-		"decide_end",
-		map[string]any{
-			"evaluated": evaluated,
-			"outcome":   outcome,
-			"readiness": readiness,
-			"decisions": len(thesis.Decisions),
-		},
-	))
 
 	if planner.ui == nil {
 		return
