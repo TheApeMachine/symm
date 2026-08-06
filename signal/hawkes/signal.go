@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -31,7 +30,6 @@ type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
-	planner       *strategy.Planner
 	normalize     normalizer
 	sample        *excitation.Sample
 	process       *excitation.Process
@@ -54,7 +52,6 @@ trade component is the sole owner of the mutable marked-arrival history.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
-	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
 ) *Signal {
@@ -65,7 +62,6 @@ func NewSignal(
 		ctx:           ctx,
 		cancel:        cancel,
 		api:           api,
-		planner:       planner,
 		sample:        excitation.NewSample(),
 		process:       excitation.NewProcess(),
 		ui:            ui,

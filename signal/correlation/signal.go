@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -25,7 +24,6 @@ type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
-	planner       *strategy.Planner
 	section       *Section
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
@@ -40,7 +38,6 @@ successive ticks can establish real price relationships.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
-	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
 ) *Signal {
@@ -51,7 +48,6 @@ func NewSignal(
 		ctx:           ctx,
 		cancel:        cancel,
 		api:           api,
-		planner:       planner,
 		section:       NewSection(),
 		ui:            ui,
 		subscriptions: subscriptions,

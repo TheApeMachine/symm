@@ -109,7 +109,7 @@ func (thesis *Thesis) Reset() *Thesis {
 }
 
 func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
-	found, ok := thesis.Tickers.LoadOrStore(ticker.Symbol, ticker)
+	found, ok := thesis.Tickers.LoadOrStore(ticker.Symbol, []kraken.TickerData{ticker})
 
 	if ok {
 		// Check if the ticker timestamp is after the last ticker timestamp.
@@ -136,7 +136,7 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 }
 
 func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
-	found, ok := thesis.Trades.LoadOrStore(trade.Symbol, trade)
+	found, ok := thesis.Trades.LoadOrStore(trade.Symbol, []kraken.TradeData{trade})
 
 	if ok {
 		// Check if the trade timestamp is after the last trade timestamp.

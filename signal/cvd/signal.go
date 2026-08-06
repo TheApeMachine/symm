@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -30,7 +29,6 @@ type Signal struct {
 	sample        *algorithm.TradeFlowSample
 	flow          *equation.Flow
 	midpoints     map[string][]midpointObservation
-	planner       *strategy.Planner
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
@@ -56,7 +54,6 @@ symbol so one market's aggressor history cannot leak into another's evidence.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
-	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
 ) *Signal {
@@ -70,7 +67,6 @@ func NewSignal(
 		sample:        algorithm.NewTradeFlowSample(),
 		flow:          equation.NewFlow(),
 		midpoints:     make(map[string][]midpointObservation),
-		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},

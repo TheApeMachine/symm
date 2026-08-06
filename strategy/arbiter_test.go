@@ -9,17 +9,16 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests"
-	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestArbiterArbitrate(t *testing.T) {
-	Convey("Given normal slots are occupied", t, stack.WithOrders(t, []*testtypes.Symbol{
+	Convey("Given normal slots are occupied", t, tests.WithOrders(t, []*testtypes.Symbol{
 		testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
 		testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
-	}, func(market *tests.Market, system *cmd.System) {
+	}, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 		for range 16 {
 			market.Tick()
 		}
@@ -32,7 +31,7 @@ func TestArbiterArbitrate(t *testing.T) {
 				Action:           types.ActionEnter,
 				Symbol:           symbol.Pair,
 				ProposedQuantity: quantity,
-				Risk:             stack.EntryRisk(system, symbol.Pair),
+				Risk:             entryRisk(system, symbol.Pair),
 			})
 
 			So(err, ShouldBeNil)
@@ -42,47 +41,59 @@ func TestArbiterArbitrate(t *testing.T) {
 		So(system.Desk.OpenSlots(true), ShouldEqual, 2)
 
 		thesis := types.NewThesis(nil)
-		stage(thesis, types.Decision{
+		decision := types.Decision{
 			ID:                uuid.NewString(),
 			Action:            types.ActionEnter,
 			Symbol:            market.Symbols[2].Pair,
 			At:                thesis.At,
 			Utility:           1.0,
 			OpportunityMargin: 1.0,
-		})
+		}
+
+		thesis.Decisions.Store(decision.Symbol, &decision)
 
 		arbiter := strategy.NewArbiter(system.Desk)
 		arbiter.Arbitrate(thesis)
 
-		So(staged(thesis), ShouldHaveLength, 1)
-		So(only(thesis).Action, ShouldEqual, types.ActionNothing)
-		So(only(thesis).Cause, ShouldEqual, "slots_full")
-		So(only(thesis).AllocationClass, ShouldNotEqual, "reserved")
+		retained := 0
+
+		thesis.Decisions.Range(func(key, value any) bool {
+			retained++
+
+			return true
+		})
+
+		So(retained, ShouldEqual, 1)
+		So(decision.Action, ShouldEqual, types.ActionNothing)
+		So(decision.Cause, ShouldEqual, "slots_full")
+		So(decision.AllocationClass, ShouldNotEqual, "reserved")
 
 		Convey("An upstream strategy exit should be suppressed", func() {
 			exitThesis := types.NewThesis(nil)
-			stage(exitThesis, types.Decision{
+			exitDecision := types.Decision{
 				Action:           types.ActionExit,
 				Symbol:           market.Symbols[0].Pair,
 				ProposedQuantity: quantity,
-			})
+			}
+
+			exitThesis.Decisions.Store(exitDecision.Symbol, &exitDecision)
 
 			strategy.NewArbiter(system.Desk).Arbitrate(exitThesis)
 
 			So(exitThesis.Decisions, ShouldHaveLength, 1)
-			So(only(exitThesis).Action, ShouldEqual, types.ActionHold)
-			So(only(exitThesis).Cause, ShouldEqual, "stoploss_only")
-			So(only(exitThesis).ProposedQuantity.Sign(), ShouldEqual, 0)
+			So(exitDecision.Action, ShouldEqual, types.ActionHold)
+			So(exitDecision.Cause, ShouldEqual, "stoploss_only")
+			So(exitDecision.ProposedQuantity.Sign(), ShouldEqual, 0)
 		})
 	}))
 
-	Convey("Given all normal and reserved slots are occupied", t, stack.WithOrders(t, []*testtypes.Symbol{
+	Convey("Given all normal and reserved slots are occupied", t, tests.WithOrders(t, []*testtypes.Symbol{
 		testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
 		testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
 		testtypes.NewSymbol("SIM4/USD", 100.0, 5150),
 		testtypes.NewSymbol("SIM5/USD", 100.0, 8080),
-	}, func(market *tests.Market, system *cmd.System) {
+	}, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 		for range 16 {
 			market.Tick()
 		}
@@ -97,7 +108,7 @@ func TestArbiterArbitrate(t *testing.T) {
 				Symbol:           symbol.Pair,
 				ProposedQuantity: quantity,
 				Opportunity:      positionIndex >= system.Desk.MaxPositions(),
-				Risk:             stack.EntryRisk(system, symbol.Pair),
+				Risk:             entryRisk(system, symbol.Pair),
 			})
 
 			So(err, ShouldBeNil)
@@ -106,7 +117,7 @@ func TestArbiterArbitrate(t *testing.T) {
 		So(system.Desk.OpenSlots(true), ShouldEqual, 0)
 
 		thesis := types.NewThesis(nil)
-		stage(thesis, types.Decision{
+		decision := types.Decision{
 			ID:                uuid.NewString(),
 			Action:            types.ActionEnter,
 			Symbol:            market.Symbols[4].Pair,
@@ -114,21 +125,31 @@ func TestArbiterArbitrate(t *testing.T) {
 			Utility:           1.0,
 			Opportunity:       true,
 			OpportunityMargin: 1.0,
-		})
+		}
+
+		thesis.Decisions.Store(decision.Symbol, &decision)
 
 		arbiter := strategy.NewArbiter(system.Desk)
 		arbiter.Arbitrate(thesis)
 
-		So(staged(thesis), ShouldHaveLength, 1)
-		So(only(thesis).Action, ShouldEqual, types.ActionNothing)
-		So(only(thesis).Cause, ShouldEqual, "slots_full")
+		retained := 0
+
+		thesis.Decisions.Range(func(key, value any) bool {
+			retained++
+
+			return true
+		})
+
+		So(retained, ShouldEqual, 1)
+		So(decision.Action, ShouldEqual, types.ActionNothing)
+		So(decision.Cause, ShouldEqual, "slots_full")
 	}))
 
-	Convey("Given normal slots are occupied by stop-governed positions", t, stack.WithOrders(t, []*testtypes.Symbol{
+	Convey("Given normal slots are occupied by stop-governed positions", t, tests.WithOrders(t, []*testtypes.Symbol{
 		testtypes.NewSymbol("SIM1/USD", 110.0, 42),
 		testtypes.NewSymbol("SIM2/USD", 110.0, 1337),
 		testtypes.NewSymbol("SIM3/USD", 110.0, 90210),
-	}, func(market *tests.Market, system *cmd.System) {
+	}, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 		market.WithAutoFill()
 
 		for range 16 {
@@ -143,7 +164,7 @@ func TestArbiterArbitrate(t *testing.T) {
 				Action:           types.ActionEnter,
 				Symbol:           symbol.Pair,
 				ProposedQuantity: quantity,
-				Risk:             stack.EntryRisk(system, symbol.Pair),
+				Risk:             entryRisk(system, symbol.Pair),
 			})
 
 			So(err, ShouldBeNil)
@@ -171,23 +192,27 @@ func TestArbiterArbitrate(t *testing.T) {
 		Convey("A weaker challenger should wait for a stoploss to free a slot", func() {
 			thesis := types.NewThesis(nil)
 			for _, decision := range decisions {
-				stage(thesis, decision)
+				thesis.Decisions.Store(decision.Symbol, &decision)
 			}
 
-			stage(thesis, types.Decision{
+			decision := types.Decision{
 				ID:               uuid.NewString(),
 				Action:           types.ActionEnter,
 				Symbol:           market.Symbols[2].Pair,
 				At:               thesis.At,
 				Utility:          0.01,
 				ProposedQuantity: quantity,
-			})
+			}
+
+			thesis.Decisions.Store(decision.Symbol, &decision)
 
 			strategy.NewArbiter(system.Desk).Arbitrate(thesis)
 
 			exits := 0
 
-			for _, decision := range staged(thesis) {
+			thesis.Decisions.Range(func(key, value any) bool {
+				decision := value.(*types.Decision)
+
 				if decision.Action == types.ActionExit {
 					exits++
 				}
@@ -196,7 +221,9 @@ func TestArbiterArbitrate(t *testing.T) {
 					So(decision.Action, ShouldEqual, types.ActionNothing)
 					So(decision.Cause, ShouldEqual, "slots_full")
 				}
-			}
+
+				return true
+			})
 
 			So(exits, ShouldEqual, 0)
 		})
@@ -204,23 +231,27 @@ func TestArbiterArbitrate(t *testing.T) {
 		Convey("Even a stronger challenger should not liquidate an incumbent", func() {
 			thesis := types.NewThesis(nil)
 			for _, decision := range decisions {
-				stage(thesis, decision)
+				thesis.Decisions.Store(decision.Symbol, &decision)
 			}
 
-			stage(thesis, types.Decision{
+			decision := types.Decision{
 				ID:               uuid.NewString(),
 				Action:           types.ActionEnter,
 				Symbol:           market.Symbols[2].Pair,
 				At:               thesis.At,
 				Utility:          0.05,
 				ProposedQuantity: quantity,
-			})
+			}
+
+			thesis.Decisions.Store(decision.Symbol, &decision)
 
 			strategy.NewArbiter(system.Desk).Arbitrate(thesis)
 
 			exits := 0
 
-			for _, decision := range staged(thesis) {
+			thesis.Decisions.Range(func(key, value any) bool {
+				decision := value.(*types.Decision)
+
 				if decision.Action == types.ActionExit {
 					exits++
 				}
@@ -230,7 +261,9 @@ func TestArbiterArbitrate(t *testing.T) {
 					So(decision.Cause, ShouldEqual, "slots_full")
 					So(decision.Displaces, ShouldBeBlank)
 				}
-			}
+
+				return true
+			})
 
 			So(exits, ShouldEqual, 0)
 		})

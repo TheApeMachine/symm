@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -45,6 +46,21 @@ type System struct {
 }
 
 /*
+Holding reports how many open lots the desk carries for one symbol.
+
+Inventory is the only question a caller driving the system from outside can ask
+that the system answers about itself rather than about its opinions, so it is
+what tells a harness that a position has actually been run out.
+*/
+func (system *System) Holding(symbol string) int {
+	if system == nil || system.Desk == nil {
+		return 0
+	}
+
+	return system.Desk.Holding(symbol)
+}
+
+/*
 Close releases every resource Boot acquired, in reverse order of acquisition.
 */
 func (system *System) Close() error {
@@ -52,8 +68,8 @@ func (system *System) Close() error {
 		return nil
 	}
 
-	for index := len(system.closers) - 1; index >= 0; index-- {
-		errnie.Error(system.closers[index]())
+	for _, v := range slices.Backward(system.closers) {
+		errnie.Error(v())
 	}
 
 	return nil
@@ -71,11 +87,6 @@ func Boot(
 	private websocket.Conn,
 	uiChannel chan []byte,
 ) *System {
-	/*
-		Boot is unusable without configuration, so load it here when the
-		caller has not already done so. The cobra command sets this up via
-		initConfig; tests rely on this fallback.
-	*/
 	if !viper.IsSet("market.subscribe.batch") {
 		if err := loadEmbeddedConfig(); err != nil {
 			errnie.Error(err)
@@ -150,26 +161,11 @@ func Boot(
 		return nil
 	}
 
-	planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
-		ctx,
-		uiChannel,
-		api,
-		desk,
-		instrument,
-		price,
-		balance,
-		nil,
-		recorder,
-	)).Wait()
-
-	errnie.Info("planner reported to be ready")
-
 	crypto := utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
 		ctx,
 		api,
 		uiChannel,
 		recorder,
-		planner,
 		desk,
 		thesis,
 	)).Wait()
@@ -179,15 +175,15 @@ func Boot(
 	signalSubscriptions := map[string]*types.Subscription[any]{}
 
 	for _, signal := range []types.Signal{
-		utils.NewWaiter[*correlation.Signal](correlation.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*cvd.Signal](cvd.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(ctx, api, instrument, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(ctx, api, instrument, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(ctx, api, planner, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*correlation.Signal](correlation.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*cvd.Signal](cvd.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(ctx, api, instrument, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(ctx, api, instrument, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
 		utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
 	} {
 		errnie.Info(fmt.Sprintf("%s signal reported to be ready", signal.Name()))
@@ -205,6 +201,22 @@ func Boot(
 	)).Wait()
 
 	errnie.Info("analyzer reported to be ready")
+
+	planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
+		ctx,
+		uiChannel,
+		api,
+		desk,
+		instrument,
+		price,
+		balance,
+		analyzer,
+		recorder,
+	)).Wait()
+
+	errnie.Info("planner reported to be ready")
+
+	crypto.AddSubscription("planner", planner.Subscribe("planner", types.NewSubscription[any]()))
 
 	system.Hub = ui.NewHub(
 		ctx,

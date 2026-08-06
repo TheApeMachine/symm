@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -21,7 +20,6 @@ type Signal struct {
 	cancel        context.CancelFunc
 	api           *websocket.API
 	section       *Section
-	planner       *strategy.Planner
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
@@ -35,7 +33,6 @@ temporal relationships persist across Thesis ticks.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
-	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
 ) *Signal {
@@ -47,7 +44,6 @@ func NewSignal(
 		cancel:        cancel,
 		api:           api,
 		section:       NewSection(),
-		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},

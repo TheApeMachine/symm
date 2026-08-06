@@ -53,9 +53,23 @@ type Market struct {
 	latest     map[string]testtypes.Sample
 	previous   map[string]testtypes.Sample
 	filled     map[string]struct{}
+	stack      Stack
 	autoFill   bool
 	primed     bool
 	sampleMu   sync.RWMutex
+}
+
+/*
+Drive points the venue at the system consuming its frames.
+
+A venue that publishes into nothing can only run for a fixed number of ticks,
+which turns every wait into a number somebody guessed. Given the system, it can
+run until what it is waiting for has actually happened.
+*/
+func (market *Market) Drive(stack Stack) *Market {
+	market.stack = stack
+
+	return market
 }
 
 /*
@@ -233,7 +247,17 @@ assumed. The ceiling is what makes a lot that never closes a failing test that
 names the position instead of a hanging one.
 */
 func (market *Market) Flatten(symbol string) error {
+	if market.stack == nil {
+		return fmt.Errorf(
+			"market: %s cannot be run flat without a driven stack", symbol,
+		)
+	}
+
 	for range flattenCeilingTicks {
+		if market.stack.Holding(symbol) == 0 {
+			return nil
+		}
+
 		market.Tick()
 	}
 
@@ -418,7 +442,8 @@ connections down when the test finishes.
 It boots nothing. The stack under test is wired by the caller against Feeds,
 because a data provider that also assembled the system would have to import it,
 and every package that owns a piece of the system could then no longer test
-against a market.
+against a market. WithStack is the same venue with that wiring done, for the
+tests that want the whole system rather than only its data.
 */
 func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market)) func() {
 	return func() {

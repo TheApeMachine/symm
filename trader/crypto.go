@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -26,7 +25,6 @@ type Crypto struct {
 	dataPath      string
 	ui            chan []byte
 	recorder      *audit.Recorder
-	planner       *strategy.Planner
 	desk          *broker.Desk
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
@@ -40,7 +38,6 @@ func NewCrypto(
 	api *websocket.API,
 	ui chan []byte,
 	recorder *audit.Recorder,
-	planner *strategy.Planner,
 	desk *broker.Desk,
 	thesis *types.Thesis,
 ) *Crypto {
@@ -55,7 +52,6 @@ func NewCrypto(
 		dataPath: utils.ResolveDataPath(),
 		ui:       ui,
 		recorder: recorder,
-		planner:  planner,
 		desk:     desk,
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
@@ -64,19 +60,20 @@ func NewCrypto(
 			"trade": api.Subscribe(
 				"trade", types.NewSubscription[any](),
 			),
-			"decisions": planner.Subscribe(
-				"decisions", types.NewSubscription[any](),
-			),
 		},
 		subscribers: &sync.Map{},
 	}
 
-	crypto.run()
 	return crypto
 }
 
 func (crypto *Crypto) Status() types.Status {
 	return crypto.status
+}
+
+func (crypto *Crypto) AddSubscription(key string, subscription *types.Subscription[any]) {
+	crypto.subscriptions[key] = subscription
+	crypto.run()
 }
 
 func (crypto *Crypto) Subscribe(
@@ -111,7 +108,7 @@ func (crypto *Crypto) run() {
 				var ok bool
 				crypto.thesis, ok = in.(*types.Thesis)
 
-				if !ok {
+				if !ok || !crypto.thesis.Readiness.Complete() {
 					continue
 				}
 
@@ -134,6 +131,8 @@ func (crypto *Crypto) run() {
 
 					return true
 				})
+
+				crypto.thesis.Reset()
 			}
 		}
 	}()

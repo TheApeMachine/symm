@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
-	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -20,7 +19,7 @@ func TestPriceWithFriction(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("Trade values should debit the fee on both sides", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("Trade values should debit the fee on both sides", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			system.Desk.Price().Update(&kraken.TickerData{
 				Symbol: symbols[0].Pair,
 				Bid:    decimal.NewFromInt64(100),
@@ -43,7 +42,7 @@ func TestPriceMark(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("A sell mark should debit the liquidation fee", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("A sell mark should debit the liquidation fee", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			system.Desk.Price().Update(&kraken.TickerData{
 				Symbol: symbols[0].Pair,
 				Bid:    decimal.NewFromInt64(100),
@@ -63,7 +62,7 @@ func TestPriceFee(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("Fee lookup should not require market data", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("Fee lookup should not require market data", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			fee, err := system.Desk.Price().Fee(symbols[0].Pair)
 
 			So(err, ShouldBeNil)
@@ -78,7 +77,7 @@ func TestPricePnL(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("PnL should retain and debit both fees exactly", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("PnL should retain and debit both fees exactly", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			bid, err := decimal.NewFromString("100.00")
 			So(err, ShouldBeNil)
 			entryPrice, err := decimal.NewFromString("100.0")

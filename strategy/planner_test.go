@@ -2,6 +2,7 @@ package strategy_test
 
 import (
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
-	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -45,8 +45,7 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("Every planner update should still advance the market tick", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
-
+		Convey("Every planner update should still advance the market tick", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			before := system.Thesis.Tick
 
 			system.Planner.Update(system.Thesis)
@@ -62,8 +61,7 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should prepare next evaluation while retaining cycle evidence", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
-
+		Convey("It should prepare next evaluation while retaining cycle evidence", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			thesis := system.Thesis
 			base := time.Unix(1_700_006_000, 0).UTC()
 			thesis.Lifecycle.Store("SIM1/USD", types.LifecycleManaging)
@@ -95,8 +93,7 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should complete evaluation and prepare next pass retaining multi-read history", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
-
+		Convey("It should complete evaluation and prepare next pass retaining multi-read history", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			thesis := system.Thesis
 			observedAt := time.Unix(1_700_006_050, 0).UTC()
 			thesis.AppendTicker(kraken.TickerData{
@@ -108,9 +105,11 @@ func TestPlannerUpdate(t *testing.T) {
 			thesis.AppendMeasurements([]*types.Measurement{{
 				Source: types.SourcePumpDump, Symbol: "SIM1/USD", At: observedAt,
 			}}, true)
-			stage(thesis, types.Decision{
+			decision := types.Decision{
 				Action: types.ActionNothing, Symbol: "SIM1/USD", At: observedAt,
-			})
+			}
+
+			thesis.Decisions.Store(decision.Symbol, &decision)
 			stampPlannerReadiness(thesis)
 
 			system.Planner.Update(thesis)
@@ -127,8 +126,7 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should emit the decisions before closing canonical history", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
-
+		Convey("It should emit the decisions before closing canonical history", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			thesis := system.Thesis
 			observedAt := time.Unix(1_700_006_100, 0).UTC()
 			thesis.AppendTicker(kraken.TickerData{
@@ -149,9 +147,11 @@ func TestPlannerUpdate(t *testing.T) {
 			So(system.Thesis, ShouldEqual, thesis)
 
 			stampPlannerReadiness(thesis)
-			stage(thesis, types.Decision{
+			decision := types.Decision{
 				Action: types.ActionHold, Symbol: "SIM1/USD", At: observedAt,
-			})
+			}
+
+			thesis.Decisions.Store(decision.Symbol, &decision)
 			subscription := system.Planner.Subscribe(
 				"cycle-close-test", types.NewSubscription[any](),
 			)
@@ -179,8 +179,32 @@ func TestPlannerPumpEntry(t *testing.T) {
 
 	Convey(
 		"Given a fast pump whose forecast never clears executable friction",
-		t, stack.WithStack(t, symbols, func(market *tests.Market, system *cmd.System) {
-			collected := collect(system)
+		t, tests.WithStack(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
+			published := make([]types.Decision, 0)
+			var publishedMu sync.Mutex
+			subscription := system.Planner.Subscribe(
+				"decisions", types.NewSubscription[any](),
+			)
+
+			go func() {
+				for {
+					emitted, open := <-subscription.Channel
+
+					if !open {
+						return
+					}
+
+					decisions, ok := emitted.([]types.Decision)
+
+					if !ok {
+						continue
+					}
+
+					publishedMu.Lock()
+					published = append(published, decisions...)
+					publishedMu.Unlock()
+				}
+			}()
 
 			initialOpportunitySlots := system.Desk.OpenSlots(true)
 
@@ -201,7 +225,7 @@ func TestPlannerPumpEntry(t *testing.T) {
 			entryDecisions := 0
 			maximumExecutableReturn := decimal.NewFromInt64(0)
 
-			for _, decision := range collected.All() {
+			for _, decision := range published {
 
 				So(decision.ValidID(), ShouldBeTrue)
 				So(decision.Symbol, ShouldNotBeBlank)
@@ -273,8 +297,32 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 		testtypes.NewSymbol("SIM4/USD", 100.0, 5150),
 	}
 
-	Convey("Given simultaneous pump candidates below their own trading costs", t, stack.WithStack(t, symbols, func(market *tests.Market, system *cmd.System) {
-		collected := collect(system)
+	Convey("Given simultaneous pump candidates below their own trading costs", t, tests.WithStack(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
+		published := make([]types.Decision, 0)
+		var publishedMu sync.Mutex
+		subscription := system.Planner.Subscribe(
+			"decisions", types.NewSubscription[any](),
+		)
+
+		go func() {
+			for {
+				emitted, open := <-subscription.Channel
+
+				if !open {
+					return
+				}
+
+				decisions, ok := emitted.([]types.Decision)
+
+				if !ok {
+					continue
+				}
+
+				publishedMu.Lock()
+				published = append(published, decisions...)
+				publishedMu.Unlock()
+			}
+		}()
 
 		initialNormalSlots := system.Desk.OpenSlots(false)
 		initialOpportunitySlots := system.Desk.OpenSlots(true)
@@ -297,7 +345,7 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 		reservedDecisions := 0
 		rounds := map[int64][]types.Decision{}
 
-		for _, decision := range collected.All() {
+		for _, decision := range published {
 			if decision.AllocationClass == "reserved" {
 				reservedDecisions++
 			}
@@ -376,8 +424,32 @@ func TestPlannerPumpReversal(t *testing.T) {
 		testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
 	}
 
-	Convey("Given an open simulated position when a pump reverses into a dump", t, stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
-		collected := collect(system)
+	Convey("Given an open simulated position when a pump reverses into a dump", t, tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
+		published := make([]types.Decision, 0)
+		var publishedMu sync.Mutex
+		subscription := system.Planner.Subscribe(
+			"decisions", types.NewSubscription[any](),
+		)
+
+		go func() {
+			for {
+				emitted, open := <-subscription.Channel
+
+				if !open {
+					return
+				}
+
+				decisions, ok := emitted.([]types.Decision)
+
+				if !ok {
+					continue
+				}
+
+				publishedMu.Lock()
+				published = append(published, decisions...)
+				publishedMu.Unlock()
+			}
+		}()
 
 		market.WithAutoFill()
 
@@ -399,7 +471,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 			Action:           types.ActionEnter,
 			Symbol:           symbols[0].Pair,
 			ProposedQuantity: entryQuantity,
-			Risk:             stack.EntryRisk(system, symbols[0].Pair),
+			Risk:             entryRisk(system, symbols[0].Pair),
 		}), ShouldBeNil)
 
 		market.Tick()
@@ -412,7 +484,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 		So(position.Status, ShouldEqual, types.OPEN)
 		So(position.Holding.SellableQty.Cmp(entryQuantity), ShouldEqual, 0)
 
-		reversalDecisionOffset := len(collected.All())
+		reversalDecisionOffset := len(published)
 		for _, symbol := range market.Symbols {
 			So(market.Transition(symbol.Pair, testtypes.FastDump), ShouldBeNil)
 		}
@@ -421,7 +493,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 			market.Tick()
 		}
 
-		decisions := collected.All()
+		decisions := published
 		So(len(decisions), ShouldBeGreaterThanOrEqualTo, reversalDecisionOffset)
 		reversalDecisions := decisions[reversalDecisionOffset:]
 		strategyExitDecisions := 0
@@ -452,4 +524,20 @@ func TestPlannerPumpReversal(t *testing.T) {
 		So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
 		So(position.Holding.ExitAt, ShouldNotBeNil)
 	}))
+}
+
+/*
+entryRisk derives the stop geometry an entry for this symbol would be sized
+under, from the live simulated book. The desk refuses an entry without one,
+because a quantity solved against a particular risk distance carries a loss
+nobody budgeted once it is fitted with another.
+*/
+func entryRisk(system *cmd.System, symbol string) types.RiskPlan {
+	pair, err := system.Desk.Instrument().Pair(symbol)
+
+	if err != nil {
+		return types.RiskPlan{}
+	}
+
+	return system.Desk.Price().RiskPlan(pair)
 }

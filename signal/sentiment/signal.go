@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -26,7 +25,6 @@ type Signal struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
-	planner       *strategy.Planner
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
@@ -49,7 +47,6 @@ tick can compare breadth with current leadership.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
-	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
 ) *Signal {
@@ -60,7 +57,6 @@ func NewSignal(
 		ctx:           ctx,
 		cancel:        cancel,
 		api:           api,
-		planner:       planner,
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},

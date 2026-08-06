@@ -19,7 +19,6 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
-	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -97,7 +96,7 @@ func TestPositionOnExecution(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("Execution updates should follow private transport correlation", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("Execution updates should follow private transport correlation", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			decision := entryDecision(system, symbols[0].Pair)
 			So(system.Desk.Execute(decision), ShouldBeNil)
@@ -412,7 +411,7 @@ func TestPositionStopAudit(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("Every change should leave a row that can label the outcome later", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("Every change should leave a row that can label the outcome later", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			decision := entryDecision(system, symbols[0].Pair)
 			So(system.Desk.Execute(decision), ShouldBeNil)
@@ -472,7 +471,7 @@ func TestPositionStopSnapshot(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("Its geometry should be readable from outside the desk goroutine", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("Its geometry should be readable from outside the desk goroutine", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			decision := entryDecision(system, symbols[0].Pair)
 			So(system.Desk.Execute(decision), ShouldBeNil)
@@ -513,7 +512,7 @@ func TestPositionOnTicker(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("Ticker updates should not submit the sell again", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("Ticker updates should not submit the sell again", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			decision := entryDecision(system, symbols[0].Pair)
 			So(system.Desk.Execute(decision), ShouldBeNil)

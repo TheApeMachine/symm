@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
-	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -51,7 +50,7 @@ func TestDeskExecute(t *testing.T) {
 			testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
 		}
 
-		Convey("Execute should submit entries but reject strategy exits", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("Execute should submit entries but reject strategy exits", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			decision := entryDecision(system, symbols[0].Pair)
 
@@ -86,7 +85,7 @@ func TestDeskExecute(t *testing.T) {
 			So(positions[0].ExitOrderResult, ShouldBeNil)
 		}))
 
-		Convey("A repeated enter should reject the new position", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("A repeated enter should reject the new position", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			decision := entryDecision(system, symbols[0].Pair)
 			So(system.Desk.Execute(decision), ShouldBeNil)
@@ -101,7 +100,7 @@ func TestDeskExecute(t *testing.T) {
 			So(slices.Collect(system.Desk.Positions()), ShouldHaveLength, openPositions)
 		}))
 
-		Convey("A strategy exit should be rejected without inspecting inventory", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("A strategy exit should be rejected without inspecting inventory", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			openPositions := system.Desk.OpenPositions()
 			err := system.Desk.Execute(types.Decision{
 				ID:     uuid.NewString(),
@@ -115,7 +114,7 @@ func TestDeskExecute(t *testing.T) {
 			So(slices.Collect(system.Desk.Positions()), ShouldBeEmpty)
 		}))
 
-		Convey("An AddOrder failure should release the attempted position", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("An AddOrder failure should release the attempted position", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			market.Private.FailAddOrder(errors.New("venue unavailable"))
 			openPositions := system.Desk.OpenPositions()
@@ -127,7 +126,7 @@ func TestDeskExecute(t *testing.T) {
 			So(slices.Collect(system.Desk.Positions()), ShouldBeEmpty)
 		}))
 
-		Convey("Concurrent entries should not exceed normal capacity", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		Convey("Concurrent entries should not exceed normal capacity", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			executionErrors := make(chan error, len(symbols))
 			wait := sync.WaitGroup{}

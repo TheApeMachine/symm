@@ -1,7 +1,6 @@
 package trader_test
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -9,12 +8,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests"
-	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
-	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -53,53 +48,10 @@ var regimes = []struct {
 	{"SIM15/USD", testtypes.PositiveEvidenceFloor},
 }
 
-func getAPI(ctx context.Context) *websocket.API {
-	return websocket.NewAPI(
-		ctx,
-		websocket.NewWithClient(ctx, nil, false, "", nil),
-		websocket.NewWithClient(ctx, nil, false, "", nil),
-	)
-}
-
-func getInstance(ctx context.Context) *trader.Crypto {
-	return trader.NewCrypto(
-		ctx,
-		getAPI(ctx),
-		nil,
-		nil,
-		strategy.NewPlanner(
-			ctx,
-			nil,
-			getAPI(ctx),
-			nil,
-			nil,
-			nil,
-			nil,
-			nil,
-			nil,
-		),
-		nil,
-		nil,
-	)
-}
-
-func TestStatus(t *testing.T) {
-	Convey(
-		"Setup",
-		t, stack.WithStack(t, symbols, func(market *tests.Market, system *cmd.System) {
-			crypto := getInstance(t.Context())
-
-			Convey("Then the status should be READY", func() {
-				So(crypto.Status(), ShouldEqual, types.READY)
-			})
-		}),
-	)
-}
-
 func TestIntegration(t *testing.T) {
 	Convey(
 		"Setup",
-		t, stack.WithStack(t, symbols, func(market *tests.Market, system *cmd.System) {
+		t, tests.WithStack(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			thesis := system.Thesis
 
 			Convey("When the market is transitioned to a fast pump", func() {
@@ -232,7 +184,7 @@ and worth more on the way out than the round trip cost to hold it.
 func TestRoundTrip(t *testing.T) {
 	Convey(
 		"Setup",
-		t, stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		t, tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			thesis := system.Thesis
 
 			market.WithAutoFill()
@@ -327,7 +279,7 @@ spoofed depth and a thin book — are built to look like the one that does.
 func TestRegimeDiscrimination(t *testing.T) {
 	Convey(
 		"Setup",
-		t, stack.WithStack(t, regimeSymbols, func(market *tests.Market, system *cmd.System) {
+		t, tests.WithStack(t, regimeSymbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
 			thesis := system.Thesis
 
 			Convey("When every market condition runs at once", func() {
@@ -411,31 +363,23 @@ func armedPositions(system *cmd.System, symbol string) int {
 }
 
 func symbolTickers(thesis *types.Thesis, symbol string) []kraken.TickerData {
-	rows := make([]kraken.TickerData, 0)
+	rowsRaw, found := thesis.Tickers.Load(symbol)
 
-	thesis.Tickers.Range(func(key, value interface{}) bool {
-		ticker := value.(kraken.TickerData)
-		if ticker.Symbol == symbol {
-			rows = append(rows, ticker)
-		}
-		return true
-	})
+	if !found {
+		return nil
+	}
 
-	return rows
+	return rowsRaw.([]kraken.TickerData)
 }
 
 func symbolTrades(thesis *types.Thesis, symbol string) []kraken.TradeData {
-	rows := make([]kraken.TradeData, 0)
+	rowsRaw, found := thesis.Trades.Load(symbol)
 
-	thesis.Trades.Range(func(key, value interface{}) bool {
-		trade := value.(kraken.TradeData)
-		if trade.Symbol == symbol {
-			rows = append(rows, trade)
-		}
-		return true
-	})
+	if !found {
+		return nil
+	}
 
-	return rows
+	return rowsRaw.([]kraken.TradeData)
 }
 
 func signalSources() []types.SourceType {

@@ -228,6 +228,30 @@ func (desk *Desk) OpenPositions() int {
 }
 
 /*
+Holding reports how many lots the desk still carries for one symbol.
+
+OpenPositions counts slots, which includes a lot whose order is still working.
+This counts inventory, so it answers the only question an observer outside the
+desk can ask about a symbol without guessing: is anything still on the book for
+it, or has the position been run all the way out.
+*/
+func (desk *Desk) Holding(symbol string) int {
+	held := 0
+
+	for position := range desk.Positions() {
+		if position.Holding == nil ||
+			position.Holding.Symbol != symbol ||
+			isTerminal(position.Status) {
+			continue
+		}
+
+		held++
+	}
+
+	return held
+}
+
+/*
 PublishEquity reports what the desk is worth if every open lot were closed now.
 
 Cash alone understates the account while positions are open. Unrealized is the

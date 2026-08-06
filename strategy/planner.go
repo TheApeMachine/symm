@@ -55,10 +55,15 @@ func NewPlanner(
 	arbiter := NewArbiter(desk)
 
 	planner := &Planner{
-		ctx:         ctx,
-		cancel:      cancel,
-		status:      types.READY,
-		ui:          uiHub,
+		ctx:    ctx,
+		cancel: cancel,
+		status: types.READY,
+		ui:     uiHub,
+		subscriptions: map[string]*types.Subscription[any]{
+			"analyzer": analyzer.Subscribe(
+				"analyzer", types.NewSubscription[any](),
+			),
+		},
 		subscribers: &sync.Map{},
 		api:         api,
 		desk:        desk,

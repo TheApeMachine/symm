@@ -18,7 +18,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -34,7 +33,6 @@ type Signal struct {
 	cancel        context.CancelFunc
 	books         websocket.BookSource
 	instrument    *broker.Instrument
-	planner       *strategy.Planner
 	sample        *algorithm.DecaySample
 	decay         *equation.Decay
 	ui            chan []byte
@@ -72,7 +70,6 @@ func NewSignal(
 	ctx context.Context,
 	books websocket.BookSource,
 	instrument *broker.Instrument,
-	planner *strategy.Planner,
 	ui chan []byte,
 	subscriptions map[string]*types.Subscription[any],
 ) *Signal {
@@ -84,7 +81,6 @@ func NewSignal(
 		cancel:        cancel,
 		books:         books,
 		instrument:    instrument,
-		planner:       planner,
 		sample:        algorithm.NewDecaySample(),
 		decay:         equation.NewDecay(),
 		ui:            ui,
