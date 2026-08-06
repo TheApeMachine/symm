@@ -2,7 +2,7 @@ package utils
 
 import (
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/kraken"
+	"github.com/theapemachine/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
 )
 

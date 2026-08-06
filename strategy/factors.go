@@ -4,7 +4,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/types"

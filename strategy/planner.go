@@ -125,22 +125,7 @@ func (planner *Planner) Close() error {
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) {
-	if thesis == nil {
-		return
-	}
-
-	if thesis.Status != types.READY {
-		planner.complete(thesis, false, 0, "status_not_ready")
-
-		return
-	}
-
-	// Strategy reads what logic derived, so a tick whose analysis has not
-	// finished is left alone and comes back once the stages that feed it have
-	// stamped. Strategy's own stamps are raised by this pass, so gating on them
-	// would be gating on the work being gated.
 	if !thesis.LogicAnalyzed() {
-		planner.complete(thesis, false, 0, "logic_not_ready")
 		return
 	}
 
@@ -168,30 +153,18 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		},
 	)
 
-	if len(decisions) == 0 {
-		planner.complete(thesis, true, 0, "no_decision")
+	if len(decisions) == 0 || !terminalDecision {
 		return
 	}
 
-	if !terminalDecision {
-		planner.complete(thesis, true, len(decisions), "deferred")
-		return
-	}
-
-	planner.complete(thesis, true, len(decisions), "decisions")
-	planner.publish(decisions)
-
-	planner.subscribers.Range(func(key, value any) bool {
-		if subscribers, ok := value.([]*types.Subscription[any]); ok {
-			for _, subscriber := range subscribers {
-				subscriber.Send(decisions)
-			}
-		}
-
-		return true
-	})
-
+	thesis.Stamp(types.SourcePlanner)
 	utils.Fanout(planner.subscribers, "planner", thesis)
+
+	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
+		"evaluated", true,
+		"outcome", "decisions",
+		"decisions", decisions,
+	)))
 }
 
 /*
@@ -224,38 +197,4 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 	})
 
 	return decisions
-}
-
-func (planner *Planner) complete(
-	thesis *types.Thesis,
-	evaluated bool,
-	decisions int,
-	outcome string,
-) {
-	if planner == nil || thesis == nil || planner.ui == nil {
-		return
-	}
-
-	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
-		"tick", thesis.Tick,
-		"at", thesis.At,
-		"evaluated", evaluated,
-		"outcome", outcome,
-		"readiness", datura.NewMap(
-			"signals", thesis.SignalsMeasured(),
-			"logic", thesis.LogicAnalyzed(),
-			"strategy", thesis.StrategyDecided(),
-		),
-		"decisions", decisions,
-	)))
-}
-
-func (planner *Planner) publish(decisions []types.Decision) {
-	if planner == nil || planner.ui == nil || len(decisions) == 0 {
-		return
-	}
-
-	out := datura.NewMap()
-	out["decisions"] = decisions
-	utils.Publish(planner.ui, out)
 }

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"

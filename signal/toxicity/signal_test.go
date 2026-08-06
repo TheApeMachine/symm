@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )

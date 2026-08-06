@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 

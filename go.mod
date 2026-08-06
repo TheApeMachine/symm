@@ -6,10 +6,10 @@ require (
 	github.com/bytedance/sonic v1.15.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/phuslu/log v1.0.124
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
+	github.com/theapemachine/api-go/v2 v2.0.3
 	golang.org/x/sync v0.21.0
 )
 
@@ -72,18 +72,16 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
-	github.com/theapemachine/datura v1.2.7
-	github.com/theapemachine/errnie v1.2.5
-	github.com/theapemachine/nomagique v0.0.4
+	github.com/theapemachine/datura v1.2.9
+	github.com/theapemachine/errnie v1.2.6
+	github.com/theapemachine/nomagique v0.0.5
 	gonum.org/v1/gonum v0.17.0 // indirect
 )
 
-replace github.com/bytedance/sonic => ../sonic
-
-replace github.com/krakenfx/api-go/v2 => ../api-go
-
-replace github.com/theapemachine/errnie => ../errnie
-
-replace github.com/theapemachine/datura => ../datura
-
-replace github.com/theapemachine/nomagique => ../nomagique
+// replace (
+// 	github.com/bytedance/sonic => ../sonic
+// 	github.com/theapemachine/api-go/v2 => ../api-go
+// 	github.com/theapemachine/errnie => ../errnie
+// 	github.com/theapemachine/datura => ../datura
+// 	github.com/theapemachine/nomagique => ../nomagique
+// )

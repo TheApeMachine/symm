@@ -61,52 +61,6 @@ var MarketStatuses = map[string]Status{
 }
 
 /*
-statusEdges enumerates every legal Status transition for broker lots and
-subsystem readiness. Terminal states have empty outbound sets.
-*/
-var statusEdges = map[Status]map[Status]struct{}{
-	UNKNOWN:      {INITIALIZING: {}, PENDING: {}, READY: {}, ERROR: {}},
-	INITIALIZING: {PENDING: {}, OPEN: {}, READY: {}, CLOSED: {}, ERROR: {}, FATAL: {}},
-	PENDING: {
-		NEW: {}, OPEN: {}, FILLED: {}, PARTIAL: {}, PARTIAL_FILLED: {},
-		CANCELED: {}, REJECTED: {}, EXPIRED: {}, ERROR: {}, CLOSED: {},
-		AMENDED: {}, RESTATED: {}, STATUS: {}, PRIORITY: {},
-	},
-	NEW: {
-		OPEN: {}, FILLED: {}, PARTIAL: {}, PARTIAL_FILLED: {},
-		CANCELED: {}, REJECTED: {}, EXPIRED: {}, ERROR: {},
-		AMENDED: {}, RESTATED: {}, STATUS: {}, PRIORITY: {},
-	},
-	OPEN: {
-		PARTIAL: {}, PARTIAL_FILLED: {}, FILLED: {}, CLOSED: {},
-		CANCELED: {}, PENDING: {}, ERROR: {},
-		AMENDED: {}, RESTATED: {}, STATUS: {}, PRIORITY: {},
-	},
-	PARTIAL: {
-		PARTIAL_FILLED: {}, FILLED: {}, CLOSED: {}, CANCELED: {},
-		OPEN: {}, ERROR: {},
-		AMENDED: {}, RESTATED: {}, STATUS: {}, PRIORITY: {},
-	},
-	PARTIAL_FILLED: {
-		FILLED: {}, CLOSED: {}, CANCELED: {}, OPEN: {}, ERROR: {},
-		AMENDED: {}, RESTATED: {}, STATUS: {}, PRIORITY: {},
-	},
-	FILLED:   {OPEN: {}, CLOSED: {}, PENDING: {}, AMENDED: {}, RESTATED: {}, STATUS: {}},
-	READY:    {BUSY: {}, PENDING: {}, ERROR: {}, FATAL: {}, PRIORITY: {}, STATUS: {}},
-	BUSY:     {READY: {}, ERROR: {}, FATAL: {}, PRIORITY: {}, STATUS: {}},
-	CLOSED:   {OPEN: {}},
-	CANCELED: {OPEN: {}},
-	REJECTED: {},
-	EXPIRED:  {},
-	ERROR:    {READY: {}, CLOSED: {}, FATAL: {}},
-	FATAL:    {},
-	AMENDED:  {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}},
-	RESTATED: {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}},
-	STATUS:   {OPEN: {}, PENDING: {}, FILLED: {}, CANCELED: {}, CLOSED: {}},
-	PRIORITY: {READY: {}, BUSY: {}, ERROR: {}},
-}
-
-/*
 StatusFromMarket resolves a venue exec_type into a canonical Status.
 Unknown types reject rather than inventing a Status string.
 */
@@ -122,38 +76,4 @@ func StatusFromMarket(execType string) (Status, error) {
 	}
 
 	return status, nil
-}
-
-/*
-Transition validates and returns the next Status when the edge is legal.
-Identical from/to is a no-op success so idempotent acks stay quiet.
-*/
-func Transition(from, to Status) (Status, error) {
-	if from == to {
-		return to, nil
-	}
-
-	if to == Status("cancelled") {
-		to = CANCELED
-	}
-
-	allowed, ok := statusEdges[from]
-
-	if !ok {
-		return UNKNOWN, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"unknown status source: "+string(from),
-			nil,
-		))
-	}
-
-	if _, ok := allowed[to]; !ok {
-		return UNKNOWN, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"illegal status transition "+string(from)+" -> "+string(to),
-			nil,
-		))
-	}
-
-	return to, nil
 }

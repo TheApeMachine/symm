@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/callback"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
+	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
+	"github.com/theapemachine/api-go/v2/pkg/callback"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	sdk "github.com/theapemachine/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/symm/kraken"
 )
 

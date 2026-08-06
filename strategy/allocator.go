@@ -4,8 +4,8 @@ import (
 	"context"
 	"math"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/config"
@@ -176,8 +176,6 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		round costs nothing that a mis-sized one does not cost more of.
 	*/
 	if !allocator.riskValid {
-		thesis.Readiness.Stamp(types.SourceAllocator)
-
 		for _, decision := range allocator.entries(thesis) {
 			allocator.reject(decision, "risk configuration invalid")
 		}
@@ -217,15 +215,6 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 	budget = budget.SetScale(allocationScale)
 
 	/*
-		The loss budget is measured against the wallet as it stood when the pass
-		began, not against what is left after each entry is funded. Every
-		decision in this round is judged the same way, and a lot sized late in
-		the loop is not allowed a smaller risk boundary purely because earlier
-		entries had already spent the cash.
-	*/
-	riskBudget := budget
-
-	/*
 		riskPool is what the whole account may still lose, after what the open
 		book already stands to lose is taken out of it.
 
@@ -235,8 +224,9 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		decremented as each entry is sized, and an entry that would overdraw it
 		is refused rather than shrunk to nothing.
 	*/
-	riskPool := budget.Mul(allocator.portfolioLossFraction).
-		Sub(allocator.committedRisk())
+	riskPool := budget.Mul(allocator.portfolioLossFraction).Sub(
+		allocator.committedRisk(),
+	)
 
 	for _, decision := range allocator.entries(thesis) {
 		pair, err := allocator.instrument.Pair(decision.Symbol)
@@ -295,7 +285,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
-		plan := allocator.plan(pair, *decision, riskBudget, riskPool)
+		plan := allocator.plan(pair, *decision, budget, riskPool)
 
 		if !plan.Present {
 			allocator.reject(decision, "risk geometry unavailable")
@@ -370,14 +360,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		budget = budget.Sub(cost)
 	}
 
-	/*
-		The pass ran against a real wallet balance, which is what the stage
-		records. Every entry that survived it carries a size the venue could
-		execute, and every one that did not was rejected in place with the
-		reason it failed on.
-	*/
 	thesis.Stamp(types.SourceAllocator)
-
 	return nil
 }
 

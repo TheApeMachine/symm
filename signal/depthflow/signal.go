@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 

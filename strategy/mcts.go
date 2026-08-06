@@ -9,15 +9,12 @@ import (
 )
 
 const (
-	ActionNothing float64 = 0.0
-	ActionEnter   float64 = 1.0
-	ActionHold    float64 = 2.0
-	// ActionCompleteTrajectory closes an internal rollout whose entry cost was
-	// already charged. It is not a live trading action and is never published.
+	ActionNothing            float64 = 0.0
+	ActionEnter              float64 = 1.0
+	ActionHold               float64 = 2.0
 	ActionCompleteTrajectory float64 = 3.0
-
-	mctsMinimumCausalRows = 12
-	mctsSearchIterations  = 50
+	mctsMinimumCausalRows            = 12
+	mctsSearchIterations             = 50
 )
 
 /*
@@ -32,23 +29,17 @@ threshold that reads one as worth taking and the other as noise is deciding by
 the symbol's price rather than by its move.
 */
 type StrategyState struct {
-	Symbol string
-	Energy float64 // Control 1
-
-	Surprise float64 // Control 2
-
-	// Treatment is the resonance model's first forward-curve step, exactly the
-	// quantity in the causal history's treatment column. RoundTripCost is the
-	// modelled friction of entering and exiting on the same fractional scale.
+	Symbol               string
+	Energy               float64
+	Surprise             float64
 	Treatment            float64
 	Forecast             *types.ResonanceForecast
 	RoundTripCost        float64
 	HoldDiscount         float64
 	HawkesSpectralRadius float64
-
-	Reward    float64 // Target / PnL
-	Step      int
-	IsHolding bool
+	Reward               float64
+	Step                 int
+	IsHolding            bool
 }
 
 /*
@@ -124,8 +115,7 @@ func (strategyState StrategyState) holdPropagation() float64 {
 		return 0
 	}
 
-	propagation := strategyState.HoldDiscount *
-		(1 + strategyState.HawkesSpectralRadius)
+	propagation := strategyState.HoldDiscount * (1 + strategyState.HawkesSpectralRadius)
 
 	if math.IsNaN(propagation) || math.IsInf(propagation, 0) {
 		return 0
@@ -180,13 +170,14 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 		next.IsHolding = true
 		next.Reward += next.Treatment - strategyState.RoundTripCost
 	case ActionHold:
-		/*
-			Each hold reads the next confidence-supported curve step rather than
-			reusing the first prediction. Exhaustion/Hawkes propagation still prices
-			how much of that step survives through the corresponding generation.
-		*/
-		next.Treatment = forecastStep *
-			math.Pow(strategyState.holdPropagation(), float64(strategyState.Step))
+		// Each hold reads the next confidence-supported curve step rather than
+		// reusing the first prediction. Exhaustion/Hawkes propagation still prices
+		// how much of that step survives through the corresponding generation.
+		next.Treatment = forecastStep * math.Pow(
+			strategyState.holdPropagation(),
+			float64(strategyState.Step),
+		)
+
 		next.Reward += next.Treatment
 	case ActionCompleteTrajectory:
 		// The round trip was already charged on entry, so exiting adds
@@ -201,7 +192,12 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 }
 
 func (strategyState StrategyState) ToVector() []float64 {
-	return []float64{strategyState.Energy, strategyState.Surprise, strategyState.Treatment, strategyState.Reward}
+	return []float64{
+		strategyState.Energy,
+		strategyState.Surprise,
+		strategyState.Treatment,
+		strategyState.Reward,
+	}
 }
 
 /*

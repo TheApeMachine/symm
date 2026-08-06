@@ -79,7 +79,7 @@ export const TerminalTopBar = () => {
 				<Balance />
 			</Toolbar.Group>
 			<Toolbar.Group>
-				<Component registerKey="strategy">
+				<Component registerKey="tick">
 					{({ ref, className }) => (
 						<Flex.Row
 							ref={ref}
@@ -91,7 +91,7 @@ export const TerminalTopBar = () => {
 								<Typography.Label size="s" tone="f4" weight="normal">
 									Tick
 								</Typography.Label>
-								<Typography.Mono size="lg" tone="f1" data-paint="tick" />
+								<Typography.Mono size="lg" tone="f1" data-paint="count" />
 							</Flex.Column>
 						</Flex.Row>
 					)}

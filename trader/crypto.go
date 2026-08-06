@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -133,6 +134,13 @@ func (crypto *Crypto) run() {
 				})
 
 				crypto.thesis.Reset()
+				crypto.thesis.Tick++
+
+				utils.Publish(crypto.ui, datura.NewMap(
+					"tick", datura.NewMap(
+						"count", crypto.thesis.Tick,
+					),
+				))
 			}
 		}
 	}()

@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 

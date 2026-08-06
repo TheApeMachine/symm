@@ -96,6 +96,8 @@ func (thesis *Thesis) Reset() *Thesis {
 	thesis.LastTickerAt = time.Now().UTC()
 	thesis.LastTradeAt = time.Now().UTC()
 	thesis.CrossSection = NewCrossSection()
+	thesis.Tickers.Clear()
+	thesis.Trades.Clear()
 	thesis.Measurements.Clear()
 	thesis.Categories.Clear()
 	thesis.Cognition.Clear()

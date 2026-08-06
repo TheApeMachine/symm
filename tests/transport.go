@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/tests/fixtures/balances"
 	"github.com/theapemachine/symm/tests/fixtures/orderack"
 	"github.com/theapemachine/symm/tests/fixtures/tradevolume"

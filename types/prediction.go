@@ -1,6 +1,6 @@
 package types
 
-import "github.com/krakenfx/api-go/v2/pkg/decimal"
+import "github.com/theapemachine/api-go/v2/pkg/decimal"
 
 type Prediction struct {
 	Symbol    string          `json:"symbol"`

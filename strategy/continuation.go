@@ -3,7 +3,7 @@ package strategy
 import (
 	"math"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )

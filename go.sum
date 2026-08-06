@@ -125,8 +125,14 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/subosito/gotenv v1.6.0 h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8=
 github.com/subosito/gotenv v1.6.0/go.mod h1:Dk4QP5c2W3ibzajGcXpNraDfq2IrhjMIvMSWPKKo0FU=
-github.com/theapemachine/errnie v1.2.5 h1:GZfYCRBR8SPSF4m2kxy+wJtAF4ea9RE2J6DJQ7o+4ss=
-github.com/theapemachine/errnie v1.2.5/go.mod h1:lzUJVUSJSrXRb0LmgwQtyxf6LupsXhrXTz2etTbAJlg=
+github.com/theapemachine/api-go/v2 v2.0.3 h1:ZWEfEWT97pre7/2SOlApXGZvwQnVrkpoMpqekr29X6Q=
+github.com/theapemachine/api-go/v2 v2.0.3/go.mod h1:Y5aKq3DaHMqYuAZQkF2uyo6S5rcRb873ZohGbRJewVk=
+github.com/theapemachine/datura v1.2.9 h1:X3aqFiJsvfEQMBnM6SqhAymtxY/vgp8wd9s7eu17OFQ=
+github.com/theapemachine/datura v1.2.9/go.mod h1:dkeD7yzcVP3PqmQ3TpYegYbX+HnWHo1wqT0Eb/W8Vfg=
+github.com/theapemachine/errnie v1.2.6 h1:ucO+/UaLzGa1SbTqQ7yGLdMHxMxw1TmyX7tgwwNFSFk=
+github.com/theapemachine/errnie v1.2.6/go.mod h1:lzUJVUSJSrXRb0LmgwQtyxf6LupsXhrXTz2etTbAJlg=
+github.com/theapemachine/nomagique v0.0.5 h1:t3hF4Pas6rFsM+Sm7/c4b2534SSM/Fkim2HF5QL8p+g=
+github.com/theapemachine/nomagique v0.0.5/go.mod h1:Vx4wI4X971QKYjqpqfXMSmMCEMjYQtnCNRq37e57iX0=
 github.com/theapemachine/qpool v1.2.6 h1:7nC2CN8SFzHJrpLEIJJb10bevsg8XeXIJQSgPg3ZaCc=
 github.com/theapemachine/qpool v1.2.6/go.mod h1:KtW9kkToeGkKUJhG8Sak2kaYnQs+9lAlbWeGdmirDkw=
 github.com/tinylib/msgp v1.6.4 h1:mOwYbyYDLPj35mkA2BjjYejgJk9BuHxDdvRnb6v2ZcQ=

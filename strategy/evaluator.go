@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -398,13 +398,23 @@ func (evaluator Evaluator) ManageContinuation(
 			continue
 		}
 
-		exitCostFraction := fee.Float64() +
-			forecast.FractionOf(forecast.ExpectedSpread)/2 +
-			forecast.FractionOf(forecast.ExpectedImpact)
+		exitCostFraction := fee.Float64() + forecast.FractionOf(
+			forecast.ExpectedSpread,
+		)/2 + forecast.FractionOf(
+			forecast.ExpectedImpact,
+		)
 
-		doExpectation, uplift, noise, causalReady := getCausalMetrics(thesis, forecast.Symbol)
-		cognition := getCognition(thesis, forecast.Symbol)
-		supports, contradicts, hasGraph := inspectGraph(thesis, forecast.Symbol)
+		doExpectation, uplift, noise, causalReady := getCausalMetrics(
+			thesis, forecast.Symbol,
+		)
+
+		cognition := getCognition(
+			thesis, forecast.Symbol,
+		)
+
+		supports, contradicts, hasGraph := inspectGraph(
+			thesis, forecast.Symbol,
+		)
 
 		holdUtility := unifiedUtility(
 			forecast.FractionOf(forecast.ExpectedReturn),
@@ -416,12 +426,10 @@ func (evaluator Evaluator) ManageContinuation(
 
 		exitUtility := -exitCostFraction
 
-		/*
-			The first-passage scenario remains on the decision as a diagnostic,
-			but it has no execution authority. Open inventory is liquidated only
-			by its broker-owned stop, so a forecast revision cannot pre-empt the
-			price geometry the position was sized and admitted under.
-		*/
+		// The first-passage scenario remains on the decision as a diagnostic,
+		// but it has no execution authority. Open inventory is liquidated only
+		// by its broker-owned stop, so a forecast revision cannot pre-empt the
+		// price geometry the position was sized and admitted under.
 		scenario, holdEV, scored := evaluator.scorePassage(
 			thesis, position, forecast, exitCostFraction,
 		)
@@ -466,12 +474,10 @@ func (evaluator Evaluator) ManageContinuation(
 		})
 	}
 
-	/*
-		Learning happens last, from the lots that finished. A trade only teaches
-		anything once it is over, and running this after the pass above means a
-		lot that closed on this very tick is retired with the last state it was
-		actually observed in rather than one tick stale.
-	*/
+	// Learning happens last, from the lots that finished. A trade only teaches
+	// anything once it is over, and running this after the pass above means a
+	// lot that closed on this very tick is retired with the last state it was
+	// actually observed in rather than one tick stale.
 	evaluator.retireEpisodes(desk)
 }
 
@@ -579,8 +585,7 @@ func (evaluator Evaluator) candidate(
 		Forecast:       reading.Forecast,
 		Uncertainty:    reading.Surprise,
 		Confidence:     reading.Forecast.Confidence,
-		Epoch: uint64(thesis.Tick) +
-			uint64(reading.Forecast.SupportedHorizon),
+		Epoch:          uint64(thesis.Tick) + uint64(reading.Forecast.SupportedHorizon),
 	}, true
 }
 

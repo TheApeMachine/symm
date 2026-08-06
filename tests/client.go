@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/krakenfx/api-go/v2/pkg/callback"
-	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/api-go/v2/pkg/callback"
+	sdkkraken "github.com/theapemachine/api-go/v2/pkg/kraken"
+	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/tests/fixtures/instrument"
 	"github.com/theapemachine/symm/tests/fixtures/orderack"
