@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -163,7 +164,15 @@ func TestMockTransportAddOrder(t *testing.T) {
 
 		Convey("When the REST AddOrder endpoint is called", func() {
 			request, err := http.NewRequest(
-				"POST", "https://api.kraken.com/0/private/AddOrder", nil,
+				"POST",
+				"https://api.kraken.com/0/private/AddOrder",
+				strings.NewReader(`{
+					"cl_ord_id":"client-order-1",
+					"ordertype":"market",
+					"type":"buy",
+					"volume":"0.25",
+					"pair":"BTC/USD"
+				}`),
 			)
 			So(err, ShouldBeNil)
 
@@ -178,12 +187,14 @@ func TestMockTransportAddOrder(t *testing.T) {
 
 			orderResult, _ := result["result"].(map[string]any)
 
-			Convey("It should contain a txid from the orderack fixture", func() {
+			Convey("It should return a venue identity and queue the order", func() {
 				So(orderResult, ShouldContainKey, "txid")
 
 				txids, _ := orderResult["txid"].([]any)
 				So(len(txids), ShouldBeGreaterThan, 0)
 				So(txids[0].(string), ShouldStartWith, "SIM-ORD-")
+				So(conn.transport.pending, ShouldHaveLength, 1)
+				So(conn.transport.pending[0].Request.Pair, ShouldEqual, "BTC/USD")
 			})
 		})
 	})

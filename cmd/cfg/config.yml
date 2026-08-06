@@ -8,7 +8,7 @@ system:
     enabled: false
     addr: 127.0.0.1:6060
   log:
-    level: debug
+    level: info
   actor:
     retry_max: 21
     buffer: 128

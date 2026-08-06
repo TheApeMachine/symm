@@ -162,6 +162,17 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		hawkes := utils.ForSymbol(hawkesRows, name)
+		latest := hawkes[len(hawkes)-1]
+		buyIntensity, buyReady := latest.Metrics[types.MetricKey(
+			types.MetricConditionalIntensity, types.SideBuy,
+		)]
+		sellIntensity, sellReady := latest.Metrics[types.MetricKey(
+			types.MetricConditionalIntensity, types.SideSell,
+		)]
+
+		if !buyReady || !sellReady {
+			continue
+		}
 
 		bidOrders := make([]*mgrbook.Order, 0)
 		askOrders := make([]*mgrbook.Order, 0)
@@ -174,19 +185,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			askOrders = append(askOrders, level.Queue()...)
 		}
 
-		buyIntensity := hawkes[len(hawkes)-1].Sample(
-			types.MetricConditionalIntensity, types.SideBuy,
-		).Raw
-		sellIntensity := hawkes[len(hawkes)-1].Sample(
-			types.MetricConditionalIntensity, types.SideSell,
-		).Raw
-
 		particles, contentIDs, err := solver.tokenizer.NewBatch(
 			bidOrders,
 			askOrders,
 			managed.Midpoint().Float64(),
-			buyIntensity,
-			sellIntensity,
+			buyIntensity.Raw,
+			sellIntensity.Raw,
 			name,
 		)
 

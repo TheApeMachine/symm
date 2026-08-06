@@ -638,6 +638,8 @@ func (position *Position) closeInventory(at time.Time) {
 	position.Holding.ExitAt = &at
 	position.Status = types.CLOSED
 	position.Holding.Status = types.CLOSED
+	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
+	position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 }
 
 func terminalOrderStatus(status string) bool {

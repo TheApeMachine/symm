@@ -239,12 +239,16 @@ func geolerp(source, target, progress float64) float64 {
 var DefaultProfiles = map[MarketState]RegimeProfile{
 	Baseline: {
 		Drift:           0.0,
-		Volatility:      0.05,
+		Volatility:      0.0,
 		SpreadScale:     1.0,
 		BidAskAsymmetry: 1.0,
 		BaseQty:         100.0,
 		VolumeScale:     1.0,
 		Cadence:         100 * time.Millisecond,
+		Precursor: PrecursorContract{
+			// A level and two changes are the minimum empirical baseline.
+			MinimumObservations: 3,
+		},
 	},
 	/*
 		FastPump opens with one violent bar, modelled on an observed +30%
@@ -297,6 +301,35 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		IgnitionVolume:  9.0,
 		IgnitionDecay:   0.6,
 	},
+	/*
+		SlowPump is persistent buy-side pressure without a discontinuous event.
+		It deliberately carries no ignition and does not admit the fast-pump
+		entry contract.
+	*/
+	SlowPump: {
+		Drift:           0.25,
+		Volatility:      0.03,
+		SpreadScale:     0.9,
+		BidAskAsymmetry: 2.5,
+		BaseQty:         200.0,
+		VolumeScale:     1.5,
+		Cadence:         100 * time.Millisecond,
+		AggressorSide:   "buy",
+	},
+	/*
+		SlowDump is the sell-side counterpart: sustained pressure without the
+		gap and volume burst that define a crash or fast dump.
+	*/
+	SlowDump: {
+		Drift:           -0.25,
+		Volatility:      0.03,
+		SpreadScale:     1.1,
+		BidAskAsymmetry: 0.4,
+		BaseQty:         200.0,
+		VolumeScale:     1.5,
+		Cadence:         100 * time.Millisecond,
+		AggressorSide:   "sell",
+	},
 	VolumeAbsorption: {
 		Drift:           0.02,
 		Volatility:      0.02,
@@ -313,6 +346,19 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		BidAskAsymmetry: 1.0,
 		BaseQty:         100.0,
 		VolumeScale:     0.5,
+		Cadence:         100 * time.Millisecond,
+	},
+	/*
+		LoadedLiquidity keeps a deep, balanced book around an ordinary tape so
+		depth alone cannot be mistaken for directional demand.
+	*/
+	LoadedLiquidity: {
+		Drift:           0.0,
+		Volatility:      0.02,
+		SpreadScale:     0.5,
+		BidAskAsymmetry: 1.0,
+		BaseQty:         5000.0,
+		VolumeScale:     1.0,
 		Cadence:         100 * time.Millisecond,
 	},
 	ThinLiquidity: {
@@ -341,5 +387,31 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		BaseQty:         5000.0,
 		VolumeScale:     0.2,
 		Cadence:         50 * time.Millisecond,
+	},
+	/*
+		SidewaysChop alternates around a stationary center on ordinary volume;
+		its variance is real, but it has no directional flow contract.
+	*/
+	SidewaysChop: {
+		Drift:           0.0,
+		Volatility:      0.4,
+		SpreadScale:     1.5,
+		BidAskAsymmetry: 1.0,
+		BaseQty:         150.0,
+		VolumeScale:     2.0,
+		Cadence:         50 * time.Millisecond,
+	},
+	/*
+		VolatilitySpike raises dispersion and tape rate together while keeping
+		direction balanced, separating activity from an executable long thesis.
+	*/
+	VolatilitySpike: {
+		Drift:           0.0,
+		Volatility:      1.0,
+		SpreadScale:     2.0,
+		BidAskAsymmetry: 1.0,
+		BaseQty:         300.0,
+		VolumeScale:     8.0,
+		Cadence:         10 * time.Millisecond,
 	},
 }

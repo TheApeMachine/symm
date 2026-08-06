@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests/fixtures/book"
+	"github.com/theapemachine/symm/tests/fixtures/execution"
 	"github.com/theapemachine/symm/tests/fixtures/level3"
 	"github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/tests/fixtures/trade"
@@ -56,6 +58,9 @@ type Market struct {
 	stack      Stack
 	autoFill   bool
 	primed     bool
+	clockSet   bool
+	clockAt    time.Time
+	sampleAt   time.Time
 	sampleMu   sync.RWMutex
 }
 
@@ -127,7 +132,11 @@ func newMarket(
 
 	for _, symbol := range symbols {
 		generator := signal.NewGenerator(
-			symbol.Pair, symbol.StartPrice, symbol.Seed,
+			symbol.Pair,
+			symbol.StartPrice,
+			symbol.PriceIncrement,
+			symbol.PricePrecision,
+			symbol.Seed,
 		)
 
 		market.generators[symbol.Pair] = generator
@@ -177,14 +186,10 @@ func (market *Market) Transition(
 		return fmt.Errorf("market: cannot transition unknown symbol %q", symbol)
 	}
 
-	if !market.primed {
-		baselineSamples := viper.GetInt("signals.pumpdump.baselineCapacity")
+	if !market.primed && market.stack != nil {
+		baseline := testtypes.DefaultProfiles[testtypes.Baseline]
 
-		if baselineSamples <= 0 {
-			return fmt.Errorf("market: positive empirical baseline capacity required")
-		}
-
-		for range baselineSamples {
+		for range baseline.Precursor.MinimumObservations {
 			market.Tick()
 		}
 
@@ -199,6 +204,57 @@ func (market *Market) Transition(
 	}
 
 	return nil
+}
+
+/*
+TransitionAll moves several symbols into their declared precursors on the same
+market timeline. Every generator is armed before the first transition tick, so
+no regime gains foreknowledge or extra history because it appeared earlier in
+the caller's list.
+*/
+func (market *Market) TransitionAll(
+	states map[string]testtypes.MarketState,
+) error {
+	for symbol, state := range states {
+		if _, known := market.generators[symbol]; !known {
+			return fmt.Errorf("market: cannot transition unknown symbol %q", symbol)
+		}
+
+		if _, known := testtypes.DefaultProfiles[state]; !known {
+			return fmt.Errorf("market: cannot transition %s to unknown state %d", symbol, state)
+		}
+	}
+
+	if !market.primed && market.stack != nil {
+		baseline := testtypes.DefaultProfiles[testtypes.Baseline]
+
+		for range baseline.Precursor.MinimumObservations {
+			market.Tick()
+		}
+
+		market.primed = true
+	}
+
+	for symbol, state := range states {
+		market.generators[symbol].SetState(state, testtypes.MomentumMap[state])
+	}
+
+	for {
+		pending := false
+
+		for symbol := range states {
+			if market.generators[symbol].PrecursorPending() {
+				pending = true
+				break
+			}
+		}
+
+		if !pending {
+			return nil
+		}
+
+		market.Tick()
+	}
 }
 
 /*
@@ -236,6 +292,36 @@ func (market *Market) Express(symbol string) error {
 	}
 
 	return nil
+}
+
+/*
+ExpressAll advances one shared timeline until every selected regime has spent
+its ignition. Symbols with shorter bursts keep publishing their continuation
+while slower regimes finish; none is advanced in a private future.
+*/
+func (market *Market) ExpressAll(symbols []string) error {
+	for _, symbol := range symbols {
+		if _, known := market.generators[symbol]; !known {
+			return fmt.Errorf("market: cannot express unknown symbol %q", symbol)
+		}
+	}
+
+	for {
+		pending := false
+
+		for _, symbol := range symbols {
+			if !market.generators[symbol].IgnitionSpent() {
+				pending = true
+				break
+			}
+		}
+
+		if !pending {
+			return nil
+		}
+
+		market.Tick()
+	}
 }
 
 /*
@@ -285,6 +371,7 @@ WebSocket channel consumed by the production stack.
 */
 func (market *Market) publish(generator *signal.Generator) testtypes.Sample {
 	sample := generator.Step()
+	market.pace(sample.Timestamp)
 	market.sampleMu.Lock()
 
 	if known, ok := market.latest[sample.Symbol]; ok {
@@ -310,6 +397,7 @@ func (market *Market) publish(generator *signal.Generator) testtypes.Sample {
 	)
 
 	market.waitForBook(sample)
+	market.fill(sample)
 
 	market.Public.Publish(
 		"trade",
@@ -320,11 +408,97 @@ func (market *Market) publish(generator *signal.Generator) testtypes.Sample {
 }
 
 /*
+pace delivers a driven venue on the event-time cadence its generator declares.
+The origin is established after boot, so connection setup time cannot leave the
+simulated clock permanently behind wall time. An undriven fixture remains
+unpaced because no asynchronous stack is consuming its frames.
+*/
+func (market *Market) pace(sampleAt time.Time) {
+	if market.stack == nil {
+		return
+	}
+
+	if !market.clockSet {
+		market.clockSet = true
+		market.clockAt = time.Now()
+		market.sampleAt = sampleAt
+		return
+	}
+
+	deliveryAt := market.clockAt.Add(sampleAt.Sub(market.sampleAt))
+	delay := time.Until(deliveryAt)
+
+	if delay <= 0 {
+		return
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-market.ctx.Done():
+	case <-timer.C:
+	}
+}
+
+/*
+fill turns accepted REST market orders into private execution frames at the
+next price published by that symbol's simulated book.
+*/
+func (market *Market) fill(sample testtypes.Sample) {
+	if !market.autoFill {
+		return
+	}
+
+	for _, order := range market.Private.transport.takeOrders(sample.Symbol) {
+		if _, filled := market.filled[order.ID]; filled {
+			continue
+		}
+
+		price := sample.Ask
+
+		if order.Request.Type == "sell" {
+			price = sample.Bid
+		}
+
+		market.filled[order.ID] = struct{}{}
+		priceText := strconv.FormatFloat(price, 'f', -1, 64)
+		cost := price * order.Quantity
+		costText := strconv.FormatFloat(cost, 'f', -1, 64)
+		feeText := strconv.FormatFloat(
+			market.Private.transport.takerFee(cost), 'f', -1, 64,
+		)
+		market.Private.Publish("executions", execution.Frame(execution.Options{
+			OrderID:       order.ID,
+			ClientOrderID: order.Request.ClOrdId,
+			ExecID:        order.ID + "-fill",
+			Symbol:        order.Request.Pair,
+			Side:          order.Request.Type,
+			LastQty:       order.Request.Volume,
+			LastPrice:     priceText,
+			Cost:          costText,
+			OrderStatus:   "filled",
+			OrderType:     order.Request.OrderType,
+			ExecType:      "trade",
+			CumQty:        order.Request.Volume,
+			CumCost:       costText,
+			AvgPrice:      priceText,
+			FeeUsdEquiv:   feeText,
+			Timestamp:     sample.Timestamp.Format(time.RFC3339Nano),
+		}))
+	}
+}
+
+/*
 waitForBook preserves venue causality between a depth update and a trade at
 that depth. Conn confirms frame dispatch, while the production book callback
 may still be applying it; the simulated trade must not overtake that work.
 */
 func (market *Market) waitForBook(sample testtypes.Sample) {
+	if market.stack == nil {
+		return
+	}
+
 	actorCapacity := viper.GetInt("system.actor.buffer")
 	var observedBid float64
 	var observedAsk float64

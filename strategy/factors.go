@@ -456,26 +456,31 @@ func hollowPressure(thesis *types.Thesis, symbol string) (float64, bool) {
 				continue
 			}
 
-			observed = true
-
-			cancelled := measurement.Sample(
+			cancelled, cancelledReady := measurement.Metrics[types.MetricKey(
 				types.MetricCancelledQuantity, types.SideBuy,
-			).Raw
-			resting := measurement.Sample(
+			)]
+			resting, restingReady := measurement.Metrics[types.MetricKey(
 				types.MetricTouchQuantity, types.SideBuy,
-			).Raw
+			)]
 
-			if math.IsNaN(cancelled) || math.IsInf(cancelled, 0) || cancelled <= 0 {
+			if !cancelledReady || !restingReady {
 				continue
 			}
 
-			prior := resting + cancelled
+			observed = true
+
+			if math.IsNaN(cancelled.Raw) || math.IsInf(cancelled.Raw, 0) ||
+				cancelled.Raw <= 0 {
+				continue
+			}
+
+			prior := resting.Raw + cancelled.Raw
 
 			if math.IsNaN(prior) || math.IsInf(prior, 0) || prior <= 0 {
 				continue
 			}
 
-			pressure = math.Max(pressure, cancelled/prior)
+			pressure = math.Max(pressure, cancelled.Raw/prior)
 		}
 
 		return true

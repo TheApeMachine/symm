@@ -229,7 +229,18 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			forecast.Uncertainty,
 		)
 
-		opportunity := highVelocityOpportunity(thesis, symbol)
+		opportunity, disqualified := highVelocityOpportunity(thesis, symbol)
+		regimeInvalidation := regimeExit(thesis, symbol)
+
+		if disqualified || regimeInvalidation != "" {
+			evaluator.record(thesis, evaluator.reject(
+				forecast, utility, "adverse_structure",
+				"long entry is contradicted by adverse market structure",
+				trace,
+			))
+
+			continue
+		}
 
 		/*
 			The forecast is fitted on realized returns, so a discontinuity is

@@ -27,6 +27,18 @@ func NewSubscription[T any]() *Subscription[T] {
 }
 
 /*
+NewLatestSubscription allocates one slot for a shared state pointer.
+Producers mutate the same state between notifications, so queueing older
+notifications cannot preserve older state; it only repeats work on the newest
+state. SendLatest replaces that one pending notification when consumers lag.
+*/
+func NewLatestSubscription[T any]() *Subscription[T] {
+	return &Subscription[T]{
+		Channel: make(chan T, 1),
+	}
+}
+
+/*
 Send publishes one message onto the subscription channel.
 */
 func (subscription *Subscription[T]) Send(message T) {

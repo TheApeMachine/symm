@@ -39,6 +39,17 @@ func TestConnConfigure(t *testing.T) {
 }
 
 func TestConnPublish(t *testing.T) {
+	Convey("Given a Conn without a connected client", t, func() {
+		conn := NewConn(context.Background())
+		defer conn.Close()
+
+		Convey("It should discard a frame that has no consumer", func() {
+			conn.Publish("heartbeat", []byte(`{"channel":"heartbeat"}`))
+
+			So(conn.accepted, ShouldBeNil)
+		})
+	})
+
 	Convey("Given a Conn with an OnReceived listener", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()

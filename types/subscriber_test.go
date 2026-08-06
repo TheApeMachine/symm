@@ -6,6 +6,20 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestNewLatestSubscription(t *testing.T) {
+	Convey("Given a shared-state subscription", t, func() {
+		subscription := NewLatestSubscription[int]()
+		subscription.SendLatest(1)
+		subscription.SendLatest(2)
+
+		Convey("It should retain only the latest pending notification", func() {
+			So(cap(subscription.Channel), ShouldEqual, 1)
+			So(len(subscription.Channel), ShouldEqual, 1)
+			So(<-subscription.Channel, ShouldEqual, 2)
+		})
+	})
+}
+
 func TestSubscriptionSendLatest(t *testing.T) {
 	Convey("Given a full subscription buffer", t, func() {
 		subscription := &Subscription[int]{Channel: make(chan int, 1)}

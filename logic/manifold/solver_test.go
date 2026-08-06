@@ -92,6 +92,59 @@ func TestUpdate(t *testing.T) {
 			So(thesis.Readiness.Manifold, ShouldBeTrue)
 		})
 	})
+
+	Convey("Given Hawkes evidence without both directional intensities", t, func() {
+		config := pfluid.DefaultConfig()
+		domain, err := newDomain(config)
+		So(err, ShouldBeNil)
+		Reset(func() { So(domain.Close(), ShouldBeNil) })
+
+		symbol := "BTC/USD"
+		managed := mgrbook.New()
+		managed.Name = symbol
+		managed.NoBookCrossing = false
+		managed.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Bid,
+			ID:        "bid",
+			Price:     decimal.NewFromInt64(99),
+			Quantity:  decimal.NewFromInt64(1),
+		})
+		managed.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Ask,
+			ID:        "ask",
+			Price:     decimal.NewFromInt64(101),
+			Quantity:  decimal.NewFromInt64(1),
+		})
+		books := &manifoldBookSource{books: map[string]*mgrbook.Book{
+			symbol: managed,
+		}}
+		solver := &Solver{
+			books:     books,
+			config:    config,
+			domain:    domain,
+			tokenizer: NewTokenizer(config, []string{symbol}),
+			residency: 2,
+			binui:     make(chan []byte, 1),
+		}
+		thesis := types.NewThesis(nil)
+		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
+			Source: types.SourceHawkes,
+			Symbol: symbol,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricConditionalIntensity, types.SideBuy): {
+					Raw: 1,
+				},
+			},
+		}})
+
+		err = solver.Update(thesis)
+
+		Convey("It should wait without adding a zero-intensity substitute", func() {
+			So(err, ShouldBeNil)
+			So(domain.ParticleCount(), ShouldEqual, 0)
+			So(thesis.Readiness.Manifold, ShouldBeTrue)
+		})
+	})
 }
 
 func TestSolverStep(t *testing.T) {

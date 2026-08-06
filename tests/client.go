@@ -212,6 +212,8 @@ func (conn *Conn) Publish(channel string, payload []byte) {
 	case <-conn.ready:
 	case <-conn.ctx.Done():
 		return
+	default:
+		return
 	}
 
 	conn.mu.Lock()
@@ -317,17 +319,13 @@ func (conn *Conn) handleSubscribe(wire map[string]any) {
 		must be answered for the system to reach READY.
 	*/
 	if channel == "instrument" {
-		pairs := []string{}
+		symbols := conn.transport.getSymbols()
 
-		for _, symbol := range conn.transport.getSymbols() {
-			pairs = append(pairs, symbol.Pair)
-		}
-
-		if len(pairs) == 0 {
+		if len(symbols) == 0 {
 			return
 		}
 
-		for frame := range instrument.NewMarket(pairs, 0.01).Generate() {
+		for frame := range instrument.NewMarket(symbols).Generate() {
 			conn.Publish("instrument", frame)
 		}
 	}

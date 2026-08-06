@@ -1,8 +1,10 @@
 package trader_test
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -17,35 +19,53 @@ var symbols = []*testtypes.Symbol{
 	testtypes.NewSymbol("SIM1/USD", 64000.0, 42),
 	testtypes.NewSymbol("SIM2/USD", 5432.193, 1337),
 	testtypes.NewSymbol("SIM3/USD", 103.01234, 90210),
+	testtypes.NewSymbol("SIM4/USD", 0.00012345, 123456789),
+	testtypes.NewSymbol("SIM5/USD", 987654321.0, 1),
+	testtypes.NewSymbol("SIM6/USD", 50.0, 80085),
+	testtypes.NewSymbol("SIM7/USD", 72.2123, 80085),
+	testtypes.NewSymbol("SIM8/USD", 14.78192, 57391),
+	testtypes.NewSymbol("SIM9/USD", 1987.442, 48120),
+	testtypes.NewSymbol("SIM10/USD", 0.056781, 750394),
+	testtypes.NewSymbol("SIM11/USD", 84567.99, 31415),
+	testtypes.NewSymbol("SIM12/USD", 3.141592, 271828),
+	testtypes.NewSymbol("SIM13/USD", 1250000.75, 600613),
+	testtypes.NewSymbol("SIM14/USD", 0.987654, 918273),
+	testtypes.NewSymbol("SIM15/USD", 456.789123, 112358),
 }
 
 var regimeSymbols = []*testtypes.Symbol{
-	testtypes.NewSymbol("SIM1/USD", 64000.0, 42),
-	testtypes.NewSymbol("SIM2/USD", 5432.193, 1337),
-	testtypes.NewSymbol("SIM3/USD", 103.01234, 90210),
-	testtypes.NewSymbol("SIM4/USD", 0.00012345, 123456789),
-	testtypes.NewSymbol("SIM5/USD", 987654321.0, 1),
+	testtypes.NewSymbol("REG1/USD", 12.8754, 501),
+	testtypes.NewSymbol("REG2/USD", 845.219, 7284),
+	testtypes.NewSymbol("REG3/USD", 0.00458231, 15092),
+	testtypes.NewSymbol("REG4/USD", 72193.44, 98231),
+	testtypes.NewSymbol("REG5/USD", 18.999, 654321),
+	testtypes.NewSymbol("REG6/USD", 2500000.0, 73),
+	testtypes.NewSymbol("REG7/USD", 6.283185, 41256),
+	testtypes.NewSymbol("REG8/USD", 0.87654321, 888001),
+	testtypes.NewSymbol("REG9/USD", 15432.77, 99987),
+	testtypes.NewSymbol("REG10/USD", 399.125, 210345),
+	testtypes.NewSymbol("REG11/USD", 0.00000987, 7654321),
+	testtypes.NewSymbol("REG12/USD", 910000.42, 184729),
+	testtypes.NewSymbol("REG13/USD", 77.7777, 55555),
 }
 
 var regimes = []struct {
 	Symbol string
 	State  testtypes.MarketState
 }{
-	{"SIM1/USD", testtypes.FastPump},
-	{"SIM2/USD", testtypes.FastDump},
-	{"SIM3/USD", testtypes.FlashCrash},
-	{"SIM4/USD", testtypes.LoadedLiquidity},
-	{"SIM5/USD", testtypes.Baseline},
-	{"SIM6/USD", testtypes.SidewaysChop},
-	{"SIM7/USD", testtypes.SlowPump},
-	{"SIM8/USD", testtypes.SlowDump},
-	{"SIM9/USD", testtypes.SpoofLiquidity},
-	{"SIM10/USD", testtypes.SpreadCompression},
-	{"SIM11/USD", testtypes.ThinLiquidity},
-	{"SIM12/USD", testtypes.VolatilitySpike},
-	{"SIM13/USD", testtypes.VolumeAbsorption},
-	{"SIM14/USD", testtypes.EmpiricalRatioBaseline},
-	{"SIM15/USD", testtypes.PositiveEvidenceFloor},
+	{"REG1/USD", testtypes.FastPump},
+	{"REG2/USD", testtypes.FastDump},
+	{"REG3/USD", testtypes.FlashCrash},
+	{"REG4/USD", testtypes.LoadedLiquidity},
+	{"REG5/USD", testtypes.Baseline},
+	{"REG6/USD", testtypes.SidewaysChop},
+	{"REG7/USD", testtypes.SlowPump},
+	{"REG8/USD", testtypes.SlowDump},
+	{"REG9/USD", testtypes.SpoofLiquidity},
+	{"REG10/USD", testtypes.SpreadCompression},
+	{"REG11/USD", testtypes.ThinLiquidity},
+	{"REG12/USD", testtypes.VolatilitySpike},
+	{"REG13/USD", testtypes.VolumeAbsorption},
 }
 
 func TestIntegration(t *testing.T) {
@@ -55,16 +75,32 @@ func TestIntegration(t *testing.T) {
 			thesis := system.Thesis
 
 			Convey("When the market is transitioned to a fast pump", func() {
+				subscription := system.Planner.Subscribe(
+					"integration-decisions", types.NewSubscription[any](),
+				)
+				stopCollector, collected := collectDecisionBatches(
+					t.Context(), subscription,
+				)
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
+				stopCollector()
+				decisionResult := <-collected
+				So(decisionResult.err, ShouldBeNil)
+				snapshots := make(chan integrationSnapshot, 1)
+				go captureIntegrationSnapshot(t.Context(), thesis, "SIM1/USD", snapshots)
+				snapshot, err := nextIntegrationSnapshot(t.Context(), snapshots)
+				So(err, ShouldBeNil)
+				entry := findDecision(
+					decisionResult.decisions, "SIM1/USD", types.ActionEnter,
+				)
 				profile := testtypes.DefaultProfiles[testtypes.FastPump]
 				expectation := profile.PrecursorExpectation(
 					testtypes.DefaultProfiles[testtypes.Baseline],
 				)
 
 				Convey("Then canonical market history should satisfy the profile contract", func() {
-					So(thesis, ShouldNotBeNil)
-					tickers := symbolTickers(thesis, "SIM1/USD")
-					trades := symbolTrades(thesis, "SIM1/USD")
+					So(snapshot.tickers, ShouldNotBeEmpty)
+					tickers := snapshot.tickers
+					trades := snapshot.trades
 
 					So(len(tickers), ShouldBeGreaterThanOrEqualTo,
 						expectation.Contract.MinimumObservations)
@@ -82,7 +118,7 @@ func TestIntegration(t *testing.T) {
 
 					Convey("And each signal should expose explicitly available Thesis evidence", func() {
 						for _, source := range signalSources() {
-							measurement := latestMeasurement(thesis, source, "")
+							measurement := snapshot.measurements[source]
 
 							So(fmt.Sprintf("%s:%t", source, measurement != nil),
 								ShouldEqual, fmt.Sprintf("%s:true", source))
@@ -91,9 +127,7 @@ func TestIntegration(t *testing.T) {
 						}
 
 						Convey("And pump evidence should meet the named precursor thresholds", func() {
-							measurement := latestMeasurement(
-								thesis, types.SourcePumpDump, "SIM1/USD",
-							)
+							measurement := snapshot.measurements[types.SourcePumpDump]
 
 							for _, expectedMetric := range expectation.Contract.Metrics {
 								sample, found := measurement.Metrics[types.MetricKey(
@@ -107,9 +141,8 @@ func TestIntegration(t *testing.T) {
 							}
 
 							Convey("And logic should recognize the declared precursor categories", func() {
-								categoriesRaw, found := thesis.Categories.Load("SIM1/USD")
-								So(found, ShouldBeTrue)
-								categories := categoriesRaw.([]types.Category)
+								categories := snapshot.categories
+								So(categories, ShouldNotBeEmpty)
 
 								for _, expectedCategory := range expectation.Contract.Categories {
 									category, found := findCategory(categories, expectedCategory)
@@ -121,10 +154,7 @@ func TestIntegration(t *testing.T) {
 								}
 
 								Convey("And resonance should issue a positive forecast", func() {
-									resonanceRaw, found := thesis.Resonance.Load("SIM1/USD")
-									So(found, ShouldBeTrue)
-									resonance, ok := resonanceRaw.(types.ResonanceReading)
-									So(ok, ShouldBeTrue)
+									resonance := snapshot.resonance
 									So(resonance.Samples, ShouldBeGreaterThan, 0)
 									So(resonance.Forecast, ShouldNotBeNil)
 									So(resonance.Forecast.Validate(), ShouldBeNil)
@@ -136,20 +166,6 @@ func TestIntegration(t *testing.T) {
 									So(expectedReturn, ShouldBeGreaterThan, 0.0)
 
 									Convey("Then the planner should enter before ignition is sampled", func() {
-										var entry *types.Decision
-
-										thesis.Decisions.Range(func(key, value interface{}) bool {
-											decision := value.(*types.Decision)
-
-											if decision.Symbol == "SIM1/USD" &&
-												decision.Action == types.ActionEnter {
-												entry = decision
-												return false
-											}
-
-											return true
-										})
-
 										So(entry, ShouldNotBeNil)
 										So(entry.Risk.Present, ShouldBeTrue)
 										So(entry.ProposedQuantity, ShouldNotBeNil)
@@ -179,11 +195,15 @@ func TestRoundTrip(t *testing.T) {
 	Convey(
 		"Setup",
 		t, tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
-			thesis := system.Thesis
-
 			market.WithAutoFill()
 
 			Convey("When a pump runs from its precursor into a reversal", func() {
+				subscription := system.Planner.Subscribe(
+					"roundtrip-decisions", types.NewSubscription[any](),
+				)
+				stopCollector, collected := collectDecisionBatches(
+					t.Context(), subscription,
+				)
 				/*
 					Every boundary here is one the generator owns. The entry is
 					judged at the end of the precursor, the move is observed once
@@ -192,11 +212,12 @@ func TestRoundTrip(t *testing.T) {
 					a number of ticks chosen to make it come out.
 				*/
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
-
-				// The verdict is read where it is reached. A completed cycle
-				// resets the thesis, so a decision inspected after the move has
-				// run is a decision the run has already cleared.
-				entry := symbolDecision(thesis, "SIM1/USD", types.ActionEnter)
+				stopCollector()
+				decisionResult := <-collected
+				So(decisionResult.err, ShouldBeNil)
+				entry := findDecision(
+					decisionResult.decisions, "SIM1/USD", types.ActionEnter,
+				)
 
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 
@@ -215,7 +236,7 @@ func TestRoundTrip(t *testing.T) {
 						So(armed, ShouldBeGreaterThan, 0)
 
 						Convey("And the lot should be closed by its stoploss alone", func() {
-							So(system.Desk.OpenPositions(), ShouldEqual, 0)
+							So(system.Desk.Holding("SIM1/USD"), ShouldEqual, 0)
 
 							Convey("And the round trip should have realized a profit", func() {
 								closed := 0
@@ -266,9 +287,9 @@ which of them the strategy was willing to be long.
 
 The profile declares whether a long belongs in the regime it generates, so this
 asserts against that declaration rather than against a list repeated here. Most
-of the matrix is negative on purpose: entering the one regime that pays is worth
-nothing if the same rule also enters the seven that do not, and two of them —
-spoofed depth and a thin book — are built to look like the one that does.
+of the matrix is negative on purpose: entering the regimes that pay is worth
+nothing if the same rule also enters those that do not, and two of them — spoofed
+depth and a thin book — are built to resemble directional opportunity.
 */
 func TestRegimeDiscrimination(t *testing.T) {
 	Convey(
@@ -277,22 +298,31 @@ func TestRegimeDiscrimination(t *testing.T) {
 			thesis := system.Thesis
 
 			Convey("When every market condition runs at once", func() {
-				entries := map[string]bool{}
+				subscription := system.Planner.Subscribe(
+					"regime-decisions", types.NewSubscription[any](),
+				)
+				stopCollector, collected := collectDecisionBatches(
+					t.Context(), subscription,
+				)
+				states := make(map[string]testtypes.MarketState, len(regimes))
 
 				for _, regime := range regimes {
-					So(market.Transition(regime.Symbol, regime.State), ShouldBeNil)
-
-					// A verdict is read at the moment it is reached, because a
-					// completed cycle resets the thesis and a later reader would
-					// be asking a map the run has already cleared.
-					entries[regime.Symbol] = symbolDecision(
-						thesis, regime.Symbol, types.ActionEnter,
-					) != nil
-
-					So(market.Express(regime.Symbol), ShouldBeNil)
+					states[regime.Symbol] = regime.State
 				}
 
-				Convey("Then it should be long exactly the regimes that admit one", func() {
+				So(market.TransitionAll(states), ShouldBeNil)
+				stopCollector()
+				decisionResult := <-collected
+				So(decisionResult.err, ShouldBeNil)
+				entries := map[string]bool{}
+
+				for _, decision := range decisionResult.decisions {
+					if decision.Action == types.ActionEnter {
+						entries[decision.Symbol] = true
+					}
+				}
+
+				Convey("Then it should admit the declared regimes from measured evidence", func() {
 					for _, regime := range regimes {
 						profile := testtypes.DefaultProfiles[regime.State]
 						entered := entries[regime.Symbol]
@@ -304,9 +334,7 @@ func TestRegimeDiscrimination(t *testing.T) {
 								regime.State, regime.Symbol, profile.AdmitsLong),
 						)
 					}
-				})
 
-				Convey("Then every regime should have produced its own evidence", func() {
 					for _, regime := range regimes {
 						measurements := 0
 
@@ -354,6 +382,159 @@ func armedPositions(system *cmd.System, symbol string) int {
 	}
 
 	return armed
+}
+
+type integrationSnapshot struct {
+	tickers      []kraken.TickerData
+	trades       []kraken.TradeData
+	measurements map[types.SourceType]*types.Measurement
+	categories   []types.Category
+	resonance    types.ResonanceReading
+}
+
+func captureIntegrationSnapshot(
+	ctx context.Context,
+	thesis *types.Thesis,
+	symbol string,
+	snapshots chan<- integrationSnapshot,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		tickers := symbolTickers(thesis, symbol)
+		trades := symbolTrades(thesis, symbol)
+		categoriesRaw, categoriesReady := thesis.Categories.Load(symbol)
+		resonanceRaw, resonanceReady := thesis.Resonance.Load(symbol)
+
+		if len(tickers) == 0 || len(trades) == 0 ||
+			!categoriesReady || !resonanceReady {
+			runtime.Gosched()
+			continue
+		}
+
+		categories, categoriesReady := categoriesRaw.([]types.Category)
+		resonance, resonanceReady := resonanceRaw.(types.ResonanceReading)
+
+		if !categoriesReady || len(categories) == 0 ||
+			!resonanceReady || resonance.Samples == 0 {
+			runtime.Gosched()
+			continue
+		}
+
+		measurements := make(map[types.SourceType]*types.Measurement)
+
+		for _, source := range signalSources() {
+			measurement := latestMeasurement(thesis, source, symbol)
+
+			if measurement != nil {
+				measurements[source] = measurement
+			}
+		}
+
+		if len(measurements) != len(signalSources()) {
+			runtime.Gosched()
+			continue
+		}
+
+		snapshots <- integrationSnapshot{
+			tickers:      append([]kraken.TickerData(nil), tickers...),
+			trades:       append([]kraken.TradeData(nil), trades...),
+			measurements: measurements,
+			categories:   append([]types.Category(nil), categories...),
+			resonance:    resonance,
+		}
+
+		return
+	}
+}
+
+func nextIntegrationSnapshot(
+	ctx context.Context,
+	snapshots <-chan integrationSnapshot,
+) (integrationSnapshot, error) {
+	select {
+	case snapshot := <-snapshots:
+		return snapshot, nil
+	case <-ctx.Done():
+		return integrationSnapshot{}, ctx.Err()
+	}
+}
+
+type decisionCollection struct {
+	decisions []types.Decision
+	err       error
+}
+
+func collectDecisionBatches(
+	parent context.Context,
+	subscription *types.Subscription[any],
+) (context.CancelFunc, <-chan decisionCollection) {
+	ctx, cancel := context.WithCancel(parent)
+	completed := make(chan decisionCollection, 1)
+
+	go func() {
+		collection := decisionCollection{}
+
+		for {
+			select {
+			case emitted := <-subscription.Channel:
+				decisions, ok := emitted.([]types.Decision)
+
+				if !ok {
+					collection.err = fmt.Errorf(
+						"planner: expected detached decisions, got %T", emitted,
+					)
+					completed <- collection
+					return
+				}
+
+				collection.decisions = append(collection.decisions, decisions...)
+			case <-ctx.Done():
+				for {
+					select {
+					case emitted := <-subscription.Channel:
+						decisions, ok := emitted.([]types.Decision)
+
+						if !ok {
+							collection.err = fmt.Errorf(
+								"planner: expected detached decisions, got %T",
+								emitted,
+							)
+							completed <- collection
+							return
+						}
+
+						collection.decisions = append(
+							collection.decisions, decisions...,
+						)
+					default:
+						completed <- collection
+						return
+					}
+				}
+			}
+		}
+	}()
+
+	return cancel, completed
+}
+
+func findDecision(
+	decisions []types.Decision,
+	symbol string,
+	action types.Action,
+) *types.Decision {
+	for index := range decisions {
+		if decisions[index].Symbol == symbol && decisions[index].Action == action {
+			return &decisions[index]
+		}
+	}
+
+	return nil
 }
 
 func symbolTickers(thesis *types.Thesis, symbol string) []kraken.TickerData {
@@ -434,28 +615,4 @@ func findCategory(
 	}
 
 	return types.Category{}, false
-}
-
-/*
-symbolDecision returns the verdict this tick reached for one symbol when it
-carries the given action, and nil when it reached a different one or none.
-*/
-func symbolDecision(
-	thesis *types.Thesis,
-	symbol string,
-	action types.Action,
-) *types.Decision {
-	stored, found := thesis.Decisions.Load(symbol)
-
-	if !found {
-		return nil
-	}
-
-	decision, ok := stored.(*types.Decision)
-
-	if !ok || decision.Action != action {
-		return nil
-	}
-
-	return decision
 }

@@ -72,7 +72,7 @@ func TestPriceFee(t *testing.T) {
 }
 
 func TestPricePnL(t *testing.T) {
-	Convey("Given a flat holding with actual entry and estimated exit fees", t, func() {
+	Convey("Given a holding with actual entry economics", t, func() {
 		symbols := []*testtypes.Symbol{
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
@@ -106,6 +106,42 @@ func TestPricePnL(t *testing.T) {
 
 			So(pnl.Float64(), ShouldAlmostEqual, -0.208, 1e-8)
 			So(pnl.String(), ShouldEqual, "-0.20800")
+		}))
+
+		Convey("A closed PnL should remain fixed at its execution economics", tests.WithOrders(t, symbols, cmd.Boot, func(market *tests.Market, system *cmd.System) {
+			entryPrice, err := decimal.NewFromString("100.00")
+			So(err, ShouldBeNil)
+			entryFee, err := decimal.NewFromString("0.10400")
+			So(err, ShouldBeNil)
+			exitPrice, err := decimal.NewFromString("110.00")
+			So(err, ShouldBeNil)
+			exitFee, err := decimal.NewFromString("0.11440")
+			So(err, ShouldBeNil)
+
+			system.Desk.Price().Update(&kraken.TickerData{
+				Symbol: symbols[0].Pair,
+				Bid:    decimal.NewFromInt64(50),
+				Ask:    decimal.NewFromInt64(50),
+			})
+			holding := &types.Holding{
+				Status:     types.CLOSED,
+				Symbol:     symbols[0].Pair,
+				Qty:        decimal.NewFromFloat64(0.4),
+				EntryPrice: entryPrice,
+				EntryFee:   entryFee,
+				ExitPrice:  exitPrice,
+				ExitFee:    exitFee,
+			}
+			pair := kraken.InstrumentPair{
+				Symbol:        symbols[0].Pair,
+				CostPrecision: 5,
+			}
+
+			pnl := system.Desk.Price().PnL(pair, holding)
+
+			So(pnl.String(), ShouldEqual, "3.78160")
+			So(system.Desk.Price().ReturnPct(pair, holding),
+				ShouldAlmostEqual, 0.09454, 1e-8)
 		}))
 	})
 }

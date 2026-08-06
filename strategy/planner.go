@@ -61,7 +61,7 @@ func NewPlanner(
 		ui:     uiHub,
 		subscriptions: map[string]*types.Subscription[any]{
 			"analyzer": analyzer.Subscribe(
-				"analyzer", types.NewSubscription[any](),
+				"analyzer", types.NewLatestSubscription[any](),
 			),
 		},
 		subscribers: &sync.Map{},
@@ -145,6 +145,19 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 	// because the reset below clears the map the moment the cycle completes.
 	decisions := planner.decisions(thesis)
 	thesis.Stamp(types.SourcePlanner)
+	planner.subscribers.Range(func(key, value any) bool {
+		name, ok := key.(string)
+
+		if !ok || name == "planner" {
+			return true
+		}
+
+		for _, subscriber := range value.([]*types.Subscription[any]) {
+			subscriber.SendLatest(decisions)
+		}
+
+		return true
+	})
 
 	terminalDecision := slices.ContainsFunc(
 		decisions,

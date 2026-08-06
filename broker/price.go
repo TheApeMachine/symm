@@ -216,9 +216,26 @@ func (price *Price) PnL(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
 ) *decimal.Decimal {
-	if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 || holding.Mark == nil ||
+	if holding == nil || holding.Qty == nil || holding.Qty.Sign() <= 0 ||
 		holding.EntryPrice == nil || holding.EntryFee == nil {
 		return nil
+	}
+
+	costScale := int64(pair.CostPrecision)
+	entryValue := holding.EntryPrice.SetScale(costScale).Mul(holding.Qty)
+	entryFee := holding.EntryFee.SetScale(costScale)
+
+	if holding.Status == types.CLOSED {
+		if holding.ExitPrice == nil || holding.ExitFee == nil {
+			return nil
+		}
+
+		grossProceeds := holding.ExitPrice.SetScale(costScale).Mul(holding.Qty)
+
+		return grossProceeds.
+			Sub(holding.ExitFee.SetScale(costScale)).
+			Sub(entryValue).
+			Sub(entryFee)
 	}
 
 	_, fee, err := price.getTickAndFee(pair.Symbol)
@@ -248,11 +265,8 @@ func (price *Price) PnL(
 		return nil
 	}
 
-	costScale := int64(pair.CostPrecision)
 	grossProceeds := liquidation.SetScale(costScale).Mul(holding.Qty)
 	exitFee := fee.Fee.Mul(grossProceeds).SetScale(costScale)
-	entryValue := holding.EntryPrice.SetScale(costScale).Mul(holding.Qty)
-	entryFee := holding.EntryFee.SetScale(costScale)
 
 	return grossProceeds.
 		Sub(exitFee).

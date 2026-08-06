@@ -10,7 +10,7 @@ import (
 
 func TestGeneratorNewGenerator(t *testing.T) {
 	Convey("Given a symbol name and start price", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 42)
+		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
 
 		Convey("It should initialize with default Baseline state", func() {
 			So(generator, ShouldNotBeNil)
@@ -23,7 +23,7 @@ func TestGeneratorNewGenerator(t *testing.T) {
 
 func TestGeneratorSetState(t *testing.T) {
 	Convey("Given a generator", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 42)
+		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
 
 		Convey("When SetState is called", func() {
 			generator.SetState(testtypes.FastPump)
@@ -37,7 +37,7 @@ func TestGeneratorSetState(t *testing.T) {
 
 func TestGeneratorStep(t *testing.T) {
 	Convey("Given a generator", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 42)
+		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
 
 		Convey("When Step is called", func() {
 			sample := generator.Step()
@@ -51,8 +51,33 @@ func TestGeneratorStep(t *testing.T) {
 		})
 	})
 
+	Convey("Given a stationary baseline", t, func() {
+		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
+		buyTrades := 0
+		sellTrades := 0
+
+		for range 128 {
+			sample := generator.Step()
+
+			if sample.AggressorSide == "buy" {
+				buyTrades++
+			}
+
+			if sample.AggressorSide == "sell" {
+				sellTrades++
+			}
+		}
+
+		Convey("It should stay flat while producing balanced two-sided flow", func() {
+			So(generator.trendPrice, ShouldEqual, 100.0)
+			So(generator.midPrice, ShouldEqual, 100.0)
+			So(buyTrades, ShouldBeGreaterThan, 0)
+			So(sellTrades, ShouldBeGreaterThan, 0)
+		})
+	})
+
 	Convey("Given a FastPump transition", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 42)
+		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
 		profile := testtypes.DefaultProfiles[testtypes.FastPump]
 		generator.SetState(testtypes.FastPump, testtypes.MomentumMap[testtypes.FastPump])
 
@@ -74,11 +99,34 @@ func TestGeneratorStep(t *testing.T) {
 			So(generator.IgnitionArmed(), ShouldBeFalse)
 		})
 	})
+
+	Convey("Given a compressed regime on a tick-sized book", t, func() {
+		generator := NewGenerator("REG1/USD", 12.8754, 0.001, 3, 501)
+		baseline := generator.Step()
+		generator.SetState(
+			testtypes.FastPump,
+			testtypes.MomentumMap[testtypes.FastPump],
+		)
+		precursor := baseline
+
+		for generator.PrecursorPending() {
+			precursor = generator.Step()
+		}
+
+		Convey("Its quoted spread should preserve the configured compression", func() {
+			baselineFraction := (baseline.Ask - baseline.Bid) /
+				((baseline.Ask + baseline.Bid) / 2)
+			precursorFraction := (precursor.Ask - precursor.Bid) /
+				((precursor.Ask + precursor.Bid) / 2)
+
+			So(precursorFraction, ShouldBeLessThan, baselineFraction)
+		})
+	})
 }
 
 func TestGeneratorGenerate(t *testing.T) {
 	Convey("Given a generator and JSON template", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 42)
+		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
 		template := []byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"SIM1/USD","bid":100.0}]}`)
 
 		Convey("When Generate is called", func() {
@@ -96,7 +144,7 @@ func TestGeneratorGenerate(t *testing.T) {
 
 func TestGeneratorRender(t *testing.T) {
 	Convey("Given one sampled market state and each venue channel template", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 42)
+		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
 		sample := generator.Step()
 		marketTime := generator.currTime
 		marketPrice := generator.midPrice
@@ -236,7 +284,7 @@ func TestGeneratorRender(t *testing.T) {
 }
 
 func BenchmarkGeneratorStep(b *testing.B) {
-	generator := NewGenerator("SIM1/USD", 100.0, 42)
+	generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
 
 	for b.Loop() {
 		_ = generator.Step()

@@ -125,22 +125,22 @@ func Boot(
 		ctx, public, private,
 	)).Wait()
 
-	errnie.Info("api reported to be ready")
+	errnie.Debug("api reported to be ready")
 
 	price := utils.NewWaiter[*broker.Price](broker.NewPrice(api)).Wait()
-	errnie.Info("price reported to be ready")
+	errnie.Debug("price reported to be ready")
 
 	instrument := utils.NewWaiter[*broker.Instrument](
 		broker.NewInstrument(api, price, uiChannel),
 	).Wait()
 
-	errnie.Info("instrument reported to be ready")
+	errnie.Debug("instrument reported to be ready")
 
 	balance := utils.NewWaiter[*broker.Balance](
 		broker.NewBalance(api, uiChannel),
 	).Wait()
 
-	errnie.Info("balance reported to be ready")
+	errnie.Debug("balance reported to be ready")
 
 	desk := utils.NewWaiter[*broker.Desk](broker.NewDesk(
 		ctx,
@@ -152,7 +152,7 @@ func Boot(
 		uiChannel,
 	)).Wait()
 
-	errnie.Info("desk reported to be ready")
+	errnie.Debug("desk reported to be ready")
 
 	tree, err := dmt.NewTree("")
 
@@ -170,24 +170,26 @@ func Boot(
 		thesis,
 	)).Wait()
 
-	errnie.Info("trader reported to be ready")
+	errnie.Debug("trader reported to be ready")
 
 	signalSubscriptions := map[string]*types.Subscription[any]{}
 
 	for _, signal := range []types.Signal{
-		utils.NewWaiter[*correlation.Signal](correlation.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*cvd.Signal](cvd.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(ctx, api, instrument, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(ctx, api, instrument, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*correlation.Signal](correlation.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*cvd.Signal](cvd.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(ctx, api, instrument, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(ctx, api, instrument, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
+		utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewLatestSubscription[any]())})).Wait(),
 	} {
-		errnie.Info(fmt.Sprintf("%s signal reported to be ready", signal.Name()))
-		signalSubscriptions[signal.Name()] = signal.Subscribe(signal.Name(), types.NewSubscription[any]())
+		errnie.Debug(fmt.Sprintf("%s signal reported to be ready", signal.Name()))
+		signalSubscriptions[signal.Name()] = signal.Subscribe(
+			signal.Name(), types.NewLatestSubscription[any](),
+		)
 	}
 
 	analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
@@ -200,7 +202,7 @@ func Boot(
 		signalSubscriptions,
 	)).Wait()
 
-	errnie.Info("analyzer reported to be ready")
+	errnie.Debug("analyzer reported to be ready")
 
 	planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
 		ctx,
@@ -214,9 +216,9 @@ func Boot(
 		recorder,
 	)).Wait()
 
-	errnie.Info("planner reported to be ready")
+	errnie.Debug("planner reported to be ready")
 
-	crypto.AddSubscription("planner", planner.Subscribe("planner", types.NewSubscription[any]()))
+	crypto.AddSubscription("planner", planner.Subscribe("planner", types.NewLatestSubscription[any]()))
 
 	system.Hub = ui.NewHub(
 		ctx,

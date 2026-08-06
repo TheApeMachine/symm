@@ -8,15 +8,22 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func highVelocityOpportunity(thesis *types.Thesis, symbol string) bool {
+func highVelocityOpportunity(
+	thesis *types.Thesis,
+	symbol string,
+) (bool, bool) {
 	if thesis == nil {
-		return false
+		return false, false
+	}
+
+	if adverseOpportunity(thesis, symbol) {
+		return false, true
 	}
 
 	stored, found := thesis.Categories.Load(symbol)
 
 	if !found {
-		return false
+		return false, false
 	}
 
 	categories, ok := stored.([]types.Category)
@@ -28,7 +35,7 @@ func highVelocityOpportunity(thesis *types.Thesis, symbol string) bool {
 			nil,
 		))
 
-		return false
+		return false, false
 	}
 
 	highVelocity := false
@@ -40,10 +47,11 @@ func highVelocityOpportunity(thesis *types.Thesis, symbol string) bool {
 			types.CategoryThermalExhaustion,
 			types.CategoryMechanicalCollapse,
 			types.CategoryActiveReversal,
+			types.CategoryHiddenAbsorption,
 			types.CategorySpoofTrap,
 			types.CategoryToxicBluff,
 			types.CategoryBookThinning:
-			return false
+			return false, true
 		case types.CategoryVerticalIgnition,
 			types.CategoryFrenzy,
 			types.CategoryAggressiveDrive,
@@ -53,7 +61,48 @@ func highVelocityOpportunity(thesis *types.Thesis, symbol string) bool {
 		}
 	}
 
-	return highVelocity
+	return highVelocity, false
+}
+
+/*
+adverseOpportunity reads classifications the flow and book models have already
+made before the category layer has enough independent evidence to name them.
+Only relative dominance is used: absorption must exceed drive, while a thin or
+spoof book must outrank every competing book state.
+*/
+func adverseOpportunity(thesis *types.Thesis, symbol string) bool {
+	flow, flowReady := latestMeasurement(thesis, symbol, types.SourceCVD)
+
+	if flowReady {
+		absorption, absorptionReady := rawMetric(
+			flow, types.MetricAbsorption, types.SideNone,
+		)
+		drive, driveReady := rawMetric(flow, types.MetricDrive, types.SideNone)
+
+		if absorptionReady && driveReady && absorption > drive {
+			return true
+		}
+	}
+
+	book, bookReady := latestMeasurement(thesis, symbol, types.SourceDepthFlow)
+
+	if !bookReady {
+		return false
+	}
+
+	loaded, loadedReady := rawMetric(book, types.MetricLoadedScore, types.SideNone)
+	spoof, spoofReady := rawMetric(book, types.MetricSpoofScore, types.SideNone)
+	thin, thinReady := rawMetric(book, types.MetricThinScore, types.SideNone)
+	neutral, neutralReady := rawMetric(book, types.MetricNeutralScore, types.SideNone)
+
+	if !loadedReady || !spoofReady || !thinReady || !neutralReady {
+		return false
+	}
+
+	competing := math.Max(loaded, neutral)
+
+	return thin > math.Max(spoof, competing) ||
+		spoof > math.Max(thin, competing)
 }
 
 func getMetricValue(measurement *types.Measurement, metricKey string) float64 {

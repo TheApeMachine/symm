@@ -41,22 +41,31 @@ type Generator struct {
 	*/
 	burst float64
 
-	profiles  map[testtypes.MarketState]testtypes.RegimeProfile
-	midPrice  float64
-	openPrice float64
-	cumVolume float64
-	cumValue  float64
-	highPrice float64
-	lowPrice  float64
-	currTime  time.Time
-	sequence  int64
-	l3Bid     float64
-	l3Ask     float64
-	l3BidQty  float64
-	l3AskQty  float64
+	profiles       map[testtypes.MarketState]testtypes.RegimeProfile
+	midPrice       float64
+	trendPrice     float64
+	openPrice      float64
+	priceIncrement float64
+	pricePrecision int
+	cumVolume      float64
+	cumValue       float64
+	highPrice      float64
+	lowPrice       float64
+	currTime       time.Time
+	sequence       int64
+	l3Bid          float64
+	l3Ask          float64
+	l3BidQty       float64
+	l3AskQty       float64
 }
 
-func NewGenerator(symbol string, startPrice float64, seed int64) *Generator {
+func NewGenerator(
+	symbol string,
+	startPrice float64,
+	priceIncrement float64,
+	pricePrecision int,
+	seed int64,
+) *Generator {
 	return &Generator{
 		rng:          rand.New(rand.NewSource(seed)),
 		symbol:       symbol,
@@ -72,11 +81,14 @@ func NewGenerator(symbol string, startPrice float64, seed int64) *Generator {
 		progress:      1.0,
 		momentum:      1.0,
 
-		midPrice:  startPrice,
-		openPrice: startPrice,
-		highPrice: startPrice,
-		lowPrice:  startPrice,
-		currTime:  time.Now().UTC(),
+		midPrice:       startPrice,
+		trendPrice:     startPrice,
+		openPrice:      startPrice,
+		priceIncrement: priceIncrement,
+		pricePrecision: pricePrecision,
+		highPrice:      startPrice,
+		lowPrice:       startPrice,
+		currTime:       time.Now().UTC(),
 	}
 }
 
@@ -207,10 +219,11 @@ func (generator *Generator) Step() testtypes.Sample {
 	// 1. Advance Time Cadence
 	generator.currTime = generator.currTime.Add(profile.Cadence)
 
-	// 2. Calculate Price Motion (Geometric Random Walk + Drift)
+	// 2. Calculate a latent trend with stationary observation noise.
 	dt := profile.Cadence.Seconds()
 	noise := generator.rng.NormFloat64()
-	deltaPct := (profile.Drift * dt * 0.01) + (profile.Volatility * math.Sqrt(dt) * noise * 0.01)
+	driftPct := profile.Drift * dt * 0.01
+	noisePct := profile.Volatility * math.Sqrt(dt) * noise * 0.01
 
 	/*
 		The blended approach is the observable precursor: spread, flow, and
@@ -225,21 +238,48 @@ func (generator *Generator) Step() testtypes.Sample {
 		generator.burst *= profile.IgnitionDecay
 	}
 
-	generator.midPrice = math.Max(0.01, generator.midPrice*(1.0+deltaPct+impulse))
+	generator.trendPrice = math.Max(
+		generator.priceIncrement,
+		generator.trendPrice*(1.0+driftPct+impulse),
+	)
+	generator.midPrice = math.Max(
+		generator.priceIncrement,
+		generator.trendPrice*(1.0+noisePct),
+	)
 
 	// 3. Dynamic Spread & Bid/Ask Construction
 	baseSpread := generator.midPrice * 0.0005
-	actualSpread := math.Max(0.01, baseSpread*profile.SpreadScale)
+	actualSpread := math.Max(
+		generator.priceIncrement,
+		baseSpread*profile.SpreadScale,
+	)
 
-	halfSpread := actualSpread / 2.0
-	bid := math.Trunc((generator.midPrice-halfSpread)*100) / 100
-	ask := math.Trunc((generator.midPrice+halfSpread)*100) / 100
+	spreadTicks := math.Max(
+		1, math.Round(actualSpread/generator.priceIncrement),
+	)
+	quotedSpread := spreadTicks * generator.priceIncrement
+	halfSpread := quotedSpread / 2.0
+	bid := generator.floorPrice(generator.midPrice - halfSpread)
+	ask := generator.roundPrice(bid + quotedSpread)
+
+	if bid < generator.priceIncrement {
+		bid = generator.priceIncrement
+	}
+
+	if ask <= bid {
+		ask = generator.roundPrice(bid + generator.priceIncrement)
+	}
+
 	aggressorSide := profile.AggressorSide
 
 	if aggressorSide == "" {
 		aggressorSide = "buy"
 
-		if deltaPct+impulse < 0 {
+		if driftPct+noisePct+impulse < 0 {
+			aggressorSide = "sell"
+		}
+
+		if driftPct+noisePct+impulse == 0 && generator.rng.Intn(2) == 0 {
 			aggressorSide = "sell"
 		}
 	}
@@ -301,16 +341,34 @@ func (generator *Generator) Step() testtypes.Sample {
 		BidQty:        math.Round(bidQty*100) / 100,
 		Ask:           ask,
 		AskQty:        math.Round(askQty*100) / 100,
-		Last:          math.Round(last*100) / 100,
+		Last:          generator.roundPrice(last),
 		Volume:        math.Round(generator.cumVolume*100) / 100,
 		StepVolume:    math.Round(stepVolume*100) / 100,
-		VWAP:          math.Round(vwap*100) / 100,
-		Low:           math.Round(generator.lowPrice*100) / 100,
-		High:          math.Round(generator.highPrice*100) / 100,
-		Change:        math.Round(change*100) / 100,
+		VWAP:          generator.roundPrice(vwap),
+		Low:           generator.roundPrice(generator.lowPrice),
+		High:          generator.roundPrice(generator.highPrice),
+		Change:        generator.roundPrice(change),
 		ChangePct:     math.Round(changePct*100) / 100,
 		Timestamp:     generator.currTime,
 	}
+}
+
+func (generator *Generator) floorPrice(price float64) float64 {
+	return generator.roundPrice(
+		math.Floor(price/generator.priceIncrement) * generator.priceIncrement,
+	)
+}
+
+func (generator *Generator) ceilPrice(price float64) float64 {
+	return generator.roundPrice(
+		math.Ceil(price/generator.priceIncrement) * generator.priceIncrement,
+	)
+}
+
+func (generator *Generator) roundPrice(price float64) float64 {
+	scale := math.Pow10(generator.pricePrecision)
+
+	return math.Round(price*scale) / scale
 }
 
 /*

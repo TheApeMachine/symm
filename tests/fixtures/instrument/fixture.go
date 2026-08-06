@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"iter"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
 //go:embed fixtures/*.json
@@ -49,7 +51,7 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 NewMarket injects the requested simulated symbols into the Kraken instrument
 snapshot template and returns a ready-to-consume fixture.
 */
-func NewMarket(symbols []string, priceIncrement float64) *Fixture {
+func NewMarket(symbols []*testtypes.Symbol) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
 
 	if err != nil {
@@ -69,13 +71,6 @@ func NewMarket(symbols []string, priceIncrement float64) *Fixture {
 	template := data["pairs"].([]any)[0].(map[string]any)
 	pairs := make([]map[string]any, len(symbols))
 	assets := map[string]map[string]any{}
-	pricePrecision := 0
-	priceText := fmt.Sprintf("%.10f", priceIncrement)
-	priceText = strings.TrimRight(priceText, "0")
-
-	if point := strings.IndexByte(priceText, '.'); point >= 0 {
-		pricePrecision = len(priceText) - point - 1
-	}
 
 	for index, symbol := range symbols {
 		pair := make(map[string]any, len(template))
@@ -84,20 +79,23 @@ func NewMarket(symbols []string, priceIncrement float64) *Fixture {
 			pair[key] = value
 		}
 
-		parts := strings.Split(symbol, "/")
+		parts := strings.Split(symbol.Pair, "/")
 
 		if len(parts) != 2 {
 			panic(errnie.Err(
 				errnie.Validation,
-				fmt.Sprintf("instrument fixture invalid symbol %q", symbol),
+				fmt.Sprintf("instrument fixture invalid symbol %q", symbol.Pair),
 				nil,
 			))
 		}
 
-		pair["symbol"] = symbol
+		priceText := strconv.FormatFloat(
+			symbol.PriceIncrement, 'f', symbol.PricePrecision, 64,
+		)
+		pair["symbol"] = symbol.Pair
 		pair["base"] = parts[0]
 		pair["quote"] = parts[1]
-		pair["price_precision"] = pricePrecision
+		pair["price_precision"] = symbol.PricePrecision
 		pair["tick_size"] = json.Number(priceText)
 		pair["price_increment"] = json.Number(priceText)
 		pairs[index] = pair
