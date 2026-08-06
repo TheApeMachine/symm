@@ -200,6 +200,22 @@ func (thesis *Thesis) LatestTicker(symbol string) (kraken.TickerData, bool) {
 	return tickers[len(tickers)-1], true
 }
 
+func (thesis *Thesis) LatestTrade(symbol string) (kraken.TradeData, bool) {
+	tradesRaw, found := thesis.Trades.Load(symbol)
+
+	if !found {
+		return kraken.TradeData{}, false
+	}
+
+	trades := tradesRaw.([]kraken.TradeData)
+
+	if len(trades) == 0 {
+		return kraken.TradeData{}, false
+	}
+
+	return trades[len(trades)-1], true
+}
+
 func (thesis *Thesis) MarketSymbols() []string {
 	symbols := make([]string, 0)
 

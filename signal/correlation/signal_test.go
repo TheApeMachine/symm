@@ -50,7 +50,7 @@ func BenchmarkCorrelationMetrics(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		_, _ = correlationMetrics(scores)
 	}
 }

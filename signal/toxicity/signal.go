@@ -90,7 +90,7 @@ func (signal *Signal) run() {
 						continue
 					}
 
-					thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
+					thesis.AppendMeasurements(measurements, true)
 
 					if !completed(measurements) {
 						continue
@@ -167,7 +167,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 func completed(measurements []*types.Measurement) bool {
 	for _, measurement := range measurements {
-		if measurement != nil && measurement.Validity.State == types.ValidityValid {
+		if measurement != nil {
 			return true
 		}
 	}

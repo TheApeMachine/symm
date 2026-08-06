@@ -104,7 +104,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
+						thesis.AppendMeasurements(measurements, true)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}
@@ -123,7 +123,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
-	peers, freshness, cadenceReady := signal.cohort()
+	peers, _, cadenceReady := signal.cohort()
 
 	if len(peers) == 0 {
 		return nil
@@ -132,21 +132,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	sort.Slice(peers, func(left, right int) bool {
 		return peers[left].symbol < peers[right].symbol
 	})
-	scale := types.ScaleReference{Kind: types.ScaleObservationWindow}
-
-	for _, peer := range peers {
-		if scale.From.IsZero() || peer.observation.at.Before(scale.From) {
-			scale.From = peer.observation.at
-		}
-
-		if peer.observation.at.After(scale.Through) {
-			scale.Through = peer.observation.at
-		}
-	}
-
-	if cadenceReady && freshness > 0 {
-		scale.From = scale.Through.Add(-freshness)
-	}
 
 	cohortDepthMedian, depthCohortReady := liquidityCohortMedian(peers, true)
 	cohortNotionalMedian, notionalCohortReady := liquidityCohortMedian(peers, false)
@@ -163,40 +148,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		reportedNotional := peer.observation.quoteNotional
 		reportedReady := len(notionalPeers) >= 2 && hasNotionalMedian &&
 			notionalMedian > 0 && reportedNotional > 0 && notionalCohortReady
-		validity := types.MeasurementValidity{
-			State:     types.ValidityValid,
-			Readiness: types.ReadinessObservation,
-		}
-		if !peerReady || executableDepth <= 0 {
-			validity.State = types.ValidityProvisional
-
-			if executableDepth <= 0 {
-				validity.Reason = "executable touch depth unavailable"
-			}
-
-			if !peerReady {
-				if validity.Reason != "" {
-					validity.Reason += "; peer executable-depth median unavailable"
-				}
-
-				if validity.Reason == "" {
-					validity.Reason = "peer executable-depth median unavailable"
-				}
-			}
-		}
-
-		if !cadenceReady {
-			validity.State = types.ValidityProvisional
-			validity.Reason = appendReason(validity.Reason, "cohort cadence unavailable")
-		}
-
-		if !reportedReady {
-			validity.State = types.ValidityProvisional
-			validity.Reason = appendReason(
-				validity.Reason,
-				"peer reported-volume median unavailable",
-			)
-		}
 
 		relativeDepth := 0.0
 		scarcity := 0.0
@@ -249,11 +200,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		}
 
 		measurement := &types.Measurement{
-			Source:   types.SourceLiquidity,
-			Symbol:   peer.symbol,
-			At:       peer.observation.at,
-			Validity: validity,
-			Scale:    scale,
+			Source: types.SourceLiquidity,
+			Symbol: peer.symbol,
+			At:     peer.observation.at,
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone): {
 					Raw:        executableDepth,
@@ -509,14 +458,6 @@ func quoteNotional(row kraken.TickerData) float64 {
 	}
 
 	return price * row.Volume
-}
-
-func appendReason(reason, addition string) string {
-	if reason == "" {
-		return addition
-	}
-
-	return reason + "; " + addition
 }
 
 /*

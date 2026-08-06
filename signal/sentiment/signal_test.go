@@ -99,7 +99,6 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It should not fabricate normalized zeroes without a scale", func() {
 			So(measurements, ShouldHaveLength, 2)
-			So(measurements[0].Validity.State, ShouldEqual, types.ValidityProvisional)
 			So(measurements[0].Sample(types.MetricChange, types.SideNone).Normalized,
 				ShouldBeNil)
 		})

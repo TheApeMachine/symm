@@ -155,9 +155,6 @@ func TestExhaustionHoldDiscount(t *testing.T) {
 		thesis.Measurements.Store(types.SourceExhaustion, []*types.Measurement{{
 			Source: types.SourceExhaustion,
 			Symbol: "BTC/USD",
-			Validity: types.MeasurementValidity{
-				State: types.ValidityValid,
-			},
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricUrgency, types.SideBuy): {Raw: 0.8},
 			},
@@ -200,10 +197,6 @@ func TestHawkesSpectralRadius(t *testing.T) {
 		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
 			Symbol: "BTC/USD",
-			Validity: types.MeasurementValidity{
-				State:     types.ValidityProvisional,
-				Readiness: types.ReadinessModel,
-			},
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricSpectralRadius, types.SideNone): {Raw: 0.85},
 			},
@@ -236,9 +229,6 @@ func TestRegimeExit(t *testing.T) {
 		thesis.Measurements.Store(types.SourcePumpDump, []*types.Measurement{{
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
-			Validity: types.MeasurementValidity{
-				State: types.ValidityValid,
-			},
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricIgnition, types.SideBuy):  {Raw: 0.4},
 				types.MetricKey(types.MetricIgnition, types.SideSell): {Raw: 1.2},
@@ -268,10 +258,6 @@ func TestRegimeExit(t *testing.T) {
 		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
 			Symbol: "BTC/USD",
-			Validity: types.MeasurementValidity{
-				State:     types.ValidityProvisional,
-				Readiness: types.ReadinessModel,
-			},
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricSpectralRadius, types.SideNone):       {Raw: 0.9},
 				types.MetricKey(types.MetricTotalDescendants, types.SideBuy):      {Raw: 0.5},
@@ -294,9 +280,6 @@ func TestAllocationHaircut(t *testing.T) {
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
-			Validity: types.MeasurementValidity{
-				State: types.ValidityValid,
-			},
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricScarcityScore, types.SideNone): {Raw: 0.5},
 			},
@@ -304,9 +287,6 @@ func TestAllocationHaircut(t *testing.T) {
 		thesis.Measurements.Store(types.SourceToxicity, []*types.Measurement{{
 			Source: types.SourceToxicity,
 			Symbol: "BTC/USD",
-			Validity: types.MeasurementValidity{
-				State: types.ValidityValid,
-			},
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {Raw: 4},
 				types.MetricKey(types.MetricTouchQuantity, types.SideBuy):     {Raw: 6},
@@ -386,9 +366,6 @@ func BenchmarkAllocationHaircut(b *testing.B) {
 	thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 		Source: types.SourceLiquidity,
 		Symbol: "BTC/USD",
-		Validity: types.MeasurementValidity{
-			State: types.ValidityValid,
-		},
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricScarcityScore, types.SideNone): {Raw: 0.5},
 		},
@@ -396,9 +373,6 @@ func BenchmarkAllocationHaircut(b *testing.B) {
 	thesis.Measurements.Store(types.SourceToxicity, []*types.Measurement{{
 		Source: types.SourceToxicity,
 		Symbol: "BTC/USD",
-		Validity: types.MeasurementValidity{
-			State: types.ValidityValid,
-		},
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {Raw: 4},
 			types.MetricKey(types.MetricTouchQuantity, types.SideBuy):     {Raw: 6},
@@ -422,10 +396,6 @@ func BenchmarkHawkesSpectralRadius(b *testing.B) {
 	thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 		Source: types.SourceHawkes,
 		Symbol: "BTC/USD",
-		Validity: types.MeasurementValidity{
-			State:     types.ValidityProvisional,
-			Readiness: types.ReadinessModel,
-		},
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricSpectralRadius, types.SideNone): {Raw: 0.85},
 		},

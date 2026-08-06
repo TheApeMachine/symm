@@ -141,8 +141,6 @@ func TestCVDMeasurements(t *testing.T) {
 		)[0]
 
 		Convey("It should normalize every defined flow family and signed net", func() {
-			So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
-
 			for _, sample := range measurement.Metrics {
 				So(sample.Normalized, ShouldNotBeNil)
 			}

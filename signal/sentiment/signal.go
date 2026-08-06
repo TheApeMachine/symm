@@ -101,7 +101,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
+						thesis.AppendMeasurements(measurements, true)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}
@@ -120,52 +120,13 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
-	peers, freshness, cadenceReady := signal.cohort()
+	peers, _, _ := signal.cohort()
 
 	if len(peers) == 0 {
 		return nil
 	}
 
 	statistics := sentimentStatistics(peers)
-
-	validity := types.MeasurementValidity{
-		State:     types.ValidityValid,
-		Readiness: types.ReadinessObservation,
-	}
-
-	if len(peers) < 2 {
-		validity.State = types.ValidityProvisional
-		validity.Reason = "peer return cohort unavailable"
-	}
-
-	if !cadenceReady {
-		validity.State = types.ValidityProvisional
-		validity.Reason = appendReason(validity.Reason, "cohort cadence unavailable")
-	}
-
-	if !statistics.scaleReady {
-		validity.State = types.ValidityProvisional
-		validity.Reason = appendReason(
-			validity.Reason,
-			"peer return magnitude scale unavailable",
-		)
-	}
-
-	scale := types.ScaleReference{Kind: types.ScaleObservationWindow}
-
-	for _, peer := range peers {
-		if scale.From.IsZero() || peer.observation.at.Before(scale.From) {
-			scale.From = peer.observation.at
-		}
-
-		if peer.observation.at.After(scale.Through) {
-			scale.Through = peer.observation.at
-		}
-	}
-
-	if cadenceReady && freshness > 0 {
-		scale.From = scale.Through.Add(-freshness)
-	}
 
 	measurements := make([]*types.Measurement, 0, len(peers))
 	out := make([]*types.Measurement, 0)
@@ -189,7 +150,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			statistics.surge,
 			math.Max(peerDivergenceScore, statistics.slump),
 		)
-		metrics, normalized := sentimentMetrics(
+		metrics := sentimentMetrics(
 			map[types.MetricType]float64{
 				types.MetricChange:         change,
 				types.MetricBreadth:        statistics.breadth,
@@ -202,22 +163,13 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				types.MetricStrength:       strength,
 			},
 			statistics.magnitudeBaseline,
-			validity.State == types.ValidityValid,
 		)
-		measurementValidity := validity
-
-		if validity.State == types.ValidityValid && !normalized {
-			measurementValidity.State = types.ValidityInvalid
-			measurementValidity.Reason = "sentiment normalization contract violated"
-		}
 
 		measurement := &types.Measurement{
-			Source:   types.SourceSentiment,
-			Symbol:   peer.symbol,
-			At:       peer.observation.at,
-			Validity: measurementValidity,
-			Scale:    scale,
-			Metrics:  metrics,
+			Source:  types.SourceSentiment,
+			Symbol:  peer.symbol,
+			At:      peer.observation.at,
+			Metrics: metrics,
 		}
 
 		measurements = append(measurements, measurement)
@@ -446,30 +398,22 @@ already signed or unsigned cohort fractions derived from that same cut.
 func sentimentMetrics(
 	readings map[types.MetricType]float64,
 	magnitudeBaseline float64,
-	ready bool,
-) (map[string]types.MetricSample, bool) {
+) map[string]types.MetricSample {
 	metrics := make(map[string]types.MetricSample, len(readings))
-	valid := ready
 
 	for metric, raw := range readings {
 		sample := types.MetricSample{Raw: raw, Unit: types.UnitDimensionless}
 
-		if ready {
-			sample.Normalized = normalizedSentimentMetric(
-				metric,
-				raw,
-				magnitudeBaseline,
-			)
-
-			if sample.Normalized == nil {
-				valid = false
-			}
-		}
+		sample.Normalized = normalizedSentimentMetric(
+			metric,
+			raw,
+			magnitudeBaseline,
+		)
 
 		metrics[types.MetricKey(metric, types.SideNone)] = sample
 	}
 
-	return metrics, valid
+	return metrics
 }
 
 func normalizedSentimentMetric(
@@ -513,14 +457,6 @@ func normalizedSentimentMetric(
 	value := raw
 
 	return &value
-}
-
-func appendReason(reason, addition string) string {
-	if reason == "" {
-		return addition
-	}
-
-	return reason + "; " + addition
 }
 
 /*

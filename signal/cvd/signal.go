@@ -123,7 +123,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
+						thesis.AppendMeasurements(measurements, true)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 
@@ -356,20 +356,11 @@ func (signal *Signal) cvdMeasurements(
 		types.MetricNetFraction, output.NetFraction, evidenceCount,
 	)
 	net := normalizedSignedNet(output.Net, output.NetFraction, evidenceCount)
-	validity := types.ObservationValidity(evidenceCount)
-
-	if validity.State == types.ValidityValid &&
-		(absorption == nil || drive == nil || balance == nil || starvation == nil ||
-			strength == nil || netFraction == nil || net == nil) {
-		validity.State = types.ValidityInvalid
-		validity.Reason = "flow normalization contract violated"
-	}
 
 	measurement := &types.Measurement{
-		Source:   types.SourceCVD,
-		Symbol:   row.Symbol,
-		At:       row.Timestamp,
-		Validity: validity,
+		Source: types.SourceCVD,
+		Symbol: row.Symbol,
+		At:     row.Timestamp,
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricAbsorption, types.SideNone): {
 				Raw:        output.Absorption,

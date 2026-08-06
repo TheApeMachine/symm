@@ -64,11 +64,6 @@ func touchMeasurement(
 		Source: types.SourceToxicity,
 		Symbol: symbol,
 		At:     touch.asOf,
-		Validity: types.MeasurementValidity{
-			State:     types.ValidityProvisional,
-			Readiness: types.ReadinessObservation,
-			Reason:    "awaiting a later touch with intervening trades",
-		},
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
 				Raw:  touch.bid.price,
@@ -100,7 +95,6 @@ func latestTouch(
 	for _, measurement := range measurements {
 		if measurement == nil || measurement.Symbol != symbol ||
 			measurement.Source != types.SourceToxicity ||
-			measurement.Validity.State != types.ValidityProvisional ||
 			measurement.At.Before(latest.asOf) {
 			continue
 		}
@@ -173,15 +167,12 @@ func toxicityMeasurement(
 	askRetreatNormalized := normalizedTouchRatio(askRetreat, previous.ask.quantity)
 	bidCancelledNormalized := normalizedTouchRatio(bidCancelled, previous.bid.quantity)
 	askCancelledNormalized := normalizedTouchRatio(askCancelled, previous.ask.quantity)
-	validity := types.ObservationValidity(len(trades) + 2)
 
 	if tradeVolumeNormalized == nil || bidFillNormalized == nil || askFillNormalized == nil ||
 		bidPriceNormalized == nil || askPriceNormalized == nil ||
 		bidQuantityNormalized == nil || askQuantityNormalized == nil ||
 		bidRetreatNormalized == nil || askRetreatNormalized == nil ||
 		bidCancelledNormalized == nil || askCancelledNormalized == nil {
-		validity.State = types.ValidityProvisional
-		validity.Reason = "previous touch normalization scale unavailable"
 	}
 
 	return &types.Measurement{
@@ -190,7 +181,6 @@ func toxicityMeasurement(
 		At:           current.asOf,
 		ObservedFrom: previous.asOf,
 		Horizon:      current.asOf.Sub(previous.asOf),
-		Validity:     validity,
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricTradeVolume, types.SideNone): {
 				Raw:        tradeVolume,

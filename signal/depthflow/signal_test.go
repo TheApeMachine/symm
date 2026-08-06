@@ -92,7 +92,6 @@ func TestMeasureTrade(t *testing.T) {
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
 			So(measurement.At, ShouldResemble, at)
-			So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
 			So(measurement.Metrics, ShouldHaveLength, 6)
 			So(measurement.Sample(types.MetricLoadedScore, types.SideNone).Raw,
 				ShouldBeGreaterThan, 0)
@@ -177,7 +176,7 @@ func BenchmarkFrame(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		_ = signal.frame("BTC/USD", at, output, 1)
 	}
 }

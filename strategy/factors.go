@@ -130,7 +130,7 @@ preserves that result rather than imposing a second fusion rule.
 func exhaustionHoldDiscount(thesis *types.Thesis, symbol string) (float64, bool) {
 	measurement, ok := latestMeasurement(thesis, symbol, types.SourceExhaustion)
 
-	if !ok || measurement.Validity.State != types.ValidityValid {
+	if !ok {
 		return 0, false
 	}
 
@@ -159,8 +159,7 @@ violates the model whose output strategy is consuming.
 func hawkesSpectralRadius(thesis *types.Thesis, symbol string) (float64, bool) {
 	measurement, ok := latestMeasurement(thesis, symbol, types.SourceHawkes)
 
-	if !ok || measurement.Validity.State == types.ValidityInvalid ||
-		measurement.Validity.Readiness != types.ReadinessModel {
+	if !ok {
 		return 0, false
 	}
 
@@ -197,7 +196,7 @@ Compression is the coil that separates a wind-up from a move already spent.
 func ignitionPrecursor(thesis *types.Thesis, symbol string) bool {
 	pump, ok := latestMeasurement(thesis, symbol, types.SourcePumpDump)
 
-	if !ok || pump.Validity.State != types.ValidityValid {
+	if !ok {
 		return false
 	}
 
@@ -225,7 +224,7 @@ descendant and dominate the buy process.
 func regimeExit(thesis *types.Thesis, symbol string) string {
 	pump, ok := latestMeasurement(thesis, symbol, types.SourcePumpDump)
 
-	if ok && pump.Validity.State == types.ValidityValid {
+	if ok {
 		sell, sellReady := rawMetric(pump, types.MetricIgnition, types.SideSell)
 		buy, buyReady := rawMetric(pump, types.MetricIgnition, types.SideBuy)
 
@@ -236,8 +235,7 @@ func regimeExit(thesis *types.Thesis, symbol string) string {
 
 	hawkes, ok := latestMeasurement(thesis, symbol, types.SourceHawkes)
 
-	if !ok || hawkes.Validity.State == types.ValidityInvalid ||
-		hawkes.Validity.Readiness != types.ReadinessModel {
+	if !ok {
 		return ""
 	}
 
@@ -287,7 +285,7 @@ func allocationHaircut(
 ) (float64, string, bool) {
 	liquidity, ok := latestMeasurement(thesis, row.Symbol, types.SourceLiquidity)
 
-	if !ok || liquidity.Validity.State != types.ValidityValid {
+	if !ok {
 		return 0, "", false
 	}
 
@@ -454,8 +452,7 @@ func hollowPressure(thesis *types.Thesis, symbol string) (float64, bool) {
 
 		for _, measurement := range rows {
 			if measurement == nil || measurement.Symbol != symbol ||
-				measurement.Source != types.SourceToxicity ||
-				measurement.Validity.State != types.ValidityValid {
+				measurement.Source != types.SourceToxicity {
 				continue
 			}
 

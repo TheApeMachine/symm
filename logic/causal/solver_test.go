@@ -97,7 +97,6 @@ func BenchmarkUpdate(b *testing.B) {
 			},
 		})
 		thesis.Resonance.Store(symbol, testResonanceReading(
-			&testing.T{},
 			float64(index),
 			float64(index)/float64(index+1),
 			[]float64{float64(index) / float64(index+1)},

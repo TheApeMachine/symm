@@ -528,8 +528,7 @@ func (evaluator Evaluator) candidate(
 
 	reading, ok := resonanceReading(thesis, symbol)
 
-	if !ok || reading.Forecast == nil ||
-		reading.ForecastValidity.State != types.ValidityValid {
+	if !ok || reading.Forecast == nil {
 		return candidate{}, false
 	}
 

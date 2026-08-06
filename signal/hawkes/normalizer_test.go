@@ -123,7 +123,7 @@ func BenchmarkValue(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		_ = normalization.value(
 			outcome,
 			types.MetricExcitationAmplitude,

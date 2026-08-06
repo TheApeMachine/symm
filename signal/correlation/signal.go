@@ -92,7 +92,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
+						thesis.AppendMeasurements(measurements, true)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 
@@ -142,11 +142,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
-	validity := types.MeasurementValidity{
-		State:     types.ValidityValid,
-		Readiness: types.ReadinessObservation,
-	}
-
 	for symbol, scores := range scoresBySymbol {
 		at := latestAtBySymbol[symbol]
 
@@ -158,20 +153,13 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			continue
 		}
 
-		metrics, normalizationReady := correlationMetrics(scores)
-		measurementValidity := validity
-
-		if !normalizationReady {
-			measurementValidity.State = types.ValidityInvalid
-			measurementValidity.Reason = "correlation normalization contract violated"
-		}
+		metrics, _ := correlationMetrics(scores)
 
 		measurement := &types.Measurement{
-			Source:   types.SourceCorrelation,
-			Symbol:   symbol,
-			At:       at,
-			Validity: measurementValidity,
-			Metrics:  metrics,
+			Source:  types.SourceCorrelation,
+			Symbol:  symbol,
+			At:      at,
+			Metrics: metrics,
 		}
 
 		measurements = append(measurements, measurement)

@@ -7,43 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	nomagiquehawkes "github.com/theapemachine/nomagique/hawkes"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
 )
-
-func TestSeenTrade(t *testing.T) {
-	Convey("Given an exact-once cursor for one symbol", t, func() {
-		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
-		at := time.Unix(1_700_000_000, 0).UTC()
-		first := kraken.TradeData{Symbol: "ALT/USD", TradeID: 11, Timestamp: at}
-		secondSameTime := kraken.TradeData{Symbol: "ALT/USD", TradeID: 12, Timestamp: at}
-		regressed := kraken.TradeData{
-			Symbol: "ALT/USD", TradeID: 13, Timestamp: at.Add(-time.Nanosecond),
-		}
-
-		Convey("It should accept distinct same-time IDs and reject replay or regression", func() {
-			So(signal.seenTrade(first), ShouldBeFalse)
-			signal.commitTrade(first)
-			So(signal.seenTrade(first), ShouldBeTrue)
-			So(signal.seenTrade(secondSameTime), ShouldBeFalse)
-			signal.commitTrade(secondSameTime)
-			So(signal.seenTrade(secondSameTime), ShouldBeTrue)
-			So(signal.seenTrade(regressed), ShouldBeTrue)
-		})
-	})
-
-	Convey("Given same-time trades without exchange IDs", t, func() {
-		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
-		at := time.Unix(1_700_000_100, 0).UTC()
-		unidentified := kraken.TradeData{Symbol: "ALT/USD", Timestamp: at}
-
-		signal.commitTrade(unidentified)
-
-		Convey("It should document the intrinsic indistinguishability by rejecting the second zero-ID event", func() {
-			So(signal.seenTrade(unidentified), ShouldBeTrue)
-		})
-	})
-}
 
 func TestMeasurements(t *testing.T) {
 	Convey("Given a retained fit evaluated on a later observation epoch", t, func() {
@@ -61,10 +25,6 @@ func TestMeasurements(t *testing.T) {
 			So(measurement.ObservedFrom, ShouldResemble, observedFrom)
 			So(measurement.At, ShouldResemble, at)
 			So(measurement.Horizon, ShouldEqual, 5*time.Second)
-			So(measurement.Scale.From, ShouldResemble, fitFrom)
-			So(measurement.Scale.Through, ShouldResemble, fitAt)
-			So(measurement.Validity.State, ShouldEqual, types.ValidityProvisional)
-			So(measurement.Validity.Readiness, ShouldEqual, types.ReadinessModel)
 		})
 	})
 }

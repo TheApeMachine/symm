@@ -173,8 +173,6 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		return
 	}
 
-	planner.audit(thesis, decisions)
-
 	if !terminalDecision {
 		planner.complete(thesis, true, len(decisions), "deferred")
 		return
@@ -194,39 +192,6 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 	})
 
 	utils.Fanout(planner.subscribers, "planner", thesis)
-}
-
-/*
-audit writes one durable record per verdict this tick reached, which is the
-corpus a post-mortem reads a decision back out of once the thesis that held it
-has been reset.
-*/
-func (planner *Planner) audit(thesis *types.Thesis, decisions []types.Decision) {
-	if planner.recorder == nil {
-		return
-	}
-
-	for _, decision := range decisions {
-		errnie.Error(audit.Record(planner.recorder, audit.DecisionContext{
-			DecisionID:       decision.ID,
-			Symbol:           decision.Symbol,
-			At:               decision.At,
-			Tick:             thesis.Tick,
-			Action:           decision.Action,
-			Cause:            decision.Cause,
-			Reason:           decision.Reason,
-			Utility:          decision.Utility,
-			Alternatives:     decision.Alternatives,
-			Opportunity:      decision.Opportunity,
-			AllocationClass:  decision.AllocationClass,
-			AllocationCut:    decision.AllocationHaircut,
-			AllocationReason: decision.AllocationHaircutReason,
-			ProposedQuantity: decision.ProposedQuantity,
-			ProposedNotional: decision.ProposedNotional,
-			Risk:             decision.Risk,
-			Trace:            decision.Trace,
-		}))
-	}
 }
 
 /*

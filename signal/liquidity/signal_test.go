@@ -68,7 +68,6 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It should not normalize before cohort cadence is known", func() {
 			first := measurementFor(firstMeasurements, "THIN/USD")
-			So(first.Validity.State, ShouldEqual, types.ValidityProvisional)
 			So(first.Sample(types.MetricExecutableTouchDepth, types.SideNone).Normalized,
 				ShouldBeNil)
 		})
@@ -126,7 +125,6 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It should keep depth usable while turnover normalization stays absent", func() {
 			measurement := measurementFor(measurements, "NO-VOLUME/USD")
-			So(measurement.Validity.State, ShouldEqual, types.ValidityProvisional)
 			So(measurement.Sample(
 				types.MetricExecutableTouchDepth,
 				types.SideNone,

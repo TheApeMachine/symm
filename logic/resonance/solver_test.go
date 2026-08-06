@@ -19,12 +19,11 @@ primeFeatures gives one symbol's feature standardizers a scale to score against.
 The stage settles on standardized readings, and a standardizer answers zero
 until it has prior moments, so a solver handed its first observation has nothing
 to settle on and says so. A test that exercises what the stage does once it is
-reading the market has to get it past that point first, which is why the solver
-owns its warmup rather than inheriting one.
+reading the market has to get it past that point first, which takes readings
+that move: three ticks is what it costs to hold a mean, a spread, and a sample
+scored against them.
 */
 func primeFeatures(solver *Solver, symbol string, keys ...string) {
-	solver.featureWarmup = 1
-
 	for tick := range 3 {
 		metrics := make(map[string]types.MetricSample, len(keys))
 
@@ -137,7 +136,7 @@ func TestUpdate(t *testing.T) {
 		}})
 		solver := NewSolver(make(chan []byte, 1), nil)
 		primeFeatures(solver, "BTC/USD", "first", "second")
-		thesis.Tickers.Store("BTC/USD", kraken.TickerData{
+		thesis.AppendTicker(kraken.TickerData{
 			Symbol:    "BTC/USD",
 			Bid:       decimal.NewFromFloat64(99),
 			Ask:       decimal.NewFromFloat64(101),
@@ -182,7 +181,7 @@ func TestUpdate(t *testing.T) {
 		Convey("Then a warmed stage publishes a forecast its own curve supports", func() {
 			first = 0.5
 			second = -0.25
-			thesis.Tickers.Store("BTC/USD", kraken.TickerData{
+			thesis.AppendTicker(kraken.TickerData{
 				Symbol:    "BTC/USD",
 				Bid:       decimal.NewFromFloat64(100),
 				Ask:       decimal.NewFromFloat64(102),
@@ -194,7 +193,7 @@ func TestUpdate(t *testing.T) {
 
 			first = 0.75
 			second = 0
-			thesis.Tickers.Store("BTC/USD", kraken.TickerData{
+			thesis.AppendTicker(kraken.TickerData{
 				Symbol:    "BTC/USD",
 				Bid:       decimal.NewFromFloat64(102),
 				Ask:       decimal.NewFromFloat64(104),
@@ -221,8 +220,6 @@ func TestUpdate(t *testing.T) {
 				now is the contract a stage reading actual features owes — a
 				forecast whose horizon, curve and retention agree.
 			*/
-			So(row.ForecastValidity.State, ShouldEqual, types.ValidityValid)
-			So(row.ForecastValidity.Readiness, ShouldEqual, types.ReadinessForecast)
 			So(row.Forecast, ShouldNotBeNil)
 			So(row.Forecast.Validate(), ShouldBeNil)
 			So(len(row.Forecast.Curve), ShouldEqual, row.Forecast.SupportedHorizon)
@@ -247,7 +244,7 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 				"reading": {Normalized: &normalized},
 			},
 		}})
-		first.Tickers.Store("BTC/USD", kraken.TickerData{
+		first.AppendTicker(kraken.TickerData{
 			Symbol:    "BTC/USD",
 			Bid:       decimal.NewFromFloat64(99),
 			Ask:       decimal.NewFromFloat64(101),
@@ -266,7 +263,7 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 					"reading": {Normalized: &normalized},
 				},
 			}})
-			second.Tickers.Store("ETH/USD", kraken.TickerData{
+			second.AppendTicker(kraken.TickerData{
 				Symbol:    "ETH/USD",
 				Bid:       decimal.NewFromFloat64(199),
 				Ask:       decimal.NewFromFloat64(201),
@@ -317,7 +314,7 @@ func driveSolver(ticks int) *Solver {
 			},
 		}})
 
-		thesis.Tickers.Store("BTC/USD", kraken.TickerData{
+		thesis.AppendTicker(kraken.TickerData{
 			Symbol:    "BTC/USD",
 			Bid:       decimal.NewFromFloat64(100 + float64(tick)*0.01),
 			Ask:       decimal.NewFromFloat64(100.02 + float64(tick)*0.01),
@@ -474,7 +471,7 @@ func BenchmarkUpdate(b *testing.B) {
 
 	for b.Loop() {
 		for _, symbol := range symbols {
-			thesis.Tickers.Store(symbol, kraken.TickerData{
+			thesis.AppendTicker(kraken.TickerData{
 				Symbol:    symbol,
 				Bid:       decimal.NewFromFloat64(99),
 				Ask:       decimal.NewFromFloat64(101),

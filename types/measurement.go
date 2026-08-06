@@ -1,7 +1,6 @@
 package types
 
 import (
-	"errors"
 	"sync"
 	"time"
 )
@@ -81,66 +80,6 @@ const (
 )
 
 /*
-MeasurementValidity carries estimator readiness and any reason a value cannot
-yet be used at a stronger layer.
-*/
-type MeasurementValidity struct {
-	State     ValidityState        `json:"state"`
-	Readiness MeasurementReadiness `json:"readiness"`
-	Reason    string               `json:"reason,omitempty"`
-}
-
-/*
-ObservationValidity derives observation-layer validity from how many
-corroborating events contributed to the current window. A lone event stays
-provisional so downstream logic and UI can distinguish thin batches from
-multi-event corroboration while ReadinessObservation remains unchanged.
-*/
-func ObservationValidity(evidenceCount int) MeasurementValidity {
-	validity := MeasurementValidity{
-		Readiness: ReadinessObservation,
-	}
-
-	if evidenceCount <= 0 {
-		validity.State = ValidityInvalid
-		validity.Reason = "no observation evidence"
-
-		return validity
-	}
-
-	if evidenceCount == 1 {
-		validity.State = ValidityProvisional
-		validity.Reason = "single observation in window"
-
-		return validity
-	}
-
-	validity.State = ValidityValid
-
-	return validity
-}
-
-/*
-ScaleType identifies the baseline or observation epoch that gives a normalized
-or estimated value its local scale.
-*/
-type ScaleType string
-
-const (
-	ScaleObservationWindow ScaleType = "observation_window"
-)
-
-/*
-ScaleReference identifies the exact data interval used to establish scale so
-measurements from different adaptive epochs are not silently compared.
-*/
-type ScaleReference struct {
-	Kind    ScaleType `json:"kind"`
-	From    time.Time `json:"from"`
-	Through time.Time `json:"through"`
-}
-
-/*
 MetricSample is one named numeric reading inside a source×symbol Measurement.
 */
 type MetricSample struct {
@@ -170,8 +109,6 @@ type Measurement struct {
 	Horizon      time.Duration           `json:"horizon,omitempty" validate:"nonnegative"`
 	Maturity     float64                 `json:"maturity,omitempty" validate:"finite"`
 	Uncertainty  *MeasurementUncertainty `json:"uncertainty,omitempty"`
-	Validity     MeasurementValidity     `json:"validity"`
-	Scale        ScaleReference          `json:"scale"`
 	Metrics      map[string]MetricSample `json:"metrics,omitempty"`
 }
 
@@ -186,33 +123,6 @@ func (measurement *Measurement) Key() string {
 	}
 
 	return string(measurement.Source) + ":" + measurement.Symbol + ":" + measurement.Peer
-}
-
-/*
-ValidateStruct enforces the provenance contract. Producers must emit forward
-observation and scale intervals; this rejects conflict instead of rewriting it.
-*/
-func (measurement *Measurement) ValidateStruct() error {
-	if measurement == nil {
-		return errors.New("measurement required")
-	}
-
-	if !measurement.ObservedFrom.IsZero() &&
-		measurement.ObservedFrom.After(measurement.At) {
-		return errors.New("observedFrom after At")
-	}
-
-	if !measurement.Scale.From.IsZero() &&
-		!measurement.Scale.Through.IsZero() &&
-		measurement.Scale.Through.Before(measurement.Scale.From) {
-		return errors.New("scale interval ends before it starts")
-	}
-
-	if len(measurement.Metrics) == 0 {
-		return errors.New("metrics required")
-	}
-
-	return nil
 }
 
 /*
@@ -369,26 +279,6 @@ func (measurement *Measurement) fitParameter() bool {
 			MetricCrossSelfDelta,
 			MetricImmediateOffspring,
 			MetricTotalDescendants:
-			return true
-		}
-	}
-
-	return false
-}
-
-/*
-MeasurementsReady answers whether a set of readings is finished evidence or a
-stage still gathering.
-
-A stage stamps only once at least one of its readings is valid, because a
-provisional row is the stage saying it has not finished the work that row will
-eventually describe. Skipping the stamp leaves the thesis short of the gate the
-later stages read, so the tick comes back around and the stage continues from
-the measurements it already wrote.
-*/
-func MeasurementsReady(measurements []*Measurement) bool {
-	for _, measurement := range measurements {
-		if measurement != nil && measurement.Validity.State == ValidityValid {
 			return true
 		}
 	}

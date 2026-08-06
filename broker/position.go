@@ -304,42 +304,6 @@ func (position *Position) StopSnapshot() types.StopSnapshot {
 }
 
 /*
-auditStops writes every geometry change the regulator has made since the last
-call.
-
-The rows are what makes the stop answerable after the fact. A position that
-exits leaves a decision row saying a sell went out, and nothing about which
-boundary sent it or where the other boundaries stood at that moment. Each row
-here carries both floors, the profit line, the peak and the mark, so a later
-pass can label the one question the calibrated model will need answered: from
-this state, did the lot reach its protected profit before its hard loss.
-*/
-func (position *Position) auditStops() {
-	if position.recorder == nil || position.Holding == nil ||
-		position.Holding.Stoploss == nil {
-		return
-	}
-
-	stoploss := position.Holding.Stoploss
-
-	for _, transition := range stoploss.DrainTransitions() {
-		event := audit.ExecutionLifecycle{
-			PositionID: position.ID,
-			Symbol:     position.pair.Symbol,
-			Kind:       audit.ExecutionStopTransition,
-			Transition: transition,
-		}
-
-		if transition.Status == types.TRIGGERED {
-			event.StopOrderID = position.stopOrderID
-			event.ExitAttempt = position.exitAttempt
-		}
-
-		errnie.Error(audit.Record(position.recorder, event))
-	}
-}
-
-/*
 onTicker refreshes the mark cache for this position's holding and lets the
 bound stoploss regulator judge the price a sale would actually realise.
 */
@@ -372,9 +336,7 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		position.exitOnStop()
 	}
 
-	position.auditStops()
 	position.mu.Unlock()
-
 	position.Publish()
 }
 
@@ -603,7 +565,6 @@ func (position *Position) applyEntryFill(row kraken.ExecutionData) {
 	})
 
 	position.publishSnapshot()
-	position.auditStops()
 
 	if position.Holding.Stoploss.Status == types.TRIGGERED || position.exiting {
 		position.Status = types.PENDING

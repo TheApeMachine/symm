@@ -75,9 +75,6 @@ func TestHubForecastPublication(t *testing.T) {
 			Source:   types.SourceResonance,
 			Symbol:   "BTC/USD",
 			Forecast: forecast,
-			ForecastValidity: types.MeasurementValidity{
-				State: types.ValidityValid, Readiness: types.ReadinessForecast,
-			},
 		}
 
 		utils.Publish(messages, datura.NewMap("resonance", []any{reading}))

@@ -144,9 +144,6 @@ func TestExtractResonanceNodes(t *testing.T) {
 			At:       at,
 			Surprise: 0.25,
 			Forecast: forecast,
-			ForecastValidity: types.MeasurementValidity{
-				State: types.ValidityValid, Readiness: types.ReadinessForecast,
-			},
 		})
 		graph := NewGraph(at)
 		solver := NewSolver(nil, nil)

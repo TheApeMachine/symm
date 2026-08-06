@@ -46,7 +46,6 @@ func TestBuildScoreMeasurement(t *testing.T) {
 			"ALT/USD",
 			"BTC/USD",
 			time.Unix(1_700_020_000, 0).UTC(),
-			8,
 			correlationSelection{
 				correlation: 0.8, signedCorrelation: -0.8,
 				signedContempCorrelation: -0.8, lagFraction: 0.25,
@@ -57,7 +56,6 @@ func TestBuildScoreMeasurement(t *testing.T) {
 		)
 
 		Convey("It should expose the equation's dimensionless values", func() {
-			So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
 			So(*measurement.Sample(types.MetricSignedCorrelation, types.SideNone).Normalized,
 				ShouldAlmostEqual, -0.8, 1e-12)
 			So(*measurement.Sample(types.MetricLagFraction, types.SideNone).Normalized,
@@ -67,12 +65,11 @@ func TestBuildScoreMeasurement(t *testing.T) {
 
 	Convey("Given only one observation", t, func() {
 		measurement := buildScoreMeasurement(
-			"ALT/USD", "BTC/USD", time.Unix(1_700_020_100, 0).UTC(), 1,
+			"ALT/USD", "BTC/USD", time.Unix(1_700_020_100, 0).UTC(),
 			correlationSelection{correlation: 0.8}, 1, evidenceWeights{},
 		)
 
 		Convey("It should keep normalized evidence absent while provisional", func() {
-			So(measurement.Validity.State, ShouldEqual, types.ValidityProvisional)
 			So(measurement.Sample(types.MetricCorrelation, types.SideNone).Normalized,
 				ShouldBeNil)
 		})
@@ -89,7 +86,7 @@ func BenchmarkBuildScoreMeasurement(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for range b.N {
-		_ = buildScoreMeasurement("ALT/USD", "BTC/USD", at, 8, selected, 1, weights)
+	for b.Loop() {
+		_ = buildScoreMeasurement("ALT/USD", "BTC/USD", at, selected, 1, weights)
 	}
 }

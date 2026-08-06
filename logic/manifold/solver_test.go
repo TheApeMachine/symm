@@ -2,7 +2,6 @@ package manifold
 
 import (
 	"encoding/binary"
-	"errors"
 	"math"
 	"testing"
 	"time"
@@ -261,7 +260,7 @@ func TestRejectBatch(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		solver := &Solver{domain: domain, turnover: 5}
-		solver.rejectBatch("BTC/USD", time.Now().UTC(), 3, 2, errors.New("failed test step"))
+		solver.rejectBatch("BTC/USD", 3, 2)
 
 		Convey("It should retain the resident state that preceded that batch", func() {
 			So(domain.ParticleCount(), ShouldEqual, 3)

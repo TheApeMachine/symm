@@ -134,7 +134,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
+						thesis.AppendMeasurements(measurements, true)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}
@@ -517,23 +517,13 @@ func (signal *Signal) frame(
 	output equation.DecayOutput,
 	maturity float64,
 ) []*types.Measurement {
-	metrics, normalized := normalizedDecayMetrics(output)
-	validity := types.MeasurementValidity{
-		State:     types.ValidityValid,
-		Readiness: types.ReadinessObservation,
-	}
-
-	if !normalized {
-		validity.State = types.ValidityInvalid
-		validity.Reason = "decay normalization contract violated"
-	}
+	metrics, _ := normalizedDecayMetrics(output)
 
 	measurement := &types.Measurement{
 		Source:   types.SourceExhaustion,
 		Symbol:   symbol,
 		At:       at,
 		Maturity: maturity,
-		Validity: validity,
 		Metrics:  metrics,
 	}
 

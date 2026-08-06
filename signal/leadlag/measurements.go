@@ -225,7 +225,6 @@ func buildScoreMeasurement(
 	symbol string,
 	anchor string,
 	at time.Time,
-	evidenceCount int,
 	selected correlationSelection,
 	sampleSupport float64,
 	weights evidenceWeights,
@@ -258,16 +257,12 @@ func buildScoreMeasurement(
 		peer = anchor
 	}
 
-	validity := types.ObservationValidity(evidenceCount)
-	normalize := validity.State == types.ValidityValid
-
 	measurement := &types.Measurement{
-		Source:   types.SourceLeadLag,
-		Symbol:   symbol,
-		Peer:     peer,
-		At:       at,
-		Validity: validity,
-		Metrics:  make(map[string]types.MetricSample, len(readings)+1),
+		Source:  types.SourceLeadLag,
+		Symbol:  symbol,
+		Peer:    peer,
+		At:      at,
+		Metrics: make(map[string]types.MetricSample, len(readings)+1),
 	}
 
 	for _, item := range readings {
@@ -276,14 +271,7 @@ func buildScoreMeasurement(
 			Unit: types.UnitDimensionless,
 		}
 
-		if normalize {
-			sample.Normalized = normalizedLeadLag(item.metric, item.raw)
-
-			if sample.Normalized == nil {
-				measurement.Validity.State = types.ValidityInvalid
-				measurement.Validity.Reason = "lead-lag normalization contract violated"
-			}
-		}
+		sample.Normalized = normalizedLeadLag(item.metric, item.raw)
 
 		measurement.Metrics[types.MetricKey(item.metric, types.SideNone)] = sample
 	}
@@ -293,17 +281,10 @@ func buildScoreMeasurement(
 		Unit: types.UnitDimensionless,
 	}
 
-	if normalize {
-		direction.Normalized = normalizedLeadLag(
-			types.MetricSignedLagDirection,
-			selected.lagDirection,
-		)
-
-		if direction.Normalized == nil {
-			measurement.Validity.State = types.ValidityInvalid
-			measurement.Validity.Reason = "lead-lag normalization contract violated"
-		}
-	}
+	direction.Normalized = normalizedLeadLag(
+		types.MetricSignedLagDirection,
+		selected.lagDirection,
+	)
 
 	measurement.Metrics[types.MetricKey(
 		types.MetricSignedLagDirection,
@@ -367,14 +348,9 @@ func (signal *Signal) score(
 	sampleSupport := sampleSupportFraction(features.SampleCount)
 	weights := weightEvidence(features, selected, sampleSupport)
 	anchor := signal.section.AnchorSymbol()
-	evidenceCount := features.SampleCount
-
-	if evidenceCount == 0 {
-		evidenceCount = signal.section.PriceSampleCount(symbol)
-	}
 
 	return buildScoreMeasurement(
-		symbol, anchor, at, evidenceCount, selected, sampleSupport, weights,
+		symbol, anchor, at, selected, sampleSupport, weights,
 	)
 }
 
@@ -386,16 +362,10 @@ func (signal *Signal) provisional(
 	symbol string,
 	at time.Time,
 ) *types.Measurement {
-	validity := types.MeasurementValidity{
-		State:     types.ValidityProvisional,
-		Readiness: types.ReadinessObservation,
-		Reason:    "no cross-section leader",
-	}
 	measurement := &types.Measurement{
-		Source:   types.SourceLeadLag,
-		Symbol:   symbol,
-		At:       at,
-		Validity: validity,
+		Source: types.SourceLeadLag,
+		Symbol: symbol,
+		At:     at,
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricCorrelation, types.SideNone): {
 				Raw:  0,

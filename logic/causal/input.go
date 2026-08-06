@@ -158,8 +158,7 @@ func (solver *Solver) buildCausalInput(
 
 	resonance, ok := resonanceRaw.(types.ResonanceReading)
 
-	if !ok || resonance.Forecast == nil ||
-		resonance.ForecastValidity.State != types.ValidityValid {
+	if !ok || resonance.Forecast == nil {
 		return causalInput{}, false
 	}
 

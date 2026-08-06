@@ -343,8 +343,7 @@ func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) 
 		symbol, symbolOK := key.(string)
 		reading, readingOK := value.(types.ResonanceReading)
 
-		if !symbolOK || !readingOK || symbol == "" || reading.Forecast == nil ||
-			reading.ForecastValidity.State != types.ValidityValid {
+		if !symbolOK || !readingOK || symbol == "" || reading.Forecast == nil {
 			return true
 		}
 

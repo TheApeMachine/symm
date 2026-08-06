@@ -87,9 +87,6 @@ func TestIntegration(t *testing.T) {
 							So(fmt.Sprintf("%s:%t", source, measurement != nil),
 								ShouldEqual, fmt.Sprintf("%s:true", source))
 							So(measurement.At.IsZero(), ShouldBeFalse)
-							So(fmt.Sprintf("%s:%s", source, measurement.Validity.State),
-								ShouldNotEqual,
-								fmt.Sprintf("%s:%s", source, types.ValidityInvalid))
 							So(measurement.Metrics, ShouldNotBeEmpty)
 						}
 
@@ -97,7 +94,6 @@ func TestIntegration(t *testing.T) {
 							measurement := latestMeasurement(
 								thesis, types.SourcePumpDump, "SIM1/USD",
 							)
-							So(measurement.Validity.State, ShouldEqual, types.ValidityValid)
 
 							for _, expectedMetric := range expectation.Contract.Metrics {
 								sample, found := measurement.Metrics[types.MetricKey(
@@ -130,8 +126,6 @@ func TestIntegration(t *testing.T) {
 									resonance, ok := resonanceRaw.(types.ResonanceReading)
 									So(ok, ShouldBeTrue)
 									So(resonance.Samples, ShouldBeGreaterThan, 0)
-									So(resonance.ForecastValidity.State,
-										ShouldEqual, types.ValidityValid)
 									So(resonance.Forecast, ShouldNotBeNil)
 									So(resonance.Forecast.Validate(), ShouldBeNil)
 									So(resonance.Forecast.Curve, ShouldNotBeEmpty)

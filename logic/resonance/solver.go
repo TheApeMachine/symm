@@ -21,19 +21,6 @@ import (
 const (
 	resonanceReturnDimensions = 1
 	restAlpha                 = 0.03
-
-	/*
-		defaultFeatureWarmup is how many observations a feature needs before it
-		has a scale to be scored against.
-
-		It is declared here rather than left to the standardizer's own default
-		because it decides observable behaviour of this stage: until a feature
-		warms, it standardizes to zero, and a settle over a vector of those is
-		what drives the latent state to the origin and publishes a forecast the
-		dynamics do not support. Owning the number keeps that boundary visible
-		to the tests that have to cross it.
-	*/
-	defaultFeatureWarmup = 32
 )
 
 /*
@@ -51,7 +38,6 @@ type Solver struct {
 	learn           bool
 	advanceTemporal bool
 	ui              chan []byte
-	featureWarmup   int
 }
 
 /*
@@ -68,7 +54,6 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 		learn:           true,
 		advanceTemporal: true,
 		ui:              ui,
-		featureWarmup:   defaultFeatureWarmup,
 	}
 }
 
@@ -196,15 +181,20 @@ func (solver *Solver) updateSymbol(
 	}
 
 	/*
-		A standardizer answers zero until it has the moments to score against,
-		so a vector that is entirely zero is the absence of a reading rather
-		than a market that measured zero on all counts.
+		A standardizer answers zero while it has no spread to score against, so
+		a vector that is entirely zero is the absence of a reading rather than a
+		market that measured zero on all counts.
 
 		Settling on it drives the latent state to the origin, which makes the
 		rollout retention zero and publishes the forecast as invalid; learning
 		from it spends a resolved return sample teaching the return head that
-		no input predicts a real move. Both are wrong about a stage that is
-		simply still warming, so the reading says so and waits.
+		no input predicts a real move. Both are wrong about a stage that has
+		simply not seen a feature move yet, so the reading says so and waits.
+
+		This resolves as soon as any feature varies, because the standardizer
+		scores against its own precision rather than waiting out a sample count:
+		an early reading is small because the scale behind it is uncertain, and
+		it grows into a full z-score as the moments settle.
 	*/
 	if !informative {
 		thesis.Resonance.Store(symbol, types.ResonanceReading{
@@ -215,11 +205,6 @@ func (solver *Solver) updateSymbol(
 			At:           thesis.At,
 			Alpha:        state.alpha,
 			Samples:      state.targetSamples,
-			ForecastValidity: types.MeasurementValidity{
-				State:     types.ValidityProvisional,
-				Readiness: types.ReadinessModel,
-				Reason:    "resonance features have no standardizable scale yet",
-			},
 		})
 
 		return nil
@@ -277,30 +262,13 @@ func (solver *Solver) updateSymbol(
 
 	var forecast *types.ResonanceForecast
 
-	forecastValidity := types.MeasurementValidity{
-		State:     types.ValidityProvisional,
-		Readiness: types.ReadinessModel,
-		Reason:    "resonance return head has no resolved sample",
-	}
-
 	if state.targetSamples > 0 {
-		var err error
-
 		forecast, err = types.NewResonanceForecast(
 			state.manifold.RolloutTaskPrediction(activeHorizon),
 			state.manifold.RolloutRetention(activeHorizon),
 			activeHorizon,
 			confidence,
 		)
-
-		if err != nil {
-			forecastValidity.State = types.ValidityInvalid
-			forecastValidity.Reason = err.Error()
-		} else {
-			forecastValidity.State = types.ValidityValid
-			forecastValidity.Readiness = types.ReadinessForecast
-			forecastValidity.Reason = ""
-		}
 	}
 
 	if targetReady && (state.pendingAt.IsZero() || !targetAt.Before(state.pendingAt)) {
@@ -316,18 +284,17 @@ func (solver *Solver) updateSymbol(
 	}
 
 	row := types.ResonanceReading{
-		Stage:            "resonance",
-		Source:           types.SourceResonance,
-		Symbol:           symbol,
-		TargetSymbol:     symbol,
-		At:               thesis.At,
-		Surprise:         surprise,
-		Energy:           energy,
-		Latent:           latent,
-		Forecast:         forecast,
-		ForecastValidity: forecastValidity,
-		Alpha:            state.alpha,
-		Samples:          state.targetSamples,
+		Stage:        "resonance",
+		Source:       types.SourceResonance,
+		Symbol:       symbol,
+		TargetSymbol: symbol,
+		At:           thesis.At,
+		Surprise:     surprise,
+		Energy:       energy,
+		Latent:       latent,
+		Forecast:     forecast,
+		Alpha:        state.alpha,
+		Samples:      state.targetSamples,
 	}
 
 	thesis.Resonance.Store(symbol, row)
@@ -423,9 +390,7 @@ func (solver *Solver) standardizeFeatures(
 		normalizer, ok := state.featureScale[featureKey]
 
 		if !ok {
-			normalizer = adaptive.NewStandardizer(adaptive.StandardizerConfig{
-				Warmup: solver.featureWarmup,
-			})
+			normalizer = adaptive.NewStandardizer()
 			state.featureScale[featureKey] = normalizer
 		}
 

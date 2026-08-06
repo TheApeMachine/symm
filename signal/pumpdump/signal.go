@@ -102,7 +102,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
+						thesis.AppendMeasurements(measurements, true)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}
@@ -176,22 +176,11 @@ func (signal *Signal) Measure(
 
 		signal.commitTrade(trade)
 
-		validity := types.MeasurementValidity{
-			State:     types.ValidityValid,
-			Readiness: types.ReadinessObservation,
-		}
-
-		if !ready {
-			validity.State = types.ValidityProvisional
-			validity.Reason = "ignition baseline not ready"
-		}
-
 		measurement := &types.Measurement{
 			Source:   types.SourcePumpDump,
 			Symbol:   trade.Symbol,
 			At:       trade.Timestamp,
 			Maturity: maturity,
-			Validity: validity,
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricRVOL, types.SideNone): {
 					Raw:        output.RVOL,
@@ -296,11 +285,6 @@ func (signal *Signal) Measure(
 			},
 		}
 
-		if ready && !ignitionNormalizationComplete(measurement) {
-			measurement.Validity.State = types.ValidityInvalid
-			measurement.Validity.Reason = "ignition normalization contract violated"
-		}
-
 		measurements = append(measurements, measurement)
 
 		if measurement.Symbol == types.Focus() {
@@ -347,20 +331,6 @@ func normalizedSpread(raw, midpoint float64) *float64 {
 	}
 
 	return &value
-}
-
-func ignitionNormalizationComplete(measurement *types.Measurement) bool {
-	if measurement == nil {
-		return false
-	}
-
-	for _, sample := range measurement.Metrics {
-		if sample.Normalized == nil {
-			return false
-		}
-	}
-
-	return true
 }
 
 func validTrade(row kraken.TradeData) bool {

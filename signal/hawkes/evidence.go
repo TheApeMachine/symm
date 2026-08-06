@@ -18,7 +18,6 @@ func (signal *Signal) measurements(
 	outcome excitation.Outcome,
 ) []*types.Measurement {
 	from, through := signal.observationInterval(outcome)
-	validity := signal.validity(outcome)
 	measurement := &types.Measurement{
 		Source:       types.SourceHawkes,
 		Symbol:       symbol,
@@ -26,13 +25,7 @@ func (signal *Signal) measurements(
 		ObservedFrom: from,
 		Horizon:      through.Sub(from),
 		Maturity:     outcome.Maturity,
-		Validity:     validity,
-		Scale: types.ScaleReference{
-			Kind:    types.ScaleObservationWindow,
-			From:    from,
-			Through: through,
-		},
-		Metrics: make(map[string]types.MetricSample, 16),
+		Metrics:      make(map[string]types.MetricSample, 16),
 	}
 
 	if outcome.Readiness.HawkesFit {
@@ -43,31 +36,6 @@ func (signal *Signal) measurements(
 	signal.putFitMetrics(measurement, outcome)
 
 	return []*types.Measurement{measurement}
-}
-
-/*
-validity summarizes estimator readiness for the merged Hawkes row.
-*/
-func (signal *Signal) validity(
-	outcome excitation.Outcome,
-) types.MeasurementValidity {
-	if outcome.Readiness.HawkesFit {
-		return types.MeasurementValidity{
-			State:     types.ValidityProvisional,
-			Readiness: types.ReadinessModel,
-			Reason:    outcome.Readiness.Reason,
-		}
-	}
-
-	validity := types.ObservationValidity(outcome.EventCount)
-
-	if outcome.Readiness.Intensity {
-		validity.State = types.ValidityValid
-		validity.Readiness = types.ReadinessIntensity
-		validity.Reason = outcome.Readiness.Reason
-	}
-
-	return validity
 }
 
 /*
@@ -283,11 +251,9 @@ func (signal *Signal) applyFitEvaluation(
 	measurement *types.Measurement,
 	outcome excitation.Outcome,
 ) {
-	measurement.Scale = types.ScaleReference{
-		Kind:    types.ScaleObservationWindow,
-		From:    outcome.FitObservedFrom,
-		Through: outcome.FitAt,
-	}
+	measurement.At = outcome.FitAt
+	measurement.ObservedFrom = outcome.FitObservedFrom
+	measurement.Horizon = outcome.FitAt.Sub(outcome.FitObservedFrom)
 }
 
 /*

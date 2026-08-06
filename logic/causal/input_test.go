@@ -10,7 +10,6 @@ import (
 )
 
 func testResonanceReading(
-	t *testing.T,
 	energy, surprise float64,
 	curve []float64,
 ) types.ResonanceReading {
@@ -30,9 +29,6 @@ func testResonanceReading(
 
 	return types.ResonanceReading{
 		Energy: energy, Surprise: surprise, Forecast: forecast,
-		ForecastValidity: types.MeasurementValidity{
-			State: types.ValidityValid, Readiness: types.ReadinessForecast,
-		},
 	}
 }
 
@@ -40,7 +36,7 @@ func TestBuildCausalRow(t *testing.T) {
 	convey.Convey("Given a causal thesis with non-finite measurement metrics", t, func() {
 		solver := NewSolver(nil, nil)
 		thesis := types.NewThesis(nil)
-		thesis.Resonance.Store("BTC/USD", testResonanceReading(t,
+		thesis.Resonance.Store("BTC/USD", testResonanceReading(
 			1.5, 0.25, []float64{0.75},
 		))
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
@@ -67,7 +63,7 @@ func TestBuildCausalRow(t *testing.T) {
 	convey.Convey("Given a causal thesis with only non-finite target evidence", t, func() {
 		solver := NewSolver(nil, nil)
 		thesis := types.NewThesis(nil)
-		thesis.Resonance.Store("BTC/USD", testResonanceReading(t,
+		thesis.Resonance.Store("BTC/USD", testResonanceReading(
 			1.5, 0.25, []float64{0.75},
 		))
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
@@ -96,10 +92,10 @@ func TestBuildCausalInputs(t *testing.T) {
 	convey.Convey("Given unsorted measurements in slice and single-row storage", t, func() {
 		solver := NewSolver(nil, nil)
 		thesis := types.NewThesis(nil)
-		thesis.Resonance.Store("ZEC/USD", testResonanceReading(t,
+		thesis.Resonance.Store("ZEC/USD", testResonanceReading(
 			2.0, 0.2, []float64{0.02},
 		))
-		thesis.Resonance.Store("ADA/USD", testResonanceReading(t,
+		thesis.Resonance.Store("ADA/USD", testResonanceReading(
 			1.0, 0.1, []float64{0.01},
 		))
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{

@@ -14,7 +14,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/tests"
@@ -381,8 +380,7 @@ func stopRows(t *testing.T, positionID string) []map[string]any {
 	for scanner.Scan() {
 		var row map[string]any
 
-		if json.Unmarshal(scanner.Bytes(), &row) != nil ||
-			row["type"] != string(audit.CategoryExecutionLifecycle) {
+		if json.Unmarshal(scanner.Bytes(), &row) != nil {
 			continue
 		}
 

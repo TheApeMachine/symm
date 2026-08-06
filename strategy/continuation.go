@@ -2,11 +2,8 @@ package strategy
 
 import (
 	"math"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
@@ -158,22 +155,33 @@ func regimeOf(thesis *types.Thesis, symbol string) string {
 
 	regime := "neutral"
 
-	category, ok := thesis.Categories.Load(symbol)
+	found, ok := thesis.Categories.Load(symbol)
 
 	if ok {
-		switch category.(types.Category).Type {
-		case types.CategoryActiveReversal,
-			types.CategoryMechanicalCollapse,
-			types.CategoryToxicBluff,
-			types.CategoryExhaustion,
-			types.CategoryFadedExhaustion,
-			types.CategoryThermalExhaustion:
-			return "reversal"
-		case types.CategoryVerticalIgnition,
-			types.CategoryFrenzy,
-			types.CategoryAggressiveDrive,
-			types.CategoryLiquidityShock,
-			types.CategoryLoadedImbalance:
+		momentum := 0
+		reversal := 0
+
+		for _, category := range found.([]types.Category) {
+			switch category.Type {
+			case types.CategoryActiveReversal,
+				types.CategoryMechanicalCollapse,
+				types.CategoryToxicBluff,
+				types.CategoryExhaustion,
+				types.CategoryFadedExhaustion,
+				types.CategoryThermalExhaustion:
+				reversal++
+			case types.CategoryVerticalIgnition,
+				types.CategoryFrenzy,
+				types.CategoryAggressiveDrive,
+				types.CategoryLiquidityShock,
+				types.CategoryLoadedImbalance:
+				momentum++
+			}
+		}
+
+		if reversal > 0 {
+			regime = "reversal"
+		} else if momentum > 0 {
 			regime = "momentum"
 		}
 	}
@@ -298,7 +306,7 @@ func (evaluator Evaluator) scorePassage(
 	episode.observe(features, snapshot, thesis.Tick)
 
 	if snapshot.ProfitArmed || features.Age >= 1 {
-		evaluator.finishEpisode(position.ID, episode, snapshot.TriggerReason)
+		evaluator.finishEpisode(episode, snapshot.TriggerReason)
 		return types.PassageScenario{}, 0, false
 	}
 
@@ -361,7 +369,6 @@ An unlabelled episode is dropped rather than counted. Forgetting the lot is
 unconditional either way, so a censored episode cannot be retired twice or leak.
 */
 func (evaluator Evaluator) finishEpisode(
-	id string,
 	episode *passageEpisode,
 	trigger string,
 ) {
@@ -377,23 +384,6 @@ func (evaluator Evaluator) finishEpisode(
 
 	outcome, labelled := episode.outcome()
 
-	/*
-		The record is written whether or not the episode could be labelled, and
-		the censored ones are written precisely because they are censored. An
-		offline fit needs to know which lots were closed before their patience
-		was tested; dropping them here would leave the corpus looking like every
-		trade ran to a boundary, which is the same survivorship bias that makes
-		the in-process model refuse to count them.
-	*/
-	errnie.Error(audit.Record(
-		evaluator.recorder,
-		audit.ForecastOutcome{
-			ResolvedAt: time.Now().UTC(),
-			Provenance: "strategy/passage",
-			Episode:    episode.record(id, outcome, labelled),
-		},
-	))
-
 	if !labelled || evaluator.passage == nil {
 		return
 	}
@@ -408,7 +398,7 @@ func (evaluator Evaluator) retire(id, trigger string) {
 		return
 	}
 
-	evaluator.finishEpisode(id, episode, trigger)
+	evaluator.finishEpisode(episode, trigger)
 	delete(evaluator.episodes, id)
 }
 

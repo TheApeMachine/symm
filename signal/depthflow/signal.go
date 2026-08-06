@@ -142,7 +142,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
+						thesis.AppendMeasurements(measurements, true)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}
@@ -529,15 +529,9 @@ func (signal *Signal) frame(
 	neutral := normalizedBookflowScore(types.MetricNeutralScore, output.NeutralScore, output.Category)
 	strength := normalizedBookflowScore(types.MetricStrength, output.Strength, output.Category)
 	value := normalizedBookflowScore(types.MetricValue, output.Value, output.Category)
-	validity := types.MeasurementValidity{
-		State:     types.ValidityValid,
-		Readiness: types.ReadinessObservation,
-	}
 
 	if loaded == nil || spoof == nil || thin == nil || neutral == nil ||
 		strength == nil || value == nil {
-		validity.State = types.ValidityInvalid
-		validity.Reason = "book-flow normalization contract violated"
 	}
 
 	measurement := &types.Measurement{
@@ -545,7 +539,6 @@ func (signal *Signal) frame(
 		Symbol:   symbol,
 		At:       at,
 		Maturity: maturity,
-		Validity: validity,
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricLoadedScore, types.SideNone): {
 				Raw:        output.LoadedScore,

@@ -204,21 +204,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			continue
 		}
 
-		originalBatchParticles := len(particles)
-		particles, contentIDs, droppedParticles := solver.filterBatch(particles, contentIDs)
-
-		if droppedParticles > 0 && solver.recorder != nil {
-			errnie.Error(audit.Record(solver.recorder, audit.ModelValidation{
-				Component: "manifold",
-				Symbol:    name,
-				At:        thesis.At,
-				Status:    "filtered",
-				Reason:    "invalid_particle",
-				Observed:  originalBatchParticles,
-				Retained:  len(particles),
-				Dropped:   droppedParticles,
-			}))
-		}
+		particles, contentIDs, _ = solver.filterBatch(particles, contentIDs)
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
 			continue
@@ -249,7 +235,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	if updateErr != nil {
 		if attempted {
-			solver.resetDomain(stepSymbol, updateErr)
+			solver.resetDomain(stepSymbol)
 		}
 
 		return updateErr
@@ -263,7 +249,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.evict()
 
 	if err := solver.Step(stepSymbol, thesis.At); err != nil {
-		solver.resetDomain(stepSymbol, err)
+		solver.resetDomain(stepSymbol)
 		return nil
 	}
 
@@ -276,7 +262,7 @@ func (solver *Solver) maybeRebase(at time.Time) {
 		return
 	}
 
-	solver.recreateDomain("turnover", at, nil, map[string]any{
+	solver.recreateDomain("turnover", at, map[string]any{
 		"resident_particles": solver.domain.ParticleCount(),
 		"turnover_particles": solver.turnover,
 		"residency":          solver.residency,
@@ -455,10 +441,8 @@ func admissibleParticle(particle pfluid.Particle, config pfluid.Config) bool {
 
 func (solver *Solver) rejectBatch(
 	symbol string,
-	at time.Time,
 	batchStart int,
 	batchParticles int,
-	cause error,
 ) {
 	if solver == nil || solver.domain == nil || batchParticles <= 0 {
 		return
@@ -482,33 +466,15 @@ func (solver *Solver) rejectBatch(
 	}
 
 	if err := solver.domain.Retain(keep); err != nil {
-		solver.resetDomain(symbol, errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("failed to reject destabilizing manifold batch for %s", symbol),
-			err,
-		))
+		solver.resetDomain(symbol)
 		return
 	}
 
 	solver.turnover = max(solver.turnover-batchParticles, 0)
-
-	if solver.recorder != nil {
-		errnie.Error(audit.Record(solver.recorder, audit.ModelValidation{
-			Component:  "manifold",
-			Symbol:     symbol,
-			At:         at,
-			Status:     "rejected",
-			Reason:     "failed_step",
-			Error:      cause.Error(),
-			Resident:   solver.domain.ParticleCount(),
-			BatchStart: batchStart,
-			BatchSize:  batchParticles,
-		}))
-	}
 }
 
-func (solver *Solver) resetDomain(symbol string, cause error) {
-	solver.recreateDomain("failed_step", time.Time{}, cause, map[string]any{
+func (solver *Solver) resetDomain(symbol string) {
+	solver.recreateDomain("failed_step", time.Time{}, map[string]any{
 		"symbol": symbol,
 	})
 }
@@ -516,7 +482,6 @@ func (solver *Solver) resetDomain(symbol string, cause error) {
 func (solver *Solver) recreateDomain(
 	reason string,
 	at time.Time,
-	cause error,
 	extra map[string]any,
 ) {
 	if solver == nil {
@@ -555,42 +520,6 @@ func (solver *Solver) recreateDomain(
 
 	if validationAt.IsZero() {
 		validationAt = time.Now().UTC()
-	}
-
-	event := audit.ModelValidation{
-		Component: "manifold",
-		At:        validationAt,
-		Status:    "recreated",
-		Reason:    reason,
-	}
-
-	if symbol, ok := extra["symbol"].(string); ok {
-		event.Symbol = symbol
-	}
-
-	if resident, ok := extra["resident_particles"].(int); ok {
-		event.Resident = resident
-	}
-
-	if turnover, ok := extra["turnover_particles"].(int); ok {
-		event.Observed = turnover
-	}
-
-	if capacity, ok := extra["residency"].(int); ok {
-		event.Capacity = capacity
-	}
-
-	if cause != nil {
-		event.Error = cause.Error()
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("reset manifold domain after failed step for %v", extra["symbol"]),
-			cause,
-		))
-	}
-
-	if solver.recorder != nil {
-		errnie.Error(audit.Record(solver.recorder, event))
 	}
 }
 
