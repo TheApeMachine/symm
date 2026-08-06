@@ -139,6 +139,22 @@ type RegimeProfile struct {
 	IgnitionVolume float64
 	IgnitionDecay  float64
 	Precursor      PrecursorContract
+
+	/*
+		AdmitsLong states whether this regime is one a long position belongs in.
+
+		It describes the generated market rather than any stack that reads it: a
+		pump winding up is an opportunity to be long and a crash is not, and that
+		remains true of the prices in this file whatever code observes them.
+
+		Two of these regimes are only worth generating because of this field.
+		SpoofLiquidity stacks the bid harder than the pump does while almost
+		nothing trades, and ThinLiquidity widens the spread on a book with
+		nothing behind it — both present the depth signature of an opportunity
+		without the flow, so a stack that reads depth alone takes them and one
+		that reads what is executable does not.
+	*/
+	AdmitsLong bool
 }
 
 /*
@@ -198,6 +214,7 @@ func Blend(source, target RegimeProfile, progress float64) RegimeProfile {
 		IgnitionVolume: target.IgnitionVolume,
 		IgnitionDecay:  target.IgnitionDecay,
 		Precursor:      target.Precursor,
+		AdmitsLong:     target.AdmitsLong,
 	}
 }
 
@@ -246,6 +263,7 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		IgnitionMove:    0.30,
 		IgnitionVolume:  8.0,
 		IgnitionDecay:   0.6,
+		AdmitsLong:      true,
 		Precursor: PrecursorContract{
 			MinimumObservations: 2,
 			Metrics: []PrecursorMetricExpectation{

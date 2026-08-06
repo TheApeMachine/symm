@@ -90,16 +90,12 @@ func (signal *Signal) run() {
 						continue
 					}
 
-					thesis.AppendMeasurements(
-						types.SourceToxicity,
-						measurements...,
-					)
+					thesis.AppendMeasurements(measurements)
 
 					if !completed(measurements) {
 						continue
 					}
 
-					thesis.Readiness.Stamp(types.SourceToxicity)
 					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}

@@ -302,7 +302,10 @@ func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
 extractCategoryNodes registers active categories as nodes.
 */
 func (solver *Solver) extractCategoryNodes(thesis *types.Thesis, graph *Graph) {
-	for symbol, categories := range thesis.Categories {
+	thesis.Categories.Range(func(key, value interface{}) bool {
+		symbol := key.(string)
+		categories := value.([]types.Category)
+
 		for _, cat := range categories {
 			nodeID := fmt.Sprintf("cat:%s:%s", symbol, string(cat.Type))
 
@@ -323,7 +326,9 @@ func (solver *Solver) extractCategoryNodes(thesis *types.Thesis, graph *Graph) {
 				},
 			})
 		}
-	}
+
+		return true
+	})
 }
 
 /*
@@ -624,7 +629,10 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 	})
 
 	// 3. Evaluate Category Supporting and Opposing lists
-	for symbol, categories := range thesis.Categories {
+	thesis.Categories.Range(func(key, value interface{}) bool {
+		symbol := key.(string)
+		categories := value.([]types.Category)
+
 		for _, cat := range categories {
 			catNodeID := fmt.Sprintf("cat:%s:%s", symbol, string(cat.Type))
 
@@ -656,7 +664,9 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 				})
 			}
 		}
-	}
+
+		return true
+	})
 }
 
 /*

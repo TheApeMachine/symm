@@ -79,7 +79,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 
 	occupied := getOccupiedSymbols(thesis, evaluator.desk)
 
-	for _, symbol := range thesis.Symbols() {
+	for _, symbol := range thesis.MarketSymbols() {
 		if _, blocked := occupied[symbol]; blocked {
 			continue
 		}

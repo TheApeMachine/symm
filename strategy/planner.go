@@ -17,20 +17,21 @@ import (
 )
 
 type Planner struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	status      types.Status
-	ui          chan []byte
-	subscribers *sync.Map
-	api         *websocket.API
-	desk        *broker.Desk
-	price       *broker.Price
-	balance     *broker.Balance
-	recorder    *audit.Recorder
-	evaluator   Evaluator
-	arbiter     *Arbiter
-	allocator   *Allocator
-	Thesis      *types.Thesis
+	ctx           context.Context
+	cancel        context.CancelFunc
+	status        types.Status
+	ui            chan []byte
+	subscriptions map[string]*types.Subscription[any]
+	subscribers   *sync.Map
+	api           *websocket.API
+	desk          *broker.Desk
+	price         *broker.Price
+	balance       *broker.Balance
+	recorder      *audit.Recorder
+	evaluator     Evaluator
+	arbiter       *Arbiter
+	allocator     *Allocator
+	Thesis        *types.Thesis
 }
 
 func NewPlanner(
@@ -70,27 +71,8 @@ func NewPlanner(
 		allocator:   NewAllocator(ctx, balance, instrument, price, desk),
 	}
 
-	if analyzer != nil {
-		planner.AttachAnalyzer(analyzer)
-	}
-
+	planner.run()
 	return planner
-}
-
-/*
-AttachAnalyzer registers the planner as the analyzer's evaluator.
-
-The planner runs inline on the analyzer's goroutine rather than consuming a
-thesis subscription of its own. Update prepares the next evaluation epoch on
-that same goroutine so readiness and derived snapshots cannot be cleared while
-the analyzer is still writing them.
-*/
-func (planner *Planner) AttachAnalyzer(analyzer *logic.Analyzer) {
-	if analyzer == nil {
-		return
-	}
-
-	analyzer.AttachEvaluator(planner)
 }
 
 func (planner *Planner) Status() types.Status {
@@ -112,6 +94,33 @@ func (planner *Planner) Subscribe(
 	}
 
 	return subscription
+}
+
+func (planner *Planner) run() {
+	go func() {
+		for {
+			select {
+			case <-planner.ctx.Done():
+				return
+			case in := <-planner.subscribers.Load("logic").Channel:
+				typedDecisions, ok := in.([]types.Decision)
+
+				if !ok {
+					continue
+				}
+
+				go func() {
+					if err := crypto.desk.Execute(typedDecisions); err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Internal,
+							"crypto: failed to execute decision round",
+							err,
+						))
+					}
+				}()
+			}
+		}
+	}()
 }
 
 func (planner *Planner) Close() error {
@@ -184,7 +193,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 
 	if len(thesis.Decisions) == 0 {
 		planner.complete(thesis, true, "no_decision")
-		thesis.PrepareNextEvaluation()
+		thesis.RearmEvaluation()
 
 		return thesis
 	}
@@ -195,7 +204,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 
 	if !terminalDecision {
 		planner.complete(thesis, true, "deferred")
-		thesis.PrepareNextEvaluation()
+		thesis.RearmEvaluation()
 
 		return thesis
 	}

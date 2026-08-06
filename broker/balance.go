@@ -43,7 +43,6 @@ func NewBalance(
 	}
 
 	balance.Update()
-
 	return balance
 }
 
@@ -59,11 +58,13 @@ func (balance *Balance) Wallet() []byte {
 
 	balance.wallet.Range(func(key, value any) bool {
 		asset, ok := key.(string)
+
 		if !ok {
 			return true
 		}
 
 		amount, ok := value.(*decimal.Decimal)
+
 		if !ok {
 			return true
 		}
@@ -144,7 +145,6 @@ func (balance *Balance) Assets() map[string]*decimal.Decimal {
 		}
 
 		assets[asset] = amount
-
 		return true
 	})
 

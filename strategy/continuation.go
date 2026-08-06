@@ -152,14 +152,16 @@ reversal is the case the model most needs to separate and the optimistic reading
 is the expensive mistake.
 */
 func regimeOf(thesis *types.Thesis, symbol string) string {
-	if thesis == nil || len(thesis.Categories) == 0 {
+	if !thesis.Readiness.Categories {
 		return "unclassified"
 	}
 
 	regime := "neutral"
 
-	for _, category := range thesis.Categories[symbol] {
-		switch category.Type {
+	category, ok := thesis.Categories.Load(symbol)
+
+	if ok {
+		switch category.(types.Category).Type {
 		case types.CategoryActiveReversal,
 			types.CategoryMechanicalCollapse,
 			types.CategoryToxicBluff,

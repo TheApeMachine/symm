@@ -138,12 +138,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(
-							types.SourceExhaustion,
-							measurements...,
-						)
-
-						thesis.Readiness.Stamp(types.SourceExhaustion)
+						thesis.AppendMeasurements(measurements)
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

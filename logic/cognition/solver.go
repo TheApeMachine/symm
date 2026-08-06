@@ -99,15 +99,19 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	nowUnix := uint64(thesis.At.UnixNano())
 
 	// 1. Process active categories per symbol
-	for symbol, categories := range thesis.Categories {
+	thesis.Categories.Range(func(key, value interface{}) bool {
+		symbol := key.(string)
+		categories := value.([]types.Category)
+
 		if len(categories) == 0 {
-			continue
+			return true
 		}
 
 		// Select the dominant category for this symbol on this tick
 		dominantCategory := solver.selectDominantCategory(categories)
+
 		if dominantCategory == types.CategoryTypeNone {
-			continue
+			return true
 		}
 
 		categoryToken := solver.encodeCategory(dominantCategory)
@@ -253,7 +257,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		thesis.Cognition.Store(symbol, cognition)
-	}
+		return true
+	})
 
 	thesis.Readiness.Cognition = true
 

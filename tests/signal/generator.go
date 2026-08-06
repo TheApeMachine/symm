@@ -152,6 +152,25 @@ func (generator *Generator) IgnitionArmed() bool {
 }
 
 /*
+IgnitionSpent reports whether the target regime's discontinuous event has been
+sampled and its continuation has fully decayed.
+
+PrecursorPending marks the beginning of the move a regime describes and this
+marks its end, so a test that has to observe what the whole move produced can
+run to it rather than guessing at a number of ticks. A regime that configures no
+ignition has nothing to spend and is complete as soon as it has settled.
+*/
+func (generator *Generator) IgnitionSpent() bool {
+	generator.mu.RLock()
+	defer generator.mu.RUnlock()
+
+	profile := generator.profiles[generator.targetState]
+
+	return generator.progress >= 1.0 &&
+		(profile.IgnitionMove == 0 || generator.burst == 0)
+}
+
+/*
 activeProfile returns the profile currently in effect, which mid-transition
 is the blend between the source and target regimes.
 */

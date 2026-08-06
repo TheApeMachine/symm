@@ -15,9 +15,15 @@ const (
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
 
-	SourceManifold  SourceType = "manifold"
-	SourceResonance SourceType = "resonance"
-	SourceCausal    SourceType = "causal"
-	SourceCognition SourceType = "cognition"
-	SourceGraph     SourceType = "graph"
+	SourceManifold   SourceType = "manifold"
+	SourceResonance  SourceType = "resonance"
+	SourceCausal     SourceType = "causal"
+	SourceCognition  SourceType = "cognition"
+	SourceGraph      SourceType = "graph"
+	SourceCategories SourceType = "categories"
+
+	SourceAllocator SourceType = "allocator"
+	SourceArbiter   SourceType = "arbiter"
+	SourceEvaluator SourceType = "evaluator"
+	SourcePlanner   SourceType = "planner"
 )

@@ -143,7 +143,6 @@ func (crypto *Crypto) onTicker(data any) {
 
 	for _, ticker := range typedTickers.Data {
 		crypto.thesis.AppendTicker(ticker)
-
 		crypto.desk.Price().Update(&ticker)
 	}
 

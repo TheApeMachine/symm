@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +33,27 @@ const (
 	// up with it. Whether it has is observed rather than assumed, so this only
 	// decides the granularity of the wait.
 	tickInterval = 10 * time.Millisecond
+
+	/*
+		flattenCeilingTicks bounds how long a lot may take to close before the
+		harness calls it stuck. It is not a wait anything is expected to reach:
+		a regulator that has armed closes on the reversal within the transition
+		the reversal takes, so this only has to be longer than a regime change
+		to distinguish a slow exit from one that is never coming.
+	*/
+	flattenCeilingTicks = 512
+
+	/*
+		passCeiling is how long the feed will wait for the stack to analyze what
+		it published before calling the stack stopped rather than slow.
+
+		It is deliberately far longer than a pass costs. How long one takes is a
+		property of the symbol count and of the stages themselves, so a ceiling
+		tight enough to be a performance assertion would fail on a busy machine
+		and say nothing about the market. This only has to separate slow from
+		stopped, and the wait ends the moment the work lands.
+	*/
+	passCeiling = 30 * time.Second
 )
 
 /*
@@ -53,9 +74,9 @@ type Market struct {
 	Desk         *broker.Desk
 	Planner      *strategy.Planner
 	Analyzer     *logic.Analyzer
-	capture      *thesisCapture
 	generators   map[string]*signal.Generator
 	latest       map[string]testtypes.Sample
+	previous     map[string]testtypes.Sample
 	decisions    []types.Decision
 	measurements map[string][]*types.Measurement
 	filled       map[string]struct{}
@@ -63,78 +84,6 @@ type Market struct {
 	primed       bool
 	decisionMu   sync.Mutex
 	sampleMu     sync.RWMutex
-}
-
-/*
-retainMeasurements copies the current cycle's signal readings aside so tests
-can inspect them after a completed decision closes the Thesis evidence cycle.
-*/
-func (market *Market) retainMeasurements() {
-	market.decisionMu.Lock()
-	defer market.decisionMu.Unlock()
-
-	if market.measurements == nil {
-		market.measurements = map[string][]*types.Measurement{}
-	}
-
-	market.Thesis.Measurements.Range(func(key, value any) bool {
-		source, ok := key.(types.SourceType)
-
-		if !ok {
-			return true
-		}
-
-		if rows, ok := value.([]*types.Measurement); ok && len(rows) > 0 {
-			market.measurements[string(source)] = rows
-		}
-
-		return true
-	})
-}
-
-/*
-Decisions returns every decision the planner has published so far. Collecting
-the emitted copy preserves completed decision sets after their Thesis cycle has
-closed.
-*/
-func (market *Market) Decisions() []types.Decision {
-	market.decisionMu.Lock()
-	defer market.decisionMu.Unlock()
-
-	return slices.Clone(market.decisions)
-}
-
-/*
-collectDecisions drains the planner's decision stream for the life of the
-market.
-*/
-func (market *Market) collectDecisions() {
-	if market.system == nil || market.system.Planner == nil {
-		return
-	}
-
-	subscription := market.system.Planner.Subscribe(
-		"decisions", types.NewSubscription[any](),
-	)
-
-	go func() {
-		for {
-			select {
-			case <-market.ctx.Done():
-				return
-			case published := <-subscription.Channel:
-				decisions, ok := published.([]types.Decision)
-
-				if !ok {
-					continue
-				}
-
-				market.decisionMu.Lock()
-				market.decisions = append(market.decisions, decisions...)
-				market.decisionMu.Unlock()
-			}
-		}
-	}()
 }
 
 /*
@@ -187,6 +136,7 @@ func newMarket(
 		Thesis:     types.NewThesis(nil),
 		generators: make(map[string]*signal.Generator, len(symbols)),
 		latest:     make(map[string]testtypes.Sample, len(symbols)),
+		previous:   make(map[string]testtypes.Sample, len(symbols)),
 		filled:     make(map[string]struct{}),
 	}
 
@@ -228,7 +178,6 @@ func newMarket(
 		ctx, market.Thesis, market.public, market.private, nil,
 	)
 
-	market.collectDecisions()
 	market.Desk = market.system.Desk
 	market.Planner = market.system.Planner
 	market.Analyzer = market.system.Analyzer
@@ -237,9 +186,6 @@ func newMarket(
 	for _, symbol := range symbols {
 		pairs = append(pairs, symbol.Pair)
 	}
-
-	market.capture = newThesisCapture(market.Planner, pairs)
-	market.Analyzer.AttachEvaluator(market.capture)
 
 	return market
 }
@@ -307,83 +253,93 @@ func (market *Market) Transition(
 	}
 
 	market.State = state
-	market.capture.Enable(symbol)
 	generator.SetState(state, testtypes.MomentumMap[state])
 
 	for generator.PrecursorPending() {
 		market.Tick()
 	}
 
-	return market.waitForTransitionThesis(symbol)
+	return nil
 }
 
 /*
-TransitionThesis returns the last analyzed precursor Thesis captured before the
-real planner consumed it.
+LastSample returns the venue state this feed most recently published for one
+symbol, which is the book any fill answered at that moment was struck against.
 */
-func (market *Market) TransitionThesis() *types.Thesis {
-	return market.capture.Snapshot()
-}
-
-func (market *Market) waitForTransitionThesis(symbol string) error {
+func (market *Market) LastSample(symbol string) (testtypes.Sample, bool) {
 	market.sampleMu.RLock()
-	published := market.latest[symbol]
-	market.sampleMu.RUnlock()
+	defer market.sampleMu.RUnlock()
 
-	actorCapacity := viper.GetInt("system.actor.buffer")
+	sample, known := market.latest[symbol]
 
-	if actorCapacity < 1 {
-		actorCapacity = 64
-	}
-
-	for range actorCapacity {
-		snapshot := market.TransitionThesis()
-
-		if snapshot != nil {
-			latest, found := snapshot.LatestTicker(symbol)
-			measuredAt := latestMeasurementAt(
-				snapshot, types.SourcePumpDump, symbol,
-			)
-
-			if found && !latest.Timestamp.Before(published.Timestamp) &&
-				!measuredAt.Before(published.Timestamp) {
-				return nil
-			}
-		}
-
-		time.Sleep(tickInterval)
-	}
-
-	return fmt.Errorf("market: precursor Thesis did not reach %s", published.Timestamp)
+	return sample, known
 }
 
-func latestMeasurementAt(
-	thesis *types.Thesis,
-	source types.SourceType,
-	symbol string,
-) time.Time {
-	stored, found := thesis.Measurements.Load(source)
+/*
+Express runs a transitioned regime through the discontinuous event it was
+configured with, until the burst that opens it has fully decayed.
 
-	if !found {
-		return time.Time{}
-	}
-
-	rows, ok := stored.([]*types.Measurement)
+Transition stops at the precursor because that is the exact moment an entry has
+to be judged on. This is the other end of the same move: the generator knows
+when its ignition has printed and when the continuation has decayed to nothing,
+so a test observing what the whole regime produced runs to that rather than to a
+tick count somebody picked.
+*/
+func (market *Market) Express(symbol string) error {
+	generator, ok := market.generators[symbol]
 
 	if !ok {
-		return time.Time{}
+		return fmt.Errorf("market: cannot express unknown symbol %q", symbol)
 	}
 
-	var latest time.Time
+	for !generator.IgnitionSpent() {
+		market.Tick()
+	}
 
-	for _, measurement := range rows {
-		if measurement != nil && measurement.Symbol == symbol &&
-			measurement.At.After(latest) {
-			latest = measurement.At
+	return nil
+}
+
+/*
+Flatten runs the market on until the desk carries no open lot for the symbol.
+
+How long a position takes to close is a property of the geometry its regulator
+set on the way in and of the prices that followed, so it is observed rather than
+assumed. The ceiling is what makes a lot that never closes a failing test that
+names the position instead of a hanging one.
+*/
+func (market *Market) Flatten(symbol string) error {
+	for range flattenCeilingTicks {
+		if !market.holds(symbol) {
+			return nil
+		}
+
+		market.Tick()
+	}
+
+	return fmt.Errorf(
+		"market: %s was still held after %d ticks", symbol, flattenCeilingTicks,
+	)
+}
+
+/*
+holds answers whether the desk still carries an unclosed lot for one symbol.
+*/
+func (market *Market) holds(symbol string) bool {
+	if market.Desk == nil {
+		return false
+	}
+
+	for position := range market.Desk.Positions() {
+		if position.Holding == nil || position.Holding.Symbol != symbol {
+			continue
+		}
+
+		if position.Holding.Status != types.CLOSED {
+			return true
 		}
 	}
 
-	return latest
+	return false
 }
 
 /*
@@ -408,6 +364,11 @@ WebSocket channel consumed by the production stack.
 func (market *Market) publish(generator *signal.Generator) testtypes.Sample {
 	sample := generator.Step()
 	market.sampleMu.Lock()
+
+	if known, ok := market.latest[sample.Symbol]; ok {
+		market.previous[sample.Symbol] = known
+	}
+
 	market.latest[sample.Symbol] = sample
 	market.sampleMu.Unlock()
 
@@ -415,15 +376,19 @@ func (market *Market) publish(generator *signal.Generator) testtypes.Sample {
 		"ticker",
 		ticker.NewFixture(ticker.UPDATE, 1, generator).Render(sample),
 	)
+
 	market.Public.Publish(
 		"book",
 		book.NewFixture(book.UPDATE, 1, generator).Render(sample),
 	)
+
 	market.Level3.Publish(
 		"level3",
 		level3.NewFixture(level3.SNAPSHOT, 1, generator).Render(sample),
 	)
+
 	market.waitForBook(sample)
+
 	market.Public.Publish(
 		"trade",
 		trade.NewFixture(trade.UPDATE, 1, generator).Render(sample),
@@ -491,66 +456,9 @@ func (market *Market) waitForBook(sample testtypes.Sample) {
 }
 
 func (market *Market) settleTick() {
-
-	/*
-		Answer pending orders before the processing pause so the execution and
-		this tick's market frames can both reach the desk before the next tick.
-	*/
+	// Answer pending orders before the processing pause so the execution and
+	// this tick's market frames can both reach the desk before the next tick.
 	market.fillPending()
-	market.waitForPass()
-	market.retainMeasurements()
-}
-
-/*
-waitForPass holds the feed until the stack has analyzed what this tick published.
-
-A feed that runs ahead of its consumer is not a faster market, it is one the
-stack never sees as separate observations. The analyzer publishes a thesis once
-every signal has measured, so every tick sent while a pass is still running is
-folded into the next one, and a stage that learns a sample per pass then learns
-from a batch that was never a moment in this market.
-
-That is what the tick counts in this harness are counting, so a tick is not
-settled until it has become one. The bound is what keeps a stack that stops
-analyzing a failing test rather than a hanging one; the assertions on what the
-stack produced are what report it.
-*/
-func (market *Market) waitForPass() {
-	actorCapacity := viper.GetInt("system.actor.buffer")
-
-	if actorCapacity < 1 {
-		actorCapacity = 64
-	}
-
-	for range actorCapacity {
-		time.Sleep(tickInterval)
-
-		if market.analyzed() {
-			return
-		}
-	}
-}
-
-/*
-analyzed answers whether every symbol's most recently published sample has
-reached an analyzed thesis.
-
-Counting passes would not answer it. A pass already running when a tick is
-published completes without containing it, so a feed that waited for the next
-pass could move on having never been observed — and with the feed and the stack
-in lockstep there is no backlog left to carry it into a later one.
-*/
-func (market *Market) analyzed() bool {
-	market.sampleMu.RLock()
-	defer market.sampleMu.RUnlock()
-
-	for symbol, sample := range market.latest {
-		if market.capture.Observed(symbol).Before(sample.Timestamp) {
-			return false
-		}
-	}
-
-	return true
 }
 
 /*
@@ -611,8 +519,71 @@ func (market *Market) fillPending() {
 		fill.CumQty = order.Volume
 		fill.LastQty = fill.CumQty
 
+		if err := market.priceFill(&fill, position.Holding.Symbol); err != nil {
+			panic(err)
+		}
+
 		market.Private.Publish("executions", executionfixture.Frame(fill))
 	}
+}
+
+/*
+priceFill answers an order at the price the simulated venue would actually have
+executed it at.
+
+The fill options this borrows are broker unit-test constants — a buy averaging
+105 and a sell averaging 110 — which describe the fixture they were written for
+and nothing about this market. Left in place they book every entry and exit at
+those two prices however the symbol is quoted, so a position opened at sixty
+thousand records a four percent gain it never made, and every realised return
+measured here would be that arithmetic rather than the strategy's.
+
+A taker buy lifts the ask and a taker sell hits the bid, both at the touch this
+tick published, and the fee is the same schedule the entry was priced against.
+That is what makes a realised profit here a claim about the decisions rather
+than about the fixture.
+*/
+func (market *Market) priceFill(fill *executionfixture.Options, symbol string) error {
+	market.sampleMu.RLock()
+	sample, known := market.latest[symbol]
+	market.sampleMu.RUnlock()
+
+	if !known {
+		return fmt.Errorf("market: cannot price a fill for unpublished symbol %q", symbol)
+	}
+
+	price := sample.Ask
+
+	if fill.Side == "sell" {
+		price = sample.Bid
+	}
+
+	if price <= 0 {
+		return fmt.Errorf("market: %s has no executable touch to fill against", symbol)
+	}
+
+	quantity, err := strconv.ParseFloat(fill.CumQty, 64)
+
+	if err != nil || quantity <= 0 {
+		return fmt.Errorf("market: fill for %s carries no executable quantity", symbol)
+	}
+
+	rate, err := market.Desk.Price().Fee(symbol)
+
+	if err != nil {
+		return fmt.Errorf("market: no fee schedule to charge %s against: %w", symbol, err)
+	}
+
+	cost := price * quantity
+
+	fill.LastPrice = strconv.FormatFloat(price, 'f', -1, 64)
+	fill.AvgPrice = fill.LastPrice
+	fill.Cost = strconv.FormatFloat(cost, 'f', -1, 64)
+	fill.CumCost = fill.Cost
+	fill.FeeUsdEquiv = strconv.FormatFloat(cost*rate.Float64(), 'f', -1, 64)
+	fill.Timestamp = sample.Timestamp.UTC().Format(time.RFC3339Nano)
+
+	return nil
 }
 
 func (market *Market) Close() {
@@ -634,7 +605,7 @@ for the duration of one market test, then restores the caller's configuration.
 func WithFixtureOrders(
 	t *testing.T,
 	symbols []*testtypes.Symbol,
-	f func(*Market),
+	f func(*Market, *types.Thesis),
 ) func() {
 	return func() {
 		tradingModel := viper.GetString("trading.model")
@@ -670,7 +641,7 @@ WithMarket boots a full symm stack against a simulated market, attaches the
 market data feeds, and tears everything down when the test finishes. The test
 body receives a ready market and asserts against market.Thesis.
 */
-func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market)) func() {
+func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market, *types.Thesis)) func() {
 	return func() {
 		market := NewMarket(t.Context(), symbols)
 		defer market.Close()
@@ -681,7 +652,7 @@ func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market)) func
 			market.Close()
 		})
 
-		f(market)
+		f(market, market.system.Thesis)
 	}
 }
 

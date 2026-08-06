@@ -439,19 +439,15 @@ func (desk *Desk) enter(decision types.Decision) error {
 	decision.EntryFee = entryFee
 	decision.Mark = tick.Bid
 
-	/*
-		An entry without stop geometry is refused rather than fitted with some.
-
-		The desk could derive a plan here, and an earlier version did — but the
-		quantity arriving with the decision was solved against whatever distance
-		the allocator used, and attaching a different distance after the fact
-		breaks exactly the coupling that makes a wide stop affordable. A lot
-		sized for a ten-cent boundary and then defended at forty is carrying
-		four times the loss it was budgeted.
-
-		Recovered wallet inventory is the one case that legitimately has no
-		plan, and it does not come through here.
-	*/
+	// An entry without stop geometry is refused rather than fitted with some.
+	// The desk could derive a plan here, and an earlier version did — but the
+	// quantity arriving with the decision was solved against whatever distance
+	// the allocator used, and attaching a different distance after the fact
+	// breaks exactly the coupling that makes a wide stop affordable. A lot
+	// sized for a ten-cent boundary and then defended at forty is carrying
+	// four times the loss it was budgeted.
+	// Recovered wallet inventory is the one case that legitimately has no
+	// plan, and it does not come through here.
 	if !decision.Risk.Present {
 		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,

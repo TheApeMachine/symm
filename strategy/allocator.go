@@ -142,7 +142,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		round costs nothing that a mis-sized one does not cost more of.
 	*/
 	if !allocator.riskValid {
-		thesis.Readiness.Allocation = true
+		thesis.Readiness.Stamp(types.SourceAllocator)
 
 		for index := range thesis.Decisions {
 			if thesis.Decisions[index].Action == types.ActionEnter {

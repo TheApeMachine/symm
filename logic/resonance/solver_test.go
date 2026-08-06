@@ -13,6 +13,37 @@ import (
 	"github.com/theapemachine/symm/utils"
 )
 
+/*
+primeFeatures gives one symbol's feature standardizers a scale to score against.
+
+The stage settles on standardized readings, and a standardizer answers zero
+until it has prior moments, so a solver handed its first observation has nothing
+to settle on and says so. A test that exercises what the stage does once it is
+reading the market has to get it past that point first, which is why the solver
+owns its warmup rather than inheriting one.
+*/
+func primeFeatures(solver *Solver, symbol string, keys ...string) {
+	solver.featureWarmup = 1
+
+	for tick := range 3 {
+		metrics := make(map[string]types.MetricSample, len(keys))
+
+		for index, key := range keys {
+			reading := 0.1 * float64(tick+index+1)
+			metrics[key] = types.MetricSample{Normalized: &reading}
+		}
+
+		thesis := types.NewThesis(nil)
+		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+			Source:  types.SourceLiquidity,
+			Symbol:  symbol,
+			Metrics: metrics,
+		}})
+
+		solver.Update(thesis)
+	}
+}
+
 func TestExtractFeatures(t *testing.T) {
 	Convey("Given measurements with raw and normalized metric values", t, func() {
 		normalized := 0.25
@@ -105,6 +136,7 @@ func TestUpdate(t *testing.T) {
 			},
 		}})
 		solver := NewSolver(make(chan []byte, 1), nil)
+		primeFeatures(solver, "BTC/USD", "first", "second")
 		thesis.Tickers.Store("BTC/USD", kraken.TickerData{
 			Symbol:    "BTC/USD",
 			Bid:       decimal.NewFromFloat64(99),
@@ -147,7 +179,7 @@ func TestUpdate(t *testing.T) {
 				state.manifold.PredictionEnergy()/featureCount)
 		})
 
-		Convey("Then unsupported latent retention stays explicitly unavailable", func() {
+		Convey("Then a warmed stage publishes a forecast its own curve supports", func() {
 			first = 0.5
 			second = -0.25
 			thesis.Tickers.Store("BTC/USD", kraken.TickerData{
@@ -179,10 +211,22 @@ func TestUpdate(t *testing.T) {
 			state := solver.state("BTC/USD")
 
 			So(err, ShouldBeNil)
-			So(row.ForecastValidity.State, ShouldEqual, types.ValidityInvalid)
-			So(row.ForecastValidity.Readiness, ShouldEqual, types.ReadinessModel)
-			So(row.ForecastValidity.Reason, ShouldNotBeBlank)
-			So(row.Forecast, ShouldBeNil)
+
+			/*
+				This branch used to assert the opposite, and passed because the
+				stage was settling on a vector of standardizer warmup zeros: the
+				latent relaxed to the origin, its rollout retained nothing, and
+				the forecast was published as invalid. That is a description of
+				the warmup rather than of the retention, so what is pinned here
+				now is the contract a stage reading actual features owes — a
+				forecast whose horizon, curve and retention agree.
+			*/
+			So(row.ForecastValidity.State, ShouldEqual, types.ValidityValid)
+			So(row.ForecastValidity.Readiness, ShouldEqual, types.ReadinessForecast)
+			So(row.Forecast, ShouldNotBeNil)
+			So(row.Forecast.Validate(), ShouldBeNil)
+			So(len(row.Forecast.Curve), ShouldEqual, row.Forecast.SupportedHorizon)
+			So(len(row.Forecast.Retention), ShouldEqual, row.Forecast.SupportedHorizon)
 			So(state.targetSamples, ShouldEqual, 2)
 		})
 	})
@@ -192,6 +236,8 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 	Convey("Given a pending resonance sample from one symbol", t, func() {
 		normalized := 0.25
 		solver := NewSolver(make(chan []byte, 1), nil)
+		primeFeatures(solver, "BTC/USD", "reading")
+		primeFeatures(solver, "ETH/USD", "reading")
 
 		first := types.NewThesis(nil)
 		first.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
@@ -238,6 +284,155 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 			row, ok := rowRaw.(types.ResonanceReading)
 			So(ok, ShouldBeTrue)
 			So(row.TargetSymbol, ShouldEqual, "ETH/USD")
+		})
+	})
+}
+
+/*
+driveSolver runs the solver over a stream of resolvable ticker epochs and
+returns it, so a test can inspect the reach it earned.
+
+Each tick carries its own ticker timestamp, because the task head only resolves
+a supervised sample when the market epoch advances. A stream that repeats one
+epoch teaches the head nothing however long it runs.
+*/
+func driveSolver(ticks int) *Solver {
+	solver := NewSolver(make(chan []byte, 1), nil)
+
+	for tick := range ticks {
+		/*
+			The reading has to move. A feature repeated at one value has no
+			scale to be scored against, so it standardizes to zero for as long
+			as it is fed, and a head driven by it would be earning its reach
+			from an input that never said anything.
+		*/
+		normalized := 0.5 + 0.25*math.Sin(float64(tick)/7.0)
+
+		thesis := types.NewThesis(nil)
+		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+			Source: types.SourceLiquidity,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				"reading": {Normalized: &normalized},
+			},
+		}})
+
+		thesis.Tickers.Store("BTC/USD", kraken.TickerData{
+			Symbol:    "BTC/USD",
+			Bid:       decimal.NewFromFloat64(100 + float64(tick)*0.01),
+			Ask:       decimal.NewFromFloat64(100.02 + float64(tick)*0.01),
+			Timestamp: time.Unix(int64(tick), 0),
+		})
+
+		solver.Update(thesis)
+	}
+
+	return solver
+}
+
+/*
+TestHorizonExtendsWhilePrecisionHolds pins the behaviour the predictive coding
+stage exists to provide: a forecast window that grows as far as the head can
+support and gives way when it cannot.
+*/
+func TestHorizonExtendsWhilePrecisionHolds(t *testing.T) {
+	Convey("Given a head fed resolvable epochs until its precision settles", t, func() {
+		solver := driveSolver(400)
+		state := solver.state("BTC/USD")
+		precision, hasPrecision := state.manifold.TaskPrecision()
+
+		t.Logf("samples %d, precision %.3f, reach %d",
+			state.targetSamples, precision, state.horizonReach)
+
+		Convey("Then the head reports a precision it can be judged on", func() {
+			So(hasPrecision, ShouldBeTrue)
+			So(precision, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("Then the reach grows well past a single step", func() {
+			So(state.targetSamples, ShouldBeGreaterThan, 0)
+			So(state.horizonReach, ShouldBeGreaterThan, 1)
+			So(state.horizonReach, ShouldBeLessThanOrEqualTo, solver.maxHorizon)
+		})
+
+		Convey("Then the published horizon does not outrun that reach", func() {
+			horizon, _ := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
+
+			So(horizon, ShouldBeGreaterThanOrEqualTo, 1)
+			So(horizon, ShouldBeLessThanOrEqualTo, state.horizonReach)
+		})
+	})
+}
+
+func TestHorizonConfidenceCapsReach(t *testing.T) {
+	Convey("Given a solver that has already earned multi-step reach", t, func() {
+		solver := driveSolver(400)
+		state := solver.state("BTC/USD")
+		precision, hasPrecision := state.manifold.TaskPrecision()
+
+		So(hasPrecision, ShouldBeTrue)
+		So(precision, ShouldBeGreaterThan, 0)
+		So(state.horizonReach, ShouldBeGreaterThan, 1)
+
+		Convey("Then middling confidence caps the earned reach itself", func() {
+			reach := state.horizonReach
+			confidence := 0.4
+			horizon, _ := state.manifold.DynamicHorizon(confidence, reach, solver.maxHorizon)
+			confidenceCap := max(1, int(float64(reach)*confidence))
+
+			So(horizon, ShouldBeLessThan, reach)
+			So(horizon, ShouldBeGreaterThanOrEqualTo, 1)
+			So(horizon, ShouldBeLessThanOrEqualTo, confidenceCap)
+		})
+	})
+}
+
+/*
+TestHorizonRetractsFasterThanItGrows pins the asymmetry between earning reach
+and losing it.
+*/
+func TestHorizonRetractsFasterThanItGrows(t *testing.T) {
+	Convey("Given a solver holding its full reach", t, func() {
+		solver := driveSolver(400)
+		state := solver.state("BTC/USD")
+		state.horizonReach = solver.maxHorizon
+
+		growthTicks := solver.maxHorizon
+		retractionTicks := 0
+
+		for state.horizonReach > 1 {
+			_, newReach := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
+			state.horizonReach = newReach
+			retractionTicks++
+
+			So(retractionTicks, ShouldBeLessThan, 100)
+		}
+
+		t.Logf("earned over %d ticks, surrendered in %d", growthTicks, retractionTicks)
+
+		Convey("Then reach is surrendered faster than it is earned", func() {
+			So(retractionTicks, ShouldBeLessThan, growthTicks)
+		})
+	})
+}
+
+/*
+TestHorizonStartsShortWithoutSamples pins that reach is earned rather than
+assumed. A head that has resolved no supervised sample has no basis for any
+claim about the future.
+*/
+func TestHorizonStartsShortWithoutSamples(t *testing.T) {
+	Convey("Given a solver whose head has resolved nothing", t, func() {
+		solver := driveSolver(1)
+		state := solver.state("BTC/USD")
+
+		_, hasPrecision := state.manifold.TaskPrecision()
+
+		Convey("Then it claims the shortest horizon", func() {
+			So(hasPrecision, ShouldBeFalse)
+			horizon, newReach := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
+			So(horizon, ShouldEqual, 1)
+			So(newReach, ShouldEqual, 1)
 		})
 	})
 }

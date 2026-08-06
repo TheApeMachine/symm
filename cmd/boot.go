@@ -206,8 +206,6 @@ func Boot(
 
 	errnie.Info("analyzer reported to be ready")
 
-	planner.AttachAnalyzer(analyzer)
-
 	system.Hub = ui.NewHub(
 		ctx,
 		desk,

@@ -18,7 +18,9 @@ func TestAllocatorAllocate(t *testing.T) {
 		testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 	}
 
-	Convey("Given a market with positive cash balance", t, tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+	Convey(
+		"Given a market with positive cash balance", 
+		t, tests.WithFixtureOrders(t, symbols, func(market *tests.Market, thesis *types.Thesis) {
 		for range 16 {
 			market.Tick()
 		}
