@@ -8,8 +8,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -26,16 +28,15 @@ func stampPlannerReadiness(thesis *types.Thesis) {
 		types.SourcePumpDump,
 		types.SourceSentiment,
 		types.SourceToxicity,
+		types.SourceManifold,
+		types.SourceResonance,
+		types.SourceCausal,
+		types.SourceGraph,
+		types.SourceCategories,
+		types.SourceCognition,
 	} {
 		thesis.Readiness.Stamp(source)
 	}
-
-	thesis.Readiness.Manifold = true
-	thesis.Readiness.Resonance = true
-	thesis.Readiness.Causal = true
-	thesis.Readiness.Graph = true
-	thesis.Readiness.Categories = true
-	thesis.Readiness.Cognition = true
 }
 
 func TestPlannerUpdate(t *testing.T) {
@@ -44,14 +45,15 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("Every planner update should still advance the market tick", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			before := market.Thesis.Tick
+		Convey("Every planner update should still advance the market tick", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 
-			market.Planner.Update(market.Thesis)
-			So(market.Thesis.Tick, ShouldEqual, before+1)
+			before := system.Thesis.Tick
 
-			market.Planner.Update(market.Thesis)
-			So(market.Thesis.Tick, ShouldEqual, before+2)
+			system.Planner.Update(system.Thesis)
+			So(system.Thesis.Tick, ShouldEqual, before+1)
+
+			system.Planner.Update(system.Thesis)
+			So(system.Thesis.Tick, ShouldEqual, before+2)
 		}))
 	})
 
@@ -60,10 +62,11 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should prepare next evaluation while retaining cycle evidence", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			thesis := market.Thesis
+		Convey("It should prepare next evaluation while retaining cycle evidence", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+
+			thesis := system.Thesis
 			base := time.Unix(1_700_006_000, 0).UTC()
-			thesis.NoteLifecycle("SIM1/USD", types.LifecycleManaging, base)
+			thesis.Lifecycle.Store("SIM1/USD", types.LifecycleManaging)
 			stampPlannerReadiness(thesis)
 
 			observedAt := base
@@ -74,11 +77,11 @@ func TestPlannerUpdate(t *testing.T) {
 				Symbol: "SIM1/USD", TradeID: 1,
 				Timestamp: observedAt,
 			})
-			thesis.AppendMeasurements(types.SourceCVD, &types.Measurement{
+			thesis.AppendMeasurements([]*types.Measurement{{
 				Source: types.SourceCVD, Symbol: "SIM1/USD", At: observedAt,
-			})
+			}}, true)
 
-			market.Planner.Update(thesis)
+			system.Planner.Update(thesis)
 
 			So(thesis.MarketTickers(), ShouldNotBeEmpty)
 			So(thesis.MarketTrades(), ShouldNotBeEmpty)
@@ -92,8 +95,9 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should complete evaluation and prepare next pass retaining multi-read history", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			thesis := market.Thesis
+		Convey("It should complete evaluation and prepare next pass retaining multi-read history", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+
+			thesis := system.Thesis
 			observedAt := time.Unix(1_700_006_050, 0).UTC()
 			thesis.AppendTicker(kraken.TickerData{
 				Symbol: "SIM1/USD", Timestamp: observedAt,
@@ -101,15 +105,15 @@ func TestPlannerUpdate(t *testing.T) {
 			thesis.AppendTrade(kraken.TradeData{
 				Symbol: "SIM1/USD", TradeID: 1, Timestamp: observedAt,
 			})
-			thesis.AppendMeasurements(types.SourcePumpDump, &types.Measurement{
+			thesis.AppendMeasurements([]*types.Measurement{{
 				Source: types.SourcePumpDump, Symbol: "SIM1/USD", At: observedAt,
-			})
-			thesis.Decisions = []types.Decision{{
+			}}, true)
+			stage(thesis, types.Decision{
 				Action: types.ActionNothing, Symbol: "SIM1/USD", At: observedAt,
-			}}
+			})
 			stampPlannerReadiness(thesis)
 
-			market.Planner.Update(thesis)
+			system.Planner.Update(thesis)
 
 			So(thesis.MarketTickers(), ShouldNotBeEmpty)
 			So(thesis.MarketTrades(), ShouldNotBeEmpty)
@@ -123,8 +127,9 @@ func TestPlannerUpdate(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("It should emit the decisions before closing canonical history", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			thesis := market.Thesis
+		Convey("It should emit the decisions before closing canonical history", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+
+			thesis := system.Thesis
 			observedAt := time.Unix(1_700_006_100, 0).UTC()
 			thesis.AppendTicker(kraken.TickerData{
 				Symbol: "SIM1/USD", Timestamp: observedAt,
@@ -132,26 +137,26 @@ func TestPlannerUpdate(t *testing.T) {
 			thesis.AppendTrade(kraken.TradeData{
 				Symbol: "SIM1/USD", TradeID: 1, Timestamp: observedAt,
 			})
-			thesis.AppendMeasurements(types.SourceCVD, &types.Measurement{
+			thesis.AppendMeasurements([]*types.Measurement{{
 				Source: types.SourceCVD, Symbol: "SIM1/USD", At: observedAt,
-			})
-			thesis.NoteLifecycle("SIM1/USD", types.LifecycleManaging, observedAt)
+			}}, true)
+			thesis.Lifecycle.Store("SIM1/USD", types.LifecycleManaging)
 			stampPlannerReadiness(thesis)
 
-			market.Planner.Update(thesis)
+			system.Planner.Update(thesis)
 			So(thesis.Decisions, ShouldBeEmpty)
 			So(thesis.Readiness.Complete(), ShouldBeFalse)
-			So(market.Thesis, ShouldEqual, thesis)
+			So(system.Thesis, ShouldEqual, thesis)
 
 			stampPlannerReadiness(thesis)
-			thesis.Decisions = []types.Decision{{
+			stage(thesis, types.Decision{
 				Action: types.ActionHold, Symbol: "SIM1/USD", At: observedAt,
-			}}
-			subscription := market.Planner.Subscribe(
+			})
+			subscription := system.Planner.Subscribe(
 				"cycle-close-test", types.NewSubscription[any](),
 			)
 
-			market.Planner.Update(thesis)
+			system.Planner.Update(thesis)
 
 			emitted := (<-subscription.Channel).([]types.Decision)
 			So(emitted, ShouldHaveLength, 1)
@@ -172,87 +177,92 @@ func TestPlannerPumpEntry(t *testing.T) {
 		testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
 	}
 
-	Convey("Given a fast pump whose forecast never clears executable friction", t, tests.WithMarket(t, symbols, func(market *tests.Market) {
-		initialOpportunitySlots := market.Desk.OpenSlots(true)
+	Convey(
+		"Given a fast pump whose forecast never clears executable friction",
+		t, stack.WithStack(t, symbols, func(market *tests.Market, system *cmd.System) {
+			collected := collect(system)
 
-		for range 64 {
-			market.Tick()
-		}
+			initialOpportunitySlots := system.Desk.OpenSlots(true)
 
-		for _, symbol := range market.Symbols {
-			So(market.Transition(symbol.Pair, testtypes.FastPump), ShouldBeNil)
-		}
-
-		for range 256 {
-			market.Tick()
-		}
-
-		decisions := market.Decisions()
-		pricedCandidates := 0
-		uneconomicCandidates := 0
-		entryDecisions := 0
-		maximumExecutableReturn := decimal.NewFromInt64(0)
-
-		for _, decision := range decisions {
-			So(decision.ValidID(), ShouldBeTrue)
-			So(decision.Symbol, ShouldNotBeBlank)
-			So(decision.Cause, ShouldNotBeBlank)
-			So(decision.Reason, ShouldNotBeBlank)
-
-			if decision.ExpectedReturn == nil ||
-				decision.ExpectedFees == nil ||
-				decision.ExpectedSpread == nil ||
-				decision.ExpectedImpact == nil {
-				continue
+			for range 64 {
+				market.Tick()
 			}
 
-			pricedCandidates++
-			friction := decision.ExpectedFees.
-				Add(decision.ExpectedSpread).
-				Add(decision.ExpectedImpact)
-			executableReturn := decision.ExpectedReturn.Sub(friction)
-
-			if executableReturn.Cmp(maximumExecutableReturn) > 0 {
-				maximumExecutableReturn = executableReturn
+			for _, symbol := range market.Symbols {
+				So(market.Transition(symbol.Pair, testtypes.FastPump), ShouldBeNil)
 			}
 
-			if executableReturn.Sign() <= 0 {
-				uneconomicCandidates++
-				So(decision.Action, ShouldNotEqual, types.ActionEnter)
+			for range 256 {
+				market.Tick()
 			}
 
-			if decision.Utility <= 0 {
-				So(decision.Action, ShouldNotEqual, types.ActionEnter)
+			pricedCandidates := 0
+			uneconomicCandidates := 0
+			entryDecisions := 0
+			maximumExecutableReturn := decimal.NewFromInt64(0)
+
+			for _, decision := range collected.All() {
+
+				So(decision.ValidID(), ShouldBeTrue)
+				So(decision.Symbol, ShouldNotBeBlank)
+				So(decision.Cause, ShouldNotBeBlank)
+				So(decision.Reason, ShouldNotBeBlank)
+
+				if decision.ExpectedReturn == nil ||
+					decision.ExpectedFees == nil ||
+					decision.ExpectedSpread == nil ||
+					decision.ExpectedImpact == nil {
+					continue
+				}
+
+				pricedCandidates++
+				friction := decision.ExpectedFees.
+					Add(decision.ExpectedSpread).
+					Add(decision.ExpectedImpact)
+				executableReturn := decision.ExpectedReturn.Sub(friction)
+
+				if executableReturn.Cmp(maximumExecutableReturn) > 0 {
+					maximumExecutableReturn = executableReturn
+				}
+
+				if executableReturn.Sign() <= 0 {
+					uneconomicCandidates++
+					So(decision.Action, ShouldNotEqual, types.ActionEnter)
+				}
+
+				if decision.Utility <= 0 {
+					So(decision.Action, ShouldNotEqual, types.ActionEnter)
+				}
+
+				if decision.Action != types.ActionEnter {
+					continue
+				}
+
+				entryDecisions++
+				So(executableReturn.Sign(), ShouldEqual, 1)
+				So(decision.Utility, ShouldBeGreaterThan, 0.0)
+				So(decision.ProposedQuantity, ShouldNotBeNil)
+				So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
+				So(decision.ProposedNotional, ShouldNotBeNil)
+				So(decision.ProposedNotional.Sign(), ShouldEqual, 1)
+				So(decision.ReferencePrice, ShouldNotBeNil)
+				So(decision.ReferencePrice.Sign(), ShouldEqual, 1)
+				So(decision.Confidence, ShouldBeBetweenOrEqual, 0.0, 1.0)
+				So(decision.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0.0)
+				So(decision.ForecastSource, ShouldNotBeBlank)
+				So(decision.ValidThroughEpoch, ShouldBeGreaterThan, uint64(0))
+
 			}
 
-			if decision.Action != types.ActionEnter {
-				continue
-			}
-
-			entryDecisions++
-			So(executableReturn.Sign(), ShouldEqual, 1)
-			So(decision.Utility, ShouldBeGreaterThan, 0.0)
-			So(decision.ProposedQuantity, ShouldNotBeNil)
-			So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
-			So(decision.ProposedNotional, ShouldNotBeNil)
-			So(decision.ProposedNotional.Sign(), ShouldEqual, 1)
-			So(decision.ReferencePrice, ShouldNotBeNil)
-			So(decision.ReferencePrice.Sign(), ShouldEqual, 1)
-			So(decision.Confidence, ShouldBeBetweenOrEqual, 0.0, 1.0)
-			So(decision.Uncertainty, ShouldBeGreaterThanOrEqualTo, 0.0)
-			So(decision.ForecastSource, ShouldNotBeBlank)
-			So(decision.ValidThroughEpoch, ShouldBeGreaterThan, uint64(0))
-		}
-
-		So(decisions, ShouldNotBeEmpty)
-		So(market.Measurements(), ShouldContainKey, "pumpdump")
-		So(pricedCandidates, ShouldBeGreaterThan, 0)
-		So(uneconomicCandidates, ShouldEqual, pricedCandidates)
-		So(maximumExecutableReturn.Sign(), ShouldBeLessThanOrEqualTo, 0)
-		So(entryDecisions, ShouldEqual, 0)
-		So(market.Desk.OpenPositions(), ShouldEqual, 0)
-		So(market.Desk.OpenSlots(true), ShouldEqual, initialOpportunitySlots)
-	}))
+			_, measured := system.Thesis.Measurements.Load(types.SourcePumpDump)
+			So(measured, ShouldBeTrue)
+			So(pricedCandidates, ShouldBeGreaterThan, 0)
+			So(uneconomicCandidates, ShouldEqual, pricedCandidates)
+			So(maximumExecutableReturn.Sign(), ShouldBeLessThanOrEqualTo, 0)
+			So(entryDecisions, ShouldEqual, 0)
+			So(system.Desk.OpenPositions(), ShouldEqual, 0)
+			So(system.Desk.OpenSlots(true), ShouldEqual, initialOpportunitySlots)
+		}))
 }
 
 func TestPlannerSlotDiscipline(t *testing.T) {
@@ -263,9 +273,11 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 		testtypes.NewSymbol("SIM4/USD", 100.0, 5150),
 	}
 
-	Convey("Given simultaneous pump candidates below their own trading costs", t, tests.WithMarket(t, symbols, func(market *tests.Market) {
-		initialNormalSlots := market.Desk.OpenSlots(false)
-		initialOpportunitySlots := market.Desk.OpenSlots(true)
+	Convey("Given simultaneous pump candidates below their own trading costs", t, stack.WithStack(t, symbols, func(market *tests.Market, system *cmd.System) {
+		collected := collect(system)
+
+		initialNormalSlots := system.Desk.OpenSlots(false)
+		initialOpportunitySlots := system.Desk.OpenSlots(true)
 
 		for range 64 {
 			market.Tick()
@@ -285,7 +297,7 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 		reservedDecisions := 0
 		rounds := map[int64][]types.Decision{}
 
-		for _, decision := range market.Decisions() {
+		for _, decision := range collected.All() {
 			if decision.AllocationClass == "reserved" {
 				reservedDecisions++
 			}
@@ -316,7 +328,7 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 			}
 
 			entryDecisions++
-			So(decision.SlotCapacity, ShouldEqual, market.Desk.MaxPositions())
+			So(decision.SlotCapacity, ShouldEqual, system.Desk.MaxPositions())
 			So(decision.OpenPositions, ShouldBeGreaterThanOrEqualTo, 0)
 			So(decision.OpenPositions, ShouldBeLessThanOrEqualTo, decision.SlotCapacity)
 			So(decision.ArbitrationRound, ShouldBeGreaterThan, int64(0))
@@ -352,9 +364,9 @@ func TestPlannerSlotDiscipline(t *testing.T) {
 		So(uneconomicCandidates, ShouldEqual, pricedCandidates)
 		So(entryDecisions, ShouldEqual, 0)
 		So(reservedDecisions, ShouldEqual, 0)
-		So(market.Desk.OpenPositions(), ShouldEqual, 0)
-		So(market.Desk.OpenSlots(false), ShouldEqual, initialNormalSlots)
-		So(market.Desk.OpenSlots(true), ShouldEqual, initialOpportunitySlots)
+		So(system.Desk.OpenPositions(), ShouldEqual, 0)
+		So(system.Desk.OpenSlots(false), ShouldEqual, initialNormalSlots)
+		So(system.Desk.OpenSlots(true), ShouldEqual, initialOpportunitySlots)
 	}))
 }
 
@@ -364,7 +376,9 @@ func TestPlannerPumpReversal(t *testing.T) {
 		testtypes.NewSymbol("SIM2/USD", 100.0, 1337),
 	}
 
-	Convey("Given an open simulated position when a pump reverses into a dump", t, tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+	Convey("Given an open simulated position when a pump reverses into a dump", t, stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+		collected := collect(system)
+
 		market.WithAutoFill()
 
 		for range 64 {
@@ -380,25 +394,25 @@ func TestPlannerPumpReversal(t *testing.T) {
 		}
 
 		entryQuantity := decimal.NewFromFloat64(0.25)
-		So(market.Desk.Execute([]types.Decision{{
+		So(system.Desk.Execute(types.Decision{
 			ID:               uuid.NewString(),
 			Action:           types.ActionEnter,
 			Symbol:           symbols[0].Pair,
 			ProposedQuantity: entryQuantity,
-			Risk:             tests.EntryRisk(market, symbols[0].Pair),
-		}}), ShouldBeNil)
+			Risk:             stack.EntryRisk(system, symbols[0].Pair),
+		}), ShouldBeNil)
 
 		market.Tick()
 		market.Tick()
 
-		positions := slices.Collect(market.Desk.Positions())
+		positions := slices.Collect(system.Desk.Positions())
 		So(positions, ShouldHaveLength, 1)
 
 		position := positions[0]
 		So(position.Status, ShouldEqual, types.OPEN)
 		So(position.Holding.SellableQty.Cmp(entryQuantity), ShouldEqual, 0)
 
-		reversalDecisionOffset := len(market.Decisions())
+		reversalDecisionOffset := len(collected.All())
 		for _, symbol := range market.Symbols {
 			So(market.Transition(symbol.Pair, testtypes.FastDump), ShouldBeNil)
 		}
@@ -407,7 +421,7 @@ func TestPlannerPumpReversal(t *testing.T) {
 			market.Tick()
 		}
 
-		decisions := market.Decisions()
+		decisions := collected.All()
 		So(len(decisions), ShouldBeGreaterThanOrEqualTo, reversalDecisionOffset)
 		reversalDecisions := decisions[reversalDecisionOffset:]
 		strategyExitDecisions := 0
@@ -428,11 +442,11 @@ func TestPlannerPumpReversal(t *testing.T) {
 		So(entryDecisions, ShouldEqual, 0)
 		So(strategyExitDecisions, ShouldEqual, 0)
 
-		position = slices.Collect(market.Desk.Positions())[0]
+		position = slices.Collect(system.Desk.Positions())[0]
 		stopped := position.Holding.Stoploss.Status == types.TRIGGERED &&
 			position.Holding.Stoploss.TriggerReason != ""
 		So(stopped, ShouldBeTrue)
-		So(market.Desk.OpenPositions(), ShouldEqual, 0)
+		So(system.Desk.OpenPositions(), ShouldEqual, 0)
 		So(position.Status, ShouldEqual, types.CLOSED)
 		So(position.Holding.Status, ShouldEqual, types.CLOSED)
 		So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)

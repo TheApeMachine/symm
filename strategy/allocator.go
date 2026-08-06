@@ -102,6 +102,40 @@ func NewAllocator(
 }
 
 /*
+entries collects the pointers to this tick's entry candidates.
+
+Sizing mutates the decisions it judges, and the map holds pointers, so writing
+through them updates the thesis in place. They are gathered first because the
+body below is a sequence of guarded rejections that reads as a loop and would
+have to become a callback returning true to keep ranging.
+*/
+func (allocator *Allocator) entries(thesis *types.Thesis) []*types.Decision {
+	entries := make([]*types.Decision, 0)
+
+	thesis.Decisions.Range(func(key, value any) bool {
+		decision, ok := value.(*types.Decision)
+
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"allocator: decision map holds a value that is not a decision",
+				nil,
+			))
+
+			return true
+		}
+
+		if decision.Action == types.ActionEnter {
+			entries = append(entries, decision)
+		}
+
+		return true
+	})
+
+	return entries
+}
+
+/*
 committedRisk is what the open book already stands to lose if every position
 runs to its hard floor.
 
@@ -144,10 +178,8 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 	if !allocator.riskValid {
 		thesis.Readiness.Stamp(types.SourceAllocator)
 
-		for index := range thesis.Decisions {
-			if thesis.Decisions[index].Action == types.ActionEnter {
-				allocator.reject(&thesis.Decisions[index], "risk configuration invalid")
-			}
+		for _, decision := range allocator.entries(thesis) {
+			allocator.reject(decision, "risk configuration invalid")
 		}
 
 		return errnie.Error(errnie.Err(
@@ -206,13 +238,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 	riskPool := budget.Mul(allocator.portfolioLossFraction).
 		Sub(allocator.committedRisk())
 
-	for i := range thesis.Decisions {
-		decision := &thesis.Decisions[i]
-
-		if decision.Action != types.ActionEnter {
-			continue
-		}
-
+	for _, decision := range allocator.entries(thesis) {
 		pair, err := allocator.instrument.Pair(decision.Symbol)
 
 		if err != nil {
@@ -350,7 +376,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		execute, and every one that did not was rejected in place with the
 		reason it failed on.
 	*/
-	thesis.Readiness.Allocation = true
+	thesis.Stamp(types.SourceAllocator)
 
 	return nil
 }

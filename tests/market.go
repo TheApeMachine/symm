@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -12,20 +11,13 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests/fixtures/book"
-	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
 	"github.com/theapemachine/symm/tests/fixtures/level3"
 	"github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/tests/fixtures/trade"
 	"github.com/theapemachine/symm/tests/signal"
 	testtypes "github.com/theapemachine/symm/tests/types"
-	"github.com/theapemachine/symm/types"
 )
 
 const (
@@ -42,48 +34,28 @@ const (
 		to distinguish a slow exit from one that is never coming.
 	*/
 	flattenCeilingTicks = 512
-
-	/*
-		passCeiling is how long the feed will wait for the stack to analyze what
-		it published before calling the stack stopped rather than slow.
-
-		It is deliberately far longer than a pass costs. How long one takes is a
-		property of the symbol count and of the stages themselves, so a ceiling
-		tight enough to be a performance assertion would fail on a busy machine
-		and say nothing about the market. This only has to separate slow from
-		stopped, and the wait ends the moment the work lands.
-	*/
-	passCeiling = 30 * time.Second
 )
 
 /*
 Market ranges ready fixture payloads into the fake Kraken connections.
 */
 type Market struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	Public       *Conn
-	Private      *Conn
-	Level3       *Conn
-	Symbols      []*testtypes.Symbol
-	State        testtypes.MarketState
-	system       *cmd.System
-	public       *websocket.Live
-	private      *websocket.Live
-	Thesis       *types.Thesis
-	Desk         *broker.Desk
-	Planner      *strategy.Planner
-	Analyzer     *logic.Analyzer
-	generators   map[string]*signal.Generator
-	latest       map[string]testtypes.Sample
-	previous     map[string]testtypes.Sample
-	decisions    []types.Decision
-	measurements map[string][]*types.Measurement
-	filled       map[string]struct{}
-	autoFill     bool
-	primed       bool
-	decisionMu   sync.Mutex
-	sampleMu     sync.RWMutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	Public     *Conn
+	Private    *Conn
+	Level3     *Conn
+	Symbols    []*testtypes.Symbol
+	State      testtypes.MarketState
+	public     *websocket.Live
+	private    *websocket.Live
+	generators map[string]*signal.Generator
+	latest     map[string]testtypes.Sample
+	previous   map[string]testtypes.Sample
+	filled     map[string]struct{}
+	autoFill   bool
+	primed     bool
+	sampleMu   sync.RWMutex
 }
 
 /*
@@ -133,7 +105,6 @@ func newMarket(
 		Level3:     NewConn(ctx),
 		Symbols:    symbols,
 		State:      testtypes.Baseline,
-		Thesis:     types.NewThesis(nil),
 		generators: make(map[string]*signal.Generator, len(symbols)),
 		latest:     make(map[string]testtypes.Sample, len(symbols)),
 		previous:   make(map[string]testtypes.Sample, len(symbols)),
@@ -174,53 +145,7 @@ func newMarket(
 	// depth rather than a real Kraken endpoint.
 	market.private.Level3Client = market.Level3.Client
 
-	market.system = cmd.Boot(
-		ctx, market.Thesis, market.public, market.private, nil,
-	)
-
-	market.Desk = market.system.Desk
-	market.Planner = market.system.Planner
-	market.Analyzer = market.system.Analyzer
-	pairs := make([]string, 0, len(symbols))
-
-	for _, symbol := range symbols {
-		pairs = append(pairs, symbol.Pair)
-	}
-
 	return market
-}
-
-/*
-Measurements flattens the measurements the signals have written, so assertions
-can inspect them as an ordinary map. The harness copy also keeps completed
-cycles available after decision emission closes the live Thesis cycle.
-*/
-func (market *Market) Measurements() map[string][]*types.Measurement {
-	measurements := map[string][]*types.Measurement{}
-
-	market.decisionMu.Lock()
-
-	for source, rows := range market.measurements {
-		measurements[source] = rows
-	}
-
-	market.decisionMu.Unlock()
-
-	market.Thesis.Measurements.Range(func(key, value any) bool {
-		source, ok := key.(types.SourceType)
-
-		if !ok {
-			return true
-		}
-
-		if found, ok := value.([]*types.Measurement); ok {
-			measurements[string(source)] = found
-		}
-
-		return true
-	})
-
-	return measurements
 }
 
 /*
@@ -309,37 +234,12 @@ names the position instead of a hanging one.
 */
 func (market *Market) Flatten(symbol string) error {
 	for range flattenCeilingTicks {
-		if !market.holds(symbol) {
-			return nil
-		}
-
 		market.Tick()
 	}
 
 	return fmt.Errorf(
 		"market: %s was still held after %d ticks", symbol, flattenCeilingTicks,
 	)
-}
-
-/*
-holds answers whether the desk still carries an unclosed lot for one symbol.
-*/
-func (market *Market) holds(symbol string) bool {
-	if market.Desk == nil {
-		return false
-	}
-
-	for position := range market.Desk.Positions() {
-		if position.Holding == nil || position.Holding.Symbol != symbol {
-			continue
-		}
-
-		if position.Holding.Status != types.CLOSED {
-			return true
-		}
-	}
-
-	return false
 }
 
 /*
@@ -353,8 +253,6 @@ func (market *Market) Tick() {
 		generator := market.generators[symbol.Pair]
 		_ = market.publish(generator)
 	}
-
-	market.settleTick()
 }
 
 /*
@@ -455,12 +353,6 @@ func (market *Market) waitForBook(sample testtypes.Sample) {
 	))
 }
 
-func (market *Market) settleTick() {
-	// Answer pending orders before the processing pause so the execution and
-	// this tick's market frames can both reach the desk before the next tick.
-	market.fillPending()
-}
-
 /*
 WithAutoFill makes the market answer its own orders with fills.
 
@@ -474,124 +366,7 @@ func (market *Market) WithAutoFill() *Market {
 	return market
 }
 
-/*
-fillPending settles any order the desk has submitted but not yet seen filled.
-
-A live venue answers a market order with an execution on the private channel,
-and until that arrives a position stays PENDING and never becomes something the
-strategy can manage or close. Nothing else in the harness plays the venue, so
-without this the desk accumulates orders that never become positions.
-*/
-func (market *Market) fillPending() {
-	if market.Desk == nil || !market.autoFill {
-		return
-	}
-
-	for position := range market.Desk.Positions() {
-		if position.Status != types.PENDING || position.Holding == nil ||
-			position.EntryOrder == nil || position.EntryOrderResult == nil {
-			continue
-		}
-
-		fill := executionfixture.BuyFill()
-		order := position.EntryOrder
-		result := position.EntryOrderResult
-
-		if position.ExitOrderResult != nil {
-			fill = executionfixture.ExitFill()
-			order = position.ExitOrder
-			result = position.ExitOrderResult
-		}
-
-		if order == nil || result == nil || len(result.ID) == 0 {
-			continue
-		}
-
-		fill.OrderID = result.ID[0]
-
-		if _, done := market.filled[order.ClOrdId]; done {
-			continue
-		}
-
-		market.filled[order.ClOrdId] = struct{}{}
-		fill.ClientOrderID = order.ClOrdId
-		fill.Symbol = position.Holding.Symbol
-		fill.CumQty = order.Volume
-		fill.LastQty = fill.CumQty
-
-		if err := market.priceFill(&fill, position.Holding.Symbol); err != nil {
-			panic(err)
-		}
-
-		market.Private.Publish("executions", executionfixture.Frame(fill))
-	}
-}
-
-/*
-priceFill answers an order at the price the simulated venue would actually have
-executed it at.
-
-The fill options this borrows are broker unit-test constants — a buy averaging
-105 and a sell averaging 110 — which describe the fixture they were written for
-and nothing about this market. Left in place they book every entry and exit at
-those two prices however the symbol is quoted, so a position opened at sixty
-thousand records a four percent gain it never made, and every realised return
-measured here would be that arithmetic rather than the strategy's.
-
-A taker buy lifts the ask and a taker sell hits the bid, both at the touch this
-tick published, and the fee is the same schedule the entry was priced against.
-That is what makes a realised profit here a claim about the decisions rather
-than about the fixture.
-*/
-func (market *Market) priceFill(fill *executionfixture.Options, symbol string) error {
-	market.sampleMu.RLock()
-	sample, known := market.latest[symbol]
-	market.sampleMu.RUnlock()
-
-	if !known {
-		return fmt.Errorf("market: cannot price a fill for unpublished symbol %q", symbol)
-	}
-
-	price := sample.Ask
-
-	if fill.Side == "sell" {
-		price = sample.Bid
-	}
-
-	if price <= 0 {
-		return fmt.Errorf("market: %s has no executable touch to fill against", symbol)
-	}
-
-	quantity, err := strconv.ParseFloat(fill.CumQty, 64)
-
-	if err != nil || quantity <= 0 {
-		return fmt.Errorf("market: fill for %s carries no executable quantity", symbol)
-	}
-
-	rate, err := market.Desk.Price().Fee(symbol)
-
-	if err != nil {
-		return fmt.Errorf("market: no fee schedule to charge %s against: %w", symbol, err)
-	}
-
-	cost := price * quantity
-
-	fill.LastPrice = strconv.FormatFloat(price, 'f', -1, 64)
-	fill.AvgPrice = fill.LastPrice
-	fill.Cost = strconv.FormatFloat(cost, 'f', -1, 64)
-	fill.CumCost = fill.Cost
-	fill.FeeUsdEquiv = strconv.FormatFloat(cost*rate.Float64(), 'f', -1, 64)
-	fill.Timestamp = sample.Timestamp.UTC().Format(time.RFC3339Nano)
-
-	return nil
-}
-
 func (market *Market) Close() {
-	if market.system != nil {
-		errnie.Error(market.system.Close())
-		market.system = nil
-	}
-
 	market.Public.Close()
 	market.Private.Close()
 	market.Level3.Close()
@@ -605,7 +380,7 @@ for the duration of one market test, then restores the caller's configuration.
 func WithFixtureOrders(
 	t *testing.T,
 	symbols []*testtypes.Symbol,
-	f func(*Market, *types.Thesis),
+	f func(*Market),
 ) func() {
 	return func() {
 		tradingModel := viper.GetString("trading.model")
@@ -637,44 +412,31 @@ func WithFixtureOrders(
 }
 
 /*
-WithMarket boots a full symm stack against a simulated market, attaches the
-market data feeds, and tears everything down when the test finishes. The test
-body receives a ready market and asserts against market.Thesis.
+WithMarket runs a simulated venue for the duration of one test and tears its
+connections down when the test finishes.
+
+It boots nothing. The stack under test is wired by the caller against Feeds,
+because a data provider that also assembled the system would have to import it,
+and every package that owns a piece of the system could then no longer test
+against a market.
 */
-func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market, *types.Thesis)) func() {
+func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market)) func() {
 	return func() {
 		market := NewMarket(t.Context(), symbols)
 		defer market.Close()
-
-		So(market.system != nil, ShouldBeTrue)
 
 		Reset(func() {
 			market.Close()
 		})
 
-		f(market, market.system.Thesis)
+		f(market)
 	}
 }
 
 /*
-EntryRisk derives the stop geometry an entry for this symbol would be sized
-under, from the live simulated book.
-
-Tests that submit entries need it because the desk refuses an entry without one:
-the quantity on a decision was solved against a particular risk distance, and a
-lot fitted with some other distance after the fact is carrying a loss nobody
-budgeted. A bare decision would exercise a path production does not have.
+Feeds returns the public and private connections the venue publishes through,
+which is what a caller points its own stack at.
 */
-func EntryRisk(market *Market, symbol string) types.RiskPlan {
-	if market == nil || market.Desk == nil {
-		return types.RiskPlan{}
-	}
-
-	pair, err := market.Desk.Instrument().Pair(symbol)
-
-	if err != nil {
-		return types.RiskPlan{}
-	}
-
-	return market.Desk.Price().RiskPlan(pair)
+func (market *Market) Feeds() (*websocket.Live, *websocket.Live) {
+	return market.public, market.private
 }

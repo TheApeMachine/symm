@@ -31,7 +31,6 @@ type Planner struct {
 	evaluator     Evaluator
 	arbiter       *Arbiter
 	allocator     *Allocator
-	Thesis        *types.Thesis
 }
 
 func NewPlanner(
@@ -102,22 +101,14 @@ func (planner *Planner) run() {
 			select {
 			case <-planner.ctx.Done():
 				return
-			case in := <-planner.subscribers.Load("logic").Channel:
-				typedDecisions, ok := in.([]types.Decision)
+			case in := <-planner.subscriptions["analyzer"].Channel:
+				thesis, ok := in.(*types.Thesis)
 
 				if !ok {
 					continue
 				}
 
-				go func() {
-					if err := crypto.desk.Execute(typedDecisions); err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Internal,
-							"crypto: failed to execute decision round",
-							err,
-						))
-					}
-				}()
+				planner.Update(thesis)
 			}
 		}
 	}()
@@ -128,93 +119,64 @@ func (planner *Planner) Close() error {
 	return nil
 }
 
-func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
+func (planner *Planner) Update(thesis *types.Thesis) {
 	if thesis == nil {
-		return nil
+		return
 	}
-
-	thesis.Tick++
 
 	if thesis.Status != types.READY {
-		planner.complete(thesis, false, "status_not_ready")
+		planner.complete(thesis, false, 0, "status_not_ready")
 
-		return thesis
+		return
 	}
 
-	if !thesis.Readiness.Complete() {
-		planner.complete(thesis, false, "logic_not_ready")
-		return thesis
+	// Strategy reads what logic derived, so a tick whose analysis has not
+	// finished is left alone and comes back once the stages that feed it have
+	// stamped. Strategy's own stamps are raised by this pass, so gating on them
+	// would be gating on the work being gated.
+	if !thesis.LogicAnalyzed() {
+		planner.complete(thesis, false, 0, "logic_not_ready")
+		return
 	}
 
-	/*
-		Candidates are produced, then funded, then arbitrated.
-
-		Sizing has to settle before slots do because arbitration assigns normal and
-		reserved capacity only to entries the wallet can actually fund. Open positions
-		keep their slots until their stoploss closes them.
-	*/
 	planner.evaluator.ManageContinuation(thesis, planner.desk, planner.price)
 	planner.evaluator.EvaluateOpportunities(thesis)
 
-	if len(thesis.Decisions) > 0 {
-		if err := planner.allocator.Allocate(thesis); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal, "failed to allocate", err,
-			))
-		}
+	if err := planner.allocator.Allocate(thesis); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal, "failed to allocate", err,
+		))
 	}
 
 	planner.arbiter.Arbitrate(thesis)
 
-	/*
-		Arbitration is the last hand on the slice, so what survives it is what
-		this tick decided. The stamp is what the no_decision branch below reads
-		to tell a tick that judged the market and stood down from one that never
-		got to judge it at all.
-	*/
+	// Arbitration is the last hand on the verdicts, so what it leaves is what
+	// this tick decided. Detaching them here gives subscribers their own copy,
+	// because the reset below clears the map the moment the cycle completes.
+	decisions := planner.decisions(thesis)
+	thesis.Stamp(types.SourcePlanner)
+
 	terminalDecision := slices.ContainsFunc(
-		thesis.Decisions,
+		decisions,
 		func(decision types.Decision) bool {
 			return decision.Action != types.ActionNothing
 		},
 	)
-	thesis.Readiness.Decisions = terminalDecision
 
-	/*
-		Every decision leaving the planner carries a durable identifier, which
-		is what later links a fill, a position, and a post-mortem back to the
-		reasoning that produced them. Stamping after arbitration covers each
-		path into the slice at the one point they all pass through.
-	*/
-	for index := range thesis.Decisions {
-		thesis.Decisions[index].EnsureID()
-		thesis.Decisions[index].ArbitrationRound = thesis.Tick
+	if len(decisions) == 0 {
+		planner.complete(thesis, true, 0, "no_decision")
+		return
 	}
 
-	if len(thesis.Decisions) == 0 {
-		planner.complete(thesis, true, "no_decision")
-		thesis.RearmEvaluation()
-
-		return thesis
-	}
-
-	if planner.recorder != nil {
-		errnie.Error(audit.RecordDecisionCycle(planner.recorder, thesis))
-	}
+	planner.audit(thesis, decisions)
 
 	if !terminalDecision {
-		planner.complete(thesis, true, "deferred")
-		thesis.RearmEvaluation()
-
-		return thesis
+		planner.complete(thesis, true, len(decisions), "deferred")
+		return
 	}
 
-	planner.complete(thesis, true, "decisions")
-	planner.publish(thesis)
-
-	// Subscribers receive their own copy because closing the completed decision
-	// cycle clears the Thesis immediately after emission.
-	decisions := slices.Clone(thesis.Decisions)
+	planner.complete(thesis, true, len(decisions), "decisions")
+	planner.publish(decisions)
 
 	planner.subscribers.Range(func(key, value any) bool {
 		if subscribers, ok := value.([]*types.Subscription[any]); ok {
@@ -226,23 +188,81 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.Thesis {
 		return true
 	})
 
-	thesis.CloseCycle()
+	utils.Fanout(planner.subscribers, "planner", thesis)
+}
 
-	return thesis
+/*
+audit writes one durable record per verdict this tick reached, which is the
+corpus a post-mortem reads a decision back out of once the thesis that held it
+has been reset.
+*/
+func (planner *Planner) audit(thesis *types.Thesis, decisions []types.Decision) {
+	if planner.recorder == nil {
+		return
+	}
+
+	for _, decision := range decisions {
+		errnie.Error(audit.Record(planner.recorder, audit.DecisionContext{
+			DecisionID:       decision.ID,
+			Symbol:           decision.Symbol,
+			At:               decision.At,
+			Tick:             thesis.Tick,
+			Action:           decision.Action,
+			Cause:            decision.Cause,
+			Reason:           decision.Reason,
+			Utility:          decision.Utility,
+			Alternatives:     decision.Alternatives,
+			Opportunity:      decision.Opportunity,
+			AllocationClass:  decision.AllocationClass,
+			AllocationCut:    decision.AllocationHaircut,
+			AllocationReason: decision.AllocationHaircutReason,
+			ProposedQuantity: decision.ProposedQuantity,
+			ProposedNotional: decision.ProposedNotional,
+			Risk:             decision.Risk,
+			Trace:            decision.Trace,
+		}))
+	}
+}
+
+/*
+decisions detaches this tick's verdicts and gives each the identity that later
+links a fill, a position and a post-mortem back to the reasoning that produced
+it. Every path into the map passes through here, so it is the one place the
+identity has to be applied.
+*/
+func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
+	decisions := make([]types.Decision, 0)
+
+	thesis.Decisions.Range(func(key, value any) bool {
+		decision, ok := value.(*types.Decision)
+
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"planner: decision map holds a value that is not a decision",
+				nil,
+			))
+
+			return true
+		}
+
+		decision.EnsureID()
+		decision.ArbitrationRound = thesis.Tick
+		decisions = append(decisions, *decision)
+
+		return true
+	})
+
+	return decisions
 }
 
 func (planner *Planner) complete(
 	thesis *types.Thesis,
 	evaluated bool,
+	decisions int,
 	outcome string,
 ) {
-	if planner == nil || thesis == nil {
-		return
-	}
-
-	readiness := thesis.Readiness.Snapshot()
-
-	if planner.ui == nil {
+	if planner == nil || thesis == nil || planner.ui == nil {
 		return
 	}
 
@@ -251,17 +271,21 @@ func (planner *Planner) complete(
 		"at", thesis.At,
 		"evaluated", evaluated,
 		"outcome", outcome,
-		"readiness", readiness,
-		"decisions", len(thesis.Decisions),
+		"readiness", datura.NewMap(
+			"signals", thesis.SignalsMeasured(),
+			"logic", thesis.LogicAnalyzed(),
+			"strategy", thesis.StrategyDecided(),
+		),
+		"decisions", decisions,
 	)))
 }
 
-func (planner *Planner) publish(thesis *types.Thesis) {
-	if planner == nil || planner.ui == nil || thesis == nil || len(thesis.Decisions) == 0 {
+func (planner *Planner) publish(decisions []types.Decision) {
+	if planner == nil || planner.ui == nil || len(decisions) == 0 {
 		return
 	}
 
 	out := datura.NewMap()
-	out["decisions"] = thesis.Decisions
+	out["decisions"] = decisions
 	utils.Publish(planner.ui, out)
 }

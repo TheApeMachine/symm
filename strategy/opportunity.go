@@ -3,16 +3,34 @@ package strategy
 import (
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
 
 func highVelocityOpportunity(thesis *types.Thesis, symbol string) bool {
-	if thesis == nil || len(thesis.Categories) == 0 {
+	if thesis == nil {
 		return false
 	}
 
-	categories := thesis.Categories[symbol]
+	stored, found := thesis.Categories.Load(symbol)
+
+	if !found {
+		return false
+	}
+
+	categories, ok := stored.([]types.Category)
+
+	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"opportunity: category map holds a value that is not a category set",
+			nil,
+		))
+
+		return false
+	}
+
 	highVelocity := false
 
 	for _, category := range categories {

@@ -9,8 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
+	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -25,7 +27,7 @@ distance and attaching some other distance after the fact breaks the coupling
 that makes a wide stop affordable. A bare decision here would only be testing a
 path production no longer has.
 */
-func entryDecision(market *tests.Market, symbol string) types.Decision {
+func entryDecision(system *cmd.System, symbol string) types.Decision {
 	decision := types.Decision{
 		ID:               uuid.NewString(),
 		Action:           types.ActionEnter,
@@ -34,8 +36,8 @@ func entryDecision(market *tests.Market, symbol string) types.Decision {
 		ProposedNotional: decimal.NewFromInt64(25),
 	}
 
-	if pair, err := market.Desk.Instrument().Pair(symbol); err == nil {
-		decision.Risk = market.Desk.Price().RiskPlan(pair)
+	if pair, err := system.Desk.Instrument().Pair(symbol); err == nil {
+		decision.Risk = system.Desk.Price().RiskPlan(pair)
 	}
 
 	return decision
@@ -49,14 +51,14 @@ func TestDeskExecute(t *testing.T) {
 			testtypes.NewSymbol("SIM3/USD", 100.0, 90210),
 		}
 
-		Convey("Execute should submit entries but reject strategy exits", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("Execute should submit entries but reject strategy exits", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
-			decision := entryDecision(market, symbols[0].Pair)
+			decision := entryDecision(system, symbols[0].Pair)
 
-			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
-			So(market.Desk.OpenPositions(), ShouldEqual, 1)
+			So(system.Desk.Execute(decision), ShouldBeNil)
+			So(system.Desk.OpenPositions(), ShouldEqual, 1)
 
-			positions := slices.Collect(market.Desk.Positions())
+			positions := slices.Collect(system.Desk.Positions())
 			So(positions, ShouldHaveLength, 1)
 			So(positions[0].ID, ShouldEqual, decision.ID)
 			So(positions[0].EntryOrder.ClOrdId, ShouldEqual, decision.ID)
@@ -65,18 +67,18 @@ func TestDeskExecute(t *testing.T) {
 			fill := executionfixture.BuyFill()
 			fill.ClientOrderID = decision.ID
 			fill.Symbol = decision.Symbol
-			fill.AvgPrice = fillPrice(market, decision.Symbol)
+			fill.AvgPrice = fillPrice(system, decision.Symbol)
 			fill.CumQty = decision.ProposedQuantity.String()
 			market.Private.Publish("executions", executionfixture.Frame(fill))
 			market.Tick()
 
-			err := market.Desk.Execute([]types.Decision{{
+			err := system.Desk.Execute(types.Decision{
 				ID:     uuid.NewString(),
 				Action: types.ActionExit,
 				Symbol: decision.Symbol,
-			}})
+			})
 
-			positions = slices.Collect(market.Desk.Positions())
+			positions = slices.Collect(system.Desk.Positions())
 			So(positions, ShouldHaveLength, 1)
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "only a triggered stoploss may submit a sell")
@@ -84,48 +86,48 @@ func TestDeskExecute(t *testing.T) {
 			So(positions[0].ExitOrderResult, ShouldBeNil)
 		}))
 
-		Convey("A repeated enter should reject the new position", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("A repeated enter should reject the new position", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
-			decision := entryDecision(market, symbols[0].Pair)
-			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
-			openPositions := market.Desk.OpenPositions()
+			decision := entryDecision(system, symbols[0].Pair)
+			So(system.Desk.Execute(decision), ShouldBeNil)
+			openPositions := system.Desk.OpenPositions()
 
-			duplicate := entryDecision(market, decision.Symbol)
-			err := market.Desk.Execute([]types.Decision{duplicate})
+			duplicate := entryDecision(system, decision.Symbol)
+			err := system.Desk.Execute(duplicate)
 
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "symbol already has an active position")
-			So(market.Desk.OpenPositions(), ShouldEqual, openPositions)
-			So(slices.Collect(market.Desk.Positions()), ShouldHaveLength, openPositions)
+			So(system.Desk.OpenPositions(), ShouldEqual, openPositions)
+			So(slices.Collect(system.Desk.Positions()), ShouldHaveLength, openPositions)
 		}))
 
-		Convey("A strategy exit should be rejected without inspecting inventory", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			openPositions := market.Desk.OpenPositions()
-			err := market.Desk.Execute([]types.Decision{{
+		Convey("A strategy exit should be rejected without inspecting inventory", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+			openPositions := system.Desk.OpenPositions()
+			err := system.Desk.Execute(types.Decision{
 				ID:     uuid.NewString(),
 				Action: types.ActionExit,
 				Symbol: symbols[0].Pair,
-			}})
+			})
 
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "only a triggered stoploss may submit a sell")
-			So(market.Desk.OpenPositions(), ShouldEqual, openPositions)
-			So(slices.Collect(market.Desk.Positions()), ShouldBeEmpty)
+			So(system.Desk.OpenPositions(), ShouldEqual, openPositions)
+			So(slices.Collect(system.Desk.Positions()), ShouldBeEmpty)
 		}))
 
-		Convey("An AddOrder failure should release the attempted position", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("An AddOrder failure should release the attempted position", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			market.Private.FailAddOrder(errors.New("venue unavailable"))
-			openPositions := market.Desk.OpenPositions()
-			err := market.Desk.Execute([]types.Decision{entryDecision(market, symbols[0].Pair)})
+			openPositions := system.Desk.OpenPositions()
+			err := system.Desk.Execute(entryDecision(system, symbols[0].Pair))
 
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "failed to place market order")
-			So(market.Desk.OpenPositions(), ShouldEqual, openPositions)
-			So(slices.Collect(market.Desk.Positions()), ShouldBeEmpty)
+			So(system.Desk.OpenPositions(), ShouldEqual, openPositions)
+			So(slices.Collect(system.Desk.Positions()), ShouldBeEmpty)
 		}))
 
-		Convey("Concurrent entries should not exceed normal capacity", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("Concurrent entries should not exceed normal capacity", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
 			executionErrors := make(chan error, len(symbols))
 			wait := sync.WaitGroup{}
@@ -135,7 +137,7 @@ func TestDeskExecute(t *testing.T) {
 
 				go func() {
 					defer wait.Done()
-					executionErrors <- market.Desk.Execute([]types.Decision{entryDecision(market, symbol.Pair)})
+					executionErrors <- system.Desk.Execute(entryDecision(system, symbol.Pair))
 				}()
 			}
 
@@ -150,8 +152,8 @@ func TestDeskExecute(t *testing.T) {
 			}
 
 			So(rejections, ShouldEqual, 1)
-			So(market.Desk.OpenPositions(), ShouldEqual, market.Desk.MaxPositions())
-			So(slices.Collect(market.Desk.Positions()), ShouldHaveLength, market.Desk.MaxPositions())
+			So(system.Desk.OpenPositions(), ShouldEqual, system.Desk.MaxPositions())
+			So(slices.Collect(system.Desk.Positions()), ShouldHaveLength, system.Desk.MaxPositions())
 		}))
 	})
 }
@@ -164,10 +166,15 @@ func BenchmarkDeskExecute(b *testing.B) {
 	market := tests.NewMarket(b.Context(), symbols)
 	defer market.Close()
 
+	public, private := market.Feeds()
+	system := cmd.Boot(b.Context(), types.NewThesis(nil), public, private, nil)
+
+	defer system.Close()
+
 	market.Tick()
-	decision := entryDecision(market, symbols[0].Pair)
+	decision := entryDecision(system, symbols[0].Pair)
 
 	for b.Loop() {
-		_ = market.Desk.Execute([]types.Decision{decision})
+		_ = system.Desk.Execute(decision)
 	}
 }

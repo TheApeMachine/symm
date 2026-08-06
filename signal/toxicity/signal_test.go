@@ -20,7 +20,7 @@ func TestMeasure(t *testing.T) {
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(types.SourceToxicity, provisional...)
+		thesis.AppendMeasurements(provisional, types.MeasurementsReady(provisional))
 		So(provisional, ShouldHaveLength, 1)
 		So(provisional[0].Validity.State, ShouldEqual, types.ValidityProvisional)
 		So(provisional[0].At, ShouldResemble, base)
@@ -76,7 +76,7 @@ func TestMeasure(t *testing.T) {
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(types.SourceToxicity, provisional...)
+		thesis.AppendMeasurements(provisional, types.MeasurementsReady(provisional))
 		trade := toxicityTrade(93, "buy", 101, 1, base.Add(time.Second))
 		thesis.AppendTrade(trade)
 

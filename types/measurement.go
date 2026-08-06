@@ -375,3 +375,23 @@ func (measurement *Measurement) fitParameter() bool {
 
 	return false
 }
+
+/*
+MeasurementsReady answers whether a set of readings is finished evidence or a
+stage still gathering.
+
+A stage stamps only once at least one of its readings is valid, because a
+provisional row is the stage saying it has not finished the work that row will
+eventually describe. Skipping the stamp leaves the thesis short of the gate the
+later stages read, so the tick comes back around and the stage continues from
+the measurements it already wrote.
+*/
+func MeasurementsReady(measurements []*Measurement) bool {
+	for _, measurement := range measurements {
+		if measurement != nil && measurement.Validity.State == ValidityValid {
+			return true
+		}
+	}
+
+	return false
+}

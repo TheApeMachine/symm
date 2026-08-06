@@ -210,7 +210,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	// 3. Store compiled Graph into thesis.Graphs
 	thesis.Graphs.Store("market_graph", graph)
-	thesis.Readiness.Graph = true
+	thesis.Stamp(types.SourceGraph)
 
 	solver.publish(thesis, graph)
 

@@ -90,7 +90,7 @@ func (signal *Signal) run() {
 						continue
 					}
 
-					thesis.AppendMeasurements(measurements)
+					thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
 
 					if !completed(measurements) {
 						continue

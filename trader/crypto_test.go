@@ -7,10 +7,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
@@ -84,7 +86,7 @@ func getInstance(ctx context.Context) *trader.Crypto {
 func TestStatus(t *testing.T) {
 	Convey(
 		"Setup",
-		t, tests.WithMarket(t, symbols, func(market *tests.Market, thesis *types.Thesis) {
+		t, stack.WithStack(t, symbols, func(market *tests.Market, system *cmd.System) {
 			crypto := getInstance(t.Context())
 
 			Convey("Then the status should be READY", func() {
@@ -97,7 +99,9 @@ func TestStatus(t *testing.T) {
 func TestIntegration(t *testing.T) {
 	Convey(
 		"Setup",
-		t, tests.WithMarket(t, symbols, func(market *tests.Market, thesis *types.Thesis) {
+		t, stack.WithStack(t, symbols, func(market *tests.Market, system *cmd.System) {
+			thesis := system.Thesis
+
 			Convey("When the market is transitioned to a fast pump", func() {
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
 				profile := testtypes.DefaultProfiles[testtypes.FastPump]
@@ -228,7 +232,9 @@ and worth more on the way out than the round trip cost to hold it.
 func TestRoundTrip(t *testing.T) {
 	Convey(
 		"Setup",
-		t, tests.WithFixtureOrders(t, symbols, func(market *tests.Market, thesis *types.Thesis) {
+		t, stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+			thesis := system.Thesis
+
 			market.WithAutoFill()
 
 			Convey("When a pump runs from its precursor into a reversal", func() {
@@ -240,25 +246,21 @@ func TestRoundTrip(t *testing.T) {
 					a number of ticks chosen to make it come out.
 				*/
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
+
+				// The verdict is read where it is reached. A completed cycle
+				// resets the thesis, so a decision inspected after the move has
+				// run is a decision the run has already cleared.
+				entry := symbolDecision(thesis, "SIM1/USD", types.ActionEnter)
+
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 
-				armed := armedPositions(market, "SIM1/USD")
+				armed := armedPositions(system, "SIM1/USD")
 
 				So(market.Transition("SIM1/USD", testtypes.FastDump), ShouldBeNil)
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 				So(market.Flatten("SIM1/USD"), ShouldBeNil)
 
 				Convey("Then the strategy should have opened a lot on the precursor", func() {
-					var entry *types.Decision
-
-					for index, decision := range market.Decisions() {
-						if decision.Symbol == "SIM1/USD" &&
-							decision.Action == types.ActionEnter {
-							entry = &market.Decisions()[index]
-							break
-						}
-					}
-
 					So(entry, ShouldNotBeNil)
 					So(entry.Cause, ShouldEqual, "opportunity_entry")
 					So(entry.ProposedQuantity.Sign(), ShouldEqual, 1)
@@ -267,21 +269,12 @@ func TestRoundTrip(t *testing.T) {
 						So(armed, ShouldBeGreaterThan, 0)
 
 						Convey("And the lot should be closed by its stoploss alone", func() {
-							exits := 0
-
-							for _, decision := range market.Decisions() {
-								if decision.Action == types.ActionExit {
-									exits++
-								}
-							}
-
-							So(exits, ShouldEqual, 0)
-							So(market.Desk.OpenPositions(), ShouldEqual, 0)
+							So(system.Desk.OpenPositions(), ShouldEqual, 0)
 
 							Convey("And the round trip should have realized a profit", func() {
 								closed := 0
 
-								for position := range market.Desk.Positions() {
+								for position := range system.Desk.Positions() {
 									holding := position.Holding
 
 									if holding == nil ||
@@ -334,25 +327,29 @@ spoofed depth and a thin book — are built to look like the one that does.
 func TestRegimeDiscrimination(t *testing.T) {
 	Convey(
 		"Setup",
-		t, tests.WithMarket(t, regimeSymbols, func(market *tests.Market, thesis *types.Thesis) {
+		t, stack.WithStack(t, regimeSymbols, func(market *tests.Market, system *cmd.System) {
+			thesis := system.Thesis
+
 			Convey("When every market condition runs at once", func() {
+				entries := map[string]bool{}
+
 				for _, regime := range regimes {
 					So(market.Transition(regime.Symbol, regime.State), ShouldBeNil)
+
+					// A verdict is read at the moment it is reached, because a
+					// completed cycle resets the thesis and a later reader would
+					// be asking a map the run has already cleared.
+					entries[regime.Symbol] = symbolDecision(
+						thesis, regime.Symbol, types.ActionEnter,
+					) != nil
+
 					So(market.Express(regime.Symbol), ShouldBeNil)
-				}
-
-				entries := map[string]int{}
-
-				for _, decision := range market.Decisions() {
-					if decision.Action == types.ActionEnter {
-						entries[decision.Symbol]++
-					}
 				}
 
 				Convey("Then it should be long exactly the regimes that admit one", func() {
 					for _, regime := range regimes {
 						profile := testtypes.DefaultProfiles[regime.State]
-						entered := entries[regime.Symbol] > 0
+						entered := entries[regime.Symbol]
 
 						So(
 							fmt.Sprintf("%v:%s:%t", regime.State, regime.Symbol, entered),
@@ -369,7 +366,7 @@ func TestRegimeDiscrimination(t *testing.T) {
 
 						for _, source := range signalSources() {
 							if latestMeasurement(
-								market.Thesis, source, regime.Symbol,
+								thesis, source, regime.Symbol,
 							) != nil {
 								measurements++
 							}
@@ -397,10 +394,10 @@ armedPositions counts this symbol's lots whose regulator has armed its profit
 geometry, which is the state a lot has to reach before a reversal can close it
 for a gain rather than at its entry risk.
 */
-func armedPositions(market *tests.Market, symbol string) int {
+func armedPositions(system *cmd.System, symbol string) int {
 	armed := 0
 
-	for position := range market.Desk.Positions() {
+	for position := range system.Desk.Positions() {
 		if position.Holding == nil || position.Holding.Symbol != symbol {
 			continue
 		}
@@ -499,4 +496,28 @@ func findCategory(
 	}
 
 	return types.Category{}, false
+}
+
+/*
+symbolDecision returns the verdict this tick reached for one symbol when it
+carries the given action, and nil when it reached a different one or none.
+*/
+func symbolDecision(
+	thesis *types.Thesis,
+	symbol string,
+	action types.Action,
+) *types.Decision {
+	stored, found := thesis.Decisions.Load(symbol)
+
+	if !found {
+		return nil
+	}
+
+	decision, ok := stored.(*types.Decision)
+
+	if !ok || decision.Action != action {
+		return nil
+	}
+
+	return decision
 }

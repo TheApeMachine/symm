@@ -16,8 +16,10 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/tests"
 	executionfixture "github.com/theapemachine/symm/tests/fixtures/execution"
+	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -37,8 +39,8 @@ it opens — which is a hard-floor breach, correctly. These tests are about
 execution correlation, so they fill at a price the book could have filled them
 at.
 */
-func fillPrice(market *tests.Market, symbol string) string {
-	tick := market.Desk.Price().Tick(symbol)
+func fillPrice(system *cmd.System, symbol string) string {
+	tick := system.Desk.Price().Tick(symbol)
 
 	if tick == nil || tick.Ask == nil {
 		return ""
@@ -48,14 +50,14 @@ func fillPrice(market *tests.Market, symbol string) string {
 }
 
 func awaitPosition(
-	market *tests.Market,
+	system *cmd.System,
 	match func(*broker.Position) bool,
 ) *broker.Position {
 	deadline := time.Now().Add(fixtureEventTimeout)
 	var latest *broker.Position
 
 	for time.Now().Before(deadline) {
-		positions := slices.Collect(market.Desk.Positions())
+		positions := slices.Collect(system.Desk.Positions())
 
 		if len(positions) > 0 {
 			latest = positions[0]
@@ -71,8 +73,12 @@ func awaitPosition(
 	return latest
 }
 
-func triggerStop(market *tests.Market, symbol string) *broker.Position {
-	market.Desk.ApplyEvidence(types.StopEvidence{
+func triggerStop(
+	market *tests.Market,
+	system *cmd.System,
+	symbol string,
+) *broker.Position {
+	system.Desk.ApplyEvidence(types.StopEvidence{
 		Symbol:     symbol,
 		RegimeExit: types.TriggerPumpDumpSellIgnition,
 		ObservedAt: time.Now().UTC(),
@@ -80,7 +86,7 @@ func triggerStop(market *tests.Market, symbol string) *broker.Position {
 	})
 	market.Tick()
 
-	return awaitPosition(market, func(position *broker.Position) bool {
+	return awaitPosition(system, func(position *broker.Position) bool {
 		return position.ExitOrder != nil && position.ExitOrder.ClOrdId != ""
 	})
 }
@@ -91,12 +97,12 @@ func TestPositionOnExecution(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("Execution updates should follow private transport correlation", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("Execution updates should follow private transport correlation", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
-			decision := entryDecision(market, symbols[0].Pair)
-			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+			decision := entryDecision(system, symbols[0].Pair)
+			So(system.Desk.Execute(decision), ShouldBeNil)
 
-			positions := slices.Collect(market.Desk.Positions())
+			positions := slices.Collect(system.Desk.Positions())
 			So(positions, ShouldHaveLength, 1)
 			position := positions[0]
 
@@ -111,15 +117,15 @@ func TestPositionOnExecution(t *testing.T) {
 				market.Private.Publish("executions", executionfixture.Frame(opened))
 				market.Tick()
 
-				position = slices.Collect(market.Desk.Positions())[0]
+				position = slices.Collect(system.Desk.Positions())[0]
 				So(position.Status, ShouldEqual, types.PENDING)
 				So(position.Holding.Status, ShouldEqual, types.PENDING)
-				So(market.Desk.OpenPositions(), ShouldEqual, 1)
+				So(system.Desk.OpenPositions(), ShouldEqual, 1)
 			})
 
 			Convey("A filled event with another client order ID should be ignored", func() {
 				originalQuantity := position.Holding.Qty.String()
-				openPositions := market.Desk.OpenPositions()
+				openPositions := system.Desk.OpenPositions()
 				uncorrelated := executionfixture.BuyFill()
 				uncorrelated.ClientOrderID = uuid.NewString()
 				uncorrelated.Symbol = decision.Symbol
@@ -127,23 +133,23 @@ func TestPositionOnExecution(t *testing.T) {
 				market.Private.Publish("executions", executionfixture.Frame(uncorrelated))
 				market.Tick()
 
-				position = slices.Collect(market.Desk.Positions())[0]
+				position = slices.Collect(system.Desk.Positions())[0]
 				So(position.Status, ShouldEqual, types.PENDING)
 				So(position.Holding.Status, ShouldEqual, types.PENDING)
 				So(position.Holding.Qty.String(), ShouldEqual, originalQuantity)
-				So(market.Desk.OpenPositions(), ShouldEqual, openPositions)
+				So(system.Desk.OpenPositions(), ShouldEqual, openPositions)
 			})
 
 			Convey("Correlated buy and sell fills should open and close inventory", func() {
 				buy := executionfixture.BuyFill()
 				buy.ClientOrderID = decision.ID
 				buy.Symbol = decision.Symbol
-				buy.AvgPrice = fillPrice(market, decision.Symbol)
+				buy.AvgPrice = fillPrice(system, decision.Symbol)
 				buy.CumQty = decision.ProposedQuantity.String()
 				market.Private.Publish("executions", executionfixture.Frame(buy))
 				market.Tick()
 
-				position = slices.Collect(market.Desk.Positions())[0]
+				position = slices.Collect(system.Desk.Positions())[0]
 				So(position.Status, ShouldEqual, types.OPEN)
 				So(position.Holding.Status, ShouldEqual, types.OPEN)
 				So(position.Holding.SellableQty.Cmp(decimal.NewFromFloat64(0.25)), ShouldEqual, 0)
@@ -151,9 +157,9 @@ func TestPositionOnExecution(t *testing.T) {
 				expectedEntryAt, err := time.Parse(time.RFC3339Nano, buy.Timestamp)
 				So(err, ShouldBeNil)
 				So(*position.Holding.EntryAt, ShouldResemble, expectedEntryAt)
-				So(market.Desk.OpenPositions(), ShouldEqual, 1)
+				So(system.Desk.OpenPositions(), ShouldEqual, 1)
 
-				position = triggerStop(market, decision.Symbol)
+				position = triggerStop(market, system, decision.Symbol)
 				exitID := position.ExitOrder.ClOrdId
 				So(exitID, ShouldNotBeBlank)
 
@@ -164,7 +170,7 @@ func TestPositionOnExecution(t *testing.T) {
 				market.Private.Publish("executions", executionfixture.Frame(sell))
 				market.Tick()
 
-				position = awaitPosition(market, func(position *broker.Position) bool {
+				position = awaitPosition(system, func(position *broker.Position) bool {
 					return position.Status == types.CLOSED
 				})
 				So(position.Status, ShouldEqual, types.CLOSED)
@@ -174,7 +180,7 @@ func TestPositionOnExecution(t *testing.T) {
 				expectedExitAt, err := time.Parse(time.RFC3339Nano, sell.Timestamp)
 				So(err, ShouldBeNil)
 				So(*position.Holding.ExitAt, ShouldResemble, expectedExitAt)
-				So(market.Desk.OpenPositions(), ShouldEqual, 0)
+				So(system.Desk.OpenPositions(), ShouldEqual, 0)
 			})
 
 			Convey("Split fills should accumulate each execution fee exactly once", func() {
@@ -202,13 +208,13 @@ func TestPositionOnExecution(t *testing.T) {
 
 				expectedFee, err := decimal.NewFromString("0.065")
 				So(err, ShouldBeNil)
-				position = awaitPosition(market, func(position *broker.Position) bool {
+				position = awaitPosition(system, func(position *broker.Position) bool {
 					return position.Holding.EntryFee != nil &&
 						position.Holding.EntryFee.Cmp(expectedFee) == 0
 				})
 				So(position.Holding.EntryFee.Cmp(expectedFee), ShouldEqual, 0)
 
-				position = triggerStop(market, decision.Symbol)
+				position = triggerStop(market, system, decision.Symbol)
 				exitID := position.ExitOrder.ClOrdId
 				So(exitID, ShouldNotBeBlank)
 
@@ -224,7 +230,7 @@ func TestPositionOnExecution(t *testing.T) {
 				market.Tick()
 				firstExitFee, err := decimal.NewFromString("0.030")
 				So(err, ShouldBeNil)
-				awaitPosition(market, func(position *broker.Position) bool {
+				awaitPosition(system, func(position *broker.Position) bool {
 					return position.Holding.ExitFee != nil &&
 						position.Holding.ExitFee.Cmp(firstExitFee) == 0
 				})
@@ -239,7 +245,7 @@ func TestPositionOnExecution(t *testing.T) {
 				market.Private.Publish("executions", executionfixture.Frame(secondSell))
 				market.Tick()
 
-				position = awaitPosition(market, func(position *broker.Position) bool {
+				position = awaitPosition(system, func(position *broker.Position) bool {
 					return position.Holding.ExitFee != nil &&
 						position.Holding.ExitFee.Cmp(expectedFee) == 0
 				})
@@ -254,11 +260,11 @@ func TestPositionOnExecution(t *testing.T) {
 				partial.OrderStatus = "partially_filled"
 				partial.LastQty = "0.10"
 				partial.CumQty = "0.10"
-				partial.AvgPrice = fillPrice(market, decision.Symbol)
+				partial.AvgPrice = fillPrice(system, decision.Symbol)
 				market.Private.Publish("executions", executionfixture.Frame(partial))
 				market.Tick()
 
-				position = triggerStop(market, decision.Symbol)
+				position = triggerStop(market, system, decision.Symbol)
 				firstExitID := position.ExitOrder.ClOrdId
 
 				late := partial
@@ -276,12 +282,12 @@ func TestPositionOnExecution(t *testing.T) {
 				firstExit.CumQty = "0.10"
 				market.Private.Publish("executions", executionfixture.Frame(firstExit))
 				market.Tick()
-				awaitPosition(market, func(position *broker.Position) bool {
+				awaitPosition(system, func(position *broker.Position) bool {
 					return position.Holding.SellableQty.Cmp(decimal.NewFromFloat64(0.15)) == 0
 				})
 				market.Tick()
 
-				position = awaitPosition(market, func(position *broker.Position) bool {
+				position = awaitPosition(system, func(position *broker.Position) bool {
 					return position.ExitOrder.ClOrdId != firstExitID
 				})
 				secondExitID := position.ExitOrder.ClOrdId
@@ -297,7 +303,7 @@ func TestPositionOnExecution(t *testing.T) {
 				market.Private.Publish("executions", executionfixture.Frame(secondExit))
 				market.Tick()
 
-				position = awaitPosition(market, func(position *broker.Position) bool {
+				position = awaitPosition(system, func(position *broker.Position) bool {
 					return position.Status == types.CLOSED
 				})
 				So(position.Status, ShouldEqual, types.CLOSED)
@@ -308,12 +314,12 @@ func TestPositionOnExecution(t *testing.T) {
 				buy := executionfixture.BuyFill()
 				buy.ClientOrderID = decision.ID
 				buy.Symbol = decision.Symbol
-				buy.AvgPrice = fillPrice(market, decision.Symbol)
+				buy.AvgPrice = fillPrice(system, decision.Symbol)
 				buy.CumQty = decision.ProposedQuantity.String()
 				market.Private.Publish("executions", executionfixture.Frame(buy))
 				market.Tick()
 
-				position = triggerStop(market, decision.Symbol)
+				position = triggerStop(market, system, decision.Symbol)
 				firstExitID := position.ExitOrder.ClOrdId
 
 				canceled := executionfixture.ExitFill()
@@ -325,12 +331,12 @@ func TestPositionOnExecution(t *testing.T) {
 				canceled.CumQty = "0.10"
 				market.Private.Publish("executions", executionfixture.Frame(canceled))
 				market.Tick()
-				awaitPosition(market, func(position *broker.Position) bool {
+				awaitPosition(system, func(position *broker.Position) bool {
 					return position.Holding.SellableQty.Cmp(decimal.NewFromFloat64(0.15)) == 0
 				})
 				market.Tick()
 
-				position = awaitPosition(market, func(position *broker.Position) bool {
+				position = awaitPosition(system, func(position *broker.Position) bool {
 					return position.ExitOrder.ClOrdId != firstExitID
 				})
 				So(position.ExitOrder.ClOrdId, ShouldNotEqual, firstExitID)
@@ -390,6 +396,8 @@ func stopRows(t *testing.T, positionID string) []map[string]any {
 		rows = append(rows, value)
 	}
 
+	So(scanner.Err(), ShouldBeNil)
+
 	return rows
 }
 
@@ -404,16 +412,16 @@ func TestPositionStopAudit(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("Every change should leave a row that can label the outcome later", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("Every change should leave a row that can label the outcome later", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
-			decision := entryDecision(market, symbols[0].Pair)
-			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+			decision := entryDecision(system, symbols[0].Pair)
+			So(system.Desk.Execute(decision), ShouldBeNil)
 
-			position := slices.Collect(market.Desk.Positions())[0]
+			position := slices.Collect(system.Desk.Positions())[0]
 			buy := executionfixture.BuyFill()
 			buy.ClientOrderID = decision.ID
 			buy.Symbol = decision.Symbol
-			buy.AvgPrice = fillPrice(market, decision.Symbol)
+			buy.AvgPrice = fillPrice(system, decision.Symbol)
 			buy.CumQty = decision.ProposedQuantity.String()
 			market.Private.Publish("executions", executionfixture.Frame(buy))
 			market.Tick()
@@ -464,16 +472,16 @@ func TestPositionStopSnapshot(t *testing.T) {
 			testtypes.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		Convey("Its geometry should be readable from outside the desk goroutine", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("Its geometry should be readable from outside the desk goroutine", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
-			decision := entryDecision(market, symbols[0].Pair)
-			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+			decision := entryDecision(system, symbols[0].Pair)
+			So(system.Desk.Execute(decision), ShouldBeNil)
 
-			position := slices.Collect(market.Desk.Positions())[0]
+			position := slices.Collect(system.Desk.Positions())[0]
 			buy := executionfixture.BuyFill()
 			buy.ClientOrderID = decision.ID
 			buy.Symbol = decision.Symbol
-			buy.AvgPrice = fillPrice(market, decision.Symbol)
+			buy.AvgPrice = fillPrice(system, decision.Symbol)
 			buy.CumQty = decision.ProposedQuantity.String()
 			market.Private.Publish("executions", executionfixture.Frame(buy))
 			market.Tick()
@@ -505,26 +513,26 @@ func TestPositionOnTicker(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("Ticker updates should not submit the sell again", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("Ticker updates should not submit the sell again", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			market.Tick()
-			decision := entryDecision(market, symbols[0].Pair)
-			So(market.Desk.Execute([]types.Decision{decision}), ShouldBeNil)
+			decision := entryDecision(system, symbols[0].Pair)
+			So(system.Desk.Execute(decision), ShouldBeNil)
 
 			buy := executionfixture.BuyFill()
 			buy.ClientOrderID = decision.ID
 			buy.Symbol = decision.Symbol
-			buy.AvgPrice = fillPrice(market, decision.Symbol)
+			buy.AvgPrice = fillPrice(system, decision.Symbol)
 			buy.CumQty = decision.ProposedQuantity.String()
 			market.Private.Publish("executions", executionfixture.Frame(buy))
 			market.Tick()
 
-			position := triggerStop(market, decision.Symbol)
+			position := triggerStop(market, system, decision.Symbol)
 			So(position.Status, ShouldEqual, types.PENDING)
 			So(position.ExitOrderResult, ShouldNotBeNil)
 			firstOrderID := position.ExitOrderResult.ID[0]
 
 			market.Tick()
-			position = slices.Collect(market.Desk.Positions())[0]
+			position = slices.Collect(system.Desk.Positions())[0]
 
 			So(position.ExitOrderResult.ID[0], ShouldEqual, firstOrderID)
 		}))

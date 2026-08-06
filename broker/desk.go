@@ -348,18 +348,16 @@ Execute turns an arbitrated decision round into desk-owned order work. Entries
 are recorded before submission so the next arbitration round sees committed
 capacity even while the venue acknowledgement or fill is still pending.
 */
-func (desk *Desk) Execute(decisions []types.Decision) (err error) {
-	for _, decision := range decisions {
-		switch decision.Action {
-		case types.ActionEnter:
-			err = errors.Join(err, desk.enter(decision))
-		case types.ActionExit:
-			err = errors.Join(err, errnie.Err(
-				errnie.NotAcceptable,
-				"desk: strategy exits are disabled; only a triggered stoploss may submit a sell",
-				nil,
-			))
-		}
+func (desk *Desk) Execute(decision types.Decision) (err error) {
+	switch decision.Action {
+	case types.ActionEnter:
+		err = desk.enter(decision)
+	case types.ActionExit:
+		err = errnie.Err(
+			errnie.NotAcceptable,
+			"desk: strategy exits are disabled; only a triggered stoploss may submit a sell",
+			nil,
+		)
 	}
 
 	return errnie.Error(err)

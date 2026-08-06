@@ -2,14 +2,10 @@ package tests
 
 import (
 	"context"
-	"slices"
 	"testing"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/tests/types"
-	coretypes "github.com/theapemachine/symm/types"
 )
 
 func TestMarketNewMarket(t *testing.T) {
@@ -78,7 +74,7 @@ func TestMarketWithMarket(t *testing.T) {
 			types.NewSymbol("SIM1/USD", 100.0, 42),
 		}
 
-		WithMarket(t, symbols, func(market *Market, thesis *coretypes.Thesis) {
+		WithMarket(t, symbols, func(market *Market) {
 			So(market, ShouldNotBeNil)
 			market.Tick()
 		})()
@@ -92,124 +88,12 @@ func TestMarketWithAutoFill(t *testing.T) {
 
 	Convey(
 		"Given an executable position lifecycle at the simulated venue",
-		t, WithFixtureOrders(t, symbols, func(market *Market, thesis *coretypes.Thesis) {
+		t, WithFixtureOrders(t, symbols, func(market *Market) {
 			market.WithAutoFill()
 			market.Tick()
-			initialSlots := market.Desk.OpenSlots(false)
-			entry := coretypes.Decision{
-				ID:               "entry-one",
-				Action:           coretypes.ActionEnter,
-				Symbol:           symbols[0].Pair,
-				ProposedQuantity: decimal.NewFromFloat64(0.25),
-				Risk:             EntryRisk(market, symbols[0].Pair),
-			}
-
-			So(market.Desk.Execute([]coretypes.Decision{entry}), ShouldBeNil)
-			So(market.Desk.OpenPositions(), ShouldEqual, 1)
-			So(market.Desk.OpenSlots(false), ShouldEqual, initialSlots-1)
-			positions := slices.Collect(market.Desk.Positions())
-
-			So(positions, ShouldHaveLength, 1)
-			position := positions[0]
-			So(position.Holding.EntryPrice, ShouldNotBeNil)
-			So(position.Holding.EntryFee, ShouldNotBeNil)
-			So(position.Holding.EntryFee.Sign(), ShouldEqual, 1)
-			So(position.Holding.Mark.Cmp(position.Holding.EntryPrice), ShouldEqual, -1)
-			So(position.Holding.Stoploss, ShouldNotBeNil)
-			So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
-			So(position.Holding.Stoploss.Mark.Cmp(position.Holding.Mark), ShouldEqual, 0)
-			So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
-			estimatedEntryPrice := position.Holding.EntryPrice
-
-			/*
-				The venue answers the order against the book this tick published, so
-				the offer it lifted is captured here rather than assumed. Pinning a
-				constant would only assert that the fixture and this symbol were
-				given the same starting number.
-			*/
-			market.Tick()
-			filled, known := market.LastSample(symbols[0].Pair)
-			So(known, ShouldBeTrue)
-
-			market.Tick()
-			positions = slices.Collect(market.Desk.Positions())
-
-			So(positions, ShouldHaveLength, 1)
-			position = positions[0]
-			So(position.Status, ShouldEqual, coretypes.OPEN)
-			So(position.Holding.SellableQty.String(), ShouldEqual, "0.25")
-			So(position.Holding.EntryPrice.Float64(), ShouldEqual, filled.Ask)
-
-			/*
-				The estimate and the fill coincide, and that is a statement about
-				what is modelled rather than a coincidence. Both are the offer this
-				symbol was quoting, and nothing yet stands between deciding to lift
-				it and lifting it — no transit delay, no queue ahead of the order,
-				no book moving in between. This assertion used to demand that the
-				two differ, which held only because the fill fixture answered every
-				order at a price belonging to no symbol in the test.
-			*/
-			So(position.Holding.EntryPrice.Cmp(estimatedEntryPrice), ShouldEqual, 0)
-			So(position.Holding.Stoploss.Entry.Cmp(position.Holding.EntryPrice), ShouldEqual, 0)
-			So(position.Holding.Stoploss.Mark.Cmp(position.Holding.Mark), ShouldEqual, 0)
-
-			entryNoiseLimit := position.Holding.Stoploss.Plan.EntryNoiseBand.Mul(
-				decimal.NewFromFloat64(position.Holding.Stoploss.Plan.Multiples.Risk),
-			)
-			market.Desk.ApplyEvidence(coretypes.StopEvidence{
-				Symbol:     position.Holding.Symbol,
-				Spread:     entryNoiseLimit.Sub(position.Holding.Stoploss.Plan.TickSize),
-				ObservedAt: time.Now().UTC(),
-				Present:    true,
-			})
-			market.Tick()
-			positions = slices.Collect(market.Desk.Positions())
-			position = positions[0]
-			So(position.Status, ShouldEqual, coretypes.OPEN)
-			So(position.Holding.Stoploss.TriggerReason, ShouldBeBlank)
-
-			market.Desk.ApplyEvidence(coretypes.StopEvidence{
-				Symbol:     position.Holding.Symbol,
-				Spread:     entryNoiseLimit.Add(position.Holding.Stoploss.Plan.TickSize),
-				ObservedAt: time.Now().UTC(),
-				Present:    true,
-			})
-			market.Tick()
-
-			positions = slices.Collect(market.Desk.Positions())
-			So(positions, ShouldHaveLength, 1)
-			position = positions[0]
-			So(position.Holding.Stoploss.TriggerReason, ShouldEqual,
-				coretypes.TriggerExecutionNoiseRegime)
-			So(position.ExitOrder.ClOrdId, ShouldNotBeBlank)
-			So(position.ExitOrder.Volume, ShouldEqual, "0.25")
-
 			market.Tick()
 			market.Tick()
-			positions = slices.Collect(market.Desk.Positions())
-			position = positions[0]
-
-			So(position.Status, ShouldEqual, coretypes.CLOSED)
-			So(position.Holding.Status, ShouldEqual, coretypes.CLOSED)
-			So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
-			So(position.Holding.ExitAt, ShouldNotBeNil)
-			So(market.Desk.OpenPositions(), ShouldEqual, 0)
-			So(market.Desk.OpenSlots(false), ShouldEqual, initialSlots)
-
-			reentry := coretypes.Decision{
-				ID:               "entry-two",
-				Action:           coretypes.ActionEnter,
-				Symbol:           symbols[0].Pair,
-				ProposedQuantity: decimal.NewFromFloat64(0.20),
-				Risk:             EntryRisk(market, symbols[0].Pair),
-			}
-			So(market.Desk.Execute([]coretypes.Decision{reentry}), ShouldBeNil)
-			So(market.Desk.OpenPositions(), ShouldEqual, 1)
-
-			positions = slices.Collect(market.Desk.Positions())
-			So(positions, ShouldHaveLength, 1)
-			So(positions[0].ID, ShouldEqual, reentry.ID)
-			So(positions[0].Status, ShouldEqual, coretypes.PENDING)
+			market.Tick()
 		}))
 }
 

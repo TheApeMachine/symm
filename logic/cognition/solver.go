@@ -260,7 +260,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return true
 	})
 
-	thesis.Readiness.Cognition = true
+	thesis.Stamp(types.SourceCognition)
 
 	solver.publish(thesis)
 

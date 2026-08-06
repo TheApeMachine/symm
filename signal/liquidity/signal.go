@@ -108,7 +108,7 @@ func (signal *Signal) run() {
 					measurements := signal.Measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements)
+						thesis.AppendMeasurements(measurements, types.MeasurementsReady(measurements))
 						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
 				}

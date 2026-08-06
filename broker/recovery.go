@@ -352,4 +352,3 @@ func subtractAmount(left, right *decimal.Decimal) *decimal.Decimal {
 	scale := max(left.GetScale(), right.GetScale())
 	return left.SetScale(scale).Sub(right.SetScale(scale))
 }
-

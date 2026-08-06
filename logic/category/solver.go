@@ -73,19 +73,27 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	symbols := thesis.Symbols()
-	categories := make(map[string][]types.Category, len(symbols))
-
-	for _, symbol := range symbols {
-		found := solver.classify(symbol, thesis.Series(symbol))
-
-		if len(found) > 0 {
-			categories[symbol] = found
-		}
+	// Categories are read off this tick's measurements, so there is nothing to
+	// classify until every signal has stamped. Skipping leaves the stamp
+	// unraised and the tick comes back once the evidence is there.
+	if !thesis.SignalsMeasured() {
+		return nil
 	}
 
-	thesis.Categories = categories
-	thesis.Readiness.Categories = true
+	for _, symbol := range thesis.MarketSymbols() {
+		found := solver.classify(symbol, thesis.Series(symbol))
+
+		if len(found) == 0 {
+			// A symbol the evidence no longer supports must not keep the
+			// verdict it carried on an earlier tick.
+			thesis.Categories.Delete(symbol)
+			continue
+		}
+
+		thesis.Categories.Store(symbol, found)
+	}
+
+	thesis.Stamp(types.SourceCategories)
 
 	return nil
 }

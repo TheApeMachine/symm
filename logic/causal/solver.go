@@ -106,7 +106,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	solver.store(thesis, results)
-	thesis.Readiness.Causal = true
+	thesis.Stamp(types.SourceCausal)
 
 	solver.publish(thesis)
 	return nil

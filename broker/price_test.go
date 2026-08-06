@@ -6,8 +6,10 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/tests"
+	"github.com/theapemachine/symm/tests/stack"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -18,16 +20,16 @@ func TestPriceWithFriction(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("Trade values should debit the fee on both sides", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			market.Desk.Price().Update(&kraken.TickerData{
+		Convey("Trade values should debit the fee on both sides", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+			system.Desk.Price().Update(&kraken.TickerData{
 				Symbol: symbols[0].Pair,
 				Bid:    decimal.NewFromInt64(100),
 				Ask:    decimal.NewFromInt64(100),
 			})
 			volume := decimal.NewFromFloat64(0.4)
 
-			buyValue := market.Desk.Price().WithFriction(symbols[0].Pair, broker.BUY, volume)
-			sellValue := market.Desk.Price().WithFriction(symbols[0].Pair, broker.SELL, volume)
+			buyValue := system.Desk.Price().WithFriction(symbols[0].Pair, broker.BUY, volume)
+			sellValue := system.Desk.Price().WithFriction(symbols[0].Pair, broker.SELL, volume)
 
 			So(buyValue.String(), ShouldEqual, "40.10")
 			So(sellValue.String(), ShouldEqual, "39.90")
@@ -41,14 +43,14 @@ func TestPriceMark(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("A sell mark should debit the liquidation fee", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			market.Desk.Price().Update(&kraken.TickerData{
+		Convey("A sell mark should debit the liquidation fee", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+			system.Desk.Price().Update(&kraken.TickerData{
 				Symbol: symbols[0].Pair,
 				Bid:    decimal.NewFromInt64(100),
 				Ask:    decimal.NewFromInt64(100),
 			})
 
-			sellMark := market.Desk.Price().Mark(symbols[0].Pair, broker.SELL)
+			sellMark := system.Desk.Price().Mark(symbols[0].Pair, broker.SELL)
 
 			So(sellMark.String(), ShouldEqual, "99.74")
 		}))
@@ -61,8 +63,8 @@ func TestPriceFee(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("Fee lookup should not require market data", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
-			fee, err := market.Desk.Price().Fee(symbols[0].Pair)
+		Convey("Fee lookup should not require market data", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
+			fee, err := system.Desk.Price().Fee(symbols[0].Pair)
 
 			So(err, ShouldBeNil)
 			So(fee.String(), ShouldEqual, "0.00260000")
@@ -76,7 +78,7 @@ func TestPricePnL(t *testing.T) {
 			testtypes.NewSymbol("BTC/USD", 100.0, 42),
 		}
 
-		Convey("PnL should retain and debit both fees exactly", tests.WithFixtureOrders(t, symbols, func(market *tests.Market) {
+		Convey("PnL should retain and debit both fees exactly", stack.WithOrders(t, symbols, func(market *tests.Market, system *cmd.System) {
 			bid, err := decimal.NewFromString("100.00")
 			So(err, ShouldBeNil)
 			entryPrice, err := decimal.NewFromString("100.0")
@@ -84,7 +86,7 @@ func TestPricePnL(t *testing.T) {
 			entryFee, err := decimal.NewFromString("0.10400000")
 			So(err, ShouldBeNil)
 
-			market.Desk.Price().Update(&kraken.TickerData{
+			system.Desk.Price().Update(&kraken.TickerData{
 				Symbol: symbols[0].Pair,
 				Bid:    bid,
 				Ask:    bid,
@@ -101,7 +103,7 @@ func TestPricePnL(t *testing.T) {
 				Symbol:        symbols[0].Pair,
 				CostPrecision: 5,
 			}
-			pnl := market.Desk.Price().PnL(pair, holding)
+			pnl := system.Desk.Price().PnL(pair, holding)
 
 			So(pnl.Float64(), ShouldAlmostEqual, -0.208, 1e-8)
 			So(pnl.String(), ShouldEqual, "-0.20800")

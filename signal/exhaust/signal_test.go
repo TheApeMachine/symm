@@ -183,7 +183,7 @@ func BenchmarkFrame(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		_ = signal.frame("BTC/USD", at, output, 1)
 	}
 }

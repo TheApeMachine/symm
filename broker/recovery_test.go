@@ -12,6 +12,7 @@ import (
 	"github.com/phuslu/log"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -71,6 +72,11 @@ func TestRecover(t *testing.T) {
 				},
 			},
 		)
+		public, private := market.Feeds()
+		system := cmd.Boot(t.Context(), types.NewThesis(nil), public, private, nil)
+
+		defer system.Close()
+
 		logs := &bytes.Buffer{}
 		originalWriter := log.DefaultLogger.Writer
 		log.DefaultLogger.Writer = log.IOWriter{Writer: logs}
@@ -81,10 +87,10 @@ func TestRecover(t *testing.T) {
 		}()
 
 		Convey("Recovery should adopt the known lot and skip unmanaged wallet inventory", func() {
-			positions := slices.Collect(market.Desk.Positions())
+			positions := slices.Collect(system.Desk.Positions())
 
 			So(positions, ShouldHaveLength, 1)
-			So(market.Desk.OpenPositions(), ShouldEqual, 1)
+			So(system.Desk.OpenPositions(), ShouldEqual, 1)
 			So(positions[0].ID, ShouldEqual, "recovered:SIM2/USD")
 			So(positions[0].Status, ShouldEqual, types.OPEN)
 			So(positions[0].Holding.Symbol, ShouldEqual, "SIM2/USD")
@@ -101,9 +107,9 @@ func TestRecover(t *testing.T) {
 			So(positions[0].Holding.Stoploss.Floor, ShouldBeNil)
 
 			market.Tick()
-			positions = slices.Collect(market.Desk.Positions())
+			positions = slices.Collect(system.Desk.Positions())
 
-			So(market.Desk.Price().Tick("sim2usd"), ShouldNotBeNil)
+			So(system.Desk.Price().Tick("sim2usd"), ShouldNotBeNil)
 			So(positions[0].Holding.EntryPrice.Float64(), ShouldEqual, 100.0)
 			So(positions[0].Holding.Mark.Cmp(positions[0].Holding.EntryPrice), ShouldNotEqual, 0)
 			So(positions[0].Holding.Stoploss.Entry.Cmp(positions[0].Holding.EntryPrice), ShouldEqual, 0)

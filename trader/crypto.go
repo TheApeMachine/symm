@@ -107,22 +107,33 @@ func (crypto *Crypto) run() {
 				crypto.onTicker(ticker)
 			case trade := <-crypto.subscriptions["trade"].Channel:
 				crypto.onTrade(trade)
-			case decisions := <-crypto.subscriptions["decisions"].Channel:
-				typedDecisions, ok := decisions.([]types.Decision)
+			case in := <-crypto.subscriptions["planner"].Channel:
+				var ok bool
+				crypto.thesis, ok = in.(*types.Thesis)
 
 				if !ok {
 					continue
 				}
 
-				go func() {
-					if err := crypto.desk.Execute(typedDecisions); err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Internal,
-							"crypto: failed to execute decision round",
-							err,
-						))
+				crypto.thesis.Decisions.Range(func(key, value any) bool {
+					decision, ok := value.(*types.Decision)
+
+					if !ok {
+						return true
 					}
-				}()
+
+					go func() {
+						if err := crypto.desk.Execute(*decision); err != nil {
+							errnie.Error(errnie.Err(
+								errnie.Internal,
+								"crypto: failed to execute decision round",
+								err,
+							))
+						}
+					}()
+
+					return true
+				})
 			}
 		}
 	}()

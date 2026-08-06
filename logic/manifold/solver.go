@@ -256,7 +256,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	if !attempted {
-		thesis.Readiness.Manifold = true
+		thesis.Stamp(types.SourceManifold)
 		return nil
 	}
 
@@ -267,7 +267,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	thesis.Readiness.Manifold = true
+	thesis.Stamp(types.SourceManifold)
 	return nil
 }
 

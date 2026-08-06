@@ -56,6 +56,16 @@ func NewEvaluator(
 	}
 }
 
+/*
+record stores one verdict under the symbol it was reached about, which is the
+key every later stage reads a symbol's decision back by. One evaluation reaches
+one verdict per symbol, so a second store for the same symbol replaces the first
+rather than leaving the pass holding two answers to the same question.
+*/
+func (evaluator Evaluator) record(thesis *types.Thesis, decision types.Decision) {
+	thesis.Decisions.Store(decision.Symbol, &decision)
+}
+
 func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 	if thesis == nil {
 		return
@@ -91,7 +101,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		forecast, ok := evaluator.candidate(thesis, symbol)
 
 		if !ok {
-			thesis.Decisions = append(thesis.Decisions, types.Decision{
+			evaluator.record(thesis, types.Decision{
 				Action:           types.ActionNothing,
 				Symbol:           symbol,
 				At:               thesis.At,
@@ -115,7 +125,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		firstStep, firstStepReady := forecast.Forecast.Step(0)
 
 		if !firstStepReady {
-			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+			evaluator.record(thesis, evaluator.reject(
 				forecast, 0, "forecast_curve_unavailable",
 				"confidence-supported forecast has no first step",
 				nil,
@@ -159,7 +169,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		}
 
 		if trace.MCTS.Searchable && !discountReady {
-			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+			evaluator.record(thesis, evaluator.reject(
 				forecast, 0, "hold_discount_unavailable",
 				"valid long-side exhaustion decay is required for trajectory search",
 				trace,
@@ -169,7 +179,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		}
 
 		if trace.MCTS.Searchable && !propagationReady {
-			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+			evaluator.record(thesis, evaluator.reject(
 				forecast, 0, "hawkes_propagation_unavailable",
 				"a valid fitted Hawkes spectral radius is required for trajectory search",
 				trace,
@@ -181,7 +191,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 		if hasGraph && contradicts > 0 &&
 			contradicts/(supports+contradicts) > graphContradictionShare {
 
-			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+			evaluator.record(thesis, evaluator.reject(
 				forecast, 0, "graph_contradiction",
 				"relational graph contradicts trade hypothesis",
 				trace,
@@ -242,7 +252,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			forecast.ExpectedReturn != nil && forecast.ExpectedReturn.Sign() >= 0
 
 		if utility <= 0 && !structural {
-			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+			evaluator.record(thesis, evaluator.reject(
 				forecast, utility, "non_positive_utility",
 				"executable utility does not clear trading costs",
 				trace,
@@ -255,7 +265,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			((mctsErr == nil && recommendedAction == ActionEnter) || !searchable)
 
 		if !priced && !structural {
-			thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+			evaluator.record(thesis, evaluator.reject(
 				forecast, utility, "mcts_rejected",
 				"causal MCTS trajectory search did not select entry action",
 				trace,
@@ -271,7 +281,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			)
 
 			if !haircutReady {
-				thesis.Decisions = append(thesis.Decisions, evaluator.reject(
+				evaluator.record(thesis, evaluator.reject(
 					forecast, utility, "allocation_evidence_unavailable",
 					"valid toxicity and executable-liquidity evidence is required for sizing",
 					trace,
@@ -292,7 +302,7 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 				reason = "positive executable utility accepted before causal history reached the MCTS minimum"
 			}
 
-			thesis.Decisions = append(thesis.Decisions, types.Decision{
+			evaluator.record(thesis, types.Decision{
 				Action:                  types.ActionEnter,
 				Symbol:                  symbol,
 				At:                      forecast.At,
@@ -325,6 +335,8 @@ func (evaluator Evaluator) EvaluateOpportunities(thesis *types.Thesis) {
 			})
 		}
 	}
+
+	thesis.Stamp(types.SourceEvaluator)
 }
 
 func (evaluator Evaluator) ManageContinuation(
@@ -357,7 +369,7 @@ func (evaluator Evaluator) ManageContinuation(
 		forecast, found := evaluator.candidate(thesis, position.Holding.Symbol)
 
 		if !found {
-			thesis.Decisions = append(thesis.Decisions, types.Decision{
+			evaluator.record(thesis, types.Decision{
 				Action:           types.ActionHold,
 				Symbol:           position.Holding.Symbol,
 				Cause:            "continuation",
@@ -373,7 +385,7 @@ func (evaluator Evaluator) ManageContinuation(
 		fee, err := price.Fee(position.Holding.Symbol)
 
 		if err != nil {
-			thesis.Decisions = append(thesis.Decisions, types.Decision{
+			evaluator.record(thesis, types.Decision{
 				Action:           types.ActionHold,
 				Symbol:           position.Holding.Symbol,
 				Cause:            "continuation",
@@ -427,7 +439,7 @@ func (evaluator Evaluator) ManageContinuation(
 			alternatives["passage_support"] = scenario.Support
 		}
 
-		thesis.Decisions = append(thesis.Decisions, types.Decision{
+		evaluator.record(thesis, types.Decision{
 			Action:            types.ActionHold,
 			Symbol:            forecast.Symbol,
 			At:                forecast.At,

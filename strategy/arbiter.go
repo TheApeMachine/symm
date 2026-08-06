@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 )
@@ -22,13 +23,27 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 		return
 	}
 
-	enters := make([]types.Decision, 0, len(thesis.Decisions))
-	retained := make([]types.Decision, 0, len(thesis.Decisions))
+	enters := make([]*types.Decision, 0)
 
-	for _, decision := range thesis.Decisions {
+	// The map holds pointers, so a verdict revised here is revised on the
+	// thesis. Only the entries are collected, and only because they have to be
+	// ranked against each other before any of them can claim a slot.
+	thesis.Decisions.Range(func(key, value any) bool {
+		decision, ok := value.(*types.Decision)
+
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"arbiter: decision map holds a value that is not a decision",
+				nil,
+			))
+
+			return true
+		}
+
 		if decision.Action == types.ActionEnter {
 			enters = append(enters, decision)
-			continue
+			return true
 		}
 
 		if decision.Action == types.ActionExit {
@@ -38,16 +53,16 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 			decision.ProposedQuantity = decimal.NewFromInt64(0)
 		}
 
-		retained = append(retained, decision)
-	}
+		return true
+	})
 
 	// Sort enter candidates by Opportunity first, then Utility descending
-	sort.Slice(enters, func(i, j int) bool {
-		if enters[i].Opportunity != enters[j].Opportunity {
-			return enters[i].Opportunity
+	sort.Slice(enters, func(left, right int) bool {
+		if enters[left].Opportunity != enters[right].Opportunity {
+			return enters[left].Opportunity
 		}
 
-		return enters[i].Utility > enters[j].Utility
+		return enters[left].Utility > enters[right].Utility
 	})
 
 	openSlots := max(arbiter.desk.OpenSlots(false), 0)
@@ -67,8 +82,7 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 
 		if openSlots > 0 {
 			candidate.AllocationClass = "normal"
-			thesis.NoteLifecycle(candidate.Symbol, types.LifecycleEntrySelected, thesis.At)
-			retained = append(retained, candidate)
+			thesis.Lifecycle.Store(candidate.Symbol, types.LifecycleEntrySelected)
 			openSlots--
 			continue
 		}
@@ -85,8 +99,7 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 				candidate.OpportunityMargin = candidate.Utility
 			}
 
-			thesis.NoteLifecycle(candidate.Symbol, types.LifecycleEntrySelected, thesis.At)
-			retained = append(retained, candidate)
+			thesis.Lifecycle.Store(candidate.Symbol, types.LifecycleEntrySelected)
 			reserveSlots--
 			continue
 		}
@@ -95,8 +108,7 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 		candidate.Action = types.ActionNothing
 		candidate.Cause = "slots_full"
 		candidate.Reason = "all entry slots are occupied by stop-governed positions"
-		retained = append(retained, candidate)
 	}
 
-	thesis.Decisions = retained
+	thesis.Stamp(types.SourceArbiter)
 }
