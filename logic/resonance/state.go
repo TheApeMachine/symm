@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/vector"
 )
 
 /*
@@ -17,9 +18,9 @@ type symbolState struct {
 	alphaCtrl     *learning.PaceController
 	confidence    *probability.Calibrator
 	featureScale  map[string]*adaptive.Standardizer
+	extractor     *vector.FeatureExtractor
 	alpha         float64
 	featureSchema []string
-	input         []float64
 	pendingInput  []float64
 	pendingMid    float64
 	pendingAt     time.Time

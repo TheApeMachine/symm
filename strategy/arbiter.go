@@ -20,6 +20,11 @@ func NewArbiter(desk *broker.Desk) *Arbiter {
 // Arbitrate ranks candidate entries and allocates available slots.
 func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 	enters := make([]*types.Decision, 0)
+	openPositions := arbiter.desk.OpenPositions()
+	normalSlots := arbiter.desk.OpenSlots(false)
+	opportunitySlots := arbiter.desk.OpenSlots(true)
+	normalCapacity := openPositions + normalSlots
+	opportunityCapacity := openPositions + opportunitySlots
 
 	// The map holds pointers, so a verdict revised here is revised on the
 	// thesis. Only the entries are collected, and only because they have to be
@@ -62,14 +67,23 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 	})
 
 	for _, candidate := range enters {
-		if arbiter.desk.OpenSlots(false) > 0 {
+		candidate.OpenPositions = openPositions
+		candidate.SlotCapacity = normalCapacity
+
+		if normalSlots > 0 {
 			candidate.AllocationClass = "normal"
+			normalSlots--
+			opportunitySlots--
+			openPositions++
 			thesis.Lifecycle.Store(candidate.Symbol, types.LifecycleEntrySelected)
 			continue
 		}
 
-		if candidate.Opportunity && arbiter.desk.OpenSlots(true) > 0 {
+		if candidate.Opportunity && opportunitySlots > 0 {
 			candidate.AllocationClass = "reserved"
+			candidate.SlotCapacity = opportunityCapacity
+			opportunitySlots--
+			openPositions++
 
 			if candidate.OpportunityMargin <= 0 {
 				candidate.OpportunityMargin = candidate.Utility
@@ -81,6 +95,7 @@ func (arbiter *Arbiter) Arbitrate(thesis *types.Thesis) {
 
 		// Open inventory belongs to its stoploss, so a challenger waits for a slot.
 		candidate.Action = types.ActionNothing
+		candidate.AllocationClass = ""
 		candidate.Cause = "slots_full"
 		candidate.Reason = "all entry slots are occupied by stop-governed positions"
 	}

@@ -227,6 +227,50 @@ func TestUpdate(t *testing.T) {
 			So(state.targetSamples, ShouldEqual, 2)
 		})
 	})
+
+	Convey("Given a ready feature observed at its learned mean", t, func() {
+		solver := NewSolver(nil, nil)
+		symbol := "BTC/USD"
+		featureKey := "reading"
+
+		for _, normalized := range []float64{0, 2} {
+			thesis := types.NewThesis(nil)
+			thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+				Source: types.SourceLiquidity,
+				Symbol: symbol,
+				Metrics: map[string]types.MetricSample{
+					featureKey: {Normalized: &normalized},
+				},
+			}})
+
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		mean := 1.0
+		thesis := types.NewThesis(nil)
+		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+			Source: types.SourceLiquidity,
+			Symbol: symbol,
+			Metrics: map[string]types.MetricSample{
+				featureKey: {Normalized: &mean},
+			},
+		}})
+
+		err := solver.Update(thesis)
+
+		Convey("Then the zero z-score remains a valid predictive-coding observation", func() {
+			So(err, ShouldBeNil)
+
+			stored, found := thesis.Resonance.Load(symbol)
+			So(found, ShouldBeTrue)
+
+			reading, ok := stored.(types.ResonanceReading)
+			So(ok, ShouldBeTrue)
+			So(reading.Stage, ShouldEqual, "resonance")
+			So(solver.state(symbol).alphaCtrl.Count(), ShouldEqual, 1)
+			So(solver.state(symbol).extractor, ShouldNotBeNil)
+		})
+	})
 }
 
 func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {

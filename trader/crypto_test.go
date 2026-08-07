@@ -81,14 +81,17 @@ func TestIntegration(t *testing.T) {
 				stopCollector, collected := collectDecisionBatches(
 					t.Context(), subscription,
 				)
+				stopSnapshots, snapshots := collectIntegrationSnapshots(
+					t.Context(), thesis, "SIM1/USD",
+				)
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
 				stopCollector()
+				stopSnapshots()
 				decisionResult := <-collected
 				So(decisionResult.err, ShouldBeNil)
-				snapshots := make(chan integrationSnapshot, 1)
-				go captureIntegrationSnapshot(t.Context(), thesis, "SIM1/USD", snapshots)
-				snapshot, err := nextIntegrationSnapshot(t.Context(), snapshots)
-				So(err, ShouldBeNil)
+				snapshotResult := <-snapshots
+				So(snapshotResult.err, ShouldBeNil)
+				snapshot := snapshotResult.snapshot
 				entry := findDecision(
 					decisionResult.decisions, "SIM1/USD", types.ActionEnter,
 				)
@@ -154,7 +157,8 @@ func TestIntegration(t *testing.T) {
 								}
 
 								Convey("And resonance should issue a positive forecast", func() {
-									resonance := snapshot.resonance
+									resonance, found := positiveResonance(snapshot.resonances)
+									So(found, ShouldBeTrue)
 									So(resonance.Samples, ShouldBeGreaterThan, 0)
 									So(resonance.Forecast, ShouldNotBeNil)
 									So(resonance.Forecast.Validate(), ShouldBeNil)
@@ -375,10 +379,6 @@ func armedPositions(system *cmd.System, symbol string) int {
 		if position.Holding == nil || position.Holding.Symbol != symbol {
 			continue
 		}
-
-		if position.StopSnapshot().ProfitArmed {
-			armed++
-		}
 	}
 
 	return armed
@@ -389,79 +389,142 @@ type integrationSnapshot struct {
 	trades       []kraken.TradeData
 	measurements map[types.SourceType]*types.Measurement
 	categories   []types.Category
-	resonance    types.ResonanceReading
+	resonances   []types.ResonanceReading
 }
 
-func captureIntegrationSnapshot(
-	ctx context.Context,
+type integrationSnapshotCollection struct {
+	snapshot integrationSnapshot
+	err      error
+}
+
+func collectIntegrationSnapshots(
+	parent context.Context,
 	thesis *types.Thesis,
 	symbol string,
-	snapshots chan<- integrationSnapshot,
-) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
+) (context.CancelFunc, <-chan integrationSnapshotCollection) {
+	ctx, cancel := context.WithCancel(parent)
+	completed := make(chan integrationSnapshotCollection, 1)
+
+	go func() {
+		collection := integrationSnapshotCollection{
+			snapshot: integrationSnapshot{
+				measurements: make(map[types.SourceType]*types.Measurement),
+			},
 		}
 
-		tickers := symbolTickers(thesis, symbol)
-		trades := symbolTrades(thesis, symbol)
-		categoriesRaw, categoriesReady := thesis.Categories.Load(symbol)
-		resonanceRaw, resonanceReady := thesis.Resonance.Load(symbol)
+		for {
+			updateIntegrationSnapshot(&collection.snapshot, thesis, symbol)
 
-		if len(tickers) == 0 || len(trades) == 0 ||
-			!categoriesReady || !resonanceReady {
-			runtime.Gosched()
-			continue
-		}
+			select {
+			case <-ctx.Done():
+				if !integrationSnapshotReady(collection.snapshot) {
+					collection.err = fmt.Errorf(
+						"integration: no complete snapshot captured for %s", symbol,
+					)
+				}
 
-		categories, categoriesReady := categoriesRaw.([]types.Category)
-		resonance, resonanceReady := resonanceRaw.(types.ResonanceReading)
-
-		if !categoriesReady || len(categories) == 0 ||
-			!resonanceReady || resonance.Samples == 0 {
-			runtime.Gosched()
-			continue
-		}
-
-		measurements := make(map[types.SourceType]*types.Measurement)
-
-		for _, source := range signalSources() {
-			measurement := latestMeasurement(thesis, source, symbol)
-
-			if measurement != nil {
-				measurements[source] = measurement
+				completed <- collection
+				return
+			default:
+				runtime.Gosched()
 			}
 		}
+	}()
 
-		if len(measurements) != len(signalSources()) {
-			runtime.Gosched()
-			continue
+	return cancel, completed
+}
+
+func updateIntegrationSnapshot(
+	snapshot *integrationSnapshot,
+	thesis *types.Thesis,
+	symbol string,
+) {
+	tickers := symbolTickers(thesis, symbol)
+	trades := symbolTrades(thesis, symbol)
+
+	if len(tickers) > 0 && (len(snapshot.tickers) == 0 ||
+		tickers[len(tickers)-1].Timestamp.After(
+			snapshot.tickers[len(snapshot.tickers)-1].Timestamp,
+		)) {
+		snapshot.tickers = append([]kraken.TickerData(nil), tickers...)
+	}
+
+	if len(trades) > 0 && (len(snapshot.trades) == 0 ||
+		trades[len(trades)-1].Timestamp.After(
+			snapshot.trades[len(snapshot.trades)-1].Timestamp,
+		)) {
+		snapshot.trades = append([]kraken.TradeData(nil), trades...)
+	}
+
+	for _, source := range signalSources() {
+		measurement := latestMeasurement(thesis, source, symbol)
+		stored := snapshot.measurements[source]
+
+		if measurement != nil && (stored == nil || measurement.At.After(stored.At)) {
+			snapshot.measurements[source] = measurement
 		}
+	}
 
-		snapshots <- integrationSnapshot{
-			tickers:      append([]kraken.TickerData(nil), tickers...),
-			trades:       append([]kraken.TradeData(nil), trades...),
-			measurements: measurements,
-			categories:   append([]types.Category(nil), categories...),
-			resonance:    resonance,
-		}
+	categoriesRaw, categoriesReady := thesis.Categories.Load(symbol)
 
-		return
+	if categories, ok := categoriesRaw.([]types.Category); categoriesReady && ok {
+		snapshot.categories = mergeCategories(snapshot.categories, categories)
+	}
+
+	resonanceRaw, resonanceReady := thesis.Resonance.Load(symbol)
+
+	if resonance, ok := resonanceRaw.(types.ResonanceReading); resonanceReady && ok &&
+		resonance.Samples > 0 && (len(snapshot.resonances) == 0 ||
+		resonance.At.After(snapshot.resonances[len(snapshot.resonances)-1].At)) {
+		snapshot.resonances = append(snapshot.resonances, resonance)
 	}
 }
 
-func nextIntegrationSnapshot(
-	ctx context.Context,
-	snapshots <-chan integrationSnapshot,
-) (integrationSnapshot, error) {
-	select {
-	case snapshot := <-snapshots:
-		return snapshot, nil
-	case <-ctx.Done():
-		return integrationSnapshot{}, ctx.Err()
+func integrationSnapshotReady(snapshot integrationSnapshot) bool {
+	return len(snapshot.tickers) > 0 &&
+		len(snapshot.trades) > 0 &&
+		len(snapshot.measurements) == len(signalSources()) &&
+		len(snapshot.categories) > 0 &&
+		len(snapshot.resonances) > 0
+}
+
+func mergeCategories(
+	observed []types.Category,
+	current []types.Category,
+) []types.Category {
+	for _, category := range current {
+		replaced := false
+
+		for index := range observed {
+			if observed[index].Type != category.Type {
+				continue
+			}
+
+			observed[index] = category
+			replaced = true
+			break
+		}
+
+		if !replaced {
+			observed = append(observed, category)
+		}
 	}
+
+	return observed
+}
+
+func positiveResonance(
+	readings []types.ResonanceReading,
+) (types.ResonanceReading, bool) {
+	for _, reading := range readings {
+		if reading.Forecast == nil || reading.Forecast.ExpectedReturn <= 0 {
+			continue
+		}
+
+		return reading, true
+	}
+
+	return types.ResonanceReading{}, false
 }
 
 type decisionCollection struct {

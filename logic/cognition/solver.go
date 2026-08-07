@@ -91,7 +91,7 @@ Update ingests the active Thesis categories, evaluates category transition surpr
 breaks/continues sequence paths, classifies market regimes, and runs lookahead beam search.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis == nil || solver.tree == nil {
+	if !thesis.Readiness.Categories {
 		return nil
 	}
 

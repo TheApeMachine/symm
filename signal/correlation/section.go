@@ -3,9 +3,13 @@ package correlation
 import (
 	"fmt"
 	"math"
+	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
@@ -45,18 +49,28 @@ type Section struct {
 	pairs           map[string]map[string]*pairState
 	globalEnergySum float64
 	energyReady     int
-	scratch         []string
+	scratch         *sync.Map
 	revisionBuf     []pairRevision
+	pool            pond.Pool
+	group           pond.TaskGroup
+	measureMu       sync.Mutex
+	stateMu         sync.Mutex
+	energyMu        sync.Mutex
 }
 
 /*
 NewSection creates empty correlation history owned by one correlation signal.
 */
 func NewSection() *Section {
-	return &Section{
+	section := &Section{
 		symbols: make(map[string]*symbolState),
 		pairs:   make(map[string]map[string]*pairState),
+		scratch: &sync.Map{},
+		pool:    pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
+
+	section.group = section.pool.NewGroup()
+	return section
 }
 
 /*
@@ -67,7 +81,34 @@ histories for unchanged pairs.
 func (section *Section) Measure(
 	rows []kraken.TickerData,
 ) (map[string]map[string]float64, error) {
-	section.scratch = section.scratch[:0]
+	section.measureMu.Lock()
+	defer section.measureMu.Unlock()
+
+	if section.symbols == nil {
+		section.symbols = make(map[string]*symbolState)
+	}
+
+	if section.pairs == nil {
+		section.pairs = make(map[string]map[string]*pairState)
+	}
+
+	if section.scratch == nil {
+		section.scratch = &sync.Map{}
+	}
+
+	if section.pool == nil {
+		section.pool = pond.NewPool(runtime.GOMAXPROCS(0))
+	}
+
+	if section.group == nil {
+		section.group = section.pool.NewGroup()
+	}
+
+	section.scratch.Clear()
+	rowBatches := make(map[string][]kraken.TickerData)
+	changedSymbols := make([]string, 0)
+	seenSymbols := make(map[string]struct{})
+	errorsBySymbol := &sync.Map{}
 
 	for _, row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
@@ -76,36 +117,99 @@ func (section *Section) Measure(
 			continue
 		}
 
-		state := section.ensure(symbol)
-
-		if len(state.samples) > 0 && !row.Timestamp.After(state.samples[len(state.samples)-1].At) {
-			continue
+		if _, exists := seenSymbols[symbol]; !exists {
+			seenSymbols[symbol] = struct{}{}
+			changedSymbols = append(changedSymbols, symbol)
 		}
 
-		if err := section.appendSample(symbol, state, nomcorrelation.Sample{
-			At:    row.Timestamp,
-			Value: row.Last.Float64(),
-		}); err != nil {
-			return nil, err
-		}
+		rowBatches[symbol] = append(rowBatches[symbol], row)
+	}
+	sort.Strings(changedSymbols)
 
-		section.scratch = append(section.scratch, symbol)
+	for _, symbol := range changedSymbols {
+		symbolRows := rowBatches[symbol]
+		sort.SliceStable(symbolRows, func(leftIndex, rightIndex int) bool {
+			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
+		})
+
+		section.group.Submit(func() {
+			state := section.ensure(symbol)
+
+			for _, row := range symbolRows {
+				if len(state.samples) > 0 && !row.Timestamp.After(state.samples[len(state.samples)-1].At) {
+					continue
+				}
+
+				if err := section.appendSample(symbol, state, nomcorrelation.Sample{
+					At:    row.Timestamp,
+					Value: row.Last.Float64(),
+				}); err != nil {
+					errorsBySymbol.Store(symbol, err)
+					return
+				}
+			}
+
+			section.scratch.Store(symbol, struct{}{})
+		})
 	}
 
-	if len(section.scratch) == 0 {
+	if err := section.group.Wait(); err != nil {
+		return nil, err
+	}
+
+	var measurementErr error
+	errorsBySymbol.Range(func(key, value any) bool {
+		measurementErr = value.(error)
+		return false
+	})
+
+	if measurementErr != nil {
+		return nil, measurementErr
+	}
+
+	empty := true
+
+	section.scratch.Range(func(key, value any) bool {
+		empty = false
+		return false
+	})
+
+	if empty {
 		return nil, nil
 	}
 
-	results := make(map[string]map[string]float64, len(section.symbols))
+	section.stateMu.Lock()
+	allSymbols := make([]string, 0, len(section.symbols))
 
 	for symbol := range section.symbols {
-		scores, ok := section.scores(symbol)
+		allSymbols = append(allSymbols, symbol)
+	}
+	section.stateMu.Unlock()
+	sort.Strings(allSymbols)
+	concurrentResults := &sync.Map{}
 
-		if !ok {
-			continue
+	for _, symbol := range allSymbols {
+		section.group.Submit(func() {
+			scores, ok := section.scores(symbol)
+
+			if ok {
+				concurrentResults.Store(symbol, scores)
+			}
+		})
+	}
+
+	if err := section.group.Wait(); err != nil {
+		return nil, err
+	}
+
+	results := make(map[string]map[string]float64, len(allSymbols))
+
+	for _, symbol := range allSymbols {
+		raw, exists := concurrentResults.Load(symbol)
+
+		if exists {
+			results[symbol] = raw.(map[string]float64)
 		}
-
-		results[symbol] = scores
 	}
 
 	return results, nil
@@ -130,6 +234,9 @@ func (section *Section) LastAt(symbol string) time.Time {
 ensure returns the mutable state for symbol, creating it on first sight.
 */
 func (section *Section) ensure(symbol string) *symbolState {
+	section.stateMu.Lock()
+	defer section.stateMu.Unlock()
+
 	state := section.symbols[symbol]
 
 	if state != nil {
@@ -200,6 +307,9 @@ refreshEnergy recomputes time-normalized return energy and keeps the global
 energy sum consistent for O(1) leave-one-out peer energy.
 */
 func (section *Section) refreshEnergy(symbol string, state *symbolState) error {
+	section.energyMu.Lock()
+	defer section.energyMu.Unlock()
+
 	previous := state.energy
 	wasReady := previous > 0 && len(state.samples) >= 3
 
@@ -238,6 +348,15 @@ func (section *Section) refreshEnergy(symbol string, state *symbolState) error {
 	_ = symbol
 
 	return nil
+}
+
+func (section *Section) Close() {
+	section.measureMu.Lock()
+	defer section.measureMu.Unlock()
+
+	if section.pool != nil {
+		section.pool.StopAndWait()
+	}
 }
 
 /*

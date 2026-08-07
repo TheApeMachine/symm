@@ -3,10 +3,14 @@ package toxicity
 import (
 	"context"
 	"math"
+	"runtime"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -25,6 +29,9 @@ type Signal struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
+	measureMu     sync.Mutex
+	pool          pond.Pool
+	group         pond.TaskGroup
 }
 
 /*
@@ -47,7 +54,9 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
+		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
+	signal.group = signal.pool.NewGroup()
 
 	signal.status = types.READY
 	signal.run()
@@ -104,6 +113,9 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
@@ -113,46 +125,80 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 	trades := thesis.MarketTrades()
 	toxicity := utils.Measurements(thesis, types.SourceToxicity)
+	symbols := thesis.MarketSymbols()
+	sort.Strings(symbols)
+	results := make([][]*types.Measurement, len(symbols))
 
-	for _, symbol := range thesis.MarketSymbols() {
-		current, ok := observedTouch(signal.books.Book(symbol))
+	if signal.pool == nil {
+		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
+	}
 
-		if !ok {
-			continue
-		}
+	if signal.group == nil {
+		signal.group = signal.pool.NewGroup()
+	}
 
-		previous, ok := latestTouch(toxicity, symbol)
+	for index, symbol := range symbols {
+		resultIndex := index
 
-		if !ok {
-			measurements = append(measurements, touchMeasurement(symbol, current))
-			continue
-		}
+		signal.group.Submit(func() {
+			current, ok := observedTouch(signal.books.Book(symbol))
 
-		if !current.asOf.After(previous.asOf) {
-			continue
-		}
+			if !ok {
+				return
+			}
 
-		bracketed := bracketedTrades(
-			trades,
-			symbol,
-			previous.asOf,
-			current.asOf,
-		)
+			previous, ok := latestTouch(toxicity, symbol)
 
-		if len(bracketed) == 0 {
-			measurements = append(measurements, touchMeasurement(symbol, current))
-			continue
-		}
+			if !ok {
+				results[resultIndex] = []*types.Measurement{touchMeasurement(symbol, current)}
+				return
+			}
 
-		measurement := toxicityMeasurement(symbol, previous, current, bracketed)
-		measurements = append(
-			measurements,
-			measurement,
-			touchMeasurement(symbol, current),
-		)
+			if !current.asOf.After(previous.asOf) {
+				return
+			}
 
-		if measurement.Symbol == types.Focus() {
-			out = append(out, measurement)
+			bracketed := bracketedTrades(
+				trades,
+				symbol,
+				previous.asOf,
+				current.asOf,
+			)
+
+			if len(bracketed) == 0 {
+				results[resultIndex] = []*types.Measurement{touchMeasurement(symbol, current)}
+				return
+			}
+
+			measurement := toxicityMeasurement(symbol, previous, current, bracketed)
+			results[resultIndex] = []*types.Measurement{
+				measurement,
+				touchMeasurement(symbol, current),
+			}
+		})
+	}
+
+	if err := signal.group.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"toxicity: parallel measurement failed",
+			err,
+		))
+		return measurements
+	}
+
+	for _, symbolMeasurements := range results {
+		measurements = append(measurements, symbolMeasurements...)
+
+		for _, measurement := range symbolMeasurements {
+			_, complete := measurement.Metrics[types.MetricKey(
+				types.MetricTradeVolume,
+				types.SideNone,
+			)]
+
+			if measurement.Symbol == types.Focus() && complete {
+				out = append(out, measurement)
+			}
 		}
 	}
 
@@ -208,6 +254,16 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.cancel()
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
+	if signal.pool != nil {
+		signal.pool.StopAndWait()
+	}
+
 	return nil
 }

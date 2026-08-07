@@ -134,19 +134,20 @@ func (crypto *Crypto) run() {
 				})
 
 				crypto.thesis.Reset()
-				crypto.thesis.Tick++
-
-				utils.Publish(crypto.ui, datura.NewMap(
-					"tick", datura.NewMap(
-						"count", crypto.thesis.Tick,
-					),
-				))
 			}
 		}
 	}()
 }
 
 func (crypto *Crypto) onTicker(data any) {
+	crypto.thesis.Tick++
+
+	utils.Publish(crypto.ui, datura.NewMap(
+		"tick", datura.NewMap(
+			"count", crypto.thesis.Tick,
+		),
+	))
+
 	typedTickers, ok := data.(*kraken.Ticker)
 
 	if !ok {

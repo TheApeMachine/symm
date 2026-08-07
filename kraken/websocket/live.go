@@ -50,10 +50,6 @@ var entityMap = map[string]func([]byte) any{
 	},
 }
 
-func hotPublicChannel(channel string) bool {
-	return channel == "ticker" || channel == "trade" || channel == "book"
-}
-
 /*
 Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
 and Sub* resubscribe after the SDK reconnects.
@@ -269,7 +265,7 @@ func NewWithClient(
 
 		if ok && subscribers != nil {
 			for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-				if hotPublicChannel(channel) {
+				if channel != "ticker" {
 					subscriber.SendLatest(out)
 					continue
 				}
@@ -552,11 +548,6 @@ func (live *Live) SubL3(symbols []string) {
 		conn.symbols = append([]string{}, groups...)
 
 		for group := range slices.Chunk(groups, 40) {
-			errnie.Info(fmt.Sprintf(
-				"websocket: subscribing to level3 %s",
-				strings.Join(group, "|"),
-			))
-
 			if conn.book != nil {
 				for _, symbol := range group {
 					conn.book.Create(symbol, viper.GetInt("market.l3_depth"))

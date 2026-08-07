@@ -1,12 +1,13 @@
 package causal
 
 import (
+	"math"
 	"sync"
 
+	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 )
@@ -32,16 +33,10 @@ physics fluid metrics, and predictive coding resonance predictions.
 type Solver struct {
 	recorder *audit.Recorder
 	pearls   *sync.Map
-	regimes  *sync.Map
-	history  *sync.Map
 	config   algorithm.PearlConfig
 	ui       chan []byte
-}
-
-type causalResult struct {
-	symbol string
-	output map[string]any
-	err    error
+	pool     pond.Pool
+	group    pond.TaskGroup
 }
 
 /*
@@ -63,11 +58,12 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 	solver := &Solver{
 		recorder: recorder,
 		pearls:   &sync.Map{},
-		regimes:  &sync.Map{},
-		history:  &sync.Map{},
 		config:   defaultConfig,
 		ui:       ui,
+		pool:     pond.NewPool(16),
 	}
+
+	solver.group = solver.pool.NewGroup()
 
 	for _, opt := range opts {
 		opt(solver)
@@ -77,132 +73,147 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 }
 
 /*
-Update extracts aligned causal rows from Thesis, evaluates regime
-switching and Pearl's causal ladder (Association, Do-Intervention,
-Abductive Counterfactuals), and enriches thesis.Causal.
+Update extracts aligned causal rows from Thesis, evaluates Pearl's causal
+ladder, and stores each symbol's output directly on thesis.Causal.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis == nil {
+	if !thesis.Readiness.Resonance {
 		return nil
 	}
 
-	inputs := solver.buildCausalInputs(thesis)
-	results := make([]causalResult, len(inputs))
-	groups := make([]types.SymbolRows[causalInput], len(inputs))
+	thesis.Resonance.Range(func(key, _ any) bool {
+		symbol, symbolOK := key.(string)
 
-	for index, input := range inputs {
-		groups[index] = types.SymbolRows[causalInput]{Symbol: input.symbol, Rows: []causalInput{input}}
-	}
+		if !symbolOK || symbol == "" {
+			return true
+		}
 
-	err := types.RunSymbolGroupsParallel(groups, func(index int, rows []causalInput) error {
-		results[index] = solver.measure(rows[0])
-		return nil
+		solver.group.SubmitErr(func() error {
+			return solver.measure(thesis, symbol)
+		})
+
+		return true
 	})
 
-	if err != nil {
+	if err := solver.group.Wait(); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, "causal: parallel evaluation failed", err,
 		))
 	}
 
-	solver.store(thesis, results)
 	thesis.Stamp(types.SourceCausal)
 
 	solver.publish(thesis)
 	return nil
 }
 
-func (solver *Solver) measure(input causalInput) causalResult {
-	solver.appendHistory(input.symbol, input.row)
+func (solver *Solver) measure(
+	thesis *types.Thesis,
+	symbol string,
+) error {
+	stored, found := thesis.Resonance.Load(symbol)
 
-	regimeOut, err := solver.getRegime(input.symbol).Measure(causal.RegimeInput{
-		Rows:      [][]float64{input.row},
-		Contagion: input.contagion,
-	})
+	if !found {
+		return nil
+	}
 
-	inverted := err == nil && regimeOut.RawInverted > 0
+	resonance, ok := stored.(types.ResonanceReading)
 
-	output, ready, err := solver.getPearl(input.symbol).Measure(algorithm.PearlInput{
-		Key:          input.symbol,
-		Row:          input.row,
-		Inverted:     inverted,
-		Contagion:    input.contagion,
-		Condition:    input.condition,
-		Intervention: input.intervention,
+	if !ok || resonance.Forecast == nil {
+		return nil
+	}
+
+	if err := resonance.Forecast.Validate(); err != nil {
+		return nil
+	}
+
+	prediction, predictionReady := resonance.Forecast.Step(0)
+
+	if !predictionReady || math.IsNaN(resonance.Energy) ||
+		math.IsInf(resonance.Energy, 0) || math.IsNaN(resonance.Surprise) ||
+		math.IsInf(resonance.Surprise, 0) {
+		return nil
+	}
+
+	stored, found = thesis.Measurements.Load(types.SourceSentiment)
+
+	if !found {
+		return nil
+	}
+
+	measurements, ok := stored.([]*types.Measurement)
+
+	if !ok {
+		return errnie.Err(
+			errnie.Validation,
+			"causal: sentiment measurements have an invalid type",
+			nil,
+		)
+	}
+
+	changeKey := types.MetricKey(types.MetricChange, types.SideNone)
+	realizedReturn := 0.0
+	found = false
+	var latestAt int64
+
+	for _, measurement := range measurements {
+		if measurement == nil || measurement.Symbol != symbol {
+			continue
+		}
+
+		change, present := measurement.Metrics[changeKey]
+
+		if !present || math.IsNaN(change.Raw) || math.IsInf(change.Raw, 0) {
+			continue
+		}
+
+		at := measurement.At.UnixNano()
+
+		if found && at <= latestAt {
+			continue
+		}
+
+		realizedReturn = change.Raw
+		latestAt = at
+		found = true
+	}
+
+	if !found {
+		return nil
+	}
+
+	output, ready, err := solver.getPearl(symbol).Measure(algorithm.PearlInput{
+		Key: symbol,
+		Row: []float64{
+			resonance.Energy,
+			resonance.Surprise,
+			prediction,
+			realizedReturn,
+		},
+		Contagion:    resonance.Surprise,
+		Condition:    resonance.Energy,
+		Intervention: prediction,
 	})
 
 	if err != nil {
-		return causalResult{
-			symbol: input.symbol,
-			err: errnie.Err(
-				errnie.UnprocessableContent,
-				"causal: pearl evaluation failed",
-				err,
-			),
-		}
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"causal: pearl evaluation failed",
+			err,
+		)
 	}
 
-	outMap := map[string]any{
+	causalOutput := map[string]any{
 		"ready": ready,
 	}
 
 	if ready {
-		outMap = output.Outputs()
-		outMap["ready"] = true
+		causalOutput = output.Outputs()
+		causalOutput["ready"] = true
 	}
 
-	return causalResult{
-		symbol: input.symbol,
-		output: outMap,
-	}
-}
-
-func (solver *Solver) store(thesis *types.Thesis, results []causalResult) bool {
-	resolved := false
-
-	for _, result := range results {
-		if result.err != nil {
-			errnie.Error(result.err)
-
-			continue
-		}
-
-		if result.output == nil {
-			result.output = make(map[string]any)
-		}
-
-		result.output["historyRows"] = solver.historyRows(result.symbol)
-		thesis.Causal.Store(result.symbol, result.output)
-		resolved = true
-	}
-
-	return resolved
-}
-
-func (solver *Solver) appendHistory(symbol string, row []float64) {
-	stored, _ := solver.history.LoadOrStore(symbol, [][]float64{})
-	rows := stored.([][]float64)
-	rows = append(rows, append([]float64(nil), row...))
-	rowWidth := len(row)
-	capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
-
-	if len(rows) > capacity {
-		rows = rows[len(rows)-capacity:]
-	}
-
-	solver.history.Store(symbol, rows)
-}
-
-func (solver *Solver) historyRows(symbol string) [][]float64 {
-	stored, _ := solver.history.LoadOrStore(symbol, [][]float64{})
-	rows := stored.([][]float64)
-	copied := make([][]float64, len(rows))
-
-	for index, row := range rows {
-		copied[index] = append([]float64(nil), row...)
-	}
-
-	return copied
+	thesis.Causal.Store(symbol, causalOutput)
+	return nil
 }
 
 /*
@@ -254,28 +265,9 @@ func (solver *Solver) getPearl(symbol string) *algorithm.Pearl {
 }
 
 /*
-getRegime lazily gets or creates a Regime selector per symbol.
-*/
-func (solver *Solver) getRegime(symbol string) *causal.Regime {
-	r, ok := solver.regimes.Load(symbol)
-
-	if !ok {
-		r = causal.NewRegime(causal.RegimeConfig{
-			Target:         solver.config.Target,
-			ConditionLeft:  0,
-			ConditionRight: 1,
-		})
-
-		solver.regimes.Store(symbol, r)
-	}
-
-	return r.(*causal.Regime)
-}
-
-/*
 Close cleans up the solver instance.
 */
 func (solver *Solver) Close() error {
-	solver.history = nil
+	solver.pool.StopAndWait()
 	return nil
 }

@@ -3,10 +3,12 @@ package depthflow
 import (
 	"context"
 	"math"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/spf13/viper"
 	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
@@ -39,9 +41,12 @@ type Signal struct {
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
-	lastTrade     map[string]tradeCursor
-	lastBookAt    map[string]time.Time
-	lastBook      map[string]bookSnapshot
+	lastTrade     *sync.Map
+	lastBookAt    *sync.Map
+	lastBook      *sync.Map
+	measureMu     sync.Mutex
+	pool          pond.Pool
+	group         pond.TaskGroup
 }
 
 type tradeCursor struct {
@@ -52,11 +57,6 @@ type tradeCursor struct {
 type bookSnapshot struct {
 	bids map[int64]flow.BookLevel
 	asks map[int64]flow.BookLevel
-}
-
-type bookObservation struct {
-	managed *spotbook.Book
-	at      time.Time
 }
 
 /*
@@ -94,10 +94,12 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
-		lastTrade:     make(map[string]tradeCursor),
-		lastBookAt:    make(map[string]time.Time),
-		lastBook:      make(map[string]bookSnapshot),
+		lastTrade:     &sync.Map{},
+		lastBookAt:    &sync.Map{},
+		lastBook:      &sync.Map{},
+		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
+	signal.group = signal.pool.NewGroup()
 	signal.status = types.READY
 	signal.run()
 	return signal
@@ -152,95 +154,168 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	trades := thesis.MarketTrades()
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
 
+	trades := thesis.MarketTrades()
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
-	bookObservations := make([]bookObservation, 0)
 
 	if signal.books == nil {
 		return measurements
 	}
 
-	for _, symbol := range thesis.MarketSymbols() {
-		managed := signal.books.Book(symbol)
-
-		if managed != nil {
-			bookObservations = append(bookObservations, bookObservation{
-				managed: managed,
-				at:      managedBookObservedAt(managed),
-			})
-		}
+	if signal.lastTrade == nil {
+		signal.lastTrade = &sync.Map{}
 	}
 
-	sort.SliceStable(bookObservations, func(leftIndex, rightIndex int) bool {
-		left := bookObservations[leftIndex]
-		right := bookObservations[rightIndex]
+	if signal.lastBookAt == nil {
+		signal.lastBookAt = &sync.Map{}
+	}
 
-		if left.at.Equal(right.at) {
-			return left.managed.Name < right.managed.Name
+	if signal.lastBook == nil {
+		signal.lastBook = &sync.Map{}
+	}
+
+	tradeBatches := make(map[string][]kraken.TradeData)
+	symbols := thesis.MarketSymbols()
+	symbolSet := make(map[string]struct{}, len(symbols))
+
+	for _, symbol := range symbols {
+		symbolSet[symbol] = struct{}{}
+	}
+
+	sort.Strings(symbols)
+	results := &sync.Map{}
+	publish := &sync.Map{}
+
+	for _, trade := range trades {
+		if validTrade(trade) {
+			tradeBatches[trade.Symbol] = append(tradeBatches[trade.Symbol], trade)
+
+			if _, exists := symbolSet[trade.Symbol]; !exists {
+				symbolSet[trade.Symbol] = struct{}{}
+				symbols = append(symbols, trade.Symbol)
+			}
 		}
+	}
+	sort.Strings(symbols)
 
-		return left.at.Before(right.at)
-	})
+	if signal.pool == nil {
+		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
+	}
 
-	bookIndex := 0
-	tradeIndex := 0
+	if signal.group == nil {
+		signal.group = signal.pool.NewGroup()
+	}
 
-	for bookIndex < len(bookObservations) || tradeIndex < len(trades) {
-		if bookIndex < len(bookObservations) &&
-			(tradeIndex == len(trades) ||
-				!trades[tradeIndex].Timestamp.Before(bookObservations[bookIndex].at)) {
-			bookMeasurements, err := signal.measureManagedBook(
-				bookObservations[bookIndex].managed,
-			)
-			bookIndex++
+	for _, symbol := range symbols {
+		symbolTrades := tradeBatches[symbol]
+		sort.SliceStable(symbolTrades, func(leftIndex, rightIndex int) bool {
+			left := symbolTrades[leftIndex]
+			right := symbolTrades[rightIndex]
 
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"depthflow: failed to measure book",
-					err,
-				))
-				continue
+			if left.Timestamp.Equal(right.Timestamp) {
+				return left.TradeID < right.TradeID
 			}
 
-			measurements = append(measurements, bookMeasurements...)
-			continue
-		}
+			return left.Timestamp.Before(right.Timestamp)
+		})
+		managed := signal.books.Book(symbol)
+		bookAt := managedBookObservedAt(managed)
 
-		trade := trades[tradeIndex]
-		tradeIndex++
+		signal.group.Submit(func() {
+			symbolMeasurements := make([]*types.Measurement, 0)
+			symbolOut := make([]*types.Measurement, 0)
+			bookPending := managed != nil
 
-		if !validTrade(trade) || signal.seenTrade(trade) {
-			continue
-		}
+			for _, trade := range symbolTrades {
+				if bookPending && !trade.Timestamp.Before(bookAt) {
+					bookMeasurements, err := signal.measureManagedBook(managed)
 
-		bookAt, hasBook := signal.lastBookAt[trade.Symbol]
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"depthflow: failed to measure book",
+							err,
+						))
+					}
 
-		if !hasBook || bookAt.IsZero() || bookAt.After(trade.Timestamp) {
-			continue
-		}
+					symbolMeasurements = append(symbolMeasurements, bookMeasurements...)
+					bookPending = false
+				}
 
-		tradeMeasurements, err := signal.measureTrade(trade)
+				if signal.seenTrade(trade) {
+					continue
+				}
 
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"depthflow: failed to measure trade",
-				err,
-			))
-			continue
-		}
+				lastBookAt, hasBook := signal.bookAt(trade.Symbol)
 
-		signal.commitTrade(trade)
+				if !hasBook || lastBookAt.IsZero() || lastBookAt.After(trade.Timestamp) {
+					continue
+				}
 
-		measurements = append(measurements, tradeMeasurements...)
+				tradeMeasurements, err := signal.measureTrade(trade)
 
-		for _, measurement := range tradeMeasurements {
-			if measurement.Symbol == types.Focus() {
-				out = append(out, measurement)
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"depthflow: failed to measure trade",
+						err,
+					))
+					continue
+				}
+
+				signal.commitTrade(trade)
+				symbolMeasurements = append(symbolMeasurements, tradeMeasurements...)
+
+				if symbol == types.Focus() {
+					symbolOut = append(symbolOut, tradeMeasurements...)
+				}
 			}
+
+			if bookPending {
+				bookMeasurements, err := signal.measureManagedBook(managed)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"depthflow: failed to measure book",
+						err,
+					))
+				}
+
+				symbolMeasurements = append(symbolMeasurements, bookMeasurements...)
+			}
+
+			results.Store(symbol, symbolMeasurements)
+			publish.Store(symbol, symbolOut)
+		})
+	}
+
+	if err := signal.group.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"depthflow: parallel measurement failed",
+			err,
+		))
+		return measurements
+	}
+
+	for _, symbol := range symbols {
+		raw, exists := results.Load(symbol)
+
+		if !exists {
+			continue
+		}
+
+		symbolMeasurements := raw.([]*types.Measurement)
+		measurements = append(measurements, symbolMeasurements...)
+
+		focused, hasFocused := publish.Load(symbol)
+
+		if hasFocused {
+			out = append(out, focused.([]*types.Measurement)...)
 		}
 	}
 
@@ -286,17 +361,9 @@ func (signal *Signal) measureManagedBook(
 		bids: make(map[int64]flow.BookLevel),
 		asks: make(map[int64]flow.BookLevel),
 	}
+
 	observedAt := time.Time{}
-
-	instrument, err := signal.instrument.Pair(managed.Name)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"depthflow: failed to resolve instrument",
-			err,
-		))
-	}
+	instrument := signal.instrument.Pair(managed.Name)
 
 	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
 		level := flow.BookLevel{
@@ -334,17 +401,21 @@ func (signal *Signal) measureManagedBook(
 		return nil, nil
 	}
 
-	previous := signal.lastBook[managed.Name]
+	previous := signal.bookSnapshot(managed.Name)
 
 	if sameSnapshot(current, previous) {
-		if observedAt.After(signal.lastBookAt[managed.Name]) {
-			signal.lastBookAt[managed.Name] = observedAt
+		lastBookAt, _ := signal.bookAt(managed.Name)
+
+		if observedAt.After(lastBookAt) {
+			signal.lastBookAt.Store(managed.Name, observedAt)
 		}
 
 		return nil, nil
 	}
 
-	if observedAt.Before(signal.lastBookAt[managed.Name]) {
+	lastBookAt, _ := signal.bookAt(managed.Name)
+
+	if observedAt.Before(lastBookAt) {
 		return nil, nil
 	}
 
@@ -362,8 +433,8 @@ func (signal *Signal) measureManagedBook(
 		))
 	}
 
-	signal.lastBook[managed.Name] = current
-	signal.lastBookAt[managed.Name] = observedAt
+	signal.lastBook.Store(managed.Name, current)
+	signal.lastBookAt.Store(managed.Name, observedAt)
 
 	if !ready {
 		return nil, nil
@@ -443,7 +514,13 @@ func validTrade(row kraken.TradeData) bool {
 }
 
 func (signal *Signal) seenTrade(row kraken.TradeData) bool {
-	previous := signal.lastTrade[row.Symbol]
+	raw, exists := signal.lastTrade.Load(row.Symbol)
+
+	if !exists {
+		return false
+	}
+
+	previous := raw.(tradeCursor)
 
 	if row.Timestamp.Before(previous.at) {
 		return true
@@ -459,7 +536,12 @@ func (signal *Signal) seenTrade(row kraken.TradeData) bool {
 }
 
 func (signal *Signal) commitTrade(row kraken.TradeData) {
-	previous := signal.lastTrade[row.Symbol]
+	previous := tradeCursor{}
+	raw, exists := signal.lastTrade.Load(row.Symbol)
+
+	if exists {
+		previous = raw.(tradeCursor)
+	}
 
 	if row.Timestamp.After(previous.at) {
 		previous = tradeCursor{at: row.Timestamp, ids: make(map[int64]struct{})}
@@ -470,7 +552,27 @@ func (signal *Signal) commitTrade(row kraken.TradeData) {
 	}
 
 	previous.ids[row.TradeID] = struct{}{}
-	signal.lastTrade[row.Symbol] = previous
+	signal.lastTrade.Store(row.Symbol, previous)
+}
+
+func (signal *Signal) bookAt(symbol string) (time.Time, bool) {
+	raw, exists := signal.lastBookAt.Load(symbol)
+
+	if !exists {
+		return time.Time{}, false
+	}
+
+	return raw.(time.Time), true
+}
+
+func (signal *Signal) bookSnapshot(symbol string) bookSnapshot {
+	raw, exists := signal.lastBook.Load(symbol)
+
+	if !exists {
+		return bookSnapshot{}
+	}
+
+	return raw.(bookSnapshot)
 }
 
 func sameSnapshot(current, previous bookSnapshot) bool {
@@ -636,6 +738,16 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.cancel()
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
+	if signal.pool != nil {
+		signal.pool.StopAndWait()
+	}
+
 	return nil
 }

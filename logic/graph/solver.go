@@ -193,7 +193,7 @@ Update extracts nodes and infers directional edges from Thesis, publishing the c
 Graph into thesis.Graphs.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis == nil {
+	if !thesis.Readiness.Categories || !thesis.Readiness.Resonance || !thesis.Readiness.Causal || !thesis.Readiness.Cognition {
 		return nil
 	}
 

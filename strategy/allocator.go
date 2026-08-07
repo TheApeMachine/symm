@@ -155,13 +155,8 @@ func (allocator *Allocator) committedRisk() *decimal.Decimal {
 			continue
 		}
 
-		snapshot := position.StopSnapshot()
-
-		if !snapshot.Present || snapshot.WorstCaseLoss == nil {
-			continue
-		}
-
-		committed = committed.Add(snapshot.WorstCaseLoss.SetScale(allocationScale))
+		stopSnapshot := position.Holding.Stoploss
+		committed = committed.Add(stopSnapshot.Floor)
 	}
 
 	return committed
@@ -187,15 +182,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		))
 	}
 
-	budget, err := allocator.balance.Cash()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"ledger cash unavailable",
-			err,
-		))
-	}
+	budget := allocator.balance.Cash()
 
 	if budget == nil || budget.Sign() <= 0 {
 		return errnie.Error(errnie.Err(
@@ -229,12 +216,9 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 	)
 
 	for _, decision := range allocator.entries(thesis) {
-		pair, err := allocator.instrument.Pair(decision.Symbol)
+		decision.AvailableCapital = budget
 
-		if err != nil {
-			allocator.reject(decision, "instrument pair unavailable")
-			continue
-		}
+		pair := allocator.instrument.Pair(decision.Symbol)
 
 		if pair.QtyMin == nil || pair.QtyMin.Sign() <= 0 {
 			allocator.reject(decision, "instrument qty_min unavailable")
@@ -300,9 +284,9 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		}
 
 		// Quantize quantity against instrument venue rules
-		qty, err := allocator.price.Quantity(pair.Symbol, decision.ProposedNotional)
+		qty := allocator.price.Quantity(pair.Symbol, decision.ProposedNotional)
 
-		if err != nil || qty == nil || qty.Sign() <= 0 {
+		if qty == nil || qty.Sign() <= 0 {
 			allocator.reject(decision, "quantity sizing failed")
 			continue
 		}
@@ -316,16 +300,16 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 		capacity := plan.MaxQuantity(tick.Ask)
 
 		if capacity != nil && qty.Cmp(capacity) > 0 {
-			funded := allocator.price.WithFriction(pair.Symbol, broker.BUY, capacity)
+			funded := allocator.price.WithFee(pair.Symbol, allocator.price.Tick(pair.Symbol).Bid, broker.BUY)
 
 			if funded == nil || funded.Sign() <= 0 {
 				allocator.reject(decision, "risk-capped quantity could not be priced")
 				continue
 			}
 
-			qty, err = allocator.price.Quantity(pair.Symbol, funded)
+			qty = allocator.price.Quantity(pair.Symbol, funded)
 
-			if err != nil || qty == nil || qty.Sign() <= 0 {
+			if qty == nil || qty.Sign() <= 0 {
 				allocator.reject(decision, "risk-capped quantity sizing failed")
 				continue
 			}
@@ -336,7 +320,7 @@ func (allocator *Allocator) Allocate(thesis *types.Thesis) error {
 			continue
 		}
 
-		cost := allocator.price.WithFriction(pair.Symbol, broker.BUY, qty)
+		cost := allocator.price.WithFee(pair.Symbol, allocator.price.Tick(pair.Symbol).Bid, broker.BUY)
 
 		if cost == nil || cost.Cmp(budget) > 0 {
 			allocator.reject(decision, "taker cost exceeds available budget")
@@ -379,12 +363,6 @@ func (allocator *Allocator) plan(
 	riskBudget *decimal.Decimal,
 	riskPool *decimal.Decimal,
 ) types.RiskPlan {
-	exitFeeRate, err := allocator.price.Fee(pair.Symbol)
-
-	if err != nil {
-		return types.RiskPlan{}
-	}
-
 	reference := decision.ReferencePrice
 
 	if reference == nil || reference.Sign() <= 0 {
@@ -419,8 +397,6 @@ func (allocator *Allocator) plan(
 		Spread:         decision.ExpectedSpread,
 		Impact:         decision.ExpectedImpact,
 		TickSize:       tickSize(pair),
-		ExitFeeRate:    exitFeeRate,
-		EntryFeeRate:   exitFeeRate,
 		MaxLoss:        maxLoss,
 		Multiples:      allocator.multiples,
 	})

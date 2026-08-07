@@ -9,6 +9,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 )
@@ -77,7 +78,15 @@ func NewHub(
 		}
 
 		if hub.desk != nil {
-			conn.WriteMessage(websocket.TextMessage, hub.desk.PublishPositions())
+			out := make([]*broker.Position, 0)
+
+			for position := range hub.desk.Positions() {
+				out = append(out, position)
+			}
+
+			conn.WriteMessage(websocket.TextMessage, datura.NewMap(
+				"positions", out,
+			).MarshalAndFree())
 		}
 
 		for {

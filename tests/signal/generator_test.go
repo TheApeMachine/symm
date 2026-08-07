@@ -122,6 +122,22 @@ func TestGeneratorStep(t *testing.T) {
 			So(precursorFraction, ShouldBeLessThan, baselineFraction)
 		})
 	})
+
+	Convey("Given a volume-absorption transition", t, func() {
+		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
+		profile := testtypes.DefaultProfiles[testtypes.VolumeAbsorption]
+		generator.SetState(
+			testtypes.VolumeAbsorption,
+			testtypes.MomentumMap[testtypes.VolumeAbsorption],
+		)
+
+		for generator.PrecursorPending() {
+			sample := generator.Step()
+
+			So(sample.AggressorSide, ShouldEqual, profile.AggressorSide)
+			So(sample.Last, ShouldEqual, sample.Ask)
+		}
+	})
 }
 
 func TestGeneratorGenerate(t *testing.T) {

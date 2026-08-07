@@ -4,20 +4,23 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 
 	mgrbook "github.com/theapemachine/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/adaptive"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 )
 
 /*
-injectHeatFraction initializes thermal heat as a small fraction (1e-4) of kinetic energy
-to implement "cold injection" where newly spawned particles do not immediately overheat the system.
+unitOscillatorEnergy is the energy every token carries on injection. It is the unit of
+the oscillator store, so amplitude sqrt(Energy) is one for an unforced particle and the
+system starts with exactly one unit of energy per observation.
 symbolIndexMask limits symbol indices to 15 bits so the packed token ID stays cleanly within
 Metal's 16-bit token bitmask (0xFFFF).
 */
 const (
-	injectHeatFraction float32 = 1e-4
-	symbolIndexMask    uint32  = 0x7fff
+	unitOscillatorEnergy float32 = 1
+	symbolIndexMask      uint32  = 0x7fff
 )
 
 /*
@@ -38,14 +41,22 @@ projects market structure into a continuous 3D pilot-wave fluid:
   - Position X: Relative log price log(Price / MidPrice), placing Bids at X < 0.5 and Asks at X > 0.5.
   - Position Y: Log order quantity log(Quantity), compressing liquidity across orders of magnitude.
   - Position Z: Empirical order age rank (oldest = 0 at front, newest = N-1 at back).
-  - Mass: Order quantity, allowing large liquidity walls to exert stronger gravitational/collision forces.
-  - Energy: Hawkes arrival intensities, exciting particles during periods of high market activity.
-  - Phase: Bid-Ask spread phase boundary ([0, pi) for Bids, [pi, 2pi) for Asks).
-  - Omega: Uniform frequency distribution spanning the GPE spectral lattice.
+  - Mass: Order quantity divided by total visible quantity, preserving liquidity shares without injecting exchange units into the fluid.
+  - Heat: Zero on injection. Heat is earned from collision and Planck relaxation, not stamped.
+  - Energy: One unit per order, forced above unit by the side's Hawkes self-excitation.
+  - Phase: Bid-Ask spread phase boundary ([0, pi) for Bids, [pi, 2pi) for Asks), swept by price-time queue priority.
+  - Omega: Log distance from mid, measured against the symbol's own accumulated scale.
+
+Position is a viewport: X, Y and Z normalize against the current batch so the visible
+book always fills the PIC grid. Omega is an identity and therefore does not, because a
+frequency that is re-derived from whichever orders share the batch cannot hold a carrier
+attractor well in place.
 */
 type Tokenizer struct {
 	config   pfluid.Config
 	universe []string
+	mutex    sync.Mutex
+	scales   map[string]*adaptive.Accumulator
 }
 
 /*
@@ -57,6 +68,7 @@ func NewTokenizer(config pfluid.Config, symbols []string) *Tokenizer {
 	return &Tokenizer{
 		config:   config,
 		universe: sortedUniverse(symbols),
+		scales:   make(map[string]*adaptive.Accumulator),
 	}
 }
 
@@ -66,16 +78,26 @@ NewBatch converts resting L3 bid and ask orders into an appendable particle batc
 It merges bids and asks, extracts Decimal values into float64, derives dynamic geometry bounds,
 resolves the symbol token ID, computes empirical age ranks, and projects every order directly into a physics particle:
   - Single-pass construction avoids intermediate struct allocation ceremony.
-  - Order quantity directly dictates particle mass to preserve gravitational and collision kinetics on GPU.
+  - Normalized order quantity dictates particle mass while conserving one unit across the visible population.
   - Position phase uses Option 3 (Bid/Ask spread quantum boundary).
   - Returns the particle array alongside token content IDs expected by Metal's merge pipeline.
+
+The caller collects levels by walking a Go map, so the two orders in the argument slices
+are shuffled on every tick. Nothing stamped onto a particle may read the slice index:
+every coordinate is derived either from the order itself or from a rank recomputed under
+a total ordering.
+
+buyExcitation and sellExcitation are the side's Hawkes self-excitation expressed as a
+multiple of its own immigrant baseline, (lambda - mu) / mu. They are the forcing term:
+a side in a self-exciting cascade enters above unit energy and therefore drives the wave
+field harder than the side it is arriving against.
 */
-func (tokenizer Tokenizer) NewBatch(
+func (tokenizer *Tokenizer) NewBatch(
 	bidOrders []*mgrbook.Order,
 	askOrders []*mgrbook.Order,
 	midPrice float64,
-	buyIntensity float64,
-	sellIntensity float64,
+	buyExcitation float64,
+	sellExcitation float64,
 	symbol string,
 ) ([]pfluid.Particle, []uint32, error) {
 	numBids := len(bidOrders)
@@ -83,6 +105,12 @@ func (tokenizer Tokenizer) NewBatch(
 	totalOrders := numBids + numAsks
 	if totalOrders == 0 || midPrice <= 0 {
 		return nil, nil, nil
+	}
+
+	if !finiteNonnegative(buyExcitation) || !finiteNonnegative(sellExcitation) {
+		return nil, nil, fmt.Errorf(
+			"manifold: Hawkes excitation must be finite, nonnegative, and representable as binary32",
+		)
 	}
 
 	// 1. Combine bid and ask orders while retaining side information.
@@ -99,7 +127,10 @@ func (tokenizer Tokenizer) NewBatch(
 	}
 
 	// 2. Derive dynamic log-space extents relative to midPrice.
-	logPriceMin, logPriceMax, logSizeMin, logSizeMax, ok := geometryBounds(orders, midPrice)
+	logPriceMin, logPriceMax, logSizeMin, logSizeMax, totalQuantity, ok := geometryBounds(
+		orders,
+		midPrice,
+	)
 	if !ok {
 		return nil, nil, nil
 	}
@@ -111,14 +142,21 @@ func (tokenizer Tokenizer) NewBatch(
 		return nil, nil, fmt.Errorf("manifold: symbol %s is outside the tokenizer universe", symbol)
 	}
 
+	// 4. Accumulate this batch into the symbol's content-frequency scale, then read
+	// the converged scale back out. Omega is normalized against it rather than
+	// against this batch's own extents.
+	scale, err := tokenizer.omegaScale(symbol, orders, midPrice)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
 	ranks := orderAgeRanks(orders)
-	circle := uint32(len(orders))
+	queue := queueRanks(entries)
 
 	grid := tokenizer.config.Grid
 	extent := max(grid.X, grid.Y, grid.Z)
 	spacing := float32(1.0 / float64(extent))
-	span := tokenizer.config.OmegaMax - tokenizer.config.OmegaMin
-
 	particles := make([]pfluid.Particle, 0, len(orders))
 	contentIDs := make([]uint32, 0, len(orders))
 
@@ -133,21 +171,19 @@ func (tokenizer Tokenizer) NewBatch(
 
 		tokenID := packContent(symbolIdx, entry.side)
 
-		// Distribute omega evenly across the spectral GPE lattice [OmegaMin, OmegaMax].
-		omega := tokenizer.config.OmegaMin +
-			(float32(seq)+0.5)/float32(circle)*span
+		// Hawkes is the forcing element. It rides on top of the unit, so a quiet side
+		// enters at unit energy and an excited side enters hot and drives the field.
+		energy := unitOscillatorEnergy * float32(1+buyExcitation)
 
-		// Hawkes intensity sets particle energy based on side-specific market excitement.
-		energy := float32(buyIntensity)
 		if entry.side == mgrbook.Ask {
-			energy = float32(sellIntensity)
+			energy = unitOscillatorEnergy * float32(1+sellExcitation)
 		}
 
-		// Calculate relative queue position within its respective side (bids vs asks)
-		sideSeq := seq
+		// Queue position is the order's rank in its own side's price-time priority,
+		// never its position in the shuffled input slice.
 		sideCount := numBids
+
 		if entry.side == mgrbook.Ask {
-			sideSeq = seq - numBids
 			sideCount = numAsks
 		}
 
@@ -158,12 +194,20 @@ func (tokenizer Tokenizer) NewBatch(
 				grid, spacing,
 			),
 			Velocity: pfluid.Vector{},
-			Mass:     float32(quantity), // Mass scales with liquidity size
-			Heat:     energy * injectHeatFraction,
-			Energy:   energy,
-			Phase:    positionPhase(sideSeq, sideCount, entry.side),
-			Omega:    omega,
+			Mass:     float32(quantity / totalQuantity),
+			// Heat is earned, never stamped. It accumulates from inelastic collision and
+			// from Planck relaxation draining the oscillator store, so tokens enter cold.
+			Heat:   0,
+			Energy: energy,
+			Phase:  positionPhase(queue[seq], sideCount, entry.side),
+			Omega: positionOmega(
+				price,
+				midPrice,
+				scale,
+				tokenizer.config,
+			),
 		})
+
 		contentIDs = append(contentIDs, tokenID)
 	}
 
@@ -227,9 +271,12 @@ Why:
 func geometryBounds(
 	orders []*mgrbook.Order,
 	midPrice float64,
-) (logPriceMin, logPriceMax, logSizeMin, logSizeMax float64, ok bool) {
+) (
+	logPriceMin, logPriceMax, logSizeMin, logSizeMax, totalQuantity float64,
+	ok bool,
+) {
 	if len(orders) == 0 || midPrice <= 0 {
-		return 0, 0, 0, 0, false
+		return 0, 0, 0, 0, 0, false
 	}
 
 	logMid := math.Log(midPrice)
@@ -243,7 +290,7 @@ func geometryBounds(
 		quantity := resting.Quantity.Float64()
 
 		if price <= 0 || quantity <= 0 {
-			return 0, 0, 0, 0, false
+			return 0, 0, 0, 0, 0, false
 		}
 
 		logPrice := math.Log(price) - logMid
@@ -253,18 +300,186 @@ func geometryBounds(
 		logPriceMax = max(logPriceMax, logPrice)
 		logSizeMin = min(logSizeMin, logSize)
 		logSizeMax = max(logSizeMax, logSize)
+		totalQuantity += quantity
 	}
 
-	return logPriceMin, logPriceMax, logSizeMin, logSizeMax, true
+	if math.IsInf(totalQuantity, 0) || math.IsNaN(totalQuantity) {
+		return 0, 0, 0, 0, 0, false
+	}
+
+	return logPriceMin, logPriceMax, logSizeMin, logSizeMax, totalQuantity, true
+}
+
+func finiteNonnegative(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) &&
+		value >= 0 && value <= math.MaxFloat32
+}
+
+/*
+omegaScale folds one batch into the symbol's accumulated log-distance scale and returns
+the root mean square of log(Price / MidPrice) over every order the tokenizer has ever
+seen for that symbol.
+
+Why:
+  - Omega is the particle's identity, so its normalization cannot be a statistic of
+    whichever orders happen to share the current batch. Normalizing against per-batch
+    extents means one distant order arriving or cancelling re-assigns every other
+    particle's natural frequency, and the carrier cannot hold an attractor well at a
+    frequency that moves underneath it.
+  - A running mean square converges: after the opening ticks the scale barely moves, so
+    the same distance from mid keeps mapping to the same frequency across ticks. That
+    convergence is the property Psi(omega) needs, and it is also the trade-off — the
+    scale follows a volatility regime change only as fast as the sample count dilutes.
+  - Measuring dispersion about zero rather than about a sample mean keeps mid price at
+    the centre of the lattice, which is the only physically meaningful origin here.
+  - Kahan-compensated accumulation preserves the low-order terms of a stream that runs
+    for millions of orders.
+  - Every resting order is sampled again on every tick, so the scale is weighted by how
+    long orders sit rather than by how often they arrive.
+  - A mean square is pulled by orders far from mid. At market.l3_depth 10 the book is
+    tight enough that this does not bite, but a much deeper subscription would let a few
+    far-parked orders compress the near-touch levels into a sliver of the lattice.
+*/
+func (tokenizer *Tokenizer) omegaScale(
+	symbol string,
+	orders []*mgrbook.Order,
+	midPrice float64,
+) (float64, error) {
+	logMid := math.Log(midPrice)
+
+	tokenizer.mutex.Lock()
+	defer tokenizer.mutex.Unlock()
+
+	accumulated, ok := tokenizer.scales[symbol]
+
+	if !ok {
+		accumulated = adaptive.NewAccumulator()
+		tokenizer.scales[symbol] = accumulated
+	}
+
+	var output adaptive.AccumulatorOutput
+
+	for _, resting := range orders {
+		price := resting.LimitPrice.Float64()
+
+		if price <= 0 {
+			continue
+		}
+
+		deviation := math.Log(price) - logMid
+		measured, err := accumulated.Measure(deviation * deviation)
+
+		if err != nil {
+			return 0, err
+		}
+
+		output = measured
+	}
+
+	if output.Count == 0 {
+		return 0, nil
+	}
+
+	return math.Sqrt(output.Value / float64(output.Count)), nil
+}
+
+/*
+positionOmega maps an order's log distance from mid onto the content-frequency lattice.
+
+Why:
+  - The only inputs are the order's own price, the mid it is quoted against, and the
+    symbol's converged scale, so two identical orders one tick apart receive the same
+    frequency. Nothing about the rest of the batch enters.
+  - The sign is meaningful rather than incidental: bids sit below the lattice centre and
+    asks above it, with mid price at the centre. Extent normalization gave a lopsided
+    book the whole lattice, so its bids could land in ask territory.
+  - tanh is a monotone bounded map, chosen so distance ordering survives and no particle
+    can rail. Extent normalization pinned the nearest and furthest order to exactly
+    OmegaMin and OmegaMax every tick, making them spuriously resonant with each other;
+    tanh approaches the bounds without reaching them. Its tail compression is a
+    consequence of that choice, not a derived market law.
+*/
+func positionOmega(
+	price, midPrice, scale float64,
+	config pfluid.Config,
+) float32 {
+	centre := (config.OmegaMax + config.OmegaMin) / 2
+
+	if !(scale > 0) {
+		return centre
+	}
+
+	halfSpan := (config.OmegaMax - config.OmegaMin) / 2
+	deviation := math.Log(price) - math.Log(midPrice)
+
+	return centre + halfSpan*float32(math.Tanh(deviation/scale))
+}
+
+/*
+queueRanks ranks every entry within its own side by exchange price-time priority and
+returns each entry's rank (best resting order = 0).
+
+Why:
+  - Phase is the sequence coordinate of the Sensorium mapping, so it has to belong to
+    the order. The caller assembles its slices by walking a Go map, whose iteration
+    order is randomized per tick, so a slice index re-randomizes a resting order's
+    phase on every batch and destroys the relative phase offsets that carry position.
+  - Bids rank best-first by descending price, asks best-first by ascending price.
+  - Timestamp then order ID complete the ordering, so orders sharing a price and a
+    timestamp still rank deterministically instead of inheriting map order through an
+    unstable comparison.
+*/
+func queueRanks(entries []orderEntry) []int {
+	indices := make([]int, len(entries))
+
+	for index := range indices {
+		indices[index] = index
+	}
+
+	sort.Slice(indices, func(left, right int) bool {
+		first := entries[indices[left]]
+		second := entries[indices[right]]
+
+		if first.side != second.side {
+			return first.side == mgrbook.Bid
+		}
+
+		if order := first.order.LimitPrice.Cmp(second.order.LimitPrice); order != 0 {
+			if first.side == mgrbook.Bid {
+				return order > 0
+			}
+
+			return order < 0
+		}
+
+		if !first.order.Timestamp.Equal(second.order.Timestamp) {
+			return first.order.Timestamp.Before(second.order.Timestamp)
+		}
+
+		return first.order.ID < second.order.ID
+	})
+
+	ranks := make([]int, len(entries))
+	sideRanks := map[mgrbook.BookDirection]int{}
+
+	for _, index := range indices {
+		side := entries[index].side
+		ranks[index] = sideRanks[side]
+		sideRanks[side]++
+	}
+
+	return ranks
 }
 
 /*
 orderAgeRanks ranks orders from 0 to N-1 based on ascending timestamps (oldest = rank 0).
 
 Why:
-  - Maps queue priority directly to the Z-axis in physical space.
+  - Maps queue age directly to the Z-axis in physical space.
   - Uses the `Timestamp` field on `*mgrbook.Order`.
-  - Stable sort preserves walk order for orders sharing identical timestamps, ensuring smooth Z-span.
+  - Order ID breaks timestamp ties. A stable sort preserves walk order instead, and walk
+    order here is Go map iteration order, so every same-millisecond cluster of orders
+    would shuffle its Z coordinates between ticks.
 */
 func orderAgeRanks(orders []*mgrbook.Order) []int {
 	indices := make([]int, len(orders))
@@ -272,8 +487,15 @@ func orderAgeRanks(orders []*mgrbook.Order) []int {
 		indices[i] = i
 	}
 
-	sort.SliceStable(indices, func(left, right int) bool {
-		return orders[indices[left]].Timestamp.Before(orders[indices[right]].Timestamp)
+	sort.Slice(indices, func(left, right int) bool {
+		first := orders[indices[left]]
+		second := orders[indices[right]]
+
+		if !first.Timestamp.Equal(second.Timestamp) {
+			return first.Timestamp.Before(second.Timestamp)
+		}
+
+		return first.ID < second.ID
 	})
 
 	ranks := make([]int, len(orders))
@@ -289,12 +511,15 @@ unitInRange maps a continuous value onto the range [0.0, 1.0] across observed mi
 Why:
   - Handles degenerate spans (min == max) by anchoring the value at the 0.5 midline so single
     observations do not get pinned artificially to domain edges.
+  - Clamps the result. The bounds are derived by one expression and applied by another, and
+    a value sitting exactly on a bound can land a few ULP outside it, which is enough to
+    push a particle off the PIC grid.
 */
 func unitInRange(value, minimum, maximum float64) float64 {
 	if maximum <= minimum {
 		return 0.5
 	}
-	return (value - minimum) / (maximum - minimum)
+	return min(max((value-minimum)/(maximum-minimum), 0), 1)
 }
 
 /*
@@ -314,7 +539,10 @@ func marketPosition(
 	grid pfluid.Grid,
 	spacing float32,
 ) pfluid.Vector {
-	xUnit := unitInRange(math.Log(price/midPrice), logPriceMin, logPriceMax)
+	// Matches geometryBounds term for term. log(price/mid) rounds differently from
+	// log(price) - log(mid), and the difference is what put the cheapest order a few
+	// ULP below zero on the X axis.
+	xUnit := unitInRange(math.Log(price)-math.Log(midPrice), logPriceMin, logPriceMax)
 	yUnit := unitInRange(math.Log(quantity), logSizeMin, logSizeMax)
 	zUnit := 0.5
 

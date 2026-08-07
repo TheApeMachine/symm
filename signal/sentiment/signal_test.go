@@ -35,7 +35,7 @@ func measurementFor(
 
 func TestMeasure(t *testing.T) {
 	Convey("Given a causal multi-leg return cohort", t, func() {
-		signal := &Signal{observations: make(map[string]returnObservation)}
+		signal := &Signal{observations: &sync.Map{}}
 		thesis := types.NewThesis(nil)
 		start := time.Unix(1_700_000_000, 0).UTC()
 
@@ -57,6 +57,7 @@ func TestMeasure(t *testing.T) {
 
 		thesis.Tickers = tickerMap(firstLeg)
 		So(signal.Measure(thesis), ShouldBeEmpty)
+		group := signal.group
 		thesis.Tickers = tickerMap(secondLeg)
 		So(signal.Measure(thesis), ShouldHaveLength, 3)
 		thesis.Tickers = tickerMap(thirdLeg)
@@ -79,11 +80,13 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It should reject repeated latest-value cache entries", func() {
 			So(signal.Measure(thesis), ShouldBeEmpty)
+			So(signal.group, ShouldEqual, group)
+			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(18))
 		})
 	})
 
 	Convey("Given a cohort with real cadence but no return dispersion", t, func() {
-		signal := &Signal{observations: make(map[string]returnObservation)}
+		signal := &Signal{observations: &sync.Map{}}
 		thesis := types.NewThesis(nil)
 		start := time.Unix(1_700_000_100, 0).UTC()
 		thesis.Tickers = tickerMap([]kraken.TickerData{
@@ -109,7 +112,7 @@ func tickerMap(rows []kraken.TickerData) *sync.Map {
 	values := &sync.Map{}
 
 	for _, row := range rows {
-		values.Store(row.Symbol, row)
+		values.Store(row.Symbol, []kraken.TickerData{row})
 	}
 
 	return values

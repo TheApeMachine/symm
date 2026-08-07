@@ -12,6 +12,32 @@ import (
 )
 
 func TestMeasure(t *testing.T) {
+	Convey("Given unchanged touches for independent toxicity symbols", t, func() {
+		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
+		signal := &Signal{books: books}
+		base := time.Unix(1_700_004_100, 0).UTC()
+		thesis := types.NewThesis(nil)
+		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
+		thesis.AppendTicker(kraken.TickerData{Symbol: "ALT/USD", Timestamp: base})
+		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
+		books.books["ALT/USD"] = toxicityBook(50, 51, 20, 20, base)
+
+		Reset(func() {
+			signal.Close()
+		})
+
+		Convey("It reuses one stored group and submits one task per symbol", func() {
+			measurements := signal.Measure(thesis)
+			group := signal.group
+			So(measurements, ShouldHaveLength, 2)
+			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(2))
+			thesis.AppendMeasurements(measurements, true)
+			So(signal.Measure(thesis), ShouldBeEmpty)
+			So(signal.group, ShouldEqual, group)
+			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(4))
+		})
+	})
+
 	Convey("Given a pre-touch, multiple executions, and a later post-touch", t, func() {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
 		signal := &Signal{books: books}
@@ -20,7 +46,7 @@ func TestMeasure(t *testing.T) {
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(provisional, true)
+		thesis.AppendMeasurements(provisional, false)
 		So(provisional, ShouldHaveLength, 1)
 		So(provisional[0].At, ShouldResemble, base)
 		So(provisional[0].Sample(types.MetricTouchQuantity, types.SideBuy).Normalized,
@@ -73,7 +99,7 @@ func TestMeasure(t *testing.T) {
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(provisional, true)
+		thesis.AppendMeasurements(provisional, false)
 		trade := toxicityTrade(93, "buy", 101, 1, base.Add(time.Second))
 		thesis.AppendTrade(trade)
 

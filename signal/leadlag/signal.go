@@ -2,8 +2,10 @@ package leadlag
 
 import (
 	"context"
+	"runtime"
 	"sync"
 
+	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -24,6 +26,8 @@ type Signal struct {
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
 	mu            sync.Mutex
+	pool          pond.Pool
+	group         pond.TaskGroup
 }
 
 /*
@@ -47,7 +51,9 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
+		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
+	signal.group = signal.pool.NewGroup()
 	signal.status = types.READY
 	signal.run()
 	return signal
@@ -102,6 +108,9 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
+
 	if signal.section == nil {
 		signal.section = NewSection()
 	}
@@ -116,6 +125,16 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.cancel()
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
+
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
+	if signal.pool != nil {
+		signal.pool.StopAndWait()
+	}
+
 	return nil
 }

@@ -65,27 +65,10 @@ func NewHolding(
 		Stoploss: NewStoploss(
 			ctx,
 			symbol,
-			decision.EntryPrice,
-			decision.ProposedQuantity,
-			decision.EntryFee,
 			decision.Mark,
-			decision.Risk,
 		),
-
-		/*
-			ExitPrice, ExitFee and PnL are left absent rather than zeroed. The
-			lot has not been sold, so there is no price it went out at, and a
-			zero would read as one, and Position fills all three in from the
-			execution that actually closes the lot.
-		*/
 	}
 
-	/*
-		A realised return only exists once something has been realised. The
-		field is a plain float64 with no way to say "not yet", so an entry
-		carries the zero it has actually returned so far, and the deref is
-		guarded because an entry decision never carries one at all.
-	*/
 	if decision.ReturnPct != nil {
 		holding.ReturnPct = *decision.ReturnPct
 	}
@@ -112,30 +95,9 @@ func (holding *Holding) Update(
 	}
 
 	holding.Mark = ticker.Bid
-
-	if holding.Stoploss != nil && holding.Stoploss.ProfitLine != nil {
-		holding.ProfitThreshold = holding.Stoploss.ProfitLine
-	}
+	holding.Stoploss.Update(holding.Mark)
 
 	return nil
-}
-
-/*
-Observe forwards one executable observation to the regulator. It is separate
-from Update because the price the stop judges is not the price on the ticker:
-it is what selling this lot's quantity would actually realise, which only the
-broker's price surface can derive.
-*/
-func (holding *Holding) Observe(evidence StopEvidence) {
-	if holding == nil || holding.Stoploss == nil {
-		return
-	}
-
-	holding.Stoploss.Observe(evidence)
-
-	if holding.Stoploss.ProfitLine != nil {
-		holding.ProfitThreshold = holding.Stoploss.ProfitLine
-	}
 }
 
 func (holding *Holding) Close() (err error) {

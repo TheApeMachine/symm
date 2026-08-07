@@ -36,6 +36,7 @@ func TestAllocatorAllocate(t *testing.T) {
 
 			Convey("An entry decision should be sized and marked ready", func() {
 				thesis := types.NewThesis(nil)
+				availableCapital := system.Desk.Balance().Cash()
 				decision := types.Decision{
 					ID:     uuid.NewString(),
 					Action: types.ActionEnter,
@@ -54,6 +55,8 @@ func TestAllocatorAllocate(t *testing.T) {
 				So(decision.ProposedNotional, ShouldNotBeNil)
 				So(decision.ProposedNotional.Sign(), ShouldBeGreaterThan, 0)
 				So(decision.ReferencePrice, ShouldNotBeNil)
+				So(decision.AvailableCapital, ShouldNotBeNil)
+				So(decision.AvailableCapital.Cmp(availableCapital), ShouldEqual, 0)
 			})
 
 			Convey("A sized entry should carry the geometry it was sized under", func() {

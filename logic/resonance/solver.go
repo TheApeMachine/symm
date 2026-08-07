@@ -7,15 +7,16 @@ import (
 	"sort"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
+	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -38,6 +39,8 @@ type Solver struct {
 	learn           bool
 	advanceTemporal bool
 	ui              chan []byte
+	pool            pond.Pool
+	group           pond.TaskGroup
 }
 
 /*
@@ -46,7 +49,7 @@ dynamic forward prediction rollout.
 Defaults: initial alpha = 0.03, maxHorizon = 20 ticks.
 */
 func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
-	return &Solver{
+	solver := &Solver{
 		recorder:        recorder,
 		states:          make(map[string]*symbolState),
 		targetDim:       resonanceReturnDimensions,
@@ -54,7 +57,11 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 		learn:           true,
 		advanceTemporal: true,
 		ui:              ui,
+		pool:            pond.NewPool(runtime.NumCPU()),
 	}
+
+	solver.group = solver.pool.NewGroup()
+	return solver
 }
 
 func (solver *Solver) state(symbol string) *symbolState {
@@ -86,17 +93,18 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		solver.state(symbol)
 	}
 
-	group := errgroup.Group{}
-	group.SetLimit(max(runtime.NumCPU(), 1))
-
 	for symbol, features := range featureSets {
-		group.Go(func() error {
+		solver.group.SubmitErr(func() error {
 			return solver.updateSymbol(thesis, symbol, features)
 		})
 	}
 
-	if err := group.Wait(); err != nil {
-		return err
+	if err := solver.group.Wait(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: failed to update CPU predictive coding manifold",
+			err,
+		))
 	}
 
 	thesis.Readiness.Stamp(types.SourceResonance)
@@ -120,7 +128,11 @@ func (solver *Solver) updateSymbol(
 	}
 
 	state := solver.state(symbol)
-	features = solver.standardizeFeatures(state, features)
+	features, informative, err := solver.standardizeFeatures(state, features)
+
+	if err != nil {
+		return err
+	}
 
 	if state.targetSamples == 0 {
 		featureSchema := append([]string(nil), state.featureSchema...)
@@ -150,6 +162,12 @@ func (solver *Solver) updateSymbol(
 			}
 
 			state.featureSchema = featureSchema
+			state.extractor = vector.NewFeatureExtractor(vector.FeatureExtractorConfig{
+				FeatureScopeConfig: vector.FeatureScopeConfig{
+					Root:   ".",
+					Inputs: slices.Clone(featureSchema),
+				},
+			})
 			state.pendingInput = nil
 			state.pendingMid = 0
 			state.pendingAt = time.Time{}
@@ -161,31 +179,35 @@ func (solver *Solver) updateSymbol(
 		}
 	}
 
-	input := state.input
+	fields := make([]vector.NamedValue, 0, len(features))
 
-	if cap(input) < len(state.featureSchema) {
-		input = make([]float64, len(state.featureSchema))
-	} else {
-		input = input[:len(state.featureSchema)]
+	for featureKey, reading := range features {
+		fields = append(fields, vector.NamedValue{
+			Name:  featureKey,
+			Value: reading,
+		})
 	}
 
-	state.input = input
-	informative := false
+	featureVector, err := state.extractor.Measure(vector.FeatureInput{
+		Row: vector.NewFeatureRow(fields...),
+	})
 
-	for featureIndex, featureKey := range state.featureSchema {
-		input[featureIndex] = features[featureKey]
-
-		if input[featureIndex] != 0 {
-			informative = true
-		}
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: failed to extract ordered feature vector",
+			err,
+		))
 	}
+
+	input := featureVector.Features
 
 	/*
-		A standardizer answers zero while it has no spread to score against, so
-		a vector that is entirely zero is the absence of a reading rather than a
-		market that measured zero on all counts.
+		A standardizer reports whether prior spread makes its current score a
+		measurement. During warmup it answers zero without readiness, while a
+		ready observation at the learned mean is also legitimately zero.
 
-		Settling on it drives the latent state to the origin, which makes the
+		Settling on an unready vector drives the latent state to the origin, which makes the
 		rollout retention zero and publishes the forecast as invalid; learning
 		from it spends a resolved return sample teaching the return head that
 		no input predicts a real move. Both are wrong about a stage that has
@@ -194,7 +216,8 @@ func (solver *Solver) updateSymbol(
 		This resolves as soon as any feature varies, because the standardizer
 		scores against its own precision rather than waiting out a sample count:
 		an early reading is small because the scale behind it is uncertain, and
-		it grows into a full z-score as the moments settle.
+		it grows into a full z-score as the moments settle. Once ready, its value
+		may still be zero without making the observation absent.
 	*/
 	if !informative {
 		thesis.Resonance.Store(symbol, types.ResonanceReading{
@@ -377,14 +400,16 @@ func (solver *Solver) extractFeatures(thesis *types.Thesis) map[string]map[strin
 func (solver *Solver) standardizeFeatures(
 	state *symbolState,
 	features map[string]float64,
-) map[string]float64 {
+) (map[string]float64, bool, error) {
 	if len(features) == 0 {
-		return nil
+		return nil, false, nil
 	}
 
 	if state.featureScale == nil {
 		state.featureScale = make(map[string]*adaptive.Standardizer)
 	}
+
+	informative := false
 
 	for featureKey, reading := range features {
 		normalizer, ok := state.featureScale[featureKey]
@@ -397,14 +422,21 @@ func (solver *Solver) standardizeFeatures(
 		output, err := normalizer.Measure(reading)
 
 		if err != nil {
-			features[featureKey] = 0
-			continue
+			return nil, false, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"resonance: failed to standardize feature",
+				err,
+			).With("feature", featureKey))
 		}
 
 		features[featureKey] = output.Value
+
+		if output.Ready {
+			informative = true
+		}
 	}
 
-	return features
+	return features, informative, nil
 }
 
 func (solver *Solver) returnTarget(
@@ -489,17 +521,6 @@ func (solver *Solver) learnReturn(state *symbolState, midpoint float64, at time.
 	state.targetSamples++
 
 	return nil
-}
-
-/*
-Reset clears learned temporal and precision state in the predictive coding manifold.
-*/
-func (solver *Solver) Reset(resetPrecision bool) {
-	for _, state := range solver.states {
-		if state.manifold != nil {
-			state.manifold.ResetState(resetPrecision)
-		}
-	}
 }
 
 /*

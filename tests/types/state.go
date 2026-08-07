@@ -338,6 +338,7 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		BaseQty:         2500.0,
 		VolumeScale:     10.0,
 		Cadence:         50 * time.Millisecond,
+		AggressorSide:   "buy",
 	},
 	SpreadCompression: {
 		Drift:           0.0,

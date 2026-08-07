@@ -3,7 +3,9 @@ module github.com/theapemachine/symm
 go 1.26.1
 
 require (
+	github.com/alitto/pond/v2 v2.7.1
 	github.com/bytedance/sonic v1.15.2
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/phuslu/log v1.0.124

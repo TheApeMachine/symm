@@ -17,20 +17,21 @@ import (
 )
 
 type Planner struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	status        types.Status
-	ui            chan []byte
-	subscriptions map[string]*types.Subscription[any]
-	subscribers   *sync.Map
-	api           *websocket.API
-	desk          *broker.Desk
-	price         *broker.Price
-	balance       *broker.Balance
-	recorder      *audit.Recorder
-	evaluator     Evaluator
-	arbiter       *Arbiter
-	allocator     *Allocator
+	ctx              context.Context
+	cancel           context.CancelFunc
+	status           types.Status
+	ui               chan []byte
+	subscriptions    map[string]*types.Subscription[any]
+	subscribers      *sync.Map
+	api              *websocket.API
+	desk             *broker.Desk
+	price            *broker.Price
+	balance          *broker.Balance
+	recorder         *audit.Recorder
+	arbitrationRound int64
+	evaluator        Evaluator
+	arbiter          *Arbiter
+	allocator        *Allocator
 }
 
 func NewPlanner(
@@ -129,7 +130,8 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		return
 	}
 
-	planner.evaluator.ManageContinuation(thesis, planner.desk, planner.price)
+	planner.arbitrationRound++
+
 	planner.evaluator.EvaluateOpportunities(thesis)
 
 	if err := planner.allocator.Allocate(thesis); err != nil {
@@ -145,6 +147,7 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 	// because the reset below clears the map the moment the cycle completes.
 	decisions := planner.decisions(thesis)
 	thesis.Stamp(types.SourcePlanner)
+
 	planner.subscribers.Range(func(key, value any) bool {
 		name, ok := key.(string)
 
@@ -170,6 +173,7 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		return
 	}
 
+	planner.recorder.Write(decisions)
 	thesis.Stamp(types.SourcePlanner)
 	utils.Fanout(planner.subscribers, "planner", thesis)
 
@@ -203,7 +207,7 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 		}
 
 		decision.EnsureID()
-		decision.ArbitrationRound = thesis.Tick
+		decision.ArbitrationRound = planner.arbitrationRound
 		decisions = append(decisions, *decision)
 
 		return true

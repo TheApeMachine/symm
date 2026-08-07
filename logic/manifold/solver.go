@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"runtime"
 	"sort"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	mgrbook "github.com/theapemachine/api-go/v2/pkg/book"
@@ -26,15 +28,18 @@ Symbols contribute observations to the same gas and wave fields; they are not
 split into independent simulations that cannot interfere.
 */
 type Solver struct {
-	books     websocket.BookSource
+	api       *websocket.API
 	config    pfluid.Config
 	domain    *pfluid.Domain
 	recorder  *audit.Recorder
 	tokenizer *Tokenizer
 	residency int
 	turnover  int
+	fold      foldMeter
 	ui        chan []byte
 	binui     chan []byte
+	pool      pond.Pool
+	group     pond.TaskGroup
 }
 
 /*
@@ -70,14 +75,6 @@ func NewSolver(
 	domain, err := newDomain(config)
 	errnie.Error(err)
 
-	/*
-		Residency must stay well below the lattice size in practice. The shared
-		thermo-wave solve destabilizes long before one quarter-cell occupancy once
-		hundreds of symbols have contributed sequentially, so the resident history
-		is bounded to one thirty-second of the cells unless config overrides it.
-		That keeps the newest cross-market carriers while forcing eviction to act
-		before the pilot-wave gather reaches the observed non-finite regime.
-	*/
 	cells := config.Grid.X * config.Grid.Y * config.Grid.Z
 	residency := max(cells/32, 1)
 
@@ -85,16 +82,21 @@ func NewSolver(
 		residency = configuredResidency
 	}
 
-	return &Solver{
-		books:     api,
+	solver := &Solver{
+		api:       api,
 		config:    config,
 		domain:    domain,
 		recorder:  recorder,
 		tokenizer: NewTokenizer(config, symbols),
 		residency: residency,
+		fold:      foldMeter{cap: residency},
 		ui:        ui,
 		binui:     binui,
+		pool:      pond.NewPool(runtime.NumCPU()),
 	}
+
+	solver.group = solver.pool.NewGroup()
+	return solver
 }
 
 func newDomain(config pfluid.Config) (*pfluid.Domain, error) {
@@ -123,16 +125,15 @@ Update appends tokenized book samples for every changed Hawkes epoch, then
 advances the shared domain once for the complete tick.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis == nil {
+	if !thesis.Readiness.Hawkes {
 		return nil
 	}
 
 	solver.maybeRebase(thesis.At)
 
-	attempted := false
+	// attempted := false
 	stepSymbol := ""
 	focus := types.Focus()
-	var updateErr error
 	hawkesRows := utils.Measurements(thesis, types.SourceHawkes)
 	symbolSet := make(map[string]struct{})
 
@@ -151,28 +152,24 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	sort.Strings(symbols)
 
 	for _, name := range symbols {
-		if solver.books == nil {
-			break
-		}
-
-		managed := solver.books.Book(name)
+		managed := solver.api.Book(name)
 
 		if managed == nil {
-			continue
+			return nil
 		}
 
 		hawkes := utils.ForSymbol(hawkesRows, name)
 		latest := hawkes[len(hawkes)-1]
-		buyIntensity, buyReady := latest.Metrics[types.MetricKey(
-			types.MetricConditionalIntensity, types.SideBuy,
-		)]
-		sellIntensity, sellReady := latest.Metrics[types.MetricKey(
-			types.MetricConditionalIntensity, types.SideSell,
-		)]
 
-		if !buyReady || !sellReady {
-			continue
-		}
+		// The conditional-intensity keys are always present: the hawkes signal publishes
+		// them with a zero Raw before its fit is ready, so map presence says nothing.
+		// Normalized is the discriminator - it is only set once HawkesFit is ready, and
+		// it carries the quantity we actually want, (lambda - mu) / mu.
+		buyExcitation, buyState := sideExcitation(latest, types.SideBuy)
+		sellExcitation, sellState := sideExcitation(latest, types.SideSell)
+
+		solver.fold.excite(buyState)
+		solver.fold.excite(sellState)
 
 		bidOrders := make([]*mgrbook.Order, 0)
 		askOrders := make([]*mgrbook.Order, 0)
@@ -189,35 +186,29 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			bidOrders,
 			askOrders,
 			managed.Midpoint().Float64(),
-			buyIntensity.Raw,
-			sellIntensity.Raw,
+			buyExcitation,
+			sellExcitation,
 			name,
 		)
 
 		if err != nil {
-			updateErr = errnie.Error(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				fmt.Sprintf("failed to tokenize manifold particles for %s", name),
 				err,
 			))
-
-			break
-		}
-
-		if len(particles) == 0 || len(contentIDs) == 0 {
-			continue
 		}
 
 		particles, contentIDs, _ = solver.filterBatch(particles, contentIDs)
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
-			continue
+			return nil
 		}
 
 		_, err = solver.domain.Append(particles, contentIDs)
 
 		if err != nil {
-			updateErr = errnie.Error(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				fmt.Sprintf(
 					"failed to append %d manifold particles for %s: %v",
@@ -225,36 +216,36 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				),
 				err,
 			))
-
-			break
 		}
 
 		solver.turnover += len(particles)
-		attempted = true
+		solver.fold.inject(len(particles))
+		// attempted = true
 
 		if stepSymbol == "" || name == focus {
 			stepSymbol = name
 		}
 	}
 
-	if updateErr != nil {
-		if attempted {
-			solver.resetDomain(stepSymbol)
-		}
-
-		return updateErr
-	}
-
-	if !attempted {
-		thesis.Stamp(types.SourceManifold)
-		return nil
-	}
-
 	solver.evict()
 
 	if err := solver.Step(stepSymbol, thesis.At); err != nil {
-		solver.resetDomain(stepSymbol)
-		return nil
+		// solver.resetDomain(stepSymbol)
+		return err
+	}
+
+	var err error
+	thesis.Manifold, err = solver.domain.Reading()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"failed to read manifold for %s with %d resident particles: %v",
+				stepSymbol, solver.domain.ParticleCount(), err,
+			),
+			err,
+		))
 	}
 
 	thesis.Stamp(types.SourceManifold)
@@ -312,11 +303,28 @@ func (solver *Solver) evict() {
 			),
 			err,
 		))
+
+		return
 	}
+
+	solver.fold.drop(resident, solver.domain.ParticleCount())
 }
 
 func (solver *Solver) Step(symbol string, at time.Time) error {
+	// Inelastic merge is the only stage inside Advance that removes particles, so the
+	// population lost across it is the fold yield.
+	beforeAdvance := solver.domain.ParticleCount()
+
 	_, err := solver.domain.Advance()
+
+	if err == nil {
+		resident := solver.domain.ParticleCount()
+		solver.fold.fold(beforeAdvance, resident)
+
+		if solver.fold.due() {
+			solver.fold.report(resident)
+		}
+	}
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -413,6 +421,44 @@ func (solver *Solver) filterBatch(
 	}
 
 	return keptParticles, keptContentIDs, dropped
+}
+
+/*
+sideExcitation reads one side's Hawkes self-excitation, (lambda - mu) / mu, from a
+measurement row.
+
+Why:
+  - The hawkes signal publishes conditional_intensity for both sides on every row, but
+    substitutes a zero Raw until its fit converges, so testing the map for the key cannot
+    tell a converged zero from an unconverged placeholder. Normalized is only populated
+    once HawkesFit is ready, which makes its presence the readiness signal.
+  - An unconverged fit means the excitation is unmeasured, and an unmeasured cascade
+    forces nothing, so the side enters at unit energy rather than stalling the symbol.
+*/
+func sideExcitation(
+	measurement *types.Measurement,
+	side types.MeasurementSide,
+) (float64, excitationState) {
+	sample, ok := measurement.Metrics[types.MetricKey(
+		types.MetricConditionalIntensity, side,
+	)]
+
+	if !ok {
+		return 0, excitationMissing
+	}
+
+	if sample.Normalized == nil {
+		// The hawkes signal substitutes a zero Raw for an unconverged fit, so a nil
+		// Normalized sitting on a zero Raw is a warm-up and a nil sitting on a positive
+		// Raw is a converged fit reporting arrivals below their immigrant baseline.
+		if sample.Raw == 0 {
+			return 0, excitationUnfit
+		}
+
+		return 0, excitationBelowBaseline
+	}
+
+	return *sample.Normalized, excitationForced
 }
 
 func admissibleParticle(particle pfluid.Particle, config pfluid.Config) bool {

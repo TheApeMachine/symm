@@ -34,13 +34,6 @@ inventing prices.
 type StopEvidence struct {
 	Symbol string `json:"symbol"`
 	/*
-		RegimeExit names a live structural condition that invalidates the entry
-		regime. It is empty during normal operation; when present the regulator
-		exits immediately without moving the risk boundary the lot was sized
-		against.
-	*/
-	RegimeExit string `json:"regime_exit,omitempty"`
-	/*
 		ExecutableMark is the estimated sell VWAP for the position's sellable
 		quantity, gross of the exit fee but net of the depth impact walking that
 		quantity down the book would cost.

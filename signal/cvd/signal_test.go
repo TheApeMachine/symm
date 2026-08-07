@@ -1,6 +1,7 @@
 package cvd
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 
 func TestSeenTrade(t *testing.T) {
 	Convey("Given an exact-once cursor for one CVD symbol", t, func() {
-		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
+		signal := &Signal{lastTrade: &sync.Map{}}
 		at := time.Unix(1_700_003_000, 0).UTC()
 		first := kraken.TradeData{Symbol: "ALT/USD", TradeID: 61, Timestamp: at}
 		second := kraken.TradeData{Symbol: "ALT/USD", TradeID: 62, Timestamp: at}
@@ -32,7 +33,7 @@ func TestSeenTrade(t *testing.T) {
 	})
 
 	Convey("Given same-time CVD trades without exchange IDs", t, func() {
-		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
+		signal := &Signal{lastTrade: &sync.Map{}}
 		trade := kraken.TradeData{Symbol: "ALT/USD", Timestamp: time.Unix(1_700_003_100, 0).UTC()}
 		signal.commitTrade(trade)
 
@@ -47,8 +48,8 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{
 			sample:    algorithm.NewTradeFlowSample(),
 			flow:      equation.NewFlow(),
-			midpoints: make(map[string][]midpointObservation),
-			lastTrade: make(map[string]tradeCursor),
+			midpoints: &sync.Map{},
+			lastTrade: &sync.Map{},
 		}
 		base := time.Unix(1_700_003_200, 0).UTC()
 		causalTicker := cvdTicker(99, 101, base)
@@ -56,18 +57,20 @@ func TestMeasure(t *testing.T) {
 		trade := cvdTrade(71, "buy", 101, base.Add(2*time.Second))
 
 		causalCut := types.NewThesis(nil)
-		causalCut.Tickers.Store("BTC/USD", causalTicker)
+		causalCut.Tickers.Store("BTC/USD", []kraken.TickerData{causalTicker})
 		So(signal.Measure(causalCut), ShouldBeEmpty)
 
 		futureCut := types.NewThesis(nil)
-		futureCut.Tickers.Store("BTC/USD", futureTicker)
-		futureCut.Trades.Store(int64(71), trade)
+		futureCut.Tickers.Store("BTC/USD", []kraken.TickerData{futureTicker})
+		futureCut.Trades.Store("BTC/USD", []kraken.TradeData{trade})
 		measurements := signal.Measure(futureCut)
 
 		Convey("It uses the older midpoint, emits the preserved contract, and commits once", func() {
 			So(measurements, ShouldHaveLength, 1)
 			So(signal.seenTrade(trade), ShouldBeTrue)
-			So(signal.midpoints["BTC/USD"], ShouldHaveLength, 2)
+			raw, exists := signal.midpoints.Load("BTC/USD")
+			So(exists, ShouldBeTrue)
+			So(raw.([]midpointObservation), ShouldHaveLength, 2)
 			measurement := measurements[0]
 			So(measurement.At, ShouldResemble, trade.Timestamp)
 			So(measurement.Metrics, ShouldHaveLength, 7)
@@ -107,24 +110,83 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{
 			sample:    algorithm.NewTradeFlowSample(),
 			flow:      equation.NewFlow(),
-			midpoints: make(map[string][]midpointObservation),
-			lastTrade: make(map[string]tradeCursor),
+			midpoints: &sync.Map{},
+			lastTrade: &sync.Map{},
 		}
 		base := time.Unix(1_700_003_300, 0).UTC()
 		trade := cvdTrade(72, "sell", 100, base)
 		futureCut := types.NewThesis(nil)
-		futureCut.Tickers.Store("BTC/USD", cvdTicker(99, 101, base.Add(time.Second)))
-		futureCut.Trades.Store(int64(72), trade)
+		futureCut.Tickers.Store("BTC/USD", []kraken.TickerData{
+			cvdTicker(99, 101, base.Add(time.Second)),
+		})
+		futureCut.Trades.Store("BTC/USD", []kraken.TradeData{trade})
 
 		Convey("It defers without consuming the trade, then resolves after causal evidence arrives", func() {
 			So(signal.Measure(futureCut), ShouldBeEmpty)
 			So(signal.seenTrade(trade), ShouldBeFalse)
 
 			causalCut := types.NewThesis(nil)
-			causalCut.Tickers.Store("BTC/USD", cvdTicker(98, 100, base))
-			causalCut.Trades.Store(int64(72), trade)
+			causalCut.Tickers.Store("BTC/USD", []kraken.TickerData{
+				cvdTicker(98, 100, base),
+			})
+			causalCut.Trades.Store("BTC/USD", []kraken.TradeData{trade})
 			So(signal.Measure(causalCut), ShouldHaveLength, 1)
 			So(signal.seenTrade(trade), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given reversed trade batches for independent CVD symbols", t, func() {
+		signal := &Signal{
+			sample:    algorithm.NewTradeFlowSample(),
+			flow:      equation.NewFlow(),
+			midpoints: &sync.Map{},
+			lastTrade: &sync.Map{},
+		}
+		base := time.Unix(1_700_003_350, 0).UTC()
+		bitcoinTicker := cvdTicker(99, 101, base)
+		altTicker := cvdTicker(49, 51, base)
+		altTicker.Symbol = "ALT/USD"
+		bitcoinFirst := cvdTrade(73, "buy", 100, base.Add(time.Second))
+		bitcoinSecond := cvdTrade(74, "sell", 101, base.Add(2*time.Second))
+		altFirst := cvdTrade(75, "sell", 50, base.Add(time.Second))
+		altFirst.Symbol = "ALT/USD"
+		altSecond := cvdTrade(76, "buy", 51, base.Add(2*time.Second))
+		altSecond.Symbol = "ALT/USD"
+		cut := types.NewThesis(nil)
+		cut.Tickers.Store("BTC/USD", []kraken.TickerData{bitcoinTicker})
+		cut.Tickers.Store("ALT/USD", []kraken.TickerData{altTicker})
+		cut.Trades.Store("BTC/USD", []kraken.TradeData{bitcoinSecond, bitcoinFirst})
+		cut.Trades.Store("ALT/USD", []kraken.TradeData{altSecond, altFirst})
+
+		Reset(func() {
+			signal.pool.StopAndWait()
+		})
+
+		Convey("It runs one task per symbol and preserves causal order within each task", func() {
+			measurements := signal.Measure(cut)
+			group := signal.group
+			So(measurements, ShouldHaveLength, 4)
+			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(2))
+
+			measurementsBySymbol := make(map[string][]*types.Measurement)
+
+			for _, measurement := range measurements {
+				measurementsBySymbol[measurement.Symbol] = append(
+					measurementsBySymbol[measurement.Symbol], measurement,
+				)
+			}
+
+			So(measurementsBySymbol["BTC/USD"], ShouldHaveLength, 2)
+			So(measurementsBySymbol["ALT/USD"], ShouldHaveLength, 2)
+			So(measurementsBySymbol["BTC/USD"][0].At.Before(
+				measurementsBySymbol["BTC/USD"][1].At,
+			), ShouldBeTrue)
+			So(measurementsBySymbol["ALT/USD"][0].At.Before(
+				measurementsBySymbol["ALT/USD"][1].At,
+			), ShouldBeTrue)
+			So(signal.Measure(cut), ShouldBeEmpty)
+			So(signal.group, ShouldEqual, group)
+			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(4))
 		})
 	})
 }

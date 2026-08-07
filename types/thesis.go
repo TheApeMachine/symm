@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -50,7 +51,7 @@ type Thesis struct {
 	Decisions    *sync.Map     `json:"decisions"`
 	Lifecycle    *sync.Map     `json:"lifecycle"`
 	Categories   *sync.Map     `json:"categories"`
-	Manifold     *sync.Map     `json:"-"`
+	Manifold     fluid.Reading `json:"-"`
 	Cognition    *sync.Map     `json:"-"`
 	Resonance    *sync.Map     `json:"-"`
 	Causal       *sync.Map     `json:"-"`
@@ -74,7 +75,7 @@ func NewThesis(ui chan []byte) *Thesis {
 		Measurements: &sync.Map{},
 		Tickers:      &sync.Map{},
 		Trades:       &sync.Map{},
-		Manifold:     &sync.Map{},
+		Manifold:     fluid.Reading{},
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
 		Causal:       &sync.Map{},
@@ -101,7 +102,7 @@ func (thesis *Thesis) Reset() *Thesis {
 	thesis.Measurements.Clear()
 	thesis.Categories.Clear()
 	thesis.Cognition.Clear()
-	thesis.Manifold.Clear()
+	thesis.Manifold = fluid.Reading{}
 	thesis.Resonance.Clear()
 	thesis.Causal.Clear()
 	thesis.Graphs.Clear()

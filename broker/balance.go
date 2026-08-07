@@ -154,18 +154,18 @@ func (balance *Balance) Assets() map[string]*decimal.Decimal {
 /*
 Cash reports the quote balance exactly as the exchange last stated it.
 */
-func (balance *Balance) Cash() (*decimal.Decimal, error) {
+func (balance *Balance) Cash() *decimal.Decimal {
 	found, ok := balance.wallet.Load(balance.quote)
 
 	if !ok || found == nil {
-		return nil, nil
+		return nil
 	}
 
 	cash, ok := found.(*decimal.Decimal)
 
 	if !ok {
-		return nil, nil
+		return nil
 	}
 
-	return cash, nil
+	return cash
 }

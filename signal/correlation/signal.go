@@ -3,10 +3,13 @@ package correlation
 import (
 	"context"
 	"math"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -28,7 +31,9 @@ type Signal struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
-	mu            sync.Mutex
+	measureMu     sync.Mutex
+	pool          pond.Pool
+	group         pond.TaskGroup
 }
 
 /*
@@ -52,7 +57,9 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
+		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
+	signal.group = signal.pool.NewGroup()
 
 	signal.run()
 	signal.status = types.READY
@@ -103,6 +110,9 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
 	tickers := thesis.MarketTickers()
 
 	if len(tickers) == 0 {
@@ -139,35 +149,74 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		latestAtBySymbol[symbol] = row.Timestamp
 	}
 
-	measurements := make([]*types.Measurement, 0)
+	symbols := make([]string, 0, len(scoresBySymbol))
+
+	for symbol := range scoresBySymbol {
+		symbols = append(symbols, symbol)
+	}
+	sort.Strings(symbols)
+	measurements := make([]*types.Measurement, len(symbols))
 	out := make([]*types.Measurement, 0)
 
-	for symbol, scores := range scoresBySymbol {
-		at := latestAtBySymbol[symbol]
+	if signal.pool == nil {
+		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
+	}
 
-		if at.IsZero() {
-			at = signal.section.LastAt(symbol)
-		}
+	if signal.group == nil {
+		signal.group = signal.pool.NewGroup()
+	}
 
-		if at.IsZero() {
+	for index, symbol := range symbols {
+		measurementIndex := index
+		scores := scoresBySymbol[symbol]
+
+		signal.group.Submit(func() {
+			at := latestAtBySymbol[symbol]
+
+			if at.IsZero() {
+				at = signal.section.LastAt(symbol)
+			}
+
+			if at.IsZero() {
+				return
+			}
+
+			metrics, _ := correlationMetrics(scores)
+
+			measurement := &types.Measurement{
+				Source:  types.SourceCorrelation,
+				Symbol:  symbol,
+				At:      at,
+				Metrics: metrics,
+			}
+
+			measurements[measurementIndex] = measurement
+		})
+	}
+
+	if err := signal.group.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"correlation: parallel measurement construction failed",
+			err,
+		))
+		return nil
+	}
+
+	compacted := measurements[:0]
+
+	for _, measurement := range measurements {
+		if measurement == nil {
 			continue
 		}
 
-		metrics, _ := correlationMetrics(scores)
+		compacted = append(compacted, measurement)
 
-		measurement := &types.Measurement{
-			Source:  types.SourceCorrelation,
-			Symbol:  symbol,
-			At:      at,
-			Metrics: metrics,
-		}
-
-		measurements = append(measurements, measurement)
-
-		if symbol == types.Focus() {
+		if measurement.Symbol == types.Focus() {
 			out = append(out, measurement)
 		}
 	}
+	measurements = compacted
 
 	if len(out) > 0 {
 		utils.Publish(signal.ui, datura.NewMap(
@@ -273,6 +322,20 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.cancel()
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
+	if signal.section != nil {
+		signal.section.Close()
+	}
+
+	if signal.pool != nil {
+		signal.pool.StopAndWait()
+	}
+
 	return nil
 }

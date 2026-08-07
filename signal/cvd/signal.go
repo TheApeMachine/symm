@@ -3,9 +3,12 @@ package cvd
 import (
 	"context"
 	"math"
+	"runtime"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -28,11 +31,14 @@ type Signal struct {
 	api           *websocket.API
 	sample        *algorithm.TradeFlowSample
 	flow          *equation.Flow
-	midpoints     map[string][]midpointObservation
+	midpoints     *sync.Map
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
-	lastTrade     map[string]tradeCursor
+	lastTrade     *sync.Map
+	measureMu     sync.Mutex
+	pool          pond.Pool
+	group         pond.TaskGroup
 }
 
 type tradeCursor struct {
@@ -66,14 +72,17 @@ func NewSignal(
 		api:           api,
 		sample:        algorithm.NewTradeFlowSample(),
 		flow:          equation.NewFlow(),
-		midpoints:     make(map[string][]midpointObservation),
+		midpoints:     &sync.Map{},
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
-		lastTrade:     make(map[string]tradeCursor),
+		lastTrade:     &sync.Map{},
+		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
 
+	signal.group = signal.pool.NewGroup()
 	signal.status = types.READY
+
 	signal.run()
 	return signal
 }
@@ -134,45 +143,123 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
 	tickers := thesis.MarketTickers()
 	trades := thesis.MarketTrades()
-
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
+	tradeBatches := make(map[string][]kraken.TradeData)
+	symbols := make([]string, 0)
+	results := &sync.Map{}
+	errorsBySymbol := &sync.Map{}
 
 	for _, row := range tickers {
 		signal.observeMidpoint(row)
 	}
 
 	for _, row := range trades {
-		if !validTrade(row) || signal.seenTrade(row) {
+		if !validTrade(row) {
 			continue
 		}
 
-		midpoint, index, exists := signal.midpointAt(row.Symbol, row.Timestamp)
+		if _, exists := tradeBatches[row.Symbol]; !exists {
+			symbols = append(symbols, row.Symbol)
+		}
+
+		tradeBatches[row.Symbol] = append(tradeBatches[row.Symbol], row)
+	}
+
+	for _, symbol := range symbols {
+		sort.SliceStable(tradeBatches[symbol], func(leftIndex, rightIndex int) bool {
+			left := tradeBatches[symbol][leftIndex]
+			right := tradeBatches[symbol][rightIndex]
+
+			if left.Timestamp.Equal(right.Timestamp) {
+				return left.TradeID < right.TradeID
+			}
+
+			return left.Timestamp.Before(right.Timestamp)
+		})
+	}
+
+	signal.ensureProcessors()
+
+	if signal.pool == nil {
+		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
+	}
+
+	if signal.group == nil {
+		signal.group = signal.pool.NewGroup()
+	}
+
+	for _, symbol := range symbols {
+		symbolTrades := tradeBatches[symbol]
+
+		signal.group.Submit(func() {
+			symbolMeasurements := make([]*types.Measurement, 0)
+
+			for _, row := range symbolTrades {
+				if signal.seenTrade(row) {
+					continue
+				}
+
+				midpoint, index, exists := signal.midpointAt(row.Symbol, row.Timestamp)
+
+				if !exists {
+					continue
+				}
+
+				tradeMeasurements, err := signal.measureTrade(row, midpoint.price)
+
+				if err != nil {
+					results.Store(symbol, symbolMeasurements)
+					errorsBySymbol.Store(symbol, err)
+					return
+				}
+
+				signal.commitTrade(row)
+				signal.commitMidpoint(row.Symbol, index)
+				symbolMeasurements = append(symbolMeasurements, tradeMeasurements...)
+			}
+
+			results.Store(symbol, symbolMeasurements)
+		})
+	}
+
+	err := signal.group.Wait()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"cvd: parallel measurement failed",
+			err,
+		))
+	}
+
+	errorsBySymbol.Range(func(key, value any) bool {
+		err := value.(error)
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"cvd: failed to measure trade",
+			err,
+		))
+		return true
+	})
+
+	for _, symbol := range symbols {
+		raw, exists := results.Load(symbol)
 
 		if !exists {
 			continue
 		}
 
-		tradeMeasurements, err := signal.measureTrade(row, midpoint.price)
+		symbolMeasurements := raw.([]*types.Measurement)
+		measurements = append(measurements, symbolMeasurements...)
 
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"cvd: failed to measure trade",
-				err,
-			))
-			continue
-		}
-
-		signal.commitTrade(row)
-		signal.commitMidpoint(row.Symbol, index)
-
-		measurements = append(measurements, tradeMeasurements...)
-
-		if row.Symbol == types.Focus() {
-			out = append(out, tradeMeasurements...)
+		if symbol == types.Focus() {
+			out = append(out, symbolMeasurements...)
 		}
 	}
 
@@ -197,17 +284,23 @@ func (signal *Signal) observeMidpoint(row kraken.TickerData) {
 	}
 
 	if signal.midpoints == nil {
-		signal.midpoints = make(map[string][]midpointObservation)
+		signal.midpoints = &sync.Map{}
 	}
 
-	observations := signal.midpoints[row.Symbol]
+	raw, exists := signal.midpoints.Load(row.Symbol)
+	observations := make([]midpointObservation, 0)
+
+	if exists {
+		observations = raw.([]midpointObservation)
+	}
+
 	observation := midpointObservation{at: row.Timestamp, price: (bid + ask) / 2}
 	insertAt := len(observations)
 
 	for index, existing := range observations {
 		if existing.at.Equal(observation.at) {
 			observations[index] = observation
-			signal.midpoints[row.Symbol] = observations
+			signal.midpoints.Store(row.Symbol, observations)
 
 			return
 		}
@@ -221,14 +314,24 @@ func (signal *Signal) observeMidpoint(row kraken.TickerData) {
 	observations = append(observations, midpointObservation{})
 	copy(observations[insertAt+1:], observations[insertAt:])
 	observations[insertAt] = observation
-	signal.midpoints[row.Symbol] = observations
+	signal.midpoints.Store(row.Symbol, observations)
 }
 
 func (signal *Signal) midpointAt(
 	symbol string,
 	at time.Time,
 ) (midpointObservation, int, bool) {
-	observations := signal.midpoints[symbol]
+	if signal.midpoints == nil {
+		return midpointObservation{}, 0, false
+	}
+
+	raw, exists := signal.midpoints.Load(symbol)
+
+	if !exists {
+		return midpointObservation{}, 0, false
+	}
+
+	observations := raw.([]midpointObservation)
 
 	for index := len(observations) - 1; index >= 0; index-- {
 		if !observations[index].at.After(at) {
@@ -240,13 +343,19 @@ func (signal *Signal) midpointAt(
 }
 
 func (signal *Signal) commitMidpoint(symbol string, index int) {
-	observations := signal.midpoints[symbol]
+	raw, exists := signal.midpoints.Load(symbol)
+
+	if !exists {
+		return
+	}
+
+	observations := raw.([]midpointObservation)
 
 	if index <= 0 || index >= len(observations) {
 		return
 	}
 
-	signal.midpoints[symbol] = observations[index:]
+	signal.midpoints.Store(symbol, observations[index:])
 }
 
 func validTrade(row kraken.TradeData) bool {
@@ -258,7 +367,17 @@ func validTrade(row kraken.TradeData) bool {
 }
 
 func (signal *Signal) seenTrade(row kraken.TradeData) bool {
-	previous := signal.lastTrade[row.Symbol]
+	if signal.lastTrade == nil {
+		return false
+	}
+
+	raw, exists := signal.lastTrade.Load(row.Symbol)
+
+	if !exists {
+		return false
+	}
+
+	previous := raw.(tradeCursor)
 
 	if row.Timestamp.Before(previous.at) {
 		return true
@@ -274,7 +393,16 @@ func (signal *Signal) seenTrade(row kraken.TradeData) bool {
 }
 
 func (signal *Signal) commitTrade(row kraken.TradeData) {
-	previous := signal.lastTrade[row.Symbol]
+	if signal.lastTrade == nil {
+		signal.lastTrade = &sync.Map{}
+	}
+
+	previous := tradeCursor{}
+	raw, exists := signal.lastTrade.Load(row.Symbol)
+
+	if exists {
+		previous = raw.(tradeCursor)
+	}
 
 	if row.Timestamp.After(previous.at) {
 		previous = tradeCursor{
@@ -288,7 +416,7 @@ func (signal *Signal) commitTrade(row kraken.TradeData) {
 	}
 
 	previous.ids[row.TradeID] = struct{}{}
-	signal.lastTrade[row.Symbol] = previous
+	signal.lastTrade.Store(row.Symbol, previous)
 }
 
 /*
@@ -465,6 +593,16 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.cancel()
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
+	if signal.pool != nil {
+		signal.pool.StopAndWait()
+	}
+
 	return nil
 }

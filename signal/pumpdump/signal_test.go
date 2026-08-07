@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 
 func TestSeenTrade(t *testing.T) {
 	Convey("Given an exact-once cursor for one pumpdump symbol", t, func() {
-		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
+		signal := &Signal{lastTrade: &sync.Map{}}
 		at := time.Unix(1_700_002_000, 0).UTC()
 		first := kraken.TradeData{Symbol: "ALT/USD", TradeID: 51, Timestamp: at}
 		second := kraken.TradeData{Symbol: "ALT/USD", TradeID: 52, Timestamp: at}
@@ -33,7 +34,7 @@ func TestSeenTrade(t *testing.T) {
 	})
 
 	Convey("Given same-time pumpdump trades without exchange IDs", t, func() {
-		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
+		signal := &Signal{lastTrade: &sync.Map{}}
 		trade := kraken.TradeData{Symbol: "ALT/USD", Timestamp: time.Unix(1_700_002_100, 0).UTC()}
 		signal.commitTrade(trade)
 
@@ -50,11 +51,12 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{
 			algo:      equation.NewIgnition(128),
 			books:     books,
-			lastTrade: make(map[string]tradeCursor),
+			lastTrade: &sync.Map{},
 		}
 		thesis := types.NewThesis(nil)
 		base := time.Unix(1_700_002_200, 0).UTC()
 		var measurements []*types.Measurement
+		var group any
 
 		for index, price := range []float64{100, 101, 100, 102, 101, 104} {
 			at := base.Add(time.Duration(index) * time.Second)
@@ -66,10 +68,16 @@ func TestMeasure(t *testing.T) {
 			)
 			thesis.AppendTrade(pumpdumpTrade(int64(index+1), price, at))
 			measurements = signal.Measure(thesis)
+
+			if index == 0 {
+				group = signal.group
+			}
 		}
 
 		Convey("It preserves legacy keys and publishes both dimensionless directional families", func() {
 			So(measurements, ShouldHaveLength, 1)
+			So(signal.group, ShouldEqual, group)
+			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(6))
 			measurement := measurements[0]
 			So(measurement.Metrics, ShouldHaveLength, 20)
 			So(measurement.Sample(types.MetricRVOL, types.SideNone).Unit,

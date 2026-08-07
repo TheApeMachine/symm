@@ -94,18 +94,20 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 /*
 Pair returns a deep-copied instrument snapshot for the symbol.
 */
-func (instrument *Instrument) Pair(symbol string) (kraken.InstrumentPair, error) {
+func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 	value, ok := instrument.cache.Load(symbol)
 
 	if !ok {
-		return kraken.InstrumentPair{}, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"trader: instrument pair not found",
 			nil,
 		))
+
+		return kraken.InstrumentPair{}
 	}
 
-	return value.(kraken.InstrumentPair), nil
+	return value.(kraken.InstrumentPair)
 }
 
 /*

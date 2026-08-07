@@ -2,13 +2,11 @@ package broker
 
 import (
 	"context"
-	"errors"
 	"iter"
 	"sync"
 	"sync/atomic"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -84,6 +82,7 @@ func NewDesk(
 
 	if err := desk.recovery.Recover(); err != nil {
 		desk.status = types.ERROR
+
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			"desk: failed to recover account positions",
@@ -106,39 +105,28 @@ func (desk *Desk) run() {
 			case <-desk.ctx.Done():
 				return
 			case message := <-desk.subscriptions["ticker"].Channel:
-				tickers, ok := message.(*kraken.Ticker)
+				ticker, ok := message.(*kraken.Ticker)
 
-				if !ok || tickers == nil {
+				if !ok || ticker == nil {
 					continue
 				}
 
-				// Positions are keyed by symbol, so each row goes straight to
-				// the one lot it concerns.
-				for _, ticker := range tickers.Data {
-					desk.price.Update(&ticker)
+				for _, tickerData := range ticker.Data {
+					found, ok := desk.positions.Load(tickerData.Symbol)
 
-					value, ok := desk.positions.Load(ticker.Symbol)
+					if ok && found != nil {
+						position, ok := found.(*Position)
 
-					if !ok {
-						continue
-					}
-
-					position, ok := value.(*Position)
-
-					if ok && position != nil {
-						position.onTicker(ticker)
+						if ok && position != nil {
+							position.onTicker(tickerData)
+						}
 					}
 				}
 
-				// The wallet is re-read from REST because it is the only
-				// statement of what is actually held. Refresh asynchronously
-				// so the ticker-processing path is never blocked, and guard
-				// against overlapping REST calls.
 				if balanceRefreshing.CompareAndSwap(false, true) {
 					go func() {
 						defer balanceRefreshing.Store(false)
 						desk.balance.Update()
-						desk.PublishEquity()
 					}()
 				}
 			case message := <-desk.subscriptions["executions"].Channel:
@@ -152,7 +140,7 @@ func (desk *Desk) run() {
 					position, ok := value.(*Position)
 
 					if ok && position != nil {
-						position.onExecution(execution)
+						position.onExecution(*execution)
 					}
 
 					return true
@@ -160,20 +148,6 @@ func (desk *Desk) run() {
 			}
 		}
 	}()
-}
-
-/*
-isTerminal reports whether a lot can no longer trade. These are exactly the
-states the UI retires a row on, so the two sides agree on what "gone" means.
-*/
-func isTerminal(status types.Status) bool {
-	switch status {
-	case types.CLOSED, types.CANCELED, types.REJECTED, types.EXPIRED,
-		types.ERROR, types.FATAL:
-		return true
-	default:
-		return false
-	}
 }
 
 /*
@@ -239,9 +213,7 @@ func (desk *Desk) Holding(symbol string) int {
 	held := 0
 
 	for position := range desk.Positions() {
-		if position.Holding == nil ||
-			position.Holding.Symbol != symbol ||
-			isTerminal(position.Status) {
+		if position.Status == types.CLOSED {
 			continue
 		}
 
@@ -259,77 +231,23 @@ profit/loss only; equity is cash plus the basis committed to open positions plus
 that profit/loss.
 */
 func (desk *Desk) PublishEquity() {
-	if desk == nil || desk.ui == nil || desk.balance == nil {
-		return
-	}
-
-	cash, err := desk.balance.Cash()
-
-	if err != nil || cash == nil {
-		return
-	}
-
-	unrealized := decimal.NewFromInt64(0)
-	invested := decimal.NewFromInt64(0)
-
-	for position := range desk.Positions() {
-		if isTerminal(position.Status) || position.Holding == nil ||
-			position.Holding.SellableQty == nil || position.Holding.SellableQty.Sign() <= 0 {
-			continue
-		}
-
-		if position.Holding.EntryPrice != nil {
-			basis := position.Holding.EntryPrice.Mul(position.Holding.SellableQty)
-
-			if position.Holding.EntryFee != nil {
-				basisScale := max(basis.GetScale(), position.Holding.EntryFee.GetScale())
-				basis = basis.SetScale(basisScale).Add(position.Holding.EntryFee)
-			}
-
-			investedScale := max(invested.GetScale(), basis.GetScale())
-			invested = invested.SetScale(investedScale).Add(basis)
-		}
-
-		if position.Holding.PnL != nil {
-			unrealizedScale := max(
-				unrealized.GetScale(),
-				position.Holding.PnL.GetScale(),
-			)
-			unrealized = unrealized.
-				SetScale(unrealizedScale).
-				Add(position.Holding.PnL)
-		}
-	}
-
-	equityScale := max(cash.GetScale(), invested.GetScale(), unrealized.GetScale())
-	equity := cash.SetScale(equityScale).Add(invested).Add(unrealized)
 	tradeBalance, err := desk.api.TradeBalance()
 
 	if err != nil {
 		errnie.Error(errnie.Err(
-			errnie.IO,
+			errnie.Internal,
 			"desk: could not fetch trade balance",
 			err,
 		))
+
+		return
 	}
 
-	if tradeBalance.UnrealizedPnL != nil {
-		unrealized = tradeBalance.UnrealizedPnL
-	}
-
-	if tradeBalance.Equity != nil {
-		equity = tradeBalance.Equity
-	}
-
-	out := datura.NewMap()
-	out["equity"] = datura.NewMap(
-		"cash", cash,
-		"invested", invested,
-		"unrealized", unrealized,
-		"equity", equity,
-	)
-
-	utils.Publish(desk.ui, out)
+	utils.Publish(desk.ui, datura.NewMap("equity", datura.NewMap(
+		"cash", desk.balance.Cash(),
+		"unrealized", tradeBalance.UnrealizedPnL,
+		"equity", tradeBalance.Equity,
+	)))
 }
 
 func (desk *Desk) Positions() iter.Seq[*Position] {
@@ -341,7 +259,7 @@ func (desk *Desk) Positions() iter.Seq[*Position] {
 				return true
 			}
 
-			return yield(position.Snapshot())
+			return yield(position)
 		})
 	}
 }
@@ -350,21 +268,10 @@ func (desk *Desk) Positions() iter.Seq[*Position] {
 PublishPositions sends all current non-terminal positions to the UI channel
 so newly connected clients can see open positions immediately.
 */
-func (desk *Desk) PublishPositions() []byte {
-	out := datura.NewMap()
-	out["positions"] = []*Position{}
-
+func (desk *Desk) PublishPositions() {
 	for position := range desk.Positions() {
-		status := position.Status
-
-		if isTerminal(status) {
-			continue
-		}
-
-		out["positions"] = append(out["positions"].([]*Position), position)
+		position.Publish()
 	}
-
-	return out.MarshalAndFree()
 }
 
 /*
@@ -375,7 +282,17 @@ capacity even while the venue acknowledgement or fill is still pending.
 func (desk *Desk) Execute(decision types.Decision) (err error) {
 	switch decision.Action {
 	case types.ActionEnter:
-		err = desk.enter(decision)
+		desk.positions.LoadOrStore(decision.Symbol, NewPosition(
+			desk.ctx,
+			desk.api,
+			desk.ui,
+			desk.instrument,
+			desk.price,
+			desk.balance,
+			desk.recorder,
+			desk.instrument.Pair(decision.Symbol),
+			decision,
+		))
 	case types.ActionExit:
 		err = errnie.Err(
 			errnie.NotAcceptable,
@@ -385,162 +302,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 	}
 
 	return errnie.Error(err)
-}
-
-func (desk *Desk) enter(decision types.Decision) error {
-	if decision.ID == "" || decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"desk: entry decision is missing an identifier or executable quantity",
-			nil,
-		))
-	}
-
-	desk.positionsMu.Lock()
-	defer desk.positionsMu.Unlock()
-
-	if value, ok := desk.positions.Load(decision.Symbol); ok {
-		if position, ok := value.(*Position); ok && position != nil {
-			status := position.Snapshot().Status
-
-			if status != types.CLOSED {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"desk: symbol already has an active position",
-					nil,
-				))
-			}
-		}
-	}
-
-	if desk.OpenSlots(decision.Opportunity) <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"desk: position capacity is exhausted",
-			nil,
-		))
-	}
-
-	pair, err := desk.instrument.Pair(decision.Symbol)
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-
-	// A pending market buy starts with the current executable ask as its
-	// provisional basis. The private fill replaces this estimate with the
-	// venue's realized average price.
-	tick := desk.price.Tick(pair.Symbol)
-
-	if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"desk: cannot price "+decision.Symbol+" for entry",
-			nil,
-		))
-	}
-
-	feeRate, err := desk.price.Fee(pair.Symbol)
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-
-	entryValue := tick.Ask.Mul(decision.ProposedQuantity)
-	entryFee := feeRate.Mul(entryValue)
-
-	if entryValue == nil || entryFee == nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"desk: could not estimate entry basis for "+decision.Symbol,
-			nil,
-		))
-	}
-
-	decision.EntryPrice = tick.Ask
-	decision.EntryFee = entryFee
-	decision.Mark = tick.Bid
-
-	// An entry without stop geometry is refused rather than fitted with some.
-	// The desk could derive a plan here, and an earlier version did — but the
-	// quantity arriving with the decision was solved against whatever distance
-	// the allocator used, and attaching a different distance after the fact
-	// breaks exactly the coupling that makes a wide stop affordable. A lot
-	// sized for a ten-cent boundary and then defended at forty is carrying
-	// four times the loss it was budgeted.
-	// Recovered wallet inventory is the one case that legitimately has no
-	// plan, and it does not come through here.
-	if !decision.Risk.Present {
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"desk: entry for "+decision.Symbol+" carries no risk geometry",
-			nil,
-		))
-	}
-
-	position := NewPosition(
-		desk.ctx,
-		desk.api,
-		desk.ui,
-		desk.instrument,
-		desk.price,
-		desk.balance,
-		desk.recorder,
-		pair,
-		decision,
-	)
-
-	desk.positions.Store(pair.Symbol, position)
-
-	if _, err := position.Enter(); err != nil {
-		desk.positions.Delete(pair.Symbol)
-
-		return errnie.Error(errors.Join(
-			errnie.Err(
-				errnie.UnprocessableContent,
-				"desk: could not enter position",
-				nil,
-			),
-			err,
-		))
-	}
-
-	return nil
-}
-
-/*
-ApplyEvidence hands the strategy's reading of one symbol to the position that
-holds it.
-
-This is the whole of the strategy's write access to an open lot. The evaluator
-runs on the analyzer's goroutine and everything else about a position runs on
-the desk's, so the strategy states what it observed and the desk decides when
-that observation meets a book — rather than the strategy reaching across and
-setting stop geometry itself.
-
-An unknown or closed symbol is not an error. The thesis judges every symbol it
-has evidence for, most of which the desk holds nothing in.
-*/
-func (desk *Desk) ApplyEvidence(evidence types.StopEvidence) {
-	value, ok := desk.positions.Load(evidence.Symbol)
-
-	if !ok {
-		return
-	}
-
-	position, ok := value.(*Position)
-
-	if !ok || position == nil {
-		return
-	}
-
-	snapshot := position.Snapshot()
-
-	if snapshot == nil || isTerminal(snapshot.Status) {
-		return
-	}
-
-	position.ApplyEvidence(evidence)
 }
 
 /*

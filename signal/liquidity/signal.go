@@ -3,12 +3,15 @@ package liquidity
 import (
 	"context"
 	"math"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
@@ -31,7 +34,10 @@ type Signal struct {
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
-	observations  map[string]liquidityObservation
+	observations  *sync.Map
+	measureMu     sync.Mutex
+	pool          pond.Pool
+	group         pond.TaskGroup
 }
 
 type liquidityObservation struct {
@@ -63,8 +69,10 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
-		observations:  make(map[string]liquidityObservation),
+		observations:  &sync.Map{},
+		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
+	signal.group = signal.pool.NewGroup()
 
 	signal.status = types.READY
 	signal.run()
@@ -117,6 +125,17 @@ func (signal *Signal) run() {
 Measure produces the Measurements for the liquidity signal.
 */
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
+	if signal.pool == nil {
+		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
+	}
+
+	if signal.group == nil {
+		signal.group = signal.pool.NewGroup()
+	}
+
 	tickers := thesis.MarketTickers()
 
 	if !signal.ingest(tickers) {
@@ -136,110 +155,125 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	cohortDepthMedian, depthCohortReady := liquidityCohortMedian(peers, true)
 	cohortNotionalMedian, notionalCohortReady := liquidityCohortMedian(peers, false)
 
-	measurements := make([]*types.Measurement, 0)
+	measurements := make([]*types.Measurement, len(peers))
 	out := make([]*types.Measurement, 0)
 
-	for _, peer := range peers {
-		executableDepth := peer.observation.executableDepth
-		depthPeers, notionalPeers := leaveOneOutLiquidity(peer.symbol, peers)
-		depthMedian, depthOK := statistic.MedianOf(depthPeers)
-		peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
-		notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
-		reportedNotional := peer.observation.quoteNotional
-		reportedReady := len(notionalPeers) >= 2 && hasNotionalMedian &&
-			notionalMedian > 0 && reportedNotional > 0 && notionalCohortReady
+	for index, peer := range peers {
+		measurementIndex := index
 
-		relativeDepth := 0.0
-		scarcity := 0.0
-		median := 0.0
+		signal.group.Submit(func() {
+			executableDepth := peer.observation.executableDepth
+			depthPeers, notionalPeers := leaveOneOutLiquidity(peer.symbol, peers)
+			depthMedian, depthOK := statistic.MedianOf(depthPeers)
+			peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
+			notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
+			reportedNotional := peer.observation.quoteNotional
+			reportedReady := len(notionalPeers) >= 2 && hasNotionalMedian &&
+				notionalMedian > 0 && reportedNotional > 0 && notionalCohortReady
 
-		if peerReady && executableDepth > 0 {
-			relativeDepth = executableDepth / depthMedian
-			median = depthMedian
-			deficit := math.Max(0, depthMedian-executableDepth)
+			relativeDepth := 0.0
+			scarcity := 0.0
+			median := 0.0
 
-			if deficit > 0 {
-				deviations := absoluteDeviations(depthPeers, depthMedian)
-				dispersion, _ := statistic.MedianOf(deviations)
-				scarcity = deficit / (deficit + dispersion)
+			if peerReady && executableDepth > 0 {
+				relativeDepth = executableDepth / depthMedian
+				median = depthMedian
+				deficit := math.Max(0, depthMedian-executableDepth)
+
+				if deficit > 0 {
+					deviations := absoluteDeviations(depthPeers, depthMedian)
+					dispersion, _ := statistic.MedianOf(deviations)
+					scarcity = deficit / (deficit + dispersion)
+				}
 			}
-		}
 
-		reportedMedian := 0.0
+			reportedMedian := 0.0
 
-		if hasNotionalMedian && notionalMedian > 0 {
-			reportedMedian = notionalMedian
-		}
+			if hasNotionalMedian && notionalMedian > 0 {
+				reportedMedian = notionalMedian
+			}
 
-		var normalizedDepth *float64
-		var normalizedRelativeDepth *float64
-		var normalizedScarcity *float64
-		var normalizedDepthMedian *float64
-		var normalizedReportedNotional *float64
-		var normalizedReportedMedian *float64
+			var normalizedDepth *float64
+			var normalizedRelativeDepth *float64
+			var normalizedScarcity *float64
+			var normalizedDepthMedian *float64
+			var normalizedReportedNotional *float64
+			var normalizedReportedMedian *float64
 
-		if peerReady && cadenceReady && executableDepth > 0 && depthCohortReady {
-			normalizedDepth = normalizedLiquidityRatio(executableDepth, depthMedian)
-			normalizedRelativeDepth = normalizedRelativeLiquidity(relativeDepth)
-			normalizedScarcity = normalizedLiquidityScore(scarcity)
-			normalizedDepthMedian = normalizedLiquidityRatio(
-				depthMedian,
-				cohortDepthMedian,
-			)
-		}
+			if peerReady && cadenceReady && executableDepth > 0 && depthCohortReady {
+				normalizedDepth = normalizedLiquidityRatio(executableDepth, depthMedian)
+				normalizedRelativeDepth = normalizedRelativeLiquidity(relativeDepth)
+				normalizedScarcity = normalizedLiquidityScore(scarcity)
+				normalizedDepthMedian = normalizedLiquidityRatio(
+					depthMedian,
+					cohortDepthMedian,
+				)
+			}
 
-		if reportedReady && cadenceReady {
-			normalizedReportedNotional = normalizedLiquidityRatio(
-				reportedNotional,
-				notionalMedian,
-			)
-			normalizedReportedMedian = normalizedLiquidityRatio(
-				notionalMedian,
-				cohortNotionalMedian,
-			)
-		}
+			if reportedReady && cadenceReady {
+				normalizedReportedNotional = normalizedLiquidityRatio(
+					reportedNotional,
+					notionalMedian,
+				)
+				normalizedReportedMedian = normalizedLiquidityRatio(
+					notionalMedian,
+					cohortNotionalMedian,
+				)
+			}
 
-		measurement := &types.Measurement{
-			Source: types.SourceLiquidity,
-			Symbol: peer.symbol,
-			At:     peer.observation.at,
-			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone): {
-					Raw:        executableDepth,
-					Normalized: normalizedDepth,
-					Unit:       types.UnitQuoteCurrency,
+			measurement := &types.Measurement{
+				Source: types.SourceLiquidity,
+				Symbol: peer.symbol,
+				At:     peer.observation.at,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone): {
+						Raw:        executableDepth,
+						Normalized: normalizedDepth,
+						Unit:       types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricRelativeTouchDepth, types.SideNone): {
+						Raw:        relativeDepth,
+						Normalized: normalizedRelativeDepth,
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricScarcityScore, types.SideNone): {
+						Raw:        scarcity,
+						Normalized: normalizedScarcity,
+						Unit:       types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricExecutableTouchDepthMedian, types.SideNone): {
+						Raw:        median,
+						Normalized: normalizedDepthMedian,
+						Unit:       types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricReportedVolumeNotional, types.SideNone): {
+						Raw:        reportedNotional,
+						Normalized: normalizedReportedNotional,
+						Unit:       types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricReportedVolumeNotionalMedian, types.SideNone): {
+						Raw:        reportedMedian,
+						Normalized: normalizedReportedMedian,
+						Unit:       types.UnitQuoteCurrency,
+					},
 				},
-				types.MetricKey(types.MetricRelativeTouchDepth, types.SideNone): {
-					Raw:        relativeDepth,
-					Normalized: normalizedRelativeDepth,
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricScarcityScore, types.SideNone): {
-					Raw:        scarcity,
-					Normalized: normalizedScarcity,
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricExecutableTouchDepthMedian, types.SideNone): {
-					Raw:        median,
-					Normalized: normalizedDepthMedian,
-					Unit:       types.UnitQuoteCurrency,
-				},
-				types.MetricKey(types.MetricReportedVolumeNotional, types.SideNone): {
-					Raw:        reportedNotional,
-					Normalized: normalizedReportedNotional,
-					Unit:       types.UnitQuoteCurrency,
-				},
-				types.MetricKey(types.MetricReportedVolumeNotionalMedian, types.SideNone): {
-					Raw:        reportedMedian,
-					Normalized: normalizedReportedMedian,
-					Unit:       types.UnitQuoteCurrency,
-				},
-			},
-		}
+			}
 
-		measurements = append(measurements, measurement)
+			measurements[measurementIndex] = measurement
+		})
+	}
 
-		if peer.symbol == types.Focus() {
+	if err := signal.group.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"liquidity: parallel measurement failed",
+			err,
+		))
+		return nil
+	}
+
+	for _, measurement := range measurements {
+		if measurement.Symbol == types.Focus() {
 			out = append(out, measurement)
 		}
 	}
@@ -331,10 +365,11 @@ type liquidityPeer struct {
 
 func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 	if signal.observations == nil {
-		signal.observations = make(map[string]liquidityObservation)
+		signal.observations = &sync.Map{}
 	}
 
-	changed := false
+	rowBatches := make(map[string][]kraken.TickerData)
+	symbols := make([]string, 0)
 
 	for _, row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
@@ -343,34 +378,76 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 			continue
 		}
 
-		previous, exists := signal.observations[symbol]
-
-		if exists && !row.Timestamp.After(previous.at) {
-			continue
+		if _, exists := rowBatches[symbol]; !exists {
+			symbols = append(symbols, symbol)
 		}
 
-		observation := liquidityObservation{
-			at:              row.Timestamp,
-			executableDepth: executableDepth(row),
-			quoteNotional:   quoteNotional(row),
-		}
+		row.Symbol = symbol
+		rowBatches[symbol] = append(rowBatches[symbol], row)
+	}
+	sort.Strings(symbols)
+	changed := &sync.Map{}
 
-		if exists {
-			observation.cadence = row.Timestamp.Sub(previous.at)
-		}
+	for _, symbol := range symbols {
+		symbolRows := rowBatches[symbol]
+		sort.SliceStable(symbolRows, func(leftIndex, rightIndex int) bool {
+			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
+		})
 
-		signal.observations[symbol] = observation
-		changed = true
+		signal.group.Submit(func() {
+			for _, row := range symbolRows {
+				raw, exists := signal.observations.Load(symbol)
+				previous := liquidityObservation{}
+
+				if exists {
+					previous = raw.(liquidityObservation)
+				}
+
+				if exists && !row.Timestamp.After(previous.at) {
+					continue
+				}
+
+				observation := liquidityObservation{
+					at:              row.Timestamp,
+					executableDepth: executableDepth(row),
+					quoteNotional:   quoteNotional(row),
+				}
+
+				if exists {
+					observation.cadence = row.Timestamp.Sub(previous.at)
+				}
+
+				signal.observations.Store(symbol, observation)
+				changed.Store(symbol, struct{}{})
+			}
+		})
 	}
 
-	return changed
+	if err := signal.group.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"liquidity: parallel ingestion failed",
+			err,
+		))
+		return false
+	}
+
+	anyChanged := false
+	changed.Range(func(key, value any) bool {
+		anyChanged = true
+		return false
+	})
+
+	return anyChanged
 }
 
 func (signal *Signal) cohort() ([]liquidityPeer, time.Duration, bool) {
 	latest := time.Time{}
-	cadences := make([]float64, 0, len(signal.observations))
+	cadences := make([]float64, 0)
 
-	for _, observation := range signal.observations {
+	signal.observations.Range(func(key, value any) bool {
+		observation := value.(liquidityObservation)
+
 		if observation.at.After(latest) {
 			latest = observation.at
 		}
@@ -378,19 +455,25 @@ func (signal *Signal) cohort() ([]liquidityPeer, time.Duration, bool) {
 		if observation.cadence > 0 {
 			cadences = append(cadences, float64(observation.cadence))
 		}
-	}
+
+		return true
+	})
 
 	medianCadence, cadenceReady := statistic.MedianOf(cadences)
 	freshness := time.Duration(medianCadence)
-	peers := make([]liquidityPeer, 0, len(signal.observations))
+	peers := make([]liquidityPeer, 0)
 
-	for symbol, observation := range signal.observations {
+	signal.observations.Range(func(key, value any) bool {
+		symbol := key.(string)
+		observation := value.(liquidityObservation)
+
 		if cadenceReady && freshness > 0 && latest.Sub(observation.at) > freshness {
-			continue
+			return true
 		}
 
 		peers = append(peers, liquidityPeer{symbol: symbol, observation: observation})
-	}
+		return true
+	})
 
 	return peers, freshness, cadenceReady && freshness > 0
 }
@@ -465,6 +548,16 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.cancel()
+	signal.measureMu.Lock()
+	defer signal.measureMu.Unlock()
+
+	if signal.cancel != nil {
+		signal.cancel()
+	}
+
+	if signal.pool != nil {
+		signal.pool.StopAndWait()
+	}
+
 	return nil
 }

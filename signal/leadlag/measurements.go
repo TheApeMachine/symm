@@ -2,9 +2,13 @@ package leadlag
 
 import (
 	"math"
+	"runtime"
+	"sort"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -16,9 +20,7 @@ measureFrame ingests prices, refreshes the anchor, and scores each follower row.
 func (signal *Signal) measureFrame(
 	tickers []kraken.TickerData,
 ) []*types.Measurement {
-	rows := tickers
 	section := signal.section
-
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
@@ -32,9 +34,11 @@ func (signal *Signal) measureFrame(
 		section.SetAnchor(anchor)
 	}
 
-	changed := make(map[string]struct{}, len(rows))
+	rowBatches := make(map[string][]kraken.TickerData)
+	symbols := make([]string, 0)
+	seenSymbols := make(map[string]struct{})
 
-	for _, row := range rows {
+	for _, row := range tickers {
 		if row.Timestamp.IsZero() || row.Symbol == "" || row.Last == nil {
 			continue
 		}
@@ -45,40 +49,97 @@ func (signal *Signal) measureFrame(
 			continue
 		}
 
-		if section.ObservePrice(row.Symbol, lastPrice, row.Timestamp) {
-			changed[row.Symbol] = struct{}{}
+		if _, exists := seenSymbols[row.Symbol]; !exists {
+			seenSymbols[row.Symbol] = struct{}{}
+			symbols = append(symbols, row.Symbol)
 		}
+
+		rowBatches[row.Symbol] = append(rowBatches[row.Symbol], row)
+	}
+	sort.Strings(symbols)
+	changedRows := make([][]kraken.TickerData, len(symbols))
+	results := make([][]*types.Measurement, len(symbols))
+	publish := make([][]*types.Measurement, len(symbols))
+
+	if signal.pool == nil {
+		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
 	}
 
-	for _, row := range rows {
-		if row.Timestamp.IsZero() || row.Symbol == "" || row.Last == nil {
+	if signal.group == nil {
+		signal.group = signal.pool.NewGroup()
+	}
+
+	for index, symbol := range symbols {
+		resultIndex := index
+		symbolRows := rowBatches[symbol]
+		sort.SliceStable(symbolRows, func(leftIndex, rightIndex int) bool {
+			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
+		})
+
+		signal.group.Submit(func() {
+			for _, row := range symbolRows {
+				if section.ObservePrice(row.Symbol, row.Last.Float64(), row.Timestamp) {
+					changedRows[resultIndex] = append(changedRows[resultIndex], row)
+				}
+			}
+		})
+	}
+
+	if err := signal.group.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"leadlag: parallel ingestion failed",
+			err,
+		))
+		return measurements
+	}
+
+	for index, symbol := range symbols {
+		resultIndex := index
+		symbolRows := changedRows[index]
+
+		if len(symbolRows) == 0 {
 			continue
 		}
 
-		if row.Last.Float64() <= 0 {
-			continue
-		}
+		signal.group.Submit(func() {
+			for _, row := range symbolRows {
+				if section.AnchorSymbol() == "" {
+					publish[resultIndex] = append(
+						publish[resultIndex],
+						signal.provisional(symbol, row.Timestamp),
+					)
+					continue
+				}
 
-		if _, exists := changed[row.Symbol]; !exists {
-			continue
-		}
+				features := section.Features(symbol)
 
-		if section.AnchorSymbol() == "" {
-			out = append(out, signal.provisional(row.Symbol, row.Timestamp))
-			continue
-		}
+				if features.Price <= 0 {
+					continue
+				}
 
-		features := section.Features(row.Symbol)
+				measurement := signal.score(symbol, row.Timestamp, features)
+				results[resultIndex] = append(results[resultIndex], measurement)
 
-		if features.Price <= 0 {
-			continue
-		}
+				if symbol == types.Focus() {
+					publish[resultIndex] = append(publish[resultIndex], measurement)
+				}
+			}
+		})
+	}
 
-		measurements = append(measurements, signal.score(row.Symbol, row.Timestamp, features))
+	if err := signal.group.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"leadlag: parallel measurement failed",
+			err,
+		))
+		return measurements
+	}
 
-		if row.Symbol == types.Focus() {
-			out = append(out, measurements[len(measurements)-1])
-		}
+	for index := range symbols {
+		measurements = append(measurements, results[index]...)
+		out = append(out, publish[index]...)
 	}
 
 	if len(out) > 0 {

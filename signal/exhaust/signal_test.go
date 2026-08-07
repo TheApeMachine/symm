@@ -1,10 +1,12 @@
 package exhaust
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -13,9 +15,37 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+func TestMeasure(t *testing.T) {
+	Convey("Given independent exhaustion symbols without a ready book", t, func() {
+		signal := &Signal{books: emptyBookSource{}}
+		thesis := types.NewThesis(nil)
+		thesis.Tickers.Store("AAA/USD", []kraken.TickerData{{Symbol: "AAA/USD"}})
+		thesis.Tickers.Store("BBB/USD", []kraken.TickerData{{Symbol: "BBB/USD"}})
+
+		Reset(func() {
+			signal.Close()
+		})
+
+		Convey("It reuses one stored group and submits one task per symbol", func() {
+			So(signal.Measure(thesis), ShouldBeEmpty)
+			group := signal.group
+			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(2))
+			So(signal.Measure(thesis), ShouldBeEmpty)
+			So(signal.group, ShouldEqual, group)
+			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(4))
+		})
+	})
+}
+
+type emptyBookSource struct{}
+
+func (emptyBookSource) Book(string) *spotbook.Book {
+	return nil
+}
+
 func TestSeenTrade(t *testing.T) {
 	Convey("Given an exact-once cursor for one exhaustion symbol", t, func() {
-		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
+		signal := &Signal{lastTrade: &sync.Map{}}
 		at := time.Unix(1_700_001_000, 0).UTC()
 		first := kraken.TradeData{Symbol: "ALT/USD", TradeID: 31, Timestamp: at}
 		secondSameTime := kraken.TradeData{Symbol: "ALT/USD", TradeID: 32, Timestamp: at}
@@ -35,7 +65,7 @@ func TestSeenTrade(t *testing.T) {
 	})
 
 	Convey("Given same-time exhaustion trades without exchange IDs", t, func() {
-		signal := &Signal{lastTrade: make(map[string]tradeCursor)}
+		signal := &Signal{lastTrade: &sync.Map{}}
 		at := time.Unix(1_700_001_100, 0).UTC()
 		unidentified := kraken.TradeData{Symbol: "ALT/USD", Timestamp: at}
 

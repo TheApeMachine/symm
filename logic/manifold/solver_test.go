@@ -11,9 +11,13 @@ import (
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/compute"
+	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
+
+var api = websocket.NewAPI(nil, mock.NewConn(), mock.NewConn())
 
 func TestUpdate(t *testing.T) {
 	Convey("Given a valid tick with no manifold carriers", t, func() {
@@ -38,7 +42,7 @@ func TestUpdate(t *testing.T) {
 		frames := make(chan []byte, len(symbols))
 		books := &manifoldBookSource{books: make(map[string]*mgrbook.Book)}
 		solver := &Solver{
-			books:     books,
+			api:       api,
 			config:    config,
 			domain:    domain,
 			tokenizer: NewTokenizer(config, symbols),
@@ -115,11 +119,8 @@ func TestUpdate(t *testing.T) {
 			Price:     decimal.NewFromInt64(101),
 			Quantity:  decimal.NewFromInt64(1),
 		})
-		books := &manifoldBookSource{books: map[string]*mgrbook.Book{
-			symbol: managed,
-		}}
 		solver := &Solver{
-			books:     books,
+			api:       api,
 			config:    config,
 			domain:    domain,
 			tokenizer: NewTokenizer(config, []string{symbol}),
@@ -393,9 +394,9 @@ func BenchmarkUpdate(b *testing.B) {
 	defer domain.Close()
 
 	symbols := []string{"BTC/USD", "ETH/USD"}
-	books := &manifoldBookSource{books: make(map[string]*mgrbook.Book)}
+	api := websocket.NewAPI(b.Context(), mock.NewConn(), mock.NewConn())
 	solver := &Solver{
-		books:     books,
+		api:       api,
 		config:    config,
 		domain:    domain,
 		tokenizer: NewTokenizer(config, symbols),
@@ -422,7 +423,7 @@ func BenchmarkUpdate(b *testing.B) {
 			Quantity:  decimal.NewFromInt64(1),
 			Timestamp: time.Unix(int64(index+2), 0).UTC(),
 		})
-		books.books[symbol] = managed
+		managed = api.Book(symbol)
 		measurements = append(measurements, &types.Measurement{
 			Source: types.SourceHawkes,
 			Symbol: symbol,

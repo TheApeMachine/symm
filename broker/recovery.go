@@ -161,13 +161,9 @@ func (recovery *Recovery) recoverAsset(
 	working map[string]spot.Order,
 ) error {
 	symbol := asset + "/" + quote
-	pair, err := recovery.instrument.Pair(symbol)
+	pair := recovery.instrument.Pair(symbol)
 
-	if err != nil {
-		return nil
-	}
-
-	orderID, order, err := recovery.recoveredSell(pair, working)
+	_, order, err := recovery.recoveredSell(pair, working)
 
 	if err != nil {
 		return err
@@ -194,14 +190,6 @@ func (recovery *Recovery) recoverAsset(
 	}
 
 	position := recovery.recoveredPosition(pair, asset, quantity, entryPrice, entryFee, entryAt)
-
-	if order != nil {
-		position.adoptExit(orderID, *order)
-		delete(working, orderID)
-	}
-
-	recovery.positions.Store(symbol, position)
-	position.publishSnapshot()
 	position.Publish()
 
 	return nil
@@ -292,18 +280,15 @@ func (recovery *Recovery) recoveredPosition(
 			EntryPrice:       entryPrice,
 			EntryFee:         entryFee,
 			Mark:             entryPrice,
-			Risk:             recovery.price.RiskPlan(pair),
 		},
 	)
 
 	position.Status = types.OPEN
-	position.entryTerminal = true
 	position.Holding.Asset = asset
 	position.Holding.Qty = quantity
 	position.Holding.SellableQty = quantity
 	position.Holding.EntryAt = &entryAt
 	position.Holding.Status = types.OPEN
-	position.Holding.Stoploss.BindRecovered()
 
 	return position
 }
