@@ -275,7 +275,7 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 				}
 
 				if exists && !row.Timestamp.After(previous.at) {
-					return nil
+					continue
 				}
 
 				observation := returnObservation{at: row.Timestamp, price: price}

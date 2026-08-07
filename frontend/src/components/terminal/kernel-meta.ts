@@ -44,6 +44,46 @@ const kernelOrderIndex = (source: string): number => {
 	return index === -1 ? TERMINAL_KERNEL_ORDER.length : index;
 };
 
+/*
+Each kernel publishes its own vocabulary, so the headline is named per source
+rather than assumed. A generic "strength" was asked of every kernel, and the
+ones that do not publish one — hawkes counts arrivals, liquidity scores
+scarcity, exhaustion and toxicity split their readings by side — showed nothing
+at all.
+*/
+const SOURCE_HEADLINE: Record<string, string> = {
+	correlation: "strength",
+	cvd: "strength",
+	depthflow: "strength",
+	exhaustion: "strength:buy",
+	hawkes: "arrival_rate:buy",
+	leadlag: "strength",
+	liquidity: "scarcity_score",
+	pumpdump: "strength",
+	sentiment: "strength",
+	toxicity: "touch_quantity:buy",
+};
+
+/*
+sourceHeadlineMetric names the metric map entry a kernel row leads with.
+*/
+export const sourceHeadlineMetric = (source: string) =>
+	`metrics.${SOURCE_HEADLINE[source.toLowerCase()] ?? "strength"}`;
+
+/*
+readinessGate names the stage gate that owns a kernel. The gates are snake
+cased where the measurement source is not, so the two have to be mapped rather
+than assumed equal.
+*/
+const READINESS_GATE: Record<string, string> = {
+	depthflow: "depth_flow",
+	leadlag: "lead_lag",
+	pumpdump: "pump_dump",
+};
+
+export const readinessGate = (source: string) =>
+	READINESS_GATE[source.toLowerCase()] ?? source.toLowerCase();
+
 export const orderedKernelSources = (sources: string[]): string[] =>
 	[...sources].sort((left, right) => {
 		const byOrder = kernelOrderIndex(left) - kernelOrderIndex(right);

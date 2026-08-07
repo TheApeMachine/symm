@@ -12,35 +12,42 @@ import (
 Stoploss regulates one open lot in two regimes.
 
 Before profit lock, Floor is the lowest price implied by the trusted Resonance
-path. Once Mark clears ArmAt, Floor moves immediately to LockFloor. Every later
-new Peak may raise Floor by the RiskPlan trail distance; no path lowers it.
+path. The distance from entry to that floor is the forecast's own jitter room.
+Once Mark clears the profit line by that distance plus one executable tick,
+Floor moves above ProfitLine. Every later new Peak raises Floor by the same
+distance; no path lowers it.
 */
 type Stoploss struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	forecast   *ResonanceForecast
-	risk       RiskPlan
-	Status     Status           `json:"status"`
-	Symbol     string           `json:"symbol"`
-	Floor      *decimal.Decimal `json:"floor"`
-	Mark       *decimal.Decimal `json:"mark"`
-	Peak       *decimal.Decimal `json:"peak"`
-	ProfitLine *decimal.Decimal `json:"profit_line"`
-	ArmAt      *decimal.Decimal `json:"arm_at"`
-	LockFloor  *decimal.Decimal `json:"lock_floor"`
-	Locked     bool             `json:"locked"`
+	ctx           context.Context
+	cancel        context.CancelFunc
+	forecast      *ResonanceForecast
+	tickSize      *decimal.Decimal
+	entryFeeRate  *decimal.Decimal
+	exitFeeRate   *decimal.Decimal
+	trailDistance *decimal.Decimal
+	Status        Status           `json:"status"`
+	Symbol        string           `json:"symbol"`
+	Floor         *decimal.Decimal `json:"floor"`
+	Mark          *decimal.Decimal `json:"mark"`
+	Peak          *decimal.Decimal `json:"peak"`
+	ProfitLine    *decimal.Decimal `json:"profit_line"`
+	ArmAt         *decimal.Decimal `json:"arm_at"`
+	LockFloor     *decimal.Decimal `json:"lock_floor"`
+	Locked        bool             `json:"locked"`
 }
 
 /*
-NewStoploss constructs the entry regulator from the exact forecast and risk
-geometry carried by the strategy decision.
+NewStoploss constructs the entry regulator from the admitted forecast and the
+venue facts needed to state executable price lines.
 */
 func NewStoploss(
 	ctx context.Context,
 	symbol string,
 	entryPrice *decimal.Decimal,
 	forecast *ResonanceForecast,
-	risk RiskPlan,
+	tickSize *decimal.Decimal,
+	entryFeeRate *decimal.Decimal,
+	exitFeeRate *decimal.Decimal,
 ) (*Stoploss, error) {
 	if symbol == "" {
 		return nil, fmt.Errorf("stoploss: symbol required")
@@ -48,12 +55,14 @@ func NewStoploss(
 
 	ctx, cancel := context.WithCancel(ctx)
 	stoploss := &Stoploss{
-		ctx:      ctx,
-		cancel:   cancel,
-		forecast: forecast,
-		risk:     risk,
-		Status:   ARMED,
-		Symbol:   symbol,
+		ctx:          ctx,
+		cancel:       cancel,
+		forecast:     forecast,
+		tickSize:     tickSize,
+		entryFeeRate: entryFeeRate,
+		exitFeeRate:  exitFeeRate,
+		Status:       ARMED,
+		Symbol:       symbol,
 	}
 
 	if err := stoploss.RebindFill(entryPrice); err != nil {
@@ -68,7 +77,9 @@ func NewStoploss(
 RebindFill rebuilds provisional entry geometry from the venue's actual fill.
 */
 func (stoploss *Stoploss) RebindFill(entryPrice *decimal.Decimal) error {
-	floor, profitLine, armAt, lockFloor, err := stoploss.geometry(entryPrice)
+	floor, profitLine, armAt, lockFloor, trailDistance, err := stoploss.geometry(
+		entryPrice,
+	)
 
 	if err != nil {
 		return err
@@ -81,6 +92,7 @@ func (stoploss *Stoploss) RebindFill(entryPrice *decimal.Decimal) error {
 	stoploss.ProfitLine = profitLine
 	stoploss.ArmAt = armAt
 	stoploss.LockFloor = lockFloor
+	stoploss.trailDistance = trailDistance
 	stoploss.Locked = false
 
 	return nil
@@ -126,8 +138,8 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 	}
 
 	candidate := floorToTick(
-		mark.SetScale(riskScale).Sub(stoploss.risk.TrailDistance),
-		stoploss.risk.TickSize,
+		mark.SetScale(riskScale).Sub(stoploss.trailDistance),
+		stoploss.tickSize,
 	)
 
 	if candidate != nil && candidate.Cmp(stoploss.Floor) > 0 {
@@ -142,69 +154,81 @@ func (stoploss *Stoploss) geometry(
 	*decimal.Decimal,
 	*decimal.Decimal,
 	*decimal.Decimal,
+	*decimal.Decimal,
 	error,
 ) {
 	if entryPrice == nil || entryPrice.Sign() <= 0 {
-		return nil, nil, nil, nil, fmt.Errorf("stoploss: positive entry price required")
+		return nil, nil, nil, nil, nil, fmt.Errorf(
+			"stoploss: positive entry price required",
+		)
 	}
 
-	if stoploss.forecast == nil || !stoploss.risk.Present {
-		return nil, nil, nil, nil, fmt.Errorf("stoploss: forecast and risk plan required")
+	if stoploss.forecast == nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("stoploss: forecast required")
 	}
 
-	if stoploss.risk.RiskDistance == nil || stoploss.risk.RiskDistance.Sign() <= 0 ||
-		stoploss.risk.TrailDistance == nil || stoploss.risk.TrailDistance.Sign() <= 0 ||
-		stoploss.risk.ArmBuffer == nil || stoploss.risk.ArmBuffer.Sign() <= 0 ||
-		stoploss.risk.LockBuffer == nil || stoploss.risk.LockBuffer.Sign() <= 0 ||
-		stoploss.risk.MinEdge == nil || stoploss.risk.MinEdge.Sign() <= 0 {
-		return nil, nil, nil, nil, fmt.Errorf("stoploss: incomplete risk geometry")
+	tick := scaled(stoploss.tickSize)
+
+	if tick == nil || tick.Sign() <= 0 {
+		return nil, nil, nil, nil, nil, fmt.Errorf(
+			"stoploss: positive tick size required",
+		)
 	}
 
 	drawdown, err := stoploss.forecast.WorstIntermediateDrawdown()
 
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("stoploss: invalid forecast path: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf(
+			"stoploss: invalid forecast path: %w", err,
+		)
 	}
 
 	entry := entryPrice.SetScale(riskScale)
 	one := decimal.NewFromInt64(1).SetScale(riskScale)
 	survival := one.Sub(decimal.NewFromFloat64(drawdown).SetScale(riskScale))
-	floor := floorToTick(entry.Mul(survival), stoploss.risk.TickSize)
-	hardFloor := floorToTick(
-		entry.Sub(stoploss.risk.RiskDistance),
-		stoploss.risk.TickSize,
-	)
+	floor := floorToTick(entry.Mul(survival), tick)
 
-	if floor == nil || floor.Sign() <= 0 || hardFloor == nil || floor.Cmp(hardFloor) < 0 {
-		return nil, nil, nil, nil, fmt.Errorf(
-			"stoploss: forecast drawdown exceeds sized risk geometry",
+	if floor == nil || floor.Sign() <= 0 {
+		return nil, nil, nil, nil, nil, fmt.Errorf(
+			"stoploss: forecast does not imply a positive floor",
 		)
 	}
 
-	entryRate := scaled(stoploss.risk.EntryFeeRate)
-	exitRate := scaled(stoploss.risk.ExitFeeRate)
+	entryRate := scaled(stoploss.entryFeeRate)
+	exitRate := scaled(stoploss.exitFeeRate)
 
 	if entryRate == nil || entryRate.Sign() < 0 ||
 		exitRate == nil || exitRate.Sign() < 0 || exitRate.Cmp(one) >= 0 {
-		return nil, nil, nil, nil, fmt.Errorf("stoploss: valid fee rates required")
+		return nil, nil, nil, nil, nil, fmt.Errorf(
+			"stoploss: valid fee rates required",
+		)
 	}
 
 	cost := entry.Add(entry.Mul(entryRate))
 	breakEven := cost.Div(one.Sub(exitRate))
-	profitLine := ceilToTick(
-		breakEven.Add(stoploss.risk.MinEdge),
-		stoploss.risk.TickSize,
-	)
+	profitLine := ceilToTick(breakEven, tick)
+	trailDistance := ceilToTick(entry.Sub(floor), tick)
+
+	if trailDistance == nil || trailDistance.Cmp(tick) < 0 {
+		trailDistance = tick
+	}
+
 	armAt := ceilToTick(
-		profitLine.Add(stoploss.risk.ArmBuffer),
-		stoploss.risk.TickSize,
+		profitLine.Add(trailDistance).Add(tick),
+		tick,
 	)
-	lockFloor := ceilToTick(
-		profitLine.Add(stoploss.risk.LockBuffer),
-		stoploss.risk.TickSize,
+	lockFloor := floorToTick(
+		armAt.Sub(trailDistance),
+		tick,
 	)
 
-	return floor, profitLine, armAt, lockFloor, nil
+	if lockFloor == nil || lockFloor.Cmp(profitLine) <= 0 {
+		return nil, nil, nil, nil, nil, fmt.Errorf(
+			"stoploss: profit lock must clear profit line",
+		)
+	}
+
+	return floor, profitLine, armAt, lockFloor, trailDistance, nil
 }
 
 /*

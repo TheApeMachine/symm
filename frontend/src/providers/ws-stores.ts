@@ -109,10 +109,57 @@ export const registerPainter = (key: string, paint: Paint): (() => void) => {
 	};
 };
 
+/*
+observeFrame records what a frame reveals about the run's shape: which kernels
+have reported, and which symbols the engine has said anything about. Neither is
+published as a list of its own, so the only way the palette and the kernel rail
+learn them is by watching the frames that name them go past.
+*/
+const observeFrame = (key: string, updates: JSONSerializable): void => {
+	if (key === "cognition") {
+		appStore.actions.observeSymbols(
+			cognitionEntries(updates).map(([symbol]) => symbol),
+		);
+
+		return;
+	}
+
+	if (key !== "measurements" && key !== "causal" && key !== "positions") {
+		return;
+	}
+
+	const rows = frameRows(updates);
+	const symbols: string[] = [];
+	const sources = new Set<string>();
+
+	for (const row of rows) {
+		const symbol = symbolIdentity(row) ?? positionIdentity(row);
+
+		if (symbol !== null) {
+			symbols.push(symbol);
+		}
+
+		if (
+			key === "measurements" &&
+			row !== null &&
+			typeof row === "object" &&
+			!Array.isArray(row) &&
+			typeof row.source === "string"
+		) {
+			sources.add(row.source);
+		}
+	}
+
+	appStore.actions.observeSymbols(symbols);
+	appStore.actions.observeSources(sources);
+};
+
 export const paintRegistered = (
 	key: string,
 	updates: JSONSerializable,
 ): void => {
+	observeFrame(key, updates);
+
 	if (key === "manifold") {
 		paintTerminalFluidChart(updates, appStore.state.focusSymbol);
 	}

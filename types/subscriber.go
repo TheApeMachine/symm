@@ -15,7 +15,6 @@ NewSubscription allocates one buffered typed subscription using the configured
 system buffer or the production default when unset.
 */
 func NewSubscription[T any]() *Subscription[T] {
-	viper.SetDefault("system.actor.buffer", 1024)
 	buffer := viper.GetInt("system.actor.buffer")
 
 	return &Subscription[T]{
@@ -30,7 +29,6 @@ notifications cannot preserve older state; it only repeats work on the newest
 state. SendLatest replaces that one pending notification when consumers lag.
 */
 func NewLatestSubscription[T any]() *Subscription[T] {
-	viper.SetDefault("system.actor.buffer", 1024)
 	buffer := viper.GetInt("system.actor.buffer")
 
 	return &Subscription[T]{

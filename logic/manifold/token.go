@@ -103,6 +103,7 @@ func (tokenizer *Tokenizer) NewBatch(
 	numBids := len(bidOrders)
 	numAsks := len(askOrders)
 	totalOrders := numBids + numAsks
+
 	if totalOrders == 0 || midPrice <= 0 {
 		return nil, nil, nil
 	}
@@ -131,6 +132,7 @@ func (tokenizer *Tokenizer) NewBatch(
 		orders,
 		midPrice,
 	)
+
 	if !ok {
 		return nil, nil, nil
 	}
@@ -177,6 +179,10 @@ func (tokenizer *Tokenizer) NewBatch(
 
 		if entry.side == mgrbook.Ask {
 			energy = unitOscillatorEnergy * float32(1+sellExcitation)
+		}
+
+		if energy == 0 {
+			continue
 		}
 
 		// Queue position is the order's rank in its own side's price-time priority,

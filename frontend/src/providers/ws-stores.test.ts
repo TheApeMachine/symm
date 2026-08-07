@@ -17,7 +17,10 @@ vi.mock("#/components/charts/resonance", () => ({
 }));
 
 vi.mock("#/collections/app", () => ({
-	appStore: { state: { focusSymbol: "BTC/USD" } },
+	appStore: {
+		state: { focusSymbol: "BTC/USD" },
+		actions: { observeSymbols: () => {}, observeSources: () => {} },
+	},
 }));
 
 vi.mock("#/providers/manifold-binary", () => ({

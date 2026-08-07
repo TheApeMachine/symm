@@ -87,6 +87,8 @@ func Boot(
 	private websocket.Conn,
 	uiChannel chan []byte,
 ) *System {
+	viper.SetDefault("system.actor.buffer", 1024)
+
 	if !viper.IsSet("market.subscribe.batch") {
 		if err := loadEmbeddedConfig(); err != nil {
 			errnie.Error(err)
@@ -209,7 +211,7 @@ func Boot(
 		uiChannel,
 		analyzer,
 		recorder,
-		balance,
+		desk,
 	)).Wait()
 
 	errnie.Debug("planner reported to be ready")

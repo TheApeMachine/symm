@@ -104,6 +104,25 @@ func TestMeasure(t *testing.T) {
 				ShouldBeNil)
 		})
 	})
+
+	Convey("Given ticker history retained across market epochs", t, func() {
+		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
+		thesis := types.NewThesis(nil)
+		start := time.Unix(1_700_000_200, 0).UTC()
+		thesis.AppendTicker(ticker("AAA/USD", 100, start))
+
+		So(signal.Measure(thesis), ShouldBeEmpty)
+
+		thesis.AppendTicker(ticker("AAA/USD", 101, start.Add(time.Second)))
+		measurements := signal.Measure(thesis)
+
+		Convey("It should skip the observed row and measure the newer return", func() {
+			So(measurements, ShouldHaveLength, 1)
+			change := measurements[0].Sample(types.MetricChange, types.SideNone)
+			So(change.Raw, ShouldAlmostEqual, math.Log(101.0/100.0), 1e-12)
+			So(change.Normalized, ShouldNotBeNil)
+		})
+	})
 }
 
 func tickerMap(rows []kraken.TickerData) *sync.Map {
@@ -128,5 +147,25 @@ func BenchmarkSentimentStatistics(b *testing.B) {
 
 	for b.Loop() {
 		_ = sentimentStatistics(peers)
+	}
+}
+
+func BenchmarkMeasure(b *testing.B) {
+	thesis := types.NewThesis(nil)
+	start := time.Unix(1_700_000_300, 0).UTC()
+
+	for index := range 256 {
+		thesis.AppendTicker(ticker(
+			"AAA/USD",
+			100+float64(index)/100,
+			start.Add(time.Duration(index)*time.Second),
+		))
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
+		_ = signal.Measure(thesis)
 	}
 }

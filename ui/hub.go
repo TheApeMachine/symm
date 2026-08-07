@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -88,6 +89,44 @@ func NewHub(
 				"positions", out,
 			).MarshalAndFree())
 		}
+
+		/*
+			The dashboard tells the engine which symbol it is looking at, and
+			focus-gated publishers — resonance above all — only emit for that one.
+			Nothing read the socket, so the focus message was discarded and the
+			gate stayed on whatever the process started with: a terminal pointed
+			at one symbol kept receiving another's latent state, or none at all.
+
+			The reader owns its own goroutine because the write loop below blocks
+			on the broadcast channel, and a connection that is only ever written to
+			also never observes the client hanging up.
+		*/
+		go func() {
+			for {
+				messageType, payload, err := conn.Conn.ReadMessage()
+
+				if err != nil {
+					return
+				}
+
+				if messageType != websocket.TextMessage {
+					continue
+				}
+
+				var request struct {
+					Type   string `json:"type"`
+					Symbol string `json:"symbol"`
+				}
+
+				if err := sonic.Unmarshal(payload, &request); err != nil {
+					continue
+				}
+
+				if request.Type == "focus" {
+					types.SetFocus(request.Symbol)
+				}
+			}
+		}()
 
 		for {
 			select {

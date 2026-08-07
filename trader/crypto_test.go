@@ -6,10 +6,12 @@ import (
 	"math"
 	"runtime"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -171,9 +173,10 @@ func TestIntegration(t *testing.T) {
 
 									Convey("Then the planner should enter before ignition is sampled", func() {
 										So(entry, ShouldNotBeNil)
-										So(entry.Risk.Present, ShouldBeTrue)
 										So(entry.ProposedQuantity, ShouldNotBeNil)
 										So(entry.ProposedQuantity.Sign(), ShouldEqual, 1)
+										So(entry.Stoploss, ShouldNotBeNil)
+										So(entry.Stoploss.Floor, ShouldNotBeNil)
 									})
 								})
 							})
@@ -279,6 +282,84 @@ func TestRoundTrip(t *testing.T) {
 							})
 						})
 					})
+				})
+			})
+		}),
+	)
+}
+
+func TestCryptoRun(t *testing.T) {
+	Convey(
+		"Setup",
+		t, tests.WithOrders(t, symbols[:1], cmd.Boot, func(
+			market *tests.Market,
+			system *cmd.System,
+		) {
+			Convey("Given an admitted forecast and causal entry verdict", func() {
+				market.Tick()
+				deadline := time.Now().Add(5 * time.Second)
+
+				for system.Desk.Price().Tick("SIM1/USD") == nil &&
+					time.Now().Before(deadline) {
+					runtime.Gosched()
+				}
+
+				So(system.Desk.Price().Tick("SIM1/USD"), ShouldNotBeNil)
+
+				forecast, err := types.NewResonanceForecast(
+					[]float64{-0.01, 0.03},
+					[]float64{1, 1},
+					2,
+					0.95,
+				)
+				So(err, ShouldBeNil)
+
+				thesis := types.NewThesis(nil)
+				thesis.Resonance.Store("SIM1/USD", types.ResonanceReading{
+					Forecast: forecast,
+				})
+
+				rows := make([][]float64, causal.MinimumSearchRows)
+
+				for index := range rows {
+					treatment := float64(index % 2)
+					rows[index] = []float64{
+						float64(index),
+						math.Sin(float64(index)),
+						treatment,
+						treatment,
+					}
+				}
+
+				thesis.Causal.Store("SIM1/USD", map[string]any{
+					"ready":          true,
+					"historyRows":    rows,
+					"treatmentLevel": 1.0,
+				})
+
+				for _, source := range []types.SourceType{
+					types.SourceCategories,
+					types.SourceCognition,
+					types.SourceManifold,
+					types.SourceResonance,
+					types.SourceCausal,
+					types.SourceGraph,
+				} {
+					thesis.Readiness.Stamp(source)
+				}
+
+				system.Planner.Update(thesis)
+				stored, found := thesis.Decisions.Load("SIM1/USD")
+				So(found, ShouldBeTrue)
+				decision := stored.(*types.Decision)
+
+				Convey("Then the desk should accept the completed entry", func() {
+					So(decision.Action, ShouldEqual, types.ActionEnter)
+					So(decision.ProposedQuantity, ShouldNotBeNil)
+					So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
+					So(decision.Stoploss, ShouldNotBeNil)
+					So(decision.Stoploss.Floor, ShouldNotBeNil)
+					So(system.Desk.Execute(*decision), ShouldBeNil)
 				})
 			})
 		}),

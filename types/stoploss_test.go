@@ -37,6 +37,15 @@ func TestStoplossUpdate(t *testing.T) {
 			So(stoploss.Floor.Cmp(preLockFloor), ShouldEqual, 0)
 		})
 
+		Convey("It should leave the forecast jitter room before profit lock", func() {
+			stoploss.Update(stoploss.ArmAt.Sub(
+				decimal.NewFromFloat64(0.01),
+			))
+
+			So(stoploss.Locked, ShouldBeFalse)
+			So(stoploss.Floor.Cmp(preLockFloor), ShouldEqual, 0)
+		})
+
 		Convey("It should lock profit immediately at the arming line", func() {
 			stoploss.Update(stoploss.ArmAt)
 
@@ -48,8 +57,14 @@ func TestStoplossUpdate(t *testing.T) {
 		Convey("It should ratchet upward after profit lock", func() {
 			stoploss.Update(stoploss.ArmAt)
 			stoploss.Update(decimal.NewFromFloat64(110))
+			expected := floorToTick(
+				decimal.NewFromFloat64(110).SetScale(riskScale).Sub(
+					stoploss.trailDistance,
+				),
+				stoploss.tickSize,
+			)
 
-			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(108)), ShouldEqual, 0)
+			So(stoploss.Floor.Cmp(expected), ShouldEqual, 0)
 		})
 
 		Convey("It should never lower a ratcheted floor", func() {
@@ -98,17 +113,9 @@ func stoplossFixture(testingTB testReporter) *Stoploss {
 		"SIM/USD",
 		decimal.NewFromFloat64(100),
 		forecast,
-		RiskPlan{
-			Present:       true,
-			RiskDistance:  decimal.NewFromFloat64(2),
-			TrailDistance: decimal.NewFromFloat64(2),
-			ArmBuffer:     decimal.NewFromFloat64(2),
-			LockBuffer:    decimal.NewFromFloat64(1),
-			MinEdge:       decimal.NewFromFloat64(1),
-			ExitFeeRate:   zeroRate,
-			EntryFeeRate:  zeroRate,
-			TickSize:      decimal.NewFromFloat64(0.01),
-		},
+		decimal.NewFromFloat64(0.01),
+		zeroRate,
+		zeroRate,
 	)
 
 	if err != nil {

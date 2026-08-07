@@ -2,10 +2,12 @@ package strategy
 
 import (
 	"math"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/mcts"
+	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -54,6 +56,88 @@ func TestPlannerSearch(t *testing.T) {
 		Convey("Then it should stand aside until the causal search can run", func() {
 			So(err, ShouldBeNil)
 			So(decision.Action, ShouldEqual, types.ActionNothing)
+		})
+	})
+
+	Convey("Given causal history whose intervention raises realized return", t, func() {
+		planner := &Planner{mctsEngine: mcts.NewCausalMCTS(
+			NewCausalEngineAdapter(),
+			math.Sqrt2,
+			1,
+			mctsMinimumCausalRows,
+			2,
+			3,
+			[]int{0, 1},
+			[]int{0, 1, 2},
+			false,
+		)}
+		rows := make([][]float64, mctsMinimumCausalRows)
+
+		for index := range rows {
+			treatment := float64(index % 2)
+			rows[index] = []float64{
+				float64(index),
+				math.Sin(float64(index)),
+				treatment,
+				treatment,
+			}
+		}
+
+		decision, err := planner.search("BTC/USD", map[string]any{
+			"ready":          true,
+			"historyRows":    rows,
+			"treatmentLevel": 1.0,
+		})
+
+		Convey("Then it should select entry", func() {
+			So(err, ShouldBeNil)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+		})
+	})
+}
+
+func TestPlannerUpdate(t *testing.T) {
+	Convey("Given a fully analyzed thesis whose forecast is still warming", t, func() {
+		planner := &Planner{subscribers: &sync.Map{}}
+		causalSolver := causal.NewSolver(nil, nil)
+		thesis := types.NewThesis(nil)
+		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
+			Source: types.SourceResonance,
+			Symbol: "BTC/USD",
+		})
+		Reset(func() {
+			So(causalSolver.Close(), ShouldBeNil)
+		})
+
+		for _, source := range []types.SourceType{
+			types.SourceCorrelation,
+			types.SourceCVD,
+			types.SourceDepthFlow,
+			types.SourceExhaustion,
+			types.SourceHawkes,
+			types.SourceLeadLag,
+			types.SourceLiquidity,
+			types.SourcePumpDump,
+			types.SourceSentiment,
+			types.SourceToxicity,
+			types.SourceCategories,
+			types.SourceCognition,
+			types.SourceManifold,
+			types.SourceResonance,
+			types.SourceGraph,
+		} {
+			thesis.Readiness.Stamp(source)
+		}
+
+		So(causalSolver.Update(thesis), ShouldBeNil)
+		planner.Update(thesis)
+
+		Convey("Then Planner should complete an explicit Do Not Enter decision", func() {
+			So(thesis.Readiness.Planner, ShouldBeTrue)
+			So(thesis.Readiness.Complete(), ShouldBeTrue)
+			stored, found := thesis.Decisions.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			So(stored.(*types.Decision).Action, ShouldEqual, types.ActionNothing)
 		})
 	})
 }

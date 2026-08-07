@@ -78,7 +78,6 @@ coding manifold, dynamically tunes alpha and forward prediction horizon, and enr
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	featureSets := solver.extractFeatures(thesis)
-	thesis.Resonance.Clear()
 
 	if len(featureSets) == 0 {
 		return nil
@@ -109,7 +108,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	focused, found := thesis.Resonance.Load(types.Focus())
 
 	if found {
-		utils.Publish(solver.ui, datura.NewMap("resonance", []any{focused}))
+		utils.Publish(
+			solver.ui,
+			datura.NewMap("resonance", []any{focused}),
+		)
 	}
 
 	return nil
@@ -324,15 +326,30 @@ func (solver *Solver) updateSymbol(
 }
 
 /*
-horizon returns the current confidence-supported forecast reach. Resolved
-return samples are the only finite bound: the model cannot support more steps
-than it has learned targets for, and no fixed product horizon is imposed.
+horizon returns and remembers the confidence-supported forecast reach. Resolved
+return samples are the finite bound: the model cannot support more steps than
+targets it has learned, and no fixed product horizon is imposed.
+
+DynamicHorizon floors its confidence cap. At one remembered step that would
+make every confidence below certainty publish one step forever, even while the
+task head is precise enough to grow. Using the ceiling of the same proportional
+support lets high confidence earn the next whole tick. The published horizon is
+still what is remembered, so weak confidence contracts the next rollout rather
+than merely hiding an independently growing reach.
 */
 func (solver *Solver) horizon(state *symbolState, confidence float64) int {
 	maximum := max(1, int(state.targetSamples))
-	horizon, _ := state.manifold.DynamicHorizon(
+	horizon, reach := state.manifold.DynamicHorizon(
 		confidence, state.horizonReach, maximum,
 	)
+	confidenceReach := max(1, int(math.Ceil(float64(reach)*confidence)))
+
+	if confidenceReach > horizon {
+		supportedConfidence := float64(confidenceReach) / float64(reach)
+		horizon, _ = state.manifold.DynamicHorizon(
+			supportedConfidence, state.horizonReach, maximum,
+		)
+	}
 
 	state.horizonReach = horizon
 	return horizon

@@ -11,7 +11,7 @@ const decisionSlotKeys = Array.from(
 );
 
 export const Decisions = () => (
-	<Component registerKey="decisions">
+	<Component registerKey="strategy" select="decisions">
 		{({ ref, className }) => (
 			<Flex.Column ref={ref} className={cn("h-full min-h-0 gap-0", className)}>
 				<Flex.Row

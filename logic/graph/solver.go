@@ -142,6 +142,15 @@ func (graph *Graph) AddEdge(edge *Edge) {
 	if edge == nil || edge.From == "" || edge.To == "" {
 		return
 	}
+
+	if _, found := graph.Nodes[edge.From]; !found {
+		return
+	}
+
+	if _, found := graph.Nodes[edge.To]; !found {
+		return
+	}
+
 	graph.Edges = append(graph.Edges, edge)
 	graph.Adjacency[edge.From] = append(graph.Adjacency[edge.From], edge.To)
 }
@@ -487,7 +496,7 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 	resonanceBySymbol := make(map[string][]*Node)
 	causalBySymbol := make(map[string][]*Node)
 	interventions := make([]*Node, 0)
-	expectations := make([]*Node, 0)
+	expectationsBySymbol := make(map[string][]*Node)
 
 	for _, node := range nodes {
 		switch node.Kind {
@@ -506,7 +515,10 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 			}
 
 			if node.ID == "causal:"+node.Symbol+":doExpectation" {
-				expectations = append(expectations, node)
+				expectationsBySymbol[node.Symbol] = append(
+					expectationsBySymbol[node.Symbol],
+					node,
+				)
 			}
 		}
 	}
@@ -568,7 +580,7 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 	}
 
 	for _, intervention := range interventions {
-		for _, expectation := range expectations {
+		for _, expectation := range expectationsBySymbol[intervention.Symbol] {
 			graph.AddEdge(&Edge{
 				From:     intervention.ID,
 				To:       expectation.ID,

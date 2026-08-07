@@ -23,6 +23,14 @@ export const appStore = createStore(
 		query: "",
 		kernels: DEFAULT_KERNELS,
 		observedSources: new Set<string>(),
+		/*
+			The symbols the engine has actually said something about this run. It is
+			not a list the backend publishes — no instruments key reaches the wire —
+			so it accumulates from the frames that name a symbol. The command palette
+			searches it, which is the only place a symbol the user has not already
+			focused can be reached.
+		*/
+		symbols: [] as string[],
 		startedAtMs: null as number | null,
 	},
 	({ setState }) => ({
@@ -52,6 +60,20 @@ export const appStore = createStore(
 				...prev,
 				query: query,
 			})),
+		observeSymbols: (symbols: Iterable<string>) =>
+			setState((prev) => {
+				const merged = new Set(prev.symbols);
+				let changed = false;
+
+				for (const symbol of symbols) {
+					if (symbol !== "" && !merged.has(symbol)) {
+						merged.add(symbol);
+						changed = true;
+					}
+				}
+
+				return changed ? { ...prev, symbols: [...merged].sort() } : prev;
+			}),
 		observeSources: (sources: Set<string>) =>
 			setState((prev) => {
 				if (sources.size === 0) {

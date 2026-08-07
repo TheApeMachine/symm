@@ -33,6 +33,29 @@ func testResonanceReading(
 }
 
 func TestUpdate(t *testing.T) {
+	convey.Convey("Given a predictive-coding reading that is still warming", t, func() {
+		solver := NewSolver(nil, nil)
+		thesis := types.NewThesis(nil)
+		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
+			Source: types.SourceResonance,
+			Symbol: "BTC/USD",
+		})
+		thesis.Readiness.Stamp(types.SourceResonance)
+		convey.Reset(func() {
+			convey.So(solver.Close(), convey.ShouldBeNil)
+		})
+
+		err := solver.Update(thesis)
+
+		convey.Convey("Then causal should expose a not-ready result for Planner", func() {
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(thesis.Readiness.Causal, convey.ShouldBeTrue)
+			stored, found := thesis.Causal.Load("BTC/USD")
+			convey.So(found, convey.ShouldBeTrue)
+			convey.So(stored.(map[string]any)["ready"], convey.ShouldBeFalse)
+		})
+	})
+
 	convey.Convey("Given a causal evidence stream for one symbol", t, func() {
 		solver := NewSolver(nil, nil)
 		thesis := types.NewThesis(nil)
@@ -104,8 +127,8 @@ func TestUpdate(t *testing.T) {
 			convey.So(solver.Update(thesis), convey.ShouldBeNil)
 		}
 
-		convey.Convey("Then it should remain unstamped and not expose a search artifact", func() {
-			convey.So(thesis.Readiness.Causal, convey.ShouldBeFalse)
+		convey.Convey("Then it should stamp the completed stage without exposing a search artifact", func() {
+			convey.So(thesis.Readiness.Causal, convey.ShouldBeTrue)
 			stored, found := thesis.Causal.Load("BTC/USD")
 			convey.So(found, convey.ShouldBeTrue)
 			convey.So(stored.(map[string]any)["ready"], convey.ShouldBeFalse)

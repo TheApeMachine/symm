@@ -10,9 +10,14 @@ as readily as live ones, and the only time that explains what the surfaces are
 showing is the time the engine thinks it is.
 */
 export const Clock = () => (
-	<Component registerKey="strategy">
+	/*
+		The strategy envelope carries no stamp of its own; the decisions it
+		arbitrated do. Reading the first decision's instant is what makes this the
+		engine's clock rather than the browser's.
+	*/
+	<Component registerKey="strategy" select="decisions">
 		{({ ref, className }) => (
-			<Flex.Column ref={ref} className={cn(className)}>
+			<Flex.Column ref={ref} data-index="0" className={cn(className)}>
 				<Flex>
 					<span data-paint="at" data-paint-format="time" data-paint-suffix=" UTC">
 						—

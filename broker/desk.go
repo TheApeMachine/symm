@@ -123,10 +123,19 @@ func (desk *Desk) run() {
 					}
 				}
 
+				/*
+					Cash and equity are refreshed together because they answer the
+					same question at the same instant: what the account holds, and
+					what it would settle at if every open lot were closed now. The
+					in-flight guard already paces both against the ticker rate, so
+					the account readout stays live without adding venue traffic of
+					its own.
+				*/
 				if balanceRefreshing.CompareAndSwap(false, true) {
 					go func() {
 						defer balanceRefreshing.Store(false)
 						desk.balance.Update()
+						desk.PublishEquity()
 					}()
 				}
 			case message := <-desk.subscriptions["executions"].Channel:
@@ -291,7 +300,19 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		desk.positions.LoadOrStore(decision.Symbol, NewPosition(
+		desk.positionsMu.Lock()
+		found, loaded := desk.positions.Load(decision.Symbol)
+
+		if loaded {
+			position, valid := found.(*Position)
+
+			if valid && position != nil && position.Status != types.CLOSED {
+				desk.positionsMu.Unlock()
+				return nil
+			}
+		}
+
+		position := NewPosition(
 			desk.ctx,
 			desk.api,
 			desk.ui,
@@ -301,7 +322,16 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.recorder,
 			desk.instrument.Pair(decision.Symbol),
 			decision,
-		))
+		)
+		desk.positions.Store(decision.Symbol, position)
+		desk.positionsMu.Unlock()
+
+		_, err = position.Enter()
+
+		if err != nil {
+			desk.positions.CompareAndDelete(decision.Symbol, position)
+			return err
+		}
 	case types.ActionExit:
 		err = errnie.Err(
 			errnie.NotAcceptable,

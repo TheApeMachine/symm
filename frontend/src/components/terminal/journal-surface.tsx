@@ -1,216 +1,190 @@
-import { createRef, useEffect } from "react";
-import { appStore } from "#/collections/app";
-import { terminalStore } from "#/collections/terminal";
-import type { LifecycleRow, Position, Thesis } from "#/collections/types";
-import {
-	findingKey,
-	journalEntryKey,
-	paintJournalSurface,
-} from "#/components/terminal/journal-paint";
-import type { Finding } from "#/types/thesis";
+import { Component } from "#/components/ui/component";
 import { Panel } from "@/components/ui/panel";
 import { Section } from "@/components/ui/section";
 
-const rootRef = createRef<HTMLDivElement>();
-
-let lastLifecycle: LifecycleRow[] = [];
-let lastPositions: Position[] = [];
-let lastFindings: Finding[] = [];
-let lastJournal: Thesis[] = [];
-let selectedSymbol: string | null = null;
-
-const asRows = <T,>(value: unknown): T[] =>
-	(Array.isArray(value)
-		? value
-		: value !== null && typeof value === "object"
-			? Object.values(value as Record<string, T>)
-			: value != null
-				? [value]
-				: []) as T[];
-
-const selectLifecycleSymbol = (symbol: string) => {
-	selectedSymbol = selectedSymbol === symbol ? null : symbol;
-	appStore.actions.updateFocusSymbol(symbol);
-	paint();
-};
-
-const selectJournalEntry = (key: string) => {
-	const entry = lastJournal.find(
-		(candidate) => journalEntryKey(candidate) === key,
-	);
-	const symbol =
-		Object.keys(entry?.lifecycle ?? {})[0] ??
-		Object.keys(entry?.holdings ?? {})[0] ??
-		"";
-
-	if (symbol === "") {
-		return;
-	}
-
-	selectedSymbol = symbol;
-	appStore.actions.updateFocusSymbol(symbol);
-	terminalStore.actions.openThesis(symbol);
-	paint();
-};
-
 /*
-paint writes lifecycle / holdings / findings shells from the module caches.
+JournalSurface is the record of what the desk actually did.
+
+It reads the positions batch, which is the only account of a lot the engine
+publishes: its lifecycle status, the prices it was opened and marked at, the
+regulator that governs its exit, and what it has cost or made. The surface
+previously expected three further wire keys — lifecycle, findings and journal —
+that no part of the backend sends, which is why all three columns sat on
+"waiting for frames" for the whole run. What it cannot show, it no longer
+claims to be waiting for.
+
+Every column is one Component over the same key, so a lot appears in the rail
+and in the journal on the same frame rather than on two different ones.
 */
-const paint = () => {
-	const focusSymbol = appStore.state.focusSymbol;
-	const nextSymbols = [
-		...new Set([
-			...lastLifecycle.map((row) => row.symbol),
-			...lastPositions
-				.map((position) => position.holding?.symbol)
-				.filter(Boolean),
-			...lastJournal.flatMap((entry) => [
-				...Object.keys(entry.lifecycle ?? {}),
-				...Object.keys(entry.holdings ?? {}),
-			]),
-		]),
-	].sort();
-	const nextJournalKeys = [
-		...new Set(lastJournal.map((entry) => journalEntryKey(entry))),
-	].sort();
-	const nextFindingKeys = [
-		...new Set(lastFindings.map((finding) => findingKey(finding))),
-	].sort();
-	const nextActive =
-		selectedSymbol ??
-		(nextSymbols.includes(focusSymbol) ? focusSymbol : nextSymbols[0]) ??
-		null;
+const LIFECYCLE_TONE =
+	"INITIALIZING:text-(--info) OPEN:text-(--up) CLOSED:text-(--f4) ERROR:text-(--down)";
 
-	paintJournalSurface(rootRef.current, {
-		activeSymbol: nextActive,
-		entries: lastJournal,
-		findings: lastFindings,
-		findingKeys: nextFindingKeys,
-		journalKeys: nextJournalKeys,
-		lifecycleBySymbol: Object.fromEntries(
-			lastLifecycle.map((row) => [row.symbol, String(row.state)]),
-		),
-		onJournalSelect: selectJournalEntry,
-		onLifecycleSelect: selectLifecycleSymbol,
-		online: appStore.state.online,
-		symbols: nextSymbols,
-	});
-};
-
-/*
-paintJournalLifecycle refreshes the journal from the current DRAW lifecycle batch.
-*/
-export const paintJournalLifecycle = (value: unknown, _focusSymbol: string) => {
-	lastLifecycle = asRows<LifecycleRow>(value);
-	paint();
-};
-
-/*
- paintJournalPositions refreshes the journal from the current DRAW positions batch.
- */
-export const paintJournalPositions = (value: unknown, _focusSymbol: string) => {
-	lastPositions = (
-		Array.isArray(value)
-			? value
-			: value !== null && typeof value === "object"
-				? Object.values(value as Record<string, Position>)
-				: value != null
-					? [value]
-					: []
-	) as Position[];
-	paint();
-};
-
-export const paintJournalHoldings = paintJournalPositions;
-
-/*
-paintJournalFindings refreshes the journal from the current DRAW findings batch.
-*/
-export const paintJournalFindings = (value: unknown, _focusSymbol: string) => {
-	lastFindings = asRows<Finding>(value);
-	paint();
-};
-
-export const paintJournalEntries = (value: unknown, _focusSymbol: string) => {
-	lastJournal = asRows<Thesis>(value);
-	paint();
-};
-
-/*
-JournalSurface is the static lifecycle / holdings / findings shell.
- DRAW paints via paintJournalLifecycle, paintJournalPositions, paintJournalFindings.
-*/
-export const JournalSurface = () => <JournalSurfaceBody />;
-
-const JournalSurfaceBody = () => {
-	useEffect(() => {
-		paint();
-	}, []);
-
-	return (
-		<div
-			ref={rootRef}
-			className="grid h-full min-h-0 min-w-[1040px] grid-cols-[minmax(280px,320px)_minmax(420px,1fr)_minmax(280px,320px)]"
-		>
-			<div className="min-h-0 overflow-auto border-(--line) border-r p-3.5">
-				<Section>
-					<Section.Header
-						title="Lifecycle rail"
-						meta={<span data-journal="lifecycle-meta">0 symbols</span>}
-					/>
-					<div
-						className="flex flex-col gap-2 p-2"
-						data-journal-host="lifecycle"
-					>
-						<Panel
-							variant="surface"
-							size="bare"
-							data-journal="lifecycle-empty"
-							className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
-						>
-							waiting for lifecycle frames
-						</Panel>
+export const JournalSurface = () => (
+	<div className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(280px,320px)_minmax(420px,1fr)]">
+		<div className="min-h-0 overflow-auto border-(--line) border-r p-3.5">
+			<Component registerKey="positions">
+				{({ ref, slots }) => (
+					<div ref={ref}>
+						<Section>
+							<Section.Header
+								title="Lifecycle rail"
+								meta={`${slots.length} lots`}
+							/>
+							<div className="flex flex-col gap-2 p-2">
+								{slots.length === 0 ? (
+									<Panel
+										variant="surface"
+										size="bare"
+										className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+									>
+										no lots held
+									</Panel>
+								) : (
+									slots.map((slot) => (
+										<Panel
+											key={slot}
+											variant="surface"
+											size="bare"
+											data-index={slot}
+											className="flex items-center justify-between gap-2 px-2.5 py-2 font-mono text-[11px]"
+										>
+											<span
+												data-paint="holding.symbol"
+												className="truncate text-(--f1)"
+											/>
+											<span
+												data-paint="status"
+												data-paint-class={LIFECYCLE_TONE}
+												className="shrink-0 text-[9px] uppercase tracking-wide"
+											/>
+										</Panel>
+									))
+								)}
+							</div>
+						</Section>
 					</div>
-				</Section>
-			</div>
-
-			<div className="min-h-0 overflow-auto px-4 py-[18px]">
-				<Section.Header
-					size="bare"
-					rule={false}
-					title="Journal"
-					meta={<span data-journal="holdings-meta" />}
-				/>
-				<div className="flex flex-col gap-2" data-journal-host="journal">
-					<Panel
-						variant="surface"
-						size="bare"
-						data-journal="holdings-empty"
-						className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
-					>
-						waiting for journal frames
-					</Panel>
-				</div>
-			</div>
-
-			<div className="min-h-0 overflow-auto border-(--line) border-l p-3.5">
-				<Section>
-					<Section.Header
-						title="PostMortem findings"
-						meta={<span data-journal="findings-meta">0 findings</span>}
-					/>
-					<div className="flex flex-col gap-2 p-2" data-journal-host="findings">
-						<Panel
-							variant="surface"
-							size="bare"
-							data-journal="findings-empty"
-							className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
-						>
-							waiting for findings frames
-						</Panel>
-					</div>
-				</Section>
-			</div>
+				)}
+			</Component>
 		</div>
-	);
-};
+
+		<div className="min-h-0 overflow-auto px-4 py-4.5">
+			<Component registerKey="positions">
+				{({ ref, slots }) => (
+					<div ref={ref}>
+						<Section.Header
+							size="bare"
+							rule={false}
+							title="Journal"
+							meta={`${slots.length} entries`}
+						/>
+						<div className="mt-2 flex flex-col gap-2">
+							{slots.length === 0 ? (
+								<Panel
+									variant="surface"
+									size="bare"
+									className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+								>
+									nothing traded yet this run
+								</Panel>
+							) : (
+								slots.map((slot) => (
+									<Panel
+										key={slot}
+										variant="surface"
+										size="bare"
+										data-index={slot}
+										className="px-3 py-2.5 font-mono text-[11px]"
+									>
+										<div
+											data-set="holding.pnl"
+											data-set-scale="sign-color"
+											data-target="style.--pnl"
+											className="flex items-center justify-between gap-2"
+										>
+											<span
+												data-paint="holding.symbol"
+												className="truncate font-semibold text-(--f1)"
+											/>
+											<span
+												data-paint="holding.pnl"
+												data-paint-format=".4f"
+												data-paint-suffix=" USD"
+												className="shrink-0 font-semibold text-(--pnl)"
+											/>
+										</div>
+
+										<div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9.5px] text-(--f4)">
+											<span>
+												opened{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.entry_at"
+													data-paint-format="time"
+												/>
+											</span>
+											<span className="text-right">
+												closed{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.exit_at"
+													data-paint-format="time"
+												/>
+											</span>
+											<span>
+												entry{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.entry_price"
+													data-paint-format=".6f"
+												/>
+											</span>
+											<span className="text-right">
+												mark{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.mark"
+													data-paint-format=".6f"
+												/>
+											</span>
+											<span>
+												qty{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.qty"
+													data-paint-format=".6f"
+												/>
+											</span>
+											<span className="text-right">
+												return{" "}
+												<b
+													className="font-normal text-(--pnl)"
+													data-paint="holding.return_pct"
+													data-paint-format=".2%"
+												/>
+											</span>
+											<span>
+												fees{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.entry_fee"
+													data-paint-format=".4f"
+												/>
+											</span>
+											<span className="text-right">
+												stop{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.stoploss.status"
+												/>
+											</span>
+										</div>
+									</Panel>
+								))
+							)}
+						</div>
+					</div>
+				)}
+			</Component>
+		</div>
+	</div>
+);

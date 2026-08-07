@@ -536,12 +536,15 @@ func TestHorizonConfidenceCapsReach(t *testing.T) {
 		So(hasPrecision, ShouldBeTrue)
 		So(precision, ShouldBeGreaterThan, 0)
 
-		Convey("Then middling confidence caps the earned reach itself", func() {
+		Convey("Then lower confidence contracts the remembered reach itself", func() {
 			state.horizonReach = 10
 			reach := state.horizonReach
 			confidence := 0.4
 			horizon := solver.horizon(state, confidence)
-			confidenceCap := max(1, int(float64(reach+1)*confidence))
+			expectedReach := min(int(state.targetSamples), reach+1)
+			confidenceCap := max(1, int(math.Ceil(
+				float64(expectedReach)*confidence,
+			)))
 
 			So(horizon, ShouldBeLessThan, reach)
 			So(horizon, ShouldBeGreaterThanOrEqualTo, 1)
@@ -551,30 +554,22 @@ func TestHorizonConfidenceCapsReach(t *testing.T) {
 	})
 }
 
-/*
-TestHorizonRetractsFasterThanItGrows pins the asymmetry between earning reach
-and losing it.
-*/
-func TestHorizonRetractsFasterThanItGrows(t *testing.T) {
-	Convey("Given a solver holding its full reach", t, func() {
+func TestHorizonGrowsFromHighConfidence(t *testing.T) {
+	Convey("Given high confidence at the shortest remembered reach", t, func() {
 		solver := driveSolver(400)
 		state := solver.state("BTC/USD")
-		state.horizonReach = int(state.targetSamples)
+		precision, hasPrecision := state.manifold.TaskPrecision()
+		state.horizonReach = 1
+		highConfidence := 0.95
 
-		growthTicks := int(state.targetSamples)
-		retractionTicks := 0
+		So(hasPrecision, ShouldBeTrue)
+		So(precision, ShouldBeGreaterThanOrEqualTo, 0.5)
 
-		for state.horizonReach > 1 {
-			solver.horizon(state, 0.4)
-			retractionTicks++
+		Convey("Then it should grow the remembered reach immediately", func() {
+			horizon := solver.horizon(state, highConfidence)
 
-			So(retractionTicks, ShouldBeLessThan, 100)
-		}
-
-		t.Logf("earned over %d ticks, surrendered in %d", growthTicks, retractionTicks)
-
-		Convey("Then reach is surrendered faster than it is earned", func() {
-			So(retractionTicks, ShouldBeLessThan, growthTicks)
+			So(horizon, ShouldEqual, 2)
+			So(state.horizonReach, ShouldEqual, horizon)
 		})
 	})
 }

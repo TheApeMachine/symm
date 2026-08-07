@@ -29,7 +29,7 @@ export const XrayFactsPanel = () => {
 						<div className="flex justify-between gap-3">
 							<span className="text-(--f3)">regime class</span>
 							<Typography.Span
-								data-paint="winnerRegime"
+								data-paint="winner"
 								data-paint-absent="—"
 								data-paint-empty="none named"
 								className="text-right text-(--acc)"
@@ -49,9 +49,9 @@ export const XrayFactsPanel = () => {
 							</Typography.Span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-(--f3)">surprisal</span>
+							<span className="text-(--f3)">class contrast</span>
 							<Typography.Span
-								data-paint="surprisal"
+								data-paint="contrast"
 								data-paint-absent="—"
 								data-paint-format=".3f"
 								className="text-right text-(--f1)"
@@ -71,9 +71,9 @@ export const XrayFactsPanel = () => {
 							</Typography.Span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-(--f3)">regime break</span>
+							<span className="text-(--f3)">classified</span>
 							<Typography.Span
-								data-paint="isBreak"
+								data-paint="ready"
 								data-paint-absent="—"
 								data-paint-class="true:text-(--warn) false:text-(--f3)"
 								className="text-right"
@@ -84,7 +84,7 @@ export const XrayFactsPanel = () => {
 						<div className="flex justify-between gap-3">
 							<span className="text-(--f3)">ambiguous</span>
 							<Typography.Span
-								data-paint="ambiguity"
+								data-paint="ambiguous"
 								data-paint-absent="—"
 								data-paint-class="true:text-(--warn) false:text-(--f3)"
 								className="text-right"
@@ -95,7 +95,7 @@ export const XrayFactsPanel = () => {
 						<div className="flex justify-between gap-3">
 							<span className="text-(--f3)">sequence</span>
 							<Typography.Span
-								data-paint="activeSequence"
+								data-paint="sequence"
 								data-paint-absent="—"
 								data-paint-empty="none"
 								className="max-w-42 truncate text-right text-(--f3) text-[10px]"

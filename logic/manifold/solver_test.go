@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"context"
 	"encoding/binary"
 	"math"
 	"testing"
@@ -17,7 +18,7 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-var api = websocket.NewAPI(nil, mock.NewConn(), mock.NewConn())
+var api = websocket.NewAPI(context.Background(), mock.NewConn(), mock.NewConn())
 
 func TestUpdate(t *testing.T) {
 	Convey("Given a valid tick with no manifold carriers", t, func() {

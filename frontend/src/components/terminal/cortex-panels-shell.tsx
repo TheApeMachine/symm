@@ -31,7 +31,7 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => (
 					<div className="flex flex-col gap-2">
 						<div className="flex items-center justify-between font-mono text-[10px]">
 							<Typography.Span
-								data-paint="winnerRegime"
+								data-paint="winner"
 								className="text-(--f3)"
 							/>
 							<Typography.Span
@@ -61,10 +61,10 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => (
 					<div className="grid grid-cols-2 gap-2.5 text-center">
 						<Stat
 							layout="feature"
-							label="surprisal"
+							label="contrast"
 							value={
 								<Typography.Span
-									data-paint="surprisal"
+									data-paint="contrast"
 									data-paint-format=".3f"
 								/>
 							}
@@ -95,7 +95,7 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => (
 							than by a threshold restated here.
 						*/}
 						<Typography.Span
-							data-paint="ambiguity"
+							data-paint="ambiguous"
 							data-paint-class="true:text-(--warn) false:text-(--up)"
 							className="font-semibold text-[9px] uppercase tracking-wide"
 						/>
@@ -105,8 +105,8 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => (
 					</div>
 					<div>
 						<div className="mb-1 flex justify-between font-mono text-[10px]">
-							<span className="text-(--f3)">regime break</span>
-							<Typography.Span data-paint="isBreak" className="text-(--f1)" />
+							<span className="text-(--f3)">classified</span>
+							<Typography.Span data-paint="ready" className="text-(--f1)" />
 						</div>
 						<div
 							className={meterTrackVariants({ variant: "success", size: "m" })}

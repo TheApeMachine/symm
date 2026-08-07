@@ -193,15 +193,20 @@ DashboardFrame is a generic keyed UI frame used by legacy paint helpers.
 export type DashboardFrame = Record<string, unknown>;
 
 /*
-CausalReading mirrors algorithm.PearlOutput published inside each causal frame.
+CausalReading mirrors algorithm.PearlOutput.
+
+The solver publishes it flat — every reading sits at the top level of the row
+alongside the symbol, and the baselines keep their snake-cased wire names. A
+nested `reading` wrapper and camel-cased baselines were what this file used to
+describe, which is why every consumer of a causal row read undefined.
 */
 export type CausalReading = {
 	value?: number;
 	category?: number;
 	confidence?: number;
-	confidenceBaseline?: number;
-	entryBaseline?: number;
-	exitBaseline?: number;
+	confidence_baseline?: number;
+	entry_baseline?: number;
+	exit_baseline?: number;
 	strength?: number;
 	association?: number;
 	associationScore?: number;
@@ -210,29 +215,30 @@ export type CausalReading = {
 	doExpectation?: number;
 	uplift?: number;
 	upliftScore?: number;
+	residual?: number;
 	counterfactual?: number;
 	noise?: number;
 	contagion?: number;
 	condition?: number;
-	inverted?: boolean;
+	inverted?: number;
 	probabilities?: number[];
 	distribution?: Record<string, number>;
 };
 
 /*
-CausalFrame mirrors logic.CausalOutcome published on each thesis tick.
+CausalFrame mirrors logic.CausalOutcome published on each thesis tick. A row
+that is not ready yet carries only its symbol and that flag.
 */
-export type CausalFrame = {
-	source: string;
+export type CausalFrame = CausalReading & {
+	source?: string;
 	symbol: string;
-	at: string;
+	at?: string;
 	samples?: number;
 	ready?: boolean;
 	hypothesis?: string;
 	treatment?: string;
 	controls?: string[];
 	target?: string;
-	reading?: CausalReading;
 };
 
 /*
@@ -301,18 +307,13 @@ export type CognitiveReading = {
 	scope?: string;
 	sequence?: string;
 	regimePrefix?: string;
-	regimeCohort?: number;
 	ambiguous?: boolean;
 	sideline?: boolean;
 	entropyBits?: number;
 	entropyThreshold?: number;
-	classConfidence?: number;
-	contrastEvidence?: number;
 	lookaheadScore?: number;
 	lookaheadPaths?: number;
-	winnerClass?: string;
-	prewarmPaths?: number | null;
-	prewarmScore?: number | null;
+	predictions?: Record<string, CognitivePrediction>;
 	updatedAt?: number;
 	beamWidth?: number;
 	maxHops?: number;
@@ -329,6 +330,17 @@ export type CognitiveReading = {
 	confidence?: number;
 	contrast?: number;
 	cohort?: number;
+};
+
+/*
+CognitivePrediction is one projected path the beam search kept, keyed by the
+path itself in the predictions map.
+*/
+export type CognitivePrediction = {
+	predictedPath?: string;
+	probability?: number;
+	hops?: number;
+	score?: number;
 };
 
 export type CognitiveBranch = {

@@ -114,10 +114,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
-	if solver.searchReady(thesis) {
-		thesis.Stamp(types.SourceCausal)
-	}
-
+	thesis.Stamp(types.SourceCausal)
 	solver.publish(thesis)
 	return nil
 }
@@ -134,7 +131,21 @@ func (solver *Solver) measure(
 
 	resonance, ok := stored.(types.ResonanceReading)
 
-	if !ok || resonance.Forecast == nil {
+	if !ok {
+		return errnie.Err(
+			errnie.Validation,
+			"causal: resonance reading has an invalid type",
+			nil,
+		)
+	}
+
+	// A warm predictive-coding reading is still a causal result: the symbol
+	// is not ready for search. Publishing that state lets Planner complete an
+	// explicit ActionNothing decision while Resonance keeps learning across
+	// subsequent theses.
+	thesis.Causal.Store(symbol, map[string]any{"ready": false})
+
+	if resonance.Forecast == nil {
 		return nil
 	}
 
@@ -236,22 +247,6 @@ func (solver *Solver) measure(
 
 	thesis.Causal.Store(symbol, causalOutput)
 	return nil
-}
-
-func (solver *Solver) searchReady(thesis *types.Thesis) bool {
-	ready := false
-
-	thesis.Causal.Range(func(_, value any) bool {
-		output, valid := value.(map[string]any)
-
-		if valid {
-			ready, _ = output["ready"].(bool)
-		}
-
-		return !ready
-	})
-
-	return ready
 }
 
 /*

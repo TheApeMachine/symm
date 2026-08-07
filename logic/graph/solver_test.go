@@ -10,6 +10,50 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+func TestUpdate(t *testing.T) {
+	Convey("Given completed upstream stages with causal search still warming", t, func() {
+		thesis := types.NewThesis(nil)
+		thesis.Readiness.Stamp(types.SourceCategories)
+		thesis.Readiness.Stamp(types.SourceResonance)
+		thesis.Readiness.Stamp(types.SourceCausal)
+		thesis.Readiness.Stamp(types.SourceCognition)
+		thesis.Causal.Store("BTC/USD", map[string]any{"ready": false})
+		solver := NewSolver(nil, nil)
+
+		err := solver.Update(thesis)
+
+		Convey("It should compile and stamp the graph", func() {
+			So(err, ShouldBeNil)
+			So(thesis.Readiness.Graph, ShouldBeTrue)
+			_, found := thesis.Graphs.Load("market_graph")
+			So(found, ShouldBeTrue)
+		})
+	})
+}
+
+func TestAddEdge(t *testing.T) {
+	Convey("Given an edge whose target is not a registered graph node", t, func() {
+		graph := NewGraph(time.Unix(1, 0).UTC())
+		graph.AddNode(&Node{ID: "source"})
+		edge := &Edge{From: "source", To: "missing"}
+
+		graph.AddEdge(edge)
+
+		Convey("It should not materialize a dangling relationship", func() {
+			So(graph.Edges, ShouldBeEmpty)
+			So(graph.Adjacency[edge.From], ShouldBeEmpty)
+		})
+
+		Convey("It should connect the edge once both nodes exist", func() {
+			graph.AddNode(&Node{ID: edge.To})
+			graph.AddEdge(edge)
+
+			So(graph.Edges, ShouldHaveLength, 1)
+			So(graph.Adjacency[edge.From], ShouldResemble, []string{edge.To})
+		})
+	})
+}
+
 func TestInferStructuralEdges(t *testing.T) {
 	Convey("Given canonical causal intervention and expectation nodes", t, func() {
 		at := time.Unix(1, 0).UTC()
@@ -44,16 +88,18 @@ func TestInferStructuralEdges(t *testing.T) {
 
 		solver.inferStructuralEdges(types.NewThesis(nil), graph)
 
-		Convey("Every intervention conditions every do-expectation", func() {
+		Convey("Each intervention should condition its symbol's do-expectation", func() {
 			conditionEdges := 0
 
 			for _, edge := range graph.Edges {
 				if edge.Relation == RelationConditions {
 					conditionEdges++
+					So(graph.Nodes[edge.From].Symbol,
+						ShouldEqual, graph.Nodes[edge.To].Symbol)
 				}
 			}
 
-			So(conditionEdges, ShouldEqual, 4)
+			So(conditionEdges, ShouldEqual, 2)
 		})
 	})
 
@@ -323,6 +369,75 @@ func BenchmarkPublish(b *testing.B) {
 
 	for b.Loop() {
 		solver.publish(thesis, graph)
+		<-ui
+	}
+}
+
+func BenchmarkUpdate(b *testing.B) {
+	at := time.Unix(1, 0).UTC()
+	thesis := types.NewThesis(nil)
+	thesis.At = at
+	forecast, err := types.NewResonanceForecast(
+		[]float64{0.01},
+		[]float64{1},
+		1,
+		0.8,
+	)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for _, source := range []types.SourceType{
+		types.SourceCategories,
+		types.SourceResonance,
+		types.SourceCausal,
+		types.SourceCognition,
+	} {
+		thesis.Readiness.Stamp(source)
+	}
+
+	for index := range 256 {
+		symbol := "SIM" + strconv.Itoa(index) + "/USD"
+		thesis.Categories.Store(symbol, []types.Category{{
+			Symbol:     symbol,
+			Type:       types.CategoryForecastEdge,
+			Confidence: 0.8,
+			Strength:   0.5,
+			Supporting: []string{"sentiment:" + symbol + ":change"},
+			Opposing:   []string{"toxicity:" + symbol + ":intensity"},
+		}})
+		thesis.Resonance.Store(symbol, types.ResonanceReading{
+			Symbol:   symbol,
+			Surprise: 0.1,
+			Forecast: forecast,
+		})
+		thesis.Causal.Store(symbol, map[string]any{
+			"association":   0.1,
+			"confidence":    0.8,
+			"doExpectation": 0.1,
+			"intervention":  0.1,
+			"uplift":        0.1,
+		})
+		thesis.Cognition.Store(symbol, types.Cognition{
+			Symbol:     symbol,
+			Source:     "cognition",
+			At:         at,
+			Winner:     string(types.CategoryForecastEdge),
+			Confidence: 0.8,
+		})
+	}
+
+	ui := make(chan []byte, 1)
+	solver := NewSolver(ui, nil)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if err := solver.Update(thesis); err != nil {
+			b.Fatal(err)
+		}
+
 		<-ui
 	}
 }

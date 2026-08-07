@@ -40,14 +40,20 @@ export const Positions = () => (
 										data-paint="holding.symbol"
 										className="font-semibold text-[11.5px] text-(--f1)"
 									/>
+									{/*
+										The regulator publishes no phase of its own, so the badge
+										states the lot's own lifecycle. Whether the floor has
+										ratcheted past break-even is the Locked flag, and it reads
+										in the stop geometry below where the prices explain it.
+									*/}
 									<Typography.Span
-										data-paint="holding.stoploss.phase"
-										data-paint-class="discovery:text-(--warn) protected:text-(--up)"
-										className="rounded-[2px] border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide"
+										data-paint="holding.status"
+										data-paint-class="OPEN:text-(--up) INITIALIZING:text-(--info) CLOSED:text-(--f4)"
+										className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide"
 									/>
 									<Typography.Span
 										data-paint="holding.stoploss.status"
-										data-paint-class="pending:text-(--info) armed:text-(--up) triggered:text-(--down)"
+										data-paint-class="INITIALIZING:text-(--info) ARMED:text-(--up) TRIGGERED:text-(--down)"
 										className="text-[8px] uppercase text-(--f4)"
 									/>
 								</Flex.Row>

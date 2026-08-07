@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 
@@ -28,7 +29,7 @@ type Planner struct {
 	mctsEngine        *mcts.CausalMCTS
 	minimumConfidence float64
 	maxFraction       float64
-	balance           *broker.Balance
+	desk              *broker.Desk
 }
 
 func NewPlanner(
@@ -36,7 +37,7 @@ func NewPlanner(
 	uiHub chan []byte,
 	analyzer *logic.Analyzer,
 	recorder *audit.Recorder,
-	balance *broker.Balance,
+	desk *broker.Desk,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
 	mctsEngine := mcts.NewCausalMCTS(
@@ -68,7 +69,7 @@ func NewPlanner(
 			"trading.resonance.minimum_confidence",
 		),
 		maxFraction: viper.GetFloat64("trading.allocation.max_fraction"),
-		balance:     balance,
+		desk:        desk,
 	}
 
 	planner.run()
@@ -187,7 +188,19 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 		}
 
 		decision = planner.admit(thesis, decision)
-		decision = planner.size(decision)
+		decision, err = planner.size(decision)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"planner: entry sizing failed: "+err.Error(),
+				err,
+			))
+
+			decision = types.NewDecision(types.ActionNothing, symbol)
+			decision.Reason = err.Error()
+		}
+
 		decision.At = thesis.At
 		thesis.Decisions.Store(symbol, decision)
 		decisions = append(decisions, *decision)
@@ -199,28 +212,77 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 }
 
 /*
-size records the configured fraction of available quote cash on an admitted
-Enter decision. It does not choose the action or construct a separate allocator.
+size completes the two execution fields an admitted Enter requires. Quantity
+is the configured cash fraction normalized by the venue price surface. The
+Stoploss is built from the same forecast Planner admitted, so its initial floor
+is the lowest predicted tick in that confidence-supported horizon.
 */
-func (planner *Planner) size(decision *types.Decision) *types.Decision {
-	if decision == nil || decision.Action != types.ActionEnter ||
-		planner.balance == nil || planner.maxFraction <= 0 ||
-		planner.maxFraction > 1 {
-		return decision
+func (planner *Planner) size(
+	decision *types.Decision,
+) (*types.Decision, error) {
+	if decision == nil || decision.Action != types.ActionEnter {
+		return decision, nil
 	}
 
-	cash := planner.balance.Cash()
+	if planner.desk == nil || planner.maxFraction <= 0 || planner.maxFraction > 1 {
+		return decision, fmt.Errorf("planner: executable desk and allocation required")
+	}
+
+	cash := planner.desk.Balance().Cash()
 
 	if cash == nil || cash.Sign() <= 0 {
-		return decision
+		return decision, fmt.Errorf("planner: positive quote cash required")
+	}
+
+	notional := cash.Mul(decimal.NewFromFloat64(planner.maxFraction))
+	price := planner.desk.Price()
+	tick := price.Tick(decision.Symbol)
+
+	if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 {
+		return decision, fmt.Errorf("planner: executable ask required")
+	}
+
+	quantity := price.Quantity(decision.Symbol, notional)
+
+	if quantity == nil || quantity.Sign() <= 0 {
+		return decision, fmt.Errorf("planner: normalized quantity required")
+	}
+
+	pair := planner.desk.Instrument().Pair(decision.Symbol)
+
+	if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
+		return decision, fmt.Errorf("planner: instrument tick size required")
+	}
+
+	fee := price.Fee(decision.Symbol)
+
+	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 {
+		return decision, fmt.Errorf("planner: taker fee required")
+	}
+
+	feeRate := fee.Fee.Div(decimal.NewFromInt64(100))
+	stoploss, err := types.NewStoploss(
+		planner.ctx,
+		decision.Symbol,
+		tick.Ask,
+		decision.Forecast,
+		&pair.TickSize,
+		feeRate,
+		feeRate,
+	)
+
+	if err != nil {
+		return decision, fmt.Errorf("planner: strategy stoploss: %w", err)
 	}
 
 	decision.AvailableCapital = cash
-	decision.ProposedNotional = cash.Mul(
-		decimal.NewFromFloat64(planner.maxFraction),
-	)
+	decision.ProposedNotional = notional
+	decision.ProposedQuantity = quantity
+	decision.ReferencePrice = tick.Ask
+	decision.Mark = tick.Bid
+	decision.Stoploss = stoploss
 
-	return decision
+	return decision, nil
 }
 
 /*

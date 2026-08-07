@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Measurement } from "#/collections/types";
 import { terminalHealthSummary } from "./health";
-import { regimeAxes } from "./regime-radar";
 
 const reading = (
 	source: string,
@@ -67,24 +66,4 @@ describe("terminalHealthSummary", () => {
 		expect(summary.completed).toBe(true);
 	});
 
-	it("projects numerical measurements onto the backend regime axes", () => {
-		expect(
-			regimeAxes(
-				[
-					reading("hawkes", "BTC/USD", "spectral_radius", 0.8, 0.8),
-					reading("pumpdump", "BTC/USD", "trend", 0.6, 0.6),
-					reading("cvd", "BTC/USD", "net", -12),
-					reading("cvd", "BTC/USD", "net_fraction", 0.7, 0.7),
-					reading("cvd", "BTC/USD", "balance", 0.3, 0.3),
-				],
-				["hawkes", "pumpdump", "cvd"],
-			),
-		).toEqual([
-			{ label: "volatility", value: 0.8 },
-			{ label: "trend", value: 0.6 },
-			{ label: "bullish", value: 0 },
-			{ label: "bearish", value: 0.7 },
-			{ label: "chop", value: 0.3 },
-		]);
-	});
 });

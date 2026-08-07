@@ -29,7 +29,7 @@ const READINESS_GATES = [
 	"resonance",
 	"causal",
 	"graph",
-	"mcts",
+	"planner",
 ] as const;
 
 const Row = ({
@@ -59,7 +59,12 @@ export const Engine = () => (
 			)}
 		</Component>
 
-		<Component registerKey="readiness">
+		{/*
+			The arbitration phase and the candidate count belong to the strategy
+			frame, not to readiness — readiness only carries the stage gates. Asking
+			readiness for them is why both rows sat on their placeholder.
+		*/}
+		<Component registerKey="strategy">
 			{({ ref }) => (
 				<Flex.Column ref={ref}>
 					<Row label="phase">
@@ -70,11 +75,25 @@ export const Engine = () => (
 							—
 						</Flex>
 					</Row>
+				</Flex.Column>
+			)}
+		</Component>
+
+		<Component registerKey="strategy" select="decisions">
+			{({ ref }) => (
+				<Flex.Column ref={ref}>
 					<Row label="cand">
-						<Flex data-paint="decisions" className="text-(--f1)">
+						<Flex data-paint="length" className="text-(--f1)">
 							—
 						</Flex>
 					</Row>
+				</Flex.Column>
+			)}
+		</Component>
+
+		<Component registerKey="readiness">
+			{({ ref }) => (
+				<Flex.Column ref={ref}>
 					<Row label="gates">
 						<Flex.Row gap={1} align="center">
 							{READINESS_GATES.map((gate) => (

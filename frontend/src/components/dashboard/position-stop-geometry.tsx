@@ -1,30 +1,27 @@
 import { Typography } from "#/components/ui/typography";
 import { Flex } from "@/components/ui/flex";
 
+/*
+The regulator publishes seven prices and one flag. Everything drawn here is one
+of them: the axis is their shared domain, and each marker is a price placed on
+it. Nothing is reconstructed in the browser, so a boundary that moves on the
+engine moves here on the same frame.
+*/
 const stopDomain = [
 	"holding.entry_price",
 	"holding.mark",
-	"holding.stoploss.hard_floor",
-	"holding.stoploss.break_even_line",
-	"holding.stoploss.profit_failsafe",
-	"holding.stoploss.profit_line",
-	"holding.stoploss.arm_line",
-	"holding.stoploss.profit_floor",
-	"holding.stoploss.trail_floor",
 	"holding.stoploss.floor",
+	"holding.stoploss.profit_line",
+	"holding.stoploss.arm_at",
+	"holding.stoploss.lock_floor",
 	"holding.stoploss.peak",
 ].join(",");
 
 const stopMarkers = [
 	{
-		path: "holding.stoploss.hard_floor",
-		title: "hard loss boundary",
-		className: "h-3 w-px bg-(--down)",
-	},
-	{
-		path: "holding.stoploss.break_even_line",
-		title: "round-trip break-even",
-		className: "h-2.5 w-px bg-(--f2)",
+		path: "holding.stoploss.lock_floor",
+		title: "floor once profit protection arms",
+		className: "h-2.5 w-px bg-(--up)",
 	},
 	{
 		path: "holding.stoploss.profit_line",
@@ -32,24 +29,9 @@ const stopMarkers = [
 		className: "h-2.5 w-px bg-(--info)",
 	},
 	{
-		path: "holding.stoploss.profit_failsafe",
-		title: "immediate protected-profit failsafe",
-		className: "h-2 w-px bg-(--warn)",
-	},
-	{
-		path: "holding.stoploss.arm_line",
+		path: "holding.stoploss.arm_at",
 		title: "profit protection arms here",
 		className: "h-3 w-px bg-(--warn)",
-	},
-	{
-		path: "holding.stoploss.profit_floor",
-		title: "profit locked when protection arms",
-		className: "h-2.5 w-px bg-(--up)",
-	},
-	{
-		path: "holding.stoploss.trail_floor",
-		title: "peak-following giveback floor",
-		className: "h-2.5 w-px bg-(--info)",
 	},
 	{
 		path: "holding.stoploss.floor",
@@ -63,7 +45,7 @@ const stopMarkers = [
 	},
 	{
 		path: "holding.stoploss.peak",
-		title: "reachable peak",
+		title: "highest mark seen",
 		className: "h-3 w-px bg-(--up)",
 	},
 	{
@@ -74,12 +56,9 @@ const stopMarkers = [
 ] as const;
 
 const stopLevels = [
-	["break-even", "holding.stoploss.break_even_line", "text-(--f2)"],
 	["profit", "holding.stoploss.profit_line", "text-(--info)"],
-	["arm", "holding.stoploss.arm_line", "text-(--warn)"],
-	["lock", "holding.stoploss.profit_floor", "text-(--f3)"],
-	["trail", "holding.stoploss.trail_floor", "text-(--f3)"],
-	["failsafe", "holding.stoploss.profit_failsafe", "text-(--f3)"],
+	["arm", "holding.stoploss.arm_at", "text-(--warn)"],
+	["lock", "holding.stoploss.lock_floor", "text-(--up)"],
 ] as const;
 
 /*
@@ -104,16 +83,12 @@ export const PositionStopGeometry = () => (
 		</div>
 
 		<Flex.Row className="mt-1.25 items-center justify-between gap-2 text-[8.5px]">
-			<Typography.Span className="text-(--down)">
-				hard{" "}
-				<span
-					data-paint="holding.stoploss.hard_floor"
-					data-paint-format=".6f"
-				/>
-			</Typography.Span>
 			<Typography.Span className="text-(--acc)">
-				active{" "}
+				floor{" "}
 				<span data-paint="holding.stoploss.floor" data-paint-format=".6f" />
+			</Typography.Span>
+			<Typography.Span className="text-(--f3)">
+				mark <span data-paint="holding.stoploss.mark" data-paint-format=".6f" />
 			</Typography.Span>
 			<Typography.Span className="text-(--up)">
 				peak <span data-paint="holding.stoploss.peak" data-paint-format=".6f" />
@@ -133,44 +108,33 @@ export const PositionStopGeometry = () => (
 			))}
 		</div>
 
+		{/*
+			Locked is the one thing on the regulator that is not a price: it says
+			whether the floor has already ratcheted past break-even, which is the
+			difference between a lot that can still lose and one that cannot.
+		*/}
 		<Flex.Row className="mt-1 items-center justify-between gap-2 text-[8px] text-(--f4)">
 			<span>
-				noise{" "}
-				<b
-					className="font-normal text-(--f3)"
-					data-paint="holding.stoploss.plan.noise_band"
-					data-paint-format=".6f"
-				/>
-			</span>
-			<span>
-				confirm{" "}
-				<b
-					className="font-normal text-(--f3)"
-					data-paint="holding.stoploss.plan.confirm_marks"
-				/>{" "}
-				marks
-			</span>
-			<span>
-				basis{" "}
+				locked{" "}
 				<b
 					className="font-normal"
-					data-paint="holding.stoploss.basis_confirmed"
+					data-paint="holding.stoploss.locked"
 					data-paint-class="true:text-(--up) false:text-(--warn)"
 				/>
 			</span>
 			<span>
-				events{" "}
+				threshold{" "}
 				<b
 					className="font-normal text-(--f3)"
-					data-paint="holding.stoploss.transitions.length"
+					data-paint="holding.profit_threshold"
+					data-paint-format=".6f"
 				/>
 			</span>
+			<b
+				className="font-normal uppercase"
+				data-paint="holding.stoploss.status"
+				data-paint-class="ARMED:text-(--up) TRIGGERED:text-(--down) ERROR:text-(--down)"
+			/>
 		</Flex.Row>
-
-		<Typography.Span
-			data-paint="holding.stoploss.trigger_reason"
-			data-paint-class="hard_risk:text-(--down) protected_giveback:text-(--warn) profit_failsafe:text-(--warn)"
-			className="mt-0.5 text-right text-[8px] uppercase"
-		/>
 	</>
 );

@@ -2,7 +2,6 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
-import type { Instrument, Measurement } from "#/collections/types";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -34,54 +33,6 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "allocation", label: "Allocation", hint: "Capital & exposure" },
 ];
 
-let lastInstrumentSymbols: string[] = [];
-let lastMeasuredSymbols: string[] = [];
-
-const asRows = <T,>(value: unknown): T[] =>
-	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
-
-const sameSymbols = (left: string[], right: string[]): boolean =>
-	left.length === right.length &&
-	left.every((symbol, index) => symbol === right[index]);
-
-/*
-paintPaletteInstruments discovers instrument symbols from the current DRAW batch.
-*/
-export const paintPaletteInstruments = (
-	value: unknown,
-	_focusSymbol: string,
-) => {
-	const next = asRows<Instrument>(value)
-		.map((instrument) => instrument.symbol)
-		.sort();
-
-	if (sameSymbols(lastInstrumentSymbols, next)) {
-		return;
-	}
-
-	lastInstrumentSymbols = next;
-};
-
-/*
-paintPaletteMeasurements discovers measured symbols from the current DRAW batch.
-*/
-export const paintPaletteMeasurements = (
-	value: unknown,
-	_focusSymbol: string,
-) => {
-	const next = [
-		...new Set(
-			asRows<Measurement>(value).map((measurement) => measurement.symbol),
-		),
-	].sort();
-
-	if (sameSymbols(lastMeasuredSymbols, next)) {
-		return;
-	}
-
-	lastMeasuredSymbols = next;
-};
-
 /*
 GROUP_ICON names each command group's glyph. The palette used to carry four
 inline SVGs at its own stroke weight; they are the shared set now, so a palette
@@ -105,8 +56,12 @@ type PaletteCommand = {
 };
 
 /*
-CommandPalette is the static jump shell. DRAW discovers symbols via
-paintPaletteInstruments and paintPaletteMeasurements.
+CommandPalette is the jump shell.
+
+The symbol universe is whatever the engine has named this run, accumulated in
+the app store as frames arrive. It used to be discovered into module-level
+variables that no frame ever wrote, so the palette could only ever offer the
+surfaces and kernels it had hard-coded.
 */
 export const CommandPalette = ({
 	activeSurface,
@@ -132,9 +87,7 @@ export const CommandPalette = ({
 		return null;
 	}
 
-	const symbolUniverse = [
-		...new Set([...lastInstrumentSymbols, ...lastMeasuredSymbols]),
-	].sort();
+	const symbolUniverse = app.symbols;
 
 	const commands: PaletteCommand[] = [
 		...SURFACES.map(

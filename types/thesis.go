@@ -172,24 +172,30 @@ func (thesis *Thesis) AppendMeasurements(
 		return thesis
 	}
 
-	for _, measurement := range measurements {
-		if measurement == nil {
-			continue
-		}
+	thesis.Measurements.Store(measurements[0].Source, measurements)
 
-		found, ok := thesis.Measurements.LoadOrStore(
-			measurement.Source,
-			[]*Measurement{measurement},
-		)
-
-		if ok {
-			thesis.Measurements.Store(measurement.Source, append(found.([]*Measurement), measurement))
-		}
-
-		if ready {
-			thesis.Readiness.Stamp(SourceType(measurement.Source))
-		}
+	if ready {
+		thesis.Readiness.Stamp(SourceType(measurements[0].Source))
 	}
+
+	// for _, measurement := range measurements {
+	// 	if measurement == nil {
+	// 		continue
+	// 	}
+
+	// 	found, ok := thesis.Measurements.LoadOrStore(
+	// 		measurement.Source,
+	// 		[]*Measurement{measurement},
+	// 	)
+
+	// 	if ok {
+	// 		thesis.Measurements.Store(measurement.Source, append(found.([]*Measurement), measurement))
+	// 	}
+
+	// 	if ready {
+	// 		thesis.Readiness.Stamp(SourceType(measurement.Source))
+	// 	}
+	// }
 
 	return thesis
 }

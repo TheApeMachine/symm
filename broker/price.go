@@ -321,7 +321,7 @@ func (price *Price) Fee(symbol string) *kraken.TradeVolumeFee {
 		return nil
 	}
 
-	fee, ok := found.(*kraken.TradeVolumeFee)
+	fee, ok := found.(kraken.TradeVolumeFee)
 
 	if !ok {
 		errnie.Error(errnie.Err(
@@ -333,7 +333,7 @@ func (price *Price) Fee(symbol string) *kraken.TradeVolumeFee {
 		return nil
 	}
 
-	return fee
+	return &fee
 }
 
 /*

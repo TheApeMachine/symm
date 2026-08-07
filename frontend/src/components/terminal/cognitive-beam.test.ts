@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { CognitiveReading } from "#/collections/types";
 import {
-	cognitiveBeamModel,
 	cognitiveReadingFor,
+	cognitiveScopes,
 } from "#/components/terminal/cognitive-beam";
 
+/*
+These are the names the classifier publishes. The beam used to read
+winnerClass / classConfidence / regimeCohort, none of which exist on the wire,
+so pinning the real ones here is what keeps the panel bound to live data.
+*/
 const reading = (overrides: Partial<CognitiveReading> = {}): CognitiveReading =>
 	({
 		symbol: "BONK/USD",
-		regimeCohort: 3,
+		cohort: 3,
 		sequence: "symbol-bonk · pump · hold",
-		winnerClass: "pump",
-		classConfidence: 0.82,
+		winner: "pump",
+		confidence: 0.82,
+		contrast: 0.31,
 		lookaheadScore: 0.41,
 		lookaheadPaths: 4,
 		entropyBits: 0.2,
@@ -21,34 +27,35 @@ const reading = (overrides: Partial<CognitiveReading> = {}): CognitiveReading =>
 
 describe("cognitiveReadingFor", () => {
 	it("selects the concrete symbol when present", () => {
-		const rows = [
-			reading({ symbol: "AAVE/USD", winnerClass: "coil" }),
-			reading(),
-		];
+		const rows = [reading({ symbol: "AAVE/USD", winner: "coil" }), reading()];
 
-		expect(cognitiveReadingFor(rows, "BONK/USD")?.winnerClass).toBe("pump");
+		expect(cognitiveReadingFor(rows, "BONK/USD")?.winner).toBe("pump");
+	});
+
+	it("reads a symbol-keyed map as readily as a batch", () => {
+		const rows = {
+			"AAVE/USD": reading({ symbol: "AAVE/USD", winner: "coil" }),
+			"BONK/USD": reading(),
+		};
+
+		expect(cognitiveReadingFor(rows, "AAVE/USD")?.winner).toBe("coil");
+	});
+
+	it("falls back to the first scope that owns a reading", () => {
+		const rows = [reading({ symbol: "AAVE/USD", winner: "coil" }), reading()];
+
+		expect(cognitiveReadingFor(rows)?.symbol).toBe("AAVE/USD");
 	});
 });
 
-describe("cognitiveBeamModel", () => {
-	it("maps finite cognitive fields into paint meters", () => {
-		const model = cognitiveBeamModel(reading());
-
-		expect(model?.cohort).toBe("3");
-		expect(model?.winner).toBe("pump");
-		expect(model?.paths).toBe("4");
-		expect(model?.meters).toHaveLength(3);
-		expect(model?.meters[1]?.value).toBe("82%");
-		expect(model?.meters[1]?.percent).toBe(82);
-	});
-
-	it("returns null when no reading is available", () => {
-		expect(cognitiveBeamModel(null)).toBeNull();
-	});
-
-	it("falls back when regimeCohort is missing", () => {
-		const model = cognitiveBeamModel(reading({ regimeCohort: undefined }));
-
-		expect(model?.cohort).toBe("—");
+describe("cognitiveScopes", () => {
+	it("lists each symbol once, in order", () => {
+		expect(
+			cognitiveScopes([
+				reading({ symbol: "SOL/USD" }),
+				reading({ symbol: "AAVE/USD" }),
+				reading({ symbol: "SOL/USD" }),
+			]),
+		).toEqual(["AAVE/USD", "SOL/USD"]);
 	});
 });

@@ -11,7 +11,8 @@ import {
 	nodeIdentity,
 } from "#/components/terminal/evidence-graph-viz";
 import { GraphInspector } from "#/components/terminal/thesis-graph-inspector";
-import type { Graph } from "#/types/thesis";
+import { registerPainter } from "#/providers/ws-stores";
+import type { Graph, GraphEdge, GraphNode } from "#/types/thesis";
 
 type HoverState = {
 	hit: GraphHit;
@@ -32,8 +33,85 @@ let animation: number | null = null;
 let tweenStart = 0;
 let fromByIdentity = new Map<string, GraphNodePosition>();
 
-const asRows = <T,>(value: unknown): T[] =>
-	(Array.isArray(value) ? value : value != null ? [value] : []) as T[];
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+	value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+
+/*
+evidenceGraphFor cuts one symbol's evidence out of the run-wide graph.
+
+The engine publishes a single graph keyed by node id, not one frame per symbol,
+so the modal selects the nodes that belong to its symbol and keeps the edges
+whose two ends both survived that cut. Selecting rows is all that happens here —
+no weight, relation or confidence is recomputed, so the picture cannot claim
+anything the engine did not.
+*/
+export const evidenceGraphFor = (
+	frame: unknown,
+	symbol: string,
+): Graph | null => {
+	const record = asRecord(frame);
+	const rawNodes = asRecord(record?.nodes);
+
+	if (record === null || rawNodes === null || symbol === "") {
+		return null;
+	}
+
+	const nodes: GraphNode[] = [];
+	const keys = new Set<string>();
+
+	for (const [key, value] of Object.entries(rawNodes)) {
+		const node = asRecord(value);
+
+		if (node === null || node.symbol !== symbol) {
+			continue;
+		}
+
+		keys.add(key);
+		nodes.push({
+			key,
+			kind: node.kind === "category" ? "category" : "measurement",
+			category: typeof node.kind === "string" ? node.kind : undefined,
+			measurement: node,
+		});
+	}
+
+	if (nodes.length === 0) {
+		return null;
+	}
+
+	const edges: GraphEdge[] = [];
+
+	for (const value of Object.values(asRecord(record.edges) ?? {})) {
+		const edge = asRecord(value);
+
+		if (
+			edge === null ||
+			typeof edge.from !== "string" ||
+			typeof edge.to !== "string" ||
+			!keys.has(edge.from) ||
+			!keys.has(edge.to)
+		) {
+			continue;
+		}
+
+		edges.push({
+			from: edge.from,
+			to: edge.to,
+			type: typeof edge.relation === "string" ? edge.relation : "",
+			at: typeof edge.at === "string" ? edge.at : "",
+			observedFrom: typeof edge.at === "string" ? edge.at : "",
+		});
+	}
+
+	return {
+		symbol,
+		at: typeof record.at === "string" ? record.at : "",
+		nodes,
+		edges,
+	};
+};
 
 const easeInOut = (t: number): number =>
 	t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
@@ -145,19 +223,17 @@ const retarget = (force: boolean) => {
 };
 
 /*
-paintThesisEvidence paints the current DRAW graphs batch for the bound symbol.
+paintThesisEvidence paints the run-wide graph frame, cut to the bound symbol.
 */
-export const paintThesisEvidence = (value: unknown, focusSymbol: string) => {
-	const graphs = asRows<Graph>(value);
-
-	graph = graphs.find((frame) => frame.symbol === focusSymbol) ?? null;
+const paintThesisEvidence = (value: unknown, focusSymbol: string) => {
+	graph = evidenceGraphFor(value, focusSymbol);
 	retarget(false);
 };
 
 /*
 ThesisEvidenceCanvas is the static evidence-graph shell. paintThesis drives it.
 */
-export const ThesisEvidenceCanvas = () => {
+export const ThesisEvidenceCanvas = ({ symbol }: { symbol: string }) => {
 	const [hover, setHover] = useState<HoverState | null>(null);
 
 	useEffect(() => {
@@ -170,9 +246,18 @@ export const ThesisEvidenceCanvas = () => {
 		const onResize = () => retarget(true);
 		const observer = new ResizeObserver(onResize);
 		observer.observe(canvas);
+		/*
+			The graph frame is the whole run's evidence, published on its own
+			cadence. Registering here rather than routing through the modal keeps
+			the canvas fed for as long as it is mounted.
+		*/
+		const unregister = registerPainter("graph", (updates) => {
+			paintThesisEvidence(updates, symbol);
+		});
 		retarget(true);
 
 		return () => {
+			unregister?.();
 			observer.disconnect();
 
 			if (animation !== null) {
@@ -180,7 +265,7 @@ export const ThesisEvidenceCanvas = () => {
 				animation = null;
 			}
 		};
-	}, []);
+	}, [symbol]);
 
 	const onPointerMove = useCallback(
 		(event: React.PointerEvent<HTMLCanvasElement>) => {

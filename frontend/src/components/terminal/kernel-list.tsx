@@ -1,4 +1,8 @@
 import { DEFAULT_KERNELS } from "#/collections/app";
+import {
+	readinessGate,
+	sourceHeadlineMetric,
+} from "#/components/terminal/kernel-meta";
 import { terminalStore } from "#/collections/terminal";
 import { cn } from "#/lib/utils";
 import { Component } from "../ui/component";
@@ -15,17 +19,6 @@ const interactive = (compact: boolean, source: string) => {
 	return () => {
 		terminalStore.actions.inspectSource(source);
 	};
-};
-
-const sourceHeadlineMetric = (source: string) => {
-	const metric =
-		{
-			hawkes: "conditional_intensity",
-			liquidity: "scarcity_score",
-			toxicity: "touch_quantity",
-		}[source.toLowerCase()] ?? "strength";
-
-	return `metrics.${metric}.raw`;
 };
 
 /*
@@ -73,22 +66,51 @@ export const KernelList = ({
 									at all, and this dot never left grey. Dot's tone classes are
 									literals in dot.tsx, so they are always generated.
 								*/
-								<Dot
-									size="m"
-									data-paint="validity.state"
-									data-paint-class="valid:[--dot-tone:var(--success)] invalid:[--dot-tone:var(--error)] provisional:[--dot-tone:var(--info)]"
-									className="size-1.75"
-								>
-									STANDBY
-								</Dot>
+								<Component registerKey="readiness">
+									{({ ref: gateRef }) => (
+										<span ref={gateRef} className="contents">
+											<Dot
+												size="m"
+												data-set={readinessGate(source)}
+												data-set-scale="bool-color"
+												data-target="style.--dot-tone"
+												className="size-1.75"
+											/>
+										</span>
+									)}
+								</Component>
 							) : (
-								<span
-									data-paint="validity.state"
-									data-paint-class="valid:border-[color-mix(in_srgb,var(--up)_38%,transparent)],bg-[color-mix(in_srgb,var(--up)_12%,transparent)],text-(--up) invalid:border-[color-mix(in_srgb,var(--down)_38%,transparent)],bg-[color-mix(in_srgb,var(--down)_12%,transparent)],text-(--down) provisional:border-[color-mix(in_srgb,var(--info)_38%,transparent)],bg-[color-mix(in_srgb,var(--info)_12%,transparent)],text-(--info)"
-									className="shrink-0 rounded-xs border border-(--line2) bg-(--line) px-1.25 py-0.5 font-mono text-[9px] uppercase tracking-[0.07em] text-(--f3)"
-								>
-									STANDBY
-								</span>
+								/*
+									A measurement row carries no verdict on itself — the engine
+									states which stages are live in the readiness frame, so the
+									badge reads that gate rather than a `validity` field the
+									wire has never sent.
+								*/
+								<Component registerKey="readiness">
+									{({ ref: gateRef }) => (
+										<span ref={gateRef} className="contents">
+											{/*
+												data-paint-prop puts the gate in the badge's own
+												dataset instead of its text, so the class toggle can
+												colour it and CSS can pick the word — the label stays
+												"live" or "standby" rather than "true" or "false".
+											*/}
+											<span
+												data-paint={readinessGate(source)}
+												data-paint-prop="dataset.gate"
+												data-paint-class="true:border-[color-mix(in_srgb,var(--up)_38%,transparent)],text-(--up) false:text-(--f3)"
+												className="group shrink-0 rounded-xs border border-(--line2) bg-(--line) px-1.25 py-0.5 font-mono text-[9px] uppercase tracking-[0.07em] text-(--f3)"
+											>
+												<span className="group-data-[gate=true]:hidden">
+													standby
+												</span>
+												<span className="hidden group-data-[gate=true]:inline">
+													live
+												</span>
+											</span>
+										</span>
+									)}
+								</Component>
 							)}
 						</div>
 
@@ -101,7 +123,7 @@ export const KernelList = ({
 						{compact ? null : (
 							<>
 								<Sparkline
-									bind={sourceHeadlineMetric(source)}
+									bind={`${sourceHeadlineMetric(source)}.normalized`}
 									title="Signal trace"
 									className="mt-1.5 h-6.5"
 								/>
@@ -109,7 +131,7 @@ export const KernelList = ({
 								<div className="mt-1.5 flex items-center gap-2">
 									<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
 										<div
-											data-set={sourceHeadlineMetric(source)}
+											data-set={`${sourceHeadlineMetric(source)}.normalized`}
 											data-target="style.--strength"
 											className="h-full bg-(--acc)"
 											style={{ width: "calc(var(--strength, 0) * 100%)" }}
@@ -117,15 +139,20 @@ export const KernelList = ({
 									</div>
 
 									<span
-										data-paint={sourceHeadlineMetric(source)}
+										data-paint={`${sourceHeadlineMetric(source)}.normalized`}
 										data-paint-format=".0%"
 										className="w-8 shrink-0 text-right font-mono text-[10px] text-(--f2)"
 									/>
 
+								{/*
+										The bar and the percentage are the normalized reading —
+										where the kernel sits against its own scale. The figure
+										beside them is the raw measurement, which is the only one
+										of the two that carries a unit.
+									*/}
 									<span
-										data-paint={sourceHeadlineMetric(source)}
-										data-paint-format=".2f"
-										data-paint-suffix=" × thr"
+										data-paint={`${sourceHeadlineMetric(source)}.raw`}
+										data-paint-format=".3f"
 										className="w-16 shrink-0 truncate text-right font-mono text-[9.5px] text-(--acc)"
 									/>
 								</div>

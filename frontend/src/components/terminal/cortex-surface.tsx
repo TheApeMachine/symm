@@ -3,6 +3,7 @@ import { appStore } from "#/collections/app";
 import { cn } from "#/lib/utils";
 import { Component } from "../ui/component";
 import { CortexBeamShell } from "./cortex-beam-shell";
+import { CortexCanvas } from "./cortex-canvas";
 import { CortexPanelsShell } from "./cortex-panels-shell";
 
 /*
@@ -26,14 +27,17 @@ export const CortexSurface = () => {
 							Sensory context
 						</span>
 						<span className="ml-auto shrink-0 font-mono text-[10px] text-(--f4)">
-							<span data-paint="winnerRegime" /> ·{" "}
-							<span data-paint="activeSequence" />
+							<span data-paint="winner" /> ·{" "}
+							<span data-paint="sequence" />
 						</span>
 					</div>
 					<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_364px]">
 						<div className="flex min-h-0 flex-col border-(--line) border-r">
 							<div className="relative min-h-0 flex-[1.55] overflow-hidden bg-(--sunken)">
-								<canvas data-paint="tree" className="absolute inset-0 block h-full w-full bg-(--bg)" />
+								<CortexCanvas
+									symbol={focusSymbol}
+									className="absolute inset-0 block h-full w-full bg-(--bg)"
+								/>
 								<div className="pointer-events-none absolute top-3 left-3.5">
 									<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
 										Sensory prefix tree · s/[sequence]

@@ -1,14 +1,10 @@
-import { createRef } from "react";
+import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import type { CognitiveReading } from "#/collections/types";
-import { readDecisionsScopeSymbol } from "#/components/terminal/decision-side";
-import {
-	formatBeamSequence,
-	formatEntropyGate,
-} from "#/components/terminal/cognitive-entropy";
+import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
+import { Component } from "#/components/ui/component";
 import { meterTrackVariants } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
-import type { Variant } from "@/components/ui/types";
 
 const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 	symbol !== undefined && symbol !== "" && symbol !== "stream";
@@ -24,20 +20,6 @@ export const cognitiveScopes = (readings: CognitiveReading[]): string[] =>
 				.filter((scope) => scope !== ""),
 		),
 	].sort();
-
-export type CognitiveBeamModel = {
-	sequenceTitle: string;
-	cohort: string;
-	sequence: string;
-	winner: string;
-	paths: string;
-	meters: Array<{
-		label: string;
-		value: string;
-		percent: number;
-		variant: Variant;
-	}>;
-};
 
 export const cognitiveReadingFor = (
 	readings: CognitiveReading[] | Record<string, CognitiveReading>,
@@ -56,183 +38,53 @@ export const cognitiveReadingFor = (
 		: (rows.find((reading) => reading.symbol === scope) ?? null);
 };
 
-export const cognitiveBeamModel = (
-	reading: CognitiveReading | null,
-): CognitiveBeamModel | null => {
-	if (reading === null) {
-		return null;
-	}
-
-	const entropyBits =
-		typeof reading.entropyBits === "number" &&
-		Number.isFinite(reading.entropyBits)
-			? reading.entropyBits
-			: 0;
-	const entropyThreshold =
-		typeof reading.entropyThreshold === "number" &&
-		Number.isFinite(reading.entropyThreshold)
-			? reading.entropyThreshold
-			: 0;
-	const entropyGate = formatEntropyGate(entropyBits, entropyThreshold);
-	const sequence = formatBeamSequence(reading.sequence || "waiting");
-	const confidence = Math.min(
-		1,
-		Math.max(
-			0,
-			typeof reading.classConfidence === "number" &&
-				Number.isFinite(reading.classConfidence)
-				? reading.classConfidence
-				: 0,
-		),
-	);
-	const lookahead = Math.min(
-		1,
-		Math.max(
-			0,
-			typeof reading.lookaheadScore === "number" &&
-				Number.isFinite(reading.lookaheadScore)
-				? reading.lookaheadScore
-				: 0,
-		),
-	);
-	const paths =
-		(typeof reading.lookaheadPaths === "number" &&
-		Number.isFinite(reading.lookaheadPaths)
-			? reading.lookaheadPaths
-			: null) ??
-		(typeof reading.prewarmPaths === "number" &&
-		Number.isFinite(reading.prewarmPaths)
-			? reading.prewarmPaths
-			: 0);
-
-	return {
-		cohort:
-			typeof reading.regimeCohort === "number" &&
-			Number.isFinite(reading.regimeCohort)
-				? String(reading.regimeCohort)
-				: "—",
-		sequence: sequence.preview,
-		sequenceTitle: sequence.title,
-		winner: reading.winnerClass || "pending",
-		paths: String(Math.round(paths)),
-		meters: [
-			{
-				label: "Entropy gate",
-				value: entropyGate.value,
-				percent: entropyGate.percent,
-				variant: entropyGate.ungated ? "disabled" : "success",
-			},
-			{
-				label: "Class confidence",
-				value: `${Math.round(confidence * 100)}%`,
-				percent: confidence * 100,
-				variant: "info",
-			},
-			{
-				label: "Lookahead beam",
-				value: lookahead.toFixed(3),
-				percent: lookahead * 100,
-				variant: "warning",
-			},
-		],
-	};
-};
-
-const setText = (node: Element | null | undefined, value: string): void => {
-	if (node instanceof HTMLElement) {
-		node.textContent = value;
-	}
-};
-
-const METER_KEYS = ["entropy", "confidence", "lookahead"] as const;
-
-const beamRootRef = createRef<HTMLDivElement>();
-const paintBeamModel = (model: CognitiveBeamModel | null): void => {
-	const root = beamRootRef.current;
-
-	if (root === null) {
-		return;
-	}
-
-	const waiting = root.querySelector("[data-beam='waiting']");
-	const panel = root.querySelector("[data-beam='panel']");
-
-	if (waiting instanceof HTMLElement) {
-		waiting.style.display = model === null ? "" : "none";
-	}
-
-	if (panel instanceof HTMLElement) {
-		panel.style.display = model === null ? "none" : "";
-	}
-
-	if (model === null) {
-		return;
-	}
-
-	setText(root.querySelector("[data-beam='cohort']"), `cohort ${model.cohort}`);
-	setText(root.querySelector("[data-beam='sequence']"), model.sequence);
-
-	const sequence = root.querySelector("[data-beam='sequence']");
-
-	if (sequence instanceof HTMLElement) {
-		sequence.title = model.sequenceTitle;
-	}
-
-	setText(root.querySelector("[data-beam='winner']"), model.winner);
-	setText(root.querySelector("[data-beam='paths']"), model.paths);
-
-	for (const [index, key] of METER_KEYS.entries()) {
-		const meter = model.meters[index];
-		const row = root.querySelector(`[data-beam-meter='${key}']`);
-
-		if (!(row instanceof HTMLElement) || meter === undefined) {
-			continue;
-		}
-
-		setText(row.querySelector("[data-beam='meter-value']"), meter.value);
-
-		const track = row.querySelector("[data-beam='meter-track']");
-		const fill = row.querySelector("[data-beam='meter-fill']");
-
-		if (track instanceof HTMLElement) {
-			track.className = meterTrackVariants({
-				variant: meter.variant,
-				size: "s",
-			});
-		}
-
-		if (fill instanceof HTMLElement) {
-			fill.style.width = `${Math.max(0, Math.min(100, meter.percent))}%`;
-		}
-	}
-};
+/*
+The meters read straight off the classifier's own numbers. Entropy is shown
+against the threshold it is judged by rather than as a bare bit count, because
+the only thing that matters about it is which side of that line it sits on —
+data-set-scale="above-threshold" colours it from the same frame that carries it.
+*/
+const METERS = [
+	{
+		key: "confidence",
+		label: "Class confidence",
+		path: "confidence",
+		format: ".1%",
+		variant: "info",
+	},
+	{
+		key: "lookahead",
+		label: "Lookahead beam",
+		path: "lookaheadScore",
+		format: ".3f",
+		variant: "warning",
+	},
+	{
+		key: "contrast",
+		label: "Class contrast",
+		path: "contrast",
+		format: ".3f",
+		variant: "success",
+	},
+] as const;
 
 /*
-paintCognitiveBeam paints DMT beam diagnostics from the current DRAW cognition
-batch into the CognitiveBeam shell. Prefers the mounted symbol prop when set.
-*/
-export const paintCognitiveBeam = (value: unknown, focusSymbol: string) => {
-	const readings = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as CognitiveReading[];
-	const symbol = isConcreteSymbol(readDecisionsScopeSymbol())
-		? readDecisionsScopeSymbol()
-		: isConcreteSymbol(focusSymbol)
-			? focusSymbol
-			: appStore.state.focusSymbol;
+CognitiveBeam reports the DMT beam diagnostics for the candidate the decision
+rail has selected, falling back to the dashboard focus.
 
-	paintBeamModel(
-		cognitiveBeamModel(cognitiveReadingFor(readings, symbol)),
-	);
-};
-
-/*
-CognitiveBeam is the static DMT beam shell. DRAW paints via paintCognitiveBeam.
-Optional symbol is cached so decision-rail scope wins over app focus.
+Cognition is published as a symbol-keyed map, so the reading is selected by
+naming the symbol: a miss is a real answer — the classifier has published
+nothing for it — and the panel says so rather than showing another symbol's
+beam under this one's name.
 */
-export const CognitiveBeam = () => (
-		<div ref={beamRootRef} className="mt-3.5">
-			<Panel data-beam="waiting">
+export const CognitiveBeam = () => {
+	const scope = useDecisionsScopeSymbol();
+	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const symbol = isConcreteSymbol(scope) ? scope : focusSymbol;
+
+	if (!isConcreteSymbol(symbol)) {
+		return (
+			<Panel className="mt-3.5">
 				<div className="font-semibold text-[12px] text-(--f1)">
 					Cognitive beam
 				</div>
@@ -240,65 +92,110 @@ export const CognitiveBeam = () => (
 					waiting for cognitive frame
 				</div>
 			</Panel>
+		);
+	}
 
-			<Panel data-beam="panel" style={{ display: "none" }}>
-				<div className="flex items-center justify-between">
-					<span className="font-semibold text-[12px] text-(--f1)">
-						Cognitive beam
-					</span>
-					<span
-						data-beam="cohort"
-						className="rounded-full border border-(--line2) px-2 py-px font-mono text-[9px] text-(--info)"
-					/>
-				</div>
-				<div className="mt-2 font-mono text-[9.5px] text-(--f4)">
-					DMT sequence
-				</div>
-				<div
-					data-beam="sequence"
-					className="mt-1 line-clamp-3 wrap-break-word rounded-sm border border-(--line) bg-(--bg) p-1.5 font-mono text-[10px] text-(--f2)"
-				/>
+	return (
+		<Component registerKey="cognition" select={symbol}>
+			{({ ref }) => (
+				<div ref={ref} className="mt-3.5">
+					<Panel>
+						<div className="flex items-center justify-between">
+							<span className="font-semibold text-[12px] text-(--f1)">
+								Cognitive beam
+							</span>
+							<span
+								data-paint="cohort"
+								data-paint-absent="—"
+								className="rounded-full border border-(--line2) px-2 py-px font-mono text-[9px] text-(--info)"
+							/>
+						</div>
+						<div className="mt-2 font-mono text-[9.5px] text-(--f4)">
+							DMT sequence
+						</div>
+						<div
+							data-paint="sequence"
+							data-paint-empty="no sequence yet"
+							data-paint-absent="waiting for cognitive frame"
+							className="mt-1 line-clamp-3 wrap-break-word rounded-sm border border-(--line) bg-(--bg) p-1.5 font-mono text-[10px] text-(--f2)"
+						/>
 
-				<div className="mt-3 flex flex-col gap-2.5">
-					{(
-						[
-							["entropy", "Entropy gate"],
-							["confidence", "Class confidence"],
-							["lookahead", "Lookahead beam"],
-						] as const
-					).map(([key, label]) => (
-						<div key={key} data-beam-meter={key}>
-							<div className="mb-1 flex justify-between font-mono text-[10px]">
-								<span className="text-(--f3)">{label}</span>
-								<span data-beam="meter-value" className="text-(--f1)" />
+						<div className="mt-3 flex flex-col gap-2.5">
+							<div>
+								<div className="mb-1 flex justify-between font-mono text-[10px]">
+									<span className="text-(--f3)">Entropy gate</span>
+									<span
+										data-paint="entropyBits"
+										data-paint-format=".3f"
+										data-set="entropyBits"
+										data-set-scale="above-threshold"
+										data-set-threshold="entropyThreshold"
+										data-target="style.color"
+										data-paint-absent="—"
+									/>
+								</div>
+								<div className="font-mono text-[9px] text-(--f4)">
+									threshold{" "}
+									<span
+										data-paint="entropyThreshold"
+										data-paint-format=".3f"
+										data-paint-absent="—"
+									/>
+								</div>
 							</div>
-							<div
-								data-beam="meter-track"
-								className={meterTrackVariants({
-									variant: "info",
-									size: "s",
-								})}
-							>
-								<div
-									data-beam="meter-fill"
-									className="h-full bg-(--meter-tone)"
-									style={{ width: "0%" }}
+
+							{METERS.map((meter) => (
+								<div key={meter.key}>
+									<div className="mb-1 flex justify-between font-mono text-[10px]">
+										<span className="text-(--f3)">{meter.label}</span>
+										<span
+											data-paint={meter.path}
+											data-paint-format={meter.format}
+											data-paint-absent="—"
+											className="text-(--f1)"
+										/>
+									</div>
+									<div
+										className={meterTrackVariants({
+											variant: meter.variant,
+											size: "s",
+										})}
+									>
+										<div
+											data-set={meter.path}
+											data-target="style.--beam"
+											className="h-full bg-(--meter-tone)"
+											style={{
+												width: "clamp(0%, calc(var(--beam, 0) * 100%), 100%)",
+											}}
+										/>
+									</div>
+								</div>
+							))}
+						</div>
+
+						<div className="mt-3 grid grid-cols-2 gap-1.5 font-mono text-[10px]">
+							<div className="flex justify-between">
+								<span className="text-(--f4)">winner</span>
+								<span
+									data-paint="winner"
+									data-paint-empty="pending"
+									data-paint-absent="—"
+									className="text-(--acc)"
+								/>
+							</div>
+							<div className="flex justify-between">
+								<span className="text-(--f4)">paths</span>
+								<span
+									data-paint="lookaheadPaths"
+									data-paint-absent="—"
+									className="text-(--f1)"
 								/>
 							</div>
 						</div>
-					))}
+					</Panel>
 				</div>
-
-				<div className="mt-3 grid grid-cols-2 gap-1.5 font-mono text-[10px]">
-					<div className="flex justify-between">
-						<span className="text-(--f4)">winner</span>
-						<span data-beam="winner" className="text-(--acc)" />
-					</div>
-					<div className="flex justify-between">
-						<span className="text-(--f4)">paths</span>
-						<span data-beam="paths" className="text-(--f1)" />
-					</div>
-				</div>
-			</Panel>
-		</div>
-);
+			)}
+		</Component>
+	);
+};

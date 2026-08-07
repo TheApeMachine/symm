@@ -128,40 +128,19 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	attempted := false
-	stepSymbol := ""
-	focus := types.Focus()
-	hawkesRows := utils.Measurements(thesis, types.SourceHawkes)
-	symbolSet := make(map[string]struct{})
-
-	for _, measurement := range hawkesRows {
-		if measurement != nil && measurement.Symbol != "" {
-			symbolSet[measurement.Symbol] = struct{}{}
-		}
-	}
-
-	symbols := make([]string, 0, len(symbolSet))
-
-	for symbol := range symbolSet {
-		symbols = append(symbols, symbol)
-	}
-
-	for _, name := range symbols {
-		managed := solver.api.Book(name)
+	for _, measurement := range utils.Measurements(thesis, types.SourceHawkes) {
+		managed := solver.api.Book(measurement.Symbol)
 
 		if managed == nil {
 			continue
 		}
 
-		hawkes := utils.ForSymbol(hawkesRows, name)
-		latest := hawkes[len(hawkes)-1]
-
 		// The conditional-intensity keys are always present: the hawkes signal publishes
 		// them with a zero Raw before its fit is ready, so map presence says nothing.
 		// Normalized is the discriminator - it is only set once HawkesFit is ready, and
 		// it carries the quantity we actually want, (lambda - mu) / mu.
-		buyExcitation, buyState := sideExcitation(latest, types.SideBuy)
-		sellExcitation, sellState := sideExcitation(latest, types.SideSell)
+		buyExcitation, buyState := sideExcitation(measurement, types.SideBuy)
+		sellExcitation, sellState := sideExcitation(measurement, types.SideSell)
 
 		solver.fold.excite(buyState)
 		solver.fold.excite(sellState)
@@ -183,13 +162,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			managed.Midpoint().Float64(),
 			buyExcitation,
 			sellExcitation,
-			name,
+			measurement.Symbol,
 		)
 
 		if err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				fmt.Sprintf("failed to tokenize manifold particles for %s, %s", name, err.Error()),
+				fmt.Sprintf("failed to tokenize manifold particles for %s, %s", measurement.Symbol, err.Error()),
 				err,
 			))
 		}
@@ -207,7 +186,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				errnie.Internal,
 				fmt.Sprintf(
 					"failed to append %d manifold particles for %s: %v",
-					len(particles), name, err,
+					len(particles), measurement.Symbol, err,
 				),
 				err,
 			))
@@ -215,20 +194,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		solver.turnover += len(particles)
 		solver.fold.inject(len(particles))
-		attempted = true
 
-		if stepSymbol == "" || name == focus {
-			stepSymbol = name
+		if err := solver.Step(measurement.Symbol, thesis.At); err != nil {
+			continue
 		}
-	}
-
-	if err := solver.Step(stepSymbol, thesis.At); err != nil {
-		return err
-	}
-
-	if !attempted {
-		thesis.Stamp(types.SourceManifold)
-		return nil
 	}
 
 	var err error
@@ -237,10 +206,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			fmt.Sprintf(
-				"failed to read manifold for %s with %d resident particles: %v",
-				stepSymbol, solver.domain.ParticleCount(), err,
-			),
+			"failed to read manifold: "+err.Error(),
 			err,
 		))
 	}
