@@ -45,8 +45,16 @@ func NewHolding(
 	ctx context.Context,
 	symbol string,
 	decision Decision,
-) *Holding {
+) (*Holding, error) {
 	errnie.Info("creating holding for: " + symbol)
+
+	if decision.Stoploss == nil {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"holding: strategy stoploss required",
+			nil,
+		)
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	holding := &Holding{
@@ -62,18 +70,14 @@ func NewHolding(
 		EntryAt:       decision.EntryAt,
 		EntryPrice:    decision.EntryPrice,
 		EntryFee:      decision.EntryFee,
-		Stoploss: NewStoploss(
-			ctx,
-			symbol,
-			decision.Mark,
-		),
+		Stoploss:      decision.Stoploss,
 	}
 
 	if decision.ReturnPct != nil {
 		holding.ReturnPct = *decision.ReturnPct
 	}
 
-	return holding
+	return holding, nil
 }
 
 /*

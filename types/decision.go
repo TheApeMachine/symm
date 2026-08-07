@@ -33,6 +33,7 @@ type Decision struct {
 	ForecastSource          string             `json:"forecastSource"`
 	ForecastModel           string             `json:"forecastModel"`
 	ForecastEpoch           uint64             `json:"forecastEpoch"`
+	Forecast                *ResonanceForecast `json:"forecast,omitempty"`
 	CalibrationCount        uint64             `json:"calibrationCount"`
 	ExpectedReturn          *decimal.Decimal   `json:"expectedReturn" validate:"required"`
 	ExpectedFees            *decimal.Decimal   `json:"expectedFees" validate:"required"`

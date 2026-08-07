@@ -129,6 +129,22 @@ func (position *Position) onExecution(execution kraken.Execution) {
 			position.Holding.EntryFee = execution.FeeUsdEquiv
 			position.Holding.Qty = execution.CumQty
 			position.Holding.SellableQty = execution.CumQty
+
+			if err := position.Holding.Stoploss.RebindFill(
+				position.Holding.EntryPrice,
+			); err != nil {
+				position.Status = types.ERROR
+				position.Holding.Status = types.ERROR
+				position.Holding.Stoploss.Status = types.ERROR
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"position: failed to bind stoploss to entry fill",
+					err,
+				))
+
+				continue
+			}
+
 			position.Holding.Stoploss.Update(position.Holding.Mark)
 			position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 			position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)

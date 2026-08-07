@@ -282,6 +282,15 @@ capacity even while the venue acknowledgement or fill is still pending.
 func (desk *Desk) Execute(decision types.Decision) (err error) {
 	switch decision.Action {
 	case types.ActionEnter:
+		if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 ||
+			decision.Stoploss == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"desk: sized quantity and strategy stoploss required for entry",
+				nil,
+			))
+		}
+
 		desk.positions.LoadOrStore(decision.Symbol, NewPosition(
 			desk.ctx,
 			desk.api,

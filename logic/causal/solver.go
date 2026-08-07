@@ -33,6 +33,8 @@ physics fluid metrics, and predictive coding resonance predictions.
 type Solver struct {
 	recorder *audit.Recorder
 	pearls   *sync.Map
+	rows     *sync.Map
+	rowsMu   sync.Mutex
 	config   algorithm.PearlConfig
 	ui       chan []byte
 	pool     pond.Pool
@@ -58,6 +60,7 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 	solver := &Solver{
 		recorder: recorder,
 		pearls:   &sync.Map{},
+		rows:     &sync.Map{},
 		config:   defaultConfig,
 		ui:       ui,
 		pool:     pond.NewPool(16),
@@ -182,14 +185,17 @@ func (solver *Solver) measure(
 		return nil
 	}
 
+	row := []float64{
+		resonance.Energy,
+		resonance.Surprise,
+		prediction,
+		realizedReturn,
+	}
+	rows := solver.observe(symbol, row)
+
 	output, ready, err := solver.getPearl(symbol).Measure(algorithm.PearlInput{
 		Key: symbol,
-		Row: []float64{
-			resonance.Energy,
-			resonance.Surprise,
-			prediction,
-			realizedReturn,
-		},
+		Row: row,
 		Contagion:    resonance.Surprise,
 		Condition:    resonance.Energy,
 		Intervention: prediction,
@@ -210,10 +216,43 @@ func (solver *Solver) measure(
 	if ready {
 		causalOutput = output.Outputs()
 		causalOutput["ready"] = true
+		causalOutput["historyRows"] = rows
+		causalOutput["treatmentLevel"] = prediction
 	}
 
 	thesis.Causal.Store(symbol, causalOutput)
 	return nil
+}
+
+/*
+observe retains the same aligned causal rows the Pearl model observed.
+
+The capacity is the number of first- and second-moment parameters implied by
+the row width, matching the model's own data-backed window without introducing
+an independent history limit.
+*/
+func (solver *Solver) observe(symbol string, row []float64) [][]float64 {
+	solver.rowsMu.Lock()
+	defer solver.rowsMu.Unlock()
+
+	stored, _ := solver.rows.LoadOrStore(symbol, [][]float64{})
+	rows := stored.([][]float64)
+	rows = append(rows, append([]float64(nil), row...))
+	rowWidth := len(row)
+	capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
+
+	if len(rows) > capacity {
+		rows = rows[len(rows)-capacity:]
+	}
+
+	solver.rows.Store(symbol, rows)
+	out := make([][]float64, len(rows))
+
+	for index, retained := range rows {
+		out[index] = append([]float64(nil), retained...)
+	}
+
+	return out
 }
 
 /*

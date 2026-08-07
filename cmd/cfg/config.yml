@@ -75,6 +75,10 @@ ui:
 
 trading:
   model: paper
+  resonance:
+    # Provisional strategy admission policy. Recalibrate from strategy
+    # postmortems once resolved forecast outcomes provide an empirical rule.
+    minimum_confidence: 0.80
   allocation:
     max_fraction: 0.20
   slots:

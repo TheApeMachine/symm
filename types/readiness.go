@@ -34,9 +34,6 @@ type Readiness struct {
 	Resonance   bool `json:"resonance"`
 	Causal      bool `json:"causal"`
 	Graph       bool `json:"graph"`
-	Allocator   bool `json:"allocation"`
-	Arbiter     bool `json:"arbiter"`
-	Evaluator   bool `json:"evaluator"`
 	Planner     bool `json:"planner"`
 }
 
@@ -136,21 +133,6 @@ func (readiness *Readiness) Stamp(source SourceType) {
 			readiness.Graph = true
 			didUpdate = true
 		}
-	case SourceAllocator:
-		if !readiness.Allocator {
-			readiness.Allocator = true
-			didUpdate = true
-		}
-	case SourceArbiter:
-		if !readiness.Arbiter {
-			readiness.Arbiter = true
-			didUpdate = true
-		}
-	case SourceEvaluator:
-		if !readiness.Evaluator {
-			readiness.Evaluator = true
-			didUpdate = true
-		}
 	case SourcePlanner:
 		if !readiness.Planner {
 			readiness.Planner = true
@@ -202,10 +184,7 @@ func (readiness *Readiness) StrategyDecided() bool {
 	readiness.mu.RLock()
 	defer readiness.mu.RUnlock()
 
-	return readiness.Allocator &&
-		readiness.Arbiter &&
-		readiness.Evaluator &&
-		readiness.Planner
+	return readiness.Planner
 }
 
 /*
@@ -250,8 +229,5 @@ func (readiness *Readiness) Reset() {
 	readiness.Causal = false
 	readiness.Graph = false
 
-	readiness.Allocator = false
-	readiness.Arbiter = false
-	readiness.Evaluator = false
 	readiness.Planner = false
 }

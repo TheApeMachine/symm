@@ -35,14 +35,8 @@ func TestStrategyStateTrace(t *testing.T) {
 		}
 
 		state := StrategyState{
-			Symbol:               "BTC/USD",
-			Energy:               0.2,
-			Surprise:             0.01,
-			Treatment:            0.004,
-			Forecast:             testStrategyForecast(t, forecastCurve),
-			RoundTripCost:        0.0015,
-			HoldDiscount:         0.8,
-			HawkesSpectralRadius: 0.6,
+			Symbol:    "BTC/USD",
+			Treatment: 0.004,
 		}
 
 		Convey("It should expose the exact state and a searchable history", func() {
@@ -123,11 +117,7 @@ func TestStrategyStateApplyAction(t *testing.T) {
 		)
 		So(err, ShouldBeNil)
 		state := StrategyState{
-			Treatment:            forecast.Curve[0],
-			Forecast:             forecast,
-			RoundTripCost:        0.001,
-			HoldDiscount:         0.6,
-			HawkesSpectralRadius: 0.8,
+			Treatment: forecast.Curve[0],
 		}
 
 		entered := state.ApplyAction(ActionEnter).(StrategyState)
@@ -161,10 +151,7 @@ func TestStrategyStateApplyAction(t *testing.T) {
 		forecast.Curve = forecast.Curve[:1]
 		state := StrategyState{
 			Treatment: 0.004,
-			Forecast:  forecast,
 			Reward:    0.003,
-			Step:      1,
-			IsHolding: true,
 		}
 
 		next := state.ApplyAction(ActionHold).(StrategyState)
@@ -186,14 +173,8 @@ func BenchmarkStrategyStateTrace(b *testing.B) {
 	}
 
 	state := StrategyState{
-		Symbol:               "BTC/USD",
-		Energy:               0.2,
-		Surprise:             0.01,
-		Treatment:            0.004,
-		Forecast:             testStrategyForecast(b, forecastCurve),
-		RoundTripCost:        0.0015,
-		HoldDiscount:         0.8,
-		HawkesSpectralRadius: 0.6,
+		Symbol:    "BTC/USD",
+		Treatment: 0.004,
 	}
 
 	for b.Loop() {
@@ -206,10 +187,7 @@ func BenchmarkStrategyStateTrace(b *testing.B) {
 }
 
 func BenchmarkStrategyStateHoldPropagation(b *testing.B) {
-	state := StrategyState{
-		HoldDiscount:         0.6,
-		HawkesSpectralRadius: 0.8,
-	}
+	state := StrategyState{}
 
 	for b.Loop() {
 		_ = state.holdPropagation()
@@ -230,12 +208,7 @@ func BenchmarkStrategyStateApplyAction(b *testing.B) {
 	}
 
 	state := StrategyState{
-		Treatment:            0.004,
-		Forecast:             testStrategyForecast(b, forecastCurve),
-		HoldDiscount:         0.6,
-		HawkesSpectralRadius: 0.8,
-		Step:                 1,
-		IsHolding:            true,
+		Treatment: 0.004,
 	}
 
 	for b.Loop() {

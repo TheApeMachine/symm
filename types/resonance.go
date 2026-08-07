@@ -119,6 +119,40 @@ func (forecast *ResonanceForecast) Step(index int) (float64, bool) {
 	return step * math.Min(1, surviving/reference), true
 }
 
+/*
+WorstIntermediateDrawdown returns the deepest predicted loss from the current
+price anywhere on the supported path, as a positive simple-return fraction.
+
+Each Step is already a retention-adjusted log return. Adding the steps produces
+the cumulative log-price path; converting its lowest point with Expm1 preserves
+the return units used by ExpectedReturn. A path that never falls below its
+starting price has no expected drawdown and returns zero.
+*/
+func (forecast *ResonanceForecast) WorstIntermediateDrawdown() (float64, error) {
+	if err := forecast.Validate(); err != nil {
+		return 0, err
+	}
+
+	cumulative := 0.0
+	worst := 0.0
+
+	for index := range forecast.SupportedHorizon {
+		step, present := forecast.Step(index)
+
+		if !present {
+			return 0, errors.New("resonance forecast path contains an unsupported step")
+		}
+
+		cumulative += step
+
+		if cumulative < worst {
+			worst = cumulative
+		}
+	}
+
+	return -math.Expm1(worst), nil
+}
+
 func (forecast *ResonanceForecast) calculateExpectedReturn() (float64, error) {
 	if forecast == nil {
 		return 0, errors.New("resonance forecast required")

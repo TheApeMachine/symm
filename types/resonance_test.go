@@ -124,6 +124,42 @@ func TestResonanceForecastStep(t *testing.T) {
 	})
 }
 
+func TestResonanceForecastWorstIntermediateDrawdown(t *testing.T) {
+	Convey("Given a retained forecast path with a temporary intermediate dip", t, func() {
+		forecast, err := NewResonanceForecast(
+			[]float64{-0.01, -0.02, 0.06},
+			[]float64{1, 0.5, 0.5},
+			3,
+			0.9,
+		)
+		So(err, ShouldBeNil)
+
+		Convey("It should report the deepest cumulative retained loss", func() {
+			drawdown, err := forecast.WorstIntermediateDrawdown()
+
+			So(err, ShouldBeNil)
+			So(drawdown, ShouldAlmostEqual, -math.Expm1(-0.02), 1e-12)
+		})
+	})
+
+	Convey("Given a path that remains above its starting price", t, func() {
+		forecast, err := NewResonanceForecast(
+			[]float64{0.02, -0.01},
+			[]float64{1, 1},
+			2,
+			0.9,
+		)
+		So(err, ShouldBeNil)
+
+		Convey("It should report no adverse excursion from entry", func() {
+			drawdown, err := forecast.WorstIntermediateDrawdown()
+
+			So(err, ShouldBeNil)
+			So(drawdown, ShouldEqual, 0.0)
+		})
+	})
+}
+
 func BenchmarkNewResonanceForecast(b *testing.B) {
 	curve := make([]float64, 20)
 	retention := make([]float64, len(curve))

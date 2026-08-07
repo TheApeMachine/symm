@@ -23,14 +23,13 @@ const READINESS_GATES = [
 	"pump_dump",
 	"sentiment",
 	"toxicity",
+	"categories",
 	"manifold",
+	"cognition",
 	"resonance",
 	"causal",
 	"graph",
-	"allocation",
-	"decisions",
-	"categories",
-	"cognition",
+	"mcts",
 ] as const;
 
 const Row = ({

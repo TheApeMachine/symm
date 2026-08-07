@@ -2,15 +2,13 @@ package strategy
 
 import (
 	"context"
-	"slices"
+	"math"
 	"sync"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -23,37 +21,28 @@ type Planner struct {
 	ui               chan []byte
 	subscriptions    map[string]*types.Subscription[any]
 	subscribers      *sync.Map
-	api              *websocket.API
-	desk             *broker.Desk
-	price            *broker.Price
-	balance          *broker.Balance
 	recorder         *audit.Recorder
-	arbitrationRound int64
-	evaluator        Evaluator
-	arbiter          *Arbiter
-	allocator        *Allocator
+	mctsEngine       *mcts.CausalMCTS
 }
 
 func NewPlanner(
 	ctx context.Context,
 	uiHub chan []byte,
-	api *websocket.API,
-	desk *broker.Desk,
-	instrument *broker.Instrument,
-	price *broker.Price,
-	balance *broker.Balance,
 	analyzer *logic.Analyzer,
 	recorder *audit.Recorder,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
-	buffer := viper.GetInt("system.actor.buffer")
-
-	if buffer < 1 {
-		buffer = 64
-	}
-
-	evaluator := NewEvaluator(desk, price, balance, recorder)
-	arbiter := NewArbiter(desk)
+	mctsEngine := mcts.NewCausalMCTS(
+		NewCausalEngineAdapter(),
+		math.Sqrt2,
+		1,
+		mctsMinimumCausalRows,
+		2,
+		3,
+		[]int{0, 1},
+		[]int{0, 1, 2},
+		false,
+	)
 
 	planner := &Planner{
 		ctx:    ctx,
@@ -66,14 +55,8 @@ func NewPlanner(
 			),
 		},
 		subscribers: &sync.Map{},
-		api:         api,
-		desk:        desk,
-		price:       price,
-		balance:     balance,
 		recorder:    recorder,
-		evaluator:   evaluator,
-		arbiter:     arbiter,
-		allocator:   NewAllocator(ctx, balance, instrument, price, desk),
+		mctsEngine:  mctsEngine,
 	}
 
 	planner.run()
@@ -126,27 +109,15 @@ func (planner *Planner) Close() error {
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) {
-	if !thesis.LogicAnalyzed() {
+	if thesis == nil || !thesis.LogicAnalyzed() {
 		return
 	}
 
-	planner.arbitrationRound++
-
-	planner.evaluator.EvaluateOpportunities(thesis)
-
-	if err := planner.allocator.Allocate(thesis); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal, "failed to allocate", err,
-		))
-	}
-
-	planner.arbiter.Arbitrate(thesis)
-
-	// Arbitration is the last hand on the verdicts, so what it leaves is what
-	// this tick decided. Detaching them here gives subscribers their own copy,
-	// because the reset below clears the map the moment the cycle completes.
 	decisions := planner.decisions(thesis)
-	thesis.Stamp(types.SourcePlanner)
+
+	if len(decisions) == 0 {
+		return
+	}
 
 	planner.subscribers.Range(func(key, value any) bool {
 		name, ok := key.(string)
@@ -162,18 +133,16 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		return true
 	})
 
-	terminalDecision := slices.ContainsFunc(
-		decisions,
-		func(decision types.Decision) bool {
-			return decision.Action != types.ActionNothing
-		},
-	)
-
-	if len(decisions) == 0 || !terminalDecision {
-		return
+	if planner.recorder != nil {
+		if err := planner.recorder.Write(decisions); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"planner: decision audit failed",
+				err,
+			))
+		}
 	}
 
-	planner.recorder.Write(decisions)
 	thesis.Stamp(types.SourcePlanner)
 	utils.Fanout(planner.subscribers, "planner", thesis)
 
@@ -185,33 +154,104 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 }
 
 /*
-decisions detaches this tick's verdicts and gives each the identity that later
-links a fill, a position and a post-mortem back to the reasoning that produced
-it. Every path into the map passes through here, so it is the one place the
-identity has to be applied.
+decisions asks causal MCTS for one binary verdict per ready causal artifact.
 */
 func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 	decisions := make([]types.Decision, 0)
 
-	thesis.Decisions.Range(func(key, value any) bool {
-		decision, ok := value.(*types.Decision)
+	thesis.Causal.Range(func(key, value any) bool {
+		symbol, symbolOK := key.(string)
+		causal, causalOK := value.(map[string]any)
 
-		if !ok {
+		if !symbolOK || symbol == "" || !causalOK {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"planner: decision map holds a value that is not a decision",
+				"planner: invalid causal artifact",
 				nil,
 			))
 
 			return true
 		}
 
-		decision.EnsureID()
-		decision.ArbitrationRound = planner.arbitrationRound
+		decision, err := planner.search(symbol, causal)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"planner: causal search failed",
+				err,
+			))
+
+			return true
+		}
+
+		decision.At = thesis.At
+		thesis.Decisions.Store(symbol, decision)
 		decisions = append(decisions, *decision)
 
 		return true
 	})
 
 	return decisions
+}
+
+/*
+search compares the observed treatment with the standing-aside do(0)
+intervention using the existing causal MCTS.
+*/
+func (planner *Planner) search(
+	symbol string,
+	causal map[string]any,
+) (*types.Decision, error) {
+	ready, readyOK := causal["ready"].(bool)
+	rows, rowsOK := causal["historyRows"].([][]float64)
+	treatment, treatmentOK := causal["treatmentLevel"].(float64)
+
+	if !readyOK || !ready || !rowsOK ||
+		len(rows) < planner.mctsEngine.MinRows || !treatmentOK ||
+		math.IsNaN(treatment) || math.IsInf(treatment, 0) {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"planner: complete causal rows and treatment required",
+			nil,
+		)
+	}
+
+	latest := rows[len(rows)-1]
+
+	if len(latest) != 4 {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"planner: causal row must contain two controls, treatment, and target",
+			nil,
+		)
+	}
+
+	root := StrategyState{
+		Symbol:    symbol,
+		Condition: latest[0],
+		Contagion: latest[1],
+		Treatment: treatment,
+	}
+	action, err := planner.mctsEngine.Search(
+		root,
+		mctsSearchIterations,
+		rows,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	decisionAction := strategyAction(action)
+
+	if decisionAction == "" {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"planner: causal search returned an unsupported action",
+			nil,
+		)
+	}
+
+	return types.NewDecision(decisionAction, symbol), nil
 }
