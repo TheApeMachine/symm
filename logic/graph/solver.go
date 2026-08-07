@@ -285,7 +285,7 @@ func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
 	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"graph: failed to marshal publication",
+			"graph: failed to marshal publication: "+err.Error(),
 			err,
 		))
 

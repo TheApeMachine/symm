@@ -44,6 +44,43 @@ func primeFeatures(solver *Solver, symbol string, keys ...string) {
 }
 
 func TestExtractFeatures(t *testing.T) {
+	Convey("Given the normalized fields published by the current Hawkes measurement", t, func() {
+		buyArrival := 0.75
+		sellArrival := 0.25
+		eventSupport := 0.5
+		thesis := types.NewThesis(nil)
+		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
+			Source: types.SourceHawkes,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricEventCount, types.SideNone): {
+					Normalized: &eventSupport,
+				},
+				types.MetricKey(types.MetricArrivalRate, types.SideBuy): {
+					Normalized: &buyArrival,
+				},
+				types.MetricKey(types.MetricArrivalRate, types.SideSell): {
+					Normalized: &sellArrival,
+				},
+				types.MetricKey(types.MetricConditionalIntensity, types.SideBuy): {
+					Raw: 2,
+				},
+			},
+		}})
+
+		features := (&Solver{}).extractFeatures(thesis)
+
+		Convey("Then Resonance should consume the current metric identities without inventing an unready fit value", func() {
+			So(features, ShouldResemble, map[string]map[string]float64{
+				"BTC/USD": {
+					"hawkes:BTC/USD:event_count":       eventSupport,
+					"hawkes:BTC/USD:arrival_rate:buy":  buyArrival,
+					"hawkes:BTC/USD:arrival_rate:sell": sellArrival,
+				},
+			})
+		})
+	})
+
 	Convey("Given measurements with raw and normalized metric values", t, func() {
 		normalized := 0.25
 		notFinite := math.Inf(1)
@@ -122,6 +159,87 @@ func TestExtractFeatures(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
+	Convey("Given an initialized symbol whose upstream feature is absent this pass", t, func() {
+		solver := NewSolver(nil, nil)
+		symbol := "BTC/USD"
+		primeFeatures(solver, symbol, "first", "second")
+		first := 0.75
+		thesis := types.NewThesis(nil)
+		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
+			Source: types.SourceLiquidity,
+			Symbol: symbol,
+			Metrics: map[string]types.MetricSample{
+				"first": {Normalized: &first},
+			},
+		}})
+
+		err := solver.Update(thesis)
+
+		Convey("Then it should skip only that incomplete symbol without failing logic", func() {
+			So(err, ShouldBeNil)
+			_, published := thesis.Resonance.Load(symbol)
+			So(published, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given an established schema from current Hawkes observations", t, func() {
+		solver := NewSolver(nil, nil)
+		symbol := "BTC/USD"
+
+		for tick := range 3 {
+			eventSupport := 0.25 + float64(tick)*0.1
+			buyArrival := 0.6 + float64(tick)*0.05
+			sellArrival := 0.4 - float64(tick)*0.05
+			thesis := types.NewThesis(nil)
+			thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
+				Source: types.SourceHawkes,
+				Symbol: symbol,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricEventCount, types.SideNone): {
+						Normalized: &eventSupport,
+					},
+					types.MetricKey(types.MetricArrivalRate, types.SideBuy): {
+						Normalized: &buyArrival,
+					},
+					types.MetricKey(types.MetricArrivalRate, types.SideSell): {
+						Normalized: &sellArrival,
+					},
+				},
+			}})
+
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		Convey("Then a pass carrying every current Hawkes feature should update and stamp", func() {
+			eventSupport := 0.8
+			buyArrival := 0.7
+			sellArrival := 0.3
+			thesis := types.NewThesis(nil)
+			thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
+				Source: types.SourceHawkes,
+				Symbol: symbol,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricEventCount, types.SideNone): {
+						Normalized: &eventSupport,
+					},
+					types.MetricKey(types.MetricArrivalRate, types.SideBuy): {
+						Normalized: &buyArrival,
+					},
+					types.MetricKey(types.MetricArrivalRate, types.SideSell): {
+						Normalized: &sellArrival,
+					},
+				},
+			}})
+
+			err := solver.Update(thesis)
+
+			So(err, ShouldBeNil)
+			So(thesis.Readiness.Resonance, ShouldBeTrue)
+			_, published := thesis.Resonance.Load(symbol)
+			So(published, ShouldBeTrue)
+		})
+	})
+
 	Convey("Given normalized predictive-coding features", t, func() {
 		first := 0.25
 		second := -0.5
@@ -391,13 +509,17 @@ func TestHorizonExtendsWhilePrecisionHolds(t *testing.T) {
 		})
 
 		Convey("Then the reach grows well past a single step", func() {
+			for range 4 {
+				solver.horizon(state, 1.0)
+			}
+
 			So(state.targetSamples, ShouldBeGreaterThan, 0)
 			So(state.horizonReach, ShouldBeGreaterThan, 1)
-			So(state.horizonReach, ShouldBeLessThanOrEqualTo, solver.maxHorizon)
+			So(state.horizonReach, ShouldBeLessThanOrEqualTo, int(state.targetSamples))
 		})
 
 		Convey("Then the published horizon does not outrun that reach", func() {
-			horizon, _ := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
+			horizon := solver.horizon(state, 1.0)
 
 			So(horizon, ShouldBeGreaterThanOrEqualTo, 1)
 			So(horizon, ShouldBeLessThanOrEqualTo, state.horizonReach)
@@ -413,17 +535,18 @@ func TestHorizonConfidenceCapsReach(t *testing.T) {
 
 		So(hasPrecision, ShouldBeTrue)
 		So(precision, ShouldBeGreaterThan, 0)
-		So(state.horizonReach, ShouldBeGreaterThan, 1)
 
 		Convey("Then middling confidence caps the earned reach itself", func() {
+			state.horizonReach = 10
 			reach := state.horizonReach
 			confidence := 0.4
-			horizon, _ := state.manifold.DynamicHorizon(confidence, reach, solver.maxHorizon)
-			confidenceCap := max(1, int(float64(reach)*confidence))
+			horizon := solver.horizon(state, confidence)
+			confidenceCap := max(1, int(float64(reach+1)*confidence))
 
 			So(horizon, ShouldBeLessThan, reach)
 			So(horizon, ShouldBeGreaterThanOrEqualTo, 1)
 			So(horizon, ShouldBeLessThanOrEqualTo, confidenceCap)
+			So(state.horizonReach, ShouldEqual, horizon)
 		})
 	})
 }
@@ -436,14 +559,13 @@ func TestHorizonRetractsFasterThanItGrows(t *testing.T) {
 	Convey("Given a solver holding its full reach", t, func() {
 		solver := driveSolver(400)
 		state := solver.state("BTC/USD")
-		state.horizonReach = solver.maxHorizon
+		state.horizonReach = int(state.targetSamples)
 
-		growthTicks := solver.maxHorizon
+		growthTicks := int(state.targetSamples)
 		retractionTicks := 0
 
 		for state.horizonReach > 1 {
-			_, newReach := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
-			state.horizonReach = newReach
+			solver.horizon(state, 0.4)
 			retractionTicks++
 
 			So(retractionTicks, ShouldBeLessThan, 100)
@@ -471,9 +593,9 @@ func TestHorizonStartsShortWithoutSamples(t *testing.T) {
 
 		Convey("Then it claims the shortest horizon", func() {
 			So(hasPrecision, ShouldBeFalse)
-			horizon, newReach := state.manifold.DynamicHorizon(1.0, state.horizonReach, solver.maxHorizon)
+			horizon := solver.horizon(state, 1.0)
 			So(horizon, ShouldEqual, 1)
-			So(newReach, ShouldEqual, 1)
+			So(state.horizonReach, ShouldEqual, 1)
 		})
 	})
 }

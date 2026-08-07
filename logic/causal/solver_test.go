@@ -40,7 +40,7 @@ func TestUpdate(t *testing.T) {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
 
-		convey.Convey("It should evaluate on its pool and store only Pearl output on the thesis", func() {
+		convey.Convey("It should retain the aligned rows used by Pearl for causal search", func() {
 			for index := range 12 {
 				energy := float64(index % 3)
 				surprise := float64((index * 2) % 5)
@@ -49,6 +49,7 @@ func TestUpdate(t *testing.T) {
 				thesis.Resonance.Store("BTC/USD", testResonanceReading(
 					energy, surprise, []float64{prediction},
 				))
+				thesis.Readiness.Stamp(types.SourceResonance)
 				thesis.Measurements.Store(types.SourceSentiment, []*types.Measurement{{
 					Source: types.SourceSentiment,
 					Symbol: "BTC/USD",
@@ -69,7 +70,9 @@ func TestUpdate(t *testing.T) {
 			convey.So(solver.pool.SubmittedTasks(), convey.ShouldEqual, uint64(12))
 			convey.So(output["ready"], convey.ShouldEqual, true)
 			convey.So(output["association"], convey.ShouldNotBeNil)
-			convey.So(output["historyRows"], convey.ShouldBeNil)
+			rows, rowsOK := output["historyRows"].([][]float64)
+			convey.So(rowsOK, convey.ShouldBeTrue)
+			convey.So(rows, convey.ShouldHaveLength, 12)
 		})
 	})
 }

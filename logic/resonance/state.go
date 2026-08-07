@@ -42,3 +42,19 @@ func newSymbolState(initialAlpha float64) *symbolState {
 		horizonReach: 1,
 	}
 }
+
+/*
+hasFeatures confirms that this observation can populate the fixed input schema
+that has already learned return targets. A missing upstream measurement makes
+this symbol unavailable for the pass; it must not corrupt another symbol's
+logic pass or turn into a synthetic zero.
+*/
+func (state *symbolState) hasFeatures(features map[string]float64) bool {
+	for _, featureKey := range state.featureSchema {
+		if _, present := features[featureKey]; !present {
+			return false
+		}
+	}
+
+	return true
+}

@@ -44,7 +44,6 @@ type Signal struct {
 	lastTrade     *sync.Map
 	lastBookAt    *sync.Map
 	lastBook      *sync.Map
-	measureMu     sync.Mutex
 	pool          pond.Pool
 	group         pond.TaskGroup
 }
@@ -137,8 +136,9 @@ func (signal *Signal) run() {
 
 					if len(measurements) > 0 {
 						thesis.AppendMeasurements(measurements, true)
-						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
+
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
@@ -146,9 +146,6 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	signal.measureMu.Lock()
-	defer signal.measureMu.Unlock()
-
 	trades := thesis.MarketTrades()
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
@@ -715,9 +712,6 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.measureMu.Lock()
-	defer signal.measureMu.Unlock()
-
 	if signal.cancel != nil {
 		signal.cancel()
 	}

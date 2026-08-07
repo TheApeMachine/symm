@@ -141,29 +141,26 @@ func (analyzer *Analyzer) process(in any) {
 		return
 	}
 
-	if !thesis.Readiness.SignalsMeasured() {
-		return
-	}
+	if thesis.Readiness.SignalsMeasured() {
+		// A stage that fails is recorded and the pass continues. Readiness is
+		// taken from the stamps each stage leaves, so one that did not complete
+		// simply never stamps and the planner declines the tick on its own;
+		// returning here would instead discard the work of every stage that did
+		// run, including the ones that had already finished.
+		for _, solver := range analyzer.solvers {
+			analyzer.group.SubmitErr(func() error {
+				return solver.Update(thesis)
+			})
+		}
 
-	// A stage that fails is recorded and the pass continues. Readiness is
-	// taken from the stamps each stage leaves, so one that did not complete
-	// simply never stamps and the planner declines the tick on its own;
-	// returning here would instead discard the work of every stage that did
-	// run, including the ones that had already finished.
-	for _, solver := range analyzer.solvers {
-		analyzer.group.SubmitErr(func() error {
-			return solver.Update(thesis)
-		})
-	}
+		if err := analyzer.group.Wait(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to update analyzers: "+err.Error(),
+				err,
+			))
 
-	if err := analyzer.group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to update analyzers",
-			err,
-		))
-
-		return
+		}
 	}
 
 	utils.Fanout(
@@ -205,7 +202,7 @@ func (analyzer *Analyzer) Close() error {
 		if err := solver.Close(); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
-				"failed to close solver",
+				"failed to close solver: "+err.Error(),
 				err,
 			))
 		}

@@ -35,7 +35,6 @@ type Solver struct {
 	states          map[string]*symbolState
 	arch            []int
 	targetDim       int
-	maxHorizon      int
 	learn           bool
 	advanceTemporal bool
 	ui              chan []byte
@@ -46,14 +45,14 @@ type Solver struct {
 /*
 NewSolver returns a new predictive coding solver with dynamic alpha control and
 dynamic forward prediction rollout.
-Defaults: initial alpha = 0.03, maxHorizon = 20 ticks.
+The forecast horizon grows only as resolved return samples accumulate and
+contracts to the confidence-supported path length.
 */
 func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 	solver := &Solver{
 		recorder:        recorder,
 		states:          make(map[string]*symbolState),
 		targetDim:       resonanceReturnDimensions,
-		maxHorizon:      20,
 		learn:           true,
 		advanceTemporal: true,
 		ui:              ui,
@@ -102,7 +101,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	if err := solver.group.Wait(); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"resonance: failed to update CPU predictive coding manifold",
+			"resonance: failed to update CPU predictive coding manifold: "+err.Error(),
 			err,
 		))
 	}
@@ -128,13 +127,18 @@ func (solver *Solver) updateSymbol(
 	}
 
 	state := solver.state(symbol)
+
+	if state.manifold != nil && !state.hasFeatures(features) {
+		return nil
+	}
+
 	features, informative, err := solver.standardizeFeatures(state, features)
 
 	if err != nil {
 		return err
 	}
 
-	if state.targetSamples == 0 {
+	if state.manifold == nil {
 		featureSchema := append([]string(nil), state.featureSchema...)
 		knownFeatures := make(map[string]struct{}, len(featureSchema))
 
@@ -156,7 +160,7 @@ func (solver *Solver) updateSymbol(
 			if err := solver.initManifold(state, len(featureSchema)); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
-					"resonance: failed to initialize CPU predictive coding manifold",
+					"resonance: failed to initialize CPU predictive coding manifold: "+err.Error(),
 					err,
 				))
 			}
@@ -195,7 +199,7 @@ func (solver *Solver) updateSymbol(
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"resonance: failed to extract ordered feature vector",
+			"resonance: failed to extract ordered feature vector: "+err.Error(),
 			err,
 		))
 	}
@@ -251,7 +255,7 @@ func (solver *Solver) updateSymbol(
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"resonance: CPU predictive coding settle failed",
+			"resonance: CPU predictive coding settle failed: "+err.Error(),
 			err,
 		))
 	}
@@ -278,10 +282,7 @@ func (solver *Solver) updateSymbol(
 	}
 
 	confidence := state.confidence.Quantile(surprise)
-	activeHorizon, newReach := state.manifold.DynamicHorizon(
-		confidence, state.horizonReach, solver.maxHorizon,
-	)
-	state.horizonReach = newReach
+	activeHorizon := solver.horizon(state, confidence)
 
 	var forecast *types.ResonanceForecast
 
@@ -324,6 +325,21 @@ func (solver *Solver) updateSymbol(
 	return nil
 }
 
+/*
+horizon returns the current confidence-supported forecast reach. Resolved
+return samples are the only finite bound: the model cannot support more steps
+than it has learned targets for, and no fixed product horizon is imposed.
+*/
+func (solver *Solver) horizon(state *symbolState, confidence float64) int {
+	maximum := max(1, int(state.targetSamples))
+	horizon, _ := state.manifold.DynamicHorizon(
+		confidence, state.horizonReach, maximum,
+	)
+
+	state.horizonReach = horizon
+	return horizon
+}
+
 func (solver *Solver) initManifold(state *symbolState, inputDim int) error {
 	arch := append([]int(nil), solver.arch...)
 
@@ -342,7 +358,7 @@ func (solver *Solver) initManifold(state *symbolState, inputDim int) error {
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"resonance: failed to initialize CPU predictive coding manifold",
+			"resonance: failed to initialize CPU predictive coding manifold: "+err.Error(),
 			err,
 		))
 	}
@@ -424,7 +440,7 @@ func (solver *Solver) standardizeFeatures(
 		if err != nil {
 			return nil, false, errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"resonance: failed to standardize feature",
+				"resonance: failed to standardize feature: "+err.Error(),
 				err,
 			).With("feature", featureKey))
 		}
@@ -505,7 +521,7 @@ func (solver *Solver) learnReturn(state *symbolState, midpoint float64, at time.
 	if err := state.manifold.Settle(state.pendingInput, false); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"resonance: prior return state failed to settle",
+			"resonance: prior return state failed to settle: "+err.Error(),
 			err,
 		))
 	}
@@ -513,7 +529,7 @@ func (solver *Solver) learnReturn(state *symbolState, midpoint float64, at time.
 	if err := state.manifold.Learn([]float64{target}); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"resonance: return target learning failed",
+			"resonance: return target learning failed: "+err.Error(),
 			err,
 		))
 	}

@@ -15,6 +15,7 @@ func TestLoad(t *testing.T) {
 		viper.Set("ui.addr", "127.0.0.1:8765")
 		viper.Set("trading.model", "paper")
 		viper.Set("trading.allocation.max_fraction", 0.2)
+		viper.Set("trading.resonance.minimum_confidence", 0.8)
 		viper.Set("trading.slots.normal", 2)
 		viper.Set("trading.slots.reserved", 2)
 		viper.Set("market.quote_currency", "USD")
@@ -99,6 +100,13 @@ func TestLoad(t *testing.T) {
 
 		Convey("When arming is not separated from locking", func() {
 			viper.Set("trading.risk.arm_multiple", 1.0)
+			_, err := Load()
+
+			So(err, ShouldNotBeNil)
+		})
+
+		Convey("When the Resonance admission confidence is outside its range", func() {
+			viper.Set("trading.resonance.minimum_confidence", 0.0)
 			_, err := Load()
 
 			So(err, ShouldNotBeNil)

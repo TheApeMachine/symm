@@ -116,12 +116,13 @@ func (signal *Signal) run() {
 				return
 			case message := <-subscription.Channel:
 				if thesis, ok := message.(*types.Thesis); ok {
-					measurements := signal.Measure(thesis)
+					measurements, ready := signal.measure(thesis)
 
 					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, true)
-						utils.Fanout(signal.subscribers, signal.Name(), thesis)
+						thesis.AppendMeasurements(measurements, ready)
 					}
+
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
@@ -129,10 +130,15 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+	measurements, _ := signal.measure(thesis)
+	return measurements
+}
+
+func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	trades := thesis.MarketTrades()
 
 	if len(trades) == 0 {
-		return nil
+		return nil, false
 	}
 
 	buyTimes := make(map[string][]time.Time)
@@ -152,6 +158,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		measurements = make([]*types.Measurement, 0, len(buyTimes)+len(sellTimes))
 		out          = make([]*types.Measurement, 0)
 		group        = signal.pool.NewGroup()
+		ready        bool
 	)
 
 	measure := func(symbol string, buys, sells []time.Time) func() error {
@@ -182,7 +189,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			if err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
-					"excitation measure failed",
+					"excitation measure failed: "+err.Error(),
 					err,
 				))
 			}
@@ -197,6 +204,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			defer collected.Unlock()
 
 			measurements = append(measurements, measurement)
+			ready = ready || outcome.Readiness.Intensity
 
 			if symbol == types.Focus() {
 				out = append(out, measurement)
@@ -221,7 +229,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	if err := group.Wait(); err != nil {
-		return nil
+		return nil, false
 	}
 
 	if len(out) > 0 {
@@ -230,7 +238,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		))
 	}
 
-	return measurements
+	return measurements, ready && len(measurements) > 0
 }
 
 /*

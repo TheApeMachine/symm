@@ -28,7 +28,7 @@ Symbols contribute observations to the same gas and wave fields; they are not
 split into independent simulations that cannot interfere.
 */
 type Solver struct {
-	api       *websocket.API
+	api       websocket.BookSource
 	config    pfluid.Config
 	domain    *pfluid.Domain
 	recorder  *audit.Recorder
@@ -131,7 +131,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	solver.maybeRebase(thesis.At)
 
-	// attempted := false
+	attempted := false
 	stepSymbol := ""
 	focus := types.Focus()
 	hawkesRows := utils.Measurements(thesis, types.SourceHawkes)
@@ -155,7 +155,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		managed := solver.api.Book(name)
 
 		if managed == nil {
-			return nil
+			continue
 		}
 
 		hawkes := utils.ForSymbol(hawkesRows, name)
@@ -194,7 +194,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		if err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				fmt.Sprintf("failed to tokenize manifold particles for %s", name),
+				fmt.Sprintf("failed to tokenize manifold particles for %s, %s", name, err.Error()),
 				err,
 			))
 		}
@@ -202,7 +202,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		particles, contentIDs, _ = solver.filterBatch(particles, contentIDs)
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
-			return nil
+			continue
 		}
 
 		_, err = solver.domain.Append(particles, contentIDs)
@@ -220,11 +220,16 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		solver.turnover += len(particles)
 		solver.fold.inject(len(particles))
-		// attempted = true
+		attempted = true
 
 		if stepSymbol == "" || name == focus {
 			stepSymbol = name
 		}
+	}
+
+	if !attempted {
+		thesis.Stamp(types.SourceManifold)
+		return nil
 	}
 
 	solver.evict()
@@ -362,7 +367,7 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 		if encodeErr != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
-				fmt.Sprintf("failed to encode manifold display for %s", symbol),
+				fmt.Sprintf("failed to encode manifold display for %s, %s", symbol, encodeErr.Error()),
 				encodeErr,
 			))
 		}
@@ -556,7 +561,7 @@ func (solver *Solver) recreateDomain(
 
 		errnie.Error(errnie.Err(
 			errnie.Internal,
-			message,
+			message+": "+err.Error(),
 			err,
 		))
 

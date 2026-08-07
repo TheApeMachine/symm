@@ -55,6 +55,39 @@ func excitationOutcome(fitted bool) excitation.Outcome {
 }
 
 func TestMeasure(t *testing.T) {
+	Convey("Given a liquid market and an unrelated thin market", t, func() {
+		signal := &Signal{processors: &sync.Map{}, pool: pond.NewPool(runtime.GOMAXPROCS(0))}
+		start := time.Unix(1_700_006_000, 0).UTC()
+		thesis := types.NewThesis(nil)
+		liquid := make([]kraken.TradeData, 0, 80)
+
+		for index := range 80 {
+			side := "buy"
+
+			if index%2 != 0 {
+				side = "sell"
+			}
+
+			liquid = append(liquid, kraken.TradeData{
+				Symbol:    "BTC/USD",
+				Side:      side,
+				Timestamp: start.Add(time.Duration(index) * time.Second),
+			})
+		}
+
+		thesis.Trades.Store("BTC/USD", liquid)
+		thesis.Trades.Store("THIN/USD", []kraken.TradeData{
+			{Symbol: "THIN/USD", Side: "buy", Timestamp: start},
+			{Symbol: "THIN/USD", Side: "sell", Timestamp: start.Add(time.Second)},
+		})
+
+		_, ready := signal.measure(thesis)
+
+		Convey("It should not let the thin market veto Hawkes readiness", func() {
+			So(ready, ShouldBeTrue)
+		})
+	})
+
 	Convey("Given trades for symbols whose marks arrive out of order", t, func() {
 		signal := &Signal{processors: &sync.Map{}, pool: pond.NewPool(runtime.GOMAXPROCS(0))}
 		start := time.Unix(1_700_006_000, 0).UTC()
@@ -88,6 +121,7 @@ func TestMeasure(t *testing.T) {
 				types.MetricEventCount, types.SideSell,
 			).Raw, ShouldEqual, 1)
 		})
+
 	})
 
 	Convey("Given a symbol whose only trades are sells", t, func() {

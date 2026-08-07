@@ -33,7 +33,6 @@ type Signal struct {
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
 	observations  *sync.Map
-	measureMu     sync.Mutex
 	pool          pond.Pool
 	group         pond.TaskGroup
 }
@@ -110,8 +109,9 @@ func (signal *Signal) run() {
 
 					if len(measurements) > 0 {
 						thesis.AppendMeasurements(measurements, true)
-						utils.Fanout(signal.subscribers, signal.Name(), thesis)
 					}
+
+					utils.Fanout(signal.subscribers, signal.Name(), thesis)
 				}
 			}
 		}
@@ -122,9 +122,6 @@ func (signal *Signal) run() {
 Measure produces the Measurements for the sentiment signal.
 */
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	signal.measureMu.Lock()
-	defer signal.measureMu.Unlock()
-
 	if signal.pool == nil {
 		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
 	}
@@ -547,9 +544,6 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	signal.measureMu.Lock()
-	defer signal.measureMu.Unlock()
-
 	if signal.cancel != nil {
 		signal.cancel()
 	}

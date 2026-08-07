@@ -207,13 +207,9 @@ func Boot(
 	planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
 		ctx,
 		uiChannel,
-		api,
-		desk,
-		instrument,
-		price,
-		balance,
 		analyzer,
 		recorder,
+		balance,
 	)).Wait()
 
 	errnie.Debug("planner reported to be ready")

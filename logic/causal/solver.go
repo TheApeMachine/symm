@@ -100,7 +100,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	if err := solver.group.Wait(); err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, "causal: parallel evaluation failed", err,
+			errnie.UnprocessableContent,
+			"causal: parallel evaluation failed: "+err.Error(),
+			err,
 		))
 	}
 
@@ -194,8 +196,8 @@ func (solver *Solver) measure(
 	rows := solver.observe(symbol, row)
 
 	output, ready, err := solver.getPearl(symbol).Measure(algorithm.PearlInput{
-		Key: symbol,
-		Row: row,
+		Key:          symbol,
+		Row:          row,
 		Contagion:    resonance.Surprise,
 		Condition:    resonance.Energy,
 		Intervention: prediction,
@@ -204,7 +206,7 @@ func (solver *Solver) measure(
 	if err != nil {
 		return errnie.Err(
 			errnie.UnprocessableContent,
-			"causal: pearl evaluation failed",
+			"causal: pearl evaluation failed: "+err.Error(),
 			err,
 		)
 	}

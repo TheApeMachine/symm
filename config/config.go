@@ -50,11 +50,12 @@ type MarketConfig struct {
 TradingConfig holds allocation and execution mode.
 */
 type TradingConfig struct {
-	Model         string
-	MaxFraction   float64
-	SlotsNormal   int
-	SlotsReserved int
-	Risk          RiskConfig
+	Model             string
+	MaxFraction       float64
+	MinimumConfidence float64
+	SlotsNormal       int
+	SlotsReserved     int
+	Risk              RiskConfig
 }
 
 /*
@@ -133,10 +134,11 @@ func Load() (Config, error) {
 			BaselineHalflife: viper.GetDuration("market.baseline_halflife"),
 		},
 		Trading: TradingConfig{
-			Model:         viper.GetString("trading.model"),
-			MaxFraction:   viper.GetFloat64("trading.allocation.max_fraction"),
-			SlotsNormal:   viper.GetInt("trading.slots.normal"),
-			SlotsReserved: viper.GetInt("trading.slots.reserved"),
+			Model:             viper.GetString("trading.model"),
+			MaxFraction:       viper.GetFloat64("trading.allocation.max_fraction"),
+			MinimumConfidence: viper.GetFloat64("trading.resonance.minimum_confidence"),
+			SlotsNormal:       viper.GetInt("trading.slots.normal"),
+			SlotsReserved:     viper.GetInt("trading.slots.reserved"),
 			Risk: RiskConfig{
 				MaxLossFraction:       viper.GetFloat64("trading.risk.max_loss_fraction"),
 				PortfolioLossFraction: viper.GetFloat64("trading.risk.portfolio_loss_fraction"),
@@ -192,6 +194,13 @@ func Load() (Config, error) {
 
 	if config.Trading.MaxFraction <= 0 || config.Trading.MaxFraction > 1 {
 		return Config{}, fmt.Errorf("config: trading.allocation.max_fraction must be in (0, 1]")
+	}
+
+	if config.Trading.MinimumConfidence <= 0 ||
+		config.Trading.MinimumConfidence > 1 {
+		return Config{}, fmt.Errorf(
+			"config: trading.resonance.minimum_confidence must be in (0, 1]",
+		)
 	}
 
 	if config.Trading.SlotsNormal < 1 {
@@ -288,10 +297,11 @@ func Fixture() Config {
 			BaselineHalflife: 30 * time.Second,
 		},
 		Trading: TradingConfig{
-			Model:         "paper",
-			MaxFraction:   0.2,
-			SlotsNormal:   2,
-			SlotsReserved: 2,
+			Model:             "paper",
+			MaxFraction:       0.2,
+			MinimumConfidence: 0.8,
+			SlotsNormal:       2,
+			SlotsReserved:     2,
 			Risk: RiskConfig{
 				MaxLossFraction:       0.01,
 				PortfolioLossFraction: 0.03,
