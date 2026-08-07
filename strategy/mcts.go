@@ -3,13 +3,14 @@ package strategy
 import (
 	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/mcts"
+	logiccausal "github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/types"
 )
 
 const (
 	ActionNothing         float64 = 0.0
 	ActionEnter           float64 = 1.0
-	mctsMinimumCausalRows         = 12
+	mctsMinimumCausalRows         = logiccausal.MinimumSearchRows
 	mctsSearchIterations          = 50
 )
 
@@ -21,12 +22,12 @@ Standing aside intervenes at zero. Both actions terminate immediately, so the
 search compares the two do-expectations without adding a second decision rule.
 */
 type StrategyState struct {
-	Symbol      string
-	Condition   float64
-	Contagion   float64
-	Treatment   float64
-	Reward      float64
-	Decided     bool
+	Symbol    string
+	Condition float64
+	Contagion float64
+	Treatment float64
+	Reward    float64
+	Decided   bool
 }
 
 /*

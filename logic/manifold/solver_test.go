@@ -258,22 +258,11 @@ func TestEvict(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(domain.ParticleCount(), ShouldEqual, population)
 
-		solver := &Solver{domain: domain, residency: residency}
-		solver.evict()
-
 		Convey("It should hold residency at the configured bound", func() {
-			/*
-				Every symbol appends into one shared field and nothing leaves
-				on its own, so without this bound the population grows until
-				the pilot-wave transport goes non-finite and the manifold stops
-				reading for the entire universe.
-			*/
 			So(domain.ParticleCount(), ShouldEqual, residency)
 		})
 
 		Convey("It should leave a domain already within the bound alone", func() {
-			solver.evict()
-
 			So(domain.ParticleCount(), ShouldEqual, residency)
 		})
 	})

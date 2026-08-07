@@ -106,6 +106,12 @@ func (planner *Planner) run() {
 				thesis, ok := in.(*types.Thesis)
 
 				if !ok {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"planner: invalid thesis",
+						nil,
+					))
+
 					continue
 				}
 
@@ -173,7 +179,7 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 		if err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"planner: causal search failed",
+				"planner: causal search failed: "+err.Error(),
 				err,
 			))
 
@@ -270,21 +276,13 @@ func (planner *Planner) search(
 	if !readyOK || !ready || !rowsOK ||
 		len(rows) < planner.mctsEngine.MinRows || !treatmentOK ||
 		math.IsNaN(treatment) || math.IsInf(treatment, 0) {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"planner: complete causal rows and treatment required",
-			nil,
-		)
+		return types.NewDecision(types.ActionNothing, symbol), nil
 	}
 
 	latest := rows[len(rows)-1]
 
 	if len(latest) != 4 {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"planner: causal row must contain two controls, treatment, and target",
-			nil,
-		)
+		return types.NewDecision(types.ActionNothing, symbol), nil
 	}
 
 	root := StrategyState{

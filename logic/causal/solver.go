@@ -12,6 +12,10 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+// MinimumSearchRows is the least number of aligned causal observations the
+// live MCTS contract accepts for a decision.
+const MinimumSearchRows = 12
+
 /*
 Option configures the Causal solver.
 */
@@ -106,7 +110,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
-	thesis.Stamp(types.SourceCausal)
+	if solver.searchReady(thesis) {
+		thesis.Stamp(types.SourceCausal)
+	}
 
 	solver.publish(thesis)
 	return nil
@@ -211,19 +217,37 @@ func (solver *Solver) measure(
 		)
 	}
 
-	causalOutput := map[string]any{
-		"ready": ready,
-	}
+	searchReady := ready && len(rows) >= MinimumSearchRows
+	causalOutput := map[string]any{"ready": searchReady}
 
 	if ready {
 		causalOutput = output.Outputs()
-		causalOutput["ready"] = true
-		causalOutput["historyRows"] = rows
-		causalOutput["treatmentLevel"] = prediction
+		causalOutput["ready"] = searchReady
+
+		if searchReady {
+			causalOutput["historyRows"] = rows
+			causalOutput["treatmentLevel"] = prediction
+		}
 	}
 
 	thesis.Causal.Store(symbol, causalOutput)
 	return nil
+}
+
+func (solver *Solver) searchReady(thesis *types.Thesis) bool {
+	ready := false
+
+	thesis.Causal.Range(func(_, value any) bool {
+		output, valid := value.(map[string]any)
+
+		if valid {
+			ready, _ = output["ready"].(bool)
+		}
+
+		return !ready
+	})
+
+	return ready
 }
 
 /*

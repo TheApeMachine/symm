@@ -75,6 +75,43 @@ func TestUpdate(t *testing.T) {
 			convey.So(rows, convey.ShouldHaveLength, 12)
 		})
 	})
+
+	convey.Convey("Given fewer aligned rows than causal MCTS needs", t, func() {
+		solver := NewSolver(nil, nil)
+		thesis := types.NewThesis(nil)
+		convey.Reset(func() {
+			convey.So(solver.Close(), convey.ShouldBeNil)
+		})
+
+		for index := range MinimumSearchRows - 1 {
+			prediction := float64(index + 1)
+			thesis.Resonance.Store("BTC/USD", testResonanceReading(
+				float64(index%3),
+				float64(index%5),
+				[]float64{prediction},
+			))
+			thesis.Readiness.Stamp(types.SourceResonance)
+			thesis.Measurements.Store(types.SourceSentiment, []*types.Measurement{{
+				Source: types.SourceSentiment,
+				Symbol: "BTC/USD",
+				At:     time.Unix(int64(index+1), 0),
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricChange, types.SideNone): {
+						Raw: float64(index),
+					},
+				},
+			}})
+
+			convey.So(solver.Update(thesis), convey.ShouldBeNil)
+		}
+
+		convey.Convey("Then it should remain unstamped and not expose a search artifact", func() {
+			convey.So(thesis.Readiness.Causal, convey.ShouldBeFalse)
+			stored, found := thesis.Causal.Load("BTC/USD")
+			convey.So(found, convey.ShouldBeTrue)
+			convey.So(stored.(map[string]any)["ready"], convey.ShouldBeFalse)
+		})
+	})
 }
 
 func BenchmarkUpdate(b *testing.B) {
@@ -107,6 +144,7 @@ func BenchmarkUpdate(b *testing.B) {
 	}
 
 	thesis.Measurements.Store(types.SourceSentiment, measurements)
+	thesis.Readiness.Stamp(types.SourceResonance)
 	b.ResetTimer()
 
 	for b.Loop() {

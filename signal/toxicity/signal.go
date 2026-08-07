@@ -94,7 +94,7 @@ func (signal *Signal) run() {
 				if thesis, ok := message.(*types.Thesis); ok {
 					measurements := signal.Measure(thesis)
 
-					if len(measurements) == 0 {
+					if len(measurements) > 0 {
 						thesis.AppendMeasurements(measurements, true)
 					}
 

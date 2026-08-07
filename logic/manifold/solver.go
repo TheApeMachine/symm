@@ -5,7 +5,6 @@ import (
 	"maps"
 	"math"
 	"runtime"
-	"sort"
 	"time"
 
 	"github.com/alitto/pond/v2"
@@ -129,8 +128,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	solver.maybeRebase(thesis.At)
-
 	attempted := false
 	stepSymbol := ""
 	focus := types.Focus()
@@ -148,8 +145,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	for symbol := range symbolSet {
 		symbols = append(symbols, symbol)
 	}
-
-	sort.Strings(symbols)
 
 	for _, name := range symbols {
 		managed := solver.api.Book(name)
@@ -227,16 +222,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 	}
 
+	if err := solver.Step(stepSymbol, thesis.At); err != nil {
+		return err
+	}
+
 	if !attempted {
 		thesis.Stamp(types.SourceManifold)
 		return nil
-	}
-
-	solver.evict()
-
-	if err := solver.Step(stepSymbol, thesis.At); err != nil {
-		// solver.resetDomain(stepSymbol)
-		return err
 	}
 
 	var err error
@@ -255,64 +247,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	thesis.Stamp(types.SourceManifold)
 	return nil
-}
-
-func (solver *Solver) maybeRebase(at time.Time) {
-	if solver == nil || solver.residency <= 0 || solver.turnover < solver.residency {
-		return
-	}
-
-	solver.recreateDomain("turnover", at, map[string]any{
-		"resident_particles": solver.domain.ParticleCount(),
-		"turnover_particles": solver.turnover,
-		"residency":          solver.residency,
-	})
-}
-
-/*
-evict bounds how much of the market stays resident in the shared field.
-
-Every symbol appends into one domain and nothing ever leaves, so residency
-grows without limit until the pilot-wave transport goes non-finite and the
-manifold stops reading at all. Keeping the most recent particles holds the
-field at a size it can integrate while preserving the newest state, which is
-the part the strategy reads.
-*/
-func (solver *Solver) evict() {
-	if solver.domain == nil {
-		return
-	}
-
-	resident := solver.domain.ParticleCount()
-
-	if resident <= solver.residency {
-		return
-	}
-
-	/*
-		Retain takes the indices to keep, and particles are appended in
-		arrival order, so the tail is the newest of them.
-	*/
-	keep := make([]uint32, 0, solver.residency)
-
-	for index := resident - solver.residency; index < resident; index++ {
-		keep = append(keep, uint32(index))
-	}
-
-	if err := solver.domain.Retain(keep); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"failed to bound manifold residency at %d particles",
-				solver.residency,
-			),
-			err,
-		))
-
-		return
-	}
-
-	solver.fold.drop(resident, solver.domain.ParticleCount())
 }
 
 func (solver *Solver) Step(symbol string, at time.Time) error {

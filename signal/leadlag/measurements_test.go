@@ -64,9 +64,9 @@ func TestBuildScoreMeasurement(t *testing.T) {
 	})
 
 	Convey("Given only one observation", t, func() {
-		measurement := buildScoreMeasurement(
-			"ALT/USD", "BTC/USD", time.Unix(1_700_020_100, 0).UTC(),
-			correlationSelection{correlation: 0.8}, 1, evidenceWeights{},
+		measurement := (&Signal{}).provisional(
+			"ALT/USD",
+			time.Unix(1_700_020_100, 0).UTC(),
 		)
 
 		Convey("It should keep normalized evidence absent while provisional", func() {

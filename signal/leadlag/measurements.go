@@ -105,10 +105,9 @@ func (signal *Signal) measureFrame(
 		signal.group.Submit(func() {
 			for _, row := range symbolRows {
 				if section.AnchorSymbol() == "" {
-					publish[resultIndex] = append(
-						publish[resultIndex],
-						signal.provisional(symbol, row.Timestamp),
-					)
+					measurement := signal.provisional(symbol, row.Timestamp)
+					results[resultIndex] = append(results[resultIndex], measurement)
+					publish[resultIndex] = append(publish[resultIndex], measurement)
 					continue
 				}
 

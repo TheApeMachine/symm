@@ -40,6 +40,7 @@ func TestMeasure(t *testing.T) {
 
 			if leg == 0 {
 				group = signal.group
+				So(measurements, ShouldHaveLength, 3)
 			}
 
 			if leg == 2 {

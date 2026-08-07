@@ -31,6 +31,31 @@ func TestPlannerSearch(t *testing.T) {
 			So(decision.Symbol, ShouldEqual, "BTC/USD")
 		})
 	})
+
+	Convey("Given causal analysis that is ready before its MCTS rows are usable", t, func() {
+		planner := &Planner{mctsEngine: mcts.NewCausalMCTS(
+			NewCausalEngineAdapter(),
+			math.Sqrt2,
+			1,
+			mctsMinimumCausalRows,
+			2,
+			3,
+			[]int{0, 1},
+			[]int{0, 1, 2},
+			false,
+		)}
+
+		decision, err := planner.search("BTC/USD", map[string]any{
+			"ready":          true,
+			"historyRows":    [][]float64{{1, 2, 3, 4}},
+			"treatmentLevel": 3.0,
+		})
+
+		Convey("Then it should stand aside until the causal search can run", func() {
+			So(err, ShouldBeNil)
+			So(decision.Action, ShouldEqual, types.ActionNothing)
+		})
+	})
 }
 
 func TestPlannerDecisions(t *testing.T) {
