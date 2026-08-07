@@ -6,6 +6,7 @@ import {
 import { terminalStore } from "#/collections/terminal";
 import { cn } from "#/lib/utils";
 import { Component } from "../ui/component";
+import { Gate } from "../ui/gate";
 import { Dot } from "../ui/dot";
 import { Sparkline } from "../ui/sparkline";
 
@@ -89,25 +90,7 @@ export const KernelList = ({
 								<Component registerKey="readiness">
 									{({ ref: gateRef }) => (
 										<span ref={gateRef} className="contents">
-											{/*
-												data-paint-prop puts the gate in the badge's own
-												dataset instead of its text, so the class toggle can
-												colour it and CSS can pick the word — the label stays
-												"live" or "standby" rather than "true" or "false".
-											*/}
-											<span
-												data-paint={readinessGate(source)}
-												data-paint-prop="dataset.gate"
-												data-paint-class="true:border-[color-mix(in_srgb,var(--up)_38%,transparent)],text-(--up) false:text-(--f3)"
-												className="group shrink-0 rounded-xs border border-(--line2) bg-(--line) px-1.25 py-0.5 font-mono text-[9px] uppercase tracking-[0.07em] text-(--f3)"
-											>
-												<span className="group-data-[gate=true]:hidden">
-													standby
-												</span>
-												<span className="hidden group-data-[gate=true]:inline">
-													live
-												</span>
-											</span>
+											<Gate bind={readinessGate(source)} className="shrink-0" />
 										</span>
 									)}
 								</Component>
@@ -144,7 +127,7 @@ export const KernelList = ({
 										className="w-8 shrink-0 text-right font-mono text-[10px] text-(--f2)"
 									/>
 
-								{/*
+									{/*
 										The bar and the percentage are the normalized reading —
 										where the kernel sits against its own scale. The figure
 										beside them is the raw measurement, which is the only one

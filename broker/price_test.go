@@ -1,21 +1,61 @@
-package broker_test
+package broker
 
 import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+newPriceSurface creates a price surface with the symbol's executable fee row.
+*/
+func newPriceSurface(testCase testing.TB, symbol string) (*Price, *websocket.API) {
+	testCase.Helper()
+	api := websocket.NewAPI(testCase.Context(), mock.NewConn(), mock.NewConn())
+	price := NewPrice(api)
+	price.fees.Store(symbol, kraken.TradeVolumeFee{
+		Fee: decimal.NewFromFloat64(0.25),
+	})
+
+	return price, api
+}
+
+/*
+newQuantityPrice creates the executable BTC/USD quantity fixture.
+*/
+func newQuantityPrice(testCase testing.TB) *Price {
+	testCase.Helper()
+	price, api := newPriceSurface(testCase, "BTC/USD")
+	api.Normalizer().Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{
+			"BTC": {AltName: "BTC", Decimals: 8, DisplayDecimals: 8},
+			"USD": {AltName: "USD", Decimals: 2, DisplayDecimals: 2},
+		},
+		NewPairs: map[string]spot.AssetPair{
+			"BTCUSD": {
+				WSName: "BTC/USD", Base: "BTC", Quote: "USD",
+				PairDecimals: 2, LotDecimals: 8, LotMultiplier: 1,
+			},
+		},
+	})
+	price.Update(&kraken.TickerData{
+		Symbol: "BTC/USD",
+		Ask:    decimal.NewFromFloat64(100000),
+		Bid:    decimal.NewFromFloat64(99900),
+	})
+
+	return price
+}
+
 func TestPriceUpdate(t *testing.T) {
 	Convey("Setup", t, func() {
-		api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
-		price := broker.NewPrice(api)
+		price, _ := newPriceSurface(t, "TEST1")
 
 		Convey("Given some ticker data", func() {
 			ticker := &kraken.TickerData{
@@ -37,8 +77,7 @@ func TestPriceUpdate(t *testing.T) {
 
 func TestPriceMark(t *testing.T) {
 	Convey("Setup", t, func() {
-		api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
-		price := broker.NewPrice(api)
+		price, _ := newPriceSurface(t, "TEST2")
 
 		Convey("Given some ticker data", func() {
 			ticker := &kraken.TickerData{
@@ -50,20 +89,18 @@ func TestPriceMark(t *testing.T) {
 			price.Update(ticker)
 
 			Convey("When the mark price is requested for buying", func() {
-				markPrice := price.Mark("TEST2", broker.BUY)
+				markPrice := price.Mark("TEST2", BUY)
 
-				Convey("It should return the average of the bid and ask prices", func() {
-					expectedMarkPrice := ticker.Ask.Add(ticker.Bid).Div(decimal.NewFromFloat64(2))
-					So(markPrice, ShouldEqual, expectedMarkPrice)
+				Convey("It should return the ask with the taker fee", func() {
+					So(markPrice.String(), ShouldEqual, "40100")
 				})
 			})
 
 			Convey("When the mark price is requested for selling", func() {
-				markPrice := price.Mark("TEST2", broker.SELL)
+				markPrice := price.Mark("TEST2", SELL)
 
-				Convey("It should return the average of the bid and ask prices", func() {
-					expectedMarkPrice := ticker.Ask.Add(ticker.Bid).Div(decimal.NewFromFloat64(2))
-					So(markPrice, ShouldEqual, expectedMarkPrice)
+				Convey("It should return the bid after the taker fee", func() {
+					So(markPrice.String(), ShouldEqual, "39850")
 				})
 			})
 		})
@@ -72,13 +109,13 @@ func TestPriceMark(t *testing.T) {
 
 func TestPricePnL(t *testing.T) {
 	Convey("Setup", t, func() {
-		api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
-		price := broker.NewPrice(api)
-		pair := kraken.InstrumentPair{Base: "BTC", Quote: "USD"}
+		price, _ := newPriceSurface(t, "TEST3")
+		pair := kraken.InstrumentPair{Symbol: "TEST3", Base: "BTC", Quote: "USD"}
 		holding := &types.Holding{
 			Symbol:     "TEST3",
 			Qty:        decimal.NewFromFloat64(1.0),
 			EntryPrice: decimal.NewFromFloat64(45000.00),
+			EntryFee:   decimal.NewFromInt64(0),
 		}
 
 		Convey("Given some ticker data", func() {
@@ -94,8 +131,7 @@ func TestPricePnL(t *testing.T) {
 				pnl := price.PnL(pair, holding)
 
 				Convey("It should return the profit or loss based on the current market best bid price", func() {
-					expectedPnL := ticker.Bid.Sub(decimal.NewFromFloat64(1000.00))
-					So(pnl, ShouldEqual, expectedPnL)
+					So(pnl.String(), ShouldEqual, "4825")
 				})
 			})
 		})
@@ -104,13 +140,13 @@ func TestPricePnL(t *testing.T) {
 
 func TestExitValue(t *testing.T) {
 	Convey("Setup", t, func() {
-		api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
-		price := broker.NewPrice(api)
-		pair := kraken.InstrumentPair{Base: "BTC", Quote: "USD"}
+		price, _ := newPriceSurface(t, "TEST4")
+		pair := kraken.InstrumentPair{Symbol: "TEST4", Base: "BTC", Quote: "USD"}
 		holding := &types.Holding{
 			Symbol:     "TEST4",
 			Qty:        decimal.NewFromFloat64(2.0),
 			EntryPrice: decimal.NewFromFloat64(60000.00),
+			EntryFee:   decimal.NewFromInt64(0),
 		}
 
 		Convey("Given some ticker data", func() {
@@ -126,8 +162,7 @@ func TestExitValue(t *testing.T) {
 				exitValue := price.ExitValue(pair, holding)
 
 				Convey("It should return the exit value based on the current market best bid price", func() {
-					expectedExitValue := ticker.Bid.Mul(holding.Qty)
-					So(exitValue, ShouldEqual, expectedExitValue)
+					So(exitValue.String(), ShouldEqual, "129575")
 				})
 			})
 		})
@@ -136,8 +171,7 @@ func TestExitValue(t *testing.T) {
 
 func TestPriceWithFee(t *testing.T) {
 	Convey("Setup", t, func() {
-		api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
-		price := broker.NewPrice(api)
+		price, _ := newPriceSurface(t, "TEST5")
 
 		Convey("Given some ticker data", func() {
 			ticker := &kraken.TickerData{
@@ -149,20 +183,18 @@ func TestPriceWithFee(t *testing.T) {
 			price.Update(ticker)
 
 			Convey("When the price with fee is calculated for buying", func() {
-				priceWithFee := price.WithFee("TEST5", ticker.Ask, broker.BUY)
+				priceWithFee := price.WithFee("TEST5", ticker.Ask, BUY)
 
 				Convey("It should return the price with the taker fee applied", func() {
-					expectedPriceWithFee := ticker.Ask.Mul(decimal.NewFromFloat64(1.0025)) // Assuming a 0.25% taker fee
-					So(priceWithFee, ShouldEqual, expectedPriceWithFee)
+					So(priceWithFee.String(), ShouldEqual, "70175")
 				})
 			})
 
 			Convey("When the price with fee is calculated for selling", func() {
-				priceWithFee := price.WithFee("TEST5", ticker.Bid, broker.SELL)
+				priceWithFee := price.WithFee("TEST5", ticker.Bid, SELL)
 
 				Convey("It should return the price with the taker fee applied", func() {
-					expectedPriceWithFee := ticker.Bid.Mul(decimal.NewFromFloat64(0.9975)) // Assuming a 0.25% taker fee
-					So(priceWithFee, ShouldEqual, expectedPriceWithFee)
+					So(priceWithFee.String(), ShouldEqual, "69775")
 				})
 			})
 		})
@@ -171,15 +203,13 @@ func TestPriceWithFee(t *testing.T) {
 
 func TestPriceFee(t *testing.T) {
 	Convey("Setup", t, func() {
-		api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
-		price := broker.NewPrice(api)
+		price, _ := newPriceSurface(t, "TEST6")
 
 		Convey("When the fee is requested for a symbol", func() {
 			fee := price.Fee("TEST6")
 
 			Convey("It should return the taker fee for that symbol", func() {
-				expectedFee := decimal.NewFromFloat64(0.0025) // Assuming a 0.25% taker fee
-				So(fee.Fee, ShouldEqual, expectedFee)
+				So(fee.Fee.String(), ShouldEqual, "0.25")
 			})
 		})
 	})
@@ -187,8 +217,7 @@ func TestPriceFee(t *testing.T) {
 
 func TestPriceTick(t *testing.T) {
 	Convey("Setup", t, func() {
-		api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
-		price := broker.NewPrice(api)
+		price, _ := newPriceSurface(t, "TEST7")
 
 		Convey("Given some ticker data", func() {
 			ticker := &kraken.TickerData{
@@ -210,9 +239,26 @@ func TestPriceTick(t *testing.T) {
 	})
 }
 
+func TestPriceQuantity(t *testing.T) {
+	Convey("Given an integer cash balance and a fractional allocation", t, func() {
+		price := newQuantityPrice(t)
+		fraction := decimal.NewFromFloat64(0.20)
+		notional := decimal.ExactMul(decimal.NewFromInt64(100), fraction)
+
+		Convey("When the allocated cash is converted at the fee-adjusted ask", func() {
+			quantity := price.Quantity("BTC/USD", notional)
+
+			Convey("Then receiver precision should not erase the order quantity", func() {
+				So(quantity, ShouldNotBeNil)
+				So(quantity.Sign(), ShouldEqual, 1)
+				So(quantity.String(), ShouldEqual, "0.00019950")
+			})
+		})
+	})
+}
+
 func BenchmarkPriceUpdate(b *testing.B) {
-	api := websocket.NewAPI(b.Context(), mock.NewConn(), mock.NewConn())
-	price := broker.NewPrice(api)
+	price, _ := newPriceSurface(b, "TEST8")
 
 	ticker := &kraken.TickerData{
 		Symbol: "TEST8",
@@ -228,8 +274,7 @@ func BenchmarkPriceUpdate(b *testing.B) {
 }
 
 func BenchmarkPriceMark(b *testing.B) {
-	api := websocket.NewAPI(b.Context(), mock.NewConn(), mock.NewConn())
-	price := broker.NewPrice(api)
+	price, _ := newPriceSurface(b, "TEST9")
 
 	ticker := &kraken.TickerData{
 		Symbol: "TEST9",
@@ -242,13 +287,12 @@ func BenchmarkPriceMark(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		price.Mark("TEST9", broker.BUY)
+		price.Mark("TEST9", BUY)
 	}
 }
 
 func BenchmarkPricePnL(b *testing.B) {
-	api := websocket.NewAPI(b.Context(), mock.NewConn(), mock.NewConn())
-	price := broker.NewPrice(api)
+	price, _ := newPriceSurface(b, "TEST10")
 	pair := kraken.InstrumentPair{Base: "BTC", Quote: "USD"}
 	holding := &types.Holding{
 		Symbol:     "TEST10",
@@ -272,8 +316,7 @@ func BenchmarkPricePnL(b *testing.B) {
 }
 
 func BenchmarkPriceExitValue(b *testing.B) {
-	api := websocket.NewAPI(b.Context(), mock.NewConn(), mock.NewConn())
-	price := broker.NewPrice(api)
+	price, _ := newPriceSurface(b, "TEST11")
 	pair := kraken.InstrumentPair{Base: "BTC", Quote: "USD"}
 	holding := &types.Holding{
 		Symbol:     "TEST11",
@@ -297,8 +340,7 @@ func BenchmarkPriceExitValue(b *testing.B) {
 }
 
 func BenchmarkPriceWithFee(b *testing.B) {
-	api := websocket.NewAPI(b.Context(), mock.NewConn(), mock.NewConn())
-	price := broker.NewPrice(api)
+	price, _ := newPriceSurface(b, "TEST12")
 
 	ticker := &kraken.TickerData{
 		Symbol: "TEST12",
@@ -311,13 +353,12 @@ func BenchmarkPriceWithFee(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		price.WithFee("TEST12", ticker.Ask, broker.BUY)
+		price.WithFee("TEST12", ticker.Ask, BUY)
 	}
 }
 
 func BenchmarkPriceFee(b *testing.B) {
-	api := websocket.NewAPI(b.Context(), mock.NewConn(), mock.NewConn())
-	price := broker.NewPrice(api)
+	price, _ := newPriceSurface(b, "TEST13")
 
 	b.ResetTimer()
 
@@ -327,8 +368,7 @@ func BenchmarkPriceFee(b *testing.B) {
 }
 
 func BenchmarkPriceTick(b *testing.B) {
-	api := websocket.NewAPI(b.Context(), mock.NewConn(), mock.NewConn())
-	price := broker.NewPrice(api)
+	price, _ := newPriceSurface(b, "TEST14")
 
 	ticker := &kraken.TickerData{
 		Symbol: "TEST14",
@@ -341,5 +381,20 @@ func BenchmarkPriceTick(b *testing.B) {
 
 	for b.Loop() {
 		price.Tick("TEST14")
+	}
+}
+
+func BenchmarkPriceQuantity(b *testing.B) {
+	price := newQuantityPrice(b)
+	notional, err := decimal.NewFromString("20.00")
+
+	if err != nil {
+		b.Fatalf("notional: %v", err)
+	}
+
+	b.ResetTimer()
+
+	for b.Loop() {
+		price.Quantity("BTC/USD", notional)
 	}
 }

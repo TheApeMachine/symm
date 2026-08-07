@@ -1,5 +1,6 @@
 import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { Component } from "#/components/ui/component";
+import { Typography } from "@/components/ui/typography";
 import { Panel } from "@/components/ui/panel";
 import type { Variant } from "@/components/ui/types";
 
@@ -115,9 +116,9 @@ export const CausalLadder = () => {
 	if (scope === undefined) {
 		return (
 			<Panel>
-				<div className="font-semibold text-[12px] text-(--f1)">
+				<Typography.Label size="lg" tone="f1" className="block">
 					Causal ladder
-				</div>
+				</Typography.Label>
 				<div className="mt-2 font-mono text-[9.5px] text-(--f4)">
 					select a candidate to scope its causal reading
 				</div>
@@ -129,9 +130,9 @@ export const CausalLadder = () => {
 		<Component registerKey="causal">
 			{({ ref }) => (
 				<Panel ref={ref} data-scope="symbol" data-filter={scope}>
-					<div className="font-semibold text-[12px] text-(--f1)">
+					<Typography.Label size="lg" tone="f1" className="block">
 						Causal ladder
-					</div>
+					</Typography.Label>
 					<div className="mt-0.5 mb-3 font-mono text-[9.5px] text-(--f4)">
 						pearl do-calculus · category{" "}
 						<span data-paint="category" data-paint-empty="—" />
@@ -144,9 +145,9 @@ export const CausalLadder = () => {
 								className="rounded-sm border border-(--line) bg-(--surface) px-2.5 py-2"
 							>
 								<div className="flex items-center justify-between">
-									<span className="font-semibold text-[11.5px] text-(--f1)">
+									<Typography.Label size="xs" tone="f1">
 										{rung.rung}. {rung.name}
-									</span>
+									</Typography.Label>
 									<span
 										data-paint={rung.path}
 										data-paint-format=".4f"
@@ -173,7 +174,9 @@ export const CausalLadder = () => {
 					<div className="mt-3 grid grid-cols-2 gap-1.5 border-(--line) border-t pt-2 font-mono text-[10px]">
 						{FOOTER_FIELDS.map((field) => (
 							<div key={field.path} className="flex justify-between">
-								<span className="text-(--f4)">{field.label}</span>
+								<Typography.Label size="xxs" tone="f4" weight="normal">
+									{field.label}
+								</Typography.Label>
 								<span
 									data-paint={field.path}
 									data-paint-format=".4f"

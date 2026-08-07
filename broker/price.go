@@ -192,11 +192,9 @@ func (price *Price) WithFriction(
 		return nil
 	}
 
-	bestBidGross := tick.Bid.Mul(holding.Qty)
-
 	bestBidNet := price.WithFee(
 		pair.Symbol,
-		bestBidGross,
+		tick.Bid.Mul(holding.Qty),
 		SELL,
 	)
 
@@ -289,7 +287,7 @@ func (price *Price) Quantity(
 
 	out, err := price.normalizer.FormatSize(
 		symbol,
-		notional.Div(askWithFee),
+		decimal.ExactDiv(notional, askWithFee),
 	)
 
 	if err != nil {
@@ -390,15 +388,15 @@ func (price *Price) WithFee(
 		return nil
 	}
 
+	feeAmount := decimal.ExactMul(amount, decimal.ExactDiv(
+		fee.Fee, decimal.NewFromInt64(100),
+	))
+
 	switch direction {
 	case BUY:
-		amount = amount.Add(
-			fee.Fee.Div(decimal.NewFromInt64(100)).Mul(amount),
-		)
+		amount = amount.Add(feeAmount)
 	case SELL:
-		amount = amount.Sub(
-			fee.Fee.Div(decimal.NewFromInt64(100)).Mul(amount),
-		)
+		amount = amount.Sub(feeAmount)
 	}
 
 	return amount

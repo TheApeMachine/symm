@@ -139,6 +139,35 @@ type PaintBinding = {
 	mode: "paint" | "set" | "append" | "stream";
 };
 
+/*
+COMPONENT_ROOT marks the element a Component hands its ref to, so a scan can
+tell where one Component's surface ends and a nested one's begins.
+*/
+const COMPONENT_ROOT = "data-paint-root";
+
+/*
+inherited walks up from a binding for the row selector it belongs to, and stops
+at the edge of its own Component.
+
+Components nest: a kernel row scoped to one measurement source can hold a second
+Component reading the readiness gates. The gate binding sits inside the row's
+data-scope in the DOM, but it is not a row of that batch, and inheriting the
+row's selector made it ask the readiness frame for a "source" field it does not
+have — so every gate resolved to absent and every badge stayed on standby. A
+selector only applies within the Component that declared it.
+*/
+const inherited = (
+	root: HTMLElement,
+	element: HTMLElement,
+	selector: string,
+): HTMLElement | undefined => {
+	const ancestor = element.closest<HTMLElement>(selector);
+
+	return ancestor !== null && (ancestor === root || root.contains(ancestor))
+		? ancestor
+		: undefined;
+};
+
 const scanTargets = (root: HTMLElement) => {
 	const rootTargets = new Map<string, PaintBinding[]>();
 
@@ -155,16 +184,23 @@ const scanTargets = (root: HTMLElement) => {
 			continue;
 		}
 
-		const scopedParent = element.closest<HTMLElement>(
-			"[data-scope][data-filter]",
-		);
+		/*
+			A binding belongs to the nearest Component above it. Without this an
+			outer Component would also paint the bindings of any Component nested
+			inside it, writing one key's frame into a surface bound to another's.
+		*/
+		if (element.closest(`[${COMPONENT_ROOT}]`) !== root) {
+			continue;
+		}
+
+		const scopedParent = inherited(root, element, "[data-scope][data-filter]");
 		const dataset: PaintDataset = {
 			...element.dataset,
 			scope: element.dataset.scope ?? scopedParent?.dataset.scope,
 			filter: element.dataset.filter ?? scopedParent?.dataset.filter,
 			index:
 				element.dataset.index ??
-				element.closest<HTMLElement>("[data-index]")?.dataset.index,
+				inherited(root, element, "[data-index]")?.dataset.index,
 		};
 
 		if (!rootTargets.has(key)) {
@@ -1193,6 +1229,12 @@ export const Component = ({
 			return;
 		}
 
+		/*
+			The marker is stamped rather than passed through the render props: call
+			sites hand the ref to whatever element suits them, and a surface should
+			not have to remember to spread an extra attribute for nesting to work.
+		*/
+		ref.current.setAttribute(COMPONENT_ROOT, "");
 		targets.current = scanTargets(ref.current);
 		repaint();
 	});

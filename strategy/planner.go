@@ -234,7 +234,10 @@ func (planner *Planner) size(
 		return decision, fmt.Errorf("planner: positive quote cash required")
 	}
 
-	notional := cash.Mul(decimal.NewFromFloat64(planner.maxFraction))
+	notional := decimal.ExactMul(
+		cash,
+		decimal.NewFromFloat64(planner.maxFraction),
+	)
 	price := planner.desk.Price()
 	tick := price.Tick(decision.Symbol)
 
@@ -245,7 +248,7 @@ func (planner *Planner) size(
 	quantity := price.Quantity(decision.Symbol, notional)
 
 	if quantity == nil || quantity.Sign() <= 0 {
-		return decision, fmt.Errorf("planner: normalized quantity required")
+		return decision, fmt.Errorf("planner: allocation produced no executable quantity")
 	}
 
 	pair := planner.desk.Instrument().Pair(decision.Symbol)
@@ -260,7 +263,7 @@ func (planner *Planner) size(
 		return decision, fmt.Errorf("planner: taker fee required")
 	}
 
-	feeRate := fee.Fee.Div(decimal.NewFromInt64(100))
+	feeRate := decimal.ExactDiv(fee.Fee, decimal.NewFromInt64(100))
 	stoploss, err := types.NewStoploss(
 		planner.ctx,
 		decision.Symbol,

@@ -126,8 +126,8 @@ func Load() (Config, error) {
 		},
 		Market: MarketConfig{
 			QuoteCurrency:    viper.GetString("market.quote_currency"),
-			SubscribeBatch:   viper.GetInt("market.subscribe_batch"),
-			SubscribePace:    viper.GetDuration("market.subscribe_pace"),
+			SubscribeBatch:   viper.GetInt("market.subscribe.batch"),
+			SubscribePace:    viper.GetDuration("market.subscribe.pace"),
 			L3Enabled:        viper.GetBool("market.l3_enabled"),
 			L3Depth:          viper.GetInt("market.l3_depth"),
 			L3RateLimit:      viper.GetInt("market.l3_rate_limit"),

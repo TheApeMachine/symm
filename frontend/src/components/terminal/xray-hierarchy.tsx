@@ -3,6 +3,7 @@ import type { ResonanceFrame } from "#/collections/types";
 import { heatColor } from "#/components/terminal/canvas";
 import { layerCellsFromState } from "#/components/terminal/xray-layers";
 import { xrayLayersFromResonance } from "#/components/terminal/xray-view";
+import { Typography } from "@/components/ui/typography";
 
 const symbolRef = createRef<HTMLSpanElement>();
 const waitingRef = createRef<HTMLDivElement>();
@@ -97,7 +98,8 @@ const paintHierarchyRows = (
 
 			if (cell === undefined) {
 				cell = document.createElement("div");
-				cell.className = "min-w-0 rounded-[1px] transition-colors duration-150 ease-out";
+				cell.className =
+					"min-w-0 rounded-[1px] transition-colors duration-150 ease-out";
 				cells.appendChild(cell);
 			}
 
@@ -150,9 +152,9 @@ via paintXrayHierarchy.
 export const XrayHierarchyPanel = () => (
 	<div className="shrink-0 px-4.5 py-4">
 		<div className="flex items-baseline justify-between gap-3">
-			<span className="font-serif font-semibold text-[22px] text-(--f1) leading-[1.1]">
+			<Typography.Display size="lg">
 				Predictive-coding hierarchy
-			</span>
+			</Typography.Display>
 			<span
 				ref={symbolRef}
 				className="shrink-0 cursor-pointer font-mono text-[11px] text-(--f3)"

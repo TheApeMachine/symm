@@ -8,6 +8,8 @@ import {
 } from "#/components/terminal/kernel-meta";
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
+import { Typography } from "@/components/ui/typography";
+import { Gate } from "@/components/ui/gate";
 
 /*
 SignalDetail reads one kernel's measurement for the focused symbol.
@@ -22,15 +24,26 @@ name, so the reading and the unit under it always describe the same thing.
 The badge is the readiness gate for the same kernel, because a measurement row
 carries no verdict on itself.
 */
-const Reading = ({ label, bind, format }: {
+const Reading = ({
+	label,
+	bind,
+	format,
+}: {
 	label: string;
 	bind: string;
 	format?: string;
 }) => (
-	<div className="flex justify-between font-mono text-xs">
-		<span className="text-(--f3)">{label}</span>
-		<span data-paint={bind} data-paint-format={format} className="text-(--f1)" />
-	</div>
+	<Flex.Row justify="between" align="baseline" className="gap-2">
+		<Typography.Label size="xxs" tone="f3" weight="normal">
+			{label}
+		</Typography.Label>
+		<Typography.Mono
+			size="m"
+			tone="f1"
+			data-paint={bind}
+			data-paint-format={format}
+		/>
+	</Flex.Row>
 );
 
 export const SignalDetail = () => {
@@ -49,38 +62,24 @@ export const SignalDetail = () => {
 					className={className ?? "min-h-0 overflow-auto px-5 py-4.5"}
 				>
 					<Flex.Row className="items-start justify-between gap-3">
-						<div className="min-w-0">
-							<span className="block font-serif font-semibold text-[24px] text-(--f1) leading-[1.1]">
-								{copy.name}
-							</span>
-							<span className="mt-1 block font-mono text-[10px] text-(--f4)">
+						<Flex.Column className="min-w-0 gap-1">
+							<Typography.Display size="xl">{copy.name}</Typography.Display>
+							<Typography.Mono size="s" tone="f4">
 								{copy.sub}
-							</span>
-						</div>
+							</Typography.Mono>
+						</Flex.Column>
 						<Component registerKey="readiness">
 							{({ ref: gateRef }) => (
 								<span ref={gateRef} className="contents">
-									<span
-										data-paint={readinessGate(source)}
-										data-paint-prop="dataset.gate"
-										data-paint-class="true:border-(--up),text-(--up) false:border-(--line2),text-(--f3)"
-										className="group shrink-0 rounded-[3px] border border-(--line2) bg-(--sunken) px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-									>
-										<span className="group-data-[gate=true]:hidden">
-											standby
-										</span>
-										<span className="hidden group-data-[gate=true]:inline">
-											live
-										</span>
-									</span>
+									<Gate bind={readinessGate(source)} size="s" />
 								</span>
 							)}
 						</Component>
 					</Flex.Row>
 
-					<p className="mt-3.5 max-w-prose text-[12px] text-(--f3) leading-relaxed">
+					<Typography.Paragraph className="mt-3.5 max-w-prose text-[12px] text-(--f3) leading-relaxed">
 						{copy.blurb}
-					</p>
+					</Typography.Paragraph>
 
 					<div className="mt-4.5 grid grid-cols-2 gap-x-5.5 gap-y-3">
 						<Reading label="Symbol" bind="symbol" />

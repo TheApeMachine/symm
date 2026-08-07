@@ -25,6 +25,7 @@ export { Component } from "./component";
 export { Divider, type DividerProps, dividerVariants } from "./divider";
 export { DOT_SIZE_FOR, Dot, type DotProps, dotVariants } from "./dot";
 export { AnimatePresence, Flex, flexVariants } from "./flex";
+export { Gate, type GateProps } from "./gate";
 export {
 	type GapType,
 	Grid,
@@ -98,6 +99,8 @@ export {
 	type Variant,
 } from "./types";
 export {
+	type DisplayProps,
+	displayVariants,
 	type LabelProps,
 	labelVariants,
 	type MonoProps,

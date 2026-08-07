@@ -1,4 +1,6 @@
 import { Component } from "#/components/ui/component";
+import { Flex } from "@/components/ui/flex";
+import { Typography } from "@/components/ui/typography";
 import { Panel } from "@/components/ui/panel";
 
 /*
@@ -21,10 +23,17 @@ const Row = ({
 	format?: string;
 	tone?: string;
 }) => (
-	<div className="flex items-baseline justify-between gap-2 font-mono text-[10px]">
-		<span className="text-(--f4)">{label}</span>
-		<span data-paint={bind} data-paint-format={format} className={tone} />
-	</div>
+	<Flex.Row align="baseline" justify="between" className="gap-2">
+		<Typography.Label size="xxs" tone="f4" weight="normal">
+			{label}
+		</Typography.Label>
+		<Typography.Mono
+			size="s"
+			data-paint={bind}
+			data-paint-format={format}
+			className={tone}
+		/>
+	</Flex.Row>
 );
 
 const Card = ({
@@ -35,9 +44,9 @@ const Card = ({
 	children: React.ReactNode;
 }) => (
 	<Panel variant="surface" size="bare" className="px-3 py-2.5">
-		<div className="mb-2 font-semibold text-[11px] text-(--f1) uppercase tracking-[0.08em]">
+		<Typography.Label size="lg" tone="f1" className="mb-2 block">
 			{title}
-		</div>
+		</Typography.Label>
 		<div className="flex flex-col gap-1">{children}</div>
 	</Panel>
 );
@@ -48,11 +57,7 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => (
 			{({ ref }) => (
 				<div ref={ref} data-scope="symbol" data-filter={symbol}>
 					<Card title="Arbitration">
-						<Row
-							label="action"
-							bind="action"
-							tone="text-(--acc) uppercase"
-						/>
+						<Row label="action" bind="action" tone="text-(--acc) uppercase" />
 						<Row label="utility" bind="utility" format=".5f" />
 						<Row label="confidence" bind="confidence" format=".1%" />
 						<Row label="expected return" bind="expectedReturn" format=".6f" />
@@ -116,7 +121,11 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => (
 						<Row label="mark" bind="holding.mark" format=".6f" />
 						<Row label="pnl" bind="holding.pnl" format=".4f" />
 						<Row label="return" bind="holding.return_pct" format=".2%" />
-						<Row label="stop floor" bind="holding.stoploss.floor" format=".6f" />
+						<Row
+							label="stop floor"
+							bind="holding.stoploss.floor"
+							format=".6f"
+						/>
 						<Row label="stop status" bind="holding.stoploss.status" />
 					</Card>
 				</div>

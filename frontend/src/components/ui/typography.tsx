@@ -171,6 +171,43 @@ Typography.PageTitle = textElement(
 	"h1",
 	"font-semibold text-foreground text-lg",
 );
+
+/*
+Display is the serif title a surface opens with — the one piece of text in the
+terminal that is not monospace, used where a heading names the whole panel
+rather than labelling a reading inside it. It exists here so that choice is made
+once: it was hand-rolled as `font-serif font-semibold text-[Npx]` at four
+different sizes, which is how a modal ended up in a different face from the
+surface behind it.
+*/
+export const displayVariants = cva(
+	"font-serif font-semibold text-(--f1) leading-[1.1]",
+	{
+		variants: {
+			size: {
+				s: "text-[15px]",
+				m: "text-[18px]",
+				lg: "text-[22px]",
+				xl: "text-[24px]",
+			},
+		},
+		defaultVariants: {
+			size: "m",
+		},
+	},
+);
+
+export type DisplayProps = ComponentProps<"span"> &
+	VariantProps<typeof displayVariants>;
+
+Typography.Display = ({ ref, size, className, ...props }: DisplayProps) => (
+	<span
+		ref={ref}
+		className={cn(displayVariants({ size }), className)}
+		{...props}
+	/>
+);
+
 Typography.Title = textElement("h1");
 Typography.Subtitle = textElement("h2");
 Typography.H3 = textElement("h3");

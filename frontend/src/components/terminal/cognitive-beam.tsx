@@ -3,6 +3,7 @@ import { appStore } from "#/collections/app";
 import type { CognitiveReading } from "#/collections/types";
 import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { Component } from "#/components/ui/component";
+import { Typography } from "@/components/ui/typography";
 import { meterTrackVariants } from "@/components/ui/meter";
 import { Panel } from "@/components/ui/panel";
 
@@ -85,9 +86,9 @@ export const CognitiveBeam = () => {
 	if (!isConcreteSymbol(symbol)) {
 		return (
 			<Panel className="mt-3.5">
-				<div className="font-semibold text-[12px] text-(--f1)">
+				<Typography.Label size="lg" tone="f1" className="block">
 					Cognitive beam
-				</div>
+				</Typography.Label>
 				<div className="mt-2 font-mono text-[9.5px] text-(--f4)">
 					waiting for cognitive frame
 				</div>
@@ -101,9 +102,9 @@ export const CognitiveBeam = () => {
 				<div ref={ref} className="mt-3.5">
 					<Panel>
 						<div className="flex items-center justify-between">
-							<span className="font-semibold text-[12px] text-(--f1)">
+							<Typography.Label size="lg" tone="f1">
 								Cognitive beam
-							</span>
+							</Typography.Label>
 							<span
 								data-paint="cohort"
 								data-paint-absent="—"
@@ -123,7 +124,9 @@ export const CognitiveBeam = () => {
 						<div className="mt-3 flex flex-col gap-2.5">
 							<div>
 								<div className="mb-1 flex justify-between font-mono text-[10px]">
-									<span className="text-(--f3)">Entropy gate</span>
+									<Typography.Label size="xxs" tone="f3" weight="normal">
+										Entropy gate
+									</Typography.Label>
 									<span
 										data-paint="entropyBits"
 										data-paint-format=".3f"
@@ -147,7 +150,9 @@ export const CognitiveBeam = () => {
 							{METERS.map((meter) => (
 								<div key={meter.key}>
 									<div className="mb-1 flex justify-between font-mono text-[10px]">
-										<span className="text-(--f3)">{meter.label}</span>
+										<Typography.Label size="xxs" tone="f3" weight="normal">
+											{meter.label}
+										</Typography.Label>
 										<span
 											data-paint={meter.path}
 											data-paint-format={meter.format}
@@ -176,7 +181,9 @@ export const CognitiveBeam = () => {
 
 						<div className="mt-3 grid grid-cols-2 gap-1.5 font-mono text-[10px]">
 							<div className="flex justify-between">
-								<span className="text-(--f4)">winner</span>
+								<Typography.Label size="xxs" tone="f4" weight="normal">
+									winner
+								</Typography.Label>
 								<span
 									data-paint="winner"
 									data-paint-empty="pending"
@@ -185,7 +192,9 @@ export const CognitiveBeam = () => {
 								/>
 							</div>
 							<div className="flex justify-between">
-								<span className="text-(--f4)">paths</span>
+								<Typography.Label size="xxs" tone="f4" weight="normal">
+									paths
+								</Typography.Label>
 								<span
 									data-paint="lookaheadPaths"
 									data-paint-absent="—"

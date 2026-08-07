@@ -3,6 +3,7 @@ import { terminalStore } from "#/collections/terminal";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
 import { ThesisEvidenceCanvas } from "#/components/terminal/thesis-evidence-canvas";
 import { Component } from "#/components/ui/component";
+import { Typography } from "@/components/ui/typography";
 import { cn } from "#/lib/utils";
 
 /*
@@ -49,9 +50,7 @@ export const ThesisModal = () => {
 				<div className="flex shrink-0 items-start justify-between gap-3 border-(--line) border-b px-5 py-4">
 					<div className="min-w-0">
 						<div className="flex flex-wrap items-center gap-2">
-							<span className="font-serif font-semibold text-[24px] text-(--f1) leading-[1.05]">
-								{symbol}
-							</span>
+							<Typography.Display size="lg">{symbol}</Typography.Display>
 							<Component registerKey="strategy" select="decisions">
 								{({ ref }) => (
 									<span
