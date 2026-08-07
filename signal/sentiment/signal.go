@@ -3,13 +3,11 @@ package sentiment
 import (
 	"context"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
@@ -17,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -33,8 +32,6 @@ type Signal struct {
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
 	observations  *sync.Map
-	pool          pond.Pool
-	group         pond.TaskGroup
 }
 
 type returnObservation struct {
@@ -66,9 +63,7 @@ func NewSignal(
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
 		observations:  &sync.Map{},
-		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
-	signal.group = signal.pool.NewGroup()
 
 	signal.status = types.READY
 	signal.run()
@@ -122,13 +117,7 @@ func (signal *Signal) run() {
 Measure produces the Measurements for the sentiment signal.
 */
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	if signal.pool == nil {
-		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
-	}
-
-	if signal.group == nil {
-		signal.group = signal.pool.NewGroup()
-	}
+	group, _ := errgroup.WithContext(signal.ctx)
 
 	tickers := thesis.MarketTickers()
 
@@ -150,7 +139,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	for index, peer := range peers {
 		measurementIndex := index
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			change := peer.observation.change
 			leaderStrength := 0.0
 			leaderEvidence := 0.0
@@ -192,10 +181,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			}
 
 			measurements[measurementIndex] = measurement
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"sentiment: parallel measurement failed",
@@ -260,18 +251,20 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 	sort.Strings(symbols)
 	changed := &sync.Map{}
 
+	group, _ := errgroup.WithContext(signal.ctx)
+
 	for _, symbol := range symbols {
 		symbolRows := rowBatches[symbol]
 		sort.SliceStable(symbolRows, func(leftIndex, rightIndex int) bool {
 			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
 		})
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			for _, row := range symbolRows {
 				price := row.Last.Float64()
 
 				if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
-					continue
+					return nil
 				}
 
 				raw, exists := signal.observations.Load(symbol)
@@ -282,7 +275,7 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 				}
 
 				if exists && !row.Timestamp.After(previous.at) {
-					continue
+					return nil
 				}
 
 				observation := returnObservation{at: row.Timestamp, price: price}
@@ -296,10 +289,12 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 				signal.observations.Store(symbol, observation)
 				changed.Store(symbol, struct{}{})
 			}
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"sentiment: parallel ingestion failed",
@@ -546,10 +541,6 @@ active market-data producers.
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
-	}
-
-	if signal.pool != nil {
-		signal.pool.StopAndWait()
 	}
 
 	return nil

@@ -4,12 +4,10 @@ import (
 	"context"
 	"maps"
 	"math"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -17,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 const criticalBranch = 1.0
@@ -41,7 +40,6 @@ type Signal struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
-	pool          pond.Pool
 }
 
 /*
@@ -64,7 +62,6 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
-		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
 
 	signal.status.Store(types.INITIALIZING)
@@ -157,7 +154,7 @@ func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		collected    sync.Mutex
 		measurements = make([]*types.Measurement, 0, len(buyTimes)+len(sellTimes))
 		out          = make([]*types.Measurement, 0)
-		group        = signal.pool.NewGroup()
+		group, _     = errgroup.WithContext(signal.ctx)
 		ready        bool
 	)
 
@@ -215,7 +212,7 @@ func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 	}
 
 	for symbol, buys := range buyTimes {
-		group.SubmitErr(measure(symbol, buys, sellTimes[symbol]))
+		group.Go(measure(symbol, buys, sellTimes[symbol]))
 	}
 
 	for symbol, sells := range sellTimes {
@@ -225,7 +222,7 @@ func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			continue
 		}
 
-		group.SubmitErr(measure(symbol, nil, sells))
+		group.Go(measure(symbol, nil, sells))
 	}
 
 	if err := group.Wait(); err != nil {
@@ -489,10 +486,6 @@ Close releases the receiver's owned resources.
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
-	}
-
-	if signal.pool != nil {
-		signal.pool.StopAndWait()
 	}
 
 	return nil

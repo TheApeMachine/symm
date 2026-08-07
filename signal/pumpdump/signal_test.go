@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -49,6 +50,7 @@ func TestMeasure(t *testing.T) {
 		viper.Set("signals.pumpdump.baselineCapacity", 128)
 		books := &pumpdumpBookSource{books: make(map[string]*spotbook.Book)}
 		signal := &Signal{
+			ctx:       context.Background(),
 			algo:      equation.NewIgnition(128),
 			books:     books,
 			lastTrade: &sync.Map{},
@@ -56,7 +58,6 @@ func TestMeasure(t *testing.T) {
 		thesis := types.NewThesis(nil)
 		base := time.Unix(1_700_002_200, 0).UTC()
 		var measurements []*types.Measurement
-		var group any
 
 		for index, price := range []float64{100, 101, 100, 102, 101, 104} {
 			at := base.Add(time.Duration(index) * time.Second)
@@ -68,16 +69,10 @@ func TestMeasure(t *testing.T) {
 			)
 			thesis.AppendTrade(pumpdumpTrade(int64(index+1), price, at))
 			measurements = signal.Measure(thesis)
-
-			if index == 0 {
-				group = signal.group
-			}
 		}
 
 		Convey("It preserves legacy keys and publishes both dimensionless directional families", func() {
 			So(measurements, ShouldHaveLength, 1)
-			So(signal.group, ShouldEqual, group)
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(6))
 			measurement := measurements[0]
 			So(measurement.Metrics, ShouldHaveLength, 20)
 			So(measurement.Sample(types.MetricRVOL, types.SideNone).Unit,

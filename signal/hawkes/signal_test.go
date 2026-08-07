@@ -1,13 +1,12 @@
 package hawkes
 
 import (
+	"context"
 	"math"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	nmhawkes "github.com/theapemachine/nomagique/hawkes"
@@ -56,7 +55,7 @@ func excitationOutcome(fitted bool) excitation.Outcome {
 
 func TestMeasure(t *testing.T) {
 	Convey("Given a liquid market and an unrelated thin market", t, func() {
-		signal := &Signal{processors: &sync.Map{}, pool: pond.NewPool(runtime.GOMAXPROCS(0))}
+		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(nil)
 		liquid := make([]kraken.TradeData, 0, 80)
@@ -89,7 +88,7 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given trades for symbols whose marks arrive out of order", t, func() {
-		signal := &Signal{processors: &sync.Map{}, pool: pond.NewPool(runtime.GOMAXPROCS(0))}
+		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(nil)
 
@@ -125,7 +124,7 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a symbol whose only trades are sells", t, func() {
-		signal := &Signal{processors: &sync.Map{}, pool: pond.NewPool(runtime.GOMAXPROCS(0))}
+		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(nil)
 
@@ -143,7 +142,7 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given trades for two independent symbols", t, func() {
-		signal := &Signal{processors: &sync.Map{}, pool: pond.NewPool(runtime.GOMAXPROCS(0))}
+		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(nil)
 
@@ -173,7 +172,7 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a thesis carrying no trades", t, func() {
-		signal := &Signal{processors: &sync.Map{}, pool: pond.NewPool(runtime.GOMAXPROCS(0))}
+		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 
 		Convey("It should measure nothing", func() {
 			So(signal.Measure(types.NewThesis(nil)), ShouldBeEmpty)

@@ -1,6 +1,7 @@
 package liquidity
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func measurementFor(
 
 func TestMeasure(t *testing.T) {
 	Convey("Given a multi-leg executable-depth cohort", t, func() {
-		signal := &Signal{observations: &sync.Map{}}
+		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
 		thesis := types.NewThesis(nil)
 		start := time.Unix(1_700_000_000, 0).UTC()
 		firstLeg := []kraken.TickerData{
@@ -62,7 +63,6 @@ func TestMeasure(t *testing.T) {
 
 		thesis.Tickers = tickerMap(firstLeg)
 		firstMeasurements := signal.Measure(thesis)
-		group := signal.group
 		So(firstMeasurements, ShouldHaveLength, 4)
 		thesis.Tickers = tickerMap(secondLeg)
 		measurements := signal.Measure(thesis)
@@ -94,13 +94,11 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It should not emit unchanged cached observations", func() {
 			So(signal.Measure(thesis), ShouldBeEmpty)
-			So(signal.group, ShouldEqual, group)
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(20))
 		})
 	})
 
 	Convey("Given valid executable depth but missing reported turnover", t, func() {
-		signal := &Signal{observations: &sync.Map{}}
+		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
 		thesis := types.NewThesis(nil)
 		start := time.Unix(1_700_000_050, 0).UTC()
 
@@ -151,7 +149,7 @@ func tickerMap(rows []kraken.TickerData) *sync.Map {
 }
 
 func BenchmarkMeasure(b *testing.B) {
-	signal := &Signal{observations: &sync.Map{}}
+	signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
 	thesis := types.NewThesis(nil)
 	start := time.Unix(1_700_000_100, 0).UTC()
 

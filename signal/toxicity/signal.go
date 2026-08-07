@@ -3,18 +3,17 @@ package toxicity
 import (
 	"context"
 	"math"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -29,8 +28,6 @@ type Signal struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
-	pool          pond.Pool
-	group         pond.TaskGroup
 }
 
 /*
@@ -53,9 +50,7 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
-		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
-	signal.group = signal.pool.NewGroup()
 
 	signal.status = types.READY
 	signal.run()
@@ -119,33 +114,27 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	sort.Strings(symbols)
 	results := make([][]*types.Measurement, len(symbols))
 
-	if signal.pool == nil {
-		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
-	}
-
-	if signal.group == nil {
-		signal.group = signal.pool.NewGroup()
-	}
+	group, _ := errgroup.WithContext(signal.ctx)
 
 	for index, symbol := range symbols {
 		resultIndex := index
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			current, ok := observedTouch(signal.books.Book(symbol))
 
 			if !ok {
-				return
+				return nil
 			}
 
 			previous, ok := latestTouch(toxicity, symbol)
 
 			if !ok {
 				results[resultIndex] = []*types.Measurement{touchMeasurement(symbol, current)}
-				return
+				return nil
 			}
 
 			if !current.asOf.After(previous.asOf) {
-				return
+				return nil
 			}
 
 			bracketed := bracketedTrades(
@@ -157,7 +146,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 			if len(bracketed) == 0 {
 				results[resultIndex] = []*types.Measurement{touchMeasurement(symbol, current)}
-				return
+				return nil
 			}
 
 			measurement := toxicityMeasurement(symbol, previous, current, bracketed)
@@ -165,10 +154,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				measurement,
 				touchMeasurement(symbol, current),
 			}
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"toxicity: parallel measurement failed",
@@ -246,10 +237,6 @@ active market-data producers.
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
-	}
-
-	if signal.pool != nil {
-		signal.pool.StopAndWait()
 	}
 
 	return nil

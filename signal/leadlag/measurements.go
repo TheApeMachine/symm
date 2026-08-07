@@ -2,16 +2,15 @@ package leadlag
 
 import (
 	"math"
-	"runtime"
 	"sort"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -61,13 +60,7 @@ func (signal *Signal) measureFrame(
 	results := make([][]*types.Measurement, len(symbols))
 	publish := make([][]*types.Measurement, len(symbols))
 
-	if signal.pool == nil {
-		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
-	}
-
-	if signal.group == nil {
-		signal.group = signal.pool.NewGroup()
-	}
+	group, _ := errgroup.WithContext(signal.ctx)
 
 	for index, symbol := range symbols {
 		resultIndex := index
@@ -76,16 +69,18 @@ func (signal *Signal) measureFrame(
 			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
 		})
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			for _, row := range symbolRows {
 				if section.ObservePrice(row.Symbol, row.Last.Float64(), row.Timestamp) {
 					changedRows[resultIndex] = append(changedRows[resultIndex], row)
 				}
 			}
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"leadlag: parallel ingestion failed",
@@ -102,7 +97,7 @@ func (signal *Signal) measureFrame(
 			continue
 		}
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			for _, row := range symbolRows {
 				if section.AnchorSymbol() == "" {
 					measurement := signal.provisional(symbol, row.Timestamp)
@@ -124,10 +119,12 @@ func (signal *Signal) measureFrame(
 					publish[resultIndex] = append(publish[resultIndex], measurement)
 				}
 			}
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"leadlag: parallel measurement failed",

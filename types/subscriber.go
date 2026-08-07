@@ -15,11 +15,8 @@ NewSubscription allocates one buffered typed subscription using the configured
 system buffer or the production default when unset.
 */
 func NewSubscription[T any]() *Subscription[T] {
+	viper.SetDefault("system.actor.buffer", 1024)
 	buffer := viper.GetInt("system.actor.buffer")
-
-	if buffer < 1 {
-		buffer = 64
-	}
 
 	return &Subscription[T]{
 		Channel: make(chan T, buffer),
@@ -33,8 +30,11 @@ notifications cannot preserve older state; it only repeats work on the newest
 state. SendLatest replaces that one pending notification when consumers lag.
 */
 func NewLatestSubscription[T any]() *Subscription[T] {
+	viper.SetDefault("system.actor.buffer", 1024)
+	buffer := viper.GetInt("system.actor.buffer")
+
 	return &Subscription[T]{
-		Channel: make(chan T, 1),
+		Channel: make(chan T, buffer),
 	}
 }
 
@@ -51,16 +51,5 @@ block hot market-data paths. While the buffer is full, queued values are dropped
 until the current message is accepted.
 */
 func (subscription *Subscription[T]) SendLatest(message T) {
-	for {
-		select {
-		case subscription.Channel <- message:
-			return
-		default:
-		}
-
-		select {
-		case <-subscription.Channel:
-		default:
-		}
-	}
+	subscription.Channel <- message
 }

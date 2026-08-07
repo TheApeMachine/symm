@@ -250,20 +250,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 }
 
 func (solver *Solver) Step(symbol string, at time.Time) error {
-	// Inelastic merge is the only stage inside Advance that removes particles, so the
-	// population lost across it is the fold yield.
-	beforeAdvance := solver.domain.ParticleCount()
-
 	_, err := solver.domain.Advance()
-
-	if err == nil {
-		resident := solver.domain.ParticleCount()
-		solver.fold.fold(beforeAdvance, resident)
-
-		if solver.fold.due() {
-			solver.fold.report(resident)
-		}
-	}
 
 	if err != nil {
 		return errnie.Error(errnie.Err(

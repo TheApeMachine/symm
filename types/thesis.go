@@ -173,7 +173,14 @@ func (thesis *Thesis) AppendMeasurements(
 	}
 
 	for _, measurement := range measurements {
-		found, ok := thesis.Measurements.LoadOrStore(measurement.Source, measurements)
+		if measurement == nil {
+			continue
+		}
+
+		found, ok := thesis.Measurements.LoadOrStore(
+			measurement.Source,
+			[]*Measurement{measurement},
+		)
 
 		if ok {
 			thesis.Measurements.Store(measurement.Source, append(found.([]*Measurement), measurement))

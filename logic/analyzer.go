@@ -2,10 +2,8 @@ package logic
 
 import (
 	"context"
-	"runtime"
 	"sync"
 
-	"github.com/alitto/pond/v2"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -19,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 type Solver interface {
@@ -48,8 +47,6 @@ type Analyzer struct {
 	recorder      *audit.Recorder
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
-	pool          pond.Pool
-	group         pond.TaskGroup
 }
 
 /*
@@ -89,10 +86,8 @@ func NewAnalyzer(
 		recorder:      recorder,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
-		pool:          pond.NewPool(runtime.NumCPU()),
 	}
 
-	analyzer.group = analyzer.pool.NewGroup()
 	analyzer.run()
 	return analyzer
 }
@@ -142,18 +137,23 @@ func (analyzer *Analyzer) process(in any) {
 	}
 
 	if thesis.Readiness.SignalsMeasured() {
+		// A pond task group is cancelled permanently after one task returns an
+		// error. Each Thesis pass needs its own group so an earlier failed solver
+		// does not prevent every solver from running on later market updates.
+		group, _ := errgroup.WithContext(analyzer.ctx)
+
 		// A stage that fails is recorded and the pass continues. Readiness is
 		// taken from the stamps each stage leaves, so one that did not complete
 		// simply never stamps and the planner declines the tick on its own;
 		// returning here would instead discard the work of every stage that did
 		// run, including the ones that had already finished.
 		for _, solver := range analyzer.solvers {
-			analyzer.group.SubmitErr(func() error {
+			group.Go(func() error {
 				return solver.Update(thesis)
 			})
 		}
 
-		if err := analyzer.group.Wait(); err != nil {
+		if err := group.Wait(); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Internal,
 				"failed to update analyzers: "+err.Error(),

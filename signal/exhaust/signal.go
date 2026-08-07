@@ -3,16 +3,15 @@ package exhaust
 import (
 	"context"
 	"math"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -44,8 +43,6 @@ type Signal struct {
 	lastTrade     *sync.Map
 	lastBookAt    *sync.Map
 	lastBook      *sync.Map
-	pool          pond.Pool
-	group         pond.TaskGroup
 }
 
 type tradeCursor struct {
@@ -88,9 +85,8 @@ func NewSignal(
 		lastTrade:     &sync.Map{},
 		lastBookAt:    &sync.Map{},
 		lastBook:      &sync.Map{},
-		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
-	signal.group = signal.pool.NewGroup()
+
 	signal.status = types.READY
 	signal.run()
 	return signal
@@ -189,13 +185,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 	sort.Strings(symbols)
 
-	if signal.pool == nil {
-		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
-	}
-
-	if signal.group == nil {
-		signal.group = signal.pool.NewGroup()
-	}
+	group, _ := errgroup.WithContext(signal.ctx)
 
 	for _, symbol := range symbols {
 		symbolTrades := tradeBatches[symbol]
@@ -212,7 +202,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		managed := signal.books.Book(symbol)
 		bookAt := managedBookObservedAt(managed)
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			symbolMeasurements := make([]*types.Measurement, 0)
 			symbolOut := make([]*types.Measurement, 0)
 			bookPending := managed != nil
@@ -278,10 +268,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 			results.Store(symbol, symbolMeasurements)
 			publish.Store(symbol, symbolOut)
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"exhaust: parallel measurement failed",
@@ -714,10 +706,6 @@ active market-data producers.
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
-	}
-
-	if signal.pool != nil {
-		signal.pool.StopAndWait()
 	}
 
 	return nil

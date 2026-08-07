@@ -1,6 +1,7 @@
 package toxicity
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 func TestMeasure(t *testing.T) {
 	Convey("Given unchanged touches for independent toxicity symbols", t, func() {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
-		signal := &Signal{books: books}
+		signal := &Signal{ctx: context.Background(), books: books}
 		base := time.Unix(1_700_004_100, 0).UTC()
 		thesis := types.NewThesis(nil)
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
@@ -26,21 +27,17 @@ func TestMeasure(t *testing.T) {
 			signal.Close()
 		})
 
-		Convey("It reuses one stored group and submits one task per symbol", func() {
+		Convey("It completes each symbol before returning the combined measurements", func() {
 			measurements := signal.Measure(thesis)
-			group := signal.group
 			So(measurements, ShouldHaveLength, 2)
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(2))
 			thesis.AppendMeasurements(measurements, true)
 			So(signal.Measure(thesis), ShouldBeEmpty)
-			So(signal.group, ShouldEqual, group)
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(4))
 		})
 	})
 
 	Convey("Given a pre-touch, multiple executions, and a later post-touch", t, func() {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
-		signal := &Signal{books: books}
+		signal := &Signal{ctx: context.Background(), books: books}
 		base := time.Unix(1_700_004_200, 0).UTC()
 		thesis := types.NewThesis(nil)
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
@@ -93,7 +90,7 @@ func TestMeasure(t *testing.T) {
 
 	Convey("Given only a pre-trade touch", t, func() {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
-		signal := &Signal{books: books}
+		signal := &Signal{ctx: context.Background(), books: books}
 		base := time.Unix(1_700_004_300, 0).UTC()
 		thesis := types.NewThesis(nil)
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})

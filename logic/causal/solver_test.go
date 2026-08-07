@@ -67,7 +67,6 @@ func TestUpdate(t *testing.T) {
 			convey.So(found, convey.ShouldBeTrue)
 			output := stored.(map[string]any)
 
-			convey.So(solver.pool.SubmittedTasks(), convey.ShouldEqual, uint64(12))
 			convey.So(output["ready"], convey.ShouldEqual, true)
 			convey.So(output["association"], convey.ShouldNotBeNil)
 			rows, rowsOK := output["historyRows"].([][]float64)

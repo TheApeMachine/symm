@@ -1,7 +1,5 @@
 package manifold
 
-import "github.com/theapemachine/errnie"
-
 /*
 foldReportInterval is how many advances pass between fold reports. The measurement is
 cumulative, so the interval only controls how often it is read out.
@@ -99,39 +97,4 @@ due reports whether a readout is owed.
 */
 func (meter *foldMeter) due() bool {
 	return meter.advances > 0 && meter.advances%foldReportInterval == 0
-}
-
-/*
-report emits the cumulative fold accounting.
-
-Why:
-  - foldRate is merged over injected: the share of observations absorbed by collision,
-    and the only honest compression signal available here.
-  - evictRate is evicted over injected: the share the residency cap discarded instead.
-  - The Sensorium ratio of injected over resident is deliberately not reported. The
-    reference run folded 4,692,608 observations down to 31,476 particles with nothing
-    capping the population, so its ratio measured merging. Here Retain pins the resident
-    count to a fixed residency, which would make the same ratio climb forever regardless
-    of whether a single particle ever merged.
-*/
-func (meter *foldMeter) report(resident int) {
-	if meter.injected == 0 {
-		return
-	}
-
-	errnie.Info(
-		"manifold fold",
-		"injected", meter.injected,
-		"merged", meter.merged,
-		"evicted", meter.evicted,
-		"resident", resident,
-		"residency_cap", meter.cap,
-		"fold_rate", float64(meter.merged)/float64(meter.injected),
-		"evict_rate", float64(meter.evicted)/float64(meter.injected),
-		"advances", meter.advances,
-		"forced", meter.drive[excitationForced],
-		"unfit", meter.drive[excitationUnfit],
-		"below_baseline", meter.drive[excitationBelowBaseline],
-		"missing", meter.drive[excitationMissing],
-	)
 }

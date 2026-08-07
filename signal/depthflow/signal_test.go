@@ -1,6 +1,7 @@
 package depthflow
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 
 func TestMeasure(t *testing.T) {
 	Convey("Given independent depth-flow symbols without a ready book", t, func() {
-		signal := &Signal{books: emptyBookSource{}}
+		signal := &Signal{ctx: context.Background(), books: emptyBookSource{}}
 		thesis := types.NewThesis(nil)
 		thesis.Tickers.Store("AAA/USD", []kraken.TickerData{{Symbol: "AAA/USD"}})
 		thesis.Tickers.Store("BBB/USD", []kraken.TickerData{{Symbol: "BBB/USD"}})
@@ -25,13 +26,9 @@ func TestMeasure(t *testing.T) {
 			signal.Close()
 		})
 
-		Convey("It reuses one stored group and submits one task per symbol", func() {
+		Convey("It completes each independent symbol pass without measurements", func() {
 			So(signal.Measure(thesis), ShouldBeEmpty)
-			group := signal.group
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(2))
 			So(signal.Measure(thesis), ShouldBeEmpty)
-			So(signal.group, ShouldEqual, group)
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(4))
 		})
 	})
 }

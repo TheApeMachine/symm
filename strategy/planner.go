@@ -58,7 +58,7 @@ func NewPlanner(
 		ui:     uiHub,
 		subscriptions: map[string]*types.Subscription[any]{
 			"analyzer": analyzer.Subscribe(
-				"analyzer", types.NewLatestSubscription[any](),
+				"analyzer", types.NewSubscription[any](),
 			),
 		},
 		subscribers: &sync.Map{},

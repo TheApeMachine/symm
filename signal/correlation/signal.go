@@ -3,18 +3,17 @@ package correlation
 import (
 	"context"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -31,8 +30,6 @@ type Signal struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
-	pool          pond.Pool
-	group         pond.TaskGroup
 }
 
 /*
@@ -56,9 +53,7 @@ func NewSignal(
 		ui:            ui,
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
-		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
-	signal.group = signal.pool.NewGroup()
 
 	signal.run()
 	signal.status = types.READY
@@ -154,19 +149,13 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements := make([]*types.Measurement, len(symbols))
 	out := make([]*types.Measurement, 0)
 
-	if signal.pool == nil {
-		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
-	}
-
-	if signal.group == nil {
-		signal.group = signal.pool.NewGroup()
-	}
+	group, _ := errgroup.WithContext(signal.ctx)
 
 	for index, symbol := range symbols {
 		measurementIndex := index
 		scores := scoresBySymbol[symbol]
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			at := latestAtBySymbol[symbol]
 
 			if at.IsZero() {
@@ -174,7 +163,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			}
 
 			if at.IsZero() {
-				return
+				return nil
 			}
 
 			metrics, _ := correlationMetrics(scores)
@@ -187,10 +176,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			}
 
 			measurements[measurementIndex] = measurement
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"correlation: parallel measurement construction failed",
@@ -324,10 +315,6 @@ func (signal *Signal) Close() error {
 
 	if signal.section != nil {
 		signal.section.Close()
-	}
-
-	if signal.pool != nil {
-		signal.pool.StopAndWait()
 	}
 
 	return nil

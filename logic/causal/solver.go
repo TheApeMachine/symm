@@ -1,15 +1,16 @@
 package causal
 
 import (
+	"context"
 	"math"
 	"sync"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 // MinimumSearchRows is the least number of aligned causal observations the
@@ -35,14 +36,14 @@ Solver evaluates Judea Pearl's Causal Ladder over live market measurements,
 physics fluid metrics, and predictive coding resonance predictions.
 */
 type Solver struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
 	recorder *audit.Recorder
 	pearls   *sync.Map
 	rows     *sync.Map
 	rowsMu   sync.Mutex
 	config   algorithm.PearlConfig
 	ui       chan []byte
-	pool     pond.Pool
-	group    pond.TaskGroup
 }
 
 /*
@@ -62,15 +63,14 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 	}
 
 	solver := &Solver{
+		ctx:      context.Background(),
+		cancel:   func() {},
 		recorder: recorder,
 		pearls:   &sync.Map{},
 		rows:     &sync.Map{},
 		config:   defaultConfig,
 		ui:       ui,
-		pool:     pond.NewPool(16),
 	}
-
-	solver.group = solver.pool.NewGroup()
 
 	for _, opt := range opts {
 		opt(solver)
@@ -88,6 +88,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
+	// A failed pass cancels a pond group permanently. Causal evaluation is
+	// retried on every enriched Thesis, so it requires a new group per pass.
+	group, _ := errgroup.WithContext(solver.ctx)
+
 	thesis.Resonance.Range(func(key, _ any) bool {
 		symbol, symbolOK := key.(string)
 
@@ -95,14 +99,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		solver.group.SubmitErr(func() error {
+		group.Go(func() error {
 			return solver.measure(thesis, symbol)
 		})
 
 		return true
 	})
 
-	if err := solver.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"causal: parallel evaluation failed: "+err.Error(),
@@ -333,6 +337,6 @@ func (solver *Solver) getPearl(symbol string) *algorithm.Pearl {
 Close cleans up the solver instance.
 */
 func (solver *Solver) Close() error {
-	solver.pool.StopAndWait()
+	solver.cancel()
 	return nil
 }

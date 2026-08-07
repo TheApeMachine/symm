@@ -265,11 +265,6 @@ func NewWithClient(
 
 		if ok && subscribers != nil {
 			for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-				if channel != "ticker" {
-					subscriber.SendLatest(out)
-					continue
-				}
-
 				subscriber.Send(out)
 			}
 		}

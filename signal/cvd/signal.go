@@ -3,12 +3,10 @@ package cvd
 import (
 	"context"
 	"math"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -17,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -36,8 +35,6 @@ type Signal struct {
 	subscriptions map[string]*types.Subscription[any]
 	subscribers   *sync.Map
 	lastTrade     *sync.Map
-	pool          pond.Pool
-	group         pond.TaskGroup
 }
 
 type tradeCursor struct {
@@ -76,10 +73,8 @@ func NewSignal(
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
 		lastTrade:     &sync.Map{},
-		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
 
-	signal.group = signal.pool.NewGroup()
 	signal.status = types.READY
 
 	signal.run()
@@ -182,18 +177,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 	signal.ensureProcessors()
 
-	if signal.pool == nil {
-		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
-	}
-
-	if signal.group == nil {
-		signal.group = signal.pool.NewGroup()
-	}
+	group, _ := errgroup.WithContext(signal.ctx)
 
 	for _, symbol := range symbols {
 		symbolTrades := tradeBatches[symbol]
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			symbolMeasurements := make([]*types.Measurement, 0)
 
 			for _, row := range symbolTrades {
@@ -212,7 +201,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				if err != nil {
 					results.Store(symbol, symbolMeasurements)
 					errorsBySymbol.Store(symbol, err)
-					return
+					return nil
 				}
 
 				signal.commitTrade(row)
@@ -221,12 +210,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			}
 
 			results.Store(symbol, symbolMeasurements)
+			return nil
 		})
 	}
 
-	err := signal.group.Wait()
-
-	if err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"cvd: parallel measurement failed",
@@ -591,10 +579,6 @@ active market-data producers.
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
-	}
-
-	if signal.pool != nil {
-		signal.pool.StopAndWait()
 	}
 
 	return nil

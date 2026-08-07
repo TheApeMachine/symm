@@ -201,7 +201,23 @@ func (readiness *Readiness) Complete() bool {
 	readiness.mu.RLock()
 	defer readiness.mu.RUnlock()
 
-	return readiness.SignalsMeasured() && readiness.LogicAnalyzed() && readiness.StrategyDecided()
+	return readiness.Correlation &&
+		readiness.CVD &&
+		readiness.DepthFlow &&
+		readiness.Exhaustion &&
+		readiness.Hawkes &&
+		readiness.LeadLag &&
+		readiness.Liquidity &&
+		readiness.PumpDump &&
+		readiness.Sentiment &&
+		readiness.Toxicity &&
+		readiness.Categories &&
+		readiness.Cognition &&
+		readiness.Manifold &&
+		readiness.Resonance &&
+		readiness.Causal &&
+		readiness.Graph &&
+		readiness.Planner
 }
 
 /*

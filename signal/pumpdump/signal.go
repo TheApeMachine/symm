@@ -3,12 +3,10 @@ package pumpdump
 import (
 	"context"
 	"math"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -17,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -38,8 +37,6 @@ type Signal struct {
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
 	lastTrade     *sync.Map
-	pool          pond.Pool
-	group         pond.TaskGroup
 }
 
 type tradeCursor struct {
@@ -71,9 +68,7 @@ func NewSignal(
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
 		lastTrade:     &sync.Map{},
-		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
-	signal.group = signal.pool.NewGroup()
 
 	signal.status = types.READY
 	signal.run()
@@ -157,13 +152,7 @@ func (signal *Signal) Measure(
 
 	sort.Strings(symbols)
 
-	if signal.pool == nil {
-		signal.pool = pond.NewPool(runtime.GOMAXPROCS(0))
-	}
-
-	if signal.group == nil {
-		signal.group = signal.pool.NewGroup()
-	}
+	group, _ := errgroup.WithContext(signal.ctx)
 
 	if signal.algorithms == nil {
 		signal.algorithms = &sync.Map{}
@@ -187,7 +176,7 @@ func (signal *Signal) Measure(
 			return left.Timestamp.Before(right.Timestamp)
 		})
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			symbolMeasurements := make([]*types.Measurement, 0)
 			algo := signal.algorithm(symbol)
 
@@ -231,7 +220,7 @@ func (signal *Signal) Measure(
 
 				if err != nil {
 					errorsBySymbol.Store(symbol, err)
-					return
+					return nil
 				}
 
 				signal.commitTrade(trade)
@@ -349,10 +338,12 @@ func (signal *Signal) Measure(
 			}
 
 			results.Store(symbol, symbolMeasurements)
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"pumpdump: parallel measurement failed",
@@ -503,10 +494,6 @@ active market-data producers.
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
-	}
-
-	if signal.pool != nil {
-		signal.pool.StopAndWait()
 	}
 
 	return nil

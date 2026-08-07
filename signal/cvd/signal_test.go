@@ -1,6 +1,7 @@
 package cvd
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -46,6 +47,7 @@ func TestSeenTrade(t *testing.T) {
 func TestMeasure(t *testing.T) {
 	Convey("Given a retained causal midpoint and a newer future ticker", t, func() {
 		signal := &Signal{
+			ctx:       context.Background(),
 			sample:    algorithm.NewTradeFlowSample(),
 			flow:      equation.NewFlow(),
 			midpoints: &sync.Map{},
@@ -108,6 +110,7 @@ func TestMeasure(t *testing.T) {
 
 	Convey("Given a trade with only future midpoint evidence", t, func() {
 		signal := &Signal{
+			ctx:       context.Background(),
 			sample:    algorithm.NewTradeFlowSample(),
 			flow:      equation.NewFlow(),
 			midpoints: &sync.Map{},
@@ -137,6 +140,7 @@ func TestMeasure(t *testing.T) {
 
 	Convey("Given reversed trade batches for independent CVD symbols", t, func() {
 		signal := &Signal{
+			ctx:       context.Background(),
 			sample:    algorithm.NewTradeFlowSample(),
 			flow:      equation.NewFlow(),
 			midpoints: &sync.Map{},
@@ -158,15 +162,9 @@ func TestMeasure(t *testing.T) {
 		cut.Trades.Store("BTC/USD", []kraken.TradeData{bitcoinSecond, bitcoinFirst})
 		cut.Trades.Store("ALT/USD", []kraken.TradeData{altSecond, altFirst})
 
-		Reset(func() {
-			signal.pool.StopAndWait()
-		})
-
-		Convey("It runs one task per symbol and preserves causal order within each task", func() {
+		Convey("It preserves causal order independently for each symbol", func() {
 			measurements := signal.Measure(cut)
-			group := signal.group
 			So(measurements, ShouldHaveLength, 4)
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(2))
 
 			measurementsBySymbol := make(map[string][]*types.Measurement)
 
@@ -185,8 +183,6 @@ func TestMeasure(t *testing.T) {
 				measurementsBySymbol["ALT/USD"][1].At,
 			), ShouldBeTrue)
 			So(signal.Measure(cut), ShouldBeEmpty)
-			So(signal.group, ShouldEqual, group)
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(4))
 		})
 	})
 }

@@ -1,6 +1,7 @@
 package correlation
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 func TestMeasure(t *testing.T) {
 	Convey("Given repeated multi-symbol correlation cuts", t, func() {
-		signal := &Signal{section: NewSection()}
+		signal := &Signal{ctx: context.Background(), section: NewSection()}
 		start := time.Unix(1_700_005_000, 0).UTC()
 
 		Reset(func() {
@@ -35,11 +36,9 @@ func TestMeasure(t *testing.T) {
 			_ = signal.Measure(thesis)
 		}
 
-		Convey("It reuses both stored groups across ingestion, scoring, and construction", func() {
+		Convey("It reuses the section group and constructs every symbol measurement", func() {
 			sectionGroup := signal.section.group
-			signalGroup := signal.group
 			beforeSectionTasks := signal.section.pool.SubmittedTasks()
-			beforeSignalTasks := signal.pool.SubmittedTasks()
 			at := start.Add(3 * time.Second)
 			thesis := types.NewThesis(nil)
 			thesis.Tickers.Store("AAA/USD", []kraken.TickerData{
@@ -52,9 +51,7 @@ func TestMeasure(t *testing.T) {
 			measurements := signal.Measure(thesis)
 			So(measurements, ShouldHaveLength, 2)
 			So(signal.section.group, ShouldEqual, sectionGroup)
-			So(signal.group, ShouldEqual, signalGroup)
 			So(signal.section.pool.SubmittedTasks(), ShouldBeGreaterThan, beforeSectionTasks)
-			So(signal.pool.SubmittedTasks(), ShouldBeGreaterThan, beforeSignalTasks)
 		})
 	})
 }

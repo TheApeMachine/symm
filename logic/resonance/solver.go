@@ -1,13 +1,12 @@
 package resonance
 
 import (
+	"context"
 	"math"
-	"runtime"
 	"slices"
 	"sort"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
@@ -17,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -38,8 +38,6 @@ type Solver struct {
 	learn           bool
 	advanceTemporal bool
 	ui              chan []byte
-	pool            pond.Pool
-	group           pond.TaskGroup
 }
 
 /*
@@ -56,10 +54,8 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 		learn:           true,
 		advanceTemporal: true,
 		ui:              ui,
-		pool:            pond.NewPool(runtime.NumCPU()),
 	}
 
-	solver.group = solver.pool.NewGroup()
 	return solver
 }
 
@@ -88,17 +84,19 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
+	group, _ := errgroup.WithContext(context.Background())
+
 	for symbol := range featureSets {
 		solver.state(symbol)
 	}
 
 	for symbol, features := range featureSets {
-		solver.group.SubmitErr(func() error {
+		group.Go(func() error {
 			return solver.updateSymbol(thesis, symbol, features)
 		})
 	}
 
-	if err := solver.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"resonance: failed to update CPU predictive coding manifold: "+err.Error(),

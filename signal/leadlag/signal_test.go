@@ -1,6 +1,7 @@
 package leadlag
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,9 +13,8 @@ import (
 
 func TestMeasure(t *testing.T) {
 	Convey("Given repeated multi-symbol lead-lag cuts", t, func() {
-		signal := &Signal{section: NewSection()}
+		signal := &Signal{ctx: context.Background(), section: NewSection()}
 		start := time.Unix(1_700_007_000, 0).UTC()
-		var group any
 
 		Reset(func() {
 			signal.Close()
@@ -39,7 +39,6 @@ func TestMeasure(t *testing.T) {
 			measurements := signal.Measure(thesis)
 
 			if leg == 0 {
-				group = signal.group
 				So(measurements, ShouldHaveLength, 3)
 			}
 
@@ -48,10 +47,10 @@ func TestMeasure(t *testing.T) {
 			}
 		}
 
-		Convey("It reuses the stored group for both ingestion and scoring phases", func() {
-			So(signal.group, ShouldNotBeNil)
-			So(signal.group, ShouldEqual, group)
-			So(signal.pool.SubmittedTasks(), ShouldEqual, uint64(18))
+		Convey("It retains every symbol history across measurement passes", func() {
+			for _, symbol := range []string{"AAA/USD", "BBB/USD", "CCC/USD"} {
+				So(signal.section.PriceSampleCount(symbol), ShouldEqual, 3)
+			}
 		})
 	})
 }

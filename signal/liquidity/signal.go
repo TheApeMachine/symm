@@ -3,15 +3,14 @@ package liquidity
 import (
 	"context"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
@@ -35,8 +34,6 @@ type Signal struct {
 	subscribers   *sync.Map
 	subscribeMu   sync.Mutex
 	observations  *sync.Map
-	pool          pond.Pool
-	group         pond.TaskGroup
 }
 
 type liquidityObservation struct {
@@ -69,9 +66,7 @@ func NewSignal(
 		subscriptions: subscriptions,
 		subscribers:   &sync.Map{},
 		observations:  &sync.Map{},
-		pool:          pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
-	signal.group = signal.pool.NewGroup()
 
 	signal.status = types.READY
 	signal.run()
@@ -147,10 +142,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements := make([]*types.Measurement, len(peers))
 	out := make([]*types.Measurement, 0)
 
+	group, _ := errgroup.WithContext(signal.ctx)
+
 	for index, peer := range peers {
 		measurementIndex := index
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			executableDepth := peer.observation.executableDepth
 			depthPeers, notionalPeers := leaveOneOutLiquidity(peer.symbol, peers)
 			depthMedian, depthOK := statistic.MedianOf(depthPeers)
@@ -249,10 +246,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			}
 
 			measurements[measurementIndex] = measurement
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"liquidity: parallel measurement failed",
@@ -374,8 +373,11 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 		row.Symbol = symbol
 		rowBatches[symbol] = append(rowBatches[symbol], row)
 	}
+
 	sort.Strings(symbols)
 	changed := &sync.Map{}
+
+	group, _ := errgroup.WithContext(signal.ctx)
 
 	for _, symbol := range symbols {
 		symbolRows := rowBatches[symbol]
@@ -383,7 +385,7 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
 		})
 
-		signal.group.Submit(func() {
+		group.Go(func() error {
 			for _, row := range symbolRows {
 				raw, exists := signal.observations.Load(symbol)
 				previous := liquidityObservation{}
@@ -409,10 +411,12 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 				signal.observations.Store(symbol, observation)
 				changed.Store(symbol, struct{}{})
 			}
+
+			return nil
 		})
 	}
 
-	if err := signal.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"liquidity: parallel ingestion failed",
@@ -539,10 +543,6 @@ active market-data producers.
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
-	}
-
-	if signal.pool != nil {
-		signal.pool.StopAndWait()
 	}
 
 	return nil

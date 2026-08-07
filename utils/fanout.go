@@ -33,7 +33,7 @@ func Fanout(subscribers *sync.Map, name string, thesis *types.Thesis) {
 
 	if ok && found != nil {
 		for _, subscriber := range found.([]*types.Subscription[any]) {
-			subscriber.SendLatest(thesis)
+			subscriber.Send(thesis)
 		}
 	}
 }
