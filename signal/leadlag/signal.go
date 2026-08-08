@@ -107,7 +107,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		signal.section = NewSection()
 	}
 
-	tickers := thesis.MarketTickers()
+	tickers := thesis.MarketTickers(types.SourceLeadLag)
 
 	return signal.measureFrame(tickers)
 }

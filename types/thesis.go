@@ -45,6 +45,7 @@ type Thesis struct {
 	LastTradeAt  time.Time     `json:"lastTradeAt"`
 	CrossSection *CrossSection `json:"crossSection"`
 	Measurements *sync.Map     `json:"-"`
+	Measured     *sync.Map     `json:"-"`
 	Tickers      *sync.Map     `json:"-"`
 	Trades       *sync.Map     `json:"-"`
 	Graphs       *sync.Map     `json:"-"`
@@ -74,6 +75,7 @@ func NewThesis(ui chan []byte) *Thesis {
 		Lifecycle:    &sync.Map{},
 		Categories:   &sync.Map{},
 		Measurements: &sync.Map{},
+		Measured:     &sync.Map{},
 		Tickers:      &sync.Map{},
 		Trades:       &sync.Map{},
 		Manifold:     fluid.Reading{},
@@ -85,9 +87,10 @@ func NewThesis(ui chan []byte) *Thesis {
 }
 
 /*
-Reset the thesis to a clean state for the next evaluation.
-This is only called once the readiness has reached the
-Complete state and the planner has emitted actionable decisions.
+Reset starts the next evaluation epoch after the planner has completed this
+one. Measurements remain as bounded, source-keyed prior evidence: each signal
+replaces matching rows when it next produces an artifact. Raw market input and
+derived decision artifacts are epoch-local and are cleared.
 */
 func (thesis *Thesis) Reset() *Thesis {
 	if !thesis.Readiness.Complete() {
@@ -101,7 +104,6 @@ func (thesis *Thesis) Reset() *Thesis {
 	thesis.CrossSection = NewCrossSection()
 	thesis.Tickers.Clear()
 	thesis.Trades.Clear()
-	thesis.Measurements.Clear()
 	thesis.Categories.Clear()
 	thesis.Cognition.Clear()
 	thesis.Manifold = fluid.Reading{}
@@ -175,30 +177,33 @@ func (thesis *Thesis) AppendMeasurements(
 		return thesis
 	}
 
-	thesis.Measurements.Store(measurements[0].Source, measurements)
+	source := measurements[0].Source
+	replaced := make(map[string]struct{}, len(measurements))
 
-	if ready {
-		thesis.Readiness.Stamp(SourceType(measurements[0].Source))
+	for _, measurement := range measurements {
+		replaced[measurement.Key()] = struct{}{}
 	}
 
-	// for _, measurement := range measurements {
-	// 	if measurement == nil {
-	// 		continue
-	// 	}
+	merged := make([]*Measurement, 0, len(measurements))
+	stored, found := thesis.Measurements.Load(source)
 
-	// 	found, ok := thesis.Measurements.LoadOrStore(
-	// 		measurement.Source,
-	// 		[]*Measurement{measurement},
-	// 	)
+	if found {
+		for _, measurement := range stored.([]*Measurement) {
+			if _, replace := replaced[measurement.Key()]; replace {
+				continue
+			}
 
-	// 	if ok {
-	// 		thesis.Measurements.Store(measurement.Source, append(found.([]*Measurement), measurement))
-	// 	}
+			merged = append(merged, measurement)
+		}
+	}
 
-	// 	if ready {
-	// 		thesis.Readiness.Stamp(SourceType(measurement.Source))
-	// 	}
-	// }
+	merged = append(merged, measurements...)
+	thesis.Measurements.Store(source, merged)
+	thesis.commitMarketInputs(source, measurements)
+
+	if ready {
+		thesis.Readiness.Stamp(SourceType(source))
+	}
 
 	return thesis
 }
@@ -249,34 +254,6 @@ func (thesis *Thesis) MarketSymbols() []string {
 	})
 
 	return symbols
-}
-
-func (thesis *Thesis) MarketTickers() []kraken.TickerData {
-	tickers := make([]kraken.TickerData, 0)
-
-	thesis.Tickers.Range(func(key, value any) bool {
-		if tickerSlice, ok := value.([]kraken.TickerData); ok {
-			tickers = append(tickers, tickerSlice...)
-		}
-
-		return true
-	})
-
-	return tickers
-}
-
-func (thesis *Thesis) MarketTrades() []kraken.TradeData {
-	trades := make([]kraken.TradeData, 0)
-
-	thesis.Trades.Range(func(key, value any) bool {
-		if tradeSlice, ok := value.([]kraken.TradeData); ok {
-			trades = append(trades, tradeSlice...)
-		}
-
-		return true
-	})
-
-	return trades
 }
 
 func (thesis *Thesis) Series(symbol string) []*Measurement {

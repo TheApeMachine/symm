@@ -119,7 +119,7 @@ Measure produces the Measurements for the sentiment signal.
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	group, _ := errgroup.WithContext(signal.ctx)
 
-	tickers := thesis.MarketTickers()
+	tickers := thesis.MarketTickers(types.SourceSentiment)
 
 	if !signal.ingest(tickers) {
 		return nil

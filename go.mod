@@ -102,6 +102,6 @@ replace (
 	// github.com/bytedance/sonic => ../sonic
 	// github.com/theapemachine/api-go/v2 => ../api-go
 	// github.com/theapemachine/errnie => ../errnie
-	// github.com/theapemachine/datura => ../datura
+	github.com/theapemachine/datura => ../datura
 	github.com/theapemachine/nomagique => ../nomagique
 )

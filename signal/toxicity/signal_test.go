@@ -56,7 +56,7 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It keeps both trades pending until a strict post-trade touch arrives", func() {
 			So(signal.Measure(thesis), ShouldBeEmpty)
-			So(thesis.MarketTrades(), ShouldHaveLength, 2)
+			So(thesis.MarketTrades(types.SourceToxicity), ShouldHaveLength, 2)
 
 			postAt := base.Add(3 * time.Second)
 			books.books["BTC/USD"] = toxicityBook(99, 101, 7, 6, postAt)
@@ -102,7 +102,7 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It cannot claim validity or consume the unresolved trade", func() {
 			So(signal.Measure(thesis), ShouldBeEmpty)
-			trades := thesis.MarketTrades()
+			trades := thesis.MarketTrades(types.SourceToxicity)
 			So(trades, ShouldHaveLength, 1)
 			So(trades[0].TradeID, ShouldEqual, trade.TradeID)
 			So(trades[0].Timestamp, ShouldResemble, trade.Timestamp)

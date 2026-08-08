@@ -4,14 +4,13 @@ import (
 	"context"
 	"maps"
 	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	nmhawkes "github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -43,8 +42,8 @@ type Signal struct {
 }
 
 /*
-NewSignal constructs the symbol-local excitation measurement pipeline. Its
-trade component is the sole owner of the mutable marked-arrival history.
+NewSignal constructs the symbol-local excitation measurement pipeline. Each
+update reconstructs marked-arrival history from the prior Thesis measurement.
 */
 func NewSignal(
 	ctx context.Context,
@@ -132,56 +131,65 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 }
 
 func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
-	trades := thesis.MarketTrades()
+	trades := thesis.MarketTrades(types.SourceHawkes)
 
 	if len(trades) == 0 {
 		return nil, false
 	}
 
-	buyTimes := make(map[string][]time.Time)
-	sellTimes := make(map[string][]time.Time)
+	previous := make(map[string]*types.Measurement)
+
+	for _, measurement := range utils.Measurements(thesis, types.SourceHawkes) {
+		current, found := previous[measurement.Symbol]
+
+		if !found || measurement.At.After(current.At) {
+			previous[measurement.Symbol] = measurement
+		}
+	}
+
+	histories := make(map[string]*arrivalHistory)
 
 	for _, trade := range trades {
-		switch trade.Side {
-		case "buy":
-			buyTimes[trade.Symbol] = append(buyTimes[trade.Symbol], trade.Timestamp)
-		case "sell":
-			sellTimes[trade.Symbol] = append(sellTimes[trade.Symbol], trade.Timestamp)
+		history, found := histories[trade.Symbol]
+
+		if !found {
+			history = newArrivalHistory(previous[trade.Symbol])
+			histories[trade.Symbol] = history
+		}
+
+		if err := history.Append(trade); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"hawkes: invalid market trade",
+				err,
+			))
+
+			return nil, false
 		}
 	}
 
 	var (
 		collected    sync.Mutex
-		measurements = make([]*types.Measurement, 0, len(buyTimes)+len(sellTimes))
+		measurements = make([]*types.Measurement, 0, len(histories))
 		out          = make([]*types.Measurement, 0)
 		group, _     = errgroup.WithContext(signal.ctx)
 		ready        bool
 	)
 
-	measure := func(symbol string, buys, sells []time.Time) func() error {
+	measure := func(history *arrivalHistory) func() error {
 		return func() error {
-			// The horizon has to cover the latest arrival of either mark, so a
-			// symbol whose last trade is a sell is not rejected by the estimator.
-			var from, through time.Time
+			input, found := history.Input()
 
-			for _, at := range append(append([]time.Time{}, buys...), sells...) {
-				if from.IsZero() || at.Before(from) {
-					from = at
-				}
-
-				if at.After(through) {
-					through = at
-				}
+			if !found {
+				return nil
 			}
 
-			process, _ := signal.processors.LoadOrStore(symbol, excitation.NewProcess())
+			process, _ := signal.processors.LoadOrStore(
+				input.Symbol,
+				excitation.NewProcess(),
+			)
 
-			outcome, ok, err := process.(*excitation.Process).Measure(excitation.Input{
-				Symbol:       symbol,
-				Stream:       nmhawkes.NewArrivalStream(buys, sells),
-				Horizon:      through,
-				ObservedFrom: from,
-			})
+			outcome, ok, err := process.(*excitation.Process).Measure(input)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -195,7 +203,8 @@ func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 				return nil
 			}
 
-			measurement := signal.measurement(symbol, outcome)
+			measurement := signal.measurement(input.Symbol, outcome)
+			measurement.Arrivals = history.Arrivals(outcome.ObservedFrom)
 
 			collected.Lock()
 			defer collected.Unlock()
@@ -203,7 +212,7 @@ func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			measurements = append(measurements, measurement)
 			ready = ready || outcome.Readiness.Intensity
 
-			if symbol == types.Focus() {
+			if input.Symbol == types.Focus() {
 				out = append(out, measurement)
 			}
 
@@ -211,23 +220,20 @@ func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		}
 	}
 
-	for symbol, buys := range buyTimes {
-		group.Go(measure(symbol, buys, sellTimes[symbol]))
-	}
-
-	for symbol, sells := range sellTimes {
-		// Symbols with buys already carried their sells through the pass above.
-		// Measuring them twice would advance one estimator on the same events.
-		if _, measured := buyTimes[symbol]; measured {
-			continue
-		}
-
-		group.Go(measure(symbol, nil, sells))
+	for _, history := range histories {
+		group.Go(measure(history))
 	}
 
 	if err := group.Wait(); err != nil {
 		return nil, false
 	}
+
+	sort.Slice(measurements, func(left, right int) bool {
+		return measurements[left].Symbol < measurements[right].Symbol
+	})
+	sort.Slice(out, func(left, right int) bool {
+		return out[left].Symbol < out[right].Symbol
+	})
 
 	if len(out) > 0 {
 		utils.Publish(signal.ui, datura.NewMap(

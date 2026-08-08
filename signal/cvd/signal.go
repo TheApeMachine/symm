@@ -137,8 +137,8 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers := thesis.MarketTickers()
-	trades := thesis.MarketTrades()
+	tickers := thesis.MarketTickers(types.SourceCVD)
+	trades := thesis.MarketTrades(types.SourceCVD)
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 	tradeBatches := make(map[string][]kraken.TradeData)

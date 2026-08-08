@@ -52,9 +52,38 @@ type Solver struct {
 	// Reusable zero-allocation scratch buffers
 	classScratch dmt.ClassificationScratch
 	beamScratch  dmt.BeamSearchScratch
+
+	// Consolidation products, refreshed on the REM schedule rather than per
+	// tick, because they read weights only consolidation rewrites.
+	dreams  []string
+	symbols []types.CognitionSymbol
+
+	// spawned records the last self-named regime per symbol, so a reading can
+	// report that its basin was invented rather than taught.
+	spawned map[string]string
 }
 
 const categoryTokenSeparator = "\x1f"
+
+/*
+dreamTemperature is how far consolidation strays from the strongest continuation
+when generating from a settled basin. Zero would replay the modal path the model
+already holds, which teaches it nothing; the value keeps generation exploratory
+while consolidation's own novelty and confidence gates discard what does not
+come back crisp.
+*/
+const dreamTemperature = 0.8
+
+/*
+dreamMaxTokens bounds a generated sequence to the same window a lived one gets,
+so an invented regime cannot claim more context than an observed one.
+*/
+const dreamMaxTokens = 6
+
+/*
+symbolLimit is how many discriminative category paths are retained for display.
+*/
+const symbolLimit = 32
 
 /*
 NewSolver returns a new cognition solver bound to a radix tree.
@@ -69,6 +98,7 @@ func NewSolver(
 		recorder:       recorder,
 		tree:           tree,
 		sequences:      make(map[string][]string),
+		spawned:        make(map[string]string),
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
 		surprisalLimit: 3.5, // > 3.5 bits surprisal (P < 8.8%) indicates a regime break
 		ui:             ui,
@@ -130,8 +160,23 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				// Commit completed sequence to episodic buffer for REM replay
 				_, _ = solver.tree.CommitToEpisodicBuffer(nowUnix, oldSequenceBytes)
 
-				// Run unsupervised learning to strengthen attractor basin weights
-				_, _, _ = solver.tree.UnsupervisedLearn(oldSequenceBytes, &solver.classScratch)
+				/*
+					A completed sequence is learned without being told what it
+					was. When nothing the model already knows explains it, the
+					model names a regime for it rather than forcing it into the
+					least-bad existing basin and corrupting that basin.
+
+					This is the one place cognition can exceed the category
+					taxonomy: categories are a fixed vocabulary, but the
+					sequences they compose into are not.
+				*/
+				outcome, experienceErr := solver.tree.ExperienceSequence(
+					oldSequenceBytes, &solver.classScratch,
+				)
+
+				if experienceErr == nil && outcome.NewConcept {
+					solver.spawned[symbol] = string(outcome.Class)
+				}
 
 				// Start fresh sequence buffer with new category
 				activeTokens = []string{categoryToken}
@@ -147,6 +192,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		activeSequenceBytes := solver.sequenceBytes(activeTokens)
+		spawnedClass, spawned := solver.spawned[symbol]
 
 		// 4. Classify macro market regime / concept attractor basin
 		classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)
@@ -233,6 +279,20 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		winner := string(classResult.Winner)
 
+		// Backoff surprisal scores the sequence against every order of its own
+		// context, so an unseen continuation of a known prefix is merely
+		// surprising instead of unmeasurable.
+		interpolated := solver.tree.InterpolatedSurprisal(activeSequenceBytes)
+		averageSurprisal := 0.0
+
+		for _, item := range interpolated {
+			averageSurprisal += item.Surprisal
+		}
+
+		if len(interpolated) > 0 {
+			averageSurprisal /= float64(len(interpolated))
+		}
+
 		cognition := types.Cognition{
 			Source:           "cognition",
 			Symbol:           symbol,
@@ -259,6 +319,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			Branches:         branches,
 			Beams:            beams,
 			Classes:          classes,
+
+			InterpolatedSurprisal: averageSurprisal,
+			Contributions:         solver.contributions(activeSequenceBytes),
+			Lexical:               solver.lexical(activeTokens),
+			Symbols:               solver.symbols,
+			Dreams:                solver.dreams,
+			NewConcept:            spawned,
+			SpawnedClass:          spawnedClass,
 		}
 
 		thesis.Cognition.Store(symbol, cognition)
@@ -272,10 +340,112 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	// 10. Periodic REM Sleep Consolidation (every 128 ticks)
 	if solver.tickCounter%128 == 0 && nowUnix > 60e9 {
 		startWindow := nowUnix - 60e9 // 1 minute window
-		solver.tree.ExecuteREMSleepConsolidation(startWindow, nowUnix)
+		solver.consolidate(thesis, startWindow, nowUnix)
 	}
 
 	return nil
+}
+
+/*
+consolidate replays the episodic window and then dreams from each settled basin,
+recording what the model invented for itself.
+
+Why:
+
+	Replay can only reinforce what was observed. Generating from a basin and
+	keeping what classifies back to it crisply is how the model fills in the
+	continuations its own statistics imply but that never happened to occur.
+
+	Symbol extraction runs on the same schedule because it reads the basin
+	weights consolidation has just rewritten. Extracting before the pass would
+	rank paths on evidence that is about to change.
+*/
+func (solver *Solver) consolidate(
+	thesis *types.Thesis,
+	startWindow, nowUnix uint64,
+) {
+	dreams := solver.tree.ExecuteREMSleepWithDreaming(
+		startWindow,
+		nowUnix,
+		dreamTemperature,
+		dreamMaxTokens,
+		&solver.classScratch,
+		dmt.SelectStochasticToken,
+	)
+
+	solver.dreams = solver.dreams[:0]
+
+	for _, dream := range dreams {
+		solver.dreams = append(
+			solver.dreams,
+			solver.decodeCategoryPath(dream.Sequence),
+		)
+	}
+
+	solver.symbols = solver.symbols[:0]
+
+	for _, symbol := range solver.tree.ExtractDiscriminativeSymbols(symbolLimit) {
+		solver.symbols = append(solver.symbols, types.CognitionSymbol{
+			Symbol: solver.decodeCategoryPath(symbol.Symbol),
+			Class:  solver.decodeCategoryToken(string(symbol.Class)),
+			Score:  symbol.Score,
+			Purity: symbol.Purity,
+		})
+	}
+}
+
+/*
+contributions reports how much more evidence each transition gave the winning
+basin than the runner-up, which is what turns a verdict into an explanation.
+*/
+func (solver *Solver) contributions(
+	sequenceBytes []byte,
+) []types.CognitionContribution {
+	raw := solver.tree.ContrastiveTokenContributions(sequenceBytes)
+
+	if len(raw) == 0 {
+		return nil
+	}
+
+	out := make([]types.CognitionContribution, 0, len(raw))
+
+	for _, contribution := range raw {
+		out = append(out, types.CognitionContribution{
+			Token: solver.decodeCategoryToken(string(contribution.Token)),
+			Bits:  contribution.Bits,
+		})
+	}
+
+	return out
+}
+
+/*
+lexical reports any active token that had to be resolved onto a different known
+token, so a reading can show it was scored against a neighbour rather than
+against itself.
+*/
+func (solver *Solver) lexical(activeTokens []string) []types.CognitionLexical {
+	resolved := make([]types.CognitionLexical, 0, len(activeTokens))
+
+	for _, token := range activeTokens {
+		match := solver.tree.ResolveToken([]byte(token))
+
+		if string(match.Mapped) == token {
+			continue
+		}
+
+		resolved = append(resolved, types.CognitionLexical{
+			Original:   solver.decodeCategoryToken(token),
+			Mapped:     solver.decodeCategoryToken(string(match.Mapped)),
+			Similarity: match.Similarity,
+		})
+	}
+
+	if len(resolved) == 0 {
+		return nil
+	}
+
+	return resolved
 }
 
 /*

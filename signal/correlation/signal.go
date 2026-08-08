@@ -104,7 +104,7 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers := thesis.MarketTickers()
+	tickers := thesis.MarketTickers(types.SourceCorrelation)
 
 	if len(tickers) == 0 {
 		return nil

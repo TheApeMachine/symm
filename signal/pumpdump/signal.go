@@ -127,7 +127,7 @@ func (signal *Signal) Measure(
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
-	trades := thesis.MarketTrades()
+	trades := thesis.MarketTrades(types.SourcePumpDump)
 
 	if len(trades) == 0 || signal.books == nil {
 		return measurements

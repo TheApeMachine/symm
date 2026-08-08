@@ -120,7 +120,7 @@ func (signal *Signal) run() {
 Measure produces the Measurements for the liquidity signal.
 */
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers := thesis.MarketTickers()
+	tickers := thesis.MarketTickers(types.SourceLiquidity)
 
 	if !signal.ingest(tickers) {
 		return nil

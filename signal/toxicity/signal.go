@@ -108,7 +108,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return measurements
 	}
 
-	trades := thesis.MarketTrades()
+	trades := thesis.MarketTrades(types.SourceToxicity)
 	toxicity := utils.Measurements(thesis, types.SourceToxicity)
 	symbols := thesis.MarketSymbols()
 	sort.Strings(symbols)

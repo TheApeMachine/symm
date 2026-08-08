@@ -54,6 +54,43 @@ func excitationOutcome(fitted bool) excitation.Outcome {
 }
 
 func TestMeasure(t *testing.T) {
+	Convey("Given one new trade on each Thesis fanout", t, func() {
+		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
+		start := time.Unix(1_700_005_000, 0).UTC()
+		thesis := types.NewThesis(nil)
+		var measurements []*types.Measurement
+		var ready bool
+
+		for index, side := range []string{"buy", "sell", "buy"} {
+			thesis.AppendTrade(kraken.TradeData{
+				Symbol:    "BTC/USD",
+				TradeID:   int64(index + 1),
+				Side:      side,
+				Timestamp: start.Add(time.Duration(index) * time.Second),
+			})
+			measurements, ready = signal.measure(thesis)
+
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].Arrivals, ShouldHaveLength, index+1)
+			So(ready, ShouldEqual, index == 2)
+
+			thesis.AppendMeasurements(measurements, ready)
+			So(thesis.MarketTrades(types.SourceHawkes), ShouldBeEmpty)
+		}
+
+		Convey("It should carry prior arrivals in a bounded intermediate measurement", func() {
+			stored, found := thesis.Measurements.Load(types.SourceHawkes)
+			So(found, ShouldBeTrue)
+			So(stored.([]*types.Measurement), ShouldHaveLength, 1)
+			So(stored.([]*types.Measurement)[0], ShouldEqual, measurements[0])
+			So(measurements[0].Sample(
+				types.MetricEventCount,
+				types.SideNone,
+			).Raw, ShouldEqual, 2)
+			So(thesis.Readiness.Hawkes, ShouldBeTrue)
+		})
+	})
+
 	Convey("Given a liquid market and an unrelated thin market", t, func() {
 		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()

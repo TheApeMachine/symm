@@ -89,6 +89,16 @@ type MetricSample struct {
 }
 
 /*
+MeasurementArrival is the bounded marked-event evidence retained by an
+incremental arrival-process measurement. It carries only the timestamp and
+side the estimator needs; exchange trade payloads remain raw Thesis input.
+*/
+type MeasurementArrival struct {
+	At   time.Time       `json:"at"`
+	Side MeasurementSide `json:"side"`
+}
+
+/*
 Measurement is one source×symbol observation: shared provenance plus a Metrics
 map keyed like the UI wire (metric, or metric:side).
 
@@ -110,6 +120,7 @@ type Measurement struct {
 	Maturity     float64                 `json:"maturity,omitempty" validate:"finite"`
 	Uncertainty  *MeasurementUncertainty `json:"uncertainty,omitempty"`
 	Metrics      map[string]MetricSample `json:"metrics,omitempty"`
+	Arrivals     []MeasurementArrival    `json:"-"`
 }
 
 /*

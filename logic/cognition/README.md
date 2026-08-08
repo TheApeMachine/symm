@@ -13,7 +13,7 @@ question becomes what any language model asks — given this prefix, what comes
 next, and how surprised should I be by what actually arrived?
 
 The substrate is a **radix trie** (`dmt.Tree` in
-[`datura/dmt`](../../../datura/dmt)) holding a Markov context model. This is worth
+[`github.com/theapemachine/datura/dmt`](https://github.com/TheApeMachine/datura/tree/9dfddf9fa0f310cb1195deb3f8afcd9979232e5a/dmt)) holding a Markov context model. This is worth
 stating plainly because it is easy to mistake for the other subsystems: it shares
 *no machinery* with the manifold's quantum hydrodynamics or resonance's
 predictive coding. Different data structure, different mathematics, different

@@ -32,6 +32,35 @@ type CognitionClass struct {
 }
 
 /*
+CognitionContribution is one token's signed evidence for the winning class over
+the runner-up, in bits, so a verdict can name the transition that carried it.
+*/
+type CognitionContribution struct {
+	Token string  `json:"token"`
+	Bits  float64 `json:"bits"`
+}
+
+/*
+CognitionSymbol is a category path that identifies one class disproportionately.
+*/
+type CognitionSymbol struct {
+	Symbol string  `json:"symbol"`
+	Class  string  `json:"class"`
+	Score  float64 `json:"score"`
+	Purity float64 `json:"purity"`
+}
+
+/*
+CognitionLexical records an observed category token resolved onto the vocabulary
+the model actually knows.
+*/
+type CognitionLexical struct {
+	Original   string  `json:"original"`
+	Mapped     string  `json:"mapped"`
+	Similarity float64 `json:"similarity"`
+}
+
+/*
 Cognition is the DMT reading for one symbol's reduced category context. It
 retains both the current basin classification and the next-step lookahead so
 the Thesis can expose cognition as one influence among many, rather than as a
@@ -67,4 +96,19 @@ type Cognition struct {
 	REMFrom          time.Time          `json:"remFrom,omitempty"`
 	REMThrough       time.Time          `json:"remThrough,omitempty"`
 	REMReplays       int                `json:"remReplays,omitempty"`
+
+	// InterpolatedSurprisal scores the active sequence through backoff rather
+	// than a single stored path, so a novel continuation of a familiar prefix is
+	// surprising rather than unmeasurable.
+	InterpolatedSurprisal float64 `json:"interpolatedSurprisal"`
+
+	// NewConcept reports that this observation matched no existing basin well
+	// enough to be claimed by one, and the model named a regime for it.
+	NewConcept   bool   `json:"newConcept,omitempty"`
+	SpawnedClass string `json:"spawnedClass,omitempty"`
+
+	Contributions []CognitionContribution `json:"contributions,omitempty"`
+	Symbols       []CognitionSymbol       `json:"symbols,omitempty"`
+	Lexical       []CognitionLexical      `json:"lexical,omitempty"`
+	Dreams        []string                `json:"dreams,omitempty"`
 }
