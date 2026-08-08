@@ -119,9 +119,9 @@ func BenchmarkThesisMarketTickers(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for range b.N {
+	for b.Loop() {
 		if len(thesis.MarketTickers(SourceCorrelation)) == 0 {
 			b.Fatal("expected uncommitted benchmark tickers")
 		}
@@ -152,9 +152,9 @@ func BenchmarkThesisMarketTrades(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for range b.N {
+	for b.Loop() {
 		if len(thesis.MarketTrades(SourceHawkes)) == 0 {
 			b.Fatal("expected uncommitted benchmark trades")
 		}

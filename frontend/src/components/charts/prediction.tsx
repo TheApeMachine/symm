@@ -14,16 +14,54 @@ const ScalarDiagnostics = () => (
 		{({ ref }) => (
 			<div
 				ref={ref}
-				className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)"
+				className="grid grid-cols-8 gap-px overflow-hidden border border-(--line) bg-(--line)"
 			>
 				<div className="bg-[#0a0907] px-2 py-1.5">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						confidence
+						direction probability
 					</div>
 					<div
 						data-paint="forecast.confidence"
 						data-paint-format=".1%"
 						className="mt-0.5 font-mono text-[11px] text-(--up)"
+					>
+						—
+					</div>
+				</div>
+				<div className="bg-[#0a0907] px-2 py-1.5">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+						skill evidence
+					</div>
+					<div
+						data-paint="skillEvidence"
+						data-paint-format=".1%"
+						className="mt-0.5 font-mono text-[11px] text-(--f2)"
+					>
+						—
+					</div>
+				</div>
+				<div className="bg-[#0a0907] px-2 py-1.5">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+						expected move
+					</div>
+					<div
+						data-paint="forecast.expectedBasisPoints"
+						data-paint-format=".3f"
+						data-paint-suffix=" bp"
+						className="mt-0.5 font-mono text-[11px] text-(--acc)"
+					>
+						—
+					</div>
+				</div>
+				<div className="bg-[#0a0907] px-2 py-1.5">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+						predictive σ
+					</div>
+					<div
+						data-paint="forecast.predictiveScaleBasisPoints"
+						data-paint-format=".3f"
+						data-paint-suffix=" bp"
+						className="mt-0.5 font-mono text-[11px] text-(--f2)"
 					>
 						—
 					</div>
@@ -155,8 +193,9 @@ const ForecastArrow = () => (
 			▲
 		</span>
 		<span
-			data-paint="forecast.expectedReturn"
-			data-paint-format=".3%"
+			data-paint="forecast.expectedBasisPoints"
+			data-paint-format=".3f"
+			data-paint-suffix=" bp"
 			className="truncate font-mono text-[13px] text-(--tone,var(--f3))"
 		>
 			—
@@ -337,8 +376,8 @@ export const TerminalPredictionChart = () => (
 		/>
 		<VectorLane
 			select="forecast.forwardCurve"
-			label="Forward return curve"
-			meta="dynamic recurrent rollout · t+1 → t+k"
+			label="Forward return shape"
+			meta="relative shape · magnitude in bp above · t+1 → t+k"
 			color="bg-(--acc)"
 			scale="max-abs"
 		/>

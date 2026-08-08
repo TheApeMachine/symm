@@ -2,6 +2,7 @@ package resonance
 
 import (
 	"context"
+	"errors"
 	"math"
 	"slices"
 	"sort"
@@ -21,7 +22,6 @@ import (
 
 const (
 	resonanceReturnDimensions = 1
-	restAlpha                 = 0.03
 )
 
 /*
@@ -31,29 +31,49 @@ errors (Surprise), settles top-down/bottom-up latent states, learns forward retu
 with recursive least squares, and extends horizons based on resolved forecast skill.
 */
 type Solver struct {
-	recorder        *audit.Recorder
-	states          map[string]*symbolState
-	arch            []int
-	targetDim       int
-	learn           bool
-	advanceTemporal bool
-	ui              chan []byte
+	ctx              context.Context
+	cancel           context.CancelFunc
+	recorder         *audit.Recorder
+	states           map[string]*symbolState
+	arch             []int
+	targetDim        int
+	initialAlpha     float64
+	configurationErr error
+	learn            bool
+	advanceTemporal  bool
+	ui               chan []byte
 }
 
 /*
-NewSolver returns a new predictive coding solver with dynamic alpha control and
+NewSolver returns a predictive coding solver with a configured base alpha and
 dynamic forward prediction rollout.
 The forecast horizon grows only as resolved return samples accumulate and
 contracts to the confidence-supported path length.
 */
-func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
+func NewSolver(
+	ctx context.Context,
+	ui chan []byte,
+	recorder *audit.Recorder,
+	initialAlpha float64,
+) *Solver {
+	ctx, cancel := context.WithCancel(ctx)
+
 	solver := &Solver{
+		ctx:             ctx,
+		cancel:          cancel,
 		recorder:        recorder,
 		states:          make(map[string]*symbolState),
 		targetDim:       resonanceReturnDimensions,
+		initialAlpha:    initialAlpha,
 		learn:           true,
 		advanceTemporal: true,
 		ui:              ui,
+	}
+
+	if !(initialAlpha > 0) || initialAlpha > 1 || math.IsNaN(initialAlpha) || math.IsInf(initialAlpha, 0) {
+		solver.configurationErr = errors.New(
+			"resonance: learning rate must be finite and in (0, 1]",
+		)
 	}
 
 	return solver
@@ -66,67 +86,73 @@ func (solver *Solver) state(symbol string) *symbolState {
 		return state
 	}
 
-	state = newSymbolState(restAlpha)
+	state = newSymbolState(solver.initialAlpha)
 	solver.states[symbol] = state
 
 	return state
 }
 
 /*
-Update extracts physical/field feature vectors from the Thesis, settles the CPU predictive
-coding manifold, dynamically tunes alpha and forward prediction horizon, and enriches the Thesis.
+Update extracts physical/field feature vectors from the Thesis, settles the CPU
+predictive-coding manifold, updates the adaptive return learner and forward
+prediction horizon, and enriches the Thesis.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	featureSets := solver.extractFeatures(thesis)
-
-	if len(featureSets) == 0 {
-		return nil
-	}
-
-	group, _ := errgroup.WithContext(context.Background())
-
-	for symbol := range featureSets {
-		solver.state(symbol)
-	}
-
-	for symbol, features := range featureSets {
-		group.Go(func() error {
-			return solver.updateSymbol(thesis, symbol, features)
-		})
-	}
-
-	if err := group.Wait(); err != nil {
+	if solver.configurationErr != nil {
 		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"resonance: failed to update CPU predictive coding manifold: "+err.Error(),
-			err,
+			errnie.Validation,
+			"resonance: invalid solver configuration",
+			solver.configurationErr,
 		))
 	}
 
-	thesis.Readiness.Stamp(types.SourceResonance)
+	featureSets := solver.extractFeatures(thesis)
 
-	/*
-		Every carrier the solver settled this round is published, not just the
-		focused one. The latent manifold is a cross-section — a cloud of symbols
-		positioned by where their predictive states sit relative to one another —
-		and one point is not a cross-section. Only the focused row carries the
-		full latent vector and the layer stack; every other row carries its
-		embedding and its scalars, which is what the cloud actually plots.
-	*/
-	rows := make([]any, 0, 64)
+	if len(featureSets) > 0 {
+		group, _ := errgroup.WithContext(context.Background())
 
-	thesis.Resonance.Range(func(_, value any) bool {
-		rows = append(rows, value)
-		return true
-	})
+		for symbol := range featureSets {
+			solver.state(symbol)
+		}
 
-	if len(rows) != 0 {
-		utils.Publish(
-			solver.ui,
-			datura.NewMap("resonance", rows),
-		)
+		for symbol, features := range featureSets {
+			group.Go(func() error {
+				return solver.updateSymbol(thesis, symbol, features)
+			})
+		}
+
+		if err := group.Wait(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"resonance: failed to update CPU predictive coding manifold: "+err.Error(),
+				err,
+			))
+		}
+
+		thesis.Readiness.Stamp(types.SourceResonance)
+
+		// Every carrier the solver settled this round is published, not just the
+		// focused one. The latent manifold is a cross-section — a cloud of symbols
+		// positioned by where their predictive states sit relative to one another —
+		// and one point is not a cross-section. Only the focused row carries the
+		// full latent vector and the layer stack; every other row carries its
+		// embedding and its scalars, which is what the cloud actually plots.
+		rows := make([]any, 0, 64)
+
+		thesis.Resonance.Range(func(_, value any) bool {
+			rows = append(rows, value)
+			return true
+		})
+
+		if len(rows) != 0 {
+			utils.Publish(
+				solver.ui,
+				datura.NewMap("resonance", rows),
+			)
+		}
 	}
 
+	thesis.Fanout()
 	return nil
 }
 
@@ -189,7 +215,7 @@ func (solver *Solver) updateSymbol(
 			state.pendingMid = 0
 			state.pendingAt = time.Time{}
 			state.skill = probability.NewBernoulli()
-			state.confidence = 0
+			state.skillEvidence = chanceForecastSkill
 			state.horizonReach = 1
 		}
 	}
@@ -236,13 +262,15 @@ func (solver *Solver) updateSymbol(
 	*/
 	if !informative {
 		thesis.Resonance.Store(symbol, types.ResonanceReading{
-			Stage:        "resonance",
-			Source:       types.SourceResonance,
-			Symbol:       symbol,
-			TargetSymbol: symbol,
-			At:           thesis.At,
-			Alpha:        state.alpha,
-			Samples:      state.targetSamples,
+			Stage:         "resonance",
+			Source:        types.SourceResonance,
+			Symbol:        symbol,
+			TargetSymbol:  symbol,
+			At:            thesis.At,
+			Verdict:       resonanceVerdict(nil),
+			Alpha:         state.alpha,
+			Samples:       state.targetSamples,
+			SkillEvidence: state.skillEvidence,
 		})
 
 		return nil
@@ -275,18 +303,87 @@ func (solver *Solver) updateSymbol(
 	surprise := totalSurprise / math.Sqrt(featureCount)
 	energy := state.manifold.PredictionEnergy() / featureCount
 
-	confidence := state.confidence
+	firstStep, err := state.manifold.RolloutTaskForecast(1)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: first-step return forecast failed: "+err.Error(),
+			err,
+		))
+	}
+
+	if len(firstStep) != solver.targetDim {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: first-step return forecast dimension mismatch",
+			nil,
+		))
+	}
+
+	confidence, err := state.forecastConfidence(firstStep[0])
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: current forecast confidence failed: "+err.Error(),
+			err,
+		))
+	}
+
 	activeHorizon := solver.horizon(state, confidence)
 
+	rollout, err := state.manifold.RolloutTaskForecast(activeHorizon)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: return forecast rollout failed: "+err.Error(),
+			err,
+		))
+	}
+
+	if len(rollout) != activeHorizon*solver.targetDim {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: return forecast rollout dimension mismatch",
+			nil,
+		))
+	}
+
+	curve := make([]float64, activeHorizon)
+
+	for step := range activeHorizon {
+		curve[step] = rollout[step*solver.targetDim].Value
+	}
+
+	retention := state.manifold.RolloutRetention(activeHorizon)
 	var forecast *types.ResonanceForecast
 
-	if state.targetSamples > 0 {
+	if len(retention) == activeHorizon && retention[0] > 0 {
 		forecast, err = types.NewResonanceForecast(
-			state.manifold.RolloutTaskPrediction(activeHorizon),
-			state.manifold.RolloutRetention(activeHorizon),
-			activeHorizon,
-			confidence,
+			curve, retention, activeHorizon, confidence,
 		)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"resonance: invalid forward forecast: "+err.Error(),
+				err,
+			))
+		}
+
+		if err := forecast.SetPredictiveDistribution(
+			rollout[0].Scale,
+			rollout[0].DegreesOfFreedom,
+			rollout[0].Ready,
+		); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"resonance: invalid predictive distribution: "+err.Error(),
+				err,
+			))
+		}
 	}
 
 	verdict := resonanceVerdict(forecast)
@@ -323,20 +420,21 @@ func (solver *Solver) updateSymbol(
 	}
 
 	row := types.ResonanceReading{
-		Stage:        "resonance",
-		Source:       types.SourceResonance,
-		Symbol:       symbol,
-		TargetSymbol: symbol,
-		At:           thesis.At,
-		Surprise:     surprise,
-		Energy:       energy,
-		Latent:       latent,
-		Embedding:    embedding,
-		Layers:       layers,
-		Forecast:     forecast,
-		Verdict:      verdict,
-		Alpha:        state.alpha,
-		Samples:      state.targetSamples,
+		Stage:         "resonance",
+		Source:        types.SourceResonance,
+		Symbol:        symbol,
+		TargetSymbol:  symbol,
+		At:            thesis.At,
+		Surprise:      surprise,
+		Energy:        energy,
+		Latent:        latent,
+		Embedding:     embedding,
+		Layers:        layers,
+		Forecast:      forecast,
+		Verdict:       verdict,
+		Alpha:         state.alpha,
+		Samples:       state.targetSamples,
+		SkillEvidence: state.skillEvidence,
 	}
 
 	thesis.Resonance.Store(symbol, row)

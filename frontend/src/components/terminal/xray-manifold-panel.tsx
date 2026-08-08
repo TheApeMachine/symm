@@ -9,9 +9,8 @@ XrayManifoldPanel is the manifold reading.
 
 The predictive network publishes its settled state one carrier at a time, so the
 panel scopes to the focused symbol's frame rather than whichever frame happens
-to sit first in the batch. Confidence drives the mode bar because it is the
-network's own statement of how well its current state explains what it is
-seeing.
+to sit first in the batch. Direction probability and historical skill remain
+separate because only the first belongs to the current forecast.
 */
 export const XrayManifoldPanel = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
@@ -94,11 +93,35 @@ export const XrayManifoldPanel = () => {
 							</Typography.Span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-(--f3)">fwd return</span>
+							<span className="text-(--f3)">skill evidence</span>
 							<Typography.Span
-								data-paint="forecast.expectedReturn"
+								data-paint="skillEvidence"
 								data-paint-absent="—"
-								data-paint-format=".5f"
+								data-paint-format=".1%"
+								className="text-right text-(--f1)"
+							>
+								—
+							</Typography.Span>
+						</div>
+						<div className="flex justify-between gap-3">
+							<span className="text-(--f3)">expected move</span>
+							<Typography.Span
+								data-paint="forecast.expectedBasisPoints"
+								data-paint-absent="—"
+								data-paint-format=".3f"
+								data-paint-suffix=" bp"
+								className="text-right text-(--f1)"
+							>
+								—
+							</Typography.Span>
+						</div>
+						<div className="flex justify-between gap-3">
+							<span className="text-(--f3)">predictive σ</span>
+							<Typography.Span
+								data-paint="forecast.predictiveScaleBasisPoints"
+								data-paint-absent="—"
+								data-paint-format=".3f"
+								data-paint-suffix=" bp"
 								className="text-right text-(--f1)"
 							>
 								—
@@ -107,7 +130,7 @@ export const XrayManifoldPanel = () => {
 					</div>
 					<div data-scope="symbol" data-filter={focusSymbol} className="mt-0.5">
 						<div className="mb-1 flex justify-between text-[10px]">
-							<span className="text-(--f3)">predictive confidence</span>
+							<span className="text-(--f3)">direction probability</span>
 							<Typography.Span
 								data-paint="forecast.confidence"
 								data-paint-absent="—"
@@ -119,7 +142,7 @@ export const XrayManifoldPanel = () => {
 						</div>
 						<div className="h-1.5 overflow-hidden rounded-[3px] bg-(--line)">
 							<div
-								data-set="confidence"
+								data-set="forecast.confidence"
 								data-target="style.--mode"
 								className="h-full bg-(--acc)"
 								style={{ width: "calc(var(--mode, 0) * 100%)" }}

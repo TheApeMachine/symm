@@ -18,6 +18,7 @@ const branch = (
 	parentId,
 	token,
 	prefix: prefix ?? (depth === 0 ? "" : token),
+	key: prefix ?? (depth === 0 ? "" : token),
 	depth,
 	probability,
 	count: 1,
@@ -33,7 +34,7 @@ const readingWith = (
 	nodeCount: branches.length,
 	sequence,
 	branches,
-	beams: [{ sequence: "beta", score: -0.1 }],
+	beams: [{ sequence: "beta", key: "beta", score: -0.1 }],
 	classes: [{ name: "sell", probability: 0.9 }],
 });
 
@@ -50,7 +51,7 @@ describe("cortexTreeFromReading", () => {
 				"alpha_gamma_long_sealed_tail",
 				3,
 			),
-			beams: [{ sequence: "beta", score: -0.2 }],
+			beams: [{ sequence: "beta", key: "beta", score: -0.2 }],
 		});
 
 		expect(tree?.beamPrefixes.has("beta")).toBe(true);

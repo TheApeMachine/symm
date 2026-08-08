@@ -44,6 +44,25 @@ func primeFeatures(solver *Solver, symbol string, keys ...string) {
 	}
 }
 
+func TestNewSolver(t *testing.T) {
+	Convey("Given the configured generative-model learning rate", t, func() {
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+
+		Convey("It should initialize every symbol with that exact base pace", func() {
+			So(solver.state("BTC/USD").alpha, ShouldEqual, testAlpha)
+		})
+	})
+
+	Convey("Given an invalid configured learning rate", t, func() {
+		solver := NewSolver(t.Context(), nil, nil, 0)
+		err := solver.Update(types.NewThesis(t.Context(), nil))
+
+		Convey("It should fail visibly before processing market state", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestExtractFeatures(t *testing.T) {
 	Convey("Given the normalized fields published by the current Hawkes measurement", t, func() {
 		buyArrival := 0.75
@@ -161,7 +180,7 @@ func TestExtractFeatures(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	Convey("Given an initialized symbol whose upstream feature is absent this pass", t, func() {
-		solver := NewSolver(nil, nil)
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 		symbol := "BTC/USD"
 		primeFeatures(solver, symbol, "first", "second")
 		first := 0.75
@@ -184,7 +203,7 @@ func TestUpdate(t *testing.T) {
 	})
 
 	Convey("Given an established schema from current Hawkes observations", t, func() {
-		solver := NewSolver(nil, nil)
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 		symbol := "BTC/USD"
 
 		for tick := range 3 {
@@ -253,7 +272,7 @@ func TestUpdate(t *testing.T) {
 				"second": {Normalized: &second},
 			},
 		}})
-		solver := NewSolver(make(chan []byte, 1), nil)
+		solver := NewSolver(t.Context(), make(chan []byte, 1), nil, testAlpha)
 		primeFeatures(solver, "BTC/USD", "first", "second")
 		thesis.AppendTicker(kraken.TickerData{
 			Symbol:    "BTC/USD",
@@ -293,6 +312,12 @@ func TestUpdate(t *testing.T) {
 			*/
 			So(row.Energy, ShouldAlmostEqual,
 				state.manifold.PredictionEnergy()/featureCount)
+			So(row.Samples, ShouldEqual, uint64(0))
+			So(row.Forecast, ShouldNotBeNil)
+			So(row.Forecast.Confidence, ShouldAlmostEqual, chanceForecastSkill)
+			So(row.Forecast.ConfidenceReady, ShouldBeFalse)
+			So(row.SkillEvidence, ShouldAlmostEqual, chanceForecastSkill)
+			So(row.Verdict.Learning, ShouldEqual, "predicting")
 			So(row.Layers, ShouldHaveLength, 3)
 			So(row.Layers[0].State, ShouldHaveLength, len(state.featureSchema))
 			So(row.Layers[0].Prediction, ShouldHaveLength, len(state.featureSchema))
@@ -348,12 +373,17 @@ func TestUpdate(t *testing.T) {
 			So(row.Forecast.Validate(), ShouldBeNil)
 			So(len(row.Forecast.Curve), ShouldEqual, row.Forecast.SupportedHorizon)
 			So(len(row.Forecast.Retention), ShouldEqual, row.Forecast.SupportedHorizon)
+			So(row.Forecast.Curve[0], ShouldAlmostEqual,
+				state.manifold.TaskPrediction()[0])
+			So(row.Forecast.ExpectedBasisPoints, ShouldNotEqual, 0.0)
+			So(row.Forecast.ConfidenceReady, ShouldBeTrue)
+			So(row.Forecast.PredictiveScale, ShouldBeGreaterThan, 0)
 			So(state.targetSamples, ShouldEqual, 2)
 		})
 	})
 
 	Convey("Given a ready feature observed at its learned mean", t, func() {
-		solver := NewSolver(nil, nil)
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 		symbol := "BTC/USD"
 		featureKey := "reading"
 
@@ -391,6 +421,9 @@ func TestUpdate(t *testing.T) {
 			reading, ok := stored.(types.ResonanceReading)
 			So(ok, ShouldBeTrue)
 			So(reading.Stage, ShouldEqual, "resonance")
+			So(reading.Verdict.Learning, ShouldEqual, "predicting")
+			So(reading.Verdict.Tuning, ShouldEqual, "recursive least squares")
+			So(reading.Forecast.Confidence, ShouldEqual, chanceForecastSkill)
 			So(solver.state(symbol).manifold, ShouldNotBeNil)
 			So(solver.state(symbol).extractor, ShouldNotBeNil)
 		})
@@ -400,7 +433,7 @@ func TestUpdate(t *testing.T) {
 func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 	Convey("Given a pending resonance sample from one symbol", t, func() {
 		normalized := 0.25
-		solver := NewSolver(make(chan []byte, 1), nil)
+		solver := NewSolver(t.Context(), make(chan []byte, 1), nil, testAlpha)
 		primeFeatures(solver, "BTC/USD", "reading")
 		primeFeatures(solver, "ETH/USD", "reading")
 
@@ -462,7 +495,7 @@ a supervised sample when the market epoch advances. A stream that repeats one
 epoch teaches the head nothing however long it runs.
 */
 func driveSolver(ticks int) *Solver {
-	solver := NewSolver(make(chan []byte, 1), nil)
+	solver := NewSolver(context.Background(), make(chan []byte, 1), nil, testAlpha)
 
 	for tick := range ticks {
 		/*
@@ -611,7 +644,7 @@ func BenchmarkUpdate(b *testing.B) {
 	const featureCount = 48
 
 	thesis := types.NewThesis(b.Context(), nil)
-	solver := NewSolver(make(chan []byte, 1), nil)
+	solver := NewSolver(b.Context(), make(chan []byte, 1), nil, testAlpha)
 	symbols := []string{"BTC/USD", "SIM2/USD"}
 
 	for symbolIndex, symbol := range symbols {

@@ -130,8 +130,9 @@ func TestPlannerSearch(t *testing.T) {
 }
 
 func TestPlannerUpdate(t *testing.T) {
-	Convey("Given a fully analyzed thesis whose forecast is still warming", t, func() {
-		planner := &Planner{}
+	Convey("Given a fully analyzed thesis whose forecast is unavailable", t, func() {
+		messages := make(chan []byte, 2)
+		planner := &Planner{ui: messages}
 		causalSolver := causal.NewSolver(nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
@@ -165,6 +166,7 @@ func TestPlannerUpdate(t *testing.T) {
 
 		So(causalSolver.Update(thesis), ShouldBeNil)
 		planner.Update(thesis)
+		planner.Update(thesis)
 
 		Convey("Then Planner should complete an explicit Do Not Enter decision", func() {
 			So(thesis.Readiness.Planner, ShouldBeTrue)
@@ -172,6 +174,29 @@ func TestPlannerUpdate(t *testing.T) {
 			stored, found := thesis.Decisions.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			So(stored.(*types.Decision).Action, ShouldEqual, types.ActionNothing)
+			So(len(messages), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given a complete logic cut without causal candidates", t, func() {
+		planner := &Planner{}
+		thesis := types.NewThesis(t.Context(), nil)
+
+		for _, source := range []types.SourceType{
+			types.SourceCategories,
+			types.SourceCognition,
+			types.SourceManifold,
+			types.SourceResonance,
+			types.SourceCausal,
+			types.SourceGraph,
+		} {
+			thesis.Readiness.Stamp(source)
+		}
+
+		planner.Update(thesis)
+
+		Convey("Then Planner should close the epoch without inventing a decision", func() {
+			So(thesis.StrategyDecided(), ShouldBeTrue)
 		})
 	})
 }
@@ -182,9 +207,10 @@ func TestPlannerDecisions(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Causal.Store("BTC/USD", map[string]any{"ready": false})
 
-		decisions := planner.decisions(thesis)
+		decisions, err := planner.decisions(thesis)
 
 		Convey("Then Planner should write Do Not Enter to the thesis", func() {
+			So(err, ShouldBeNil)
 			So(decisions, ShouldHaveLength, 1)
 			So(decisions[0].Action, ShouldEqual, types.ActionNothing)
 
@@ -373,6 +399,8 @@ func BenchmarkPlannerDecisions(b *testing.B) {
 			"historyRows":    rows,
 			"treatmentLevel": 1.0,
 		})
-		_ = planner.decisions(thesis)
+		if _, err := planner.decisions(thesis); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

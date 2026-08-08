@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/spf13/viper"
@@ -92,61 +93,69 @@ func (planner *Planner) Close() error {
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) {
-	if thesis.LogicAnalyzed() {
-		decisions := planner.decisions(thesis)
+	if !thesis.LogicAnalyzed() || thesis.StrategyDecided() {
+		return
+	}
 
-		if len(decisions) != 0 {
-			if planner.recorder != nil {
-				if err := planner.recorder.Write(decisions); err != nil {
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"planner: decision audit failed",
-						err,
-					))
-				}
-			}
+	decisions, err := planner.decisions(thesis)
 
-			thesis.Stamp(types.SourcePlanner)
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"planner: decision pass failed: "+err.Error(),
+			err,
+		))
 
-			utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
-				"evaluated", true,
-				"outcome", "decisions",
-				"decisions", decisions,
-			)))
+		return
+	}
+
+	if len(decisions) != 0 && planner.recorder != nil {
+		if err := planner.recorder.Write(decisions); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"planner: decision audit failed",
+				err,
+			))
 		}
+	}
+
+	thesis.Stamp(types.SourcePlanner)
+
+	if len(decisions) != 0 {
+		utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
+			"evaluated", true,
+			"outcome", "decisions",
+			"decisions", decisions,
+		)))
 	}
 
 	thesis.Fanout()
 }
 
 /* decisions evaluates one binary verdict per ready causal artifact. */
-func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
+func (planner *Planner) decisions(thesis *types.Thesis) ([]types.Decision, error) {
 	decisions := make([]types.Decision, 0)
+	var decisionsErr error
 
 	thesis.Causal.Range(func(key, value any) bool {
 		symbol, symbolOK := key.(string)
 		causal, causalOK := value.(map[string]any)
 
 		if !symbolOK || symbol == "" || !causalOK {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"planner: invalid causal artifact",
-				nil,
-			))
-
-			return true
+			decisionsErr = fmt.Errorf("planner: invalid causal artifact")
+			return false
 		}
 
 		decision, err := planner.search(thesis, symbol, causal)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"planner: causal search failed: "+err.Error(),
+			decisionsErr = fmt.Errorf(
+				"planner: causal search failed for %s: %w",
+				symbol,
 				err,
-			))
+			)
 
-			return true
+			return false
 		}
 
 		decision, err = planner.size(decision)
@@ -169,7 +178,7 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 		return true
 	})
 
-	return decisions
+	return decisions, decisionsErr
 }
 
 /*

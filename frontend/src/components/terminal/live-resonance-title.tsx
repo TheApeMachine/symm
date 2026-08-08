@@ -13,8 +13,8 @@ export const LiveResonanceTitle = () => (
 				<span data-paint="forecast.supportedHorizon" data-paint-format=".0f">
 					—
 				</span>
-				{" · confidence "}
-				<span data-paint="forecast.confidence" data-paint-format=".0%">
+				{" · direction p "}
+				<span data-paint="forecast.confidence" data-paint-format=".1%">
 					—
 				</span>
 			</span>

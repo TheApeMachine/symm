@@ -1,7 +1,7 @@
 package logic
 
 import (
-	"sync"
+	"errors"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -15,10 +15,15 @@ type orderedSolver struct {
 	index  int
 	order  *[]int
 	source types.SourceType
+	err    error
 }
 
 func (solver *orderedSolver) Update(thesis *types.Thesis) error {
 	*solver.order = append(*solver.order, solver.index)
+
+	if solver.err != nil {
+		return solver.err
+	}
 
 	if solver.source != "" {
 		thesis.Stamp(solver.source)
@@ -54,6 +59,26 @@ func TestAnalyzerProcess(t *testing.T) {
 			So(order, ShouldResemble, []int{0, 1, 2, 3, 4, 5})
 		})
 	})
+
+	Convey("Given a solver that cannot complete the current logic cut", t, func() {
+		order := make([]int, 0, 3)
+		analyzer := &Analyzer{
+			solvers: []Solver{
+				&orderedSolver{index: 0, order: &order, source: types.SourceCategories},
+				&orderedSolver{index: 1, order: &order, err: errors.New("failed cut")},
+				&orderedSolver{index: 2, order: &order, source: types.SourceGraph},
+			},
+		}
+		thesis := types.NewThesis(t.Context(), nil)
+		stampSignalReadiness(thesis)
+
+		analyzer.process(thesis)
+
+		Convey("It should not publish downstream stages from the partial snapshot", func() {
+			So(order, ShouldResemble, []int{0, 1})
+			So(thesis.Readiness.Graph, ShouldBeFalse)
+		})
+	})
 }
 
 func stampSignalReadiness(thesis *types.Thesis) {
@@ -79,9 +104,6 @@ production stage positions; each solver package benchmarks its own model work.
 */
 func BenchmarkAnalyzerProcess(b *testing.B) {
 	order := make([]int, 0, 6)
-	subscribers := &sync.Map{}
-	subscription := &types.Subscription[any]{Channel: make(chan any, 1)}
-	subscribers.Store("analyzer", []*types.Subscription[any]{subscription})
 	analyzer := &Analyzer{
 		solvers: []Solver{
 			&orderedSolver{index: 0, order: &order, source: types.SourceCategories},
@@ -100,6 +122,5 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 		stampSignalReadiness(thesis)
 		order = order[:0]
 		analyzer.process(thesis)
-		<-subscription.Channel
 	}
 }

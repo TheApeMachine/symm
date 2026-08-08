@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"fmt"
 	"context"
 	"math"
 	"strings"
@@ -151,4 +152,169 @@ func BenchmarkUpdate(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestPrefixTreeBranches(t *testing.T) {
+	Convey("Given a trie holding divergent continuations of one prefix", t, func() {
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
+		solver := NewSolver(tree, nil, nil)
+
+		ignition := solver.encodeCategory(types.CategoryVerticalIgnition)
+		reversal := solver.encodeCategory(types.CategoryActiveReversal)
+		exhaust := solver.encodeCategory(types.CategoryExhaustion)
+
+		// Two sequences share a prefix and then diverge, so the prefix has a
+		// genuine sibling pair the export must reach.
+		tree.TrainSensorySequence(solver.sequenceBytes([]string{ignition, reversal}))
+		tree.TrainSensorySequence(solver.sequenceBytes([]string{ignition, exhaust}))
+
+		Convey("When exporting the prefix tree for the active sequence", func() {
+			branches := solver.prefixTreeBranches([]string{ignition, reversal})
+
+			childrenOf := func(id int) []types.CognitionBranch {
+				found := []types.CognitionBranch{}
+
+				for _, branch := range branches {
+					if branch.ParentID == id {
+						found = append(found, branch)
+					}
+				}
+
+				return found
+			}
+
+			Convey("Then the shared prefix should export both continuations", func() {
+				roots := childrenOf(0)
+				So(len(roots), ShouldEqual, 1)
+				So(roots[0].Token, ShouldEqual, solver.decodeCategoryToken(ignition))
+
+				// The bug this guards: a projection built from the active
+				// sequence alone emits one child here and calls it a tree.
+				siblings := childrenOf(roots[0].ID)
+				So(len(siblings), ShouldEqual, 2)
+			})
+
+			Convey("Then every node should carry a splittable machine key", func() {
+				for _, branch := range branches[1:] {
+					So(branch.Key, ShouldNotEqual, "")
+					So(strings.Split(branch.Key, "_"), ShouldHaveLength, branch.Depth)
+				}
+			})
+		})
+	})
+}
+
+func TestPrefixTreeBranchesPinsActivePath(t *testing.T) {
+	Convey("Given an active continuation weaker than the render width allows", t, func() {
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
+		solver := NewSolver(tree, nil, nil, WithPrefixTreeShape(1, 4, 64))
+
+		ignition := solver.encodeCategory(types.CategoryVerticalIgnition)
+		reversal := solver.encodeCategory(types.CategoryActiveReversal)
+		exhaust := solver.encodeCategory(types.CategoryExhaustion)
+
+		for range 5 {
+			tree.TrainSensorySequence(solver.sequenceBytes([]string{ignition, reversal}))
+		}
+
+		tree.TrainSensorySequence(solver.sequenceBytes([]string{ignition, exhaust}))
+
+		Convey("When the weak continuation is the live one", func() {
+			branches := solver.prefixTreeBranches([]string{ignition, exhaust})
+			tokens := []string{}
+
+			for _, branch := range branches {
+				tokens = append(tokens, branch.Token)
+			}
+
+			Convey("Then it should still be exported so the beam has a node", func() {
+				So(tokens, ShouldContain, solver.decodeCategoryToken(exhaust))
+			})
+		})
+	})
+}
+
+/*
+prefixTreeFixture builds a deliberately broad trie so the export benchmarks
+measure a fan-out the walk actually has to bound.
+*/
+func prefixTreeFixture() (*Solver, []string) {
+	tree, _ := dmt.NewTree("")
+	solver := NewSolver(tree, nil, nil)
+
+	for first := range 8 {
+		for second := range 8 {
+			for third := range 8 {
+				tree.TrainSensorySequence(solver.sequenceBytes([]string{
+					fmt.Sprintf("r%d", first),
+					fmt.Sprintf("s%d", second),
+					fmt.Sprintf("t%d", third),
+				}))
+			}
+		}
+	}
+
+	return solver, []string{"r0", "s0", "t0"}
+}
+
+func BenchmarkPrefixTreeBranches(b *testing.B) {
+	solver, active := prefixTreeFixture()
+
+	for b.Loop() {
+		_ = solver.prefixTreeBranches(active)
+	}
+}
+
+func BenchmarkCachedPrefixTree(b *testing.B) {
+	solver, active := prefixTreeFixture()
+	_ = solver.cachedPrefixTree("BTC/USD", active, true)
+
+	for b.Loop() {
+		solver.tickCounter = 1
+		_ = solver.cachedPrefixTree("BTC/USD", active, false)
+	}
+}
+
+func TestCachedPrefixTree(t *testing.T) {
+	Convey("Given an exported prefix tree held between ticks", t, func() {
+		solver, active := prefixTreeFixture()
+
+		first := solver.cachedPrefixTree("BTC/USD", active, true)
+
+		Convey("When no transition occurs", func() {
+			solver.tickCounter = 1
+			again := solver.cachedPrefixTree("BTC/USD", active, false)
+
+			Convey("Then the held walk should be reused", func() {
+				So(len(again), ShouldEqual, len(first))
+			})
+		})
+
+		Convey("When the sequence transitions", func() {
+			solver.tickCounter = 2
+			moved := solver.cachedPrefixTree("BTC/USD", []string{"r1"}, true)
+
+			Convey("Then the walk should follow the new sequence", func() {
+				keys := []string{}
+
+				for _, branch := range moved {
+					keys = append(keys, branch.Key)
+				}
+
+				So(keys, ShouldContain, "r1")
+			})
+		})
+
+		Convey("When the cache ages past the refresh bound", func() {
+			solver.tickCounter = branchRefreshTicks + 1
+			refreshed := solver.cachedPrefixTree("BTC/USD", active, false)
+
+			Convey("Then it should be rebuilt rather than served stale forever", func() {
+				So(len(refreshed), ShouldBeGreaterThan, 0)
+				So(solver.branchesStamp["BTC/USD"], ShouldEqual, solver.tickCounter)
+			})
+		})
+	})
 }

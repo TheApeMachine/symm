@@ -268,7 +268,12 @@ export type ResonanceForecast = {
 	forwardRetention: number[];
 	supportedHorizon: number;
 	expectedReturn: number;
+	expectedBasisPoints: number;
 	confidence: number;
+	confidenceReady: boolean;
+	predictiveScale?: number;
+	predictiveScaleBasisPoints?: number;
+	degreesOfFreedom?: number;
 };
 
 /*
@@ -298,6 +303,7 @@ export type ResonanceFrame = Record<string, unknown> & {
 	symbol: string;
 	at: string;
 	samples?: number;
+	skillEvidence?: number;
 	observables?: number[];
 	latent?: number[];
 	embedding?: number[];
@@ -363,6 +369,7 @@ export type CognitiveBranch = {
 	parentId: number;
 	token: string;
 	prefix: string;
+	key: string;
 	depth: number;
 	probability: number;
 	count: number;
@@ -370,6 +377,7 @@ export type CognitiveBranch = {
 
 export type CognitiveBeam = {
 	sequence: string;
+	key: string;
 	score: number;
 };
 

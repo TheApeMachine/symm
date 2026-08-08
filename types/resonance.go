@@ -9,31 +9,37 @@ import (
 	"github.com/theapemachine/nomagique/learning"
 )
 
+const basisPointsPerUnit = 10_000
+
 /*
 ResonanceForecast is the one return forecast supported by a resonance reading.
 
 Curve contains one-step log-return predictions over SupportedHorizon. Retention
 states how much of the first forecast state's magnitude survives at each step.
-
-	ExpectedReturn is the simple return obtained by accumulating every supported
-	step after applying that retention. Confidence is sequential evidence that
-	strictly prior forecasts beat the zero-return baseline; it has already capped
-	the horizon and is not a second multiplier on ExpectedReturn.
+ExpectedReturn is the simple return obtained by accumulating every supported
+step after applying that retention. Confidence is the posterior probability that
+the first resolved return has the point forecast's direction. PredictiveScale and
+DegreesOfFreedom identify the Student-t distribution behind that probability.
 */
 type ResonanceForecast struct {
-	Curve            []float64 `json:"forwardCurve"`
-	Retention        []float64 `json:"forwardRetention"`
-	SupportedHorizon int       `json:"supportedHorizon"`
-	ExpectedReturn   float64   `json:"expectedReturn"`
-	Confidence       float64   `json:"confidence"`
+	Curve                      []float64 `json:"forwardCurve"`
+	Retention                  []float64 `json:"forwardRetention"`
+	SupportedHorizon           int       `json:"supportedHorizon"`
+	ExpectedReturn             float64   `json:"expectedReturn"`
+	ExpectedBasisPoints        float64   `json:"expectedBasisPoints"`
+	Confidence                 float64   `json:"confidence"`
+	ConfidenceReady            bool      `json:"confidenceReady"`
+	PredictiveScale            float64   `json:"predictiveScale,omitempty"`
+	PredictiveScaleBasisPoints float64   `json:"predictiveScaleBasisPoints,omitempty"`
+	DegreesOfFreedom           float64   `json:"degreesOfFreedom,omitempty"`
 }
 
 /*
 ResonanceVerdict is the plain-language reading of a resonance frame.
 
-	The panel answers three questions before any number is read: is a forecast
-	available, which estimator learns its return head, and which way does the curve
-	point. Each is decided here rather than recomputed in the browser.
+The panel answers three questions before any number is read: is a forecast
+available, which estimator learns its return head, and which way does the curve
+point. Each is decided here rather than recomputed in the browser.
 */
 type ResonanceVerdict struct {
 	/* "observing" | "predicting". */
@@ -47,8 +53,8 @@ type ResonanceVerdict struct {
 	LearningHealth float64 `json:"learningHealth"`
 	TuningHealth   float64 `json:"tuningHealth"`
 	/*
-		Sign of the expected return, and its confidence-scaled magnitude. Drift is
-		the arrow; Conviction dims it when the forecast is poorly supported.
+		Sign of the expected return and the posterior probability of that direction.
+		Direction turns the arrow; Conviction dims it when poorly supported.
 	*/
 	Direction  float64 `json:"direction"`
 	Conviction float64 `json:"conviction"`
@@ -56,24 +62,29 @@ type ResonanceVerdict struct {
 
 /*
 ResonanceReading is one predictive-coding result for a symbol. Forecast remains
-nil until the task head has enough resolved market data to publish a curve, so
-absence cannot be confused with a numerical forecast of zero.
+nil only when the settled latent state cannot support a forward path; an
+informative state publishes the zero-coefficient prior before any target resolves.
+SkillEvidence is historical prequential evidence that the model beats a zero-return
+baseline more than half the time; it is deliberately separate from the current
+forecast's Confidence. Alpha is the configured generative-model base pace, not
+the return learner's gain and not a dynamically tuned value.
 */
 type ResonanceReading struct {
-	Stage        string                        `json:"stage"`
-	Source       SourceType                    `json:"source"`
-	Symbol       string                        `json:"symbol"`
-	TargetSymbol string                        `json:"targetSymbol"`
-	At           time.Time                     `json:"at"`
-	Surprise     float64                       `json:"surprise"`
-	Energy       float64                       `json:"energy"`
-	Latent       []float64                     `json:"latent,omitempty"`
-	Embedding    []float64                     `json:"embedding,omitempty"`
-	Layers       []learning.ResonanceLayerWire `json:"layers,omitempty"`
-	Forecast     *ResonanceForecast            `json:"forecast,omitempty"`
-	Verdict      ResonanceVerdict              `json:"verdict"`
-	Alpha        float64                       `json:"alpha"`
-	Samples      uint64                        `json:"samples"`
+	Stage         string                        `json:"stage"`
+	Source        SourceType                    `json:"source"`
+	Symbol        string                        `json:"symbol"`
+	TargetSymbol  string                        `json:"targetSymbol"`
+	At            time.Time                     `json:"at"`
+	Surprise      float64                       `json:"surprise"`
+	Energy        float64                       `json:"energy"`
+	Latent        []float64                     `json:"latent,omitempty"`
+	Embedding     []float64                     `json:"embedding,omitempty"`
+	Layers        []learning.ResonanceLayerWire `json:"layers,omitempty"`
+	Forecast      *ResonanceForecast            `json:"forecast,omitempty"`
+	Verdict       ResonanceVerdict              `json:"verdict"`
+	Alpha         float64                       `json:"alpha"`
+	Samples       uint64                        `json:"samples"`
+	SkillEvidence float64                       `json:"skillEvidence"`
 }
 
 /*
@@ -100,8 +111,49 @@ func NewResonanceForecast(
 	}
 
 	forecast.ExpectedReturn = expectedReturn
+	forecast.ExpectedBasisPoints = expectedReturn * basisPointsPerUnit
 
 	return forecast, nil
+}
+
+/*
+SetPredictiveDistribution attaches the uncertainty distribution used to derive
+Confidence. An unavailable distribution must remain structurally absent instead
+of acquiring an invented scale.
+*/
+func (forecast *ResonanceForecast) SetPredictiveDistribution(
+	scale, degreesOfFreedom float64,
+	ready bool,
+) error {
+	if forecast == nil {
+		return errors.New("resonance forecast required")
+	}
+
+	if !ready {
+		if scale != 0 || degreesOfFreedom != 0 {
+			return errors.New("unready resonance forecast cannot carry a distribution")
+		}
+
+		forecast.ConfidenceReady = false
+		forecast.PredictiveScale = 0
+		forecast.PredictiveScaleBasisPoints = 0
+		forecast.DegreesOfFreedom = 0
+
+		return nil
+	}
+
+	if !(scale > 0) || math.IsNaN(scale) || math.IsInf(scale, 0) ||
+		!(degreesOfFreedom > 0) || math.IsNaN(degreesOfFreedom) ||
+		math.IsInf(degreesOfFreedom, 0) {
+		return errors.New("resonance forecast distribution must be finite and positive")
+	}
+
+	forecast.ConfidenceReady = true
+	forecast.PredictiveScale = scale
+	forecast.PredictiveScaleBasisPoints = scale * basisPointsPerUnit
+	forecast.DegreesOfFreedom = degreesOfFreedom
+
+	return nil
 }
 
 /*
@@ -118,6 +170,33 @@ func (forecast *ResonanceForecast) Validate() error {
 
 	if forecast.ExpectedReturn != expectedReturn {
 		return errors.New("resonance forecast expected return does not match curve")
+	}
+
+	if forecast.ExpectedBasisPoints != expectedReturn*basisPointsPerUnit {
+		return errors.New("resonance forecast basis points do not match expected return")
+	}
+
+	if forecast.ConfidenceReady {
+		if !(forecast.PredictiveScale > 0) ||
+			math.IsNaN(forecast.PredictiveScale) ||
+			math.IsInf(forecast.PredictiveScale, 0) ||
+			!(forecast.DegreesOfFreedom > 0) ||
+			math.IsNaN(forecast.DegreesOfFreedom) ||
+			math.IsInf(forecast.DegreesOfFreedom, 0) {
+			return errors.New("resonance forecast distribution is invalid")
+		}
+
+		if forecast.PredictiveScaleBasisPoints !=
+			forecast.PredictiveScale*basisPointsPerUnit {
+			return errors.New("resonance forecast scale basis points do not match scale")
+		}
+
+		return nil
+	}
+
+	if forecast.PredictiveScale != 0 || forecast.PredictiveScaleBasisPoints != 0 ||
+		forecast.DegreesOfFreedom != 0 {
+		return errors.New("unready resonance forecast cannot carry a distribution")
 	}
 
 	return nil

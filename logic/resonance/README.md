@@ -38,10 +38,11 @@ measurements (every signal, this tick)
         ▼
    ResonanceManifold.Settle    ──►  latent state z, layer stack, Surprise
         │
-        ├──►  recursive least squares →  fit the resolved return
-        ├──►  Beta-Bernoulli evidence →  confidence in prior forecasts
+        ├──►  recursive least squares →  fit return + predictive distribution
+        ├──►  Student-t direction p   →  confidence in this forecast
+        ├──►  Beta-Bernoulli evidence →  historical skill against zero return
         ├──►  DynamicHorizon          →  how far ahead is supported
-        └──►  forward rollout         →  ResonanceForecast
+        └──►  aligned forward rollout →  ResonanceForecast
                                              │
                                              ▼
                               thesis.Resonance[symbol]
@@ -75,6 +76,11 @@ baseline. Only then does recursive least squares observe the target. A sample is
 only spent once the future has actually arrived, and a target can never certify
 the prediction that was fitted with it.
 
+The same state is used at publication and resolution: settled `z_t` predicts the
+next return `r_t→t+1`. The first rollout element evaluates that state directly;
+only later elements advance through the temporal prior `A`. This indexing is a
+model invariant, not a display convention.
+
 Non-positive prices and non-finite returns drop the sample explicitly rather than
 poisoning the head with a synthetic zero.
 
@@ -88,11 +94,11 @@ actual measurement. During warm-up it answers zero *without readiness*. But a
 ready observation sitting exactly at the learned mean is *also* legitimately
 zero. Same number, opposite meanings.
 
-Settling on an unready vector drives the latent state to the origin, which zeroes
-rollout retention and publishes the forecast as invalid. Worse, learning from it
-spends a resolved return sample teaching the return head that no input predicts a
-real move. Both outcomes are wrong about a stage that has simply not seen a
-feature move yet — so when `informative` is false the reading says so and waits.
+Settling on an unready vector drives the latent state to the origin and turns an
+absent observation into a structural zero. Learning from it would spend a resolved
+return sample teaching the return head that no input predicts a real move. That is
+wrong about a stage that has simply not seen a feature move yet, so when
+`informative` is false the reading says so and waits.
 
 This resolves as soon as *any* feature varies, because the standardizer scores
 against its own estimate precision rather than waiting out a fixed sample count.
@@ -113,14 +119,20 @@ to their own objective:
 | Quantity                 | Derived by                        | Meaning                                                                        |
 |--------------------------|-----------------------------------|--------------------------------------------------------------------------------|
 | **Return-head gain**     | square-root recursive least squares | Latent design covariance determines how much each resolved target can teach. |
-| **Forecast confidence**  | Beta posterior skill evidence    | Probability that prior forecasts beat the zero-return baseline more than half the time. |
-| **Horizon**              | `manifold.DynamicHorizon`         | Forecast only as far as resolved samples, retention, and confidence support.  |
+| **Forecast confidence**  | RLS Student-t posterior predictive | Probability that the current resolved return has the point forecast's direction. |
+| **Skill evidence**       | Beta posterior over prequential wins | Probability that prior forecasts beat zero return more than half the time. |
+| **Horizon**              | `manifold.DynamicHorizon`         | Forecast only as far as resolved samples, retention, and current confidence support. |
 
 There is no separate warming state. The head predicts from its prior immediately;
-before it has evidence its confidence is low, so the existing planner confidence
-gate prevents action. Each resolved forecast contributes a win, loss, or neutral
-tie by comparing squared return error with the zero-return baseline. The uniform
-Beta prior expresses uncertainty without inventing a minimum sample count.
+before residual noise is identifiable its direction probability is the symmetric
+50% prior, so the existing planner gate prevents action. Each resolved innovation
+updates both coefficient uncertainty and observation noise, producing a
+magnitude- and design-dependent Student-t probability for the next forecast.
+
+Historical skill is reported separately. Each resolved forecast contributes a win
+or loss by comparing squared return error with the zero-return baseline; an exact
+tie carries no evidence. That Beta posterior monitors the learner but is never
+presented as confidence in the current price move.
 
 The manifold's generative alpha remains its configured base pace. The old global
 pace controller was removed from this adapter because it tuned that alpha from

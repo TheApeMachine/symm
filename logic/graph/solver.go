@@ -169,41 +169,40 @@ Update extracts nodes and infers directional edges from Thesis, publishing the c
 Graph into thesis.Graphs.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if !thesis.Readiness.Categories || !thesis.Readiness.Resonance || !thesis.Readiness.Causal || !thesis.Readiness.Cognition {
-		return nil
+	if thesis.Readiness.Categories && thesis.Readiness.Resonance && thesis.Readiness.Causal && thesis.Readiness.Cognition {
+		graph := NewGraph(thesis.At)
+
+		// 1. Extract and register all non-measurement nodes from Thesis
+		solver.extractCategoryNodes(thesis, graph)
+		solver.extractResonanceNodes(thesis, graph)
+
+		if err := solver.extractCausalNodes(thesis, graph); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"graph: failed to extract causal nodes - "+err.Error(),
+				err,
+			))
+		}
+
+		solver.extractCognitionNodes(thesis, graph)
+
+		// 2. Infer directional relationships between nodes
+		if err := solver.inferStructuralEdges(thesis, graph); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"graph: failed to infer structural edges - "+err.Error(),
+				err,
+			))
+		}
+
+		// 3. Store compiled Graph into thesis.Graphs
+		thesis.Graphs.Store("market_graph", graph)
+		thesis.Stamp(types.SourceGraph)
+
+		utils.Publish(solver.ui, datura.NewMap("graph", graph))
 	}
 
-	graph := NewGraph(thesis.At)
-
-	// 1. Extract and register all non-measurement nodes from Thesis
-	solver.extractCategoryNodes(thesis, graph)
-	solver.extractResonanceNodes(thesis, graph)
-
-	if err := solver.extractCausalNodes(thesis, graph); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"graph: failed to extract causal nodes - "+err.Error(),
-			err,
-		))
-	}
-
-	solver.extractCognitionNodes(thesis, graph)
-
-	// 2. Infer directional relationships between nodes
-	if err := solver.inferStructuralEdges(thesis, graph); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"graph: failed to infer structural edges - "+err.Error(),
-			err,
-		))
-	}
-
-	// 3. Store compiled Graph into thesis.Graphs
-	thesis.Graphs.Store("market_graph", graph)
-	thesis.Stamp(types.SourceGraph)
-
-	utils.Publish(solver.ui, datura.NewMap("graph", graph))
-
+	thesis.Fanout()
 	return nil
 }
 

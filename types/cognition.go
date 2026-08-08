@@ -10,6 +10,10 @@ type CognitionBranch struct {
 	ParentID    int     `json:"parentId"`
 	Token       string  `json:"token"`
 	Prefix      string  `json:"prefix"`
+	// Key is the machine-readable sequence address (encoded tokens joined by
+	// "_"). Prefix is display text with arrow separators and cannot be split
+	// back into tokens, so beam highlighting matches on Key.
+	Key         string  `json:"key"`
 	Depth       int     `json:"depth"`
 	Probability float64 `json:"probability"`
 	Count       uint64  `json:"count"`
@@ -20,7 +24,10 @@ CognitionBeam is one scored beam-search path exported for Cortex.
 */
 type CognitionBeam struct {
 	Sequence string  `json:"sequence"`
-	Score    float64 `json:"score"`
+	// Key is the machine-readable form of Sequence, addressing the same nodes
+	// CognitionBranch.Key does.
+	Key   string  `json:"key"`
+	Score float64 `json:"score"`
 }
 
 /*

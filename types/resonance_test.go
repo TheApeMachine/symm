@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -27,6 +28,8 @@ func TestNewResonanceForecast(t *testing.T) {
 
 			So(oneStep.ExpectedReturn, ShouldAlmostEqual, math.Expm1(oneStepCurve[0]), 1e-12)
 			So(long.ExpectedReturn, ShouldAlmostEqual, expectedLongReturn, 1e-12)
+			So(long.ExpectedBasisPoints, ShouldAlmostEqual,
+				expectedLongReturn*basisPointsPerUnit, 1e-12)
 			So(long.ExpectedReturn, ShouldNotEqual, oneStep.ExpectedReturn)
 			So(long.SupportedHorizon, ShouldEqual, len(longCurve))
 			So(long.Confidence, ShouldEqual, 0.75)
@@ -81,6 +84,63 @@ func TestNewResonanceForecast(t *testing.T) {
 				So(err, ShouldNotBeNil)
 				So(forecast, ShouldBeNil)
 			}
+		})
+	})
+}
+
+func TestResonanceForecastSetPredictiveDistribution(t *testing.T) {
+	Convey("Given an identified Student-t predictive distribution", t, func() {
+		forecast, err := NewResonanceForecast(
+			[]float64{0.001}, []float64{1}, 1, 0.8,
+		)
+		So(err, ShouldBeNil)
+
+		err = forecast.SetPredictiveDistribution(0.0004, 12, true)
+
+		Convey("It should retain the distribution and its basis-point scale", func() {
+			So(err, ShouldBeNil)
+			So(forecast.ConfidenceReady, ShouldBeTrue)
+			So(forecast.PredictiveScale, ShouldEqual, 0.0004)
+			So(forecast.PredictiveScaleBasisPoints, ShouldEqual, 4.0)
+			So(forecast.DegreesOfFreedom, ShouldEqual, 12)
+			So(forecast.Validate(), ShouldBeNil)
+		})
+	})
+
+	Convey("Given uncertainty that is not identified", t, func() {
+		forecast, err := NewResonanceForecast(
+			[]float64{0}, []float64{1}, 1, 0.5,
+		)
+		So(err, ShouldBeNil)
+
+		err = forecast.SetPredictiveDistribution(1, 0, false)
+
+		Convey("It should reject an invented unavailable scale", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given a forecast whose former distribution is no longer available", t, func() {
+		forecast, err := NewResonanceForecast(
+			[]float64{0}, []float64{1}, 1, 0.5,
+		)
+		So(err, ShouldBeNil)
+		So(forecast.SetPredictiveDistribution(0.0004, 12, true), ShouldBeNil)
+
+		err = forecast.SetPredictiveDistribution(0, 0, false)
+
+		Convey("It should remove every stale uncertainty field", func() {
+			So(err, ShouldBeNil)
+			So(forecast.ConfidenceReady, ShouldBeFalse)
+			So(forecast.PredictiveScale, ShouldEqual, 0.0)
+			So(forecast.PredictiveScaleBasisPoints, ShouldEqual, 0.0)
+			So(forecast.DegreesOfFreedom, ShouldEqual, 0.0)
+			So(forecast.Validate(), ShouldBeNil)
+
+			payload, err := json.Marshal(forecast)
+			So(err, ShouldBeNil)
+			So(string(payload), ShouldNotContainSubstring, "predictiveScale")
+			So(string(payload), ShouldNotContainSubstring, "degreesOfFreedom")
 		})
 	})
 }

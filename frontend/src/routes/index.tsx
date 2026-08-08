@@ -85,7 +85,7 @@ const RouteComponent = () => {
 									Predictive coding · <LiveResonanceTitle />
 								</>
 							}
-							meta="settled latent state · adaptive horizon · prequential skill evidence"
+							meta="settled latent state · adaptive horizon · posterior direction probability"
 							topRight={
 								<div className="flex gap-3 text-left">
 									<span className="inline-flex items-center gap-1.5">

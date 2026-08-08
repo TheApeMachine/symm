@@ -33,24 +33,14 @@ type symbolState struct {
 }
 
 /*
-pairState retains the Hayashi cross-covariance for one unordered symbol pair.
-Correlation is derived from covariance and the two symbol variances.
-*/
-type pairState struct {
-	covariance float64
-}
-
-/*
 Section owns per-symbol streaming state and the nested pair covariance table
 used for incremental Hayashi maintenance without composite string keys.
 */
 type Section struct {
-	symbols         *sync.Map
-	pairs           *sync.Map
-	globalEnergySum float64
-	energyReady     int
-	scratch         *sync.Map
-	revisionBuf     []pairRevision
+	symbols     *sync.Map
+	pairs       *sync.Map
+	scratch     *sync.Map
+	revisionBuf []pairRevision
 }
 
 /*
@@ -221,17 +211,9 @@ func (section *Section) LastAt(symbol string) time.Time {
 ensure returns the mutable state for symbol, creating it on first sight.
 */
 func (section *Section) ensure(symbol string) *symbolState {
-	raw, _ := section.symbols.Load(symbol)
-	state := raw.(*symbolState)
+	raw, _ := section.symbols.LoadOrStore(symbol, &symbolState{})
 
-	if state != nil {
-		return state
-	}
-
-	state = &symbolState{}
-	section.symbols.Store(symbol, state)
-
-	return state
+	return raw.(*symbolState)
 }
 
 /*
@@ -288,21 +270,12 @@ func (section *Section) trim(symbol string, state *symbolState) error {
 }
 
 /*
-refreshEnergy recomputes time-normalized return energy and keeps the global
-energy sum consistent for O(1) leave-one-out peer energy.
+refreshEnergy recomputes time-normalized return energy for one symbol.
 */
 func (section *Section) refreshEnergy(symbol string, state *symbolState) error {
-	previous := state.energy
-	wasReady := previous > 0 && len(state.samples) >= 3
-
 	if len(state.samples) < 3 {
 		state.returns = state.returns[:0]
 		state.energy = 0
-
-		if wasReady {
-			section.globalEnergySum -= previous
-			section.energyReady--
-		}
 
 		return nil
 	}
@@ -315,17 +288,6 @@ func (section *Section) refreshEnergy(symbol string, state *symbolState) error {
 	}
 
 	state.energy = median
-	ready := state.energy > 0
-
-	if wasReady {
-		section.globalEnergySum -= previous
-		section.energyReady--
-	}
-
-	if ready {
-		section.globalEnergySum += state.energy
-		section.energyReady++
-	}
 
 	_ = symbol
 

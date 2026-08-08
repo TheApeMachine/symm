@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/bytedance/sonic"
+	fastwebsocket "github.com/fasthttp/websocket"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/datura"
@@ -149,16 +150,8 @@ func NewHub(
 					away from the clients that are still alive.
 				*/
 				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					for _, expected := range []error{
-						syscall.EPIPE,
-						syscall.ECONNRESET,
-						io.EOF,
-						io.ErrClosedPipe,
-						websocket.ErrCloseSent,
-					} {
-						if errors.Is(err, expected) {
-							return
-						}
+					if expectedDashboardWriteClosure(err) {
+						return
 					}
 
 					errnie.Error(errnie.Err(
@@ -176,6 +169,26 @@ func NewHub(
 	hub.registerFluidWebRTC()
 
 	return hub
+}
+
+/*
+expectedDashboardWriteClosure identifies transport errors that only report an
+already completed dashboard disconnect.
+*/
+func expectedDashboardWriteClosure(err error) bool {
+	for _, expected := range []error{
+		syscall.EPIPE,
+		syscall.ECONNRESET,
+		io.EOF,
+		io.ErrClosedPipe,
+		fastwebsocket.ErrCloseSent,
+	} {
+		if errors.Is(err, expected) {
+			return true
+		}
+	}
+
+	return false
 }
 
 /*

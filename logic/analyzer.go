@@ -59,11 +59,6 @@ func NewAnalyzer(
 	thesis *types.Thesis,
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
-	buffer := viper.GetInt("system.actor.buffer")
-
-	if buffer < 1 {
-		buffer = 64
-	}
 
 	analyzer := &Analyzer{
 		ctx:    ctx,
@@ -73,7 +68,12 @@ func NewAnalyzer(
 		solvers: []Solver{
 			category.NewSolver(api, ui, recorder),
 			manifold.NewSolver(api, ui, binui, recorder),
-			resonance.NewSolver(ui, recorder),
+			resonance.NewSolver(
+				ctx,
+				ui,
+				recorder,
+				viper.GetFloat64("resonance.learning_rate"),
+			),
 			causal.NewSolver(ui, recorder),
 			cognition.NewSolver(tree, ui, recorder),
 			graph.NewSolver(ui, recorder),
@@ -112,13 +112,6 @@ func (analyzer *Analyzer) process(in any) {
 			"failed to convert signal payload to thesis",
 			nil,
 		))
-
-		thesis.Fanout()
-		return
-	}
-
-	if !thesis.Readiness.SignalsMeasured() {
-		thesis.Fanout()
 		return
 	}
 
@@ -131,6 +124,8 @@ func (analyzer *Analyzer) process(in any) {
 				"failed to update analyzer: "+err.Error(),
 				err,
 			))
+
+			return
 		}
 	}
 

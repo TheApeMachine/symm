@@ -31,7 +31,7 @@ func TestResonanceVerdict(t *testing.T) {
 			Confidence:     0.9,
 		})
 
-		Convey("It should predict immediately while keeping direction and evidence separate", func() {
+		Convey("It should predict immediately while keeping direction and probability separate", func() {
 			So(weakLong.Learning, ShouldEqual, "predicting")
 			So(weakLong.LearningHealth, ShouldEqual, 1)
 			So(weakLong.Direction, ShouldEqual, 1)

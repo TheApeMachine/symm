@@ -98,7 +98,7 @@ export class CortexLeafRoster {
 }
 
 const isOnBeam = (tree: CortexTree, node: CortexNode): boolean =>
-	tree.beamPrefixes.has(node.prefix);
+	tree.beamPrefixes.has(node.key);
 
 /*
 displayToken shortens live metric tokens to mockup-scale labels so the filled
@@ -269,7 +269,7 @@ const beamPathNodes = (tree: CortexTree): CortexNode[] => {
 	}
 
 	const nodeByPrefix = new Map(
-		tree.nodes.map((node) => [node.prefix, node] as const),
+		tree.nodes.map((node) => [node.key, node] as const),
 	);
 	const tokens = beamSequence.split("_").filter(Boolean);
 	const path: CortexNode[] = [tree.root];

@@ -84,38 +84,38 @@ Update extracts aligned causal rows from Thesis, evaluates Pearl's causal
 ladder, and stores each symbol's output directly on thesis.Causal.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if !thesis.Readiness.Resonance {
-		return nil
-	}
+	if thesis.Readiness.Resonance {
+		// A failed pass cancels a pond group permanently. Causal evaluation is
+		// retried on every enriched Thesis, so it requires a new group per pass.
+		group, _ := errgroup.WithContext(solver.ctx)
 
-	// A failed pass cancels a pond group permanently. Causal evaluation is
-	// retried on every enriched Thesis, so it requires a new group per pass.
-	group, _ := errgroup.WithContext(solver.ctx)
+		thesis.Resonance.Range(func(key, _ any) bool {
+			symbol, symbolOK := key.(string)
 
-	thesis.Resonance.Range(func(key, _ any) bool {
-		symbol, symbolOK := key.(string)
+			if !symbolOK || symbol == "" {
+				return true
+			}
 
-		if !symbolOK || symbol == "" {
+			group.Go(func() error {
+				return solver.measure(thesis, symbol)
+			})
+
 			return true
-		}
-
-		group.Go(func() error {
-			return solver.measure(thesis, symbol)
 		})
 
-		return true
-	})
+		if err := group.Wait(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"causal: parallel evaluation failed: "+err.Error(),
+				err,
+			))
+		}
 
-	if err := group.Wait(); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"causal: parallel evaluation failed: "+err.Error(),
-			err,
-		))
+		thesis.Stamp(types.SourceCausal)
+		solver.publish(thesis)
 	}
 
-	thesis.Stamp(types.SourceCausal)
-	solver.publish(thesis)
+	thesis.Fanout()
 	return nil
 }
 

@@ -77,6 +77,7 @@ const branchesFromReading = (
 				parentId,
 				token: stringField(record.token, "node"),
 				prefix: stringField(record.prefix),
+				key: stringField(record.key),
 				depth,
 				probability,
 				count,
@@ -100,12 +101,13 @@ const frameBeams = (reading: Record<string, unknown>): FrameBeam[] => {
 		const record = entry as Record<string, unknown>;
 		const score = finite(record.score);
 		const sequence = stringField(record.sequence);
+		const key = stringField(record.key);
 
 		if (score === null || sequence === "") {
 			return [];
 		}
 
-		return [{ sequence, score }];
+		return [{ sequence, key, score }];
 	});
 };
 
@@ -209,8 +211,11 @@ const activePrefixesFrom = (
 ): Set<string> => {
 	// Amber tracks the MAP beam through the radix tree (mockup legend), not the
 	// sealed observation bag — that bag is a long sorted spine and reads as one path.
-	if (beam?.sequence) {
-		return prefixesFromSequence(beam.sequence);
+	// Matching runs on the machine key: beam.sequence is arrow-separated display
+	// text, so splitting it on "_" yielded one un-splittable blob that matched
+	// no node.
+	if (beam?.key) {
+		return prefixesFromSequence(beam.key);
 	}
 
 	return prefixesFromSequence("");

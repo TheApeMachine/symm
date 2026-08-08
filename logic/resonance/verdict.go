@@ -18,9 +18,10 @@ func learningVerdict(forecast *types.ResonanceForecast) (string, float64) {
 resonanceVerdict reduces one settled frame to the three readings the predictive
 coding panel leads with.
 
-Direction is the raw sign of the expected return and conviction is the forecast's
-prequential skill confidence. The tuning label names the actual return estimator:
-square-root recursive least squares with covariance-derived gain.
+Direction is the raw sign of the expected return and conviction is its current
+posterior direction probability. Historical prequential skill remains a separate
+reading. The tuning label names square-root recursive least squares with
+covariance-derived gain.
 */
 func resonanceVerdict(forecast *types.ResonanceForecast) types.ResonanceVerdict {
 	learning, learningHealth := learningVerdict(forecast)
