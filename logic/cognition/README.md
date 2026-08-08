@@ -25,7 +25,7 @@ Each tick, per symbol, the dominant category becomes one token:
 
 ```
 aggressive_drive → book_thinning → frenzy → exhaustion
-└────────────────── one sequence, up to maxSeqLen (6) ─────┘
+└──────────── one sequence, up to maxSeqLen (6) ─────┘
 ```
 
 `dmt` tokenizes on `_`, so that is the sequence separator. But category names
