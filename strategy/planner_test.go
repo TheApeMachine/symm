@@ -301,6 +301,11 @@ func plannerThesisFixture(
 	t.Helper()
 	thesis := types.NewThesis(nil)
 	forecast := forecastFixture(t, confidence)
+	thesis.Cognition.Store(symbol, types.Cognition{
+		Symbol:     symbol,
+		Ready:      true,
+		Confidence: 0,
+	})
 	thesis.Resonance.Store(symbol, types.ResonanceReading{Forecast: forecast})
 	marketGraph := logicgraph.NewGraph(thesis.At)
 	marketGraph.AddNode(&logicgraph.Node{

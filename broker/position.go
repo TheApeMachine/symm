@@ -78,13 +78,14 @@ func NewPosition(
 			Pair:      pair.Symbol,
 		},
 		Holding: &types.Holding{
-			Symbol:      pair.Symbol,
-			Qty:         decimal.NewFromInt64(0),
-			SellableQty: decimal.NewFromInt64(0),
-			Asset:       pair.Base,
-			EntryPrice:  decision.EntryPrice,
-			Mark:        decision.Mark,
-			Stoploss:    decision.Stoploss,
+			Symbol:        pair.Symbol,
+			Qty:           decimal.NewFromInt64(0),
+			SellableQty:   decimal.NewFromInt64(0),
+			Asset:         pair.Base,
+			EntryPrice:    decision.EntryPrice,
+			Mark:          decision.Mark,
+			IsOpportunity: decision.Opportunity,
+			Stoploss:      decision.Stoploss,
 		},
 	}
 

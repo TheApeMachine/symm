@@ -30,6 +30,7 @@ type Paper struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	simulator   *Simulator
+	commandMu   sync.Mutex
 	subMu       sync.Mutex
 	subscribers map[string][]*types.Subscription[any]
 	books       *spot.BookManager
@@ -451,6 +452,9 @@ func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, 
 }
 
 func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], error) {
+	paper.commandMu.Lock()
+	defer paper.commandMu.Unlock()
+
 	input := []string{"paper"}
 	input = append(input, command...)
 	input = append(input, "--output", "json")

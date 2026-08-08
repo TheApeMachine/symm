@@ -317,6 +317,15 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			}
 		}
 
+		if desk.OpenSlots(decision.Opportunity) <= 0 {
+			desk.positionsMu.Unlock()
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: position capacity exhausted for requested allocation",
+				nil,
+			))
+		}
+
 		position := NewPosition(
 			desk.ctx,
 			desk.api,
@@ -357,13 +366,39 @@ func (desk *Desk) MaxPositions() int {
 	return desk.maxPositions
 }
 
+/*
+OpenSlots reports normal capacity unless the decision has independently
+qualified for the reserve lane. It never reports historical over-capacity as
+new capacity.
+*/
 func (desk *Desk) OpenSlots(opportunity bool) int {
-	switch opportunity {
-	case true:
-		return (desk.maxPositions + desk.maxReserved) - desk.OpenPositions()
-	default:
-		return desk.maxPositions - desk.OpenPositions()
+	occupied := desk.occupiedPositions()
+
+	if opportunity {
+		return max(0, (desk.maxPositions+desk.maxReserved)-occupied)
 	}
+
+	return max(0, desk.maxPositions-occupied)
+}
+
+/*
+occupiedPositions counts committed desk entries without reading mutable order
+status. Entries are stored before submission and removed after failure or close,
+so map membership is the race-free risk-slot boundary.
+*/
+func (desk *Desk) occupiedPositions() int {
+	occupied := 0
+	desk.positions.Range(func(_, value any) bool {
+		position, valid := value.(*Position)
+
+		if valid && position != nil {
+			occupied++
+		}
+
+		return true
+	})
+
+	return occupied
 }
 
 /*

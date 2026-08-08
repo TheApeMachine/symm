@@ -2,12 +2,10 @@ package strategy
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/mcts"
@@ -209,83 +207,6 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 }
 
 /*
-size adds execution quantity and forecast-derived protection to an entry.
-*/
-func (planner *Planner) size(
-	decision *types.Decision,
-) (*types.Decision, error) {
-	if decision == nil || decision.Action != types.ActionEnter {
-		return decision, nil
-	}
-
-	if planner.desk == nil || planner.maxFraction <= 0 || planner.maxFraction > 1 {
-		return decision, fmt.Errorf("planner: executable desk and allocation required")
-	}
-
-	cash := planner.desk.Balance().Cash()
-
-	if cash == nil || cash.Sign() <= 0 {
-		return decision, fmt.Errorf("planner: positive quote cash required")
-	}
-
-	notional := decimal.ExactMul(
-		cash,
-		decimal.NewFromFloat64(planner.maxFraction),
-	)
-	price := planner.desk.Price()
-	tick := price.Tick(decision.Symbol)
-
-	if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 ||
-		tick.Bid == nil || tick.Bid.Sign() <= 0 {
-		return decision, fmt.Errorf("planner: executable bid and ask required")
-	}
-
-	quantity := price.Quantity(decision.Symbol, notional)
-
-	if quantity == nil || quantity.Sign() <= 0 {
-		return decision, fmt.Errorf("planner: allocation produced no executable quantity")
-	}
-
-	pair := planner.desk.Instrument().Pair(decision.Symbol)
-
-	if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
-		return decision, fmt.Errorf("planner: instrument tick size required")
-	}
-
-	fee := price.Fee(decision.Symbol)
-
-	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 {
-		return decision, fmt.Errorf("planner: taker fee required")
-	}
-
-	feeRate := decimal.ExactDiv(fee.Fee, decimal.NewFromInt64(100))
-	stoploss, err := types.NewStoploss(
-		planner.ctx,
-		decision.Symbol,
-		tick.Ask,
-		tick.Bid,
-		decision.Forecast,
-		&pair.TickSize,
-		feeRate,
-		feeRate,
-	)
-
-	if err != nil {
-		return decision, fmt.Errorf("planner: strategy stoploss: %w", err)
-	}
-
-	decision.AvailableCapital = cash
-	decision.ProposedNotional = notional
-	decision.ProposedQuantity = quantity
-	decision.ReferencePrice = tick.Ask
-	decision.EntryPrice = tick.Ask
-	decision.Mark = tick.Bid
-	decision.Stoploss = stoploss
-
-	return decision, nil
-}
-
-/*
 admit gates on predictive confidence and returns graph-adjusted evidence.
 */
 func (planner *Planner) admit(
@@ -316,6 +237,10 @@ func (planner *Planner) admit(
 
 	decision.Forecast = forecast
 	decision.Confidence = confidence
+
+	if err := planner.classifyAllocation(thesis, decision); err != nil {
+		return nil, evidence, err
+	}
 
 	return decision, evidence, nil
 }
