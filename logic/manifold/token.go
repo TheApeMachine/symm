@@ -53,10 +53,11 @@ frequency that is re-derived from whichever orders share the batch cannot hold a
 attractor well in place.
 */
 type Tokenizer struct {
-	config   pfluid.Config
-	universe []string
-	mutex    sync.Mutex
-	scales   map[string]*adaptive.Accumulator
+	config    pfluid.Config
+	universe  []string
+	mutex     sync.Mutex
+	scales    map[string]*adaptive.Accumulator
+	converged map[string]float64
 }
 
 /*
@@ -66,9 +67,10 @@ for GPU memory merging regardless of tick arrival order.
 */
 func NewTokenizer(config pfluid.Config, symbols []string) *Tokenizer {
 	return &Tokenizer{
-		config:   config,
-		universe: sortedUniverse(symbols),
-		scales:   make(map[string]*adaptive.Accumulator),
+		config:    config,
+		universe:  sortedUniverse(symbols),
+		scales:    make(map[string]*adaptive.Accumulator),
+		converged: make(map[string]float64),
 	}
 }
 
@@ -386,7 +388,10 @@ func (tokenizer *Tokenizer) omegaScale(
 		return 0, nil
 	}
 
-	return math.Sqrt(output.Value / float64(output.Count)), nil
+	scale := math.Sqrt(output.Value / float64(output.Count))
+	tokenizer.converged[symbol] = scale
+
+	return scale, nil
 }
 
 /*
@@ -586,4 +591,18 @@ func positionPhase(sideSeq int, sideCount int, side mgrbook.BookDirection) float
 
 	phase := basePhase + math.Pi*progress
 	return float32(math.Mod(phase, 2*math.Pi))
+}
+
+/*
+Scale reports a symbol's most recently converged RMS log distance from mid,
+which is the book's own measure of how far its price has to move to be
+distinguishable from its resting depth.
+*/
+func (tokenizer *Tokenizer) Scale(symbol string) (float64, bool) {
+	tokenizer.mutex.Lock()
+	defer tokenizer.mutex.Unlock()
+
+	scale, ok := tokenizer.converged[symbol]
+
+	return scale, ok && scale > 0
 }

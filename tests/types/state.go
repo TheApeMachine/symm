@@ -94,7 +94,9 @@ var MomentumMap = map[MarketState]float64{
 	VolatilitySpike:   0.0,
 }
 
-// Sample represents a fully populated market ticker payload point.
+/*
+Sample represents a fully populated market ticker payload point.
+*/
 type Sample struct {
 	Symbol        string  `json:"symbol"`
 	AggressorSide string  `json:"-"`
@@ -126,34 +128,29 @@ type RegimeProfile struct {
 	Cadence         time.Duration // Time interval step between ticks
 	AggressorSide   string        // Explicit taker intent when the regime owns flow direction
 
-	/*
-		IgnitionMove is the fraction the price gaps in a single step when the
-		regime is entered, and IgnitionVolume is the multiple of normal
-		executed volume that prints alongside it. Real pumps begin with one
-		violent bar rather than a smooth ramp, and detectors score volume and
-		price against their own recent medians, so a gradual climb never
-		registers as ignition. IgnitionDecay is the fraction of the burst
-		that survives each subsequent step.
-	*/
+	// IgnitionMove is the fraction the price gaps in a single step when the
+	// regime is entered, and IgnitionVolume is the multiple of normal
+	// executed volume that prints alongside it. Real pumps begin with one
+	// violent bar rather than a smooth ramp, and detectors score volume and
+	// price against their own recent medians, so a gradual climb never
+	// registers as ignition. IgnitionDecay is the fraction of the burst
+	// that survives each subsequent step.
 	IgnitionMove   float64
 	IgnitionVolume float64
 	IgnitionDecay  float64
 	Precursor      PrecursorContract
 
-	/*
-		AdmitsLong states whether this regime is one a long position belongs in.
+	// AdmitsLong states whether this regime is one a long position belongs in.
+	// It describes the generated market rather than any stack that reads it: a
+	// pump winding up is an opportunity to be long and a crash is not, and that
+	// remains true of the prices in this file whatever code observes them.
 
-		It describes the generated market rather than any stack that reads it: a
-		pump winding up is an opportunity to be long and a crash is not, and that
-		remains true of the prices in this file whatever code observes them.
-
-		Two of these regimes are only worth generating because of this field.
-		SpoofLiquidity stacks the bid harder than the pump does while almost
-		nothing trades, and ThinLiquidity widens the spread on a book with
-		nothing behind it — both present the depth signature of an opportunity
-		without the flow, so a stack that reads depth alone takes them and one
-		that reads what is executable does not.
-	*/
+	// Two of these regimes are only worth generating because of this field.
+	// SpoofLiquidity stacks the bid harder than the pump does while almost
+	// nothing trades, and ThinLiquidity widens the spread on a book with
+	// nothing behind it — both present the depth signature of an opportunity
+	// without the flow, so a stack that reads depth alone takes them and one
+	// that reads what is executable does not.
 	AdmitsLong bool
 }
 
@@ -206,10 +203,8 @@ func Blend(source, target RegimeProfile, progress float64) RegimeProfile {
 		)),
 		AggressorSide: target.AggressorSide,
 
-		/*
-			Ignition describes how the target regime is entered, so it is
-			taken from the target rather than blended away to nothing.
-		*/
+		// Ignition describes how the target regime is entered, so it is
+		// taken from the target rather than blended away to nothing.
 		IgnitionMove:   target.IgnitionMove,
 		IgnitionVolume: target.IgnitionVolume,
 		IgnitionDecay:  target.IgnitionDecay,
@@ -250,11 +245,9 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 			MinimumObservations: 3,
 		},
 	},
-	/*
-		FastPump opens with one violent bar, modelled on an observed +30%
-		30-minute candle that printed roughly eight times the surrounding
-		volume, then continues to grind higher as the burst decays.
-	*/
+	// FastPump opens with one violent bar, modelled on an observed +30%
+	// 30-minute candle that printed roughly eight times the surrounding
+	// volume, then continues to grind higher as the burst decays.
 	FastPump: {
 		Drift:           0.8,
 		Volatility:      0.04,
@@ -301,11 +294,9 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		IgnitionVolume:  9.0,
 		IgnitionDecay:   0.6,
 	},
-	/*
-		SlowPump is persistent buy-side pressure without a discontinuous event.
-		It deliberately carries no ignition and does not admit the fast-pump
-		entry contract.
-	*/
+	// SlowPump is persistent buy-side pressure without a discontinuous event.
+	// It deliberately carries no ignition and does not admit the fast-pump
+	// entry contract.
 	SlowPump: {
 		Drift:           0.25,
 		Volatility:      0.03,
@@ -316,10 +307,8 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		Cadence:         100 * time.Millisecond,
 		AggressorSide:   "buy",
 	},
-	/*
-		SlowDump is the sell-side counterpart: sustained pressure without the
-		gap and volume burst that define a crash or fast dump.
-	*/
+	// SlowDump is the sell-side counterpart: sustained pressure without the
+	// gap and volume burst that define a crash or fast dump.
 	SlowDump: {
 		Drift:           -0.25,
 		Volatility:      0.03,
@@ -349,10 +338,8 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		VolumeScale:     0.5,
 		Cadence:         100 * time.Millisecond,
 	},
-	/*
-		LoadedLiquidity keeps a deep, balanced book around an ordinary tape so
-		depth alone cannot be mistaken for directional demand.
-	*/
+	// LoadedLiquidity keeps a deep, balanced book around an ordinary tape so
+	// depth alone cannot be mistaken for directional demand.
 	LoadedLiquidity: {
 		Drift:           0.0,
 		Volatility:      0.02,
@@ -389,10 +376,8 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		VolumeScale:     0.2,
 		Cadence:         50 * time.Millisecond,
 	},
-	/*
-		SidewaysChop alternates around a stationary center on ordinary volume;
-		its variance is real, but it has no directional flow contract.
-	*/
+	// SidewaysChop alternates around a stationary center on ordinary volume;
+	// its variance is real, but it has no directional flow contract.
 	SidewaysChop: {
 		Drift:           0.0,
 		Volatility:      0.4,
@@ -402,10 +387,8 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 		VolumeScale:     2.0,
 		Cadence:         50 * time.Millisecond,
 	},
-	/*
-		VolatilitySpike raises dispersion and tape rate together while keeping
-		direction balanced, separating activity from an executable long thesis.
-	*/
+	// VolatilitySpike raises dispersion and tape rate together while keeping
+	// direction balanced, separating activity from an executable long thesis.
 	VolatilitySpike: {
 		Drift:           0.0,
 		Volatility:      1.0,

@@ -5,10 +5,6 @@ import { attach } from "#/providers/ws-stores";
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
 
-const manifoldSocketUrl =
-	import.meta.env.VITE_SYMM_MANIFOLD_WS_URL?.trim() ||
-	"ws://127.0.0.1:8765/ws-manifold";
-
 type WorkerOutbound =
 	| { type: "READY" }
 	| { type: "ONLINE"; online: boolean }
@@ -16,7 +12,6 @@ type WorkerOutbound =
 	| { type: "ERROR_FRAME"; frame: Record<string, unknown> };
 
 let worker: Worker | null = null;
-let manifoldWorker: Worker | null = null;
 let focusUnsubscribe: (() => void) | null = null;
 
 const disconnectTransport = () => {
@@ -27,12 +22,6 @@ const disconnectTransport = () => {
 		worker.postMessage({ type: "DISCONNECT" });
 		worker.terminate();
 		worker = null;
-	}
-
-	if (manifoldWorker !== null) {
-		manifoldWorker.postMessage({ type: "DISCONNECT" });
-		manifoldWorker.terminate();
-		manifoldWorker = null;
 	}
 };
 
@@ -75,38 +64,14 @@ const connect = () => {
 	worker = new Worker(new URL("./ws-worker.ts", import.meta.url), {
 		type: "module",
 	});
-	manifoldWorker = new Worker(new URL("./ws-worker.ts", import.meta.url), {
-		type: "module",
-	});
 
 	attach(worker);
-	attach(manifoldWorker);
 	worker.addEventListener("message", handleWorkerMessage);
 	worker.addEventListener("error", (event) => {
 		console.error("WS worker failed:", event.message);
 		appStore.actions.updateOnline(false);
 		appStore.actions.updateError({ message: event.message });
 	});
-	manifoldWorker.addEventListener("message", (event) => {
-		const message = event.data as WorkerOutbound;
-
-		if (message.type === "READY") {
-			manifoldWorker?.postMessage({
-				type: "CONNECT",
-				url: manifoldSocketUrl,
-			});
-			return;
-		}
-
-		if (message.type === "ERROR") {
-			appStore.actions.updateError({ message: message.message });
-		}
-	});
-	manifoldWorker.addEventListener("error", (event) => {
-		console.error("Manifold WS worker failed:", event.message);
-		appStore.actions.updateError({ message: event.message });
-	});
-
 	let previous = appStore.state.focusSymbol;
 	const subscription = appStore.subscribe(() => {
 		const next = appStore.state.focusSymbol;

@@ -21,6 +21,11 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		label: "Market graph",
 		hint: "Relational topology · node inspection",
 	},
+	{
+		id: "fluid",
+		label: "Fluid manifold",
+		hint: "Particle gas · gas volume · complex wave field",
+	},
 	{ id: "signals", label: "Signal insight", hint: "Per-kernel forensics" },
 	{ id: "decisions", label: "Decision tree", hint: "Gate-by-gate trace" },
 	{

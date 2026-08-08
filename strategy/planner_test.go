@@ -14,17 +14,7 @@ import (
 
 func TestPlannerSearch(t *testing.T) {
 	Convey("Given a causal artifact that has not reached its data requirement", t, func() {
-		planner := &Planner{mctsEngine: mcts.NewCausalMCTS(
-			NewCausalEngineAdapter(),
-			math.Sqrt2,
-			1,
-			mctsMinimumCausalRows,
-			2,
-			3,
-			[]int{0, 1},
-			[]int{0, 1, 2},
-			false,
-		)}
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
 		decision, err := planner.search(
 			types.NewThesis(nil),
@@ -40,17 +30,7 @@ func TestPlannerSearch(t *testing.T) {
 	})
 
 	Convey("Given causal analysis that is ready before its MCTS rows are usable", t, func() {
-		planner := &Planner{mctsEngine: mcts.NewCausalMCTS(
-			NewCausalEngineAdapter(),
-			math.Sqrt2,
-			1,
-			mctsMinimumCausalRows,
-			2,
-			3,
-			[]int{0, 1},
-			[]int{0, 1, 2},
-			false,
-		)}
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
 		decision, err := planner.search(types.NewThesis(nil), "BTC/USD", map[string]any{
 			"ready":          true,
@@ -64,18 +44,28 @@ func TestPlannerSearch(t *testing.T) {
 		})
 	})
 
+	Convey("Given ready causal history while symbol cognition is still warming", t, func() {
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
+		rows := make([][]float64, mctsMinimumCausalRows)
+
+		for index := range rows {
+			rows[index] = []float64{float64(index), 0, 1, 1}
+		}
+
+		decision, err := planner.search(types.NewThesis(nil), "BTC/USD", map[string]any{
+			"ready":          true,
+			"historyRows":    rows,
+			"treatmentLevel": 1.0,
+		})
+
+		Convey("Then it should stand aside without reporting a failed search", func() {
+			So(err, ShouldBeNil)
+			So(decision.Action, ShouldEqual, types.ActionNothing)
+		})
+	})
+
 	Convey("Given causal history whose intervention raises realized return", t, func() {
-		planner := &Planner{mctsEngine: mcts.NewCausalMCTS(
-			NewCausalEngineAdapter(),
-			math.Sqrt2,
-			1,
-			mctsMinimumCausalRows,
-			2,
-			3,
-			[]int{0, 1},
-			[]int{0, 1, 2},
-			false,
-		)}
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 		rows := make([][]float64, mctsMinimumCausalRows)
 
 		for index := range rows {
@@ -103,17 +93,7 @@ func TestPlannerSearch(t *testing.T) {
 
 	Convey("Given positive causal history with graph contradiction above the forecast", t, func() {
 		planner := &Planner{
-			mctsEngine: mcts.NewCausalMCTS(
-				NewCausalEngineAdapter(),
-				math.Sqrt2,
-				1,
-				mctsMinimumCausalRows,
-				2,
-				3,
-				[]int{0, 1},
-				[]int{0, 1, 2},
-				false,
-			),
+			mctsEngine:        plannerMCTSEngine(),
 			minimumConfidence: 0.80,
 		}
 		rows := make([][]float64, mctsMinimumCausalRows)
@@ -293,6 +273,20 @@ func TestPlannerAdmit(t *testing.T) {
 	})
 }
 
+func plannerMCTSEngine() *mcts.CausalMCTS {
+	return mcts.NewCausalMCTS(
+		NewCausalEngineAdapter(),
+		math.Sqrt2,
+		1,
+		mctsMinimumCausalRows,
+		2,
+		3,
+		[]int{0, 1},
+		[]int{0, 1, 2},
+		false,
+	)
+}
+
 func plannerThesisFixture(
 	t *testing.T,
 	symbol string,
@@ -366,11 +360,20 @@ func forecastFixture(t *testing.T, confidence float64) *types.ResonanceForecast 
 }
 
 func BenchmarkPlannerDecisions(b *testing.B) {
-	planner := &Planner{}
+	planner := &Planner{mctsEngine: plannerMCTSEngine()}
+	rows := make([][]float64, mctsMinimumCausalRows)
+
+	for index := range rows {
+		rows[index] = []float64{float64(index), 0, 1, 1}
+	}
 
 	for b.Loop() {
 		thesis := types.NewThesis(nil)
-		thesis.Causal.Store("BTC/USD", map[string]any{"ready": false})
+		thesis.Causal.Store("BTC/USD", map[string]any{
+			"ready":          true,
+			"historyRows":    rows,
+			"treatmentLevel": 1.0,
+		})
 		_ = planner.decisions(thesis)
 	}
 }

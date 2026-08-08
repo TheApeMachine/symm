@@ -174,6 +174,19 @@ export const paintRegistered = (
 };
 
 /*
+RESONANCE_FOCUS is the focused carrier on its own key.
+
+The solver publishes every carrier it settled, because the latent cross-section
+plots all of them. A surface reading one carrier wants the inspected symbol, and
+picking it out of the batch by position only works once that symbol has settled —
+before then index 0 is some other symbol, and the chart would draw its vectors
+under the focused symbol's name. Deriving the row here makes "the carrier being
+inspected" a stream of its own, so a binding cannot accidentally read a
+neighbour.
+*/
+export const RESONANCE_FOCUS = "resonance.focus";
+
+/*
 attach coalesces worker updates to one paint pass per display frame. DRAW values
 carry at most one sparse delta per identity from the worker. Positions, cognition
 and resonance are retained on the main thread and materialized once when the
@@ -212,6 +225,14 @@ export const attach = (worker: Worker) => {
 
 		for (const [key, value] of updates) {
 			paintRegistered(key, value);
+
+			if (key === "resonance") {
+				const focused = retainedResonance.get(appStore.state.focusSymbol);
+
+				if (focused !== undefined) {
+					paintRegistered(RESONANCE_FOCUS, focused);
+				}
+			}
 		}
 
 		if (binary !== null && retainManifoldBinary(binary)) {

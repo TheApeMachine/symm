@@ -53,17 +53,17 @@ kill:
 
 run:
 	@echo "symm running (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
 	go run $(LDFLAGS) main.go
 
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
 	export DATURA_INSPECT=1 && go run $(LDFLAGS) main.go
 
 debug-inspect:
 	@echo "symm debug (DATURA_INSPECT) running (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws — dashboard: cd frontend && pnpm dev"
+	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
 	export DATURA_INSPECT=1 && go run $(LDFLAGS) main.go
 
 run-profile:

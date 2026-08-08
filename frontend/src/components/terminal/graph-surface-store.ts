@@ -6,6 +6,7 @@ export type MarketGraphNode = {
 	source?: string;
 	kind?: string;
 	value?: number;
+	strength?: number;
 	confidence?: number;
 	at?: string;
 	metadata?: Record<string, unknown>;
@@ -80,6 +81,7 @@ export const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
 			confidence: node.confidence,
 			kind: node.kind,
 			source: node.source,
+			strength: node.strength,
 			symbol: node.symbol,
 			value: node.value,
 		});

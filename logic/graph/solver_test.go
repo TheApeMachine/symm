@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -65,14 +66,16 @@ func TestInferStructuralEdges(t *testing.T) {
 				Symbol:     symbol,
 				Kind:       KindCausal,
 				Value:      0.5,
-				Confidence: 1,
+				Strength:   2301.376798,
+				Confidence: 0.58,
 				At:         at,
 			})
 			graph.AddNode(&Node{
 				ID:         "causal:" + symbol + ":doExpectation",
 				Symbol:     symbol,
 				Kind:       KindCausal,
-				Confidence: 1,
+				Strength:   2301.376798,
+				Confidence: 0.58,
 				At:         at,
 			})
 		}
@@ -85,7 +88,8 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		solver.inferStructuralEdges(types.NewThesis(nil), graph)
+		err := solver.inferStructuralEdges(types.NewThesis(nil), graph)
+		So(err, ShouldBeNil)
 
 		Convey("Each intervention should condition its symbol's do-expectation", func() {
 			conditionEdges := 0
@@ -95,6 +99,9 @@ func TestInferStructuralEdges(t *testing.T) {
 					conditionEdges++
 					So(graph.Nodes[edge.From].Symbol,
 						ShouldEqual, graph.Nodes[edge.To].Symbol)
+					So(edge.Weight, ShouldBeGreaterThan, 0)
+					So(edge.Weight, ShouldBeLessThan, 1)
+					So(edge.Confidence, ShouldBeLessThan, 1)
 				}
 			}
 
@@ -134,7 +141,8 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		solver.inferStructuralEdges(types.NewThesis(nil), graph)
+		err := solver.inferStructuralEdges(types.NewThesis(nil), graph)
+		So(err, ShouldBeNil)
 
 		Convey("It omits zero-confidence pair edges while retaining evidence-bearing edges", func() {
 			counts := make(map[RelationType]int)
@@ -157,19 +165,41 @@ func TestExtractCausalNodes(t *testing.T) {
 		thesis := types.NewThesis(nil)
 		thesis.At = at
 		thesis.Causal.Store("BTC/USD", map[string]any{
-			"doExpectation": 0.25,
-			"confidence":    0.37,
+			"association":       0.1,
+			"associationScore":  0.2,
+			"doExpectation":     0.25,
+			"interventionScore": 0.4,
+			"probabilities":     []float64{0.12, 0.58, 0.2, 0.1},
 		})
 		graph := NewGraph(at)
 		solver := NewSolver(nil, nil)
 
-		solver.extractCausalNodes(thesis, graph)
+		err := solver.extractCausalNodes(thesis, graph)
+		So(err, ShouldBeNil)
 
-		Convey("It should carry confidence onto the do-expectation node", func() {
+		Convey("It should carry channel-specific confidence onto each causal node", func() {
 			node, found := graph.Nodes["causal:BTC/USD:doExpectation"]
+			association := graph.Nodes["causal:BTC/USD:association"]
 
 			So(found, ShouldBeTrue)
-			So(node.Confidence, ShouldEqual, 0.37)
+			So(node.Confidence, ShouldEqual, 0.58)
+			So(node.Strength, ShouldEqual, 0.4)
+			So(association.Confidence, ShouldEqual, 0.12)
+			So(association.Confidence, ShouldNotEqual, node.Confidence)
+		})
+	})
+
+	Convey("Given a causal value without its probability distribution", t, func() {
+		thesis := types.NewThesis(nil)
+		thesis.Causal.Store("BTC/USD", map[string]any{"intervention": 1.0})
+
+		err := NewSolver(nil, nil).extractCausalNodes(
+			thesis,
+			NewGraph(time.Unix(1, 0).UTC()),
+		)
+
+		Convey("It should reject confidence-free causal nodes", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -206,6 +236,39 @@ func TestExtractResonanceNodes(t *testing.T) {
 	})
 }
 
+func TestMagnitudeWeight(t *testing.T) {
+	Convey("Given the large finite causal magnitude observed on the live graph", t, func() {
+		weight, err := magnitudeWeight(2301.376798)
+
+		Convey("It should remain strong without becoming certain", func() {
+			So(err, ShouldBeNil)
+			So(weight, ShouldBeGreaterThan, 0)
+			So(weight, ShouldBeLessThan, 1)
+		})
+	})
+
+	Convey("Given the largest representable finite strength", t, func() {
+		weight, err := magnitudeWeight(math.MaxFloat64)
+
+		Convey("It should preserve the open probability bound", func() {
+			So(err, ShouldBeNil)
+			So(weight, ShouldBeLessThan, 1)
+		})
+	})
+}
+
+func TestAgreementWeight(t *testing.T) {
+	Convey("Given two large finite readings on unrelated scales", t, func() {
+		weight, err := agreementWeight(2301.376798, -9172.4)
+
+		Convey("It should preserve strong agreement without saturating", func() {
+			So(err, ShouldBeNil)
+			So(weight, ShouldBeGreaterThan, 0)
+			So(weight, ShouldBeLessThan, 1)
+		})
+	})
+}
+
 func BenchmarkInferStructuralEdges(b *testing.B) {
 	at := time.Unix(1, 0).UTC()
 	nodes := make(map[string]*Node, 260)
@@ -228,6 +291,7 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 			Symbol:     symbol,
 			Kind:       KindCausal,
 			Value:      0.5,
+			Strength:   0.5,
 			Confidence: 1,
 			At:         at,
 		}
@@ -250,7 +314,9 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 	for b.Loop() {
 		graph := NewGraph(at)
 		graph.Nodes = nodes
-		solver.inferStructuralEdges(thesis, graph)
+		if err := solver.inferStructuralEdges(thesis, graph); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -294,11 +360,14 @@ func BenchmarkUpdate(b *testing.B) {
 			Forecast: forecast,
 		})
 		thesis.Causal.Store(symbol, map[string]any{
-			"association":   0.1,
-			"confidence":    0.8,
-			"doExpectation": 0.1,
-			"intervention":  0.1,
-			"uplift":        0.1,
+			"association":       0.1,
+			"associationScore":  0.1,
+			"doExpectation":     0.1,
+			"intervention":      0.1,
+			"interventionScore": 0.1,
+			"probabilities":     []float64{0.3, 0.4, 0.2, 0.1},
+			"uplift":            0.1,
+			"upliftScore":       0.1,
 		})
 		thesis.Cognition.Store(symbol, types.Cognition{
 			Symbol:     symbol,

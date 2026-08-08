@@ -1,35 +1,23 @@
-import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
 import { Component } from "#/components/ui/component";
+import { RESONANCE_FOCUS } from "#/providers/ws-stores";
 /*
 The resonance batch carries every settled carrier, not just the focused one, so
-the row is pinned by symbol. Reading index 0 used to be the same thing when the
-solver published a single row; it now names whichever carrier happens to sort
-first, which is a different symbol from one frame to the next.
+this reads the focused-carrier stream rather than a position in that batch.
 */
 
-export const LiveResonanceFooter = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-
-	return (
-		<Component registerKey="resonance">
-			{({ ref, className }) => (
-				<span
-					ref={ref}
-					data-scope="symbol"
-					data-filter={focusSymbol}
-					className={className}
-				>
-					α{" "}
-					<span data-paint="alpha" data-paint-format=".4f">
-						—
-					</span>
-					{" · surprise "}
-					<span data-paint="surprise" data-paint-format=".2f">
-						—
-					</span>
+export const LiveResonanceFooter = () => (
+	<Component registerKey={RESONANCE_FOCUS}>
+		{({ ref, className }) => (
+			<span ref={ref} className={className}>
+				α{" "}
+				<span data-paint="alpha" data-paint-format=".4f">
+					—
 				</span>
-			)}
-		</Component>
-	);
-};
+				{" · surprise "}
+				<span data-paint="surprise" data-paint-format=".2f">
+					—
+				</span>
+			</span>
+		)}
+	</Component>
+);

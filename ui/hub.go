@@ -27,10 +27,10 @@ type Hub struct {
 	app        *fiber.App
 	listenAddr string
 	Messages   chan []byte
-	Manifold   chan []byte
 	desk       *broker.Desk
 	price      *broker.Price
 	balance    *broker.Balance
+	fluid      *FluidRTC
 }
 
 /*
@@ -51,7 +51,6 @@ func NewHub(
 		cancel:     cancel,
 		listenAddr: "127.0.0.1:8765",
 		Messages:   channel,
-		Manifold:   manifold,
 		desk:       desk,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
@@ -62,7 +61,9 @@ func NewHub(
 		}),
 		price:   price,
 		balance: balance,
+		fluid:   NewFluidRTC(ctx),
 	}
+	go hub.fluid.Run(manifold)
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -103,27 +104,33 @@ func NewHub(
 		*/
 		go func() {
 			for {
-				messageType, payload, err := conn.Conn.ReadMessage()
-
-				if err != nil {
+				select {
+				case <-hub.ctx.Done():
+					errnie.Error(hub.Close())
 					return
-				}
+				default:
+					messageType, payload, err := conn.Conn.ReadMessage()
 
-				if messageType != websocket.TextMessage {
-					continue
-				}
+					if err != nil {
+						return
+					}
 
-				var request struct {
-					Type   string `json:"type"`
-					Symbol string `json:"symbol"`
-				}
+					if messageType != websocket.TextMessage {
+						continue
+					}
 
-				if err := sonic.Unmarshal(payload, &request); err != nil {
-					continue
-				}
+					var request struct {
+						Type   string `json:"type"`
+						Symbol string `json:"symbol"`
+					}
 
-				if request.Type == "focus" {
-					types.SetFocus(request.Symbol)
+					if err := sonic.Unmarshal(payload, &request); err != nil {
+						continue
+					}
+
+					if request.Type == "focus" {
+						types.SetFocus(request.Symbol)
+					}
 				}
 			}
 		}()
@@ -131,6 +138,7 @@ func NewHub(
 		for {
 			select {
 			case <-hub.ctx.Done():
+				errnie.Error(hub.Close())
 				return
 			case msg := <-hub.Messages:
 				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
@@ -155,42 +163,7 @@ func NewHub(
 		}
 	}))
 
-	hub.app.Use("/ws-manifold", func(c fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(c) {
-			c.Locals("allowed", true)
-			return c.Next()
-		}
-
-		return fiber.ErrUpgradeRequired
-	})
-
-	hub.app.Get("/ws-manifold", websocket.New(func(conn *websocket.Conn) {
-		for {
-			select {
-			case <-hub.ctx.Done():
-				return
-			case msg := <-hub.Manifold:
-				if err := conn.Conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
-					for _, closeError := range []error{
-						syscall.EPIPE,
-						syscall.ECONNRESET,
-						io.EOF,
-						io.ErrClosedPipe,
-					} {
-						if errors.Is(err, closeError) {
-							return
-						}
-					}
-
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"failed to write dashboard websocket message: "+err.Error(),
-						err,
-					))
-				}
-			}
-		}
-	}))
+	hub.registerFluidWebRTC()
 
 	return hub
 }
@@ -208,10 +181,12 @@ Close shuts down the HTTP server, cancels clients, and waits for ingress drain.
 func (hub *Hub) Close() error {
 	var err error
 
+	hub.cancel()
+	err = errors.Join(err, hub.fluid.Close())
+
 	if hub.app != nil {
 		err = hub.app.Shutdown()
 	}
 
-	hub.cancel()
 	return err
 }

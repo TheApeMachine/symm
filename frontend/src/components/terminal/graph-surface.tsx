@@ -164,10 +164,14 @@ const SelectedNodePanel = ({
 					<span>
 						{typeof node.value === "number" ? node.value.toFixed(6) : "—"}
 					</span>
+					<span className="text-(--f4)">strength</span>
+					<span>
+						{typeof node.strength === "number" ? node.strength.toFixed(6) : "—"}
+					</span>
 					<span className="text-(--f4)">confidence</span>
 					<span>
 						{typeof node.confidence === "number"
-							? node.confidence.toFixed(4)
+							? node.confidence.toFixed(6)
 							: "—"}
 					</span>
 					<span className="text-(--f4)">at</span>
@@ -218,11 +222,11 @@ const SelectedNodePanel = ({
 								<div className="mt-0.5 text-(--f4)">
 									{edge.relation ?? "relationless"} · w=
 									{typeof edge.weight === "number"
-										? edge.weight.toFixed(4)
+										? edge.weight.toFixed(6)
 										: "—"}{" "}
 									· c=
 									{typeof edge.confidence === "number"
-										? edge.confidence.toFixed(4)
+										? edge.confidence.toFixed(6)
 										: "—"}
 								</div>
 								{edge.reason ? (

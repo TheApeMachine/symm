@@ -20,18 +20,28 @@ Position is one lot shell owned and event-routed by Desk. Order correlation uses
 each decision's client order ID, then the exchange order ID returned by REST.
 */
 type Position struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	api              *websocket.API
-	ui               chan []byte
-	instrument       *Instrument
-	price            *Price
-	balance          *Balance
-	recorder         *audit.Recorder
-	store            *PositionStore
-	pair             kraken.InstrumentPair
-	seenExecutions   map[string]struct{}
-	Status           types.Status          `json:"status"`
+	ctx            context.Context
+	cancel         context.CancelFunc
+	api            *websocket.API
+	ui             chan []byte
+	instrument     *Instrument
+	price          *Price
+	balance        *Balance
+	recorder       *audit.Recorder
+	store          *PositionStore
+	pair           kraken.InstrumentPair
+	seenExecutions map[string]struct{}
+	Status         types.Status `json:"status"`
+	/*
+		Decision is the arbitration that opened this lot, kept verbatim.
+
+		A position outlives the round that produced it: the planner moves on, and
+		by the time anyone asks why a lot is open its originating decision is no
+		longer anywhere in the current decision batch. Carrying it here is what
+		lets the terminal answer that question at all, and it survives a client
+		reconnect because the desk republishes its positions on connect.
+	*/
+	Decision         types.Decision        `json:"decision"`
 	EntryOrder       *spot.AddOrderRequest `json:"entry_order"`
 	ExitOrder        *spot.AddOrderRequest `json:"exit_order"`
 	EntryOrderResult *spot.AddOrderResult  `json:"entry_order_result"`
@@ -70,6 +80,7 @@ func NewPosition(
 		store:          store,
 		pair:           pair,
 		seenExecutions: map[string]struct{}{},
+		Decision:       decision,
 		EntryOrder: &spot.AddOrderRequest{
 			ClOrdId:   decision.ID,
 			Type:      "buy",

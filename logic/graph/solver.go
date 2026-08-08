@@ -5,8 +5,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -50,6 +51,7 @@ type Node struct {
 	Source     string         `json:"source,omitempty"`
 	Kind       Kind           `json:"kind"`
 	Value      float64        `json:"value"`
+	Strength   float64        `json:"strength,omitempty"`
 	Confidence float64        `json:"confidence"`
 	At         time.Time      `json:"at"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
@@ -77,10 +79,6 @@ type Graph struct {
 	Edges     []*Edge             `json:"edges"`
 	Adjacency map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
 }
-
-var publishJSON = sonic.Config{
-	EncodeNullForInfOrNan: true,
-}.Froze()
 
 /*
 NewGraph creates an empty graph initialized with node and adjacency maps.
@@ -180,11 +178,25 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	// 1. Extract and register all non-measurement nodes from Thesis
 	solver.extractCategoryNodes(thesis, graph)
 	solver.extractResonanceNodes(thesis, graph)
-	solver.extractCausalNodes(thesis, graph)
+
+	if err := solver.extractCausalNodes(thesis, graph); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"graph: failed to extract causal nodes - "+err.Error(),
+			err,
+		))
+	}
+
 	solver.extractCognitionNodes(thesis, graph)
 
 	// 2. Infer directional relationships between nodes
-	solver.inferStructuralEdges(thesis, graph)
+	if err := solver.inferStructuralEdges(thesis, graph); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"graph: failed to infer structural edges - "+err.Error(),
+			err,
+		))
+	}
 
 	// 3. Store compiled Graph into thesis.Graphs
 	thesis.Graphs.Store("market_graph", graph)
@@ -198,8 +210,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 /*
 extractCategoryNodes registers active categories as nodes.
 */
-func (solver *Solver) extractCategoryNodes(thesis *types.Thesis, graph *Graph) {
-	thesis.Categories.Range(func(key, value interface{}) bool {
+func (solver *Solver) extractCategoryNodes(
+	thesis *types.Thesis, graph *Graph,
+) {
+	thesis.Categories.Range(func(key, value any) bool {
 		symbol := key.(string)
 		categories := value.([]types.Category)
 
@@ -231,7 +245,9 @@ func (solver *Solver) extractCategoryNodes(thesis *types.Thesis, graph *Graph) {
 /*
 extractResonanceNodes registers predictive coding outcomes (surprise, expected return forecast).
 */
-func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) {
+func (solver *Solver) extractResonanceNodes(
+	thesis *types.Thesis, graph *Graph,
+) {
 	if thesis == nil || thesis.Resonance == nil {
 		return
 	}
@@ -274,53 +290,132 @@ func (solver *Solver) extractResonanceNodes(thesis *types.Thesis, graph *Graph) 
 }
 
 /*
+causalField maps one Pearl output value to its standardized score and channel
+probability. Do-expectation belongs to the intervention channel because it is
+the target estimate produced by that intervention.
+*/
+type causalField struct {
+	value            string
+	score            string
+	probabilityIndex int
+}
+
+const causalProbabilityCount = 4
+
+var causalFields = [...]causalField{
+	{value: "association", score: "associationScore", probabilityIndex: 0},
+	{value: "intervention", score: "interventionScore", probabilityIndex: 1},
+	{value: "doExpectation", score: "interventionScore", probabilityIndex: 1},
+	{value: "uplift", score: "upliftScore", probabilityIndex: 2},
+}
+
+func (field causalField) node(
+	symbol string,
+	at time.Time,
+	causalMap map[string]any,
+	probabilities []float64,
+) (*Node, bool, error) {
+	fieldValue, found := causalMap[field.value].(float64)
+
+	if !found {
+		return nil, false, nil
+	}
+
+	if math.IsNaN(fieldValue) || math.IsInf(fieldValue, 0) {
+		return nil, false, fmt.Errorf(
+			"finite causal value %s required for %s", field.value, symbol,
+		)
+	}
+
+	strength, found := causalMap[field.score].(float64)
+
+	if !found || math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 {
+		return nil, false, fmt.Errorf(
+			"finite causal score %s required for %s", field.score, symbol,
+		)
+	}
+
+	return &Node{
+		ID:         fmt.Sprintf("causal:%s:%s", symbol, field.value),
+		Symbol:     symbol,
+		Source:     "causal",
+		Kind:       KindCausal,
+		Value:      fieldValue,
+		Strength:   strength,
+		Confidence: probabilities[field.probabilityIndex],
+		At:         at,
+	}, true, nil
+}
+
+func causalProbabilities(symbol string, causalMap map[string]any) ([]float64, error) {
+	probabilities, ok := causalMap["probabilities"].([]float64)
+
+	if !ok || len(probabilities) != causalProbabilityCount {
+		return nil, fmt.Errorf(
+			"%d causal probabilities required for %s", causalProbabilityCount, symbol,
+		)
+	}
+
+	for index, confidence := range probabilities {
+		if math.IsNaN(confidence) || math.IsInf(confidence, 0) ||
+			confidence < 0 || confidence > 1 {
+			return nil, fmt.Errorf(
+				"causal probability %d for %s must be within [0,1]", index, symbol,
+			)
+		}
+	}
+
+	return probabilities, nil
+}
+
+func causalValuesPresent(causalMap map[string]any) bool {
+	for _, field := range causalFields {
+		if _, found := causalMap[field.value]; found {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
 extractCausalNodes registers Pearl do-calculus and counterfactual uplift outputs.
 */
-func (solver *Solver) extractCausalNodes(thesis *types.Thesis, graph *Graph) {
+func (solver *Solver) extractCausalNodes(thesis *types.Thesis, graph *Graph) error {
+	var extractErr error
+
 	thesis.Causal.Range(func(key, value any) bool {
-		symbol, _ := key.(string)
-		causalMap, ok := value.(map[string]any)
-		if !ok {
+		symbol, symbolOK := key.(string)
+		causalMap, mapOK := value.(map[string]any)
+
+		if !symbolOK || !mapOK || !causalValuesPresent(causalMap) {
 			return true
 		}
 
-		confidence := graphConfidence(causalMap["confidence"])
+		probabilities, err := causalProbabilities(symbol, causalMap)
 
-		for _, field := range []string{"doExpectation", "uplift", "association", "intervention"} {
-			if val, ok := causalMap[field].(float64); ok {
-				nodeID := fmt.Sprintf("causal:%s:%s", symbol, field)
-				graph.AddNode(&Node{
-					ID:         nodeID,
-					Symbol:     symbol,
-					Source:     "causal",
-					Kind:       "causal",
-					Value:      val,
-					Confidence: confidence,
-					At:         thesis.At,
-				})
+		if err != nil {
+			extractErr = err
+			return false
+		}
+
+		for _, field := range causalFields {
+			node, found, err := field.node(symbol, thesis.At, causalMap, probabilities)
+
+			if err != nil {
+				extractErr = err
+				return false
+			}
+
+			if found {
+				graph.AddNode(node)
 			}
 		}
 
 		return true
 	})
-}
 
-func graphConfidence(value any) float64 {
-	confidence, ok := value.(float64)
-
-	if !ok || math.IsNaN(confidence) || math.IsInf(confidence, 0) {
-		return 0
-	}
-
-	if confidence < 0 {
-		return 0
-	}
-
-	if confidence > 1 {
-		return 1
-	}
-
-	return confidence
+	return extractErr
 }
 
 /*
@@ -363,15 +458,20 @@ magnitudes directly would make the relation a statement about scale rather than
 about agreement, so each side is squashed to a bounded strength first and the
 weaker of the two decides how much the pair can claim.
 */
-func agreementWeight(left, right float64) float64 {
-	if math.IsNaN(left) || math.IsNaN(right) {
-		return 0
+func agreementWeight(left, right float64) (float64, error) {
+	leftWeight, err := magnitudeWeight(math.Abs(left))
+
+	if err != nil {
+		return 0, fmt.Errorf("left agreement strength: %w", err)
 	}
 
-	return math.Min(
-		math.Tanh(math.Abs(left)),
-		math.Tanh(math.Abs(right)),
-	)
+	rightWeight, err := magnitudeWeight(math.Abs(right))
+
+	if err != nil {
+		return 0, fmt.Errorf("right agreement strength: %w", err)
+	}
+
+	return math.Min(leftWeight, rightWeight), nil
 }
 
 /*
@@ -379,12 +479,13 @@ inferStructuralEdges indexes nodes by the domains that can produce an
 evidence-bearing relationship. Zero-confidence pair relations are not
 materialized because their decision weight is necessarily zero.
 */
-func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
+func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) error {
 	nodes := graph.Nodes
 	resonanceBySymbol := make(map[string][]*Node)
 	causalBySymbol := make(map[string][]*Node)
 	interventions := make([]*Node, 0)
 	expectationsBySymbol := make(map[string][]*Node)
+	var inferenceErr error
 
 	for _, node := range nodes {
 		switch node.Kind {
@@ -421,7 +522,16 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 					between the values; a raw magnitude here would let the
 					head with the larger units decide the relation by itself.
 				*/
-				agreement := agreementWeight(resonanceNode.Value, causalNode.Value)
+				agreement, err := agreementWeight(resonanceNode.Value, causalNode.Value)
+
+				if err != nil {
+					return fmt.Errorf(
+						"agreement weight from %s to %s: %w",
+						resonanceNode.ID,
+						causalNode.ID,
+						err,
+					)
+				}
 
 				if resonanceNode.Value > 0 && causalNode.Value > 0 {
 					graph.AddEdge(&Edge{
@@ -451,35 +561,35 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 
 					continue
 				}
-
-				if math.Abs(resonanceNode.Value) < 0.01 && math.Abs(causalNode.Value) < 0.01 {
-					graph.AddEdge(&Edge{
-						From:       resonanceNode.ID,
-						To:         causalNode.ID,
-						Relation:   RelationIndependentOf,
-						Weight:     1.0,
-						Confidence: 1.0,
-						At:         graph.At,
-						Reason:     "zero forecast magnitude and zero causal uplift",
-					})
-				}
 			}
 		}
 	}
 
 	for _, intervention := range interventions {
 		for _, expectation := range expectationsBySymbol[intervention.Symbol] {
+			weight, err := magnitudeWeight(intervention.Strength)
+
+			if err != nil {
+				return fmt.Errorf(
+					"condition weight for %s: %w", intervention.ID, err,
+				)
+			}
+
+			if weight == 0 || intervention.Confidence == 0 {
+				continue
+			}
+
 			graph.AddEdge(&Edge{
 				From:     intervention.ID,
 				To:       expectation.ID,
 				Relation: RelationConditions,
 
 				/*
-					The interventional level is an unbounded causal score,
-					so it states how strongly it conditions rather than by
-					how much, keeping this edge comparable to the others.
+					The causal solver standardizes this score against the
+					target's robust scale. MagnitudeMargin keeps finite
+					evidence below certainty without introducing a fixed cap.
 				*/
-				Weight:     math.Tanh(math.Abs(intervention.Value)),
+				Weight:     weight,
 				Confidence: intervention.Confidence,
 				At:         graph.At,
 				Reason:     "interventional level conditions do-expectation",
@@ -535,6 +645,14 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 		for _, cat := range categories {
 			catNodeID := fmt.Sprintf("cat:%s:%s", symbol, string(cat.Type))
 
+			weight, err := magnitudeWeight(math.Abs(cat.Strength))
+
+			if err != nil {
+				inferenceErr = fmt.Errorf("category weight for %s: %w", catNodeID, err)
+
+				return false
+			}
+
 			for _, supp := range cat.Supporting {
 				targetNodeID := fmt.Sprintf("cat:%s:%s", symbol, supp)
 
@@ -542,7 +660,7 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 					From:       catNodeID,
 					To:         targetNodeID,
 					Relation:   RelationSupports,
-					Weight:     cat.Strength,
+					Weight:     weight,
 					Confidence: cat.Confidence,
 					At:         graph.At,
 					Reason:     "category explicit supporting list",
@@ -555,8 +673,8 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 				graph.AddEdge(&Edge{
 					From:       catNodeID,
 					To:         targetNodeID,
-					Relation:   RelationOpposingRelation(catNodeID, targetNodeID),
-					Weight:     cat.Strength,
+					Relation:   RelationContradicts,
+					Weight:     weight,
 					Confidence: cat.Confidence,
 					At:         graph.At,
 					Reason:     "category explicit opposing list",
@@ -566,13 +684,46 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) {
 
 		return true
 	})
+
+	if inferenceErr != nil {
+		return inferenceErr
+	}
+
+	return nil
 }
 
 /*
-RelationOpposingRelation returns RelationContradicts for opposing categories.
+magnitudeWeight maps a finite dimensionless strength to an open unit interval.
+Zero strength carries no edge mass; finite evidence never asserts certainty.
 */
-func RelationOpposingRelation(_, _ string) RelationType {
-	return RelationContradicts
+func magnitudeWeight(strength float64) (float64, error) {
+	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"graph: finite, non-negative strength required",
+			nil,
+		))
+	}
+
+	if strength == 0 {
+		return 0, nil
+	}
+
+	weight, err := probability.MagnitudeMargin(strength)
+
+	if err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"graph: invalid weight - "+err.Error(),
+			err,
+		))
+	}
+
+	if weight >= 1 {
+		return math.Nextafter(1, 0), nil
+	}
+
+	return weight, nil
 }
 
 /*

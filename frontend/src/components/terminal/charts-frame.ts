@@ -32,10 +32,9 @@ export type TerminalPhaseResponse = {
 
 export type TerminalPhaseOutcome = {
 	symbol: string;
-	className: string;
-	confidence: number;
-	ambiguous: boolean;
-	cohort: number;
+	direction: string;
+	forwardReturn: number;
+	horizon: number;
 };
 
 export type TerminalPhaseStatus = {
@@ -163,7 +162,8 @@ export const terminalWaveModesFromFrame = (
 
 /*
 terminalPhaseScanFromFrame reads signed corpus responses over the backend's
-mode-derived angular path together with the DMT outcome that owns each sector.
+mode-derived angular path together with the realized direction that owns each
+sector.
 */
 export const terminalPhaseScanFromFrame = (
 	frame: Record<string, unknown> | null | undefined,
@@ -174,19 +174,18 @@ export const terminalPhaseScanFromFrame = (
 		const observedAt = stringValue(record.observedAt);
 		const outcome = asRecord(record.outcome);
 		const symbol = stringValue(outcome?.symbol);
-		const className = stringValue(outcome?.class);
-		const confidence = finiteNumber(outcome?.confidence);
-		const cohort = finiteNumber(outcome?.cohort);
+		const direction = stringValue(outcome?.direction);
+		const forwardReturn = finiteNumber(outcome?.return);
+		const horizon = finiteNumber(outcome?.horizon);
 
 		if (
 			angle === null ||
 			similarity === null ||
 			observedAt === "" ||
 			symbol === "" ||
-			className === "" ||
-			confidence === null ||
-			cohort === null ||
-			typeof outcome?.ambiguous !== "boolean"
+			direction === "" ||
+			forwardReturn === null ||
+			horizon === null
 		) {
 			return [];
 		}
@@ -196,13 +195,7 @@ export const terminalPhaseScanFromFrame = (
 				angle,
 				similarity,
 				observedAt,
-				outcome: {
-					symbol,
-					className,
-					confidence,
-					ambiguous: outcome.ambiguous,
-					cohort,
-				},
+				outcome: { symbol, direction, forwardReturn, horizon },
 			},
 		];
 	});

@@ -21,10 +21,9 @@ describe("terminal phase dial frame", () => {
 					observedAt: "2026-07-20T12:00:00Z",
 					outcome: {
 						symbol: "BTC/USD",
-						class: "buy",
-						confidence: 0.75,
-						ambiguous: false,
-						cohort: 12,
+						direction: "up",
+						return: 0.0125,
+						horizon: 8,
 					},
 				},
 				{
@@ -33,10 +32,9 @@ describe("terminal phase dial frame", () => {
 					observedAt: "2026-07-20T12:00:00Z",
 					outcome: {
 						symbol: "BTC/USD",
-						class: "sell",
-						confidence: 0.6,
-						ambiguous: true,
-						cohort: 8,
+						direction: "down",
+						return: -0.009,
+						horizon: 8,
 					},
 				},
 			],
@@ -50,10 +48,9 @@ describe("terminal phase dial frame", () => {
 				observedAt: "2026-07-20T12:00:00Z",
 				outcome: {
 					symbol: "BTC/USD",
-					className: "buy",
-					confidence: 0.75,
-					ambiguous: false,
-					cohort: 12,
+					direction: "up",
+					forwardReturn: 0.0125,
+					horizon: 8,
 				},
 			},
 			{
@@ -62,10 +59,9 @@ describe("terminal phase dial frame", () => {
 				observedAt: "2026-07-20T12:00:00Z",
 				outcome: {
 					symbol: "BTC/USD",
-					className: "sell",
-					confidence: 0.6,
-					ambiguous: true,
-					cohort: 8,
+					direction: "down",
+					forwardReturn: -0.009,
+					horizon: 8,
 				},
 			},
 		]);

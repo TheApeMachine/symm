@@ -31,6 +31,7 @@ import {
 	attach,
 	paintRegistered,
 	registerPainter,
+	RESONANCE_FOCUS,
 } from "#/providers/ws-stores";
 
 type WorkerListener = (event: MessageEvent) => void;
@@ -152,6 +153,51 @@ describe("ws-stores", () => {
 		);
 
 		unregisterResonance();
+	});
+
+	/*
+		Every settled carrier is published so the latent cross-section has a cloud
+		to plot, and the focused carrier is derived onto its own key so a chart
+		cannot read a neighbour's vectors under the focused symbol's name.
+	*/
+	it("derives the focused carrier onto its own key", () => {
+		const worker = new MockWorker();
+		const batchPaint = vi.fn();
+		const focusPaint = vi.fn();
+		const unregisterBatch = registerPainter("resonance", batchPaint);
+		const unregisterFocus = registerPainter(RESONANCE_FOCUS, focusPaint);
+		const other = { symbol: "AVAX/USD", embedding: [0.07, 0.08] };
+		const focused = { symbol: "BTC/USD", embedding: [0.01, -0.02] };
+
+		attach(worker as unknown as Worker);
+		worker.emit({ type: "DRAW", frame: { resonance: [other, focused] } });
+
+		animationFrame?.(0);
+
+		expect(batchPaint).toHaveBeenCalledWith([other, focused]);
+		expect(focusPaint).toHaveBeenCalledWith(focused);
+
+		unregisterBatch();
+		unregisterFocus();
+	});
+
+	it("paints no focused carrier until the focused symbol settles", () => {
+		const worker = new MockWorker();
+		const focusPaint = vi.fn();
+		const unregisterFocus = registerPainter(RESONANCE_FOCUS, focusPaint);
+		const rows = [
+			{ symbol: "AVAX/USD", embedding: [0.07, 0.08] },
+			{ symbol: "SOL/USD", embedding: [0.02, 0.05] },
+		];
+
+		attach(worker as unknown as Worker);
+		worker.emit({ type: "DRAW", frame: { resonance: rows } });
+
+		animationFrame?.(0);
+
+		expect(focusPaint).not.toHaveBeenCalled();
+
+		unregisterFocus();
 	});
 
 	it("dispatches manifold batches to the fluid chart painter", () => {

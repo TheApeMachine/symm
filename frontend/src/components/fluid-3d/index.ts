@@ -1,0 +1,1 @@
+export { FluidInspector } from "./component";

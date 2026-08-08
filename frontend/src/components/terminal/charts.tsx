@@ -15,6 +15,7 @@ export {
 	paintTerminalManifoldChart,
 	TerminalManifoldChart,
 } from "#/components/charts/manifold";
+export { TerminalPhaseDialChart } from "#/components/charts/phase-dial";
 export { TerminalPredictionChart } from "#/components/charts/prediction";
 export {
 	paintTerminalResonanceChart,

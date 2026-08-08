@@ -1,3 +1,5 @@
+import type { MouseEvent } from "react";
+import { terminalStore } from "#/collections/terminal";
 import { Component } from "#/components/ui/component";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
@@ -12,16 +14,35 @@ Each lot exposes the regulator as a price map: hard loss, break-even, minimum
 profit, arming, active protection, mark, and peak all share one derived domain.
 That makes the phase change from discovery to protected visible without
 reconstructing any stop rule in the browser.
+
+A card opens the carrier for its symbol, which is where the arbitration that
+opened the lot is inspectable. The symbol comes out of the painted node rather
+than out of React state: these rows are written by the websocket, so the DOM is
+the only place that knows which lot a given card currently holds.
 */
+const inspectPosition = (event: MouseEvent<HTMLButtonElement>): void => {
+	const symbol = event.currentTarget
+		.querySelector<HTMLElement>("[data-paint='holding.symbol']")
+		?.textContent?.trim();
+
+	if (!symbol) {
+		return;
+	}
+
+	terminalStore.actions.openThesis(symbol);
+};
 export const Positions = () => (
 	<Component registerKey="positions">
 		{({ ref, className, slots }) => (
 			<List ref={ref} className={cn("min-h-0 flex-1 p-1.5", className)}>
 				{slots.map((slot) => (
-					<List.Item
+					<button
 						data-index={slot}
 						key={`${slot}-position`}
-						className="mb-1.25 block rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
+						type="button"
+						onClick={inspectPosition}
+						title="Inspect this lot"
+						className="mb-1.25 block w-full cursor-pointer rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
 					>
 						{/*
               The lot's own colour is set once as a custom property on the
@@ -84,7 +105,7 @@ export const Positions = () => (
 
 							<PositionStopGeometry />
 						</Flex.Column>
-					</List.Item>
+					</button>
 				))}
 			</List>
 		)}

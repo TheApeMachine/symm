@@ -52,6 +52,7 @@ type Thesis struct {
 	Lifecycle    *sync.Map     `json:"lifecycle"`
 	Categories   *sync.Map     `json:"categories"`
 	Manifold     fluid.Reading `json:"-"`
+	Phase        *sync.Map     `json:"-"`
 	Cognition    *sync.Map     `json:"-"`
 	Resonance    *sync.Map     `json:"-"`
 	Causal       *sync.Map     `json:"-"`
@@ -76,6 +77,7 @@ func NewThesis(ui chan []byte) *Thesis {
 		Tickers:      &sync.Map{},
 		Trades:       &sync.Map{},
 		Manifold:     fluid.Reading{},
+		Phase:        &sync.Map{},
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
 		Causal:       &sync.Map{},
@@ -103,6 +105,7 @@ func (thesis *Thesis) Reset() *Thesis {
 	thesis.Categories.Clear()
 	thesis.Cognition.Clear()
 	thesis.Manifold = fluid.Reading{}
+	thesis.Phase.Clear()
 	thesis.Resonance.Clear()
 	thesis.Causal.Clear()
 	thesis.Graphs.Clear()

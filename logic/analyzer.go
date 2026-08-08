@@ -17,13 +17,13 @@ import (
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
-	"golang.org/x/sync/errgroup"
 )
 
 type Solver interface {
 	Update(thesis *types.Thesis) error
 	Close() error
 }
+
 
 /*
 Analyzer is the entrypoint to the logic stage. This stage is responsible for
@@ -136,31 +136,24 @@ func (analyzer *Analyzer) process(in any) {
 		return
 	}
 
-	if thesis.Readiness.SignalsMeasured() {
-		// A pond task group is cancelled permanently after one task returns an
-		// error. Each Thesis pass needs its own group so an earlier failed solver
-		// does not prevent every solver from running on later market updates.
-		group, _ := errgroup.WithContext(analyzer.ctx)
+	if !thesis.Readiness.SignalsMeasured() || thesis.Readiness.LogicAnalyzed() {
+		return
+	}
 
-		// A stage that fails is recorded and the pass continues. Readiness is
-		// taken from the stamps each stage leaves, so one that did not complete
-		// simply never stamps and the planner declines the tick on its own;
-		// returning here would instead discard the work of every stage that did
-		// run, including the ones that had already finished.
-		for _, solver := range analyzer.solvers {
-			group.Go(func() error {
-				return solver.Update(thesis)
-			})
-		}
-
-		if err := group.Wait(); err != nil {
+	// Each solver reads outputs stamped by its predecessors. Running this chain
+	// concurrently mixes prior-epoch readiness with current-epoch values.
+	for _, solver := range analyzer.solvers {
+		if err := solver.Update(thesis); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Internal,
-				"failed to update analyzers: "+err.Error(),
+				"failed to update analyzer: "+err.Error(),
 				err,
 			))
-
 		}
+	}
+
+	if !thesis.Readiness.LogicAnalyzed() {
+		return
 	}
 
 	utils.Fanout(

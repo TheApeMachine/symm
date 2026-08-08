@@ -10,6 +10,7 @@ import { Nav } from "@/components/ui/nav";
 type TerminalRoutePath =
 	| "/"
 	| "/graph"
+	| "/fluid"
 	| "/signals"
 	| "/decisions"
 	| "/journal"
@@ -25,6 +26,7 @@ const SURFACE_ITEMS: Array<{
 }> = [
 	{ key: "dashboard", label: "Dashboard", icon: "dashboard", to: "/" },
 	{ key: "graph", label: "Market graph", icon: "graph", to: "/graph" },
+	{ key: "fluid", label: "Fluid manifold", icon: "scan", to: "/fluid" },
 	{ key: "signals", label: "Signal insight", icon: "signal", to: "/signals" },
 	{ key: "decisions", label: "Decision tree", icon: "tree", to: "/decisions" },
 	{ key: "journal", label: "Trade journal", icon: "journal", to: "/journal" },

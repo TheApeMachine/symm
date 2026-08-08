@@ -160,4 +160,29 @@ THERE IS A REASON IT IS CALLED HISTORY, AND IT IS RARELY THE WAY
 FORWARD, EVEN IF TECHNICALLY AN OLDER SOLUTION WOULD WORK AND "SOLVE"
 AN ISSUE, IT WAS OBVIOUSLY REJECTED FOR A REASON.
 
-`/**/` style comments only for top-level structures, inline comments use `//`. 
+`/**/` style comments only for top-level structures, inline comments use `//`.
+
+```go
+/*
+Sample represents a fully populated market ticker payload point.
+*/
+type Sample struct {
+	Symbol        string  `json:"symbol"`
+	AggressorSide string  `json:"-"`
+	Bid           float64 `json:"bid"`
+	BidQty        float64 `json:"bid_qty"`
+	Ask           float64 `json:"ask"`
+	AskQty        float64 `json:"ask_qty"`
+	Last          float64 `json:"last"`
+	Volume        float64 `json:"volume"`
+	// StepVolume is the quantity executed in this step alone, as opposed to
+	// Volume, which is the cumulative traded quantity the ticker reports.
+	StepVolume float64   `json:"step_volume"`
+	VWAP       float64   `json:"vwap"`
+	Low        float64   `json:"low"`
+	High       float64   `json:"high"`
+	Change     float64   `json:"change"`
+	ChangePct  float64   `json:"change_pct"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+```

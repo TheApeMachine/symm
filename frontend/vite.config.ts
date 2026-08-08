@@ -11,12 +11,12 @@ const config = defineConfig({
 		tsconfigPaths: true,
 	},
 	assetsInclude: ["**/*.wasm"],
-	plugins: [
-		devtools(),
-		tailwindcss(),
-		tanstackStart(),
-		viteReact(),
-	],
+	plugins: [devtools(), tailwindcss(), tanstackStart(), viteReact()],
+	server: {
+		watch: {
+			ignored: ["**/src-tauri/**"],
+		},
+	},
 });
 
 export default config;

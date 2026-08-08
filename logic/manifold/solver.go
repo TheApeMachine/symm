@@ -2,17 +2,16 @@ package manifold
 
 import (
 	"fmt"
-	"maps"
 	"math"
 	"runtime"
 	"time"
 
 	"github.com/alitto/pond/v2"
-	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
 	mgrbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/geometry"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -20,6 +19,8 @@ import (
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
+
+const inspectionParticleLimit = 4096
 
 /*
 Solver owns one resident Sensorium domain for the complete market universe.
@@ -35,6 +36,9 @@ type Solver struct {
 	residency int
 	turnover  int
 	fold      foldMeter
+	corpus    *geometry.Corpus[types.PhaseOutcome]
+	angles    []float64
+	pending   map[string][]pendingDial
 	ui        chan []byte
 	binui     chan []byte
 	pool      pond.Pool
@@ -81,6 +85,11 @@ func NewSolver(
 		residency = configuredResidency
 	}
 
+	corpus, corpusErr := geometry.NewCorpus[types.PhaseOutcome](phaseCorpusCapacity)
+	errnie.Error(corpusErr)
+	angles, angleErr := geometry.PhasePath(phaseScanAngles)
+	errnie.Error(angleErr)
+
 	solver := &Solver{
 		api:       api,
 		config:    config,
@@ -89,6 +98,9 @@ func NewSolver(
 		tokenizer: NewTokenizer(config, symbols),
 		residency: residency,
 		fold:      foldMeter{cap: residency},
+		corpus:    corpus,
+		angles:    angles,
+		pending:   make(map[string][]pendingDial),
 		ui:        ui,
 		binui:     binui,
 		pool:      pond.NewPool(runtime.NumCPU()),
@@ -195,7 +207,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		solver.turnover += len(particles)
 		solver.fold.inject(len(particles))
 
-		if err := solver.Step(measurement.Symbol, thesis.At); err != nil {
+		if err := solver.Step(thesis, measurement.Symbol, thesis.At, particles); err != nil {
 			continue
 		}
 	}
@@ -215,7 +227,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	return nil
 }
 
-func (solver *Solver) Step(symbol string, at time.Time) error {
+func (solver *Solver) Step(
+	thesis *types.Thesis,
+	symbol string,
+	at time.Time,
+	particles []pfluid.Particle,
+) error {
 	_, err := solver.domain.Advance()
 
 	if err != nil {
@@ -229,40 +246,36 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 		))
 	}
 
-	frame, stats, err := solver.domain.Display()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"failed to display manifold for %s with %d resident particles: %v",
-				symbol, solver.domain.ParticleCount(), err,
-			),
-			err,
-		))
-	}
-
 	if solver.binui != nil {
-		payload, encodeErr := EncodeDisplay(
-			symbol,
-			at,
-			int(stats.Width),
-			int(stats.Height),
-			frame,
-		)
+		fields, fieldsErr := solver.domain.Fields()
 
-		if encodeErr != nil {
+		if fieldsErr != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
-				fmt.Sprintf("failed to encode manifold display for %s, %s", symbol, encodeErr.Error()),
-				encodeErr,
+				fmt.Sprintf(
+					"failed to read manifold fields for %s with %d resident particles: %v",
+					symbol, solver.domain.ParticleCount(), fieldsErr,
+				),
+				fieldsErr,
 			))
 		}
 
-		select {
-		case solver.binui <- payload:
-		default:
+		utils.Publish(solver.binui, datura.NewMap("fields", fields))
+		particleCount := min(solver.domain.ParticleCount(), inspectionParticleLimit)
+		resident, particlesErr := solver.domain.ReadParticles(0, particleCount)
+
+		if particlesErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf(
+					"failed to read manifold particles for %s with %d resident particles: %v",
+					symbol, solver.domain.ParticleCount(), particlesErr,
+				),
+				particlesErr,
+			))
 		}
+
+		utils.Publish(solver.binui, datura.NewMap("particles", resident))
 	}
 
 	if solver.ui != nil {
@@ -272,12 +285,7 @@ func (solver *Solver) Step(symbol string, at time.Time) error {
 			"at", at.Format(time.RFC3339),
 		)
 
-		if statsBytes, err := sonic.Marshal(stats); err == nil {
-			var statsMap map[string]any
-			if err := sonic.Unmarshal(statsBytes, &statsMap); err == nil {
-				maps.Copy(row, statsMap)
-			}
-		}
+		solver.stampPhase(thesis, row, symbol, at, particles)
 
 		select {
 		case solver.ui <- datura.NewMap(

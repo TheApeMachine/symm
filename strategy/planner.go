@@ -272,6 +272,13 @@ func (planner *Planner) search(
 		return types.NewDecision(types.ActionNothing, symbol), nil
 	}
 
+	storedCognition, found := thesis.Cognition.Load(symbol)
+	cognition, valid := storedCognition.(types.Cognition)
+
+	if !found || !valid || !cognition.Ready {
+		return types.NewDecision(types.ActionNothing, symbol), nil
+	}
+
 	candidate, evidence, err := planner.admit(
 		thesis,
 		types.NewDecision(types.ActionEnter, symbol),
