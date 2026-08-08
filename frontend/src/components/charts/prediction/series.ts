@@ -30,8 +30,8 @@ export type ReturnHeadTrace = {
 	lower: PredictionSample[];
 	latestExpected: number | null;
 	latestUncertainty: number | null;
-	mse: number | null;
-	skillLowerBound: number | null;
+	confidence: number | null;
+	horizon: number | null;
 	samples: number | null;
 	ready: boolean;
 };
@@ -124,8 +124,14 @@ const hierarchyTrace = (
 };
 
 /*
-returnHeadTrace derives the signed forecast and empirical residual-uncertainty
-band, along with the calibration evidence that determines readiness.
+returnHeadTrace derives the signed forecast and, where the solver publishes one,
+the residual band around it.
+
+Readiness is the solver's own forecast confidence and the reach it says that
+confidence supports. It used to be read from a forecastValidity block alongside
+an incremental MSE, a skill lower bound and a calibration count — none of which
+appear on the wire, so the lane could only ever report "CALIBRATING" beside four
+em-dashes no matter how well the head was doing.
 */
 const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 	const latest = frames.at(-1);
@@ -150,11 +156,10 @@ const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 		}),
 		latestExpected: finiteNumber(latest?.forecast?.expectedReturn),
 		latestUncertainty: finiteNumber(latest?.uncertainty),
-		mse: finiteNumber(latest?.incrementalMSE),
-		skillLowerBound: finiteNumber(latest?.incrementalSkillLowerBound),
-		samples: finiteNumber(latest?.calibrationSamples),
-		ready:
-			latest?.forecastValidity?.state === "valid" && latest.forecast !== undefined,
+		confidence: finiteNumber(latest?.forecast?.confidence),
+		horizon: finiteNumber(latest?.forecast?.supportedHorizon),
+		samples: finiteNumber(latest?.samples),
+		ready: (finiteNumber(latest?.forecast?.confidence) ?? 0) > 0,
 	};
 };
 

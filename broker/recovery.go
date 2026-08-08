@@ -30,6 +30,7 @@ type Recovery struct {
 	price      *Price
 	balance    *Balance
 	recorder   *audit.Recorder
+	store      *PositionStore
 	positions  *sync.Map
 }
 
@@ -44,6 +45,7 @@ func NewRecovery(
 	price *Price,
 	balance *Balance,
 	recorder *audit.Recorder,
+	store *PositionStore,
 	positions *sync.Map,
 ) *Recovery {
 	ctx, cancel := context.WithCancel(ctx)
@@ -57,6 +59,7 @@ func NewRecovery(
 		price:      price,
 		balance:    balance,
 		recorder:   recorder,
+		store:      store,
 		positions:  positions,
 	}
 }
@@ -97,7 +100,9 @@ func (recovery *Recovery) Recover() error {
 			continue
 		}
 
-		if err := recovery.recoverAsset(asset, quote, amount, history.Trades, working.Open); err != nil {
+		if err := recovery.recoverAsset(
+			asset, quote, amount, history.Trades, working.Open,
+		); err != nil {
 			return err
 		}
 	}
@@ -162,8 +167,7 @@ func (recovery *Recovery) recoverAsset(
 ) error {
 	symbol := asset + "/" + quote
 	pair := recovery.instrument.Pair(symbol)
-
-	_, order, err := recovery.recoveredSell(pair, working)
+	orderID, order, err := recovery.recoveredSell(pair, working)
 
 	if err != nil {
 		return err
@@ -178,20 +182,48 @@ func (recovery *Recovery) recoverAsset(
 	quantity, err := recovery.api.Normalizer().FormatSize(symbol, amount)
 
 	if err != nil || quantity == nil || quantity.Sign() <= 0 {
-		return nil
+		return errnie.Error(err)
 	}
 
 	if entryPrice == nil || entryPrice.Sign() <= 0 {
-		if tick := recovery.price.Tick(symbol); tick != nil && tick.Last != nil && tick.Last.Sign() > 0 {
-			entryPrice = tick.Last
-		} else {
-			entryPrice = decimal.NewFromInt64(0)
-		}
+		return errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"recovery: entry basis required for "+symbol,
+			nil,
+		))
 	}
 
-	position := recovery.recoveredPosition(pair, asset, quantity, entryPrice, entryFee, entryAt)
-	position.Publish()
+	stoploss, err := recovery.store.Load(recovery.ctx, symbol)
 
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if stoploss == nil {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"recovery: stored stoploss required for "+symbol,
+			nil,
+		))
+	}
+
+	position := recovery.recoveredPosition(
+		pair, asset, quantity, entryPrice, entryFee, entryAt, stoploss,
+	)
+
+	if order != nil {
+		position.ExitOrder = &spot.AddOrderRequest{
+			ClOrdId: order.ClOrdID,
+			Type:    "sell",
+			Volume:  quantity.String(),
+			Pair:    symbol,
+		}
+		position.Status = types.PENDING
+		position.Holding.Status = types.PENDING
+		delete(working, orderID)
+	}
+
+	position.Publish()
 	return nil
 }
 
@@ -271,15 +303,17 @@ func (recovery *Recovery) recoveredPosition(
 	entryPrice *decimal.Decimal,
 	entryFee *decimal.Decimal,
 	entryAt time.Time,
+	stoploss *types.Stoploss,
 ) *Position {
 	position := NewPosition(
 		recovery.ctx, recovery.api, recovery.ui, recovery.instrument, recovery.price,
-		recovery.balance, recovery.recorder, pair, types.Decision{
+		recovery.balance, recovery.recorder, recovery.store, pair, types.Decision{
 			ID:               "recovered:" + pair.Symbol,
 			ProposedQuantity: quantity,
 			EntryPrice:       entryPrice,
 			EntryFee:         entryFee,
-			Mark:             entryPrice,
+			Mark:             stoploss.Mark,
+			Stoploss:         stoploss,
 		},
 	)
 
@@ -288,7 +322,9 @@ func (recovery *Recovery) recoveredPosition(
 	position.Holding.Qty = quantity
 	position.Holding.SellableQty = quantity
 	position.Holding.EntryAt = &entryAt
+	position.Holding.EntryFee = entryFee
 	position.Holding.Status = types.OPEN
+	recovery.positions.Store(pair.Symbol, position)
 
 	return position
 }

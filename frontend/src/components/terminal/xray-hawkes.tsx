@@ -4,7 +4,7 @@ import { Component } from "#/components/ui/component";
 import { Typography } from "#/components/ui/typography";
 
 /*
-XrayHawkesPanel draws the focused symbol's buy-side arrival process.
+XrayHawkesPanel draws the focused symbol's arrival process.
 
 Every Hawkes measurement is stamped at a real trade arrival rather than on a
 clock, so this is an event stream, not a series sampled at a fixed rate. The
@@ -13,6 +13,14 @@ from, and relaxes λ toward μ at the fitted β between them — the kernel's ow
 shape. Drawing straight lines between arrivals would assert a linear decay the
 fit explicitly denies, and spacing them evenly would erase the inter-arrival
 timing, which in a self-exciting process is the whole signal.
+
+The plotted series is the observed arrival count, because that is what the
+kernel publishes from its first tick. λ, μ and the branching ratio come from a
+bivariate fit that needs enough arrivals to estimate, and binding the curve to
+the fitted intensity left the panel blank for the whole warm-up — a symbol with
+five trades in the window has an arrival process worth showing and no fit worth
+reporting. The fitted readings sit beside the curve and fill in when the
+estimate lands, so the panel states which of the two it currently has.
 
 The branching ratio comes from the fitted spectral radius, so the bar states how
 close the cascade sits to criticality without labelling a regime the kernel
@@ -28,17 +36,12 @@ export const XrayHawkesPanel = () => {
 					ref={ref}
 					className="relative flex min-h-52.5 flex-1 flex-col border-(--line) border-t"
 				>
-					{/*
-						The plot is inset below the caption so its own axis labels are not
-						painted underneath it. A canvas carries an intrinsic aspect ratio,
-						so the inset lives on a plain box and the canvas fills it.
-					*/}
 					<div className="absolute inset-x-0 top-16 bottom-0">
 						<canvas
 							data-stream-filter={`source=hawkes,symbol=${focusSymbol}`}
 							data-stream-id="at"
 							data-stream-time="at"
-							data-stream-value="metrics.conditional_intensity:buy.raw"
+							data-stream-value="metrics.event_count.raw"
 							data-stream-baseline="metrics.baseline_intensity:buy.raw"
 							data-stream-decay="metrics.decay_rate.raw"
 							data-stream-window="120"
@@ -52,7 +55,7 @@ export const XrayHawkesPanel = () => {
 							Hawkes self-exciting intensity
 						</div>
 						<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-							λ(t) = μ + Σ α·e^(-β(t-tᵢ)) · ticks mark observed arrivals
+							arrivals observed · λ(t) = μ + Σ α·e^(-β(t-tᵢ)) once fitted
 						</div>
 					</div>
 					<div
@@ -61,12 +64,20 @@ export const XrayHawkesPanel = () => {
 						className="pointer-events-none absolute top-3 right-4.5 w-38 text-right font-mono text-[9.5px] text-(--f3) leading-[1.7]"
 					>
 						<div>
+							events{" "}
+							<Typography.Span
+								data-paint="metrics.event_count.raw"
+								data-paint-format=".0f"
+								className="text-(--acc)"
+							/>
+						</div>
+						<div>
 							λ buy{" "}
 							<Typography.Span
 								data-paint="metrics.conditional_intensity:buy.raw"
 								data-paint-format=".4f"
 								data-paint-suffix=" /s"
-								className="text-(--acc)"
+								className="text-(--f1)"
 							/>
 						</div>
 						<div>
@@ -79,9 +90,10 @@ export const XrayHawkesPanel = () => {
 							/>
 						</div>
 						<div>
-							events{" "}
+							sells{" "}
 							<Typography.Span
-								data-paint="metrics.event_count.raw"
+								data-paint="metrics.event_count:sell.raw"
+								data-paint-format=".0f"
 								className="text-(--f1)"
 							/>
 						</div>

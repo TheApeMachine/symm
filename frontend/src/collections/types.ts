@@ -287,6 +287,7 @@ export type ResonanceFrame = Record<string, unknown> & {
 	samples?: number;
 	observables?: number[];
 	latent?: number[];
+	embedding?: number[];
 	layers?: ResonanceLayer[];
 	energy?: number;
 	surprise?: number;

@@ -155,9 +155,7 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 	utils.Fanout(planner.subscribers, "planner", thesis)
 }
 
-/*
-decisions asks causal MCTS for one binary verdict per ready causal artifact.
-*/
+/* decisions evaluates one binary verdict per ready causal artifact. */
 func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 	decisions := make([]types.Decision, 0)
 
@@ -175,7 +173,7 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 			return true
 		}
 
-		decision, err := planner.search(symbol, causal)
+		decision, err := planner.search(thesis, symbol, causal)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -187,7 +185,6 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 			return true
 		}
 
-		decision = planner.admit(thesis, decision)
 		decision, err = planner.size(decision)
 
 		if err != nil {
@@ -212,10 +209,7 @@ func (planner *Planner) decisions(thesis *types.Thesis) []types.Decision {
 }
 
 /*
-size completes the two execution fields an admitted Enter requires. Quantity
-is the configured cash fraction normalized by the venue price surface. The
-Stoploss is built from the same forecast Planner admitted, so its initial floor
-is the lowest predicted tick in that confidence-supported horizon.
+size adds execution quantity and forecast-derived protection to an entry.
 */
 func (planner *Planner) size(
 	decision *types.Decision,
@@ -241,8 +235,9 @@ func (planner *Planner) size(
 	price := planner.desk.Price()
 	tick := price.Tick(decision.Symbol)
 
-	if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 {
-		return decision, fmt.Errorf("planner: executable ask required")
+	if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 ||
+		tick.Bid == nil || tick.Bid.Sign() <= 0 {
+		return decision, fmt.Errorf("planner: executable bid and ask required")
 	}
 
 	quantity := price.Quantity(decision.Symbol, notional)
@@ -268,6 +263,7 @@ func (planner *Planner) size(
 		planner.ctx,
 		decision.Symbol,
 		tick.Ask,
+		tick.Bid,
 		decision.Forecast,
 		&pair.TickSize,
 		feeRate,
@@ -282,6 +278,7 @@ func (planner *Planner) size(
 	decision.ProposedNotional = notional
 	decision.ProposedQuantity = quantity
 	decision.ReferencePrice = tick.Ask
+	decision.EntryPrice = tick.Ask
 	decision.Mark = tick.Bid
 	decision.Stoploss = stoploss
 
@@ -289,43 +286,43 @@ func (planner *Planner) size(
 }
 
 /*
-admit applies the provisional Resonance admission policy to an Enter verdict.
-The forecast remains on the decision because the position's Stoploss uses its
-lowest supported path point as the pre-profit-lock floor.
+admit gates on predictive confidence and returns graph-adjusted evidence.
 */
 func (planner *Planner) admit(
 	thesis *types.Thesis,
 	decision *types.Decision,
-) *types.Decision {
+) (*types.Decision, graphEvidence, error) {
+	evidence := graphEvidence{}
+
 	if decision == nil || decision.Action != types.ActionEnter {
-		return decision
+		return decision, evidence, nil
 	}
 
-	readingRaw, found := thesis.Resonance.Load(decision.Symbol)
+	forecast, evidence, confidence, err := graphAdjustedForecast(
+		thesis,
+		decision.Symbol,
+	)
 
-	if !found {
-		return types.NewDecision(types.ActionNothing, decision.Symbol)
+	if err != nil {
+		return nil, evidence, err
 	}
 
-	reading, valid := readingRaw.(types.ResonanceReading)
+	if forecast.Confidence < planner.minimumConfidence {
+		rejected := types.NewDecision(types.ActionNothing, decision.Symbol)
+		rejected.Confidence = confidence
 
-	if !valid || reading.Forecast == nil ||
-		reading.Forecast.Confidence < planner.minimumConfidence ||
-		reading.Forecast.Validate() != nil {
-		return types.NewDecision(types.ActionNothing, decision.Symbol)
+		return rejected, evidence, nil
 	}
 
-	decision.Forecast = reading.Forecast
-	decision.Confidence = reading.Forecast.Confidence
+	decision.Forecast = forecast
+	decision.Confidence = confidence
 
-	return decision
+	return decision, evidence, nil
 }
 
-/*
-search compares the observed treatment with the standing-aside do(0)
-intervention using the existing causal MCTS.
-*/
+/* search compares entry with the standing-aside do(0) intervention. */
 func (planner *Planner) search(
+	thesis *types.Thesis,
 	symbol string,
 	causal map[string]any,
 ) (*types.Decision, error) {
@@ -350,17 +347,30 @@ func (planner *Planner) search(
 		return types.NewDecision(types.ActionNothing, symbol), nil
 	}
 
-	root := StrategyState{
-		Symbol:    symbol,
-		Condition: latest[0],
-		Contagion: latest[1],
-		Treatment: treatment,
-	}
-	action, err := planner.mctsEngine.Search(
-		root,
-		mctsSearchIterations,
-		rows,
+	candidate, evidence, err := planner.admit(
+		thesis,
+		types.NewDecision(types.ActionEnter, symbol),
 	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	graphReward, err := evidence.Reward(rows, planner.mctsEngine.TargetCol)
+
+	if err != nil {
+		return nil, err
+	}
+
+	root := StrategyState{
+		Symbol:      symbol,
+		Condition:   latest[0],
+		Contagion:   latest[1],
+		Treatment:   treatment,
+		CanEnter:    candidate.Action == types.ActionEnter,
+		GraphReward: graphReward,
+	}
+	action, err := root.SelectAction(planner.mctsEngine, rows)
 
 	if err != nil {
 		return nil, err
@@ -376,5 +386,12 @@ func (planner *Planner) search(
 		)
 	}
 
-	return types.NewDecision(decisionAction, symbol), nil
+	if decisionAction == types.ActionEnter {
+		return candidate, nil
+	}
+
+	decision := types.NewDecision(decisionAction, symbol)
+	decision.Confidence = candidate.Confidence
+
+	return decision, nil
 }

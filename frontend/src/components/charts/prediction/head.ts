@@ -80,7 +80,7 @@ const drawReturnStats = (
 		top + 14,
 	);
 	context.fillText(
-		`skillₗ ${head.skillLowerBound?.toExponential(2) ?? "—"} · mse ${head.mse?.toExponential(2) ?? "—"}`,
+		`conf ${head.confidence === null ? "—" : `${(head.confidence * 100).toFixed(0)}%`} · k ${head.horizon ?? "—"}`,
 		left,
 		top + 28,
 	);
@@ -101,7 +101,7 @@ export const drawReturnLane = (
 	const plotRight = detailLeft - 16;
 	const scale = signedScale(head.lower, head.upper, head.expected);
 	const zero = (top + bottom) / 2;
-	const status = head.ready ? "READY" : "CALIBRATING";
+	const status = head.ready ? "FORECASTING" : "CALIBRATING";
 
 	drawLaneFrame(
 		context,

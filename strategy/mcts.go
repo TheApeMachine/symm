@@ -1,6 +1,9 @@
 package strategy
 
 import (
+	"fmt"
+	"math"
+
 	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/mcts"
 	logiccausal "github.com/theapemachine/symm/logic/causal"
@@ -11,23 +14,27 @@ const (
 	ActionNothing         float64 = 0.0
 	ActionEnter           float64 = 1.0
 	mctsMinimumCausalRows         = logiccausal.MinimumSearchRows
-	mctsSearchIterations          = 50
 )
 
 /*
-StrategyState is the binary state evaluated by causal MCTS.
+StrategyState is the binary state evaluated in causal target units.
 
 Treatment is the actual intervention level observed by the causal model.
 Standing aside intervenes at zero. Both actions terminate immediately, so the
 search compares the two do-expectations without adding a second decision rule.
+CanEnter carries the predictive model's admission result into the feasible
+action set. GraphReward carries relational evidence on the realized-return
+scale, keeping dimensionless confidence out of the causal reward column.
 */
 type StrategyState struct {
-	Symbol    string
-	Condition float64
-	Contagion float64
-	Treatment float64
-	Reward    float64
-	Decided   bool
+	Symbol      string
+	Condition   float64
+	Contagion   float64
+	Treatment   float64
+	Reward      float64
+	Decided     bool
+	CanEnter    bool
+	GraphReward float64
 }
 
 /*
@@ -58,6 +65,10 @@ func (strategyState StrategyState) GetPossibleActions() []float64 {
 		return nil
 	}
 
+	if !strategyState.CanEnter {
+		return []float64{ActionNothing}
+	}
+
 	return []float64{ActionNothing, ActionEnter}
 }
 
@@ -74,6 +85,7 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 	switch action {
 	case ActionEnter:
 		next.Treatment = strategyState.Treatment
+		next.Reward = strategyState.GraphReward
 	case ActionNothing:
 		next.Treatment = 0
 	}
@@ -105,6 +117,66 @@ func (strategyState StrategyState) GetInterventionLevel(action float64) float64 
 	default:
 		return 0.0
 	}
+}
+
+/*
+SelectAction compares the two terminal interventions in causal target units.
+Because either action ends this state immediately, their do-expectations are
+the complete action values; a rollout cannot add another state transition.
+*/
+func (strategyState StrategyState) SelectAction(
+	engine *mcts.CausalMCTS,
+	rows [][]float64,
+) (float64, error) {
+	if !strategyState.CanEnter {
+		return ActionNothing, nil
+	}
+
+	if engine == nil || engine.CausalEngine == nil {
+		return 0, fmt.Errorf("strategy: causal search engine required")
+	}
+
+	standingAside, err := engine.CausalEngine.DoExpectation(
+		rows,
+		engine.TargetCol,
+		engine.MinRows,
+		engine.TreatmentCol,
+		strategyState.GetInterventionLevel(ActionNothing),
+		engine.ControlCols,
+	)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if math.IsNaN(standingAside) || math.IsInf(standingAside, 0) {
+		return 0, fmt.Errorf("strategy: finite standing-aside expectation required")
+	}
+
+	enter, err := engine.CausalEngine.DoExpectation(
+		rows,
+		engine.TargetCol,
+		engine.MinRows,
+		engine.TreatmentCol,
+		strategyState.GetInterventionLevel(ActionEnter),
+		engine.ControlCols,
+	)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if math.IsNaN(enter) || math.IsInf(enter, 0) {
+		return 0, fmt.Errorf("strategy: finite entry expectation required")
+	}
+
+	enter += strategyState.GraphReward
+
+	if enter <= standingAside {
+		return ActionNothing, nil
+	}
+
+	return ActionEnter, nil
 }
 
 // CausalEngineAdapter wraps causal.NodeTable to satisfy mcts.CausalEngine.

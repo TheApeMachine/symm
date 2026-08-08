@@ -56,6 +56,11 @@ comma separated lists so a row can be pinned on more than one field at once:
 		<span data-paint="metrics.spectral_radius.raw" data-paint-format=".3f" />
 	</div>
 
+data-paint-hold="2000" reads a flag over a window rather than instantaneously: a
+true paints at once, a false only after the flag has stayed down that many
+milliseconds. It is for latches that clear on the producer's own cycle — a
+per-epoch readiness stamp — which strobe a status light if painted raw.
+
 data-paint-format also takes "time" and "date" for RFC 3339 stamps, and the path
 segment "length" reads an array's size. data-paint-empty says how an empty string
 reads. data-paint-absent says how a missing row reads, and belongs on bindings
@@ -130,6 +135,8 @@ type PaintDataset = DOMStringMap & {
 	paintClass?: string;
 	paintEmpty?: string;
 	paintAbsent?: string;
+	paintHold?: string;
+	paintRaisedAt?: string;
 };
 
 type PaintBinding = {
@@ -1124,6 +1131,41 @@ const drawStreamCanvas = (
 	context.fill();
 };
 
+/*
+isRaised reads a flag the way a status light does: only a real true counts as
+raised, so a numeric or textual reading never latches the hold open.
+*/
+const isRaised = (value: JSONSerializable): boolean =>
+	value === true || value === "true";
+
+/*
+holdSuppresses answers whether this paint should be skipped because the flag it
+carries has not been down long enough to believe. Returns false for every
+binding that did not ask for a hold, which is all of them by default.
+*/
+const holdSuppresses = (
+	element: HTMLElement,
+	dataset: PaintDataset,
+	value: JSONSerializable,
+): boolean => {
+	const window = Number(dataset.paintHold);
+
+	if (!Number.isFinite(window) || window <= 0) {
+		return false;
+	}
+
+	const now = performance.now();
+
+	if (isRaised(value)) {
+		element.dataset.paintRaisedAt = String(now);
+		return false;
+	}
+
+	const raisedAt = Number(element.dataset.paintRaisedAt);
+
+	return Number.isFinite(raisedAt) && now - raisedAt < window;
+};
+
 const updateTargets = (
 	targets: Map<string, PaintBinding[]>,
 	updates: JSONSerializable,
@@ -1161,6 +1203,22 @@ const updateTargets = (
 			const value = readPath(scopedUpdates, key);
 
 			if (value === undefined || value === null) {
+				continue;
+			}
+
+			/*
+				Some flags are latches that clear on the producer's own cycle rather
+				than states that persist: a per-epoch readiness stamp is true from the
+				moment its stage reports until the next epoch resets it. Painted
+				instantaneously, a status light bound to one strobes.
+
+				data-paint-hold reads such a flag over a window instead: a true is
+				taken immediately, and a false is only taken once the flag has stayed
+				false for the whole window. Nothing is invented — the surface still
+				goes false when the producer genuinely stops raising it, just not on
+				the gap between two raises.
+			*/
+			if (holdSuppresses(target.element, target.dataset, value)) {
 				continue;
 			}
 

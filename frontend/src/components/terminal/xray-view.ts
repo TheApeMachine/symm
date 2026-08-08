@@ -206,9 +206,18 @@ export const latentPointsFromFrames = (
 	}
 
 	return [...latest.entries()].flatMap(([symbol, frame]) => {
-		const latent = numberArray(frame.latent);
+		/*
+			Every carrier publishes the two leading components of its settled state
+			as an embedding; only the focused one carries the full latent vector.
+			Reading the embedding first is what makes this a cross-section rather
+			than a single point, and the fallback keeps a frame that predates the
+			field plotting.
+		*/
+		const embedding = numberArray(frame.embedding);
+		const position =
+			embedding.length >= 2 ? embedding : numberArray(frame.latent);
 
-		if (latent.length < 2) {
+		if (position.length < 2) {
 			return [];
 		}
 
@@ -216,8 +225,8 @@ export const latentPointsFromFrames = (
 			{
 				key: `${symbol}:${String(frame.at ?? "")}`,
 				symbol,
-				x: latent[0] ?? 0,
-				y: latent[1] ?? 0,
+				x: position[0] ?? 0,
+				y: position[1] ?? 0,
 				category: stringValue(frame.category),
 			},
 		];

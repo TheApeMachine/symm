@@ -31,6 +31,18 @@ export type GateProps = Omit<ComponentProps<"span">, "children"> & {
 	on?: string;
 	/* Word shown when it does not. */
 	off?: string;
+	/*
+		How long the badge keeps saying "on" after the flag drops, in ms.
+
+		Flags worth badging are usually latches that clear on the producer's own
+		cycle, so painting one raw makes the badge strobe at that cycle instead of
+		reporting a state. The default is sized from the observed gap between
+		raises rather than picked: symm's readiness stamps arrive a median 0.6s
+		apart with a p90 near 3s and a tail to 19s, so a shorter window blinks on
+		the tail and this one only falls to "off" when the producer has genuinely
+		stopped. Set 0 to read the flag instantaneously.
+	*/
+	hold?: number;
 	size?: Size;
 };
 
@@ -39,6 +51,7 @@ export const Gate = ({
 	bind,
 	on = "live",
 	off = "standby",
+	hold = 20000,
 	size = "xs",
 	className,
 	...props
@@ -51,6 +64,7 @@ export const Gate = ({
 			which is what leaves the two words below intact for CSS to choose from.
 		*/
 		data-paint-prop="dataset.gate"
+		data-paint-hold={hold === 0 ? undefined : String(hold)}
 		className={cn(
 			"group",
 			badgeVariants({ variant: "disabled", size }),

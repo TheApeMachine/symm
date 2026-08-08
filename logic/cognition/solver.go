@@ -116,32 +116,37 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		categoryToken := solver.encodeCategory(dominantCategory)
 		activeTokens := solver.sequences[symbol]
+		transitioned := len(activeTokens) == 0 ||
+			activeTokens[len(activeTokens)-1] != categoryToken
 
-		// 2. Evaluate if appending this category causes a Sequence Break
-		broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
+		if transitioned {
+			// 2. Evaluate if appending this category causes a Sequence Break
+			broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
 
-		if broken && len(activeTokens) > 0 {
-			// --- SEQUENCE BREAK DETECTED ---
-			oldSequenceBytes := solver.sequenceBytes(activeTokens)
+			if broken && len(activeTokens) > 0 {
+				// --- SEQUENCE BREAK DETECTED ---
+				oldSequenceBytes := solver.sequenceBytes(activeTokens)
 
-			// Commit completed sequence to episodic buffer for REM replay
-			_, _ = solver.tree.CommitToEpisodicBuffer(nowUnix, oldSequenceBytes)
+				// Commit completed sequence to episodic buffer for REM replay
+				_, _ = solver.tree.CommitToEpisodicBuffer(nowUnix, oldSequenceBytes)
 
-			// Run unsupervised learning to strengthen attractor basin weights
-			_, _, _ = solver.tree.UnsupervisedLearn(oldSequenceBytes, &solver.classScratch)
+				// Run unsupervised learning to strengthen attractor basin weights
+				_, _, _ = solver.tree.UnsupervisedLearn(oldSequenceBytes, &solver.classScratch)
 
-			// Start fresh sequence buffer with new category
-			activeTokens = []string{categoryToken}
-		} else {
-			// --- SEQUENCE CONTINUES ---
-			activeTokens = append(activeTokens, categoryToken)
+				// Start fresh sequence buffer with new category
+				activeTokens = []string{categoryToken}
+			} else {
+				// --- SEQUENCE CONTINUES ---
+				activeTokens = append(activeTokens, categoryToken)
+			}
+
+			solver.sequences[symbol] = activeTokens
+
+			// 3. Train only the first observation and category transitions.
+			solver.tree.TrainSensorySequence(solver.sequenceBytes(activeTokens))
 		}
 
-		solver.sequences[symbol] = activeTokens
 		activeSequenceBytes := solver.sequenceBytes(activeTokens)
-
-		// 3. Train sensory sequence online
-		solver.tree.TrainSensorySequence(activeSequenceBytes)
 
 		// 4. Classify macro market regime / concept attractor basin
 		classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)

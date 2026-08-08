@@ -294,6 +294,13 @@ func TestUpdate(t *testing.T) {
 			*/
 			So(row.Energy, ShouldAlmostEqual,
 				state.manifold.PredictionEnergy()/featureCount)
+			So(row.Layers, ShouldHaveLength, 3)
+			So(row.Layers[0].State, ShouldHaveLength, len(state.featureSchema))
+			So(row.Layers[0].Prediction, ShouldHaveLength, len(state.featureSchema))
+			So(row.Layers[1].State, ShouldHaveLength, len(state.featureSchema)*2)
+			So(row.Layers[1].Prediction, ShouldHaveLength, len(state.featureSchema)*2)
+			So(row.Layers[2].State, ShouldHaveLength, len(state.featureSchema))
+			So(row.Layers[2].Prediction, ShouldHaveLength, len(state.featureSchema))
 		})
 
 		Convey("Then a warmed stage publishes a forecast its own curve supports", func() {
@@ -597,15 +604,16 @@ func TestHorizonStartsShortWithoutSamples(t *testing.T) {
 
 /*
 BenchmarkUpdate measures the two-symbol resonance pass at the feature width
-observed in the full tick profile. It exposes whether per-symbol fan-out helps
-or merely competes with Gonum's own parallel matrix work.
+observed in the full tick profile, including the focused symbol's hierarchy
+snapshot. It exposes whether per-symbol fan-out helps or merely competes with
+Gonum's own parallel matrix work.
 */
 func BenchmarkUpdate(b *testing.B) {
 	const featureCount = 48
 
 	thesis := types.NewThesis(nil)
-	solver := NewSolver(nil, nil)
-	symbols := []string{"SIM1/USD", "SIM2/USD"}
+	solver := NewSolver(make(chan []byte, 1), nil)
+	symbols := []string{"BTC/USD", "SIM2/USD"}
 
 	for symbolIndex, symbol := range symbols {
 		metrics := make(map[string]types.MetricSample, featureCount)

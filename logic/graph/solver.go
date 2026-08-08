@@ -6,9 +6,10 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -80,38 +81,6 @@ type Graph struct {
 var publishJSON = sonic.Config{
 	EncodeNullForInfOrNan: true,
 }.Froze()
-
-type publishedNode struct {
-	Source     string         `json:"source"`
-	Symbol     string         `json:"symbol"`
-	At         string         `json:"at"`
-	ID         string         `json:"id"`
-	Kind       string         `json:"kind"`
-	Value      float64        `json:"value"`
-	Confidence float64        `json:"confidence"`
-	NodeSource string         `json:"nodeSource,omitempty"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-}
-
-type publishedEdge struct {
-	From       string  `json:"from"`
-	To         string  `json:"to"`
-	Relation   string  `json:"relation"`
-	Weight     float64 `json:"weight"`
-	Confidence float64 `json:"confidence"`
-	At         string  `json:"at"`
-	Reason     string  `json:"reason"`
-}
-
-type publishedGraph struct {
-	At    string                   `json:"at"`
-	Nodes map[string]publishedNode `json:"nodes"`
-	Edges []publishedEdge          `json:"edges"`
-}
-
-type publishedGraphFrame struct {
-	Graph publishedGraph `json:"graph"`
-}
 
 /*
 NewGraph creates an empty graph initialized with node and adjacency maps.
@@ -221,90 +190,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	thesis.Graphs.Store("market_graph", graph)
 	thesis.Stamp(types.SourceGraph)
 
-	solver.publish(thesis, graph)
+	utils.Publish(solver.ui, datura.NewMap("graph", graph))
 
 	return nil
-}
-
-func (solver *Solver) publish(thesis *types.Thesis, graph *Graph) {
-	if solver == nil || solver.ui == nil || thesis == nil || graph == nil {
-		return
-	}
-
-	if cap(solver.ui) > 0 && len(solver.ui) == cap(solver.ui) {
-		return
-	}
-
-	at := thesis.At.Format(time.RFC3339)
-	nodes := make(map[string]publishedNode, len(graph.Nodes))
-
-	for _, node := range graph.Nodes {
-		if node == nil {
-			continue
-		}
-
-		nodes[node.ID] = publishedNode{
-			Source:     "graph",
-			Symbol:     node.Symbol,
-			At:         at,
-			ID:         node.ID,
-			Kind:       string(node.Kind),
-			Value:      node.Value,
-			Confidence: node.Confidence,
-			NodeSource: node.Source,
-			Metadata:   node.Metadata,
-		}
-	}
-
-	if len(nodes) == 0 {
-		return
-	}
-
-	/*
-		Edges travel with the nodes they connect. A graph is the relationships
-		it encodes, so publishing the nodes alone would leave the display with
-		a list of readings and no way to show how any of them relate.
-	*/
-	edges := make([]publishedEdge, 0, len(graph.Edges))
-
-	for _, edge := range graph.Edges {
-		if edge == nil {
-			continue
-		}
-
-		edges = append(edges, publishedEdge{
-			From:       edge.From,
-			To:         edge.To,
-			Relation:   string(edge.Relation),
-			Weight:     edge.Weight,
-			Confidence: edge.Confidence,
-			At:         at,
-			Reason:     edge.Reason,
-		})
-	}
-
-	payload, err := publishJSON.Marshal(publishedGraphFrame{
-		Graph: publishedGraph{
-			At:    at,
-			Nodes: nodes,
-			Edges: edges,
-		},
-	})
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"graph: failed to marshal publication: "+err.Error(),
-			err,
-		))
-
-		return
-	}
-
-	select {
-	case solver.ui <- payload:
-	default:
-	}
 }
 
 /*

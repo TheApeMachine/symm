@@ -33,6 +33,7 @@ type Desk struct {
 	price         *Price
 	balance       *Balance
 	recorder      *audit.Recorder
+	store         *PositionStore
 	recovery      *Recovery
 	positions     *sync.Map
 	positionsMu   sync.Mutex
@@ -50,6 +51,7 @@ func NewDesk(
 	price *Price,
 	balance *Balance,
 	recorder *audit.Recorder,
+	store *PositionStore,
 	ui chan []byte,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
@@ -71,13 +73,14 @@ func NewDesk(
 		price:        price,
 		balance:      balance,
 		recorder:     recorder,
+		store:        store,
 		positions:    &sync.Map{},
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
 	desk.recovery = NewRecovery(
-		ctx, api, ui, instrument, price, balance, recorder, desk.positions,
+		ctx, api, ui, instrument, price, balance, recorder, store, desk.positions,
 	)
 
 	if err := desk.recovery.Recover(); err != nil {
@@ -149,7 +152,9 @@ func (desk *Desk) run() {
 					position, ok := value.(*Position)
 
 					if ok && position != nil {
-						position.onExecution(*execution)
+						if position.onExecution(*execution) {
+							desk.positions.CompareAndDelete(key, position)
+						}
 					}
 
 					return true
@@ -320,6 +325,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.price,
 			desk.balance,
 			desk.recorder,
+			desk.store,
 			desk.instrument.Pair(decision.Symbol),
 			decision,
 		)

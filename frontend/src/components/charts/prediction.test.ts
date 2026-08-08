@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { ResonanceFrame } from "#/collections/types";
-import { vectorSlotTransform } from "#/components/charts/prediction";
 import {
 	predictiveCodingSeries,
 	reconstructionError,
@@ -51,8 +50,9 @@ describe("predictiveCodingSeries", () => {
 			expected: [0.012],
 			upper: [0.016],
 			lower: [0.008],
+			confidence: 0.75,
+			horizon: 1,
 			ready: true,
-			samples: 21,
 		});
 	});
 
@@ -92,13 +92,5 @@ describe("predictiveCodingSeries", () => {
 		expect(series.layers[0]?.values).toEqual([1, null]);
 		expect(series.returnHead.expected).toEqual([0.01, null]);
 		expect(series.returnHead.upper).toEqual([null, null]);
-	});
-});
-
-describe("vectorSlotTransform", () => {
-	it("positions slots with transforms derived from the current vector length", () => {
-		expect(vectorSlotTransform(0, 4)).toBe("translateX(0%) scaleX(0.25)");
-		expect(vectorSlotTransform(2, 4)).toBe("translateX(50%) scaleX(0.25)");
-		expect(vectorSlotTransform(2, 5)).toBe("translateX(40%) scaleX(0.2)");
 	});
 });

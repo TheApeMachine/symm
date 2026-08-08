@@ -28,6 +28,7 @@ type Position struct {
 	price            *Price
 	balance          *Balance
 	recorder         *audit.Recorder
+	store            *PositionStore
 	pair             kraken.InstrumentPair
 	seenExecutions   map[string]struct{}
 	Status           types.Status          `json:"status"`
@@ -49,6 +50,7 @@ func NewPosition(
 	price *Price,
 	balance *Balance,
 	recorder *audit.Recorder,
+	store *PositionStore,
 	pair kraken.InstrumentPair,
 	decision types.Decision,
 ) *Position {
@@ -65,6 +67,7 @@ func NewPosition(
 		price:          price,
 		balance:        balance,
 		recorder:       recorder,
+		store:          store,
 		pair:           pair,
 		seenExecutions: map[string]struct{}{},
 		EntryOrder: &spot.AddOrderRequest{
@@ -78,15 +81,12 @@ func NewPosition(
 			Symbol:      pair.Symbol,
 			Qty:         decimal.NewFromInt64(0),
 			SellableQty: decimal.NewFromInt64(0),
-			EntryPrice:  price.Tick(pair.Symbol).Ask,
-			Mark:        price.Tick(pair.Symbol).Bid,
+			Asset:       pair.Base,
+			EntryPrice:  decision.EntryPrice,
+			Mark:        decision.Mark,
 			Stoploss:    decision.Stoploss,
 		},
 	}
-
-	position.Holding.PnL = position.price.PnL(pair, position.Holding)
-	position.Holding.ReturnPct = position.price.ReturnPct(pair, position.Holding)
-	position.Holding.Stoploss.Update(position.Holding.Mark)
 
 	return position
 }
@@ -110,47 +110,108 @@ onTicker refreshes the mark cache for this position's holding and lets the
 bound stoploss regulator judge the price a sale would actually realise.
 */
 func (position *Position) onTicker(ticker kraken.TickerData) {
-	if position.Holding != nil {
-		position.Holding.Update(ticker)
+	if position.Holding == nil {
+		position.Publish()
+		return
 	}
 
-	if position.Holding.Stoploss.Status == types.TRIGGERED {
+	position.price.Update(&ticker)
+
+	if position.Holding.Qty == nil || position.Holding.Qty.Sign() <= 0 {
+		if ticker.Bid != nil {
+			position.Holding.Mark = ticker.Bid
+		}
+
+		position.Publish()
+		return
+	}
+
+	if position.Holding.Stoploss == nil {
+		position.Holding.Mark = ticker.Bid
+		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
+		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
+		position.Publish()
+		return
+	}
+
+	previousStatus := position.Holding.Stoploss.Status
+	previousLocked := position.Holding.Stoploss.Locked
+	previousFloor := position.Holding.Stoploss.Floor
+	previousPeak := position.Holding.Stoploss.Peak
+	position.Holding.Update(ticker)
+
+	stoploss := position.Holding.Stoploss
+	changed := previousStatus != stoploss.Status ||
+		previousLocked != stoploss.Locked ||
+		previousFloor.Cmp(stoploss.Floor) != 0 ||
+		previousPeak.Cmp(stoploss.Peak) != 0
+
+	if changed && position.store != nil {
+		if err := position.store.Save(stoploss); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"position: failed to persist stoploss transition",
+				err,
+			))
+		}
+	}
+
+	if stoploss.Status == types.TRIGGERED && position.ExitOrder == nil {
 		position.Exit()
 	}
 
 	position.Publish()
 }
 
-func (position *Position) onExecution(execution kraken.Execution) {
-	for _, execution := range execution.Data {
-		if execution.ClientOrderID == position.EntryOrder.ClOrdId {
-			position.Status = types.MarketStatuses[execution.OrderStatus]
-			position.Holding.EntryAt = &execution.Timestamp
-			position.Holding.EntryPrice = execution.CumCost.Div(execution.CumQty)
-			position.Holding.EntryFee = execution.FeeUsdEquiv
-			position.Holding.Qty = execution.CumQty
-			position.Holding.SellableQty = execution.CumQty
-
-			if err := position.Holding.Stoploss.RebindFill(
-				position.Holding.EntryPrice,
-			); err != nil {
-				position.Status = types.ERROR
-				position.Holding.Status = types.ERROR
-				position.Holding.Stoploss.Status = types.ERROR
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"position: failed to bind stoploss to entry fill",
-					err,
-				))
-
-				continue
+func (position *Position) onExecution(message kraken.Execution) bool {
+	for _, execution := range message.Data {
+		if position.ExitOrder != nil &&
+			execution.ClientOrderID == position.ExitOrder.ClOrdId &&
+			execution.OrderStatus == "filled" {
+			if position.store != nil {
+				errnie.Error(position.store.Delete(position.pair.Symbol))
 			}
 
-			position.Holding.Stoploss.Update(position.Holding.Mark)
-			position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
-			position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
+			errnie.Error(position.Close())
+			return true
+		}
+
+		if position.EntryOrder == nil ||
+			execution.ClientOrderID != position.EntryOrder.ClOrdId ||
+			execution.CumQty == nil || execution.CumQty.Sign() <= 0 ||
+			execution.CumCost == nil || execution.CumCost.Sign() <= 0 ||
+			execution.FeeUsdEquiv == nil || execution.FeeUsdEquiv.Sign() < 0 {
+			continue
+		}
+
+		position.Status = types.MarketStatuses[execution.OrderStatus]
+		position.Holding.Status = position.Status
+		position.Holding.EntryAt = &execution.Timestamp
+		position.Holding.EntryPrice = execution.CumCost.Div(execution.CumQty)
+		position.Holding.EntryFee = execution.FeeUsdEquiv
+		position.Holding.Qty = execution.CumQty
+		position.Holding.SellableQty = execution.CumQty
+
+		if err := position.Holding.Stoploss.RebindFill(
+			position.Holding.EntryPrice,
+		); err != nil {
+			position.Status = types.ERROR
+			position.Holding.Status = types.ERROR
+			position.Holding.Stoploss.Status = types.ERROR
+			errnie.Error(err)
+			continue
+		}
+
+		position.Holding.Stoploss.Update(position.Holding.Mark)
+		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
+		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
+
+		if position.store != nil {
+			errnie.Error(position.store.Save(position.Holding.Stoploss))
 		}
 	}
+
+	return false
 }
 
 /*

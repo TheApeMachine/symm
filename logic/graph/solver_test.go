@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
@@ -207,76 +206,6 @@ func TestExtractResonanceNodes(t *testing.T) {
 	})
 }
 
-func TestPublish(t *testing.T) {
-	Convey("Given a graph with related nodes", t, func() {
-		at := time.Unix(1, 0).UTC()
-		ui := make(chan []byte, 1)
-		solver := NewSolver(ui, nil)
-
-		graph := NewGraph(at)
-		graph.AddNode(&Node{
-			ID:         "res:BTC/USD:surprise",
-			Symbol:     "BTC/USD",
-			Kind:       KindResonance,
-			Value:      0.4,
-			Confidence: 1,
-			At:         at,
-		})
-		graph.AddNode(&Node{
-			ID:         "causal:BTC/USD:uplift",
-			Symbol:     "BTC/USD",
-			Kind:       KindCausal,
-			Value:      -0.2,
-			Confidence: 1,
-			At:         at,
-		})
-		graph.AddEdge(&Edge{
-			From:       "res:BTC/USD:surprise",
-			To:         "causal:BTC/USD:uplift",
-			Relation:   RelationContradicts,
-			Weight:     0.3,
-			Confidence: 1,
-			At:         at,
-		})
-
-		thesis := types.NewThesis(nil)
-		solver.publish(thesis, graph)
-
-		Convey("It should publish the edges alongside the nodes", func() {
-			/*
-				A graph is the relationships it encodes. Publishing the nodes
-				without the edges would leave the display a list of readings
-				with no way to show how any of them relate.
-			*/
-			var frame map[string]any
-
-			select {
-			case raw := <-ui:
-				So(sonic.Unmarshal(raw, &frame), ShouldBeNil)
-			default:
-				t.Fatal("no graph frame published")
-			}
-
-			published, ok := frame["graph"].(map[string]any)
-			So(ok, ShouldBeTrue)
-
-			nodes, ok := published["nodes"].(map[string]any)
-			So(ok, ShouldBeTrue)
-			So(len(nodes), ShouldEqual, 2)
-
-			edges, ok := published["edges"].([]any)
-			So(ok, ShouldBeTrue)
-			So(len(edges), ShouldEqual, 1)
-
-			edge, ok := edges[0].(map[string]any)
-			So(ok, ShouldBeTrue)
-			So(edge["from"], ShouldEqual, "res:BTC/USD:surprise")
-			So(edge["to"], ShouldEqual, "causal:BTC/USD:uplift")
-			So(edge["relation"], ShouldEqual, string(RelationContradicts))
-		})
-	})
-}
-
 func BenchmarkInferStructuralEdges(b *testing.B) {
 	at := time.Unix(1, 0).UTC()
 	nodes := make(map[string]*Node, 260)
@@ -322,54 +251,6 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 		graph := NewGraph(at)
 		graph.Nodes = nodes
 		solver.inferStructuralEdges(thesis, graph)
-	}
-}
-
-func BenchmarkPublish(b *testing.B) {
-	at := time.Unix(1, 0).UTC()
-	ui := make(chan []byte, 1)
-	solver := NewSolver(ui, nil)
-	thesis := types.NewThesis(nil)
-	thesis.At = at
-	graph := NewGraph(at)
-
-	for index := range 256 {
-		nodeID := "cat:BTC/USD:source:" + strconv.Itoa(index)
-		graph.AddNode(&Node{
-			ID:         nodeID,
-			Symbol:     "BTC/USD",
-			Source:     "source",
-			Kind:       KindCategory,
-			Value:      float64(index),
-			Confidence: 1,
-			At:         at,
-			Metadata: map[string]any{
-				"readiness": "observation",
-				"state":     "valid",
-				"unit":      "dimensionless",
-			},
-		})
-
-		if index == 0 {
-			continue
-		}
-
-		graph.AddEdge(&Edge{
-			From:       "cat:BTC/USD:source:" + strconv.Itoa(index-1),
-			To:         nodeID,
-			Relation:   RelationSupports,
-			Weight:     1,
-			Confidence: 1,
-			At:         at,
-			Reason:     "benchmark relation",
-		})
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		solver.publish(thesis, graph)
-		<-ui
 	}
 }
 

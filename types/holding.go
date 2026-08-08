@@ -105,7 +105,9 @@ func (holding *Holding) Update(
 }
 
 func (holding *Holding) Close() (err error) {
-	holding.cancel()
+	if holding.cancel != nil {
+		holding.cancel()
+	}
 
 	if holding.Stoploss != nil {
 		err = holding.Stoploss.Close()

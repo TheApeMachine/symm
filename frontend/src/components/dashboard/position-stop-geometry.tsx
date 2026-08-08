@@ -2,37 +2,16 @@ import { Typography } from "#/components/ui/typography";
 import { Flex } from "@/components/ui/flex";
 
 /*
-The regulator publishes seven prices and one flag. Everything drawn here is one
-of them: the axis is their shared domain, and each marker is a price placed on
-it. Nothing is reconstructed in the browser, so a boundary that moves on the
-engine moves here on the same frame.
+Floor and Peak bound the live stop interval. Before protection locks, Floor is
+the forecast loss boundary. Afterward it is the locked floor that ratchets with
+new peaks, so this domain follows the regulator's phase without reconstructing
+that phase in the browser.
 */
-const stopDomain = [
-	"holding.entry_price",
-	"holding.mark",
-	"holding.stoploss.floor",
-	"holding.stoploss.profit_line",
-	"holding.stoploss.arm_at",
-	"holding.stoploss.lock_floor",
-	"holding.stoploss.peak",
-].join(",");
+const stopDomain = ["holding.stoploss.floor", "holding.stoploss.peak"].join(
+	",",
+);
 
 const stopMarkers = [
-	{
-		path: "holding.stoploss.lock_floor",
-		title: "floor once profit protection arms",
-		className: "h-2.5 w-px bg-(--up)",
-	},
-	{
-		path: "holding.stoploss.profit_line",
-		title: "minimum profitable exit",
-		className: "h-2.5 w-px bg-(--info)",
-	},
-	{
-		path: "holding.stoploss.arm_at",
-		title: "profit protection arms here",
-		className: "h-3 w-px bg-(--warn)",
-	},
 	{
 		path: "holding.stoploss.floor",
 		title: "active exit floor",
@@ -62,9 +41,9 @@ const stopLevels = [
 ] as const;
 
 /*
-PositionStopGeometry maps every regulator boundary onto one price axis, then
-names the contract values underneath. Values come directly from Stoploss; only
-their position within the shared domain is derived in the browser.
+PositionStopGeometry maps the current mark onto the regulator's active stop
+interval. Profit-lock boundaries remain named underneath, but do not compress
+the distance between the floor and peak that determines stop proximity.
 */
 export const PositionStopGeometry = () => (
 	<>
@@ -86,9 +65,6 @@ export const PositionStopGeometry = () => (
 			<Typography.Span className="text-(--acc)">
 				floor{" "}
 				<span data-paint="holding.stoploss.floor" data-paint-format=".6f" />
-			</Typography.Span>
-			<Typography.Span className="text-(--f3)">
-				mark <span data-paint="holding.stoploss.mark" data-paint-format=".6f" />
 			</Typography.Span>
 			<Typography.Span className="text-(--up)">
 				peak <span data-paint="holding.stoploss.peak" data-paint-format=".6f" />

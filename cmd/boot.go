@@ -113,7 +113,28 @@ func Boot(
 		return nil
 	}
 
-	system := &System{Thesis: thesis, closers: []func() error{recorder.Close}}
+	dataPath := utils.ResolveDataPath()
+
+	if dataPath == "" {
+		errnie.Error(fmt.Errorf("system data path required"))
+		_ = recorder.Close()
+		return nil
+	}
+
+	positionStore, err := broker.NewPositionStore(
+		filepath.Join(dataPath, "symm.sqlite"),
+	)
+
+	if err != nil {
+		errnie.Error(fmt.Errorf("failed to create position store: %w", err))
+		_ = recorder.Close()
+		return nil
+	}
+
+	system := &System{
+		Thesis:  thesis,
+		closers: []func() error{recorder.Close, positionStore.Close},
+	}
 
 	if public == nil {
 		public = websocket.New(ctx, nil, false, websocket.PublicWebSocketURL)
@@ -151,6 +172,7 @@ func Boot(
 		price,
 		balance,
 		recorder,
+		positionStore,
 		uiChannel,
 	)).Wait()
 

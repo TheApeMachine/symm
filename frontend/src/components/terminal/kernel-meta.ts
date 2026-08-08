@@ -47,16 +47,22 @@ const kernelOrderIndex = (source: string): number => {
 /*
 Each kernel publishes its own vocabulary, so the headline is named per source
 rather than assumed. A generic "strength" was asked of every kernel, and the
-ones that do not publish one — hawkes counts arrivals, liquidity scores
-scarcity, exhaustion and toxicity split their readings by side — showed nothing
-at all.
+ones that do not publish one — hawkes reports a fitted intensity, liquidity
+scores scarcity, exhaustion and toxicity split their readings by side — showed
+nothing at all.
+
+Hawkes names its fitted conditional intensity rather than its raw arrival rate.
+The arrival rate is published from the first tick but carries no normalized
+estimate until the kernel has a fit, and a bar bound to an absent normalized
+keeps whatever it last painted — which is how the row came to show a confident
+50% beside a raw reading of zero.
 */
 const SOURCE_HEADLINE: Record<string, string> = {
 	correlation: "strength",
 	cvd: "strength",
 	depthflow: "strength",
 	exhaustion: "strength:buy",
-	hawkes: "arrival_rate:buy",
+	hawkes: "conditional_intensity:buy",
 	leadlag: "strength",
 	liquidity: "scarcity_score",
 	pumpdump: "strength",

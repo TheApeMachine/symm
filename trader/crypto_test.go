@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/causal"
+	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -318,6 +319,16 @@ func TestCryptoRun(t *testing.T) {
 				thesis.Resonance.Store("SIM1/USD", types.ResonanceReading{
 					Forecast: forecast,
 				})
+				marketGraph := logicgraph.NewGraph(thesis.At)
+				marketGraph.AddNode(&logicgraph.Node{
+					ID:         "res:SIM1/USD:forecast",
+					Symbol:     "SIM1/USD",
+					Kind:       logicgraph.KindResonance,
+					Value:      forecast.ExpectedReturn,
+					Confidence: forecast.Confidence,
+					At:         thesis.At,
+				})
+				thesis.Graphs.Store("market_graph", marketGraph)
 
 				rows := make([][]float64, causal.MinimumSearchRows)
 

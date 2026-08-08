@@ -147,7 +147,7 @@ func NewHub(
 
 					errnie.Error(errnie.Err(
 						errnie.IO,
-						"failed to write dashboard websocket message",
+						"failed to write dashboard websocket message: "+err.Error(),
 						err,
 					))
 				}
@@ -184,7 +184,7 @@ func NewHub(
 
 					errnie.Error(errnie.Err(
 						errnie.IO,
-						"failed to write dashboard websocket message",
+						"failed to write dashboard websocket message: "+err.Error(),
 						err,
 					))
 				}

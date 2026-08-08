@@ -105,12 +105,25 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	thesis.Readiness.Stamp(types.SourceResonance)
 
-	focused, found := thesis.Resonance.Load(types.Focus())
+	/*
+		Every carrier the solver settled this round is published, not just the
+		focused one. The latent manifold is a cross-section — a cloud of symbols
+		positioned by where their predictive states sit relative to one another —
+		and one point is not a cross-section. Only the focused row carries the
+		full latent vector and the layer stack; every other row carries its
+		embedding and its scalars, which is what the cloud actually plots.
+	*/
+	rows := make([]any, 0, 64)
 
-	if found {
+	thesis.Resonance.Range(func(_, value any) bool {
+		rows = append(rows, value)
+		return true
+	})
+
+	if len(rows) != 0 {
 		utils.Publish(
 			solver.ui,
-			datura.NewMap("resonance", []any{focused}),
+			datura.NewMap("resonance", rows),
 		)
 	}
 
@@ -301,10 +314,29 @@ func (solver *Solver) updateSymbol(
 		state.pendingAt = targetAt
 	}
 
+	/*
+		Every carrier carries the two leading components of its settled state so
+		the cross-section can place it against the others. The full vector and the
+		layer stack stay with the focused symbol: those are what the hierarchy
+		panel reads, and they are the expensive part of the frame — the whole
+		universe's worth of them would be published every round to draw a scatter
+		that only needs two numbers per symbol.
+	*/
 	var latent []float64
+	var layers []learning.ResonanceLayerWire
+	var embedding []float64
 
-	if solver.ui != nil && symbol == types.Focus() {
-		latent = state.manifold.LatentState()
+	if solver.ui != nil {
+		settled := state.manifold.LatentState()
+
+		if len(settled) >= 2 {
+			embedding = []float64{settled[0], settled[1]}
+		}
+
+		if symbol == types.Focus() {
+			latent = settled
+			layers, _, _ = state.manifold.WireSnapshot()
+		}
 	}
 
 	row := types.ResonanceReading{
@@ -316,6 +348,8 @@ func (solver *Solver) updateSymbol(
 		Surprise:     surprise,
 		Energy:       energy,
 		Latent:       latent,
+		Embedding:    embedding,
+		Layers:       layers,
 		Forecast:     forecast,
 		Alpha:        state.alpha,
 		Samples:      state.targetSamples,

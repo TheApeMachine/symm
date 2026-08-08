@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -95,6 +96,9 @@ func drive[S Driven](
 ) func(*Market) {
 	return func(market *Market) {
 		var absent S
+		previousDataPath := viper.GetString("system.data_path")
+		viper.Set("system.data_path", t.TempDir())
+		defer viper.Set("system.data_path", previousDataPath)
 
 		public, private := market.Feeds()
 		system := boot(t.Context(), types.NewThesis(nil), public, private, nil)

@@ -5,6 +5,8 @@ import (
 	"math"
 	"slices"
 	"time"
+
+	"github.com/theapemachine/nomagique/learning"
 )
 
 /*
@@ -30,17 +32,19 @@ nil until the task head has enough resolved market data to publish a curve, so
 absence cannot be confused with a numerical forecast of zero.
 */
 type ResonanceReading struct {
-	Stage        string             `json:"stage"`
-	Source       SourceType         `json:"source"`
-	Symbol       string             `json:"symbol"`
-	TargetSymbol string             `json:"targetSymbol"`
-	At           time.Time          `json:"at"`
-	Surprise     float64            `json:"surprise"`
-	Energy       float64            `json:"energy"`
-	Latent       []float64          `json:"latent,omitempty"`
-	Forecast     *ResonanceForecast `json:"forecast,omitempty"`
-	Alpha        float64            `json:"alpha"`
-	Samples      uint64             `json:"samples"`
+	Stage        string                        `json:"stage"`
+	Source       SourceType                    `json:"source"`
+	Symbol       string                        `json:"symbol"`
+	TargetSymbol string                        `json:"targetSymbol"`
+	At           time.Time                     `json:"at"`
+	Surprise     float64                       `json:"surprise"`
+	Energy       float64                       `json:"energy"`
+	Latent       []float64                     `json:"latent,omitempty"`
+	Embedding    []float64                     `json:"embedding,omitempty"`
+	Layers       []learning.ResonanceLayerWire `json:"layers,omitempty"`
+	Forecast     *ResonanceForecast            `json:"forecast,omitempty"`
+	Alpha        float64                       `json:"alpha"`
+	Samples      uint64                        `json:"samples"`
 }
 
 /*
