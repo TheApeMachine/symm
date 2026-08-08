@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -52,6 +53,64 @@ func TestNewStoploss(t *testing.T) {
 			stoploss.Update(decimal.NewFromFloat64(73.70))
 
 			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+	})
+
+	Convey("Given a forecast path that never falls below its starting price", t, func() {
+		forecast, err := NewResonanceForecast(
+			[]float64{0.01, 0.01},
+			[]float64{1, 1},
+			2,
+			0.9,
+		)
+		So(err, ShouldBeNil)
+		zeroRate := decimal.NewFromInt64(0)
+
+		Convey("It should project the mathematical floor onto the preceding venue tick", func() {
+			stoploss, err := NewStoploss(
+				context.Background(),
+				"BTC/USD",
+				decimal.NewFromFloat64(100.02),
+				decimal.NewFromFloat64(100),
+				forecast,
+				decimal.NewFromFloat64(0.01),
+				zeroRate,
+				zeroRate,
+			)
+
+			So(err, ShouldBeNil)
+			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(99.99)), ShouldEqual, 0)
+			So(stoploss.Floor.Cmp(stoploss.Peak), ShouldBeLessThan, 0)
+		})
+	})
+
+	Convey("Given a downside smaller than one executable tick", t, func() {
+		forecast, err := NewResonanceForecast(
+			[]float64{-1e-8, 0.01},
+			[]float64{1, 1},
+			2,
+			0.9,
+		)
+		So(err, ShouldBeNil)
+		zeroRate := decimal.NewFromInt64(0)
+
+		Convey("It should use tick rounding while preserving strict floor separation", func() {
+			stoploss, err := NewStoploss(
+				context.Background(),
+				"BTC/USD",
+				decimal.NewFromFloat64(100.02),
+				decimal.NewFromFloat64(100),
+				forecast,
+				decimal.NewFromFloat64(0.01),
+				zeroRate,
+				zeroRate,
+			)
+
+			So(err, ShouldBeNil)
+			So(stoploss.Floor.Cmp(stoploss.Peak), ShouldBeLessThan, 0)
+			So(stoploss.Peak.Sub(stoploss.Floor).Cmp(
+				decimal.NewFromFloat64(0.01),
+			), ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
@@ -144,6 +203,25 @@ func TestRestoreStoploss(t *testing.T) {
 			original.Update(nextMark)
 			restored.Update(nextMark)
 			So(restored.Floor.Cmp(original.Floor), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a legacy stored stop whose floor collapsed onto its peak", t, func() {
+		original := stoplossFixture(t)
+		encoded, err := original.MarshalState()
+		So(err, ShouldBeNil)
+		state := stoplossState{}
+		So(json.Unmarshal(encoded, &state), ShouldBeNil)
+		state.Floor = state.Peak
+		encoded, err = json.Marshal(state)
+		So(err, ShouldBeNil)
+
+		Convey("It should refuse to recover unsafe geometry", func() {
+			restored, err := RestoreStoploss(context.Background(), encoded)
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "floor must remain below peak")
+			So(restored, ShouldBeNil)
 		})
 	})
 }

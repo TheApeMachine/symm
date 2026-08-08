@@ -271,6 +271,19 @@ export type ResonanceForecast = {
 	confidence: number;
 };
 
+/*
+ResonanceVerdict mirrors the backend types.ResonanceVerdict. The labels are
+decided by the solver, never rederived here.
+*/
+export type ResonanceVerdict = {
+	learning: "warming" | "predicting" | "drifting" | "lost";
+	errorRank: number;
+	tuning: "warming" | "adapting" | "pinned fast" | "pinned slow";
+	alphaBand: number;
+	direction: number;
+	conviction: number;
+};
+
 export type ForecastValidity = {
 	state: "valid" | "provisional" | "invalid";
 	readiness: string;
@@ -293,6 +306,7 @@ export type ResonanceFrame = Record<string, unknown> & {
 	surprise?: number;
 	targetSymbol?: string;
 	forecast?: ResonanceForecast;
+	verdict?: ResonanceVerdict;
 	forecastValidity?: ForecastValidity;
 	incrementalMSE?: number;
 	incrementalSkillLowerBound?: number;

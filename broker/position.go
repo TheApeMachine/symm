@@ -180,11 +180,19 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		if position.ExitOrder != nil &&
 			execution.ClientOrderID == position.ExitOrder.ClOrdId &&
 			execution.OrderStatus == "filled" {
-			if position.store != nil {
-				errnie.Error(position.store.Delete(position.pair.Symbol))
+			if err := position.closeFill(execution); err != nil {
+				position.Status = types.ERROR
+
+				if position.Holding != nil {
+					position.Holding.Status = types.ERROR
+				}
+
+				position.Publish()
+				errnie.Error(err)
+
+				return false
 			}
 
-			errnie.Error(position.Close())
 			return true
 		}
 
@@ -199,7 +207,10 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		position.Status = types.MarketStatuses[execution.OrderStatus]
 		position.Holding.Status = position.Status
 		position.Holding.EntryAt = &execution.Timestamp
-		position.Holding.EntryPrice = execution.CumCost.Div(execution.CumQty)
+		position.Holding.EntryPrice = decimal.ExactDiv(
+			execution.CumCost,
+			execution.CumQty,
+		)
 		position.Holding.EntryFee = execution.FeeUsdEquiv
 		position.Holding.Qty = execution.CumQty
 		position.Holding.SellableQty = execution.CumQty
@@ -224,6 +235,77 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 	}
 
 	return false
+}
+
+/*
+closeFill records the exchange's realized exit economics before the lot leaves
+the desk and publishes the terminal state so retained UI positions can remove
+it by identity.
+*/
+func (position *Position) closeFill(execution kraken.ExecutionData) error {
+	if position.Holding == nil || position.Holding.Qty == nil ||
+		position.Holding.Qty.Sign() <= 0 || position.Holding.EntryPrice == nil ||
+		position.Holding.EntryPrice.Sign() <= 0 || position.Holding.EntryFee == nil ||
+		position.Holding.EntryFee.Sign() < 0 || execution.CumQty == nil ||
+		execution.CumQty.Sign() <= 0 || execution.CumCost == nil ||
+		execution.CumCost.Sign() <= 0 || execution.FeeUsdEquiv == nil ||
+		execution.FeeUsdEquiv.Sign() < 0 || execution.Timestamp.IsZero() {
+		return errnie.Err(
+			errnie.Validation,
+			"position: complete exit fill economics required",
+			nil,
+		)
+	}
+
+	sellable := position.Holding.SellableQty
+
+	if sellable == nil {
+		sellable = position.Holding.Qty
+	}
+
+	if execution.CumQty.Cmp(sellable) != 0 {
+		return errnie.Err(
+			errnie.Conflict,
+			"position: filled exit quantity does not match sellable inventory",
+			nil,
+		)
+	}
+
+	entryGross := decimal.ExactMul(
+		position.Holding.EntryPrice,
+		position.Holding.Qty,
+	)
+	entryScale := max(entryGross.GetScale(), position.Holding.EntryFee.GetScale())
+	entryValue := entryGross.SetScale(entryScale).Add(position.Holding.EntryFee)
+	exitScale := max(execution.CumCost.GetScale(), execution.FeeUsdEquiv.GetScale())
+	exitValue := execution.CumCost.SetScale(exitScale).Sub(execution.FeeUsdEquiv)
+	valueScale := max(entryValue.GetScale(), exitValue.GetScale())
+	position.Holding.ExitAt = &execution.Timestamp
+	position.Holding.ExitPrice = decimal.ExactDiv(
+		execution.CumCost,
+		execution.CumQty,
+	)
+	position.Holding.ExitFee = execution.FeeUsdEquiv
+	position.Holding.PnL = exitValue.SetScale(valueScale).Sub(entryValue)
+	position.Holding.ReturnPct = decimal.ExactMul(
+		decimal.ExactDiv(position.Holding.PnL, entryValue),
+		decimal.NewFromInt64(100),
+	).Float64()
+	position.Holding.SellableQty = decimal.NewFromInt64(0)
+
+	if position.store != nil {
+		if err := position.store.Delete(position.pair.Symbol); err != nil {
+			return err
+		}
+	}
+
+	if err := position.Close(); err != nil {
+		return err
+	}
+
+	position.Publish()
+
+	return nil
 }
 
 /*

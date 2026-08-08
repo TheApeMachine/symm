@@ -46,16 +46,19 @@ export const paintTerminalResonanceChart = (
 
 	const width = canvas.clientWidth;
 	const height = canvas.clientHeight;
+	
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ResonanceFrame[];
+
 	const frame =
 		frames.find(
 			(entry) => focusSymbol === "" || entry.symbol === focusSymbol,
 		) ??
 		frames.at(-1) ??
 		null;
-	const matrix = terminalResonanceLayerMatrixFromFrame(frame);
+	
+		const matrix = terminalResonanceLayerMatrixFromFrame(frame);
 
 	if (matrix.length === 0) {
 		drawWaiting(context, width, height, "waiting for resonance layers");

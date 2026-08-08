@@ -86,10 +86,7 @@ func (price *Price) Mark(
 	return nil
 }
 
-/*
-PnL returns the profit or loss for a holding, including fees.
-It is based on the current market best bid price.
-*/
+/* PnL returns holding profit or loss at the current bid, including fees. */
 func (price *Price) PnL(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
@@ -108,13 +105,11 @@ func (price *Price) PnL(
 	}
 
 	return price.ExitValue(pair, holding).Sub(
-		holding.EntryPrice.Mul(holding.Qty),
+		decimal.ExactMul(holding.EntryPrice, holding.Qty),
 	).Sub(holding.EntryFee)
 }
 
-/*
-ExitValue returns the exit value for a holding, which is the current market best bid price minus the taker fee.
-*/
+/* ExitValue returns holding value at the current bid after the taker fee. */
 func (price *Price) ExitValue(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
@@ -133,7 +128,7 @@ func (price *Price) ExitValue(
 
 	return price.WithFee(
 		pair.Symbol,
-		tick.Bid.Mul(holding.Qty),
+		decimal.ExactMul(tick.Bid, holding.Qty),
 		SELL,
 	)
 }
@@ -175,9 +170,7 @@ func (price *Price) WithFriction(
 			fillQty = remaining
 		}
 
-		bookGross = bookGross.Add(
-			bid.Price.Mul(fillQty),
-		)
+		bookGross = bookGross.Add(decimal.ExactMul(bid.Price, fillQty))
 
 		remaining = remaining.Sub(fillQty)
 	}
@@ -194,7 +187,7 @@ func (price *Price) WithFriction(
 
 	bestBidNet := price.WithFee(
 		pair.Symbol,
-		tick.Bid.Mul(holding.Qty),
+		decimal.ExactMul(tick.Bid, holding.Qty),
 		SELL,
 	)
 
@@ -207,9 +200,7 @@ func (price *Price) WithFriction(
 	return value.Sub(bestBidNet.Sub(bookNet))
 }
 
-/*
-ReturnPct returns the return percentage for a holding.
-*/
+/* ReturnPct returns the holding's fee-inclusive percentage return. */
 func (price *Price) ReturnPct(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
@@ -229,9 +220,12 @@ func (price *Price) ReturnPct(
 		return 0
 	}
 
-	entryValue := holding.EntryPrice.Mul(
+	entryGross := decimal.ExactMul(
+		holding.EntryPrice,
 		holding.Qty,
-	).Add(holding.EntryFee)
+	)
+	entryScale := max(entryGross.GetScale(), holding.EntryFee.GetScale())
+	entryValue := entryGross.SetScale(entryScale).Add(holding.EntryFee)
 
 	zero := decimal.NewFromInt64(0)
 
@@ -245,7 +239,8 @@ func (price *Price) ReturnPct(
 		return 0
 	}
 
-	return pnl.Div(entryValue).Mul(
+	return decimal.ExactMul(
+		decimal.ExactDiv(pnl, entryValue),
 		decimal.NewFromInt64(100),
 	).Float64()
 }
@@ -391,6 +386,7 @@ func (price *Price) WithFee(
 	feeAmount := decimal.ExactMul(amount, decimal.ExactDiv(
 		fee.Fee, decimal.NewFromInt64(100),
 	))
+	amount = amount.SetScale(max(amount.GetScale(), feeAmount.GetScale()))
 
 	switch direction {
 	case BUY:

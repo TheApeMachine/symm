@@ -92,7 +92,7 @@ func TestPriceMark(t *testing.T) {
 				markPrice := price.Mark("TEST2", BUY)
 
 				Convey("It should return the ask with the taker fee", func() {
-					So(markPrice.String(), ShouldEqual, "40100")
+					So(markPrice.Float64(), ShouldAlmostEqual, 40100, 1e-12)
 				})
 			})
 
@@ -100,7 +100,7 @@ func TestPriceMark(t *testing.T) {
 				markPrice := price.Mark("TEST2", SELL)
 
 				Convey("It should return the bid after the taker fee", func() {
-					So(markPrice.String(), ShouldEqual, "39850")
+					So(markPrice.Float64(), ShouldAlmostEqual, 39850.125, 1e-12)
 				})
 			})
 		})
@@ -131,9 +131,43 @@ func TestPricePnL(t *testing.T) {
 				pnl := price.PnL(pair, holding)
 
 				Convey("It should return the profit or loss based on the current market best bid price", func() {
-					So(pnl.String(), ShouldEqual, "4825")
+					So(pnl.Float64(), ShouldAlmostEqual, 4825.125, 1e-12)
 				})
 			})
+		})
+	})
+
+	Convey("Given a tiny quantity of a high-priced asset", t, func() {
+		price, _ := newPriceSurface(t, "PAXG/USD")
+		entryPrice := 4339.01
+		bid := 4338.33
+		quantity := 0.00765083
+		entryFee := entryPrice * quantity * 0.0025
+		pair := kraken.InstrumentPair{
+			Symbol: "PAXG/USD",
+			Base:   "PAXG",
+			Quote:  "USD",
+		}
+		holding := &types.Holding{
+			Symbol:     "PAXG/USD",
+			Qty:        decimal.NewFromFloat64(quantity),
+			EntryPrice: decimal.NewFromFloat64(entryPrice),
+			EntryFee:   decimal.NewFromFloat64(entryFee),
+		}
+		price.Update(&kraken.TickerData{
+			Symbol: "PAXG/USD",
+			Ask:    decimal.NewFromFloat64(4339.02),
+			Bid:    decimal.NewFromFloat64(bid),
+		})
+
+		Convey("It should multiply price and quantity without rounding quantity to a cent", func() {
+			pnl := price.PnL(pair, holding)
+			expected := bid*quantity*(1-0.0025) -
+				entryPrice*quantity - entryFee
+
+			So(pnl.Sign(), ShouldEqual, -1)
+			So(pnl.Float64(), ShouldAlmostEqual, expected, 1e-10)
+			So(pnl.Float64(), ShouldBeGreaterThan, -1)
 		})
 	})
 }
@@ -162,7 +196,7 @@ func TestExitValue(t *testing.T) {
 				exitValue := price.ExitValue(pair, holding)
 
 				Convey("It should return the exit value based on the current market best bid price", func() {
-					So(exitValue.String(), ShouldEqual, "129575")
+					So(exitValue.Float64(), ShouldAlmostEqual, 129575.25, 1e-12)
 				})
 			})
 		})
@@ -186,7 +220,7 @@ func TestPriceWithFee(t *testing.T) {
 				priceWithFee := price.WithFee("TEST5", ticker.Ask, BUY)
 
 				Convey("It should return the price with the taker fee applied", func() {
-					So(priceWithFee.String(), ShouldEqual, "70175")
+					So(priceWithFee.Float64(), ShouldAlmostEqual, 70175, 1e-12)
 				})
 			})
 
@@ -194,7 +228,7 @@ func TestPriceWithFee(t *testing.T) {
 				priceWithFee := price.WithFee("TEST5", ticker.Bid, SELL)
 
 				Convey("It should return the price with the taker fee applied", func() {
-					So(priceWithFee.String(), ShouldEqual, "69775")
+					So(priceWithFee.Float64(), ShouldAlmostEqual, 69775.125, 1e-12)
 				})
 			})
 		})
@@ -257,6 +291,43 @@ func TestPriceQuantity(t *testing.T) {
 	})
 }
 
+func TestPriceReturnPct(t *testing.T) {
+	Convey("Given the high-price tiny-quantity precision boundary", t, func() {
+		price, _ := newPriceSurface(t, "BTC/USD")
+		entryPrice := 64951.1
+		bid := 64951.0
+		quantity := 0.00051057
+		entryFee := entryPrice * quantity * 0.0025
+		pair := kraken.InstrumentPair{
+			Symbol: "BTC/USD",
+			Base:   "BTC",
+			Quote:  "USD",
+		}
+		holding := &types.Holding{
+			Symbol:     "BTC/USD",
+			Qty:        decimal.NewFromFloat64(quantity),
+			EntryPrice: decimal.NewFromFloat64(entryPrice),
+			EntryFee:   decimal.NewFromFloat64(entryFee),
+		}
+		price.Update(&kraken.TickerData{
+			Symbol: "BTC/USD",
+			Ask:    decimal.NewFromFloat64(64951.1),
+			Bid:    decimal.NewFromFloat64(bid),
+		})
+
+		Convey("It should report percent once instead of erasing the exit value", func() {
+			entryValue := entryPrice*quantity + entryFee
+			expectedPnL := bid*quantity*(1-0.0025) - entryValue
+			expectedReturn := expectedPnL / entryValue * 100
+			actual := price.ReturnPct(pair, holding)
+
+			So(actual, ShouldAlmostEqual, expectedReturn, 1e-10)
+			So(actual, ShouldBeGreaterThan, -1)
+			So(actual, ShouldBeLessThan, 0)
+		})
+	})
+}
+
 func BenchmarkPriceUpdate(b *testing.B) {
 	price, _ := newPriceSurface(b, "TEST8")
 
@@ -293,11 +364,12 @@ func BenchmarkPriceMark(b *testing.B) {
 
 func BenchmarkPricePnL(b *testing.B) {
 	price, _ := newPriceSurface(b, "TEST10")
-	pair := kraken.InstrumentPair{Base: "BTC", Quote: "USD"}
+	pair := kraken.InstrumentPair{Symbol: "TEST10", Base: "BTC", Quote: "USD"}
 	holding := &types.Holding{
 		Symbol:     "TEST10",
 		Qty:        decimal.NewFromFloat64(1.0),
 		EntryPrice: decimal.NewFromFloat64(110000.00),
+		EntryFee:   decimal.NewFromInt64(0),
 	}
 
 	ticker := &kraken.TickerData{
@@ -317,11 +389,12 @@ func BenchmarkPricePnL(b *testing.B) {
 
 func BenchmarkPriceExitValue(b *testing.B) {
 	price, _ := newPriceSurface(b, "TEST11")
-	pair := kraken.InstrumentPair{Base: "BTC", Quote: "USD"}
+	pair := kraken.InstrumentPair{Symbol: "TEST11", Base: "BTC", Quote: "USD"}
 	holding := &types.Holding{
 		Symbol:     "TEST11",
 		Qty:        decimal.NewFromFloat64(2.0),
 		EntryPrice: decimal.NewFromFloat64(120000.00),
+		EntryFee:   decimal.NewFromInt64(0),
 	}
 
 	ticker := &kraken.TickerData{

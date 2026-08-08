@@ -27,6 +27,41 @@ type ResonanceForecast struct {
 }
 
 /*
+ResonanceVerdict is the plain-language reading of a resonance frame.
+
+The panel answers three questions before any number is read: is the model
+predicting, is the pace controller still free to move, and which way does the
+curve point. Each is decided here rather than in the browser, because a verdict
+recomputed from a frame in the client is a second model of the same thing that
+can disagree with this one.
+
+Learning and Tuning are stable labels, not thresholds crossed per tick, so a
+reader is never asked to average a strobing light by eye.
+*/
+type ResonanceVerdict struct {
+	/* "warming" | "predicting" | "drifting" | "lost". */
+	Learning string `json:"learning"`
+	/* Smoothed rank of the reconstruction error within its own history. */
+	ErrorRank float64 `json:"errorRank"`
+	/* "warming" | "adapting" | "pinned fast" | "pinned slow". */
+	Tuning string `json:"tuning"`
+	/*
+		Each label's health as nominal (1), attention (0), or broken (-1), so the
+		panel tones a verdict without keeping a second copy of the label set.
+	*/
+	LearningHealth float64 `json:"learningHealth"`
+	TuningHealth   float64 `json:"tuningHealth"`
+	/* Alpha's position inside its own bounds, log spaced, 0..1. */
+	AlphaBand float64 `json:"alphaBand"`
+	/*
+		Sign of the expected return, and its confidence-scaled magnitude. Drift is
+		the arrow; Conviction dims it when the forecast is poorly supported.
+	*/
+	Direction  float64 `json:"direction"`
+	Conviction float64 `json:"conviction"`
+}
+
+/*
 ResonanceReading is one predictive-coding result for a symbol. Forecast remains
 nil until the task head has enough resolved market data to publish a curve, so
 absence cannot be confused with a numerical forecast of zero.
@@ -43,6 +78,7 @@ type ResonanceReading struct {
 	Embedding    []float64                     `json:"embedding,omitempty"`
 	Layers       []learning.ResonanceLayerWire `json:"layers,omitempty"`
 	Forecast     *ResonanceForecast            `json:"forecast,omitempty"`
+	Verdict      ResonanceVerdict              `json:"verdict"`
 	Alpha        float64                       `json:"alpha"`
 	Samples      uint64                        `json:"samples"`
 }

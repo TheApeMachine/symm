@@ -159,8 +159,9 @@ export const JournalSurface = () => (
 												<b
 													className="font-normal text-(--pnl)"
 													data-paint="holding.return_pct"
-													data-paint-format=".2%"
+													data-paint-format=".2f"
 												/>
+												%
 											</span>
 											<span>
 												fees{" "}

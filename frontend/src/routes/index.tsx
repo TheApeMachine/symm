@@ -12,7 +12,6 @@ import {
 	TerminalPredictionChart,
 } from "#/components/terminal/charts";
 import { KernelList } from "#/components/terminal/kernel-list";
-import { LiveResonanceFooter } from "#/components/terminal/live-resonance-footer";
 import { LiveResonanceTitle } from "#/components/terminal/live-resonance-title";
 import { ThesisModal } from "#/components/terminal/thesis-modal";
 import { Canvas } from "#/components/ui/canvas";
@@ -87,7 +86,6 @@ const RouteComponent = () => {
 								</>
 							}
 							meta="settled latent state · dynamic horizon · adaptive learning pace"
-							footer={<LiveResonanceFooter />}
 							topRight={
 								<div className="flex gap-3 text-left">
 									<span className="inline-flex items-center gap-1.5">

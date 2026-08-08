@@ -549,6 +549,30 @@ const scaleSetValue = (
 		return "var(--f3)";
 	}
 
+	/*
+		Health is a separate colour language from direction on purpose. A red
+		"up/down" tone and a red "this is broken" tone in one panel are read as
+		the same statement, so system state gets its own hue and leaves --up and
+		--down to mean price and nothing else.
+	*/
+	if (dataset.setScale === "health-color") {
+		const numericValue = Number(value);
+
+		if (!Number.isFinite(numericValue)) {
+			return "var(--f3)";
+		}
+
+		if (numericValue > 0) {
+			return "var(--info)";
+		}
+
+		if (numericValue < 0) {
+			return "var(--error)";
+		}
+
+		return "var(--warn)";
+	}
+
 	if (dataset.setScale === "bool-color") {
 		return value === true ? "var(--up)" : "var(--line2)";
 	}

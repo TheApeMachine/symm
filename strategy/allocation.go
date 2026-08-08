@@ -162,6 +162,38 @@ func (planner *Planner) size(
 	}
 
 	feeRate := decimal.ExactDiv(fee.Fee, decimal.NewFromInt64(100))
+	decision.AvailableCapital = cash
+	decision.ProposedNotional = notional
+	decision.ProposedQuantity = quantity
+	decision.ReferencePrice = tick.Ask
+	decision.EntryPrice = tick.Ask
+	decision.Mark = tick.Bid
+
+	economics, err := price.EntryEconomics(
+		decision.Symbol,
+		quantity,
+		decision.Forecast.ExpectedReturn,
+	)
+
+	if err != nil {
+		decision.Action = types.ActionNothing
+		decision.Reason = "planner: entry is not executable: " + err.Error()
+
+		return decision, nil
+	}
+
+	decision.ExpectedReturn = economics.ExpectedReturn
+	decision.ExpectedFees = economics.ExpectedFees
+	decision.ExpectedSpread = economics.ExpectedSpread
+	decision.ExpectedImpact = economics.ExpectedImpact
+
+	if economics.NetReturn.Sign() <= 0 {
+		decision.Action = types.ActionNothing
+		decision.Reason = "planner: forecast does not clear current spread and taker fees"
+
+		return decision, nil
+	}
+
 	stoploss, err := types.NewStoploss(
 		planner.ctx,
 		decision.Symbol,
@@ -174,19 +206,12 @@ func (planner *Planner) size(
 	)
 
 	if err != nil {
-		return decision, errnie.Err(
-			errnie.Validation,
-			"planner: could not construct strategy stoploss",
-			err,
-		)
+		decision.Action = types.ActionNothing
+		decision.Reason = "planner: forecast cannot construct an executable stop: " + err.Error()
+
+		return decision, nil
 	}
 
-	decision.AvailableCapital = cash
-	decision.ProposedNotional = notional
-	decision.ProposedQuantity = quantity
-	decision.ReferencePrice = tick.Ask
-	decision.EntryPrice = tick.Ask
-	decision.Mark = tick.Bid
 	decision.Stoploss = stoploss
 
 	return decision, nil

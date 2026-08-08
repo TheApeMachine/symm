@@ -141,14 +141,22 @@ func NewHub(
 				errnie.Error(hub.Close())
 				return
 			case msg := <-hub.Messages:
+				/*
+					A write failure on a websocket is terminal: the connection is
+					gone, or a close frame has already been sent and every later
+					write returns the same error. Continuing the loop would spin
+					on the error forever and, worse, keep draining hub.Messages
+					away from the clients that are still alive.
+				*/
 				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					for _, closeError := range []error{
+					for _, expected := range []error{
 						syscall.EPIPE,
 						syscall.ECONNRESET,
 						io.EOF,
 						io.ErrClosedPipe,
+						websocket.ErrCloseSent,
 					} {
-						if errors.Is(err, closeError) {
+						if errors.Is(err, expected) {
 							return
 						}
 					}
@@ -158,6 +166,8 @@ func NewHub(
 						"failed to write dashboard websocket message: "+err.Error(),
 						err,
 					))
+
+					return
 				}
 			}
 		}

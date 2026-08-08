@@ -297,11 +297,19 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 	switch decision.Action {
 	case types.ActionEnter:
 		if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 ||
-			decision.Stoploss == nil {
+			decision.Stoploss == nil || decision.Forecast == nil || desk.price == nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				"desk: sized quantity and strategy stoploss required for entry",
+				"desk: quantity, forecast, price, and strategy stoploss required for entry",
 				nil,
+			))
+		}
+
+		if err := decision.Forecast.Validate(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"desk: valid forecast required for entry",
+				err,
 			))
 		}
 
@@ -325,6 +333,35 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 				nil,
 			))
 		}
+
+		economics, err := desk.price.EntryEconomics(
+			decision.Symbol,
+			decision.ProposedQuantity,
+			decision.Forecast.ExpectedReturn,
+		)
+
+		if err != nil {
+			desk.positionsMu.Unlock()
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: entry is no longer executable",
+				err,
+			))
+		}
+
+		if economics.NetReturn.Sign() <= 0 {
+			desk.positionsMu.Unlock()
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: forecast no longer clears current spread and taker fees",
+				nil,
+			))
+		}
+
+		decision.ExpectedReturn = economics.ExpectedReturn
+		decision.ExpectedFees = economics.ExpectedFees
+		decision.ExpectedSpread = economics.ExpectedSpread
+		decision.ExpectedImpact = economics.ExpectedImpact
 
 		position := NewPosition(
 			desk.ctx,

@@ -319,6 +319,11 @@ func TestCryptoRun(t *testing.T) {
 				thesis.Resonance.Store("SIM1/USD", types.ResonanceReading{
 					Forecast: forecast,
 				})
+				thesis.Cognition.Store("SIM1/USD", types.Cognition{
+					Symbol:     "SIM1/USD",
+					Ready:      true,
+					Confidence: 0.95,
+				})
 				marketGraph := logicgraph.NewGraph(thesis.At)
 				marketGraph.AddNode(&logicgraph.Node{
 					ID:         "res:SIM1/USD:forecast",
@@ -368,8 +373,16 @@ func TestCryptoRun(t *testing.T) {
 					So(decision.Action, ShouldEqual, types.ActionEnter)
 					So(decision.ProposedQuantity, ShouldNotBeNil)
 					So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
+					So(decision.ExpectedReturn, ShouldNotBeNil)
+					So(decision.ExpectedFees, ShouldNotBeNil)
+					So(decision.ExpectedSpread, ShouldNotBeNil)
+					So(decision.ExpectedImpact, ShouldNotBeNil)
+					So(decision.ExpectedImpact.Sign(), ShouldEqual, 0)
 					So(decision.Stoploss, ShouldNotBeNil)
 					So(decision.Stoploss.Floor, ShouldNotBeNil)
+					So(decision.Stoploss.Floor.Cmp(
+						decision.Stoploss.Peak,
+					), ShouldBeLessThan, 0)
 					So(system.Desk.Execute(*decision), ShouldBeNil)
 				})
 			})

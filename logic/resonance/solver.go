@@ -191,6 +191,7 @@ func (solver *Solver) updateSymbol(
 			state.alphaCtrl = learning.NewPaceController(learning.PaceConfig{
 				InitialAlpha: state.alpha,
 			})
+			state.rankTrend = newRankTrend()
 			state.confidence = probability.NewCalibrator()
 			state.horizonReach = 1
 		}
@@ -287,11 +288,27 @@ func (solver *Solver) updateSymbol(
 		temporalError /= math.Sqrt(float64(latentDimension))
 	}
 
-	newAlpha := state.alphaCtrl.Update(surprise, temporalError)
+	/*
+		Measure rather than Update: the pace controller's rank and readiness are
+		what make alpha legible downstream, and Update discards both.
+	*/
+	pace, err := state.alphaCtrl.Measure(surprise)
 
-	if newAlpha != state.alpha {
-		state.alpha = newAlpha
-		state.manifold.SetAlpha(newAlpha)
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if pace.Alpha != state.alpha {
+		state.alpha = pace.Alpha
+		state.manifold.SetAlpha(pace.Alpha)
+	}
+
+	rankTrend := pace.Rank
+
+	if state.rankTrend != nil {
+		if smoothed, trendErr := state.rankTrend.Measure(pace.Rank); trendErr == nil {
+			rankTrend = smoothed
+		}
 	}
 
 	confidence := state.confidence.Quantile(surprise)
@@ -307,6 +324,9 @@ func (solver *Solver) updateSymbol(
 			confidence,
 		)
 	}
+
+	minAlpha, maxAlpha := state.alphaCtrl.Bounds()
+	verdict := resonanceVerdict(pace, rankTrend, state.alpha, minAlpha, maxAlpha, forecast)
 
 	if targetReady && (state.pendingAt.IsZero() || !targetAt.Before(state.pendingAt)) {
 		state.pendingInput = slices.Clone(input)
@@ -351,6 +371,7 @@ func (solver *Solver) updateSymbol(
 		Embedding:    embedding,
 		Layers:       layers,
 		Forecast:     forecast,
+		Verdict:      verdict,
 		Alpha:        state.alpha,
 		Samples:      state.targetSamples,
 	}

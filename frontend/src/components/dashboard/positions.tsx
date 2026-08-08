@@ -98,7 +98,8 @@ export const Positions = () => (
 								</Typography.Span>
 								<Typography.Span
 									data-paint="holding.return_pct"
-									data-paint-format=".2%"
+									data-paint-format=".2f"
+									data-paint-suffix="%"
 									className="text-(--pnl)"
 								/>
 							</Flex.Row>

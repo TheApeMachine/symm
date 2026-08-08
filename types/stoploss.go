@@ -219,6 +219,10 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 		return nil, fmt.Errorf("stoploss: invalid stored status %s", state.Status)
 	}
 
+	if state.Floor.Cmp(state.Peak) >= 0 {
+		return nil, fmt.Errorf("stoploss: stored floor must remain below peak")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Stoploss{
@@ -270,9 +274,21 @@ func (stoploss *Stoploss) forecastGeometry(
 	survival := one.Sub(decimal.NewFromFloat64(drawdown).SetScale(riskScale))
 	floor := floorToTick(currentMark.Mul(survival), tick)
 
+	// A path with no predicted dip reaches the current mark. The strict stop
+	// lattice projects that boundary to the immediately preceding venue tick.
+	if floor != nil && floor.Cmp(currentMark) >= 0 {
+		floor = floorToTick(currentMark.Sub(tick), tick)
+	}
+
 	if floor == nil || floor.Sign() <= 0 {
 		return nil, nil, fmt.Errorf(
 			"stoploss: forecast does not imply a positive floor",
+		)
+	}
+
+	if floor.Cmp(currentMark) >= 0 {
+		return nil, nil, fmt.Errorf(
+			"stoploss: forecast floor must remain below executable mark",
 		)
 	}
 

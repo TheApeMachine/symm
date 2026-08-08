@@ -213,7 +213,7 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => (
 						<Row label="entry" bind="holding.entry_price" format=".6f" />
 						<Row label="mark" bind="holding.mark" format=".6f" />
 						<Row label="pnl" bind="holding.pnl" format=".4f" />
-						<Row label="return" bind="holding.return_pct" format=".2%" />
+						<Row label="return %" bind="holding.return_pct" format=".2f" />
 						<Row
 							label="stop floor"
 							bind="holding.stoploss.floor"

@@ -14,6 +14,42 @@ import (
 )
 
 func TestDeskExecute(t *testing.T) {
+	Convey("Given a positive forecast that does not pay current execution costs", t, func() {
+		desk := deskFixture(t)
+		decision := deskDecisionFixture(t, desk, "MARGINAL/USD", false)
+		forecast, err := types.NewResonanceForecast(
+			[]float64{-0.0001, 0.0002},
+			[]float64{1, 1},
+			2,
+			0.90,
+		)
+		So(err, ShouldBeNil)
+		decision.Forecast = forecast
+
+		Convey("It should refuse the order at the final atomic execution boundary", func() {
+			err := desk.Execute(decision)
+
+			So(err, ShouldNotBeNil)
+			So(desk.OpenPositions(), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given an order larger than the current complete best quotes", t, func() {
+		desk := deskFixture(t)
+		decision := deskDecisionFixture(t, desk, "DEPTH/USD", false)
+		decision.ProposedQuantity = decimal.NewFromFloat64(2)
+		tick := desk.price.Tick(decision.Symbol)
+		tick.AskQty = 1
+		tick.BidQty = 1
+
+		Convey("It should refuse to treat unknown depth impact as zero", func() {
+			err := desk.Execute(decision)
+
+			So(err, ShouldNotBeNil)
+			So(desk.OpenPositions(), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given normal capacity already occupied", t, func() {
 		desk := deskFixture(t)
 		desk.positions.Store("NORMAL1/USD", &Position{Status: types.OPEN})
@@ -119,6 +155,7 @@ func deskFixture(t testing.TB) *Desk {
 		ctx:          t.Context(),
 		api:          api,
 		instrument:   &Instrument{cache: &sync.Map{}},
+		price:        NewPrice(api),
 		positions:    &sync.Map{},
 		maxPositions: 2,
 		maxReserved:  2,
@@ -139,6 +176,16 @@ func deskDecisionFixture(
 		TickSize: *decimal.NewFromFloat64(0.01),
 	}
 	desk.instrument.cache.Store(symbol, pair)
+	desk.price.fees.Store(symbol, kraken.TradeVolumeFee{
+		Fee: decimal.NewFromFloat64(0.25),
+	})
+	desk.price.Update(&kraken.TickerData{
+		Symbol: symbol,
+		Ask:    decimal.NewFromFloat64(100.02),
+		AskQty: 10,
+		Bid:    decimal.NewFromFloat64(100),
+		BidQty: 10,
+	})
 	forecast, err := types.NewResonanceForecast(
 		[]float64{-0.01, 0.03},
 		[]float64{1, 1},
@@ -170,6 +217,7 @@ func deskDecisionFixture(
 
 	decision := types.NewDecision(types.ActionEnter, symbol)
 	decision.Opportunity = opportunity
+	decision.Forecast = forecast
 	decision.ProposedQuantity = decimal.NewFromInt64(1)
 	decision.EntryPrice = entry
 	decision.Mark = mark

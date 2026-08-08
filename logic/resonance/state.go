@@ -24,6 +24,7 @@ type symbolState struct {
 	pendingInput  []float64
 	pendingMid    float64
 	pendingAt     time.Time
+	rankTrend     *adaptive.EMA
 	targetSamples uint64
 	horizonReach  int
 }
@@ -39,8 +40,29 @@ func newSymbolState(initialAlpha float64) *symbolState {
 		}),
 		confidence:   probability.NewCalibrator(),
 		featureScale: make(map[string]*adaptive.Standardizer),
+		rankTrend:    newRankTrend(),
 		horizonReach: 1,
 	}
+}
+
+/*
+newRankTrend smooths the pace controller's error rank.
+
+A single rank is uniform by construction and says nothing on its own; what
+separates a model that is tracking from one a regime has broken is whether its
+errors sit persistently high inside their own recent history.
+*/
+func newRankTrend() *adaptive.EMA {
+	trend, err := adaptive.NewEMA(adaptive.EMAConfig{
+		Period:    rankTrendPeriod,
+		Smoothing: rankTrendSmoothing,
+	})
+
+	if err != nil {
+		return nil
+	}
+
+	return trend
 }
 
 /*
