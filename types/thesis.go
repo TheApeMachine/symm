@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"slices"
 	"sync"
 	"time"
@@ -38,6 +39,9 @@ broker execution and settlement continue in their own lifecycle.
 */
 type Thesis struct {
 	Readiness
+	ctx          context.Context
+	cancel       context.CancelFunc
+	subscribers  *sync.Map
 	Status       Status        `json:"status"`
 	Tick         int64         `json:"tick"`
 	At           time.Time     `json:"at"`
@@ -62,8 +66,15 @@ type Thesis struct {
 /*
 NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
-func NewThesis(ui chan []byte) *Thesis {
+func NewThesis(
+	ctx context.Context, ui chan []byte,
+) *Thesis {
+	ctx, cancel := context.WithCancel(ctx)
+
 	return &Thesis{
+		ctx:          ctx,
+		cancel:       cancel,
+		subscribers:  &sync.Map{},
 		Status:       READY,
 		At:           time.Now().UTC(),
 		LastTickerAt: time.Now().UTC(),
@@ -140,6 +151,7 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 		thesis.LastTickerAt = ticker.Timestamp
 	}
 
+	thesis.Fanout()
 	return thesis
 }
 
@@ -167,44 +179,44 @@ func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 		thesis.LastTradeAt = trade.Timestamp
 	}
 
+	thesis.Fanout()
 	return thesis
 }
 
 func (thesis *Thesis) AppendMeasurements(
 	measurements []*Measurement, ready bool,
 ) *Thesis {
-	if len(measurements) == 0 {
-		return thesis
-	}
+	if len(measurements) != 0 {
+		source := measurements[0].Source
+		replaced := make(map[string]struct{}, len(measurements))
 
-	source := measurements[0].Source
-	replaced := make(map[string]struct{}, len(measurements))
+		for _, measurement := range measurements {
+			replaced[measurement.Key()] = struct{}{}
+		}
 
-	for _, measurement := range measurements {
-		replaced[measurement.Key()] = struct{}{}
-	}
+		merged := make([]*Measurement, 0, len(measurements))
+		stored, found := thesis.Measurements.Load(source)
 
-	merged := make([]*Measurement, 0, len(measurements))
-	stored, found := thesis.Measurements.Load(source)
+		if found {
+			for _, measurement := range stored.([]*Measurement) {
+				if _, replace := replaced[measurement.Key()]; replace {
+					continue
+				}
 
-	if found {
-		for _, measurement := range stored.([]*Measurement) {
-			if _, replace := replaced[measurement.Key()]; replace {
-				continue
+				merged = append(merged, measurement)
 			}
+		}
 
-			merged = append(merged, measurement)
+		merged = append(merged, measurements...)
+		thesis.Measurements.Store(source, merged)
+		thesis.commitMarketInputs(source, measurements)
+
+		if ready {
+			thesis.Readiness.Stamp(SourceType(source))
 		}
 	}
 
-	merged = append(merged, measurements...)
-	thesis.Measurements.Store(source, merged)
-	thesis.commitMarketInputs(source, measurements)
-
-	if ready {
-		thesis.Readiness.Stamp(SourceType(source))
-	}
-
+	thesis.Fanout()
 	return thesis
 }
 
@@ -276,4 +288,31 @@ func (thesis *Thesis) Series(symbol string) []*Measurement {
 	})
 
 	return out
+}
+
+func (thesis *Thesis) Subscribe(source SourceType, semaphore chan struct{}) {
+	thesis.subscribers.Store(source, semaphore)
+}
+
+func (thesis *Thesis) Fanout() {
+	thesis.subscribers.Range(func(key, value any) bool {
+		semaphore := value.(chan struct{})
+
+		select {
+		case <-thesis.ctx.Done():
+			return false
+		case semaphore <- struct{}{}:
+		default:
+		}
+
+		return true
+	})
+}
+
+func (thesis *Thesis) Close() error {
+	if thesis.cancel != nil {
+		thesis.cancel()
+	}
+
+	return nil
 }

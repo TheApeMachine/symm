@@ -3,7 +3,34 @@ package utils
 import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/types"
 )
+
+/*
+PublishFluid sends one manifold frame to a named fluid data channel, dropping it
+when the transport is already saturated on the same terms as Publish.
+*/
+func PublishFluid(
+	fluid chan types.FluidFrame, channel string, data datura.Map[any],
+) {
+	if data == nil || fluid == nil {
+		data.Free()
+		return
+	}
+
+	if capacity := cap(fluid); capacity > 0 && len(fluid) == capacity {
+		data.Free()
+		return
+	}
+
+	select {
+	case fluid <- types.FluidFrame{
+		Channel: channel,
+		Payload: data.MarshalAndFree(),
+	}:
+	default:
+	}
+}
 
 /*
 Publish sends replaceable dashboard state without letting an absent or slow UI

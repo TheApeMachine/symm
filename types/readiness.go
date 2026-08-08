@@ -152,6 +152,58 @@ func (readiness *Readiness) Stamp(source SourceType) {
 	}
 }
 
+/*
+Stamped answers whether one stage has already run this epoch.
+
+Every module is woken by the same broadcast, so each needs to recognise work it
+has already done: a stage that ran, stamped, and notified would otherwise be
+woken by its own notification and run again forever. Prerequisites-stamped and
+self-not-stamped together are the whole of a module's admission test.
+*/
+func (readiness *Readiness) Stamped(source SourceType) bool {
+	readiness.mu.RLock()
+	defer readiness.mu.RUnlock()
+
+	switch source {
+	case SourceCorrelation:
+		return readiness.Correlation
+	case SourceCVD:
+		return readiness.CVD
+	case SourceDepthFlow:
+		return readiness.DepthFlow
+	case SourceExhaustion:
+		return readiness.Exhaustion
+	case SourceHawkes:
+		return readiness.Hawkes
+	case SourceLeadLag:
+		return readiness.LeadLag
+	case SourceLiquidity:
+		return readiness.Liquidity
+	case SourcePumpDump:
+		return readiness.PumpDump
+	case SourceSentiment:
+		return readiness.Sentiment
+	case SourceToxicity:
+		return readiness.Toxicity
+	case SourceCategories:
+		return readiness.Categories
+	case SourceCognition:
+		return readiness.Cognition
+	case SourceManifold:
+		return readiness.Manifold
+	case SourceResonance:
+		return readiness.Resonance
+	case SourceCausal:
+		return readiness.Causal
+	case SourceGraph:
+		return readiness.Graph
+	case SourcePlanner:
+		return readiness.Planner
+	default:
+		return false
+	}
+}
+
 func (readiness *Readiness) SignalsMeasured() bool {
 	readiness.mu.RLock()
 	defer readiness.mu.RUnlock()

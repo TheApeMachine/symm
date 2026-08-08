@@ -50,7 +50,7 @@ var (
 			startPprof()
 
 			uiChannel := make(chan []byte, 1024)
-			thesis := types.NewThesis(uiChannel)
+			thesis := types.NewThesis(cmd.Context(), uiChannel)
 			system := Boot(cmd.Context(), thesis, nil, nil, uiChannel)
 
 			if system == nil {

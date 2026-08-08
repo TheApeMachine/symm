@@ -276,10 +276,10 @@ ResonanceVerdict mirrors the backend types.ResonanceVerdict. The labels are
 decided by the solver, never rederived here.
 */
 export type ResonanceVerdict = {
-	learning: "warming" | "predicting" | "drifting" | "lost";
-	errorRank: number;
-	tuning: "warming" | "adapting" | "pinned fast" | "pinned slow";
-	alphaBand: number;
+	learning: "observing" | "predicting";
+	tuning: "recursive least squares";
+	learningHealth: number;
+	tuningHealth: number;
 	direction: number;
 	conviction: number;
 };

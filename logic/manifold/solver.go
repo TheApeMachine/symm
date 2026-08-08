@@ -40,7 +40,7 @@ type Solver struct {
 	angles    []float64
 	pending   map[string][]pendingDial
 	ui        chan []byte
-	binui     chan []byte
+	binui     chan types.FluidFrame
 	pool      pond.Pool
 	group     pond.TaskGroup
 }
@@ -51,7 +51,8 @@ by the same explicit event-history capacity as the live market feed.
 */
 func NewSolver(
 	api *websocket.API,
-	ui, binui chan []byte,
+	ui chan []byte,
+	binui chan types.FluidFrame,
 	recorder *audit.Recorder,
 ) *Solver {
 	config := pfluid.DefaultConfig()
@@ -246,7 +247,16 @@ func (solver *Solver) Step(
 		))
 	}
 
-	if solver.binui != nil {
+	/*
+		Fields and particles are the fluid view's raw frames, and the view
+		renders one symbol: the one the dashboard is focused on. Reading them
+		back for every symbol served no display, but still paid the GPU readback
+		and — because Publish marshals — encoded whole float grids into decimal
+		text, which profiled at 37% of process CPU and 80GB of allocations per
+		run. The resulting GC pressure was the stall, so the frames are read
+		only for the symbol something is actually looking at.
+	*/
+	if solver.binui != nil && symbol == types.Focus() {
 		fields, fieldsErr := solver.domain.Fields()
 
 		if fieldsErr != nil {
@@ -260,7 +270,10 @@ func (solver *Solver) Step(
 			))
 		}
 
-		utils.Publish(solver.binui, datura.NewMap("fields", fields))
+		utils.PublishFluid(
+			solver.binui, types.FluidFieldsChannel,
+			datura.NewMap("fields", fields),
+		)
 		particleCount := min(solver.domain.ParticleCount(), inspectionParticleLimit)
 		resident, particlesErr := solver.domain.ReadParticles(0, particleCount)
 
@@ -275,7 +288,10 @@ func (solver *Solver) Step(
 			))
 		}
 
-		utils.Publish(solver.binui, datura.NewMap("particles", resident))
+		utils.PublishFluid(
+			solver.binui, types.FluidParticlesChannel,
+			datura.NewMap("particles", resident),
+		)
 	}
 
 	if solver.ui != nil {

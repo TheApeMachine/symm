@@ -19,8 +19,8 @@ expectation did not account for.
 The engine is `learning.ResonanceManifold` in
 [`nomagique/learning`](../../../nomagique/learning). This package is the market
 adapter around it: it decides what counts as an observation, keeps one model per
-symbol, paces learning, and turns the settled latent state into a forecast the
-rest of the system can act on.
+symbol, records resolved forecast skill, and turns the settled latent state into
+a forecast the rest of the system can act on.
 
 ## The loop
 
@@ -38,10 +38,10 @@ measurements (every signal, this tick)
         ▼
    ResonanceManifold.Settle    ──►  latent state z, layer stack, Surprise
         │
-        ├──►  PaceController         →  adapt α (learning rate)
-        ├──►  probability.Calibrator →  confidence
-        ├──►  DynamicHorizon         →  how far ahead is supported
-        └──►  forward rollout        →  ResonanceForecast
+        ├──►  recursive least squares →  fit the resolved return
+        ├──►  Beta-Bernoulli evidence →  confidence in prior forecasts
+        ├──►  DynamicHorizon          →  how far ahead is supported
+        └──►  forward rollout         →  ResonanceForecast
                                              │
                                              ▼
                               thesis.Resonance[symbol]
@@ -57,8 +57,10 @@ The manifold settles a latent state that serves three purposes at once:
    cross-section: every symbol's embedding plotted together is a cloud showing
    where symbols sit *relative to one another*, which one point cannot show.
 3. **Supervised return head (V).** Predicts forward log return over an adaptive
-   horizon. This is the head that produces an actionable number, and it feeds a
-   `predictive_forecast_negative` gate rule downstream.
+   horizon. Square-root recursive least squares fits this linear head with a gain
+   derived from the observed latent design covariance. This is the head that
+   produces an actionable number, and it feeds a `predictive_forecast_negative`
+   gate rule downstream.
 
 ## Learning is deferred, and that's the point
 
@@ -67,9 +69,11 @@ observation time — the target does not exist yet.
 
 The solver holds `pendingInput` (the feature vector) and `pendingMid` (the
 midpoint at that moment). On a **later** tick with a new midpoint, it computes
-`target = log(mid_now / mid_pending)`, re-settles the stored input, and learns
-against that realized return. A sample is only spent once the future has actually
-arrived.
+`target = log(mid_now / mid_pending)` and re-settles the stored input. Before the
+target is learned, the strictly prior prediction is scored against a zero-return
+baseline. Only then does recursive least squares observe the target. A sample is
+only spent once the future has actually arrived, and a target can never certify
+the prediction that was fitted with it.
 
 Non-positive prices and non-finite returns drop the sample explicitly rather than
 poisoning the head with a synthetic zero.
@@ -101,15 +105,29 @@ learned against a fixed input schema and an upstream measurement goes missing,
 that symbol sits the round out. It must not corrupt another symbol's pass or turn
 a gap into a synthetic zero.
 
-## Adaptive everything
+## Adaptation with an owned objective
 
-Three quantities that most systems hardcode are derived here:
+The return learner, confidence, and horizon each adapt from evidence that belongs
+to their own objective:
 
-| Quantity              | Derived by                | Why                                                                                           |
-|-----------------------|---------------------------|-----------------------------------------------------------------------------------------------|
-| **α** (learning rate) | `learning.PaceController` | A fixed rate is either too slow to track a regime change or too fast to keep what it learned. |
-| **Confidence**        | `probability.Calibrator`  | Raw model output is not a probability. Calibration makes it one.                              |
-| **Horizon**           | `manifold.DynamicHorizon` | Forecast only as far as resolved samples support.                                             |
+| Quantity                 | Derived by                        | Meaning                                                                        |
+|--------------------------|-----------------------------------|--------------------------------------------------------------------------------|
+| **Return-head gain**     | square-root recursive least squares | Latent design covariance determines how much each resolved target can teach. |
+| **Forecast confidence**  | Beta posterior skill evidence    | Probability that prior forecasts beat the zero-return baseline more than half the time. |
+| **Horizon**              | `manifold.DynamicHorizon`         | Forecast only as far as resolved samples, retention, and confidence support.  |
+
+There is no separate warming state. The head predicts from its prior immediately;
+before it has evidence its confidence is low, so the existing planner confidence
+gate prevents action. Each resolved forecast contributes a win, loss, or neutral
+tie by comparing squared return error with the zero-return baseline. The uniform
+Beta prior expresses uncertainty without inventing a minimum sample count.
+
+The manifold's generative alpha remains its configured base pace. The old global
+pace controller was removed from this adapter because it tuned that alpha from
+reconstruction surprise while also moving unrelated generative, recognition,
+temporal, precision, regularization, and task-head updates. That was neither a
+return-error optimizer nor an identifiable learning-rate controller. The return
+head now adapts only the gain that minimizes its own resolved prediction error.
 
 The horizon logic is worth reading closely (`horizon()`): it grows only as
 resolved return samples accumulate, then **contracts to the confidence-supported
@@ -119,8 +137,9 @@ published optimistically.
 
 ## Per-symbol, but published as a population
 
-Each symbol gets its own `symbolState` — its own manifold, pace controller,
-calibrator, and per-feature standardizers. Symbols do not share a model.
+Each symbol gets its own `symbolState` — its own manifold, recursive return
+learner, skill posterior, and per-feature standardizers. Symbols do not share a
+model.
 
 But publication is deliberately *not* per-symbol-on-demand. Every carrier settled
 this round is published, because the latent manifold is a cross-section. Only the

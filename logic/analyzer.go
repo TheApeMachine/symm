@@ -2,7 +2,6 @@ package logic
 
 import (
 	"context"
-	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -16,14 +15,12 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 type Solver interface {
 	Update(thesis *types.Thesis) error
 	Close() error
 }
-
 
 /*
 Analyzer is the entrypoint to the logic stage. This stage is responsible for
@@ -35,18 +32,18 @@ Strategy package to make Decisions. The final output of the Logic stage is
 the Graph, which should encode everything that has been collected so far.
 */
 type Analyzer struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	status        types.Status
-	tree          *dmt.Tree
-	cognition     *cognition.Solver
-	graph         *graph.Solver
-	solvers       []Solver
-	ui            chan []byte
-	binui         chan []byte
-	recorder      *audit.Recorder
-	subscriptions map[string]*types.Subscription[any]
-	subscribers   *sync.Map
+	ctx       context.Context
+	cancel    context.CancelFunc
+	status    types.Status
+	tree      *dmt.Tree
+	cognition *cognition.Solver
+	graph     *graph.Solver
+	solvers   []Solver
+	ui        chan []byte
+	binui     chan types.FluidFrame
+	recorder  *audit.Recorder
+	thesis    *types.Thesis
+	semaphore chan struct{}
 }
 
 /*
@@ -57,9 +54,9 @@ func NewAnalyzer(
 	api *websocket.API,
 	tree *dmt.Tree,
 	ui chan []byte,
-	binui chan []byte,
+	binui chan types.FluidFrame,
 	recorder *audit.Recorder,
-	subscriptions map[string]*types.Subscription[any],
+	thesis *types.Thesis,
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
 	buffer := viper.GetInt("system.actor.buffer")
@@ -81,13 +78,14 @@ func NewAnalyzer(
 			cognition.NewSolver(tree, ui, recorder),
 			graph.NewSolver(ui, recorder),
 		},
-		ui:            ui,
-		binui:         binui,
-		recorder:      recorder,
-		subscriptions: subscriptions,
-		subscribers:   &sync.Map{},
+		ui:        ui,
+		binui:     binui,
+		recorder:  recorder,
+		thesis:    thesis,
+		semaphore: make(chan struct{}, 1),
 	}
 
+	analyzer.thesis.Subscribe(types.SourceCategories, analyzer.semaphore)
 	analyzer.run()
 	return analyzer
 }
@@ -98,26 +96,8 @@ func (analyzer *Analyzer) run() {
 			select {
 			case <-analyzer.ctx.Done():
 				return
-			case in := <-analyzer.subscriptions["correlation"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["cvd"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["depthflow"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["exhaustion"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["hawkes"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["leadlag"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["liquidity"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["pumpdump"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["sentiment"].Channel:
-				analyzer.process(in)
-			case in := <-analyzer.subscriptions["toxicity"].Channel:
-				analyzer.process(in)
+			case <-analyzer.semaphore:
+				analyzer.process(analyzer.thesis)
 			}
 		}
 	}()
@@ -133,10 +113,12 @@ func (analyzer *Analyzer) process(in any) {
 			nil,
 		))
 
+		thesis.Fanout()
 		return
 	}
 
-	if !thesis.Readiness.SignalsMeasured() || thesis.Readiness.LogicAnalyzed() {
+	if !thesis.Readiness.SignalsMeasured() {
+		thesis.Fanout()
 		return
 	}
 
@@ -152,26 +134,7 @@ func (analyzer *Analyzer) process(in any) {
 		}
 	}
 
-	if !thesis.Readiness.LogicAnalyzed() {
-		return
-	}
-
-	utils.Fanout(
-		analyzer.subscribers,
-		"analyzer",
-		thesis,
-	)
-}
-
-func (analyzer *Analyzer) Subscribe(
-	key string,
-	subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	return utils.Subscribe(
-		analyzer.subscribers,
-		key,
-		subscription,
-	)
+	thesis.Fanout()
 }
 
 /*

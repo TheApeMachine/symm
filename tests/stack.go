@@ -101,7 +101,7 @@ func drive[S Driven](
 		defer viper.Set("system.data_path", previousDataPath)
 
 		public, private := market.Feeds()
-		system := boot(t.Context(), types.NewThesis(nil), public, private, nil)
+		system := boot(t.Context(), types.NewThesis(t.Context(), nil), public, private, nil)
 
 		if system == absent {
 			t.Fatal("tests: boot produced no system")

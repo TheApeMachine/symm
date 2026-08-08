@@ -1,18 +1,18 @@
 package correlation
 
 import (
+	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -45,17 +45,12 @@ Section owns per-symbol streaming state and the nested pair covariance table
 used for incremental Hayashi maintenance without composite string keys.
 */
 type Section struct {
-	symbols         map[string]*symbolState
-	pairs           map[string]map[string]*pairState
+	symbols         *sync.Map
+	pairs           *sync.Map
 	globalEnergySum float64
 	energyReady     int
 	scratch         *sync.Map
 	revisionBuf     []pairRevision
-	pool            pond.Pool
-	group           pond.TaskGroup
-	measureMu       sync.Mutex
-	stateMu         sync.Mutex
-	energyMu        sync.Mutex
 }
 
 /*
@@ -63,13 +58,11 @@ NewSection creates empty correlation history owned by one correlation signal.
 */
 func NewSection() *Section {
 	section := &Section{
-		symbols: make(map[string]*symbolState),
-		pairs:   make(map[string]map[string]*pairState),
+		symbols: &sync.Map{},
+		pairs:   &sync.Map{},
 		scratch: &sync.Map{},
-		pool:    pond.NewPool(runtime.GOMAXPROCS(0)),
 	}
 
-	section.group = section.pool.NewGroup()
 	return section
 }
 
@@ -81,28 +74,19 @@ histories for unchanged pairs.
 func (section *Section) Measure(
 	rows []kraken.TickerData,
 ) (map[string]map[string]float64, error) {
-	section.measureMu.Lock()
-	defer section.measureMu.Unlock()
-
 	if section.symbols == nil {
-		section.symbols = make(map[string]*symbolState)
+		section.symbols = &sync.Map{}
 	}
 
 	if section.pairs == nil {
-		section.pairs = make(map[string]map[string]*pairState)
+		section.pairs = &sync.Map{}
 	}
 
 	if section.scratch == nil {
 		section.scratch = &sync.Map{}
 	}
 
-	if section.pool == nil {
-		section.pool = pond.NewPool(runtime.GOMAXPROCS(0))
-	}
-
-	if section.group == nil {
-		section.group = section.pool.NewGroup()
-	}
+	group, _ := errgroup.WithContext(context.Background())
 
 	section.scratch.Clear()
 	rowBatches := make(map[string][]kraken.TickerData)
@@ -132,7 +116,7 @@ func (section *Section) Measure(
 			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
 		})
 
-		section.group.Submit(func() {
+		group.Go(func() error {
 			state := section.ensure(symbol)
 
 			for _, row := range symbolRows {
@@ -145,15 +129,16 @@ func (section *Section) Measure(
 					Value: row.Last.Float64(),
 				}); err != nil {
 					errorsBySymbol.Store(symbol, err)
-					return
+					return err
 				}
 			}
 
 			section.scratch.Store(symbol, struct{}{})
+			return nil
 		})
 	}
 
-	if err := section.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		return nil, err
 	}
 
@@ -178,27 +163,28 @@ func (section *Section) Measure(
 		return nil, nil
 	}
 
-	section.stateMu.Lock()
-	allSymbols := make([]string, 0, len(section.symbols))
+	allSymbols := make([]string, 0)
+	section.symbols.Range(func(key, value any) bool {
+		allSymbols = append(allSymbols, key.(string))
+		return true
+	})
 
-	for symbol := range section.symbols {
-		allSymbols = append(allSymbols, symbol)
-	}
-	section.stateMu.Unlock()
 	sort.Strings(allSymbols)
 	concurrentResults := &sync.Map{}
 
 	for _, symbol := range allSymbols {
-		section.group.Submit(func() {
+		group.Go(func() error {
 			scores, ok := section.scores(symbol)
 
 			if ok {
 				concurrentResults.Store(symbol, scores)
 			}
+
+			return nil
 		})
 	}
 
-	if err := section.group.Wait(); err != nil {
+	if err := group.Wait(); err != nil {
 		return nil, err
 	}
 
@@ -221,7 +207,8 @@ Emission uses this for cohort peers that were scored but absent from the
 current ticker batch so focus-gated UI still receives a live reading.
 */
 func (section *Section) LastAt(symbol string) time.Time {
-	state := section.symbols[symbol]
+	raw, _ := section.symbols.Load(symbol)
+	state := raw.(*symbolState)
 
 	if state == nil || len(state.samples) == 0 {
 		return time.Time{}
@@ -234,17 +221,15 @@ func (section *Section) LastAt(symbol string) time.Time {
 ensure returns the mutable state for symbol, creating it on first sight.
 */
 func (section *Section) ensure(symbol string) *symbolState {
-	section.stateMu.Lock()
-	defer section.stateMu.Unlock()
-
-	state := section.symbols[symbol]
+	raw, _ := section.symbols.Load(symbol)
+	state := raw.(*symbolState)
 
 	if state != nil {
 		return state
 	}
 
 	state = &symbolState{}
-	section.symbols[symbol] = state
+	section.symbols.Store(symbol, state)
 
 	return state
 }
@@ -307,9 +292,6 @@ refreshEnergy recomputes time-normalized return energy and keeps the global
 energy sum consistent for O(1) leave-one-out peer energy.
 */
 func (section *Section) refreshEnergy(symbol string, state *symbolState) error {
-	section.energyMu.Lock()
-	defer section.energyMu.Unlock()
-
 	previous := state.energy
 	wasReady := previous > 0 && len(state.samples) >= 3
 
@@ -351,19 +333,14 @@ func (section *Section) refreshEnergy(symbol string, state *symbolState) error {
 }
 
 func (section *Section) Close() {
-	section.measureMu.Lock()
-	defer section.measureMu.Unlock()
-
-	if section.pool != nil {
-		section.pool.StopAndWait()
-	}
 }
 
 /*
 scores derives herd/alpha/noise/stress from streaming cohort aggregates.
 */
 func (section *Section) scores(symbol string) (map[string]float64, bool) {
-	state := section.symbols[symbol]
+	raw, _ := section.symbols.Load(symbol)
+	state := raw.(*symbolState)
 
 	if state == nil || state.energy <= 0 {
 		return nil, false
@@ -374,9 +351,12 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	weightedPeerEnergy := 0.0
 	totalSupport := 0.0
 
-	for peerSymbol, peer := range section.symbols {
+	section.symbols.Range(func(key, value any) bool {
+		peerSymbol := key.(string)
+		peer := value.(*symbolState)
+
 		if peerSymbol == symbol || peer.energy <= 0 {
-			continue
+			return true
 		}
 
 		correlationValue, support, ok := supportedCorrelation(
@@ -384,7 +364,7 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 		)
 
 		if !ok {
-			continue
+			return true
 		}
 
 		weight := float64(support)
@@ -392,7 +372,8 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 		weightedAbsolute += math.Abs(correlationValue) * weight
 		weightedPeerEnergy += peer.energy * weight
 		totalSupport += weight
-	}
+		return true
+	})
 
 	if totalSupport <= 0 {
 		return nil, false

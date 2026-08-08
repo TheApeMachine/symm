@@ -31,7 +31,7 @@ export const XrayManifoldPanel = () => {
 							Manifold reading
 						</div>
 						<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-							settled predictive state · learning pace
+							settled predictive state · prequential return skill
 						</div>
 					</div>
 					<div
@@ -62,7 +62,7 @@ export const XrayManifoldPanel = () => {
 							</Typography.Span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-(--f3)">alpha</span>
+							<span className="text-(--f3)">base alpha</span>
 							<Typography.Span
 								data-paint="alpha"
 								data-paint-absent="—"
@@ -105,11 +105,7 @@ export const XrayManifoldPanel = () => {
 							</Typography.Span>
 						</div>
 					</div>
-					<div
-						data-scope="symbol"
-						data-filter={focusSymbol}
-						className="mt-0.5"
-					>
+					<div data-scope="symbol" data-filter={focusSymbol} className="mt-0.5">
 						<div className="mb-1 flex justify-between text-[10px]">
 							<span className="text-(--f3)">predictive confidence</span>
 							<Typography.Span

@@ -29,20 +29,19 @@ or short position should exit. It emits numerical family scores, their fused
 urgency, and the winning numerical family identifier for downstream logic.
 */
 type Signal struct {
-	status        types.Status
-	ctx           context.Context
-	cancel        context.CancelFunc
-	books         websocket.BookSource
-	instrument    *broker.Instrument
-	sample        *algorithm.DecaySample
-	decay         *equation.Decay
-	ui            chan []byte
-	subscriptions map[string]*types.Subscription[any]
-	subscribers   *sync.Map
-	subscribeMu   sync.Mutex
-	lastTrade     *sync.Map
-	lastBookAt    *sync.Map
-	lastBook      *sync.Map
+	status     types.Status
+	ctx        context.Context
+	cancel     context.CancelFunc
+	books      websocket.BookSource
+	instrument *broker.Instrument
+	sample     *algorithm.DecaySample
+	decay      *equation.Decay
+	ui         chan []byte
+	thesis     *types.Thesis
+	semaphore  chan struct{}
+	lastTrade  *sync.Map
+	lastBookAt *sync.Map
+	lastBook   *sync.Map
 }
 
 type tradeCursor struct {
@@ -67,28 +66,30 @@ func NewSignal(
 	books websocket.BookSource,
 	instrument *broker.Instrument,
 	ui chan []byte,
-	subscriptions map[string]*types.Subscription[any],
+	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:        types.INITIALIZING,
-		ctx:           ctx,
-		cancel:        cancel,
-		books:         books,
-		instrument:    instrument,
-		sample:        algorithm.NewDecaySample(),
-		decay:         equation.NewDecay(),
-		ui:            ui,
-		subscriptions: subscriptions,
-		subscribers:   &sync.Map{},
-		lastTrade:     &sync.Map{},
-		lastBookAt:    &sync.Map{},
-		lastBook:      &sync.Map{},
+		status:     types.INITIALIZING,
+		ctx:        ctx,
+		cancel:     cancel,
+		books:      books,
+		instrument: instrument,
+		sample:     algorithm.NewDecaySample(),
+		decay:      equation.NewDecay(),
+		ui:         ui,
+		thesis:     thesis,
+		semaphore:  make(chan struct{}, 1),
+		lastTrade:  &sync.Map{},
+		lastBookAt: &sync.Map{},
+		lastBook:   &sync.Map{},
 	}
 
-	signal.status = types.READY
+	signal.thesis.Subscribe(types.SourceExhaustion, signal.semaphore)
 	signal.run()
+	signal.status = types.READY
+
 	return signal
 }
 
@@ -103,39 +104,16 @@ func (signal *Signal) Status() types.Status {
 	return signal.status
 }
 
-func (signal *Signal) Subscribe(
-	channel string,
-	subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	return utils.Subscribe(
-		signal.subscribers,
-		channel,
-		subscription,
-	)
-}
-
 func (signal *Signal) run() {
-	thesisSubscription := signal.subscriptions["thesis"]
-
-	if thesisSubscription == nil {
-		return
-	}
-
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-thesisSubscription.Channel:
-				if thesis, ok := message.(*types.Thesis); ok {
-					measurements := signal.Measure(thesis)
-
-					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, true)
-					}
-
-					utils.Fanout(signal.subscribers, signal.Name(), thesis)
-				}
+			case <-signal.semaphore:
+				signal.thesis.AppendMeasurements(
+					signal.Measure(signal.thesis), true,
+				)
 			}
 		}
 	}()

@@ -25,18 +25,17 @@ fact from its authoritative stream without treating them as independent
 corroborating signals.
 */
 type Signal struct {
-	status        types.Status
-	ctx           context.Context
-	cancel        context.CancelFunc
-	books         websocket.BookSource
-	algo          *equation.Ignition
-	algorithms    *sync.Map
-	capacity      int
-	ui            chan []byte
-	subscriptions map[string]*types.Subscription[any]
-	subscribers   *sync.Map
-	subscribeMu   sync.Mutex
-	lastTrade     *sync.Map
+	status     types.Status
+	ctx        context.Context
+	cancel     context.CancelFunc
+	books      websocket.BookSource
+	algo       *equation.Ignition
+	algorithms *sync.Map
+	capacity   int
+	ui         chan []byte
+	thesis     *types.Thesis
+	semaphore  chan struct{}
+	lastTrade  *sync.Map
 }
 
 type tradeCursor struct {
@@ -52,26 +51,28 @@ func NewSignal(
 	ctx context.Context,
 	books websocket.BookSource,
 	ui chan []byte,
-	subscriptions map[string]*types.Subscription[any],
+	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	capacity := viper.GetViper().GetInt("signals.pumpdump.baselineCapacity")
 	signal := &Signal{
-		status:        types.INITIALIZING,
-		ctx:           ctx,
-		cancel:        cancel,
-		books:         books,
-		algorithms:    &sync.Map{},
-		capacity:      capacity,
-		ui:            ui,
-		subscriptions: subscriptions,
-		subscribers:   &sync.Map{},
-		lastTrade:     &sync.Map{},
+		status:     types.INITIALIZING,
+		ctx:        ctx,
+		cancel:     cancel,
+		books:      books,
+		algorithms: &sync.Map{},
+		capacity:   capacity,
+		ui:         ui,
+		thesis:     thesis,
+		semaphore:  make(chan struct{}, 1),
+		lastTrade:  &sync.Map{},
 	}
 
-	signal.status = types.READY
+	signal.thesis.Subscribe(types.SourcePumpDump, signal.semaphore)
 	signal.run()
+	signal.status = types.READY
+
 	return signal
 }
 
@@ -86,33 +87,16 @@ func (signal *Signal) Status() types.Status {
 	return signal.status
 }
 
-func (signal *Signal) Subscribe(
-	channel string,
-	subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	return utils.Subscribe(
-		signal.subscribers,
-		channel,
-		subscription,
-	)
-}
-
 func (signal *Signal) run() {
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-signal.subscriptions["thesis"].Channel:
-				if thesis, ok := message.(*types.Thesis); ok {
-					measurements := signal.Measure(thesis)
-
-					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, true)
-					}
-
-					utils.Fanout(signal.subscribers, signal.Name(), thesis)
-				}
+			case <-signal.semaphore:
+				signal.thesis.AppendMeasurements(
+					signal.Measure(signal.thesis), true,
+				)
 			}
 		}
 	}()

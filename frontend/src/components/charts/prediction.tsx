@@ -43,11 +43,11 @@ const ScalarDiagnostics = () => (
 				</div>
 				<div className="bg-[#0a0907] px-2 py-1.5">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						alpha
+						resolved samples
 					</div>
 					<div
-						data-paint="alpha"
-						data-paint-format=".4f"
+						data-paint="samples"
+						data-paint-format=".0f"
 						className="mt-0.5 font-mono text-[11px] text-(--acc)"
 					>
 						—
@@ -133,24 +133,6 @@ const VerdictTile = ({
 );
 
 /*
-PaceBand shows where alpha sits between its own floor and ceiling.
-
-The value of alpha cannot distinguish a pace that has settled from one clamped
-against a rail, which is the single thing worth knowing about it, so the band is
-drawn and the number is left to the strip below.
-*/
-const PaceBand = () => (
-	<div className="relative h-1 w-full bg-(--line)">
-		<div
-			data-set="verdict.alphaBand"
-			data-target="style.--band"
-			className="absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--f2)"
-			style={{ left: "calc(var(--band, 0) * 100%)" }}
-		/>
-	</div>
-);
-
-/*
 ForecastArrow is one triangle that rotates: up, flat, or down.
 
 Direction is a sign, so it is painted as rotation rather than as three swapped
@@ -195,12 +177,10 @@ const VerdictRow = () => (
 					health="verdict.learningHealth"
 				/>
 				<VerdictTile
-					title="dynamic tuning"
+					title="return learner"
 					label="verdict.tuning"
 					health="verdict.tuningHealth"
-				>
-					<PaceBand />
-				</VerdictTile>
+				/>
 				<div
 					data-set="verdict.conviction"
 					data-target="style.--conv"

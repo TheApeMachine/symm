@@ -1,6 +1,7 @@
 package resonance
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -32,7 +33,7 @@ func primeFeatures(solver *Solver, symbol string, keys ...string) {
 			metrics[key] = types.MetricSample{Normalized: &reading}
 		}
 
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(context.Background(), nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source:  types.SourceLiquidity,
 			Symbol:  symbol,
@@ -48,7 +49,7 @@ func TestExtractFeatures(t *testing.T) {
 		buyArrival := 0.75
 		sellArrival := 0.25
 		eventSupport := 0.5
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 			Source: types.SourceHawkes,
 			Symbol: "BTC/USD",
@@ -84,7 +85,7 @@ func TestExtractFeatures(t *testing.T) {
 	Convey("Given measurements with raw and normalized metric values", t, func() {
 		normalized := 0.25
 		notFinite := math.Inf(1)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -116,7 +117,7 @@ func TestExtractFeatures(t *testing.T) {
 
 	Convey("Given a relative reading whose peer rotates", t, func() {
 		normalized := 0.5
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 
 		reading := func(peer string) *types.Measurement {
 			return &types.Measurement{
@@ -164,7 +165,7 @@ func TestUpdate(t *testing.T) {
 		symbol := "BTC/USD"
 		primeFeatures(solver, symbol, "first", "second")
 		first := 0.75
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: symbol,
@@ -190,7 +191,7 @@ func TestUpdate(t *testing.T) {
 			eventSupport := 0.25 + float64(tick)*0.1
 			buyArrival := 0.6 + float64(tick)*0.05
 			sellArrival := 0.4 - float64(tick)*0.05
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis(t.Context(), nil)
 			thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 				Source: types.SourceHawkes,
 				Symbol: symbol,
@@ -214,7 +215,7 @@ func TestUpdate(t *testing.T) {
 			eventSupport := 0.8
 			buyArrival := 0.7
 			sellArrival := 0.3
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis(t.Context(), nil)
 			thesis.Measurements.Store(types.SourceHawkes, []*types.Measurement{{
 				Source: types.SourceHawkes,
 				Symbol: symbol,
@@ -243,7 +244,7 @@ func TestUpdate(t *testing.T) {
 	Convey("Given normalized predictive-coding features", t, func() {
 		first := 0.25
 		second := -0.5
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -286,11 +287,9 @@ func TestUpdate(t *testing.T) {
 				state.manifold.ReconstructionError()/math.Sqrt(featureCount))
 
 			/*
-				PredictionEnergy rather than Energy. The latter adds the latent
-				decay and sparsity penalties, whose magnitudes are set by the
-				learning pace, so publishing it would make the reported energy
-				move whenever the controller retuned alpha with no change in how
-				well the network predicts.
+				PredictionEnergy rather than Energy. The latter adds latent decay
+				and sparsity penalties whose magnitudes are set by the configured
+				base pace, so it is not a pure reconstruction residual.
 			*/
 			So(row.Energy, ShouldAlmostEqual,
 				state.manifold.PredictionEnergy()/featureCount)
@@ -303,7 +302,7 @@ func TestUpdate(t *testing.T) {
 			So(row.Layers[2].Prediction, ShouldHaveLength, len(state.featureSchema))
 		})
 
-		Convey("Then a warmed stage publishes a forecast its own curve supports", func() {
+		Convey("Then an informative stage publishes a forecast its own curve supports", func() {
 			first = 0.5
 			second = -0.25
 			thesis.AppendTicker(kraken.TickerData{
@@ -359,7 +358,7 @@ func TestUpdate(t *testing.T) {
 		featureKey := "reading"
 
 		for _, normalized := range []float64{0, 2} {
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis(t.Context(), nil)
 			thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 				Source: types.SourceLiquidity,
 				Symbol: symbol,
@@ -372,7 +371,7 @@ func TestUpdate(t *testing.T) {
 		}
 
 		mean := 1.0
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: symbol,
@@ -392,7 +391,7 @@ func TestUpdate(t *testing.T) {
 			reading, ok := stored.(types.ResonanceReading)
 			So(ok, ShouldBeTrue)
 			So(reading.Stage, ShouldEqual, "resonance")
-			So(solver.state(symbol).alphaCtrl.Count(), ShouldEqual, 1)
+			So(solver.state(symbol).manifold, ShouldNotBeNil)
 			So(solver.state(symbol).extractor, ShouldNotBeNil)
 		})
 	})
@@ -405,7 +404,7 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 		primeFeatures(solver, "BTC/USD", "reading")
 		primeFeatures(solver, "ETH/USD", "reading")
 
-		first := types.NewThesis(nil)
+		first := types.NewThesis(t.Context(), nil)
 		first.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -424,7 +423,7 @@ func TestUpdateKeepsIndependentSymbolStates(t *testing.T) {
 		So(solver.state("BTC/USD").pendingAt.IsZero(), ShouldBeFalse)
 
 		Convey("Then a later tick on a different target symbol must not train the same head sample", func() {
-			second := types.NewThesis(nil)
+			second := types.NewThesis(t.Context(), nil)
 			second.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 				Source: types.SourceLiquidity,
 				Symbol: "ETH/USD",
@@ -474,7 +473,7 @@ func driveSolver(ticks int) *Solver {
 		*/
 		normalized := 0.5 + 0.25*math.Sin(float64(tick)/7.0)
 
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(context.Background(), nil)
 		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -611,7 +610,7 @@ Gonum's own parallel matrix work.
 func BenchmarkUpdate(b *testing.B) {
 	const featureCount = 48
 
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis(b.Context(), nil)
 	solver := NewSolver(make(chan []byte, 1), nil)
 	symbols := []string{"BTC/USD", "SIM2/USD"}
 

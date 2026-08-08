@@ -19,7 +19,7 @@ func TestHubForecastPublication(t *testing.T) {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		So(err, ShouldBeNil)
 		messages := make(chan []byte, 1)
-		hub := NewHub(context.Background(), nil, nil, nil, messages, make(chan []byte, 1))
+		hub := NewHub(context.Background(), nil, nil, nil, messages, make(chan types.FluidFrame, 1))
 		serveErr := make(chan error, 1)
 
 		go func() {
@@ -83,7 +83,7 @@ func TestHubReadinessPublication(t *testing.T) {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		So(err, ShouldBeNil)
 		messages := make(chan []byte, 1)
-		hub := NewHub(context.Background(), nil, nil, nil, messages, make(chan []byte, 1))
+		hub := NewHub(context.Background(), nil, nil, nil, messages, make(chan types.FluidFrame, 1))
 		serveErr := make(chan error, 1)
 
 		go func() {

@@ -69,10 +69,6 @@ Categories are the substrate the graph and the cognition tree are built from,
 so they are derived before either runs.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis == nil {
-		return nil
-	}
-
 	// Categories are read off this tick's measurements, so there is nothing to
 	// classify until every signal has stamped. Skipping leaves the stamp
 	// unraised and the tick comes back once the evidence is there.

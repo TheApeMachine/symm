@@ -77,6 +77,113 @@ export const sourceHeadlineMetric = (source: string) =>
 	`metrics.${SOURCE_HEADLINE[source.toLowerCase()] ?? "strength"}`;
 
 /*
+A kernel publishes a map of named metrics, and the detail panel reads several of
+them side by side. The map cannot be walked from a binding — a painted surface
+names the paths it wants up front — so each kernel's readable metrics are named
+here, in the vocabulary the signal actually emits.
+
+A name that a kernel turns out not to publish reads as absent rather than as a
+zero, so the panel understates rather than invents.
+*/
+const SOURCE_METRICS: Record<string, string[]> = {
+	correlation: [
+		"strength",
+		"herd_score",
+		"alpha_score",
+		"noise_score",
+		"stress_score",
+		"peak_score",
+	],
+	cvd: [
+		"strength",
+		"absorption",
+		"drive",
+		"balance",
+		"starvation",
+		"net_fraction",
+	],
+	depthflow: [
+		"strength",
+		"loaded_score",
+		"spoof_score",
+		"thin_score",
+		"neutral_score",
+	],
+	exhaustion: [
+		"strength:buy",
+		"strength:sell",
+		"urgency:buy",
+		"reversal:buy",
+		"mechanical:buy",
+		"fragile:buy",
+	],
+	hawkes: [
+		"conditional_intensity:buy",
+		"conditional_intensity:sell",
+		"baseline_intensity:buy",
+		"excitation_amplitude:buy_to_buy",
+		"spectral_radius",
+		"expected_total_descendants:buy",
+	],
+	leadlag: [
+		"strength",
+		"correlation",
+		"signed_correlation",
+		"lag_fraction",
+		"sample_support",
+	],
+	liquidity: [
+		"scarcity_score",
+		"relative_touch_depth",
+		"executable_touch_depth",
+		"reported_volume_notional",
+	],
+	pumpdump: [
+		"strength",
+		"ignition",
+		"compression",
+		"precursor",
+		"trend",
+		"exhaustion",
+	],
+	sentiment: [
+		"strength",
+		"breadth",
+		"change",
+		"divergent_score",
+		"leader_strength",
+	],
+	toxicity: [
+		"touch_quantity:buy",
+		"touch_quantity:sell",
+		"cancelled_quantity:buy",
+		"cancelled_quantity:sell",
+		"fill_volume:buy",
+		"fill_volume:sell",
+	],
+};
+
+/*
+sourceMetrics names the metrics a kernel's detail panel reads. A kernel with no
+entry falls back to the one metric its row leads with.
+*/
+export const sourceMetrics = (source: string): string[] =>
+	SOURCE_METRICS[source.toLowerCase()] ?? [
+		sourceHeadlineMetric(source).slice("metrics.".length),
+	];
+
+/*
+metricLabel reads a wire metric name — snake cased, optionally suffixed with the
+side it was measured on — as a human label.
+*/
+export const metricLabel = (metric: string): string => {
+	const [name, side] = metric.split(":");
+	const words = name.replace(/_/g, " ");
+
+	return side ? `${words} · ${side}` : words;
+};
+
+/*
 readinessGate names the stage gate that owns a kernel. The gates are snake
 cased where the measurement source is not, so the two have to be mapped rather
 than assumed equal.

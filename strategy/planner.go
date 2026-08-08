@@ -3,7 +3,6 @@ package strategy
 import (
 	"context"
 	"math"
-	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -11,7 +10,6 @@ import (
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -21,8 +19,8 @@ type Planner struct {
 	cancel            context.CancelFunc
 	status            types.Status
 	ui                chan []byte
-	subscriptions     map[string]*types.Subscription[any]
-	subscribers       *sync.Map
+	thesis            *types.Thesis
+	semaphore         chan struct{}
 	recorder          *audit.Recorder
 	mctsEngine        *mcts.CausalMCTS
 	minimumConfidence float64
@@ -33,7 +31,7 @@ type Planner struct {
 func NewPlanner(
 	ctx context.Context,
 	uiHub chan []byte,
-	analyzer *logic.Analyzer,
+	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	desk *broker.Desk,
 ) *Planner {
@@ -51,18 +49,14 @@ func NewPlanner(
 	)
 
 	planner := &Planner{
-		ctx:    ctx,
-		cancel: cancel,
-		status: types.READY,
-		ui:     uiHub,
-		subscriptions: map[string]*types.Subscription[any]{
-			"analyzer": analyzer.Subscribe(
-				"analyzer", types.NewSubscription[any](),
-			),
-		},
-		subscribers: &sync.Map{},
-		recorder:    recorder,
-		mctsEngine:  mctsEngine,
+		ctx:        ctx,
+		cancel:     cancel,
+		status:     types.READY,
+		ui:         uiHub,
+		thesis:     thesis,
+		semaphore:  make(chan struct{}, 1),
+		recorder:   recorder,
+		mctsEngine: mctsEngine,
 		minimumConfidence: viper.GetFloat64(
 			"trading.resonance.minimum_confidence",
 		),
@@ -70,6 +64,7 @@ func NewPlanner(
 		desk:        desk,
 	}
 
+	planner.thesis.Subscribe(types.SourcePlanner, planner.semaphore)
 	planner.run()
 	return planner
 }
@@ -78,43 +73,14 @@ func (planner *Planner) Status() types.Status {
 	return planner.status
 }
 
-func (planner *Planner) Subscribe(
-	key string, subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	subscribers, ok := planner.subscribers.LoadOrStore(
-		key, []*types.Subscription[any]{subscription},
-	)
-
-	if ok {
-		planner.subscribers.Store(key, append(
-			subscribers.([]*types.Subscription[any]),
-			subscription,
-		))
-	}
-
-	return subscription
-}
-
 func (planner *Planner) run() {
 	go func() {
 		for {
 			select {
 			case <-planner.ctx.Done():
 				return
-			case in := <-planner.subscriptions["analyzer"].Channel:
-				thesis, ok := in.(*types.Thesis)
-
-				if !ok {
-					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"planner: invalid thesis",
-						nil,
-					))
-
-					continue
-				}
-
-				planner.Update(thesis)
+			case <-planner.semaphore:
+				planner.Update(planner.thesis)
 			}
 		}
 	}()
@@ -150,7 +116,7 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		}
 	}
 
-	utils.Fanout(planner.subscribers, "planner", thesis)
+	thesis.Fanout()
 }
 
 /* decisions evaluates one binary verdict per ready causal artifact. */

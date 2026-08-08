@@ -10,6 +10,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/types"
 )
 
 const fluidTestTimeout = 5 * time.Second
@@ -18,7 +19,7 @@ func TestFluidRTCAnswer(t *testing.T) {
 	Convey("Given a browser peer offering the direct fluid channels", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		publications := make(chan []byte, 2)
+		publications := make(chan types.FluidFrame, 2)
 		transport := NewFluidRTC(ctx)
 		go transport.Run(publications)
 		defer func() { So(transport.Close(), ShouldBeNil) }()
@@ -30,8 +31,8 @@ func TestFluidRTCAnswer(t *testing.T) {
 		fieldsMessages := make(chan []byte, 8)
 		particlesMessages := make(chan []byte, 8)
 		opened := make(chan struct{}, 2)
-		createFluidTestChannel(client, fluidFieldsChannel, fieldsMessages, opened)
-		createFluidTestChannel(client, fluidParticlesChannel, particlesMessages, opened)
+		createFluidTestChannel(client, types.FluidFieldsChannel, fieldsMessages, opened)
+		createFluidTestChannel(client, types.FluidParticlesChannel, particlesMessages, opened)
 		offer, err := client.CreateOffer(nil)
 		So(err, ShouldBeNil)
 		gathered := webrtc.GatheringCompletePromise(client)
@@ -47,27 +48,14 @@ func TestFluidRTCAnswer(t *testing.T) {
 			bytes.Repeat([]byte{'d'}, fluidSegmentSize)...)
 		fields = append(fields, []byte(`"}}`)...)
 		particles := []byte(`{"particles":[{"Mass":1,"Heat":2}]}`)
-		publications <- fields
-		publications <- particles
+		publications <- types.FluidFrame{Channel: types.FluidFieldsChannel, Payload: fields}
+		publications <- types.FluidFrame{Channel: types.FluidParticlesChannel, Payload: particles}
 
 		Convey("It transmits each unmodified JSON value on its named channel", func() {
 			So(readFluidTestRecord(fieldsMessages), ShouldResemble, fields)
 			So(readFluidTestRecord(particlesMessages), ShouldResemble, particles)
 		})
 	})
-}
-
-func BenchmarkFluidPayloadChannel(b *testing.B) {
-	payload := []byte(`{"fields":{"Grid":{"x":64,"y":64,"z":64}}}`)
-	b.ReportAllocs()
-
-	for range b.N {
-		_, err := fluidPayloadChannel(payload)
-
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
 }
 
 func createFluidTestChannel(

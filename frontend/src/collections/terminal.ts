@@ -17,7 +17,13 @@ export { DEFAULT_FOCUS_SYMBOL };
 export const terminalStore = createStore(
 	{
 		scanlines: true,
-		selectedSource: "manifold",
+		/*
+			No kernel is selected until one is picked or the rail resolves the first
+			live source. The default used to name "manifold", which is a surface of
+			its own and never appears as a measurement source, so the detail panel
+			pinned every binding to a row the wire cannot send and opened blank.
+		*/
+		selectedSource: "",
 		inspectorSource: null as string | null,
 		paletteOpen: false,
 		paletteMode: "all" as "all" | "symbols",

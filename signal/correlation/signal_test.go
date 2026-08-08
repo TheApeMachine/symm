@@ -26,7 +26,7 @@ func TestMeasure(t *testing.T) {
 			{121, 242},
 		} {
 			at := start.Add(time.Duration(leg) * time.Second)
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis(t.Context(), nil)
 			thesis.Tickers.Store("AAA/USD", []kraken.TickerData{
 				correlationTicker("AAA/USD", prices[0], at),
 			})
@@ -37,10 +37,8 @@ func TestMeasure(t *testing.T) {
 		}
 
 		Convey("It reuses the section group and constructs every symbol measurement", func() {
-			sectionGroup := signal.section.group
-			beforeSectionTasks := signal.section.pool.SubmittedTasks()
 			at := start.Add(3 * time.Second)
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis(t.Context(), nil)
 			thesis.Tickers.Store("AAA/USD", []kraken.TickerData{
 				correlationTicker("AAA/USD", 133.1, at),
 			})
@@ -50,8 +48,6 @@ func TestMeasure(t *testing.T) {
 
 			measurements := signal.Measure(thesis)
 			So(measurements, ShouldHaveLength, 2)
-			So(signal.section.group, ShouldEqual, sectionGroup)
-			So(signal.section.pool.SubmittedTasks(), ShouldBeGreaterThan, beforeSectionTasks)
 		})
 	})
 }

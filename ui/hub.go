@@ -42,7 +42,7 @@ func NewHub(
 	price *broker.Price,
 	balance *broker.Balance,
 	channel chan []byte,
-	manifold chan []byte,
+	manifold chan types.FluidFrame,
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 

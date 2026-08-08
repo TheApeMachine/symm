@@ -57,7 +57,7 @@ func TestMeasure(t *testing.T) {
 	Convey("Given one new trade on each Thesis fanout", t, func() {
 		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_005_000, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		var measurements []*types.Measurement
 		var ready bool
 
@@ -94,7 +94,7 @@ func TestMeasure(t *testing.T) {
 	Convey("Given a liquid market and an unrelated thin market", t, func() {
 		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		liquid := make([]kraken.TradeData, 0, 80)
 
 		for index := range 80 {
@@ -127,7 +127,7 @@ func TestMeasure(t *testing.T) {
 	Convey("Given trades for symbols whose marks arrive out of order", t, func() {
 		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 
 		// NewArrivalStream sorts each side, so the signal must not pre-sort. The
 		// sell here lands after the last buy, which is what makes the horizon
@@ -163,7 +163,7 @@ func TestMeasure(t *testing.T) {
 	Convey("Given a symbol whose only trades are sells", t, func() {
 		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 
 		thesis.Trades.Store("BBB/USD", []kraken.TradeData{
 			{Symbol: "BBB/USD", Side: "sell", Timestamp: start},
@@ -181,7 +181,7 @@ func TestMeasure(t *testing.T) {
 	Convey("Given trades for two independent symbols", t, func() {
 		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 		start := time.Unix(1_700_006_000, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 
 		thesis.Trades.Store("AAA/USD", []kraken.TradeData{
 			{Symbol: "AAA/USD", Side: "buy", Timestamp: start},
@@ -212,7 +212,7 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
 
 		Convey("It should measure nothing", func() {
-			So(signal.Measure(types.NewThesis(nil)), ShouldBeEmpty)
+			So(signal.Measure(types.NewThesis(t.Context(), nil)), ShouldBeEmpty)
 		})
 	})
 }

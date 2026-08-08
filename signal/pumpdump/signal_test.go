@@ -55,7 +55,7 @@ func TestMeasure(t *testing.T) {
 			books:     books,
 			lastTrade: &sync.Map{},
 		}
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		base := time.Unix(1_700_002_200, 0).UTC()
 		var measurements []*types.Measurement
 

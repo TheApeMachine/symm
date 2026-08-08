@@ -34,9 +34,6 @@ func (solver *orderedSolver) Close() error {
 func TestAnalyzerProcess(t *testing.T) {
 	Convey("Given several signal notifications for one readiness epoch", t, func() {
 		order := make([]int, 0, 6)
-		subscribers := &sync.Map{}
-		subscription := &types.Subscription[any]{Channel: make(chan any, 2)}
-		subscribers.Store("analyzer", []*types.Subscription[any]{subscription})
 		analyzer := &Analyzer{
 			solvers: []Solver{
 				&orderedSolver{index: 0, order: &order, source: types.SourceCategories},
@@ -46,18 +43,15 @@ func TestAnalyzerProcess(t *testing.T) {
 				&orderedSolver{index: 4, order: &order, source: types.SourceCognition},
 				&orderedSolver{index: 5, order: &order, source: types.SourceGraph},
 			},
-			subscribers: subscribers,
 		}
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		stampSignalReadiness(thesis)
 
 		analyzer.process(thesis)
 		analyzer.process(thesis)
 
-		Convey("It should publish one dependency-consistent cut", func() {
+		Convey("It should run one dependency-consistent cut", func() {
 			So(order, ShouldResemble, []int{0, 1, 2, 3, 4, 5})
-			So(len(subscription.Channel), ShouldEqual, 1)
-			So(<-subscription.Channel, ShouldEqual, thesis)
 		})
 	})
 }
@@ -97,9 +91,8 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 			&orderedSolver{index: 4, order: &order, source: types.SourceCognition},
 			&orderedSolver{index: 5, order: &order, source: types.SourceGraph},
 		},
-		subscribers: subscribers,
 	}
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis(b.Context(), nil)
 	b.ReportAllocs()
 
 	for b.Loop() {

@@ -96,7 +96,7 @@ func Boot(
 		}
 	}
 
-	manifoldChannel := make(chan []byte, 1024)
+	manifoldChannel := make(chan types.FluidFrame, 1024)
 	auditPath := filepath.Join(utils.ResolveDataPath(), "runtime-audit.jsonl")
 
 	if viper.GetBool("system.audit.rotate_on_boot") {
@@ -196,24 +196,20 @@ func Boot(
 
 	errnie.Debug("trader reported to be ready")
 
-	signalSubscriptions := map[string]*types.Subscription[any]{}
-
 	for _, signal := range []types.Signal{
-		utils.NewWaiter[*correlation.Signal](correlation.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*cvd.Signal](cvd.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(ctx, api, instrument, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(ctx, api, instrument, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
-		utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(ctx, api, uiChannel, map[string]*types.Subscription[any]{"thesis": crypto.Subscribe("thesis", types.NewSubscription[any]())})).Wait(),
+		utils.NewWaiter[*correlation.Signal](correlation.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*cvd.Signal](cvd.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(ctx, api, instrument, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(ctx, api, instrument, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
+		utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
 	} {
 		errnie.Debug(fmt.Sprintf("%s signal reported to be ready", signal.Name()))
-		signalSubscriptions[signal.Name()] = signal.Subscribe(
-			signal.Name(), types.NewSubscription[any](),
-		)
+		system.closers = append(system.closers, signal.Close)
 	}
 
 	analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
@@ -223,7 +219,7 @@ func Boot(
 		uiChannel,
 		manifoldChannel,
 		recorder,
-		signalSubscriptions,
+		thesis,
 	)).Wait()
 
 	errnie.Debug("analyzer reported to be ready")
@@ -231,14 +227,12 @@ func Boot(
 	planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
 		ctx,
 		uiChannel,
-		analyzer,
+		thesis,
 		recorder,
 		desk,
 	)).Wait()
 
 	errnie.Debug("planner reported to be ready")
-
-	crypto.AddSubscription("planner", planner.Subscribe("planner", types.NewSubscription[any]()))
 
 	system.Hub = ui.NewHub(
 		ctx,

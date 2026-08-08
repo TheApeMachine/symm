@@ -78,11 +78,8 @@ func TestIntegration(t *testing.T) {
 			thesis := system.Thesis
 
 			Convey("When the market is transitioned to a fast pump", func() {
-				subscription := system.Planner.Subscribe(
-					"integration-decisions", types.NewSubscription[any](),
-				)
 				stopCollector, collected := collectDecisionBatches(
-					t.Context(), subscription,
+					t.Context(), thesis,
 				)
 				stopSnapshots, snapshots := collectIntegrationSnapshots(
 					t.Context(), thesis, "SIM1/USD",
@@ -206,11 +203,8 @@ func TestRoundTrip(t *testing.T) {
 			market.WithAutoFill()
 
 			Convey("When a pump runs from its precursor into a reversal", func() {
-				subscription := system.Planner.Subscribe(
-					"roundtrip-decisions", types.NewSubscription[any](),
-				)
 				stopCollector, collected := collectDecisionBatches(
-					t.Context(), subscription,
+					t.Context(), system.Thesis,
 				)
 				/*
 					Every boundary here is one the generator owns. The entry is
@@ -315,7 +309,7 @@ func TestCryptoRun(t *testing.T) {
 				)
 				So(err, ShouldBeNil)
 
-				thesis := types.NewThesis(nil)
+				thesis := types.NewThesis(t.Context(), nil)
 				thesis.Resonance.Store("SIM1/USD", types.ResonanceReading{
 					Forecast: forecast,
 				})
@@ -407,11 +401,8 @@ func TestRegimeDiscrimination(t *testing.T) {
 			thesis := system.Thesis
 
 			Convey("When every market condition runs at once", func() {
-				subscription := system.Planner.Subscribe(
-					"regime-decisions", types.NewSubscription[any](),
-				)
 				stopCollector, collected := collectDecisionBatches(
-					t.Context(), subscription,
+					t.Context(), thesis,
 				)
 				states := make(map[string]testtypes.MarketState, len(regimes))
 
@@ -639,51 +630,48 @@ type decisionCollection struct {
 
 func collectDecisionBatches(
 	parent context.Context,
-	subscription *types.Subscription[any],
+	thesis *types.Thesis,
 ) (context.CancelFunc, <-chan decisionCollection) {
 	ctx, cancel := context.WithCancel(parent)
 	completed := make(chan decisionCollection, 1)
 
 	go func() {
 		collection := decisionCollection{}
+		collectedIDs := make(map[string]struct{})
 
 		for {
-			select {
-			case emitted := <-subscription.Channel:
-				decisions, ok := emitted.([]types.Decision)
+			thesis.Decisions.Range(func(key, value any) bool {
+				decision, ok := value.(*types.Decision)
 
 				if !ok {
 					collection.err = fmt.Errorf(
-						"planner: expected detached decisions, got %T", emitted,
+						"planner: expected decision, got %T", value,
 					)
-					completed <- collection
-					return
+
+					return false
 				}
 
-				collection.decisions = append(collection.decisions, decisions...)
+				if _, found := collectedIDs[decision.ID]; found {
+					return true
+				}
+
+				collectedIDs[decision.ID] = struct{}{}
+				collection.decisions = append(collection.decisions, *decision)
+
+				return true
+			})
+
+			if collection.err != nil {
+				completed <- collection
+				return
+			}
+
+			select {
 			case <-ctx.Done():
-				for {
-					select {
-					case emitted := <-subscription.Channel:
-						decisions, ok := emitted.([]types.Decision)
-
-						if !ok {
-							collection.err = fmt.Errorf(
-								"planner: expected detached decisions, got %T",
-								emitted,
-							)
-							completed <- collection
-							return
-						}
-
-						collection.decisions = append(
-							collection.decisions, decisions...,
-						)
-					default:
-						completed <- collection
-						return
-					}
-				}
+				completed <- collection
+				return
+			default:
+				runtime.Gosched()
 			}
 		}
 	}()

@@ -6,6 +6,5 @@ shared Thesis updates downstream.
 */
 type Signal interface {
 	Name() string
-	Subscribe(string, *Subscription[any]) *Subscription[any]
 	Close() error
 }

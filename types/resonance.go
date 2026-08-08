@@ -14,9 +14,11 @@ ResonanceForecast is the one return forecast supported by a resonance reading.
 
 Curve contains one-step log-return predictions over SupportedHorizon. Retention
 states how much of the first forecast state's magnitude survives at each step.
-ExpectedReturn is the simple return obtained by accumulating every supported
-step after applying that retention. Confidence has already capped the horizon;
-it is not a second multiplier on ExpectedReturn.
+
+	ExpectedReturn is the simple return obtained by accumulating every supported
+	step after applying that retention. Confidence is sequential evidence that
+	strictly prior forecasts beat the zero-return baseline; it has already capped
+	the horizon and is not a second multiplier on ExpectedReturn.
 */
 type ResonanceForecast struct {
 	Curve            []float64 `json:"forwardCurve"`
@@ -29,21 +31,14 @@ type ResonanceForecast struct {
 /*
 ResonanceVerdict is the plain-language reading of a resonance frame.
 
-The panel answers three questions before any number is read: is the model
-predicting, is the pace controller still free to move, and which way does the
-curve point. Each is decided here rather than in the browser, because a verdict
-recomputed from a frame in the client is a second model of the same thing that
-can disagree with this one.
-
-Learning and Tuning are stable labels, not thresholds crossed per tick, so a
-reader is never asked to average a strobing light by eye.
+	The panel answers three questions before any number is read: is a forecast
+	available, which estimator learns its return head, and which way does the curve
+	point. Each is decided here rather than recomputed in the browser.
 */
 type ResonanceVerdict struct {
-	/* "warming" | "predicting" | "drifting" | "lost". */
+	/* "observing" | "predicting". */
 	Learning string `json:"learning"`
-	/* Smoothed rank of the reconstruction error within its own history. */
-	ErrorRank float64 `json:"errorRank"`
-	/* "warming" | "adapting" | "pinned fast" | "pinned slow". */
+	/* The online estimator used by the supervised return head. */
 	Tuning string `json:"tuning"`
 	/*
 		Each label's health as nominal (1), attention (0), or broken (-1), so the
@@ -51,8 +46,6 @@ type ResonanceVerdict struct {
 	*/
 	LearningHealth float64 `json:"learningHealth"`
 	TuningHealth   float64 `json:"tuningHealth"`
-	/* Alpha's position inside its own bounds, log spaced, 0..1. */
-	AlphaBand float64 `json:"alphaBand"`
 	/*
 		Sign of the expected return, and its confidence-scaled magnitude. Drift is
 		the arrow; Conviction dims it when the forecast is poorly supported.

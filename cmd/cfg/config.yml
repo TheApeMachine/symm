@@ -12,6 +12,12 @@ system:
   actor:
     retry_max: 21
     buffer: 2048
+  bus:
+    # The thesis broadcast re-asserts itself on this interval while an epoch is
+    # unfinished, so a module that missed or coalesced a wake-up is woken again
+    # instead of leaving the epoch stalled with no stamp and no way to recover.
+    # Lower costs idle broadcasts; higher lengthens the worst-case recovery.
+    heartbeat: 250ms
   websocket:
     channel:
       # Public book/trade/ticker ingress queues and UI fan-out. Undersizing

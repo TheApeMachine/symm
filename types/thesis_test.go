@@ -10,7 +10,7 @@ import (
 
 func TestThesisAppendMeasurements(t *testing.T) {
 	Convey("Given multiple measurements from one signal", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis(t.Context(), nil)
 		measurements := []*Measurement{
 			{Source: SourceLeadLag, Symbol: "BTC/USD", At: time.Unix(1, 0)},
 			{Source: SourceLeadLag, Symbol: "ETH/USD", At: time.Unix(2, 0)},
@@ -29,7 +29,7 @@ func TestThesisAppendMeasurements(t *testing.T) {
 	})
 
 	Convey("Given a new measurement for one previously observed symbol", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis(t.Context(), nil)
 		bitcoin := &Measurement{
 			Source: SourceHawkes,
 			Symbol: "BTC/USD",
@@ -56,7 +56,7 @@ func TestThesisAppendMeasurements(t *testing.T) {
 	})
 
 	Convey("Given multiple rows sharing one measurement identity", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis(t.Context(), nil)
 		previous := []*Measurement{
 			{Source: SourceToxicity, Symbol: "BTC/USD", At: time.Unix(1, 0)},
 			{Source: SourceToxicity, Symbol: "BTC/USD", At: time.Unix(2, 0)},
@@ -78,7 +78,7 @@ func TestThesisAppendMeasurements(t *testing.T) {
 
 func TestThesisReset(t *testing.T) {
 	Convey("Given a completed Thesis with ready measurement evidence", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis(t.Context(), nil)
 		measurements := []*Measurement{{
 			Source: SourceToxicity,
 			Symbol: "BTC/USD",

@@ -1,6 +1,7 @@
 package cognition
 
 import (
+	"context"
 	"math"
 	"strings"
 	"testing"
@@ -121,7 +122,7 @@ func TestFormatLookaheadPredictions(t *testing.T) {
 }
 
 func cognitionThesis(category types.CategoryType) *types.Thesis {
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis(context.Background(), nil)
 	thesis.At = time.Unix(1, 0).UTC()
 	thesis.Categories.Store("BTC/USD", []types.Category{{
 		Symbol:     "BTC/USD",

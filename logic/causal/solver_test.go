@@ -35,7 +35,7 @@ func testResonanceReading(
 func TestUpdate(t *testing.T) {
 	convey.Convey("Given a predictive-coding reading that is still warming", t, func() {
 		solver := NewSolver(nil, nil)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
 			Source: types.SourceResonance,
 			Symbol: "BTC/USD",
@@ -58,7 +58,7 @@ func TestUpdate(t *testing.T) {
 
 	convey.Convey("Given a causal evidence stream for one symbol", t, func() {
 		solver := NewSolver(nil, nil)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
@@ -100,7 +100,7 @@ func TestUpdate(t *testing.T) {
 
 	convey.Convey("Given fewer aligned rows than causal MCTS needs", t, func() {
 		solver := NewSolver(nil, nil)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
@@ -143,7 +143,7 @@ func BenchmarkUpdate(b *testing.B) {
 			b.Fatal(err)
 		}
 	})
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis(b.Context(), nil)
 	measurements := make([]*types.Measurement, 0, 640)
 
 	for index := range 640 {

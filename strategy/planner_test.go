@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"math"
-	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -17,7 +16,7 @@ func TestPlannerSearch(t *testing.T) {
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
 		decision, err := planner.search(
-			types.NewThesis(nil),
+			types.NewThesis(t.Context(), nil),
 			"BTC/USD",
 			map[string]any{"ready": false},
 		)
@@ -32,7 +31,7 @@ func TestPlannerSearch(t *testing.T) {
 	Convey("Given causal analysis that is ready before its MCTS rows are usable", t, func() {
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
-		decision, err := planner.search(types.NewThesis(nil), "BTC/USD", map[string]any{
+		decision, err := planner.search(types.NewThesis(t.Context(), nil), "BTC/USD", map[string]any{
 			"ready":          true,
 			"historyRows":    [][]float64{{1, 2, 3, 4}},
 			"treatmentLevel": 3.0,
@@ -52,7 +51,7 @@ func TestPlannerSearch(t *testing.T) {
 			rows[index] = []float64{float64(index), 0, 1, 1}
 		}
 
-		decision, err := planner.search(types.NewThesis(nil), "BTC/USD", map[string]any{
+		decision, err := planner.search(types.NewThesis(t.Context(), nil), "BTC/USD", map[string]any{
 			"ready":          true,
 			"historyRows":    rows,
 			"treatmentLevel": 1.0,
@@ -132,9 +131,9 @@ func TestPlannerSearch(t *testing.T) {
 
 func TestPlannerUpdate(t *testing.T) {
 	Convey("Given a fully analyzed thesis whose forecast is still warming", t, func() {
-		planner := &Planner{subscribers: &sync.Map{}}
+		planner := &Planner{}
 		causalSolver := causal.NewSolver(nil, nil)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
 			Source: types.SourceResonance,
 			Symbol: "BTC/USD",
@@ -180,7 +179,7 @@ func TestPlannerUpdate(t *testing.T) {
 func TestPlannerDecisions(t *testing.T) {
 	Convey("Given a thesis with causal evidence that is not ready", t, func() {
 		planner := &Planner{}
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Causal.Store("BTC/USD", map[string]any{"ready": false})
 
 		decisions := planner.decisions(thesis)
@@ -293,7 +292,7 @@ func plannerThesisFixture(
 	confidence float64,
 ) *types.Thesis {
 	t.Helper()
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis(t.Context(), nil)
 	forecast := forecastFixture(t, confidence)
 	thesis.Cognition.Store(symbol, types.Cognition{
 		Symbol:     symbol,
@@ -368,7 +367,7 @@ func BenchmarkPlannerDecisions(b *testing.B) {
 	}
 
 	for b.Loop() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(b.Context(), nil)
 		thesis.Causal.Store("BTC/USD", map[string]any{
 			"ready":          true,
 			"historyRows":    rows,

@@ -1,13 +1,13 @@
 import { DEFAULT_KERNELS } from "#/collections/app";
+import { terminalStore } from "#/collections/terminal";
 import {
 	readinessGate,
 	sourceHeadlineMetric,
 } from "#/components/terminal/kernel-meta";
-import { terminalStore } from "#/collections/terminal";
 import { cn } from "#/lib/utils";
 import { Component } from "../ui/component";
-import { Gate } from "../ui/gate";
 import { Dot } from "../ui/dot";
+import { Gate } from "../ui/gate";
 import { Sparkline } from "../ui/sparkline";
 
 const interactive = (compact: boolean, source: string) => {
@@ -97,8 +97,20 @@ export const KernelList = ({
 							)}
 						</div>
 
-						<div className="mt-0.5 truncate font-mono text-[9.5px] text-(--f4)">
-							<span data-paint="symbol" className="text-(--f4)">
+						{/*
+							A row is a kernel's standing at a glance: where its headline
+							reading sits on its own scale, and the symbol it was measured
+							on. Both come from the same row, so the two never describe
+							different observations.
+						*/}
+						<div className="mt-0.5 flex items-baseline gap-1.5 truncate font-mono text-[9.5px] text-(--f4)">
+							<span
+								data-paint={`${sourceHeadlineMetric(source)}.normalized`}
+								data-paint-format=".0%"
+								data-paint-absent="—"
+								className="text-(--acc)"
+							/>
+							<span data-paint="symbol" data-paint-absent="waiting">
 								waiting
 							</span>
 						</div>

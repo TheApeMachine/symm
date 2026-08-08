@@ -340,7 +340,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	// 10. Periodic REM Sleep Consolidation (every 128 ticks)
 	if solver.tickCounter%128 == 0 && nowUnix > 60e9 {
 		startWindow := nowUnix - 60e9 // 1 minute window
-		solver.consolidate(thesis, startWindow, nowUnix)
+		solver.consolidate(startWindow, nowUnix)
 	}
 
 	return nil
@@ -361,7 +361,6 @@ Why:
 	rank paths on evidence that is about to change.
 */
 func (solver *Solver) consolidate(
-	thesis *types.Thesis,
 	startWindow, nowUnix uint64,
 ) {
 	dreams := solver.tree.ExecuteREMSleepWithDreaming(

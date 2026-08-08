@@ -58,11 +58,11 @@ func TestMeasure(t *testing.T) {
 		futureTicker := cvdTicker(109, 111, base.Add(3*time.Second))
 		trade := cvdTrade(71, "buy", 101, base.Add(2*time.Second))
 
-		causalCut := types.NewThesis(nil)
+		causalCut := types.NewThesis(t.Context(), nil)
 		causalCut.Tickers.Store("BTC/USD", []kraken.TickerData{causalTicker})
 		So(signal.Measure(causalCut), ShouldBeEmpty)
 
-		futureCut := types.NewThesis(nil)
+		futureCut := types.NewThesis(t.Context(), nil)
 		futureCut.Tickers.Store("BTC/USD", []kraken.TickerData{futureTicker})
 		futureCut.Trades.Store("BTC/USD", []kraken.TradeData{trade})
 		measurements := signal.Measure(futureCut)
@@ -118,7 +118,7 @@ func TestMeasure(t *testing.T) {
 		}
 		base := time.Unix(1_700_003_300, 0).UTC()
 		trade := cvdTrade(72, "sell", 100, base)
-		futureCut := types.NewThesis(nil)
+		futureCut := types.NewThesis(t.Context(), nil)
 		futureCut.Tickers.Store("BTC/USD", []kraken.TickerData{
 			cvdTicker(99, 101, base.Add(time.Second)),
 		})
@@ -128,7 +128,7 @@ func TestMeasure(t *testing.T) {
 			So(signal.Measure(futureCut), ShouldBeEmpty)
 			So(signal.seenTrade(trade), ShouldBeFalse)
 
-			causalCut := types.NewThesis(nil)
+			causalCut := types.NewThesis(t.Context(), nil)
 			causalCut.Tickers.Store("BTC/USD", []kraken.TickerData{
 				cvdTicker(98, 100, base),
 			})
@@ -156,7 +156,7 @@ func TestMeasure(t *testing.T) {
 		altFirst.Symbol = "ALT/USD"
 		altSecond := cvdTrade(76, "buy", 51, base.Add(2*time.Second))
 		altSecond.Symbol = "ALT/USD"
-		cut := types.NewThesis(nil)
+		cut := types.NewThesis(t.Context(), nil)
 		cut.Tickers.Store("BTC/USD", []kraken.TickerData{bitcoinTicker})
 		cut.Tickers.Store("ALT/USD", []kraken.TickerData{altTicker})
 		cut.Trades.Store("BTC/USD", []kraken.TradeData{bitcoinSecond, bitcoinFirst})

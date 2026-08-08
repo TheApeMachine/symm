@@ -27,8 +27,8 @@ const (
 /*
 Solver wraps the CPU Predictive Coding Resonance Manifold (`learning.ResonanceManifold`).
 It accepts physics/field metrics from the upstream manifold solver, computes prediction
-errors (Surprise), settles top-down/bottom-up latent states, dynamically adapts alpha,
-and extends forward prediction horizons dynamically based on confidence.
+errors (Surprise), settles top-down/bottom-up latent states, learns forward returns
+with recursive least squares, and extends horizons based on resolved forecast skill.
 */
 type Solver struct {
 	recorder        *audit.Recorder
@@ -188,11 +188,8 @@ func (solver *Solver) updateSymbol(
 			state.pendingInput = nil
 			state.pendingMid = 0
 			state.pendingAt = time.Time{}
-			state.alphaCtrl = learning.NewPaceController(learning.PaceConfig{
-				InitialAlpha: state.alpha,
-			})
-			state.rankTrend = newRankTrend()
-			state.confidence = probability.NewCalibrator()
+			state.skill = probability.NewBernoulli()
+			state.confidence = 0
 			state.horizonReach = 1
 		}
 	}
@@ -277,41 +274,8 @@ func (solver *Solver) updateSymbol(
 	featureCount := float64(len(input))
 	surprise := totalSurprise / math.Sqrt(featureCount)
 	energy := state.manifold.PredictionEnergy() / featureCount
-	temporalError, hasTemporal := state.manifold.TemporalError()
-	latentDimension := len(state.featureSchema)
 
-	if len(solver.arch) > 1 {
-		latentDimension = solver.arch[len(solver.arch)-1]
-	}
-
-	if hasTemporal && latentDimension > 0 {
-		temporalError /= math.Sqrt(float64(latentDimension))
-	}
-
-	/*
-		Measure rather than Update: the pace controller's rank and readiness are
-		what make alpha legible downstream, and Update discards both.
-	*/
-	pace, err := state.alphaCtrl.Measure(surprise)
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-
-	if pace.Alpha != state.alpha {
-		state.alpha = pace.Alpha
-		state.manifold.SetAlpha(pace.Alpha)
-	}
-
-	rankTrend := pace.Rank
-
-	if state.rankTrend != nil {
-		if smoothed, trendErr := state.rankTrend.Measure(pace.Rank); trendErr == nil {
-			rankTrend = smoothed
-		}
-	}
-
-	confidence := state.confidence.Quantile(surprise)
+	confidence := state.confidence
 	activeHorizon := solver.horizon(state, confidence)
 
 	var forecast *types.ResonanceForecast
@@ -325,8 +289,7 @@ func (solver *Solver) updateSymbol(
 		)
 	}
 
-	minAlpha, maxAlpha := state.alphaCtrl.Bounds()
-	verdict := resonanceVerdict(pace, rankTrend, state.alpha, minAlpha, maxAlpha, forecast)
+	verdict := resonanceVerdict(forecast)
 
 	if targetReady && (state.pendingAt.IsZero() || !targetAt.Before(state.pendingAt)) {
 		state.pendingInput = slices.Clone(input)
@@ -592,6 +555,24 @@ func (solver *Solver) learnReturn(state *symbolState, midpoint float64, at time.
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"resonance: prior return state failed to settle: "+err.Error(),
+			err,
+		))
+	}
+
+	prediction := state.manifold.TaskPrediction()
+
+	if len(prediction) != solver.targetDim {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: prior return forecast dimension mismatch",
+			nil,
+		))
+	}
+
+	if err := state.measureForecastSkill(prediction[0], target); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"resonance: forecast skill update failed: "+err.Error(),
 			err,
 		))
 	}

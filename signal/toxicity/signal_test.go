@@ -17,7 +17,7 @@ func TestMeasure(t *testing.T) {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
 		signal := &Signal{ctx: context.Background(), books: books}
 		base := time.Unix(1_700_004_100, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		thesis.AppendTicker(kraken.TickerData{Symbol: "ALT/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
@@ -39,7 +39,7 @@ func TestMeasure(t *testing.T) {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
 		signal := &Signal{ctx: context.Background(), books: books}
 		base := time.Unix(1_700_004_200, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)
@@ -92,7 +92,7 @@ func TestMeasure(t *testing.T) {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
 		signal := &Signal{ctx: context.Background(), books: books}
 		base := time.Unix(1_700_004_300, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)

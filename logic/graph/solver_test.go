@@ -12,7 +12,7 @@ import (
 
 func TestUpdate(t *testing.T) {
 	Convey("Given completed upstream stages with causal search still warming", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Readiness.Stamp(types.SourceCategories)
 		thesis.Readiness.Stamp(types.SourceResonance)
 		thesis.Readiness.Stamp(types.SourceCausal)
@@ -88,7 +88,7 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		err := solver.inferStructuralEdges(types.NewThesis(nil), graph)
+		err := solver.inferStructuralEdges(types.NewThesis(t.Context(), nil), graph)
 		So(err, ShouldBeNil)
 
 		Convey("Each intervention should condition its symbol's do-expectation", func() {
@@ -141,7 +141,7 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		err := solver.inferStructuralEdges(types.NewThesis(nil), graph)
+		err := solver.inferStructuralEdges(types.NewThesis(t.Context(), nil), graph)
 		So(err, ShouldBeNil)
 
 		Convey("It omits zero-confidence pair edges while retaining evidence-bearing edges", func() {
@@ -162,7 +162,7 @@ func TestInferStructuralEdges(t *testing.T) {
 func TestExtractCausalNodes(t *testing.T) {
 	Convey("Given causal outputs with Pearl confidence", t, func() {
 		at := time.Unix(1, 0).UTC()
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = at
 		thesis.Causal.Store("BTC/USD", map[string]any{
 			"association":       0.1,
@@ -190,7 +190,7 @@ func TestExtractCausalNodes(t *testing.T) {
 	})
 
 	Convey("Given a causal value without its probability distribution", t, func() {
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Causal.Store("BTC/USD", map[string]any{"intervention": 1.0})
 
 		err := NewSolver(nil, nil).extractCausalNodes(
@@ -212,7 +212,7 @@ func TestExtractResonanceNodes(t *testing.T) {
 		)
 		So(err, ShouldBeNil)
 
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = at
 		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
 			Symbol:   "BTC/USD",
@@ -307,7 +307,7 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 	}
 
 	solver := NewSolver(nil, nil)
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis(b.Context(), nil)
 
 	b.ReportAllocs()
 
@@ -322,7 +322,7 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 
 func BenchmarkUpdate(b *testing.B) {
 	at := time.Unix(1, 0).UTC()
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis(b.Context(), nil)
 	thesis.At = at
 	forecast, err := types.NewResonanceForecast(
 		[]float64{0.01},

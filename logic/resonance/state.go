@@ -1,6 +1,8 @@
 package resonance
 
 import (
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/theapemachine/nomagique/adaptive"
@@ -10,21 +12,20 @@ import (
 )
 
 /*
-symbolState holds per-symbol predictive coding and adaptive state, delegating
-normalization, error calibration, and learning rate pacing to nomagique primitives.
+symbolState holds one symbol's predictive-coding model, feature normalization,
+prequential skill evidence, and unresolved return target.
 */
 type symbolState struct {
 	manifold      *learning.ResonanceManifold
-	alphaCtrl     *learning.PaceController
-	confidence    *probability.Calibrator
+	skill         *probability.Bernoulli
 	featureScale  map[string]*adaptive.Standardizer
 	extractor     *vector.FeatureExtractor
 	alpha         float64
+	confidence    float64
 	featureSchema []string
 	pendingInput  []float64
 	pendingMid    float64
 	pendingAt     time.Time
-	rankTrend     *adaptive.EMA
 	targetSamples uint64
 	horizonReach  int
 }
@@ -34,35 +35,51 @@ newSymbolState instantiates a fresh symbolState initialized with nomagique primi
 */
 func newSymbolState(initialAlpha float64) *symbolState {
 	return &symbolState{
-		alpha: initialAlpha,
-		alphaCtrl: learning.NewPaceController(learning.PaceConfig{
-			InitialAlpha: initialAlpha,
-		}),
-		confidence:   probability.NewCalibrator(),
+		alpha:        initialAlpha,
+		skill:        probability.NewBernoulli(),
 		featureScale: make(map[string]*adaptive.Standardizer),
-		rankTrend:    newRankTrend(),
 		horizonReach: 1,
 	}
 }
 
 /*
-newRankTrend smooths the pace controller's error rank.
-
-A single rank is uniform by construction and says nothing on its own; what
-separates a model that is tracking from one a regime has broken is whether its
-errors sit persistently high inside their own recent history.
+measureForecastSkill records whether a strictly prior return forecast beat the
+zero-return baseline. A tie contributes neutral evidence. Confidence is the Beta
+posterior probability that the model's win rate exceeds chance, so sparse evidence
+stays uncertain without a fixed warm-up count.
 */
-func newRankTrend() *adaptive.EMA {
-	trend, err := adaptive.NewEMA(adaptive.EMAConfig{
-		Period:    rankTrendPeriod,
-		Smoothing: rankTrendSmoothing,
-	})
-
-	if err != nil {
-		return nil
+func (state *symbolState) measureForecastSkill(predicted, actual float64) error {
+	if math.IsNaN(predicted) || math.IsInf(predicted, 0) ||
+		math.IsNaN(actual) || math.IsInf(actual, 0) {
+		return fmt.Errorf("resonance: forecast skill requires finite returns")
 	}
 
-	return trend
+	modelError := actual - predicted
+	modelLoss := modelError * modelError
+	baselineLoss := actual * actual
+	outcome := 0.5
+
+	if modelLoss < baselineLoss {
+		outcome = 1
+	}
+
+	if modelLoss > baselineLoss {
+		outcome = 0
+	}
+
+	if _, err := state.skill.Measure(outcome); err != nil {
+		return fmt.Errorf("resonance: forecast skill observation: %w", err)
+	}
+
+	confidence, err := state.skill.ProbabilityAbove(0.5)
+
+	if err != nil {
+		return fmt.Errorf("resonance: forecast skill confidence: %w", err)
+	}
+
+	state.confidence = confidence
+
+	return nil
 }
 
 /*

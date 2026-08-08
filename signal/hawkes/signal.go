@@ -31,14 +31,14 @@ forecast readiness remains false until residual and out-of-sample validation
 exists.
 */
 type Signal struct {
-	status        atomic.Value
-	ctx           context.Context
-	cancel        context.CancelFunc
-	api           *websocket.API
-	processors    *sync.Map
-	ui            chan []byte
-	subscriptions map[string]*types.Subscription[any]
-	subscribers   *sync.Map
+	status     atomic.Value
+	ctx        context.Context
+	cancel     context.CancelFunc
+	api        *websocket.API
+	processors *sync.Map
+	ui         chan []byte
+	thesis     *types.Thesis
+	semaphore  chan struct{}
 }
 
 /*
@@ -49,23 +49,24 @@ func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
-	subscriptions map[string]*types.Subscription[any],
+	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:           ctx,
-		cancel:        cancel,
-		api:           api,
-		processors:    &sync.Map{},
-		ui:            ui,
-		subscriptions: subscriptions,
-		subscribers:   &sync.Map{},
+		ctx:        ctx,
+		cancel:     cancel,
+		api:        api,
+		processors: &sync.Map{},
+		ui:         ui,
+		thesis:     thesis,
+		semaphore:  make(chan struct{}, 1),
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.status.Store(types.READY)
+	signal.thesis.Subscribe(types.SourceHawkes, signal.semaphore)
 	signal.run()
+	signal.status.Store(types.READY)
 
 	return signal
 }
@@ -81,45 +82,16 @@ func (signal *Signal) Status() types.Status {
 	return signal.status.Load().(types.Status)
 }
 
-func (signal *Signal) Subscribe(
-	channel string,
-	subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	return utils.Subscribe(
-		signal.subscribers,
-		channel,
-		subscription,
-	)
-}
-
 func (signal *Signal) run() {
-	subscription, ok := signal.subscriptions["thesis"]
-
-	if !ok || subscription == nil || subscription.Channel == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"hawkes: no thesis subscription to measure",
-			nil,
-		))
-
-		return
-	}
-
 	go func() {
 		for {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-subscription.Channel:
-				if thesis, ok := message.(*types.Thesis); ok {
-					measurements, ready := signal.measure(thesis)
-
-					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, ready)
-					}
-
-					utils.Fanout(signal.subscribers, signal.Name(), thesis)
-				}
+			case <-signal.semaphore:
+				signal.thesis.AppendMeasurements(
+					signal.Measure(signal.thesis), true,
+				)
 			}
 		}
 	}()

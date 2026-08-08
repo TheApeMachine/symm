@@ -24,17 +24,17 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	status        types.Status
-	ctx           context.Context
-	cancel        context.CancelFunc
-	api           *websocket.API
-	sample        *algorithm.TradeFlowSample
-	flow          *equation.Flow
-	midpoints     *sync.Map
-	ui            chan []byte
-	subscriptions map[string]*types.Subscription[any]
-	subscribers   *sync.Map
-	lastTrade     *sync.Map
+	status    types.Status
+	ctx       context.Context
+	cancel    context.CancelFunc
+	api       *websocket.API
+	sample    *algorithm.TradeFlowSample
+	flow      *equation.Flow
+	midpoints *sync.Map
+	ui        chan []byte
+	thesis    *types.Thesis
+	semaphore chan struct{}
+	lastTrade *sync.Map
 }
 
 type tradeCursor struct {
@@ -57,27 +57,28 @@ func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
-	subscriptions map[string]*types.Subscription[any],
+	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:        types.INITIALIZING,
-		ctx:           ctx,
-		cancel:        cancel,
-		api:           api,
-		sample:        algorithm.NewTradeFlowSample(),
-		flow:          equation.NewFlow(),
-		midpoints:     &sync.Map{},
-		ui:            ui,
-		subscriptions: subscriptions,
-		subscribers:   &sync.Map{},
-		lastTrade:     &sync.Map{},
+		status:    types.INITIALIZING,
+		ctx:       ctx,
+		cancel:    cancel,
+		api:       api,
+		sample:    algorithm.NewTradeFlowSample(),
+		flow:      equation.NewFlow(),
+		midpoints: &sync.Map{},
+		ui:        ui,
+		thesis:    thesis,
+		semaphore: make(chan struct{}, 1),
+		lastTrade: &sync.Map{},
 	}
 
+	signal.thesis.Subscribe(types.SourceCVD, signal.semaphore)
+	signal.run()
 	signal.status = types.READY
 
-	signal.run()
 	return signal
 }
 
@@ -90,17 +91,6 @@ func (signal *Signal) Name() string {
 
 func (signal *Signal) Status() types.Status {
 	return signal.status
-}
-
-func (signal *Signal) Subscribe(
-	channel string,
-	subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	return utils.Subscribe(
-		signal.subscribers,
-		channel,
-		subscription,
-	)
 }
 
 func (signal *Signal) ensureProcessors() (*algorithm.TradeFlowSample, *equation.Flow) {
@@ -121,16 +111,10 @@ func (signal *Signal) run() {
 			select {
 			case <-signal.ctx.Done():
 				return
-			case message := <-signal.subscriptions["thesis"].Channel:
-				if thesis, ok := message.(*types.Thesis); ok {
-					measurements := signal.Measure(thesis)
-
-					if len(measurements) > 0 {
-						thesis.AppendMeasurements(measurements, true)
-					}
-
-					utils.Fanout(signal.subscribers, signal.Name(), thesis)
-				}
+			case <-signal.semaphore:
+				signal.thesis.AppendMeasurements(
+					signal.Measure(signal.thesis), true,
+				)
 			}
 		}
 	}()

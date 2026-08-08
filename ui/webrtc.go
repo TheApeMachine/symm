@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -11,11 +10,10 @@ import (
 
 	"github.com/pion/webrtc/v4"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/types"
 )
 
 const (
-	fluidFieldsChannel    = "fluid-fields"
-	fluidParticlesChannel = "fluid-particles"
 	fluidRecordHeaderSize = 8
 	// RFC 8831 recommends messages no larger than 16 KiB when SCTP message
 	// interleaving is unavailable. Ordered records are reassembled unchanged.
@@ -25,7 +23,7 @@ const (
 var fluidRecordMagic = [4]byte{'S', 'F', 'D', '1'}
 
 /*
-FluidRTC owns the WebRTC peers consuming direct Fields and Particle JSON
+FluidRTC owns the WebRTC peers consuming direct Fields and Particle
 publications from the manifold solver.
 */
 type FluidRTC struct {
@@ -49,27 +47,22 @@ func NewFluidRTC(ctx context.Context) *FluidRTC {
 }
 
 /*
-Run drains direct manifold publications and fans each one to its matching data
-channel. Unknown envelopes are rejected visibly rather than silently dropped.
+Run drains direct manifold publications and fans each one to the data channel
+it names. A frame carries its own destination because the solver knows which
+view it built the frame for; recovering that here by sniffing the payload's
+leading bytes only re-derived it, and tied routing to the encoding.
 */
-func (transport *FluidRTC) Run(publications <-chan []byte) {
+func (transport *FluidRTC) Run(publications <-chan types.FluidFrame) {
 	for {
 		select {
 		case <-transport.ctx.Done():
 			return
-		case payload, open := <-publications:
+		case frame, open := <-publications:
 			if !open {
 				return
 			}
 
-			channel, err := fluidPayloadChannel(payload)
-
-			if err != nil {
-				errnie.Error(errnie.Err(errnie.Validation, err.Error(), err))
-				continue
-			}
-
-			transport.publish(channel, payload)
+			transport.publish(frame.Channel, frame.Payload)
 		}
 	}
 }
@@ -83,36 +76,55 @@ func (transport *FluidRTC) Answer(
 	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 
 	if err != nil {
-		return webrtc.SessionDescription{}, fmt.Errorf("create fluid peer: %w", err)
+		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
+			errnie.IO,
+			"webrtc: unable create new peer connection - "+err.Error(),
+			err,
+		))
 	}
 
 	peer := newFluidPeer(transport.ctx)
 	transport.add(peerConnection, peer)
 	peerConnection.OnDataChannel(peer.attach)
+
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		if state == webrtc.PeerConnectionStateFailed ||
-			state == webrtc.PeerConnectionStateClosed {
+		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
 			transport.remove(peerConnection)
 		}
 	})
 
 	if err = peerConnection.SetRemoteDescription(offer); err != nil {
 		transport.remove(peerConnection)
-		return webrtc.SessionDescription{}, fmt.Errorf("set fluid offer: %w", err)
+
+		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
+			errnie.IO,
+			"webrtc: unable to set remove description - "+err.Error(),
+			err,
+		))
 	}
 
 	answer, err := peerConnection.CreateAnswer(nil)
 
 	if err != nil {
 		transport.remove(peerConnection)
-		return webrtc.SessionDescription{}, fmt.Errorf("create fluid answer: %w", err)
+
+		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
+			errnie.IO,
+			"webrtc: unable to create answer - "+err.Error(),
+			err,
+		))
 	}
 
 	gathered := webrtc.GatheringCompletePromise(peerConnection)
 
 	if err = peerConnection.SetLocalDescription(answer); err != nil {
 		transport.remove(peerConnection)
-		return webrtc.SessionDescription{}, fmt.Errorf("set fluid answer: %w", err)
+
+		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
+			errnie.IO,
+			"webrtc: unable to set local description - "+err.Error(),
+			err,
+		))
 	}
 
 	select {
@@ -126,7 +138,12 @@ func (transport *FluidRTC) Answer(
 
 	if local == nil {
 		transport.remove(peerConnection)
-		return webrtc.SessionDescription{}, fmt.Errorf("fluid answer has no local description")
+
+		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
+			errnie.IO,
+			"webrtc: peer connection has no local description",
+			err,
+		))
 	}
 
 	return *local, nil
@@ -204,10 +221,10 @@ func newFluidPeer(ctx context.Context) *fluidPeer {
 func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 	label := dataChannel.Label()
 
-	if label != fluidFieldsChannel && label != fluidParticlesChannel {
+	if label != types.FluidFieldsChannel && label != types.FluidParticlesChannel {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"unsupported fluid data channel "+label,
+			"webrtc: unsupported fluid data channel "+label,
 			nil,
 		))
 		_ = dataChannel.Close()
@@ -216,11 +233,13 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 
 	if !dataChannel.Ordered() || dataChannel.MaxPacketLifeTime() != nil ||
 		dataChannel.MaxRetransmits() != nil {
+
 		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"fluid data channels must be ordered and reliable",
+			"webrtc: fluid data channels must be ordered and reliable",
 			nil,
 		))
+
 		_ = dataChannel.Close()
 		return
 	}
@@ -281,6 +300,7 @@ func newFluidChannel(
 		pending:     make(chan []byte, 1),
 		drained:     make(chan struct{}, 1),
 	}
+
 	dataChannel.SetBufferedAmountLowThreshold(0)
 	dataChannel.OnBufferedAmountLow(func() {
 		select {
@@ -288,11 +308,13 @@ func newFluidChannel(
 		default:
 		}
 	})
+
 	dataChannel.OnClose(cancel)
 	dataChannel.OnError(func(err error) {
 		errnie.Error(errnie.Err(errnie.IO, "fluid data channel failed: "+err.Error(), err))
 		cancel()
 	})
+
 	return channel
 }
 
@@ -372,16 +394,4 @@ func (channel *fluidChannel) waitUntilDrained() {
 func (channel *fluidChannel) close() {
 	channel.cancel()
 	_ = channel.dataChannel.Close()
-}
-
-func fluidPayloadChannel(payload []byte) (string, error) {
-	if bytes.HasPrefix(payload, []byte(`{"fields":`)) {
-		return fluidFieldsChannel, nil
-	}
-
-	if bytes.HasPrefix(payload, []byte(`{"particles":`)) {
-		return fluidParticlesChannel, nil
-	}
-
-	return "", fmt.Errorf("fluid publication has no fields or particles envelope")
 }

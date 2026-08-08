@@ -2,7 +2,6 @@ package trader
 
 import (
 	"context"
-	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -23,12 +22,12 @@ type Crypto struct {
 	cancel        context.CancelFunc
 	api           *websocket.API
 	thesis        *types.Thesis
+	semaphore     chan struct{}
 	dataPath      string
 	ui            chan []byte
 	recorder      *audit.Recorder
 	desk          *broker.Desk
 	subscriptions map[string]*types.Subscription[any]
-	subscribers   *sync.Map
 }
 
 /*
@@ -45,15 +44,16 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:      ctx,
-		cancel:   cancel,
-		status:   types.READY,
-		api:      api,
-		thesis:   thesis,
-		dataPath: utils.ResolveDataPath(),
-		ui:       ui,
-		recorder: recorder,
-		desk:     desk,
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    types.READY,
+		api:       api,
+		thesis:    thesis,
+		semaphore: make(chan struct{}, 1),
+		dataPath:  utils.ResolveDataPath(),
+		ui:        ui,
+		recorder:  recorder,
+		desk:      desk,
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
 				"ticker", types.NewSubscription[any](),
@@ -62,37 +62,16 @@ func NewCrypto(
 				"trade", types.NewSubscription[any](),
 			),
 		},
-		subscribers: &sync.Map{},
 	}
+
+	crypto.thesis.Subscribe(types.SourceEvaluator, crypto.semaphore)
+	crypto.run()
 
 	return crypto
 }
 
 func (crypto *Crypto) Status() types.Status {
 	return crypto.status
-}
-
-func (crypto *Crypto) AddSubscription(key string, subscription *types.Subscription[any]) {
-	crypto.subscriptions[key] = subscription
-	crypto.run()
-}
-
-func (crypto *Crypto) Subscribe(
-	key string, subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	subscribers, ok := crypto.subscribers.LoadOrStore(
-		key, []*types.Subscription[any]{subscription},
-	)
-
-	if ok {
-		subscribers = append(
-			subscribers.([]*types.Subscription[any]), subscription,
-		)
-
-		crypto.subscribers.Store(key, subscribers)
-	}
-
-	return subscription
 }
 
 func (crypto *Crypto) run() {
@@ -105,11 +84,8 @@ func (crypto *Crypto) run() {
 				crypto.onTicker(ticker)
 			case trade := <-crypto.subscriptions["trade"].Channel:
 				crypto.onTrade(trade)
-			case in := <-crypto.subscriptions["planner"].Channel:
-				var ok bool
-				crypto.thesis, ok = in.(*types.Thesis)
-
-				if !ok || !crypto.thesis.Readiness.Complete() {
+			case <-crypto.semaphore:
+				if !crypto.thesis.Readiness.Complete() {
 					continue
 				}
 
@@ -164,8 +140,6 @@ func (crypto *Crypto) onTicker(data any) {
 		crypto.thesis.AppendTicker(ticker)
 		crypto.desk.Price().Update(&ticker)
 	}
-
-	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -184,8 +158,6 @@ func (crypto *Crypto) onTrade(data any) {
 	for _, trade := range typedTrades.Data {
 		crypto.thesis.AppendTrade(trade)
 	}
-
-	utils.Fanout(crypto.subscribers, "thesis", crypto.thesis)
 }
 
 func (crypto *Crypto) Close() (err error) {

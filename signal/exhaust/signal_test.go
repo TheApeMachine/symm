@@ -19,7 +19,7 @@ import (
 func TestMeasure(t *testing.T) {
 	Convey("Given independent exhaustion symbols without a ready book", t, func() {
 		signal := &Signal{ctx: context.Background(), books: emptyBookSource{}}
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Tickers.Store("AAA/USD", []kraken.TickerData{{Symbol: "AAA/USD"}})
 		thesis.Tickers.Store("BBB/USD", []kraken.TickerData{{Symbol: "BBB/USD"}})
 

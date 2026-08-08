@@ -11,7 +11,7 @@ import (
 
 func TestThesisMarketTickers(t *testing.T) {
 	Convey("Given ticker observations not yet incorporated by a signal", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis(t.Context(), nil)
 		bitcoinAt := time.Unix(10, 0).UTC()
 		altAt := time.Unix(9, 0).UTC()
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: bitcoinAt})
@@ -58,7 +58,7 @@ func TestThesisMarketTickers(t *testing.T) {
 
 func TestThesisMarketTrades(t *testing.T) {
 	Convey("Given distinct trades sharing one exchange timestamp", t, func() {
-		thesis := NewThesis(nil)
+		thesis := NewThesis(t.Context(), nil)
 		observedAt := time.Unix(20, 0).UTC()
 		firstTrade := kraken.TradeData{
 			Symbol: "BTC/USD", TradeID: 1, Timestamp: observedAt,
@@ -104,7 +104,7 @@ func BenchmarkThesisMarketTickers(b *testing.B) {
 		benchmarkRowsPerSymbol = 64
 	)
 
-	thesis := NewThesis(nil)
+	thesis := NewThesis(b.Context(), nil)
 	observedAt := time.Unix(1_700_000_000, 0).UTC()
 
 	for symbolIndex := range benchmarkSymbols {
@@ -136,7 +136,7 @@ func BenchmarkThesisMarketTrades(b *testing.B) {
 		benchmarkRowsPerSymbol = 64
 	)
 
-	thesis := NewThesis(nil)
+	thesis := NewThesis(b.Context(), nil)
 	observedAt := time.Unix(1_700_000_000, 0).UTC()
 
 	for symbolIndex := range benchmarkSymbols {

@@ -58,7 +58,7 @@ func TestPlannerClassifyAllocation(t *testing.T) {
 			0.90,
 		)
 		So(err, ShouldBeNil)
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Cognition.Store("BTC/USD", types.Cognition{
 			Symbol:     "BTC/USD",
 			Ready:      true,
@@ -78,7 +78,7 @@ func TestPlannerClassifyAllocation(t *testing.T) {
 
 	Convey("Given an entry without a ready cognition reading", t, func() {
 		planner := &Planner{}
-		thesis := types.NewThesis(nil)
+		thesis := types.NewThesis(t.Context(), nil)
 		decision := types.NewDecision(types.ActionEnter, "BTC/USD")
 		decision.Forecast = forecastFixture(t, 0.90)
 
@@ -104,7 +104,7 @@ func BenchmarkPlannerClassifyAllocation(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	thesis := types.NewThesis(nil)
+	thesis := types.NewThesis(b.Context(), nil)
 	thesis.Cognition.Store("BTC/USD", types.Cognition{
 		Symbol:     "BTC/USD",
 		Ready:      true,

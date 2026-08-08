@@ -26,7 +26,7 @@ func TestMeasure(t *testing.T) {
 			{121, 102, 98},
 		} {
 			at := start.Add(time.Duration(leg) * time.Second)
-			thesis := types.NewThesis(nil)
+			thesis := types.NewThesis(t.Context(), nil)
 
 			for index, symbol := range []string{"AAA/USD", "BBB/USD", "CCC/USD"} {
 				thesis.Tickers.Store(symbol, []kraken.TickerData{{
