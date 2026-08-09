@@ -279,7 +279,7 @@ func TestPlannerAdmit(t *testing.T) {
 			So(decision.Action, ShouldEqual, types.ActionNothing)
 			So(decision.Confidence, ShouldEqual, 0.79)
 			So(decision.Forecast, ShouldNotBeNil)
-			So(decision.Reason, ShouldContainSubstring, "below configured minimum")
+			So(decision.Reason, ShouldContainSubstring, "below regulated minimum")
 		})
 
 		Convey("Then a forecast at the configured confidence stays attached to Enter", func() {

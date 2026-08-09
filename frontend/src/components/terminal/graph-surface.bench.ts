@@ -1,5 +1,6 @@
 import { bench, describe } from "vitest";
 import {
+	adaptGraph,
 	graphFramePlan,
 	graphStructureKey,
 	type MarketGraphFrame,
@@ -25,5 +26,9 @@ const displayedKey = graphStructureKey(graphFrame);
 describe("graphFramePlan", () => {
 	bench("classifies a live 512-node graph frame", () => {
 		graphFramePlan(displayedKey, graphFrame);
+	});
+
+	bench("adapts a connected 512-node graph frame", () => {
+		adaptGraph(graphFrame);
 	});
 });

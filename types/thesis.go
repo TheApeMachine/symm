@@ -50,6 +50,7 @@ type Thesis struct {
 	LastTradeAt  time.Time     `json:"lastTradeAt"`
 	CrossSection *CrossSection `json:"crossSection"`
 	Measurements *sync.Map     `json:"-"`
+	Symbols      *sync.Map     `json:"-"`
 	Measured     *sync.Map     `json:"-"`
 	Tickers      *sync.Map     `json:"-"`
 	Trades       *sync.Map     `json:"-"`
@@ -87,6 +88,7 @@ func NewThesis(
 		Lifecycle:    &sync.Map{},
 		Categories:   &sync.Map{},
 		Measurements: &sync.Map{},
+		Symbols:      &sync.Map{},
 		Measured:     &sync.Map{},
 		Tickers:      &sync.Map{},
 		Trades:       &sync.Map{},
@@ -110,6 +112,10 @@ func (thesis *Thesis) Reset() *Thesis {
 	}
 
 	thesis.Readiness.Reset()
+	thesis.Symbols.Range(func(_, value any) bool {
+		value.(*Symbol).Reset()
+		return true
+	})
 	thesis.At = time.Now().UTC()
 	thesis.LastTickerAt = time.Now().UTC()
 	thesis.LastTradeAt = time.Now().UTC()
@@ -188,52 +194,92 @@ func (thesis *Thesis) AppendMeasurements(
 	measurements []*Measurement,
 	ready bool,
 ) error {
-	if len(measurements) == 0 {
-		return nil
-	}
+	if len(measurements) > 0 {
+		found, ok := thesis.Measurements.LoadOrStore(sender, measurements)
 
-	found, ok := thesis.Measurements.LoadOrStore(sender, measurements)
+		if ok {
+			stored := found.([]*Measurement)
 
-	if ok {
-		stored := found.([]*Measurement)
+			for _, newMeasurement := range measurements {
+				replaced := false
 
-		for _, newMeasurement := range measurements {
-			replaced := false
+				for index, measurement := range stored {
+					if measurement.ID == newMeasurement.ID {
+						return errnie.Error(errnie.Err(
+							errnie.Conflict,
+							fmt.Sprintf(
+								"thesis: duplicate measurement found for [%s]",
+								sender,
+							),
+							nil,
+						))
+					}
 
-			for index, measurement := range stored {
-				if measurement.ID == newMeasurement.ID {
-					return errnie.Error(errnie.Err(
-						errnie.Conflict,
-						fmt.Sprintf(
-							"thesis: duplicate measurement found for [%s]",
-							sender,
-						),
-						nil,
-					))
+					if measurement.Source == newMeasurement.Source &&
+						measurement.Symbol == newMeasurement.Symbol &&
+						measurement.Peer == newMeasurement.Peer {
+						stored[index] = newMeasurement
+						replaced = true
+					}
 				}
 
-				if measurement.Source == newMeasurement.Source &&
-					measurement.Symbol == newMeasurement.Symbol &&
-					measurement.Peer == newMeasurement.Peer {
-					stored[index] = newMeasurement
+				if !replaced {
+					stored = append(stored, newMeasurement)
+				}
+			}
+
+			thesis.Measurements.Store(sender, stored)
+		}
+
+		for _, measurement := range measurements {
+			if measurement == nil {
+				continue
+			}
+
+			found, _ := thesis.Symbols.LoadOrStore(measurement.Symbol, &Symbol{})
+			symbol, ok := found.(*Symbol)
+
+			if !ok || symbol == nil {
+				symbol = &Symbol{}
+				thesis.Symbols.Store(measurement.Symbol, symbol)
+			}
+
+			replaced := false
+
+			for index, stored := range symbol.Measurements {
+				if stored != nil && stored.Source == measurement.Source && stored.Peer == measurement.Peer {
+					symbol.Measurements[index] = measurement
 					replaced = true
+					break
 				}
 			}
 
 			if !replaced {
-				stored = append(stored, newMeasurement)
+				symbol.Measurements = append(symbol.Measurements, measurement)
+			}
+
+			if ready {
+				symbol.Stamp(sender)
 			}
 		}
-
-		thesis.Measurements.Store(sender, stored)
 	}
 
 	if ready {
-		thesis.Readiness.Stamp(SourceType(measurements[0].Source))
+		thesis.Readiness.Stamp(sender)
 		thesis.Fanout(sender)
 	}
 
 	return nil
+}
+
+type tradeCursor struct {
+	at      time.Time
+	tradeID int64
+}
+
+type tickerCursor struct {
+	at     time.Time
+	symbol string
 }
 
 /*
@@ -242,26 +288,37 @@ source has already seen. This is used to fan out new tickers to subscribers.
 */
 func (thesis *Thesis) MarketTickers(source SourceType) []kraken.TickerData {
 	out := make([]kraken.TickerData, 0)
-	at := time.Time{}
-	cursor := time.Time{}
+	latestAt := time.Time{}
+	cursorAt := time.Time{}
+	cursorSymbol := ""
+
 	stored, ok := thesis.Measured.Load(source + "tickers")
 
 	if ok {
-		cursor = stored.(time.Time)
+		if tc, ok := stored.(tickerCursor); ok {
+			cursorAt = tc.at
+			cursorSymbol = tc.symbol
+		} else if t, ok := stored.(time.Time); ok {
+			cursorAt = t
+		}
 	}
 
 	thesis.Tickers.Range(func(key, value any) bool {
 		if tickerSlice, ok := value.([]kraken.TickerData); ok {
 			for _, ticker := range tickerSlice {
-				if !ticker.Timestamp.After(cursor) {
+				if ticker.Timestamp.Before(cursorAt) {
+					continue
+				}
+
+				if ticker.Timestamp.Equal(cursorAt) && cursorSymbol != "" && ticker.Symbol == cursorSymbol {
 					continue
 				}
 
 				out = append(out, ticker)
 
-				if ticker.Timestamp.After(at) {
-					thesis.Measured.Store(source+"tickers", ticker.Timestamp)
-					at = ticker.Timestamp
+				if ticker.Timestamp.After(latestAt) || (ticker.Timestamp.Equal(latestAt) && ticker.Symbol != "") {
+					thesis.Measured.Store(source+"tickers", tickerCursor{at: ticker.Timestamp, symbol: ticker.Symbol})
+					latestAt = ticker.Timestamp
 				}
 			}
 		}
@@ -274,26 +331,39 @@ func (thesis *Thesis) MarketTickers(source SourceType) []kraken.TickerData {
 
 func (thesis *Thesis) MarketTrades(source SourceType) []kraken.TradeData {
 	out := make([]kraken.TradeData, 0)
-	at := time.Time{}
-	cursor := time.Time{}
+	latestAt := time.Time{}
+	var latestID int64
+	cursorAt := time.Time{}
+	var cursorID int64
+
 	stored, ok := thesis.Measured.Load(source + "trades")
 
 	if ok {
-		cursor = stored.(time.Time)
+		if tc, ok := stored.(tradeCursor); ok {
+			cursorAt = tc.at
+			cursorID = tc.tradeID
+		} else if t, ok := stored.(time.Time); ok {
+			cursorAt = t
+		}
 	}
 
 	thesis.Trades.Range(func(key, value any) bool {
 		if tradeSlice, ok := value.([]kraken.TradeData); ok {
 			for _, trade := range tradeSlice {
-				if !trade.Timestamp.After(cursor) {
+				if trade.Timestamp.Before(cursorAt) {
+					continue
+				}
+
+				if trade.Timestamp.Equal(cursorAt) && trade.TradeID != 0 && trade.TradeID <= cursorID {
 					continue
 				}
 
 				out = append(out, trade)
 
-				if trade.Timestamp.After(at) {
-					thesis.Measured.Store(source+"trades", trade.Timestamp)
-					at = trade.Timestamp
+				if trade.Timestamp.After(latestAt) || (trade.Timestamp.Equal(latestAt) && trade.TradeID > latestID) {
+					thesis.Measured.Store(source+"trades", tradeCursor{at: trade.Timestamp, tradeID: trade.TradeID})
+					latestAt = trade.Timestamp
+					latestID = trade.TradeID
 				}
 			}
 		}

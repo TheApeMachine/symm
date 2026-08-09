@@ -46,8 +46,8 @@ func TestMeasure(t *testing.T) {
 		thesis.AppendMeasurements(types.SourceToxicity, provisional, false)
 		So(provisional, ShouldHaveLength, 1)
 		So(provisional[0].At, ShouldResemble, base)
-		So(provisional[0].Sample(types.MetricTouchQuantity, types.SideBuy).Normalized,
-			ShouldBeNil)
+		So(*provisional[0].Sample(types.MetricTouchQuantity, types.SideBuy).Normalized,
+			ShouldEqual, 1.0)
 
 		firstTrade := toxicityTrade(91, "sell", 100, 2, base.Add(time.Second))
 		secondTrade := toxicityTrade(92, "buy", 101, 3, base.Add(2*time.Second))
@@ -61,7 +61,7 @@ func TestMeasure(t *testing.T) {
 			postAt := base.Add(3 * time.Second)
 			books.books["BTC/USD"] = toxicityBook(99, 101, 7, 6, postAt)
 			measurements := signal.Measure(thesis)
-			So(measurements, ShouldHaveLength, 2)
+			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
 			So(measurement.ObservedFrom, ShouldResemble, base)
 			So(measurement.At, ShouldResemble, postAt)
@@ -84,7 +84,6 @@ func TestMeasure(t *testing.T) {
 				ShouldAlmostEqual, 0.1, 1e-12)
 			So(*measurement.Sample(types.MetricBestPrice, types.SideSell).Normalized,
 				ShouldEqual, 0.0)
-			So(measurements[1].At, ShouldResemble, postAt)
 		})
 	})
 

@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -65,7 +66,7 @@ func NewPlanner(
 		desk:        desk,
 	}
 
-	planner.thesis.Subscribe(types.SourcePlanner, planner.semaphore)
+	planner.thesis.Subscribe(types.SourceCategories, planner.semaphore)
 	planner.run()
 	return planner
 }
@@ -212,14 +213,20 @@ func (planner *Planner) admit(
 		return rejected, evidence, nil
 	}
 
-	if forecast.Confidence < planner.minimumConfidence {
+	minConfidence := planner.minimumConfidence
+
+	if system.Cfg != nil && system.Cfg.Planner != nil && system.Cfg.Planner.MinimumConfidence > 0 {
+		minConfidence = system.Cfg.Planner.MinimumConfidence
+	}
+
+	if forecast.Confidence < minConfidence {
 		rejected := types.NewDecision(types.ActionNothing, decision.Symbol)
 		rejected.Forecast = forecast
 		rejected.Confidence = forecast.Confidence
 		rejected.Reason = fmt.Sprintf(
-			"planner: forecast confidence %.6f is below configured minimum %.6f",
+			"planner: forecast confidence %.6f is below regulated minimum %.6f",
 			forecast.Confidence,
-			planner.minimumConfidence,
+			minConfidence,
 		)
 
 		return rejected, evidence, nil
@@ -288,6 +295,36 @@ func (planner *Planner) search(
 		return nil, err
 	}
 
+	causalAlpha := 1.0
+	searchIterations := len(rows)
+	exploration := math.Sqrt2
+
+	if system.Cfg != nil && system.Cfg.Planner != nil {
+		if system.Cfg.Planner.CausalAlpha > 0 {
+			causalAlpha = system.Cfg.Planner.CausalAlpha
+		}
+
+		if system.Cfg.Planner.MCTSIterations > 0 {
+			searchIterations = system.Cfg.Planner.MCTSIterations
+		}
+
+		if system.Cfg.Planner.ExplorationConstant > 0 {
+			exploration = system.Cfg.Planner.ExplorationConstant
+		}
+	}
+
+	mctsEngine := mcts.NewCausalMCTS(
+		NewCausalEngineAdapter(),
+		exploration,
+		causalAlpha,
+		0,
+		2,
+		3,
+		[]int{0, 1},
+		[]int{0, 1, 2},
+		false,
+	)
+
 	rootState := StrategyState{
 		Symbol:      symbol,
 		Condition:   latest[0],
@@ -296,9 +333,10 @@ func (planner *Planner) search(
 		CanEnter:    candidate.Action == types.ActionEnter,
 		GraphReward: graphReward,
 		Precision:   precision,
+		Horizon:     5,
 	}
-	searchIterations := len(rows)
-	searchRoot, action, err := planner.mctsEngine.Search(
+
+	searchRoot, action, err := mctsEngine.Search(
 		rootState, searchIterations, rows,
 	)
 

@@ -14,6 +14,17 @@ type Category struct {
 	Missing     []string     `json:"missing,omitempty"`
 }
 
+/*
+CategorySchema declares which measured value is fed to a category input.
+It carries identity only; nomagique owns extraction and classification.
+*/
+type CategorySchema struct {
+	Source   SourceType
+	Metric   MetricType
+	Side     MeasurementSide
+	Category CategoryType
+}
+
 type CategoryType string
 
 const (

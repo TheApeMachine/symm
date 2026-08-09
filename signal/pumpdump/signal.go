@@ -408,8 +408,11 @@ score. Before the volume-clock baselines mature, raw zero placeholders stay
 visible but cannot enter downstream normalized math.
 */
 func normalizedIgnitionEvidence(raw float64, ready bool) *float64 {
+	if !ready {
+		return nil
+	}
+
 	value := raw
-	_ = ready
 
 	return &value
 }

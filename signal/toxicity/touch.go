@@ -4,8 +4,8 @@ import (
 	"math"
 	"time"
 
-	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/google/uuid"
+	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -140,13 +140,6 @@ func toxicityMeasurement(
 	bidCancelledNormalized := normalizedTouchRatio(bidCancelled, previous.bid.quantity)
 	askCancelledNormalized := normalizedTouchRatio(askCancelled, previous.ask.quantity)
 
-	if tradeVolumeNormalized == nil || bidFillNormalized == nil || askFillNormalized == nil ||
-		bidPriceNormalized == nil || askPriceNormalized == nil ||
-		bidQuantityNormalized == nil || askQuantityNormalized == nil ||
-		bidRetreatNormalized == nil || askRetreatNormalized == nil ||
-		bidCancelledNormalized == nil || askCancelledNormalized == nil {
-	}
-
 	return &types.Measurement{
 		ID:           uuid.NewString(),
 		Source:       types.SourceToxicity,
@@ -219,15 +212,7 @@ normalizedTouchRatio expresses executed, remaining, retreating, and cancelled
 base quantity against the resting touch quantity that could actually change.
 */
 func normalizedTouchRatio(raw, previousQuantity float64) *float64 {
-	if raw < 0 || previousQuantity <= 0 || !finite(raw) || !finite(previousQuantity) {
-		return nil
-	}
-
 	value := raw / previousQuantity
-
-	if !finite(value) {
-		return nil
-	}
 
 	return &value
 }
@@ -237,16 +222,7 @@ normalizedTouchPrice is the side-specific log return between the two observed
 touches. An unchanged, valid price therefore produces a genuine zero.
 */
 func normalizedTouchPrice(currentPrice, previousPrice float64) *float64 {
-	if currentPrice <= 0 || previousPrice <= 0 || !finite(currentPrice) ||
-		!finite(previousPrice) {
-		return nil
-	}
-
 	value := math.Log(currentPrice / previousPrice)
-
-	if !finite(value) {
-		return nil
-	}
 
 	return &value
 }

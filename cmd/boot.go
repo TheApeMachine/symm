@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/regulator"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -36,13 +37,14 @@ needs to drive and observe the running system, and owns the shutdown of the
 resources Boot acquired.
 */
 type System struct {
-	Hub      *ui.Hub
-	Desk     *broker.Desk
-	Planner  *strategy.Planner
-	Analyzer *logic.Analyzer
-	Crypto   *trader.Crypto
-	Thesis   *types.Thesis
-	closers  []func() error
+	Hub       *ui.Hub
+	Desk      *broker.Desk
+	Planner   *strategy.Planner
+	Analyzer  *logic.Analyzer
+	Crypto    *trader.Crypto
+	Regulator *regulator.Solver
+	Thesis    *types.Thesis
+	closers   []func() error
 }
 
 /*
@@ -235,6 +237,16 @@ func Boot(
 
 	errnie.Debug("planner reported to be ready")
 
+	regulatorSolver := utils.NewWaiter[*regulator.Solver](regulator.NewSolver(
+		ctx,
+		uiChannel,
+		desk,
+	)).Wait()
+
+	regulatorSolver.Start(thesis)
+	errnie.Debug("regulator reported to be ready")
+	system.closers = append(system.closers, regulatorSolver.Close)
+
 	system.Hub = ui.NewHub(
 		ctx,
 		desk,
@@ -248,6 +260,7 @@ func Boot(
 	system.Planner = planner
 	system.Analyzer = analyzer
 	system.Crypto = crypto
+	system.Regulator = regulatorSolver
 
 	return system
 }

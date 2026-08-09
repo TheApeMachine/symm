@@ -105,6 +105,7 @@ func TestUpdate(t *testing.T) {
 		thesis.Resonance.Store(symbol, testResonanceReading(
 			thesis, symbol, 0.75, 0.5, []float64{0.2},
 		))
+		thesis.Readiness.Stamp(types.SourceResonance)
 		setCausalPrice(thesis, symbol, 110, firstAt.Add(time.Second))
 		err := solver.Update(thesis)
 

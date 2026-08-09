@@ -54,6 +54,37 @@ func TestAddEdge(t *testing.T) {
 }
 
 func TestInferStructuralEdges(t *testing.T) {
+	Convey("Given categories with conflicting evidence", t, func() {
+		at := time.Unix(1, 0).UTC()
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Categories.Store("BTC/USD", []types.Category{
+			{
+				Type:       types.CategoryAggressiveDrive,
+				Strength:   0.8,
+				Confidence: 0.9,
+				Supporting: []string{"drive"},
+			},
+			{
+				Type:       types.CategoryExhaustion,
+				Strength:   0.6,
+				Confidence: 0.7,
+				Opposing:   []string{"drive"},
+			},
+		})
+		graph := NewGraph(at)
+		NewSolver(nil, nil).extractCategoryNodes(thesis, graph)
+
+		err := NewSolver(nil, nil).inferStructuralEdges(thesis, graph)
+
+		Convey("It connects the category hypotheses directly", func() {
+			So(err, ShouldBeNil)
+			So(graph.Edges, ShouldHaveLength, 1)
+			So(graph.Edges[0].Relation, ShouldEqual, RelationContradicts)
+			So(graph.Edges[0].From, ShouldEqual, "cat:BTC/USD:aggressive_drive")
+			So(graph.Edges[0].To, ShouldEqual, "cat:BTC/USD:exhaustion")
+		})
+	})
+
 	Convey("Given canonical causal intervention and expectation nodes", t, func() {
 		at := time.Unix(1, 0).UTC()
 		graph := NewGraph(at)
@@ -346,14 +377,22 @@ func BenchmarkUpdate(b *testing.B) {
 
 	for index := range 256 {
 		symbol := "SIM" + strconv.Itoa(index) + "/USD"
-		thesis.Categories.Store(symbol, []types.Category{{
-			Symbol:     symbol,
-			Type:       types.CategoryForecastEdge,
-			Confidence: 0.8,
-			Strength:   0.5,
-			Supporting: []string{"sentiment:" + symbol + ":change"},
-			Opposing:   []string{"toxicity:" + symbol + ":intensity"},
-		}})
+		thesis.Categories.Store(symbol, []types.Category{
+			{
+				Symbol:     symbol,
+				Type:       types.CategoryForecastEdge,
+				Confidence: 0.8,
+				Strength:   0.5,
+				Supporting: []string{"sentiment:" + symbol + ":change"},
+			},
+			{
+				Symbol:     symbol,
+				Type:       types.CategoryExhaustion,
+				Confidence: 0.7,
+				Strength:   0.4,
+				Opposing:   []string{"sentiment:" + symbol + ":change"},
+			},
+		})
 		thesis.Resonance.Store(symbol, types.ResonanceReading{
 			Symbol:   symbol,
 			Surprise: 0.1,

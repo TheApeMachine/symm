@@ -95,7 +95,7 @@ require (
 	github.com/theapemachine/datura v1.2.9
 	github.com/theapemachine/errnie v1.2.6
 	github.com/theapemachine/nomagique v0.0.5
-	gonum.org/v1/gonum v0.17.0
+	gonum.org/v1/gonum v0.17.0 // indirect
 )
 
 replace (

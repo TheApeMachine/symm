@@ -7,11 +7,11 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
@@ -25,16 +25,11 @@ type Solver struct {
 	cancel   context.CancelFunc
 	recorder *audit.Recorder
 	coders   *sync.Map
+	samples  *sync.Map
+	reach    *sync.Map
+	schemas  *sync.Map
 	alpha    float64
 	ui       chan []byte
-}
-
-var coderPool = sync.Pool{
-	New: func() any {
-		return learning.NewResonanceManifold(
-			[]int{6, 12, 6}, 1, viper.GetFloat64("resonance.learning_rate"),
-		)
-	},
 }
 
 /*
@@ -48,11 +43,18 @@ func NewSolver(
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
+	if initialAlpha == 0 && system.Cfg != nil && system.Cfg.Resonance != nil {
+		initialAlpha = system.Cfg.Resonance.LearningRate
+	}
+
 	return &Solver{
 		ctx:      ctx,
 		cancel:   cancel,
 		recorder: recorder,
 		coders:   &sync.Map{},
+		samples:  &sync.Map{},
+		reach:    &sync.Map{},
+		schemas:  &sync.Map{},
 		alpha:    initialAlpha,
 		ui:       ui,
 	}
@@ -73,29 +75,27 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	features := make(map[string]map[string]float64)
 
-	thesis.Measurements.Range(func(_, value any) bool {
-		measurements, ok := value.([]*types.Measurement)
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbol, ok := value.(*types.Symbol)
 
-		if !ok {
+		if !ok || !symbol.SignalsMeasured() {
 			return true
 		}
 
-		for _, measurement := range measurements {
-			if measurement == nil || measurement.Symbol == "" {
-				continue
-			}
+		name := key.(string)
 
+		for _, measurement := range symbol.Measurements {
 			for key, sample := range measurement.Metrics {
-				if sample.Normalized == nil || math.IsNaN(*sample.Normalized) || math.IsInf(*sample.Normalized, 0) {
+				if sample.Normalized == nil {
 					continue
 				}
 
-				if features[measurement.Symbol] == nil {
-					features[measurement.Symbol] = make(map[string]float64)
+				if features[name] == nil {
+					features[name] = make(map[string]float64)
 				}
 
-				identity := string(measurement.Source) + ":" + measurement.Symbol + ":" + key
-				features[measurement.Symbol][identity] = *sample.Normalized
+				identity := string(measurement.Source) + ":" + name + ":" + key
+				features[name][identity] = *sample.Normalized
 			}
 		}
 
@@ -111,61 +111,120 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	for symbol, readings := range features {
 		group.Go(func() error {
-			schema := make([]string, 0, len(readings))
+			var masterSchema []string
 
-			for identity := range readings {
-				schema = append(schema, identity)
+			if rawSchema, loaded := solver.schemas.Load(symbol); loaded {
+				masterSchema = rawSchema.([]string)
 			}
 
-			sort.Strings(schema)
-			input := make([]float64, len(schema))
+			schemaMap := make(map[string]bool, len(masterSchema))
 
-			for index, identity := range schema {
-				input[index] = readings[identity]
+			for _, id := range masterSchema {
+				schemaMap[id] = true
+			}
+
+			schemaUpdated := false
+
+			for identity := range readings {
+				if !schemaMap[identity] {
+					masterSchema = append(masterSchema, identity)
+					schemaMap[identity] = true
+					schemaUpdated = true
+				}
+			}
+
+			if schemaUpdated || len(masterSchema) == 0 {
+				sort.Strings(masterSchema)
+				solver.schemas.Store(symbol, masterSchema)
+			}
+
+			inputDim := len(masterSchema)
+
+			if inputDim == 0 {
+				return nil
+			}
+
+			input := make([]float64, inputDim)
+
+			for index, identity := range masterSchema {
+				if val, found := readings[identity]; found {
+					input[index] = val
+				}
 			}
 
 			found, ok := solver.coders.Load(symbol)
+			var coder *learning.ResonanceManifold
 
-			if !ok {
-				found, ok = coderPool.Get().(*learning.ResonanceManifold)
+			if ok && found != nil {
+				if existingCoder, valid := found.(*learning.ResonanceManifold); valid {
+					layers, _, _ := existingCoder.WireSnapshot()
 
-				if !ok || found == nil {
+					if len(layers) > 0 && len(layers[0].State) == inputDim {
+						coder = existingCoder
+					}
+				}
+			}
+
+			if coder == nil {
+				coder = learning.NewResonanceManifold(
+					[]int{inputDim, inputDim * 2, inputDim}, 1, solver.alpha,
+				)
+
+				if coder == nil {
 					return errnie.Error(errnie.Err(
 						errnie.UnprocessableContent,
-						"resonance: failed to get predictive coding manifold from pool",
+						"resonance: failed to construct predictive coding manifold",
 						errors.New("invalid resonance manifold"),
 					))
 				}
 
-				solver.coders.Store(symbol, found)
-			}
-
-			coder, ok := found.(*learning.ResonanceManifold)
-
-			if !ok || coder == nil {
-				return errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"resonance: predictive coding manifold has an invalid type",
-					errors.New("invalid resonance manifold"),
-				))
+				solver.coders.Store(symbol, coder)
 			}
 
 			if _, err := coder.SettleFromBatch(input, nil); err != nil {
 				return err
 			}
 
+			var count uint64
+			if val, loaded := solver.samples.Load(symbol); loaded {
+				count = val.(uint64) + 1
+			} else {
+				count = 1
+			}
+			solver.samples.Store(symbol, count)
+
 			layers, surprise, energy := coder.WireSnapshot()
+			latent := coder.LatentState()
+
+			var embedding []float64
+			if len(latent) >= 2 {
+				embedding = latent[:2]
+			} else {
+				embedding = latent
+			}
+
+			forecast, verdict := solver.buildForecast(coder, symbol)
+
+			skillEvidence := 0.0
+			if skill, ok := coder.TaskSkill(); ok {
+				skillEvidence = skill
+			}
 
 			reading := types.ResonanceReading{
-				Stage:    "resonance",
-				Source:   types.SourceResonance,
-				Symbol:   symbol,
-				At:       thesis.At,
-				Surprise: surprise,
-				Energy:   energy,
-				Latent:   coder.LatentState(),
-				Layers:   layers,
-				Alpha:    solver.alpha,
+				Stage:         "resonance",
+				Source:        types.SourceResonance,
+				Symbol:        symbol,
+				At:            thesis.At,
+				Surprise:      surprise,
+				Energy:        energy,
+				Latent:        latent,
+				Embedding:     embedding,
+				Layers:        layers,
+				Forecast:      forecast,
+				Verdict:       verdict,
+				Alpha:         solver.alpha,
+				Samples:       count,
+				SkillEvidence: skillEvidence,
 			}
 
 			thesis.Resonance.Store(symbol, reading)
@@ -190,6 +249,82 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	thesis.Readiness.Stamp(types.SourceResonance)
 	thesis.Fanout(types.SourceResonance)
 	return nil
+}
+
+/*
+buildForecast queries nomagique's task readiness and rollout methods.
+If nomagique reports that the task head is not ready (TaskSkill or TaskPrecision missing, or RLS unready),
+it returns an observing verdict and a nil forecast without fabricating confidence metrics.
+*/
+func (solver *Solver) buildForecast(
+	coder *learning.ResonanceManifold, symbol string,
+) (*types.ResonanceForecast, types.ResonanceVerdict) {
+	verdict := types.ResonanceVerdict{
+		Learning:       "observing",
+		Tuning:         "recursive least squares",
+		LearningHealth: 0,
+		TuningHealth:   1,
+	}
+
+	skill, hasSkill := coder.TaskSkill()
+	precision, hasPrecision := coder.TaskPrecision()
+
+	if !hasSkill || !hasPrecision {
+		return nil, verdict
+	}
+
+	currentReach := 1
+	if val, loaded := solver.reach.Load(symbol); loaded {
+		currentReach = val.(int)
+	}
+
+	horizon, newReach := coder.DynamicHorizon(precision, currentReach, 8)
+	solver.reach.Store(symbol, newReach)
+
+	rlsOutputs, err := coder.RolloutTaskForecast(horizon)
+
+	if err != nil || len(rlsOutputs) < horizon || !rlsOutputs[0].Ready {
+		return nil, verdict
+	}
+
+	predictions := coder.RolloutTaskPrediction(horizon)
+
+	if len(predictions) < horizon {
+		return nil, verdict
+	}
+
+	retention := coder.RolloutRetention(horizon)
+
+	if len(retention) < horizon {
+		return nil, verdict
+	}
+
+	rls := rlsOutputs[0]
+	fc, err := types.NewResonanceForecast(
+		predictions[:horizon], retention[:horizon], horizon, skill,
+	)
+
+	if err != nil {
+		return nil, verdict
+	}
+
+	if err := fc.SetPredictiveDistribution(rls.Scale, rls.DegreesOfFreedom, rls.Ready); err != nil {
+		return nil, verdict
+	}
+
+	verdict.Learning = "predicting"
+	verdict.LearningHealth = 1
+	verdict.Conviction = skill
+
+	if fc.ExpectedReturn > 0 {
+		verdict.Direction = 1
+	}
+
+	if fc.ExpectedReturn < 0 {
+		verdict.Direction = -1
+	}
+
+	return fc, verdict
 }
 
 /*

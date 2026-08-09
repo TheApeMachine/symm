@@ -337,7 +337,7 @@ func TestNormalizedBranching(t *testing.T) {
 		})
 
 		Convey("It should refuse a ratio whose cascade size diverges", func() {
-			So(normalizedBranching(criticalBranch), ShouldBeNil)
+			So(normalizedBranching(1), ShouldBeNil)
 			So(normalizedBranching(1.5), ShouldBeNil)
 			So(normalizedBranching(-0.1), ShouldBeNil)
 		})

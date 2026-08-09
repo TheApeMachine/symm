@@ -70,8 +70,20 @@ export const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
 		target: "to",
 	});
 
+	for (const edge of frame.edges ?? []) {
+		if (typeof edge.from !== "string" || typeof edge.to !== "string") {
+			continue;
+		}
+
+		graph.addEdge(edge.from, edge.to, {
+			...edge,
+			from: edge.from,
+			to: edge.to,
+		});
+	}
+
 	for (const node of Object.values(frame.nodes ?? {})) {
-		if (typeof node.id !== "string" || node.id === "") {
+		if (typeof node.id !== "string" || graph.nodes[node.id] === undefined) {
 			continue;
 		}
 
@@ -84,18 +96,6 @@ export const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
 			strength: node.strength,
 			symbol: node.symbol,
 			value: node.value,
-		});
-	}
-
-	for (const edge of frame.edges ?? []) {
-		if (typeof edge.from !== "string" || typeof edge.to !== "string") {
-			continue;
-		}
-
-		graph.addEdge(edge.from, edge.to, {
-			...edge,
-			from: edge.from,
-			to: edge.to,
 		});
 	}
 

@@ -1,6 +1,8 @@
 package strategy
 
 import (
+	"math"
+
 	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/types"
@@ -9,43 +11,41 @@ import (
 const (
 	ActionNothing float64 = 0.0
 	ActionEnter   float64 = 1.0
+	ActionHold    float64 = 2.0
 )
 
 /*
-StrategyState is the binary state evaluated in causal target units.
+StrategyState is the sequential trajectory state evaluated over a multi-horizon window.
 
-Treatment is the actual intervention level observed by the causal model.
-Standing aside intervenes at zero. Both actions terminate immediately, so the
-search compares the two do-expectations without adding a second decision rule.
-CanEnter carries the predictive model's admission result into the feasible
-action set. GraphReward carries relational evidence on the realized-return
-scale, keeping dimensionless confidence out of the causal reward column.
-Precision is the causal estimate's own reliability in [0,1]; it discounts the
-reward ApplyAction assigns to entering, so a search run on a shaky causal
-estimate is naturally biased toward standing aside rather than trusting an
-uncertain do-expectation at full strength.
+Treatment is the intervention level observed by the causal SCM model.
+Horizon describes the maximum trajectory depth (e.g., H = 5 steps).
+Step tracks current search depth within the rollout.
+CumulativeReward is the total discounted causal expectation accumulated over the trajectory.
+CanEnter carries the admission check into the initial decision node.
 */
 type StrategyState struct {
-	Symbol      string
-	Condition   float64
-	Contagion   float64
-	Treatment   float64
-	Reward      float64
-	Decided     bool
-	CanEnter    bool
-	GraphReward float64
-	Precision   float64
+	Symbol           string
+	Condition        float64
+	Contagion        float64
+	Treatment        float64
+	Reward           float64
+	CumulativeReward float64
+	Horizon          int
+	Step             int
+	Decided          bool
+	CanEnter         bool
+	GraphReward      float64
+	Precision        float64
 }
 
 /*
-strategyAction translates only the search actions the live planner is allowed
-to publish. Internal trajectory completion and unknown results remain absent.
+strategyAction maps search actions to published decisions.
 */
 func strategyAction(action float64) types.Action {
 	switch action {
 	case ActionNothing:
 		return types.ActionNothing
-	case ActionEnter:
+	case ActionEnter, ActionHold:
 		return types.ActionEnter
 	}
 
@@ -53,23 +53,35 @@ func strategyAction(action float64) types.Action {
 }
 
 func (strategyState StrategyState) IsTerminal() bool {
-	return strategyState.Decided
+	if strategyState.Horizon <= 0 {
+		return strategyState.Decided
+	}
+
+	return strategyState.Decided || strategyState.Step >= strategyState.Horizon
 }
 
 func (strategyState StrategyState) GetReward() float64 {
-	return strategyState.Reward
+	return strategyState.CumulativeReward
 }
 
 func (strategyState StrategyState) GetPossibleActions() []float64 {
-	if strategyState.Decided {
+	if strategyState.IsTerminal() {
 		return nil
 	}
 
-	if !strategyState.CanEnter {
-		return []float64{ActionNothing}
+	if strategyState.Step == 0 {
+		if !strategyState.CanEnter {
+			return []float64{ActionNothing}
+		}
+
+		return []float64{ActionNothing, ActionEnter}
 	}
 
-	return []float64{ActionNothing, ActionEnter}
+	if strategyState.Treatment > 0 {
+		return []float64{ActionNothing, ActionHold}
+	}
+
+	return []float64{ActionNothing}
 }
 
 func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
@@ -79,15 +91,34 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 		return next
 	}
 
-	next.Decided = true
-	next.Reward = 0
+	next.Step++
 
 	switch action {
 	case ActionEnter:
 		next.Treatment = strategyState.Treatment
-		next.Reward = strategyState.GraphReward * strategyState.Precision
+		discount := math.Pow(0.95, float64(next.Step-1))
+		stepReward := strategyState.GraphReward * strategyState.Precision * discount
+		next.Reward = stepReward
+		next.CumulativeReward += stepReward
+	case ActionHold:
+		discount := math.Pow(0.95, float64(next.Step-1))
+		stepReward := strategyState.GraphReward * strategyState.Precision * discount
+		next.Reward = stepReward
+		next.CumulativeReward += stepReward
 	case ActionNothing:
 		next.Treatment = 0
+		next.Reward = 0
+		next.Decided = true
+	}
+
+	maxHorizon := next.Horizon
+
+	if maxHorizon <= 0 {
+		maxHorizon = 1
+	}
+
+	if next.Step >= maxHorizon {
+		next.Decided = true
 	}
 
 	return next
@@ -98,21 +129,17 @@ func (strategyState StrategyState) ToVector() []float64 {
 		strategyState.Condition,
 		strategyState.Contagion,
 		strategyState.Treatment,
-		strategyState.Reward,
+		strategyState.CumulativeReward,
 	}
 }
 
 /*
 GetInterventionLevel is the value the SCM's treatment variable is held at when
 the search asks what an action would do.
-
-Enter uses the actual treatment observed by the causal model. Do Not Enter uses
-the user-defined standing-aside intervention do(0). The action enum itself is
-never passed to the causal model as a treatment value.
 */
 func (strategyState StrategyState) GetInterventionLevel(action float64) float64 {
 	switch action {
-	case ActionEnter:
+	case ActionEnter, ActionHold:
 		return strategyState.Treatment
 	default:
 		return 0.0
@@ -120,9 +147,7 @@ func (strategyState StrategyState) GetInterventionLevel(action float64) float64 
 }
 
 /*
-mctsBranches reports every root child the search actually explored, so the
-decision trace carries the real visit counts and mean rewards rather than a
-value comparison computed separately from the search.
+mctsBranches reports every root child the search actually explored.
 */
 func mctsBranches(root *mcts.Node) []types.DecisionMCTSBranch {
 	if root == nil {

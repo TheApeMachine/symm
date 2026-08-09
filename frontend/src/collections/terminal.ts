@@ -10,7 +10,8 @@ export type TerminalSurface =
 	| "journal"
 	| "xray"
 	| "cortex"
-	| "allocation";
+	| "allocation"
+	| "regulator";
 
 export { DEFAULT_FOCUS_SYMBOL };
 

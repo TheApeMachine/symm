@@ -28,7 +28,7 @@ func TestUpdate(t *testing.T) {
 	viper.Set("resonance.learning_rate", testAlpha)
 
 	Convey("Given an invalid configured learning pace", t, func() {
-		solver := NewSolver(t.Context(), nil, nil, 0)
+		solver := NewSolver(t.Context(), nil, nil, -1.0)
 		err := solver.Update(types.NewThesis(t.Context(), nil))
 
 		Convey("It should fail before settling market state", func() {
@@ -43,22 +43,29 @@ func TestUpdate(t *testing.T) {
 		fourth := -0.2
 		fifth := 0.3
 		sixth := -0.4
-		notFinite := math.Inf(1)
+		seventh := 0.6
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
-			Source: types.SourceLiquidity,
-			Symbol: "BTC/USD",
-			Metrics: map[string]types.MetricSample{
-				"second":   {Normalized: &second},
-				"first":    {Normalized: &first},
-				"third":    {Normalized: &third},
-				"fourth":   {Normalized: &fourth},
-				"fifth":    {Normalized: &fifth},
-				"sixth":    {Normalized: &sixth},
-				"raw_only": {Raw: 100},
-				"invalid":  {Normalized: &notFinite},
+		thesis.Symbols.Store("BTC/USD", &types.Symbol{
+			Readiness: types.Readiness{
+				Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
+				Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
+				Sentiment: true, Toxicity: true,
 			},
-		}})
+			Measurements: []*types.Measurement{{
+				Source: types.SourceLiquidity,
+				Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					"second":   {Normalized: &second},
+					"first":    {Normalized: &first},
+					"third":    {Normalized: &third},
+					"fourth":   {Normalized: &fourth},
+					"fifth":    {Normalized: &fifth},
+					"sixth":    {Normalized: &sixth},
+					"seventh":  {Normalized: &seventh},
+					"raw_only": {Raw: 100},
+				},
+			}},
+		})
 		solver := NewSolver(t.Context(), make(chan []byte, 1), nil, testAlpha)
 
 		err := solver.Update(thesis)
@@ -77,10 +84,14 @@ func TestUpdate(t *testing.T) {
 			So(reading.Symbol, ShouldEqual, "BTC/USD")
 			So(reading.Alpha, ShouldEqual, testAlpha)
 			So(reading.Layers, ShouldHaveLength, 3)
-			So(reading.Layers[0].State, ShouldHaveLength, 6)
-			So(reading.Layers[1].State, ShouldHaveLength, 12)
-			So(reading.Layers[2].State, ShouldHaveLength, 6)
-			So(reading.Latent, ShouldHaveLength, 6)
+			So(reading.Layers[0].State, ShouldHaveLength, 7)
+			So(reading.Layers[1].State, ShouldHaveLength, 14)
+			So(reading.Layers[2].State, ShouldHaveLength, 7)
+			So(reading.Latent, ShouldHaveLength, 7)
+			So(reading.Embedding, ShouldHaveLength, 2)
+			So(reading.Samples, ShouldEqual, 1)
+			So(reading.Verdict.Learning, ShouldEqual, "observing")
+			So(reading.Forecast, ShouldBeNil)
 			So(math.IsNaN(reading.Surprise), ShouldBeFalse)
 			So(math.IsNaN(reading.Energy), ShouldBeFalse)
 		})
@@ -103,32 +114,31 @@ func TestUpdate(t *testing.T) {
 		bitcoin := 0.25
 		ethereum := -0.25
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{
-			{
-				Source: types.SourceLiquidity,
-				Symbol: "BTC/USD",
-				Metrics: map[string]types.MetricSample{
-					"first":  {Normalized: &bitcoin},
-					"second": {Normalized: &bitcoin},
-					"third":  {Normalized: &bitcoin},
-					"fourth": {Normalized: &bitcoin},
-					"fifth":  {Normalized: &bitcoin},
-					"sixth":  {Normalized: &bitcoin},
+		for symbol, value := range map[string]float64{
+			"BTC/USD": bitcoin,
+			"ETH/USD": ethereum,
+		} {
+			value := value
+			thesis.Symbols.Store(symbol, &types.Symbol{
+				Readiness: types.Readiness{
+					Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
+					Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
+					Sentiment: true, Toxicity: true,
 				},
-			},
-			{
-				Source: types.SourceLiquidity,
-				Symbol: "ETH/USD",
-				Metrics: map[string]types.MetricSample{
-					"first":  {Normalized: &ethereum},
-					"second": {Normalized: &ethereum},
-					"third":  {Normalized: &ethereum},
-					"fourth": {Normalized: &ethereum},
-					"fifth":  {Normalized: &ethereum},
-					"sixth":  {Normalized: &ethereum},
-				},
-			},
-		})
+				Measurements: []*types.Measurement{{
+					Source: types.SourceLiquidity,
+					Symbol: symbol,
+					Metrics: map[string]types.MetricSample{
+						"first":  {Normalized: &value},
+						"second": {Normalized: &value},
+						"third":  {Normalized: &value},
+						"fourth": {Normalized: &value},
+						"fifth":  {Normalized: &value},
+						"sixth":  {Normalized: &value},
+					},
+				}},
+			})
+		}
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
 		err := solver.Update(thesis)
@@ -149,13 +159,20 @@ func TestUpdate(t *testing.T) {
 
 	Convey("Given no normalized measurements", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Measurements.Store(types.SourceLiquidity, []*types.Measurement{{
-			Source: types.SourceLiquidity,
-			Symbol: "BTC/USD",
-			Metrics: map[string]types.MetricSample{
-				"midpoint": {Raw: 100},
+		thesis.Symbols.Store("BTC/USD", &types.Symbol{
+			Readiness: types.Readiness{
+				Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
+				Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
+				Sentiment: true, Toxicity: true,
 			},
-		}})
+			Measurements: []*types.Measurement{{
+				Source: types.SourceLiquidity,
+				Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					"midpoint": {Raw: 100},
+				},
+			}},
+		})
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
 		err := solver.Update(thesis)
@@ -179,3 +196,42 @@ func TestClose(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkUpdate(b *testing.B) {
+	first := 0.25
+	second := -0.5
+	third := 0.1
+	fourth := -0.2
+	fifth := 0.3
+	sixth := -0.4
+	seventh := 0.6
+
+	ctx := b.Context()
+	thesis := types.NewThesis(ctx, nil)
+	thesis.Symbols.Store("BTC/USD", &types.Symbol{
+		Readiness: types.Readiness{
+			Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
+			Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
+			Sentiment: true, Toxicity: true,
+		},
+		Measurements: []*types.Measurement{{
+			Source: types.SourceLiquidity,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				"second":  {Normalized: &second},
+				"first":   {Normalized: &first},
+				"third":   {Normalized: &third},
+				"fourth":  {Normalized: &fourth},
+				"fifth":   {Normalized: &fifth},
+				"sixth":   {Normalized: &sixth},
+				"seventh": {Normalized: &seventh},
+			},
+		}},
+	})
+	solver := NewSolver(ctx, nil, nil, testAlpha)
+
+	for b.Loop() {
+		_ = solver.Update(thesis)
+	}
+}
+

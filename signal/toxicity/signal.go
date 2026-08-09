@@ -93,9 +93,15 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return measurements
 	}
 
-	trades := thesis.MarketTrades(types.SourceToxicity)
+	tickers := thesis.MarketTickers(types.SourceToxicity)
 	toxicity := utils.Measurements(thesis, types.SourceToxicity)
 	symbolSet := make(map[string]struct{})
+
+	for _, ticker := range tickers {
+		if ticker.Symbol != "" {
+			symbolSet[ticker.Symbol] = struct{}{}
+		}
+	}
 
 	thesis.Measurements.Range(func(_, value any) bool {
 		rows, ok := value.([]*types.Measurement)
@@ -113,11 +119,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return true
 	})
 
-	for _, trade := range trades {
-		if validTrade(trade) {
-			symbolSet[trade.Symbol] = struct{}{}
+	thesis.Trades.Range(func(key, _ any) bool {
+		if symbol, ok := key.(string); ok {
+			symbolSet[symbol] = struct{}{}
 		}
-	}
+		return true
+	})
 
 	symbols := make([]string, 0, len(symbolSet))
 
@@ -152,6 +159,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			if !current.asOf.After(previous.asOf) {
 				return nil
 			}
+
+			stored, _ := thesis.Trades.Load(symbol)
+			trades, _ := stored.([]kraken.TradeData)
 
 			bracketed := bracketedTrades(
 				trades,

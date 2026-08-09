@@ -343,6 +343,8 @@ func TestCryptoRun(t *testing.T) {
 					"ready":          true,
 					"historyRows":    rows,
 					"treatmentLevel": 1.0,
+					"precision":      1.0,
+					"samples":        100,
 				})
 
 				for _, source := range []types.SourceType{

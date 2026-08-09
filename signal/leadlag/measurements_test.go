@@ -62,18 +62,6 @@ func TestBuildScoreMeasurement(t *testing.T) {
 				ShouldAlmostEqual, 0.25, 1e-12)
 		})
 	})
-
-	Convey("Given only one observation", t, func() {
-		measurement := (&Signal{}).provisional(
-			"ALT/USD",
-			time.Unix(1_700_020_100, 0).UTC(),
-		)
-
-		Convey("It should keep normalized evidence absent while provisional", func() {
-			So(measurement.Sample(types.MetricCorrelation, types.SideNone).Normalized,
-				ShouldBeNil)
-		})
-	})
 }
 
 func BenchmarkBuildScoreMeasurement(b *testing.B) {

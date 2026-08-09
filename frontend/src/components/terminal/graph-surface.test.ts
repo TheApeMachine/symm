@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	adaptGraph,
 	graphFramePlan,
 	graphStructureKey,
 	type MarketGraphEdge,
@@ -17,6 +18,20 @@ const frame = (): MarketGraphFrame & {
 		beta: { id: "beta", value: -0.1, confidence: 0.6 },
 	},
 	edges: [{ from: "alpha", to: "beta", relation: "supports", weight: 0.4 }],
+});
+
+describe("adaptGraph", () => {
+	it("renders the relational graph without isolated conclusions", () => {
+		const current = frame();
+		current.nodes.isolated = { id: "isolated", value: 1 };
+
+		const graph = adaptGraph(current);
+
+		expect(graph.getNodeCount()).toBe(2);
+		expect(graph.getEdgeCount()).toBe(1);
+		expect(graph.nodes.isolated).toBeUndefined();
+		expect(graph.nodes.alpha?.data[0]?.value).toBe(0.2);
+	});
 });
 
 describe("graphFramePlan", () => {

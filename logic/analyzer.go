@@ -87,7 +87,21 @@ func NewAnalyzer(
 		semaphore: make(chan struct{}, 1),
 	}
 
-	analyzer.thesis.Subscribe(types.SourceCategories, analyzer.semaphore)
+	for _, source := range []types.SourceType{
+		types.SourceCorrelation,
+		types.SourceCVD,
+		types.SourceDepthFlow,
+		types.SourceExhaustion,
+		types.SourceHawkes,
+		types.SourceLeadLag,
+		types.SourceLiquidity,
+		types.SourcePumpDump,
+		types.SourceSentiment,
+		types.SourceToxicity,
+	} {
+		analyzer.thesis.Subscribe(source, analyzer.semaphore)
+	}
+
 	analyzer.run()
 	return analyzer
 }

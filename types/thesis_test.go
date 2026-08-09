@@ -33,10 +33,10 @@ func TestThesisAppendMeasurements(t *testing.T) {
 
 		thesis.AppendMeasurements(SourceCorrelation, nil, true)
 
-		Convey("Then it should not stamp readiness without evidence", func() {
-			So(thesis.Stamped(SourceCorrelation), ShouldBeFalse)
+		Convey("Then it should stamp readiness and notify subscribers", func() {
+			So(thesis.Stamped(SourceCorrelation), ShouldBeTrue)
 			So(len(correlation), ShouldEqual, 0)
-			So(len(cvd), ShouldEqual, 0)
+			So(len(cvd), ShouldEqual, 1)
 		})
 	})
 
@@ -245,7 +245,7 @@ func TestThesisReset(t *testing.T) {
 	Convey("Given a completed Thesis with ready measurement evidence", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		toxicity := make(chan struct{}, 1)
-		thesis.Subscribe(SourceToxicity, toxicity)
+		thesis.Subscribe(SourceCorrelation, toxicity)
 		measurements := []*Measurement{{
 			Source: SourceToxicity,
 			Symbol: "BTC/USD",
@@ -269,6 +269,7 @@ func TestThesisReset(t *testing.T) {
 			SourceLiquidity,
 			SourcePumpDump,
 			SourceSentiment,
+			SourceToxicity,
 			SourceCategories,
 			SourceCognition,
 			SourceManifold,

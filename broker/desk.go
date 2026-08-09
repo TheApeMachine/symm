@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -97,6 +98,17 @@ func NewDesk(
 
 	desk.run()
 	return desk
+}
+
+/*
+Cash returns the current cash balance in quote currency.
+*/
+func (desk *Desk) Cash() *decimal.Decimal {
+	if desk == nil || desk.balance == nil {
+		return nil
+	}
+
+	return desk.balance.Cash()
 }
 
 func (desk *Desk) run() {

@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -663,47 +664,52 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) e
 		return true
 	})
 
-	// 3. Evaluate Category Supporting and Opposing lists
+	// 3. Relate categories through the evidence they actually share.
 	thesis.Categories.Range(func(key, value interface{}) bool {
 		symbol := key.(string)
 		categories := value.([]types.Category)
 
-		for _, cat := range categories {
-			catNodeID := fmt.Sprintf("cat:%s:%s", symbol, string(cat.Type))
+		for _, category := range categories {
+			for _, peer := range categories {
+				if category.Type == peer.Type {
+					continue
+				}
 
-			weight, err := magnitudeWeight(math.Abs(cat.Strength))
+				relation := RelationType("")
+				reason := ""
 
-			if err != nil {
-				inferenceErr = fmt.Errorf("category weight for %s: %w", catNodeID, err)
+				for _, evidence := range category.Supporting {
+					if slices.Contains(peer.Opposing, evidence) {
+						relation = RelationContradicts
+						reason = "category evidence conflicts on " + evidence
+						break
+					}
 
-				return false
-			}
+					if relation == "" && slices.Contains(peer.Supporting, evidence) {
+						relation = RelationRedundantWith
+						reason = "categories share supporting evidence " + evidence
+					}
+				}
 
-			for _, supp := range cat.Supporting {
-				targetNodeID := fmt.Sprintf("cat:%s:%s", symbol, supp)
+				if relation == "" {
+					continue
+				}
+
+				weight, err := agreementWeight(category.Strength, peer.Strength)
+
+				if err != nil {
+					inferenceErr = fmt.Errorf("category weight for %s: %w", category.Type, err)
+					return false
+				}
 
 				graph.AddEdge(&Edge{
-					From:       catNodeID,
-					To:         targetNodeID,
-					Relation:   RelationSupports,
+					From:       fmt.Sprintf("cat:%s:%s", symbol, category.Type),
+					To:         fmt.Sprintf("cat:%s:%s", symbol, peer.Type),
+					Relation:   relation,
 					Weight:     weight,
-					Confidence: cat.Confidence,
+					Confidence: category.Confidence * peer.Confidence,
 					At:         graph.At,
-					Reason:     "category explicit supporting list",
-				})
-			}
-
-			for _, opp := range cat.Opposing {
-				targetNodeID := fmt.Sprintf("cat:%s:%s", symbol, opp)
-
-				graph.AddEdge(&Edge{
-					From:       catNodeID,
-					To:         targetNodeID,
-					Relation:   RelationContradicts,
-					Weight:     weight,
-					Confidence: cat.Confidence,
-					At:         graph.At,
-					Reason:     "category explicit opposing list",
+					Reason:     reason,
 				})
 			}
 		}

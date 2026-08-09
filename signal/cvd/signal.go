@@ -517,10 +517,17 @@ Price-response families need at least two response prices; balance, strength,
 and net fraction are defined by the first observed aggressor split.
 */
 func normalizedFlowMetric(
-	_ types.MetricType,
+	metricType types.MetricType,
 	raw float64,
-	_ int,
+	evidenceCount int,
 ) *float64 {
+	switch metricType {
+	case types.MetricAbsorption, types.MetricDrive, types.MetricStarvation:
+		if evidenceCount < minimumPriceResponseObservations {
+			return nil
+		}
+	}
+
 	value := raw
 
 	return &value

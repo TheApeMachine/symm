@@ -25,4 +25,5 @@ const (
 	SourceEvaluator   SourceType = "evaluator"
 	SourcePlanner     SourceType = "planner"
 	SourceTrader      SourceType = "trader"
+	SourceRegulator   SourceType = "regulator"
 )

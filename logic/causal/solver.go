@@ -149,36 +149,56 @@ func (solver *Solver) measure(
 		prediction, forecastReady = resonance.Forecast.Step(0)
 	}
 
-	if solver.price == nil {
-		return nil
-	}
-
-	ticker := solver.price.Tick(symbol)
-
-	if ticker == nil {
-		return nil
-	}
-
 	midpoint := 0.0
+	tickerAt := thesis.At
 
-	if ticker.Bid != nil && ticker.Ask != nil {
-		bid := ticker.Bid.Float64()
-		ask := ticker.Ask.Float64()
+	if solver.price != nil {
+		ticker := solver.price.Tick(symbol)
 
-		if bid > 0 && ask >= bid {
-			midpoint = (bid + ask) / 2
+		if ticker != nil {
+			tickerAt = ticker.Timestamp
+
+			if ticker.Bid != nil && ticker.Ask != nil {
+				bid := ticker.Bid.Float64()
+				ask := ticker.Ask.Float64()
+
+				if bid > 0 && ask >= bid {
+					midpoint = (bid + ask) / 2
+				}
+			}
+
+			if midpoint == 0 && ticker.Last != nil && ticker.Last.Sign() > 0 {
+				midpoint = ticker.Last.Float64()
+			}
 		}
 	}
 
-	if midpoint == 0 && ticker.Last != nil && ticker.Last.Sign() > 0 {
-		midpoint = ticker.Last.Float64()
+	if midpoint == 0 && thesis != nil {
+		tickers := thesis.MarketTickers(types.SourceCausal)
+
+		if len(tickers) > 0 {
+			latest := tickers[len(tickers)-1]
+			tickerAt = latest.Timestamp
+
+			if latest.Bid.Sign() > 0 && latest.Ask.Sign() > 0 && latest.Ask.Cmp(latest.Bid) >= 0 {
+				bid := latest.Bid.Float64()
+				ask := latest.Ask.Float64()
+				midpoint = (bid + ask) / 2
+			} else if latest.Last.Sign() > 0 {
+				midpoint = latest.Last.Float64()
+			}
+		}
+	}
+
+	if midpoint == 0 {
+		return nil
 	}
 
 	row, rows, resolved, err := solver.observe(
 		symbol,
 		[3]float64{resonance.Energy, resonance.Surprise, prediction},
 		midpoint,
-		ticker.Timestamp,
+		tickerAt,
 		forecastReady,
 	)
 
