@@ -334,7 +334,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				RegimePrefix:     winner,
 				Winner:           winner,
 				WinnerClass:      winner,
-				Ready:            winner != "",
 				Confidence:       classResult.Highest,
 				ClassConfidence:  classResult.Highest,
 				Contrast:         contrast,

@@ -11,7 +11,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic/causal"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
@@ -315,7 +314,6 @@ func TestCryptoRun(t *testing.T) {
 				})
 				thesis.Cognition.Store("SIM1/USD", types.Cognition{
 					Symbol:     "SIM1/USD",
-					Ready:      true,
 					Confidence: 0.95,
 				})
 				marketGraph := logicgraph.NewGraph(thesis.At)
@@ -329,7 +327,7 @@ func TestCryptoRun(t *testing.T) {
 				})
 				thesis.Graphs.Store("market_graph", marketGraph)
 
-				rows := make([][]float64, causal.MinimumSearchRows)
+				rows := make([][]float64, 100)
 
 				for index := range rows {
 					treatment := float64(index % 2)

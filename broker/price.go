@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
@@ -299,37 +298,6 @@ func (price *Price) Quantity(
 }
 
 /*
-Fee returns the taker fee for a symbol.
-*/
-func (price *Price) Fee(symbol string) *kraken.TradeVolumeFee {
-	found, ok := price.fees.Load(price.api.Normalizer().Name(symbol))
-
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"fee not found",
-			nil,
-		))
-
-		return nil
-	}
-
-	fee, ok := found.(kraken.TradeVolumeFee)
-
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"invalid fee type",
-			nil,
-		))
-
-		return nil
-	}
-
-	return &fee
-}
-
-/*
 Tick returns the latest cached ticker row for a symbol.
 */
 func (price *Price) Tick(symbol string) *kraken.TickerData {
@@ -340,60 +308,4 @@ func (price *Price) Tick(symbol string) *kraken.TickerData {
 	}
 
 	return value.(*kraken.TickerData)
-}
-
-/*
-GetFees loads TradeVolume taker fee tiers for the requested symbols and makes
-them executable for later quantity, fee, and PnL calculations.
-*/
-func (price *Price) GetFees(symbols []string) error {
-	errnie.Info(fmt.Sprintf("getting fees for %d symbols", len(symbols)))
-
-	tradeVolumeResult, err := price.api.TradeVolume(symbols)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"trade volume: failed to fetch",
-			err,
-		))
-	}
-
-	for symbol, fee := range tradeVolumeResult.Fees {
-		price.fees.Store(price.api.Normalizer().Name(symbol), fee)
-	}
-
-	price.status = types.READY
-	return nil
-}
-
-func (price *Price) WithFee(
-	symbol string,
-	amount *decimal.Decimal,
-	direction Direction,
-) *decimal.Decimal {
-	fee := price.Fee(symbol)
-
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"symbol":    symbol,
-		"amount":    amount,
-		"direction": direction,
-		"fee":       fee,
-	})); err != nil {
-		return nil
-	}
-
-	feeAmount := decimal.ExactMul(amount, decimal.ExactDiv(
-		fee.Fee, decimal.NewFromInt64(100),
-	))
-	amount = amount.SetScale(max(amount.GetScale(), feeAmount.GetScale()))
-
-	switch direction {
-	case BUY:
-		amount = amount.Add(feeAmount)
-	case SELL:
-		amount = amount.Sub(feeAmount)
-	}
-
-	return amount
 }

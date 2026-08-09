@@ -313,6 +313,7 @@ func (field causalField) node(
 	at time.Time,
 	causalMap map[string]any,
 	probabilities []float64,
+	precision float64,
 ) (*Node, bool, error) {
 	fieldValue, found := causalMap[field.value].(float64)
 
@@ -341,9 +342,22 @@ func (field causalField) node(
 		Kind:       KindCausal,
 		Value:      fieldValue,
 		Strength:   strength,
-		Confidence: probabilities[field.probabilityIndex],
+		Confidence: probabilities[field.probabilityIndex] * precision,
 		At:         at,
 	}, true, nil
+}
+
+func causalPrecision(symbol string, causalMap map[string]any) (float64, error) {
+	precision, ok := causalMap["precision"].(float64)
+
+	if !ok || math.IsNaN(precision) || math.IsInf(precision, 0) ||
+		precision < 0 || precision > 1 {
+		return 0, fmt.Errorf(
+			"causal precision for %s must be within [0,1]", symbol,
+		)
+	}
+
+	return precision, nil
 }
 
 func causalProbabilities(symbol string, causalMap map[string]any) ([]float64, error) {
@@ -398,8 +412,21 @@ func (solver *Solver) extractCausalNodes(thesis *types.Thesis, graph *Graph) err
 			return false
 		}
 
+		precision, err := causalPrecision(symbol, causalMap)
+
+		if err != nil {
+			extractErr = err
+			return false
+		}
+
 		for _, field := range causalFields {
-			node, found, err := field.node(symbol, thesis.At, causalMap, probabilities)
+			node, found, err := field.node(
+				symbol,
+				thesis.At,
+				causalMap,
+				probabilities,
+				precision,
+			)
 
 			if err != nil {
 				extractErr = err

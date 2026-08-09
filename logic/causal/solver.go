@@ -7,15 +7,12 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 	"golang.org/x/sync/errgroup"
 )
-
-// MinimumSearchRows is the least number of aligned causal observations the
-// live MCTS contract accepts for a decision.
-const MinimumSearchRows = 12
 
 /*
 Option configures the Causal solver.
@@ -139,12 +136,6 @@ func (solver *Solver) measure(
 		)
 	}
 
-	// A warm predictive-coding reading is still a causal result: the symbol
-	// is not ready for search. Publishing that state lets Planner complete an
-	// explicit ActionNothing decision while Resonance keeps learning across
-	// subsequent theses.
-	thesis.Causal.Store(symbol, map[string]any{"ready": false})
-
 	if resonance.Forecast == nil {
 		return nil
 	}
@@ -216,7 +207,7 @@ func (solver *Solver) measure(
 	}
 	rows := solver.observe(symbol, row)
 
-	output, ready, err := solver.getPearl(symbol).Measure(algorithm.PearlInput{
+	output, resolved, err := solver.getPearl(symbol).Measure(algorithm.PearlInput{
 		Key:          symbol,
 		Row:          row,
 		Contagion:    resonance.Surprise,
@@ -232,17 +223,29 @@ func (solver *Solver) measure(
 		)
 	}
 
-	searchReady := ready && len(rows) >= MinimumSearchRows
-	causalOutput := map[string]any{"ready": searchReady}
+	precision, err := solver.estimatePrecision(rows)
 
-	if ready {
+	if err != nil {
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"causal: precision estimation failed: "+err.Error(),
+			err,
+		)
+	}
+
+	causalOutput := map[string]any{
+		"historyRows":    rows,
+		"precision":      precision,
+		"samples":        len(rows),
+		"treatmentLevel": prediction,
+	}
+
+	if resolved {
 		causalOutput = output.Outputs()
-		causalOutput["ready"] = searchReady
-
-		if searchReady {
-			causalOutput["historyRows"] = rows
-			causalOutput["treatmentLevel"] = prediction
-		}
+		causalOutput["historyRows"] = rows
+		causalOutput["precision"] = precision
+		causalOutput["samples"] = len(rows)
+		causalOutput["treatmentLevel"] = prediction
 	}
 
 	thesis.Causal.Store(symbol, causalOutput)
@@ -262,7 +265,7 @@ func (solver *Solver) observe(symbol string, row []float64) [][]float64 {
 
 	stored, _ := solver.rows.LoadOrStore(symbol, [][]float64{})
 	rows := stored.([][]float64)
-	rows = append(rows, append([]float64(nil), row...))
+	rows = append(rows, row)
 	rowWidth := len(row)
 	capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
 
@@ -271,13 +274,40 @@ func (solver *Solver) observe(symbol string, row []float64) [][]float64 {
 	}
 
 	solver.rows.Store(symbol, rows)
-	out := make([][]float64, len(rows))
+	return append([][]float64(nil), rows...)
+}
 
-	for index, retained := range rows {
-		out[index] = append([]float64(nil), retained...)
+/*
+estimatePrecision reports the weakest finite-sample precision required to
+identify a treatment effect: both the treatment and target must vary. It uses
+the same predictive-scale precision measure as nomagique's online
+standardizer, so precision rises continuously instead of crossing a row-count
+gate.
+*/
+func (solver *Solver) estimatePrecision(rows [][]float64) (float64, error) {
+	treatment := adaptive.NewStandardizer()
+	target := adaptive.NewStandardizer()
+
+	for _, row := range rows {
+		if solver.config.Treatment < 0 || solver.config.Treatment >= len(row) ||
+			solver.config.Target < 0 || solver.config.Target >= len(row) {
+			return 0, errnie.Err(
+				errnie.Validation,
+				"causal: treatment and target must fit retained row width",
+				nil,
+			)
+		}
+
+		if _, err := treatment.Measure(row[solver.config.Treatment]); err != nil {
+			return 0, err
+		}
+
+		if _, err := target.Measure(row[solver.config.Target]); err != nil {
+			return 0, err
+		}
 	}
 
-	return out
+	return math.Min(treatment.Precision(), target.Precision()), nil
 }
 
 /*

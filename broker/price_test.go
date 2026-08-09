@@ -203,52 +203,6 @@ func TestExitValue(t *testing.T) {
 	})
 }
 
-func TestPriceWithFee(t *testing.T) {
-	Convey("Setup", t, func() {
-		price, _ := newPriceSurface(t, "TEST5")
-
-		Convey("Given some ticker data", func() {
-			ticker := &kraken.TickerData{
-				Symbol: "TEST5",
-				Ask:    decimal.NewFromFloat64(70000.00),
-				Bid:    decimal.NewFromFloat64(69950.00),
-			}
-
-			price.Update(ticker)
-
-			Convey("When the price with fee is calculated for buying", func() {
-				priceWithFee := price.WithFee("TEST5", ticker.Ask, BUY)
-
-				Convey("It should return the price with the taker fee applied", func() {
-					So(priceWithFee.Float64(), ShouldAlmostEqual, 70175, 1e-12)
-				})
-			})
-
-			Convey("When the price with fee is calculated for selling", func() {
-				priceWithFee := price.WithFee("TEST5", ticker.Bid, SELL)
-
-				Convey("It should return the price with the taker fee applied", func() {
-					So(priceWithFee.Float64(), ShouldAlmostEqual, 69775.125, 1e-12)
-				})
-			})
-		})
-	})
-}
-
-func TestPriceFee(t *testing.T) {
-	Convey("Setup", t, func() {
-		price, _ := newPriceSurface(t, "TEST6")
-
-		Convey("When the fee is requested for a symbol", func() {
-			fee := price.Fee("TEST6")
-
-			Convey("It should return the taker fee for that symbol", func() {
-				So(fee.Fee.String(), ShouldEqual, "0.25")
-			})
-		})
-	})
-}
-
 func TestPriceTick(t *testing.T) {
 	Convey("Setup", t, func() {
 		price, _ := newPriceSurface(t, "TEST7")
@@ -409,34 +363,6 @@ func BenchmarkPriceExitValue(b *testing.B) {
 
 	for b.Loop() {
 		price.ExitValue(pair, holding)
-	}
-}
-
-func BenchmarkPriceWithFee(b *testing.B) {
-	price, _ := newPriceSurface(b, "TEST12")
-
-	ticker := &kraken.TickerData{
-		Symbol: "TEST12",
-		Ask:    decimal.NewFromFloat64(130000.00),
-		Bid:    decimal.NewFromFloat64(129950.00),
-	}
-
-	price.Update(ticker)
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		price.WithFee("TEST12", ticker.Ask, BUY)
-	}
-}
-
-func BenchmarkPriceFee(b *testing.B) {
-	price, _ := newPriceSurface(b, "TEST13")
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		price.Fee("TEST13")
 	}
 }
 

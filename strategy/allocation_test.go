@@ -31,7 +31,6 @@ func TestPlannerClassifyAllocation(t *testing.T) {
 		thesis.Manifold.CoherenceMag2 = 0.20
 		thesis.Cognition.Store("BTC/USD", types.Cognition{
 			Symbol:     "BTC/USD",
-			Ready:      true,
 			Confidence: 0.80,
 		})
 		decision := types.NewDecision(types.ActionEnter, "BTC/USD")
@@ -61,7 +60,6 @@ func TestPlannerClassifyAllocation(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Cognition.Store("BTC/USD", types.Cognition{
 			Symbol:     "BTC/USD",
-			Ready:      true,
 			Confidence: 0.80,
 		})
 		decision := types.NewDecision(types.ActionEnter, "BTC/USD")
@@ -76,13 +74,31 @@ func TestPlannerClassifyAllocation(t *testing.T) {
 		})
 	})
 
-	Convey("Given an entry without a ready cognition reading", t, func() {
+	Convey("Given an entry without a cognition reading", t, func() {
 		planner := &Planner{}
 		thesis := types.NewThesis(t.Context(), nil)
 		decision := types.NewDecision(types.ActionEnter, "BTC/USD")
 		decision.Forecast = forecastFixture(t, 0.90)
 
-		Convey("It should fail instead of silently treating missing evidence as normal", func() {
+		Convey("It should remain in normal capacity without inventing cognitive support", func() {
+			err := planner.classifyAllocation(thesis, decision)
+
+			So(err, ShouldBeNil)
+			So(decision.BasinConfidence, ShouldEqual, 0.0)
+			So(decision.CognitiveLead, ShouldEqual, 0.0)
+			So(decision.AllocationClass, ShouldEqual, allocationClassNormal)
+			So(decision.Opportunity, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given an entry with malformed cognition", t, func() {
+		planner := &Planner{}
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Cognition.Store("BTC/USD", "invalid")
+		decision := types.NewDecision(types.ActionEnter, "BTC/USD")
+		decision.Forecast = forecastFixture(t, 0.90)
+
+		Convey("It should reject the invalid evidence", func() {
 			err := planner.classifyAllocation(thesis, decision)
 
 			So(err, ShouldNotBeNil)
@@ -107,7 +123,6 @@ func BenchmarkPlannerClassifyAllocation(b *testing.B) {
 	thesis := types.NewThesis(b.Context(), nil)
 	thesis.Cognition.Store("BTC/USD", types.Cognition{
 		Symbol:     "BTC/USD",
-		Ready:      true,
 		Confidence: 0.80,
 	})
 	decision := types.NewDecision(types.ActionEnter, "BTC/USD")

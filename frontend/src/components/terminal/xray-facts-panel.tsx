@@ -71,17 +71,6 @@ export const XrayFactsPanel = () => {
 							</Typography.Span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-(--f3)">classified</span>
-							<Typography.Span
-								data-paint="ready"
-								data-paint-absent="—"
-								data-paint-class="true:text-(--warn) false:text-(--f3)"
-								className="text-right"
-							>
-								—
-							</Typography.Span>
-						</div>
-						<div className="flex justify-between gap-3">
 							<span className="text-(--f3)">ambiguous</span>
 							<Typography.Span
 								data-paint="ambiguous"

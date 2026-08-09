@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -65,58 +64,8 @@ func TestStrategyStateGetPossibleActions(t *testing.T) {
 	})
 }
 
-func TestStrategyStateSelectAction(t *testing.T) {
-	Convey("Given weak causal uplift and graph evidence", t, func() {
-		engine := strategyMCTSFixture()
-		rows := strategyRowsFixture(1)
-		state := StrategyState{Treatment: 1, CanEnter: true}
-
-		Convey("It should enter when the causal intervention improves return", func() {
-			action, err := state.SelectAction(engine, rows)
-
-			So(err, ShouldBeNil)
-			So(action, ShouldEqual, ActionEnter)
-		})
-
-		Convey("It should stand aside when contradiction outweighs the uplift", func() {
-			reward, err := (graphEvidence{contradicts: 1}).Reward(rows, 3)
-			So(err, ShouldBeNil)
-			state.GraphReward = reward
-			action, err := state.SelectAction(engine, rows)
-
-			So(err, ShouldBeNil)
-			So(action, ShouldEqual, ActionNothing)
-		})
-
-		Convey("It should admit support that outweighs weak negative uplift", func() {
-			rows = strategyRowsFixture(-1)
-			reward, err := (graphEvidence{supports: 1}).Reward(rows, 3)
-			So(err, ShouldBeNil)
-			state.GraphReward = reward
-			action, err := state.SelectAction(engine, rows)
-
-			So(err, ShouldBeNil)
-			So(action, ShouldEqual, ActionEnter)
-		})
-	})
-}
-
-func strategyMCTSFixture() *mcts.CausalMCTS {
-	return mcts.NewCausalMCTS(
-		NewCausalEngineAdapter(),
-		math.Sqrt2,
-		1,
-		mctsMinimumCausalRows,
-		2,
-		3,
-		[]int{0, 1},
-		[]int{0, 1, 2},
-		false,
-	)
-}
-
 func strategyRowsFixture(treatmentDirection float64) [][]float64 {
-	rows := make([][]float64, mctsMinimumCausalRows)
+	rows := make([][]float64, 12)
 
 	for index := range rows {
 		treatment := float64(index % 2)
@@ -137,20 +86,5 @@ func BenchmarkStrategyStateApplyAction(b *testing.B) {
 
 	for b.Loop() {
 		_ = state.ApplyAction(ActionEnter)
-	}
-}
-
-func BenchmarkStrategyStateSelectAction(b *testing.B) {
-	engine := strategyMCTSFixture()
-	rows := strategyRowsFixture(1)
-	state := StrategyState{Treatment: 1, CanEnter: true}
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_, err := state.SelectAction(engine, rows)
-
-		if err != nil {
-			b.Fatal(err)
-		}
 	}
 }

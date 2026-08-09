@@ -47,3 +47,30 @@ export const useDecisionsScopeSymbol = (): string | undefined =>
 		readDecisionsScopeSymbol,
 		readDecisionsScopeSymbol,
 	);
+
+/*
+pendingFocusSymbol is a one-shot arrival flag, separate from the persistent
+scope above. A dashboard row navigating in sets both: the scope so the side
+rail already shows the right candidate, and this so the matching DecisionChain
+expands and scrolls into view itself the first time its own painted symbol
+matches — then clears it, so later live repaints of the same row don't keep
+forcing it back open after the trader has collapsed or picked a different one.
+*/
+let pendingFocusSymbol: string | undefined;
+
+export const setDecisionsPendingFocus = (symbol: string): void => {
+	pendingFocusSymbol = symbol;
+};
+
+/*
+consumeDecisionsPendingFocus returns and clears the pending focus symbol if it
+matches, so only the first DecisionChain to observe the match claims it.
+*/
+export const consumeDecisionsPendingFocus = (symbol: string): boolean => {
+	if (pendingFocusSymbol === undefined || pendingFocusSymbol !== symbol) {
+		return false;
+	}
+
+	pendingFocusSymbol = undefined;
+	return true;
+};

@@ -11,13 +11,12 @@ import (
 )
 
 func TestUpdate(t *testing.T) {
-	Convey("Given completed upstream stages with causal search still warming", t, func() {
+	Convey("Given completed upstream stages without a causal estimate", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Readiness.Stamp(types.SourceCategories)
 		thesis.Readiness.Stamp(types.SourceResonance)
 		thesis.Readiness.Stamp(types.SourceCausal)
 		thesis.Readiness.Stamp(types.SourceCognition)
-		thesis.Causal.Store("BTC/USD", map[string]any{"ready": false})
 		solver := NewSolver(nil, nil)
 
 		err := solver.Update(thesis)
@@ -160,7 +159,7 @@ func TestInferStructuralEdges(t *testing.T) {
 }
 
 func TestExtractCausalNodes(t *testing.T) {
-	Convey("Given causal outputs with Pearl confidence", t, func() {
+	Convey("Given causal outputs with channel confidence and sample precision", t, func() {
 		at := time.Unix(1, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = at
@@ -169,6 +168,7 @@ func TestExtractCausalNodes(t *testing.T) {
 			"associationScore":  0.2,
 			"doExpectation":     0.25,
 			"interventionScore": 0.4,
+			"precision":         0.5,
 			"probabilities":     []float64{0.12, 0.58, 0.2, 0.1},
 		})
 		graph := NewGraph(at)
@@ -177,14 +177,14 @@ func TestExtractCausalNodes(t *testing.T) {
 		err := solver.extractCausalNodes(thesis, graph)
 		So(err, ShouldBeNil)
 
-		Convey("It should carry channel-specific confidence onto each causal node", func() {
+		Convey("It should attenuate channel confidence by estimator precision", func() {
 			node, found := graph.Nodes["causal:BTC/USD:doExpectation"]
 			association := graph.Nodes["causal:BTC/USD:association"]
 
 			So(found, ShouldBeTrue)
-			So(node.Confidence, ShouldEqual, 0.58)
+			So(node.Confidence, ShouldAlmostEqual, 0.29)
 			So(node.Strength, ShouldEqual, 0.4)
-			So(association.Confidence, ShouldEqual, 0.12)
+			So(association.Confidence, ShouldAlmostEqual, 0.06)
 			So(association.Confidence, ShouldNotEqual, node.Confidence)
 		})
 	})
@@ -365,6 +365,7 @@ func BenchmarkUpdate(b *testing.B) {
 			"doExpectation":     0.1,
 			"intervention":      0.1,
 			"interventionScore": 0.1,
+			"precision":         0.8,
 			"probabilities":     []float64{0.3, 0.4, 0.2, 0.1},
 			"uplift":            0.1,
 			"upliftScore":       0.1,

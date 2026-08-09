@@ -226,15 +226,15 @@ export type CausalReading = {
 };
 
 /*
-CausalFrame mirrors logic.CausalOutcome published on each thesis tick. A row
-that is not ready yet carries only its symbol and that flag.
+CausalFrame mirrors the causal estimate published for each aligned observation.
+Precision reports finite-sample support without withholding an estimate.
 */
 export type CausalFrame = CausalReading & {
 	source?: string;
 	symbol: string;
 	at?: string;
 	samples?: number;
-	ready?: boolean;
+	precision?: number;
 	hypothesis?: string;
 	treatment?: string;
 	controls?: string[];

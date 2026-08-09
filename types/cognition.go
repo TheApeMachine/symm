@@ -6,10 +6,10 @@ import "time"
 CognitionBranch is one node in the sensory prefix tree exported for Cortex.
 */
 type CognitionBranch struct {
-	ID          int     `json:"id"`
-	ParentID    int     `json:"parentId"`
-	Token       string  `json:"token"`
-	Prefix      string  `json:"prefix"`
+	ID       int    `json:"id"`
+	ParentID int    `json:"parentId"`
+	Token    string `json:"token"`
+	Prefix   string `json:"prefix"`
 	// Key is the machine-readable sequence address (encoded tokens joined by
 	// "_"). Prefix is display text with arrow separators and cannot be split
 	// back into tokens, so beam highlighting matches on Key.
@@ -23,7 +23,7 @@ type CognitionBranch struct {
 CognitionBeam is one scored beam-search path exported for Cortex.
 */
 type CognitionBeam struct {
-	Sequence string  `json:"sequence"`
+	Sequence string `json:"sequence"`
 	// Key is the machine-readable form of Sequence, addressing the same nodes
 	// CognitionBranch.Key does.
 	Key   string  `json:"key"`
@@ -81,7 +81,6 @@ type Cognition struct {
 	RegimePrefix     string             `json:"regimePrefix"`
 	Winner           string             `json:"winner"`
 	WinnerClass      string             `json:"winnerClass,omitempty"`
-	Ready            bool               `json:"ready"`
 	Error            string             `json:"error,omitempty"`
 	Confidence       float64            `json:"confidence"`
 	ClassConfidence  float64            `json:"classConfidence,omitempty"`

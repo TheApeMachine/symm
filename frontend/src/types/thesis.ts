@@ -19,21 +19,13 @@ export type DecisionTrace = {
 		graphFactor: number;
 	};
 	mcts: {
-		energy: number;
-		surprise: number;
 		treatment: number;
-		roundTripCost: number;
-		holdDiscount: number;
-		hawkesSpectralRadius: number;
-		holdPropagation: number;
-		causalRows: number;
-		minimumCausalRows: number;
-		iterations: number;
-		horizonSteps: number;
-		searchable: boolean;
-		attempted: boolean;
+		precision: number;
+		standingAside: number;
+		enter: number;
+		utility: number;
+		canEnter: boolean;
 		recommendedAction?: Action;
-		error?: string;
 	};
 };
 
@@ -64,6 +56,7 @@ export interface Decision {
 	adverseSelection: string;
 	uncertainty: number;
 	confidence: number;
+	causalPrecision: number;
 	opportunityMargin: number;
 	cognitiveLead: number;
 	basinConfidence: number;

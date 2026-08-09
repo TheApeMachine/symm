@@ -106,19 +106,21 @@ func (analyzer *Analyzer) run() {
 func (analyzer *Analyzer) process(in any) {
 	thesis, ok := in.(*types.Thesis)
 
-	if ok {
-		// Each solver reads outputs stamped by its predecessors. Running this chain
-		// concurrently mixes prior-epoch readiness with current-epoch values.
-		for _, solver := range analyzer.solvers {
-			if err := solver.Update(thesis); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to update analyzer: "+err.Error(),
-					err,
-				))
+	if !ok || thesis == nil || thesis.Stamped(types.SourceGraph) {
+		return
+	}
 
-				continue
-			}
+	// Each solver reads outputs stamped by its predecessors. Running this chain
+	// concurrently mixes prior-epoch readiness with current-epoch values.
+	for _, solver := range analyzer.solvers {
+		if err := solver.Update(thesis); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to update analyzer: "+err.Error(),
+				err,
+			))
+
+			return
 		}
 	}
 

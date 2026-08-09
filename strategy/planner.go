@@ -41,7 +41,7 @@ func NewPlanner(
 		NewCausalEngineAdapter(),
 		math.Sqrt2,
 		1,
-		mctsMinimumCausalRows,
+		0,
 		2,
 		3,
 		[]int{0, 1},
@@ -167,7 +167,7 @@ func (planner *Planner) decisions(thesis *types.Thesis) ([]types.Decision, error
 				err,
 			))
 
-			decision = types.NewDecision(types.ActionNothing, symbol)
+			decision.Action = types.ActionNothing
 			decision.Reason = err.Error()
 		}
 
@@ -205,7 +205,13 @@ func (planner *Planner) admit(
 
 	if forecast.Confidence < planner.minimumConfidence {
 		rejected := types.NewDecision(types.ActionNothing, decision.Symbol)
+		rejected.Forecast = forecast
 		rejected.Confidence = confidence
+		rejected.Reason = fmt.Sprintf(
+			"planner: forecast confidence %.6f is below configured minimum %.6f",
+			forecast.Confidence,
+			planner.minimumConfidence,
+		)
 
 		return rejected, evidence, nil
 	}
@@ -226,40 +232,31 @@ func (planner *Planner) search(
 	symbol string,
 	causal map[string]any,
 ) (*types.Decision, error) {
-	ready, readyOK := causal["ready"].(bool)
-
-	if readyOK && !ready {
-		decision := types.NewDecision(types.ActionNothing, symbol)
-		decision.Reason = "planner: causal evidence is still warming"
-		return decision, nil
-	}
-
 	rows, rowsOK := causal["historyRows"].([][]float64)
 	treatment, treatmentOK := causal["treatmentLevel"].(float64)
+	precision, precisionOK := causal["precision"].(float64)
+	samples, samplesOK := causal["samples"].(int)
 
-	if !readyOK || !ready || !rowsOK ||
-		len(rows) < planner.mctsEngine.MinRows || !treatmentOK ||
-		math.IsNaN(treatment) || math.IsInf(treatment, 0) {
-		decision := types.NewDecision(types.ActionNothing, symbol)
-		decision.Reason = "planner: causal search inputs are incomplete"
-		return decision, nil
+	if !rowsOK || len(rows) == 0 || !treatmentOK || !precisionOK ||
+		!samplesOK || samples != len(rows) ||
+		math.IsNaN(treatment) || math.IsInf(treatment, 0) ||
+		math.IsNaN(precision) || math.IsInf(precision, 0) ||
+		precision < 0 || precision > 1 {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"planner: complete finite causal estimate required",
+			nil,
+		)
 	}
 
 	latest := rows[len(rows)-1]
 
 	if len(latest) != 4 {
-		decision := types.NewDecision(types.ActionNothing, symbol)
-		decision.Reason = "planner: causal row shape is invalid"
-		return decision, nil
-	}
-
-	storedCognition, found := thesis.Cognition.Load(symbol)
-	cognition, valid := storedCognition.(types.Cognition)
-
-	if !found || !valid || !cognition.Ready {
-		decision := types.NewDecision(types.ActionNothing, symbol)
-		decision.Reason = "planner: cognition is still warming"
-		return decision, nil
+		return nil, errnie.Err(
+			errnie.Validation,
+			"planner: causal row shape is invalid",
+			nil,
+		)
 	}
 
 	candidate, evidence, err := planner.admit(
@@ -277,7 +274,7 @@ func (planner *Planner) search(
 		return nil, err
 	}
 
-	root := StrategyState{
+	rootState := StrategyState{
 		Symbol:      symbol,
 		Condition:   latest[0],
 		Contagion:   latest[1],
@@ -285,7 +282,10 @@ func (planner *Planner) search(
 		CanEnter:    candidate.Action == types.ActionEnter,
 		GraphReward: graphReward,
 	}
-	action, err := root.SelectAction(planner.mctsEngine, rows)
+	searchIterations := len(rows)
+	searchRoot, action, err := planner.mctsEngine.Search(
+		rootState, searchIterations, rows,
+	)
 
 	if err != nil {
 		return nil, err
@@ -301,12 +301,32 @@ func (planner *Planner) search(
 		)
 	}
 
+	candidate.CausalPrecision = precision
+	candidate.Trace = &types.DecisionTrace{
+		MCTS: types.DecisionMCTSTrace{
+			Treatment:         treatment,
+			Precision:         precision,
+			Iterations:        searchIterations,
+			Branches:          mctsBranches(searchRoot),
+			RecommendedAction: decisionAction,
+		},
+	}
+
 	if decisionAction == types.ActionEnter {
 		return candidate, nil
 	}
 
-	decision := types.NewDecision(decisionAction, symbol)
-	decision.Confidence = candidate.Confidence
+	candidate.Action = decisionAction
 
-	return decision, nil
+	if candidate.Reason != "" {
+		return candidate, nil
+	}
+
+	if precision == 0 {
+		candidate.Reason = "planner: causal estimate has zero precision"
+		return candidate, nil
+	}
+
+	candidate.Reason = "planner: causal search selected standing aside"
+	return candidate, nil
 }

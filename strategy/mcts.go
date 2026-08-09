@@ -1,19 +1,14 @@
 package strategy
 
 import (
-	"fmt"
-	"math"
-
 	"github.com/theapemachine/nomagique/causal"
 	"github.com/theapemachine/nomagique/mcts"
-	logiccausal "github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/types"
 )
 
 const (
-	ActionNothing         float64 = 0.0
-	ActionEnter           float64 = 1.0
-	mctsMinimumCausalRows         = logiccausal.MinimumSearchRows
+	ActionNothing float64 = 0.0
+	ActionEnter   float64 = 1.0
 )
 
 /*
@@ -120,63 +115,36 @@ func (strategyState StrategyState) GetInterventionLevel(action float64) float64 
 }
 
 /*
-SelectAction compares the two terminal interventions in causal target units.
-Because either action ends this state immediately, their do-expectations are
-the complete action values; a rollout cannot add another state transition.
+mctsBranches reports every root child the search actually explored, so the
+decision trace carries the real visit counts and mean rewards rather than a
+value comparison computed separately from the search.
 */
-func (strategyState StrategyState) SelectAction(
-	engine *mcts.CausalMCTS,
-	rows [][]float64,
-) (float64, error) {
-	if !strategyState.CanEnter {
-		return ActionNothing, nil
+func mctsBranches(root *mcts.Node) []types.DecisionMCTSBranch {
+	if root == nil {
+		return nil
 	}
 
-	if engine == nil || engine.CausalEngine == nil {
-		return 0, fmt.Errorf("strategy: causal search engine required")
+	branches := make([]types.DecisionMCTSBranch, 0, len(root.Children))
+
+	for _, child := range root.Children {
+		if child == nil {
+			continue
+		}
+
+		meanReward := 0.0
+
+		if child.Visits > 0 {
+			meanReward = child.TotalReward / float64(child.Visits)
+		}
+
+		branches = append(branches, types.DecisionMCTSBranch{
+			Action:     strategyAction(child.Action),
+			Visits:     child.Visits,
+			MeanReward: meanReward,
+		})
 	}
 
-	standingAside, err := engine.CausalEngine.DoExpectation(
-		rows,
-		engine.TargetCol,
-		engine.MinRows,
-		engine.TreatmentCol,
-		strategyState.GetInterventionLevel(ActionNothing),
-		engine.ControlCols,
-	)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(standingAside) || math.IsInf(standingAside, 0) {
-		return 0, fmt.Errorf("strategy: finite standing-aside expectation required")
-	}
-
-	enter, err := engine.CausalEngine.DoExpectation(
-		rows,
-		engine.TargetCol,
-		engine.MinRows,
-		engine.TreatmentCol,
-		strategyState.GetInterventionLevel(ActionEnter),
-		engine.ControlCols,
-	)
-
-	if err != nil {
-		return 0, err
-	}
-
-	if math.IsNaN(enter) || math.IsInf(enter, 0) {
-		return 0, fmt.Errorf("strategy: finite entry expectation required")
-	}
-
-	enter += strategyState.GraphReward
-
-	if enter <= standingAside {
-		return ActionNothing, nil
-	}
-
-	return ActionEnter, nil
+	return branches
 }
 
 // CausalEngineAdapter wraps causal.NodeTable to satisfy mcts.CausalEngine.

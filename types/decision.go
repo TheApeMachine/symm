@@ -42,6 +42,7 @@ type Decision struct {
 	AdverseSelection        *decimal.Decimal   `json:"adverseSelection" validate:"finite,nonnegative"`
 	Uncertainty             float64            `json:"uncertainty" validate:"finite,nonnegative"`
 	Confidence              float64            `json:"confidence" validate:"finite,min=0,max=1"`
+	CausalPrecision         float64            `json:"causalPrecision" validate:"finite,min=0,max=1"`
 	OpportunityMargin       float64            `json:"opportunityMargin" validate:"finite"`
 	CognitiveLead           float64            `json:"cognitiveLead" validate:"finite"`
 	BasinConfidence         float64            `json:"basinConfidence" validate:"finite,nonnegative"`
@@ -105,26 +106,29 @@ type DecisionUtilityTrace struct {
 }
 
 /*
-DecisionMCTSTrace records what the causal trajectory search actually received
-and whether it ran. The search package currently returns only its robust-child
-root action, so no invented child visits or rewards are exposed here.
+DecisionMCTSBranch is one root child actually explored by the causal search:
+the action it represents, how many simulations visited it, and the mean
+reward those simulations produced. Visits and MeanReward come straight off
+the search tree — nothing here is a frontend reconstruction of the search.
+*/
+type DecisionMCTSBranch struct {
+	Action     Action  `json:"action"`
+	Visits     int     `json:"visits"`
+	MeanReward float64 `json:"meanReward"`
+}
+
+/*
+DecisionMCTSTrace records every root branch the causal search actually
+explored, ranked by visit count. The recommended action is the branch with
+the most visits (the search's own robust-child rule), not a value comparison
+computed separately by the frontend.
 */
 type DecisionMCTSTrace struct {
-	Energy               float64 `json:"energy"`
-	Surprise             float64 `json:"surprise"`
-	Treatment            float64 `json:"treatment"`
-	RoundTripCost        float64 `json:"roundTripCost"`
-	HoldDiscount         float64 `json:"holdDiscount"`
-	HawkesSpectralRadius float64 `json:"hawkesSpectralRadius"`
-	HoldPropagation      float64 `json:"holdPropagation"`
-	CausalRows           int     `json:"causalRows"`
-	MinimumCausalRows    int     `json:"minimumCausalRows"`
-	Iterations           int     `json:"iterations"`
-	HorizonSteps         int     `json:"horizonSteps"`
-	Searchable           bool    `json:"searchable"`
-	Attempted            bool    `json:"attempted"`
-	RecommendedAction    Action  `json:"recommendedAction,omitempty"`
-	Error                string  `json:"error,omitempty"`
+	Treatment         float64              `json:"treatment"`
+	Precision         float64              `json:"precision"`
+	Iterations        int                  `json:"iterations"`
+	Branches          []DecisionMCTSBranch `json:"branches"`
+	RecommendedAction Action               `json:"recommendedAction,omitempty"`
 }
 
 /*

@@ -2,7 +2,9 @@ package manifold
 
 import (
 	"fmt"
+	"math"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/alitto/pond/v2"
@@ -38,6 +40,9 @@ type Solver struct {
 	binui     chan types.FluidFrame
 	pool      pond.Pool
 	group     pond.TaskGroup
+	domainMu  sync.Mutex
+	closing   bool
+	settling  bool
 	stepped   bool
 }
 
@@ -128,8 +133,8 @@ func newDomain(config pfluid.Config) (*pfluid.Domain, error) {
 }
 
 /*
-Update appends tokenized book samples for every changed Hawkes epoch, then
-advances the shared domain once for the complete tick.
+Update appends tokenized book samples for every changed Hawkes epoch and starts
+the shared domain's background settling loop.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	if thesis.Readiness.Hawkes {
@@ -210,7 +215,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				continue
 			}
 
+			solver.domainMu.Lock()
 			_, err = solver.domain.Append(particles, contentIDs)
+			solver.domainMu.Unlock()
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -223,20 +230,22 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				))
 			}
 
-			if err := solver.Step(
-				thesis, measurement.Symbol, thesis.At, particles,
-			); err != nil {
-				continue
-			}
+			solver.Step(thesis, measurement.Symbol, thesis.At, particles)
 		}
 
-		if !solver.stepped {
+		solver.domainMu.Lock()
+		stepped := solver.stepped
+		solver.domainMu.Unlock()
+
+		if !stepped {
 			thesis.Stamp(types.SourceManifold)
 			return nil
 		}
 
 		var err error
+		solver.domainMu.Lock()
 		thesis.Manifold, err = solver.domain.Reading()
+		solver.domainMu.Unlock()
 
 		if err != nil {
 			return errnie.Error(errnie.Err(
@@ -255,22 +264,96 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 func (solver *Solver) Step(
 	thesis *types.Thesis,
-) error {
-	_, err := solver.domain.Advance()
+	symbol string,
+	at time.Time,
+	particles []pfluid.Particle,
+) {
+	solver.domainMu.Lock()
 
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"failed to advance manifold with %d resident particles: %v",
-				solver.domain.ParticleCount(), err,
-			),
-			err,
-		))
+	if solver.closing || solver.domain == nil || solver.settling {
+		solver.domainMu.Unlock()
+		return
 	}
 
-	solver.stepped = true
+	solver.settling = true
+	solver.group.Submit(func() {
+		var previousHeat float32
+		hasPreviousHeat := false
 
+		for {
+			solver.domainMu.Lock()
+
+			if solver.closing || solver.domain == nil {
+				solver.settling = false
+				solver.domainMu.Unlock()
+				return
+			}
+
+			_, err := solver.domain.Advance()
+
+			if err != nil {
+				particleCount := solver.domain.ParticleCount()
+				solver.settling = false
+				solver.domainMu.Unlock()
+				errnie.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf(
+						"failed to advance manifold with %d resident particles: %v",
+						particleCount, err,
+					),
+					err,
+				))
+				return
+			}
+
+			solver.stepped = true
+			currentHeat, err := solver.residentHeatLocked()
+
+			if err != nil {
+				solver.settling = false
+				solver.domainMu.Unlock()
+				errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to read manifold heat: "+err.Error(),
+					err,
+				))
+				return
+			}
+
+			if err := solver.publishLocked(thesis, symbol, at, particles); err != nil {
+				solver.settling = false
+				solver.domainMu.Unlock()
+				errnie.Error(err)
+				return
+			}
+
+			if hasPreviousHeat && heatSettled(previousHeat, currentHeat) {
+				solver.settling = false
+				solver.domainMu.Unlock()
+				return
+			}
+
+			previousHeat = currentHeat
+			hasPreviousHeat = true
+			solver.domainMu.Unlock()
+		}
+	})
+	solver.domainMu.Unlock()
+}
+
+func heatSettled(previous, current float32) bool {
+	scale := max(float32(math.Abs(float64(previous))), float32(math.Abs(float64(current))))
+	tolerance := math.Nextafter32(scale, float32(math.Inf(1))) - scale
+
+	return float32(math.Abs(float64(current-previous))) <= tolerance
+}
+
+func (solver *Solver) publishLocked(
+	thesis *types.Thesis,
+	symbol string,
+	at time.Time,
+	particles []pfluid.Particle,
+) error {
 	// Fields and particles are the fluid view's raw frames, and the view
 	// renders one symbol: the one the dashboard is focused on. Reading them
 	// back for every symbol served no display, but still paid the GPU readback
@@ -285,8 +368,8 @@ func (solver *Solver) Step(
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				fmt.Sprintf(
-					"failed to read manifold fields for %s with %d resident particles: %v",
-					symbol, solver.domain.ParticleCount(), fieldsErr,
+					"failed to read manifold fields with %d resident particles: %v",
+					solver.domain.ParticleCount(), fieldsErr,
 				),
 				fieldsErr,
 			))
@@ -305,8 +388,8 @@ func (solver *Solver) Step(
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				fmt.Sprintf(
-					"failed to read manifold particles for %s with %d resident particles: %v",
-					symbol, solver.domain.ParticleCount(), err,
+					"failed to read manifold particles with %d resident particles: %v",
+					solver.domain.ParticleCount(), err,
 				),
 				err,
 			))
@@ -382,12 +465,28 @@ func (solver *Solver) Close() error {
 		return nil
 	}
 
+	solver.domainMu.Lock()
+
 	if solver.domain == nil {
+		solver.domainMu.Unlock()
 		return nil
 	}
 
-	errnie.Error(solver.domain.Close())
+	solver.closing = true
+	solver.domainMu.Unlock()
+	solver.pool.StopAndWait()
+	solver.domainMu.Lock()
+	err := solver.domain.Close()
 	solver.domain = nil
+	solver.domainMu.Unlock()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to close manifold domain: "+err.Error(),
+			err,
+		))
+	}
 
 	return nil
 }

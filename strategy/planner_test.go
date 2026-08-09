@@ -12,60 +12,75 @@ import (
 )
 
 func TestPlannerSearch(t *testing.T) {
-	Convey("Given a causal artifact that has not reached its data requirement", t, func() {
+	Convey("Given an incomplete causal artifact", t, func() {
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
 		decision, err := planner.search(
 			types.NewThesis(t.Context(), nil),
 			"BTC/USD",
-			map[string]any{"ready": false},
+			map[string]any{},
 		)
 
-		Convey("Then it should write the standing-aside decision", func() {
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
-			So(decision.Symbol, ShouldEqual, "BTC/USD")
+		Convey("Then it should reject the malformed estimate", func() {
+			So(err, ShouldNotBeNil)
+			So(decision, ShouldBeNil)
 		})
 	})
 
-	Convey("Given causal analysis that is ready before its MCTS rows are usable", t, func() {
+	Convey("Given the first causal observation", t, func() {
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
+		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
 
-		decision, err := planner.search(types.NewThesis(t.Context(), nil), "BTC/USD", map[string]any{
-			"ready":          true,
+		decision, err := planner.search(thesis, "BTC/USD", map[string]any{
 			"historyRows":    [][]float64{{1, 2, 3, 4}},
+			"precision":      0.0,
+			"samples":        1,
 			"treatmentLevel": 3.0,
 		})
 
-		Convey("Then it should stand aside until the causal search can run", func() {
+		Convey("Then it should run the packaged search and retain zero precision", func() {
 			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.CausalPrecision, ShouldEqual, 0.0)
+			So(decision.Alternatives, ShouldBeEmpty)
+			So(decision.Utility, ShouldEqual, 0.0)
+			So(decision.Confidence, ShouldEqual, 0.80)
+			So(decision.Trace, ShouldBeNil)
 		})
 	})
 
-	Convey("Given ready causal history while symbol cognition is still warming", t, func() {
+	Convey("Given causal history without a named cognition class", t, func() {
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
-		rows := make([][]float64, mctsMinimumCausalRows)
+		rows := make([][]float64, 12)
 
 		for index := range rows {
-			rows[index] = []float64{float64(index), 0, 1, 1}
+			treatment := float64(index % 2)
+			rows[index] = []float64{float64(index), 0, treatment, treatment}
 		}
+		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
+		thesis.Cognition.Store("BTC/USD", types.Cognition{
+			Symbol:     "BTC/USD",
+			Confidence: 0.25,
+		})
 
-		decision, err := planner.search(types.NewThesis(t.Context(), nil), "BTC/USD", map[string]any{
-			"ready":          true,
+		decision, err := planner.search(thesis, "BTC/USD", map[string]any{
 			"historyRows":    rows,
+			"precision":      0.5,
+			"samples":        len(rows),
 			"treatmentLevel": 1.0,
 		})
 
-		Convey("Then it should stand aside without reporting a failed search", func() {
+		Convey("Then cognition confidence should influence allocation without blocking the estimate", func() {
 			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.CausalPrecision, ShouldEqual, 0.5)
+			So(decision.Utility, ShouldEqual, 0.0)
 		})
 	})
 
 	Convey("Given causal history whose intervention raises realized return", t, func() {
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
-		rows := make([][]float64, mctsMinimumCausalRows)
+		rows := make([][]float64, 12)
 
 		for index := range rows {
 			treatment := float64(index % 2)
@@ -79,14 +94,17 @@ func TestPlannerSearch(t *testing.T) {
 		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
 
 		decision, err := planner.search(thesis, "BTC/USD", map[string]any{
-			"ready":          true,
 			"historyRows":    rows,
+			"precision":      0.75,
+			"samples":        len(rows),
 			"treatmentLevel": 1.0,
 		})
 
 		Convey("Then it should select entry", func() {
 			So(err, ShouldBeNil)
 			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.CausalPrecision, ShouldEqual, 0.75)
+			So(decision.Utility, ShouldEqual, 0.0)
 		})
 	})
 
@@ -95,7 +113,7 @@ func TestPlannerSearch(t *testing.T) {
 			mctsEngine:        plannerMCTSEngine(),
 			minimumConfidence: 0.80,
 		}
-		rows := make([][]float64, mctsMinimumCausalRows)
+		rows := make([][]float64, 12)
 
 		for index := range rows {
 			treatment := float64(index % 2)
@@ -116,15 +134,17 @@ func TestPlannerSearch(t *testing.T) {
 			1,
 		)
 		decision, err := planner.search(thesis, "BTC/USD", map[string]any{
-			"ready":          true,
 			"historyRows":    rows,
+			"precision":      0.75,
+			"samples":        len(rows),
 			"treatmentLevel": 1.0,
 		})
 
-		Convey("Then the graph penalty should outweigh the weak causal uplift", func() {
+		Convey("Then the packaged search should select the robust child without a local override", func() {
 			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
 			So(decision.Confidence, ShouldAlmostEqual, 0)
+			So(decision.Utility, ShouldEqual, 0.0)
 		})
 	})
 }
@@ -168,13 +188,12 @@ func TestPlannerUpdate(t *testing.T) {
 		planner.Update(thesis)
 		planner.Update(thesis)
 
-		Convey("Then Planner should complete an explicit Do Not Enter decision", func() {
+		Convey("Then Planner should complete without inventing a decision", func() {
 			So(thesis.Readiness.Planner, ShouldBeTrue)
 			So(thesis.Readiness.Complete(), ShouldBeTrue)
-			stored, found := thesis.Decisions.Load("BTC/USD")
-			So(found, ShouldBeTrue)
-			So(stored.(*types.Decision).Action, ShouldEqual, types.ActionNothing)
-			So(len(messages), ShouldEqual, 1)
+			_, found := thesis.Decisions.Load("BTC/USD")
+			So(found, ShouldBeFalse)
+			So(len(messages), ShouldEqual, 0)
 		})
 	})
 
@@ -202,17 +221,24 @@ func TestPlannerUpdate(t *testing.T) {
 }
 
 func TestPlannerDecisions(t *testing.T) {
-	Convey("Given a thesis with causal evidence that is not ready", t, func() {
-		planner := &Planner{}
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Causal.Store("BTC/USD", map[string]any{"ready": false})
+	Convey("Given a thesis with a zero-precision causal estimate", t, func() {
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
+		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
+		thesis.Causal.Store("BTC/USD", map[string]any{
+			"historyRows":    [][]float64{{1, 2, 3, 4}},
+			"precision":      0.0,
+			"samples":        1,
+			"treatmentLevel": 3.0,
+		})
 
 		decisions, err := planner.decisions(thesis)
 
-		Convey("Then Planner should write Do Not Enter to the thesis", func() {
+		Convey("Then Planner should retain the estimate on Do Not Enter", func() {
 			So(err, ShouldBeNil)
 			So(decisions, ShouldHaveLength, 1)
 			So(decisions[0].Action, ShouldEqual, types.ActionNothing)
+			So(decisions[0].CausalPrecision, ShouldEqual, 0.0)
+			So(decisions[0].Alternatives, ShouldBeEmpty)
 
 			stored, found := thesis.Decisions.Load("BTC/USD")
 			So(found, ShouldBeTrue)
@@ -236,6 +262,8 @@ func TestPlannerAdmit(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(decision.Action, ShouldEqual, types.ActionNothing)
 			So(decision.Confidence, ShouldEqual, 0.79)
+			So(decision.Forecast, ShouldNotBeNil)
+			So(decision.Reason, ShouldContainSubstring, "below configured minimum")
 		})
 
 		Convey("Then a forecast at the configured confidence stays attached to Enter", func() {
@@ -303,7 +331,7 @@ func plannerMCTSEngine() *mcts.CausalMCTS {
 		NewCausalEngineAdapter(),
 		math.Sqrt2,
 		1,
-		mctsMinimumCausalRows,
+		0,
 		2,
 		3,
 		[]int{0, 1},
@@ -313,18 +341,13 @@ func plannerMCTSEngine() *mcts.CausalMCTS {
 }
 
 func plannerThesisFixture(
-	t *testing.T,
+	t testing.TB,
 	symbol string,
 	confidence float64,
 ) *types.Thesis {
 	t.Helper()
 	thesis := types.NewThesis(t.Context(), nil)
 	forecast := forecastFixture(t, confidence)
-	thesis.Cognition.Store(symbol, types.Cognition{
-		Symbol:     symbol,
-		Ready:      true,
-		Confidence: 0,
-	})
 	thesis.Resonance.Store(symbol, types.ResonanceReading{Forecast: forecast})
 	marketGraph := logicgraph.NewGraph(thesis.At)
 	marketGraph.AddNode(&logicgraph.Node{
@@ -368,7 +391,7 @@ func plannerGraphRelation(
 	})
 }
 
-func forecastFixture(t *testing.T, confidence float64) *types.ResonanceForecast {
+func forecastFixture(t testing.TB, confidence float64) *types.ResonanceForecast {
 	t.Helper()
 	forecast, err := types.NewResonanceForecast(
 		[]float64{-0.01, 0.03},
@@ -385,18 +408,18 @@ func forecastFixture(t *testing.T, confidence float64) *types.ResonanceForecast 
 }
 
 func BenchmarkPlannerDecisions(b *testing.B) {
-	planner := &Planner{mctsEngine: plannerMCTSEngine()}
-	rows := make([][]float64, mctsMinimumCausalRows)
-
-	for index := range rows {
-		rows[index] = []float64{float64(index), 0, 1, 1}
+	planner := &Planner{
+		mctsEngine:        plannerMCTSEngine(),
+		minimumConfidence: 1,
 	}
+	rows := strategyRowsFixture(-1)
 
 	for b.Loop() {
-		thesis := types.NewThesis(b.Context(), nil)
+		thesis := plannerThesisFixture(b, "BTC/USD", 0.80)
 		thesis.Causal.Store("BTC/USD", map[string]any{
-			"ready":          true,
 			"historyRows":    rows,
+			"precision":      0.75,
+			"samples":        len(rows),
 			"treatmentLevel": 1.0,
 		})
 		if _, err := planner.decisions(thesis); err != nil {

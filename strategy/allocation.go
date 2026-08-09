@@ -41,13 +41,23 @@ func (planner *Planner) classifyAllocation(
 		)
 	}
 
+	decision.Uncertainty = uncertainty
+	decision.OpportunityMargin = decision.Forecast.ExpectedReturn - uncertainty
+	decision.AllocationClass = allocationClassNormal
+	decision.Opportunity = false
+
 	stored, found := thesis.Cognition.Load(decision.Symbol)
+
+	if !found {
+		return nil
+	}
+
 	cognition, valid := stored.(types.Cognition)
 
-	if !found || !valid || !cognition.Ready {
+	if !valid {
 		return errnie.Err(
 			errnie.Validation,
-			"planner: ready cognition required for "+decision.Symbol+" allocation",
+			"planner: cognition has an invalid type for "+decision.Symbol,
 			nil,
 		)
 	}
@@ -63,12 +73,8 @@ func (planner *Planner) classifyAllocation(
 		)
 	}
 
-	decision.Uncertainty = uncertainty
-	decision.OpportunityMargin = decision.Forecast.ExpectedReturn - uncertainty
 	decision.CognitiveLead = cognition.Confidence - coherence
 	decision.BasinConfidence = cognition.Confidence
-	decision.AllocationClass = allocationClassNormal
-	decision.Opportunity = false
 
 	if decision.OpportunityMargin <= 0 || decision.CognitiveLead <= 0 {
 		return nil

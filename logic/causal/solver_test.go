@@ -33,7 +33,7 @@ func testResonanceReading(
 }
 
 func TestUpdate(t *testing.T) {
-	convey.Convey("Given a predictive-coding reading that is still warming", t, func() {
+	convey.Convey("Given a predictive-coding reading without a forecast", t, func() {
 		solver := NewSolver(nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
@@ -47,12 +47,48 @@ func TestUpdate(t *testing.T) {
 
 		err := solver.Update(thesis)
 
-		convey.Convey("Then causal should expose a not-ready result for Planner", func() {
+		convey.Convey("Then causal should complete without inventing an estimate", func() {
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(thesis.Readiness.Causal, convey.ShouldBeTrue)
+			_, found := thesis.Causal.Load("BTC/USD")
+			convey.So(found, convey.ShouldBeFalse)
+		})
+	})
+
+	convey.Convey("Given the first aligned causal observation", t, func() {
+		solver := NewSolver(nil, nil)
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Resonance.Store("BTC/USD", testResonanceReading(
+			0.5,
+			0.25,
+			[]float64{0.1},
+		))
+		thesis.Readiness.Stamp(types.SourceResonance)
+		thesis.Measurements.Store(types.SourceSentiment, []*types.Measurement{{
+			Source: types.SourceSentiment,
+			Symbol: "BTC/USD",
+			At:     time.Unix(1, 0),
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricChange, types.SideNone): {Raw: 0.2},
+			},
+		}})
+		convey.Reset(func() {
+			convey.So(solver.Close(), convey.ShouldBeNil)
+		})
+
+		err := solver.Update(thesis)
+
+		convey.Convey("Then it should publish the estimate with zero precision", func() {
+			convey.So(err, convey.ShouldBeNil)
 			stored, found := thesis.Causal.Load("BTC/USD")
 			convey.So(found, convey.ShouldBeTrue)
-			convey.So(stored.(map[string]any)["ready"], convey.ShouldBeFalse)
+			output := stored.(map[string]any)
+			convey.So(output["samples"], convey.ShouldEqual, 1)
+			convey.So(output["precision"], convey.ShouldEqual, 0.0)
+			convey.So(output["treatmentLevel"], convey.ShouldEqual, 0.1)
+			convey.So(output["historyRows"], convey.ShouldHaveLength, 1)
+			_, hasAssociation := output["association"]
+			convey.So(hasAssociation, convey.ShouldBeFalse)
 		})
 	})
 
@@ -63,7 +99,7 @@ func TestUpdate(t *testing.T) {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
 
-		convey.Convey("It should retain the aligned rows used by Pearl for causal search", func() {
+		convey.Convey("It should retain rows and report finite-sample precision", func() {
 			for index := range 12 {
 				energy := float64(index % 3)
 				surprise := float64((index * 2) % 5)
@@ -90,48 +126,13 @@ func TestUpdate(t *testing.T) {
 			convey.So(found, convey.ShouldBeTrue)
 			output := stored.(map[string]any)
 
-			convey.So(output["ready"], convey.ShouldEqual, true)
 			convey.So(output["association"], convey.ShouldNotBeNil)
+			convey.So(output["samples"], convey.ShouldEqual, 12)
+			convey.So(output["precision"], convey.ShouldBeGreaterThan, 0.0)
+			convey.So(output["precision"], convey.ShouldBeLessThan, 1.0)
 			rows, rowsOK := output["historyRows"].([][]float64)
 			convey.So(rowsOK, convey.ShouldBeTrue)
 			convey.So(rows, convey.ShouldHaveLength, 12)
-		})
-	})
-
-	convey.Convey("Given fewer aligned rows than causal MCTS needs", t, func() {
-		solver := NewSolver(nil, nil)
-		thesis := types.NewThesis(t.Context(), nil)
-		convey.Reset(func() {
-			convey.So(solver.Close(), convey.ShouldBeNil)
-		})
-
-		for index := range MinimumSearchRows - 1 {
-			prediction := float64(index + 1)
-			thesis.Resonance.Store("BTC/USD", testResonanceReading(
-				float64(index%3),
-				float64(index%5),
-				[]float64{prediction},
-			))
-			thesis.Readiness.Stamp(types.SourceResonance)
-			thesis.Measurements.Store(types.SourceSentiment, []*types.Measurement{{
-				Source: types.SourceSentiment,
-				Symbol: "BTC/USD",
-				At:     time.Unix(int64(index+1), 0),
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricChange, types.SideNone): {
-						Raw: float64(index),
-					},
-				},
-			}})
-
-			convey.So(solver.Update(thesis), convey.ShouldBeNil)
-		}
-
-		convey.Convey("Then it should stamp the completed stage without exposing a search artifact", func() {
-			convey.So(thesis.Readiness.Causal, convey.ShouldBeTrue)
-			stored, found := thesis.Causal.Load("BTC/USD")
-			convey.So(found, convey.ShouldBeTrue)
-			convey.So(stored.(map[string]any)["ready"], convey.ShouldBeFalse)
 		})
 	})
 }

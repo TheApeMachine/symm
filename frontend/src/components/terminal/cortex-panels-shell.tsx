@@ -104,10 +104,6 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => (
 						shannon H vs uniform threshold
 					</div>
 					<div>
-						<div className="mb-1 flex justify-between font-mono text-[10px]">
-							<span className="text-(--f3)">classified</span>
-							<Typography.Span data-paint="ready" className="text-(--f1)" />
-						</div>
 						<div
 							className={meterTrackVariants({ variant: "success", size: "m" })}
 						>

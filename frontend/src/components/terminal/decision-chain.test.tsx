@@ -10,9 +10,11 @@ describe("DecisionChain", () => {
 		expect(markup).toContain("group-data-[selected=true]:grid");
 		expect(markup).toContain("1 · forecast");
 		expect(markup).toContain("2 · evidence");
-		expect(markup).toContain("3 · causal MCTS");
+		expect(markup).toContain("3 · causal search");
 		expect(markup).toContain("4 · capital + slots");
-		expect(markup).toContain('data-paint="trace.mcts.holdDiscount"');
+		expect(markup).toContain('data-paint="trace.mcts.precision"');
+		expect(markup).toContain('data-paint="trace.mcts.standingAside"');
+		expect(markup).toContain('data-paint="trace.mcts.enter"');
 		expect(markup).toContain('data-paint="allocation_haircut"');
 		expect(markup).toContain('data-paint="allocation_haircut_reason"');
 	});
