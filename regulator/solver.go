@@ -111,7 +111,7 @@ func (solver *Solver) Start(thesis *types.Thesis) {
 		return
 	}
 
-	thesis.Subscribe(types.SourceCategories, solver.semaphore)
+	thesis.Subscribe(types.SourceRegulator, solver.semaphore)
 
 	go func() {
 		for {

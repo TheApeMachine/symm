@@ -64,7 +64,7 @@ func NewCrypto(
 		},
 	}
 
-	crypto.thesis.Subscribe(types.SourcePlanner, crypto.semaphore)
+	crypto.thesis.Subscribe(types.SourceTrader, crypto.semaphore)
 	crypto.run()
 
 	return crypto

@@ -11,6 +11,22 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+func TestNewPlanner(t *testing.T) {
+	Convey("Given an analyzer already subscribed under its actor identity", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		analyzer := make(chan struct{}, 1)
+		thesis.Subscribe(types.SourceCategories, analyzer)
+		planner := NewPlanner(t.Context(), nil, thesis, nil, nil)
+		defer planner.Close()
+
+		thesis.Fanout(types.SourceTrader)
+
+		Convey("Then the planner should not replace the analyzer subscription", func() {
+			So(len(analyzer), ShouldEqual, 1)
+		})
+	})
+}
+
 func TestPlannerSearch(t *testing.T) {
 	Convey("Given an incomplete causal artifact", t, func() {
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}

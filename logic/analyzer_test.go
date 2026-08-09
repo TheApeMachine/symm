@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -34,6 +35,26 @@ func (solver *orderedSolver) Update(thesis *types.Thesis) error {
 
 func (solver *orderedSolver) Close() error {
 	return nil
+}
+
+func TestNewAnalyzer(t *testing.T) {
+	Convey("Given a signal already subscribed under its actor identity", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		signal := make(chan struct{}, 1)
+		thesis.Subscribe(types.SourceCorrelation, signal)
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
+		analyzer := NewAnalyzer(
+			t.Context(), nil, nil, tree, nil, nil, nil, thesis,
+		)
+		defer analyzer.Close()
+
+		thesis.Fanout(types.SourceTrader)
+
+		Convey("Then the analyzer should not replace the signal subscription", func() {
+			So(len(signal), ShouldEqual, 1)
+		})
+	})
 }
 
 func TestAnalyzerProcess(t *testing.T) {

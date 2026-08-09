@@ -66,7 +66,7 @@ func NewPlanner(
 		desk:        desk,
 	}
 
-	planner.thesis.Subscribe(types.SourceCategories, planner.semaphore)
+	planner.thesis.Subscribe(types.SourcePlanner, planner.semaphore)
 	planner.run()
 	return planner
 }

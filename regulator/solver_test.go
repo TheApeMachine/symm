@@ -21,6 +21,23 @@ func TestNewSolver(t *testing.T) {
 	})
 }
 
+func TestStart(t *testing.T) {
+	Convey("Given an analyzer already subscribed under its actor identity", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		analyzer := make(chan struct{}, 1)
+		thesis.Subscribe(types.SourceCategories, analyzer)
+		solver := NewSolver(t.Context(), nil, nil)
+		defer solver.Close()
+		solver.Start(thesis)
+
+		thesis.Fanout(types.SourceTrader)
+
+		Convey("Then the regulator should not replace the analyzer subscription", func() {
+			So(len(analyzer), ShouldEqual, 1)
+		})
+	})
+}
+
 func TestUpdate(t *testing.T) {
 	Convey("Given an active regulator solver and thesis", t, func() {
 		cfg := system.NewConfig()
