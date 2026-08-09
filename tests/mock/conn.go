@@ -34,7 +34,7 @@ func (conn *Conn) Subscribe(string, *types.Subscription[any]) *types.Subscriptio
 
 func (conn *Conn) Books() *sync.Map { return nil }
 
-func (conn *Conn) Book(string) *book.Book { return nil }
+func (conn *Conn) Book(_ string, read func(*book.Book)) { read(nil) }
 
 func (conn *Conn) SubInstrument(callback types.Subscription[any]) {}
 

@@ -127,8 +127,8 @@ type pumpdumpBookSource struct {
 	books map[string]*spotbook.Book
 }
 
-func (source *pumpdumpBookSource) Book(symbol string) *spotbook.Book {
-	return source.books[symbol]
+func (source *pumpdumpBookSource) Book(symbol string, read func(*spotbook.Book)) {
+	read(source.books[symbol])
 }
 
 func pumpdumpTrade(id int64, price float64, at time.Time) kraken.TradeData {

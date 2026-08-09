@@ -114,8 +114,8 @@ type toxicityBookSource struct {
 	books map[string]*spotbook.Book
 }
 
-func (source *toxicityBookSource) Book(symbol string) *spotbook.Book {
-	return source.books[symbol]
+func (source *toxicityBookSource) Book(symbol string, read func(*spotbook.Book)) {
+	read(source.books[symbol])
 }
 
 func toxicityTrade(

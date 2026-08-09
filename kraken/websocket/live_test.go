@@ -12,6 +12,7 @@ import (
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -100,6 +101,23 @@ func TestRememberPublicSubscription(t *testing.T) {
 			So(live.public["ticker"], ShouldResemble, [][]string{
 				{"BTC/USD", "ETH/USD"},
 				{"ADA/USD"},
+			})
+		})
+	})
+}
+
+func TestLiveBook(t *testing.T) {
+	Convey("Given a Level 3 connection containing the requested book", t, func() {
+		managed := NewBook(t.Context())
+		managed.Create("BTC/USD", 32)
+		live := &Live{level3: &sync.Map{}}
+		live.level3.Store("unrelated subscription key", &Live{book: managed})
+
+		Convey("It should find the managed book without parsing subscription keys", func() {
+			live.Book("BTC/USD", func(actual *book.Book) {
+				managed.Get("BTC/USD", func(expected *book.Book) {
+					So(actual, ShouldEqual, expected)
+				})
 			})
 		})
 	})
@@ -227,4 +245,17 @@ func TestLiveSubscribe(t *testing.T) {
 			So(<-subscription.Channel, ShouldEqual, execution)
 		})
 	})
+}
+
+func BenchmarkLiveBook(b *testing.B) {
+	managed := NewBook(b.Context())
+	managed.Create("BTC/USD", 32)
+	live := &Live{level3: &sync.Map{}}
+	live.level3.Store("subscription", &Live{book: managed})
+	read := func(*book.Book) {}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		live.Book("BTC/USD", read)
+	}
 }

@@ -35,4 +35,16 @@ describe("WorkerFrameBuffer", () => {
 		});
 		expect(buffer.take()).toBeNull();
 	});
+
+	it("keeps a direct resonance reading intact", () => {
+		const buffer = new WorkerFrameBuffer();
+
+		buffer.merge({
+			resonance: { symbol: "BTC/USD", confidence: 0.75 },
+		});
+
+		expect(buffer.take()).toEqual({
+			resonance: [{ symbol: "BTC/USD", confidence: 0.75 }],
+		});
+	});
 });

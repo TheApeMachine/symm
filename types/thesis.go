@@ -386,6 +386,15 @@ func (thesis *Thesis) Fanout(sender SourceType) {
 			return true
 		}
 
+		if sender != SourceTrader {
+			switch source {
+			case SourceCorrelation, SourceCVD, SourceDepthFlow, SourceExhaustion,
+				SourceHawkes, SourceLeadLag, SourceLiquidity, SourcePumpDump,
+				SourceSentiment, SourceToxicity:
+				return true
+			}
+		}
+
 		semaphore := value.(chan struct{})
 
 		select {

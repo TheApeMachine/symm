@@ -10,7 +10,9 @@ const frameRows = (value: unknown): unknown[] => {
 
 	const record = objectRecord(value);
 
-	return record === null ? [] : Object.values(record);
+	return record === null || symbolIdentity(record) === null
+		? Object.values(record ?? {})
+		: [record];
 };
 
 const positionIdentity = (value: unknown): string | null => {

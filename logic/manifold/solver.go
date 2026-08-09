@@ -139,23 +139,6 @@ the shared domain's background settling loop.
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	if thesis.Readiness.Hawkes {
 		for _, measurement := range utils.Measurements(thesis, types.SourceHawkes) {
-			managed := solver.api.Book(measurement.Symbol)
-
-			if managed == nil {
-				continue
-			}
-
-			bidOrders := make([]*mgrbook.Order, 0)
-			askOrders := make([]*mgrbook.Order, 0)
-
-			for _, level := range managed.Bids.Levels {
-				bidOrders = append(bidOrders, level.Queue()...)
-			}
-
-			for _, level := range managed.Asks.Levels {
-				askOrders = append(askOrders, level.Queue()...)
-			}
-
 			found, ok := thesis.Measurements.Load(types.SourceHawkes)
 
 			if !ok {
@@ -194,14 +177,34 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				continue
 			}
 
-			particles, contentIDs, err := solver.tokenizer.NewBatch(
-				bidOrders,
-				askOrders,
-				managed.Midpoint().Float64(),
-				buyExcitation,
-				sellExcitation,
-				measurement.Symbol,
-			)
+			var particles []pfluid.Particle
+			var contentIDs []uint32
+			var err error
+			solver.api.Book(measurement.Symbol, func(managed *mgrbook.Book) {
+				if managed == nil {
+					return
+				}
+
+				bidOrders := make([]*mgrbook.Order, 0)
+				askOrders := make([]*mgrbook.Order, 0)
+
+				for _, level := range managed.Bids.Levels {
+					bidOrders = append(bidOrders, level.Queue()...)
+				}
+
+				for _, level := range managed.Asks.Levels {
+					askOrders = append(askOrders, level.Queue()...)
+				}
+
+				particles, contentIDs, err = solver.tokenizer.NewBatch(
+					bidOrders,
+					askOrders,
+					managed.Midpoint().Float64(),
+					buyExcitation,
+					sellExcitation,
+					measurement.Symbol,
+				)
+			})
 
 			if err != nil {
 				return errnie.Error(errnie.Err(

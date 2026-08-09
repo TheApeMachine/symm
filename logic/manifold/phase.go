@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	mgrbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/geometry"
@@ -262,11 +263,12 @@ func (solver *Solver) midpoint(symbol string) float64 {
 		return 0
 	}
 
-	managed := solver.api.Book(symbol)
+	var midpoint float64
+	solver.api.Book(symbol, func(managed *mgrbook.Book) {
+		if managed != nil {
+			midpoint = managed.Midpoint().Float64()
+		}
+	})
 
-	if managed == nil {
-		return 0
-	}
-
-	return managed.Midpoint().Float64()
+	return midpoint
 }

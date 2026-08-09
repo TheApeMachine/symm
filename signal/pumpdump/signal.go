@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/google/uuid"
+	"github.com/spf13/viper"
+	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
@@ -171,24 +172,31 @@ func (signal *Signal) Measure(
 					continue
 				}
 
-				book := signal.books.Book(trade.Symbol)
+				var askPrice, bidPrice float64
+				var askAt, bidAt time.Time
+				bookReady := false
+				signal.books.Book(trade.Symbol, func(book *spotbook.Book) {
+					ask, bid := book.BestAsk(), book.BestBid()
 
-				if book == nil {
+					if ask == nil || bid == nil || ask.Price == nil || bid.Price == nil {
+						return
+					}
+
+					askPrice = ask.Price.Float64()
+					bidPrice = bid.Price.Float64()
+					askAt = ask.Timestamp
+					bidAt = bid.Timestamp
+					bookReady = true
+				})
+
+				if !bookReady {
 					continue
 				}
 
-				ask, bid := book.BestAsk(), book.BestBid()
-
-				if ask == nil || bid == nil || ask.Price == nil || bid.Price == nil {
+				if askAt.After(trade.Timestamp) || bidAt.After(trade.Timestamp) {
 					continue
 				}
 
-				if ask.Timestamp.After(trade.Timestamp) || bid.Timestamp.After(trade.Timestamp) {
-					continue
-				}
-
-				askPrice := ask.Price.Float64()
-				bidPrice := bid.Price.Float64()
 				mid := (askPrice + bidPrice) / 2
 
 				if bidPrice <= 0 || askPrice <= bidPrice || math.IsNaN(mid) || math.IsInf(mid, 0) {

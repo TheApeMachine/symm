@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/tests/fixtures/book"
 	"github.com/theapemachine/symm/tests/fixtures/level3"
 	"github.com/theapemachine/symm/tests/fixtures/ticker"
@@ -195,9 +196,8 @@ func (market *Market) waitForBook(sample testtypes.Sample) {
 	defer poll.Stop()
 
 	for {
-		liveBook := market.private.Book(sample.Symbol)
-
-		if liveBook != nil {
+		matched := false
+		market.private.Book(sample.Symbol, func(liveBook *spotbook.Book) {
 			bidLevels = len(liveBook.Bids.Levels)
 			askLevels = len(liveBook.Asks.Levels)
 			bid := liveBook.BestBid()
@@ -216,8 +216,12 @@ func (market *Market) waitForBook(sample testtypes.Sample) {
 				ask.Price.Float64() == sample.Ask &&
 				!bid.Timestamp.Before(sample.Timestamp) &&
 				!ask.Timestamp.Before(sample.Timestamp) {
-				return
+				matched = true
 			}
+		})
+
+		if matched {
+			return
 		}
 
 		select {

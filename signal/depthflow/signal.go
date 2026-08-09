@@ -205,16 +205,59 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 			return left.Timestamp.Before(right.Timestamp)
 		})
-		managed := signal.books.Book(symbol)
-		bookAt := managedBookObservedAt(managed)
-
 		group.Go(func() error {
-			symbolMeasurements := make([]*types.Measurement, 0)
-			symbolOut := make([]*types.Measurement, 0)
-			bookPending := managed != nil
+			signal.books.Book(symbol, func(managed *spotbook.Book) {
+				bookAt := managedBookObservedAt(managed)
+				symbolMeasurements := make([]*types.Measurement, 0)
+				symbolOut := make([]*types.Measurement, 0)
+				bookPending := managed != nil
 
-			for _, trade := range symbolTrades {
-				if bookPending && !trade.Timestamp.Before(bookAt) {
+				for _, trade := range symbolTrades {
+					if bookPending && !trade.Timestamp.Before(bookAt) {
+						bookMeasurements, err := signal.measureManagedBook(managed)
+
+						if err != nil {
+							errnie.Error(errnie.Err(
+								errnie.UnprocessableContent,
+								"depthflow: failed to measure book",
+								err,
+							))
+						}
+
+						symbolMeasurements = append(symbolMeasurements, bookMeasurements...)
+						bookPending = false
+					}
+
+					if signal.seenTrade(trade) {
+						continue
+					}
+
+					lastBookAt, hasBook := signal.bookAt(trade.Symbol)
+
+					if !hasBook || lastBookAt.IsZero() || lastBookAt.After(trade.Timestamp) {
+						continue
+					}
+
+					tradeMeasurements, err := signal.measureTrade(trade)
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"depthflow: failed to measure trade",
+							err,
+						))
+						continue
+					}
+
+					signal.commitTrade(trade)
+					symbolMeasurements = append(symbolMeasurements, tradeMeasurements...)
+
+					if symbol == types.Focus() {
+						symbolOut = append(symbolOut, tradeMeasurements...)
+					}
+				}
+
+				if bookPending {
 					bookMeasurements, err := signal.measureManagedBook(managed)
 
 					if err != nil {
@@ -226,54 +269,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 					}
 
 					symbolMeasurements = append(symbolMeasurements, bookMeasurements...)
-					bookPending = false
 				}
 
-				if signal.seenTrade(trade) {
-					continue
-				}
-
-				lastBookAt, hasBook := signal.bookAt(trade.Symbol)
-
-				if !hasBook || lastBookAt.IsZero() || lastBookAt.After(trade.Timestamp) {
-					continue
-				}
-
-				tradeMeasurements, err := signal.measureTrade(trade)
-
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"depthflow: failed to measure trade",
-						err,
-					))
-					continue
-				}
-
-				signal.commitTrade(trade)
-				symbolMeasurements = append(symbolMeasurements, tradeMeasurements...)
-
-				if symbol == types.Focus() {
-					symbolOut = append(symbolOut, tradeMeasurements...)
-				}
-			}
-
-			if bookPending {
-				bookMeasurements, err := signal.measureManagedBook(managed)
-
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"depthflow: failed to measure book",
-						err,
-					))
-				}
-
-				symbolMeasurements = append(symbolMeasurements, bookMeasurements...)
-			}
-
-			results.Store(symbol, symbolMeasurements)
-			publish.Store(symbol, symbolOut)
+				results.Store(symbol, symbolMeasurements)
+				publish.Store(symbol, symbolOut)
+			})
 
 			return nil
 		})

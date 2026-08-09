@@ -25,7 +25,7 @@ type Conn interface {
 	Status() types.Status
 	Subscribe(string, *types.Subscription[any]) *types.Subscription[any]
 	Books() *sync.Map
-	Book(string) *book.Book
+	Book(string, func(*book.Book))
 	SubInstrument(types.Subscription[any])
 	SubTicker([]string)
 	SubBook([]string)
@@ -49,7 +49,7 @@ type Conn interface {
 BookSource exposes the authoritative live Level 3 cache to measurement stages.
 */
 type BookSource interface {
-	Book(string) *book.Book
+	Book(string, func(*book.Book))
 }
 
 type Callback[T any] struct {
@@ -133,7 +133,7 @@ func (api *API) Subscribe(
 }
 
 func (api *API) Books() *sync.Map                                 { return api.private.Books() }
-func (api *API) Book(symbol string) *book.Book                    { return api.private.Book(symbol) }
+func (api *API) Book(symbol string, read func(*book.Book))        { api.private.Book(symbol, read) }
 func (api *API) SubInstrument(callback types.Subscription[any])   { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
 func (api *API) SubBook(symbols []string)                         { api.public.SubBook(symbols) }

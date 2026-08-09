@@ -36,8 +36,8 @@ func TestMeasure(t *testing.T) {
 
 type emptyBookSource struct{}
 
-func (emptyBookSource) Book(string) *spotbook.Book {
-	return nil
+func (emptyBookSource) Book(_ string, read func(*spotbook.Book)) {
+	read(nil)
 }
 
 func TestSeenTrade(t *testing.T) {

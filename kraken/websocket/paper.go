@@ -136,8 +136,8 @@ func (paper *Paper) Books() map[string]*book.Book {
 /*
 Book returns no public book because paper does not own market subscriptions.
 */
-func (paper *Paper) Book(string) *book.Book {
-	return nil
+func (paper *Paper) Book(_ string, read func(*book.Book)) {
+	read(nil)
 }
 
 /*

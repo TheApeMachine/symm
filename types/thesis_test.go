@@ -28,15 +28,18 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		thesis := NewThesis(t.Context(), nil)
 		correlation := make(chan struct{}, 1)
 		cvd := make(chan struct{}, 1)
+		categories := make(chan struct{}, 1)
 		thesis.Subscribe(SourceCorrelation, correlation)
 		thesis.Subscribe(SourceCVD, cvd)
+		thesis.Subscribe(SourceCategories, categories)
 
 		thesis.AppendMeasurements(SourceCorrelation, nil, true)
 
-		Convey("Then it should stamp readiness and notify subscribers", func() {
+		Convey("Then it should stamp readiness and notify the downstream stage", func() {
 			So(thesis.Stamped(SourceCorrelation), ShouldBeTrue)
 			So(len(correlation), ShouldEqual, 0)
-			So(len(cvd), ShouldEqual, 1)
+			So(len(cvd), ShouldEqual, 0)
+			So(len(categories), ShouldEqual, 1)
 		})
 	})
 
@@ -217,26 +220,28 @@ func TestThesisAppendMeasurements(t *testing.T) {
 }
 
 func TestThesisFanout(t *testing.T) {
-	Convey("Given two subscribers and a publication from the first source", t, func() {
+	Convey("Given signal and downstream subscribers", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		correlation := make(chan struct{}, 1)
 		cvd := make(chan struct{}, 1)
+		categories := make(chan struct{}, 1)
 		thesis.Subscribe(SourceCorrelation, correlation)
 		thesis.Subscribe(SourceCVD, cvd)
+		thesis.Subscribe(SourceCategories, categories)
 
 		thesis.Fanout(SourceCorrelation)
 
-		Convey("Then it should skip the sender and wake the other subscriber", func() {
+		Convey("Then signal output should only wake downstream work", func() {
 			So(len(correlation), ShouldEqual, 0)
-			So(len(cvd), ShouldEqual, 1)
+			So(len(cvd), ShouldEqual, 0)
+			So(len(categories), ShouldEqual, 1)
 		})
 
-		Convey("Then another source should still be able to wake the first subscriber", func() {
-			<-cvd
-			thesis.Fanout(SourceCVD)
+		Convey("Then market input should wake every signal", func() {
+			thesis.Fanout(SourceTrader)
 
 			So(len(correlation), ShouldEqual, 1)
-			So(len(cvd), ShouldEqual, 0)
+			So(len(cvd), ShouldEqual, 1)
 		})
 	})
 }
@@ -244,8 +249,8 @@ func TestThesisFanout(t *testing.T) {
 func TestThesisReset(t *testing.T) {
 	Convey("Given a completed Thesis with ready measurement evidence", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		toxicity := make(chan struct{}, 1)
-		thesis.Subscribe(SourceCorrelation, toxicity)
+		notified := make(chan struct{}, 1)
+		thesis.Subscribe(SourceCategories, notified)
 		measurements := []*Measurement{{
 			Source: SourceToxicity,
 			Symbol: "BTC/USD",
@@ -282,7 +287,7 @@ func TestThesisReset(t *testing.T) {
 		}
 
 		So(thesis.Readiness.Complete(), ShouldBeTrue)
-		<-toxicity
+		<-notified
 		thesis.Reset()
 
 		Convey("Then the next epoch should retain only the prior measurements", func() {
@@ -290,7 +295,7 @@ func TestThesisReset(t *testing.T) {
 			So(found, ShouldBeTrue)
 			So(stored, ShouldResemble, measurements)
 			So(thesis.Readiness.Complete(), ShouldBeFalse)
-			So(len(toxicity), ShouldEqual, 0)
+			So(len(notified), ShouldEqual, 0)
 			_, found = thesis.Categories.Load("BTC/USD")
 			So(found, ShouldBeFalse)
 

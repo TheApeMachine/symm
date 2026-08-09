@@ -2,7 +2,6 @@ package websocket
 
 import (
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -37,80 +36,12 @@ func TestBookAll(t *testing.T) {
 			So(managed.Update(event, payload), ShouldBeNil)
 		}
 
-		Convey("All should return a detached snapshot", func() {
+		Convey("All should expose the managed book", func() {
 			value, found := managed.All().Load("BTC/USD")
 			So(found, ShouldBeTrue)
-
-			snapshot := value.(*spotbook.Book)
-			snapshot.Bids.Levels = map[string]*spotbook.Level{}
-
-			current := managed.Get("BTC/USD")
-			So(current, ShouldNotBeNil)
-			So(len(current.Bids.Levels), ShouldEqual, 32)
-		})
-
-		Convey("Snapshots should remain race-free while updates continue", func() {
-			waitGroup := sync.WaitGroup{}
-			waitGroup.Add(8)
-
-			for range 8 {
-				go func() {
-					defer waitGroup.Done()
-
-					for range 256 {
-						managed.All().Range(func(key, value any) bool {
-							snapshot := value.(*spotbook.Book)
-							_ = snapshot.BestBid()
-							return true
-						})
-					}
-				}()
-			}
-
-			for index := range 256 {
-				price := decimal.NewFromInt64(int64(100 + index%32))
-				payload := &kraken.Level3{Data: []kraken.Level3Data{{
-					Symbol: "BTC/USD",
-					Bids: []kraken.Level3Order{{
-						OrderID:    fmt.Sprintf("bid-%d", index%32),
-						LimitPrice: price,
-						OrderQty:   decimal.NewFromInt64(int64(index%7 + 1)),
-						Timestamp:  time.Now().UTC(),
-					}},
-				}}}
-
-				So(managed.Update(event, payload), ShouldBeNil)
-			}
-
-			waitGroup.Wait()
-		})
-
-		Convey("One snapshot should support concurrent Level3 queue reads", func() {
-			snapshot := managed.Get("BTC/USD")
-			orders := 0
-
-			for _, level := range snapshot.Bids.Levels {
-				orders += len(level.Queue())
-			}
-
-			So(orders, ShouldEqual, 32)
-
-			waitGroup := sync.WaitGroup{}
-			waitGroup.Add(8)
-
-			for range 8 {
-				go func() {
-					defer waitGroup.Done()
-
-					for range 256 {
-						for _, level := range snapshot.Bids.Levels {
-							_ = level.Queue()
-						}
-					}
-				}()
-			}
-
-			waitGroup.Wait()
+			managed.Get("BTC/USD", func(current *spotbook.Book) {
+				So(value.(*spotbook.Book), ShouldEqual, current)
+			})
 		})
 	})
 }
@@ -151,13 +82,15 @@ func TestBookUpdate(t *testing.T) {
 			}
 
 			So(managed.Update(event, deletion("bid-one")), ShouldBeNil)
-			book := managed.Get("BTC/USD")
-			So(book.Bids.Levels, ShouldHaveLength, 1)
-			So(book.BestBid().Quantity.Float64(), ShouldEqual, 2.0)
+			managed.Get("BTC/USD", func(book *spotbook.Book) {
+				So(book.Bids.Levels, ShouldHaveLength, 1)
+				So(book.BestBid().Quantity.Float64(), ShouldEqual, 2.0)
+			})
 
 			So(managed.Update(event, deletion("bid-two")), ShouldBeNil)
-			book = managed.Get("BTC/USD")
-			So(book.Bids.Levels, ShouldBeEmpty)
+			managed.Get("BTC/USD", func(book *spotbook.Book) {
+				So(book.Bids.Levels, ShouldBeEmpty)
+			})
 		})
 	})
 }
@@ -190,6 +123,17 @@ func BenchmarkBookAll(b *testing.B) {
 
 	for b.Loop() {
 		managed.All()
+	}
+}
+
+func BenchmarkBookGet(b *testing.B) {
+	managed := NewBook(b.Context())
+	managed.Create("BTC/USD", 32)
+	read := func(*spotbook.Book) {}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		managed.Get("BTC/USD", read)
 	}
 }
 

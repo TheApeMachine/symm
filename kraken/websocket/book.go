@@ -81,11 +81,15 @@ func (book *Book) Status() types.Status {
 	return book.status
 }
 
-func (book *Book) Get(symbol string) *spotbook.Book {
+func (book *Book) Get(symbol string, read func(*spotbook.Book)) {
 	book.mu.RLock()
 	defer book.mu.RUnlock()
 
-	return cloneBook(book.manager.GetBook(symbol))
+	managed := book.manager.GetBook(symbol)
+
+	if managed != nil {
+		read(managed)
+	}
 }
 
 func (book *Book) Create(symbol string, depth int) {
@@ -268,78 +272,14 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 	defer book.mu.RUnlock()
 
 	for _, symbol := range book.manager.GetBooks() {
-		out.Store(symbol, cloneBook(book.manager.GetBook(symbol)))
+		out.Store(symbol, book.manager.GetBook(symbol))
 	}
-}
-
-func cloneBook(source *spotbook.Book) *spotbook.Book {
-	if source == nil {
-		return nil
-	}
-
-	cloned := spotbook.New()
-	cloned.Name = source.Name
-	cloned.MaxDepth = source.MaxDepth
-	cloned.NoBookCrossing = false
-	cloned.EnableMaxDepth = false
-	cloneSide(cloned, source.Bids, spotbook.Bid)
-	cloneSide(cloned, source.Asks, spotbook.Ask)
-	primeQueues(cloned)
-	cloned.NoBookCrossing = source.NoBookCrossing
-	cloned.EnableMaxDepth = source.EnableMaxDepth
-
-	return cloned
 }
 
 func primeQueues(book *spotbook.Book) {
 	for _, side := range []*spotbook.Side{book.Bids, book.Asks} {
 		for _, level := range side.Levels {
 			level.Queue()
-		}
-	}
-}
-
-func cloneSide(
-	destination *spotbook.Book,
-	source *spotbook.Side,
-	direction spotbook.BookDirection,
-) {
-	if source == nil {
-		return
-	}
-
-	for _, level := range source.Levels {
-		if level == nil || level.Price == nil || level.Quantity == nil {
-			continue
-		}
-
-		orders := level.Queue()
-
-		if len(orders) == 0 {
-			destination.Update(&spotbook.UpdateOptions{
-				Direction: direction,
-				Price:     level.Price,
-				Quantity:  level.Quantity,
-				Timestamp: level.Timestamp,
-				Silent:    true,
-			})
-
-			continue
-		}
-
-		for _, order := range orders {
-			if order == nil || order.LimitPrice == nil || order.Quantity == nil {
-				continue
-			}
-
-			destination.Update(&spotbook.UpdateOptions{
-				Direction: direction,
-				ID:        order.ID,
-				Price:     order.LimitPrice,
-				Quantity:  order.Quantity,
-				Timestamp: order.Timestamp,
-				Silent:    true,
-			})
 		}
 	}
 }

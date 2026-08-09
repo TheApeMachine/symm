@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -141,7 +142,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		resultIndex := index
 
 		group.Go(func() error {
-			current, ok := observedTouch(signal.books.Book(symbol))
+			var current touchSnapshot
+			var ok bool
+			signal.books.Book(symbol, func(book *spotbook.Book) {
+				current, ok = observedTouch(book)
+			})
 
 			if !ok {
 				return nil

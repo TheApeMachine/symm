@@ -3,6 +3,7 @@ package broker
 import (
 	"sync"
 
+	"github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
@@ -143,60 +144,63 @@ func (price *Price) WithFriction(
 	value *decimal.Decimal,
 ) *decimal.Decimal {
 	tick := price.Tick(pair.Symbol)
-	book := price.api.Book(price.api.Normalizer().Name(pair.Symbol))
 
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"holding": holding,
 		"qty":     holding.Qty,
 		"value":   value,
-		"book":    book,
 	})); err != nil {
 		return nil
 	}
 
-	zero := decimal.NewFromInt64(0)
-	remaining := holding.Qty
-	bookGross := zero
+	var adjusted *decimal.Decimal
+	price.api.Book(price.api.Normalizer().Name(pair.Symbol), func(book *book.Book) {
+		zero := decimal.NewFromInt64(0)
+		remaining := holding.Qty
+		bookGross := zero
 
-	for _, bid := range book.Bids.Levels {
-		if remaining.Cmp(zero) <= 0 {
-			break
+		for _, bid := range book.Bids.Levels {
+			if remaining.Cmp(zero) <= 0 {
+				break
+			}
+
+			fillQty := bid.Quantity
+
+			if fillQty.Cmp(remaining) > 0 {
+				fillQty = remaining
+			}
+
+			bookGross = bookGross.Add(decimal.ExactMul(bid.Price, fillQty))
+
+			remaining = remaining.Sub(fillQty)
 		}
 
-		fillQty := bid.Quantity
+		if remaining.Cmp(zero) > 0 {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"insufficient bid liquidity to exit holding",
+				nil,
+			))
 
-		if fillQty.Cmp(remaining) > 0 {
-			fillQty = remaining
+			return
 		}
 
-		bookGross = bookGross.Add(decimal.ExactMul(bid.Price, fillQty))
+		bestBidNet := price.WithFee(
+			pair.Symbol,
+			decimal.ExactMul(tick.Bid, holding.Qty),
+			SELL,
+		)
 
-		remaining = remaining.Sub(fillQty)
-	}
+		bookNet := price.WithFee(
+			pair.Symbol,
+			bookGross,
+			SELL,
+		)
 
-	if remaining.Cmp(zero) > 0 {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"insufficient bid liquidity to exit holding",
-			nil,
-		))
+		adjusted = value.Sub(bestBidNet.Sub(bookNet))
+	})
 
-		return nil
-	}
-
-	bestBidNet := price.WithFee(
-		pair.Symbol,
-		decimal.ExactMul(tick.Bid, holding.Qty),
-		SELL,
-	)
-
-	bookNet := price.WithFee(
-		pair.Symbol,
-		bookGross,
-		SELL,
-	)
-
-	return value.Sub(bestBidNet.Sub(bookNet))
+	return adjusted
 }
 
 /* ReturnPct returns the holding's fee-inclusive percentage return. */

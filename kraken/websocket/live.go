@@ -574,27 +574,30 @@ func (live *Live) Books() *sync.Map {
 	return out
 }
 
-func (live *Live) Book(symbol string) *book.Book {
-	var manager *book.Book
-
+func (live *Live) Book(symbol string, read func(*book.Book)) {
 	if live.level3 == nil {
-		return nil
+		read(nil)
+		return
 	}
 
-	live.level3.Range(func(key, value any) bool {
-		keys := strings.Split(key.(string), "|")
+	found := false
+	live.level3.Range(func(_, value any) bool {
+		conn, ok := value.(*Live)
 
-		if slices.Contains(keys, symbol) {
-			if conn, ok := value.(*Live); ok && conn.book != nil {
-				manager = conn.book.Get(symbol)
-				return false
-			}
+		if !ok || conn.book == nil {
+			return true
 		}
 
-		return true
+		conn.book.Get(symbol, func(managed *book.Book) {
+			found = true
+			read(managed)
+		})
+		return !found
 	})
 
-	return manager
+	if !found {
+		read(nil)
+	}
 }
 
 func (live *Live) Balance() (map[string]*decimal.Decimal, error) {
