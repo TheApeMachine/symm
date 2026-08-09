@@ -9,6 +9,26 @@ import { retainManifoldBinary } from "#/providers/manifold-binary";
 
 const registeredPainters = new Map<string, Set<Paint>>();
 
+/*
+lastFrameByKey retains the most recent value painted under each registerKey,
+independent of whether anything is currently subscribed to it. A route that
+unmounts and remounts a Component loses that instance's own paint history —
+routing tears the DOM and the fiber down — so a freshly mounted Component
+needs somewhere durable to ask "what was the last frame for this key" and
+repaint immediately instead of sitting blank until the next websocket tick.
+Bounded to one entry per key: this is a replay cache for "the current state
+of the world," not a history, so it cannot grow with time or traffic.
+*/
+const lastFrameByKey = new Map<string, JSONSerializable>();
+
+/*
+getLastFrame lets a freshly mounted Component replay the retained value for
+its registerKey immediately on mount, rather than showing nothing until the
+next server frame arrives.
+*/
+export const getLastFrame = (key: string): JSONSerializable | undefined =>
+	lastFrameByKey.get(key);
+
 const terminalPositionStatuses = new Set([
 	"canceled",
 	"closed",
@@ -24,6 +44,10 @@ const frameRows = (value: JSONSerializable): JSONSerializable[] => {
 	}
 
 	if (value !== null && typeof value === "object") {
+		if (symbolIdentity(value) !== null) {
+			return [value];
+		}
+
 		return Object.values(value).filter(
 			(row): row is JSONSerializable => row !== undefined,
 		);
@@ -158,6 +182,7 @@ export const paintRegistered = (
 	key: string,
 	updates: JSONSerializable,
 ): void => {
+	lastFrameByKey.set(key, updates);
 	observeFrame(key, updates);
 
 	if (key === "manifold") {

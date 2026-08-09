@@ -47,10 +47,10 @@ func TestNewStoploss(t *testing.T) {
 		)
 		So(err, ShouldBeNil)
 
-		Convey("It should apply predicted drawdown to the sellable mark", func() {
-			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(73.69)), ShouldEqual, 0)
+		Convey("It should retain enough room to recover the entry crossing", func() {
+			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(73.68)), ShouldEqual, 0)
 
-			stoploss.Update(decimal.NewFromFloat64(73.70))
+			stoploss.Update(decimal.NewFromFloat64(73.69))
 
 			So(stoploss.Status, ShouldEqual, ARMED)
 		})
@@ -66,7 +66,7 @@ func TestNewStoploss(t *testing.T) {
 		So(err, ShouldBeNil)
 		zeroRate := decimal.NewFromInt64(0)
 
-		Convey("It should project the mathematical floor onto the preceding venue tick", func() {
+		Convey("It should put the floor beyond the measured entry spread", func() {
 			stoploss, err := NewStoploss(
 				context.Background(),
 				"BTC/USD",
@@ -79,7 +79,7 @@ func TestNewStoploss(t *testing.T) {
 			)
 
 			So(err, ShouldBeNil)
-			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(99.99)), ShouldEqual, 0)
+			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(99.98)), ShouldEqual, 0)
 			So(stoploss.Floor.Cmp(stoploss.Peak), ShouldBeLessThan, 0)
 		})
 	})
@@ -109,8 +109,52 @@ func TestNewStoploss(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(stoploss.Floor.Cmp(stoploss.Peak), ShouldBeLessThan, 0)
 			So(stoploss.Peak.Sub(stoploss.Floor).Cmp(
-				decimal.NewFromFloat64(0.01),
+				decimal.NewFromFloat64(0.02),
 			), ShouldBeGreaterThanOrEqualTo, 0)
+		})
+	})
+
+	Convey("Given the MEZO entry spread and taker fees", t, func() {
+		forecast, err := NewResonanceForecast(
+			[]float64{0.01},
+			[]float64{1},
+			1,
+			0.9,
+		)
+		So(err, ShouldBeNil)
+		entryPrice, err := decimal.NewFromString("0.00985")
+		So(err, ShouldBeNil)
+		mark, err := decimal.NewFromString("0.00984")
+		So(err, ShouldBeNil)
+		tick, err := decimal.NewFromString("0.00001")
+		So(err, ShouldBeNil)
+		feeRate, err := decimal.NewFromString("0.0026")
+		So(err, ShouldBeNil)
+		stoploss, err := NewStoploss(
+			context.Background(),
+			"MEZO/USD",
+			entryPrice,
+			mark,
+			forecast,
+			tick,
+			feeRate,
+			feeRate,
+		)
+		So(err, ShouldBeNil)
+		profitLine, err := decimal.NewFromString("0.00991")
+		So(err, ShouldBeNil)
+		floor, err := decimal.NewFromString("0.00977")
+		So(err, ShouldBeNil)
+		oneTickLower, err := decimal.NewFromString("0.00982")
+		So(err, ShouldBeNil)
+
+		Convey("It should not treat a one-tick move as exit evidence", func() {
+			So(stoploss.ProfitLine.Cmp(profitLine), ShouldEqual, 0)
+			So(stoploss.Floor.Cmp(floor), ShouldEqual, 0)
+
+			stoploss.Update(oneTickLower)
+
+			So(stoploss.Status, ShouldEqual, ARMED)
 		})
 	})
 }
@@ -121,8 +165,11 @@ func TestStoplossRebindFill(t *testing.T) {
 		floor := stoploss.Floor
 		trailDistance := stoploss.trailDistance
 
-		Convey("It should update fill economics without rebuilding reach", func() {
-			err := stoploss.RebindFill(decimal.NewFromFloat64(100.05))
+		Convey("It should update fill economics without narrowing forecast reach", func() {
+			err := stoploss.RebindFill(
+				decimal.NewFromFloat64(100.05),
+				decimal.NewFromFloat64(100),
+			)
 
 			So(err, ShouldBeNil)
 			So(stoploss.Floor.Cmp(floor), ShouldEqual, 0)

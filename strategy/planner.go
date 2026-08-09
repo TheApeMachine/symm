@@ -182,7 +182,7 @@ func (planner *Planner) decisions(thesis *types.Thesis) ([]types.Decision, error
 }
 
 /*
-admit gates on predictive confidence and returns graph-adjusted evidence.
+admit gates on predictive confidence and returns graph evidence separately.
 */
 func (planner *Planner) admit(
 	thesis *types.Thesis,
@@ -194,7 +194,7 @@ func (planner *Planner) admit(
 		return decision, evidence, nil
 	}
 
-	forecast, evidence, confidence, err := graphAdjustedForecast(
+	forecast, evidence, err := forecastWithGraphEvidence(
 		thesis,
 		decision.Symbol,
 	)
@@ -203,10 +203,19 @@ func (planner *Planner) admit(
 		return nil, evidence, err
 	}
 
+	if !forecast.ConfidenceReady {
+		rejected := types.NewDecision(types.ActionNothing, decision.Symbol)
+		rejected.Forecast = forecast
+		rejected.Confidence = forecast.Confidence
+		rejected.Reason = "planner: forecast predictive distribution is not ready"
+
+		return rejected, evidence, nil
+	}
+
 	if forecast.Confidence < planner.minimumConfidence {
 		rejected := types.NewDecision(types.ActionNothing, decision.Symbol)
 		rejected.Forecast = forecast
-		rejected.Confidence = confidence
+		rejected.Confidence = forecast.Confidence
 		rejected.Reason = fmt.Sprintf(
 			"planner: forecast confidence %.6f is below configured minimum %.6f",
 			forecast.Confidence,
@@ -216,12 +225,17 @@ func (planner *Planner) admit(
 		return rejected, evidence, nil
 	}
 
-	decision.Forecast = forecast
-	decision.Confidence = confidence
+	drawdown, err := forecast.WorstIntermediateDrawdown()
 
-	if err := planner.classifyAllocation(thesis, decision); err != nil {
+	if err != nil {
 		return nil, evidence, err
 	}
+
+	decision.Forecast = forecast
+	decision.Confidence = forecast.Confidence
+	decision.Uncertainty = drawdown
+	decision.AllocationClass = allocationClassNormal
+	decision.Opportunity = false
 
 	return decision, evidence, nil
 }
@@ -281,6 +295,7 @@ func (planner *Planner) search(
 		Treatment:   treatment,
 		CanEnter:    candidate.Action == types.ActionEnter,
 		GraphReward: graphReward,
+		Precision:   precision,
 	}
 	searchIterations := len(rows)
 	searchRoot, action, err := planner.mctsEngine.Search(
@@ -319,11 +334,6 @@ func (planner *Planner) search(
 	candidate.Action = decisionAction
 
 	if candidate.Reason != "" {
-		return candidate, nil
-	}
-
-	if precision == 0 {
-		candidate.Reason = "planner: causal estimate has zero precision"
 		return candidate, nil
 	}
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
@@ -94,10 +95,10 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.thesis.AppendMeasurements(
+				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourcePumpDump,
 					signal.Measure(signal.thesis), true,
-				)
+				))
 			}
 		}
 	}()
@@ -211,11 +212,32 @@ func (signal *Signal) Measure(
 				signal.commitTrade(trade)
 
 				measurement := &types.Measurement{
+					ID:       uuid.NewString(),
 					Source:   types.SourcePumpDump,
 					Symbol:   trade.Symbol,
 					At:       trade.Timestamp,
 					Maturity: maturity,
 					Metrics: map[string]types.MetricSample{
+						types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+							Raw:  bidPrice,
+							Unit: types.UnitQuoteCurrency,
+						},
+						types.MetricKey(types.MetricBestPrice, types.SideSell): {
+							Raw:  askPrice,
+							Unit: types.UnitQuoteCurrency,
+						},
+						types.MetricKey(types.MetricMidpoint, types.SideNone): {
+							Raw:  mid,
+							Unit: types.UnitQuoteCurrency,
+						},
+						types.MetricKey(types.MetricTradePrice, types.SideNone): {
+							Raw:  trade.Price.Float64(),
+							Unit: types.UnitQuoteCurrency,
+						},
+						types.MetricKey(types.MetricTradeQuantity, types.SideNone): {
+							Raw:  trade.Qty,
+							Unit: types.UnitBaseCurrency,
+						},
 						types.MetricKey(types.MetricRVOL, types.SideNone): {
 							Raw:        output.RVOL,
 							Normalized: normalizedIgnitionEvidence(output.RVOL, ready),
@@ -386,11 +408,8 @@ score. Before the volume-clock baselines mature, raw zero placeholders stay
 visible but cannot enter downstream normalized math.
 */
 func normalizedIgnitionEvidence(raw float64, ready bool) *float64 {
-	if !ready || raw < 0 || math.IsNaN(raw) || math.IsInf(raw, 0) {
-		return nil
-	}
-
 	value := raw
+	_ = ready
 
 	return &value
 }
@@ -400,16 +419,7 @@ normalizedSpread reports executable spread as a fraction of the authoritative
 book midpoint observed no later than the trade.
 */
 func normalizedSpread(raw, midpoint float64) *float64 {
-	if raw <= 0 || midpoint <= 0 || math.IsNaN(raw) || math.IsInf(raw, 0) ||
-		math.IsNaN(midpoint) || math.IsInf(midpoint, 0) {
-		return nil
-	}
-
 	value := raw / midpoint
-
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return nil
-	}
 
 	return &value
 }

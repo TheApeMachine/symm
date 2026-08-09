@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
@@ -89,10 +90,10 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.thesis.AppendMeasurements(
+				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceSentiment,
 					signal.Measure(signal.thesis), true,
-				)
+				))
 			}
 		}
 	}()
@@ -125,6 +126,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		measurementIndex := index
 
 		group.Go(func() error {
+			updated := false
+
+			for _, ticker := range tickers {
+				if strings.TrimSpace(ticker.Symbol) == peer.symbol &&
+					ticker.Timestamp.Equal(peer.observation.at) {
+					updated = true
+					break
+				}
+			}
+
+			if !updated {
+				return nil
+			}
+
 			change := peer.observation.change
 			leaderStrength := 0.0
 			leaderEvidence := 0.0
@@ -159,11 +174,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			)
 
 			measurement := &types.Measurement{
+				ID:      uuid.NewString(),
 				Source:  types.SourceSentiment,
 				Symbol:  peer.symbol,
 				At:      peer.observation.at,
 				Metrics: metrics,
 			}
+			measurement.PutMetric(
+				types.MetricLastPrice,
+				types.SideNone,
+				types.MetricSample{
+					Raw:  peer.observation.price,
+					Unit: types.UnitQuoteCurrency,
+				},
+			)
 
 			measurements[measurementIndex] = measurement
 
@@ -180,11 +204,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
+	compacted := measurements[:0]
+
 	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		compacted = append(compacted, measurement)
+
 		if measurement.Symbol == types.Focus() {
 			out = append(out, measurement)
 		}
 	}
+	measurements = compacted
 
 	if len(out) > 0 {
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
@@ -326,10 +359,6 @@ func (signal *Signal) cohort() ([]sentimentPeer, time.Duration, bool) {
 	signal.observations.Range(func(key, value any) bool {
 		symbol := key.(string)
 		observation := value.(returnObservation)
-
-		if !observation.ready {
-			return true
-		}
 
 		if cadenceReady && freshness > 0 && latest.Sub(observation.at) > freshness {
 			return true
@@ -481,37 +510,14 @@ func normalizedSentimentMetric(
 	raw float64,
 	magnitudeBaseline float64,
 ) *float64 {
-	if math.IsNaN(raw) || math.IsInf(raw, 0) {
-		return nil
-	}
-
 	if metric == types.MetricChange || metric == types.MetricLeaderStrength {
-		if magnitudeBaseline <= 0 || math.IsNaN(magnitudeBaseline) ||
-			math.IsInf(magnitudeBaseline, 0) {
-			return nil
-		}
-
-		value := raw / magnitudeBaseline
-
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return nil
-		}
-
-		return &value
-	}
-
-	if metric == types.MetricBreadth {
-		if raw < -1 || raw > 1 {
-			return nil
-		}
-
 		value := raw
 
-		return &value
-	}
+		if magnitudeBaseline != 0 {
+			value = raw / magnitudeBaseline
+		}
 
-	if raw < 0 || raw > 1 {
-		return nil
+		return &value
 	}
 
 	value := raw

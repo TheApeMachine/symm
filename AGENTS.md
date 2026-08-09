@@ -44,6 +44,7 @@ A best-effort, highly principled market system. Detect real opportunity types—
 * **No `else` Blocks:** Invert conditions and return/exit early.
 * **Nesting Ceiling:** Max 2 levels of `if` nesting. If logic requires deeper branching, simplify the state checks instead of scattering code into helper methods.
 * **No Silent Failures:** Return descriptive errors. Substituting default fallbacks or ignoring errors is prohibited. Let unexpected panics surface rather than hiding them.
+* **No checks for NaN or Inf** Prefer to let the system crash, because this will give us the clearest signal possible that somewhere there is something wrong. By handling these cases and letting the system continue, we have silent death in the system. If for example we return 0 as the fallback and then use that in a multiplication, we instantly zero out the operations. Just let the system crash, then we can solve the cause and not the effect.
 
 ### Formatting & Naming
 

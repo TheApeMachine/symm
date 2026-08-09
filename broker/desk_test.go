@@ -70,7 +70,9 @@ func TestDeskExecute(t *testing.T) {
 
 			stored, found := desk.positions.Load(firstReserve.Symbol)
 			So(found, ShouldBeTrue)
-			So(stored.(*Position).Holding.IsOpportunity, ShouldBeTrue)
+			position := stored.(*Position)
+			So(position.Holding.IsOpportunity, ShouldBeTrue)
+			So(position.Decision.OpportunityMargin, ShouldBeGreaterThan, 0)
 		})
 	})
 

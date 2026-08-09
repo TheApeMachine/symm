@@ -1,11 +1,8 @@
 package signal
 
 import (
-	"encoding/json"
-	"iter"
 	"math"
 	"math/rand"
-	"strings"
 	"sync"
 	"time"
 
@@ -47,16 +44,20 @@ type Generator struct {
 	openPrice      float64
 	priceIncrement float64
 	pricePrecision int
+	quantityScale  float64
+	spreadFraction float64
+	factorLoading  float64
+	depthLevels    int
+	depthScale     float64
 	cumVolume      float64
 	cumValue       float64
 	highPrice      float64
 	lowPrice       float64
 	currTime       time.Time
+	steps          int64
 	sequence       int64
-	l3Bid          float64
-	l3Ask          float64
-	l3BidQty       float64
-	l3AskQty       float64
+	l3Bids         []testtypes.DepthLevel
+	l3Asks         []testtypes.DepthLevel
 }
 
 func NewGenerator(
@@ -66,18 +67,19 @@ func NewGenerator(
 	pricePrecision int,
 	seed int64,
 ) *Generator {
+	profiles := testtypes.CloneProfiles(testtypes.DefaultProfiles)
 	return &Generator{
 		rng:          rand.New(rand.NewSource(seed)),
 		symbol:       symbol,
 		currentState: testtypes.Baseline,
 		targetState:  testtypes.Baseline,
-		profiles:     testtypes.DefaultProfiles,
+		profiles:     profiles,
 
 		/*
 			A new generator is already settled in the baseline regime, so the
 			transition starts complete.
 		*/
-		sourceProfile: testtypes.DefaultProfiles[testtypes.Baseline],
+		sourceProfile: profiles[testtypes.Baseline],
 		progress:      1.0,
 		momentum:      1.0,
 
@@ -86,17 +88,15 @@ func NewGenerator(
 		openPrice:      startPrice,
 		priceIncrement: priceIncrement,
 		pricePrecision: pricePrecision,
+		quantityScale:  math.Pow10(testtypes.DefaultQuantityPrecision),
+		spreadFraction: testtypes.DefaultBaseSpreadFraction,
+		depthLevels:    testtypes.DefaultBookDepthLevels,
+		depthScale:     testtypes.DefaultBookDepthQuantityScale,
 		highPrice:      startPrice,
 		lowPrice:       startPrice,
 		currTime:       time.Now().UTC(),
 	}
 }
-
-/*
-baselineTransitionTicks is how many ticks a regime shift takes at unit
-momentum. Stronger moves complete in proportionally fewer ticks.
-*/
-const baselineTransitionTicks = 20.0
 
 /*
 SetState begins a gradual transition from the current regime to the given
@@ -116,16 +116,7 @@ is instead of snapping back to the previous regime.
 func (generator *Generator) SetState(state testtypes.MarketState, momentum ...float64) {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
-
-	speed := 0.0
-
-	if len(momentum) > 0 {
-		speed = math.Abs(momentum[0])
-	}
-
-	if speed == 0 {
-		speed = 1.0
-	}
+	speed := generator.transitionMomentum(state, momentum)
 
 	generator.sourceProfile = generator.activeProfile()
 	generator.currentState = state
@@ -187,17 +178,17 @@ activeProfile returns the profile currently in effect, which mid-transition
 is the blend between the source and target regimes.
 */
 func (generator *Generator) activeProfile() testtypes.RegimeProfile {
-	target, ok := generator.profiles[generator.targetState]
-
-	if !ok {
-		target = generator.profiles[testtypes.Baseline]
-	}
+	target := generator.profiles[generator.targetState]
 
 	return testtypes.Blend(generator.sourceProfile, target, generator.progress)
 }
 
-// Step generates the next relative sample frame based on current state.
-func (generator *Generator) Step() testtypes.Sample {
+/*
+Step generates the next relative sample frame based on current state. An
+optional shared standard-normal shock creates configured positive, negative,
+or independent cross-symbol returns without exposing a regime label.
+*/
+func (generator *Generator) Step(sharedShock ...float64) testtypes.Sample {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
 
@@ -209,20 +200,42 @@ func (generator *Generator) Step() testtypes.Sample {
 	precursor := generator.progress < 1.0
 
 	if precursor {
+		transitionObservations := generator.profiles[testtypes.Baseline].
+			Precursor.MinimumObservations
+		targetObservations := generator.profiles[generator.targetState].
+			Precursor.MinimumObservations
+
+		if targetObservations > 0 {
+			transitionObservations = targetObservations
+		}
+
 		generator.progress = math.Min(1.0, generator.progress+
-			generator.momentum/baselineTransitionTicks,
+			generator.momentum/float64(transitionObservations),
 		)
 	}
 
 	profile := generator.activeProfile()
+	generator.steps++
 
 	// 1. Advance Time Cadence
 	generator.currTime = generator.currTime.Add(profile.Cadence)
 
 	// 2. Calculate a latent trend with stationary observation noise.
 	dt := profile.Cadence.Seconds()
-	noise := generator.rng.NormFloat64()
+	marketShock := 0.0
+
+	if len(sharedShock) > 0 {
+		marketShock = sharedShock[0]
+	}
+
+	idiosyncraticShock := generator.rng.NormFloat64()
+	idiosyncraticWeight := math.Sqrt(
+		math.Max(0, 1-math.Pow(generator.factorLoading, 2)),
+	)
+	noise := generator.factorLoading*marketShock +
+		idiosyncraticWeight*idiosyncraticShock
 	driftPct := profile.Drift * dt * 0.01
+	diffusionPct := profile.Diffusion * math.Sqrt(dt) * noise * 0.01
 	noisePct := profile.Volatility * math.Sqrt(dt) * noise * 0.01
 
 	/*
@@ -238,9 +251,18 @@ func (generator *Generator) Step() testtypes.Sample {
 		generator.burst *= profile.IgnitionDecay
 	}
 
+	meanReversionPct := profile.MeanReversion * dt *
+		(generator.openPrice/generator.trendPrice - 1)
+	oscillation := profile.OscillationMove
+
+	if generator.steps%2 == 0 {
+		oscillation = -oscillation
+	}
+
 	generator.trendPrice = math.Max(
 		generator.priceIncrement,
-		generator.trendPrice*(1.0+driftPct+impulse),
+		generator.trendPrice*(1.0+driftPct+diffusionPct+
+			meanReversionPct+oscillation+impulse),
 	)
 	generator.midPrice = math.Max(
 		generator.priceIncrement,
@@ -248,10 +270,13 @@ func (generator *Generator) Step() testtypes.Sample {
 	)
 
 	// 3. Dynamic Spread & Bid/Ask Construction
-	baseSpread := generator.midPrice * 0.0005
+	baseSpread := generator.midPrice * generator.spreadFraction
+	spreadNoise := math.Exp(
+		profile.SpreadJitter * math.Sqrt(dt) * generator.rng.NormFloat64(),
+	)
 	actualSpread := math.Max(
 		generator.priceIncrement,
-		baseSpread*profile.SpreadScale,
+		baseSpread*profile.SpreadScale*spreadNoise,
 	)
 
 	spreadTicks := math.Max(
@@ -275,11 +300,14 @@ func (generator *Generator) Step() testtypes.Sample {
 	if aggressorSide == "" {
 		aggressorSide = "buy"
 
-		if driftPct+noisePct+impulse < 0 {
+		movement := driftPct + diffusionPct + meanReversionPct +
+			oscillation + noisePct + impulse
+
+		if movement < 0 {
 			aggressorSide = "sell"
 		}
 
-		if driftPct+noisePct+impulse == 0 && generator.rng.Intn(2) == 0 {
+		if movement == 0 && generator.rng.Intn(2) == 0 {
 			aggressorSide = "sell"
 		}
 	}
@@ -333,200 +361,27 @@ func (generator *Generator) Step() testtypes.Sample {
 
 	change := last - generator.openPrice
 	changePct := (change / generator.openPrice) * 100.0
+	roundedBidQuantity := generator.roundQuantity(bidQty)
+	roundedAskQuantity := generator.roundQuantity(askQty)
+	bids, asks := generator.depth(bid, bidQty, ask, askQty)
 
 	return testtypes.Sample{
 		Symbol:        generator.symbol,
 		AggressorSide: aggressorSide,
 		Bid:           bid,
-		BidQty:        math.Round(bidQty*100) / 100,
+		BidQty:        roundedBidQuantity,
 		Ask:           ask,
-		AskQty:        math.Round(askQty*100) / 100,
+		AskQty:        roundedAskQuantity,
 		Last:          generator.roundPrice(last),
-		Volume:        math.Round(generator.cumVolume*100) / 100,
-		StepVolume:    math.Round(stepVolume*100) / 100,
+		Volume:        generator.roundQuantity(generator.cumVolume),
+		StepVolume:    generator.roundQuantity(stepVolume),
 		VWAP:          generator.roundPrice(vwap),
 		Low:           generator.roundPrice(generator.lowPrice),
 		High:          generator.roundPrice(generator.highPrice),
 		Change:        generator.roundPrice(change),
 		ChangePct:     math.Round(changePct*100) / 100,
 		Timestamp:     generator.currTime,
+		Bids:          bids,
+		Asks:          asks,
 	}
-}
-
-func (generator *Generator) floorPrice(price float64) float64 {
-	return generator.roundPrice(
-		math.Floor(price/generator.priceIncrement) * generator.priceIncrement,
-	)
-}
-
-func (generator *Generator) ceilPrice(price float64) float64 {
-	return generator.roundPrice(
-		math.Ceil(price/generator.priceIncrement) * generator.priceIncrement,
-	)
-}
-
-func (generator *Generator) roundPrice(price float64) float64 {
-	scale := math.Pow10(generator.pricePrecision)
-
-	return math.Round(price*scale) / scale
-}
-
-/*
-Generate yields raw JSON []byte payload frames derived by updating the given template with signal steps.
-*/
-func (generator *Generator) Generate(template []byte) iter.Seq[[]byte] {
-	return func(yield func([]byte) bool) {
-		sample := generator.Step()
-		frame := generator.Render(template, sample)
-
-		if len(frame) > 0 {
-			yield(frame)
-		}
-	}
-}
-
-/*
-Render writes one already-sampled market state into a channel template.
-
-Keeping sampling separate from rendering lets one venue tick publish the same
-price, quantity, and timestamp through ticker, book, trade, and level3 rather
-than advancing the simulated market once per channel.
-*/
-func (generator *Generator) Render(template []byte, sample testtypes.Sample) []byte {
-	if len(template) == 0 {
-		payload, _ := json.Marshal(map[string]any{
-			"channel": "ticker",
-			"type":    "update",
-			"data":    []testtypes.Sample{sample},
-		})
-
-		return payload
-	}
-
-	var wire map[string]any
-
-	if err := json.Unmarshal(template, &wire); err != nil {
-		return template
-	}
-
-	channel, _ := wire["channel"].(string)
-	wireType, _ := wire["type"].(string)
-	stamp := sample.Timestamp.Format(time.RFC3339Nano)
-	generator.sequence++
-
-	if data, ok := wire["data"].([]any); ok && len(data) > 0 {
-		if row, ok := data[0].(map[string]any); ok {
-			row["symbol"] = sample.Symbol
-			row["timestamp"] = stamp
-
-			switch channel {
-			case "book":
-				row["bids"] = []any{map[string]any{
-					"price": sample.Bid, "qty": sample.BidQty,
-				}}
-				row["asks"] = []any{map[string]any{
-					"price": sample.Ask, "qty": sample.AskQty,
-				}}
-			case "level3":
-				if wireType == "snapshot" {
-					generator.l3Bid = 0
-					generator.l3Ask = 0
-				}
-
-				orderSymbol := strings.NewReplacer("/", "-", ".", "-").
-					Replace(sample.Symbol)
-				bidOrders := make([]any, 0, 2)
-				askOrders := make([]any, 0, 2)
-				bidEvent := "add"
-				askEvent := "add"
-
-				if generator.l3Bid > 0 && generator.l3Bid != sample.Bid {
-					bidOrders = append(bidOrders, map[string]any{
-						"event":       "delete",
-						"order_id":    "OBID-" + orderSymbol,
-						"limit_price": generator.l3Bid,
-						"order_qty":   generator.l3BidQty,
-						"timestamp":   stamp,
-					})
-				}
-
-				if generator.l3Ask > 0 && generator.l3Ask != sample.Ask {
-					askOrders = append(askOrders, map[string]any{
-						"event":       "delete",
-						"order_id":    "OASK-" + orderSymbol,
-						"limit_price": generator.l3Ask,
-						"order_qty":   generator.l3AskQty,
-						"timestamp":   stamp,
-					})
-				}
-
-				if generator.l3Bid == sample.Bid {
-					bidEvent = "modify"
-				}
-
-				if generator.l3Ask == sample.Ask {
-					askEvent = "modify"
-				}
-
-				bidOrders = append(bidOrders, map[string]any{
-					"event":       bidEvent,
-					"order_id":    "OBID-" + orderSymbol,
-					"limit_price": sample.Bid,
-					"order_qty":   sample.BidQty,
-					"timestamp":   stamp,
-				})
-				askOrders = append(askOrders, map[string]any{
-					"event":       askEvent,
-					"order_id":    "OASK-" + orderSymbol,
-					"limit_price": sample.Ask,
-					"order_qty":   sample.AskQty,
-					"timestamp":   stamp,
-				})
-				row["bids"] = bidOrders
-				row["asks"] = askOrders
-				generator.l3Bid = sample.Bid
-				generator.l3Ask = sample.Ask
-				generator.l3BidQty = sample.BidQty
-				generator.l3AskQty = sample.AskQty
-			case "trade":
-				row["side"] = sample.AggressorSide
-				row["price"] = sample.Last
-
-				/*
-					A trade reports the quantity that actually executed, not
-					the size resting on the bid. Ignition scores volume rate
-					against its own median, so the executed quantity is the
-					only figure that carries the surge.
-				*/
-				row["qty"] = sample.StepVolume
-				row["ord_type"] = "limit"
-				row["trade_id"] = generator.sequence
-			default:
-				row["bid"] = sample.Bid
-				row["bid_qty"] = sample.BidQty
-				row["ask"] = sample.Ask
-				row["ask_qty"] = sample.AskQty
-				row["last"] = sample.Last
-				row["volume"] = sample.Volume
-				row["vwap"] = sample.VWAP
-				row["low"] = sample.Low
-				row["high"] = sample.High
-				row["change"] = sample.Change
-				row["change_pct"] = sample.ChangePct
-			}
-
-			wire["data"] = []any{row}
-		}
-	}
-
-	if wireType != "snapshot" {
-		wire["type"] = "update"
-	}
-	payload, err := json.Marshal(wire)
-
-	if err != nil {
-		return template
-	}
-
-	return payload
 }

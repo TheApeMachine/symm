@@ -2,10 +2,11 @@ package types
 
 import (
 	"context"
-	"slices"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/kraken"
 )
@@ -148,9 +149,9 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 
 		thesis.Tickers.Store(ticker.Symbol, append(found.([]kraken.TickerData), ticker))
 		thesis.LastTickerAt = ticker.Timestamp
+		thesis.Fanout(SourceTrader)
 	}
 
-	thesis.Fanout(SourceEvaluator)
 	return thesis
 }
 
@@ -176,9 +177,9 @@ func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 
 		thesis.Trades.Store(trade.Symbol, append(found.([]kraken.TradeData), trade))
 		thesis.LastTradeAt = trade.Timestamp
+		thesis.Fanout(SourceTrader)
 	}
 
-	thesis.Fanout(SourceEvaluator)
 	return thesis
 }
 
@@ -186,102 +187,114 @@ func (thesis *Thesis) AppendMeasurements(
 	sender SourceType,
 	measurements []*Measurement,
 	ready bool,
-) *Thesis {
-	if len(measurements) != 0 {
-		source := measurements[0].Source
-		replaced := make(map[string]struct{}, len(measurements))
+) error {
+	if len(measurements) == 0 {
+		return nil
+	}
 
-		for _, measurement := range measurements {
-			replaced[measurement.Key()] = struct{}{}
-		}
+	found, ok := thesis.Measurements.LoadOrStore(sender, measurements)
 
-		merged := make([]*Measurement, 0, len(measurements))
-		stored, found := thesis.Measurements.Load(source)
+	if ok {
+		stored := found.([]*Measurement)
 
-		if found {
-			for _, measurement := range stored.([]*Measurement) {
-				if _, replace := replaced[measurement.Key()]; replace {
-					continue
+		for _, newMeasurement := range measurements {
+			replaced := false
+
+			for index, measurement := range stored {
+				if measurement.ID == newMeasurement.ID {
+					return errnie.Error(errnie.Err(
+						errnie.Conflict,
+						fmt.Sprintf(
+							"thesis: duplicate measurement found for [%s]",
+							sender,
+						),
+						nil,
+					))
 				}
 
-				merged = append(merged, measurement)
+				if measurement.Source == newMeasurement.Source &&
+					measurement.Symbol == newMeasurement.Symbol &&
+					measurement.Peer == newMeasurement.Peer {
+					stored[index] = newMeasurement
+					replaced = true
+				}
+			}
+
+			if !replaced {
+				stored = append(stored, newMeasurement)
 			}
 		}
 
-		merged = append(merged, measurements...)
-		thesis.Measurements.Store(source, merged)
-		thesis.commitMarketInputs(source, measurements)
-
-		if ready {
-			thesis.Readiness.Stamp(SourceType(source))
-		}
+		thesis.Measurements.Store(sender, stored)
 	}
 
-	thesis.Fanout(sender)
-	return thesis
+	if ready {
+		thesis.Readiness.Stamp(SourceType(measurements[0].Source))
+		thesis.Fanout(sender)
+	}
+
+	return nil
 }
 
-func (thesis *Thesis) LatestTicker(symbol string) (kraken.TickerData, bool) {
-	tickersRaw, found := thesis.Tickers.Load(symbol)
+/*
+MarketTickers returns all the tickers in the thesis, except those that the
+source has already seen. This is used to fan out new tickers to subscribers.
+*/
+func (thesis *Thesis) MarketTickers(source SourceType) []kraken.TickerData {
+	out := make([]kraken.TickerData, 0)
+	at := time.Time{}
+	cursor := time.Time{}
+	stored, ok := thesis.Measured.Load(source + "tickers")
 
-	if !found {
-		return kraken.TickerData{}, false
+	if ok {
+		cursor = stored.(time.Time)
 	}
-
-	tickers := tickersRaw.([]kraken.TickerData)
-
-	if len(tickers) == 0 {
-		return kraken.TickerData{}, false
-	}
-
-	return tickers[len(tickers)-1], true
-}
-
-func (thesis *Thesis) LatestTrade(symbol string) (kraken.TradeData, bool) {
-	tradesRaw, found := thesis.Trades.Load(symbol)
-
-	if !found {
-		return kraken.TradeData{}, false
-	}
-
-	trades := tradesRaw.([]kraken.TradeData)
-
-	if len(trades) == 0 {
-		return kraken.TradeData{}, false
-	}
-
-	return trades[len(trades)-1], true
-}
-
-func (thesis *Thesis) MarketSymbols() []string {
-	symbols := make([]string, 0)
 
 	thesis.Tickers.Range(func(key, value any) bool {
-		if symbol, ok := key.(string); ok {
-			if !slices.Contains(symbols, symbol) {
-				symbols = append(symbols, symbol)
+		if tickerSlice, ok := value.([]kraken.TickerData); ok {
+			for _, ticker := range tickerSlice {
+				if !ticker.Timestamp.After(cursor) {
+					continue
+				}
+
+				out = append(out, ticker)
+
+				if ticker.Timestamp.After(at) {
+					thesis.Measured.Store(source+"tickers", ticker.Timestamp)
+					at = ticker.Timestamp
+				}
 			}
 		}
 
 		return true
 	})
 
-	return symbols
+	return out
 }
 
-func (thesis *Thesis) Series(symbol string) []*Measurement {
-	out := make([]*Measurement, 0)
+func (thesis *Thesis) MarketTrades(source SourceType) []kraken.TradeData {
+	out := make([]kraken.TradeData, 0)
+	at := time.Time{}
+	cursor := time.Time{}
+	stored, ok := thesis.Measured.Load(source + "trades")
 
-	thesis.Measurements.Range(func(key, value any) bool {
-		measurements, ok := value.([]*Measurement)
+	if ok {
+		cursor = stored.(time.Time)
+	}
 
-		if !ok {
-			return true
-		}
+	thesis.Trades.Range(func(key, value any) bool {
+		if tradeSlice, ok := value.([]kraken.TradeData); ok {
+			for _, trade := range tradeSlice {
+				if !trade.Timestamp.After(cursor) {
+					continue
+				}
 
-		for _, measurement := range measurements {
-			if measurement.Symbol == symbol {
-				out = append(out, measurement)
+				out = append(out, trade)
+
+				if trade.Timestamp.After(at) {
+					thesis.Measured.Store(source+"trades", trade.Timestamp)
+					at = trade.Timestamp
+				}
 			}
 		}
 

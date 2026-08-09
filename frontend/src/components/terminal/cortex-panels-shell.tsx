@@ -116,6 +116,61 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => (
 						</div>
 					</div>
 				</Panel>
+
+				<Panel>
+					<div className="flex items-center justify-between">
+						<span className="font-semibold text-[12px] text-(--f1)">
+							REM consolidation
+						</span>
+						{/*
+							data-paint-prop diverts the boolean into the dataset instead
+							of textContent, leaving the two words below for CSS to pick
+							from and their own tone classes intact.
+						*/}
+						<span
+							data-paint="remConsolidating"
+							data-paint-prop="dataset.consolidating"
+							className="group rounded-full border border-(--line2) px-2.25 py-px font-mono text-[9px]"
+						>
+							<span className="text-(--f3) group-data-[consolidating=true]:hidden">
+								awake
+							</span>
+							<span className="hidden text-(--acc) group-data-[consolidating=true]:inline">
+								REM
+							</span>
+						</span>
+					</div>
+					<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
+						episodic replay · decay · retroactive inhibition
+					</div>
+					<div className="grid grid-cols-3 gap-2">
+						<Stat
+							layout="feature"
+							label="decay γ"
+							value={
+								<Typography.Span
+									data-paint="remDecayFactor"
+									data-paint-format=".3f"
+								/>
+							}
+						/>
+						<Stat
+							layout="feature"
+							label="replays"
+							value={<Typography.Span data-paint="remReplays" />}
+						/>
+						<Stat
+							layout="feature"
+							label="inhibition"
+							value={
+								<Typography.Span
+									data-paint="remInhibitionPct"
+									data-paint-format=".0%"
+								/>
+							}
+						/>
+					</div>
+				</Panel>
 			</div>
 		)}
 	</Component>

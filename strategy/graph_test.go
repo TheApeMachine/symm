@@ -8,6 +8,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestNewGraphEvidence(t *testing.T) {
@@ -46,11 +47,39 @@ func TestNewGraphEvidence(t *testing.T) {
 
 		evidence, err := newGraphEvidence(marketGraph, "BTC/USD")
 
-		Convey("It should average only direct directional evidence", func() {
+		Convey("It should retain only the strongest direct evidence in each direction", func() {
+			So(err, ShouldBeNil)
+			So(evidence.relations, ShouldEqual, 2)
+			So(evidence.supports, ShouldAlmostEqual, 0.8)
+			So(evidence.contradicts, ShouldAlmostEqual, 0.2)
+		})
+	})
+
+	Convey("Given repeated direct support from one causal family", t, func() {
+		marketGraph := graphEvidenceFixture()
+		forecastID := "res:BTC/USD:forecast"
+
+		for _, nodeID := range []string{
+			"causal:BTC/USD:uplift",
+			"causal:BTC/USD:doExpectation",
+		} {
+			marketGraph.AddNode(&logicgraph.Node{
+				ID: nodeID, Symbol: "BTC/USD",
+				Kind: logicgraph.KindCausal, At: marketGraph.At,
+			})
+			marketGraph.AddEdge(&logicgraph.Edge{
+				From: forecastID, To: nodeID,
+				Relation: logicgraph.RelationSupports, Weight: 0.5,
+				Confidence: 0.8, At: marketGraph.At,
+			})
+		}
+
+		evidence, err := newGraphEvidence(marketGraph, "BTC/USD")
+
+		Convey("It should not increase support by repeating the relation", func() {
 			So(err, ShouldBeNil)
 			So(evidence.relations, ShouldEqual, 2)
 			So(evidence.supports, ShouldAlmostEqual, 0.4)
-			So(evidence.contradicts, ShouldAlmostEqual, 0.1)
 		})
 	})
 
@@ -74,42 +103,31 @@ func TestNewGraphEvidence(t *testing.T) {
 	})
 }
 
-func TestGraphAdjustedForecast(t *testing.T) {
+func TestForecastWithGraphEvidence(t *testing.T) {
 	Convey("Given a graph forecast that differs from its Thesis forecast", t, func() {
 		thesis := plannerThesisFixture(t, "BTC/USD", 0.8)
 		stored, _ := thesis.Graphs.Load(marketGraphKey)
 		marketGraph := stored.(*logicgraph.Graph)
 		marketGraph.Nodes["res:BTC/USD:forecast"].Value++
 
-		_, _, _, err := graphAdjustedForecast(thesis, "BTC/USD")
+		_, _, err := forecastWithGraphEvidence(thesis, "BTC/USD")
 
 		Convey("It should reject evidence compiled from another forecast", func() {
 			So(err, ShouldNotBeNil)
 		})
 	})
-}
 
-func TestGraphEvidenceConfidence(t *testing.T) {
-	Convey("Given bounded graph evidence", t, func() {
-		Convey("Support should convert the matching share of uncertainty", func() {
-			confidence, err := (graphEvidence{supports: 0.5}).Confidence(0.6)
+	Convey("Given a resonance reading from an earlier Thesis cut", t, func() {
+		thesis := plannerThesisFixture(t, "BTC/USD", 0.8)
+		stored, _ := thesis.Resonance.Load("BTC/USD")
+		reading := stored.(types.ResonanceReading)
+		reading.At = reading.At.Add(-time.Nanosecond)
+		thesis.Resonance.Store("BTC/USD", reading)
 
-			So(err, ShouldBeNil)
-			So(confidence, ShouldAlmostEqual, 0.75)
-		})
+		_, _, err := forecastWithGraphEvidence(thesis, "BTC/USD")
 
-		Convey("Contradiction should remove the matching share of confidence", func() {
-			confidence, err := (graphEvidence{contradicts: 0.5}).Confidence(0.9)
-
-			So(err, ShouldBeNil)
-			So(confidence, ShouldAlmostEqual, 0.8181818181818181)
-		})
-
-		Convey("Absent directional evidence should remain neutral", func() {
-			confidence, err := (graphEvidence{}).Confidence(0.75)
-
-			So(err, ShouldBeNil)
-			So(confidence, ShouldEqual, 0.75)
+		Convey("It should reject the stale forecast", func() {
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

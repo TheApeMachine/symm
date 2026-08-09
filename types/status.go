@@ -48,16 +48,17 @@ MarketStatuses maps venue exec_type strings onto canonical Status values.
 Unknown keys must not be cast; callers use StatusFromMarket.
 */
 var MarketStatuses = map[string]Status{
-	"pending_new":    PENDING,
-	"new":            NEW,
-	"trade":          OPEN,
-	"filled":         FILLED,
-	"canceled":       CANCELED,
-	"iceberg_filled": FILLED,
-	"expired":        EXPIRED,
-	"amended":        AMENDED,
-	"restated":       RESTATED,
-	"status":         STATUS,
+	"pending_new":      PENDING,
+	"new":              NEW,
+	"trade":            OPEN,
+	"partially_filled": PARTIAL_FILLED,
+	"filled":           FILLED,
+	"canceled":         CANCELED,
+	"iceberg_filled":   FILLED,
+	"expired":          EXPIRED,
+	"amended":          AMENDED,
+	"restated":         RESTATED,
+	"status":           STATUS,
 }
 
 /*

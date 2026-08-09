@@ -4,7 +4,7 @@ import {
 	drawCortexTree,
 } from "#/components/terminal/cortex-draw";
 import { cortexTreeFromReading } from "#/components/terminal/cortex-tree";
-import { registerPainter } from "#/providers/ws-stores";
+import { getLastFrame, registerPainter } from "#/providers/ws-stores";
 
 /*
 CortexCanvas draws the sensory prefix tree.
@@ -72,7 +72,7 @@ export const CortexCanvas = ({
 			re-read this tick, so a frame that omits this one leaves the last tree on
 			screen instead of blanking it.
 		*/
-		const unregister = registerPainter("cognition", (updates) => {
+		const paint = (updates: unknown) => {
 			if (updates === null || typeof updates !== "object") {
 				return;
 			}
@@ -85,7 +85,9 @@ export const CortexCanvas = ({
 
 			readingRef.current = reading as Record<string, unknown>;
 			draw();
-		});
+		};
+
+		const unregister = registerPainter("cognition", paint);
 
 		const observer = new ResizeObserver(draw);
 		const canvas = canvasRef.current;
@@ -94,7 +96,20 @@ export const CortexCanvas = ({
 			observer.observe(canvas);
 		}
 
-		draw();
+		/*
+			A fresh mount has an empty `readingRef` even when cognition is
+			already flowing — routing tears the previous instance's ref down.
+			Replaying the retained last frame is what makes revisiting this
+			page show its tree immediately instead of sitting blank until the
+			classifier's next tick.
+		*/
+		const seed = getLastFrame("cognition");
+
+		if (seed !== undefined) {
+			paint(seed);
+		} else {
+			draw();
+		}
 
 		return () => {
 			unregister?.();

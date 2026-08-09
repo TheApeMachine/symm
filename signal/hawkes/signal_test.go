@@ -129,13 +129,17 @@ func TestMeasure(t *testing.T) {
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 
-		// NewArrivalStream sorts each side, so the signal must not pre-sort. The
-		// sell here lands after the last buy, which is what makes the horizon
-		// span both marks rather than the buy side alone.
-		thesis.Trades.Store("AAA/USD", []kraken.TradeData{
-			{Symbol: "AAA/USD", Side: "sell", Timestamp: start.Add(2 * time.Second)},
-			{Symbol: "AAA/USD", Side: "buy", Timestamp: start},
-			{Symbol: "AAA/USD", Side: "buy", Timestamp: start.Add(time.Second)},
+		// Ingestion receives the sell first and keeps the stored stream causal.
+		// The sell lands after the last buy in exchange time, which is what makes
+		// the horizon span both marks rather than the buy side alone.
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol: "AAA/USD", Side: "sell", Timestamp: start.Add(2 * time.Second),
+		})
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol: "AAA/USD", Side: "buy", Timestamp: start,
+		})
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol: "AAA/USD", Side: "buy", Timestamp: start.Add(time.Second),
 		})
 
 		measurements := signal.Measure(thesis)

@@ -5,7 +5,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { registerPainter } from "#/providers/ws-stores";
+import { getLastFrame, registerPainter } from "#/providers/ws-stores";
 import type { JSONSerializable, Paint } from "./paint";
 
 /*
@@ -1377,8 +1377,17 @@ export const Component = ({
 
 		const unregister = registerPainter(registerKey, paint);
 
-		if (latest.current !== undefined) {
-			paint(latest.current);
+		/*
+			A fresh mount has an empty `latest` ref even when the registerKey
+			already has data flowing — routing tears the previous instance's
+			ref down along with its DOM. Replaying the retained last frame here
+			is what makes revisiting a page show its data immediately instead
+			of sitting blank until the next websocket tick.
+		*/
+		const seed = latest.current ?? getLastFrame(registerKey);
+
+		if (seed !== undefined) {
+			paint(seed);
 		}
 
 		return () => {

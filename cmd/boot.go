@@ -214,6 +214,7 @@ func Boot(
 
 	analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
 		ctx,
+		price,
 		api,
 		tree,
 		uiChannel,

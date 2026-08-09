@@ -36,6 +36,7 @@ var entityMap = map[string]func([]byte) any{
 	"ticker":     func(buf []byte) any { return kraken.NewTicker(buf) },
 	"book":       func(buf []byte) any { return kraken.NewBook(buf) },
 	"trade":      func(buf []byte) any { return kraken.NewTrade(buf) },
+	"ohlc":       func(buf []byte) any { return kraken.NewOHLC(buf) },
 	"level3":     func(buf []byte) any { return kraken.NewLevel3(buf) },
 	"instrument": func(buf []byte) any { return kraken.NewInstrument(buf) },
 	"balances":   func(buf []byte) any { return kraken.NewBalance(buf) },

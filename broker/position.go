@@ -169,7 +169,9 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	}
 
 	if stoploss.Status == types.TRIGGERED && position.ExitOrder == nil {
-		position.Exit()
+		if _, err := position.Exit(); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	position.Publish()
@@ -217,6 +219,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 
 		if err := position.Holding.Stoploss.RebindFill(
 			position.Holding.EntryPrice,
+			position.Holding.Mark,
 		); err != nil {
 			position.Status = types.ERROR
 			position.Holding.Status = types.ERROR
@@ -338,7 +341,20 @@ func (position *Position) Enter() (*Position, error) {
 	return position, nil
 }
 
+/*
+Exit is the single sell-order boundary for an open lot. Exit causes may evolve,
+but none may bypass the position's regulator and liquidate an armed holding.
+*/
 func (position *Position) Exit() (*Position, error) {
+	if position.Holding == nil || position.Holding.Stoploss == nil ||
+		position.Holding.Stoploss.Status != types.TRIGGERED {
+		return position, errnie.Err(
+			errnie.NotAcceptable,
+			"position: triggered stoploss required to submit an exit",
+			nil,
+		)
+	}
+
 	position.ExitOrder = &spot.AddOrderRequest{
 		ClOrdId:   position.EntryOrder.ClOrdId + "-exit",
 		Type:      "sell",

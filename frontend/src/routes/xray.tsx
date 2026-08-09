@@ -14,7 +14,7 @@ import {
 } from "#/components/terminal/xray-panels";
 import { Component } from "#/components/ui/component";
 import type { JSONSerializable } from "#/components/ui/paint";
-import { registerPainter } from "#/providers/ws-stores";
+import { getLastFrame, registerPainter } from "#/providers/ws-stores";
 
 const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
@@ -29,8 +29,16 @@ const XrayPaintBridge = () => {
 
 		const unregister = registerPainter("resonance", paint);
 
-		if (latestResonance.current !== null) {
-			paint(latestResonance.current);
+		/*
+			A fresh mount has no `latestResonance` even when the feed already has
+			data — routing tears the previous instance down along with its ref.
+			Replaying the retained last frame is what makes revisiting this page
+			show data immediately instead of sitting blank until the next tick.
+		*/
+		const seed = latestResonance.current ?? getLastFrame("resonance");
+
+		if (seed !== null && seed !== undefined) {
+			paint(seed);
 		}
 
 		return unregister;

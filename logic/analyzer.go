@@ -7,6 +7,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/causal"
@@ -51,6 +52,7 @@ NewAnalyzer composes the field processor required by the analysis stage.
 */
 func NewAnalyzer(
 	ctx context.Context,
+	price *broker.Price,
 	api *websocket.API,
 	tree *dmt.Tree,
 	ui chan []byte,
@@ -74,7 +76,7 @@ func NewAnalyzer(
 				recorder,
 				viper.GetFloat64("resonance.learning_rate"),
 			),
-			causal.NewSolver(ui, recorder),
+			causal.NewSolver(price, ui, recorder),
 			cognition.NewSolver(tree, ui, recorder),
 			graph.NewSolver(ui, recorder),
 		},

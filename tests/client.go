@@ -3,13 +3,10 @@ package tests
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -17,12 +14,13 @@ import (
 	sdkkraken "github.com/theapemachine/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/tests/fixtures/instrument"
-	"github.com/theapemachine/symm/tests/fixtures/orderack"
 	"github.com/theapemachine/symm/tests/types"
 )
 
-var orderCounter atomic.Uint64
+const (
+	fixtureDeliveryTimeout = 5 * time.Second
+	fixtureReconnectWait   = 10 * time.Millisecond
+)
 
 /*
 Conn is a fake Kraken WebSocket endpoint. It runs a real websocket server on
@@ -36,10 +34,14 @@ type Conn struct {
 	ws        *spot.WebSocket
 	transport *mockTransport
 	server    *httptest.Server
+	faults    *faultInjector
+	responder *fixtureResponder
+	clock     time.Time
 
-	mu       sync.Mutex
-	accepted *websocket.Conn
-	ready    chan struct{}
+	mu                   sync.Mutex
+	accepted             *websocket.Conn
+	connectionGeneration uint64
+	ready                chan struct{}
 }
 
 /*
@@ -66,8 +68,12 @@ func NewConn(ctxs ...context.Context) *Conn {
 		cancel:    cancel,
 		ws:        client,
 		transport: transport,
+		faults:    newFaultInjector(types.FaultConfig{}),
+		clock:     types.DefaultScenarioStart,
 		ready:     make(chan struct{}),
 	}
+	conn.responder = &fixtureResponder{conn: conn}
+	client.ReconnectWait = fixtureReconnectWait
 
 	upgrader := websocket.Upgrader{}
 
@@ -81,6 +87,7 @@ func NewConn(ctxs ...context.Context) *Conn {
 
 			conn.mu.Lock()
 			conn.accepted = accepted
+			conn.connectionGeneration++
 			conn.mu.Unlock()
 
 			select {
@@ -134,7 +141,7 @@ func (conn *Conn) Connect() error {
 	select {
 	case <-conn.ready:
 		return nil
-	case <-time.After(5 * time.Second):
+	case <-time.After(fixtureDeliveryTimeout):
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"tests: fixture websocket did not connect",
@@ -155,7 +162,7 @@ func (conn *Conn) serve(accepted *websocket.Conn) {
 			return
 		}
 
-		conn.handleSentMessage(sdkkraken.NewWebSocketMessage(raw))
+		conn.responder.Handle(sdkkraken.NewWebSocketMessage(raw))
 	}
 }
 
@@ -166,6 +173,16 @@ the fixture system. Must be called before wiring the client into Live.
 */
 func (conn *Conn) Configure(symbols []*types.Symbol) {
 	conn.transport.configure(symbols)
+}
+
+/*
+ConfigureFaults installs deterministic websocket and REST delivery faults.
+*/
+func (conn *Conn) ConfigureFaults(config types.FaultConfig) {
+	conn.mu.Lock()
+	conn.faults = newFaultInjector(config)
+	conn.mu.Unlock()
+	conn.transport.configureFaults(conn.faults)
 }
 
 /*
@@ -203,19 +220,53 @@ Publish writes a raw JSON payload to the connected client over the fixture's
 websocket, so the SDK receives it through its own read loop exactly as it
 would a frame from Kraken.
 */
-func (conn *Conn) Publish(channel string, payload []byte) {
+func (conn *Conn) Publish(channel string, payload []byte) bool {
 	if len(payload) == 0 {
-		return
+		return false
 	}
 
 	select {
 	case <-conn.ready:
 	case <-conn.ctx.Done():
-		return
+		return false
 	default:
-		return
+		return false
 	}
 
+	conn.mu.Lock()
+	faults := conn.faults
+	conn.mu.Unlock()
+
+	if faults == nil {
+		return false
+	}
+
+	delivery := faults.Apply(channel, payload)
+
+	if delivery.delay > 0 {
+		timer := time.NewTimer(delivery.delay)
+
+		select {
+		case <-timer.C:
+		case <-conn.ctx.Done():
+			timer.Stop()
+			return false
+		}
+	}
+
+	if delivery.reconnect {
+		conn.reconnect()
+		return false
+	}
+
+	for _, frame := range delivery.frames {
+		conn.publish(frame)
+	}
+
+	return true
+}
+
+func (conn *Conn) publish(payload []byte) {
 	conn.mu.Lock()
 	accepted := conn.accepted
 	conn.mu.Unlock()
@@ -255,92 +306,11 @@ func (conn *Conn) Publish(channel string, payload []byte) {
 	select {
 	case <-delivered:
 	case <-conn.ctx.Done():
-	case <-time.After(5 * time.Second):
+	case <-time.After(fixtureDeliveryTimeout):
 		errnie.Error(errnie.Err(
 			errnie.IO, "tests: frame delivery timed out", nil,
 		))
 	}
-}
-
-func (conn *Conn) handleSentMessage(msg *sdkkraken.WebSocketMessage) {
-	if msg == nil {
-		return
-	}
-
-	raw := msg.Bytes()
-
-	if len(raw) == 0 {
-		return
-	}
-
-	var wire map[string]any
-
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		return
-	}
-
-	method, _ := wire["method"].(string)
-
-	if method == "" {
-		return
-	}
-
-	switch method {
-	case "subscribe":
-		conn.handleSubscribe(wire)
-	case "add_order":
-		conn.handleAddOrder()
-	}
-}
-
-func (conn *Conn) handleSubscribe(wire map[string]any) {
-	params, _ := wire["params"].(map[string]any)
-	channel, _ := params["channel"].(string)
-	reqID := wire["req_id"]
-
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-
-	ack, _ := json.Marshal(map[string]any{
-		"method":  "subscribe",
-		"req_id":  reqID,
-		"success": true,
-		"result": map[string]any{
-			"channel": channel,
-		},
-		"time_in":  now,
-		"time_out": now,
-	})
-
-	conn.Publish("subscribe", ack)
-
-	/*
-		Kraken follows a subscription ack with the channel's opening snapshot.
-		The instrument channel is the one the boot sequence blocks on, so it
-		must be answered for the system to reach READY.
-	*/
-	if channel == "instrument" {
-		symbols := conn.transport.getSymbols()
-
-		if len(symbols) == 0 {
-			return
-		}
-
-		for frame := range instrument.NewMarket(symbols).Generate() {
-			conn.Publish("instrument", frame)
-		}
-	}
-}
-
-func (conn *Conn) handleAddOrder() {
-	sequence := orderCounter.Add(1)
-
-	ackPayload := orderack.Frame(orderack.Options{
-		ReqID:   int64(sequence),
-		OrderID: fmt.Sprintf("SIM-ORD-%06d", sequence),
-		Success: true,
-	})
-
-	conn.Publish("add_order", ackPayload)
 }
 
 func (conn *Conn) Close() {

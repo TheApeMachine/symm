@@ -89,7 +89,7 @@ export const EvidenceStage = () => (
 
 export const CapitalStage = () => (
 	<DecisionStage title="4 · capital + slots" meta="final decision">
-		<div className="rounded-[2px] bg-[color-mix(in_srgb,var(--down)_12%,transparent)] px-1.5 py-1 text-(--down)">
+		<div className="rounded-xs bg-[color-mix(in_srgb,var(--down)_12%,transparent)] px-1.5 py-1 text-(--down)">
 			<div className="flex items-center justify-between gap-2">
 				<span>flow haircut</span>
 				<span data-paint="allocation_haircut" data-paint-format=".1%" />

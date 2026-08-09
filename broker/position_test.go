@@ -134,6 +134,27 @@ func TestPositionOnExecution(t *testing.T) {
 	})
 }
 
+func TestPositionExit(t *testing.T) {
+	Convey("Given an open lot whose regulator remains armed", t, func() {
+		position := &Position{
+			Status: types.OPEN,
+			Holding: &types.Holding{
+				Qty:      decimal.NewFromInt64(1),
+				Stoploss: newBrokerStoploss(t),
+			},
+		}
+
+		Convey("It should reject liquidation at the order boundary", func() {
+			returned, err := position.Exit()
+
+			So(returned, ShouldEqual, position)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "triggered stoploss required")
+			So(position.ExitOrder, ShouldBeNil)
+		})
+	})
+}
+
 func TestPositionCloseFill(t *testing.T) {
 	Convey("Given an exact filled exit for a tiny high-priced lot", t, func() {
 		quantity := decimal.NewFromFloat64(0.00051057)

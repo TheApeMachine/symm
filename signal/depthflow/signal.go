@@ -2,11 +2,11 @@ package depthflow
 
 import (
 	"context"
-	"math"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
@@ -119,10 +119,10 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.thesis.AppendMeasurements(
+				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceDepthFlow,
 					signal.Measure(signal.thesis), true,
-				)
+				))
 			}
 		}
 	}()
@@ -150,14 +150,32 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	tradeBatches := make(map[string][]kraken.TradeData)
-	symbols := thesis.MarketSymbols()
-	symbolSet := make(map[string]struct{}, len(symbols))
+	symbols := make([]string, 0)
+	symbolSet := make(map[string]struct{})
 
-	for _, symbol := range symbols {
-		symbolSet[symbol] = struct{}{}
-	}
+	thesis.Measurements.Range(func(_, value any) bool {
+		rows, ok := value.([]*types.Measurement)
 
-	sort.Strings(symbols)
+		if !ok {
+			return true
+		}
+
+		for _, measurement := range rows {
+			if measurement == nil || measurement.Symbol == "" {
+				continue
+			}
+
+			if _, exists := symbolSet[measurement.Symbol]; exists {
+				continue
+			}
+
+			symbolSet[measurement.Symbol] = struct{}{}
+			symbols = append(symbols, measurement.Symbol)
+		}
+
+		return true
+	})
+
 	results := &sync.Map{}
 	publish := &sync.Map{}
 
@@ -387,7 +405,7 @@ func (signal *Signal) measureManagedBook(
 		return nil, nil
 	}
 
-	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+	input, _, maturity, err := signal.sample.MeasureBook(flow.BookInput{
 		Symbol:   managed.Name,
 		TickSize: instrument.TickSize.Float64(),
 		Bids:     snapshotDelta(current.bids, previous.bids),
@@ -404,10 +422,6 @@ func (signal *Signal) measureManagedBook(
 	signal.lastBook.Store(managed.Name, current)
 	signal.lastBookAt.Store(managed.Name, observedAt)
 
-	if !ready {
-		return nil, nil
-	}
-
 	output, err := signal.bookflow.Measure(input)
 
 	if err != nil {
@@ -418,12 +432,35 @@ func (signal *Signal) measureManagedBook(
 		))
 	}
 
-	return signal.frame(
+	measurements := signal.frame(
 		managed.Name,
 		observedAt,
 		output,
 		maturity,
-	), nil
+	)
+	measurement := measurements[0]
+	measurement.PutMetric(types.MetricBestPrice, types.SideBuy, types.MetricSample{
+		Raw:  bestBid.Price.Float64(),
+		Unit: types.UnitQuoteCurrency,
+	})
+	measurement.PutMetric(types.MetricBestPrice, types.SideSell, types.MetricSample{
+		Raw:  bestAsk.Price.Float64(),
+		Unit: types.UnitQuoteCurrency,
+	})
+	measurement.PutMetric(types.MetricTouchQuantity, types.SideBuy, types.MetricSample{
+		Raw:  bestBid.Quantity.Float64(),
+		Unit: types.UnitBaseCurrency,
+	})
+	measurement.PutMetric(types.MetricTouchQuantity, types.SideSell, types.MetricSample{
+		Raw:  bestAsk.Quantity.Float64(),
+		Unit: types.UnitBaseCurrency,
+	})
+	measurement.PutMetric(types.MetricMidpoint, types.SideNone, types.MetricSample{
+		Raw:  (bestBid.Price.Float64() + bestAsk.Price.Float64()) / 2,
+		Unit: types.UnitQuoteCurrency,
+	})
+
+	return measurements, nil
 }
 
 /*
@@ -438,7 +475,7 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
+	input, _, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
@@ -454,10 +491,6 @@ func (signal *Signal) measureTrade(
 		))
 	}
 
-	if !ready {
-		return nil, nil
-	}
-
 	output, err := signal.bookflow.Measure(input)
 
 	if err != nil {
@@ -468,12 +501,23 @@ func (signal *Signal) measureTrade(
 		))
 	}
 
-	return signal.frame(
+	measurements := signal.frame(
 		row.Symbol,
 		row.Timestamp,
 		output,
 		maturity,
-	), nil
+	)
+	measurement := measurements[0]
+	measurement.PutMetric(types.MetricTradePrice, types.SideNone, types.MetricSample{
+		Raw:  row.Price.Float64(),
+		Unit: types.UnitQuoteCurrency,
+	})
+	measurement.PutMetric(types.MetricTradeQuantity, types.SideNone, types.MetricSample{
+		Raw:  row.Qty,
+		Unit: types.UnitBaseCurrency,
+	})
+
+	return measurements, nil
 }
 
 func validTrade(row kraken.TradeData) bool {
@@ -605,6 +649,7 @@ func (signal *Signal) frame(
 	}
 
 	measurement := &types.Measurement{
+		ID:       uuid.NewString(),
 		Source:   types.SourceDepthFlow,
 		Symbol:   symbol,
 		At:       at,
@@ -662,40 +707,15 @@ func normalizedBookflowScore(
 	raw float64,
 	category float64,
 ) *float64 {
-	if math.IsNaN(raw) || math.IsInf(raw, 0) || raw < 0 {
-		return nil
-	}
-
 	value := raw
 
 	switch metric {
 	case types.MetricSpoofScore:
-		if raw > maxBookImbalanceContrast {
-			return nil
-		}
-
 		value = raw / maxBookImbalanceContrast
 	case types.MetricStrength, types.MetricValue:
 		if category == bookflowSpoofCategory {
-			if raw > maxBookImbalanceContrast {
-				return nil
-			}
-
 			value = raw / maxBookImbalanceContrast
-			break
 		}
-
-		if raw > 1 {
-			return nil
-		}
-	case types.MetricLoadedScore,
-		types.MetricThinScore,
-		types.MetricNeutralScore:
-		if raw > 1 {
-			return nil
-		}
-	default:
-		return nil
 	}
 
 	return &value

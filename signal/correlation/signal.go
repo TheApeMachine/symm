@@ -2,13 +2,13 @@ package correlation
 
 import (
 	"context"
-	"math"
 	"sort"
 	"strings"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -79,10 +79,10 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.thesis.AppendMeasurements(
+				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceCorrelation,
 					signal.Measure(signal.thesis), true,
-				)
+				))
 			}
 		}
 	}()
@@ -109,7 +109,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
-	latestAtBySymbol := make(map[string]time.Time, len(tickers))
+	latestBySymbol := make(map[string]kraken.TickerData, len(tickers))
 
 	for _, row := range tickers {
 		symbol := strings.TrimSpace(row.Symbol)
@@ -118,11 +118,12 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			continue
 		}
 
-		if !row.Timestamp.After(latestAtBySymbol[symbol]) {
+		if previous, found := latestBySymbol[symbol]; found &&
+			!row.Timestamp.After(previous.Timestamp) {
 			continue
 		}
 
-		latestAtBySymbol[symbol] = row.Timestamp
+		latestBySymbol[symbol] = row
 	}
 
 	symbols := make([]string, 0, len(scoresBySymbol))
@@ -141,24 +142,29 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		scores := scoresBySymbol[symbol]
 
 		group.Go(func() error {
-			at := latestAtBySymbol[symbol]
+			row, updated := latestBySymbol[symbol]
 
-			if at.IsZero() {
-				at = signal.section.LastAt(symbol)
-			}
-
-			if at.IsZero() {
+			if !updated || row.Timestamp.IsZero() || row.Last == nil {
 				return nil
 			}
 
 			metrics, _ := correlationMetrics(scores)
 
 			measurement := &types.Measurement{
+				ID:      uuid.NewString(),
 				Source:  types.SourceCorrelation,
 				Symbol:  symbol,
-				At:      at,
+				At:      row.Timestamp,
 				Metrics: metrics,
 			}
+			measurement.PutMetric(
+				types.MetricLastPrice,
+				types.SideNone,
+				types.MetricSample{
+					Raw:  row.Last.Float64(),
+					Unit: types.UnitQuoteCurrency,
+				},
+			)
 
 			measurements[measurementIndex] = measurement
 
@@ -245,46 +251,8 @@ func correlationMetrics(
 }
 
 func normalizedCorrelationMetric(metric types.MetricType, raw float64) *float64 {
-	if math.IsNaN(raw) || math.IsInf(raw, 0) {
-		return nil
-	}
-
-	if metric == types.MetricSigned {
-		if raw < -1 || raw > 1 {
-			return nil
-		}
-
-		value := raw
-
-		return &value
-	}
-
-	if metric == types.MetricRelativeEnergy {
-		if raw <= 0 {
-			return nil
-		}
-
-		value := raw
-
-		return &value
-	}
-
-	switch metric {
-	case types.MetricCorrelation,
-		types.MetricHerdScore,
-		types.MetricAlphaScore,
-		types.MetricNoiseScore,
-		types.MetricStressScore,
-		types.MetricPeakScore,
-		types.MetricStrength:
-		if raw < 0 || raw > 1 {
-			return nil
-		}
-	default:
-		return nil
-	}
-
 	value := raw
+	_ = metric
 
 	return &value
 }

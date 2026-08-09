@@ -75,7 +75,7 @@ func TestMeasure(t *testing.T) {
 			So(raw.([]midpointObservation), ShouldHaveLength, 2)
 			measurement := measurements[0]
 			So(measurement.At, ShouldResemble, trade.Timestamp)
-			So(measurement.Metrics, ShouldHaveLength, 7)
+			So(measurement.Metrics, ShouldHaveLength, 10)
 			So(measurement.Sample(types.MetricNet, types.SideNone).Unit,
 				ShouldEqual, types.UnitQuoteCurrency)
 
@@ -159,8 +159,10 @@ func TestMeasure(t *testing.T) {
 		cut := types.NewThesis(t.Context(), nil)
 		cut.Tickers.Store("BTC/USD", []kraken.TickerData{bitcoinTicker})
 		cut.Tickers.Store("ALT/USD", []kraken.TickerData{altTicker})
-		cut.Trades.Store("BTC/USD", []kraken.TradeData{bitcoinSecond, bitcoinFirst})
-		cut.Trades.Store("ALT/USD", []kraken.TradeData{altSecond, altFirst})
+		cut.AppendTrade(bitcoinSecond)
+		cut.AppendTrade(bitcoinFirst)
+		cut.AppendTrade(altSecond)
+		cut.AppendTrade(altFirst)
 
 		Convey("It preserves causal order independently for each symbol", func() {
 			measurements := signal.Measure(cut)
@@ -191,6 +193,7 @@ func TestCVDMeasurements(t *testing.T) {
 	Convey("Given multi-observation aggressor and price-response evidence", t, func() {
 		measurement := (&Signal{}).cvdMeasurements(
 			cvdTrade(1, "sell", 100, time.Unix(1_700_003_400, 0).UTC()),
+			100.5,
 			equation.FlowOutput{
 				Absorption: 0.2, Drive: 0.3, Balance: 0.5, Starvation: 0,
 				Value: 0.5, Net: -25, NetFraction: 0.25,
@@ -199,12 +202,26 @@ func TestCVDMeasurements(t *testing.T) {
 		)[0]
 
 		Convey("It should normalize every defined flow family and signed net", func() {
-			for _, sample := range measurement.Metrics {
-				So(sample.Normalized, ShouldNotBeNil)
+			for _, metric := range []types.MetricType{
+				types.MetricAbsorption,
+				types.MetricDrive,
+				types.MetricBalance,
+				types.MetricStarvation,
+				types.MetricStrength,
+				types.MetricNetFraction,
+				types.MetricNet,
+			} {
+				So(measurement.Sample(metric, types.SideNone).Normalized, ShouldNotBeNil)
 			}
 
 			So(*measurement.Sample(types.MetricNet, types.SideNone).Normalized,
 				ShouldAlmostEqual, -0.25, 1e-12)
+			So(measurement.Sample(types.MetricMidpoint, types.SideNone), ShouldResemble,
+				types.MetricSample{Raw: 100.5, Unit: types.UnitQuoteCurrency})
+			So(measurement.Sample(types.MetricTradePrice, types.SideNone), ShouldResemble,
+				types.MetricSample{Raw: 100, Unit: types.UnitQuoteCurrency})
+			So(measurement.Sample(types.MetricTradeQuantity, types.SideNone), ShouldResemble,
+				types.MetricSample{Raw: 2, Unit: types.UnitBaseCurrency})
 		})
 	})
 }
@@ -238,6 +255,6 @@ func BenchmarkCVDMeasurements(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = signal.cvdMeasurements(row, output, 4)
+		_ = signal.cvdMeasurements(row, 100.5, output, 4)
 	}
 }

@@ -76,10 +76,10 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.thesis.AppendMeasurements(
+				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceToxicity,
 					signal.Measure(signal.thesis), true,
-				)
+				))
 			}
 		}
 	}()
@@ -95,7 +95,36 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 	trades := thesis.MarketTrades(types.SourceToxicity)
 	toxicity := utils.Measurements(thesis, types.SourceToxicity)
-	symbols := thesis.MarketSymbols()
+	symbolSet := make(map[string]struct{})
+
+	thesis.Measurements.Range(func(_, value any) bool {
+		rows, ok := value.([]*types.Measurement)
+
+		if !ok {
+			return true
+		}
+
+		for _, measurement := range rows {
+			if measurement != nil && measurement.Symbol != "" {
+				symbolSet[measurement.Symbol] = struct{}{}
+			}
+		}
+
+		return true
+	})
+
+	for _, trade := range trades {
+		if validTrade(trade) {
+			symbolSet[trade.Symbol] = struct{}{}
+		}
+	}
+
+	symbols := make([]string, 0, len(symbolSet))
+
+	for symbol := range symbolSet {
+		symbols = append(symbols, symbol)
+	}
+
 	sort.Strings(symbols)
 	results := make([][]*types.Measurement, len(symbols))
 
@@ -114,7 +143,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			previous, ok := latestTouch(toxicity, symbol)
 
 			if !ok {
-				results[resultIndex] = []*types.Measurement{touchMeasurement(symbol, current)}
+				results[resultIndex] = []*types.Measurement{
+					toxicityMeasurement(symbol, current, current, nil),
+				}
 				return nil
 			}
 
@@ -130,15 +161,14 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			)
 
 			if len(bracketed) == 0 {
-				results[resultIndex] = []*types.Measurement{touchMeasurement(symbol, current)}
+				results[resultIndex] = []*types.Measurement{
+					toxicityMeasurement(symbol, previous, current, nil),
+				}
 				return nil
 			}
 
 			measurement := toxicityMeasurement(symbol, previous, current, bracketed)
-			results[resultIndex] = []*types.Measurement{
-				measurement,
-				touchMeasurement(symbol, current),
-			}
+			results[resultIndex] = []*types.Measurement{measurement}
 
 			return nil
 		})

@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/theapemachine/datura"
@@ -93,6 +94,16 @@ type Solver struct {
 	// tick, because they read weights only consolidation rewrites.
 	dreams  []string
 	symbols []types.CognitionSymbol
+
+	// remOutcome is the most recent consolidation pass's own report — replay
+	// count, decay factor, and how much of the sensory namespace retroactive
+	// inhibition pruned. remFrom/remThrough are the window that pass covered.
+	// remOutcome stays what it was between passes, since consolidation runs
+	// far less often than a tick, so a reading between passes reports the
+	// last real consolidation rather than a manufactured zero.
+	remOutcome dmt.REMConsolidationOutcome
+	remFrom    time.Time
+	remThrough time.Time
 
 	// spawned records the last self-named regime per symbol, so a reading can
 	// report that its basin was invented rather than taught.
@@ -359,6 +370,17 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				Dreams:                solver.dreams,
 				NewConcept:            spawned,
 				SpawnedClass:          spawnedClass,
+
+				REMFrom:          solver.remFrom,
+				REMThrough:       solver.remThrough,
+				REMReplays:       int(solver.remOutcome.ReplayedObservations),
+				REMDecayFactor:   solver.remOutcome.DecayFactor,
+				REMInhibitionPct: solver.remOutcome.RetroactiveInhibitionPct,
+				// A pass runs synchronously inline on the 128-tick schedule
+				// below, so "consolidating" is true only for the reading
+				// published on the very tick that triggered it — every other
+				// tick reports the awake state between passes.
+				REMConsolidating: solver.tickCounter%128 == 0 && nowUnix > 60e9,
 			}
 
 			thesis.Cognition.Store(symbol, cognition)
@@ -396,7 +418,7 @@ Why:
 func (solver *Solver) consolidate(
 	startWindow, nowUnix uint64,
 ) {
-	dreams := solver.tree.ExecuteREMSleepWithDreaming(
+	dreams, outcome := solver.tree.ExecuteREMSleepWithDreaming(
 		startWindow,
 		nowUnix,
 		dreamTemperature,
@@ -404,6 +426,10 @@ func (solver *Solver) consolidate(
 		&solver.classScratch,
 		dmt.SelectStochasticToken,
 	)
+
+	solver.remOutcome = outcome
+	solver.remFrom = time.Unix(0, int64(startWindow))
+	solver.remThrough = time.Unix(0, int64(nowUnix))
 
 	solver.dreams = solver.dreams[:0]
 

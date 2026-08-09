@@ -5,6 +5,7 @@ import (
 	"time"
 
 	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
+	"github.com/google/uuid"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -54,35 +55,6 @@ func observedTouch(managed *spotbook.Book) (touchSnapshot, bool) {
 		bid:  touchObservation{price: bidPrice, quantity: bidQuantity},
 		ask:  touchObservation{price: askPrice, quantity: askQuantity},
 	}, true
-}
-
-func touchMeasurement(
-	symbol string,
-	touch touchSnapshot,
-) *types.Measurement {
-	return &types.Measurement{
-		Source: types.SourceToxicity,
-		Symbol: symbol,
-		At:     touch.asOf,
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
-				Raw:  touch.bid.price,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricBestPrice, types.SideSell): {
-				Raw:  touch.ask.price,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
-				Raw:  touch.bid.quantity,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
-				Raw:  touch.ask.quantity,
-				Unit: types.UnitBaseCurrency,
-			},
-		},
-	}
 }
 
 func latestTouch(
@@ -176,6 +148,7 @@ func toxicityMeasurement(
 	}
 
 	return &types.Measurement{
+		ID:           uuid.NewString(),
 		Source:       types.SourceToxicity,
 		Symbol:       symbol,
 		At:           current.asOf,

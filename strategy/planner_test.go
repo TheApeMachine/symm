@@ -45,7 +45,7 @@ func TestPlannerSearch(t *testing.T) {
 			So(decision.Alternatives, ShouldBeEmpty)
 			So(decision.Utility, ShouldEqual, 0.0)
 			So(decision.Confidence, ShouldEqual, 0.80)
-			So(decision.Trace, ShouldBeNil)
+			So(decision.Trace, ShouldNotBeNil)
 		})
 	})
 
@@ -143,7 +143,7 @@ func TestPlannerSearch(t *testing.T) {
 		Convey("Then the packaged search should select the robust child without a local override", func() {
 			So(err, ShouldBeNil)
 			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.Confidence, ShouldAlmostEqual, 0)
+			So(decision.Confidence, ShouldAlmostEqual, 0.90)
 			So(decision.Utility, ShouldEqual, 0.0)
 		})
 	})
@@ -153,7 +153,7 @@ func TestPlannerUpdate(t *testing.T) {
 	Convey("Given a fully analyzed thesis whose forecast is unavailable", t, func() {
 		messages := make(chan []byte, 2)
 		planner := &Planner{ui: messages}
-		causalSolver := causal.NewSolver(nil, nil)
+		causalSolver := causal.NewSolver(nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
 			Source: types.SourceResonance,
@@ -251,6 +251,22 @@ func TestPlannerAdmit(t *testing.T) {
 	Convey("Given an Enter verdict from causal search", t, func() {
 		planner := &Planner{minimumConfidence: 0.80}
 
+		Convey("Then a forecast without a predictive distribution becomes Do Not Enter", func() {
+			thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
+			stored, _ := thesis.Resonance.Load("BTC/USD")
+			reading := stored.(types.ResonanceReading)
+			So(reading.Forecast.SetPredictiveDistribution(0, 0, false), ShouldBeNil)
+
+			decision, _, err := planner.admit(
+				thesis,
+				types.NewDecision(types.ActionEnter, "BTC/USD"),
+			)
+
+			So(err, ShouldBeNil)
+			So(decision.Action, ShouldEqual, types.ActionNothing)
+			So(decision.Reason, ShouldContainSubstring, "not ready")
+		})
+
 		Convey("Then a forecast below the configured confidence becomes Do Not Enter", func() {
 			thesis := plannerThesisFixture(t, "BTC/USD", 0.79)
 
@@ -280,9 +296,10 @@ func TestPlannerAdmit(t *testing.T) {
 			So(decision.Action, ShouldEqual, types.ActionEnter)
 			So(decision.Forecast, ShouldEqual, forecast)
 			So(decision.Confidence, ShouldAlmostEqual, 0.80)
+			So(decision.Uncertainty, ShouldAlmostEqual, 0.009950166250831947, 1e-12)
 		})
 
-		Convey("Then direct graph support raises an admitted forecast's confidence", func() {
+		Convey("Then direct graph support remains separate from forecast confidence", func() {
 			thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
 			plannerGraphRelation(
 				thesis,
@@ -299,11 +316,11 @@ func TestPlannerAdmit(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.Confidence, ShouldAlmostEqual, 0.8888888888888888)
+			So(decision.Confidence, ShouldAlmostEqual, 0.80)
 			So(evidence.supports, ShouldAlmostEqual, 0.50)
 		})
 
-		Convey("Then direct graph contradiction lowers confidence without bypassing causal search", func() {
+		Convey("Then direct graph contradiction remains separate from forecast confidence", func() {
 			thesis := plannerThesisFixture(t, "BTC/USD", 0.90)
 			plannerGraphRelation(
 				thesis,
@@ -320,8 +337,27 @@ func TestPlannerAdmit(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.Confidence, ShouldAlmostEqual, 0.8181818181818181)
+			So(decision.Confidence, ShouldAlmostEqual, 0.90)
 			So(evidence.contradicts, ShouldAlmostEqual, 0.50)
+		})
+
+		Convey("Then cognition cannot grant uncalibrated reserve capacity", func() {
+			thesis := plannerThesisFixture(t, "BTC/USD", 0.90)
+			thesis.Manifold.CoherenceMag2 = 0.20
+			thesis.Cognition.Store("BTC/USD", types.Cognition{
+				Symbol: "BTC/USD", Confidence: 0.80,
+			})
+
+			decision, _, err := planner.admit(
+				thesis,
+				types.NewDecision(types.ActionEnter, "BTC/USD"),
+			)
+
+			So(err, ShouldBeNil)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.AllocationClass, ShouldEqual, allocationClassNormal)
+			So(decision.Opportunity, ShouldBeFalse)
+			So(decision.CognitiveLead, ShouldEqual, 0.0)
 		})
 	})
 }
@@ -348,7 +384,13 @@ func plannerThesisFixture(
 	t.Helper()
 	thesis := types.NewThesis(t.Context(), nil)
 	forecast := forecastFixture(t, confidence)
-	thesis.Resonance.Store(symbol, types.ResonanceReading{Forecast: forecast})
+	thesis.Resonance.Store(symbol, types.ResonanceReading{
+		Source:   types.SourceResonance,
+		Symbol:   symbol,
+		At:       thesis.At,
+		Forecast: forecast,
+		Samples:  12,
+	})
 	marketGraph := logicgraph.NewGraph(thesis.At)
 	marketGraph.AddNode(&logicgraph.Node{
 		ID:         "res:" + symbol + ":forecast",
@@ -402,6 +444,10 @@ func forecastFixture(t testing.TB, confidence float64) *types.ResonanceForecast 
 
 	if err != nil {
 		t.Fatalf("forecast: %v", err)
+	}
+
+	if err := forecast.SetPredictiveDistribution(0.01, 12, true); err != nil {
+		t.Fatalf("forecast distribution: %v", err)
 	}
 
 	return forecast

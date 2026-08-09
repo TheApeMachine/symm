@@ -64,9 +64,9 @@ type ResonanceVerdict struct {
 ResonanceReading is one predictive-coding result for a symbol. Forecast remains
 nil only when the settled latent state cannot support a forward path; an
 informative state publishes the zero-coefficient prior before any target resolves.
-SkillEvidence is historical prequential evidence that the model beats a zero-return
-baseline more than half the time; it is deliberately separate from the current
-forecast's Confidence. Alpha is the configured generative-model base pace, not
+	SkillEvidence is historical prequential evidence that the model beats a zero-return
+	baseline more than half the time; it is deliberately separate from the current
+	forecast's Confidence. Alpha is the configured generative-model base pace, not
 the return learner's gain and not a dynamically tuned value.
 */
 type ResonanceReading struct {

@@ -1,90 +1,12 @@
 package strategy
 
 import (
-	"math"
-
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
 
-const (
-	allocationClassNormal   = "normal"
-	allocationClassReserved = "reserved"
-)
-
-/*
-classifyAllocation reserves overflow capacity for return-supported entries
-whose cognitive basin is ahead of the physical field. The forecast's worst
-intermediate drawdown is the return-denominated uncertainty term; model-space
-residuals and confidence probabilities are not mixed with returns.
-*/
-func (planner *Planner) classifyAllocation(
-	thesis *types.Thesis,
-	decision *types.Decision,
-) error {
-	if thesis == nil || decision == nil || decision.Forecast == nil {
-		return errnie.Err(
-			errnie.Validation,
-			"planner: thesis, decision, and forecast required for allocation",
-			nil,
-		)
-	}
-
-	uncertainty, err := decision.Forecast.WorstIntermediateDrawdown()
-
-	if err != nil {
-		return errnie.Err(
-			errnie.Validation,
-			"planner: could not derive allocation uncertainty",
-			err,
-		)
-	}
-
-	decision.Uncertainty = uncertainty
-	decision.OpportunityMargin = decision.Forecast.ExpectedReturn - uncertainty
-	decision.AllocationClass = allocationClassNormal
-	decision.Opportunity = false
-
-	stored, found := thesis.Cognition.Load(decision.Symbol)
-
-	if !found {
-		return nil
-	}
-
-	cognition, valid := stored.(types.Cognition)
-
-	if !valid {
-		return errnie.Err(
-			errnie.Validation,
-			"planner: cognition has an invalid type for "+decision.Symbol,
-			nil,
-		)
-	}
-
-	coherence := thesis.Manifold.CoherenceMag2
-
-	if math.IsNaN(cognition.Confidence) || math.IsInf(cognition.Confidence, 0) ||
-		math.IsNaN(coherence) || math.IsInf(coherence, 0) {
-		return errnie.Err(
-			errnie.Validation,
-			"planner: finite cognition and coherence required for allocation",
-			nil,
-		)
-	}
-
-	decision.CognitiveLead = cognition.Confidence - coherence
-	decision.BasinConfidence = cognition.Confidence
-
-	if decision.OpportunityMargin <= 0 || decision.CognitiveLead <= 0 {
-		return nil
-	}
-
-	decision.AllocationClass = allocationClassReserved
-	decision.Opportunity = true
-
-	return nil
-}
+const allocationClassNormal = "normal"
 
 /*
 size adds execution quantity and forecast-derived protection to an entry.
@@ -192,6 +114,7 @@ func (planner *Planner) size(
 	decision.ExpectedFees = economics.ExpectedFees
 	decision.ExpectedSpread = economics.ExpectedSpread
 	decision.ExpectedImpact = economics.ExpectedImpact
+	decision.OpportunityMargin = economics.NetReturn.Float64()
 
 	if economics.NetReturn.Sign() <= 0 {
 		decision.Action = types.ActionNothing

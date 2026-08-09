@@ -13,8 +13,8 @@ describe("DecisionChain", () => {
 		expect(markup).toContain("3 · causal search");
 		expect(markup).toContain("4 · capital + slots");
 		expect(markup).toContain('data-paint="trace.mcts.precision"');
-		expect(markup).toContain('data-paint="trace.mcts.standingAside"');
-		expect(markup).toContain('data-paint="trace.mcts.enter"');
+		expect(markup).toContain('data-paint="trace.mcts.branches.0.action"');
+		expect(markup).toContain('data-paint="trace.mcts.branches.1.action"');
 		expect(markup).toContain('data-paint="allocation_haircut"');
 		expect(markup).toContain('data-paint="allocation_haircut_reason"');
 	});

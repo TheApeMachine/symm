@@ -23,7 +23,7 @@ func TestStrategyAction(t *testing.T) {
 
 func TestStrategyStateApplyAction(t *testing.T) {
 	Convey("Given a causal state with an observed treatment", t, func() {
-		state := StrategyState{Treatment: 0.4, GraphReward: 0.25}
+		state := StrategyState{Treatment: 0.4, GraphReward: 0.25, Precision: 1}
 
 		Convey("It should model standing aside as do(0)", func() {
 			next := state.ApplyAction(ActionNothing).(StrategyState)
@@ -41,6 +41,22 @@ func TestStrategyStateApplyAction(t *testing.T) {
 			So(next.Treatment, ShouldEqual, state.Treatment)
 			So(next.Reward, ShouldEqual, state.GraphReward)
 			So(next.GetInterventionLevel(ActionEnter), ShouldEqual, state.Treatment)
+		})
+	})
+
+	Convey("Given a causal state with an unreliable estimate", t, func() {
+		state := StrategyState{Treatment: 0.4, GraphReward: 0.25, Precision: 0.2}
+
+		Convey("It should discount the Enter reward by precision", func() {
+			next := state.ApplyAction(ActionEnter).(StrategyState)
+
+			So(next.Reward, ShouldEqual, state.GraphReward*state.Precision)
+		})
+
+		Convey("It should not discount standing aside, which has no reward", func() {
+			next := state.ApplyAction(ActionNothing).(StrategyState)
+
+			So(next.Reward, ShouldEqual, 0)
 		})
 	})
 }

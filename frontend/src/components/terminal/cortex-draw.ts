@@ -22,6 +22,14 @@ export class CortexLeafRoster {
 		this.slots.clear();
 	}
 
+	/*
+		`leaves` arrives in the tree's own depth-first order (collectLeaves in
+		layoutCortexTree walks children in their sorted sibling order), so
+		leaves under the same parent are already adjacent. Ranking by that
+		array position — not by re-sorting prefixes alphabetically — is what
+		keeps a parent's children grouped in Y and stops sibling subtrees from
+		interleaving into edges that cross on screen.
+	*/
 	ranks(leaves: CortexNode[]): Map<string, number> {
 		const current = new Set(leaves.map((leaf) => leaf.prefix));
 
@@ -31,33 +39,62 @@ export class CortexLeafRoster {
 			}
 		}
 
-		const arriving = [...leaves]
-			.filter((leaf) => !this.slots.has(leaf.prefix))
-			.sort((left, right) => left.prefix.localeCompare(right.prefix));
-
 		if (this.slots.size === 0) {
-			const initial = [...leaves].sort((left, right) =>
-				left.prefix.localeCompare(right.prefix),
-			);
-
-			for (const [index, leaf] of initial.entries()) {
+			for (const [index, leaf] of leaves.entries()) {
 				this.slots.set(
 					leaf.prefix,
-					initial.length > 1 ? index / (initial.length - 1) : 0.5,
+					leaves.length > 1 ? index / (leaves.length - 1) : 0.5,
 				);
 			}
 
 			return new Map(this.slots);
 		}
 
-		for (const leaf of arriving) {
-			this.insert(leaf.prefix);
+		for (const [index, leaf] of leaves.entries()) {
+			if (this.slots.has(leaf.prefix)) {
+				continue;
+			}
+
+			const before = leaves[index - 1]?.prefix;
+			const after = leaves[index + 1]?.prefix;
+			this.insert(leaf.prefix, before, after);
 		}
 
 		return new Map(this.slots);
 	}
 
-	private insert(prefix: string): void {
+	/*
+		A new leaf inserts between its tree-order neighbors' existing slots when
+		either is already ranked, so it lands beside its actual siblings instead
+		of in whatever numeric gap happens to be largest. Falls back to the
+		largest open gap only when neither neighbor has a slot yet (e.g. an
+		entirely new subtree arriving at once).
+	*/
+	private insert(
+		prefix: string,
+		beforePrefix: string | undefined,
+		afterPrefix: string | undefined,
+	): void {
+		const beforeOrdinate =
+			beforePrefix === undefined ? undefined : this.slots.get(beforePrefix);
+		const afterOrdinate =
+			afterPrefix === undefined ? undefined : this.slots.get(afterPrefix);
+
+		if (beforeOrdinate !== undefined && afterOrdinate !== undefined) {
+			this.slots.set(prefix, (beforeOrdinate + afterOrdinate) / 2);
+			return;
+		}
+
+		if (beforeOrdinate !== undefined) {
+			this.slots.set(prefix, Math.min(1, beforeOrdinate + 0.01));
+			return;
+		}
+
+		if (afterOrdinate !== undefined) {
+			this.slots.set(prefix, Math.max(0, afterOrdinate - 0.01));
+			return;
+		}
+
 		const ordinates = [...this.slots.values()].sort(
 			(left, right) => left - right,
 		);
@@ -227,6 +264,15 @@ export const layoutCortexTree = (
 	return { xByID, yByID, maxDepth };
 };
 
+/*
+	Interior nodes are the categories a sequence actually passed through, so
+	they stay labeled at every depth regardless of leaf density — hiding them
+	past depth 2 was what made deeper hops read as unlabeled blank circles.
+	Only leaf labels thin out under crowding, since a dense leaf fringe is
+	where text genuinely overlaps; the cutoff softens into a lower budget
+	rather than a hard on/off cliff so a moderately busy tree still shows
+	some leaf text instead of none.
+*/
 const shouldLabel = (
 	node: CortexNode,
 	onBeam: boolean,
@@ -240,19 +286,15 @@ const shouldLabel = (
 		return false;
 	}
 
+	if (onBeam || node.children.length > 0) {
+		return true;
+	}
+
 	if (node.depth <= 2) {
 		return true;
 	}
 
-	if (onBeam) {
-		return true;
-	}
-
-	if (node.children.length > 0) {
-		return false;
-	}
-
-	return leafCount <= MOCKUP_LEAF_LABEL_BUDGET;
+	return leafCount <= MOCKUP_LEAF_LABEL_BUDGET * 2;
 };
 
 const beamPathNodes = (tree: CortexTree): CortexNode[] => {

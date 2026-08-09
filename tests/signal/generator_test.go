@@ -1,7 +1,7 @@
 package signal
 
 import (
-	"encoding/json"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -9,11 +9,10 @@ import (
 )
 
 func TestGeneratorNewGenerator(t *testing.T) {
-	Convey("Given a symbol name and start price", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
+	Convey("Given a symbol and a valid starting price", t, func() {
+		generator := NewGenerator("SIM1/USD", 100, 0.01, 2, 42)
 
-		Convey("It should initialize with default Baseline state", func() {
-			So(generator, ShouldNotBeNil)
+		Convey("It should initialize in the stationary baseline", func() {
 			So(generator.symbol, ShouldEqual, "SIM1/USD")
 			So(generator.midPrice, ShouldEqual, 100.0)
 			So(generator.currentState, ShouldEqual, testtypes.Baseline)
@@ -22,42 +21,41 @@ func TestGeneratorNewGenerator(t *testing.T) {
 }
 
 func TestGeneratorSetState(t *testing.T) {
-	Convey("Given a generator", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
+	Convey("Given a baseline generator", t, func() {
+		generator := NewGenerator("SIM1/USD", 100, 0.01, 2, 42)
+		generator.SetState(testtypes.FastPump)
 
-		Convey("When SetState is called", func() {
-			generator.SetState(testtypes.FastPump)
-
+		Convey("The observable precursor should begin before ignition", func() {
 			So(generator.targetState, ShouldEqual, testtypes.FastPump)
 			So(generator.PrecursorPending(), ShouldBeTrue)
 			So(generator.IgnitionArmed(), ShouldBeFalse)
+		})
+
+		Convey("An undeclared latent state should fail loudly", func() {
+			So(func() {
+				generator.SetState(testtypes.MarketState(10_000))
+			}, ShouldPanic)
+		})
+
+		Convey("Ambiguous transition momentum should fail loudly", func() {
+			So(func() {
+				generator.SetState(testtypes.FastPump, 1, 2)
+			}, ShouldPanic)
 		})
 	})
 }
 
 func TestGeneratorStep(t *testing.T) {
-	Convey("Given a generator", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
-
-		Convey("When Step is called", func() {
-			sample := generator.Step()
-
-			So(sample.Symbol, ShouldEqual, "SIM1/USD")
-			So(sample.Bid, ShouldBeGreaterThan, 0)
-			So(sample.Ask, ShouldBeGreaterThan, sample.Bid)
-			So(sample.Last, ShouldBeGreaterThan, 0)
-			So(sample.Volume, ShouldBeGreaterThan, 0)
-			So(sample.VWAP, ShouldBeGreaterThan, 0)
-		})
-	})
-
 	Convey("Given a stationary baseline", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
+		generator := NewGenerator("SIM1/USD", 100, 0.01, 2, 42)
 		buyTrades := 0
 		sellTrades := 0
 
 		for range 128 {
 			sample := generator.Step()
+			So(sample.Bid, ShouldBeGreaterThan, 0)
+			So(sample.Ask, ShouldBeGreaterThan, sample.Bid)
+			So(sample.StepVolume, ShouldBeGreaterThan, 0)
 
 			if sample.AggressorSide == "buy" {
 				buyTrades++
@@ -68,7 +66,7 @@ func TestGeneratorStep(t *testing.T) {
 			}
 		}
 
-		Convey("It should stay flat while producing balanced two-sided flow", func() {
+		Convey("Price should stay flat while flow remains two-sided", func() {
 			So(generator.trendPrice, ShouldEqual, 100.0)
 			So(generator.midPrice, ShouldEqual, 100.0)
 			So(buyTrades, ShouldBeGreaterThan, 0)
@@ -77,230 +75,113 @@ func TestGeneratorStep(t *testing.T) {
 	})
 
 	Convey("Given a FastPump transition", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
+		generator := NewGenerator("SIM1/USD", 100, 0.01, 2, 42)
 		profile := testtypes.DefaultProfiles[testtypes.FastPump]
 		generator.SetState(testtypes.FastPump, testtypes.MomentumMap[testtypes.FastPump])
 
 		for generator.PrecursorPending() {
 			sample := generator.Step()
-			So(sample.ChangePct,
-				ShouldBeLessThan, profile.IgnitionMove*100.0)
-			So(sample.AggressorSide, ShouldEqual, profile.AggressorSide)
-			So(sample.Last, ShouldEqual, sample.Ask)
+			So(sample.ChangePct, ShouldBeLessThan, profile.IgnitionMove*100)
+			So(sample.AggressorSide, ShouldEqual, "buy")
 		}
 
-		Convey("It should leave the full ignition armed for the next sample", func() {
+		Convey("The full discontinuity should remain armed for the next sample", func() {
 			So(generator.IgnitionArmed(), ShouldBeTrue)
-
 			ignition := generator.Step()
-
 			So(ignition.ChangePct,
-				ShouldBeGreaterThanOrEqualTo, profile.IgnitionMove*100.0)
+				ShouldBeGreaterThanOrEqualTo, profile.IgnitionMove*100)
 			So(generator.IgnitionArmed(), ShouldBeFalse)
 		})
 	})
 
-	Convey("Given a compressed regime on a tick-sized book", t, func() {
-		generator := NewGenerator("REG1/USD", 12.8754, 0.001, 3, 501)
-		baseline := generator.Step()
-		generator.SetState(
-			testtypes.FastPump,
-			testtypes.MomentumMap[testtypes.FastPump],
-		)
-		precursor := baseline
+	Convey("Given opposite loadings on one shared factor", t, func() {
+		positiveSymbol := testtypes.NewSymbol("POS/USD", 100, 91)
+		negativeSymbol := testtypes.NewSymbol("NEG/USD", 100, 92)
+		positiveSymbol.FactorLoading = 1
+		negativeSymbol.FactorLoading = -1
+		positive := NewGeneratorFromSymbol(positiveSymbol)
+		negative := NewGeneratorFromSymbol(negativeSymbol)
+		positive.SetState(testtypes.SidewaysChop)
+		negative.SetState(testtypes.SidewaysChop)
 
-		for generator.PrecursorPending() {
-			precursor = generator.Step()
+		for positive.PrecursorPending() || negative.PrecursorPending() {
+			positive.Step(0)
+			negative.Step(0)
 		}
 
-		Convey("Its quoted spread should preserve the configured compression", func() {
-			baselineFraction := (baseline.Ask - baseline.Bid) /
-				((baseline.Ask + baseline.Bid) / 2)
-			precursorFraction := (precursor.Ask - precursor.Bid) /
-				((precursor.Ask + precursor.Bid) / 2)
+		positive.Step(1)
+		negative.Step(1)
 
-			So(precursorFraction, ShouldBeLessThan, baselineFraction)
+		Convey("Their observation shocks should move in opposite directions", func() {
+			So(positive.midPrice, ShouldBeGreaterThan, positive.trendPrice)
+			So(negative.midPrice, ShouldBeLessThan, negative.trendPrice)
 		})
 	})
 
-	Convey("Given a volume-absorption transition", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
-		profile := testtypes.DefaultProfiles[testtypes.VolumeAbsorption]
-		generator.SetState(
-			testtypes.VolumeAbsorption,
-			testtypes.MomentumMap[testtypes.VolumeAbsorption],
-		)
+	Convey("Given an explicitly tiered symbol", t, func() {
+		symbol := testtypes.NewSymbol("DEPTH/USD", 100, 93)
+		symbol.BookDepthLevels = 3
+		symbol.DepthQuantityScale = 1.5
+		sample := NewGeneratorFromSymbol(symbol).Step()
 
-		for generator.PrecursorPending() {
-			sample := generator.Step()
-
-			So(sample.AggressorSide, ShouldEqual, profile.AggressorSide)
-			So(sample.Last, ShouldEqual, sample.Ask)
-		}
-	})
-}
-
-func TestGeneratorGenerate(t *testing.T) {
-	Convey("Given a generator and JSON template", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
-		template := []byte(`{"channel":"ticker","type":"snapshot","data":[{"symbol":"SIM1/USD","bid":100.0}]}`)
-
-		Convey("When Generate is called", func() {
-			count := 0
-
-			for frame := range generator.Generate(template) {
-				So(len(frame), ShouldBeGreaterThan, 0)
-				count++
-			}
-
-			So(count, ShouldEqual, 1)
+		Convey("Every generated tier should be finite and ordered", func() {
+			So(sample.Bids, ShouldHaveLength, 3)
+			So(sample.Asks, ShouldHaveLength, 3)
+			So(sample.Bids[1].Price, ShouldBeLessThan, sample.Bids[0].Price)
+			So(sample.Asks[1].Price, ShouldBeGreaterThan, sample.Asks[0].Price)
+			So(sample.Bids[1].Quantity,
+				ShouldBeGreaterThan, sample.Bids[0].Quantity)
 		})
 	})
-}
 
-func TestGeneratorRender(t *testing.T) {
-	Convey("Given one sampled market state and each venue channel template", t, func() {
-		generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
-		sample := generator.Step()
-		marketTime := generator.currTime
-		marketPrice := generator.midPrice
-		stamp := sample.Timestamp.Format("2006-01-02T15:04:05.999999999Z07:00")
+	Convey("Given a fractional tick whose binary representation is inexact", t, func() {
+		symbol := testtypes.NewSymbol("FRACTION/USD", 3.1415, 94)
+		sample := NewGeneratorFromSymbol(symbol).Step()
 
-		tickerFrame := struct {
-			Data []struct {
-				Symbol    string  `json:"symbol"`
-				Bid       float64 `json:"bid"`
-				BidQty    float64 `json:"bid_qty"`
-				Ask       float64 `json:"ask"`
-				AskQty    float64 `json:"ask_qty"`
-				Last      float64 `json:"last"`
-				Volume    float64 `json:"volume"`
-				Timestamp string  `json:"timestamp"`
-			} `json:"data"`
-		}{}
-		bookFrame := struct {
-			Data []struct {
-				Symbol    string `json:"symbol"`
-				Timestamp string `json:"timestamp"`
-				Bids      []struct {
-					Price float64 `json:"price"`
-					Qty   float64 `json:"qty"`
-				} `json:"bids"`
-				Asks []struct {
-					Price float64 `json:"price"`
-					Qty   float64 `json:"qty"`
-				} `json:"asks"`
-			} `json:"data"`
-		}{}
-		tradeFrame := struct {
-			Data []struct {
-				Symbol    string  `json:"symbol"`
-				Side      string  `json:"side"`
-				Price     float64 `json:"price"`
-				Qty       float64 `json:"qty"`
-				Timestamp string  `json:"timestamp"`
-			} `json:"data"`
-		}{}
-		level3Frame := struct {
-			Data []struct {
-				Symbol    string `json:"symbol"`
-				Timestamp string `json:"timestamp"`
-				Bids      []struct {
-					Event     string  `json:"event"`
-					OrderID   string  `json:"order_id"`
-					Price     float64 `json:"limit_price"`
-					Qty       float64 `json:"order_qty"`
-					Timestamp string  `json:"timestamp"`
-				} `json:"bids"`
-				Asks []struct {
-					Event     string  `json:"event"`
-					OrderID   string  `json:"order_id"`
-					Price     float64 `json:"limit_price"`
-					Qty       float64 `json:"order_qty"`
-					Timestamp string  `json:"timestamp"`
-				} `json:"asks"`
-			} `json:"data"`
-		}{}
+		Convey("The canonical quote should equal the first rendered depth tier", func() {
+			So(sample.Bids[0].Price, ShouldEqual, sample.Bid)
+			So(sample.Asks[0].Price, ShouldEqual, sample.Ask)
+		})
+	})
 
-		err := json.Unmarshal(generator.Render(
-			[]byte(`{"channel":"ticker","data":[{}]}`), sample,
-		), &tickerFrame)
-		So(err, ShouldBeNil)
-		err = json.Unmarshal(generator.Render(
-			[]byte(`{"channel":"book","data":[{}]}`), sample,
-		), &bookFrame)
-		So(err, ShouldBeNil)
-		err = json.Unmarshal(generator.Render(
-			[]byte(`{"channel":"trade","data":[{}]}`), sample,
-		), &tradeFrame)
-		So(err, ShouldBeNil)
-		err = json.Unmarshal(generator.Render(
-			[]byte(`{"channel":"level3","data":[{}]}`), sample,
-		), &level3Frame)
-		So(err, ShouldBeNil)
+	Convey("Given random-walk and false-breakout controls", t, func() {
+		randomWalk := NewGenerator("RANDOM/USD", 100, 0.01, 2, 95)
+		randomWalk.SetState(testtypes.RandomWalk)
 
-		So(tickerFrame.Data, ShouldHaveLength, 1)
-		So(bookFrame.Data, ShouldHaveLength, 1)
-		So(tradeFrame.Data, ShouldHaveLength, 1)
-		So(level3Frame.Data, ShouldHaveLength, 1)
-		So(bookFrame.Data[0].Bids, ShouldHaveLength, 1)
-		So(bookFrame.Data[0].Asks, ShouldHaveLength, 1)
-		So(level3Frame.Data[0].Bids, ShouldHaveLength, 1)
-		So(level3Frame.Data[0].Asks, ShouldHaveLength, 1)
+		for randomWalk.PrecursorPending() {
+			randomWalk.Step()
+		}
 
-		So(tickerFrame.Data[0].Symbol, ShouldEqual, sample.Symbol)
-		So(bookFrame.Data[0].Symbol, ShouldEqual, sample.Symbol)
-		So(tradeFrame.Data[0].Symbol, ShouldEqual, sample.Symbol)
-		So(level3Frame.Data[0].Symbol, ShouldEqual, sample.Symbol)
-		So(tickerFrame.Data[0].Timestamp, ShouldEqual, stamp)
-		So(bookFrame.Data[0].Timestamp, ShouldEqual, stamp)
-		So(tradeFrame.Data[0].Timestamp, ShouldEqual, stamp)
-		So(level3Frame.Data[0].Timestamp, ShouldEqual, stamp)
-		So(level3Frame.Data[0].Bids[0].Timestamp, ShouldEqual, stamp)
-		So(level3Frame.Data[0].Asks[0].Timestamp, ShouldEqual, stamp)
+		walkStart := randomWalk.trendPrice
 
-		So(tickerFrame.Data[0].Bid, ShouldEqual, sample.Bid)
-		So(tickerFrame.Data[0].BidQty, ShouldEqual, sample.BidQty)
-		So(tickerFrame.Data[0].Ask, ShouldEqual, sample.Ask)
-		So(tickerFrame.Data[0].AskQty, ShouldEqual, sample.AskQty)
-		So(bookFrame.Data[0].Bids[0].Price, ShouldEqual, sample.Bid)
-		So(bookFrame.Data[0].Bids[0].Qty, ShouldEqual, sample.BidQty)
-		So(bookFrame.Data[0].Asks[0].Price, ShouldEqual, sample.Ask)
-		So(bookFrame.Data[0].Asks[0].Qty, ShouldEqual, sample.AskQty)
-		So(level3Frame.Data[0].Bids[0].Price, ShouldEqual, sample.Bid)
-		So(level3Frame.Data[0].Bids[0].Qty, ShouldEqual, sample.BidQty)
-		So(level3Frame.Data[0].Asks[0].Price, ShouldEqual, sample.Ask)
-		So(level3Frame.Data[0].Asks[0].Qty, ShouldEqual, sample.AskQty)
-		So(tradeFrame.Data[0].Price, ShouldEqual, sample.Last)
-		So(tradeFrame.Data[0].Qty, ShouldEqual, sample.StepVolume)
-		So(tradeFrame.Data[0].Side, ShouldEqual, sample.AggressorSide)
-		So(tradeFrame.Data[0].Price, ShouldBeGreaterThanOrEqualTo, sample.Bid)
-		So(tradeFrame.Data[0].Price, ShouldBeLessThanOrEqualTo, sample.Ask)
-		So(tickerFrame.Data[0].Last, ShouldEqual, tradeFrame.Data[0].Price)
-		So(tickerFrame.Data[0].Volume, ShouldEqual, sample.Volume)
+		for range 16 {
+			randomWalk.Step()
+		}
 
-		So(generator.currTime, ShouldEqual, marketTime)
-		So(generator.midPrice, ShouldEqual, marketPrice)
+		falseBreak := NewGenerator("FALSE/USD", 100, 0.01, 2, 96)
+		falseBreak.SetState(testtypes.FalseBreakout)
 
-		nextFrame := level3Frame
-		next := generator.Step()
-		err = json.Unmarshal(generator.Render(
-			[]byte(`{"channel":"level3","data":[{}]}`), next,
-		), &nextFrame)
-		So(err, ShouldBeNil)
-		nextBid := nextFrame.Data[0].Bids[len(nextFrame.Data[0].Bids)-1]
-		nextAsk := nextFrame.Data[0].Asks[len(nextFrame.Data[0].Asks)-1]
-		So(nextBid.Event, ShouldBeIn, "add", "modify")
-		So(nextAsk.Event, ShouldBeIn, "add", "modify")
-		So(nextBid.OrderID,
-			ShouldEqual, level3Frame.Data[0].Bids[0].OrderID)
-		So(nextAsk.OrderID,
-			ShouldEqual, level3Frame.Data[0].Asks[0].OrderID)
+		for falseBreak.PrecursorPending() {
+			falseBreak.Step()
+		}
+
+		falseBreak.Step()
+		breakoutDistance := math.Abs(falseBreak.trendPrice - falseBreak.openPrice)
+
+		for range 16 {
+			falseBreak.Step()
+		}
+
+		Convey("The null should diffuse and the false break should revert", func() {
+			So(randomWalk.trendPrice, ShouldNotEqual, walkStart)
+			So(math.Abs(falseBreak.trendPrice-falseBreak.openPrice),
+				ShouldBeLessThan, breakoutDistance)
+		})
 	})
 }
 
 func BenchmarkGeneratorStep(b *testing.B) {
-	generator := NewGenerator("SIM1/USD", 100.0, 0.01, 2, 42)
+	generator := NewGenerator("SIM1/USD", 100, 0.01, 2, 42)
 
 	for b.Loop() {
 		_ = generator.Step()

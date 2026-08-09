@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 	"golang.org/x/sync/errgroup"
 )
@@ -35,6 +36,7 @@ physics fluid metrics, and predictive coding resonance predictions.
 type Solver struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
+	price    *broker.Price
 	recorder *audit.Recorder
 	pearls   *sync.Map
 	rows     *sync.Map
@@ -51,7 +53,7 @@ Default layout (4-column row):
   - Col 2: Treatment (Resonance Task Prediction / Expected Return)
   - Col 3: Target (Realized Price Return)
 */
-func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(price *broker.Price, ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
 	defaultConfig := algorithm.PearlConfig{
 		Target:                  3,
 		Treatment:               2,
@@ -62,6 +64,7 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver
 	solver := &Solver{
 		ctx:      context.Background(),
 		cancel:   func() {},
+		price:    price,
 		recorder: recorder,
 		pearls:   &sync.Map{},
 		rows:     &sync.Map{},
@@ -136,76 +139,56 @@ func (solver *Solver) measure(
 		)
 	}
 
-	if resonance.Forecast == nil {
+	forecastReady := resonance.Symbol == symbol && resonance.At.Equal(thesis.At) &&
+		resonance.Forecast != nil && resonance.Forecast.Validate() == nil &&
+		!math.IsNaN(resonance.Energy) && !math.IsInf(resonance.Energy, 0) &&
+		!math.IsNaN(resonance.Surprise) && !math.IsInf(resonance.Surprise, 0)
+	prediction := 0.0
+
+	if forecastReady {
+		prediction, forecastReady = resonance.Forecast.Step(0)
+	}
+
+	if solver.price == nil {
 		return nil
 	}
 
-	if err := resonance.Forecast.Validate(); err != nil {
+	ticker := solver.price.Tick(symbol)
+
+	if ticker == nil {
 		return nil
 	}
 
-	prediction, predictionReady := resonance.Forecast.Step(0)
+	midpoint := 0.0
 
-	if !predictionReady || math.IsNaN(resonance.Energy) ||
-		math.IsInf(resonance.Energy, 0) || math.IsNaN(resonance.Surprise) ||
-		math.IsInf(resonance.Surprise, 0) {
-		return nil
-	}
+	if ticker.Bid != nil && ticker.Ask != nil {
+		bid := ticker.Bid.Float64()
+		ask := ticker.Ask.Float64()
 
-	stored, found = thesis.Measurements.Load(types.SourceSentiment)
-
-	if !found {
-		return nil
-	}
-
-	measurements, ok := stored.([]*types.Measurement)
-
-	if !ok {
-		return errnie.Err(
-			errnie.Validation,
-			"causal: sentiment measurements have an invalid type",
-			nil,
-		)
-	}
-
-	changeKey := types.MetricKey(types.MetricChange, types.SideNone)
-	realizedReturn := 0.0
-	found = false
-	var latestAt int64
-
-	for _, measurement := range measurements {
-		if measurement == nil || measurement.Symbol != symbol {
-			continue
+		if bid > 0 && ask >= bid {
+			midpoint = (bid + ask) / 2
 		}
-
-		change, present := measurement.Metrics[changeKey]
-
-		if !present || math.IsNaN(change.Raw) || math.IsInf(change.Raw, 0) {
-			continue
-		}
-
-		at := measurement.At.UnixNano()
-
-		if found && at <= latestAt {
-			continue
-		}
-
-		realizedReturn = change.Raw
-		latestAt = at
-		found = true
 	}
 
-	if !found {
+	if midpoint == 0 && ticker.Last != nil && ticker.Last.Sign() > 0 {
+		midpoint = ticker.Last.Float64()
+	}
+
+	row, rows, resolved, err := solver.observe(
+		symbol,
+		[3]float64{resonance.Energy, resonance.Surprise, prediction},
+		midpoint,
+		ticker.Timestamp,
+		forecastReady,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	if !resolved {
 		return nil
 	}
-
-	row := []float64{
-		resonance.Energy,
-		resonance.Surprise,
-		prediction,
-		realizedReturn,
-	}
-	rows := solver.observe(symbol, row)
 
 	output, resolved, err := solver.getPearl(symbol).Measure(algorithm.PearlInput{
 		Key:          symbol,
@@ -235,6 +218,7 @@ func (solver *Solver) measure(
 
 	causalOutput := map[string]any{
 		"historyRows":    rows,
+		"identification": "adjustedAssociation",
 		"precision":      precision,
 		"samples":        len(rows),
 		"treatmentLevel": prediction,
@@ -243,6 +227,7 @@ func (solver *Solver) measure(
 	if resolved {
 		causalOutput = output.Outputs()
 		causalOutput["historyRows"] = rows
+		causalOutput["identification"] = "adjustedAssociation"
 		causalOutput["precision"] = precision
 		causalOutput["samples"] = len(rows)
 		causalOutput["treatmentLevel"] = prediction
@@ -250,31 +235,6 @@ func (solver *Solver) measure(
 
 	thesis.Causal.Store(symbol, causalOutput)
 	return nil
-}
-
-/*
-observe retains the same aligned causal rows the Pearl model observed.
-
-The capacity is the number of first- and second-moment parameters implied by
-the row width, matching the model's own data-backed window without introducing
-an independent history limit.
-*/
-func (solver *Solver) observe(symbol string, row []float64) [][]float64 {
-	solver.rowsMu.Lock()
-	defer solver.rowsMu.Unlock()
-
-	stored, _ := solver.rows.LoadOrStore(symbol, [][]float64{})
-	rows := stored.([][]float64)
-	rows = append(rows, row)
-	rowWidth := len(row)
-	capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
-
-	if len(rows) > capacity {
-		rows = rows[len(rows)-capacity:]
-	}
-
-	solver.rows.Store(symbol, rows)
-	return append([][]float64(nil), rows...)
 }
 
 /*

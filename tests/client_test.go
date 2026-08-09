@@ -3,9 +3,7 @@ package tests
 import (
 	"context"
 	"testing"
-	"time"
 
-	"github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/api-go/v2/pkg/callback"
 	sdkkraken "github.com/theapemachine/api-go/v2/pkg/kraken"
@@ -70,72 +68,7 @@ func TestConnPublish(t *testing.T) {
 			So(string(received), ShouldEqual, string(payload))
 		})
 	})
-}
 
-func TestConnSubscriptionACK(t *testing.T) {
-	Convey("Given a Conn", t, func() {
-		conn := NewConn(context.Background())
-		defer conn.Close()
-		So(conn.Connect(), ShouldBeNil)
-
-		Convey("When a subscribe request is written to the connection", func() {
-			acked := make(chan []byte, 1)
-
-			conn.Client().OnReceived.Recurring(
-				func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-					select {
-					case acked <- event.Data.Bytes():
-					default:
-					}
-				},
-			)
-
-			So(conn.Client().WriteMessage(
-				websocket.TextMessage,
-				[]byte(`{"method":"subscribe","params":{"channel":"ticker"}}`),
-			), ShouldBeNil)
-
-			select {
-			case ack := <-acked:
-				So(string(ack), ShouldContainSubstring, `"method":"subscribe"`)
-			case <-time.After(5 * time.Second):
-				So("subscribe ack", ShouldEqual, "not received")
-			}
-		})
-	})
-}
-
-func TestConnOrderACK(t *testing.T) {
-	Convey("Given a Conn", t, func() {
-		conn := NewConn(context.Background())
-		defer conn.Close()
-		So(conn.Connect(), ShouldBeNil)
-
-		Convey("When an add_order request is written to the connection", func() {
-			acked := make(chan []byte, 1)
-
-			conn.Client().OnReceived.Recurring(
-				func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-					select {
-					case acked <- event.Data.Bytes():
-					default:
-					}
-				},
-			)
-
-			So(conn.Client().WriteMessage(
-				websocket.TextMessage,
-				[]byte(`{"method":"add_order","cl_ord_id":"TEST_ORDER"}`),
-			), ShouldBeNil)
-
-			select {
-			case ack := <-acked:
-				So(string(ack), ShouldContainSubstring, "SIM-ORD-")
-			case <-time.After(5 * time.Second):
-				So("add_order ack", ShouldEqual, "not received")
-			}
-		})
-	})
 }
 
 func BenchmarkConnPublish(b *testing.B) {

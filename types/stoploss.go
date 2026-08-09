@@ -12,9 +12,9 @@ import (
 /*
 Stoploss regulates one open lot in two regimes.
 
-Before profit lock, Floor is the lowest executable mark implied by the trusted
-Resonance path. The distance from the current mark to that floor is the
-forecast's own jitter room.
+Before profit lock, Floor is the lower of the trusted Resonance path boundary
+and the boundary outside the lot's measured round-trip execution cost. A move
+smaller than the cost of entering and exiting is not adverse evidence.
 Once Mark clears the profit line by that distance plus one executable tick,
 Floor moves above ProfitLine. Every later new Peak raises Floor by the same
 distance; no path lowers it.
@@ -94,7 +94,7 @@ func NewStoploss(
 	stoploss.Floor = floor
 	stoploss.trailDistance = trailDistance
 
-	if err := stoploss.RebindFill(entryPrice); err != nil {
+	if err := stoploss.RebindFill(entryPrice, mark); err != nil {
 		cancel()
 		return nil, err
 	}
@@ -103,17 +103,23 @@ func NewStoploss(
 }
 
 /*
-RebindFill updates fill-dependent profit geometry without changing the
-forecast floor or its remembered reach.
+RebindFill updates the lot from its realized entry and current executable mark.
+The forecast room is retained, but never allowed to be narrower than the
+measured distance from that mark to fee-inclusive break-even.
 */
-func (stoploss *Stoploss) RebindFill(entryPrice *decimal.Decimal) error {
-	profitLine, armAt, lockFloor, err := stoploss.entryGeometry(entryPrice)
+func (stoploss *Stoploss) RebindFill(
+	entryPrice *decimal.Decimal,
+	mark *decimal.Decimal,
+) error {
+	profitLine, armAt, lockFloor, err := stoploss.entryGeometry(entryPrice, mark)
 
 	if err != nil {
 		return err
 	}
 
 	stoploss.Status = ARMED
+	stoploss.Mark = mark
+	stoploss.Peak = mark
 	stoploss.ProfitLine = profitLine
 	stoploss.ArmAt = armAt
 	stoploss.LockFloor = lockFloor
@@ -303,10 +309,17 @@ func (stoploss *Stoploss) forecastGeometry(
 
 func (stoploss *Stoploss) entryGeometry(
 	entryPrice *decimal.Decimal,
+	mark *decimal.Decimal,
 ) (*decimal.Decimal, *decimal.Decimal, *decimal.Decimal, error) {
 	if entryPrice == nil || entryPrice.Sign() <= 0 {
 		return nil, nil, nil, fmt.Errorf(
 			"stoploss: positive entry price required",
+		)
+	}
+
+	if mark == nil || mark.Sign() <= 0 {
+		return nil, nil, nil, fmt.Errorf(
+			"stoploss: positive executable mark required",
 		)
 	}
 
@@ -331,13 +344,23 @@ func (stoploss *Stoploss) entryGeometry(
 	cost := entry.Add(entry.Mul(entryRate))
 	breakEven := cost.Div(one.Sub(exitRate))
 	profitLine := ceilToTick(breakEven, tick)
+	currentMark := mark.SetScale(riskScale)
+	executionDistance := ceilToTick(profitLine.Sub(currentMark), tick)
+	trailDistance := largest(stoploss.trailDistance, executionDistance)
+	executionFloor := floorToTick(currentMark.Sub(trailDistance), tick)
+
+	if executionFloor == nil || executionFloor.Sign() <= 0 {
+		return nil, nil, nil, fmt.Errorf(
+			"stoploss: execution cost does not imply a positive floor",
+		)
+	}
 
 	armAt := ceilToTick(
-		profitLine.Add(stoploss.trailDistance).Add(tick),
+		profitLine.Add(trailDistance).Add(tick),
 		tick,
 	)
 	lockFloor := floorToTick(
-		armAt.Sub(stoploss.trailDistance),
+		armAt.Sub(trailDistance),
 		tick,
 	)
 
@@ -346,6 +369,12 @@ func (stoploss *Stoploss) entryGeometry(
 			"stoploss: profit lock must clear profit line",
 		)
 	}
+
+	if executionFloor.Cmp(stoploss.Floor) < 0 {
+		stoploss.Floor = executionFloor
+	}
+
+	stoploss.trailDistance = trailDistance
 
 	return profitLine, armAt, lockFloor, nil
 }

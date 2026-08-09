@@ -20,6 +20,10 @@ search compares the two do-expectations without adding a second decision rule.
 CanEnter carries the predictive model's admission result into the feasible
 action set. GraphReward carries relational evidence on the realized-return
 scale, keeping dimensionless confidence out of the causal reward column.
+Precision is the causal estimate's own reliability in [0,1]; it discounts the
+reward ApplyAction assigns to entering, so a search run on a shaky causal
+estimate is naturally biased toward standing aside rather than trusting an
+uncertain do-expectation at full strength.
 */
 type StrategyState struct {
 	Symbol      string
@@ -30,6 +34,7 @@ type StrategyState struct {
 	Decided     bool
 	CanEnter    bool
 	GraphReward float64
+	Precision   float64
 }
 
 /*
@@ -80,7 +85,7 @@ func (strategyState StrategyState) ApplyAction(action float64) mcts.State {
 	switch action {
 	case ActionEnter:
 		next.Treatment = strategyState.Treatment
-		next.Reward = strategyState.GraphReward
+		next.Reward = strategyState.GraphReward * strategyState.Precision
 	case ActionNothing:
 		next.Treatment = 0
 	}

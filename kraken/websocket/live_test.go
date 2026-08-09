@@ -204,6 +204,7 @@ func TestSubscribeAccount(t *testing.T) {
 
 			So(entityMap["balances"]([]byte(`{"channel":"balances"}`)), ShouldHaveSameTypeAs, &kraken.Balance{})
 			So(entityMap["executions"]([]byte(`{"channel":"executions"}`)), ShouldHaveSameTypeAs, &kraken.Execution{})
+			So(entityMap["ohlc"]([]byte(`{"channel":"ohlc"}`)), ShouldHaveSameTypeAs, &kraken.OHLC{})
 		})
 	})
 }
@@ -216,7 +217,9 @@ func TestLiveSubscribe(t *testing.T) {
 			paper:       paper,
 			subscribers: &sync.Map{},
 		}
-		subscription := live.Subscribe("executions", types.NewSubscription[any]())
+		subscription := live.Subscribe("executions", &types.Subscription[any]{
+			Channel: make(chan any, 1),
+		})
 		execution := &kraken.Execution{Channel: "executions", Type: "update"}
 
 		Convey("A paper fill should reach the live execution subscriber", func() {

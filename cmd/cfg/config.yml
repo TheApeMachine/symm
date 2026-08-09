@@ -86,9 +86,13 @@ trading:
     # postmortems once resolved forecast outcomes provide an empirical rule.
     minimum_confidence: 0.80
   allocation:
+    # Hard per-entry quote-notional ceiling. This is not a risk target: the
+    # planner may reduce it once calibrated loss and liquidity budgets exist.
     max_fraction: 0.20
   slots:
     normal: 2
+    # Dormant for planner-generated entries until an early-information sleeve
+    # demonstrates independently calibrated net expectancy.
     reserved: 2
 
 signals:

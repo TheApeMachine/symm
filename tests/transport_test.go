@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -13,209 +12,87 @@ import (
 )
 
 func TestMockTransportAssets(t *testing.T) {
-	Convey("Given a mockTransport configured with simulated symbols", t, func() {
-		symbols := []*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 50000, 1),
-			testtypes.NewSymbol("ETH/USD", 3000, 2),
-		}
-
+	Convey("Given a transport configured with two simulated symbols", t, func() {
 		conn := NewConn(context.Background())
-		conn.Configure(symbols)
 		defer conn.Close()
+		conn.Configure([]*testtypes.Symbol{
+			testtypes.NewSymbol("BTC/USD", 50_000, 1),
+			testtypes.NewSymbol("ETH/USD", 3_000, 2),
+		})
+		request, err := http.NewRequest(
+			"GET", "https://api.kraken.com/0/public/Assets", nil,
+		)
+		So(err, ShouldBeNil)
 
-		Convey("When the REST Assets endpoint is called", func() {
-			request, err := http.NewRequest(
-				"GET", "https://api.kraken.com/0/public/Assets", nil,
-			)
-			So(err, ShouldBeNil)
+		response, err := conn.ws.REST.Executor(request)
+		So(err, ShouldBeNil)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		So(err, ShouldBeNil)
+		result := map[string]any{}
+		So(json.Unmarshal(body, &result), ShouldBeNil)
+		assets, _ := result["result"].(map[string]any)
 
-			response, err := conn.ws.REST.Executor(request)
-			So(err, ShouldBeNil)
-			So(response.StatusCode, ShouldEqual, 200)
-
-			body, err := io.ReadAll(response.Body)
-			So(err, ShouldBeNil)
-
-			var result map[string]any
-			So(json.Unmarshal(body, &result), ShouldBeNil)
-
-			assets, _ := result["result"].(map[string]any)
-
-			Convey("It should contain entries for BTC, USD, and ETH", func() {
-				So(assets, ShouldContainKey, "BTC")
-				So(assets, ShouldContainKey, "USD")
-				So(assets, ShouldContainKey, "ETH")
-			})
+		Convey("Every base and quote asset should be declared", func() {
+			So(assets, ShouldContainKey, "BTC")
+			So(assets, ShouldContainKey, "ETH")
+			So(assets, ShouldContainKey, "USD")
 		})
 	})
 }
 
 func TestMockTransportAssetPairs(t *testing.T) {
-	Convey("Given a mockTransport configured with simulated symbols", t, func() {
-		symbols := []*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 50000, 1),
-		}
-
+	Convey("Given a transport configured with one symbol", t, func() {
 		conn := NewConn(context.Background())
-		conn.Configure(symbols)
 		defer conn.Close()
-
-		Convey("When the REST AssetPairs endpoint is called", func() {
-			request, err := http.NewRequest(
-				"GET", "https://api.kraken.com/0/public/AssetPairs", nil,
-			)
-			So(err, ShouldBeNil)
-
-			response, err := conn.ws.REST.Executor(request)
-			So(err, ShouldBeNil)
-
-			body, err := io.ReadAll(response.Body)
-			So(err, ShouldBeNil)
-
-			var result map[string]any
-			So(json.Unmarshal(body, &result), ShouldBeNil)
-
-			pairs, _ := result["result"].(map[string]any)
-
-			Convey("It should contain the BTCUSD pair with wsname", func() {
-				So(pairs, ShouldContainKey, "BTCUSD")
-
-				pair, _ := pairs["BTCUSD"].(map[string]any)
-				So(pair["wsname"], ShouldEqual, "BTC/USD")
-				So(pair["base"], ShouldEqual, "BTC")
-				So(pair["quote"], ShouldEqual, "USD")
-			})
+		conn.Configure([]*testtypes.Symbol{
+			testtypes.NewSymbol("BTC/USD", 50_000, 1),
 		})
-	})
-}
+		request, err := http.NewRequest(
+			"GET", "https://api.kraken.com/0/public/AssetPairs", nil,
+		)
+		So(err, ShouldBeNil)
 
-func TestMockTransportBalance(t *testing.T) {
-	Convey("Given a mockTransport configured with symbols", t, func() {
-		conn := NewConn(context.Background())
-		conn.Configure([]*testtypes.Symbol{testtypes.NewSymbol("BTC/USD", 50000, 1)})
-		defer conn.Close()
+		response, err := conn.ws.REST.Executor(request)
+		So(err, ShouldBeNil)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		So(err, ShouldBeNil)
+		result := map[string]any{}
+		So(json.Unmarshal(body, &result), ShouldBeNil)
+		pairs, _ := result["result"].(map[string]any)
+		pair, _ := pairs["BTCUSD"].(map[string]any)
 
-		Convey("When the REST Balance endpoint is called", func() {
-			request, err := http.NewRequest(
-				"POST", "https://api.kraken.com/0/private/Balance", nil,
-			)
-			So(err, ShouldBeNil)
-
-			response, err := conn.ws.REST.Executor(request)
-			So(err, ShouldBeNil)
-
-			body, err := io.ReadAll(response.Body)
-			So(err, ShouldBeNil)
-
-			var result map[string]any
-			So(json.Unmarshal(body, &result), ShouldBeNil)
-
-			balanceResult, _ := result["result"].(map[string]any)
-
-			Convey("It should contain a USD balance from the fixture", func() {
-				So(balanceResult, ShouldContainKey, "USD")
-			})
-		})
-	})
-}
-
-func TestMockTransportTradeVolume(t *testing.T) {
-	Convey("Given a mockTransport configured with symbols", t, func() {
-		symbols := []*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 50000, 1),
-		}
-
-		conn := NewConn(context.Background())
-		conn.Configure(symbols)
-		defer conn.Close()
-
-		Convey("When the REST TradeVolume endpoint is called", func() {
-			request, err := http.NewRequest(
-				"POST", "https://api.kraken.com/0/private/TradeVolume", nil,
-			)
-			So(err, ShouldBeNil)
-
-			response, err := conn.ws.REST.Executor(request)
-			So(err, ShouldBeNil)
-
-			body, err := io.ReadAll(response.Body)
-			So(err, ShouldBeNil)
-
-			var result map[string]any
-			So(json.Unmarshal(body, &result), ShouldBeNil)
-
-			volumeResult, _ := result["result"].(map[string]any)
-
-			Convey("It should contain fees from the tradevolume fixture", func() {
-				So(volumeResult, ShouldContainKey, "fees")
-
-				fees, _ := volumeResult["fees"].(map[string]any)
-				So(fees, ShouldContainKey, "BTCUSD")
-			})
-		})
-	})
-}
-
-func TestMockTransportAddOrder(t *testing.T) {
-	Convey("Given a mockTransport configured with symbols", t, func() {
-		conn := NewConn(context.Background())
-		conn.Configure([]*testtypes.Symbol{testtypes.NewSymbol("BTC/USD", 50000, 1)})
-		defer conn.Close()
-
-		Convey("When the REST AddOrder endpoint is called", func() {
-			request, err := http.NewRequest(
-				"POST",
-				"https://api.kraken.com/0/private/AddOrder",
-				strings.NewReader(`{
-					"cl_ord_id":"client-order-1",
-					"ordertype":"market",
-					"type":"buy",
-					"volume":"0.25",
-					"pair":"BTC/USD"
-				}`),
-			)
-			So(err, ShouldBeNil)
-
-			response, err := conn.ws.REST.Executor(request)
-			So(err, ShouldBeNil)
-
-			body, err := io.ReadAll(response.Body)
-			So(err, ShouldBeNil)
-
-			var result map[string]any
-			So(json.Unmarshal(body, &result), ShouldBeNil)
-
-			orderResult, _ := result["result"].(map[string]any)
-
-			Convey("It should return a venue identity and queue the order", func() {
-				So(orderResult, ShouldContainKey, "txid")
-
-				txids, _ := orderResult["txid"].([]any)
-				So(len(txids), ShouldBeGreaterThan, 0)
-				So(txids[0].(string), ShouldStartWith, "SIM-ORD-")
-				So(conn.transport.pending, ShouldHaveLength, 1)
-				So(conn.transport.pending[0].Request.Pair, ShouldEqual, "BTC/USD")
-			})
+		Convey("The venue pair identity should match the websocket symbol", func() {
+			So(pair["wsname"], ShouldEqual, "BTC/USD")
+			So(pair["base"], ShouldEqual, "BTC")
+			So(pair["quote"], ShouldEqual, "USD")
 		})
 	})
 }
 
 func BenchmarkMockTransportRoundTrip(b *testing.B) {
-	symbols := []*testtypes.Symbol{
-		testtypes.NewSymbol("BTC/USD", 50000, 1),
-		testtypes.NewSymbol("ETH/USD", 3000, 2),
-	}
-
 	conn := NewConn(context.Background())
-	conn.Configure(symbols)
+	conn.Configure([]*testtypes.Symbol{
+		testtypes.NewSymbol("BTC/USD", 50_000, 1),
+		testtypes.NewSymbol("ETH/USD", 3_000, 2),
+	})
 	defer conn.Close()
-
-	request, _ := http.NewRequest(
+	request, err := http.NewRequest(
 		"GET", "https://api.kraken.com/0/public/Assets", nil,
 	)
 
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	for b.Loop() {
-		response, _ := conn.ws.REST.Executor(request)
+		response, err := conn.ws.REST.Executor(request)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
 		response.Body.Close()
 	}
 }

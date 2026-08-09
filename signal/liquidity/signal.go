@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"golang.org/x/sync/errgroup"
@@ -37,6 +38,12 @@ type Signal struct {
 
 type liquidityObservation struct {
 	at              time.Time
+	bid             float64
+	ask             float64
+	bidQuantity     float64
+	askQuantity     float64
+	reportedPrice   float64
+	reportedVolume  float64
 	executableDepth float64
 	quoteNotional   float64
 	cadence         time.Duration
@@ -92,10 +99,10 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.thesis.AppendMeasurements(
+				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceLiquidity,
 					signal.Measure(signal.thesis), true,
-				)
+				))
 			}
 		}
 	}()
@@ -133,6 +140,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		measurementIndex := index
 
 		group.Go(func() error {
+			updated := false
+
+			for _, ticker := range tickers {
+				if strings.TrimSpace(ticker.Symbol) == peer.symbol &&
+					ticker.Timestamp.Equal(peer.observation.at) {
+					updated = true
+					break
+				}
+			}
+
+			if !updated {
+				return nil
+			}
+
 			executableDepth := peer.observation.executableDepth
 			depthPeers, notionalPeers := leaveOneOutLiquidity(peer.symbol, peers)
 			depthMedian, depthOK := statistic.MedianOf(depthPeers)
@@ -164,39 +185,62 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				reportedMedian = notionalMedian
 			}
 
-			var normalizedDepth *float64
-			var normalizedRelativeDepth *float64
-			var normalizedScarcity *float64
-			var normalizedDepthMedian *float64
-			var normalizedReportedNotional *float64
-			var normalizedReportedMedian *float64
+			normalizedDepth := normalizedLiquidityRatio(executableDepth, depthMedian)
+			normalizedRelativeDepth := normalizedRelativeLiquidity(relativeDepth)
+			normalizedScarcity := normalizedLiquidityScore(scarcity)
+			normalizedDepthMedian := normalizedLiquidityRatio(
+				depthMedian,
+				cohortDepthMedian,
+			)
+			normalizedReportedNotional := normalizedLiquidityRatio(
+				reportedNotional,
+				notionalMedian,
+			)
+			normalizedReportedMedian := normalizedLiquidityRatio(
+				notionalMedian,
+				cohortNotionalMedian,
+			)
+			maturity := 0.0
 
-			if peerReady && cadenceReady && executableDepth > 0 && depthCohortReady {
-				normalizedDepth = normalizedLiquidityRatio(executableDepth, depthMedian)
-				normalizedRelativeDepth = normalizedRelativeLiquidity(relativeDepth)
-				normalizedScarcity = normalizedLiquidityScore(scarcity)
-				normalizedDepthMedian = normalizedLiquidityRatio(
-					depthMedian,
-					cohortDepthMedian,
-				)
-			}
-
-			if reportedReady && cadenceReady {
-				normalizedReportedNotional = normalizedLiquidityRatio(
-					reportedNotional,
-					notionalMedian,
-				)
-				normalizedReportedMedian = normalizedLiquidityRatio(
-					notionalMedian,
-					cohortNotionalMedian,
-				)
+			if cadenceReady && peerReady && depthCohortReady && reportedReady {
+				maturity = 1
 			}
 
 			measurement := &types.Measurement{
-				Source: types.SourceLiquidity,
-				Symbol: peer.symbol,
-				At:     peer.observation.at,
+				ID:       uuid.NewString(),
+				Source:   types.SourceLiquidity,
+				Symbol:   peer.symbol,
+				At:       peer.observation.at,
+				Maturity: maturity,
 				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+						Raw:  peer.observation.bid,
+						Unit: types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricBestPrice, types.SideSell): {
+						Raw:  peer.observation.ask,
+						Unit: types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
+						Raw:  peer.observation.bidQuantity,
+						Unit: types.UnitBaseCurrency,
+					},
+					types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
+						Raw:  peer.observation.askQuantity,
+						Unit: types.UnitBaseCurrency,
+					},
+					types.MetricKey(types.MetricMidpoint, types.SideNone): {
+						Raw:  (peer.observation.bid + peer.observation.ask) / 2,
+						Unit: types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricVWAP, types.SideNone): {
+						Raw:  peer.observation.reportedPrice,
+						Unit: types.UnitQuoteCurrency,
+					},
+					types.MetricKey(types.MetricReportedVolume, types.SideNone): {
+						Raw:  peer.observation.reportedVolume,
+						Unit: types.UnitBaseCurrency,
+					},
 					types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone): {
 						Raw:        executableDepth,
 						Normalized: normalizedDepth,
@@ -245,11 +289,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
+	compacted := measurements[:0]
+
 	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		compacted = append(compacted, measurement)
+
 		if measurement.Symbol == types.Focus() {
 			out = append(out, measurement)
 		}
 	}
+	measurements = compacted
 
 	if len(out) > 0 {
 		utils.Publish(signal.ui, datura.NewMap(
@@ -265,10 +318,6 @@ normalizedRelativeLiquidity validates a ratio that already carries its real
 leave-one-out executable-depth denominator.
 */
 func normalizedRelativeLiquidity(raw float64) *float64 {
-	if raw < 0 || math.IsNaN(raw) || math.IsInf(raw, 0) {
-		return nil
-	}
-
 	value := raw
 
 	return &value
@@ -307,25 +356,16 @@ normalizedLiquidityRatio uses a positive executable cohort baseline. Zero is
 accepted only as a measured numerator; a missing or malformed scale stays nil.
 */
 func normalizedLiquidityRatio(raw, baseline float64) *float64 {
-	if raw < 0 || baseline <= 0 || math.IsNaN(raw) || math.IsInf(raw, 0) ||
-		math.IsNaN(baseline) || math.IsInf(baseline, 0) {
-		return nil
-	}
+	value := 1.0
 
-	value := raw / baseline
-
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return nil
+	if baseline != 0 {
+		value = raw / baseline
 	}
 
 	return &value
 }
 
 func normalizedLiquidityScore(raw float64) *float64 {
-	if raw < 0 || raw > 1 || math.IsNaN(raw) || math.IsInf(raw, 0) {
-		return nil
-	}
-
 	value := raw
 
 	return &value
@@ -383,8 +423,16 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 					continue
 				}
 
+				bid, ask, bidQuantity, askQuantity := tickerTouch(row)
+				reportedPrice, reportedVolume := reportedTurnover(row)
 				observation := liquidityObservation{
 					at:              row.Timestamp,
+					bid:             bid,
+					ask:             ask,
+					bidQuantity:     bidQuantity,
+					askQuantity:     askQuantity,
+					reportedPrice:   reportedPrice,
+					reportedVolume:  reportedVolume,
 					executableDepth: executableDepth(row),
 					quoteNotional:   quoteNotional(row),
 				}
@@ -507,6 +555,20 @@ func executableDepth(row kraken.TickerData) float64 {
 }
 
 func quoteNotional(row kraken.TickerData) float64 {
+	price, volume := reportedTurnover(row)
+
+	return price * volume
+}
+
+func tickerTouch(row kraken.TickerData) (float64, float64, float64, float64) {
+	if row.Bid == nil || row.Ask == nil || row.BidQty <= 0 || row.AskQty <= 0 {
+		return 0, 0, 0, 0
+	}
+
+	return row.Bid.Float64(), row.Ask.Float64(), row.BidQty, row.AskQty
+}
+
+func reportedTurnover(row kraken.TickerData) (float64, float64) {
 	price := row.Vwap
 
 	if price <= 0 && row.Last != nil {
@@ -515,10 +577,10 @@ func quoteNotional(row kraken.TickerData) float64 {
 
 	if price <= 0 || row.Volume <= 0 || math.IsNaN(price) || math.IsNaN(row.Volume) ||
 		math.IsInf(price, 0) || math.IsInf(row.Volume, 0) {
-		return 0
+		return 0, 0
 	}
 
-	return price * row.Volume
+	return price, row.Volume
 }
 
 /*

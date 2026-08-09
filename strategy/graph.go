@@ -12,8 +12,9 @@ const marketGraphKey = "market_graph"
 
 /*
 graphEvidence is the graph's bounded opinion about one forecast. Direct
-supporting and contradictory masses are averaged so graph degree cannot
-manufacture confidence by repeating the same opinion.
+supporting and contradictory masses retain only the strongest relation in each
+direction, so repeated outputs from the same causal family cannot manufacture
+evidence through graph degree.
 */
 type graphEvidence struct {
 	supports    float64
@@ -22,67 +23,66 @@ type graphEvidence struct {
 }
 
 /*
-graphAdjustedForecast resolves a forecast and the graph compiled for the same
-Thesis cut. Missing, stale, or mismatched evidence is an error.
+forecastWithGraphEvidence resolves a forecast and the graph compiled for the
+same Thesis cut. Graph evidence remains separate from forecast confidence:
+without outcome calibration it is not a likelihood and cannot update a
+posterior probability. Missing, stale, or mismatched evidence is an error.
 */
-func graphAdjustedForecast(
+func forecastWithGraphEvidence(
 	thesis *types.Thesis,
 	symbol string,
-) (*types.ResonanceForecast, graphEvidence, float64, error) {
+) (*types.ResonanceForecast, graphEvidence, error) {
 	evidence := graphEvidence{}
 
 	if thesis == nil {
-		return nil, evidence, 0, fmt.Errorf("planner: thesis required")
+		return nil, evidence, fmt.Errorf("planner: thesis required")
 	}
 
 	readingRaw, found := thesis.Resonance.Load(symbol)
 
 	if !found {
-		return nil, evidence, 0, fmt.Errorf("planner: resonance forecast required for %s", symbol)
+		return nil, evidence, fmt.Errorf("planner: resonance forecast required for %s", symbol)
 	}
 
 	reading, valid := readingRaw.(types.ResonanceReading)
 
-	if !valid || reading.Forecast == nil {
-		return nil, evidence, 0, fmt.Errorf("planner: valid resonance forecast required for %s", symbol)
+	if !valid || reading.Symbol != symbol || !reading.At.Equal(thesis.At) ||
+		reading.Forecast == nil {
+		return nil, evidence, fmt.Errorf(
+			"planner: current resonance forecast required for %s", symbol,
+		)
 	}
 
 	if err := reading.Forecast.Validate(); err != nil {
-		return nil, evidence, 0, fmt.Errorf("planner: invalid resonance forecast for %s: %w", symbol, err)
+		return nil, evidence, fmt.Errorf("planner: invalid resonance forecast for %s: %w", symbol, err)
 	}
 
 	storedGraph, found := thesis.Graphs.Load(marketGraphKey)
 
 	if !found {
-		return nil, evidence, 0, fmt.Errorf("planner: market graph required for %s", symbol)
+		return nil, evidence, fmt.Errorf("planner: market graph required for %s", symbol)
 	}
 
 	marketGraph, valid := storedGraph.(*logicgraph.Graph)
 
 	if !valid || marketGraph == nil || !marketGraph.At.Equal(thesis.At) {
-		return nil, evidence, 0, fmt.Errorf("planner: current market graph required for %s", symbol)
+		return nil, evidence, fmt.Errorf("planner: current market graph required for %s", symbol)
 	}
 
 	graphForecast := marketGraph.Nodes["res:"+symbol+":forecast"]
 
 	if graphForecast == nil || graphForecast.Value != reading.Forecast.ExpectedReturn ||
 		graphForecast.Confidence != reading.Forecast.Confidence {
-		return nil, evidence, 0, fmt.Errorf("planner: graph forecast mismatch for %s", symbol)
+		return nil, evidence, fmt.Errorf("planner: graph forecast mismatch for %s", symbol)
 	}
 
 	evidence, err := newGraphEvidence(marketGraph, symbol)
 
 	if err != nil {
-		return nil, evidence, 0, fmt.Errorf("planner: graph evidence for %s: %w", symbol, err)
+		return nil, evidence, fmt.Errorf("planner: graph evidence for %s: %w", symbol, err)
 	}
 
-	confidence, err := evidence.Confidence(reading.Forecast.Confidence)
-
-	if err != nil {
-		return nil, evidence, 0, fmt.Errorf("planner: graph confidence for %s: %w", symbol, err)
-	}
-
-	return reading.Forecast, evidence, confidence, nil
+	return reading.Forecast, evidence, nil
 }
 
 /*
@@ -138,44 +138,17 @@ func newGraphEvidence(
 			continue
 		}
 
-		evidence.relations++
-
 		if edge.Relation == logicgraph.RelationSupports {
-			evidence.supports += mass
+			evidence.supports = max(evidence.supports, mass)
+			evidence.relations++
 			continue
 		}
 
-		evidence.contradicts += mass
-	}
-
-	if evidence.relations > 0 {
-		relations := float64(evidence.relations)
-		evidence.supports /= relations
-		evidence.contradicts /= relations
+		evidence.contradicts = max(evidence.contradicts, mass)
+		evidence.relations++
 	}
 
 	return evidence, nil
-}
-
-/* Confidence applies graph evidence as normalized forecast likelihoods. */
-func (evidence graphEvidence) Confidence(prior float64) (float64, error) {
-	if math.IsNaN(prior) || math.IsInf(prior, 0) || prior < 0 || prior > 1 {
-		return 0, fmt.Errorf("strategy: forecast confidence must be within [0,1]")
-	}
-
-	if err := evidence.validate(); err != nil {
-		return 0, err
-	}
-
-	forecastMass := prior * (1 - evidence.contradicts)
-	alternativeMass := (1 - prior) * (1 - evidence.supports)
-	normalizer := forecastMass + alternativeMass
-
-	if normalizer == 0 {
-		return 0, fmt.Errorf("strategy: graph evidence cannot normalize forecast confidence")
-	}
-
-	return forecastMass / normalizer, nil
 }
 
 /*
@@ -208,9 +181,9 @@ func (evidence graphEvidence) Reward(rows [][]float64, target int) (float64, err
 func (evidence graphEvidence) validate() error {
 	if math.IsNaN(evidence.supports) || math.IsInf(evidence.supports, 0) ||
 		math.IsNaN(evidence.contradicts) || math.IsInf(evidence.contradicts, 0) ||
-		evidence.supports < 0 || evidence.contradicts < 0 ||
-		evidence.supports+evidence.contradicts > 1 {
-		return fmt.Errorf("strategy: graph evidence must be finite probability mass")
+		evidence.supports < 0 || evidence.supports > 1 ||
+		evidence.contradicts < 0 || evidence.contradicts > 1 {
+		return fmt.Errorf("strategy: graph evidence must be finite unit evidence")
 	}
 
 	return nil

@@ -305,7 +305,11 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	state := raw.(*symbolState)
 
 	if state == nil || state.energy <= 0 {
-		return nil, false
+		return map[string]float64{
+			"correlation": 0, "signed": 0, "relativeEnergy": 1,
+			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
+			"stressScore": 0, "peakScore": 0, "strength": 0,
+		}, true
 	}
 
 	weightedSigned := 0.0
@@ -338,13 +342,21 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	})
 
 	if totalSupport <= 0 {
-		return nil, false
+		return map[string]float64{
+			"correlation": 0, "signed": 0, "relativeEnergy": 1,
+			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
+			"stressScore": 0, "peakScore": 0, "strength": 0,
+		}, true
 	}
 
 	peerEnergy := weightedPeerEnergy / totalSupport
 
 	if peerEnergy <= 0 {
-		return nil, false
+		return map[string]float64{
+			"correlation": 0, "signed": 0, "relativeEnergy": 1,
+			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
+			"stressScore": 0, "peakScore": 0, "strength": 0,
+		}, true
 	}
 
 	signed := weightedSigned / totalSupport

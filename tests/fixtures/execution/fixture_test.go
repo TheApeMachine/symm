@@ -27,5 +27,22 @@ func TestExecutionFrame(t *testing.T) {
 				So(string(payload), ShouldContainSubstring, `"channel":"executions"`)
 			})
 		}
+
+		Convey("A declared venue sequence should be encoded", func() {
+			options := executionfixture.BuyFill()
+			options.Sequence = 17
+
+			So(string(executionfixture.Frame(options)),
+				ShouldContainSubstring, `"sequence":17`)
+		})
 	})
+}
+
+func BenchmarkExecutionFrame(b *testing.B) {
+	options := executionfixture.BuyFill()
+	options.Sequence = 17
+
+	for b.Loop() {
+		_ = executionfixture.Frame(options)
+	}
 }

@@ -76,8 +76,32 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	for _, symbol := range thesis.MarketSymbols() {
-		found := solver.classify(symbol, thesis.Series(symbol))
+	measurementsBySymbol := make(map[string][]*types.Measurement)
+
+	thesis.Measurements.Range(func(_, value any) bool {
+		measurements, ok := value.([]*types.Measurement)
+
+		if !ok {
+			return true
+		}
+
+		for _, measurement := range measurements {
+			if measurement == nil || measurement.Symbol == "" {
+				continue
+			}
+
+			measurementsBySymbol[measurement.Symbol] = append(
+				measurementsBySymbol[measurement.Symbol],
+				measurement,
+			)
+		}
+
+		return true
+	})
+
+	for symbol, measurements := range measurementsBySymbol {
+
+		found := solver.classify(symbol, measurements)
 
 		if len(found) == 0 {
 			// A symbol the evidence no longer supports must not keep the
@@ -103,59 +127,19 @@ func (solver *Solver) Close() error {
 }
 
 /*
-series is one metric's readings over the tick, in observation order.
+classify weighs one symbol's measurements against every candidate category
+and returns those the evidence actually supports.
 */
-type series struct {
-	readings []float64
-	maturity float64
-}
-
-/*
-level is what the metric reads now. A category asking what is true takes the
-latest observation rather than an average over history, which would blunt
-exactly the move it is trying to catch.
-*/
-func (series *series) level() float64 {
-	if len(series.readings) == 0 {
-		return 0
-	}
-
-	return series.readings[len(series.readings)-1]
-}
-
-/*
-slope is how fast the metric is changing, as the mean rate of change per
-observation across the series. A category asking where the market is heading
-reads this rather than the level: compression that is still tightening is a
-coil, while compression that has stopped tightening is just a quiet market.
-*/
-func (series *series) slope() float64 {
-	if len(series.readings) < 2 {
-		return 0
-	}
-
-	first := series.readings[0]
-	last := series.readings[len(series.readings)-1]
-
-	return (last - first) / float64(len(series.readings)-1)
-}
-
-/*
-collect reduces one symbol's timeline into a series per metric, preserving
-observation order so later stages can read both level and direction.
-*/
-func (solver *Solver) collect(
+func (solver *Solver) classify(
+	symbol string,
 	measurements []*types.Measurement,
-) map[string]*series {
-	collected := make(map[string]*series)
+) []types.Category {
+	tally := make(map[types.CategoryType]*evidence)
+	readings := make(map[string][]float64)
+	maturity := make(map[string]float64)
 
 	for _, measurement := range measurements {
 		for key, sample := range measurement.Metrics {
-			/*
-				Normalized readings are the only ones comparable across
-				metrics; raw values carry their own units and cannot be
-				weighed against each other.
-			*/
 			if sample.Normalized == nil {
 				continue
 			}
@@ -166,33 +150,14 @@ func (solver *Solver) collect(
 				continue
 			}
 
-			found, ok := collected[key]
-
-			if !ok {
-				found = &series{}
-				collected[key] = found
-			}
-
-			found.readings = append(found.readings, reading)
-			found.maturity = measurement.Maturity
+			readings[key] = append(readings[key], reading)
+			maturity[key] = measurement.Maturity
 		}
 	}
 
-	return collected
-}
-
-/*
-classify weighs one symbol's measurements against every candidate category
-and returns those the evidence actually supports.
-*/
-func (solver *Solver) classify(
-	symbol string,
-	measurements []*types.Measurement,
-) []types.Category {
-	tally := make(map[types.CategoryType]*evidence)
-
-	for key, readings := range solver.collect(measurements) {
+	for key, samples := range readings {
 		metric, _ := types.ParseMetricKey(key)
+		level := samples[len(samples)-1]
 
 		/*
 			A metric speaks twice: its level says what is true now, and its
@@ -200,12 +165,23 @@ func (solver *Solver) classify(
 			independently, because a metric can carry one without the other.
 		*/
 		if weights, ok := solver.mapper.Weights(metric); ok {
-			solver.contribute(key, readings, math.Abs(readings.level()), weights, tally)
+			solver.contribute(key, math.Abs(level), maturity[key], weights, tally)
 		}
 
-		if weights, ok := solver.mapper.Trending(metric); ok {
-			solver.contribute(key+trendSuffix, readings, readings.slope(), weights, tally)
+		if len(samples) < 2 {
+			continue
 		}
+
+		weights, ok := solver.mapper.Trending(metric)
+
+		if !ok {
+			continue
+		}
+
+		first := samples[0]
+		last := samples[len(samples)-1]
+		slope := (last - first) / float64(len(samples)-1)
+		solver.contribute(key+trendSuffix, slope, maturity[key], weights, tally)
 	}
 
 	return solver.verdicts(symbol, tally)
@@ -224,8 +200,8 @@ is positively weighted for, while a falling one supports their opposites.
 */
 func (solver *Solver) contribute(
 	key string,
-	readings *series,
 	reading float64,
+	maturity float64,
 	weights map[types.CategoryType]float64,
 	tally map[types.CategoryType]*evidence,
 ) {
@@ -248,7 +224,7 @@ func (solver *Solver) contribute(
 		*/
 		contribution := math.Abs(reading) * math.Abs(weight)
 		found.samples++
-		found.maturity += readings.maturity
+		found.maturity += maturity
 		found.distinct[key] = struct{}{}
 
 		if (reading > 0) == (weight > 0) {

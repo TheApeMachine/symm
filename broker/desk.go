@@ -362,6 +362,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		decision.ExpectedFees = economics.ExpectedFees
 		decision.ExpectedSpread = economics.ExpectedSpread
 		decision.ExpectedImpact = economics.ExpectedImpact
+		decision.OpportunityMargin = economics.NetReturn.Float64()
 
 		position := NewPosition(
 			desk.ctx,

@@ -32,6 +32,7 @@ type Options struct {
 	AvgPrice      string
 	FeeUsdEquiv   string
 	Timestamp     string
+	Sequence      int64
 }
 
 /*
@@ -125,6 +126,10 @@ func Frame(options Options) []byte {
 
 	if options.Timestamp != "" {
 		row["timestamp"] = options.Timestamp
+	}
+
+	if options.Sequence > 0 {
+		payload["sequence"] = options.Sequence
 	}
 
 	encoded, err := sonic.Marshal(payload)

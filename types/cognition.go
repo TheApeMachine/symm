@@ -102,6 +102,11 @@ type Cognition struct {
 	REMFrom          time.Time          `json:"remFrom,omitempty"`
 	REMThrough       time.Time          `json:"remThrough,omitempty"`
 	REMReplays       int                `json:"remReplays,omitempty"`
+	// REMDecayFactor and REMInhibitionPct are only meaningful once REMReplays
+	// is nonzero — the model has never consolidated before its first pass.
+	REMDecayFactor   float64 `json:"remDecayFactor,omitempty"`
+	REMInhibitionPct float64 `json:"remInhibitionPct,omitempty"`
+	REMConsolidating bool    `json:"remConsolidating,omitempty"`
 
 	// InterpolatedSurprisal scores the active sequence through backoff rather
 	// than a single stored path, so a novel continuation of a familiar prefix is

@@ -111,6 +111,7 @@ Provenance contract (set correctly at emit; never rewritten downstream):
     observation interval.
 */
 type Measurement struct {
+	ID           string                  `json:"id"`
 	Source       SourceType              `json:"source"`
 	Symbol       string                  `json:"symbol" validate:"required"`
 	Peer         string                  `json:"peer,omitempty"`

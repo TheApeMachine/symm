@@ -3,43 +3,21 @@ package tests
 import (
 	"context"
 	"fmt"
-	"os"
+	"math/rand"
 	"strconv"
 	"sync"
-	"testing"
 	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/tests/fixtures/book"
-	"github.com/theapemachine/symm/tests/fixtures/execution"
-	"github.com/theapemachine/symm/tests/fixtures/level3"
-	"github.com/theapemachine/symm/tests/fixtures/ticker"
-	"github.com/theapemachine/symm/tests/fixtures/trade"
 	"github.com/theapemachine/symm/tests/signal"
 	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
-const (
-	// tickInterval is how often the feed re-checks whether the stack has caught
-	// up with it. Whether it has is observed rather than assumed, so this only
-	// decides the granularity of the wait.
-	tickInterval = 10 * time.Millisecond
-
-	/*
-		flattenCeilingTicks bounds how long a lot may take to close before the
-		harness calls it stuck. It is not a wait anything is expected to reach:
-		a regulator that has armed closes on the reversal within the transition
-		the reversal takes, so this only has to be longer than a regime change
-		to distinguish a slow exit from one that is never coming.
-	*/
-	flattenCeilingTicks = 512
-)
-
 /*
-Market ranges ready fixture payloads into the fake Kraken connections.
+Market drives real production websocket consumers with one coherent, replayable
+simulated venue timeline.
 */
 type Market struct {
 	ctx        context.Context
@@ -49,27 +27,32 @@ type Market struct {
 	Level3     *Conn
 	Symbols    []*testtypes.Symbol
 	State      testtypes.MarketState
+	Config     testtypes.ScenarioConfig
 	public     *websocket.Live
 	private    *websocket.Live
 	generators map[string]*signal.Generator
 	latest     map[string]testtypes.Sample
 	previous   map[string]testtypes.Sample
-	filled     map[string]struct{}
+	states     map[string]testtypes.MarketState
+	candles    map[string]*candleState
+	execution  *executionModel
 	stack      Stack
 	autoFill   bool
 	primed     bool
 	clockSet   bool
 	clockAt    time.Time
 	sampleAt   time.Time
+	tick       uint64
+	factorRNG  *rand.Rand
+	factors    []float64
+	timeline   []RegimeObservation
+	exposure   map[string]map[testtypes.MarketState]uint64
+	published  map[string]bool
 	sampleMu   sync.RWMutex
 }
 
 /*
-Drive points the venue at the system consuming its frames.
-
-A venue that publishes into nothing can only run for a fixed number of ticks,
-which turns every wait into a number somebody guessed. Given the system, it can
-run until what it is waiting for has actually happened.
+Drive attaches the production stack whose progress controls market pacing.
 */
 func (market *Market) Drive(stack Stack) *Market {
 	market.stack = stack
@@ -78,21 +61,50 @@ func (market *Market) Drive(stack Stack) *Market {
 }
 
 /*
-NewMarket creates a simulated market with the given number of symbols.
-It replaces the production Kraken API WebSockets and REST routes with
-in-memory fixtures that emit deterministic events for testing.
+NewMarket creates a deterministic default mechanics scenario.
 */
 func NewMarket(
 	ctx context.Context,
 	symbols []*testtypes.Symbol,
 ) *Market {
-	return newMarket(ctx, symbols, nil)
+	config := testtypes.NewScenarioConfig(symbols)
+
+	if err := config.Validate(); err != nil {
+		panic(err)
+	}
+
+	return newMarket(ctx, config, nil)
 }
 
 /*
-NewMarketWithAccount boots the fixture stack from an existing wallet and its
-account fills, matching a process restart against an account that already owns
-inventory.
+NewMarketWithScenario builds a market from a complete validated replay identity.
+*/
+func NewMarketWithScenario(
+	ctx context.Context,
+	config testtypes.ScenarioConfig,
+) (*Market, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	config = config.Clone()
+
+	return newMarket(ctx, config, func(private *Conn) {
+		if len(config.InitialBalances) == 0 {
+			return
+		}
+
+		balances := make(map[string]string, len(config.InitialBalances))
+
+		for asset, balance := range config.InitialBalances {
+			balances[asset] = strconv.FormatFloat(balance, 'f', -1, 64)
+		}
+
+		private.ConfigureAccount(balances, nil)
+	}), nil
+}
+
+/*
+NewMarketWithAccount starts from explicit exchange inventory and fill history.
 */
 func NewMarketWithAccount(
 	ctx context.Context,
@@ -100,81 +112,99 @@ func NewMarketWithAccount(
 	balances map[string]string,
 	trades map[string]spot.Trade,
 ) *Market {
-	return newMarket(ctx, symbols, func(private *Conn) {
+	config := testtypes.NewScenarioConfig(symbols)
+
+	if err := config.Validate(); err != nil {
+		panic(err)
+	}
+
+	return newMarket(ctx, config, func(private *Conn) {
 		private.ConfigureAccount(balances, trades)
 	})
 }
 
 func newMarket(
 	ctx context.Context,
-	symbols []*testtypes.Symbol,
+	config testtypes.ScenarioConfig,
 	configureAccount func(*Conn),
 ) *Market {
+	config = config.Clone()
 	tradingModel := viper.GetString("trading.model")
 	viper.Set("trading.model", "real")
 	defer viper.Set("trading.model", tradingModel)
-
 	ctx, cancel := context.WithCancel(ctx)
+	publicConn := NewConn(ctx)
+	privateConn := NewConn(ctx)
+	level3Conn := NewConn(ctx)
+
+	for _, conn := range []*Conn{publicConn, privateConn, level3Conn} {
+		if err := conn.ConfigureTime(config.StartTime); err != nil {
+			panic(err)
+		}
+	}
+
+	publicConn.ConfigureFaults(config.Faults)
+	privateConn.ConfigureFaults(config.Faults)
+	level3Conn.ConfigureFaults(config.Faults)
 
 	market := &Market{
 		ctx:        ctx,
 		cancel:     cancel,
-		Public:     NewConn(ctx),
-		Private:    NewConn(ctx),
-		Level3:     NewConn(ctx),
-		Symbols:    symbols,
+		Public:     publicConn,
+		Private:    privateConn,
+		Level3:     level3Conn,
+		Symbols:    config.Symbols,
 		State:      testtypes.Baseline,
-		generators: make(map[string]*signal.Generator, len(symbols)),
-		latest:     make(map[string]testtypes.Sample, len(symbols)),
-		previous:   make(map[string]testtypes.Sample, len(symbols)),
-		filled:     make(map[string]struct{}),
+		Config:     config,
+		generators: make(map[string]*signal.Generator, len(config.Symbols)),
+		latest:     make(map[string]testtypes.Sample, len(config.Symbols)),
+		previous:   make(map[string]testtypes.Sample, len(config.Symbols)),
+		states:     make(map[string]testtypes.MarketState, len(config.Symbols)),
+		candles:    make(map[string]*candleState, len(config.Symbols)),
+		factorRNG:  rand.New(rand.NewSource(config.Seed)),
+		exposure:   make(map[string]map[testtypes.MarketState]uint64, len(config.Symbols)),
+		published:  make(map[string]bool, len(config.Symbols)),
 	}
 
-	for _, symbol := range symbols {
-		generator := signal.NewGenerator(
-			symbol.Pair,
-			symbol.StartPrice,
-			symbol.PriceIncrement,
-			symbol.PricePrecision,
-			symbol.Seed,
-		)
+	for _, symbol := range config.Symbols {
+		generator := signal.NewGeneratorFromSymbol(symbol)
+
+		if err := generator.ConfigureProfiles(config.Profiles); err != nil {
+			panic(err)
+		}
+
+		if err := generator.SetTime(config.StartTime); err != nil {
+			panic(err)
+		}
 
 		market.generators[symbol.Pair] = generator
+		market.states[symbol.Pair] = testtypes.Baseline
+		market.exposure[symbol.Pair] = map[testtypes.MarketState]uint64{}
 	}
 
-	market.Public.Configure(symbols)
-	market.Private.Configure(symbols)
-	market.Level3.Configure(symbols)
+	market.Public.Configure(config.Symbols)
+	market.Private.Configure(config.Symbols)
+	market.Level3.Configure(config.Symbols)
 
 	if configureAccount != nil {
 		configureAccount(market.Private)
 	}
 
-	// The fixture Conn owns the in-memory transport; Live wraps its client
-	// so that production parsing, routing, and book handling all run
-	// unchanged against the simulated frames.
 	market.public = websocket.NewWithClient(
 		ctx, nil, false,
 		websocket.PublicWebSocketURL, market.Public.Client(),
 	)
-
 	market.private = websocket.NewWithClient(
 		ctx, nil, true,
 		websocket.PrivateWebSocketURL, market.Private.Client(),
 	)
-
-	// SubL3 opens child connections for the Level3 book. Point them at the
-	// fixture's Level3 transport so the books are built from simulated
-	// depth rather than a real Kraken endpoint.
 	market.private.Level3Client = market.Level3.Client
 
 	return market
 }
 
 /*
-Transition moves one symbol into another market state. This should not be an
-instant regime shift; the selected generator takes a realistic number of ticks
-to move from one state into another.
+Transition moves one symbol through its observable precursor to a latent state.
 */
 func (market *Market) Transition(
 	symbol string,
@@ -186,8 +216,12 @@ func (market *Market) Transition(
 		return fmt.Errorf("market: cannot transition unknown symbol %q", symbol)
 	}
 
+	if _, known := market.Config.Profiles[state]; !known {
+		return fmt.Errorf("market: cannot transition %s to unknown state %d", symbol, state)
+	}
+
 	if !market.primed && market.stack != nil {
-		baseline := testtypes.DefaultProfiles[testtypes.Baseline]
+		baseline := market.Config.Profiles[testtypes.Baseline]
 
 		for range baseline.Precursor.MinimumObservations {
 			market.Tick()
@@ -197,7 +231,11 @@ func (market *Market) Transition(
 	}
 
 	market.State = state
-	generator.SetState(state, testtypes.MomentumMap[state])
+	market.states[symbol] = state
+	market.timeline = append(market.timeline, RegimeObservation{
+		Tick: market.tick, Symbol: symbol, State: state,
+	})
+	generator.SetState(state, market.Config.Momentum[state])
 
 	for generator.PrecursorPending() {
 		market.Tick()
@@ -207,10 +245,7 @@ func (market *Market) Transition(
 }
 
 /*
-TransitionAll moves several symbols into their declared precursors on the same
-market timeline. Every generator is armed before the first transition tick, so
-no regime gains foreknowledge or extra history because it appeared earlier in
-the caller's list.
+TransitionAll arms every declared symbol before advancing their shared timeline.
 */
 func (market *Market) TransitionAll(
 	states map[string]testtypes.MarketState,
@@ -220,13 +255,13 @@ func (market *Market) TransitionAll(
 			return fmt.Errorf("market: cannot transition unknown symbol %q", symbol)
 		}
 
-		if _, known := testtypes.DefaultProfiles[state]; !known {
+		if _, known := market.Config.Profiles[state]; !known {
 			return fmt.Errorf("market: cannot transition %s to unknown state %d", symbol, state)
 		}
 	}
 
 	if !market.primed && market.stack != nil {
-		baseline := testtypes.DefaultProfiles[testtypes.Baseline]
+		baseline := market.Config.Profiles[testtypes.Baseline]
 
 		for range baseline.Precursor.MinimumObservations {
 			market.Tick()
@@ -236,7 +271,11 @@ func (market *Market) TransitionAll(
 	}
 
 	for symbol, state := range states {
-		market.generators[symbol].SetState(state, testtypes.MomentumMap[state])
+		market.generators[symbol].SetState(state, market.Config.Momentum[state])
+		market.states[symbol] = state
+		market.timeline = append(market.timeline, RegimeObservation{
+			Tick: market.tick, Symbol: symbol, State: state,
+		})
 	}
 
 	for {
@@ -258,384 +297,56 @@ func (market *Market) TransitionAll(
 }
 
 /*
-LastSample returns the venue state this feed most recently published for one
-symbol, which is the book any fill answered at that moment was struck against.
+LastSample returns the latest coherent observation for one symbol.
 */
 func (market *Market) LastSample(symbol string) (testtypes.Sample, bool) {
 	market.sampleMu.RLock()
 	defer market.sampleMu.RUnlock()
-
 	sample, known := market.latest[symbol]
 
 	return sample, known
 }
 
 /*
-Express runs a transitioned regime through the discontinuous event it was
-configured with, until the burst that opens it has fully decayed.
-
-Transition stops at the precursor because that is the exact moment an entry has
-to be judged on. This is the other end of the same move: the generator knows
-when its ignition has printed and when the continuation has decayed to nothing,
-so a test observing what the whole regime produced runs to that rather than to a
-tick count somebody picked.
-*/
-func (market *Market) Express(symbol string) error {
-	generator, ok := market.generators[symbol]
-
-	if !ok {
-		return fmt.Errorf("market: cannot express unknown symbol %q", symbol)
-	}
-
-	for !generator.IgnitionSpent() {
-		market.Tick()
-	}
-
-	return nil
-}
-
-/*
-ExpressAll advances one shared timeline until every selected regime has spent
-its ignition. Symbols with shorter bursts keep publishing their continuation
-while slower regimes finish; none is advanced in a private future.
-*/
-func (market *Market) ExpressAll(symbols []string) error {
-	for _, symbol := range symbols {
-		if _, known := market.generators[symbol]; !known {
-			return fmt.Errorf("market: cannot express unknown symbol %q", symbol)
-		}
-	}
-
-	for {
-		pending := false
-
-		for _, symbol := range symbols {
-			if !market.generators[symbol].IgnitionSpent() {
-				pending = true
-				break
-			}
-		}
-
-		if !pending {
-			return nil
-		}
-
-		market.Tick()
-	}
-}
-
-/*
-Flatten runs the market on until the desk carries no open lot for the symbol.
-
-How long a position takes to close is a property of the geometry its regulator
-set on the way in and of the prices that followed, so it is observed rather than
-assumed. The ceiling is what makes a lot that never closes a failing test that
-names the position instead of a hanging one.
-*/
-func (market *Market) Flatten(symbol string) error {
-	if market.stack == nil {
-		return fmt.Errorf(
-			"market: %s cannot be run flat without a driven stack", symbol,
-		)
-	}
-
-	for range flattenCeilingTicks {
-		if market.stack.Holding(symbol) == 0 {
-			return nil
-		}
-
-		market.Tick()
-	}
-
-	return fmt.Errorf(
-		"market: %s was still held after %d ticks", symbol, flattenCeilingTicks,
-	)
-}
-
-/*
-Tick the market. Each symbol advances one generator step, and that coherent
-sample is rendered into every channel before the frames are published exactly
-as if they had arrived over real WebSockets. This does not give you any result,
-because the result should come from the code that is currently being tested.
+Tick advances every symbol once on one shared seeded factor timeline.
 */
 func (market *Market) Tick() {
+	market.applySchedule()
+	marketShock := market.factorRNG.NormFloat64()
+	market.factors = append(market.factors, marketShock)
+
 	for _, symbol := range market.Symbols {
-		generator := market.generators[symbol.Pair]
-		_ = market.publish(generator)
+		market.exposure[symbol.Pair][market.states[symbol.Pair]]++
+		market.publish(market.generators[symbol.Pair], market.factor(symbol))
 	}
+
+	market.tick++
 }
 
-/*
-publish samples one coherent venue state and sends it through every real
-WebSocket channel consumed by the production stack.
-*/
-func (market *Market) publish(generator *signal.Generator) testtypes.Sample {
-	sample := generator.Step()
-	market.pace(sample.Timestamp)
-	market.sampleMu.Lock()
-
-	if known, ok := market.latest[sample.Symbol]; ok {
-		market.previous[sample.Symbol] = known
-	}
-
-	market.latest[sample.Symbol] = sample
-	market.sampleMu.Unlock()
-
-	market.Public.Publish(
-		"ticker",
-		ticker.NewFixture(ticker.UPDATE, 1, generator).Render(sample),
-	)
-
-	market.Public.Publish(
-		"book",
-		book.NewFixture(book.UPDATE, 1, generator).Render(sample),
-	)
-
-	market.Level3.Publish(
-		"level3",
-		level3.NewFixture(level3.SNAPSHOT, 1, generator).Render(sample),
-	)
-
-	market.waitForBook(sample)
-	market.fill(sample)
-
-	market.Public.Publish(
-		"trade",
-		trade.NewFixture(trade.UPDATE, 1, generator).Render(sample),
-	)
-
-	return sample
-}
-
-/*
-pace delivers a driven venue on the event-time cadence its generator declares.
-The origin is established after boot, so connection setup time cannot leave the
-simulated clock permanently behind wall time. An undriven fixture remains
-unpaced because no asynchronous stack is consuming its frames.
-*/
-func (market *Market) pace(sampleAt time.Time) {
-	if market.stack == nil {
-		return
-	}
-
-	if !market.clockSet {
-		market.clockSet = true
-		market.clockAt = time.Now()
-		market.sampleAt = sampleAt
-		return
-	}
-
-	deliveryAt := market.clockAt.Add(sampleAt.Sub(market.sampleAt))
-	delay := time.Until(deliveryAt)
-
-	if delay <= 0 {
-		return
-	}
-
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-market.ctx.Done():
-	case <-timer.C:
-	}
-}
-
-/*
-fill turns accepted REST market orders into private execution frames at the
-next price published by that symbol's simulated book.
-*/
-func (market *Market) fill(sample testtypes.Sample) {
-	if !market.autoFill {
-		return
-	}
-
-	for _, order := range market.Private.transport.takeOrders(sample.Symbol) {
-		if _, filled := market.filled[order.ID]; filled {
+func (market *Market) applySchedule() {
+	for _, transition := range market.Config.Schedule {
+		if transition.Tick != market.tick {
 			continue
 		}
 
-		price := sample.Ask
-
-		if order.Request.Type == "sell" {
-			price = sample.Bid
-		}
-
-		market.filled[order.ID] = struct{}{}
-		priceText := strconv.FormatFloat(price, 'f', -1, 64)
-		cost := price * order.Quantity
-		costText := strconv.FormatFloat(cost, 'f', -1, 64)
-		feeText := strconv.FormatFloat(
-			market.Private.transport.takerFee(cost), 'f', -1, 64,
-		)
-		market.Private.Publish("executions", execution.Frame(execution.Options{
-			OrderID:       order.ID,
-			ClientOrderID: order.Request.ClOrdId,
-			ExecID:        order.ID + "-fill",
-			Symbol:        order.Request.Pair,
-			Side:          order.Request.Type,
-			LastQty:       order.Request.Volume,
-			LastPrice:     priceText,
-			Cost:          costText,
-			OrderStatus:   "filled",
-			OrderType:     order.Request.OrderType,
-			ExecType:      "trade",
-			CumQty:        order.Request.Volume,
-			CumCost:       costText,
-			AvgPrice:      priceText,
-			FeeUsdEquiv:   feeText,
-			Timestamp:     sample.Timestamp.Format(time.RFC3339Nano),
-		}))
-	}
-}
-
-/*
-waitForBook preserves venue causality between a depth update and a trade at
-that depth. Conn confirms frame dispatch, while the production book callback
-may still be applying it; the simulated trade must not overtake that work.
-*/
-func (market *Market) waitForBook(sample testtypes.Sample) {
-	if market.stack == nil {
-		return
-	}
-
-	actorCapacity := viper.GetInt("system.actor.buffer")
-	var observedBid float64
-	var observedAsk float64
-	var bidLevels int
-	var askLevels int
-
-	if actorCapacity < 1 {
-		actorCapacity = 64
-	}
-
-	for range actorCapacity {
-		liveBook := market.private.Book(sample.Symbol)
-
-		if liveBook != nil {
-			bidLevels = len(liveBook.Bids.Levels)
-			askLevels = len(liveBook.Asks.Levels)
-			bid := liveBook.BestBid()
-			ask := liveBook.BestAsk()
-
-			if bid != nil {
-				observedBid = bid.Price.Float64()
-			}
-
-			if ask != nil {
-				observedAsk = ask.Price.Float64()
-			}
-
-			if bid != nil && ask != nil &&
-				bid.Price.Float64() == sample.Bid &&
-				ask.Price.Float64() == sample.Ask &&
-				!bid.Timestamp.Before(sample.Timestamp) &&
-				!ask.Timestamp.Before(sample.Timestamp) {
-				return
-			}
-		}
-
-		time.Sleep(tickInterval)
-	}
-
-	panic(fmt.Errorf(
-		"market: live book did not reach %s at %s: want %g/%g, got %g/%g across %d/%d levels",
-		sample.Symbol,
-		sample.Timestamp,
-		sample.Bid,
-		sample.Ask,
-		observedBid,
-		observedAsk,
-		bidLevels,
-		askLevels,
-	))
-}
-
-/*
-WithAutoFill makes the market answer its own orders with fills.
-
-A test that drives the strategy end to end needs positions to open without
-staging every execution itself. Tests that publish their own execution frames
-leave this off, so the harness never fills an order out from under them.
-*/
-func (market *Market) WithAutoFill() *Market {
-	market.autoFill = true
-
-	return market
-}
-
-func (market *Market) Close() {
-	market.Public.Close()
-	market.Private.Close()
-	market.Level3.Close()
-	market.cancel()
-}
-
-/*
-WithFixtureOrders routes orders through the simulated private REST transport
-for the duration of one market test, then restores the caller's configuration.
-*/
-func WithFixtureOrders(
-	t *testing.T,
-	symbols []*testtypes.Symbol,
-	f func(*Market),
-) func() {
-	return func() {
-		tradingModel := viper.GetString("trading.model")
-		apiKey, hadAPIKey := os.LookupEnv("KRAKEN_API_KEY")
-		apiSecret, hadAPISecret := os.LookupEnv("KRAKEN_API_SECRET")
-
-		viper.Set("trading.model", "real")
-		_ = os.Setenv("KRAKEN_API_KEY", "fixture-key")
-		_ = os.Setenv("KRAKEN_API_SECRET", "Zml4dHVyZS1zZWNyZXQ=")
-
-		defer func() {
-			viper.Set("trading.model", tradingModel)
-
-			if hadAPIKey {
-				_ = os.Setenv("KRAKEN_API_KEY", apiKey)
-			} else {
-				_ = os.Unsetenv("KRAKEN_API_KEY")
-			}
-
-			if hadAPISecret {
-				_ = os.Setenv("KRAKEN_API_SECRET", apiSecret)
-			} else {
-				_ = os.Unsetenv("KRAKEN_API_SECRET")
-			}
-		}()
-
-		WithMarket(t, symbols, f)()
-	}
-}
-
-/*
-WithMarket runs a simulated venue for the duration of one test and tears its
-connections down when the test finishes.
-
-It boots nothing. The stack under test is wired by the caller against Feeds,
-because a data provider that also assembled the system would have to import it,
-and every package that owns a piece of the system could then no longer test
-against a market. WithStack is the same venue with that wiring done, for the
-tests that want the whole system rather than only its data.
-*/
-func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market)) func() {
-	return func() {
-		market := NewMarket(t.Context(), symbols)
-		defer market.Close()
-
-		Reset(func() {
-			market.Close()
+		market.State = transition.State
+		market.states[transition.Symbol] = transition.State
+		market.timeline = append(market.timeline, RegimeObservation{
+			Tick: market.tick, Symbol: transition.Symbol, State: transition.State,
 		})
-
-		f(market)
+		market.generators[transition.Symbol].SetState(
+			transition.State,
+			market.Config.Momentum[transition.State],
+		)
 	}
 }
 
-/*
-Feeds returns the public and private connections the venue publishes through,
-which is what a caller points its own stack at.
-*/
-func (market *Market) Feeds() (*websocket.Live, *websocket.Live) {
-	return market.public, market.private
+func (market *Market) factor(symbol *testtypes.Symbol) float64 {
+	index := len(market.factors) - 1 - symbol.FactorLagTicks
+
+	if index < 0 {
+		return 0
+	}
+
+	return market.factors[index]
 }

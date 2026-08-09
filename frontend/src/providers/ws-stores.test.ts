@@ -155,6 +155,31 @@ describe("ws-stores", () => {
 		unregisterResonance();
 	});
 
+	it("retains the direct resonance row emitted by the solver", () => {
+		const worker = new MockWorker();
+		const resonancePaint = vi.fn();
+		const unregisterResonance = registerPainter("resonance", resonancePaint);
+		const row = {
+			stage: "resonance",
+			source: "resonance",
+			symbol: "BTC/USD",
+			at: "2026-08-09T16:00:00Z",
+			latent: [0.3, -0.4],
+			layers: [{ state: [0.1], prediction: [0.2] }],
+			surprise: 0.1,
+			energy: 0.2,
+			alpha: 0.05,
+		};
+
+		attach(worker as unknown as Worker);
+		worker.emit({ type: "DRAW", frame: { resonance: row } });
+		animationFrame?.(0);
+
+		expect(resonancePaint).toHaveBeenCalledWith([row]);
+
+		unregisterResonance();
+	});
+
 	/*
 		Every settled carrier is published so the latent cross-section has a cloud
 		to plot, and the focused carrier is derived onto its own key so a chart

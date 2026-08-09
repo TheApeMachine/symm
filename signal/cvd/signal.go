@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -112,10 +113,10 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.thesis.AppendMeasurements(
+				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceCVD,
 					signal.Measure(signal.thesis), true,
-				)
+				))
 			}
 		}
 	}()
@@ -398,7 +399,7 @@ func (signal *Signal) measureTrade(
 ) ([]*types.Measurement, error) {
 	sample, flow := signal.ensureProcessors()
 
-	input, ready, err := sample.Measure(algorithm.TradeFlowInput{
+	input, _, err := sample.Measure(algorithm.TradeFlowInput{
 		Symbol:        row.Symbol,
 		Price:         row.Price.Float64(),
 		ResponsePrice: midpoint,
@@ -414,10 +415,6 @@ func (signal *Signal) measureTrade(
 		))
 	}
 
-	if !ready {
-		return nil, nil
-	}
-
 	output, err := flow.Measure(input)
 
 	if err != nil {
@@ -428,7 +425,7 @@ func (signal *Signal) measureTrade(
 		))
 	}
 
-	return signal.cvdMeasurements(row, output, input.TradeCount), nil
+	return signal.cvdMeasurements(row, midpoint, output, input.TradeCount), nil
 }
 
 /*
@@ -437,6 +434,7 @@ Metrics map preserves each reading's unit and normalization.
 */
 func (signal *Signal) cvdMeasurements(
 	row kraken.TradeData,
+	midpoint float64,
 	output equation.FlowOutput,
 	evidenceCount int,
 ) []*types.Measurement {
@@ -455,10 +453,23 @@ func (signal *Signal) cvdMeasurements(
 	net := normalizedSignedNet(output.Net, output.NetFraction, evidenceCount)
 
 	measurement := &types.Measurement{
+		ID:     uuid.NewString(),
 		Source: types.SourceCVD,
 		Symbol: row.Symbol,
 		At:     row.Timestamp,
 		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricMidpoint, types.SideNone): {
+				Raw:  midpoint,
+				Unit: types.UnitQuoteCurrency,
+			},
+			types.MetricKey(types.MetricTradePrice, types.SideNone): {
+				Raw:  row.Price.Float64(),
+				Unit: types.UnitQuoteCurrency,
+			},
+			types.MetricKey(types.MetricTradeQuantity, types.SideNone): {
+				Raw:  row.Qty,
+				Unit: types.UnitBaseCurrency,
+			},
 			types.MetricKey(types.MetricAbsorption, types.SideNone): {
 				Raw:        output.Absorption,
 				Normalized: absorption,
@@ -506,24 +517,10 @@ Price-response families need at least two response prices; balance, strength,
 and net fraction are defined by the first observed aggressor split.
 */
 func normalizedFlowMetric(
-	metric types.MetricType,
+	_ types.MetricType,
 	raw float64,
-	evidenceCount int,
+	_ int,
 ) *float64 {
-	if math.IsNaN(raw) || math.IsInf(raw, 0) || raw < 0 || raw > 1 {
-		return nil
-	}
-
-	if evidenceCount <= 0 {
-		return nil
-	}
-
-	if evidenceCount < minimumPriceResponseObservations &&
-		(metric == types.MetricAbsorption || metric == types.MetricDrive ||
-			metric == types.MetricStarvation) {
-		return nil
-	}
-
 	value := raw
 
 	return &value
@@ -535,20 +532,8 @@ raw quote-currency net remains available while the normalized reading is the
 signed share of actually executed gross notional.
 */
 func normalizedSignedNet(raw, netFraction float64, evidenceCount int) *float64 {
-	if evidenceCount <= 0 {
-		return nil
-	}
-
-	if math.IsNaN(raw) || math.IsInf(raw, 0) || netFraction < 0 || netFraction > 1 ||
-		math.IsNaN(netFraction) || math.IsInf(netFraction, 0) {
-		return nil
-	}
-
-	if raw == 0 && netFraction != 0 {
-		return nil
-	}
-
 	value := math.Copysign(netFraction, raw)
+	_ = evidenceCount
 
 	if raw == 0 {
 		value = 0
