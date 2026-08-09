@@ -254,15 +254,13 @@ func (solver *Solver) Step(
 		))
 	}
 
-	/*
-		Fields and particles are the fluid view's raw frames, and the view
-		renders one symbol: the one the dashboard is focused on. Reading them
-		back for every symbol served no display, but still paid the GPU readback
-		and — because Publish marshals — encoded whole float grids into decimal
-		text, which profiled at 37% of process CPU and 80GB of allocations per
-		run. The resulting GC pressure was the stall, so the frames are read
-		only for the symbol something is actually looking at.
-	*/
+	// Fields and particles are the fluid view's raw frames, and the view
+	// renders one symbol: the one the dashboard is focused on. Reading them
+	// back for every symbol served no display, but still paid the GPU readback
+	// and — because Publish marshals — encoded whole float grids into decimal
+	// text, which profiled at 37% of process CPU and 80GB of allocations per
+	// run. The resulting GC pressure was the stall, so the frames are read
+	// only for the symbol something is actually looking at.
 	if solver.binui != nil && symbol == types.Focus() {
 		fields, fieldsErr := solver.domain.Fields()
 
