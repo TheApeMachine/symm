@@ -129,7 +129,7 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		)))
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(types.SourcePlanner)
 }
 
 /* decisions evaluates one binary verdict per ready causal artifact. */
@@ -229,7 +229,9 @@ func (planner *Planner) search(
 	ready, readyOK := causal["ready"].(bool)
 
 	if readyOK && !ready {
-		return types.NewDecision(types.ActionNothing, symbol), nil
+		decision := types.NewDecision(types.ActionNothing, symbol)
+		decision.Reason = "planner: causal evidence is still warming"
+		return decision, nil
 	}
 
 	rows, rowsOK := causal["historyRows"].([][]float64)
@@ -238,20 +240,26 @@ func (planner *Planner) search(
 	if !readyOK || !ready || !rowsOK ||
 		len(rows) < planner.mctsEngine.MinRows || !treatmentOK ||
 		math.IsNaN(treatment) || math.IsInf(treatment, 0) {
-		return types.NewDecision(types.ActionNothing, symbol), nil
+		decision := types.NewDecision(types.ActionNothing, symbol)
+		decision.Reason = "planner: causal search inputs are incomplete"
+		return decision, nil
 	}
 
 	latest := rows[len(rows)-1]
 
 	if len(latest) != 4 {
-		return types.NewDecision(types.ActionNothing, symbol), nil
+		decision := types.NewDecision(types.ActionNothing, symbol)
+		decision.Reason = "planner: causal row shape is invalid"
+		return decision, nil
 	}
 
 	storedCognition, found := thesis.Cognition.Load(symbol)
 	cognition, valid := storedCognition.(types.Cognition)
 
 	if !found || !valid || !cognition.Ready {
-		return types.NewDecision(types.ActionNothing, symbol), nil
+		decision := types.NewDecision(types.ActionNothing, symbol)
+		decision.Reason = "planner: cognition is still warming"
+		return decision, nil
 	}
 
 	candidate, evidence, err := planner.admit(

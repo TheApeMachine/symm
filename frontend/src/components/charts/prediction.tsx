@@ -14,7 +14,7 @@ const ScalarDiagnostics = () => (
 		{({ ref }) => (
 			<div
 				ref={ref}
-				className="grid grid-cols-8 gap-px overflow-hidden border border-(--line) bg-(--line)"
+				className="grid grid-cols-7 gap-px overflow-hidden border border-(--line) bg-(--line)"
 			>
 				<div className="bg-[#0a0907] px-2 py-1.5">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
@@ -36,19 +36,6 @@ const ScalarDiagnostics = () => (
 						data-paint="skillEvidence"
 						data-paint-format=".1%"
 						className="mt-0.5 font-mono text-[11px] text-(--f2)"
-					>
-						—
-					</div>
-				</div>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						expected move
-					</div>
-					<div
-						data-paint="forecast.expectedBasisPoints"
-						data-paint-format=".3f"
-						data-paint-suffix=" bp"
-						className="mt-0.5 font-mono text-[11px] text-(--acc)"
 					>
 						—
 					</div>

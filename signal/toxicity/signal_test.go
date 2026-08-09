@@ -30,7 +30,7 @@ func TestMeasure(t *testing.T) {
 		Convey("It completes each symbol before returning the combined measurements", func() {
 			measurements := signal.Measure(thesis)
 			So(measurements, ShouldHaveLength, 2)
-			thesis.AppendMeasurements(measurements, true)
+			thesis.AppendMeasurements(types.SourceToxicity, measurements, true)
 			So(signal.Measure(thesis), ShouldBeEmpty)
 		})
 	})
@@ -43,7 +43,7 @@ func TestMeasure(t *testing.T) {
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(provisional, false)
+		thesis.AppendMeasurements(types.SourceToxicity, provisional, false)
 		So(provisional, ShouldHaveLength, 1)
 		So(provisional[0].At, ShouldResemble, base)
 		So(provisional[0].Sample(types.MetricTouchQuantity, types.SideBuy).Normalized,
@@ -96,7 +96,7 @@ func TestMeasure(t *testing.T) {
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(provisional, false)
+		thesis.AppendMeasurements(types.SourceToxicity, provisional, false)
 		trade := toxicityTrade(93, "buy", 101, 1, base.Add(time.Second))
 		thesis.AppendTrade(trade)
 

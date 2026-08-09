@@ -106,30 +106,23 @@ func (analyzer *Analyzer) run() {
 func (analyzer *Analyzer) process(in any) {
 	thesis, ok := in.(*types.Thesis)
 
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"failed to convert signal payload to thesis",
-			nil,
-		))
-		return
-	}
+	if ok {
+		// Each solver reads outputs stamped by its predecessors. Running this chain
+		// concurrently mixes prior-epoch readiness with current-epoch values.
+		for _, solver := range analyzer.solvers {
+			if err := solver.Update(thesis); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to update analyzer: "+err.Error(),
+					err,
+				))
 
-	// Each solver reads outputs stamped by its predecessors. Running this chain
-	// concurrently mixes prior-epoch readiness with current-epoch values.
-	for _, solver := range analyzer.solvers {
-		if err := solver.Update(thesis); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to update analyzer: "+err.Error(),
-				err,
-			))
-
-			return
+				continue
+			}
 		}
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(types.SourceCategories)
 }
 
 /*

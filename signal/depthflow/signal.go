@@ -120,6 +120,7 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.thesis.AppendMeasurements(
+					types.SourceDepthFlow,
 					signal.Measure(signal.thesis), true,
 				)
 			}

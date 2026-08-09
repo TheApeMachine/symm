@@ -72,6 +72,7 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.thesis.AppendMeasurements(
+					types.SourceLeadLag,
 					signal.Measure(signal.thesis), true,
 				)
 			}

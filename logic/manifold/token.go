@@ -12,6 +12,8 @@ import (
 )
 
 /*
+unitCarrierMass is the mass contributed by one observed order. Inelastic collision
+adds these units when repeated observations merge into a resident carrier.
 unitOscillatorEnergy is the energy every token carries on injection. It is the unit of
 the oscillator store, so amplitude sqrt(Energy) is one for an unforced particle and the
 system starts with exactly one unit of energy per observation.
@@ -19,6 +21,7 @@ symbolIndexMask limits symbol indices to 15 bits so the packed token ID stays cl
 Metal's 16-bit token bitmask (0xFFFF).
 */
 const (
+	unitCarrierMass      float32 = 1
 	unitOscillatorEnergy float32 = 1
 	symbolIndexMask      uint32  = 0x7fff
 )
@@ -41,7 +44,7 @@ projects market structure into a continuous 3D pilot-wave fluid:
   - Position X: Relative log price log(Price / MidPrice), placing Bids at X < 0.5 and Asks at X > 0.5.
   - Position Y: Log order quantity log(Quantity), compressing liquidity across orders of magnitude.
   - Position Z: Empirical order age rank (oldest = 0 at front, newest = N-1 at back).
-  - Mass: Order quantity divided by total visible quantity, preserving liquidity shares without injecting exchange units into the fluid.
+  - Mass: One carrier unit per observed resting order. Repeated observations gain mass through inelastic collision.
   - Heat: Zero on injection. Heat is earned from collision and Planck relaxation, not stamped.
   - Energy: One unit per order, forced above unit by the side's Hawkes self-excitation.
   - Phase: Bid-Ask spread phase boundary ([0, pi) for Bids, [pi, 2pi) for Asks), swept by price-time queue priority.
@@ -80,7 +83,7 @@ NewBatch converts resting L3 bid and ask orders into an appendable particle batc
 It merges bids and asks, extracts Decimal values into float64, derives dynamic geometry bounds,
 resolves the symbol token ID, computes empirical age ranks, and projects every order directly into a physics particle:
   - Single-pass construction avoids intermediate struct allocation ceremony.
-  - Normalized order quantity dictates particle mass while conserving one unit across the visible population.
+  - Every observed order contributes one unit of carrier mass; quantity remains encoded in Position Y.
   - Position phase uses Option 3 (Bid/Ask spread quantum boundary).
   - Returns the particle array alongside token content IDs expected by Metal's merge pipeline.
 
@@ -130,7 +133,7 @@ func (tokenizer *Tokenizer) NewBatch(
 	}
 
 	// 2. Derive dynamic log-space extents relative to midPrice.
-	logPriceMin, logPriceMax, logSizeMin, logSizeMax, totalQuantity, ok := geometryBounds(
+	logPriceMin, logPriceMax, logSizeMin, logSizeMax, ok := geometryBounds(
 		orders,
 		midPrice,
 	)
@@ -177,10 +180,10 @@ func (tokenizer *Tokenizer) NewBatch(
 
 		// Hawkes is the forcing element. It rides on top of the unit, so a quiet side
 		// enters at unit energy and an excited side enters hot and drives the field.
-		energy := unitOscillatorEnergy * float32(1+buyExcitation)
+		energy := unitOscillatorEnergy + float32(buyExcitation)
 
 		if entry.side == mgrbook.Ask {
-			energy = unitOscillatorEnergy * float32(1+sellExcitation)
+			energy = unitOscillatorEnergy + float32(sellExcitation)
 		}
 
 		if energy == 0 {
@@ -202,7 +205,7 @@ func (tokenizer *Tokenizer) NewBatch(
 				grid, spacing,
 			),
 			Velocity: pfluid.Vector{},
-			Mass:     float32(quantity / totalQuantity),
+			Mass:     unitCarrierMass,
 			// Heat is earned, never stamped. It accumulates from inelastic collision and
 			// from Planck relaxation draining the oscillator store, so tokens enter cold.
 			Heat:   0,
@@ -280,11 +283,11 @@ func geometryBounds(
 	orders []*mgrbook.Order,
 	midPrice float64,
 ) (
-	logPriceMin, logPriceMax, logSizeMin, logSizeMax, totalQuantity float64,
+	logPriceMin, logPriceMax, logSizeMin, logSizeMax float64,
 	ok bool,
 ) {
 	if len(orders) == 0 || midPrice <= 0 {
-		return 0, 0, 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 
 	logMid := math.Log(midPrice)
@@ -297,8 +300,9 @@ func geometryBounds(
 		price := resting.LimitPrice.Float64()
 		quantity := resting.Quantity.Float64()
 
-		if price <= 0 || quantity <= 0 {
-			return 0, 0, 0, 0, 0, false
+		if price <= 0 || quantity <= 0 || math.IsNaN(price) || math.IsNaN(quantity) ||
+			math.IsInf(price, 0) || math.IsInf(quantity, 0) {
+			return 0, 0, 0, 0, false
 		}
 
 		logPrice := math.Log(price) - logMid
@@ -308,14 +312,9 @@ func geometryBounds(
 		logPriceMax = max(logPriceMax, logPrice)
 		logSizeMin = min(logSizeMin, logSize)
 		logSizeMax = max(logSizeMax, logSize)
-		totalQuantity += quantity
 	}
 
-	if math.IsInf(totalQuantity, 0) || math.IsNaN(totalQuantity) {
-		return 0, 0, 0, 0, 0, false
-	}
-
-	return logPriceMin, logPriceMax, logSizeMin, logSizeMax, totalQuantity, true
+	return logPriceMin, logPriceMax, logSizeMin, logSizeMax, true
 }
 
 func finiteNonnegative(value float64) bool {

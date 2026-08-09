@@ -115,7 +115,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		solver.publish(thesis)
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(types.SourceCausal)
 	return nil
 }
 

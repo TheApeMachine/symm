@@ -100,7 +100,9 @@ func (solver *Solver) stampPhase(
 	mid := solver.midpoint(symbol)
 	solver.mature(symbol, mid)
 
+	solver.domainMu.Lock()
 	wave, waveErr := solver.domain.Wave()
+	solver.domainMu.Unlock()
 
 	if waveErr != nil {
 		solver.recordPhase(thesis, row, types.PhaseReading{
@@ -111,7 +113,9 @@ func (solver *Solver) stampPhase(
 	}
 
 	row["wave"] = wave
+	solver.domainMu.Lock()
 	dial, dialErr := solver.domain.SourceDial(particles)
+	solver.domainMu.Unlock()
 
 	if dialErr != nil || len(dial) == 0 {
 		solver.recordPhase(thesis, row, types.PhaseReading{

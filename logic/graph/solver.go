@@ -202,7 +202,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		utils.Publish(solver.ui, datura.NewMap("graph", graph))
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(types.SourceGraph)
 	return nil
 }
 

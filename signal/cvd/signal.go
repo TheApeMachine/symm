@@ -113,6 +113,7 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.thesis.AppendMeasurements(
+					types.SourceCVD,
 					signal.Measure(signal.thesis), true,
 				)
 			}

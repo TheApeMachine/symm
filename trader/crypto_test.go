@@ -538,18 +538,24 @@ func updateIntegrationSnapshot(
 	tickers := symbolTickers(thesis, symbol)
 	trades := symbolTrades(thesis, symbol)
 
-	if len(tickers) > 0 && (len(snapshot.tickers) == 0 ||
-		tickers[len(tickers)-1].Timestamp.After(
+	for _, ticker := range tickers {
+		if len(snapshot.tickers) > 0 && !ticker.Timestamp.After(
 			snapshot.tickers[len(snapshot.tickers)-1].Timestamp,
-		)) {
-		snapshot.tickers = append([]kraken.TickerData(nil), tickers...)
+		) {
+			continue
+		}
+
+		snapshot.tickers = append(snapshot.tickers, ticker)
 	}
 
-	if len(trades) > 0 && (len(snapshot.trades) == 0 ||
-		trades[len(trades)-1].Timestamp.After(
+	for _, trade := range trades {
+		if len(snapshot.trades) > 0 && !trade.Timestamp.After(
 			snapshot.trades[len(snapshot.trades)-1].Timestamp,
-		)) {
-		snapshot.trades = append([]kraken.TradeData(nil), trades...)
+		) {
+			continue
+		}
+
+		snapshot.trades = append(snapshot.trades, trade)
 	}
 
 	for _, source := range signalSources() {
@@ -570,9 +576,16 @@ func updateIntegrationSnapshot(
 	resonanceRaw, resonanceReady := thesis.Resonance.Load(symbol)
 
 	if resonance, ok := resonanceRaw.(types.ResonanceReading); resonanceReady && ok &&
-		resonance.Samples > 0 && (len(snapshot.resonances) == 0 ||
-		resonance.At.After(snapshot.resonances[len(snapshot.resonances)-1].At)) {
-		snapshot.resonances = append(snapshot.resonances, resonance)
+		resonance.Samples > 0 {
+		if len(snapshot.resonances) == 0 ||
+			resonance.At.After(snapshot.resonances[len(snapshot.resonances)-1].At) {
+			snapshot.resonances = append(snapshot.resonances, resonance)
+			return
+		}
+
+		if resonance.At.Equal(snapshot.resonances[len(snapshot.resonances)-1].At) {
+			snapshot.resonances[len(snapshot.resonances)-1] = resonance
+		}
 	}
 }
 

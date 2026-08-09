@@ -132,8 +132,9 @@ func (mapper *Mapper) Update(metricType types.MetricType) {
 		}
 	case types.MetricCompression:
 		mapper.metrics[metricType] = map[types.CategoryType]float64{
-			types.CategoryEndogenousAlpha: 1.0,
-			types.CategoryHardSupport:     -1.0,
+			types.CategoryEndogenousAlpha:   1.0,
+			types.CategoryCoiledCompression: 1.0,
+			types.CategoryHardSupport:       -1.0,
 		}
 
 	/*
@@ -182,9 +183,10 @@ func (mapper *Mapper) Update(metricType types.MetricType) {
 		}
 	case types.MetricDrive:
 		mapper.metrics[metricType] = map[types.CategoryType]float64{
-			types.CategoryAggressiveDrive:  1.0,
-			types.CategoryVerticalIgnition: 1.0,
-			types.CategoryHiddenAbsorption: -1.0,
+			types.CategoryAggressiveDrive:   1.0,
+			types.CategoryVerticalIgnition:  1.0,
+			types.CategoryCoiledCompression: 1.0,
+			types.CategoryHiddenAbsorption:  -1.0,
 		}
 	case types.MetricAbsorption:
 		mapper.metrics[metricType] = map[types.CategoryType]float64{

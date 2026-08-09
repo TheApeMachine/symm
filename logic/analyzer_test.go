@@ -55,8 +55,11 @@ func TestAnalyzerProcess(t *testing.T) {
 		analyzer.process(thesis)
 		analyzer.process(thesis)
 
-		Convey("It should run one dependency-consistent cut", func() {
-			So(order, ShouldResemble, []int{0, 1, 2, 3, 4, 5})
+		Convey("It should run a dependency-consistent cut for each notification", func() {
+			So(order, ShouldResemble, []int{
+				0, 1, 2, 3, 4, 5,
+				0, 1, 2, 3, 4, 5,
+			})
 		})
 	})
 

@@ -38,6 +38,7 @@ type Solver struct {
 	binui     chan types.FluidFrame
 	pool      pond.Pool
 	group     pond.TaskGroup
+	stepped   bool
 }
 
 /*
@@ -165,13 +166,23 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			var buyExcitation, sellExcitation float64
 
 			for _, measurement := range measurements {
-				buyExcitation = *measurement.Metrics[types.MetricKey(
-					types.MetricExcitationAmplitude, types.SideBuyToBuy,
-				)].Normalized
+				if measurement == nil {
+					continue
+				}
 
-				sellExcitation = *measurement.Metrics[types.MetricKey(
+				buySample, buyFound := measurement.Metrics[types.MetricKey(
+					types.MetricExcitationAmplitude, types.SideBuyToBuy,
+				)]
+				sellSample, sellFound := measurement.Metrics[types.MetricKey(
 					types.MetricExcitationAmplitude, types.SideSellToSell,
-				)].Normalized
+				)]
+
+				if !buyFound || !sellFound || buySample.Normalized == nil || sellSample.Normalized == nil {
+					continue
+				}
+
+				buyExcitation = *buySample.Normalized
+				sellExcitation = *sellSample.Normalized
 			}
 
 			if buyExcitation == 0 && sellExcitation == 0 {
@@ -212,9 +223,16 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				))
 			}
 
-			if err := solver.Step(thesis, measurement.Symbol, thesis.At, particles); err != nil {
+			if err := solver.Step(
+				thesis, measurement.Symbol, thesis.At, particles,
+			); err != nil {
 				continue
 			}
+		}
+
+		if !solver.stepped {
+			thesis.Stamp(types.SourceManifold)
+			return nil
 		}
 
 		var err error
@@ -231,15 +249,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		thesis.Stamp(types.SourceManifold)
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(types.SourceManifold)
 	return nil
 }
 
 func (solver *Solver) Step(
 	thesis *types.Thesis,
-	symbol string,
-	at time.Time,
-	particles []pfluid.Particle,
 ) error {
 	_, err := solver.domain.Advance()
 
@@ -247,12 +262,14 @@ func (solver *Solver) Step(
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf(
-				"failed to advance manifold for %s with %d resident particles: %v",
-				symbol, solver.domain.ParticleCount(), err,
+				"failed to advance manifold with %d resident particles: %v",
+				solver.domain.ParticleCount(), err,
 			),
 			err,
 		))
 	}
+
+	solver.stepped = true
 
 	// Fields and particles are the fluid view's raw frames, and the view
 	// renders one symbol: the one the dashboard is focused on. Reading them
@@ -319,6 +336,42 @@ func (solver *Solver) Step(
 	}
 
 	return nil
+}
+
+/*
+residentHeatLocked sums Heat over every resident particle that is not
+clamped, matching the Python prototype's total_Q. Callers must hold domainMu.
+*/
+func (solver *Solver) residentHeatLocked() (float32, error) {
+	count := solver.domain.ParticleCount()
+
+	if count == 0 {
+		return 0, nil
+	}
+
+	particles, err := solver.domain.ReadParticles(0, count)
+
+	if err != nil {
+		return 0, err
+	}
+
+	clamped, err := solver.domain.ReadClamped(0, count)
+
+	if err != nil {
+		return 0, err
+	}
+
+	var totalHeat float32
+
+	for index, particle := range particles {
+		if index < len(clamped) && clamped[index] {
+			continue
+		}
+
+		totalHeat += particle.Heat
+	}
+
+	return totalHeat, nil
 }
 
 /*

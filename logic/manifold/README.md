@@ -48,7 +48,7 @@ a deliberate claim about what an order *is*.
 
 | Particle field | What the order contributes                                                                                                            |
 |----------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| **Mass**       | Size. Heavy orders have inertia in the pilot-wave transport.                                                                          |
+| **Mass**       | Observation multiplicity. Each injected order contributes one unit; inelastic collision adds units into persistent carriers.         |
 | **Omega (ω)**  | Log distance from mid, normalized by the symbol's own accumulated scale. This is the particle's **identity** — its content frequency. |
 | **Phase (φ)**  | Queue rank by exchange price-time priority. Sequence position.                                                                        |
 | **Position**   | Where it lands in the 64³ spatial grid.                                                                                               |
@@ -63,8 +63,13 @@ lopsided book the entire lattice and let its bids land in ask territory.
 furthest order to exactly `OmegaMin`/`OmegaMax` every tick, making them
 spuriously resonant with each other. `tanh` is monotone and bounded — distance
 ordering survives, and nothing can rail. Its tail compression is a consequence of
-that choice, not a market law. *(Note: `TestTokenizerNewBatch` still asserts the
-old rail-to-the-bound behaviour and fails accordingly.)*
+that choice, not a market law.
+
+**Mass begins at the observation unit.** An ordinary resting order enters with
+mass `1`, independently of its exchange lot units. Order quantity is already
+encoded by the Y position. Repeated observations acquire mass only when the
+Metal inelastic merge combines matching carriers, preserving the original
+tokenizer invariant that mass measures additive observation multiplicity.
 
 **φ comes from queue rank, not slice index.** The caller assembles order slices
 by walking a Go map, whose iteration order is randomized per tick. Using the

@@ -90,6 +90,7 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.thesis.AppendMeasurements(
+					types.SourceHawkes,
 					signal.Measure(signal.thesis), true,
 				)
 			}

@@ -77,6 +77,7 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.thesis.AppendMeasurements(
+					types.SourceToxicity,
 					signal.Measure(signal.thesis), true,
 				)
 			}

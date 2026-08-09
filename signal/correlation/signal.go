@@ -80,6 +80,7 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.thesis.AppendMeasurements(
+					types.SourceCorrelation,
 					signal.Measure(signal.thesis), true,
 				)
 			}

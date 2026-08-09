@@ -95,6 +95,7 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.thesis.AppendMeasurements(
+					types.SourcePumpDump,
 					signal.Measure(signal.thesis), true,
 				)
 			}

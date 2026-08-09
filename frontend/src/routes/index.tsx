@@ -2,15 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DEFAULT_KERNELS } from "#/collections/app";
 import { AuditTrail } from "#/components/dashboard/audit";
 import { Decisions } from "#/components/dashboard/decisions";
-import { FluidLegend } from "#/components/dashboard/fluid";
 import { Positions } from "#/components/dashboard/positions";
 import { KernelInspector } from "#/components/kernel/inspector";
 import { Pulse } from "#/components/pulse";
-import {
-	TerminalFluidChart,
-	TerminalPhaseDialChart,
-	TerminalPredictionChart,
-} from "#/components/terminal/charts";
+import { TerminalPredictionChart } from "#/components/terminal/charts";
 import { KernelList } from "#/components/terminal/kernel-list";
 import { LiveResonanceTitle } from "#/components/terminal/live-resonance-title";
 import { ThesisModal } from "#/components/terminal/thesis-modal";
@@ -46,39 +41,6 @@ const RouteComponent = () => {
 					</Section>
 
 					<Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">
-						<Flex className="min-h-0 flex-1">
-							<Canvas
-								title="Fluid density field"
-								meta="navier-stokes · vol-rank x delta · whale carriers"
-								legend={<FluidLegend />}
-								className="aspect-square h-full flex-none"
-							>
-								<TerminalFluidChart />
-							</Canvas>
-							<Canvas
-								title="Phase dial"
-								meta="ω-fingerprint · signed corpus response · DMT basins"
-								topRight={
-									<div className="flex flex-col gap-0.5">
-										<span className="inline-flex items-center justify-end gap-1.5">
-											<span className="inline-block size-1.5 bg-(--acc)" />
-											alignment ray
-										</span>
-										<span className="inline-flex items-center justify-end gap-1.5">
-											<span className="inline-block size-1.5 bg-info" />
-											wave modes
-										</span>
-										<span className="inline-flex items-center justify-end gap-1.5">
-											<span className="inline-block h-px w-3 bg-(--line2)" />ρ =
-											0 ring
-										</span>
-									</div>
-								}
-								className="min-w-0 flex-1 border-(--line) border-l"
-							>
-								<TerminalPhaseDialChart />
-							</Canvas>
-						</Flex>
 						<Canvas
 							title={
 								<>
@@ -102,7 +64,7 @@ const RouteComponent = () => {
 									</span>
 								</div>
 							}
-							className="flex-1 border-(--line) border-t"
+							className="flex-1"
 						>
 							<TerminalPredictionChart />
 						</Canvas>

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import { Canvas } from "#/components/ui/canvas";
 import { Flex } from "#/components/ui/flex";
 import { Input } from "#/components/ui/input";
 import { Section } from "#/components/ui/section";
+import { TerminalPhaseDialChart } from "#/components/terminal/charts";
 import { Typography } from "#/components/ui/typography";
 import { FluidScene, type FluidSceneOptions } from "./scene";
 import { FluidWebRTCFeed } from "./transport";
@@ -15,11 +17,12 @@ const initialOptions: FluidSceneOptions = {
 	wave: true,
 	volume: true,
 	slices: false,
-	exposure: 1,
+	exposure: 1.5,
 };
 
-// Four optical-depth units preserve detail below saturation while still giving
-// weak fields enough range for visual inspection.
+// Range compression (see field-shaders.ts `compress`) already lifts faint
+// structure into visibility, so exposure only needs a modest ceiling to
+// avoid blowing out dense regions.
 const maximumVisualExposure = 4;
 
 const Toggle = ({
@@ -225,6 +228,29 @@ export const FluidInspector = () => {
 			<Typography.Pre className="absolute bottom-3 left-3 z-10 m-0 whitespace-pre rounded border border-(--line) bg-[#0e0c0ae8] p-2 text-[10px] leading-4 text-(--f3)">
 				{particleReadout(selected)}
 			</Typography.Pre>
+
+			<Canvas
+				title="Phase dial"
+				meta="ω-fingerprint · signed corpus response · DMT basins"
+				topRight={
+					<div className="flex flex-col gap-0.5">
+						<span className="inline-flex items-center justify-end gap-1.5">
+							<span className="inline-block size-1.5 bg-(--acc)" />
+							alignment ray
+						</span>
+						<span className="inline-flex items-center justify-end gap-1.5">
+							<span className="inline-block size-1.5 bg-info" />
+							wave modes
+						</span>
+						<span className="inline-flex items-center justify-end gap-1.5">
+							<span className="inline-block h-px w-3 bg-(--line2)" />ρ = 0 ring
+						</span>
+					</div>
+				}
+				className="absolute top-14 left-3 z-10 h-64 w-72 rounded border border-(--line) bg-[#0e0c0ae8]"
+			>
+				<TerminalPhaseDialChart />
+			</Canvas>
 
 			{error === null ? null : (
 				<Flex.Row

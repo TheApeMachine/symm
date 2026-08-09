@@ -35,7 +35,7 @@ const fieldUniforms = (textures: FluidFieldTextures) => ({
 	},
 	uShowGas: { value: true },
 	uShowWave: { value: true },
-	uExposure: { value: 1 },
+	uExposure: { value: 1.5 },
 });
 
 const volumeMaterial = (uniforms: FieldUniforms) =>
@@ -81,7 +81,7 @@ export class FluidFieldView {
 		wave: true,
 		volume: true,
 		slices: false,
-		exposure: 1,
+		exposure: 1.5,
 	};
 
 	update(fields: FluidFields) {

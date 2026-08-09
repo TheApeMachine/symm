@@ -74,7 +74,7 @@ func TestMeasure(t *testing.T) {
 			So(measurements[0].Arrivals, ShouldHaveLength, index+1)
 			So(ready, ShouldEqual, index == 2)
 
-			thesis.AppendMeasurements(measurements, ready)
+			thesis.AppendMeasurements(types.SourceHawkes, measurements, ready)
 			So(thesis.MarketTrades(types.SourceHawkes), ShouldBeEmpty)
 		}
 

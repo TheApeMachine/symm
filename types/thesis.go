@@ -123,7 +123,6 @@ func (thesis *Thesis) Reset() *Thesis {
 	thesis.Causal.Clear()
 	thesis.Graphs.Clear()
 	thesis.Decisions.Clear()
-
 	return thesis
 }
 
@@ -151,7 +150,7 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 		thesis.LastTickerAt = ticker.Timestamp
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(SourceEvaluator)
 	return thesis
 }
 
@@ -179,12 +178,14 @@ func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 		thesis.LastTradeAt = trade.Timestamp
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(SourceEvaluator)
 	return thesis
 }
 
 func (thesis *Thesis) AppendMeasurements(
-	measurements []*Measurement, ready bool,
+	sender SourceType,
+	measurements []*Measurement,
+	ready bool,
 ) *Thesis {
 	if len(measurements) != 0 {
 		source := measurements[0].Source
@@ -216,7 +217,7 @@ func (thesis *Thesis) AppendMeasurements(
 		}
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(sender)
 	return thesis
 }
 
@@ -294,8 +295,14 @@ func (thesis *Thesis) Subscribe(source SourceType, semaphore chan struct{}) {
 	thesis.subscribers.Store(source, semaphore)
 }
 
-func (thesis *Thesis) Fanout() {
+func (thesis *Thesis) Fanout(sender SourceType) {
 	thesis.subscribers.Range(func(key, value any) bool {
+		source := key.(SourceType)
+
+		if source == sender {
+			return true
+		}
+
 		semaphore := value.(chan struct{})
 
 		select {

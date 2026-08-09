@@ -25,7 +25,7 @@ func TestThesisMarketTickers(t *testing.T) {
 			So(second, ShouldHaveLength, 2)
 		})
 
-		thesis.AppendMeasurements([]*Measurement{{
+		thesis.AppendMeasurements(SourceCorrelation, []*Measurement{{
 			Source: SourceCorrelation,
 			Symbol: "BTC/USD",
 			At:     bitcoinAt,
@@ -45,7 +45,7 @@ func TestThesisMarketTickers(t *testing.T) {
 
 		Convey("Then a peer named by a cross-symbol artifact should also be committed", func() {
 			So(thesis.MarketTickers(SourceLeadLag), ShouldHaveLength, 3)
-			thesis.AppendMeasurements([]*Measurement{{
+			thesis.AppendMeasurements(SourceLeadLag, []*Measurement{{
 				Source: SourceLeadLag,
 				Symbol: "BTC/USD",
 				Peer:   "ALT/USD",
@@ -74,7 +74,7 @@ func TestThesisMarketTrades(t *testing.T) {
 			So(second[0].TradeID, ShouldEqual, firstTrade.TradeID)
 		})
 
-		thesis.AppendMeasurements([]*Measurement{{
+		thesis.AppendMeasurements(SourceHawkes, []*Measurement{{
 			Source: SourceHawkes,
 			Symbol: "BTC/USD",
 			At:     observedAt,
@@ -119,7 +119,6 @@ func BenchmarkThesisMarketTickers(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		if len(thesis.MarketTickers(SourceCorrelation)) == 0 {
@@ -152,7 +151,6 @@ func BenchmarkThesisMarketTrades(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		if len(thesis.MarketTrades(SourceHawkes)) == 0 {

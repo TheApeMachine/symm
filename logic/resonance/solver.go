@@ -152,7 +152,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 	}
 
-	thesis.Fanout()
+	thesis.Fanout(types.SourceResonance)
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -86,7 +87,7 @@ func TestTokenizerNewBatch(t *testing.T) {
 			"BTC/USD",
 		)
 
-		Convey("It should conserve one unit of carrier mass and preserve liquidity shares", func() {
+		Convey("It should inject one carrier mass unit per order independently of lot units", func() {
 			So(err, ShouldBeNil)
 			So(scaledErr, ShouldBeNil)
 			So(reversedErr, ShouldBeNil)
@@ -98,19 +99,19 @@ func TestTokenizerNewBatch(t *testing.T) {
 
 			for index, particle := range particles {
 				totalMass += particle.Mass
-				So(particle.Mass, ShouldAlmostEqual, scaledParticles[index].Mass, 1e-6)
-				So(particle.Mass, ShouldBeGreaterThan, pfluid.MinimumPilotWaveMass)
-				So(particle.Mass, ShouldBeLessThanOrEqualTo, float32(1))
+				So(particle.Mass, ShouldEqual, unitCarrierMass)
+				So(scaledParticles[index].Mass, ShouldEqual, unitCarrierMass)
 				// Bids carry the buy-side excitation of 7 on top of the unit.
-				So(particle.Energy, ShouldAlmostEqual, unitOscillatorEnergy*8, 1e-6)
+				So(particle.Energy, ShouldAlmostEqual, unitOscillatorEnergy+7, 1e-6)
 				So(particle.Heat, ShouldEqual, float32(0))
 				So(particle.Omega, ShouldAlmostEqual, scaledParticles[index].Omega, 1e-6)
 				So(particle.Omega, ShouldAlmostEqual, reversedParticles[len(orders)-1-index].Omega, 1e-6)
 			}
 
-			So(totalMass, ShouldAlmostEqual, float32(1), 1e-6)
-			So(particles[0].Omega, ShouldEqual, config.OmegaMin)
-			So(particles[len(particles)-1].Omega, ShouldEqual, config.OmegaMax)
+			So(totalMass, ShouldEqual, float32(len(orders))*unitCarrierMass)
+			So(particles[0].Omega, ShouldBeGreaterThanOrEqualTo, config.OmegaMin)
+			So(particles[0].Omega, ShouldBeLessThan, particles[len(particles)-1].Omega)
+			So(particles[len(particles)-1].Omega, ShouldBeLessThanOrEqualTo, config.OmegaMax)
 		})
 
 		Convey("It should remain finite through a coupled Metal advance", func() {
@@ -186,4 +187,148 @@ func TestTokenizerNewBatch(t *testing.T) {
 			}
 		})
 	})
+
+	Convey("Given a book whose order quantities span eight orders of magnitude", t, func() {
+		config := pfluid.DefaultConfig()
+		tokenizer := NewTokenizer(config, []string{"USDC/USD"})
+		bidOrders := []*mgrbook.Order{
+			{
+				ID:         "large-bid",
+				LimitPrice: decimal.NewFromFloat64(0.9999),
+				Quantity:   decimal.NewFromFloat64(10_000_000),
+				Timestamp:  time.Unix(1, 0).UTC(),
+			},
+			{
+				ID:         "small-bid",
+				LimitPrice: decimal.NewFromFloat64(0.9998),
+				Quantity:   decimal.NewFromFloat64(1),
+				Timestamp:  time.Unix(2, 0).UTC(),
+			},
+		}
+		askOrders := []*mgrbook.Order{
+			{
+				ID:         "large-ask",
+				LimitPrice: decimal.NewFromFloat64(1.0001),
+				Quantity:   decimal.NewFromFloat64(10_000_000),
+				Timestamp:  time.Unix(1, 0).UTC(),
+			},
+			{
+				ID:         "small-ask",
+				LimitPrice: decimal.NewFromFloat64(1.0002),
+				Quantity:   decimal.NewFromFloat64(1),
+				Timestamp:  time.Unix(2, 0).UTC(),
+			},
+		}
+
+		particles, contentIDs, err := tokenizer.NewBatch(
+			bidOrders, askOrders, 1, 2, 3, "USDC/USD",
+		)
+
+		Convey("It should preserve every order as a unit-mass carrier", func() {
+			So(err, ShouldBeNil)
+			So(particles, ShouldHaveLength, 4)
+			So(contentIDs, ShouldResemble, []uint32{0, 0, 1, 1})
+
+			var totalMass float32
+
+			for index, particle := range particles {
+				totalMass += particle.Mass
+				So(particle.Mass, ShouldEqual, unitCarrierMass)
+				So(particle.Heat, ShouldEqual, float32(0))
+
+				if index < len(bidOrders) {
+					So(particle.Energy, ShouldAlmostEqual, unitOscillatorEnergy+2, 1e-6)
+				}
+
+				if index >= len(bidOrders) {
+					So(particle.Energy, ShouldAlmostEqual, unitOscillatorEnergy+3, 1e-6)
+				}
+			}
+
+			So(totalMass, ShouldEqual, float32(4))
+		})
+
+		Convey("It should advance every carrier through the fluid domain", func() {
+			var domain *pfluid.Domain
+			domainErr := compute.WithMetalInit(func() error {
+				created, err := pfluid.NewDomain(config)
+
+				if err != nil {
+					return err
+				}
+
+				domain = created
+				return nil
+			})
+			So(domainErr, ShouldBeNil)
+			Reset(func() { So(domain.Close(), ShouldBeNil) })
+
+			_, appendErr := domain.Append(particles, contentIDs)
+			So(appendErr, ShouldBeNil)
+
+			_, advanceErr := domain.Advance()
+			So(advanceErr, ShouldBeNil)
+		})
+	})
+}
+
+func BenchmarkTokenizerNewBatch(testingTB *testing.B) {
+	const (
+		orderCount    = 413
+		bookSideCount = 2
+	)
+
+	config := pfluid.DefaultConfig()
+	tokenizer := NewTokenizer(config, []string{"USDC/USD"})
+	midPrice := 1.0
+	dominantQuantity := float64(orderCount * orderCount * orderCount)
+	bidOrders := make([]*mgrbook.Order, 0, orderCount/bookSideCount+1)
+	askOrders := make([]*mgrbook.Order, 0, orderCount/bookSideCount+1)
+
+	for index := range orderCount {
+		distance := float64(index+1) / float64(orderCount+1) / float64(orderCount)
+		quantity := 1.0
+
+		if index < bookSideCount {
+			quantity = dominantQuantity
+		}
+
+		order := &mgrbook.Order{
+			ID:        fmt.Sprintf("order-%d", index),
+			Quantity:  decimal.NewFromFloat64(quantity),
+			Timestamp: time.Unix(int64(index+1), 0).UTC(),
+		}
+
+		if index%bookSideCount == 0 {
+			order.LimitPrice = decimal.NewFromFloat64(midPrice - distance)
+			bidOrders = append(bidOrders, order)
+
+			continue
+		}
+
+		order.LimitPrice = decimal.NewFromFloat64(midPrice + distance)
+		askOrders = append(askOrders, order)
+	}
+
+	testingTB.ReportAllocs()
+
+	for testingTB.Loop() {
+		particles, _, err := tokenizer.NewBatch(
+			bidOrders, askOrders, midPrice, 2, 3, "USDC/USD",
+		)
+
+		if err != nil {
+			testingTB.Fatal(err)
+		}
+
+		if len(particles) != orderCount {
+			testingTB.Fatalf("expected %d particles, got %d", orderCount, len(particles))
+		}
+
+		for index, particle := range particles {
+			if particle.Mass != unitCarrierMass {
+				testingTB.Fatalf("particle %d has mass %g", index, particle.Mass)
+			}
+		}
+	}
 }
