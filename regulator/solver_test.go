@@ -22,18 +22,43 @@ func TestNewSolver(t *testing.T) {
 }
 
 func TestStart(t *testing.T) {
-	Convey("Given an analyzer already subscribed under its actor identity", t, func() {
+	Convey("Given a completed system epoch", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
-		analyzer := make(chan struct{}, 1)
-		thesis.Subscribe(types.SourceCategories, analyzer)
 		solver := NewSolver(t.Context(), nil, nil)
 		defer solver.Close()
 		solver.Start(thesis)
+		thesis.Tick = 42
 
-		thesis.Fanout(types.SourceTrader)
+		for _, source := range []types.SourceType{
+			types.SourceCorrelation,
+			types.SourceCVD,
+			types.SourceDepthFlow,
+			types.SourceExhaustion,
+			types.SourceHawkes,
+			types.SourceLeadLag,
+			types.SourceLiquidity,
+			types.SourcePumpDump,
+			types.SourceSentiment,
+			types.SourceToxicity,
+			types.SourceCategories,
+			types.SourceCognition,
+			types.SourceManifold,
+			types.SourceResonance,
+			types.SourceCausal,
+			types.SourceGraph,
+			types.SourcePlanner,
+		} {
+			thesis.Stamp(source)
+		}
 
-		Convey("Then the regulator should not replace the analyzer subscription", func() {
-			So(len(analyzer), ShouldEqual, 1)
+		thesis.Fanout(types.SourcePlanner)
+		thesis.Reset()
+		observation, observed := solver.latestObservation()
+
+		Convey("Then the regulator should retain the pre-reset epoch identity", func() {
+			So(observed, ShouldBeTrue)
+			So(observation.Tick, ShouldEqual, 42)
+			So(observation.At.IsZero(), ShouldBeFalse)
 		})
 	})
 }

@@ -1,11 +1,11 @@
 package category
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -17,9 +17,7 @@ tick. A category is a hypothesis about what the market is doing, and each
 metric that carries affinity is typed evidence for or against it.
 */
 type Solver struct {
-	extractor  *vector.FeatureExtractor
 	classifier *probability.Classifier
-	inputs     []string
 	categories []types.CategoryType
 	api        *websocket.API
 	recorder   *audit.Recorder
@@ -34,16 +32,10 @@ func NewSolver(
 	ui chan []byte,
 	recorder *audit.Recorder,
 ) *Solver {
-	inputs := make([]string, len(types.CategorySchemas))
 	categories := make([]types.CategoryType, 0, len(types.CategorySchemas))
 	categoryNames := make([]string, 0, len(types.CategorySchemas))
 
-	for index, schema := range types.CategorySchemas {
-		inputs[index] = string(schema.Source) + ":" + types.MetricKey(
-			schema.Metric,
-			schema.Side,
-		)
-
+	for _, schema := range types.CategorySchemas {
 		if slices.Contains(categories, schema.Category) {
 			continue
 		}
@@ -53,18 +45,9 @@ func NewSolver(
 	}
 
 	return &Solver{
-		extractor: vector.NewFeatureExtractor(
-			vector.FeatureExtractorConfig{
-				FeatureScopeConfig: vector.FeatureScopeConfig{
-					Root:   ".",
-					Inputs: inputs,
-				},
-			},
-		),
 		classifier: probability.NewClassifier(
 			probability.ClassifierSchema{Categories: categoryNames},
 		),
-		inputs:     inputs,
 		categories: categories,
 		api:        api,
 		recorder:   recorder,
@@ -83,49 +66,128 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	var err error
+	var classificationErr error
 
 	thesis.Symbols.Range(func(key, value any) bool {
-		symbol := value.(*types.Symbol)
+		symbolName, nameOK := key.(string)
+		symbol, symbolOK := value.(*types.Symbol)
 
-		for _, measurement := range symbol.Measurements {
-			for _, schema := range types.CategorySchemas {
-				if schema.Source != measurement.Source {
-					continue
-				}
+		if !nameOK || symbolName == "" || !symbolOK || symbol == nil {
+			classificationErr = fmt.Errorf("category: invalid symbol evidence")
 
-				category, err := solver.classifier.Classify(probability.ClassifierInput{
-					Scores: []probability.CategoryScore{{
-						Category: string(schema.Category),
-						Score:    measurement.Uncertainty.Confidence,
-					}},
-				})
-
-				if err != nil {
-					err = err
-					return false
-				}
-
-				thesis.Categories.Store(symbol, []probability.ScoreResult{category})
-
-				return true
-			}
+			return false
 		}
+
+		category, err := solver.classify(symbolName, symbol.Measurements)
+
+		if err != nil {
+			classificationErr = err
+
+			return false
+		}
+
+		thesis.Categories.Store(symbolName, []types.Category{category})
 
 		return true
 	})
 
-	if err != nil {
+	if classificationErr != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"category: failed to classify categories - "+err.Error(),
-			err,
+			"category: failed to classify categories - "+classificationErr.Error(),
+			classificationErr,
 		))
 	}
 
 	thesis.Stamp(types.SourceCategories)
 
 	return nil
+}
+
+func (solver *Solver) classify(
+	symbol string,
+	measurements []*types.Measurement,
+) (types.Category, error) {
+	evidence := make(map[types.CategoryType][]float64, len(solver.categories))
+	supporting := make(map[types.CategoryType][]string, len(solver.categories))
+	maturity := make(map[types.CategoryType]float64, len(solver.categories))
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		for _, schema := range types.CategorySchemas {
+			if schema.Source != measurement.Source {
+				continue
+			}
+
+			metricKey := types.MetricKey(schema.Metric, schema.Side)
+			sample, exists := measurement.Metrics[metricKey]
+
+			if !exists || sample.Normalized == nil || *sample.Normalized <= 0 {
+				continue
+			}
+
+			evidence[schema.Category] = append(
+				evidence[schema.Category], *sample.Normalized,
+			)
+			supporting[schema.Category] = append(
+				supporting[schema.Category], string(schema.Source)+":"+metricKey,
+			)
+			maturity[schema.Category] = max(
+				maturity[schema.Category], measurement.Maturity,
+			)
+		}
+	}
+
+	scores := make([]probability.CategoryScore, 0, len(solver.categories))
+	strengths := make(map[types.CategoryType]float64, len(solver.categories))
+	maxStrength := 0.0
+
+	for _, category := range solver.categories {
+		strength := 0.0
+
+		if len(evidence[category]) > 0 {
+			var err error
+			strength, err = probability.EvidenceGeomean(evidence[category]...)
+
+			if err != nil {
+				return types.Category{}, err
+			}
+		}
+
+		strengths[category] = strength
+		maxStrength = max(maxStrength, strength)
+		scores = append(scores, probability.CategoryScore{
+			Category: string(category),
+			Score:    strength,
+		})
+	}
+
+	result, err := solver.classifier.Classify(probability.ClassifierInput{
+		Scores:   scores,
+		Strength: maxStrength,
+	})
+
+	if err != nil {
+		return types.Category{}, err
+	}
+
+	categoryType := types.CategoryTypeNone
+
+	if maxStrength > 0 {
+		categoryType = solver.categories[int(result.Category)-1]
+	}
+
+	return types.Category{
+		Symbol:     symbol,
+		Type:       categoryType,
+		Confidence: result.Confidence,
+		Strength:   strengths[categoryType],
+		Maturity:   maturity[categoryType],
+		Supporting: supporting[categoryType],
+	}, nil
 }
 
 /*

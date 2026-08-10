@@ -146,3 +146,43 @@ func categoryAt(thesis *types.Thesis, symbol string) types.Category {
 
 	return value.([]types.Category)[0]
 }
+
+func BenchmarkUpdate(b *testing.B) {
+	solver := NewSolver(nil, nil, nil)
+	strength := 0.9
+
+	for b.Loop() {
+		thesis := types.NewThesis(b.Context(), nil)
+
+		for _, source := range []types.SourceType{
+			types.SourceCorrelation,
+			types.SourceCVD,
+			types.SourceDepthFlow,
+			types.SourceExhaustion,
+			types.SourceHawkes,
+			types.SourceLeadLag,
+			types.SourceLiquidity,
+			types.SourcePumpDump,
+			types.SourceSentiment,
+			types.SourceToxicity,
+		} {
+			thesis.Stamp(source)
+		}
+
+		thesis.Symbols.Store("BTC/USD", &types.Symbol{
+			Measurements: []*types.Measurement{{
+				Source: types.SourcePumpDump,
+				Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricIgnition, types.SideNone): {
+						Normalized: &strength,
+					},
+				},
+			}},
+		})
+
+		if err := solver.Update(thesis); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

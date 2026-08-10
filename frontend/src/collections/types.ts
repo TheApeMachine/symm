@@ -391,6 +391,7 @@ export type MeasurementCategory = Omit<ThesisCategory, "maturity"> & {
 };
 
 export type Measurement = {
+	id?: string;
 	source: string;
 	symbol: string;
 	subject?: string;

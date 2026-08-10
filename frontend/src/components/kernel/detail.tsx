@@ -4,7 +4,6 @@ import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
 	metricLabel,
-	readinessGate,
 	sourceHeadlineMetric,
 	sourceMetrics,
 } from "#/components/terminal/kernel-meta";
@@ -22,8 +21,8 @@ panel pins the row it wants with data-scope and reads that kernel's metrics out
 of the map by name, so every reading and the unit under it describe the same
 thing.
 
-The badge is the readiness gate for the same kernel, because a measurement row
-carries no verdict on itself.
+The badge is raised by the presence of this source and focused symbol's own
+measurement row, independently of the engine-wide readiness gates.
 */
 const Reading = ({
 	label,
@@ -140,13 +139,12 @@ export const SignalDetail = () => {
 								{copy.sub}
 							</Typography.Mono>
 						</Flex.Column>
-						<Component registerKey="readiness">
-							{({ ref: gateRef }) => (
-								<span ref={gateRef} className="contents">
-									<Gate bind={readinessGate(source)} size="s" />
-								</span>
-							)}
-						</Component>
+						<span
+							data-scope="source,symbol"
+							data-filter={`${source},${focusSymbol}`}
+						>
+							<Gate bind="symbol" presence size="s" />
+						</span>
 					</Flex.Row>
 
 					<Typography.Paragraph className="mt-3.5 max-w-prose text-[12px] text-(--f3) leading-relaxed">

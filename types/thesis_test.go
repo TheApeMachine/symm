@@ -246,6 +246,50 @@ func TestThesisFanout(t *testing.T) {
 	})
 }
 
+func TestThesisObserveCompletions(t *testing.T) {
+	Convey("Given a completed Thesis epoch", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		observations := make([]EpochObservation, 0, 1)
+		thesis.Tick = 42
+		thesis.ObserveCompletions(func(observation EpochObservation) {
+			observations = append(observations, observation)
+		})
+
+		for _, source := range []SourceType{
+			SourceCorrelation,
+			SourceCVD,
+			SourceDepthFlow,
+			SourceExhaustion,
+			SourceHawkes,
+			SourceLeadLag,
+			SourceLiquidity,
+			SourcePumpDump,
+			SourceSentiment,
+			SourceToxicity,
+			SourceCategories,
+			SourceCognition,
+			SourceManifold,
+			SourceResonance,
+			SourceCausal,
+			SourceGraph,
+			SourcePlanner,
+		} {
+			thesis.Stamp(source)
+		}
+
+		thesis.Fanout(SourcePlanner)
+		thesis.Fanout(SourcePlanner)
+		thesis.Reset()
+
+		Convey("Then one detached pre-reset identity should be observed", func() {
+			So(observations, ShouldHaveLength, 1)
+			So(observations[0].Tick, ShouldEqual, 42)
+			So(observations[0].At.IsZero(), ShouldBeFalse)
+			So(observations[0].At.Equal(thesis.At), ShouldBeFalse)
+		})
+	})
+}
+
 func TestThesisReset(t *testing.T) {
 	Convey("Given a completed Thesis with ready measurement evidence", t, func() {
 		thesis := NewThesis(t.Context(), nil)
@@ -348,4 +392,37 @@ func BenchmarkThesisAppendMeasurements(b *testing.B) {
 			}
 		}
 	})
+}
+
+func BenchmarkThesisFanout(b *testing.B) {
+	thesis := NewThesis(b.Context(), nil)
+	thesis.ObserveCompletions(func(EpochObservation) {})
+	sources := []SourceType{
+		SourceCorrelation,
+		SourceCVD,
+		SourceDepthFlow,
+		SourceExhaustion,
+		SourceHawkes,
+		SourceLeadLag,
+		SourceLiquidity,
+		SourcePumpDump,
+		SourceSentiment,
+		SourceToxicity,
+		SourceCategories,
+		SourceCognition,
+		SourceManifold,
+		SourceResonance,
+		SourceCausal,
+		SourceGraph,
+		SourcePlanner,
+	}
+
+	for b.Loop() {
+		for _, source := range sources {
+			thesis.Stamp(source)
+		}
+
+		thesis.Fanout(SourcePlanner)
+		thesis.Reset()
+	}
 }

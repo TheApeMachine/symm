@@ -53,7 +53,7 @@ describe("ws-worker", () => {
 		MockWebSocket.latest = null;
 	});
 
-	it("holds and merges draw deltas until the main thread acknowledges its paint", async () => {
+	it("forwards every websocket frame directly to the paint thread", async () => {
 		const scope = new MockWorkerScope();
 
 		vi.stubGlobal("self", scope);
@@ -98,22 +98,20 @@ describe("ws-worker", () => {
 					cognition: { "BTC/USD": { regime: "coil" } },
 				},
 			},
-		]);
-
-		await scope.emit("message", { type: "DRAWN" });
-
-		expect(scope.messages.at(-1)).toEqual({
-			type: "DRAW",
-			frame: {
-				resonance: [
-					{ symbol: "ETH/USD", confidence: 0.25 },
-					{ symbol: "BTC/USD", confidence: 0.75 },
-				],
-				cognition: {
-					"ETH/USD": { regime: "lift" },
-					"BTC/USD": { regime: "break" },
+			{
+				type: "DRAW",
+				frame: {
+					resonance: [{ symbol: "ETH/USD", confidence: 0.25 }],
+					cognition: { "ETH/USD": { regime: "lift" } },
 				},
 			},
-		});
+			{
+				type: "DRAW",
+				frame: {
+					resonance: [{ symbol: "BTC/USD", confidence: 0.75 }],
+					cognition: { "BTC/USD": { regime: "break" } },
+				},
+			},
+		]);
 	});
 });

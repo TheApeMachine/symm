@@ -198,6 +198,10 @@ normalizedTouchRatio expresses executed, remaining, retreating, and cancelled
 base quantity against the resting touch quantity that could actually change.
 */
 func normalizedTouchRatio(raw, previousQuantity float64) *float64 {
+	if previousQuantity <= 0 {
+		return nil
+	}
+
 	value := raw / previousQuantity
 
 	return &value
@@ -208,7 +212,12 @@ normalizedTouchPrice is the side-specific log return between the two observed
 touches. An unchanged, valid price therefore produces a genuine zero.
 */
 func normalizedTouchPrice(currentPrice, previousPrice float64) *float64 {
+	if currentPrice <= 0 || previousPrice <= 0 {
+		return nil
+	}
+
 	value := math.Log(currentPrice / previousPrice)
+
 	return &value
 }
 

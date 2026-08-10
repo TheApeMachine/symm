@@ -1,21 +1,17 @@
 /// <reference lib="webworker" />
 
-import { WorkerFrameBuffer } from "#/providers/ws-frame-buffer";
-
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 5000;
 
 type WorkerInbound =
 	| { type: "CONNECT"; url: string }
 	| { type: "DISCONNECT" }
-	| { type: "FOCUS"; symbol: string }
-	| { type: "DRAWN" };
+	| { type: "FOCUS"; symbol: string };
 
 type WorkerOutbound =
 	| { type: "READY" }
 	| { type: "ONLINE"; online: boolean }
 	| { type: "DRAW"; frame: Record<string, unknown> }
-	| { type: "DRAW_BIN"; buffer: ArrayBuffer }
 	| { type: "ERROR_FRAME"; frame: Record<string, unknown> }
 	| { type: "ERROR"; message: string };
 
@@ -25,52 +21,6 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let activeUrl = "";
 let focusSymbol = "";
-let drawOutstanding = false;
-let pendingBinary: ArrayBuffer | null = null;
-const frameBuffer = new WorkerFrameBuffer();
-
-const postPendingDraw = () => {
-	if (drawOutstanding) {
-		return;
-	}
-
-	if (pendingBinary !== null) {
-		const buffer = pendingBinary;
-
-		pendingBinary = null;
-		drawOutstanding = true;
-		self.postMessage({ type: "DRAW_BIN", buffer } satisfies WorkerOutbound, [
-			buffer,
-		]);
-		return;
-	}
-
-	const frame = frameBuffer.take();
-
-	if (frame === null) {
-		return;
-	}
-
-	drawOutstanding = true;
-	self.postMessage({ type: "DRAW", frame } satisfies WorkerOutbound);
-};
-
-const readTextFrame = async (data: unknown): Promise<string | null> => {
-	if (data instanceof ArrayBuffer) {
-		return null;
-	}
-
-	if (data instanceof Blob) {
-		const text = data.size > 0 ? await data.text() : "";
-		const trimmed = text.trim();
-
-		return trimmed === "" ? null : trimmed;
-	}
-
-	const trimmed = String(data).trim();
-
-	return trimmed === "" ? null : trimmed;
-};
 
 /*
 sendFocus pushes the dashboard focus to the backend so signal-metric publishes
@@ -117,7 +67,6 @@ const connect = (url: string) => {
 
 	socketListeners = new AbortController();
 	socket = new WebSocket(url);
-	socket.binaryType = "arraybuffer";
 
 	socket.addEventListener(
 		"open",
@@ -182,19 +131,7 @@ const connect = (url: string) => {
 		"message",
 		async (event) => {
 			try {
-				if (event.data instanceof ArrayBuffer) {
-					pendingBinary = event.data;
-					postPendingDraw();
-					return;
-				}
-
-				const payload = await readTextFrame(event.data);
-
-				if (payload === null) {
-					return;
-				}
-
-				const frame = JSON.parse(payload) as Record<string, unknown>;
+				const frame = JSON.parse(event.data) as Record<string, unknown>;
 
 				if (
 					frame === null ||
@@ -213,11 +150,11 @@ const connect = (url: string) => {
 						type: "ERROR_FRAME",
 						frame: frame.error as Record<string, unknown>,
 					} satisfies WorkerOutbound);
+
 					return;
 				}
 
-				frameBuffer.merge(frame);
-				postPendingDraw();
+				self.postMessage({ type: "DRAW", frame } satisfies WorkerOutbound);
 			} catch (err) {
 				console.log(event);
 
@@ -245,9 +182,6 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 		case "DISCONNECT": {
 			activeUrl = "";
-			drawOutstanding = false;
-			pendingBinary = null;
-			frameBuffer.clear();
 
 			if (reconnectTimer !== null) {
 				clearTimeout(reconnectTimer);
@@ -267,12 +201,6 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 			return;
 		}
 
-		case "DRAWN": {
-			drawOutstanding = false;
-			postPendingDraw();
-			return;
-		}
-
 		default: {
 			const _exhaustive: never = message;
 			return _exhaustive;
@@ -281,3 +209,5 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 });
 
 self.postMessage({ type: "READY" } satisfies WorkerOutbound);
+
+export {};

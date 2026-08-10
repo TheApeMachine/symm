@@ -577,6 +577,14 @@ const scaleSetValue = (
 		return value === true ? "var(--up)" : "var(--line2)";
 	}
 
+	if (dataset.setScale === "presence") {
+		return true;
+	}
+
+	if (dataset.setScale === "presence-color") {
+		return "var(--up)";
+	}
+
 	if (dataset.setScale === "above-threshold") {
 		const numericValue = Number(value);
 

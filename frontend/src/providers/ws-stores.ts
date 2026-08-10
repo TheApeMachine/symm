@@ -1,11 +1,7 @@
 import { appStore } from "#/collections/app";
-import {
-	paintTerminalFluidChart,
-	repaintTerminalFluidChart,
-} from "#/components/charts/fluid";
+import { paintTerminalFluidChart } from "#/components/charts/fluid";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
 import type { JSONSerializable, Paint } from "#/components/ui/paint";
-import { retainManifoldBinary } from "#/providers/manifold-binary";
 
 const registeredPainters = new Map<string, Set<Paint>>();
 
@@ -16,10 +12,12 @@ unmounts and remounts a Component loses that instance's own paint history —
 routing tears the DOM and the fiber down — so a freshly mounted Component
 needs somewhere durable to ask "what was the last frame for this key" and
 repaint immediately instead of sitting blank until the next websocket tick.
-Bounded to one entry per key: this is a replay cache for "the current state
-of the world," not a history, so it cannot grow with time or traffic.
+Ordinary keys retain one value. Sparse measurement batches retain one current
+row per source and symbol, so remounting a surface cannot erase every kernel
+except whichever source happened to publish last.
 */
 const lastFrameByKey = new Map<string, JSONSerializable>();
+const retainedMeasurements = new Map<string, JSONSerializable>();
 
 /*
 getLastFrame lets a freshly mounted Component replay the retained value for
@@ -98,6 +96,19 @@ const symbolIdentity = (value: JSONSerializable): string | null =>
 	value.symbol !== ""
 		? value.symbol
 		: null;
+
+const measurementIdentity = (value: JSONSerializable): string | null => {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		return null;
+	}
+
+	return typeof value.source === "string" &&
+		value.source !== "" &&
+		typeof value.symbol === "string" &&
+		value.symbol !== ""
+		? `${value.source}\u0000${value.symbol}`
+		: null;
+};
 
 /*
 cognitionEntries reads the symbol-keyed cognition map off the wire. The
@@ -182,7 +193,20 @@ export const paintRegistered = (
 	key: string,
 	updates: JSONSerializable,
 ): void => {
-	lastFrameByKey.set(key, updates);
+	if (key === "measurements") {
+		for (const row of frameRows(updates)) {
+			const identity = measurementIdentity(row);
+
+			if (identity !== null) {
+				retainedMeasurements.set(identity, row);
+			}
+		}
+
+		lastFrameByKey.set(key, Array.from(retainedMeasurements.values()));
+	} else {
+		lastFrameByKey.set(key, updates);
+	}
+
 	observeFrame(key, updates);
 
 	if (key === "manifold") {
@@ -212,18 +236,16 @@ neighbour.
 export const RESONANCE_FOCUS = "resonance.focus";
 
 /*
-attach coalesces worker updates to one paint pass per display frame. DRAW values
-carry at most one sparse delta per identity from the worker. Positions, cognition
-and resonance are retained on the main thread and materialized once when the
-display frame begins; other newer values supersede work not yet painted. DRAWN
-acknowledges the paint so the worker does not dispatch faster than the display.
+attach paints sparse measurement frames immediately and retains the aggregate
+domains that are explicitly materialized as current sets. Measurement absence
+is not a state transition, so one source can never replace another source's
+pending observation before direct paint sees it.
 */
 export const attach = (worker: Worker) => {
 	const pendingUpdates = new Map<string, JSONSerializable>();
 	const retainedPositions = new Map<string, JSONSerializable>();
 	const retainedCognition = new Map<string, JSONSerializable>();
 	const retainedResonance = new Map<string, JSONSerializable>();
-	let pendingBinary: ArrayBuffer | null = null;
 	let animationFrame: number | null = null;
 
 	const flush = () => {
@@ -243,10 +265,7 @@ export const attach = (worker: Worker) => {
 
 			return [key, value] as const;
 		});
-		const binary = pendingBinary;
-
 		pendingUpdates.clear();
-		pendingBinary = null;
 
 		for (const [key, value] of updates) {
 			paintRegistered(key, value);
@@ -259,12 +278,6 @@ export const attach = (worker: Worker) => {
 				}
 			}
 		}
-
-		if (binary !== null && retainManifoldBinary(binary)) {
-			repaintTerminalFluidChart(appStore.state.focusSymbol);
-		}
-
-		worker.postMessage({ type: "DRAWN" });
 	};
 
 	const schedule = () => {
@@ -276,21 +289,17 @@ export const attach = (worker: Worker) => {
 	};
 
 	worker.addEventListener("message", (event: MessageEvent) => {
-		if (
-			event.data.type === "DRAW_BIN" &&
-			event.data.buffer instanceof ArrayBuffer
-		) {
-			pendingBinary = event.data.buffer;
-			schedule();
-			return;
-		}
-
 		if (event.data.type !== "DRAW" || event.data.frame === undefined) {
 			return;
 		}
 
 		for (const [key, value] of Object.entries(event.data.frame)) {
 			const update = value as JSONSerializable;
+
+			if (key === "measurements") {
+				paintRegistered(key, update);
+				continue;
+			}
 
 			if (key === "cognition") {
 				for (const [symbol, reading] of cognitionEntries(update)) {
@@ -337,6 +346,8 @@ export const attach = (worker: Worker) => {
 			pendingUpdates.set("positions", null);
 		}
 
-		schedule();
+		if (pendingUpdates.size > 0) {
+			schedule();
+		}
 	});
 };

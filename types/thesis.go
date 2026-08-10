@@ -43,6 +43,9 @@ type Thesis struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	subscribers  *sync.Map
+	observerMu   sync.RWMutex
+	observers    []func(EpochObservation)
+	observed     bool
 	Status       Status        `json:"status"`
 	Tick         int64         `json:"tick"`
 	At           time.Time     `json:"at"`
@@ -112,6 +115,9 @@ func (thesis *Thesis) Reset() *Thesis {
 	}
 
 	thesis.Readiness.Reset()
+	thesis.observerMu.Lock()
+	thesis.observed = false
+	thesis.observerMu.Unlock()
 	thesis.Symbols.Range(func(_, value any) bool {
 		value.(*Symbol).Reset()
 		return true
@@ -372,7 +378,26 @@ func (thesis *Thesis) Subscribe(source SourceType, semaphore chan struct{}) {
 	thesis.subscribers.Store(source, semaphore)
 }
 
+/*
+ObserveCompletions registers a synchronous, non-mutating completion observer.
+Observers must return promptly; expensive regulation belongs behind their own
+queue after copying the observation.
+*/
+func (thesis *Thesis) ObserveCompletions(observer func(EpochObservation)) {
+	if observer == nil {
+		panic("thesis: completion observer required")
+	}
+
+	thesis.observerMu.Lock()
+	defer thesis.observerMu.Unlock()
+	thesis.observers = append(thesis.observers, observer)
+}
+
 func (thesis *Thesis) Fanout(sender SourceType) {
+	if sender == SourcePlanner && thesis.Complete() {
+		thesis.notifyCompletion()
+	}
+
 	thesis.subscribers.Range(func(key, value any) bool {
 		source := key.(SourceType)
 
@@ -400,6 +425,25 @@ func (thesis *Thesis) Fanout(sender SourceType) {
 
 		return true
 	})
+}
+
+func (thesis *Thesis) notifyCompletion() {
+	thesis.observerMu.Lock()
+
+	if thesis.observed {
+		thesis.observerMu.Unlock()
+
+		return
+	}
+
+	thesis.observed = true
+	observers := append([]func(EpochObservation){}, thesis.observers...)
+	thesis.observerMu.Unlock()
+	observation := EpochObservation{Tick: thesis.Tick, At: thesis.At}
+
+	for _, observer := range observers {
+		observer(observation)
+	}
 }
 
 func (thesis *Thesis) Close() error {

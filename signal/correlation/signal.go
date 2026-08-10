@@ -206,9 +206,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 }
 
 /*
-correlationMetrics validates the equation-defined normalized domains. Pair
-correlation and category scores are bounded, signed correlation retains its
-direction, and relative energy is already a symbol/peer-energy ratio.
+correlationMetrics maps the complete equation output onto measurement keys.
+The equation already returns dimensionless scores and ratios, so Normalized
+retains those values without applying a second transformation.
 */
 func correlationMetrics(
 	scores map[string]float64,
@@ -229,15 +229,18 @@ func correlationMetrics(
 		{"peakScore", types.MetricPeakScore},
 		{"strength", types.MetricStrength},
 	}
+
 	metrics := make(map[string]types.MetricSample, len(readings))
 	valid := true
 
 	for _, item := range readings {
 		raw, exists := scores[item.name]
-		normalized := normalizedCorrelationMetric(item.metric, raw)
+		var normalized *float64
 
-		if !exists || normalized == nil {
+		if !exists {
 			valid = false
+		} else {
+			normalized = &raw
 		}
 
 		metrics[types.MetricKey(item.metric, types.SideNone)] = types.MetricSample{
@@ -248,13 +251,6 @@ func correlationMetrics(
 	}
 
 	return metrics, valid
-}
-
-func normalizedCorrelationMetric(metric types.MetricType, raw float64) *float64 {
-	value := raw
-	_ = metric
-
-	return &value
 }
 
 /*

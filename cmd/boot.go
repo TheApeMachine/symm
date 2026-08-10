@@ -244,6 +244,7 @@ func Boot(
 	)).Wait()
 
 	errnie.Debug("regulator reported to be ready")
+	regulatorSolver.Start(thesis)
 	system.closers = append(system.closers, regulatorSolver.Close)
 
 	system.Hub = ui.NewHub(

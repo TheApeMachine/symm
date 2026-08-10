@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -31,13 +32,13 @@ type SubsystemStatus struct {
 RegulatorPayload is the wire JSON published for the /regulator UI page.
 */
 type RegulatorPayload struct {
-	Status      string            `json:"status"`
-	Surprise    float64           `json:"surprise"`
-	Energy      float64           `json:"energy"`
-	PnL         float64           `json:"pnl"`
-	Summary     string            `json:"summary"`
-	Subsystems  []SubsystemStatus `json:"subsystems"`
-	Sparkline   []float64         `json:"sparkline"`
+	Status     string            `json:"status"`
+	Surprise   float64           `json:"surprise"`
+	Energy     float64           `json:"energy"`
+	PnL        float64           `json:"pnl"`
+	Summary    string            `json:"summary"`
+	Subsystems []SubsystemStatus `json:"subsystems"`
+	Sparkline  []float64         `json:"sparkline"`
 }
 
 /*
@@ -57,7 +58,9 @@ type Solver struct {
 	coder         *learning.ResonanceManifold
 	desk          *broker.Desk
 	ui            chan []byte
-	semaphore     chan struct{}
+	observationMu sync.RWMutex
+	observation   types.EpochObservation
+	observed      bool
 	history       []float64
 	initialEquity float64
 }
@@ -83,14 +86,13 @@ func NewSolver(
 	coder := learning.NewResonanceManifold(arch, 1, learningRate)
 
 	solver := &Solver{
-		ctx:       ctx,
-		cancel:    cancel,
-		config:    config,
-		coder:     coder,
-		desk:      desk,
-		ui:        ui,
-		semaphore: make(chan struct{}, 1),
-		history:   make([]float64, 0, 30),
+		ctx:     ctx,
+		cancel:  cancel,
+		config:  config,
+		coder:   coder,
+		desk:    desk,
+		ui:      ui,
+		history: make([]float64, 0, 30),
 	}
 
 	return solver
@@ -104,25 +106,28 @@ func (solver *Solver) Status() types.Status {
 }
 
 /*
-Start subscribes the solver to the thesis event channel for live active inference execution.
+Start observes completed system epochs without joining the analysis pipeline.
 */
 func (solver *Solver) Start(thesis *types.Thesis) {
 	if solver == nil || thesis == nil {
 		return
 	}
 
-	thesis.Subscribe(types.SourceRegulator, solver.semaphore)
+	thesis.ObserveCompletions(solver.observe)
+}
 
-	go func() {
-		for {
-			select {
-			case <-solver.ctx.Done():
-				return
-			case <-solver.semaphore:
-				_ = solver.Update(thesis)
-			}
-		}
-	}()
+func (solver *Solver) observe(observation types.EpochObservation) {
+	solver.observationMu.Lock()
+	defer solver.observationMu.Unlock()
+	solver.observation = observation
+	solver.observed = true
+}
+
+func (solver *Solver) latestObservation() (types.EpochObservation, bool) {
+	solver.observationMu.RLock()
+	defer solver.observationMu.RUnlock()
+
+	return solver.observation, solver.observed
 }
 
 /*
@@ -461,13 +466,13 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, pnlRatio fl
 	}
 
 	return RegulatorPayload{
-		Status:      status,
-		Surprise:    surprise,
-		Energy:      energy,
-		PnL:         pnlRatio * 100.0,
-		Summary:     summary,
-		Subsystems:  subsystems,
-		Sparkline:   solver.history,
+		Status:     status,
+		Surprise:   surprise,
+		Energy:     energy,
+		PnL:        pnlRatio * 100.0,
+		Summary:    summary,
+		Subsystems: subsystems,
+		Sparkline:  solver.history,
 	}
 }
 

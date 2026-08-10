@@ -1,17 +1,20 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
+import type { Measurement } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
+import { MeasurementInspection } from "#/components/kernel/measurement-inspection";
 import {
 	kernelCopy,
-	readinessGate,
 	sourceHeadlineMetric,
 } from "#/components/terminal/kernel-meta";
 import { Component } from "#/components/ui/component";
+import type { JSONSerializable } from "#/components/ui/paint";
+import { getLastFrame, registerPainter } from "#/providers/ws-stores";
 import { Button } from "@/components/ui/button";
 import { Flex } from "@/components/ui/flex";
 import { Gate } from "@/components/ui/gate";
-import { meterTrackVariants } from "@/components/ui/meter";
 import { Modal } from "@/components/ui/modal";
 import { Panel } from "@/components/ui/panel";
 import { Sparkline } from "@/components/ui/sparkline";
@@ -22,66 +25,80 @@ KernelInspector shows one kernel's live reading over the focused symbol.
 
 The trace is the shared Sparkline, so the curve here and the one on the kernel
 row are the same shape drawn from the same appended series rather than two
-sparklines that drifted apart. Every reading below it carries its own meter,
-because a bare figure says what the kernel measured but not where that sits on
-its own scale — which is the entire question the panel is open to answer.
+sparklines that drifted apart. The decomposition reads the complete focused
+measurement rather than a curated headline subset.
 */
-const METRICS = [
-	{ label: "raw", suffix: ".raw", format: ".4f", meter: false },
-	{ label: "normalized", suffix: ".normalized", format: ".4f", meter: true },
-] as const;
+const measurementRows = (frame: JSONSerializable): Measurement[] => {
+	const rows = Array.isArray(frame)
+		? frame
+		: frame !== null && typeof frame === "object" && "source" in frame
+			? [frame]
+			: frame !== null && typeof frame === "object"
+				? Object.values(frame)
+				: [];
 
-const ROW_METRICS = [
-	{ label: "maturity", bind: "maturity", format: ".3f" },
-	{ label: "confidence", bind: "uncertainty.confidence", format: ".4f" },
-] as const;
+	return rows.filter(
+		(row): row is Measurement =>
+			row !== undefined &&
+			row !== null &&
+			typeof row === "object" &&
+			!Array.isArray(row) &&
+			typeof row.source === "string" &&
+			typeof row.symbol === "string",
+	);
+};
 
-const Reading = ({
-	label,
-	bind,
-	format,
-	meter,
-}: {
-	label: string;
-	bind: string;
-	format: string;
-	meter: boolean;
-}) => (
-	<Flex.Column className="min-w-0 flex-1 gap-1">
-		<Flex.Row align="baseline" justify="between" className="gap-2">
-			<Typography.Label size="xxs" tone="f4" weight="normal">
-				{label}
-			</Typography.Label>
-			<Typography.Mono
-				size="s"
-				tone="f1"
-				data-paint={bind}
-				data-paint-format={format}
-			/>
-		</Flex.Row>
-		{meter ? (
-			<div className={meterTrackVariants({ variant: "warning", size: "xs" })}>
-				{/*
-					The fill is the reading itself, clamped in CSS: a kernel that
-					reports past its own scale saturates rather than running out of
-					the track.
-				*/}
-				<div
-					data-set={bind}
-					data-target="style.--reading"
-					className="h-full bg-(--meter-tone)"
-					style={{ width: "clamp(0%, calc(var(--reading, 0) * 100%), 100%)" }}
-				/>
-			</div>
-		) : null}
-	</Flex.Column>
-);
+const focusedMeasurement = (
+	frame: JSONSerializable | undefined,
+	source: string,
+	symbol: string,
+): Measurement | null => {
+	if (frame === undefined) {
+		return null;
+	}
+
+	return (
+		measurementRows(frame).find(
+			(measurement) =>
+				measurement.source === source && measurement.symbol === symbol,
+		) ?? null
+	);
+};
+
+const useFocusedMeasurement = (source: string, symbol: string) => {
+	const [measurement, setMeasurement] = useState<Measurement | null>(() =>
+		focusedMeasurement(getLastFrame("measurements"), source, symbol),
+	);
+
+	useEffect(() => {
+		const paint = (frame: JSONSerializable) => {
+			const focused = focusedMeasurement(frame, source, symbol);
+
+			if (focused !== null) {
+				setMeasurement(focused);
+			}
+		};
+		const unregister = registerPainter("measurements", paint);
+		const retained = focusedMeasurement(
+			getLastFrame("measurements"),
+			source,
+			symbol,
+		);
+
+		setMeasurement(retained);
+
+		return unregister;
+	}, [source, symbol]);
+
+	return measurement;
+};
 
 export const KernelInspector = () => {
 	const navigate = useNavigate();
 	const source = useSelector(terminalStore, (state) => state.inspectorSource);
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 	const { closeInspect, selectSource } = terminalStore.actions;
+	const measurement = useFocusedMeasurement(source ?? "", focusSymbol);
 
 	if (source === null || source === "") {
 		return null;
@@ -102,7 +119,7 @@ export const KernelInspector = () => {
 	};
 
 	return (
-		<Modal open onClose={closeInspect} size="m">
+		<Modal open onClose={closeInspect} size="xl">
 			<Component registerKey="measurements">
 				{({ ref }) => (
 					<Flex.Column
@@ -122,13 +139,7 @@ export const KernelInspector = () => {
 								<Typography.Display size="s" className="truncate">
 									{copy.name}
 								</Typography.Display>
-								<Component registerKey="readiness">
-									{({ ref: gateRef }) => (
-										<span ref={gateRef} className="contents">
-											<Gate bind={readinessGate(source)} />
-										</span>
-									)}
-								</Component>
+								<Gate bind="symbol" presence />
 							</Flex.Row>
 							<Modal.Close
 								aria-label="Close kernel inspector"
@@ -136,7 +147,7 @@ export const KernelInspector = () => {
 							/>
 						</Modal.Header>
 
-						<Modal.Body className="flex flex-col gap-3.5">
+						<Modal.Body className="flex flex-col gap-4">
 							<Flex.Column gap={1}>
 								<Flex.Row align="baseline" justify="between" className="gap-2">
 									<Typography.Label size="xxs" tone="f4">
@@ -158,33 +169,11 @@ export const KernelInspector = () => {
 								</Panel>
 							</Flex.Column>
 
-							<Flex.Row gap={4} className="items-start">
-								{METRICS.map((metric) => (
-									<Reading
-										key={metric.label}
-										label={metric.label}
-										bind={`${headline}${metric.suffix}`}
-										format={metric.format}
-										meter={metric.meter}
-									/>
-								))}
-							</Flex.Row>
-
-							<Flex.Row gap={4} className="items-start">
-								{ROW_METRICS.map((metric) => (
-									<Reading
-										key={metric.label}
-										label={metric.label}
-										bind={metric.bind}
-										format={metric.format}
-										meter
-									/>
-								))}
-							</Flex.Row>
-
 							<Typography.Paragraph className="text-[11px] text-(--f3) leading-relaxed">
 								{copy.blurb}
 							</Typography.Paragraph>
+
+							<MeasurementInspection measurement={measurement} />
 						</Modal.Body>
 
 						<Modal.Footer>

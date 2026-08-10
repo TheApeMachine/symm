@@ -27,6 +27,8 @@ are fixed rather than configurable.
 export type GateProps = Omit<ComponentProps<"span">, "children"> & {
 	/* Path inside the painted frame; written to data-paint. */
 	bind: string;
+	/* Treat the presence of the bound field as the raised state. */
+	presence?: boolean;
 	/* Word shown when the flag reads true. */
 	on?: string;
 	/* Word shown when it does not. */
@@ -49,6 +51,7 @@ export type GateProps = Omit<ComponentProps<"span">, "children"> & {
 export const Gate = ({
 	ref,
 	bind,
+	presence = false,
 	on = "live",
 	off = "standby",
 	hold = 20000,
@@ -58,13 +61,16 @@ export const Gate = ({
 }: GateProps) => (
 	<span
 		ref={ref}
-		data-paint={bind}
+		data-paint={presence ? undefined : bind}
+		data-set={presence ? bind : undefined}
+		data-set-scale={presence ? "presence" : undefined}
+		data-target={presence ? "dataset.gate" : undefined}
 		/*
 			data-paint-prop diverts the value into the dataset instead of the text,
 			which is what leaves the two words below intact for CSS to choose from.
 		*/
-		data-paint-prop="dataset.gate"
-		data-paint-hold={hold === 0 ? undefined : String(hold)}
+		data-paint-prop={presence ? undefined : "dataset.gate"}
+		data-paint-hold={presence || hold === 0 ? undefined : String(hold)}
 		className={cn(
 			"group",
 			badgeVariants({ variant: "disabled", size }),
