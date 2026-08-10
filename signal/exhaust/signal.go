@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,7 +31,7 @@ or short position should exit. It emits numerical family scores, their fused
 urgency, and the winning numerical family identifier for downstream logic.
 */
 type Signal struct {
-	status     types.Status
+	status     atomic.Value
 	ctx        context.Context
 	cancel     context.CancelFunc
 	books      websocket.BookSource
@@ -72,7 +73,6 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:     types.INITIALIZING,
 		ctx:        ctx,
 		cancel:     cancel,
 		books:      books,
@@ -87,9 +87,10 @@ func NewSignal(
 		lastBook:   &sync.Map{},
 	}
 
+	signal.status.Store(types.INITIALIZING)
 	signal.thesis.Subscribe(types.SourceExhaustion, signal.semaphore)
+	signal.status.Store(types.READY)
 	signal.run()
-	signal.status = types.READY
 
 	return signal
 }
@@ -102,7 +103,7 @@ func (signal *Signal) Name() string {
 }
 
 func (signal *Signal) Status() types.Status {
-	return signal.status
+	return signal.status.Load().(types.Status)
 }
 
 func (signal *Signal) run() {
@@ -112,10 +113,13 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
+				signal.status.Store(types.BUSY)
 				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceExhaustion,
 					signal.Measure(signal.thesis), true,
 				))
+
+				signal.status.Store(types.READY)
 			}
 		}
 	}()

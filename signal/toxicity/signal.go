@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
@@ -21,7 +22,7 @@ Signal tracks whether near-touch liquidity is sincere, retreating, or bluffing
 from Level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
-	status    types.Status
+	status    atomic.Value
 	ctx       context.Context
 	cancel    context.CancelFunc
 	books     websocket.BookSource
@@ -43,7 +44,6 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:    types.INITIALIZING,
 		ctx:       ctx,
 		cancel:    cancel,
 		books:     books,
@@ -52,9 +52,10 @@ func NewSignal(
 		semaphore: make(chan struct{}, 1),
 	}
 
+	signal.status.Store(types.INITIALIZING)
 	signal.thesis.Subscribe(types.SourceToxicity, signal.semaphore)
+	signal.status.Store(types.READY)
 	signal.run()
-	signal.status = types.READY
 
 	return signal
 }
@@ -67,7 +68,7 @@ func (signal *Signal) Name() string {
 }
 
 func (signal *Signal) Status() types.Status {
-	return signal.status
+	return signal.status.Load().(types.Status)
 }
 
 func (signal *Signal) run() {
@@ -77,10 +78,13 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
+				signal.status.Store(types.BUSY)
 				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceToxicity,
 					signal.Measure(signal.thesis), true,
 				))
+
+				signal.status.Store(types.READY)
 			}
 		}
 	}()

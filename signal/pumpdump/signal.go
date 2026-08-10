@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +28,7 @@ fact from its authoritative stream without treating them as independent
 corroborating signals.
 */
 type Signal struct {
-	status     types.Status
+	status     atomic.Value
 	ctx        context.Context
 	cancel     context.CancelFunc
 	books      websocket.BookSource
@@ -59,7 +60,6 @@ func NewSignal(
 
 	capacity := viper.GetViper().GetInt("signals.pumpdump.baselineCapacity")
 	signal := &Signal{
-		status:     types.INITIALIZING,
 		ctx:        ctx,
 		cancel:     cancel,
 		books:      books,
@@ -71,9 +71,10 @@ func NewSignal(
 		lastTrade:  &sync.Map{},
 	}
 
+	signal.status.Store(types.INITIALIZING)
 	signal.thesis.Subscribe(types.SourcePumpDump, signal.semaphore)
+	signal.status.Store(types.READY)
 	signal.run()
-	signal.status = types.READY
 
 	return signal
 }
@@ -86,7 +87,7 @@ func (signal *Signal) Name() string {
 }
 
 func (signal *Signal) Status() types.Status {
-	return signal.status
+	return signal.status.Load().(types.Status)
 }
 
 func (signal *Signal) run() {
@@ -96,10 +97,13 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
+				signal.status.Store(types.BUSY)
 				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourcePumpDump,
 					signal.Measure(signal.thesis), true,
 				))
+
+				signal.status.Store(types.READY)
 			}
 		}
 	}()

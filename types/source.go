@@ -14,6 +14,7 @@ const (
 	SourceCategory    SourceType = "category"
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
+	SourceAnalyzer    SourceType = "analyzer"
 	SourceManifold    SourceType = "manifold"
 	SourceResonance   SourceType = "resonance"
 	SourceCausal      SourceType = "causal"
@@ -28,3 +29,21 @@ const (
 	SourceEquity      SourceType = "equity"
 	SourceRegulator   SourceType = "regulator"
 )
+
+var tickerReceivers = []SourceType{
+	SourceCorrelation,
+	SourceCVD,
+	SourceLeadLag,
+	SourceLiquidity,
+	SourceSentiment,
+	SourceToxicity,
+}
+
+var tradeReceivers = []SourceType{
+	SourceCVD,
+	SourceDepthFlow,
+	SourceExhaustion,
+	SourceHawkes,
+	SourcePumpDump,
+	SourceToxicity,
+}

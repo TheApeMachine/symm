@@ -78,7 +78,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, ok := value.(*types.Symbol)
 
-		if !ok || !symbol.SignalsMeasured() || symbol.Stamped(types.SourceResonance) {
+		if !ok || symbol.Stamped(types.SourceResonance) || len(symbol.Measurements) == 0 {
 			return true
 		}
 
@@ -227,7 +227,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				SkillEvidence: skillEvidence,
 			}
 
-			thesis.Resonance.Store(symbol, reading)
+			symbol.Resonance.Store(symbol, reading)
 			thesis.Stamp(symbol, types.SourceResonance)
 
 			utils.Publish(
@@ -247,7 +247,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
-	thesis.Fanout(types.SourceResonance)
 	return nil
 }
 

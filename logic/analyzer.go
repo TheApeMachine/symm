@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 type Solver interface {
@@ -87,7 +88,7 @@ func NewAnalyzer(
 		semaphore: make(chan struct{}, 1),
 	}
 
-	analyzer.thesis.Subscribe(types.SourceCategories, analyzer.semaphore)
+	analyzer.thesis.Subscribe(types.SourceAnalyzer, analyzer.semaphore)
 
 	analyzer.run()
 	return analyzer
@@ -119,18 +120,22 @@ func (analyzer *Analyzer) process(in any) {
 		return
 	}
 
-	// Each solver reads outputs stamped by its predecessors. Running this chain
-	// concurrently mixes prior-epoch readiness with current-epoch values.
-	for _, solver := range analyzer.solvers {
-		if err := solver.Update(thesis); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to update analyzer: "+err.Error(),
-				err,
-			))
+	group := &errgroup.Group{}
 
-			return
-		}
+	// Solvers inspect their own prerequisites and publish another coalesced
+	// analyzer wake-up when they make downstream work available.
+	for _, solver := range analyzer.solvers {
+		group.Go(func() error {
+			return errnie.Error(solver.Update(thesis))
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to update analyzer: "+err.Error(),
+			err,
+		))
 	}
 }
 

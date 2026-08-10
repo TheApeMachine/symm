@@ -10,6 +10,24 @@ import (
 )
 
 func TestThesisAppendMeasurements(t *testing.T) {
+	Convey("Given one ready signal measurement", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		analyzer := make(chan struct{}, 1)
+		peerSignal := make(chan struct{}, 1)
+		thesis.Subscribe(SourceAnalyzer, analyzer)
+		thesis.Subscribe(SourceCVD, peerSignal)
+
+		err := thesis.AppendMeasurements(SourceCorrelation, []*Measurement{{
+			ID: "correlation", Source: SourceCorrelation, Symbol: "BTC/USD",
+		}}, true)
+
+		Convey("Then it should wake only the coalescing analyzer", func() {
+			So(err, ShouldBeNil)
+			So(len(analyzer), ShouldEqual, 1)
+			So(len(peerSignal), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given an empty measurement pass", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		correlation := make(chan struct{}, 1)
@@ -254,6 +272,19 @@ func TestThesisAppendMeasurements(t *testing.T) {
 }
 
 func TestThesisFanout(t *testing.T) {
+	Convey("Given repeated work for one analyzer", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		analyzer := make(chan struct{}, 1)
+		thesis.Subscribe(SourceAnalyzer, analyzer)
+
+		thesis.Fanout(SourceCorrelation, SourceAnalyzer)
+		thesis.Fanout(SourceCVD, SourceAnalyzer)
+
+		Convey("Then it should retain one coalesced wake-up", func() {
+			So(len(analyzer), ShouldEqual, 1)
+		})
+	})
+
 	Convey("Given signal and downstream subscribers", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		correlation := make(chan struct{}, 1)
@@ -301,16 +332,22 @@ func TestThesisFanout(t *testing.T) {
 func TestThesisAppendTicker(t *testing.T) {
 	Convey("Given the first ticker observed for a symbol", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		signal := make(chan struct{}, 1)
-		thesis.Subscribe(SourceCorrelation, signal)
+		correlation := make(chan struct{}, 1)
+		depthflow := make(chan struct{}, 1)
+		hawkes := make(chan struct{}, 1)
+		thesis.Subscribe(SourceCorrelation, correlation)
+		thesis.Subscribe(SourceDepthFlow, depthflow)
+		thesis.Subscribe(SourceHawkes, hawkes)
 
 		thesis.AppendTicker(kraken.TickerData{
 			Symbol:    "BTC/USD",
 			Timestamp: time.Unix(1, 0),
 		})
 
-		Convey("Then it should wake signal processing immediately", func() {
-			So(len(signal), ShouldEqual, 1)
+		Convey("Then it should wake only ticker-consuming signals", func() {
+			So(len(correlation), ShouldEqual, 1)
+			So(len(depthflow), ShouldEqual, 0)
+			So(len(hawkes), ShouldEqual, 0)
 		})
 	})
 }
@@ -318,16 +355,65 @@ func TestThesisAppendTicker(t *testing.T) {
 func TestThesisAppendTrade(t *testing.T) {
 	Convey("Given the first trade observed for a symbol", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		signal := make(chan struct{}, 1)
-		thesis.Subscribe(SourceCorrelation, signal)
+		correlation := make(chan struct{}, 1)
+		hawkes := make(chan struct{}, 1)
+		thesis.Subscribe(SourceCorrelation, correlation)
+		thesis.Subscribe(SourceHawkes, hawkes)
 
 		thesis.AppendTrade(kraken.TradeData{
 			Symbol:    "BTC/USD",
 			Timestamp: time.Unix(1, 0),
 		})
 
-		Convey("Then it should wake signal processing immediately", func() {
-			So(len(signal), ShouldEqual, 1)
+		Convey("Then it should wake only trade-consuming signals", func() {
+			So(len(correlation), ShouldEqual, 0)
+			So(len(hawkes), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestThesisMarketTickers(t *testing.T) {
+	Convey("Given one ticker frame shared by ticker consumers", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		thesis.AppendTicker(kraken.TickerData{
+			Symbol: "BTC/USD", Timestamp: time.Unix(1, 0),
+		})
+
+		correlation := thesis.MarketTickers(SourceCorrelation)
+		thesis.AppendTicker(kraken.TickerData{
+			Symbol: "BTC/USD", Timestamp: time.Unix(2, 0),
+		})
+		correlationNext := thesis.MarketTickers(SourceCorrelation)
+		cvd := thesis.MarketTickers(SourceCVD)
+
+		Convey("Then each signal should advance only its own cache cursor", func() {
+			So(correlation, ShouldHaveLength, 1)
+			So(correlationNext, ShouldHaveLength, 1)
+			So(correlationNext[0].Timestamp, ShouldResemble, time.Unix(2, 0))
+			So(cvd, ShouldHaveLength, 2)
+		})
+	})
+}
+
+func TestThesisMarketTrades(t *testing.T) {
+	Convey("Given one trade frame shared by trade consumers", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol: "BTC/USD", TradeID: 1, Timestamp: time.Unix(1, 0),
+		})
+
+		cvd := thesis.MarketTrades(SourceCVD)
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol: "BTC/USD", TradeID: 2, Timestamp: time.Unix(2, 0),
+		})
+		cvdNext := thesis.MarketTrades(SourceCVD)
+		hawkes := thesis.MarketTrades(SourceHawkes)
+
+		Convey("Then each signal should advance only its own cache cursor", func() {
+			So(cvd, ShouldHaveLength, 1)
+			So(cvdNext, ShouldHaveLength, 1)
+			So(cvdNext[0].TradeID, ShouldEqual, 2)
+			So(hawkes, ShouldHaveLength, 2)
 		})
 	})
 }
@@ -372,7 +458,7 @@ func TestThesisReset(t *testing.T) {
 	Convey("Given a completed Thesis with ready measurement evidence", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		notified := make(chan struct{}, 1)
-		thesis.Subscribe(SourceCategories, notified)
+		thesis.Subscribe(SourceAnalyzer, notified)
 		measurements := []*Measurement{{
 			Source: SourceToxicity,
 			Symbol: "BTC/USD",
@@ -526,5 +612,33 @@ func BenchmarkThesisFanout(b *testing.B) {
 
 		thesis.Fanout(SourcePlanner)
 		thesis.Reset()
+	}
+}
+
+func BenchmarkThesisAppendTicker(b *testing.B) {
+	ticker := kraken.TickerData{
+		Symbol: "BTC/USD", Timestamp: time.Unix(1, 0),
+	}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		b.StopTimer()
+		thesis := NewThesis(b.Context(), nil)
+		b.StartTimer()
+		thesis.AppendTicker(ticker)
+	}
+}
+
+func BenchmarkThesisAppendTrade(b *testing.B) {
+	trade := kraken.TradeData{
+		Symbol: "BTC/USD", TradeID: 1, Timestamp: time.Unix(1, 0),
+	}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		b.StopTimer()
+		thesis := NewThesis(b.Context(), nil)
+		b.StartTimer()
+		thesis.AppendTrade(trade)
 	}
 }

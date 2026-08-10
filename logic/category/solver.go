@@ -81,11 +81,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
-		if symbol.Stamped(types.SourceCategory) || !symbol.SignalsMeasured() {
+		if symbol.Stamped(types.SourceCategory) || len(symbol.Measurements) == 0 {
 			return true
 		}
 
-		category, err := solver.classify(symbolName, symbol.Measurements)
+		category, err := solver.classify(
+			symbolName,
+			symbol.Measurements,
+		)
 
 		if err != nil {
 			classificationErr = errnie.Error(errnie.Err(

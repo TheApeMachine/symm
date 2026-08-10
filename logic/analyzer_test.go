@@ -2,6 +2,8 @@ package logic
 
 import (
 	"errors"
+	"slices"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -15,12 +17,15 @@ orderedSolver records when Analyzer invokes a solver.
 type orderedSolver struct {
 	index  int
 	order  *[]int
+	mu     *sync.Mutex
 	source types.SourceType
 	err    error
 }
 
 func (solver *orderedSolver) Update(thesis *types.Thesis) error {
+	solver.mu.Lock()
 	*solver.order = append(*solver.order, solver.index)
+	solver.mu.Unlock()
 
 	if solver.err != nil {
 		return solver.err
@@ -60,9 +65,10 @@ func TestNewAnalyzer(t *testing.T) {
 func TestAnalyzerProcess(t *testing.T) {
 	Convey("Given an incomplete signal epoch", t, func() {
 		order := make([]int, 0, 1)
+		mu := &sync.Mutex{}
 		analyzer := &Analyzer{
 			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, source: types.SourceCategory},
+				&orderedSolver{index: 0, order: &order, mu: mu, source: types.SourceCategory},
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
@@ -75,14 +81,15 @@ func TestAnalyzerProcess(t *testing.T) {
 
 	Convey("Given several signal notifications for one readiness epoch", t, func() {
 		order := make([]int, 0, 6)
+		mu := &sync.Mutex{}
 		analyzer := &Analyzer{
 			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, source: types.SourceCategory},
-				&orderedSolver{index: 1, order: &order, source: types.SourceManifold},
-				&orderedSolver{index: 2, order: &order, source: types.SourceResonance},
-				&orderedSolver{index: 3, order: &order, source: types.SourceCausal},
-				&orderedSolver{index: 4, order: &order, source: types.SourceCognition},
-				&orderedSolver{index: 5, order: &order, source: types.SourceGraph},
+				&orderedSolver{index: 0, order: &order, mu: mu, source: types.SourceCategory},
+				&orderedSolver{index: 1, order: &order, mu: mu, source: types.SourceManifold},
+				&orderedSolver{index: 2, order: &order, mu: mu, source: types.SourceResonance},
+				&orderedSolver{index: 3, order: &order, mu: mu, source: types.SourceCausal},
+				&orderedSolver{index: 4, order: &order, mu: mu, source: types.SourceCognition},
+				&orderedSolver{index: 5, order: &order, mu: mu, source: types.SourceGraph},
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
@@ -90,29 +97,32 @@ func TestAnalyzerProcess(t *testing.T) {
 
 		analyzer.process(thesis)
 		analyzer.process(thesis)
+		slices.Sort(order)
 
 		Convey("It should run the chain for each notification without a global cut", func() {
-			So(order, ShouldResemble, []int{0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5})
+			So(order, ShouldResemble, []int{0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5})
 		})
 	})
 
 	Convey("Given a solver that cannot complete the current logic cut", t, func() {
 		order := make([]int, 0, 3)
+		mu := &sync.Mutex{}
 		analyzer := &Analyzer{
 			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, source: types.SourceCategory},
-				&orderedSolver{index: 1, order: &order, err: errors.New("failed cut")},
-				&orderedSolver{index: 2, order: &order, source: types.SourceGraph},
+				&orderedSolver{index: 0, order: &order, mu: mu, source: types.SourceCategory},
+				&orderedSolver{index: 1, order: &order, mu: mu, err: errors.New("failed cut")},
+				&orderedSolver{index: 2, order: &order, mu: mu, source: types.SourceGraph},
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
 		stampSignalReadiness(thesis)
 
 		analyzer.process(thesis)
+		slices.Sort(order)
 
-		Convey("It should not publish downstream stages from the partial snapshot", func() {
-			So(order, ShouldResemble, []int{0, 1})
-			So(thesis.Stamped("BTC/USD", types.SourceGraph), ShouldBeFalse)
+		Convey("It should let independent solvers complete their available work", func() {
+			So(order, ShouldResemble, []int{0, 1, 2})
+			So(thesis.Stamped("BTC/USD", types.SourceGraph), ShouldBeTrue)
 		})
 	})
 }
@@ -142,14 +152,15 @@ production stage positions; each solver package benchmarks its own model work.
 */
 func BenchmarkAnalyzerProcess(b *testing.B) {
 	order := make([]int, 0, 6)
+	mu := &sync.Mutex{}
 	analyzer := &Analyzer{
 		solvers: []Solver{
-			&orderedSolver{index: 0, order: &order, source: types.SourceCategory},
-			&orderedSolver{index: 1, order: &order, source: types.SourceManifold},
-			&orderedSolver{index: 2, order: &order, source: types.SourceResonance},
-			&orderedSolver{index: 3, order: &order, source: types.SourceCausal},
-			&orderedSolver{index: 4, order: &order, source: types.SourceCognition},
-			&orderedSolver{index: 5, order: &order, source: types.SourceGraph},
+			&orderedSolver{index: 0, order: &order, mu: mu, source: types.SourceCategory},
+			&orderedSolver{index: 1, order: &order, mu: mu, source: types.SourceManifold},
+			&orderedSolver{index: 2, order: &order, mu: mu, source: types.SourceResonance},
+			&orderedSolver{index: 3, order: &order, mu: mu, source: types.SourceCausal},
+			&orderedSolver{index: 4, order: &order, mu: mu, source: types.SourceCognition},
+			&orderedSolver{index: 5, order: &order, mu: mu, source: types.SourceGraph},
 		},
 	}
 	thesis := types.NewThesis(b.Context(), nil)

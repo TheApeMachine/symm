@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,7 +26,7 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	status    types.Status
+	status    atomic.Value
 	ctx       context.Context
 	cancel    context.CancelFunc
 	api       *websocket.API
@@ -63,7 +64,6 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		status:    types.INITIALIZING,
 		ctx:       ctx,
 		cancel:    cancel,
 		api:       api,
@@ -76,9 +76,10 @@ func NewSignal(
 		lastTrade: &sync.Map{},
 	}
 
+	signal.status.Store(types.INITIALIZING)
 	signal.thesis.Subscribe(types.SourceCVD, signal.semaphore)
+	signal.status.Store(types.READY)
 	signal.run()
-	signal.status = types.READY
 
 	return signal
 }
@@ -91,7 +92,7 @@ func (signal *Signal) Name() string {
 }
 
 func (signal *Signal) Status() types.Status {
-	return signal.status
+	return signal.status.Load().(types.Status)
 }
 
 func (signal *Signal) ensureProcessors() (*algorithm.TradeFlowSample, *equation.Flow) {
@@ -113,10 +114,13 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
+				signal.status.Store(types.BUSY)
 				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceCVD,
 					signal.Measure(signal.thesis), true,
 				))
+
+				signal.status.Store(types.READY)
 			}
 		}
 	}()

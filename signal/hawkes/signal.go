@@ -60,8 +60,8 @@ func NewSignal(
 
 	signal.status.Store(types.INITIALIZING)
 	signal.thesis.Subscribe(types.SourceHawkes, signal.semaphore)
-	signal.run()
 	signal.status.Store(types.READY)
+	signal.run()
 
 	return signal
 }
@@ -84,6 +84,7 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
+				signal.status.Store(types.BUSY)
 				measurements, ready := signal.Measure(signal.thesis)
 
 				errnie.Error(signal.thesis.AppendMeasurements(
@@ -91,6 +92,8 @@ func (signal *Signal) run() {
 					measurements,
 					ready,
 				))
+
+				signal.status.Store(types.READY)
 			}
 		}
 	}()
