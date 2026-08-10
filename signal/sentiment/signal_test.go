@@ -57,7 +57,7 @@ func TestMeasure(t *testing.T) {
 		}
 
 		thesis.Tickers = tickerMap(firstLeg)
-		So(signal.Measure(thesis), ShouldBeEmpty)
+		So(signal.Measure(thesis), ShouldHaveLength, 3)
 		thesis.Tickers = tickerMap(secondLeg)
 		So(signal.Measure(thesis), ShouldHaveLength, 3)
 		thesis.Tickers = tickerMap(thirdLeg)
@@ -91,17 +91,17 @@ func TestMeasure(t *testing.T) {
 			ticker("AAA/USD", 100, start),
 			ticker("BBB/USD", 100, start),
 		})
-		So(signal.Measure(thesis), ShouldBeEmpty)
+		So(signal.Measure(thesis), ShouldHaveLength, 2)
 		thesis.Tickers = tickerMap([]kraken.TickerData{
 			ticker("AAA/USD", 100, start.Add(time.Second)),
 			ticker("BBB/USD", 100, start.Add(time.Second)),
 		})
 		measurements := signal.Measure(thesis)
 
-		Convey("It should not fabricate normalized zeroes without a scale", func() {
+		Convey("It should retain the normalized zero return", func() {
 			So(measurements, ShouldHaveLength, 2)
 			So(measurements[0].Sample(types.MetricChange, types.SideNone).Normalized,
-				ShouldBeNil)
+				ShouldNotBeNil)
 		})
 	})
 
@@ -111,7 +111,7 @@ func TestMeasure(t *testing.T) {
 		start := time.Unix(1_700_000_200, 0).UTC()
 		thesis.AppendTicker(ticker("AAA/USD", 100, start))
 
-		So(signal.Measure(thesis), ShouldBeEmpty)
+		So(signal.Measure(thesis), ShouldHaveLength, 1)
 
 		thesis.AppendTicker(ticker("AAA/USD", 101, start.Add(time.Second)))
 		measurements := signal.Measure(thesis)

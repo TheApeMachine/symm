@@ -38,7 +38,14 @@ func forecastWithGraphEvidence(
 		return nil, evidence, fmt.Errorf("planner: thesis required")
 	}
 
-	readingRaw, found := thesis.Resonance.Load(symbol)
+	symbolValue, found := thesis.Symbols.Load(symbol)
+
+	if !found {
+		return nil, evidence, fmt.Errorf("planner: symbol state required for %s", symbol)
+	}
+
+	symbolState := symbolValue.(*types.Symbol)
+	readingRaw, found := symbolState.Resonance.Load(symbol)
 
 	if !found {
 		return nil, evidence, fmt.Errorf("planner: resonance forecast required for %s", symbol)
@@ -57,7 +64,7 @@ func forecastWithGraphEvidence(
 		return nil, evidence, fmt.Errorf("planner: invalid resonance forecast for %s: %w", symbol, err)
 	}
 
-	storedGraph, found := thesis.Graphs.Load(marketGraphKey)
+	storedGraph, found := symbolState.Graphs.Load(marketGraphKey)
 
 	if !found {
 		return nil, evidence, fmt.Errorf("planner: market graph required for %s", symbol)

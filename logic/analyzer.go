@@ -122,21 +122,25 @@ func (analyzer *Analyzer) process(in any) {
 
 	group := &errgroup.Group{}
 
-	// Solvers inspect their own prerequisites and publish another coalesced
-	// analyzer wake-up when they make downstream work available.
-	for _, solver := range analyzer.solvers {
-		group.Go(func() error {
-			return errnie.Error(solver.Update(thesis))
-		})
+	for thesis.SymbolsReady() {
+		// Solvers inspect their own prerequisites and publish another coalesced
+		// analyzer wake-up when they make downstream work available.
+		for _, solver := range analyzer.solvers {
+			group.Go(func() error {
+				return errnie.Error(solver.Update(thesis))
+			})
+		}
+
+		if err := group.Wait(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to update analyzer: "+err.Error(),
+				err,
+			))
+		}
 	}
 
-	if err := group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to update analyzer: "+err.Error(),
-			err,
-		))
-	}
+	thesis.Fanout(types.SourceAnalyzer, types.SourcePlanner)
 }
 
 /*

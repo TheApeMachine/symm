@@ -83,15 +83,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		name := key.(string)
+		features[name] = make(map[string]float64)
 
 		for _, measurement := range symbol.Measurements {
 			for key, sample := range measurement.Metrics {
 				if sample.Normalized == nil {
 					continue
-				}
-
-				if features[name] == nil {
-					features[name] = make(map[string]float64)
 				}
 
 				identity := string(measurement.Source) + ":" + name + ":" + key
@@ -103,17 +100,16 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	})
 
 	if len(features) == 0 {
-		thesis.Fanout(types.SourceResonance)
 		return nil
 	}
 
 	group, _ := errgroup.WithContext(solver.ctx)
 
-	for symbol, readings := range features {
+	for symbolName, readings := range features {
 		group.Go(func() error {
 			var masterSchema []string
 
-			if rawSchema, loaded := solver.schemas.Load(symbol); loaded {
+			if rawSchema, loaded := solver.schemas.Load(symbolName); loaded {
 				masterSchema = rawSchema.([]string)
 			}
 
@@ -135,12 +131,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 			if schemaUpdated || len(masterSchema) == 0 {
 				sort.Strings(masterSchema)
-				solver.schemas.Store(symbol, masterSchema)
+				solver.schemas.Store(symbolName, masterSchema)
 			}
 
 			inputDim := len(masterSchema)
 
 			if inputDim == 0 {
+				thesis.Stamp(symbolName, types.SourceResonance)
 				return nil
 			}
 
@@ -152,7 +149,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				}
 			}
 
-			found, ok := solver.coders.Load(symbol)
+			found, ok := solver.coders.Load(symbolName)
 			var coder *learning.ResonanceManifold
 
 			if ok && found != nil {
@@ -178,7 +175,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					))
 				}
 
-				solver.coders.Store(symbol, coder)
+				solver.coders.Store(symbolName, coder)
 			}
 
 			if _, err := coder.SettleFromBatch(input, nil); err != nil {
@@ -186,12 +183,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			var count uint64
-			if val, loaded := solver.samples.Load(symbol); loaded {
+			if val, loaded := solver.samples.Load(symbolName); loaded {
 				count = val.(uint64) + 1
 			} else {
 				count = 1
 			}
-			solver.samples.Store(symbol, count)
+			solver.samples.Store(symbolName, count)
 
 			layers, surprise, energy := coder.WireSnapshot()
 			latent := coder.LatentState()
@@ -203,7 +200,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				embedding = latent
 			}
 
-			forecast, verdict := solver.buildForecast(coder, symbol)
+			forecast, verdict := solver.buildForecast(coder, symbolName)
 
 			skillEvidence := 0.0
 			if skill, ok := coder.TaskSkill(); ok {
@@ -213,7 +210,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			reading := types.ResonanceReading{
 				Stage:         "resonance",
 				Source:        types.SourceResonance,
-				Symbol:        symbol,
+				Symbol:        symbolName,
 				At:            thesis.At,
 				Surprise:      surprise,
 				Energy:        energy,
@@ -227,8 +224,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				SkillEvidence: skillEvidence,
 			}
 
-			symbol.Resonance.Store(symbol, reading)
-			thesis.Stamp(symbol, types.SourceResonance)
+			stored, _ := thesis.Symbols.Load(symbolName)
+			symbol := stored.(*types.Symbol)
+			symbol.Resonance.Store(symbolName, reading)
+			thesis.Stamp(symbolName, types.SourceResonance)
 
 			utils.Publish(
 				solver.ui,

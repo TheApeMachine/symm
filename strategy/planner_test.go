@@ -74,7 +74,8 @@ func TestPlannerSearch(t *testing.T) {
 			rows[index] = []float64{float64(index), 0, treatment, treatment}
 		}
 		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-		thesis.Cognition.Store("BTC/USD", types.Cognition{
+		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+		storedSymbol.(*types.Symbol).Cognition.Store("BTC/USD", types.Cognition{
 			Symbol:     "BTC/USD",
 			Confidence: 0.25,
 		})
@@ -171,12 +172,13 @@ func TestPlannerUpdate(t *testing.T) {
 		planner := &Planner{ui: messages}
 		causalSolver := causal.NewSolver(nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Resonance.Store("BTC/USD", types.ResonanceReading{
 			Source: types.SourceResonance,
 			Symbol: "BTC/USD",
 		})
-		thesis.Graphs.Store(marketGraphKey, logicgraph.NewGraph(thesis.At))
-		thesis.Symbols.Store("BTC/USD", &types.Symbol{})
+		symbol.Graphs.Store(marketGraphKey, logicgraph.NewGraph(thesis.At))
+		thesis.Symbols.Store("BTC/USD", symbol)
 		Reset(func() {
 			So(causalSolver.Close(), ShouldBeNil)
 		})
@@ -197,7 +199,7 @@ func TestPlannerUpdate(t *testing.T) {
 
 		Convey("Then Planner should complete without inventing a decision", func() {
 			So(thesis.Stamped("BTC/USD", types.SourcePlanner), ShouldBeTrue)
-			_, found := thesis.Decisions.Load("BTC/USD")
+			_, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeFalse)
 			So(len(messages), ShouldEqual, 0)
 		})
@@ -206,8 +208,8 @@ func TestPlannerUpdate(t *testing.T) {
 	Convey("Given a complete logic cut without causal candidates", t, func() {
 		planner := &Planner{}
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbols.Store("BTC/USD", &types.Symbol{})
-		thesis.Symbols.Store("ETH/USD", &types.Symbol{})
+		thesis.Symbols.Store("BTC/USD", types.NewSymbol("BTC/USD", nil))
+		thesis.Symbols.Store("ETH/USD", types.NewSymbol("ETH/USD", nil))
 
 		for _, source := range []types.SourceType{
 			types.SourceCategory,
@@ -234,7 +236,9 @@ func TestPlannerDecisions(t *testing.T) {
 	Convey("Given a thesis with a zero-precision causal estimate", t, func() {
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-		thesis.Causal.Store("BTC/USD", map[string]any{
+		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := storedSymbol.(*types.Symbol)
+		symbol.Causal.Store("BTC/USD", map[string]any{
 			"historyRows":    [][]float64{{1, 2, 3, 4}},
 			"precision":      0.0,
 			"samples":        1,
@@ -250,7 +254,7 @@ func TestPlannerDecisions(t *testing.T) {
 			So(decisions[0].CausalPrecision, ShouldEqual, 0.0)
 			So(decisions[0].Alternatives, ShouldBeEmpty)
 
-			stored, found := thesis.Decisions.Load("BTC/USD")
+			stored, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			So(stored.(*types.Decision).Action, ShouldEqual, types.ActionNothing)
 		})
@@ -263,7 +267,8 @@ func TestPlannerAdmit(t *testing.T) {
 
 		Convey("Then a forecast without a predictive distribution becomes Do Not Enter", func() {
 			thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-			stored, _ := thesis.Resonance.Load("BTC/USD")
+			storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+			stored, _ := storedSymbol.(*types.Symbol).Resonance.Load("BTC/USD")
 			reading := stored.(types.ResonanceReading)
 			So(reading.Forecast.SetPredictiveDistribution(0, 0, false), ShouldBeNil)
 
@@ -294,7 +299,8 @@ func TestPlannerAdmit(t *testing.T) {
 
 		Convey("Then a forecast at the configured confidence stays attached to Enter", func() {
 			thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-			stored, _ := thesis.Resonance.Load("BTC/USD")
+			storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+			stored, _ := storedSymbol.(*types.Symbol).Resonance.Load("BTC/USD")
 			forecast := stored.(types.ResonanceReading).Forecast
 
 			decision, _, err := planner.admit(
@@ -354,7 +360,8 @@ func TestPlannerAdmit(t *testing.T) {
 		Convey("Then cognition cannot grant uncalibrated reserve capacity", func() {
 			thesis := plannerThesisFixture(t, "BTC/USD", 0.90)
 			thesis.Manifold.CoherenceMag2 = 0.20
-			thesis.Cognition.Store("BTC/USD", types.Cognition{
+			storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+			storedSymbol.(*types.Symbol).Cognition.Store("BTC/USD", types.Cognition{
 				Symbol: "BTC/USD", Confidence: 0.80,
 			})
 
@@ -394,7 +401,8 @@ func plannerThesisFixture(
 	t.Helper()
 	thesis := types.NewThesis(t.Context(), nil)
 	forecast := forecastFixture(t, confidence)
-	thesis.Resonance.Store(symbol, types.ResonanceReading{
+	symbolState := types.NewSymbol(symbol, nil)
+	symbolState.Resonance.Store(symbol, types.ResonanceReading{
 		Source:   types.SourceResonance,
 		Symbol:   symbol,
 		At:       thesis.At,
@@ -410,8 +418,8 @@ func plannerThesisFixture(
 		Confidence: confidence,
 		At:         thesis.At,
 	})
-	thesis.Graphs.Store(marketGraphKey, marketGraph)
-	thesis.Symbols.Store(symbol, &types.Symbol{})
+	symbolState.Graphs.Store(marketGraphKey, marketGraph)
+	thesis.Symbols.Store(symbol, symbolState)
 	thesis.Stamp(symbol, types.SourceGraph)
 
 	return thesis
@@ -424,7 +432,8 @@ func plannerGraphRelation(
 	weight float64,
 	confidence float64,
 ) {
-	stored, _ := thesis.Graphs.Load(marketGraphKey)
+	storedSymbol, _ := thesis.Symbols.Load(symbol)
+	stored, _ := storedSymbol.(*types.Symbol).Graphs.Load(marketGraphKey)
 	marketGraph := stored.(*logicgraph.Graph)
 	forecast := marketGraph.Nodes["res:"+symbol+":forecast"]
 	causalID := "causal:" + symbol + ":" + string(relation)
@@ -474,7 +483,8 @@ func BenchmarkPlannerDecisions(b *testing.B) {
 
 	for b.Loop() {
 		thesis := plannerThesisFixture(b, "BTC/USD", 0.80)
-		thesis.Causal.Store("BTC/USD", map[string]any{
+		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+		storedSymbol.(*types.Symbol).Causal.Store("BTC/USD", map[string]any{
 			"historyRows":    rows,
 			"precision":      0.75,
 			"samples":        len(rows),

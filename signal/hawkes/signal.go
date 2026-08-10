@@ -87,11 +87,11 @@ func (signal *Signal) run() {
 				signal.status.Store(types.BUSY)
 				measurements, ready := signal.Measure(signal.thesis)
 
-				errnie.Error(signal.thesis.AppendMeasurements(
-					types.SourceHawkes,
-					measurements,
-					ready,
-				))
+				if len(measurements) > 0 {
+					signal.thesis.AppendMeasurements(
+						types.SourceHawkes, measurements, ready,
+					)
+				}
 
 				signal.status.Store(types.READY)
 			}

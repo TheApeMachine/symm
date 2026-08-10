@@ -67,10 +67,10 @@ func TestMeasure(t *testing.T) {
 		thesis.Tickers = tickerMap(secondLeg)
 		measurements := signal.Measure(thesis)
 
-		Convey("It should not normalize before cohort cadence is known", func() {
+		Convey("It should normalize from the first complete cohort", func() {
 			first := measurementFor(firstMeasurements, "THIN/USD")
 			So(first.Sample(types.MetricExecutableTouchDepth, types.SideNone).Normalized,
-				ShouldBeNil)
+				ShouldNotBeNil)
 		})
 
 		Convey("It should use a leave-one-out robust baseline", func() {
@@ -133,7 +133,7 @@ func TestMeasure(t *testing.T) {
 			So(measurement.Sample(
 				types.MetricReportedVolumeNotional,
 				types.SideNone,
-			).Normalized, ShouldBeNil)
+			).Normalized, ShouldNotBeNil)
 		})
 	})
 }

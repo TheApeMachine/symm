@@ -106,7 +106,9 @@ func TestNewGraphEvidence(t *testing.T) {
 func TestForecastWithGraphEvidence(t *testing.T) {
 	Convey("Given a graph forecast that differs from its Thesis forecast", t, func() {
 		thesis := plannerThesisFixture(t, "BTC/USD", 0.8)
-		stored, _ := thesis.Graphs.Load(marketGraphKey)
+		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := storedSymbol.(*types.Symbol)
+		stored, _ := symbol.Graphs.Load(marketGraphKey)
 		marketGraph := stored.(*logicgraph.Graph)
 		marketGraph.Nodes["res:BTC/USD:forecast"].Value++
 
@@ -119,10 +121,12 @@ func TestForecastWithGraphEvidence(t *testing.T) {
 
 	Convey("Given a resonance reading from an earlier Thesis cut", t, func() {
 		thesis := plannerThesisFixture(t, "BTC/USD", 0.8)
-		stored, _ := thesis.Resonance.Load("BTC/USD")
+		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := storedSymbol.(*types.Symbol)
+		stored, _ := symbol.Resonance.Load("BTC/USD")
 		reading := stored.(types.ResonanceReading)
 		reading.At = reading.At.Add(-time.Nanosecond)
-		thesis.Resonance.Store("BTC/USD", reading)
+		symbol.Resonance.Store("BTC/USD", reading)
 
 		_, _, err := forecastWithGraphEvidence(thesis, "BTC/USD")
 

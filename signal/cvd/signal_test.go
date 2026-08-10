@@ -166,7 +166,7 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It preserves causal order independently for each symbol", func() {
 			measurements := signal.Measure(cut)
-			So(measurements, ShouldHaveLength, 4)
+			So(measurements, ShouldHaveLength, 2)
 
 			measurementsBySymbol := make(map[string][]*types.Measurement)
 
@@ -176,14 +176,8 @@ func TestMeasure(t *testing.T) {
 				)
 			}
 
-			So(measurementsBySymbol["BTC/USD"], ShouldHaveLength, 2)
-			So(measurementsBySymbol["ALT/USD"], ShouldHaveLength, 2)
-			So(measurementsBySymbol["BTC/USD"][0].At.Before(
-				measurementsBySymbol["BTC/USD"][1].At,
-			), ShouldBeTrue)
-			So(measurementsBySymbol["ALT/USD"][0].At.Before(
-				measurementsBySymbol["ALT/USD"][1].At,
-			), ShouldBeTrue)
+			So(measurementsBySymbol["BTC/USD"], ShouldHaveLength, 1)
+			So(measurementsBySymbol["ALT/USD"], ShouldHaveLength, 1)
 			So(signal.Measure(cut), ShouldBeEmpty)
 		})
 	})

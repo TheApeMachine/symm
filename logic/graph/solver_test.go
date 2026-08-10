@@ -13,8 +13,9 @@ import (
 func TestUpdate(t *testing.T) {
 	Convey("Given completed upstream stages without a causal estimate", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbols.Store("BTC/USD", &types.Symbol{})
-		thesis.Symbols.Store("ETH/USD", &types.Symbol{})
+		bitcoin := types.NewSymbol("BTC/USD", nil)
+		thesis.Symbols.Store("BTC/USD", bitcoin)
+		thesis.Symbols.Store("ETH/USD", types.NewSymbol("ETH/USD", nil))
 
 		for _, source := range []types.SourceType{
 			types.SourceCategory,
@@ -38,7 +39,7 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(thesis.Stamped("BTC/USD", types.SourceGraph), ShouldBeTrue)
 			So(thesis.Stamped("ETH/USD", types.SourceGraph), ShouldBeFalse)
-			_, found := thesis.Graphs.Load("market_graph")
+			_, found := bitcoin.Graphs.Load("market_graph")
 			So(found, ShouldBeTrue)
 		})
 	})
@@ -71,7 +72,8 @@ func TestInferStructuralEdges(t *testing.T) {
 	Convey("Given categories with conflicting evidence", t, func() {
 		at := time.Unix(1, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Categories.Store("BTC/USD", []types.Category{
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Categories.Store("BTC/USD", []types.Category{
 			{
 				Type:       types.CategoryAggressiveDrive,
 				Strength:   0.8,
@@ -85,10 +87,11 @@ func TestInferStructuralEdges(t *testing.T) {
 				Opposing:   []string{"drive"},
 			},
 		})
+		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
-		NewSolver(nil, nil).extractCategoryNodes(thesis, graph)
+		NewSolver(nil, nil).extractCategoryNodes(symbol, graph)
 
-		err := NewSolver(nil, nil).inferStructuralEdges(thesis, graph)
+		err := NewSolver(nil, nil).inferStructuralEdges(symbol, graph)
 
 		Convey("It connects the category hypotheses directly", func() {
 			So(err, ShouldBeNil)
@@ -132,7 +135,7 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		err := solver.inferStructuralEdges(types.NewThesis(t.Context(), nil), graph)
+		err := solver.inferStructuralEdges(types.NewSymbol("BTC/USD", nil), graph)
 		So(err, ShouldBeNil)
 
 		Convey("Each intervention should condition its symbol's do-expectation", func() {
@@ -185,7 +188,7 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		err := solver.inferStructuralEdges(types.NewThesis(t.Context(), nil), graph)
+		err := solver.inferStructuralEdges(types.NewSymbol("BTC/USD", nil), graph)
 		So(err, ShouldBeNil)
 
 		Convey("It omits zero-confidence pair edges while retaining evidence-bearing edges", func() {
@@ -208,7 +211,8 @@ func TestExtractCausalNodes(t *testing.T) {
 		at := time.Unix(1, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = at
-		thesis.Causal.Store("BTC/USD", map[string]any{
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Causal.Store("BTC/USD", map[string]any{
 			"association":       0.1,
 			"associationScore":  0.2,
 			"doExpectation":     0.25,
@@ -216,10 +220,11 @@ func TestExtractCausalNodes(t *testing.T) {
 			"precision":         0.5,
 			"probabilities":     []float64{0.12, 0.58, 0.2, 0.1},
 		})
+		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
 		solver := NewSolver(nil, nil)
 
-		err := solver.extractCausalNodes(thesis, graph)
+		err := solver.extractCausalNodes(symbol, graph)
 		So(err, ShouldBeNil)
 
 		Convey("It should attenuate channel confidence by estimator precision", func() {
@@ -236,10 +241,12 @@ func TestExtractCausalNodes(t *testing.T) {
 
 	Convey("Given a causal value without its probability distribution", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Causal.Store("BTC/USD", map[string]any{"intervention": 1.0})
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Causal.Store("BTC/USD", map[string]any{"intervention": 1.0})
+		thesis.Symbols.Store("BTC/USD", symbol)
 
 		err := NewSolver(nil, nil).extractCausalNodes(
-			thesis,
+			symbol,
 			NewGraph(time.Unix(1, 0).UTC()),
 		)
 
@@ -259,16 +266,18 @@ func TestExtractResonanceNodes(t *testing.T) {
 
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = at
-		thesis.Resonance.Store("BTC/USD", types.ResonanceReading{
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Resonance.Store("BTC/USD", types.ResonanceReading{
 			Symbol:   "BTC/USD",
 			At:       at,
 			Surprise: 0.25,
 			Forecast: forecast,
 		})
+		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
 		solver := NewSolver(nil, nil)
 
-		solver.extractResonanceNodes(thesis, graph)
+		solver.extractResonanceNodes(symbol, graph)
 
 		Convey("It should publish the full-horizon return at measured confidence", func() {
 			node, found := graph.Nodes["res:BTC/USD:forecast"]
@@ -352,14 +361,14 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 	}
 
 	solver := NewSolver(nil, nil)
-	thesis := types.NewThesis(b.Context(), nil)
+	symbol := types.NewSymbol("BTC/USD", nil)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
 		graph := NewGraph(at)
 		graph.Nodes = nodes
-		if err := solver.inferStructuralEdges(thesis, graph); err != nil {
+		if err := solver.inferStructuralEdges(symbol, graph); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -382,7 +391,8 @@ func BenchmarkUpdate(b *testing.B) {
 
 	for index := range 256 {
 		symbol := "SIM" + strconv.Itoa(index) + "/USD"
-		thesis.Symbols.Store(symbol, &types.Symbol{})
+		symbolState := types.NewSymbol(symbol, nil)
+		thesis.Symbols.Store(symbol, symbolState)
 
 		for _, source := range []types.SourceType{
 			types.SourceCategory,
@@ -394,7 +404,7 @@ func BenchmarkUpdate(b *testing.B) {
 			thesis.Stamp(symbol, source)
 		}
 
-		thesis.Categories.Store(symbol, []types.Category{
+		symbolState.Categories.Store(symbol, []types.Category{
 			{
 				Symbol:     symbol,
 				Type:       types.CategoryForecastEdge,
@@ -410,12 +420,12 @@ func BenchmarkUpdate(b *testing.B) {
 				Opposing:   []string{"sentiment:" + symbol + ":change"},
 			},
 		})
-		thesis.Resonance.Store(symbol, types.ResonanceReading{
+		symbolState.Resonance.Store(symbol, types.ResonanceReading{
 			Symbol:   symbol,
 			Surprise: 0.1,
 			Forecast: forecast,
 		})
-		thesis.Causal.Store(symbol, map[string]any{
+		symbolState.Causal.Store(symbol, map[string]any{
 			"association":       0.1,
 			"associationScore":  0.1,
 			"doExpectation":     0.1,
@@ -426,7 +436,7 @@ func BenchmarkUpdate(b *testing.B) {
 			"uplift":            0.1,
 			"upliftScore":       0.1,
 		})
-		thesis.Cognition.Store(symbol, types.Cognition{
+		symbolState.Cognition.Store(symbol, types.Cognition{
 			Symbol:     symbol,
 			Source:     "cognition",
 			At:         at,
@@ -443,7 +453,7 @@ func BenchmarkUpdate(b *testing.B) {
 	for b.Loop() {
 		thesis.Symbols.Range(func(_, value any) bool {
 			symbol := value.(*types.Symbol)
-			symbol.Reset()
+			symbol.Readiness.Reset()
 
 			for _, source := range []types.SourceType{
 				types.SourceCategory,

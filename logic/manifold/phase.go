@@ -199,7 +199,11 @@ func (solver *Solver) recordPhase(
 	reading types.PhaseReading,
 ) {
 	if thesis != nil {
-		thesis.Phase.Store(reading.Symbol, reading)
+		stored, found := thesis.Symbols.Load(reading.Symbol)
+
+		if found {
+			stored.(*types.Symbol).Phase.Store(reading.Symbol, reading)
+		}
 	}
 
 	row["phaseReady"] = reading.Ready

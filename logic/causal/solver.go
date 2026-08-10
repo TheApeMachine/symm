@@ -87,11 +87,17 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	// A failed pass cancels a pond group permanently. Causal evaluation is
 	// retried on every enriched Thesis, so it requires a new group per pass.
 	group, _ := errgroup.WithContext(solver.ctx)
+	updated := false
 
-	thesis.Resonance.Range(func(key, _ any) bool {
+	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, symbolOK := key.(string)
+		symbolState, stateOK := value.(*types.Symbol)
 
-		if !symbolOK || symbol == "" {
+		if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
+			return true
+		}
+
+		if _, found := symbolState.Resonance.Load(symbol); !found {
 			return true
 		}
 
@@ -99,6 +105,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
+		updated = true
 		group.Go(func() error {
 			err := solver.measure(thesis, symbol)
 
@@ -120,9 +127,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
-	solver.publish(thesis)
-	thesis.Fanout(types.SourceCausal)
+	if !updated {
+		return nil
+	}
 
+	solver.publish(thesis)
 	return nil
 }
 
@@ -130,7 +139,14 @@ func (solver *Solver) measure(
 	thesis *types.Thesis,
 	symbol string,
 ) error {
-	stored, found := thesis.Resonance.Load(symbol)
+	symbolValue, found := thesis.Symbols.Load(symbol)
+
+	if !found {
+		return nil
+	}
+
+	symbolState := symbolValue.(*types.Symbol)
+	stored, found := symbolState.Resonance.Load(symbol)
 
 	if !found {
 		return nil
@@ -260,7 +276,7 @@ func (solver *Solver) measure(
 		causalOutput["treatmentLevel"] = prediction
 	}
 
-	thesis.Causal.Store(symbol, causalOutput)
+	symbolState.Causal.Store(symbol, causalOutput)
 	return nil
 }
 
@@ -307,11 +323,18 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 
 	rows := make([]map[string]any, 0)
 
-	thesis.Causal.Range(func(key, value any) bool {
-		causalMap, ok := value.(map[string]any)
+	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, symbolOK := key.(string)
+		symbolState, stateOK := value.(*types.Symbol)
 
-		if !ok || !symbolOK || symbol == "" {
+		if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
+			return true
+		}
+
+		stored, found := symbolState.Causal.Load(symbol)
+		causalMap, ok := stored.(map[string]any)
+
+		if !found || !ok {
 			return true
 		}
 

@@ -251,7 +251,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 	}
 
-	thesis.Fanout(types.SourceManifold)
 	return nil
 }
 

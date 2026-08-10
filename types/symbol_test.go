@@ -12,6 +12,7 @@ func TestSymbolNewSymbol(t *testing.T) {
 
 		Convey("It should initialize empty symbol measurement state", func() {
 			So(symbol.Symbol, ShouldEqual, "BTC/USD")
+			So(symbol.Status, ShouldEqual, Status(""))
 			So(symbol.Measurements, ShouldBeEmpty)
 		})
 	})
@@ -31,49 +32,49 @@ func TestSymbolAddMeasurement(t *testing.T) {
 		symbol.AddMeasurement(updated)
 
 		Convey("It should replace only the matching source and peer", func() {
+			So(symbol.Status, ShouldEqual, BUSY)
 			So(symbol.Measurements, ShouldResemble, []*Measurement{updated, peer})
 		})
 	})
 }
 
-func TestSymbolMeasurementsSnapshot(t *testing.T) {
-	Convey("Given a logic reader holding a symbol snapshot", t, func() {
+func TestSymbolStamp(t *testing.T) {
+	Convey("Given both direct consumers of an active measurement cut", t, func() {
 		symbol := NewSymbol("BTC/USD", nil)
-		first := &Measurement{ID: "first", Source: SourceHawkes, Symbol: "BTC/USD"}
-		updated := &Measurement{ID: "updated", Source: SourceHawkes, Symbol: "BTC/USD"}
-		symbol.AddMeasurement(first)
-		snapshot := symbol.MeasurementsSnapshot()
+		measurement := &Measurement{
+			ID: "hawkes", Source: SourceHawkes, Symbol: "BTC/USD",
+		}
+		symbol.AddMeasurement(measurement)
 
-		symbol.AddMeasurement(updated)
+		symbol.Stamp(SourceCategory)
 
-		Convey("It should keep the in-flight logic slice stable", func() {
-			So(snapshot, ShouldResemble, []*Measurement{first})
-			So(symbol.MeasurementsSnapshot(), ShouldResemble, []*Measurement{updated})
+		Convey("It should retain the cut until resonance also finishes", func() {
+			So(symbol.Status, ShouldEqual, BUSY)
+			So(symbol.Measurements, ShouldResemble, []*Measurement{measurement})
+		})
+
+		symbol.Stamp(SourceResonance)
+
+		Convey("It should retain the cut until every named consumer finishes", func() {
+			So(symbol.Status, ShouldEqual, BUSY)
+			So(symbol.Measurements, ShouldResemble, []*Measurement{measurement})
+		})
+
+		Convey("It should retain the completed readiness stamps", func() {
+			So(symbol.Stamped(SourceCategory), ShouldBeTrue)
+			So(symbol.Stamped(SourceResonance), ShouldBeTrue)
 		})
 	})
 }
 
 func BenchmarkSymbolAddMeasurement(b *testing.B) {
-	symbol := NewSymbol("BTC/USD", nil)
 	measurement := &Measurement{
 		ID: "hawkes", Source: SourceHawkes, Symbol: "BTC/USD",
 	}
-	symbol.AddMeasurement(measurement)
 	b.ReportAllocs()
 
 	for b.Loop() {
+		symbol := NewSymbol("BTC/USD", nil)
 		symbol.AddMeasurement(measurement)
-	}
-}
-
-func BenchmarkSymbolMeasurementsSnapshot(b *testing.B) {
-	symbol := NewSymbol("BTC/USD", nil)
-	symbol.AddMeasurement(&Measurement{
-		ID: "hawkes", Source: SourceHawkes, Symbol: "BTC/USD",
-	})
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = symbol.MeasurementsSnapshot()
 	}
 }

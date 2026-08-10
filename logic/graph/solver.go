@@ -170,7 +170,6 @@ Update extracts nodes and infers directional edges from Thesis, publishing the c
 Graph into thesis.Graphs.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	readySymbols := make([]string, 0)
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, ok := value.(*types.Symbol)
 
@@ -186,46 +185,38 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		symbolName, ok := key.(string)
 
 		if ok && symbolName != "" {
-			readySymbols = append(readySymbols, symbolName)
 		}
 
+		graph := NewGraph(thesis.At)
+		solver.extractCategoryNodes(symbol, graph)
+		solver.extractResonanceNodes(symbol, graph)
+
+		if err := solver.extractCausalNodes(symbol, graph); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"graph: failed to extract causal nodes - "+err.Error(),
+				err,
+			))
+
+			return true
+		}
+
+		solver.extractCognitionNodes(symbol, graph)
+
+		if err := solver.inferStructuralEdges(symbol, graph); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"graph: failed to infer structural edges - "+err.Error(),
+				err,
+			))
+
+			return true
+		}
+
+		utils.Publish(solver.ui, datura.NewMap("graph", graph))
 		return true
 	})
 
-	if len(readySymbols) == 0 {
-		return nil
-	}
-
-	graph := NewGraph(thesis.At)
-	solver.extractCategoryNodes(thesis, graph)
-	solver.extractResonanceNodes(thesis, graph)
-
-	if err := solver.extractCausalNodes(thesis, graph); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"graph: failed to extract causal nodes - "+err.Error(),
-			err,
-		))
-	}
-
-	solver.extractCognitionNodes(thesis, graph)
-
-	if err := solver.inferStructuralEdges(thesis, graph); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"graph: failed to infer structural edges - "+err.Error(),
-			err,
-		))
-	}
-
-	thesis.Graphs.Store("market_graph", graph)
-
-	for _, symbol := range readySymbols {
-		thesis.Stamp(symbol, types.SourceGraph)
-	}
-
-	utils.Publish(solver.ui, datura.NewMap("graph", graph))
-	thesis.Fanout(types.SourceGraph, types.SourcePlanner)
 	return nil
 }
 
@@ -233,81 +224,75 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 extractCategoryNodes registers active categories as nodes.
 */
 func (solver *Solver) extractCategoryNodes(
-	thesis *types.Thesis, graph *Graph,
+	symbol *types.Symbol, graph *Graph,
 ) {
-	thesis.Categories.Range(func(key, value any) bool {
-		symbol := key.(string)
-		categories := value.([]types.Category)
+	stored, found := symbol.Categories.Load(symbol.Symbol)
 
-		for _, cat := range categories {
-			nodeID := fmt.Sprintf("cat:%s:%s", symbol, string(cat.Type))
+	if !found {
+		return
+	}
 
-			graph.AddNode(&Node{
-				ID:         nodeID,
-				Symbol:     symbol,
-				Source:     "category",
-				Kind:       "category",
-				Value:      cat.Strength,
-				Confidence: cat.Confidence,
-				At:         thesis.At,
-				Metadata: map[string]any{
-					"type":       string(cat.Type),
-					"surprisal":  cat.Surprisal,
-					"maturity":   cat.Maturity,
-					"supporting": cat.Supporting,
-					"opposing":   cat.Opposing,
-				},
-			})
-		}
+	categories := stored.([]types.Category)
 
-		return true
-	})
+	for _, cat := range categories {
+		nodeID := fmt.Sprintf("cat:%s:%s", symbol.Symbol, string(cat.Type))
+
+		graph.AddNode(&Node{
+			ID:         nodeID,
+			Symbol:     symbol.Symbol,
+			Source:     "category",
+			Kind:       "category",
+			Value:      cat.Strength,
+			Confidence: cat.Confidence,
+			Metadata: map[string]any{
+				"type":       string(cat.Type),
+				"surprisal":  cat.Surprisal,
+				"maturity":   cat.Maturity,
+				"supporting": cat.Supporting,
+				"opposing":   cat.Opposing,
+			},
+		})
+	}
 }
 
 /*
 extractResonanceNodes registers predictive coding outcomes (surprise, expected return forecast).
 */
 func (solver *Solver) extractResonanceNodes(
-	thesis *types.Thesis, graph *Graph,
+	symbol *types.Symbol, graph *Graph,
 ) {
-	if thesis == nil || thesis.Resonance == nil {
+	if symbol == nil {
 		return
 	}
 
-	thesis.Resonance.Range(func(key, value any) bool {
-		symbol, symbolOK := key.(string)
-		reading, readingOK := value.(types.ResonanceReading)
+	stored, found := symbol.Resonance.Load(symbol.Symbol)
+	reading, readingOK := stored.(types.ResonanceReading)
 
-		if !symbolOK || !readingOK || symbol == "" || reading.Forecast == nil {
-			return true
-		}
+	if !found || !readingOK || reading.Forecast == nil {
+		return
+	}
 
-		if err := reading.Forecast.Validate(); err != nil ||
-			math.IsNaN(reading.Surprise) || math.IsInf(reading.Surprise, 0) {
-			return true
-		}
+	if err := reading.Forecast.Validate(); err != nil ||
+		math.IsNaN(reading.Surprise) || math.IsInf(reading.Surprise, 0) {
+		return
+	}
 
-		graph.AddNode(&Node{
-			ID:         fmt.Sprintf("res:%s:surprise", symbol),
-			Symbol:     symbol,
-			Source:     "resonance",
-			Kind:       "resonance",
-			Value:      reading.Surprise,
-			Confidence: reading.Forecast.Confidence,
-			At:         thesis.At,
-		})
+	graph.AddNode(&Node{
+		ID:         fmt.Sprintf("res:%s:surprise", symbol.Symbol),
+		Symbol:     symbol.Symbol,
+		Source:     "resonance",
+		Kind:       "resonance",
+		Value:      reading.Surprise,
+		Confidence: reading.Forecast.Confidence,
+	})
 
-		graph.AddNode(&Node{
-			ID:         fmt.Sprintf("res:%s:forecast", symbol),
-			Symbol:     symbol,
-			Source:     "resonance",
-			Kind:       "resonance",
-			Value:      reading.Forecast.ExpectedReturn,
-			Confidence: reading.Forecast.Confidence,
-			At:         thesis.At,
-		})
-
-		return true
+	graph.AddNode(&Node{
+		ID:         fmt.Sprintf("res:%s:forecast", symbol.Symbol),
+		Symbol:     symbol.Symbol,
+		Source:     "resonance",
+		Kind:       "resonance",
+		Value:      reading.Forecast.ExpectedReturn,
+		Confidence: reading.Forecast.Confidence,
 	})
 }
 
@@ -333,7 +318,6 @@ var causalFields = [...]causalField{
 
 func (field causalField) node(
 	symbol string,
-	at time.Time,
 	causalMap map[string]any,
 	probabilities []float64,
 	precision float64,
@@ -366,7 +350,6 @@ func (field causalField) node(
 		Value:      fieldValue,
 		Strength:   strength,
 		Confidence: probabilities[field.probabilityIndex] * precision,
-		At:         at,
 	}, true, nil
 }
 
@@ -417,83 +400,89 @@ func causalValuesPresent(causalMap map[string]any) bool {
 /*
 extractCausalNodes registers Pearl do-calculus and counterfactual uplift outputs.
 */
-func (solver *Solver) extractCausalNodes(thesis *types.Thesis, graph *Graph) error {
-	var extractErr error
+func (solver *Solver) extractCausalNodes(
+	symbol *types.Symbol, graph *Graph,
+) error {
+	stored, found := symbol.Causal.Load(symbol.Symbol)
+	causalMap, mapOK := stored.(map[string]any)
 
-	thesis.Causal.Range(func(key, value any) bool {
-		symbol, symbolOK := key.(string)
-		causalMap, mapOK := value.(map[string]any)
+	if !found || !mapOK || !causalValuesPresent(causalMap) {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"causal: no causal values found for symbol "+symbol.Symbol,
+			nil,
+		))
+	}
 
-		if !symbolOK || !mapOK || !causalValuesPresent(causalMap) {
-			return true
-		}
+	probabilities, err := causalProbabilities(symbol.Symbol, causalMap)
 
-		probabilities, err := causalProbabilities(symbol, causalMap)
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"causal: failed to extract probabilities for symbol "+symbol.Symbol+" - "+err.Error(),
+			err,
+		))
+	}
+
+	precision, err := causalPrecision(symbol.Symbol, causalMap)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"causal: failed to extract precision for symbol "+symbol.Symbol+" - "+err.Error(),
+			err,
+		))
+	}
+
+	for _, field := range causalFields {
+		node, found, err := field.node(
+			symbol.Symbol,
+			causalMap,
+			probabilities,
+			precision,
+		)
 
 		if err != nil {
-			extractErr = err
-			return false
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"causal: failed to extract node for symbol "+symbol.Symbol+" - "+err.Error(),
+				err,
+			))
 		}
 
-		precision, err := causalPrecision(symbol, causalMap)
-
-		if err != nil {
-			extractErr = err
-			return false
+		if found {
+			graph.AddNode(node)
 		}
+	}
 
-		for _, field := range causalFields {
-			node, found, err := field.node(
-				symbol,
-				thesis.At,
-				causalMap,
-				probabilities,
-				precision,
-			)
-
-			if err != nil {
-				extractErr = err
-				return false
-			}
-
-			if found {
-				graph.AddNode(node)
-			}
-		}
-
-		return true
-	})
-
-	return extractErr
+	return nil
 }
 
 /*
 extractCognitionNodes registers active category sequences and lookahead predictions.
 */
-func (solver *Solver) extractCognitionNodes(thesis *types.Thesis, graph *Graph) {
-	thesis.Cognition.Range(func(key, value any) bool {
-		symbol, symbolOK := key.(string)
-		cognition, cognitionOK := value.(types.Cognition)
+func (solver *Solver) extractCognitionNodes(
+	symbol *types.Symbol, graph *Graph,
+) {
+	stored, found := symbol.Cognition.Load(symbol.Symbol)
+	cognition, cognitionOK := stored.(types.Cognition)
 
-		if !symbolOK || !cognitionOK || cognition.Winner == "" {
-			return true
-		}
+	if !found || !cognitionOK || cognition.Winner == "" {
+		return
+	}
 
-		nodeID := fmt.Sprintf("cog:%s:winner_regime", symbol)
-		graph.AddNode(&Node{
-			ID:         nodeID,
-			Symbol:     symbol,
-			Source:     cognition.Source,
-			Kind:       KindCognition,
-			Value:      cognition.Confidence,
-			Confidence: cognition.Confidence,
-			At:         cognition.At,
-			Metadata: map[string]any{
-				"regime": cognition.Winner,
-			},
-		})
-
-		return true
+	nodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
+	graph.AddNode(&Node{
+		ID:         nodeID,
+		Symbol:     symbol.Symbol,
+		Source:     cognition.Source,
+		Kind:       KindCognition,
+		Value:      cognition.Confidence,
+		Confidence: cognition.Confidence,
+		At:         cognition.At,
+		Metadata: map[string]any{
+			"regime": cognition.Winner,
+		},
 	})
 }
 
@@ -528,13 +517,14 @@ inferStructuralEdges indexes nodes by the domains that can produce an
 evidence-bearing relationship. Zero-confidence pair relations are not
 materialized because their decision weight is necessarily zero.
 */
-func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) error {
+func (solver *Solver) inferStructuralEdges(
+	symbol *types.Symbol, graph *Graph,
+) error {
 	nodes := graph.Nodes
 	resonanceBySymbol := make(map[string][]*Node)
 	causalBySymbol := make(map[string][]*Node)
 	interventions := make([]*Node, 0)
 	expectationsBySymbol := make(map[string][]*Node)
-	var inferenceErr error
 
 	for _, node := range nodes {
 		switch node.Kind {
@@ -647,100 +637,96 @@ func (solver *Solver) inferStructuralEdges(thesis *types.Thesis, graph *Graph) e
 	}
 
 	// 2. Evaluate Leads & Lags from Cognition Beam Search
-	thesis.Cognition.Range(func(key, value any) bool {
-		symbol, symbolOK := key.(string)
-		cognition, cognitionOK := value.(types.Cognition)
+	stored, found := symbol.Cognition.Load(symbol.Symbol)
+	cognition, cognitionOK := stored.(types.Cognition)
 
-		if !symbolOK || !cognitionOK {
-			return true
+	if !found || !cognitionOK {
+		return nil
+	}
+
+	currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
+
+	for path, probability := range cognition.Predictions {
+		if path == "" {
+			continue
 		}
 
-		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol)
+		targetNodeID := fmt.Sprintf("cat:%s:%s", symbol.Symbol, path)
+		graph.AddEdge(&Edge{
+			From:       currentNodeID,
+			To:         targetNodeID,
+			Relation:   RelationLeads,
+			Weight:     probability,
+			Confidence: probability,
+			At:         graph.At,
+			Reason:     "cognition beam search lookahead prediction",
+		})
+		graph.AddEdge(&Edge{
+			From:       targetNodeID,
+			To:         currentNodeID,
+			Relation:   RelationLags,
+			Weight:     probability,
+			Confidence: probability,
+			At:         graph.At,
+			Reason:     "inverse temporal lag of beam search lookahead",
+		})
+	}
 
-		for path, probability := range cognition.Predictions {
-			if path == "" {
+	// 3. Relate categories through the evidence they actually share.
+	stored, found = symbol.Categories.Load(symbol.Symbol)
+
+	if !found {
+		return nil
+	}
+
+	categories := stored.([]types.Category)
+
+	for _, category := range categories {
+		for _, peer := range categories {
+			if category.Type == peer.Type {
 				continue
 			}
 
-			targetNodeID := fmt.Sprintf("cat:%s:%s", symbol, path)
-			graph.AddEdge(&Edge{
-				From:       currentNodeID,
-				To:         targetNodeID,
-				Relation:   RelationLeads,
-				Weight:     probability,
-				Confidence: probability,
-				At:         graph.At,
-				Reason:     "cognition beam search lookahead prediction",
-			})
-			graph.AddEdge(&Edge{
-				From:       targetNodeID,
-				To:         currentNodeID,
-				Relation:   RelationLags,
-				Weight:     probability,
-				Confidence: probability,
-				At:         graph.At,
-				Reason:     "inverse temporal lag of beam search lookahead",
-			})
-		}
+			relation := RelationType("")
+			reason := ""
 
-		return true
-	})
-
-	// 3. Relate categories through the evidence they actually share.
-	thesis.Categories.Range(func(key, value interface{}) bool {
-		symbol := key.(string)
-		categories := value.([]types.Category)
-
-		for _, category := range categories {
-			for _, peer := range categories {
-				if category.Type == peer.Type {
-					continue
+			for _, evidence := range category.Supporting {
+				if slices.Contains(peer.Opposing, evidence) {
+					relation = RelationContradicts
+					reason = "category evidence conflicts on " + evidence
+					break
 				}
 
-				relation := RelationType("")
-				reason := ""
-
-				for _, evidence := range category.Supporting {
-					if slices.Contains(peer.Opposing, evidence) {
-						relation = RelationContradicts
-						reason = "category evidence conflicts on " + evidence
-						break
-					}
-
-					if relation == "" && slices.Contains(peer.Supporting, evidence) {
-						relation = RelationRedundantWith
-						reason = "categories share supporting evidence " + evidence
-					}
+				if relation == "" && slices.Contains(peer.Supporting, evidence) {
+					relation = RelationRedundantWith
+					reason = "categories share supporting evidence " + evidence
 				}
-
-				if relation == "" {
-					continue
-				}
-
-				weight, err := agreementWeight(category.Strength, peer.Strength)
-
-				if err != nil {
-					inferenceErr = fmt.Errorf("category weight for %s: %w", category.Type, err)
-					return false
-				}
-
-				graph.AddEdge(&Edge{
-					From:       fmt.Sprintf("cat:%s:%s", symbol, category.Type),
-					To:         fmt.Sprintf("cat:%s:%s", symbol, peer.Type),
-					Relation:   relation,
-					Weight:     weight,
-					Confidence: category.Confidence * peer.Confidence,
-					At:         graph.At,
-					Reason:     reason,
-				})
 			}
+
+			if relation == "" {
+				continue
+			}
+
+			weight, err := agreementWeight(category.Strength, peer.Strength)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"graph: failed to compute agreement weight between categories - "+err.Error(),
+					err,
+				))
+			}
+
+			graph.AddEdge(&Edge{
+				From:       fmt.Sprintf("cat:%s:%s", symbol.Symbol, category.Type),
+				To:         fmt.Sprintf("cat:%s:%s", symbol.Symbol, peer.Type),
+				Relation:   relation,
+				Weight:     weight,
+				Confidence: category.Confidence * peer.Confidence,
+				At:         graph.At,
+				Reason:     reason,
+			})
 		}
-
-		return true
-	})
-
-	if inferenceErr != nil {
-		return inferenceErr
 	}
 
 	return nil

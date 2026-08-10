@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -74,10 +73,13 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.status.Store(types.BUSY)
-				errnie.Error(signal.thesis.AppendMeasurements(
-					types.SourceLeadLag,
-					signal.Measure(signal.thesis), true,
-				))
+				measurements := signal.Measure(signal.thesis)
+
+				if len(measurements) > 0 {
+					signal.thesis.AppendMeasurements(
+						types.SourceLeadLag, measurements, true,
+					)
+				}
 
 				signal.status.Store(types.READY)
 			}

@@ -120,8 +120,6 @@ func (thesis *Thesis) Reset(symbols ...string) *Thesis {
 		return true
 	})
 	thesis.At = time.Now().UTC()
-	thesis.LastTickerAt = time.Now().UTC()
-	thesis.LastTradeAt = time.Now().UTC()
 	thesis.CrossSection = NewCrossSection()
 	thesis.Tickers.Clear()
 	thesis.Trades.Clear()
@@ -161,12 +159,6 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 
 func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 	found, ok := thesis.Trades.LoadOrStore(trade.Symbol, []kraken.TradeData{trade})
-
-	if !ok {
-		thesis.LastTradeAt = trade.Timestamp
-		thesis.Fanout(SourceTrader, tradeReceivers...)
-		return thesis
-	}
 
 	if ok {
 		// Check if the trade timestamp is after the last trade timestamp.
@@ -422,6 +414,27 @@ func (thesis *Thesis) Stamped(symbol string, sources ...SourceType) bool {
 	}
 
 	return symbolStamped
+}
+
+func (thesis *Thesis) SymbolsReady() bool {
+	ready := true
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbol, ok := value.(*Symbol)
+
+		if !ok || symbol == nil {
+			return true
+		}
+
+		if symbol.Status != READY {
+			ready = false
+			return false
+		}
+
+		return true
+	})
+
+	return ready
 }
 
 func (thesis *Thesis) Close() error {

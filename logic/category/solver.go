@@ -103,8 +103,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
-		thesis.Categories.Store(symbolName, []types.Category{category})
-		symbol.Stamp(types.SourceCategory)
+		symbol.Categories.Store(symbolName, []types.Category{category})
+		thesis.Stamp(symbolName, types.SourceCategory)
 		return true
 	})
 

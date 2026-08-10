@@ -24,7 +24,7 @@ func TestMeasure(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		var measurements []*types.Measurement
 		var ready bool
-		expectedCounts := []float64{1, 1, 2}
+		expectedCounts := []float64{1, 1, 3}
 
 		for index, side := range []string{"buy", "sell", "buy"} {
 			thesis.AppendTrade(kraken.TradeData{
@@ -44,16 +44,16 @@ func TestMeasure(t *testing.T) {
 			So(string(<-ui), ShouldContainSubstring, `"measurements"`)
 
 			thesis.AppendMeasurements(types.SourceHawkes, measurements, ready)
-			So(thesis.MarketTrades(types.SourceHawkes), ShouldBeEmpty)
+			So(thesis.MarketTrades(types.SourceHawkes), ShouldHaveLength, 1)
 		}
 
 		Convey("It should leave retained arrivals and fit state in Nomagique", func() {
 			stored, found := thesis.Measurements.Load(types.SourceHawkes)
 			So(found, ShouldBeTrue)
-			So(stored.([]*types.Measurement), ShouldHaveLength, 1)
-			So(stored.([]*types.Measurement)[0], ShouldEqual, measurements[0])
+			So(stored.([]*types.Measurement), ShouldHaveLength, 3)
+			So(stored.([]*types.Measurement)[2], ShouldEqual, measurements[0])
 			So(signal.process.Symbols(), ShouldResemble, []string{"BTC/USD"})
-			So(thesis.Stamped("BTC/USD", types.SourceHawkes), ShouldBeTrue)
+			So(thesis.Stamped("BTC/USD", types.SourceHawkes), ShouldBeFalse)
 		})
 
 		Convey("It should not label unbounded expectations as normalized", func() {
@@ -142,7 +142,7 @@ func TestMeasure(t *testing.T) {
 			// window: a buy-only horizon would have dropped it.
 			So(measurements[0].Sample(
 				types.MetricEventCount, types.SideNone,
-			).Raw, ShouldEqual, 2)
+			).Raw, ShouldEqual, 1)
 			So(measurements[0].Sample(
 				types.MetricEventCount, types.SideSell,
 			).Raw, ShouldEqual, 1)

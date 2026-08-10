@@ -186,9 +186,16 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	nowUnix := uint64(thesis.At.UnixNano())
 
 	// 1. Process active categories per symbol
-	thesis.Categories.Range(func(key, value interface{}) bool {
+	thesis.Symbols.Range(func(key, value interface{}) bool {
 		symbol := key.(string)
-		categories := value.([]types.Category)
+		symbolState := value.(*types.Symbol)
+		stored, found := symbolState.Categories.Load(symbol)
+
+		if !found {
+			return true
+		}
+
+		categories := stored.([]types.Category)
 
 		if thesis.Stamped(symbol, types.SourceCognition) ||
 			!thesis.Stamped(symbol, types.SourceCategory) {
@@ -394,7 +401,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			REMConsolidating: solver.tickCounter%128 == 0 && nowUnix > 60e9,
 		}
 
-		thesis.Cognition.Store(symbol, cognition)
+		symbolState.Cognition.Store(symbol, cognition)
 		thesis.Stamp(symbol, types.SourceCognition)
 		return true
 	})
@@ -407,10 +414,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			startWindow := nowUnix - 60e9 // 1 minute window
 			solver.consolidate(startWindow, nowUnix)
 		}
-	}
-
-	if updated {
-		thesis.Fanout(types.SourceCognition)
 	}
 
 	return nil
@@ -826,13 +829,21 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 	*/
 	rows := datura.NewMap()
 
-	thesis.Cognition.Range(func(key, value any) bool {
+	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, ok := key.(string)
-		if !ok || value == nil {
+		symbolState, stateOK := value.(*types.Symbol)
+
+		if !ok || !stateOK || symbolState == nil {
 			return true
 		}
 
-		cognition, ok := value.(types.Cognition)
+		stored, found := symbolState.Cognition.Load(symbol)
+
+		if !found {
+			return true
+		}
+
+		cognition, ok := stored.(types.Cognition)
 		if !ok {
 			return true
 		}

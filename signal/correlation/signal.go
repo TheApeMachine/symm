@@ -81,10 +81,13 @@ func (signal *Signal) run() {
 				return
 			case <-signal.semaphore:
 				signal.status.Store(types.BUSY)
-				errnie.Error(signal.thesis.AppendMeasurements(
-					types.SourceCorrelation,
-					signal.Measure(signal.thesis), true,
-				))
+				measurements := signal.Measure(signal.thesis)
+
+				if len(measurements) > 0 {
+					signal.thesis.AppendMeasurements(
+						types.SourceCorrelation, measurements, true,
+					)
+				}
 
 				signal.status.Store(types.READY)
 			}

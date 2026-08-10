@@ -45,27 +45,27 @@ func TestUpdate(t *testing.T) {
 		sixth := -0.4
 		seventh := 0.6
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbols.Store("BTC/USD", &types.Symbol{
-			Readiness: types.Readiness{
-				Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
-				Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
-				Sentiment: true, Toxicity: true,
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Readiness = types.Readiness{
+			Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
+			Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
+			Sentiment: true, Toxicity: true,
+		}
+		symbol.Measurements = []*types.Measurement{{
+			Source: types.SourceLiquidity,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				"second":   {Normalized: &second},
+				"first":    {Normalized: &first},
+				"third":    {Normalized: &third},
+				"fourth":   {Normalized: &fourth},
+				"fifth":    {Normalized: &fifth},
+				"sixth":    {Normalized: &sixth},
+				"seventh":  {Normalized: &seventh},
+				"raw_only": {Raw: 100},
 			},
-			Measurements: []*types.Measurement{{
-				Source: types.SourceLiquidity,
-				Symbol: "BTC/USD",
-				Metrics: map[string]types.MetricSample{
-					"second":   {Normalized: &second},
-					"first":    {Normalized: &first},
-					"third":    {Normalized: &third},
-					"fourth":   {Normalized: &fourth},
-					"fifth":    {Normalized: &fifth},
-					"sixth":    {Normalized: &sixth},
-					"seventh":  {Normalized: &seventh},
-					"raw_only": {Raw: 100},
-				},
-			}},
-		})
+		}}
+		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(t.Context(), make(chan []byte, 1), nil, testAlpha)
 
 		err := solver.Update(thesis)
@@ -74,7 +74,7 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
 
-			stored, found := thesis.Resonance.Load("BTC/USD")
+			stored, found := symbol.Resonance.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 
 			reading, ok := stored.(types.ResonanceReading)
@@ -119,25 +119,25 @@ func TestUpdate(t *testing.T) {
 			"ETH/USD": ethereum,
 		} {
 			value := value
-			thesis.Symbols.Store(symbol, &types.Symbol{
-				Readiness: types.Readiness{
-					Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
-					Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
-					Sentiment: true, Toxicity: true,
+			symbolState := types.NewSymbol(symbol, nil)
+			symbolState.Readiness = types.Readiness{
+				Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
+				Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
+				Sentiment: true, Toxicity: true,
+			}
+			symbolState.Measurements = []*types.Measurement{{
+				Source: types.SourceLiquidity,
+				Symbol: symbol,
+				Metrics: map[string]types.MetricSample{
+					"first":  {Normalized: &value},
+					"second": {Normalized: &value},
+					"third":  {Normalized: &value},
+					"fourth": {Normalized: &value},
+					"fifth":  {Normalized: &value},
+					"sixth":  {Normalized: &value},
 				},
-				Measurements: []*types.Measurement{{
-					Source: types.SourceLiquidity,
-					Symbol: symbol,
-					Metrics: map[string]types.MetricSample{
-						"first":  {Normalized: &value},
-						"second": {Normalized: &value},
-						"third":  {Normalized: &value},
-						"fourth": {Normalized: &value},
-						"fifth":  {Normalized: &value},
-						"sixth":  {Normalized: &value},
-					},
-				}},
-			})
+			}}
+			thesis.Symbols.Store(symbol, symbolState)
 		}
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
@@ -150,8 +150,10 @@ func TestUpdate(t *testing.T) {
 			So(bitcoinFound, ShouldBeTrue)
 			So(ethereumFound, ShouldBeTrue)
 			So(bitcoinCoder, ShouldNotEqual, ethereumCoder)
-			_, bitcoinPublished := thesis.Resonance.Load("BTC/USD")
-			_, ethereumPublished := thesis.Resonance.Load("ETH/USD")
+			bitcoinState, _ := thesis.Symbols.Load("BTC/USD")
+			ethereumState, _ := thesis.Symbols.Load("ETH/USD")
+			_, bitcoinPublished := bitcoinState.(*types.Symbol).Resonance.Load("BTC/USD")
+			_, ethereumPublished := ethereumState.(*types.Symbol).Resonance.Load("ETH/USD")
 			So(bitcoinPublished, ShouldBeTrue)
 			So(ethereumPublished, ShouldBeTrue)
 			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
@@ -162,6 +164,14 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a symbol populated through ready signal publications", t, func() {
 		value := 0.25
 		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.AddMeasurement(&types.Measurement{
+			ID: "liquidity", Source: types.SourceLiquidity, Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				"score": {Normalized: &value},
+			},
+		})
+		thesis.Symbols.Store("BTC/USD", symbol)
 		sources := []types.SourceType{
 			types.SourceCorrelation,
 			types.SourceCVD,
@@ -190,35 +200,35 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should settle the published symbol instead of rejecting its readiness", func() {
 			So(err, ShouldBeNil)
-			_, found := thesis.Resonance.Load("BTC/USD")
+			_, found := symbol.Resonance.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 		})
 	})
 
 	Convey("Given no normalized measurements", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbols.Store("BTC/USD", &types.Symbol{
-			Readiness: types.Readiness{
-				Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
-				Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
-				Sentiment: true, Toxicity: true,
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Readiness = types.Readiness{
+			Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
+			Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
+			Sentiment: true, Toxicity: true,
+		}
+		symbol.Measurements = []*types.Measurement{{
+			Source: types.SourceLiquidity,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				"midpoint": {Raw: 100},
 			},
-			Measurements: []*types.Measurement{{
-				Source: types.SourceLiquidity,
-				Symbol: "BTC/USD",
-				Metrics: map[string]types.MetricSample{
-					"midpoint": {Raw: 100},
-				},
-			}},
-		})
+		}}
+		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
 		err := solver.Update(thesis)
 
-		Convey("It should leave resonance unstamped", func() {
+		Convey("It should stamp the empty normalized feature set", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeFalse)
-			_, published := thesis.Resonance.Load("BTC/USD")
+			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
+			_, published := symbol.Resonance.Load("BTC/USD")
 			So(published, ShouldBeFalse)
 		})
 	})
@@ -246,26 +256,25 @@ func BenchmarkUpdate(b *testing.B) {
 
 	ctx := b.Context()
 	thesis := types.NewThesis(ctx, nil)
-	symbol := &types.Symbol{
-		Readiness: types.Readiness{
-			Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
-			Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
-			Sentiment: true, Toxicity: true,
-		},
-		Measurements: []*types.Measurement{{
-			Source: types.SourceLiquidity,
-			Symbol: "BTC/USD",
-			Metrics: map[string]types.MetricSample{
-				"second":  {Normalized: &second},
-				"first":   {Normalized: &first},
-				"third":   {Normalized: &third},
-				"fourth":  {Normalized: &fourth},
-				"fifth":   {Normalized: &fifth},
-				"sixth":   {Normalized: &sixth},
-				"seventh": {Normalized: &seventh},
-			},
-		}},
+	symbol := types.NewSymbol("BTC/USD", nil)
+	symbol.Readiness = types.Readiness{
+		Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
+		Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
+		Sentiment: true, Toxicity: true,
 	}
+	symbol.Measurements = []*types.Measurement{{
+		Source: types.SourceLiquidity,
+		Symbol: "BTC/USD",
+		Metrics: map[string]types.MetricSample{
+			"second":  {Normalized: &second},
+			"first":   {Normalized: &first},
+			"third":   {Normalized: &third},
+			"fourth":  {Normalized: &fourth},
+			"fifth":   {Normalized: &fifth},
+			"sixth":   {Normalized: &sixth},
+			"seventh": {Normalized: &seventh},
+		},
+	}}
 	thesis.Symbols.Store("BTC/USD", symbol)
 	solver := NewSolver(ctx, nil, nil, testAlpha)
 	sources := []types.SourceType{

@@ -145,7 +145,7 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		)))
 	}
 
-	thesis.Fanout(types.SourcePlanner)
+	thesis.Fanout(types.SourcePlanner, types.SourceTrader)
 }
 
 /* decisions evaluates one binary verdict per ready causal artifact. */
@@ -153,11 +153,24 @@ func (planner *Planner) decisions(thesis *types.Thesis) ([]types.Decision, error
 	decisions := make([]types.Decision, 0)
 	var decisionsErr error
 
-	thesis.Causal.Range(func(key, value any) bool {
+	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, symbolOK := key.(string)
-		causal, causalOK := value.(map[string]any)
+		symbolState, stateOK := value.(*types.Symbol)
 
-		if !symbolOK || symbol == "" || !causalOK {
+		if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
+			decisionsErr = fmt.Errorf("planner: invalid causal artifact")
+			return false
+		}
+
+		causalValue, found := symbolState.Causal.Load(symbol)
+
+		if !found {
+			return true
+		}
+
+		causal, causalOK := causalValue.(map[string]any)
+
+		if !causalOK {
 			decisionsErr = fmt.Errorf("planner: invalid causal artifact")
 			return false
 		}
@@ -193,7 +206,7 @@ func (planner *Planner) decisions(thesis *types.Thesis) ([]types.Decision, error
 		}
 
 		decision.At = thesis.At
-		thesis.Decisions.Store(symbol, decision)
+		symbolState.Decisions.Store(symbol, decision)
 		decisions = append(decisions, *decision)
 
 		return true

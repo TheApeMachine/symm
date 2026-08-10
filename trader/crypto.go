@@ -85,15 +85,15 @@ func (crypto *Crypto) run() {
 			case trade := <-crypto.subscriptions["trade"].Channel:
 				crypto.onTrade(trade)
 			case <-crypto.semaphore:
-				completed := make([]string, 0)
-				crypto.thesis.Symbols.Range(func(key, _ any) bool {
-					symbol, ok := key.(string)
+				crypto.thesis.Symbols.Range(func(key, value any) bool {
+					symbolName, nameOK := key.(string)
+					symbol, symbolOK := value.(*types.Symbol)
 
-					if !ok || !crypto.thesis.Stamped(symbol, types.SourcePlanner) {
+					if !nameOK || !symbolOK || !symbol.Stamped(types.SourcePlanner) {
 						return true
 					}
 
-					if value, found := crypto.thesis.Decisions.Load(symbol); found {
+					if value, found := symbol.Decisions.Load(symbolName); found {
 						decision, valid := value.(*types.Decision)
 
 						if valid {
@@ -107,15 +107,13 @@ func (crypto *Crypto) run() {
 								}
 							}()
 						}
+
+						return true
 					}
 
-					completed = append(completed, symbol)
+					symbol.Reset()
 					return true
 				})
-
-				if len(completed) > 0 {
-					crypto.thesis.Reset(completed...)
-				}
 			}
 		}
 	}()

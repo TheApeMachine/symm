@@ -74,7 +74,7 @@ func TestMeasure(t *testing.T) {
 		Convey("It preserves legacy keys and publishes both dimensionless directional families", func() {
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
-			So(measurement.Metrics, ShouldHaveLength, 20)
+			So(measurement.Metrics, ShouldHaveLength, 25)
 			So(measurement.Sample(types.MetricRVOL, types.SideNone).Unit,
 				ShouldEqual, types.UnitDimensionless)
 			So(measurement.Sample(types.MetricSpread, types.SideNone).Unit,

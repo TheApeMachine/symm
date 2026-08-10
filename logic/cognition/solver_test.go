@@ -41,16 +41,16 @@ func TestUpdate(t *testing.T) {
 			).Count, ShouldEqual, uint64(0))
 		})
 
-		thesis.Categories.Store("BTC/USD", []types.Category{{
+		state, found := thesis.Symbols.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		symbol := state.(*types.Symbol)
+		symbol.Readiness.Reset()
+		symbol.Categories.Store("BTC/USD", []types.Category{{
 			Symbol:     "BTC/USD",
 			Type:       types.CategoryActiveReversal,
 			Confidence: 1,
 			Strength:   1,
 		}})
-		state, found := thesis.Symbols.Load("BTC/USD")
-		So(found, ShouldBeTrue)
-		symbol := state.(*types.Symbol)
-		symbol.Reset()
 		symbol.Stamp(types.SourceCategory)
 		So(solver.Update(thesis), ShouldBeNil)
 		transitionCount := tree.GetSensoryWeight(
@@ -130,13 +130,14 @@ func TestFormatLookaheadPredictions(t *testing.T) {
 func cognitionThesis(category types.CategoryType) *types.Thesis {
 	thesis := types.NewThesis(context.Background(), nil)
 	thesis.At = time.Unix(1, 0).UTC()
-	thesis.Categories.Store("BTC/USD", []types.Category{{
+	symbol := types.NewSymbol("BTC/USD", nil)
+	symbol.Categories.Store("BTC/USD", []types.Category{{
 		Symbol:     "BTC/USD",
 		Type:       category,
 		Confidence: 1,
 		Strength:   1,
 	}})
-	thesis.Symbols.Store("BTC/USD", &types.Symbol{})
+	thesis.Symbols.Store("BTC/USD", symbol)
 	thesis.Stamp("BTC/USD", types.SourceCategory)
 
 	return thesis
@@ -161,7 +162,7 @@ func BenchmarkUpdate(b *testing.B) {
 		}
 
 		symbol := state.(*types.Symbol)
-		symbol.Reset()
+		symbol.Readiness.Reset()
 		symbol.Stamp(types.SourceCategory)
 
 		if err := solver.Update(thesis); err != nil {

@@ -310,14 +310,15 @@ func TestCryptoRun(t *testing.T) {
 				So(forecast.SetPredictiveDistribution(0.01, 12, true), ShouldBeNil)
 
 				thesis := types.NewThesis(t.Context(), nil)
-				thesis.Symbols.Store("SIM1/USD", &types.Symbol{})
-				thesis.Resonance.Store("SIM1/USD", types.ResonanceReading{
+				symbol := types.NewSymbol("SIM1/USD", nil)
+				thesis.Symbols.Store("SIM1/USD", symbol)
+				symbol.Resonance.Store("SIM1/USD", types.ResonanceReading{
 					Source:   types.SourceResonance,
 					Symbol:   "SIM1/USD",
 					At:       thesis.At,
 					Forecast: forecast,
 				})
-				thesis.Cognition.Store("SIM1/USD", types.Cognition{
+				symbol.Cognition.Store("SIM1/USD", types.Cognition{
 					Symbol:     "SIM1/USD",
 					Confidence: 0.95,
 				})
@@ -330,7 +331,7 @@ func TestCryptoRun(t *testing.T) {
 					Confidence: forecast.Confidence,
 					At:         thesis.At,
 				})
-				thesis.Graphs.Store("market_graph", marketGraph)
+				symbol.Graphs.Store("market_graph", marketGraph)
 
 				rows := make([][]float64, 100)
 
@@ -344,7 +345,7 @@ func TestCryptoRun(t *testing.T) {
 					}
 				}
 
-				thesis.Causal.Store("SIM1/USD", map[string]any{
+				symbol.Causal.Store("SIM1/USD", map[string]any{
 					"ready":          true,
 					"historyRows":    rows,
 					"treatmentLevel": 1.0,
@@ -364,7 +365,7 @@ func TestCryptoRun(t *testing.T) {
 				}
 
 				system.Planner.Update(thesis)
-				stored, found := thesis.Decisions.Load("SIM1/USD")
+				stored, found := symbol.Decisions.Load("SIM1/USD")
 				So(found, ShouldBeTrue)
 				decision := stored.(*types.Decision)
 
@@ -416,6 +417,23 @@ func TestRegimeDiscrimination(t *testing.T) {
 				}
 
 				So(market.TransitionAll(states), ShouldBeNil)
+
+				for {
+					storedSymbol, _ := thesis.Symbols.Load("REG1/USD")
+					symbolState := storedSymbol.(*types.Symbol)
+					_, decided := symbolState.Decisions.Load("REG1/USD")
+
+					if decided {
+						break
+					}
+
+					if err := t.Context().Err(); err != nil {
+						t.Fatal(err)
+					}
+
+					runtime.Gosched()
+				}
+
 				stopCollector()
 				decisionResult := <-collected
 				So(decisionResult.err, ShouldBeNil)
@@ -572,13 +590,20 @@ func updateIntegrationSnapshot(
 		}
 	}
 
-	categoriesRaw, categoriesReady := thesis.Categories.Load(symbol)
+	storedSymbol, symbolReady := thesis.Symbols.Load(symbol)
+
+	if !symbolReady {
+		return
+	}
+
+	symbolState := storedSymbol.(*types.Symbol)
+	categoriesRaw, categoriesReady := symbolState.Categories.Load(symbol)
 
 	if categories, ok := categoriesRaw.([]types.Category); categoriesReady && ok {
 		snapshot.categories = mergeCategories(snapshot.categories, categories)
 	}
 
-	resonanceRaw, resonanceReady := thesis.Resonance.Load(symbol)
+	resonanceRaw, resonanceReady := symbolState.Resonance.Load(symbol)
 
 	if resonance, ok := resonanceRaw.(types.ResonanceReading); resonanceReady && ok &&
 		resonance.Samples > 0 {
@@ -658,25 +683,39 @@ func collectDecisionBatches(
 		collectedIDs := make(map[string]struct{})
 
 		for {
-			thesis.Decisions.Range(func(key, value any) bool {
-				decision, ok := value.(*types.Decision)
+			thesis.Symbols.Range(func(_, value any) bool {
+				symbol, ok := value.(*types.Symbol)
 
 				if !ok {
 					collection.err = fmt.Errorf(
-						"planner: expected decision, got %T", value,
+						"planner: expected symbol, got %T", value,
 					)
 
 					return false
 				}
 
-				if _, found := collectedIDs[decision.ID]; found {
+				symbol.Decisions.Range(func(_, value any) bool {
+					decision, ok := value.(*types.Decision)
+
+					if !ok {
+						collection.err = fmt.Errorf(
+							"planner: expected decision, got %T", value,
+						)
+
+						return false
+					}
+
+					if _, found := collectedIDs[decision.ID]; found {
+						return true
+					}
+
+					collectedIDs[decision.ID] = struct{}{}
+					collection.decisions = append(collection.decisions, *decision)
+
 					return true
-				}
+				})
 
-				collectedIDs[decision.ID] = struct{}{}
-				collection.decisions = append(collection.decisions, *decision)
-
-				return true
+				return collection.err == nil
 			})
 
 			if collection.err != nil {
