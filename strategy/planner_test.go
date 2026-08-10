@@ -176,28 +176,19 @@ func TestPlannerUpdate(t *testing.T) {
 			Symbol: "BTC/USD",
 		})
 		thesis.Graphs.Store(marketGraphKey, logicgraph.NewGraph(thesis.At))
+		thesis.Symbols.Store("BTC/USD", &types.Symbol{})
 		Reset(func() {
 			So(causalSolver.Close(), ShouldBeNil)
 		})
 
 		for _, source := range []types.SourceType{
-			types.SourceCorrelation,
-			types.SourceCVD,
-			types.SourceDepthFlow,
-			types.SourceExhaustion,
-			types.SourceHawkes,
-			types.SourceLeadLag,
-			types.SourceLiquidity,
-			types.SourcePumpDump,
-			types.SourceSentiment,
-			types.SourceToxicity,
-			types.SourceCategories,
+			types.SourceCategory,
 			types.SourceCognition,
 			types.SourceManifold,
 			types.SourceResonance,
 			types.SourceGraph,
 		} {
-			thesis.Readiness.Stamp(source)
+			thesis.Stamp("BTC/USD", source)
 		}
 
 		So(causalSolver.Update(thesis), ShouldBeNil)
@@ -205,8 +196,7 @@ func TestPlannerUpdate(t *testing.T) {
 		planner.Update(thesis)
 
 		Convey("Then Planner should complete without inventing a decision", func() {
-			So(thesis.Readiness.Planner, ShouldBeTrue)
-			So(thesis.Readiness.Complete(), ShouldBeTrue)
+			So(thesis.Stamped("BTC/USD", types.SourcePlanner), ShouldBeTrue)
 			_, found := thesis.Decisions.Load("BTC/USD")
 			So(found, ShouldBeFalse)
 			So(len(messages), ShouldEqual, 0)
@@ -216,22 +206,26 @@ func TestPlannerUpdate(t *testing.T) {
 	Convey("Given a complete logic cut without causal candidates", t, func() {
 		planner := &Planner{}
 		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Symbols.Store("BTC/USD", &types.Symbol{})
+		thesis.Symbols.Store("ETH/USD", &types.Symbol{})
 
 		for _, source := range []types.SourceType{
-			types.SourceCategories,
+			types.SourceCategory,
 			types.SourceCognition,
 			types.SourceManifold,
 			types.SourceResonance,
 			types.SourceCausal,
 			types.SourceGraph,
 		} {
-			thesis.Readiness.Stamp(source)
+			thesis.Stamp("BTC/USD", source)
 		}
+		thesis.Stamp("ETH/USD", types.SourceCategory)
 
 		planner.Update(thesis)
 
-		Convey("Then Planner should close the epoch without inventing a decision", func() {
-			So(thesis.StrategyDecided(), ShouldBeTrue)
+		Convey("Then Planner should close only the ready symbol", func() {
+			So(thesis.Stamped("BTC/USD", types.SourcePlanner), ShouldBeTrue)
+			So(thesis.Stamped("ETH/USD", types.SourcePlanner), ShouldBeFalse)
 		})
 	})
 }
@@ -417,6 +411,8 @@ func plannerThesisFixture(
 		At:         thesis.At,
 	})
 	thesis.Graphs.Store(marketGraphKey, marketGraph)
+	thesis.Symbols.Store(symbol, &types.Symbol{})
+	thesis.Stamp(symbol, types.SourceGraph)
 
 	return thesis
 }

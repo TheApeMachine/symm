@@ -119,13 +119,25 @@ func TestMeasureTrade(t *testing.T) {
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
 			So(measurement.At, ShouldResemble, at)
-			So(measurement.Metrics, ShouldHaveLength, 6)
+			So(measurement.Metrics, ShouldHaveLength, 7)
 			So(measurement.Sample(types.MetricLoadedScore, types.SideNone).Raw,
+				ShouldBeGreaterThan, 0)
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
 				ShouldBeGreaterThan, 0)
 
 			for _, sample := range measurement.Metrics {
-				So(sample.Unit, ShouldEqual, types.UnitDimensionless)
+				if sample.Unit == types.UnitDimensionless {
+					continue
+				}
+
+				So(sample.Unit, ShouldBeIn, types.UnitQuoteCurrency, types.UnitBaseCurrency)
 			}
+			strengthKey := types.MetricKey(types.MetricStrength, types.SideNone)
+			valueKey := types.MetricKey(types.MetricValue, types.SideNone)
+			_, hasStrength := measurement.Metrics[strengthKey]
+			_, hasValue := measurement.Metrics[valueKey]
+			So(hasStrength, ShouldBeFalse)
+			So(hasValue, ShouldBeFalse)
 		})
 	})
 }
@@ -135,7 +147,7 @@ func TestFrame(t *testing.T) {
 		signal := &Signal{}
 		at := time.Unix(1_700_000_300, 0).UTC()
 		measurements := signal.frame("BTC/USD", at, equation.BookflowOutput{
-			Value: 0.3, Strength: 0.3, ThinScore: 0.3, Category: 3, Ready: true,
+			Value: 0.3, SNR: 0.4, ThinScore: 0.3, Category: 3, Ready: true,
 		}, 0.8)
 
 		Convey("It should preserve the dimensionless depletion fraction and provenance", func() {
@@ -147,6 +159,8 @@ func TestFrame(t *testing.T) {
 				ShouldAlmostEqual, 0.3, 1e-12)
 			So(*measurement.Sample(types.MetricThinScore, types.SideNone).Normalized,
 				ShouldAlmostEqual, 0.3, 1e-12)
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldAlmostEqual, 0.4, 1e-12)
 		})
 	})
 
@@ -155,7 +169,7 @@ func TestFrame(t *testing.T) {
 			"BTC/USD",
 			time.Unix(1_700_000_400, 0).UTC(),
 			equation.BookflowOutput{
-				Value: 1.5, Strength: 1.5, SpoofScore: 1.5, Category: 2, Ready: true,
+				Value: 1.5, SNR: 0.6, SpoofScore: 1.5, Category: 2, Ready: true,
 			},
 			1,
 		)[0]
@@ -163,8 +177,27 @@ func TestFrame(t *testing.T) {
 		Convey("It should scale spoof evidence by the maximum possible contrast", func() {
 			So(*measurement.Sample(types.MetricSpoofScore, types.SideNone).Normalized,
 				ShouldAlmostEqual, 0.75, 1e-12)
-			So(*measurement.Sample(types.MetricStrength, types.SideNone).Normalized,
-				ShouldAlmostEqual, 0.75, 1e-12)
+			So(measurement.Metrics, ShouldHaveLength, 5)
+		})
+	})
+}
+
+func TestNormalizedBookflowScore(t *testing.T) {
+	Convey("Given the complete bookflow score domains", t, func() {
+		loaded := normalizedBookflowScore(types.MetricLoadedScore, 0.4)
+		thin := normalizedBookflowScore(types.MetricThinScore, 0.6)
+		neutral := normalizedBookflowScore(types.MetricNeutralScore, 0.8)
+		snr := normalizedBookflowScore(types.MetricSNR, 0.7)
+		spoofMidpoint := normalizedBookflowScore(types.MetricSpoofScore, 1)
+		spoofMaximum := normalizedBookflowScore(types.MetricSpoofScore, 2)
+
+		Convey("It should preserve unit scores and scale contrast by its full domain", func() {
+			So(*loaded, ShouldAlmostEqual, 0.4, 1e-12)
+			So(*thin, ShouldAlmostEqual, 0.6, 1e-12)
+			So(*neutral, ShouldAlmostEqual, 0.8, 1e-12)
+			So(*snr, ShouldAlmostEqual, 0.7, 1e-12)
+			So(*spoofMidpoint, ShouldAlmostEqual, 0.5, 1e-12)
+			So(*spoofMaximum, ShouldAlmostEqual, 1, 1e-12)
 		})
 	})
 }
@@ -198,7 +231,7 @@ func BenchmarkFrame(b *testing.B) {
 	signal := &Signal{}
 	at := time.Unix(1_700_000_500, 0).UTC()
 	output := equation.BookflowOutput{
-		Value: 0.7, Strength: 0.7, LoadedScore: 0.7, Category: 1, Ready: true,
+		Value: 0.7, SNR: 0.6, LoadedScore: 0.7, Category: 1, Ready: true,
 	}
 
 	b.ReportAllocs()

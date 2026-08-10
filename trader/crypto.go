@@ -85,31 +85,37 @@ func (crypto *Crypto) run() {
 			case trade := <-crypto.subscriptions["trade"].Channel:
 				crypto.onTrade(trade)
 			case <-crypto.semaphore:
-				if !crypto.thesis.Readiness.Complete() {
-					continue
-				}
+				completed := make([]string, 0)
+				crypto.thesis.Symbols.Range(func(key, _ any) bool {
+					symbol, ok := key.(string)
 
-				crypto.thesis.Decisions.Range(func(key, value any) bool {
-					decision, ok := value.(*types.Decision)
-
-					if !ok {
+					if !ok || !crypto.thesis.Stamped(symbol, types.SourcePlanner) {
 						return true
 					}
 
-					go func() {
-						if err := crypto.desk.Execute(*decision); err != nil {
-							errnie.Error(errnie.Err(
-								errnie.Internal,
-								"crypto: failed to execute decision round",
-								err,
-							))
-						}
-					}()
+					if value, found := crypto.thesis.Decisions.Load(symbol); found {
+						decision, valid := value.(*types.Decision)
 
+						if valid {
+							go func() {
+								if err := crypto.desk.Execute(*decision); err != nil {
+									errnie.Error(errnie.Err(
+										errnie.Internal,
+										"crypto: failed to execute decision round",
+										err,
+									))
+								}
+							}()
+						}
+					}
+
+					completed = append(completed, symbol)
 					return true
 				})
 
-				crypto.thesis.Reset()
+				if len(completed) > 0 {
+					crypto.thesis.Reset(completed...)
+				}
 			}
 		}
 	}()

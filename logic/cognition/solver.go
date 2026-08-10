@@ -182,212 +182,224 @@ Update ingests the active Thesis categories, evaluates category transition surpr
 breaks/continues sequence paths, classifies market regimes, and runs lookahead beam search.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis.Readiness.Categories {
-		solver.tickCounter++
-		nowUnix := uint64(thesis.At.UnixNano())
+	updated := false
+	nowUnix := uint64(thesis.At.UnixNano())
 
-		// 1. Process active categories per symbol
-		thesis.Categories.Range(func(key, value interface{}) bool {
-			symbol := key.(string)
-			categories := value.([]types.Category)
+	// 1. Process active categories per symbol
+	thesis.Categories.Range(func(key, value interface{}) bool {
+		symbol := key.(string)
+		categories := value.([]types.Category)
 
-			if len(categories) == 0 {
-				return true
-			}
+		if thesis.Stamped(symbol, types.SourceCognition) ||
+			!thesis.Stamped(symbol, types.SourceCategory) {
+			return true
+		}
 
-			// Select the dominant category for this symbol on this tick
-			dominantCategory := solver.selectDominantCategory(categories)
+		if !updated {
+			solver.tickCounter++
+			updated = true
+		}
 
-			if dominantCategory == types.CategoryTypeNone {
-				return true
-			}
+		if len(categories) == 0 {
+			thesis.Stamp(symbol, types.SourceCognition)
+			return true
+		}
 
-			categoryToken := solver.encodeCategory(dominantCategory)
-			activeTokens := solver.sequences[symbol]
-			transitioned := len(activeTokens) == 0 ||
-				activeTokens[len(activeTokens)-1] != categoryToken
+		// Select the dominant category for this symbol on this tick
+		dominantCategory := solver.selectDominantCategory(categories)
 
-			if transitioned {
-				// 2. Evaluate if appending this category causes a Sequence Break
-				broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
+		if dominantCategory == types.CategoryTypeNone {
+			thesis.Stamp(symbol, types.SourceCognition)
+			return true
+		}
 
-				if broken && len(activeTokens) > 0 {
-					// --- SEQUENCE BREAK DETECTED ---
-					oldSequenceBytes := solver.sequenceBytes(activeTokens)
+		categoryToken := solver.encodeCategory(dominantCategory)
+		activeTokens := solver.sequences[symbol]
+		transitioned := len(activeTokens) == 0 ||
+			activeTokens[len(activeTokens)-1] != categoryToken
 
-					// Commit completed sequence to episodic buffer for REM replay
-					_, _ = solver.tree.CommitToEpisodicBuffer(nowUnix, oldSequenceBytes)
+		if transitioned {
+			// 2. Evaluate if appending this category causes a Sequence Break
+			broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
 
-					/*
-						A completed sequence is learned without being told what it
-						was. When nothing the model already knows explains it, the
-						model names a regime for it rather than forcing it into the
-						least-bad existing basin and corrupting that basin.
+			if broken && len(activeTokens) > 0 {
+				// --- SEQUENCE BREAK DETECTED ---
+				oldSequenceBytes := solver.sequenceBytes(activeTokens)
 
-						This is the one place cognition can exceed the category
-						taxonomy: categories are a fixed vocabulary, but the
-						sequences they compose into are not.
-					*/
-					outcome, experienceErr := solver.tree.ExperienceSequence(
-						oldSequenceBytes, &solver.classScratch,
-					)
+				// Commit completed sequence to episodic buffer for REM replay
+				_, _ = solver.tree.CommitToEpisodicBuffer(nowUnix, oldSequenceBytes)
 
-					if experienceErr == nil && outcome.NewConcept {
-						solver.spawned[symbol] = string(outcome.Class)
-					}
+				/*
+					A completed sequence is learned without being told what it
+					was. When nothing the model already knows explains it, the
+					model names a regime for it rather than forcing it into the
+					least-bad existing basin and corrupting that basin.
 
-					// Start fresh sequence buffer with new category
-					activeTokens = []string{categoryToken}
-				} else {
-					// --- SEQUENCE CONTINUES ---
-					activeTokens = append(activeTokens, categoryToken)
+					This is the one place cognition can exceed the category
+					taxonomy: categories are a fixed vocabulary, but the
+					sequences they compose into are not.
+				*/
+				outcome, experienceErr := solver.tree.ExperienceSequence(
+					oldSequenceBytes, &solver.classScratch,
+				)
+
+				if experienceErr == nil && outcome.NewConcept {
+					solver.spawned[symbol] = string(outcome.Class)
 				}
 
-				solver.sequences[symbol] = activeTokens
-
-				// 3. Train only the first observation and category transitions.
-				solver.tree.TrainSensorySequence(solver.sequenceBytes(activeTokens))
+				// Start fresh sequence buffer with new category
+				activeTokens = []string{categoryToken}
+			} else {
+				// --- SEQUENCE CONTINUES ---
+				activeTokens = append(activeTokens, categoryToken)
 			}
 
-			activeSequenceBytes := solver.sequenceBytes(activeTokens)
-			spawnedClass, spawned := solver.spawned[symbol]
+			solver.sequences[symbol] = activeTokens
 
-			// 4. Classify macro market regime / concept attractor basin
-			classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)
+			// 3. Train only the first observation and category transitions.
+			solver.tree.TrainSensorySequence(solver.sequenceBytes(activeTokens))
+		}
 
-			// 5. Lookahead Beam Search: Predict next 2–3 likely category hops
-			beamPaths := solver.tree.ExecuteBeamSearch(
+		activeSequenceBytes := solver.sequenceBytes(activeTokens)
+		spawnedClass, spawned := solver.spawned[symbol]
+
+		// 4. Classify macro market regime / concept attractor basin
+		classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)
+
+		// 5. Lookahead Beam Search: Predict next 2–3 likely category hops
+		beamPaths := solver.tree.ExecuteBeamSearch(
+			activeSequenceBytes,
+			solver.beamWidth,
+			solver.maxHops,
+			&solver.beamScratch,
+		)
+
+		/*
+			6. Measure Branch Ambiguity (Shannon Entropy)
+
+			MeasureBranchAmbiguity seeks the storage key verbatim — unlike
+			GetSensoryWeight and PredictNextSensoryTokens, which namespace their
+			argument internally. Handing it a bare sequence searched a namespace
+			nothing is written to, so every prefix reported zero bits and the
+			entropy gate could never open.
+		*/
+		ambiguity := solver.tree.MeasureBranchAmbiguity(
+			dmt.SensoryPrefixKey(activeSequenceBytes),
+		)
+
+		// 7. Format Lookahead Predictions for Thesis
+		predictions := solver.formatLookaheadPredictions(
+			beamPaths, activeSequenceBytes,
+		)
+
+		classes := make([]types.CognitionClass, 0, len(classResult.Scores))
+
+		for _, score := range classResult.Scores {
+			classes = append(classes, types.CognitionClass{
+				Name:        string(score.ClassName),
+				Probability: score.Value,
+			})
+		}
+
+		beams := make([]types.CognitionBeam, 0, len(beamPaths))
+
+		for _, path := range beamPaths {
+			beams = append(beams, types.CognitionBeam{
+				Sequence: solver.decodeCategoryPath(path.Sequence),
+				Key:      string(path.Sequence),
+				Score:    path.Score,
+			})
+		}
+
+		branches := solver.cachedPrefixTree(symbol, activeTokens, transitioned)
+
+		contrast := 0.0
+		contrastEvidence := 0.0
+
+		if len(classResult.Scores) > 1 {
+			contrast = classResult.Scores[0].Value - classResult.Scores[1].Value
+			evidence := solver.tree.ComputeBasinContrastiveEvidence(
+				classResult.Scores[0].ClassName,
+				classResult.Scores[1].ClassName,
 				activeSequenceBytes,
-				solver.beamWidth,
-				solver.maxHops,
-				&solver.beamScratch,
 			)
+			contrastEvidence = evidence.Divergence
+		}
 
-			/*
-				6. Measure Branch Ambiguity (Shannon Entropy)
+		lookaheadScore := 0.0
 
-				MeasureBranchAmbiguity seeks the storage key verbatim — unlike
-				GetSensoryWeight and PredictNextSensoryTokens, which namespace their
-				argument internally. Handing it a bare sequence searched a namespace
-				nothing is written to, so every prefix reported zero bits and the
-				entropy gate could never open.
-			*/
-			ambiguity := solver.tree.MeasureBranchAmbiguity(
-				dmt.SensoryPrefixKey(activeSequenceBytes),
-			)
+		if len(beamPaths) > 0 {
+			lookaheadScore = beamPaths[0].Score
+		}
 
-			// 7. Format Lookahead Predictions for Thesis
-			predictions := solver.formatLookaheadPredictions(
-				beamPaths, activeSequenceBytes,
-			)
+		winner := string(classResult.Winner)
 
-			classes := make([]types.CognitionClass, 0, len(classResult.Scores))
+		// Backoff surprisal scores the sequence against every order of its own
+		// context, so an unseen continuation of a known prefix is merely
+		// surprising instead of unmeasurable.
+		interpolated := solver.tree.InterpolatedSurprisal(activeSequenceBytes)
+		averageSurprisal := 0.0
 
-			for _, score := range classResult.Scores {
-				classes = append(classes, types.CognitionClass{
-					Name:        string(score.ClassName),
-					Probability: score.Value,
-				})
-			}
+		for _, item := range interpolated {
+			averageSurprisal += item.Surprisal
+		}
 
-			beams := make([]types.CognitionBeam, 0, len(beamPaths))
+		if len(interpolated) > 0 {
+			averageSurprisal /= float64(len(interpolated))
+		}
 
-			for _, path := range beamPaths {
-				beams = append(beams, types.CognitionBeam{
-					Sequence: solver.decodeCategoryPath(path.Sequence),
-					Key:      string(path.Sequence),
-					Score:    path.Score,
-				})
-			}
+		cognition := types.Cognition{
+			Source:           "cognition",
+			Symbol:           symbol,
+			At:               thesis.At,
+			Sequence:         solver.decodeCategoryPath(activeSequenceBytes),
+			RegimePrefix:     winner,
+			Winner:           winner,
+			WinnerClass:      winner,
+			Confidence:       classResult.Highest,
+			ClassConfidence:  classResult.Highest,
+			Contrast:         contrast,
+			ContrastEvidence: contrastEvidence,
+			EntropyBits:      ambiguity.EntropyBits,
+			EntropyThreshold: ambiguity.Threshold,
+			Ambiguous:        ambiguity.Ambiguous,
+			Cohort:           solver.tree.GetSensoryWeight(activeSequenceBytes).Count,
+			LookaheadScore:   lookaheadScore,
+			LookaheadPaths:   len(beamPaths),
+			BeamWidth:        solver.beamWidth,
+			MaxHops:          solver.maxHops,
+			NodeCount:        len(branches),
+			Predictions:      predictions,
+			Branches:         branches,
+			Beams:            beams,
+			Classes:          classes,
 
-			branches := solver.cachedPrefixTree(symbol, activeTokens, transitioned)
+			InterpolatedSurprisal: averageSurprisal,
+			Contributions:         solver.contributions(activeSequenceBytes),
+			Lexical:               solver.lexical(activeTokens),
+			Symbols:               solver.symbols,
+			Dreams:                solver.dreams,
+			NewConcept:            spawned,
+			SpawnedClass:          spawnedClass,
 
-			contrast := 0.0
-			contrastEvidence := 0.0
+			REMFrom:          solver.remFrom,
+			REMThrough:       solver.remThrough,
+			REMReplays:       int(solver.remOutcome.ReplayedObservations),
+			REMDecayFactor:   solver.remOutcome.DecayFactor,
+			REMInhibitionPct: solver.remOutcome.RetroactiveInhibitionPct,
+			// A pass runs synchronously inline on the 128-tick schedule
+			// below, so "consolidating" is true only for the reading
+			// published on the very tick that triggered it — every other
+			// tick reports the awake state between passes.
+			REMConsolidating: solver.tickCounter%128 == 0 && nowUnix > 60e9,
+		}
 
-			if len(classResult.Scores) > 1 {
-				contrast = classResult.Scores[0].Value - classResult.Scores[1].Value
-				evidence := solver.tree.ComputeBasinContrastiveEvidence(
-					classResult.Scores[0].ClassName,
-					classResult.Scores[1].ClassName,
-					activeSequenceBytes,
-				)
-				contrastEvidence = evidence.Divergence
-			}
+		thesis.Cognition.Store(symbol, cognition)
+		thesis.Stamp(symbol, types.SourceCognition)
+		return true
+	})
 
-			lookaheadScore := 0.0
-
-			if len(beamPaths) > 0 {
-				lookaheadScore = beamPaths[0].Score
-			}
-
-			winner := string(classResult.Winner)
-
-			// Backoff surprisal scores the sequence against every order of its own
-			// context, so an unseen continuation of a known prefix is merely
-			// surprising instead of unmeasurable.
-			interpolated := solver.tree.InterpolatedSurprisal(activeSequenceBytes)
-			averageSurprisal := 0.0
-
-			for _, item := range interpolated {
-				averageSurprisal += item.Surprisal
-			}
-
-			if len(interpolated) > 0 {
-				averageSurprisal /= float64(len(interpolated))
-			}
-
-			cognition := types.Cognition{
-				Source:           "cognition",
-				Symbol:           symbol,
-				At:               thesis.At,
-				Sequence:         solver.decodeCategoryPath(activeSequenceBytes),
-				RegimePrefix:     winner,
-				Winner:           winner,
-				WinnerClass:      winner,
-				Confidence:       classResult.Highest,
-				ClassConfidence:  classResult.Highest,
-				Contrast:         contrast,
-				ContrastEvidence: contrastEvidence,
-				EntropyBits:      ambiguity.EntropyBits,
-				EntropyThreshold: ambiguity.Threshold,
-				Ambiguous:        ambiguity.Ambiguous,
-				Cohort:           solver.tree.GetSensoryWeight(activeSequenceBytes).Count,
-				LookaheadScore:   lookaheadScore,
-				LookaheadPaths:   len(beamPaths),
-				BeamWidth:        solver.beamWidth,
-				MaxHops:          solver.maxHops,
-				NodeCount:        len(branches),
-				Predictions:      predictions,
-				Branches:         branches,
-				Beams:            beams,
-				Classes:          classes,
-
-				InterpolatedSurprisal: averageSurprisal,
-				Contributions:         solver.contributions(activeSequenceBytes),
-				Lexical:               solver.lexical(activeTokens),
-				Symbols:               solver.symbols,
-				Dreams:                solver.dreams,
-				NewConcept:            spawned,
-				SpawnedClass:          spawnedClass,
-
-				REMFrom:          solver.remFrom,
-				REMThrough:       solver.remThrough,
-				REMReplays:       int(solver.remOutcome.ReplayedObservations),
-				REMDecayFactor:   solver.remOutcome.DecayFactor,
-				REMInhibitionPct: solver.remOutcome.RetroactiveInhibitionPct,
-				// A pass runs synchronously inline on the 128-tick schedule
-				// below, so "consolidating" is true only for the reading
-				// published on the very tick that triggered it — every other
-				// tick reports the awake state between passes.
-				REMConsolidating: solver.tickCounter%128 == 0 && nowUnix > 60e9,
-			}
-
-			thesis.Cognition.Store(symbol, cognition)
-			return true
-		})
-
-		thesis.Stamp(types.SourceCognition)
+	if updated {
 		solver.publish(thesis)
 
 		// 10. Periodic REM Sleep Consolidation (every 128 ticks)
@@ -397,7 +409,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 	}
 
-	thesis.Fanout(types.SourceCognition)
+	if updated {
+		thesis.Fanout(types.SourceCognition)
+	}
+
 	return nil
 }
 

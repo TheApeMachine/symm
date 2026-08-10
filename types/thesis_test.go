@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -35,11 +36,11 @@ func TestThesisAppendMeasurements(t *testing.T) {
 
 		thesis.AppendMeasurements(SourceCorrelation, nil, true)
 
-		Convey("Then it should stamp readiness and notify the downstream stage", func() {
-			So(thesis.Stamped(SourceCorrelation), ShouldBeTrue)
+		Convey("Then it should keep readiness and downstream work pending", func() {
+			So(thesis.Stamped("BTC/USD", SourceCorrelation), ShouldBeFalse)
 			So(len(correlation), ShouldEqual, 0)
 			So(len(cvd), ShouldEqual, 0)
-			So(len(categories), ShouldEqual, 1)
+			So(len(categories), ShouldEqual, 0)
 		})
 	})
 
@@ -58,7 +59,40 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			So(found, ShouldBeTrue)
 			actual := stored.([]*Measurement)
 			So(actual, ShouldResemble, measurements)
-			So(thesis.Readiness.LeadLag, ShouldBeTrue)
+			So(thesis.Stamped("BTC/USD", SourceLeadLag), ShouldBeTrue)
+			So(thesis.Stamped("ETH/USD", SourceLeadLag), ShouldBeTrue)
+			So(thesis.Stamped("SOL/USD", SourceLeadLag), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given one symbol measured by every ready signal", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		sources := []SourceType{
+			SourceCorrelation,
+			SourceCVD,
+			SourceDepthFlow,
+			SourceExhaustion,
+			SourceHawkes,
+			SourceLeadLag,
+			SourceLiquidity,
+			SourcePumpDump,
+			SourceSentiment,
+			SourceToxicity,
+		}
+
+		for _, source := range sources {
+			err := thesis.AppendMeasurements(source, []*Measurement{{
+				ID: string(source), Source: source, Symbol: "BTC/USD", At: time.Unix(1, 0),
+			}}, true)
+			So(err, ShouldBeNil)
+		}
+
+		Convey("Then the symbol should be ready for predictive coding", func() {
+			stored, found := thesis.Symbols.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			symbol := stored.(*Symbol)
+			So(symbol.SignalsMeasured(), ShouldBeTrue)
+			So(symbol.Measurements, ShouldHaveLength, len(sources))
 		})
 	})
 
@@ -244,48 +278,92 @@ func TestThesisFanout(t *testing.T) {
 			So(len(cvd), ShouldEqual, 1)
 		})
 	})
+
+	Convey("Given explicitly targeted subscribers", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		correlation := make(chan struct{}, 1)
+		categories := make(chan struct{}, 1)
+		regulator := make(chan struct{}, 1)
+		thesis.Subscribe(SourceCorrelation, correlation)
+		thesis.Subscribe(SourceCategories, categories)
+		thesis.Subscribe(SourceRegulator, regulator)
+
+		thesis.Fanout(SourceEquity, SourceCorrelation, SourceRegulator)
+
+		Convey("Then only the named receiver group should wake", func() {
+			So(len(correlation), ShouldEqual, 1)
+			So(len(categories), ShouldEqual, 0)
+			So(len(regulator), ShouldEqual, 1)
+		})
+	})
 }
 
-func TestThesisObserveCompletions(t *testing.T) {
-	Convey("Given a completed Thesis epoch", t, func() {
+func TestThesisAppendTicker(t *testing.T) {
+	Convey("Given the first ticker observed for a symbol", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		observations := make([]EpochObservation, 0, 1)
-		thesis.Tick = 42
-		thesis.ObserveCompletions(func(observation EpochObservation) {
-			observations = append(observations, observation)
+		signal := make(chan struct{}, 1)
+		thesis.Subscribe(SourceCorrelation, signal)
+
+		thesis.AppendTicker(kraken.TickerData{
+			Symbol:    "BTC/USD",
+			Timestamp: time.Unix(1, 0),
 		})
 
-		for _, source := range []SourceType{
-			SourceCorrelation,
-			SourceCVD,
-			SourceDepthFlow,
-			SourceExhaustion,
-			SourceHawkes,
-			SourceLeadLag,
-			SourceLiquidity,
-			SourcePumpDump,
-			SourceSentiment,
-			SourceToxicity,
-			SourceCategories,
-			SourceCognition,
-			SourceManifold,
-			SourceResonance,
-			SourceCausal,
-			SourceGraph,
-			SourcePlanner,
-		} {
-			thesis.Stamp(source)
+		Convey("Then it should wake signal processing immediately", func() {
+			So(len(signal), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestThesisAppendTrade(t *testing.T) {
+	Convey("Given the first trade observed for a symbol", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		signal := make(chan struct{}, 1)
+		thesis.Subscribe(SourceCorrelation, signal)
+
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol:    "BTC/USD",
+			Timestamp: time.Unix(1, 0),
+		})
+
+		Convey("Then it should wake signal processing immediately", func() {
+			So(len(signal), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestThesisAppendEquity(t *testing.T) {
+	Convey("Given a complete positive account valuation", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		logic := make(chan struct{}, 1)
+		regulator := make(chan struct{}, 1)
+		thesis.Subscribe(SourceCategories, logic)
+		thesis.Subscribe(SourceRegulator, regulator)
+		equity := kraken.TradeBalanceResult{
+			Equity:        decimal.NewFromInt64(200),
+			UnrealizedPnL: decimal.NewFromInt64(-3),
 		}
 
-		thesis.Fanout(SourcePlanner)
-		thesis.Fanout(SourcePlanner)
-		thesis.Reset()
+		err := thesis.AppendEquity(equity)
+		stored, exists := thesis.Equity()
 
-		Convey("Then one detached pre-reset identity should be observed", func() {
-			So(observations, ShouldHaveLength, 1)
-			So(observations[0].Tick, ShouldEqual, 42)
-			So(observations[0].At.IsZero(), ShouldBeFalse)
-			So(observations[0].At.Equal(thesis.At), ShouldBeFalse)
+		Convey("Then it should retain the valuation and wake only the regulator", func() {
+			So(err, ShouldBeNil)
+			So(exists, ShouldBeTrue)
+			So(stored.Equity.Float64(), ShouldEqual, 200.0)
+			So(stored.UnrealizedPnL.Float64(), ShouldEqual, -3.0)
+			So(len(logic), ShouldEqual, 0)
+			So(len(regulator), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given an incomplete account valuation", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+
+		Convey("Then it should reject the update instead of fanning out zero equity", func() {
+			So(thesis.AppendEquity(kraken.TradeBalanceResult{}), ShouldNotBeNil)
+			_, exists := thesis.Equity()
+			So(exists, ShouldBeFalse)
 		})
 	})
 }
@@ -319,7 +397,7 @@ func TestThesisReset(t *testing.T) {
 			SourcePumpDump,
 			SourceSentiment,
 			SourceToxicity,
-			SourceCategories,
+			SourceCategory,
 			SourceCognition,
 			SourceManifold,
 			SourceResonance,
@@ -327,10 +405,10 @@ func TestThesisReset(t *testing.T) {
 			SourceGraph,
 			SourcePlanner,
 		} {
-			thesis.Stamp(source)
+			thesis.Stamp("BTC/USD", source)
 		}
 
-		So(thesis.Readiness.Complete(), ShouldBeTrue)
+		So(thesis.Stamped("BTC/USD"), ShouldBeTrue)
 		<-notified
 		thesis.Reset()
 
@@ -338,7 +416,7 @@ func TestThesisReset(t *testing.T) {
 			stored, found := thesis.Measurements.Load(SourceToxicity)
 			So(found, ShouldBeTrue)
 			So(stored, ShouldResemble, measurements)
-			So(thesis.Readiness.Complete(), ShouldBeFalse)
+			So(thesis.Stamped("BTC/USD"), ShouldBeFalse)
 			So(len(notified), ShouldEqual, 0)
 			_, found = thesis.Categories.Load("BTC/USD")
 			So(found, ShouldBeFalse)
@@ -350,6 +428,30 @@ func TestThesisReset(t *testing.T) {
 			unseen := thesis.MarketTrades(SourceToxicity)
 			So(unseen, ShouldHaveLength, 1)
 			So(unseen[0].TradeID, ShouldEqual, 2)
+		})
+	})
+
+	Convey("Given one planned symbol and one still-active symbol", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		thesis.Symbols.Store("BTC/USD", &Symbol{})
+		thesis.Symbols.Store("ETH/USD", &Symbol{})
+		thesis.Stamp("BTC/USD", SourcePlanner)
+		thesis.Stamp("ETH/USD", SourcePlanner)
+		thesis.Categories.Store("BTC/USD", []Category{{Symbol: "BTC/USD"}})
+		thesis.Categories.Store("ETH/USD", []Category{{Symbol: "ETH/USD"}})
+		thesis.Graphs.Store("market_graph", struct{}{})
+
+		thesis.Reset("BTC/USD")
+
+		Convey("Then it should clear only that symbol's evaluation state", func() {
+			So(thesis.Stamped("BTC/USD", SourcePlanner), ShouldBeFalse)
+			So(thesis.Stamped("ETH/USD", SourcePlanner), ShouldBeTrue)
+			_, bitcoinCategory := thesis.Categories.Load("BTC/USD")
+			_, etherCategory := thesis.Categories.Load("ETH/USD")
+			_, graph := thesis.Graphs.Load("market_graph")
+			So(bitcoinCategory, ShouldBeFalse)
+			So(etherCategory, ShouldBeTrue)
+			So(graph, ShouldBeFalse)
 		})
 	})
 }
@@ -386,7 +488,7 @@ func BenchmarkThesisAppendMeasurements(b *testing.B) {
 			incoming[0] = epochs[epoch]
 
 			if err := thesis.AppendMeasurements(
-				SourceCorrelation, incoming, false,
+				SourceCorrelation, incoming, true,
 			); err != nil {
 				b.Fatal(err)
 			}
@@ -396,7 +498,7 @@ func BenchmarkThesisAppendMeasurements(b *testing.B) {
 
 func BenchmarkThesisFanout(b *testing.B) {
 	thesis := NewThesis(b.Context(), nil)
-	thesis.ObserveCompletions(func(EpochObservation) {})
+	thesis.Symbols.Store("BTC/USD", &Symbol{})
 	sources := []SourceType{
 		SourceCorrelation,
 		SourceCVD,
@@ -408,7 +510,7 @@ func BenchmarkThesisFanout(b *testing.B) {
 		SourcePumpDump,
 		SourceSentiment,
 		SourceToxicity,
-		SourceCategories,
+		SourceCategory,
 		SourceCognition,
 		SourceManifold,
 		SourceResonance,
@@ -419,7 +521,7 @@ func BenchmarkThesisFanout(b *testing.B) {
 
 	for b.Loop() {
 		for _, source := range sources {
-			thesis.Stamp(source)
+			thesis.Stamp("BTC/USD", source)
 		}
 
 		thesis.Fanout(SourcePlanner)

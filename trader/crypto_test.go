@@ -307,9 +307,14 @@ func TestCryptoRun(t *testing.T) {
 					0.95,
 				)
 				So(err, ShouldBeNil)
+				So(forecast.SetPredictiveDistribution(0.01, 12, true), ShouldBeNil)
 
 				thesis := types.NewThesis(t.Context(), nil)
+				thesis.Symbols.Store("SIM1/USD", &types.Symbol{})
 				thesis.Resonance.Store("SIM1/USD", types.ResonanceReading{
+					Source:   types.SourceResonance,
+					Symbol:   "SIM1/USD",
+					At:       thesis.At,
 					Forecast: forecast,
 				})
 				thesis.Cognition.Store("SIM1/USD", types.Cognition{
@@ -348,14 +353,14 @@ func TestCryptoRun(t *testing.T) {
 				})
 
 				for _, source := range []types.SourceType{
-					types.SourceCategories,
+					types.SourceCategory,
 					types.SourceCognition,
 					types.SourceManifold,
 					types.SourceResonance,
 					types.SourceCausal,
 					types.SourceGraph,
 				} {
-					thesis.Readiness.Stamp(source)
+					thesis.Stamp("SIM1/USD", source)
 				}
 
 				system.Planner.Update(thesis)

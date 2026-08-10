@@ -201,7 +201,7 @@ export const SignalDetail = () => {
 								tone="f3"
 								className="mb-2 block tracking-[0.13em]"
 							>
-								Cross-section · {source} strength
+								Cross-section · {source} headline
 							</Typography.Label>
 							<div className="grid grid-cols-12 gap-0.75">
 								{symbols.slice(0, 24).map((symbol) => (

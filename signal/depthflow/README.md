@@ -73,7 +73,8 @@ tempo, not a fixed lookback.
 `Bookflow.Measure` derives thresholds from **median absolute** historical
 values of the weighted and level1 imbalance series (`bookflowMedianAbsolute`)
 — an empirical "how extreme is extreme, for this symbol" bar, not a fixed
-constant:
+constant. It retains a priority category for equation consumers, while the
+measurement publishes each evidence score independently:
 
 | State        | Condition                                                                                                                                                                                                        | Reading                                                                                                                                                                      |
 |--------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -82,10 +83,9 @@ constant:
 | **Loaded**   | Not spoofed, not thinning; weighted and level1 agree in sign and both exceed their own historical thresholds                                                                                                     | Both resolutions of imbalance agree, and both are unusually large for this symbol — the "this is real, corroborated pressure" reading.                                       |
 | **Neutral**  | None of the above                                                                                                                                                                                                | Nothing distinguishing about the book's current shape.                                                                                                                       |
 
-Spoof and thinning are checked **before** loaded, and loaded is defined as
-"not spoofed and not thinning" — so a book that would otherwise look loaded
-but has a contradicting touch/depth signal, or is thinning overall, is
-never also classified as loaded. Each observation gets exactly one category.
+Spoof and thinning are checked **before** loaded when selecting the legacy
+category. That priority does not erase other evidence: a thin book with aligned,
+unusually large imbalance can carry both `thinScore` and `loadedScore`.
 
 `loadedScore` additionally folds in trade-pressure confirmation
 (`bookflowLoadedScore`): the loaded reading is boosted when trade pressure
@@ -113,27 +113,24 @@ evidence just because a heartbeat update arrived.
 
 ## Every metric this package produces
 
-All published under `source=depthflow`, keyed `type:none` (one category wins
-per observation; the reading is a single measurement, not per-side).
+All published under `source=depthflow`, keyed `type:none`.
 
 | Metric          | Meaning                                                                                                                                                                                                      |
 |-----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `loaded_score`  | `\|weighted imbalance\|`, boosted or damped by trade-pressure agreement (see above). `0` unless this observation classified as loaded.                                                                       |
-| `spoof_score`   | `\|weighted - level1\|` — how much the two imbalance resolutions disagree, in imbalance units (each imbalance itself is bounded in `[-1,1]`, so this can range up to `2`). `0` unless classified as spoofed. |
-| `thin_score`    | `(baselineNotional - currentNotional) / baselineNotional` — how far below its own historical median the book's total notional currently sits. `0` unless classified as thinning.                             |
-| `neutral_score` | `max(0, 1 - \|weighted\|)` — how far from any imbalance extreme the book currently sits. `0` unless classified as neutral.                                                                                   |
-| `strength`      | `max` across the four scores above — whichever category won, its own reading.                                                                                                                                |
-| `value`         | Same value as `strength`.                                                                                                                                                                                    |
+| `loaded_score`  | `\|weighted imbalance\|`, boosted or damped by trade-pressure agreement (see above). Nonzero when weighted and touch imbalance align and both exceed their empirical gates.                                      |
+| `spoof_score`   | The largest sign-opposed contrast between weighted/flat depth and touch imbalance. Each imbalance is bounded in `[-1,1]`, so the raw contrast ranges up to `2`.                                                     |
+| `thin_score`    | `(baselineNotional - currentNotional) / baselineNotional` when current book notional is below its own historical median.                                                                                             |
+| `neutral_score` | `max(0, 1 - \|weighted\|)` — the residual balance present in the current weighted book, independently of the other evidence.                                                                                       |
+| `snr`           | Relative separation between the strongest and second-strongest normalized loaded, spoof, thin, and neutral hypotheses. Equal competitors produce `0`; an uncontested hypothesis produces `1`.                 |
 
 ### Normalization
 
-`spoof_score` and, when the winning category is spoof, `strength`/`value`
-are normalized against `2.0` (`maxBookImbalanceContrast`) — the domain-derived
-maximum possible disagreement between two `[-1,1]`-bounded imbalance readings.
-All other categories normalize `strength`/`value`/`loaded_score`/
-`thin_score`/`neutral_score` against `1`, their natural bound. `Normalized`
-is `nil` for any reading outside its category's valid domain — a defensive
-check against the classifier's own invariants, not an expected runtime state.
+`spoof_score` is normalized against `2.0` (`maxBookImbalanceContrast`) — the
+domain-derived maximum possible disagreement between two `[-1,1]`-bounded
+imbalance readings. `loaded_score`, `thin_score`, and `neutral_score` already
+use their natural unit interval and are retained directly. `snr` is computed
+from those four normalized hypothesis scores as
+`(dominant - runner-up) / dominant`; an all-zero bundle yields zero.
 
 ### Readiness
 

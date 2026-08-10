@@ -33,6 +33,7 @@ type Desk struct {
 	instrument    *Instrument
 	price         *Price
 	balance       *Balance
+	thesis        *types.Thesis
 	recorder      *audit.Recorder
 	store         *PositionStore
 	recovery      *Recovery
@@ -51,6 +52,7 @@ func NewDesk(
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
+	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	store *PositionStore,
 	ui chan []byte,
@@ -73,6 +75,7 @@ func NewDesk(
 		instrument:   instrument,
 		price:        price,
 		balance:      balance,
+		thesis:       thesis,
 		recorder:     recorder,
 		store:        store,
 		positions:    &sync.Map{},
@@ -150,7 +153,7 @@ func (desk *Desk) run() {
 					go func() {
 						defer balanceRefreshing.Store(false)
 						desk.balance.Update()
-						desk.PublishEquity()
+						errnie.Error(desk.PublishEquity())
 					}()
 				}
 			case message := <-desk.subscriptions["executions"].Channel:
@@ -256,17 +259,23 @@ Cash alone understates the account while positions are open. Unrealized is the
 profit/loss only; equity is cash plus the basis committed to open positions plus
 that profit/loss.
 */
-func (desk *Desk) PublishEquity() {
+func (desk *Desk) PublishEquity() error {
 	tradeBalance, err := desk.api.TradeBalance()
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"desk: could not fetch trade balance",
 			err,
 		))
+	}
 
-		return
+	if err := desk.thesis.AppendEquity(tradeBalance); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"desk: could not publish account equity",
+			err,
+		))
 	}
 
 	utils.Publish(desk.ui, datura.NewMap("equity", datura.NewMap(
@@ -274,6 +283,8 @@ func (desk *Desk) PublishEquity() {
 		"unrealized", tradeBalance.UnrealizedPnL,
 		"equity", tradeBalance.Equity,
 	)))
+
+	return nil
 }
 
 func (desk *Desk) Positions() iter.Seq[*Position] {

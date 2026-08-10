@@ -170,39 +170,61 @@ Update extracts nodes and infers directional edges from Thesis, publishing the c
 Graph into thesis.Graphs.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis.Readiness.Categories && thesis.Readiness.Resonance && thesis.Readiness.Causal && thesis.Readiness.Cognition {
-		graph := NewGraph(thesis.At)
+	readySymbols := make([]string, 0)
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbol, ok := value.(*types.Symbol)
 
-		// 1. Extract and register all non-measurement nodes from Thesis
-		solver.extractCategoryNodes(thesis, graph)
-		solver.extractResonanceNodes(thesis, graph)
-
-		if err := solver.extractCausalNodes(thesis, graph); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"graph: failed to extract causal nodes - "+err.Error(),
-				err,
-			))
+		if !ok || symbol == nil || symbol.Stamped(types.SourceGraph) ||
+			!symbol.Stamped(types.SourceCategory) ||
+			!symbol.Stamped(types.SourceResonance) ||
+			!symbol.Stamped(types.SourceManifold) ||
+			!symbol.Stamped(types.SourceCausal) ||
+			!symbol.Stamped(types.SourceCognition) {
+			return true
 		}
 
-		solver.extractCognitionNodes(thesis, graph)
+		symbolName, ok := key.(string)
 
-		// 2. Infer directional relationships between nodes
-		if err := solver.inferStructuralEdges(thesis, graph); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"graph: failed to infer structural edges - "+err.Error(),
-				err,
-			))
+		if ok && symbolName != "" {
+			readySymbols = append(readySymbols, symbolName)
 		}
 
-		// 3. Store compiled Graph into thesis.Graphs
-		thesis.Graphs.Store("market_graph", graph)
-		thesis.Stamp(types.SourceGraph)
+		return true
+	})
 
-		utils.Publish(solver.ui, datura.NewMap("graph", graph))
+	if len(readySymbols) == 0 {
+		return nil
 	}
 
+	graph := NewGraph(thesis.At)
+	solver.extractCategoryNodes(thesis, graph)
+	solver.extractResonanceNodes(thesis, graph)
+
+	if err := solver.extractCausalNodes(thesis, graph); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"graph: failed to extract causal nodes - "+err.Error(),
+			err,
+		))
+	}
+
+	solver.extractCognitionNodes(thesis, graph)
+
+	if err := solver.inferStructuralEdges(thesis, graph); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"graph: failed to infer structural edges - "+err.Error(),
+			err,
+		))
+	}
+
+	thesis.Graphs.Store("market_graph", graph)
+
+	for _, symbol := range readySymbols {
+		thesis.Stamp(symbol, types.SourceGraph)
+	}
+
+	utils.Publish(solver.ui, datura.NewMap("graph", graph))
 	thesis.Fanout(types.SourceGraph)
 	return nil
 }

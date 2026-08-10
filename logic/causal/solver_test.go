@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -46,17 +48,20 @@ func setCausalPrice(
 	midpoint float64,
 	at time.Time,
 ) {
-	thesis.Measurements.Store(types.SourceCVD, []*types.Measurement{{
-		Source: types.SourceCVD,
-		Symbol: symbol,
-		At:     at,
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricMidpoint, types.SideNone): {
-				Raw:  midpoint,
-				Unit: types.UnitQuoteCurrency,
-			},
-		},
-	}})
+	thesis.AppendTicker(kraken.TickerData{
+		Symbol:    symbol,
+		Bid:       decimal.NewFromFloat64(midpoint),
+		Ask:       decimal.NewFromFloat64(midpoint),
+		Last:      decimal.NewFromFloat64(midpoint),
+		Timestamp: at,
+	})
+}
+
+func resetCausalSymbol(thesis *types.Thesis, symbol string) {
+	value, _ := thesis.Symbols.LoadOrStore(symbol, &types.Symbol{})
+	state := value.(*types.Symbol)
+	state.Reset()
+	state.Stamp(types.SourceResonance)
 }
 
 func TestUpdate(t *testing.T) {
@@ -68,7 +73,7 @@ func TestUpdate(t *testing.T) {
 			Symbol: "BTC/USD",
 			At:     thesis.At,
 		})
-		thesis.Readiness.Stamp(types.SourceResonance)
+		resetCausalSymbol(thesis, "BTC/USD")
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
@@ -77,7 +82,7 @@ func TestUpdate(t *testing.T) {
 
 		convey.Convey("Then causal should complete without inventing an estimate", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(thesis.Readiness.Causal, convey.ShouldBeTrue)
+			convey.So(thesis.Stamped("BTC/USD", types.SourceCausal), convey.ShouldBeTrue)
 			_, found := thesis.Causal.Load("BTC/USD")
 			convey.So(found, convey.ShouldBeFalse)
 		})
@@ -91,7 +96,7 @@ func TestUpdate(t *testing.T) {
 		thesis.Resonance.Store(symbol, testResonanceReading(
 			thesis, symbol, 0.5, 0.25, []float64{0.1},
 		))
-		thesis.Readiness.Stamp(types.SourceResonance)
+		resetCausalSymbol(thesis, symbol)
 		setCausalPrice(thesis, symbol, 100, firstAt)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
@@ -105,7 +110,7 @@ func TestUpdate(t *testing.T) {
 		thesis.Resonance.Store(symbol, testResonanceReading(
 			thesis, symbol, 0.75, 0.5, []float64{0.2},
 		))
-		thesis.Readiness.Stamp(types.SourceResonance)
+		resetCausalSymbol(thesis, symbol)
 		setCausalPrice(thesis, symbol, 110, firstAt.Add(time.Second))
 		err := solver.Update(thesis)
 
@@ -157,8 +162,8 @@ func TestUpdate(t *testing.T) {
 				thesis.Resonance.Store(symbol, testResonanceReading(
 					thesis, symbol, energy, surprise, []float64{prediction},
 				))
-				thesis.Readiness.Stamp(types.SourceResonance)
-			setCausalPrice(thesis, symbol, midpoint, thesis.At)
+				resetCausalSymbol(thesis, symbol)
+				setCausalPrice(thesis, symbol, midpoint, thesis.At)
 
 				err := solver.Update(thesis)
 				convey.So(err, convey.ShouldBeNil)
@@ -203,10 +208,9 @@ func BenchmarkUpdate(b *testing.B) {
 			float64(index)/float64(index+1),
 			[]float64{float64(index) / float64(index+1)},
 		))
+		resetCausalSymbol(thesis, symbol)
 		setCausalPrice(thesis, symbol, 100, baseAt)
 	}
-
-	thesis.Readiness.Stamp(types.SourceResonance)
 
 	if err := solver.Update(thesis); err != nil {
 		b.Fatal(err)
@@ -229,6 +233,7 @@ func BenchmarkUpdate(b *testing.B) {
 				float64(index)/float64(index+1),
 				[]float64{float64(index) / float64(index+1)},
 			))
+			resetCausalSymbol(thesis, symbol)
 			setCausalPrice(thesis, symbol, 100+float64(tick)/1_000, at)
 		}
 

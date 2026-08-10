@@ -72,7 +72,7 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should settle and publish the hierarchy directly", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Readiness.Resonance, ShouldBeTrue)
+			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
 
 			stored, found := thesis.Resonance.Load("BTC/USD")
 			So(found, ShouldBeTrue)
@@ -154,6 +154,44 @@ func TestUpdate(t *testing.T) {
 			_, ethereumPublished := thesis.Resonance.Load("ETH/USD")
 			So(bitcoinPublished, ShouldBeTrue)
 			So(ethereumPublished, ShouldBeTrue)
+			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
+			So(thesis.Stamped("ETH/USD", types.SourceResonance), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a symbol populated through ready signal publications", t, func() {
+		value := 0.25
+		thesis := types.NewThesis(t.Context(), nil)
+		sources := []types.SourceType{
+			types.SourceCorrelation,
+			types.SourceCVD,
+			types.SourceDepthFlow,
+			types.SourceExhaustion,
+			types.SourceHawkes,
+			types.SourceLeadLag,
+			types.SourceLiquidity,
+			types.SourcePumpDump,
+			types.SourceSentiment,
+			types.SourceToxicity,
+		}
+
+		for _, source := range sources {
+			err := thesis.AppendMeasurements(source, []*types.Measurement{{
+				ID: string(source), Source: source, Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					"score": {Normalized: &value},
+				},
+			}}, true)
+			So(err, ShouldBeNil)
+		}
+
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+		err := solver.Update(thesis)
+
+		Convey("It should settle the published symbol instead of rejecting its readiness", func() {
+			So(err, ShouldBeNil)
+			_, found := thesis.Resonance.Load("BTC/USD")
+			So(found, ShouldBeTrue)
 		})
 	})
 
@@ -179,7 +217,7 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should leave resonance unstamped", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Readiness.Resonance, ShouldBeFalse)
+			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeFalse)
 			_, published := thesis.Resonance.Load("BTC/USD")
 			So(published, ShouldBeFalse)
 		})
@@ -208,7 +246,7 @@ func BenchmarkUpdate(b *testing.B) {
 
 	ctx := b.Context()
 	thesis := types.NewThesis(ctx, nil)
-	thesis.Symbols.Store("BTC/USD", &types.Symbol{
+	symbol := &types.Symbol{
 		Readiness: types.Readiness{
 			Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
 			Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
@@ -227,11 +265,30 @@ func BenchmarkUpdate(b *testing.B) {
 				"seventh": {Normalized: &seventh},
 			},
 		}},
-	})
+	}
+	thesis.Symbols.Store("BTC/USD", symbol)
 	solver := NewSolver(ctx, nil, nil, testAlpha)
+	sources := []types.SourceType{
+		types.SourceCorrelation,
+		types.SourceCVD,
+		types.SourceDepthFlow,
+		types.SourceExhaustion,
+		types.SourceHawkes,
+		types.SourceLeadLag,
+		types.SourceLiquidity,
+		types.SourcePumpDump,
+		types.SourceSentiment,
+		types.SourceToxicity,
+	}
+	b.ReportAllocs()
 
 	for b.Loop() {
+		symbol.Reset()
+
+		for _, source := range sources {
+			symbol.Stamp(source)
+		}
+
 		_ = solver.Update(thesis)
 	}
 }
-

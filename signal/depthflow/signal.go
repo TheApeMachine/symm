@@ -637,16 +637,11 @@ func (signal *Signal) frame(
 	output equation.BookflowOutput,
 	maturity float64,
 ) []*types.Measurement {
-	loaded := normalizedBookflowScore(types.MetricLoadedScore, output.LoadedScore, output.Category)
-	spoof := normalizedBookflowScore(types.MetricSpoofScore, output.SpoofScore, output.Category)
-	thin := normalizedBookflowScore(types.MetricThinScore, output.ThinScore, output.Category)
-	neutral := normalizedBookflowScore(types.MetricNeutralScore, output.NeutralScore, output.Category)
-	strength := normalizedBookflowScore(types.MetricStrength, output.Strength, output.Category)
-	value := normalizedBookflowScore(types.MetricValue, output.Value, output.Category)
-
-	if loaded == nil || spoof == nil || thin == nil || neutral == nil ||
-		strength == nil || value == nil {
-	}
+	loaded := normalizedBookflowScore(types.MetricLoadedScore, output.LoadedScore)
+	spoof := normalizedBookflowScore(types.MetricSpoofScore, output.SpoofScore)
+	thin := normalizedBookflowScore(types.MetricThinScore, output.ThinScore)
+	neutral := normalizedBookflowScore(types.MetricNeutralScore, output.NeutralScore)
+	snr := normalizedBookflowScore(types.MetricSNR, output.SNR)
 
 	measurement := &types.Measurement{
 		ID:       uuid.NewString(),
@@ -655,6 +650,11 @@ func (signal *Signal) frame(
 		At:       at,
 		Maturity: maturity,
 		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricSNR, types.SideNone): {
+				Raw:        output.SNR,
+				Normalized: snr,
+				Unit:       types.UnitDimensionless,
+			},
 			types.MetricKey(types.MetricLoadedScore, types.SideNone): {
 				Raw:        output.LoadedScore,
 				Normalized: loaded,
@@ -675,47 +675,27 @@ func (signal *Signal) frame(
 				Normalized: neutral,
 				Unit:       types.UnitDimensionless,
 			},
-			types.MetricKey(types.MetricStrength, types.SideNone): {
-				Raw:        output.Strength,
-				Normalized: strength,
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricValue, types.SideNone): {
-				Raw:        output.Value,
-				Normalized: value,
-				Unit:       types.UnitDimensionless,
-			},
 		},
 	}
 
 	return []*types.Measurement{measurement}
 }
 
-const (
-	bookflowSpoofCategory    = 2.0
-	maxBookImbalanceContrast = 2.0
-)
+const maxBookImbalanceContrast = 2.0
 
 /*
 normalizedBookflowScore preserves the equation's bounded depth fractions. A
 spoof score is the absolute difference of two imbalances in [-1, 1], so its
-domain-derived maximum contrast is two; the winning strength/value use that
-same scale only for the spoof category.
+domain-derived maximum contrast is two.
 */
 func normalizedBookflowScore(
 	metric types.MetricType,
 	raw float64,
-	category float64,
 ) *float64 {
 	value := raw
 
-	switch metric {
-	case types.MetricSpoofScore:
+	if metric == types.MetricSpoofScore {
 		value = raw / maxBookImbalanceContrast
-	case types.MetricStrength, types.MetricValue:
-		if category == bookflowSpoofCategory {
-			value = raw / maxBookImbalanceContrast
-		}
 	}
 
 	return &value

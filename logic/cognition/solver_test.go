@@ -1,8 +1,8 @@
 package cognition
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -47,6 +47,11 @@ func TestUpdate(t *testing.T) {
 			Confidence: 1,
 			Strength:   1,
 		}})
+		state, found := thesis.Symbols.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		symbol := state.(*types.Symbol)
+		symbol.Reset()
+		symbol.Stamp(types.SourceCategory)
 		So(solver.Update(thesis), ShouldBeNil)
 		transitionCount := tree.GetSensoryWeight(
 			solver.sequenceBytes([]string{vertical, reversal}),
@@ -131,7 +136,8 @@ func cognitionThesis(category types.CategoryType) *types.Thesis {
 		Confidence: 1,
 		Strength:   1,
 	}})
-	thesis.Stamp(types.SourceCategories)
+	thesis.Symbols.Store("BTC/USD", &types.Symbol{})
+	thesis.Stamp("BTC/USD", types.SourceCategory)
 
 	return thesis
 }
@@ -148,6 +154,16 @@ func BenchmarkUpdate(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
+		state, found := thesis.Symbols.Load("BTC/USD")
+
+		if !found {
+			b.Fatal("missing cognition symbol")
+		}
+
+		symbol := state.(*types.Symbol)
+		symbol.Reset()
+		symbol.Stamp(types.SourceCategory)
+
 		if err := solver.Update(thesis); err != nil {
 			b.Fatal(err)
 		}

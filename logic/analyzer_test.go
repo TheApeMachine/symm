@@ -27,7 +27,7 @@ func (solver *orderedSolver) Update(thesis *types.Thesis) error {
 	}
 
 	if solver.source != "" {
-		thesis.Stamp(solver.source)
+		thesis.Stamp("BTC/USD", solver.source)
 	}
 
 	return nil
@@ -62,16 +62,14 @@ func TestAnalyzerProcess(t *testing.T) {
 		order := make([]int, 0, 1)
 		analyzer := &Analyzer{
 			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, source: types.SourceCategories},
+				&orderedSolver{index: 0, order: &order, source: types.SourceCategory},
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Stamp(types.SourceHawkes)
-
 		analyzer.process(thesis)
 
-		Convey("It should not admit partial evidence to the logic chain", func() {
-			So(order, ShouldBeEmpty)
+		Convey("It should let each solver inspect symbol readiness", func() {
+			So(order, ShouldResemble, []int{0})
 		})
 	})
 
@@ -79,7 +77,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		order := make([]int, 0, 6)
 		analyzer := &Analyzer{
 			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, source: types.SourceCategories},
+				&orderedSolver{index: 0, order: &order, source: types.SourceCategory},
 				&orderedSolver{index: 1, order: &order, source: types.SourceManifold},
 				&orderedSolver{index: 2, order: &order, source: types.SourceResonance},
 				&orderedSolver{index: 3, order: &order, source: types.SourceCausal},
@@ -93,8 +91,8 @@ func TestAnalyzerProcess(t *testing.T) {
 		analyzer.process(thesis)
 		analyzer.process(thesis)
 
-		Convey("It should freeze the completed dependency-consistent cut", func() {
-			So(order, ShouldResemble, []int{0, 1, 2, 3, 4, 5})
+		Convey("It should run the chain for each notification without a global cut", func() {
+			So(order, ShouldResemble, []int{0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5})
 		})
 	})
 
@@ -102,7 +100,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		order := make([]int, 0, 3)
 		analyzer := &Analyzer{
 			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, source: types.SourceCategories},
+				&orderedSolver{index: 0, order: &order, source: types.SourceCategory},
 				&orderedSolver{index: 1, order: &order, err: errors.New("failed cut")},
 				&orderedSolver{index: 2, order: &order, source: types.SourceGraph},
 			},
@@ -114,12 +112,14 @@ func TestAnalyzerProcess(t *testing.T) {
 
 		Convey("It should not publish downstream stages from the partial snapshot", func() {
 			So(order, ShouldResemble, []int{0, 1})
-			So(thesis.Readiness.Graph, ShouldBeFalse)
+			So(thesis.Stamped("BTC/USD", types.SourceGraph), ShouldBeFalse)
 		})
 	})
 }
 
 func stampSignalReadiness(thesis *types.Thesis) {
+	thesis.Symbols.Store("BTC/USD", &types.Symbol{})
+
 	for _, source := range []types.SourceType{
 		types.SourceCorrelation,
 		types.SourceCVD,
@@ -132,7 +132,7 @@ func stampSignalReadiness(thesis *types.Thesis) {
 		types.SourceSentiment,
 		types.SourceToxicity,
 	} {
-		thesis.Stamp(source)
+		thesis.Stamp("BTC/USD", source)
 	}
 }
 
@@ -144,7 +144,7 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 	order := make([]int, 0, 6)
 	analyzer := &Analyzer{
 		solvers: []Solver{
-			&orderedSolver{index: 0, order: &order, source: types.SourceCategories},
+			&orderedSolver{index: 0, order: &order, source: types.SourceCategory},
 			&orderedSolver{index: 1, order: &order, source: types.SourceManifold},
 			&orderedSolver{index: 2, order: &order, source: types.SourceResonance},
 			&orderedSolver{index: 3, order: &order, source: types.SourceCausal},
@@ -156,7 +156,12 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		thesis.Readiness.Reset()
+		value, found := thesis.Symbols.Load("BTC/USD")
+
+		if found {
+			value.(*types.Symbol).Reset()
+		}
+
 		stampSignalReadiness(thesis)
 		order = order[:0]
 		analyzer.process(thesis)

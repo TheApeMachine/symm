@@ -62,10 +62,6 @@ Categories are the substrate the graph and the cognition tree are built from,
 so they are derived before either runs.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis.Stamped(types.SourceCategories) || !thesis.SignalsMeasured() {
-		return nil
-	}
-
 	var classificationErr error
 
 	thesis.Symbols.Range(func(key, value any) bool {
@@ -73,21 +69,39 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		symbol, symbolOK := value.(*types.Symbol)
 
 		if !nameOK || symbolName == "" || !symbolOK || symbol == nil {
-			classificationErr = fmt.Errorf("category: invalid symbol evidence")
+			classificationErr = errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf(
+					"category: failed to classify symbol - invalid key or value: %v, %v",
+					key, value,
+				),
+				nil,
+			))
 
 			return false
+		}
+
+		if symbol.Stamped(types.SourceCategory) || !symbol.SignalsMeasured() {
+			return true
 		}
 
 		category, err := solver.classify(symbolName, symbol.Measurements)
 
 		if err != nil {
-			classificationErr = err
+			classificationErr = errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf(
+					"category: failed to classify symbol %s - %v",
+					symbolName, err,
+				),
+				err,
+			))
 
 			return false
 		}
 
 		thesis.Categories.Store(symbolName, []types.Category{category})
-
+		symbol.Stamp(types.SourceCategory)
 		return true
 	})
 
@@ -98,8 +112,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			classificationErr,
 		))
 	}
-
-	thesis.Stamp(types.SourceCategories)
 
 	return nil
 }

@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"math"
-	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -56,13 +54,11 @@ type Solver struct {
 	cancel        context.CancelFunc
 	config        *system.Config
 	coder         *learning.ResonanceManifold
-	desk          *broker.Desk
 	ui            chan []byte
-	observationMu sync.RWMutex
-	observation   types.EpochObservation
-	observed      bool
 	history       []float64
 	initialEquity float64
+	semaphore     chan struct{}
+	thesis        *types.Thesis
 }
 
 /*
@@ -71,7 +67,7 @@ NewSolver creates a new instance of Solver tied to the ambient system configurat
 func NewSolver(
 	ctx context.Context,
 	ui chan []byte,
-	desk *broker.Desk,
+	thesis *types.Thesis,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 	config := system.Cfg
@@ -86,15 +82,18 @@ func NewSolver(
 	coder := learning.NewResonanceManifold(arch, 1, learningRate)
 
 	solver := &Solver{
-		ctx:     ctx,
-		cancel:  cancel,
-		config:  config,
-		coder:   coder,
-		desk:    desk,
-		ui:      ui,
-		history: make([]float64, 0, 30),
+		ctx:       ctx,
+		cancel:    cancel,
+		config:    config,
+		coder:     coder,
+		ui:        ui,
+		history:   make([]float64, 0, 30),
+		semaphore: make(chan struct{}, 1),
+		thesis:    thesis,
 	}
 
+	solver.thesis.Subscribe(types.SourceRegulator, solver.semaphore)
+	solver.run()
 	return solver
 }
 
@@ -105,29 +104,17 @@ func (solver *Solver) Status() types.Status {
 	return types.READY
 }
 
-/*
-Start observes completed system epochs without joining the analysis pipeline.
-*/
-func (solver *Solver) Start(thesis *types.Thesis) {
-	if solver == nil || thesis == nil {
-		return
-	}
-
-	thesis.ObserveCompletions(solver.observe)
-}
-
-func (solver *Solver) observe(observation types.EpochObservation) {
-	solver.observationMu.Lock()
-	defer solver.observationMu.Unlock()
-	solver.observation = observation
-	solver.observed = true
-}
-
-func (solver *Solver) latestObservation() (types.EpochObservation, bool) {
-	solver.observationMu.RLock()
-	defer solver.observationMu.RUnlock()
-
-	return solver.observation, solver.observed
+func (solver *Solver) run() {
+	go func() {
+		for {
+			select {
+			case <-solver.ctx.Done():
+				return
+			case <-solver.semaphore:
+				errnie.Error(solver.Update(solver.thesis))
+			}
+		}
+	}()
 }
 
 /*
@@ -147,7 +134,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	pnlRatio := solver.readFinancialFeedback()
+	pnlRatio, hasEquity := solver.readFinancialFeedback(thesis)
+
+	if !hasEquity {
+		return nil
+	}
+
 	metrics := make([]float64, 16)
 
 	if solver.config.Resonance != nil {
@@ -211,31 +203,23 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	return nil
 }
 
-func (solver *Solver) readFinancialFeedback() float64 {
-	if solver.desk == nil {
-		return 0.0
+func (solver *Solver) readFinancialFeedback(
+	thesis *types.Thesis,
+) (float64, bool) {
+	equity, exists := thesis.Equity()
+
+	if !exists || equity.Equity == nil || equity.Equity.Sign() <= 0 {
+		return 0, false
 	}
 
-	cash := solver.desk.Cash()
-
-	if cash == nil {
-		return 0.0
-	}
-
-	currentEquity := cash.Float64()
+	currentEquity := equity.Equity.Float64()
 
 	if solver.initialEquity <= 0 {
-		if currentEquity > 0 {
-			solver.initialEquity = currentEquity
-		}
-		return 0.0
+		solver.initialEquity = currentEquity
+		return 0, true
 	}
 
-	if solver.initialEquity <= 0 {
-		return 0.0
-	}
-
-	return (currentEquity - solver.initialEquity) / solver.initialEquity
+	return (currentEquity - solver.initialEquity) / solver.initialEquity, true
 }
 
 func (solver *Solver) recordHistory(value float64) {

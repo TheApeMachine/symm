@@ -173,6 +173,7 @@ func Boot(
 		instrument,
 		price,
 		balance,
+		thesis,
 		recorder,
 		positionStore,
 		uiChannel,
@@ -240,11 +241,10 @@ func Boot(
 	regulatorSolver := utils.NewWaiter[*regulator.Solver](regulator.NewSolver(
 		ctx,
 		uiChannel,
-		desk,
+		thesis,
 	)).Wait()
 
 	errnie.Debug("regulator reported to be ready")
-	regulatorSolver.Start(thesis)
 	system.closers = append(system.closers, regulatorSolver.Close)
 
 	system.Hub = ui.NewHub(

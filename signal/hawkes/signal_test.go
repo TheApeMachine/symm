@@ -53,7 +53,7 @@ func TestMeasure(t *testing.T) {
 			So(stored.([]*types.Measurement), ShouldHaveLength, 1)
 			So(stored.([]*types.Measurement)[0], ShouldEqual, measurements[0])
 			So(signal.process.Symbols(), ShouldResemble, []string{"BTC/USD"})
-			So(thesis.Readiness.Hawkes, ShouldBeTrue)
+			So(thesis.Stamped("BTC/USD", types.SourceHawkes), ShouldBeTrue)
 		})
 
 		Convey("It should not label unbounded expectations as normalized", func() {

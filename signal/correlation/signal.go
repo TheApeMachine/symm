@@ -219,6 +219,7 @@ func correlationMetrics(
 	}
 
 	readings := []reading{
+		{"snr", types.MetricSNR},
 		{"correlation", types.MetricCorrelation},
 		{"signed", types.MetricSigned},
 		{"relativeEnergy", types.MetricRelativeEnergy},
@@ -226,8 +227,6 @@ func correlationMetrics(
 		{"alphaScore", types.MetricAlphaScore},
 		{"noiseScore", types.MetricNoiseScore},
 		{"stressScore", types.MetricStressScore},
-		{"peakScore", types.MetricPeakScore},
-		{"strength", types.MetricStrength},
 	}
 
 	metrics := make(map[string]types.MetricSample, len(readings))

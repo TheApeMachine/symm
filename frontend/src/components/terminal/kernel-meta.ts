@@ -58,9 +58,9 @@ keeps whatever it last painted — which is how the row came to show a confident
 50% beside a raw reading of zero.
 */
 const SOURCE_HEADLINE: Record<string, string> = {
-	correlation: "strength",
+	correlation: "snr",
 	cvd: "strength",
-	depthflow: "strength",
+	depthflow: "snr",
 	exhaustion: "strength:buy",
 	hawkes: "conditional_intensity:buy",
 	leadlag: "strength",
@@ -87,12 +87,14 @@ zero, so the panel understates rather than invents.
 */
 const SOURCE_METRICS: Record<string, string[]> = {
 	correlation: [
-		"strength",
+		"snr",
+		"correlation",
+		"signed",
+		"relative_energy",
 		"herd_score",
 		"alpha_score",
 		"noise_score",
 		"stress_score",
-		"peak_score",
 	],
 	cvd: [
 		"strength",
@@ -103,7 +105,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"net_fraction",
 	],
 	depthflow: [
-		"strength",
+		"snr",
 		"loaded_score",
 		"spoof_score",
 		"thin_score",

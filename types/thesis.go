@@ -39,13 +39,12 @@ one decision. It closes only after the planner emits the completed decision set;
 broker execution and settlement continue in their own lifecycle.
 */
 type Thesis struct {
-	Readiness
 	ctx          context.Context
 	cancel       context.CancelFunc
 	subscribers  *sync.Map
-	observerMu   sync.RWMutex
-	observers    []func(EpochObservation)
-	observed     bool
+	ui           chan []byte
+	equityMu     sync.RWMutex
+	equity       *kraken.TradeBalanceResult
 	Status       Status        `json:"status"`
 	Tick         int64         `json:"tick"`
 	At           time.Time     `json:"at"`
@@ -80,11 +79,11 @@ func NewThesis(
 		ctx:          ctx,
 		cancel:       cancel,
 		subscribers:  &sync.Map{},
+		ui:           ui,
 		Status:       READY,
 		At:           time.Now().UTC(),
 		LastTickerAt: time.Now().UTC(),
 		LastTradeAt:  time.Now().UTC(),
-		Readiness:    NewReadiness(ui),
 		CrossSection: NewCrossSection(),
 		Decisions:    &sync.Map{},
 		Graphs:       &sync.Map{},
@@ -104,20 +103,37 @@ func NewThesis(
 }
 
 /*
-Reset starts the next evaluation epoch after the planner has completed this
-one. Measurements remain as bounded, source-keyed prior evidence: each signal
-replaces matching rows when it next produces an artifact. Raw market input and
-derived decision artifacts are epoch-local and are cleared.
+Reset clears completed symbol evaluations. With no symbols it clears the full
+market state.
 */
-func (thesis *Thesis) Reset() *Thesis {
-	if !thesis.Readiness.Complete() {
+func (thesis *Thesis) Reset(symbols ...string) *Thesis {
+	if len(symbols) > 0 {
+		for _, symbolName := range symbols {
+			value, found := thesis.Symbols.Load(symbolName)
+
+			if found {
+				symbol, ok := value.(*Symbol)
+
+				if ok && symbol != nil {
+					symbol.Reset()
+				}
+			}
+
+			thesis.Tickers.Delete(symbolName)
+			thesis.Trades.Delete(symbolName)
+			thesis.Categories.Delete(symbolName)
+			thesis.Cognition.Delete(symbolName)
+			thesis.Phase.Delete(symbolName)
+			thesis.Resonance.Delete(symbolName)
+			thesis.Causal.Delete(symbolName)
+			thesis.Decisions.Delete(symbolName)
+		}
+
+		thesis.Graphs.Clear()
+		thesis.At = time.Now().UTC()
 		return thesis
 	}
 
-	thesis.Readiness.Reset()
-	thesis.observerMu.Lock()
-	thesis.observed = false
-	thesis.observerMu.Unlock()
 	thesis.Symbols.Range(func(_, value any) bool {
 		value.(*Symbol).Reset()
 		return true
@@ -141,6 +157,12 @@ func (thesis *Thesis) Reset() *Thesis {
 
 func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 	found, ok := thesis.Tickers.LoadOrStore(ticker.Symbol, []kraken.TickerData{ticker})
+
+	if !ok {
+		thesis.LastTickerAt = ticker.Timestamp
+		thesis.Fanout(SourceTrader)
+		return thesis
+	}
 
 	if ok {
 		// Check if the ticker timestamp is after the last ticker timestamp.
@@ -170,6 +192,12 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 	found, ok := thesis.Trades.LoadOrStore(trade.Symbol, []kraken.TradeData{trade})
 
+	if !ok {
+		thesis.LastTradeAt = trade.Timestamp
+		thesis.Fanout(SourceTrader)
+		return thesis
+	}
+
 	if ok {
 		// Check if the trade timestamp is after the last trade timestamp.
 		// If not, we need to insert the trade in the correct position in
@@ -195,6 +223,41 @@ func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 	return thesis
 }
 
+/*
+AppendEquity retains the latest complete account valuation and wakes only the
+global regulator. Account feedback must not start another market-analysis pass.
+*/
+func (thesis *Thesis) AppendEquity(equity kraken.TradeBalanceResult) error {
+	if equity.Equity == nil || equity.Equity.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"thesis: positive account equity required",
+			nil,
+		))
+	}
+
+	thesis.equityMu.Lock()
+	thesis.equity = &equity
+	thesis.equityMu.Unlock()
+	thesis.Fanout(SourceEquity, SourceRegulator)
+
+	return nil
+}
+
+/*
+Equity returns the latest complete account valuation received from the broker.
+*/
+func (thesis *Thesis) Equity() (kraken.TradeBalanceResult, bool) {
+	thesis.equityMu.RLock()
+	defer thesis.equityMu.RUnlock()
+
+	if thesis.equity == nil {
+		return kraken.TradeBalanceResult{}, false
+	}
+
+	return *thesis.equity, true
+}
+
 func (thesis *Thesis) AppendMeasurements(
 	sender SourceType,
 	measurements []*Measurement,
@@ -211,7 +274,7 @@ func (thesis *Thesis) AppendMeasurements(
 
 				for index, measurement := range stored {
 					if measurement.ID == newMeasurement.ID {
-						errnie.Error(errnie.Err(
+						return errnie.Error(errnie.Err(
 							errnie.Conflict,
 							fmt.Sprintf(
 								"thesis: duplicate measurement found for [%s]",
@@ -219,8 +282,6 @@ func (thesis *Thesis) AppendMeasurements(
 							),
 							nil,
 						))
-
-						continue
 					}
 
 					if measurement.Source == newMeasurement.Source &&
@@ -240,11 +301,15 @@ func (thesis *Thesis) AppendMeasurements(
 		}
 
 		for _, measurement := range measurements {
-			found, _ := thesis.Symbols.LoadOrStore(measurement.Symbol, &Symbol{})
+			found, _ := thesis.Symbols.LoadOrStore(measurement.Symbol, &Symbol{
+				Readiness: NewReadiness(measurement.Symbol, thesis.ui),
+			})
 			symbol, ok := found.(*Symbol)
 
 			if !ok || symbol == nil {
-				symbol = &Symbol{}
+				symbol = &Symbol{
+					Readiness: NewReadiness(measurement.Symbol, thesis.ui),
+				}
 				thesis.Symbols.Store(measurement.Symbol, symbol)
 			}
 
@@ -261,11 +326,14 @@ func (thesis *Thesis) AppendMeasurements(
 			if !replaced {
 				symbol.Measurements = append(symbol.Measurements, measurement)
 			}
+
+			if ready {
+				symbol.Readiness.Stamp(sender)
+			}
 		}
 	}
 
 	if ready && len(measurements) > 0 {
-		thesis.Readiness.Stamp(sender)
 		thesis.Fanout(sender)
 	}
 
@@ -378,26 +446,7 @@ func (thesis *Thesis) Subscribe(source SourceType, semaphore chan struct{}) {
 	thesis.subscribers.Store(source, semaphore)
 }
 
-/*
-ObserveCompletions registers a synchronous, non-mutating completion observer.
-Observers must return promptly; expensive regulation belongs behind their own
-queue after copying the observation.
-*/
-func (thesis *Thesis) ObserveCompletions(observer func(EpochObservation)) {
-	if observer == nil {
-		panic("thesis: completion observer required")
-	}
-
-	thesis.observerMu.Lock()
-	defer thesis.observerMu.Unlock()
-	thesis.observers = append(thesis.observers, observer)
-}
-
-func (thesis *Thesis) Fanout(sender SourceType) {
-	if sender == SourcePlanner && thesis.Complete() {
-		thesis.notifyCompletion()
-	}
-
+func (thesis *Thesis) Fanout(sender SourceType, receivers ...SourceType) {
 	thesis.subscribers.Range(func(key, value any) bool {
 		source := key.(SourceType)
 
@@ -405,7 +454,20 @@ func (thesis *Thesis) Fanout(sender SourceType) {
 			return true
 		}
 
-		if sender != SourceTrader {
+		if len(receivers) > 0 {
+			targeted := false
+
+			for _, receiver := range receivers {
+				if source == receiver {
+					targeted = true
+					break
+				}
+			}
+
+			if !targeted {
+				return true
+			}
+		} else if sender != SourceTrader {
 			switch source {
 			case SourceCorrelation, SourceCVD, SourceDepthFlow, SourceExhaustion,
 				SourceHawkes, SourceLeadLag, SourceLiquidity, SourcePumpDump,
@@ -427,23 +489,54 @@ func (thesis *Thesis) Fanout(sender SourceType) {
 	})
 }
 
-func (thesis *Thesis) notifyCompletion() {
-	thesis.observerMu.Lock()
+/*
+Stamp marks the symbol as having been measured by the source. This is used to
+track which sources have contributed to the symbol's measurements and to ensure
+that all sources have been accounted for before making decisions based on the
+symbol's measurements.
+*/
+func (thesis *Thesis) Stamp(symbol string, source SourceType) {
+	found, ok := thesis.Symbols.Load(symbol)
 
-	if thesis.observed {
-		thesis.observerMu.Unlock()
-
+	if !ok {
 		return
 	}
 
-	thesis.observed = true
-	observers := append([]func(EpochObservation){}, thesis.observers...)
-	thesis.observerMu.Unlock()
-	observation := EpochObservation{Tick: thesis.Tick, At: thesis.At}
-
-	for _, observer := range observers {
-		observer(observation)
+	if s, ok := found.(*Symbol); ok && s != nil {
+		s.Stamp(source)
 	}
+}
+
+/*
+Stamped returns true if the symbol has been stamped by the thesis for all
+specified sources. If no sources are specified, it checks if the symbol has been
+stamped for all sources.
+*/
+func (thesis *Thesis) Stamped(symbol string, sources ...SourceType) bool {
+	symbolStamped := false
+
+	found, ok := thesis.Symbols.Load(symbol)
+
+	if !ok {
+		return false
+	}
+
+	if s, ok := found.(*Symbol); ok && s != nil {
+		if len(sources) == 0 {
+			symbolStamped = s.Readiness.Complete()
+		} else {
+			symbolStamped = true
+
+			for _, source := range sources {
+				if !s.Readiness.Stamped(source) {
+					symbolStamped = false
+					break
+				}
+			}
+		}
+	}
+
+	return symbolStamped
 }
 
 func (thesis *Thesis) Close() error {

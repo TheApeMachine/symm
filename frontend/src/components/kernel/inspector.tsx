@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
+import { useEffect, useState } from "react";
 import { appStore } from "#/collections/app";
-import type { Measurement } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
+import type { Measurement } from "#/collections/types";
 import { MeasurementInspection } from "#/components/kernel/measurement-inspection";
 import {
 	kernelCopy,
+	metricLabel,
 	sourceHeadlineMetric,
 } from "#/components/terminal/kernel-meta";
 import { Component } from "#/components/ui/component";
@@ -105,7 +106,7 @@ export const KernelInspector = () => {
 	}
 
 	const copy = kernelCopy(source, "");
-	const headline = sourceHeadlineMetric(source);
+	const headline = sourceHeadlineMetric(source).slice("metrics.".length);
 
 	/*
 		Opening the kernel on its own surface is a navigation, not a selection. It
@@ -156,13 +157,13 @@ export const KernelInspector = () => {
 									<Typography.Mono
 										size="xxs"
 										tone="f4"
-										data-paint={`${headline}.unit`}
+										data-paint={`metrics.${headline}.unit`}
 									/>
 								</Flex.Row>
 								<Panel size="bare" className="px-0 py-0">
 									<Sparkline
-										bind={`${headline}.normalized`}
-										title="Signal history"
+										bind={`metrics.${headline}.normalized`}
+										title={`${metricLabel(headline)} history`}
 										limit={150}
 										className="h-13"
 									/>

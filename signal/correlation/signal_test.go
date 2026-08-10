@@ -48,6 +48,12 @@ func TestMeasure(t *testing.T) {
 
 			measurements := signal.Measure(thesis)
 			So(measurements, ShouldHaveLength, 2)
+
+			for _, measurement := range measurements {
+				snr := measurement.Sample(types.MetricSNR, types.SideNone)
+				So(snr.Normalized, ShouldNotBeNil)
+				So(snr.Raw, ShouldAlmostEqual, 1, 1e-12)
+			}
 		})
 	})
 }
@@ -61,6 +67,7 @@ func correlationTicker(symbol string, price float64, at time.Time) kraken.Ticker
 func TestCorrelationMetrics(t *testing.T) {
 	Convey("Given cohort scores with their equation-defined domains", t, func() {
 		metrics, valid := correlationMetrics(map[string]float64{
+			"snr":            0.25,
 			"correlation":    0.8,
 			"signed":         -0.6,
 			"relativeEnergy": 1.5,
@@ -68,8 +75,6 @@ func TestCorrelationMetrics(t *testing.T) {
 			"alphaScore":     0.3,
 			"noiseScore":     0.4,
 			"stressScore":    0.5,
-			"peakScore":      0.5,
-			"strength":       0.5,
 		})
 
 		Convey("It should retain signed and relative evidence without fake scaling", func() {
@@ -78,6 +83,13 @@ func TestCorrelationMetrics(t *testing.T) {
 				ShouldAlmostEqual, -0.6, 1e-12)
 			So(*metrics[types.MetricKey(types.MetricRelativeEnergy, types.SideNone)].Normalized,
 				ShouldAlmostEqual, 1.5, 1e-12)
+			So(*metrics[types.MetricKey(types.MetricSNR, types.SideNone)].Normalized,
+				ShouldAlmostEqual, 0.25, 1e-12)
+			So(metrics, ShouldHaveLength, 8)
+			_, hasPeak := metrics["peak_score"]
+			_, hasStrength := metrics[types.MetricKey(types.MetricStrength, types.SideNone)]
+			So(hasPeak, ShouldBeFalse)
+			So(hasStrength, ShouldBeFalse)
 		})
 	})
 
@@ -94,9 +106,10 @@ func TestCorrelationMetrics(t *testing.T) {
 
 func BenchmarkCorrelationMetrics(b *testing.B) {
 	scores := map[string]float64{
+		"snr":         0.25,
 		"correlation": 0.8, "signed": 0.6, "relativeEnergy": 1.5,
 		"herdScore": 0.2, "alphaScore": 0.3, "noiseScore": 0.4,
-		"stressScore": 0.5, "peakScore": 0.5, "strength": 0.5,
+		"stressScore": 0.5,
 	}
 
 	b.ReportAllocs()

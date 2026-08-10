@@ -137,87 +137,75 @@ Update appends tokenized book samples for every changed Hawkes epoch and starts
 the shared domain's background settling loop.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis.Readiness.Hawkes {
-		for _, measurement := range utils.Measurements(thesis, types.SourceHawkes) {
-			found, ok := thesis.Measurements.Load(types.SourceHawkes)
+	updated := false
 
-			if !ok {
-				continue
+	for _, measurement := range utils.Measurements(thesis, types.SourceHawkes) {
+		if measurement == nil || measurement.Symbol == "" ||
+			thesis.Stamped(measurement.Symbol, types.SourceManifold) ||
+			!thesis.Stamped(measurement.Symbol, types.SourceHawkes) {
+			continue
+		}
+
+		buySample, buyFound := measurement.Metrics[types.MetricKey(
+			types.MetricExcitationAmplitude, types.SideBuyToBuy,
+		)]
+		sellSample, sellFound := measurement.Metrics[types.MetricKey(
+			types.MetricExcitationAmplitude, types.SideSellToSell,
+		)]
+
+		if !buyFound || !sellFound || buySample.Normalized == nil || sellSample.Normalized == nil {
+			thesis.Stamp(measurement.Symbol, types.SourceManifold)
+			updated = true
+			continue
+		}
+
+		buyExcitation := *buySample.Normalized
+		sellExcitation := *sellSample.Normalized
+
+		if buyExcitation == 0 && sellExcitation == 0 {
+			thesis.Stamp(measurement.Symbol, types.SourceManifold)
+			updated = true
+			continue
+		}
+
+		var particles []pfluid.Particle
+		var contentIDs []uint32
+		var err error
+		solver.api.Book(measurement.Symbol, func(managed *mgrbook.Book) {
+			if managed == nil {
+				return
 			}
 
-			measurements, ok := found.([]*types.Measurement)
+			bidOrders := make([]*mgrbook.Order, 0)
+			askOrders := make([]*mgrbook.Order, 0)
 
-			if !ok {
-				continue
+			for _, level := range managed.Bids.Levels {
+				bidOrders = append(bidOrders, level.Queue()...)
 			}
 
-			var buyExcitation, sellExcitation float64
-
-			for _, measurement := range measurements {
-				if measurement == nil {
-					continue
-				}
-
-				buySample, buyFound := measurement.Metrics[types.MetricKey(
-					types.MetricExcitationAmplitude, types.SideBuyToBuy,
-				)]
-				sellSample, sellFound := measurement.Metrics[types.MetricKey(
-					types.MetricExcitationAmplitude, types.SideSellToSell,
-				)]
-
-				if !buyFound || !sellFound || buySample.Normalized == nil || sellSample.Normalized == nil {
-					continue
-				}
-
-				buyExcitation = *buySample.Normalized
-				sellExcitation = *sellSample.Normalized
+			for _, level := range managed.Asks.Levels {
+				askOrders = append(askOrders, level.Queue()...)
 			}
 
-			if buyExcitation == 0 && sellExcitation == 0 {
-				continue
-			}
+			particles, contentIDs, err = solver.tokenizer.NewBatch(
+				bidOrders,
+				askOrders,
+				managed.Midpoint().Float64(),
+				buyExcitation,
+				sellExcitation,
+				measurement.Symbol,
+			)
+		})
 
-			var particles []pfluid.Particle
-			var contentIDs []uint32
-			var err error
-			solver.api.Book(measurement.Symbol, func(managed *mgrbook.Book) {
-				if managed == nil {
-					return
-				}
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("failed to tokenize manifold particles for %s, %s", measurement.Symbol, err.Error()),
+				err,
+			))
+		}
 
-				bidOrders := make([]*mgrbook.Order, 0)
-				askOrders := make([]*mgrbook.Order, 0)
-
-				for _, level := range managed.Bids.Levels {
-					bidOrders = append(bidOrders, level.Queue()...)
-				}
-
-				for _, level := range managed.Asks.Levels {
-					askOrders = append(askOrders, level.Queue()...)
-				}
-
-				particles, contentIDs, err = solver.tokenizer.NewBatch(
-					bidOrders,
-					askOrders,
-					managed.Midpoint().Float64(),
-					buyExcitation,
-					sellExcitation,
-					measurement.Symbol,
-				)
-			})
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf("failed to tokenize manifold particles for %s, %s", measurement.Symbol, err.Error()),
-					err,
-				))
-			}
-
-			if len(particles) == 0 || len(contentIDs) == 0 {
-				continue
-			}
-
+		if len(particles) > 0 && len(contentIDs) > 0 {
 			solver.domainMu.Lock()
 			_, err = solver.domain.Append(particles, contentIDs)
 			solver.domainMu.Unlock()
@@ -236,15 +224,19 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			solver.Step(thesis, measurement.Symbol, thesis.At, particles)
 		}
 
-		solver.domainMu.Lock()
-		stepped := solver.stepped
-		solver.domainMu.Unlock()
+		thesis.Stamp(measurement.Symbol, types.SourceManifold)
+		updated = true
+	}
 
-		if !stepped {
-			thesis.Stamp(types.SourceManifold)
-			return nil
-		}
+	if !updated {
+		return nil
+	}
 
+	solver.domainMu.Lock()
+	stepped := solver.stepped
+	solver.domainMu.Unlock()
+
+	if stepped {
 		var err error
 		solver.domainMu.Lock()
 		thesis.Manifold, err = solver.domain.Reading()
@@ -257,8 +249,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				err,
 			))
 		}
-
-		thesis.Stamp(types.SourceManifold)
 	}
 
 	thesis.Fanout(types.SourceManifold)

@@ -94,7 +94,20 @@ func (planner *Planner) Close() error {
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) {
-	if !thesis.LogicAnalyzed() || thesis.StrategyDecided() {
+	readySymbols := make([]string, 0)
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbol, ok := value.(*types.Symbol)
+		symbolName, nameOK := key.(string)
+
+		if ok && symbol != nil && nameOK && symbolName != "" &&
+			symbol.LogicAnalyzed() && !symbol.StrategyDecided() {
+			readySymbols = append(readySymbols, symbolName)
+		}
+
+		return true
+	})
+
+	if len(readySymbols) == 0 {
 		return
 	}
 
@@ -120,7 +133,9 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		}
 	}
 
-	thesis.Stamp(types.SourcePlanner)
+	for _, symbol := range readySymbols {
+		thesis.Stamp(symbol, types.SourcePlanner)
+	}
 
 	if len(decisions) != 0 {
 		utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
@@ -145,6 +160,11 @@ func (planner *Planner) decisions(thesis *types.Thesis) ([]types.Decision, error
 		if !symbolOK || symbol == "" || !causalOK {
 			decisionsErr = fmt.Errorf("planner: invalid causal artifact")
 			return false
+		}
+
+		if !thesis.Stamped(symbol, types.SourceGraph) ||
+			thesis.Stamped(symbol, types.SourcePlanner) {
+			return true
 		}
 
 		decision, err := planner.search(thesis, symbol, causal)

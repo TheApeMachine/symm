@@ -32,13 +32,16 @@ func TestUpdate(t *testing.T) {
 				},
 			},
 		}}})
+		stampCategorySignals(thesis, "BTC/USD")
+		stampCategorySignals(thesis, "ETH/USD")
 		solver := NewSolver(nil, nil, nil)
 
 		err := solver.Update(thesis)
 
 		Convey("It should classify every symbol from the evidence it actually has", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Readiness.Categories, ShouldBeTrue)
+			So(thesis.Stamped("BTC/USD", types.SourceCategory), ShouldBeTrue)
+			So(thesis.Stamped("ETH/USD", types.SourceCategory), ShouldBeTrue)
 			So(categoryAt(thesis, "BTC/USD"), ShouldResemble, types.Category{
 				Symbol:     "BTC/USD",
 				Type:       types.VerticalIgnition,
@@ -61,6 +64,7 @@ func TestUpdate(t *testing.T) {
 				types.MetricKey(types.MetricIgnition, types.SideNone): {Raw: 1},
 			},
 		}}})
+		stampCategorySignals(thesis, "BTC/USD")
 
 		err := NewSolver(nil, nil, nil).Update(thesis)
 
@@ -91,6 +95,7 @@ func TestUpdate(t *testing.T) {
 				},
 			},
 		}}})
+		stampCategorySignals(thesis, "BTC/USD")
 
 		err := NewSolver(nil, nil, nil).Update(thesis)
 
@@ -111,14 +116,23 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should leave category readiness open", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Readiness.Categories, ShouldBeFalse)
+			So(thesis.Stamped("BTC/USD", types.SourceCategory), ShouldBeFalse)
 		})
 	})
 }
 
 func categoryThesis(t *testing.T) *types.Thesis {
-	thesis := types.NewThesis(t.Context(), nil)
+	return types.NewThesis(t.Context(), nil)
+}
 
+func stampCategorySignals(thesis *types.Thesis, symbol string) {
+	value, found := thesis.Symbols.Load(symbol)
+
+	if !found || value == nil {
+		return
+	}
+
+	state := value.(*types.Symbol)
 	for _, source := range []types.SourceType{
 		types.SourceCorrelation,
 		types.SourceCVD,
@@ -131,10 +145,8 @@ func categoryThesis(t *testing.T) *types.Thesis {
 		types.SourceSentiment,
 		types.SourceToxicity,
 	} {
-		thesis.Stamp(source)
+		state.Stamp(source)
 	}
-
-	return thesis
 }
 
 func categoryAt(thesis *types.Thesis, symbol string) types.Category {
@@ -154,21 +166,6 @@ func BenchmarkUpdate(b *testing.B) {
 	for b.Loop() {
 		thesis := types.NewThesis(b.Context(), nil)
 
-		for _, source := range []types.SourceType{
-			types.SourceCorrelation,
-			types.SourceCVD,
-			types.SourceDepthFlow,
-			types.SourceExhaustion,
-			types.SourceHawkes,
-			types.SourceLeadLag,
-			types.SourceLiquidity,
-			types.SourcePumpDump,
-			types.SourceSentiment,
-			types.SourceToxicity,
-		} {
-			thesis.Stamp(source)
-		}
-
 		thesis.Symbols.Store("BTC/USD", &types.Symbol{
 			Measurements: []*types.Measurement{{
 				Source: types.SourcePumpDump,
@@ -180,6 +177,7 @@ func BenchmarkUpdate(b *testing.B) {
 				},
 			}},
 		})
+		stampCategorySignals(thesis, "BTC/USD")
 
 		if err := solver.Update(thesis); err != nil {
 			b.Fatal(err)

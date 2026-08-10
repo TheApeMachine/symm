@@ -7,39 +7,35 @@ import (
 )
 
 /*
-Readiness returns the readiness of the thesis for evaluation.
-
-A stage is ready when it has stamped the thesis, and only then. A stamp is the
-one statement a solver makes about itself having run to completion, so reading
-anything else — the contents of its output map, the length of a slice it
-happens to fill — infers readiness from a side effect and lets a stage that
-legitimately produced nothing read as never having run.
+Readiness records which stages have evaluated one symbol.
 */
 type Readiness struct {
 	mu          sync.RWMutex
 	ui          chan []byte
-	Correlation bool `json:"correlation"`
-	CVD         bool `json:"cvd"`
-	DepthFlow   bool `json:"depth_flow"`
-	Exhaustion  bool `json:"exhaustion"`
-	Hawkes      bool `json:"hawkes"`
-	LeadLag     bool `json:"lead_lag"`
-	Liquidity   bool `json:"liquidity"`
-	PumpDump    bool `json:"pump_dump"`
-	Sentiment   bool `json:"sentiment"`
-	Toxicity    bool `json:"toxicity"`
-	Categories  bool `json:"categories"`
-	Cognition   bool `json:"cognition"`
-	Manifold    bool `json:"manifold"`
-	Resonance   bool `json:"resonance"`
-	Causal      bool `json:"causal"`
-	Graph       bool `json:"graph"`
-	Planner     bool `json:"planner"`
+	Symbol      string `json:"symbol"`
+	Correlation bool   `json:"correlation"`
+	CVD         bool   `json:"cvd"`
+	DepthFlow   bool   `json:"depth_flow"`
+	Exhaustion  bool   `json:"exhaustion"`
+	Hawkes      bool   `json:"hawkes"`
+	LeadLag     bool   `json:"lead_lag"`
+	Liquidity   bool   `json:"liquidity"`
+	PumpDump    bool   `json:"pump_dump"`
+	Sentiment   bool   `json:"sentiment"`
+	Toxicity    bool   `json:"toxicity"`
+	Categories  bool   `json:"categories"`
+	Cognition   bool   `json:"cognition"`
+	Manifold    bool   `json:"manifold"`
+	Resonance   bool   `json:"resonance"`
+	Causal      bool   `json:"causal"`
+	Graph       bool   `json:"graph"`
+	Planner     bool   `json:"planner"`
 }
 
-func NewReadiness(ui chan []byte) Readiness {
+func NewReadiness(symbol string, ui chan []byte) Readiness {
 	return Readiness{
-		ui: ui,
+		ui:     ui,
+		Symbol: symbol,
 	}
 }
 
@@ -103,7 +99,7 @@ func (readiness *Readiness) Stamp(source SourceType) {
 			readiness.Toxicity = true
 			didUpdate = true
 		}
-	case SourceCategories:
+	case SourceCategory:
 		if !readiness.Categories {
 			readiness.Categories = true
 			didUpdate = true
@@ -145,7 +141,7 @@ func (readiness *Readiness) Stamp(source SourceType) {
 	if readiness.ui != nil && didUpdate {
 		select {
 		case readiness.ui <- datura.NewMap(
-			"readiness", readiness,
+			"readiness", []*Readiness{readiness},
 		).MarshalAndFree():
 		default:
 		}
@@ -185,7 +181,7 @@ func (readiness *Readiness) Stamped(source SourceType) bool {
 		return readiness.Sentiment
 	case SourceToxicity:
 		return readiness.Toxicity
-	case SourceCategories:
+	case SourceCategory:
 		return readiness.Categories
 	case SourceCognition:
 		return readiness.Cognition
@@ -298,4 +294,13 @@ func (readiness *Readiness) Reset() {
 	readiness.Graph = false
 
 	readiness.Planner = false
+
+	if readiness.ui != nil {
+		select {
+		case readiness.ui <- datura.NewMap(
+			"readiness", []*Readiness{readiness},
+		).MarshalAndFree():
+		default:
+		}
+	}
 }

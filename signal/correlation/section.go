@@ -10,6 +10,7 @@ import (
 	"time"
 
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"golang.org/x/sync/errgroup"
@@ -164,7 +165,10 @@ func (section *Section) Measure(
 
 	for _, symbol := range allSymbols {
 		group.Go(func() error {
-			scores, ok := section.scores(symbol)
+			scores, ok, err := section.scores(symbol)
+			if err != nil {
+				return err
+			}
 
 			if ok {
 				concurrentResults.Store(symbol, scores)
@@ -300,7 +304,9 @@ func (section *Section) Close() {
 /*
 scores derives herd/alpha/noise/stress from streaming cohort aggregates.
 */
-func (section *Section) scores(symbol string) (map[string]float64, bool) {
+func (section *Section) scores(
+	symbol string,
+) (map[string]float64, bool, error) {
 	raw, _ := section.symbols.Load(symbol)
 	state := raw.(*symbolState)
 
@@ -308,8 +314,8 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 		return map[string]float64{
 			"correlation": 0, "signed": 0, "relativeEnergy": 1,
 			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
-			"stressScore": 0, "peakScore": 0, "strength": 0,
-		}, true
+			"stressScore": 0, "snr": 0,
+		}, true, nil
 	}
 
 	weightedSigned := 0.0
@@ -345,8 +351,8 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 		return map[string]float64{
 			"correlation": 0, "signed": 0, "relativeEnergy": 1,
 			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
-			"stressScore": 0, "peakScore": 0, "strength": 0,
-		}, true
+			"stressScore": 0, "snr": 0,
+		}, true, nil
 	}
 
 	peerEnergy := weightedPeerEnergy / totalSupport
@@ -355,8 +361,8 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 		return map[string]float64{
 			"correlation": 0, "signed": 0, "relativeEnergy": 1,
 			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
-			"stressScore": 0, "peakScore": 0, "strength": 0,
-		}, true
+			"stressScore": 0, "snr": 0,
+		}, true, nil
 	}
 
 	signed := weightedSigned / totalSupport
@@ -369,9 +375,17 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 	alphaScore := excessMass / (1 + math.Max(0, signed))
 	noiseScore := math.Max(0, 1-correlation) / (1 + excessEnergy + energyDeficit)
 	stressScore := math.Max(0, -signed)
-	strength := max(max(herdScore, alphaScore), max(noiseScore, stressScore))
+	snr, err := probability.SignalNoiseRatio([]float64{
+		herdScore,
+		alphaScore,
+		noiseScore,
+		stressScore,
+	})
+	if err != nil {
+		return nil, false, err
+	}
 
-	// Zero strength is still a live cohort reading (quiet / locked peers).
+	// A zero score bundle is still a live cohort reading (quiet / locked peers).
 	// Suppressing it left the focused kernel on STANDBY forever in calm tapes.
 	return map[string]float64{
 		"correlation":    correlation,
@@ -381,9 +395,8 @@ func (section *Section) scores(symbol string) (map[string]float64, bool) {
 		"alphaScore":     alphaScore,
 		"noiseScore":     noiseScore,
 		"stressScore":    stressScore,
-		"peakScore":      strength,
-		"strength":       strength,
-	}, true
+		"snr":            snr,
+	}, true, nil
 }
 
 func fillReturns(

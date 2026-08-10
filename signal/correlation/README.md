@@ -91,7 +91,12 @@ herdScore  = max(0, signed) / (1 + excessEnergy)
 alphaScore = excessMass / (1 + max(0, signed))
 noiseScore = max(0, 1-correlation) / (1 + excessEnergy + energyDeficit)
 stressScore = max(0, -signed)
+snr = (dominantScore - runnerUpScore) / dominantScore
 ```
+
+`dominantScore` and `runnerUpScore` are the two strongest readings among herd,
+alpha, noise, and stress. If those hypotheses are tied, or all are zero, `snr`
+is zero. An uncontested positive hypothesis has `snr=1`.
 
 Each formula is a distinct question about the same underlying numbers:
 
@@ -102,14 +107,9 @@ Each formula is a distinct question about the same underlying numbers:
 | `noiseScore`  | Is this symbol both uncorrelated with peers *and* moving an unremarkable amount? Damped by both `excessEnergy` and `energyDeficit`, so an unusual move in either direction pulls this down — noise specifically means "nothing distinguishing is happening here."                                                                                   |
 | `stressScore` | Is this symbol moving *against* its cohort's direction? `max(0, -signed)` — nonzero exactly when the weighted correlation is negative, i.e. this symbol and its peers are, on net, moving opposite ways.                                                                                                                                            |
 
-`strength` (also published as `peakScore` — both keys currently carry the
-same `max` value) is `max` across all four, so a consumer wanting "how
-distinctive was this symbol's cohort relationship this tick" doesn't need to
-know which of the four categories produced it.
-
-A zero-strength reading is still emitted deliberately (see the comment at
-`section.go:362`) — a quiet, fully-locked cohort is a real state the rest of
-the system needs to see, not something to suppress as "no signal."
+A zero score bundle is still emitted deliberately — a quiet, fully-locked
+cohort is a real state the rest of the system needs to see, not something to
+suppress as "no signal."
 
 ## Every metric this package produces
 
@@ -124,8 +124,7 @@ All published under `source=correlation`, keyed `type:none`.
 | `alpha_score`     | See table above. `0..1`, high = large move not explained by correlation.                                                                                                                           |
 | `noise_score`     | See table above. `0..1`, high = uncorrelated and unremarkable move.                                                                                                                                |
 | `stress_score`    | See table above. `0..1`, high = moving against the cohort's net direction.                                                                                                                         |
-| `peak_score`      | Same value as `strength` (`max` of the four scores).                                                                                                                                               |
-| `strength`        | `max(herd_score, alpha_score, noise_score, stress_score)`.                                                                                                                                         |
+| `snr`             | Relative separation between the strongest and second-strongest normalized cohort hypotheses. `0` means ambiguous; `1` means uncontested.                                                       |
 
 ### Readiness
 

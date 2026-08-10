@@ -13,17 +13,31 @@ import (
 func TestUpdate(t *testing.T) {
 	Convey("Given completed upstream stages without a causal estimate", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Readiness.Stamp(types.SourceCategories)
-		thesis.Readiness.Stamp(types.SourceResonance)
-		thesis.Readiness.Stamp(types.SourceCausal)
-		thesis.Readiness.Stamp(types.SourceCognition)
+		thesis.Symbols.Store("BTC/USD", &types.Symbol{})
+		thesis.Symbols.Store("ETH/USD", &types.Symbol{})
+
+		for _, source := range []types.SourceType{
+			types.SourceCategory,
+			types.SourceResonance,
+			types.SourceManifold,
+			types.SourceCausal,
+			types.SourceCognition,
+		} {
+			thesis.Stamp("BTC/USD", source)
+		}
+		thesis.Stamp("ETH/USD", types.SourceCategory)
+		thesis.Stamp("ETH/USD", types.SourceResonance)
+		thesis.Stamp("ETH/USD", types.SourceManifold)
+		thesis.Stamp("ETH/USD", types.SourceCausal)
+
 		solver := NewSolver(nil, nil)
 
 		err := solver.Update(thesis)
 
 		Convey("It should compile and stamp the graph", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Readiness.Graph, ShouldBeTrue)
+			So(thesis.Stamped("BTC/USD", types.SourceGraph), ShouldBeTrue)
+			So(thesis.Stamped("ETH/USD", types.SourceGraph), ShouldBeFalse)
 			_, found := thesis.Graphs.Load("market_graph")
 			So(found, ShouldBeTrue)
 		})
@@ -366,17 +380,20 @@ func BenchmarkUpdate(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for _, source := range []types.SourceType{
-		types.SourceCategories,
-		types.SourceResonance,
-		types.SourceCausal,
-		types.SourceCognition,
-	} {
-		thesis.Readiness.Stamp(source)
-	}
-
 	for index := range 256 {
 		symbol := "SIM" + strconv.Itoa(index) + "/USD"
+		thesis.Symbols.Store(symbol, &types.Symbol{})
+
+		for _, source := range []types.SourceType{
+			types.SourceCategory,
+			types.SourceResonance,
+			types.SourceManifold,
+			types.SourceCausal,
+			types.SourceCognition,
+		} {
+			thesis.Stamp(symbol, source)
+		}
+
 		thesis.Categories.Store(symbol, []types.Category{
 			{
 				Symbol:     symbol,
@@ -424,6 +441,23 @@ func BenchmarkUpdate(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
+		thesis.Symbols.Range(func(_, value any) bool {
+			symbol := value.(*types.Symbol)
+			symbol.Reset()
+
+			for _, source := range []types.SourceType{
+				types.SourceCategory,
+				types.SourceResonance,
+				types.SourceManifold,
+				types.SourceCausal,
+				types.SourceCognition,
+			} {
+				symbol.Stamp(source)
+			}
+
+			return true
+		})
+
 		if err := solver.Update(thesis); err != nil {
 			b.Fatal(err)
 		}
