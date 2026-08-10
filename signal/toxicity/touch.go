@@ -125,20 +125,6 @@ func toxicityMeasurement(
 	askFill = math.Min(askFill, previous.ask.quantity)
 	bidRetreat, bidCancelled := touchChange(types.SideBuy, previous.bid, current.bid, bidFill)
 	askRetreat, askCancelled := touchChange(types.SideSell, previous.ask, current.ask, askFill)
-	tradeVolumeNormalized := normalizedTouchRatio(
-		tradeVolume,
-		previous.bid.quantity+previous.ask.quantity,
-	)
-	bidFillNormalized := normalizedTouchRatio(bidFill, previous.bid.quantity)
-	askFillNormalized := normalizedTouchRatio(askFill, previous.ask.quantity)
-	bidPriceNormalized := normalizedTouchPrice(current.bid.price, previous.bid.price)
-	askPriceNormalized := normalizedTouchPrice(current.ask.price, previous.ask.price)
-	bidQuantityNormalized := normalizedTouchRatio(current.bid.quantity, previous.bid.quantity)
-	askQuantityNormalized := normalizedTouchRatio(current.ask.quantity, previous.ask.quantity)
-	bidRetreatNormalized := normalizedTouchRatio(bidRetreat, previous.bid.quantity)
-	askRetreatNormalized := normalizedTouchRatio(askRetreat, previous.ask.quantity)
-	bidCancelledNormalized := normalizedTouchRatio(bidCancelled, previous.bid.quantity)
-	askCancelledNormalized := normalizedTouchRatio(askCancelled, previous.ask.quantity)
 
 	return &types.Measurement{
 		ID:           uuid.NewString(),
@@ -150,57 +136,57 @@ func toxicityMeasurement(
 		Metrics: map[string]types.MetricSample{
 			types.MetricKey(types.MetricTradeVolume, types.SideNone): {
 				Raw:        tradeVolume,
-				Normalized: tradeVolumeNormalized,
+				Normalized: normalizedTouchRatio(tradeVolume, previous.bid.quantity+previous.ask.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricFillVolume, types.SideBuy): {
 				Raw:        bidFill,
-				Normalized: bidFillNormalized,
+				Normalized: normalizedTouchRatio(bidFill, previous.bid.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricFillVolume, types.SideSell): {
 				Raw:        askFill,
-				Normalized: askFillNormalized,
+				Normalized: normalizedTouchRatio(askFill, previous.ask.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
 				Raw:        current.bid.price,
-				Normalized: bidPriceNormalized,
+				Normalized: normalizedTouchPrice(current.bid.price, previous.bid.price),
 				Unit:       types.UnitQuoteCurrency,
 			},
 			types.MetricKey(types.MetricBestPrice, types.SideSell): {
 				Raw:        current.ask.price,
-				Normalized: askPriceNormalized,
+				Normalized: normalizedTouchPrice(current.ask.price, previous.ask.price),
 				Unit:       types.UnitQuoteCurrency,
 			},
 			types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
 				Raw:        current.bid.quantity,
-				Normalized: bidQuantityNormalized,
+				Normalized: normalizedTouchRatio(current.bid.quantity, previous.bid.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
 				Raw:        current.ask.quantity,
-				Normalized: askQuantityNormalized,
+				Normalized: normalizedTouchRatio(current.ask.quantity, previous.ask.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy): {
 				Raw:        bidRetreat,
-				Normalized: bidRetreatNormalized,
+				Normalized: normalizedTouchRatio(bidRetreat, previous.bid.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): {
 				Raw:        askRetreat,
-				Normalized: askRetreatNormalized,
+				Normalized: normalizedTouchRatio(askRetreat, previous.ask.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
 				Raw:        bidCancelled,
-				Normalized: bidCancelledNormalized,
+				Normalized: normalizedTouchRatio(bidCancelled, previous.bid.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricCancelledQuantity, types.SideSell): {
 				Raw:        askCancelled,
-				Normalized: askCancelledNormalized,
+				Normalized: normalizedTouchRatio(askCancelled, previous.ask.quantity),
 				Unit:       types.UnitBaseCurrency,
 			},
 		},
@@ -223,7 +209,6 @@ touches. An unchanged, valid price therefore produces a genuine zero.
 */
 func normalizedTouchPrice(currentPrice, previousPrice float64) *float64 {
 	value := math.Log(currentPrice / previousPrice)
-
 	return &value
 }
 

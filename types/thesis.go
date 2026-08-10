@@ -205,7 +205,7 @@ func (thesis *Thesis) AppendMeasurements(
 
 				for index, measurement := range stored {
 					if measurement.ID == newMeasurement.ID {
-						return errnie.Error(errnie.Err(
+						errnie.Error(errnie.Err(
 							errnie.Conflict,
 							fmt.Sprintf(
 								"thesis: duplicate measurement found for [%s]",
@@ -213,6 +213,8 @@ func (thesis *Thesis) AppendMeasurements(
 							),
 							nil,
 						))
+
+						continue
 					}
 
 					if measurement.Source == newMeasurement.Source &&
@@ -232,10 +234,6 @@ func (thesis *Thesis) AppendMeasurements(
 		}
 
 		for _, measurement := range measurements {
-			if measurement == nil {
-				continue
-			}
-
 			found, _ := thesis.Symbols.LoadOrStore(measurement.Symbol, &Symbol{})
 			symbol, ok := found.(*Symbol)
 
@@ -257,14 +255,10 @@ func (thesis *Thesis) AppendMeasurements(
 			if !replaced {
 				symbol.Measurements = append(symbol.Measurements, measurement)
 			}
-
-			if ready {
-				symbol.Stamp(sender)
-			}
 		}
 	}
 
-	if ready {
+	if ready && len(measurements) > 0 {
 		thesis.Readiness.Stamp(sender)
 		thesis.Fanout(sender)
 	}

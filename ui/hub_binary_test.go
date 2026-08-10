@@ -44,6 +44,12 @@ func TestHubForecastPublication(t *testing.T) {
 		)
 		So(err, ShouldBeNil)
 		Reset(func() { So(conn.Close(), ShouldBeNil) })
+		peer, _, err := websocket.DefaultDialer.Dial(
+			"ws://"+listener.Addr().String()+"/ws",
+			nil,
+		)
+		So(err, ShouldBeNil)
+		Reset(func() { So(peer.Close(), ShouldBeNil) })
 
 		forecast, err := types.NewResonanceForecast(
 			[]float64{0.01, 0.02}, []float64{1, 0.5}, 2, 0.75,
@@ -61,6 +67,10 @@ func TestHubForecastPublication(t *testing.T) {
 		messageType, received, err := conn.ReadMessage()
 		So(err, ShouldBeNil)
 		So(messageType, ShouldEqual, websocket.TextMessage)
+		So(peer.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
+		_, peerReceived, err := peer.ReadMessage()
+		So(err, ShouldBeNil)
+		So(peerReceived, ShouldResemble, received)
 
 		var frame struct {
 			Resonance []types.ResonanceReading `json:"resonance"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"syscall"
 
 	"github.com/bytedance/sonic"
@@ -32,6 +33,7 @@ type Hub struct {
 	price      *broker.Price
 	balance    *broker.Balance
 	fluid      *FluidRTC
+	clients    sync.Map
 }
 
 /*
@@ -65,6 +67,23 @@ func NewHub(
 		fluid:   NewFluidRTC(ctx),
 	}
 	go hub.fluid.Run(manifold)
+	go func() {
+		for {
+			select {
+			case <-hub.ctx.Done():
+				return
+			case message := <-hub.Messages:
+				hub.clients.Range(func(_, value any) bool {
+					select {
+					case value.(chan []byte) <- message:
+					default:
+					}
+
+					return true
+				})
+			}
+		}
+	}()
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -76,6 +95,10 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
+		messages := make(chan []byte, 1)
+		hub.clients.Store(conn, messages)
+		defer hub.clients.Delete(conn)
+
 		if hub.balance != nil {
 			conn.WriteMessage(websocket.TextMessage, hub.balance.Wallet())
 		}
@@ -141,7 +164,7 @@ func NewHub(
 			case <-hub.ctx.Done():
 				errnie.Error(hub.Close())
 				return
-			case msg := <-hub.Messages:
+			case msg := <-messages:
 				/*
 					A write failure on a websocket is terminal: the connection is
 					gone, or a close frame has already been sent and every later

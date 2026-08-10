@@ -1,6 +1,9 @@
 package category
 
 import (
+	"slices"
+
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/vector"
 	"github.com/theapemachine/symm/audit"
@@ -16,6 +19,8 @@ metric that carries affinity is typed evidence for or against it.
 type Solver struct {
 	extractor  *vector.FeatureExtractor
 	classifier *probability.Classifier
+	inputs     []string
+	categories []types.CategoryType
 	api        *websocket.API
 	recorder   *audit.Recorder
 	ui         chan []byte
@@ -29,31 +34,93 @@ func NewSolver(
 	ui chan []byte,
 	recorder *audit.Recorder,
 ) *Solver {
+	inputs := make([]string, len(types.CategorySchemas))
+	categories := make([]types.CategoryType, 0, len(types.CategorySchemas))
+	categoryNames := make([]string, 0, len(types.CategorySchemas))
+
+	for index, schema := range types.CategorySchemas {
+		inputs[index] = string(schema.Source) + ":" + types.MetricKey(
+			schema.Metric,
+			schema.Side,
+		)
+
+		if slices.Contains(categories, schema.Category) {
+			continue
+		}
+
+		categories = append(categories, schema.Category)
+		categoryNames = append(categoryNames, string(schema.Category))
+	}
+
 	return &Solver{
 		extractor: vector.NewFeatureExtractor(
-			vector.FeatureExtractorConfig{},
+			vector.FeatureExtractorConfig{
+				FeatureScopeConfig: vector.FeatureScopeConfig{
+					Root:   ".",
+					Inputs: inputs,
+				},
+			},
 		),
 		classifier: probability.NewClassifier(
-			probability.ClassifierSchema{},
+			probability.ClassifierSchema{Categories: categoryNames},
 		),
-		api:      api,
-		recorder: recorder,
-		ui:       ui,
+		inputs:     inputs,
+		categories: categories,
+		api:        api,
+		recorder:   recorder,
+		ui:         ui,
 	}
 }
 
 /*
 Update scores the configured categories against the measurements this tick
-carried and records those that cleared their evidence threshold.
+carried and records one classified artifact per symbol.
 Categories are the substrate the graph and the cognition tree are built from,
 so they are derived before either runs.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	// Categories are read off this tick's measurements, so there is nothing to
-	// classify until every signal has stamped. Skipping leaves the stamp
-	// unraised and the tick comes back once the evidence is there.
-	if !thesis.SignalsMeasured() {
+	if thesis.Stamped(types.SourceCategories) || !thesis.SignalsMeasured() {
 		return nil
+	}
+
+	var err error
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbol := value.(*types.Symbol)
+
+		for _, measurement := range symbol.Measurements {
+			for _, schema := range types.CategorySchemas {
+				if schema.Source != measurement.Source {
+					continue
+				}
+
+				category, err := solver.classifier.Classify(probability.ClassifierInput{
+					Scores: []probability.CategoryScore{{
+						Category: string(schema.Category),
+						Score:    measurement.Uncertainty.Confidence,
+					}},
+				})
+
+				if err != nil {
+					err = err
+					return false
+				}
+
+				thesis.Categories.Store(symbol, []probability.ScoreResult{category})
+
+				return true
+			}
+		}
+
+		return true
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"category: failed to classify categories - "+err.Error(),
+			err,
+		))
 	}
 
 	thesis.Stamp(types.SourceCategories)

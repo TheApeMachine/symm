@@ -2,64 +2,29 @@ package hawkes
 
 import (
 	"context"
-	"math"
-	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	nmhawkes "github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-excitationOutcome builds an outcome whose fit epoch precedes the evaluation
-epoch, so provenance and scale can be told apart in assertions.
-*/
-func excitationOutcome(fitted bool) excitation.Outcome {
-	fitFrom := time.Unix(1_700_001_000, 0).UTC()
-	observedFrom := fitFrom.Add(11 * time.Second)
-
-	return excitation.Outcome{
-		ObservedFrom:                    observedFrom,
-		At:                              observedFrom.Add(5 * time.Second),
-		FitObservedFrom:                 fitFrom,
-		FitAt:                           fitFrom.Add(10 * time.Second),
-		EventCount:                      8,
-		BuyEventCount:                   6,
-		SellEventCount:                  2,
-		BuyArrivalRate:                  1.2,
-		SellArrivalRate:                 0.4,
-		MinimumFitEvents:                16,
-		Maturity:                        1,
-		HawkesPoissonLogLikelihoodDelta: 4,
-		CrossSelfLogLikelihoodDelta:     2,
-		ImmediateBuyOffspring:           0.5,
-		TotalBuyDescendants:             1.25,
-		Fit: nmhawkes.BivariateFit{
-			MuX: 0.5, MuY: 0.5,
-			AlphaXX: 1, AlphaXY: 0.5, AlphaYX: 0.25, AlphaYY: 0.75,
-			Beta: 2, SpectralRadius: 0.4,
-			IntensityX: 2, IntensityY: 0.25,
-		},
-		Readiness: excitation.Readiness{
-			Observation: true,
-			Intensity:   true,
-			HawkesFit:   fitted,
-			Reason:      "residual validation pending",
-		},
-	}
-}
-
 func TestMeasure(t *testing.T) {
 	Convey("Given one new trade on each Thesis fanout", t, func() {
-		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
+		ui := make(chan []byte, 1)
+		signal := &Signal{
+			ctx:     context.Background(),
+			process: excitation.NewProcess(),
+			sample:  excitation.NewSample(),
+			ui:      ui,
+		}
 		start := time.Unix(1_700_005_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 		var measurements []*types.Measurement
 		var ready bool
+		expectedCounts := []float64{1, 1, 2}
 
 		for index, side := range []string{"buy", "sell", "buy"} {
 			thesis.AppendTrade(kraken.TradeData{
@@ -68,31 +33,48 @@ func TestMeasure(t *testing.T) {
 				Side:      side,
 				Timestamp: start.Add(time.Duration(index) * time.Second),
 			})
-			measurements, ready = signal.measure(thesis)
+			measurements, ready = signal.Measure(thesis)
 
 			So(measurements, ShouldHaveLength, 1)
-			So(measurements[0].Arrivals, ShouldHaveLength, index+1)
+			So(measurements[0].Sample(
+				types.MetricEventCount,
+				types.SideNone,
+			).Raw, ShouldEqual, expectedCounts[index])
 			So(ready, ShouldEqual, index == 2)
+			So(string(<-ui), ShouldContainSubstring, `"measurements"`)
 
 			thesis.AppendMeasurements(types.SourceHawkes, measurements, ready)
 			So(thesis.MarketTrades(types.SourceHawkes), ShouldBeEmpty)
 		}
 
-		Convey("It should carry prior arrivals in a bounded intermediate measurement", func() {
+		Convey("It should leave retained arrivals and fit state in Nomagique", func() {
 			stored, found := thesis.Measurements.Load(types.SourceHawkes)
 			So(found, ShouldBeTrue)
 			So(stored.([]*types.Measurement), ShouldHaveLength, 1)
 			So(stored.([]*types.Measurement)[0], ShouldEqual, measurements[0])
-			So(measurements[0].Sample(
-				types.MetricEventCount,
-				types.SideNone,
-			).Raw, ShouldEqual, 2)
+			So(signal.process.Symbols(), ShouldResemble, []string{"BTC/USD"})
 			So(thesis.Readiness.Hawkes, ShouldBeTrue)
+		})
+
+		Convey("It should not label unbounded expectations as normalized", func() {
+			for _, metric := range []types.MetricType{
+				types.MetricImmediateOffspring,
+				types.MetricTotalDescendants,
+			} {
+				So(measurements[0].Sample(metric, types.SideBuy).Normalized,
+					ShouldBeNil)
+				So(measurements[0].Sample(metric, types.SideSell).Normalized,
+					ShouldBeNil)
+			}
 		})
 	})
 
 	Convey("Given a liquid market and an unrelated thin market", t, func() {
-		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
+		signal := &Signal{
+			ctx:     context.Background(),
+			process: excitation.NewProcess(),
+			sample:  excitation.NewSample(),
+		}
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 		liquid := make([]kraken.TradeData, 0, 80)
@@ -117,7 +99,7 @@ func TestMeasure(t *testing.T) {
 			{Symbol: "THIN/USD", Side: "sell", Timestamp: start.Add(time.Second)},
 		})
 
-		_, ready := signal.measure(thesis)
+		_, ready := signal.Measure(thesis)
 
 		Convey("It should not let the thin market veto Hawkes readiness", func() {
 			So(ready, ShouldBeTrue)
@@ -125,7 +107,11 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given trades for symbols whose marks arrive out of order", t, func() {
-		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
+		signal := &Signal{
+			ctx:     context.Background(),
+			process: excitation.NewProcess(),
+			sample:  excitation.NewSample(),
+		}
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 
@@ -142,7 +128,7 @@ func TestMeasure(t *testing.T) {
 			Symbol: "AAA/USD", Side: "buy", Timestamp: start.Add(time.Second),
 		})
 
-		measurements := signal.Measure(thesis)
+		measurements, _ := signal.Measure(thesis)
 
 		Convey("It should emit one row for the symbol", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -165,7 +151,11 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a symbol whose only trades are sells", t, func() {
-		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
+		signal := &Signal{
+			ctx:     context.Background(),
+			process: excitation.NewProcess(),
+			sample:  excitation.NewSample(),
+		}
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 
@@ -174,7 +164,7 @@ func TestMeasure(t *testing.T) {
 			{Symbol: "BBB/USD", Side: "sell", Timestamp: start.Add(time.Second)},
 		})
 
-		measurements := signal.Measure(thesis)
+		measurements, _ := signal.Measure(thesis)
 
 		Convey("It should still measure the one-sided arrival process", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -183,7 +173,11 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given trades for two independent symbols", t, func() {
-		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
+		signal := &Signal{
+			ctx:     context.Background(),
+			process: excitation.NewProcess(),
+			sample:  excitation.NewSample(),
+		}
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 
@@ -196,150 +190,60 @@ func TestMeasure(t *testing.T) {
 			{Symbol: "BBB/USD", Side: "buy", Timestamp: start.Add(time.Second)},
 		})
 
-		measurements := signal.Measure(thesis)
+		measurements, _ := signal.Measure(thesis)
 
 		Convey("It should emit one row per symbol, never one per mark", func() {
 			So(measurements, ShouldHaveLength, 2)
 		})
 
 		Convey("It should keep each symbol's estimator state apart", func() {
-			for _, symbol := range []string{"AAA/USD", "BBB/USD"} {
-				process, ok := signal.processors.Load(symbol)
-
-				So(ok, ShouldBeTrue)
-				So(process.(*excitation.Process).Symbols(), ShouldResemble, []string{symbol})
-			}
+			So(signal.process.Symbols(), ShouldResemble,
+				[]string{"AAA/USD", "BBB/USD"})
 		})
 	})
 
 	Convey("Given a thesis carrying no trades", t, func() {
-		signal := &Signal{ctx: context.Background(), processors: &sync.Map{}}
+		signal := &Signal{
+			ctx:     context.Background(),
+			process: excitation.NewProcess(),
+			sample:  excitation.NewSample(),
+		}
 
 		Convey("It should measure nothing", func() {
-			So(signal.Measure(types.NewThesis(t.Context(), nil)), ShouldBeEmpty)
+			So(func() []*types.Measurement {
+				measurements, _ := signal.Measure(types.NewThesis(t.Context(), nil))
+				return measurements
+			}(), ShouldBeEmpty)
 		})
 	})
 }
 
-func TestMeasurement(t *testing.T) {
-	Convey("Given an identified fit evaluated on a later observation epoch", t, func() {
-		signal := &Signal{}
-		outcome := excitationOutcome(true)
-		measurement := signal.measurement("ALT/USD", outcome)
+func BenchmarkMeasure(t *testing.B) {
+	signal := &Signal{
+		ctx:     context.Background(),
+		process: excitation.NewProcess(),
+		sample:  excitation.NewSample(),
+	}
+	thesis := types.NewThesis(context.Background(), nil)
+	start := time.Unix(1_700_005_000, 0).UTC()
+	iteration := 0
 
-		Convey("It should keep evaluation provenance separate from fit scale", func() {
-			So(measurement.ObservedFrom, ShouldResemble, outcome.ObservedFrom)
-			So(measurement.At, ShouldResemble, outcome.At)
-			So(measurement.Horizon, ShouldEqual, 5*time.Second)
-		})
+	t.ReportAllocs()
 
-		Convey("It should report self-excitation against the immigrant baseline", func() {
-			// Intensity 2.0 over a baseline of 0.5 is three baselines of excitation.
-			sample := measurement.Sample(
-				types.MetricConditionalIntensity, types.SideBuy,
-			)
+	for t.Loop() {
+		side := "buy"
 
-			So(sample.Normalized, ShouldNotBeNil)
-			So(*sample.Normalized, ShouldAlmostEqual, 3.0, 1e-9)
-		})
+		if iteration%2 != 0 {
+			side = "sell"
+		}
 
-		Convey("It should refuse an intensity beneath its own baseline", func() {
-			// A nonnegative kernel cannot hold IntensityY 0.25 under MuY 0.5.
-			So(measurement.Sample(
-				types.MetricConditionalIntensity, types.SideSell,
-			).Normalized, ShouldBeNil)
-		})
-
-		Convey("It should scale each amplitude by the decay consuming it", func() {
-			So(*measurement.Sample(
-				types.MetricExcitationAmplitude, types.SideBuyToBuy,
-			).Normalized, ShouldAlmostEqual, 0.5, 1e-9)
-		})
-
-		Convey("It should publish kernel memory as a share of the horizon", func() {
-			sample := measurement.Sample(types.MetricKernelMemory, types.SideNone)
-
-			So(sample.Raw, ShouldAlmostEqual, 0.5, 1e-9)
-			So(*sample.Normalized, ShouldAlmostEqual, 0.1, 1e-9)
-		})
-
-		Convey("It should report likelihood gains per observed event", func() {
-			So(*measurement.Sample(
-				types.MetricHawkesPoissonDelta, types.SideNone,
-			).Normalized, ShouldAlmostEqual, 0.5, 1e-9)
-		})
-
-		Convey("It should mark the row as carrying fit parameters", func() {
-			So(types.ForPublish([]*types.Measurement{measurement}), ShouldHaveLength, 1)
-		})
-	})
-
-	Convey("Given an outcome whose fit is not identifiable", t, func() {
-		signal := &Signal{}
-		measurement := signal.measurement("ALT/USD", excitationOutcome(false))
-
-		Convey("It should omit fitted state rather than publish a zero", func() {
-			for _, metric := range []types.MetricType{
-				types.MetricConditionalIntensity,
-				types.MetricBaselineIntensity,
-				types.MetricSpectralRadius,
-				types.MetricDecayRate,
-			} {
-				_, present := measurement.Metrics[types.MetricKey(metric, types.SideBuy)]
-				So(present, ShouldBeFalse)
-
-				_, present = measurement.Metrics[types.MetricKey(metric, types.SideNone)]
-				So(present, ShouldBeFalse)
-			}
-		})
-
-		Convey("It should still publish the empirical arrival rate", func() {
-			sample := measurement.Sample(types.MetricArrivalRate, types.SideBuy)
-
-			So(sample.Raw, ShouldAlmostEqual, 1.2, 1e-9)
-			So(sample.Unit, ShouldEqual, types.UnitEventsPerSecond)
-		})
-
-		Convey("It should scale rates against the total marked rate", func() {
-			// 1.2 buys against 1.6 marked arrivals per second.
-			So(*measurement.Sample(
-				types.MetricArrivalRate, types.SideBuy,
-			).Normalized, ShouldAlmostEqual, 0.75, 1e-9)
-		})
-
-		Convey("It should measure support against the estimator requirement", func() {
-			So(*measurement.Sample(
-				types.MetricEventCount, types.SideNone,
-			).Normalized, ShouldAlmostEqual, 0.5, 1e-9)
-		})
-	})
-}
-
-func TestNormalizedShare(t *testing.T) {
-	Convey("Given a reading and a reference scale", t, func() {
-		Convey("It should report the reading as a fraction of the reference", func() {
-			So(*normalizedShare(3, 4), ShouldAlmostEqual, 0.75, 1e-9)
-		})
-
-		Convey("It should refuse a reference that establishes no scale", func() {
-			So(normalizedShare(3, 0), ShouldBeNil)
-			So(normalizedShare(3, -1), ShouldBeNil)
-			So(normalizedShare(math.NaN(), 4), ShouldBeNil)
-			So(normalizedShare(math.Inf(1), 4), ShouldBeNil)
-		})
-	})
-}
-
-func TestNormalizedBranching(t *testing.T) {
-	Convey("Given a fitted branching ratio", t, func() {
-		Convey("It should publish a stationary process", func() {
-			So(*normalizedBranching(0.4), ShouldAlmostEqual, 0.4, 1e-9)
-		})
-
-		Convey("It should refuse a ratio whose cascade size diverges", func() {
-			So(normalizedBranching(1), ShouldBeNil)
-			So(normalizedBranching(1.5), ShouldBeNil)
-			So(normalizedBranching(-0.1), ShouldBeNil)
-		})
-	})
+		thesis.Trades.Store("BTC/USD", []kraken.TradeData{{
+			Symbol:    "BTC/USD",
+			TradeID:   int64(iteration + 1),
+			Side:      side,
+			Timestamp: start.Add(time.Duration(iteration) * time.Second),
+		}})
+		signal.Measure(thesis)
+		iteration++
+	}
 }

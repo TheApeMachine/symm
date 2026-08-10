@@ -25,6 +25,45 @@ type CategorySchema struct {
 	Category CategoryType
 }
 
+/*
+CategorySchemas maps signal scores to the category evidence they already
+represent. Repeated categories are combined by the nomagique classifier path.
+*/
+var CategorySchemas = []CategorySchema{
+	{Source: SourceCorrelation, Metric: MetricHerdScore, Category: SystemicHerd},
+	{Source: SourceCorrelation, Metric: MetricAlphaScore, Category: DecoupledAlpha},
+	{Source: SourceCorrelation, Metric: MetricNoiseScore, Category: StochasticNoise},
+	{Source: SourceCorrelation, Metric: MetricStressScore, Category: DivergentStress},
+	{Source: SourceCVD, Metric: MetricAbsorption, Category: HiddenAbsorption},
+	{Source: SourceCVD, Metric: MetricDrive, Category: AggressiveDrive},
+	{Source: SourceCVD, Metric: MetricBalance, Category: StochasticBalance},
+	{Source: SourceCVD, Metric: MetricStarvation, Category: VolumeStarvation},
+	{Source: SourceDepthFlow, Metric: MetricLoadedScore, Category: LoadedImbalance},
+	{Source: SourceDepthFlow, Metric: MetricSpoofScore, Category: SpoofTrap},
+	{Source: SourceDepthFlow, Metric: MetricThinScore, Category: BookThinning},
+	{Source: SourceDepthFlow, Metric: MetricNeutralScore, Category: DenseNeutrality},
+	{Source: SourceExhaustion, Metric: MetricMechanical, Side: SideBuy, Category: MechanicalCollapse},
+	{Source: SourceExhaustion, Metric: MetricMechanical, Side: SideSell, Category: MechanicalCollapse},
+	{Source: SourceExhaustion, Metric: MetricThermal, Side: SideBuy, Category: ThermalExhaustion},
+	{Source: SourceExhaustion, Metric: MetricThermal, Side: SideSell, Category: ThermalExhaustion},
+	{Source: SourceExhaustion, Metric: MetricFragile, Side: SideBuy, Category: FragileExpansion},
+	{Source: SourceExhaustion, Metric: MetricFragile, Side: SideSell, Category: FragileExpansion},
+	{Source: SourceExhaustion, Metric: MetricReversal, Side: SideBuy, Category: ActiveReversal},
+	{Source: SourceExhaustion, Metric: MetricReversal, Side: SideSell, Category: ActiveReversal},
+	{Source: SourceLeadLag, Metric: MetricInefficient, Category: InefficientLag},
+	{Source: SourceLeadLag, Metric: MetricSync, Category: SynchronizedDrift},
+	{Source: SourceLeadLag, Metric: MetricDecoupled, Category: DecoupledMove},
+	{Source: SourceLeadLag, Metric: MetricStall, Category: AnchorStall},
+	{Source: SourcePumpDump, Metric: MetricIgnition, Category: VerticalIgnition},
+	{Source: SourcePumpDump, Metric: MetricCompression, Category: CoiledCompression},
+	{Source: SourcePumpDump, Metric: MetricTrend, Category: OrganicTrend},
+	{Source: SourcePumpDump, Metric: MetricExhaustion, Category: FadedExhaustion},
+	{Source: SourceLiquidity, Metric: MetricScarcityScore, Category: ExtremeScarcity},
+	{Source: SourceSentiment, Metric: MetricSurgeScore, Category: RiskOnSurge},
+	{Source: SourceSentiment, Metric: MetricDivergentScore, Category: DivergentMove},
+	{Source: SourceSentiment, Metric: MetricSlumpScore, Category: SystemicSlump},
+}
+
 type CategoryType string
 
 const (

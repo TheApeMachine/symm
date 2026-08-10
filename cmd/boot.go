@@ -243,7 +243,6 @@ func Boot(
 		desk,
 	)).Wait()
 
-	regulatorSolver.Start(thesis)
 	errnie.Debug("regulator reported to be ready")
 	system.closers = append(system.closers, regulatorSolver.Close)
 

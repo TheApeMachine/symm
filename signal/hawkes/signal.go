@@ -2,18 +2,14 @@ package hawkes
 
 import (
 	"context"
-	"sort"
-	"sync"
 	"sync/atomic"
 
+	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -28,19 +24,20 @@ forecast readiness remains false until residual and out-of-sample validation
 exists.
 */
 type Signal struct {
-	status     atomic.Value
-	ctx        context.Context
-	cancel     context.CancelFunc
-	api        *websocket.API
-	processors *sync.Map
-	ui         chan []byte
-	thesis     *types.Thesis
-	semaphore  chan struct{}
+	status    atomic.Value
+	ctx       context.Context
+	cancel    context.CancelFunc
+	api       *websocket.API
+	process   *excitation.Process
+	sample    *excitation.Sample
+	ui        chan []byte
+	thesis    *types.Thesis
+	semaphore chan struct{}
 }
 
 /*
-NewSignal constructs the symbol-local excitation measurement pipeline. Each
-update reconstructs marked-arrival history from the prior Thesis measurement.
+NewSignal constructs the excitation pipeline. Nomagique owns the symbol-local
+arrival windows and fitted parameter epochs.
 */
 func NewSignal(
 	ctx context.Context,
@@ -51,13 +48,14 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:        ctx,
-		cancel:     cancel,
-		api:        api,
-		processors: &sync.Map{},
-		ui:         ui,
-		thesis:     thesis,
-		semaphore:  make(chan struct{}, 1),
+		ctx:       ctx,
+		cancel:    cancel,
+		api:       api,
+		process:   excitation.NewProcess(),
+		sample:    excitation.NewSample(),
+		ui:        ui,
+		thesis:    thesis,
+		semaphore: make(chan struct{}, 1),
 	}
 
 	signal.status.Store(types.INITIALIZING)
@@ -86,515 +84,216 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
+				measurements, ready := signal.Measure(signal.thesis)
+
 				errnie.Error(signal.thesis.AppendMeasurements(
 					types.SourceHawkes,
-					signal.Measure(signal.thesis), true,
+					measurements,
+					ready,
 				))
 			}
 		}
 	}()
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	measurements, _ := signal.measure(thesis)
-	return measurements
-}
-
-func (signal *Signal) measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	trades := thesis.MarketTrades(types.SourceHawkes)
 
 	if len(trades) == 0 {
 		return nil, false
 	}
 
-	previous := make(map[string]*types.Measurement)
+	measurements := make([]*types.Measurement, 0)
+	var focused *types.Measurement
+	ready := false
 
-	for _, measurement := range utils.Measurements(thesis, types.SourceHawkes) {
-		current, found := previous[measurement.Symbol]
+	for index, trade := range trades {
+		input, sampled, err := signal.sample.MeasureArrival(excitation.TradeInput{
+			Symbol:    trade.Symbol,
+			Side:      trade.Side,
+			Timestamp: trade.Timestamp,
+		})
 
-		if !found || measurement.At.After(current.At) {
-			previous[measurement.Symbol] = measurement
-		}
-	}
-
-	histories := make(map[string]*arrivalHistory)
-
-	for _, trade := range trades {
-		history, found := histories[trade.Symbol]
-
-		if !found {
-			history = newArrivalHistory(previous[trade.Symbol])
-			histories[trade.Symbol] = history
-		}
-
-		if err := history.Append(trade); err != nil {
+		if err != nil {
 			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"hawkes: invalid market trade",
+				errnie.UnprocessableContent,
+				"excitation sample failed: "+err.Error(),
 				err,
 			))
 
-			return nil, false
+			continue
+		}
+
+		if !sampled {
+			continue
+		}
+
+		outcome, measured, err := signal.process.Measure(input)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"excitation measure failed: "+err.Error(),
+				err,
+			))
+
+			continue
+		}
+
+		if !measured {
+			continue
+		}
+
+		latest := true
+
+		for _, pending := range trades[index+1:] {
+			if pending.Symbol == trade.Symbol {
+				latest = false
+				break
+			}
+		}
+
+		if !latest {
+			continue
+		}
+
+		branching := outcome.Fit.Params().BranchingMatrix()
+
+		measurement := &types.Measurement{
+			ID:           uuid.NewString(),
+			Source:       types.SourceHawkes,
+			Symbol:       input.Symbol,
+			At:           outcome.At,
+			ObservedFrom: outcome.ObservedFrom,
+			Horizon:      outcome.Horizon,
+			Maturity:     outcome.Maturity,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricEventCount, types.SideNone): {
+					Raw:  float64(outcome.EventCount),
+					Unit: types.UnitCount,
+				},
+				types.MetricKey(types.MetricEventCount, types.SideBuy): {
+					Raw:  float64(outcome.BuyEventCount),
+					Unit: types.UnitCount,
+				},
+				types.MetricKey(types.MetricEventCount, types.SideSell): {
+					Raw:  float64(outcome.SellEventCount),
+					Unit: types.UnitCount,
+				},
+				types.MetricKey(types.MetricArrivalRate, types.SideBuy): {
+					Raw:  outcome.BuyArrivalRate,
+					Unit: types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricArrivalRate, types.SideSell): {
+					Raw:  outcome.SellArrivalRate,
+					Unit: types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricConditionalIntensity, types.SideBuy): {
+					Raw:  outcome.Fit.IntensityX,
+					Unit: types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricConditionalIntensity, types.SideSell): {
+					Raw:  outcome.Fit.IntensityY,
+					Unit: types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricBaselineIntensity, types.SideBuy): {
+					Raw:  outcome.Fit.MuX,
+					Unit: types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricBaselineIntensity, types.SideSell): {
+					Raw:  outcome.Fit.MuY,
+					Unit: types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy): {
+					Raw:        outcome.Fit.AlphaXX,
+					Normalized: &branching[0][0],
+					Unit:       types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToBuy): {
+					Raw:        outcome.Fit.AlphaXY,
+					Normalized: &branching[0][1],
+					Unit:       types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToSell): {
+					Raw:        outcome.Fit.AlphaYX,
+					Normalized: &branching[1][0],
+					Unit:       types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell): {
+					Raw:        outcome.Fit.AlphaYY,
+					Normalized: &branching[1][1],
+					Unit:       types.UnitEventsPerSecond,
+				},
+				types.MetricKey(types.MetricDecayRate, types.SideNone): {
+					Raw:  outcome.Fit.Beta,
+					Unit: types.UnitInverseSecond,
+				},
+				types.MetricKey(types.MetricKernelMemory, types.SideNone): {
+					Raw:  outcome.Fit.Runway().Seconds(),
+					Unit: types.UnitSecond,
+				},
+				types.MetricKey(types.MetricSpectralRadius, types.SideNone): {
+					Raw:        outcome.Fit.SpectralRadius,
+					Normalized: &outcome.Fit.SpectralRadius,
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricHawkesPoissonDelta, types.SideNone): {
+					Raw:  outcome.HawkesPoissonLogLikelihoodDelta,
+					Unit: types.UnitNat,
+				},
+				types.MetricKey(types.MetricCrossSelfDelta, types.SideNone): {
+					Raw:  outcome.CrossSelfLogLikelihoodDelta,
+					Unit: types.UnitNat,
+				},
+				types.MetricKey(types.MetricImmediateOffspring, types.SideBuy): {
+					Raw:  outcome.ImmediateBuyOffspring,
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricImmediateOffspring, types.SideSell): {
+					Raw:  outcome.ImmediateSellOffspring,
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricTotalDescendants, types.SideBuy): {
+					Raw:  outcome.TotalBuyDescendants,
+					Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricTotalDescendants, types.SideSell): {
+					Raw:  outcome.TotalSellDescendants,
+					Unit: types.UnitDimensionless,
+				},
+			},
+		}
+
+		measurements = append(measurements, measurement)
+		ready = ready || outcome.Readiness.Intensity
+
+		if measurement.Symbol == types.Focus() {
+			focused = measurement
 		}
 	}
 
-	var (
-		collected    sync.Mutex
-		measurements = make([]*types.Measurement, 0, len(histories))
-		out          = make([]*types.Measurement, 0)
-		group, _     = errgroup.WithContext(signal.ctx)
-		ready        bool
-	)
-
-	measure := func(history *arrivalHistory) func() error {
-		return func() error {
-			input, found := history.Input()
-
-			if !found {
-				return nil
-			}
-
-			process, _ := signal.processors.LoadOrStore(
-				input.Symbol,
-				excitation.NewProcess(),
-			)
-
-			outcome, ok, err := process.(*excitation.Process).Measure(input)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"excitation measure failed: "+err.Error(),
-					err,
-				))
-			}
-
-			if !ok {
-				return nil
-			}
-
-			measurement := signal.measurement(input.Symbol, outcome)
-			measurement.Arrivals = history.Arrivals(outcome.ObservedFrom)
-
-			collected.Lock()
-			defer collected.Unlock()
-
-			measurements = append(measurements, measurement)
-			ready = ready || outcome.Readiness.Intensity
-
-			if input.Symbol == types.Focus() {
-				out = append(out, measurement)
-			}
-
-			return nil
-		}
+	if focused == nil || signal.ui == nil {
+		return measurements, ready
 	}
 
-	for _, history := range histories {
-		group.Go(measure(history))
+	payload, err := sonic.Marshal(struct {
+		Measurements []*types.Measurement `json:"measurements"`
+	}{Measurements: []*types.Measurement{focused}})
+
+	if err != nil {
+		panic(errnie.Error(errnie.Err(
+			errnie.Validation,
+			"failed to marshal Hawkes measurement: "+err.Error(),
+			err,
+		)))
 	}
 
-	if err := group.Wait(); err != nil {
-		return nil, false
+	select {
+	case signal.ui <- payload:
+	default:
 	}
 
-	sort.Slice(measurements, func(left, right int) bool {
-		return measurements[left].Symbol < measurements[right].Symbol
-	})
-	sort.Slice(out, func(left, right int) bool {
-		return out[left].Symbol < out[right].Symbol
-	})
-
-	if len(out) > 0 {
-		utils.Publish(signal.ui, datura.NewMap(
-			"measurements", out,
-		))
-	}
-
-	return measurements, ready && len(measurements) > 0
-}
-
-/*
-measurement projects one excitation outcome onto the measurement wire. Fitted
-state is written only once the kernel is identified, so a metric that is absent
-stays distinguishable from one measured at zero.
-*/
-func (signal *Signal) measurement(
-	symbol string,
-	outcome excitation.Outcome,
-) *types.Measurement {
-	fit := outcome.Fit
-	events := float64(outcome.EventCount)
-	horizon := outcome.Horizon
-
-	if !outcome.ObservedFrom.IsZero() && outcome.At.After(outcome.ObservedFrom) {
-		horizon = outcome.At.Sub(outcome.ObservedFrom)
-	}
-
-	// Before a fit the only shared scale is the total marked rate the two sides
-	// were drawn from; after one, each side has its own immigrant baseline.
-	marked := outcome.BuyArrivalRate + outcome.SellArrivalRate
-	buyBaseline, sellBaseline := marked, marked
-	kernelMemory := horizon.Seconds()
-
-	if outcome.Readiness.HawkesFit {
-		buyBaseline, sellBaseline = fit.MuX, fit.MuY
-		kernelMemory = 1 / fit.Beta
-	}
-
-	if !outcome.Readiness.HawkesFit {
-		fit.MuX = outcome.BuyArrivalRate
-		fit.MuY = outcome.SellArrivalRate
-		fit.IntensityX = outcome.BuyArrivalRate
-		fit.IntensityY = outcome.SellArrivalRate
-
-		if kernelMemory > 0 {
-			fit.Beta = 1 / kernelMemory
-		}
-	}
-
-	immigrant := fit.MuX + fit.MuY
-
-	measurement := &types.Measurement{
-		ID:           uuid.NewString(),
-		Source:       types.SourceHawkes,
-		Symbol:       symbol,
-		At:           outcome.At,
-		ObservedFrom: outcome.ObservedFrom,
-		Horizon:      horizon,
-		Maturity:     outcome.Maturity,
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricEventCount, types.SideNone): {
-				Raw:        events,
-				Normalized: normalizedShare(events, float64(outcome.MinimumFitEvents)),
-				Unit:       types.UnitCount,
-			},
-			types.MetricKey(types.MetricEventCount, types.SideBuy): {
-				Raw:        float64(outcome.BuyEventCount),
-				Normalized: normalizedShare(float64(outcome.BuyEventCount), events),
-				Unit:       types.UnitCount,
-			},
-			types.MetricKey(types.MetricEventCount, types.SideSell): {
-				Raw:        float64(outcome.SellEventCount),
-				Normalized: normalizedShare(float64(outcome.SellEventCount), events),
-				Unit:       types.UnitCount,
-			},
-			types.MetricKey(types.MetricArrivalRate, types.SideBuy): {
-				Raw:        outcome.BuyArrivalRate,
-				Normalized: normalizedRate(outcome.BuyArrivalRate, buyBaseline, outcome),
-				Unit:       types.UnitEventsPerSecond,
-			},
-			types.MetricKey(types.MetricArrivalRate, types.SideSell): {
-				Raw:        outcome.SellArrivalRate,
-				Normalized: normalizedRate(outcome.SellArrivalRate, sellBaseline, outcome),
-				Unit:       types.UnitEventsPerSecond,
-			},
-		},
-	}
-
-	// A nonnegative kernel cannot hold a conditional rate below its own
-	// immigrant baseline, and A/beta is the offspring one parent arrival is
-	// expected to produce, so an amplitude is scaled by the decay consuming it.
-	measurement.Metrics[types.MetricKey(
-		types.MetricConditionalIntensity,
-		types.SideBuy,
-	)] = types.MetricSample{
-		Raw:        fit.IntensityX,
-		Normalized: normalizedExcess(fit.IntensityX, fit.MuX),
-		Unit:       types.UnitEventsPerSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricConditionalIntensity,
-		types.SideSell,
-	)] = types.MetricSample{
-		Raw:        fit.IntensityY,
-		Normalized: normalizedExcess(fit.IntensityY, fit.MuY),
-		Unit:       types.UnitEventsPerSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricBaselineIntensity,
-		types.SideBuy,
-	)] = types.MetricSample{
-		Raw:        fit.MuX,
-		Normalized: normalizedShare(fit.MuX, immigrant),
-		Unit:       types.UnitEventsPerSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricBaselineIntensity,
-		types.SideSell,
-	)] = types.MetricSample{
-		Raw:        fit.MuY,
-		Normalized: normalizedShare(fit.MuY, immigrant),
-		Unit:       types.UnitEventsPerSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricExcitationAmplitude,
-		types.SideBuyToBuy,
-	)] = types.MetricSample{
-		Raw:        fit.AlphaXX,
-		Normalized: normalizedShare(fit.AlphaXX, fit.Beta),
-		Unit:       types.UnitEventsPerSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricExcitationAmplitude,
-		types.SideSellToBuy,
-	)] = types.MetricSample{
-		Raw:        fit.AlphaXY,
-		Normalized: normalizedShare(fit.AlphaXY, fit.Beta),
-		Unit:       types.UnitEventsPerSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricExcitationAmplitude,
-		types.SideBuyToSell,
-	)] = types.MetricSample{
-		Raw:        fit.AlphaYX,
-		Normalized: normalizedShare(fit.AlphaYX, fit.Beta),
-		Unit:       types.UnitEventsPerSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricExcitationAmplitude,
-		types.SideSellToSell,
-	)] = types.MetricSample{
-		Raw:        fit.AlphaYY,
-		Normalized: normalizedShare(fit.AlphaYY, fit.Beta),
-		Unit:       types.UnitEventsPerSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricDecayRate,
-		types.SideNone,
-	)] = types.MetricSample{
-		Raw:        fit.Beta,
-		Normalized: normalizedShare(fit.Beta, immigrant),
-		Unit:       types.UnitInverseSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricKernelMemory,
-		types.SideNone,
-	)] = types.MetricSample{
-		Raw:        kernelMemory,
-		Normalized: normalizedShare(kernelMemory, horizon.Seconds()),
-		Unit:       types.UnitSecond,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricSpectralRadius,
-		types.SideNone,
-	)] = types.MetricSample{
-		Raw:        fit.SpectralRadius,
-		Normalized: normalizedBranching(fit.SpectralRadius),
-		Unit:       types.UnitDimensionless,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricHawkesPoissonDelta,
-		types.SideNone,
-	)] = types.MetricSample{
-		Raw:        outcome.HawkesPoissonLogLikelihoodDelta,
-		Normalized: normalizedShare(outcome.HawkesPoissonLogLikelihoodDelta, events),
-		Unit:       types.UnitNat,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricCrossSelfDelta,
-		types.SideNone,
-	)] = types.MetricSample{
-		Raw:        outcome.CrossSelfLogLikelihoodDelta,
-		Normalized: normalizedShare(outcome.CrossSelfLogLikelihoodDelta, events),
-		Unit:       types.UnitNat,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricImmediateOffspring,
-		types.SideBuy,
-	)] = types.MetricSample{
-		Raw:        outcome.ImmediateBuyOffspring,
-		Normalized: normalizedExpectation(outcome.ImmediateBuyOffspring),
-		Unit:       types.UnitDimensionless,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricImmediateOffspring,
-		types.SideSell,
-	)] = types.MetricSample{
-		Raw:        outcome.ImmediateSellOffspring,
-		Normalized: normalizedExpectation(outcome.ImmediateSellOffspring),
-		Unit:       types.UnitDimensionless,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricTotalDescendants,
-		types.SideBuy,
-	)] = types.MetricSample{
-		Raw:        outcome.TotalBuyDescendants,
-		Normalized: normalizedExpectation(outcome.TotalBuyDescendants),
-		Unit:       types.UnitDimensionless,
-	}
-	measurement.Metrics[types.MetricKey(
-		types.MetricTotalDescendants,
-		types.SideSell,
-	)] = types.MetricSample{
-		Raw:        outcome.TotalSellDescendants,
-		Normalized: normalizedExpectation(outcome.TotalSellDescendants),
-		Unit:       types.UnitDimensionless,
-	}
-
-	return measurement
-	/*
-	fitted := map[string]types.MetricSample{
-		types.MetricKey(types.MetricConditionalIntensity, types.SideBuy): {
-			Raw:        fit.IntensityX,
-			Normalized: normalizedExcess(fit.IntensityX, fit.MuX),
-			Unit:       types.UnitEventsPerSecond,
-		},
-		types.MetricKey(types.MetricConditionalIntensity, types.SideSell): {
-			Raw:        fit.IntensityY,
-			Normalized: normalizedExcess(fit.IntensityY, fit.MuY),
-			Unit:       types.UnitEventsPerSecond,
-		},
-		types.MetricKey(types.MetricBaselineIntensity, types.SideBuy): {
-			Raw:        fit.MuX,
-			Normalized: normalizedShare(fit.MuX, immigrant),
-			Unit:       types.UnitEventsPerSecond,
-		},
-		types.MetricKey(types.MetricBaselineIntensity, types.SideSell): {
-			Raw:        fit.MuY,
-			Normalized: normalizedShare(fit.MuY, immigrant),
-			Unit:       types.UnitEventsPerSecond,
-		},
-		types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy): {
-			Raw:        fit.AlphaXX,
-			Normalized: normalizedShare(fit.AlphaXX, fit.Beta),
-			Unit:       types.UnitEventsPerSecond,
-		},
-		types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToBuy): {
-			Raw:        fit.AlphaXY,
-			Normalized: normalizedShare(fit.AlphaXY, fit.Beta),
-			Unit:       types.UnitEventsPerSecond,
-		},
-		types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToSell): {
-			Raw:        fit.AlphaYX,
-			Normalized: normalizedShare(fit.AlphaYX, fit.Beta),
-			Unit:       types.UnitEventsPerSecond,
-		},
-		types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell): {
-			Raw:        fit.AlphaYY,
-			Normalized: normalizedShare(fit.AlphaYY, fit.Beta),
-			Unit:       types.UnitEventsPerSecond,
-		},
-		types.MetricKey(types.MetricDecayRate, types.SideNone): {
-			Raw:        fit.Beta,
-			Normalized: normalizedShare(fit.Beta, immigrant),
-			Unit:       types.UnitInverseSecond,
-		},
-		types.MetricKey(types.MetricKernelMemory, types.SideNone): {
-			Raw:        1 / fit.Beta,
-			Normalized: normalizedShare(1/fit.Beta, horizon.Seconds()),
-			Unit:       types.UnitSecond,
-		},
-		types.MetricKey(types.MetricSpectralRadius, types.SideNone): {
-			Raw:        fit.SpectralRadius,
-			Normalized: normalizedBranching(fit.SpectralRadius),
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricHawkesPoissonDelta, types.SideNone): {
-			Raw:        outcome.HawkesPoissonLogLikelihoodDelta,
-			Normalized: normalizedShare(outcome.HawkesPoissonLogLikelihoodDelta, events),
-			Unit:       types.UnitNat,
-		},
-		types.MetricKey(types.MetricCrossSelfDelta, types.SideNone): {
-			Raw:        outcome.CrossSelfLogLikelihoodDelta,
-			Normalized: normalizedShare(outcome.CrossSelfLogLikelihoodDelta, events),
-			Unit:       types.UnitNat,
-		},
-		types.MetricKey(types.MetricImmediateOffspring, types.SideBuy): {
-			Raw:        outcome.ImmediateBuyOffspring,
-			Normalized: normalizedExpectation(outcome.ImmediateBuyOffspring),
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricImmediateOffspring, types.SideSell): {
-			Raw:        outcome.ImmediateSellOffspring,
-			Normalized: normalizedExpectation(outcome.ImmediateSellOffspring),
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricTotalDescendants, types.SideBuy): {
-			Raw:        outcome.TotalBuyDescendants,
-			Normalized: normalizedExpectation(outcome.TotalBuyDescendants),
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricTotalDescendants, types.SideSell): {
-			Raw:        outcome.TotalSellDescendants,
-			Normalized: normalizedExpectation(outcome.TotalSellDescendants),
-			Unit:       types.UnitDimensionless,
-		},
-	}
-
-	maps.Copy(measurement.Metrics, fitted)
-	*/
-}
-
-/*
-normalizedShare reports a reading as a fraction of the positive reference scale
-that makes it comparable across symbols.
-*/
-func normalizedShare(raw, reference float64) *float64 {
-	value := raw
-
-	if reference != 0 {
-		value = raw / reference
-	}
-
-	return &value
-}
-
-/*
-normalizedRate scales an empirical arrival rate against whichever baseline the
-estimator has established. Before a fit that is the total marked rate the two
-sides were drawn from, so the reading is this mark's share of all arrivals.
-After a fit it is this mark's own immigrant intensity, so the reading is the
-excitation carried above that baseline. Below intensity readiness there is no
-rate to compare against at all.
-*/
-func normalizedRate(raw, baseline float64, outcome excitation.Outcome) *float64 {
-	if !outcome.Readiness.Intensity {
-		value := raw
-
-		return &value
-	}
-
-	if !outcome.Readiness.HawkesFit {
-		return normalizedShare(raw, baseline)
-	}
-
-	return normalizedExcess(raw, baseline)
-}
-
-/*
-normalizedExcess reports a rate in baselines above its reference, which the
-nonnegative-kernel Hawkes contract requires to be at or above that reference.
-*/
-func normalizedExcess(raw, baseline float64) *float64 {
-	value := raw
-
-	if baseline != 0 {
-		value = (raw - baseline) / baseline
-	}
-
-	return &value
-}
-
-/*
-normalizedBranching publishes a branching ratio only while the process is
-stationary. At or above one the expected cascade size diverges and the number
-stops describing anything observable.
-*/
-func normalizedBranching(raw float64) *float64 {
-	value := raw
-
-	return &value
-}
-
-/*
-normalizedExpectation accepts an offspring or descendant count, which a fitted
-branching structure cannot make negative.
-*/
-func normalizedExpectation(raw float64) *float64 {
-	value := raw
-
-	return &value
+	return measurements, ready
 }
 
 /*

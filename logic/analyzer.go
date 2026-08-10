@@ -69,13 +69,13 @@ func NewAnalyzer(
 		tree:   tree,
 		solvers: []Solver{
 			category.NewSolver(api, ui, recorder),
-			manifold.NewSolver(api, ui, binui, recorder),
 			resonance.NewSolver(
 				ctx,
 				ui,
 				recorder,
 				viper.GetFloat64("resonance.learning_rate"),
 			),
+			manifold.NewSolver(api, ui, binui, recorder),
 			causal.NewSolver(price, ui, recorder),
 			cognition.NewSolver(tree, ui, recorder),
 			graph.NewSolver(ui, recorder),
@@ -109,7 +109,13 @@ func (analyzer *Analyzer) run() {
 func (analyzer *Analyzer) process(in any) {
 	thesis, ok := in.(*types.Thesis)
 
-	if !ok || thesis == nil || thesis.Stamped(types.SourceGraph) {
+	if !ok || thesis == nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to process analyzer: thesis is nil",
+			nil,
+		))
+
 		return
 	}
 
@@ -126,8 +132,6 @@ func (analyzer *Analyzer) process(in any) {
 			return
 		}
 	}
-
-	thesis.Fanout(types.SourceCategories)
 }
 
 /*

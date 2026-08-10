@@ -58,6 +58,23 @@ func TestNewAnalyzer(t *testing.T) {
 }
 
 func TestAnalyzerProcess(t *testing.T) {
+	Convey("Given an incomplete signal epoch", t, func() {
+		order := make([]int, 0, 1)
+		analyzer := &Analyzer{
+			solvers: []Solver{
+				&orderedSolver{index: 0, order: &order, source: types.SourceCategories},
+			},
+		}
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Stamp(types.SourceHawkes)
+
+		analyzer.process(thesis)
+
+		Convey("It should not admit partial evidence to the logic chain", func() {
+			So(order, ShouldBeEmpty)
+		})
+	})
+
 	Convey("Given several signal notifications for one readiness epoch", t, func() {
 		order := make([]int, 0, 6)
 		analyzer := &Analyzer{
