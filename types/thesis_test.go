@@ -14,25 +14,25 @@ func TestThesisAppendMeasurements(t *testing.T) {
 	Convey("Given one ready signal measurement", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		analyzer := make(chan struct{}, 1)
-		peerSignal := make(chan struct{}, 1)
 		thesis.Subscribe(SourceAnalyzer, analyzer)
-		thesis.Subscribe(SourceCVD, peerSignal)
 		measurement := &Measurement{
 			ID: "correlation", Source: SourceCorrelation, Symbol: "BTC/USD",
 		}
+		incoming := []*Measurement{measurement}
 
 		err := thesis.AppendMeasurements(
-			SourceCorrelation, []*Measurement{measurement}, true,
+			SourceCorrelation, incoming, true,
 		)
 
-		Convey("Then it should admit and notify the first ready batch immediately", func() {
+		Convey("Then it should admit the batch without mutating caller storage", func() {
 			So(err, ShouldBeNil)
-			So(len(analyzer), ShouldEqual, 1)
-			So(len(peerSignal), ShouldEqual, 0)
+			So(incoming, ShouldResemble, []*Measurement{measurement})
+			So(incoming[0], ShouldNotBeNil)
+			So(len(analyzer), ShouldEqual, 0)
 			storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			symbol := storedSymbol.(*Symbol)
-			So(symbol.Status, ShouldEqual, BUSY)
+			So(symbol.Status, ShouldEqual, READY)
 			So(symbol.Measurements, ShouldResemble, []*Measurement{measurement})
 			So(symbol.Stamped(SourceCorrelation), ShouldBeTrue)
 			stored, found := thesis.Measurements.Load(SourceCorrelation)
@@ -75,7 +75,7 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		})
 	})
 
-	Convey("Given multiple measurements from one signal", t, func() {
+	Convey("Given multiple independent symbols in the first ready batch", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		measurements := []*Measurement{
 			{ID: "btc", Source: SourceLeadLag, Symbol: "BTC/USD", At: time.Unix(1, 0)},
@@ -85,15 +85,18 @@ func TestThesisAppendMeasurements(t *testing.T) {
 
 		thesis.AppendMeasurements(SourceLeadLag, measurements, true)
 
-		Convey("Then it should immediately admit every independent symbol", func() {
+		Convey("Then it should admit every row exactly once without skipping", func() {
 			stored, found := thesis.Measurements.Load(SourceLeadLag)
 			So(found, ShouldBeTrue)
 			So(stored, ShouldBeEmpty)
+			So(measurements[0], ShouldNotBeNil)
+			So(measurements[1], ShouldNotBeNil)
+			So(measurements[2], ShouldNotBeNil)
 
 			for _, measurement := range measurements {
 				storedSymbol, found := thesis.Symbols.Load(measurement.Symbol)
 				So(found, ShouldBeTrue)
-				So(storedSymbol.(*Symbol).Status, ShouldEqual, BUSY)
+				So(storedSymbol.(*Symbol).Status, ShouldEqual, READY)
 				So(storedSymbol.(*Symbol).Measurements, ShouldHaveLength, 1)
 			}
 		})
@@ -101,6 +104,8 @@ func TestThesisAppendMeasurements(t *testing.T) {
 
 	Convey("Given one symbol measured by every ready signal", t, func() {
 		thesis := NewThesis(t.Context(), nil)
+		analyzer := make(chan struct{}, 1)
+		thesis.Subscribe(SourceAnalyzer, analyzer)
 		sources := []SourceType{
 			SourceCorrelation,
 			SourceCVD,
@@ -114,21 +119,33 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			SourceToxicity,
 		}
 
-		for _, source := range sources {
+		for index, source := range sources {
 			err := thesis.AppendMeasurements(source, []*Measurement{{
 				ID: string(source), Source: source, Symbol: "BTC/USD", At: time.Unix(1, 0),
 			}}, true)
 			So(err, ShouldBeNil)
+
+			if index < len(sources)-1 {
+				stored, _ := thesis.Symbols.Load("BTC/USD")
+				So(stored.(*Symbol).Status, ShouldEqual, READY)
+				So(len(analyzer), ShouldEqual, 0)
+			}
 		}
 
-		Convey("Then one contribution should run while the other symbols remain queued", func() {
+		Convey("Then the complete cut should lock and notify the analyzer once", func() {
 			pending := 0
 			thesis.Measurements.Range(func(_, value any) bool {
 				pending += len(value.([]*Measurement))
 				return true
 			})
-			So(pending, ShouldEqual, len(sources)-1)
-			So(thesis.Stamped("BTC/USD", SourceCorrelation), ShouldBeTrue)
+			So(pending, ShouldEqual, 0)
+			stored, found := thesis.Symbols.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			symbol := stored.(*Symbol)
+			So(symbol.Status, ShouldEqual, BUSY)
+			So(symbol.Measurements, ShouldHaveLength, len(sources))
+			So(symbol.SignalsMeasured(), ShouldBeTrue)
+			So(len(analyzer), ShouldEqual, 1)
 		})
 	})
 
@@ -136,32 +153,37 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		thesis := NewThesis(t.Context(), nil)
 		analyzer := make(chan struct{}, 1)
 		thesis.Subscribe(SourceAnalyzer, analyzer)
-		symbol := NewSymbol("BTC/USD", nil)
-		symbol.Reset()
-		thesis.Symbols.Store("BTC/USD", symbol)
-		first := &Measurement{
-			ID: "correlation", Source: SourceCorrelation, Symbol: "BTC/USD",
+		sources := []SourceType{
+			SourceCorrelation, SourceCVD, SourceDepthFlow, SourceExhaustion, SourceHawkes,
+			SourceLeadLag, SourceLiquidity, SourcePumpDump, SourceSentiment, SourceToxicity,
 		}
+
+		for _, source := range sources {
+			So(thesis.AppendMeasurements(source, []*Measurement{{
+				ID: string(source), Source: source, Symbol: "BTC/USD",
+			}}, true), ShouldBeNil)
+		}
+
+		<-analyzer
 		pending := &Measurement{
 			ID: "correlation-pending", Source: SourceCorrelation, Symbol: "BTC/USD",
 		}
 		So(thesis.AppendMeasurements(
-			SourceCorrelation, []*Measurement{first}, true,
-		), ShouldBeNil)
-		So(thesis.AppendMeasurements(
 			SourceCorrelation, []*Measurement{pending}, true,
 		), ShouldBeNil)
 
-		Convey("Then it should cut prior work and retain the new batch", func() {
-			So(symbol.Measurements, ShouldResemble, []*Measurement{first})
+		Convey("Then it should retain the new row for the next cut without another wake-up", func() {
+			stored, _ := thesis.Symbols.Load("BTC/USD")
+			symbol := stored.(*Symbol)
+			So(symbol.Measurements, ShouldHaveLength, len(sources))
 			queued, found := thesis.Measurements.Load(SourceCorrelation)
 			So(found, ShouldBeTrue)
 			So(queued, ShouldResemble, []*Measurement{pending})
-			So(len(analyzer), ShouldEqual, 1)
+			So(len(analyzer), ShouldEqual, 0)
 		})
 	})
 
-	Convey("Given a new measurement for one previously observed symbol", t, func() {
+	Convey("Given provisional measurements for independent symbols", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		bitcoin := &Measurement{
 			ID:     "bitcoin-1",
@@ -184,10 +206,14 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		thesis.AppendMeasurements(SourceHawkes, []*Measurement{bitcoin, ether}, false)
 		thesis.AppendMeasurements(SourceHawkes, []*Measurement{updated}, false)
 
-		Convey("Then it should process independent symbols and retain the busy update", func() {
+		Convey("Then it should retain the latest row for each independent identity", func() {
 			stored, found := thesis.Measurements.Load(SourceHawkes)
 			So(found, ShouldBeTrue)
-			So(stored, ShouldResemble, []*Measurement{updated})
+			So(stored, ShouldResemble, []*Measurement{ether, updated})
+			_, bitcoinFound := thesis.Symbols.Load("BTC/USD")
+			_, etherFound := thesis.Symbols.Load("ETH/USD")
+			So(bitcoinFound, ShouldBeFalse)
+			So(etherFound, ShouldBeFalse)
 		})
 	})
 
@@ -215,7 +241,7 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		})
 	})
 
-	Convey("Given a measurement epoch whose market input is already committed", t, func() {
+	Convey("Given a provisional measurement repeated exactly", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		at := time.Unix(1, 0).UTC()
 		trade := kraken.TradeData{
@@ -234,7 +260,7 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			SourceCVD, []*Measurement{measurement}, false,
 		), ShouldBeNil)
 
-		Convey("Then replaying that measurement should queue it behind the active cut", func() {
+		Convey("Then replaying it should retain one prior rather than duplicate it", func() {
 			err := thesis.AppendMeasurements(
 				SourceCVD, []*Measurement{measurement}, false,
 			)
@@ -307,11 +333,68 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		)
 
 		Convey("Then every pointer in the prior view should remain valid", func() {
-			So(prior, ShouldResemble, []*Measurement{ether})
+			So(prior, ShouldResemble, []*Measurement{bitcoin, ether})
 
 			for _, measurement := range prior {
 				So(measurement, ShouldNotBeNil)
 			}
+		})
+	})
+
+	Convey("Given a provisional row followed by its completed replacement", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		provisional := &Measurement{
+			ID: "cvd-prior", Source: SourceCVD, Symbol: "BTC/USD", At: time.Unix(1, 0),
+		}
+		completed := &Measurement{
+			ID: "cvd-final", Source: SourceCVD, Symbol: "BTC/USD", At: time.Unix(2, 0),
+		}
+		So(thesis.AppendMeasurements(
+			SourceCVD, []*Measurement{provisional}, false,
+		), ShouldBeNil)
+
+		Convey("Then only the completed row should enter the symbol cut", func() {
+			incoming := []*Measurement{completed}
+			So(thesis.AppendMeasurements(SourceCVD, incoming, true), ShouldBeNil)
+			stored, found := thesis.Symbols.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			So(stored.(*Symbol).Measurements, ShouldResemble, []*Measurement{completed})
+			So(incoming, ShouldResemble, []*Measurement{completed})
+			queued, found := thesis.Measurements.Load(SourceCVD)
+			So(found, ShouldBeTrue)
+			So(queued, ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given multiple peer rows from the signal that completes the cut", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		analyzer := make(chan struct{}, 1)
+		thesis.Subscribe(SourceAnalyzer, analyzer)
+		sources := []SourceType{
+			SourceCorrelation, SourceCVD, SourceDepthFlow, SourceExhaustion, SourceHawkes,
+			SourceLiquidity, SourcePumpDump, SourceSentiment, SourceToxicity,
+		}
+
+		for _, source := range sources {
+			So(thesis.AppendMeasurements(source, []*Measurement{{
+				ID: string(source), Source: source, Symbol: "BTC/USD",
+			}}, true), ShouldBeNil)
+		}
+
+		peers := []*Measurement{
+			{ID: "eth", Source: SourceLeadLag, Symbol: "BTC/USD", Peer: "ETH/USD"},
+			{ID: "sol", Source: SourceLeadLag, Symbol: "BTC/USD", Peer: "SOL/USD"},
+		}
+		So(thesis.AppendMeasurements(SourceLeadLag, peers, true), ShouldBeNil)
+
+		Convey("Then every peer row should be admitted before analysis locks the symbol", func() {
+			stored, found := thesis.Symbols.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			symbol := stored.(*Symbol)
+			So(symbol.Status, ShouldEqual, BUSY)
+			So(symbol.Measurements, ShouldHaveLength, len(sources)+len(peers))
+			So(symbol.Measurements[len(symbol.Measurements)-2:], ShouldResemble, peers)
+			So(len(analyzer), ShouldEqual, 1)
 		})
 	})
 }
@@ -507,12 +590,10 @@ func TestThesisAppendEquity(t *testing.T) {
 }
 
 func TestThesisReset(t *testing.T) {
-	Convey("Given a completed Thesis with ready measurement evidence", t, func() {
+	Convey("Given a Thesis with prior measurement and evaluation state", t, func() {
 		thesis := NewThesis(t.Context(), nil)
 		symbol := NewSymbol("BTC/USD", nil)
 		thesis.Symbols.Store("BTC/USD", symbol)
-		notified := make(chan struct{}, 1)
-		thesis.Subscribe(SourceAnalyzer, notified)
 		measurements := []*Measurement{{
 			Source: SourceToxicity,
 			Symbol: "BTC/USD",
@@ -523,43 +604,16 @@ func TestThesisReset(t *testing.T) {
 		}
 		thesis.AppendTrade(consumed)
 		So(thesis.MarketTrades(SourceToxicity), ShouldHaveLength, 1)
-		thesis.AppendMeasurements(SourceToxicity, measurements, true)
-		So(len(notified), ShouldEqual, 1)
-		<-notified
+		thesis.AppendMeasurements(SourceToxicity, measurements, false)
+		symbol.AddMeasurement(measurements[0])
 		symbol.Categories.Store("BTC/USD", []Category{{Symbol: "BTC/USD"}})
-
-		for _, source := range []SourceType{
-			SourceCorrelation,
-			SourceCVD,
-			SourceDepthFlow,
-			SourceExhaustion,
-			SourceHawkes,
-			SourceLeadLag,
-			SourceLiquidity,
-			SourcePumpDump,
-			SourceSentiment,
-			SourceToxicity,
-			SourceCategory,
-			SourceCognition,
-			SourceManifold,
-			SourceResonance,
-			SourceCausal,
-			SourceGraph,
-			SourcePlanner,
-		} {
-			thesis.Stamp("BTC/USD", source)
-		}
-
-		So(thesis.Stamped("BTC/USD"), ShouldBeTrue)
-		So(len(notified), ShouldEqual, 1)
-		<-notified
+		symbol.Stamp(SourcePlanner)
 		thesis.Reset()
 
 		Convey("Then the next epoch should retain only the prior measurements", func() {
 			_, found := thesis.Measurements.Load(SourceToxicity)
 			So(found, ShouldBeTrue)
 			So(thesis.Stamped("BTC/USD"), ShouldBeFalse)
-			So(len(notified), ShouldEqual, 0)
 			_, found = symbol.Categories.Load("BTC/USD")
 			So(found, ShouldBeFalse)
 

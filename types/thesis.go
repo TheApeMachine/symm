@@ -226,57 +226,57 @@ func (thesis *Thesis) AppendMeasurements(
 	ready bool,
 ) error {
 	if len(measurements) > 0 {
-		found, loaded := thesis.Measurements.LoadOrStore(sender, measurements)
+		found, _ := thesis.Measurements.LoadOrStore(sender, measurements)
 
-		if loaded {
-			stored, ok := found.([]*Measurement)
+		stored, ok := found.([]*Measurement)
 
-			if !ok {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"thesis: invalid measurement type for source "+string(sender),
-					nil,
-				))
-			}
-
-			if ready {
-				for i := 0; i < len(stored); i++ {
-					symbolFound, _ := thesis.Symbols.LoadOrStore(stored[i].Symbol, NewSymbol(
-						stored[i].Symbol, thesis.ui,
-					))
-
-					symbol := symbolFound.(*Symbol)
-
-					if symbol.Status == READY {
-						symbol.AddMeasurement(stored[i])
-						stored = slices.Delete(stored, i, i+1)
-					}
-
-					if symbol.Status == BUSY {
-						thesis.Fanout(sender, SourceAnalyzer)
-					}
-				}
-
-				for i := 0; i < len(measurements); i++ {
-					symbolFound, _ := thesis.Symbols.LoadOrStore(measurements[i].Symbol, NewSymbol(
-						measurements[i].Symbol, thesis.ui,
-					))
-
-					symbol := symbolFound.(*Symbol)
-
-					if symbol.Status == READY {
-						symbol.AddMeasurement(measurements[i])
-						measurements = slices.Delete(measurements, i, i+1)
-					}
-
-					if symbol.Status == BUSY {
-						thesis.Fanout(sender, SourceAnalyzer)
-					}
-				}
-			}
-
-			thesis.Measurements.Store(sender, append(stored, measurements...))
+		if !ok {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"thesis: invalid measurement type for source "+string(sender),
+				nil,
+			))
 		}
+
+		clone := slices.Clone(stored)
+
+		if ready {
+			for i := 0; i < len(clone); i++ {
+				symbolFound, _ := thesis.Symbols.LoadOrStore(clone[i].Symbol, NewSymbol(
+					clone[i].Symbol, thesis.ui,
+				))
+
+				symbol := symbolFound.(*Symbol)
+
+				if symbol.Status == READY {
+					symbol.AddMeasurement(clone[i])
+					clone = slices.Delete(clone, i, i+1)
+				}
+
+				if symbol.Status == BUSY {
+					thesis.Fanout(sender, SourceAnalyzer)
+				}
+			}
+
+			for i := 0; i < len(measurements); i++ {
+				symbolFound, _ := thesis.Symbols.LoadOrStore(measurements[i].Symbol, NewSymbol(
+					measurements[i].Symbol, thesis.ui,
+				))
+
+				symbol := symbolFound.(*Symbol)
+
+				if symbol.Status == READY {
+					symbol.AddMeasurement(measurements[i])
+					measurements = slices.Delete(measurements, i, i+1)
+				}
+
+				if symbol.Status == BUSY {
+					thesis.Fanout(sender, SourceAnalyzer)
+				}
+			}
+		}
+
+		thesis.Measurements.Store(sender, append(clone, measurements...))
 	}
 
 	return nil

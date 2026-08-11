@@ -107,8 +107,6 @@ func (crypto *Crypto) run() {
 								}
 							}()
 						}
-
-						return true
 					}
 
 					symbol.Reset()
