@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -66,7 +67,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceSentiment, signal.semaphore)
+	signal.thesis.Subscribe(types.SourceSentiment, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -91,7 +92,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {
@@ -165,8 +165,21 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				statistics.surge,
 				math.Max(peerDivergenceScore, statistics.slump),
 			)
+			// Divergence is contextual evidence that can coexist with either market
+			// direction. Advancing and declining cohort shares are the competing
+			// breadth hypotheses.
+			snr, err := probability.SignalNoiseRatio([]float64{
+				statistics.advanceShare,
+				statistics.declineShare,
+			})
+
+			if err != nil {
+				panic(err)
+			}
+
 			metrics := sentimentMetrics(
 				map[types.MetricType]float64{
+					types.MetricSNR:            snr,
 					types.MetricChange:         change,
 					types.MetricBreadth:        statistics.breadth,
 					types.MetricLeaderStrength: leaderStrength,
@@ -244,6 +257,8 @@ type sentimentSummary struct {
 	leaderEvidence    float64
 	relativeLead      float64
 	breadth           float64
+	advanceShare      float64
+	declineShare      float64
 	surge             float64
 	slump             float64
 	divergence        float64
@@ -288,7 +303,7 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 			for _, row := range symbolRows {
 				price := row.Last.Float64()
 
-				if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+				if price <= 0 {
 					return nil
 				}
 
@@ -416,6 +431,8 @@ func sentimentStatistics(peers []sentimentPeer) sentimentSummary {
 	}
 
 	summary.breadth = float64(advances-declines) / float64(len(peers))
+	summary.advanceShare = float64(advances) / float64(len(peers))
+	summary.declineShare = float64(declines) / float64(len(peers))
 	medianChange, hasMedianChange := statistic.MedianOf(changes)
 	medianMagnitude, hasMedianMagnitude := statistic.MedianOf(magnitudes)
 
@@ -487,9 +504,9 @@ func sentimentStatistics(peers []sentimentPeer) sentimentSummary {
 }
 
 /*
-sentimentMetrics normalizes raw log returns and leader magnitude by the current
-cohort's median absolute return. Breadth and the remaining evidence scores are
-already signed or unsigned cohort fractions derived from that same cut.
+sentimentMetrics maps raw log returns and leader magnitude against the current
+cohort's median absolute return while preserving direction. Breadth and the
+remaining evidence scores are already cohort fractions derived from that cut.
 */
 func sentimentMetrics(
 	readings map[types.MetricType]float64,
@@ -518,11 +535,11 @@ func normalizedSentimentMetric(
 	magnitudeBaseline float64,
 ) *float64 {
 	if metric == types.MetricChange || metric == types.MetricLeaderStrength {
-		value := raw
-
-		if magnitudeBaseline != 0 {
-			value = raw / magnitudeBaseline
+		if magnitudeBaseline <= 0 {
+			return nil
 		}
+
+		value := raw / (math.Abs(raw) + magnitudeBaseline)
 
 		return &value
 	}

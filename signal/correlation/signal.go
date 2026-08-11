@@ -55,7 +55,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceCorrelation, signal.semaphore)
+	signal.thesis.Subscribe(types.SourceCorrelation, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -80,7 +80,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {
@@ -155,7 +154,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				return nil
 			}
 
-			metrics, _ := correlationMetrics(scores)
+			metrics, valid := correlationMetrics(scores)
+
+			if !valid {
+				return nil
+			}
 
 			measurement := &types.Measurement{
 				ID:      uuid.NewString(),

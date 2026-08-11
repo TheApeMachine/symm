@@ -75,7 +75,9 @@ func TestMeasure(t *testing.T) {
 			So(raw.([]midpointObservation), ShouldHaveLength, 2)
 			measurement := measurements[0]
 			So(measurement.At, ShouldResemble, trade.Timestamp)
-			So(measurement.Metrics, ShouldHaveLength, 10)
+			So(measurement.Metrics, ShouldHaveLength, 11)
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Normalized,
+				ShouldNotBeNil)
 			So(measurement.Sample(types.MetricNet, types.SideNone).Unit,
 				ShouldEqual, types.UnitQuoteCurrency)
 
@@ -210,12 +212,28 @@ func TestCVDMeasurements(t *testing.T) {
 
 			So(*measurement.Sample(types.MetricNet, types.SideNone).Normalized,
 				ShouldAlmostEqual, -0.25, 1e-12)
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldAlmostEqual, 0.4, 1e-12)
 			So(measurement.Sample(types.MetricMidpoint, types.SideNone), ShouldResemble,
 				types.MetricSample{Raw: 100.5, Unit: types.UnitQuoteCurrency})
 			So(measurement.Sample(types.MetricTradePrice, types.SideNone), ShouldResemble,
 				types.MetricSample{Raw: 100, Unit: types.UnitQuoteCurrency})
 			So(measurement.Sample(types.MetricTradeQuantity, types.SideNone), ShouldResemble,
 				types.MetricSample{Raw: 2, Unit: types.UnitBaseCurrency})
+		})
+	})
+
+	Convey("Given equally strong competing CVD regimes", t, func() {
+		measurement := (&Signal{}).cvdMeasurements(
+			cvdTrade(2, "buy", 100, time.Unix(1_700_003_401, 0).UTC()),
+			100,
+			equation.FlowOutput{Absorption: 0.5, Drive: 0.5, Value: 0.5},
+			4,
+		)[0]
+
+		Convey("It should report no separation between the tied hypotheses", func() {
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldEqual, 0.0)
 		})
 	})
 }

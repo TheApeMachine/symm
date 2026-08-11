@@ -47,7 +47,9 @@ func TestMeasure(t *testing.T) {
 		So(provisional, ShouldHaveLength, 1)
 		So(provisional[0].At, ShouldResemble, base)
 		So(*provisional[0].Sample(types.MetricTouchQuantity, types.SideBuy).Normalized,
-			ShouldEqual, 1.0)
+			ShouldEqual, 0.5)
+		So(provisional[0].Sample(types.MetricSNR, types.SideNone).Raw,
+			ShouldEqual, 0.0)
 
 		firstTrade := toxicityTrade(91, "sell", 100, 2, base.Add(time.Second))
 		secondTrade := toxicityTrade(92, "buy", 101, 3, base.Add(2*time.Second))
@@ -77,7 +79,7 @@ func TestMeasure(t *testing.T) {
 			So(measurement.Sample(types.MetricCancelledQuantity, types.SideSell).Raw,
 				ShouldEqual, 1.0)
 			So(*measurement.Sample(types.MetricTradeVolume, types.SideNone).Normalized,
-				ShouldAlmostEqual, 0.25, 1e-12)
+				ShouldAlmostEqual, 0.2, 1e-12)
 			So(*measurement.Sample(types.MetricFillVolume, types.SideBuy).Normalized,
 				ShouldAlmostEqual, 0.2, 1e-12)
 			So(*measurement.Sample(types.MetricCancelledQuantity, types.SideSell).Normalized,

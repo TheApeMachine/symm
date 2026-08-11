@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"context"
-	"math"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -53,7 +52,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceToxicity, signal.semaphore)
+	signal.thesis.Subscribe(types.SourceToxicity, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -78,7 +77,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {
@@ -253,8 +251,7 @@ func validTrade(row kraken.TradeData) bool {
 	price := row.Price.Float64()
 
 	return row.Symbol != "" && !row.Timestamp.IsZero() && price > 0 && row.Qty > 0 &&
-		!math.IsNaN(price) && !math.IsInf(price, 0) && !math.IsNaN(row.Qty) &&
-		!math.IsInf(row.Qty, 0) && (row.Side == "buy" || row.Side == "sell")
+		(row.Side == "buy" || row.Side == "sell")
 }
 
 /*

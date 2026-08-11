@@ -12,7 +12,7 @@ func TestSymbolNewSymbol(t *testing.T) {
 
 		Convey("It should initialize empty symbol measurement state", func() {
 			So(symbol.Symbol, ShouldEqual, "BTC/USD")
-			So(symbol.Status, ShouldEqual, Status(""))
+			So(symbol.Status, ShouldEqual, READY)
 			So(symbol.Measurements, ShouldBeEmpty)
 		})
 	})
@@ -55,9 +55,9 @@ func TestSymbolStamp(t *testing.T) {
 
 		symbol.Stamp(SourceResonance)
 
-		Convey("It should retain the cut until every named consumer finishes", func() {
-			So(symbol.Status, ShouldEqual, BUSY)
-			So(symbol.Measurements, ShouldResemble, []*Measurement{measurement})
+		Convey("It should release the cut after every named consumer finishes", func() {
+			So(symbol.Status, ShouldEqual, READY)
+			So(symbol.Measurements, ShouldBeEmpty)
 		})
 
 		Convey("It should retain the completed readiness stamps", func() {

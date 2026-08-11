@@ -60,6 +60,24 @@ func TestBuildScoreMeasurement(t *testing.T) {
 				ShouldAlmostEqual, -0.8, 1e-12)
 			So(*measurement.Sample(types.MetricLagFraction, types.SideNone).Normalized,
 				ShouldAlmostEqual, 0.25, 1e-12)
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldEqual, 1.0)
+		})
+	})
+
+	Convey("Given tied lead-lag hypotheses", t, func() {
+		measurement := buildScoreMeasurement(
+			"ALT/USD",
+			"BTC/USD",
+			time.Unix(1_700_020_001, 0).UTC(),
+			correlationSelection{},
+			1,
+			evidenceWeights{inefficient: 0.5, syncScore: 0.5, strength: 0.5},
+		)
+
+		Convey("It should report zero SNR", func() {
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldEqual, 0.0)
 		})
 	})
 }

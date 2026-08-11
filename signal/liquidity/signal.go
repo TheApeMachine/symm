@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -75,7 +76,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceLiquidity, signal.semaphore)
+	signal.thesis.Subscribe(types.SourceLiquidity, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -100,7 +101,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {
@@ -203,6 +203,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				reportedNotional,
 				notionalMedian,
 			)
+
+			if reportedNotional <= 0 {
+				normalizedReportedNotional = nil
+			}
+
 			normalizedReportedMedian := normalizedLiquidityRatio(
 				notionalMedian,
 				cohortNotionalMedian,
@@ -213,6 +218,16 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				maturity = 1
 			}
 
+			bidDepth := peer.observation.bidQuantity
+			askDepth := peer.observation.askQuantity
+			// Bid and ask resting quantities are the same-unit competing sides of
+			// the current executable touch.
+			snr, err := probability.SignalNoiseRatio([]float64{bidDepth, askDepth})
+
+			if err != nil {
+				panic(err)
+			}
+
 			measurement := &types.Measurement{
 				ID:       uuid.NewString(),
 				Source:   types.SourceLiquidity,
@@ -220,6 +235,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				At:       peer.observation.at,
 				Maturity: maturity,
 				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricSNR, types.SideNone): {
+						Raw:        snr,
+						Normalized: &snr,
+						Unit:       types.UnitDimensionless,
+					},
 					types.MetricKey(types.MetricBestPrice, types.SideBuy): {
 						Raw:  peer.observation.bid,
 						Unit: types.UnitQuoteCurrency,
@@ -321,11 +341,15 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 }
 
 /*
-normalizedRelativeLiquidity validates a ratio that already carries its real
-leave-one-out executable-depth denominator.
+normalizedRelativeLiquidity maps a leave-one-out depth ratio to its share
+against empirical parity. A raw ratio of one therefore maps to one half.
 */
 func normalizedRelativeLiquidity(raw float64) *float64 {
-	value := raw
+	if raw < 0 {
+		return nil
+	}
+
+	value := raw / (1 + raw)
 
 	return &value
 }
@@ -348,7 +372,7 @@ func liquidityCohortMedian(
 			value = peer.observation.executableDepth
 		}
 
-		if value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+		if value > 0 {
 			values = append(values, value)
 		}
 	}
@@ -359,15 +383,16 @@ func liquidityCohortMedian(
 }
 
 /*
-normalizedLiquidityRatio uses a positive executable cohort baseline. Zero is
-accepted only as a measured numerator; a missing or malformed scale stays nil.
+normalizedLiquidityRatio reports raw as its share of raw plus a positive
+empirical cohort baseline. Zero is accepted only as a measured numerator; a
+missing or malformed scale stays nil.
 */
 func normalizedLiquidityRatio(raw, baseline float64) *float64 {
-	value := 1.0
-
-	if baseline != 0 {
-		value = raw / baseline
+	if raw < 0 || baseline <= 0 {
+		return nil
 	}
+
+	value := raw / (raw + baseline)
 
 	return &value
 }
@@ -553,8 +578,7 @@ func executableDepth(row kraken.TickerData) float64 {
 	bid := row.Bid.Float64()
 	ask := row.Ask.Float64()
 
-	if bid <= 0 || ask <= bid || math.IsNaN(bid) || math.IsNaN(ask) ||
-		math.IsInf(bid, 0) || math.IsInf(ask, 0) {
+	if bid <= 0 || ask <= bid {
 		return 0
 	}
 
@@ -582,8 +606,7 @@ func reportedTurnover(row kraken.TickerData) (float64, float64) {
 		price = row.Last.Float64()
 	}
 
-	if price <= 0 || row.Volume <= 0 || math.IsNaN(price) || math.IsNaN(row.Volume) ||
-		math.IsInf(price, 0) || math.IsInf(row.Volume, 0) {
+	if price <= 0 || row.Volume <= 0 {
 		return 0, 0
 	}
 

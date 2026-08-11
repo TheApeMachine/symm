@@ -152,7 +152,7 @@ func TestFrame(t *testing.T) {
 		Convey("It should preserve both side families under the existing metric keys", func() {
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
-			So(measurement.Metrics, ShouldHaveLength, 16)
+			So(measurement.Metrics, ShouldHaveLength, 17)
 			So(measurement.Sample(types.MetricThermal, types.SideBuy).Raw,
 				ShouldAlmostEqual, 0.4, 1e-12)
 			So(measurement.Sample(types.MetricMechanical, types.SideSell).Raw,
@@ -161,10 +161,33 @@ func TestFrame(t *testing.T) {
 				ShouldAlmostEqual, 0.4, 1e-12)
 			So(measurement.Sample(types.MetricCategory, types.SideBuy).Normalized,
 				ShouldBeNil)
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldAlmostEqual, 0.5, 1e-12)
 
 			for _, sample := range measurement.Metrics {
 				So(sample.Unit, ShouldEqual, types.UnitDimensionless)
 			}
+		})
+	})
+
+	Convey("Given tied long and short exhaustion hypotheses", t, func() {
+		measurement := (&Signal{}).frame(
+			"BTC/USD",
+			time.Unix(1_700_001_201, 0).UTC(),
+			equation.DecayOutput{
+				Long: equation.DecaySideOutput{
+					Thermal: 0.5, Strength: 0.5,
+				},
+				Short: equation.DecaySideOutput{
+					Mechanical: 0.5, Strength: 0.5,
+				},
+			},
+			1,
+		)[0]
+
+		Convey("It should report zero SNR", func() {
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldEqual, 0.0)
 		})
 	})
 }

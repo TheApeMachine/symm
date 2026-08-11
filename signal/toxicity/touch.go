@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -45,8 +46,7 @@ func observedTouch(managed *spotbook.Book) (touchSnapshot, bool) {
 	}
 
 	if asOf.IsZero() || bidPrice <= 0 || askPrice <= bidPrice || bidQuantity < 0 ||
-		askQuantity < 0 || !finite(bidPrice) || !finite(askPrice) ||
-		!finite(bidQuantity) || !finite(askQuantity) {
+		askQuantity < 0 {
 		return touchSnapshot{}, false
 	}
 
@@ -77,8 +77,7 @@ func latestTouch(
 		askQuantity := measurement.Sample(types.MetricTouchQuantity, types.SideSell).Raw
 
 		if measurement.At.IsZero() || bidPrice <= 0 || askPrice <= bidPrice ||
-			bidQuantity < 0 || askQuantity < 0 || !finite(bidPrice) ||
-			!finite(askPrice) || !finite(bidQuantity) || !finite(askQuantity) {
+			bidQuantity < 0 || askQuantity < 0 {
 			continue
 		}
 
@@ -125,6 +124,16 @@ func toxicityMeasurement(
 	askFill = math.Min(askFill, previous.ask.quantity)
 	bidRetreat, bidCancelled := touchChange(types.SideBuy, previous.bid, current.bid, bidFill)
 	askRetreat, askCancelled := touchChange(types.SideSell, previous.ask, current.ask, askFill)
+	// Retreat and cancellation are complementary disappearance mechanisms on
+	// each side. Their side totals form the competing directional hypotheses.
+	snr, err := probability.SignalNoiseRatio([]float64{
+		bidRetreat + bidCancelled,
+		askRetreat + askCancelled,
+	})
+
+	if err != nil {
+		panic(err)
+	}
 
 	return &types.Measurement{
 		ID:           uuid.NewString(),
@@ -134,19 +143,28 @@ func toxicityMeasurement(
 		ObservedFrom: previous.asOf,
 		Horizon:      current.asOf.Sub(previous.asOf),
 		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricSNR, types.SideNone): {
+				Raw:        snr,
+				Normalized: &snr,
+				Unit:       types.UnitDimensionless,
+			},
 			types.MetricKey(types.MetricTradeVolume, types.SideNone): {
-				Raw:        tradeVolume,
-				Normalized: normalizedTouchRatio(tradeVolume, previous.bid.quantity+previous.ask.quantity),
-				Unit:       types.UnitBaseCurrency,
+				Raw: tradeVolume,
+				Normalized: normalizedTouchRatio(
+					tradeVolume,
+					previous.bid.quantity+previous.ask.quantity,
+					true,
+				),
+				Unit: types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricFillVolume, types.SideBuy): {
 				Raw:        bidFill,
-				Normalized: normalizedTouchRatio(bidFill, previous.bid.quantity),
+				Normalized: normalizedTouchRatio(bidFill, previous.bid.quantity, false),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricFillVolume, types.SideSell): {
 				Raw:        askFill,
-				Normalized: normalizedTouchRatio(askFill, previous.ask.quantity),
+				Normalized: normalizedTouchRatio(askFill, previous.ask.quantity, false),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
@@ -161,32 +179,32 @@ func toxicityMeasurement(
 			},
 			types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
 				Raw:        current.bid.quantity,
-				Normalized: normalizedTouchRatio(current.bid.quantity, previous.bid.quantity),
+				Normalized: normalizedTouchRatio(current.bid.quantity, previous.bid.quantity, true),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
 				Raw:        current.ask.quantity,
-				Normalized: normalizedTouchRatio(current.ask.quantity, previous.ask.quantity),
+				Normalized: normalizedTouchRatio(current.ask.quantity, previous.ask.quantity, true),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy): {
 				Raw:        bidRetreat,
-				Normalized: normalizedTouchRatio(bidRetreat, previous.bid.quantity),
+				Normalized: normalizedTouchRatio(bidRetreat, previous.bid.quantity, false),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): {
 				Raw:        askRetreat,
-				Normalized: normalizedTouchRatio(askRetreat, previous.ask.quantity),
+				Normalized: normalizedTouchRatio(askRetreat, previous.ask.quantity, false),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
 				Raw:        bidCancelled,
-				Normalized: normalizedTouchRatio(bidCancelled, previous.bid.quantity),
+				Normalized: normalizedTouchRatio(bidCancelled, previous.bid.quantity, false),
 				Unit:       types.UnitBaseCurrency,
 			},
 			types.MetricKey(types.MetricCancelledQuantity, types.SideSell): {
 				Raw:        askCancelled,
-				Normalized: normalizedTouchRatio(askCancelled, previous.ask.quantity),
+				Normalized: normalizedTouchRatio(askCancelled, previous.ask.quantity, false),
 				Unit:       types.UnitBaseCurrency,
 			},
 		},
@@ -194,15 +212,24 @@ func toxicityMeasurement(
 }
 
 /*
-normalizedTouchRatio expresses executed, remaining, retreating, and cancelled
-base quantity against the resting touch quantity that could actually change.
+normalizedTouchRatio reports causal fill, retreat, and cancellation fractions.
+For an unbounded current or traded quantity, competing selects its share against
+the previous resting quantity instead of mislabelling an unbounded ratio.
 */
-func normalizedTouchRatio(raw, previousQuantity float64) *float64 {
-	if previousQuantity <= 0 {
+func normalizedTouchRatio(raw, previousQuantity float64, competing bool) *float64 {
+	if raw < 0 || previousQuantity <= 0 {
+		return nil
+	}
+
+	if !competing && raw > previousQuantity {
 		return nil
 	}
 
 	value := raw / previousQuantity
+
+	if competing {
+		value = raw / (raw + previousQuantity)
+	}
 
 	return &value
 }
@@ -246,8 +273,4 @@ func touchChange(
 	disappeared := previous.quantity - current.quantity
 
 	return 0, math.Max(0, disappeared-executed)
-}
-
-func finite(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }

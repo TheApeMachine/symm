@@ -74,7 +74,7 @@ func TestMeasure(t *testing.T) {
 		Convey("It preserves legacy keys and publishes both dimensionless directional families", func() {
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
-			So(measurement.Metrics, ShouldHaveLength, 25)
+			So(measurement.Metrics, ShouldHaveLength, 26)
 			So(measurement.Sample(types.MetricRVOL, types.SideNone).Unit,
 				ShouldEqual, types.UnitDimensionless)
 			So(measurement.Sample(types.MetricSpread, types.SideNone).Unit,
@@ -85,6 +85,8 @@ func TestMeasure(t *testing.T) {
 				ShouldBeGreaterThan, 0)
 			So(measurement.Sample(types.MetricPrecursor, types.SideSell).Raw,
 				ShouldEqual, 0)
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Normalized,
+				ShouldNotBeNil)
 
 			for _, metric := range []types.MetricType{
 				types.MetricPrecursor,
@@ -110,15 +112,29 @@ func TestMeasure(t *testing.T) {
 func TestNormalizedIgnitionEvidence(t *testing.T) {
 	Convey("Given an ignition score before its empirical baseline is ready", t, func() {
 		Convey("It should leave the normalized value absent", func() {
-			So(normalizedIgnitionEvidence(0, false), ShouldBeNil)
+			So(normalizedIgnitionEvidence(
+				types.MetricIgnition, 0, false,
+			), ShouldBeNil)
 		})
 	})
 
 	Convey("Given a ready empirical score that is genuinely zero", t, func() {
 		Convey("It should retain zero as measured evidence", func() {
-			value := normalizedIgnitionEvidence(0, true)
+			value := normalizedIgnitionEvidence(types.MetricIgnition, 0, true)
 			So(value, ShouldNotBeNil)
 			So(*value, ShouldEqual, 0.0)
+		})
+	})
+
+	Convey("Given evidence equal to its empirical ratio baseline", t, func() {
+		Convey("It should map parity to the center of the unit interval", func() {
+			value := normalizedIgnitionEvidence(types.MetricPrecursor, 1, true)
+			So(value, ShouldNotBeNil)
+			So(*value, ShouldEqual, 0.5)
+
+			trend := normalizedIgnitionEvidence(types.MetricTrend, 1, true)
+			So(trend, ShouldNotBeNil)
+			So(*trend, ShouldEqual, 0.5)
 		})
 	})
 }
@@ -158,6 +174,6 @@ func BenchmarkNormalizedIgnitionEvidence(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = normalizedIgnitionEvidence(1.25, true)
+		_ = normalizedIgnitionEvidence(types.MetricIgnition, 1.25, true)
 	}
 }

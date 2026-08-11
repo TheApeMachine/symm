@@ -144,6 +144,8 @@ func (crypto *Crypto) onTicker(data any) {
 		crypto.thesis.AppendTicker(ticker)
 		crypto.desk.Price().Update(&ticker)
 	}
+
+	crypto.thesis.Fanout(types.SourceTrader, types.TickerReceivers...)
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -162,6 +164,8 @@ func (crypto *Crypto) onTrade(data any) {
 	for _, trade := range typedTrades.Data {
 		crypto.thesis.AppendTrade(trade)
 	}
+
+	crypto.thesis.Fanout(types.SourceTrader, types.TradeReceivers...)
 }
 
 func (crypto *Crypto) Close() (err error) {

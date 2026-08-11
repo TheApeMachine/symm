@@ -288,12 +288,10 @@ func (section *Section) refreshEnergy(symbol string, state *symbolState) error {
 	median, ok := statistic.MedianAbsoluteOf(state.returns)
 
 	if !ok {
-		median = 0
+		return fmt.Errorf("correlation: %s return-energy median unavailable", symbol)
 	}
 
 	state.energy = median
-
-	_ = symbol
 
 	return nil
 }
@@ -311,11 +309,7 @@ func (section *Section) scores(
 	state := raw.(*symbolState)
 
 	if state == nil || state.energy <= 0 {
-		return map[string]float64{
-			"correlation": 0, "signed": 0, "relativeEnergy": 1,
-			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
-			"stressScore": 0, "snr": 0,
-		}, true, nil
+		return nil, false, nil
 	}
 
 	weightedSigned := 0.0
@@ -348,21 +342,13 @@ func (section *Section) scores(
 	})
 
 	if totalSupport <= 0 {
-		return map[string]float64{
-			"correlation": 0, "signed": 0, "relativeEnergy": 1,
-			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
-			"stressScore": 0, "snr": 0,
-		}, true, nil
+		return nil, false, nil
 	}
 
 	peerEnergy := weightedPeerEnergy / totalSupport
 
 	if peerEnergy <= 0 {
-		return map[string]float64{
-			"correlation": 0, "signed": 0, "relativeEnergy": 1,
-			"herdScore": 0, "alphaScore": 0, "noiseScore": 0,
-			"stressScore": 0, "snr": 0,
-		}, true, nil
+		return nil, false, nil
 	}
 
 	signed := weightedSigned / totalSupport

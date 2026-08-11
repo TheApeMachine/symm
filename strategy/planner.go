@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -107,6 +108,25 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		return true
 	})
 
+	if planner.recorder != nil {
+		err := planner.recorder.Write(map[string]any{
+			"channel": "orchestration",
+			"type":    "planner_admission",
+			"value": map[string]any{
+				"at":            time.Now().UTC(),
+				"ready_symbols": readySymbols,
+			},
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"planner: failed to audit admission",
+				err,
+			))
+		}
+	}
+
 	if len(readySymbols) == 0 {
 		return
 	}
@@ -121,6 +141,26 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		))
 
 		return
+	}
+
+	if planner.recorder != nil {
+		err := planner.recorder.Write(map[string]any{
+			"channel": "orchestration",
+			"type":    "planner_decision_pass",
+			"value": map[string]any{
+				"at":             time.Now().UTC(),
+				"ready_symbols":  readySymbols,
+				"decision_count": len(decisions),
+			},
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"planner: failed to audit decision pass",
+				err,
+			))
+		}
 	}
 
 	if len(decisions) != 0 && planner.recorder != nil {

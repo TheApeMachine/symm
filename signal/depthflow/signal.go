@@ -95,7 +95,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceDepthFlow, signal.semaphore)
+	signal.thesis.Subscribe(types.SourceDepthFlow, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -120,7 +120,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {

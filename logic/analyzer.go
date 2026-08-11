@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -121,8 +122,32 @@ func (analyzer *Analyzer) process(in any) {
 	}
 
 	group := &errgroup.Group{}
+	iterations := 0
+	initiallyReady := thesis.SymbolsReady()
 
-	for thesis.SymbolsReady() {
+	if analyzer.recorder != nil {
+		err := analyzer.recorder.Write(map[string]any{
+			"channel": "orchestration",
+			"type":    "analyzer_start",
+			"value": map[string]any{
+				"at":            time.Now().UTC(),
+				"symbols_ready": initiallyReady,
+			},
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"analyzer: failed to audit process start",
+				err,
+			))
+		}
+	}
+
+	for !thesis.SymbolsReady() {
+		iterations++
+		iterationErr := ""
+
 		// Solvers inspect their own prerequisites and publish another coalesced
 		// analyzer wake-up when they make downstream work available.
 		for _, solver := range analyzer.solvers {
@@ -132,9 +157,52 @@ func (analyzer *Analyzer) process(in any) {
 		}
 
 		if err := group.Wait(); err != nil {
+			iterationErr = err.Error()
 			errnie.Error(errnie.Err(
 				errnie.Internal,
 				"failed to update analyzer: "+err.Error(),
+				err,
+			))
+		}
+
+		if analyzer.recorder != nil {
+			err := analyzer.recorder.Write(map[string]any{
+				"channel": "orchestration",
+				"type":    "analyzer_iteration",
+				"value": map[string]any{
+					"at":            time.Now().UTC(),
+					"iteration":     iterations,
+					"symbols_ready": thesis.SymbolsReady(),
+					"error":         iterationErr,
+				},
+			})
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"analyzer: failed to audit process iteration",
+					err,
+				))
+			}
+		}
+	}
+
+	if analyzer.recorder != nil {
+		err := analyzer.recorder.Write(map[string]any{
+			"channel": "orchestration",
+			"type":    "analyzer_complete",
+			"value": map[string]any{
+				"at":              time.Now().UTC(),
+				"iterations":      iterations,
+				"initially_ready": initiallyReady,
+				"finally_ready":   thesis.SymbolsReady(),
+			},
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"analyzer: failed to audit process completion",
 				err,
 			))
 		}

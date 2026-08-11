@@ -12,25 +12,30 @@ import (
 
 func TestNormalizedTouchRatio(t *testing.T) {
 	Convey("Given equivalent fractions at different quantity scales", t, func() {
-		small := normalizedTouchRatio(0.015, 0.0005)
-		large := normalizedTouchRatio(15, 0.5)
+		small := normalizedTouchRatio(0.00015, 0.0005, false)
+		large := normalizedTouchRatio(0.15, 0.5, false)
 
-		Convey("It preserves the ratio instead of pretending normalization is a probability", func() {
-			So(*small, ShouldAlmostEqual, 30, 1e-12)
-			So(*large, ShouldAlmostEqual, 30, 1e-12)
+		Convey("It preserves the observed fraction", func() {
+			So(*small, ShouldAlmostEqual, 0.3, 1e-12)
+			So(*large, ShouldAlmostEqual, 0.3, 1e-12)
 		})
 	})
 
 	Convey("Given the fraction boundaries", t, func() {
-		So(*normalizedTouchRatio(0, 10), ShouldEqual, 0.0)
-		So(*normalizedTouchRatio(10, 10), ShouldEqual, 1.0)
-		So(*normalizedTouchRatio(25, 10), ShouldEqual, 2.5)
+		So(*normalizedTouchRatio(0, 10, false), ShouldEqual, 0.0)
+		So(*normalizedTouchRatio(10, 10, false), ShouldEqual, 1.0)
+		So(normalizedTouchRatio(25, 10, false), ShouldBeNil)
+	})
+
+	Convey("Given quantities that compete with the previous resting quantity", t, func() {
+		So(*normalizedTouchRatio(10, 10, true), ShouldAlmostEqual, 0.5, 1e-12)
+		So(*normalizedTouchRatio(30, 10, true), ShouldAlmostEqual, 0.75, 1e-12)
 	})
 
 	Convey("Given no positive resting quantity to normalize against", t, func() {
-		So(normalizedTouchRatio(0, 0), ShouldBeNil)
-		So(normalizedTouchRatio(1, 0), ShouldBeNil)
-		So(normalizedTouchRatio(1, -1), ShouldBeNil)
+		So(normalizedTouchRatio(0, 0, false), ShouldBeNil)
+		So(normalizedTouchRatio(1, 0, false), ShouldBeNil)
+		So(normalizedTouchRatio(1, -1, false), ShouldBeNil)
 	})
 }
 
@@ -76,13 +81,14 @@ func TestToxicityMeasurement(t *testing.T) {
 
 		Convey("It reports every ratio against the quantity that could cause it", func() {
 			expected := map[string]float64{
-				types.MetricKey(types.MetricTradeVolume, types.SideNone):        7.0 / 30.0,
+				types.MetricKey(types.MetricSNR, types.SideNone):                5.0 / 8.0,
+				types.MetricKey(types.MetricTradeVolume, types.SideNone):        7.0 / 37.0,
 				types.MetricKey(types.MetricFillVolume, types.SideBuy):          2.0 / 10.0,
 				types.MetricKey(types.MetricFillVolume, types.SideSell):         5.0 / 20.0,
 				types.MetricKey(types.MetricBestPrice, types.SideBuy):           math.Log(99.0 / 100.0),
 				types.MetricKey(types.MetricBestPrice, types.SideSell):          0,
-				types.MetricKey(types.MetricTouchQuantity, types.SideBuy):       8.0 / 10.0,
-				types.MetricKey(types.MetricTouchQuantity, types.SideSell):      12.0 / 20.0,
+				types.MetricKey(types.MetricTouchQuantity, types.SideBuy):       8.0 / 18.0,
+				types.MetricKey(types.MetricTouchQuantity, types.SideSell):      12.0 / 32.0,
 				types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy):  8.0 / 10.0,
 				types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): 0,
 				types.MetricKey(types.MetricCancelledQuantity, types.SideBuy):   0,

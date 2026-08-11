@@ -76,6 +76,8 @@ func TestMeasure(t *testing.T) {
 				ShouldNotBeNil)
 			So(*leader.Sample(types.MetricBreadth, types.SideNone).Normalized,
 				ShouldAlmostEqual, -1.0/3.0, 1e-12)
+			So(leader.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldAlmostEqual, 0.5, 1e-12)
 		})
 
 		Convey("It should reject repeated latest-value cache entries", func() {
@@ -98,10 +100,12 @@ func TestMeasure(t *testing.T) {
 		})
 		measurements := signal.Measure(thesis)
 
-		Convey("It should retain the normalized zero return", func() {
+		Convey("It should leave the scale-dependent return unnormalized", func() {
 			So(measurements, ShouldHaveLength, 2)
 			So(measurements[0].Sample(types.MetricChange, types.SideNone).Normalized,
-				ShouldNotBeNil)
+				ShouldBeNil)
+			So(measurements[0].Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldEqual, 0.0)
 		})
 	})
 

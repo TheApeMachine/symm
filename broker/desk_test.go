@@ -203,7 +203,7 @@ func equityDeskFixture(
 	thesis := types.NewThesis(testingTB.Context(), nil)
 	logic := make(chan struct{}, 1)
 	regulator := make(chan struct{}, 1)
-	thesis.Subscribe(types.SourceCategories, logic)
+	thesis.Subscribe(types.SourceCategory, logic)
 	thesis.Subscribe(types.SourceRegulator, regulator)
 	balance := &Balance{wallet: &sync.Map{}, quote: "USD"}
 	balance.replace(map[string]*decimal.Decimal{

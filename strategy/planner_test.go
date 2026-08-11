@@ -15,7 +15,7 @@ func TestNewPlanner(t *testing.T) {
 	Convey("Given an analyzer already subscribed under its actor identity", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		analyzer := make(chan struct{}, 1)
-		thesis.Subscribe(types.SourceCategories, analyzer)
+		thesis.Subscribe(types.SourceCategory, analyzer)
 		planner := NewPlanner(t.Context(), nil, thesis, nil, nil)
 		defer planner.Close()
 

@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -77,7 +78,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceCVD, signal.semaphore)
+	signal.thesis.Subscribe(types.SourceCVD, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -114,7 +115,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {
@@ -255,8 +255,7 @@ func (signal *Signal) observeMidpoint(row kraken.TickerData) {
 	bid := row.Bid.Float64()
 	ask := row.Ask.Float64()
 
-	if bid <= 0 || ask <= bid || math.IsNaN(bid) || math.IsNaN(ask) ||
-		math.IsInf(bid, 0) || math.IsInf(ask, 0) {
+	if bid <= 0 || ask <= bid {
 		return
 	}
 
@@ -339,8 +338,7 @@ func validTrade(row kraken.TradeData) bool {
 	price := row.Price.Float64()
 
 	return row.Symbol != "" && !row.Timestamp.IsZero() && price > 0 && row.Qty > 0 &&
-		!math.IsNaN(price) && !math.IsInf(price, 0) && !math.IsNaN(row.Qty) &&
-		!math.IsInf(row.Qty, 0) && (row.Side == "buy" || row.Side == "sell")
+		(row.Side == "buy" || row.Side == "sell")
 }
 
 func (signal *Signal) seenTrade(row kraken.TradeData) bool {
@@ -458,6 +456,18 @@ func (signal *Signal) cvdMeasurements(
 		types.MetricNetFraction, output.NetFraction, evidenceCount,
 	)
 	net := normalizedSignedNet(output.Net, output.NetFraction, evidenceCount)
+	// Flow emits four alternative classifications of the same aggressor/price
+	// response. They are comparable regime hypotheses, not component metrics.
+	snr, err := probability.SignalNoiseRatio([]float64{
+		output.Absorption,
+		output.Drive,
+		output.Balance,
+		output.Starvation,
+	})
+
+	if err != nil {
+		panic(err)
+	}
 
 	measurement := &types.Measurement{
 		ID:     uuid.NewString(),
@@ -465,6 +475,11 @@ func (signal *Signal) cvdMeasurements(
 		Symbol: row.Symbol,
 		At:     row.Timestamp,
 		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricSNR, types.SideNone): {
+				Raw:        snr,
+				Normalized: &snr,
+				Unit:       types.UnitDimensionless,
+			},
 			types.MetricKey(types.MetricMidpoint, types.SideNone): {
 				Raw:  midpoint,
 				Unit: types.UnitQuoteCurrency,

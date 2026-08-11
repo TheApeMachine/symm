@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"context"
-	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -14,6 +13,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -72,7 +72,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourcePumpDump, signal.semaphore)
+	signal.thesis.Subscribe(types.SourcePumpDump, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -97,7 +97,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {
@@ -206,7 +205,7 @@ func (signal *Signal) Measure(
 
 				mid := (askPrice + bidPrice) / 2
 
-				if bidPrice <= 0 || askPrice <= bidPrice || math.IsNaN(mid) || math.IsInf(mid, 0) {
+				if bidPrice <= 0 || askPrice <= bidPrice {
 					continue
 				}
 
@@ -224,6 +223,17 @@ func (signal *Signal) Measure(
 					return nil
 				}
 
+				// Each directional strength already fuses its complementary ignition
+				// families. Buy and sell are the competing hypotheses.
+				snr, err := probability.SignalNoiseRatio([]float64{
+					output.Buy.Strength,
+					output.Sell.Strength,
+				})
+
+				if err != nil {
+					panic(err)
+				}
+
 				signal.commitTrade(trade)
 
 				measurement := &types.Measurement{
@@ -233,6 +243,13 @@ func (signal *Signal) Measure(
 					At:       trade.Timestamp,
 					Maturity: maturity,
 					Metrics: map[string]types.MetricSample{
+						types.MetricKey(types.MetricSNR, types.SideNone): {
+							Raw: snr,
+							Normalized: normalizedIgnitionEvidence(
+								types.MetricSNR, snr, ready,
+							),
+							Unit: types.UnitDimensionless,
+						},
 						types.MetricKey(types.MetricBestPrice, types.SideBuy): {
 							Raw:  bidPrice,
 							Unit: types.UnitQuoteCurrency,
@@ -255,12 +272,12 @@ func (signal *Signal) Measure(
 						},
 						types.MetricKey(types.MetricRVOL, types.SideNone): {
 							Raw:        output.RVOL,
-							Normalized: normalizedIgnitionEvidence(output.RVOL, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricRVOL, output.RVOL, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricPrecursor, types.SideNone): {
 							Raw:        output.Precursor,
-							Normalized: normalizedIgnitionEvidence(output.Precursor, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Precursor, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricSpread, types.SideNone): {
@@ -270,87 +287,87 @@ func (signal *Signal) Measure(
 						},
 						types.MetricKey(types.MetricCompression, types.SideNone): {
 							Raw:        output.Compression,
-							Normalized: normalizedIgnitionEvidence(output.Compression, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Compression, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricIgnition, types.SideNone): {
 							Raw:        output.Ignition,
-							Normalized: normalizedIgnitionEvidence(output.Ignition, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Ignition, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricTrend, types.SideNone): {
 							Raw:        output.Trend,
-							Normalized: normalizedIgnitionEvidence(output.Trend, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Trend, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricExhaustion, types.SideNone): {
 							Raw:        output.Exhaustion,
-							Normalized: normalizedIgnitionEvidence(output.Exhaustion, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Exhaustion, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricStrength, types.SideNone): {
 							Raw:        output.Strength,
-							Normalized: normalizedIgnitionEvidence(output.Strength, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Strength, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricPrecursor, types.SideBuy): {
 							Raw:        output.Buy.Precursor,
-							Normalized: normalizedIgnitionEvidence(output.Buy.Precursor, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Buy.Precursor, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricCompression, types.SideBuy): {
 							Raw:        output.Buy.Compression,
-							Normalized: normalizedIgnitionEvidence(output.Buy.Compression, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Buy.Compression, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricIgnition, types.SideBuy): {
 							Raw:        output.Buy.Ignition,
-							Normalized: normalizedIgnitionEvidence(output.Buy.Ignition, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Buy.Ignition, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricTrend, types.SideBuy): {
 							Raw:        output.Buy.Trend,
-							Normalized: normalizedIgnitionEvidence(output.Buy.Trend, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Buy.Trend, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricExhaustion, types.SideBuy): {
 							Raw:        output.Buy.Exhaustion,
-							Normalized: normalizedIgnitionEvidence(output.Buy.Exhaustion, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Buy.Exhaustion, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricStrength, types.SideBuy): {
 							Raw:        output.Buy.Strength,
-							Normalized: normalizedIgnitionEvidence(output.Buy.Strength, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Buy.Strength, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricPrecursor, types.SideSell): {
 							Raw:        output.Sell.Precursor,
-							Normalized: normalizedIgnitionEvidence(output.Sell.Precursor, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Sell.Precursor, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricCompression, types.SideSell): {
 							Raw:        output.Sell.Compression,
-							Normalized: normalizedIgnitionEvidence(output.Sell.Compression, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Sell.Compression, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricIgnition, types.SideSell): {
 							Raw:        output.Sell.Ignition,
-							Normalized: normalizedIgnitionEvidence(output.Sell.Ignition, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Sell.Ignition, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricTrend, types.SideSell): {
 							Raw:        output.Sell.Trend,
-							Normalized: normalizedIgnitionEvidence(output.Sell.Trend, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Sell.Trend, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricExhaustion, types.SideSell): {
 							Raw:        output.Sell.Exhaustion,
-							Normalized: normalizedIgnitionEvidence(output.Sell.Exhaustion, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Sell.Exhaustion, ready),
 							Unit:       types.UnitDimensionless,
 						},
 						types.MetricKey(types.MetricStrength, types.SideSell): {
 							Raw:        output.Sell.Strength,
-							Normalized: normalizedIgnitionEvidence(output.Sell.Strength, ready),
+							Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Sell.Strength, ready),
 							Unit:       types.UnitDimensionless,
 						},
 					},
@@ -418,16 +435,27 @@ func (signal *Signal) algorithm(symbol string) *equation.Ignition {
 }
 
 /*
-normalizedIgnitionEvidence accepts only a ready empirical ignition ratio or
-score. Before the volume-clock baselines mature, raw zero placeholders stay
-visible but cannot enter downstream normalized math.
+normalizedIgnitionEvidence accepts only ready empirical ignition evidence.
+Unbounded baseline ratios use parity as their domain scale and map to their
+share against parity; bounded scores retain their calculated value. Before the
+volume-clock baselines mature, raw placeholders cannot enter normalized math.
 */
-func normalizedIgnitionEvidence(raw float64, ready bool) *float64 {
+func normalizedIgnitionEvidence(
+	metric types.MetricType,
+	raw float64,
+	ready bool,
+) *float64 {
 	if !ready {
 		return nil
 	}
 
 	value := raw
+
+	if metric == types.MetricRVOL || metric == types.MetricPrecursor ||
+		metric == types.MetricIgnition || metric == types.MetricTrend ||
+		metric == types.MetricStrength {
+		value = raw / (1 + raw)
+	}
 
 	return &value
 }
@@ -446,8 +474,7 @@ func validTrade(row kraken.TradeData) bool {
 	price := row.Price.Float64()
 
 	return row.Symbol != "" && !row.Timestamp.IsZero() && price > 0 && row.Qty > 0 &&
-		!math.IsNaN(price) && !math.IsInf(price, 0) && !math.IsNaN(row.Qty) &&
-		!math.IsInf(row.Qty, 0) && (row.Side == "buy" || row.Side == "sell")
+		(row.Side == "buy" || row.Side == "sell")
 }
 
 func (signal *Signal) seenTrade(row kraken.TradeData) bool {

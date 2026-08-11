@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -59,7 +60,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceHawkes, signal.semaphore)
+	signal.thesis.Subscribe(types.SourceHawkes, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -84,7 +85,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements, ready := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {
@@ -161,6 +161,26 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		}
 
 		branching := outcome.Fit.Params().BranchingMatrix()
+		buyHypothesis := outcome.BuyArrivalRate
+		sellHypothesis := outcome.SellArrivalRate
+
+		if outcome.Readiness.HawkesFit {
+			buyHypothesis = outcome.ImmediateBuyOffspring
+			sellHypothesis = outcome.ImmediateSellOffspring
+		}
+
+		// Self- and cross-excitation are complementary paths within each parent
+		// side. The column-summed buy and sell offspring totals are the competing
+		// fitted hypotheses; directly observed arrival rates carry that role before
+		// the fit is identifiable.
+		snr, err := probability.SignalNoiseRatio([]float64{
+			buyHypothesis,
+			sellHypothesis,
+		})
+
+		if err != nil {
+			panic(err)
+		}
 
 		measurement := &types.Measurement{
 			ID:           uuid.NewString(),
@@ -171,6 +191,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			Horizon:      outcome.Horizon,
 			Maturity:     outcome.Maturity,
 			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricSNR, types.SideNone): {
+					Raw:        snr,
+					Normalized: &snr,
+					Unit:       types.UnitDimensionless,
+				},
 				types.MetricKey(types.MetricEventCount, types.SideNone): {
 					Raw:  float64(outcome.EventCount),
 					Unit: types.UnitCount,

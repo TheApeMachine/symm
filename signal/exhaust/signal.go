@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -88,7 +89,7 @@ func NewSignal(
 	}
 
 	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceExhaustion, signal.semaphore)
+	signal.thesis.Subscribe(types.SourceExhaustion, signal.semaphore, &signal.status)
 	signal.status.Store(types.READY)
 	signal.run()
 
@@ -113,7 +114,6 @@ func (signal *Signal) run() {
 			case <-signal.ctx.Done():
 				return
 			case <-signal.semaphore:
-				signal.status.Store(types.BUSY)
 				measurements := signal.Measure(signal.thesis)
 
 				if len(measurements) > 0 {
@@ -639,7 +639,11 @@ func (signal *Signal) frame(
 	output equation.DecayOutput,
 	maturity float64,
 ) []*types.Measurement {
-	metrics, _ := normalizedDecayMetrics(output)
+	metrics, valid := normalizedDecayMetrics(output)
+
+	if !valid {
+		panic("exhaust: decay output outside its defined metric domain")
+	}
 
 	measurement := &types.Measurement{
 		ID:       uuid.NewString(),
@@ -686,7 +690,7 @@ func normalizedDecayMetrics(
 		{types.MetricValue, types.SideSell, output.Short.Value},
 		{types.MetricCategory, types.SideSell, output.Short.Category},
 	}
-	metrics := make(map[string]types.MetricSample, len(readings))
+	metrics := make(map[string]types.MetricSample, len(readings)+1)
 	valid := true
 
 	for _, item := range readings {
@@ -710,6 +714,23 @@ func normalizedDecayMetrics(
 		metrics[types.MetricKey(item.metric, item.side)] = sample
 	}
 
+	// Exhaustion families can coexist within one side. Long and short fused
+	// strengths are the competing directional hypotheses.
+	snr, err := probability.SignalNoiseRatio([]float64{
+		output.Long.Strength,
+		output.Short.Strength,
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	metrics[types.MetricKey(types.MetricSNR, types.SideNone)] = types.MetricSample{
+		Raw:        snr,
+		Normalized: &snr,
+		Unit:       types.UnitDimensionless,
+	}
+
 	return metrics, valid
 }
 
@@ -720,12 +741,8 @@ func normalizedDecayScore(raw float64) *float64 {
 }
 
 func validDecayCategory(raw float64) bool {
-	return finiteDecay(raw) && raw >= 0 && raw <= maximumDecayCategory &&
+	return raw >= 0 && raw <= maximumDecayCategory &&
 		raw == math.Trunc(raw)
-}
-
-func finiteDecay(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 /*

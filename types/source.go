@@ -20,7 +20,6 @@ const (
 	SourceCausal      SourceType = "causal"
 	SourceCognition   SourceType = "cognition"
 	SourceGraph       SourceType = "graph"
-	SourceCategories  SourceType = "categories"
 	SourceAllocator   SourceType = "allocator"
 	SourceArbiter     SourceType = "arbiter"
 	SourceEvaluator   SourceType = "evaluator"
@@ -30,7 +29,7 @@ const (
 	SourceRegulator   SourceType = "regulator"
 )
 
-var tickerReceivers = []SourceType{
+var TickerReceivers = []SourceType{
 	SourceCorrelation,
 	SourceCVD,
 	SourceLeadLag,
@@ -39,7 +38,7 @@ var tickerReceivers = []SourceType{
 	SourceToxicity,
 }
 
-var tradeReceivers = []SourceType{
+var TradeReceivers = []SourceType{
 	SourceCVD,
 	SourceDepthFlow,
 	SourceExhaustion,

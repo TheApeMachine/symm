@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -112,6 +113,21 @@ func Boot(
 
 	if err != nil {
 		errnie.Error(fmt.Errorf("failed to create runtime audit recorder: %w", err))
+		return nil
+	}
+
+	thesis.Audit = recorder.Write
+
+	if err := thesis.Audit(map[string]any{
+		"channel": "orchestration",
+		"type":    "boot",
+		"value": map[string]any{
+			"at":         time.Now().UTC(),
+			"audit_path": auditPath,
+		},
+	}); err != nil {
+		errnie.Error(fmt.Errorf("failed to write runtime audit boot event: %w", err))
+		_ = recorder.Close()
 		return nil
 	}
 

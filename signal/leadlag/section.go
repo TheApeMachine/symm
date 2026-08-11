@@ -417,13 +417,12 @@ func newMoveBaseline() *algorithm.MoveBaseline {
 	)
 
 	if err != nil {
-		shortWindow = sampleFloor
-		longWindow = sampleFloor + 1
+		panic(err)
 	}
 
 	return algorithm.NewMoveBaseline(algorithm.MoveBaselineConfig{
 		MinObs:  max(shortWindow, sampleFloor),
-		PathCap: max(longWindow+shortWindow+1, 64),
+		PathCap: longWindow + shortWindow + 1,
 	})
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -43,22 +44,24 @@ type Thesis struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	subscribers  *sync.Map
+	statuses     *sync.Map
 	ui           chan []byte
 	equityMu     sync.RWMutex
 	equity       *kraken.TradeBalanceResult
-	Status       Status        `json:"status"`
-	Tick         int64         `json:"tick"`
-	At           time.Time     `json:"at"`
-	LastTickerAt time.Time     `json:"lastTickerAt"`
-	LastTradeAt  time.Time     `json:"lastTradeAt"`
-	CrossSection *CrossSection `json:"crossSection"`
-	Measurements *sync.Map     `json:"-"`
-	Symbols      *sync.Map     `json:"-"`
-	Measured     *sync.Map     `json:"-"`
-	Tickers      *sync.Map     `json:"-"`
-	Trades       *sync.Map     `json:"-"`
-	Lifecycle    *sync.Map     `json:"lifecycle"`
-	Manifold     fluid.Reading `json:"-"`
+	Status       Status          `json:"status"`
+	Tick         int64           `json:"tick"`
+	At           time.Time       `json:"at"`
+	LastTickerAt time.Time       `json:"lastTickerAt"`
+	LastTradeAt  time.Time       `json:"lastTradeAt"`
+	CrossSection *CrossSection   `json:"crossSection"`
+	Measurements *sync.Map       `json:"-"`
+	Symbols      *sync.Map       `json:"-"`
+	Measured     *sync.Map       `json:"-"`
+	Tickers      *sync.Map       `json:"-"`
+	Trades       *sync.Map       `json:"-"`
+	Audit        func(any) error `json:"-"`
+	Lifecycle    *sync.Map       `json:"lifecycle"`
+	Manifold     fluid.Reading   `json:"-"`
 }
 
 /*
@@ -73,6 +76,7 @@ func NewThesis(
 		ctx:          ctx,
 		cancel:       cancel,
 		subscribers:  &sync.Map{},
+		statuses:     &sync.Map{},
 		ui:           ui,
 		Status:       READY,
 		At:           time.Now().UTC(),
@@ -142,7 +146,6 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 					// Insert the new ticker before the existing ticker.
 					tickers = append(tickers[:index], append([]kraken.TickerData{ticker}, tickers[index:]...)...)
 					thesis.Tickers.Store(ticker.Symbol, tickers)
-					thesis.Fanout(SourceTrader, tickerReceivers...)
 					return thesis
 				}
 			}
@@ -152,8 +155,6 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 	}
 
 	thesis.LastTickerAt = ticker.Timestamp
-	thesis.Fanout(SourceTrader, tickerReceivers...)
-
 	return thesis
 }
 
@@ -172,7 +173,6 @@ func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 					// Insert the new trade before the existing trade.
 					trades = append(trades[:index], append([]kraken.TradeData{trade}, trades[index:]...)...)
 					thesis.Trades.Store(trade.Symbol, trades)
-					thesis.Fanout(SourceTrader, tradeReceivers...)
 					return thesis
 				}
 			}
@@ -182,8 +182,6 @@ func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 	}
 
 	thesis.LastTradeAt = trade.Timestamp
-	thesis.Fanout(SourceTrader, tradeReceivers...)
-
 	return thesis
 }
 
@@ -228,37 +226,79 @@ func (thesis *Thesis) AppendMeasurements(
 	ready bool,
 ) error {
 	shouldFanout := false
+	processedSymbols := make([]string, 0, len(measurements))
+	pending := 0
 
 	if len(measurements) > 0 {
-		found, ok := thesis.Measurements.LoadOrStore(sender, measurements)
+		found, loaded := thesis.Measurements.LoadOrStore(
+			sender, append([]*Measurement{}, measurements...),
+		)
 
-		if ok {
-			stored := found.([]*Measurement)
-
-			for i := range stored {
-				symbolFound, ok := thesis.Symbols.Load(stored[i].Symbol)
-
-				if ok && symbolFound != nil {
-					symbol, ok := symbolFound.(*Symbol)
-
-					if ok && symbol != nil && symbol.Status == READY {
-						symbol.AddMeasurement(stored[i])
-						stored = slices.Delete(stored, i, i+1)
-						shouldFanout = true
-					}
-				}
+		if !loaded {
+			for _, measurement := range measurements {
+				thesis.Symbols.LoadOrStore(
+					measurement.Symbol,
+					NewSymbol(measurement.Symbol, thesis.ui),
+				)
 			}
 
+			pending = len(measurements)
+		}
+
+		stored := append([]*Measurement{}, found.([]*Measurement)...)
+
+		for index := 0; loaded && index < len(stored); {
+			symbolFound, ok := thesis.Symbols.LoadOrStore(
+				stored[index].Symbol, NewSymbol(stored[index].Symbol, thesis.ui),
+			)
+
+			symbol, ok := symbolFound.(*Symbol)
+
+			if ok && symbol != nil && symbol.Status == READY {
+				symbol.AddMeasurement(stored[index])
+				stored = slices.Delete(stored, index, index+1)
+				symbol.Stamp(sender)
+				shouldFanout = true
+				processedSymbols = append(processedSymbols, symbol.Symbol)
+				continue
+			}
+
+			index++
+		}
+
+		if loaded {
 			stored = append(stored, measurements...)
 			thesis.Measurements.Store(sender, stored)
+			pending = len(stored)
 		}
 	}
 
-	if ready && len(measurements) > 0 && shouldFanout {
-		thesis.Fanout(
-			sender,
-			SourceAnalyzer,
-		)
+	if ready && shouldFanout {
+		thesis.Fanout(sender, SourceAnalyzer)
+	}
+
+	if thesis.Audit != nil {
+		err := thesis.Audit(map[string]any{
+			"channel": "orchestration",
+			"type":    "measurement_batch",
+			"value": map[string]any{
+				"at":                time.Now().UTC(),
+				"source":            sender,
+				"received":          len(measurements),
+				"processed_symbols": processedSymbols,
+				"pending":           pending,
+				"ready":             ready,
+				"analyzer_notified": ready && shouldFanout,
+			},
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"thesis: failed to audit measurement batch",
+				err,
+			))
+		}
 	}
 
 	return nil
@@ -332,8 +372,19 @@ func (thesis *Thesis) MarketTrades(source SourceType) []kraken.TradeData {
 	return out
 }
 
-func (thesis *Thesis) Subscribe(source SourceType, semaphore chan struct{}) {
+func (thesis *Thesis) Subscribe(
+	source SourceType,
+	semaphore chan struct{},
+	status ...*atomic.Value,
+) {
 	thesis.subscribers.Store(source, semaphore)
+
+	if len(status) == 0 {
+		thesis.statuses.Delete(source)
+		return
+	}
+
+	thesis.statuses.Store(source, status[0])
 }
 
 /*
@@ -341,6 +392,11 @@ Fanout sends a wake-up signal to all subscribers of the thesis, except for the s
 If specific receivers are provided, it will only fan out to those receivers.
 */
 func (thesis *Thesis) Fanout(sender SourceType, receivers ...SourceType) {
+	dispatched := make([]SourceType, 0)
+	notReady := make([]SourceType, 0)
+	full := make([]SourceType, 0)
+	canceled := false
+
 	thesis.subscribers.Range(func(key, value any) bool {
 		source := key.(SourceType)
 
@@ -350,13 +406,23 @@ func (thesis *Thesis) Fanout(sender SourceType, receivers ...SourceType) {
 			return true
 		}
 
+		status, found := thesis.statuses.Load(source)
+
+		if found && !status.(*atomic.Value).CompareAndSwap(READY, BUSY) {
+			notReady = append(notReady, source)
+			return true
+		}
+
 		semaphore := value.(chan struct{})
 
 		select {
 		case <-thesis.ctx.Done():
+			canceled = true
 			return false
 		case semaphore <- struct{}{}:
+			dispatched = append(dispatched, source)
 		default:
+			full = append(full, source)
 			errnie.Warn(fmt.Sprintf(
 				"thesis: fanout to source [%s] skipped, semaphore full", source,
 			))
@@ -364,6 +430,30 @@ func (thesis *Thesis) Fanout(sender SourceType, receivers ...SourceType) {
 
 		return true
 	})
+
+	if thesis.Audit != nil {
+		err := thesis.Audit(map[string]any{
+			"channel": "orchestration",
+			"type":    "fanout",
+			"value": map[string]any{
+				"at":         time.Now().UTC(),
+				"sender":     sender,
+				"receivers":  receivers,
+				"dispatched": dispatched,
+				"not_ready":  notReady,
+				"full":       full,
+				"canceled":   canceled,
+			},
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"thesis: failed to audit fanout",
+				err,
+			))
+		}
+	}
 }
 
 /*
@@ -374,13 +464,47 @@ symbol's measurements.
 */
 func (thesis *Thesis) Stamp(symbol string, source SourceType) {
 	found, ok := thesis.Symbols.Load(symbol)
+	outcome := "missing_symbol"
+	signalsMeasured := false
+	logicAnalyzed := false
+	strategyDecided := false
 
-	if !ok {
-		return
+	if ok {
+		storedSymbol, valid := found.(*Symbol)
+
+		if valid && storedSymbol != nil {
+			storedSymbol.Stamp(source)
+			outcome = "stamped"
+			signalsMeasured = storedSymbol.SignalsMeasured()
+			logicAnalyzed = storedSymbol.LogicAnalyzed()
+			strategyDecided = storedSymbol.StrategyDecided()
+		} else {
+			outcome = "invalid_symbol"
+		}
 	}
 
-	if s, ok := found.(*Symbol); ok && s != nil {
-		s.Stamp(source)
+	if thesis.Audit != nil {
+		err := thesis.Audit(map[string]any{
+			"channel": "orchestration",
+			"type":    "stamp",
+			"value": map[string]any{
+				"at":               time.Now().UTC(),
+				"symbol":           symbol,
+				"source":           source,
+				"outcome":          outcome,
+				"signals_measured": signalsMeasured,
+				"logic_analyzed":   logicAnalyzed,
+				"strategy_decided": strategyDecided,
+			},
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"thesis: failed to audit readiness stamp",
+				err,
+			))
+		}
 	}
 }
 

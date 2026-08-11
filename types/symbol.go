@@ -30,6 +30,7 @@ NewSymbol creates empty measurement state for one market symbol.
 */
 func NewSymbol(symbol string, ui chan []byte) *Symbol {
 	return &Symbol{
+		Status:       READY,
 		Readiness:    NewReadiness(symbol, ui),
 		Measurements: make([]*Measurement, 0),
 		Decisions:    &sync.Map{},
@@ -78,7 +79,7 @@ func (symbol *Symbol) Stamp(source SourceType) {
 	if symbol.Readiness.Stamped(
 		SourceResonance,
 	) && symbol.Readiness.Stamped(
-		SourceCategories,
+		SourceCategory,
 	) {
 		symbol.Measurements = symbol.Measurements[:0]
 		symbol.Status = READY

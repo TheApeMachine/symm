@@ -84,8 +84,11 @@ func TestMeasure(t *testing.T) {
 			So(median, ShouldAlmostEqual, 1212)
 			So(relative, ShouldAlmostEqual, 101.0/1212.0, 1e-12)
 			So(depth.Normalized, ShouldNotBeNil)
-			So(*depth.Normalized, ShouldAlmostEqual, relative, 1e-12)
+			So(*depth.Normalized, ShouldAlmostEqual, 101.0/(101.0+1212.0), 1e-12)
+			So(*thin.Sample(types.MetricRelativeTouchDepth, types.SideNone).Normalized,
+				ShouldAlmostEqual, 101.0/(101.0+1212.0), 1e-12)
 			So(scarcity, ShouldAlmostEqual, 1111.0/(1111.0+202.0), 1e-12)
+			So(thin.Sample(types.MetricSNR, types.SideNone).Raw, ShouldEqual, 0.0)
 			So(thin.Sample(types.MetricReportedVolumeNotional, types.SideNone).Normalized,
 				ShouldNotBeNil)
 			So(thin.Sample(types.MetricExecutableTouchDepthMedian, types.SideNone).Normalized,
@@ -133,7 +136,7 @@ func TestMeasure(t *testing.T) {
 			So(measurement.Sample(
 				types.MetricReportedVolumeNotional,
 				types.SideNone,
-			).Normalized, ShouldNotBeNil)
+			).Normalized, ShouldBeNil)
 		})
 	})
 }
