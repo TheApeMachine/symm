@@ -13,7 +13,31 @@ import (
 func TestUpdate(t *testing.T) {
 	Convey("Given completed upstream stages without a causal estimate", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
+		thesis.At = time.Unix(1, 0).UTC()
 		bitcoin := types.NewSymbol("BTC/USD", nil)
+		drive := 0.8
+		snr := 0.75
+		bitcoin.AddMeasurement(&types.Measurement{
+			ID:     "cvd-measurement",
+			Source: types.SourceCVD,
+			Symbol: "BTC/USD",
+			At:     thesis.At,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricDrive, types.SideNone): {
+					Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricSNR, types.SideNone): {
+					Raw: snr, Normalized: &snr, Unit: types.UnitDimensionless,
+				},
+			},
+		})
+		bitcoin.Categories.Store("BTC/USD", []types.Category{{
+			Symbol:     "BTC/USD",
+			Type:       types.CategoryAggressiveDrive,
+			Confidence: 0.6,
+			Strength:   drive,
+			Supporting: []string{"cvd:drive"},
+		}})
 		thesis.Symbols.Store("BTC/USD", bitcoin)
 		thesis.Symbols.Store("ETH/USD", types.NewSymbol("ETH/USD", nil))
 
@@ -39,8 +63,70 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(thesis.Stamped("BTC/USD", types.SourceGraph), ShouldBeTrue)
 			So(thesis.Stamped("ETH/USD", types.SourceGraph), ShouldBeFalse)
-			_, found := bitcoin.Graphs.Load("market_graph")
+			stored, found := bitcoin.Graphs.Load("market_graph")
 			So(found, ShouldBeTrue)
+			graph := stored.(*Graph)
+			So(graph.Nodes, ShouldHaveLength, 3)
+			So(graph.Edges, ShouldHaveLength, 1)
+			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
+			So(graph.Edges[0].Evidence,
+				ShouldResemble, []string{"cvd-measurement", "cvd:drive"})
+			So(*graph.Edges[0].Quality, ShouldEqual, snr)
+		})
+	})
+
+	Convey("Given completed graphs for the focused and unfocused pairs", t, func() {
+		previousFocus := types.Focus()
+		types.SetFocus("BTC/USD")
+		Reset(func() { types.SetFocus(previousFocus) })
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.At = time.Unix(2, 0).UTC()
+
+		for _, symbolName := range []string{"BTC/USD", "ETH/USD"} {
+			symbol := types.NewSymbol(symbolName, nil)
+			drive := 0.6
+			quality := 0.7
+			symbol.AddMeasurement(&types.Measurement{
+				ID:     symbolName + "-measurement",
+				Source: types.SourceCVD,
+				Symbol: symbolName,
+				At:     thesis.At,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricDrive, types.SideNone): {
+						Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
+					},
+					types.MetricKey(types.MetricSNR, types.SideNone): {
+						Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
+					},
+				},
+			})
+			symbol.Categories.Store(symbolName, []types.Category{{
+				Symbol: symbolName, Type: types.CategoryAggressiveDrive,
+				Strength: drive, Confidence: 0.8,
+				Supporting: []string{"cvd:drive"},
+			}})
+			thesis.Symbols.Store(symbolName, symbol)
+
+			for _, source := range []types.SourceType{
+				types.SourceCategory,
+				types.SourceResonance,
+				types.SourceCausal,
+				types.SourceCognition,
+			} {
+				thesis.Stamp(symbolName, source)
+			}
+		}
+
+		ui := make(chan []byte, 2)
+		err := NewSolver(ui, nil).Update(thesis)
+
+		Convey("It should publish only the graph selected by the UI focus", func() {
+			So(err, ShouldBeNil)
+			So(ui, ShouldHaveLength, 1)
+			payload := string(<-ui)
+			So(payload, ShouldContainSubstring, "BTC/USD-measurement")
+			So(payload, ShouldNotContainSubstring, "ETH/USD-measurement")
+			So(payload, ShouldContainSubstring, `"relation":"supports"`)
 		})
 	})
 }
@@ -51,9 +137,8 @@ func TestAddEdge(t *testing.T) {
 		graph.AddNode(&Node{ID: "source"})
 		edge := &Edge{From: "source", To: "missing"}
 
-		graph.AddEdge(edge)
-
-		Convey("It should not materialize a dangling relationship", func() {
+		Convey("It should reject a dangling relationship", func() {
+			So(func() { graph.AddEdge(edge) }, ShouldPanic)
 			So(graph.Edges, ShouldBeEmpty)
 			So(graph.Adjacency[edge.From], ShouldBeEmpty)
 		})
@@ -64,6 +149,17 @@ func TestAddEdge(t *testing.T) {
 
 			So(graph.Edges, ShouldHaveLength, 1)
 			So(graph.Adjacency[edge.From], ShouldResemble, []string{edge.To})
+		})
+	})
+}
+
+func TestAddNode(t *testing.T) {
+	Convey("Given a node without an identity", t, func() {
+		graph := NewGraph(time.Unix(1, 0).UTC())
+
+		Convey("It should reject the node instead of silently losing it", func() {
+			So(func() { graph.AddNode(&Node{}) }, ShouldPanic)
+			So(graph.Nodes, ShouldBeEmpty)
 		})
 	})
 }
@@ -204,6 +300,38 @@ func TestInferStructuralEdges(t *testing.T) {
 			So(len(graph.Edges), ShouldEqual, 1)
 		})
 	})
+
+	Convey("Given a cognition winner with a measured lookahead path", t, func() {
+		at := time.Unix(20, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Cognition.Store("BTC/USD", types.Cognition{
+			Source:     "cognition",
+			Symbol:     "BTC/USD",
+			At:         at,
+			Winner:     "concept_1",
+			Confidence: 0.8,
+			Predictions: map[string]float64{
+				"active_reversal": 0.7,
+				"unsupported":     0,
+			},
+		})
+		graph := NewGraph(at)
+		solver := NewSolver(nil, nil)
+		solver.extractCognitionNodes(symbol, graph)
+
+		err := solver.inferStructuralEdges(symbol, graph)
+
+		Convey("It should retain the prediction endpoints and temporal relations", func() {
+			So(err, ShouldBeNil)
+			So(graph.Nodes, ShouldHaveLength, 2)
+			So(graph.Edges, ShouldHaveLength, 2)
+			So(graph.Edges[0].Relation, ShouldEqual, RelationLeads)
+			So(graph.Edges[1].Relation, ShouldEqual, RelationLags)
+			So(graph.Edges[0].Weight, ShouldEqual, 0.7)
+			So(graph.Edges[0].To,
+				ShouldEqual, "cog:BTC/USD:prediction:active_reversal")
+		})
+	})
 }
 
 func TestExtractCausalNodes(t *testing.T) {
@@ -234,6 +362,7 @@ func TestExtractCausalNodes(t *testing.T) {
 			So(found, ShouldBeTrue)
 			So(node.Confidence, ShouldAlmostEqual, 0.29)
 			So(node.Strength, ShouldEqual, 0.4)
+			So(node.At, ShouldEqual, at)
 			So(association.Confidence, ShouldAlmostEqual, 0.06)
 			So(association.Confidence, ShouldNotEqual, node.Confidence)
 		})
@@ -286,6 +415,39 @@ func TestExtractResonanceNodes(t *testing.T) {
 			So(node.Value, ShouldEqual, forecast.ExpectedReturn)
 			So(node.Value, ShouldNotEqual, forecast.Curve[0])
 			So(node.Confidence, ShouldEqual, forecast.Confidence)
+			So(node.At, ShouldEqual, at)
+		})
+	})
+}
+
+func TestExtractManifoldNodes(t *testing.T) {
+	Convey("Given a ready per-symbol phase alignment", t, func() {
+		at := time.Unix(1, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Phase.Store("BTC/USD", types.PhaseReading{
+			Symbol: "BTC/USD",
+			At:     at,
+			Ready:  true,
+			Responses: []types.PhaseResponse{{
+				Angle: 0.75, Similarity: 0.6, ObservedAt: at.Add(-time.Second).Format(time.RFC3339),
+				Outcome: types.PhaseOutcome{
+					Symbol: "BTC/USD", Direction: "up", Return: 0.01, Horizon: 2,
+				},
+			}},
+		})
+		graph := NewGraph(at)
+
+		NewSolver(nil, nil).extractManifoldNodes(symbol, graph)
+
+		Convey("It should retain the measured phase and realized historical outcome", func() {
+			node := graph.Nodes["man:BTC/USD:phase_alignment"]
+			So(node, ShouldNotBeNil)
+			So(node.Kind, ShouldEqual, KindManifold)
+			So(node.Value, ShouldEqual, 0.75)
+			So(node.Strength, ShouldEqual, 0.6)
+			So(node.Metadata["outcome"], ShouldResemble, types.PhaseOutcome{
+				Symbol: "BTC/USD", Direction: "up", Return: 0.01, Horizon: 2,
+			})
 		})
 	})
 }
@@ -392,6 +554,22 @@ func BenchmarkUpdate(b *testing.B) {
 	for index := range 256 {
 		symbol := "SIM" + strconv.Itoa(index) + "/USD"
 		symbolState := types.NewSymbol(symbol, nil)
+		snr := 0.8
+		surge := 0.5
+		symbolState.Measurements = append(symbolState.Measurements, &types.Measurement{
+			ID:     "sentiment-" + symbol,
+			Source: types.SourceSentiment,
+			Symbol: symbol,
+			At:     at,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricSurgeScore, types.SideNone): {
+					Raw: surge, Normalized: &surge, Unit: types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricSNR, types.SideNone): {
+					Raw: snr, Normalized: &snr, Unit: types.UnitDimensionless,
+				},
+			},
+		})
 		thesis.Symbols.Store(symbol, symbolState)
 
 		for _, source := range []types.SourceType{
@@ -407,17 +585,10 @@ func BenchmarkUpdate(b *testing.B) {
 		symbolState.Categories.Store(symbol, []types.Category{
 			{
 				Symbol:     symbol,
-				Type:       types.CategoryForecastEdge,
+				Type:       types.CategoryRiskOnSurge,
 				Confidence: 0.8,
 				Strength:   0.5,
-				Supporting: []string{"sentiment:" + symbol + ":change"},
-			},
-			{
-				Symbol:     symbol,
-				Type:       types.CategoryExhaustion,
-				Confidence: 0.7,
-				Strength:   0.4,
-				Opposing:   []string{"sentiment:" + symbol + ":change"},
+				Supporting: []string{"sentiment:surge_score"},
 			},
 		})
 		symbolState.Resonance.Store(symbol, types.ResonanceReading{
@@ -440,13 +611,16 @@ func BenchmarkUpdate(b *testing.B) {
 			Symbol:     symbol,
 			Source:     "cognition",
 			At:         at,
-			Winner:     string(types.CategoryForecastEdge),
+			Winner:     string(types.CategoryRiskOnSurge),
 			Confidence: 0.8,
 		})
 	}
 
 	ui := make(chan []byte, 1)
 	solver := NewSolver(ui, nil)
+	previousFocus := types.Focus()
+	types.SetFocus("SIM0/USD")
+	defer types.SetFocus(previousFocus)
 	b.ReportAllocs()
 	b.ResetTimer()
 

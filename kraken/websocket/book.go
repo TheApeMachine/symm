@@ -22,6 +22,7 @@ type Book struct {
 	statusMu sync.RWMutex
 	mu       sync.RWMutex
 	manager  *spot.BookManager
+	updates  chan<- string
 }
 
 func NewBook(ctx context.Context) *Book {
@@ -97,6 +98,16 @@ func (book *Book) Create(symbol string, depth int) {
 	defer book.mu.Unlock()
 
 	book.manager.CreateBook(symbol, depth)
+}
+
+/*
+SetUpdates connects this cache to the owning transport's coalesced book-update
+notification channel.
+*/
+func (book *Book) SetUpdates(updates chan<- string) {
+	book.mu.Lock()
+	book.updates = updates
+	book.mu.Unlock()
 }
 
 func (book *Book) Update(
@@ -232,6 +243,13 @@ func (book *Book) Update(
 
 		payload.Data[index] = data
 		primeQueues(symbolBook)
+
+		if book.updates != nil {
+			select {
+			case book.updates <- data.Symbol:
+			default:
+			}
+		}
 
 	}
 

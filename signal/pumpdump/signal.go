@@ -104,6 +104,8 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourcePumpDump)
+
 				signal.status.Store(types.READY)
 			}
 		}

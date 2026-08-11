@@ -41,6 +41,7 @@ type Analyzer struct {
 	tree      *dmt.Tree
 	cognition *cognition.Solver
 	graph     *graph.Solver
+	manifold  *manifold.Solver
 	solvers   []Solver
 	ui        chan []byte
 	binui     chan types.FluidFrame
@@ -63,6 +64,7 @@ func NewAnalyzer(
 	thesis *types.Thesis,
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
+	manifoldSolver := manifold.NewSolver(api, ui, binui, recorder)
 
 	analyzer := &Analyzer{
 		ctx:    ctx,
@@ -77,11 +79,12 @@ func NewAnalyzer(
 				recorder,
 				viper.GetFloat64("resonance.learning_rate"),
 			),
-			manifold.NewSolver(api, ui, binui, recorder),
+			manifoldSolver,
 			causal.NewSolver(price, ui, recorder),
 			cognition.NewSolver(tree, ui, recorder),
 			graph.NewSolver(ui, recorder),
 		},
+		manifold:  manifoldSolver,
 		ui:        ui,
 		binui:     binui,
 		recorder:  recorder,
@@ -121,6 +124,10 @@ func (analyzer *Analyzer) process(in any) {
 		return
 	}
 
+	if thesis.SymbolsReady() {
+		return
+	}
+
 	iterations := 0
 	initiallyReady := thesis.SymbolsReady()
 
@@ -146,6 +153,7 @@ func (analyzer *Analyzer) process(in any) {
 	iterationErr := ""
 
 	for !thesis.SymbolsReady() {
+		readinessRevision := thesis.ReadinessRevision()
 		group := &errgroup.Group{}
 
 		for _, solver := range analyzer.solvers {
@@ -154,12 +162,28 @@ func (analyzer *Analyzer) process(in any) {
 			})
 		}
 
-		if err := group.Wait(); err != nil {
+		err := group.Wait()
+		iterations++
+		waiting := err == nil && analyzer.manifold != nil &&
+			analyzer.manifold.WaitingForBook()
+		stalled := err == nil && !waiting && !thesis.SymbolsReady() &&
+			thesis.ReadinessRevision() == readinessRevision
+
+		if err != nil {
 			iterationErr = err.Error()
 			errnie.Error(errnie.Err(
 				errnie.Internal,
 				"failed to update analyzer: "+err.Error(),
 				err,
+			))
+		}
+
+		if stalled {
+			iterationErr = "no solver advanced readiness"
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"analyzer: "+iterationErr,
+				nil,
 			))
 		}
 
@@ -171,6 +195,7 @@ func (analyzer *Analyzer) process(in any) {
 					"at":            time.Now().UTC(),
 					"iteration":     iterations,
 					"symbols_ready": thesis.SymbolsReady(),
+					"waiting":       waiting,
 					"error":         iterationErr,
 				},
 			})
@@ -182,6 +207,14 @@ func (analyzer *Analyzer) process(in any) {
 					err,
 				))
 			}
+		}
+
+		if err != nil || waiting {
+			return
+		}
+
+		if stalled {
+			return
 		}
 
 	}

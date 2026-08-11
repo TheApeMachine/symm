@@ -66,6 +66,7 @@ type Live struct {
 	normalizer  *spot.Normalizer
 	level3      *sync.Map
 	book        *Book
+	bookUpdates chan string
 	symbols     []string
 	publicMu    sync.RWMutex
 	public      map[string][][]string
@@ -153,6 +154,7 @@ func NewWithClient(
 		subscribers: &sync.Map{},
 		callbacks:   &sync.Map{},
 		public:      make(map[string][][]string),
+		bookUpdates: make(chan string, max(viper.GetInt("system.actor.buffer"), 1)),
 		paper:       NewPaper(ctx, NewSimulator()),
 		model:       viper.GetViper().GetString("trading.model"),
 		quote:       viper.GetViper().GetString("market.quote_currency"),
@@ -216,6 +218,22 @@ func NewWithClient(
 		}
 
 		out := handler(raw)
+
+		if channel == "subscribe" {
+			errMessage := utils.GetString(raw, "error")
+
+			if errMessage != "" {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"websocket: subscription rejected: "+errMessage,
+					nil,
+				))
+				live.statusMu.Lock()
+				live.status = types.ERROR
+				live.statusMu.Unlock()
+				return
+			}
+		}
 
 		if channel == "level3" && live.book != nil {
 			level3, ok := out.(*kraken.Level3)
@@ -542,6 +560,7 @@ func (live *Live) SubL3(symbols []string) {
 		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
 		conn.symbols = append([]string{}, groups...)
+		conn.book.SetUpdates(live.bookUpdates)
 
 		for group := range slices.Chunk(groups, 40) {
 			if conn.book != nil {
@@ -598,6 +617,15 @@ func (live *Live) Book(symbol string, read func(*book.Book)) {
 	if !found {
 		read(nil)
 	}
+}
+
+/*
+BookUpdates emits a symbol after its authoritative Level 3 cache applies an
+update. Consumers use it to retry work that explicitly declared that symbol's
+snapshot pending.
+*/
+func (live *Live) BookUpdates() <-chan string {
+	return live.bookUpdates
 }
 
 func (live *Live) Balance() (map[string]*decimal.Decimal, error) {

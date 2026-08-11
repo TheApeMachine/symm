@@ -55,18 +55,19 @@ type symbolState struct {
 LagFeatures holds derived lag inputs for classification.
 */
 type LagFeatures struct {
-	IsAnchor    bool
-	Price       float64
-	MoveReady   bool
-	MoveMoved   bool
-	StallMargin float64
-	LagOK       bool
-	LagBars     int
-	LagCorr     float64
-	ContempOK   bool
-	ContempCorr float64
-	SampleCount int
-	ObservedAt  time.Time
+	IsAnchor     bool
+	Price        float64
+	MoveReady    bool
+	MoveMoved    bool
+	StallMargin  float64
+	LagOK        bool
+	LagBars      int
+	LagCorr      float64
+	ContempOK    bool
+	ContempCorr  float64
+	SampleCount  int
+	ObservedFrom time.Time
+	ObservedAt   time.Time
 }
 
 /*
@@ -286,11 +287,27 @@ func (section *Section) Features(scope string) LagFeatures {
 	}
 
 	if features.IsAnchor {
+		if len(anchor.prices) > 0 {
+			features.ObservedFrom = anchor.prices[0].at
+		}
+
 		return features
 	}
 
 	anchorSeries := append([]priceSample(nil), anchor.prices...)
 	followerSeries := append([]priceSample(nil), follower.prices...)
+
+	if len(anchorSeries) == 0 || len(followerSeries) == 0 {
+		return features
+	}
+
+	observedFrom := anchorSeries[0].at
+
+	if followerSeries[0].at.After(observedFrom) {
+		observedFrom = followerSeries[0].at
+	}
+
+	features.ObservedFrom = observedFrom
 	sampleCount := len(anchorSeries)
 
 	if len(followerSeries) < sampleCount {

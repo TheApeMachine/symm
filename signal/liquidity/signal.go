@@ -108,6 +108,8 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourceLiquidity)
+
 				signal.status.Store(types.READY)
 			}
 		}

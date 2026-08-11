@@ -87,6 +87,8 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourceCorrelation)
+
 				signal.status.Store(types.READY)
 			}
 		}

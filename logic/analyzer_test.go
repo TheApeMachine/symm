@@ -126,7 +126,28 @@ func TestAnalyzerProcess(t *testing.T) {
 		})
 	})
 
-	Convey("Given two ready signal contributions for one symbol", t, func() {
+	Convey("Given a pass in which no solver can advance readiness", t, func() {
+		order := make([]int, 0, 1)
+		mu := &sync.Mutex{}
+		analyzer := &Analyzer{
+			solvers: []Solver{
+				&orderedSolver{index: 0, order: &order, mu: mu},
+			},
+		}
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Status = types.BUSY
+		thesis.Symbols.Store("BTC/USD", symbol)
+
+		analyzer.process(thesis)
+
+		Convey("It should stop after the first unchanged pass", func() {
+			So(order, ShouldResemble, []int{0})
+			So(symbol.Status, ShouldEqual, types.BUSY)
+		})
+	})
+
+	Convey("Given incomplete signal contributions for one symbol", t, func() {
 		order := make([]int, 0, 1)
 		mu := &sync.Mutex{}
 		analyzer := &Analyzer{
@@ -152,9 +173,10 @@ func TestAnalyzerProcess(t *testing.T) {
 		stored, _ := thesis.Symbols.Load("BTC/USD")
 		symbol := stored.(*types.Symbol)
 
-		Convey("It should immediately admit the queued contribution after graph unlocks", func() {
-			So(symbol.Status, ShouldEqual, types.BUSY)
-			So(symbol.Measurements, ShouldResemble, []*types.Measurement{cvd})
+		Convey("It should wait for the complete signal set before running logic", func() {
+			So(order, ShouldBeEmpty)
+			So(symbol.Status, ShouldEqual, types.READY)
+			So(symbol.Measurements, ShouldResemble, []*types.Measurement{correlation, cvd})
 			So(symbol.Stamped(types.SourceCorrelation), ShouldBeTrue)
 			So(symbol.Stamped(types.SourceCVD), ShouldBeTrue)
 		})

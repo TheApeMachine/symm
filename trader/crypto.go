@@ -27,6 +27,7 @@ type Crypto struct {
 	ui            chan []byte
 	recorder      *audit.Recorder
 	desk          *broker.Desk
+	bookUpdates   <-chan string
 	subscriptions map[string]*types.Subscription[any]
 }
 
@@ -44,16 +45,17 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:       ctx,
-		cancel:    cancel,
-		status:    types.READY,
-		api:       api,
-		thesis:    thesis,
-		semaphore: make(chan struct{}, 1),
-		dataPath:  utils.ResolveDataPath(),
-		ui:        ui,
-		recorder:  recorder,
-		desk:      desk,
+		ctx:         ctx,
+		cancel:      cancel,
+		status:      types.READY,
+		api:         api,
+		thesis:      thesis,
+		semaphore:   make(chan struct{}, 1),
+		dataPath:    utils.ResolveDataPath(),
+		ui:          ui,
+		recorder:    recorder,
+		desk:        desk,
+		bookUpdates: api.BookUpdates(),
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
 				"ticker", types.NewSubscription[any](),
@@ -84,6 +86,8 @@ func (crypto *Crypto) run() {
 				crypto.onTicker(ticker)
 			case trade := <-crypto.subscriptions["trade"].Channel:
 				crypto.onTrade(trade)
+			case symbol := <-crypto.bookUpdates:
+				crypto.onBookUpdate(symbol)
 			case <-crypto.semaphore:
 				crypto.thesis.Symbols.Range(func(key, value any) bool {
 					symbolName, nameOK := key.(string)
@@ -115,6 +119,27 @@ func (crypto *Crypto) run() {
 			}
 		}
 	}()
+}
+
+/*
+onBookUpdate turns the authoritative manager's keyed update into the same
+thesis semaphore fanout used by ticker and trade inputs.
+*/
+func (crypto *Crypto) onBookUpdate(symbol string) {
+	if symbol == "" {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"crypto: book update requires a symbol",
+			nil,
+		))
+		return
+	}
+
+	if _, observed := crypto.thesis.Symbols.Load(symbol); !observed {
+		return
+	}
+
+	crypto.thesis.Fanout(types.SourceTrader, types.BookReceivers...)
 }
 
 func (crypto *Crypto) onTicker(data any) {

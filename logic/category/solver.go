@@ -91,7 +91,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		)
 
 		if err != nil {
-			classificationErr = errnie.Error(errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.Internal,
 				fmt.Sprintf(
 					"category: failed to classify symbol %s - %v",
@@ -99,8 +99,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				),
 				err,
 			))
-
-			return false
+			thesis.Stamp(symbolName, types.SourceCategory)
+			return true
 		}
 
 		symbol.Categories.Store(symbolName, []types.Category{category})

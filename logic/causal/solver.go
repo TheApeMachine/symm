@@ -98,6 +98,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		if _, found := symbolState.Resonance.Load(symbol); !found {
+			thesis.Stamp(symbol, types.SourceCausal)
 			return true
 		}
 
@@ -109,11 +110,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		updated = true
 		group.Go(func() error {
 			err := solver.measure(thesis, symbol)
-
-			if err == nil {
-				thesis.Stamp(symbol, types.SourceCausal)
-			}
-
+			thesis.Stamp(symbol, types.SourceCausal)
 			return err
 		})
 

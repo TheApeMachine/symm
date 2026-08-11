@@ -121,6 +121,8 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourceExhaustion)
+
 				signal.status.Store(types.READY)
 			}
 		}

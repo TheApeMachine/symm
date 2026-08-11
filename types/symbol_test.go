@@ -73,10 +73,9 @@ func TestSymbolStamp(t *testing.T) {
 
 		Convey("It should release measurements only after every logic stage stamps", func() {
 			So(symbol.Status, ShouldEqual, READY)
-			So(symbol.Measurements, ShouldBeEmpty)
 			So(symbol.Stamped(SourceCategory), ShouldBeTrue)
 			So(symbol.Stamped(SourceResonance), ShouldBeTrue)
-			So(symbol.SignalsMeasured(), ShouldBeFalse)
+			So(symbol.SignalsMeasured(), ShouldBeTrue)
 		})
 	})
 }

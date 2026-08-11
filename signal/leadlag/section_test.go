@@ -45,3 +45,31 @@ func TestCausalAnchor(t *testing.T) {
 		})
 	})
 }
+
+func TestFeatures(t *testing.T) {
+	Convey("Given overlapping anchor and follower price histories", t, func() {
+		section := NewSection()
+		start := time.Unix(1_700_000_000, 0).UTC()
+		section.SetAnchor("BTC/USD")
+
+		for index, price := range []float64{100, 101, 103} {
+			at := start.Add(time.Duration(index) * time.Second)
+			So(section.ObservePrice("BTC/USD", price, at), ShouldBeTrue)
+		}
+
+		for index, price := range []float64{50, 50.5, 51} {
+			at := start.Add(time.Second + time.Duration(index)*time.Second)
+			So(section.ObservePrice("ALT/USD", price, at), ShouldBeTrue)
+		}
+
+		features := section.Features("ALT/USD")
+		anchorFeatures := section.Features("BTC/USD")
+
+		Convey("It should retain the actual common observation interval", func() {
+			So(features.ObservedFrom, ShouldEqual, start.Add(time.Second))
+			So(features.ObservedAt, ShouldEqual, start.Add(3*time.Second))
+			So(anchorFeatures.ObservedFrom, ShouldEqual, start)
+			So(anchorFeatures.ObservedAt, ShouldEqual, start.Add(2*time.Second))
+		})
+	})
+}

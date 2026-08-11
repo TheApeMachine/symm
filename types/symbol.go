@@ -62,7 +62,18 @@ AddMeasurement retains the latest measurement for one source and peer.
 func (symbol *Symbol) AddMeasurement(measurement *Measurement) {
 	symbol.Readiness.ResetLogic(measurement.Source)
 
-	symbol.Measurements = append(symbol.Measurements, measurement)
+	replaced := false
+	for i, existing := range symbol.Measurements {
+		if existing.Source == measurement.Source && existing.Peer == measurement.Peer {
+			symbol.Measurements[i] = measurement
+			replaced = true
+			break
+		}
+	}
+
+	if !replaced {
+		symbol.Measurements = append(symbol.Measurements, measurement)
+	}
 	symbol.Stamp(measurement.Source)
 
 	if symbol.SignalsMeasured() {
@@ -70,14 +81,14 @@ func (symbol *Symbol) AddMeasurement(measurement *Measurement) {
 	}
 }
 
-func (symbol *Symbol) Stamp(source SourceType) {
-	symbol.Readiness.Stamp(source)
+func (symbol *Symbol) Stamp(source SourceType) bool {
+	didUpdate := symbol.Readiness.Stamp(source)
 
 	if symbol.LogicAnalyzed() {
-		symbol.Measurements = symbol.Measurements[:0]
-		symbol.ResetSignals()
 		symbol.Status = READY
 	}
+
+	return didUpdate
 }
 
 func (symbol *Symbol) Stamped(source SourceType) bool {

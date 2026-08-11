@@ -135,9 +135,39 @@ func (signal *Signal) measureFrame(
 		return measurements
 	}
 
+	anchorMeasured := false
+
 	for index := range symbols {
 		measurements = append(measurements, results[index]...)
 		out = append(out, publish[index]...)
+
+		for _, measurement := range results[index] {
+			anchorMeasured = anchorMeasured ||
+				(measurement.Symbol == anchor && measurement.Peer == "")
+		}
+	}
+
+	if anchor != "" && !anchorMeasured {
+		features := section.Features(anchor)
+
+		if features.Price <= 0 || features.ObservedAt.IsZero() {
+			panic("leadlag: selected anchor has no retained price observation")
+		}
+
+		measurement := signal.score(anchor, features.ObservedAt, features)
+		measurement.PutMetric(
+			types.MetricLastPrice,
+			types.SideNone,
+			types.MetricSample{
+				Raw:  features.Price,
+				Unit: types.UnitQuoteCurrency,
+			},
+		)
+		measurements = append(measurements, measurement)
+
+		if anchor == types.Focus() {
+			out = append(out, measurement)
+		}
 	}
 
 	if len(out) > 0 {
@@ -426,7 +456,18 @@ func (signal *Signal) score(
 	weights := weightEvidence(features, selected, sampleSupport)
 	anchor := signal.section.AnchorSymbol()
 
-	return buildScoreMeasurement(
+	measurement := buildScoreMeasurement(
 		symbol, anchor, at, selected, sampleSupport, weights,
 	)
+
+	if !features.ObservedFrom.IsZero() {
+		if features.ObservedFrom.After(at) {
+			panic("leadlag: observation interval runs backward")
+		}
+
+		measurement.ObservedFrom = features.ObservedFrom
+		measurement.Horizon = at.Sub(features.ObservedFrom)
+	}
+
+	return measurement
 }

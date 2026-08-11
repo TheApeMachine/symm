@@ -2,12 +2,8 @@ package manifold
 
 import (
 	"fmt"
-	"math"
-	"runtime"
-	"sync"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/spf13/viper"
 	mgrbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
@@ -17,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/compute"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -36,11 +33,9 @@ type Solver struct {
 	corpus    *geometry.Corpus[types.PhaseOutcome]
 	angles    []float64
 	pending   map[string][]pendingDial
+	waiting   map[string]struct{}
 	ui        chan []byte
 	binui     chan types.FluidFrame
-	pool      pond.Pool
-	group     pond.TaskGroup
-	domainMu  sync.Mutex
 	closing   bool
 	settling  bool
 	stepped   bool
@@ -91,9 +86,14 @@ func NewSolver(
 	errnie.Error(corpusErr)
 	angles, angleErr := geometry.PhasePath(phaseScanAngles)
 	errnie.Error(angleErr)
+	var bookSource websocket.BookSource
+
+	if api != nil {
+		bookSource = api
+	}
 
 	solver := &Solver{
-		api:       api,
+		api:       bookSource,
 		config:    config,
 		domain:    domain,
 		recorder:  recorder,
@@ -102,12 +102,11 @@ func NewSolver(
 		corpus:    corpus,
 		angles:    angles,
 		pending:   make(map[string][]pendingDial),
+		waiting:   make(map[string]struct{}),
 		ui:        ui,
 		binui:     binui,
-		pool:      pond.NewPool(runtime.NumCPU()),
 	}
 
-	solver.group = solver.pool.NewGroup()
 	return solver
 }
 
@@ -133,62 +132,87 @@ func newDomain(config pfluid.Config) (*pfluid.Domain, error) {
 }
 
 /*
-Update appends tokenized book samples for every changed Hawkes epoch and starts
-the shared domain's background settling loop.
+Update appends tokenized book samples for every changed Hawkes epoch, advances
+the shared domain by its regulated relaxation budget, and stamps the result.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	updated := false
-	measurements := make([]*types.Measurement, 0)
+	clear(solver.waiting)
+	measurements := make(map[string]*types.Measurement)
 
-	thesis.Symbols.Range(func(_, value any) bool {
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbolName, nameOK := key.(string)
 		symbol, ok := value.(*types.Symbol)
 
-		if !ok || symbol == nil || symbol.Status != types.BUSY {
+		if !nameOK || symbolName == "" || !ok || symbol == nil ||
+			symbol.Status != types.BUSY ||
+			symbol.Stamped(types.SourceManifold) ||
+			!symbol.Stamped(types.SourceHawkes) {
 			return true
 		}
 
+		measurements[symbolName] = nil
+
 		for _, measurement := range symbol.Measurements {
 			if measurement != nil && measurement.Source == types.SourceHawkes {
-				measurements = append(measurements, measurement)
+				measurements[symbolName] = measurement
+				break
 			}
 		}
 
 		return true
 	})
 
-	for _, measurement := range measurements {
-		if measurement == nil || measurement.Symbol == "" ||
-			thesis.Stamped(measurement.Symbol, types.SourceManifold) ||
-			!thesis.Stamped(measurement.Symbol, types.SourceHawkes) {
+	for symbolName, measurement := range measurements {
+		if thesis.Stamped(symbolName, types.SourceManifold) {
 			continue
 		}
 
-		buySample, buyFound := measurement.Metrics[types.MetricKey(
-			types.MetricExcitationAmplitude, types.SideBuyToBuy,
-		)]
-		sellSample, sellFound := measurement.Metrics[types.MetricKey(
-			types.MetricExcitationAmplitude, types.SideSellToSell,
-		)]
+		buyExcitation := 0.0
+		sellExcitation := 0.0
 
-		if !buyFound || !sellFound || buySample.Normalized == nil || sellSample.Normalized == nil {
-			thesis.Stamp(measurement.Symbol, types.SourceManifold)
-			updated = true
-			continue
+		if measurement != nil {
+			buySample, buyFound := measurement.Metrics[types.MetricKey(
+				types.MetricExcitationAmplitude, types.SideBuyToBuy,
+			)]
+			sellSample, sellFound := measurement.Metrics[types.MetricKey(
+				types.MetricExcitationAmplitude, types.SideSellToSell,
+			)]
+
+			if !buyFound || !sellFound {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"manifold: Hawkes excitation metrics required for "+symbolName,
+					nil,
+				))
+			}
+
+			if (buySample.Normalized == nil) != (sellSample.Normalized == nil) {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"manifold: Hawkes excitation readiness must match for both sides of "+symbolName,
+					nil,
+				))
+			}
+
+			if buySample.Normalized != nil {
+				buyExcitation = *buySample.Normalized
+				sellExcitation = *sellSample.Normalized
+			}
 		}
 
-		buyExcitation := *buySample.Normalized
-		sellExcitation := *sellSample.Normalized
-
-		if buyExcitation == 0 && sellExcitation == 0 {
-			thesis.Stamp(measurement.Symbol, types.SourceManifold)
-			updated = true
-			continue
+		if solver.api == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"manifold: authoritative order book source required",
+				nil,
+			))
 		}
 
 		var particles []pfluid.Particle
 		var contentIDs []uint32
 		var err error
-		solver.api.Book(measurement.Symbol, func(managed *mgrbook.Book) {
+		bookPopulated := false
+		solver.api.Book(symbolName, func(managed *mgrbook.Book) {
 			if managed == nil {
 				return
 			}
@@ -204,71 +228,73 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				askOrders = append(askOrders, level.Queue()...)
 			}
 
+			if len(bidOrders)+len(askOrders) == 0 {
+				return
+			}
+
+			bookPopulated = true
 			particles, contentIDs, err = solver.tokenizer.NewBatch(
 				bidOrders,
 				askOrders,
 				managed.Midpoint().Float64(),
 				buyExcitation,
 				sellExcitation,
-				measurement.Symbol,
+				symbolName,
 			)
 		})
+
+		if !bookPopulated {
+			solver.waiting[symbolName] = struct{}{}
+			continue
+		}
 
 		if err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				fmt.Sprintf("failed to tokenize manifold particles for %s, %s", measurement.Symbol, err.Error()),
+				fmt.Sprintf("failed to tokenize manifold particles for %s, %s", symbolName, err.Error()),
 				err,
 			))
 		}
 
-		if len(particles) > 0 && len(contentIDs) > 0 {
-			solver.domainMu.Lock()
-			_, err = solver.domain.Append(particles, contentIDs)
-			solver.domainMu.Unlock()
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					fmt.Sprintf(
-						"failed to append %d manifold particles for %s: %v",
-						len(particles), measurement.Symbol, err,
-					),
-					err,
-				))
-			}
-
-			solver.Step(thesis, measurement.Symbol, thesis.At, particles)
+		if len(particles) == 0 || len(contentIDs) == 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"manifold: populated authoritative order book produced no particles for "+symbolName,
+				nil,
+			))
 		}
 
-		thesis.Stamp(measurement.Symbol, types.SourceManifold)
-		updated = true
-	}
-
-	if !updated {
-		return nil
-	}
-
-	solver.domainMu.Lock()
-	stepped := solver.stepped
-	solver.domainMu.Unlock()
-
-	if stepped {
-		var err error
-		solver.domainMu.Lock()
-		thesis.Manifold, err = solver.domain.Reading()
-		solver.domainMu.Unlock()
+		_, err = solver.domain.Append(particles, contentIDs)
 
 		if err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
-				"failed to read manifold: "+err.Error(),
+				fmt.Sprintf(
+					"failed to append %d manifold particles for %s: %v",
+					len(particles), symbolName, err,
+				),
 				err,
 			))
 		}
+
+		if err := solver.Step(
+			thesis, symbolName, thesis.At, particles,
+		); err != nil {
+			return err
+		}
+
+		thesis.Stamp(symbolName, types.SourceManifold)
 	}
 
 	return nil
+}
+
+/*
+WaitingForBook answers whether Manifold has explicitly deferred any symbol
+until its authoritative Level 3 manager publishes another update.
+*/
+func (solver *Solver) WaitingForBook() bool {
+	return len(solver.waiting) > 0
 }
 
 func (solver *Solver) Step(
@@ -276,88 +302,58 @@ func (solver *Solver) Step(
 	symbol string,
 	at time.Time,
 	particles []pfluid.Particle,
-) {
-	solver.domainMu.Lock()
-
-	if solver.closing || solver.domain == nil || solver.settling {
-		solver.domainMu.Unlock()
-		return
+) error {
+	if system.Cfg == nil || system.Cfg.Manifold == nil ||
+		system.Cfg.Manifold.MinSteps <= 0 ||
+		system.Cfg.Manifold.MaxSteps < system.Cfg.Manifold.MinSteps ||
+		system.Cfg.Manifold.RelaxationSteps < system.Cfg.Manifold.MinSteps ||
+		system.Cfg.Manifold.RelaxationSteps > system.Cfg.Manifold.MaxSteps {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: regulated relaxation step count must be within its configured bounds",
+			nil,
+		))
 	}
 
-	solver.settling = true
-	solver.group.Submit(func() {
-		var previousHeat float32
-		hasPreviousHeat := false
+	relaxationSteps := system.Cfg.Manifold.RelaxationSteps
 
-		for {
-			solver.domainMu.Lock()
+	for step := 0; step < relaxationSteps; step++ {
+		_, err := solver.domain.Advance()
 
-			if solver.closing || solver.domain == nil {
-				solver.settling = false
-				solver.domainMu.Unlock()
-				return
-			}
-
-			_, err := solver.domain.Advance()
-
-			if err != nil {
-				particleCount := solver.domain.ParticleCount()
-				solver.settling = false
-				solver.domainMu.Unlock()
-				errnie.Error(errnie.Err(
-					errnie.Internal,
-					fmt.Sprintf(
-						"failed to advance manifold with %d resident particles: %v",
-						particleCount, err,
-					),
-					err,
-				))
-				return
-			}
-
-			solver.stepped = true
-			currentHeat, err := solver.residentHeatLocked()
-
-			if err != nil {
-				solver.settling = false
-				solver.domainMu.Unlock()
-				errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to read manifold heat: "+err.Error(),
-					err,
-				))
-				return
-			}
-
-			if err := solver.publishLocked(thesis, symbol, at, particles); err != nil {
-				solver.settling = false
-				solver.domainMu.Unlock()
-				errnie.Error(err)
-				return
-			}
-
-			if hasPreviousHeat && heatSettled(previousHeat, currentHeat) {
-				solver.settling = false
-				solver.domainMu.Unlock()
-				return
-			}
-
-			previousHeat = currentHeat
-			hasPreviousHeat = true
-			solver.domainMu.Unlock()
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf(
+					"failed to advance manifold at relaxation step %d of %d: %v",
+					step+1, relaxationSteps, err,
+				),
+				err,
+			))
 		}
-	})
-	solver.domainMu.Unlock()
+
+		solver.stepped = true
+	}
+
+	reading, err := solver.domain.Reading()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to read manifold: "+err.Error(),
+			err,
+		))
+	}
+
+	thesis.Manifold = reading
+
+	if err := solver.publish(thesis, symbol, at, particles); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func heatSettled(previous, current float32) bool {
-	scale := max(float32(math.Abs(float64(previous))), float32(math.Abs(float64(current))))
-	tolerance := math.Nextafter32(scale, float32(math.Inf(1))) - scale
-
-	return float32(math.Abs(float64(current-previous))) <= tolerance
-}
-
-func (solver *Solver) publishLocked(
+func (solver *Solver) publish(
 	thesis *types.Thesis,
 	symbol string,
 	at time.Time,
@@ -474,20 +470,13 @@ func (solver *Solver) Close() error {
 		return nil
 	}
 
-	solver.domainMu.Lock()
-
 	if solver.domain == nil {
-		solver.domainMu.Unlock()
 		return nil
 	}
 
 	solver.closing = true
-	solver.domainMu.Unlock()
-	solver.pool.StopAndWait()
-	solver.domainMu.Lock()
 	err := solver.domain.Close()
 	solver.domain = nil
-	solver.domainMu.Unlock()
 
 	if err != nil {
 		return errnie.Error(errnie.Err(

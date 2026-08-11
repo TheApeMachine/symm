@@ -192,6 +192,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		stored, found := symbolState.Categories.Load(symbol)
 
 		if !found {
+			thesis.Stamp(symbol, types.SourceCognition)
 			return true
 		}
 

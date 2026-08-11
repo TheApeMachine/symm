@@ -122,6 +122,8 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourceCVD)
+
 				signal.status.Store(types.READY)
 			}
 		}

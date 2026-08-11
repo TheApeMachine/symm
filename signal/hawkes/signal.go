@@ -102,6 +102,7 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourceHawkes)
 				signal.status.Store(types.READY)
 			}
 		}

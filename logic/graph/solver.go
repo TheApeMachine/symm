@@ -37,38 +37,55 @@ Kind describes the type of node in the knowledge graph.
 type Kind string
 
 const (
-	KindCategory  Kind = "category"
-	KindResonance Kind = "resonance"
-	KindCausal    Kind = "causal"
-	KindCognition Kind = "cognition"
+	KindMeasurement Kind = "measurement"
+	KindCategory    Kind = "category"
+	KindManifold    Kind = "manifold"
+	KindResonance   Kind = "resonance"
+	KindCausal      Kind = "causal"
+	KindCognition   Kind = "cognition"
+	KindPrediction  Kind = "prediction"
 )
 
 /*
 Node represents a discrete market entity, metric, category, or latent state.
 */
 type Node struct {
-	ID         string         `json:"id"`
-	Symbol     string         `json:"symbol,omitempty"`
-	Source     string         `json:"source,omitempty"`
-	Kind       Kind           `json:"kind"`
-	Value      float64        `json:"value"`
-	Strength   float64        `json:"strength,omitempty"`
-	Confidence float64        `json:"confidence"`
-	At         time.Time      `json:"at"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
+	ID            string                `json:"id"`
+	Symbol        string                `json:"symbol,omitempty"`
+	Peer          string                `json:"peer,omitempty"`
+	Source        string                `json:"source,omitempty"`
+	MeasurementID string                `json:"measurementId,omitempty"`
+	Metric        types.MetricType      `json:"metric,omitempty"`
+	Side          types.MeasurementSide `json:"side,omitempty"`
+	Kind          Kind                  `json:"kind"`
+	Value         float64               `json:"value"`
+	Normalized    *float64              `json:"normalized,omitempty"`
+	Quality       *float64              `json:"quality,omitempty"`
+	Strength      float64               `json:"strength,omitempty"`
+	Confidence    float64               `json:"confidence"`
+	Maturity      float64               `json:"maturity,omitempty"`
+	Unit          types.MeasurementUnit `json:"unit,omitempty"`
+	ObservedFrom  time.Time             `json:"observedFrom,omitempty"`
+	Horizon       time.Duration         `json:"horizon,omitempty"`
+	At            time.Time             `json:"at"`
+	Metadata      map[string]any        `json:"metadata,omitempty"`
 }
 
 /*
 Edge represents a directed, weighted relationship from Node A to Node B.
 */
 type Edge struct {
-	From       string       `json:"from"`
-	To         string       `json:"to"`
-	Relation   RelationType `json:"relation"`
-	Weight     float64      `json:"weight"`
-	Confidence float64      `json:"confidence"`
-	At         time.Time    `json:"at"`
-	Reason     string       `json:"reason,omitempty"`
+	From         string        `json:"from"`
+	To           string        `json:"to"`
+	Relation     RelationType  `json:"relation"`
+	Weight       float64       `json:"weight"`
+	Confidence   float64       `json:"confidence"`
+	Quality      *float64      `json:"quality,omitempty"`
+	Evidence     []string      `json:"evidence,omitempty"`
+	ObservedFrom time.Time     `json:"observedFrom,omitempty"`
+	Horizon      time.Duration `json:"horizon,omitempty"`
+	At           time.Time     `json:"at"`
+	Reason       string        `json:"reason,omitempty"`
 }
 
 /*
@@ -94,12 +111,13 @@ func NewGraph(at time.Time) *Graph {
 }
 
 /*
-AddNode registers a node in the graph if it doesn't already exist.
+AddNode registers the latest value for a stable node identity.
 */
 func (graph *Graph) AddNode(node *Node) {
 	if node == nil || node.ID == "" {
-		return
+		panic("graph: node and node ID required")
 	}
+
 	graph.Nodes[node.ID] = node
 }
 
@@ -108,15 +126,15 @@ AddEdge connects two nodes with a directional, weighted relationship.
 */
 func (graph *Graph) AddEdge(edge *Edge) {
 	if edge == nil || edge.From == "" || edge.To == "" {
-		return
+		panic("graph: edge and endpoint IDs required")
 	}
 
 	if _, found := graph.Nodes[edge.From]; !found {
-		return
+		panic("graph: source node not registered: " + edge.From)
 	}
 
 	if _, found := graph.Nodes[edge.To]; !found {
-		return
+		panic("graph: target node not registered: " + edge.To)
 	}
 
 	graph.Edges = append(graph.Edges, edge)
@@ -124,42 +142,23 @@ func (graph *Graph) AddEdge(edge *Edge) {
 }
 
 /*
-Option configures the Graph solver.
-*/
-type Option func(*Solver)
-
-/*
-WithStaleThreshold sets the time threshold after which a node is considered stale relative to another.
-*/
-func WithStaleThreshold(threshold time.Duration) Option {
-	return func(s *Solver) {
-		s.staleThreshold = threshold
-	}
-}
-
-/*
 Solver compiles all upstream evidence (Measurements, Manifold, Resonance, Causal, Cognition)
 into a Directed Knowledge Graph for the Strategy package.
 */
 type Solver struct {
-	recorder       *audit.Recorder
-	staleThreshold time.Duration
-	ui             chan []byte
+	recorder     *audit.Recorder
+	measurements *measurementCompiler
+	ui           chan []byte
 }
 
 /*
 NewSolver creates a graph solver.
-Default stale threshold: 5 seconds.
 */
-func NewSolver(ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 	solver := &Solver{
-		recorder:       recorder,
-		staleThreshold: 5 * time.Second,
-		ui:             ui,
-	}
-
-	for _, opt := range opts {
-		opt(solver)
+		recorder:     recorder,
+		measurements: newMeasurementCompiler(),
+		ui:           ui,
 	}
 
 	return solver
@@ -183,8 +182,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		if symbol.Stamped(types.SourceHawkes) &&
-			!symbol.Stamped(types.SourceManifold) {
+		if symbol.Stamped(types.SourceHawkes) && !symbol.Stamped(types.SourceManifold) {
 			return true
 		}
 
@@ -195,7 +193,20 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		graph := NewGraph(thesis.At)
+		measurementIndex, err := solver.measurements.addNodes(symbol, graph)
+
+		if err != nil {
+			graphErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"graph: failed to extract measurement nodes - "+err.Error(),
+				err,
+			))
+			thesis.Stamp(symbolName, types.SourceGraph)
+			return false
+		}
+
 		solver.extractCategoryNodes(symbol, graph)
+		solver.extractManifoldNodes(symbol, graph)
 		solver.extractResonanceNodes(symbol, graph)
 
 		causalValue, causalFound := symbol.Causal.Load(symbolName)
@@ -209,6 +220,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					"graph: invalid causal artifact for "+symbolName,
 					nil,
 				))
+				thesis.Stamp(symbolName, types.SourceGraph)
 				return false
 			}
 
@@ -219,6 +231,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 						"graph: failed to extract causal nodes - "+err.Error(),
 						err,
 					))
+					thesis.Stamp(symbolName, types.SourceGraph)
 					return false
 				}
 			}
@@ -226,19 +239,47 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		solver.extractCognitionNodes(symbol, graph)
 
+		if err := solver.measurements.addCategoryEdges(
+			symbol, graph, measurementIndex,
+		); err != nil {
+			graphErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"graph: failed to relate measurements and categories - "+err.Error(),
+				err,
+			))
+			thesis.Stamp(symbolName, types.SourceGraph)
+			return false
+		}
+
+		if err := solver.measurements.addLeadLagEdges(
+			thesis, symbol, graph, measurementIndex,
+		); err != nil {
+			graphErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"graph: failed to relate lead-lag measurements - "+err.Error(),
+				err,
+			))
+			thesis.Stamp(symbolName, types.SourceGraph)
+			return false
+		}
+
 		if err := solver.inferStructuralEdges(symbol, graph); err != nil {
 			graphErr = errnie.Error(errnie.Err(
 				errnie.Internal,
 				"graph: failed to infer structural edges - "+err.Error(),
 				err,
 			))
-
+			thesis.Stamp(symbolName, types.SourceGraph)
 			return false
 		}
 
 		symbol.Graphs.Store("market_graph", graph)
 		thesis.Stamp(symbolName, types.SourceGraph)
-		utils.Publish(solver.ui, datura.NewMap("graph", graph))
+
+		if symbolName == types.Focus() {
+			utils.Publish(solver.ui, datura.NewMap("graph", graph))
+		}
+
 		return true
 	})
 
@@ -260,15 +301,21 @@ func (solver *Solver) extractCategoryNodes(
 	categories := stored.([]types.Category)
 
 	for _, cat := range categories {
+		if cat.Type == types.CategoryTypeNone {
+			continue
+		}
+
 		nodeID := fmt.Sprintf("cat:%s:%s", symbol.Symbol, string(cat.Type))
 
 		graph.AddNode(&Node{
 			ID:         nodeID,
 			Symbol:     symbol.Symbol,
 			Source:     "category",
-			Kind:       "category",
+			Kind:       KindCategory,
 			Value:      cat.Strength,
 			Confidence: cat.Confidence,
+			Maturity:   cat.Maturity,
+			At:         graph.At,
 			Metadata: map[string]any{
 				"type":       string(cat.Type),
 				"surprisal":  cat.Surprisal,
@@ -278,6 +325,43 @@ func (solver *Solver) extractCategoryNodes(
 			},
 		})
 	}
+}
+
+/*
+extractManifoldNodes registers the per-symbol phase alignment actually retained
+by the manifold stage. The shared fluid field is not duplicated into each
+pair's graph.
+*/
+func (solver *Solver) extractManifoldNodes(
+	symbol *types.Symbol,
+	graph *Graph,
+) {
+	stored, found := symbol.Phase.Load(symbol.Symbol)
+	reading, readingOK := stored.(types.PhaseReading)
+
+	if !found || !readingOK {
+		return
+	}
+
+	alignment, aligned := reading.Alignment()
+
+	if !aligned {
+		return
+	}
+
+	graph.AddNode(&Node{
+		ID:       fmt.Sprintf("man:%s:phase_alignment", symbol.Symbol),
+		Symbol:   symbol.Symbol,
+		Source:   "manifold",
+		Kind:     KindManifold,
+		Value:    alignment.Angle,
+		Strength: alignment.Similarity,
+		At:       reading.At,
+		Metadata: map[string]any{
+			"observedAt": alignment.ObservedAt,
+			"outcome":    alignment.Outcome,
+		},
+	})
 }
 
 /*
@@ -306,18 +390,20 @@ func (solver *Solver) extractResonanceNodes(
 		ID:         fmt.Sprintf("res:%s:surprise", symbol.Symbol),
 		Symbol:     symbol.Symbol,
 		Source:     "resonance",
-		Kind:       "resonance",
+		Kind:       KindResonance,
 		Value:      reading.Surprise,
 		Confidence: reading.Forecast.Confidence,
+		At:         reading.At,
 	})
 
 	graph.AddNode(&Node{
 		ID:         fmt.Sprintf("res:%s:forecast", symbol.Symbol),
 		Symbol:     symbol.Symbol,
 		Source:     "resonance",
-		Kind:       "resonance",
+		Kind:       KindResonance,
 		Value:      reading.Forecast.ExpectedReturn,
 		Confidence: reading.Forecast.Confidence,
+		At:         reading.At,
 	})
 }
 
@@ -476,6 +562,7 @@ func (solver *Solver) extractCausalNodes(
 		}
 
 		if found {
+			node.At = graph.At
 			graph.AddNode(node)
 		}
 	}
@@ -506,9 +593,29 @@ func (solver *Solver) extractCognitionNodes(
 		Confidence: cognition.Confidence,
 		At:         cognition.At,
 		Metadata: map[string]any{
-			"regime": cognition.Winner,
+			"regime":   cognition.Winner,
+			"sequence": cognition.Sequence,
 		},
 	})
+
+	for path, probability := range cognition.Predictions {
+		if path == "" || probability <= 0 {
+			continue
+		}
+
+		graph.AddNode(&Node{
+			ID:         fmt.Sprintf("cog:%s:prediction:%s", symbol.Symbol, path),
+			Symbol:     symbol.Symbol,
+			Source:     cognition.Source,
+			Kind:       KindPrediction,
+			Value:      probability,
+			Confidence: probability,
+			At:         cognition.At,
+			Metadata: map[string]any{
+				"path": path,
+			},
+		})
+	}
 }
 
 /*
@@ -604,6 +711,7 @@ func (solver *Solver) inferStructuralEdges(
 						Relation:   RelationSupports,
 						Weight:     agreement,
 						Confidence: resonanceNode.Confidence * causalNode.Confidence,
+						Evidence:   []string{resonanceNode.ID, causalNode.ID},
 						At:         graph.At,
 						Reason:     "predictive forecast and causal uplift agree directionally (+)",
 					})
@@ -619,6 +727,7 @@ func (solver *Solver) inferStructuralEdges(
 						Relation:   RelationContradicts,
 						Weight:     agreement,
 						Confidence: resonanceNode.Confidence * causalNode.Confidence,
+						Evidence:   []string{resonanceNode.ID, causalNode.ID},
 						At:         graph.At,
 						Reason:     "predictive forecast and causal uplift conflict in direction",
 					})
@@ -655,6 +764,7 @@ func (solver *Solver) inferStructuralEdges(
 				*/
 				Weight:     weight,
 				Confidence: intervention.Confidence,
+				Evidence:   []string{intervention.ID, expectation.ID},
 				At:         graph.At,
 				Reason:     "interventional level conditions do-expectation",
 			})
@@ -665,21 +775,22 @@ func (solver *Solver) inferStructuralEdges(
 	stored, found := symbol.Cognition.Load(symbol.Symbol)
 	cognition, cognitionOK := stored.(types.Cognition)
 
-	if found && cognitionOK {
+	if found && cognitionOK && cognition.Winner != "" {
 		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
 
 		for path, probability := range cognition.Predictions {
-			if path == "" {
+			if path == "" || probability <= 0 {
 				continue
 			}
 
-			targetNodeID := fmt.Sprintf("cat:%s:%s", symbol.Symbol, path)
+			targetNodeID := fmt.Sprintf("cog:%s:prediction:%s", symbol.Symbol, path)
 			graph.AddEdge(&Edge{
 				From:       currentNodeID,
 				To:         targetNodeID,
 				Relation:   RelationLeads,
 				Weight:     probability,
 				Confidence: probability,
+				Evidence:   []string{currentNodeID, targetNodeID},
 				At:         graph.At,
 				Reason:     "cognition beam search lookahead prediction",
 			})
@@ -689,6 +800,7 @@ func (solver *Solver) inferStructuralEdges(
 				Relation:   RelationLags,
 				Weight:     probability,
 				Confidence: probability,
+				Evidence:   []string{currentNodeID, targetNodeID},
 				At:         graph.At,
 				Reason:     "inverse temporal lag of beam search lookahead",
 			})
@@ -706,23 +818,27 @@ func (solver *Solver) inferStructuralEdges(
 
 	for _, category := range categories {
 		for _, peer := range categories {
-			if category.Type == peer.Type {
+			if category.Type == types.CategoryTypeNone ||
+				peer.Type == types.CategoryTypeNone || category.Type == peer.Type {
 				continue
 			}
 
 			relation := RelationType("")
 			reason := ""
+			evidenceReference := ""
 
 			for _, evidence := range category.Supporting {
 				if slices.Contains(peer.Opposing, evidence) {
 					relation = RelationContradicts
 					reason = "category evidence conflicts on " + evidence
+					evidenceReference = evidence
 					break
 				}
 
 				if relation == "" && slices.Contains(peer.Supporting, evidence) {
 					relation = RelationRedundantWith
 					reason = "categories share supporting evidence " + evidence
+					evidenceReference = evidence
 				}
 			}
 
@@ -746,6 +862,7 @@ func (solver *Solver) inferStructuralEdges(
 				Relation:   relation,
 				Weight:     weight,
 				Confidence: category.Confidence * peer.Confidence,
+				Evidence:   []string{evidenceReference},
 				At:         graph.At,
 				Reason:     reason,
 			})

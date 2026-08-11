@@ -43,7 +43,7 @@ func NewReadiness(symbol string, ui chan []byte) Readiness {
 /*
 Stamp records completion of one concurrently running signal stage.
 */
-func (readiness *Readiness) Stamp(source SourceType) {
+func (readiness *Readiness) Stamp(source SourceType) bool {
 	readiness.mu.Lock()
 	defer readiness.mu.Unlock()
 
@@ -141,10 +141,10 @@ func (readiness *Readiness) Stamp(source SourceType) {
 			"readiness: unknown source type: "+string(source),
 			nil,
 		))
-		return
+		return false
 	}
 
-	if readiness.ui != nil && didUpdate {
+	if readiness.ui != nil && didUpdate && readiness.Symbol == Focus() {
 		select {
 		case readiness.ui <- datura.NewMap(
 			"readiness", []*Readiness{readiness},
@@ -152,6 +152,8 @@ func (readiness *Readiness) Stamp(source SourceType) {
 		default:
 		}
 	}
+
+	return didUpdate
 }
 
 /*
@@ -336,7 +338,7 @@ func (readiness *Readiness) Reset() {
 
 	readiness.Planner = false
 
-	if readiness.ui != nil {
+	if readiness.ui != nil && readiness.Symbol == Focus() {
 		select {
 		case readiness.ui <- datura.NewMap(
 			"readiness", []*Readiness{readiness},

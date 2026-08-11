@@ -2,7 +2,6 @@ package types
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -46,6 +45,7 @@ type Thesis struct {
 	subscribers  *sync.Map
 	statuses     *sync.Map
 	ui           chan []byte
+	readinessRev atomic.Uint64
 	equityMu     sync.RWMutex
 	equity       *kraken.TradeBalanceResult
 	Status       Status          `json:"status"`
@@ -241,42 +241,67 @@ func (thesis *Thesis) AppendMeasurements(
 		clone := slices.Clone(stored)
 
 		if ready {
-			for i := 0; i < len(clone); i++ {
-				symbolFound, _ := thesis.Symbols.LoadOrStore(clone[i].Symbol, NewSymbol(
-					clone[i].Symbol, thesis.ui,
-				))
+			shouldFanout := false
+			readySymbols := make(map[string]bool)
 
+			processMeasurement := func(m *Measurement) bool {
+				symbolFound, _ := thesis.Symbols.LoadOrStore(m.Symbol, NewSymbol(
+					m.Symbol, thesis.ui,
+				))
 				symbol := symbolFound.(*Symbol)
 
-				if symbol.Status == READY {
-					symbol.AddMeasurement(clone[i])
-					clone = slices.Delete(clone, i, i+1)
+				if _, ok := readySymbols[m.Symbol]; !ok {
+					readySymbols[m.Symbol] = (symbol.Status == READY)
 				}
 
-				if symbol.Status == BUSY {
-					thesis.Fanout(sender, SourceAnalyzer)
+				if readySymbols[m.Symbol] {
+					symbol.AddMeasurement(m)
+					if symbol.Status == BUSY {
+						shouldFanout = true
+					}
+					return true
 				}
+				return false
 			}
 
-			for i := 0; i < len(measurements); i++ {
-				symbolFound, _ := thesis.Symbols.LoadOrStore(measurements[i].Symbol, NewSymbol(
-					measurements[i].Symbol, thesis.ui,
-				))
-
-				symbol := symbolFound.(*Symbol)
-
-				if symbol.Status == READY {
-					symbol.AddMeasurement(measurements[i])
-					measurements = slices.Delete(measurements, i, i+1)
+			var remainingClone []*Measurement
+			for _, m := range clone {
+				if !processMeasurement(m) {
+					remainingClone = append(remainingClone, m)
 				}
+			}
+			clone = remainingClone
 
-				if symbol.Status == BUSY {
-					thesis.Fanout(sender, SourceAnalyzer)
+			var remainingMeasurements []*Measurement
+			for _, m := range measurements {
+				if !processMeasurement(m) {
+					remainingMeasurements = append(remainingMeasurements, m)
 				}
+			}
+			measurements = remainingMeasurements
+
+			if shouldFanout {
+				thesis.Fanout(sender, SourceAnalyzer)
 			}
 		}
 
-		thesis.Measurements.Store(sender, append(clone, measurements...))
+		combined := append(clone, measurements...)
+		deduped := make([]*Measurement, 0, len(combined))
+		seen := make(map[string]bool)
+
+		for _, m := range slices.Backward(combined) {
+			key := m.Symbol + "|" + m.Peer
+			if !seen[key] {
+				seen[key] = true
+				deduped = append(deduped, m)
+			}
+		}
+
+		for i, j := 0, len(deduped)-1; i < j; i, j = i+1, j-1 {
+			deduped[i], deduped[j] = deduped[j], deduped[i]
+		}
+
+		thesis.Measurements.Store(sender, deduped)
 	}
 
 	return nil
@@ -401,9 +426,6 @@ func (thesis *Thesis) Fanout(sender SourceType, receivers ...SourceType) {
 			dispatched = append(dispatched, source)
 		default:
 			full = append(full, source)
-			errnie.Warn(fmt.Sprintf(
-				"thesis: fanout to source [%s] skipped, semaphore full", source,
-			))
 		}
 
 		return true
@@ -451,8 +473,14 @@ func (thesis *Thesis) Stamp(symbol string, source SourceType) {
 		storedSymbol, valid := found.(*Symbol)
 
 		if valid && storedSymbol != nil {
-			storedSymbol.Stamp(source)
-			outcome = "stamped"
+			didUpdate := storedSymbol.Stamp(source)
+			outcome = "unchanged"
+
+			if didUpdate {
+				thesis.readinessRev.Add(1)
+				outcome = "stamped"
+			}
+
 			signalsMeasured = storedSymbol.SignalsMeasured()
 			logicAnalyzed = storedSymbol.LogicAnalyzed()
 			strategyDecided = storedSymbol.StrategyDecided()
@@ -461,7 +489,7 @@ func (thesis *Thesis) Stamp(symbol string, source SourceType) {
 		}
 	}
 
-	if thesis.Audit != nil {
+	if thesis.Audit != nil && outcome != "unchanged" {
 		err := thesis.Audit(map[string]any{
 			"channel": "orchestration",
 			"type":    "stamp",
@@ -484,6 +512,26 @@ func (thesis *Thesis) Stamp(symbol string, source SourceType) {
 			))
 		}
 	}
+}
+
+/*
+ReadinessRevision returns the monotonic count of readiness transitions recorded
+through the thesis. The analyzer uses it to distinguish dependency progress
+from a pass in which every solver declined the same incomplete state.
+*/
+func (thesis *Thesis) ReadinessRevision() uint64 {
+	return thesis.readinessRev.Load()
+}
+
+/*
+StampAll iterates over all symbols in the thesis and stamps them for the given source.
+This is used by signal modules to ensure that all evaluated symbols are stamped even if they yielded no measurements.
+*/
+func (thesis *Thesis) StampAll(source SourceType) {
+	thesis.Symbols.Range(func(key, value any) bool {
+		thesis.Stamp(key.(string), source)
+		return true
+	})
 }
 
 /*

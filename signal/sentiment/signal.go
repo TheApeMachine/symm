@@ -99,6 +99,8 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourceSentiment)
+
 				signal.status.Store(types.READY)
 			}
 		}

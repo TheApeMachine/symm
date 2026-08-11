@@ -469,6 +469,42 @@ func TestThesisFanout(t *testing.T) {
 	})
 }
 
+func TestThesisStamp(t *testing.T) {
+	Convey("Given the final logic stamp for a measured symbol", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		auditRecords := 0
+		thesis.Audit = func(any) error {
+			auditRecords++
+			return nil
+		}
+		symbol := NewSymbol("BTC/USD", nil)
+		thesis.Symbols.Store("BTC/USD", symbol)
+		sources := []SourceType{
+			SourceCorrelation, SourceCVD, SourceDepthFlow, SourceExhaustion, SourceHawkes,
+			SourceLeadLag, SourceLiquidity, SourcePumpDump, SourceSentiment, SourceToxicity,
+			SourceCategory, SourceResonance, SourceManifold, SourceCausal, SourceCognition,
+		}
+
+		for _, source := range sources {
+			thesis.Stamp("BTC/USD", source)
+		}
+
+		symbol.Status = BUSY
+		before := thesis.ReadinessRevision()
+		auditBefore := auditRecords
+		thesis.Stamp("BTC/USD", SourceGraph)
+		complete := thesis.ReadinessRevision()
+		thesis.Stamp("BTC/USD", SourceGraph)
+
+		Convey("Then it should release the cut without reopening stale signal work", func() {
+			So(symbol.Status, ShouldEqual, READY)
+			So(complete, ShouldEqual, before+1)
+			So(thesis.ReadinessRevision(), ShouldEqual, complete)
+			So(auditRecords, ShouldEqual, auditBefore+1)
+		})
+	})
+}
+
 func TestThesisAppendTicker(t *testing.T) {
 	Convey("Given the first ticker observed for a symbol", t, func() {
 		thesis := NewThesis(t.Context(), nil)

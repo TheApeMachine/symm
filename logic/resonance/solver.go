@@ -185,6 +185,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				)
 
 				if coder == nil {
+					thesis.Stamp(symbolName, types.SourceResonance)
 					return errnie.Error(errnie.Err(
 						errnie.UnprocessableContent,
 						"resonance: failed to construct predictive coding manifold",
@@ -196,6 +197,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			if _, err := coder.SettleFromBatch(input, nil); err != nil {
+				thesis.Stamp(symbolName, types.SourceResonance)
 				return err
 			}
 

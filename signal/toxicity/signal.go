@@ -88,6 +88,8 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourceToxicity)
+
 				signal.status.Store(types.READY)
 			}
 		}

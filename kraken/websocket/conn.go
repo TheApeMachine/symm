@@ -26,6 +26,7 @@ type Conn interface {
 	Subscribe(string, *types.Subscription[any]) *types.Subscription[any]
 	Books() *sync.Map
 	Book(string, func(*book.Book))
+	BookUpdates() <-chan string
 	SubInstrument(types.Subscription[any])
 	SubTicker([]string)
 	SubBook([]string)
@@ -134,6 +135,7 @@ func (api *API) Subscribe(
 
 func (api *API) Books() *sync.Map                                 { return api.private.Books() }
 func (api *API) Book(symbol string, read func(*book.Book))        { api.private.Book(symbol, read) }
+func (api *API) BookUpdates() <-chan string                       { return api.private.BookUpdates() }
 func (api *API) SubInstrument(callback types.Subscription[any])   { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
 func (api *API) SubBook(symbols []string)                         { api.public.SubBook(symbols) }

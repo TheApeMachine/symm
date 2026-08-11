@@ -75,6 +75,9 @@ func TestTokenizerNewBatch(t *testing.T) {
 		particles, _, err := tokenizer.NewBatch(
 			orders, nil, 100, 7, 11, "BTC/USD",
 		)
+		quietParticles, _, quietErr := tokenizer.NewBatch(
+			orders, nil, 100, 0, 0, "BTC/USD",
+		)
 		scaledParticles, _, scaledErr := tokenizer.NewBatch(
 			scaledOrders, nil, 100, 7, 11, "BTC/USD",
 		)
@@ -89,9 +92,11 @@ func TestTokenizerNewBatch(t *testing.T) {
 
 		Convey("It should inject one carrier mass unit per order independently of lot units", func() {
 			So(err, ShouldBeNil)
+			So(quietErr, ShouldBeNil)
 			So(scaledErr, ShouldBeNil)
 			So(reversedErr, ShouldBeNil)
 			So(particles, ShouldHaveLength, len(orders))
+			So(quietParticles, ShouldHaveLength, len(orders))
 			So(scaledParticles, ShouldHaveLength, len(scaledOrders))
 			So(reversedParticles, ShouldHaveLength, len(orders))
 
@@ -103,6 +108,7 @@ func TestTokenizerNewBatch(t *testing.T) {
 				So(scaledParticles[index].Mass, ShouldEqual, unitCarrierMass)
 				// Bids carry the buy-side excitation of 7 on top of the unit.
 				So(particle.Energy, ShouldAlmostEqual, unitOscillatorEnergy+7, 1e-6)
+				So(quietParticles[index].Energy, ShouldEqual, unitOscillatorEnergy)
 				So(particle.Heat, ShouldEqual, float32(0))
 				So(particle.Omega, ShouldAlmostEqual, scaledParticles[index].Omega, 1e-6)
 				So(particle.Omega, ShouldAlmostEqual, reversedParticles[len(orders)-1-index].Omega, 1e-6)

@@ -46,3 +46,16 @@ var TradeReceivers = []SourceType{
 	SourcePumpDump,
 	SourceToxicity,
 }
+
+/*
+BookReceivers names the measurement stages whose inputs change when the
+authoritative Level 3 manager applies an order update. Analyzer is included so
+an in-flight cut waiting on that book can resume through its existing thesis
+semaphore.
+*/
+var BookReceivers = []SourceType{
+	SourceDepthFlow,
+	SourceExhaustion,
+	SourceToxicity,
+	SourceAnalyzer,
+}

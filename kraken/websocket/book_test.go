@@ -47,6 +47,33 @@ func TestBookAll(t *testing.T) {
 }
 
 func TestBookUpdate(t *testing.T) {
+	Convey("Given a Level 3 cache connected to its owning transport", t, func() {
+		managed := NewBook(t.Context())
+		managed.Create("BTC/USD", 32)
+		updates := make(chan string, 1)
+		managed.SetUpdates(updates)
+		event := &callback.Event[*sdk.WebSocketMessage]{
+			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+		}
+		payload := &kraken.Level3{Data: []kraken.Level3Data{{
+			Symbol: "BTC/USD",
+			Bids: []kraken.Level3Order{{
+				Event: "add", OrderID: "bid", LimitPrice: decimal.NewFromInt64(100),
+				OrderQty: decimal.NewFromInt64(1), Timestamp: time.Unix(1, 0).UTC(),
+			}},
+		}}}
+
+		err := managed.Update(event, payload)
+
+		Convey("It should publish the symbol only after applying the update", func() {
+			So(err, ShouldBeNil)
+			So(<-updates, ShouldEqual, "BTC/USD")
+			managed.Get("BTC/USD", func(book *spotbook.Book) {
+				So(book.BestBid(), ShouldNotBeNil)
+			})
+		})
+	})
+
 	Convey("Given two Level3 orders at one price", t, func() {
 		managed := NewBook(t.Context())
 		managed.Create("BTC/USD", 32)

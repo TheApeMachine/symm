@@ -36,6 +36,8 @@ func (conn *Conn) Books() *sync.Map { return nil }
 
 func (conn *Conn) Book(_ string, read func(*book.Book)) { read(nil) }
 
+func (conn *Conn) BookUpdates() <-chan string { return nil }
+
 func (conn *Conn) SubInstrument(callback types.Subscription[any]) {}
 
 func (conn *Conn) SubTicker(symbols []string) {}

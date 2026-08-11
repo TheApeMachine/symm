@@ -128,6 +128,8 @@ func (signal *Signal) run() {
 					)
 				}
 
+				signal.thesis.StampAll(types.SourceDepthFlow)
+
 				signal.status.Store(types.READY)
 			}
 		}
