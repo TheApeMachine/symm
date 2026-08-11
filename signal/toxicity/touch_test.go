@@ -80,8 +80,14 @@ func TestToxicityMeasurement(t *testing.T) {
 		measurement := toxicityMeasurement("BTC/USD", previous, current, trades)
 
 		Convey("It reports every ratio against the quantity that could cause it", func() {
+			execution := math.Sqrt((math.Pow(0.2, 2) + math.Pow(0.25, 2)) / 2)
+			retreat := math.Sqrt((math.Pow(0.8, 2) + math.Pow(0, 2)) / 2)
+			cancellation := math.Sqrt((math.Pow(0, 2) + math.Pow(0.15, 2)) / 2)
+			noiseFloor := math.Sqrt(
+				math.Pow(execution, 2) + math.Pow(cancellation, 2),
+			)
 			expected := map[string]float64{
-				types.MetricKey(types.MetricSNR, types.SideNone):                5.0 / 8.0,
+				types.MetricKey(types.MetricSNR, types.SideNone):                (retreat - noiseFloor) / retreat,
 				types.MetricKey(types.MetricTradeVolume, types.SideNone):        7.0 / 37.0,
 				types.MetricKey(types.MetricFillVolume, types.SideBuy):          2.0 / 10.0,
 				types.MetricKey(types.MetricFillVolume, types.SideSell):         5.0 / 20.0,

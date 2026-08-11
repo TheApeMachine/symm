@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -456,30 +455,12 @@ func (signal *Signal) cvdMeasurements(
 		types.MetricNetFraction, output.NetFraction, evidenceCount,
 	)
 	net := normalizedSignedNet(output.Net, output.NetFraction, evidenceCount)
-	// Flow emits four alternative classifications of the same aggressor/price
-	// response. They are comparable regime hypotheses, not component metrics.
-	snr, err := probability.SignalNoiseRatio([]float64{
-		output.Absorption,
-		output.Drive,
-		output.Balance,
-		output.Starvation,
-	})
-
-	if err != nil {
-		panic(err)
-	}
-
 	measurement := &types.Measurement{
 		ID:     uuid.NewString(),
 		Source: types.SourceCVD,
 		Symbol: row.Symbol,
 		At:     row.Timestamp,
 		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricSNR, types.SideNone): {
-				Raw:        snr,
-				Normalized: &snr,
-				Unit:       types.UnitDimensionless,
-			},
 			types.MetricKey(types.MetricMidpoint, types.SideNone): {
 				Raw:  midpoint,
 				Unit: types.UnitQuoteCurrency,
@@ -529,6 +510,20 @@ func (signal *Signal) cvdMeasurements(
 			},
 		},
 	}
+	snr, snrReady := types.MeasurementSignalNoiseRatio(
+		types.SourceCVD,
+		measurement.Metrics,
+	)
+	snrSample := types.MetricSample{
+		Raw:  snr,
+		Unit: types.UnitDimensionless,
+	}
+
+	if snrReady {
+		snrSample.Normalized = &snr
+	}
+
+	measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 
 	return []*types.Measurement{measurement}
 }

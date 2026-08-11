@@ -18,7 +18,6 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -653,6 +652,20 @@ func (signal *Signal) frame(
 		Maturity: maturity,
 		Metrics:  metrics,
 	}
+	snr, snrReady := types.MeasurementSignalNoiseRatio(
+		types.SourceExhaustion,
+		measurement.Metrics,
+	)
+
+	if !snrReady {
+		panic("exhaust: competing metric groups are not measurable")
+	}
+
+	measurement.PutMetric(types.MetricSNR, types.SideNone, types.MetricSample{
+		Raw:        snr,
+		Normalized: &snr,
+		Unit:       types.UnitDimensionless,
+	})
 
 	return []*types.Measurement{measurement}
 }
@@ -690,7 +703,7 @@ func normalizedDecayMetrics(
 		{types.MetricValue, types.SideSell, output.Short.Value},
 		{types.MetricCategory, types.SideSell, output.Short.Category},
 	}
-	metrics := make(map[string]types.MetricSample, len(readings)+1)
+	metrics := make(map[string]types.MetricSample, len(readings))
 	valid := true
 
 	for _, item := range readings {
@@ -712,23 +725,6 @@ func normalizedDecayMetrics(
 		}
 
 		metrics[types.MetricKey(item.metric, item.side)] = sample
-	}
-
-	// Exhaustion families can coexist within one side. Long and short fused
-	// strengths are the competing directional hypotheses.
-	snr, err := probability.SignalNoiseRatio([]float64{
-		output.Long.Strength,
-		output.Short.Strength,
-	})
-
-	if err != nil {
-		panic(err)
-	}
-
-	metrics[types.MetricKey(types.MetricSNR, types.SideNone)] = types.MetricSample{
-		Raw:        snr,
-		Normalized: &snr,
-		Unit:       types.UnitDimensionless,
 	}
 
 	return metrics, valid

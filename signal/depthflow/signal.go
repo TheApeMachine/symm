@@ -647,7 +647,13 @@ func (signal *Signal) frame(
 	spoof := normalizedBookflowScore(types.MetricSpoofScore, output.SpoofScore)
 	thin := normalizedBookflowScore(types.MetricThinScore, output.ThinScore)
 	neutral := normalizedBookflowScore(types.MetricNeutralScore, output.NeutralScore)
-	snr := normalizedBookflowScore(types.MetricSNR, output.SNR)
+
+	if !output.Ready {
+		loaded = nil
+		spoof = nil
+		thin = nil
+		neutral = nil
+	}
 
 	measurement := &types.Measurement{
 		ID:       uuid.NewString(),
@@ -656,11 +662,6 @@ func (signal *Signal) frame(
 		At:       at,
 		Maturity: maturity,
 		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricSNR, types.SideNone): {
-				Raw:        output.SNR,
-				Normalized: snr,
-				Unit:       types.UnitDimensionless,
-			},
 			types.MetricKey(types.MetricLoadedScore, types.SideNone): {
 				Raw:        output.LoadedScore,
 				Normalized: loaded,
@@ -683,6 +684,20 @@ func (signal *Signal) frame(
 			},
 		},
 	}
+	snr, snrReady := types.MeasurementSignalNoiseRatio(
+		types.SourceDepthFlow,
+		measurement.Metrics,
+	)
+	snrSample := types.MetricSample{
+		Raw:  snr,
+		Unit: types.UnitDimensionless,
+	}
+
+	if snrReady {
+		snrSample.Normalized = &snr
+	}
+
+	measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 
 	return []*types.Measurement{measurement}
 }

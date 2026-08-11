@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -43,7 +42,7 @@ func TestMeasure(t *testing.T) {
 			).Raw, ShouldEqual, expectedCounts[index])
 			So(ready, ShouldEqual, index == 2)
 			So(measurements[0].Sample(types.MetricSNR, types.SideNone).Normalized,
-				ShouldNotBeNil)
+				ShouldBeNil)
 
 			So(string(<-ui), ShouldContainSubstring, `"measurements"`)
 
@@ -120,15 +119,11 @@ func TestMeasure(t *testing.T) {
 			}
 
 			So(measurement, ShouldNotBeNil)
-			expectedSNR, err := probability.SignalNoiseRatio([]float64{
-				measurement.Sample(
-					types.MetricImmediateOffspring, types.SideBuy,
-				).Raw,
-				measurement.Sample(
-					types.MetricImmediateOffspring, types.SideSell,
-				).Raw,
-			})
-			So(err, ShouldBeNil)
+			expectedSNR, snrReady := types.MeasurementSignalNoiseRatio(
+				types.SourceHawkes,
+				measurement.Metrics,
+			)
+			So(snrReady, ShouldBeTrue)
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
 				ShouldAlmostEqual, expectedSNR, 1e-12)
 		})
@@ -197,8 +192,8 @@ func TestMeasure(t *testing.T) {
 		Convey("It should still measure the one-sided arrival process", func() {
 			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Symbol, ShouldEqual, "BBB/USD")
-			So(measurements[0].Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldEqual, 1.0)
+			So(measurements[0].Sample(types.MetricSNR, types.SideNone).Normalized,
+				ShouldBeNil)
 		})
 	})
 

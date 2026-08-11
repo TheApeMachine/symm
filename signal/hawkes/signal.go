@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -161,25 +160,18 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		}
 
 		branching := outcome.Fit.Params().BranchingMatrix()
-		buyHypothesis := outcome.BuyArrivalRate
-		sellHypothesis := outcome.SellArrivalRate
+		var buyToBuy *float64
+		var sellToBuy *float64
+		var buyToSell *float64
+		var sellToSell *float64
+		var spectralRadius *float64
 
 		if outcome.Readiness.HawkesFit {
-			buyHypothesis = outcome.ImmediateBuyOffspring
-			sellHypothesis = outcome.ImmediateSellOffspring
-		}
-
-		// Self- and cross-excitation are complementary paths within each parent
-		// side. The column-summed buy and sell offspring totals are the competing
-		// fitted hypotheses; directly observed arrival rates carry that role before
-		// the fit is identifiable.
-		snr, err := probability.SignalNoiseRatio([]float64{
-			buyHypothesis,
-			sellHypothesis,
-		})
-
-		if err != nil {
-			panic(err)
+			buyToBuy = &branching[0][0]
+			sellToBuy = &branching[0][1]
+			buyToSell = &branching[1][0]
+			sellToSell = &branching[1][1]
+			spectralRadius = &outcome.Fit.SpectralRadius
 		}
 
 		measurement := &types.Measurement{
@@ -191,11 +183,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			Horizon:      outcome.Horizon,
 			Maturity:     outcome.Maturity,
 			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricSNR, types.SideNone): {
-					Raw:        snr,
-					Normalized: &snr,
-					Unit:       types.UnitDimensionless,
-				},
 				types.MetricKey(types.MetricEventCount, types.SideNone): {
 					Raw:  float64(outcome.EventCount),
 					Unit: types.UnitCount,
@@ -234,22 +221,22 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 				},
 				types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy): {
 					Raw:        outcome.Fit.AlphaXX,
-					Normalized: &branching[0][0],
+					Normalized: buyToBuy,
 					Unit:       types.UnitEventsPerSecond,
 				},
 				types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToBuy): {
 					Raw:        outcome.Fit.AlphaXY,
-					Normalized: &branching[0][1],
+					Normalized: sellToBuy,
 					Unit:       types.UnitEventsPerSecond,
 				},
 				types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToSell): {
 					Raw:        outcome.Fit.AlphaYX,
-					Normalized: &branching[1][0],
+					Normalized: buyToSell,
 					Unit:       types.UnitEventsPerSecond,
 				},
 				types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell): {
 					Raw:        outcome.Fit.AlphaYY,
-					Normalized: &branching[1][1],
+					Normalized: sellToSell,
 					Unit:       types.UnitEventsPerSecond,
 				},
 				types.MetricKey(types.MetricDecayRate, types.SideNone): {
@@ -262,7 +249,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 				},
 				types.MetricKey(types.MetricSpectralRadius, types.SideNone): {
 					Raw:        outcome.Fit.SpectralRadius,
-					Normalized: &outcome.Fit.SpectralRadius,
+					Normalized: spectralRadius,
 					Unit:       types.UnitDimensionless,
 				},
 				types.MetricKey(types.MetricHawkesPoissonDelta, types.SideNone): {
@@ -291,6 +278,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 				},
 			},
 		}
+		snr, snrReady := types.MeasurementSignalNoiseRatio(
+			types.SourceHawkes,
+			measurement.Metrics,
+		)
+		snrSample := types.MetricSample{
+			Raw:  snr,
+			Unit: types.UnitDimensionless,
+		}
+
+		if snrReady {
+			snrSample.Normalized = &snr
+		}
+
+		measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 
 		measurements = append(measurements, measurement)
 		ready = ready || outcome.Readiness.Intensity

@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -76,8 +77,10 @@ func TestMeasure(t *testing.T) {
 			measurement := measurements[0]
 			So(measurement.At, ShouldResemble, trade.Timestamp)
 			So(measurement.Metrics, ShouldHaveLength, 11)
-			So(measurement.Sample(types.MetricSNR, types.SideNone).Normalized,
-				ShouldNotBeNil)
+			_, hasSNR := measurement.Metrics[types.MetricKey(
+				types.MetricSNR, types.SideNone,
+			)]
+			So(hasSNR, ShouldBeTrue)
 			So(measurement.Sample(types.MetricNet, types.SideNone).Unit,
 				ShouldEqual, types.UnitQuoteCurrency)
 
@@ -213,7 +216,7 @@ func TestCVDMeasurements(t *testing.T) {
 			So(*measurement.Sample(types.MetricNet, types.SideNone).Normalized,
 				ShouldAlmostEqual, -0.25, 1e-12)
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldAlmostEqual, 0.4, 1e-12)
+				ShouldAlmostEqual, (0.5-math.Sqrt(0.13))/0.5, 1e-12)
 			So(measurement.Sample(types.MetricMidpoint, types.SideNone), ShouldResemble,
 				types.MetricSample{Raw: 100.5, Unit: types.UnitQuoteCurrency})
 			So(measurement.Sample(types.MetricTradePrice, types.SideNone), ShouldResemble,

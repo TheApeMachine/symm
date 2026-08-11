@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -125,6 +124,14 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	statistics := sentimentStatistics(peers)
+	directionalReady := false
+
+	for _, peer := range peers {
+		if peer.observation.ready {
+			directionalReady = true
+			break
+		}
+	}
 
 	measurements := make([]*types.Measurement, len(peers))
 	out := make([]*types.Measurement, 0)
@@ -165,21 +172,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				statistics.surge,
 				math.Max(peerDivergenceScore, statistics.slump),
 			)
-			// Divergence is contextual evidence that can coexist with either market
-			// direction. Advancing and declining cohort shares are the competing
-			// breadth hypotheses.
-			snr, err := probability.SignalNoiseRatio([]float64{
-				statistics.advanceShare,
-				statistics.declineShare,
-			})
-
-			if err != nil {
-				panic(err)
-			}
-
 			metrics := sentimentMetrics(
 				map[types.MetricType]float64{
-					types.MetricSNR:            snr,
 					types.MetricChange:         change,
 					types.MetricBreadth:        statistics.breadth,
 					types.MetricLeaderStrength: leaderStrength,
@@ -200,6 +194,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				At:      peer.observation.at,
 				Metrics: metrics,
 			}
+			snr, snrReady := types.MeasurementSignalNoiseRatio(
+				types.SourceSentiment,
+				measurement.Metrics,
+			)
+			snrSample := types.MetricSample{
+				Raw:  snr,
+				Unit: types.UnitDimensionless,
+			}
+
+			if snrReady && directionalReady {
+				snrSample.Normalized = &snr
+			}
+
+			measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 			measurement.PutMetric(
 				types.MetricLastPrice,
 				types.SideNone,
@@ -257,8 +265,6 @@ type sentimentSummary struct {
 	leaderEvidence    float64
 	relativeLead      float64
 	breadth           float64
-	advanceShare      float64
-	declineShare      float64
 	surge             float64
 	slump             float64
 	divergence        float64
@@ -431,8 +437,6 @@ func sentimentStatistics(peers []sentimentPeer) sentimentSummary {
 	}
 
 	summary.breadth = float64(advances-declines) / float64(len(peers))
-	summary.advanceShare = float64(advances) / float64(len(peers))
-	summary.declineShare = float64(declines) / float64(len(peers))
 	medianChange, hasMedianChange := statistic.MedianOf(changes)
 	medianMagnitude, hasMedianMagnitude := statistic.MedianOf(magnitudes)
 

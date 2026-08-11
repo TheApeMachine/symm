@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -223,17 +222,6 @@ func (signal *Signal) Measure(
 					return nil
 				}
 
-				// Each directional strength already fuses its complementary ignition
-				// families. Buy and sell are the competing hypotheses.
-				snr, err := probability.SignalNoiseRatio([]float64{
-					output.Buy.Strength,
-					output.Sell.Strength,
-				})
-
-				if err != nil {
-					panic(err)
-				}
-
 				signal.commitTrade(trade)
 
 				measurement := &types.Measurement{
@@ -243,13 +231,6 @@ func (signal *Signal) Measure(
 					At:       trade.Timestamp,
 					Maturity: maturity,
 					Metrics: map[string]types.MetricSample{
-						types.MetricKey(types.MetricSNR, types.SideNone): {
-							Raw: snr,
-							Normalized: normalizedIgnitionEvidence(
-								types.MetricSNR, snr, ready,
-							),
-							Unit: types.UnitDimensionless,
-						},
 						types.MetricKey(types.MetricBestPrice, types.SideBuy): {
 							Raw:  bidPrice,
 							Unit: types.UnitQuoteCurrency,
@@ -372,6 +353,20 @@ func (signal *Signal) Measure(
 						},
 					},
 				}
+				snr, snrReady := types.MeasurementSignalNoiseRatio(
+					types.SourcePumpDump,
+					measurement.Metrics,
+				)
+				snrSample := types.MetricSample{
+					Raw:  snr,
+					Unit: types.UnitDimensionless,
+				}
+
+				if snrReady {
+					snrSample.Normalized = &snr
+				}
+
+				measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 
 				symbolMeasurements = append(symbolMeasurements, measurement)
 			}

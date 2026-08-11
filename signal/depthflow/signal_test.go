@@ -160,7 +160,7 @@ func TestFrame(t *testing.T) {
 			So(*measurement.Sample(types.MetricThinScore, types.SideNone).Normalized,
 				ShouldAlmostEqual, 0.3, 1e-12)
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldAlmostEqual, 0.4, 1e-12)
+				ShouldAlmostEqual, 1, 1e-12)
 		})
 	})
 
@@ -187,7 +187,6 @@ func TestNormalizedBookflowScore(t *testing.T) {
 		loaded := normalizedBookflowScore(types.MetricLoadedScore, 0.4)
 		thin := normalizedBookflowScore(types.MetricThinScore, 0.6)
 		neutral := normalizedBookflowScore(types.MetricNeutralScore, 0.8)
-		snr := normalizedBookflowScore(types.MetricSNR, 0.7)
 		spoofMidpoint := normalizedBookflowScore(types.MetricSpoofScore, 1)
 		spoofMaximum := normalizedBookflowScore(types.MetricSpoofScore, 2)
 
@@ -195,7 +194,6 @@ func TestNormalizedBookflowScore(t *testing.T) {
 			So(*loaded, ShouldAlmostEqual, 0.4, 1e-12)
 			So(*thin, ShouldAlmostEqual, 0.6, 1e-12)
 			So(*neutral, ShouldAlmostEqual, 0.8, 1e-12)
-			So(*snr, ShouldAlmostEqual, 0.7, 1e-12)
 			So(*spoofMidpoint, ShouldAlmostEqual, 0.5, 1e-12)
 			So(*spoofMaximum, ShouldAlmostEqual, 1, 1e-12)
 		})

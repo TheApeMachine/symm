@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -88,7 +89,24 @@ func TestMeasure(t *testing.T) {
 			So(*thin.Sample(types.MetricRelativeTouchDepth, types.SideNone).Normalized,
 				ShouldAlmostEqual, 101.0/(101.0+1212.0), 1e-12)
 			So(scarcity, ShouldAlmostEqual, 1111.0/(1111.0+202.0), 1e-12)
-			So(thin.Sample(types.MetricSNR, types.SideNone).Raw, ShouldEqual, 0.0)
+			reported := thin.Sample(
+				types.MetricReportedVolumeNotional,
+				types.SideNone,
+			)
+			depthEvidence := *depth.Normalized
+			relativeEvidence := *thin.Sample(
+				types.MetricRelativeTouchDepth,
+				types.SideNone,
+			).Normalized
+			reportedEvidence := *reported.Normalized
+			available := math.Sqrt(
+				(depthEvidence*depthEvidence +
+					relativeEvidence*relativeEvidence +
+					reportedEvidence*reportedEvidence) / 3,
+			)
+			expectedSNR := (scarcity - available) / scarcity
+			So(thin.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldAlmostEqual, expectedSNR, 1e-12)
 			So(thin.Sample(types.MetricReportedVolumeNotional, types.SideNone).Normalized,
 				ShouldNotBeNil)
 			So(thin.Sample(types.MetricExecutableTouchDepthMedian, types.SideNone).Normalized,

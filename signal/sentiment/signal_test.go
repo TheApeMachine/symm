@@ -77,7 +77,7 @@ func TestMeasure(t *testing.T) {
 			So(*leader.Sample(types.MetricBreadth, types.SideNone).Normalized,
 				ShouldAlmostEqual, -1.0/3.0, 1e-12)
 			So(leader.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldAlmostEqual, 0.5, 1e-12)
+				ShouldAlmostEqual, 1, 1e-12)
 		})
 
 		Convey("It should reject repeated latest-value cache entries", func() {

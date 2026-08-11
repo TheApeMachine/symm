@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -124,18 +123,8 @@ func toxicityMeasurement(
 	askFill = math.Min(askFill, previous.ask.quantity)
 	bidRetreat, bidCancelled := touchChange(types.SideBuy, previous.bid, current.bid, bidFill)
 	askRetreat, askCancelled := touchChange(types.SideSell, previous.ask, current.ask, askFill)
-	// Retreat and cancellation are complementary disappearance mechanisms on
-	// each side. Their side totals form the competing directional hypotheses.
-	snr, err := probability.SignalNoiseRatio([]float64{
-		bidRetreat + bidCancelled,
-		askRetreat + askCancelled,
-	})
 
-	if err != nil {
-		panic(err)
-	}
-
-	return &types.Measurement{
+	measurement := &types.Measurement{
 		ID:           uuid.NewString(),
 		Source:       types.SourceToxicity,
 		Symbol:       symbol,
@@ -143,11 +132,6 @@ func toxicityMeasurement(
 		ObservedFrom: previous.asOf,
 		Horizon:      current.asOf.Sub(previous.asOf),
 		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricSNR, types.SideNone): {
-				Raw:        snr,
-				Normalized: &snr,
-				Unit:       types.UnitDimensionless,
-			},
 			types.MetricKey(types.MetricTradeVolume, types.SideNone): {
 				Raw: tradeVolume,
 				Normalized: normalizedTouchRatio(
@@ -209,6 +193,22 @@ func toxicityMeasurement(
 			},
 		},
 	}
+	snr, snrReady := types.MeasurementSignalNoiseRatio(
+		types.SourceToxicity,
+		measurement.Metrics,
+	)
+	snrSample := types.MetricSample{
+		Raw:  snr,
+		Unit: types.UnitDimensionless,
+	}
+
+	if snrReady && current.asOf.After(previous.asOf) {
+		snrSample.Normalized = &snr
+	}
+
+	measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
+
+	return measurement
 }
 
 /*

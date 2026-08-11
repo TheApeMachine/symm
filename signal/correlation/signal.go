@@ -175,6 +175,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 					Unit: types.UnitQuoteCurrency,
 				},
 			)
+			snr, snrReady := types.MeasurementSignalNoiseRatio(
+				types.SourceCorrelation,
+				measurement.Metrics,
+			)
+
+			if !snrReady {
+				panic("correlation: competing metric groups are not measurable")
+			}
+
+			measurement.PutMetric(types.MetricSNR, types.SideNone, types.MetricSample{
+				Raw:        snr,
+				Normalized: &snr,
+				Unit:       types.UnitDimensionless,
+			})
 
 			measurements[measurementIndex] = measurement
 
@@ -229,7 +243,6 @@ func correlationMetrics(
 	}
 
 	readings := []reading{
-		{"snr", types.MetricSNR},
 		{"correlation", types.MetricCorrelation},
 		{"signed", types.MetricSigned},
 		{"relativeEnergy", types.MetricRelativeEnergy},

@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -352,23 +351,20 @@ func buildScoreMeasurement(
 		types.SideNone,
 	)] = direction
 
-	// These weights describe alternative lead-lag regimes for the same pair.
-	snr, err := probability.SignalNoiseRatio([]float64{
-		weights.inefficient,
-		weights.syncScore,
-		weights.decoupled,
-		weights.stall,
-	})
-
-	if err != nil {
-		panic(err)
+	snr, snrReady := types.MeasurementSignalNoiseRatio(
+		types.SourceLeadLag,
+		measurement.Metrics,
+	)
+	snrSample := types.MetricSample{
+		Raw:  snr,
+		Unit: types.UnitDimensionless,
 	}
 
-	measurement.PutMetric(types.MetricSNR, types.SideNone, types.MetricSample{
-		Raw:        snr,
-		Normalized: &snr,
-		Unit:       types.UnitDimensionless,
-	})
+	if snrReady && sampleSupport > 0 {
+		snrSample.Normalized = &snr
+	}
+
+	measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 
 	return measurement
 }

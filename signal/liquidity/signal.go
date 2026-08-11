@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -193,8 +192,14 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			}
 
 			normalizedDepth := normalizedLiquidityRatio(executableDepth, depthMedian)
-			normalizedRelativeDepth := normalizedRelativeLiquidity(relativeDepth)
-			normalizedScarcity := normalizedLiquidityScore(scarcity)
+			var normalizedRelativeDepth *float64
+			var normalizedScarcity *float64
+
+			if peerReady && executableDepth > 0 {
+				normalizedRelativeDepth = normalizedRelativeLiquidity(relativeDepth)
+				normalizedScarcity = normalizedLiquidityScore(scarcity)
+			}
+
 			normalizedDepthMedian := normalizedLiquidityRatio(
 				depthMedian,
 				cohortDepthMedian,
@@ -218,16 +223,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				maturity = 1
 			}
 
-			bidDepth := peer.observation.bidQuantity
-			askDepth := peer.observation.askQuantity
-			// Bid and ask resting quantities are the same-unit competing sides of
-			// the current executable touch.
-			snr, err := probability.SignalNoiseRatio([]float64{bidDepth, askDepth})
-
-			if err != nil {
-				panic(err)
-			}
-
 			measurement := &types.Measurement{
 				ID:       uuid.NewString(),
 				Source:   types.SourceLiquidity,
@@ -235,11 +230,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				At:       peer.observation.at,
 				Maturity: maturity,
 				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricSNR, types.SideNone): {
-						Raw:        snr,
-						Normalized: &snr,
-						Unit:       types.UnitDimensionless,
-					},
 					types.MetricKey(types.MetricBestPrice, types.SideBuy): {
 						Raw:  peer.observation.bid,
 						Unit: types.UnitQuoteCurrency,
@@ -300,6 +290,20 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 					},
 				},
 			}
+			snr, snrReady := types.MeasurementSignalNoiseRatio(
+				types.SourceLiquidity,
+				measurement.Metrics,
+			)
+			snrSample := types.MetricSample{
+				Raw:  snr,
+				Unit: types.UnitDimensionless,
+			}
+
+			if snrReady {
+				snrSample.Normalized = &snr
+			}
+
+			measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 
 			measurements[measurementIndex] = measurement
 

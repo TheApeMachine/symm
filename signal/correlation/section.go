@@ -10,7 +10,6 @@ import (
 	"time"
 
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
-	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"golang.org/x/sync/errgroup"
@@ -361,16 +360,6 @@ func (section *Section) scores(
 	alphaScore := excessMass / (1 + math.Max(0, signed))
 	noiseScore := math.Max(0, 1-correlation) / (1 + excessEnergy + energyDeficit)
 	stressScore := math.Max(0, -signed)
-	snr, err := probability.SignalNoiseRatio([]float64{
-		herdScore,
-		alphaScore,
-		noiseScore,
-		stressScore,
-	})
-	if err != nil {
-		return nil, false, err
-	}
-
 	// A zero score bundle is still a live cohort reading (quiet / locked peers).
 	// Suppressing it left the focused kernel on STANDBY forever in calm tapes.
 	return map[string]float64{
@@ -381,7 +370,6 @@ func (section *Section) scores(
 		"alphaScore":     alphaScore,
 		"noiseScore":     noiseScore,
 		"stressScore":    stressScore,
-		"snr":            snr,
 	}, true, nil
 }
 
