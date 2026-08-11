@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -111,63 +112,30 @@ func (crypto *Crypto) Update() error {
 	crypto.thesis.At = time.Now().UTC()
 
 	if err := crypto.measurements.Update(crypto.thesis); err != nil {
-		return err
-	}
-
-	if err := crypto.analyzer.Process(crypto.thesis); err != nil {
-		return err
-	}
-
-	if err := crypto.planner.Update(crypto.thesis); err != nil {
-		return err
-	}
-
-	decisions := make([]types.Decision, 0)
-
-	crypto.thesis.Symbols.Range(func(key, value any) bool {
-		symbolName := key.(string)
-		symbol := value.(*types.Symbol)
-
-		if value, found := symbol.Decisions.Load(symbolName); found {
-			decisions = append(decisions, *value.(*types.Decision))
-		}
-
-		return true
-	})
-
-	if len(decisions) == 0 {
-		return crypto.regulator.Update(crypto.thesis)
-	}
-
-	if crypto.desk == nil || crypto.desk.PositionStore == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"crypto: thesis checkpoint store required",
-			nil,
-		))
-	}
-
-	if err := crypto.desk.SaveThesis(crypto.thesis); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
-			"crypto: save pre-execution thesis checkpoint",
+			fmt.Sprintf("crypto: measurements update failed [%s]", err.Error()),
 			err,
 		))
 	}
 
-	var err error
-
-	for _, decision := range decisions {
-		if err = crypto.desk.Execute(decision); err != nil {
-			break
-		}
+	if err := crypto.analyzer.Process(crypto.thesis); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("crypto: analyzer process failed [%s]", err.Error()),
+			err,
+		))
 	}
 
-	if err != nil {
-		return err
+	if err := crypto.planner.Update(crypto.thesis); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("crypto: planner update failed [%s]", err.Error()),
+			err,
+		))
 	}
 
-	return crypto.regulator.Update(crypto.thesis)
+	return nil
 }
 
 /*
@@ -213,7 +181,7 @@ func (crypto *Crypto) onTicker(data any) {
 	}
 
 	for _, ticker := range typedTickers.Data {
-		crypto.thesis.AppendTicker(ticker)
+		crypto.thesis.Symbol(ticker.Symbol).AppendTicker(ticker)
 		crypto.desk.Price().Update(&ticker)
 	}
 
@@ -234,7 +202,7 @@ func (crypto *Crypto) onTrade(data any) {
 	}
 
 	for _, trade := range typedTrades.Data {
-		crypto.thesis.AppendTrade(trade)
+		crypto.thesis.Symbol(trade.Symbol).AppendTrade(trade)
 	}
 
 	errnie.Error(crypto.Update())

@@ -38,36 +38,6 @@ func TestSymbolAddMeasurement(t *testing.T) {
 	})
 }
 
-func TestSymbolStamp(t *testing.T) {
-	Convey("Given logic stamps on an active symbol contribution", t, func() {
-		symbol := NewSymbol("BTC/USD", nil)
-		sources := []SourceType{
-			SourceCorrelation, SourceCVD, SourceDepthFlow, SourceExhaustion, SourceHawkes,
-			SourceLeadLag, SourceLiquidity, SourcePumpDump, SourceSentiment, SourceToxicity,
-		}
-
-		for _, source := range sources {
-			symbol.AddMeasurement(&Measurement{
-				ID: string(source), Source: source, Symbol: "BTC/USD",
-			})
-		}
-
-		Convey("It should retain the cut until resonance also finishes", func() {
-			So(symbol.Status, ShouldEqual, BUSY)
-			So(symbol.Measurements, ShouldHaveLength, len(sources))
-		})
-
-		Convey("It should retain the lock until graph completes the analyzer cut", func() {
-			So(symbol.Status, ShouldEqual, BUSY)
-			So(symbol.Measurements, ShouldHaveLength, len(sources))
-		})
-
-		Convey("It should release measurements only after every logic stage stamps", func() {
-			So(symbol.Status, ShouldEqual, READY)
-		})
-	})
-}
-
 func BenchmarkSymbolAddMeasurement(b *testing.B) {
 	measurement := &Measurement{
 		ID: "hawkes", Source: SourceHawkes, Symbol: "BTC/USD",

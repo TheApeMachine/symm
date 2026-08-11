@@ -39,9 +39,8 @@ func (solver *orderedSolver) Close() error {
 }
 
 func TestNewAnalyzer(t *testing.T) {
-	Convey("Given a signal already subscribed under its actor identity", t, func() {
+	Convey("Given analyzer construction", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
-		signal := make(chan struct{}, 1)
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
 		analyzer := NewAnalyzer(
@@ -49,124 +48,110 @@ func TestNewAnalyzer(t *testing.T) {
 		)
 		defer analyzer.Close()
 
-		Convey("Then the analyzer should not replace the signal subscription", func() {
-			So(len(signal), ShouldEqual, 1)
+		Convey("Then it should build dependency levels over the production solvers", func() {
+			So(analyzer.solvers, ShouldHaveLength, 6)
+			So(analyzer.solverGroups, ShouldHaveLength, 3)
+			So(analyzer.solverGroups[0], ShouldHaveLength, 3)
+			So(analyzer.solverGroups[1], ShouldHaveLength, 2)
+			So(analyzer.solverGroups[2], ShouldHaveLength, 1)
 		})
 	})
 }
 
 func TestAnalyzerProcess(t *testing.T) {
-	Convey("Given an incomplete signal epoch", t, func() {
-		order := make([]int, 0, 1)
-		mu := &sync.Mutex{}
-		analyzer := &Analyzer{
-			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, mu: mu, source: types.SourceCategory},
-			},
-		}
-		thesis := types.NewThesis(t.Context(), nil)
-		analyzer.Process(thesis)
-
-		Convey("It should avoid running solvers without active symbols", func() {
-			So(order, ShouldBeEmpty)
-		})
-	})
-
-	Convey("Given several signal notifications for one readiness epoch", t, func() {
-		order := make([]int, 0, 6)
-		mu := &sync.Mutex{}
-		analyzer := &Analyzer{
-			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, mu: mu, source: types.SourceCategory},
-				&orderedSolver{index: 1, order: &order, mu: mu, source: types.SourceManifold},
-				&orderedSolver{index: 2, order: &order, mu: mu, source: types.SourceResonance},
-				&orderedSolver{index: 3, order: &order, mu: mu, source: types.SourceCausal},
-				&orderedSolver{index: 4, order: &order, mu: mu, source: types.SourceCognition},
-				&orderedSolver{index: 5, order: &order, mu: mu, source: types.SourceGraph},
-			},
-		}
-		thesis := types.NewThesis(t.Context(), nil)
-
-		analyzer.Process(thesis)
-		analyzer.Process(thesis)
-		slices.Sort(order)
-
-		Convey("It should not rerun a completed symbol for a duplicate notification", func() {
-			So(order, ShouldResemble, []int{0, 1, 2, 3, 4, 5})
-		})
-	})
-
-	Convey("Given a solver that cannot complete the current logic cut", t, func() {
+	Convey("Given a legacy analyzer without explicit solver groups", t, func() {
 		order := make([]int, 0, 3)
 		mu := &sync.Mutex{}
 		analyzer := &Analyzer{
 			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, mu: mu, source: types.SourceCategory},
-				&orderedSolver{index: 1, order: &order, mu: mu, err: errors.New("failed cut")},
-				&orderedSolver{index: 2, order: &order, mu: mu, source: types.SourceGraph},
+				&orderedSolver{index: 0, order: &order, mu: mu},
+				&orderedSolver{index: 1, order: &order, mu: mu},
+				&orderedSolver{index: 2, order: &order, mu: mu},
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
-
-		analyzer.Process(thesis)
+		err := analyzer.Process(thesis)
 		slices.Sort(order)
 
-		Convey("It should let independent solvers complete their available work", func() {
+		Convey("It should still run every configured solver exactly once", func() {
+			So(err, ShouldBeNil)
 			So(order, ShouldResemble, []int{0, 1, 2})
 		})
 	})
 
-	Convey("Given a pass in which no solver can advance readiness", t, func() {
-		order := make([]int, 0, 1)
+	Convey("Given dependency levels with independent solvers", t, func() {
+		order := make([]int, 0, 6)
+		mu := &sync.Mutex{}
+		first := &orderedSolver{index: 0, order: &order, mu: mu}
+		second := &orderedSolver{index: 1, order: &order, mu: mu}
+		third := &orderedSolver{index: 2, order: &order, mu: mu}
+		fourth := &orderedSolver{index: 3, order: &order, mu: mu}
+		fifth := &orderedSolver{index: 4, order: &order, mu: mu}
+		sixth := &orderedSolver{index: 5, order: &order, mu: mu}
+		analyzer := &Analyzer{
+			solverGroups: [][]Solver{
+				{first, second, third},
+				{fourth, fifth},
+				{sixth},
+			},
+		}
+		thesis := types.NewThesis(t.Context(), nil)
+
+		err := analyzer.Process(thesis)
+
+		Convey("It should complete each dependency level before starting the next", func() {
+			So(err, ShouldBeNil)
+			firstLevel := slices.Clone(order[:3])
+			secondLevel := slices.Clone(order[3:5])
+			slices.Sort(firstLevel)
+			slices.Sort(secondLevel)
+			So(firstLevel, ShouldResemble, []int{0, 1, 2})
+			So(secondLevel, ShouldResemble, []int{3, 4})
+			So(order[5], ShouldEqual, 5)
+		})
+	})
+
+	Convey("Given a solver that cannot complete its dependency level", t, func() {
+		order := make([]int, 0, 3)
+		mu := &sync.Mutex{}
+		analyzer := &Analyzer{
+			solverGroups: [][]Solver{
+				{
+					&orderedSolver{index: 0, order: &order, mu: mu},
+					&orderedSolver{index: 1, order: &order, mu: mu, err: errors.New("failed cut")},
+				},
+				{&orderedSolver{index: 2, order: &order, mu: mu}},
+			},
+		}
+		thesis := types.NewThesis(t.Context(), nil)
+
+		err := analyzer.Process(thesis)
+		slices.Sort(order)
+
+		Convey("It should finish the current level and skip dependent levels", func() {
+			So(err, ShouldNotBeNil)
+			So(order, ShouldResemble, []int{0, 1})
+		})
+	})
+
+	Convey("Given a solver error in the legacy fallback group", t, func() {
+		order := make([]int, 0, 3)
 		mu := &sync.Mutex{}
 		analyzer := &Analyzer{
 			solvers: []Solver{
 				&orderedSolver{index: 0, order: &order, mu: mu},
+				&orderedSolver{index: 1, order: &order, mu: mu, err: errors.New("failed cut")},
+				&orderedSolver{index: 2, order: &order, mu: mu},
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
-		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Status = types.BUSY
-		thesis.Symbols.Store("BTC/USD", symbol)
 
-		analyzer.Process(thesis)
+		err := analyzer.Process(thesis)
+		slices.Sort(order)
 
-		Convey("It should stop after the first unchanged pass", func() {
-			So(order, ShouldResemble, []int{0})
-			So(symbol.Status, ShouldEqual, types.BUSY)
-		})
-	})
-
-	Convey("Given incomplete signal contributions for one symbol", t, func() {
-		order := make([]int, 0, 1)
-		mu := &sync.Mutex{}
-		analyzer := &Analyzer{
-			solvers: []Solver{
-				&orderedSolver{
-					index: 0, order: &order, mu: mu, source: types.SourceGraph,
-				},
-			},
-		}
-		thesis := types.NewThesis(t.Context(), nil)
-		correlation := &types.Measurement{
-			Source: types.SourceCorrelation, Symbol: "BTC/USD",
-		}
-		cvd := &types.Measurement{Source: types.SourceCVD, Symbol: "BTC/USD"}
-		So(thesis.AppendMeasurements(
-			types.SourceCorrelation, []*types.Measurement{correlation}, true,
-		), ShouldBeNil)
-		So(thesis.AppendMeasurements(
-			types.SourceCVD, []*types.Measurement{cvd}, true,
-		), ShouldBeNil)
-
-		analyzer.Process(thesis)
-		stored, _ := thesis.Symbols.Load("BTC/USD")
-		symbol := stored.(*types.Symbol)
-
-		Convey("It should wait for the complete signal set before running logic", func() {
-			So(order, ShouldBeEmpty)
-			So(symbol.Status, ShouldEqual, types.READY)
-			So(symbol.Measurements, ShouldResemble, []*types.Measurement{correlation, cvd})
+		Convey("It should report the error after all peers in that group finish", func() {
+			So(err, ShouldNotBeNil)
+			So(order, ShouldResemble, []int{0, 1, 2})
 		})
 	})
 }
@@ -179,13 +164,17 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 	order := make([]int, 0, 6)
 	mu := &sync.Mutex{}
 	analyzer := &Analyzer{
-		solvers: []Solver{
-			&orderedSolver{index: 0, order: &order, mu: mu, source: types.SourceCategory},
-			&orderedSolver{index: 1, order: &order, mu: mu, source: types.SourceManifold},
-			&orderedSolver{index: 2, order: &order, mu: mu, source: types.SourceResonance},
-			&orderedSolver{index: 3, order: &order, mu: mu, source: types.SourceCausal},
-			&orderedSolver{index: 4, order: &order, mu: mu, source: types.SourceCognition},
-			&orderedSolver{index: 5, order: &order, mu: mu, source: types.SourceGraph},
+		solverGroups: [][]Solver{
+			{
+				&orderedSolver{index: 0, order: &order, mu: mu},
+				&orderedSolver{index: 1, order: &order, mu: mu},
+				&orderedSolver{index: 2, order: &order, mu: mu},
+			},
+			{
+				&orderedSolver{index: 3, order: &order, mu: mu},
+				&orderedSolver{index: 4, order: &order, mu: mu},
+			},
+			{&orderedSolver{index: 5, order: &order, mu: mu}},
 		},
 	}
 	thesis := types.NewThesis(b.Context(), nil)

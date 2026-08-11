@@ -2,21 +2,15 @@ package pumpdump
 
 import (
 	"context"
-	"sort"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -26,19 +20,11 @@ fact from its authoritative stream without treating them as independent
 corroborating signals.
 */
 type Signal struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	books      websocket.BookSource
-	algo       *equation.Ignition
-	algorithms *sync.Map
-	capacity   int
-	ui         chan []byte
-	lastTrade  *sync.Map
-}
-
-type tradeCursor struct {
-	at  time.Time
-	ids map[int64]struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
+	api    *websocket.API
+	ui     chan []byte
+	algo   *equation.Ignition
 }
 
 /*
@@ -47,20 +33,19 @@ same explicit retention bound used by the production market feed.
 */
 func NewSignal(
 	ctx context.Context,
-	books websocket.BookSource,
+	api *websocket.API,
 	ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	capacity := viper.GetViper().GetInt("signals.pumpdump.baselineCapacity")
 	signal := &Signal{
-		ctx:        ctx,
-		cancel:     cancel,
-		books:      books,
-		algorithms: &sync.Map{},
-		capacity:   capacity,
-		ui:         ui,
-		lastTrade:  &sync.Map{},
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		ui:     ui,
+		algo: equation.NewIgnition(
+			system.Cfg.PumpDump.Capacity,
+		),
 	}
 
 	return signal
@@ -80,320 +65,193 @@ func (signal *Signal) Type() types.SourceType {
 /*
 Measure produces the Measurements for the pumpdump signal.
 */
-func (signal *Signal) Measure(
-	thesis *types.Thesis,
-) []*types.Measurement {
+func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
-	out := make([]*types.Measurement, 0)
 
-	trades := thesis.MarketTrades(types.SourcePumpDump)
+	for trade := range symbol.MarketTrades(types.SourcePumpDump) {
+		var (
+			bid float64
+			ask float64
+		)
 
-	if len(trades) == 0 || signal.books == nil {
-		return measurements
-	}
+		if trade.Side == "buy" {
+			bid = trade.Price.Float64()
+		} else if trade.Side == "sell" {
+			ask = trade.Price.Float64()
+		}
 
-	tradeBatches := make(map[string][]kraken.TradeData)
-	symbols := make([]string, 0)
-	results := &sync.Map{}
-	errorsBySymbol := &sync.Map{}
+		output, ready, maturity, err := signal.algo.Measure(equation.IgnitionInput{
+			Symbol: symbol.Symbol,
+			Volume: trade.Qty,
+			Last:   trade.Price.Float64(),
+			Bid:    bid,
+			Ask:    ask,
+			At:     trade.Timestamp,
+		})
 
-	for _, trade := range trades {
-		if !validTrade(trade) {
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"pumpdump: failed to measure ignition",
+				err,
+			))
+
 			continue
 		}
 
-		if _, exists := tradeBatches[trade.Symbol]; !exists {
-			symbols = append(symbols, trade.Symbol)
+		measurement := &types.Measurement{
+			ID:       uuid.NewString(),
+			Source:   types.SourcePumpDump,
+			Symbol:   trade.Symbol,
+			At:       trade.Timestamp,
+			Maturity: maturity,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+					Raw:  bid,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricBestPrice, types.SideSell): {
+					Raw:  ask,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricMidpoint, types.SideNone): {
+					Raw:  (bid + ask) / 2,
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricTradePrice, types.SideNone): {
+					Raw:  trade.Price.Float64(),
+					Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricTradeQuantity, types.SideNone): {
+					Raw:  trade.Qty,
+					Unit: types.UnitBaseCurrency,
+				},
+				types.MetricKey(types.MetricRVOL, types.SideNone): {
+					Raw:        output.RVOL,
+					Normalized: normalizedIgnitionEvidence(types.MetricRVOL, output.RVOL, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricPrecursor, types.SideNone): {
+					Raw:        output.Precursor,
+					Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Precursor, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricSpread, types.SideNone): {
+					Raw:        output.Spread,
+					Normalized: normalizedSpread(output.Spread, (bid+ask)/2),
+					Unit:       types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricCompression, types.SideNone): {
+					Raw:        output.Compression,
+					Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Compression, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricIgnition, types.SideNone): {
+					Raw:        output.Ignition,
+					Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Ignition, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricTrend, types.SideNone): {
+					Raw:        output.Trend,
+					Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Trend, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricExhaustion, types.SideNone): {
+					Raw:        output.Exhaustion,
+					Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Exhaustion, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStrength, types.SideNone): {
+					Raw:        output.Strength,
+					Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Strength, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricPrecursor, types.SideBuy): {
+					Raw:        output.Buy.Precursor,
+					Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Buy.Precursor, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricCompression, types.SideBuy): {
+					Raw:        output.Buy.Compression,
+					Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Buy.Compression, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricIgnition, types.SideBuy): {
+					Raw:        output.Buy.Ignition,
+					Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Buy.Ignition, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricTrend, types.SideBuy): {
+					Raw:        output.Buy.Trend,
+					Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Buy.Trend, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricExhaustion, types.SideBuy): {
+					Raw:        output.Buy.Exhaustion,
+					Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Buy.Exhaustion, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStrength, types.SideBuy): {
+					Raw:        output.Buy.Strength,
+					Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Buy.Strength, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricPrecursor, types.SideSell): {
+					Raw:        output.Sell.Precursor,
+					Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Sell.Precursor, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricCompression, types.SideSell): {
+					Raw:        output.Sell.Compression,
+					Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Sell.Compression, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricIgnition, types.SideSell): {
+					Raw:        output.Sell.Ignition,
+					Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Sell.Ignition, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricTrend, types.SideSell): {
+					Raw:        output.Sell.Trend,
+					Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Sell.Trend, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricExhaustion, types.SideSell): {
+					Raw:        output.Sell.Exhaustion,
+					Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Sell.Exhaustion, ready),
+					Unit:       types.UnitDimensionless,
+				},
+				types.MetricKey(types.MetricStrength, types.SideSell): {
+					Raw:        output.Sell.Strength,
+					Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Sell.Strength, ready),
+					Unit:       types.UnitDimensionless,
+				},
+			},
 		}
 
-		tradeBatches[trade.Symbol] = append(tradeBatches[trade.Symbol], trade)
-	}
+		snr, snrReady := types.MeasurementSignalNoiseRatio(
+			types.SourcePumpDump,
+			measurement.Metrics,
+		)
 
-	sort.Strings(symbols)
-
-	group, _ := errgroup.WithContext(signal.ctx)
-
-	if signal.algorithms == nil {
-		signal.algorithms = &sync.Map{}
-	}
-
-	if signal.algo != nil && len(symbols) > 0 {
-		signal.algorithms.LoadOrStore(symbols[0], signal.algo)
-		signal.algo = nil
-	}
-
-	for _, symbol := range symbols {
-		symbolTrades := tradeBatches[symbol]
-		sort.SliceStable(symbolTrades, func(leftIndex, rightIndex int) bool {
-			left := symbolTrades[leftIndex]
-			right := symbolTrades[rightIndex]
-
-			if left.Timestamp.Equal(right.Timestamp) {
-				return left.TradeID < right.TradeID
-			}
-
-			return left.Timestamp.Before(right.Timestamp)
-		})
-
-		group.Go(func() error {
-			symbolMeasurements := make([]*types.Measurement, 0)
-			algo := signal.algorithm(symbol)
-
-			for _, trade := range symbolTrades {
-				if signal.seenTrade(trade) {
-					continue
-				}
-
-				var askPrice, bidPrice float64
-				var askAt, bidAt time.Time
-				bookReady := false
-				signal.books.Book(trade.Symbol, func(book *spotbook.Book) {
-					ask, bid := book.BestAsk(), book.BestBid()
-
-					if ask == nil || bid == nil || ask.Price == nil || bid.Price == nil {
-						return
-					}
-
-					askPrice = ask.Price.Float64()
-					bidPrice = bid.Price.Float64()
-					askAt = ask.Timestamp
-					bidAt = bid.Timestamp
-					bookReady = true
-				})
-
-				if !bookReady {
-					continue
-				}
-
-				if askAt.After(trade.Timestamp) || bidAt.After(trade.Timestamp) {
-					continue
-				}
-
-				mid := (askPrice + bidPrice) / 2
-
-				if bidPrice <= 0 || askPrice <= bidPrice {
-					continue
-				}
-
-				output, ready, maturity, err := algo.Measure(equation.IgnitionInput{
-					At:     trade.Timestamp,
-					Symbol: trade.Symbol,
-					Last:   trade.Price.Float64(),
-					Volume: trade.Qty,
-					Ask:    askPrice,
-					Bid:    bidPrice,
-				})
-
-				if err != nil {
-					errorsBySymbol.Store(symbol, err)
-					return nil
-				}
-
-				signal.commitTrade(trade)
-
-				measurement := &types.Measurement{
-					ID:       uuid.NewString(),
-					Source:   types.SourcePumpDump,
-					Symbol:   trade.Symbol,
-					At:       trade.Timestamp,
-					Maturity: maturity,
-					Metrics: map[string]types.MetricSample{
-						types.MetricKey(types.MetricBestPrice, types.SideBuy): {
-							Raw:  bidPrice,
-							Unit: types.UnitQuoteCurrency,
-						},
-						types.MetricKey(types.MetricBestPrice, types.SideSell): {
-							Raw:  askPrice,
-							Unit: types.UnitQuoteCurrency,
-						},
-						types.MetricKey(types.MetricMidpoint, types.SideNone): {
-							Raw:  mid,
-							Unit: types.UnitQuoteCurrency,
-						},
-						types.MetricKey(types.MetricTradePrice, types.SideNone): {
-							Raw:  trade.Price.Float64(),
-							Unit: types.UnitQuoteCurrency,
-						},
-						types.MetricKey(types.MetricTradeQuantity, types.SideNone): {
-							Raw:  trade.Qty,
-							Unit: types.UnitBaseCurrency,
-						},
-						types.MetricKey(types.MetricRVOL, types.SideNone): {
-							Raw:        output.RVOL,
-							Normalized: normalizedIgnitionEvidence(types.MetricRVOL, output.RVOL, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricPrecursor, types.SideNone): {
-							Raw:        output.Precursor,
-							Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Precursor, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricSpread, types.SideNone): {
-							Raw:        output.Spread,
-							Normalized: normalizedSpread(output.Spread, mid),
-							Unit:       types.UnitQuoteCurrency,
-						},
-						types.MetricKey(types.MetricCompression, types.SideNone): {
-							Raw:        output.Compression,
-							Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Compression, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricIgnition, types.SideNone): {
-							Raw:        output.Ignition,
-							Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Ignition, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricTrend, types.SideNone): {
-							Raw:        output.Trend,
-							Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Trend, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricExhaustion, types.SideNone): {
-							Raw:        output.Exhaustion,
-							Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Exhaustion, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricStrength, types.SideNone): {
-							Raw:        output.Strength,
-							Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Strength, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricPrecursor, types.SideBuy): {
-							Raw:        output.Buy.Precursor,
-							Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Buy.Precursor, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricCompression, types.SideBuy): {
-							Raw:        output.Buy.Compression,
-							Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Buy.Compression, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricIgnition, types.SideBuy): {
-							Raw:        output.Buy.Ignition,
-							Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Buy.Ignition, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricTrend, types.SideBuy): {
-							Raw:        output.Buy.Trend,
-							Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Buy.Trend, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricExhaustion, types.SideBuy): {
-							Raw:        output.Buy.Exhaustion,
-							Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Buy.Exhaustion, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricStrength, types.SideBuy): {
-							Raw:        output.Buy.Strength,
-							Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Buy.Strength, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricPrecursor, types.SideSell): {
-							Raw:        output.Sell.Precursor,
-							Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Sell.Precursor, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricCompression, types.SideSell): {
-							Raw:        output.Sell.Compression,
-							Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Sell.Compression, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricIgnition, types.SideSell): {
-							Raw:        output.Sell.Ignition,
-							Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Sell.Ignition, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricTrend, types.SideSell): {
-							Raw:        output.Sell.Trend,
-							Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Sell.Trend, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricExhaustion, types.SideSell): {
-							Raw:        output.Sell.Exhaustion,
-							Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Sell.Exhaustion, ready),
-							Unit:       types.UnitDimensionless,
-						},
-						types.MetricKey(types.MetricStrength, types.SideSell): {
-							Raw:        output.Sell.Strength,
-							Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Sell.Strength, ready),
-							Unit:       types.UnitDimensionless,
-						},
-					},
-				}
-				snr, snrReady := types.MeasurementSignalNoiseRatio(
-					types.SourcePumpDump,
-					measurement.Metrics,
-				)
-				snrSample := types.MetricSample{
-					Raw:  snr,
-					Unit: types.UnitDimensionless,
-				}
-
-				if snrReady {
-					snrSample.Normalized = &snr
-				}
-
-				measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
-
-				symbolMeasurements = append(symbolMeasurements, measurement)
-			}
-
-			results.Store(symbol, symbolMeasurements)
-
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"pumpdump: parallel measurement failed",
-			err,
-		))
-	}
-
-	errorsBySymbol.Range(func(key, value any) bool {
-		err := value.(error)
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"pumpdump: failed to measure ignition",
-			err,
-		))
-		return true
-	})
-
-	for _, symbol := range symbols {
-		raw, exists := results.Load(symbol)
-
-		if !exists {
-			continue
+		snrSample := types.MetricSample{
+			Raw:  snr,
+			Unit: types.UnitDimensionless,
 		}
 
-		symbolMeasurements := raw.([]*types.Measurement)
-		measurements = append(measurements, symbolMeasurements...)
-
-		if symbol == types.Focus() {
-			out = append(out, symbolMeasurements...)
+		if snrReady {
+			snrSample.Normalized = &snr
 		}
+
+		measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
+		measurements = append(measurements, measurement)
 	}
 
-	if len(out) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", out))
+	if symbol.Symbol == types.Focus() {
+		utils.Publish(signal.ui, datura.NewMap("measurements", measurements))
 	}
 
 	return measurements
-}
-
-func (signal *Signal) algorithm(symbol string) *equation.Ignition {
-	capacity := signal.capacity
-
-	if capacity <= 0 {
-		capacity = viper.GetViper().GetInt("signals.pumpdump.baselineCapacity")
-	}
-
-	raw, _ := signal.algorithms.LoadOrStore(symbol, equation.NewIgnition(capacity))
-
-	return raw.(*equation.Ignition)
 }
 
 /*
@@ -440,63 +298,6 @@ func normalizedSpread(raw, midpoint float64) *float64 {
 	value := raw / midpoint
 
 	return &value
-}
-
-func validTrade(row kraken.TradeData) bool {
-	price := row.Price.Float64()
-
-	return row.Symbol != "" && !row.Timestamp.IsZero() && price > 0 && row.Qty > 0 &&
-		(row.Side == "buy" || row.Side == "sell")
-}
-
-func (signal *Signal) seenTrade(row kraken.TradeData) bool {
-	if signal.lastTrade == nil {
-		return false
-	}
-
-	raw, exists := signal.lastTrade.Load(row.Symbol)
-
-	if !exists {
-		return false
-	}
-
-	previous := raw.(tradeCursor)
-
-	if row.Timestamp.Before(previous.at) {
-		return true
-	}
-
-	if row.Timestamp.After(previous.at) {
-		return false
-	}
-
-	_, seen := previous.ids[row.TradeID]
-
-	return seen
-}
-
-func (signal *Signal) commitTrade(row kraken.TradeData) {
-	if signal.lastTrade == nil {
-		signal.lastTrade = &sync.Map{}
-	}
-
-	previous := tradeCursor{}
-	raw, exists := signal.lastTrade.Load(row.Symbol)
-
-	if exists {
-		previous = raw.(tradeCursor)
-	}
-
-	if row.Timestamp.After(previous.at) {
-		previous = tradeCursor{at: row.Timestamp, ids: make(map[int64]struct{})}
-	}
-
-	if previous.ids == nil {
-		previous.ids = make(map[int64]struct{})
-	}
-
-	previous.ids[row.TradeID] = struct{}{}
-	signal.lastTrade.Store(row.Symbol, previous)
 }
 
 /*

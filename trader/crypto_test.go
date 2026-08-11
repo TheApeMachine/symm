@@ -741,23 +741,23 @@ func findDecision(
 }
 
 func symbolTickers(thesis *types.Thesis, symbol string) []kraken.TickerData {
-	rowsRaw, found := thesis.Tickers.Load(symbol)
+	stored, found := thesis.Symbols.Load(symbol)
 
 	if !found {
 		return nil
 	}
 
-	return rowsRaw.([]kraken.TickerData)
+	return stored.(*types.Symbol).TickersSnapshot()
 }
 
 func symbolTrades(thesis *types.Thesis, symbol string) []kraken.TradeData {
-	rowsRaw, found := thesis.Trades.Load(symbol)
+	stored, found := thesis.Symbols.Load(symbol)
 
 	if !found {
 		return nil
 	}
 
-	return rowsRaw.([]kraken.TradeData)
+	return stored.(*types.Symbol).TradesSnapshot()
 }
 
 func signalSources() []types.SourceType {

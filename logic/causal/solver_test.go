@@ -57,12 +57,17 @@ func setCausalPrice(
 	})
 }
 
+func causalSymbol(thesis *types.Thesis, symbol string) *types.Symbol {
+	stored, _ := thesis.Symbols.LoadOrStore(symbol, types.NewSymbol(symbol, nil))
+
+	return stored.(*types.Symbol)
+}
+
 func TestUpdate(t *testing.T) {
 	convey.Convey("Given a predictive-coding reading without a forecast", t, func() {
 		solver := NewSolver(nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
-		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
-		symbolState := storedSymbol.(*types.Symbol)
+		symbolState := causalSymbol(thesis, "BTC/USD")
 		symbolState.Resonance.Store("BTC/USD", types.ResonanceReading{
 			Source: types.SourceResonance,
 			Symbol: "BTC/USD",
@@ -86,8 +91,7 @@ func TestUpdate(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := "BTC/USD"
 		firstAt := time.Unix(1, 0)
-		storedSymbol, _ := thesis.Symbols.Load(symbol)
-		symbolState := storedSymbol.(*types.Symbol)
+		symbolState := causalSymbol(thesis, symbol)
 		symbolState.Resonance.Store(symbol, testResonanceReading(
 			thesis, symbol, 0.5, 0.25, []float64{0.1},
 		))
@@ -131,8 +135,7 @@ func TestUpdate(t *testing.T) {
 		solver := NewSolver(nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := "BTC/USD"
-		storedSymbol, _ := thesis.Symbols.Load(symbol)
-		symbolState := storedSymbol.(*types.Symbol)
+		symbolState := causalSymbol(thesis, symbol)
 		baseAt := time.Unix(1, 0)
 		midpoint := 100.0
 		previousEnergy := 0.0

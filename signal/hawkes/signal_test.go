@@ -106,11 +106,11 @@ func TestMeasure(t *testing.T) {
 			})
 		}
 
-		thesis.Trades.Store("BTC/USD", liquid)
-		thesis.Trades.Store("THIN/USD", []kraken.TradeData{
-			{Symbol: "THIN/USD", Side: "buy", Timestamp: start},
-			{Symbol: "THIN/USD", Side: "sell", Timestamp: start.Add(time.Second)},
-		})
+		appendTrades(thesis, liquid...)
+		appendTrades(thesis,
+			kraken.TradeData{Symbol: "THIN/USD", Side: "buy", Timestamp: start},
+			kraken.TradeData{Symbol: "THIN/USD", Side: "sell", Timestamp: start.Add(time.Second)},
+		)
 
 		measurements := signal.Measure(thesis)
 
@@ -151,15 +151,11 @@ func TestMeasure(t *testing.T) {
 		// Ingestion receives the sell first and keeps the stored stream causal.
 		// The sell lands after the last buy in exchange time, which is what makes
 		// the horizon span both marks rather than the buy side alone.
-		thesis.AppendTrade(kraken.TradeData{
-			Symbol: "AAA/USD", Side: "sell", Timestamp: start.Add(2 * time.Second),
-		})
-		thesis.AppendTrade(kraken.TradeData{
-			Symbol: "AAA/USD", Side: "buy", Timestamp: start,
-		})
-		thesis.AppendTrade(kraken.TradeData{
-			Symbol: "AAA/USD", Side: "buy", Timestamp: start.Add(time.Second),
-		})
+		appendTrades(thesis,
+			kraken.TradeData{Symbol: "AAA/USD", Side: "sell", Timestamp: start.Add(2 * time.Second)},
+			kraken.TradeData{Symbol: "AAA/USD", Side: "buy", Timestamp: start},
+			kraken.TradeData{Symbol: "AAA/USD", Side: "buy", Timestamp: start.Add(time.Second)},
+		)
 
 		measurements := signal.Measure(thesis)
 
@@ -192,10 +188,10 @@ func TestMeasure(t *testing.T) {
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 
-		thesis.Trades.Store("BBB/USD", []kraken.TradeData{
-			{Symbol: "BBB/USD", Side: "sell", Timestamp: start},
-			{Symbol: "BBB/USD", Side: "sell", Timestamp: start.Add(time.Second)},
-		})
+		appendTrades(thesis,
+			kraken.TradeData{Symbol: "BBB/USD", Side: "sell", Timestamp: start},
+			kraken.TradeData{Symbol: "BBB/USD", Side: "sell", Timestamp: start.Add(time.Second)},
+		)
 
 		measurements := signal.Measure(thesis)
 
@@ -216,14 +212,12 @@ func TestMeasure(t *testing.T) {
 		start := time.Unix(1_700_006_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 
-		thesis.Trades.Store("AAA/USD", []kraken.TradeData{
-			{Symbol: "AAA/USD", Side: "buy", Timestamp: start},
-			{Symbol: "AAA/USD", Side: "sell", Timestamp: start.Add(time.Second)},
-		})
-		thesis.Trades.Store("BBB/USD", []kraken.TradeData{
-			{Symbol: "BBB/USD", Side: "sell", Timestamp: start},
-			{Symbol: "BBB/USD", Side: "buy", Timestamp: start.Add(time.Second)},
-		})
+		appendTrades(thesis,
+			kraken.TradeData{Symbol: "AAA/USD", Side: "buy", Timestamp: start},
+			kraken.TradeData{Symbol: "AAA/USD", Side: "sell", Timestamp: start.Add(time.Second)},
+			kraken.TradeData{Symbol: "BBB/USD", Side: "sell", Timestamp: start},
+			kraken.TradeData{Symbol: "BBB/USD", Side: "buy", Timestamp: start.Add(time.Second)},
+		)
 
 		measurements := signal.Measure(thesis)
 
@@ -251,6 +245,12 @@ func TestMeasure(t *testing.T) {
 			}(), ShouldBeEmpty)
 		})
 	})
+}
+
+func appendTrades(thesis *types.Thesis, rows ...kraken.TradeData) {
+	for _, row := range rows {
+		thesis.AppendTrade(row)
+	}
 }
 
 func TestSeenTrade(t *testing.T) {
@@ -294,12 +294,12 @@ func BenchmarkMeasure(t *testing.B) {
 			side = "sell"
 		}
 
-		thesis.Trades.Store("BTC/USD", []kraken.TradeData{{
+		appendTrades(thesis, kraken.TradeData{
 			Symbol:    "BTC/USD",
 			TradeID:   int64(iteration + 1),
 			Side:      side,
 			Timestamp: start.Add(time.Duration(iteration) * time.Second),
-		}})
+		})
 		signal.Measure(thesis)
 		iteration++
 	}

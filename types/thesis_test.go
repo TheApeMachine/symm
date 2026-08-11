@@ -50,11 +50,13 @@ func TestThesisMarshalState(t *testing.T) {
 			So(unmarshalErr, ShouldBeNil)
 			So(checkpoint["tick"], ShouldEqual, float64(7))
 			So(checkpoint["equity"], ShouldNotBeNil)
-			So(checkpoint["tickers"], ShouldNotBeEmpty)
-			So(checkpoint["trades"], ShouldNotBeEmpty)
+			So(checkpoint["tickers"], ShouldBeNil)
+			So(checkpoint["trades"], ShouldBeNil)
 			So(checkpoint["measurements"], ShouldNotBeEmpty)
 			symbols := checkpoint["symbols"].(map[string]any)
 			state := symbols["BTC/USD"].(map[string]any)
+			So(state["Tickers"], ShouldNotBeEmpty)
+			So(state["Trades"], ShouldNotBeEmpty)
 			So(state["decisions"], ShouldNotBeEmpty)
 			So(state["graphs"], ShouldNotBeEmpty)
 			So(state["categories"], ShouldNotBeEmpty)
@@ -69,7 +71,6 @@ func TestThesisMarshalState(t *testing.T) {
 func TestThesisAppendMeasurements(t *testing.T) {
 	Convey("Given one ready signal measurement", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		analyzer := make(chan struct{}, 1)
 		measurement := &Measurement{
 			ID: "correlation", Source: SourceCorrelation, Symbol: "BTC/USD",
 		}
@@ -83,7 +84,6 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(incoming, ShouldResemble, []*Measurement{measurement})
 			So(incoming[0], ShouldNotBeNil)
-			So(len(analyzer), ShouldEqual, 0)
 			storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			symbol := storedSymbol.(*Symbol)
@@ -97,29 +97,35 @@ func TestThesisAppendMeasurements(t *testing.T) {
 
 	Convey("Given an empty measurement pass", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		correlation := make(chan struct{}, 1)
-		cvd := make(chan struct{}, 1)
 
 		thesis.AppendMeasurements(SourceCorrelation, nil, false)
 
-		Convey("Then it should not create an indirect notification cycle", func() {
-			So(len(correlation), ShouldEqual, 0)
-			So(len(cvd), ShouldEqual, 0)
+		Convey("Then it should not create source queues or symbols", func() {
+			_, found := thesis.Measurements.Load(SourceCorrelation)
+			So(found, ShouldBeFalse)
+			symbols := 0
+			thesis.Symbols.Range(func(_, _ any) bool {
+				symbols++
+				return true
+			})
+			So(symbols, ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given an empty pass that claims readiness", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		correlation := make(chan struct{}, 1)
-		cvd := make(chan struct{}, 1)
-		categories := make(chan struct{}, 1)
 
 		thesis.AppendMeasurements(SourceCorrelation, nil, true)
 
-		Convey("Then it should keep readiness and downstream work pending", func() {
-			So(len(correlation), ShouldEqual, 0)
-			So(len(cvd), ShouldEqual, 0)
-			So(len(categories), ShouldEqual, 0)
+		Convey("Then it should not advance any symbol state", func() {
+			_, found := thesis.Measurements.Load(SourceCorrelation)
+			So(found, ShouldBeFalse)
+			symbols := 0
+			thesis.Symbols.Range(func(_, _ any) bool {
+				symbols++
+				return true
+			})
+			So(symbols, ShouldEqual, 0)
 		})
 	})
 
@@ -152,7 +158,6 @@ func TestThesisAppendMeasurements(t *testing.T) {
 
 	Convey("Given one symbol measured by every ready signal", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		analyzer := make(chan struct{}, 1)
 		sources := []SourceType{
 			SourceCorrelation,
 			SourceCVD,
@@ -175,11 +180,10 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			if index < len(sources)-1 {
 				stored, _ := thesis.Symbols.Load("BTC/USD")
 				So(stored.(*Symbol).Status, ShouldEqual, READY)
-				So(len(analyzer), ShouldEqual, 0)
 			}
 		}
 
-		Convey("Then the complete cut should lock and notify the analyzer once", func() {
+		Convey("Then the complete cut should lock the symbol and clear pending queues", func() {
 			pending := 0
 			thesis.Measurements.Range(func(_, value any) bool {
 				pending += len(value.([]*Measurement))
@@ -191,13 +195,11 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			symbol := stored.(*Symbol)
 			So(symbol.Status, ShouldEqual, BUSY)
 			So(symbol.Measurements, ShouldHaveLength, len(sources))
-			So(len(analyzer), ShouldEqual, 1)
 		})
 	})
 
 	Convey("Given new measurements while a symbol is busy", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		analyzer := make(chan struct{}, 1)
 		sources := []SourceType{
 			SourceCorrelation, SourceCVD, SourceDepthFlow, SourceExhaustion, SourceHawkes,
 			SourceLeadLag, SourceLiquidity, SourcePumpDump, SourceSentiment, SourceToxicity,
@@ -209,7 +211,6 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			}}, true), ShouldBeNil)
 		}
 
-		<-analyzer
 		pending := &Measurement{
 			ID: "correlation-pending", Source: SourceCorrelation, Symbol: "BTC/USD",
 		}
@@ -217,14 +218,13 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			SourceCorrelation, []*Measurement{pending}, true,
 		), ShouldBeNil)
 
-		Convey("Then it should retain the new row for the next cut without another wake-up", func() {
+		Convey("Then it should retain the new row for the next cut without mutating the active cut", func() {
 			stored, _ := thesis.Symbols.Load("BTC/USD")
 			symbol := stored.(*Symbol)
 			So(symbol.Measurements, ShouldHaveLength, len(sources))
 			queued, found := thesis.Measurements.Load(SourceCorrelation)
 			So(found, ShouldBeTrue)
 			So(queued, ShouldResemble, []*Measurement{pending})
-			So(len(analyzer), ShouldEqual, 0)
 		})
 	})
 
@@ -516,7 +516,7 @@ func TestThesisAppendTicker(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(stored.(*Symbol).TickersSnapshot(), ShouldResemble, []kraken.TickerData{ticker})
-			So(thesis.LastTickerAt, ShouldResemble, ticker.Timestamp)
+			So(stored.(*Symbol).LastTickerAt, ShouldResemble, ticker.Timestamp)
 		})
 	})
 }
@@ -535,7 +535,7 @@ func TestThesisAppendTrade(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(stored.(*Symbol).TradesSnapshot(), ShouldResemble, []kraken.TradeData{trade})
-			So(thesis.LastTradeAt, ShouldResemble, trade.Timestamp)
+			So(stored.(*Symbol).LastTradeAt, ShouldResemble, trade.Timestamp)
 		})
 	})
 }
@@ -578,7 +578,9 @@ func TestThesisMarketTickers(t *testing.T) {
 			So(first[1].Symbol, ShouldEqual, "BTC/USD")
 			So(first[2].Symbol, ShouldEqual, "ETH/USD")
 			So(second, ShouldBeEmpty)
-			So(thesis.LastTickerAt, ShouldResemble, at)
+			stored, found := thesis.Symbols.Load("ETH/USD")
+			So(found, ShouldBeTrue)
+			So(stored.(*Symbol).LastTickerAt, ShouldResemble, at)
 		})
 	})
 
@@ -597,6 +599,27 @@ func TestThesisMarketTickers(t *testing.T) {
 			So(ethRows, ShouldHaveLength, 1)
 			So(bitcoinRows, ShouldHaveLength, 1)
 			So(bitcoinRows[0].Symbol, ShouldEqual, "BTC/USD")
+		})
+	})
+
+	Convey("Given a late older ticker for an already-consumed symbol", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		thesis.AppendTicker(kraken.TickerData{
+			Symbol: "BTC/USD", Timestamp: time.Unix(3, 0).UTC(),
+		})
+		first := thesis.MarketTickers(SourceCorrelation)
+		thesis.AppendTicker(kraken.TickerData{
+			Symbol: "BTC/USD", Timestamp: time.Unix(2, 0).UTC(),
+		})
+		late := thesis.MarketTickers(SourceCorrelation)
+		repeated := thesis.MarketTickers(SourceCorrelation)
+
+		Convey("Then the symbol cursor should admit the late row without replaying consumed rows", func() {
+			So(first, ShouldHaveLength, 1)
+			So(first[0].Timestamp, ShouldResemble, time.Unix(3, 0).UTC())
+			So(late, ShouldHaveLength, 1)
+			So(late[0].Timestamp, ShouldResemble, time.Unix(2, 0).UTC())
+			So(repeated, ShouldBeEmpty)
 		})
 	})
 }
@@ -639,6 +662,27 @@ func TestThesisMarketTrades(t *testing.T) {
 			So(rows[0].TradeID, ShouldEqual, 1)
 			So(rows[1].TradeID, ShouldEqual, 3)
 			So(rows[2].Symbol, ShouldEqual, "ETH/USD")
+			So(repeated, ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given a late older trade for an already-consumed symbol", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol: "BTC/USD", TradeID: 3, Timestamp: time.Unix(3, 0).UTC(),
+		})
+		first := thesis.MarketTrades(SourceHawkes)
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol: "BTC/USD", TradeID: 2, Timestamp: time.Unix(2, 0).UTC(),
+		})
+		late := thesis.MarketTrades(SourceHawkes)
+		repeated := thesis.MarketTrades(SourceHawkes)
+
+		Convey("Then the symbol cursor should admit the late trade without replaying consumed trades", func() {
+			So(first, ShouldHaveLength, 1)
+			So(first[0].TradeID, ShouldEqual, 3)
+			So(late, ShouldHaveLength, 1)
+			So(late[0].TradeID, ShouldEqual, 2)
 			So(repeated, ShouldBeEmpty)
 		})
 	})

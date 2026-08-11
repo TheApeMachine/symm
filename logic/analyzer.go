@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 type Solver interface {
@@ -33,17 +34,18 @@ Strategy package to make Decisions. The final output of the Logic stage is
 the Graph, which should encode everything that has been collected so far.
 */
 type Analyzer struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	status    types.Status
-	tree      *dmt.Tree
-	cognition *cognition.Solver
-	graph     *graph.Solver
-	solvers   []Solver
-	ui        chan []byte
-	binui     chan types.FluidFrame
-	recorder  *audit.Recorder
-	thesis    *types.Thesis
+	ctx          context.Context
+	cancel       context.CancelFunc
+	status       types.Status
+	tree         *dmt.Tree
+	cognition    *cognition.Solver
+	graph        *graph.Solver
+	solvers      []Solver
+	solverGroups [][]Solver
+	ui           chan []byte
+	binui        chan types.FluidFrame
+	recorder     *audit.Recorder
+	thesis       *types.Thesis
 }
 
 /*
@@ -61,23 +63,35 @@ func NewAnalyzer(
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
 
+	categorySolver := category.NewSolver(api, ui, recorder)
+	resonanceSolver := resonance.NewSolver(
+		ctx,
+		ui,
+		recorder,
+		viper.GetFloat64("resonance.learning_rate"),
+	)
+	manifoldSolver := manifold.NewSolver(api, ui, binui, recorder)
+	causalSolver := causal.NewSolver(price, ui, recorder)
+	cognitionSolver := cognition.NewSolver(tree, ui, recorder)
+	graphSolver := graph.NewSolver(ui, recorder)
+
 	analyzer := &Analyzer{
 		ctx:    ctx,
 		cancel: cancel,
 		status: types.READY,
 		tree:   tree,
 		solvers: []Solver{
-			category.NewSolver(api, ui, recorder),
-			resonance.NewSolver(
-				ctx,
-				ui,
-				recorder,
-				viper.GetFloat64("resonance.learning_rate"),
-			),
-			manifold.NewSolver(api, ui, binui, recorder),
-			causal.NewSolver(price, ui, recorder),
-			cognition.NewSolver(tree, ui, recorder),
-			graph.NewSolver(ui, recorder),
+			categorySolver,
+			resonanceSolver,
+			manifoldSolver,
+			causalSolver,
+			cognitionSolver,
+			graphSolver,
+		},
+		solverGroups: [][]Solver{
+			{categorySolver, resonanceSolver, manifoldSolver},
+			{causalSolver, cognitionSolver},
+			{graphSolver},
 		},
 		ui:       ui,
 		binui:    binui,
@@ -89,13 +103,40 @@ func NewAnalyzer(
 }
 
 func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
-	for _, solver := range analyzer.solvers {
-		if err := solver.Update(thesis); err != nil {
-			return errnie.Err(
-				errnie.Internal,
-				"analyzer: solver update failed",
-				err,
-			)
+	ctx := analyzer.ctx
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if len(analyzer.solverGroups) == 0 && len(analyzer.solvers) > 0 {
+		analyzer.solverGroups = [][]Solver{analyzer.solvers}
+	}
+
+	for _, solvers := range analyzer.solverGroups {
+		group, _ := errgroup.WithContext(ctx)
+
+		for _, solver := range solvers {
+			if solver == nil {
+				continue
+			}
+
+			currentSolver := solver
+			group.Go(func() error {
+				if err := currentSolver.Update(thesis); err != nil {
+					return errnie.Err(
+						errnie.Internal,
+						"analyzer: solver update failed",
+						err,
+					)
+				}
+
+				return nil
+			})
+		}
+
+		if err := group.Wait(); err != nil {
+			return err
 		}
 	}
 

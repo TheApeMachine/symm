@@ -71,11 +71,29 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 
 	for _, signal := range measurements.signals {
 		group.Go(func() error {
-			return thesis.AppendMeasurements(
-				signal.Type(),
-				signal.Measure(thesis),
-				false,
-			)
+			symbolGroup, _ := errgroup.WithContext(measurements.ctx)
+
+			thesis.Symbols.Range(func(key, value any) bool {
+				symbolGroup.Go(func() error {
+					symbol, ok := value.(*types.Symbol)
+
+					if !ok {
+						return errnie.Err(
+							errnie.Internal,
+							"measurements: symbol type assertion failed",
+							nil,
+						)
+					}
+
+					symbol.AppendMeasurement(signal.Measure(symbol))
+
+					return nil
+				})
+
+				return true
+			})
+
+			return nil
 		})
 	}
 

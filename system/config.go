@@ -17,6 +17,7 @@ type Config struct {
 	*Manifold
 	*Risk
 	Planner *PlannerConfig
+	*PumpDump
 }
 
 func NewConfig() *Config {
@@ -25,6 +26,7 @@ func NewConfig() *Config {
 		Manifold:  NewManifold(),
 		Risk:      NewRisk(),
 		Planner:   NewPlannerConfig(),
+		PumpDump:  NewPumpDump(),
 	}
 }
 
