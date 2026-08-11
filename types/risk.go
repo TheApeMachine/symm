@@ -3,17 +3,8 @@ package types
 import (
 	"math"
 
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
-
-/*
-riskScale is the working precision for stop geometry. Every distance here is a
-per-unit price, and the operands arrive at whatever precision the venue quoted
-them at, so each one is widened before arithmetic: decimal math keeps the
-receiver's scale, and a price the venue reported without decimals would round
-an entire noise band to zero.
-*/
-const riskScale = 12
 
 /*
 RiskPlan is the geometry one lot is entered under: how far price is allowed to
@@ -259,7 +250,7 @@ func NewRiskPlan(inputs RiskInputs) RiskPlan {
 	tick := scaled(inputs.TickSize)
 
 	if tick == nil || tick.Sign() <= 0 {
-		tick = reference.Mul(decimal.NewFromFloat64(1e-8))
+		return RiskPlan{}
 	}
 
 	noiseBand := sum(scaled(inputs.Spread), scaled(inputs.Impact))
@@ -272,13 +263,13 @@ func NewRiskPlan(inputs RiskInputs) RiskPlan {
 		noiseBand = minimumBand
 	}
 
-	volatilityBand := decimal.NewFromInt64(0).SetScale(riskScale)
+	volatilityBand := decimal.NewFromInt64(0)
 
 	if !math.IsNaN(inputs.ReturnRiskFraction) &&
 		!math.IsInf(inputs.ReturnRiskFraction, 0) &&
 		inputs.ReturnRiskFraction > 0 {
 		volatilityBand = reference.Mul(
-			decimal.NewFromFloat64(inputs.ReturnRiskFraction).SetScale(riskScale),
+			decimal.NewFromFloat64(inputs.ReturnRiskFraction),
 		)
 	}
 
@@ -352,18 +343,18 @@ func (plan RiskPlan) LossPerUnit(entryPrice *decimal.Decimal) *decimal.Decimal {
 		return nil
 	}
 
-	entry := entryPrice.SetScale(riskScale)
+	entry := scaled(entryPrice)
 	floor := floorToTick(entry.Sub(plan.RiskDistance), plan.TickSize)
 
 	if floor == nil || floor.Sign() <= 0 {
 		return nil
 	}
 
-	proceeds := floor
+	proceeds := scaled(floor)
 
 	if rate := plan.ExitFeeRate; rate != nil && rate.Sign() > 0 {
-		proceeds = floor.Mul(
-			decimal.NewFromInt64(1).SetScale(riskScale).Sub(rate),
+		proceeds = proceeds.Mul(
+			decimal.NewFromInt64(1).Sub(rate),
 		)
 	}
 
@@ -404,7 +395,7 @@ func (plan RiskPlan) MaxQuantity(entryPrice *decimal.Decimal) *decimal.Decimal {
 		return nil
 	}
 
-	return plan.MaxLoss.SetScale(riskScale).Div(lossPerUnit)
+	return scaled(plan.MaxLoss).Div(lossPerUnit)
 }
 
 /*
@@ -415,7 +406,7 @@ func scaled(value *decimal.Decimal) *decimal.Decimal {
 		return nil
 	}
 
-	return value.SetScale(riskScale)
+	return decimal.NewFromInt64(0).Add(value)
 }
 
 /*
@@ -426,9 +417,7 @@ func multiply(value *decimal.Decimal, factor float64) *decimal.Decimal {
 		return nil
 	}
 
-	return value.SetScale(riskScale).Mul(
-		decimal.NewFromFloat64(factor).SetScale(riskScale),
-	)
+	return scaled(value).Mul(decimal.NewFromFloat64(factor))
 }
 
 /*
@@ -442,7 +431,7 @@ func sum(left, right *decimal.Decimal) *decimal.Decimal {
 	case right == nil:
 		return left
 	default:
-		return left.SetScale(riskScale).Add(right)
+		return scaled(left).Add(right)
 	}
 }
 
@@ -479,13 +468,8 @@ func ceilToTick(price, tick *decimal.Decimal) *decimal.Decimal {
 		return price
 	}
 
-	ticks := decimal.ExactDivFloor(price, tick, 0)
-
-	if ticks == nil {
-		return price
-	}
-
-	rounded := ticks.SetScale(riskScale).Mul(tick)
+	ticks := scaled(price).Div(tick).Int64()
+	rounded := tick.Mul(decimal.NewFromInt64(ticks))
 
 	if rounded.Cmp(price) < 0 {
 		rounded = rounded.Add(tick)
@@ -507,11 +491,7 @@ func floorToTick(price, tick *decimal.Decimal) *decimal.Decimal {
 		return price
 	}
 
-	ticks := decimal.ExactDivFloor(price, tick, 0)
+	ticks := scaled(price).Div(tick).Int64()
 
-	if ticks == nil {
-		return price
-	}
-
-	return ticks.SetScale(riskScale).Mul(tick)
+	return tick.Mul(decimal.NewFromInt64(ticks))
 }

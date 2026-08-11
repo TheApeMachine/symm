@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
@@ -20,8 +20,10 @@ func TestMeasure(t *testing.T) {
 	Convey("Given independent depth-flow symbols without a ready book", t, func() {
 		signal := &Signal{ctx: context.Background(), books: emptyBookSource{}}
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Tickers.Store("AAA/USD", []kraken.TickerData{{Symbol: "AAA/USD"}})
-		thesis.Tickers.Store("BBB/USD", []kraken.TickerData{{Symbol: "BBB/USD"}})
+		appendTickers(thesis,
+			kraken.TickerData{Symbol: "AAA/USD"},
+			kraken.TickerData{Symbol: "BBB/USD"},
+		)
 
 		Reset(func() {
 			signal.Close()
@@ -32,6 +34,12 @@ func TestMeasure(t *testing.T) {
 			So(signal.Measure(thesis), ShouldBeEmpty)
 		})
 	})
+}
+
+func appendTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
+	for _, row := range rows {
+		thesis.AppendTicker(row)
+	}
 }
 
 type emptyBookSource struct{}

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
-	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"

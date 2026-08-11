@@ -3,7 +3,7 @@ package broker
 import (
 	"fmt"
 
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -155,10 +155,11 @@ func (price *Price) WithFee(
 		return nil
 	}
 
-	feeAmount := decimal.ExactMul(amount, decimal.ExactDiv(
-		fee.Fee, decimal.NewFromInt64(100),
-	))
-	amount = amount.SetScale(max(amount.GetScale(), feeAmount.GetScale()))
+	amount = decimal.NewFromInt64(0).Add(amount)
+	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
+		decimal.NewFromInt64(100),
+	)
+	feeAmount := amount.Mul(feeRate)
 
 	switch direction {
 	case BUY:

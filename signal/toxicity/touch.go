@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )

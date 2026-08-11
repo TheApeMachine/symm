@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -56,11 +56,11 @@ func TestMeasure(t *testing.T) {
 			ticker("CCC/USD", 98, start.Add(2*time.Second)),
 		}
 
-		thesis.Tickers = tickerMap(firstLeg)
+		appendTickers(thesis, firstLeg...)
 		So(signal.Measure(thesis), ShouldHaveLength, 3)
-		thesis.Tickers = tickerMap(secondLeg)
+		appendTickers(thesis, secondLeg...)
 		So(signal.Measure(thesis), ShouldHaveLength, 3)
-		thesis.Tickers = tickerMap(thirdLeg)
+		appendTickers(thesis, thirdLeg...)
 		measurements := signal.Measure(thesis)
 
 		Convey("It should use consecutive log returns and signed breadth", func() {
@@ -103,15 +103,15 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
 		thesis := types.NewThesis(t.Context(), nil)
 		start := time.Unix(1_700_000_100, 0).UTC()
-		thesis.Tickers = tickerMap([]kraken.TickerData{
+		appendTickers(thesis,
 			ticker("AAA/USD", 100, start),
 			ticker("BBB/USD", 100, start),
-		})
+		)
 		So(signal.Measure(thesis), ShouldHaveLength, 2)
-		thesis.Tickers = tickerMap([]kraken.TickerData{
+		appendTickers(thesis,
 			ticker("AAA/USD", 100, start.Add(time.Second)),
 			ticker("BBB/USD", 100, start.Add(time.Second)),
-		})
+		)
 		measurements := signal.Measure(thesis)
 
 		Convey("It should leave the scale-dependent return unnormalized", func() {
@@ -227,14 +227,10 @@ func TestNormalizedSentimentMetric(t *testing.T) {
 	})
 }
 
-func tickerMap(rows []kraken.TickerData) *sync.Map {
-	values := &sync.Map{}
-
+func appendTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		values.Store(row.Symbol, []kraken.TickerData{row})
+		thesis.AppendTicker(row)
 	}
-
-	return values
 }
 
 func BenchmarkSentimentStatistics(b *testing.B) {

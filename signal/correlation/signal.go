@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -61,22 +60,7 @@ func (signal *Signal) Type() types.SourceType {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers := make([]kraken.TickerData, 0)
-	thesis.Tickers.Range(func(key, value any) bool {
-		symbol := key.(string)
-		stored := value.([]kraken.TickerData)
-		latestAt, _, found := signal.section.Latest(symbol)
-
-		for _, ticker := range stored {
-			if found && !ticker.Timestamp.After(latestAt) {
-				continue
-			}
-
-			tickers = append(tickers, ticker)
-		}
-
-		return true
-	})
+	tickers := thesis.MarketTickers(types.SourceCorrelation)
 
 	if len(tickers) == 0 {
 		return nil

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -24,6 +24,7 @@ message to the positions it owns so closed lots leave no abandoned fan-out
 subscriber behind.
 */
 type Desk struct {
+	*PositionStore
 	ctx           context.Context
 	cancel        context.CancelFunc
 	status        types.Status
@@ -35,10 +36,8 @@ type Desk struct {
 	balance       *Balance
 	thesis        *types.Thesis
 	recorder      *audit.Recorder
-	store         *PositionStore
 	recovery      *Recovery
 	positions     *sync.Map
-	positionsMu   sync.Mutex
 	maxPositions  int
 	maxReserved   int
 }
@@ -71,16 +70,16 @@ func NewDesk(
 			"ticker":     api.Subscribe("ticker", types.NewSubscription[any]()),
 			"executions": api.Subscribe("executions", types.NewSubscription[any]()),
 		},
-		ui:           ui,
-		instrument:   instrument,
-		price:        price,
-		balance:      balance,
-		thesis:       thesis,
-		recorder:     recorder,
-		store:        store,
-		positions:    &sync.Map{},
-		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
+		ui:            ui,
+		instrument:    instrument,
+		price:         price,
+		balance:       balance,
+		thesis:        thesis,
+		recorder:      recorder,
+		PositionStore: store,
+		positions:     &sync.Map{},
+		maxPositions:  viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:   viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
 	desk.recovery = NewRecovery(
@@ -336,20 +335,17 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		desk.positionsMu.Lock()
 		found, loaded := desk.positions.Load(decision.Symbol)
 
 		if loaded {
 			position, valid := found.(*Position)
 
 			if valid && position != nil && position.Status != types.CLOSED {
-				desk.positionsMu.Unlock()
 				return nil
 			}
 		}
 
 		if desk.OpenSlots(decision.Opportunity) <= 0 {
-			desk.positionsMu.Unlock()
 			return errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"desk: position capacity exhausted for requested allocation",
@@ -364,7 +360,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		)
 
 		if err != nil {
-			desk.positionsMu.Unlock()
 			return errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"desk: entry is no longer executable",
@@ -373,7 +368,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		}
 
 		if economics.NetReturn.Sign() <= 0 {
-			desk.positionsMu.Unlock()
 			return errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"desk: forecast no longer clears current spread and taker fees",
@@ -395,12 +389,11 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.price,
 			desk.balance,
 			desk.recorder,
-			desk.store,
+			desk.PositionStore,
 			desk.instrument.Pair(decision.Symbol),
 			decision,
 		)
 		desk.positions.Store(decision.Symbol, position)
-		desk.positionsMu.Unlock()
 
 		_, err = position.Enter()
 

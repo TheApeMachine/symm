@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/callback"
+	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/callback"
-	sdkkraken "github.com/theapemachine/api-go/v2/pkg/kraken"
 )
 
 func TestFixtureResponderSubscribe(t *testing.T) {

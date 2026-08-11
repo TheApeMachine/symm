@@ -6,8 +6,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 )
 
 func TestNewStoploss(t *testing.T) {
@@ -108,7 +108,7 @@ func TestNewStoploss(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(stoploss.Floor.Cmp(stoploss.Peak), ShouldBeLessThan, 0)
-			So(stoploss.Peak.Sub(stoploss.Floor).Cmp(
+			So(scaled(stoploss.Peak).Sub(stoploss.Floor).Cmp(
 				decimal.NewFromFloat64(0.02),
 			), ShouldBeGreaterThanOrEqualTo, 0)
 		})
@@ -212,7 +212,7 @@ func TestStoplossUpdate(t *testing.T) {
 			stoploss.Update(stoploss.ArmAt)
 			stoploss.Update(decimal.NewFromFloat64(110))
 			expected := floorToTick(
-				decimal.NewFromFloat64(110).SetScale(riskScale).Sub(
+				scaled(decimal.NewFromFloat64(110)).Sub(
 					stoploss.trailDistance,
 				),
 				stoploss.tickSize,

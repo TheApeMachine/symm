@@ -1,14 +1,70 @@
 package types
 
 import (
+	"encoding/json"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
+
+func TestThesisMarshalState(t *testing.T) {
+	Convey("Given a thesis carrying raw, measured, evaluated, and decision state", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		thesis.Tick = 7
+		thesis.AppendTicker(kraken.TickerData{
+			Symbol: "BTC/USD", Timestamp: time.Unix(1, 0),
+		})
+		thesis.AppendTrade(kraken.TradeData{
+			Symbol: "BTC/USD", TradeID: 9, Timestamp: time.Unix(2, 0),
+		})
+		So(thesis.AppendEquity(kraken.TradeBalanceResult{
+			Equity: decimal.NewFromInt64(200),
+		}), ShouldBeNil)
+		measurement := &Measurement{
+			ID: "pump", Source: SourcePumpDump, Symbol: "BTC/USD", At: time.Unix(3, 0),
+		}
+		So(thesis.AppendMeasurements(
+			SourcePumpDump, []*Measurement{measurement}, true,
+		), ShouldBeNil)
+		stored, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := stored.(*Symbol)
+		decision := NewDecision(ActionEnter, "BTC/USD")
+		symbol.Decisions.Store("BTC/USD", decision)
+		symbol.Graphs.Store("market_graph", map[string]any{"ready": true})
+		symbol.Categories.Store("BTC/USD", []Category{{Symbol: "BTC/USD"}})
+		symbol.Phase.Store("BTC/USD", PhaseReading{Symbol: "BTC/USD"})
+		symbol.Cognition.Store("BTC/USD", Cognition{Symbol: "BTC/USD"})
+		symbol.Resonance.Store("BTC/USD", ResonanceReading{Symbol: "BTC/USD"})
+		symbol.Causal.Store("BTC/USD", map[string]any{"precision": 0.5})
+
+		state, err := thesis.MarshalState()
+		var checkpoint map[string]any
+		unmarshalErr := json.Unmarshal(state, &checkpoint)
+
+		Convey("It should materialize every state family in one JSON document", func() {
+			So(err, ShouldBeNil)
+			So(unmarshalErr, ShouldBeNil)
+			So(checkpoint["tick"], ShouldEqual, float64(7))
+			So(checkpoint["equity"], ShouldNotBeNil)
+			So(checkpoint["tickers"], ShouldNotBeEmpty)
+			So(checkpoint["trades"], ShouldNotBeEmpty)
+			So(checkpoint["measurements"], ShouldNotBeEmpty)
+			symbols := checkpoint["symbols"].(map[string]any)
+			state := symbols["BTC/USD"].(map[string]any)
+			So(state["decisions"], ShouldNotBeEmpty)
+			So(state["graphs"], ShouldNotBeEmpty)
+			So(state["categories"], ShouldNotBeEmpty)
+			So(state["phase"], ShouldNotBeEmpty)
+			So(state["cognition"], ShouldNotBeEmpty)
+			So(state["resonance"], ShouldNotBeEmpty)
+			So(state["causal"], ShouldNotBeEmpty)
+		})
+	})
+}
 
 func TestThesisAppendMeasurements(t *testing.T) {
 	Convey("Given one ready signal measurement", t, func() {
@@ -244,7 +300,8 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		}
 
 		thesis.AppendTrade(trade)
-		So(thesis.MarketTrades(SourceCVD), ShouldHaveLength, 1)
+		trades := thesis.MarketTrades(SourceCVD)
+		So(trades, ShouldHaveLength, 1)
 		So(thesis.AppendMeasurements(
 			SourceCVD, []*Measurement{measurement}, false,
 		), ShouldBeNil)
@@ -455,10 +512,10 @@ func TestThesisAppendTicker(t *testing.T) {
 		thesis.AppendTicker(ticker)
 
 		Convey("Then it should retain the ticker and its observation time", func() {
-			stored, found := thesis.Tickers.Load("BTC/USD")
+			stored, found := thesis.Symbols.Load("BTC/USD")
 
 			So(found, ShouldBeTrue)
-			So(stored, ShouldResemble, []kraken.TickerData{ticker})
+			So(stored.(*Symbol).TickersSnapshot(), ShouldResemble, []kraken.TickerData{ticker})
 			So(thesis.LastTickerAt, ShouldResemble, ticker.Timestamp)
 		})
 	})
@@ -474,10 +531,10 @@ func TestThesisAppendTrade(t *testing.T) {
 		thesis.AppendTrade(trade)
 
 		Convey("Then it should retain the trade and its observation time", func() {
-			stored, found := thesis.Trades.Load("BTC/USD")
+			stored, found := thesis.Symbols.Load("BTC/USD")
 
 			So(found, ShouldBeTrue)
-			So(stored, ShouldResemble, []kraken.TradeData{trade})
+			So(stored.(*Symbol).TradesSnapshot(), ShouldResemble, []kraken.TradeData{trade})
 			So(thesis.LastTradeAt, ShouldResemble, trade.Timestamp)
 		})
 	})
@@ -499,9 +556,47 @@ func TestThesisMarketTickers(t *testing.T) {
 
 		Convey("Then each signal should advance only its own cache cursor", func() {
 			So(correlation, ShouldHaveLength, 1)
-			So(correlationNext, ShouldHaveLength, 2)
-			So(correlationNext[1].Timestamp, ShouldResemble, time.Unix(2, 0))
+			So(correlationNext, ShouldHaveLength, 1)
+			So(correlationNext[0].Timestamp, ShouldResemble, time.Unix(2, 0))
 			So(cvd, ShouldHaveLength, 2)
+		})
+	})
+
+	Convey("Given interleaved symbols with equal and stale event times", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		at := time.Unix(10, 0).UTC()
+		thesis.AppendTicker(kraken.TickerData{Symbol: "ETH/USD", Timestamp: at})
+		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: at})
+		thesis.AppendTicker(kraken.TickerData{Symbol: "ETH/USD", Timestamp: at.Add(-time.Second)})
+
+		first := thesis.MarketTickers(SourceCorrelation)
+		second := thesis.MarketTickers(SourceCorrelation)
+
+		Convey("Then every arrival should be returned once in deterministic event-time order", func() {
+			So(first, ShouldHaveLength, 3)
+			So(first[0].Timestamp, ShouldResemble, at.Add(-time.Second))
+			So(first[1].Symbol, ShouldEqual, "BTC/USD")
+			So(first[2].Symbol, ShouldEqual, "ETH/USD")
+			So(second, ShouldBeEmpty)
+			So(thesis.LastTickerAt, ShouldResemble, at)
+		})
+	})
+
+	Convey("Given one symbol lagging behind another symbol's latest event", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		thesis.AppendTicker(kraken.TickerData{
+			Symbol: "ETH/USD", Timestamp: time.Unix(3, 0).UTC(),
+		})
+		ethRows := thesis.MarketTickers(SourceCorrelation)
+		thesis.AppendTicker(kraken.TickerData{
+			Symbol: "BTC/USD", Timestamp: time.Unix(2, 0).UTC(),
+		})
+		bitcoinRows := thesis.MarketTickers(SourceCorrelation)
+
+		Convey("Then the per-symbol cursor should not hide the older new symbol event", func() {
+			So(ethRows, ShouldHaveLength, 1)
+			So(bitcoinRows, ShouldHaveLength, 1)
+			So(bitcoinRows[0].Symbol, ShouldEqual, "BTC/USD")
 		})
 	})
 }
@@ -522,9 +617,29 @@ func TestThesisMarketTrades(t *testing.T) {
 
 		Convey("Then each signal should advance only its own cache cursor", func() {
 			So(cvd, ShouldHaveLength, 1)
-			So(cvdNext, ShouldHaveLength, 2)
-			So(cvdNext[1].TradeID, ShouldEqual, 2)
+			So(cvdNext, ShouldHaveLength, 1)
+			So(cvdNext[0].TradeID, ShouldEqual, 2)
 			So(hawkes, ShouldHaveLength, 2)
+		})
+	})
+
+	Convey("Given equal-time trades across independent symbol streams", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		at := time.Unix(10, 0).UTC()
+		thesis.AppendTrade(kraken.TradeData{Symbol: "ETH/USD", TradeID: 2, Timestamp: at})
+		thesis.AppendTrade(kraken.TradeData{Symbol: "BTC/USD", TradeID: 3, Timestamp: at})
+		thesis.AppendTrade(kraken.TradeData{Symbol: "BTC/USD", TradeID: 1, Timestamp: at})
+
+		rows := thesis.MarketTrades(SourceHawkes)
+		repeated := thesis.MarketTrades(SourceHawkes)
+
+		Convey("Then symbol and venue trade identity should define stable exact-once order", func() {
+			So(rows, ShouldHaveLength, 3)
+			So(rows[0].Symbol, ShouldEqual, "BTC/USD")
+			So(rows[0].TradeID, ShouldEqual, 1)
+			So(rows[1].TradeID, ShouldEqual, 3)
+			So(rows[2].Symbol, ShouldEqual, "ETH/USD")
+			So(repeated, ShouldBeEmpty)
 		})
 	})
 }
@@ -577,7 +692,8 @@ func TestThesisReset(t *testing.T) {
 			Symbol: "BTC/USD", TradeID: 1, Timestamp: time.Unix(1, 0),
 		}
 		thesis.AppendTrade(consumed)
-		So(thesis.MarketTrades(SourceToxicity), ShouldHaveLength, 1)
+		initial := thesis.MarketTrades(SourceToxicity)
+		So(initial, ShouldHaveLength, 1)
 		thesis.AppendMeasurements(SourceToxicity, measurements, false)
 		symbol.AddMeasurement(measurements[0])
 		symbol.Categories.Store("BTC/USD", []Category{{Symbol: "BTC/USD"}})

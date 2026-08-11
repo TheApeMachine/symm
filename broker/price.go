@@ -3,9 +3,9 @@ package broker
 import (
 	"sync"
 
-	"github.com/theapemachine/api-go/v2/pkg/book"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -105,7 +105,7 @@ func (price *Price) PnL(
 	}
 
 	return price.ExitValue(pair, holding).Sub(
-		decimal.ExactMul(holding.EntryPrice, holding.Qty),
+		decimal.NewFromInt64(0).Add(holding.EntryPrice).Mul(holding.Qty),
 	).Sub(holding.EntryFee)
 }
 
@@ -128,7 +128,7 @@ func (price *Price) ExitValue(
 
 	return price.WithFee(
 		pair.Symbol,
-		decimal.ExactMul(tick.Bid, holding.Qty),
+		decimal.NewFromInt64(0).Add(tick.Bid).Mul(holding.Qty),
 		SELL,
 	)
 }
@@ -170,7 +170,9 @@ func (price *Price) WithFriction(
 				fillQty = remaining
 			}
 
-			bookGross = bookGross.Add(decimal.ExactMul(bid.Price, fillQty))
+			bookGross = bookGross.Add(
+				decimal.NewFromInt64(0).Add(bid.Price).Mul(fillQty),
+			)
 
 			remaining = remaining.Sub(fillQty)
 		}
@@ -187,7 +189,7 @@ func (price *Price) WithFriction(
 
 		bestBidNet := price.WithFee(
 			pair.Symbol,
-			decimal.ExactMul(tick.Bid, holding.Qty),
+			decimal.NewFromInt64(0).Add(tick.Bid).Mul(holding.Qty),
 			SELL,
 		)
 
@@ -223,12 +225,10 @@ func (price *Price) ReturnPct(
 		return 0
 	}
 
-	entryGross := decimal.ExactMul(
-		holding.EntryPrice,
+	entryGross := decimal.NewFromInt64(0).Add(holding.EntryPrice).Mul(
 		holding.Qty,
 	)
-	entryScale := max(entryGross.GetScale(), holding.EntryFee.GetScale())
-	entryValue := entryGross.SetScale(entryScale).Add(holding.EntryFee)
+	entryValue := entryGross.Add(holding.EntryFee)
 
 	zero := decimal.NewFromInt64(0)
 
@@ -242,8 +242,7 @@ func (price *Price) ReturnPct(
 		return 0
 	}
 
-	return decimal.ExactMul(
-		decimal.ExactDiv(pnl, entryValue),
+	return decimal.NewFromInt64(0).Add(pnl).Div(entryValue).Mul(
 		decimal.NewFromInt64(100),
 	).Float64()
 }
@@ -285,7 +284,7 @@ func (price *Price) Quantity(
 
 	out, err := price.normalizer.FormatSize(
 		symbol,
-		decimal.ExactDiv(notional, askWithFee),
+		decimal.NewFromInt64(0).Add(notional).Div(askWithFee),
 	)
 
 	if err != nil {

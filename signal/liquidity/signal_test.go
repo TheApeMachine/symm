@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -62,10 +62,10 @@ func TestMeasure(t *testing.T) {
 			ticker("PEER-C/USD", 101, 14, 41, start.Add(time.Second)),
 		}
 
-		thesis.Tickers = tickerMap(firstLeg)
+		appendTickers(thesis, firstLeg...)
 		firstMeasurements := signal.Measure(thesis)
 		So(firstMeasurements, ShouldHaveLength, 4)
-		thesis.Tickers = tickerMap(secondLeg)
+		appendTickers(thesis, secondLeg...)
 		measurements := signal.Measure(thesis)
 
 		Convey("It should normalize from the first complete cohort", func() {
@@ -125,24 +125,24 @@ func TestMeasure(t *testing.T) {
 
 		for leg := range 2 {
 			at := start.Add(time.Duration(leg) * time.Second)
-			thesis.Tickers = tickerMap([]kraken.TickerData{
+			appendTickers(thesis,
 				ticker("NO-VOLUME/USD", 100, 2, 0, at),
 				ticker("PEER-A/USD", 100, 4, 20, at),
 				ticker("PEER-B/USD", 100, 6, 30, at),
 				ticker("PEER-C/USD", 100, 8, 40, at),
-			})
+			)
 			_ = signal.Measure(thesis)
 		}
 
 		measurements := signal.Measure(thesis)
 		So(measurements, ShouldBeEmpty)
 		at := start.Add(2 * time.Second)
-		thesis.Tickers = tickerMap([]kraken.TickerData{
+		appendTickers(thesis,
 			ticker("NO-VOLUME/USD", 100, 2, 0, at),
 			ticker("PEER-A/USD", 100, 4, 20, at),
 			ticker("PEER-B/USD", 100, 6, 30, at),
 			ticker("PEER-C/USD", 100, 8, 40, at),
-		})
+		)
 		measurements = signal.Measure(thesis)
 
 		Convey("It should keep depth usable while turnover normalization stays absent", func() {
@@ -251,14 +251,10 @@ func TestLeaveOneOutLiquidity(t *testing.T) {
 	})
 }
 
-func tickerMap(rows []kraken.TickerData) *sync.Map {
-	values := &sync.Map{}
-
+func appendTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		values.Store(row.Symbol, []kraken.TickerData{row})
+		thesis.AppendTicker(row)
 	}
-
-	return values
 }
 
 func BenchmarkMeasure(b *testing.B) {
@@ -270,11 +266,11 @@ func BenchmarkMeasure(b *testing.B) {
 
 	for index := range b.N {
 		at := start.Add(time.Duration(index) * time.Second)
-		thesis.Tickers = tickerMap([]kraken.TickerData{
+		appendTickers(thesis,
 			ticker("AAA/USD", 100, 2, 10, at),
 			ticker("BBB/USD", 100, 4, 20, at),
 			ticker("CCC/USD", 100, 6, 30, at),
-		})
+		)
 		_ = signal.Measure(thesis)
 	}
 }

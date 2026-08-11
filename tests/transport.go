@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/api-go/v2/pkg/spot"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/tests/fixtures/tradevolume"
 	testtypes "github.com/theapemachine/symm/tests/types"

@@ -31,12 +31,14 @@ func TestUpdate(t *testing.T) {
 				},
 			},
 		})
+		_, revision, _ := bitcoin.MeasurementState()
 		bitcoin.Categories.Store("BTC/USD", []types.Category{{
-			Symbol:     "BTC/USD",
-			Type:       types.CategoryAggressiveDrive,
-			Confidence: 0.6,
-			Strength:   drive,
-			Supporting: []string{"cvd:drive"},
+			Symbol:           "BTC/USD",
+			Type:             types.CategoryAggressiveDrive,
+			EvidenceRevision: revision,
+			Confidence:       0.6,
+			Strength:         drive,
+			Supporting:       []string{"cvd:drive"},
 		}})
 		thesis.Symbols.Store("BTC/USD", bitcoin)
 		thesis.Symbols.Store("ETH/USD", types.NewSymbol("ETH/USD", nil))
@@ -84,10 +86,11 @@ func TestUpdate(t *testing.T) {
 					},
 				},
 			})
+			_, revision, _ := symbol.MeasurementState()
 
 			symbol.Categories.Store(symbolName, []types.Category{{
 				Symbol: symbolName, Type: types.CategoryAggressiveDrive,
-				Strength: drive, Confidence: 0.8,
+				EvidenceRevision: revision, Strength: drive, Confidence: 0.8,
 				Supporting: []string{"cvd:drive"},
 			}})
 

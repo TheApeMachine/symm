@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -98,12 +98,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return true
 	})
 
-	thesis.Trades.Range(func(key, _ any) bool {
-		if symbol, ok := key.(string); ok {
+	for _, symbol := range thesis.TradeSymbols() {
+		if symbol != "" {
 			symbolSet[symbol] = struct{}{}
 		}
-		return true
-	})
+	}
 	signal.touches.Range(func(key, _ any) bool {
 		symbolSet[key.(string)] = struct{}{}
 		return true
@@ -156,8 +155,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				return nil
 			}
 
-			stored, _ := thesis.Trades.Load(symbol)
-			trades, _ := stored.([]kraken.TradeData)
+			trades := thesis.TradesSnapshot(symbol)
 
 			bracketed := bracketedTrades(
 				trades,

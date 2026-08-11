@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -46,10 +45,9 @@ func NewSolver(
 	initialAlpha float64,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
-	config := system.Cfg.Snapshot()
 
-	if initialAlpha == 0 && config != nil && config.Resonance != nil {
-		initialAlpha = config.Resonance.LearningRate
+	if initialAlpha == 0 && system.Cfg != nil && system.Cfg.Resonance != nil {
+		initialAlpha = system.Cfg.Resonance.LearningRate
 	}
 
 	return &Solver{
@@ -213,12 +211,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			midpoint := 0.0
-			storedTickers, tickerReady := thesis.Tickers.Load(symbolName)
+			latest, tickerReady := thesis.LatestTicker(symbolName)
 
 			if tickerReady {
-				tickers := storedTickers.([]kraken.TickerData)
-				latest := tickers[len(tickers)-1]
-
 				if latest.Bid != nil && latest.Ask != nil && latest.Bid.Sign() > 0 && latest.Ask.Sign() > 0 {
 					midpoint = (latest.Bid.Float64() + latest.Ask.Float64()) / 2
 				}

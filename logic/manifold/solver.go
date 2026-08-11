@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
-	mgrbook "github.com/theapemachine/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/geometry"
@@ -300,13 +300,11 @@ func (solver *Solver) Step(
 	at time.Time,
 	particles []pfluid.Particle,
 ) error {
-	config := system.Cfg.Snapshot()
-
-	if config == nil || config.Manifold == nil ||
-		config.Manifold.MinSteps <= 0 ||
-		config.Manifold.MaxSteps < config.Manifold.MinSteps ||
-		config.Manifold.RelaxationSteps < config.Manifold.MinSteps ||
-		config.Manifold.RelaxationSteps > config.Manifold.MaxSteps {
+	if system.Cfg == nil || system.Cfg.Manifold == nil ||
+		system.Cfg.Manifold.MinSteps <= 0 ||
+		system.Cfg.Manifold.MaxSteps < system.Cfg.Manifold.MinSteps ||
+		system.Cfg.Manifold.RelaxationSteps < system.Cfg.Manifold.MinSteps ||
+		system.Cfg.Manifold.RelaxationSteps > system.Cfg.Manifold.MaxSteps {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"manifold: regulated relaxation step count must be within its configured bounds",
@@ -314,7 +312,7 @@ func (solver *Solver) Step(
 		))
 	}
 
-	relaxationSteps := config.Manifold.RelaxationSteps
+	relaxationSteps := system.Cfg.Manifold.RelaxationSteps
 
 	for step := 0; step < relaxationSteps; step++ {
 		_, err := solver.domain.Advance()

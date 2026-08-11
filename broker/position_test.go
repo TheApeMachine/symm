@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -159,15 +159,13 @@ func TestPositionCloseFill(t *testing.T) {
 	Convey("Given an exact filled exit for a tiny high-priced lot", t, func() {
 		quantity := decimal.NewFromFloat64(0.00051057)
 		entryPrice := decimal.NewFromFloat64(64951.1)
-		entryGross := decimal.ExactMul(entryPrice, quantity)
-		entryFee := decimal.ExactMul(
-			entryGross,
+		entryGross := decimal.NewFromInt64(0).Add(entryPrice).Mul(quantity)
+		entryFee := entryGross.Mul(
 			decimal.NewFromFloat64(0.0025),
 		)
 		exitPrice := decimal.NewFromFloat64(66000)
-		exitGross := decimal.ExactMul(exitPrice, quantity)
-		exitFee := decimal.ExactMul(
-			exitGross,
+		exitGross := decimal.NewFromInt64(0).Add(exitPrice).Mul(quantity)
+		exitFee := exitGross.Mul(
 			decimal.NewFromFloat64(0.0025),
 		)
 		position := &Position{

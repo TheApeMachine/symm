@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
 	testtypes "github.com/theapemachine/symm/tests/types"
 )
 

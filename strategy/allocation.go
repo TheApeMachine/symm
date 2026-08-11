@@ -3,7 +3,7 @@ package strategy
 import (
 	"context"
 
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"
@@ -72,8 +72,7 @@ func (allocation *Allocation) Calculate(thesis *types.Thesis) error {
 				return true
 			}
 
-			notional := decimal.ExactMul(
-				cash,
+			notional := decimal.NewFromInt64(0).Add(cash).Mul(
 				decimal.NewFromFloat64(config.Planner.MaxAllocationFraction),
 			)
 			price := allocation.desk.Price()
@@ -126,7 +125,9 @@ func (allocation *Allocation) Calculate(thesis *types.Thesis) error {
 				return true
 			}
 
-			feeRate := decimal.ExactDiv(fee.Fee, decimal.NewFromInt64(100))
+			feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
+				decimal.NewFromInt64(100),
+			)
 			decision.AvailableCapital = cash
 			decision.ProposedNotional = notional
 			decision.ProposedQuantity = quantity

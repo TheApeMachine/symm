@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	sdkkraken "github.com/theapemachine/api-go/v2/pkg/kraken"
+	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/tests/fixtures/instrument"
 	"github.com/theapemachine/symm/tests/fixtures/orderack"

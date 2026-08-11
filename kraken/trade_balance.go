@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )

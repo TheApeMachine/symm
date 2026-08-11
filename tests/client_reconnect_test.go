@@ -10,7 +10,7 @@ import (
 )
 
 /*
-The API SDK v2.0.3 reconnects its next reader before the previous reader has
+The official API SDK v2.0.0 reconnects its next reader before the previous reader has
 returned, and both write an unexported activity flag without synchronization.
 The normal suite verifies the real SDK reconnect boundary; the race build omits
 only this dependency-owned transition until the SDK synchronizes that flag.

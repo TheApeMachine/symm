@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	mgrbook "github.com/theapemachine/api-go/v2/pkg/book"
+	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/geometry"

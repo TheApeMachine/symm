@@ -72,6 +72,8 @@ github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
 github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
+github.com/krakenfx/api-go/v2 v2.0.0 h1:s5BJCeGvszfi+8/Ql2X06+IU9ocaFP7GzQHyPYp/RRA=
+github.com/krakenfx/api-go/v2 v2.0.0/go.mod h1:++1GUUow88yZz1Z0AXz2+PDbZ7kDaPmC1+ODL+8DwSc=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=
 github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.22 h1:j8l17JJ9i6VGPUFUYoTUKPSgKe/83EYU2zBC7YNKMw4=
@@ -161,8 +163,6 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/subosito/gotenv v1.6.0 h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8=
 github.com/subosito/gotenv v1.6.0/go.mod h1:Dk4QP5c2W3ibzajGcXpNraDfq2IrhjMIvMSWPKKo0FU=
-github.com/theapemachine/api-go/v2 v2.0.3 h1:ZWEfEWT97pre7/2SOlApXGZvwQnVrkpoMpqekr29X6Q=
-github.com/theapemachine/api-go/v2 v2.0.3/go.mod h1:Y5aKq3DaHMqYuAZQkF2uyo6S5rcRb873ZohGbRJewVk=
 github.com/theapemachine/errnie v1.2.6 h1:ucO+/UaLzGa1SbTqQ7yGLdMHxMxw1TmyX7tgwwNFSFk=
 github.com/theapemachine/errnie v1.2.6/go.mod h1:lzUJVUSJSrXRb0LmgwQtyxf6LupsXhrXTz2etTbAJlg=
 github.com/theapemachine/qpool v1.2.6 h1:7nC2CN8SFzHJrpLEIJJb10bevsg8XeXIJQSgPg3ZaCc=

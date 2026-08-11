@@ -6,12 +6,12 @@ require (
 	github.com/bytedance/sonic v1.15.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/mattn/go-sqlite3 v1.14.49
 	github.com/phuslu/log v1.0.124
 	github.com/pion/webrtc/v4 v4.2.18
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
-	github.com/theapemachine/api-go/v2 v2.0.3
 	golang.org/x/sync v0.21.0
 )
 
@@ -99,7 +99,6 @@ require (
 
 replace (
 	// github.com/bytedance/sonic => ../sonic
-	// github.com/theapemachine/api-go/v2 => ../api-go
 	// github.com/theapemachine/errnie => ../errnie
 	github.com/theapemachine/datura => ../datura
 	github.com/theapemachine/nomagique => ../nomagique

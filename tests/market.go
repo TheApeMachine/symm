@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests/signal"
 	testtypes "github.com/theapemachine/symm/tests/types"

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
@@ -60,12 +60,12 @@ func TestMeasure(t *testing.T) {
 		trade := cvdTrade(71, "buy", 101, base.Add(2*time.Second))
 
 		causalCut := types.NewThesis(t.Context(), nil)
-		causalCut.Tickers.Store("BTC/USD", []kraken.TickerData{causalTicker})
+		appendMarketTickers(causalCut, causalTicker)
 		So(signal.Measure(causalCut), ShouldBeEmpty)
 
 		futureCut := types.NewThesis(t.Context(), nil)
-		futureCut.Tickers.Store("BTC/USD", []kraken.TickerData{futureTicker})
-		futureCut.Trades.Store("BTC/USD", []kraken.TradeData{trade})
+		appendMarketTickers(futureCut, futureTicker)
+		appendMarketTrades(futureCut, trade)
 		measurements := signal.Measure(futureCut)
 
 		Convey("It uses the older midpoint, emits the preserved contract, and commits once", func() {
@@ -124,20 +124,20 @@ func TestMeasure(t *testing.T) {
 		base := time.Unix(1_700_003_300, 0).UTC()
 		trade := cvdTrade(72, "sell", 100, base)
 		futureCut := types.NewThesis(t.Context(), nil)
-		futureCut.Tickers.Store("BTC/USD", []kraken.TickerData{
+		appendMarketTickers(futureCut,
 			cvdTicker(99, 101, base.Add(time.Second)),
-		})
-		futureCut.Trades.Store("BTC/USD", []kraken.TradeData{trade})
+		)
+		appendMarketTrades(futureCut, trade)
 
 		Convey("It defers without consuming the trade, then resolves after causal evidence arrives", func() {
 			So(signal.Measure(futureCut), ShouldBeEmpty)
 			So(signal.seenTrade(trade), ShouldBeFalse)
 
 			causalCut := types.NewThesis(t.Context(), nil)
-			causalCut.Tickers.Store("BTC/USD", []kraken.TickerData{
+			appendMarketTickers(causalCut,
 				cvdTicker(98, 100, base),
-			})
-			causalCut.Trades.Store("BTC/USD", []kraken.TradeData{trade})
+			)
+			appendMarketTrades(causalCut, trade)
 			So(signal.Measure(causalCut), ShouldHaveLength, 1)
 			So(signal.seenTrade(trade), ShouldBeTrue)
 		})
@@ -162,8 +162,7 @@ func TestMeasure(t *testing.T) {
 		altSecond := cvdTrade(76, "buy", 51, base.Add(2*time.Second))
 		altSecond.Symbol = "ALT/USD"
 		cut := types.NewThesis(t.Context(), nil)
-		cut.Tickers.Store("BTC/USD", []kraken.TickerData{bitcoinTicker})
-		cut.Tickers.Store("ALT/USD", []kraken.TickerData{altTicker})
+		appendMarketTickers(cut, bitcoinTicker, altTicker)
 		cut.AppendTrade(bitcoinSecond)
 		cut.AppendTrade(bitcoinFirst)
 		cut.AppendTrade(altSecond)
@@ -171,7 +170,7 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It preserves causal order independently for each symbol", func() {
 			measurements := signal.Measure(cut)
-			So(measurements, ShouldHaveLength, 2)
+			So(measurements, ShouldHaveLength, 4)
 
 			measurementsBySymbol := make(map[string][]*types.Measurement)
 
@@ -181,11 +180,23 @@ func TestMeasure(t *testing.T) {
 				)
 			}
 
-			So(measurementsBySymbol["BTC/USD"], ShouldHaveLength, 1)
-			So(measurementsBySymbol["ALT/USD"], ShouldHaveLength, 1)
+			So(measurementsBySymbol["BTC/USD"], ShouldHaveLength, 2)
+			So(measurementsBySymbol["ALT/USD"], ShouldHaveLength, 2)
 			So(signal.Measure(cut), ShouldBeEmpty)
 		})
 	})
+}
+
+func appendMarketTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
+	for _, row := range rows {
+		thesis.AppendTicker(row)
+	}
+}
+
+func appendMarketTrades(thesis *types.Thesis, rows ...kraken.TradeData) {
+	for _, row := range rows {
+		thesis.AppendTrade(row)
+	}
 }
 
 func TestCVDMeasurements(t *testing.T) {

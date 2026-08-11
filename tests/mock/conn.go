@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/theapemachine/api-go/v2/pkg/book"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"

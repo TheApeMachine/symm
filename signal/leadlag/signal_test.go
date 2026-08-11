@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -30,11 +30,11 @@ func TestMeasure(t *testing.T) {
 			thesis := types.NewThesis(t.Context(), nil)
 
 			for index, symbol := range []string{"AAA/USD", "BBB/USD", "CCC/USD"} {
-				thesis.Tickers.Store(symbol, []kraken.TickerData{{
+				appendTickers(thesis, kraken.TickerData{
 					Symbol:    symbol,
 					Last:      decimal.NewFromFloat64(prices[index]),
 					Timestamp: at,
-				}})
+				})
 			}
 
 			measurements := signal.Measure(thesis)
@@ -91,6 +91,12 @@ func TestMeasure(t *testing.T) {
 				ShouldEqual, 120.0)
 		})
 	})
+}
+
+func appendTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
+	for _, row := range rows {
+		thesis.AppendTicker(row)
+	}
 }
 
 func BenchmarkMeasure(b *testing.B) {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
 
 /*
@@ -65,43 +65,30 @@ func (price *Price) EntryEconomics(
 		)
 	}
 
-	priceScale := max(
-		int64(decimal.DefaultScale),
-		tick.Ask.GetScale(),
-		tick.Bid.GetScale(),
-	)
-	ask := tick.Ask.SetScale(priceScale)
-	bid := tick.Bid.SetScale(priceScale)
-	midpoint := decimal.ExactDiv(
-		ask.Add(bid),
-		decimal.NewFromInt64(2),
-	)
+	ask := decimal.NewFromInt64(0).Add(tick.Ask)
+	bid := decimal.NewFromInt64(0).Add(tick.Bid)
+	midpoint := ask.Add(bid).Div(decimal.NewFromInt64(2))
 	expectedReturn := decimal.NewFromFloat64(forecastReturn)
-	expectedMove := decimal.ExactMul(midpoint, expectedReturn)
-	exitScale := max(bid.GetScale(), expectedMove.GetScale())
-	expectedExit := bid.SetScale(exitScale).Add(expectedMove)
+	expectedMove := midpoint.Mul(expectedReturn)
+	expectedExit := bid.Add(expectedMove)
 
 	if expectedExit.Sign() <= 0 {
 		return nil, fmt.Errorf("entry economics: forecast implies a non-positive exit price")
 	}
 
-	feeRate := decimal.ExactDiv(fee.Fee, decimal.NewFromInt64(100))
-	entryFee := decimal.ExactMul(ask, feeRate)
-	exitFee := decimal.ExactMul(expectedExit, feeRate)
-	feeScale := max(entryFee.GetScale(), exitFee.GetScale())
-	totalFees := entryFee.SetScale(feeScale).Add(exitFee)
-	entryScale := max(ask.GetScale(), entryFee.GetScale())
-	exitValueScale := max(expectedExit.GetScale(), exitFee.GetScale())
-	entryCost := ask.SetScale(entryScale).Add(entryFee)
-	exitValue := expectedExit.SetScale(exitValueScale).Sub(exitFee)
-	valueScale := max(entryCost.GetScale(), exitValue.GetScale())
-	netValue := exitValue.SetScale(valueScale).Sub(entryCost)
+	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(decimal.NewFromInt64(100))
+	entryFee := ask.Mul(feeRate)
+	exitFee := expectedExit.Mul(feeRate)
+	totalFees := entryFee.Add(exitFee)
+	entryCost := ask.Add(entryFee)
+	exitValue := expectedExit.Sub(exitFee)
+	netValue := exitValue.Sub(entryCost)
 
 	return &EntryEconomics{
 		ExpectedReturn: expectedReturn,
-		ExpectedFees:   decimal.ExactDiv(totalFees, midpoint),
-		ExpectedSpread: decimal.ExactDiv(ask.Sub(bid), midpoint),
+		ExpectedFees:   totalFees.Div(midpoint),
+		ExpectedSpread: ask.Sub(bid).Div(midpoint),
 		ExpectedImpact: decimal.NewFromInt64(0),
-		NetReturn:      decimal.ExactDiv(netValue, midpoint),
+		NetReturn:      netValue.Div(midpoint),
 	}, nil
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/tests/fixtures/book"
 	"github.com/theapemachine/symm/tests/fixtures/level3"
 	"github.com/theapemachine/symm/tests/fixtures/ticker"

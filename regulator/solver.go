@@ -16,6 +16,8 @@ import (
 	"github.com/theapemachine/symm/utils"
 )
 
+const regulatorMetricCount = 6
+
 /*
 SubsystemStatus represents the visual health status of one regulated subsystem.
 */
@@ -53,34 +55,33 @@ making high-level adjustments to keep the strategy adaptive and
 resilient.
 */
 type Solver struct {
-	mu            sync.Mutex
-	configSource  *system.Config
-	config        *system.Config
-	coder         *learning.ResonanceManifold
-	pace          *learning.PaceController
-	ui            chan []byte
-	history       []float64
-	lastEquity    float64
-	peakEquity    float64
-	allocation    float64
-	confidence    float64
-	causalAlpha   float64
-	iterations    int
-	learningRate  float64
-	relaxation    float64
-	uncertainty   float64
-	surpriseRank  float64
-	rankReady     bool
+	mu           sync.Mutex
+	configSource *system.Config
+	config       *system.Config
+	coder        *learning.ResonanceManifold
+	pace         *learning.PaceController
+	ui           chan []byte
+	history      []float64
+	lastEquity   float64
+	peakEquity   float64
+	allocation   float64
+	confidence   float64
+	causalAlpha  float64
+	iterations   int
+	learningRate float64
+	relaxation   float64
+	uncertainty  float64
+	surpriseRank float64
+	rankReady    bool
 }
 
 /*
 NewSolver creates a new instance of Solver tied to the ambient system configuration and broker desk.
 */
 func NewSolver(
-	ctx context.Context,
+	_ context.Context,
 	ui chan []byte,
 ) *Solver {
-	_ = ctx
 	configSource := system.Cfg
 	config := configSource.Snapshot()
 
@@ -90,7 +91,11 @@ func NewSolver(
 		learningRate = config.Resonance.LearningRate
 	}
 
-	arch := []int{6, 12, 6}
+	arch := []int{
+		regulatorMetricCount,
+		regulatorMetricCount + regulatorMetricCount,
+		regulatorMetricCount,
+	}
 	coder := learning.NewResonanceManifold(arch, 1, learningRate)
 	coder.SetStreamLearn(true)
 
@@ -102,7 +107,7 @@ func NewSolver(
 			InitialAlpha: learningRate,
 		}),
 		ui:      ui,
-		history: make([]float64, 0, 30),
+		history: make([]float64, 0),
 	}
 
 	if config != nil && config.Planner != nil {
@@ -171,7 +176,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	metrics := make([]float64, 6)
+	metrics := make([]float64, regulatorMetricCount)
 
 	if solver.config.Resonance != nil {
 		metrics[0] = solver.config.Resonance.LearningRate / solver.learningRate
@@ -272,7 +277,9 @@ func (solver *Solver) readFinancialFeedback(
 }
 
 func (solver *Solver) recordHistory(value float64) {
-	if len(solver.history) >= 30 {
+	historyLimit := solver.pace.Count()
+
+	if historyLimit > 0 && len(solver.history) >= historyLimit {
 		solver.history = solver.history[1:]
 	}
 
@@ -311,11 +318,27 @@ func (solver *Solver) applyTuning() error {
 	}
 
 	if solver.rankReady {
-		tailProbability := math.Abs(1 - solver.surpriseRank)
-		solver.config.Planner.CausalAlpha = solver.causalAlpha + tailProbability
+		sampleCount := solver.pace.Count()
+
+		if sampleCount <= 1 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"regulator: calibrated surprise requires retained empirical history",
+				nil,
+			))
+		}
+
+		empiricalResolution := 1 / float64(sampleCount)
+		normalizedSurprise := -math.Log(math.Max(
+			solver.surpriseRank,
+			empiricalResolution,
+		)) / math.Log(float64(sampleCount))
+		solver.config.Planner.CausalAlpha = solver.causalAlpha + normalizedSurprise
 		solver.config.Planner.MCTSIterations = max(
 			1,
-			int(math.Ceil(float64(solver.iterations)*solver.surpriseRank)),
+			int(math.Ceil(
+				float64(solver.iterations)/math.Exp(normalizedSurprise),
+			)),
 		)
 	}
 
@@ -334,19 +357,20 @@ func (solver *Solver) applyTuning() error {
 }
 
 func (solver *Solver) buildPayload(surprise float64, energy float64, drawdown float64) RegulatorPayload {
-	skill, hasSkill := solver.coder.TaskSkill()
+	_, hasSkill := solver.coder.TaskSkill()
 	_, hasPrecision := solver.coder.TaskPrecision()
 
 	status := "healthy"
 	summary := "System operating in calm, optimal equilibrium."
 
-	if !hasSkill || !hasPrecision || !solver.rankReady {
+	switch {
+	case !hasSkill || !hasPrecision || !solver.rankReady:
 		status = "observing"
 		summary = "System in warm-up state. Observing initial market telemetry to calibrate predictive precision."
-	} else if solver.surpriseRank <= 1/math.Sqrt(float64(solver.pace.Count())) {
+	case solver.surpriseRank <= 1/math.Sqrt(float64(solver.pace.Count())):
 		status = "strained"
 		summary = "Financial drawdown or high surprisal detected. Throttling risk boundaries and contracting allocation."
-	} else if solver.surpriseRank < 0.5 {
+	case solver.surpriseRank < 0.5:
 		status = "adapting"
 		summary = "Market turbulence detected. Regulator actively tuning subsystem parameters."
 	}
@@ -370,9 +394,10 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, drawdown fl
 		steps := solver.config.Manifold.RelaxationSteps
 		dir := "stable"
 
-		if float64(steps) > solver.relaxation {
+		switch {
+		case float64(steps) > solver.relaxation:
 			dir = "expanding"
-		} else if status == "observing" {
+		case status == "observing":
 			dir = "calibrating"
 		}
 
@@ -390,9 +415,10 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, drawdown fl
 	if solver.config.Risk != nil {
 		dir := "stable"
 
-		if solver.config.Risk.UncertaintyScale > solver.uncertainty {
+		switch {
+		case solver.config.Risk.UncertaintyScale > solver.uncertainty:
 			dir = "expanding"
-		} else if status == "observing" {
+		case status == "observing":
 			dir = "calibrating"
 		}
 
@@ -427,11 +453,12 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, drawdown fl
 
 		confDir := "stable"
 
-		if solver.config.Planner.MinimumConfidence > solver.confidence {
+		switch {
+		case solver.config.Planner.MinimumConfidence > solver.confidence:
 			confDir = "tightened"
-		} else if solver.config.Planner.MinimumConfidence < solver.confidence {
+		case solver.config.Planner.MinimumConfidence < solver.confidence:
 			confDir = "relaxed"
-		} else if status == "observing" {
+		case status == "observing":
 			confDir = "calibrating"
 		}
 
@@ -447,9 +474,10 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, drawdown fl
 
 		mctsDir := "stable"
 
-		if solver.config.Planner.CausalAlpha > solver.causalAlpha {
+		switch {
+		case solver.config.Planner.CausalAlpha > solver.causalAlpha:
 			mctsDir = "elevated"
-		} else if status == "observing" {
+		case status == "observing":
 			mctsDir = "calibrating"
 		}
 

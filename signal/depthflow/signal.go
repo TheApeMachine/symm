@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"golang.org/x/sync/errgroup"
@@ -328,8 +328,7 @@ func (signal *Signal) measureManagedBook(
 		level := flow.BookLevel{
 			Price:    bid.Price.Float64(),
 			Quantity: bid.Quantity.Float64(),
-			Ticks: decimal.ExactDiv(
-				bid.Price,
+			Ticks: decimal.NewFromInt64(0).Add(bid.Price).Div(
 				&instrument.PriceIncrement,
 			).Int64(),
 		}
@@ -344,8 +343,7 @@ func (signal *Signal) measureManagedBook(
 		level := flow.BookLevel{
 			Price:    ask.Price.Float64(),
 			Quantity: ask.Quantity.Float64(),
-			Ticks: decimal.ExactDiv(
-				ask.Price,
+			Ticks: decimal.NewFromInt64(0).Add(ask.Price).Div(
 				&instrument.PriceIncrement,
 			).Int64(),
 		}

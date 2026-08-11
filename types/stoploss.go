@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 )
 
@@ -168,7 +168,7 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 	}
 
 	candidate := floorToTick(
-		mark.SetScale(riskScale).Sub(stoploss.trailDistance),
+		scaled(mark).Sub(stoploss.trailDistance),
 		stoploss.tickSize,
 	)
 
@@ -275,9 +275,9 @@ func (stoploss *Stoploss) forecastGeometry(
 		)
 	}
 
-	currentMark := mark.SetScale(riskScale)
-	one := decimal.NewFromInt64(1).SetScale(riskScale)
-	survival := one.Sub(decimal.NewFromFloat64(drawdown).SetScale(riskScale))
+	currentMark := scaled(mark)
+	one := decimal.NewFromInt64(1)
+	survival := one.Sub(decimal.NewFromFloat64(drawdown))
 	floor := floorToTick(currentMark.Mul(survival), tick)
 
 	// A path with no predicted dip reaches the current mark. The strict stop
@@ -329,8 +329,8 @@ func (stoploss *Stoploss) entryGeometry(
 		return nil, nil, nil, fmt.Errorf("stoploss: forecast geometry required")
 	}
 
-	entry := entryPrice.SetScale(riskScale)
-	one := decimal.NewFromInt64(1).SetScale(riskScale)
+	entry := scaled(entryPrice)
+	one := decimal.NewFromInt64(1)
 	entryRate := scaled(stoploss.entryFeeRate)
 	exitRate := scaled(stoploss.exitFeeRate)
 
@@ -344,7 +344,7 @@ func (stoploss *Stoploss) entryGeometry(
 	cost := entry.Add(entry.Mul(entryRate))
 	breakEven := cost.Div(one.Sub(exitRate))
 	profitLine := ceilToTick(breakEven, tick)
-	currentMark := mark.SetScale(riskScale)
+	currentMark := scaled(mark)
 	executionDistance := ceilToTick(profitLine.Sub(currentMark), tick)
 	trailDistance := largest(stoploss.trailDistance, executionDistance)
 	executionFloor := floorToTick(currentMark.Sub(trailDistance), tick)

@@ -28,3 +28,39 @@ func TestNewConfig(t *testing.T) {
 		})
 	})
 }
+
+func TestSnapshot(t *testing.T) {
+	Convey("Given a populated system configuration", t, func() {
+		config := NewConfig()
+		snapshot := config.Snapshot()
+
+		Convey("It should return an independent value graph", func() {
+			So(snapshot, ShouldNotBeNil)
+			So(snapshot == config, ShouldBeFalse)
+			So(snapshot.Resonance == config.Resonance, ShouldBeFalse)
+			So(snapshot.Manifold == config.Manifold, ShouldBeFalse)
+			So(snapshot.Risk == config.Risk, ShouldBeFalse)
+			So(snapshot.Planner == config.Planner, ShouldBeFalse)
+			So(snapshot.Planner, ShouldResemble, config.Planner)
+		})
+	})
+}
+
+func TestApplyRegulation(t *testing.T) {
+	Convey("Given a regulator-owned resonance and planner update", t, func() {
+		config := NewConfig()
+		resonance := *config.Resonance
+		planner := *config.Planner
+		resonance.LearningRate /= float64(config.Resonance.Layers)
+		planner.MCTSIterations /= config.Manifold.RelaxationSteps
+
+		err := config.ApplyRegulation(resonance, planner)
+		snapshot := config.Snapshot()
+
+		Convey("It should publish both settings in one configuration generation", func() {
+			So(err, ShouldBeNil)
+			So(snapshot.Resonance.LearningRate, ShouldEqual, resonance.LearningRate)
+			So(snapshot.Planner.MCTSIterations, ShouldEqual, planner.MCTSIterations)
+		})
+	})
+}

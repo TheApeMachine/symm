@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -209,10 +209,9 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		position.Status = types.MarketStatuses[execution.OrderStatus]
 		position.Holding.Status = position.Status
 		position.Holding.EntryAt = &execution.Timestamp
-		position.Holding.EntryPrice = decimal.ExactDiv(
+		position.Holding.EntryPrice = decimal.NewFromInt64(0).Add(
 			execution.CumCost,
-			execution.CumQty,
-		)
+		).Div(execution.CumQty)
 		position.Holding.EntryFee = execution.FeeUsdEquiv
 		position.Holding.Qty = execution.CumQty
 		position.Holding.SellableQty = execution.CumQty
@@ -274,26 +273,22 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 		)
 	}
 
-	entryGross := decimal.ExactMul(
+	entryGross := decimal.NewFromInt64(0).Add(
 		position.Holding.EntryPrice,
-		position.Holding.Qty,
+	).Mul(position.Holding.Qty)
+	entryValue := entryGross.Add(position.Holding.EntryFee)
+	exitValue := decimal.NewFromInt64(0).Add(execution.CumCost).Sub(
+		execution.FeeUsdEquiv,
 	)
-	entryScale := max(entryGross.GetScale(), position.Holding.EntryFee.GetScale())
-	entryValue := entryGross.SetScale(entryScale).Add(position.Holding.EntryFee)
-	exitScale := max(execution.CumCost.GetScale(), execution.FeeUsdEquiv.GetScale())
-	exitValue := execution.CumCost.SetScale(exitScale).Sub(execution.FeeUsdEquiv)
-	valueScale := max(entryValue.GetScale(), exitValue.GetScale())
 	position.Holding.ExitAt = &execution.Timestamp
-	position.Holding.ExitPrice = decimal.ExactDiv(
+	position.Holding.ExitPrice = decimal.NewFromInt64(0).Add(
 		execution.CumCost,
-		execution.CumQty,
-	)
+	).Div(execution.CumQty)
 	position.Holding.ExitFee = execution.FeeUsdEquiv
-	position.Holding.PnL = exitValue.SetScale(valueScale).Sub(entryValue)
-	position.Holding.ReturnPct = decimal.ExactMul(
-		decimal.ExactDiv(position.Holding.PnL, entryValue),
-		decimal.NewFromInt64(100),
-	).Float64()
+	position.Holding.PnL = exitValue.Sub(entryValue)
+	position.Holding.ReturnPct = decimal.NewFromInt64(0).Add(
+		position.Holding.PnL,
+	).Div(entryValue).Mul(decimal.NewFromInt64(100)).Float64()
 	position.Holding.SellableQty = decimal.NewFromInt64(0)
 
 	if position.store != nil {

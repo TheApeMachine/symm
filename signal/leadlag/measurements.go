@@ -22,7 +22,7 @@ func (signal *Signal) measureFrame(
 ) []*types.Measurement {
 	section := signal.section
 	measurements := make([]*types.Measurement, 0)
-	out := make([]*types.Measurement, 0)
+	var focused []*types.Measurement
 
 	anchor := section.CausalAnchor()
 
@@ -137,12 +137,15 @@ func (signal *Signal) measureFrame(
 
 	for index := range symbols {
 		measurements = append(measurements, results[index]...)
-		out = append(out, publish[index]...)
+
+		if symbols[index] == types.Focus() {
+			focused = publish[index]
+		}
 	}
 
-	if len(out) > 0 {
+	if len(focused) > 0 {
 		utils.Publish(signal.ui, datura.NewMap(
-			"measurements", out,
+			"measurements", focused,
 		))
 	}
 

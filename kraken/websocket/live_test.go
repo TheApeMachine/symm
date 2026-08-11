@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	gorillawebsocket "github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/book"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -21,7 +21,7 @@ import (
 func subscriptionConnection(
 	t *testing.T,
 	requestCount int,
-) (chan map[string]any, *gorillawebsocket.Conn, func()) {
+) (chan map[string]any, string, func()) {
 	t.Helper()
 	requests := make(chan map[string]any, requestCount)
 	upgrader := gorillawebsocket.Upgrader{}
@@ -51,22 +51,18 @@ func subscriptionConnection(
 			}
 		}
 	}))
-	connection, _, err := gorillawebsocket.DefaultDialer.Dial(
-		"ws"+strings.TrimPrefix(server.URL, "http"), nil,
-	)
-	So(err, ShouldBeNil)
-
-	return requests, connection, server.Close
+	return requests, "ws" + strings.TrimPrefix(server.URL, "http"), server.Close
 }
 
 func TestRestorePublicSubscriptions(t *testing.T) {
 	Convey("Given remembered public websocket subscriptions", t, func() {
-		requests, connection, closeServer := subscriptionConnection(t, 2)
+		requests, endpoint, closeServer := subscriptionConnection(t, 2)
 		defer closeServer()
-		defer connection.Close()
 
 		client := spot.NewWebSocket()
-		client.Conn = connection
+		client.URL = endpoint
+		So(client.Connect(), ShouldBeNil)
+		defer func() { client.DoReconnect = false }()
 		live := &Live{
 			client: client,
 			public: map[string][][]string{
@@ -125,12 +121,13 @@ func TestLiveBook(t *testing.T) {
 
 func TestRestoreLevel3Subscription(t *testing.T) {
 	Convey("Given remembered Level 3 symbols", t, func() {
-		requests, connection, closeServer := subscriptionConnection(t, 2)
+		requests, endpoint, closeServer := subscriptionConnection(t, 2)
 		defer closeServer()
-		defer connection.Close()
 
 		client := spot.NewWebSocket()
-		client.Conn = connection
+		client.URL = endpoint
+		So(client.Connect(), ShouldBeNil)
+		defer func() { client.DoReconnect = false }()
 		symbols := make([]string, 41)
 
 		for index := range symbols {
@@ -190,12 +187,9 @@ func TestSubscribeAccount(t *testing.T) {
 		defer server.Close()
 
 		client := spot.NewWebSocket()
-		connection, _, err := gorillawebsocket.DefaultDialer.Dial(
-			"ws"+strings.TrimPrefix(server.URL, "http"), nil,
-		)
-		So(err, ShouldBeNil)
-		defer connection.Close()
-		client.Conn = connection
+		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
+		So(client.Connect(), ShouldBeNil)
+		defer func() { client.DoReconnect = false }()
 
 		live := &Live{client: client}
 

@@ -3,10 +3,12 @@ package types
 import (
 	"context"
 	"slices"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/kraken"
@@ -57,8 +59,6 @@ func NewThesis(
 		ui:           ui,
 		Status:       READY,
 		At:           time.Now().UTC(),
-		LastTickerAt: time.Now().UTC(),
-		LastTradeAt:  time.Now().UTC(),
 		CrossSection: NewCrossSection(),
 		Measurements: &sync.Map{},
 		Symbols:      &sync.Map{},
@@ -67,6 +67,12 @@ func NewThesis(
 		Trades:       &sync.Map{},
 		Manifold:     fluid.Reading{},
 	}
+}
+
+func (thesis *Thesis) symbol(symbolName string) *Symbol {
+	value, _ := thesis.Symbols.LoadOrStore(symbolName, NewSymbol(symbolName, thesis.ui))
+
+	return value.(*Symbol)
 }
 
 /*
@@ -86,9 +92,9 @@ func (thesis *Thesis) Reset(symbols ...string) *Thesis {
 				}
 			}
 
+			thesis.Symbols.Delete(symbolName)
 			thesis.Tickers.Delete(symbolName)
 			thesis.Trades.Delete(symbolName)
-			thesis.Symbols.Delete(symbolName)
 		}
 
 		thesis.At = time.Now().UTC()
@@ -96,7 +102,9 @@ func (thesis *Thesis) Reset(symbols ...string) *Thesis {
 	}
 
 	thesis.Symbols.Range(func(_, value any) bool {
-		value.(*Symbol).Reset()
+		symbol := value.(*Symbol)
+		symbol.Reset()
+		symbol.ResetMarket()
 		return true
 	})
 	thesis.At = time.Now().UTC()
@@ -108,57 +116,29 @@ func (thesis *Thesis) Reset(symbols ...string) *Thesis {
 }
 
 func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
-	found, ok := thesis.Tickers.LoadOrStore(ticker.Symbol, []kraken.TickerData{ticker})
-
-	if ok {
-		// Check if the ticker timestamp is after the last ticker timestamp.
-		// If not, we need to insert the ticker in the correct position in
-		// the slice to maintain chronological order.
-		if ticker.Timestamp.After(thesis.LastTickerAt) {
-			tickers := found.([]kraken.TickerData)
-
-			for index, existingTicker := range tickers {
-				if ticker.Timestamp.Before(existingTicker.Timestamp) {
-					// Insert the new ticker before the existing ticker.
-					tickers = append(tickers[:index], append([]kraken.TickerData{ticker}, tickers[index:]...)...)
-					thesis.Tickers.Store(ticker.Symbol, tickers)
-					return thesis
-				}
-			}
-		}
-
-		thesis.Tickers.Store(ticker.Symbol, append(found.([]kraken.TickerData), ticker))
+	if ticker.Symbol == "" {
+		return thesis
 	}
 
-	thesis.LastTickerAt = ticker.Timestamp
+	thesis.symbol(ticker.Symbol).AppendTicker(ticker)
+
+	if ticker.Timestamp.After(thesis.LastTickerAt) {
+		thesis.LastTickerAt = ticker.Timestamp
+	}
 
 	return thesis
 }
 
 func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
-	found, ok := thesis.Trades.LoadOrStore(trade.Symbol, []kraken.TradeData{trade})
-
-	if ok {
-		// Check if the trade timestamp is after the last trade timestamp.
-		// If not, we need to insert the trade in the correct position in
-		// the slice to maintain chronological order.
-		if trade.Timestamp.After(thesis.LastTradeAt) {
-			trades := found.([]kraken.TradeData)
-
-			for index, existingTrade := range trades {
-				if trade.Timestamp.Before(existingTrade.Timestamp) {
-					// Insert the new trade before the existing trade.
-					trades = append(trades[:index], append([]kraken.TradeData{trade}, trades[index:]...)...)
-					thesis.Trades.Store(trade.Symbol, trades)
-					return thesis
-				}
-			}
-		}
-
-		thesis.Trades.Store(trade.Symbol, append(found.([]kraken.TradeData), trade))
+	if trade.Symbol == "" {
+		return thesis
 	}
 
-	thesis.LastTradeAt = trade.Timestamp
+	thesis.symbol(trade.Symbol).AppendTrade(trade)
+
+	if trade.Timestamp.After(thesis.LastTradeAt) {
+		thesis.LastTradeAt = trade.Timestamp
+	}
 
 	return thesis
 }
@@ -195,6 +175,56 @@ func (thesis *Thesis) Equity() (kraken.TradeBalanceResult, bool) {
 	}
 
 	return *thesis.equity, true
+}
+
+/*
+MarshalState captures the complete durable thesis cut before execution or reset.
+*/
+func (thesis *Thesis) MarshalState() ([]byte, error) {
+	if thesis == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"thesis: state required for checkpoint",
+			nil,
+		))
+	}
+
+	equity, hasEquity := thesis.Equity()
+	var equityState *kraken.TradeBalanceResult
+
+	if hasEquity {
+		equityState = &equity
+	}
+
+	return sonic.Marshal(struct {
+		Status       Status                     `json:"status"`
+		Tick         int64                      `json:"tick"`
+		At           time.Time                  `json:"at"`
+		LastTickerAt time.Time                  `json:"lastTickerAt"`
+		LastTradeAt  time.Time                  `json:"lastTradeAt"`
+		CrossSection *CrossSection              `json:"crossSection"`
+		Measurements map[string]any             `json:"measurements"`
+		Symbols      map[string]any             `json:"symbols"`
+		Measured     map[string]any             `json:"measured"`
+		Tickers      map[string]any             `json:"tickers"`
+		Trades       map[string]any             `json:"trades"`
+		Equity       *kraken.TradeBalanceResult `json:"equity,omitempty"`
+		Manifold     fluid.Reading              `json:"manifold"`
+	}{
+		Status:       thesis.Status,
+		Tick:         thesis.Tick,
+		At:           thesis.At,
+		LastTickerAt: thesis.LastTickerAt,
+		LastTradeAt:  thesis.LastTradeAt,
+		CrossSection: thesis.CrossSection,
+		Measurements: syncMapState(thesis.Measurements),
+		Symbols:      syncMapState(thesis.Symbols),
+		Measured:     syncMapState(thesis.Measured),
+		Tickers:      thesis.TickersState(),
+		Trades:       thesis.TradesState(),
+		Equity:       equityState,
+		Manifold:     thesis.Manifold,
+	})
 }
 
 func (thesis *Thesis) AppendMeasurements(
@@ -254,36 +284,35 @@ func (thesis *Thesis) AppendMeasurements(
 }
 
 /*
-MarketTickers returns all the tickers in the thesis, except those that the
-source has already seen. This is used to fan out new tickers to subscribers.
+MarketTickers returns each symbol's ticker rows not yet seen by source.
 */
 func (thesis *Thesis) MarketTickers(source SourceType) []kraken.TickerData {
 	out := make([]kraken.TickerData, 0)
-	latestAt := time.Time{}
-
-	stored, ok := thesis.Measured.Load(source + "tickers")
-
-	if ok {
-		latestAt, _ = stored.(time.Time)
-	}
 
 	thesis.Tickers.Range(func(key, value any) bool {
-		if tickerSlice, ok := value.([]kraken.TickerData); ok {
-			for _, ticker := range tickerSlice {
-				if !latestAt.IsZero() && ticker.Timestamp.Before(latestAt) {
-					continue
-				}
+		symbolName := key.(string)
 
-				out = append(out, ticker)
-
-				if ticker.Timestamp.After(latestAt) {
-					thesis.Measured.Store(source+"tickers", ticker.Timestamp)
-					latestAt = ticker.Timestamp
-				}
-			}
+		for _, ticker := range value.([]kraken.TickerData) {
+			thesis.symbol(symbolName).AppendTicker(ticker)
 		}
 
+		thesis.Tickers.Delete(symbolName)
 		return true
+	})
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbol := value.(*Symbol)
+		out = append(out, symbol.MarketTickers(source)...)
+
+		return true
+	})
+
+	sort.SliceStable(out, func(left, right int) bool {
+		if out[left].Timestamp.Equal(out[right].Timestamp) {
+			return out[left].Symbol < out[right].Symbol
+		}
+
+		return out[left].Timestamp.Before(out[right].Timestamp)
 	})
 
 	return out
@@ -291,34 +320,136 @@ func (thesis *Thesis) MarketTickers(source SourceType) []kraken.TickerData {
 
 func (thesis *Thesis) MarketTrades(source SourceType) []kraken.TradeData {
 	out := make([]kraken.TradeData, 0)
-	latestAt := time.Time{}
-
-	stored, ok := thesis.Measured.Load(source + "trades")
-
-	if ok {
-		latestAt, _ = stored.(time.Time)
-	}
 
 	thesis.Trades.Range(func(key, value any) bool {
-		if tradeSlice, ok := value.([]kraken.TradeData); ok {
-			for _, trade := range tradeSlice {
-				if !latestAt.IsZero() && trade.Timestamp.Before(latestAt) {
-					continue
-				}
+		symbolName := key.(string)
 
-				out = append(out, trade)
+		for _, trade := range value.([]kraken.TradeData) {
+			thesis.symbol(symbolName).AppendTrade(trade)
+		}
 
-				if trade.Timestamp.After(latestAt) {
-					thesis.Measured.Store(source+"trades", trade.Timestamp)
-					latestAt = trade.Timestamp
-				}
+		thesis.Trades.Delete(symbolName)
+		return true
+	})
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbol := value.(*Symbol)
+		out = append(out, symbol.MarketTrades(source)...)
+
+		return true
+	})
+
+	sort.SliceStable(out, func(left, right int) bool {
+		if out[left].Timestamp.Equal(out[right].Timestamp) {
+			if out[left].Symbol == out[right].Symbol {
+				return out[left].TradeID < out[right].TradeID
 			}
+
+			return out[left].Symbol < out[right].Symbol
+		}
+
+		return out[left].Timestamp.Before(out[right].Timestamp)
+	})
+
+	return out
+}
+
+func (thesis *Thesis) TickersState() map[string]any {
+	state := make(map[string]any)
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		rows := value.(*Symbol).TickersSnapshot()
+
+		if len(rows) > 0 {
+			state[key.(string)] = rows
 		}
 
 		return true
 	})
 
-	return out
+	return state
+}
+
+func (thesis *Thesis) TradesState() map[string]any {
+	state := make(map[string]any)
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		rows := value.(*Symbol).TradesSnapshot()
+
+		if len(rows) > 0 {
+			state[key.(string)] = rows
+		}
+
+		return true
+	})
+
+	return state
+}
+
+func (thesis *Thesis) LatestTicker(symbolName string) (kraken.TickerData, bool) {
+	value, found := thesis.Symbols.Load(symbolName)
+
+	if found {
+		return value.(*Symbol).LatestTicker()
+	}
+
+	stored, legacyFound := thesis.Tickers.Load(symbolName)
+
+	if !legacyFound {
+		return kraken.TickerData{}, false
+	}
+
+	rows := stored.([]kraken.TickerData)
+
+	if len(rows) == 0 {
+		return kraken.TickerData{}, false
+	}
+
+	return rows[len(rows)-1], true
+}
+
+func (thesis *Thesis) TradesSnapshot(symbolName string) []kraken.TradeData {
+	value, found := thesis.Symbols.Load(symbolName)
+
+	if found {
+		return value.(*Symbol).TradesSnapshot()
+	}
+
+	stored, legacyFound := thesis.Trades.Load(symbolName)
+
+	if !legacyFound {
+		return nil
+	}
+
+	return slices.Clone(stored.([]kraken.TradeData))
+}
+
+func (thesis *Thesis) TradeSymbols() []string {
+	symbols := make([]string, 0)
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		if len(value.(*Symbol).TradesSnapshot()) > 0 {
+			symbols = append(symbols, key.(string))
+		}
+
+		return true
+	})
+
+	thesis.Trades.Range(func(key, value any) bool {
+		symbolName := key.(string)
+		rows := value.([]kraken.TradeData)
+		_, found := thesis.Symbols.Load(symbolName)
+
+		if !found && len(rows) > 0 {
+			symbols = append(symbols, symbolName)
+		}
+
+		return true
+	})
+
+	sort.Strings(symbols)
+
+	return symbols
 }
 
 func (thesis *Thesis) Close() error {

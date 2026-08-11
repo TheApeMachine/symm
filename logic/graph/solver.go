@@ -101,6 +101,31 @@ type Graph struct {
 }
 
 /*
+CheckpointState includes the forecast omitted from the dashboard graph wire.
+*/
+func (graph *Graph) CheckpointState() any {
+	if graph == nil {
+		return nil
+	}
+
+	return struct {
+		At               time.Time                `json:"at"`
+		EvidenceRevision uint64                   `json:"evidenceRevision"`
+		Forecast         *types.ResonanceForecast `json:"forecast,omitempty"`
+		Nodes            map[string]*Node         `json:"nodes"`
+		Edges            []*Edge                  `json:"edges"`
+		Adjacency        map[string][]string      `json:"adjacency"`
+	}{
+		At:               graph.At,
+		EvidenceRevision: graph.EvidenceRevision,
+		Forecast:         graph.Forecast,
+		Nodes:            graph.Nodes,
+		Edges:            graph.Edges,
+		Adjacency:        graph.Adjacency,
+	}
+}
+
+/*
 NewGraph creates an empty graph initialized with node and adjacency maps.
 */
 func NewGraph(at time.Time) *Graph {

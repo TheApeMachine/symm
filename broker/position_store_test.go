@@ -2,11 +2,12 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -28,6 +29,36 @@ func TestPositionStoreSave(t *testing.T) {
 			restored, err = store.Load(t.Context(), stoploss.Symbol)
 			So(err, ShouldBeNil)
 			So(restored, ShouldBeNil)
+		})
+	})
+}
+
+func TestPositionStoreSaveThesis(t *testing.T) {
+	Convey("Given two completed thesis decision rounds", t, func() {
+		store := newPositionStoreFixture(t)
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Tick = 1
+		So(store.SaveThesis(thesis), ShouldBeNil)
+		thesis.Tick = 2
+		So(store.SaveThesis(thesis), ShouldBeNil)
+
+		rows, err := store.database.Query(`
+SELECT state FROM thesis_checkpoints ORDER BY id`)
+		So(err, ShouldBeNil)
+		defer rows.Close()
+		ticks := make([]float64, 0)
+
+		for rows.Next() {
+			var state []byte
+			So(rows.Scan(&state), ShouldBeNil)
+			var checkpoint map[string]any
+			So(json.Unmarshal(state, &checkpoint), ShouldBeNil)
+			ticks = append(ticks, checkpoint["tick"].(float64))
+		}
+
+		Convey("It should append rather than overwrite the prior checkpoint", func() {
+			So(rows.Err(), ShouldBeNil)
+			So(ticks, ShouldResemble, []float64{1, 2})
 		})
 	})
 }

@@ -3,9 +3,9 @@ package broker
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests/mock"
@@ -231,7 +231,7 @@ func TestPriceQuantity(t *testing.T) {
 	Convey("Given an integer cash balance and a fractional allocation", t, func() {
 		price := newQuantityPrice(t)
 		fraction := decimal.NewFromFloat64(0.20)
-		notional := decimal.ExactMul(decimal.NewFromInt64(100), fraction)
+		notional := decimal.NewFromInt64(100).Mul(fraction)
 
 		Convey("When the allocated cash is converted at the fee-adjusted ask", func() {
 			quantity := price.Quantity("BTC/USD", notional)

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/theapemachine/api-go/v2/pkg/spot"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/tests/fixtures/balances"
 )
 

@@ -25,7 +25,6 @@ func TestMeasure(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		var measurements []*types.Measurement
 		var latest *types.Measurement
-		var ready bool
 		expectedCounts := []float64{1, 1, 2}
 
 		for index, side := range []string{"buy", "sell", "buy"} {
@@ -42,15 +41,14 @@ func TestMeasure(t *testing.T) {
 				types.MetricEventCount,
 				types.SideNone,
 			).Raw, ShouldEqual, expectedCounts[index])
-			So(ready, ShouldEqual, index == 2)
 			So(measurements[0].Sample(types.MetricSNR, types.SideNone).Normalized,
 				ShouldBeNil)
 
 			So(string(<-ui), ShouldContainSubstring, `"measurements"`)
 			latest = measurements[0]
 
-			thesis.AppendMeasurements(types.SourceHawkes, measurements, ready)
-			So(thesis.MarketTrades(types.SourceHawkes), ShouldHaveLength, 1)
+			thesis.AppendMeasurements(types.SourceHawkes, measurements, false)
+			So(thesis.MarketTrades(types.SourceHawkes), ShouldBeEmpty)
 		}
 
 		Convey("It should leave retained arrivals and fit state in Nomagique", func() {
@@ -177,7 +175,7 @@ func TestMeasure(t *testing.T) {
 			// window: a buy-only horizon would have dropped it.
 			So(measurements[0].Sample(
 				types.MetricEventCount, types.SideNone,
-			).Raw, ShouldEqual, 1)
+			).Raw, ShouldEqual, 2)
 			So(measurements[0].Sample(
 				types.MetricEventCount, types.SideSell,
 			).Raw, ShouldEqual, 1)

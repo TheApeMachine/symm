@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/theapemachine/api-go/v2/pkg/callback"
-	sdkkraken "github.com/theapemachine/api-go/v2/pkg/kraken"
-	"github.com/theapemachine/api-go/v2/pkg/spot"
+	"github.com/krakenfx/api-go/v2/pkg/callback"
+	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/tests/types"
 )
@@ -104,23 +104,7 @@ func NewConn(ctxs ...context.Context) *Conn {
 		The SDK dials this fixture's own listener instead of Kraken, so
 		Connect, the read loop, and WriteMessage all run unmodified.
 	*/
-	client.Dial = func(string) (*websocket.Conn, error) {
-		conn.mu.Lock()
-		server := conn.server
-		conn.mu.Unlock()
-
-		if server == nil {
-			return nil, errnie.Err(
-				errnie.IO, "tests: fixture websocket is closed", nil,
-			)
-		}
-
-		dialed, _, err := websocket.DefaultDialer.Dial(
-			"ws"+strings.TrimPrefix(server.URL, "http"), nil,
-		)
-
-		return dialed, err
-	}
+	client.URL = "ws" + strings.TrimPrefix(conn.server.URL, "http")
 
 	return conn
 }
