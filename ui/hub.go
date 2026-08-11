@@ -66,24 +66,8 @@ func NewHub(
 		balance: balance,
 		fluid:   NewFluidRTC(ctx),
 	}
-	go hub.fluid.Run(manifold)
-	go func() {
-		for {
-			select {
-			case <-hub.ctx.Done():
-				return
-			case message := <-hub.Messages:
-				hub.clients.Range(func(_, value any) bool {
-					select {
-					case value.(chan []byte) <- message:
-					default:
-					}
 
-					return true
-				})
-			}
-		}
-	}()
+	go hub.fluid.Run(manifold)
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -95,10 +79,6 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		messages := make(chan []byte, 1)
-		hub.clients.Store(conn, messages)
-		defer hub.clients.Delete(conn)
-
 		if hub.balance != nil {
 			conn.WriteMessage(websocket.TextMessage, hub.balance.Wallet())
 		}
@@ -115,17 +95,6 @@ func NewHub(
 			).MarshalAndFree())
 		}
 
-		/*
-			The dashboard tells the engine which symbol it is looking at, and
-			focus-gated publishers — resonance above all — only emit for that one.
-			Nothing read the socket, so the focus message was discarded and the
-			gate stayed on whatever the process started with: a terminal pointed
-			at one symbol kept receiving another's latent state, or none at all.
-
-			The reader owns its own goroutine because the write loop below blocks
-			on the broadcast channel, and a connection that is only ever written to
-			also never observes the client hanging up.
-		*/
 		go func() {
 			for {
 				select {
@@ -164,14 +133,7 @@ func NewHub(
 			case <-hub.ctx.Done():
 				errnie.Error(hub.Close())
 				return
-			case msg := <-messages:
-				/*
-					A write failure on a websocket is terminal: the connection is
-					gone, or a close frame has already been sent and every later
-					write returns the same error. Continuing the loop would spin
-					on the error forever and, worse, keep draining hub.Messages
-					away from the clients that are still alive.
-				*/
+			case msg := <-hub.Messages:
 				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 					if expectedDashboardWriteClosure(err) {
 						return

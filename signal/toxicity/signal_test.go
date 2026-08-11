@@ -43,13 +43,22 @@ func TestMeasure(t *testing.T) {
 		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
 		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(types.SourceToxicity, provisional, false)
+		thesis.AppendMeasurements(types.SourceToxicity, provisional, true)
 		So(provisional, ShouldHaveLength, 1)
 		So(provisional[0].At, ShouldResemble, base)
-		So(*provisional[0].Sample(types.MetricTouchQuantity, types.SideBuy).Normalized,
-			ShouldEqual, 0.5)
-		So(provisional[0].Sample(types.MetricSNR, types.SideNone).Raw,
-			ShouldEqual, 0.0)
+		So(provisional[0].Metrics, ShouldHaveLength, 4)
+		So(provisional[0].Sample(
+			types.MetricTouchQuantity,
+			types.SideBuy,
+		).Normalized, ShouldBeNil)
+		_, hasSNR := provisional[0].Metrics[types.MetricKey(
+			types.MetricSNR,
+			types.SideNone,
+		)]
+		So(hasSNR, ShouldBeFalse)
+		thesis.Measurements.Delete(types.SourceToxicity)
+		_, found := thesis.Measurements.Load(types.SourceToxicity)
+		So(found, ShouldBeFalse)
 
 		firstTrade := toxicityTrade(91, "sell", 100, 2, base.Add(time.Second))
 		secondTrade := toxicityTrade(92, "buy", 101, 3, base.Add(2*time.Second))
@@ -79,11 +88,11 @@ func TestMeasure(t *testing.T) {
 			So(measurement.Sample(types.MetricCancelledQuantity, types.SideSell).Raw,
 				ShouldEqual, 1.0)
 			So(*measurement.Sample(types.MetricTradeVolume, types.SideNone).Normalized,
-				ShouldAlmostEqual, 0.2, 1e-12)
+				ShouldEqual, 5.0/(5.0+20.0))
 			So(*measurement.Sample(types.MetricFillVolume, types.SideBuy).Normalized,
-				ShouldAlmostEqual, 0.2, 1e-12)
+				ShouldEqual, 2.0/10.0)
 			So(*measurement.Sample(types.MetricCancelledQuantity, types.SideSell).Normalized,
-				ShouldAlmostEqual, 0.1, 1e-12)
+				ShouldEqual, 1.0/10.0)
 			So(*measurement.Sample(types.MetricBestPrice, types.SideSell).Normalized,
 				ShouldEqual, 0.0)
 		})

@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -135,6 +136,11 @@ func (readiness *Readiness) Stamp(source SourceType) {
 			didUpdate = true
 		}
 	default:
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"readiness: unknown source type: "+string(source),
+			nil,
+		))
 		return
 	}
 
@@ -216,6 +222,22 @@ func (readiness *Readiness) SignalsMeasured() bool {
 		readiness.Toxicity
 }
 
+func (readiness *Readiness) ResetSignals() {
+	readiness.mu.Lock()
+	defer readiness.mu.Unlock()
+
+	readiness.Correlation = false
+	readiness.CVD = false
+	readiness.DepthFlow = false
+	readiness.Exhaustion = false
+	readiness.Hawkes = false
+	readiness.LeadLag = false
+	readiness.Liquidity = false
+	readiness.PumpDump = false
+	readiness.Sentiment = false
+	readiness.Toxicity = false
+}
+
 func (readiness *Readiness) LogicAnalyzed() bool {
 	readiness.mu.RLock()
 	defer readiness.mu.RUnlock()
@@ -226,6 +248,25 @@ func (readiness *Readiness) LogicAnalyzed() bool {
 		readiness.Resonance &&
 		readiness.Causal &&
 		readiness.Graph
+}
+
+/*
+ResetLogic clears the stages that must process a newly admitted signal
+contribution. Manifold is input-specific and only reopens for Hawkes evidence.
+*/
+func (readiness *Readiness) ResetLogic(source SourceType) {
+	readiness.mu.Lock()
+	defer readiness.mu.Unlock()
+
+	readiness.Categories = false
+	readiness.Cognition = false
+	readiness.Resonance = false
+	readiness.Causal = false
+	readiness.Graph = false
+
+	if source == SourceHawkes {
+		readiness.Manifold = false
+	}
 }
 
 func (readiness *Readiness) StrategyDecided() bool {

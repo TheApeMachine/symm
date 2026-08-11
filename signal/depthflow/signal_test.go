@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -95,6 +96,8 @@ func TestMeasureTrade(t *testing.T) {
 	Convey("Given a multi-leg book baseline before aligned aggressive flow", t, func() {
 		sample, err := flow.NewSample(8)
 		So(err, ShouldBeNil)
+		expectedSample, err := flow.NewSample(8)
+		So(err, ShouldBeNil)
 		signal := &Signal{
 			sample:   sample,
 			bookflow: equation.NewBookflow(),
@@ -103,27 +106,53 @@ func TestMeasureTrade(t *testing.T) {
 		for range 3 {
 			_, _, _, err = sample.MeasureBook(depthflowBookInput(10, 10))
 			So(err, ShouldBeNil)
+			_, _, _, err = expectedSample.MeasureBook(depthflowBookInput(10, 10))
+			So(err, ShouldBeNil)
 		}
 
 		_, _, _, err = sample.MeasureBook(depthflowBookInput(20, 8))
 		So(err, ShouldBeNil)
+		_, _, _, err = expectedSample.MeasureBook(depthflowBookInput(20, 8))
+		So(err, ShouldBeNil)
 
 		at := time.Unix(1_700_000_200, 0).UTC()
-		measurements, err := signal.measureTrade(kraken.TradeData{
+		trade := kraken.TradeData{
 			Symbol: "BTC/USD", Side: "buy", Price: *decimal.NewFromInt64(100),
 			Qty: 5, TradeID: 21, Timestamp: at,
-		})
+		}
+		expectedInput, _, expectedMaturity, err := expectedSample.MeasureTrade(
+			flow.TradeInput{
+				Symbol: trade.Symbol, Price: 100, Quantity: trade.Qty,
+				Side: flow.TradeBuy, At: trade.Timestamp,
+			},
+		)
+		So(err, ShouldBeNil)
+		expectedOutput, err := equation.NewBookflow().Measure(expectedInput)
+		So(err, ShouldBeNil)
+		measurements, err := signal.measureTrade(trade)
 
 		Convey("It should emit the preserved dimensionless metric contract at the trade time", func() {
 			So(err, ShouldBeNil)
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
 			So(measurement.At, ShouldResemble, at)
+			So(measurement.Maturity, ShouldEqual, expectedMaturity)
 			So(measurement.Metrics, ShouldHaveLength, 7)
 			So(measurement.Sample(types.MetricLoadedScore, types.SideNone).Raw,
-				ShouldBeGreaterThan, 0)
+				ShouldEqual, expectedOutput.LoadedScore)
+			So(measurement.Sample(types.MetricSpoofScore, types.SideNone).Raw,
+				ShouldEqual, expectedOutput.SpoofScore)
+			So(measurement.Sample(types.MetricThinScore, types.SideNone).Raw,
+				ShouldEqual, expectedOutput.ThinScore)
+			So(measurement.Sample(types.MetricNeutralScore, types.SideNone).Raw,
+				ShouldEqual, expectedOutput.NeutralScore)
+			expectedSNR, ready := types.MeasurementSignalNoiseRatio(
+				types.SourceDepthFlow,
+				measurement.Metrics,
+			)
+			So(ready, ShouldBeTrue)
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldBeGreaterThan, 0)
+				ShouldEqual, expectedSNR)
 
 			for _, sample := range measurement.Metrics {
 				if sample.Unit == types.UnitDimensionless {
@@ -156,11 +185,16 @@ func TestFrame(t *testing.T) {
 			So(measurement.At, ShouldResemble, at)
 			So(measurement.Maturity, ShouldEqual, 0.8)
 			So(measurement.Sample(types.MetricThinScore, types.SideNone).Raw,
-				ShouldAlmostEqual, 0.3, 1e-12)
+				ShouldEqual, 0.3)
 			So(*measurement.Sample(types.MetricThinScore, types.SideNone).Normalized,
-				ShouldAlmostEqual, 0.3, 1e-12)
+				ShouldEqual, 0.3)
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldAlmostEqual, 1, 1e-12)
+				ShouldEqual, 1.0)
+			So(measurement.Metrics, ShouldHaveLength, 5)
+
+			for _, sample := range measurement.Metrics {
+				So(sample.Unit, ShouldEqual, types.UnitDimensionless)
+			}
 		})
 	})
 
@@ -176,8 +210,33 @@ func TestFrame(t *testing.T) {
 
 		Convey("It should scale spoof evidence by the maximum possible contrast", func() {
 			So(*measurement.Sample(types.MetricSpoofScore, types.SideNone).Normalized,
-				ShouldAlmostEqual, 0.75, 1e-12)
+				ShouldEqual, 1.5/maxBookImbalanceContrast)
 			So(measurement.Metrics, ShouldHaveLength, 5)
+		})
+	})
+
+	Convey("Given a mathematically provisional bookflow output", t, func() {
+		measurement := (&Signal{}).frame(
+			"BTC/USD",
+			time.Unix(1_700_000_401, 0).UTC(),
+			equation.BookflowOutput{NeutralScore: 1, Ready: false},
+			0,
+		)[0]
+
+		Convey("It should expose raw values while withholding every hypothesis normalization", func() {
+			for _, metric := range []types.MetricType{
+				types.MetricLoadedScore,
+				types.MetricSpoofScore,
+				types.MetricThinScore,
+				types.MetricNeutralScore,
+			} {
+				So(measurement.Sample(metric, types.SideNone).Normalized, ShouldBeNil)
+			}
+
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+				ShouldEqual, 0.0)
+			So(measurement.Sample(types.MetricSNR, types.SideNone).Normalized,
+				ShouldBeNil)
 		})
 	})
 }
@@ -191,11 +250,39 @@ func TestNormalizedBookflowScore(t *testing.T) {
 		spoofMaximum := normalizedBookflowScore(types.MetricSpoofScore, 2)
 
 		Convey("It should preserve unit scores and scale contrast by its full domain", func() {
-			So(*loaded, ShouldAlmostEqual, 0.4, 1e-12)
-			So(*thin, ShouldAlmostEqual, 0.6, 1e-12)
-			So(*neutral, ShouldAlmostEqual, 0.8, 1e-12)
-			So(*spoofMidpoint, ShouldAlmostEqual, 0.5, 1e-12)
-			So(*spoofMaximum, ShouldAlmostEqual, 1, 1e-12)
+			So(*loaded, ShouldEqual, 0.4)
+			So(*thin, ShouldEqual, 0.6)
+			So(*neutral, ShouldEqual, 0.8)
+			So(*spoofMidpoint, ShouldEqual, 1.0/maxBookImbalanceContrast)
+			So(*spoofMaximum, ShouldEqual, 1.0)
+		})
+	})
+
+	Convey("Given scores one representable value outside their domains", t, func() {
+		Convey("It should reject negative evidence and overflow instead of poisoning SNR", func() {
+			So(normalizedBookflowScore(
+				types.MetricLoadedScore,
+				math.Nextafter(0, -1),
+			), ShouldBeNil)
+			So(normalizedBookflowScore(
+				types.MetricThinScore,
+				math.Nextafter(1, 2),
+			), ShouldBeNil)
+			So(normalizedBookflowScore(
+				types.MetricSpoofScore,
+				math.Nextafter(maxBookImbalanceContrast, 3),
+			), ShouldBeNil)
+			So(func() {
+				(&Signal{}).frame(
+					"BTC/USD",
+					time.Unix(1_700_000_402, 0).UTC(),
+					equation.BookflowOutput{
+						LoadedScore: math.Nextafter(1, 2),
+						Ready:       true,
+					},
+					1,
+				)
+			}, ShouldPanic)
 		})
 	})
 }

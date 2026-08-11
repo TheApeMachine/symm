@@ -195,19 +195,26 @@ func (section *Section) Measure(
 }
 
 /*
-LastAt returns the newest sample time retained for symbol.
-Emission uses this for cohort peers that were scored but absent from the
-current ticker batch so focus-gated UI still receives a live reading.
+Latest returns the newest retained price sample for one symbol. Correlation
+uses the sample as its per-symbol input cursor and as the provenance of cohort
+scores that become measurable when a peer changes.
 */
-func (section *Section) LastAt(symbol string) time.Time {
-	raw, _ := section.symbols.Load(symbol)
+func (section *Section) Latest(symbol string) (time.Time, float64, bool) {
+	raw, found := section.symbols.Load(symbol)
+
+	if !found {
+		return time.Time{}, 0, false
+	}
+
 	state := raw.(*symbolState)
 
 	if state == nil || len(state.samples) == 0 {
-		return time.Time{}
+		return time.Time{}, 0, false
 	}
 
-	return state.samples[len(state.samples)-1].At
+	latest := state.samples[len(state.samples)-1]
+
+	return latest.At, latest.Value, true
 }
 
 /*

@@ -103,6 +103,29 @@ func toxicityMeasurement(
 	current touchSnapshot,
 	trades []kraken.TradeData,
 ) *types.Measurement {
+	if previous.asOf.Equal(current.asOf) {
+		return &types.Measurement{
+			ID:     uuid.NewString(),
+			Source: types.SourceToxicity,
+			Symbol: symbol,
+			At:     current.asOf,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+					Raw: current.bid.price, Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricBestPrice, types.SideSell): {
+					Raw: current.ask.price, Unit: types.UnitQuoteCurrency,
+				},
+				types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
+					Raw: current.bid.quantity, Unit: types.UnitBaseCurrency,
+				},
+				types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
+					Raw: current.ask.quantity, Unit: types.UnitBaseCurrency,
+				},
+			},
+		}
+	}
+
 	tradeVolume := 0.0
 	bidFill := 0.0
 	askFill := 0.0

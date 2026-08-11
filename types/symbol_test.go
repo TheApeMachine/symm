@@ -39,7 +39,7 @@ func TestSymbolAddMeasurement(t *testing.T) {
 }
 
 func TestSymbolStamp(t *testing.T) {
-	Convey("Given both direct consumers of an active measurement cut", t, func() {
+	Convey("Given logic stamps on an active symbol contribution", t, func() {
 		symbol := NewSymbol("BTC/USD", nil)
 		measurement := &Measurement{
 			ID: "hawkes", Source: SourceHawkes, Symbol: "BTC/USD",
@@ -55,7 +55,10 @@ func TestSymbolStamp(t *testing.T) {
 
 		symbol.Stamp(SourceResonance)
 
-		Convey("It should release the cut after every named consumer finishes", func() {
+		Convey("It should retain the lock until the analyzer releases it", func() {
+			So(symbol.Status, ShouldEqual, BUSY)
+			So(symbol.Measurements, ShouldResemble, []*Measurement{measurement})
+
 			So(symbol.Status, ShouldEqual, READY)
 			So(symbol.Measurements, ShouldBeEmpty)
 		})

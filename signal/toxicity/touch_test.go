@@ -16,8 +16,8 @@ func TestNormalizedTouchRatio(t *testing.T) {
 		large := normalizedTouchRatio(0.15, 0.5, false)
 
 		Convey("It preserves the observed fraction", func() {
-			So(*small, ShouldAlmostEqual, 0.3, 1e-12)
-			So(*large, ShouldAlmostEqual, 0.3, 1e-12)
+			So(*small, ShouldEqual, 0.00015/0.0005)
+			So(*large, ShouldEqual, 0.15/0.5)
 		})
 	})
 
@@ -28,8 +28,8 @@ func TestNormalizedTouchRatio(t *testing.T) {
 	})
 
 	Convey("Given quantities that compete with the previous resting quantity", t, func() {
-		So(*normalizedTouchRatio(10, 10, true), ShouldAlmostEqual, 0.5, 1e-12)
-		So(*normalizedTouchRatio(30, 10, true), ShouldAlmostEqual, 0.75, 1e-12)
+		So(*normalizedTouchRatio(10, 10, true), ShouldEqual, 10.0/(10.0+10.0))
+		So(*normalizedTouchRatio(30, 10, true), ShouldEqual, 30.0/(30.0+10.0))
 	})
 
 	Convey("Given no positive resting quantity to normalize against", t, func() {
@@ -45,9 +45,9 @@ func TestNormalizedTouchPrice(t *testing.T) {
 		scaled := normalizedTouchPrice(204, 200)
 		reversed := normalizedTouchPrice(100, 102)
 
-		So(*base, ShouldAlmostEqual, math.Log(1.02), 1e-12)
-		So(*scaled, ShouldAlmostEqual, *base, 1e-12)
-		So(*reversed, ShouldAlmostEqual, -*base, 1e-12)
+		So(*base, ShouldEqual, math.Log(102.0/100.0))
+		So(*scaled, ShouldEqual, *base)
+		So(*reversed, ShouldEqual, math.Log(100.0/102.0))
 	})
 
 	Convey("Given an unchanged valid touch price", t, func() {
@@ -61,6 +61,30 @@ func TestNormalizedTouchPrice(t *testing.T) {
 }
 
 func TestToxicityMeasurement(t *testing.T) {
+	Convey("Given the first observed touch without a prior bracket", t, func() {
+		at := time.Unix(1_700_004_450, 0).UTC()
+		touch := touchSnapshot{
+			asOf: at,
+			bid:  touchObservation{price: 100, quantity: 10},
+			ask:  touchObservation{price: 101, quantity: 20},
+		}
+		measurement := toxicityMeasurement("BTC/USD", touch, touch, nil)
+
+		Convey("It should emit only the raw prior needed by the next observation", func() {
+			So(measurement.Metrics, ShouldHaveLength, 4)
+			So(measurement.ObservedFrom.IsZero(), ShouldBeTrue)
+			So(measurement.Horizon, ShouldEqual, time.Duration(0))
+			So(measurement.Sample(types.MetricBestPrice, types.SideBuy),
+				ShouldResemble, types.MetricSample{
+					Raw: 100, Unit: types.UnitQuoteCurrency,
+				})
+			So(measurement.Sample(types.MetricTouchQuantity, types.SideSell),
+				ShouldResemble, types.MetricSample{
+					Raw: 20, Unit: types.UnitBaseCurrency,
+				})
+		})
+	})
+
 	Convey("Given fills, a retreat, and an unexplained cancellation", t, func() {
 		from := time.Unix(1_700_004_500, 0).UTC()
 		previous := touchSnapshot{
@@ -104,8 +128,12 @@ func TestToxicityMeasurement(t *testing.T) {
 			for metric, normalized := range expected {
 				sample := measurement.Metrics[metric]
 				So(sample.Normalized, ShouldNotBeNil)
-				So(*sample.Normalized, ShouldAlmostEqual, normalized, 1e-12)
+				So(*sample.Normalized, ShouldEqual, normalized)
 			}
+			So(measurement.Metrics, ShouldHaveLength, 12)
+			So(measurement.ObservedFrom, ShouldResemble, previous.asOf)
+			So(measurement.At, ShouldResemble, current.asOf)
+			So(measurement.Horizon, ShouldEqual, time.Second)
 		})
 
 		Convey("It preserves every normalized value when base quantities are rescaled", func() {
@@ -128,9 +156,42 @@ func TestToxicityMeasurement(t *testing.T) {
 			)
 
 			for metric, sample := range measurement.Metrics {
-				So(*scaled.Metrics[metric].Normalized,
-					ShouldAlmostEqual, *sample.Normalized, 1e-12)
+				So(*scaled.Metrics[metric].Normalized, ShouldEqual, *sample.Normalized)
 			}
+		})
+	})
+
+	Convey("Given more tape volume than could fill the previous touch", t, func() {
+		from := time.Unix(1_700_004_600, 0).UTC()
+		previous := touchSnapshot{
+			asOf: from,
+			bid:  touchObservation{price: 100, quantity: 3},
+			ask:  touchObservation{price: 101, quantity: 5},
+		}
+		current := touchSnapshot{
+			asOf: from.Add(time.Second),
+			bid:  touchObservation{price: 99, quantity: 2},
+			ask:  touchObservation{price: 101, quantity: 1},
+		}
+		measurement := toxicityMeasurement(
+			"BTC/USD",
+			previous,
+			current,
+			[]kraken.TradeData{
+				toxicityTrade(3, "sell", 100, 11, from.Add(time.Second)),
+				toxicityTrade(4, "buy", 101, 13, from.Add(time.Second)),
+			},
+		)
+
+		Convey("It caps fills at physically displayed quantity and cannot invent cancellation", func() {
+			So(measurement.Sample(types.MetricFillVolume, types.SideBuy).Raw,
+				ShouldEqual, 3.0)
+			So(measurement.Sample(types.MetricFillVolume, types.SideSell).Raw,
+				ShouldEqual, 5.0)
+			So(measurement.Sample(types.MetricRetreatingQuantity, types.SideBuy).Raw,
+				ShouldEqual, 0.0)
+			So(measurement.Sample(types.MetricCancelledQuantity, types.SideSell).Raw,
+				ShouldEqual, 0.0)
 		})
 	})
 }

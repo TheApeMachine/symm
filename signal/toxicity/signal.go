@@ -3,6 +3,7 @@ package toxicity
 import (
 	"context"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,7 @@ type Signal struct {
 	ui        chan []byte
 	thesis    *types.Thesis
 	semaphore chan struct{}
+	touches   *sync.Map
 }
 
 /*
@@ -49,6 +51,7 @@ func NewSignal(
 		ui:        ui,
 		thesis:    thesis,
 		semaphore: make(chan struct{}, 1),
+		touches:   &sync.Map{},
 	}
 
 	signal.status.Store(types.INITIALIZING)
@@ -100,8 +103,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	}
 
 	tickers := thesis.MarketTickers(types.SourceToxicity)
-	toxicity := utils.Measurements(thesis, types.SourceToxicity)
 	symbolSet := make(map[string]struct{})
+
+	if signal.touches == nil {
+		signal.touches = &sync.Map{}
+	}
 
 	for _, ticker := range tickers {
 		if ticker.Symbol != "" {
@@ -131,6 +137,10 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		}
 		return true
 	})
+	signal.touches.Range(func(key, _ any) bool {
+		symbolSet[key.(string)] = struct{}{}
+		return true
+	})
 
 	symbols := make([]string, 0, len(symbolSet))
 
@@ -157,9 +167,18 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				return nil
 			}
 
-			previous, ok := latestTouch(toxicity, symbol)
+			previous := touchSnapshot{}
+			previousMeasurement, found := signal.touches.Load(symbol)
+			previousFound := false
 
-			if !ok {
+			if found {
+				previous, previousFound = latestTouch(
+					[]*types.Measurement{previousMeasurement.(*types.Measurement)},
+					symbol,
+				)
+			}
+
+			if !previousFound {
 				results[resultIndex] = []*types.Measurement{
 					toxicityMeasurement(symbol, current, current, nil),
 				}
@@ -207,6 +226,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		measurements = append(measurements, symbolMeasurements...)
 
 		for _, measurement := range symbolMeasurements {
+			signal.touches.Store(measurement.Symbol, measurement)
 			_, complete := measurement.Metrics[types.MetricKey(
 				types.MetricTradeVolume,
 				types.SideNone,
@@ -226,7 +246,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 
 	return measurements
 }
-
 func bracketedTrades(
 	trades []kraken.TradeData,
 	symbol string,

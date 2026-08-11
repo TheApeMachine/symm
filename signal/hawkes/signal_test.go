@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,8 +24,9 @@ func TestMeasure(t *testing.T) {
 		start := time.Unix(1_700_005_000, 0).UTC()
 		thesis := types.NewThesis(t.Context(), nil)
 		var measurements []*types.Measurement
+		var latest *types.Measurement
 		var ready bool
-		expectedCounts := []float64{1, 1, 3}
+		expectedCounts := []float64{1, 1, 2}
 
 		for index, side := range []string{"buy", "sell", "buy"} {
 			thesis.AppendTrade(kraken.TradeData{
@@ -45,18 +47,29 @@ func TestMeasure(t *testing.T) {
 				ShouldBeNil)
 
 			So(string(<-ui), ShouldContainSubstring, `"measurements"`)
+			latest = measurements[0]
 
 			thesis.AppendMeasurements(types.SourceHawkes, measurements, ready)
 			So(thesis.MarketTrades(types.SourceHawkes), ShouldHaveLength, 1)
 		}
 
 		Convey("It should leave retained arrivals and fit state in Nomagique", func() {
-			stored, found := thesis.Measurements.Load(types.SourceHawkes)
-			So(found, ShouldBeTrue)
-			So(stored.([]*types.Measurement), ShouldHaveLength, 2)
-			So(stored.([]*types.Measurement)[1], ShouldEqual, measurements[0])
 			So(signal.process.Symbols(), ShouldResemble, []string{"BTC/USD"})
 			So(thesis.Stamped("BTC/USD", types.SourceHawkes), ShouldBeTrue)
+			So(latest.Metrics, ShouldHaveLength, 23)
+			So(latest.ObservedFrom, ShouldResemble, start)
+			So(latest.At, ShouldResemble, start.Add(2*time.Second))
+			So(latest.Horizon, ShouldEqual, 2*time.Second)
+			So(latest.Sample(types.MetricEventCount, types.SideNone).Raw,
+				ShouldEqual, 2.0)
+			So(latest.Sample(types.MetricEventCount, types.SideBuy).Raw,
+				ShouldEqual, 1.0)
+			So(latest.Sample(types.MetricEventCount, types.SideSell).Raw,
+				ShouldEqual, 1.0)
+			So(latest.Sample(types.MetricArrivalRate, types.SideBuy).Raw,
+				ShouldEqual, 0.5)
+			So(latest.Sample(types.MetricArrivalRate, types.SideSell).Raw,
+				ShouldEqual, 0.5)
 		})
 
 		Convey("It should not label unbounded expectations as normalized", func() {
@@ -64,9 +77,9 @@ func TestMeasure(t *testing.T) {
 				types.MetricImmediateOffspring,
 				types.MetricTotalDescendants,
 			} {
-				So(measurements[0].Sample(metric, types.SideBuy).Normalized,
+				So(latest.Sample(metric, types.SideBuy).Normalized,
 					ShouldBeNil)
-				So(measurements[0].Sample(metric, types.SideSell).Normalized,
+				So(latest.Sample(metric, types.SideSell).Normalized,
 					ShouldBeNil)
 			}
 		})
@@ -125,7 +138,7 @@ func TestMeasure(t *testing.T) {
 			)
 			So(snrReady, ShouldBeTrue)
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldAlmostEqual, expectedSNR, 1e-12)
+				ShouldEqual, expectedSNR)
 		})
 	})
 
@@ -239,6 +252,28 @@ func TestMeasure(t *testing.T) {
 				measurements, _ := signal.Measure(types.NewThesis(t.Context(), nil))
 				return measurements
 			}(), ShouldBeEmpty)
+		})
+	})
+}
+
+func TestSeenTrade(t *testing.T) {
+	Convey("Given Hawkes arrivals sharing a timestamp", t, func() {
+		signal := &Signal{lastTrade: &sync.Map{}}
+		at := time.Unix(1_700_006_500, 0).UTC()
+		first := kraken.TradeData{Symbol: "BTC/USD", TradeID: 1, Timestamp: at}
+		second := kraken.TradeData{Symbol: "BTC/USD", TradeID: 2, Timestamp: at}
+		regressed := kraken.TradeData{
+			Symbol: "BTC/USD", TradeID: 3, Timestamp: at.Add(-time.Nanosecond),
+		}
+
+		Convey("It should admit each identity once and reject replay or temporal regression", func() {
+			So(signal.seenTrade(first), ShouldBeFalse)
+			signal.commitTrade(first)
+			So(signal.seenTrade(first), ShouldBeTrue)
+			So(signal.seenTrade(second), ShouldBeFalse)
+			signal.commitTrade(second)
+			So(signal.seenTrade(second), ShouldBeTrue)
+			So(signal.seenTrade(regressed), ShouldBeTrue)
 		})
 	})
 }

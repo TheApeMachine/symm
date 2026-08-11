@@ -138,8 +138,25 @@ the shared domain's background settling loop.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	updated := false
+	measurements := make([]*types.Measurement, 0)
 
-	for _, measurement := range utils.Measurements(thesis, types.SourceHawkes) {
+	thesis.Symbols.Range(func(_, value any) bool {
+		symbol, ok := value.(*types.Symbol)
+
+		if !ok || symbol == nil || symbol.Status != types.BUSY {
+			return true
+		}
+
+		for _, measurement := range symbol.Measurements {
+			if measurement != nil && measurement.Source == types.SourceHawkes {
+				measurements = append(measurements, measurement)
+			}
+		}
+
+		return true
+	})
+
+	for _, measurement := range measurements {
 		if measurement == nil || measurement.Symbol == "" ||
 			thesis.Stamped(measurement.Symbol, types.SourceManifold) ||
 			!thesis.Stamped(measurement.Symbol, types.SourceHawkes) {

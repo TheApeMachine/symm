@@ -225,11 +225,14 @@ func TestUpdate(t *testing.T) {
 
 		err := solver.Update(thesis)
 
-		Convey("It should stamp the empty normalized feature set", func() {
+		Convey("It should publish the explicit observing state", func() {
 			So(err, ShouldBeNil)
 			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
-			_, published := symbol.Resonance.Load("BTC/USD")
-			So(published, ShouldBeFalse)
+			stored, published := symbol.Resonance.Load("BTC/USD")
+			So(published, ShouldBeTrue)
+			reading := stored.(types.ResonanceReading)
+			So(reading.Verdict.Learning, ShouldEqual, "observing")
+			So(reading.Latent, ShouldBeEmpty)
 		})
 	})
 }

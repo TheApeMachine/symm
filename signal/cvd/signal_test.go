@@ -106,8 +106,8 @@ func TestMeasure(t *testing.T) {
 
 			net := measurement.Sample(types.MetricNet, types.SideNone)
 			So(net.Normalized, ShouldNotBeNil)
-			So(*net.Normalized, ShouldAlmostEqual,
-				measurement.Sample(types.MetricNetFraction, types.SideNone).Raw, 1e-12)
+			So(*net.Normalized, ShouldEqual,
+				measurement.Sample(types.MetricNetFraction, types.SideNone).Raw)
 
 			So(signal.Measure(futureCut), ShouldBeEmpty)
 		})
@@ -214,9 +214,9 @@ func TestCVDMeasurements(t *testing.T) {
 			}
 
 			So(*measurement.Sample(types.MetricNet, types.SideNone).Normalized,
-				ShouldAlmostEqual, -0.25, 1e-12)
+				ShouldEqual, -0.25)
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldAlmostEqual, (0.5-math.Sqrt(0.13))/0.5, 1e-12)
+				ShouldEqual, (0.5-math.Sqrt(0.2*0.2+0.3*0.3))/0.5)
 			So(measurement.Sample(types.MetricMidpoint, types.SideNone), ShouldResemble,
 				types.MetricSample{Raw: 100.5, Unit: types.UnitQuoteCurrency})
 			So(measurement.Sample(types.MetricTradePrice, types.SideNone), ShouldResemble,
@@ -237,6 +237,64 @@ func TestCVDMeasurements(t *testing.T) {
 		Convey("It should report no separation between the tied hypotheses", func() {
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
 				ShouldEqual, 0.0)
+		})
+	})
+
+	Convey("Given a flow score one representable value outside its probability domain", t, func() {
+		Convey("It should fail loudly before corrupt evidence reaches SNR", func() {
+			So(func() {
+				(&Signal{}).cvdMeasurements(
+					cvdTrade(3, "buy", 100, time.Unix(1_700_003_402, 0).UTC()),
+					100,
+					equation.FlowOutput{
+						Drive: math.Nextafter(1, 2),
+					},
+					2,
+				)
+			}, ShouldPanic)
+		})
+	})
+}
+
+func TestNormalizedFlowMetric(t *testing.T) {
+	Convey("Given a bounded flow family", t, func() {
+		Convey("It should expose balance immediately but gate price-response families", func() {
+			So(*normalizedFlowMetric(types.MetricBalance, 0.25, 1),
+				ShouldEqual, 0.25)
+			So(normalizedFlowMetric(types.MetricAbsorption, 0.25, 1),
+				ShouldBeNil)
+			So(*normalizedFlowMetric(types.MetricAbsorption, 0.25, 2),
+				ShouldEqual, 0.25)
+		})
+
+		Convey("It should retain exact boundaries and reject their adjacent exterior values", func() {
+			So(*normalizedFlowMetric(types.MetricDrive, 0, 2), ShouldEqual, 0.0)
+			So(*normalizedFlowMetric(types.MetricDrive, 1, 2), ShouldEqual, 1.0)
+			So(normalizedFlowMetric(
+				types.MetricDrive,
+				math.Nextafter(0, -1),
+				2,
+			), ShouldBeNil)
+			So(normalizedFlowMetric(
+				types.MetricDrive,
+				math.Nextafter(1, 2),
+				2,
+			), ShouldBeNil)
+		})
+	})
+}
+
+func TestNormalizedSignedNet(t *testing.T) {
+	Convey("Given signed quote flow and its gross-notional fraction", t, func() {
+		Convey("It should preserve direction, magnitude, and exact zero", func() {
+			So(*normalizedSignedNet(25, 0.25, 1), ShouldEqual, 0.25)
+			So(*normalizedSignedNet(-25, 0.25, 1), ShouldEqual, -0.25)
+			So(*normalizedSignedNet(0, 0.25, 1), ShouldEqual, 0.0)
+		})
+
+		Convey("It should reject a fraction outside executed gross notional", func() {
+			So(normalizedSignedNet(25, math.Nextafter(0, -1), 1), ShouldBeNil)
+			So(normalizedSignedNet(25, math.Nextafter(1, 2), 1), ShouldBeNil)
 		})
 	})
 }

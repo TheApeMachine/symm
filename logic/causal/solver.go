@@ -101,7 +101,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		if thesis.Stamped(symbol, types.SourceCausal) || !thesis.Stamped(symbol, types.SourceResonance) {
+		if thesis.Stamped(symbol, types.SourceCausal) ||
+			!thesis.Stamped(symbol, types.SourceResonance) {
 			return true
 		}
 

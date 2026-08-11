@@ -101,7 +101,8 @@ func (planner *Planner) Update(thesis *types.Thesis) {
 		symbolName, nameOK := key.(string)
 
 		if ok && symbol != nil && nameOK && symbolName != "" &&
-			symbol.LogicAnalyzed() && !symbol.StrategyDecided() {
+			symbol.SignalsMeasured() && symbol.LogicAnalyzed() &&
+			!symbol.StrategyDecided() {
 			readySymbols = append(readySymbols, symbolName)
 		}
 

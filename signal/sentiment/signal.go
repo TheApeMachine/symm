@@ -539,13 +539,21 @@ func normalizedSentimentMetric(
 	magnitudeBaseline float64,
 ) *float64 {
 	if metric == types.MetricChange || metric == types.MetricLeaderStrength {
-		if magnitudeBaseline <= 0 {
+		if magnitudeBaseline <= 0 || metric == types.MetricLeaderStrength && raw < 0 {
 			return nil
 		}
 
 		value := raw / (math.Abs(raw) + magnitudeBaseline)
 
 		return &value
+	}
+
+	if metric == types.MetricBreadth {
+		if raw < -1 || raw > 1 {
+			return nil
+		}
+	} else if raw < 0 || raw > 1 {
+		return nil
 	}
 
 	value := raw

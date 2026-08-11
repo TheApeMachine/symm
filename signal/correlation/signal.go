@@ -3,7 +3,6 @@ package correlation
 import (
 	"context"
 	"sort"
-	"strings"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -95,7 +94,22 @@ func (signal *Signal) run() {
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers := thesis.MarketTickers(types.SourceCorrelation)
+	tickers := make([]kraken.TickerData, 0)
+	thesis.Tickers.Range(func(key, value any) bool {
+		symbol := key.(string)
+		stored := value.([]kraken.TickerData)
+		latestAt, _, found := signal.section.Latest(symbol)
+
+		for _, ticker := range stored {
+			if found && !ticker.Timestamp.After(latestAt) {
+				continue
+			}
+
+			tickers = append(tickers, ticker)
+		}
+
+		return true
+	})
 
 	if len(tickers) == 0 {
 		return nil
@@ -115,23 +129,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		return nil
 	}
 
-	latestBySymbol := make(map[string]kraken.TickerData, len(tickers))
-
-	for _, row := range tickers {
-		symbol := strings.TrimSpace(row.Symbol)
-
-		if symbol == "" || row.Timestamp.IsZero() {
-			continue
-		}
-
-		if previous, found := latestBySymbol[symbol]; found &&
-			!row.Timestamp.After(previous.Timestamp) {
-			continue
-		}
-
-		latestBySymbol[symbol] = row
-	}
-
 	symbols := make([]string, 0, len(scoresBySymbol))
 
 	for symbol := range scoresBySymbol {
@@ -148,9 +145,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		scores := scoresBySymbol[symbol]
 
 		group.Go(func() error {
-			row, updated := latestBySymbol[symbol]
+			at, price, found := signal.section.Latest(symbol)
 
-			if !updated || row.Timestamp.IsZero() || row.Last == nil {
+			if !found {
 				return nil
 			}
 
@@ -164,14 +161,14 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				ID:      uuid.NewString(),
 				Source:  types.SourceCorrelation,
 				Symbol:  symbol,
-				At:      row.Timestamp,
+				At:      at,
 				Metrics: metrics,
 			}
 			measurement.PutMetric(
 				types.MetricLastPrice,
 				types.SideNone,
 				types.MetricSample{
-					Raw:  row.Last.Float64(),
+					Raw:  price,
 					Unit: types.UnitQuoteCurrency,
 				},
 			)
@@ -258,8 +255,22 @@ func correlationMetrics(
 	for _, item := range readings {
 		raw, exists := scores[item.name]
 		var normalized *float64
+		domainValid := exists
 
-		if !exists {
+		if item.metric == types.MetricSigned {
+			domainValid = domainValid && raw >= -1 && raw <= 1
+		}
+
+		if item.metric == types.MetricRelativeEnergy {
+			domainValid = domainValid && raw >= 0
+		}
+
+		if item.metric != types.MetricSigned &&
+			item.metric != types.MetricRelativeEnergy {
+			domainValid = domainValid && raw >= 0 && raw <= 1
+		}
+
+		if !domainValid {
 			valid = false
 		} else {
 			normalized = &raw

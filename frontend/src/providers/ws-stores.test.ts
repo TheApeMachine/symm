@@ -362,4 +362,22 @@ describe("ws-stores", () => {
 
 		unregisterResonance();
 	});
+
+	it("retains readiness independently for every symbol", () => {
+		const worker = new MockWorker();
+		const readinessPaint = vi.fn();
+		const unregisterReadiness = registerPainter("readiness", readinessPaint);
+		const btc = { symbol: "BTC/USD", hawkes: true };
+		const eth = { symbol: "ETH/USD", correlation: true };
+
+		attach(worker as unknown as Worker);
+		worker.emit({ type: "DRAW", frame: { readiness: [btc] } });
+		worker.emit({ type: "DRAW", frame: { readiness: [eth] } });
+
+		animationFrame?.(0);
+
+		expect(readinessPaint).toHaveBeenLastCalledWith([btc, eth]);
+
+		unregisterReadiness();
+	});
 });

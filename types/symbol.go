@@ -60,28 +60,22 @@ func (symbol *Symbol) Reset() {
 AddMeasurement retains the latest measurement for one source and peer.
 */
 func (symbol *Symbol) AddMeasurement(measurement *Measurement) {
-	for index, stored := range symbol.Measurements {
-		if stored.Source == measurement.Source && stored.Peer == measurement.Peer {
-			symbol.Measurements[index] = measurement
-			return
-		}
-	}
+	symbol.Readiness.ResetLogic(measurement.Source)
 
 	symbol.Measurements = append(symbol.Measurements, measurement)
-	symbol.Status = BUSY
+	symbol.Stamp(measurement.Source)
+
+	if symbol.SignalsMeasured() {
+		symbol.Status = BUSY
+	}
 }
 
 func (symbol *Symbol) Stamp(source SourceType) {
 	symbol.Readiness.Stamp(source)
 
-	// When the logic types have used the measurements, we clear them and
-	// mark the symbol as ready for the next batch waiting in thesis.Measurements.
-	if symbol.Readiness.Stamped(
-		SourceResonance,
-	) && symbol.Readiness.Stamped(
-		SourceCategory,
-	) {
+	if symbol.LogicAnalyzed() {
 		symbol.Measurements = symbol.Measurements[:0]
+		symbol.ResetSignals()
 		symbol.Status = READY
 	}
 }

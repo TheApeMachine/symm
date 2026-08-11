@@ -648,6 +648,10 @@ func (signal *Signal) frame(
 	thin := normalizedBookflowScore(types.MetricThinScore, output.ThinScore)
 	neutral := normalizedBookflowScore(types.MetricNeutralScore, output.NeutralScore)
 
+	if loaded == nil || spoof == nil || thin == nil || neutral == nil {
+		panic("depthflow: bookflow output outside its defined metric domain")
+	}
+
 	if !output.Ready {
 		loaded = nil
 		spoof = nil
@@ -713,6 +717,16 @@ func normalizedBookflowScore(
 	metric types.MetricType,
 	raw float64,
 ) *float64 {
+	maximum := 1.0
+
+	if metric == types.MetricSpoofScore {
+		maximum = maxBookImbalanceContrast
+	}
+
+	if raw < 0 || raw > maximum {
+		return nil
+	}
+
 	value := raw
 
 	if metric == types.MetricSpoofScore {

@@ -444,12 +444,18 @@ func normalizedIgnitionEvidence(
 		return nil
 	}
 
+	if raw < 0 {
+		return nil
+	}
+
 	value := raw
 
 	if metric == types.MetricRVOL || metric == types.MetricPrecursor ||
 		metric == types.MetricIgnition || metric == types.MetricTrend ||
 		metric == types.MetricStrength {
 		value = raw / (1 + raw)
+	} else if raw > 1 {
+		return nil
 	}
 
 	return &value
@@ -460,6 +466,10 @@ normalizedSpread reports executable spread as a fraction of the authoritative
 book midpoint observed no later than the trade.
 */
 func normalizedSpread(raw, midpoint float64) *float64 {
+	if raw <= 0 || midpoint <= 0 {
+		return nil
+	}
+
 	value := raw / midpoint
 
 	return &value

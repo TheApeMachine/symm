@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -95,8 +96,12 @@ func TestSnapshotDelta(t *testing.T) {
 func TestMeasureTrade(t *testing.T) {
 	Convey("Given pressure fade after a causal adverse book-price move", t, func() {
 		sample := algorithm.NewDecaySample()
+		expectedSample := algorithm.NewDecaySample()
 		signal := &Signal{sample: sample, decay: equation.NewDecay()}
 		_, ready, _, err := sample.MeasureBook(exhaustBookAt(100, 101, 10, 10))
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeTrue)
+		_, ready, _, err = expectedSample.MeasureBook(exhaustBookAt(100, 101, 10, 10))
 		So(err, ShouldBeNil)
 		So(ready, ShouldBeTrue)
 		_, _, _, err = sample.MeasureTrade(flow.TradeInput{
@@ -104,7 +109,12 @@ func TestMeasureTrade(t *testing.T) {
 			Side: flow.TradeBuy, At: time.Unix(1, 0),
 		})
 		So(err, ShouldBeNil)
-		_, ready, _, err = sample.MeasureBook(flow.BookInput{
+		_, _, _, err = expectedSample.MeasureTrade(flow.TradeInput{
+			Symbol: "BTC/USD", Price: 100, Quantity: 10,
+			Side: flow.TradeBuy, At: time.Unix(1, 0),
+		})
+		So(err, ShouldBeNil)
+		adverseBook := flow.BookInput{
 			Symbol: "BTC/USD", TickSize: 1,
 			Bids: []flow.BookLevel{
 				{Price: 100, Ticks: 100, Quantity: 0},
@@ -114,24 +124,43 @@ func TestMeasureTrade(t *testing.T) {
 				{Price: 101, Ticks: 101, Quantity: 0},
 				{Price: 100, Ticks: 100, Quantity: 10},
 			},
-		})
+		}
+		_, ready, _, err = sample.MeasureBook(adverseBook)
+		So(err, ShouldBeNil)
+		So(ready, ShouldBeTrue)
+		_, ready, _, err = expectedSample.MeasureBook(adverseBook)
 		So(err, ShouldBeNil)
 		So(ready, ShouldBeTrue)
 		at := time.Unix(2, 0)
-		measurements, err := signal.measureTrade(kraken.TradeData{
+		trade := kraken.TradeData{
 			Symbol: "BTC/USD", Side: "buy", Price: *decimal.NewFromInt64(99),
 			Qty: 1, TradeID: 41, Timestamp: at,
-		})
+		}
+		expectedInput, _, expectedMaturity, err := expectedSample.MeasureTrade(
+			flow.TradeInput{
+				Symbol: trade.Symbol, Price: 99, Quantity: trade.Qty,
+				Side: flow.TradeBuy, At: trade.Timestamp,
+			},
+		)
+		So(err, ShouldBeNil)
+		expectedOutput, err := equation.NewDecay().Measure(expectedInput)
+		So(err, ShouldBeNil)
+		measurements, err := signal.measureTrade(trade)
 
 		Convey("It should emit positive long thermal exhaustion only after both legs", func() {
 			So(err, ShouldBeNil)
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
 			So(measurement.At, ShouldResemble, at)
+			So(measurement.Maturity, ShouldEqual, expectedMaturity)
 			So(measurement.Sample(types.MetricThermal, types.SideBuy).Raw,
-				ShouldBeGreaterThan, 0)
+				ShouldEqual, expectedOutput.Long.Thermal)
 			So(measurement.Sample(types.MetricThermal, types.SideSell).Raw,
-				ShouldEqual, 0)
+				ShouldEqual, expectedOutput.Short.Thermal)
+			So(measurement.Sample(types.MetricMechanical, types.SideBuy).Raw,
+				ShouldEqual, expectedOutput.Long.Mechanical)
+			So(measurement.Sample(types.MetricMechanical, types.SideSell).Raw,
+				ShouldEqual, expectedOutput.Short.Mechanical)
 		})
 	})
 }
@@ -154,15 +183,15 @@ func TestFrame(t *testing.T) {
 			measurement := measurements[0]
 			So(measurement.Metrics, ShouldHaveLength, 17)
 			So(measurement.Sample(types.MetricThermal, types.SideBuy).Raw,
-				ShouldAlmostEqual, 0.4, 1e-12)
+				ShouldEqual, 0.4)
 			So(measurement.Sample(types.MetricMechanical, types.SideSell).Raw,
-				ShouldAlmostEqual, 0.2, 1e-12)
+				ShouldEqual, 0.2)
 			So(*measurement.Sample(types.MetricThermal, types.SideBuy).Normalized,
-				ShouldAlmostEqual, 0.4, 1e-12)
+				ShouldEqual, 0.4)
 			So(measurement.Sample(types.MetricCategory, types.SideBuy).Normalized,
 				ShouldBeNil)
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldAlmostEqual, 0.5, 1e-12)
+				ShouldEqual, (0.4-0.2)/0.4)
 
 			for _, sample := range measurement.Metrics {
 				So(sample.Unit, ShouldEqual, types.UnitDimensionless)
@@ -188,6 +217,60 @@ func TestFrame(t *testing.T) {
 		Convey("It should report zero SNR", func() {
 			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
 				ShouldEqual, 0.0)
+		})
+	})
+}
+
+func TestNormalizedDecayScore(t *testing.T) {
+	Convey("Given the exact closed domain of every decay probability margin", t, func() {
+		Convey("It should retain both boundaries and an interior score", func() {
+			So(*normalizedDecayScore(0), ShouldEqual, 0.0)
+			So(*normalizedDecayScore(0.375), ShouldEqual, 0.375)
+			So(*normalizedDecayScore(1), ShouldEqual, 1.0)
+		})
+
+		Convey("It should reject one-ULP underflow and overflow", func() {
+			So(normalizedDecayScore(math.Nextafter(0, -1)), ShouldBeNil)
+			So(normalizedDecayScore(math.Nextafter(1, 2)), ShouldBeNil)
+		})
+	})
+}
+
+func TestValidDecayCategory(t *testing.T) {
+	Convey("Given decay's nominal category domain", t, func() {
+		Convey("It should accept every exact identifier", func() {
+			for category := 0.0; category <= maximumDecayCategory; category++ {
+				So(validDecayCategory(category), ShouldBeTrue)
+			}
+		})
+
+		Convey("It should reject fractional and out-of-range identifiers", func() {
+			So(validDecayCategory(0.5), ShouldBeFalse)
+			So(validDecayCategory(math.Nextafter(0, -1)), ShouldBeFalse)
+			So(validDecayCategory(
+				math.Nextafter(maximumDecayCategory, maximumDecayCategory+1),
+			), ShouldBeFalse)
+		})
+	})
+}
+
+func TestNormalizedDecayMetrics(t *testing.T) {
+	Convey("Given one malformed probability margin in an otherwise valid output", t, func() {
+		output := equation.DecayOutput{}
+		output.Long.Thermal = math.Nextafter(1, 2)
+		metrics, valid := normalizedDecayMetrics(output)
+
+		Convey("It should preserve the raw audit value and reject the bundle", func() {
+			So(valid, ShouldBeFalse)
+			So(metrics, ShouldHaveLength, 16)
+			So(metrics[types.MetricKey(
+				types.MetricThermal,
+				types.SideBuy,
+			)].Raw, ShouldEqual, output.Long.Thermal)
+			So(metrics[types.MetricKey(
+				types.MetricThermal,
+				types.SideBuy,
+			)].Normalized, ShouldBeNil)
 		})
 	})
 }

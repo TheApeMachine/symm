@@ -25,19 +25,19 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			SourceCorrelation, []*Measurement{measurement}, true,
 		)
 
-		Convey("Then it should create the ready symbol and queue its first batch", func() {
+		Convey("Then it should admit and notify the first ready batch immediately", func() {
 			So(err, ShouldBeNil)
-			So(len(analyzer), ShouldEqual, 0)
+			So(len(analyzer), ShouldEqual, 1)
 			So(len(peerSignal), ShouldEqual, 0)
 			storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			symbol := storedSymbol.(*Symbol)
-			So(symbol.Status, ShouldEqual, READY)
-			So(symbol.Measurements, ShouldBeEmpty)
-			So(symbol.Stamped(SourceCorrelation), ShouldBeFalse)
+			So(symbol.Status, ShouldEqual, BUSY)
+			So(symbol.Measurements, ShouldResemble, []*Measurement{measurement})
+			So(symbol.Stamped(SourceCorrelation), ShouldBeTrue)
 			stored, found := thesis.Measurements.Load(SourceCorrelation)
 			So(found, ShouldBeTrue)
-			So(stored, ShouldResemble, []*Measurement{measurement})
+			So(stored, ShouldBeEmpty)
 		})
 	})
 
@@ -85,16 +85,16 @@ func TestThesisAppendMeasurements(t *testing.T) {
 
 		thesis.AppendMeasurements(SourceLeadLag, measurements, true)
 
-		Convey("Then it should create every ready symbol and retain the first batch", func() {
+		Convey("Then it should immediately admit every independent symbol", func() {
 			stored, found := thesis.Measurements.Load(SourceLeadLag)
 			So(found, ShouldBeTrue)
-			So(stored, ShouldResemble, measurements)
+			So(stored, ShouldBeEmpty)
 
 			for _, measurement := range measurements {
 				storedSymbol, found := thesis.Symbols.Load(measurement.Symbol)
 				So(found, ShouldBeTrue)
-				So(storedSymbol.(*Symbol).Status, ShouldEqual, READY)
-				So(storedSymbol.(*Symbol).Measurements, ShouldBeEmpty)
+				So(storedSymbol.(*Symbol).Status, ShouldEqual, BUSY)
+				So(storedSymbol.(*Symbol).Measurements, ShouldHaveLength, 1)
 			}
 		})
 	})
@@ -121,14 +121,14 @@ func TestThesisAppendMeasurements(t *testing.T) {
 			So(err, ShouldBeNil)
 		}
 
-		Convey("Then each sender's first batch should remain queued", func() {
+		Convey("Then one contribution should run while the other symbols remain queued", func() {
 			pending := 0
 			thesis.Measurements.Range(func(_, value any) bool {
 				pending += len(value.([]*Measurement))
 				return true
 			})
-			So(pending, ShouldEqual, len(sources))
-			So(thesis.Stamped("BTC/USD", SourceCorrelation), ShouldBeFalse)
+			So(pending, ShouldEqual, len(sources)-1)
+			So(thesis.Stamped("BTC/USD", SourceCorrelation), ShouldBeTrue)
 		})
 	})
 
@@ -184,7 +184,7 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		thesis.AppendMeasurements(SourceHawkes, []*Measurement{bitcoin, ether}, false)
 		thesis.AppendMeasurements(SourceHawkes, []*Measurement{updated}, false)
 
-		Convey("Then it should retain only work that arrived while the symbol was busy", func() {
+		Convey("Then it should process independent symbols and retain the busy update", func() {
 			stored, found := thesis.Measurements.Load(SourceHawkes)
 			So(found, ShouldBeTrue)
 			So(stored, ShouldResemble, []*Measurement{updated})
@@ -307,7 +307,7 @@ func TestThesisAppendMeasurements(t *testing.T) {
 		)
 
 		Convey("Then every pointer in the prior view should remain valid", func() {
-			So(prior, ShouldResemble, []*Measurement{bitcoin, ether})
+			So(prior, ShouldResemble, []*Measurement{ether})
 
 			for _, measurement := range prior {
 				So(measurement, ShouldNotBeNil)
@@ -524,7 +524,8 @@ func TestThesisReset(t *testing.T) {
 		thesis.AppendTrade(consumed)
 		So(thesis.MarketTrades(SourceToxicity), ShouldHaveLength, 1)
 		thesis.AppendMeasurements(SourceToxicity, measurements, true)
-		So(len(notified), ShouldEqual, 0)
+		So(len(notified), ShouldEqual, 1)
+		<-notified
 		symbol.Categories.Store("BTC/USD", []Category{{Symbol: "BTC/USD"}})
 
 		for _, source := range []SourceType{
@@ -550,6 +551,8 @@ func TestThesisReset(t *testing.T) {
 		}
 
 		So(thesis.Stamped("BTC/USD"), ShouldBeTrue)
+		So(len(notified), ShouldEqual, 1)
+		<-notified
 		thesis.Reset()
 
 		Convey("Then the next epoch should retain only the prior measurements", func() {

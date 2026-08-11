@@ -81,14 +81,14 @@ func TestMeasure(t *testing.T) {
 			median := thin.Metrics[types.MetricKey(types.MetricExecutableTouchDepthMedian, types.SideNone)].Raw
 			relative := thin.Metrics[types.MetricKey(types.MetricRelativeTouchDepth, types.SideNone)].Raw
 			scarcity := thin.Metrics[types.MetricKey(types.MetricScarcityScore, types.SideNone)].Raw
-			So(depth.Raw, ShouldAlmostEqual, 101)
-			So(median, ShouldAlmostEqual, 1212)
-			So(relative, ShouldAlmostEqual, 101.0/1212.0, 1e-12)
+			So(depth.Raw, ShouldEqual, 101.0)
+			So(median, ShouldEqual, 1212.0)
+			So(relative, ShouldEqual, 101.0/1212.0)
 			So(depth.Normalized, ShouldNotBeNil)
-			So(*depth.Normalized, ShouldAlmostEqual, 101.0/(101.0+1212.0), 1e-12)
+			So(*depth.Normalized, ShouldEqual, 101.0/(101.0+1212.0))
 			So(*thin.Sample(types.MetricRelativeTouchDepth, types.SideNone).Normalized,
-				ShouldAlmostEqual, 101.0/(101.0+1212.0), 1e-12)
-			So(scarcity, ShouldAlmostEqual, 1111.0/(1111.0+202.0), 1e-12)
+				ShouldEqual, (101.0/1212.0)/(1.0+101.0/1212.0))
+			So(scarcity, ShouldEqual, 1111.0/(1111.0+202.0))
 			reported := thin.Sample(
 				types.MetricReportedVolumeNotional,
 				types.SideNone,
@@ -106,7 +106,7 @@ func TestMeasure(t *testing.T) {
 			)
 			expectedSNR := (scarcity - available) / scarcity
 			So(thin.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldAlmostEqual, expectedSNR, 1e-12)
+				ShouldEqual, expectedSNR)
 			So(thin.Sample(types.MetricReportedVolumeNotional, types.SideNone).Normalized,
 				ShouldNotBeNil)
 			So(thin.Sample(types.MetricExecutableTouchDepthMedian, types.SideNone).Normalized,
@@ -155,6 +155,98 @@ func TestMeasure(t *testing.T) {
 				types.MetricReportedVolumeNotional,
 				types.SideNone,
 			).Normalized, ShouldBeNil)
+		})
+	})
+}
+
+func TestNormalizedRelativeLiquidity(t *testing.T) {
+	Convey("Given a leave-one-out depth ratio against empirical parity", t, func() {
+		Convey("It should map zero, parity, and an exact multiple to their shares", func() {
+			So(*normalizedRelativeLiquidity(0), ShouldEqual, 0.0)
+			So(*normalizedRelativeLiquidity(1), ShouldEqual, 0.5)
+			So(*normalizedRelativeLiquidity(3), ShouldEqual, 3.0/4.0)
+		})
+
+		Convey("It should reject the nearest negative representable ratio", func() {
+			So(normalizedRelativeLiquidity(math.Nextafter(0, -1)), ShouldBeNil)
+		})
+	})
+}
+
+func TestLiquidityCohortMedian(t *testing.T) {
+	Convey("Given positive, zero, and extreme cohort observations", t, func() {
+		peers := []liquidityPeer{
+			{symbol: "ZERO/USD"},
+			{symbol: "A/USD", observation: liquidityObservation{
+				executableDepth: 2, quoteNotional: 20,
+			}},
+			{symbol: "B/USD", observation: liquidityObservation{
+				executableDepth: 4, quoteNotional: 40,
+			}},
+			{symbol: "OUTLIER/USD", observation: liquidityObservation{
+				executableDepth: 100, quoteNotional: 1000,
+			}},
+		}
+
+		Convey("It should exclude missing values and retain the robust middle observation", func() {
+			depth, depthReady := liquidityCohortMedian(peers, true)
+			notional, notionalReady := liquidityCohortMedian(peers, false)
+			So(depth, ShouldEqual, 4.0)
+			So(depthReady, ShouldBeTrue)
+			So(notional, ShouldEqual, 40.0)
+			So(notionalReady, ShouldBeTrue)
+		})
+	})
+}
+
+func TestNormalizedLiquidityRatio(t *testing.T) {
+	Convey("Given current liquidity and a positive cohort baseline", t, func() {
+		Convey("It should compute exact shares and preserve zero as measured", func() {
+			So(*normalizedLiquidityRatio(0, 4), ShouldEqual, 0.0)
+			So(*normalizedLiquidityRatio(4, 4), ShouldEqual, 0.5)
+			So(*normalizedLiquidityRatio(12, 4), ShouldEqual, 12.0/16.0)
+		})
+
+		Convey("It should reject negative numerators and non-positive scales", func() {
+			So(normalizedLiquidityRatio(math.Nextafter(0, -1), 4), ShouldBeNil)
+			So(normalizedLiquidityRatio(4, 0), ShouldBeNil)
+			So(normalizedLiquidityRatio(4, math.Nextafter(0, -1)), ShouldBeNil)
+		})
+	})
+}
+
+func TestNormalizedLiquidityScore(t *testing.T) {
+	Convey("Given scarcity's closed probability domain", t, func() {
+		Convey("It should retain both boundaries and reject adjacent exterior values", func() {
+			So(*normalizedLiquidityScore(0), ShouldEqual, 0.0)
+			So(*normalizedLiquidityScore(1), ShouldEqual, 1.0)
+			So(normalizedLiquidityScore(math.Nextafter(0, -1)), ShouldBeNil)
+			So(normalizedLiquidityScore(math.Nextafter(1, 2)), ShouldBeNil)
+		})
+	})
+}
+
+func TestLeaveOneOutLiquidity(t *testing.T) {
+	Convey("Given a target, valid peers, and peers missing one evidence family", t, func() {
+		peers := []liquidityPeer{
+			{symbol: "TARGET/USD", observation: liquidityObservation{
+				executableDepth: 1, quoteNotional: 10,
+			}},
+			{symbol: "A/USD", observation: liquidityObservation{
+				executableDepth: 2, quoteNotional: 20,
+			}},
+			{symbol: "B/USD", observation: liquidityObservation{
+				executableDepth: 4,
+			}},
+			{symbol: "C/USD", observation: liquidityObservation{
+				quoteNotional: 60,
+			}},
+		}
+		depths, notionals := leaveOneOutLiquidity("TARGET/USD", peers)
+
+		Convey("It should exclude the target and never substitute missing peer evidence", func() {
+			So(depths, ShouldResemble, []float64{2, 4})
+			So(notionals, ShouldResemble, []float64{20, 60})
 		})
 	})
 }

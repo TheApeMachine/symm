@@ -225,79 +225,57 @@ func (thesis *Thesis) AppendMeasurements(
 	measurements []*Measurement,
 	ready bool,
 ) error {
-	shouldFanout := false
-	processedSymbols := make([]string, 0, len(measurements))
-	pending := 0
-
 	if len(measurements) > 0 {
-		found, loaded := thesis.Measurements.LoadOrStore(
-			sender, append([]*Measurement{}, measurements...),
-		)
-
-		if !loaded {
-			for _, measurement := range measurements {
-				thesis.Symbols.LoadOrStore(
-					measurement.Symbol,
-					NewSymbol(measurement.Symbol, thesis.ui),
-				)
-			}
-
-			pending = len(measurements)
-		}
-
-		stored := append([]*Measurement{}, found.([]*Measurement)...)
-
-		for index := 0; loaded && index < len(stored); {
-			symbolFound, ok := thesis.Symbols.LoadOrStore(
-				stored[index].Symbol, NewSymbol(stored[index].Symbol, thesis.ui),
-			)
-
-			symbol, ok := symbolFound.(*Symbol)
-
-			if ok && symbol != nil && symbol.Status == READY {
-				symbol.AddMeasurement(stored[index])
-				stored = slices.Delete(stored, index, index+1)
-				symbol.Stamp(sender)
-				shouldFanout = true
-				processedSymbols = append(processedSymbols, symbol.Symbol)
-				continue
-			}
-
-			index++
-		}
+		found, loaded := thesis.Measurements.LoadOrStore(sender, measurements)
 
 		if loaded {
-			stored = append(stored, measurements...)
-			thesis.Measurements.Store(sender, stored)
-			pending = len(stored)
-		}
-	}
+			stored, ok := found.([]*Measurement)
 
-	if ready && shouldFanout {
-		thesis.Fanout(sender, SourceAnalyzer)
-	}
+			if !ok {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"thesis: invalid measurement type for source "+string(sender),
+					nil,
+				))
+			}
 
-	if thesis.Audit != nil {
-		err := thesis.Audit(map[string]any{
-			"channel": "orchestration",
-			"type":    "measurement_batch",
-			"value": map[string]any{
-				"at":                time.Now().UTC(),
-				"source":            sender,
-				"received":          len(measurements),
-				"processed_symbols": processedSymbols,
-				"pending":           pending,
-				"ready":             ready,
-				"analyzer_notified": ready && shouldFanout,
-			},
-		})
+			if ready {
+				for i := 0; i < len(stored); i++ {
+					symbolFound, _ := thesis.Symbols.LoadOrStore(stored[i].Symbol, NewSymbol(
+						stored[i].Symbol, thesis.ui,
+					))
 
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"thesis: failed to audit measurement batch",
-				err,
-			))
+					symbol := symbolFound.(*Symbol)
+
+					if symbol.Status == READY {
+						symbol.AddMeasurement(stored[i])
+						stored = slices.Delete(stored, i, i+1)
+					}
+
+					if symbol.Status == BUSY {
+						thesis.Fanout(sender, SourceAnalyzer)
+					}
+				}
+
+				for i := 0; i < len(measurements); i++ {
+					symbolFound, _ := thesis.Symbols.LoadOrStore(measurements[i].Symbol, NewSymbol(
+						measurements[i].Symbol, thesis.ui,
+					))
+
+					symbol := symbolFound.(*Symbol)
+
+					if symbol.Status == READY {
+						symbol.AddMeasurement(measurements[i])
+						measurements = slices.Delete(measurements, i, i+1)
+					}
+
+					if symbol.Status == BUSY {
+						thesis.Fanout(sender, SourceAnalyzer)
+					}
+				}
+			}
+
+			thesis.Measurements.Store(sender, append(stored, measurements...))
 		}
 	}
 

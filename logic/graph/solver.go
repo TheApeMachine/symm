@@ -170,54 +170,79 @@ Update extracts nodes and infers directional edges from Thesis, publishing the c
 Graph into thesis.Graphs.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
+	var graphErr error
+
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, ok := value.(*types.Symbol)
 
 		if !ok || symbol == nil || symbol.Stamped(types.SourceGraph) ||
 			!symbol.Stamped(types.SourceCategory) ||
 			!symbol.Stamped(types.SourceResonance) ||
-			!symbol.Stamped(types.SourceManifold) ||
 			!symbol.Stamped(types.SourceCausal) ||
 			!symbol.Stamped(types.SourceCognition) {
 			return true
 		}
 
+		if symbol.Stamped(types.SourceHawkes) &&
+			!symbol.Stamped(types.SourceManifold) {
+			return true
+		}
+
 		symbolName, ok := key.(string)
 
-		if ok && symbolName != "" {
+		if !ok || symbolName == "" {
+			return true
 		}
 
 		graph := NewGraph(thesis.At)
 		solver.extractCategoryNodes(symbol, graph)
 		solver.extractResonanceNodes(symbol, graph)
 
-		if err := solver.extractCausalNodes(symbol, graph); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"graph: failed to extract causal nodes - "+err.Error(),
-				err,
-			))
+		causalValue, causalFound := symbol.Causal.Load(symbolName)
 
-			return true
+		if causalFound {
+			causalMap, mapOK := causalValue.(map[string]any)
+
+			if !mapOK {
+				graphErr = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"graph: invalid causal artifact for "+symbolName,
+					nil,
+				))
+				return false
+			}
+
+			if causalValuesPresent(causalMap) {
+				if err := solver.extractCausalNodes(symbol, graph); err != nil {
+					graphErr = errnie.Error(errnie.Err(
+						errnie.Internal,
+						"graph: failed to extract causal nodes - "+err.Error(),
+						err,
+					))
+					return false
+				}
+			}
 		}
 
 		solver.extractCognitionNodes(symbol, graph)
 
 		if err := solver.inferStructuralEdges(symbol, graph); err != nil {
-			errnie.Error(errnie.Err(
+			graphErr = errnie.Error(errnie.Err(
 				errnie.Internal,
 				"graph: failed to infer structural edges - "+err.Error(),
 				err,
 			))
 
-			return true
+			return false
 		}
 
+		symbol.Graphs.Store("market_graph", graph)
+		thesis.Stamp(symbolName, types.SourceGraph)
 		utils.Publish(solver.ui, datura.NewMap("graph", graph))
 		return true
 	})
 
-	return nil
+	return graphErr
 }
 
 /*
@@ -640,36 +665,34 @@ func (solver *Solver) inferStructuralEdges(
 	stored, found := symbol.Cognition.Load(symbol.Symbol)
 	cognition, cognitionOK := stored.(types.Cognition)
 
-	if !found || !cognitionOK {
-		return nil
-	}
+	if found && cognitionOK {
+		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
 
-	currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
+		for path, probability := range cognition.Predictions {
+			if path == "" {
+				continue
+			}
 
-	for path, probability := range cognition.Predictions {
-		if path == "" {
-			continue
+			targetNodeID := fmt.Sprintf("cat:%s:%s", symbol.Symbol, path)
+			graph.AddEdge(&Edge{
+				From:       currentNodeID,
+				To:         targetNodeID,
+				Relation:   RelationLeads,
+				Weight:     probability,
+				Confidence: probability,
+				At:         graph.At,
+				Reason:     "cognition beam search lookahead prediction",
+			})
+			graph.AddEdge(&Edge{
+				From:       targetNodeID,
+				To:         currentNodeID,
+				Relation:   RelationLags,
+				Weight:     probability,
+				Confidence: probability,
+				At:         graph.At,
+				Reason:     "inverse temporal lag of beam search lookahead",
+			})
 		}
-
-		targetNodeID := fmt.Sprintf("cat:%s:%s", symbol.Symbol, path)
-		graph.AddEdge(&Edge{
-			From:       currentNodeID,
-			To:         targetNodeID,
-			Relation:   RelationLeads,
-			Weight:     probability,
-			Confidence: probability,
-			At:         graph.At,
-			Reason:     "cognition beam search lookahead prediction",
-		})
-		graph.AddEdge(&Edge{
-			From:       targetNodeID,
-			To:         currentNodeID,
-			Relation:   RelationLags,
-			Weight:     probability,
-			Confidence: probability,
-			At:         graph.At,
-			Reason:     "inverse temporal lag of beam search lookahead",
-		})
 	}
 
 	// 3. Relate categories through the evidence they actually share.

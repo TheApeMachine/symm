@@ -121,7 +121,6 @@ func (analyzer *Analyzer) process(in any) {
 		return
 	}
 
-	group := &errgroup.Group{}
 	iterations := 0
 	initiallyReady := thesis.SymbolsReady()
 
@@ -144,15 +143,14 @@ func (analyzer *Analyzer) process(in any) {
 		}
 	}
 
-	for !thesis.SymbolsReady() {
-		iterations++
-		iterationErr := ""
+	iterationErr := ""
 
-		// Solvers inspect their own prerequisites and publish another coalesced
-		// analyzer wake-up when they make downstream work available.
+	for !thesis.SymbolsReady() {
+		group := &errgroup.Group{}
+
 		for _, solver := range analyzer.solvers {
 			group.Go(func() error {
-				return errnie.Error(solver.Update(thesis))
+				return solver.Update(thesis)
 			})
 		}
 
@@ -185,6 +183,7 @@ func (analyzer *Analyzer) process(in any) {
 				))
 			}
 		}
+
 	}
 
 	if analyzer.recorder != nil {

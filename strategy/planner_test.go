@@ -167,6 +167,29 @@ func TestPlannerSearch(t *testing.T) {
 }
 
 func TestPlannerUpdate(t *testing.T) {
+	Convey("Given complete logic without complete signal contributions", t, func() {
+		planner := &Planner{}
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Symbols.Store("BTC/USD", types.NewSymbol("BTC/USD", nil))
+
+		for _, source := range []types.SourceType{
+			types.SourceCategory,
+			types.SourceCognition,
+			types.SourceManifold,
+			types.SourceResonance,
+			types.SourceCausal,
+			types.SourceGraph,
+		} {
+			thesis.Stamp("BTC/USD", source)
+		}
+
+		planner.Update(thesis)
+
+		Convey("Then strategy should remain pending", func() {
+			So(thesis.Stamped("BTC/USD", types.SourcePlanner), ShouldBeFalse)
+		})
+	})
+
 	Convey("Given a fully analyzed thesis whose forecast is unavailable", t, func() {
 		messages := make(chan []byte, 2)
 		planner := &Planner{ui: messages}
@@ -179,6 +202,7 @@ func TestPlannerUpdate(t *testing.T) {
 		})
 		symbol.Graphs.Store(marketGraphKey, logicgraph.NewGraph(thesis.At))
 		thesis.Symbols.Store("BTC/USD", symbol)
+		stampPlannerSignals(thesis, "BTC/USD")
 		Reset(func() {
 			So(causalSolver.Close(), ShouldBeNil)
 		})
@@ -210,6 +234,7 @@ func TestPlannerUpdate(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Symbols.Store("BTC/USD", types.NewSymbol("BTC/USD", nil))
 		thesis.Symbols.Store("ETH/USD", types.NewSymbol("ETH/USD", nil))
+		stampPlannerSignals(thesis, "BTC/USD")
 
 		for _, source := range []types.SourceType{
 			types.SourceCategory,
@@ -230,6 +255,23 @@ func TestPlannerUpdate(t *testing.T) {
 			So(thesis.Stamped("ETH/USD", types.SourcePlanner), ShouldBeFalse)
 		})
 	})
+}
+
+func stampPlannerSignals(thesis *types.Thesis, symbol string) {
+	for _, source := range []types.SourceType{
+		types.SourceCorrelation,
+		types.SourceCVD,
+		types.SourceDepthFlow,
+		types.SourceExhaustion,
+		types.SourceHawkes,
+		types.SourceLeadLag,
+		types.SourceLiquidity,
+		types.SourcePumpDump,
+		types.SourceSentiment,
+		types.SourceToxicity,
+	} {
+		thesis.Stamp(symbol, source)
+	}
 }
 
 func TestPlannerDecisions(t *testing.T) {

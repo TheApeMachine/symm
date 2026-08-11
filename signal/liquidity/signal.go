@@ -402,6 +402,10 @@ func normalizedLiquidityRatio(raw, baseline float64) *float64 {
 }
 
 func normalizedLiquidityScore(raw float64) *float64 {
+	if raw < 0 || raw > 1 {
+		return nil
+	}
+
 	value := raw
 
 	return &value

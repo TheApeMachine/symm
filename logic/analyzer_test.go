@@ -74,8 +74,8 @@ func TestAnalyzerProcess(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		analyzer.process(thesis)
 
-		Convey("It should let each solver inspect symbol readiness", func() {
-			So(order, ShouldResemble, []int{0})
+		Convey("It should avoid running solvers without active symbols", func() {
+			So(order, ShouldBeEmpty)
 		})
 	})
 
@@ -99,8 +99,8 @@ func TestAnalyzerProcess(t *testing.T) {
 		analyzer.process(thesis)
 		slices.Sort(order)
 
-		Convey("It should run the chain for each notification without a global cut", func() {
-			So(order, ShouldResemble, []int{0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5})
+		Convey("It should not rerun a completed symbol for a duplicate notification", func() {
+			So(order, ShouldResemble, []int{0, 1, 2, 3, 4, 5})
 		})
 	})
 
@@ -123,6 +123,40 @@ func TestAnalyzerProcess(t *testing.T) {
 		Convey("It should let independent solvers complete their available work", func() {
 			So(order, ShouldResemble, []int{0, 1, 2})
 			So(thesis.Stamped("BTC/USD", types.SourceGraph), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given two ready signal contributions for one symbol", t, func() {
+		order := make([]int, 0, 1)
+		mu := &sync.Mutex{}
+		analyzer := &Analyzer{
+			solvers: []Solver{
+				&orderedSolver{
+					index: 0, order: &order, mu: mu, source: types.SourceGraph,
+				},
+			},
+		}
+		thesis := types.NewThesis(t.Context(), nil)
+		correlation := &types.Measurement{
+			Source: types.SourceCorrelation, Symbol: "BTC/USD",
+		}
+		cvd := &types.Measurement{Source: types.SourceCVD, Symbol: "BTC/USD"}
+		So(thesis.AppendMeasurements(
+			types.SourceCorrelation, []*types.Measurement{correlation}, true,
+		), ShouldBeNil)
+		So(thesis.AppendMeasurements(
+			types.SourceCVD, []*types.Measurement{cvd}, true,
+		), ShouldBeNil)
+
+		analyzer.process(thesis)
+		stored, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := stored.(*types.Symbol)
+
+		Convey("It should immediately admit the queued contribution after graph unlocks", func() {
+			So(symbol.Status, ShouldEqual, types.BUSY)
+			So(symbol.Measurements, ShouldResemble, []*types.Measurement{cvd})
+			So(symbol.Stamped(types.SourceCorrelation), ShouldBeTrue)
+			So(symbol.Stamped(types.SourceCVD), ShouldBeTrue)
 		})
 	})
 }

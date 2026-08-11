@@ -137,7 +137,24 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			inputDim := len(masterSchema)
 
 			if inputDim == 0 {
+				reading := types.ResonanceReading{
+					Stage:  "resonance",
+					Source: types.SourceResonance,
+					Symbol: symbolName,
+					At:     thesis.At,
+					Alpha:  solver.alpha,
+					Verdict: types.ResonanceVerdict{
+						Learning: "observing",
+					},
+				}
+				stored, _ := thesis.Symbols.Load(symbolName)
+				symbol := stored.(*types.Symbol)
+				symbol.Resonance.Store(symbolName, reading)
 				thesis.Stamp(symbolName, types.SourceResonance)
+				utils.Publish(
+					solver.ui,
+					datura.NewMap("resonance", reading),
+				)
 				return nil
 			}
 
@@ -246,7 +263,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
-		return nil
+	return nil
 }
 
 /*

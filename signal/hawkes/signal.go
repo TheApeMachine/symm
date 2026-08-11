@@ -2,12 +2,15 @@ package hawkes
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -33,6 +36,12 @@ type Signal struct {
 	ui        chan []byte
 	thesis    *types.Thesis
 	semaphore chan struct{}
+	lastTrade *sync.Map
+}
+
+type tradeCursor struct {
+	at  time.Time
+	ids map[int64]struct{}
 }
 
 /*
@@ -56,6 +65,7 @@ func NewSignal(
 		ui:        ui,
 		thesis:    thesis,
 		semaphore: make(chan struct{}, 1),
+		lastTrade: &sync.Map{},
 	}
 
 	signal.status.Store(types.INITIALIZING)
@@ -110,6 +120,10 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 	ready := false
 
 	for index, trade := range trades {
+		if signal.seenTrade(trade) {
+			continue
+		}
+
 		input, sampled, err := signal.sample.MeasureArrival(excitation.TradeInput{
 			Symbol:    trade.Symbol,
 			Side:      trade.Side,
@@ -125,6 +139,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 
 			continue
 		}
+
+		signal.commitTrade(trade)
 
 		if !sampled {
 			continue
@@ -323,6 +339,56 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 	}
 
 	return measurements, ready
+}
+
+func (signal *Signal) seenTrade(row kraken.TradeData) bool {
+	if signal.lastTrade == nil {
+		return false
+	}
+
+	raw, exists := signal.lastTrade.Load(row.Symbol)
+
+	if !exists {
+		return false
+	}
+
+	previous := raw.(tradeCursor)
+
+	if row.Timestamp.Before(previous.at) {
+		return true
+	}
+
+	if row.Timestamp.After(previous.at) {
+		return false
+	}
+
+	_, seen := previous.ids[row.TradeID]
+
+	return seen
+}
+
+func (signal *Signal) commitTrade(row kraken.TradeData) {
+	if signal.lastTrade == nil {
+		signal.lastTrade = &sync.Map{}
+	}
+
+	previous := tradeCursor{}
+	raw, exists := signal.lastTrade.Load(row.Symbol)
+
+	if exists {
+		previous = raw.(tradeCursor)
+	}
+
+	if row.Timestamp.After(previous.at) {
+		previous = tradeCursor{at: row.Timestamp, ids: make(map[int64]struct{})}
+	}
+
+	if previous.ids == nil {
+		previous.ids = make(map[int64]struct{})
+	}
+
+	previous.ids[row.TradeID] = struct{}{}
+	signal.lastTrade.Store(row.Symbol, previous)
 }
 
 /*

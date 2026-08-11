@@ -246,6 +246,7 @@ export const attach = (worker: Worker) => {
 	const retainedPositions = new Map<string, JSONSerializable>();
 	const retainedCognition = new Map<string, JSONSerializable>();
 	const retainedResonance = new Map<string, JSONSerializable>();
+	const retainedReadiness = new Map<string, JSONSerializable>();
 	let animationFrame: number | null = null;
 
 	const flush = () => {
@@ -257,6 +258,10 @@ export const attach = (worker: Worker) => {
 
 			if (key === "resonance") {
 				return [key, Array.from(retainedResonance.values())] as const;
+			}
+
+			if (key === "readiness") {
+				return [key, Array.from(retainedReadiness.values())] as const;
 			}
 
 			if (key === "positions") {
@@ -298,6 +303,19 @@ export const attach = (worker: Worker) => {
 
 			if (key === "measurements") {
 				paintRegistered(key, update);
+				continue;
+			}
+
+			if (key === "readiness") {
+				for (const frame of frameRows(update)) {
+					const identity = symbolIdentity(frame);
+
+					if (identity !== null) {
+						retainedReadiness.set(identity, frame);
+					}
+				}
+
+				pendingUpdates.set("readiness", null);
 				continue;
 			}
 

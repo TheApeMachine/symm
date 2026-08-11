@@ -209,7 +209,8 @@ func lagSearchThreshold(effectiveSupport, searches int) float64 {
 }
 
 /*
-sampleSupportFraction scales evidence by resolved short-window depth.
+sampleSupportFraction scales evidence by resolved short-window return depth.
+One price establishes an origin but contributes no return observation.
 */
 func sampleSupportFraction(sampleCount int) float64 {
 	if sampleCount <= 0 {
@@ -222,7 +223,13 @@ func sampleSupportFraction(sampleCount int) float64 {
 		return 0
 	}
 
-	return min(1, float64(sampleCount)/float64(shortWindow))
+	returnCount := sampleCount - 1
+
+	if returnCount <= 0 {
+		return 0
+	}
+
+	return min(1, float64(returnCount)/float64(shortWindow))
 }
 
 type evidenceWeights struct {
@@ -333,6 +340,10 @@ func buildScoreMeasurement(
 
 		sample.Normalized = normalizedLeadLag(item.metric, item.raw)
 
+		if sample.Normalized == nil {
+			panic("leadlag: score outside its defined metric domain")
+		}
+
 		measurement.Metrics[types.MetricKey(item.metric, types.SideNone)] = sample
 	}
 
@@ -345,6 +356,10 @@ func buildScoreMeasurement(
 		types.MetricSignedLagDirection,
 		selected.lagDirection,
 	)
+
+	if direction.Normalized == nil {
+		panic("leadlag: direction outside its nominal domain")
+	}
 
 	measurement.Metrics[types.MetricKey(
 		types.MetricSignedLagDirection,
@@ -375,8 +390,24 @@ correlations and direction are signed, while support, lag fraction, evidence
 weights, and strength are bounded fractions.
 */
 func normalizedLeadLag(metric types.MetricType, raw float64) *float64 {
+	switch metric {
+	case types.MetricSignedCorrelation,
+		types.MetricSignedContempCorrelation,
+		types.MetricSignedLagCorrelation:
+		if raw < -1 || raw > 1 {
+			return nil
+		}
+	case types.MetricSignedLagDirection:
+		if raw != -1 && raw != 0 && raw != 1 {
+			return nil
+		}
+	default:
+		if raw < 0 || raw > 1 {
+			return nil
+		}
+	}
+
 	value := raw
-	_ = metric
 
 	return &value
 }

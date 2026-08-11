@@ -731,6 +731,10 @@ func normalizedDecayMetrics(
 }
 
 func normalizedDecayScore(raw float64) *float64 {
+	if raw < 0 || raw > 1 {
+		return nil
+	}
+
 	value := raw
 
 	return &value

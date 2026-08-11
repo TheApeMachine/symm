@@ -442,6 +442,19 @@ func (signal *Signal) cvdMeasurements(
 	output equation.FlowOutput,
 	evidenceCount int,
 ) []*types.Measurement {
+	for _, raw := range []float64{
+		output.Absorption,
+		output.Drive,
+		output.Balance,
+		output.Starvation,
+		output.Value,
+		output.NetFraction,
+	} {
+		if raw < 0 || raw > 1 {
+			panic("cvd: flow output outside its defined metric domain")
+		}
+	}
+
 	absorption := normalizedFlowMetric(
 		types.MetricAbsorption, output.Absorption, evidenceCount,
 	)
@@ -538,6 +551,10 @@ func normalizedFlowMetric(
 	raw float64,
 	evidenceCount int,
 ) *float64 {
+	if raw < 0 || raw > 1 {
+		return nil
+	}
+
 	switch metricType {
 	case types.MetricAbsorption, types.MetricDrive, types.MetricStarvation:
 		if evidenceCount < minimumPriceResponseObservations {
@@ -556,6 +573,10 @@ raw quote-currency net remains available while the normalized reading is the
 signed share of actually executed gross notional.
 */
 func normalizedSignedNet(raw, netFraction float64, evidenceCount int) *float64 {
+	if netFraction < 0 || netFraction > 1 {
+		return nil
+	}
+
 	value := math.Copysign(netFraction, raw)
 	_ = evidenceCount
 
