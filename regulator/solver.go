@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"math"
+	"slices"
+	"strconv"
+	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -50,15 +53,24 @@ making high-level adjustments to keep the strategy adaptive and
 resilient.
 */
 type Solver struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
+	mu            sync.Mutex
+	configSource  *system.Config
 	config        *system.Config
 	coder         *learning.ResonanceManifold
+	pace          *learning.PaceController
 	ui            chan []byte
 	history       []float64
-	initialEquity float64
-	semaphore     chan struct{}
-	thesis        *types.Thesis
+	lastEquity    float64
+	peakEquity    float64
+	allocation    float64
+	confidence    float64
+	causalAlpha   float64
+	iterations    int
+	learningRate  float64
+	relaxation    float64
+	uncertainty   float64
+	surpriseRank  float64
+	rankReady     bool
 }
 
 /*
@@ -67,10 +79,10 @@ NewSolver creates a new instance of Solver tied to the ambient system configurat
 func NewSolver(
 	ctx context.Context,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Solver {
-	ctx, cancel := context.WithCancel(ctx)
-	config := system.Cfg
+	_ = ctx
+	configSource := system.Cfg
+	config := configSource.Snapshot()
 
 	learningRate := 0.01
 
@@ -78,22 +90,40 @@ func NewSolver(
 		learningRate = config.Resonance.LearningRate
 	}
 
-	arch := []int{16, 32, 16}
+	arch := []int{6, 12, 6}
 	coder := learning.NewResonanceManifold(arch, 1, learningRate)
+	coder.SetStreamLearn(true)
 
 	solver := &Solver{
-		ctx:       ctx,
-		cancel:    cancel,
-		config:    config,
-		coder:     coder,
-		ui:        ui,
-		history:   make([]float64, 0, 30),
-		semaphore: make(chan struct{}, 1),
-		thesis:    thesis,
+		configSource: configSource,
+		config:       config,
+		coder:        coder,
+		pace: learning.NewPaceController(learning.PaceConfig{
+			InitialAlpha: learningRate,
+		}),
+		ui:      ui,
+		history: make([]float64, 0, 30),
 	}
 
-	solver.thesis.Subscribe(types.SourceRegulator, solver.semaphore)
-	solver.run()
+	if config != nil && config.Planner != nil {
+		solver.allocation = config.Planner.MaxAllocationFraction
+		solver.confidence = config.Planner.MinimumConfidence
+		solver.causalAlpha = config.Planner.CausalAlpha
+		solver.iterations = config.Planner.MCTSIterations
+	}
+
+	if config != nil && config.Resonance != nil {
+		solver.learningRate = config.Resonance.LearningRate
+	}
+
+	if config != nil && config.Manifold != nil {
+		solver.relaxation = float64(config.Manifold.RelaxationSteps)
+	}
+
+	if config != nil && config.Risk != nil {
+		solver.uncertainty = config.Risk.UncertaintyScale
+	}
+
 	return solver
 }
 
@@ -104,28 +134,16 @@ func (solver *Solver) Status() types.Status {
 	return types.READY
 }
 
-func (solver *Solver) run() {
-	go func() {
-		for {
-			select {
-			case <-solver.ctx.Done():
-				return
-			case <-solver.semaphore:
-				errnie.Error(solver.Update(solver.thesis))
-			}
-		}
-	}()
-}
-
 /*
 Update settles system metrics and financial PnL feedback through the regulator manifold,
 tunes system.Config fields, and publishes real-time visual regulator status frames over WebSocket.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if solver == nil || solver.coder == nil || solver.config == nil {
+	if solver == nil || solver.coder == nil || solver.pace == nil ||
+		solver.config == nil || solver.configSource == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"regulator: solver, coder, and config required",
+			"regulator: solver, coder, pace, and config required",
 			errors.New("invalid regulator solver"),
 		))
 	}
@@ -134,37 +152,50 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
-	pnlRatio, hasEquity := solver.readFinancialFeedback(thesis)
+	if solver.learningRate <= 0 || solver.relaxation <= 0 ||
+		solver.uncertainty <= 0 || solver.allocation <= 0 ||
+		solver.confidence <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"regulator: positive metric baselines required",
+			nil,
+		))
+	}
+
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	periodReturn, drawdown, hasEquity := solver.readFinancialFeedback(thesis)
 
 	if !hasEquity {
 		return nil
 	}
 
-	metrics := make([]float64, 16)
+	metrics := make([]float64, 6)
 
 	if solver.config.Resonance != nil {
-		metrics[0] = solver.config.Resonance.LearningRate
+		metrics[0] = solver.config.Resonance.LearningRate / solver.learningRate
 	}
 
 	if solver.config.Manifold != nil {
-		metrics[1] = float64(solver.config.Manifold.RelaxationSteps) / 100.0
+		metrics[1] = float64(solver.config.Manifold.RelaxationSteps) / solver.relaxation
 	}
 
 	if solver.config.Risk != nil {
-		metrics[2] = solver.config.Risk.UncertaintyScale
+		metrics[2] = solver.config.Risk.UncertaintyScale / solver.uncertainty
 	}
 
 	if solver.config.Planner != nil {
-		metrics[3] = solver.config.Planner.MaxAllocationFraction
+		metrics[3] = solver.config.Planner.MaxAllocationFraction / solver.allocation
 	}
 
-	metrics[4] = pnlRatio
+	metrics[4] = periodReturn
 
 	if solver.config.Planner != nil {
-		metrics[5] = solver.config.Planner.MinimumConfidence
+		metrics[5] = solver.config.Planner.MinimumConfidence / solver.confidence
 	}
 
-	if _, err := solver.coder.SettleFromBatch(metrics, nil); err != nil {
+	if _, err := solver.coder.SettleFromBatch(metrics, []float64{periodReturn}); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"regulator: settle failed: "+err.Error(),
@@ -174,27 +205,36 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	telemetrySurprise := solver.coder.ReconstructionError()
 	energy := solver.coder.Energy()
+	totalSurprise := telemetrySurprise + math.Max(0, -drawdown)
+	pace, err := solver.pace.Measure(totalSurprise)
 
-	if math.IsNaN(telemetrySurprise) || math.IsInf(telemetrySurprise, 0) {
-		telemetrySurprise = 0.0
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"regulator: pace measurement failed",
+			err,
+		))
 	}
 
-	if math.IsNaN(energy) || math.IsInf(energy, 0) {
-		energy = 0.0
+	if err := solver.coder.SetAlpha(pace.Alpha); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"regulator: pace update failed",
+			err,
+		))
 	}
 
-	// Financial surprisal: negative PnL increases total surprisal (error), positive PnL reduces it
-	financialSurprisal := 0.0
-
-	if pnlRatio < 0 {
-		financialSurprisal = math.Abs(pnlRatio) * 5.0
-	}
-
-	totalSurprise := telemetrySurprise + financialSurprisal
+	solver.config.Resonance.LearningRate = pace.Alpha
+	solver.surpriseRank = pace.Rank
+	solver.rankReady = pace.Ready
 
 	solver.recordHistory(totalSurprise)
-	solver.applyTuning(totalSurprise, pnlRatio)
-	payload := solver.buildPayload(totalSurprise, energy, pnlRatio)
+
+	if err := solver.applyTuning(); err != nil {
+		return err
+	}
+
+	payload := solver.buildPayload(totalSurprise, energy, drawdown)
 
 	if solver.ui != nil {
 		utils.Publish(solver.ui, datura.NewMap("regulator", payload))
@@ -205,21 +245,30 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 func (solver *Solver) readFinancialFeedback(
 	thesis *types.Thesis,
-) (float64, bool) {
+) (float64, float64, bool) {
 	equity, exists := thesis.Equity()
 
 	if !exists || equity.Equity == nil || equity.Equity.Sign() <= 0 {
-		return 0, false
+		return 0, 0, false
 	}
 
 	currentEquity := equity.Equity.Float64()
 
-	if solver.initialEquity <= 0 {
-		solver.initialEquity = currentEquity
-		return 0, true
+	if solver.lastEquity <= 0 {
+		solver.lastEquity = currentEquity
+		solver.peakEquity = currentEquity
+		return 0, 0, true
 	}
 
-	return (currentEquity - solver.initialEquity) / solver.initialEquity, true
+	periodReturn := (currentEquity - solver.lastEquity) / solver.lastEquity
+	solver.lastEquity = currentEquity
+
+	if currentEquity > solver.peakEquity {
+		solver.peakEquity = currentEquity
+	}
+
+	drawdown := (currentEquity - solver.peakEquity) / solver.peakEquity
+	return periodReturn, drawdown, true
 }
 
 func (solver *Solver) recordHistory(value float64) {
@@ -230,109 +279,74 @@ func (solver *Solver) recordHistory(value float64) {
 	solver.history = append(solver.history, value)
 }
 
-func (solver *Solver) applyTuning(surprise float64, pnlRatio float64) {
-	if solver.config == nil {
-		return
+func (solver *Solver) applyTuning() error {
+	if solver.config == nil || solver.config.Resonance == nil ||
+		solver.config.Planner == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"regulator: resonance and planner configuration required",
+			nil,
+		))
 	}
 
-	if solver.config.Resonance != nil {
-		tunedAlpha := math.Max(0.001, math.Min(1.0, solver.config.Resonance.LearningRate*(1.0+surprise*0.01)))
-		solver.config.Resonance.LearningRate = tunedAlpha
-		_ = solver.coder.SetAlpha(tunedAlpha)
+	skill, hasSkill := solver.coder.TaskSkill()
+	precision, hasPrecision := solver.coder.TaskPrecision()
+
+	if hasSkill && hasPrecision {
+		if precision <= 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"regulator: task precision must be strictly positive",
+				nil,
+			))
+		}
+
+		solver.config.Planner.MinimumSkill = skill
+		solver.config.Planner.MaxAllocationFraction = solver.allocation *
+			math.Min(1, math.Max(0, skill))
+		solver.config.Planner.MinimumConfidence = math.Min(
+			1,
+			solver.confidence/math.Min(1, precision),
+		)
 	}
 
-	if solver.config.Manifold != nil {
-		minSteps := solver.config.Manifold.MinSteps
-		maxSteps := solver.config.Manifold.MaxSteps
-
-		if minSteps < 1 {
-			minSteps = 10
-		}
-
-		if maxSteps < minSteps {
-			maxSteps = 100
-		}
-
-		steps := minSteps + int(math.Round(math.Min(1.0, surprise)*float64(maxSteps-minSteps)))
-
-		if steps > maxSteps {
-			steps = maxSteps
-		}
-
-		solver.config.Manifold.RelaxationSteps = steps
+	if solver.rankReady {
+		tailProbability := math.Abs(1 - solver.surpriseRank)
+		solver.config.Planner.CausalAlpha = solver.causalAlpha + tailProbability
+		solver.config.Planner.MCTSIterations = max(
+			1,
+			int(math.Ceil(float64(solver.iterations)*solver.surpriseRank)),
+		)
 	}
 
-	if solver.config.Risk != nil {
-		solver.config.Risk.UncertaintyScale = 1.0 + surprise*0.5
-		solver.config.Risk.DrawdownPadding = 0.005 + surprise*0.01
+	if err := solver.configSource.ApplyRegulation(
+		*solver.config.Resonance,
+		*solver.config.Planner,
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"regulator: publish tuned configuration failed",
+			err,
+		))
 	}
 
-	if solver.config.Planner != nil {
-		skill, hasSkill := solver.coder.TaskSkill()
-
-		if hasSkill {
-			solver.config.Planner.MinimumSkill = skill
-			baseAllocation := math.Min(0.2, math.Max(0.01, 0.1*skill))
-
-			// If drawdown loss is present, contract capital allocation gate
-			if pnlRatio < -0.02 {
-				baseAllocation = math.Max(0.0, baseAllocation*(1.0+pnlRatio*5.0))
-			}
-
-			solver.config.Planner.MaxAllocationFraction = baseAllocation
-		}
-
-		// Dynamically regulate MinimumConfidence (80% default baseline)
-		// Under high surprise or drawdown, confidence gate tightens up to 95%.
-		// Under calm equilibrium, confidence gate relaxes down to 60%.
-		confidenceGate := 0.80 + surprise*0.15 - pnlRatio*0.20
-
-		if confidenceGate > 0.95 {
-			confidenceGate = 0.95
-		} else if confidenceGate < 0.60 {
-			confidenceGate = 0.60
-		}
-
-		solver.config.Planner.MinimumConfidence = confidenceGate
-
-		// Dynamically regulate Causal MCTS search parameters
-		// High surprise or drawdown elevates CausalAlpha (interventional bias over correlation)
-		causalAlpha := 1.0 + surprise*2.0
-
-		if pnlRatio < -0.01 {
-			causalAlpha += math.Abs(pnlRatio) * 3.0
-		}
-
-		if causalAlpha > 5.0 {
-			causalAlpha = 5.0
-		}
-
-		solver.config.Planner.CausalAlpha = causalAlpha
-
-		mctsIter := 50 + int(math.Round(surprise*100.0))
-
-		if mctsIter > 200 {
-			mctsIter = 200
-		}
-
-		solver.config.Planner.MCTSIterations = mctsIter
-	}
+	return nil
 }
 
-func (solver *Solver) buildPayload(surprise float64, energy float64, pnlRatio float64) RegulatorPayload {
+func (solver *Solver) buildPayload(surprise float64, energy float64, drawdown float64) RegulatorPayload {
 	skill, hasSkill := solver.coder.TaskSkill()
 	_, hasPrecision := solver.coder.TaskPrecision()
 
 	status := "healthy"
 	summary := "System operating in calm, optimal equilibrium."
 
-	if !hasSkill || !hasPrecision || skill < 0.1 || len(solver.history) < 3 {
+	if !hasSkill || !hasPrecision || !solver.rankReady {
 		status = "observing"
 		summary = "System in warm-up state. Observing initial market telemetry to calibrate predictive precision."
-	} else if pnlRatio < -0.05 || surprise > 0.4 {
+	} else if solver.surpriseRank <= 1/math.Sqrt(float64(solver.pace.Count())) {
 		status = "strained"
 		summary = "Financial drawdown or high surprisal detected. Throttling risk boundaries and contracting allocation."
-	} else if pnlRatio < -0.01 || surprise > 0.15 {
+	} else if solver.surpriseRank < 0.5 {
 		status = "adapting"
 		summary = "Market turbulence detected. Regulator actively tuning subsystem parameters."
 	}
@@ -356,7 +370,7 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, pnlRatio fl
 		steps := solver.config.Manifold.RelaxationSteps
 		dir := "stable"
 
-		if steps > 25 {
+		if float64(steps) > solver.relaxation {
 			dir = "expanding"
 		} else if status == "observing" {
 			dir = "calibrating"
@@ -376,7 +390,7 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, pnlRatio fl
 	if solver.config.Risk != nil {
 		dir := "stable"
 
-		if solver.config.Risk.UncertaintyScale > 1.2 {
+		if solver.config.Risk.UncertaintyScale > solver.uncertainty {
 			dir = "expanding"
 		} else if status == "observing" {
 			dir = "calibrating"
@@ -396,7 +410,8 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, pnlRatio fl
 	if solver.config.Planner != nil {
 		dir := "open"
 
-		if status == "observing" || solver.config.Planner.MaxAllocationFraction < 0.05 {
+		if status == "observing" ||
+			solver.config.Planner.MaxAllocationFraction < solver.allocation {
 			dir = "restricted"
 		}
 
@@ -412,9 +427,9 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, pnlRatio fl
 
 		confDir := "stable"
 
-		if solver.config.Planner.MinimumConfidence > 0.85 {
+		if solver.config.Planner.MinimumConfidence > solver.confidence {
 			confDir = "tightened"
-		} else if solver.config.Planner.MinimumConfidence < 0.75 {
+		} else if solver.config.Planner.MinimumConfidence < solver.confidence {
 			confDir = "relaxed"
 		} else if status == "observing" {
 			confDir = "calibrating"
@@ -432,7 +447,7 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, pnlRatio fl
 
 		mctsDir := "stable"
 
-		if solver.config.Planner.CausalAlpha > 1.5 {
+		if solver.config.Planner.CausalAlpha > solver.causalAlpha {
 			mctsDir = "elevated"
 		} else if status == "observing" {
 			mctsDir = "calibrating"
@@ -453,81 +468,24 @@ func (solver *Solver) buildPayload(surprise float64, energy float64, pnlRatio fl
 		Status:     status,
 		Surprise:   surprise,
 		Energy:     energy,
-		PnL:        pnlRatio * 100.0,
+		PnL:        drawdown * 100.0,
 		Summary:    summary,
 		Subsystems: subsystems,
-		Sparkline:  solver.history,
+		Sparkline:  slices.Clone(solver.history),
 	}
 }
 
 func formatFloat(val float64, decimals int) string {
-	if math.IsNaN(val) || math.IsInf(val, 0) {
-		return "0.0"
-	}
-
-	multiplier := math.Pow(10, float64(decimals))
-	rounded := math.Round(val*multiplier) / multiplier
-
-	return formatRawFloat(rounded)
-}
-
-func formatRawFloat(val float64) string {
-	if val == float64(int64(val)) {
-		return formatInt(int(val))
-	}
-
-	return formatPreciseFloat(val)
-}
-
-func formatPreciseFloat(val float64) string {
-	intPart := int64(val)
-	fracPart := int64(math.Abs(val-float64(intPart)) * 1000)
-
-	if fracPart == 0 {
-		return formatInt(int(intPart))
-	}
-
-	return formatInt(int(intPart)) + "." + formatInt(int(fracPart))
+	return strconv.FormatFloat(val, 'f', decimals, 64)
 }
 
 func formatInt(val int) string {
-	if val == 0 {
-		return "0"
-	}
-
-	negative := false
-
-	if val < 0 {
-		negative = true
-		val = -val
-	}
-
-	buf := make([]byte, 0, 10)
-
-	for val > 0 {
-		buf = append(buf, byte('0'+(val%10)))
-		val /= 10
-	}
-
-	if negative {
-		buf = append(buf, '-')
-	}
-
-	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
-		buf[i], buf[j] = buf[j], buf[i]
-	}
-
-	return string(buf)
+	return strconv.Itoa(val)
 }
 
 /*
-Close stops the solver context.
+Close satisfies the solver lifecycle contract; Solver owns no background work.
 */
 func (solver *Solver) Close() error {
-	if solver == nil || solver.cancel == nil {
-		return nil
-	}
-
-	solver.cancel()
 	return nil
 }

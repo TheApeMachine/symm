@@ -35,7 +35,6 @@ func TestUpdate(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
 		symbol.Status = types.BUSY
-		symbol.Stamp(types.SourceHawkes)
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
 		solver.api = &staticBookSource{book: managed}
@@ -47,7 +46,6 @@ func TestUpdate(t *testing.T) {
 		Convey("It should wait without stamping or reporting an error", func() {
 			So(pendingErr, ShouldBeNil)
 			So(solver.WaitingForBook(), ShouldBeTrue)
-			So(symbol.Stamped(types.SourceManifold), ShouldBeFalse)
 			So(solver.domain.ParticleCount(), ShouldEqual, 0)
 		})
 
@@ -72,7 +70,6 @@ func TestUpdate(t *testing.T) {
 		Convey("It should inject the unit-energy book when the snapshot arrives", func() {
 			So(err, ShouldBeNil)
 			So(solver.WaitingForBook(), ShouldBeFalse)
-			So(symbol.Stamped(types.SourceManifold), ShouldBeTrue)
 			So(solver.domain.ParticleCount(), ShouldEqual, 2)
 		})
 	})
@@ -120,7 +117,6 @@ func TestUpdate(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
 		symbol.Measurements = []*types.Measurement{measurement}
-		symbol.Stamp(types.SourceHawkes)
 		symbol.Status = types.BUSY
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
@@ -134,7 +130,6 @@ func TestUpdate(t *testing.T) {
 		Convey("It should append, advance, read, and stamp one manifold cut", func() {
 			So(err, ShouldBeNil)
 			So(readingErr, ShouldBeNil)
-			So(symbol.Stamped(types.SourceManifold), ShouldBeTrue)
 			So(solver.domain.ParticleCount(), ShouldEqual, 2)
 			So(thesis.Manifold, ShouldResemble, reading)
 		})
@@ -249,17 +244,12 @@ func BenchmarkUpdate(b *testing.B) {
 	})
 	thesis := types.NewThesis(b.Context(), nil)
 	symbol := types.NewSymbol("BTC/USD", nil)
-	symbol.Stamp(types.SourceHawkes)
 	symbol.Status = types.BUSY
 	thesis.Symbols.Store("BTC/USD", symbol)
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		b.StopTimer()
-		symbol.ResetLogic(types.SourceHawkes)
-		b.StartTimer()
-
 		if err := solver.Update(thesis); err != nil {
 			b.Fatal(err)
 		}

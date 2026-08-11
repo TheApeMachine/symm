@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,10 +29,9 @@ imbalance with trade-pressure confirmation. Categories belong in logic; this
 signal emits numerical scores only.
 */
 type Signal struct {
-	status     atomic.Value
 	ctx        context.Context
 	cancel     context.CancelFunc
-	api        *websocket.API
+	books      websocket.BookSource
 	instrument *broker.Instrument
 	sample     *flow.Sample
 	bookflow   *equation.Bookflow
@@ -59,7 +57,7 @@ trade observations in each central market cut.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	books websocket.BookSource,
 	instrument *broker.Instrument,
 	ui chan []byte,
 ) *Signal {
@@ -79,7 +77,7 @@ func NewSignal(
 	signal := &Signal{
 		ctx:        ctx,
 		cancel:     cancel,
-		api:        api,
+		books:      books,
 		instrument: instrument,
 		sample:     sample,
 		bookflow:   equation.NewBookflow(),
@@ -103,17 +101,13 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceDepthFlow
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	trades := thesis.MarketTrades(types.SourceDepthFlow)
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
-	if signal.api == nil {
-		return measurements, false
+	if signal.books == nil {
+		return measurements
 	}
 
 	if signal.lastTrade == nil {
@@ -185,7 +179,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			return left.Timestamp.Before(right.Timestamp)
 		})
 		group.Go(func() error {
-			signal.api.Book(symbol, func(managed *spotbook.Book) {
+			signal.books.Book(symbol, func(managed *spotbook.Book) {
 				bookAt := managedBookObservedAt(managed)
 				symbolMeasurements := make([]*types.Measurement, 0)
 				symbolOut := make([]*types.Measurement, 0)
@@ -264,7 +258,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			"depthflow: parallel measurement failed",
 			err,
 		))
-		return measurements, false
+		return measurements
 	}
 
 	for _, symbol := range symbols {
@@ -288,7 +282,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return measurements, true
+	return measurements
 }
 
 func managedBookObservedAt(managed *spotbook.Book) time.Time {

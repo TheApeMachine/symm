@@ -97,21 +97,21 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		if _, found := symbolState.Resonance.Load(symbol); !found {
-			thesis.Stamp(symbol, types.SourceCausal)
+		resonanceValue, found := symbolState.Resonance.Load(symbol)
+
+		if !found {
 			return true
 		}
 
-		if thesis.Stamped(symbol, types.SourceCausal) ||
-			!thesis.Stamped(symbol, types.SourceResonance) {
+		resonance, valid := resonanceValue.(types.ResonanceReading)
+
+		if !valid || !resonance.At.Equal(thesis.At) {
 			return true
 		}
 
 		updated = true
 		group.Go(func() error {
-			err := solver.measure(thesis, symbol)
-			thesis.Stamp(symbol, types.SourceCausal)
-			return err
+			return solver.measure(thesis, symbol)
 		})
 
 		return true
@@ -160,7 +160,7 @@ func (solver *Solver) measure(
 		)
 	}
 
-	forecastReady := resonance.Symbol == symbol && resonance.At.Equal(thesis.At) &&
+	forecastReady := resonance.Symbol == symbol &&
 		resonance.Forecast != nil && resonance.Forecast.Validate() == nil &&
 		!math.IsNaN(resonance.Energy) && !math.IsInf(resonance.Energy, 0) &&
 		!math.IsNaN(resonance.Surprise) && !math.IsInf(resonance.Surprise, 0)
@@ -258,6 +258,7 @@ func (solver *Solver) measure(
 	}
 
 	causalOutput := map[string]any{
+		"at":             resonance.At,
 		"historyRows":    rows,
 		"identification": "adjustedAssociation",
 		"precision":      precision,
@@ -268,6 +269,7 @@ func (solver *Solver) measure(
 	if resolved {
 		causalOutput = output.Outputs()
 		causalOutput["historyRows"] = rows
+		causalOutput["at"] = resonance.At
 		causalOutput["identification"] = "adjustedAssociation"
 		causalOutput["precision"] = precision
 		causalOutput["samples"] = len(rows)

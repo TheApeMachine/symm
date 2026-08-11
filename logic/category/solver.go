@@ -81,13 +81,15 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
-		if symbol.Stamped(types.SourceCategory) || len(symbol.Measurements) == 0 {
+		measurements, revision, _ := symbol.MeasurementState()
+
+		if len(measurements) == 0 {
 			return true
 		}
 
 		category, err := solver.classify(
 			symbolName,
-			symbol.Measurements,
+			measurements,
 		)
 
 		if err != nil {
@@ -99,12 +101,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				),
 				err,
 			))
-			thesis.Stamp(symbolName, types.SourceCategory)
-			return true
+			classificationErr = err
+			return false
 		}
 
+		category.At = thesis.At
+		category.EvidenceRevision = revision
 		symbol.Categories.Store(symbolName, []types.Category{category})
-		thesis.Stamp(symbolName, types.SourceCategory)
 		return true
 	})
 

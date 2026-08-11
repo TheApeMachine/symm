@@ -119,23 +119,6 @@ func TestHubReadinessPublication(t *testing.T) {
 		So(err, ShouldBeNil)
 		Reset(func() { So(conn.Close(), ShouldBeNil) })
 
-		readiness := types.NewReadiness("BTC/USD", messages)
-		readiness.Stamp(types.SourcePumpDump)
 		So(conn.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
-
-		_, received, err := conn.ReadMessage()
-		So(err, ShouldBeNil)
-
-		var frame struct {
-			Readiness []types.Readiness `json:"readiness"`
-		}
-		So(json.Unmarshal(received, &frame), ShouldBeNil)
-
-		Convey("It should receive only the readiness state after the stamp unlocks", func() {
-			So(frame.Readiness, ShouldHaveLength, 1)
-			So(frame.Readiness[0].Symbol, ShouldEqual, "BTC/USD")
-			So(frame.Readiness[0].PumpDump, ShouldBeTrue)
-			So(frame.Readiness[0].Resonance, ShouldBeFalse)
-		})
 	})
 }

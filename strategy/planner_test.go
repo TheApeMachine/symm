@@ -6,533 +6,106 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/mcts"
-	"github.com/theapemachine/symm/logic/causal"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestNewPlanner(t *testing.T) {
-	Convey("Given an analyzer already subscribed under its actor identity", t, func() {
-		thesis := types.NewThesis(t.Context(), nil)
-		analyzer := make(chan struct{}, 1)
-		thesis.Subscribe(types.SourceCategory, analyzer)
-		planner := NewPlanner(t.Context(), nil, thesis, nil, nil)
+	Convey("Given the running system configuration", t, func() {
+		system.NewConfig()
+		planner := NewPlanner(t.Context(), nil, nil, nil, nil)
 		defer planner.Close()
 
-		thesis.Fanout(types.SourceTrader)
-
-		Convey("Then the planner should not replace the analyzer subscription", func() {
-			So(len(analyzer), ShouldEqual, 1)
-		})
-	})
-}
-
-func TestPlannerSearch(t *testing.T) {
-	Convey("Given an incomplete causal artifact", t, func() {
-		planner := &Planner{mctsEngine: plannerMCTSEngine()}
-
-		decision, err := planner.search(
-			types.NewThesis(t.Context(), nil),
-			"BTC/USD",
-			map[string]any{},
-		)
-
-		Convey("Then it should reject the malformed estimate", func() {
-			So(err, ShouldNotBeNil)
-			So(decision, ShouldBeNil)
-		})
-	})
-
-	Convey("Given the first causal observation", t, func() {
-		planner := &Planner{mctsEngine: plannerMCTSEngine()}
-		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-
-		decision, err := planner.search(thesis, "BTC/USD", map[string]any{
-			"historyRows":    [][]float64{{1, 2, 3, 4}},
-			"precision":      0.0,
-			"samples":        1,
-			"treatmentLevel": 3.0,
-		})
-
-		Convey("Then it should run the packaged search and retain zero precision", func() {
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.CausalPrecision, ShouldEqual, 0.0)
-			So(decision.Alternatives, ShouldBeEmpty)
-			So(decision.Utility, ShouldEqual, 0.0)
-			So(decision.Confidence, ShouldEqual, 0.80)
-			So(decision.Trace, ShouldNotBeNil)
-		})
-	})
-
-	Convey("Given causal history without a named cognition class", t, func() {
-		planner := &Planner{mctsEngine: plannerMCTSEngine()}
-		rows := make([][]float64, 12)
-
-		for index := range rows {
-			treatment := float64(index % 2)
-			rows[index] = []float64{float64(index), 0, treatment, treatment}
-		}
-		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
-		storedSymbol.(*types.Symbol).Cognition.Store("BTC/USD", types.Cognition{
-			Symbol:     "BTC/USD",
-			Confidence: 0.25,
-		})
-
-		decision, err := planner.search(thesis, "BTC/USD", map[string]any{
-			"historyRows":    rows,
-			"precision":      0.5,
-			"samples":        len(rows),
-			"treatmentLevel": 1.0,
-		})
-
-		Convey("Then cognition confidence should influence allocation without blocking the estimate", func() {
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.CausalPrecision, ShouldEqual, 0.5)
-			So(decision.Utility, ShouldEqual, 0.0)
-		})
-	})
-
-	Convey("Given causal history whose intervention raises realized return", t, func() {
-		planner := &Planner{mctsEngine: plannerMCTSEngine()}
-		rows := make([][]float64, 12)
-
-		for index := range rows {
-			treatment := float64(index % 2)
-			rows[index] = []float64{
-				float64(index),
-				math.Sin(float64(index)),
-				treatment,
-				treatment,
-			}
-		}
-		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-
-		decision, err := planner.search(thesis, "BTC/USD", map[string]any{
-			"historyRows":    rows,
-			"precision":      0.75,
-			"samples":        len(rows),
-			"treatmentLevel": 1.0,
-		})
-
-		Convey("Then it should select entry", func() {
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.CausalPrecision, ShouldEqual, 0.75)
-			So(decision.Utility, ShouldEqual, 0.0)
-		})
-	})
-
-	Convey("Given positive causal history with graph contradiction above the forecast", t, func() {
-		planner := &Planner{
-			mctsEngine:        plannerMCTSEngine(),
-			minimumConfidence: 0.80,
-		}
-		rows := make([][]float64, 12)
-
-		for index := range rows {
-			treatment := float64(index % 2)
-			rows[index] = []float64{
-				float64(index),
-				math.Sin(float64(index)),
-				treatment,
-				math.Sin(float64(index)) + treatment/float64(len(rows)),
-			}
-		}
-
-		thesis := plannerThesisFixture(t, "BTC/USD", 0.90)
-		plannerGraphRelation(
-			thesis,
-			"BTC/USD",
-			logicgraph.RelationContradicts,
-			1,
-			1,
-		)
-		decision, err := planner.search(thesis, "BTC/USD", map[string]any{
-			"historyRows":    rows,
-			"precision":      0.75,
-			"samples":        len(rows),
-			"treatmentLevel": 1.0,
-		})
-
-		Convey("Then the packaged search should select the robust child without a local override", func() {
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.Confidence, ShouldAlmostEqual, 0.90)
-			So(decision.Utility, ShouldEqual, 0.0)
+		Convey("It should initialize the reusable causal graph search", func() {
+			So(planner.Status(), ShouldEqual, types.READY)
+			So(planner.mctsEngine, ShouldNotBeNil)
 		})
 	})
 }
 
 func TestPlannerUpdate(t *testing.T) {
-	Convey("Given complete logic without complete signal contributions", t, func() {
-		planner := &Planner{}
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbols.Store("BTC/USD", types.NewSymbol("BTC/USD", nil))
+	Convey("Given a complete graph with a regulated positive forecast", t, func() {
+		system.Cfg = system.NewConfig()
+		system.Cfg.Planner.MinimumConfidence = 0.8
+		thesis := plannerGraphThesis(t, 0.9)
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
-		for _, source := range []types.SourceType{
-			types.SourceCategory,
-			types.SourceCognition,
-			types.SourceManifold,
-			types.SourceResonance,
-			types.SourceCausal,
-			types.SourceGraph,
-		} {
-			thesis.Stamp("BTC/USD", source)
-		}
+		err := planner.Update(thesis)
 
-		planner.Update(thesis)
-
-		Convey("Then strategy should remain pending", func() {
-			So(thesis.Stamped("BTC/USD", types.SourcePlanner), ShouldBeFalse)
+		Convey("It should select entry from the final graph", func() {
+			So(err, ShouldBeNil)
+			stored, _ := thesis.Symbols.Load("BTC/USD")
+			symbol := stored.(*types.Symbol)
+			decisionValue, found := symbol.Decisions.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			decision := decisionValue.(*types.Decision)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.Forecast, ShouldNotBeNil)
+			So(decision.Utility, ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given a fully analyzed thesis whose forecast is unavailable", t, func() {
-		messages := make(chan []byte, 2)
-		planner := &Planner{ui: messages}
-		causalSolver := causal.NewSolver(nil, nil, nil)
-		thesis := types.NewThesis(t.Context(), nil)
-		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Resonance.Store("BTC/USD", types.ResonanceReading{
-			Source: types.SourceResonance,
-			Symbol: "BTC/USD",
-		})
-		symbol.Graphs.Store(marketGraphKey, logicgraph.NewGraph(thesis.At))
-		thesis.Symbols.Store("BTC/USD", symbol)
-		stampPlannerSignals(thesis, "BTC/USD")
-		Reset(func() {
-			So(causalSolver.Close(), ShouldBeNil)
-		})
+	Convey("Given a graph forecast below the regulator gate", t, func() {
+		system.Cfg = system.NewConfig()
+		system.Cfg.Planner.MinimumConfidence = 0.95
+		thesis := plannerGraphThesis(t, 0.9)
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
-		for _, source := range []types.SourceType{
-			types.SourceCategory,
-			types.SourceCognition,
-			types.SourceManifold,
-			types.SourceResonance,
-			types.SourceGraph,
-		} {
-			thesis.Stamp("BTC/USD", source)
-		}
+		err := planner.Update(thesis)
 
-		So(causalSolver.Update(thesis), ShouldBeNil)
-		planner.Update(thesis)
-		planner.Update(thesis)
-
-		Convey("Then Planner should complete without inventing a decision", func() {
-			So(thesis.Stamped("BTC/USD", types.SourcePlanner), ShouldBeTrue)
+		Convey("It should not create an entry", func() {
+			So(err, ShouldBeNil)
+			stored, _ := thesis.Symbols.Load("BTC/USD")
+			symbol := stored.(*types.Symbol)
 			_, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeFalse)
-			So(len(messages), ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given a complete logic cut without causal candidates", t, func() {
-		planner := &Planner{}
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbols.Store("BTC/USD", types.NewSymbol("BTC/USD", nil))
-		thesis.Symbols.Store("ETH/USD", types.NewSymbol("ETH/USD", nil))
-		stampPlannerSignals(thesis, "BTC/USD")
-
-		for _, source := range []types.SourceType{
-			types.SourceCategory,
-			types.SourceCognition,
-			types.SourceManifold,
-			types.SourceResonance,
-			types.SourceCausal,
-			types.SourceGraph,
-		} {
-			thesis.Stamp("BTC/USD", source)
-		}
-		thesis.Stamp("ETH/USD", types.SourceCategory)
-
-		planner.Update(thesis)
-
-		Convey("Then Planner should close only the ready symbol", func() {
-			So(thesis.Stamped("BTC/USD", types.SourcePlanner), ShouldBeTrue)
-			So(thesis.Stamped("ETH/USD", types.SourcePlanner), ShouldBeFalse)
-		})
-	})
-}
-
-func stampPlannerSignals(thesis *types.Thesis, symbol string) {
-	for _, source := range []types.SourceType{
-		types.SourceCorrelation,
-		types.SourceCVD,
-		types.SourceDepthFlow,
-		types.SourceExhaustion,
-		types.SourceHawkes,
-		types.SourceLeadLag,
-		types.SourceLiquidity,
-		types.SourcePumpDump,
-		types.SourceSentiment,
-		types.SourceToxicity,
-	} {
-		thesis.Stamp(symbol, source)
-	}
-}
-
-func TestPlannerDecisions(t *testing.T) {
-	Convey("Given a thesis with a zero-precision causal estimate", t, func() {
-		planner := &Planner{mctsEngine: plannerMCTSEngine()}
-		thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
-		symbol := storedSymbol.(*types.Symbol)
-		symbol.Causal.Store("BTC/USD", map[string]any{
-			"historyRows":    [][]float64{{1, 2, 3, 4}},
-			"precision":      0.0,
-			"samples":        1,
-			"treatmentLevel": 3.0,
-		})
-
-		decisions, err := planner.decisions(thesis)
-
-		Convey("Then Planner should retain the estimate on Do Not Enter", func() {
-			So(err, ShouldBeNil)
-			So(decisions, ShouldHaveLength, 1)
-			So(decisions[0].Action, ShouldEqual, types.ActionNothing)
-			So(decisions[0].CausalPrecision, ShouldEqual, 0.0)
-			So(decisions[0].Alternatives, ShouldBeEmpty)
-
-			stored, found := symbol.Decisions.Load("BTC/USD")
-			So(found, ShouldBeTrue)
-			So(stored.(*types.Decision).Action, ShouldEqual, types.ActionNothing)
-		})
-	})
-}
-
-func TestPlannerAdmit(t *testing.T) {
-	Convey("Given an Enter verdict from causal search", t, func() {
-		planner := &Planner{minimumConfidence: 0.80}
-
-		Convey("Then a forecast without a predictive distribution becomes Do Not Enter", func() {
-			thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-			storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
-			stored, _ := storedSymbol.(*types.Symbol).Resonance.Load("BTC/USD")
-			reading := stored.(types.ResonanceReading)
-			So(reading.Forecast.SetPredictiveDistribution(0, 0, false), ShouldBeNil)
-
-			decision, _, err := planner.admit(
-				thesis,
-				types.NewDecision(types.ActionEnter, "BTC/USD"),
-			)
-
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
-			So(decision.Reason, ShouldContainSubstring, "not ready")
-		})
-
-		Convey("Then a forecast below the configured confidence becomes Do Not Enter", func() {
-			thesis := plannerThesisFixture(t, "BTC/USD", 0.79)
-
-			decision, _, err := planner.admit(
-				thesis,
-				types.NewDecision(types.ActionEnter, "BTC/USD"),
-			)
-
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
-			So(decision.Confidence, ShouldEqual, 0.79)
-			So(decision.Forecast, ShouldNotBeNil)
-			So(decision.Reason, ShouldContainSubstring, "below regulated minimum")
-		})
-
-		Convey("Then a forecast at the configured confidence stays attached to Enter", func() {
-			thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-			storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
-			stored, _ := storedSymbol.(*types.Symbol).Resonance.Load("BTC/USD")
-			forecast := stored.(types.ResonanceReading).Forecast
-
-			decision, _, err := planner.admit(
-				thesis,
-				types.NewDecision(types.ActionEnter, "BTC/USD"),
-			)
-
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.Forecast, ShouldEqual, forecast)
-			So(decision.Confidence, ShouldAlmostEqual, 0.80)
-			So(decision.Uncertainty, ShouldAlmostEqual, 0.009950166250831947, 1e-12)
-		})
-
-		Convey("Then direct graph support remains separate from forecast confidence", func() {
-			thesis := plannerThesisFixture(t, "BTC/USD", 0.80)
-			plannerGraphRelation(
-				thesis,
-				"BTC/USD",
-				logicgraph.RelationSupports,
-				1,
-				0.50,
-			)
-
-			decision, evidence, err := planner.admit(
-				thesis,
-				types.NewDecision(types.ActionEnter, "BTC/USD"),
-			)
-
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.Confidence, ShouldAlmostEqual, 0.80)
-			So(evidence.supports, ShouldAlmostEqual, 0.50)
-		})
-
-		Convey("Then direct graph contradiction remains separate from forecast confidence", func() {
-			thesis := plannerThesisFixture(t, "BTC/USD", 0.90)
-			plannerGraphRelation(
-				thesis,
-				"BTC/USD",
-				logicgraph.RelationContradicts,
-				1,
-				0.50,
-			)
-
-			decision, evidence, err := planner.admit(
-				thesis,
-				types.NewDecision(types.ActionEnter, "BTC/USD"),
-			)
-
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.Confidence, ShouldAlmostEqual, 0.90)
-			So(evidence.contradicts, ShouldAlmostEqual, 0.50)
-		})
-
-		Convey("Then cognition cannot grant uncalibrated reserve capacity", func() {
-			thesis := plannerThesisFixture(t, "BTC/USD", 0.90)
-			thesis.Manifold.CoherenceMag2 = 0.20
-			storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
-			storedSymbol.(*types.Symbol).Cognition.Store("BTC/USD", types.Cognition{
-				Symbol: "BTC/USD", Confidence: 0.80,
-			})
-
-			decision, _, err := planner.admit(
-				thesis,
-				types.NewDecision(types.ActionEnter, "BTC/USD"),
-			)
-
-			So(err, ShouldBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.AllocationClass, ShouldEqual, allocationClassNormal)
-			So(decision.Opportunity, ShouldBeFalse)
-			So(decision.CognitiveLead, ShouldEqual, 0.0)
 		})
 	})
 }
 
 func plannerMCTSEngine() *mcts.CausalMCTS {
 	return mcts.NewCausalMCTS(
-		NewCausalEngineAdapter(),
+		mcts.DefaultCausalEngine{},
 		math.Sqrt2,
 		1,
-		0,
-		2,
-		3,
-		[]int{0, 1},
-		[]int{0, 1, 2},
+		len(mcts.GraphFeatureColumns)+1,
+		mcts.GraphTreatmentColumn,
+		mcts.GraphTargetColumn,
+		mcts.GraphControlColumns,
+		mcts.GraphFeatureColumns,
 		false,
 	)
 }
 
-func plannerThesisFixture(
-	t testing.TB,
-	symbol string,
-	confidence float64,
-) *types.Thesis {
+func plannerGraphThesis(t testing.TB, confidence float64) *types.Thesis {
 	t.Helper()
 	thesis := types.NewThesis(t.Context(), nil)
-	forecast := forecastFixture(t, confidence)
-	symbolState := types.NewSymbol(symbol, nil)
-	symbolState.Resonance.Store(symbol, types.ResonanceReading{
-		Source:   types.SourceResonance,
-		Symbol:   symbol,
-		At:       thesis.At,
-		Forecast: forecast,
-		Samples:  12,
+	forecast, err := types.NewResonanceForecast(
+		[]float64{0.01}, []float64{1}, 1, confidence,
+	)
+	So(err, ShouldBeNil)
+	So(forecast.SetPredictiveDistribution(0.01, 1, true), ShouldBeNil)
+	graph := logicgraph.NewGraph(thesis.At)
+	graph.Forecast = forecast
+	graph.AddNode(&logicgraph.Node{
+		ID: "forecast", Kind: logicgraph.KindResonance,
+		Value: forecast.ExpectedReturn, Confidence: confidence,
 	})
-	marketGraph := logicgraph.NewGraph(thesis.At)
-	marketGraph.AddNode(&logicgraph.Node{
-		ID:         "res:" + symbol + ":forecast",
-		Symbol:     symbol,
-		Kind:       logicgraph.KindResonance,
-		Value:      forecast.ExpectedReturn,
-		Confidence: confidence,
-		At:         thesis.At,
-	})
-	symbolState.Graphs.Store(marketGraphKey, marketGraph)
-	thesis.Symbols.Store(symbol, symbolState)
-	thesis.Stamp(symbol, types.SourceGraph)
+	symbol := types.NewSymbol("BTC/USD", nil)
+	symbol.Graphs.Store("market_graph", graph)
+	thesis.Symbols.Store("BTC/USD", symbol)
 
 	return thesis
 }
 
-func plannerGraphRelation(
-	thesis *types.Thesis,
-	symbol string,
-	relation logicgraph.RelationType,
-	weight float64,
-	confidence float64,
-) {
-	storedSymbol, _ := thesis.Symbols.Load(symbol)
-	stored, _ := storedSymbol.(*types.Symbol).Graphs.Load(marketGraphKey)
-	marketGraph := stored.(*logicgraph.Graph)
-	forecast := marketGraph.Nodes["res:"+symbol+":forecast"]
-	causalID := "causal:" + symbol + ":" + string(relation)
-	marketGraph.AddNode(&logicgraph.Node{
-		ID:         causalID,
-		Symbol:     forecast.Symbol,
-		Kind:       logicgraph.KindCausal,
-		Confidence: confidence,
-		At:         thesis.At,
-	})
-	marketGraph.AddEdge(&logicgraph.Edge{
-		From:       forecast.ID,
-		To:         causalID,
-		Relation:   relation,
-		Weight:     weight,
-		Confidence: confidence,
-		At:         thesis.At,
-	})
-}
-
-func forecastFixture(t testing.TB, confidence float64) *types.ResonanceForecast {
-	t.Helper()
-	forecast, err := types.NewResonanceForecast(
-		[]float64{-0.01, 0.03},
-		[]float64{1, 1},
-		2,
-		confidence,
-	)
-
-	if err != nil {
-		t.Fatalf("forecast: %v", err)
-	}
-
-	if err := forecast.SetPredictiveDistribution(0.01, 12, true); err != nil {
-		t.Fatalf("forecast distribution: %v", err)
-	}
-
-	return forecast
-}
-
-func BenchmarkPlannerDecisions(b *testing.B) {
-	planner := &Planner{
-		mctsEngine:        plannerMCTSEngine(),
-		minimumConfidence: 1,
-	}
-	rows := strategyRowsFixture(-1)
+func BenchmarkPlannerUpdate(b *testing.B) {
+	system.Cfg = system.NewConfig()
+	system.Cfg.Planner.MinimumConfidence = 0.8
+	planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
 	for b.Loop() {
-		thesis := plannerThesisFixture(b, "BTC/USD", 0.80)
-		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
-		storedSymbol.(*types.Symbol).Causal.Store("BTC/USD", map[string]any{
-			"historyRows":    rows,
-			"precision":      0.75,
-			"samples":        len(rows),
-			"treatmentLevel": 1.0,
-		})
-		if _, err := planner.decisions(thesis); err != nil {
+		if err := planner.Update(plannerGraphThesis(b, 0.9)); err != nil {
 			b.Fatal(err)
 		}
 	}

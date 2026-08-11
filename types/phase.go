@@ -37,11 +37,12 @@ PhaseReading is one symbol's complete sweep for a cut, stamped on the Thesis so
 stages after the manifold can read the dial instead of re-deriving it.
 */
 type PhaseReading struct {
-	Symbol    string          `json:"symbol"`
-	At        time.Time       `json:"at"`
-	Ready     bool            `json:"ready"`
-	Reason    string          `json:"reason,omitempty"`
-	Responses []PhaseResponse `json:"responses,omitempty"`
+	Symbol           string          `json:"symbol"`
+	At               time.Time       `json:"at"`
+	EvidenceRevision uint64          `json:"evidenceRevision"`
+	Ready            bool            `json:"ready"`
+	Reason           string          `json:"reason,omitempty"`
+	Responses        []PhaseResponse `json:"responses,omitempty"`
 }
 
 /*

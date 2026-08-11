@@ -31,10 +31,6 @@ func (solver *orderedSolver) Update(thesis *types.Thesis) error {
 		return solver.err
 	}
 
-	if solver.source != "" {
-		thesis.Stamp("BTC/USD", solver.source)
-	}
-
 	return nil
 }
 
@@ -46,15 +42,12 @@ func TestNewAnalyzer(t *testing.T) {
 	Convey("Given a signal already subscribed under its actor identity", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		signal := make(chan struct{}, 1)
-		thesis.Subscribe(types.SourceCorrelation, signal)
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
 		analyzer := NewAnalyzer(
 			t.Context(), nil, nil, tree, nil, nil, nil, thesis,
 		)
 		defer analyzer.Close()
-
-		thesis.Fanout(types.SourceTrader)
 
 		Convey("Then the analyzer should not replace the signal subscription", func() {
 			So(len(signal), ShouldEqual, 1)
@@ -72,7 +65,7 @@ func TestAnalyzerProcess(t *testing.T) {
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
-		analyzer.process(thesis)
+		analyzer.Process(thesis)
 
 		Convey("It should avoid running solvers without active symbols", func() {
 			So(order, ShouldBeEmpty)
@@ -93,10 +86,9 @@ func TestAnalyzerProcess(t *testing.T) {
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
-		stampSignalReadiness(thesis)
 
-		analyzer.process(thesis)
-		analyzer.process(thesis)
+		analyzer.Process(thesis)
+		analyzer.Process(thesis)
 		slices.Sort(order)
 
 		Convey("It should not rerun a completed symbol for a duplicate notification", func() {
@@ -115,14 +107,12 @@ func TestAnalyzerProcess(t *testing.T) {
 			},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
-		stampSignalReadiness(thesis)
 
-		analyzer.process(thesis)
+		analyzer.Process(thesis)
 		slices.Sort(order)
 
 		Convey("It should let independent solvers complete their available work", func() {
 			So(order, ShouldResemble, []int{0, 1, 2})
-			So(thesis.Stamped("BTC/USD", types.SourceGraph), ShouldBeTrue)
 		})
 	})
 
@@ -139,7 +129,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		symbol.Status = types.BUSY
 		thesis.Symbols.Store("BTC/USD", symbol)
 
-		analyzer.process(thesis)
+		analyzer.Process(thesis)
 
 		Convey("It should stop after the first unchanged pass", func() {
 			So(order, ShouldResemble, []int{0})
@@ -169,7 +159,7 @@ func TestAnalyzerProcess(t *testing.T) {
 			types.SourceCVD, []*types.Measurement{cvd}, true,
 		), ShouldBeNil)
 
-		analyzer.process(thesis)
+		analyzer.Process(thesis)
 		stored, _ := thesis.Symbols.Load("BTC/USD")
 		symbol := stored.(*types.Symbol)
 
@@ -177,29 +167,8 @@ func TestAnalyzerProcess(t *testing.T) {
 			So(order, ShouldBeEmpty)
 			So(symbol.Status, ShouldEqual, types.READY)
 			So(symbol.Measurements, ShouldResemble, []*types.Measurement{correlation, cvd})
-			So(symbol.Stamped(types.SourceCorrelation), ShouldBeTrue)
-			So(symbol.Stamped(types.SourceCVD), ShouldBeTrue)
 		})
 	})
-}
-
-func stampSignalReadiness(thesis *types.Thesis) {
-	thesis.Symbols.Store("BTC/USD", &types.Symbol{})
-
-	for _, source := range []types.SourceType{
-		types.SourceCorrelation,
-		types.SourceCVD,
-		types.SourceDepthFlow,
-		types.SourceExhaustion,
-		types.SourceHawkes,
-		types.SourceLeadLag,
-		types.SourceLiquidity,
-		types.SourcePumpDump,
-		types.SourceSentiment,
-		types.SourceToxicity,
-	} {
-		thesis.Stamp("BTC/USD", source)
-	}
 }
 
 /*
@@ -229,8 +198,7 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 			value.(*types.Symbol).Reset()
 		}
 
-		stampSignalReadiness(thesis)
 		order = order[:0]
-		analyzer.process(thesis)
+		analyzer.Process(thesis)
 	}
 }

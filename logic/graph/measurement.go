@@ -35,8 +35,9 @@ func (compiler *measurementCompiler) addNodes(
 		byReference: make(map[string][]*Node),
 		bySource:    make(map[types.SourceType][]*types.Measurement),
 	}
+	measurements, _, _ := symbol.MeasurementState()
 
-	for _, measurement := range types.FilterLatestSourceEpochs(symbol.Measurements) {
+	for _, measurement := range types.FilterLatestSourceEpochs(measurements) {
 		if measurement != nil && measurement.Symbol != symbol.Symbol {
 			return nil, fmt.Errorf(
 				"measurement symbol %s does not match graph symbol %s",
@@ -192,7 +193,8 @@ func (compiler *measurementCompiler) addCategoryEdges(
 	categories := stored.([]types.Category)
 
 	for _, category := range categories {
-		if category.Type == types.CategoryTypeNone {
+		if category.EvidenceRevision != graph.EvidenceRevision ||
+			category.Type == types.CategoryTypeNone {
 			continue
 		}
 

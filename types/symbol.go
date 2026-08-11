@@ -1,6 +1,7 @@
 package types
 
 import (
+	"slices"
 	"sync"
 )
 
@@ -13,16 +14,18 @@ carry their own readiness state, which is important for the resonance solver,
 which needs a stable measurement set to train on.
 */
 type Symbol struct {
-	Readiness
-	Status       Status         `json:"status,omitempty"`
-	Measurements []*Measurement `json:"measurements,omitempty"`
-	Decisions    *sync.Map      `json:"decisions,omitempty"`
-	Graphs       *sync.Map      `json:"graphs,omitempty"`
-	Categories   *sync.Map      `json:"categories,omitempty"`
-	Phase        *sync.Map      `json:"-"`
-	Cognition    *sync.Map      `json:"-"`
-	Resonance    *sync.Map      `json:"-"`
-	Causal       *sync.Map      `json:"-"`
+	measurementMu       sync.RWMutex
+	measurementRevision uint64
+	Symbol              string         `json:"symbol,omitempty"`
+	Status              Status         `json:"status,omitempty"`
+	Measurements        []*Measurement `json:"measurements,omitempty"`
+	Decisions           *sync.Map      `json:"decisions,omitempty"`
+	Graphs              *sync.Map      `json:"graphs,omitempty"`
+	Categories          *sync.Map      `json:"categories,omitempty"`
+	Phase               *sync.Map      `json:"-"`
+	Cognition           *sync.Map      `json:"-"`
+	Resonance           *sync.Map      `json:"-"`
+	Causal              *sync.Map      `json:"-"`
 }
 
 /*
@@ -30,8 +33,8 @@ NewSymbol creates empty measurement state for one market symbol.
 */
 func NewSymbol(symbol string, ui chan []byte) *Symbol {
 	return &Symbol{
+		Symbol:       symbol,
 		Status:       READY,
-		Readiness:    NewReadiness(symbol, ui),
 		Measurements: make([]*Measurement, 0),
 		Decisions:    &sync.Map{},
 		Graphs:       &sync.Map{},
@@ -44,7 +47,9 @@ func NewSymbol(symbol string, ui chan []byte) *Symbol {
 }
 
 func (symbol *Symbol) Reset() {
-	symbol.Readiness.Reset()
+	symbol.measurementMu.Lock()
+	defer symbol.measurementMu.Unlock()
+
 	symbol.Status = READY
 	symbol.Measurements = symbol.Measurements[:0]
 	symbol.Decisions.Clear()
@@ -57,40 +62,55 @@ func (symbol *Symbol) Reset() {
 }
 
 /*
-AddMeasurement retains the latest measurement for one source and peer.
+AddMeasurement retains the latest measurement for one source and peer and
+reports whether that identity actually changed.
 */
-func (symbol *Symbol) AddMeasurement(measurement *Measurement) {
-	symbol.Readiness.ResetLogic(measurement.Source)
+func (symbol *Symbol) AddMeasurement(measurement *Measurement) bool {
+	if symbol == nil || measurement == nil {
+		return false
+	}
 
-	replaced := false
-	for i, existing := range symbol.Measurements {
+	symbol.measurementMu.Lock()
+	defer symbol.measurementMu.Unlock()
+
+	for index, existing := range symbol.Measurements {
 		if existing.Source == measurement.Source && existing.Peer == measurement.Peer {
-			symbol.Measurements[i] = measurement
-			replaced = true
-			break
+			if existing.ID == measurement.ID {
+				return false
+			}
+
+			symbol.Measurements[index] = measurement
+			symbol.measurementRevision++
+			return true
 		}
 	}
 
-	if !replaced {
-		symbol.Measurements = append(symbol.Measurements, measurement)
-	}
-	symbol.Stamp(measurement.Source)
-
-	if symbol.SignalsMeasured() {
-		symbol.Status = BUSY
-	}
+	symbol.Measurements = append(symbol.Measurements, measurement)
+	symbol.measurementRevision++
+	return true
 }
 
-func (symbol *Symbol) Stamp(source SourceType) bool {
-	didUpdate := symbol.Readiness.Stamp(source)
-
-	if symbol.LogicAnalyzed() {
-		symbol.Status = READY
+/*
+MeasurementsSnapshot returns an immutable view of the accumulated current evidence.
+*/
+func (symbol *Symbol) MeasurementsSnapshot() []*Measurement {
+	if symbol == nil {
+		return nil
 	}
 
-	return didUpdate
+	symbol.measurementMu.RLock()
+	defer symbol.measurementMu.RUnlock()
+
+	return slices.Clone(symbol.Measurements)
 }
 
-func (symbol *Symbol) Stamped(source SourceType) bool {
-	return symbol.Readiness.Stamped(source)
+/*
+MeasurementState returns one immutable evidence cut and its monotonic revision.
+*/
+func (symbol *Symbol) MeasurementState() ([]*Measurement, uint64, bool) {
+	symbol.measurementMu.RLock()
+	defer symbol.measurementMu.RUnlock()
+
+	return slices.Clone(symbol.Measurements), symbol.measurementRevision,
+		len(symbol.Measurements) > 0
 }

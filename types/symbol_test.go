@@ -52,30 +52,18 @@ func TestSymbolStamp(t *testing.T) {
 			})
 		}
 
-		symbol.Stamp(SourceCategory)
-
 		Convey("It should retain the cut until resonance also finishes", func() {
 			So(symbol.Status, ShouldEqual, BUSY)
 			So(symbol.Measurements, ShouldHaveLength, len(sources))
 		})
-
-		symbol.Stamp(SourceResonance)
-		symbol.Stamp(SourceManifold)
-		symbol.Stamp(SourceCognition)
-		symbol.Stamp(SourceCausal)
 
 		Convey("It should retain the lock until graph completes the analyzer cut", func() {
 			So(symbol.Status, ShouldEqual, BUSY)
 			So(symbol.Measurements, ShouldHaveLength, len(sources))
 		})
 
-		symbol.Stamp(SourceGraph)
-
 		Convey("It should release measurements only after every logic stage stamps", func() {
 			So(symbol.Status, ShouldEqual, READY)
-			So(symbol.Stamped(SourceCategory), ShouldBeTrue)
-			So(symbol.Stamped(SourceResonance), ShouldBeTrue)
-			So(symbol.SignalsMeasured(), ShouldBeTrue)
 		})
 	})
 }

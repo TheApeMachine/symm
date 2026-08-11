@@ -4,31 +4,26 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
 type Planner struct {
-	ctx               context.Context
-	cancel            context.CancelFunc
-	status            types.Status
-	ui                chan []byte
-	thesis            *types.Thesis
-	semaphore         chan struct{}
-	recorder          *audit.Recorder
-	mctsEngine        *mcts.CausalMCTS
-	minimumConfidence float64
-	maxFraction       float64
-	desk              *broker.Desk
+	ctx        context.Context
+	cancel     context.CancelFunc
+	status     types.Status
+	ui         chan []byte
+	recorder   *audit.Recorder
+	mctsEngine *mcts.CausalMCTS
+	allocation *Allocation
+	desk       *broker.Desk
 }
 
 func NewPlanner(
@@ -39,36 +34,28 @@ func NewPlanner(
 	desk *broker.Desk,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
-	mctsEngine := mcts.NewCausalMCTS(
-		NewCausalEngineAdapter(),
-		math.Sqrt2,
-		1,
-		0,
-		2,
-		3,
-		[]int{0, 1},
-		[]int{0, 1, 2},
-		false,
-	)
 
 	planner := &Planner{
-		ctx:        ctx,
-		cancel:     cancel,
-		status:     types.READY,
-		ui:         uiHub,
-		thesis:     thesis,
-		semaphore:  make(chan struct{}, 1),
-		recorder:   recorder,
-		mctsEngine: mctsEngine,
-		minimumConfidence: viper.GetFloat64(
-			"trading.resonance.minimum_confidence",
+		ctx:      ctx,
+		cancel:   cancel,
+		status:   types.READY,
+		ui:       uiHub,
+		recorder: recorder,
+		mctsEngine: mcts.NewCausalMCTS(
+			mcts.DefaultCausalEngine{},
+			math.Sqrt2,
+			1,
+			len(mcts.GraphFeatureColumns)+1,
+			mcts.GraphTreatmentColumn,
+			mcts.GraphTargetColumn,
+			mcts.GraphControlColumns,
+			mcts.GraphFeatureColumns,
+			false,
 		),
-		maxFraction: viper.GetFloat64("trading.allocation.max_fraction"),
-		desk:        desk,
+		allocation: NewAllocation(ctx, desk),
+		desk:       desk,
 	}
 
-	planner.thesis.Subscribe(types.SourcePlanner, planner.semaphore)
-	planner.run()
 	return planner
 }
 
@@ -76,379 +63,101 @@ func (planner *Planner) Status() types.Status {
 	return planner.status
 }
 
-func (planner *Planner) run() {
-	go func() {
-		for {
-			select {
-			case <-planner.ctx.Done():
-				return
-			case <-planner.semaphore:
-				planner.Update(planner.thesis)
-			}
-		}
-	}()
-}
-
 func (planner *Planner) Close() error {
 	planner.cancel()
 	return nil
 }
 
-func (planner *Planner) Update(thesis *types.Thesis) {
-	readySymbols := make([]string, 0)
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbol, ok := value.(*types.Symbol)
-		symbolName, nameOK := key.(string)
+func (planner *Planner) Update(thesis *types.Thesis) error {
+	config := system.Cfg.Snapshot()
 
-		if ok && symbol != nil && nameOK && symbolName != "" &&
-			symbol.SignalsMeasured() && symbol.LogicAnalyzed() &&
-			!symbol.StrategyDecided() {
-			readySymbols = append(readySymbols, symbolName)
-		}
-
-		return true
-	})
-
-	if planner.recorder != nil {
-		err := planner.recorder.Write(map[string]any{
-			"channel": "orchestration",
-			"type":    "planner_admission",
-			"value": map[string]any{
-				"at":            time.Now().UTC(),
-				"ready_symbols": readySymbols,
-			},
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"planner: failed to audit admission",
-				err,
-			))
-		}
+	if config == nil || config.Planner == nil {
+		return fmt.Errorf("planner: planner configuration required")
 	}
 
-	if len(readySymbols) == 0 {
-		return
-	}
-
-	decisions, err := planner.decisions(thesis)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"planner: decision pass failed: "+err.Error(),
-			err,
-		))
-
-		return
-	}
-
-	if planner.recorder != nil {
-		err := planner.recorder.Write(map[string]any{
-			"channel": "orchestration",
-			"type":    "planner_decision_pass",
-			"value": map[string]any{
-				"at":             time.Now().UTC(),
-				"ready_symbols":  readySymbols,
-				"decision_count": len(decisions),
-			},
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"planner: failed to audit decision pass",
-				err,
-			))
-		}
-	}
-
-	if len(decisions) != 0 && planner.recorder != nil {
-		if err := planner.recorder.Write(decisions); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"planner: decision audit failed",
-				err,
-			))
-		}
-	}
-
-	for _, symbol := range readySymbols {
-		thesis.Stamp(symbol, types.SourcePlanner)
-	}
-
-	if len(decisions) != 0 {
-		utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
-			"evaluated", true,
-			"outcome", "decisions",
-			"decisions", decisions,
-		)))
-	}
-
-	thesis.Fanout(types.SourcePlanner, types.SourceTrader)
-}
-
-/* decisions evaluates one binary verdict per ready causal artifact. */
-func (planner *Planner) decisions(thesis *types.Thesis) ([]types.Decision, error) {
 	decisions := make([]types.Decision, 0)
-	var decisionsErr error
+	var err error
 
 	thesis.Symbols.Range(func(key, value any) bool {
-		symbol, symbolOK := key.(string)
-		symbolState, stateOK := value.(*types.Symbol)
+		symbol := key.(string)
+		symbolState := value.(*types.Symbol)
+		symbolState.Decisions.Clear()
 
-		if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
-			decisionsErr = fmt.Errorf("planner: invalid causal artifact")
-			return false
-		}
-
-		causalValue, found := symbolState.Causal.Load(symbol)
+		stored, found := symbolState.Graphs.Load("market_graph")
 
 		if !found {
 			return true
 		}
 
-		causal, causalOK := causalValue.(map[string]any)
+		graph := stored.(*logicgraph.Graph)
 
-		if !causalOK {
-			decisionsErr = fmt.Errorf("planner: invalid causal artifact")
-			return false
-		}
-
-		if !thesis.Stamped(symbol, types.SourceGraph) ||
-			thesis.Stamped(symbol, types.SourcePlanner) {
+		if graph.Forecast == nil || !graph.Forecast.ConfidenceReady ||
+			graph.Forecast.ExpectedReturn <= 0 ||
+			graph.Forecast.Confidence < config.Planner.MinimumConfidence {
 			return true
 		}
 
-		decision, err := planner.search(thesis, symbol, causal)
+		state, stateErr := mcts.NewGraphState(graph)
 
-		if err != nil {
-			decisionsErr = fmt.Errorf(
-				"planner: causal search failed for %s: %w",
-				symbol,
-				err,
-			)
-
+		if stateErr != nil {
+			err = fmt.Errorf("planner: graph state for %s: %w", symbol, stateErr)
 			return false
 		}
 
-		decision, err = planner.size(decision)
+		history := state.History()
 
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"planner: entry sizing failed: "+err.Error(),
-				err,
-			))
+		planner.mctsEngine.C = config.Planner.ExplorationConstant
+		planner.mctsEngine.CausalAlpha = config.Planner.CausalAlpha
 
-			decision.Action = types.ActionNothing
-			decision.Reason = err.Error()
+		root, action, searchErr := planner.mctsEngine.Search(
+			state, config.Planner.MCTSIterations, history,
+		)
+
+		if searchErr != nil {
+			err = fmt.Errorf("planner: graph search for %s: %w", symbol, searchErr)
+			return false
 		}
 
-		decision.At = thesis.At
+		decision := types.NewDecision(types.ActionNothing, symbol)
+		decision.At = graph.At
+		decision.Forecast = graph.Forecast
+		decision.Confidence = graph.Forecast.Confidence
+		decision.Alternatives = make(map[string]float64)
+
+		for _, branch := range root.Children {
+			utility := branch.TotalReward / float64(branch.Visits)
+			decision.Alternatives[fmt.Sprintf("%g", branch.Action)] = utility
+
+			if branch.Action == action {
+				decision.Utility = utility
+			}
+		}
+
+		if decision.Utility > 0 {
+			decision.Action = types.ActionEnter
+			decision.Cause = "opportunity_entry"
+		}
+
 		symbolState.Decisions.Store(symbol, decision)
 		decisions = append(decisions, *decision)
-
 		return true
 	})
 
-	return decisions, decisionsErr
-}
-
-/*
-admit gates on predictive confidence and returns graph evidence separately.
-*/
-func (planner *Planner) admit(
-	thesis *types.Thesis,
-	decision *types.Decision,
-) (*types.Decision, graphEvidence, error) {
-	evidence := graphEvidence{}
-
-	if decision == nil || decision.Action != types.ActionEnter {
-		return decision, evidence, nil
-	}
-
-	forecast, evidence, err := forecastWithGraphEvidence(
-		thesis,
-		decision.Symbol,
-	)
-
 	if err != nil {
-		return nil, evidence, err
+		return err
 	}
 
-	if !forecast.ConfidenceReady {
-		rejected := types.NewDecision(types.ActionNothing, decision.Symbol)
-		rejected.Forecast = forecast
-		rejected.Confidence = forecast.Confidence
-		rejected.Reason = "planner: forecast predictive distribution is not ready"
-
-		return rejected, evidence, nil
-	}
-
-	minConfidence := planner.minimumConfidence
-
-	if system.Cfg != nil && system.Cfg.Planner != nil && system.Cfg.Planner.MinimumConfidence > 0 {
-		minConfidence = system.Cfg.Planner.MinimumConfidence
-	}
-
-	if forecast.Confidence < minConfidence {
-		rejected := types.NewDecision(types.ActionNothing, decision.Symbol)
-		rejected.Forecast = forecast
-		rejected.Confidence = forecast.Confidence
-		rejected.Reason = fmt.Sprintf(
-			"planner: forecast confidence %.6f is below regulated minimum %.6f",
-			forecast.Confidence,
-			minConfidence,
-		)
-
-		return rejected, evidence, nil
-	}
-
-	drawdown, err := forecast.WorstIntermediateDrawdown()
-
-	if err != nil {
-		return nil, evidence, err
-	}
-
-	decision.Forecast = forecast
-	decision.Confidence = forecast.Confidence
-	decision.Uncertainty = drawdown
-	decision.AllocationClass = allocationClassNormal
-	decision.Opportunity = false
-
-	return decision, evidence, nil
-}
-
-/* search compares entry with the standing-aside do(0) intervention. */
-func (planner *Planner) search(
-	thesis *types.Thesis,
-	symbol string,
-	causal map[string]any,
-) (*types.Decision, error) {
-	rows, rowsOK := causal["historyRows"].([][]float64)
-	treatment, treatmentOK := causal["treatmentLevel"].(float64)
-	precision, precisionOK := causal["precision"].(float64)
-	samples, samplesOK := causal["samples"].(int)
-
-	if !rowsOK || len(rows) == 0 || !treatmentOK || !precisionOK ||
-		!samplesOK || samples != len(rows) ||
-		math.IsNaN(treatment) || math.IsInf(treatment, 0) ||
-		math.IsNaN(precision) || math.IsInf(precision, 0) ||
-		precision < 0 || precision > 1 {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"planner: complete finite causal estimate required",
-			nil,
-		)
-	}
-
-	latest := rows[len(rows)-1]
-
-	if len(latest) != 4 {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"planner: causal row shape is invalid",
-			nil,
-		)
-	}
-
-	candidate, evidence, err := planner.admit(
-		thesis,
-		types.NewDecision(types.ActionEnter, symbol),
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	graphReward, err := evidence.Reward(rows, planner.mctsEngine.TargetCol)
-
-	if err != nil {
-		return nil, err
-	}
-
-	causalAlpha := 1.0
-	searchIterations := len(rows)
-	exploration := math.Sqrt2
-
-	if system.Cfg != nil && system.Cfg.Planner != nil {
-		if system.Cfg.Planner.CausalAlpha > 0 {
-			causalAlpha = system.Cfg.Planner.CausalAlpha
-		}
-
-		if system.Cfg.Planner.MCTSIterations > 0 {
-			searchIterations = system.Cfg.Planner.MCTSIterations
-		}
-
-		if system.Cfg.Planner.ExplorationConstant > 0 {
-			exploration = system.Cfg.Planner.ExplorationConstant
+	if planner.allocation != nil {
+		if err = planner.allocation.Calculate(thesis); err != nil {
+			return err
 		}
 	}
 
-	mctsEngine := mcts.NewCausalMCTS(
-		NewCausalEngineAdapter(),
-		exploration,
-		causalAlpha,
-		0,
-		2,
-		3,
-		[]int{0, 1},
-		[]int{0, 1, 2},
-		false,
-	)
+	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
+		"evaluated", true,
+		"outcome", "decisions",
+		"decisions", decisions,
+	)))
 
-	rootState := StrategyState{
-		Symbol:      symbol,
-		Condition:   latest[0],
-		Contagion:   latest[1],
-		Treatment:   treatment,
-		CanEnter:    candidate.Action == types.ActionEnter,
-		GraphReward: graphReward,
-		Precision:   precision,
-		Horizon:     5,
-	}
-
-	searchRoot, action, err := mctsEngine.Search(
-		rootState, searchIterations, rows,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	decisionAction := strategyAction(action)
-
-	if decisionAction == "" {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"planner: causal search returned an unsupported action",
-			nil,
-		)
-	}
-
-	candidate.CausalPrecision = precision
-	candidate.Trace = &types.DecisionTrace{
-		MCTS: types.DecisionMCTSTrace{
-			Treatment:         treatment,
-			Precision:         precision,
-			Iterations:        searchIterations,
-			Branches:          mctsBranches(searchRoot),
-			RecommendedAction: decisionAction,
-		},
-	}
-
-	if decisionAction == types.ActionEnter {
-		return candidate, nil
-	}
-
-	candidate.Action = decisionAction
-
-	if candidate.Reason != "" {
-		return candidate, nil
-	}
-
-	candidate.Reason = "planner: causal search selected standing aside"
-	return candidate, nil
+	return nil
 }

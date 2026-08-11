@@ -202,7 +202,9 @@ func (solver *Solver) recordPhase(
 		stored, found := thesis.Symbols.Load(reading.Symbol)
 
 		if found {
-			stored.(*types.Symbol).Phase.Store(reading.Symbol, reading)
+			symbol := stored.(*types.Symbol)
+			_, reading.EvidenceRevision, _ = symbol.MeasurementState()
+			symbol.Phase.Store(reading.Symbol, reading)
 		}
 	}
 

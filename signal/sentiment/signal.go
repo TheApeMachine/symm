@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,7 +24,6 @@ Signal measures global market conviction from breadth and leadership
 performance. Categories belong in logic; this signal emits numerical scores only.
 */
 type Signal struct {
-	status       atomic.Value
 	ctx          context.Context
 	cancel       context.CancelFunc
 	api          *websocket.API
@@ -74,26 +72,22 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceSentiment
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
 /*
 Measure produces the Measurements for the sentiment signal.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	group, _ := errgroup.WithContext(signal.ctx)
 
 	tickers := thesis.MarketTickers(types.SourceSentiment)
 
 	if !signal.ingest(tickers) {
-		return nil, false
+		return nil
 	}
 
 	peers, _, _ := signal.cohort()
 
 	if len(peers) == 0 {
-		return nil, false
+		return nil
 	}
 
 	statistics := sentimentStatistics(peers)
@@ -202,7 +196,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			"sentiment: parallel measurement failed",
 			err,
 		))
-		return measurements, false
+		return measurements
 	}
 
 	compacted := measurements[:0]
@@ -224,7 +218,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return measurements, directionalReady
+	return measurements
 }
 
 type sentimentPeer struct {

@@ -44,14 +44,12 @@ func TestUpdate(t *testing.T) {
 		state, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
 		symbol := state.(*types.Symbol)
-		symbol.Readiness.Reset()
 		symbol.Categories.Store("BTC/USD", []types.Category{{
 			Symbol:     "BTC/USD",
 			Type:       types.CategoryActiveReversal,
 			Confidence: 1,
 			Strength:   1,
 		}})
-		symbol.Stamp(types.SourceCategory)
 		So(solver.Update(thesis), ShouldBeNil)
 		transitionCount := tree.GetSensoryWeight(
 			solver.sequenceBytes([]string{vertical, reversal}),
@@ -138,37 +136,8 @@ func cognitionThesis(category types.CategoryType) *types.Thesis {
 		Strength:   1,
 	}})
 	thesis.Symbols.Store("BTC/USD", symbol)
-	thesis.Stamp("BTC/USD", types.SourceCategory)
 
 	return thesis
-}
-
-func BenchmarkUpdate(b *testing.B) {
-	tree, err := dmt.NewTree("")
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	solver := NewSolver(tree, nil, nil)
-	thesis := cognitionThesis(types.CategoryVerticalIgnition)
-	b.ReportAllocs()
-
-	for b.Loop() {
-		state, found := thesis.Symbols.Load("BTC/USD")
-
-		if !found {
-			b.Fatal("missing cognition symbol")
-		}
-
-		symbol := state.(*types.Symbol)
-		symbol.Readiness.Reset()
-		symbol.Stamp(types.SourceCategory)
-
-		if err := solver.Update(thesis); err != nil {
-			b.Fatal(err)
-		}
-	}
 }
 
 func TestPrefixTreeBranches(t *testing.T) {

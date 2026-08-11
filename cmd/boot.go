@@ -217,6 +217,14 @@ func Boot(
 
 	errnie.Debug("planner reported to be ready")
 
+	regulatorSolver := utils.NewWaiter[*regulator.Solver](regulator.NewSolver(
+		ctx,
+		uiChannel,
+	)).Wait()
+
+	errnie.Debug("regulator reported to be ready")
+	system.closers = append(system.closers, regulatorSolver.Close)
+
 	crypto := utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
 		ctx,
 		api,
@@ -225,19 +233,11 @@ func Boot(
 		desk,
 		analyzer,
 		planner,
+		regulatorSolver,
 		thesis,
 	)).Wait()
 
 	errnie.Debug("trader reported to be ready")
-
-	regulatorSolver := utils.NewWaiter[*regulator.Solver](regulator.NewSolver(
-		ctx,
-		uiChannel,
-		thesis,
-	)).Wait()
-
-	errnie.Debug("regulator reported to be ready")
-	system.closers = append(system.closers, regulatorSolver.Close)
 
 	system.Hub = ui.NewHub(
 		ctx,

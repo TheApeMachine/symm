@@ -12,28 +12,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
-const (
-	ThesisKey = "thesis"
-
-	LifecycleObserving           = "observing"
-	LifecycleShaped              = "shaped"
-	LifecycleEntrySelected       = "entry_selected"
-	LifecycleEntrySubmitted      = "entry_submitted"
-	LifecyclePartiallyEntered    = "partially_entered"
-	LifecycleEntered             = "entered"
-	LifecycleManaging            = "managing"
-	LifecycleExitSelected        = "exit_selected"
-	LifecycleExitSubmitted       = "exit_submitted"
-	LifecyclePartiallyExited     = "partially_exited"
-	LifecycleClosed              = "closed"
-	LifecyclePostExitObservation = "post_exit_observation"
-	LifecyclePostMortemReady     = "postmortem_ready"
-	LifecycleEvaluated           = "evaluated"
-	LifecycleExpired             = "expired"
-	LifecycleRejected            = "rejected"
-	LifecycleInvalid             = "invalid"
-)
-
 /*
 Thesis owns canonical evidence across every evaluated epoch that contributes to
 one decision. It closes only after the planner emits the completed decision set;
@@ -60,7 +38,6 @@ type Thesis struct {
 	Tickers      *sync.Map       `json:"-"`
 	Trades       *sync.Map       `json:"-"`
 	Audit        func(any) error `json:"-"`
-	Lifecycle    *sync.Map       `json:"lifecycle"`
 	Manifold     fluid.Reading   `json:"-"`
 }
 
@@ -83,7 +60,6 @@ func NewThesis(
 		LastTickerAt: time.Now().UTC(),
 		LastTradeAt:  time.Now().UTC(),
 		CrossSection: NewCrossSection(),
-		Lifecycle:    &sync.Map{},
 		Measurements: &sync.Map{},
 		Symbols:      &sync.Map{},
 		Measured:     &sync.Map{},
@@ -155,6 +131,7 @@ func (thesis *Thesis) AppendTicker(ticker kraken.TickerData) *Thesis {
 	}
 
 	thesis.LastTickerAt = ticker.Timestamp
+
 	return thesis
 }
 
@@ -182,6 +159,7 @@ func (thesis *Thesis) AppendTrade(trade kraken.TradeData) *Thesis {
 	}
 
 	thesis.LastTradeAt = trade.Timestamp
+
 	return thesis
 }
 
@@ -201,7 +179,6 @@ func (thesis *Thesis) AppendEquity(equity kraken.TradeBalanceResult) error {
 	thesis.equityMu.Lock()
 	thesis.equity = &equity
 	thesis.equityMu.Unlock()
-	thesis.Fanout(SourceEquity, SourceRegulator)
 
 	return nil
 }
@@ -223,7 +200,7 @@ func (thesis *Thesis) Equity() (kraken.TradeBalanceResult, bool) {
 func (thesis *Thesis) AppendMeasurements(
 	sender SourceType,
 	measurements []*Measurement,
-	ready bool,
+	_ bool,
 ) error {
 	if len(measurements) > 0 {
 		found, _ := thesis.Measurements.LoadOrStore(sender, measurements)
@@ -238,54 +215,7 @@ func (thesis *Thesis) AppendMeasurements(
 			))
 		}
 
-		clone := slices.Clone(stored)
-
-		if ready {
-			shouldFanout := false
-			readySymbols := make(map[string]bool)
-
-			processMeasurement := func(m *Measurement) bool {
-				symbolFound, _ := thesis.Symbols.LoadOrStore(m.Symbol, NewSymbol(
-					m.Symbol, thesis.ui,
-				))
-				symbol := symbolFound.(*Symbol)
-
-				if _, ok := readySymbols[m.Symbol]; !ok {
-					readySymbols[m.Symbol] = (symbol.Status == READY)
-				}
-
-				if readySymbols[m.Symbol] {
-					symbol.AddMeasurement(m)
-					if symbol.Status == BUSY {
-						shouldFanout = true
-					}
-					return true
-				}
-				return false
-			}
-
-			var remainingClone []*Measurement
-			for _, m := range clone {
-				if !processMeasurement(m) {
-					remainingClone = append(remainingClone, m)
-				}
-			}
-			clone = remainingClone
-
-			var remainingMeasurements []*Measurement
-			for _, m := range measurements {
-				if !processMeasurement(m) {
-					remainingMeasurements = append(remainingMeasurements, m)
-				}
-			}
-			measurements = remainingMeasurements
-
-			if shouldFanout {
-				thesis.Fanout(sender, SourceAnalyzer)
-			}
-		}
-
-		combined := append(clone, measurements...)
+		combined := append(slices.Clone(stored), measurements...)
 		deduped := make([]*Measurement, 0, len(combined))
 		seen := make(map[string]bool)
 
@@ -302,6 +232,22 @@ func (thesis *Thesis) AppendMeasurements(
 		}
 
 		thesis.Measurements.Store(sender, deduped)
+
+		for _, measurement := range deduped {
+			if measurement == nil || measurement.Symbol == "" {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"thesis: identified symbol measurement required for source "+string(sender),
+					nil,
+				))
+			}
+
+			symbolValue, _ := thesis.Symbols.LoadOrStore(
+				measurement.Symbol,
+				NewSymbol(measurement.Symbol, thesis.ui),
+			)
+			symbolValue.(*Symbol).AddMeasurement(measurement)
+		}
 	}
 
 	return nil
@@ -373,218 +319,6 @@ func (thesis *Thesis) MarketTrades(source SourceType) []kraken.TradeData {
 	})
 
 	return out
-}
-
-func (thesis *Thesis) Subscribe(
-	source SourceType,
-	semaphore chan struct{},
-	status ...*atomic.Value,
-) {
-	thesis.subscribers.Store(source, semaphore)
-
-	if len(status) == 0 {
-		thesis.statuses.Delete(source)
-		return
-	}
-
-	thesis.statuses.Store(source, status[0])
-}
-
-/*
-Fanout sends a wake-up signal to all subscribers of the thesis, except for the sender.
-If specific receivers are provided, it will only fan out to those receivers.
-*/
-func (thesis *Thesis) Fanout(sender SourceType, receivers ...SourceType) {
-	dispatched := make([]SourceType, 0)
-	notReady := make([]SourceType, 0)
-	full := make([]SourceType, 0)
-	canceled := false
-
-	thesis.subscribers.Range(func(key, value any) bool {
-		source := key.(SourceType)
-
-		// Prevent the sender from receiving its own fanout, and if receivers
-		// are specified, only fan out to those receivers.
-		if source == sender || (len(receivers) > 0 && !slices.Contains(receivers, source)) {
-			return true
-		}
-
-		status, found := thesis.statuses.Load(source)
-
-		if found && !status.(*atomic.Value).CompareAndSwap(READY, BUSY) {
-			notReady = append(notReady, source)
-			return true
-		}
-
-		semaphore := value.(chan struct{})
-
-		select {
-		case <-thesis.ctx.Done():
-			canceled = true
-			return false
-		case semaphore <- struct{}{}:
-			dispatched = append(dispatched, source)
-		default:
-			full = append(full, source)
-		}
-
-		return true
-	})
-
-	if thesis.Audit != nil {
-		err := thesis.Audit(map[string]any{
-			"channel": "orchestration",
-			"type":    "fanout",
-			"value": map[string]any{
-				"at":         time.Now().UTC(),
-				"sender":     sender,
-				"receivers":  receivers,
-				"dispatched": dispatched,
-				"not_ready":  notReady,
-				"full":       full,
-				"canceled":   canceled,
-			},
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"thesis: failed to audit fanout",
-				err,
-			))
-		}
-	}
-}
-
-/*
-Stamp marks the symbol as having been measured by the source. This is used to
-track which sources have contributed to the symbol's measurements and to ensure
-that all sources have been accounted for before making decisions based on the
-symbol's measurements.
-*/
-func (thesis *Thesis) Stamp(symbol string, source SourceType) {
-	found, ok := thesis.Symbols.Load(symbol)
-	outcome := "missing_symbol"
-	signalsMeasured := false
-	logicAnalyzed := false
-	strategyDecided := false
-
-	if ok {
-		storedSymbol, valid := found.(*Symbol)
-
-		if valid && storedSymbol != nil {
-			didUpdate := storedSymbol.Stamp(source)
-			outcome = "unchanged"
-
-			if didUpdate {
-				thesis.readinessRev.Add(1)
-				outcome = "stamped"
-			}
-
-			signalsMeasured = storedSymbol.SignalsMeasured()
-			logicAnalyzed = storedSymbol.LogicAnalyzed()
-			strategyDecided = storedSymbol.StrategyDecided()
-		} else {
-			outcome = "invalid_symbol"
-		}
-	}
-
-	if thesis.Audit != nil && outcome != "unchanged" {
-		err := thesis.Audit(map[string]any{
-			"channel": "orchestration",
-			"type":    "stamp",
-			"value": map[string]any{
-				"at":               time.Now().UTC(),
-				"symbol":           symbol,
-				"source":           source,
-				"outcome":          outcome,
-				"signals_measured": signalsMeasured,
-				"logic_analyzed":   logicAnalyzed,
-				"strategy_decided": strategyDecided,
-			},
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"thesis: failed to audit readiness stamp",
-				err,
-			))
-		}
-	}
-}
-
-/*
-ReadinessRevision returns the monotonic count of readiness transitions recorded
-through the thesis. The analyzer uses it to distinguish dependency progress
-from a pass in which every solver declined the same incomplete state.
-*/
-func (thesis *Thesis) ReadinessRevision() uint64 {
-	return thesis.readinessRev.Load()
-}
-
-/*
-StampAll iterates over all symbols in the thesis and stamps them for the given source.
-This is used by signal modules to ensure that all evaluated symbols are stamped even if they yielded no measurements.
-*/
-func (thesis *Thesis) StampAll(source SourceType) {
-	thesis.Symbols.Range(func(key, value any) bool {
-		thesis.Stamp(key.(string), source)
-		return true
-	})
-}
-
-/*
-Stamped returns true if the symbol has been stamped by the thesis for all
-specified sources. If no sources are specified, it checks if the symbol has been
-stamped for all sources.
-*/
-func (thesis *Thesis) Stamped(symbol string, sources ...SourceType) bool {
-	symbolStamped := false
-
-	found, ok := thesis.Symbols.Load(symbol)
-
-	if !ok {
-		return false
-	}
-
-	if s, ok := found.(*Symbol); ok && s != nil {
-		if len(sources) == 0 {
-			symbolStamped = s.Readiness.Complete()
-		} else {
-			symbolStamped = true
-
-			for _, source := range sources {
-				if !s.Readiness.Stamped(source) {
-					symbolStamped = false
-					break
-				}
-			}
-		}
-	}
-
-	return symbolStamped
-}
-
-func (thesis *Thesis) SymbolsReady() bool {
-	ready := true
-
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbol, ok := value.(*Symbol)
-
-		if !ok || symbol == nil {
-			return true
-		}
-
-		if symbol.Status != READY {
-			ready = false
-			return false
-		}
-
-		return true
-	})
-
-	return ready
 }
 
 func (thesis *Thesis) Close() error {

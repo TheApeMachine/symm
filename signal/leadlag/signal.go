@@ -2,7 +2,6 @@ package leadlag
 
 import (
 	"context"
-	"sync/atomic"
 
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -14,7 +13,6 @@ cross-section leader and each follower. Categories belong in logic; this signal
 emits numerical scores only.
 */
 type Signal struct {
-	status  atomic.Value
 	ctx     context.Context
 	cancel  context.CancelFunc
 	api     *websocket.API
@@ -55,18 +53,14 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceLeadLag
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	if signal.section == nil {
 		signal.section = NewSection()
 	}
 
 	tickers := thesis.MarketTickers(types.SourceLeadLag)
 
-	return signal.measureFrame(tickers), true
+	return signal.measureFrame(tickers)
 }
 
 /*

@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/regulator"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -31,6 +33,7 @@ type Crypto struct {
 	desk          *broker.Desk
 	analyzer      *logic.Analyzer
 	planner       *strategy.Planner
+	regulator     *regulator.Solver
 	bookUpdates   <-chan string
 	subscriptions map[string]*types.Subscription[any]
 }
@@ -46,6 +49,7 @@ func NewCrypto(
 	desk *broker.Desk,
 	analyzer *logic.Analyzer,
 	planner *strategy.Planner,
+	regulatorSolver *regulator.Solver,
 	thesis *types.Thesis,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
@@ -63,6 +67,7 @@ func NewCrypto(
 		desk:         desk,
 		analyzer:     analyzer,
 		planner:      planner,
+		regulator:    regulatorSolver,
 		bookUpdates:  api.BookUpdates(),
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
@@ -102,38 +107,43 @@ func (crypto *Crypto) run() {
 /*
 Update is the main control loop.
 */
-func (crypto *Crypto) Update() {
-	crypto.measurements.Update(crypto.thesis)
-	crypto.analyzer.Process(crypto.thesis)
-	crypto.planner.Update(crypto.thesis)
+func (crypto *Crypto) Update() error {
+	crypto.thesis.At = time.Now().UTC()
+
+	if err := crypto.measurements.Update(crypto.thesis); err != nil {
+		return err
+	}
+
+	if err := crypto.analyzer.Process(crypto.thesis); err != nil {
+		return err
+	}
+
+	if err := crypto.planner.Update(crypto.thesis); err != nil {
+		return err
+	}
+
+	var err error
 
 	crypto.thesis.Symbols.Range(func(key, value any) bool {
-		symbolName, nameOK := key.(string)
-		symbol, symbolOK := value.(*types.Symbol)
-
-		if !nameOK || !symbolOK || !symbol.Stamped(types.SourcePlanner) {
-			return true
-		}
+		symbolName := key.(string)
+		symbol := value.(*types.Symbol)
 
 		if value, found := symbol.Decisions.Load(symbolName); found {
-			decision, valid := value.(*types.Decision)
+			decision := value.(*types.Decision)
 
-			if valid {
-				go func() {
-					if err := crypto.desk.Execute(*decision); err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Internal,
-							"crypto: failed to execute decision round",
-							err,
-						))
-					}
-				}()
+			if err = crypto.desk.Execute(*decision); err != nil {
+				return false
 			}
 		}
 
-		symbol.Reset()
 		return true
 	})
+
+	if err != nil {
+		return err
+	}
+
+	return crypto.regulator.Update(crypto.thesis)
 }
 
 /*
@@ -154,7 +164,7 @@ func (crypto *Crypto) onBookUpdate(symbol string) {
 		return
 	}
 
-	crypto.Update()
+	errnie.Error(crypto.Update())
 }
 
 func (crypto *Crypto) onTicker(data any) {
@@ -183,7 +193,7 @@ func (crypto *Crypto) onTicker(data any) {
 		crypto.desk.Price().Update(&ticker)
 	}
 
-	crypto.Update()
+	errnie.Error(crypto.Update())
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -203,7 +213,7 @@ func (crypto *Crypto) onTrade(data any) {
 		crypto.thesis.AppendTrade(trade)
 	}
 
-	crypto.Update()
+	errnie.Error(crypto.Update())
 }
 
 func (crypto *Crypto) Close() (err error) {

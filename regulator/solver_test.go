@@ -2,7 +2,6 @@ package regulator
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
@@ -14,8 +13,7 @@ import (
 func TestNewSolver(t *testing.T) {
 	Convey("Given a system configuration and context", t, func() {
 		cfg := system.NewConfig()
-		thesis := types.NewThesis(t.Context(), nil)
-		solver := NewSolver(t.Context(), nil, thesis)
+		solver := NewSolver(t.Context(), nil)
 
 		Convey("It should instantiate a valid regulator solver", func() {
 			So(solver, ShouldNotBeNil)
@@ -26,25 +24,20 @@ func TestNewSolver(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	Convey("Given targeted equity feedback", t, func() {
+	Convey("Given direct equity feedback", t, func() {
 		system.NewConfig()
 		thesis := types.NewThesis(t.Context(), nil)
 		So(thesis.AppendEquity(kraken.TradeBalanceResult{
 			Equity: decimal.NewFromInt64(200),
 		}), ShouldBeNil)
 		ui := make(chan []byte, 1)
-		solver := NewSolver(t.Context(), ui, thesis)
+		solver := NewSolver(t.Context(), ui)
 		defer solver.Close()
 
-		thesis.Fanout(types.SourceEquity, types.SourceRegulator)
+		So(solver.Update(thesis), ShouldBeNil)
 
-		Convey("Then the regulator should settle and publish without waking the pipeline", func() {
-			select {
-			case frame := <-ui:
-				So(frame, ShouldNotBeEmpty)
-			case <-time.After(time.Second):
-				t.Fatal("regulator did not process targeted equity")
-			}
+		Convey("Then the regulator should settle and publish", func() {
+			So(<-ui, ShouldNotBeEmpty)
 		})
 	})
 }
@@ -62,12 +55,18 @@ func TestReadFinancialFeedback(t *testing.T) {
 			Equity: decimal.NewFromInt64(180),
 		}), ShouldBeNil)
 		drawdown, drawdownReady := solver.readFinancialFeedback(thesis)
+		So(thesis.AppendEquity(kraken.TradeBalanceResult{
+			Equity: decimal.NewFromInt64(198),
+		}), ShouldBeNil)
+		recovery, recoveryReady := solver.readFinancialFeedback(thesis)
 
 		Convey("It should establish the baseline and measure later equity change", func() {
 			So(baselineReady, ShouldBeTrue)
 			So(baseline, ShouldEqual, 0.0)
 			So(drawdownReady, ShouldBeTrue)
 			So(drawdown, ShouldAlmostEqual, -0.1, 1e-12)
+			So(recoveryReady, ShouldBeTrue)
+			So(recovery, ShouldAlmostEqual, 0.1, 1e-12)
 		})
 	})
 
@@ -90,7 +89,7 @@ func TestUpdate(t *testing.T) {
 		So(thesis.AppendEquity(kraken.TradeBalanceResult{
 			Equity: decimal.NewFromInt64(200),
 		}), ShouldBeNil)
-		solver := NewSolver(t.Context(), nil, thesis)
+		solver := NewSolver(t.Context(), nil)
 		defer solver.Close()
 
 		initialAlpha := cfg.Resonance.LearningRate
@@ -131,7 +130,7 @@ func BenchmarkUpdate(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	solver := NewSolver(ctx, nil, thesis)
+	solver := NewSolver(ctx, nil)
 	defer solver.Close()
 
 	for b.Loop() {

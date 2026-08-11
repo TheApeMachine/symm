@@ -5,7 +5,6 @@ import (
 	"math"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,7 +25,6 @@ price response. Categories belong in logic; this signal emits numerical scores
 only.
 */
 type Signal struct {
-	status    atomic.Value
 	ctx       context.Context
 	cancel    context.CancelFunc
 	api       *websocket.API
@@ -85,10 +83,6 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceCVD
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
 func (signal *Signal) ensureProcessors() (*algorithm.TradeFlowSample, *equation.Flow) {
 	if signal.sample == nil {
 		signal.sample = algorithm.NewTradeFlowSample()
@@ -101,7 +95,7 @@ func (signal *Signal) ensureProcessors() (*algorithm.TradeFlowSample, *equation.
 	return signal.sample, signal.flow
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	tickers := thesis.MarketTickers(types.SourceCVD)
 	trades := thesis.MarketTrades(types.SourceCVD)
 	measurements := make([]*types.Measurement, 0)
@@ -216,7 +210,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return measurements, true
+	return measurements
 }
 
 func (signal *Signal) observeMidpoint(row kraken.TickerData) {

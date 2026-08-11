@@ -92,10 +92,12 @@ type Edge struct {
 Graph is the full relational knowledge graph constructed for a Thesis cut.
 */
 type Graph struct {
-	At        time.Time           `json:"at"`
-	Nodes     map[string]*Node    `json:"nodes"`
-	Edges     []*Edge             `json:"edges"`
-	Adjacency map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
+	At               time.Time                `json:"at"`
+	EvidenceRevision uint64                   `json:"evidenceRevision"`
+	Forecast         *types.ResonanceForecast `json:"-"`
+	Nodes            map[string]*Node         `json:"nodes"`
+	Edges            []*Edge                  `json:"edges"`
+	Adjacency        map[string][]string      `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
 }
 
 /*
@@ -141,6 +143,52 @@ func (graph *Graph) AddEdge(edge *Edge) {
 	graph.Adjacency[edge.From] = append(graph.Adjacency[edge.From], edge.To)
 }
 
+func (graph *Graph) Roots() []string {
+	incoming := make(map[string]bool)
+
+	for _, edge := range graph.Edges {
+		incoming[edge.To] = true
+	}
+
+	roots := make([]string, 0)
+
+	for nodeID := range graph.Nodes {
+		if !incoming[nodeID] {
+			roots = append(roots, nodeID)
+		}
+	}
+
+	slices.Sort(roots)
+	return roots
+}
+
+func (graph *Graph) Targets(nodeID string) []string {
+	return slices.Clone(graph.Adjacency[nodeID])
+}
+
+func (graph *Graph) NodeValue(nodeID string) (float64, float64) {
+	node := graph.Nodes[nodeID]
+	return node.Value, node.Confidence
+}
+
+func (graph *Graph) EdgeValue(from, to string) (float64, float64) {
+	for _, edge := range graph.Edges {
+		if edge.From != from || edge.To != to {
+			continue
+		}
+
+		weight := edge.Weight
+
+		if edge.Relation == RelationContradicts {
+			weight = -weight
+		}
+
+		return weight, edge.Confidence
+	}
+
+	panic("graph: edge not found from " + from + " to " + to)
+}
+
 /*
 Solver compiles all upstream evidence (Measurements, Manifold, Resonance, Causal, Cognition)
 into a Directed Knowledge Graph for the Strategy package.
@@ -174,15 +222,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, ok := value.(*types.Symbol)
 
-		if !ok || symbol == nil || symbol.Stamped(types.SourceGraph) ||
-			!symbol.Stamped(types.SourceCategory) ||
-			!symbol.Stamped(types.SourceResonance) ||
-			!symbol.Stamped(types.SourceCausal) ||
-			!symbol.Stamped(types.SourceCognition) {
-			return true
-		}
-
-		if symbol.Stamped(types.SourceHawkes) && !symbol.Stamped(types.SourceManifold) {
+		if !ok || symbol == nil {
 			return true
 		}
 
@@ -192,7 +232,24 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
+		measurements, revision, _ := symbol.MeasurementState()
+
+		if len(measurements) == 0 {
+			return true
+		}
+
+		storedGraph, found := symbol.Graphs.Load("market_graph")
+
+		if found {
+			currentGraph, valid := storedGraph.(*Graph)
+
+			if valid && currentGraph != nil && currentGraph.EvidenceRevision == revision {
+				return true
+			}
+		}
+
 		graph := NewGraph(thesis.At)
+		graph.EvidenceRevision = revision
 		measurementIndex, err := solver.measurements.addNodes(symbol, graph)
 
 		if err != nil {
@@ -201,7 +258,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"graph: failed to extract measurement nodes - "+err.Error(),
 				err,
 			))
-			thesis.Stamp(symbolName, types.SourceGraph)
 			return false
 		}
 
@@ -220,18 +276,18 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					"graph: invalid causal artifact for "+symbolName,
 					nil,
 				))
-				thesis.Stamp(symbolName, types.SourceGraph)
 				return false
 			}
 
-			if causalValuesPresent(causalMap) {
+			causalRevision, revisionOK := causalMap["evidenceRevision"].(uint64)
+
+			if revisionOK && causalRevision == revision && causalValuesPresent(causalMap) {
 				if err := solver.extractCausalNodes(symbol, graph); err != nil {
 					graphErr = errnie.Error(errnie.Err(
 						errnie.Internal,
 						"graph: failed to extract causal nodes - "+err.Error(),
 						err,
 					))
-					thesis.Stamp(symbolName, types.SourceGraph)
 					return false
 				}
 			}
@@ -247,7 +303,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"graph: failed to relate measurements and categories - "+err.Error(),
 				err,
 			))
-			thesis.Stamp(symbolName, types.SourceGraph)
 			return false
 		}
 
@@ -259,7 +314,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"graph: failed to relate lead-lag measurements - "+err.Error(),
 				err,
 			))
-			thesis.Stamp(symbolName, types.SourceGraph)
 			return false
 		}
 
@@ -269,12 +323,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"graph: failed to infer structural edges - "+err.Error(),
 				err,
 			))
-			thesis.Stamp(symbolName, types.SourceGraph)
 			return false
 		}
 
 		symbol.Graphs.Store("market_graph", graph)
-		thesis.Stamp(symbolName, types.SourceGraph)
 
 		if symbolName == types.Focus() {
 			utils.Publish(solver.ui, datura.NewMap("graph", graph))
@@ -301,7 +353,8 @@ func (solver *Solver) extractCategoryNodes(
 	categories := stored.([]types.Category)
 
 	for _, cat := range categories {
-		if cat.Type == types.CategoryTypeNone {
+		if cat.EvidenceRevision != graph.EvidenceRevision ||
+			cat.Type == types.CategoryTypeNone {
 			continue
 		}
 
@@ -339,7 +392,8 @@ func (solver *Solver) extractManifoldNodes(
 	stored, found := symbol.Phase.Load(symbol.Symbol)
 	reading, readingOK := stored.(types.PhaseReading)
 
-	if !found || !readingOK {
+	if !found || !readingOK ||
+		reading.EvidenceRevision != graph.EvidenceRevision {
 		return
 	}
 
@@ -377,7 +431,9 @@ func (solver *Solver) extractResonanceNodes(
 	stored, found := symbol.Resonance.Load(symbol.Symbol)
 	reading, readingOK := stored.(types.ResonanceReading)
 
-	if !found || !readingOK || reading.Forecast == nil {
+	if !found || !readingOK ||
+		reading.EvidenceRevision != graph.EvidenceRevision ||
+		reading.Forecast == nil {
 		return
 	}
 
@@ -385,6 +441,8 @@ func (solver *Solver) extractResonanceNodes(
 		math.IsNaN(reading.Surprise) || math.IsInf(reading.Surprise, 0) {
 		return
 	}
+
+	graph.Forecast = reading.Forecast
 
 	graph.AddNode(&Node{
 		ID:         fmt.Sprintf("res:%s:surprise", symbol.Symbol),
@@ -579,7 +637,9 @@ func (solver *Solver) extractCognitionNodes(
 	stored, found := symbol.Cognition.Load(symbol.Symbol)
 	cognition, cognitionOK := stored.(types.Cognition)
 
-	if !found || !cognitionOK || cognition.Winner == "" {
+	if !found || !cognitionOK ||
+		cognition.EvidenceRevision != graph.EvidenceRevision ||
+		cognition.Winner == "" {
 		return
 	}
 

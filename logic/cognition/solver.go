@@ -189,17 +189,30 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	thesis.Symbols.Range(func(key, value interface{}) bool {
 		symbol := key.(string)
 		symbolState := value.(*types.Symbol)
+		measurements, revision, _ := symbolState.MeasurementState()
+
+		if len(measurements) == 0 {
+			return true
+		}
+
+		cognitionValue, cognitionFound := symbolState.Cognition.Load(symbol)
+
+		if cognitionFound {
+			reading, valid := cognitionValue.(types.Cognition)
+
+			if valid && reading.EvidenceRevision == revision {
+				return true
+			}
+		}
+
 		stored, found := symbolState.Categories.Load(symbol)
 
 		if !found {
-			thesis.Stamp(symbol, types.SourceCognition)
 			return true
 		}
 
 		categories := stored.([]types.Category)
-
-		if thesis.Stamped(symbol, types.SourceCognition) ||
-			!thesis.Stamped(symbol, types.SourceCategory) {
+		if len(categories) == 0 || categories[0].EvidenceRevision != revision {
 			return true
 		}
 
@@ -209,7 +222,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		if len(categories) == 0 {
-			thesis.Stamp(symbol, types.SourceCognition)
 			return true
 		}
 
@@ -217,7 +229,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		dominantCategory := solver.selectDominantCategory(categories)
 
 		if dominantCategory == types.CategoryTypeNone {
-			thesis.Stamp(symbol, types.SourceCognition)
 			return true
 		}
 
@@ -357,6 +368,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		cognition := types.Cognition{
+			EvidenceRevision: revision,
 			Source:           "cognition",
 			Symbol:           symbol,
 			At:               thesis.At,
@@ -403,7 +415,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		symbolState.Cognition.Store(symbol, cognition)
-		thesis.Stamp(symbol, types.SourceCognition)
 		return true
 	})
 

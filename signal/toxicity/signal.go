@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	spotbook "github.com/theapemachine/api-go/v2/pkg/book"
@@ -22,7 +21,6 @@ Signal tracks whether near-touch liquidity is sincere, retreating, or bluffing
 from Level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
-	status  atomic.Value
 	ctx     context.Context
 	cancel  context.CancelFunc
 	books   websocket.BookSource
@@ -63,16 +61,12 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceToxicity
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
 	if thesis == nil || signal.books == nil {
-		return measurements, false
+		return measurements
 	}
 
 	tickers := thesis.MarketTickers(types.SourceToxicity)
@@ -192,7 +186,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			"toxicity: parallel measurement failed",
 			err,
 		))
-		return measurements, false
+		return measurements
 	}
 
 	for _, symbolMeasurements := range results {
@@ -217,7 +211,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		))
 	}
 
-	return measurements, true
+	return measurements
 }
 
 func bracketedTrades(

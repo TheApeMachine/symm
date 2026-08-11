@@ -1,147 +1,190 @@
 package strategy
 
 import (
+	"context"
+
 	"github.com/theapemachine/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
-const allocationClassNormal = "normal"
+type Allocation struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	desk   *broker.Desk
+}
+
+func NewAllocation(
+	ctx context.Context,
+	desk *broker.Desk,
+) *Allocation {
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &Allocation{
+		ctx:    ctx,
+		cancel: cancel,
+		desk:   desk,
+	}
+}
 
 /*
 size adds execution quantity and forecast-derived protection to an entry.
 */
-func (planner *Planner) size(
-	decision *types.Decision,
-) (*types.Decision, error) {
-	if decision == nil || decision.Action != types.ActionEnter {
-		return decision, nil
-	}
+func (allocation *Allocation) Calculate(thesis *types.Thesis) error {
+	config := system.Cfg.Snapshot()
 
-	if planner.desk == nil || planner.maxFraction <= 0 || planner.maxFraction > 1 {
-		return decision, errnie.Err(
+	if config == nil || config.Planner == nil {
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"planner: executable desk and allocation required",
+			"planner: planner configuration required",
 			nil,
-		)
+		))
 	}
 
-	if planner.desk.OpenSlots(decision.Opportunity) <= 0 {
-		decision.Action = types.ActionNothing
-		decision.Reason = "planner: no position slot available for allocation"
+	thesis.Symbols.Range(func(_, value any) bool {
+		symbol := value.(*types.Symbol)
 
-		return decision, nil
-	}
+		symbol.Decisions.Range(func(_, value any) bool {
+			decision := value.(*types.Decision)
 
-	cash := planner.desk.Balance().Cash()
+			if decision.Action != types.ActionEnter {
+				return true
+			}
 
-	if cash == nil || cash.Sign() <= 0 {
-		return decision, errnie.Err(
-			errnie.Validation,
-			"planner: positive quote cash required",
-			nil,
-		)
-	}
+			if allocation.desk.OpenSlots(decision.Opportunity) <= 0 {
+				decision.Action = types.ActionNothing
+				decision.Reason = "planner: no position slot available for allocation"
 
-	notional := decimal.ExactMul(
-		cash,
-		decimal.NewFromFloat64(planner.maxFraction),
-	)
-	price := planner.desk.Price()
-	tick := price.Tick(decision.Symbol)
+				return true
+			}
 
-	if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 ||
-		tick.Bid == nil || tick.Bid.Sign() <= 0 {
-		return decision, errnie.Err(
-			errnie.Validation,
-			"planner: executable bid and ask required",
-			nil,
-		)
-	}
+			cash := allocation.desk.Balance().Cash()
 
-	quantity := price.Quantity(decision.Symbol, notional)
+			if cash == nil || cash.Sign() <= 0 {
+				errnie.Err(
+					errnie.Validation,
+					"planner: positive quote cash required",
+					nil,
+				)
 
-	if quantity == nil || quantity.Sign() <= 0 {
-		return decision, errnie.Err(
-			errnie.Validation,
-			"planner: allocation produced no executable quantity",
-			nil,
-		)
-	}
+				return true
+			}
 
-	pair := planner.desk.Instrument().Pair(decision.Symbol)
+			notional := decimal.ExactMul(
+				cash,
+				decimal.NewFromFloat64(config.Planner.MaxAllocationFraction),
+			)
+			price := allocation.desk.Price()
+			tick := price.Tick(decision.Symbol)
 
-	if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
-		return decision, errnie.Err(
-			errnie.Validation,
-			"planner: instrument tick size required",
-			nil,
-		)
-	}
+			if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 ||
+				tick.Bid == nil || tick.Bid.Sign() <= 0 {
+				errnie.Err(
+					errnie.Validation,
+					"planner: executable bid and ask required",
+					nil,
+				)
 
-	fee := price.Fee(decision.Symbol)
+				return true
+			}
 
-	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 {
-		return decision, errnie.Err(
-			errnie.Validation,
-			"planner: taker fee required",
-			nil,
-		)
-	}
+			quantity := price.Quantity(decision.Symbol, notional)
 
-	feeRate := decimal.ExactDiv(fee.Fee, decimal.NewFromInt64(100))
-	decision.AvailableCapital = cash
-	decision.ProposedNotional = notional
-	decision.ProposedQuantity = quantity
-	decision.ReferencePrice = tick.Ask
-	decision.EntryPrice = tick.Ask
-	decision.Mark = tick.Bid
+			if quantity == nil || quantity.Sign() <= 0 {
+				errnie.Err(
+					errnie.Validation,
+					"planner: allocation produced no executable quantity",
+					nil,
+				)
 
-	economics, err := price.EntryEconomics(
-		decision.Symbol,
-		quantity,
-		decision.Forecast.ExpectedReturn,
-	)
+				return true
+			}
 
-	if err != nil {
-		decision.Action = types.ActionNothing
-		decision.Reason = "planner: entry is not executable: " + err.Error()
+			pair := allocation.desk.Instrument().Pair(decision.Symbol)
 
-		return decision, nil
-	}
+			if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
+				errnie.Err(
+					errnie.Validation,
+					"planner: instrument tick size required",
+					nil,
+				)
 
-	decision.ExpectedReturn = economics.ExpectedReturn
-	decision.ExpectedFees = economics.ExpectedFees
-	decision.ExpectedSpread = economics.ExpectedSpread
-	decision.ExpectedImpact = economics.ExpectedImpact
-	decision.OpportunityMargin = economics.NetReturn.Float64()
+				return true
+			}
 
-	if economics.NetReturn.Sign() <= 0 {
-		decision.Action = types.ActionNothing
-		decision.Reason = "planner: forecast does not clear current spread and taker fees"
+			fee := price.Fee(decision.Symbol)
 
-		return decision, nil
-	}
+			if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 {
+				errnie.Err(
+					errnie.Validation,
+					"planner: taker fee required",
+					nil,
+				)
 
-	stoploss, err := types.NewStoploss(
-		planner.ctx,
-		decision.Symbol,
-		tick.Ask,
-		tick.Bid,
-		decision.Forecast,
-		&pair.TickSize,
-		feeRate,
-		feeRate,
-	)
+				return true
+			}
 
-	if err != nil {
-		decision.Action = types.ActionNothing
-		decision.Reason = "planner: forecast cannot construct an executable stop: " + err.Error()
+			feeRate := decimal.ExactDiv(fee.Fee, decimal.NewFromInt64(100))
+			decision.AvailableCapital = cash
+			decision.ProposedNotional = notional
+			decision.ProposedQuantity = quantity
+			decision.ReferencePrice = tick.Ask
+			decision.EntryPrice = tick.Ask
+			decision.Mark = tick.Bid
 
-		return decision, nil
-	}
+			economics, err := price.EntryEconomics(
+				decision.Symbol,
+				quantity,
+				decision.Forecast.ExpectedReturn,
+			)
 
-	decision.Stoploss = stoploss
+			if err != nil {
+				decision.Action = types.ActionNothing
+				decision.Reason = "planner: entry is not executable: " + err.Error()
 
-	return decision, nil
+				return true
+			}
+
+			decision.ExpectedReturn = economics.ExpectedReturn
+			decision.ExpectedFees = economics.ExpectedFees
+			decision.ExpectedSpread = economics.ExpectedSpread
+			decision.ExpectedImpact = economics.ExpectedImpact
+			decision.OpportunityMargin = economics.NetReturn.Float64()
+
+			if economics.NetReturn.Sign() <= 0 {
+				decision.Action = types.ActionNothing
+				decision.Reason = "planner: forecast does not clear current spread and taker fees"
+
+				return true
+			}
+
+			stoploss, err := types.NewStoploss(
+				allocation.ctx,
+				decision.Symbol,
+				tick.Ask,
+				tick.Bid,
+				decision.Forecast,
+				&pair.TickSize,
+				feeRate,
+				feeRate,
+			)
+
+			if err != nil {
+				decision.Action = types.ActionNothing
+				decision.Reason = "planner: forecast cannot construct an executable stop: " + err.Error()
+
+				return true
+			}
+
+			decision.Stoploss = stoploss
+
+			return true
+		})
+
+		return true
+	})
+
+	return nil
 }

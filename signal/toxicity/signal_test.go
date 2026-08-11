@@ -116,7 +116,6 @@ func TestMeasure(t *testing.T) {
 			So(trades, ShouldHaveLength, 1)
 			So(trades[0].TradeID, ShouldEqual, trade.TradeID)
 			So(trades[0].Timestamp, ShouldResemble, trade.Timestamp)
-			So(thesis.Stamped("BTC/USD", types.SourceToxicity), ShouldBeFalse)
 		})
 	})
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,10 +26,9 @@ fact from its authoritative stream without treating them as independent
 corroborating signals.
 */
 type Signal struct {
-	status     atomic.Value
 	ctx        context.Context
 	cancel     context.CancelFunc
-	api        *websocket.API
+	books      websocket.BookSource
 	algo       *equation.Ignition
 	algorithms *sync.Map
 	capacity   int
@@ -49,7 +47,7 @@ same explicit retention bound used by the production market feed.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	books websocket.BookSource,
 	ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
@@ -58,7 +56,7 @@ func NewSignal(
 	signal := &Signal{
 		ctx:        ctx,
 		cancel:     cancel,
-		api:        api,
+		books:      books,
 		algorithms: &sync.Map{},
 		capacity:   capacity,
 		ui:         ui,
@@ -79,23 +77,19 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourcePumpDump
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
 /*
 Measure produces the Measurements for the pumpdump signal.
 */
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
-) ([]*types.Measurement, bool) {
+) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
 	trades := thesis.MarketTrades(types.SourcePumpDump)
 
-	if len(trades) == 0 || signal.api == nil {
-		return measurements, false
+	if len(trades) == 0 || signal.books == nil {
+		return measurements
 	}
 
 	tradeBatches := make(map[string][]kraken.TradeData)
@@ -153,7 +147,7 @@ func (signal *Signal) Measure(
 				var askPrice, bidPrice float64
 				var askAt, bidAt time.Time
 				bookReady := false
-				signal.api.Book(trade.Symbol, func(book *spotbook.Book) {
+				signal.books.Book(trade.Symbol, func(book *spotbook.Book) {
 					ask, bid := book.BestAsk(), book.BestBid()
 
 					if ask == nil || bid == nil || ask.Price == nil || bid.Price == nil {
@@ -387,7 +381,7 @@ func (signal *Signal) Measure(
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return measurements, true
+	return measurements
 }
 
 func (signal *Signal) algorithm(symbol string) *equation.Ignition {

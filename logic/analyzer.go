@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 type Solver interface {
@@ -40,7 +39,6 @@ type Analyzer struct {
 	tree      *dmt.Tree
 	cognition *cognition.Solver
 	graph     *graph.Solver
-	manifold  *manifold.Solver
 	solvers   []Solver
 	ui        chan []byte
 	binui     chan types.FluidFrame
@@ -62,7 +60,6 @@ func NewAnalyzer(
 	thesis *types.Thesis,
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
-	manifoldSolver := manifold.NewSolver(api, ui, binui, recorder)
 
 	analyzer := &Analyzer{
 		ctx:    ctx,
@@ -77,12 +74,11 @@ func NewAnalyzer(
 				recorder,
 				viper.GetFloat64("resonance.learning_rate"),
 			),
-			manifoldSolver,
+			manifold.NewSolver(api, ui, binui, recorder),
 			causal.NewSolver(price, ui, recorder),
 			cognition.NewSolver(tree, ui, recorder),
 			graph.NewSolver(ui, recorder),
 		},
-		manifold: manifoldSolver,
 		ui:       ui,
 		binui:    binui,
 		recorder: recorder,
@@ -92,52 +88,18 @@ func NewAnalyzer(
 	return analyzer
 }
 
-func (analyzer *Analyzer) Process(thesis *types.Thesis) {
-	iterationErr := ""
-
-	for !thesis.SymbolsReady() {
-		readinessRevision := thesis.ReadinessRevision()
-		group := &errgroup.Group{}
-
-		for _, solver := range analyzer.solvers {
-			group.Go(func() error {
-				return solver.Update(thesis)
-			})
-		}
-
-		err := group.Wait()
-
-		waiting := err == nil && analyzer.manifold != nil &&
-			analyzer.manifold.WaitingForBook()
-		stalled := err == nil && !waiting && !thesis.SymbolsReady() &&
-			thesis.ReadinessRevision() == readinessRevision
-
-		if err != nil {
-			iterationErr = err.Error()
-			errnie.Error(errnie.Err(
+func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
+	for _, solver := range analyzer.solvers {
+		if err := solver.Update(thesis); err != nil {
+			return errnie.Err(
 				errnie.Internal,
-				"failed to update analyzer: "+err.Error(),
+				"analyzer: solver update failed",
 				err,
-			))
-		}
-
-		if stalled {
-			iterationErr = "no solver advanced readiness"
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"analyzer: "+iterationErr,
-				nil,
-			))
-		}
-
-		if err != nil || waiting {
-			return
-		}
-
-		if stalled {
-			return
+			)
 		}
 	}
+
+	return nil
 }
 
 /*

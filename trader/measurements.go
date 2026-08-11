@@ -58,20 +58,29 @@ Update takes the raw market data and runs it through all the signals to turn
 them into measurements. This is a "conditioning" stage that prepares the data
 for the logic stage, which can be seen as an "enrichment" process.
 */
-func (measurements *Measurements) Update(thesis *types.Thesis) {
+func (measurements *Measurements) Update(thesis *types.Thesis) error {
+	if measurements == nil || thesis == nil {
+		return errnie.Err(
+			errnie.Validation,
+			"measurements: conditioner and thesis required",
+			nil,
+		)
+	}
+
 	group, _ := errgroup.WithContext(measurements.ctx)
 
 	for _, signal := range measurements.signals {
 		group.Go(func() error {
-			measured, ready := signal.Measure(thesis)
-			thesis.AppendMeasurements(signal.Type(), measured, ready)
-
-			return nil
+			return thesis.AppendMeasurements(
+				signal.Type(),
+				signal.Measure(thesis),
+				false,
+			)
 		})
 	}
 
 	if err := group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf(
 				"measurements: signal failure [%s]",
@@ -80,4 +89,25 @@ func (measurements *Measurements) Update(thesis *types.Thesis) {
 			err,
 		))
 	}
+
+	return nil
+}
+
+/*
+Close releases every signal conditioner owned by the measurement stage.
+*/
+func (measurements *Measurements) Close() error {
+	if measurements == nil {
+		return nil
+	}
+
+	measurements.cancel()
+
+	for _, signal := range measurements.signals {
+		if err := signal.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

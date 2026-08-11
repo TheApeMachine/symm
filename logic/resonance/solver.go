@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"slices"
 	"sort"
 	"sync"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -21,15 +23,17 @@ import (
 Solver feeds normalized market measurements into one resonance manifold per symbol.
 */
 type Solver struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	recorder *audit.Recorder
-	coders   *sync.Map
-	samples  *sync.Map
-	reach    *sync.Map
-	schemas  *sync.Map
-	alpha    float64
-	ui       chan []byte
+	ctx          context.Context
+	cancel       context.CancelFunc
+	recorder     *audit.Recorder
+	coders       *sync.Map
+	samples      *sync.Map
+	reach        *sync.Map
+	schemas      *sync.Map
+	pendingInput *sync.Map
+	pendingMid   *sync.Map
+	alpha        float64
+	ui           chan []byte
 }
 
 /*
@@ -42,21 +46,24 @@ func NewSolver(
 	initialAlpha float64,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
+	config := system.Cfg.Snapshot()
 
-	if initialAlpha == 0 && system.Cfg != nil && system.Cfg.Resonance != nil {
-		initialAlpha = system.Cfg.Resonance.LearningRate
+	if initialAlpha == 0 && config != nil && config.Resonance != nil {
+		initialAlpha = config.Resonance.LearningRate
 	}
 
 	return &Solver{
-		ctx:      ctx,
-		cancel:   cancel,
-		recorder: recorder,
-		coders:   &sync.Map{},
-		samples:  &sync.Map{},
-		reach:    &sync.Map{},
-		schemas:  &sync.Map{},
-		alpha:    initialAlpha,
-		ui:       ui,
+		ctx:          ctx,
+		cancel:       cancel,
+		recorder:     recorder,
+		coders:       &sync.Map{},
+		samples:      &sync.Map{},
+		reach:        &sync.Map{},
+		schemas:      &sync.Map{},
+		pendingInput: &sync.Map{},
+		pendingMid:   &sync.Map{},
+		alpha:        initialAlpha,
+		ui:           ui,
 	}
 }
 
@@ -74,18 +81,26 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	features := make(map[string]map[string]float64)
+	revisions := make(map[string]uint64)
 
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, ok := value.(*types.Symbol)
 
-		if !ok || symbol.Stamped(types.SourceResonance) || len(symbol.Measurements) == 0 {
+		if !ok || symbol == nil {
 			return true
 		}
 
 		name := key.(string)
-		features[name] = make(map[string]float64)
+		measurements, revision, _ := symbol.MeasurementState()
 
-		for _, measurement := range symbol.Measurements {
+		if len(measurements) == 0 {
+			return true
+		}
+
+		features[name] = make(map[string]float64)
+		revisions[name] = revision
+
+		for _, measurement := range measurements {
 			for key, sample := range measurement.Metrics {
 				if sample.Normalized == nil {
 					continue
@@ -138,11 +153,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 			if inputDim == 0 {
 				reading := types.ResonanceReading{
-					Stage:  "resonance",
-					Source: types.SourceResonance,
-					Symbol: symbolName,
-					At:     thesis.At,
-					Alpha:  solver.alpha,
+					EvidenceRevision: revisions[symbolName],
+					Stage:            "resonance",
+					Source:           types.SourceResonance,
+					Symbol:           symbolName,
+					At:               thesis.At,
+					Alpha:            solver.alpha,
 					Verdict: types.ResonanceVerdict{
 						Learning: "observing",
 					},
@@ -150,7 +166,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				stored, _ := thesis.Symbols.Load(symbolName)
 				symbol := stored.(*types.Symbol)
 				symbol.Resonance.Store(symbolName, reading)
-				thesis.Stamp(symbolName, types.SourceResonance)
 				utils.Publish(
 					solver.ui,
 					datura.NewMap("resonance", reading),
@@ -180,12 +195,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			if coder == nil {
+				solver.pendingInput.Delete(symbolName)
+				solver.pendingMid.Delete(symbolName)
 				coder = learning.NewResonanceManifold(
 					[]int{inputDim, inputDim * 2, inputDim}, 1, solver.alpha,
 				)
 
 				if coder == nil {
-					thesis.Stamp(symbolName, types.SourceResonance)
 					return errnie.Error(errnie.Err(
 						errnie.UnprocessableContent,
 						"resonance: failed to construct predictive coding manifold",
@@ -196,9 +212,40 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				solver.coders.Store(symbolName, coder)
 			}
 
-			if _, err := coder.SettleFromBatch(input, nil); err != nil {
-				thesis.Stamp(symbolName, types.SourceResonance)
+			midpoint := 0.0
+			storedTickers, tickerReady := thesis.Tickers.Load(symbolName)
+
+			if tickerReady {
+				tickers := storedTickers.([]kraken.TickerData)
+				latest := tickers[len(tickers)-1]
+
+				if latest.Bid != nil && latest.Ask != nil && latest.Bid.Sign() > 0 && latest.Ask.Sign() > 0 {
+					midpoint = (latest.Bid.Float64() + latest.Ask.Float64()) / 2
+				}
+
+				if midpoint == 0 && latest.Last != nil && latest.Last.Sign() > 0 {
+					midpoint = latest.Last.Float64()
+				}
+			}
+
+			if previousInput, found := solver.pendingInput.Load(symbolName); found && midpoint > 0 {
+				previousMid, _ := solver.pendingMid.Load(symbolName)
+				target := math.Log(midpoint / previousMid.(float64))
+
+				if _, err := coder.SettleFromBatchOptions(
+					previousInput.([]float64), []float64{target}, true, false,
+				); err != nil {
+					return err
+				}
+			}
+
+			if _, err := coder.SettleFromBatchOptions(input, nil, false, true); err != nil {
 				return err
+			}
+
+			if midpoint > 0 {
+				solver.pendingInput.Store(symbolName, slices.Clone(input))
+				solver.pendingMid.Store(symbolName, midpoint)
 			}
 
 			var count uint64
@@ -227,26 +274,26 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			reading := types.ResonanceReading{
-				Stage:         "resonance",
-				Source:        types.SourceResonance,
-				Symbol:        symbolName,
-				At:            thesis.At,
-				Surprise:      surprise,
-				Energy:        energy,
-				Latent:        latent,
-				Embedding:     embedding,
-				Layers:        layers,
-				Forecast:      forecast,
-				Verdict:       verdict,
-				Alpha:         solver.alpha,
-				Samples:       count,
-				SkillEvidence: skillEvidence,
+				EvidenceRevision: revisions[symbolName],
+				Stage:            "resonance",
+				Source:           types.SourceResonance,
+				Symbol:           symbolName,
+				At:               thesis.At,
+				Surprise:         surprise,
+				Energy:           energy,
+				Latent:           latent,
+				Embedding:        embedding,
+				Layers:           layers,
+				Forecast:         forecast,
+				Verdict:          verdict,
+				Alpha:            solver.alpha,
+				Samples:          count,
+				SkillEvidence:    skillEvidence,
 			}
 
 			stored, _ := thesis.Symbols.Load(symbolName)
 			symbol := stored.(*types.Symbol)
 			symbol.Resonance.Store(symbolName, reading)
-			thesis.Stamp(symbolName, types.SourceResonance)
 
 			utils.Publish(
 				solver.ui,

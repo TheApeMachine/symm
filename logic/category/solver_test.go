@@ -45,8 +45,6 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should classify every symbol from the evidence it actually has", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Stamped("BTC/USD", types.SourceCategory), ShouldBeTrue)
-			So(thesis.Stamped("ETH/USD", types.SourceCategory), ShouldBeTrue)
 			So(categoryAt(thesis, "BTC/USD"), ShouldResemble, types.Category{
 				Symbol:     "BTC/USD",
 				Type:       types.VerticalIgnition,
@@ -125,7 +123,6 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should leave category readiness open", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Stamped("BTC/USD", types.SourceCategory), ShouldBeFalse)
 		})
 	})
 
@@ -183,22 +180,6 @@ func stampCategorySignals(thesis *types.Thesis, symbol string) {
 
 	if !found || value == nil {
 		return
-	}
-
-	state := value.(*types.Symbol)
-	for _, source := range []types.SourceType{
-		types.SourceCorrelation,
-		types.SourceCVD,
-		types.SourceDepthFlow,
-		types.SourceExhaustion,
-		types.SourceHawkes,
-		types.SourceLeadLag,
-		types.SourceLiquidity,
-		types.SourcePumpDump,
-		types.SourceSentiment,
-		types.SourceToxicity,
-	} {
-		state.Stamp(source)
 	}
 }
 

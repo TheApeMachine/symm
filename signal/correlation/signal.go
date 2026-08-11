@@ -3,7 +3,6 @@ package correlation
 import (
 	"context"
 	"sort"
-	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/datura"
@@ -21,7 +20,6 @@ it, or without a stable relation to it. Categories belong in logic; this signal
 emits numerical scores only.
 */
 type Signal struct {
-	status  atomic.Value
 	ctx     context.Context
 	cancel  context.CancelFunc
 	api     *websocket.API
@@ -62,11 +60,7 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceCorrelation
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	tickers := make([]kraken.TickerData, 0)
 	thesis.Tickers.Range(func(key, value any) bool {
 		symbol := key.(string)
@@ -85,7 +79,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 	})
 
 	if len(tickers) == 0 {
-		return nil, false
+		return nil
 	}
 
 	scoresBySymbol, err := signal.section.Measure(tickers)
@@ -95,11 +89,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			errnie.UnprocessableContent, "correlation: failed to measure tickers", err,
 		))
 
-		return nil, false
+		return nil
 	}
 
 	if len(scoresBySymbol) == 0 {
-		return nil, false
+		return nil
 	}
 
 	symbols := make([]string, 0, len(scoresBySymbol))
@@ -173,7 +167,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			err,
 		))
 
-		return nil, false
+		return nil
 	}
 
 	compacted := measurements[:0]
@@ -197,7 +191,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		))
 	}
 
-	return measurements, true
+	return measurements
 }
 
 /*

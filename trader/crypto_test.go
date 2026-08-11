@@ -323,6 +323,7 @@ func TestCryptoRun(t *testing.T) {
 					Confidence: 0.95,
 				})
 				marketGraph := logicgraph.NewGraph(thesis.At)
+				marketGraph.Forecast = forecast
 				marketGraph.AddNode(&logicgraph.Node{
 					ID:         "res:SIM1/USD:forecast",
 					Symbol:     "SIM1/USD",
@@ -352,17 +353,6 @@ func TestCryptoRun(t *testing.T) {
 					"precision":      1.0,
 					"samples":        100,
 				})
-
-				for _, source := range []types.SourceType{
-					types.SourceCategory,
-					types.SourceCognition,
-					types.SourceManifold,
-					types.SourceResonance,
-					types.SourceCausal,
-					types.SourceGraph,
-				} {
-					thesis.Stamp("SIM1/USD", source)
-				}
 
 				system.Planner.Update(thesis)
 				stored, found := symbol.Decisions.Load("SIM1/USD")

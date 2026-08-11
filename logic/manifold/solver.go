@@ -143,16 +143,19 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		symbolName, nameOK := key.(string)
 		symbol, ok := value.(*types.Symbol)
 
-		if !nameOK || symbolName == "" || !ok || symbol == nil ||
-			symbol.Status != types.BUSY ||
-			symbol.Stamped(types.SourceManifold) ||
-			!symbol.Stamped(types.SourceHawkes) {
+		if !nameOK || symbolName == "" || !ok || symbol == nil {
+			return true
+		}
+
+		evidence := symbol.MeasurementsSnapshot()
+
+		if len(evidence) == 0 {
 			return true
 		}
 
 		measurements[symbolName] = nil
 
-		for _, measurement := range symbol.Measurements {
+		for _, measurement := range evidence {
 			if measurement != nil && measurement.Source == types.SourceHawkes {
 				measurements[symbolName] = measurement
 				break
@@ -163,10 +166,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	})
 
 	for symbolName, measurement := range measurements {
-		if thesis.Stamped(symbolName, types.SourceManifold) {
-			continue
-		}
-
 		buyExcitation := 0.0
 		sellExcitation := 0.0
 
@@ -282,8 +281,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		); err != nil {
 			return err
 		}
-
-		thesis.Stamp(symbolName, types.SourceManifold)
 	}
 
 	return nil
@@ -303,11 +300,13 @@ func (solver *Solver) Step(
 	at time.Time,
 	particles []pfluid.Particle,
 ) error {
-	if system.Cfg == nil || system.Cfg.Manifold == nil ||
-		system.Cfg.Manifold.MinSteps <= 0 ||
-		system.Cfg.Manifold.MaxSteps < system.Cfg.Manifold.MinSteps ||
-		system.Cfg.Manifold.RelaxationSteps < system.Cfg.Manifold.MinSteps ||
-		system.Cfg.Manifold.RelaxationSteps > system.Cfg.Manifold.MaxSteps {
+	config := system.Cfg.Snapshot()
+
+	if config == nil || config.Manifold == nil ||
+		config.Manifold.MinSteps <= 0 ||
+		config.Manifold.MaxSteps < config.Manifold.MinSteps ||
+		config.Manifold.RelaxationSteps < config.Manifold.MinSteps ||
+		config.Manifold.RelaxationSteps > config.Manifold.MaxSteps {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"manifold: regulated relaxation step count must be within its configured bounds",
@@ -315,7 +314,7 @@ func (solver *Solver) Step(
 		))
 	}
 
-	relaxationSteps := system.Cfg.Manifold.RelaxationSteps
+	relaxationSteps := config.Manifold.RelaxationSteps
 
 	for step := 0; step < relaxationSteps; step++ {
 		_, err := solver.domain.Advance()
@@ -406,15 +405,14 @@ func (solver *Solver) publish(
 		)
 	}
 
+	row := datura.NewMap(
+		"source", "manifold",
+		"symbol", symbol,
+		"at", at.Format(time.RFC3339),
+	)
+	solver.stampPhase(thesis, row, symbol, at, particles)
+
 	if solver.ui != nil {
-		row := datura.NewMap(
-			"source", "manifold",
-			"symbol", symbol,
-			"at", at.Format(time.RFC3339),
-		)
-
-		solver.stampPhase(thesis, row, symbol, at, particles)
-
 		select {
 		case solver.ui <- datura.NewMap(
 			"manifold", []datura.Map[any]{row},
@@ -424,42 +422,6 @@ func (solver *Solver) publish(
 	}
 
 	return nil
-}
-
-/*
-residentHeatLocked sums Heat over every resident particle that is not
-clamped, matching the Python prototype's total_Q. Callers must hold domainMu.
-*/
-func (solver *Solver) residentHeatLocked() (float32, error) {
-	count := solver.domain.ParticleCount()
-
-	if count == 0 {
-		return 0, nil
-	}
-
-	particles, err := solver.domain.ReadParticles(0, count)
-
-	if err != nil {
-		return 0, err
-	}
-
-	clamped, err := solver.domain.ReadClamped(0, count)
-
-	if err != nil {
-		return 0, err
-	}
-
-	var totalHeat float32
-
-	for index, particle := range particles {
-		if index < len(clamped) && clamped[index] {
-			continue
-		}
-
-		totalHeat += particle.Heat
-	}
-
-	return totalHeat, nil
 }
 
 /*

@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +26,6 @@ executable touch depth is thin relative to peers. Reported-volume notional is
 retained as a separate turnover context and never mixed into the book-depth score.
 */
 type Signal struct {
-	status       atomic.Value
 	ctx          context.Context
 	cancel       context.CancelFunc
 	api          *websocket.API
@@ -83,24 +81,20 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceLiquidity
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
 /*
 Measure produces the Measurements for the liquidity signal.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	tickers := thesis.MarketTickers(types.SourceLiquidity)
 
 	if !signal.ingest(tickers) {
-		return nil, false
+		return nil
 	}
 
 	peers, _, cadenceReady := signal.cohort()
 
 	if len(peers) == 0 {
-		return nil, false
+		return nil
 	}
 
 	sort.Slice(peers, func(left, right int) bool {
@@ -290,7 +284,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 			"liquidity: parallel measurement failed",
 			err,
 		))
-		return measurements, false
+		return measurements
 	}
 
 	compacted := measurements[:0]
@@ -314,7 +308,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		))
 	}
 
-	return measurements, cadenceReady && depthCohortReady
+	return measurements
 }
 
 /*

@@ -74,6 +74,7 @@ the Thesis can expose cognition as one influence among many, rather than as a
 sovereign market verdict.
 */
 type Cognition struct {
+	EvidenceRevision uint64             `json:"evidenceRevision"`
 	Source           string             `json:"source"`
 	Symbol           string             `json:"symbol"`
 	At               time.Time          `json:"at"`

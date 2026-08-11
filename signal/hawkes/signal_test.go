@@ -35,7 +35,7 @@ func TestMeasure(t *testing.T) {
 				Side:      side,
 				Timestamp: start.Add(time.Duration(index) * time.Second),
 			})
-			measurements, ready = signal.Measure(thesis)
+			measurements = signal.Measure(thesis)
 
 			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Sample(
@@ -55,7 +55,6 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It should leave retained arrivals and fit state in Nomagique", func() {
 			So(signal.process.Symbols(), ShouldResemble, []string{"BTC/USD"})
-			So(thesis.Stamped("BTC/USD", types.SourceHawkes), ShouldBeTrue)
 			So(latest.Metrics, ShouldHaveLength, 23)
 			So(latest.ObservedFrom, ShouldResemble, start)
 			So(latest.At, ShouldResemble, start.Add(2*time.Second))
@@ -115,10 +114,10 @@ func TestMeasure(t *testing.T) {
 			{Symbol: "THIN/USD", Side: "sell", Timestamp: start.Add(time.Second)},
 		})
 
-		measurements, ready := signal.Measure(thesis)
+		measurements := signal.Measure(thesis)
 
 		Convey("It should not let the thin market veto Hawkes readiness", func() {
-			So(ready, ShouldBeTrue)
+			So(len(measurements) > 0, ShouldBeTrue)
 		})
 
 		Convey("It should compare the fitted directional offspring totals", func() {
@@ -164,7 +163,7 @@ func TestMeasure(t *testing.T) {
 			Symbol: "AAA/USD", Side: "buy", Timestamp: start.Add(time.Second),
 		})
 
-		measurements, _ := signal.Measure(thesis)
+		measurements := signal.Measure(thesis)
 
 		Convey("It should emit one row for the symbol", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -200,7 +199,7 @@ func TestMeasure(t *testing.T) {
 			{Symbol: "BBB/USD", Side: "sell", Timestamp: start.Add(time.Second)},
 		})
 
-		measurements, _ := signal.Measure(thesis)
+		measurements := signal.Measure(thesis)
 
 		Convey("It should still measure the one-sided arrival process", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -228,7 +227,7 @@ func TestMeasure(t *testing.T) {
 			{Symbol: "BBB/USD", Side: "buy", Timestamp: start.Add(time.Second)},
 		})
 
-		measurements, _ := signal.Measure(thesis)
+		measurements := signal.Measure(thesis)
 
 		Convey("It should emit one row per symbol, never one per mark", func() {
 			So(measurements, ShouldHaveLength, 2)
@@ -249,7 +248,7 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It should measure nothing", func() {
 			So(func() []*types.Measurement {
-				measurements, _ := signal.Measure(types.NewThesis(t.Context(), nil))
+				measurements := signal.Measure(types.NewThesis(t.Context(), nil))
 				return measurements
 			}(), ShouldBeEmpty)
 		})

@@ -64,27 +64,30 @@ type ResonanceVerdict struct {
 ResonanceReading is one predictive-coding result for a symbol. Forecast remains
 nil only when the settled latent state cannot support a forward path; an
 informative state publishes the zero-coefficient prior before any target resolves.
+
 	SkillEvidence is historical prequential evidence that the model beats a zero-return
 	baseline more than half the time; it is deliberately separate from the current
 	forecast's Confidence. Alpha is the configured generative-model base pace, not
+
 the return learner's gain and not a dynamically tuned value.
 */
 type ResonanceReading struct {
-	Stage         string                        `json:"stage"`
-	Source        SourceType                    `json:"source"`
-	Symbol        string                        `json:"symbol"`
-	TargetSymbol  string                        `json:"targetSymbol"`
-	At            time.Time                     `json:"at"`
-	Surprise      float64                       `json:"surprise"`
-	Energy        float64                       `json:"energy"`
-	Latent        []float64                     `json:"latent,omitempty"`
-	Embedding     []float64                     `json:"embedding,omitempty"`
-	Layers        []learning.ResonanceLayerWire `json:"layers,omitempty"`
-	Forecast      *ResonanceForecast            `json:"forecast,omitempty"`
-	Verdict       ResonanceVerdict              `json:"verdict"`
-	Alpha         float64                       `json:"alpha"`
-	Samples       uint64                        `json:"samples"`
-	SkillEvidence float64                       `json:"skillEvidence"`
+	EvidenceRevision uint64                        `json:"evidenceRevision"`
+	Stage            string                        `json:"stage"`
+	Source           SourceType                    `json:"source"`
+	Symbol           string                        `json:"symbol"`
+	TargetSymbol     string                        `json:"targetSymbol"`
+	At               time.Time                     `json:"at"`
+	Surprise         float64                       `json:"surprise"`
+	Energy           float64                       `json:"energy"`
+	Latent           []float64                     `json:"latent,omitempty"`
+	Embedding        []float64                     `json:"embedding,omitempty"`
+	Layers           []learning.ResonanceLayerWire `json:"layers,omitempty"`
+	Forecast         *ResonanceForecast            `json:"forecast,omitempty"`
+	Verdict          ResonanceVerdict              `json:"verdict"`
+	Alpha            float64                       `json:"alpha"`
+	Samples          uint64                        `json:"samples"`
+	SkillEvidence    float64                       `json:"skillEvidence"`
 }
 
 /*

@@ -57,18 +57,10 @@ func setCausalPrice(
 	})
 }
 
-func resetCausalSymbol(thesis *types.Thesis, symbol string) {
-	value, _ := thesis.Symbols.LoadOrStore(symbol, types.NewSymbol(symbol, nil))
-	state := value.(*types.Symbol)
-	state.Readiness.Reset()
-	state.Stamp(types.SourceResonance)
-}
-
 func TestUpdate(t *testing.T) {
 	convey.Convey("Given a predictive-coding reading without a forecast", t, func() {
 		solver := NewSolver(nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
-		resetCausalSymbol(thesis, "BTC/USD")
 		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
 		symbolState := storedSymbol.(*types.Symbol)
 		symbolState.Resonance.Store("BTC/USD", types.ResonanceReading{
@@ -84,7 +76,6 @@ func TestUpdate(t *testing.T) {
 
 		convey.Convey("Then causal should complete without inventing an estimate", func() {
 			convey.So(err, convey.ShouldBeNil)
-			convey.So(thesis.Stamped("BTC/USD", types.SourceCausal), convey.ShouldBeTrue)
 			_, found := symbolState.Causal.Load("BTC/USD")
 			convey.So(found, convey.ShouldBeFalse)
 		})
@@ -95,7 +86,6 @@ func TestUpdate(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := "BTC/USD"
 		firstAt := time.Unix(1, 0)
-		resetCausalSymbol(thesis, symbol)
 		storedSymbol, _ := thesis.Symbols.Load(symbol)
 		symbolState := storedSymbol.(*types.Symbol)
 		symbolState.Resonance.Store(symbol, testResonanceReading(
@@ -114,7 +104,6 @@ func TestUpdate(t *testing.T) {
 		symbolState.Resonance.Store(symbol, testResonanceReading(
 			thesis, symbol, 0.75, 0.5, []float64{0.2},
 		))
-		resetCausalSymbol(thesis, symbol)
 		setCausalPrice(thesis, symbol, 110, firstAt.Add(time.Second))
 		err := solver.Update(thesis)
 
@@ -142,7 +131,6 @@ func TestUpdate(t *testing.T) {
 		solver := NewSolver(nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := "BTC/USD"
-		resetCausalSymbol(thesis, symbol)
 		storedSymbol, _ := thesis.Symbols.Load(symbol)
 		symbolState := storedSymbol.(*types.Symbol)
 		baseAt := time.Unix(1, 0)
@@ -169,7 +157,6 @@ func TestUpdate(t *testing.T) {
 				symbolState.Resonance.Store(symbol, testResonanceReading(
 					thesis, symbol, energy, surprise, []float64{prediction},
 				))
-				resetCausalSymbol(thesis, symbol)
 				setCausalPrice(thesis, symbol, midpoint, thesis.At)
 
 				err := solver.Update(thesis)
@@ -208,7 +195,6 @@ func BenchmarkUpdate(b *testing.B) {
 	for index := range symbols {
 		symbol := fmt.Sprintf("SYMBOL-%03d/USD", index)
 		symbols[index] = symbol
-		resetCausalSymbol(thesis, symbol)
 		storedSymbol, _ := thesis.Symbols.Load(symbol)
 		storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceReading(
 			thesis,
@@ -242,7 +228,6 @@ func BenchmarkUpdate(b *testing.B) {
 				float64(index)/float64(index+1),
 				[]float64{float64(index) / float64(index+1)},
 			))
-			resetCausalSymbol(thesis, symbol)
 			setCausalPrice(thesis, symbol, 100+float64(tick)/1_000, at)
 		}
 

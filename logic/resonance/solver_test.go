@@ -46,11 +46,6 @@ func TestUpdate(t *testing.T) {
 		seventh := 0.6
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Readiness = types.Readiness{
-			Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
-			Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
-			Sentiment: true, Toxicity: true,
-		}
 		symbol.Measurements = []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -72,7 +67,6 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should settle and publish the hierarchy directly", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
 
 			stored, found := symbol.Resonance.Load("BTC/USD")
 			So(found, ShouldBeTrue)
@@ -120,11 +114,6 @@ func TestUpdate(t *testing.T) {
 		} {
 			value := value
 			symbolState := types.NewSymbol(symbol, nil)
-			symbolState.Readiness = types.Readiness{
-				Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
-				Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
-				Sentiment: true, Toxicity: true,
-			}
 			symbolState.Measurements = []*types.Measurement{{
 				Source: types.SourceLiquidity,
 				Symbol: symbol,
@@ -156,8 +145,6 @@ func TestUpdate(t *testing.T) {
 			_, ethereumPublished := ethereumState.(*types.Symbol).Resonance.Load("ETH/USD")
 			So(bitcoinPublished, ShouldBeTrue)
 			So(ethereumPublished, ShouldBeTrue)
-			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
-			So(thesis.Stamped("ETH/USD", types.SourceResonance), ShouldBeTrue)
 		})
 	})
 
@@ -208,11 +195,6 @@ func TestUpdate(t *testing.T) {
 	Convey("Given no normalized measurements", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Readiness = types.Readiness{
-			Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
-			Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
-			Sentiment: true, Toxicity: true,
-		}
 		symbol.Measurements = []*types.Measurement{{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
@@ -227,7 +209,6 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should publish the explicit observing state", func() {
 			So(err, ShouldBeNil)
-			So(thesis.Stamped("BTC/USD", types.SourceResonance), ShouldBeTrue)
 			stored, published := symbol.Resonance.Load("BTC/USD")
 			So(published, ShouldBeTrue)
 			reading := stored.(types.ResonanceReading)
@@ -260,11 +241,6 @@ func BenchmarkUpdate(b *testing.B) {
 	ctx := b.Context()
 	thesis := types.NewThesis(ctx, nil)
 	symbol := types.NewSymbol("BTC/USD", nil)
-	symbol.Readiness = types.Readiness{
-		Correlation: true, CVD: true, DepthFlow: true, Exhaustion: true,
-		Hawkes: true, LeadLag: true, Liquidity: true, PumpDump: true,
-		Sentiment: true, Toxicity: true,
-	}
 	symbol.Measurements = []*types.Measurement{{
 		Source: types.SourceLiquidity,
 		Symbol: "BTC/USD",
@@ -280,27 +256,10 @@ func BenchmarkUpdate(b *testing.B) {
 	}}
 	thesis.Symbols.Store("BTC/USD", symbol)
 	solver := NewSolver(ctx, nil, nil, testAlpha)
-	sources := []types.SourceType{
-		types.SourceCorrelation,
-		types.SourceCVD,
-		types.SourceDepthFlow,
-		types.SourceExhaustion,
-		types.SourceHawkes,
-		types.SourceLeadLag,
-		types.SourceLiquidity,
-		types.SourcePumpDump,
-		types.SourceSentiment,
-		types.SourceToxicity,
-	}
 	b.ReportAllocs()
 
 	for b.Loop() {
 		symbol.Reset()
-
-		for _, source := range sources {
-			symbol.Stamp(source)
-		}
-
 		_ = solver.Update(thesis)
 	}
 }

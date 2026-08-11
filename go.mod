@@ -3,7 +3,6 @@ module github.com/theapemachine/symm
 go 1.26.1
 
 require (
-	github.com/alitto/pond/v2 v2.7.1
 	github.com/bytedance/sonic v1.15.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3

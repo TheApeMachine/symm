@@ -3,7 +3,6 @@ package hawkes
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -27,7 +26,6 @@ forecast readiness remains false until residual and out-of-sample validation
 exists.
 */
 type Signal struct {
-	status    atomic.Value
 	ctx       context.Context
 	cancel    context.CancelFunc
 	api       *websocket.API
@@ -77,20 +75,15 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceHawkes
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
+func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	trades := thesis.MarketTrades(types.SourceHawkes)
 
 	if len(trades) == 0 {
-		return nil, false
+		return nil
 	}
 
 	measurements := make([]*types.Measurement, 0)
 	var focused *types.Measurement
-	ready := false
 
 	for index, trade := range trades {
 		if signal.seenTrade(trade) {
@@ -283,7 +276,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 		measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 
 		measurements = append(measurements, measurement)
-		ready = ready || outcome.Readiness.Intensity
 
 		if measurement.Symbol == types.Focus() {
 			focused = measurement
@@ -291,7 +283,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 	}
 
 	if focused == nil || signal.ui == nil {
-		return measurements, ready
+		return measurements
 	}
 
 	payload, err := sonic.Marshal(struct {
@@ -311,7 +303,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool)
 	default:
 	}
 
-	return measurements, ready
+	return measurements
 }
 
 func (signal *Signal) seenTrade(row kraken.TradeData) bool {
