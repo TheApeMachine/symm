@@ -30,8 +30,6 @@ type Signal struct {
 	cancel       context.CancelFunc
 	api          *websocket.API
 	ui           chan []byte
-	thesis       *types.Thesis
-	semaphore    chan struct{}
 	observations *sync.Map
 }
 
@@ -51,7 +49,6 @@ func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -60,15 +57,8 @@ func NewSignal(
 		cancel:       cancel,
 		api:          api,
 		ui:           ui,
-		thesis:       thesis,
-		semaphore:    make(chan struct{}, 1),
 		observations: &sync.Map{},
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceSentiment, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -80,49 +70,30 @@ func (signal *Signal) Name() string {
 	return string(types.SourceSentiment)
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
+func (signal *Signal) Type() types.SourceType {
+	return types.SourceSentiment
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourceSentiment, measurements, true,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourceSentiment)
-
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
+func (signal *Signal) Status() types.Status {
+	return signal.status.Load().(types.Status)
 }
 
 /*
 Measure produces the Measurements for the sentiment signal.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	group, _ := errgroup.WithContext(signal.ctx)
 
 	tickers := thesis.MarketTickers(types.SourceSentiment)
 
 	if !signal.ingest(tickers) {
-		return nil
+		return nil, false
 	}
 
 	peers, _, _ := signal.cohort()
 
 	if len(peers) == 0 {
-		return nil
+		return nil, false
 	}
 
 	statistics := sentimentStatistics(peers)
@@ -231,7 +202,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			"sentiment: parallel measurement failed",
 			err,
 		))
-		return nil
+		return measurements, false
 	}
 
 	compacted := measurements[:0]
@@ -253,7 +224,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return measurements
+	return measurements, directionalReady
 }
 
 type sentimentPeer struct {

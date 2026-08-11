@@ -9,6 +9,8 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -21,12 +23,14 @@ type Crypto struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
+	measurements  *Measurements
 	thesis        *types.Thesis
-	semaphore     chan struct{}
 	dataPath      string
 	ui            chan []byte
 	recorder      *audit.Recorder
 	desk          *broker.Desk
+	analyzer      *logic.Analyzer
+	planner       *strategy.Planner
 	bookUpdates   <-chan string
 	subscriptions map[string]*types.Subscription[any]
 }
@@ -40,22 +44,26 @@ func NewCrypto(
 	ui chan []byte,
 	recorder *audit.Recorder,
 	desk *broker.Desk,
+	analyzer *logic.Analyzer,
+	planner *strategy.Planner,
 	thesis *types.Thesis,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:         ctx,
-		cancel:      cancel,
-		status:      types.READY,
-		api:         api,
-		thesis:      thesis,
-		semaphore:   make(chan struct{}, 1),
-		dataPath:    utils.ResolveDataPath(),
-		ui:          ui,
-		recorder:    recorder,
-		desk:        desk,
-		bookUpdates: api.BookUpdates(),
+		ctx:          ctx,
+		cancel:       cancel,
+		status:       types.READY,
+		api:          api,
+		measurements: NewMeasurements(ctx, api, desk.Instrument(), ui),
+		thesis:       thesis,
+		dataPath:     utils.ResolveDataPath(),
+		ui:           ui,
+		recorder:     recorder,
+		desk:         desk,
+		analyzer:     analyzer,
+		planner:      planner,
+		bookUpdates:  api.BookUpdates(),
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
 				"ticker", types.NewSubscription[any](),
@@ -66,9 +74,7 @@ func NewCrypto(
 		},
 	}
 
-	crypto.thesis.Subscribe(types.SourceTrader, crypto.semaphore)
 	crypto.run()
-
 	return crypto
 }
 
@@ -88,37 +94,46 @@ func (crypto *Crypto) run() {
 				crypto.onTrade(trade)
 			case symbol := <-crypto.bookUpdates:
 				crypto.onBookUpdate(symbol)
-			case <-crypto.semaphore:
-				crypto.thesis.Symbols.Range(func(key, value any) bool {
-					symbolName, nameOK := key.(string)
-					symbol, symbolOK := value.(*types.Symbol)
-
-					if !nameOK || !symbolOK || !symbol.Stamped(types.SourcePlanner) {
-						return true
-					}
-
-					if value, found := symbol.Decisions.Load(symbolName); found {
-						decision, valid := value.(*types.Decision)
-
-						if valid {
-							go func() {
-								if err := crypto.desk.Execute(*decision); err != nil {
-									errnie.Error(errnie.Err(
-										errnie.Internal,
-										"crypto: failed to execute decision round",
-										err,
-									))
-								}
-							}()
-						}
-					}
-
-					symbol.Reset()
-					return true
-				})
 			}
 		}
 	}()
+}
+
+/*
+Update is the main control loop.
+*/
+func (crypto *Crypto) Update() {
+	crypto.measurements.Update(crypto.thesis)
+	crypto.analyzer.Process(crypto.thesis)
+	crypto.planner.Update(crypto.thesis)
+
+	crypto.thesis.Symbols.Range(func(key, value any) bool {
+		symbolName, nameOK := key.(string)
+		symbol, symbolOK := value.(*types.Symbol)
+
+		if !nameOK || !symbolOK || !symbol.Stamped(types.SourcePlanner) {
+			return true
+		}
+
+		if value, found := symbol.Decisions.Load(symbolName); found {
+			decision, valid := value.(*types.Decision)
+
+			if valid {
+				go func() {
+					if err := crypto.desk.Execute(*decision); err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Internal,
+							"crypto: failed to execute decision round",
+							err,
+						))
+					}
+				}()
+			}
+		}
+
+		symbol.Reset()
+		return true
+	})
 }
 
 /*
@@ -139,7 +154,7 @@ func (crypto *Crypto) onBookUpdate(symbol string) {
 		return
 	}
 
-	crypto.thesis.Fanout(types.SourceTrader, types.BookReceivers...)
+	crypto.Update()
 }
 
 func (crypto *Crypto) onTicker(data any) {
@@ -168,7 +183,7 @@ func (crypto *Crypto) onTicker(data any) {
 		crypto.desk.Price().Update(&ticker)
 	}
 
-	crypto.thesis.Fanout(types.SourceTrader, types.TickerReceivers...)
+	crypto.Update()
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -188,7 +203,7 @@ func (crypto *Crypto) onTrade(data any) {
 		crypto.thesis.AppendTrade(trade)
 	}
 
-	crypto.thesis.Fanout(types.SourceTrader, types.TradeReceivers...)
+	crypto.Update()
 }
 
 func (crypto *Crypto) Close() (err error) {

@@ -2,447 +2,366 @@
 
 # S.Y.M.M. — Shake Your Money Maker
 
-A Kraken spot microstructure engine. Live market data is written once into a shared **DMT tree** as `datura.Artifact` rows. Signal systems **Measure** by seeking tree prefixes and running composed **nomagique** pipelines; each emits categorized readings with finite **confidence** and temporal **surprise**. The trader queries those measurements, walks YAML playbooks in `logic/rules/tree.yml`, and allocates capital proportional to edge across the live cross-section. A paper wallet (€200 default) records fills against Kraken WebSocket v2.
+S.Y.M.M. is an experimental Kraken Spot market-research and trading system. It conditions ticker, trade, and Level 3 order-book data into typed numerical measurements; assembles those measurements into a per-symbol thesis; derives predictive, causal, physical, cognitive, and graph evidence; and admits only executable decisions to a broker-owned position lifecycle.
 
-Category semantics and design rationale: [`DECISION.md`](DECISION.md).  
-Agent and architecture contract: [`AGENTS.md`](AGENTS.md) §8.  
-Migration tasks and acceptance: [`spec/SPEC.md`](spec/SPEC.md).
+Paper execution is the configured default. This project is not financial advice, and its live path should be treated as experimental software controlling real funds.
+
+The current runtime is thesis-driven. The DMT tree is used by the cognition solver; it is not the market-data bus, and there is no YAML playbook decision engine in the current code.
 
 ## Contents
 
 - [Architecture](#architecture)
-- [The data pipeline](#the-data-pipeline)
-- [Boot sequence](#boot-sequence)
-- [Core types](#core-types)
-- [Playbooks](#playbooks)
-- [Signal systems](#signal-systems)
-- [Trader mechanics](#trader-mechanics)
-- [Sizing](#sizing)
-- [UI and telemetry](#ui-and-telemetry)
-- [nomagique layer](#nomagique-layer)
+- [Runtime data flow](#runtime-data-flow)
+- [Signals](#signals)
+- [Logic and strategy](#logic-and-strategy)
+- [Execution and recovery](#execution-and-recovery)
+- [Dashboard](#dashboard)
+- [Configuration](#configuration)
 - [Build and run](#build-and-run)
-- [Configuration reference](#configuration-reference)
+- [Tests and benchmarks](#tests-and-benchmarks)
 - [Repository map](#repository-map)
-
-![Infographic of the S.Y.M.M. architecture](overview.png)
+- [Design references](#design-references)
 
 ## Architecture
 
-**Canonical contract** (`AGENTS.md` §8): one tree, write at ingest, query everywhere else. If wiring beyond **websocket → tree → Seek → FlipFlop → nomagique.Number** seems necessary, fix nomagique, artifact schema, or ingest prefixes — do not grow relay layers in the trader or signals.
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  Kraken WebSocket v2 — kraken/public, kraken/paper, kraken/user  │
-│    trade · ticker · book · instrument · ohlc                     │
-│    parse frame → datura.Artifact → tree.Insert(prefix, wire)     │
-└──────────────┬───────────────────────────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  dmt.Tree (shared process bus)                                   │
-│    ingest:  role/scope/origin/…  (e.g. book/BTC-USD)             │
-│    measure: measurement/<scope>/<origin>/…                       │
-└──────────────┬───────────────────────────────────────────────────┘
-               │  tree.Seek(prefix) → signal Measure / explicit packed frames
-               ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  signal/* — Measure only (reference: signal/toxicity/signal.go)  │
-│  pumpdump · depthflow · hawkes · leadlag · liquidity · sentiment │
-│  correlation · cvd · exhaust · toxicity · …                      │
-└──────────────┬───────────────────────────────────────────────────┘
-               │  logic.Measurement {Source, Category, Confidence, Surprise}
-               ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  logic.Tree — embedded logic/rules/tree.yml                      │
-│  Walk() → deepest reachable leaf wins; exits before entries      │
-└──────────────┬───────────────────────────────────────────────────┘
-               │  ActionEnter / ActionStopLoss / ActionTakeProfit
-               ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  trader.Crypto — desk                                            │
-│  latest readings per (symbol, source); edge-proportional sizing  │
-│  broker → paper fills or live orders                             │
-└──────────────┬───────────────────────────────────────────────────┘
-               ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  ui.Hub → ws://127.0.0.1:8765/ws → React dashboard               │
-└──────────────────────────────────────────────────────────────────┘
+```text
+Kraken WebSocket v2 / REST
+        │
+        ├── instrument, ticker, trade, L2 and authenticated L3
+        ▼
+kraken/websocket.API
+        │
+        ▼
+trader.Crypto ── append market observations ──► types.Thesis
+                                                    │
+                           ticker/trade/book fanout │
+                                                    ▼
+                         ten independent signal conditioners
+                                                    │
+                                    typed numerical Measurements
+                                                    ▼
+                                            logic.Analyzer
+                     category · resonance · manifold · causal · cognition · graph
+                                                    │
+                              per-symbol readiness + final evidence graph
+                                                    ▼
+                                           strategy.Planner
+                          forecast gate · causal MCTS · economics · sizing
+                                                    │
+                                     enter / nothing Decision
+                                                    ▼
+                                             broker.Desk
+                          order lifecycle · stoploss · recovery · accounting
+                                                    │
+                   ┌────────────────────────────────┴──────────────────────┐
+                   ▼                                                       ▼
+           paper or Kraken orders                               audit + dashboard
 ```
 
-SYMM is a **fleet of classifiers** plus a **playbook layer** and a **desk**. Signals do not call each other; they read the same tree the websockets write.
+The central coordination object is [`types.Thesis`](types/thesis.go). It owns the current market observations, measurements, per-symbol analysis products, decisions, account equity, lifecycle state, and a non-blocking semaphore fanout between runtime stages.
 
-> **Migration note:** The `curious` branch is mid-migration. Legacy relay paths (`trader/crypto.go` → `updateSignals` → `signal.Update`, `signal/replay/`, `signal/codec/`, `signal/buffer/`) are **debt to remove**, not targets to restore. See `spec/SPEC.md` Phase 1–2.
+Each symbol has an explicit [`types.Readiness`](types/readiness.go) record. A stage stamps a symbol after evaluating it, downstream stages check their prerequisites, and the symbol is reset only after the trader has consumed its completed decision. Missing evidence remains missing; it is not silently replaced with a successful default.
 
-## The data pipeline
+## Runtime data flow
 
-```
-Kraken WS ──► tree.Insert (raw JSON artifacts)
-                    │
-                    ▼
-         signal.Measure ──► measurement artifacts
-                    │
-                    ▼
-         trader: latest reading per (symbol, source)
-                    │
-                    ▼
-              logic.Tree.Walk
-                    │
-        ┌───────────┴────────────┐
-        ▼                        ▼
-   flat → consider entry    held → manage exit
-        │                        │
-        └──── broker fill ───────┘
-                    │
-                    ▼
-              wallet + ui audit
-```
+### Boot
 
-**Four properties:**
+[`cmd.Boot`](cmd/boot.go) assembles the system in dependency order:
 
-1. **Single ingress.** Market data enters once at the websocket. No duplicate fan-out through trader book/trade/ticker types or per-signal `Update`.
+1. Rotate and open `runtime-audit.jsonl` when configured.
+2. Open the SQLite position store at `<system.data_path>/symm.sqlite`.
+3. Open or accept injected public and private Kraken connections.
+4. Construct the transport API, price cache, instrument universe, balance, and desk.
+5. Recover exchange inventory, working orders, and stored stop state.
+6. Construct the shared DMT cognition tree and the market-data coordinator.
+7. Start the ten signal workers.
+8. Start the logic analyzer, strategy planner, and global regulator.
+9. Serve the dashboard WebSocket and manifold WebRTC endpoint.
 
-2. **Measure-only signals.** Each signal seeks ingest prefixes on the shared tree, runs one `nomagique.Number` pipeline, and writes measurement artifacts. Reference: `signal/toxicity/signal.go`.
+Production constructors report readiness through [`utils.Waiter`](utils/waiter.go), so dependent components are not built before their upstream services report `READY`.
 
-3. **Signal trust before the desk.** Publishable measurements carry finite `Confidence` ∈ (0, 1] and temporal `Surprise` (playbook YAML may still say `SNR`; the Go field is `logic.Measurement.Surprise`). Playbook branches gate on explicit `value:` thresholds.
+### Market ingress
 
-4. **Forward feedback.** `market.Story` records per-source forward movement labels; calibrated scales sharpen or soften feature scoring before category evidence is derived.
+[`broker.Instrument`](broker/instrument.go) discovers every online pair for the configured quote currency, loads fee metadata, and subscribes in batches to trades, L2 books, tickers, and authenticated L3 books.
 
-## Boot sequence
+[`trader.Crypto`](trader/crypto.go) is the single market-ingress coordinator:
 
-Current entry point: `cmd/root.go` → four concurrent roles:
+- ticker frames update the thesis and the broker price cache;
+- trade frames append to the thesis trade tape;
+- applied L3 updates publish the affected symbol;
+- each input wakes only the signal stages that consume it.
 
-```
-cmd.Execute()
-  └─ rootCmd.Run
-       ├─ qpool.NewQ (workers from runtime.NumCPU())
-       ├─ go public.NewWebSocket(...).Run(WebSocketURL)
-       ├─ go paper.NewWebSocket(...).Run()
-       ├─ go trader.NewCrypto(...).Run()
-       ├─ trader.PublishDecisionTreeSnapshot(pool)
-       └─ ui.NewHub(...).Run()   // blocks; serves ws://127.0.0.1:8765/ws
-```
+Signals retain their own incremental estimator state, but the observations for the current evaluation epoch live in the shared thesis.
 
-Config loads from `cmd/cfg/config.yml` (embedded default), overridable via `--config` or `$HOME/.symm/config.yml`.
+### Measurements
 
-Paper mode uses `kraken/paper` for simulated private channel responses. Live desk requires `SYMM_KRAKEN_API_KEY`, `SYMM_KRAKEN_API_SECRET`, and `SYMM_LIVE=1`.
-
-## Core types
-
-### Measurement
-
-One signal's classified reading on one symbol at one moment (`logic/measurement.go`):
+A [`types.Measurement`](types/measurement.go) is a source-and-symbol observation with explicit provenance:
 
 ```go
 type Measurement struct {
-    Symbol     string
-    Source     SourceType
-    Category   CategoryType
-    Strength   float64   // raw fused strength (dashboard gauges)
-    Confidence float64   // finite selection trust ∈ (0, 1]
-    Surprise   float64   // temporal category surprise (playbook gating)
-    Price      float64
-    ObservedAt time.Time
-    // …
+    ID               string
+    Source           SourceType
+    Symbol           string
+    Peer             string
+    At               time.Time
+    ObservedFrom     time.Time
+    Horizon          time.Duration
+    PeerAt           time.Time
+    PeerObservedFrom time.Time
+    Maturity         float64
+    Uncertainty      *MeasurementUncertainty
+    Metrics          map[string]MetricSample
 }
 ```
 
-> `Confidence` exact `0` means no publishable evidence; above `1` is invalid signal math. `Surprise` is how unexpected the selected category is against that symbol's recent category prior — not a win rate. Playbook branches often gate on `surprise > 1`.
+Metrics preserve raw value, optional normalized value, and unit. A signal reports numerical observations; it does not choose a market category or trading action.
 
-Bridge from tree artifacts: `logic.MeasurementFromArtifact`. Each signal emits exactly one category at a time.
+## Signals
 
-### Decision
+Signals subscribe to thesis wake-ups, consume only new observations for their source, publish measurements, and stamp every symbol they evaluated. Their estimators use observed data to derive windows and scales rather than sharing fixed market horizons.
 
-Output of a playbook walk (`logic/action.go`). `logic.Tree` evaluates embedded `rules/tree.yml`; deepest reachable leaf wins. Exits are evaluated before entries.
+| Signal | Primary inputs | Responsibility |
+|---|---|---|
+| `correlation` | ticker | Asynchronous cross-symbol co-movement and cohort divergence using Hayashi–Yoshida relationships. |
+| `cvd` | ticker, trade | Signed aggressor flow against midpoint response, separating drive from absorption. |
+| `depthflow` | trade, L3 | Touch and depth-weighted imbalance, thinning, pressure, and toxic depth. |
+| `exhaust` | trade, L3 | Side-specific decay in the microstructure that would support a position. |
+| `hawkes` | trade | Bivariate buy/sell arrival intensity, excitation, stability, and fitted process parameters. |
+| `leadlag` | ticker | Asynchronous leader/follower timing, lag, synchronization, and anchor state. |
+| `liquidity` | ticker | Executable touch depth and reported turnover relative to the current cohort. |
+| `pumpdump` | trade, L3 snapshot | Trade lift and price movement conditioned by current midpoint and spread structure. |
+| `sentiment` | ticker | Cross-sectional breadth, leadership, and peer divergence. |
+| `toxicity` | ticker, trade, L3 | Touch cancellation, retreat, replenishment, and execution asymmetry. |
 
-**Actions:** `ActionEnter`, `ActionDeny`, `ActionWait`, `ActionStopLoss`, `ActionTakeProfit`, `ActionShort`.
+Detailed mathematical notes live beside each implementation under `signal/<name>/README.md`. `signal/compute` is shared Metal-initialization infrastructure, not a market signal.
 
-## Playbooks
+## Logic and strategy
 
-Canonical source: **`logic/rules/tree.yml`** (embedded via `logic/tree.go`). Not `market/perspectives/` — that package is removed.
+### Analyzer
 
-| Priority | Playbook   | Thesis (summary) |
-|----------|------------|------------------|
-| 1        | `trend`    | Breadth + endogenous alpha + laminar/frenzy + aggressive drive |
-| 2        | `drive`    | Aggressive drive or hidden absorption |
-| 3        | `leadlag`  | Breadth + inefficient lag |
-| 4        | `scarcity` | Extreme scarcity + ignition cue |
-| 5        | `pump`     | Coiled compression or spoof trap entry |
+[`logic.Analyzer`](logic/analyzer.go) runs six solvers concurrently. Solvers that do not yet have their prerequisites return without inventing output; the analyzer repeats while readiness advances and stops if the manifold explicitly needs a newer book or no solver can progress.
 
-**Tree walking:** branches gate on category, observation, or metric. Category branches compare `Surprise` (or `confidence` when configured) to explicit YAML `value:` thresholds. Metric branches read trader context (`thesis_score`, `spread_bps`, `fee_pct`, etc.).
+| Solver | Output |
+|---|---|
+| `category` | Cross-signal hypotheses derived from metric support, opposition, and missing evidence. |
+| `resonance` | Per-symbol predictive-coding state and an online return forecast with a Student-t predictive distribution. |
+| `manifold` | A physical readout of the visible L3 order population, conditioned by Hawkes excitation. |
+| `causal` | Historical causal rows, treatment level, sample support, and estimate precision. |
+| `cognition` | DMT-backed episodic sequences and cognitive paths. |
+| `graph` | The final evidence graph, including support, contradiction, lead/lag, and temporal relationships. |
 
-Builtin deny categories (`ToxicBluff`, `LiquidityVacuum`, `Turbulent`, `Saturation`, `SystemicHerd`, `LiquidityShock`) appear in the embedded tree. Full mappings: `logic/category.go` and [`DECISION.md`](DECISION.md).
+The graph stage waits for category, resonance, causal, cognition, and—when Hawkes evidence is present—manifold completion. It is the final structural product of the logic layer.
 
-## Signal systems
+### Forecasts
 
-Each signal package:
+[`types.ResonanceForecast`](types/resonance.go) carries a retention-supported forward log-return curve, expected simple return, posterior directional confidence, predictive scale, degrees of freedom, and supported horizon.
 
-- Composes **one** `nomagique.Number` in `NewSignal` (schema on a `datura.Artifact`, not hardcoded Go params)
-- Implements **`Measure(query)`** — `tree.Seek(query.Prefix())`, explicit artifact frame decode, pipeline evaluate where used
-- Does **not** ingest feeds, hold `Update`, or switch on category index inside `Measure`
+The resonance learner is prequential: it scores a prior prediction against a later resolved return before using that return to update the model. Current confidence and historical evidence that the learner beats a zero-return baseline remain separate quantities.
 
-| Signal          | Package              | Categories (examples)                                                               | Ingest prefix |
-|-----------------|----------------------|-------------------------------------------------------------------------------------|---------------|
-| **PumpDump**    | `signal/pumpdump`    | `vertical_ignition`, `coiled_compression`, `organic_trend`, `faded_exhaustion`      | trade         |
-| **DepthFlow**   | `signal/depthflow`   | `loaded_imbalance`, `spoof_trap`, `book_thinning`, `dense_neutrality`               | book          |
-| **Hawkes**      | `signal/hawkes`      | `frenzy`, `saturation`, `organic`, `exhaustion`                                     | trade         |
-| **LeadLag**     | `signal/leadlag`     | `inefficient_lag`, `synchronized_drift`, `decoupled_move`, `anchor_stall`           | trade, ticker |
-| **Liquidity**   | `signal/liquidity`   | `extreme_scarcity`, `median_depth`, `robust_liquidity`                              | trade         |
-| **Sentiment**   | `signal/sentiment`   | `risk_on_surge`, `divergent_move`, `systemic_slump`                                 | trade         |
-| **Correlation** | `signal/correlation` | `decoupled_alpha`, `stochastic_noise`, `divergent_stress`, `systemic_herd`          | trade         |
-| **CVD**         | `signal/cvd`         | `hidden_absorption`, `aggressive_drive`, `stochastic_balance`, `volume_starvation`  | trade         |
-| **Toxicity**    | `signal/toxicity`    | `toxic_bluff`, `liquidity_vacuum`, `hard_support`                                   | book, trade   |
-| **Exhaust**     | `signal/exhaust`     | `mechanical_collapse`, `thermal_exhaustion`, `active_reversal`, `fragile_expansion` | book, trade   |
+### Decisions
 
-Per-signal narratives below remain valid product descriptions; wiring must follow the Measure-only tree contract above.
+[`strategy.Planner`](strategy/planner.go) considers a symbol only after its signal and logic stages are complete. The entry path is:
 
-### 💥 PumpDump
+1. Require a current resonance forecast and matching graph evidence.
+2. Require a ready predictive distribution above the configured confidence gate.
+3. Compare entry against standing aside with causal MCTS.
+4. Convert the chosen candidate into an executable allocation.
+5. Recheck bid, ask, pair increments, fees, spread, and expected impact.
+6. Reject a forecast that does not clear current round-trip friction.
+7. Construct forecast-derived stop geometry and publish the decision.
 
-Hunts verticality: volume-relative-to-baseline (RVOL) and price precursor across rolling windows, self-scaled against per-symbol EMA baselines. Three detection windows: 10 s fast, 5 m medium, hourly against a 14-day median.
+Public decision actions are `enter`, `exit`, `hold`, and `nothing`. The current planner emits entry or standing-aside decisions. The desk rejects strategy-driven exits; an open lot exits only when its bound stoploss triggers.
 
-### 📚 DepthFlow
+## Execution and recovery
 
-Distance-decayed book imbalance with anti-spoof filtering. Bid and ask volumes weighted by exponential decay from the touch; fake near-touch walls excluded before imbalance is computed.
+[`broker.Desk`](broker/desk.go) owns positions and serializes exchange-facing state. A planned entry is placed into the desk before network submission so concurrent decisions cannot overbook the same capacity.
 
-### ⚡ Hawkes
+For every entry, the desk:
 
-Bivariate self-exciting point process on the trade stream. MLE refit throttled per symbol on thin markets.
+- verifies the forecast and proposed quantity;
+- re-evaluates entry economics against the latest executable prices;
+- reserves a normal or independently qualified position slot;
+- submits a market order with the decision UUID as client order ID;
+- updates the lot from authenticated execution frames;
+- persists stoploss state in SQLite;
+- marks and regulates the position from ticker updates;
+- submits the sell only after the stoploss reaches `TRIGGERED`.
 
-### 📡 LeadLag
+On boot, [`broker.Recovery`](broker/recovery.go) reconciles exchange balances, trade history, working orders, and stored stop state. The exchange wallet is authoritative: balance snapshots replace the local wallet rather than merging into it.
 
-BTC/EUR anchor lag vs follower universe. Hayashi-Yoshida cross-correlation over per-symbol history; `InefficientLag` when the anchor moved and followers lag.
+### Paper and real execution
 
-### 💧 Liquidity
+`trading.model: paper` routes balances, fills, history, and orders through the native `kraken paper` CLI while public market data continues to come from Kraken. The paper ledger is external to this process; it is not an in-memory fake exchange.
 
-Cross-section rank by daily quote volume; `ExtremeScarcity` for illiquid outliers.
+`trading.model: real` routes account operations and orders to Kraken. Authenticated transports read:
 
-### 🌡️ Sentiment
+| Environment variable | Purpose |
+|---|---|
+| `KRAKEN_API_KEY` | Kraken API public key. |
+| `KRAKEN_API_SECRET` | Kraken API secret consumed by the SDK. |
+| `SYMM_PPROF` | Enables the pprof listener even when config disables it. |
 
-Breadth of positive returns across the universe; macro overlay.
+There is no automatic `SYMM_*` mapping for Viper configuration in the current loader. Use a YAML configuration file for other settings.
 
-### 🔗 Correlation
+## Dashboard
 
-Pearson cross-symbol return correlation; `SystemicHerd` as deny, `DecoupledAlpha` as entry cue.
+[`ui.Hub`](ui/hub.go) exposes:
 
-### 📊 CVD
+- `ws://127.0.0.1:8765/ws` for JSON state and telemetry;
+- `http://127.0.0.1:8765/webrtc/manifold` for non-trickle WebRTC signaling;
+- WebRTC data channels for binary manifold field and particle frames.
 
-Cumulative volume delta from the trade tape. `AggressiveDrive` and `HiddenAbsorption` drive drive-playbook entries.
+The frontend is a React 19 and TanStack Start terminal. Its surfaces include the dashboard, global regulator, evidence graph, fluid manifold, signal inspection, decisions, trade journal, latent-state x-ray, cognitive tree, and allocation view. The browser sends the selected focus symbol back to the backend so detailed telemetry can be gated to the active market.
 
-### ☠️ Toxicity
+The WebSocket URL defaults to `ws://127.0.0.1:8765/ws` and can be changed at frontend build time with `VITE_SYMM_WS_URL`.
 
-Cancel-vs-fill asymmetry on book updates. `ToxicBluff`, `LiquidityVacuum`, `HardSupport`. Reference implementation for signal shape: `signal/toxicity/signal.go`.
+## Configuration
 
-### 🚪 Exhaust
+The Cobra entrypoint loads configuration in this order:
 
-Microstructure decay modes; exit timing via playbook leaves (`ActionStopLoss`, `ActionTakeProfit`), not a separate exit channel.
+1. `--config <path>` when explicitly supplied; failure is fatal.
+2. `cmd/cfg/config.yml`.
+3. `./config.yml`.
+4. `$HOME/.symm/config.yml`.
+5. The copy of `cmd/cfg/config.yml` embedded in the binary.
 
-## Trader mechanics
+The checked-in configuration defaults to:
 
-`trader.Crypto` scores through playbooks, not by re-deriving signal math.
+- data under `~/.symm/data`;
+- audit rotation on boot;
+- paper execution;
+- USD quote-market discovery;
+- authenticated L3 depth alongside ticker, trade, and L2 subscriptions;
+- two normal and two reserved position slots;
+- a predictive-confidence entry gate and a maximum per-entry cash fraction;
+- an in-process cognition tree;
+- pprof disabled unless enabled by config or `SYMM_PPROF`.
 
-**Target ingestion:** query measurement artifacts from the shared tree (or consolidated story readings) — not `measurements` broadcast fan-out from per-signal `Update`.
+See [`cmd/cfg/config.yml`](cmd/cfg/config.yml) for the complete checked-in configuration. Some adaptive strategy values are held in [`system.Config`](system/config.go) and can be updated at runtime by the equity-driven global regulator.
 
-**Entry path (summary):**
+Runtime files under `system.data_path` include:
 
-1. Collect playbook entries authorizing `ActionEnter`
-2. Thesis score — RMS of playbook-relevant surprises
-3. Friction and economics gates
-4. Cross-section edge calibration
-5. Edge-proportional size → `broker` fill
-
-**Exit path:** pump peak trail, perspective TTL, then exit branches with `ObservationHolding`. Stops before take-profits when both fire.
-
-**Paper / live parity:** `broker.QuoteCache`, `SlippageFill`, `PreflightGates`, Kraken fee schedule from `AssetPairs`, latency profile in `runs/network_latency.json`. Live: `SYMM_LIVE=1` + API credentials; boot fails closed if live session cannot start.
-
-**Forward truth:** `market.Story` records per-signal forward labels independent of fills; scales feed back into signal feature scoring.
-
-## Sizing
-
-Edge-proportional across the live cross-section:
-
-```
-thesisScore(s) = RMS(playbook-relevant surprises) × √confirmations
-edge(s)        = thesisScore(s) − median(all scores) − MAD(all scores)
-share(s)       = edge(s) / (thesisScore(s) + Σ positive scores)
-notional(s)    = free_cash × share(s)
-```
-
-`MinCostEUR` remains the exchange-cost floor.
-
-## UI and telemetry
-
-`ui.Hub` serves `ws://127.0.0.1:8765/ws` (default `127.0.0.1:8765`; set `ui.addr` or `SYMM_UI_ADDR` to `:8765` for all interfaces).
-
-On connect, the hub sends a snapshot from `trader.ConnectSnapshotFrames` (wallet, decision tree, layout). Live frames arrive via `ui.Publish*` from trader and signals.
-
-| Event / frame   | Typical source   | Contents |
-|-----------------|------------------|----------|
-| `layout`        | ui.Hub           | dashboard schema |
-| `confidence`    | measurements     | per-source confidence and surprise |
-| `wallet`        | trader           | balance, inventory, marks |
-| `audit`         | trader           | conviction, edge, playbook |
-| `ohlc`          | kraken/public    | anchor / open-position candles |
-| `decision_tree` | trader           | embedded playbook snapshot |
-| `heartbeat`     | ui.Hub           | seq, queue depth |
-
-Frontend: `cd frontend && pnpm install && pnpm dev`. Override WS URL with `VITE_SYMM_WS_URL`.
-
-## nomagique layer
-
-Signal math lives in **`github.com/theapemachine/nomagique`**, composed in each signal's `NewSignal`:
-
-```go
-nomagique.Number(
-    vector.NewFeatureExtractor(schemaArtifact),
-    probability.NewClassifier(
-        logic.NewCircuit(/* rules */),
-        logic.NewCircuit(/* rules */),
-    ),
-    probability.NewTransitionSurprise(/* … */),
-)
-```
-
-- **FeatureExtractor** — reads payload JSON using schema artifact attributes
-- **Classifier** — score source order is the category index; no symm-side `switch`
-- **Circuit** — priority-ordered rules (`Match` / `Then`)
-- **Transport** — `datura/transport.FlipFlop` between tree seek and pipeline
-
-Do not add domain types to nomagique; do not hardcode thresholds in Go — declare transforms and keys on schema artifacts (`AGENTS.md` §8).
+| File | Purpose |
+|---|---|
+| `runtime-audit.jsonl` | Orchestration, evidence, decision, and execution audit records. |
+| `symm.sqlite` | Persisted per-symbol stoploss state used during recovery. |
+| authenticated nonce state | Monotonic Kraken nonce continuity across restarts. |
 
 ## Build and run
 
-`qpool` uses `go:linkname` hooks. **Use the Makefile** (exports `GOFLAGS=-ldflags=-checklinkname=0`):
+### Prerequisites
 
-```bash
-make build          # → bin/symm (includes capnp-ts codegen)
-make run            # paper defaults; UI at ws://127.0.0.1:8765/ws
-make test-go        # full Go suite
-make test-frontend  # tsc + Vitest
-make bench          # package benchmarks
-make test-cover     # → runs/coverage.out
+- Go 1.26.1.
+- pnpm 10.28.1 for the frontend.
+- Local sibling checkouts of `../datura` and `../nomagique`, as required by `go.mod` replacements.
+- A supported Metal environment for the GPU-backed analysis path.
+- The native `kraken` CLI for paper account and execution operations.
+- Kraken credentials for authenticated private and Level 3 connections.
+
+`qpool`, reached through DMT, currently uses `go:linkname` runtime hooks. The Makefile exports the required linker setting:
+
+```text
+GOFLAGS=-ldflags=-checklinkname=0
 ```
 
-> Bare `go test ./...` without `GOFLAGS` fails at link time. Use `make test-go` or `export GOFLAGS=-ldflags=-checklinkname=0`.
+Use the Makefile so the setting reaches nested Go and cgo subprocesses:
 
-Profile while running: `make run-profile` → http://127.0.0.1:6060/debug/pprof/
+```bash
+make build
+make run
+```
 
-**CLI tuning / replay eval** (`symm tune`, `symm eval`, `make record`) are **deferred** until the tree + Measure path is stable (`spec/SPEC.md` Phase 5). Offline tests insert artifacts directly into the tree or use package-level websocket harnesses — not a `signal/replay` relay package.
+`make build` writes the race-enabled binary to `bin/symm`. `make run` starts the backend and blocks in the dashboard hub.
 
-### Environment variables
+Run the frontend separately:
 
-| Variable                 | Effect |
-|--------------------------|--------|
-| `SYMM_KRAKEN_API_KEY`    | Live desk + L3 when paired with secret |
-| `SYMM_KRAKEN_API_SECRET` | Base64-encoded API secret |
-| `SYMM_LIVE`              | `1` or `true` for live desk |
-| `SYMM_UI_ADDR`           | WebSocket listen address |
-| `SYMM_WALLET_EUR`        | Paper starting capital (default `200`) |
-| `SYMM_QUOTE_CURRENCY`    | Symbol discovery quote (config default `EUR`) |
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
 
-Full wiring: `cmd/cfg/config.yml` and viper `SYMM_*` overrides.
+The frontend development server listens on port 3000 by default.
 
-## Configuration reference
+To use a configuration outside the normal search path:
 
-<details>
-<summary>📋 Wallet and desk</summary>
+```bash
+make build
+./bin/symm --config /absolute/path/to/config.yml
+```
 
-| Field               | Default | Description |
-|---------------------|---------|-------------|
-| `WalletEUR`         | `200.0` | Paper capital |
-| `MinCostEUR`        | `0.45`  | Minimum trade notional |
-| `PerspectiveTTL`    | `30s`   | Position binding horizon |
-| `EntryEdgeMultiple` | `2.0`   | Thesis vs round-trip friction |
+Enable profiling with `system.pprof.enabled: true` or `SYMM_PPROF=1`, then open `http://127.0.0.1:6060/debug/pprof/`. `make run-profile`, `make profile`, and `make profile-report` wrap the common workflow.
 
-</details>
+## Tests and benchmarks
 
-<details>
-<summary>📋 Execution economics</summary>
+The Go suite uses GoConvey and includes package tests, concurrency checks, calculation benchmarks, transport fixtures, and a deterministic multi-symbol market simulator. [`tests.Market`](tests/market.go) drives production websocket parsing with coherent ticker, trade, L2, L3, candle, execution, balance, latency, fault, and reconnect behavior.
 
-| Field                        | Default | Description |
-|------------------------------|---------|-------------|
-| `ExecutionEconomicsEnabled`  | `true`  | Post-fee return ledger |
-| `ForwardReturnMinSamples`    | `30`    | Warm playbook threshold |
-| `ForwardReturnSignificanceZ` | `1.96`  | Economics gate z-score |
+Metal pipeline creation is process-global, so Go package test binaries run serially with `-p 1`.
 
-</details>
+```bash
+make test-go          # Go tests
+make test-race        # Go race suite
+make test-cover       # Go coverage → runs/coverage.out
+make bench            # Go benchmarks with allocations
+make test             # Go tests + race suite + frontend production build
+```
 
-<details>
-<summary>📋 Exit and trail parameters</summary>
+Frontend verification is explicit:
 
-| Field             | Default | Description |
-|-------------------|---------|-------------|
-| `TakeProfitR`     | `2.0`   | Return multiple vs stop |
-| `StopVolMultiple` | `8.0`   | Stop = N× tick volatility |
-| `PumpTrailPct`    | `0.08`  | Fast pump trail |
-| `PumpHardStopPct` | `0.12`  | Pump hard floor |
+```bash
+cd frontend
+pnpm test             # Vitest
+pnpm typecheck        # TypeScript
+pnpm lint             # Biome
+pnpm build            # production build
+pnpm bench            # Vitest benchmarks
+```
 
-</details>
-
-<details>
-<summary>📋 Market data and connectivity</summary>
-
-| Field           | Default | Description |
-|-----------------|---------|-------------|
-| `QuoteCurrency` | `EUR`   | Discovery filter |
-| `BookDepthLevels` | `5`   | Book depth maintained locally |
-
-</details>
-
-<details>
-<summary>📋 Signal-specific parameters</summary>
-
-| Field                 | Default | Description |
-|-----------------------|---------|-------------|
-| `HawkesFitCooldown`   | `5s`    | MLE refit interval |
-| `BookDepthDecayLambda`| `1000`  | DepthFlow decay (ms) |
-| `FluidGridSize`       | `32`    | Fluid grid N×N |
-| `CausalContagionBreak`| `0.9`   | Regime break threshold |
-
-See `cmd/cfg/config.yml` for the full set.
-
-</details>
-
-<details>
-<summary>📋 UI and infrastructure</summary>
-
-| Field               | Default          | Description |
-|---------------------|------------------|-------------|
-| `UIAddr`            | `127.0.0.1:8765` | Dashboard WebSocket |
-| `UITelemetryBuffer` | `512`            | Lossy client ring |
-
-</details>
+`make test-frontend` runs `pnpm build`; it does not run Vitest.
 
 ## Repository map
 
-| Path | Contents |
-|------|----------|
-| `cmd/` | Cobra entry, embedded `cfg/config.yml`, boot |
-| `spec/SPEC.md` | Migration spec (tasks, acceptance) |
-| `logic/` | Playbooks (`rules/tree.yml`), `Measurement`, tree walk |
-| `signal/` | Measure-only classifiers |
-| `trader/` | Desk, economics, cognitive memory |
-| `market/` | Story, forward feedback (not playbooks) |
-| `kraken/public/` | Public REST + WebSocket → tree ingest |
-| `kraken/paper/` | Paper private WebSocket |
-| `kraken/user/` | Authenticated user streams |
-| `kraken/market/` | Kraken frame helpers / tree ingest (thin; no feed multiplexer) |
-| `broker/` | Paper and live execution, quote cache |
-| `ui/` | WebSocket hub, publish helpers |
-| `frontend/` | React dashboard |
-| `datura/`, `nomagique/`, `qpool/`, `errnie/` | External libs (see go.mod) |
-| `DECISION.md` | Category semantics |
-| `AGENTS.md` | Agent contract; §8 = architecture |
+| Path | Responsibility |
+|---|---|
+| `main.go`, `cmd/` | Cobra entrypoint, configuration loading, and system assembly. |
+| `kraken/` | Kraken wire models and normalized exchange payloads. |
+| `kraken/websocket/` | Live public/private/L3 transport, subscriptions, nonce management, and paper routing. |
+| `types/` | Thesis, measurements, readiness, evidence, forecasts, decisions, holdings, and stoploss types. |
+| `signal/` | Numerical market conditioners and their per-source estimator state. |
+| `logic/` | Category, resonance, manifold, causal, cognition, graph, and analyzer stages. |
+| `strategy/` | Forecast admission, graph evidence, causal MCTS, and allocation. |
+| `broker/` | Instruments, price and fee economics, wallet, desk, orders, positions, persistence, and recovery. |
+| `trader/` | Raw market ingress and completed-decision handoff. |
+| `regulator/` | Equity-driven global predictive regulator. |
+| `audit/` | JSONL recording and boot rotation. |
+| `ui/` | Dashboard WebSocket, WebRTC manifold transport, and error bridge. |
+| `frontend/` | React/TanStack terminal and WebSocket-backed stores. |
+| `tests/` | Deterministic venue, market scenarios, fixtures, execution model, and stack harness. |
+| `system/` | Runtime-tunable analysis, risk, and planner configuration. |
+| `utils/` | Small shared transport, JSON, math, path, publish, and readiness helpers. |
+| `specs/` | Design contracts, research notes, reviews, and simulator specifications. |
 
-**Removed / do not restore:** `market/perspectives/`, `signal/replay/`, `signal/codec/`, `signal/buffer/`, trader `updateSignals` relay.
+### Adding or changing a signal
 
-**Adding a signal:**
+1. Emit dimensional numerical metrics with correct timestamps, units, maturity, and uncertainty.
+2. Keep market categories and actions out of the signal package.
+3. Subscribe the signal to the thesis and expose `Name` and `Close`.
+4. Register its source, readiness stamp, and ticker/trade/book receiver wiring.
+5. Update category and graph composition only where the new metric has documented semantic meaning.
+6. Cover multi-step behavior and invalid input with mirrored GoConvey tests.
+7. Add and run a benchmark when the change affects repeated calculation or data processing.
 
-1. Compose one `nomagique.Number` in `NewSignal` from schema artifact attributes.
-2. Implement `Measure(query)` — seek ingest prefix on the shared tree, `FlipFlop`, return measurement artifacts.
-3. Do **not** add `Update`, feed subscriptions, or category switches in `Measure`.
-4. Register measurement prefixes consistent with `logic.SourceType` and `DECISION.md`.
-5. Extend `logic/rules/tree.yml` if new categories should authorize or deny trades.
+## Design references
 
-See `signal/toxicity/signal.go` and `AGENTS.md` §8.
+- [`AGENTS.md`](AGENTS.md) — implementation, safety, testing, and architecture rules.
+- [`specs/thesis.md`](specs/thesis.md) — measurement, evidence, lifecycle, and thesis ownership contract.
+- [`specs/manifold.md`](specs/manifold.md) — L3 physical-model contract and validation sequence.
+- [`specs/pnl.md`](specs/pnl.md) — execution precision, fees, and PnL design.
+- [`specs/market-simulator.md`](specs/market-simulator.md) — deterministic venue model.
+- [`specs/test.md`](specs/test.md) — testing direction.
+- Per-package READMEs under `signal/` and `logic/` — focused mathematical and semantic notes.
+
+## Terminal
 
 ![Image of S.Y.M.M. Terminal](terminal1.png)
 

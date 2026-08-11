@@ -31,3 +31,4 @@ qodana.yaml
 .playwright-mcp/
 .cache/
 .tmp/
+.codex/

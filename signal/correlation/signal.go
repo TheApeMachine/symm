@@ -21,14 +21,12 @@ it, or without a stable relation to it. Categories belong in logic; this signal
 emits numerical scores only.
 */
 type Signal struct {
-	status    atomic.Value
-	ctx       context.Context
-	cancel    context.CancelFunc
-	api       *websocket.API
-	section   *Section
-	ui        chan []byte
-	thesis    *types.Thesis
-	semaphore chan struct{}
+	status  atomic.Value
+	ctx     context.Context
+	cancel  context.CancelFunc
+	api     *websocket.API
+	section *Section
+	ui      chan []byte
 }
 
 /*
@@ -39,24 +37,16 @@ func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:       ctx,
-		cancel:    cancel,
-		api:       api,
-		section:   NewSection(),
-		ui:        ui,
-		thesis:    thesis,
-		semaphore: make(chan struct{}, 1),
+		ctx:     ctx,
+		cancel:  cancel,
+		api:     api,
+		section: NewSection(),
+		ui:      ui,
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceCorrelation, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -68,34 +58,15 @@ func (signal *Signal) Name() string {
 	return string(types.SourceCorrelation)
 }
 
+func (signal *Signal) Type() types.SourceType {
+	return types.SourceCorrelation
+}
+
 func (signal *Signal) Status() types.Status {
 	return signal.status.Load().(types.Status)
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourceCorrelation, measurements, true,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourceCorrelation)
-
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	tickers := make([]kraken.TickerData, 0)
 	thesis.Tickers.Range(func(key, value any) bool {
 		symbol := key.(string)
@@ -114,7 +85,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 	})
 
 	if len(tickers) == 0 {
-		return nil
+		return nil, false
 	}
 
 	scoresBySymbol, err := signal.section.Measure(tickers)
@@ -124,11 +95,11 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			errnie.UnprocessableContent, "correlation: failed to measure tickers", err,
 		))
 
-		return nil
+		return nil, false
 	}
 
 	if len(scoresBySymbol) == 0 {
-		return nil
+		return nil, false
 	}
 
 	symbols := make([]string, 0, len(scoresBySymbol))
@@ -201,7 +172,8 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			"correlation: parallel measurement construction failed",
 			err,
 		))
-		return nil
+
+		return nil, false
 	}
 
 	compacted := measurements[:0]
@@ -225,7 +197,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		))
 	}
 
-	return measurements
+	return measurements, true
 }
 
 /*

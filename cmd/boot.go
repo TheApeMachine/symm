@@ -15,16 +15,6 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/regulator"
-	"github.com/theapemachine/symm/signal/correlation"
-	"github.com/theapemachine/symm/signal/cvd"
-	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/exhaust"
-	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/signal/leadlag"
-	"github.com/theapemachine/symm/signal/liquidity"
-	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
@@ -204,33 +194,6 @@ func Boot(
 		return nil
 	}
 
-	crypto := utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
-		ctx,
-		api,
-		uiChannel,
-		recorder,
-		desk,
-		thesis,
-	)).Wait()
-
-	errnie.Debug("trader reported to be ready")
-
-	for _, signal := range []types.Signal{
-		utils.NewWaiter[*correlation.Signal](correlation.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*cvd.Signal](cvd.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*depthflow.Signal](depthflow.NewSignal(ctx, api, instrument, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*exhaust.Signal](exhaust.NewSignal(ctx, api, instrument, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*hawkes.Signal](hawkes.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*leadlag.Signal](leadlag.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*liquidity.Signal](liquidity.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*pumpdump.Signal](pumpdump.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*sentiment.Signal](sentiment.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
-		utils.NewWaiter[*toxicity.Signal](toxicity.NewSignal(ctx, api, uiChannel, thesis)).Wait(),
-	} {
-		errnie.Debug(fmt.Sprintf("%s signal reported to be ready", signal.Name()))
-		system.closers = append(system.closers, signal.Close)
-	}
-
 	analyzer := utils.NewWaiter[*logic.Analyzer](logic.NewAnalyzer(
 		ctx,
 		price,
@@ -253,6 +216,19 @@ func Boot(
 	)).Wait()
 
 	errnie.Debug("planner reported to be ready")
+
+	crypto := utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
+		ctx,
+		api,
+		uiChannel,
+		recorder,
+		desk,
+		analyzer,
+		planner,
+		thesis,
+	)).Wait()
+
+	errnie.Debug("trader reported to be ready")
 
 	regulatorSolver := utils.NewWaiter[*regulator.Solver](regulator.NewSolver(
 		ctx,

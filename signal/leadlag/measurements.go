@@ -135,39 +135,9 @@ func (signal *Signal) measureFrame(
 		return measurements
 	}
 
-	anchorMeasured := false
-
 	for index := range symbols {
 		measurements = append(measurements, results[index]...)
 		out = append(out, publish[index]...)
-
-		for _, measurement := range results[index] {
-			anchorMeasured = anchorMeasured ||
-				(measurement.Symbol == anchor && measurement.Peer == "")
-		}
-	}
-
-	if anchor != "" && !anchorMeasured {
-		features := section.Features(anchor)
-
-		if features.Price <= 0 || features.ObservedAt.IsZero() {
-			panic("leadlag: selected anchor has no retained price observation")
-		}
-
-		measurement := signal.score(anchor, features.ObservedAt, features)
-		measurement.PutMetric(
-			types.MetricLastPrice,
-			types.SideNone,
-			types.MetricSample{
-				Raw:  features.Price,
-				Unit: types.UnitQuoteCurrency,
-			},
-		)
-		measurements = append(measurements, measurement)
-
-		if anchor == types.Focus() {
-			out = append(out, measurement)
-		}
 	}
 
 	if len(out) > 0 {
@@ -468,6 +438,27 @@ func (signal *Signal) score(
 		measurement.ObservedFrom = features.ObservedFrom
 		measurement.Horizon = at.Sub(features.ObservedFrom)
 	}
+
+	if measurement.Peer == "" {
+		return measurement
+	}
+
+	if features.PeerPrice <= 0 || features.PeerAt.IsZero() ||
+		features.PeerFrom.IsZero() ||
+		features.PeerFrom.After(features.PeerAt) {
+		panic("leadlag: peer observation is incomplete")
+	}
+
+	measurement.PeerAt = features.PeerAt
+	measurement.PeerObservedFrom = features.PeerFrom
+	measurement.PutMetric(
+		types.MetricPeerLastPrice,
+		types.SideNone,
+		types.MetricSample{
+			Raw:  features.PeerPrice,
+			Unit: types.UnitQuoteCurrency,
+		},
+	)
 
 	return measurement
 }

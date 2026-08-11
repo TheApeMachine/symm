@@ -8,31 +8,16 @@ import (
 )
 
 func (compiler *measurementCompiler) addLeadLagEdges(
-	thesis *types.Thesis,
 	symbol *types.Symbol,
 	graph *Graph,
 	index *measurementIndex,
 ) error {
-	localMeasurements := append(
-		[]*types.Measurement(nil), index.bySource[types.SourceLeadLag]...,
-	)
-
-	for _, measurement := range localMeasurements {
+	for _, measurement := range index.bySource[types.SourceLeadLag] {
 		if measurement.Symbol != symbol.Symbol || measurement.Peer == "" {
 			continue
 		}
 
-		peerMeasurement, err := leadLagMeasurement(thesis, measurement.Peer)
-
-		if err != nil {
-			return err
-		}
-
-		if err := compiler.addMeasurement(peerMeasurement, graph, index); err != nil {
-			return fmt.Errorf("peer %s: %w", measurement.Peer, err)
-		}
-
-		if err := compiler.relateLeadLag(measurement, peerMeasurement, graph); err != nil {
+		if err := compiler.relateLeadLag(measurement, graph); err != nil {
 			return err
 		}
 	}
@@ -40,31 +25,8 @@ func (compiler *measurementCompiler) addLeadLagEdges(
 	return nil
 }
 
-func leadLagMeasurement(
-	thesis *types.Thesis,
-	symbol string,
-) (*types.Measurement, error) {
-	stored, found := thesis.Symbols.Load(symbol)
-
-	if !found {
-		return nil, fmt.Errorf("lead-lag peer symbol %s required", symbol)
-	}
-
-	peer := stored.(*types.Symbol)
-
-	for _, measurement := range peer.Measurements {
-		if measurement != nil && measurement.Source == types.SourceLeadLag &&
-			measurement.Symbol == symbol && measurement.Peer == "" {
-			return measurement, nil
-		}
-	}
-
-	return nil, fmt.Errorf("lead-lag anchor measurement %s required", symbol)
-}
-
 func (compiler *measurementCompiler) relateLeadLag(
 	measurement *types.Measurement,
-	peer *types.Measurement,
 	graph *Graph,
 ) error {
 	localPrice, err := priceNode(measurement, graph)
@@ -73,7 +35,7 @@ func (compiler *measurementCompiler) relateLeadLag(
 		return err
 	}
 
-	peerPrice, err := priceNode(peer, graph)
+	peerPrice, err := peerPriceNode(measurement, graph)
 
 	if err != nil {
 		return err
@@ -110,6 +72,19 @@ func (compiler *measurementCompiler) relateLeadLag(
 	}
 
 	return nil
+}
+
+func peerPriceNode(measurement *types.Measurement, graph *Graph) (*Node, error) {
+	metricKey := types.MetricKey(types.MetricPeerLastPrice, types.SideNone)
+	node := graph.Nodes[measurementNodeID(measurement, metricKey)]
+
+	if node == nil {
+		return nil, fmt.Errorf(
+			"lead-lag peer price node for %s required", measurement.Peer,
+		)
+	}
+
+	return node, nil
 }
 
 func priceNode(measurement *types.Measurement, graph *Graph) (*Node, error) {

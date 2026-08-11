@@ -109,19 +109,23 @@ Provenance contract (set correctly at emit; never rewritten downstream):
   - Scale is an optional separate fit/baseline epoch. When both Scale.From and
     Scale.Through are set they must run forward; Scale is not folded into the
     observation interval.
+  - Bivariate rows set PeerAt and PeerObservedFrom for the peer observation;
+    these timestamps are not inferred from the local interval downstream.
 */
 type Measurement struct {
-	ID           string                  `json:"id"`
-	Source       SourceType              `json:"source"`
-	Symbol       string                  `json:"symbol" validate:"required"`
-	Peer         string                  `json:"peer,omitempty"`
-	At           time.Time               `json:"at" validate:"required"`
-	ObservedFrom time.Time               `json:"observedFrom,omitempty"`
-	Horizon      time.Duration           `json:"horizon,omitempty" validate:"nonnegative"`
-	Maturity     float64                 `json:"maturity,omitempty" validate:"finite"`
-	Uncertainty  *MeasurementUncertainty `json:"uncertainty,omitempty"`
-	Metrics      map[string]MetricSample `json:"metrics,omitempty"`
-	Arrivals     []MeasurementArrival    `json:"-"`
+	ID               string                  `json:"id"`
+	Source           SourceType              `json:"source"`
+	Symbol           string                  `json:"symbol" validate:"required"`
+	Peer             string                  `json:"peer,omitempty"`
+	At               time.Time               `json:"at" validate:"required"`
+	ObservedFrom     time.Time               `json:"observedFrom,omitempty"`
+	Horizon          time.Duration           `json:"horizon,omitempty" validate:"nonnegative"`
+	PeerAt           time.Time               `json:"peerAt,omitempty"`
+	PeerObservedFrom time.Time               `json:"peerObservedFrom,omitempty"`
+	Maturity         float64                 `json:"maturity,omitempty" validate:"finite"`
+	Uncertainty      *MeasurementUncertainty `json:"uncertainty,omitempty"`
+	Metrics          map[string]MetricSample `json:"metrics,omitempty"`
+	Arrivals         []MeasurementArrival    `json:"-"`
 }
 
 /*
@@ -181,6 +185,41 @@ func FilterLatest(measurements []*Measurement) []*Measurement {
 
 	for _, measurement := range measurements {
 		if measurement.At.Equal(latestBySymbol[measurement.Symbol]) {
+			filtered = append(filtered, measurement)
+		}
+	}
+
+	return filtered
+}
+
+/*
+FilterLatestSourceEpochs retains every row from the newest observation epoch
+for each source. Bivariate sources may emit several peer rows in one epoch, so
+source alone is not a storage identity and rows tied at the latest At survive.
+*/
+func FilterLatestSourceEpochs(measurements []*Measurement) []*Measurement {
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	latestBySource := make(map[SourceType]time.Time)
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		latest, exists := latestBySource[measurement.Source]
+
+		if !exists || measurement.At.After(latest) {
+			latestBySource[measurement.Source] = measurement.At
+		}
+	}
+
+	filtered := make([]*Measurement, 0, len(measurements))
+
+	for _, measurement := range measurements {
+		if measurement == nil || measurement.At.Equal(latestBySource[measurement.Source]) {
 			filtered = append(filtered, measurement)
 		}
 	}

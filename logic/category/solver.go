@@ -127,7 +127,7 @@ func (solver *Solver) classify(
 	supporting := make(map[types.CategoryType][]string, len(solver.categories))
 	maturity := make(map[types.CategoryType]float64, len(solver.categories))
 
-	for _, measurement := range measurements {
+	for _, measurement := range types.FilterLatestSourceEpochs(measurements) {
 		if measurement == nil {
 			continue
 		}

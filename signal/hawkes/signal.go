@@ -34,8 +34,6 @@ type Signal struct {
 	process   *excitation.Process
 	sample    *excitation.Sample
 	ui        chan []byte
-	thesis    *types.Thesis
-	semaphore chan struct{}
 	lastTrade *sync.Map
 }
 
@@ -52,7 +50,6 @@ func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -63,15 +60,8 @@ func NewSignal(
 		process:   excitation.NewProcess(),
 		sample:    excitation.NewSample(),
 		ui:        ui,
-		thesis:    thesis,
-		semaphore: make(chan struct{}, 1),
 		lastTrade: &sync.Map{},
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceHawkes, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -83,30 +73,12 @@ func (signal *Signal) Name() string {
 	return string(types.SourceHawkes)
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
+func (signal *Signal) Type() types.SourceType {
+	return types.SourceHawkes
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements, ready := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourceHawkes, measurements, ready,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourceHawkes)
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
+func (signal *Signal) Status() types.Status {
+	return signal.status.Load().(types.Status)
 }
 
 func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {

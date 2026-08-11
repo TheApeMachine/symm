@@ -68,6 +68,9 @@ func TestFeatures(t *testing.T) {
 		Convey("It should retain the actual common observation interval", func() {
 			So(features.ObservedFrom, ShouldEqual, start.Add(time.Second))
 			So(features.ObservedAt, ShouldEqual, start.Add(3*time.Second))
+			So(features.PeerPrice, ShouldEqual, 103.0)
+			So(features.PeerFrom, ShouldEqual, start)
+			So(features.PeerAt, ShouldEqual, start.Add(2*time.Second))
 			So(anchorFeatures.ObservedFrom, ShouldEqual, start)
 			So(anchorFeatures.ObservedAt, ShouldEqual, start.Add(2*time.Second))
 		})

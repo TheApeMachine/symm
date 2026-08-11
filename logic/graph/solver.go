@@ -252,7 +252,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		if err := solver.measurements.addLeadLagEdges(
-			thesis, symbol, graph, measurementIndex,
+			symbol, graph, measurementIndex,
 		); err != nil {
 			graphErr = errnie.Error(errnie.Err(
 				errnie.Validation,

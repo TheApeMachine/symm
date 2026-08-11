@@ -30,13 +30,11 @@ type Signal struct {
 	status     atomic.Value
 	ctx        context.Context
 	cancel     context.CancelFunc
-	books      websocket.BookSource
+	api        *websocket.API
 	algo       *equation.Ignition
 	algorithms *sync.Map
 	capacity   int
 	ui         chan []byte
-	thesis     *types.Thesis
-	semaphore  chan struct{}
 	lastTrade  *sync.Map
 }
 
@@ -51,9 +49,8 @@ same explicit retention bound used by the production market feed.
 */
 func NewSignal(
 	ctx context.Context,
-	books websocket.BookSource,
+	api *websocket.API,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -61,19 +58,12 @@ func NewSignal(
 	signal := &Signal{
 		ctx:        ctx,
 		cancel:     cancel,
-		books:      books,
+		api:        api,
 		algorithms: &sync.Map{},
 		capacity:   capacity,
 		ui:         ui,
-		thesis:     thesis,
-		semaphore:  make(chan struct{}, 1),
 		lastTrade:  &sync.Map{},
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourcePumpDump, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -85,31 +75,12 @@ func (signal *Signal) Name() string {
 	return string(types.SourcePumpDump)
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
+func (signal *Signal) Type() types.SourceType {
+	return types.SourcePumpDump
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourcePumpDump, measurements, true,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourcePumpDump)
-
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
+func (signal *Signal) Status() types.Status {
+	return signal.status.Load().(types.Status)
 }
 
 /*
@@ -117,14 +88,14 @@ Measure produces the Measurements for the pumpdump signal.
 */
 func (signal *Signal) Measure(
 	thesis *types.Thesis,
-) []*types.Measurement {
+) ([]*types.Measurement, bool) {
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
 	trades := thesis.MarketTrades(types.SourcePumpDump)
 
-	if len(trades) == 0 || signal.books == nil {
-		return measurements
+	if len(trades) == 0 || signal.api == nil {
+		return measurements, false
 	}
 
 	tradeBatches := make(map[string][]kraken.TradeData)
@@ -182,7 +153,7 @@ func (signal *Signal) Measure(
 				var askPrice, bidPrice float64
 				var askAt, bidAt time.Time
 				bookReady := false
-				signal.books.Book(trade.Symbol, func(book *spotbook.Book) {
+				signal.api.Book(trade.Symbol, func(book *spotbook.Book) {
 					ask, bid := book.BestAsk(), book.BestBid()
 
 					if ask == nil || bid == nil || ask.Price == nil || bid.Price == nil {
@@ -416,7 +387,7 @@ func (signal *Signal) Measure(
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return measurements
+	return measurements, true
 }
 
 func (signal *Signal) algorithm(symbol string) *equation.Ignition {

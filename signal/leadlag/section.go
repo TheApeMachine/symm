@@ -68,6 +68,9 @@ type LagFeatures struct {
 	SampleCount  int
 	ObservedFrom time.Time
 	ObservedAt   time.Time
+	PeerPrice    float64
+	PeerFrom     time.Time
+	PeerAt       time.Time
 }
 
 /*
@@ -284,6 +287,12 @@ func (section *Section) Features(scope string) LagFeatures {
 		MoveMoved:   move.moved,
 		StallMargin: move.stallMargin,
 		ObservedAt:  follower.lastSampleAt,
+		PeerPrice:   anchor.last,
+		PeerAt:      anchor.lastSampleAt,
+	}
+
+	if len(anchor.prices) > 0 {
+		features.PeerFrom = anchor.prices[0].at
 	}
 
 	if features.IsAnchor {

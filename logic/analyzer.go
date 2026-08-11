@@ -2,7 +2,6 @@ package logic
 
 import (
 	"context"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -47,7 +46,6 @@ type Analyzer struct {
 	binui     chan types.FluidFrame
 	recorder  *audit.Recorder
 	thesis    *types.Thesis
-	semaphore chan struct{}
 }
 
 /*
@@ -84,72 +82,17 @@ func NewAnalyzer(
 			cognition.NewSolver(tree, ui, recorder),
 			graph.NewSolver(ui, recorder),
 		},
-		manifold:  manifoldSolver,
-		ui:        ui,
-		binui:     binui,
-		recorder:  recorder,
-		thesis:    thesis,
-		semaphore: make(chan struct{}, 1),
+		manifold: manifoldSolver,
+		ui:       ui,
+		binui:    binui,
+		recorder: recorder,
+		thesis:   thesis,
 	}
 
-	analyzer.thesis.Subscribe(types.SourceAnalyzer, analyzer.semaphore)
-
-	analyzer.run()
 	return analyzer
 }
 
-func (analyzer *Analyzer) run() {
-	go func() {
-		for {
-			select {
-			case <-analyzer.ctx.Done():
-				return
-			case <-analyzer.semaphore:
-				analyzer.process(analyzer.thesis)
-			}
-		}
-	}()
-}
-
-func (analyzer *Analyzer) process(in any) {
-	thesis, ok := in.(*types.Thesis)
-
-	if !ok || thesis == nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"failed to process analyzer: thesis is nil",
-			nil,
-		))
-
-		return
-	}
-
-	if thesis.SymbolsReady() {
-		return
-	}
-
-	iterations := 0
-	initiallyReady := thesis.SymbolsReady()
-
-	if analyzer.recorder != nil {
-		err := analyzer.recorder.Write(map[string]any{
-			"channel": "orchestration",
-			"type":    "analyzer_start",
-			"value": map[string]any{
-				"at":            time.Now().UTC(),
-				"symbols_ready": initiallyReady,
-			},
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"analyzer: failed to audit process start",
-				err,
-			))
-		}
-	}
-
+func (analyzer *Analyzer) Process(thesis *types.Thesis) {
 	iterationErr := ""
 
 	for !thesis.SymbolsReady() {
@@ -163,7 +106,7 @@ func (analyzer *Analyzer) process(in any) {
 		}
 
 		err := group.Wait()
-		iterations++
+
 		waiting := err == nil && analyzer.manifold != nil &&
 			analyzer.manifold.WaitingForBook()
 		stalled := err == nil && !waiting && !thesis.SymbolsReady() &&
@@ -187,28 +130,6 @@ func (analyzer *Analyzer) process(in any) {
 			))
 		}
 
-		if analyzer.recorder != nil {
-			err := analyzer.recorder.Write(map[string]any{
-				"channel": "orchestration",
-				"type":    "analyzer_iteration",
-				"value": map[string]any{
-					"at":            time.Now().UTC(),
-					"iteration":     iterations,
-					"symbols_ready": thesis.SymbolsReady(),
-					"waiting":       waiting,
-					"error":         iterationErr,
-				},
-			})
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"analyzer: failed to audit process iteration",
-					err,
-				))
-			}
-		}
-
 		if err != nil || waiting {
 			return
 		}
@@ -216,31 +137,7 @@ func (analyzer *Analyzer) process(in any) {
 		if stalled {
 			return
 		}
-
 	}
-
-	if analyzer.recorder != nil {
-		err := analyzer.recorder.Write(map[string]any{
-			"channel": "orchestration",
-			"type":    "analyzer_complete",
-			"value": map[string]any{
-				"at":              time.Now().UTC(),
-				"iterations":      iterations,
-				"initially_ready": initiallyReady,
-				"finally_ready":   thesis.SymbolsReady(),
-			},
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"analyzer: failed to audit process completion",
-				err,
-			))
-		}
-	}
-
-	thesis.Fanout(types.SourceAnalyzer, types.SourcePlanner)
 }
 
 /*

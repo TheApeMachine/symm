@@ -34,8 +34,6 @@ type Signal struct {
 	flow      *equation.Flow
 	midpoints *sync.Map
 	ui        chan []byte
-	thesis    *types.Thesis
-	semaphore chan struct{}
 	lastTrade *sync.Map
 }
 
@@ -59,7 +57,6 @@ func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -71,15 +68,8 @@ func NewSignal(
 		flow:      equation.NewFlow(),
 		midpoints: &sync.Map{},
 		ui:        ui,
-		thesis:    thesis,
-		semaphore: make(chan struct{}, 1),
 		lastTrade: &sync.Map{},
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceCVD, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -89,6 +79,10 @@ Name returns the signal source identity.
 */
 func (signal *Signal) Name() string {
 	return string(types.SourceCVD)
+}
+
+func (signal *Signal) Type() types.SourceType {
+	return types.SourceCVD
 }
 
 func (signal *Signal) Status() types.Status {
@@ -107,30 +101,7 @@ func (signal *Signal) ensureProcessors() (*algorithm.TradeFlowSample, *equation.
 	return signal.sample, signal.flow
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourceCVD, measurements, true,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourceCVD)
-
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	tickers := thesis.MarketTickers(types.SourceCVD)
 	trades := thesis.MarketTrades(types.SourceCVD)
 	measurements := make([]*types.Measurement, 0)
@@ -245,7 +216,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return measurements
+	return measurements, true
 }
 
 func (signal *Signal) observeMidpoint(row kraken.TickerData) {

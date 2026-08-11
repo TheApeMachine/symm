@@ -80,28 +80,15 @@ func TestMeasure(t *testing.T) {
 			Timestamp: start.Add(2 * time.Second),
 		}})
 
-		Convey("It should emit the exact retained anchor endpoint", func() {
-			So(measurements, ShouldHaveLength, 2)
-			var anchor *types.Measurement
-			var follower *types.Measurement
-
-			for _, measurement := range measurements {
-				if measurement.Symbol == "AAA/USD" {
-					anchor = measurement
-				}
-
-				if measurement.Symbol == "BBB/USD" {
-					follower = measurement
-				}
-			}
-
-			So(anchor, ShouldNotBeNil)
-			So(anchor.Peer, ShouldBeEmpty)
-			So(anchor.At, ShouldEqual, start.Add(time.Second))
-			So(anchor.Sample(types.MetricLastPrice, types.SideNone).Raw,
+		Convey("It should retain the exact anchor endpoint on the relationship", func() {
+			So(measurements, ShouldHaveLength, 1)
+			measurement := measurements[0]
+			So(measurement.Symbol, ShouldEqual, "BBB/USD")
+			So(measurement.Peer, ShouldEqual, "AAA/USD")
+			So(measurement.PeerAt, ShouldEqual, start.Add(time.Second))
+			So(measurement.PeerObservedFrom, ShouldEqual, start)
+			So(measurement.Sample(types.MetricPeerLastPrice, types.SideNone).Raw,
 				ShouldEqual, 120.0)
-			So(follower, ShouldNotBeNil)
-			So(follower.Peer, ShouldEqual, "AAA/USD")
 		})
 	})
 }

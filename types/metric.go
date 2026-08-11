@@ -45,6 +45,7 @@ const (
 	MetricCategory                        MetricType = "category"
 	MetricMidpoint                        MetricType = "midpoint"
 	MetricLastPrice                       MetricType = "last_price"
+	MetricPeerLastPrice                   MetricType = "peer_last_price"
 	MetricTradePrice                      MetricType = "trade_price"
 	MetricTradeQuantity                   MetricType = "trade_quantity"
 	MetricVWAP                            MetricType = "vwap"
@@ -220,6 +221,7 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 	SourceLeadLag: {
 		MetricKey(MetricSNR, SideNone):                      {"definition", false},
 		MetricKey(MetricLastPrice, SideNone):                {"price", false},
+		MetricKey(MetricPeerLastPrice, SideNone):            {"peer_price", false},
 		MetricKey(MetricCorrelation, SideNone):              {"relation", false},
 		MetricKey(MetricSignedCorrelation, SideNone):        {"relation", false},
 		MetricKey(MetricSignedContempCorrelation, SideNone): {"relation", false},

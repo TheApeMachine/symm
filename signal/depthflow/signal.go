@@ -33,13 +33,11 @@ type Signal struct {
 	status     atomic.Value
 	ctx        context.Context
 	cancel     context.CancelFunc
-	books      websocket.BookSource
+	api        *websocket.API
 	instrument *broker.Instrument
 	sample     *flow.Sample
 	bookflow   *equation.Bookflow
 	ui         chan []byte
-	thesis     *types.Thesis
-	semaphore  chan struct{}
 	lastTrade  *sync.Map
 	lastBookAt *sync.Map
 	lastBook   *sync.Map
@@ -61,10 +59,9 @@ trade observations in each central market cut.
 */
 func NewSignal(
 	ctx context.Context,
-	books websocket.BookSource,
+	api *websocket.API,
 	instrument *broker.Instrument,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	sample, err := flow.NewSample(viper.GetViper().GetInt("signals.depthflow.sampleSize"))
@@ -82,22 +79,15 @@ func NewSignal(
 	signal := &Signal{
 		ctx:        ctx,
 		cancel:     cancel,
-		books:      books,
+		api:        api,
 		instrument: instrument,
 		sample:     sample,
 		bookflow:   equation.NewBookflow(),
 		ui:         ui,
-		thesis:     thesis,
-		semaphore:  make(chan struct{}, 1),
 		lastTrade:  &sync.Map{},
 		lastBookAt: &sync.Map{},
 		lastBook:   &sync.Map{},
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceDepthFlow, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -109,40 +99,21 @@ func (signal *Signal) Name() string {
 	return string(types.SourceDepthFlow)
 }
 
+func (signal *Signal) Type() types.SourceType {
+	return types.SourceDepthFlow
+}
+
 func (signal *Signal) Status() types.Status {
 	return signal.status.Load().(types.Status)
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourceDepthFlow, measurements, true,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourceDepthFlow)
-
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	trades := thesis.MarketTrades(types.SourceDepthFlow)
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
-	if signal.books == nil {
-		return measurements
+	if signal.api == nil {
+		return measurements, false
 	}
 
 	if signal.lastTrade == nil {
@@ -214,7 +185,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			return left.Timestamp.Before(right.Timestamp)
 		})
 		group.Go(func() error {
-			signal.books.Book(symbol, func(managed *spotbook.Book) {
+			signal.api.Book(symbol, func(managed *spotbook.Book) {
 				bookAt := managedBookObservedAt(managed)
 				symbolMeasurements := make([]*types.Measurement, 0)
 				symbolOut := make([]*types.Measurement, 0)
@@ -293,7 +264,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			"depthflow: parallel measurement failed",
 			err,
 		))
-		return measurements
+		return measurements, false
 	}
 
 	for _, symbol := range symbols {
@@ -317,7 +288,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))
 	}
 
-	return measurements
+	return measurements, true
 }
 
 func managedBookObservedAt(managed *spotbook.Book) time.Time {

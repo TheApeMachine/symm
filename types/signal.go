@@ -6,5 +6,7 @@ shared Thesis updates downstream.
 */
 type Signal interface {
 	Name() string
+	Type() SourceType
+	Measure(thesis *Thesis) ([]*Measurement, bool)
 	Close() error
 }

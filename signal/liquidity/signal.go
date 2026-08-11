@@ -32,8 +32,6 @@ type Signal struct {
 	cancel       context.CancelFunc
 	api          *websocket.API
 	ui           chan []byte
-	thesis       *types.Thesis
-	semaphore    chan struct{}
 	observations *sync.Map
 }
 
@@ -60,7 +58,6 @@ func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -69,15 +66,8 @@ func NewSignal(
 		cancel:       cancel,
 		api:          api,
 		ui:           ui,
-		thesis:       thesis,
-		semaphore:    make(chan struct{}, 1),
 		observations: &sync.Map{},
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceLiquidity, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -89,47 +79,28 @@ func (signal *Signal) Name() string {
 	return string(types.SourceLiquidity)
 }
 
-func (signal *Signal) Status() types.Status {
-	return signal.status.Load().(types.Status)
+func (signal *Signal) Type() types.SourceType {
+	return types.SourceLiquidity
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourceLiquidity, measurements, true,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourceLiquidity)
-
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
+func (signal *Signal) Status() types.Status {
+	return signal.status.Load().(types.Status)
 }
 
 /*
 Measure produces the Measurements for the liquidity signal.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	tickers := thesis.MarketTickers(types.SourceLiquidity)
 
 	if !signal.ingest(tickers) {
-		return nil
+		return nil, false
 	}
 
 	peers, _, cadenceReady := signal.cohort()
 
 	if len(peers) == 0 {
-		return nil
+		return nil, false
 	}
 
 	sort.Slice(peers, func(left, right int) bool {
@@ -319,7 +290,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			"liquidity: parallel measurement failed",
 			err,
 		))
-		return nil
+		return measurements, false
 	}
 
 	compacted := measurements[:0]
@@ -343,7 +314,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		))
 	}
 
-	return measurements
+	return measurements, cadenceReady && depthCohortReady
 }
 
 /*

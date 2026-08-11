@@ -36,7 +36,7 @@ func (compiler *measurementCompiler) addNodes(
 		bySource:    make(map[types.SourceType][]*types.Measurement),
 	}
 
-	for _, measurement := range symbol.Measurements {
+	for _, measurement := range types.FilterLatestSourceEpochs(symbol.Measurements) {
 		if measurement != nil && measurement.Symbol != symbol.Symbol {
 			return nil, fmt.Errorf(
 				"measurement symbol %s does not match graph symbol %s",
@@ -61,6 +61,19 @@ func (compiler *measurementCompiler) addMeasurement(
 	if measurement == nil || measurement.ID == "" || measurement.Source == "" ||
 		measurement.Symbol == "" || measurement.At.IsZero() || len(measurement.Metrics) == 0 {
 		return fmt.Errorf("identified, timestamped measurement metrics required")
+	}
+
+	if measurement.Source == types.SourceLeadLag && measurement.Peer != "" {
+		_, peerPriceFound := measurement.Metrics[types.MetricKey(
+			types.MetricPeerLastPrice,
+			types.SideNone,
+		)]
+
+		if !peerPriceFound || measurement.PeerAt.IsZero() ||
+			measurement.PeerObservedFrom.IsZero() ||
+			measurement.PeerObservedFrom.After(measurement.PeerAt) {
+			return fmt.Errorf("complete lead-lag peer observation required")
+		}
 	}
 
 	quality := measurementQuality(measurement)
@@ -91,7 +104,7 @@ func measurementNode(
 	sample types.MetricSample,
 	quality *float64,
 ) *Node {
-	return &Node{
+	node := &Node{
 		ID:            measurementNodeID(measurement, metricKey),
 		Symbol:        measurement.Symbol,
 		Peer:          measurement.Peer,
@@ -109,6 +122,18 @@ func measurementNode(
 		Horizon:       measurement.Horizon,
 		At:            measurement.At,
 	}
+
+	if metric != types.MetricPeerLastPrice {
+		return node
+	}
+
+	node.Symbol = measurement.Peer
+	node.Peer = measurement.Symbol
+	node.At = measurement.PeerAt
+	node.ObservedFrom = measurement.PeerObservedFrom
+	node.Horizon = measurement.PeerAt.Sub(measurement.PeerObservedFrom)
+
+	return node
 }
 
 func measurementQuality(measurement *types.Measurement) *float64 {
@@ -125,6 +150,11 @@ func measurementNodeID(
 	measurement *types.Measurement,
 	metricKey string,
 ) string {
+	if metricKey == types.MetricKey(types.MetricPeerLastPrice, types.SideNone) {
+		return "meas:" + measurement.Peer + ":" + string(measurement.Source) + ":" +
+			measurement.Symbol + ":" + metricKey
+	}
+
 	nodeID := "meas:" + measurement.Symbol + ":" + string(measurement.Source) + ":"
 
 	if measurement.Peer != "" {

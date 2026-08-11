@@ -22,14 +22,12 @@ Signal tracks whether near-touch liquidity is sincere, retreating, or bluffing
 from Level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
-	status    atomic.Value
-	ctx       context.Context
-	cancel    context.CancelFunc
-	books     websocket.BookSource
-	ui        chan []byte
-	thesis    *types.Thesis
-	semaphore chan struct{}
-	touches   *sync.Map
+	status  atomic.Value
+	ctx     context.Context
+	cancel  context.CancelFunc
+	books   websocket.BookSource
+	ui      chan []byte
+	touches *sync.Map
 }
 
 /*
@@ -40,24 +38,16 @@ func NewSignal(
 	ctx context.Context,
 	books websocket.BookSource,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:       ctx,
-		cancel:    cancel,
-		books:     books,
-		ui:        ui,
-		thesis:    thesis,
-		semaphore: make(chan struct{}, 1),
-		touches:   &sync.Map{},
+		ctx:     ctx,
+		cancel:  cancel,
+		books:   books,
+		ui:      ui,
+		touches: &sync.Map{},
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceToxicity, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -69,39 +59,20 @@ func (signal *Signal) Name() string {
 	return string(types.SourceToxicity)
 }
 
+func (signal *Signal) Type() types.SourceType {
+	return types.SourceToxicity
+}
+
 func (signal *Signal) Status() types.Status {
 	return signal.status.Load().(types.Status)
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourceToxicity, measurements, true,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourceToxicity)
-
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
 	if thesis == nil || signal.books == nil {
-		return measurements
+		return measurements, false
 	}
 
 	tickers := thesis.MarketTickers(types.SourceToxicity)
@@ -221,7 +192,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			"toxicity: parallel measurement failed",
 			err,
 		))
-		return measurements
+		return measurements, false
 	}
 
 	for _, symbolMeasurements := range results {
@@ -246,8 +217,9 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		))
 	}
 
-	return measurements
+	return measurements, true
 }
+
 func bracketedTrades(
 	trades []kraken.TradeData,
 	symbol string,

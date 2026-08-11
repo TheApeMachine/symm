@@ -14,14 +14,12 @@ cross-section leader and each follower. Categories belong in logic; this signal
 emits numerical scores only.
 */
 type Signal struct {
-	status    atomic.Value
-	ctx       context.Context
-	cancel    context.CancelFunc
-	api       *websocket.API
-	section   *Section
-	ui        chan []byte
-	thesis    *types.Thesis
-	semaphore chan struct{}
+	status  atomic.Value
+	ctx     context.Context
+	cancel  context.CancelFunc
+	api     *websocket.API
+	section *Section
+	ui      chan []byte
 }
 
 /*
@@ -32,24 +30,16 @@ func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
-	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:       ctx,
-		cancel:    cancel,
-		api:       api,
-		section:   NewSection(),
-		ui:        ui,
-		thesis:    thesis,
-		semaphore: make(chan struct{}, 1),
+		ctx:     ctx,
+		cancel:  cancel,
+		api:     api,
+		section: NewSection(),
+		ui:      ui,
 	}
-
-	signal.status.Store(types.INITIALIZING)
-	signal.thesis.Subscribe(types.SourceLeadLag, signal.semaphore, &signal.status)
-	signal.status.Store(types.READY)
-	signal.run()
 
 	return signal
 }
@@ -61,41 +51,22 @@ func (signal *Signal) Name() string {
 	return string(types.SourceLeadLag)
 }
 
+func (signal *Signal) Type() types.SourceType {
+	return types.SourceLeadLag
+}
+
 func (signal *Signal) Status() types.Status {
 	return signal.status.Load().(types.Status)
 }
 
-func (signal *Signal) run() {
-	go func() {
-		for {
-			select {
-			case <-signal.ctx.Done():
-				return
-			case <-signal.semaphore:
-				measurements := signal.Measure(signal.thesis)
-
-				if len(measurements) > 0 {
-					signal.thesis.AppendMeasurements(
-						types.SourceLeadLag, measurements, true,
-					)
-				}
-
-				signal.thesis.StampAll(types.SourceLeadLag)
-
-				signal.status.Store(types.READY)
-			}
-		}
-	}()
-}
-
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(thesis *types.Thesis) ([]*types.Measurement, bool) {
 	if signal.section == nil {
 		signal.section = NewSection()
 	}
 
 	tickers := thesis.MarketTickers(types.SourceLeadLag)
 
-	return signal.measureFrame(tickers)
+	return signal.measureFrame(tickers), true
 }
 
 /*
