@@ -38,51 +38,49 @@ export const DecisionStage = ({
 );
 
 export const ForecastStage = () => (
-	<DecisionStage title="1 · forecast" meta="priced edge">
+	<DecisionStage title="1 · forecast" meta="net edge before sizing">
 		<TraceValue label="return" path="expectedReturn" format=".6f" />
 		<TraceValue label="fees" path="expectedFees" format=".6f" />
 		<TraceValue label="spread" path="expectedSpread" format=".6f" />
 		<TraceValue label="impact" path="expectedImpact" format=".6f" />
-		<TraceValue
-			label="executable"
-			path="trace.utility.executableFraction"
-			format=".3%"
-			className="text-(--acc)"
-		/>
 	</DecisionStage>
 );
 
 export const EvidenceStage = () => (
-	<DecisionStage title="2 · evidence" meta="utility factors">
-		<TraceValue label="causal" path="trace.utility.causalFactor" format=".4f" />
-		<TraceValue
-			label="cognition"
-			path="trace.utility.cognitionFactor"
-			format=".4f"
-		/>
-		<TraceValue label="graph" path="trace.utility.graphFactor" format=".4f" />
-		<TraceValue
-			label="precision"
-			path="trace.utility.uncertaintyWeight"
-			format=".4f"
-		/>
-		<div className="flex justify-between gap-2 text-(--f4)">
-			<span>
-				support{" "}
-				<b
-					data-paint="trace.graphSupports"
-					data-paint-format=".3f"
-					className="font-normal text-(--up)"
-				/>
-			</span>
-			<span>
-				oppose{" "}
-				<b
-					data-paint="trace.graphContradicts"
-					data-paint-format=".3f"
-					className="font-normal text-(--down)"
-				/>
-			</span>
+	<DecisionStage title="2 · evidence graph" meta="edge mass used by search">
+		<div className="flex items-center justify-between gap-2">
+			<span className="text-(--f4)">supporting edges</span>
+			<span
+				data-paint="trace.graphSupports"
+				data-paint-format=".3f"
+				className="text-(--up)"
+			/>
+		</div>
+		<div className="h-1.25 overflow-hidden rounded-[3px] bg-(--line)">
+			<div
+				data-set="trace.graphSupports"
+				data-set-scale="domain-percent"
+				data-set-domain="trace.graphSupports,trace.graphContradicts"
+				data-target="style.width"
+				className="h-full bg-(--up)"
+			/>
+		</div>
+		<div className="flex items-center justify-between gap-2">
+			<span className="text-(--f4)">contradicting edges</span>
+			<span
+				data-paint="trace.graphContradicts"
+				data-paint-format=".3f"
+				className="text-(--down)"
+			/>
+		</div>
+		<div className="h-1.25 overflow-hidden rounded-[3px] bg-(--line)">
+			<div
+				data-set="trace.graphContradicts"
+				data-set-scale="domain-percent"
+				data-set-domain="trace.graphSupports,trace.graphContradicts"
+				data-target="style.width"
+				className="h-full bg-(--down)"
+			/>
 		</div>
 	</DecisionStage>
 );

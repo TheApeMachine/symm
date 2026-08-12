@@ -13,6 +13,7 @@ require (
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sync v0.21.0
+	gonum.org/v1/gonum v0.17.0
 )
 
 require (
@@ -95,7 +96,6 @@ require (
 	github.com/theapemachine/errnie v1.2.6
 	github.com/theapemachine/nomagique v0.0.5
 	golang.design/x/lockfree v0.1.0
-	gonum.org/v1/gonum v0.17.0 // indirect
 )
 
 replace (

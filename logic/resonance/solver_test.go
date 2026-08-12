@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -203,6 +204,46 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			_, published := symbol.Resonance.Load("BTC/USD")
 			So(published, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given enough priced ticks to resolve configured forward horizons", t, func() {
+		system.Cfg = system.NewConfig()
+		system.Cfg.Resonance.Layers = 3
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+
+		for tick := int64(1); tick <= 4; tick++ {
+			value := float64(tick) / 10
+			thesis := types.NewThesis(t.Context(), nil)
+			symbol := types.NewSymbol("BTC/USD", nil)
+			symbol.AppendMeasurement(types.SourceLiquidity, &types.Measurement{
+				Source: types.SourceLiquidity,
+				Symbol: "BTC/USD",
+				Tick:   tick,
+				Metadata: map[string]float64{
+					"last_price": 100 + float64(tick),
+				},
+				Metrics: map[string]types.MetricSample{
+					"score": {Normalized: &value},
+				},
+			})
+			thesis.Symbols.Store("BTC/USD", symbol)
+
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		Convey("It should train one target head per horizon instead of only t+1", func() {
+			stored, found := solver.coders.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			forecast, err := stored.(*learning.ResonanceManifold).RolloutTaskForecast(1)
+			So(err, ShouldBeNil)
+			So(forecast, ShouldHaveLength, system.Cfg.Resonance.Layers)
+
+			historyValue, found := solver.histories.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			history := historyValue.(*sampleHistory)
+			_, retained := history.inputs[1]
+			So(retained, ShouldBeFalse)
 		})
 	})
 }

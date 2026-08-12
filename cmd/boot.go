@@ -172,6 +172,15 @@ func Boot(
 	).Wait()
 
 	errnie.Debug("balance reported to be ready")
+	regulatorSolver, err := regulator.NewSolver(ctx, uiChannel)
+
+	if err != nil {
+		errnie.Error(fmt.Errorf("failed to create regulator: %w", err))
+		return nil
+	}
+
+	errnie.Debug("regulator reported to be ready")
+	system.closers = append(system.closers, regulatorSolver.Close)
 
 	desk := utils.NewWaiter[*broker.Desk](broker.NewDesk(
 		ctx,
@@ -180,6 +189,7 @@ func Boot(
 		price,
 		balance,
 		thesis,
+		regulatorSolver,
 		recorder,
 		positionStore,
 		uiChannel,
@@ -217,14 +227,6 @@ func Boot(
 
 	errnie.Debug("planner reported to be ready")
 
-	regulatorSolver := utils.NewWaiter[*regulator.Solver](regulator.NewSolver(
-		ctx,
-		uiChannel,
-	)).Wait()
-
-	errnie.Debug("regulator reported to be ready")
-	system.closers = append(system.closers, regulatorSolver.Close)
-
 	crypto := utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
 		ctx,
 		api,
@@ -233,7 +235,6 @@ func Boot(
 		desk,
 		analyzer,
 		planner,
-		regulatorSolver,
 		thesis,
 	)).Wait()
 

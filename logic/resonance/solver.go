@@ -20,17 +20,20 @@ import (
 Solver feeds normalized market measurements into one resonance manifold per symbol.
 */
 type Solver struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	recorder      *audit.Recorder
-	coders        *sync.Map
-	schemas       *sync.Map
-	previousInput *sync.Map
-	previousMark  *sync.Map
-	previousTick  *sync.Map
-	currentReach  *sync.Map
-	alpha         float64
-	ui            chan []byte
+	ctx          context.Context
+	cancel       context.CancelFunc
+	recorder     *audit.Recorder
+	coders       *sync.Map
+	schemas      *sync.Map
+	histories    *sync.Map
+	currentReach *sync.Map
+	alpha        float64
+	ui           chan []byte
+}
+
+type sampleHistory struct {
+	inputs map[int64][]float64
+	marks  map[int64]float64
 }
 
 /*
@@ -49,17 +52,15 @@ func NewSolver(
 	}
 
 	return &Solver{
-		ctx:           ctx,
-		cancel:        cancel,
-		recorder:      recorder,
-		coders:        &sync.Map{},
-		schemas:       &sync.Map{},
-		previousInput: &sync.Map{},
-		previousMark:  &sync.Map{},
-		previousTick:  &sync.Map{},
-		currentReach:  &sync.Map{},
-		alpha:         initialAlpha,
-		ui:            ui,
+		ctx:          ctx,
+		cancel:       cancel,
+		recorder:     recorder,
+		coders:       &sync.Map{},
+		schemas:      &sync.Map{},
+		histories:    &sync.Map{},
+		currentReach: &sync.Map{},
+		alpha:        initialAlpha,
+		ui:           ui,
 	}
 }
 
@@ -71,6 +72,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	if solver.alpha <= 0 {
 		return errors.New("resonance: positive learning pace required")
 	}
+
+	if system.Cfg == nil || system.Cfg.Resonance == nil ||
+		system.Cfg.Resonance.Layers <= 0 {
+		return errors.New("resonance: positive horizon layer count required")
+	}
+
+	maxHorizon := system.Cfg.Resonance.Layers
 
 	var updateErr error
 
@@ -147,9 +155,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			sort.Strings(schema)
 			solver.schemas.Store(name, schema)
 			solver.coders.Delete(name)
-			solver.previousInput.Delete(name)
-			solver.previousMark.Delete(name)
-			solver.previousTick.Delete(name)
+			solver.histories.Delete(name)
 			solver.currentReach.Delete(name)
 		}
 
@@ -167,7 +173,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		if coder == nil {
 			coder = learning.NewResonanceManifold(
-				[]int{len(input), len(input) * 2, len(input)}, 1, solver.alpha,
+				[]int{len(input), len(input) * 2, len(input)}, maxHorizon, solver.alpha,
 			)
 
 			if coder == nil {
@@ -178,18 +184,58 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			solver.coders.Store(name, coder)
 		}
 
-		if previousInput, found := solver.previousInput.Load(name); found && mark > 0 {
-			previousTick, _ := solver.previousTick.Load(name)
+		historyValue, _ := solver.histories.LoadOrStore(name, &sampleHistory{
+			inputs: make(map[int64][]float64),
+			marks:  make(map[int64]float64),
+		})
+		history := historyValue.(*sampleHistory)
 
-			if tick == previousTick.(int64)+1 {
-				previousMark, _ := solver.previousMark.Load(name)
-				target := math.Log(mark / previousMark.(float64))
+		if mark > 0 && tick > 0 {
+			history.marks[tick] = mark
+			dueTicks := make([]int64, 0)
+
+			for previousTick := range history.inputs {
+				if previousTick+int64(maxHorizon) <= tick {
+					dueTicks = append(dueTicks, previousTick)
+				}
+			}
+
+			slices.Sort(dueTicks)
+
+			for _, previousTick := range dueTicks {
+				previousMark := history.marks[previousTick]
+				target := make([]float64, maxHorizon)
+				complete := previousMark > 0
+
+				for horizon := 1; horizon <= maxHorizon; horizon++ {
+					futureMark, found := history.marks[previousTick+int64(horizon)]
+
+					if !found || futureMark <= 0 {
+						complete = false
+						break
+					}
+
+					target[horizon-1] = math.Log(futureMark / previousMark)
+				}
+
+				previousInput := history.inputs[previousTick]
+				delete(history.inputs, previousTick)
+
+				if !complete {
+					continue
+				}
 
 				if _, err := coder.SettleFromBatchOptions(
-					previousInput.([]float64), []float64{target}, true, false,
+					previousInput, target, true, false,
 				); err != nil {
 					updateErr = err
 					return false
+				}
+			}
+
+			for previousTick := range history.marks {
+				if previousTick+int64(maxHorizon) < tick {
+					delete(history.marks, previousTick)
 				}
 			}
 		}
@@ -200,9 +246,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		if mark > 0 && tick > 0 {
-			solver.previousInput.Store(name, slices.Clone(input))
-			solver.previousMark.Store(name, mark)
-			solver.previousTick.Store(name, tick)
+			history.inputs[tick] = slices.Clone(input)
 		}
 
 		symbol.Resonance.Store(name, coder)
@@ -218,17 +262,21 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		supportedHorizon, nextReach := coder.DynamicHorizon(
 			taskPrecision,
 			currentReach,
-			system.Cfg.Resonance.Layers,
+			maxHorizon,
 		)
 		solver.currentReach.Store(name, nextReach)
-		forecast, err := coder.RolloutTaskForecast(supportedHorizon)
+		forecast, err := coder.RolloutTaskForecast(1)
 
 		if err != nil {
 			updateErr = err
 			return false
 		}
 
-		forwardCurve := coder.RolloutTaskPrediction(supportedHorizon)
+		if len(forecast) > supportedHorizon {
+			forecast = forecast[:supportedHorizon]
+		}
+
+		forwardCurve := coder.TaskPrediction()
 		forwardRetention := coder.RolloutRetention(supportedHorizon)
 
 		if len(forwardCurve) > supportedHorizon {

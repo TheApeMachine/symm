@@ -11,21 +11,14 @@ export type Action = "enter" | "exit" | "reduce" | "hold" | "nothing";
 export type DecisionTrace = {
 	graphSupports: number;
 	graphContradicts: number;
-	utility: {
-		executableFraction: number;
-		uncertaintyWeight: number;
-		causalFactor: number;
-		cognitionFactor: number;
-		graphFactor: number;
-	};
 	mcts: {
-		treatment: number;
-		precision: number;
-		standingAside: number;
-		enter: number;
-		utility: number;
-		canEnter: boolean;
-		recommendedAction?: Action;
+		iterations: number;
+		branches: Array<{
+			action: string;
+			visits: number;
+			meanReward: number;
+		}>;
+		recommendedAction?: string;
 	};
 };
 

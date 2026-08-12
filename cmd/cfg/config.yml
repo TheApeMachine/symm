@@ -30,6 +30,14 @@ resonance:
   learning_rate: 0.01
   layers: 10
 
+regulator:
+  # Number of model-surprise observations retained for the dashboard only.
+  # Predictive learning retains its own sufficient statistics separately.
+  history_capacity: 256
+  # Posterior quantile used by bounded candidate search. Higher values explore
+  # parameter settings whose wallet-return effect is still uncertain.
+  optimization_confidence: 0.95
+
 cognitive:
   # Keep the DMT radix tree fully in process. Empty persist_dir / in_memory
   # skips the WAL so TrainSensorySequence and episodic commits do not hit disk.

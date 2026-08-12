@@ -117,18 +117,17 @@ func TestDeskExecute(t *testing.T) {
 
 func TestDeskPublishEquity(t *testing.T) {
 	Convey("Given a refreshed complete broker valuation", t, func() {
-		desk, thesis, logic, regulator := equityDeskFixture(t)
+		desk, thesis, observer := equityDeskFixture(t)
 
 		err := desk.PublishEquity()
 		equity, exists := thesis.Equity()
 
-		Convey("It should retain equity and notify only the regulator", func() {
+		Convey("It should retain equity and notify the regulator", func() {
 			So(err, ShouldBeNil)
 			So(exists, ShouldBeTrue)
 			So(equity.Equity.Float64(), ShouldEqual, 200.0)
 			So(equity.UnrealizedPnL.Float64(), ShouldEqual, -5.0)
-			So(len(logic), ShouldEqual, 0)
-			So(len(regulator), ShouldEqual, 0)
+			So(observer.updates, ShouldEqual, 1)
 		})
 	})
 }
@@ -167,7 +166,7 @@ func BenchmarkDeskOpenSlots(b *testing.B) {
 }
 
 func BenchmarkDeskPublishEquity(b *testing.B) {
-	desk, _, _, _ := equityDeskFixture(b)
+	desk, _, _ := equityDeskFixture(b)
 	b.ReportAllocs()
 
 	for b.Loop() {
@@ -182,13 +181,22 @@ type equityConn struct {
 	tradeBalance kraken.TradeBalanceResult
 }
 
+type equityObserver struct {
+	updates int
+}
+
+func (observer *equityObserver) Update(_ *types.Thesis) error {
+	observer.updates++
+	return nil
+}
+
 func (conn *equityConn) TradeBalance() (kraken.TradeBalanceResult, error) {
 	return conn.tradeBalance, nil
 }
 
 func equityDeskFixture(
 	testingTB testing.TB,
-) (*Desk, *types.Thesis, chan struct{}, chan struct{}) {
+) (*Desk, *types.Thesis, *equityObserver) {
 	testingTB.Helper()
 	public := mock.NewConn()
 	private := &equityConn{
@@ -200,20 +208,20 @@ func equityDeskFixture(
 	}
 	api := websocket.NewAPI(testingTB.Context(), public, private)
 	thesis := types.NewThesis(testingTB.Context(), nil)
-	logic := make(chan struct{}, 1)
-	regulator := make(chan struct{}, 1)
+	observer := &equityObserver{}
 	balance := &Balance{wallet: &sync.Map{}, quote: "USD"}
 	balance.replace(map[string]*decimal.Decimal{
 		"USD": decimal.NewFromInt64(150),
 	})
 	desk := &Desk{
-		api:     api,
-		balance: balance,
-		thesis:  thesis,
-		ui:      make(chan []byte, 1),
+		api:            api,
+		balance:        balance,
+		thesis:         thesis,
+		equityObserver: observer,
+		ui:             make(chan []byte, 1),
 	}
 
-	return desk, thesis, logic, regulator
+	return desk, thesis, observer
 }
 
 func deskFixture(t testing.TB) *Desk {

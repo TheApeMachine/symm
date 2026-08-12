@@ -67,4 +67,35 @@ func TestThesisAppendEquity(t *testing.T) {
 			So(equity.Equity.Float64(), ShouldEqual, 200.0)
 		})
 	})
+
+	Convey("Given an incomplete account valuation", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+
+		err := thesis.AppendEquity(kraken.TradeBalanceResult{})
+
+		Convey("It should reject the observation without dereferencing missing equity", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestThesisEquitySnapshot(t *testing.T) {
+	Convey("Given successive complete account valuations", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		So(thesis.AppendEquity(kraken.TradeBalanceResult{
+			Equity: decimal.NewFromInt64(200),
+		}), ShouldBeNil)
+		_, firstRevision, firstFound := thesis.EquitySnapshot()
+		So(thesis.AppendEquity(kraken.TradeBalanceResult{
+			Equity: decimal.NewFromInt64(201),
+		}), ShouldBeNil)
+		equity, secondRevision, secondFound := thesis.EquitySnapshot()
+
+		Convey("It should identify each broker observation exactly once", func() {
+			So(firstFound, ShouldBeTrue)
+			So(secondFound, ShouldBeTrue)
+			So(secondRevision, ShouldEqual, firstRevision+1)
+			So(equity.Equity.Float64(), ShouldEqual, 201.0)
+		})
+	})
 }

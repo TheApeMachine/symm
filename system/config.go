@@ -16,7 +16,8 @@ type Config struct {
 	*Resonance
 	*Manifold
 	*Risk
-	Planner *PlannerConfig
+	Regulator *RegulatorConfig
+	Planner   *PlannerConfig
 	*PumpDump
 	*CVD
 }
@@ -26,6 +27,7 @@ func NewConfig() *Config {
 		Resonance: NewResonance(),
 		Manifold:  NewManifold(),
 		Risk:      NewRisk(),
+		Regulator: NewRegulatorConfig(),
 		Planner:   NewPlannerConfig(),
 		PumpDump:  NewPumpDump(),
 		CVD:       NewCVD(),
@@ -60,6 +62,11 @@ func (config *Config) Snapshot() *Config {
 		snapshot.Risk = &risk
 	}
 
+	if config.Regulator != nil {
+		regulator := *config.Regulator
+		snapshot.Regulator = &regulator
+	}
+
 	if config.Planner != nil {
 		planner := *config.Planner
 		snapshot.Planner = &planner
@@ -72,17 +79,17 @@ func (config *Config) Snapshot() *Config {
 ApplyRegulation atomically publishes the regulator-owned dynamic settings.
 */
 func (config *Config) ApplyRegulation(
-	resonance Resonance,
+	manifold Manifold,
 	planner PlannerConfig,
 ) error {
-	if config == nil || config.Resonance == nil || config.Planner == nil {
-		return errors.New("system: resonance and planner configuration required for regulation")
+	if config == nil || config.Manifold == nil || config.Planner == nil {
+		return errors.New("system: manifold and planner configuration required for regulation")
 	}
 
 	config.mu.Lock()
 	defer config.mu.Unlock()
 
-	*config.Resonance = resonance
+	*config.Manifold = manifold
 	*config.Planner = planner
 
 	return nil

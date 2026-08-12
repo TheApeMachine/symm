@@ -1,150 +1,95 @@
 package regulator
 
 import (
+	"math"
 	"sync"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestNewSolver(t *testing.T) {
-	Convey("Given a system configuration and context", t, func() {
+	Convey("Given a complete optimizer configuration", t, func() {
 		system.Cfg = system.NewConfig()
-		solver := NewSolver(t.Context(), nil)
+		solver, err := NewSolver(t.Context(), nil)
 
-		Convey("It should instantiate a valid regulator solver", func() {
-			So(solver, ShouldNotBeNil)
-			So(solver.configSource, ShouldEqual, system.Cfg)
-			So(solver.config == solver.configSource, ShouldBeFalse)
-			So(solver.config.Planner == solver.configSource.Planner, ShouldBeFalse)
-			So(solver.config.Planner, ShouldResemble, solver.configSource.Planner)
-			_, err := solver.coder.SettleFromBatch(
-				make([]float64, regulatorMetricCount), []float64{0},
-			)
+		Convey("It should construct the predictive model and fixed control space", func() {
 			So(err, ShouldBeNil)
-			_, err = solver.coder.SettleFromBatch(make([]float64, 16), []float64{0})
-			So(err, ShouldNotBeNil)
+			So(solver, ShouldNotBeNil)
+			So(solver.Status(), ShouldEqual, types.READY)
+			So(solver.optimizer.coder, ShouldNotBeNil)
+			So(solver.optimizer.pending, ShouldBeNil)
 			So(solver.Close(), ShouldBeNil)
 		})
 	})
 }
 
-func TestRun(t *testing.T) {
-	Convey("Given direct equity feedback", t, func() {
-		system.Cfg = system.NewConfig()
-		thesis := types.NewThesis(t.Context(), nil)
-		So(thesis.AppendEquity(kraken.TradeBalanceResult{
-			Equity: decimal.NewFromInt64(200),
-		}), ShouldBeNil)
-		ui := make(chan []byte, 1)
-		solver := NewSolver(t.Context(), ui)
-		defer solver.Close()
-
-		So(solver.Update(thesis), ShouldBeNil)
-
-		Convey("Then the regulator should settle and publish", func() {
-			So(<-ui, ShouldNotBeEmpty)
-		})
-	})
-}
-
-func TestReadFinancialFeedback(t *testing.T) {
-	Convey("Given successive complete equity valuations", t, func() {
-		thesis := types.NewThesis(t.Context(), nil)
-		solver := &Solver{}
-		So(thesis.AppendEquity(kraken.TradeBalanceResult{
-			Equity: decimal.NewFromInt64(200),
-		}), ShouldBeNil)
-
-		baselineReturn, baselineDrawdown, baselineReady := solver.readFinancialFeedback(thesis)
-		So(thesis.AppendEquity(kraken.TradeBalanceResult{
-			Equity: decimal.NewFromInt64(180),
-		}), ShouldBeNil)
-		drawdownReturn, drawdown, drawdownReady := solver.readFinancialFeedback(thesis)
-		So(thesis.AppendEquity(kraken.TradeBalanceResult{
-			Equity: decimal.NewFromInt64(198),
-		}), ShouldBeNil)
-		recoveryReturn, recoveryDrawdown, recoveryReady := solver.readFinancialFeedback(thesis)
-
-		Convey("It should retain period return and drawdown from peak independently", func() {
-			So(baselineReady, ShouldBeTrue)
-			So(baselineReturn, ShouldEqual, 0.0)
-			So(baselineDrawdown, ShouldEqual, 0.0)
-			So(drawdownReady, ShouldBeTrue)
-			So(drawdownReturn, ShouldAlmostEqual, -0.1, 1e-12)
-			So(drawdown, ShouldAlmostEqual, -0.1, 1e-12)
-			So(recoveryReady, ShouldBeTrue)
-			So(recoveryReturn, ShouldAlmostEqual, 0.1, 1e-12)
-			So(recoveryDrawdown, ShouldAlmostEqual, -0.01, 1e-12)
-		})
-	})
-
-	Convey("Given no account valuation", t, func() {
-		periodReturn, drawdown, ready := (&Solver{}).readFinancialFeedback(
-			types.NewThesis(t.Context(), nil),
-		)
-
-		Convey("It should freeze instead of treating absent equity as zero", func() {
-			So(ready, ShouldBeFalse)
-			So(periodReturn, ShouldEqual, 0.0)
-			So(drawdown, ShouldEqual, 0.0)
-		})
-	})
-}
-
 func TestUpdate(t *testing.T) {
-	Convey("Given an active regulator solver and thesis", t, func() {
+	Convey("Given a baseline valuation followed by a changed equity outcome", t, func() {
 		system.Cfg = system.NewConfig()
-		cfg := system.Cfg
+		baseline := system.Cfg.Snapshot()
 		thesis := types.NewThesis(t.Context(), nil)
-		So(thesis.AppendEquity(kraken.TradeBalanceResult{
-			Equity: decimal.NewFromInt64(200),
-		}), ShouldBeNil)
-		solver := NewSolver(t.Context(), nil)
+		ui := make(chan []byte, 2)
+		solver, err := NewSolver(t.Context(), ui)
+		So(err, ShouldBeNil)
 		defer solver.Close()
+		So(appendEquity(thesis, 200), ShouldBeNil)
 
-		initialAlpha := cfg.Resonance.LearningRate
-		err := solver.Update(thesis)
+		err = solver.Update(thesis)
+		firstPending := append([]float64(nil), solver.optimizer.pending...)
+		firstConfig := system.Cfg.Snapshot()
+		So(appendEquity(thesis, 180), ShouldBeNil)
+		errAfterOutcome := solver.Update(thesis)
+		regulated := system.Cfg.Snapshot()
 
-		Convey("It should settle metrics and tune system config", func() {
+		Convey("It should resolve the prior controls against only the later log return", func() {
 			So(err, ShouldBeNil)
-			So(cfg.Resonance.LearningRate, ShouldBeGreaterThan, 0)
-			So(cfg.Manifold.RelaxationSteps, ShouldBeGreaterThan, 0)
-			So(cfg.Risk.UncertaintyScale, ShouldBeGreaterThan, 0)
-			So(cfg.Planner.MaxAllocationFraction, ShouldBeGreaterThan, 0)
-			So(initialAlpha, ShouldBeGreaterThan, 0)
-			So(solver.pace.Count(), ShouldEqual, 1)
-			So(cfg.Resonance.LearningRate, ShouldEqual, solver.pace.Alpha())
-		})
-
-		Convey("It should construct a visual RegulatorPayload", func() {
-			initialPayload := solver.buildPayload(0.0, 0.0, 0.0)
-			So(initialPayload.Status, ShouldEqual, "observing")
-			So(initialPayload.Subsystems, ShouldHaveLength, 6)
-
-			for range 5 {
-				solver.recordHistory(0.2)
-			}
-
-			solver.coder.SetStreamLearn(true)
-			payload := solver.buildPayload(0.2, 0.1, 0.0)
-			So(payload.Subsystems, ShouldHaveLength, 6)
+			So(errAfterOutcome, ShouldBeNil)
+			So(firstPending, ShouldHaveLength, regulatorContextCount+controlCount)
+			So(firstPending[0], ShouldEqual, 0.0)
+			So(solver.optimizer.resolved, ShouldEqual, 1)
+			So(firstConfig.Planner, ShouldResemble, baseline.Planner)
+			So(regulated.Planner.MaxAllocationFraction,
+				ShouldBeLessThan, baseline.Planner.MaxAllocationFraction)
+			So(solver.lastEquity, ShouldEqual, 180.0)
+			So(solver.peakEquity, ShouldEqual, 200.0)
+			So(solver.history, ShouldHaveLength, 2)
+			So(len(ui), ShouldEqual, 2)
 		})
 	})
 
-	Convey("Given concurrent account feedback updates", t, func() {
+	Convey("Given repeated broker revisions with identical equity", t, func() {
 		system.Cfg = system.NewConfig()
 		thesis := types.NewThesis(t.Context(), nil)
-		So(thesis.AppendEquity(kraken.TradeBalanceResult{
-			Equity: decimal.NewFromInt64(200),
-		}), ShouldBeNil)
-		solver := NewSolver(t.Context(), nil)
+		solver, err := NewSolver(t.Context(), nil)
+		So(err, ShouldBeNil)
 		defer solver.Close()
+		So(appendEquity(thesis, 200), ShouldBeNil)
+		So(solver.Update(thesis), ShouldBeNil)
+		So(appendEquity(thesis, 200), ShouldBeNil)
+
+		err = solver.Update(thesis)
+
+		Convey("It should acknowledge but not relearn a duplicate outcome", func() {
+			So(err, ShouldBeNil)
+			So(solver.optimizer.resolved, ShouldEqual, 0)
+			So(solver.history, ShouldHaveLength, 1)
+		})
+	})
+
+	Convey("Given concurrent delivery of one changed equity revision", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := types.NewThesis(t.Context(), nil)
+		solver, err := NewSolver(t.Context(), nil)
+		So(err, ShouldBeNil)
+		defer solver.Close()
+		So(appendEquity(thesis, 200), ShouldBeNil)
+		So(solver.Update(thesis), ShouldBeNil)
+		So(appendEquity(thesis, 201), ShouldBeNil)
 		var updates sync.WaitGroup
 		errs := make(chan error, 16)
 
@@ -157,123 +102,75 @@ func TestUpdate(t *testing.T) {
 		updates.Wait()
 		close(errs)
 
-		Convey("It should serialize manifold and state mutation", func() {
+		Convey("It should spend the revision exactly once", func() {
 			for err := range errs {
 				So(err, ShouldBeNil)
 			}
 
-			So(solver.pace.Count(), ShouldEqual, 16)
-			So(solver.history, ShouldHaveLength, 16)
+			So(solver.optimizer.resolved, ShouldEqual, 1)
+			So(solver.history, ShouldHaveLength, 2)
 		})
 	})
+}
 
-	Convey("Given a calibrated quiet history followed by an equity shock", t, func() {
-		system.Cfg = system.NewConfig()
-		thesis := types.NewThesis(t.Context(), nil)
-		So(thesis.AppendEquity(kraken.TradeBalanceResult{
-			Equity: decimal.NewFromInt64(200),
-		}), ShouldBeNil)
-		solver := NewSolver(t.Context(), nil)
-		defer solver.Close()
-		solver.pace = learning.NewPaceController(learning.PaceConfig{
-			InitialAlpha: solver.learningRate,
-			Window:       4,
-		})
+func TestFinancialFeedback(t *testing.T) {
+	Convey("Given a drawdown followed by a partial recovery", t, func() {
+		solver := &Solver{lastEquity: 200, peakEquity: 200}
 
-		for range 4 {
-			So(solver.Update(thesis), ShouldBeNil)
-		}
+		loss, drawdown := solver.financialFeedback(180)
+		solver.lastEquity = 180
+		recovery, recoveryDrawdown := solver.financialFeedback(198)
 
-		initialAlpha := solver.learningRate
-		So(thesis.AppendEquity(kraken.TradeBalanceResult{
-			Equity: decimal.NewFromInt64(100),
-		}), ShouldBeNil)
-		So(solver.Update(thesis), ShouldBeNil)
-
-		Convey("It should publish the empirically adapted manifold pace", func() {
-			So(solver.rankReady, ShouldBeTrue)
-			So(solver.config.Resonance.LearningRate, ShouldBeGreaterThan, initialAlpha)
-			So(system.Cfg.Snapshot().Resonance.LearningRate,
-				ShouldEqual, solver.config.Resonance.LearningRate)
+		Convey("It should preserve additive return and peak-relative drawdown separately", func() {
+			So(loss, ShouldAlmostEqual, math.Log(0.9), 1e-12)
+			So(drawdown, ShouldAlmostEqual, math.Log(0.9), 1e-12)
+			So(recovery, ShouldAlmostEqual, math.Log(1.1), 1e-12)
+			So(recoveryDrawdown, ShouldAlmostEqual, math.Log(0.99), 1e-12)
 		})
 	})
 }
 
 func TestRecordHistory(t *testing.T) {
-	Convey("Given more readings than the empirical pace horizon", t, func() {
-		system.Cfg = system.NewConfig()
-		solver := NewSolver(t.Context(), nil)
-		defer solver.Close()
+	Convey("Given more reconstruction errors than the configured UI capacity", t, func() {
+		solver := &Solver{historyCapacity: 3, history: make([]float64, 0, 3)}
 
-		for reading := range 300 {
-			_, err := solver.pace.Measure(float64(reading))
-			So(err, ShouldBeNil)
+		for reading := range 5 {
 			solver.recordHistory(float64(reading))
 		}
 
-		Convey("It should retain the same rolling horizon as the calibrator", func() {
-			So(solver.history, ShouldHaveLength, solver.pace.Count())
-			So(solver.history[0], ShouldEqual, 44.0)
-			So(solver.history[len(solver.history)-1], ShouldEqual, 299.0)
-		})
-	})
-}
-
-func TestApplyTuning(t *testing.T) {
-	Convey("Given a calibrated high-surprise rank", t, func() {
-		system.Cfg = system.NewConfig()
-		solver := NewSolver(t.Context(), nil)
-		defer solver.Close()
-		window := 2
-		solver.pace = learning.NewPaceController(learning.PaceConfig{
-			InitialAlpha: solver.learningRate,
-			Window:       window,
-		})
-
-		for range window {
-			_, err := solver.pace.Measure(0)
-			So(err, ShouldBeNil)
-		}
-
-		pace, err := solver.pace.Measure(1)
-		So(err, ShouldBeNil)
-		solver.rankReady = pace.Ready
-		solver.surpriseRank = pace.Rank
-
-		err = solver.applyTuning()
-
-		Convey("It should increase causal scrutiny without expanding search latency", func() {
-			So(err, ShouldBeNil)
-			So(solver.config.Planner.CausalAlpha, ShouldBeGreaterThan, solver.causalAlpha)
-			So(solver.config.Planner.MCTSIterations, ShouldBeLessThanOrEqualTo, solver.iterations)
-			So(solver.config.Planner.MCTSIterations, ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-func TestFormatFloat(t *testing.T) {
-	Convey("Given financial values with leading fractional zeroes and a negative fraction", t, func() {
-		Convey("It should preserve exact fixed-point presentation", func() {
-			So(formatFloat(1.005, 3), ShouldEqual, "1.005")
-			So(formatFloat(-0.25, 2), ShouldEqual, "-0.25")
+		Convey("It should retain the newest bounded observations", func() {
+			So(solver.history, ShouldResemble, []float64{2, 3, 4})
 		})
 	})
 }
 
 func BenchmarkUpdate(b *testing.B) {
-	ctx := b.Context()
-	thesis := types.NewThesis(ctx, nil)
+	system.Cfg = system.NewConfig()
+	thesis := types.NewThesis(b.Context(), nil)
+	solver, err := NewSolver(b.Context(), nil)
 
-	if err := thesis.AppendEquity(kraken.TradeBalanceResult{
-		Equity: decimal.NewFromInt64(200),
-	}); err != nil {
+	if err != nil {
 		b.Fatal(err)
 	}
 
-	solver := NewSolver(ctx, nil)
 	defer solver.Close()
+	value := 200.0
 
 	for b.Loop() {
-		_ = solver.Update(thesis)
+		value += 0.01
+
+		if err := appendEquity(thesis, value); err != nil {
+			b.Fatal(err)
+		}
+
+		if err := solver.Update(thesis); err != nil {
+			b.Fatal(err)
+		}
 	}
+}
+
+func appendEquity(thesis *types.Thesis, value float64) error {
+	return thesis.AppendEquity(kraken.TradeBalanceResult{
+		Equity: decimal.NewFromFloat64(value),
+	})
 }

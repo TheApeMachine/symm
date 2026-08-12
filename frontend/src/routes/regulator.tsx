@@ -20,6 +20,9 @@ type RegulatorFrame = {
 	status?: "healthy" | "adapting" | "strained" | "observing";
 	surprise?: number;
 	energy?: number;
+	predictedReturn?: number;
+	predictionScale?: number;
+	samples?: number;
 	summary?: string;
 	subsystems?: SubsystemStatus[];
 	sparkline?: number[];
@@ -29,64 +32,9 @@ const DEFAULT_FRAME: RegulatorFrame = {
 	status: "observing",
 	surprise: 0.0,
 	energy: 0.0,
-	summary: "System in warm-up state. Observing initial market telemetry to calibrate predictive precision.",
-	subsystems: [
-		{
-			name: "resonance",
-			label: "Resonance Learning Pace",
-			health: "observing",
-			direction: "calibrating",
-			valueText: "0.0100",
-			explanation: "Establishing baseline pace from initial market observations.",
-			value: 0.01,
-		},
-		{
-			name: "manifold",
-			label: "Physics Relaxation Steps",
-			health: "observing",
-			direction: "calibrating",
-			valueText: "20 steps",
-			explanation: "Compute steps set to safe baseline during warm-up.",
-			value: 20,
-		},
-		{
-			name: "risk",
-			label: "Stoploss Breathing Room",
-			health: "observing",
-			direction: "calibrating",
-			valueText: "1.00x scale",
-			explanation: "Floor padding held at conservative baseline until volatility settles.",
-			value: 1.0,
-		},
-		{
-			name: "planner",
-			label: "Capital Allocation Gate",
-			health: "observing",
-			direction: "restricted",
-			valueText: "0.0% max",
-			explanation: "Capital velocity restricted during warm-up observation period.",
-			value: 0.0,
-		},
-		{
-			name: "confidence",
-			label: "Resonance Decision Gate",
-			health: "observing",
-			direction: "calibrating",
-			valueText: "80.0% min",
-			explanation: "Minimum forecast confidence required to admit decision signals.",
-			value: 0.8,
-		},
-		{
-			name: "mcts",
-			label: "Causal MCTS Search Bias",
-			health: "observing",
-			direction: "calibrating",
-			valueText: "1.00x bias",
-			explanation: "Interventional causal bias scaling MCTS UCT trajectory selection under market surprise.",
-			value: 1.0,
-		},
-	],
-	sparkline: [0.0, 0.0, 0.0],
+	summary: "Waiting for a changed account valuation to resolve the first applied control vector.",
+	subsystems: [],
+	sparkline: [],
 };
 
 const HealthPulse = ({ status }: { status: "healthy" | "adapting" | "strained" | "observing" }) => {
@@ -96,28 +44,28 @@ const HealthPulse = ({ status }: { status: "healthy" | "adapting" | "strained" |
 			text: "text-(--acc)",
 			border: "border-(--acc)",
 			ring: "shadow-[0_0_15px_rgba(59,130,246,0.35)]",
-			label: "Observing / Calibrating",
+			label: "Observing / Resolving",
 		},
 		healthy: {
 			bg: "bg-(--up)",
 			text: "text-(--up)",
 			border: "border-(--up)",
 			ring: "shadow-[0_0_15px_rgba(34,197,94,0.35)]",
-			label: "Healthy / Optimal",
+			label: "Predictive / Optimizing",
 		},
 		adapting: {
 			bg: "bg-(--warn)",
 			text: "text-(--warn)",
 			border: "border-(--warn)",
 			ring: "shadow-[0_0_15px_rgba(234,179,8,0.35)]",
-			label: "Adapting / Tuning",
+			label: "Identifying / Exploring",
 		},
 		strained: {
 			bg: "bg-(--down)",
 			text: "text-(--down)",
 			border: "border-(--down)",
 			ring: "shadow-[0_0_15px_rgba(239,68,68,0.35)]",
-			label: "High Surprisal / Throttling",
+			label: "Adverse Return Forecast",
 		},
 	};
 
@@ -187,6 +135,9 @@ const RouteComponent = () => {
 	const status = frame.status ?? "healthy";
 	const surprise = frame.surprise ?? 0.04;
 	const energy = frame.energy ?? 0.01;
+	const predictedReturn = frame.predictedReturn ?? 0;
+	const predictionScale = frame.predictionScale ?? 0;
+	const samples = frame.samples ?? 0;
 	const summary = frame.summary ?? "System operating in calm, optimal equilibrium.";
 	const subsystems = frame.subsystems ?? DEFAULT_FRAME.subsystems ?? [];
 	const sparkline = frame.sparkline ?? DEFAULT_FRAME.sparkline ?? [];
@@ -216,8 +167,11 @@ const RouteComponent = () => {
 
 				<Flex.Row justify="between" align="center" className="pt-2 border-t border-(--line) text-[11px] font-mono text-(--f4)">
 					<Flex.Row gap={4}>
-						<span>Surprisal Error: <strong className="text-(--f1)">{(surprise * 100).toFixed(1)}%</strong></span>
+						<span>Reconstruction Error: <strong className="text-(--f1)">{surprise.toFixed(4)}</strong></span>
 						<span>Variational Energy: <strong className="text-(--f1)">{energy.toFixed(3)}</strong></span>
+						<span>Next Equity Return: <strong className="text-(--f1)">{(predictedReturn * 100).toFixed(3)}%</strong></span>
+						<span>Posterior Scale: <strong className="text-(--f1)">{predictionScale.toFixed(4)}</strong></span>
+						<span>Resolved Outcomes: <strong className="text-(--f1)">{samples}</strong></span>
 					</Flex.Row>
 					{sparkline.length > 1 ? (
 						<Flex.Row align="center" gap={2}>
@@ -282,13 +236,13 @@ const RouteComponent = () => {
 				</span>
 				<div className="grid grid-cols-3 gap-3 pt-1 text-[10.5px]">
 					<div>
-						<strong className="text-(--up)">Green (Optimal Equilibrium)</strong>: The market matches predictive expectations. Compute is relaxed, allocations are active, and stoploss boundaries are tight.
+						<strong className="text-(--up)">Green (Predictive)</strong>: Prior parameter/outcome pairs beat the zero-return baseline and bounded posterior search is selecting controls.
 					</div>
 					<div>
-						<strong className="text-(--warn)">Amber (Adapting to Volatility)</strong>: Market surprisal detected. The regulator expands compute steps and adjusts floor padding to prevent noise stopouts.
+						<strong className="text-(--warn)">Amber (Identifying)</strong>: The return model is applying one shrinking coordinate intervention and waiting for its subsequent equity outcome.
 					</div>
 					<div>
-						<strong className="text-(--down)">Red (High Stress / Throttling)</strong>: Extreme surprise detected. Capital velocity is restricted and risk boundaries are expanded until equilibrium recovers.
+						<strong className="text-(--down)">Red (Adverse Forecast)</strong>: The best evaluated control neighborhood still has a negative posterior mean for next account return.
 					</div>
 				</div>
 			</Panel>

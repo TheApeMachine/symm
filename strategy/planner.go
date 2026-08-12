@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -13,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
 type Planner struct {
@@ -75,7 +78,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		return fmt.Errorf("planner: planner configuration required")
 	}
 
-	decisions := make([]types.Decision, 0)
+	createdDecisions := make([]*types.Decision, 0)
 	var err error
 
 	thesis.Symbols.Range(func(key, value any) bool {
@@ -120,25 +123,47 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		decision := types.NewDecision(types.ActionNothing, symbol)
 		decision.At = graph.At
 		decision.Forecast = graph.Forecast
-		decision.Confidence = config.Planner.MinimumConfidence
+		confidence, confidenceErr := forecastDirectionConfidence(graph.Forecast)
+
+		if confidenceErr != nil {
+			err = fmt.Errorf("planner: forecast confidence for %s: %w", symbol, confidenceErr)
+			return false
+		}
+
+		decision.Confidence = confidence
 		decision.Alternatives = make(map[string]float64)
+		decision.Trace = decisionTrace(
+			graph,
+			root,
+			action,
+			config.Planner.MCTSIterations,
+		)
 
 		for _, branch := range root.Children {
 			utility := branch.TotalReward / float64(branch.Visits)
-			decision.Alternatives[fmt.Sprintf("%g", branch.Action)] = utility
+			decision.Alternatives[graphActionLabel(graph.Roots(), branch.Action)] = utility
 
 			if branch.Action == action {
 				decision.Utility = utility
 			}
 		}
 
-		if decision.Utility > 0 {
+		if decision.Utility > config.Planner.MinimumUtility &&
+			decision.Confidence >= config.Planner.MinimumConfidence {
 			decision.Action = types.ActionEnter
 			decision.Cause = "opportunity_entry"
 		}
 
+		if decision.Confidence < config.Planner.MinimumConfidence {
+			decision.Reason = "planner: forecast confidence does not clear regulated entry threshold"
+		}
+
+		if decision.Action != types.ActionEnter && decision.Reason == "" {
+			decision.Reason = "planner: utility does not clear regulated entry threshold"
+		}
+
 		symbolState.Decisions.Store(symbol, decision)
-		decisions = append(decisions, *decision)
+		createdDecisions = append(createdDecisions, decision)
 		return true
 	})
 
@@ -152,6 +177,24 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 	}
 
+	if planner.desk != nil {
+		for _, decision := range createdDecisions {
+			if decision.Action != types.ActionEnter {
+				continue
+			}
+
+			if err = planner.desk.Execute(*decision); err != nil {
+				return fmt.Errorf("planner: execute %s: %w", decision.Symbol, err)
+			}
+		}
+	}
+
+	decisions := make([]types.Decision, 0, len(createdDecisions))
+
+	for _, decision := range createdDecisions {
+		decisions = append(decisions, *decision)
+	}
+
 	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
 		"evaluated", true,
 		"outcome", "decisions",
@@ -159,4 +202,89 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	)))
 
 	return nil
+}
+
+func forecastDirectionConfidence(forecast *learning.RLSOutput) (float64, error) {
+	if forecast == nil || !forecast.Ready || forecast.Scale <= 0 ||
+		forecast.DegreesOfFreedom <= 0 {
+		return 0, fmt.Errorf("ready posterior predictive forecast required")
+	}
+
+	distribution := distuv.StudentsT{
+		Mu:    forecast.Value,
+		Sigma: forecast.Scale,
+		Nu:    forecast.DegreesOfFreedom,
+	}
+
+	return 1 - distribution.CDF(0), nil
+}
+
+func decisionTrace(
+	graph *logicgraph.Graph,
+	root *mcts.Node,
+	recommended float64,
+	iterations int,
+) *types.DecisionTrace {
+	supports, contradicts := graphEvidenceMass(graph)
+	branches := make([]types.DecisionMCTSBranch, 0, len(root.Children))
+	roots := graph.Roots()
+
+	for _, branch := range root.Children {
+		branches = append(branches, types.DecisionMCTSBranch{
+			Action:     graphActionLabel(roots, branch.Action),
+			Visits:     branch.Visits,
+			MeanReward: branch.TotalReward / float64(branch.Visits),
+		})
+	}
+
+	slices.SortFunc(branches, func(left, right types.DecisionMCTSBranch) int {
+		if left.Visits == right.Visits {
+			return 0
+		}
+
+		if left.Visits > right.Visits {
+			return -1
+		}
+
+		return 1
+	})
+
+	return &types.DecisionTrace{
+		GraphSupports:    supports,
+		GraphContradicts: contradicts,
+		MCTS: types.DecisionMCTSTrace{
+			Iterations:        iterations,
+			Branches:          branches,
+			RecommendedAction: graphActionLabel(roots, recommended),
+		},
+	}
+}
+
+func graphActionLabel(roots []string, action float64) string {
+	index := int(action)
+
+	if index >= 0 && index < len(roots) && action == float64(index) {
+		return roots[index]
+	}
+
+	return fmt.Sprintf("root[%g]", action)
+}
+
+func graphEvidenceMass(graph *logicgraph.Graph) (float64, float64) {
+	supports := 0.0
+	contradicts := 0.0
+
+	for _, edge := range graph.Edges {
+		mass := edge.Weight * edge.Confidence
+
+		if edge.Relation == logicgraph.RelationSupports {
+			supports += mass
+		}
+
+		if edge.Relation == logicgraph.RelationContradicts {
+			contradicts += mass
+		}
+	}
+
+	return supports, contradicts
 }

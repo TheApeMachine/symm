@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/regulator"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -34,7 +33,6 @@ type Crypto struct {
 	desk          *broker.Desk
 	analyzer      *logic.Analyzer
 	planner       *strategy.Planner
-	regulator     *regulator.Solver
 	bookUpdates   <-chan string
 	subscriptions map[string]*types.Subscription[any]
 }
@@ -50,7 +48,6 @@ func NewCrypto(
 	desk *broker.Desk,
 	analyzer *logic.Analyzer,
 	planner *strategy.Planner,
-	regulatorSolver *regulator.Solver,
 	thesis *types.Thesis,
 ) *Crypto {
 	ctx, cancel := context.WithCancel(ctx)
@@ -68,7 +65,6 @@ func NewCrypto(
 		desk:         desk,
 		analyzer:     analyzer,
 		planner:      planner,
-		regulator:    regulatorSolver,
 		bookUpdates:  api.BookUpdates(),
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(

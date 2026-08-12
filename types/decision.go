@@ -89,21 +89,9 @@ DecisionTrace is the observable entry-decision chain. It carries values already
 used by strategy rather than a frontend reconstruction of those values.
 */
 type DecisionTrace struct {
-	GraphSupports    float64              `json:"graphSupports"`
-	GraphContradicts float64              `json:"graphContradicts"`
-	Utility          DecisionUtilityTrace `json:"utility"`
-	MCTS             DecisionMCTSTrace    `json:"mcts"`
-}
-
-/*
-DecisionUtilityTrace records every factor multiplied into unified utility.
-*/
-type DecisionUtilityTrace struct {
-	ExecutableFraction float64 `json:"executableFraction"`
-	UncertaintyWeight  float64 `json:"uncertaintyWeight"`
-	CausalFactor       float64 `json:"causalFactor"`
-	CognitionFactor    float64 `json:"cognitionFactor"`
-	GraphFactor        float64 `json:"graphFactor"`
+	GraphSupports    float64           `json:"graphSupports"`
+	GraphContradicts float64           `json:"graphContradicts"`
+	MCTS             DecisionMCTSTrace `json:"mcts"`
 }
 
 /*
@@ -113,7 +101,7 @@ reward those simulations produced. Visits and MeanReward come straight off
 the search tree — nothing here is a frontend reconstruction of the search.
 */
 type DecisionMCTSBranch struct {
-	Action     Action  `json:"action"`
+	Action     string  `json:"action"`
 	Visits     int     `json:"visits"`
 	MeanReward float64 `json:"meanReward"`
 }
@@ -125,11 +113,9 @@ the most visits (the search's own robust-child rule), not a value comparison
 computed separately by the frontend.
 */
 type DecisionMCTSTrace struct {
-	Treatment         float64              `json:"treatment"`
-	Precision         float64              `json:"precision"`
 	Iterations        int                  `json:"iterations"`
 	Branches          []DecisionMCTSBranch `json:"branches"`
-	RecommendedAction Action               `json:"recommendedAction,omitempty"`
+	RecommendedAction string               `json:"recommendedAction,omitempty"`
 }
 
 /*

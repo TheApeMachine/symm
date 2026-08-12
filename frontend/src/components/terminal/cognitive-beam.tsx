@@ -125,7 +125,7 @@ export const CognitiveBeam = () => {
 							<div>
 								<div className="mb-1 flex justify-between font-mono text-[10px]">
 									<Typography.Label size="xxs" tone="f3" weight="normal">
-										Entropy gate
+										Branch entropy
 									</Typography.Label>
 									<span
 										data-paint="entropyBits"
@@ -138,10 +138,9 @@ export const CognitiveBeam = () => {
 									/>
 								</div>
 								<div className="font-mono text-[9px] text-(--f4)">
-									threshold{" "}
+									only gates when the prefix has competing branches · paths{" "}
 									<span
-										data-paint="entropyThreshold"
-										data-paint-format=".3f"
+										data-paint="lookaheadPaths"
 										data-paint-absent="—"
 									/>
 								</div>

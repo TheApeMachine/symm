@@ -36,7 +36,7 @@ const RUNGS: Rung[] = [
 		rung: 3,
 		name: "Counterfactual",
 		desc: "P(y' | x', x)",
-		path: "confidence",
+		path: "counterfactual",
 		variant: "warning",
 	},
 	{
@@ -134,7 +134,7 @@ export const CausalLadder = () => {
 						Causal ladder
 					</Typography.Label>
 					<div className="mt-0.5 mb-3 font-mono text-[9.5px] text-(--f4)">
-						pearl do-calculus · category{" "}
+						Pearl estimates · evidence class{" "}
 						<span data-paint="category" data-paint-empty="—" />
 					</div>
 

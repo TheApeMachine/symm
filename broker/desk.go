@@ -25,22 +25,31 @@ subscriber behind.
 */
 type Desk struct {
 	*PositionStore
-	ctx           context.Context
-	cancel        context.CancelFunc
-	status        types.Status
-	api           *websocket.API
-	subscriptions map[string]*types.Subscription[any]
-	ui            chan []byte
-	instrument    *Instrument
-	price         *Price
-	balance       *Balance
-	thesis        *types.Thesis
-	recorder      *audit.Recorder
-	recovery      *Recovery
-	positions     *sync.Map
-	executeMu     sync.Mutex
-	maxPositions  int
-	maxReserved   int
+	ctx            context.Context
+	cancel         context.CancelFunc
+	status         types.Status
+	api            *websocket.API
+	subscriptions  map[string]*types.Subscription[any]
+	ui             chan []byte
+	instrument     *Instrument
+	price          *Price
+	balance        *Balance
+	thesis         *types.Thesis
+	equityObserver EquityObserver
+	recorder       *audit.Recorder
+	recovery       *Recovery
+	positions      *sync.Map
+	executeMu      sync.Mutex
+	maxPositions   int
+	maxReserved    int
+}
+
+/*
+EquityObserver consumes each complete broker valuation after it is committed to
+the shared thesis.
+*/
+type EquityObserver interface {
+	Update(*types.Thesis) error
 }
 
 /*
@@ -53,6 +62,7 @@ func NewDesk(
 	price *Price,
 	balance *Balance,
 	thesis *types.Thesis,
+	equityObserver EquityObserver,
 	recorder *audit.Recorder,
 	store *PositionStore,
 	ui chan []byte,
@@ -71,16 +81,17 @@ func NewDesk(
 			"ticker":     api.Subscribe("ticker", types.NewSubscription[any]()),
 			"executions": api.Subscribe("executions", types.NewSubscription[any]()),
 		},
-		ui:            ui,
-		instrument:    instrument,
-		price:         price,
-		balance:       balance,
-		thesis:        thesis,
-		recorder:      recorder,
-		PositionStore: store,
-		positions:     &sync.Map{},
-		maxPositions:  viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:   viper.GetViper().GetInt("trading.slots.reserved"),
+		ui:             ui,
+		instrument:     instrument,
+		price:          price,
+		balance:        balance,
+		thesis:         thesis,
+		equityObserver: equityObserver,
+		recorder:       recorder,
+		PositionStore:  store,
+		positions:      &sync.Map{},
+		maxPositions:   viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:    viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
 	desk.recovery = NewRecovery(
@@ -260,6 +271,14 @@ profit/loss only; equity is cash plus the basis committed to open positions plus
 that profit/loss.
 */
 func (desk *Desk) PublishEquity() error {
+	if desk == nil || desk.api == nil || desk.thesis == nil || desk.equityObserver == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"desk: API, thesis, and equity observer required",
+			nil,
+		))
+	}
+
 	tradeBalance, err := desk.api.TradeBalance()
 
 	if err != nil {
@@ -274,6 +293,14 @@ func (desk *Desk) PublishEquity() error {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"desk: could not publish account equity",
+			err,
+		))
+	}
+
+	if err := desk.equityObserver.Update(desk.thesis); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"desk: regulator rejected account equity",
 			err,
 		))
 	}

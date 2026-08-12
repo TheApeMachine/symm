@@ -102,6 +102,15 @@ export const DecisionChain = ({ index }: { index: number }) => {
 				</div>
 				<div className="flex shrink-0 items-center gap-2 font-mono">
 					<span className="text-[9px] text-(--f4)">
+						edge=
+						<b
+							data-paint="expectedReturn"
+							data-paint-format=".2bp"
+							className="font-normal text-(--acc)"
+						/>
+						bp
+					</span>
+					<span className="text-[9px] text-(--f4)">
 						u=
 						<b
 							data-paint="utility"
@@ -117,6 +126,13 @@ export const DecisionChain = ({ index }: { index: number }) => {
 				</div>
 			</div>
 
+			<div className="hidden border-(--line) border-b px-3 py-2 font-mono text-[9px] text-(--f4) group-data-[selected=true]:block">
+				<span className="text-(--f3)">verdict: </span>
+				<span data-paint="cause" data-paint-empty="pending" className="text-(--f2)" />
+				<span> · </span>
+				<span data-paint="reason" data-paint-empty="planner admitted this candidate" />
+			</div>
+
 			<div className="hidden grid-cols-4 gap-1.5 p-2 font-mono text-[8.5px] group-data-[selected=true]:grid">
 				<ForecastStage />
 				<EvidenceStage />
@@ -125,23 +141,11 @@ export const DecisionChain = ({ index }: { index: number }) => {
 			</div>
 
 			<div className="hidden items-center gap-4 border-(--line) border-t px-3 py-1.5 font-mono text-[8.5px] text-(--f4) group-data-[selected=true]:flex">
-				<span>alternatives</span>
-				<span>
-					enter{" "}
-					<b
-						data-paint="alternatives.enter"
-						data-paint-format=".5f"
-						className="font-normal text-(--f2)"
-					/>
-				</span>
-				<span>
-					nothing{" "}
-					<b
-						data-paint="alternatives.nothing"
-						data-paint-format=".5f"
-						className="font-normal text-(--f2)"
-					/>
-				</span>
+				<span>selected root</span>
+				<span
+					data-paint="trace.mcts.recommendedAction"
+					className="max-w-80 truncate text-(--acc)"
+				/>
 				<span className="ml-auto">
 					round{" "}
 					<b data-paint="arbitrationRound" className="font-normal text-(--f2)" />

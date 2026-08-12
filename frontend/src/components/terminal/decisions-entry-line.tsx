@@ -24,32 +24,41 @@ export const LiveDecisionsEntryLine = () => {
 		<Component registerKey="causal">
 			{({ ref }) => (
 				<div ref={ref} data-scope="symbol" data-filter={scope}>
-					<Panel className="mb-3.5 flex items-center gap-3.5 px-3 py-2 font-mono text-[11.5px]">
-						<span className="text-(--f3)">entry line</span>
-						<span
-							data-paint="entry_baseline"
-							data-paint-format=".6f"
-							className="font-semibold text-(--acc)"
-						/>
-						<span className="text-(--f4)">·</span>
-						<span className="text-(--f3)">
-							strength{" "}
-							<span
-								data-paint="strength"
-								data-paint-format=".6f"
-							/>
-						</span>
-						<span className="text-(--f4)">·</span>
-						<span className="text-(--f3)">
-							confidence{" "}
-							<span
-								data-paint="confidence"
-								data-paint-format=".4f"
-							/>
-						</span>
-						<span className="ml-auto text-(--f4)">
-							support gate ≥ 2 · strategy utility wins
-						</span>
+					<Panel className="mb-3.5 px-3 py-2 font-mono">
+						<div className="mb-1.5 flex items-center justify-between gap-3">
+							<span className="text-[10px] font-semibold text-(--f3) uppercase tracking-[0.13em]">
+								causal admission line
+							</span>
+							<span className="text-[9px] text-(--f4)">
+								classifier evidence, not a price or probability
+							</span>
+						</div>
+						<div className="grid grid-cols-3 gap-2 text-[10px]">
+							<div className="rounded-xs border border-(--line) bg-(--surface) px-2 py-1">
+								<div className="text-(--f4)">entry baseline</div>
+								<div
+									data-paint="entry_baseline"
+									data-paint-format=".6f"
+									className="mt-0.5 text-[12px] font-semibold text-(--acc)"
+								/>
+							</div>
+							<div className="rounded-xs border border-(--line) bg-(--surface) px-2 py-1">
+								<div className="text-(--f4)">evidence score</div>
+								<div
+									data-paint="strength"
+									data-paint-format=".6f"
+									className="mt-0.5 text-[12px] text-(--f1)"
+								/>
+							</div>
+							<div className="rounded-xs border border-(--line) bg-(--surface) px-2 py-1">
+								<div className="text-(--f4)">evidence share</div>
+								<div
+									data-paint="confidence"
+									data-paint-format=".1%"
+									className="mt-0.5 text-[12px] text-(--info)"
+								/>
+							</div>
+						</div>
 					</Panel>
 				</div>
 			)}

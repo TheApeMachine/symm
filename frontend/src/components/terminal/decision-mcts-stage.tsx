@@ -14,13 +14,13 @@ on the absent path, which would wipe them).
 */
 const BranchBox = ({ index }: { index: 0 | 1 }) => (
 	<div
-		data-paint={`trace.mcts.branches.${index}.action`}
-		data-paint-prop="dataset.action"
-		className="flex-1 rounded-xs border border-(--line) bg-(--sunken) px-1.5 py-1 data-[action=nothing]:border-(--up) data-[action=nothing]:bg-[color-mix(in_srgb,var(--up)_8%,transparent)]"
-	>
+	data-paint={`trace.mcts.branches.${index}.action`}
+	data-paint-prop="dataset.action"
+	className="flex-1 rounded-xs border border-(--line) bg-(--sunken) px-1.5 py-1"
+>
 		<span
 			data-paint={`trace.mcts.branches.${index}.action`}
-			className="text-(--f4) uppercase"
+			className="block truncate text-(--f4)"
 		/>
 		<div className="flex items-baseline justify-between gap-2">
 			<b
@@ -40,28 +40,10 @@ const BranchBox = ({ index }: { index: 0 | 1 }) => (
 );
 
 export const DecisionMCTSStage = () => (
-	<DecisionStage title="3 · causal search" meta="root branches explored">
+	<DecisionStage title="3 · graph search" meta="root branches explored">
 		<div className="flex items-stretch gap-2">
 			<BranchBox index={0} />
 			<BranchBox index={1} />
-		</div>
-		<div className="flex justify-between gap-2 text-(--f4)">
-			<span>
-				treatment{" "}
-				<b
-					data-paint="trace.mcts.treatment"
-					data-paint-format=".3%"
-					className="font-normal text-(--f2)"
-				/>
-			</span>
-			<span>
-				precision{" "}
-				<b
-					data-paint="trace.mcts.precision"
-					data-paint-format=".3f"
-					className="font-normal text-(--f2)"
-				/>
-			</span>
 		</div>
 		<div className="flex items-center justify-between gap-2">
 			<span className="text-(--f4)">
@@ -73,7 +55,7 @@ export const DecisionMCTSStage = () => (
 			</span>
 			<span
 				data-paint="trace.mcts.recommendedAction"
-				className="font-semibold text-(--acc) uppercase"
+				className="max-w-30 truncate font-semibold text-(--acc)"
 			/>
 		</div>
 	</DecisionStage>
