@@ -35,9 +35,9 @@ func TestAddNodes(t *testing.T) {
 			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
 		)
 
-		Convey("It should retain the measurement value, quality, and provenance", func() {
+		Convey("It should retain graph evidence value, quality, and provenance", func() {
 			So(err, ShouldBeNil)
-			So(graph.Nodes, ShouldHaveLength, 2)
+			So(graph.Nodes, ShouldHaveLength, 1)
 			node := graph.Nodes[measurementNodeID(measurement, "drive")]
 			So(node, ShouldNotBeNil)
 			So(node.ID, ShouldEqual, "meas:BTC/USD:cvd:drive")
@@ -77,6 +77,48 @@ func TestAddNodes(t *testing.T) {
 }
 
 func TestAddCategoryEdges(t *testing.T) {
+	Convey("Given retained category evidence with old raw and current normalized values", t, func() {
+		at := time.Unix(10, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD", nil)
+		drive := 0.8
+		symbol.AppendMeasurement(types.SourceCVD, &types.Measurement{
+			ID: "old", Source: types.SourceCVD, Symbol: "BTC/USD", At: at,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricDrive, types.SideNone): {
+					Raw: 0.7, Unit: types.UnitDimensionless,
+				},
+			},
+		})
+		symbol.AppendMeasurement(types.SourceCVD, &types.Measurement{
+			ID: "current", Source: types.SourceCVD, Symbol: "BTC/USD", At: at,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricDrive, types.SideNone): {
+					Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
+				},
+			},
+		})
+		symbol.Categories.Store("BTC/USD", []types.Category{{
+			Symbol: "BTC/USD", Type: types.CategoryAggressiveDrive,
+			Supporting: []string{"cvd:drive"},
+		}})
+		graph := NewGraph(at)
+		compiler := newMeasurementCompiler()
+		NewSolver(nil, nil).extractCategoryNodes(symbol, graph)
+		index, err := compiler.addNodes(
+			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
+		)
+		So(err, ShouldBeNil)
+
+		err = compiler.addCategoryEdges(symbol, graph, index)
+
+		Convey("It should relate the usable evidence and skip the raw stale node", func() {
+			So(err, ShouldBeNil)
+			So(graph.Edges, ShouldHaveLength, 1)
+			So(graph.Edges[0].Evidence,
+				ShouldResemble, []string{"current", "cvd:drive"})
+		})
+	})
+
 	Convey("Given category evidence without a normalized measurement value", t, func() {
 		at := time.Unix(20, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD", nil)
@@ -103,7 +145,7 @@ func TestAddCategoryEdges(t *testing.T) {
 
 		Convey("It should reject the unsupported edge instead of substituting a value", func() {
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "has no normalized value")
+			So(err.Error(), ShouldContainSubstring, "has no measurement node")
 			So(graph.Edges, ShouldBeEmpty)
 		})
 	})

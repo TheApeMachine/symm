@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
@@ -77,7 +76,6 @@ func (signal *Signal) Type() types.SourceType {
 
 func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
-	var focused *types.Measurement
 
 	for trade := range symbol.MarketTrades(types.SourceHawkes) {
 		if signal.seenTrade(trade) {
@@ -257,31 +255,6 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 		measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
 
 		measurements = append(measurements, measurement)
-
-		if measurement.Symbol == types.Focus() {
-			focused = measurement
-		}
-	}
-
-	if focused == nil || signal.ui == nil {
-		return measurements
-	}
-
-	payload, err := sonic.Marshal(struct {
-		Measurements []*types.Measurement `json:"measurements"`
-	}{Measurements: []*types.Measurement{focused}})
-
-	if err != nil {
-		panic(errnie.Error(errnie.Err(
-			errnie.Validation,
-			"failed to marshal Hawkes measurement: "+err.Error(),
-			err,
-		)))
-	}
-
-	select {
-	case signal.ui <- payload:
-	default:
 	}
 
 	return measurements

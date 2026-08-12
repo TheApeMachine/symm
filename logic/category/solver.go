@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strconv"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
@@ -82,7 +83,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
-		category, measured, err := solver.classify(
+		categories, measured, err := solver.classify(
 			symbolName,
 			symbol.MarketMeasurements("category"),
 		)
@@ -101,9 +102,16 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		if measured {
-			category.At = thesis.At
-			symbol.Categories.Store(symbolName, []types.Category{category})
+			for index := range categories {
+				categories[index].At = thesis.At
+				categories[index].EvidenceRevision = uint64(symbol.Tick)
+			}
+
+			symbol.Categories.Store(symbolName, categories)
+			return true
 		}
+
+		symbol.Categories.Delete(symbolName)
 
 		return true
 	})
@@ -122,7 +130,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 func (solver *Solver) classify(
 	symbol string,
 	measurements iter.Seq[*types.Measurement],
-) (types.Category, bool, error) {
+) ([]types.Category, bool, error) {
 	evidence := make(map[types.CategoryType][]float64, len(solver.categories))
 	supporting := make(map[types.CategoryType][]string, len(solver.categories))
 	maturity := make(map[types.CategoryType]float64, len(solver.categories))
@@ -162,7 +170,7 @@ func (solver *Solver) classify(
 	}
 
 	if !measured {
-		return types.Category{}, false, nil
+		return nil, false, nil
 	}
 
 	scores := make([]probability.CategoryScore, 0, len(solver.categories))
@@ -177,7 +185,7 @@ func (solver *Solver) classify(
 			strength, err = probability.EvidenceGeomean(evidence[category]...)
 
 			if err != nil {
-				return types.Category{}, false, err
+				return nil, false, err
 			}
 		}
 
@@ -195,7 +203,7 @@ func (solver *Solver) classify(
 	})
 
 	if err != nil {
-		return types.Category{}, false, err
+		return nil, false, err
 	}
 
 	categoryType := types.CategoryTypeNone
@@ -204,14 +212,40 @@ func (solver *Solver) classify(
 		categoryType = solver.categories[int(result.Category)-1]
 	}
 
-	return types.Category{
+	if categoryType == types.CategoryTypeNone {
+		return []types.Category{{
+			Symbol:     symbol,
+			Type:       categoryType,
+			Confidence: result.Confidence,
+		}}, true, nil
+	}
+
+	categories := make([]types.Category, 0, len(solver.categories))
+	categories = append(categories, types.Category{
 		Symbol:     symbol,
 		Type:       categoryType,
 		Confidence: result.Confidence,
 		Strength:   strengths[categoryType],
 		Maturity:   maturity[categoryType],
 		Supporting: supporting[categoryType],
-	}, true, nil
+	})
+
+	for index, category := range solver.categories {
+		if category == categoryType || strengths[category] <= 0 {
+			continue
+		}
+
+		categories = append(categories, types.Category{
+			Symbol:     symbol,
+			Type:       category,
+			Confidence: result.Distribution[strconv.Itoa(index+1)],
+			Strength:   strengths[category],
+			Maturity:   maturity[category],
+			Supporting: supporting[category],
+		})
+	}
+
+	return categories, true, nil
 }
 
 /*

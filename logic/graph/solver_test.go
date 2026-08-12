@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,6 +29,57 @@ func graphResonanceManifold() *learning.ResonanceManifold {
 }
 
 func TestUpdate(t *testing.T) {
+	Convey("Given a symbol with every category-bearing signal measurement", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.At = time.Unix(9, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD", nil)
+		categories := map[types.CategoryType]struct{}{}
+
+		for index, schema := range types.CategorySchemas {
+			value := 1 / float64(index+2)
+			metricKey := types.MetricKey(schema.Metric, schema.Side)
+			symbol.AppendMeasurement(schema.Source, &types.Measurement{
+				ID:     fmt.Sprintf("%s:%s:%d", schema.Source, metricKey, index),
+				Source: schema.Source,
+				Symbol: "BTC/USD",
+				At:     thesis.At,
+				Metrics: map[string]types.MetricSample{
+					metricKey: {
+						Raw:        value,
+						Normalized: &value,
+						Unit:       types.UnitDimensionless,
+					},
+				},
+			})
+			categories[schema.Category] = struct{}{}
+		}
+		thesis.Symbols.Store("BTC/USD", symbol)
+
+		categoryErr := category.NewSolver(nil, nil, nil).Update(thesis)
+		err := NewSolver(nil, nil).Update(thesis)
+
+		Convey("It should compile a connected evidence graph rather than one winning edge", func() {
+			So(categoryErr, ShouldBeNil)
+			So(err, ShouldBeNil)
+			stored, found := symbol.Graphs.Load("market_graph")
+			So(found, ShouldBeTrue)
+			graph := stored.(*Graph)
+			incident := make(map[string]int, len(graph.Nodes))
+
+			for _, edge := range graph.Edges {
+				incident[edge.From]++
+				incident[edge.To]++
+			}
+
+			for _, node := range graph.Nodes {
+				So(incident[node.ID], ShouldBeGreaterThan, 0)
+			}
+
+			So(graph.Edges, ShouldHaveLength, len(types.CategorySchemas))
+			So(graph.Nodes, ShouldHaveLength, len(types.CategorySchemas)+len(categories))
+		})
+	})
+
 	Convey("Given completed upstream stages without a causal estimate", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = time.Unix(1, 0).UTC()
@@ -63,12 +116,12 @@ func TestUpdate(t *testing.T) {
 
 		err := solver.Update(thesis)
 
-		Convey("It should compile and stamp the graph", func() {
+		Convey("It should compile only graph-bearing evidence and stamp the graph", func() {
 			So(err, ShouldBeNil)
 			stored, found := bitcoin.Graphs.Load("market_graph")
 			So(found, ShouldBeTrue)
 			graph := stored.(*Graph)
-			So(graph.Nodes, ShouldHaveLength, 3)
+			So(graph.Nodes, ShouldHaveLength, 2)
 			So(graph.Edges, ShouldHaveLength, 1)
 			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
 			So(graph.Edges[0].Evidence,
@@ -102,11 +155,9 @@ func TestUpdate(t *testing.T) {
 					},
 				},
 			})
-			revision := uint64(symbol.Tick)
-
 			symbol.Categories.Store(symbolName, []types.Category{{
 				Symbol: symbolName, Type: types.CategoryAggressiveDrive,
-				EvidenceRevision: revision, Strength: drive, Confidence: 0.8,
+				Strength: drive, Confidence: 0.8,
 				Supporting: []string{"cvd:drive"},
 			}})
 

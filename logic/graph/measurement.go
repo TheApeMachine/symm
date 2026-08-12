@@ -86,6 +86,10 @@ func (compiler *measurementCompiler) addMeasurement(
 		side types.MeasurementSide,
 		sample types.MetricSample,
 	) bool {
+		if !compiler.graphMetric(measurement.Source, metric, side, sample) {
+			return true
+		}
+
 		metricKey := types.MetricKey(metric, side)
 		node := measurementNode(measurement, metricKey, metric, side, sample, quality)
 		graph.AddNode(node)
@@ -95,6 +99,30 @@ func (compiler *measurementCompiler) addMeasurement(
 	})
 
 	return nil
+}
+
+func (compiler *measurementCompiler) graphMetric(
+	source types.SourceType,
+	metric types.MetricType,
+	side types.MeasurementSide,
+	sample types.MetricSample,
+) bool {
+	if source == types.SourceLeadLag &&
+		(metric == types.MetricLastPrice || metric == types.MetricPeerLastPrice) {
+		return true
+	}
+
+	if sample.Normalized == nil || *sample.Normalized <= 0 {
+		return false
+	}
+
+	for _, schema := range types.CategorySchemas {
+		if schema.Source == source && schema.Metric == metric && schema.Side == side {
+			return true
+		}
+	}
+
+	return false
 }
 
 func measurementNode(
@@ -193,8 +221,7 @@ func (compiler *measurementCompiler) addCategoryEdges(
 	categories := stored.([]types.Category)
 
 	for _, category := range categories {
-		if category.EvidenceRevision != graph.EvidenceRevision ||
-			category.Type == types.CategoryTypeNone {
+		if category.Type == types.CategoryTypeNone {
 			continue
 		}
 
@@ -238,10 +265,14 @@ func (compiler *measurementCompiler) addCategoryRelations(
 			return fmt.Errorf("category evidence %s has no measurement node", reference)
 		}
 
+		normalized := false
+
 		for _, node := range nodes {
 			if node.Normalized == nil {
-				return fmt.Errorf("category evidence %s has no normalized value", reference)
+				continue
 			}
+
+			normalized = true
 
 			weight := math.Abs(*node.Normalized)
 
@@ -263,6 +294,10 @@ func (compiler *measurementCompiler) addCategoryRelations(
 					reference, string(relation), string(category.Type),
 				}, " "),
 			})
+		}
+
+		if !normalized {
+			return fmt.Errorf("category evidence %s has no normalized value", reference)
 		}
 	}
 

@@ -10,13 +10,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -102,7 +100,6 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	}
 
 	measurements := make([]*types.Measurement, len(peers))
-	out := make([]*types.Measurement, 0)
 
 	for index, peer := range peers {
 		measurementIndex := index
@@ -202,16 +199,8 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 		}
 
 		compacted = append(compacted, measurement)
-
-		if measurement.Symbol == types.Focus() {
-			out = append(out, measurement)
-		}
 	}
 	measurements = compacted
-
-	if len(out) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", out))
-	}
 
 	return measurements
 }

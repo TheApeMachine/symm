@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -18,6 +19,7 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -25,6 +27,7 @@ type Measurements struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	signals []types.Signal
+	ui      chan []byte
 }
 
 func NewMeasurements(
@@ -38,6 +41,7 @@ func NewMeasurements(
 	return &Measurements{
 		ctx:    ctx,
 		cancel: cancel,
+		ui:     ui,
 		signals: []types.Signal{
 			correlation.NewSignal(ctx, api, ui),
 			cvd.NewSignal(ctx, api, ui),
@@ -85,8 +89,26 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 						)
 					}
 
+					focused := make([]*types.Measurement, 0)
+
 					for _, measurement := range signal.Measure(symbol) {
-						symbol.AppendMeasurement(signal.Type(), measurement)
+						if measurement == nil {
+							continue
+						}
+
+						thesis.Symbol(measurement.Symbol).AppendMeasurement(
+							signal.Type(), measurement,
+						)
+
+						if measurement.Symbol == types.Focus() {
+							focused = append(focused, measurement)
+						}
+					}
+
+					if len(focused) > 0 {
+						utils.Publish(measurements.ui, datura.NewMap(
+							"measurements", focused,
+						))
 					}
 
 					return nil

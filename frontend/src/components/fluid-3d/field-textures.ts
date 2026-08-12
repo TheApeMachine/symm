@@ -20,6 +20,9 @@ export type FluidFieldTextures = {
 	dispose: () => void;
 };
 
+export const fluidWaveMagnitude = (real: number, imaginary: number) =>
+	real * real + imaginary * imaginary;
+
 const texture = (
 	values: Float32Array,
 	grid: FluidGrid,
@@ -117,8 +120,7 @@ export const createFluidFieldTextures = (
 		);
 		maximumWaveMagnitude = Math.max(
 			maximumWaveMagnitude,
-			waveReal[cell] * waveReal[cell] +
-				waveImaginary[cell] * waveImaginary[cell],
+			fluidWaveMagnitude(waveReal[cell], waveImaginary[cell]),
 		);
 	}
 

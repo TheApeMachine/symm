@@ -3,6 +3,7 @@ import {
 	adaptGraph,
 	graphFramePlan,
 	graphStructureKey,
+	renderedNodeIds,
 	type MarketGraphEdge,
 	type MarketGraphFrame,
 	type MarketGraphNode,
@@ -31,6 +32,35 @@ describe("adaptGraph", () => {
 		expect(graph.getEdgeCount()).toBe(1);
 		expect(graph.nodes.isolated).toBeUndefined();
 		expect(graph.nodes.alpha?.data[0]?.value).toBe(0.2);
+	});
+
+	it("renders every displayed node with at least one incident edge", () => {
+		const current = frame();
+		current.nodes.gamma = { id: "gamma", value: 0.3 };
+		current.nodes.delta = { id: "delta", value: 0.4 };
+		current.nodes.orphan = { id: "orphan", value: 9 };
+		current.edges.push({
+			from: "gamma",
+			to: "delta",
+			relation: "supports",
+			weight: 0.8,
+		});
+
+		const graph = adaptGraph(current);
+		const incident = new Map<string, number>();
+
+		for (const edge of Object.values(graph.edges)) {
+			incident.set(edge.source, (incident.get(edge.source) ?? 0) + 1);
+			incident.set(edge.target, (incident.get(edge.target) ?? 0) + 1);
+		}
+
+		for (const nodeId of renderedNodeIds(current)) {
+			expect(incident.get(nodeId)).toBeGreaterThan(0);
+		}
+
+		expect(graph.getNodeCount()).toBe(4);
+		expect(graph.getEdgeCount()).toBe(2);
+		expect(graph.nodes.orphan).toBeUndefined();
 	});
 });
 

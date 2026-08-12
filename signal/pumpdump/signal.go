@@ -2,15 +2,15 @@ package pumpdump
 
 import (
 	"context"
+	"sync"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -25,6 +25,7 @@ type Signal struct {
 	api    *websocket.API
 	ui     chan []byte
 	algo   *equation.Ignition
+	quotes *sync.Map
 }
 
 /*
@@ -46,6 +47,7 @@ func NewSignal(
 		algo: equation.NewIgnition(
 			system.Cfg.PumpDump.Capacity,
 		),
+		quotes: &sync.Map{},
 	}
 
 	return signal
@@ -67,20 +69,12 @@ Measure produces the Measurements for the pumpdump signal.
 */
 func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
+	signal.ingestQuotes(symbol)
 
 	for trade := range symbol.MarketTrades(types.SourcePumpDump) {
-		var (
-			bid float64
-			ask float64
-		)
+		bid, ask, found := signal.quote(trade)
 
-		if trade.Side == "buy" {
-			bid = trade.Price.Float64()
-		} else if trade.Side == "sell" {
-			ask = trade.Price.Float64()
-		}
-
-		if bid <= 0 || ask <= 0 {
+		if !found {
 			continue
 		}
 
@@ -258,11 +252,46 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 		measurements = append(measurements, measurement)
 	}
 
-	if symbol.Symbol == types.Focus() {
-		utils.Publish(signal.ui, datura.NewMap("measurements", measurements))
+	return measurements
+}
+
+func (signal *Signal) ingestQuotes(symbol *types.Symbol) {
+	if signal.quotes == nil {
+		signal.quotes = &sync.Map{}
 	}
 
-	return measurements
+	for ticker := range symbol.MarketTickers(types.SourcePumpDump) {
+		if ticker.Symbol == "" || ticker.Bid == nil || ticker.Ask == nil ||
+			ticker.Timestamp.IsZero() {
+			continue
+		}
+
+		if ticker.Bid.Float64() <= 0 || ticker.Ask.Float64() <= ticker.Bid.Float64() {
+			continue
+		}
+
+		signal.quotes.Store(ticker.Symbol, ticker)
+	}
+}
+
+func (signal *Signal) quote(trade kraken.TradeData) (float64, float64, bool) {
+	if signal.quotes == nil {
+		return 0, 0, false
+	}
+
+	stored, found := signal.quotes.Load(trade.Symbol)
+
+	if !found {
+		return 0, 0, false
+	}
+
+	ticker := stored.(kraken.TickerData)
+
+	if ticker.Timestamp.After(trade.Timestamp) {
+		return 0, 0, false
+	}
+
+	return ticker.Bid.Float64(), ticker.Ask.Float64(), true
 }
 
 /*

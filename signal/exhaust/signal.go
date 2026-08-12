@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/nomagique/algorithm"
@@ -19,7 +18,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -94,7 +92,6 @@ func (signal *Signal) Type() types.SourceType {
 
 func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
-	out := make([]*types.Measurement, 0)
 
 	if signal.books == nil {
 		return measurements
@@ -159,10 +156,6 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 
 			signal.commitTrade(trade)
 			measurements = append(measurements, tradeMeasurements...)
-
-			if symbol.Symbol == types.Focus() {
-				out = append(out, tradeMeasurements...)
-			}
 		}
 
 		if bookPending {
@@ -179,10 +172,6 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 			measurements = append(measurements, bookMeasurements...)
 		}
 	})
-
-	if len(out) > 0 {
-		utils.Publish(signal.ui, datura.NewMap("measurements", out))
-	}
 
 	return measurements
 }

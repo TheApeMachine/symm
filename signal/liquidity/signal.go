@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"golang.org/x/sync/errgroup"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -106,7 +104,6 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	cohortNotionalMedian, notionalCohortReady := liquidityCohortMedian(peers, false)
 
 	measurements := make([]*types.Measurement, len(peers))
-	out := make([]*types.Measurement, 0)
 
 	group, _ := errgroup.WithContext(signal.ctx)
 
@@ -295,18 +292,8 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 		}
 
 		compacted = append(compacted, measurement)
-
-		if measurement.Symbol == types.Focus() {
-			out = append(out, measurement)
-		}
 	}
 	measurements = compacted
-
-	if len(out) > 0 {
-		utils.Publish(signal.ui, datura.NewMap(
-			"measurements", out,
-		))
-	}
 
 	return measurements
 }

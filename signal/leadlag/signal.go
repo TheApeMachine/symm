@@ -6,13 +6,11 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -105,7 +103,25 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 			continue
 		}
 
-		if !features.IsAnchor && (!features.LagOK || !features.ContempOK || features.SampleCount <= 0) {
+		if features.IsAnchor && (!features.MoveReady || features.MoveMoved || features.StallMargin <= 0) {
+			continue
+		}
+
+		if !features.IsAnchor && features.SampleCount <= 0 {
+			continue
+		}
+
+		if !features.IsAnchor && !features.MoveReady && !features.ContempOK {
+			continue
+		}
+
+		if !features.IsAnchor && features.MoveReady && features.MoveMoved &&
+			!features.LagOK && !features.ContempOK {
+			continue
+		}
+
+		if !features.IsAnchor && features.MoveReady && !features.MoveMoved &&
+			!features.ContempOK && features.StallMargin <= 0 {
 			continue
 		}
 
@@ -174,6 +190,12 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 
 		correlation := math.Abs(signedCorrelation)
 		sampleCount := float64(features.SampleCount)
+		sampleSupport := 0.0
+
+		if features.SampleCount > 0 {
+			sampleSupport = 1.0
+		}
+
 		metrics := map[string]types.MetricSample{
 			types.MetricKey(types.MetricCorrelation, types.SideNone): {
 				Raw:        correlation,
@@ -206,8 +228,9 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 				Unit:       types.UnitDimensionless,
 			},
 			types.MetricKey(types.MetricSampleSupport, types.SideNone): {
-				Raw:  sampleCount,
-				Unit: types.UnitDimensionless,
+				Raw:        sampleCount,
+				Normalized: &sampleSupport,
+				Unit:       types.UnitDimensionless,
 			},
 			types.MetricKey(types.MetricInefficient, types.SideNone): {
 				Raw:        outcome.InefficientScore,
@@ -297,12 +320,6 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 		}
 
 		measurements = append(measurements, measurement)
-	}
-
-	if symbol.Symbol == types.Focus() {
-		utils.Publish(signal.ui, datura.NewMap(
-			"measurements", measurements,
-		))
 	}
 
 	return measurements

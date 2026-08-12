@@ -8,10 +8,12 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -26,6 +28,7 @@ type Solver struct {
 	previousInput *sync.Map
 	previousMark  *sync.Map
 	previousTick  *sync.Map
+	currentReach  *sync.Map
 	alpha         float64
 	ui            chan []byte
 }
@@ -54,6 +57,7 @@ func NewSolver(
 		previousInput: &sync.Map{},
 		previousMark:  &sync.Map{},
 		previousTick:  &sync.Map{},
+		currentReach:  &sync.Map{},
 		alpha:         initialAlpha,
 		ui:            ui,
 	}
@@ -64,6 +68,10 @@ Update settles one predictive-coding manifold for every symbol carrying finite,
 normalized measurements and publishes the resulting hierarchy.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
+	if solver.alpha <= 0 {
+		return errors.New("resonance: positive learning pace required")
+	}
+
 	var updateErr error
 
 	thesis.Symbols.Range(func(key, value any) bool {
@@ -142,6 +150,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			solver.previousInput.Delete(name)
 			solver.previousMark.Delete(name)
 			solver.previousTick.Delete(name)
+			solver.currentReach.Delete(name)
 		}
 
 		input := make([]float64, len(schema))
@@ -197,6 +206,63 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		symbol.Resonance.Store(name, coder)
+		layers, surprise, energy := coder.WireSnapshot()
+		taskPrecision, taskPrecisionReady := coder.TaskPrecision()
+		taskSkill, taskSkillReady := coder.TaskSkill()
+		currentReach := 1
+
+		if storedReach, found := solver.currentReach.Load(name); found {
+			currentReach = storedReach.(int)
+		}
+
+		supportedHorizon, nextReach := coder.DynamicHorizon(
+			taskPrecision,
+			currentReach,
+			system.Cfg.Resonance.Layers,
+		)
+		solver.currentReach.Store(name, nextReach)
+		forecast, err := coder.RolloutTaskForecast(supportedHorizon)
+
+		if err != nil {
+			updateErr = err
+			return false
+		}
+
+		forwardCurve := coder.RolloutTaskPrediction(supportedHorizon)
+		forwardRetention := coder.RolloutRetention(supportedHorizon)
+
+		if len(forwardCurve) > supportedHorizon {
+			forwardCurve = forwardCurve[:supportedHorizon]
+		}
+
+		if len(forwardRetention) > supportedHorizon {
+			forwardRetention = forwardRetention[:supportedHorizon]
+		}
+
+		utils.Publish(solver.ui, datura.NewMap("resonance", datura.NewMap(
+			"source", types.SourceResonance,
+			"symbol", name,
+			"at", thesis.At,
+			"tick", thesis.Tick,
+			"taskPrecision", taskPrecision,
+			"taskPrecisionReady", taskPrecisionReady,
+			"taskSkill", taskSkill,
+			"taskSkillReady", taskSkillReady,
+			"taskScale", forecast[0].Scale,
+			"taskForecast", forwardCurve[0],
+			"layers", layers,
+			"latent", layers[len(layers)-1].State,
+			"surprise", surprise,
+			"energy", energy,
+			"forecast", datura.NewMap(
+				"posterior", forecast,
+				"forwardCurve", forwardCurve,
+				"forwardRetention", forwardRetention,
+				"supportedHorizon", supportedHorizon,
+				"currentReach", currentReach,
+				"nextReach", nextReach,
+			),
+		)))
 
 		return true
 	})

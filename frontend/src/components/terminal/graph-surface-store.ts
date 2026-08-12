@@ -70,20 +70,24 @@ export const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
 		target: "to",
 	});
 
+	const connected = new Set<string>();
+
 	for (const edge of frame.edges ?? []) {
-		if (typeof edge.from !== "string" || typeof edge.to !== "string") {
+		if (
+			typeof edge.from !== "string" ||
+			typeof edge.to !== "string" ||
+			edge.from === "" ||
+			edge.to === ""
+		) {
 			continue;
 		}
 
-		graph.addEdge(edge.from, edge.to, {
-			...edge,
-			from: edge.from,
-			to: edge.to,
-		});
+		connected.add(edge.from);
+		connected.add(edge.to);
 	}
 
 	for (const node of Object.values(frame.nodes ?? {})) {
-		if (typeof node.id !== "string" || graph.nodes[node.id] === undefined) {
+		if (typeof node.id !== "string" || !connected.has(node.id)) {
 			continue;
 		}
 
@@ -99,7 +103,23 @@ export const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
 		});
 	}
 
+	for (const edge of frame.edges ?? []) {
+		if (!connected.has(edge.from) || !connected.has(edge.to)) {
+			continue;
+		}
+
+		graph.addEdge(edge.from, edge.to, {
+			...edge,
+			from: edge.from,
+			to: edge.to,
+		});
+	}
+
 	return graph;
+};
+
+export const renderedNodeIds = (frame: MarketGraphFrame): Set<string> => {
+	return new Set(Object.keys(adaptGraph(frame).nodes));
 };
 
 export const graphStructureKey = (frame: MarketGraphFrame): string => {

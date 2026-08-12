@@ -46,13 +46,14 @@ func TestUpdate(t *testing.T) {
 		Convey("It should classify every symbol from the evidence it actually has", func() {
 			So(err, ShouldBeNil)
 			So(categoryAt(thesis, "BTC/USD"), ShouldResemble, types.Category{
-				At:         categoryAt(thesis, "BTC/USD").At,
-				Symbol:     "BTC/USD",
-				Type:       types.VerticalIgnition,
-				Confidence: categoryAt(thesis, "BTC/USD").Confidence,
-				Strength:   ignition,
-				Maturity:   0.75,
-				Supporting: []string{"pumpdump:ignition"},
+				At:               categoryAt(thesis, "BTC/USD").At,
+				EvidenceRevision: uint64(bitcoin.Tick),
+				Symbol:           "BTC/USD",
+				Type:             types.VerticalIgnition,
+				Confidence:       categoryAt(thesis, "BTC/USD").Confidence,
+				Strength:         ignition,
+				Maturity:         0.75,
+				Supporting:       []string{"pumpdump:ignition"},
 			})
 			So(categoryAt(thesis, "ETH/USD").Type, ShouldEqual, types.AggressiveDrive)
 			So(categoryAt(thesis, "ETH/USD").Strength, ShouldEqual, drive)

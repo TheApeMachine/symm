@@ -379,8 +379,7 @@ func (solver *Solver) extractCategoryNodes(
 	categories := stored.([]types.Category)
 
 	for _, cat := range categories {
-		if cat.EvidenceRevision != graph.EvidenceRevision ||
-			cat.Type == types.CategoryTypeNone {
+		if cat.Type == types.CategoryTypeNone {
 			continue
 		}
 

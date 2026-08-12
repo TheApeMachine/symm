@@ -6,14 +6,12 @@ import (
 
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/algorithm/book/quality"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -196,6 +194,10 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 		return measurements
 	}
 
+	if at.IsZero() {
+		return measurements
+	}
+
 	metrics := map[string]types.MetricSample{
 		types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
 			Raw:  input.CancelBid,
@@ -263,12 +265,6 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 	}
 
 	measurements = append(measurements, measurement)
-
-	if market.Symbol == types.Focus() {
-		utils.Publish(signal.ui, datura.NewMap(
-			"measurements", measurements,
-		))
-	}
 
 	return measurements
 }

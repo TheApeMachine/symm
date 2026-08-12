@@ -48,6 +48,10 @@ func TestMeasure(t *testing.T) {
 			So(signal.section.PriceSampleCount("CCC/USD"), ShouldEqual, 4)
 			So(len(measurements), ShouldBeGreaterThan, 0)
 			So(measurements[0].Source, ShouldEqual, types.SourceLeadLag)
+			So(measurements[0].Sample(
+				types.MetricSampleSupport,
+				types.SideNone,
+			).Normalized, ShouldNotBeNil)
 			So(measurements[0].Sample(types.MetricStrength, types.SideNone).Unit,
 				ShouldEqual, types.UnitDimensionless)
 		})

@@ -113,7 +113,7 @@ export const fluidVolumeFragmentShader = /* glsl */ `
 		vec3 waveAccumulated = vec3(0.0);
 
 		for (int step = 0; step < ${MAXIMUM_VOLUME_STEPS}; step += 1) {
-			if (float(step) >= sampleCount || accumulatedAlpha >= 1.0) {
+			if (float(step) >= sampleCount) {
 				break;
 			}
 

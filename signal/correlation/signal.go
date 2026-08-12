@@ -5,11 +5,9 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -83,7 +81,6 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 	}
 	sort.Strings(symbols)
 	measurements := make([]*types.Measurement, len(symbols))
-	out := make([]*types.Measurement, 0)
 
 	group, _ := errgroup.WithContext(signal.ctx)
 
@@ -162,18 +159,8 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 		}
 
 		compacted = append(compacted, measurement)
-
-		if measurement.Symbol == types.Focus() {
-			out = append(out, measurement)
-		}
 	}
 	measurements = compacted
-
-	if len(out) > 0 {
-		utils.Publish(signal.ui, datura.NewMap(
-			"measurements", out,
-		))
-	}
 
 	return measurements
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFluidFieldTextures } from "./field-textures";
+import { createFluidFieldTextures, fluidWaveMagnitude } from "./field-textures";
 import type { FluidFields } from "./wire";
 
 const fields = (): FluidFields => ({
@@ -39,5 +39,23 @@ describe("createFluidFieldTextures", () => {
 		expect(() => createFluidFieldTextures(invalid)).toThrow(
 			"WaveReal[3] is not finite",
 		);
+	});
+
+	it("measures the complex wave independently of gas density", () => {
+		const current = fields();
+		current.Density.fill(0);
+		current.Momentum.fill(0);
+		current.InternalEnergy.fill(0);
+		current.WaveReal[4] = 3;
+		current.WaveImaginary[4] = 4;
+
+		const result = createFluidFieldTextures(current);
+
+		expect(fluidWaveMagnitude(3, 4)).toBe(25);
+		expect(result.densityScale).toBe(0);
+		expect(result.momentumScale).toBe(0);
+		expect(result.energyScale).toBe(0);
+		expect(result.waveScale).toBe(1 / 25);
+		result.dispose();
 	});
 });

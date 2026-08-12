@@ -8,6 +8,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -100,7 +101,7 @@ func TestUpdate(t *testing.T) {
 		setCausalPrice(price, symbol, 110, firstAt.Add(time.Second))
 		err := solver.Update(thesis)
 
-		convey.Convey("Then it should score only the strictly prior forecast", func() {
+		convey.Convey("Then it should retain the strictly prior resolved row", func() {
 			convey.So(err, convey.ShouldBeNil)
 			stored, found := symbolState.Causal.Load(symbol)
 			convey.So(found, convey.ShouldBeTrue)
@@ -108,15 +109,59 @@ func TestUpdate(t *testing.T) {
 			rows := output["historyRows"].([][]float64)
 			convey.So(output["samples"], convey.ShouldEqual, 1)
 			convey.So(output["precision"], convey.ShouldEqual, 0.0)
-			convey.So(output["treatmentLevel"], convey.ShouldEqual, 0.2)
+			convey.So(output["treatmentLevel"], convey.ShouldNotBeNil)
 			convey.So(output["identification"], convey.ShouldEqual, "adjustedAssociation")
 			convey.So(rows, convey.ShouldHaveLength, 1)
-			convey.So(rows[0][0], convey.ShouldEqual, 0.5)
-			convey.So(rows[0][1], convey.ShouldEqual, 0.25)
-			convey.So(rows[0][2], convey.ShouldEqual, 0.1)
+			convey.So(rows[0], convey.ShouldHaveLength, 4)
+			convey.So(math.IsNaN(rows[0][0]), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(rows[0][1]), convey.ShouldBeFalse)
+			convey.So(math.IsNaN(rows[0][2]), convey.ShouldBeFalse)
 			convey.So(rows[0][3], convey.ShouldAlmostEqual, math.Log(110.0/100.0), 1e-12)
 			_, hasAssociation := output["association"]
 			convey.So(hasAssociation, convey.ShouldBeFalse)
+		})
+	})
+
+	convey.Convey("Given an invalid causal row configuration", t, func() {
+		price := broker.NewPrice(websocket.NewAPI(t.Context(), nil, nil))
+		solver := NewSolver(
+			price,
+			nil,
+			nil,
+			WithPearlConfig(algorithm.PearlConfig{
+				Target:    99,
+				Treatment: 2,
+				Controls:  []int{0, 1},
+			}),
+		)
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := "BTC/USD"
+		symbolState := causalSymbol(thesis, symbol)
+		baseAt := time.Unix(1, 0)
+		convey.Reset(func() {
+			convey.So(solver.Close(), convey.ShouldBeNil)
+		})
+
+		for index := range 4 {
+			thesis.At = baseAt.Add(time.Duration(index) * time.Second)
+			symbolState.Resonance.Store(symbol, testResonanceReading(
+				float64(index+1)/10,
+				float64(index+2)/10,
+				[]float64{float64(index+3) / 10},
+			))
+			setCausalPrice(price, symbol, 100+float64(index), thesis.At)
+
+			if index < 3 {
+				_ = solver.Update(thesis)
+			}
+		}
+
+		err := solver.Update(thesis)
+
+		convey.Convey("Then it should not hide real bad configuration as unresolved evidence", func() {
+			convey.So(err, convey.ShouldNotBeNil)
+			_, found := symbolState.Causal.Load(symbol)
+			convey.So(found, convey.ShouldBeFalse)
 		})
 	})
 

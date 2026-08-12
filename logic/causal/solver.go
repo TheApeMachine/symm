@@ -2,8 +2,12 @@ package causal
 
 import (
 	"context"
+	"errors"
+	"io"
 	"math"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -224,6 +228,12 @@ func (solver *Solver) measure(
 	})
 
 	if err != nil {
+		if solver.unresolvedPearlError(err) {
+			solver.pearls.Delete(symbol)
+			solver.storeUnresolved(symbolState, symbol, tickerAt, rows, prediction)
+			return nil
+		}
+
 		return errnie.Err(
 			errnie.UnprocessableContent,
 			"causal: pearl evaluation failed: "+err.Error(),
@@ -262,6 +272,47 @@ func (solver *Solver) measure(
 
 	symbolState.Causal.Store(symbol, causalOutput)
 	return nil
+}
+
+func (solver *Solver) unresolvedPearlError(err error) bool {
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+
+	message := err.Error()
+
+	return strings.Contains(message, "causal: linear structural fit failed") ||
+		strings.Contains(message, "causal: target residualization failed") ||
+		strings.Contains(message, "causal: treatment residualization failed") ||
+		strings.Contains(message, "causal: backdoor denominator is non-positive")
+}
+
+func (solver *Solver) storeUnresolved(
+	symbolState *types.Symbol,
+	symbol string,
+	at time.Time,
+	rows [][]float64,
+	prediction float64,
+) {
+	if len(rows) == 0 {
+		return
+	}
+
+	precision, err := solver.estimatePrecision(rows)
+
+	if err != nil {
+		return
+	}
+
+	symbolState.Causal.Store(symbol, map[string]any{
+		"at":             at,
+		"evidenceRevision": uint64(symbolState.Tick),
+		"historyRows":    rows,
+		"identification": "unresolved",
+		"precision":      precision,
+		"samples":        len(rows),
+		"treatmentLevel": prediction,
+	})
 }
 
 /*
