@@ -16,23 +16,20 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func testResonanceReading(
+func testResonanceManifold(
 	energy, surprise float64,
 	curve []float64,
 ) *learning.ResonanceManifold {
-	coder := learning.NewResonanceManifold([]int{3, 6, 3}, 1, 0.05)
+	coder := learning.NewResonanceManifold([]int{1, 2, 1}, 1, 0.1)
+	prediction := 0.0
 
-	for _, prediction := range curve {
-		_, err := coder.SettleFromBatchOptions(
-			[]float64{energy, surprise, prediction},
-			[]float64{prediction},
-			true,
-			true,
-		)
+	if len(curve) > 0 {
+		prediction = curve[0]
+	}
 
-		if err != nil {
-			panic(err)
-		}
+	for index := range 8 {
+		input := []float64{energy + surprise + float64(index+1)/10}
+		_, _ = coder.SettleFromBatchOptions(input, []float64{prediction}, true, true)
 	}
 
 	return coder
@@ -65,7 +62,7 @@ func TestUpdate(t *testing.T) {
 		solver := NewSolver(price, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbolState := causalSymbol(thesis, "BTC/USD")
-		symbolState.Resonance.Store("BTC/USD", learning.NewResonanceManifold([]int{1, 2, 1}, 1, 0.05))
+		symbolState.Resonance.Store("BTC/USD", learning.NewResonanceManifold([]int{1, 2, 1}, 1, 0.1))
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
@@ -86,7 +83,7 @@ func TestUpdate(t *testing.T) {
 		symbol := "BTC/USD"
 		firstAt := time.Unix(1, 0)
 		symbolState := causalSymbol(thesis, symbol)
-		symbolState.Resonance.Store(symbol, testResonanceReading(0.5, 0.25, []float64{0.1}))
+		symbolState.Resonance.Store(symbol, testResonanceManifold(0.5, 0.25, []float64{0.1}))
 		setCausalPrice(price, symbol, 100, firstAt)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
@@ -97,7 +94,7 @@ func TestUpdate(t *testing.T) {
 		convey.So(found, convey.ShouldBeFalse)
 
 		thesis.At = thesis.At.Add(time.Second)
-		symbolState.Resonance.Store(symbol, testResonanceReading(0.75, 0.5, []float64{0.2}))
+		symbolState.Resonance.Store(symbol, testResonanceManifold(0.75, 0.5, []float64{0.2}))
 		setCausalPrice(price, symbol, 110, firstAt.Add(time.Second))
 		err := solver.Update(thesis)
 
@@ -144,7 +141,7 @@ func TestUpdate(t *testing.T) {
 
 		for index := range 4 {
 			thesis.At = baseAt.Add(time.Duration(index) * time.Second)
-			symbolState.Resonance.Store(symbol, testResonanceReading(
+			symbolState.Resonance.Store(symbol, testResonanceManifold(
 				float64(index+1)/10,
 				float64(index+2)/10,
 				[]float64{float64(index+3) / 10},
@@ -192,7 +189,7 @@ func TestUpdate(t *testing.T) {
 				surprise := float64((index*2)%5) / 1_000
 				prediction := float64(index+1) / 1_000
 				thesis.At = baseAt.Add(time.Duration(index) * time.Second)
-				symbolState.Resonance.Store(symbol, testResonanceReading(energy, surprise, []float64{prediction}))
+				symbolState.Resonance.Store(symbol, testResonanceManifold(energy, surprise, []float64{prediction}))
 				setCausalPrice(price, symbol, midpoint, thesis.At)
 
 				err := solver.Update(thesis)
@@ -232,7 +229,7 @@ func BenchmarkUpdate(b *testing.B) {
 		symbol := fmt.Sprintf("SYMBOL-%03d/USD", index)
 		symbols[index] = symbol
 		storedSymbol, _ := thesis.Symbols.Load(symbol)
-		storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceReading(
+		storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceManifold(
 			float64(index),
 			float64(index)/float64(index+1),
 			[]float64{float64(index) / float64(index+1)},
@@ -254,7 +251,7 @@ func BenchmarkUpdate(b *testing.B) {
 
 		for index, symbol := range symbols {
 			storedSymbol, _ := thesis.Symbols.Load(symbol)
-			storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceReading(
+			storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceManifold(
 				float64(index),
 				float64(index)/float64(index+1),
 				[]float64{float64(index) / float64(index+1)},

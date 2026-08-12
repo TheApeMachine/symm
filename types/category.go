@@ -4,7 +4,6 @@ import "time"
 
 type Category struct {
 	At               time.Time    `json:"at"`
-	EvidenceRevision uint64       `json:"evidenceRevision"`
 	Symbol           string       `json:"symbol,omitempty"`
 	Type             CategoryType `json:"type"`
 	Confidence       float64      `json:"confidence"`

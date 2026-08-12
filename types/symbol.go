@@ -3,26 +3,13 @@ package types
 import (
 	"fmt"
 	"iter"
+	"slices"
 	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"golang.design/x/lockfree/lf"
 )
-
-var signals = []SourceType{
-	SourceCorrelation,
-	SourceCVD,
-	SourceDepthFlow,
-	SourceExhaustion,
-	SourceHawkes,
-	SourceLeadLag,
-	SourceLiquidity,
-	SourcePumpDump,
-	SourceSentiment,
-	SourceToxicity,
-	SourceResonance,
-}
 
 /*
 Symbol is an alternative grouping of measurements, and is used in logic that
@@ -33,19 +20,20 @@ carry their own readiness state, which is important for the resonance solver,
 which needs a stable measurement set to train on.
 */
 type Symbol struct {
-	Symbol       string    `json:"symbol,omitempty"`
-	Status       Status    `json:"status,omitempty"`
-	Tick         int64     `json:"tick,omitempty"`
-	Measurements *sync.Map `json:"-"`
-	tickers      *sync.Map `json:"-"`
-	trades       *sync.Map `json:"-"`
-	Decisions    *sync.Map `json:"decisions,omitempty"`
-	Graphs       *sync.Map `json:"graphs,omitempty"`
-	Categories   *sync.Map `json:"categories,omitempty"`
-	Phase        *sync.Map `json:"-"`
-	Cognition    *sync.Map `json:"-"`
-	Resonance    *sync.Map `json:"-"`
-	Causal       *sync.Map `json:"-"`
+	Symbol         string    `json:"symbol,omitempty"`
+	Status         Status    `json:"status,omitempty"`
+	Tick           int64     `json:"tick,omitempty"`
+	Measurements   *sync.Map `json:"-"`
+	tickers        *sync.Map `json:"-"`
+	trades         *sync.Map `json:"-"`
+	Decisions      *sync.Map `json:"decisions,omitempty"`
+	Graphs         *sync.Map `json:"graphs,omitempty"`
+	Categories     *sync.Map `json:"categories,omitempty"`
+	Phase          *sync.Map `json:"-"`
+	Cognition      *sync.Map `json:"-"`
+	Resonance      *sync.Map `json:"-"`
+	Causal         *sync.Map `json:"-"`
+	resonanceReady []bool    `json:"-"`
 }
 
 /*
@@ -65,12 +53,18 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
 		Causal:       &sync.Map{},
+		resonanceReady: []bool{
+			false, false, false, false, false,
+			false, false, false, false, false,
+		},
 	}
 
-	for _, source := range signals {
+	for _, source := range TickerReceivers {
 		symbol.tickers.Store(source, lf.NewQueue[kraken.TickerData]())
+	}
+
+	for _, source := range TradeReceivers {
 		symbol.trades.Store(source, lf.NewQueue[kraken.TradeData]())
-		symbol.Measurements.Store(source, lf.NewQueue[*Measurement]())
 	}
 
 	return symbol
@@ -79,7 +73,7 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
 	symbol.Tick++
 
-	for _, source := range signals {
+	for _, source := range TickerReceivers {
 		value, ok := symbol.tickers.Load(source)
 
 		if !ok {
@@ -99,13 +93,13 @@ func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
 func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
 	symbol.Tick++
 
-	for _, source := range signals {
+	for _, source := range TradeReceivers {
 		value, ok := symbol.trades.Load(source)
 
 		if !ok {
 			errnie.Error(errnie.Err(
 				errnie.NotFound,
-				fmt.Sprintf("ticker cursor not found for source %s", source),
+				fmt.Sprintf("trade cursor not found for source %s", source),
 				nil,
 			))
 
@@ -116,16 +110,39 @@ func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
 	}
 }
 
-func (symbol *Symbol) AppendMeasurement(source SourceType, measurement *Measurement) {
+func (symbol *Symbol) AppendMeasurement(source SourceType, measurement *Measurement) bool {
 	categoryMeasurements, _ := symbol.Measurements.LoadOrStore("category", lf.NewQueue[*Measurement]())
 	graphMeasurements, _ := symbol.Measurements.LoadOrStore("graph", lf.NewQueue[*Measurement]())
 	manifoldMeasurements, _ := symbol.Measurements.LoadOrStore("manifold", lf.NewQueue[*Measurement]())
-	resonanceMeasurements, _ := symbol.Measurements.LoadOrStore("resonance", lf.NewQueue[*Measurement]())
+	resonanceMeasurements, _ := symbol.Measurements.LoadOrStore("resonance", lf.NewQueue[*ResonanceMeasurement]())
 
 	categoryMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 	graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 	manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
-	resonanceMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+
+	if resMeasurement := MeasurementToResonance(symbol.Symbol, measurement); resMeasurement != nil {
+		resonanceMeasurements.(*lf.Queue[*ResonanceMeasurement]).Enqueue(resMeasurement)
+		symbol.resonanceReady[slices.Index(SignalSources, source)] = true
+	}
+
+	return true
+}
+
+func (symbol *Symbol) ResonanceReady() bool {
+	return slices.Equal(
+		symbol.resonanceReady,
+		[]bool{
+			true, true, true, true, true,
+			true, true, true, true, true,
+		},
+	)
+}
+
+func (symbol *Symbol) ResetResonanceReady() {
+	symbol.resonanceReady = []bool{
+		false, false, false, false, false,
+		false, false, false, false, false,
+	}
 }
 
 func (symbol *Symbol) MarketTickers(source SourceType) iter.Seq[kraken.TickerData] {
@@ -193,6 +210,30 @@ func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*Measurement] {
 
 		for ok {
 			data, ok = measurements.(*lf.Queue[*Measurement]).Dequeue()
+
+			if ok {
+				if !yield(data) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (symbol *Symbol) ResonanceMeasurements() iter.Seq[*ResonanceMeasurement] {
+	measurements, found := symbol.Measurements.Load("resonance")
+
+	if !found {
+		return func(yield func(*ResonanceMeasurement) bool) {}
+	}
+
+	return func(yield func(*ResonanceMeasurement) bool) {
+		var (
+			data *ResonanceMeasurement
+			ok   bool = true
+		)
+		for ok {
+			data, ok = measurements.(*lf.Queue[*ResonanceMeasurement]).Dequeue()
 
 			if ok {
 				if !yield(data) {

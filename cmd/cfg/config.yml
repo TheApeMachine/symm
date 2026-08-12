@@ -1,6 +1,5 @@
 system:
   data_path: ~/.symm/data
-  checkpoint_interval: 1s
   audit:
     # Rename runtime-audit.jsonl aside on boot so diagnostics start clean.
     rotate_on_boot: true
@@ -28,7 +27,8 @@ system:
 
 resonance:
   learning_rate: 0.01
-  layers: 10
+  layers: 3
+  max_horizon: 10
 
 regulator:
   # Number of model-surprise observations retained for the dashboard only.
@@ -43,7 +43,6 @@ cognitive:
   # skips the WAL so TrainSensorySequence and episodic commits do not hit disk.
   in_memory: true
   persist_dir: ~/.symm/cognitive
-  tick_budget: 10ms
   # Rotate the cognitive store aside on boot so a bloated WAL cannot poison the
   # next run. No-op when in_memory is set.
   reset_on_boot: true

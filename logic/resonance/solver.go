@@ -10,13 +10,17 @@ import (
 	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
+
+const defaultHorizonConfidence = 0.85
 
 /*
 Solver feeds adaptively standardized market measurements into one resonance
@@ -85,7 +89,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	maxHorizon := system.Cfg.Resonance.Layers
 
-	var updateErr error
+	group, _ := errgroup.WithContext(solver.ctx)
 
 	thesis.Symbols.Range(func(key, value any) bool {
 		name := key.(string)
@@ -95,261 +99,284 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		readings := make(map[string]float64)
-		mark := 0.0
-		tick := int64(0)
+		if !symbol.ResonanceReady() {
+			return true
+		}
 
-		for measurement := range symbol.MarketMeasurements("resonance") {
-			if measurement.Symbol != name {
-				continue
-			}
+		group.Go(func() error {
+			readings := make(map[string]float64)
+			mark := 0.0
+			tick := int64(0)
 
-			if measurement.Tick > tick || measurement.Tick == tick && mark == 0 {
-				if bid, hasBid := measurement.Metadata["bid"]; hasBid {
-					if ask, hasAsk := measurement.Metadata["ask"]; hasAsk && bid > 0 && ask > 0 {
-						mark = (bid + ask) / 2
-						tick = measurement.Tick
-					}
-				}
-
-				if mark == 0 {
-					if value, found := measurement.Metadata["last_price"]; found && value > 0 {
-						mark = value
-						tick = measurement.Tick
-					}
-				}
-
-				if mark == 0 {
-					if value, found := measurement.Metadata["trade_price"]; found && value > 0 {
-						mark = value
-						tick = measurement.Tick
-					}
-				}
-			}
-
-			for key, sample := range measurement.Metrics {
-				if sample.Normalized == nil {
+			for rm := range symbol.ResonanceMeasurements() {
+				if rm == nil {
 					continue
 				}
 
-				identity := string(measurement.Source) + ":" + name + ":" + key
-				readings[identity] = *sample.Normalized
-			}
-		}
+				if rm.Tick > tick || (rm.Tick == tick && mark == 0) {
+					if rm.Mark > 0 {
+						mark = rm.Mark
+						tick = rm.Tick
+					}
+				}
 
-		if len(readings) == 0 {
-			return true
-		}
-
-		var schema []string
-		if rawSchema, loaded := solver.schemas.Load(name); loaded {
-			schema = rawSchema.([]string)
-		}
-
-		schemaChanged := false
-		for identity := range readings {
-			if slices.Contains(schema, identity) {
-				continue
+				for identity, value := range rm.Readings {
+					readings[identity] = value
+				}
 			}
 
-			schema = append(schema, identity)
-			schemaChanged = true
-		}
-
-		if schemaChanged {
-			sort.Strings(schema)
-			solver.schemas.Store(name, schema)
-			solver.coders.Delete(name)
-			solver.histories.Delete(name)
-			solver.currentReach.Delete(name)
-		}
-
-		for _, identity := range schema {
-			if _, found := readings[identity]; !found {
-				return true
-			}
-		}
-
-		input := make([]float64, len(schema))
-		informative := false
-
-		for index, identity := range schema {
-			rawStandardizer, found := solver.standardizers.Load(identity)
-
-			if !found {
-				rawStandardizer = adaptive.NewStandardizer()
-				solver.standardizers.Store(identity, rawStandardizer)
+			if len(readings) == 0 {
+				return nil
 			}
 
-			standardized, err := rawStandardizer.(*adaptive.Standardizer).Measure(
-				readings[identity],
-			)
+			var schema []string
 
-			if err != nil {
-				updateErr = fmt.Errorf("resonance: standardize %s: %w", identity, err)
-				return false
+			if rawSchema, loaded := solver.schemas.Load(name); loaded {
+				schema = rawSchema.([]string)
 			}
 
-			input[index] = standardized.Value
-			informative = informative || standardized.Ready
-		}
+			schemaChanged := false
 
-		if !informative {
-			return true
-		}
+			for identity := range readings {
+				if slices.Contains(schema, identity) {
+					continue
+				}
 
-		var coder *learning.ResonanceManifold
-		rawCoder, loaded := solver.coders.Load(name)
+				schema = append(schema, identity)
+				schemaChanged = true
+			}
 
-		if loaded {
-			coder = rawCoder.(*learning.ResonanceManifold)
-		}
+			if schemaChanged {
+				sort.Strings(schema)
+				solver.schemas.Store(name, schema)
+				solver.coders.Delete(name)
+				solver.histories.Delete(name)
+				solver.currentReach.Delete(name)
+			}
 
-		if coder == nil {
-			coder = learning.NewResonanceManifold(
-				[]int{len(input), len(input) * 2, len(input)}, maxHorizon, solver.alpha,
-			)
+			for _, identity := range schema {
+				if _, found := readings[identity]; !found {
+					return errnie.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf("resonance: missing reading for %s", identity),
+						nil,
+					))
+				}
+			}
+
+			input := make([]float64, len(schema))
+			informative := false
+
+			for index, identity := range schema {
+				rawStandardizer, found := solver.standardizers.Load(identity)
+
+				if !found {
+					rawStandardizer = adaptive.NewStandardizer()
+					solver.standardizers.Store(identity, rawStandardizer)
+				}
+
+				standardized, err := rawStandardizer.(*adaptive.Standardizer).Measure(
+					readings[identity],
+				)
+
+				if err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf("resonance: standardize %s: %s", identity, err.Error()),
+						err,
+					))
+				}
+
+				input[index] = standardized.Value
+				informative = informative || standardized.Ready
+			}
+
+			if !informative {
+				return nil
+			}
+
+			var coder *learning.ResonanceManifold
+			rawCoder, loaded := solver.coders.Load(name)
+
+			if loaded {
+				coder = rawCoder.(*learning.ResonanceManifold)
+			}
 
 			if coder == nil {
-				updateErr = errors.New("resonance: failed to construct manifold")
-				return false
-			}
+				coder = learning.NewResonanceManifold(
+					[]int{len(input), len(input) * 2, len(input)}, maxHorizon, solver.alpha,
+				)
 
-			solver.coders.Store(name, coder)
-		}
-
-		historyValue, _ := solver.histories.LoadOrStore(name, &sampleHistory{
-			inputs: make(map[int64][]float64),
-			marks:  make(map[int64]float64),
-		})
-		history := historyValue.(*sampleHistory)
-
-		if mark > 0 && tick > 0 {
-			history.marks[tick] = mark
-			dueTicks := make([]int64, 0)
-
-			for previousTick := range history.inputs {
-				if previousTick+int64(maxHorizon) <= tick {
-					dueTicks = append(dueTicks, previousTick)
+				if coder == nil {
+					return errnie.Error(errnie.Err(
+						errnie.Internal,
+						"resonance: failed to create manifold",
+						nil,
+					))
 				}
+
+				solver.coders.Store(name, coder)
 			}
 
-			slices.Sort(dueTicks)
+			historyValue, _ := solver.histories.LoadOrStore(name, &sampleHistory{
+				inputs: make(map[int64][]float64),
+				marks:  make(map[int64]float64),
+			})
 
-			for _, previousTick := range dueTicks {
-				previousMark := history.marks[previousTick]
-				target := make([]float64, maxHorizon)
-				complete := previousMark > 0
+			history := historyValue.(*sampleHistory)
 
-				for horizon := 1; horizon <= maxHorizon; horizon++ {
-					futureMark, found := history.marks[previousTick+int64(horizon)]
+			// 1. Process Matured Historical Targets (Delayed Training)
+			if mark > 0 && tick > 0 {
+				history.marks[tick] = mark
+				dueTicks := make([]int64, 0)
 
-					if !found || futureMark <= 0 {
-						complete = false
-						break
+				for previousTick := range history.inputs {
+					if previousTick+int64(maxHorizon) <= tick {
+						dueTicks = append(dueTicks, previousTick)
+					}
+				}
+
+				slices.Sort(dueTicks)
+
+				for _, previousTick := range dueTicks {
+					previousMark := history.marks[previousTick]
+					target := make([]float64, maxHorizon)
+					complete := previousMark > 0
+
+					for horizon := 1; horizon <= maxHorizon; horizon++ {
+						futureMark, found := history.marks[previousTick+int64(horizon)]
+
+						if !found || futureMark <= 0 {
+							complete = false
+							break
+						}
+
+						target[horizon-1] = math.Log(futureMark / previousMark)
 					}
 
-					target[horizon-1] = math.Log(futureMark / previousMark)
+					previousInput := history.inputs[previousTick]
+					delete(history.inputs, previousTick)
+
+					if !complete {
+						continue
+					}
+
+					if _, err := coder.SettleFromBatchOptions(
+						previousInput, target, true, false,
+					); err != nil {
+						return errnie.Error(errnie.Err(
+							errnie.Internal,
+							fmt.Sprintf("resonance: settle failed [%s]", err.Error()),
+							err,
+						))
+					}
 				}
 
-				previousInput := history.inputs[previousTick]
-				delete(history.inputs, previousTick)
-
-				if !complete {
-					continue
-				}
-
-				if _, err := coder.SettleFromBatchOptions(
-					previousInput, target, true, false,
-				); err != nil {
-					updateErr = err
-					return false
+				for previousTick := range history.marks {
+					if previousTick+int64(maxHorizon) < tick {
+						delete(history.marks, previousTick)
+					}
 				}
 			}
 
-			for previousTick := range history.marks {
-				if previousTick+int64(maxHorizon) < tick {
-					delete(history.marks, previousTick)
-				}
+			// 2. Perform Generative Settle on CURRENT Tick Input for Inference
+			if _, err := coder.SettleFromBatchOptions(input, nil, false, true); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf("resonance: settle failed [%s]", err.Error()),
+					err,
+				))
 			}
-		}
 
-		if _, err := coder.SettleFromBatchOptions(input, nil, false, true); err != nil {
-			updateErr = err
-			return false
-		}
+			if mark > 0 && tick > 0 {
+				history.inputs[tick] = slices.Clone(input)
+			}
 
-		if mark > 0 && tick > 0 {
-			history.inputs[tick] = slices.Clone(input)
-		}
+			symbol.Resonance.Store(name, coder)
 
-		symbol.Resonance.Store(name, coder)
-		layers, surprise, energy := coder.WireSnapshot()
-		taskPrecision, taskPrecisionReady := coder.TaskPrecision()
-		taskSkill, taskSkillReady := coder.TaskSkill()
-		currentReach := 1
+			// 3. Extract Diagnostics & Rollout Telemetry
+			layers, surprise, energy := coder.WireSnapshot()
+			taskPrecision, taskPrecisionReady := coder.TaskPrecision()
+			taskSkill, taskSkillReady := coder.TaskSkill()
+			currentReach := 1
 
-		if storedReach, found := solver.currentReach.Load(name); found {
-			currentReach = storedReach.(int)
-		}
+			if storedReach, found := solver.currentReach.Load(name); found {
+				currentReach = storedReach.(int)
+			}
 
-		supportedHorizon, nextReach := coder.DynamicHorizon(
-			taskPrecision,
-			currentReach,
-			maxHorizon,
-		)
-		solver.currentReach.Store(name, nextReach)
-		forecast, err := coder.RolloutTaskForecast(1)
+			supportedHorizon, nextReach := coder.DynamicHorizon(
+				defaultHorizonConfidence,
+				currentReach,
+				maxHorizon,
+			)
+			solver.currentReach.Store(name, nextReach)
 
-		if err != nil {
-			updateErr = err
-			return false
-		}
+			forecast, err := coder.RolloutTaskForecast(supportedHorizon)
 
-		if len(forecast) > supportedHorizon {
-			forecast = forecast[:supportedHorizon]
-		}
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf("resonance: forecast rollout failed [%s]", err.Error()),
+					err,
+				))
+			}
 
-		forwardCurve := coder.TaskPrediction()
-		forwardRetention := coder.RolloutRetention(supportedHorizon)
+			forwardCurve := coder.RolloutTaskPrediction(supportedHorizon)
+			forwardRetention := coder.RolloutRetention(supportedHorizon)
 
-		if len(forwardCurve) > supportedHorizon {
-			forwardCurve = forwardCurve[:supportedHorizon]
-		}
+			// Safe guards against empty predictions during cold start
+			var taskScale float64
 
-		if len(forwardRetention) > supportedHorizon {
-			forwardRetention = forwardRetention[:supportedHorizon]
-		}
+			if len(forecast) > 0 {
+				taskScale = forecast[0].Scale
+			}
 
-		utils.Publish(solver.ui, datura.NewMap("resonance", datura.NewMap(
-			"source", types.SourceResonance,
-			"symbol", name,
-			"at", thesis.At,
-			"tick", thesis.Tick,
-			"taskPrecision", taskPrecision,
-			"taskPrecisionReady", taskPrecisionReady,
-			"taskSkill", taskSkill,
-			"taskSkillReady", taskSkillReady,
-			"taskScale", forecast[0].Scale,
-			"taskForecast", forwardCurve[0],
-			"layers", layers,
-			"latent", layers[len(layers)-1].State,
-			"surprise", surprise,
-			"energy", energy,
-			"forecast", datura.NewMap(
-				"posterior", forecast,
-				"forwardCurve", forwardCurve,
-				"forwardRetention", forwardRetention,
-				"supportedHorizon", supportedHorizon,
-				"currentReach", currentReach,
-				"nextReach", nextReach,
-			),
-		)))
+			var taskForecast float64
+
+			if len(forwardCurve) > 0 {
+				taskForecast = forwardCurve[0]
+			}
+
+			utils.Publish(solver.ui, datura.NewMap("resonance", datura.NewMap(
+				"source", types.SourceResonance,
+				"symbol", name,
+				"at", thesis.At,
+				"tick", thesis.Tick,
+				"taskPrecision", taskPrecision,
+				"taskPrecisionReady", taskPrecisionReady,
+				"taskSkill", taskSkill,
+				"taskSkillReady", taskSkillReady,
+				"taskScale", taskScale,
+				"taskForecast", taskForecast,
+				"layers", layers,
+				"latent", layers[len(layers)-1].State,
+				"surprise", surprise,
+				"energy", energy,
+				"forecast", datura.NewMap(
+					"posterior", forecast,
+					"forwardCurve", forwardCurve,
+					"forwardRetention", forwardRetention,
+					"supportedHorizon", supportedHorizon,
+					"currentReach", currentReach,
+					"nextReach", nextReach,
+				),
+			)))
+
+			return nil
+		})
 
 		return true
 	})
 
-	return updateErr
+	if err := group.Wait(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("resonance: solver update failed [%s]", err.Error()),
+			err,
+		))
+	}
+
+	return nil
 }
 
 /*

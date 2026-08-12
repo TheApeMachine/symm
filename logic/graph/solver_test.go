@@ -100,14 +100,12 @@ func TestUpdate(t *testing.T) {
 				},
 			},
 		})
-		revision := uint64(bitcoin.Tick)
 		bitcoin.Categories.Store("BTC/USD", []types.Category{{
-			Symbol:           "BTC/USD",
-			Type:             types.CategoryAggressiveDrive,
-			EvidenceRevision: revision,
-			Confidence:       0.6,
-			Strength:         drive,
-			Supporting:       []string{"cvd:drive"},
+			Symbol:     "BTC/USD",
+			Type:       types.CategoryAggressiveDrive,
+			Confidence: 0.6,
+			Strength:   drive,
+			Supporting: []string{"cvd:drive"},
 		}})
 		thesis.Symbols.Store("BTC/USD", bitcoin)
 		thesis.Symbols.Store("ETH/USD", types.NewSymbol("ETH/USD", nil))
@@ -608,7 +606,14 @@ func BenchmarkUpdate(b *testing.B) {
 				Supporting: []string{"sentiment:surge_score"},
 			},
 		})
-		symbolState.Resonance.Store(symbol, forecast)
+		coder := learning.NewResonanceManifold([]int{1, 2, 1}, 1, 0.1)
+
+		for sample := range 8 {
+			input := []float64{float64(sample+1) / 10}
+			_, _ = coder.SettleFromBatchOptions(input, []float64{forecast.Value}, true, true)
+		}
+
+		symbolState.Resonance.Store(symbol, coder)
 		symbolState.Causal.Store(symbol, map[string]any{
 			"association":       0.1,
 			"associationScore":  0.1,

@@ -29,15 +29,37 @@ const (
 	SourceRegulator   SourceType = "regulator"
 )
 
-var TickerReceivers = []SourceType{
+/*
+SignalSources is the complete configured measurement source set. A downstream
+cut is complete only after every source in this set has contributed.
+*/
+var SignalSources = []SourceType{
 	SourceCorrelation,
 	SourceCVD,
+	SourceDepthFlow,
+	SourceExhaustion,
+	SourceHawkes,
 	SourceLeadLag,
 	SourceLiquidity,
+	SourcePumpDump,
 	SourceSentiment,
 	SourceToxicity,
 }
 
+/*
+TickerReceivers names the signals that drain per-symbol ticker queues.
+*/
+var TickerReceivers = []SourceType{
+	SourceCorrelation,
+	SourceLeadLag,
+	SourceLiquidity,
+	SourcePumpDump,
+	SourceSentiment,
+}
+
+/*
+TradeReceivers names the signals that drain per-symbol trade queues.
+*/
 var TradeReceivers = []SourceType{
 	SourceCVD,
 	SourceDepthFlow,
@@ -48,14 +70,11 @@ var TradeReceivers = []SourceType{
 }
 
 /*
-BookReceivers names the measurement stages whose inputs change when the
-authoritative Level 3 manager applies an order update. Analyzer is included so
-an in-flight cut waiting on that book can resume through its existing thesis
-semaphore.
+BookReceivers names the signals whose inputs change when the authoritative
+Level 3 manager applies an order update.
 */
 var BookReceivers = []SourceType{
 	SourceDepthFlow,
 	SourceExhaustion,
 	SourceToxicity,
-	SourceAnalyzer,
 }

@@ -3,6 +3,8 @@ package trader
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sync/atomic"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -58,13 +60,15 @@ func NewMeasurements(
 }
 
 /*
-Update takes the raw market data and runs it through all the signals to turn
-them into measurements. This is a "conditioning" stage that prepares the data
-for the logic stage, which can be seen as an "enrichment" process.
+Update runs only the signals receiving the current market-data kind. This is a
+"conditioning" stage that prepares raw data for the logic stage.
 */
-func (measurements *Measurements) Update(thesis *types.Thesis) error {
+func (measurements *Measurements) Update(
+	thesis *types.Thesis,
+	receivers []types.SourceType,
+) (bool, error) {
 	if measurements == nil || thesis == nil {
-		return errnie.Err(
+		return false, errnie.Err(
 			errnie.Validation,
 			"measurements: conditioner and thesis required",
 			nil,
@@ -72,8 +76,13 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 	}
 
 	group, _ := errgroup.WithContext(measurements.ctx)
+	resonanceReady := &atomic.Bool{}
 
 	for _, signal := range measurements.signals {
+		if !slices.Contains(receivers, signal.Type()) {
+			continue
+		}
+
 		group.Go(func() error {
 			symbolGroup, _ := errgroup.WithContext(measurements.ctx)
 
@@ -96,9 +105,11 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 							continue
 						}
 
-						thesis.Symbol(measurement.Symbol).AppendMeasurement(
+						if thesis.Symbol(measurement.Symbol).AppendMeasurement(
 							signal.Type(), measurement,
-						)
+						) {
+							resonanceReady.Store(true)
+						}
 
 						if measurement.Symbol == types.Focus() {
 							focused = append(focused, measurement)
@@ -133,7 +144,7 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 	}
 
 	if err := group.Wait(); err != nil {
-		return errnie.Error(errnie.Err(
+		return false, errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf(
 				"measurements: signal failure [%s]",
@@ -143,7 +154,7 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 		))
 	}
 
-	return nil
+	return resonanceReady.Load(), nil
 }
 
 /*

@@ -166,7 +166,16 @@ func (solver *Solver) measure(
 	}
 
 	forecast, err := coder.RolloutTaskForecast(1)
-	forecastReady := err == nil && len(forecast) > 0 && forecast[0].Ready
+
+	if err != nil {
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"causal: resonance forecast failed: "+err.Error(),
+			err,
+		)
+	}
+
+	forecastReady := len(forecast) > 0 && forecast[0].Ready
 	prediction := 0.0
 
 	if forecastReady {
@@ -306,7 +315,6 @@ func (solver *Solver) storeUnresolved(
 
 	symbolState.Causal.Store(symbol, map[string]any{
 		"at":             at,
-		"evidenceRevision": uint64(symbolState.Tick),
 		"historyRows":    rows,
 		"identification": "unresolved",
 		"precision":      precision,

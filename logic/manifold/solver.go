@@ -147,6 +147,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
+		if symbol.Status == types.BUSY {
+			measurements[symbolName] = nil
+		}
+
 		for measurement := range symbol.MarketMeasurements("manifold") {
 			if measurement != nil && measurement.Source == types.SourceHawkes {
 				measurements[symbolName] = measurement

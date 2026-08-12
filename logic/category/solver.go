@@ -104,7 +104,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		if measured {
 			for index := range categories {
 				categories[index].At = thesis.At
-				categories[index].EvidenceRevision = uint64(symbol.Tick)
 			}
 
 			symbol.Categories.Store(symbolName, categories)

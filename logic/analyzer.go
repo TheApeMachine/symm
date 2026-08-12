@@ -40,6 +40,7 @@ type Analyzer struct {
 	tree         *dmt.Tree
 	cognition    *cognition.Solver
 	graph        *graph.Solver
+	resonance    Solver
 	solvers      []Solver
 	solverGroups [][]Solver
 	ui           chan []byte
@@ -76,10 +77,11 @@ func NewAnalyzer(
 	graphSolver := graph.NewSolver(ui, recorder)
 
 	analyzer := &Analyzer{
-		ctx:    ctx,
-		cancel: cancel,
-		status: types.READY,
-		tree:   tree,
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    types.READY,
+		tree:      tree,
+		resonance: resonanceSolver,
 		solvers: []Solver{
 			categorySolver,
 			resonanceSolver,
@@ -102,28 +104,20 @@ func NewAnalyzer(
 	return analyzer
 }
 
-func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
-	ctx := analyzer.ctx
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	if len(analyzer.solverGroups) == 0 && len(analyzer.solvers) > 0 {
-		analyzer.solverGroups = [][]Solver{analyzer.solvers}
-	}
-
+func (analyzer *Analyzer) Process(
+	thesis *types.Thesis,
+	resonanceReady bool,
+) error {
 	for _, solvers := range analyzer.solverGroups {
-		group, _ := errgroup.WithContext(ctx)
+		group, _ := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
-			if solver == nil {
+			if solver == analyzer.resonance && !resonanceReady {
 				continue
 			}
 
-			currentSolver := solver
 			group.Go(func() error {
-				if err := currentSolver.Update(thesis); err != nil {
+				if err := solver.Update(thesis); err != nil {
 					return errnie.Err(
 						errnie.Internal,
 						"analyzer: solver update failed",

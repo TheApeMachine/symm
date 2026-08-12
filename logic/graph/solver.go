@@ -93,12 +93,11 @@ type Edge struct {
 Graph is the full relational knowledge graph constructed for a Thesis cut.
 */
 type Graph struct {
-	At               time.Time           `json:"at"`
-	EvidenceRevision uint64              `json:"evidenceRevision"`
-	Forecast         *learning.RLSOutput `json:"-"`
-	Nodes            map[string]*Node    `json:"nodes"`
-	Edges            []*Edge             `json:"edges"`
-	Adjacency        map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
+	At        time.Time           `json:"at"`
+	Forecast  *learning.RLSOutput `json:"-"`
+	Nodes     map[string]*Node    `json:"nodes"`
+	Edges     []*Edge             `json:"edges"`
+	Adjacency map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
 }
 
 /*
@@ -110,19 +109,17 @@ func (graph *Graph) CheckpointState() any {
 	}
 
 	return struct {
-		At               time.Time           `json:"at"`
-		EvidenceRevision uint64              `json:"evidenceRevision"`
-		Forecast         *learning.RLSOutput `json:"forecast,omitempty"`
-		Nodes            map[string]*Node    `json:"nodes"`
-		Edges            []*Edge             `json:"edges"`
-		Adjacency        map[string][]string `json:"adjacency"`
+		At        time.Time           `json:"at"`
+		Forecast  *learning.RLSOutput `json:"forecast,omitempty"`
+		Nodes     map[string]*Node    `json:"nodes"`
+		Edges     []*Edge             `json:"edges"`
+		Adjacency map[string][]string `json:"adjacency"`
 	}{
-		At:               graph.At,
-		EvidenceRevision: graph.EvidenceRevision,
-		Forecast:         graph.Forecast,
-		Nodes:            graph.Nodes,
-		Edges:            graph.Edges,
-		Adjacency:        graph.Adjacency,
+		At:        graph.At,
+		Forecast:  graph.Forecast,
+		Nodes:     graph.Nodes,
+		Edges:     graph.Edges,
+		Adjacency: graph.Adjacency,
 	}
 }
 
@@ -258,20 +255,17 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		revision := uint64(symbol.Tick)
-
 		storedGraph, found := symbol.Graphs.Load("market_graph")
 
 		if found {
 			currentGraph, valid := storedGraph.(*Graph)
 
-			if valid && currentGraph != nil && currentGraph.EvidenceRevision == revision {
+			if valid && currentGraph != nil {
 				return true
 			}
 		}
 
 		graph := NewGraph(thesis.At)
-		graph.EvidenceRevision = revision
 		measurementIndex, err := solver.measurements.addNodes(
 			symbolName,
 			symbol.MarketMeasurements("graph"),
@@ -305,9 +299,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				return false
 			}
 
-			causalRevision, revisionOK := causalMap["evidenceRevision"].(uint64)
-
-			if revisionOK && causalRevision == revision && causalValuesPresent(causalMap) {
+			if causalValuesPresent(causalMap) {
 				if err := solver.extractCausalNodes(symbol, graph); err != nil {
 					graphErr = errnie.Error(errnie.Err(
 						errnie.Internal,
@@ -417,8 +409,7 @@ func (solver *Solver) extractManifoldNodes(
 	stored, found := symbol.Phase.Load(symbol.Symbol)
 	reading, readingOK := stored.(types.PhaseReading)
 
-	if !found || !readingOK ||
-		reading.EvidenceRevision != graph.EvidenceRevision {
+	if !found || !readingOK {
 		return
 	}
 
@@ -473,11 +464,13 @@ func (solver *Solver) extractResonanceNodes(
 
 	layers, surprise, _ := coder.WireSnapshot()
 
-	if len(layers) == 0 || math.IsNaN(surprise) || math.IsInf(surprise, 0) {
+	if len(layers) == 0 || math.IsNaN(surprise) ||
+		math.IsInf(surprise, 0) {
 		return
 	}
 
-	graph.Forecast = &forecast[0]
+	graphForecast := forecast[0]
+	graph.Forecast = &graphForecast
 
 	graph.AddNode(&Node{
 		ID:         fmt.Sprintf("res:%s:surprise", symbol.Symbol),
@@ -494,7 +487,7 @@ func (solver *Solver) extractResonanceNodes(
 		Symbol:     symbol.Symbol,
 		Source:     "resonance",
 		Kind:       KindResonance,
-		Value:      forecast[0].Value,
+		Value:      graphForecast.Value,
 		Confidence: 1,
 		At:         graph.At,
 	})
@@ -673,7 +666,6 @@ func (solver *Solver) extractCognitionNodes(
 	cognition, cognitionOK := stored.(types.Cognition)
 
 	if !found || !cognitionOK ||
-		cognition.EvidenceRevision != graph.EvidenceRevision ||
 		cognition.Winner == "" {
 		return
 	}
@@ -870,7 +862,8 @@ func (solver *Solver) inferStructuralEdges(
 	stored, found := symbol.Cognition.Load(symbol.Symbol)
 	cognition, cognitionOK := stored.(types.Cognition)
 
-	if found && cognitionOK && cognition.Winner != "" {
+	if found && cognitionOK &&
+		cognition.Winner != "" {
 		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
 
 		for path, probability := range cognition.Predictions {

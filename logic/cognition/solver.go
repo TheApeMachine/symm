@@ -190,16 +190,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		symbol := key.(string)
 		symbolState := value.(*types.Symbol)
 
-		cognitionValue, cognitionFound := symbolState.Cognition.Load(symbol)
-
-		if cognitionFound {
-			_, valid := cognitionValue.(types.Cognition)
-
-			if valid {
-				return true
-			}
-		}
-
 		stored, found := symbolState.Categories.Load(symbol)
 
 		if !found {
@@ -210,8 +200,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		if len(categories) == 0 {
 			return true
 		}
-
-		revision := categories[0].EvidenceRevision
 
 		if !updated {
 			solver.tickCounter++
@@ -365,7 +353,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		cognition := types.Cognition{
-			EvidenceRevision: revision,
 			Source:           "cognition",
 			Symbol:           symbol,
 			At:               thesis.At,

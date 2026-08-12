@@ -102,12 +102,14 @@ func (crypto *Crypto) run() {
 }
 
 /*
-Update is the main control loop.
+Update is the main control loop for the signals receiving the triggering data.
 */
-func (crypto *Crypto) Update() error {
+func (crypto *Crypto) Update(receivers []types.SourceType) error {
 	crypto.thesis.At = time.Now().UTC()
 
-	if err := crypto.measurements.Update(crypto.thesis); err != nil {
+	resonanceReady, err := crypto.measurements.Update(crypto.thesis, receivers)
+
+	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf("crypto: measurements update failed [%s]", err.Error()),
@@ -115,7 +117,7 @@ func (crypto *Crypto) Update() error {
 		))
 	}
 
-	if err := crypto.analyzer.Process(crypto.thesis); err != nil {
+	if err := crypto.analyzer.Process(crypto.thesis, resonanceReady); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf("crypto: analyzer process failed [%s]", err.Error()),
@@ -152,7 +154,7 @@ func (crypto *Crypto) onBookUpdate(symbol string) {
 		return
 	}
 
-	errnie.Error(crypto.Update())
+	errnie.Error(crypto.Update(types.BookReceivers))
 }
 
 func (crypto *Crypto) onTicker(data any) {
@@ -181,7 +183,7 @@ func (crypto *Crypto) onTicker(data any) {
 		crypto.desk.Price().Update(&ticker)
 	}
 
-	errnie.Error(crypto.Update())
+	errnie.Error(crypto.Update(types.TickerReceivers))
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -201,7 +203,7 @@ func (crypto *Crypto) onTrade(data any) {
 		crypto.thesis.Symbol(trade.Symbol).AppendTrade(trade)
 	}
 
-	errnie.Error(crypto.Update())
+	errnie.Error(crypto.Update(types.TradeReceivers))
 }
 
 func (crypto *Crypto) Close() (err error) {

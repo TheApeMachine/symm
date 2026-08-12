@@ -39,7 +39,6 @@ stages after the manifold can read the dial instead of re-deriving it.
 type PhaseReading struct {
 	Symbol           string          `json:"symbol"`
 	At               time.Time       `json:"at"`
-	EvidenceRevision uint64          `json:"evidenceRevision"`
 	Ready            bool            `json:"ready"`
 	Reason           string          `json:"reason,omitempty"`
 	Responses        []PhaseResponse `json:"responses,omitempty"`

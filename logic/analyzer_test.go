@@ -59,23 +59,27 @@ func TestNewAnalyzer(t *testing.T) {
 }
 
 func TestAnalyzerProcess(t *testing.T) {
-	Convey("Given a legacy analyzer without explicit solver groups", t, func() {
-		order := make([]int, 0, 3)
+	Convey("Given a solver waiting for its input barrier", t, func() {
+		order := make([]int, 0, 2)
 		mu := &sync.Mutex{}
+		first := &orderedSolver{index: 0, order: &order, mu: mu}
+		resonance := &orderedSolver{index: 1, order: &order, mu: mu}
 		analyzer := &Analyzer{
-			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, mu: mu},
-				&orderedSolver{index: 1, order: &order, mu: mu},
-				&orderedSolver{index: 2, order: &order, mu: mu},
-			},
+			ctx:          t.Context(),
+			resonance:    resonance,
+			solverGroups: [][]Solver{{first, resonance}},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
-		err := analyzer.Process(thesis)
-		slices.Sort(order)
 
-		Convey("It should still run every configured solver exactly once", func() {
-			So(err, ShouldBeNil)
-			So(order, ShouldResemble, []int{0, 1, 2})
+		So(analyzer.Process(thesis, false), ShouldBeNil)
+
+		Convey("It should omit resonance until a complete input is queued", func() {
+			So(order, ShouldResemble, []int{0})
+
+			order = order[:0]
+			So(analyzer.Process(thesis, true), ShouldBeNil)
+			slices.Sort(order)
+			So(order, ShouldResemble, []int{0, 1})
 		})
 	})
 
@@ -89,6 +93,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		fifth := &orderedSolver{index: 4, order: &order, mu: mu}
 		sixth := &orderedSolver{index: 5, order: &order, mu: mu}
 		analyzer := &Analyzer{
+			ctx: t.Context(),
 			solverGroups: [][]Solver{
 				{first, second, third},
 				{fourth, fifth},
@@ -97,7 +102,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		}
 		thesis := types.NewThesis(t.Context(), nil)
 
-		err := analyzer.Process(thesis)
+		err := analyzer.Process(thesis, true)
 
 		Convey("It should complete each dependency level before starting the next", func() {
 			So(err, ShouldBeNil)
@@ -115,6 +120,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		order := make([]int, 0, 3)
 		mu := &sync.Mutex{}
 		analyzer := &Analyzer{
+			ctx: t.Context(),
 			solverGroups: [][]Solver{
 				{
 					&orderedSolver{index: 0, order: &order, mu: mu},
@@ -125,7 +131,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		}
 		thesis := types.NewThesis(t.Context(), nil)
 
-		err := analyzer.Process(thesis)
+		err := analyzer.Process(thesis, true)
 		slices.Sort(order)
 
 		Convey("It should finish the current level and skip dependent levels", func() {
@@ -134,26 +140,6 @@ func TestAnalyzerProcess(t *testing.T) {
 		})
 	})
 
-	Convey("Given a solver error in the legacy fallback group", t, func() {
-		order := make([]int, 0, 3)
-		mu := &sync.Mutex{}
-		analyzer := &Analyzer{
-			solvers: []Solver{
-				&orderedSolver{index: 0, order: &order, mu: mu},
-				&orderedSolver{index: 1, order: &order, mu: mu, err: errors.New("failed cut")},
-				&orderedSolver{index: 2, order: &order, mu: mu},
-			},
-		}
-		thesis := types.NewThesis(t.Context(), nil)
-
-		err := analyzer.Process(thesis)
-		slices.Sort(order)
-
-		Convey("It should report the error after all peers in that group finish", func() {
-			So(err, ShouldNotBeNil)
-			So(order, ShouldResemble, []int{0, 1, 2})
-		})
-	})
 }
 
 /*
@@ -164,6 +150,7 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 	order := make([]int, 0, 6)
 	mu := &sync.Mutex{}
 	analyzer := &Analyzer{
+		ctx: b.Context(),
 		solverGroups: [][]Solver{
 			{
 				&orderedSolver{index: 0, order: &order, mu: mu},
@@ -187,6 +174,6 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 		_ = value
 
 		order = order[:0]
-		analyzer.Process(thesis)
+		analyzer.Process(thesis, true)
 	}
 }

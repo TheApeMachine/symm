@@ -159,8 +159,8 @@ func TestIntegration(t *testing.T) {
 								Convey("And resonance should issue a positive forecast", func() {
 									resonance, found := positiveResonance(snapshot.resonances)
 									So(found, ShouldBeTrue)
-					So(resonance, ShouldNotBeNil)
-					expectedReturn := resonance.Value
+									So(resonance, ShouldNotBeNil)
+									expectedReturn := resonance.Value
 									So(math.IsNaN(expectedReturn), ShouldBeFalse)
 									So(expectedReturn, ShouldBeGreaterThan, 0.0)
 

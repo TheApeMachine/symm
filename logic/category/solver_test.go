@@ -47,7 +47,6 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(categoryAt(thesis, "BTC/USD"), ShouldResemble, types.Category{
 				At:               categoryAt(thesis, "BTC/USD").At,
-				EvidenceRevision: uint64(bitcoin.Tick),
 				Symbol:           "BTC/USD",
 				Type:             types.VerticalIgnition,
 				Confidence:       categoryAt(thesis, "BTC/USD").Confidence,
