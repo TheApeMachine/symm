@@ -5,6 +5,9 @@ import { RESONANCE_FOCUS } from "#/providers/ws-stores";
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
   `translateX(${(slot / slotCount) * 100}%) scaleX(${1 / slotCount})`;
 
+export const signedVectorTransform =
+  "scaleY(calc(var(--value, 0) * -1))";
+
 /*
 Every lane reads the focused-carrier stream, so the whole chart describes one
 symbol without each binding having to name it.
@@ -254,7 +257,7 @@ const VectorLane = ({
 								data-set-scale={scale}
 								data-target="style.--value"
 								className={`absolute top-1/2 right-1.5 left-1 h-[calc(50%-1px)] origin-top ${color}`}
-								style={{ transform: "scaleY(calc(var(--value, 0) * -1))" }}
+								style={{ transform: signedVectorTransform }}
 							/>
             </div>
           ))}
@@ -308,7 +311,7 @@ const GhostLane = ({ select }: { select: string }) => (
               data-set-scale="max-abs"
               data-target="style.--value"
               className="absolute top-1/2 right-px left-0 h-[calc(50%-1px)] origin-top bg-(--line2)"
-              style={{ transform: "scaleY(var(--value, 0))" }}
+              style={{ transform: signedVectorTransform }}
             />
           </div>
         ))}

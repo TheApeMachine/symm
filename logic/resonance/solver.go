@@ -3,12 +3,14 @@ package resonance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"sort"
 	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/system"
@@ -17,18 +19,20 @@ import (
 )
 
 /*
-Solver feeds normalized market measurements into one resonance manifold per symbol.
+Solver feeds adaptively standardized market measurements into one resonance
+manifold per symbol.
 */
 type Solver struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	recorder     *audit.Recorder
-	coders       *sync.Map
-	schemas      *sync.Map
-	histories    *sync.Map
-	currentReach *sync.Map
-	alpha        float64
-	ui           chan []byte
+	ctx           context.Context
+	cancel        context.CancelFunc
+	recorder      *audit.Recorder
+	coders        *sync.Map
+	schemas       *sync.Map
+	standardizers *sync.Map
+	histories     *sync.Map
+	currentReach  *sync.Map
+	alpha         float64
+	ui            chan []byte
 }
 
 type sampleHistory struct {
@@ -52,15 +56,16 @@ func NewSolver(
 	}
 
 	return &Solver{
-		ctx:          ctx,
-		cancel:       cancel,
-		recorder:     recorder,
-		coders:       &sync.Map{},
-		schemas:      &sync.Map{},
-		histories:    &sync.Map{},
-		currentReach: &sync.Map{},
-		alpha:        initialAlpha,
-		ui:           ui,
+		ctx:           ctx,
+		cancel:        cancel,
+		recorder:      recorder,
+		coders:        &sync.Map{},
+		schemas:       &sync.Map{},
+		standardizers: &sync.Map{},
+		histories:     &sync.Map{},
+		currentReach:  &sync.Map{},
+		alpha:         initialAlpha,
+		ui:            ui,
 	}
 }
 
@@ -159,9 +164,38 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			solver.currentReach.Delete(name)
 		}
 
+		for _, identity := range schema {
+			if _, found := readings[identity]; !found {
+				return true
+			}
+		}
+
 		input := make([]float64, len(schema))
+		informative := false
+
 		for index, identity := range schema {
-			input[index] = readings[identity]
+			rawStandardizer, found := solver.standardizers.Load(identity)
+
+			if !found {
+				rawStandardizer = adaptive.NewStandardizer()
+				solver.standardizers.Store(identity, rawStandardizer)
+			}
+
+			standardized, err := rawStandardizer.(*adaptive.Standardizer).Measure(
+				readings[identity],
+			)
+
+			if err != nil {
+				updateErr = fmt.Errorf("resonance: standardize %s: %w", identity, err)
+				return false
+			}
+
+			input[index] = standardized.Value
+			informative = informative || standardized.Ready
+		}
+
+		if !informative {
+			return true
 		}
 
 		var coder *learning.ResonanceManifold

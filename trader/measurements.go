@@ -117,7 +117,18 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 				return true
 			})
 
-			return symbolGroup.Wait()
+			if err := symbolGroup.Wait(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf(
+						"measurements: signal failure [%s]",
+						err.Error(),
+					),
+					err,
+				))
+			}
+
+			return nil
 		})
 	}
 

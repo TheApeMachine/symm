@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ResonanceFrame } from "#/collections/types";
-import { vectorSlotTransform } from "#/components/charts/prediction";
+import {
+  signedVectorTransform,
+  vectorSlotTransform,
+} from "#/components/charts/prediction";
 import {
   predictiveCodingSeries,
   reconstructionError,
@@ -104,5 +107,13 @@ describe("vectorSlotTransform", () => {
     expect(vectorSlotTransform(0, 4)).toBe("translateX(0%) scaleX(0.25)");
     expect(vectorSlotTransform(2, 4)).toBe("translateX(50%) scaleX(0.25)");
     expect(vectorSlotTransform(2, 5)).toBe("translateX(40%) scaleX(0.2)");
+  });
+});
+
+describe("signedVectorTransform", () => {
+  it("uses the same upward-positive convention for state and prediction bars", () => {
+    expect(signedVectorTransform).toBe(
+      "scaleY(calc(var(--value, 0) * -1))",
+    );
   });
 });
