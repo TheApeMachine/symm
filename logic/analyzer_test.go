@@ -73,7 +73,7 @@ func TestAnalyzerProcess(t *testing.T) {
 
 		So(analyzer.Process(thesis, false), ShouldBeNil)
 
-		Convey("It should omit resonance until a complete input is queued", func() {
+		Convey("It should omit resonance until a normalized input is queued", func() {
 			So(order, ShouldResemble, []int{0})
 
 			order = order[:0]

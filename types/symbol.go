@@ -3,7 +3,6 @@ package types
 import (
 	"fmt"
 	"iter"
-	"slices"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -15,25 +14,22 @@ import (
 Symbol is an alternative grouping of measurements, and is used in logic that
 legitimately needs to fan out measurements by symbol, rather than by source.
 It should be kept extremely simple, and lean, and is not an invitation to
-start adding additional complexity beyond what is truly earned. Symbols
-carry their own readiness state, which is important for the resonance solver,
-which needs a stable measurement set to train on.
+start adding additional complexity beyond what is truly earned.
 */
 type Symbol struct {
-	Symbol         string    `json:"symbol,omitempty"`
-	Status         Status    `json:"status,omitempty"`
-	Tick           int64     `json:"tick,omitempty"`
-	Measurements   *sync.Map `json:"-"`
-	tickers        *sync.Map `json:"-"`
-	trades         *sync.Map `json:"-"`
-	Decisions      *sync.Map `json:"decisions,omitempty"`
-	Graphs         *sync.Map `json:"graphs,omitempty"`
-	Categories     *sync.Map `json:"categories,omitempty"`
-	Phase          *sync.Map `json:"-"`
-	Cognition      *sync.Map `json:"-"`
-	Resonance      *sync.Map `json:"-"`
-	Causal         *sync.Map `json:"-"`
-	resonanceReady []bool    `json:"-"`
+	Symbol       string    `json:"symbol,omitempty"`
+	Status       Status    `json:"status,omitempty"`
+	Tick         int64     `json:"tick,omitempty"`
+	Measurements *sync.Map `json:"-"`
+	tickers      *sync.Map `json:"-"`
+	trades       *sync.Map `json:"-"`
+	Decisions    *sync.Map `json:"decisions,omitempty"`
+	Graphs       *sync.Map `json:"graphs,omitempty"`
+	Categories   *sync.Map `json:"categories,omitempty"`
+	Phase        *sync.Map `json:"-"`
+	Cognition    *sync.Map `json:"-"`
+	Resonance    *sync.Map `json:"-"`
+	Causal       *sync.Map `json:"-"`
 }
 
 /*
@@ -53,10 +49,6 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 		Cognition:    &sync.Map{},
 		Resonance:    &sync.Map{},
 		Causal:       &sync.Map{},
-		resonanceReady: []bool{
-			false, false, false, false, false,
-			false, false, false, false, false,
-		},
 	}
 
 	for _, source := range TickerReceivers {
@@ -110,39 +102,28 @@ func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
 	}
 }
 
-func (symbol *Symbol) AppendMeasurement(source SourceType, measurement *Measurement) bool {
+func (symbol *Symbol) AppendMeasurement(_ SourceType, measurement *Measurement) bool {
 	categoryMeasurements, _ := symbol.Measurements.LoadOrStore("category", lf.NewQueue[*Measurement]())
 	graphMeasurements, _ := symbol.Measurements.LoadOrStore("graph", lf.NewQueue[*Measurement]())
 	manifoldMeasurements, _ := symbol.Measurements.LoadOrStore("manifold", lf.NewQueue[*Measurement]())
-	resonanceMeasurements, _ := symbol.Measurements.LoadOrStore("resonance", lf.NewQueue[*ResonanceMeasurement]())
 
 	categoryMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 	graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 	manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 
-	if resMeasurement := MeasurementToResonance(symbol.Symbol, measurement); resMeasurement != nil {
-		resonanceMeasurements.(*lf.Queue[*ResonanceMeasurement]).Enqueue(resMeasurement)
-		symbol.resonanceReady[slices.Index(SignalSources, source)] = true
+	resonanceMeasurement := MeasurementToResonance(symbol.Symbol, measurement)
+
+	if resonanceMeasurement == nil || len(resonanceMeasurement.Readings) == 0 {
+		return false
 	}
+
+	resonanceMeasurements, _ := symbol.Measurements.LoadOrStore(
+		"resonance",
+		lf.NewQueue[*ResonanceMeasurement](),
+	)
+	resonanceMeasurements.(*lf.Queue[*ResonanceMeasurement]).Enqueue(resonanceMeasurement)
 
 	return true
-}
-
-func (symbol *Symbol) ResonanceReady() bool {
-	return slices.Equal(
-		symbol.resonanceReady,
-		[]bool{
-			true, true, true, true, true,
-			true, true, true, true, true,
-		},
-	)
-}
-
-func (symbol *Symbol) ResetResonanceReady() {
-	symbol.resonanceReady = []bool{
-		false, false, false, false, false,
-		false, false, false, false, false,
-	}
 }
 
 func (symbol *Symbol) MarketTickers(source SourceType) iter.Seq[kraken.TickerData] {

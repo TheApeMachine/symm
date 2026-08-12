@@ -33,6 +33,7 @@ type Solver struct {
 	coders        *sync.Map
 	schemas       *sync.Map
 	standardizers *sync.Map
+	states        *sync.Map
 	histories     *sync.Map
 	currentReach  *sync.Map
 	alpha         float64
@@ -40,8 +41,9 @@ type Solver struct {
 }
 
 type sampleHistory struct {
-	inputs map[int64][]float64
-	marks  map[int64]float64
+	inputs   map[int64][]float64
+	marks    map[int64]float64
+	resolved int
 }
 
 /*
@@ -66,6 +68,7 @@ func NewSolver(
 		coders:        &sync.Map{},
 		schemas:       &sync.Map{},
 		standardizers: &sync.Map{},
+		states:        &sync.Map{},
 		histories:     &sync.Map{},
 		currentReach:  &sync.Map{},
 		alpha:         initialAlpha,
@@ -99,10 +102,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		if !symbol.ResonanceReady() {
-			return true
-		}
-
 		group.Go(func() error {
 			readings := make(map[string]float64)
 			mark := 0.0
@@ -129,6 +128,40 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				return nil
 			}
 
+			stateValue, _ := solver.states.LoadOrStore(name, make(map[string]float64))
+			state := stateValue.(map[string]float64)
+			updated := false
+
+			for identity, reading := range readings {
+				rawStandardizer, found := solver.standardizers.Load(identity)
+
+				if !found {
+					rawStandardizer = adaptive.NewStandardizer()
+					solver.standardizers.Store(identity, rawStandardizer)
+				}
+
+				standardized, err := rawStandardizer.(*adaptive.Standardizer).Measure(reading)
+
+				if err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf("resonance: standardize %s: %s", identity, err.Error()),
+						err,
+					))
+				}
+
+				if !standardized.Ready {
+					continue
+				}
+
+				state[identity] = standardized.Value
+				updated = true
+			}
+
+			if !updated {
+				return nil
+			}
+
 			var schema []string
 
 			if rawSchema, loaded := solver.schemas.Load(name); loaded {
@@ -137,7 +170,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 			schemaChanged := false
 
-			for identity := range readings {
+			for identity := range state {
 				if slices.Contains(schema, identity) {
 					continue
 				}
@@ -154,45 +187,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				solver.currentReach.Delete(name)
 			}
 
-			for _, identity := range schema {
-				if _, found := readings[identity]; !found {
-					return errnie.Error(errnie.Err(
-						errnie.Internal,
-						fmt.Sprintf("resonance: missing reading for %s", identity),
-						nil,
-					))
-				}
-			}
-
 			input := make([]float64, len(schema))
-			informative := false
 
 			for index, identity := range schema {
-				rawStandardizer, found := solver.standardizers.Load(identity)
-
-				if !found {
-					rawStandardizer = adaptive.NewStandardizer()
-					solver.standardizers.Store(identity, rawStandardizer)
-				}
-
-				standardized, err := rawStandardizer.(*adaptive.Standardizer).Measure(
-					readings[identity],
-				)
-
-				if err != nil {
-					return errnie.Error(errnie.Err(
-						errnie.Internal,
-						fmt.Sprintf("resonance: standardize %s: %s", identity, err.Error()),
-						err,
-					))
-				}
-
-				input[index] = standardized.Value
-				informative = informative || standardized.Ready
-			}
-
-			if !informative {
-				return nil
+				input[index] = state[identity]
 			}
 
 			var coder *learning.ResonanceManifold
@@ -270,6 +268,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 							err,
 						))
 					}
+
+					history.resolved++
 				}
 
 				for previousTick := range history.marks {
@@ -348,6 +348,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"taskSkillReady", taskSkillReady,
 				"taskScale", taskScale,
 				"taskForecast", taskForecast,
+				"samples", history.resolved,
 				"layers", layers,
 				"latent", layers[len(layers)-1].State,
 				"surprise", surprise,

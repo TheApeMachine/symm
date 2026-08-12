@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -16,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -116,7 +118,32 @@ func (analyzer *Analyzer) Process(
 				continue
 			}
 
+			source := ""
+
+			switch solver.(type) {
+			case *category.Solver:
+				source = string(types.SourceCategory)
+			case *manifold.Solver:
+				source = string(types.SourceManifold)
+			case *causal.Solver:
+				source = string(types.SourceCausal)
+			case *cognition.Solver:
+				source = string(types.SourceCognition)
+			case *graph.Solver:
+				source = string(types.SourceGraph)
+			default:
+				source = string(types.SourceResonance)
+			}
+
 			group.Go(func() error {
+				utils.Publish(analyzer.ui, datura.NewMap("activity", datura.NewMap(
+					source, "running",
+				)))
+
+				defer utils.Publish(analyzer.ui, datura.NewMap("activity", datura.NewMap(
+					source, "done",
+				)))
+
 				if err := solver.Update(thesis); err != nil {
 					return errnie.Err(
 						errnie.Internal,

@@ -20,13 +20,13 @@ func TestSymbolNewSymbol(t *testing.T) {
 }
 
 func TestSymbolAppendMeasurement(t *testing.T) {
-	Convey("Given one measurement appended to a symbol", t, func() {
+	Convey("Given one raw-only measurement appended to a symbol", t, func() {
 		symbol := NewSymbol("BTC/USD", nil)
 		measurement := &Measurement{ID: "first", Source: SourceHawkes, Symbol: "BTC/USD"}
 
-		symbol.AppendMeasurement(SourceHawkes, measurement)
+		ready := symbol.AppendMeasurement(SourceHawkes, measurement)
 
-		Convey("It should expose the row to every downstream measurement iterator", func() {
+		Convey("It should expose the row without waking predictive coding", func() {
 			for _, solver := range []string{"category", "graph", "manifold"} {
 				rows := make([]*Measurement, 0)
 
@@ -39,51 +39,21 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 
 			_, found := symbol.Measurements.Load("resonance")
 			So(found, ShouldBeFalse)
+			So(ready, ShouldBeFalse)
 		})
 	})
 }
 
 func TestSymbolResonanceInputs(t *testing.T) {
-	Convey("Given varied complete cuts followed by an incomplete cut", t, func() {
+	Convey("Given one source with a normalized observation", t, func() {
 		symbol := NewSymbol("BTC/USD", nil)
-		value := 0.0
+		value := 0.5
 
-		for epoch := range 2 {
-			value = float64(epoch)
-
-			for _, source := range SignalSources {
-				symbol.AppendMeasurement(source, &Measurement{
-					Source: source,
-					Symbol: "BTC/USD",
-					Metrics: map[string]MetricSample{
-						"score": {Normalized: &value},
-					},
-				})
-			}
-		}
-
-		value = 2
-
-		for _, source := range SignalSources[:len(SignalSources)-1] {
-			symbol.AppendMeasurement(source, &Measurement{
-				Source: source,
+		Convey("It should enqueue that honest observation immediately", func() {
+			ready := symbol.AppendMeasurement(SourceHawkes, &Measurement{
+				Source: SourceHawkes,
 				Symbol: "BTC/USD",
-				Tick:   3,
-				Metadata: map[string]float64{
-					"last_price": 100,
-				},
-				Metrics: map[string]MetricSample{
-					"score": {Normalized: &value},
-				},
-			})
-		}
-
-		Convey("It should enqueue one model-ready vector only after the last source", func() {
-			lastSource := SignalSources[len(SignalSources)-1]
-			ready := symbol.AppendMeasurement(lastSource, &Measurement{
-				Source: lastSource,
-				Symbol: "BTC/USD",
-				Tick:   3,
+				Tick:   1,
 				Metadata: map[string]float64{
 					"last_price": 100,
 				},
@@ -93,6 +63,14 @@ func TestSymbolResonanceInputs(t *testing.T) {
 			})
 
 			So(ready, ShouldBeTrue)
+			rows := make([]*ResonanceMeasurement, 0)
+
+			for row := range symbol.ResonanceMeasurements() {
+				rows = append(rows, row)
+			}
+
+			So(rows, ShouldHaveLength, 1)
+			So(rows[0].Readings, ShouldHaveLength, 1)
 		})
 	})
 }

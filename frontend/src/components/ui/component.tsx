@@ -585,6 +585,18 @@ const scaleSetValue = (
     return value === true ? "var(--up)" : "var(--line2)";
   }
 
+  if (dataset.setScale === "activity-color") {
+    if (value === "running") {
+      return "var(--down)";
+    }
+
+    if (value === "done") {
+      return "var(--up)";
+    }
+
+    return "var(--line2)";
+  }
+
   if (dataset.setScale === "presence") {
     return true;
   }

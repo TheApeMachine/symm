@@ -1,13 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
 import { Engine } from "#/components/engine";
 
 describe("Engine", () => {
-	it("scopes readiness gates to the focused symbol", () => {
+	it("binds gates to module activity", () => {
 		const markup = renderToStaticMarkup(<Engine />);
 
-		expect(markup).toContain('data-scope="symbol"');
-		expect(markup).toContain(`data-filter="${DEFAULT_FOCUS_SYMBOL}"`);
+		expect(markup).toContain('data-set="correlation"');
+		expect(markup).toContain('data-set="category"');
+		expect(markup).toContain('data-set="planner"');
+		expect(markup).toContain('data-set-scale="activity-color"');
 	});
 });

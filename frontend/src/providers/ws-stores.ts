@@ -301,6 +301,11 @@ export const attach = (worker: Worker) => {
 		for (const [key, value] of Object.entries(event.data.frame)) {
 			const update = value as JSONSerializable;
 
+			if (key === "activity") {
+				paintRegistered(key, update);
+				continue;
+			}
+
 			if (key === "measurements") {
 				paintRegistered(key, update);
 				continue;

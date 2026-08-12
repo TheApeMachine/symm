@@ -72,6 +72,14 @@ func (planner *Planner) Close() error {
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) error {
+	utils.Publish(planner.ui, datura.NewMap("activity", datura.NewMap(
+		string(types.SourcePlanner), "running",
+	)))
+
+	defer utils.Publish(planner.ui, datura.NewMap("activity", datura.NewMap(
+		string(types.SourcePlanner), "done",
+	)))
+
 	config := system.Cfg.Snapshot()
 
 	if config == nil || config.Planner == nil {

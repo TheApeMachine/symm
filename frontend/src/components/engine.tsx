@@ -1,5 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
 import { Component } from "#/components/ui/component";
 import { Dot } from "#/components/ui/dot";
 import { Flex } from "#/components/ui/flex";
@@ -10,26 +8,25 @@ Engine is the run readout.
 
 Each row is painted from the wire key that actually owns it: the sequence
 counter from tick, the arbitration state from strategy, and the two volumes from
-the batches themselves. The readiness gates are the strategy's own account of
-which stages are live, so a run that is still warming up says which stage it is
-waiting on rather than reporting a bare "not ready".
+the batches themselves. The activity row shows whether each signal, logic module,
+and the planner is currently running or finished its last cycle.
 */
-const READINESS_GATES = [
+const ACTIVITY_MODULES = [
 	"correlation",
 	"cvd",
-	"depth_flow",
+	"depthflow",
 	"exhaustion",
 	"hawkes",
-	"lead_lag",
+	"leadlag",
 	"liquidity",
-	"pump_dump",
+	"pumpdump",
 	"sentiment",
 	"toxicity",
-	"categories",
+	"category",
 	"manifold",
-	"cognition",
 	"resonance",
 	"causal",
+	"cognition",
 	"graph",
 	"planner",
 ] as const;
@@ -48,8 +45,6 @@ const Row = ({
 );
 
 export const Engine = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-
 	return (
 		<Panel size="bare" className="p-2.5 font-mono text-[11px] leading-[1.7]">
 			<Component registerKey="tick">
@@ -96,18 +91,18 @@ export const Engine = () => {
 				)}
 			</Component>
 
-			<Component registerKey="readiness">
+			<Component registerKey="activity">
 				{({ ref }) => (
-					<Flex.Column ref={ref} data-scope="symbol" data-filter={focusSymbol}>
+					<Flex.Column ref={ref}>
 						<Row label="gates">
 							<Flex.Row gap={1} align="center">
-								{READINESS_GATES.map((gate) => (
+								{ACTIVITY_MODULES.map((gate) => (
 									<Dot
 										key={gate}
 										variant="disabled"
 										title={gate}
 										data-set={gate}
-										data-set-scale="bool-color"
+										data-set-scale="activity-color"
 										data-target="style.background"
 									/>
 								))}

@@ -34,6 +34,26 @@ func appendResonanceCut(
 	}
 }
 
+func appendResonanceSource(
+	symbol *types.Symbol,
+	source types.SourceType,
+	tick int64,
+	mark float64,
+	value float64,
+) {
+	symbol.AppendMeasurement(source, &types.Measurement{
+		Source: source,
+		Symbol: symbol.Symbol,
+		Tick:   tick,
+		Metadata: map[string]float64{
+			"last_price": mark,
+		},
+		Metrics: map[string]types.MetricSample{
+			"score": {Normalized: &value},
+		},
+	})
+}
+
 func TestNewSolver(t *testing.T) {
 	Convey("Given a configured resonance pace", t, func() {
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
@@ -82,6 +102,9 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(layers, ShouldHaveLength, 3)
 			So(forecast, ShouldNotBeEmpty)
+			history, found := solver.histories.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			So(history.(*sampleHistory).resolved, ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -154,6 +177,43 @@ func TestUpdate(t *testing.T) {
 			So(solver.Update(thesis), ShouldBeNil)
 			_, published := symbol.Resonance.Load(symbol.Symbol)
 			So(published, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given normalized sources that update asynchronously", t, func() {
+		previousConfig := system.Cfg
+		system.Cfg = system.NewConfig()
+		system.Cfg.Resonance.Layers = 3
+		Reset(func() { system.Cfg = previousConfig })
+
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("BTC/USD", nil)
+		thesis.Symbols.Store(symbol.Symbol, symbol)
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+
+		for tick := int64(1); tick <= 3; tick++ {
+			appendResonanceSource(
+				symbol, types.SourceHawkes, tick, 100+float64(tick), float64(tick),
+			)
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		Convey("It should settle before every configured signal has emitted", func() {
+			_, found := symbol.Resonance.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+
+			for tick := int64(4); tick <= 6; tick++ {
+				appendResonanceSource(
+					symbol, types.SourceCVD, tick, 100+float64(tick), float64(tick),
+				)
+				So(solver.Update(thesis), ShouldBeNil)
+			}
+
+			appendResonanceSource(symbol, types.SourceHawkes, 7, 107, 7)
+			So(solver.Update(thesis), ShouldBeNil)
+			schema, found := solver.schemas.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			So(schema, ShouldHaveLength, 2)
 		})
 	})
 }

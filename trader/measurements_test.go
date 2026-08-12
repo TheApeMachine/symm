@@ -128,26 +128,20 @@ func TestMeasurementsUpdate(t *testing.T) {
 			}
 		})
 
-		Convey("A complete source cut should report a queued resonance input", func() {
+		Convey("Any normalized source observation should report a queued resonance input", func() {
 			value := 0.0
 
-			for epoch := range 3 {
-				value = float64(epoch)
-
-				for source, signal := range signals {
-					signal.measurement = &types.Measurement{
-						Source: source,
-						Symbol: "BTC/USD",
-						Metrics: map[string]types.MetricSample{
-							"score": {Normalized: &value},
-						},
-					}
-				}
-
-				ready, err := measurements.Update(thesis, types.SignalSources)
-				So(err, ShouldBeNil)
-				So(ready, ShouldEqual, epoch == 2)
+			signals[types.SourceHawkes].measurement = &types.Measurement{
+				Source: types.SourceHawkes,
+				Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					"score": {Normalized: &value},
+				},
 			}
+
+			ready, err := measurements.Update(thesis, types.TradeReceivers)
+			So(err, ShouldBeNil)
+			So(ready, ShouldBeTrue)
 		})
 	})
 }

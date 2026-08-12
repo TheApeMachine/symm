@@ -30,8 +30,8 @@ const (
 )
 
 /*
-SignalSources is the complete configured measurement source set. A downstream
-cut is complete only after every source in this set has contributed.
+SignalSources is the complete configured measurement source set used by signal
+scheduling and cross-source inspection.
 */
 var SignalSources = []SourceType{
 	SourceCorrelation,

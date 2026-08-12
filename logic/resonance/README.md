@@ -25,7 +25,7 @@ a forecast the rest of the system can act on.
 ## The loop
 
 ```
-measurements (every signal, this tick)
+measurements (whichever signals observed this event)
         │
         │  extractFeatures       →  source:symbol:metric  →  normalized value
         ▼
@@ -33,7 +33,8 @@ measurements (every signal, this tick)
         │
         │  informative? ──no──►  publish "not ready", wait
         ▼
-   FeatureExtractor   (stable ordering — a vector, not a map)
+   latest scoreable feature state
+        │  (stable ordering — a vector, not a map)
         │
         ▼
    ResonanceManifold.Settle    ──►  latent state z, layer stack, Surprise

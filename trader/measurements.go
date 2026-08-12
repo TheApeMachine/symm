@@ -84,6 +84,14 @@ func (measurements *Measurements) Update(
 		}
 
 		group.Go(func() error {
+			utils.Publish(measurements.ui, datura.NewMap("activity", datura.NewMap(
+				string(signal.Type()), "running",
+			)))
+
+			defer utils.Publish(measurements.ui, datura.NewMap("activity", datura.NewMap(
+				string(signal.Type()), "done",
+			)))
+
 			symbolGroup, _ := errgroup.WithContext(measurements.ctx)
 
 			thesis.Symbols.Range(func(key, value any) bool {
