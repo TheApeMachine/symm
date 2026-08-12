@@ -10,35 +10,36 @@ func TestSymbolNewSymbol(t *testing.T) {
 	Convey("Given a symbol name", t, func() {
 		symbol := NewSymbol("BTC/USD", nil)
 
-		Convey("It should initialize empty symbol measurement state", func() {
+		Convey("It should initialize empty symbol stream state", func() {
 			So(symbol.Symbol, ShouldEqual, "BTC/USD")
 			So(symbol.Status, ShouldEqual, READY)
-			So(symbol.Measurements, ShouldBeEmpty)
+			So(symbol.Measurements, ShouldNotBeNil)
 		})
 	})
 }
 
-func TestSymbolAddMeasurement(t *testing.T) {
-	Convey("Given measurements with one matching source identity", t, func() {
+func TestSymbolAppendMeasurement(t *testing.T) {
+	Convey("Given one measurement appended to a symbol", t, func() {
 		symbol := NewSymbol("BTC/USD", nil)
-		first := &Measurement{ID: "first", Source: SourceHawkes, Symbol: "BTC/USD"}
-		updated := &Measurement{ID: "updated", Source: SourceHawkes, Symbol: "BTC/USD"}
-		peer := &Measurement{
-			ID: "peer", Source: SourceHawkes, Symbol: "BTC/USD", Peer: "ETH/USD",
-		}
+		measurement := &Measurement{ID: "first", Source: SourceHawkes, Symbol: "BTC/USD"}
 
-		symbol.AddMeasurement(first)
-		symbol.AddMeasurement(peer)
-		symbol.AddMeasurement(updated)
+		symbol.AppendMeasurement(SourceHawkes, measurement)
 
-		Convey("It should replace only the matching source and peer", func() {
-			So(symbol.Status, ShouldEqual, READY)
-			So(symbol.Measurements, ShouldResemble, []*Measurement{updated, peer})
+		Convey("It should expose the row to every downstream measurement iterator", func() {
+			for _, solver := range []string{"category", "graph", "manifold", "resonance"} {
+				rows := make([]*Measurement, 0)
+
+				for row := range symbol.MarketMeasurements(solver) {
+					rows = append(rows, row)
+				}
+
+				So(rows, ShouldResemble, []*Measurement{measurement})
+			}
 		})
 	})
 }
 
-func BenchmarkSymbolAddMeasurement(b *testing.B) {
+func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 	measurement := &Measurement{
 		ID: "hawkes", Source: SourceHawkes, Symbol: "BTC/USD",
 	}
@@ -46,6 +47,6 @@ func BenchmarkSymbolAddMeasurement(b *testing.B) {
 
 	for b.Loop() {
 		symbol := NewSymbol("BTC/USD", nil)
-		symbol.AddMeasurement(measurement)
+		symbol.AppendMeasurement(SourceHawkes, measurement)
 	}
 }

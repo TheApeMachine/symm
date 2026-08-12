@@ -203,7 +203,7 @@ func (solver *Solver) recordPhase(
 
 		if found {
 			symbol := stored.(*types.Symbol)
-			_, reading.EvidenceRevision, _ = symbol.MeasurementState()
+			reading.EvidenceRevision = uint64(symbol.Tick)
 			symbol.Phase.Store(reading.Symbol, reading)
 		}
 	}

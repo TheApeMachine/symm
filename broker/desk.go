@@ -38,6 +38,7 @@ type Desk struct {
 	recorder      *audit.Recorder
 	recovery      *Recovery
 	positions     *sync.Map
+	executeMu     sync.Mutex
 	maxPositions  int
 	maxReserved   int
 }
@@ -318,6 +319,9 @@ capacity even while the venue acknowledgement or fill is still pending.
 func (desk *Desk) Execute(decision types.Decision) (err error) {
 	switch decision.Action {
 	case types.ActionEnter:
+		desk.executeMu.Lock()
+		defer desk.executeMu.Unlock()
+
 		if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 ||
 			decision.Stoploss == nil || decision.Forecast == nil || desk.price == nil {
 			return errnie.Error(errnie.Err(
@@ -327,11 +331,11 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		if err := decision.Forecast.Validate(); err != nil {
+		if !decision.Forecast.Ready {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
 				"desk: valid forecast required for entry",
-				err,
+				nil,
 			))
 		}
 
@@ -356,7 +360,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		economics, err := desk.price.EntryEconomics(
 			decision.Symbol,
 			decision.ProposedQuantity,
-			decision.Forecast.ExpectedReturn,
+			decision.Forecast.Value,
 		)
 
 		if err != nil {

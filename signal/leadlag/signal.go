@@ -2,9 +2,17 @@ package leadlag
 
 import (
 	"context"
+	"math"
+	"sort"
 
+	"github.com/google/uuid"
+	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -17,6 +25,7 @@ type Signal struct {
 	cancel  context.CancelFunc
 	api     *websocket.API
 	section *Section
+	lag     *algorithm.Lag
 	ui      chan []byte
 }
 
@@ -36,6 +45,7 @@ func NewSignal(
 		cancel:  cancel,
 		api:     api,
 		section: NewSection(),
+		lag:     algorithm.NewLag(),
 		ui:      ui,
 	}
 
@@ -53,14 +63,249 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceLeadLag
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	if signal.section == nil {
-		signal.section = NewSection()
+func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
+	measurements := make([]*types.Measurement, 0)
+
+	anchor := signal.section.CausalAnchor()
+
+	if anchor == "" {
+		signal.section.ClearAnchor()
 	}
 
-	tickers := thesis.MarketTickers(types.SourceLeadLag)
+	if anchor != "" {
+		signal.section.SetAnchor(anchor)
+	}
 
-	return signal.measureFrame(tickers)
+	tickers := make([]kraken.TickerData, 0)
+
+	for ticker := range symbol.MarketTickers(types.SourceLeadLag) {
+		if ticker.Timestamp.IsZero() || ticker.Symbol == "" || ticker.Last == nil {
+			continue
+		}
+
+		if ticker.Last.Float64() <= 0 {
+			continue
+		}
+
+		tickers = append(tickers, ticker)
+	}
+
+	sort.SliceStable(tickers, func(leftIndex, rightIndex int) bool {
+		return tickers[leftIndex].Timestamp.Before(tickers[rightIndex].Timestamp)
+	})
+
+	for _, ticker := range tickers {
+		if !signal.section.ObservePrice(ticker.Symbol, ticker.Last.Float64(), ticker.Timestamp) {
+			continue
+		}
+
+		features := signal.section.Features(ticker.Symbol)
+
+		if features.Price <= 0 {
+			continue
+		}
+
+		if !features.IsAnchor && (!features.LagOK || !features.ContempOK || features.SampleCount <= 0) {
+			continue
+		}
+
+		outcome, err := signal.lag.Measure(algorithm.LagInput{
+			IsAnchor:    features.IsAnchor,
+			Price:       features.Price,
+			MoveReady:   features.MoveReady,
+			MoveMoved:   features.MoveMoved,
+			StallMargin: features.StallMargin,
+			LagOK:       features.LagOK,
+			LagBars:     features.LagBars,
+			LagCorr:     features.LagCorr,
+			ContempOK:   features.ContempOK,
+			ContempCorr: features.ContempCorr,
+			SampleCount: features.SampleCount,
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"leadlag: failed to measure lag",
+				err,
+			))
+
+			continue
+		}
+
+		peer := ""
+
+		if signal.section.AnchorSymbol() != "" && signal.section.AnchorSymbol() != ticker.Symbol {
+			peer = signal.section.AnchorSymbol()
+		}
+
+		contempCorrelation := 0.0
+
+		if features.ContempOK {
+			contempCorrelation = features.ContempCorr
+		}
+
+		lagCorrelation := 0.0
+		lagFraction := 0.0
+		lagDirection := 0.0
+
+		if features.LagOK {
+			lagCorrelation = features.LagCorr
+			maxLagBars := signal.section.maxLagBars(features.SampleCount)
+
+			if maxLagBars > 0 {
+				lagFraction = math.Abs(float64(features.LagBars)) / float64(maxLagBars)
+			}
+
+			if features.LagBars > 0 {
+				lagDirection = 1
+			}
+
+			if features.LagBars < 0 {
+				lagDirection = -1
+			}
+		}
+
+		signedCorrelation := contempCorrelation
+
+		if outcome.InefficientScore > 0 {
+			signedCorrelation = lagCorrelation
+		}
+
+		correlation := math.Abs(signedCorrelation)
+		sampleCount := float64(features.SampleCount)
+		metrics := map[string]types.MetricSample{
+			types.MetricKey(types.MetricCorrelation, types.SideNone): {
+				Raw:        correlation,
+				Normalized: &correlation,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSignedCorrelation, types.SideNone): {
+				Raw:        signedCorrelation,
+				Normalized: &signedCorrelation,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSignedContempCorrelation, types.SideNone): {
+				Raw:        contempCorrelation,
+				Normalized: &contempCorrelation,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSignedLagCorrelation, types.SideNone): {
+				Raw:        lagCorrelation,
+				Normalized: &lagCorrelation,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricLagFraction, types.SideNone): {
+				Raw:        lagFraction,
+				Normalized: &lagFraction,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSignedLagDirection, types.SideNone): {
+				Raw:        lagDirection,
+				Normalized: &lagDirection,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSampleSupport, types.SideNone): {
+				Raw:  sampleCount,
+				Unit: types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricInefficient, types.SideNone): {
+				Raw:        outcome.InefficientScore,
+				Normalized: &outcome.InefficientScore,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricSync, types.SideNone): {
+				Raw:        outcome.SyncScore,
+				Normalized: &outcome.SyncScore,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricDecoupled, types.SideNone): {
+				Raw:        outcome.DecoupledScore,
+				Normalized: &outcome.DecoupledScore,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStall, types.SideNone): {
+				Raw:        outcome.StallScore,
+				Normalized: &outcome.StallScore,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricStrength, types.SideNone): {
+				Raw:        outcome.Strength,
+				Normalized: &outcome.Strength,
+				Unit:       types.UnitDimensionless,
+			},
+			types.MetricKey(types.MetricLastPrice, types.SideNone): {
+				Raw:  ticker.Last.Float64(),
+				Unit: types.UnitQuoteCurrency,
+			},
+		}
+
+		snr, snrReady := types.MeasurementSignalNoiseRatio(
+			types.SourceLeadLag,
+			metrics,
+		)
+		snrSample := types.MetricSample{
+			Raw:  snr,
+			Unit: types.UnitDimensionless,
+		}
+
+		if snrReady {
+			snrSample.Normalized = &snr
+		}
+
+		metrics[types.MetricKey(types.MetricSNR, types.SideNone)] = snrSample
+		measurement := &types.Measurement{
+			ID:     uuid.NewString(),
+			Source: types.SourceLeadLag,
+			Symbol: ticker.Symbol,
+			Peer:   peer,
+			Tick:   symbol.Tick,
+			At:     ticker.Timestamp,
+			Metadata: map[string]float64{
+				"last_price": ticker.Last.Float64(),
+			},
+			Metrics: metrics,
+		}
+
+		if !features.ObservedFrom.IsZero() {
+			if features.ObservedFrom.After(ticker.Timestamp) {
+				panic("leadlag: observation interval runs backward")
+			}
+
+			measurement.ObservedFrom = features.ObservedFrom
+			measurement.Horizon = ticker.Timestamp.Sub(features.ObservedFrom)
+		}
+
+		if measurement.Peer != "" {
+			if features.PeerPrice <= 0 || features.PeerAt.IsZero() ||
+				features.PeerFrom.IsZero() ||
+				features.PeerFrom.After(features.PeerAt) {
+				panic("leadlag: peer observation is incomplete")
+			}
+
+			measurement.PeerAt = features.PeerAt
+			measurement.PeerObservedFrom = features.PeerFrom
+			measurement.PutMarketValue("peer_last_price", features.PeerPrice)
+			measurement.PutMetric(
+				types.MetricPeerLastPrice,
+				types.SideNone,
+				types.MetricSample{
+					Raw:  features.PeerPrice,
+					Unit: types.UnitQuoteCurrency,
+				},
+			)
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	if symbol.Symbol == types.Focus() {
+		utils.Publish(signal.ui, datura.NewMap(
+			"measurements", measurements,
+		))
+	}
+
+	return measurements
 }
 
 /*

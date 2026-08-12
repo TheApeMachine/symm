@@ -8,47 +8,42 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 func testResonanceReading(
-	thesis *types.Thesis,
-	symbol string,
 	energy, surprise float64,
 	curve []float64,
-) types.ResonanceReading {
-	retention := make([]float64, len(curve))
+) *learning.ResonanceManifold {
+	coder := learning.NewResonanceManifold([]int{3, 6, 3}, 1, 0.05)
 
-	for index := range retention {
-		retention[index] = 1
+	for _, prediction := range curve {
+		_, err := coder.SettleFromBatchOptions(
+			[]float64{energy, surprise, prediction},
+			[]float64{prediction},
+			true,
+			true,
+		)
+
+		if err != nil {
+			panic(err)
+		}
 	}
 
-	forecast, err := types.NewResonanceForecast(
-		curve, retention, len(curve), 0.75,
-	)
-
-	if err != nil {
-		panic(err)
-	}
-
-	return types.ResonanceReading{
-		Source:   types.SourceResonance,
-		Symbol:   symbol,
-		At:       thesis.At,
-		Energy:   energy,
-		Surprise: surprise,
-		Forecast: forecast,
-	}
+	return coder
 }
 
 func setCausalPrice(
-	thesis *types.Thesis,
+	price *broker.Price,
 	symbol string,
 	midpoint float64,
 	at time.Time,
 ) {
-	thesis.AppendTicker(kraken.TickerData{
+	price.Update(&kraken.TickerData{
 		Symbol:    symbol,
 		Bid:       decimal.NewFromFloat64(midpoint),
 		Ask:       decimal.NewFromFloat64(midpoint),
@@ -65,14 +60,11 @@ func causalSymbol(thesis *types.Thesis, symbol string) *types.Symbol {
 
 func TestUpdate(t *testing.T) {
 	convey.Convey("Given a predictive-coding reading without a forecast", t, func() {
-		solver := NewSolver(nil, nil, nil)
+		price := broker.NewPrice(websocket.NewAPI(t.Context(), nil, nil))
+		solver := NewSolver(price, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbolState := causalSymbol(thesis, "BTC/USD")
-		symbolState.Resonance.Store("BTC/USD", types.ResonanceReading{
-			Source: types.SourceResonance,
-			Symbol: "BTC/USD",
-			At:     thesis.At,
-		})
+		symbolState.Resonance.Store("BTC/USD", learning.NewResonanceManifold([]int{1, 2, 1}, 1, 0.05))
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
@@ -87,15 +79,14 @@ func TestUpdate(t *testing.T) {
 	})
 
 	convey.Convey("Given a forecast followed by a later executable midpoint", t, func() {
-		solver := NewSolver(nil, nil, nil)
+		price := broker.NewPrice(websocket.NewAPI(t.Context(), nil, nil))
+		solver := NewSolver(price, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := "BTC/USD"
 		firstAt := time.Unix(1, 0)
 		symbolState := causalSymbol(thesis, symbol)
-		symbolState.Resonance.Store(symbol, testResonanceReading(
-			thesis, symbol, 0.5, 0.25, []float64{0.1},
-		))
-		setCausalPrice(thesis, symbol, 100, firstAt)
+		symbolState.Resonance.Store(symbol, testResonanceReading(0.5, 0.25, []float64{0.1}))
+		setCausalPrice(price, symbol, 100, firstAt)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
@@ -105,10 +96,8 @@ func TestUpdate(t *testing.T) {
 		convey.So(found, convey.ShouldBeFalse)
 
 		thesis.At = thesis.At.Add(time.Second)
-		symbolState.Resonance.Store(symbol, testResonanceReading(
-			thesis, symbol, 0.75, 0.5, []float64{0.2},
-		))
-		setCausalPrice(thesis, symbol, 110, firstAt.Add(time.Second))
+		symbolState.Resonance.Store(symbol, testResonanceReading(0.75, 0.5, []float64{0.2}))
+		setCausalPrice(price, symbol, 110, firstAt.Add(time.Second))
 		err := solver.Update(thesis)
 
 		convey.Convey("Then it should score only the strictly prior forecast", func() {
@@ -132,7 +121,8 @@ func TestUpdate(t *testing.T) {
 	})
 
 	convey.Convey("Given a causal evidence stream for one symbol", t, func() {
-		solver := NewSolver(nil, nil, nil)
+		price := broker.NewPrice(websocket.NewAPI(t.Context(), nil, nil))
+		solver := NewSolver(price, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := "BTC/USD"
 		symbolState := causalSymbol(thesis, symbol)
@@ -157,10 +147,8 @@ func TestUpdate(t *testing.T) {
 				surprise := float64((index*2)%5) / 1_000
 				prediction := float64(index+1) / 1_000
 				thesis.At = baseAt.Add(time.Duration(index) * time.Second)
-				symbolState.Resonance.Store(symbol, testResonanceReading(
-					thesis, symbol, energy, surprise, []float64{prediction},
-				))
-				setCausalPrice(thesis, symbol, midpoint, thesis.At)
+				symbolState.Resonance.Store(symbol, testResonanceReading(energy, surprise, []float64{prediction}))
+				setCausalPrice(price, symbol, midpoint, thesis.At)
 
 				err := solver.Update(thesis)
 				convey.So(err, convey.ShouldBeNil)
@@ -200,13 +188,10 @@ func BenchmarkUpdate(b *testing.B) {
 		symbols[index] = symbol
 		storedSymbol, _ := thesis.Symbols.Load(symbol)
 		storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceReading(
-			thesis,
-			symbol,
 			float64(index),
 			float64(index)/float64(index+1),
 			[]float64{float64(index) / float64(index+1)},
 		))
-		setCausalPrice(thesis, symbol, 100, baseAt)
 	}
 
 	if err := solver.Update(thesis); err != nil {
@@ -225,13 +210,11 @@ func BenchmarkUpdate(b *testing.B) {
 		for index, symbol := range symbols {
 			storedSymbol, _ := thesis.Symbols.Load(symbol)
 			storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceReading(
-				thesis,
-				symbol,
 				float64(index),
 				float64(index)/float64(index+1),
 				[]float64{float64(index) / float64(index+1)},
 			))
-			setCausalPrice(thesis, symbol, 100+float64(tick)/1_000, at)
+			_ = at
 		}
 
 		b.StartTimer()

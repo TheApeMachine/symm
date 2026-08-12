@@ -47,7 +47,7 @@ func measurementFor(
 func TestMeasure(t *testing.T) {
 	Convey("Given a multi-leg executable-depth cohort", t, func() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		thesis := types.NewThesis(t.Context(), nil)
+		market := types.NewSymbol("THIN/USD", nil)
 		start := time.Unix(1_700_000_000, 0).UTC()
 		firstLeg := []kraken.TickerData{
 			ticker("THIN/USD", 100, 1, 10, start),
@@ -62,11 +62,11 @@ func TestMeasure(t *testing.T) {
 			ticker("PEER-C/USD", 101, 14, 41, start.Add(time.Second)),
 		}
 
-		appendTickers(thesis, firstLeg...)
-		firstMeasurements := signal.Measure(thesis)
-		So(firstMeasurements, ShouldHaveLength, 4)
-		appendTickers(thesis, secondLeg...)
-		measurements := signal.Measure(thesis)
+		appendTickers(market, firstLeg...)
+		firstMeasurements := signal.Measure(market)
+		So(firstMeasurements, ShouldHaveLength, 1)
+		appendTickers(market, secondLeg...)
+		measurements := signal.Measure(market)
 
 		Convey("It should normalize from the first complete cohort", func() {
 			first := measurementFor(firstMeasurements, "THIN/USD")
@@ -114,36 +114,36 @@ func TestMeasure(t *testing.T) {
 		})
 
 		Convey("It should not emit unchanged cached observations", func() {
-			So(signal.Measure(thesis), ShouldBeEmpty)
+			So(signal.Measure(market), ShouldBeEmpty)
 		})
 	})
 
 	Convey("Given valid executable depth but missing reported turnover", t, func() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		thesis := types.NewThesis(t.Context(), nil)
+		market := types.NewSymbol("NO-VOLUME/USD", nil)
 		start := time.Unix(1_700_000_050, 0).UTC()
 
 		for leg := range 2 {
 			at := start.Add(time.Duration(leg) * time.Second)
-			appendTickers(thesis,
+			appendTickers(market,
 				ticker("NO-VOLUME/USD", 100, 2, 0, at),
 				ticker("PEER-A/USD", 100, 4, 20, at),
 				ticker("PEER-B/USD", 100, 6, 30, at),
 				ticker("PEER-C/USD", 100, 8, 40, at),
 			)
-			_ = signal.Measure(thesis)
+			_ = signal.Measure(market)
 		}
 
-		measurements := signal.Measure(thesis)
+		measurements := signal.Measure(market)
 		So(measurements, ShouldBeEmpty)
 		at := start.Add(2 * time.Second)
-		appendTickers(thesis,
+		appendTickers(market,
 			ticker("NO-VOLUME/USD", 100, 2, 0, at),
 			ticker("PEER-A/USD", 100, 4, 20, at),
 			ticker("PEER-B/USD", 100, 6, 30, at),
 			ticker("PEER-C/USD", 100, 8, 40, at),
 		)
-		measurements = signal.Measure(thesis)
+		measurements = signal.Measure(market)
 
 		Convey("It should keep depth usable while turnover normalization stays absent", func() {
 			measurement := measurementFor(measurements, "NO-VOLUME/USD")
@@ -251,26 +251,26 @@ func TestLeaveOneOutLiquidity(t *testing.T) {
 	})
 }
 
-func appendTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
+func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		thesis.AppendTicker(row)
+		market.AppendTicker(row)
 	}
 }
 
 func BenchmarkMeasure(b *testing.B) {
 	signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-	thesis := types.NewThesis(b.Context(), nil)
+	market := types.NewSymbol("AAA/USD", nil)
 	start := time.Unix(1_700_000_100, 0).UTC()
 
 	b.ReportAllocs()
 
 	for index := range b.N {
 		at := start.Add(time.Duration(index) * time.Second)
-		appendTickers(thesis,
+		appendTickers(market,
 			ticker("AAA/USD", 100, 2, 10, at),
 			ticker("BBB/USD", 100, 4, 20, at),
 			ticker("CCC/USD", 100, 6, 30, at),
 		)
-		_ = signal.Measure(thesis)
+		_ = signal.Measure(market)
 	}
 }

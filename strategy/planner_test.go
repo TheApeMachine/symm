@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/mcts"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/system"
@@ -46,18 +47,20 @@ func TestPlannerUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given a graph forecast below the regulator gate", t, func() {
+	Convey("Given a graph forecast that is not ready", t, func() {
 		system.Cfg = system.NewConfig()
 		system.Cfg.Planner.MinimumConfidence = 0.95
 		thesis := plannerGraphThesis(t, 0.9)
+		stored, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := stored.(*types.Symbol)
+		graphValue, _ := symbol.Graphs.Load("market_graph")
+		graphValue.(*logicgraph.Graph).Forecast.Ready = false
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
 		err := planner.Update(thesis)
 
 		Convey("It should not create an entry", func() {
 			So(err, ShouldBeNil)
-			stored, _ := thesis.Symbols.Load("BTC/USD")
-			symbol := stored.(*types.Symbol)
 			_, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeFalse)
 		})
@@ -81,16 +84,12 @@ func plannerMCTSEngine() *mcts.CausalMCTS {
 func plannerGraphThesis(t testing.TB, confidence float64) *types.Thesis {
 	t.Helper()
 	thesis := types.NewThesis(t.Context(), nil)
-	forecast, err := types.NewResonanceForecast(
-		[]float64{0.01}, []float64{1}, 1, confidence,
-	)
-	So(err, ShouldBeNil)
-	So(forecast.SetPredictiveDistribution(0.01, 1, true), ShouldBeNil)
+	forecast := &learning.RLSOutput{Value: 0.01, Ready: true, Scale: 0.01, DegreesOfFreedom: 1}
 	graph := logicgraph.NewGraph(thesis.At)
 	graph.Forecast = forecast
 	graph.AddNode(&logicgraph.Node{
 		ID: "forecast", Kind: logicgraph.KindResonance,
-		Value: forecast.ExpectedReturn, Confidence: confidence,
+		Value: forecast.Value, Confidence: confidence,
 	})
 	symbol := types.NewSymbol("BTC/USD", nil)
 	symbol.Graphs.Store("market_graph", graph)

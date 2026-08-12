@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
@@ -158,13 +159,8 @@ func TestIntegration(t *testing.T) {
 								Convey("And resonance should issue a positive forecast", func() {
 									resonance, found := positiveResonance(snapshot.resonances)
 									So(found, ShouldBeTrue)
-									So(resonance.Samples, ShouldBeGreaterThan, 0)
-									So(resonance.Forecast, ShouldNotBeNil)
-									So(resonance.Forecast.Validate(), ShouldBeNil)
-									So(resonance.Forecast.Curve, ShouldNotBeEmpty)
-									So(resonance.Forecast.SupportedHorizon,
-										ShouldEqual, len(resonance.Forecast.Curve))
-									expectedReturn := resonance.Forecast.ExpectedReturn
+					So(resonance, ShouldNotBeNil)
+					expectedReturn := resonance.Value
 									So(math.IsNaN(expectedReturn), ShouldBeFalse)
 									So(expectedReturn, ShouldBeGreaterThan, 0.0)
 
@@ -300,24 +296,16 @@ func TestCryptoRun(t *testing.T) {
 
 				So(system.Desk.Price().Tick("SIM1/USD"), ShouldNotBeNil)
 
-				forecast, err := types.NewResonanceForecast(
-					[]float64{-0.01, 0.03},
-					[]float64{1, 1},
-					2,
-					0.95,
-				)
-				So(err, ShouldBeNil)
-				So(forecast.SetPredictiveDistribution(0.01, 12, true), ShouldBeNil)
+				forecast := &learning.RLSOutput{
+					Value:            0.03,
+					Scale:            0.01,
+					DegreesOfFreedom: 12,
+					Ready:            true,
+				}
 
 				thesis := types.NewThesis(t.Context(), nil)
 				symbol := types.NewSymbol("SIM1/USD", nil)
 				thesis.Symbols.Store("SIM1/USD", symbol)
-				symbol.Resonance.Store("SIM1/USD", types.ResonanceReading{
-					Source:   types.SourceResonance,
-					Symbol:   "SIM1/USD",
-					At:       thesis.At,
-					Forecast: forecast,
-				})
 				symbol.Cognition.Store("SIM1/USD", types.Cognition{
 					Symbol:     "SIM1/USD",
 					Confidence: 0.95,
@@ -328,8 +316,8 @@ func TestCryptoRun(t *testing.T) {
 					ID:         "res:SIM1/USD:forecast",
 					Symbol:     "SIM1/USD",
 					Kind:       logicgraph.KindResonance,
-					Value:      forecast.ExpectedReturn,
-					Confidence: forecast.Confidence,
+					Value:      forecast.Value,
+					Confidence: 0.95,
 					At:         thesis.At,
 				})
 				symbol.Graphs.Store("market_graph", marketGraph)
@@ -498,7 +486,7 @@ type integrationSnapshot struct {
 	trades       []kraken.TradeData
 	measurements map[types.SourceType]*types.Measurement
 	categories   []types.Category
-	resonances   []types.ResonanceReading
+	resonances   []learning.RLSOutput
 }
 
 type integrationSnapshotCollection struct {
@@ -595,16 +583,19 @@ func updateIntegrationSnapshot(
 
 	resonanceRaw, resonanceReady := symbolState.Resonance.Load(symbol)
 
-	if resonance, ok := resonanceRaw.(types.ResonanceReading); resonanceReady && ok &&
-		resonance.Samples > 0 {
-		if len(snapshot.resonances) == 0 ||
-			resonance.At.After(snapshot.resonances[len(snapshot.resonances)-1].At) {
-			snapshot.resonances = append(snapshot.resonances, resonance)
+	if coder, ok := resonanceRaw.(*learning.ResonanceManifold); resonanceReady && ok {
+		forecast, err := coder.RolloutTaskForecast(1)
+
+		if err != nil || len(forecast) == 0 || !forecast[0].Ready {
 			return
 		}
 
-		if resonance.At.Equal(snapshot.resonances[len(snapshot.resonances)-1].At) {
-			snapshot.resonances[len(snapshot.resonances)-1] = resonance
+		resonance := forecast[0]
+
+		if len(snapshot.resonances) == 0 ||
+			resonance.Value != snapshot.resonances[len(snapshot.resonances)-1].Value {
+			snapshot.resonances = append(snapshot.resonances, resonance)
+			return
 		}
 	}
 }
@@ -643,17 +634,17 @@ func mergeCategories(
 }
 
 func positiveResonance(
-	readings []types.ResonanceReading,
-) (types.ResonanceReading, bool) {
+	readings []learning.RLSOutput,
+) (*learning.RLSOutput, bool) {
 	for _, reading := range readings {
-		if reading.Forecast == nil || reading.Forecast.ExpectedReturn <= 0 {
+		if reading.Value <= 0 {
 			continue
 		}
 
-		return reading, true
+		return &reading, true
 	}
 
-	return types.ResonanceReading{}, false
+	return nil, false
 }
 
 type decisionCollection struct {
@@ -747,7 +738,14 @@ func symbolTickers(thesis *types.Thesis, symbol string) []kraken.TickerData {
 		return nil
 	}
 
-	return stored.(*types.Symbol).TickersSnapshot()
+	symbolState := stored.(*types.Symbol)
+	var tickers []kraken.TickerData
+
+	for ticker := range symbolState.MarketTickers(types.SourceLiquidity) {
+		tickers = append(tickers, ticker)
+	}
+
+	return tickers
 }
 
 func symbolTrades(thesis *types.Thesis, symbol string) []kraken.TradeData {
@@ -757,7 +755,14 @@ func symbolTrades(thesis *types.Thesis, symbol string) []kraken.TradeData {
 		return nil
 	}
 
-	return stored.(*types.Symbol).TradesSnapshot()
+	symbolState := stored.(*types.Symbol)
+	var trades []kraken.TradeData
+
+	for trade := range symbolState.MarketTrades(types.SourcePumpDump) {
+		trades = append(trades, trade)
+	}
+
+	return trades
 }
 
 func signalSources() []types.SourceType {
@@ -780,22 +785,16 @@ func latestMeasurement(
 	source types.SourceType,
 	symbol string,
 ) *types.Measurement {
-	stored, found := thesis.Measurements.Load(source)
+	stored, found := thesis.Symbols.Load(symbol)
 
 	if !found {
 		return nil
 	}
 
-	rows, ok := stored.([]*types.Measurement)
-
-	if !ok {
-		return nil
-	}
-
 	var latest *types.Measurement
 
-	for _, measurement := range rows {
-		if measurement == nil || (symbol != "" && measurement.Symbol != symbol) {
+	for measurement := range stored.(*types.Symbol).MarketMeasurements("graph") {
+		if measurement == nil || measurement.Source != source || measurement.Symbol != symbol {
 			continue
 		}
 

@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
@@ -103,9 +104,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		resonance, valid := resonanceValue.(types.ResonanceReading)
+		_, valid := resonanceValue.(*learning.ResonanceManifold)
 
-		if !valid || !resonance.At.Equal(thesis.At) {
+		if !valid {
 			return true
 		}
 
@@ -150,25 +151,25 @@ func (solver *Solver) measure(
 		return nil
 	}
 
-	resonance, ok := stored.(types.ResonanceReading)
+	coder, ok := stored.(*learning.ResonanceManifold)
 
 	if !ok {
 		return errnie.Err(
 			errnie.Validation,
-			"causal: resonance reading has an invalid type",
+			"causal: resonance manifold has an invalid type",
 			nil,
 		)
 	}
 
-	forecastReady := resonance.Symbol == symbol &&
-		resonance.Forecast != nil && resonance.Forecast.Validate() == nil &&
-		!math.IsNaN(resonance.Energy) && !math.IsInf(resonance.Energy, 0) &&
-		!math.IsNaN(resonance.Surprise) && !math.IsInf(resonance.Surprise, 0)
+	forecast, err := coder.RolloutTaskForecast(1)
+	forecastReady := err == nil && len(forecast) > 0 && forecast[0].Ready
 	prediction := 0.0
 
 	if forecastReady {
-		prediction, forecastReady = resonance.Forecast.Step(0)
+		prediction = forecast[0].Value
 	}
+
+	_, surprise, energy := coder.WireSnapshot()
 
 	midpoint := 0.0
 	tickerAt := thesis.At
@@ -194,30 +195,13 @@ func (solver *Solver) measure(
 		}
 	}
 
-	if midpoint == 0 && thesis != nil {
-		tickers := thesis.MarketTickers(types.SourceCausal)
-
-		if len(tickers) > 0 {
-			latest := tickers[len(tickers)-1]
-			tickerAt = latest.Timestamp
-
-			if latest.Bid.Sign() > 0 && latest.Ask.Sign() > 0 && latest.Ask.Cmp(latest.Bid) >= 0 {
-				bid := latest.Bid.Float64()
-				ask := latest.Ask.Float64()
-				midpoint = (bid + ask) / 2
-			} else if latest.Last.Sign() > 0 {
-				midpoint = latest.Last.Float64()
-			}
-		}
-	}
-
 	if midpoint == 0 {
 		return nil
 	}
 
 	row, rows, resolved, err := solver.observe(
 		symbol,
-		[3]float64{resonance.Energy, resonance.Surprise, prediction},
+		[3]float64{energy, surprise, prediction},
 		midpoint,
 		tickerAt,
 		forecastReady,
@@ -234,8 +218,8 @@ func (solver *Solver) measure(
 	output, resolved, err := solver.getPearl(symbol).Measure(algorithm.PearlInput{
 		Key:          symbol,
 		Row:          row,
-		Contagion:    resonance.Surprise,
-		Condition:    resonance.Energy,
+		Contagion:    surprise,
+		Condition:    energy,
 		Intervention: prediction,
 	})
 
@@ -258,7 +242,7 @@ func (solver *Solver) measure(
 	}
 
 	causalOutput := map[string]any{
-		"at":             resonance.At,
+		"at":             tickerAt,
 		"historyRows":    rows,
 		"identification": "adjustedAssociation",
 		"precision":      precision,
@@ -269,7 +253,7 @@ func (solver *Solver) measure(
 	if resolved {
 		causalOutput = output.Outputs()
 		causalOutput["historyRows"] = rows
-		causalOutput["at"] = resonance.At
+		causalOutput["at"] = tickerAt
 		causalOutput["identification"] = "adjustedAssociation"
 		causalOutput["precision"] = precision
 		causalOutput["samples"] = len(rows)

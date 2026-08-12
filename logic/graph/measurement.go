@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"iter"
 	"math"
 	"strings"
 
@@ -28,21 +29,20 @@ func newMeasurementCompiler() *measurementCompiler {
 }
 
 func (compiler *measurementCompiler) addNodes(
-	symbol *types.Symbol,
+	symbol string,
+	measurements iter.Seq[*types.Measurement],
 	graph *Graph,
 ) (*measurementIndex, error) {
 	index := &measurementIndex{
 		byReference: make(map[string][]*Node),
 		bySource:    make(map[types.SourceType][]*types.Measurement),
 	}
-	measurements, _, _ := symbol.MeasurementState()
-
-	for _, measurement := range types.FilterLatestSourceEpochs(measurements) {
-		if measurement != nil && measurement.Symbol != symbol.Symbol {
+	for measurement := range measurements {
+		if measurement != nil && measurement.Symbol != symbol {
 			return nil, fmt.Errorf(
 				"measurement symbol %s does not match graph symbol %s",
 				measurement.Symbol,
-				symbol.Symbol,
+				symbol,
 			)
 		}
 

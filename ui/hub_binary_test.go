@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -51,14 +52,15 @@ func TestHubForecastPublication(t *testing.T) {
 		So(err, ShouldBeNil)
 		Reset(func() { So(peer.Close(), ShouldBeNil) })
 
-		forecast, err := types.NewResonanceForecast(
-			[]float64{0.01, 0.02}, []float64{1, 0.5}, 2, 0.75,
-		)
-		So(err, ShouldBeNil)
-		reading := types.ResonanceReading{
-			Source:   types.SourceResonance,
-			Symbol:   "BTC/USD",
-			Forecast: forecast,
+		reading := map[string]any{
+			"source": types.SourceResonance,
+			"symbol": "BTC/USD",
+			"forecast": learning.RLSOutput{
+				Value:            0.02,
+				Scale:            0.01,
+				DegreesOfFreedom: 2,
+				Ready:            true,
+			},
 		}
 
 		utils.Publish(messages, datura.NewMap("resonance", []any{reading}))
@@ -73,17 +75,20 @@ func TestHubForecastPublication(t *testing.T) {
 		So(peerReceived, ShouldResemble, received)
 
 		var frame struct {
-			Resonance []types.ResonanceReading `json:"resonance"`
+			Resonance []struct {
+				Source   types.SourceType   `json:"source"`
+				Symbol   string             `json:"symbol"`
+				Forecast learning.RLSOutput `json:"forecast"`
+			} `json:"resonance"`
 		}
 		So(json.Unmarshal(received, &frame), ShouldBeNil)
 
 		Convey("It should receive the explicit supported-horizon forecast", func() {
 			So(frame.Resonance, ShouldHaveLength, 1)
-			So(frame.Resonance[0].Forecast, ShouldNotBeNil)
-			So(frame.Resonance[0].Forecast.Validate(), ShouldBeNil)
-			So(frame.Resonance[0].Forecast.SupportedHorizon, ShouldEqual, 2)
-			So(frame.Resonance[0].Forecast.ExpectedReturn,
-				ShouldEqual, forecast.ExpectedReturn)
+			So(frame.Resonance[0].Source, ShouldEqual, types.SourceResonance)
+			So(frame.Resonance[0].Symbol, ShouldEqual, "BTC/USD")
+			So(frame.Resonance[0].Forecast.Ready, ShouldBeTrue)
+			So(frame.Resonance[0].Forecast.Value, ShouldEqual, 0.02)
 		})
 	})
 }

@@ -80,6 +80,10 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 			ask = trade.Price.Float64()
 		}
 
+		if bid <= 0 || ask <= 0 {
+			continue
+		}
+
 		output, ready, maturity, err := signal.algo.Measure(equation.IgnitionInput{
 			Symbol: symbol.Symbol,
 			Volume: trade.Qty,
@@ -103,8 +107,15 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 			ID:       uuid.NewString(),
 			Source:   types.SourcePumpDump,
 			Symbol:   trade.Symbol,
+			Tick:     symbol.Tick,
 			At:       trade.Timestamp,
 			Maturity: maturity,
+			Metadata: map[string]float64{
+				"ask":            ask,
+				"bid":            bid,
+				"trade_price":    trade.Price.Float64(),
+				"trade_quantity": trade.Qty,
+			},
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricBestPrice, types.SideBuy): {
 					Raw:  bid,

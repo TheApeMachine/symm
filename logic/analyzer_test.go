@@ -183,9 +183,8 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 	for b.Loop() {
 		value, found := thesis.Symbols.Load("BTC/USD")
 
-		if found {
-			value.(*types.Symbol).Reset()
-		}
+		_ = found
+		_ = value
 
 		order = order[:0]
 		analyzer.Process(thesis)

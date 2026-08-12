@@ -2,6 +2,7 @@ package category
 
 import (
 	"fmt"
+	"iter"
 	"slices"
 
 	"github.com/theapemachine/errnie"
@@ -81,15 +82,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
-		measurements, revision, _ := symbol.MeasurementState()
-
-		if len(measurements) == 0 {
-			return true
-		}
-
-		category, err := solver.classify(
+		category, measured, err := solver.classify(
 			symbolName,
-			measurements,
+			symbol.MarketMeasurements("category"),
 		)
 
 		if err != nil {
@@ -105,9 +100,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
-		category.At = thesis.At
-		category.EvidenceRevision = revision
-		symbol.Categories.Store(symbolName, []types.Category{category})
+		if measured {
+			category.At = thesis.At
+			symbol.Categories.Store(symbolName, []types.Category{category})
+		}
+
 		return true
 	})
 
@@ -124,16 +121,19 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 func (solver *Solver) classify(
 	symbol string,
-	measurements []*types.Measurement,
-) (types.Category, error) {
+	measurements iter.Seq[*types.Measurement],
+) (types.Category, bool, error) {
 	evidence := make(map[types.CategoryType][]float64, len(solver.categories))
 	supporting := make(map[types.CategoryType][]string, len(solver.categories))
 	maturity := make(map[types.CategoryType]float64, len(solver.categories))
+	measured := false
 
-	for _, measurement := range types.FilterLatestSourceEpochs(measurements) {
+	for measurement := range measurements {
 		if measurement == nil {
 			continue
 		}
+
+		measured = true
 
 		for _, schema := range types.CategorySchemas {
 			if schema.Source != measurement.Source {
@@ -150,13 +150,19 @@ func (solver *Solver) classify(
 			evidence[schema.Category] = append(
 				evidence[schema.Category], *sample.Normalized,
 			)
+
 			supporting[schema.Category] = append(
 				supporting[schema.Category], string(schema.Source)+":"+metricKey,
 			)
+
 			maturity[schema.Category] = max(
 				maturity[schema.Category], measurement.Maturity,
 			)
 		}
+	}
+
+	if !measured {
+		return types.Category{}, false, nil
 	}
 
 	scores := make([]probability.CategoryScore, 0, len(solver.categories))
@@ -171,7 +177,7 @@ func (solver *Solver) classify(
 			strength, err = probability.EvidenceGeomean(evidence[category]...)
 
 			if err != nil {
-				return types.Category{}, err
+				return types.Category{}, false, err
 			}
 		}
 
@@ -189,7 +195,7 @@ func (solver *Solver) classify(
 	})
 
 	if err != nil {
-		return types.Category{}, err
+		return types.Category{}, false, err
 	}
 
 	categoryType := types.CategoryTypeNone
@@ -205,7 +211,7 @@ func (solver *Solver) classify(
 		Strength:   strengths[categoryType],
 		Maturity:   maturity[categoryType],
 		Supporting: supporting[categoryType],
-	}, nil
+	}, true, nil
 }
 
 /*

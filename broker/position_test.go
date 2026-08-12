@@ -9,6 +9,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -16,13 +17,7 @@ import (
 func TestPositionOnTicker(t *testing.T) {
 	Convey("Given a position whose entry has not filled", t, func() {
 		price, _ := newPriceSurface(t, "SIM/USD")
-		forecast, err := types.NewResonanceForecast(
-			[]float64{-0.01},
-			[]float64{1},
-			1,
-			0.9,
-		)
-		So(err, ShouldBeNil)
+		forecast := &learning.RLSOutput{Value: -0.01, Ready: true, Scale: 0.01, DegreesOfFreedom: 1}
 
 		zeroRate := decimal.NewFromInt64(0)
 		stoploss, err := types.NewStoploss(

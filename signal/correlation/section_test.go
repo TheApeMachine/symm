@@ -35,7 +35,13 @@ func TestScores(t *testing.T) {
 			}
 		}
 
-		scores, err := section.Measure(rows)
+		scores, err := section.Measure(func(yield func(kraken.TickerData) bool) {
+			for _, row := range rows {
+				if !yield(row) {
+					return
+				}
+			}
+		})
 
 		Convey("It should produce the exact support-weighted cohort decomposition", func() {
 			So(err, ShouldBeNil)

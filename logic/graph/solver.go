@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
@@ -92,12 +93,12 @@ type Edge struct {
 Graph is the full relational knowledge graph constructed for a Thesis cut.
 */
 type Graph struct {
-	At               time.Time                `json:"at"`
-	EvidenceRevision uint64                   `json:"evidenceRevision"`
-	Forecast         *types.ResonanceForecast `json:"-"`
-	Nodes            map[string]*Node         `json:"nodes"`
-	Edges            []*Edge                  `json:"edges"`
-	Adjacency        map[string][]string      `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
+	At               time.Time           `json:"at"`
+	EvidenceRevision uint64              `json:"evidenceRevision"`
+	Forecast         *learning.RLSOutput `json:"-"`
+	Nodes            map[string]*Node    `json:"nodes"`
+	Edges            []*Edge             `json:"edges"`
+	Adjacency        map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
 }
 
 /*
@@ -109,12 +110,12 @@ func (graph *Graph) CheckpointState() any {
 	}
 
 	return struct {
-		At               time.Time                `json:"at"`
-		EvidenceRevision uint64                   `json:"evidenceRevision"`
-		Forecast         *types.ResonanceForecast `json:"forecast,omitempty"`
-		Nodes            map[string]*Node         `json:"nodes"`
-		Edges            []*Edge                  `json:"edges"`
-		Adjacency        map[string][]string      `json:"adjacency"`
+		At               time.Time           `json:"at"`
+		EvidenceRevision uint64              `json:"evidenceRevision"`
+		Forecast         *learning.RLSOutput `json:"forecast,omitempty"`
+		Nodes            map[string]*Node    `json:"nodes"`
+		Edges            []*Edge             `json:"edges"`
+		Adjacency        map[string][]string `json:"adjacency"`
 	}{
 		At:               graph.At,
 		EvidenceRevision: graph.EvidenceRevision,
@@ -257,11 +258,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		measurements, revision, _ := symbol.MeasurementState()
-
-		if len(measurements) == 0 {
-			return true
-		}
+		revision := uint64(symbol.Tick)
 
 		storedGraph, found := symbol.Graphs.Load("market_graph")
 
@@ -275,7 +272,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		graph := NewGraph(thesis.At)
 		graph.EvidenceRevision = revision
-		measurementIndex, err := solver.measurements.addNodes(symbol, graph)
+		measurementIndex, err := solver.measurements.addNodes(
+			symbolName,
+			symbol.MarketMeasurements("graph"),
+			graph,
+		)
 
 		if err != nil {
 			graphErr = errnie.Error(errnie.Err(
@@ -454,29 +455,39 @@ func (solver *Solver) extractResonanceNodes(
 	}
 
 	stored, found := symbol.Resonance.Load(symbol.Symbol)
-	reading, readingOK := stored.(types.ResonanceReading)
 
-	if !found || !readingOK ||
-		reading.EvidenceRevision != graph.EvidenceRevision ||
-		reading.Forecast == nil {
+	if !found {
 		return
 	}
 
-	if err := reading.Forecast.Validate(); err != nil ||
-		math.IsNaN(reading.Surprise) || math.IsInf(reading.Surprise, 0) {
+	coder, ok := stored.(*learning.ResonanceManifold)
+
+	if !ok {
 		return
 	}
 
-	graph.Forecast = reading.Forecast
+	forecast, err := coder.RolloutTaskForecast(1)
+
+	if err != nil || len(forecast) == 0 || !forecast[0].Ready {
+		return
+	}
+
+	layers, surprise, _ := coder.WireSnapshot()
+
+	if len(layers) == 0 || math.IsNaN(surprise) || math.IsInf(surprise, 0) {
+		return
+	}
+
+	graph.Forecast = &forecast[0]
 
 	graph.AddNode(&Node{
 		ID:         fmt.Sprintf("res:%s:surprise", symbol.Symbol),
 		Symbol:     symbol.Symbol,
 		Source:     "resonance",
 		Kind:       KindResonance,
-		Value:      reading.Surprise,
-		Confidence: reading.Forecast.Confidence,
-		At:         reading.At,
+		Value:      surprise,
+		Confidence: 1,
+		At:         graph.At,
 	})
 
 	graph.AddNode(&Node{
@@ -484,9 +495,9 @@ func (solver *Solver) extractResonanceNodes(
 		Symbol:     symbol.Symbol,
 		Source:     "resonance",
 		Kind:       KindResonance,
-		Value:      reading.Forecast.ExpectedReturn,
-		Confidence: reading.Forecast.Confidence,
-		At:         reading.At,
+		Value:      forecast[0].Value,
+		Confidence: 1,
+		At:         graph.At,
 	})
 }
 

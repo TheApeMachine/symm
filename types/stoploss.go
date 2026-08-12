@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/learning"
 )
 
 /*
@@ -22,7 +24,7 @@ distance; no path lowers it.
 type Stoploss struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	forecast      *ResonanceForecast
+	forecast      *learning.RLSOutput
 	tickSize      *decimal.Decimal
 	entryFeeRate  *decimal.Decimal
 	exitFeeRate   *decimal.Decimal
@@ -61,7 +63,7 @@ func NewStoploss(
 	symbol string,
 	entryPrice *decimal.Decimal,
 	mark *decimal.Decimal,
-	forecast *ResonanceForecast,
+	forecast *learning.RLSOutput,
 	tickSize *decimal.Decimal,
 	entryFeeRate *decimal.Decimal,
 	exitFeeRate *decimal.Decimal,
@@ -267,12 +269,14 @@ func (stoploss *Stoploss) forecastGeometry(
 		)
 	}
 
-	drawdown, err := stoploss.forecast.WorstIntermediateDrawdown()
+	if !stoploss.forecast.Ready {
+		return nil, nil, fmt.Errorf("stoploss: forecast distribution required")
+	}
 
-	if err != nil {
-		return nil, nil, fmt.Errorf(
-			"stoploss: invalid forecast path: %w", err,
-		)
+	drawdown := -math.Expm1(stoploss.forecast.Value)
+
+	if drawdown < 0 {
+		drawdown = 0
 	}
 
 	currentMark := scaled(mark)

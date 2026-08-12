@@ -84,16 +84,7 @@ func newPositionStoreFixture(testingTB testing.TB) *PositionStore {
 
 func newBrokerStoploss(testingTB testing.TB) *types.Stoploss {
 	testingTB.Helper()
-	forecast, err := types.NewResonanceForecast(
-		[]float64{-0.01, 0.03},
-		[]float64{1, 1},
-		2,
-		0.95,
-	)
-
-	if err != nil {
-		testingTB.Fatalf("forecast: %v", err)
-	}
+	forecast := brokerForecast(0.03)
 
 	zeroRate := decimal.NewFromInt64(0)
 	stoploss, err := types.NewStoploss(

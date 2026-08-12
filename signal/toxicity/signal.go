@@ -2,18 +2,18 @@ package toxicity
 
 import (
 	"context"
-	"sort"
-	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
+	"github.com/theapemachine/nomagique/algorithm/book/quality"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -21,11 +21,12 @@ Signal tracks whether near-touch liquidity is sincere, retreating, or bluffing
 from Level3 order events corroborated by the public trade tape.
 */
 type Signal struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	books   websocket.BookSource
-	ui      chan []byte
-	touches *sync.Map
+	ctx         context.Context
+	cancel      context.CancelFunc
+	books       websocket.BookSource
+	ui          chan []byte
+	sample      *quality.Sample
+	bookQuality *equation.BookQuality
 }
 
 /*
@@ -40,11 +41,12 @@ func NewSignal(
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:     ctx,
-		cancel:  cancel,
-		books:   books,
-		ui:      ui,
-		touches: &sync.Map{},
+		ctx:         ctx,
+		cancel:      cancel,
+		books:       books,
+		ui:          ui,
+		sample:      quality.NewSample(),
+		bookQuality: equation.NewBookQuality(),
 	}
 
 	return signal
@@ -61,182 +63,214 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceToxicity
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
-	out := make([]*types.Measurement, 0)
 
-	if thesis == nil || signal.books == nil {
-		return measurements
-	}
+	for trade := range market.MarketTrades(types.SourceToxicity) {
+		input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
+			Symbol:   trade.Symbol,
+			Price:    trade.Price.Float64(),
+			Quantity: trade.Qty,
+			Side:     flow.TradeSide(trade.Side),
+			At:       trade.Timestamp,
+		})
 
-	tickers := thesis.MarketTickers(types.SourceToxicity)
-	symbolSet := make(map[string]struct{})
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"toxicity: failed to sample trade",
+				err,
+			))
 
-	if signal.touches == nil {
-		signal.touches = &sync.Map{}
-	}
-
-	for _, ticker := range tickers {
-		if ticker.Symbol != "" {
-			symbolSet[ticker.Symbol] = struct{}{}
-		}
-	}
-
-	thesis.Measurements.Range(func(_, value any) bool {
-		rows, ok := value.([]*types.Measurement)
-
-		if !ok {
-			return true
+			continue
 		}
 
-		for _, measurement := range rows {
-			if measurement != nil && measurement.Symbol != "" {
-				symbolSet[measurement.Symbol] = struct{}{}
-			}
+		if !ready {
+			continue
 		}
 
-		return true
-	})
-
-	for _, symbol := range thesis.TradeSymbols() {
-		if symbol != "" {
-			symbolSet[symbol] = struct{}{}
+		metrics := map[string]types.MetricSample{
+			types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
+				Raw:  input.CancelBid,
+				Unit: types.UnitBaseCurrency,
+			},
+			types.MetricKey(types.MetricCancelledQuantity, types.SideSell): {
+				Raw:  input.CancelAsk,
+				Unit: types.UnitBaseCurrency,
+			},
+			types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy): {
+				Raw:  input.BidDepth,
+				Unit: types.UnitBaseCurrency,
+			},
+			types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): {
+				Raw:  input.AskDepth,
+				Unit: types.UnitBaseCurrency,
+			},
+			types.MetricKey(types.MetricFillVolume, types.SideBuy): {
+				Raw:  input.FillBid,
+				Unit: types.UnitBaseCurrency,
+			},
+			types.MetricKey(types.MetricFillVolume, types.SideSell): {
+				Raw:  input.FillAsk,
+				Unit: types.UnitBaseCurrency,
+			},
+			types.MetricKey(types.MetricTradeVolume, types.SideNone): {
+				Raw:  trade.Qty,
+				Unit: types.UnitBaseCurrency,
+			},
+			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+				Raw:  input.LastPrice,
+				Unit: types.UnitQuoteCurrency,
+			},
+			types.MetricKey(types.MetricBestPrice, types.SideSell): {
+				Raw:  input.LastPrice,
+				Unit: types.UnitQuoteCurrency,
+			},
+			types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
+				Raw:  input.BidDepth,
+				Unit: types.UnitBaseCurrency,
+			},
+			types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
+				Raw:  input.AskDepth,
+				Unit: types.UnitBaseCurrency,
+			},
 		}
+
+		measurement := &types.Measurement{
+			ID:       uuid.NewString(),
+			Source:   types.SourceToxicity,
+			Symbol:   trade.Symbol,
+			At:       trade.Timestamp,
+			Maturity: maturity,
+			Metrics:  metrics,
+		}
+
+		measurements = append(measurements, measurement)
 	}
-	signal.touches.Range(func(key, _ any) bool {
-		symbolSet[key.(string)] = struct{}{}
-		return true
-	})
 
-	symbols := make([]string, 0, len(symbolSet))
+	var at time.Time
+	var input equation.BookQualityInput
+	var ready bool
+	var maturity float64
+	var err error
 
-	for symbol := range symbolSet {
-		symbols = append(symbols, symbol)
-	}
+	signal.books.Book(market.Symbol, func(book *spotbook.Book) {
+		bookInput := flow.BookInput{Symbol: market.Symbol}
 
-	sort.Strings(symbols)
-	results := make([][]*types.Measurement, len(symbols))
-
-	group, _ := errgroup.WithContext(signal.ctx)
-
-	for index, symbol := range symbols {
-		resultIndex := index
-
-		group.Go(func() error {
-			var current touchSnapshot
-			var ok bool
-			signal.books.Book(symbol, func(book *spotbook.Book) {
-				current, ok = observedTouch(book)
+		for level := book.Bids.Low; level != nil; level = level.Higher {
+			bookInput.Bids = append(bookInput.Bids, flow.BookLevel{
+				Price:    level.Price.Float64(),
+				Quantity: level.Quantity.Float64(),
 			})
 
-			if !ok {
-				return nil
+			if level.Timestamp.After(at) {
+				at = level.Timestamp
 			}
+		}
 
-			previous := touchSnapshot{}
-			previousMeasurement, found := signal.touches.Load(symbol)
-			previousFound := false
+		for level := book.Asks.Low; level != nil; level = level.Higher {
+			bookInput.Asks = append(bookInput.Asks, flow.BookLevel{
+				Price:    level.Price.Float64(),
+				Quantity: level.Quantity.Float64(),
+			})
 
-			if found {
-				previous, previousFound = latestTouch(
-					[]*types.Measurement{previousMeasurement.(*types.Measurement)},
-					symbol,
-				)
+			if level.Timestamp.After(at) {
+				at = level.Timestamp
 			}
+		}
 
-			if !previousFound {
-				results[resultIndex] = []*types.Measurement{
-					toxicityMeasurement(symbol, current, current, nil),
-				}
-				return nil
-			}
+		input, ready, maturity, err = signal.sample.MeasureBook(bookInput)
+	})
 
-			if !current.asOf.After(previous.asOf) {
-				return nil
-			}
-
-			trades := thesis.TradesSnapshot(symbol)
-
-			bracketed := bracketedTrades(
-				trades,
-				symbol,
-				previous.asOf,
-				current.asOf,
-			)
-
-			if len(bracketed) == 0 {
-				results[resultIndex] = []*types.Measurement{
-					toxicityMeasurement(symbol, previous, current, nil),
-				}
-				return nil
-			}
-
-			measurement := toxicityMeasurement(symbol, previous, current, bracketed)
-			results[resultIndex] = []*types.Measurement{measurement}
-
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
+	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"toxicity: parallel measurement failed",
+			"toxicity: failed to sample book",
 			err,
 		))
+
 		return measurements
 	}
 
-	for _, symbolMeasurements := range results {
-		measurements = append(measurements, symbolMeasurements...)
+	if !ready {
+		return measurements
+	}
 
-		for _, measurement := range symbolMeasurements {
-			signal.touches.Store(measurement.Symbol, measurement)
-			_, complete := measurement.Metrics[types.MetricKey(
-				types.MetricTradeVolume,
-				types.SideNone,
-			)]
+	metrics := map[string]types.MetricSample{
+		types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
+			Raw:  input.CancelBid,
+			Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricCancelledQuantity, types.SideSell): {
+			Raw:  input.CancelAsk,
+			Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy): {
+			Raw:  input.BidDepth,
+			Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): {
+			Raw:  input.AskDepth,
+			Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricFillVolume, types.SideBuy): {
+			Raw:  input.FillBid,
+			Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricFillVolume, types.SideSell): {
+			Raw:  input.FillAsk,
+			Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricTradeVolume, types.SideNone): {
+			Raw:  input.FillBid + input.FillAsk,
+			Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+			Raw:  input.LastPrice,
+			Unit: types.UnitQuoteCurrency,
+		},
+		types.MetricKey(types.MetricBestPrice, types.SideSell): {
+			Raw:  input.LastPrice,
+			Unit: types.UnitQuoteCurrency,
+		},
+		types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
+			Raw:  input.BidDepth,
+			Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
+			Raw:  input.AskDepth,
+			Unit: types.UnitBaseCurrency,
+		},
+	}
 
-			if measurement.Symbol == types.Focus() && complete {
-				out = append(out, measurement)
-			}
+	snr, ok := types.MeasurementSignalNoiseRatio(types.SourceToxicity, metrics)
+
+	if ok {
+		metrics[types.MetricKey(types.MetricSNR, types.SideNone)] = types.MetricSample{
+			Raw:        snr,
+			Normalized: &snr,
+			Unit:       types.UnitDimensionless,
 		}
 	}
 
-	if len(out) > 0 {
+	measurement := &types.Measurement{
+		ID:       uuid.NewString(),
+		Source:   types.SourceToxicity,
+		Symbol:   market.Symbol,
+		At:       at,
+		Maturity: maturity,
+		Metrics:  metrics,
+	}
+
+	measurements = append(measurements, measurement)
+
+	if market.Symbol == types.Focus() {
 		utils.Publish(signal.ui, datura.NewMap(
-			"measurements", out,
+			"measurements", measurements,
 		))
 	}
 
 	return measurements
-}
-
-func bracketedTrades(
-	trades []kraken.TradeData,
-	symbol string,
-	from time.Time,
-	through time.Time,
-) []kraken.TradeData {
-	bracketed := make([]kraken.TradeData, 0)
-
-	for _, trade := range trades {
-		if trade.Symbol != symbol || !validTrade(trade) ||
-			!trade.Timestamp.After(from) || trade.Timestamp.After(through) {
-			continue
-		}
-
-		bracketed = append(bracketed, trade)
-	}
-
-	return bracketed
-}
-
-func validTrade(row kraken.TradeData) bool {
-	price := row.Price.Float64()
-
-	return row.Symbol != "" && !row.Timestamp.IsZero() && price > 0 && row.Qty > 0 &&
-		(row.Side == "buy" || row.Side == "sell")
 }
 
 /*

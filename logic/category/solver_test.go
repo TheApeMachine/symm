@@ -14,7 +14,7 @@ func TestUpdate(t *testing.T) {
 		ignition := 0.9
 		drive := 0.8
 		bitcoin := types.NewSymbol("BTC/USD", nil)
-		bitcoin.AddMeasurement(&types.Measurement{
+		bitcoin.AppendMeasurement(types.SourcePumpDump, &types.Measurement{
 			Source:   types.SourcePumpDump,
 			Symbol:   "BTC/USD",
 			Maturity: 0.75,
@@ -25,7 +25,7 @@ func TestUpdate(t *testing.T) {
 			},
 		})
 		ethereum := types.NewSymbol("ETH/USD", nil)
-		ethereum.AddMeasurement(&types.Measurement{
+		ethereum.AppendMeasurement(types.SourceCVD, &types.Measurement{
 			Source:   types.SourceCVD,
 			Symbol:   "ETH/USD",
 			Maturity: 0.5,
@@ -46,6 +46,7 @@ func TestUpdate(t *testing.T) {
 		Convey("It should classify every symbol from the evidence it actually has", func() {
 			So(err, ShouldBeNil)
 			So(categoryAt(thesis, "BTC/USD"), ShouldResemble, types.Category{
+				At:         categoryAt(thesis, "BTC/USD").At,
 				Symbol:     "BTC/USD",
 				Type:       types.VerticalIgnition,
 				Confidence: categoryAt(thesis, "BTC/USD").Confidence,
@@ -61,7 +62,7 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a symbol whose configured scores are not usable yet", t, func() {
 		thesis := categoryThesis(t)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AddMeasurement(&types.Measurement{
+		symbol.AppendMeasurement(types.SourcePumpDump, &types.Measurement{
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
@@ -88,7 +89,7 @@ func TestUpdate(t *testing.T) {
 		buy := 0.81
 		sell := 0.49
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AddMeasurement(&types.Measurement{
+		symbol.AppendMeasurement(types.SourceExhaustion, &types.Measurement{
 			Source:   types.SourceExhaustion,
 			Symbol:   "BTC/USD",
 			Maturity: 0.6,
@@ -131,42 +132,40 @@ func TestUpdate(t *testing.T) {
 		oldInefficient := 1.0
 		currentSync := 0.8
 		symbol := types.NewSymbol("ALT/USD", nil)
-		symbol.Measurements = append(symbol.Measurements,
-			&types.Measurement{
-				Source: types.SourceLeadLag,
-				Symbol: "ALT/USD",
-				Peer:   "UNFI/USD",
-				At:     time.Unix(1, 0),
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricInefficient, types.SideNone): {
-						Normalized: &oldInefficient,
-					},
+		symbol.AppendMeasurement(types.SourceLeadLag, &types.Measurement{
+			Source: types.SourceLeadLag,
+			Symbol: "ALT/USD",
+			Peer:   "UNFI/USD",
+			At:     time.Unix(1, 0),
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricInefficient, types.SideNone): {
+					Normalized: &oldInefficient,
 				},
 			},
-			&types.Measurement{
-				Source: types.SourceLeadLag,
-				Symbol: "ALT/USD",
-				Peer:   "SOSO/USD",
-				At:     time.Unix(2, 0),
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricSync, types.SideNone): {
-						Normalized: &currentSync,
-					},
+		})
+		symbol.AppendMeasurement(types.SourceLeadLag, &types.Measurement{
+			Source: types.SourceLeadLag,
+			Symbol: "ALT/USD",
+			Peer:   "SOSO/USD",
+			At:     time.Unix(2, 0),
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricSync, types.SideNone): {
+					Normalized: &currentSync,
 				},
 			},
-		)
+		})
 		thesis.Symbols.Store("ALT/USD", symbol)
 		stampCategorySignals(thesis, "ALT/USD")
 
 		err := NewSolver(nil, nil, nil).Update(thesis)
 
-		Convey("It classifies only the newest source epoch", func() {
+		Convey("It classifies the strongest retained lead-lag evidence", func() {
 			category := categoryAt(thesis, "ALT/USD")
 
 			So(err, ShouldBeNil)
-			So(category.Type, ShouldEqual, types.SynchronizedDrift)
-			So(category.Strength, ShouldEqual, currentSync)
-			So(category.Supporting, ShouldResemble, []string{"leadlag:sync"})
+			So(category.Type, ShouldEqual, types.InefficientLag)
+			So(category.Strength, ShouldEqual, oldInefficient)
+			So(category.Supporting, ShouldResemble, []string{"leadlag:inefficient"})
 		})
 	})
 }
@@ -207,7 +206,7 @@ func BenchmarkUpdate(b *testing.B) {
 	for b.Loop() {
 		thesis := types.NewThesis(b.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AddMeasurement(&types.Measurement{
+		symbol.AppendMeasurement(types.SourcePumpDump, &types.Measurement{
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{

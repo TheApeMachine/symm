@@ -138,7 +138,7 @@ func (allocation *Allocation) Calculate(thesis *types.Thesis) error {
 			economics, err := price.EntryEconomics(
 				decision.Symbol,
 				quantity,
-				decision.Forecast.ExpectedReturn,
+				decision.Forecast.Value,
 			)
 
 			if err != nil {

@@ -147,18 +147,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		evidence := symbol.MeasurementsSnapshot()
-
-		if len(evidence) == 0 {
-			return true
-		}
-
-		measurements[symbolName] = nil
-
-		for _, measurement := range evidence {
+		for measurement := range symbol.MarketMeasurements("manifold") {
 			if measurement != nil && measurement.Source == types.SourceHawkes {
 				measurements[symbolName] = measurement
-				break
 			}
 		}
 

@@ -37,7 +37,7 @@ func measurementFor(
 func TestMeasure(t *testing.T) {
 	Convey("Given a causal multi-leg return cohort", t, func() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		thesis := types.NewThesis(t.Context(), nil)
+		market := types.NewSymbol("AAA/USD", nil)
 		start := time.Unix(1_700_000_000, 0).UTC()
 
 		firstLeg := []kraken.TickerData{
@@ -56,12 +56,12 @@ func TestMeasure(t *testing.T) {
 			ticker("CCC/USD", 98, start.Add(2*time.Second)),
 		}
 
-		appendTickers(thesis, firstLeg...)
-		So(signal.Measure(thesis), ShouldHaveLength, 3)
-		appendTickers(thesis, secondLeg...)
-		So(signal.Measure(thesis), ShouldHaveLength, 3)
-		appendTickers(thesis, thirdLeg...)
-		measurements := signal.Measure(thesis)
+		appendTickers(market, firstLeg...)
+		So(signal.Measure(market), ShouldHaveLength, 1)
+		appendTickers(market, secondLeg...)
+		So(signal.Measure(market), ShouldHaveLength, 1)
+		appendTickers(market, thirdLeg...)
+		measurements := signal.Measure(market)
 
 		Convey("It should use consecutive log returns and signed breadth", func() {
 			leader := measurementFor(measurements, "AAA/USD")
@@ -95,27 +95,27 @@ func TestMeasure(t *testing.T) {
 		})
 
 		Convey("It should reject repeated latest-value cache entries", func() {
-			So(signal.Measure(thesis), ShouldBeEmpty)
+			So(signal.Measure(market), ShouldBeEmpty)
 		})
 	})
 
 	Convey("Given a cohort with real cadence but no return dispersion", t, func() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		thesis := types.NewThesis(t.Context(), nil)
+		market := types.NewSymbol("AAA/USD", nil)
 		start := time.Unix(1_700_000_100, 0).UTC()
-		appendTickers(thesis,
+		appendTickers(market,
 			ticker("AAA/USD", 100, start),
 			ticker("BBB/USD", 100, start),
 		)
-		So(signal.Measure(thesis), ShouldHaveLength, 2)
-		appendTickers(thesis,
+		So(signal.Measure(market), ShouldHaveLength, 1)
+		appendTickers(market,
 			ticker("AAA/USD", 100, start.Add(time.Second)),
 			ticker("BBB/USD", 100, start.Add(time.Second)),
 		)
-		measurements := signal.Measure(thesis)
+		measurements := signal.Measure(market)
 
 		Convey("It should leave the scale-dependent return unnormalized", func() {
-			So(measurements, ShouldHaveLength, 2)
+			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Sample(types.MetricChange, types.SideNone).Normalized,
 				ShouldBeNil)
 			So(measurements[0].Sample(types.MetricSNR, types.SideNone).Raw,
@@ -125,14 +125,14 @@ func TestMeasure(t *testing.T) {
 
 	Convey("Given ticker history retained across market epochs", t, func() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		thesis := types.NewThesis(t.Context(), nil)
+		market := types.NewSymbol("AAA/USD", nil)
 		start := time.Unix(1_700_000_200, 0).UTC()
-		thesis.AppendTicker(ticker("AAA/USD", 100, start))
+		market.AppendTicker(ticker("AAA/USD", 100, start))
 
-		So(signal.Measure(thesis), ShouldHaveLength, 1)
+		So(signal.Measure(market), ShouldHaveLength, 1)
 
-		thesis.AppendTicker(ticker("AAA/USD", 101, start.Add(time.Second)))
-		measurements := signal.Measure(thesis)
+		market.AppendTicker(ticker("AAA/USD", 101, start.Add(time.Second)))
+		measurements := signal.Measure(market)
 
 		Convey("It should skip the observed row and measure the newer return", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -227,9 +227,9 @@ func TestNormalizedSentimentMetric(t *testing.T) {
 	})
 }
 
-func appendTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
+func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		thesis.AppendTicker(row)
+		market.AppendTicker(row)
 	}
 }
 
@@ -249,11 +249,11 @@ func BenchmarkSentimentStatistics(b *testing.B) {
 }
 
 func BenchmarkMeasure(b *testing.B) {
-	thesis := types.NewThesis(b.Context(), nil)
+	market := types.NewSymbol("AAA/USD", nil)
 	start := time.Unix(1_700_000_300, 0).UTC()
 
 	for index := range 256 {
-		thesis.AppendTicker(ticker(
+		market.AppendTicker(ticker(
 			"AAA/USD",
 			100+float64(index)/100,
 			start.Add(time.Duration(index)*time.Second),
@@ -264,6 +264,6 @@ func BenchmarkMeasure(b *testing.B) {
 
 	for b.Loop() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		_ = signal.Measure(thesis)
+		_ = signal.Measure(market)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"iter"
 	"sync"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"golang.design/x/lockfree/lf"
@@ -22,6 +21,7 @@ var signals = []SourceType{
 	SourcePumpDump,
 	SourceSentiment,
 	SourceToxicity,
+	SourceResonance,
 }
 
 /*
@@ -35,6 +35,7 @@ which needs a stable measurement set to train on.
 type Symbol struct {
 	Symbol       string    `json:"symbol,omitempty"`
 	Status       Status    `json:"status,omitempty"`
+	Tick         int64     `json:"tick,omitempty"`
 	Measurements *sync.Map `json:"-"`
 	tickers      *sync.Map `json:"-"`
 	trades       *sync.Map `json:"-"`
@@ -76,6 +77,8 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 }
 
 func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
+	symbol.Tick++
+
 	for _, source := range signals {
 		value, ok := symbol.tickers.Load(source)
 
@@ -94,6 +97,8 @@ func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
 }
 
 func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
+	symbol.Tick++
+
 	for _, source := range signals {
 		value, ok := symbol.trades.Load(source)
 
@@ -112,19 +117,15 @@ func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
 }
 
 func (symbol *Symbol) AppendMeasurement(source SourceType, measurement *Measurement) {
-	value, ok := symbol.Measurements.Load(source)
+	categoryMeasurements, _ := symbol.Measurements.LoadOrStore("category", lf.NewQueue[*Measurement]())
+	graphMeasurements, _ := symbol.Measurements.LoadOrStore("graph", lf.NewQueue[*Measurement]())
+	manifoldMeasurements, _ := symbol.Measurements.LoadOrStore("manifold", lf.NewQueue[*Measurement]())
+	resonanceMeasurements, _ := symbol.Measurements.LoadOrStore("resonance", lf.NewQueue[*Measurement]())
 
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			fmt.Sprintf("measurement queue not found for source %s", source),
-			nil,
-		))
-
-		return
-	}
-
-	value.(*lf.Queue[*Measurement]).Enqueue(measurement)
+	categoryMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+	graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+	manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+	resonanceMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 }
 
 func (symbol *Symbol) MarketTickers(source SourceType) iter.Seq[kraken.TickerData] {
@@ -144,7 +145,9 @@ func (symbol *Symbol) MarketTickers(source SourceType) iter.Seq[kraken.TickerDat
 			data, ok = ticker.(*lf.Queue[kraken.TickerData]).Dequeue()
 
 			if ok {
-				yield(data)
+				if !yield(data) {
+					return
+				}
 			}
 		}
 	}
@@ -167,16 +170,18 @@ func (symbol *Symbol) MarketTrades(source SourceType) iter.Seq[kraken.TradeData]
 			data, ok = trade.(*lf.Queue[kraken.TradeData]).Dequeue()
 
 			if ok {
-				yield(data)
+				if !yield(data) {
+					return
+				}
 			}
 		}
 	}
 }
 
-func (symbol *Symbol) MarketMeasurements(measurement *Measurement) iter.Seq[*Measurement] {
-	measurements, ok := symbol.Measurements.Load(measurement.Source)
+func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*Measurement] {
+	measurements, found := symbol.Measurements.Load(solver)
 
-	if !ok {
+	if !found {
 		return func(yield func(*Measurement) bool) {}
 	}
 
@@ -190,16 +195,10 @@ func (symbol *Symbol) MarketMeasurements(measurement *Measurement) iter.Seq[*Mea
 			data, ok = measurements.(*lf.Queue[*Measurement]).Dequeue()
 
 			if ok {
-				yield(data)
+				if !yield(data) {
+					return
+				}
 			}
 		}
 	}
-}
-
-/*
-MarshalJSON materializes every concurrent symbol state map for durable thesis
-checkpoints.
-*/
-func (symbol *Symbol) MarshalJSON() ([]byte, error) {
-	return datura.NewMap(symbol).MarshalAndFree(), nil
 }

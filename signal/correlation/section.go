@@ -3,6 +3,7 @@ package correlation
 import (
 	"context"
 	"fmt"
+	"iter"
 	"math"
 	"sort"
 	"strings"
@@ -62,7 +63,7 @@ each changed symbol, and returns cohort scores without rescanning full peer
 histories for unchanged pairs.
 */
 func (section *Section) Measure(
-	rows []kraken.TickerData,
+	rows iter.Seq[kraken.TickerData],
 ) (map[string]map[string]float64, error) {
 	if section.symbols == nil {
 		section.symbols = &sync.Map{}
@@ -84,7 +85,7 @@ func (section *Section) Measure(
 	seenSymbols := make(map[string]struct{})
 	errorsBySymbol := &sync.Map{}
 
-	for _, row := range rows {
+	for row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
 
 		if symbol == "" || row.Timestamp.IsZero() || row.Last == nil || row.Last.Sign() <= 0 {

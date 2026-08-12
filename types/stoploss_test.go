@@ -8,7 +8,12 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/learning"
 )
+
+func testForecast(value float64) *learning.RLSOutput {
+	return &learning.RLSOutput{Value: value, Ready: true, Scale: 0.01, DegreesOfFreedom: 1}
+}
 
 func TestNewStoploss(t *testing.T) {
 	Convey("Given a trusted path with a temporary retained drawdown", t, func() {
@@ -26,13 +31,7 @@ func TestNewStoploss(t *testing.T) {
 	})
 
 	Convey("Given an entry ask above the executable mark", t, func() {
-		forecast, err := NewResonanceForecast(
-			[]float64{-0.0001},
-			[]float64{1},
-			1,
-			0.9,
-		)
-		So(err, ShouldBeNil)
+		forecast := testForecast(-0.0001)
 
 		zeroRate := decimal.NewFromInt64(0)
 		stoploss, err := NewStoploss(
@@ -57,13 +56,7 @@ func TestNewStoploss(t *testing.T) {
 	})
 
 	Convey("Given a forecast path that never falls below its starting price", t, func() {
-		forecast, err := NewResonanceForecast(
-			[]float64{0.01, 0.01},
-			[]float64{1, 1},
-			2,
-			0.9,
-		)
-		So(err, ShouldBeNil)
+		forecast := testForecast(0.01)
 		zeroRate := decimal.NewFromInt64(0)
 
 		Convey("It should put the floor beyond the measured entry spread", func() {
@@ -85,13 +78,7 @@ func TestNewStoploss(t *testing.T) {
 	})
 
 	Convey("Given a downside smaller than one executable tick", t, func() {
-		forecast, err := NewResonanceForecast(
-			[]float64{-1e-8, 0.01},
-			[]float64{1, 1},
-			2,
-			0.9,
-		)
-		So(err, ShouldBeNil)
+		forecast := testForecast(-1e-8)
 		zeroRate := decimal.NewFromInt64(0)
 
 		Convey("It should use tick rounding while preserving strict floor separation", func() {
@@ -115,13 +102,7 @@ func TestNewStoploss(t *testing.T) {
 	})
 
 	Convey("Given the MEZO entry spread and taker fees", t, func() {
-		forecast, err := NewResonanceForecast(
-			[]float64{0.01},
-			[]float64{1},
-			1,
-			0.9,
-		)
-		So(err, ShouldBeNil)
+		forecast := testForecast(0.01)
 		entryPrice, err := decimal.NewFromString("0.00985")
 		So(err, ShouldBeNil)
 		mark, err := decimal.NewFromString("0.00984")
@@ -280,16 +261,7 @@ type testReporter interface {
 
 func stoplossFixture(testingTB testReporter) *Stoploss {
 	testingTB.Helper()
-	forecast, err := NewResonanceForecast(
-		[]float64{-0.01, -0.02, 0.06},
-		[]float64{1, 0.5, 0.5},
-		3,
-		0.9,
-	)
-
-	if err != nil {
-		testingTB.Fatalf("forecast: %v", err)
-	}
+	forecast := testForecast(-0.02)
 
 	zeroRate := decimal.NewFromInt64(0)
 	stoploss, err := NewStoploss(
@@ -311,16 +283,7 @@ func stoplossFixture(testingTB testReporter) *Stoploss {
 }
 
 func BenchmarkNewStoploss(b *testing.B) {
-	forecast, err := NewResonanceForecast(
-		[]float64{-0.01, -0.02, 0.06},
-		[]float64{1, 0.5, 0.5},
-		3,
-		0.9,
-	)
-
-	if err != nil {
-		b.Fatalf("forecast: %v", err)
-	}
+	forecast := testForecast(-0.02)
 
 	zeroRate := decimal.NewFromInt64(0)
 	entry := decimal.NewFromFloat64(100.02)

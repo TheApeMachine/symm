@@ -18,6 +18,7 @@ type Config struct {
 	*Risk
 	Planner *PlannerConfig
 	*PumpDump
+	*CVD
 }
 
 func NewConfig() *Config {
@@ -27,6 +28,7 @@ func NewConfig() *Config {
 		Risk:      NewRisk(),
 		Planner:   NewPlannerConfig(),
 		PumpDump:  NewPumpDump(),
+		CVD:       NewCVD(),
 	}
 }
 

@@ -7,23 +7,22 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
 
+func brokerForecast(value float64) *learning.RLSOutput {
+	return &learning.RLSOutput{Value: value, Ready: true, Scale: 0.01, DegreesOfFreedom: 1}
+}
+
 func TestDeskExecute(t *testing.T) {
 	Convey("Given a positive forecast that does not pay current execution costs", t, func() {
 		desk := deskFixture(t)
 		decision := deskDecisionFixture(t, desk, "MARGINAL/USD", false)
-		forecast, err := types.NewResonanceForecast(
-			[]float64{-0.0001, 0.0002},
-			[]float64{1, 1},
-			2,
-			0.90,
-		)
-		So(err, ShouldBeNil)
+		forecast := brokerForecast(-0.0001)
 		decision.Forecast = forecast
 
 		Convey("It should refuse the order at the final atomic execution boundary", func() {
@@ -129,7 +128,7 @@ func TestDeskPublishEquity(t *testing.T) {
 			So(equity.Equity.Float64(), ShouldEqual, 200.0)
 			So(equity.UnrealizedPnL.Float64(), ShouldEqual, -5.0)
 			So(len(logic), ShouldEqual, 0)
-			So(len(regulator), ShouldEqual, 1)
+			So(len(regulator), ShouldEqual, 0)
 		})
 	})
 }
@@ -256,16 +255,7 @@ func deskDecisionFixture(
 		Bid:    decimal.NewFromFloat64(100),
 		BidQty: 10,
 	})
-	forecast, err := types.NewResonanceForecast(
-		[]float64{-0.01, 0.03},
-		[]float64{1, 1},
-		2,
-		0.90,
-	)
-
-	if err != nil {
-		t.Fatalf("forecast: %v", err)
-	}
+	forecast := brokerForecast(0.05)
 
 	entry := decimal.NewFromFloat64(100.02)
 	mark := decimal.NewFromFloat64(100)

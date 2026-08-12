@@ -8,31 +8,26 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
 Solver feeds normalized market measurements into one resonance manifold per symbol.
 */
 type Solver struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	recorder     *audit.Recorder
-	coders       *sync.Map
-	samples      *sync.Map
-	reach        *sync.Map
-	schemas      *sync.Map
-	pendingInput *sync.Map
-	pendingMid   *sync.Map
-	alpha        float64
-	ui           chan []byte
+	ctx           context.Context
+	cancel        context.CancelFunc
+	recorder      *audit.Recorder
+	coders        *sync.Map
+	schemas       *sync.Map
+	previousInput *sync.Map
+	previousMark  *sync.Map
+	previousTick  *sync.Map
+	alpha         float64
+	ui            chan []byte
 }
 
 /*
@@ -51,17 +46,16 @@ func NewSolver(
 	}
 
 	return &Solver{
-		ctx:          ctx,
-		cancel:       cancel,
-		recorder:     recorder,
-		coders:       &sync.Map{},
-		samples:      &sync.Map{},
-		reach:        &sync.Map{},
-		schemas:      &sync.Map{},
-		pendingInput: &sync.Map{},
-		pendingMid:   &sync.Map{},
-		alpha:        initialAlpha,
-		ui:           ui,
+		ctx:           ctx,
+		cancel:        cancel,
+		recorder:      recorder,
+		coders:        &sync.Map{},
+		schemas:       &sync.Map{},
+		previousInput: &sync.Map{},
+		previousMark:  &sync.Map{},
+		previousTick:  &sync.Map{},
+		alpha:         initialAlpha,
+		ui:            ui,
 	}
 }
 
@@ -70,320 +64,144 @@ Update settles one predictive-coding manifold for every symbol carrying finite,
 normalized measurements and publishes the resulting hierarchy.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if !(solver.alpha > 0) || solver.alpha > 1 || math.IsNaN(solver.alpha) || math.IsInf(solver.alpha, 0) {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: alpha must be finite and in (0, 1]",
-			errors.New("invalid resonance alpha"),
-		))
-	}
-
-	features := make(map[string]map[string]float64)
-	revisions := make(map[string]uint64)
+	var updateErr error
 
 	thesis.Symbols.Range(func(key, value any) bool {
+		name := key.(string)
 		symbol, ok := value.(*types.Symbol)
 
 		if !ok || symbol == nil {
 			return true
 		}
 
-		name := key.(string)
-		measurements, revision, _ := symbol.MeasurementState()
+		readings := make(map[string]float64)
+		mark := 0.0
+		tick := int64(0)
 
-		if len(measurements) == 0 {
-			return true
-		}
+		for measurement := range symbol.MarketMeasurements("resonance") {
+			if measurement.Symbol != name {
+				continue
+			}
 
-		features[name] = make(map[string]float64)
-		revisions[name] = revision
+			if measurement.Tick > tick || measurement.Tick == tick && mark == 0 {
+				if bid, hasBid := measurement.Metadata["bid"]; hasBid {
+					if ask, hasAsk := measurement.Metadata["ask"]; hasAsk && bid > 0 && ask > 0 {
+						mark = (bid + ask) / 2
+						tick = measurement.Tick
+					}
+				}
 
-		for _, measurement := range measurements {
+				if mark == 0 {
+					if value, found := measurement.Metadata["last_price"]; found && value > 0 {
+						mark = value
+						tick = measurement.Tick
+					}
+				}
+
+				if mark == 0 {
+					if value, found := measurement.Metadata["trade_price"]; found && value > 0 {
+						mark = value
+						tick = measurement.Tick
+					}
+				}
+			}
+
 			for key, sample := range measurement.Metrics {
 				if sample.Normalized == nil {
 					continue
 				}
 
 				identity := string(measurement.Source) + ":" + name + ":" + key
-				features[name][identity] = *sample.Normalized
+				readings[identity] = *sample.Normalized
 			}
 		}
 
-		return true
-	})
+		if len(readings) == 0 {
+			return true
+		}
 
-	if len(features) == 0 {
-		return nil
-	}
+		var schema []string
+		if rawSchema, loaded := solver.schemas.Load(name); loaded {
+			schema = rawSchema.([]string)
+		}
 
-	group, _ := errgroup.WithContext(solver.ctx)
-
-	for symbolName, readings := range features {
-		group.Go(func() error {
-			var masterSchema []string
-
-			if rawSchema, loaded := solver.schemas.Load(symbolName); loaded {
-				masterSchema = rawSchema.([]string)
+		schemaChanged := false
+		for identity := range readings {
+			if slices.Contains(schema, identity) {
+				continue
 			}
 
-			schemaMap := make(map[string]bool, len(masterSchema))
+			schema = append(schema, identity)
+			schemaChanged = true
+		}
 
-			for _, id := range masterSchema {
-				schemaMap[id] = true
-			}
+		if schemaChanged {
+			sort.Strings(schema)
+			solver.schemas.Store(name, schema)
+			solver.coders.Delete(name)
+			solver.previousInput.Delete(name)
+			solver.previousMark.Delete(name)
+			solver.previousTick.Delete(name)
+		}
 
-			schemaUpdated := false
+		input := make([]float64, len(schema))
+		for index, identity := range schema {
+			input[index] = readings[identity]
+		}
 
-			for identity := range readings {
-				if !schemaMap[identity] {
-					masterSchema = append(masterSchema, identity)
-					schemaMap[identity] = true
-					schemaUpdated = true
-				}
-			}
+		var coder *learning.ResonanceManifold
+		rawCoder, loaded := solver.coders.Load(name)
 
-			if schemaUpdated || len(masterSchema) == 0 {
-				sort.Strings(masterSchema)
-				solver.schemas.Store(symbolName, masterSchema)
-			}
+		if loaded {
+			coder = rawCoder.(*learning.ResonanceManifold)
+		}
 
-			inputDim := len(masterSchema)
-
-			if inputDim == 0 {
-				reading := types.ResonanceReading{
-					EvidenceRevision: revisions[symbolName],
-					Stage:            "resonance",
-					Source:           types.SourceResonance,
-					Symbol:           symbolName,
-					At:               thesis.At,
-					Alpha:            solver.alpha,
-					Verdict: types.ResonanceVerdict{
-						Learning: "observing",
-					},
-				}
-				stored, _ := thesis.Symbols.Load(symbolName)
-				symbol := stored.(*types.Symbol)
-				symbol.Resonance.Store(symbolName, reading)
-				utils.Publish(
-					solver.ui,
-					datura.NewMap("resonance", reading),
-				)
-				return nil
-			}
-
-			input := make([]float64, inputDim)
-
-			for index, identity := range masterSchema {
-				if val, found := readings[identity]; found {
-					input[index] = val
-				}
-			}
-
-			found, ok := solver.coders.Load(symbolName)
-			var coder *learning.ResonanceManifold
-
-			if ok && found != nil {
-				if existingCoder, valid := found.(*learning.ResonanceManifold); valid {
-					layers, _, _ := existingCoder.WireSnapshot()
-
-					if len(layers) > 0 && len(layers[0].State) == inputDim {
-						coder = existingCoder
-					}
-				}
-			}
+		if coder == nil {
+			coder = learning.NewResonanceManifold(
+				[]int{len(input), len(input) * 2, len(input)}, 1, solver.alpha,
+			)
 
 			if coder == nil {
-				solver.pendingInput.Delete(symbolName)
-				solver.pendingMid.Delete(symbolName)
-				coder = learning.NewResonanceManifold(
-					[]int{inputDim, inputDim * 2, inputDim}, 1, solver.alpha,
-				)
-
-				if coder == nil {
-					return errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"resonance: failed to construct predictive coding manifold",
-						errors.New("invalid resonance manifold"),
-					))
-				}
-
-				solver.coders.Store(symbolName, coder)
+				updateErr = errors.New("resonance: failed to construct manifold")
+				return false
 			}
 
-			midpoint := 0.0
-			latest, tickerReady := thesis.LatestTicker(symbolName)
+			solver.coders.Store(name, coder)
+		}
 
-			if tickerReady {
-				if latest.Bid != nil && latest.Ask != nil && latest.Bid.Sign() > 0 && latest.Ask.Sign() > 0 {
-					midpoint = (latest.Bid.Float64() + latest.Ask.Float64()) / 2
-				}
+		if previousInput, found := solver.previousInput.Load(name); found && mark > 0 {
+			previousTick, _ := solver.previousTick.Load(name)
 
-				if midpoint == 0 && latest.Last != nil && latest.Last.Sign() > 0 {
-					midpoint = latest.Last.Float64()
-				}
-			}
-
-			if previousInput, found := solver.pendingInput.Load(symbolName); found && midpoint > 0 {
-				previousMid, _ := solver.pendingMid.Load(symbolName)
-				target := math.Log(midpoint / previousMid.(float64))
+			if tick == previousTick.(int64)+1 {
+				previousMark, _ := solver.previousMark.Load(name)
+				target := math.Log(mark / previousMark.(float64))
 
 				if _, err := coder.SettleFromBatchOptions(
 					previousInput.([]float64), []float64{target}, true, false,
 				); err != nil {
-					return err
+					updateErr = err
+					return false
 				}
 			}
+		}
 
-			if _, err := coder.SettleFromBatchOptions(input, nil, false, true); err != nil {
-				return err
-			}
+		if _, err := coder.SettleFromBatchOptions(input, nil, false, true); err != nil {
+			updateErr = err
+			return false
+		}
 
-			if midpoint > 0 {
-				solver.pendingInput.Store(symbolName, slices.Clone(input))
-				solver.pendingMid.Store(symbolName, midpoint)
-			}
+		if mark > 0 && tick > 0 {
+			solver.previousInput.Store(name, slices.Clone(input))
+			solver.previousMark.Store(name, mark)
+			solver.previousTick.Store(name, tick)
+		}
 
-			var count uint64
-			if val, loaded := solver.samples.Load(symbolName); loaded {
-				count = val.(uint64) + 1
-			} else {
-				count = 1
-			}
-			solver.samples.Store(symbolName, count)
+		symbol.Resonance.Store(name, coder)
 
-			layers, surprise, energy := coder.WireSnapshot()
-			latent := coder.LatentState()
+		return true
+	})
 
-			var embedding []float64
-			if len(latent) >= 2 {
-				embedding = latent[:2]
-			} else {
-				embedding = latent
-			}
-
-			forecast, verdict := solver.buildForecast(coder, symbolName)
-
-			skillEvidence := 0.0
-			if skill, ok := coder.TaskSkill(); ok {
-				skillEvidence = skill
-			}
-
-			reading := types.ResonanceReading{
-				EvidenceRevision: revisions[symbolName],
-				Stage:            "resonance",
-				Source:           types.SourceResonance,
-				Symbol:           symbolName,
-				At:               thesis.At,
-				Surprise:         surprise,
-				Energy:           energy,
-				Latent:           latent,
-				Embedding:        embedding,
-				Layers:           layers,
-				Forecast:         forecast,
-				Verdict:          verdict,
-				Alpha:            solver.alpha,
-				Samples:          count,
-				SkillEvidence:    skillEvidence,
-			}
-
-			stored, _ := thesis.Symbols.Load(symbolName)
-			symbol := stored.(*types.Symbol)
-			symbol.Resonance.Store(symbolName, reading)
-
-			utils.Publish(
-				solver.ui,
-				datura.NewMap("resonance", reading),
-			)
-
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"resonance: failed to update CPU predictive coding manifold: "+err.Error(),
-			err,
-		))
-	}
-
-	return nil
-}
-
-/*
-buildForecast queries nomagique's task readiness and rollout methods.
-If nomagique reports that the task head is not ready (TaskSkill or TaskPrecision missing, or RLS unready),
-it returns an observing verdict and a nil forecast without fabricating confidence metrics.
-*/
-func (solver *Solver) buildForecast(
-	coder *learning.ResonanceManifold, symbol string,
-) (*types.ResonanceForecast, types.ResonanceVerdict) {
-	verdict := types.ResonanceVerdict{
-		Learning:       "observing",
-		Tuning:         "recursive least squares",
-		LearningHealth: 0,
-		TuningHealth:   1,
-	}
-
-	skill, hasSkill := coder.TaskSkill()
-	precision, hasPrecision := coder.TaskPrecision()
-
-	if !hasSkill || !hasPrecision {
-		return nil, verdict
-	}
-
-	currentReach := 1
-	if val, loaded := solver.reach.Load(symbol); loaded {
-		currentReach = val.(int)
-	}
-
-	horizon, newReach := coder.DynamicHorizon(precision, currentReach, 8)
-	solver.reach.Store(symbol, newReach)
-
-	rlsOutputs, err := coder.RolloutTaskForecast(horizon)
-
-	if err != nil || len(rlsOutputs) < horizon || !rlsOutputs[0].Ready {
-		return nil, verdict
-	}
-
-	predictions := coder.RolloutTaskPrediction(horizon)
-
-	if len(predictions) < horizon {
-		return nil, verdict
-	}
-
-	retention := coder.RolloutRetention(horizon)
-
-	if len(retention) < horizon {
-		return nil, verdict
-	}
-
-	rls := rlsOutputs[0]
-	fc, err := types.NewResonanceForecast(
-		predictions[:horizon], retention[:horizon], horizon, skill,
-	)
-
-	if err != nil {
-		return nil, verdict
-	}
-
-	if err := fc.SetPredictiveDistribution(rls.Scale, rls.DegreesOfFreedom, rls.Ready); err != nil {
-		return nil, verdict
-	}
-
-	verdict.Learning = "predicting"
-	verdict.LearningHealth = 1
-	verdict.Conviction = skill
-
-	if fc.ExpectedReturn > 0 {
-		verdict.Direction = 1
-	}
-
-	if fc.ExpectedReturn < 0 {
-		verdict.Direction = -1
-	}
-
-	return fc, verdict
+	return updateErr
 }
 
 /*

@@ -59,14 +59,10 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceCorrelation
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers := thesis.MarketTickers(types.SourceCorrelation)
-
-	if len(tickers) == 0 {
-		return nil
-	}
-
-	scoresBySymbol, err := signal.section.Measure(tickers)
+func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
+	scoresBySymbol, err := signal.section.Measure(
+		market.MarketTickers(types.SourceCorrelation),
+	)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -109,10 +105,14 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			}
 
 			measurement := &types.Measurement{
-				ID:      uuid.NewString(),
-				Source:  types.SourceCorrelation,
-				Symbol:  symbol,
-				At:      at,
+				ID:     uuid.NewString(),
+				Source: types.SourceCorrelation,
+				Symbol: symbol,
+				Tick:   market.Tick,
+				At:     at,
+				Metadata: map[string]float64{
+					"last_price": price,
+				},
 				Metrics: metrics,
 			}
 			measurement.PutMetric(

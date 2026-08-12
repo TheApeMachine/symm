@@ -15,10 +15,12 @@ func TestAddLeadLagEdges(t *testing.T) {
 		localMeasurement := leadLagFixture(
 			"local-leadlag", "ALT/USD", "BTC/USD", at, 1, 0.6, 0.2, 0.1, 1,
 		)
-		local.Measurements = append(local.Measurements, localMeasurement)
+		local.AppendMeasurement(types.SourceLeadLag, localMeasurement)
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		index, err := compiler.addNodes(local, graph)
+		index, err := compiler.addNodes(
+			"ALT/USD", local.MarketMeasurements("graph"), graph,
+		)
 		So(err, ShouldBeNil)
 
 		err = compiler.addLeadLagEdges(local, graph, index)
@@ -54,12 +56,14 @@ func TestAddLeadLagEdges(t *testing.T) {
 	Convey("Given a peer comparison without one resolved return", t, func() {
 		at := time.Unix(20, 0).UTC()
 		local := types.NewSymbol("ALT/USD", nil)
-		local.Measurements = append(local.Measurements, leadLagFixture(
+		local.AppendMeasurement(types.SourceLeadLag, leadLagFixture(
 			"local-empty", "ALT/USD", "BTC/USD", at, 0, 0, 0, 0, 0,
 		))
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		index, err := compiler.addNodes(local, graph)
+		index, err := compiler.addNodes(
+			"ALT/USD", local.MarketMeasurements("graph"), graph,
+		)
 		So(err, ShouldBeNil)
 
 		err = compiler.addLeadLagEdges(local, graph, index)
@@ -83,10 +87,12 @@ func TestAddLeadLagEdges(t *testing.T) {
 		)
 		localMeasurement.PeerAt = at.Add(-3 * time.Second)
 		localMeasurement.PeerObservedFrom = localMeasurement.PeerAt.Add(-time.Second)
-		local.Measurements = append(local.Measurements, localMeasurement)
+		local.AppendMeasurement(types.SourceLeadLag, localMeasurement)
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		index, err := compiler.addNodes(local, graph)
+		index, err := compiler.addNodes(
+			"ALT/USD", local.MarketMeasurements("graph"), graph,
+		)
 		So(err, ShouldBeNil)
 
 		err = compiler.addLeadLagEdges(local, graph, index)
@@ -109,35 +115,39 @@ func TestAddLeadLagEdges(t *testing.T) {
 	Convey("Given retained lead-lag relationships from different anchor epochs", t, func() {
 		at := time.Unix(40, 0).UTC()
 		local := types.NewSymbol("ALT/USD", nil)
-		local.Measurements = append(
-			local.Measurements,
+		local.AppendMeasurement(
+			types.SourceLeadLag,
 			leadLagFixture(
 				"old", "ALT/USD", "UNFI/USD", at.Add(-time.Second), 0, 0, 0, 0, 0,
 			),
+		)
+		local.AppendMeasurement(
+			types.SourceLeadLag,
 			leadLagFixture(
 				"current", "ALT/USD", "SOSO/USD", at, 0, 0, 0, 0, 0,
 			),
 		)
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		index, err := compiler.addNodes(local, graph)
+		index, err := compiler.addNodes(
+			"ALT/USD", local.MarketMeasurements("graph"), graph,
+		)
 		So(err, ShouldBeNil)
 
 		err = compiler.addLeadLagEdges(local, graph, index)
 
-		Convey("It should relate only the newest anchor epoch", func() {
+		Convey("It should relate every queued anchor epoch", func() {
 			So(err, ShouldBeNil)
-			So(graph.Edges, ShouldHaveLength, 2)
+			So(graph.Edges, ShouldHaveLength, 4)
 
-			for nodeID := range graph.Nodes {
-				So(nodeID, ShouldNotContainSubstring, "UNFI/USD")
-			}
+			seen := map[string]bool{}
 
 			for _, edge := range graph.Edges {
-				So(edge.Evidence[0], ShouldEqual, "current")
-				So(edge.From, ShouldNotContainSubstring, "UNFI/USD")
-				So(edge.To, ShouldNotContainSubstring, "UNFI/USD")
+				seen[edge.Evidence[0]] = true
 			}
+
+			So(seen["old"], ShouldBeTrue)
+			So(seen["current"], ShouldBeTrue)
 		})
 	})
 }

@@ -85,7 +85,9 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 						)
 					}
 
-					symbol.AppendMeasurement(signal.Measure(symbol))
+					for _, measurement := range signal.Measure(symbol) {
+						symbol.AppendMeasurement(signal.Type(), measurement)
+					}
 
 					return nil
 				})
@@ -93,7 +95,7 @@ func (measurements *Measurements) Update(thesis *types.Thesis) error {
 				return true
 			})
 
-			return nil
+			return symbolGroup.Wait()
 		})
 	}
 

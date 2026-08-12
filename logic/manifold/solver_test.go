@@ -116,7 +116,7 @@ func TestUpdate(t *testing.T) {
 		}
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Measurements = []*types.Measurement{measurement}
+		symbol.AppendMeasurement(types.SourceHawkes, measurement)
 		symbol.Status = types.BUSY
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)

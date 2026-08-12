@@ -91,9 +91,8 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 
 		graph := stored.(*logicgraph.Graph)
 
-		if graph.Forecast == nil || !graph.Forecast.ConfidenceReady ||
-			graph.Forecast.ExpectedReturn <= 0 ||
-			graph.Forecast.Confidence < config.Planner.MinimumConfidence {
+		if graph.Forecast == nil || !graph.Forecast.Ready ||
+			graph.Forecast.Value <= 0 {
 			return true
 		}
 
@@ -121,7 +120,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		decision := types.NewDecision(types.ActionNothing, symbol)
 		decision.At = graph.At
 		decision.Forecast = graph.Forecast
-		decision.Confidence = graph.Forecast.Confidence
+		decision.Confidence = config.Planner.MinimumConfidence
 		decision.Alternatives = make(map[string]float64)
 
 		for _, branch := range root.Children {

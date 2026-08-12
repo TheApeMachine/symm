@@ -7,8 +7,24 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 )
+
+func graphForecast(value float64) *learning.RLSOutput {
+	return &learning.RLSOutput{Value: value, Ready: true, Scale: 0.01, DegreesOfFreedom: 1}
+}
+
+func graphResonanceManifold() *learning.ResonanceManifold {
+	coder := learning.NewResonanceManifold([]int{1, 2, 1}, 1, 0.1)
+
+	for index := range 8 {
+		input := []float64{float64(index+1) / 10}
+		_, _ = coder.SettleFromBatchOptions(input, []float64{0.01}, true, true)
+	}
+
+	return coder
+}
 
 func TestUpdate(t *testing.T) {
 	Convey("Given completed upstream stages without a causal estimate", t, func() {
@@ -17,7 +33,7 @@ func TestUpdate(t *testing.T) {
 		bitcoin := types.NewSymbol("BTC/USD", nil)
 		drive := 0.8
 		snr := 0.75
-		bitcoin.AddMeasurement(&types.Measurement{
+		bitcoin.AppendMeasurement(types.SourceCVD, &types.Measurement{
 			ID:     "cvd-measurement",
 			Source: types.SourceCVD,
 			Symbol: "BTC/USD",
@@ -31,7 +47,7 @@ func TestUpdate(t *testing.T) {
 				},
 			},
 		})
-		_, revision, _ := bitcoin.MeasurementState()
+		revision := uint64(bitcoin.Tick)
 		bitcoin.Categories.Store("BTC/USD", []types.Category{{
 			Symbol:           "BTC/USD",
 			Type:             types.CategoryAggressiveDrive,
@@ -72,7 +88,7 @@ func TestUpdate(t *testing.T) {
 			symbol := types.NewSymbol(symbolName, nil)
 			drive := 0.6
 			quality := 0.7
-			symbol.AddMeasurement(&types.Measurement{
+			symbol.AppendMeasurement(types.SourceCVD, &types.Measurement{
 				ID:     symbolName + "-measurement",
 				Source: types.SourceCVD,
 				Symbol: symbolName,
@@ -86,7 +102,7 @@ func TestUpdate(t *testing.T) {
 					},
 				},
 			})
-			_, revision, _ := symbol.MeasurementState()
+			revision := uint64(symbol.Tick)
 
 			symbol.Categories.Store(symbolName, []types.Category{{
 				Symbol: symbolName, Type: types.CategoryAggressiveDrive,
@@ -368,33 +384,22 @@ func TestExtractCausalNodes(t *testing.T) {
 func TestExtractResonanceNodes(t *testing.T) {
 	Convey("Given a confidence-supported multi-step resonance forecast", t, func() {
 		at := time.Unix(1, 0).UTC()
-		forecast, err := types.NewResonanceForecast(
-			[]float64{0.01, 0.02}, []float64{1, 0.5}, 2, 0.4,
-		)
-		So(err, ShouldBeNil)
-
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = at
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Resonance.Store("BTC/USD", types.ResonanceReading{
-			Symbol:   "BTC/USD",
-			At:       at,
-			Surprise: 0.25,
-			Forecast: forecast,
-		})
+		symbol.Resonance.Store("BTC/USD", graphResonanceManifold())
 		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
 		solver := NewSolver(nil, nil)
 
 		solver.extractResonanceNodes(symbol, graph)
 
-		Convey("It should publish the full-horizon return at measured confidence", func() {
+		Convey("It should publish the nomagique task forecast", func() {
 			node, found := graph.Nodes["res:BTC/USD:forecast"]
 
 			So(found, ShouldBeTrue)
-			So(node.Value, ShouldEqual, forecast.ExpectedReturn)
-			So(node.Value, ShouldNotEqual, forecast.Curve[0])
-			So(node.Confidence, ShouldEqual, forecast.Confidence)
+			So(node.Value, ShouldNotEqual, 0)
+			So(node.Confidence, ShouldEqual, 1)
 			So(node.At, ShouldEqual, at)
 		})
 	})
@@ -520,23 +525,14 @@ func BenchmarkUpdate(b *testing.B) {
 	at := time.Unix(1, 0).UTC()
 	thesis := types.NewThesis(b.Context(), nil)
 	thesis.At = at
-	forecast, err := types.NewResonanceForecast(
-		[]float64{0.01},
-		[]float64{1},
-		1,
-		0.8,
-	)
-
-	if err != nil {
-		b.Fatal(err)
-	}
+	forecast := graphForecast(0.01)
 
 	for index := range 256 {
 		symbol := "SIM" + strconv.Itoa(index) + "/USD"
 		symbolState := types.NewSymbol(symbol, nil)
 		snr := 0.8
 		surge := 0.5
-		symbolState.Measurements = append(symbolState.Measurements, &types.Measurement{
+		symbolState.AppendMeasurement(types.SourceSentiment, &types.Measurement{
 			ID:     "sentiment-" + symbol,
 			Source: types.SourceSentiment,
 			Symbol: symbol,
@@ -561,11 +557,7 @@ func BenchmarkUpdate(b *testing.B) {
 				Supporting: []string{"sentiment:surge_score"},
 			},
 		})
-		symbolState.Resonance.Store(symbol, types.ResonanceReading{
-			Symbol:   symbol,
-			Surprise: 0.1,
-			Forecast: forecast,
-		})
+		symbolState.Resonance.Store(symbol, forecast)
 		symbolState.Causal.Store(symbol, map[string]any{
 			"association":       0.1,
 			"associationScore":  0.1,

@@ -75,17 +75,11 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceHawkes
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	trades := thesis.MarketTrades(types.SourceHawkes)
-
-	if len(trades) == 0 {
-		return nil
-	}
-
+func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 	var focused *types.Measurement
 
-	for index, trade := range trades {
+	for trade := range symbol.MarketTrades(types.SourceHawkes) {
 		if signal.seenTrade(trade) {
 			continue
 		}
@@ -125,19 +119,6 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		}
 
 		if !measured {
-			continue
-		}
-
-		latest := true
-
-		for _, pending := range trades[index+1:] {
-			if pending.Symbol == trade.Symbol {
-				latest = false
-				break
-			}
-		}
-
-		if !latest {
 			continue
 		}
 

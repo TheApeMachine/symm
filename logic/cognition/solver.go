@@ -189,18 +189,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	thesis.Symbols.Range(func(key, value interface{}) bool {
 		symbol := key.(string)
 		symbolState := value.(*types.Symbol)
-		measurements, revision, _ := symbolState.MeasurementState()
-
-		if len(measurements) == 0 {
-			return true
-		}
 
 		cognitionValue, cognitionFound := symbolState.Cognition.Load(symbol)
 
 		if cognitionFound {
-			reading, valid := cognitionValue.(types.Cognition)
+			_, valid := cognitionValue.(types.Cognition)
 
-			if valid && reading.EvidenceRevision == revision {
+			if valid {
 				return true
 			}
 		}
@@ -212,9 +207,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		categories := stored.([]types.Category)
-		if len(categories) == 0 || categories[0].EvidenceRevision != revision {
+		if len(categories) == 0 {
 			return true
 		}
+
+		revision := categories[0].EvidenceRevision
 
 		if !updated {
 			solver.tickCounter++

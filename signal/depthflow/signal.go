@@ -2,7 +2,6 @@ package depthflow
 
 import (
 	"context"
-	"sort"
 	"sync"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
@@ -101,8 +99,7 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceDepthFlow
 }
 
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	trades := thesis.MarketTrades(types.SourceDepthFlow)
+func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 	out := make([]*types.Measurement, 0)
 
@@ -122,161 +119,73 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		signal.lastBook = &sync.Map{}
 	}
 
-	tradeBatches := make(map[string][]kraken.TradeData)
-	symbols := make([]string, 0)
-	symbolSet := make(map[string]struct{})
+	signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
+		bookAt := managedBookObservedAt(managed)
+		bookPending := managed != nil
 
-	thesis.Measurements.Range(func(_, value any) bool {
-		rows, ok := value.([]*types.Measurement)
-
-		if !ok {
-			return true
-		}
-
-		for _, measurement := range rows {
-			if measurement == nil || measurement.Symbol == "" {
+		for trade := range symbol.MarketTrades(types.SourceDepthFlow) {
+			if !validTrade(trade) {
 				continue
 			}
 
-			if _, exists := symbolSet[measurement.Symbol]; exists {
+			if bookPending && !trade.Timestamp.Before(bookAt) {
+				bookMeasurements, err := signal.measureManagedBook(managed)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"depthflow: failed to measure book",
+						err,
+					))
+				}
+
+				measurements = append(measurements, bookMeasurements...)
+				bookPending = false
+			}
+
+			if signal.seenTrade(trade) {
 				continue
 			}
 
-			symbolSet[measurement.Symbol] = struct{}{}
-			symbols = append(symbols, measurement.Symbol)
+			lastBookAt, hasBook := signal.bookAt(trade.Symbol)
+
+			if !hasBook || lastBookAt.IsZero() || lastBookAt.After(trade.Timestamp) {
+				continue
+			}
+
+			tradeMeasurements, err := signal.measureTrade(trade)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"depthflow: failed to measure trade",
+					err,
+				))
+				continue
+			}
+
+			signal.commitTrade(trade)
+			measurements = append(measurements, tradeMeasurements...)
+
+			if symbol.Symbol == types.Focus() {
+				out = append(out, tradeMeasurements...)
+			}
 		}
 
-		return true
+		if bookPending {
+			bookMeasurements, err := signal.measureManagedBook(managed)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"depthflow: failed to measure book",
+					err,
+				))
+			}
+
+			measurements = append(measurements, bookMeasurements...)
+		}
 	})
-
-	results := &sync.Map{}
-	publish := &sync.Map{}
-
-	for _, trade := range trades {
-		if validTrade(trade) {
-			tradeBatches[trade.Symbol] = append(tradeBatches[trade.Symbol], trade)
-
-			if _, exists := symbolSet[trade.Symbol]; !exists {
-				symbolSet[trade.Symbol] = struct{}{}
-				symbols = append(symbols, trade.Symbol)
-			}
-		}
-	}
-	sort.Strings(symbols)
-
-	group, _ := errgroup.WithContext(signal.ctx)
-
-	for _, symbol := range symbols {
-		symbolTrades := tradeBatches[symbol]
-		sort.SliceStable(symbolTrades, func(leftIndex, rightIndex int) bool {
-			left := symbolTrades[leftIndex]
-			right := symbolTrades[rightIndex]
-
-			if left.Timestamp.Equal(right.Timestamp) {
-				return left.TradeID < right.TradeID
-			}
-
-			return left.Timestamp.Before(right.Timestamp)
-		})
-		group.Go(func() error {
-			signal.books.Book(symbol, func(managed *spotbook.Book) {
-				bookAt := managedBookObservedAt(managed)
-				symbolMeasurements := make([]*types.Measurement, 0)
-				symbolOut := make([]*types.Measurement, 0)
-				bookPending := managed != nil
-
-				for _, trade := range symbolTrades {
-					if bookPending && !trade.Timestamp.Before(bookAt) {
-						bookMeasurements, err := signal.measureManagedBook(managed)
-
-						if err != nil {
-							errnie.Error(errnie.Err(
-								errnie.UnprocessableContent,
-								"depthflow: failed to measure book",
-								err,
-							))
-						}
-
-						symbolMeasurements = append(symbolMeasurements, bookMeasurements...)
-						bookPending = false
-					}
-
-					if signal.seenTrade(trade) {
-						continue
-					}
-
-					lastBookAt, hasBook := signal.bookAt(trade.Symbol)
-
-					if !hasBook || lastBookAt.IsZero() || lastBookAt.After(trade.Timestamp) {
-						continue
-					}
-
-					tradeMeasurements, err := signal.measureTrade(trade)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"depthflow: failed to measure trade",
-							err,
-						))
-						continue
-					}
-
-					signal.commitTrade(trade)
-					symbolMeasurements = append(symbolMeasurements, tradeMeasurements...)
-
-					if symbol == types.Focus() {
-						symbolOut = append(symbolOut, tradeMeasurements...)
-					}
-				}
-
-				if bookPending {
-					bookMeasurements, err := signal.measureManagedBook(managed)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"depthflow: failed to measure book",
-							err,
-						))
-					}
-
-					symbolMeasurements = append(symbolMeasurements, bookMeasurements...)
-				}
-
-				results.Store(symbol, symbolMeasurements)
-				publish.Store(symbol, symbolOut)
-			})
-
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"depthflow: parallel measurement failed",
-			err,
-		))
-		return measurements
-	}
-
-	for _, symbol := range symbols {
-		raw, exists := results.Load(symbol)
-
-		if !exists {
-			continue
-		}
-
-		symbolMeasurements := raw.([]*types.Measurement)
-		measurements = append(measurements, symbolMeasurements...)
-
-		focused, hasFocused := publish.Load(symbol)
-
-		if hasFocused {
-			out = append(out, focused.([]*types.Measurement)...)
-		}
-	}
 
 	if len(out) > 0 {
 		utils.Publish(signal.ui, datura.NewMap("measurements", out))

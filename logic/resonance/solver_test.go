@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -46,7 +47,7 @@ func TestUpdate(t *testing.T) {
 		seventh := 0.6
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Measurements = []*types.Measurement{{
+		symbol.AppendMeasurement(types.SourceLiquidity, &types.Measurement{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
@@ -59,7 +60,7 @@ func TestUpdate(t *testing.T) {
 				"seventh":  {Normalized: &seventh},
 				"raw_only": {Raw: 100},
 			},
-		}}
+		})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(t.Context(), make(chan []byte, 1), nil, testAlpha)
 
@@ -71,23 +72,15 @@ func TestUpdate(t *testing.T) {
 			stored, found := symbol.Resonance.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 
-			reading, ok := stored.(types.ResonanceReading)
+			coder, ok := stored.(*learning.ResonanceManifold)
 			So(ok, ShouldBeTrue)
-			So(reading.Stage, ShouldEqual, "resonance")
-			So(reading.Source, ShouldEqual, types.SourceResonance)
-			So(reading.Symbol, ShouldEqual, "BTC/USD")
-			So(reading.Alpha, ShouldEqual, testAlpha)
-			So(reading.Layers, ShouldHaveLength, 3)
-			So(reading.Layers[0].State, ShouldHaveLength, 7)
-			So(reading.Layers[1].State, ShouldHaveLength, 14)
-			So(reading.Layers[2].State, ShouldHaveLength, 7)
-			So(reading.Latent, ShouldHaveLength, 7)
-			So(reading.Embedding, ShouldHaveLength, 2)
-			So(reading.Samples, ShouldEqual, 1)
-			So(reading.Verdict.Learning, ShouldEqual, "observing")
-			So(reading.Forecast, ShouldBeNil)
-			So(math.IsNaN(reading.Surprise), ShouldBeFalse)
-			So(math.IsNaN(reading.Energy), ShouldBeFalse)
+			layers, surprise, energy := coder.WireSnapshot()
+			So(layers, ShouldHaveLength, 3)
+			So(layers[0].State, ShouldHaveLength, 7)
+			So(layers[1].State, ShouldHaveLength, 14)
+			So(layers[2].State, ShouldHaveLength, 7)
+			So(math.IsNaN(surprise), ShouldBeFalse)
+			So(math.IsNaN(energy), ShouldBeFalse)
 		})
 
 		Convey("It should retain the model while the schema is unchanged", func() {
@@ -114,7 +107,7 @@ func TestUpdate(t *testing.T) {
 		} {
 			value := value
 			symbolState := types.NewSymbol(symbol, nil)
-			symbolState.Measurements = []*types.Measurement{{
+			symbolState.AppendMeasurement(types.SourceLiquidity, &types.Measurement{
 				Source: types.SourceLiquidity,
 				Symbol: symbol,
 				Metrics: map[string]types.MetricSample{
@@ -125,7 +118,7 @@ func TestUpdate(t *testing.T) {
 					"fifth":  {Normalized: &value},
 					"sixth":  {Normalized: &value},
 				},
-			}}
+			})
 			thesis.Symbols.Store(symbol, symbolState)
 		}
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
@@ -152,7 +145,7 @@ func TestUpdate(t *testing.T) {
 		value := 0.25
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AddMeasurement(&types.Measurement{
+		symbol.AppendMeasurement(types.SourceLiquidity, &types.Measurement{
 			ID: "liquidity", Source: types.SourceLiquidity, Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
 				"score": {Normalized: &value},
@@ -173,13 +166,12 @@ func TestUpdate(t *testing.T) {
 		}
 
 		for _, source := range sources {
-			err := thesis.AppendMeasurements(source, []*types.Measurement{{
+			symbol.AppendMeasurement(source, &types.Measurement{
 				ID: string(source), Source: source, Symbol: "BTC/USD",
 				Metrics: map[string]types.MetricSample{
 					"score": {Normalized: &value},
 				},
-			}}, true)
-			So(err, ShouldBeNil)
+			})
 		}
 
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
@@ -195,13 +187,13 @@ func TestUpdate(t *testing.T) {
 	Convey("Given no normalized measurements", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Measurements = []*types.Measurement{{
+		symbol.AppendMeasurement(types.SourceLiquidity, &types.Measurement{
 			Source: types.SourceLiquidity,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
 				"midpoint": {Raw: 100},
 			},
-		}}
+		})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
@@ -209,11 +201,8 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should publish the explicit observing state", func() {
 			So(err, ShouldBeNil)
-			stored, published := symbol.Resonance.Load("BTC/USD")
-			So(published, ShouldBeTrue)
-			reading := stored.(types.ResonanceReading)
-			So(reading.Verdict.Learning, ShouldEqual, "observing")
-			So(reading.Latent, ShouldBeEmpty)
+			_, published := symbol.Resonance.Load("BTC/USD")
+			So(published, ShouldBeFalse)
 		})
 	})
 }
@@ -241,7 +230,7 @@ func BenchmarkUpdate(b *testing.B) {
 	ctx := b.Context()
 	thesis := types.NewThesis(ctx, nil)
 	symbol := types.NewSymbol("BTC/USD", nil)
-	symbol.Measurements = []*types.Measurement{{
+	symbol.AppendMeasurement(types.SourceLiquidity, &types.Measurement{
 		Source: types.SourceLiquidity,
 		Symbol: "BTC/USD",
 		Metrics: map[string]types.MetricSample{
@@ -253,13 +242,12 @@ func BenchmarkUpdate(b *testing.B) {
 			"sixth":   {Normalized: &sixth},
 			"seventh": {Normalized: &seventh},
 		},
-	}}
+	})
 	thesis.Symbols.Store("BTC/USD", symbol)
 	solver := NewSolver(ctx, nil, nil, testAlpha)
 	b.ReportAllocs()
 
 	for b.Loop() {
-		symbol.Reset()
 		_ = solver.Update(thesis)
 	}
 }

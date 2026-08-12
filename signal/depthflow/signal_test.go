@@ -19,8 +19,8 @@ import (
 func TestMeasure(t *testing.T) {
 	Convey("Given independent depth-flow symbols without a ready book", t, func() {
 		signal := &Signal{ctx: context.Background(), books: emptyBookSource{}}
-		thesis := types.NewThesis(t.Context(), nil)
-		appendTickers(thesis,
+		market := types.NewSymbol("AAA/USD", nil)
+		appendTickers(market,
 			kraken.TickerData{Symbol: "AAA/USD"},
 			kraken.TickerData{Symbol: "BBB/USD"},
 		)
@@ -30,15 +30,15 @@ func TestMeasure(t *testing.T) {
 		})
 
 		Convey("It completes each independent symbol pass without measurements", func() {
-			So(signal.Measure(thesis), ShouldBeEmpty)
-			So(signal.Measure(thesis), ShouldBeEmpty)
+			So(signal.Measure(market), ShouldBeEmpty)
+			So(signal.Measure(market), ShouldBeEmpty)
 		})
 	})
 }
 
-func appendTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
+func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		thesis.AppendTicker(row)
+		market.AppendTicker(row)
 	}
 }
 

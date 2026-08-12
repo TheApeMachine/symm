@@ -27,23 +27,23 @@ func TestMeasure(t *testing.T) {
 			{121, 242},
 		} {
 			at := start.Add(time.Duration(leg) * time.Second)
-			thesis := types.NewThesis(t.Context(), nil)
-			appendCorrelationTickers(thesis,
+			market := types.NewSymbol("AAA/USD", nil)
+			appendCorrelationTickers(market,
 				correlationTicker("AAA/USD", prices[0], at),
 				correlationTicker("BBB/USD", prices[1], at),
 			)
-			_ = signal.Measure(thesis)
+			_ = signal.Measure(market)
 		}
 
 		Convey("It reuses the section group and constructs every symbol measurement", func() {
 			at := start.Add(3 * time.Second)
-			thesis := types.NewThesis(t.Context(), nil)
-			appendCorrelationTickers(thesis,
+			market := types.NewSymbol("AAA/USD", nil)
+			appendCorrelationTickers(market,
 				correlationTicker("AAA/USD", 133.1, at),
 				correlationTicker("BBB/USD", 266.2, at),
 			)
 
-			measurements := signal.Measure(thesis)
+			measurements := signal.Measure(market)
 			So(measurements, ShouldHaveLength, 2)
 
 			for _, measurement := range measurements {
@@ -57,8 +57,8 @@ func TestMeasure(t *testing.T) {
 	Convey("Given complete symbol histories behind symbol-local cursors", t, func() {
 		signal := &Signal{ctx: context.Background(), section: NewSection()}
 		start := time.Unix(1_700_006_000, 0).UTC()
-		thesis := types.NewThesis(t.Context(), nil)
-		appendCorrelationTickers(thesis,
+		market := types.NewSymbol("AAA/USD", nil)
+		appendCorrelationTickers(market,
 			correlationTicker("AAA/USD", 100, start),
 			correlationTicker("AAA/USD", 110, start.Add(time.Second)),
 			correlationTicker("AAA/USD", 121, start.Add(2*time.Second)),
@@ -67,11 +67,11 @@ func TestMeasure(t *testing.T) {
 			correlationTicker("BBB/USD", 242, start.Add(2*time.Second)),
 		)
 
-		measurements := signal.Measure(thesis)
+		measurements := signal.Measure(market)
 
 		Convey("It should consume each symbol history with its own cursor", func() {
 			So(measurements, ShouldHaveLength, 2)
-			So(signal.Measure(thesis), ShouldBeEmpty)
+			So(signal.Measure(market), ShouldBeEmpty)
 		})
 	})
 
@@ -85,19 +85,19 @@ func TestMeasure(t *testing.T) {
 			{121, 242},
 		} {
 			at := start.Add(time.Duration(leg) * time.Second)
-			thesis := types.NewThesis(t.Context(), nil)
-			appendCorrelationTickers(thesis,
+			market := types.NewSymbol("AAA/USD", nil)
+			appendCorrelationTickers(market,
 				correlationTicker("AAA/USD", prices[0], at),
 				correlationTicker("BBB/USD", prices[1], at),
 			)
-			_ = signal.Measure(thesis)
+			_ = signal.Measure(market)
 		}
 
-		thesis := types.NewThesis(t.Context(), nil)
-		appendCorrelationTickers(thesis,
+		market := types.NewSymbol("AAA/USD", nil)
+		appendCorrelationTickers(market,
 			correlationTicker("BBB/USD", 266.2, start.Add(3*time.Second)),
 		)
-		measurements := signal.Measure(thesis)
+		measurements := signal.Measure(market)
 
 		Convey("It should emit both peer scores from their retained samples", func() {
 			So(measurements, ShouldHaveLength, 2)
@@ -118,9 +118,9 @@ func correlationTicker(symbol string, price float64, at time.Time) kraken.Ticker
 	}
 }
 
-func appendCorrelationTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
+func appendCorrelationTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		thesis.AppendTicker(row)
+		market.AppendTicker(row)
 	}
 }
 
@@ -217,12 +217,12 @@ func BenchmarkMeasure(b *testing.B) {
 		{121, 242},
 	} {
 		at := start.Add(time.Duration(leg) * time.Second)
-		thesis := types.NewThesis(b.Context(), nil)
-		appendCorrelationTickers(thesis,
+		market := types.NewSymbol("AAA/USD", nil)
+		appendCorrelationTickers(market,
 			correlationTicker("AAA/USD", prices[0], at),
 			correlationTicker("BBB/USD", prices[1], at),
 		)
-		_ = signal.Measure(thesis)
+		_ = signal.Measure(market)
 	}
 
 	sequence := 3
@@ -231,14 +231,14 @@ func BenchmarkMeasure(b *testing.B) {
 
 	for b.Loop() {
 		sequence++
-		thesis := types.NewThesis(b.Context(), nil)
-		appendCorrelationTickers(thesis,
+		market := types.NewSymbol("AAA/USD", nil)
+		appendCorrelationTickers(market,
 			correlationTicker(
 				"BBB/USD",
 				242+float64(sequence%7),
 				start.Add(time.Duration(sequence)*time.Second),
 			),
 		)
-		_ = signal.Measure(thesis)
+		_ = signal.Measure(market)
 	}
 }

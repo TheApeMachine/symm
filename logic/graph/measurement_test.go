@@ -16,7 +16,7 @@ func TestAddNodes(t *testing.T) {
 		drive := 0.7
 		quality := 0.8
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Measurements = append(symbol.Measurements, &types.Measurement{
+		measurement := &types.Measurement{
 			ID: "cvd-1", Source: types.SourceCVD, Symbol: "BTC/USD", At: at,
 			ObservedFrom: observedFrom, Horizon: time.Second, Maturity: 0.6,
 			Metrics: map[string]types.MetricSample{
@@ -27,15 +27,18 @@ func TestAddNodes(t *testing.T) {
 					Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
 				},
 			},
-		})
+		}
+		symbol.AppendMeasurement(types.SourceCVD, measurement)
 		graph := NewGraph(at)
 
-		index, err := newMeasurementCompiler().addNodes(symbol, graph)
+		index, err := newMeasurementCompiler().addNodes(
+			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
+		)
 
 		Convey("It should retain the measurement value, quality, and provenance", func() {
 			So(err, ShouldBeNil)
 			So(graph.Nodes, ShouldHaveLength, 2)
-			node := graph.Nodes[measurementNodeID(symbol.Measurements[0], "drive")]
+			node := graph.Nodes[measurementNodeID(measurement, "drive")]
 			So(node, ShouldNotBeNil)
 			So(node.ID, ShouldEqual, "meas:BTC/USD:cvd:drive")
 			So(node.Kind, ShouldEqual, KindMeasurement)
@@ -53,7 +56,7 @@ func TestAddNodes(t *testing.T) {
 
 	Convey("Given a measurement assigned to another pair", t, func() {
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Measurements = append(symbol.Measurements, &types.Measurement{
+		symbol.AppendMeasurement(types.SourceCVD, &types.Measurement{
 			ID: "cvd-other", Source: types.SourceCVD, Symbol: "ETH/USD",
 			At: time.Unix(11, 0).UTC(),
 			Metrics: map[string]types.MetricSample{
@@ -62,7 +65,7 @@ func TestAddNodes(t *testing.T) {
 		})
 
 		_, err := newMeasurementCompiler().addNodes(
-			symbol,
+			"BTC/USD", symbol.MarketMeasurements("graph"),
 			NewGraph(time.Unix(11, 0).UTC()),
 		)
 
@@ -77,7 +80,7 @@ func TestAddCategoryEdges(t *testing.T) {
 	Convey("Given category evidence without a normalized measurement value", t, func() {
 		at := time.Unix(20, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Measurements = append(symbol.Measurements, &types.Measurement{
+		symbol.AppendMeasurement(types.SourceCVD, &types.Measurement{
 			ID: "cvd-raw", Source: types.SourceCVD, Symbol: "BTC/USD", At: at,
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricDrive, types.SideNone): {
@@ -91,7 +94,9 @@ func TestAddCategoryEdges(t *testing.T) {
 		}})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		index, err := compiler.addNodes(symbol, graph)
+		index, err := compiler.addNodes(
+			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
+		)
 		So(err, ShouldBeNil)
 
 		err = compiler.addCategoryEdges(symbol, graph, index)
@@ -110,7 +115,7 @@ func BenchmarkAddNodes(b *testing.B) {
 	value := 0.5
 
 	for index, schema := range types.CategorySchemas {
-		symbol.Measurements = append(symbol.Measurements, &types.Measurement{
+		symbol.AppendMeasurement(schema.Source, &types.Measurement{
 			ID:     string(schema.Source) + ":" + strconv.Itoa(index),
 			Source: schema.Source, Symbol: "BTC/USD", At: at,
 			Metrics: map[string]types.MetricSample{
@@ -125,7 +130,9 @@ func BenchmarkAddNodes(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, err := compiler.addNodes(symbol, NewGraph(at)); err != nil {
+		if _, err := compiler.addNodes(
+			"BTC/USD", symbol.MarketMeasurements("graph"), NewGraph(at),
+		); err != nil {
 			b.Fatal(err)
 		}
 	}

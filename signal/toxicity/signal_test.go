@@ -13,109 +13,39 @@ import (
 )
 
 func TestMeasure(t *testing.T) {
-	Convey("Given unchanged touches for independent toxicity symbols", t, func() {
+	Convey("Given toxicity book observations on one symbol", t, func() {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
-		signal := &Signal{ctx: context.Background(), books: books}
+		signal := NewSignal(context.Background(), books, nil)
+		market := types.NewSymbol("BTC/USD", nil)
 		base := time.Unix(1_700_004_100, 0).UTC()
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
-		thesis.AppendTicker(kraken.TickerData{Symbol: "ALT/USD", Timestamp: base})
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
-		books.books["ALT/USD"] = toxicityBook(50, 51, 20, 20, base)
 
-		Reset(func() {
-			signal.Close()
-		})
+		measurements := signal.Measure(market)
 
-		Convey("It completes each symbol before returning the combined measurements", func() {
-			measurements := signal.Measure(thesis)
-			So(measurements, ShouldHaveLength, 2)
-			thesis.AppendMeasurements(types.SourceToxicity, measurements, true)
-			So(signal.Measure(thesis), ShouldBeEmpty)
-		})
-	})
-
-	Convey("Given a pre-touch, multiple executions, and a later post-touch", t, func() {
-		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
-		signal := &Signal{ctx: context.Background(), books: books}
-		base := time.Unix(1_700_004_200, 0).UTC()
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
-		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
-		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(types.SourceToxicity, provisional, true)
-		So(provisional, ShouldHaveLength, 1)
-		So(provisional[0].At, ShouldResemble, base)
-		So(provisional[0].Metrics, ShouldHaveLength, 4)
-		So(provisional[0].Sample(
-			types.MetricTouchQuantity,
-			types.SideBuy,
-		).Normalized, ShouldBeNil)
-		_, hasSNR := provisional[0].Metrics[types.MetricKey(
-			types.MetricSNR,
-			types.SideNone,
-		)]
-		So(hasSNR, ShouldBeFalse)
-		thesis.Measurements.Delete(types.SourceToxicity)
-		_, found := thesis.Measurements.Load(types.SourceToxicity)
-		So(found, ShouldBeFalse)
-
-		firstTrade := toxicityTrade(91, "sell", 100, 2, base.Add(time.Second))
-		secondTrade := toxicityTrade(92, "buy", 101, 3, base.Add(2*time.Second))
-		thesis.AppendTrade(firstTrade)
-		thesis.AppendTrade(secondTrade)
-
-		Convey("It keeps both trades pending until a strict post-trade touch arrives", func() {
-			So(signal.Measure(thesis), ShouldBeEmpty)
-			So(thesis.MarketTrades(types.SourceToxicity), ShouldHaveLength, 2)
-
-			postAt := base.Add(3 * time.Second)
-			books.books["BTC/USD"] = toxicityBook(99, 101, 7, 6, postAt)
-			measurements := signal.Measure(thesis)
+		Convey("It should emit book-quality input metrics from nomagique", func() {
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]
-			So(measurement.ObservedFrom, ShouldResemble, base)
-			So(measurement.At, ShouldResemble, postAt)
-			So(measurement.Horizon, ShouldEqual, 3*time.Second)
-			So(measurement.Sample(types.MetricTradeVolume, types.SideNone).Raw,
-				ShouldEqual, 5.0)
-			So(measurement.Sample(types.MetricFillVolume, types.SideBuy).Raw,
-				ShouldEqual, 2.0)
-			So(measurement.Sample(types.MetricFillVolume, types.SideSell).Raw,
-				ShouldEqual, 3.0)
-			So(measurement.Sample(types.MetricRetreatingQuantity, types.SideBuy).Raw,
-				ShouldEqual, 8.0)
-			So(measurement.Sample(types.MetricCancelledQuantity, types.SideSell).Raw,
-				ShouldEqual, 1.0)
-			So(*measurement.Sample(types.MetricTradeVolume, types.SideNone).Normalized,
-				ShouldEqual, 5.0/(5.0+20.0))
-			So(*measurement.Sample(types.MetricFillVolume, types.SideBuy).Normalized,
-				ShouldEqual, 2.0/10.0)
-			So(*measurement.Sample(types.MetricCancelledQuantity, types.SideSell).Normalized,
-				ShouldEqual, 1.0/10.0)
-			So(*measurement.Sample(types.MetricBestPrice, types.SideSell).Normalized,
-				ShouldEqual, 0.0)
+			So(measurement.Source, ShouldEqual, types.SourceToxicity)
+			So(measurement.Symbol, ShouldEqual, "BTC/USD")
+			So(measurement.Sample(types.MetricTouchQuantity, types.SideBuy).Raw, ShouldEqual, 10.0)
+			So(measurement.Sample(types.MetricTouchQuantity, types.SideSell).Raw, ShouldEqual, 10.0)
 		})
 	})
 
-	Convey("Given only a pre-trade touch", t, func() {
+	Convey("Given trades after retained book state", t, func() {
 		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
-		signal := &Signal{ctx: context.Background(), books: books}
-		base := time.Unix(1_700_004_300, 0).UTC()
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.AppendTicker(kraken.TickerData{Symbol: "BTC/USD", Timestamp: base})
+		signal := NewSignal(context.Background(), books, nil)
+		market := types.NewSymbol("BTC/USD", nil)
+		base := time.Unix(1_700_004_200, 0).UTC()
 		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
-		provisional := signal.Measure(thesis)
-		thesis.AppendMeasurements(types.SourceToxicity, provisional, false)
-		trade := toxicityTrade(93, "buy", 101, 1, base.Add(time.Second))
-		thesis.AppendTrade(trade)
+		So(signal.Measure(market), ShouldHaveLength, 1)
+		market.AppendTrade(toxicityTrade(91, "sell", 100, 2, base.Add(time.Second)))
 
-		Convey("It cannot claim validity or consume the unresolved trade", func() {
-			So(signal.Measure(thesis), ShouldBeEmpty)
-			trades := thesis.MarketTrades(types.SourceToxicity)
-			So(trades, ShouldHaveLength, 1)
-			So(trades[0].TradeID, ShouldEqual, trade.TradeID)
-			So(trades[0].Timestamp, ShouldResemble, trade.Timestamp)
+		measurements := signal.Measure(market)
+
+		Convey("It should append trade and book measurements", func() {
+			So(measurements, ShouldHaveLength, 2)
+			So(measurements[0].Sample(types.MetricTradeVolume, types.SideNone).Raw, ShouldEqual, 2.0)
 		})
 	})
 }
@@ -161,27 +91,4 @@ func toxicityBook(
 	})
 
 	return managed
-}
-
-func BenchmarkToxicityMeasurement(b *testing.B) {
-	from := time.Unix(1_700_004_400, 0).UTC()
-	previous := touchSnapshot{
-		asOf: from,
-		bid:  touchObservation{price: 100, quantity: 10},
-		ask:  touchObservation{price: 101, quantity: 10},
-	}
-	current := touchSnapshot{
-		asOf: from.Add(time.Second),
-		bid:  touchObservation{price: 99, quantity: 7},
-		ask:  touchObservation{price: 101, quantity: 6},
-	}
-	trades := []kraken.TradeData{
-		toxicityTrade(1, "sell", 100, 2, from.Add(time.Second)),
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = toxicityMeasurement("BTC/USD", previous, current, trades)
-	}
 }

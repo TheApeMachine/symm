@@ -116,6 +116,7 @@ type Measurement struct {
 	ID               string                  `json:"id"`
 	Source           SourceType              `json:"source"`
 	Symbol           string                  `json:"symbol" validate:"required"`
+	Tick             int64                   `json:"tick,omitempty"`
 	Peer             string                  `json:"peer,omitempty"`
 	At               time.Time               `json:"at" validate:"required"`
 	ObservedFrom     time.Time               `json:"observedFrom,omitempty"`
@@ -125,7 +126,25 @@ type Measurement struct {
 	Maturity         float64                 `json:"maturity,omitempty" validate:"finite"`
 	Uncertainty      *MeasurementUncertainty `json:"uncertainty,omitempty"`
 	Metrics          map[string]MetricSample `json:"metrics,omitempty"`
+	Metadata         map[string]float64      `json:"metadata,omitempty"`
 	Arrivals         []MeasurementArrival    `json:"-"`
+}
+
+/*
+PutMarketValue stores one raw market value used to build this Measurement's
+Metrics. It is intentionally numeric-only so this metadata stays a raw market
+snapshot rather than becoming a general annotation bag.
+*/
+func (measurement *Measurement) PutMarketValue(key string, value float64) {
+	if measurement == nil || key == "" {
+		return
+	}
+
+	if measurement.Metadata == nil {
+		measurement.Metadata = map[string]float64{}
+	}
+
+	measurement.Metadata[key] = value
 }
 
 /*

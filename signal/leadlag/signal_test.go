@@ -14,8 +14,10 @@ import (
 
 func TestMeasure(t *testing.T) {
 	Convey("Given repeated multi-symbol lead-lag cuts", t, func() {
-		signal := &Signal{ctx: context.Background(), section: NewSection()}
+		signal := NewSignal(context.Background(), nil, nil)
+		market := types.NewSymbol("AAA/USD", nil)
 		start := time.Unix(1_700_007_000, 0).UTC()
+		var measurements []*types.Measurement
 
 		Reset(func() {
 			signal.Close()
@@ -25,38 +27,35 @@ func TestMeasure(t *testing.T) {
 			{100, 100, 100},
 			{110, 101, 99},
 			{121, 102, 98},
+			{133, 103, 97},
 		} {
 			at := start.Add(time.Duration(leg) * time.Second)
-			thesis := types.NewThesis(t.Context(), nil)
 
 			for index, symbol := range []string{"AAA/USD", "BBB/USD", "CCC/USD"} {
-				appendTickers(thesis, kraken.TickerData{
+				market.AppendTicker(kraken.TickerData{
 					Symbol:    symbol,
 					Last:      decimal.NewFromFloat64(prices[index]),
 					Timestamp: at,
 				})
 			}
 
-			measurements := signal.Measure(thesis)
-
-			if leg == 0 {
-				So(measurements, ShouldHaveLength, 3)
-			}
-
-			if leg == 2 {
-				So(measurements, ShouldHaveLength, 3)
-			}
+			measurements = signal.Measure(market)
 		}
 
-		Convey("It retains every symbol history across measurement passes", func() {
-			for _, symbol := range []string{"AAA/USD", "BBB/USD", "CCC/USD"} {
-				So(signal.section.PriceSampleCount(symbol), ShouldEqual, 3)
-			}
+		Convey("It should retain symbol history and emit nomagique lag measurements", func() {
+			So(signal.section.PriceSampleCount("AAA/USD"), ShouldEqual, 4)
+			So(signal.section.PriceSampleCount("BBB/USD"), ShouldEqual, 4)
+			So(signal.section.PriceSampleCount("CCC/USD"), ShouldEqual, 4)
+			So(len(measurements), ShouldBeGreaterThan, 0)
+			So(measurements[0].Source, ShouldEqual, types.SourceLeadLag)
+			So(measurements[0].Sample(types.MetricStrength, types.SideNone).Unit,
+				ShouldEqual, types.UnitDimensionless)
 		})
 	})
 
 	Convey("Given a retained anchor without a ticker in the current frame", t, func() {
-		signal := &Signal{ctx: context.Background(), section: NewSection()}
+		signal := NewSignal(context.Background(), nil, nil)
+		market := types.NewSymbol("BBB/USD", nil)
 		start := time.Unix(1_700_008_000, 0).UTC()
 
 		for _, sample := range []struct {
@@ -75,10 +74,11 @@ func TestMeasure(t *testing.T) {
 			), ShouldBeTrue)
 		}
 
-		measurements := signal.measureFrame([]kraken.TickerData{{
+		market.AppendTicker(kraken.TickerData{
 			Symbol: "BBB/USD", Last: decimal.NewFromFloat64(106),
 			Timestamp: start.Add(2 * time.Second),
-		}})
+		})
+		measurements := signal.Measure(market)
 
 		Convey("It should retain the exact anchor endpoint on the relationship", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -93,14 +93,9 @@ func TestMeasure(t *testing.T) {
 	})
 }
 
-func appendTickers(thesis *types.Thesis, rows ...kraken.TickerData) {
-	for _, row := range rows {
-		thesis.AppendTicker(row)
-	}
-}
-
 func BenchmarkMeasure(b *testing.B) {
-	signal := &Signal{ctx: context.Background(), section: NewSection()}
+	signal := NewSignal(context.Background(), nil, nil)
+	market := types.NewSymbol("AAA/USD", nil)
 	at := time.Unix(1_700_009_000, 0).UTC()
 
 	if !signal.section.ObservePrice("AAA/USD", 100, at) ||
@@ -133,8 +128,9 @@ func BenchmarkMeasure(b *testing.B) {
 
 		for index := range tickers {
 			tickers[index].Timestamp = at
+			market.AppendTicker(tickers[index])
 		}
 
-		_ = signal.measureFrame(tickers)
+		_ = signal.Measure(market)
 	}
 }

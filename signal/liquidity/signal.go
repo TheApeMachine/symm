@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sort"
 	"strings"
@@ -84,8 +85,8 @@ func (signal *Signal) Type() types.SourceType {
 /*
 Measure produces the Measurements for the liquidity signal.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
-	tickers := thesis.MarketTickers(types.SourceLiquidity)
+func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
+	tickers := symbol.MarketTickers(types.SourceLiquidity)
 
 	if !signal.ingest(tickers) {
 		return nil
@@ -113,17 +114,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		measurementIndex := index
 
 		group.Go(func() error {
-			updated := false
-
-			for _, ticker := range tickers {
-				if strings.TrimSpace(ticker.Symbol) == peer.symbol &&
-					ticker.Timestamp.Equal(peer.observation.at) {
-					updated = true
-					break
-				}
-			}
-
-			if !updated {
+			if peer.symbol != symbol.Symbol {
 				return nil
 			}
 
@@ -194,8 +185,17 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 				ID:       uuid.NewString(),
 				Source:   types.SourceLiquidity,
 				Symbol:   peer.symbol,
+				Tick:     symbol.Tick,
 				At:       peer.observation.at,
 				Maturity: maturity,
+				Metadata: map[string]float64{
+					"ask":             peer.observation.ask,
+					"ask_quantity":    peer.observation.askQuantity,
+					"bid":             peer.observation.bid,
+					"bid_quantity":    peer.observation.bidQuantity,
+					"reported_price":  peer.observation.reportedPrice,
+					"reported_volume": peer.observation.reportedVolume,
+				},
 				Metrics: map[string]types.MetricSample{
 					types.MetricKey(types.MetricBestPrice, types.SideBuy): {
 						Raw:  peer.observation.bid,
@@ -383,7 +383,7 @@ type liquidityPeer struct {
 	observation liquidityObservation
 }
 
-func (signal *Signal) ingest(rows []kraken.TickerData) bool {
+func (signal *Signal) ingest(rows iter.Seq[kraken.TickerData]) bool {
 	if signal.observations == nil {
 		signal.observations = &sync.Map{}
 	}
@@ -391,7 +391,7 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 	rowBatches := make(map[string][]kraken.TickerData)
 	symbols := make([]string, 0)
 
-	for _, row := range rows {
+	for row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
 
 		if symbol == "" || row.Timestamp.IsZero() {

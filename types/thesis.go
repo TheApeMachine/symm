@@ -2,6 +2,8 @@ package types
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -58,6 +60,33 @@ func (thesis *Thesis) Symbol(name string) *Symbol {
 	}
 
 	return symbol.(*Symbol)
+}
+
+func (thesis *Thesis) AppendEquity(equity kraken.TradeBalanceResult) error {
+	if equity.Equity.Float64() <= 0 {
+		return fmt.Errorf("thesis: positive equity required")
+	}
+
+	thesis.equityMu.Lock()
+	defer thesis.equityMu.Unlock()
+	thesis.equity = &equity
+
+	return nil
+}
+
+func (thesis *Thesis) Equity() (kraken.TradeBalanceResult, bool) {
+	thesis.equityMu.RLock()
+	defer thesis.equityMu.RUnlock()
+
+	if thesis.equity == nil {
+		return kraken.TradeBalanceResult{}, false
+	}
+
+	return *thesis.equity, true
+}
+
+func (thesis *Thesis) MarshalState() ([]byte, error) {
+	return json.Marshal(thesis)
 }
 
 func (thesis *Thesis) Close() error {

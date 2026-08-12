@@ -2,6 +2,7 @@ package sentiment
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sort"
 	"strings"
@@ -75,10 +76,10 @@ func (signal *Signal) Type() types.SourceType {
 /*
 Measure produces the Measurements for the sentiment signal.
 */
-func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
+func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 	group, _ := errgroup.WithContext(signal.ctx)
 
-	tickers := thesis.MarketTickers(types.SourceSentiment)
+	tickers := symbol.MarketTickers(types.SourceSentiment)
 
 	if !signal.ingest(tickers) {
 		return nil
@@ -107,17 +108,7 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 		measurementIndex := index
 
 		group.Go(func() error {
-			updated := false
-
-			for _, ticker := range tickers {
-				if strings.TrimSpace(ticker.Symbol) == peer.symbol &&
-					ticker.Timestamp.Equal(peer.observation.at) {
-					updated = true
-					break
-				}
-			}
-
-			if !updated {
+			if peer.symbol != symbol.Symbol {
 				return nil
 			}
 
@@ -155,10 +146,14 @@ func (signal *Signal) Measure(thesis *types.Thesis) []*types.Measurement {
 			)
 
 			measurement := &types.Measurement{
-				ID:      uuid.NewString(),
-				Source:  types.SourceSentiment,
-				Symbol:  peer.symbol,
-				At:      peer.observation.at,
+				ID:     uuid.NewString(),
+				Source: types.SourceSentiment,
+				Symbol: peer.symbol,
+				Tick:   symbol.Tick,
+				At:     peer.observation.at,
+				Metadata: map[string]float64{
+					"last_price": peer.observation.price,
+				},
 				Metrics: metrics,
 			}
 			snr, snrReady := types.MeasurementSignalNoiseRatio(
@@ -239,7 +234,7 @@ type sentimentSummary struct {
 	scaleReady        bool
 }
 
-func (signal *Signal) ingest(rows []kraken.TickerData) bool {
+func (signal *Signal) ingest(rows iter.Seq[kraken.TickerData]) bool {
 	if signal.observations == nil {
 		signal.observations = &sync.Map{}
 	}
@@ -247,7 +242,7 @@ func (signal *Signal) ingest(rows []kraken.TickerData) bool {
 	rowBatches := make(map[string][]kraken.TickerData)
 	symbols := make([]string, 0)
 
-	for _, row := range rows {
+	for row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
 
 		if symbol == "" || row.Timestamp.IsZero() || row.Last == nil {
