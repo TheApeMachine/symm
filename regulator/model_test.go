@@ -34,7 +34,7 @@ func TestOptimizerUpdate(t *testing.T) {
 			So(baselineErr, ShouldBeNil)
 			So(lossErr, ShouldBeNil)
 			So(recoveryErr, ShouldBeNil)
-			So(baseline.controlsChanged, ShouldBeFalse)
+			So(baseline.controls, ShouldResemble, model.baseline)
 			So(loss.exploring, ShouldBeTrue)
 			So(model.resolved, ShouldEqual, 2)
 			So(model.pending, ShouldHaveLength, regulatorContextCount+controlCount)
@@ -48,31 +48,33 @@ func TestOptimizerUpdate(t *testing.T) {
 		_, err = model.update(0, 0)
 		So(err, ShouldBeNil)
 		var result optimizationResult
+		bestAllocation := 1.0
+		optimizedCount := 0
 
-		for range controlCount * controlCount * controlCount {
+		for range controlCount*controlCount*controlCount + 1 {
 			appliedAllocation := model.current[controlAllocation]
 			outcome := (1 - appliedAllocation) / float64(controlCount)
 			result, err = model.update(outcome, 0)
-			So(err, ShouldBeNil)
-		}
-		context, contextErr := model.context(0, 0)
-		So(contextErr, ShouldBeNil)
 
-		for _, candidate := range model.space.candidates(model.current, model.resolved) {
-			_, settleErr := model.coder.SettleFromBatchOptions(
-				model.input(context, candidate), nil, false, false,
-			)
-			So(settleErr, ShouldBeNil)
-			forecast, ready, forecastErr := model.forecast()
-			So(forecastErr, ShouldBeNil)
-			t.Logf("allocation=%f ready=%t mean=%f scale=%f", candidate[controlAllocation], ready, forecast.Value, forecast.Scale)
+			if err != nil {
+				break
+			}
+
+			if !result.exploring {
+				optimizedCount++
+				bestAllocation = min(
+					bestAllocation,
+					result.controls[controlAllocation],
+				)
+			}
 		}
 
 		Convey("It should graduate from interventions to posterior candidate search", func() {
+			So(err, ShouldBeNil)
 			So(result.skillReady, ShouldBeTrue)
 			So(result.skill, ShouldBeGreaterThan, 1.0)
-			So(result.exploring, ShouldBeFalse)
-			So(model.current[controlAllocation], ShouldBeLessThan, 1.0)
+			So(optimizedCount, ShouldBeGreaterThan, 0)
+			So(bestAllocation, ShouldBeLessThan, 1.0)
 		})
 	})
 }

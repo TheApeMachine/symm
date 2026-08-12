@@ -62,7 +62,7 @@ func TestUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given repeated broker revisions with identical equity", t, func() {
+	Convey("Given a later broker valuation with identical equity", t, func() {
 		system.Cfg = system.NewConfig()
 		thesis := types.NewThesis(t.Context(), nil)
 		solver, err := NewSolver(t.Context(), nil)
@@ -74,10 +74,10 @@ func TestUpdate(t *testing.T) {
 
 		err = solver.Update(thesis)
 
-		Convey("It should acknowledge but not relearn a duplicate outcome", func() {
+		Convey("It should learn the economically real zero-return interval", func() {
 			So(err, ShouldBeNil)
-			So(solver.optimizer.resolved, ShouldEqual, 0)
-			So(solver.history, ShouldHaveLength, 1)
+			So(solver.optimizer.resolved, ShouldEqual, 1)
+			So(solver.history, ShouldHaveLength, 2)
 		})
 	})
 

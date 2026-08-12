@@ -32,7 +32,7 @@ const DEFAULT_FRAME: RegulatorFrame = {
 	status: "observing",
 	surprise: 0.0,
 	energy: 0.0,
-	summary: "Waiting for a changed account valuation to resolve the first applied control vector.",
+	summary: "Waiting for a later account valuation to resolve the first applied control vector.",
 	subsystems: [],
 	sparkline: [],
 };
@@ -103,6 +103,7 @@ const SparklineSVG = ({ points }: { points: number[] }) => {
 
 	return (
 		<svg width={width} height={height} className="overflow-visible">
+			<title>Recent predictive-coding reconstruction error</title>
 			<path d={pathD} fill="none" stroke="var(--acc)" strokeWidth="2" strokeLinecap="round" />
 		</svg>
 	);
@@ -132,13 +133,13 @@ const RegulatorBridge = ({ onFrame }: { onFrame: (frame: RegulatorFrame) => void
 const RouteComponent = () => {
 	const [frame, setFrame] = useState<RegulatorFrame>(DEFAULT_FRAME);
 
-	const status = frame.status ?? "healthy";
-	const surprise = frame.surprise ?? 0.04;
-	const energy = frame.energy ?? 0.01;
+	const status = frame.status ?? DEFAULT_FRAME.status ?? "observing";
+	const surprise = frame.surprise ?? 0;
+	const energy = frame.energy ?? 0;
 	const predictedReturn = frame.predictedReturn ?? 0;
 	const predictionScale = frame.predictionScale ?? 0;
 	const samples = frame.samples ?? 0;
-	const summary = frame.summary ?? "System operating in calm, optimal equilibrium.";
+	const summary = frame.summary ?? DEFAULT_FRAME.summary;
 	const subsystems = frame.subsystems ?? DEFAULT_FRAME.subsystems ?? [];
 	const sparkline = frame.sparkline ?? DEFAULT_FRAME.sparkline ?? [];
 
@@ -146,15 +147,15 @@ const RouteComponent = () => {
 		<div className="flex h-full min-w-275 flex-col overflow-auto bg-(--bg) p-5 gap-5">
 			<RegulatorBridge onFrame={setFrame} />
 
-			{/* Vital Health Banner */}
+			{/* Predictive model status */}
 			<Panel className="p-5 border border-(--line2) bg-(--surface) rounded-md flex flex-col gap-3">
 				<Flex.Row justify="between" align="center" className="w-full">
 					<Flex.Column gap={1}>
 						<span className="font-mono text-[10px] text-(--f4) uppercase tracking-widest">
-							Global Active Inference Regulator
+							Global Predictive-Coding Regulator
 						</span>
 						<h1 className="text-xl font-bold tracking-tight text-(--f1)">
-							System Vital Influence Dashboard
+							Online Control Dashboard
 						</h1>
 					</Flex.Column>
 
@@ -182,13 +183,13 @@ const RouteComponent = () => {
 				</Flex.Row>
 			</Panel>
 
-			{/* Subsystem Influence Grid */}
+			{/* Model and live control grid */}
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 				<Component registerKey="regulator">
 					{({ ref }) => (
 						<div ref={ref} className="contents">
 							{subsystems.map((sub) => {
-								const isExpanding = sub.direction === "expanding" || sub.direction === "restricted";
+								const isChanged = !["configured", "resolving", "validated"].includes(sub.direction);
 								const healthColor =
 									sub.health === "healthy"
 										? "text-(--up) border-(--up)/30"
@@ -213,8 +214,8 @@ const RouteComponent = () => {
 											<span className="text-2xl font-bold font-mono text-(--f1)">
 												{sub.valueText}
 											</span>
-											<span className={`font-mono text-[11px] font-semibold ${isExpanding ? "text-(--warn)" : "text-(--up)"}`}>
-												{isExpanding ? "▲ " + sub.direction : "● " + sub.direction}
+											<span className={`font-mono text-[11px] font-semibold ${isChanged ? "text-(--warn)" : "text-(--f4)"}`}>
+												● {sub.direction}
 											</span>
 										</Flex.Row>
 
@@ -229,10 +230,10 @@ const RouteComponent = () => {
 				</Component>
 			</div>
 
-			{/* Educational Footer Legend */}
+			{/* Interpretation legend */}
 			<Panel className="p-4 border border-(--line) bg-(--surface)/50 rounded-md font-mono text-[11px] text-(--f4) flex flex-col gap-1.5">
 				<span className="font-semibold text-(--f3) uppercase tracking-wider text-[10px]">
-					How to Interpret Regulator Influence
+						How to Interpret the Regulator
 				</span>
 				<div className="grid grid-cols-3 gap-3 pt-1 text-[10.5px]">
 					<div>
@@ -242,7 +243,7 @@ const RouteComponent = () => {
 						<strong className="text-(--warn)">Amber (Identifying)</strong>: The return model is applying one shrinking coordinate intervention and waiting for its subsequent equity outcome.
 					</div>
 					<div>
-						<strong className="text-(--down)">Red (Adverse Forecast)</strong>: The best evaluated control neighborhood still has a negative posterior mean for next account return.
+						<strong className="text-(--down)">Red (Adverse Forecast)</strong>: The selected control vector has a negative posterior mean for next account return.
 					</div>
 				</div>
 			</Panel>

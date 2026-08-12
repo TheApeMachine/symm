@@ -36,94 +36,66 @@ type RegulatorPayload struct {
 	Sparkline       []float64         `json:"sparkline"`
 }
 
+/*
+controlPresentation describes the truthful wire label and formatting for one
+live control coordinate.
+*/
+type controlPresentation struct {
+	index        int
+	name         string
+	label        string
+	suffix       string
+	displayScale float64
+	changed      string
+	explanation  string
+	integer      bool
+}
+
+var controlPresentations = [...]controlPresentation{
+	{
+		index: controlAllocation, name: "allocation",
+		label: "Capital Allocation Ceiling", suffix: "% max", displayScale: 100,
+		changed:     "reduced",
+		explanation: "Maximum quote capital one admitted entry may allocate.",
+	},
+	{
+		index: controlConfidence, name: "confidence",
+		label: "Forecast Confidence Gate", suffix: "% min", displayScale: 100,
+		changed:     "tightened",
+		explanation: "Minimum posterior direction probability required before graph search may enter.",
+	},
+	{
+		index: controlCausalAlpha, name: "causal",
+		label: "Causal Search Bias", suffix: "x bias", displayScale: 1,
+		changed:     "reduced",
+		explanation: "Weight of interventional evidence in MCTS trajectory selection.",
+	},
+	{
+		index: controlIterations, name: "iterations",
+		label: "MCTS Search Budget", suffix: "iterations", integer: true,
+		changed:     "reduced",
+		explanation: "Number of causal trajectory simulations evaluated for each decision.",
+	},
+	{
+		index: controlExploration, name: "exploration",
+		label: "MCTS Exploration", suffix: " UCT", displayScale: 1,
+		changed:     "reduced",
+		explanation: "Exploration weight used when balancing visited and uncertain graph branches.",
+	},
+	{
+		index: controlRelaxation, name: "manifold",
+		label: "Manifold Relaxation", suffix: "steps", integer: true,
+		changed:     "changed",
+		explanation: "Physics relaxation work completed before downstream evidence is compiled.",
+	},
+}
+
 func (solver *Solver) buildPayload(
 	periodReturn float64,
 	result optimizationResult,
 ) RegulatorPayload {
-	status := "healthy"
-	summary := "The predictive account model selected the bounded control vector with the strongest posterior wallet-return prospect."
-
-	if !result.skillReady || !result.forecastReady {
-		status = "observing"
-		summary = "Collecting temporally resolved control and equity outcomes before trusting counterfactual parameter forecasts."
-	}
-
-	if result.exploring {
-		status = "adapting"
-		summary = "Applying a shrinking bounded intervention to identify how one live control affects the next account outcome."
-	}
-
-	if result.forecastReady && result.forecast.Value < 0 {
-		status = "strained"
-		summary = "Every evaluated control neighborhood has adverse expected wallet return; the optimizer selected the least adverse bounded candidate."
-	}
-
-	space := solver.optimizer.space
-	controls := result.controls
-	baseline := solver.optimizer.baseline
-	modelValue := 0.0
-	modelText := "learning"
-	modelDirection := "resolving"
-
-	if result.skillReady {
-		modelValue = result.skill
-		modelText = formatFloat(result.skill, 3) + "x skill"
-		modelDirection = "validated"
-	}
-
-	subsystems := []SubsystemStatus{{
-		Name:        "model",
-		Label:       "Predictive Account Model",
-		Health:      status,
-		Direction:   modelDirection,
-		ValueText:   modelText,
-		Explanation: "Prequential skill compares prior next-equity forecasts with a zero-return baseline.",
-		Value:       modelValue,
-	}}
-	subsystems = append(subsystems,
-		controlStatus(
-			"allocation", "Capital Allocation Ceiling", status,
-			space.value(controlAllocation, controls),
-			space.value(controlAllocation, baseline),
-			"% max", 100, "reduced", "configured",
-			"Maximum quote capital one admitted entry may allocate.",
-		),
-		controlStatus(
-			"confidence", "Forecast Confidence Gate", status,
-			space.value(controlConfidence, controls),
-			space.value(controlConfidence, baseline),
-			"% min", 100, "tightened", "configured",
-			"Minimum posterior direction probability required before graph search may enter.",
-		),
-		controlStatus(
-			"causal", "Causal Search Bias", status,
-			space.value(controlCausalAlpha, controls),
-			space.value(controlCausalAlpha, baseline),
-			"x bias", 1, "reduced", "configured",
-			"Weight of interventional evidence in MCTS trajectory selection.",
-		),
-		integerControlStatus(
-			"iterations", "MCTS Search Budget", status,
-			int(space.value(controlIterations, controls)),
-			int(space.value(controlIterations, baseline)),
-			"iterations", "reduced", "configured",
-			"Number of causal trajectory simulations evaluated for each decision.",
-		),
-		controlStatus(
-			"exploration", "MCTS Exploration", status,
-			space.value(controlExploration, controls),
-			space.value(controlExploration, baseline),
-			" UCT", 1, "reduced", "configured",
-			"Exploration weight used when balancing visited and uncertain graph branches.",
-		),
-		integerControlStatus(
-			"manifold", "Manifold Relaxation", status,
-			int(space.value(controlRelaxation, controls)),
-			int(space.value(controlRelaxation, baseline)),
-			"steps", "changed", "configured",
-			"Physics relaxation work completed before downstream evidence is compiled.",
-		),
-	)
+	status, summary := result.presentation()
+	subsystems := solver.subsystemStatuses(status, result)
 
 	predictedReturn := 0.0
 	predictionScale := 0.0
@@ -147,60 +119,81 @@ func (solver *Solver) buildPayload(
 	}
 }
 
-func controlStatus(
-	name string,
-	label string,
-	health string,
-	value float64,
-	baseline float64,
-	suffix string,
-	displayScale float64,
-	changedDirection string,
-	baselineDirection string,
-	explanation string,
-) SubsystemStatus {
-	direction := baselineDirection
-
-	if value != baseline {
-		direction = changedDirection
+func (result optimizationResult) presentation() (string, string) {
+	if result.forecastReady && result.forecast.Value < 0 {
+		return "strained", "The selected local candidate still has adverse expected wallet return."
 	}
 
-	return SubsystemStatus{
-		Name:        name,
-		Label:       label,
-		Health:      health,
-		Direction:   direction,
-		ValueText:   formatFloat(value*displayScale, 2) + suffix,
-		Explanation: explanation,
-		Value:       value,
+	if result.exploring {
+		return "adapting", "Applying a shrinking bounded intervention to identify one live control's response."
 	}
+
+	if !result.skillReady || !result.forecastReady {
+		return "observing", "Collecting resolved control and equity outcomes before trusting parameter forecasts."
+	}
+
+	return "healthy", "Selected the bounded control vector with the strongest posterior wallet-return prospect."
 }
 
-func integerControlStatus(
-	name string,
-	label string,
+func (solver *Solver) subsystemStatuses(
 	health string,
-	value int,
-	baseline int,
-	suffix string,
-	changedDirection string,
-	baselineDirection string,
-	explanation string,
+	result optimizationResult,
+) []SubsystemStatus {
+	modelValue := 0.0
+	modelText := "learning"
+	modelDirection := "resolving"
+
+	if result.skillReady {
+		modelValue = result.skill
+		modelText = formatFloat(result.skill, 3) + "x skill"
+		modelDirection = "validated"
+	}
+
+	statuses := []SubsystemStatus{{
+		Name: "model", Label: "Predictive Account Model", Health: health,
+		Direction: modelDirection, ValueText: modelText, Value: modelValue,
+		Explanation: "Prequential skill compares prior next-equity forecasts with a zero-return baseline.",
+	}}
+
+	for _, presentation := range controlPresentations {
+		statuses = append(statuses, solver.controlStatus(
+			health,
+			presentation,
+			result.controls,
+		))
+	}
+
+	return statuses
+}
+
+func (solver *Solver) controlStatus(
+	health string,
+	presentation controlPresentation,
+	controls controlVector,
 ) SubsystemStatus {
-	direction := baselineDirection
+	space := solver.optimizer.space
+	value := space.value(presentation.index, controls)
+	baseline := space.value(presentation.index, solver.optimizer.baseline)
+	direction := "configured"
 
 	if value != baseline {
-		direction = changedDirection
+		direction = presentation.changed
+	}
+
+	valueText := formatFloat(value*presentation.displayScale, 2) + presentation.suffix
+
+	if presentation.integer {
+		valueText = strconv.Itoa(int(value)) + " " + presentation.suffix
 	}
 
 	return SubsystemStatus{
-		Name:        name,
-		Label:       label,
+		Name:        presentation.name,
+		Label:       presentation.label,
 		Health:      health,
 		Direction:   direction,
-		ValueText:   strconv.Itoa(value) + " " + suffix,
-		Explanation: explanation,
-		Value:       float64(value),
+		ValueText:   valueText,
+		Explanation: presentation.explanation,
+		Value:       value,
 	}
 }
 

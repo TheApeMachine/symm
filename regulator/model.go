@@ -13,17 +13,14 @@ import (
 const regulatorContextCount = 4
 
 type optimizationResult struct {
-	controls        controlVector
-	forecast        learning.RLSOutput
-	forecastReady   bool
-	skill           float64
-	skillReady      bool
-	precision       float64
-	precisionReady  bool
-	surprise        float64
-	energy          float64
-	exploring       bool
-	controlsChanged bool
+	controls      controlVector
+	forecast      learning.RLSOutput
+	forecastReady bool
+	skill         float64
+	skillReady    bool
+	surprise      float64
+	energy        float64
+	exploring     bool
 }
 
 /*
@@ -40,6 +37,7 @@ type optimizer struct {
 	current       controlVector
 	pending       []float64
 	resolved      int
+	interventions int
 }
 
 func newOptimizer(config *system.Config) (*optimizer, error) {
@@ -87,20 +85,8 @@ func (optimizer *optimizer) update(
 	periodReturn float64,
 	drawdown float64,
 ) (optimizationResult, error) {
-	if optimizer.pending != nil {
-		if _, err := optimizer.coder.SettleFromBatchOptions(
-			optimizer.pending,
-			[]float64{periodReturn},
-			true,
-			false,
-		); err != nil {
-			return optimizationResult{}, fmt.Errorf(
-				"regulator: resolve prior control outcome: %w",
-				err,
-			)
-		}
-
-		optimizer.resolved++
+	if err := optimizer.resolve(periodReturn); err != nil {
+		return optimizationResult{}, err
 	}
 
 	context, err := optimizer.context(periodReturn, drawdown)
@@ -109,27 +95,10 @@ func (optimizer *optimizer) update(
 		return optimizationResult{}, err
 	}
 
-	selected := optimizer.current
-	exploring := false
-	skill, skillReady := optimizer.coder.TaskSkill()
-	precision, precisionReady := optimizer.coder.TaskPrecision()
+	selected, exploring, skill, skillReady, err := optimizer.selectControls(context)
 
-	if optimizer.resolved > 0 {
-		if skillReady && skill > 1 {
-			selected, err = optimizer.best(context)
-		}
-
-		if !skillReady || skill <= 1 {
-			selected = optimizer.space.exploratory(
-				optimizer.current,
-				optimizer.resolved,
-			)
-			exploring = true
-		}
-
-		if err != nil {
-			return optimizationResult{}, err
-		}
+	if err != nil {
+		return optimizationResult{}, err
 	}
 
 	input := optimizer.input(context, selected)
@@ -138,7 +107,9 @@ func (optimizer *optimizer) update(
 		input,
 		nil,
 		false,
-		true,
+		// Supervised resolution advances the retained temporal state. Advancing
+		// here would replace the real prior with the candidate before it occurs.
+		false,
 	); err != nil {
 		return optimizationResult{}, fmt.Errorf(
 			"regulator: settle selected control state: %w",
@@ -153,17 +124,14 @@ func (optimizer *optimizer) update(
 	}
 
 	result := optimizationResult{
-		controls:        selected,
-		forecast:        forecast,
-		forecastReady:   forecastReady,
-		skill:           skill,
-		skillReady:      skillReady,
-		precision:       precision,
-		precisionReady:  precisionReady,
-		surprise:        optimizer.coder.ReconstructionError(),
-		energy:          optimizer.coder.Energy(),
-		exploring:       exploring,
-		controlsChanged: selected != optimizer.current,
+		controls:      selected,
+		forecast:      forecast,
+		forecastReady: forecastReady,
+		skill:         skill,
+		skillReady:    skillReady,
+		surprise:      optimizer.coder.ReconstructionError(),
+		energy:        optimizer.coder.Energy(),
+		exploring:     exploring,
 	}
 
 	optimizer.current = selected
@@ -172,9 +140,56 @@ func (optimizer *optimizer) update(
 	return result, nil
 }
 
+func (optimizer *optimizer) resolve(periodReturn float64) error {
+	if optimizer.pending == nil {
+		return nil
+	}
+
+	if _, err := optimizer.coder.SettleFromBatchOptions(
+		optimizer.pending,
+		[]float64{periodReturn},
+		true,
+		false,
+	); err != nil {
+		return fmt.Errorf("regulator: resolve prior control outcome: %w", err)
+	}
+
+	optimizer.resolved++
+	return nil
+}
+
+func (optimizer *optimizer) selectControls(
+	context []float64,
+) (controlVector, bool, float64, bool, error) {
+	skill, skillReady := optimizer.coder.TaskSkill()
+
+	if optimizer.resolved == 0 {
+		return optimizer.current, false, skill, skillReady, nil
+	}
+
+	movable := optimizer.space.movable()
+	persistent := len(movable) > 0 && optimizer.resolved%len(movable) == 0
+
+	if skillReady && skill > 1 && !persistent {
+		selected, fallback, err := optimizer.best(context)
+
+		if !fallback || err != nil {
+			return selected, fallback, skill, skillReady, err
+		}
+	}
+
+	selected := optimizer.space.exploratory(
+		optimizer.current,
+		optimizer.resolved,
+		optimizer.interventions,
+	)
+	optimizer.interventions++
+	return selected, true, skill, skillReady, nil
+}
+
 func (optimizer *optimizer) best(
 	context []float64,
-) (controlVector, error) {
+) (controlVector, bool, error) {
 	candidates := optimizer.space.candidates(
 		optimizer.current,
 		optimizer.resolved,
@@ -189,7 +204,7 @@ func (optimizer *optimizer) best(
 			false,
 			false,
 		); err != nil {
-			return controlVector{}, fmt.Errorf(
+			return controlVector{}, false, fmt.Errorf(
 				"regulator: settle candidate control state: %w",
 				err,
 			)
@@ -198,14 +213,15 @@ func (optimizer *optimizer) best(
 		forecast, ready, err := optimizer.forecast()
 
 		if err != nil {
-			return controlVector{}, err
+			return controlVector{}, false, err
 		}
 
 		if !ready {
 			return optimizer.space.exploratory(
 				optimizer.current,
 				optimizer.resolved,
-			), nil
+				optimizer.interventions,
+			), true, nil
 		}
 
 		distribution := distuv.StudentsT{
@@ -221,7 +237,7 @@ func (optimizer *optimizer) best(
 		}
 	}
 
-	return best, nil
+	return best, false, nil
 }
 
 func (optimizer *optimizer) context(

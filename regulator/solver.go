@@ -78,8 +78,8 @@ func (solver *Solver) Status() types.Status {
 }
 
 /*
-Update consumes one new broker equity revision. Unchanged valuations are
-acknowledged but not replayed into the learner as duplicate outcomes.
+Update consumes one new broker equity revision. A new unchanged valuation is a
+real zero-return outcome; only repeated delivery of the same revision is ignored.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	if solver == nil || solver.optimizer == nil || solver.configSource == nil {
@@ -117,11 +117,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	currentEquity := equity.Equity.Float64()
 
-	if solver.lastEquity > 0 && currentEquity == solver.lastEquity {
-		solver.lastRevision = revision
-		return nil
-	}
-
 	periodReturn, drawdown := solver.financialFeedback(currentEquity)
 	result, err := solver.optimizer.update(periodReturn, drawdown)
 
@@ -133,9 +128,27 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
+	if err := solver.applyControls(result.controls); err != nil {
+		return err
+	}
+
+	solver.lastEquity = currentEquity
+	solver.lastRevision = revision
+	solver.lastResult = result
+	solver.recordHistory(result.surprise)
+	payload := solver.buildPayload(periodReturn, result)
+
+	if solver.ui != nil {
+		utils.Publish(solver.ui, datura.NewMap("regulator", payload))
+	}
+
+	return nil
+}
+
+func (solver *Solver) applyControls(controls controlVector) error {
 	config := solver.configSource.Snapshot()
 
-	if err := solver.optimizer.space.apply(result.controls, config); err != nil {
+	if err := solver.optimizer.space.apply(controls, config); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"regulator: selected control vector invalid",
@@ -152,16 +165,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			"regulator: publish selected controls failed",
 			err,
 		))
-	}
-
-	solver.lastEquity = currentEquity
-	solver.lastRevision = revision
-	solver.lastResult = result
-	solver.recordHistory(result.surprise)
-	payload := solver.buildPayload(periodReturn, result)
-
-	if solver.ui != nil {
-		utils.Publish(solver.ui, datura.NewMap("regulator", payload))
 	}
 
 	return nil

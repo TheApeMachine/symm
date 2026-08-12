@@ -33,7 +33,7 @@ func TestControlSpaceCandidates(t *testing.T) {
 		current := space.current(config)
 
 		candidates := space.candidates(current, 1)
-		exploratory := space.exploratory(current, 1)
+		exploratory := space.exploratory(current, 1, 0)
 
 		Convey("It should generate shrinking feasible coordinate interventions", func() {
 			So(len(candidates), ShouldBeGreaterThan, 1)
@@ -43,6 +43,11 @@ func TestControlSpaceCandidates(t *testing.T) {
 				for _, value := range candidate {
 					So(value, ShouldBeBetweenOrEqual, 0.0, 1.0)
 				}
+
+				iterations := space.value(controlIterations, candidate)
+				So(iterations, ShouldEqual, float64(int(iterations)))
+				So(space.normalize(controlIterations, iterations),
+					ShouldEqual, candidate[controlIterations])
 			}
 		})
 	})

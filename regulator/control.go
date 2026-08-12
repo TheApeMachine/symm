@@ -3,6 +3,7 @@ package regulator
 import (
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/theapemachine/symm/system"
 )
@@ -115,9 +116,12 @@ func (space *controlSpace) candidates(
 	for _, index := range movable {
 		for _, direction := range []float64{-1, 1} {
 			candidate := current
-			candidate[index] = min(1, max(0, current[index]+direction*step))
+			candidate[index] = space.quantize(
+				index,
+				min(1, max(0, current[index]+direction*step)),
+			)
 
-			if candidate != current {
+			if candidate != current && !slices.Contains(candidates, candidate) {
 				candidates = append(candidates, candidate)
 			}
 		}
@@ -129,6 +133,7 @@ func (space *controlSpace) candidates(
 func (space *controlSpace) exploratory(
 	current controlVector,
 	resolved int,
+	intervention int,
 ) controlVector {
 	candidates := space.candidates(current, resolved)
 
@@ -136,7 +141,7 @@ func (space *controlSpace) exploratory(
 		return current
 	}
 
-	return candidates[1+(resolved-1)%(len(candidates)-1)]
+	return candidates[1+intervention%(len(candidates)-1)]
 }
 
 func (space *controlSpace) apply(
@@ -189,6 +194,17 @@ func (space *controlSpace) normalize(index int, value float64) float64 {
 	}
 
 	return (value - bound.minimum) / (bound.maximum - bound.minimum)
+}
+
+func (space *controlSpace) quantize(index int, normalized float64) float64 {
+	bound := space.bounds[index]
+
+	if !bound.integer {
+		return normalized
+	}
+
+	value := bound.minimum + normalized*(bound.maximum-bound.minimum)
+	return space.normalize(index, math.Round(value))
 }
 
 func (space *controlSpace) movable() []int {
