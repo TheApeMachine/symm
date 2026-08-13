@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -182,8 +183,7 @@ Update ingests the active Thesis categories, evaluates category transition surpr
 breaks/continues sequence paths, classifies market regimes, and runs lookahead beam search.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	updated := false
-	nowUnix := uint64(thesis.At.UnixNano())
+	rows := datura.NewMap()
 
 	// 1. Process active categories per symbol
 	thesis.Symbols.Range(func(key, value interface{}) bool {
@@ -201,15 +201,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		if !updated {
-			solver.tickCounter++
-			updated = true
-		}
-
-		if len(categories) == 0 {
-			return true
-		}
-
 		// Select the dominant category for this symbol on this tick
 		dominantCategory := solver.selectDominantCategory(categories)
 
@@ -222,47 +213,52 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		transitioned := len(activeTokens) == 0 ||
 			activeTokens[len(activeTokens)-1] != categoryToken
 
-		if transitioned {
-			// 2. Evaluate if appending this category causes a Sequence Break
-			broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
+		if !transitioned {
+			return true
+		}
 
-			if broken && len(activeTokens) > 0 {
-				// --- SEQUENCE BREAK DETECTED ---
-				oldSequenceBytes := solver.sequenceBytes(activeTokens)
+		if len(rows) == 0 {
+			solver.tickCounter++
+		}
 
-				// Commit completed sequence to episodic buffer for REM replay
-				_, _ = solver.tree.CommitToEpisodicBuffer(nowUnix, oldSequenceBytes)
+		// 2. Evaluate if appending this category causes a Sequence Break
+		broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
 
-				/*
-					A completed sequence is learned without being told what it
-					was. When nothing the model already knows explains it, the
-					model names a regime for it rather than forcing it into the
-					least-bad existing basin and corrupting that basin.
+		if broken && len(activeTokens) > 0 {
+			// --- SEQUENCE BREAK DETECTED ---
+			oldSequenceBytes := solver.sequenceBytes(activeTokens)
 
-					This is the one place cognition can exceed the category
-					taxonomy: categories are a fixed vocabulary, but the
-					sequences they compose into are not.
-				*/
-				outcome, experienceErr := solver.tree.ExperienceSequence(
-					oldSequenceBytes, &solver.classScratch,
-				)
+			// Commit completed sequence to episodic buffer for REM replay
+			_, _ = solver.tree.CommitToEpisodicBuffer(
+				uint64(thesis.At.UnixNano()), oldSequenceBytes,
+			)
 
-				if experienceErr == nil && outcome.NewConcept {
-					solver.spawned[symbol] = string(outcome.Class)
-				}
+			/*
+				A completed sequence is learned without being told what it
+				was. When nothing the model already knows explains it, the
+				model names a regime for it rather than forcing it into the
+				least-bad existing basin and corrupting that basin.
 
-				// Start fresh sequence buffer with new category
-				activeTokens = []string{categoryToken}
-			} else {
-				// --- SEQUENCE CONTINUES ---
-				activeTokens = append(activeTokens, categoryToken)
+				This is the one place cognition can exceed the category
+				taxonomy: categories are a fixed vocabulary, but the
+				sequences they compose into are not.
+			*/
+			outcome, experienceErr := solver.tree.ExperienceSequence(
+				oldSequenceBytes, &solver.classScratch,
+			)
+
+			if experienceErr == nil && outcome.NewConcept {
+				solver.spawned[symbol] = string(outcome.Class)
 			}
 
-			solver.sequences[symbol] = activeTokens
-
-			// 3. Train only the first observation and category transitions.
-			solver.tree.TrainSensorySequence(solver.sequenceBytes(activeTokens))
+			// Start fresh sequence buffer with new category
+			activeTokens = []string{categoryToken}
+		} else {
+			// --- SEQUENCE CONTINUES ---
+			activeTokens = append(activeTokens, categoryToken)
 		}
+
+		solver.sequences[symbol] = activeTokens
 
 		activeSequenceBytes := solver.sequenceBytes(activeTokens)
 		spawnedClass, spawned := solver.spawned[symbol]
@@ -395,22 +391,15 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			// below, so "consolidating" is true only for the reading
 			// published on the very tick that triggered it — every other
 			// tick reports the awake state between passes.
-			REMConsolidating: solver.tickCounter%128 == 0 && nowUnix > 60e9,
+			REMConsolidating: false,
 		}
 
 		symbolState.Cognition.Store(symbol, cognition)
+		rows[symbol] = cognition
 		return true
 	})
 
-	if updated {
-		solver.publish(thesis)
-
-		// 10. Periodic REM Sleep Consolidation (every 128 ticks)
-		if solver.tickCounter%128 == 0 && nowUnix > 60e9 {
-			startWindow := nowUnix - 60e9 // 1 minute window
-			solver.consolidate(startWindow, nowUnix)
-		}
-	}
+	solver.publish(rows)
 
 	return nil
 }
@@ -514,7 +503,7 @@ func (solver *Solver) evalSequenceBreak(
 	candidateTokens := append(append([]string(nil), activeTokens...), nextToken)
 	candidateBytes := solver.sequenceBytes(candidateTokens)
 
-	surprisalItems := solver.tree.GetSurprisal(candidateBytes)
+	surprisalItems := solver.tree.InterpolatedSurprisal(candidateBytes)
 
 	if len(surprisalItems) == 0 {
 		return false, 0.0
@@ -589,11 +578,55 @@ func (solver *Solver) cachedPrefixTree(
 		return cached
 	}
 
-	branches := solver.prefixTreeBranches(activeTokens)
-	solver.branches[symbol] = branches
+	observed := solver.prefixTreeBranches(activeTokens)
+
+	if !found {
+		solver.branches[symbol] = observed
+		solver.branchesStamp[symbol] = solver.tickCounter
+
+		return observed
+	}
+
+	byKey := make(map[string]int, len(cached))
+
+	for index, branch := range cached {
+		byKey[branch.Key] = index
+	}
+
+	observedByID := make(map[int]types.CognitionBranch, len(observed))
+
+	for _, branch := range observed {
+		observedByID[branch.ID] = branch
+		index, retained := byKey[branch.Key]
+
+		if retained {
+			branch.ID = cached[index].ID
+			branch.ParentID = cached[index].ParentID
+			cached[index] = branch
+			continue
+		}
+
+		if branch.ParentID < 0 || len(cached) >= solver.maxBranchNodes {
+			continue
+		}
+
+		parent := observedByID[branch.ParentID]
+		parentIndex, parentRetained := byKey[parent.Key]
+
+		if !parentRetained {
+			continue
+		}
+
+		branch.ID = len(cached)
+		branch.ParentID = cached[parentIndex].ID
+		byKey[branch.Key] = len(cached)
+		cached = append(cached, branch)
+	}
+
+	solver.branches[symbol] = cached
 	solver.branchesStamp[symbol] = solver.tickCounter
 
-	return branches
+	return cached
 }
 
 /*
@@ -788,48 +821,13 @@ func (solver *Solver) formatLookaheadPredictions(
 /*
 publish emits one cognition wire frame per symbol observed on this tick.
 */
-func (solver *Solver) publish(thesis *types.Thesis) {
-	if solver.ui == nil || thesis == nil {
+func (solver *Solver) publish(rows datura.Map[any]) {
+	if len(rows) == 0 {
+		rows.Free()
 		return
 	}
 
-	/*
-		Rows are keyed by symbol rather than listed, because the display reads
-		one symbol at a time and a position in a list says nothing about which
-		symbol it describes once the set of symbols changes between ticks.
-	*/
-	rows := datura.NewMap()
-
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbol, ok := key.(string)
-		symbolState, stateOK := value.(*types.Symbol)
-
-		if !ok || !stateOK || symbolState == nil {
-			return true
-		}
-
-		stored, found := symbolState.Cognition.Load(symbol)
-
-		if !found {
-			return true
-		}
-
-		cognition, ok := stored.(types.Cognition)
-		if !ok {
-			return true
-		}
-
-		cognition.At = thesis.At
-		rows[symbol] = cognition
-		return true
-	})
-
-	if len(rows) > 0 {
-		select {
-		case solver.ui <- datura.NewMap("cognition", rows).MarshalAndFree():
-		default:
-		}
-	}
+	utils.Publish(solver.ui, datura.NewMap("cognition", rows))
 }
 
 /*

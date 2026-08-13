@@ -51,6 +51,18 @@ func (compiler *measurementCompiler) addNodes(
 		}
 	}
 
+	for _, node := range graph.Nodes {
+		if node.Kind != KindMeasurement {
+			continue
+		}
+
+		reference := measurementReference(
+			types.SourceType(node.Source),
+			types.MetricKey(node.Metric, node.Side),
+		)
+		index.byReference[reference] = append(index.byReference[reference], node)
+	}
+
 	return index, nil
 }
 
@@ -93,8 +105,6 @@ func (compiler *measurementCompiler) addMeasurement(
 		metricKey := types.MetricKey(metric, side)
 		node := measurementNode(measurement, metricKey, metric, side, sample, quality)
 		graph.AddNode(node)
-		reference := measurementReference(measurement.Source, metricKey)
-		index.byReference[reference] = append(index.byReference[reference], node)
 		return true
 	})
 

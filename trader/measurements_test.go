@@ -130,10 +130,12 @@ func TestMeasurementsUpdate(t *testing.T) {
 
 		Convey("Any normalized source observation should report a queued resonance input", func() {
 			value := 0.0
+			thesis.Tick = 27
 
 			signals[types.SourceHawkes].measurement = &types.Measurement{
 				Source: types.SourceHawkes,
 				Symbol: "BTC/USD",
+				Tick:   999,
 				Metrics: map[string]types.MetricSample{
 					"score": {Normalized: &value},
 				},
@@ -142,6 +144,12 @@ func TestMeasurementsUpdate(t *testing.T) {
 			ready, err := measurements.Update(thesis, types.TradeReceivers)
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeTrue)
+			So(signals[types.SourceHawkes].measurement.Tick, ShouldEqual, thesis.Tick)
+			So(thesis.Symbol("BTC/USD").Tick, ShouldEqual, thesis.Tick)
+
+			for row := range thesis.Symbol("BTC/USD").ResonanceMeasurements() {
+				So(row.Tick, ShouldEqual, thesis.Tick)
+			}
 		})
 	})
 }

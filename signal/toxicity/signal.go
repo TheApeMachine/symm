@@ -133,6 +133,7 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 				Unit: types.UnitBaseCurrency,
 			},
 		}
+		normalizeAttribution(metrics, input)
 
 		measurement := &types.Measurement{
 			ID:       uuid.NewString(),
@@ -244,6 +245,7 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 			Unit: types.UnitBaseCurrency,
 		},
 	}
+	normalizeAttribution(metrics, input)
 
 	snr, ok := types.MeasurementSignalNoiseRatio(types.SourceToxicity, metrics)
 
@@ -267,6 +269,48 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 	measurements = append(measurements, measurement)
 
 	return measurements
+}
+
+/*
+normalizeAttribution expresses the existing cancellation and fill quantities as
+shares of the total accounted order-flow quantity. This preserves every raw
+base-currency value while giving the competing evidence groups a common,
+dimensionless denominator for SNR.
+*/
+func normalizeAttribution(
+	metrics map[string]types.MetricSample,
+	input equation.BookQualityInput,
+) {
+	total := input.CancelBid + input.CancelAsk + input.FillBid + input.FillAsk
+
+	if total <= 0 {
+		return
+	}
+
+	values := map[string]float64{
+		types.MetricKey(types.MetricCancelledQuantity, types.SideBuy):  input.CancelBid / total,
+		types.MetricKey(types.MetricCancelledQuantity, types.SideSell): input.CancelAsk / total,
+		types.MetricKey(types.MetricFillVolume, types.SideBuy):         input.FillBid / total,
+		types.MetricKey(types.MetricFillVolume, types.SideSell):        input.FillAsk / total,
+	}
+
+	for key, value := range values {
+		sample := metrics[key]
+		sample.Normalized = &value
+		metrics[key] = sample
+	}
+
+	snr, ready := types.MeasurementSignalNoiseRatio(types.SourceToxicity, metrics)
+
+	if !ready {
+		return
+	}
+
+	metrics[types.MetricKey(types.MetricSNR, types.SideNone)] = types.MetricSample{
+		Raw:        snr,
+		Normalized: &snr,
+		Unit:       types.UnitDimensionless,
+	}
 }
 
 /*

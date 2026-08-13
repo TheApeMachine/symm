@@ -2,6 +2,7 @@ package cognition
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -21,6 +22,7 @@ func TestUpdate(t *testing.T) {
 			tree,
 			nil,
 			nil,
+			WithMaxSequenceLength(2),
 			WithSurprisalLimit(math.Inf(1)),
 		)
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
@@ -31,7 +33,7 @@ func TestUpdate(t *testing.T) {
 		firstCount := tree.GetSensoryWeight(solver.sequenceBytes([]string{vertical})).Count
 		So(solver.Update(thesis), ShouldBeNil)
 
-		Convey("Then a repeated category should not create or train a self-transition", func() {
+		Convey("Then observing an active category should not train before completion", func() {
 			So(solver.sequences["BTC/USD"], ShouldResemble, []string{vertical})
 			So(tree.GetSensoryWeight(
 				solver.sequenceBytes([]string{vertical}),
@@ -56,12 +58,26 @@ func TestUpdate(t *testing.T) {
 		).Count
 		So(solver.Update(thesis), ShouldBeNil)
 
-		Convey("Then only the observed category change should extend the sequence", func() {
+		Convey("Then only the observed category change should extend the active sequence", func() {
 			So(solver.sequences["BTC/USD"], ShouldResemble, []string{vertical, reversal})
-			So(transitionCount, ShouldEqual, uint64(1))
+			So(transitionCount, ShouldEqual, uint64(0))
 			So(tree.GetSensoryWeight(
 				solver.sequenceBytes([]string{vertical, reversal}),
 			).Count, ShouldEqual, transitionCount)
+		})
+
+		symbol.Categories.Store("BTC/USD", []types.Category{{
+			Symbol:     "BTC/USD",
+			Type:       types.CategoryExhaustion,
+			Confidence: 1,
+			Strength:   1,
+		}})
+		So(solver.Update(thesis), ShouldBeNil)
+
+		Convey("Then completing the sequence should learn it exactly once", func() {
+			So(tree.GetSensoryWeight(
+				solver.sequenceBytes([]string{vertical, reversal}),
+			).Count, ShouldEqual, uint64(1))
 
 			predictions := tree.PredictNextSensoryTokens(
 				solver.sequenceBytes([]string{vertical}),
@@ -69,6 +85,67 @@ func TestUpdate(t *testing.T) {
 			)
 			So(predictions, ShouldHaveLength, 1)
 			So(string(predictions[0].Token), ShouldEqual, reversal)
+			So(solver.sequences["BTC/USD"], ShouldResemble, []string{
+				solver.encodeCategory(types.CategoryExhaustion),
+			})
+		})
+	})
+
+	Convey("Given a broad thesis whose categories do not change", t, func() {
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
+		ui := make(chan []byte, 2)
+		solver := NewSolver(tree, ui, nil)
+		thesis := types.NewThesis(context.Background(), nil)
+		thesis.At = time.Unix(1, 0).UTC()
+
+		for index := range 129 {
+			symbolName := fmt.Sprintf("SYMBOL-%d/USD", index)
+			symbol := types.NewSymbol(symbolName, nil)
+			symbol.Categories.Store(symbolName, []types.Category{{
+				Symbol:     symbolName,
+				Type:       types.CategoryVerticalIgnition,
+				Confidence: 1,
+				Strength:   1,
+			}})
+			thesis.Symbols.Store(symbolName, symbol)
+		}
+
+		So(solver.Update(thesis), ShouldBeNil)
+		<-ui
+		initialTick := solver.tickCounter
+		So(solver.Update(thesis), ShouldBeNil)
+
+		Convey("Then unchanged observations do not retrain or publish the tree", func() {
+			So(solver.tickCounter, ShouldEqual, initialTick)
+			So(len(ui), ShouldEqual, 0)
+		})
+
+		stored, found := thesis.Symbols.Load("SYMBOL-64/USD")
+		So(found, ShouldBeTrue)
+		symbol := stored.(*types.Symbol)
+		symbol.Categories.Store("SYMBOL-64/USD", []types.Category{{
+			Symbol:     "SYMBOL-64/USD",
+			Type:       types.CategoryActiveReversal,
+			Confidence: 1,
+			Strength:   1,
+		}})
+		solver.tickCounter = 127
+		So(solver.Update(thesis), ShouldBeNil)
+
+		var payload struct {
+			Cognition map[string]json.RawMessage `json:"cognition"`
+		}
+		So(json.Unmarshal(<-ui, &payload), ShouldBeNil)
+
+		Convey("Then only the changed symbol is published without automatic REM", func() {
+			So(payload.Cognition, ShouldHaveLength, 1)
+			_, published := payload.Cognition["SYMBOL-64/USD"]
+			So(published, ShouldBeTrue)
+			storedCognition, cognitionFound := symbol.Cognition.Load("SYMBOL-64/USD")
+			So(cognitionFound, ShouldBeTrue)
+			So(storedCognition.(types.Cognition).REMConsolidating, ShouldBeFalse)
+			So(solver.remOutcome.ReplayedObservations, ShouldEqual, uint64(0))
 		})
 	})
 }
@@ -263,6 +340,32 @@ func BenchmarkCachedPrefixTree(b *testing.B) {
 	}
 }
 
+func BenchmarkUpdate(b *testing.B) {
+	tree, _ := dmt.NewTree("")
+	solver := NewSolver(tree, nil, nil)
+	thesis := types.NewThesis(context.Background(), nil)
+	thesis.At = time.Unix(1, 0).UTC()
+
+	for index := range 129 {
+		symbolName := fmt.Sprintf("SYMBOL-%d/USD", index)
+		symbol := types.NewSymbol(symbolName, nil)
+		symbol.Categories.Store(symbolName, []types.Category{{
+			Symbol:     symbolName,
+			Type:       types.CategoryDenseNeutrality,
+			Confidence: 1,
+			Strength:   1,
+		}})
+		thesis.Symbols.Store(symbolName, symbol)
+	}
+
+	_ = solver.Update(thesis)
+	b.ResetTimer()
+
+	for b.Loop() {
+		_ = solver.Update(thesis)
+	}
+}
+
 func TestCachedPrefixTree(t *testing.T) {
 	Convey("Given an exported prefix tree held between ticks", t, func() {
 		solver, active := prefixTreeFixture()
@@ -290,6 +393,8 @@ func TestCachedPrefixTree(t *testing.T) {
 				}
 
 				So(keys, ShouldContain, "r1")
+				So(keys, ShouldContain, "r0")
+				So(len(moved), ShouldBeGreaterThanOrEqualTo, len(first))
 			})
 		})
 

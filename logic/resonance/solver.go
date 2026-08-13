@@ -18,9 +18,8 @@ import (
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
+	"gonum.org/v1/gonum/stat/distuv"
 )
-
-const defaultHorizonConfidence = 0.85
 
 /*
 Solver feeds adaptively standardized market measurements into one resonance
@@ -41,9 +40,11 @@ type Solver struct {
 }
 
 type sampleHistory struct {
-	inputs   map[int64][]float64
-	marks    map[int64]float64
-	resolved int
+	inputs           map[int64][]float64
+	marks            map[int64]float64
+	ticks            []int64
+	resolved         int
+	supportedHorizon int
 }
 
 /*
@@ -85,12 +86,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		return errors.New("resonance: positive learning pace required")
 	}
 
-	if system.Cfg == nil || system.Cfg.Resonance == nil ||
-		system.Cfg.Resonance.Layers <= 0 {
+	config := system.Cfg.Snapshot()
+
+	if config == nil || config.Resonance == nil || config.Planner == nil ||
+		config.Resonance.Layers <= 0 || config.Resonance.MaxHorizon <= 0 {
 		return errors.New("resonance: positive horizon layer count required")
 	}
 
-	maxHorizon := system.Cfg.Resonance.Layers
+	maxHorizon := config.Resonance.MaxHorizon
 
 	group, _ := errgroup.WithContext(solver.ctx)
 
@@ -201,8 +204,18 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			if coder == nil {
+				architecture := make([]int, config.Resonance.Layers)
+
+				for layer := range architecture {
+					architecture[layer] = len(input)
+
+					if layer > 0 && layer+1 < len(architecture) {
+						architecture[layer] = len(input) * 2
+					}
+				}
+
 				coder = learning.NewResonanceManifold(
-					[]int{len(input), len(input) * 2, len(input)}, maxHorizon, solver.alpha,
+					architecture, 1, solver.alpha,
 				)
 
 				if coder == nil {
@@ -222,38 +235,35 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			})
 
 			history := historyValue.(*sampleHistory)
+			resolvedBefore := history.resolved
 
 			// 1. Process Matured Historical Targets (Delayed Training)
 			if mark > 0 && tick > 0 {
-				history.marks[tick] = mark
-				dueTicks := make([]int64, 0)
-
-				for previousTick := range history.inputs {
-					if previousTick+int64(maxHorizon) <= tick {
-						dueTicks = append(dueTicks, previousTick)
-					}
+				if len(history.ticks) == 0 || tick > history.ticks[len(history.ticks)-1] {
+					history.ticks = append(history.ticks, tick)
+					history.marks[tick] = mark
 				}
 
-				slices.Sort(dueTicks)
-
-				for _, previousTick := range dueTicks {
+				for len(history.ticks) > 1 {
+					previousTick := history.ticks[0]
 					previousMark := history.marks[previousTick]
-					target := make([]float64, maxHorizon)
-					complete := previousMark > 0
+					previousInput, found := history.inputs[previousTick]
+					futureTick := history.ticks[1]
+					futureMark, futureFound := history.marks[futureTick]
+					target := make([]float64, 1)
+					complete := found && previousMark > 0
 
-					for horizon := 1; horizon <= maxHorizon; horizon++ {
-						futureMark, found := history.marks[previousTick+int64(horizon)]
-
-						if !found || futureMark <= 0 {
-							complete = false
-							break
-						}
-
-						target[horizon-1] = math.Log(futureMark / previousMark)
+					if !futureFound || futureMark <= 0 {
+						complete = false
 					}
 
-					previousInput := history.inputs[previousTick]
+					if complete {
+						target[0] = math.Log(futureMark / previousMark)
+					}
+
 					delete(history.inputs, previousTick)
+					delete(history.marks, previousTick)
+					history.ticks = history.ticks[1:]
 
 					if !complete {
 						continue
@@ -271,12 +281,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 					history.resolved++
 				}
-
-				for previousTick := range history.marks {
-					if previousTick+int64(maxHorizon) < tick {
-						delete(history.marks, previousTick)
-					}
-				}
 			}
 
 			// 2. Perform Generative Settle on CURRENT Tick Input for Inference
@@ -288,7 +292,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				))
 			}
 
-			if mark > 0 && tick > 0 {
+			if _, found := history.marks[tick]; found {
 				history.inputs[tick] = slices.Clone(input)
 			}
 
@@ -304,14 +308,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				currentReach = storedReach.(int)
 			}
 
-			supportedHorizon, nextReach := coder.DynamicHorizon(
-				defaultHorizonConfidence,
-				currentReach,
-				maxHorizon,
-			)
-			solver.currentReach.Store(name, nextReach)
+			supportedHorizon := history.supportedHorizon
+			nextReach := currentReach
 
-			forecast, err := coder.RolloutTaskForecast(supportedHorizon)
+			if supportedHorizon == 0 {
+				supportedHorizon = 1
+			}
+
+			forecast, err := coder.RolloutTaskForecast(maxHorizon)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -321,7 +325,45 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				))
 			}
 
-			forwardCurve := coder.RolloutTaskPrediction(supportedHorizon)
+			if history.resolved > resolvedBefore {
+				index := min(supportedHorizon, len(forecast)) - 1
+				confidence := 0.0
+
+				if index >= 0 && forecast[index].Ready {
+					distribution := distuv.StudentsT{
+						Mu:    forecast[index].Value,
+						Sigma: forecast[index].Scale,
+						Nu:    forecast[index].DegreesOfFreedom,
+					}
+					confidence = 1 - distribution.CDF(0)
+
+					if forecast[index].Value < 0 {
+						confidence = distribution.CDF(0)
+					}
+				}
+
+				if index >= 0 && forecast[index].Ready &&
+					confidence >= config.Planner.MinimumConfidence {
+					supportedHorizon = min(maxHorizon, supportedHorizon+1)
+				} else {
+					supportedHorizon = max(1, supportedHorizon-1)
+				}
+
+				nextReach = supportedHorizon
+				history.supportedHorizon = supportedHorizon
+				solver.currentReach.Store(name, supportedHorizon)
+			}
+
+			if len(forecast) > supportedHorizon {
+				forecast = forecast[:supportedHorizon]
+			}
+
+			forwardCurve := coder.RolloutTaskPrediction(maxHorizon)
+
+			if len(forwardCurve) > supportedHorizon {
+				forwardCurve = forwardCurve[:supportedHorizon]
+			}
+
 			forwardRetention := coder.RolloutRetention(supportedHorizon)
 
 			// Safe guards against empty predictions during cold start

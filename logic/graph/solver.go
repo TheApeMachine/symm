@@ -90,7 +90,7 @@ type Edge struct {
 }
 
 /*
-Graph is the full relational knowledge graph constructed for a Thesis cut.
+Graph is the relational knowledge graph accumulated during one Thesis lifecycle.
 */
 type Graph struct {
 	At        time.Time           `json:"at"`
@@ -160,6 +160,14 @@ func (graph *Graph) AddEdge(edge *Edge) {
 
 	if _, found := graph.Nodes[edge.To]; !found {
 		panic("graph: target node not registered: " + edge.To)
+	}
+
+	for index, current := range graph.Edges {
+		if current.From == edge.From && current.To == edge.To &&
+			current.Relation == edge.Relation {
+			graph.Edges[index] = edge
+			return
+		}
 	}
 
 	graph.Edges = append(graph.Edges, edge)
@@ -236,8 +244,8 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 }
 
 /*
-Update extracts nodes and infers directional edges from Thesis, publishing the compiled
-Graph into thesis.Graphs.
+Update streams newly available evidence into the graph owned by the current
+Thesis lifecycle. The graph is replaced only after a completed planner evaluation.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	var graphErr error
@@ -255,17 +263,22 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		storedGraph, found := symbol.Graphs.Load("market_graph")
+		storedGraph, _ := symbol.Graphs.LoadOrStore(
+			"market_graph",
+			NewGraph(thesis.At),
+		)
+		graph, valid := storedGraph.(*Graph)
 
-		if found {
-			currentGraph, valid := storedGraph.(*Graph)
-
-			if valid && currentGraph != nil {
-				return true
-			}
+		if !valid || graph == nil {
+			graphErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"graph: invalid lifecycle graph for "+symbolName,
+				nil,
+			))
+			return false
 		}
 
-		graph := NewGraph(thesis.At)
+		graph.At = thesis.At
 		measurementIndex, err := solver.measurements.addNodes(
 			symbolName,
 			symbol.MarketMeasurements("graph"),
@@ -343,8 +356,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			))
 			return false
 		}
-
-		symbol.Graphs.Store("market_graph", graph)
 
 		if symbolName == types.Focus() {
 			utils.Publish(solver.ui, datura.NewMap("graph", graph))

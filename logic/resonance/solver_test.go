@@ -2,6 +2,7 @@ package resonance
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -56,7 +57,8 @@ func appendResonanceSource(
 
 func TestNewSolver(t *testing.T) {
 	Convey("Given a configured resonance pace", t, func() {
-		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+		ui := make(chan []byte, 16)
+		solver := NewSolver(t.Context(), ui, nil, testAlpha)
 
 		Convey("It should retain the pace and create an empty private model registry", func() {
 			So(solver.alpha, ShouldEqual, testAlpha)
@@ -80,15 +82,21 @@ func TestUpdate(t *testing.T) {
 		system.Cfg = system.NewConfig()
 		system.Cfg.Resonance.Layers = 4
 		system.Cfg.Resonance.MaxHorizon = 2
+		system.Cfg.Planner.MinimumConfidence = 0
 		Reset(func() { system.Cfg = previousConfig })
 
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
 		thesis.Symbols.Store(symbol.Symbol, symbol)
-		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+		ui := make(chan []byte, 16)
+		solver := NewSolver(t.Context(), ui, nil, testAlpha)
 
-		for tick := int64(1); tick <= 8; tick++ {
-			appendResonanceCut(symbol, tick, 100+float64(tick), float64(tick))
+		ticks := []int64{3, 11, 25, 48, 76, 109, 147, 190}
+
+		for epoch, tick := range ticks {
+			appendResonanceCut(
+				symbol, tick, 100+float64(epoch), float64(epoch+1),
+			)
 			So(solver.Update(thesis), ShouldBeNil)
 		}
 
@@ -98,13 +106,47 @@ func TestUpdate(t *testing.T) {
 			coder, valid := stored.(*learning.ResonanceManifold)
 			So(valid, ShouldBeTrue)
 			layers, _, _ := coder.WireSnapshot()
-			forecast, err := coder.RolloutTaskForecast(system.Cfg.Resonance.Layers)
+			forecast, err := coder.RolloutTaskForecast(system.Cfg.Resonance.MaxHorizon)
 			So(err, ShouldBeNil)
-			So(layers, ShouldHaveLength, 3)
-			So(forecast, ShouldNotBeEmpty)
+			So(layers, ShouldHaveLength, system.Cfg.Resonance.Layers)
+			So(forecast, ShouldHaveLength, system.Cfg.Resonance.MaxHorizon)
 			history, found := solver.histories.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
 			So(history.(*sampleHistory).resolved, ShouldBeGreaterThan, 0)
+
+			var payload []byte
+
+			for len(ui) > 0 {
+				payload = <-ui
+			}
+
+			var frame struct {
+				Resonance struct {
+					Forecast struct {
+						ForwardCurve     []float64 `json:"forwardCurve"`
+						SupportedHorizon int       `json:"supportedHorizon"`
+					} `json:"forecast"`
+				} `json:"resonance"`
+			}
+			So(json.Unmarshal(payload, &frame), ShouldBeNil)
+			So(frame.Resonance.Forecast.ForwardCurve, ShouldHaveLength,
+				frame.Resonance.Forecast.SupportedHorizon)
+			So(frame.Resonance.Forecast.SupportedHorizon, ShouldEqual, 2)
+
+			reach, found := solver.currentReach.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			appendResonanceSource(symbol, types.SourceHawkes, 190, 107, 9)
+			So(solver.Update(thesis), ShouldBeNil)
+			unchangedReach, found := solver.currentReach.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			So(unchangedReach, ShouldEqual, reach)
+
+			system.Cfg.Planner.MinimumConfidence = 1
+			appendResonanceCut(symbol, 241, 90, -20)
+			So(solver.Update(thesis), ShouldBeNil)
+			retractedReach, found := solver.currentReach.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			So(retractedReach, ShouldEqual, 1)
 		})
 	})
 

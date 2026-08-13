@@ -48,6 +48,30 @@ func TestMeasure(t *testing.T) {
 			So(measurements[0].Sample(types.MetricTradeVolume, types.SideNone).Raw, ShouldEqual, 2.0)
 		})
 	})
+
+	Convey("Given a changed touch with accounted cancellation flow", t, func() {
+		books := &toxicityBookSource{books: make(map[string]*spotbook.Book)}
+		signal := NewSignal(context.Background(), books, nil)
+		market := types.NewSymbol("BTC/USD", nil)
+		base := time.Unix(1_700_004_300, 0).UTC()
+		books.books["BTC/USD"] = toxicityBook(100, 101, 10, 10, base)
+		So(signal.Measure(market), ShouldHaveLength, 1)
+		books.books["BTC/USD"] = toxicityBook(100, 101, 5, 10, base.Add(time.Second))
+
+		measurements := signal.Measure(market)
+		So(measurements, ShouldHaveLength, 1)
+		measurement := measurements[0]
+
+		Convey("Then raw quantities remain intact and SNR uses dimensionless shares", func() {
+			cancelled := measurement.Sample(types.MetricCancelledQuantity, types.SideBuy)
+			So(cancelled.Raw, ShouldBeGreaterThan, 0)
+			So(cancelled.Normalized, ShouldNotBeNil)
+			So(*cancelled.Normalized, ShouldEqual, 1.0)
+			snr := measurement.Sample(types.MetricSNR, types.SideNone)
+			So(snr.Normalized, ShouldNotBeNil)
+			So(*snr.Normalized, ShouldEqual, 1.0)
+		})
+	})
 }
 
 type toxicityBookSource struct {

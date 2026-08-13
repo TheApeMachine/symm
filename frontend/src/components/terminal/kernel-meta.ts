@@ -51,18 +51,17 @@ ones that do not publish one — hawkes reports a fitted intensity, liquidity
 scores scarcity, exhaustion and toxicity split their readings by side — showed
 nothing at all.
 
-Hawkes names its fitted conditional intensity rather than its raw arrival rate.
-The arrival rate is published from the first tick but carries no normalized
-estimate until the kernel has a fit, and a bar bound to an absent normalized
-keeps whatever it last painted — which is how the row came to show a confident
-50% beside a raw reading of zero.
+Hawkes leads with its fitted branching ratio. Conditional intensity is measured
+in events per second and has no intrinsic unit interval, while spectral radius
+is the dimensionless cascade measure the row describes and already carries the
+model's normalized estimate.
 */
 const SOURCE_HEADLINE: Record<string, string> = {
 	correlation: "snr",
 	cvd: "strength",
 	depthflow: "snr",
 	exhaustion: "strength:buy",
-	hawkes: "conditional_intensity:buy",
+	hawkes: "spectral_radius",
 	leadlag: "strength",
 	liquidity: "scarcity_score",
 	pumpdump: "strength",

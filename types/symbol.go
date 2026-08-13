@@ -63,8 +63,6 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 }
 
 func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
-	symbol.Tick++
-
 	for _, source := range TickerReceivers {
 		value, ok := symbol.tickers.Load(source)
 
@@ -83,8 +81,6 @@ func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
 }
 
 func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
-	symbol.Tick++
-
 	for _, source := range TradeReceivers {
 		value, ok := symbol.trades.Load(source)
 

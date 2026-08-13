@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { sourceHeadlineMetric, sourceMetrics } from "./kernel-meta";
 
 describe("sourceHeadlineMetric", () => {
+	it("uses the dimensionless branching ratio as Hawkes' headline", () => {
+		expect(sourceHeadlineMetric("hawkes")).toBe("metrics.spectral_radius");
+	});
+
 	it("uses signal-to-noise separation as depthflow's headline", () => {
 		expect(sourceHeadlineMetric("depthflow")).toBe("metrics.snr");
 		expect(sourceMetrics("depthflow")).toEqual([

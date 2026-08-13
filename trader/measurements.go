@@ -106,12 +106,15 @@ func (measurements *Measurements) Update(
 						)
 					}
 
+					symbol.Tick = thesis.Tick
 					focused := make([]*types.Measurement, 0)
 
 					for _, measurement := range signal.Measure(symbol) {
 						if measurement == nil {
 							continue
 						}
+
+						measurement.Tick = thesis.Tick
 
 						if thesis.Symbol(measurement.Symbol).AppendMeasurement(
 							signal.Type(), measurement,

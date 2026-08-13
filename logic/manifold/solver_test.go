@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"encoding/json"
+	"runtime"
 	"testing"
 	"time"
 
@@ -14,10 +15,23 @@ import (
 )
 
 type staticBookSource struct {
-	book *mgrbook.Book
+	book    *mgrbook.Book
+	entered chan<- struct{}
+	release <-chan struct{}
 }
 
 func (source *staticBookSource) Book(_ string, read func(*mgrbook.Book)) {
+	if source.entered != nil {
+		select {
+		case source.entered <- struct{}{}:
+		default:
+		}
+	}
+
+	if source.release != nil {
+		<-source.release
+	}
+
 	read(source.book)
 }
 
@@ -42,9 +56,15 @@ func TestUpdate(t *testing.T) {
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 
 		pendingErr := solver.Update(thesis)
+		deadline := time.Now().Add(10 * time.Second)
+
+		for solver.settling.Load() != 0 && time.Now().Before(deadline) {
+			runtime.Gosched()
+		}
 
 		Convey("It should wait without stamping or reporting an error", func() {
 			So(pendingErr, ShouldBeNil)
+			So(solver.settling.Load(), ShouldEqual, 0)
 			So(solver.WaitingForBook(), ShouldBeTrue)
 			So(solver.domain.ParticleCount(), ShouldEqual, 0)
 		})
@@ -66,9 +86,15 @@ func TestUpdate(t *testing.T) {
 			Silent:    true,
 		})
 		err := solver.Update(thesis)
+		deadline = time.Now().Add(10 * time.Second)
+
+		for solver.settling.Load() != 0 && time.Now().Before(deadline) {
+			runtime.Gosched()
+		}
 
 		Convey("It should inject the unit-energy book when the snapshot arrives", func() {
 			So(err, ShouldBeNil)
+			So(solver.settling.Load(), ShouldEqual, 0)
 			So(solver.WaitingForBook(), ShouldBeFalse)
 			So(solver.domain.ParticleCount(), ShouldEqual, 2)
 		})
@@ -125,14 +151,90 @@ func TestUpdate(t *testing.T) {
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 
 		err := solver.Update(thesis)
+		deadline := time.Now().Add(10 * time.Second)
+
+		for solver.settling.Load() != 0 && time.Now().Before(deadline) {
+			runtime.Gosched()
+		}
+
 		reading, readingErr := solver.domain.Reading()
 
 		Convey("It should append, advance, read, and stamp one manifold cut", func() {
 			So(err, ShouldBeNil)
+			So(solver.settling.Load(), ShouldEqual, 0)
 			So(readingErr, ShouldBeNil)
 			So(solver.domain.ParticleCount(), ShouldEqual, 2)
 			So(thesis.Manifold, ShouldResemble, reading)
 		})
+	})
+
+	Convey("Given market inputs arriving while the manifold owner is active", t, func() {
+		originalSteps := system.Cfg.Manifold.RelaxationSteps
+		originalMinimum := system.Cfg.Manifold.MinSteps
+		system.Cfg.Manifold.RelaxationSteps = 1
+		system.Cfg.Manifold.MinSteps = 1
+		Reset(func() {
+			system.Cfg.Manifold.RelaxationSteps = originalSteps
+			system.Cfg.Manifold.MinSteps = originalMinimum
+		})
+		managed := mgrbook.New()
+		managed.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Bid,
+			ID:        "bid",
+			Price:     decimal.NewFromInt64(99),
+			Quantity:  decimal.NewFromInt64(2),
+			Timestamp: time.Unix(1, 0).UTC(),
+			Silent:    true,
+		})
+		managed.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Ask,
+			ID:        "ask",
+			Price:     decimal.NewFromInt64(101),
+			Quantity:  decimal.NewFromInt64(3),
+			Timestamp: time.Unix(2, 0).UTC(),
+			Silent:    true,
+		})
+		entered := make(chan struct{}, 1)
+		release := make(chan struct{})
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Status = types.BUSY
+		thesis.Symbols.Store("BTC/USD", symbol)
+		solver := NewSolver(nil, nil, nil, nil)
+		solver.api = &staticBookSource{
+			book: managed, entered: entered, release: release,
+		}
+		solver.tokenizer = NewTokenizer(solver.config, []string{"BTC/USD"})
+
+		err := solver.Update(thesis)
+
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("manifold owner did not enter the authoritative book read")
+		}
+
+		for request := 0; request < system.Cfg.Manifold.RelaxationSteps+1; request++ {
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		queuedState := solver.settling.Load()
+		close(release)
+		deadline := time.Now().Add(10 * time.Second)
+
+		for solver.settling.Load() != 0 && time.Now().Before(deadline) {
+			runtime.Gosched()
+		}
+
+		Convey("It should return immediately and coalesce the arrivals into one follow-up cut", func() {
+			So(err, ShouldBeNil)
+			So(queuedState, ShouldEqual, 2)
+			So(solver.settling.Load(), ShouldEqual, 0)
+			So(solver.stepped, ShouldBeTrue)
+			So(solver.pending["BTC/USD"], ShouldHaveLength, 2)
+		})
+
+		So(solver.Close(), ShouldBeNil)
 	})
 }
 
@@ -252,8 +354,14 @@ func BenchmarkUpdate(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		if err := solver.Update(thesis); err != nil {
-			b.Fatal(err)
+		for request := 0; request < system.Cfg.Manifold.RelaxationSteps; request++ {
+			if err := solver.Update(thesis); err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		for solver.settling.Load() != 0 {
+			runtime.Gosched()
 		}
 	}
 }
