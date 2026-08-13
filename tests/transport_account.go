@@ -82,6 +82,63 @@ func (transport *mockTransport) setBalances(balances map[string]float64) {
 	transport.mu.Unlock()
 }
 
+func (transport *mockTransport) setPrice(pair string, price float64) {
+	transport.mu.Lock()
+	transport.prices[pair] = price
+	transport.mu.Unlock()
+}
+
+func (transport *mockTransport) setBasis(pair string, cost float64) {
+	transport.mu.Lock()
+	transport.basis[pair] = cost
+	transport.mu.Unlock()
+}
+
+func (transport *mockTransport) tradeBalance() []byte {
+	account := transport.accountBalances()
+	transport.mu.RLock()
+	defer transport.mu.RUnlock()
+
+	cash := 0.0
+	marketValue := 0.0
+	costBasis := 0.0
+
+	for _, symbol := range transport.symbols {
+		base, quote, known := splitPair(symbol.Pair)
+
+		if !known {
+			continue
+		}
+
+		cash += account[quote]
+		price := transport.prices[symbol.Pair]
+
+		if price == 0 {
+			price = symbol.StartPrice
+		}
+
+		marketValue += account[base] * price
+		costBasis += transport.basis[symbol.Pair]
+	}
+
+	tradeBalance := cash + costBasis
+	unrealized := marketValue - costBasis
+	equity := tradeBalance + unrealized
+
+	return envelope(map[string]string{
+		"eb":  strconv.FormatFloat(equity, 'f', -1, 64),
+		"tb":  strconv.FormatFloat(tradeBalance, 'f', -1, 64),
+		"m":   "0",
+		"n":   strconv.FormatFloat(unrealized, 'f', -1, 64),
+		"c":   strconv.FormatFloat(costBasis, 'f', -1, 64),
+		"v":   strconv.FormatFloat(marketValue, 'f', -1, 64),
+		"e":   strconv.FormatFloat(equity, 'f', -1, 64),
+		"mf":  strconv.FormatFloat(equity, 'f', -1, 64),
+		"mfo": strconv.FormatFloat(equity, 'f', -1, 64),
+		"uv":  "0",
+	})
+}
+
 func (transport *mockTransport) tradesHistory() []byte {
 	transport.mu.RLock()
 	configured := transport.trades

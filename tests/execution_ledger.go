@@ -111,6 +111,7 @@ func (ledger *executionLedger) ApplyFill(
 		basis.quantity += quantity
 		basis.cost += cost
 		ledger.basis[order.order.Request.Pair] = basis
+		ledger.private.transport.setBasis(order.order.Request.Pair, basis.cost)
 		ledger.project(sample.Timestamp)
 		ledger.reconcile()
 		return
@@ -125,6 +126,7 @@ func (ledger *executionLedger) ApplyFill(
 		basis.quantity -= quantity
 		basis.cost -= entryCost
 		ledger.basis[order.order.Request.Pair] = basis
+		ledger.private.transport.setBasis(order.order.Request.Pair, basis.cost)
 	}
 
 	ledger.economics.GrossPnL += cost - entryCost

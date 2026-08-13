@@ -137,6 +137,7 @@ func NewWithClient(
 ) *Live {
 	if client == nil {
 		client = spot.NewWebSocket()
+		client.URL = endpoint
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -159,8 +160,6 @@ func NewWithClient(
 		model:       viper.GetViper().GetString("trading.model"),
 		quote:       viper.GetViper().GetString("market.quote_currency"),
 	}
-
-	live.client.URL = endpoint
 
 	if err := live.normalizer.Use(live.client.REST); err != nil {
 		errnie.Error(errnie.Err(
@@ -290,7 +289,7 @@ func NewWithClient(
 	})
 
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
-		errnie.Info(fmt.Sprintf("websocket: connected to %s", endpoint))
+		errnie.Info(fmt.Sprintf("websocket: connected to %s", live.client.URL))
 
 		if auth {
 			errnie.Error(live.authenticate())
@@ -325,7 +324,7 @@ func NewWithClient(
 
 	if auth {
 		live.client.OnAuthenticated.Recurring(func(event *callback.Event[string]) {
-			errnie.Info(fmt.Sprintf("websocket: authenticated to %s", endpoint))
+			errnie.Info(fmt.Sprintf("websocket: authenticated to %s", live.client.URL))
 
 			if endpoint == PrivateWebSocketURL {
 				err := live.subscribeAccount(event.Data)
@@ -354,7 +353,7 @@ func NewWithClient(
 		})
 	}
 
-	errnie.Info(fmt.Sprintf("websocket: connecting to %s", endpoint))
+	errnie.Info(fmt.Sprintf("websocket: connecting to %s", live.client.URL))
 	live.statusMu.Lock()
 	live.status = types.PENDING
 	live.statusMu.Unlock()

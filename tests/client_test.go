@@ -17,6 +17,7 @@ func TestNewConn(t *testing.T) {
 
 		So(conn, ShouldNotBeNil)
 		So(conn.Client(), ShouldNotBeNil)
+		So(conn.Client().URL, ShouldStartWith, "ws://")
 		So(conn.Connect(), ShouldBeNil)
 	})
 }

@@ -338,18 +338,18 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		winner := string(classResult.Winner)
 
-		// Backoff surprisal scores the sequence against every order of its own
-		// context, so an unseen continuation of a known prefix is merely
-		// surprising instead of unmeasurable.
-		interpolated := solver.tree.InterpolatedSurprisal(activeSequenceBytes)
-		averageSurprisal := 0.0
+		analysis := solver.tree.AnalyzeInterpolated(activeSequenceBytes)
+		contributions := make([]types.CognitionContribution, 0, len(analysis.Contributions))
 
-		for _, item := range interpolated {
-			averageSurprisal += item.Surprisal
+		for _, contribution := range analysis.Contributions {
+			contributions = append(contributions, types.CognitionContribution{
+				Token: solver.decodeCategoryToken(string(contribution.Token)),
+				Bits:  contribution.Bits,
+			})
 		}
 
-		if len(interpolated) > 0 {
-			averageSurprisal /= float64(len(interpolated))
+		if len(contributions) == 0 {
+			contributions = nil
 		}
 
 		cognition := types.Cognition{
@@ -378,8 +378,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			Beams:            beams,
 			Classes:          classes,
 
-			InterpolatedSurprisal: averageSurprisal,
-			Contributions:         solver.contributions(activeSequenceBytes),
+			InterpolatedSurprisal: analysis.AverageSurprisal,
+			Contributions:         contributions,
 			Lexical:               solver.lexical(activeTokens),
 			Symbols:               solver.symbols,
 			Dreams:                solver.dreams,
@@ -464,31 +464,6 @@ func (solver *Solver) consolidate(
 			Purity: symbol.Purity,
 		})
 	}
-}
-
-/*
-contributions reports how much more evidence each transition gave the winning
-basin than the runner-up, which is what turns a verdict into an explanation.
-*/
-func (solver *Solver) contributions(
-	sequenceBytes []byte,
-) []types.CognitionContribution {
-	raw := solver.tree.ContrastiveTokenContributions(sequenceBytes)
-
-	if len(raw) == 0 {
-		return nil
-	}
-
-	out := make([]types.CognitionContribution, 0, len(raw))
-
-	for _, contribution := range raw {
-		out = append(out, types.CognitionContribution{
-			Token: solver.decodeCategoryToken(string(contribution.Token)),
-			Bits:  contribution.Bits,
-		})
-	}
-
-	return out
 }
 
 /*

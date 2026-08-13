@@ -47,6 +47,7 @@ func TestTokenizerNewBatch(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "SOL/USD")
 		})
+
 	})
 
 	Convey("Given visible orders expressed in different asset lot units", t, func() {

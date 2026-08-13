@@ -38,6 +38,8 @@ type mockTransport struct {
 	tradeVolume  *tradevolume.Fixture
 	pending      []simulatedOrder
 	balances     map[string]string
+	prices       map[string]float64
+	basis        map[string]float64
 	trades       map[string]spot.Trade
 	openOrders   map[string]spot.Order
 	addOrderErr  error
@@ -59,7 +61,11 @@ type simulatedOrder struct {
 }
 
 func newMockTransport() *mockTransport {
-	return &mockTransport{clock: testtypes.DefaultScenarioStart}
+	return &mockTransport{
+		clock:  testtypes.DefaultScenarioStart,
+		prices: map[string]float64{},
+		basis:  map[string]float64{},
+	}
 }
 
 func (transport *mockTransport) configureTime(start time.Time) {
@@ -142,6 +148,8 @@ func (transport *mockTransport) RoundTrip(
 		body = transport.wsToken()
 	case path == "/0/private/Balance":
 		body = transport.balance()
+	case path == "/0/private/TradeBalance":
+		body = transport.tradeBalance()
 	case path == "/0/private/TradesHistory":
 		body = transport.tradesHistory()
 	case path == "/0/private/OpenOrders":

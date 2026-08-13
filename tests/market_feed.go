@@ -109,6 +109,7 @@ func (market *Market) publishSample(
 	sample testtypes.Sample,
 ) {
 	market.pace(sample.Timestamp)
+	market.Private.transport.setPrice(sample.Symbol, sample.Bid)
 	market.sampleMu.Lock()
 
 	if known, ok := market.latest[sample.Symbol]; ok {

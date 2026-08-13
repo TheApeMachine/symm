@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -39,6 +40,16 @@ type Solver struct {
 	closing   bool
 	settling  bool
 	stepped   bool
+}
+
+/*
+manifoldCut keeps the particles attributed to one symbol while every cut in the
+market update relaxes inside the same resident domain.
+*/
+type manifoldCut struct {
+	symbol      string
+	particles   []pfluid.Particle
+	measurement *types.Measurement
 }
 
 /*
@@ -159,8 +170,24 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 		return true
 	})
+	symbolNames := make([]string, 0, len(measurements))
 
-	for symbolName, measurement := range measurements {
+	for symbolName := range measurements {
+		symbolNames = append(symbolNames, symbolName)
+	}
+
+	sort.Strings(symbolNames)
+	cuts := make([]manifoldCut, 0, len(symbolNames))
+	allParticles := make([]pfluid.Particle, 0)
+	allContentIDs := make([]uint32, 0)
+
+	for _, symbolName := range symbolNames {
+		measurement := measurements[symbolName]
+		if _, known := universeIndex(solver.tokenizer.universe, symbolName); !known {
+			solver.tokenizer.universe = sortedUniverse(
+				append(solver.tokenizer.universe, symbolName),
+			)
+		}
 		buyExcitation := 0.0
 		sellExcitation := 0.0
 
@@ -251,34 +278,33 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		if len(particles) == 0 || len(contentIDs) == 0 {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"manifold: populated authoritative order book produced no particles for "+symbolName,
-				nil,
-			))
+			solver.waiting[symbolName] = struct{}{}
+			continue
 		}
 
-		_, err = solver.domain.Append(particles, contentIDs)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				fmt.Sprintf(
-					"failed to append %d manifold particles for %s: %v",
-					len(particles), symbolName, err,
-				),
-				err,
-			))
-		}
-
-		if err := solver.Step(
-			thesis, symbolName, thesis.At, particles,
-		); err != nil {
-			return err
-		}
+		allParticles = append(allParticles, particles...)
+		allContentIDs = append(allContentIDs, contentIDs...)
+		cuts = append(cuts, manifoldCut{symbol: symbolName, particles: particles})
 	}
 
-	return nil
+	if len(cuts) == 0 {
+		return nil
+	}
+
+	_, err := solver.domain.Append(allParticles, allContentIDs)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"failed to append %d manifold particles across %d symbols: %v",
+				len(allParticles), len(cuts), err,
+			),
+			err,
+		))
+	}
+
+	return solver.Step(thesis, thesis.At, cuts)
 }
 
 /*
@@ -291,9 +317,8 @@ func (solver *Solver) WaitingForBook() bool {
 
 func (solver *Solver) Step(
 	thesis *types.Thesis,
-	symbol string,
 	at time.Time,
-	particles []pfluid.Particle,
+	cuts []manifoldCut,
 ) error {
 	config := system.Cfg.Snapshot()
 
@@ -340,8 +365,12 @@ func (solver *Solver) Step(
 
 	thesis.Manifold = reading
 
-	if err := solver.publish(thesis, symbol, at, particles); err != nil {
-		return err
+	for _, cut := range cuts {
+		if err := solver.publish(
+			thesis, cut.symbol, at, cut.particles,
+		); err != nil {
+			return err
+		}
 	}
 
 	return nil

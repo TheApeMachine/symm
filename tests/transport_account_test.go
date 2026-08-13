@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
@@ -67,6 +68,34 @@ func TestMockTransportTradeVolume(t *testing.T) {
 		Convey("REST should declare the same per-symbol fee schedule", func() {
 			So(taker["fee"], ShouldEqual, "0.31")
 			So(maker["fee"], ShouldEqual, "0.19")
+		})
+	})
+}
+
+func TestMockTransportTradeBalance(t *testing.T) {
+	Convey("Given a fixture account with USD inventory", t, func() {
+		conn := NewConn(context.Background())
+		defer conn.Close()
+		conn.Configure([]*testtypes.Symbol{
+			testtypes.NewSymbol("BTC/USD", 50_000, 1),
+		})
+		request, err := http.NewRequest(
+			"POST", "https://api.kraken.com/0/private/TradeBalance", nil,
+		)
+		So(err, ShouldBeNil)
+
+		response, err := conn.ws.REST.Executor(request)
+		So(err, ShouldBeNil)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		So(err, ShouldBeNil)
+		balance := kraken.NewTradeBalance(body)
+
+		Convey("REST should return a complete internally consistent valuation", func() {
+			So(balance.Equity, ShouldNotBeNil)
+			So(balance.TradeBalance, ShouldNotBeNil)
+			So(balance.UnrealizedPnL, ShouldNotBeNil)
+			So(balance.Equity.Cmp(balance.TradeBalance.Add(balance.UnrealizedPnL)), ShouldEqual, 0)
 		})
 	})
 }

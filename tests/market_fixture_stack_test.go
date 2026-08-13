@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	testtypes "github.com/theapemachine/symm/tests/types"
+	"github.com/theapemachine/symm/types"
 )
 
 func runAutoFillStackTest(t *testing.T, symbols []*testtypes.Symbol) {
@@ -57,6 +58,51 @@ func runAutoFillStackTest(t *testing.T, symbols []*testtypes.Symbol) {
 				simulatedTakerFeePercent / percentDenominator
 			So(fill.Data[0].FeeUsdEquiv.Float64(),
 				ShouldAlmostEqual, expectedFee, 1e-12)
+		}),
+	)
+}
+
+func TestMarketStackEntryAndExit(t *testing.T) {
+	symbols := []*testtypes.Symbol{
+		testtypes.NewSymbol("SIM1/USD", 64_000, 42),
+	}
+
+	Convey("Given the full system driven only by simulated venue data", t,
+		WithOrders(t, symbols, cmd.Boot, func(market *Market, system *cmd.System) {
+			market.WithAutoFill()
+
+			Convey("When a pump develops into a reversal", func() {
+				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
+				So(market.Express("SIM1/USD"), ShouldBeNil)
+				So(system.Desk.Holding("SIM1/USD"), ShouldBeGreaterThan, 0)
+
+				So(market.Transition("SIM1/USD", testtypes.FastDump), ShouldBeNil)
+				So(market.Flatten("SIM1/USD"), ShouldBeNil)
+
+				Convey("Then the system should have entered and exited an actual lot", func() {
+					So(system.Desk.Holding("SIM1/USD"), ShouldEqual, 0)
+					closed := 0
+
+					for position := range system.Desk.Positions() {
+						if position.Holding == nil ||
+							position.Holding.Symbol != "SIM1/USD" ||
+							position.Holding.Status != types.CLOSED {
+							continue
+						}
+
+						closed++
+						So(position.Holding.EntryAt, ShouldNotBeNil)
+						So(position.Holding.EntryPrice, ShouldNotBeNil)
+						So(position.Holding.ExitAt, ShouldNotBeNil)
+						So(position.Holding.ExitPrice, ShouldNotBeNil)
+						So(position.Holding.PnL, ShouldNotBeNil)
+						So(position.Holding.PnL.Sign(), ShouldEqual, 1)
+						So(position.Holding.ReturnPct, ShouldBeGreaterThan, 0.0)
+					}
+
+					So(closed, ShouldBeGreaterThan, 0)
+				})
+			})
 		}),
 	)
 }

@@ -164,7 +164,9 @@ func TestStep(t *testing.T) {
 		thesis.Symbols.Store("BTC/USD", types.NewSymbol("BTC/USD", nil))
 		at := time.Unix(1, 0).UTC()
 
-		err = solver.Step(thesis, "BTC/USD", at, particles)
+		err = solver.Step(thesis, at, []manifoldCut{{
+			symbol: "BTC/USD", particles: particles,
+		}})
 		reading, readingErr := solver.domain.Reading()
 		var payload []byte
 
@@ -199,7 +201,7 @@ func TestStep(t *testing.T) {
 		solver := &Solver{}
 
 		err := solver.Step(
-			types.NewThesis(t.Context(), nil), "BTC/USD", time.Unix(1, 0), nil,
+			types.NewThesis(t.Context(), nil), time.Unix(1, 0), nil,
 		)
 
 		Convey("It should reject the cut instead of silently stamping it", func() {
@@ -289,9 +291,9 @@ func BenchmarkStep(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		if err := solver.Step(
-			thesis, "BTC/USD", time.Unix(1, 0), particles,
-		); err != nil {
+		if err := solver.Step(thesis, time.Unix(1, 0), []manifoldCut{{
+			symbol: "BTC/USD", particles: particles,
+		}}); err != nil {
 			b.Fatal(err)
 		}
 	}
