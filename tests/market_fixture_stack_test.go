@@ -120,7 +120,7 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 	)
 }
 
-func TestMarketReplayRejectsUncalibratedEntry(t *testing.T) {
+func TestMarketReplayEntryAndExit(t *testing.T) {
 	previousDepth, depthWasSet := viper.GetInt("market.l3_depth"),
 		viper.IsSet("market.l3_depth")
 	viper.Set("market.l3_depth", 10)
@@ -142,7 +142,7 @@ func TestMarketReplayRejectsUncalibratedEntry(t *testing.T) {
 	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
 	config.InitialBalances = map[string]float64{"USD": 200}
 
-	Convey("Given an IDOS/USD slice without baseline-beating forecast skill", t,
+	Convey("Given an IDOS/USD slice with a resolved adaptive forecast horizon", t,
 		WithFixtureOrderScenario(t, config,
 			drive(t, cmd.Boot, func(market *Market, system *cmd.System) {
 				execution := market.Config.Execution
@@ -162,23 +162,38 @@ func TestMarketReplayRejectsUncalibratedEntry(t *testing.T) {
 				coder := stored.(*learning.ResonanceManifold)
 				forecast, forecastErr := coder.RolloutTaskForecast(1)
 				skill, skillReady := coder.TaskSkill()
+				var completed *broker.Position
+				symbolState.Positions.Range(func(_, value any) bool {
+					position, valid := value.(*broker.Position)
 
-				Convey("It should reject the apparent move without a calibrated horizon", func() {
+					if valid && position.Holding != nil &&
+						position.Holding.Status == types.CLOSED {
+						completed = position
+					}
+
+					return true
+				})
+
+				Convey("It should enter only on calibrated positive net utility and exit profitably", func() {
 					So(forecastErr, ShouldBeNil)
 					So(forecast, ShouldNotBeEmpty)
 					So(skillReady, ShouldBeTrue)
-					_, calibrated := symbolState.Resonance.Load(
-						types.ResonanceReturnForecastKey,
-					)
-					So(calibrated, ShouldBeFalse)
+					So(completed, ShouldNotBeNil)
+					So(completed.Decision.ForecastHorizon, ShouldBeGreaterThan, 0)
+					So(completed.Decision.Utility, ShouldBeGreaterThan, 0)
+					So(completed.Decision.GraphScore, ShouldBeGreaterThan, 0)
+					So(completed.Holding.PnL.Sign(), ShouldEqual, 1)
 					So(system.Desk.Holding("IDOS/USD"), ShouldEqual, 0)
-					So(market.Report().Economics.NetPnL, ShouldEqual, 0.0)
+					So(market.Report().Economics.NetPnL, ShouldBeGreaterThan, 0.0)
 					So(market.Validate(), ShouldBeNil)
 					t.Logf(
-						"exact slice rejected: forecast=%#v skill=%g/%t",
+						"exact slice result: forecast=%#v horizon=%d skill=%g/%t net=%g pnl=%s",
 						forecast,
+						completed.Decision.ForecastHorizon,
 						skill,
 						skillReady,
+						completed.Decision.Utility,
+						completed.Holding.PnL,
 					)
 				})
 			}),
