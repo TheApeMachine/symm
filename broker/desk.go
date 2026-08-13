@@ -432,6 +432,11 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.positions.CompareAndDelete(decision.Symbol, position)
 			return err
 		}
+
+		desk.thesis.Symbol(decision.Symbol).Positions.Store(
+			decision.ID,
+			position,
+		)
 	case types.ActionExit:
 		err = errnie.Err(
 			errnie.NotAcceptable,

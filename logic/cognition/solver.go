@@ -2,6 +2,7 @@ package cognition
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -106,9 +108,10 @@ type Solver struct {
 	remFrom    time.Time
 	remThrough time.Time
 
-	// spawned records the last self-named regime per symbol, so a reading can
-	// report that its basin was invented rather than taught.
-	spawned map[string]string
+	// regimes keeps the named radar regime attached to each active sequence.
+	// The DMT learns category paths under this existing market taxonomy instead
+	// of publishing anonymous internal concept identifiers as market regimes.
+	regimes map[string]types.Category
 
 	// branches caches the exported prefix tree per symbol. Walking the trie
 	// costs orders more than the rest of a reading, and the walk can only
@@ -153,7 +156,7 @@ func NewSolver(
 		recorder:       recorder,
 		tree:           tree,
 		sequences:      make(map[string][]string),
-		spawned:        make(map[string]string),
+		regimes:        make(map[string]types.Category),
 		branches:       make(map[string][]types.CognitionBranch),
 		branchesStamp:  make(map[string]uint64),
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
@@ -184,6 +187,7 @@ breaks/continues sequence paths, classifies market regimes, and runs lookahead b
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
 	rows := datura.NewMap()
+	var cognitionErr error
 
 	// 1. Process active categories per symbol
 	thesis.Symbols.Range(func(key, value interface{}) bool {
@@ -209,7 +213,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		categoryToken := solver.encodeCategory(dominantCategory)
+		observedRegime := solver.selectRegime(categories)
 		activeTokens := solver.sequences[symbol]
+		activeRegime := solver.regimes[symbol]
 		transitioned := len(activeTokens) == 0 ||
 			activeTokens[len(activeTokens)-1] != categoryToken
 
@@ -233,35 +239,44 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				uint64(thesis.At.UnixNano()), oldSequenceBytes,
 			)
 
-			/*
-				A completed sequence is learned without being told what it
-				was. When nothing the model already knows explains it, the
-				model names a regime for it rather than forcing it into the
-				least-bad existing basin and corrupting that basin.
+			if activeRegime.Type != types.CategoryTypeNone {
+				err := solver.tree.TeachSequence(
+					oldSequenceBytes, []byte(regimeName(activeRegime.Type)),
+				)
 
-				This is the one place cognition can exceed the category
-				taxonomy: categories are a fixed vocabulary, but the
-				sequences they compose into are not.
-			*/
-			outcome, experienceErr := solver.tree.ExperienceSequence(
-				oldSequenceBytes, &solver.classScratch,
-			)
+				if err != nil {
+					cognitionErr = errnie.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf(
+							"cognition: failed to learn %s regime for %s",
+							regimeName(activeRegime.Type), symbol,
+						),
+						err,
+					))
 
-			if experienceErr == nil && outcome.NewConcept {
-				solver.spawned[symbol] = string(outcome.Class)
+					return false
+				}
 			}
 
 			// Start fresh sequence buffer with new category
 			activeTokens = []string{categoryToken}
+
+			if observedRegime.Type != types.CategoryTypeNone {
+				activeRegime = observedRegime
+			}
 		} else {
 			// --- SEQUENCE CONTINUES ---
 			activeTokens = append(activeTokens, categoryToken)
+
+			if observedRegime.Type != types.CategoryTypeNone {
+				activeRegime = observedRegime
+			}
 		}
 
 		solver.sequences[symbol] = activeTokens
+		solver.regimes[symbol] = activeRegime
 
 		activeSequenceBytes := solver.sequenceBytes(activeTokens)
-		spawnedClass, spawned := solver.spawned[symbol]
 
 		// 4. Classify macro market regime / concept attractor basin
 		classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)
@@ -295,6 +310,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		classes := make([]types.CognitionClass, 0, len(classResult.Scores))
 
 		for _, score := range classResult.Scores {
+			if !isRegimeName(string(score.ClassName)) {
+				continue
+			}
+
 			classes = append(classes, types.CognitionClass{
 				Name:        string(score.ClassName),
 				Probability: score.Value,
@@ -333,6 +352,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		winner := string(classResult.Winner)
+		confidence := classResult.Highest
+		classificationReady := len(classes) > 1 && isRegimeName(winner)
+
+		if !classificationReady && activeRegime.Type != types.CategoryTypeNone {
+			winner = regimeName(activeRegime.Type)
+			confidence = activeRegime.Confidence
+			classes = solver.regimeClasses(categories)
+		}
 
 		analysis := solver.tree.AnalyzeInterpolated(activeSequenceBytes)
 		contributions := make([]types.CognitionContribution, 0, len(analysis.Contributions))
@@ -356,8 +383,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			RegimePrefix:     winner,
 			Winner:           winner,
 			WinnerClass:      winner,
-			Confidence:       classResult.Highest,
-			ClassConfidence:  classResult.Highest,
+			Confidence:       confidence,
+			ClassConfidence:  confidence,
 			Contrast:         contrast,
 			ContrastEvidence: contrastEvidence,
 			EntropyBits:      ambiguity.EntropyBits,
@@ -379,14 +406,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			Lexical:               solver.lexical(activeTokens),
 			Symbols:               solver.symbols,
 			Dreams:                solver.dreams,
-			NewConcept:            spawned,
-			SpawnedClass:          spawnedClass,
-
-			REMFrom:          solver.remFrom,
-			REMThrough:       solver.remThrough,
-			REMReplays:       int(solver.remOutcome.ReplayedObservations),
-			REMDecayFactor:   solver.remOutcome.DecayFactor,
-			REMInhibitionPct: solver.remOutcome.RetroactiveInhibitionPct,
+			REMFrom:               solver.remFrom,
+			REMThrough:            solver.remThrough,
+			REMReplays:            int(solver.remOutcome.ReplayedObservations),
+			REMDecayFactor:        solver.remOutcome.DecayFactor,
+			REMInhibitionPct:      solver.remOutcome.RetroactiveInhibitionPct,
 			// A pass runs synchronously inline on the 128-tick schedule
 			// below, so "consolidating" is true only for the reading
 			// published on the very tick that triggered it — every other
@@ -398,6 +422,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		rows[symbol] = cognition
 		return true
 	})
+
+	if cognitionErr != nil {
+		rows.Free()
+
+		return cognitionErr
+	}
 
 	solver.publish(rows)
 
@@ -446,9 +476,15 @@ func (solver *Solver) consolidate(
 	solver.symbols = solver.symbols[:0]
 
 	for _, symbol := range solver.tree.ExtractDiscriminativeSymbols(symbolLimit) {
+		class := solver.decodeCategoryToken(string(symbol.Class))
+
+		if !isRegimeName(class) {
+			continue
+		}
+
 		solver.symbols = append(solver.symbols, types.CognitionSymbol{
 			Symbol: solver.decodeCategoryPath(symbol.Symbol),
-			Class:  solver.decodeCategoryToken(string(symbol.Class)),
+			Class:  class,
 			Score:  symbol.Score,
 			Purity: symbol.Purity,
 		})
@@ -539,6 +575,94 @@ func (solver *Solver) selectDominantCategory(
 	}
 
 	return best.Type
+}
+
+/*
+selectRegime resolves the strongest named regime-radar axis carried by the
+current category evidence. Each axis is already normalized and classified by
+the category stage, so cognition neither rescales it nor invents a second
+classifier.
+*/
+func (solver *Solver) selectRegime(
+	categories []types.Category,
+) types.Category {
+	regime := types.Category{}
+	evidence := 0.0
+
+	for _, category := range categories {
+		categoryEvidence := category.Confidence * category.Strength
+
+		if !isRegimeCategory(category.Type) || categoryEvidence <= evidence {
+			continue
+		}
+
+		regime = category
+		evidence = categoryEvidence
+	}
+
+	return regime
+}
+
+func isRegimeCategory(category types.CategoryType) bool {
+	switch category {
+	case types.CategoryTurbulent,
+		types.CategoryOrganicTrend,
+		types.CategoryAggressiveDrive,
+		types.CategoryVolumeStarvation,
+		types.CategoryStochasticBalance:
+		return true
+	default:
+		return false
+	}
+}
+
+func regimeName(category types.CategoryType) string {
+	switch category {
+	case types.CategoryTurbulent:
+		return "volatility"
+	case types.CategoryOrganicTrend:
+		return "trend"
+	case types.CategoryAggressiveDrive:
+		return "drive"
+	case types.CategoryVolumeStarvation:
+		return "starved"
+	case types.CategoryStochasticBalance:
+		return "chop"
+	default:
+		return ""
+	}
+}
+
+func isRegimeName(name string) bool {
+	switch name {
+	case "volatility", "trend", "drive", "starved", "chop":
+		return true
+	default:
+		return false
+	}
+}
+
+func (solver *Solver) regimeClasses(
+	categories []types.Category,
+) []types.CognitionClass {
+	classes := make([]types.CognitionClass, 0, len(categories))
+
+	for _, category := range categories {
+		if !isRegimeCategory(category.Type) {
+			continue
+		}
+
+		classes = append(classes, types.CognitionClass{
+			Name:        regimeName(category.Type),
+			Probability: category.Confidence,
+		})
+	}
+
+	sort.SliceStable(classes, func(left, right int) bool {
+		return classes[left].Probability > classes[right].Probability
+	})
+
+	return classes
 }
 
 /*
@@ -835,6 +959,7 @@ Reset clears active sequence buffers for all symbols.
 */
 func (solver *Solver) Reset() {
 	solver.sequences = make(map[string][]string)
+	solver.regimes = make(map[string]types.Category)
 }
 
 /*
@@ -842,5 +967,6 @@ Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
 	solver.sequences = nil
+	solver.regimes = nil
 	return nil
 }

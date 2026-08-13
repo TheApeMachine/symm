@@ -52,6 +52,16 @@ func TestThesisSymbol(t *testing.T) {
 	})
 }
 
+func TestThesisNewThesis(t *testing.T) {
+	Convey("Given a thesis without market evidence", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+
+		Convey("Its event clock should remain unset", func() {
+			So(thesis.At.IsZero(), ShouldBeTrue)
+		})
+	})
+}
+
 func TestThesisAppendEquity(t *testing.T) {
 	Convey("Given positive account equity", t, func() {
 		thesis := NewThesis(t.Context(), nil)

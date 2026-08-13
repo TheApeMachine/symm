@@ -1,13 +1,19 @@
 package tests
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	testtypes "github.com/theapemachine/symm/tests/types"
 )
@@ -107,4 +113,110 @@ func TestMarketPublish(t *testing.T) {
 				ShouldEqual, testtypes.DefaultScenarioStart.Add(100*time.Millisecond))
 		})
 	})
+}
+
+func TestMarketReplay(t *testing.T) {
+	Convey("Given the opening frames of an exact Kraken capture", t, func() {
+		symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
+		symbol.PriceIncrement = 0.00001
+		symbol.PricePrecision = 5
+		symbol.QuantityPrecision = 5
+		symbol.TakerFeePercent = 0.4
+		symbol.MakerFeePercent = 0.23
+		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+		config.Execution.DepthLevels = 10
+		market, err := NewMarketWithScenario(t.Context(), config)
+		So(err, ShouldBeNil)
+		defer market.Close()
+		previousDepth := viper.GetInt("market.l3_depth")
+		viper.Set("market.l3_depth", 10)
+		defer viper.Set("market.l3_depth", previousDepth)
+		market.private.SubL3([]string{"IDOS/USD"})
+		market.WithAutoFill()
+		capture, err := os.Open(
+			"/Users/theapemachine/.symm/data/backtests/kraken/" +
+				"2026-08-13-live-exact-v2/slices/IDOSUSD.jsonl",
+		)
+		So(err, ShouldBeNil)
+		defer capture.Close()
+
+		decoder := json.NewDecoder(capture)
+		var tape bytes.Buffer
+
+		for range 4 {
+			var frame json.RawMessage
+			So(decoder.Decode(&frame), ShouldBeNil)
+			tape.Write(frame)
+			tape.WriteByte('\n')
+		}
+
+		err = market.Replay(&tape)
+		sample, found := market.LastSample("IDOS/USD")
+
+		Convey("It should route original L3 and ticker frames into one executable state", func() {
+			So(err, ShouldBeNil)
+			So(found, ShouldBeTrue)
+			So(sample.Timestamp, ShouldEqual,
+				time.Date(2026, time.August, 13, 11, 39, 0, 950432000, time.UTC))
+			market.private.Book("IDOS/USD", func(book *spotbook.Book) {
+				So(book, ShouldNotBeNil)
+				So(book.BestBid().Price.Float64(), ShouldEqual, 0.00455)
+				So(book.BestAsk().Price.Float64(), ShouldEqual, 0.00461)
+				So(book.L3Checksum(fmt.Sprint(uint32(4289101961))).Match, ShouldBeTrue)
+			})
+		})
+	})
+
+	Convey("Given malformed or unordered captured data", t, func() {
+		market := NewMarket(t.Context(), []*testtypes.Symbol{
+			testtypes.NewSymbol("IDOS/USD", 0.00455, 13),
+		})
+		defer market.Close()
+
+		Convey("It should reject the tape instead of silently altering it", func() {
+			So(market.Replay(bytes.NewBufferString("")), ShouldNotBeNil)
+			So(market.Replay(bytes.NewBufferString(
+				"{\"endpoint\":\"public\",\"payload\":{},\"received_at\":\"bad\"}\n",
+			)), ShouldNotBeNil)
+		})
+	})
+}
+
+func BenchmarkMarketReplay(b *testing.B) {
+	payload, err := os.ReadFile(
+		"/Users/theapemachine/.symm/data/backtests/kraken/" +
+			"2026-08-13-live-exact-v2/slices/IDOSUSD.jsonl",
+	)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	newline := bytes.IndexByte(payload, '\n')
+	frame := append([]byte(nil), payload[:newline+1]...)
+	symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
+	symbol.PriceIncrement = 0.00001
+	symbol.PricePrecision = 5
+	symbol.QuantityPrecision = 5
+	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+	config.Execution.DepthLevels = 10
+	previousDepth := viper.GetInt("market.l3_depth")
+	viper.Set("market.l3_depth", 10)
+	defer viper.Set("market.l3_depth", previousDepth)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		market, marketErr := NewMarketWithScenario(b.Context(), config)
+
+		if marketErr != nil {
+			b.Fatal(marketErr)
+		}
+		market.private.SubL3([]string{"IDOS/USD"})
+
+		if replayErr := market.Replay(bytes.NewReader(frame)); replayErr != nil {
+			b.Fatal(replayErr)
+		}
+
+		market.Close()
+	}
 }

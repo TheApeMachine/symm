@@ -3,7 +3,6 @@ package trader
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -105,8 +104,6 @@ func (crypto *Crypto) run() {
 Update is the main control loop for the signals receiving the triggering data.
 */
 func (crypto *Crypto) Update(receivers []types.SourceType) error {
-	crypto.thesis.At = time.Now().UTC()
-
 	resonanceReady, err := crypto.measurements.Update(crypto.thesis, receivers)
 
 	if err != nil {
@@ -179,6 +176,10 @@ func (crypto *Crypto) onTicker(data any) {
 	}
 
 	for _, ticker := range typedTickers.Data {
+		if ticker.Timestamp.After(crypto.thesis.At) {
+			crypto.thesis.At = ticker.Timestamp
+		}
+
 		crypto.thesis.Symbol(ticker.Symbol).AppendTicker(ticker)
 		crypto.desk.Price().Update(&ticker)
 	}
@@ -200,6 +201,10 @@ func (crypto *Crypto) onTrade(data any) {
 	}
 
 	for _, trade := range typedTrades.Data {
+		if trade.Timestamp.After(crypto.thesis.At) {
+			crypto.thesis.At = trade.Timestamp
+		}
+
 		crypto.thesis.Symbol(trade.Symbol).AppendTrade(trade)
 	}
 

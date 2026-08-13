@@ -15,6 +15,7 @@ func TestSymbolNewSymbol(t *testing.T) {
 			So(symbol.Symbol, ShouldEqual, "BTC/USD")
 			So(symbol.Status, ShouldEqual, READY)
 			So(symbol.Measurements, ShouldNotBeNil)
+			So(symbol.Positions, ShouldNotBeNil)
 		})
 	})
 }

@@ -191,7 +191,7 @@ func NewWithClient(
 
 	if endpoint == Level3WebSocketURL {
 		live.level3 = &sync.Map{}
-		live.book = NewBook(ctx)
+		live.book = NewBook(ctx, live.normalizer)
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {

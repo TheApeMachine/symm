@@ -31,7 +31,7 @@ type CognitionBeam struct {
 }
 
 /*
-CognitionClass is one attractor-basin posterior exported for Cortex.
+CognitionClass is one named regime-radar posterior exported for Cortex.
 */
 type CognitionClass struct {
 	Name        string  `json:"name"`
@@ -68,10 +68,11 @@ type CognitionLexical struct {
 }
 
 /*
-Cognition is the DMT reading for one symbol's reduced category context. It
-retains both the current basin classification and the next-step lookahead so
-the Thesis can expose cognition as one influence among many, rather than as a
-sovereign market verdict.
+Cognition is the DMT reading for one symbol's reduced category context. DMT
+learns category sequences under the existing named regime-radar taxonomy; its
+internal storage identities are never market classifications. The Thesis keeps
+the named regime and next-step lookahead as influences rather than a sovereign
+market verdict.
 */
 type Cognition struct {
 	Source           string             `json:"source"`
@@ -112,11 +113,6 @@ type Cognition struct {
 	// than a single stored path, so a novel continuation of a familiar prefix is
 	// surprising rather than unmeasurable.
 	InterpolatedSurprisal float64 `json:"interpolatedSurprisal"`
-
-	// NewConcept reports that this observation matched no existing basin well
-	// enough to be claimed by one, and the model named a regime for it.
-	NewConcept   bool   `json:"newConcept,omitempty"`
-	SpawnedClass string `json:"spawnedClass,omitempty"`
 
 	Contributions []CognitionContribution `json:"contributions,omitempty"`
 	Symbols       []CognitionSymbol       `json:"symbols,omitempty"`

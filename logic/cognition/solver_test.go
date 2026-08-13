@@ -88,6 +88,43 @@ func TestUpdate(t *testing.T) {
 			So(solver.sequences["BTC/USD"], ShouldResemble, []string{
 				solver.encodeCategory(types.CategoryExhaustion),
 			})
+
+			storedCognition, found := symbol.Cognition.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			cognition := storedCognition.(types.Cognition)
+			So(cognition.Winner, ShouldEqual, "trend")
+			So(cognition.WinnerClass, ShouldEqual, "trend")
+			So(cognition.RegimePrefix, ShouldEqual, "trend")
+			So(tree.KnownClasses(), ShouldContain, []byte("trend"))
+		})
+	})
+
+	Convey("Given a tree containing an old anonymous internal concept", t, func() {
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
+		var scratch dmt.ClassificationScratch
+		outcome, err := tree.ExperienceSequence([]byte("legacy_internal"), &scratch)
+		So(err, ShouldBeNil)
+		So(string(outcome.Class), ShouldStartWith, "concept_")
+		solver := NewSolver(tree, nil, nil)
+		thesis := cognitionThesis(types.CategoryVerticalIgnition)
+
+		So(solver.Update(thesis), ShouldBeNil)
+		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		symbol := storedSymbol.(*types.Symbol)
+		storedCognition, found := symbol.Cognition.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		cognition := storedCognition.(types.Cognition)
+
+		Convey("Then only the named regime-radar taxonomy crosses the Thesis boundary", func() {
+			So(cognition.Winner, ShouldEqual, "trend")
+			So(cognition.WinnerClass, ShouldEqual, "trend")
+			So(cognition.RegimePrefix, ShouldEqual, "trend")
+
+			for _, class := range cognition.Classes {
+				So(class.Name, ShouldNotStartWith, "concept_")
+			}
 		})
 	})
 
@@ -206,12 +243,20 @@ func cognitionThesis(category types.CategoryType) *types.Thesis {
 	thesis := types.NewThesis(context.Background(), nil)
 	thesis.At = time.Unix(1, 0).UTC()
 	symbol := types.NewSymbol("BTC/USD", nil)
-	symbol.Categories.Store("BTC/USD", []types.Category{{
-		Symbol:     "BTC/USD",
-		Type:       category,
-		Confidence: 1,
-		Strength:   1,
-	}})
+	symbol.Categories.Store("BTC/USD", []types.Category{
+		{
+			Symbol:     "BTC/USD",
+			Type:       category,
+			Confidence: 1,
+			Strength:   1,
+		},
+		{
+			Symbol:     "BTC/USD",
+			Type:       types.CategoryOrganicTrend,
+			Confidence: 0.8,
+			Strength:   0.8,
+		},
+	})
 	thesis.Symbols.Store("BTC/USD", symbol)
 
 	return thesis

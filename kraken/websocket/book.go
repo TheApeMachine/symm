@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -16,24 +17,31 @@ import (
 )
 
 type Book struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	status   types.Status
-	statusMu sync.RWMutex
-	mu       sync.RWMutex
-	manager  *spot.BookManager
-	updates  chan<- string
+	ctx        context.Context
+	cancel     context.CancelFunc
+	status     types.Status
+	statusMu   sync.RWMutex
+	mu         sync.RWMutex
+	manager    *spot.BookManager
+	normalizer *spot.Normalizer
+	updates    chan<- string
 }
 
-func NewBook(ctx context.Context) *Book {
+func NewBook(ctx context.Context, normalizers ...*spot.Normalizer) *Book {
 	errnie.Info("websocket: initializing book manager")
 	ctx, cancel := context.WithCancel(ctx)
+	var normalizer *spot.Normalizer
+
+	if len(normalizers) > 0 {
+		normalizer = normalizers[0]
+	}
 
 	book := &Book{
-		ctx:     ctx,
-		cancel:  cancel,
-		status:  types.INITIALIZING,
-		manager: spot.NewBookManager(),
+		ctx:        ctx,
+		cancel:     cancel,
+		status:     types.INITIALIZING,
+		manager:    spot.NewBookManager(),
+		normalizer: normalizer,
 	}
 
 	book.manager.OnCreateBook.Recurring(func(
@@ -157,7 +165,21 @@ func (book *Book) Update(
 					continue
 				}
 
-				price := order.LimitPrice.String()
+				limitPrice := order.LimitPrice
+
+				if book.normalizer != nil {
+					limitPrice, err = book.normalizer.FormatPrice(data.Symbol, limitPrice)
+
+					if err != nil {
+						return errnie.Err(
+							errnie.Validation,
+							fmt.Sprintf("level3 price precision for %s", data.Symbol),
+							err,
+						)
+					}
+				}
+
+				price := limitPrice.String()
 
 				if level, ok := symbolSide.Levels[price]; ok && level == nil {
 					delete(symbolSide.Levels, price)
@@ -168,12 +190,29 @@ func (book *Book) Update(
 						continue
 					}
 
-					if order.OrderQty.Sign() == 1 {
+					orderQuantity := order.OrderQty
+
+					if book.normalizer != nil {
+						orderQuantity, err = book.normalizer.FormatSize(
+							data.Symbol,
+							orderQuantity,
+						)
+
+						if err != nil {
+							return errnie.Err(
+								errnie.Validation,
+								fmt.Sprintf("level3 quantity precision for %s", data.Symbol),
+								err,
+							)
+						}
+					}
+
+					if orderQuantity.Sign() == 1 {
 						symbolBook.Update(&spotbook.UpdateOptions{
 							Direction: direction,
 							ID:        order.OrderID,
-							Price:     order.LimitPrice,
-							Quantity:  order.OrderQty,
+							Price:     limitPrice,
+							Quantity:  orderQuantity,
 							Timestamp: order.Timestamp,
 							Silent:    true,
 						})
@@ -189,8 +228,8 @@ func (book *Book) Update(
 					symbolBook.Update(&spotbook.UpdateOptions{
 						Direction: direction,
 						ID:        order.OrderID,
-						Price:     order.LimitPrice,
-						Quantity:  order.OrderQty,
+						Price:     limitPrice,
+						Quantity:  orderQuantity,
 						Timestamp: order.Timestamp,
 						Silent:    true,
 					})
@@ -221,7 +260,7 @@ func (book *Book) Update(
 				symbolBook.Update(&spotbook.UpdateOptions{
 					Direction: direction,
 					ID:        order.OrderID,
-					Price:     order.LimitPrice,
+					Price:     limitPrice,
 					Quantity:  removed,
 					Timestamp: order.Timestamp,
 					Silent:    true,
@@ -242,7 +281,16 @@ func (book *Book) Update(
 		}
 
 		payload.Data[index] = data
-		primeQueues(symbolBook)
+		if data.Checksum != 0 && !symbolBook.L3Checksum(strconv.FormatUint(
+			uint64(data.Checksum),
+			10,
+		)).Match {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("level3 checksum mismatch for %s", data.Symbol),
+				nil,
+			))
+		}
 
 		if book.updates != nil {
 			select {
@@ -291,13 +339,5 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 
 	for _, symbol := range book.manager.GetBooks() {
 		out.Store(symbol, book.manager.GetBook(symbol))
-	}
-}
-
-func primeQueues(book *spotbook.Book) {
-	for _, side := range []*spotbook.Side{book.Bids, book.Asks} {
-		for _, level := range side.Levels {
-			level.Queue()
-		}
 	}
 }

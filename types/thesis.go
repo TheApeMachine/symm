@@ -45,7 +45,6 @@ func NewThesis(
 		cancel:       cancel,
 		ui:           ui,
 		Status:       READY,
-		At:           time.Now().UTC(),
 		CrossSection: NewCrossSection(),
 		Symbols:      &sync.Map{},
 		Manifold:     fluid.Reading{},

@@ -113,6 +113,21 @@ func TestDeskExecute(t *testing.T) {
 			So(desk.OpenPositions(), ShouldEqual, desk.maxPositions+desk.maxReserved)
 		})
 	})
+
+	Convey("Given one accepted entry", t, func() {
+		desk := deskFixture(t)
+		decision := deskDecisionFixture(t, desk, "RETAINED/USD", false)
+
+		Convey("It should retain the submitted position on the thesis symbol", func() {
+			So(desk.Execute(decision), ShouldBeNil)
+			retained, found := desk.thesis.Symbol(decision.Symbol).Positions.Load(
+				decision.ID,
+			)
+
+			So(found, ShouldBeTrue)
+			So(retained, ShouldEqual, mustDeskPosition(desk, decision.Symbol))
+		})
+	})
 }
 
 func TestDeskPublishEquity(t *testing.T) {
@@ -233,10 +248,21 @@ func deskFixture(t testing.TB) *Desk {
 		api:          api,
 		instrument:   &Instrument{cache: &sync.Map{}},
 		price:        NewPrice(api),
+		thesis:       types.NewThesis(t.Context(), nil),
 		positions:    &sync.Map{},
 		maxPositions: 2,
 		maxReserved:  2,
 	}
+}
+
+func mustDeskPosition(desk *Desk, symbol string) *Position {
+	value, found := desk.positions.Load(symbol)
+
+	if !found {
+		panic("broker test: expected desk position")
+	}
+
+	return value.(*Position)
 }
 
 func deskDecisionFixture(

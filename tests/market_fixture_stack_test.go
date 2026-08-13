@@ -3,12 +3,17 @@
 package tests
 
 import (
+	"os"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	testtypes "github.com/theapemachine/symm/tests/types"
@@ -83,11 +88,17 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 					So(system.Desk.Holding("SIM1/USD"), ShouldEqual, 0)
 					closed := 0
 
-					for position := range system.Desk.Positions() {
+					system.Thesis.Symbol("SIM1/USD").Positions.Range(func(_, value any) bool {
+						position, ok := value.(*broker.Position)
+
+						if !ok {
+							return true
+						}
+
 						if position.Holding == nil ||
 							position.Holding.Symbol != "SIM1/USD" ||
 							position.Holding.Status != types.CLOSED {
-							continue
+							return true
 						}
 
 						closed++
@@ -98,11 +109,85 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 						So(position.Holding.PnL, ShouldNotBeNil)
 						So(position.Holding.PnL.Sign(), ShouldEqual, 1)
 						So(position.Holding.ReturnPct, ShouldBeGreaterThan, 0.0)
-					}
+						return true
+					})
 
 					So(closed, ShouldBeGreaterThan, 0)
 				})
 			})
 		}),
 	)
+}
+
+func TestMarketReplayEntryAndExit(t *testing.T) {
+	previousDepth := viper.GetInt("market.l3_depth")
+	viper.Set("market.l3_depth", 10)
+	defer viper.Set("market.l3_depth", previousDepth)
+	symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
+	symbol.PriceIncrement = 0.00001
+	symbol.PricePrecision = 5
+	symbol.QuantityPrecision = 5
+	symbol.TakerFeePercent = 0.4
+	symbol.MakerFeePercent = 0.23
+	symbol.BookDepthLevels = 10
+
+	Convey("Given an exact profitable IDOS/USD Kraken tape", t,
+		WithOrders(t, []*testtypes.Symbol{symbol}, cmd.Boot,
+			func(market *Market, system *cmd.System) {
+				execution := market.Config.Execution
+				execution.DepthLevels = 10
+				market.WithAutoFill(execution)
+				capture, err := os.Open(
+					"/Users/theapemachine/.symm/data/backtests/kraken/" +
+						"2026-08-13-live-exact-v2/slices/IDOSUSD.jsonl",
+				)
+				So(err, ShouldBeNil)
+				defer capture.Close()
+
+				So(market.Replay(capture), ShouldBeNil)
+				position := waitForClosedPosition(
+					system.Thesis.Symbol("IDOS/USD"),
+					market.Config.BookApplyTimeout,
+				)
+
+				Convey("It should retain a profitable completed position on the Thesis", func() {
+					So(position, ShouldNotBeNil)
+					So(position.Decision.Action, ShouldEqual, types.ActionEnter)
+					So(position.Holding.PnL.Sign(), ShouldEqual, 1)
+					So(position.Holding.ReturnPct, ShouldBeGreaterThan, 0.0)
+					So(market.Report().Economics.NetPnL, ShouldBeGreaterThan, 0.0)
+					So(market.Validate(), ShouldBeNil)
+				})
+			}),
+	)
+}
+
+func waitForClosedPosition(
+	symbol *types.Symbol,
+	timeout time.Duration,
+) *broker.Position {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		var closed *broker.Position
+		symbol.Positions.Range(func(_, value any) bool {
+			position, ok := value.(*broker.Position)
+
+			if ok && position.Holding != nil &&
+				position.Holding.Status == types.CLOSED {
+				closed = position
+				return false
+			}
+
+			return true
+		})
+
+		if closed != nil {
+			return closed
+		}
+
+		runtime.Gosched()
+	}
+
+	return nil
 }

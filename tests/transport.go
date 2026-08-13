@@ -257,7 +257,7 @@ func (transport *mockTransport) assetPairs() []byte {
 			"quote":               parts[1],
 			"pair_decimals":       symbol.PricePrecision,
 			"cost_decimals":       5,
-			"lot_decimals":        8,
+			"lot_decimals":        symbol.QuantityPrecision,
 			"lot_multiplier":      1,
 			"leverage_buy":        []int{},
 			"leverage_sell":       []int{},

@@ -49,9 +49,11 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.Trace, ShouldNotBeNil)
 			So(decision.Trace.MCTS.Iterations, ShouldEqual, system.Cfg.Planner.MCTSIterations)
 			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 1)
-			So(decision.Trace.MCTS.Branches[0].Action, ShouldEqual, "forecast")
+				So(decision.Trace.MCTS.Branches[0].Action,
+					ShouldEqual, "res:BTC/USD:forecast")
 			So(decision.Trace.MCTS.Branches[0].Visits, ShouldBeGreaterThan, 0)
-			So(decision.Trace.MCTS.RecommendedAction, ShouldEqual, "forecast")
+				So(decision.Trace.MCTS.RecommendedAction,
+					ShouldEqual, "res:BTC/USD:forecast")
 		})
 	})
 
@@ -183,9 +185,22 @@ func plannerGraphThesis(t testing.TB, confidence float64) *types.Thesis {
 	forecast := &learning.RLSOutput{Value: 0.01, Ready: true, Scale: 0.001, DegreesOfFreedom: 1}
 	graph := logicgraph.NewGraph(thesis.At)
 	graph.Forecast = forecast
+	graph.TaskSkill = 1
+	graph.TaskSkillReady = true
 	graph.AddNode(&logicgraph.Node{
-		ID: "forecast", Kind: logicgraph.KindResonance,
+		ID: "res:BTC/USD:forecast", Symbol: "BTC/USD", Kind: logicgraph.KindResonance,
 		Value: forecast.Value, Confidence: confidence,
+	})
+	graph.AddNode(&logicgraph.Node{
+		ID: "causal:BTC/USD:doExpectation", Symbol: "BTC/USD", Kind: logicgraph.KindCausal,
+		Confidence: confidence,
+	})
+	graph.AddEdge(&logicgraph.Edge{
+		From:       "res:BTC/USD:forecast",
+		To:         "causal:BTC/USD:doExpectation",
+		Relation:   logicgraph.RelationSupports,
+		Weight:     confidence,
+		Confidence: confidence,
 	})
 	symbol := types.NewSymbol("BTC/USD", nil)
 	symbol.Graphs.Store("market_graph", graph)

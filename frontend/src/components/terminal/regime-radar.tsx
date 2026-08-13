@@ -124,14 +124,14 @@ export const RadarPanel = () => {
 									key={`arm:${axis.label}`}
 									data-scope="source,symbol"
 									data-filter={`${axis.source},${focusSymbol}`}
+									data-set={`metrics.${axis.metric}.normalized`}
+									data-target="style.--axis"
 									style={{
 										transform: "scale(clamp(0, var(--axis, 0), 1))",
 										transformOrigin: "110px 105px",
 									}}
 								>
 									<line
-										data-set={`metrics.${axis.metric}.normalized`}
-										data-target="style.--axis"
 										x1="110"
 										y1="105"
 										x2={110 + axis.x * 84}

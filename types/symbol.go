@@ -24,6 +24,7 @@ type Symbol struct {
 	tickers      *sync.Map `json:"-"`
 	trades       *sync.Map `json:"-"`
 	Decisions    *sync.Map `json:"decisions,omitempty"`
+	Positions    *sync.Map `json:"positions,omitempty"`
 	Graphs       *sync.Map `json:"graphs,omitempty"`
 	Categories   *sync.Map `json:"categories,omitempty"`
 	Phase        *sync.Map `json:"-"`
@@ -43,6 +44,7 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 		trades:       &sync.Map{},
 		Measurements: &sync.Map{},
 		Decisions:    &sync.Map{},
+		Positions:    &sync.Map{},
 		Graphs:       &sync.Map{},
 		Categories:   &sync.Map{},
 		Phase:        &sync.Map{},

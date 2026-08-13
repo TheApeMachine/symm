@@ -3,18 +3,18 @@ package types
 import "time"
 
 type Category struct {
-	At               time.Time    `json:"at"`
-	Symbol           string       `json:"symbol,omitempty"`
-	Type             CategoryType `json:"type"`
-	Confidence       float64      `json:"confidence"`
-	Surprisal        float64      `json:"surprisal"`
-	Strength         float64      `json:"strength"`
-	Maturity         float64      `json:"maturity"`
-	Uncertainty      float64      `json:"uncertainty,omitempty"`
-	Freshness        float64      `json:"freshness,omitempty"`
-	Supporting       []string     `json:"supporting,omitempty"`
-	Opposing         []string     `json:"opposing,omitempty"`
-	Missing          []string     `json:"missing,omitempty"`
+	At          time.Time    `json:"at"`
+	Symbol      string       `json:"symbol,omitempty"`
+	Type        CategoryType `json:"type"`
+	Confidence  float64      `json:"confidence"`
+	Surprisal   float64      `json:"surprisal"`
+	Strength    float64      `json:"strength"`
+	Maturity    float64      `json:"maturity"`
+	Uncertainty float64      `json:"uncertainty,omitempty"`
+	Freshness   float64      `json:"freshness,omitempty"`
+	Supporting  []string     `json:"supporting,omitempty"`
+	Opposing    []string     `json:"opposing,omitempty"`
+	Missing     []string     `json:"missing,omitempty"`
 }
 
 /*
@@ -41,6 +41,7 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceCVD, Metric: MetricDrive, Category: AggressiveDrive},
 	{Source: SourceCVD, Metric: MetricBalance, Category: StochasticBalance},
 	{Source: SourceCVD, Metric: MetricStarvation, Category: VolumeStarvation},
+	{Source: SourceHawkes, Metric: MetricSpectralRadius, Category: Turbulent},
 	{Source: SourceDepthFlow, Metric: MetricLoadedScore, Category: LoadedImbalance},
 	{Source: SourceDepthFlow, Metric: MetricSpoofScore, Category: SpoofTrap},
 	{Source: SourceDepthFlow, Metric: MetricThinScore, Category: BookThinning},

@@ -46,13 +46,13 @@ func TestUpdate(t *testing.T) {
 		Convey("It should classify every symbol from the evidence it actually has", func() {
 			So(err, ShouldBeNil)
 			So(categoryAt(thesis, "BTC/USD"), ShouldResemble, types.Category{
-				At:               categoryAt(thesis, "BTC/USD").At,
-				Symbol:           "BTC/USD",
-				Type:             types.VerticalIgnition,
-				Confidence:       categoryAt(thesis, "BTC/USD").Confidence,
-				Strength:         ignition,
-				Maturity:         0.75,
-				Supporting:       []string{"pumpdump:ignition"},
+				At:         categoryAt(thesis, "BTC/USD").At,
+				Symbol:     "BTC/USD",
+				Type:       types.VerticalIgnition,
+				Confidence: categoryAt(thesis, "BTC/USD").Confidence,
+				Strength:   ignition,
+				Maturity:   0.75,
+				Supporting: []string{"pumpdump:ignition"},
 			})
 			So(categoryAt(thesis, "ETH/USD").Type, ShouldEqual, types.AggressiveDrive)
 			So(categoryAt(thesis, "ETH/USD").Strength, ShouldEqual, drive)
@@ -114,6 +114,33 @@ func TestUpdate(t *testing.T) {
 			So(category.Type, ShouldEqual, types.MechanicalCollapse)
 			So(category.Strength, ShouldAlmostEqual, 0.63)
 			So(category.Supporting, ShouldHaveLength, 2)
+		})
+	})
+
+	Convey("Given a fitted Hawkes spectral radius", t, func() {
+		thesis := categoryThesis(t)
+		spectralRadius := 0.73
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.AppendMeasurement(types.SourceHawkes, &types.Measurement{
+			Source:   types.SourceHawkes,
+			Symbol:   "BTC/USD",
+			Maturity: 0.9,
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricSpectralRadius, types.SideNone): {
+					Normalized: &spectralRadius,
+				},
+			},
+		})
+		thesis.Symbols.Store("BTC/USD", symbol)
+
+		err := NewSolver(nil, nil, nil).Update(thesis)
+
+		Convey("It should classify the volatility radar axis as turbulent", func() {
+			category := categoryAt(thesis, "BTC/USD")
+
+			So(err, ShouldBeNil)
+			So(category.Type, ShouldEqual, types.CategoryTurbulent)
+			So(category.Strength, ShouldEqual, spectralRadius)
 		})
 	})
 
