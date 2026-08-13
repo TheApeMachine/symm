@@ -33,7 +33,7 @@ func NewAllocation(
 /*
 size adds execution quantity and forecast-derived protection to an entry.
 */
-func (allocation *Allocation) Calculate(thesis *types.Thesis) error {
+func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 	config := system.Cfg.Snapshot()
 
 	if config == nil || config.Planner == nil {
@@ -44,26 +44,16 @@ func (allocation *Allocation) Calculate(thesis *types.Thesis) error {
 		))
 	}
 
-	decisions := make([]*types.Decision, 0)
+	hasEntry := false
 
-	thesis.Symbols.Range(func(_, value any) bool {
-		symbol := value.(*types.Symbol)
+	for _, decision := range decisions {
+		if decision.Action == types.ActionEnter {
+			hasEntry = true
+			break
+		}
+	}
 
-		symbol.Decisions.Range(func(_, value any) bool {
-			decision := value.(*types.Decision)
-
-			if decision.Action != types.ActionEnter {
-				return true
-			}
-
-			decisions = append(decisions, decision)
-			return true
-		})
-
-		return true
-	})
-
-	if len(decisions) == 0 {
+	if !hasEntry {
 		return nil
 	}
 

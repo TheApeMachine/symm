@@ -92,7 +92,6 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
 		symbolState := value.(*types.Symbol)
-		symbolState.Decisions.Clear()
 
 		stored, found := symbolState.Graphs.Load("market_graph")
 
@@ -102,8 +101,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 
 		graph := stored.(*logicgraph.Graph)
 
-		if graph.Forecast == nil || !graph.Forecast.Ready ||
-			graph.Forecast.Value <= 0 {
+		if !graph.ReadyForSearch(config.Planner.MinimumSkill) {
 			return true
 		}
 
@@ -156,13 +154,19 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			}
 		}
 
-		if decision.Utility > config.Planner.MinimumUtility &&
+		if graph.Forecast.Value > 0 &&
+			decision.Utility > config.Planner.MinimumUtility &&
 			decision.Confidence >= config.Planner.MinimumConfidence {
 			decision.Action = types.ActionEnter
 			decision.Cause = "opportunity_entry"
 		}
 
-		if decision.Confidence < config.Planner.MinimumConfidence {
+		if graph.Forecast.Value <= 0 {
+			decision.Reason = "planner: forecast does not support entry"
+		}
+
+		if graph.Forecast.Value > 0 &&
+			decision.Confidence < config.Planner.MinimumConfidence {
 			decision.Reason = "planner: forecast confidence does not clear regulated entry threshold"
 		}
 
@@ -170,7 +174,6 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			decision.Reason = "planner: utility does not clear regulated entry threshold"
 		}
 
-		symbolState.Decisions.Store(symbol, decision)
 		createdDecisions = append(createdDecisions, decision)
 		return true
 	})
@@ -179,9 +182,24 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		return err
 	}
 
+	if len(createdDecisions) == 0 {
+		return nil
+	}
+
 	if planner.allocation != nil {
-		if err = planner.allocation.Calculate(thesis); err != nil {
+		if err = planner.allocation.Calculate(createdDecisions); err != nil {
 			return err
+		}
+	}
+
+	for _, decision := range createdDecisions {
+		symbol := thesis.Symbol(decision.Symbol)
+		symbol.Decisions.Store(decision.Symbol, decision)
+	}
+
+	if planner.desk != nil {
+		if err = planner.desk.SaveThesis(thesis); err != nil {
+			return fmt.Errorf("planner: checkpoint evaluated thesis: %w", err)
 		}
 	}
 
@@ -195,6 +213,13 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 				return fmt.Errorf("planner: execute %s: %w", decision.Symbol, err)
 			}
 		}
+	}
+
+	for _, decision := range createdDecisions {
+		thesis.Symbol(decision.Symbol).Graphs.Store(
+			"market_graph",
+			logicgraph.NewGraph(thesis.At),
+		)
 	}
 
 	decisions := make([]types.Decision, 0, len(createdDecisions))

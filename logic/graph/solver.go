@@ -93,11 +93,13 @@ type Edge struct {
 Graph is the relational knowledge graph accumulated during one Thesis lifecycle.
 */
 type Graph struct {
-	At        time.Time           `json:"at"`
-	Forecast  *learning.RLSOutput `json:"-"`
-	Nodes     map[string]*Node    `json:"nodes"`
-	Edges     []*Edge             `json:"edges"`
-	Adjacency map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
+	At             time.Time           `json:"at"`
+	Forecast       *learning.RLSOutput `json:"-"`
+	TaskSkill      float64             `json:"taskSkill"`
+	TaskSkillReady bool                `json:"taskSkillReady"`
+	Nodes          map[string]*Node    `json:"nodes"`
+	Edges          []*Edge             `json:"edges"`
+	Adjacency      map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
 }
 
 /*
@@ -109,17 +111,21 @@ func (graph *Graph) CheckpointState() any {
 	}
 
 	return struct {
-		At        time.Time           `json:"at"`
-		Forecast  *learning.RLSOutput `json:"forecast,omitempty"`
-		Nodes     map[string]*Node    `json:"nodes"`
-		Edges     []*Edge             `json:"edges"`
-		Adjacency map[string][]string `json:"adjacency"`
+		At             time.Time           `json:"at"`
+		Forecast       *learning.RLSOutput `json:"forecast,omitempty"`
+		TaskSkill      float64             `json:"taskSkill"`
+		TaskSkillReady bool                `json:"taskSkillReady"`
+		Nodes          map[string]*Node    `json:"nodes"`
+		Edges          []*Edge             `json:"edges"`
+		Adjacency      map[string][]string `json:"adjacency"`
 	}{
-		At:        graph.At,
-		Forecast:  graph.Forecast,
-		Nodes:     graph.Nodes,
-		Edges:     graph.Edges,
-		Adjacency: graph.Adjacency,
+		At:             graph.At,
+		Forecast:       graph.Forecast,
+		TaskSkill:      graph.TaskSkill,
+		TaskSkillReady: graph.TaskSkillReady,
+		Nodes:          graph.Nodes,
+		Edges:          graph.Edges,
+		Adjacency:      graph.Adjacency,
 	}
 }
 
@@ -175,6 +181,20 @@ func (graph *Graph) AddEdge(edge *Edge) {
 }
 
 func (graph *Graph) Roots() []string {
+	forecastRoots := make([]string, 0, 1)
+
+	for nodeID, node := range graph.Nodes {
+		if node.Kind == KindResonance &&
+			nodeID == "res:"+node.Symbol+":forecast" {
+			forecastRoots = append(forecastRoots, nodeID)
+		}
+	}
+
+	if len(forecastRoots) > 0 {
+		slices.Sort(forecastRoots)
+		return forecastRoots
+	}
+
 	incoming := make(map[string]bool)
 
 	for _, edge := range graph.Edges {
@@ -191,6 +211,28 @@ func (graph *Graph) Roots() []string {
 
 	slices.Sort(roots)
 	return roots
+}
+
+/*
+ReadyForSearch reports whether the accumulated lifecycle graph has a skilled
+return forecast and at least one evidence-bearing relation reachable from it.
+*/
+func (graph *Graph) ReadyForSearch(minimumSkill float64) bool {
+	if graph == nil || graph.Forecast == nil || !graph.Forecast.Ready ||
+		graph.Forecast.Scale <= 0 || graph.Forecast.DegreesOfFreedom <= 0 ||
+		!graph.TaskSkillReady || graph.TaskSkill < minimumSkill {
+		return false
+	}
+
+	for _, root := range graph.Roots() {
+		for _, edge := range graph.Edges {
+			if edge.From == root && edge.Weight != 0 && edge.Confidence != 0 {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (graph *Graph) Targets(nodeID string) []string {
@@ -466,6 +508,8 @@ func (solver *Solver) extractResonanceNodes(
 	if !ok {
 		return
 	}
+
+	graph.TaskSkill, graph.TaskSkillReady = coder.TaskSkill()
 
 	forecast, err := coder.RolloutTaskForecast(1)
 
