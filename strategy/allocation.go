@@ -65,20 +65,9 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		))
 	}
 
-	slices.SortFunc(decisions, func(left, right *types.Decision) int {
-		if left.Utility == right.Utility {
-			return 0
-		}
-
-		if left.Utility > right.Utility {
-			return -1
-		}
-
-		return 1
-	})
-
 	normalSlots := allocation.desk.OpenSlots(false)
 	reserveSlots := allocation.desk.OpenSlots(true) - normalSlots
+	eligible := make([]*types.Decision, 0, len(decisions))
 
 	for _, decision := range decisions {
 		if decision.Action != types.ActionEnter {
@@ -207,10 +196,11 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.ExpectedSpread = economics.ExpectedSpread
 		decision.ExpectedImpact = economics.ExpectedImpact
 		decision.OpportunityMargin = economics.NetReturn.Float64()
+		decision.Utility = economics.NetReturn.Float64()
 
-		if economics.NetReturn.Sign() <= 0 {
+		if decision.Utility <= config.Planner.MinimumUtility {
 			decision.Action = types.ActionNothing
-			decision.Reason = "planner: forecast does not clear current spread and taker fees"
+			decision.Reason = "planner: net forecast utility does not clear regulated entry threshold"
 
 			continue
 		}
@@ -233,28 +223,38 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
-		availableSlots := normalSlots
+		decision.Stoploss = stoploss
+		eligible = append(eligible, decision)
+	}
 
-		if decision.Opportunity {
-			availableSlots += reserveSlots
+	slices.SortFunc(eligible, func(left, right *types.Decision) int {
+		if left.Utility == right.Utility {
+			return 0
 		}
 
-		if availableSlots <= 0 {
-			decision.Action = types.ActionNothing
-			decision.Reason = "planner: no position slot available for allocation"
-
-			continue
+		if left.Utility > right.Utility {
+			return -1
 		}
 
+		return 1
+	})
+
+	for _, decision := range eligible {
 		if normalSlots > 0 {
 			normalSlots--
-			decision.Stoploss = stoploss
 
 			continue
 		}
 
-		reserveSlots--
-		decision.Stoploss = stoploss
+		if decision.Opportunity && reserveSlots > 0 {
+			reserveSlots--
+
+			continue
+		}
+
+		decision.Action = types.ActionNothing
+		decision.Stoploss = nil
+		decision.Reason = "planner: no position slot available for allocation"
 	}
 
 	return nil

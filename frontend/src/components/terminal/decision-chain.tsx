@@ -111,9 +111,17 @@ export const DecisionChain = ({ index }: { index: number }) => {
 						bp
 					</span>
 					<span className="text-[9px] text-(--f4)">
-						u=
+						net=
 						<b
 							data-paint="utility"
+							data-paint-format=".5f"
+							className="font-normal text-(--f2)"
+						/>
+					</span>
+					<span className="text-[9px] text-(--f4)">
+						graph=
+						<b
+							data-paint="graphScore"
 							data-paint-format=".5f"
 							className="font-normal text-(--f2)"
 						/>
@@ -128,9 +136,16 @@ export const DecisionChain = ({ index }: { index: number }) => {
 
 			<div className="hidden border-(--line) border-b px-3 py-2 font-mono text-[9px] text-(--f4) group-data-[selected=true]:block">
 				<span className="text-(--f3)">verdict: </span>
-				<span data-paint="cause" data-paint-empty="pending" className="text-(--f2)" />
+				<span
+					data-paint="cause"
+					data-paint-empty="pending"
+					className="text-(--f2)"
+				/>
 				<span> · </span>
-				<span data-paint="reason" data-paint-empty="planner admitted this candidate" />
+				<span
+					data-paint="reason"
+					data-paint-empty="planner admitted this candidate"
+				/>
 			</div>
 
 			<div className="hidden grid-cols-4 gap-1.5 p-2 font-mono text-[8.5px] group-data-[selected=true]:grid">
@@ -148,7 +163,10 @@ export const DecisionChain = ({ index }: { index: number }) => {
 				/>
 				<span className="ml-auto">
 					round{" "}
-					<b data-paint="arbitrationRound" className="font-normal text-(--f2)" />
+					<b
+						data-paint="arbitrationRound"
+						className="font-normal text-(--f2)"
+					/>
 				</span>
 			</div>
 		</button>

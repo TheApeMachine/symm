@@ -101,7 +101,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 
 		graph := stored.(*logicgraph.Graph)
 
-		if !graph.ReadyForSearch(config.Planner.MinimumSkill) {
+		if !graph.ReadyForSearch() {
 			return true
 		}
 
@@ -129,6 +129,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		decision := types.NewDecision(types.ActionNothing, symbol)
 		decision.At = graph.At
 		decision.Forecast = graph.Forecast
+		decision.ForecastHorizon = graph.ForecastHorizon
 		confidence, confidenceErr := forecastDirectionConfidence(graph.Forecast)
 
 		if confidenceErr != nil {
@@ -150,12 +151,12 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			decision.Alternatives[graphActionLabel(graph.Roots(), branch.Action)] = utility
 
 			if branch.Action == action {
-				decision.Utility = utility
+				decision.GraphScore = utility
 			}
 		}
 
 		if graph.Forecast.Value > 0 &&
-			decision.Utility > config.Planner.MinimumUtility &&
+			decision.GraphScore > 0 &&
 			decision.Confidence >= config.Planner.MinimumConfidence {
 			decision.Action = types.ActionEnter
 			decision.Cause = "opportunity_entry"
@@ -171,7 +172,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 
 		if decision.Action != types.ActionEnter && decision.Reason == "" {
-			decision.Reason = "planner: utility does not clear regulated entry threshold"
+			decision.Reason = "planner: evidence graph does not support entry"
 		}
 
 		createdDecisions = append(createdDecisions, decision)

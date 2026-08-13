@@ -223,11 +223,10 @@ func TestAddEdge(t *testing.T) {
 }
 
 func TestGraphReadyForSearch(t *testing.T) {
-	Convey("Given a skilled forecast with a zero-valued evidence target", t, func() {
+	Convey("Given a calibrated forecast with a zero-valued evidence target", t, func() {
 		graph := NewGraph(time.Unix(1, 0).UTC())
 		graph.Forecast = graphForecast(0.01)
-		graph.TaskSkill = 1
-		graph.TaskSkillReady = true
+		graph.ForecastHorizon = 2
 		forecastID := "res:BTC/USD:forecast"
 		graph.AddNode(&Node{
 			ID: forecastID, Symbol: "BTC/USD", Kind: KindResonance, Value: 0.01, Confidence: 1,
@@ -238,12 +237,11 @@ func TestGraphReadyForSearch(t *testing.T) {
 			Weight: 0.5, Confidence: 1,
 		})
 
-		Convey("It should require both predictive advantage and reward-bearing evidence", func() {
-			So(graph.ReadyForSearch(1), ShouldBeFalse)
+		Convey("It should require reward-bearing evidence after horizon calibration", func() {
+			So(graph.ReadyForSearch(), ShouldBeFalse)
 
-			graph.TaskSkill = 1.01
 			graph.Nodes["causal"].Value = 0.02
-			So(graph.ReadyForSearch(1), ShouldBeTrue)
+			So(graph.ReadyForSearch(), ShouldBeTrue)
 		})
 	})
 }
@@ -487,6 +485,18 @@ func TestExtractResonanceNodes(t *testing.T) {
 		thesis.At = at
 		symbol := types.NewSymbol("BTC/USD", nil)
 		symbol.Resonance.Store("BTC/USD", graphResonanceManifold())
+		symbol.Resonance.Store(
+			types.ResonanceReturnForecastKey,
+			&types.ResonanceReturnForecast{
+				Distribution: learning.RLSOutput{
+					Value:            0.012,
+					Scale:            0.002,
+					DegreesOfFreedom: 8,
+					Ready:            true,
+				},
+				Horizon: 3,
+			},
+		)
 		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
 		solver := NewSolver(nil, nil)
@@ -500,6 +510,7 @@ func TestExtractResonanceNodes(t *testing.T) {
 			So(node.Value, ShouldNotEqual, 0)
 			So(node.Confidence, ShouldEqual, 1)
 			So(node.At, ShouldEqual, at)
+			So(graph.ForecastHorizon, ShouldEqual, 3)
 		})
 	})
 }

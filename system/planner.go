@@ -16,7 +16,6 @@ const UninformativeDirectionConfidence = 0.5
 
 type PlannerConfig struct {
 	MaxAllocationFraction float64
-	MinimumSkill          float64
 	MinimumConfidence     float64
 	MinimumUtility        float64
 	CausalAlpha           float64
@@ -26,7 +25,6 @@ type PlannerConfig struct {
 
 func NewPlannerConfig() *PlannerConfig {
 	viper.SetDefault("trading.allocation.max_fraction", 0.1)
-	viper.SetDefault("trading.resonance.minimum_skill", 1.0)
 	viper.SetDefault(
 		"trading.resonance.minimum_confidence",
 		UninformativeDirectionConfidence,
@@ -38,7 +36,6 @@ func NewPlannerConfig() *PlannerConfig {
 
 	return &PlannerConfig{
 		MaxAllocationFraction: viper.GetFloat64("trading.allocation.max_fraction"),
-		MinimumSkill:          viper.GetFloat64("trading.resonance.minimum_skill"),
 		MinimumConfidence:     viper.GetFloat64("trading.resonance.minimum_confidence"),
 		MinimumUtility:        viper.GetFloat64("trading.utility.minimum"),
 		CausalAlpha:           viper.GetFloat64("trading.mcts.causal_alpha"),

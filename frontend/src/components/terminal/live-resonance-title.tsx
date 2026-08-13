@@ -6,22 +6,22 @@ this reads the focused-carrier stream rather than a position in that batch.
 */
 
 export const LiveResonanceTitle = () => (
-  <Component registerKey={RESONANCE_FOCUS}>
-    {({ ref, className }) => (
-      <span ref={ref} className={className}>
-        h
-        <span data-paint="forecast.supportedHorizon" data-paint-format=".0f">
-          —
-        </span>
-        {" · r "}
-        <span data-paint="forecast.nextReach" data-paint-format=".0f">
-          —
-        </span>
-        {" · relative precision "}
-        <span data-paint="taskRelativePrecision" data-paint-format=".3f">
-          —
-        </span>
-      </span>
-    )}
-  </Component>
+	<Component registerKey={RESONANCE_FOCUS}>
+		{({ ref, className }) => (
+			<span ref={ref} className={className}>
+				h
+				<span data-paint="forecast.supportedHorizon" data-paint-format=".0f">
+					—
+				</span>
+				{" · r "}
+				<span data-paint="forecast.probeHorizon" data-paint-format=".0f">
+					—
+				</span>
+				{" · relative precision "}
+				<span data-paint="taskRelativePrecision" data-paint-format=".3f">
+					—
+				</span>
+			</span>
+		)}
+	</Component>
 );

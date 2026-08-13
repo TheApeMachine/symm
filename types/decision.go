@@ -13,11 +13,12 @@ Decision records the action strategy selected and the alternatives it compared.
 It is owned by one Thesis so intended behavior remains separate from execution.
 */
 type Decision struct {
-	ID      string    `json:"id" validate:"required"`
-	Action  Action    `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
-	Symbol  string    `json:"symbol" validate:"required"`
-	At      time.Time `json:"at" validate:"required"`
-	Utility float64   `json:"utility" validate:"finite"`
+	ID         string    `json:"id" validate:"required"`
+	Action     Action    `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
+	Symbol     string    `json:"symbol" validate:"required"`
+	At         time.Time `json:"at" validate:"required"`
+	Utility    float64   `json:"utility" validate:"finite"`
+	GraphScore float64   `json:"graphScore" validate:"finite"`
 	// AllocationHaircut is the fraction removed from the pre-risk notional by
 	// adverse-selection, toxicity, and executable-liquidity evidence. It is an
 	// allocation penalty, not a calibrated loss probability.
@@ -35,6 +36,7 @@ type Decision struct {
 	ForecastModel           string              `json:"forecastModel"`
 	ForecastEpoch           uint64              `json:"forecastEpoch"`
 	Forecast                *learning.RLSOutput `json:"forecast,omitempty"`
+	ForecastHorizon         int                 `json:"forecastHorizon" validate:"min=0"`
 	CalibrationCount        uint64              `json:"calibrationCount"`
 	ExpectedReturn          *decimal.Decimal    `json:"expectedReturn" validate:"required"`
 	ExpectedFees            *decimal.Decimal    `json:"expectedFees" validate:"required"`

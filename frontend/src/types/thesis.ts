@@ -28,6 +28,7 @@ export interface Decision {
 	symbol: string;
 	at: Date;
 	utility: number;
+	graphScore: number;
 	allocation_haircut: number;
 	allocation_haircut_reason: string;
 	alternatives: Record<string, number>;
@@ -41,6 +42,7 @@ export interface Decision {
 	forecastSource: string;
 	forecastModel: string;
 	forecastEpoch: number;
+	forecastHorizon: number;
 	calibrationCount: number;
 	expectedReturn: string;
 	expectedFees: string;

@@ -77,12 +77,11 @@ func TestUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given distinct model-depth and maximum-horizon settings", t, func() {
+	Convey("Given a configured model depth and chronological observations", t, func() {
 		previousConfig := system.Cfg
 		system.Cfg = system.NewConfig()
 		system.Cfg.Resonance.Layers = 4
-		system.Cfg.Resonance.MaxHorizon = 2
-		system.Cfg.Planner.MinimumConfidence = 0
+		system.Cfg.Planner.MinimumConfidence = 0.5
 		Reset(func() { system.Cfg = previousConfig })
 
 		thesis := types.NewThesis(t.Context(), nil)
@@ -106,13 +105,14 @@ func TestUpdate(t *testing.T) {
 			coder, valid := stored.(*learning.ResonanceManifold)
 			So(valid, ShouldBeTrue)
 			layers, _, _ := coder.WireSnapshot()
-			forecast, err := coder.RolloutTaskForecast(system.Cfg.Resonance.MaxHorizon)
+			forecast, err := coder.RolloutTaskForecast(3)
 			So(err, ShouldBeNil)
 			So(layers, ShouldHaveLength, system.Cfg.Resonance.Layers)
-			So(forecast, ShouldHaveLength, system.Cfg.Resonance.MaxHorizon)
+			So(forecast, ShouldHaveLength, 3)
 			history, found := solver.histories.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
 			So(history.(*sampleHistory).resolved, ShouldBeGreaterThan, 0)
+			So(history.(*sampleHistory).ledger.resolved, ShouldBeGreaterThan, 0)
 
 			var payload []byte
 
@@ -127,44 +127,36 @@ func TestUpdate(t *testing.T) {
 					TaskCalibration      string   `json:"taskCalibration"`
 					TaskSkillStatus      string   `json:"taskSkillStatus"`
 					LastResolvedForecast *float64 `json:"lastResolvedForecast"`
+					LastResolvedHorizon  *int     `json:"lastResolvedHorizon"`
 					LastRealizedReturn   *float64 `json:"lastRealizedReturn"`
 					LastForecastError    *float64 `json:"lastForecastError"`
 					Forecast             struct {
 						ForwardCurve     []float64 `json:"forwardCurve"`
 						SupportedHorizon int       `json:"supportedHorizon"`
+						ProbeHorizon     int       `json:"probeHorizon"`
 					} `json:"forecast"`
 				} `json:"resonance"`
 			}
 			So(json.Unmarshal(payload, &frame), ShouldBeNil)
 			So(frame.Resonance.Forecast.ForwardCurve, ShouldHaveLength,
 				frame.Resonance.Forecast.SupportedHorizon)
-			So(frame.Resonance.Forecast.SupportedHorizon, ShouldEqual, 2)
-			So(frame.Resonance.TaskScale, ShouldNotBeNil)
-			So(*frame.Resonance.TaskScale, ShouldBeGreaterThan, 0)
-			So(frame.Resonance.TaskForecast, ShouldNotBeNil)
+			So(frame.Resonance.Forecast.ProbeHorizon, ShouldEqual,
+				frame.Resonance.Forecast.SupportedHorizon+1)
 			So(frame.Resonance.TaskCalibration, ShouldEqual, "calibrated")
 			So(frame.Resonance.TaskSkillStatus,
 				ShouldBeIn, "above baseline", "baseline", "below baseline")
 			So(frame.Resonance.LastResolvedForecast, ShouldNotBeNil)
+			So(frame.Resonance.LastResolvedHorizon, ShouldNotBeNil)
+			So(*frame.Resonance.LastResolvedHorizon, ShouldBeGreaterThan, 0)
 			So(frame.Resonance.LastRealizedReturn, ShouldNotBeNil)
 			So(frame.Resonance.LastForecastError, ShouldNotBeNil)
 			So(*frame.Resonance.LastForecastError, ShouldAlmostEqual,
 				*frame.Resonance.LastRealizedReturn-*frame.Resonance.LastResolvedForecast)
 
-			reach, found := solver.currentReach.Load(symbol.Symbol)
-			So(found, ShouldBeTrue)
+			sequence := history.(*sampleHistory).sequence
 			appendResonanceSource(symbol, types.SourceHawkes, 190, 107, 9)
 			So(solver.Update(thesis), ShouldBeNil)
-			unchangedReach, found := solver.currentReach.Load(symbol.Symbol)
-			So(found, ShouldBeTrue)
-			So(unchangedReach, ShouldEqual, reach)
-
-			system.Cfg.Planner.MinimumConfidence = 1
-			appendResonanceCut(symbol, 241, 90, -20)
-			So(solver.Update(thesis), ShouldBeNil)
-			retractedReach, found := solver.currentReach.Load(symbol.Symbol)
-			So(found, ShouldBeTrue)
-			So(retractedReach, ShouldEqual, 1)
+			So(history.(*sampleHistory).sequence, ShouldEqual, sequence)
 		})
 	})
 
@@ -172,7 +164,6 @@ func TestUpdate(t *testing.T) {
 		previousConfig := system.Cfg
 		system.Cfg = system.NewConfig()
 		system.Cfg.Resonance.Layers = 3
-		system.Cfg.Resonance.MaxHorizon = 4
 		Reset(func() { system.Cfg = previousConfig })
 
 		thesis := types.NewThesis(t.Context(), nil)
@@ -236,6 +227,65 @@ func TestUpdate(t *testing.T) {
 			So(strictPriorRemoved, ShouldBeTrue)
 			So(actual, ShouldNotEqual, 0)
 			So(issued.Ready, ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a frontier that issues beyond the currently supported reach", t, func() {
+		previousConfig := system.Cfg
+		system.Cfg = system.NewConfig()
+		system.Cfg.Planner.MinimumConfidence = 0.5
+		Reset(func() { system.Cfg = previousConfig })
+
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("BTC/USD", nil)
+		thesis.Symbols.Store(symbol.Symbol, symbol)
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+
+		for tick := int64(1); tick <= 8; tick++ {
+			appendResonanceCut(symbol, tick, 100+float64(tick), float64(tick))
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		historyValue, found := solver.histories.Load(symbol.Symbol)
+		So(found, ShouldBeTrue)
+		history := historyValue.(*sampleHistory)
+		history.pending = make(map[int64][]issuedHorizon)
+		history.ledger = newHorizonLedger()
+		history.ledger.observe(1, 0.01, 0.01)
+		history.ledger.observe(1, 0.02, 0.02)
+		coderValue, coderFound := symbol.Resonance.Load(symbol.Symbol)
+		So(coderFound, ShouldBeTrue)
+		coder := coderValue.(*learning.ResonanceManifold)
+		issued, issuedErr := coder.RolloutTaskForecast(2)
+		So(issuedErr, ShouldBeNil)
+		So(issued[1].Ready, ShouldBeTrue)
+
+		appendResonanceCut(symbol, 9, 109, 9)
+		So(solver.Update(thesis), ShouldBeNil)
+		issuedSequence := history.sequence
+		pending := history.pending[issuedSequence+2]
+		So(pending, ShouldHaveLength, 1)
+		So(pending[0].horizon, ShouldEqual, 2)
+		issuedForecast := pending[0].forecast
+
+		appendResonanceCut(symbol, 10, 112, 10)
+		So(solver.Update(thesis), ShouldBeNil)
+		_, prematurelyResolved := history.ledger.horizons[2]
+
+		appendResonanceCut(symbol, 11, 119, 11)
+		So(solver.Update(thesis), ShouldBeNil)
+		resolved := history.ledger.horizons[2]
+		actual := math.Log(119.0 / 112.0)
+		expectedAdvantage := actual*actual -
+			(actual-issuedForecast)*(actual-issuedForecast)
+
+		Convey("It should resolve tick two only when its exact adjacent outcome arrives", func() {
+			So(prematurelyResolved, ShouldBeFalse)
+			So(resolved, ShouldNotBeNil)
+			So(resolved.count, ShouldEqual, 1)
+			So(resolved.mean, ShouldAlmostEqual, expectedAdvantage, 1e-15)
+			_, retained := history.pending[issuedSequence+2]
+			So(retained, ShouldBeFalse)
 		})
 	})
 
@@ -323,7 +373,6 @@ func BenchmarkUpdate(b *testing.B) {
 	previousConfig := system.Cfg
 	system.Cfg = system.NewConfig()
 	system.Cfg.Resonance.Layers = 3
-	system.Cfg.Resonance.MaxHorizon = 10
 	b.Cleanup(func() { system.Cfg = previousConfig })
 	thesis := types.NewThesis(b.Context(), nil)
 	symbol := types.NewSymbol("BTC/USD", nil)

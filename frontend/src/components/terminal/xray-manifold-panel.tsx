@@ -85,7 +85,7 @@ export const XrayManifoldPanel = () => {
 						<div className="flex justify-between gap-3">
 							<span className="text-(--f3)">reach</span>
 							<Typography.Span
-								data-paint="forecast.nextReach"
+								data-paint="forecast.probeHorizon"
 								data-paint-absent="—"
 								data-paint-suffix=" ticks"
 								className="text-right text-(--f1)"

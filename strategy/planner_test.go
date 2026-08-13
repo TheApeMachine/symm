@@ -45,7 +45,8 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.Action, ShouldEqual, types.ActionEnter)
 			So(decision.Forecast, ShouldNotBeNil)
 			So(decision.Confidence, ShouldBeGreaterThan, system.Cfg.Planner.MinimumConfidence)
-			So(decision.Utility, ShouldBeGreaterThan, decision.Forecast.Value)
+			So(decision.Utility, ShouldEqual, 0)
+			So(decision.GraphScore, ShouldBeGreaterThan, decision.Forecast.Value)
 			So(decision.Trace, ShouldNotBeNil)
 			So(decision.Trace.MCTS.Iterations, ShouldEqual, system.Cfg.Planner.MCTSIterations)
 			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 1)
@@ -68,12 +69,13 @@ func TestPlannerUpdate(t *testing.T) {
 
 		err := planner.Update(thesis)
 
-		Convey("It should reduce graph utility below the unadjusted forecast", func() {
+		Convey("It should reduce the evidence score below the unadjusted forecast", func() {
 			So(err, ShouldBeNil)
 			decisionValue, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			decision := decisionValue.(*types.Decision)
-			So(decision.Utility, ShouldBeLessThan, decision.Forecast.Value)
+			So(decision.Utility, ShouldEqual, 0)
+			So(decision.GraphScore, ShouldBeLessThan, decision.Forecast.Value)
 		})
 	})
 
@@ -123,7 +125,7 @@ func TestPlannerUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given a positive graph utility below the regulated entry threshold", t, func() {
+	Convey("Given a positive graph score before executable economics", t, func() {
 		system.Cfg = system.NewConfig()
 		system.Cfg.Planner.MinimumUtility = 0.02
 		thesis := plannerGraphThesis(t, 0.9)
@@ -131,15 +133,16 @@ func TestPlannerUpdate(t *testing.T) {
 
 		err := planner.Update(thesis)
 
-		Convey("It should keep the decision out of the market", func() {
+		Convey("It should defer the net utility threshold to allocation", func() {
 			So(err, ShouldBeNil)
 			stored, _ := thesis.Symbols.Load("BTC/USD")
 			symbol := stored.(*types.Symbol)
 			decisionValue, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			decision := decisionValue.(*types.Decision)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
-			So(decision.Reason, ShouldEqual, "planner: utility does not clear regulated entry threshold")
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.Utility, ShouldEqual, 0)
+			So(decision.GraphScore, ShouldBeGreaterThan, 0)
 		})
 	})
 }
@@ -237,6 +240,7 @@ func plannerGraphThesis(t testing.TB, confidence float64) *types.Thesis {
 	forecast := &learning.RLSOutput{Value: 0.01, Ready: true, Scale: 0.001, DegreesOfFreedom: 1}
 	graph := logicgraph.NewGraph(thesis.At)
 	graph.Forecast = forecast
+	graph.ForecastHorizon = 3
 	graph.TaskSkill = 1.01
 	graph.TaskSkillReady = true
 	graph.AddNode(&logicgraph.Node{

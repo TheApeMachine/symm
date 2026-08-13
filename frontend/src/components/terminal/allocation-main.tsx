@@ -26,7 +26,7 @@ export const AllocationMain = () => (
 
 				<div className="flex items-center gap-2.25 border-(--line) border-b pb-1.75 font-mono text-[8.5px] text-(--f4) uppercase tracking-[0.06em]">
 					<span className="w-14.5 shrink-0">symbol</span>
-					<span className="flex-1">utility {"->"} confidence</span>
+					<span className="flex-1">net utility {"->"} confidence</span>
 					<span className="w-13 shrink-0 text-right">haircut</span>
 					<span className="w-10.5 shrink-0 text-right">class</span>
 					<span className="w-18.5 shrink-0 text-right">notional</span>

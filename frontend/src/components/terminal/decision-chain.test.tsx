@@ -21,5 +21,8 @@ describe("DecisionChain", () => {
 		expect(markup).not.toContain('data-paint="trace.utility.executableFraction"');
 		expect(markup).toContain('data-paint="allocation_haircut"');
 		expect(markup).toContain('data-paint="allocation_haircut_reason"');
+		expect(markup).toContain('data-paint="forecastHorizon"');
+		expect(markup).toContain('data-paint="graphScore"');
+		expect(markup).toContain('data-paint="utility"');
 	});
 });

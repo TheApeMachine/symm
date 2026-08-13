@@ -32,3 +32,4 @@ qodana.yaml
 .cache/
 .tmp/
 .codex/
+.codex-tmp/

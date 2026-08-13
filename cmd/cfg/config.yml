@@ -36,7 +36,6 @@ system:
 resonance:
   learning_rate: 0.01
   layers: 3
-  max_horizon: 10
 
 regulator:
   # Number of model-surprise observations retained for the dashboard only.

@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
-	symmsystem "github.com/theapemachine/symm/system"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -164,12 +163,14 @@ func TestMarketReplayRejectsUncalibratedEntry(t *testing.T) {
 				forecast, forecastErr := coder.RolloutTaskForecast(1)
 				skill, skillReady := coder.TaskSkill()
 
-				Convey("It should reject the apparent move instead of trading an unskilled model", func() {
+				Convey("It should reject the apparent move without a calibrated horizon", func() {
 					So(forecastErr, ShouldBeNil)
 					So(forecast, ShouldNotBeEmpty)
 					So(skillReady, ShouldBeTrue)
-					So(skill, ShouldBeLessThanOrEqualTo,
-						symmsystem.Cfg.Planner.MinimumSkill)
+					_, calibrated := symbolState.Resonance.Load(
+						types.ResonanceReturnForecastKey,
+					)
+					So(calibrated, ShouldBeFalse)
 					So(system.Desk.Holding("IDOS/USD"), ShouldEqual, 0)
 					So(market.Report().Economics.NetPnL, ShouldEqual, 0.0)
 					So(market.Validate(), ShouldBeNil)

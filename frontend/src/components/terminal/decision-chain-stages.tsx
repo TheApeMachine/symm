@@ -39,6 +39,7 @@ export const DecisionStage = ({
 
 export const ForecastStage = () => (
 	<DecisionStage title="1 · forecast" meta="net edge before sizing">
+		<TraceValue label="horizon" path="forecastHorizon" format=".0f" />
 		<TraceValue label="return" path="expectedReturn" format=".6f" />
 		<TraceValue label="fees" path="expectedFees" format=".6f" />
 		<TraceValue label="spread" path="expectedSpread" format=".6f" />

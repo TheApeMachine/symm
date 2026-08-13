@@ -18,7 +18,6 @@ import (
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
-	"gonum.org/v1/gonum/stat/distuv"
 )
 
 /*
@@ -35,18 +34,19 @@ type Solver struct {
 	standardizers *sync.Map
 	states        *sync.Map
 	histories     *sync.Map
-	currentReach  *sync.Map
 	alpha         float64
 	ui            chan []byte
 }
 
 type sampleHistory struct {
-	issued           map[int64]issuedTask
-	marks            map[int64]float64
-	ticks            []int64
-	resolved         int
-	supportedHorizon int
-	lastResolution   *taskResolution
+	issued         map[int64]issuedTask
+	pending        map[int64][]issuedHorizon
+	marks          map[int64]float64
+	ticks          []int64
+	sequence       int64
+	resolved       int
+	ledger         *horizonLedger
+	lastResolution *taskResolution
 }
 
 type issuedTask struct {
@@ -54,7 +54,13 @@ type issuedTask struct {
 	prediction []float64
 }
 
+type issuedHorizon struct {
+	horizon  int
+	forecast float64
+}
+
 type taskResolution struct {
+	horizon  int
 	forecast float64
 	actual   float64
 	error    float64
@@ -85,7 +91,6 @@ func NewSolver(
 		standardizers: &sync.Map{},
 		states:        &sync.Map{},
 		histories:     &sync.Map{},
-		currentReach:  &sync.Map{},
 		alpha:         initialAlpha,
 		ui:            ui,
 	}
@@ -103,11 +108,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	config := system.Cfg.Snapshot()
 
 	if config == nil || config.Resonance == nil || config.Planner == nil ||
-		config.Resonance.Layers <= 0 || config.Resonance.MaxHorizon <= 0 {
-		return errors.New("resonance: positive horizon layer count required")
+		config.Resonance.Layers <= 0 {
+		return errors.New("resonance: positive layer count required")
 	}
-
-	maxHorizon := config.Resonance.MaxHorizon
 
 	group, _ := errgroup.WithContext(solver.ctx)
 
@@ -216,7 +219,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				solver.schemaTicks.Store(name, tick)
 				solver.coders.Delete(name)
 				solver.histories.Delete(name)
-				solver.currentReach.Delete(name)
+				symbol.Resonance.Delete(types.ResonanceReturnForecastKey)
 			}
 
 			input := make([]float64, len(schema))
@@ -259,18 +262,22 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			historyValue, _ := solver.histories.LoadOrStore(name, &sampleHistory{
-				issued: make(map[int64]issuedTask),
-				marks:  make(map[int64]float64),
+				issued:  make(map[int64]issuedTask),
+				pending: make(map[int64][]issuedHorizon),
+				marks:   make(map[int64]float64),
+				ledger:  newHorizonLedger(),
 			})
 
 			history := historyValue.(*sampleHistory)
-			resolvedBefore := history.resolved
+			newObservation := false
 
 			// 1. Process Matured Historical Targets (Delayed Training)
 			if mark > 0 && tick > 0 {
 				if len(history.ticks) == 0 || tick > history.ticks[len(history.ticks)-1] {
 					history.ticks = append(history.ticks, tick)
 					history.marks[tick] = mark
+					history.sequence++
+					newObservation = true
 				}
 
 				for len(history.ticks) > 1 {
@@ -288,6 +295,22 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 					if complete {
 						target[0] = math.Log(futureMark / previousMark)
+
+						for _, pending := range history.pending[history.sequence] {
+							history.ledger.observe(
+								pending.horizon,
+								pending.forecast,
+								target[0],
+							)
+							history.lastResolution = &taskResolution{
+								horizon:  pending.horizon,
+								forecast: pending.forecast,
+								actual:   target[0],
+								error:    target[0] - pending.forecast,
+							}
+						}
+
+						delete(history.pending, history.sequence)
 					}
 
 					delete(history.issued, previousTick)
@@ -310,11 +333,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 						))
 					}
 
-					history.lastResolution = &taskResolution{
-						forecast: issued.prediction[0],
-						actual:   target[0],
-						error:    target[0] - issued.prediction[0],
-					}
 					history.resolved++
 				}
 			}
@@ -329,6 +347,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			symbol.Resonance.Store(name, coder)
+			symbol.Resonance.Delete(types.ResonanceReturnForecastKey)
 
 			// 3. Extract Diagnostics & Rollout Telemetry
 			layers, surprise, energy := coder.WireSnapshot()
@@ -352,20 +371,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					taskSkillStatus = "below baseline"
 				}
 			}
-			currentReach := 1
-
-			if storedReach, found := solver.currentReach.Load(name); found {
-				currentReach = storedReach.(int)
-			}
-
-			supportedHorizon := history.supportedHorizon
-			nextReach := currentReach
-
-			if supportedHorizon == 0 {
-				supportedHorizon = 1
-			}
-
-			forecast, err := coder.RolloutTaskForecast(maxHorizon)
+			supportedHorizon := history.ledger.supported(
+				config.Planner.MinimumConfidence,
+			)
+			probeHorizon := supportedHorizon + 1
+			forecast, err := coder.RolloutTaskForecast(probeHorizon)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -375,47 +385,31 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				))
 			}
 
-			if _, found := history.marks[tick]; found && len(forecast) > 0 {
+			if newObservation && len(forecast) > 0 {
 				history.issued[tick] = issuedTask{
 					features:   coder.LatentState(),
 					prediction: []float64{forecast[0].Value},
 				}
-			}
 
-			if history.resolved > resolvedBefore {
-				index := min(supportedHorizon, len(forecast)) - 1
-				confidence := 0.0
-
-				if index >= 0 && forecast[index].Ready {
-					distribution := distuv.StudentsT{
-						Mu:    forecast[index].Value,
-						Sigma: forecast[index].Scale,
-						Nu:    forecast[index].DegreesOfFreedom,
+				for index, output := range forecast {
+					if !output.Ready {
+						continue
 					}
-					confidence = 1 - distribution.CDF(0)
 
-					if forecast[index].Value < 0 {
-						confidence = distribution.CDF(0)
-					}
+					horizon := index + 1
+					targetSequence := history.sequence + int64(horizon)
+					history.pending[targetSequence] = append(
+						history.pending[targetSequence],
+						issuedHorizon{horizon: horizon, forecast: output.Value},
+					)
 				}
-
-				if index >= 0 && forecast[index].Ready &&
-					confidence >= config.Planner.MinimumConfidence {
-					supportedHorizon = min(maxHorizon, supportedHorizon+1)
-				} else {
-					supportedHorizon = max(1, supportedHorizon-1)
-				}
-
-				nextReach = supportedHorizon
-				history.supportedHorizon = supportedHorizon
-				solver.currentReach.Store(name, supportedHorizon)
 			}
 
 			if len(forecast) > supportedHorizon {
 				forecast = forecast[:supportedHorizon]
 			}
 
-			forwardCurve := coder.RolloutTaskPrediction(maxHorizon)
+			forwardCurve := coder.RolloutTaskPrediction(supportedHorizon)
 
 			if len(forwardCurve) > supportedHorizon {
 				forwardCurve = forwardCurve[:supportedHorizon]
@@ -427,8 +421,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"posterior", forecast,
 				"forwardRetention", forwardRetention,
 				"supportedHorizon", supportedHorizon,
-				"currentReach", currentReach,
-				"nextReach", nextReach,
+				"probeHorizon", probeHorizon,
 			)
 			frame := datura.NewMap(
 				"source", types.SourceResonance,
@@ -449,14 +442,38 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"forecast", forecastFrame,
 			)
 
-			if len(forecast) > 0 && forecast[0].Ready {
-				frame["taskScale"] = forecast[0].Scale
-				frame["taskForecast"] = forecast[0].Value
+			if supportedHorizon > 0 {
+				aggregate, aggregateErr := coder.RolloutTaskAggregateForecast(
+					supportedHorizon,
+				)
+
+				if aggregateErr != nil {
+					return errnie.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf("resonance: aggregate forecast failed [%s]", aggregateErr.Error()),
+						aggregateErr,
+					))
+				}
+
+				if len(aggregate) > 0 && aggregate[0].Ready {
+					frame["taskScale"] = aggregate[0].Scale
+					frame["taskForecast"] = aggregate[0].Value
+					forecastFrame["aggregate"] = aggregate[0]
+					symbol.Resonance.Store(
+						types.ResonanceReturnForecastKey,
+						&types.ResonanceReturnForecast{
+							Distribution: aggregate[0],
+							Horizon:      supportedHorizon,
+						},
+					)
+				}
+
 				forecastFrame["forwardCurve"] = forwardCurve
 			}
 
 			if history.lastResolution != nil {
 				frame["lastResolvedForecast"] = history.lastResolution.forecast
+				frame["lastResolvedHorizon"] = history.lastResolution.horizon
 				frame["lastRealizedReturn"] = history.lastResolution.actual
 				frame["lastForecastError"] = history.lastResolution.error
 			}

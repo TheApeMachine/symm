@@ -93,13 +93,14 @@ type Edge struct {
 Graph is the relational knowledge graph accumulated during one Thesis lifecycle.
 */
 type Graph struct {
-	At             time.Time           `json:"at"`
-	Forecast       *learning.RLSOutput `json:"-"`
-	TaskSkill      float64             `json:"taskSkill"`
-	TaskSkillReady bool                `json:"taskSkillReady"`
-	Nodes          map[string]*Node    `json:"nodes"`
-	Edges          []*Edge             `json:"edges"`
-	Adjacency      map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
+	At              time.Time           `json:"at"`
+	Forecast        *learning.RLSOutput `json:"-"`
+	ForecastHorizon int                 `json:"forecastHorizon"`
+	TaskSkill       float64             `json:"taskSkill"`
+	TaskSkillReady  bool                `json:"taskSkillReady"`
+	Nodes           map[string]*Node    `json:"nodes"`
+	Edges           []*Edge             `json:"edges"`
+	Adjacency       map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
 }
 
 /*
@@ -111,21 +112,23 @@ func (graph *Graph) CheckpointState() any {
 	}
 
 	return struct {
-		At             time.Time           `json:"at"`
-		Forecast       *learning.RLSOutput `json:"forecast,omitempty"`
-		TaskSkill      float64             `json:"taskSkill"`
-		TaskSkillReady bool                `json:"taskSkillReady"`
-		Nodes          map[string]*Node    `json:"nodes"`
-		Edges          []*Edge             `json:"edges"`
-		Adjacency      map[string][]string `json:"adjacency"`
+		At              time.Time           `json:"at"`
+		Forecast        *learning.RLSOutput `json:"forecast,omitempty"`
+		ForecastHorizon int                 `json:"forecastHorizon"`
+		TaskSkill       float64             `json:"taskSkill"`
+		TaskSkillReady  bool                `json:"taskSkillReady"`
+		Nodes           map[string]*Node    `json:"nodes"`
+		Edges           []*Edge             `json:"edges"`
+		Adjacency       map[string][]string `json:"adjacency"`
 	}{
-		At:             graph.At,
-		Forecast:       graph.Forecast,
-		TaskSkill:      graph.TaskSkill,
-		TaskSkillReady: graph.TaskSkillReady,
-		Nodes:          graph.Nodes,
-		Edges:          graph.Edges,
-		Adjacency:      graph.Adjacency,
+		At:              graph.At,
+		Forecast:        graph.Forecast,
+		ForecastHorizon: graph.ForecastHorizon,
+		TaskSkill:       graph.TaskSkill,
+		TaskSkillReady:  graph.TaskSkillReady,
+		Nodes:           graph.Nodes,
+		Edges:           graph.Edges,
+		Adjacency:       graph.Adjacency,
 	}
 }
 
@@ -214,13 +217,13 @@ func (graph *Graph) Roots() []string {
 }
 
 /*
-ReadyForSearch reports whether the accumulated lifecycle graph has a skilled
+ReadyForSearch reports whether the accumulated lifecycle graph has a calibrated
 return forecast and at least one reachable relation that changes path reward.
 */
-func (graph *Graph) ReadyForSearch(minimumSkill float64) bool {
+func (graph *Graph) ReadyForSearch() bool {
 	if graph == nil || graph.Forecast == nil || !graph.Forecast.Ready ||
-		graph.Forecast.Scale <= 0 || graph.Forecast.DegreesOfFreedom <= 0 ||
-		!graph.TaskSkillReady || graph.TaskSkill <= minimumSkill {
+		graph.ForecastHorizon < 1 || graph.Forecast.Scale <= 0 ||
+		graph.Forecast.DegreesOfFreedom <= 0 {
 		return false
 	}
 
@@ -530,35 +533,49 @@ func (solver *Solver) extractResonanceNodes(
 		return
 	}
 
-	stored, found := symbol.Resonance.Load(symbol.Symbol)
+	stored, found := symbol.Resonance.Load(types.ResonanceReturnForecastKey)
 
 	if !found {
 		return
 	}
 
-	coder, ok := stored.(*learning.ResonanceManifold)
+	returnForecast, ok := stored.(*types.ResonanceReturnForecast)
 
 	if !ok {
 		return
 	}
 
-	graph.TaskSkill, graph.TaskSkillReady = coder.TaskSkill()
+	if returnForecast.Horizon < 1 || !returnForecast.Distribution.Ready {
+		return
+	}
 
-	forecast, err := coder.RolloutTaskForecast(1)
+	if coderValue, coderFound := symbol.Resonance.Load(symbol.Symbol); coderFound {
+		if coder, valid := coderValue.(*learning.ResonanceManifold); valid {
+			graph.TaskSkill, graph.TaskSkillReady = coder.TaskSkill()
+		}
+	}
 
-	if err != nil || len(forecast) == 0 || !forecast[0].Ready {
+	graphForecast := returnForecast.Distribution
+	graph.Forecast = &graphForecast
+	graph.ForecastHorizon = returnForecast.Horizon
+
+	coderValue, found := symbol.Resonance.Load(symbol.Symbol)
+
+	if !found {
+		return
+	}
+
+	coder, ok := coderValue.(*learning.ResonanceManifold)
+
+	if !ok {
 		return
 	}
 
 	layers, surprise, _ := coder.WireSnapshot()
 
-	if len(layers) == 0 || math.IsNaN(surprise) ||
-		math.IsInf(surprise, 0) {
+	if len(layers) == 0 || math.IsNaN(surprise) || math.IsInf(surprise, 0) {
 		return
 	}
-
-	graphForecast := forecast[0]
-	graph.Forecast = &graphForecast
 
 	graph.AddNode(&Node{
 		ID:         fmt.Sprintf("res:%s:surprise", symbol.Symbol),
