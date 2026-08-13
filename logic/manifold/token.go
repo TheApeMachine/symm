@@ -17,13 +17,16 @@ adds these units when repeated observations merge into a resident carrier.
 unitOscillatorEnergy is the energy every token carries on injection. It is the unit of
 the oscillator store, so amplitude sqrt(Energy) is one for an unforced particle and the
 system starts with exactly one unit of energy per observation.
+minimumCarrierTemperature is the documented Sensorium thermal-bath floor. Injected
+carriers are at rest, so their rest-frame velocity variance is zero and Q = mass*T.
 symbolIndexMask limits symbol indices to 15 bits so the packed token ID stays cleanly within
 Metal's 16-bit token bitmask (0xFFFF).
 */
 const (
-	unitCarrierMass      float32 = 1
-	unitOscillatorEnergy float32 = 1
-	symbolIndexMask      uint32  = 0x7fff
+	unitCarrierMass           float32 = 1
+	unitOscillatorEnergy      float32 = 1
+	minimumCarrierTemperature float32 = 1.0 / 32.0
+	symbolIndexMask           uint32  = 0x7fff
 )
 
 /*
@@ -45,7 +48,7 @@ projects market structure into a continuous 3D pilot-wave fluid:
   - Position Y: Log order quantity log(Quantity), compressing liquidity across orders of magnitude.
   - Position Z: Empirical order age rank (oldest = 0 at front, newest = N-1 at back).
   - Mass: One carrier unit per observed resting order. Repeated observations gain mass through inelastic collision.
-  - Heat: Zero on injection. Heat is earned from collision and Planck relaxation, not stamped.
+  - Heat: Carrier mass times the documented thermal-bath floor. Injected velocity is zero, so rest-frame variance adds nothing.
   - Energy: One unit per order, forced above unit by the side's Hawkes self-excitation.
   - Phase: Bid-Ask spread phase boundary ([0, pi) for Bids, [pi, 2pi) for Asks), swept by price-time queue priority.
   - Omega: Log distance from mid, measured against the symbol's own accumulated scale.
@@ -206,11 +209,9 @@ func (tokenizer *Tokenizer) NewBatch(
 			),
 			Velocity: pfluid.Vector{},
 			Mass:     unitCarrierMass,
-			// Heat is earned, never stamped. It accumulates from inelastic collision and
-			// from Planck relaxation draining the oscillator store, so tokens enter cold.
-			Heat:   0,
-			Energy: energy,
-			Phase:  positionPhase(queue[seq], sideCount, entry.side),
+			Heat:     unitCarrierMass * minimumCarrierTemperature,
+			Energy:   energy,
+			Phase:    positionPhase(queue[seq], sideCount, entry.side),
 			Omega: positionOmega(
 				price,
 				midPrice,

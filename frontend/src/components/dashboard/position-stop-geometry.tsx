@@ -109,7 +109,7 @@ export const PositionStopGeometry = () => (
 			<b
 				className="font-normal uppercase"
 				data-paint="holding.stoploss.status"
-				data-paint-class="ARMED:text-(--up) TRIGGERED:text-(--down) ERROR:text-(--down)"
+				data-paint-class="armed:text-(--up) triggered:text-(--down) error:text-(--down)"
 			/>
 		</Flex.Row>
 	</>

@@ -154,13 +154,13 @@ func TestMeasureTrade(t *testing.T) {
 				ShouldEqual, expectedOutput.ThinScore)
 			So(measurement.Sample(types.MetricNeutralScore, types.SideNone).Raw,
 				ShouldEqual, expectedOutput.NeutralScore)
-			expectedSNR, ready := types.MeasurementSignalNoiseRatio(
+			expectedSeparation, ready := types.MeasurementHypothesisSeparation(
 				types.SourceDepthFlow,
 				measurement.Metrics,
 			)
 			So(ready, ShouldBeTrue)
-			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldEqual, expectedSNR)
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
+				ShouldEqual, expectedSeparation)
 
 			for _, sample := range measurement.Metrics {
 				if sample.Unit == types.UnitDimensionless {
@@ -184,7 +184,7 @@ func TestFrame(t *testing.T) {
 		signal := &Signal{}
 		at := time.Unix(1_700_000_300, 0).UTC()
 		measurements := signal.frame("BTC/USD", at, equation.BookflowOutput{
-			Value: 0.3, SNR: 0.4, ThinScore: 0.3, Category: 3, Ready: true,
+			Value: 0.3, HypothesisSeparation: 0.4, ThinScore: 0.3, Category: 3, Ready: true,
 		}, 0.8)
 
 		Convey("It should preserve the dimensionless depletion fraction and provenance", func() {
@@ -196,7 +196,7 @@ func TestFrame(t *testing.T) {
 				ShouldEqual, 0.3)
 			So(*measurement.Sample(types.MetricThinScore, types.SideNone).Normalized,
 				ShouldEqual, 0.3)
-			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
 				ShouldEqual, 1.0)
 			So(measurement.Metrics, ShouldHaveLength, 5)
 
@@ -211,7 +211,7 @@ func TestFrame(t *testing.T) {
 			"BTC/USD",
 			time.Unix(1_700_000_400, 0).UTC(),
 			equation.BookflowOutput{
-				Value: 1.5, SNR: 0.6, SpoofScore: 1.5, Category: 2, Ready: true,
+				Value: 1.5, HypothesisSeparation: 0.6, SpoofScore: 1.5, Category: 2, Ready: true,
 			},
 			1,
 		)[0]
@@ -241,9 +241,9 @@ func TestFrame(t *testing.T) {
 				So(measurement.Sample(metric, types.SideNone).Normalized, ShouldBeNil)
 			}
 
-			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
 				ShouldEqual, 0.0)
-			So(measurement.Sample(types.MetricSNR, types.SideNone).Normalized,
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Normalized,
 				ShouldBeNil)
 		})
 	})
@@ -267,7 +267,7 @@ func TestNormalizedBookflowScore(t *testing.T) {
 	})
 
 	Convey("Given scores one representable value outside their domains", t, func() {
-		Convey("It should reject negative evidence and overflow instead of poisoning SNR", func() {
+		Convey("It should reject negative evidence and overflow instead of poisoning HypothesisSeparation", func() {
 			So(normalizedBookflowScore(
 				types.MetricLoadedScore,
 				math.Nextafter(0, -1),
@@ -324,7 +324,7 @@ func BenchmarkFrame(b *testing.B) {
 	signal := &Signal{}
 	at := time.Unix(1_700_000_500, 0).UTC()
 	output := equation.BookflowOutput{
-		Value: 0.7, SNR: 0.6, LoadedScore: 0.7, Category: 1, Ready: true,
+		Value: 0.7, HypothesisSeparation: 0.6, LoadedScore: 0.7, Category: 1, Ready: true,
 	}
 
 	b.ReportAllocs()

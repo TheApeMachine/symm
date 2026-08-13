@@ -3,6 +3,8 @@ manifold-binary decodes backend-composited SMF1 display frames. The GPU has
 already shaded the image, so the browser only retains and blits RGBA8 pixels.
 */
 
+import { createStore } from "@tanstack/store";
+
 export type DisplayFrame = {
 	kind: "display";
 	symbol: string;
@@ -11,7 +13,7 @@ export type DisplayFrame = {
 	rgba: Uint8ClampedArray;
 };
 
-let display: DisplayFrame | null = null;
+const displayStore = createStore<DisplayFrame | null>(null);
 
 export const parseManifoldBinary = (
 	buffer: ArrayBuffer,
@@ -66,12 +68,12 @@ export const retainManifoldBinary = (buffer: ArrayBuffer): boolean => {
 		return false;
 	}
 
-	display = frame;
+	displayStore.setState(() => frame);
 	return true;
 };
 
-export const latestDisplay = (): DisplayFrame | null => display;
+export const latestDisplay = (): DisplayFrame | null => displayStore.state;
 
 export const clearManifoldBinary = () => {
-	display = null;
+	displayStore.setState(() => null);
 };

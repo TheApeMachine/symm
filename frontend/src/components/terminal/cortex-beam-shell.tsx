@@ -12,7 +12,7 @@ focused row's predictions unrolls the list into one slot per projected path.
 Each row shows the hops the search kept and the probability it assigned them.
 */
 export const CortexBeamShell = ({ symbol }: { symbol: string }) => (
-	<Component registerKey="cognition" select={`${symbol}.predictions`}>
+	<Component registerKey="cognition" select={`${symbol}.predictions`} repeat>
 		{({ ref, className, slots }) => (
 			<div ref={ref} className={cn("flex min-h-0 flex-1 flex-col", className)}>
 				{slots.length === 0 ? (

@@ -9,7 +9,7 @@ type Category struct {
 	Confidence  float64      `json:"confidence"`
 	Surprisal   float64      `json:"surprisal"`
 	Strength    float64      `json:"strength"`
-	Maturity    float64      `json:"maturity"`
+	Maturity    float64      `json:"maturity,omitempty"`
 	Uncertainty float64      `json:"uncertainty,omitempty"`
 	Freshness   float64      `json:"freshness,omitempty"`
 	Supporting  []string     `json:"supporting,omitempty"`

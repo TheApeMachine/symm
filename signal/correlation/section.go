@@ -1,7 +1,6 @@
 package correlation
 
 import (
-	"context"
 	"fmt"
 	"iter"
 	"math"
@@ -13,7 +12,6 @@ import (
 	nomcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -77,13 +75,10 @@ func (section *Section) Measure(
 		section.scratch = &sync.Map{}
 	}
 
-	group, _ := errgroup.WithContext(context.Background())
-
 	section.scratch.Clear()
 	rowBatches := make(map[string][]kraken.TickerData)
 	changedSymbols := make([]string, 0)
 	seenSymbols := make(map[string]struct{})
-	errorsBySymbol := &sync.Map{}
 
 	for row := range rows {
 		symbol := strings.TrimSpace(row.Symbol)
@@ -107,40 +102,21 @@ func (section *Section) Measure(
 			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
 		})
 
-		group.Go(func() error {
-			state := section.ensure(symbol)
+		state := section.ensure(symbol)
 
-			for _, row := range symbolRows {
-				if len(state.samples) > 0 && !row.Timestamp.After(state.samples[len(state.samples)-1].At) {
-					continue
-				}
-
-				if err := section.appendSample(symbol, state, nomcorrelation.Sample{
-					At:    row.Timestamp,
-					Value: row.Last.Float64(),
-				}); err != nil {
-					errorsBySymbol.Store(symbol, err)
-					return err
-				}
+		for _, row := range symbolRows {
+			if len(state.samples) > 0 && !row.Timestamp.After(state.samples[len(state.samples)-1].At) {
+				continue
 			}
 
-			section.scratch.Store(symbol, struct{}{})
-			return nil
-		})
-	}
+			if err := section.appendSample(symbol, state, nomcorrelation.Sample{
+				At: row.Timestamp, Value: row.Last.Float64(),
+			}); err != nil {
+				return nil, err
+			}
+		}
 
-	if err := group.Wait(); err != nil {
-		return nil, err
-	}
-
-	var measurementErr error
-	errorsBySymbol.Range(func(key, value any) bool {
-		measurementErr = value.(error)
-		return false
-	})
-
-	if measurementErr != nil {
-		return nil, measurementErr
+		section.scratch.Store(symbol, struct{}{})
 	}
 
 	empty := true
@@ -154,41 +130,17 @@ func (section *Section) Measure(
 		return nil, nil
 	}
 
-	allSymbols := make([]string, 0)
-	section.symbols.Range(func(key, value any) bool {
-		allSymbols = append(allSymbols, key.(string))
-		return true
-	})
+	results := make(map[string]map[string]float64, len(changedSymbols))
 
-	sort.Strings(allSymbols)
-	concurrentResults := &sync.Map{}
+	for _, symbol := range changedSymbols {
+		scores, ok, err := section.scores(symbol)
 
-	for _, symbol := range allSymbols {
-		group.Go(func() error {
-			scores, ok, err := section.scores(symbol)
-			if err != nil {
-				return err
-			}
+		if err != nil {
+			return nil, err
+		}
 
-			if ok {
-				concurrentResults.Store(symbol, scores)
-			}
-
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		return nil, err
-	}
-
-	results := make(map[string]map[string]float64, len(allSymbols))
-
-	for _, symbol := range allSymbols {
-		raw, exists := concurrentResults.Load(symbol)
-
-		if exists {
-			results[symbol] = raw.(map[string]float64)
+		if ok {
+			results[symbol] = scores
 		}
 	}
 

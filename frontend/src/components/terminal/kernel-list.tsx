@@ -23,31 +23,29 @@ const interactive = (compact: boolean, source: string) => {
 	};
 };
 
-const KERNEL_TRACE_METRIC = "snr";
-
-const KernelTrace = () => (
+const KernelTrace = ({ metric }: { metric: string }) => (
 	<div>
 		<Sparkline
-			bind={`metrics.${KERNEL_TRACE_METRIC}.normalized`}
-			title={`${metricLabel(KERNEL_TRACE_METRIC)} trace`}
+			bind={`metrics.${metric}.normalized`}
+			title={`${metricLabel(metric)} trace`}
 			className="h-6.5"
 		/>
 		<div className="mt-1 flex items-center gap-2">
 			<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
 				<div
-					data-set={`metrics.${KERNEL_TRACE_METRIC}.normalized`}
+					data-set={`metrics.${metric}.normalized`}
 					data-target="style.--strength"
 					className="h-full bg-(--acc)"
 					style={{ width: "calc(var(--strength, 0) * 100%)" }}
 				/>
 			</div>
 			<span
-				data-paint={`metrics.${KERNEL_TRACE_METRIC}.normalized`}
+				data-paint={`metrics.${metric}.normalized`}
 				data-paint-format=".0%"
 				className="w-8 shrink-0 text-right font-mono text-[10px] text-(--f2)"
 			/>
 			<span
-				data-paint={`metrics.${KERNEL_TRACE_METRIC}.raw`}
+				data-paint={`metrics.${metric}.raw`}
 				data-paint-format=".3f"
 				className="w-16 shrink-0 truncate text-right font-mono text-[9.5px] text-(--acc)"
 			/>
@@ -89,7 +87,6 @@ export const KernelList = ({
 							>
 								<div className="flex items-center justify-between gap-2">
 									<span
-										data-paint="source"
 										className={cn("truncate font-semibold text-(--f1)", {
 											"text-xs": compact,
 											"text-[12.5px]": !compact,
@@ -132,12 +129,12 @@ export const KernelList = ({
 										data-paint-format=".0%"
 										className="text-(--acc)"
 									/>
-									<span data-paint="symbol">waiting</span>
+									<span data-paint="symbol" />
 								</div>
 
 								{compact ? null : (
 									<div className="mt-1.5">
-										<KernelTrace />
+										<KernelTrace metric={headline} />
 									</div>
 								)}
 							</button>

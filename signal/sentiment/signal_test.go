@@ -89,7 +89,7 @@ func TestMeasure(t *testing.T) {
 				ShouldNotBeNil)
 			So(*leader.Sample(types.MetricBreadth, types.SideNone).Normalized,
 				ShouldEqual, -1.0/3.0)
-			So(leader.Sample(types.MetricSNR, types.SideNone).Raw,
+			So(leader.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
 				ShouldEqual, 1.0)
 			So(leader.Metrics, ShouldHaveLength, 11)
 		})
@@ -118,7 +118,7 @@ func TestMeasure(t *testing.T) {
 			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Sample(types.MetricChange, types.SideNone).Normalized,
 				ShouldBeNil)
-			So(measurements[0].Sample(types.MetricSNR, types.SideNone).Raw,
+			So(measurements[0].Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
 				ShouldEqual, 0.0)
 		})
 	})

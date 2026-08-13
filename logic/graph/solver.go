@@ -430,6 +430,20 @@ func (solver *Solver) extractCategoryNodes(
 
 		nodeID := fmt.Sprintf("cat:%s:%s", symbol.Symbol, string(cat.Type))
 
+		metadata := map[string]any{
+			"type":       string(cat.Type),
+			"supporting": cat.Supporting,
+			"opposing":   cat.Opposing,
+		}
+
+		if cat.Surprisal > 0 {
+			metadata["surprisal"] = cat.Surprisal
+		}
+
+		if cat.Maturity > 0 {
+			metadata["maturity"] = cat.Maturity
+		}
+
 		graph.AddNode(&Node{
 			ID:         nodeID,
 			Symbol:     symbol.Symbol,
@@ -439,13 +453,7 @@ func (solver *Solver) extractCategoryNodes(
 			Confidence: cat.Confidence,
 			Maturity:   cat.Maturity,
 			At:         graph.At,
-			Metadata: map[string]any{
-				"type":       string(cat.Type),
-				"surprisal":  cat.Surprisal,
-				"maturity":   cat.Maturity,
-				"supporting": cat.Supporting,
-				"opposing":   cat.Opposing,
-			},
+			Metadata:   metadata,
 		})
 	}
 }

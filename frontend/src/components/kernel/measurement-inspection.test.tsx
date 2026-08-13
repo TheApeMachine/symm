@@ -32,8 +32,6 @@ describe("MeasurementInspection", () => {
 					unit: "dimensionless",
 				},
 			},
-			validity: { state: "valid", readiness: "observation" },
-			scale: { kind: "", from: "", through: "" },
 		} satisfies Measurement;
 
 		const markup = renderToStaticMarkup(

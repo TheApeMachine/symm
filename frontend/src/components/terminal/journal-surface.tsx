@@ -1,4 +1,5 @@
 import { Component } from "#/components/ui/component";
+import { JOURNAL } from "#/providers/ws-stores";
 import { Panel } from "@/components/ui/panel";
 import { Section } from "@/components/ui/section";
 
@@ -13,16 +14,16 @@ that no part of the backend sends, which is why all three columns sat on
 "waiting for frames" for the whole run. What it cannot show, it no longer
 claims to be waiting for.
 
-Every column is one Component over the same key, so a lot appears in the rail
-and in the journal on the same frame rather than on two different ones.
+The lifecycle rail reads current positions. The journal reads the bounded,
+run-local terminal-position history derived from those same backend frames.
 */
 const LIFECYCLE_TONE =
-	"INITIALIZING:text-(--info) OPEN:text-(--up) CLOSED:text-(--f4) ERROR:text-(--down)";
+	"initializing:text-(--info) pending:text-(--warning) new:text-(--info) open:text-(--up) partial:text-(--warning) partial_filled:text-(--warning) filled:text-(--up) error:text-(--down)";
 
 export const JournalSurface = () => (
 	<div className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(280px,320px)_minmax(420px,1fr)]">
 		<div className="min-h-0 overflow-auto border-(--line) border-r p-3.5">
-			<Component registerKey="positions">
+			<Component registerKey="positions" repeat>
 				{({ ref, slots }) => (
 					<div ref={ref}>
 						<Section>
@@ -68,7 +69,7 @@ export const JournalSurface = () => (
 		</div>
 
 		<div className="min-h-0 overflow-auto px-4 py-4.5">
-			<Component registerKey="positions">
+			<Component registerKey={JOURNAL} repeat>
 				{({ ref, slots }) => (
 					<div ref={ref}>
 						<Section.Header
@@ -139,10 +140,10 @@ export const JournalSurface = () => (
 												/>
 											</span>
 											<span className="text-right">
-												mark{" "}
+												exit{" "}
 												<b
 													className="font-normal text-(--f3)"
-													data-paint="holding.mark"
+													data-paint="holding.exit_price"
 													data-paint-format=".6f"
 												/>
 											</span>
@@ -164,7 +165,7 @@ export const JournalSurface = () => (
 												%
 											</span>
 											<span>
-												fees{" "}
+												entry fee{" "}
 												<b
 													className="font-normal text-(--f3)"
 													data-paint="holding.entry_fee"
@@ -172,10 +173,11 @@ export const JournalSurface = () => (
 												/>
 											</span>
 											<span className="text-right">
-												stop{" "}
+												exit fee{" "}
 												<b
 													className="font-normal text-(--f3)"
-													data-paint="holding.stoploss.status"
+													data-paint="holding.exit_fee"
+													data-paint-format=".4f"
 												/>
 											</span>
 										</div>

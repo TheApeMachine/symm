@@ -32,7 +32,7 @@ const inspectPosition = (event: MouseEvent<HTMLButtonElement>): void => {
 	terminalStore.actions.openThesis(symbol);
 };
 export const Positions = () => (
-	<Component registerKey="positions">
+	<Component registerKey="positions" repeat>
 		{({ ref, className, slots }) => (
 			<List ref={ref} className={cn("min-h-0 flex-1 p-1.5", className)}>
 				{slots.map((slot) => (
@@ -69,12 +69,12 @@ export const Positions = () => (
 									*/}
 									<Typography.Span
 										data-paint="holding.status"
-										data-paint-class="OPEN:text-(--up) INITIALIZING:text-(--info) CLOSED:text-(--f4)"
+										data-paint-class="open:text-(--up) filled:text-(--up) partial_filled:text-(--warning) pending:text-(--warning) initializing:text-(--info)"
 										className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide"
 									/>
 									<Typography.Span
 										data-paint="holding.stoploss.status"
-										data-paint-class="INITIALIZING:text-(--info) ARMED:text-(--up) TRIGGERED:text-(--down)"
+										data-paint-class="initializing:text-(--info) armed:text-(--up) triggered:text-(--down)"
 										className="text-[8px] uppercase text-(--f4)"
 									/>
 								</Flex.Row>

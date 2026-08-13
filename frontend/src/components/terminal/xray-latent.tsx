@@ -1,4 +1,5 @@
 import { createRef } from "react";
+import { createStore } from "@tanstack/store";
 import { appStore } from "#/collections/app";
 import type { ResonanceFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
@@ -19,12 +20,12 @@ import {
 } from "#/components/terminal/xray-view";
 
 const latentCanvasRef = createRef<HTMLCanvasElement>();
-const latentPointBySymbol = new Map<string, LatentPoint>();
+const latentPointsStore = createStore<LatentPoint[]>([]);
 let latentFingerprint = "";
 let latentGeometry = "";
 
 const retainedLatentPoints = (): LatentPoint[] =>
-	[...latentPointBySymbol.values()].sort((left, right) =>
+	[...latentPointsStore.state].sort((left, right) =>
 		left.symbol.localeCompare(right.symbol),
 	);
 
@@ -35,9 +36,8 @@ const latentSignature = (points: LatentPoint[], focusSymbol: string): string =>
 	`${focusSymbol}::${points.map(latentKey).join(";")}`;
 
 /*
-paintXrayLatent draws retained resonance latent carriers into latentCanvasRef.
-Sparse updates must not reshuffle the cloud or clear the canvas unless the
-visible point set or canvas geometry actually changed.
+paintXrayLatent draws the resonance store's complete bounded carrier snapshot.
+It retains only projected canvas geometry, not another copy of backend rows.
 */
 export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 	const canvas = latentCanvasRef.current;
@@ -55,12 +55,7 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ResonanceFrame[];
-	const points = latentPointsFromFrames(frames);
-
-	for (const point of points) {
-		latentPointBySymbol.set(point.symbol, point);
-	}
-
+	latentPointsStore.setState(() => latentPointsFromFrames(frames));
 	const pointsToDraw = retainedLatentPoints();
 	const width = canvas.clientWidth;
 	const height = canvas.clientHeight;

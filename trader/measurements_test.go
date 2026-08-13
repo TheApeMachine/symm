@@ -26,7 +26,7 @@ func (signal *measurementSignal) Type() types.SourceType {
 	return signal.source
 }
 
-func (signal *measurementSignal) Measure(*types.Symbol) []*types.Measurement {
+func (signal *measurementSignal) Measure(*types.Symbol, ...int64) []*types.Measurement {
 	signal.calls.Add(1)
 
 	if signal.measurement == nil {
@@ -84,6 +84,7 @@ func TestMeasurementsUpdate(t *testing.T) {
 			So(ready, ShouldBeFalse)
 			expected := map[types.SourceType]int64{
 				types.SourceCorrelation: 1,
+				types.SourceCVD:         1,
 				types.SourceLeadLag:     1,
 				types.SourceLiquidity:   1,
 				types.SourcePumpDump:    1,
@@ -120,7 +121,6 @@ func TestMeasurementsUpdate(t *testing.T) {
 			expected := map[types.SourceType]int64{
 				types.SourceDepthFlow:  1,
 				types.SourceExhaustion: 1,
-				types.SourceToxicity:   1,
 			}
 
 			for source, signal := range signals {

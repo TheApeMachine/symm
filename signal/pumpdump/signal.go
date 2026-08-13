@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"context"
-	"sync"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -25,7 +24,7 @@ type Signal struct {
 	api    *websocket.API
 	ui     chan []byte
 	algo   *equation.Ignition
-	quotes *sync.Map
+	quotes *types.QuoteHistory
 }
 
 /*
@@ -37,6 +36,24 @@ func NewSignal(
 	api *websocket.API,
 	ui chan []byte,
 ) *Signal {
+	return NewSignalWithQuotes(
+		ctx,
+		api,
+		ui,
+		types.NewQuoteHistory(system.Cfg.PumpDump.Capacity),
+	)
+}
+
+/*
+NewSignalWithQuotes creates ignition state sharing the owning tape shard's
+causal quote history.
+*/
+func NewSignalWithQuotes(
+	ctx context.Context,
+	api *websocket.API,
+	ui chan []byte,
+	quotes *types.QuoteHistory,
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -47,7 +64,7 @@ func NewSignal(
 		algo: equation.NewIgnition(
 			system.Cfg.PumpDump.Capacity,
 		),
-		quotes: &sync.Map{},
+		quotes: quotes,
 	}
 
 	return signal
@@ -67,7 +84,7 @@ func (signal *Signal) Type() types.SourceType {
 /*
 Measure produces the Measurements for the pumpdump signal.
 */
-func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
+func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 	signal.ingestQuotes(symbol)
 
@@ -234,21 +251,21 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 			},
 		}
 
-		snr, snrReady := types.MeasurementSignalNoiseRatio(
+		separation, separationReady := types.MeasurementHypothesisSeparation(
 			types.SourcePumpDump,
 			measurement.Metrics,
 		)
 
 		snrSample := types.MetricSample{
-			Raw:  snr,
+			Raw:  separation,
 			Unit: types.UnitDimensionless,
 		}
 
-		if snrReady {
-			snrSample.Normalized = &snr
+		if separationReady {
+			snrSample.Normalized = &separation
 		}
 
-		measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
+		measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
 		measurements = append(measurements, measurement)
 	}
 
@@ -256,21 +273,8 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 }
 
 func (signal *Signal) ingestQuotes(symbol *types.Symbol) {
-	if signal.quotes == nil {
-		signal.quotes = &sync.Map{}
-	}
-
 	for ticker := range symbol.MarketTickers(types.SourcePumpDump) {
-		if ticker.Symbol == "" || ticker.Bid == nil || ticker.Ask == nil ||
-			ticker.Timestamp.IsZero() {
-			continue
-		}
-
-		if ticker.Bid.Float64() <= 0 || ticker.Ask.Float64() <= ticker.Bid.Float64() {
-			continue
-		}
-
-		signal.quotes.Store(ticker.Symbol, ticker)
+		signal.quotes.Observe(ticker)
 	}
 }
 
@@ -279,15 +283,9 @@ func (signal *Signal) quote(trade kraken.TradeData) (float64, float64, bool) {
 		return 0, 0, false
 	}
 
-	stored, found := signal.quotes.Load(trade.Symbol)
+	ticker, found := signal.quotes.At(trade.Symbol, trade.Timestamp)
 
 	if !found {
-		return 0, 0, false
-	}
-
-	ticker := stored.(kraken.TickerData)
-
-	if ticker.Timestamp.After(trade.Timestamp) {
 		return 0, 0, false
 	}
 

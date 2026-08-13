@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -56,29 +57,31 @@ Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
 and Sub* resubscribe after the SDK reconnects.
 */
 type Live struct {
-	status      types.Status
-	statusMu    sync.RWMutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	client      *spot.WebSocket
-	quote       string
-	simulator   *Simulator
-	normalizer  *spot.Normalizer
-	level3      *sync.Map
-	book        *Book
-	bookUpdates chan string
-	symbols     []string
-	publicMu    sync.RWMutex
-	public      map[string][][]string
-	auth        bool
-	nonce       *AuthNonce
-	nonceErr    error
-	subscribers *sync.Map
-	callbacks   *sync.Map
-	priceIncr   sync.Map
-	resyncing   sync.Map
-	paper       *Paper
-	model       string
+	status       types.Status
+	statusMu     sync.RWMutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	client       *spot.WebSocket
+	quote        string
+	simulator    *Simulator
+	normalizer   *spot.Normalizer
+	level3       *sync.Map
+	book         *Book
+	bookUpdates  chan string
+	level3Events chan kraken.Level3Data
+	level3Active atomic.Bool
+	symbols      []string
+	publicMu     sync.RWMutex
+	public       map[string][][]string
+	auth         bool
+	nonce        *AuthNonce
+	nonceErr     error
+	subscribers  *sync.Map
+	callbacks    *sync.Map
+	priceIncr    sync.Map
+	resyncing    sync.Map
+	paper        *Paper
+	model        string
 
 	// Level3Client supplies the websocket client for the child connections
 	// SubL3 opens. When nil the child dials the real Level3 endpoint; tests
@@ -145,20 +148,21 @@ func NewWithClient(
 	viper.SetDefault("market.quote_currency", "USD")
 
 	live := &Live{
-		ctx:         ctx,
-		cancel:      cancel,
-		status:      types.INITIALIZING,
-		simulator:   simulator,
-		client:      client,
-		normalizer:  spot.NewNormalizer(),
-		auth:        auth,
-		subscribers: &sync.Map{},
-		callbacks:   &sync.Map{},
-		public:      make(map[string][][]string),
-		bookUpdates: make(chan string, max(viper.GetInt("system.actor.buffer"), 1)),
-		paper:       NewPaper(ctx, NewSimulator()),
-		model:       viper.GetViper().GetString("trading.model"),
-		quote:       viper.GetViper().GetString("market.quote_currency"),
+		ctx:          ctx,
+		cancel:       cancel,
+		status:       types.INITIALIZING,
+		simulator:    simulator,
+		client:       client,
+		normalizer:   spot.NewNormalizer(),
+		auth:         auth,
+		subscribers:  &sync.Map{},
+		callbacks:    &sync.Map{},
+		public:       make(map[string][][]string),
+		bookUpdates:  make(chan string, max(viper.GetInt("system.actor.buffer"), 1)),
+		level3Events: make(chan kraken.Level3Data, max(viper.GetInt("system.websocket.channel.buffer"), 1)),
+		paper:        NewPaper(ctx, NewSimulator()),
+		model:        viper.GetViper().GetString("trading.model"),
+		quote:        viper.GetViper().GetString("market.quote_currency"),
 	}
 
 	if err := live.normalizer.Use(live.client.REST); err != nil {
@@ -561,6 +565,10 @@ func (live *Live) SubL3(symbols []string) {
 		conn.symbols = append([]string{}, groups...)
 		conn.book.SetUpdates(live.bookUpdates)
 
+		if live.level3Active.Load() {
+			conn.book.SetEvents(live.level3Events)
+		}
+
 		for group := range slices.Chunk(groups, 40) {
 			if conn.book != nil {
 				for _, symbol := range group {
@@ -625,6 +633,25 @@ snapshot pending.
 */
 func (live *Live) BookUpdates() <-chan string {
 	return live.bookUpdates
+}
+
+/*
+Level3Events emits immutable accepted order-identity frames after checksum
+validation and authoritative book application.
+*/
+func (live *Live) Level3Events() <-chan kraken.Level3Data {
+	live.level3Active.Store(true)
+	live.level3.Range(func(_, value any) bool {
+		connection, ok := value.(*Live)
+
+		if ok && connection != nil && connection.book != nil {
+			connection.book.SetEvents(live.level3Events)
+		}
+
+		return true
+	})
+
+	return live.level3Events
 }
 
 func (live *Live) Balance() (map[string]*decimal.Decimal, error) {

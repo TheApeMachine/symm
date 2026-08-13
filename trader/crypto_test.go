@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
+	configsystem "github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -82,7 +84,7 @@ func TestIntegration(t *testing.T) {
 					t.Context(), thesis,
 				)
 				stopSnapshots, snapshots := collectIntegrationSnapshots(
-					t.Context(), thesis, "SIM1/USD",
+					t.Context(), thesis, market, "SIM1/USD",
 				)
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
 				stopCollector()
@@ -215,6 +217,42 @@ func TestRoundTrip(t *testing.T) {
 				entry := findDecision(
 					decisionResult.decisions, "SIM1/USD", types.ActionEnter,
 				)
+				symbolState := system.Thesis.Symbol("SIM1/USD")
+				latestSources := make([]types.SourceType, 0)
+				symbolState.Latest.Range(func(_, value any) bool {
+					latestSources = append(latestSources, value.(*types.Measurement).Source)
+					return true
+				})
+				categories, _ := symbolState.Categories.Load("SIM1/USD")
+				graphValue, _ := symbolState.Graphs.Load("market_graph")
+				graphState, _ := graphValue.(*logicgraph.Graph)
+				causalValue, _ := symbolState.Causal.Load("SIM1/USD")
+				simDecisions := make([]types.Decision, 0)
+				maxConfidence := 0.0
+				latestReason := ""
+
+				for _, decision := range decisionResult.decisions {
+					if decision.Symbol == "SIM1/USD" {
+						simDecisions = append(simDecisions, decision)
+						maxConfidence = max(maxConfidence, decision.Confidence)
+						latestReason = decision.Reason
+					}
+				}
+				var forecast []learning.RLSOutput
+				var skill float64
+				var skillReady bool
+
+				if rawCoder, found := symbolState.Resonance.Load("SIM1/USD"); found {
+					coder := rawCoder.(*learning.ResonanceManifold)
+					forecast, _ = coder.RolloutTaskForecast(1)
+					skill, skillReady = coder.TaskSkill()
+				}
+
+				t.Logf("round trip precursor: tick=%d sources=%v categories=%#v forecast=%#v skill=%g/%t causal=%#v graph=%T ready=%t nodes=%d edges=%d graphForecast=%#v graphSkill=%g/%t decisions=%d maxConfidence=%g latestReason=%q",
+					system.Thesis.Tick, latestSources, categories, forecast, skill, skillReady, causalValue,
+					graphValue,
+					graphState != nil && graphState.ReadyForSearch(configsystem.Cfg.Planner.MinimumSkill), len(graphState.Nodes), len(graphState.Edges), graphState.Forecast, graphState.TaskSkill, graphState.TaskSkillReady,
+					len(simDecisions), maxConfidence, latestReason)
 
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 
@@ -497,6 +535,7 @@ type integrationSnapshotCollection struct {
 func collectIntegrationSnapshots(
 	parent context.Context,
 	thesis *types.Thesis,
+	market *tests.Market,
 	symbol string,
 ) (context.CancelFunc, <-chan integrationSnapshotCollection) {
 	ctx, cancel := context.WithCancel(parent)
@@ -510,13 +549,28 @@ func collectIntegrationSnapshots(
 		}
 
 		for {
-			updateIntegrationSnapshot(&collection.snapshot, thesis, symbol)
+			updateIntegrationSnapshot(&collection.snapshot, thesis, market, symbol)
 
 			select {
 			case <-ctx.Done():
 				if !integrationSnapshotReady(collection.snapshot) {
+					missing := make([]types.SourceType, 0)
+
+					for _, source := range signalSources() {
+						if collection.snapshot.measurements[source] == nil {
+							missing = append(missing, source)
+						}
+					}
+
 					collection.err = fmt.Errorf(
-						"integration: no complete snapshot captured for %s", symbol,
+						"integration: incomplete snapshot for %s: tickers=%d trades=%d measurements=%d missing=%v categories=%d resonances=%d",
+						symbol,
+						len(collection.snapshot.tickers),
+						len(collection.snapshot.trades),
+						len(collection.snapshot.measurements),
+						missing,
+						len(collection.snapshot.categories),
+						len(collection.snapshot.resonances),
 					)
 				}
 
@@ -534,10 +588,10 @@ func collectIntegrationSnapshots(
 func updateIntegrationSnapshot(
 	snapshot *integrationSnapshot,
 	thesis *types.Thesis,
+	market *tests.Market,
 	symbol string,
 ) {
-	tickers := symbolTickers(thesis, symbol)
-	trades := symbolTrades(thesis, symbol)
+	tickers, trades := marketHistory(market, symbol)
 
 	for _, ticker := range tickers {
 		if len(snapshot.tickers) > 0 && !ticker.Timestamp.After(
@@ -731,38 +785,30 @@ func findDecision(
 	return nil
 }
 
-func symbolTickers(thesis *types.Thesis, symbol string) []kraken.TickerData {
-	stored, found := thesis.Symbols.Load(symbol)
+func marketHistory(
+	market *tests.Market,
+	symbol string,
+) ([]kraken.TickerData, []kraken.TradeData) {
+	samples := market.Samples(symbol)
+	tickers := make([]kraken.TickerData, 0, len(samples))
+	trades := make([]kraken.TradeData, 0, len(samples))
 
-	if !found {
-		return nil
+	for index, sample := range samples {
+		tickers = append(tickers, kraken.TickerData{
+			Symbol: sample.Symbol,
+			Bid:    decimal.NewFromFloat64(sample.Bid), BidQty: sample.BidQty,
+			Ask: decimal.NewFromFloat64(sample.Ask), AskQty: sample.AskQty,
+			Last: decimal.NewFromFloat64(sample.Last), Volume: sample.Volume,
+			Vwap: sample.VWAP, Timestamp: sample.Timestamp,
+		})
+		trades = append(trades, kraken.TradeData{
+			Symbol: sample.Symbol, Side: sample.AggressorSide,
+			Price: *decimal.NewFromFloat64(sample.Last), Qty: sample.StepVolume,
+			TradeID: int64(index + 1), Timestamp: sample.Timestamp,
+		})
 	}
 
-	symbolState := stored.(*types.Symbol)
-	var tickers []kraken.TickerData
-
-	for ticker := range symbolState.MarketTickers(types.SourceLiquidity) {
-		tickers = append(tickers, ticker)
-	}
-
-	return tickers
-}
-
-func symbolTrades(thesis *types.Thesis, symbol string) []kraken.TradeData {
-	stored, found := thesis.Symbols.Load(symbol)
-
-	if !found {
-		return nil
-	}
-
-	symbolState := stored.(*types.Symbol)
-	var trades []kraken.TradeData
-
-	for trade := range symbolState.MarketTrades(types.SourcePumpDump) {
-		trades = append(trades, trade)
-	}
-
-	return trades
+	return tickers, trades
 }
 
 func signalSources() []types.SourceType {
@@ -793,15 +839,23 @@ func latestMeasurement(
 
 	var latest *types.Measurement
 
-	for measurement := range stored.(*types.Symbol).MarketMeasurements("graph") {
+	stored.(*types.Symbol).Latest.Range(func(_, value any) bool {
+		measurement, ok := value.(*types.Measurement)
+
+		if !ok {
+			return true
+		}
+
 		if measurement == nil || measurement.Source != source || measurement.Symbol != symbol {
-			continue
+			return true
 		}
 
 		if latest == nil || measurement.At.After(latest.At) {
 			latest = measurement
 		}
-	}
+
+		return true
+	})
 
 	return latest
 }

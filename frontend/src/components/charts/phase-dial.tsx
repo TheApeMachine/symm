@@ -1,4 +1,5 @@
 import { createRef, useEffect } from "react";
+import { createStore } from "@tanstack/store";
 import {
 	clearCanvas,
 	resizeCanvas,
@@ -26,11 +27,11 @@ type PhaseDialState = {
 	status: TerminalPhaseStatus;
 };
 
-let phaseDialState: PhaseDialState = {
+const phaseDialStore = createStore<PhaseDialState>({
 	wave: [],
 	scan: [],
 	status: { ready: false, reason: "" },
-};
+});
 
 /*
 Sectors are coloured by what price actually did over the outcome horizon, not by
@@ -311,7 +312,7 @@ const repaint = () => {
 		context,
 		canvas.clientWidth,
 		canvas.clientHeight,
-		phaseDialState,
+		phaseDialStore.state,
 	);
 };
 
@@ -320,7 +321,7 @@ paintPhaseDial retains the latest scan so a resize or a remount repaints the sam
 cut instead of blanking until the next manifold batch.
 */
 export const paintPhaseDial = (state: PhaseDialState) => {
-	phaseDialState = state;
+	phaseDialStore.setState(() => state);
 	repaint();
 };
 

@@ -23,6 +23,8 @@ vi.mock("#/collections/app", () => ({
 import {
 	attach,
 	getLastFrame,
+	JOURNAL,
+	JOURNAL_ENTRY_LIMIT,
 	paintRegistered,
 	registerPainter,
 	RESONANCE_FOCUS,
@@ -93,7 +95,7 @@ describe("ws-stores", () => {
 
 		expect(paint).toHaveBeenNthCalledWith(1, [cvd]);
 		expect(paint).toHaveBeenNthCalledWith(2, [correlation]);
-		expect(getLastFrame("measurements")).toEqual([cvd, correlation]);
+		expect(getLastFrame("measurements")).toEqual([correlation, cvd]);
 
 		unregister();
 	});
@@ -218,21 +220,26 @@ describe("ws-stores", () => {
 		unregisterFocus();
 	});
 
-	it("paints no focused carrier until the focused symbol settles", () => {
+	it("retains the focused carrier across a sparse batch that omits it", () => {
 		const worker = new MockWorker();
 		const focusPaint = vi.fn();
 		const unregisterFocus = registerPainter(RESONANCE_FOCUS, focusPaint);
+		const focused = {
+			symbol: "BTC/USD",
+			embedding: [0.11, -0.12],
+		};
 		const rows = [
 			{ symbol: "AVAX/USD", embedding: [0.07, 0.08] },
 			{ symbol: "SOL/USD", embedding: [0.02, 0.05] },
 		];
 
 		attach(worker as unknown as Worker);
+		worker.emit({ type: "DRAW", frame: { resonance: focused } });
 		worker.emit({ type: "DRAW", frame: { resonance: rows } });
 
 		animationFrame?.(0);
 
-		expect(focusPaint).not.toHaveBeenCalled();
+		expect(focusPaint).toHaveBeenLastCalledWith(focused);
 
 		unregisterFocus();
 	});
@@ -260,8 +267,10 @@ describe("ws-stores", () => {
 		const worker = new MockWorker();
 		const positionsPaint = vi.fn();
 		const unregisterPositions = registerPainter("positions", positionsPaint);
+		const journalPaint = vi.fn();
+		const unregisterJournal = registerPainter(JOURNAL, journalPaint);
 		const position = (id: string, symbol: string, status = "open") => ({
-			id,
+			decision: { id },
 			status,
 			holding: { symbol },
 		});
@@ -305,8 +314,60 @@ describe("ws-stores", () => {
 			position("sol", "SOL/USD"),
 			position("xrp", "XRP/USD"),
 		]);
+		expect(journalPaint).toHaveBeenLastCalledWith([
+			position("eth", "ETH/USD", "closed"),
+		]);
 
 		unregisterPositions();
+		unregisterJournal();
+	});
+
+	it("bounds the terminal journal and rejects incomplete position identity", () => {
+		const worker = new MockWorker();
+		const journalPaint = vi.fn();
+		const unregisterJournal = registerPainter(JOURNAL, journalPaint);
+		const terminal = Array.from(
+			{ length: JOURNAL_ENTRY_LIMIT + 1 },
+			(_, index) => ({
+				decision: { id: `bounded-${index}` },
+				status: "closed",
+				holding: { symbol: `BOUNDED${index}/USD` },
+			}),
+		);
+
+		attach(worker as unknown as Worker);
+		worker.emit({ type: "DRAW", frame: { positions: terminal } });
+		animationFrame?.(0);
+
+		const retained = journalPaint.mock.lastCall?.[0] as Array<{
+			decision: { id: string };
+		}>;
+		expect(retained).toHaveLength(JOURNAL_ENTRY_LIMIT);
+		expect(retained[0]?.decision.id).toBe("bounded-1");
+		expect(retained.at(-1)?.decision.id).toBe(
+			`bounded-${JOURNAL_ENTRY_LIMIT}`,
+		);
+
+		expect(() =>
+			worker.emit({
+				type: "DRAW",
+				frame: {
+					positions: [{ decision: { id: "missing-symbol" }, status: "open" }],
+				},
+			}),
+		).toThrow("position frame requires holding.symbol");
+		expect(() =>
+			worker.emit({
+				type: "DRAW",
+				frame: {
+					positions: [
+						{ decision: {}, status: "closed", holding: { symbol: "BAD/USD" } },
+					],
+				},
+			}),
+		).toThrow("terminal position frame requires decision.id");
+
+		unregisterJournal();
 	});
 
 	it("merges independently published cognition symbols into one map", () => {
@@ -317,29 +378,41 @@ describe("ws-stores", () => {
 		attach(worker as unknown as Worker);
 		worker.emit({
 			type: "DRAW",
-			frame: { cognition: { "BTC/USD": { winnerRegime: "coil" } } },
+			frame: {
+				cognition: {
+					"BTC/USD": { symbol: "BTC/USD", winnerRegime: "coil" },
+				},
+			},
 		});
 		worker.emit({
 			type: "DRAW",
-			frame: { cognition: { "ETH/USD": { winnerRegime: "lift" } } },
+			frame: {
+				cognition: {
+					"ETH/USD": { symbol: "ETH/USD", winnerRegime: "lift" },
+				},
+			},
 		});
 
 		animationFrame?.(0);
 
 		expect(cognitionPaint).toHaveBeenLastCalledWith({
-			"BTC/USD": { winnerRegime: "coil" },
-			"ETH/USD": { winnerRegime: "lift" },
+			"BTC/USD": { symbol: "BTC/USD", winnerRegime: "coil" },
+			"ETH/USD": { symbol: "ETH/USD", winnerRegime: "lift" },
 		});
 
 		worker.emit({
 			type: "DRAW",
-			frame: { cognition: { "BTC/USD": { winnerRegime: "flush" } } },
+			frame: {
+				cognition: {
+					"BTC/USD": { symbol: "BTC/USD", winnerRegime: "flush" },
+				},
+			},
 		});
 		animationFrame?.(0);
 
 		expect(cognitionPaint).toHaveBeenLastCalledWith({
-			"BTC/USD": { winnerRegime: "flush" },
-			"ETH/USD": { winnerRegime: "lift" },
+			"BTC/USD": { symbol: "BTC/USD", winnerRegime: "flush" },
+			"ETH/USD": { symbol: "ETH/USD", winnerRegime: "lift" },
 		});
 
 		unregisterCognition();
@@ -358,26 +431,15 @@ describe("ws-stores", () => {
 
 		animationFrame?.(0);
 
-		expect(resonancePaint).toHaveBeenLastCalledWith([btc, eth]);
+		const retained = resonancePaint.mock.lastCall?.[0] as Array<{
+			symbol: string;
+			confidence?: number;
+		}>;
+		expect(retained).toEqual(expect.arrayContaining([btc, eth]));
+		expect(retained.find((row) => row.symbol === "BTC/USD")).toEqual(btc);
+		expect(retained.find((row) => row.symbol === "ETH/USD")).toEqual(eth);
 
 		unregisterResonance();
 	});
 
-	it("retains readiness independently for every symbol", () => {
-		const worker = new MockWorker();
-		const readinessPaint = vi.fn();
-		const unregisterReadiness = registerPainter("readiness", readinessPaint);
-		const btc = { symbol: "BTC/USD", hawkes: true };
-		const eth = { symbol: "ETH/USD", correlation: true };
-
-		attach(worker as unknown as Worker);
-		worker.emit({ type: "DRAW", frame: { readiness: [btc] } });
-		worker.emit({ type: "DRAW", frame: { readiness: [eth] } });
-
-		animationFrame?.(0);
-
-		expect(readinessPaint).toHaveBeenLastCalledWith([btc, eth]);
-
-		unregisterReadiness();
-	});
 });

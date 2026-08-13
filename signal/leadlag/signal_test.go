@@ -49,9 +49,17 @@ func TestMeasure(t *testing.T) {
 			So(len(measurements), ShouldBeGreaterThan, 0)
 			So(measurements[0].Source, ShouldEqual, types.SourceLeadLag)
 			So(measurements[0].Sample(
-				types.MetricSampleSupport,
+				types.MetricSampleCount,
 				types.SideNone,
-			).Normalized, ShouldNotBeNil)
+			).Normalized, ShouldBeNil)
+			So(measurements[0].Sample(
+				types.MetricSampleCount,
+				types.SideNone,
+			).Raw, ShouldBeGreaterThan, 0)
+			So(measurements[0].Sample(
+				types.MetricSampleCount,
+				types.SideNone,
+			).Unit, ShouldEqual, types.UnitCount)
 			So(measurements[0].Sample(types.MetricStrength, types.SideNone).Unit,
 				ShouldEqual, types.UnitDimensionless)
 		})

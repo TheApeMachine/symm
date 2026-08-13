@@ -17,20 +17,23 @@ It should be kept extremely simple, and lean, and is not an invitation to
 start adding additional complexity beyond what is truly earned.
 */
 type Symbol struct {
-	Symbol       string    `json:"symbol,omitempty"`
-	Status       Status    `json:"status,omitempty"`
-	Tick         int64     `json:"tick,omitempty"`
-	Measurements *sync.Map `json:"-"`
-	tickers      *sync.Map `json:"-"`
-	trades       *sync.Map `json:"-"`
-	Decisions    *sync.Map `json:"decisions,omitempty"`
-	Positions    *sync.Map `json:"positions,omitempty"`
-	Graphs       *sync.Map `json:"graphs,omitempty"`
-	Categories   *sync.Map `json:"categories,omitempty"`
-	Phase        *sync.Map `json:"-"`
-	Cognition    *sync.Map `json:"-"`
-	Resonance    *sync.Map `json:"-"`
-	Causal       *sync.Map `json:"-"`
+	ID           SymbolID                     `json:"id,omitempty"`
+	Symbol       string                       `json:"symbol,omitempty"`
+	Status       Status                       `json:"status,omitempty"`
+	Tick         int64                        `json:"tick,omitempty"`
+	Measurements *sync.Map                    `json:"-"`
+	Latest       *sync.Map                    `json:"-"`
+	tickers      *sync.Map                    `json:"-"`
+	trades       *sync.Map                    `json:"-"`
+	level3       *lf.Queue[kraken.Level3Data] `json:"-"`
+	Decisions    *sync.Map                    `json:"decisions,omitempty"`
+	Positions    *sync.Map                    `json:"positions,omitempty"`
+	Graphs       *sync.Map                    `json:"graphs,omitempty"`
+	Categories   *sync.Map                    `json:"categories,omitempty"`
+	Phase        *sync.Map                    `json:"-"`
+	Cognition    *sync.Map                    `json:"-"`
+	Resonance    *sync.Map                    `json:"-"`
+	Causal       *sync.Map                    `json:"-"`
 }
 
 /*
@@ -42,7 +45,9 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 		Status:       READY,
 		tickers:      &sync.Map{},
 		trades:       &sync.Map{},
+		level3:       lf.NewQueue[kraken.Level3Data](),
 		Measurements: &sync.Map{},
+		Latest:       &sync.Map{},
 		Decisions:    &sync.Map{},
 		Positions:    &sync.Map{},
 		Graphs:       &sync.Map{},
@@ -65,7 +70,18 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 }
 
 func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
-	for _, source := range TickerReceivers {
+	symbol.AppendTickerTo(ticker, TickerReceivers)
+}
+
+/*
+AppendTickerTo routes a ticker only to the signal owners selected by the
+streaming topology.
+*/
+func (symbol *Symbol) AppendTickerTo(
+	ticker kraken.TickerData,
+	receivers []SourceType,
+) {
+	for _, source := range receivers {
 		value, ok := symbol.tickers.Load(source)
 
 		if !ok {
@@ -83,7 +99,18 @@ func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
 }
 
 func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
-	for _, source := range TradeReceivers {
+	symbol.AppendTradeTo(trade, TradeReceivers)
+}
+
+/*
+AppendTradeTo routes a trade only to the signal owners selected by the
+streaming topology.
+*/
+func (symbol *Symbol) AppendTradeTo(
+	trade kraken.TradeData,
+	receivers []SourceType,
+) {
+	for _, source := range receivers {
 		value, ok := symbol.trades.Load(source)
 
 		if !ok {
@@ -100,7 +127,15 @@ func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
 	}
 }
 
+/*
+AppendLevel3 retains one accepted order-identity frame for its symbol owner.
+*/
+func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data) {
+	symbol.level3.Enqueue(level3)
+}
+
 func (symbol *Symbol) AppendMeasurement(_ SourceType, measurement *Measurement) bool {
+	symbol.Latest.Store(measurement.Key(), measurement)
 	categoryMeasurements, _ := symbol.Measurements.LoadOrStore("category", lf.NewQueue[*Measurement]())
 	graphMeasurements, _ := symbol.Measurements.LoadOrStore("graph", lf.NewQueue[*Measurement]())
 	manifoldMeasurements, _ := symbol.Measurements.LoadOrStore("manifold", lf.NewQueue[*Measurement]())
@@ -169,6 +204,25 @@ func (symbol *Symbol) MarketTrades(source SourceType) iter.Seq[kraken.TradeData]
 				if !yield(data) {
 					return
 				}
+			}
+		}
+	}
+}
+
+/*
+MarketLevel3 drains accepted order-identity frames in transport order.
+*/
+func (symbol *Symbol) MarketLevel3() iter.Seq[kraken.Level3Data] {
+	return func(yield func(kraken.Level3Data) bool) {
+		for {
+			data, ok := symbol.level3.Dequeue()
+
+			if !ok {
+				return
+			}
+
+			if !yield(data) {
+				return
 			}
 		}
 	}

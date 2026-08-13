@@ -2,9 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_KERNELS } from "#/collections/app";
 import { KernelList } from "./kernel-list";
+import { sourceHeadlineMetric } from "./kernel-meta";
 
 describe("KernelList", () => {
-	it("binds every full-size kernel trace and value to SNR", () => {
+	it("binds every full-size kernel trace to that source's backend headline", () => {
 		const markup = renderToStaticMarkup(
 			<KernelList sources={DEFAULT_KERNELS} />,
 		);
@@ -13,9 +14,18 @@ describe("KernelList", () => {
 		);
 
 		expect(traceBindings).toHaveLength(DEFAULT_KERNELS.length * 2);
-		expect(new Set(traceBindings)).toEqual(new Set(["metrics.snr.normalized"]));
-		expect(markup.match(/data-paint="metrics\.snr\.raw"/g)).toHaveLength(
-			DEFAULT_KERNELS.length,
+		expect(new Set(traceBindings)).toEqual(
+			new Set(
+				DEFAULT_KERNELS.map(
+					(source) => `${sourceHeadlineMetric(source)}.normalized`,
+				),
+			),
 		);
+
+		for (const source of DEFAULT_KERNELS) {
+			expect(markup).toContain(
+				`data-paint="${sourceHeadlineMetric(source)}.raw"`,
+			);
+		}
 	});
 });

@@ -42,7 +42,6 @@ const Reading = ({
 			tone="f1"
 			data-paint={bind}
 			data-paint-format={format}
-			data-paint-absent="—"
 		/>
 	</Flex.Row>
 );
@@ -68,7 +67,6 @@ const MetricMeter = ({ metric }: { metric: string }) => (
 				tone="f1"
 				data-paint={`metrics.${metric}.raw`}
 				data-paint-format=".4f"
-				data-paint-absent="—"
 			/>
 		</Flex.Row>
 		<div className="h-1.5 overflow-hidden rounded-[3px] bg-(--line)">
@@ -128,7 +126,7 @@ export const SignalDetail = () => {
 						retention would be a lie, so the panel is rebuilt on the source it
 						is reading and every slot starts empty again.
 					*/
-					key={source}
+					key={`${source}:${focusSymbol}`}
 					ref={ref}
 					className={className ?? "min-h-0 overflow-auto px-5 py-4.5"}
 				>

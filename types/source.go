@@ -51,6 +51,7 @@ TickerReceivers names the signals that drain per-symbol ticker queues.
 */
 var TickerReceivers = []SourceType{
 	SourceCorrelation,
+	SourceCVD,
 	SourceLeadLag,
 	SourceLiquidity,
 	SourcePumpDump,
@@ -76,5 +77,11 @@ Level 3 manager applies an order update.
 var BookReceivers = []SourceType{
 	SourceDepthFlow,
 	SourceExhaustion,
+}
+
+/*
+Level3Receivers names the signals that consume accepted order-identity events.
+*/
+var Level3Receivers = []SourceType{
 	SourceToxicity,
 }

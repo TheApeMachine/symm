@@ -3,8 +3,8 @@ package category
 import (
 	"fmt"
 	"iter"
+	"math"
 	"slices"
-	"strconv"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
@@ -110,8 +110,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		symbol.Categories.Delete(symbolName)
-
 		return true
 	})
 
@@ -133,6 +131,7 @@ func (solver *Solver) classify(
 	evidence := make(map[types.CategoryType][]float64, len(solver.categories))
 	supporting := make(map[types.CategoryType][]string, len(solver.categories))
 	maturity := make(map[types.CategoryType]float64, len(solver.categories))
+	maturitySet := make(map[types.CategoryType]bool, len(solver.categories))
 	measured := false
 
 	for measurement := range measurements {
@@ -162,7 +161,13 @@ func (solver *Solver) classify(
 				supporting[schema.Category], string(schema.Source)+":"+metricKey,
 			)
 
-			maturity[schema.Category] = max(
+			if !maturitySet[schema.Category] {
+				maturity[schema.Category] = measurement.Maturity
+				maturitySet[schema.Category] = true
+				continue
+			}
+
+			maturity[schema.Category] = min(
 				maturity[schema.Category], measurement.Maturity,
 			)
 		}
@@ -173,6 +178,7 @@ func (solver *Solver) classify(
 	}
 
 	scores := make([]probability.CategoryScore, 0, len(solver.categories))
+	scoreValues := make([]float64, 0, len(solver.categories))
 	strengths := make(map[types.CategoryType]float64, len(solver.categories))
 	maxStrength := 0.0
 
@@ -194,6 +200,7 @@ func (solver *Solver) classify(
 			Category: string(category),
 			Score:    strength,
 		})
+		scoreValues = append(scoreValues, strength)
 	}
 
 	result, err := solver.classifier.Classify(probability.ClassifierInput{
@@ -216,6 +223,7 @@ func (solver *Solver) classify(
 			Symbol:     symbol,
 			Type:       categoryType,
 			Confidence: result.Confidence,
+			Surprisal:  -math.Log2(result.Confidence),
 		}}, true, nil
 	}
 
@@ -224,6 +232,7 @@ func (solver *Solver) classify(
 		Symbol:     symbol,
 		Type:       categoryType,
 		Confidence: result.Confidence,
+		Surprisal:  -math.Log2(result.Confidence),
 		Strength:   strengths[categoryType],
 		Maturity:   maturity[categoryType],
 		Supporting: supporting[categoryType],
@@ -234,10 +243,20 @@ func (solver *Solver) classify(
 			continue
 		}
 
+		confidence, confidenceErr := probability.CategoryShareConfidence(
+			scoreValues,
+			index+1,
+		)
+
+		if confidenceErr != nil {
+			return nil, false, confidenceErr
+		}
+
 		categories = append(categories, types.Category{
 			Symbol:     symbol,
 			Type:       category,
-			Confidence: result.Distribution[strconv.Itoa(index+1)],
+			Confidence: confidence,
+			Surprisal:  -math.Log2(confidence),
 			Strength:   strengths[category],
 			Maturity:   maturity[category],
 			Supporting: supporting[category],

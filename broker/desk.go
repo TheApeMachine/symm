@@ -49,7 +49,7 @@ EquityObserver consumes each complete broker valuation after it is committed to
 the shared thesis.
 */
 type EquityObserver interface {
-	Update(*types.Thesis) error
+	Update(*types.Thesis, bool) error
 }
 
 /*
@@ -297,7 +297,7 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
-	if err := desk.equityObserver.Update(desk.thesis); err != nil {
+	if err := desk.equityObserver.Update(desk.thesis, desk.OpenPositions() > 0); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"desk: regulator rejected account equity",

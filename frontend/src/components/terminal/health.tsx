@@ -1,4 +1,5 @@
 import type { Measurement } from "#/collections/types";
+import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
 import { Component } from "#/components/ui/component";
 import { Typography } from "#/components/ui/typography";
 import { Badge } from "@/components/ui/badge";
@@ -46,7 +47,10 @@ export const terminalHealthSummary = (
 
 		focusSources.add(measurement.source);
 
-		const value = measurement.normalized ?? measurement.raw;
+		const metric = sourceHeadlineMetric(measurement.source).slice(
+			"metrics.".length,
+		);
+		const value = measurement.metrics?.[metric]?.normalized;
 
 		if (typeof value === "number" && Number.isFinite(value)) {
 			strengths.push(value);

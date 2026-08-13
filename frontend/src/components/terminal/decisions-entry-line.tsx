@@ -3,15 +3,10 @@ import { Component } from "#/components/ui/component";
 import { Panel } from "@/components/ui/panel";
 
 /*
-LiveDecisionsEntryLine states the entry gate the selected candidate is being
-judged against.
-
-The causal batch carries one row per symbol, so the panel pins its row with
-data-scope/data-filter on the candidate the ladder has selected. Every figure is
-painted straight off that row: entry_baseline is the gate, strength is what the
-symbol currently reads against it, and confidence is how much of that reading
-the model will stand behind. Nothing is recomputed here — a browser that derives
-the gate is a browser that can disagree with the engine about it.
+LiveDecisionsEntryLine shows the selected candidate's causal evidence
+classification. These are classifier diagnostics, not the planner's entry
+gate: entry_baseline is the runner-up evidence share, strength is the strongest
+standardized evidence channel, and confidence is the winning evidence share.
 */
 export const LiveDecisionsEntryLine = () => {
 	const scope = useDecisionsScopeSymbol();
@@ -27,15 +22,15 @@ export const LiveDecisionsEntryLine = () => {
 					<Panel className="mb-3.5 px-3 py-2 font-mono">
 						<div className="mb-1.5 flex items-center justify-between gap-3">
 							<span className="text-[10px] font-semibold text-(--f3) uppercase tracking-[0.13em]">
-								causal admission line
+								causal evidence classification
 							</span>
 							<span className="text-[9px] text-(--f4)">
-								classifier evidence, not a price or probability
+								standardized channels and classifier shares
 							</span>
 						</div>
 						<div className="grid grid-cols-3 gap-2 text-[10px]">
 							<div className="rounded-xs border border-(--line) bg-(--surface) px-2 py-1">
-								<div className="text-(--f4)">entry baseline</div>
+								<div className="text-(--f4)">runner-up evidence share</div>
 								<div
 									data-paint="entry_baseline"
 									data-paint-format=".6f"
@@ -43,7 +38,9 @@ export const LiveDecisionsEntryLine = () => {
 								/>
 							</div>
 							<div className="rounded-xs border border-(--line) bg-(--surface) px-2 py-1">
-								<div className="text-(--f4)">evidence score</div>
+								<div className="text-(--f4)">
+									strongest standardized channel
+								</div>
 								<div
 									data-paint="strength"
 									data-paint-format=".6f"
@@ -51,7 +48,7 @@ export const LiveDecisionsEntryLine = () => {
 								/>
 							</div>
 							<div className="rounded-xs border border-(--line) bg-(--surface) px-2 py-1">
-								<div className="text-(--f4)">evidence share</div>
+								<div className="text-(--f4)">winning evidence share</div>
 								<div
 									data-paint="confidence"
 									data-paint-format=".1%"

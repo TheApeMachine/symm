@@ -4,7 +4,7 @@ import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
 
 export const AuditTrail = () => (
-  <Component registerKey="positions">
+  <Component registerKey="positions" repeat>
     {({ ref, className, slots }) => (
       <div ref={ref} className={cn("min-h-0 flex-1", className)}>
         <Typography.Span className="block border-(--line) border-b px-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-(--f3)">

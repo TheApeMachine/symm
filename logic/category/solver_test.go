@@ -1,6 +1,7 @@
 package category
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -44,12 +45,14 @@ func TestUpdate(t *testing.T) {
 		err := solver.Update(thesis)
 
 		Convey("It should classify every symbol from the evidence it actually has", func() {
+			bitcoinCategory := categoryAt(thesis, "BTC/USD")
 			So(err, ShouldBeNil)
-			So(categoryAt(thesis, "BTC/USD"), ShouldResemble, types.Category{
-				At:         categoryAt(thesis, "BTC/USD").At,
+			So(bitcoinCategory, ShouldResemble, types.Category{
+				At:         bitcoinCategory.At,
 				Symbol:     "BTC/USD",
 				Type:       types.VerticalIgnition,
-				Confidence: categoryAt(thesis, "BTC/USD").Confidence,
+				Confidence: bitcoinCategory.Confidence,
+				Surprisal:  -math.Log2(bitcoinCategory.Confidence),
 				Strength:   ignition,
 				Maturity:   0.75,
 				Supporting: []string{"pumpdump:ignition"},
@@ -81,6 +84,7 @@ func TestUpdate(t *testing.T) {
 			So(category.Type, ShouldEqual, types.CategoryTypeNone)
 			So(category.Strength, ShouldEqual, 0)
 			So(category.Confidence, ShouldBeGreaterThan, 0)
+			So(category.Surprisal, ShouldAlmostEqual, -math.Log2(category.Confidence))
 		})
 	})
 
@@ -113,7 +117,52 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(category.Type, ShouldEqual, types.MechanicalCollapse)
 			So(category.Strength, ShouldAlmostEqual, 0.63)
+			So(category.Surprisal, ShouldBeGreaterThan, 0)
 			So(category.Supporting, ShouldHaveLength, 2)
+		})
+	})
+
+	Convey("Given positive evidence for competing categories", t, func() {
+		thesis := categoryThesis(t)
+		ignition := 0.9
+		drive := 0.4
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.AppendMeasurement(types.SourcePumpDump, &types.Measurement{
+			Source: types.SourcePumpDump,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricIgnition, types.SideNone): {
+					Normalized: &ignition,
+				},
+			},
+		})
+		symbol.AppendMeasurement(types.SourceCVD, &types.Measurement{
+			Source: types.SourceCVD,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricDrive, types.SideNone): {
+					Normalized: &drive,
+				},
+			},
+		})
+		thesis.Symbols.Store("BTC/USD", symbol)
+		stampCategorySignals(thesis, "BTC/USD")
+
+		err := NewSolver(nil, nil, nil).Update(thesis)
+
+		Convey("It should derive every surprisal from its reported confidence", func() {
+			stored, found := symbol.Categories.Load("BTC/USD")
+			categories := stored.([]types.Category)
+
+			So(err, ShouldBeNil)
+			So(found, ShouldBeTrue)
+			So(categories, ShouldHaveLength, 2)
+
+			for _, category := range categories {
+				So(category.Surprisal, ShouldAlmostEqual, -math.Log2(category.Confidence))
+			}
+
+			So(categories[0].Confidence, ShouldBeGreaterThan, categories[1].Confidence)
 		})
 	})
 
@@ -151,6 +200,26 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should leave category readiness open", func() {
 			So(err, ShouldBeNil)
+		})
+	})
+
+	Convey("Given a streamed symbol without new evidence in this update", t, func() {
+		thesis := categoryThesis(t)
+		symbol := thesis.Symbol("BTC/USD")
+		retained := []types.Category{{
+			Symbol: "BTC/USD",
+			Type:   types.VerticalIgnition,
+		}}
+		symbol.Categories.Store("BTC/USD", retained)
+
+		err := NewSolver(nil, nil, nil).Update(thesis)
+
+		Convey("It should preserve the last classified artifact", func() {
+			stored, found := symbol.Categories.Load("BTC/USD")
+
+			So(err, ShouldBeNil)
+			So(found, ShouldBeTrue)
+			So(stored, ShouldResemble, retained)
 		})
 	})
 

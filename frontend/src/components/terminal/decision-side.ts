@@ -1,8 +1,12 @@
+import { createStore } from "@tanstack/store";
 import { useSyncExternalStore } from "react";
 
-let decisionsScopeSymbol: string | undefined;
+type DecisionSideState = {
+	pendingFocusSymbol?: string;
+	scopeSymbol?: string;
+};
 
-const listeners = new Set<() => void>();
+const decisionSideStore = createStore<DecisionSideState>({});
 
 /*
 setDecisionsScopeSymbol pins the active candidate for decision-rail paints.
@@ -13,29 +17,26 @@ not just a module variable: subscribers re-render, the attribute changes, and
 the next frame paints the newly selected candidate.
 */
 export const setDecisionsScopeSymbol = (symbol: string | undefined): void => {
-	if (decisionsScopeSymbol === symbol) {
+	if (decisionSideStore.state.scopeSymbol === symbol) {
 		return;
 	}
 
-	decisionsScopeSymbol = symbol;
-
-	for (const listener of listeners) {
-		listener();
-	}
+	decisionSideStore.setState((previous) => ({
+		...previous,
+		scopeSymbol: symbol,
+	}));
 };
 
 /*
 readDecisionsScopeSymbol returns the pinned candidate scope for DRAW paints.
 */
 export const readDecisionsScopeSymbol = (): string | undefined =>
-	decisionsScopeSymbol;
+	decisionSideStore.state.scopeSymbol;
 
-const subscribe = (listener: () => void) => {
-	listeners.add(listener);
+const subscribe = (listener: () => void): (() => void) => {
+	const subscription = decisionSideStore.subscribe(listener);
 
-	return () => {
-		listeners.delete(listener);
-	};
+	return () => subscription.unsubscribe();
 };
 
 /*
@@ -56,10 +57,11 @@ expands and scrolls into view itself the first time its own painted symbol
 matches — then clears it, so later live repaints of the same row don't keep
 forcing it back open after the trader has collapsed or picked a different one.
 */
-let pendingFocusSymbol: string | undefined;
-
 export const setDecisionsPendingFocus = (symbol: string): void => {
-	pendingFocusSymbol = symbol;
+	decisionSideStore.setState((previous) => ({
+		...previous,
+		pendingFocusSymbol: symbol,
+	}));
 };
 
 /*
@@ -67,10 +69,14 @@ consumeDecisionsPendingFocus returns and clears the pending focus symbol if it
 matches, so only the first DecisionChain to observe the match claims it.
 */
 export const consumeDecisionsPendingFocus = (symbol: string): boolean => {
-	if (pendingFocusSymbol === undefined || pendingFocusSymbol !== symbol) {
+	if (decisionSideStore.state.pendingFocusSymbol !== symbol) {
 		return false;
 	}
 
-	pendingFocusSymbol = undefined;
+	decisionSideStore.setState((previous) => ({
+		...previous,
+		pendingFocusSymbol: undefined,
+	}));
+
 	return true;
 };

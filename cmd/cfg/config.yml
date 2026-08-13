@@ -11,6 +11,14 @@ system:
   actor:
     retry_max: 21
     buffer: 2048
+  streaming:
+    # Symbol affinity and SPSC lane bounds for the analytical data plane.
+    # Every value is explicit so overload behavior and CPU ownership are
+    # observable deployment decisions rather than hidden runtime fallbacks.
+    symbol_shards: 4
+    lane_capacity: 4096
+    spin_limit: 64
+    drain_limit: 256
   bus:
     # The thesis broadcast re-asserts itself on this interval while an epoch is
     # unfinished, so a module that missed or coalesced a wake-up is woken again

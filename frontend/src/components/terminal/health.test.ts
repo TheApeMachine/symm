@@ -10,23 +10,18 @@ const reading = (
 	normalized: number | null = null,
 ): Measurement => ({
 	source,
-	metric,
 	symbol,
 	at: "2026-07-06T10:00:00Z",
-	raw,
-	normalized,
 	metrics: {
 		[metric]: { raw, normalized: normalized ?? raw },
 	},
 	uncertainty: null,
-	validity: { state: "valid", readiness: "observation" },
-	scale: { kind: "observation_window", from: "", through: "" },
 });
 
 describe("terminalHealthSummary", () => {
 	it("counts backend measurement frames as firing", () => {
 		const summary = terminalHealthSummary(
-			[reading("depthflow", "BTC/USD", "strength", 0.21)],
+			[reading("depthflow", "BTC/USD", "hypothesis_separation", 0.21)],
 			"BTC/USD",
 			["depthflow", "hawkes"],
 			{ count: 12, completed: true, ns: 45_000_000 },
@@ -42,12 +37,11 @@ describe("terminalHealthSummary", () => {
 	});
 
 	it("honors explicit completed false over tick count", () => {
-		const summary = terminalHealthSummary(
-			[],
-			"BTC/USD",
-			["depthflow"],
-			{ count: 12, completed: false, ns: 12_000_000 },
-		);
+		const summary = terminalHealthSummary([], "BTC/USD", ["depthflow"], {
+			count: 12,
+			completed: false,
+			ns: 12_000_000,
+		});
 
 		expect(summary.completed).toBe(false);
 		expect(summary.label).toBe("Silent");
@@ -65,5 +59,4 @@ describe("terminalHealthSummary", () => {
 		expect(summary.label).toBe("Live · thin focus");
 		expect(summary.completed).toBe(true);
 	});
-
 });

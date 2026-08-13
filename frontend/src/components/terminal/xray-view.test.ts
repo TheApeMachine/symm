@@ -14,21 +14,18 @@ const hawkesMeasurement = (
 	raw: number,
 ): Measurement => ({
 	source: "hawkes",
-	metric,
-	subject: "hawkes_process",
-	stream: "trades",
 	symbol: "BTC/USD",
-	side,
 	at,
 	observedFrom: at,
 	horizon: 0,
-	unit: "dimensionless",
-	raw,
-	normalized: null,
 	maturity: 1,
 	uncertainty: null,
-	validity: { state: "provisional", readiness: "model" },
-	scale: { kind: "observation_window", from: at, through: at },
+	metrics: {
+		[side === "" ? metric : `${metric}:${side}`]: {
+			raw,
+			unit: "dimensionless",
+		},
+	},
 });
 
 describe("xray-view", () => {

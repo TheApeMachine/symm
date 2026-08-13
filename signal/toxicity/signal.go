@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/algorithm/book/quality"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -21,7 +21,6 @@ from Level3 order events corroborated by the public trade tape.
 type Signal struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
-	books       websocket.BookSource
 	ui          chan []byte
 	sample      *quality.Sample
 	bookQuality *equation.BookQuality
@@ -41,7 +40,6 @@ func NewSignal(
 	signal := &Signal{
 		ctx:         ctx,
 		cancel:      cancel,
-		books:       books,
 		ui:          ui,
 		sample:      quality.NewSample(),
 		bookQuality: equation.NewBookQuality(),
@@ -61,11 +59,16 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceToxicity
 }
 
-func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
+func (signal *Signal) Measure(market *types.Symbol, ticks ...int64) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
+	tick := market.Tick
+
+	if len(ticks) > 0 {
+		tick = ticks[0]
+	}
 
 	for trade := range market.MarketTrades(types.SourceToxicity) {
-		input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
+		_, _, _, err := signal.sample.MeasureTrade(flow.TradeInput{
 			Symbol:   trade.Symbol,
 			Price:    trade.Price.Float64(),
 			Quantity: trade.Qty,
@@ -83,199 +86,151 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 			continue
 		}
 
+	}
+
+	for level3 := range market.MarketLevel3() {
+		input, ready, maturity, err := signal.sample.MeasureLevel3(
+			quality.Level3Input{
+				Symbol: level3.Symbol,
+				Bids:   qualityEvents(level3.Bids),
+				Asks:   qualityEvents(level3.Asks),
+			},
+		)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"toxicity: failed to sample Level 3 frame",
+				err,
+			))
+			continue
+		}
+
 		if !ready {
 			continue
 		}
 
-		metrics := map[string]types.MetricSample{
-			types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
-				Raw:  input.CancelBid,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricCancelledQuantity, types.SideSell): {
-				Raw:  input.CancelAsk,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy): {
-				Raw:  input.BidDepth,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): {
-				Raw:  input.AskDepth,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricFillVolume, types.SideBuy): {
-				Raw:  input.FillBid,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricFillVolume, types.SideSell): {
-				Raw:  input.FillAsk,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricTradeVolume, types.SideNone): {
-				Raw:  trade.Qty,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
-				Raw:  input.LastPrice,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricBestPrice, types.SideSell): {
-				Raw:  input.LastPrice,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
-				Raw:  input.BidDepth,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
-				Raw:  input.AskDepth,
-				Unit: types.UnitBaseCurrency,
-			},
-		}
-		normalizeAttribution(metrics, input)
+		output, err := signal.bookQuality.Measure(input)
 
-		measurement := &types.Measurement{
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"toxicity: failed to classify book quality",
+				err,
+			))
+			continue
+		}
+
+		at := level3Time(level3)
+
+		if at.IsZero() {
+			continue
+		}
+
+		measurements = append(measurements, &types.Measurement{
 			ID:       uuid.NewString(),
 			Source:   types.SourceToxicity,
-			Symbol:   trade.Symbol,
-			At:       trade.Timestamp,
+			Symbol:   level3.Symbol,
+			Tick:     tick,
+			At:       at,
 			Maturity: maturity,
-			Metrics:  metrics,
-		}
-
-		measurements = append(measurements, measurement)
+			Metrics:  toxicityMetrics(input, output),
+		})
 	}
 
-	var at time.Time
-	var input equation.BookQualityInput
-	var ready bool
-	var maturity float64
-	var err error
+	return measurements
+}
 
-	signal.books.Book(market.Symbol, func(book *spotbook.Book) {
-		bookInput := flow.BookInput{Symbol: market.Symbol}
+func qualityEvents(orders []kraken.Level3Order) []quality.OrderEvent {
+	events := make([]quality.OrderEvent, 0, len(orders))
 
-		for level := book.Bids.Low; level != nil; level = level.Higher {
-			bookInput.Bids = append(bookInput.Bids, flow.BookLevel{
-				Price:    level.Price.Float64(),
-				Quantity: level.Quantity.Float64(),
-			})
+	for _, order := range orders {
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
+		}
 
-			if level.Timestamp.After(at) {
-				at = level.Timestamp
+		events = append(events, quality.OrderEvent{
+			Event:    order.Event,
+			OrderID:  order.OrderID,
+			Price:    order.LimitPrice.Float64(),
+			Quantity: order.OrderQty.Float64(),
+		})
+	}
+
+	return events
+}
+
+func level3Time(level3 kraken.Level3Data) time.Time {
+	at := level3.Timestamp
+
+	for _, orders := range [][]kraken.Level3Order{level3.Bids, level3.Asks} {
+		for _, order := range orders {
+			if order.Timestamp.After(at) {
+				at = order.Timestamp
 			}
 		}
-
-		for level := book.Asks.Low; level != nil; level = level.Higher {
-			bookInput.Asks = append(bookInput.Asks, flow.BookLevel{
-				Price:    level.Price.Float64(),
-				Quantity: level.Quantity.Float64(),
-			})
-
-			if level.Timestamp.After(at) {
-				at = level.Timestamp
-			}
-		}
-
-		input, ready, maturity, err = signal.sample.MeasureBook(bookInput)
-	})
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"toxicity: failed to sample book",
-			err,
-		))
-
-		return measurements
 	}
 
-	if !ready {
-		return measurements
-	}
+	return at
+}
 
-	if at.IsZero() {
-		return measurements
-	}
-
+func toxicityMetrics(
+	input equation.BookQualityInput,
+	output equation.BookQualityOutput,
+) map[string]types.MetricSample {
 	metrics := map[string]types.MetricSample{
 		types.MetricKey(types.MetricCancelledQuantity, types.SideBuy): {
-			Raw:  input.CancelBid,
-			Unit: types.UnitBaseCurrency,
+			Raw: input.CancelBid, Unit: types.UnitBaseCurrency,
 		},
 		types.MetricKey(types.MetricCancelledQuantity, types.SideSell): {
-			Raw:  input.CancelAsk,
-			Unit: types.UnitBaseCurrency,
-		},
-		types.MetricKey(types.MetricRetreatingQuantity, types.SideBuy): {
-			Raw:  input.BidDepth,
-			Unit: types.UnitBaseCurrency,
-		},
-		types.MetricKey(types.MetricRetreatingQuantity, types.SideSell): {
-			Raw:  input.AskDepth,
-			Unit: types.UnitBaseCurrency,
+			Raw: input.CancelAsk, Unit: types.UnitBaseCurrency,
 		},
 		types.MetricKey(types.MetricFillVolume, types.SideBuy): {
-			Raw:  input.FillBid,
-			Unit: types.UnitBaseCurrency,
+			Raw: input.FillBid, Unit: types.UnitBaseCurrency,
 		},
 		types.MetricKey(types.MetricFillVolume, types.SideSell): {
-			Raw:  input.FillAsk,
-			Unit: types.UnitBaseCurrency,
-		},
-		types.MetricKey(types.MetricTradeVolume, types.SideNone): {
-			Raw:  input.FillBid + input.FillAsk,
-			Unit: types.UnitBaseCurrency,
-		},
-		types.MetricKey(types.MetricBestPrice, types.SideBuy): {
-			Raw:  input.LastPrice,
-			Unit: types.UnitQuoteCurrency,
-		},
-		types.MetricKey(types.MetricBestPrice, types.SideSell): {
-			Raw:  input.LastPrice,
-			Unit: types.UnitQuoteCurrency,
+			Raw: input.FillAsk, Unit: types.UnitBaseCurrency,
 		},
 		types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
-			Raw:  input.BidDepth,
-			Unit: types.UnitBaseCurrency,
+			Raw: input.BidDepth, Unit: types.UnitBaseCurrency,
 		},
 		types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
-			Raw:  input.AskDepth,
-			Unit: types.UnitBaseCurrency,
+			Raw: input.AskDepth, Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricTradeVolume, types.SideNone): {
+			Raw: input.FillBid + input.FillAsk, Unit: types.UnitBaseCurrency,
+		},
+		types.MetricKey(types.MetricMidpoint, types.SideNone): {
+			Raw: output.Price, Unit: types.UnitQuoteCurrency,
 		},
 	}
 	normalizeAttribution(metrics, input)
 
-	snr, ok := types.MeasurementSignalNoiseRatio(types.SourceToxicity, metrics)
-
-	if ok {
-		metrics[types.MetricKey(types.MetricSNR, types.SideNone)] = types.MetricSample{
-			Raw:        snr,
-			Normalized: &snr,
-			Unit:       types.UnitDimensionless,
+	for metric, value := range map[types.MetricType]float64{
+		types.MetricBluffScore:   output.BluffScore,
+		types.MetricVacuumScore:  output.VacuumScore,
+		types.MetricSupportScore: output.SupportScore,
+		types.MetricStrength:     output.Strength,
+		types.MetricValue:        output.Value,
+	} {
+		normalized := value
+		metrics[types.MetricKey(metric, types.SideNone)] = types.MetricSample{
+			Raw: value, Normalized: &normalized, Unit: types.UnitDimensionless,
 		}
 	}
 
-	measurement := &types.Measurement{
-		ID:       uuid.NewString(),
-		Source:   types.SourceToxicity,
-		Symbol:   market.Symbol,
-		At:       at,
-		Maturity: maturity,
-		Metrics:  metrics,
+	metrics[types.MetricKey(types.MetricCategory, types.SideNone)] = types.MetricSample{
+		Raw: output.Category, Unit: types.UnitDimensionless,
 	}
 
-	measurements = append(measurements, measurement)
-
-	return measurements
+	return metrics
 }
 
 /*
 normalizeAttribution expresses the existing cancellation and fill quantities as
 shares of the total accounted order-flow quantity. This preserves every raw
 base-currency value while giving the competing evidence groups a common,
-dimensionless denominator for SNR.
+dimensionless denominator for HypothesisSeparation.
 */
 func normalizeAttribution(
 	metrics map[string]types.MetricSample,
@@ -300,15 +255,15 @@ func normalizeAttribution(
 		metrics[key] = sample
 	}
 
-	snr, ready := types.MeasurementSignalNoiseRatio(types.SourceToxicity, metrics)
+	separation, ready := types.MeasurementHypothesisSeparation(types.SourceToxicity, metrics)
 
 	if !ready {
 		return
 	}
 
-	metrics[types.MetricKey(types.MetricSNR, types.SideNone)] = types.MetricSample{
-		Raw:        snr,
-		Normalized: &snr,
+	metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
+		Raw:        separation,
+		Normalized: &separation,
 		Unit:       types.UnitDimensionless,
 	}
 }

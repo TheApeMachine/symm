@@ -35,7 +35,7 @@ func TestMeasure(t *testing.T) {
 			_ = signal.Measure(market)
 		}
 
-		Convey("It reuses the section group and constructs every symbol measurement", func() {
+		Convey("It reuses the section group and constructs only the event subject", func() {
 			at := start.Add(3 * time.Second)
 			market := types.NewSymbol("AAA/USD", nil)
 			appendCorrelationTickers(market,
@@ -44,12 +44,13 @@ func TestMeasure(t *testing.T) {
 			)
 
 			measurements := signal.Measure(market)
-			So(measurements, ShouldHaveLength, 2)
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].Symbol, ShouldEqual, "AAA/USD")
 
 			for _, measurement := range measurements {
-				snr := measurement.Sample(types.MetricSNR, types.SideNone)
-				So(snr.Normalized, ShouldNotBeNil)
-				So(snr.Raw, ShouldEqual, math.Nextafter(1, 0))
+				separation := measurement.Sample(types.MetricHypothesisSeparation, types.SideNone)
+				So(separation.Normalized, ShouldNotBeNil)
+				So(separation.Raw, ShouldEqual, math.Nextafter(1, 0))
 			}
 		})
 	})
@@ -70,7 +71,7 @@ func TestMeasure(t *testing.T) {
 		measurements := signal.Measure(market)
 
 		Convey("It should consume each symbol history with its own cursor", func() {
-			So(measurements, ShouldHaveLength, 2)
+			So(measurements, ShouldHaveLength, 1)
 			So(signal.Measure(market), ShouldBeEmpty)
 		})
 	})
@@ -93,21 +94,19 @@ func TestMeasure(t *testing.T) {
 			_ = signal.Measure(market)
 		}
 
-		market := types.NewSymbol("AAA/USD", nil)
+		market := types.NewSymbol("BBB/USD", nil)
 		appendCorrelationTickers(market,
 			correlationTicker("BBB/USD", 266.2, start.Add(3*time.Second)),
 		)
 		measurements := signal.Measure(market)
 
-		Convey("It should emit both peer scores from their retained samples", func() {
-			So(measurements, ShouldHaveLength, 2)
-			So(measurements[0].Symbol, ShouldEqual, "AAA/USD")
-			So(measurements[0].At, ShouldResemble, start.Add(2*time.Second))
+		Convey("It should emit only the peer changed by this event", func() {
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].Symbol, ShouldEqual, "BBB/USD")
+			So(measurements[0].At, ShouldResemble, start.Add(3*time.Second))
 			So(measurements[0].Sample(
 				types.MetricLastPrice, types.SideNone,
-			).Raw, ShouldEqual, 121.0)
-			So(measurements[1].Symbol, ShouldEqual, "BBB/USD")
-			So(measurements[1].At, ShouldResemble, start.Add(3*time.Second))
+			).Raw, ShouldEqual, 266.2)
 		})
 	})
 }

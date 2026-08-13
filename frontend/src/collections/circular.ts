@@ -28,9 +28,7 @@ export const Circular = <T>(positions: number): CircularBuffer<T> => {
 		}
 	};
 
-	const array = (): unknown[] => {
-		return buffer
-	};
+	const array = (): unknown[] => values();
 
 	const replaceTail = (value: T) => {
 		if (positions <= 0) {

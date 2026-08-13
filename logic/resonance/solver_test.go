@@ -122,7 +122,9 @@ func TestUpdate(t *testing.T) {
 
 			var frame struct {
 				Resonance struct {
-					Forecast struct {
+					TaskScale    *float64 `json:"taskScale"`
+					TaskForecast *float64 `json:"taskForecast"`
+					Forecast     struct {
 						ForwardCurve     []float64 `json:"forwardCurve"`
 						SupportedHorizon int       `json:"supportedHorizon"`
 					} `json:"forecast"`
@@ -132,6 +134,9 @@ func TestUpdate(t *testing.T) {
 			So(frame.Resonance.Forecast.ForwardCurve, ShouldHaveLength,
 				frame.Resonance.Forecast.SupportedHorizon)
 			So(frame.Resonance.Forecast.SupportedHorizon, ShouldEqual, 2)
+			So(frame.Resonance.TaskScale, ShouldNotBeNil)
+			So(*frame.Resonance.TaskScale, ShouldBeGreaterThan, 0)
+			So(frame.Resonance.TaskForecast, ShouldNotBeNil)
 
 			reach, found := solver.currentReach.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)

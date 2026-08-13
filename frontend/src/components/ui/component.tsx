@@ -16,11 +16,16 @@ This is useful for performance reasons when the component is rapid-fire
 updated with real-time data, such as a chart or a table. In those cases,
 React's diffing algorithm may introduce unnecessary overhead.
 
+Array payloads do not enter React unless repeat is explicit. Most direct-paint
+surfaces consume sparse arrays through data-scope bindings and must keep their
+static labels mounted; only repeated rows need React to allocate slots.
+
 Usage:
 
 <Component
 	className="metric-grid"
-	registerKey="measurements.signalDetail"
+	registerKey="measurements"
+	repeat
 >
 	{({ ref, className, slots }) => (
 		<div ref={ref} className={className}>
@@ -97,6 +102,7 @@ interface ComponentRenderProps {
 interface ComponentProps {
   className?: string;
   registerKey?: string;
+  repeat?: boolean;
   select?: string;
   children: (props: ComponentRenderProps) => ReactNode;
 }
@@ -500,7 +506,13 @@ const setTargetValue = (
   }
 
   if (target.startsWith("style.--")) {
-    element.style.setProperty(target.slice("style.".length), String(value));
+    const property = target.slice("style.".length);
+    const formatted = String(value);
+
+    if (element.style.getPropertyValue(property) !== formatted) {
+      element.style.setProperty(property, formatted);
+    }
+
     return;
   }
 
@@ -530,7 +542,11 @@ const setTargetValue = (
     return;
   }
 
-  (current as Record<string, unknown>)[property] = value;
+  const targetObject = current as Record<string, unknown>;
+
+  if (targetObject[property] !== value) {
+    targetObject[property] = value;
+  }
 };
 
 const scaleSetValue = (
@@ -1246,7 +1262,9 @@ const updateTargets = (
           target.mode === "paint" &&
           target.dataset.paintAbsent !== undefined
         ) {
-          target.element.textContent = target.dataset.paintAbsent;
+          if (target.element.textContent !== target.dataset.paintAbsent) {
+            target.element.textContent = target.dataset.paintAbsent;
+          }
         }
 
         continue;
@@ -1300,7 +1318,7 @@ const updateTargets = (
 
       if (target.dataset.paintProp) {
         setTargetValue(target.element, target.dataset.paintProp, formatted);
-      } else {
+      } else if (target.element.textContent !== formatted) {
         target.element.textContent = formatted;
       }
 
@@ -1312,6 +1330,7 @@ const updateTargets = (
 export const Component = ({
   className,
   registerKey,
+  repeat = false,
   select,
   children,
 }: ComponentProps) => {
@@ -1390,7 +1409,7 @@ export const Component = ({
         updates = selectedUpdates;
       }
 
-      if (Array.isArray(updates)) {
+      if (repeat && Array.isArray(updates)) {
         setSlots((current) => {
           if (current.length === updates.length) {
             return current;
@@ -1421,7 +1440,7 @@ export const Component = ({
     return () => {
       unregister?.();
     };
-  }, [registerKey, select]);
+  }, [registerKey, repeat, select]);
 
   return children({
     ref,

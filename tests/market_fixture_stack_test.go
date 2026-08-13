@@ -158,7 +158,19 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 
 				So(market.Replay(&prefix), ShouldBeNil)
 				waitForReplayCut(system.Thesis, 50, market.Config.BookApplyTimeout)
-				t.Logf("breakout decision: %#v", replayDecision(system.Thesis, "IDOS/USD"))
+				breakoutSymbol := system.Thesis.Symbol("IDOS/USD")
+				breakoutGraphValue, _ := breakoutSymbol.Graphs.Load("market_graph")
+				breakoutGraph, _ := breakoutGraphValue.(*logicgraph.Graph)
+				breakoutCausal, _ := breakoutSymbol.Causal.Load("IDOS/USD")
+				t.Logf(
+					"breakout decision: %#v causal=%#v graphReady=%t graph=%#v",
+					replayDecision(system.Thesis, "IDOS/USD"),
+					breakoutCausal,
+					breakoutGraph != nil && breakoutGraph.ReadyForSearch(
+						systemconfig.Cfg.Snapshot().Planner.MinimumSkill,
+					),
+					breakoutGraph,
+				)
 				So(market.Replay(reader), ShouldBeNil)
 				position := waitForClosedPosition(
 					system.Thesis.Symbol("IDOS/USD"),

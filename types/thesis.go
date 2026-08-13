@@ -23,6 +23,9 @@ type Thesis struct {
 	equityMu       sync.RWMutex
 	equity         *kraken.TradeBalanceResult
 	equityRevision uint64
+	symbolMu       sync.Mutex
+	symbolIDs      map[string]SymbolID
+	nextSymbolID   SymbolID
 	Status         Status          `json:"status"`
 	Tick           int64           `json:"tick"`
 	At             time.Time       `json:"at"`
@@ -47,6 +50,7 @@ func NewThesis(
 		Status:       READY,
 		CrossSection: NewCrossSection(),
 		Symbols:      &sync.Map{},
+		symbolIDs:    make(map[string]SymbolID),
 		Manifold:     fluid.Reading{},
 	}
 }
@@ -54,13 +58,31 @@ func NewThesis(
 func (thesis *Thesis) Symbol(name string) *Symbol {
 	symbol, ok := thesis.Symbols.Load(name)
 
+	if ok {
+		return symbol.(*Symbol)
+	}
+
+	thesis.symbolMu.Lock()
+	defer thesis.symbolMu.Unlock()
+
+	symbol, ok = thesis.Symbols.Load(name)
+
 	if !ok {
-		symbol = NewSymbol(name, thesis.ui)
+		created := NewSymbol(name, thesis.ui)
+		created.ID = thesis.nextSymbolID
+		thesis.symbolIDs[name] = thesis.nextSymbolID
+		thesis.nextSymbolID++
+		symbol = created
 		thesis.Symbols.Store(name, symbol)
 	}
 
 	return symbol.(*Symbol)
 }
+
+/*
+SymbolID is the append-only numerical identity assigned on first observation.
+*/
+type SymbolID uint32
 
 func (thesis *Thesis) AppendEquity(equity kraken.TradeBalanceResult) error {
 	if equity.Equity == nil || equity.Equity.Sign() <= 0 {

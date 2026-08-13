@@ -10,7 +10,7 @@ export const KernelList = () => {
 	const kernels = useSelector(appStore, (state) => state.kernels);
 
 	return (
-		<Component registerKey="measurements" select="rows">
+		<Component registerKey="measurements">
 			{({ ref, className }) => (
 				<List
 					ref={ref}

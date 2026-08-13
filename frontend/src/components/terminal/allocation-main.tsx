@@ -11,7 +11,7 @@ be on screen, which meant the browser could disagree with the engine about what
 was allocated. It now reports the decision instead of re-deciding it.
 */
 export const AllocationMain = () => (
-	<Component registerKey="strategy" select="decisions">
+	<Component registerKey="strategy" select="decisions" repeat>
 		{({ ref, slots }) => (
 			<div ref={ref} className="min-h-0 overflow-auto px-4.5 py-4">
 				<div className="mb-3 flex items-center gap-3.5 font-mono text-[11px]">

@@ -198,7 +198,7 @@ func TestFrame(t *testing.T) {
 				ShouldEqual, 0.4)
 			So(measurement.Sample(types.MetricCategory, types.SideBuy).Normalized,
 				ShouldBeNil)
-			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
 				ShouldEqual, (0.4-0.2)/0.4)
 
 			for _, sample := range measurement.Metrics {
@@ -222,8 +222,8 @@ func TestFrame(t *testing.T) {
 			1,
 		)[0]
 
-		Convey("It should report zero SNR", func() {
-			So(measurement.Sample(types.MetricSNR, types.SideNone).Raw,
+		Convey("It should report zero HypothesisSeparation", func() {
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
 				ShouldEqual, 0.0)
 		})
 	})

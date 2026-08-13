@@ -97,7 +97,7 @@ func TestSymbolAppendTicker(t *testing.T) {
 			_, found := symbol.tickers.Load(SourcePumpDump)
 			So(found, ShouldBeTrue)
 			_, found = symbol.tickers.Load(SourceCVD)
-			So(found, ShouldBeFalse)
+			So(found, ShouldBeTrue)
 			_, found = symbol.tickers.Load(SourceToxicity)
 			So(found, ShouldBeFalse)
 		})

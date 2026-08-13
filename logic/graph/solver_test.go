@@ -85,7 +85,7 @@ func TestUpdate(t *testing.T) {
 		thesis.At = time.Unix(1, 0).UTC()
 		bitcoin := types.NewSymbol("BTC/USD", nil)
 		drive := 0.8
-		snr := 0.75
+		separation := 0.75
 		bitcoin.AppendMeasurement(types.SourceCVD, &types.Measurement{
 			ID:     "cvd-measurement",
 			Source: types.SourceCVD,
@@ -95,8 +95,8 @@ func TestUpdate(t *testing.T) {
 				types.MetricKey(types.MetricDrive, types.SideNone): {
 					Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricSNR, types.SideNone): {
-					Raw: snr, Normalized: &snr, Unit: types.UnitDimensionless,
+				types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
+					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 				},
 			},
 		})
@@ -124,7 +124,7 @@ func TestUpdate(t *testing.T) {
 			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"cvd-measurement", "cvd:drive"})
-			So(*graph.Edges[0].Quality, ShouldEqual, snr)
+			So(graph.Edges[0].Quality, ShouldBeNil)
 		})
 	})
 
@@ -148,7 +148,7 @@ func TestUpdate(t *testing.T) {
 					types.MetricKey(types.MetricDrive, types.SideNone): {
 						Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
 					},
-					types.MetricKey(types.MetricSNR, types.SideNone): {
+					types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
 						Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
 					},
 				},
@@ -579,7 +579,7 @@ func BenchmarkUpdate(b *testing.B) {
 	for index := range 256 {
 		symbol := "SIM" + strconv.Itoa(index) + "/USD"
 		symbolState := types.NewSymbol(symbol, nil)
-		snr := 0.8
+		separation := 0.8
 		surge := 0.5
 		symbolState.AppendMeasurement(types.SourceSentiment, &types.Measurement{
 			ID:     "sentiment-" + symbol,
@@ -590,8 +590,8 @@ func BenchmarkUpdate(b *testing.B) {
 				types.MetricKey(types.MetricSurgeScore, types.SideNone): {
 					Raw: surge, Normalized: &surge, Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricSNR, types.SideNone): {
-					Raw: snr, Normalized: &snr, Unit: types.UnitDimensionless,
+				types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
+					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 				},
 			},
 		})

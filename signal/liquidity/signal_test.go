@@ -104,9 +104,9 @@ func TestMeasure(t *testing.T) {
 					relativeEvidence*relativeEvidence +
 					reportedEvidence*reportedEvidence) / 3,
 			)
-			expectedSNR := (scarcity - available) / scarcity
-			So(thin.Sample(types.MetricSNR, types.SideNone).Raw,
-				ShouldEqual, expectedSNR)
+			expectedSeparation := (scarcity - available) / scarcity
+			So(thin.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
+				ShouldEqual, expectedSeparation)
 			So(thin.Sample(types.MetricReportedVolumeNotional, types.SideNone).Normalized,
 				ShouldNotBeNil)
 			So(thin.Sample(types.MetricExecutableTouchDepthMedian, types.SideNone).Normalized,

@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -27,6 +28,7 @@ type Stack interface {
 		rather than for a number of ticks picked to make a test come out.
 	*/
 	Holding(symbol string) int
+	Sync(ctx context.Context, at time.Time) error
 	Close() error
 }
 

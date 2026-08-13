@@ -1,4 +1,5 @@
 import { createRef, useEffect } from "react";
+import { createStore } from "@tanstack/store";
 import type { ManifoldFrame } from "#/collections/types";
 import { drawFluidDisplay } from "#/components/charts/fluid-display";
 import { paintPhaseDial } from "#/components/charts/phase-dial";
@@ -16,7 +17,7 @@ import {
 
 const fluidFieldCanvasRef = createRef<HTMLCanvasElement>();
 let fluidFocus = "";
-let lastManifoldBatch: unknown = null;
+const manifoldBatchStore = createStore<unknown>(null);
 
 const drawWaiting = (
 	context: CanvasRenderingContext2D,
@@ -40,7 +41,7 @@ export const paintTerminalFluidChart = (
 	value: unknown,
 	focusSymbol: string,
 ) => {
-	lastManifoldBatch = value;
+	manifoldBatchStore.setState(() => value);
 	paintTerminalFluidCompose(value, focusSymbol);
 };
 
@@ -60,11 +61,11 @@ export const repaintTerminalFluidChart = (focusSymbol: string) => {
 		);
 	}
 
-	if (lastManifoldBatch === null) {
+	if (manifoldBatchStore.state === null) {
 		return;
 	}
 
-	paintTerminalFluidCompose(lastManifoldBatch, focusSymbol);
+	paintTerminalFluidCompose(manifoldBatchStore.state, focusSymbol);
 };
 
 const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {

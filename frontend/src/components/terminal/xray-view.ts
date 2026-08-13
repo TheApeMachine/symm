@@ -69,16 +69,7 @@ const measurementRaw = (
 
 	for (let index = epoch.length - 1; index >= 0; index -= 1) {
 		const measurement = epoch[index];
-
-		if (
-			measurement.metric === metric &&
-			(measurement.side ?? "") === side &&
-			Number.isFinite(measurement.raw)
-		) {
-			return measurement.raw ?? null;
-		}
-
-		const raw = measurement.metrics?.[key];
+		const raw = measurement.metrics?.[key]?.raw;
 
 		if (typeof raw === "number" && Number.isFinite(raw)) {
 			return raw;

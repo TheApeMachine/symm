@@ -2,9 +2,10 @@ package trader
 
 import (
 	"context"
-	"fmt"
+	"sync"
+	"time"
 
-	"github.com/theapemachine/datura"
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -13,27 +14,32 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
 Crypto submits desk work from thesis messages delivered by the Actor cascade.
 */
 type Crypto struct {
+	statusMu      sync.RWMutex
 	status        types.Status
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
-	measurements  *Measurements
+	pipeline      *streamPipeline
 	thesis        *types.Thesis
-	dataPath      string
-	ui            chan []byte
 	recorder      *audit.Recorder
 	desk          *broker.Desk
-	analyzer      *logic.Analyzer
-	planner       *strategy.Planner
 	bookUpdates   <-chan string
+	level3Events  <-chan kraken.Level3Data
 	subscriptions map[string]*types.Subscription[any]
+	sequence      uint64
+	nextTick      int64
+	epochs        map[string]symbolEpoch
+}
+
+type symbolEpoch struct {
+	at   time.Time
+	tick int64
 }
 
 /*
@@ -48,23 +54,20 @@ func NewCrypto(
 	analyzer *logic.Analyzer,
 	planner *strategy.Planner,
 	thesis *types.Thesis,
-) *Crypto {
+) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
 		ctx:          ctx,
 		cancel:       cancel,
-		status:       types.READY,
+		status:       types.INITIALIZING,
 		api:          api,
-		measurements: NewMeasurements(ctx, api, desk.Instrument(), ui),
 		thesis:       thesis,
-		dataPath:     utils.ResolveDataPath(),
-		ui:           ui,
 		recorder:     recorder,
 		desk:         desk,
-		analyzer:     analyzer,
-		planner:      planner,
 		bookUpdates:  api.BookUpdates(),
+		level3Events: api.Level3Events(),
+		epochs:       make(map[string]symbolEpoch),
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
 				"ticker", types.NewSubscription[any](),
@@ -74,13 +77,50 @@ func NewCrypto(
 			),
 		},
 	}
+	pipeline, err := newStreamPipeline(
+		ctx,
+		api,
+		desk.Instrument(),
+		ui,
+		thesis,
+		analyzer,
+		planner,
+		crypto.fail,
+	)
+
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	crypto.pipeline = pipeline
+	crypto.setStatus(types.READY)
 
 	crypto.run()
-	return crypto
+
+	return crypto, nil
 }
 
 func (crypto *Crypto) Status() types.Status {
+	crypto.statusMu.RLock()
+	defer crypto.statusMu.RUnlock()
+
 	return crypto.status
+}
+
+func (crypto *Crypto) setStatus(status types.Status) {
+	crypto.statusMu.Lock()
+	crypto.status = status
+	crypto.statusMu.Unlock()
+}
+
+func (crypto *Crypto) fail(err error) {
+	if err == nil {
+		return
+	}
+
+	crypto.setStatus(types.ERROR)
+	errnie.Error(err)
 }
 
 func (crypto *Crypto) run() {
@@ -95,42 +135,11 @@ func (crypto *Crypto) run() {
 				crypto.onTrade(trade)
 			case symbol := <-crypto.bookUpdates:
 				crypto.onBookUpdate(symbol)
+			case level3 := <-crypto.level3Events:
+				crypto.onLevel3(level3)
 			}
 		}
 	}()
-}
-
-/*
-Update is the main control loop for the signals receiving the triggering data.
-*/
-func (crypto *Crypto) Update(receivers []types.SourceType) error {
-	resonanceReady, err := crypto.measurements.Update(crypto.thesis, receivers)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("crypto: measurements update failed [%s]", err.Error()),
-			err,
-		))
-	}
-
-	if err := crypto.analyzer.Process(crypto.thesis, resonanceReady); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("crypto: analyzer process failed [%s]", err.Error()),
-			err,
-		))
-	}
-
-	if err := crypto.planner.Update(crypto.thesis); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("crypto: planner update failed [%s]", err.Error()),
-			err,
-		))
-	}
-
-	return nil
 }
 
 /*
@@ -151,18 +160,36 @@ func (crypto *Crypto) onBookUpdate(symbol string) {
 		return
 	}
 
-	errnie.Error(crypto.Update(types.BookReceivers))
+	at := time.Time{}
+	crypto.api.Book(symbol, func(managed *book.Book) {
+		if managed == nil {
+			return
+		}
+
+		for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
+			if bid.Timestamp.After(at) {
+				at = bid.Timestamp
+			}
+		}
+
+		for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
+			if ask.Timestamp.After(at) {
+				at = ask.Timestamp
+			}
+		}
+	})
+
+	crypto.sequence++
+	errnie.Error(crypto.pipeline.Dispatch(marketEvent{
+		sequence: crypto.sequence,
+		tick:     crypto.eventTick(symbol),
+		kind:     marketEventBook,
+		symbol:   crypto.thesis.Symbol(symbol),
+		at:       at,
+	}))
 }
 
 func (crypto *Crypto) onTicker(data any) {
-	crypto.thesis.Tick++
-
-	utils.Publish(crypto.ui, datura.NewMap(
-		"tick", datura.NewMap(
-			"count", crypto.thesis.Tick,
-		),
-	))
-
 	typedTickers, ok := data.(*kraken.Ticker)
 
 	if !ok {
@@ -176,15 +203,21 @@ func (crypto *Crypto) onTicker(data any) {
 	}
 
 	for _, ticker := range typedTickers.Data {
-		if ticker.Timestamp.After(crypto.thesis.At) {
-			crypto.thesis.At = ticker.Timestamp
+		crypto.sequence++
+		crypto.nextTick++
+		crypto.epochs[ticker.Symbol] = symbolEpoch{
+			at: ticker.Timestamp, tick: crypto.nextTick,
 		}
-
-		crypto.thesis.Symbol(ticker.Symbol).AppendTicker(ticker)
 		crypto.desk.Price().Update(&ticker)
+		errnie.Error(crypto.pipeline.Dispatch(marketEvent{
+			sequence: crypto.sequence,
+			tick:     crypto.nextTick,
+			kind:     marketEventTicker,
+			symbol:   crypto.thesis.Symbol(ticker.Symbol),
+			at:       ticker.Timestamp,
+			ticker:   ticker,
+		}))
 	}
-
-	errnie.Error(crypto.Update(types.TickerReceivers))
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -201,17 +234,74 @@ func (crypto *Crypto) onTrade(data any) {
 	}
 
 	for _, trade := range typedTrades.Data {
-		if trade.Timestamp.After(crypto.thesis.At) {
-			crypto.thesis.At = trade.Timestamp
-		}
-
-		crypto.thesis.Symbol(trade.Symbol).AppendTrade(trade)
+		crypto.sequence++
+		errnie.Error(crypto.pipeline.Dispatch(marketEvent{
+			sequence: crypto.sequence,
+			tick:     crypto.eventTick(trade.Symbol),
+			kind:     marketEventTrade,
+			symbol:   crypto.thesis.Symbol(trade.Symbol),
+			at:       trade.Timestamp,
+			trade:    trade,
+		}))
 	}
-
-	errnie.Error(crypto.Update(types.TradeReceivers))
 }
 
-func (crypto *Crypto) Close() (err error) {
+func (crypto *Crypto) onLevel3(level3 kraken.Level3Data) {
+	if level3.Symbol == "" {
+		crypto.fail(errnie.Err(
+			errnie.Validation,
+			"crypto: Level 3 event requires a symbol",
+			nil,
+		))
+		return
+	}
+
+	at := level3.Timestamp
+
+	for _, orders := range [][]kraken.Level3Order{level3.Bids, level3.Asks} {
+		for _, order := range orders {
+			if order.Timestamp.After(at) {
+				at = order.Timestamp
+			}
+		}
+	}
+
+	crypto.sequence++
+	errnie.Error(crypto.pipeline.Dispatch(marketEvent{
+		sequence: crypto.sequence,
+		tick:     crypto.eventTick(level3.Symbol),
+		kind:     marketEventLevel3,
+		symbol:   crypto.thesis.Symbol(level3.Symbol),
+		at:       at,
+		level3:   level3,
+	}))
+}
+
+func (crypto *Crypto) eventTick(symbol string) int64 {
+	epoch, found := crypto.epochs[symbol]
+
+	if !found {
+		return 0
+	}
+
+	return epoch.tick
+}
+
+/*
+Sync waits for every analytical feed family to commit through an exchange
+timestamp. Production ingress never calls it; deterministic replays use it as
+an explicit boundary instead of assuming asynchronous work finished instantly.
+*/
+func (crypto *Crypto) Sync(ctx context.Context, at time.Time) error {
+	return crypto.pipeline.Wait(ctx, at)
+}
+
+func (crypto *Crypto) Close() error {
 	crypto.cancel()
-	return nil
+
+	if crypto.pipeline == nil {
+		return nil
+	}
+
+	return crypto.pipeline.Close()
 }

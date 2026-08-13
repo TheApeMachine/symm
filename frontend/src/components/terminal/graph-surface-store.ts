@@ -1,3 +1,4 @@
+import { createStore } from "@tanstack/store";
 import { Graph as RenderGraph } from "#/components/graph/core/graph";
 
 export type MarketGraphNode = {
@@ -29,11 +30,19 @@ export type MarketGraphFrame = {
 	adjacency?: Record<string, string[]>;
 };
 
-const listeners = new Set<() => void>();
-let retainedFrame: MarketGraphFrame | null = null;
-let retainedGraph: RenderGraph | null = null;
-let displayedStructureKey = "";
-let pendingStructureKey = "";
+type GraphSurfaceState = {
+	frame: MarketGraphFrame | null;
+	graph: RenderGraph | null;
+	displayedStructureKey: string;
+	pendingStructureKey: string;
+};
+
+const graphSurfaceStore = createStore<GraphSurfaceState>({
+	frame: null,
+	graph: null,
+	displayedStructureKey: "",
+	pendingStructureKey: "",
+});
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	value !== null && typeof value === "object";
@@ -149,37 +158,39 @@ export const graphFramePlan = (
 	return displayedKey === graphStructureKey(frame) ? "refresh" : "stage";
 };
 
-const notify = (): void => {
-	for (const listener of listeners) {
-		listener();
-	}
-};
-
 const install = (frame: MarketGraphFrame): void => {
-	displayedStructureKey = graphStructureKey(frame);
-	pendingStructureKey = "";
-	retainedGraph = adaptGraph(frame);
+	graphSurfaceStore.setState((state) => ({
+		...state,
+		displayedStructureKey: graphStructureKey(frame),
+		pendingStructureKey: "",
+		graph: adaptGraph(frame),
+	}));
 };
 
-export const readGraphSurface = () => ({
-	frame: retainedFrame,
-	graph: retainedGraph,
-	topologyPending: pendingStructureKey !== "",
-});
+export const readGraphSurface = () => {
+	const state = graphSurfaceStore.state;
+
+	return {
+		frame: state.frame,
+		graph: state.graph,
+		topologyPending: state.pendingStructureKey !== "",
+	};
+};
 
 export const subscribeGraphSurface = (listener: () => void): (() => void) => {
-	listeners.add(listener);
+	const subscription = graphSurfaceStore.subscribe(listener);
 
-	return () => listeners.delete(listener);
+	return () => subscription.unsubscribe();
 };
 
 export const applyPendingGraphSurface = (): void => {
-	if (retainedFrame === null || pendingStructureKey === "") {
+	const state = graphSurfaceStore.state;
+
+	if (state.frame === null || state.pendingStructureKey === "") {
 		return;
 	}
 
-	install(retainedFrame);
-	notify();
+	install(state.frame);
 };
 
 /*
@@ -193,13 +204,23 @@ export const paintGraphSurface = (value: unknown): void => {
 		return;
 	}
 
-	retainedFrame = frame;
-	const plan = graphFramePlan(displayedStructureKey, frame);
+	graphSurfaceStore.setState((state) => {
+		const structureKey = graphStructureKey(frame);
+		const plan = graphFramePlan(state.displayedStructureKey, frame);
 
-	if (plan === "initialize") {
-		install(frame);
-	}
+		if (plan === "initialize") {
+			return {
+				frame,
+				graph: adaptGraph(frame),
+				displayedStructureKey: structureKey,
+				pendingStructureKey: "",
+			};
+		}
 
-	pendingStructureKey = plan === "stage" ? graphStructureKey(frame) : "";
-	notify();
+		return {
+			...state,
+			frame,
+			pendingStructureKey: plan === "stage" ? structureKey : "",
+		};
+	});
 };

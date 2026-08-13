@@ -87,8 +87,8 @@ type Cognition struct {
 	ClassConfidence  float64            `json:"classConfidence,omitempty"`
 	Contrast         float64            `json:"contrast"`
 	ContrastEvidence float64            `json:"contrastEvidence,omitempty"`
-	EntropyBits      float64            `json:"entropyBits"`
-	EntropyThreshold float64            `json:"entropyThreshold"`
+	EntropyBits      *float64           `json:"entropyBits,omitempty"`
+	EntropyThreshold *float64           `json:"entropyThreshold,omitempty"`
 	Ambiguous        bool               `json:"ambiguous"`
 	Cohort           uint64             `json:"cohort"`
 	LookaheadScore   float64            `json:"lookaheadScore"`

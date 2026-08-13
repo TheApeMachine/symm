@@ -25,6 +25,7 @@ type Book struct {
 	manager    *spot.BookManager
 	normalizer *spot.Normalizer
 	updates    chan<- string
+	events     chan<- kraken.Level3Data
 }
 
 func NewBook(ctx context.Context, normalizers ...*spot.Normalizer) *Book {
@@ -118,6 +119,15 @@ func (book *Book) SetUpdates(updates chan<- string) {
 	book.mu.Unlock()
 }
 
+/*
+SetEvents connects accepted Level 3 frames to the owning transport.
+*/
+func (book *Book) SetEvents(events chan<- kraken.Level3Data) {
+	book.mu.Lock()
+	book.events = events
+	book.mu.Unlock()
+}
+
 func (book *Book) Update(
 	event *callback.Event[*sdk.WebSocketMessage],
 	payload *kraken.Level3,
@@ -134,6 +144,7 @@ func (book *Book) Update(
 	defer book.mu.Unlock()
 
 	for index, data := range payload.Data {
+		data.Type = payload.Type
 		symbolBook := book.manager.GetBook(data.Symbol)
 
 		if symbolBook == nil {
@@ -208,6 +219,8 @@ func (book *Book) Update(
 					}
 
 					if orderQuantity.Sign() == 1 {
+						order.LimitPrice = limitPrice
+						order.OrderQty = orderQuantity
 						symbolBook.Update(&spotbook.UpdateOptions{
 							Direction: direction,
 							ID:        order.OrderID,
@@ -225,6 +238,8 @@ func (book *Book) Update(
 						continue
 					}
 
+					order.LimitPrice = limitPrice
+					order.OrderQty = orderQuantity
 					symbolBook.Update(&spotbook.UpdateOptions{
 						Direction: direction,
 						ID:        order.OrderID,
@@ -257,6 +272,8 @@ func (book *Book) Update(
 					continue
 				}
 
+				order.LimitPrice = limitPrice
+				order.OrderQty = decimal.NewFromInt64(0).Sub(removed)
 				symbolBook.Update(&spotbook.UpdateOptions{
 					Direction: direction,
 					ID:        order.OrderID,
@@ -296,6 +313,14 @@ func (book *Book) Update(
 			select {
 			case book.updates <- data.Symbol:
 			default:
+			}
+		}
+
+		if book.events != nil {
+			select {
+			case book.events <- data:
+			case <-book.ctx.Done():
+				return book.ctx.Err()
 			}
 		}
 

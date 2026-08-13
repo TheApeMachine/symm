@@ -14,7 +14,7 @@ name. Nothing here transforms the payload: a row shows what the planner decided
 and what it decided against.
 */
 export const DecisionsSurface = () => (
-	<Component registerKey="strategy" select="decisions">
+	<Component registerKey="strategy" select="decisions" repeat>
 		{({ ref, className, slots }) => (
 			<div
 				ref={ref}

@@ -231,7 +231,7 @@ const VectorLane = ({
 	*/
   ghost?: string;
 }) => (
-  <Component registerKey={RESONANCE_FOCUS} select={select}>
+  <Component registerKey={RESONANCE_FOCUS} select={select} repeat>
     {({ ref, slots }) => (
       <div ref={ref} className="flex min-h-0 flex-1 items-stretch gap-3">
         <div className="flex w-36 shrink-0 flex-col justify-center gap-0.5 font-mono text-[9px] leading-tight">
@@ -296,7 +296,7 @@ prediction is its own vector on the wire, and the slot count of one vector must
 not be inferred from the other's.
 */
 const GhostLane = ({ select }: { select: string }) => (
-  <Component registerKey={RESONANCE_FOCUS} select={select}>
+  <Component registerKey={RESONANCE_FOCUS} select={select} repeat>
     {({ ref, slots }) => (
       <div ref={ref} className="absolute inset-0">
         {slots.map((slot) => (

@@ -89,7 +89,6 @@ func (compiler *measurementCompiler) addMeasurement(
 		}
 	}
 
-	quality := measurementQuality(measurement)
 	index.bySource[measurement.Source] = append(
 		index.bySource[measurement.Source], measurement,
 	)
@@ -103,7 +102,7 @@ func (compiler *measurementCompiler) addMeasurement(
 		}
 
 		metricKey := types.MetricKey(metric, side)
-		node := measurementNode(measurement, metricKey, metric, side, sample, quality)
+		node := measurementNode(measurement, metricKey, metric, side, sample)
 		graph.AddNode(node)
 		return true
 	})
@@ -141,7 +140,6 @@ func measurementNode(
 	metric types.MetricType,
 	side types.MeasurementSide,
 	sample types.MetricSample,
-	quality *float64,
 ) *Node {
 	node := &Node{
 		ID:            measurementNodeID(measurement, metricKey),
@@ -154,7 +152,6 @@ func measurementNode(
 		Kind:          KindMeasurement,
 		Value:         sample.Raw,
 		Normalized:    cloneFloat(sample.Normalized),
-		Quality:       cloneFloat(quality),
 		Maturity:      measurement.Maturity,
 		Unit:          sample.Unit,
 		ObservedFrom:  measurement.ObservedFrom,
@@ -173,16 +170,6 @@ func measurementNode(
 	node.Horizon = measurement.PeerAt.Sub(measurement.PeerObservedFrom)
 
 	return node
-}
-
-func measurementQuality(measurement *types.Measurement) *float64 {
-	sample, found := measurement.Metrics[types.MetricKey(types.MetricSNR, types.SideNone)]
-
-	if !found || sample.Normalized == nil {
-		return nil
-	}
-
-	return cloneFloat(sample.Normalized)
 }
 
 func measurementNodeID(
@@ -295,7 +282,6 @@ func (compiler *measurementCompiler) addCategoryRelations(
 				To:           targetID,
 				Relation:     relation,
 				Weight:       weight,
-				Quality:      cloneFloat(node.Quality),
 				Evidence:     []string{node.MeasurementID, reference},
 				ObservedFrom: node.ObservedFrom,
 				Horizon:      node.Horizon,

@@ -57,23 +57,30 @@ is the dimensionless cascade measure the row describes and already carries the
 model's normalized estimate.
 */
 const SOURCE_HEADLINE: Record<string, string> = {
-	correlation: "snr",
+	correlation: "hypothesis_separation",
 	cvd: "strength",
-	depthflow: "snr",
+	depthflow: "hypothesis_separation",
 	exhaustion: "strength:buy",
 	hawkes: "spectral_radius",
 	leadlag: "strength",
 	liquidity: "scarcity_score",
 	pumpdump: "strength",
 	sentiment: "strength",
-	toxicity: "touch_quantity:buy",
+	toxicity: "strength",
 };
 
 /*
 sourceHeadlineMetric names the metric map entry a kernel row leads with.
 */
-export const sourceHeadlineMetric = (source: string) =>
-	`metrics.${SOURCE_HEADLINE[source.toLowerCase()] ?? "strength"}`;
+export const sourceHeadlineMetric = (source: string): string => {
+	const metric = SOURCE_HEADLINE[source.toLowerCase()];
+
+	if (metric === undefined) {
+		throw new Error(`unsupported measurement source: ${source}`);
+	}
+
+	return `metrics.${metric}`;
+};
 
 /*
 A kernel publishes a map of named metrics, and the detail panel reads several of
@@ -86,7 +93,7 @@ zero, so the panel understates rather than invents.
 */
 const SOURCE_METRICS: Record<string, string[]> = {
 	correlation: [
-		"snr",
+		"hypothesis_separation",
 		"correlation",
 		"signed",
 		"relative_energy",
@@ -104,7 +111,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"net_fraction",
 	],
 	depthflow: [
-		"snr",
+		"hypothesis_separation",
 		"loaded_score",
 		"spoof_score",
 		"thin_score",
@@ -165,13 +172,19 @@ const SOURCE_METRICS: Record<string, string[]> = {
 };
 
 /*
-sourceMetrics names the metrics a kernel's detail panel reads. A kernel with no
-entry falls back to the one metric its row leads with.
+sourceMetrics names the metrics a kernel's detail panel reads. An unsupported
+source is a wiring error; silently painting a generic metric would make that
+frontend defect indistinguishable from missing backend data.
 */
-export const sourceMetrics = (source: string): string[] =>
-	SOURCE_METRICS[source.toLowerCase()] ?? [
-		sourceHeadlineMetric(source).slice("metrics.".length),
-	];
+export const sourceMetrics = (source: string): string[] => {
+	const metrics = SOURCE_METRICS[source.toLowerCase()];
+
+	if (metrics === undefined) {
+		throw new Error(`unsupported measurement source: ${source}`);
+	}
+
+	return metrics;
+};
 
 /*
 metricLabel reads a wire metric name — snake cased, optionally suffixed with the
@@ -304,12 +317,18 @@ const KERNEL_COPY: Record<
 	},
 };
 
-export const kernelCopy = (source: string, category: string) =>
-	KERNEL_COPY[source] ?? {
-		name: source,
-		sub: category || source,
-		blurb: "Backend measurement projected into the terminal signal surface.",
-	};
+export const kernelCopy = (
+	source: string,
+	_category: string,
+): { name: string; sub: string; blurb: string } => {
+	const copy = KERNEL_COPY[source];
+
+	if (copy === undefined) {
+		throw new Error(`unsupported measurement source: ${source}`);
+	}
+
+	return copy;
+};
 
 export const kernelStatusMeta = (
 	status: SignalHealthStatus,

@@ -10,12 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -74,9 +72,7 @@ func (signal *Signal) Type() types.SourceType {
 /*
 Measure produces the Measurements for the sentiment signal.
 */
-func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
-	group, _ := errgroup.WithContext(signal.ctx)
-
+func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
 	tickers := symbol.MarketTickers(types.SourceSentiment)
 
 	if !signal.ingest(tickers) {
@@ -99,108 +95,82 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 		}
 	}
 
-	measurements := make([]*types.Measurement, len(peers))
+	measurements := make([]*types.Measurement, 0, 1)
 
-	for index, peer := range peers {
-		measurementIndex := index
-
-		group.Go(func() error {
-			if peer.symbol != symbol.Symbol {
-				return nil
-			}
-
-			change := peer.observation.change
-			leaderStrength := 0.0
-			leaderEvidence := 0.0
-			relativeLead := 0.0
-			peerDivergenceScore := 0.0
-			isLeader := statistics.leader == peer.symbol && statistics.leaderMagnitude > 0
-
-			if isLeader {
-				leaderStrength = statistics.leaderMagnitude
-				leaderEvidence = statistics.leaderEvidence
-				relativeLead = statistics.relativeLead
-				peerDivergenceScore = statistics.divergence
-			}
-
-			strength := math.Max(
-				statistics.surge,
-				math.Max(peerDivergenceScore, statistics.slump),
-			)
-			metrics := sentimentMetrics(
-				map[types.MetricType]float64{
-					types.MetricChange:         change,
-					types.MetricBreadth:        statistics.breadth,
-					types.MetricLeaderStrength: leaderStrength,
-					types.MetricLeaderEvidence: leaderEvidence,
-					types.MetricRelativeLead:   relativeLead,
-					types.MetricSurgeScore:     statistics.surge,
-					types.MetricDivergentScore: peerDivergenceScore,
-					types.MetricSlumpScore:     statistics.slump,
-					types.MetricStrength:       strength,
-				},
-				statistics.magnitudeBaseline,
-			)
-
-			measurement := &types.Measurement{
-				ID:     uuid.NewString(),
-				Source: types.SourceSentiment,
-				Symbol: peer.symbol,
-				Tick:   symbol.Tick,
-				At:     peer.observation.at,
-				Metadata: map[string]float64{
-					"last_price": peer.observation.price,
-				},
-				Metrics: metrics,
-			}
-			snr, snrReady := types.MeasurementSignalNoiseRatio(
-				types.SourceSentiment,
-				measurement.Metrics,
-			)
-			snrSample := types.MetricSample{
-				Raw:  snr,
-				Unit: types.UnitDimensionless,
-			}
-
-			if snrReady && directionalReady {
-				snrSample.Normalized = &snr
-			}
-
-			measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
-			measurement.PutMetric(
-				types.MetricLastPrice,
-				types.SideNone,
-				types.MetricSample{
-					Raw:  peer.observation.price,
-					Unit: types.UnitQuoteCurrency,
-				},
-			)
-
-			measurements[measurementIndex] = measurement
-
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"sentiment: parallel measurement failed",
-			err,
-		))
-		return measurements
-	}
-
-	compacted := measurements[:0]
-
-	for _, measurement := range measurements {
-		if measurement == nil {
+	for _, peer := range peers {
+		if peer.symbol != symbol.Symbol {
 			continue
 		}
 
-		compacted = append(compacted, measurement)
+		change := peer.observation.change
+		leaderStrength := 0.0
+		leaderEvidence := 0.0
+		relativeLead := 0.0
+		peerDivergenceScore := 0.0
+		isLeader := statistics.leader == peer.symbol && statistics.leaderMagnitude > 0
+
+		if isLeader {
+			leaderStrength = statistics.leaderMagnitude
+			leaderEvidence = statistics.leaderEvidence
+			relativeLead = statistics.relativeLead
+			peerDivergenceScore = statistics.divergence
+		}
+
+		strength := math.Max(
+			statistics.surge,
+			math.Max(peerDivergenceScore, statistics.slump),
+		)
+		metrics := sentimentMetrics(
+			map[types.MetricType]float64{
+				types.MetricChange:         change,
+				types.MetricBreadth:        statistics.breadth,
+				types.MetricLeaderStrength: leaderStrength,
+				types.MetricLeaderEvidence: leaderEvidence,
+				types.MetricRelativeLead:   relativeLead,
+				types.MetricSurgeScore:     statistics.surge,
+				types.MetricDivergentScore: peerDivergenceScore,
+				types.MetricSlumpScore:     statistics.slump,
+				types.MetricStrength:       strength,
+			},
+			statistics.magnitudeBaseline,
+		)
+
+		measurement := &types.Measurement{
+			ID:     uuid.NewString(),
+			Source: types.SourceSentiment,
+			Symbol: peer.symbol,
+			Tick:   symbol.Tick,
+			At:     peer.observation.at,
+			Metadata: map[string]float64{
+				"last_price": peer.observation.price,
+			},
+			Metrics: metrics,
+		}
+		separation, separationReady := types.MeasurementHypothesisSeparation(
+			types.SourceSentiment,
+			measurement.Metrics,
+		)
+		snrSample := types.MetricSample{
+			Raw:  separation,
+			Unit: types.UnitDimensionless,
+		}
+
+		if separationReady && directionalReady {
+			snrSample.Normalized = &separation
+		}
+
+		measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
+		measurement.PutMetric(
+			types.MetricLastPrice,
+			types.SideNone,
+			types.MetricSample{
+				Raw:  peer.observation.price,
+				Unit: types.UnitQuoteCurrency,
+			},
+		)
+
+		measurements = append(measurements, measurement)
 	}
-	measurements = compacted
 
 	return measurements
 }
@@ -246,9 +216,7 @@ func (signal *Signal) ingest(rows iter.Seq[kraken.TickerData]) bool {
 		rowBatches[symbol] = append(rowBatches[symbol], row)
 	}
 	sort.Strings(symbols)
-	changed := &sync.Map{}
-
-	group, _ := errgroup.WithContext(signal.ctx)
+	changed := false
 
 	for _, symbol := range symbols {
 		symbolRows := rowBatches[symbol]
@@ -256,57 +224,38 @@ func (signal *Signal) ingest(rows iter.Seq[kraken.TickerData]) bool {
 			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
 		})
 
-		group.Go(func() error {
-			for _, row := range symbolRows {
-				price := row.Last.Float64()
+		for _, row := range symbolRows {
+			price := row.Last.Float64()
 
-				if price <= 0 {
-					return nil
-				}
-
-				raw, exists := signal.observations.Load(symbol)
-				previous := returnObservation{}
-
-				if exists {
-					previous = raw.(returnObservation)
-				}
-
-				if exists && !row.Timestamp.After(previous.at) {
-					continue
-				}
-
-				observation := returnObservation{at: row.Timestamp, price: price}
-
-				if exists {
-					observation.change = math.Log(price / previous.price)
-					observation.cadence = row.Timestamp.Sub(previous.at)
-					observation.ready = true
-				}
-
-				signal.observations.Store(symbol, observation)
-				changed.Store(symbol, struct{}{})
+			if price <= 0 {
+				continue
 			}
 
-			return nil
-		})
+			raw, exists := signal.observations.Load(symbol)
+			previous := returnObservation{}
+
+			if exists {
+				previous = raw.(returnObservation)
+			}
+
+			if exists && !row.Timestamp.After(previous.at) {
+				continue
+			}
+
+			observation := returnObservation{at: row.Timestamp, price: price}
+
+			if exists {
+				observation.change = math.Log(price / previous.price)
+				observation.cadence = row.Timestamp.Sub(previous.at)
+				observation.ready = true
+			}
+
+			signal.observations.Store(symbol, observation)
+			changed = true
+		}
 	}
 
-	if err := group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"sentiment: parallel ingestion failed",
-			err,
-		))
-		return false
-	}
-
-	anyChanged := false
-	changed.Range(func(key, value any) bool {
-		anyChanged = true
-		return false
-	})
-
-	return anyChanged
+	return changed
 }
 
 func (signal *Signal) cohort() ([]sentimentPeer, time.Duration, bool) {

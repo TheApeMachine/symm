@@ -32,6 +32,7 @@ type Market struct {
 	private    *websocket.Live
 	generators map[string]*signal.Generator
 	latest     map[string]testtypes.Sample
+	history    map[string][]testtypes.Sample
 	previous   map[string]testtypes.Sample
 	states     map[string]testtypes.MarketState
 	candles    map[string]*candleState
@@ -158,6 +159,7 @@ func newMarket(
 		Config:     config,
 		generators: make(map[string]*signal.Generator, len(config.Symbols)),
 		latest:     make(map[string]testtypes.Sample, len(config.Symbols)),
+		history:    make(map[string][]testtypes.Sample, len(config.Symbols)),
 		previous:   make(map[string]testtypes.Sample, len(config.Symbols)),
 		states:     make(map[string]testtypes.MarketState, len(config.Symbols)),
 		candles:    make(map[string]*candleState, len(config.Symbols)),
@@ -305,6 +307,18 @@ func (market *Market) LastSample(symbol string) (testtypes.Sample, bool) {
 	sample, known := market.latest[symbol]
 
 	return sample, known
+}
+
+/*
+Samples returns an immutable copy of the venue observations published for one
+symbol. It lets integration audits inspect the fixture without competing with
+production analytical queues.
+*/
+func (market *Market) Samples(symbol string) []testtypes.Sample {
+	market.sampleMu.RLock()
+	defer market.sampleMu.RUnlock()
+
+	return append([]testtypes.Sample(nil), market.history[symbol]...)
 }
 
 /*

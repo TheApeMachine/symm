@@ -39,7 +39,7 @@ func TestAddLeadLagEdges(t *testing.T) {
 			for _, edge := range graph.Edges {
 				counts[edge.Relation]++
 				So(edge.Evidence[0], ShouldEqual, localMeasurement.ID)
-				So(*edge.Quality, ShouldEqual, 0.8)
+				So(edge.Quality, ShouldBeNil)
 			}
 
 			So(counts[RelationLeads], ShouldEqual, 1)
@@ -75,7 +75,7 @@ func TestAddLeadLagEdges(t *testing.T) {
 			So(graph.Edges[1].Relation, ShouldEqual, RelationIncomparableWith)
 			So(graph.Edges[0].Weight, ShouldEqual, 1.0)
 			So(graph.Edges[0].Evidence,
-				ShouldResemble, []string{"local-empty", "leadlag:sample_support"})
+				ShouldResemble, []string{"local-empty", "leadlag:sample_count"})
 		})
 	})
 
@@ -174,8 +174,8 @@ func leadLagFixture(
 			types.MetricKey(types.MetricLastPrice, types.SideNone): {
 				Raw: price, Unit: types.UnitQuoteCurrency,
 			},
-			types.MetricKey(types.MetricSampleSupport, types.SideNone): {
-				Raw: support, Normalized: &support, Unit: types.UnitDimensionless,
+			types.MetricKey(types.MetricSampleCount, types.SideNone): {
+				Raw: support, Unit: types.UnitCount,
 			},
 			types.MetricKey(types.MetricInefficient, types.SideNone): {
 				Raw: inefficient, Normalized: &inefficient, Unit: types.UnitDimensionless,
@@ -195,7 +195,7 @@ func leadLagFixture(
 			types.MetricKey(types.MetricSignedLagCorrelation, types.SideNone): {
 				Raw: zero, Normalized: &zero, Unit: types.UnitDimensionless,
 			},
-			types.MetricKey(types.MetricSNR, types.SideNone): {
+			types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
 				Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
 			},
 		},

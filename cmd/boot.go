@@ -54,6 +54,18 @@ func (system *System) Holding(symbol string) int {
 }
 
 /*
+Sync waits for the streaming analytical plane to commit every feed through an
+exchange timestamp. It is used by deterministic venue replays only.
+*/
+func (system *System) Sync(ctx context.Context, at time.Time) error {
+	if system == nil || system.Crypto == nil {
+		return fmt.Errorf("system: streaming trader required")
+	}
+
+	return system.Crypto.Sync(ctx, at)
+}
+
+/*
 Close releases every resource Boot acquired, in reverse order of acquisition.
 */
 func (system *System) Close() error {
@@ -227,7 +239,7 @@ func Boot(
 
 	errnie.Debug("planner reported to be ready")
 
-	crypto := utils.NewWaiter[*trader.Crypto](trader.NewCrypto(
+	crypto, err := trader.NewCrypto(
 		ctx,
 		api,
 		uiChannel,
@@ -236,7 +248,12 @@ func Boot(
 		analyzer,
 		planner,
 		thesis,
-	)).Wait()
+	)
+
+	if err != nil {
+		errnie.Error(fmt.Errorf("failed to create streaming trader: %w", err))
+		return nil
+	}
 
 	errnie.Debug("trader reported to be ready")
 

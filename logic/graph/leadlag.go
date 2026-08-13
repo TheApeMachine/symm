@@ -41,23 +41,27 @@ func (compiler *measurementCompiler) relateLeadLag(
 		return err
 	}
 
-	support, err := normalizedMetric(measurement, types.MetricSampleSupport)
+	supportKey := types.MetricKey(types.MetricSampleCount, types.SideNone)
+	support, supportFound := measurement.Metrics[supportKey]
 
-	if err != nil {
-		return err
+	if !supportFound {
+		return fmt.Errorf(
+			"lead-lag metric %s for %s required",
+			types.MetricSampleCount,
+			measurement.Symbol,
+		)
 	}
 
-	if support == 0 {
-		missingSupport := 1 - support
+	if support.Raw <= 0 {
 		compiler.addSymmetricRelation(
 			measurement,
 			localPrice,
 			peerPrice,
 			RelationIncomparableWith,
-			missingSupport,
+			1,
 			"lead-lag comparison has no resolved return support",
 			graph,
-			types.MetricSampleSupport,
+			types.MetricSampleCount,
 		)
 
 		return nil
@@ -143,7 +147,6 @@ func (compiler *measurementCompiler) addTemporalRelation(
 		To:           newer.ID,
 		Relation:     RelationStaleRelativeTo,
 		Weight:       float64(age) / float64(older.Horizon),
-		Quality:      measurementQuality(measurement),
 		Evidence:     []string{measurement.ID, older.MeasurementID, newer.MeasurementID},
 		ObservedFrom: older.ObservedFrom,
 		Horizon:      older.Horizon,
@@ -204,7 +207,7 @@ func (compiler *measurementCompiler) addCorrelationRelations(
 			synchronized, "contemporaneous price paths carry synchronized evidence", graph,
 			types.MetricSync,
 			types.MetricSignedContempCorrelation,
-			types.MetricSampleSupport,
+			types.MetricSampleCount,
 		)
 	}
 
@@ -214,7 +217,7 @@ func (compiler *measurementCompiler) addCorrelationRelations(
 			decoupled, "price paths carry decoupled correlation evidence", graph,
 			types.MetricDecoupled,
 			types.MetricSignedCorrelation,
-			types.MetricSampleSupport,
+			types.MetricSampleCount,
 		)
 	}
 
@@ -233,18 +236,17 @@ func (compiler *measurementCompiler) addDirectedPair(
 		types.MetricInefficient,
 		types.MetricSignedLagDirection,
 		types.MetricSignedLagCorrelation,
-		types.MetricSampleSupport,
+		types.MetricSampleCount,
 	)
-	quality := measurementQuality(measurement)
 	graph.AddEdge(&Edge{
 		From: leader.ID, To: follower.ID, Relation: RelationLeads,
-		Weight: weight, Quality: cloneFloat(quality), Evidence: evidence,
+		Weight: weight, Evidence: evidence,
 		ObservedFrom: measurement.ObservedFrom, Horizon: measurement.Horizon,
 		At: measurement.At, Reason: "lagged price correlation identifies temporal leader",
 	})
 	graph.AddEdge(&Edge{
 		From: follower.ID, To: leader.ID, Relation: RelationLags,
-		Weight: weight, Quality: cloneFloat(quality), Evidence: evidence,
+		Weight: weight, Evidence: evidence,
 		ObservedFrom: measurement.ObservedFrom, Horizon: measurement.Horizon,
 		At: measurement.At, Reason: "inverse of measured temporal lead",
 	})
@@ -261,12 +263,10 @@ func (compiler *measurementCompiler) addSymmetricRelation(
 	metrics ...types.MetricType,
 ) {
 	evidence := leadLagEvidence(measurement, metrics...)
-	quality := measurementQuality(measurement)
-
 	for _, endpoints := range [][2]*Node{{left, right}, {right, left}} {
 		graph.AddEdge(&Edge{
 			From: endpoints[0].ID, To: endpoints[1].ID, Relation: relation,
-			Weight: weight, Quality: cloneFloat(quality), Evidence: evidence,
+			Weight: weight, Evidence: evidence,
 			ObservedFrom: measurement.ObservedFrom, Horizon: measurement.Horizon,
 			At: measurement.At, Reason: reason,
 		})

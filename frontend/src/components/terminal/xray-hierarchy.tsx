@@ -8,10 +8,6 @@ import { Typography } from "@/components/ui/typography";
 const symbolRef = createRef<HTMLSpanElement>();
 const waitingRef = createRef<HTMLDivElement>();
 const rowsRef = createRef<HTMLDivElement>();
-const layersBySymbol = new Map<
-	string,
-	ReturnType<typeof xrayLayersFromResonance>
->();
 
 /*
 layerErrorTone maps prediction-error magnitude onto terminal semantic colors.
@@ -112,22 +108,16 @@ const paintHierarchyRows = (
 paintXrayHierarchy paints the focused symbol's resonance layers into the
 hierarchy host.
 
-Layers are retained per symbol: a sparse batch that carries no layers for the
-focused symbol must leave the last valid hierarchy standing, and a batch about
-some other symbol must never be shown under this symbol's name.
+The resonance store supplies one retained carrier per symbol. This painter reads
+that complete bounded snapshot and owns no second cache of backend state.
 */
 export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ResonanceFrame[];
 
-	for (const frame of frames) {
-		const layers = xrayLayersFromResonance(frame);
-
-		if (layers.length > 0) {
-			layersBySymbol.set(frame.symbol, layers);
-		}
-	}
+	const focused = frames.find((frame) => frame.symbol === focusSymbol);
+	const layers = xrayLayersFromResonance(focused);
 
 	if (symbolRef.current !== null) {
 		symbolRef.current.textContent = focusSymbol;
@@ -135,10 +125,8 @@ export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 	}
 
 	if (waitingRef.current !== null && rowsRef.current !== null) {
-		const layers = layersBySymbol.get(focusSymbol) ?? [];
-
 		waitingRef.current.textContent =
-			layersBySymbol.size === 0
+			frames.length === 0
 				? "waiting for resonance layers"
 				: `no resonance carrier for ${focusSymbol}`;
 		paintHierarchyRows(rowsRef.current, waitingRef.current, layers);

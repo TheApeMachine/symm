@@ -21,52 +21,52 @@ const RUNGS: Rung[] = [
 	{
 		rung: 1,
 		name: "Association",
-		desc: "P(y | x)",
+		desc: "ρ(treatment, target)",
 		path: "association",
 		variant: "info",
 	},
 	{
 		rung: 2,
-		name: "Intervention",
-		desc: "P(y | do(x))",
+		name: "Intervention expectation",
+		desc: "E[target | do(treatment)]",
 		path: "doExpectation",
 		variant: "info",
 	},
 	{
 		rung: 3,
-		name: "Counterfactual",
-		desc: "P(y' | x', x)",
+		name: "Counterfactual target",
+		desc: "structural target under alternate treatment + abducted residual",
 		path: "counterfactual",
 		variant: "warning",
 	},
 	{
 		rung: 4,
-		name: "Condition",
-		desc: "P(y | x, parents)",
+		name: "Condition context",
+		desc: "resonance energy supplied as causal context",
 		path: "condition",
 		variant: "success",
 	},
 	{
 		rung: 5,
 		name: "Intervention uplift",
-		desc: "P(y | do(x)) - P(y)",
+		desc: "counterfactual target − observed target",
 		path: "uplift",
 		variant: "success",
 	},
 	{
 		rung: 6,
-		name: "Noise floor",
-		desc: "P(y | ¬x)",
+		name: "Abducted residual",
+		desc: "observed target − fitted structural target",
 		path: "noise",
 		variant: "disabled",
 	},
 ];
 
 const FOOTER_FIELDS = [
-	{ label: "uplift", path: "upliftScore" },
-	{ label: "residual", path: "residual" },
-	{ label: "baseline", path: "entry_baseline" },
-	{ label: "panic", path: "contagion" },
+	{ label: "standardized uplift", path: "upliftScore" },
+	{ label: "standardized residual", path: "noiseScore" },
+	{ label: "runner-up share", path: "entry_baseline" },
+	{ label: "context surprise", path: "contagion" },
 ] as const;
 
 const rungTone = (variant: Variant): string => {
@@ -85,30 +85,11 @@ const rungTone = (variant: Variant): string => {
 	return "text-(--info)";
 };
 
-const rungFill = (variant: Variant): string => {
-	if (variant === "success") {
-		return "bg-(--success)";
-	}
-
-	if (variant === "warning") {
-		return "bg-(--warning)";
-	}
-
-	if (variant === "disabled") {
-		return "bg-(--line2)";
-	}
-
-	return "bg-(--info)";
-};
-
 /*
-CausalLadder reads the Pearl rungs for the selected candidate.
-
-The bar width is set from the reading itself rather than a precomputed
-percentage: the value lands in a custom property and CSS clamps it, so a rung
-that reports more than unit strength saturates instead of running off the
-panel. Every number shown is a wire field — the browser scales the picture, not
-the evidence.
+CausalLadder reads the dimensionally distinct Pearl estimates for the selected
+candidate. Values are shown numerically without a shared progress scale because
+correlation, target expectations, context, uplift, and residual are not
+interchangeable probabilities.
 */
 export const CausalLadder = () => {
 	const scope = useDecisionsScopeSymbol();
@@ -134,7 +115,7 @@ export const CausalLadder = () => {
 						Causal ladder
 					</Typography.Label>
 					<div className="mt-0.5 mb-3 font-mono text-[9.5px] text-(--f4)">
-						Pearl estimates · evidence class{" "}
+						Pearl causal estimates · evidence class{" "}
 						<span data-paint="category" data-paint-empty="—" />
 					</div>
 
@@ -150,22 +131,12 @@ export const CausalLadder = () => {
 									</Typography.Label>
 									<span
 										data-paint={rung.path}
-										data-paint-format=".4f"
+										data-paint-format=".6f"
 										className={`font-mono text-[11px] ${rungTone(rung.variant)}`}
 									/>
 								</div>
 								<div className="my-1.5 font-mono text-[9px] text-(--f4)">
 									{rung.desc}
-								</div>
-								<div className="h-1.25 overflow-hidden rounded-[3px] bg-(--line)">
-									<div
-										data-set={rung.path}
-										data-target="style.--rung"
-										className={`h-full transition-[width] duration-500 ease-out ${rungFill(rung.variant)}`}
-										style={{
-											width: "clamp(0%, calc(var(--rung, 0) * 100%), 100%)",
-										}}
-									/>
 								</div>
 							</div>
 						))}

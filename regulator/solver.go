@@ -28,6 +28,7 @@ type Solver struct {
 	lastEquity      float64
 	peakEquity      float64
 	lastRevision    uint64
+	hadExposure     bool
 	lastResult      optimizationResult
 }
 
@@ -81,7 +82,7 @@ func (solver *Solver) Status() types.Status {
 Update consumes one new broker equity revision. A new unchanged valuation is a
 real zero-return outcome; only repeated delivery of the same revision is ignored.
 */
-func (solver *Solver) Update(thesis *types.Thesis) error {
+func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	if solver == nil || solver.optimizer == nil || solver.configSource == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -117,6 +118,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	currentEquity := equity.Equity.Float64()
 
+	if !exposed && !solver.hadExposure {
+		solver.lastEquity = currentEquity
+		solver.peakEquity = max(solver.peakEquity, currentEquity)
+		solver.lastRevision = revision
+		return nil
+	}
+
 	periodReturn, drawdown := solver.financialFeedback(currentEquity)
 	result, err := solver.optimizer.update(periodReturn, drawdown)
 
@@ -134,6 +142,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	solver.lastEquity = currentEquity
 	solver.lastRevision = revision
+	solver.hadExposure = exposed
 	solver.lastResult = result
 	solver.recordHistory(result.surprise)
 	payload := solver.buildPayload(periodReturn, result)

@@ -1,4 +1,4 @@
-import { createStore, type Store } from "@tanstack/react-store";
+import { createStore, type Store } from "@tanstack/store";
 import { Circular, type CircularBuffer } from "./circular";
 
 /*

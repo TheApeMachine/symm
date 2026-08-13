@@ -42,20 +42,21 @@ export type Holding = {
   status?: string;
   symbol: string;
   asset?: string;
-  qty: number | string;
-  sellable_qty?: number | string;
+  qty: number | string | null;
+  sellable_qty?: number | string | null;
   entry_at?: string;
   exit_at?: string;
-  entry_price: number | string;
-  entry_fee: number | string;
-  exit_price?: number | string;
-  exit_fee: number | string;
-  mark: number | string;
-  pnl: number | string;
+  entry_price: number | string | null;
+  entry_fee: number | string | null;
+  exit_price: number | string | null;
+  exit_fee: number | string | null;
+  mark: number | string | null;
+  pnl: number | string | null;
+  profit_threshold: number | string | null;
   return_pct: number | string;
   is_opportunity: boolean;
   reservation_id?: string;
-  stoploss?: Stoploss;
+  stoploss: Stoploss | null;
 };
 
 export type Fill = {
@@ -68,11 +69,11 @@ export type Fill = {
 
 export type Position = {
   status: string;
-  entry_order: Record<string, unknown>;
-  exit_order: Record<string, unknown>;
-  order_id: string;
-  fills: Fill[];
-  buffered: Record<string, unknown>[];
+  decision: Decision;
+  entry_order: Record<string, unknown> | null;
+  exit_order: Record<string, unknown> | null;
+  entry_order_result: Record<string, unknown> | null;
+  exit_order_result: Record<string, unknown> | null;
   holding: Holding;
 };
 
@@ -398,11 +399,12 @@ export type Measurement = {
   id?: string;
   source: string;
   symbol: string;
-  subject?: string;
-  stream?: string;
+  tick?: number;
   peer?: string;
   at: string;
   observedFrom?: string;
+  peerAt?: string;
+  peerObservedFrom?: string;
   horizon?: number | string;
   maturity?: number;
   uncertainty?: {
@@ -411,21 +413,6 @@ export type Measurement = {
     confidence?: number;
     method?: string;
   } | null;
-  metric?: string;
-  side?: string;
-  unit?: string;
-  raw?: number;
-  normalized?: number | null;
-  validity: {
-    state: string;
-    readiness: string;
-    reason?: string;
-  };
-  scale: {
-    kind: string;
-    from: string;
-    through: string;
-  };
   metrics?: Record<
     string,
     {
@@ -434,6 +421,7 @@ export type Measurement = {
       unit?: string;
     }
   >;
+  metadata?: Record<string, number>;
   categories?: MeasurementCategory[];
 };
 

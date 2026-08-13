@@ -10,11 +10,11 @@ import (
 )
 
 func TestAddNodes(t *testing.T) {
-	Convey("Given a timestamped measurement with normalized evidence and SNR", t, func() {
+	Convey("Given timestamped evidence and a separate hypothesis margin", t, func() {
 		at := time.Unix(10, 0).UTC()
 		observedFrom := at.Add(-time.Second)
 		drive := 0.7
-		quality := 0.8
+		separation := 0.8
 		symbol := types.NewSymbol("BTC/USD", nil)
 		measurement := &types.Measurement{
 			ID: "cvd-1", Source: types.SourceCVD, Symbol: "BTC/USD", At: at,
@@ -23,8 +23,8 @@ func TestAddNodes(t *testing.T) {
 				types.MetricKey(types.MetricDrive, types.SideNone): {
 					Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
 				},
-				types.MetricKey(types.MetricSNR, types.SideNone): {
-					Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
+				types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
+					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 				},
 			},
 		}
@@ -35,7 +35,7 @@ func TestAddNodes(t *testing.T) {
 			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
 		)
 
-		Convey("It should retain graph evidence value, quality, and provenance", func() {
+		Convey("It should retain provenance without presenting separation as quality", func() {
 			So(err, ShouldBeNil)
 			So(graph.Nodes, ShouldHaveLength, 1)
 			node := graph.Nodes[measurementNodeID(measurement, "drive")]
@@ -46,7 +46,7 @@ func TestAddNodes(t *testing.T) {
 			So(node.Metric, ShouldEqual, types.MetricDrive)
 			So(node.Value, ShouldEqual, drive)
 			So(*node.Normalized, ShouldEqual, drive)
-			So(*node.Quality, ShouldEqual, quality)
+			So(node.Quality, ShouldBeNil)
 			So(node.Maturity, ShouldEqual, 0.6)
 			So(node.ObservedFrom, ShouldEqual, observedFrom)
 			So(node.Horizon, ShouldEqual, time.Second)

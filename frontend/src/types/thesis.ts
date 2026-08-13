@@ -152,7 +152,7 @@ export type ThesisCategory = {
 	confidence: number;
 	surprisal: number;
 	strength: number;
-	maturity: number;
+	maturity?: number;
 	supporting?: string[];
 	opposing?: string[];
 	missing?: string[];

@@ -175,5 +175,5 @@ Symbols are settled concurrently via `errgroup`.
   `stale_batch` / `stale_source` stages starve the momentum-decay exit.
   Allow-stage signals are healthy — reject-stage zeros are not a dead pipeline.
 - **Never feed Uncertainty in as a price fraction.** It is not one.
-- **Confidence ≠ SNR.** They are distinct per signal, and collapsing them hides
+- **Confidence ≠ hypothesis separation.** They are distinct per signal, and collapsing them hides
   degenerate signals behind clamping.

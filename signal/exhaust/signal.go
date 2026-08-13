@@ -90,7 +90,7 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceExhaustion
 }
 
-func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
+func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 
 	if signal.books == nil {
@@ -515,18 +515,18 @@ func (signal *Signal) frame(
 		Maturity: maturity,
 		Metrics:  metrics,
 	}
-	snr, snrReady := types.MeasurementSignalNoiseRatio(
+	separation, separationReady := types.MeasurementHypothesisSeparation(
 		types.SourceExhaustion,
 		measurement.Metrics,
 	)
 
-	if !snrReady {
+	if !separationReady {
 		panic("exhaust: competing metric groups are not measurable")
 	}
 
-	measurement.PutMetric(types.MetricSNR, types.SideNone, types.MetricSample{
-		Raw:        snr,
-		Normalized: &snr,
+	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, types.MetricSample{
+		Raw:        separation,
+		Normalized: &separation,
 		Unit:       types.UnitDimensionless,
 	})
 

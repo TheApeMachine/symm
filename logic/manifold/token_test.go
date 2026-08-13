@@ -110,7 +110,7 @@ func TestTokenizerNewBatch(t *testing.T) {
 				// Bids carry the buy-side excitation of 7 on top of the unit.
 				So(particle.Energy, ShouldAlmostEqual, unitOscillatorEnergy+7, 1e-6)
 				So(quietParticles[index].Energy, ShouldEqual, unitOscillatorEnergy)
-				So(particle.Heat, ShouldEqual, float32(0))
+				So(particle.Heat, ShouldEqual, unitCarrierMass*minimumCarrierTemperature)
 				So(particle.Omega, ShouldAlmostEqual, scaledParticles[index].Omega, 1e-6)
 				So(particle.Omega, ShouldAlmostEqual, reversedParticles[len(orders)-1-index].Omega, 1e-6)
 			}
@@ -145,13 +145,20 @@ func TestTokenizerNewBatch(t *testing.T) {
 			_, appendErr := domain.Append(particles, contentIDs)
 			So(appendErr, ShouldBeNil)
 
-			_, advanceErr := domain.Advance()
+			diagnostics, advanceErr := domain.Advance()
 			So(advanceErr, ShouldBeNil)
+			So(diagnostics.PsiRMS, ShouldBeGreaterThan, 0)
+			So(diagnostics.GuidanceRMS, ShouldBeGreaterThan, 0)
 
 			evolved, readErr := domain.ReadParticles(0, domain.ParticleCount())
 			So(readErr, ShouldBeNil)
+			velocityObserved := false
+			heatObserved := false
 
 			for _, particle := range evolved {
+				velocityObserved = velocityObserved || particle.Velocity.X != 0 ||
+					particle.Velocity.Y != 0 || particle.Velocity.Z != 0
+				heatObserved = heatObserved || particle.Heat > 0
 				values := []float32{
 					particle.Position.X,
 					particle.Position.Y,
@@ -171,6 +178,9 @@ func TestTokenizerNewBatch(t *testing.T) {
 					So(math.IsInf(float64(value), 0), ShouldBeFalse)
 				}
 			}
+
+			So(velocityObserved, ShouldBeTrue)
+			So(heatObserved, ShouldBeTrue)
 		})
 	})
 
@@ -241,7 +251,7 @@ func TestTokenizerNewBatch(t *testing.T) {
 			for index, particle := range particles {
 				totalMass += particle.Mass
 				So(particle.Mass, ShouldEqual, unitCarrierMass)
-				So(particle.Heat, ShouldEqual, float32(0))
+				So(particle.Heat, ShouldEqual, unitCarrierMass*minimumCarrierTemperature)
 
 				if index < len(bidOrders) {
 					So(particle.Energy, ShouldAlmostEqual, unitOscillatorEnergy+2, 1e-6)

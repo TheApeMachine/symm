@@ -74,7 +74,7 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceHawkes
 }
 
-func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
+func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 
 	for trade := range symbol.MarketTrades(types.SourceHawkes) {
@@ -239,20 +239,20 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 				},
 			},
 		}
-		snr, snrReady := types.MeasurementSignalNoiseRatio(
+		separation, separationReady := types.MeasurementHypothesisSeparation(
 			types.SourceHawkes,
 			measurement.Metrics,
 		)
 		snrSample := types.MetricSample{
-			Raw:  snr,
+			Raw:  separation,
 			Unit: types.UnitDimensionless,
 		}
 
-		if snrReady {
-			snrSample.Normalized = &snr
+		if separationReady {
+			snrSample.Normalized = &separation
 		}
 
-		measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
+		measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
 
 		measurements = append(measurements, measurement)
 	}

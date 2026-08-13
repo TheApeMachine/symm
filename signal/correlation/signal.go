@@ -2,13 +2,11 @@ package correlation
 
 import (
 	"context"
-	"sort"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -57,7 +55,7 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceCorrelation
 }
 
-func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
+func (signal *Signal) Measure(market *types.Symbol, _ ...int64) []*types.Measurement {
 	scoresBySymbol, err := signal.section.Measure(
 		market.MarketTickers(types.SourceCorrelation),
 	)
@@ -74,95 +72,54 @@ func (signal *Signal) Measure(market *types.Symbol) []*types.Measurement {
 		return nil
 	}
 
-	symbols := make([]string, 0, len(scoresBySymbol))
+	scores, found := scoresBySymbol[market.Symbol]
 
-	for symbol := range scoresBySymbol {
-		symbols = append(symbols, symbol)
-	}
-	sort.Strings(symbols)
-	measurements := make([]*types.Measurement, len(symbols))
-
-	group, _ := errgroup.WithContext(signal.ctx)
-
-	for index, symbol := range symbols {
-		measurementIndex := index
-		scores := scoresBySymbol[symbol]
-
-		group.Go(func() error {
-			at, price, found := signal.section.Latest(symbol)
-
-			if !found {
-				return nil
-			}
-
-			metrics, valid := correlationMetrics(scores)
-
-			if !valid {
-				return nil
-			}
-
-			measurement := &types.Measurement{
-				ID:     uuid.NewString(),
-				Source: types.SourceCorrelation,
-				Symbol: symbol,
-				Tick:   market.Tick,
-				At:     at,
-				Metadata: map[string]float64{
-					"last_price": price,
-				},
-				Metrics: metrics,
-			}
-			measurement.PutMetric(
-				types.MetricLastPrice,
-				types.SideNone,
-				types.MetricSample{
-					Raw:  price,
-					Unit: types.UnitQuoteCurrency,
-				},
-			)
-			snr, snrReady := types.MeasurementSignalNoiseRatio(
-				types.SourceCorrelation,
-				measurement.Metrics,
-			)
-
-			if !snrReady {
-				panic("correlation: competing metric groups are not measurable")
-			}
-
-			measurement.PutMetric(types.MetricSNR, types.SideNone, types.MetricSample{
-				Raw:        snr,
-				Normalized: &snr,
-				Unit:       types.UnitDimensionless,
-			})
-
-			measurements[measurementIndex] = measurement
-
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"correlation: parallel measurement construction failed",
-			err,
-		))
-
+	if !found {
 		return nil
 	}
 
-	compacted := measurements[:0]
+	at, price, found := signal.section.Latest(market.Symbol)
 
-	for _, measurement := range measurements {
-		if measurement == nil {
-			continue
-		}
-
-		compacted = append(compacted, measurement)
+	if !found {
+		return nil
 	}
-	measurements = compacted
 
-	return measurements
+	metrics, valid := correlationMetrics(scores)
+
+	if !valid {
+		return nil
+	}
+
+	measurement := &types.Measurement{
+		ID:     uuid.NewString(),
+		Source: types.SourceCorrelation,
+		Symbol: market.Symbol,
+		Tick:   market.Tick,
+		At:     at,
+		Metadata: map[string]float64{
+			"last_price": price,
+		},
+		Metrics: metrics,
+	}
+	measurement.PutMetric(
+		types.MetricLastPrice,
+		types.SideNone,
+		types.MetricSample{Raw: price, Unit: types.UnitQuoteCurrency},
+	)
+	separation, separationReady := types.MeasurementHypothesisSeparation(
+		types.SourceCorrelation,
+		measurement.Metrics,
+	)
+
+	if !separationReady {
+		panic("correlation: competing metric groups are not measurable")
+	}
+
+	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, types.MetricSample{
+		Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
+	})
+
+	return []*types.Measurement{measurement}
 }
 
 /*

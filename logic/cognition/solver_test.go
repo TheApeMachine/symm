@@ -128,6 +128,57 @@ func TestUpdate(t *testing.T) {
 		})
 	})
 
+	Convey("Given a learned prefix with two measured continuations", t, func() {
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
+		solver := NewSolver(tree, nil, nil)
+		vertical := solver.encodeCategory(types.CategoryVerticalIgnition)
+		reversal := solver.encodeCategory(types.CategoryActiveReversal)
+		exhaustion := solver.encodeCategory(types.CategoryExhaustion)
+		prefix := solver.sequenceBytes([]string{vertical})
+		_, _ = tree.InsertSensoryWeight(prefix, dmt.CognitiveState{Count: 6, Probability: 1})
+		_, _ = tree.InsertSensoryWeight(
+			solver.sequenceBytes([]string{vertical, reversal}),
+			dmt.CognitiveState{Count: 3, Probability: 0.5},
+		)
+		_, _ = tree.InsertSensoryWeight(
+			solver.sequenceBytes([]string{vertical, exhaustion}),
+			dmt.CognitiveState{Count: 3, Probability: 0.5},
+		)
+		thesis := cognitionThesis(types.CategoryVerticalIgnition)
+
+		So(solver.Update(thesis), ShouldBeNil)
+		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		stored, found := storedSymbol.(*types.Symbol).Cognition.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		cognition := stored.(types.Cognition)
+
+		Convey("Then it reports positive Shannon entropy and its empirical gate", func() {
+			So(cognition.EntropyBits, ShouldNotBeNil)
+			So(*cognition.EntropyBits, ShouldBeGreaterThan, 0)
+			So(cognition.EntropyThreshold, ShouldNotBeNil)
+			So(*cognition.EntropyThreshold, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given an active prefix without competing continuations", t, func() {
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
+		solver := NewSolver(tree, nil, nil)
+		thesis := cognitionThesis(types.CategoryVerticalIgnition)
+
+		So(solver.Update(thesis), ShouldBeNil)
+		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
+		stored, _ := storedSymbol.(*types.Symbol).Cognition.Load("BTC/USD")
+		cognition := stored.(types.Cognition)
+
+		Convey("Then it leaves branch entropy absent instead of publishing zero", func() {
+			So(cognition.EntropyBits, ShouldBeNil)
+			So(cognition.EntropyThreshold, ShouldBeNil)
+		})
+	})
+
 	Convey("Given a broad thesis whose categories do not change", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)

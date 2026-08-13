@@ -6,10 +6,12 @@ describe("sourceHeadlineMetric", () => {
 		expect(sourceHeadlineMetric("hawkes")).toBe("metrics.spectral_radius");
 	});
 
-	it("uses signal-to-noise separation as depthflow's headline", () => {
-		expect(sourceHeadlineMetric("depthflow")).toBe("metrics.snr");
+	it("uses classifier hypothesis separation as depthflow's headline", () => {
+		expect(sourceHeadlineMetric("depthflow")).toBe(
+			"metrics.hypothesis_separation",
+		);
 		expect(sourceMetrics("depthflow")).toEqual([
-			"snr",
+			"hypothesis_separation",
 			"loaded_score",
 			"spoof_score",
 			"thin_score",
@@ -19,10 +21,26 @@ describe("sourceHeadlineMetric", () => {
 		expect(sourceMetrics("depthflow")).not.toContain("value");
 	});
 
-	it("uses signal-to-noise separation as correlation's headline", () => {
-		expect(sourceHeadlineMetric("correlation")).toBe("metrics.snr");
-		expect(sourceMetrics("correlation")).toContain("snr");
+	it("uses classifier hypothesis separation as correlation's headline", () => {
+		expect(sourceHeadlineMetric("correlation")).toBe(
+			"metrics.hypothesis_separation",
+		);
+		expect(sourceMetrics("correlation")).toContain("hypothesis_separation");
+		expect(sourceMetrics("correlation")).not.toContain("snr");
 		expect(sourceMetrics("correlation")).not.toContain("strength");
 		expect(sourceMetrics("correlation")).not.toContain("peak_score");
+	});
+
+	it("uses toxicity's normalized summary rather than raw touch size", () => {
+		expect(sourceHeadlineMetric("toxicity")).toBe("metrics.strength");
+	});
+
+	it("rejects unsupported sources instead of inventing a metric fallback", () => {
+		expect(() => sourceHeadlineMetric("unknown")).toThrow(
+			"unsupported measurement source: unknown",
+		);
+		expect(() => sourceMetrics("unknown")).toThrow(
+			"unsupported measurement source: unknown",
+		);
 	});
 });

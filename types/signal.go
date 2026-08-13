@@ -7,6 +7,6 @@ shared Thesis updates downstream.
 type Signal interface {
 	Name() string
 	Type() SourceType
-	Measure(*Symbol) []*Measurement
+	Measure(*Symbol, ...int64) []*Measurement
 	Close() error
 }

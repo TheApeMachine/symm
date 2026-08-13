@@ -56,7 +56,7 @@ export const AllocationSidePanel = () => (
 			)}
 		</Component>
 
-		<Component registerKey="strategy" select="decisions">
+		<Component registerKey="strategy" select="decisions" repeat>
 			{({ ref, slots }) => (
 				<div
 					ref={ref}

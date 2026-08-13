@@ -39,11 +39,11 @@ func TestUpdate(t *testing.T) {
 		defer solver.Close()
 		So(appendEquity(thesis, 200), ShouldBeNil)
 
-		err = solver.Update(thesis)
+		err = solver.Update(thesis, true)
 		firstPending := append([]float64(nil), solver.optimizer.pending...)
 		firstConfig := system.Cfg.Snapshot()
 		So(appendEquity(thesis, 180), ShouldBeNil)
-		errAfterOutcome := solver.Update(thesis)
+		errAfterOutcome := solver.Update(thesis, true)
 		regulated := system.Cfg.Snapshot()
 
 		Convey("It should resolve the prior controls against only the later log return", func() {
@@ -69,15 +69,36 @@ func TestUpdate(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer solver.Close()
 		So(appendEquity(thesis, 200), ShouldBeNil)
-		So(solver.Update(thesis), ShouldBeNil)
+		So(solver.Update(thesis, true), ShouldBeNil)
 		So(appendEquity(thesis, 200), ShouldBeNil)
 
-		err = solver.Update(thesis)
+		err = solver.Update(thesis, true)
 
 		Convey("It should learn the economically real zero-return interval", func() {
 			So(err, ShouldBeNil)
 			So(solver.optimizer.resolved, ShouldEqual, 1)
 			So(solver.history, ShouldHaveLength, 2)
+		})
+	})
+
+	Convey("Given repeated valuations while the account has no exposure", t, func() {
+		system.Cfg = system.NewConfig()
+		baseline := system.Cfg.Snapshot()
+		thesis := types.NewThesis(t.Context(), nil)
+		solver, err := NewSolver(t.Context(), nil)
+		So(err, ShouldBeNil)
+		defer solver.Close()
+		So(appendEquity(thesis, 200), ShouldBeNil)
+		So(solver.Update(thesis, false), ShouldBeNil)
+		So(appendEquity(thesis, 200), ShouldBeNil)
+
+		err = solver.Update(thesis, false)
+
+		Convey("It should retain the configured controls without fitting a response", func() {
+			So(err, ShouldBeNil)
+			So(solver.optimizer.pending, ShouldBeNil)
+			So(solver.optimizer.resolved, ShouldEqual, 0)
+			So(system.Cfg.Snapshot().Planner, ShouldResemble, baseline.Planner)
 		})
 	})
 
@@ -88,14 +109,14 @@ func TestUpdate(t *testing.T) {
 		So(err, ShouldBeNil)
 		defer solver.Close()
 		So(appendEquity(thesis, 200), ShouldBeNil)
-		So(solver.Update(thesis), ShouldBeNil)
+		So(solver.Update(thesis, true), ShouldBeNil)
 		So(appendEquity(thesis, 201), ShouldBeNil)
 		var updates sync.WaitGroup
 		errs := make(chan error, 16)
 
 		for range 16 {
 			updates.Go(func() {
-				errs <- solver.Update(thesis)
+				errs <- solver.Update(thesis, true)
 			})
 		}
 
@@ -163,7 +184,7 @@ func BenchmarkUpdate(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		if err := solver.Update(thesis); err != nil {
+		if err := solver.Update(thesis, true); err != nil {
 			b.Fatal(err)
 		}
 	}

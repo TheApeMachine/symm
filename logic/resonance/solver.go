@@ -31,6 +31,7 @@ type Solver struct {
 	recorder      *audit.Recorder
 	coders        *sync.Map
 	schemas       *sync.Map
+	schemaTicks   *sync.Map
 	standardizers *sync.Map
 	states        *sync.Map
 	histories     *sync.Map
@@ -68,6 +69,7 @@ func NewSolver(
 		recorder:      recorder,
 		coders:        &sync.Map{},
 		schemas:       &sync.Map{},
+		schemaTicks:   &sync.Map{},
 		standardizers: &sync.Map{},
 		states:        &sync.Map{},
 		histories:     &sync.Map{},
@@ -109,17 +111,20 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			readings := make(map[string]float64)
 			mark := 0.0
 			tick := int64(0)
+			markTick := int64(0)
 
 			for rm := range symbol.ResonanceMeasurements() {
 				if rm == nil {
 					continue
 				}
 
-				if rm.Tick > tick || (rm.Tick == tick && mark == 0) {
-					if rm.Mark > 0 {
-						mark = rm.Mark
-						tick = rm.Tick
-					}
+				if rm.Tick > tick {
+					tick = rm.Tick
+				}
+
+				if rm.Mark > 0 && (rm.Tick > markTick || rm.Tick == markTick && mark == 0) {
+					mark = rm.Mark
+					markTick = rm.Tick
 				}
 
 				for identity, value := range rm.Readings {
@@ -172,10 +177,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			schemaChanged := false
-			trained := false
+			schemaTick := tick
+			frozen := false
 
-			if rawHistory, found := solver.histories.Load(name); found {
-				trained = rawHistory.(*sampleHistory).resolved > 0
+			if rawSchemaTick, found := solver.schemaTicks.Load(name); found {
+				schemaTick = rawSchemaTick.(int64)
+				frozen = tick > schemaTick
 			}
 
 			for identity := range state {
@@ -183,7 +190,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					continue
 				}
 
-				if trained {
+				if frozen {
 					continue
 				}
 
@@ -194,6 +201,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			if schemaChanged {
 				sort.Strings(schema)
 				solver.schemas.Store(name, schema)
+				solver.schemaTicks.Store(name, tick)
 				solver.coders.Delete(name)
 				solver.histories.Delete(name)
 				solver.currentReach.Delete(name)
@@ -375,20 +383,14 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 			forwardRetention := coder.RolloutRetention(supportedHorizon)
 
-			// Safe guards against empty predictions during cold start
-			var taskScale float64
-
-			if len(forecast) > 0 {
-				taskScale = forecast[0].Scale
-			}
-
-			var taskForecast float64
-
-			if len(forwardCurve) > 0 {
-				taskForecast = forwardCurve[0]
-			}
-
-			utils.Publish(solver.ui, datura.NewMap("resonance", datura.NewMap(
+			forecastFrame := datura.NewMap(
+				"posterior", forecast,
+				"forwardRetention", forwardRetention,
+				"supportedHorizon", supportedHorizon,
+				"currentReach", currentReach,
+				"nextReach", nextReach,
+			)
+			frame := datura.NewMap(
 				"source", types.SourceResonance,
 				"symbol", name,
 				"at", thesis.At,
@@ -397,22 +399,21 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"taskPrecisionReady", taskPrecisionReady,
 				"taskSkill", taskSkill,
 				"taskSkillReady", taskSkillReady,
-				"taskScale", taskScale,
-				"taskForecast", taskForecast,
 				"samples", history.resolved,
 				"layers", layers,
 				"latent", layers[len(layers)-1].State,
 				"surprise", surprise,
 				"energy", energy,
-				"forecast", datura.NewMap(
-					"posterior", forecast,
-					"forwardCurve", forwardCurve,
-					"forwardRetention", forwardRetention,
-					"supportedHorizon", supportedHorizon,
-					"currentReach", currentReach,
-					"nextReach", nextReach,
-				),
-			)))
+				"forecast", forecastFrame,
+			)
+
+			if len(forecast) > 0 && forecast[0].Ready {
+				frame["taskScale"] = forecast[0].Scale
+				frame["taskForecast"] = forecast[0].Value
+				forecastFrame["forwardCurve"] = forwardCurve
+			}
+
+			utils.Publish(solver.ui, datura.NewMap("resonance", frame))
 
 			return nil
 		})

@@ -117,6 +117,7 @@ func (market *Market) publishSample(
 	}
 
 	market.latest[sample.Symbol] = sample
+	market.history[sample.Symbol] = append(market.history[sample.Symbol], sample)
 	market.sampleMu.Unlock()
 
 	market.Public.Publish(
@@ -151,6 +152,12 @@ func (market *Market) publishSample(
 		trade.NewFixture(trade.UPDATE, 1, generator).Render(sample),
 	)
 	market.Public.Publish("ohlc", market.renderCandle(sample))
+
+	if market.stack != nil {
+		if err := market.stack.Sync(market.ctx, sample.Timestamp); err != nil {
+			panic(err)
+		}
+	}
 }
 
 func (market *Market) pace(sampleAt time.Time) {

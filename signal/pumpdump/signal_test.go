@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +17,7 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{
 			ctx:    context.Background(),
 			algo:   equation.NewIgnition(128),
-			quotes: &sync.Map{},
+			quotes: types.NewQuoteHistory(128),
 		}
 		market := types.NewSymbol("BTC/USD", nil)
 		market.AppendTrade(pumpdumpTrade(1, "buy", 100, time.Unix(1_700_002_200, 0).UTC()))
@@ -36,7 +35,7 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{
 			ctx:    context.Background(),
 			algo:   equation.NewIgnition(128),
-			quotes: &sync.Map{},
+			quotes: types.NewQuoteHistory(128),
 		}
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Unix(1_700_002_300, 0).UTC()

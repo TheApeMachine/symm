@@ -97,7 +97,7 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceDepthFlow
 }
 
-func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
+func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 
 	if signal.books == nil {
@@ -551,20 +551,20 @@ func (signal *Signal) frame(
 			},
 		},
 	}
-	snr, snrReady := types.MeasurementSignalNoiseRatio(
+	separation, separationReady := types.MeasurementHypothesisSeparation(
 		types.SourceDepthFlow,
 		measurement.Metrics,
 	)
 	snrSample := types.MetricSample{
-		Raw:  snr,
+		Raw:  separation,
 		Unit: types.UnitDimensionless,
 	}
 
-	if snrReady {
-		snrSample.Normalized = &snr
+	if separationReady {
+		snrSample.Normalized = &separation
 	}
 
-	measurement.PutMetric(types.MetricSNR, types.SideNone, snrSample)
+	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
 
 	return []*types.Measurement{measurement}
 }

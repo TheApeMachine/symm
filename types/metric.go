@@ -39,7 +39,7 @@ const (
 	MetricIgnition                        MetricType = "ignition"
 	MetricTrend                           MetricType = "trend"
 	MetricExhaustion                      MetricType = "exhaustion"
-	MetricSNR                             MetricType = "snr"
+	MetricHypothesisSeparation            MetricType = "hypothesis_separation"
 	MetricStrength                        MetricType = "strength"
 	MetricValue                           MetricType = "value"
 	MetricCategory                        MetricType = "category"
@@ -87,7 +87,7 @@ const (
 	MetricSignedLagCorrelation     MetricType = "signed_lag_correlation"
 	MetricLagFraction              MetricType = "lag_fraction"
 	MetricSignedLagDirection       MetricType = "signed_lag_direction"
-	MetricSampleSupport            MetricType = "sample_support"
+	MetricSampleCount              MetricType = "sample_count"
 	MetricInefficient              MetricType = "inefficient"
 	MetricSync                     MetricType = "sync"
 	MetricDecoupled                MetricType = "decoupled"
@@ -118,6 +118,9 @@ const (
 	MetricFillVolume         MetricType = "fill_volume"
 	MetricRetreatingQuantity MetricType = "retreating_quantity"
 	MetricCancelledQuantity  MetricType = "cancelled_quantity"
+	MetricBluffScore         MetricType = "bluff_score"
+	MetricVacuumScore        MetricType = "vacuum_score"
+	MetricSupportScore       MetricType = "support_score"
 )
 
 /*
@@ -130,71 +133,71 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 	Competes bool
 }{
 	SourceCorrelation: {
-		MetricKey(MetricSNR, SideNone):            {"definition", false},
-		MetricKey(MetricLastPrice, SideNone):      {"price", false},
-		MetricKey(MetricCorrelation, SideNone):    {"cohort_relation", false},
-		MetricKey(MetricSigned, SideNone):         {"cohort_relation", false},
-		MetricKey(MetricRelativeEnergy, SideNone): {"energy_scale", false},
-		MetricKey(MetricHerdScore, SideNone):      {"herd", true},
-		MetricKey(MetricAlphaScore, SideNone):     {"alpha", true},
-		MetricKey(MetricNoiseScore, SideNone):     {"noise", true},
-		MetricKey(MetricStressScore, SideNone):    {"stress", true},
+		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},
+		MetricKey(MetricLastPrice, SideNone):            {"price", false},
+		MetricKey(MetricCorrelation, SideNone):          {"cohort_relation", false},
+		MetricKey(MetricSigned, SideNone):               {"cohort_relation", false},
+		MetricKey(MetricRelativeEnergy, SideNone):       {"energy_scale", false},
+		MetricKey(MetricHerdScore, SideNone):            {"herd", true},
+		MetricKey(MetricAlphaScore, SideNone):           {"alpha", true},
+		MetricKey(MetricNoiseScore, SideNone):           {"noise", true},
+		MetricKey(MetricStressScore, SideNone):          {"stress", true},
 	},
 	SourceCVD: {
-		MetricKey(MetricSNR, SideNone):           {"definition", false},
-		MetricKey(MetricMidpoint, SideNone):      {"market", false},
-		MetricKey(MetricTradePrice, SideNone):    {"market", false},
-		MetricKey(MetricTradeQuantity, SideNone): {"market", false},
-		MetricKey(MetricAbsorption, SideNone):    {"absorption", true},
-		MetricKey(MetricDrive, SideNone):         {"drive", true},
-		MetricKey(MetricBalance, SideNone):       {"balance", true},
-		MetricKey(MetricStarvation, SideNone):    {"starvation", true},
-		MetricKey(MetricStrength, SideNone):      {"summary", false},
-		MetricKey(MetricNetFraction, SideNone):   {"flow", false},
-		MetricKey(MetricNet, SideNone):           {"flow", false},
+		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},
+		MetricKey(MetricMidpoint, SideNone):             {"market", false},
+		MetricKey(MetricTradePrice, SideNone):           {"market", false},
+		MetricKey(MetricTradeQuantity, SideNone):        {"market", false},
+		MetricKey(MetricAbsorption, SideNone):           {"absorption", true},
+		MetricKey(MetricDrive, SideNone):                {"drive", true},
+		MetricKey(MetricBalance, SideNone):              {"balance", true},
+		MetricKey(MetricStarvation, SideNone):           {"starvation", true},
+		MetricKey(MetricStrength, SideNone):             {"summary", false},
+		MetricKey(MetricNetFraction, SideNone):          {"flow", false},
+		MetricKey(MetricNet, SideNone):                  {"flow", false},
 	},
 	SourceDepthFlow: {
-		MetricKey(MetricSNR, SideNone):           {"definition", false},
-		MetricKey(MetricLoadedScore, SideNone):   {"loaded", true},
-		MetricKey(MetricSpoofScore, SideNone):    {"spoof", true},
-		MetricKey(MetricThinScore, SideNone):     {"thin", true},
-		MetricKey(MetricNeutralScore, SideNone):  {"neutral", true},
-		MetricKey(MetricBestPrice, SideBuy):      {"book", false},
-		MetricKey(MetricBestPrice, SideSell):     {"book", false},
-		MetricKey(MetricTouchQuantity, SideBuy):  {"book", false},
-		MetricKey(MetricTouchQuantity, SideSell): {"book", false},
-		MetricKey(MetricMidpoint, SideNone):      {"book", false},
-		MetricKey(MetricTradePrice, SideNone):    {"trade", false},
-		MetricKey(MetricTradeQuantity, SideNone): {"trade", false},
+		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},
+		MetricKey(MetricLoadedScore, SideNone):          {"loaded", true},
+		MetricKey(MetricSpoofScore, SideNone):           {"spoof", true},
+		MetricKey(MetricThinScore, SideNone):            {"thin", true},
+		MetricKey(MetricNeutralScore, SideNone):         {"neutral", true},
+		MetricKey(MetricBestPrice, SideBuy):             {"book", false},
+		MetricKey(MetricBestPrice, SideSell):            {"book", false},
+		MetricKey(MetricTouchQuantity, SideBuy):         {"book", false},
+		MetricKey(MetricTouchQuantity, SideSell):        {"book", false},
+		MetricKey(MetricMidpoint, SideNone):             {"book", false},
+		MetricKey(MetricTradePrice, SideNone):           {"trade", false},
+		MetricKey(MetricTradeQuantity, SideNone):        {"trade", false},
 	},
 	SourceExhaustion: {
-		MetricKey(MetricSNR, SideNone):           {"definition", false},
-		MetricKey(MetricMechanical, SideBuy):     {"long_mechanical", true},
-		MetricKey(MetricThermal, SideBuy):        {"long_thermal", true},
-		MetricKey(MetricFragile, SideBuy):        {"long_fragile", true},
-		MetricKey(MetricReversal, SideBuy):       {"long_reversal", true},
-		MetricKey(MetricMechanical, SideSell):    {"short_mechanical", true},
-		MetricKey(MetricThermal, SideSell):       {"short_thermal", true},
-		MetricKey(MetricFragile, SideSell):       {"short_fragile", true},
-		MetricKey(MetricReversal, SideSell):      {"short_reversal", true},
-		MetricKey(MetricUrgency, SideBuy):        {"long_summary", false},
-		MetricKey(MetricStrength, SideBuy):       {"long_summary", false},
-		MetricKey(MetricValue, SideBuy):          {"long_summary", false},
-		MetricKey(MetricCategory, SideBuy):       {"long_summary", false},
-		MetricKey(MetricUrgency, SideSell):       {"short_summary", false},
-		MetricKey(MetricStrength, SideSell):      {"short_summary", false},
-		MetricKey(MetricValue, SideSell):         {"short_summary", false},
-		MetricKey(MetricCategory, SideSell):      {"short_summary", false},
-		MetricKey(MetricBestPrice, SideBuy):      {"book", false},
-		MetricKey(MetricBestPrice, SideSell):     {"book", false},
-		MetricKey(MetricTouchQuantity, SideBuy):  {"book", false},
-		MetricKey(MetricTouchQuantity, SideSell): {"book", false},
-		MetricKey(MetricMidpoint, SideNone):      {"book", false},
-		MetricKey(MetricTradePrice, SideNone):    {"trade", false},
-		MetricKey(MetricTradeQuantity, SideNone): {"trade", false},
+		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},
+		MetricKey(MetricMechanical, SideBuy):            {"long_mechanical", true},
+		MetricKey(MetricThermal, SideBuy):               {"long_thermal", true},
+		MetricKey(MetricFragile, SideBuy):               {"long_fragile", true},
+		MetricKey(MetricReversal, SideBuy):              {"long_reversal", true},
+		MetricKey(MetricMechanical, SideSell):           {"short_mechanical", true},
+		MetricKey(MetricThermal, SideSell):              {"short_thermal", true},
+		MetricKey(MetricFragile, SideSell):              {"short_fragile", true},
+		MetricKey(MetricReversal, SideSell):             {"short_reversal", true},
+		MetricKey(MetricUrgency, SideBuy):               {"long_summary", false},
+		MetricKey(MetricStrength, SideBuy):              {"long_summary", false},
+		MetricKey(MetricValue, SideBuy):                 {"long_summary", false},
+		MetricKey(MetricCategory, SideBuy):              {"long_summary", false},
+		MetricKey(MetricUrgency, SideSell):              {"short_summary", false},
+		MetricKey(MetricStrength, SideSell):             {"short_summary", false},
+		MetricKey(MetricValue, SideSell):                {"short_summary", false},
+		MetricKey(MetricCategory, SideSell):             {"short_summary", false},
+		MetricKey(MetricBestPrice, SideBuy):             {"book", false},
+		MetricKey(MetricBestPrice, SideSell):            {"book", false},
+		MetricKey(MetricTouchQuantity, SideBuy):         {"book", false},
+		MetricKey(MetricTouchQuantity, SideSell):        {"book", false},
+		MetricKey(MetricMidpoint, SideNone):             {"book", false},
+		MetricKey(MetricTradePrice, SideNone):           {"trade", false},
+		MetricKey(MetricTradeQuantity, SideNone):        {"trade", false},
 	},
 	SourceHawkes: {
-		MetricKey(MetricSNR, SideNone):                       {"definition", false},
+		MetricKey(MetricHypothesisSeparation, SideNone):      {"hypothesis_separation", false},
 		MetricKey(MetricEventCount, SideNone):                {"observation", false},
 		MetricKey(MetricEventCount, SideBuy):                 {"buy_process", true},
 		MetricKey(MetricEventCount, SideSell):                {"sell_process", true},
@@ -219,7 +222,7 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 		MetricKey(MetricTotalDescendants, SideSell):          {"sell_process", true},
 	},
 	SourceLeadLag: {
-		MetricKey(MetricSNR, SideNone):                      {"definition", false},
+		MetricKey(MetricHypothesisSeparation, SideNone):     {"hypothesis_separation", false},
 		MetricKey(MetricLastPrice, SideNone):                {"price", false},
 		MetricKey(MetricPeerLastPrice, SideNone):            {"peer_price", false},
 		MetricKey(MetricCorrelation, SideNone):              {"relation", false},
@@ -228,7 +231,7 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 		MetricKey(MetricSignedLagCorrelation, SideNone):     {"relation", false},
 		MetricKey(MetricLagFraction, SideNone):              {"lag", false},
 		MetricKey(MetricSignedLagDirection, SideNone):       {"lag", false},
-		MetricKey(MetricSampleSupport, SideNone):            {"support", false},
+		MetricKey(MetricSampleCount, SideNone):              {"support", false},
 		MetricKey(MetricInefficient, SideNone):              {"inefficient", true},
 		MetricKey(MetricSync, SideNone):                     {"sync", true},
 		MetricKey(MetricDecoupled, SideNone):                {"decoupled", true},
@@ -236,7 +239,7 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 		MetricKey(MetricStrength, SideNone):                 {"summary", false},
 	},
 	SourceLiquidity: {
-		MetricKey(MetricSNR, SideNone):                          {"definition", false},
+		MetricKey(MetricHypothesisSeparation, SideNone):         {"hypothesis_separation", false},
 		MetricKey(MetricBestPrice, SideBuy):                     {"market", false},
 		MetricKey(MetricBestPrice, SideSell):                    {"market", false},
 		MetricKey(MetricTouchQuantity, SideBuy):                 {"market", false},
@@ -252,70 +255,78 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 		MetricKey(MetricReportedVolumeNotionalMedian, SideNone): {"cohort_scale", false},
 	},
 	SourcePumpDump: {
-		MetricKey(MetricSNR, SideNone):           {"definition", false},
-		MetricKey(MetricBestPrice, SideBuy):      {"market", false},
-		MetricKey(MetricBestPrice, SideSell):     {"market", false},
-		MetricKey(MetricMidpoint, SideNone):      {"market", false},
-		MetricKey(MetricTradePrice, SideNone):    {"market", false},
-		MetricKey(MetricTradeQuantity, SideNone): {"market", false},
-		MetricKey(MetricRVOL, SideNone):          {"volume_clock", false},
-		MetricKey(MetricSpread, SideNone):        {"market", false},
-		MetricKey(MetricPrecursor, SideNone):     {"legacy_summary", false},
-		MetricKey(MetricCompression, SideNone):   {"legacy_summary", false},
-		MetricKey(MetricIgnition, SideNone):      {"legacy_summary", false},
-		MetricKey(MetricTrend, SideNone):         {"legacy_summary", false},
-		MetricKey(MetricExhaustion, SideNone):    {"legacy_summary", false},
-		MetricKey(MetricStrength, SideNone):      {"legacy_summary", false},
-		MetricKey(MetricPrecursor, SideBuy):      {"buy_input", false},
-		MetricKey(MetricCompression, SideBuy):    {"buy_compression", true},
-		MetricKey(MetricIgnition, SideBuy):       {"buy_ignition", true},
-		MetricKey(MetricTrend, SideBuy):          {"buy_trend", true},
-		MetricKey(MetricExhaustion, SideBuy):     {"buy_exhaustion", true},
-		MetricKey(MetricStrength, SideBuy):       {"buy_summary", false},
-		MetricKey(MetricPrecursor, SideSell):     {"sell_input", false},
-		MetricKey(MetricCompression, SideSell):   {"sell_compression", true},
-		MetricKey(MetricIgnition, SideSell):      {"sell_ignition", true},
-		MetricKey(MetricTrend, SideSell):         {"sell_trend", true},
-		MetricKey(MetricExhaustion, SideSell):    {"sell_exhaustion", true},
-		MetricKey(MetricStrength, SideSell):      {"sell_summary", false},
+		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},
+		MetricKey(MetricBestPrice, SideBuy):             {"market", false},
+		MetricKey(MetricBestPrice, SideSell):            {"market", false},
+		MetricKey(MetricMidpoint, SideNone):             {"market", false},
+		MetricKey(MetricTradePrice, SideNone):           {"market", false},
+		MetricKey(MetricTradeQuantity, SideNone):        {"market", false},
+		MetricKey(MetricRVOL, SideNone):                 {"volume_clock", false},
+		MetricKey(MetricSpread, SideNone):               {"market", false},
+		MetricKey(MetricPrecursor, SideNone):            {"legacy_summary", false},
+		MetricKey(MetricCompression, SideNone):          {"legacy_summary", false},
+		MetricKey(MetricIgnition, SideNone):             {"legacy_summary", false},
+		MetricKey(MetricTrend, SideNone):                {"legacy_summary", false},
+		MetricKey(MetricExhaustion, SideNone):           {"legacy_summary", false},
+		MetricKey(MetricStrength, SideNone):             {"legacy_summary", false},
+		MetricKey(MetricPrecursor, SideBuy):             {"buy_input", false},
+		MetricKey(MetricCompression, SideBuy):           {"buy_compression", true},
+		MetricKey(MetricIgnition, SideBuy):              {"buy_ignition", true},
+		MetricKey(MetricTrend, SideBuy):                 {"buy_trend", true},
+		MetricKey(MetricExhaustion, SideBuy):            {"buy_exhaustion", true},
+		MetricKey(MetricStrength, SideBuy):              {"buy_summary", false},
+		MetricKey(MetricPrecursor, SideSell):            {"sell_input", false},
+		MetricKey(MetricCompression, SideSell):          {"sell_compression", true},
+		MetricKey(MetricIgnition, SideSell):             {"sell_ignition", true},
+		MetricKey(MetricTrend, SideSell):                {"sell_trend", true},
+		MetricKey(MetricExhaustion, SideSell):           {"sell_exhaustion", true},
+		MetricKey(MetricStrength, SideSell):             {"sell_summary", false},
 	},
 	SourceSentiment: {
-		MetricKey(MetricSNR, SideNone):            {"definition", false},
-		MetricKey(MetricLastPrice, SideNone):      {"price", false},
-		MetricKey(MetricChange, SideNone):         {"return", false},
-		MetricKey(MetricBreadth, SideNone):        {"breadth", false},
-		MetricKey(MetricLeaderStrength, SideNone): {"leadership", false},
-		MetricKey(MetricLeaderEvidence, SideNone): {"leadership", false},
-		MetricKey(MetricRelativeLead, SideNone):   {"leadership", false},
-		MetricKey(MetricSurgeScore, SideNone):     {"surge", true},
-		MetricKey(MetricDivergentScore, SideNone): {"divergence", false},
-		MetricKey(MetricSlumpScore, SideNone):     {"slump", true},
-		MetricKey(MetricStrength, SideNone):       {"summary", false},
+		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},
+		MetricKey(MetricLastPrice, SideNone):            {"price", false},
+		MetricKey(MetricChange, SideNone):               {"return", false},
+		MetricKey(MetricBreadth, SideNone):              {"breadth", false},
+		MetricKey(MetricLeaderStrength, SideNone):       {"leadership", false},
+		MetricKey(MetricLeaderEvidence, SideNone):       {"leadership", false},
+		MetricKey(MetricRelativeLead, SideNone):         {"leadership", false},
+		MetricKey(MetricSurgeScore, SideNone):           {"surge", true},
+		MetricKey(MetricDivergentScore, SideNone):       {"divergence", false},
+		MetricKey(MetricSlumpScore, SideNone):           {"slump", true},
+		MetricKey(MetricStrength, SideNone):             {"summary", false},
 	},
 	SourceToxicity: {
-		MetricKey(MetricSNR, SideNone):                {"definition", false},
-		MetricKey(MetricTradeVolume, SideNone):        {"market_activity", false},
-		MetricKey(MetricFillVolume, SideBuy):          {"execution", true},
-		MetricKey(MetricFillVolume, SideSell):         {"execution", true},
-		MetricKey(MetricBestPrice, SideBuy):           {"touch", false},
-		MetricKey(MetricBestPrice, SideSell):          {"touch", false},
-		MetricKey(MetricTouchQuantity, SideBuy):       {"touch", false},
-		MetricKey(MetricTouchQuantity, SideSell):      {"touch", false},
-		MetricKey(MetricRetreatingQuantity, SideBuy):  {"retreat", true},
-		MetricKey(MetricRetreatingQuantity, SideSell): {"retreat", true},
-		MetricKey(MetricCancelledQuantity, SideBuy):   {"cancellation", true},
-		MetricKey(MetricCancelledQuantity, SideSell):  {"cancellation", true},
+		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},
+		MetricKey(MetricMidpoint, SideNone):             {"market", false},
+		MetricKey(MetricTradeVolume, SideNone):          {"market_activity", false},
+		MetricKey(MetricFillVolume, SideBuy):            {"execution", true},
+		MetricKey(MetricFillVolume, SideSell):           {"execution", true},
+		MetricKey(MetricBestPrice, SideBuy):             {"touch", false},
+		MetricKey(MetricBestPrice, SideSell):            {"touch", false},
+		MetricKey(MetricTouchQuantity, SideBuy):         {"touch", false},
+		MetricKey(MetricTouchQuantity, SideSell):        {"touch", false},
+		MetricKey(MetricRetreatingQuantity, SideBuy):    {"retreat", true},
+		MetricKey(MetricRetreatingQuantity, SideSell):   {"retreat", true},
+		MetricKey(MetricCancelledQuantity, SideBuy):     {"cancellation", true},
+		MetricKey(MetricCancelledQuantity, SideSell):    {"cancellation", true},
+		MetricKey(MetricBluffScore, SideNone):           {"bluff", true},
+		MetricKey(MetricVacuumScore, SideNone):          {"vacuum", true},
+		MetricKey(MetricSupportScore, SideNone):         {"support", true},
+		MetricKey(MetricStrength, SideNone):             {"summary", false},
+		MetricKey(MetricValue, SideNone):                {"summary", false},
+		MetricKey(MetricCategory, SideNone):             {"summary", false},
 	},
 }
 
 /*
-MeasurementSignalNoiseRatio measures how far the strongest supporting group
-stands above all competing group energy. Supporting metrics are combined by
-root mean square so a group does not win merely because it has more metrics.
-Competing group strengths combine as root-sum-square noise, so every material
-alternative raises the floor instead of disappearing behind a top-two rank.
+MeasurementHypothesisSeparation measures how far the strongest hypothesis
+stands above all competing hypothesis energy. It is a category margin, not an
+estimate of signal-to-noise ratio, sample precision, or model quality.
+Supporting metrics are combined by root mean square so a group does not win
+merely because it has more metrics. Competing group strengths combine as
+root-sum-square alternatives, so every material competitor raises the floor.
 */
-func MeasurementSignalNoiseRatio(
+func MeasurementHypothesisSeparation(
 	source SourceType,
 	metrics map[string]MetricSample,
 ) (float64, bool) {

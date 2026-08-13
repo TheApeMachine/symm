@@ -143,6 +143,7 @@ func TestDeskPublishEquity(t *testing.T) {
 			So(equity.Equity.Float64(), ShouldEqual, 200.0)
 			So(equity.UnrealizedPnL.Float64(), ShouldEqual, -5.0)
 			So(observer.updates, ShouldEqual, 1)
+			So(observer.exposure, ShouldBeFalse)
 		})
 	})
 }
@@ -197,11 +198,13 @@ type equityConn struct {
 }
 
 type equityObserver struct {
-	updates int
+	updates  int
+	exposure bool
 }
 
-func (observer *equityObserver) Update(_ *types.Thesis) error {
+func (observer *equityObserver) Update(_ *types.Thesis, exposure bool) error {
 	observer.updates++
+	observer.exposure = exposure
 	return nil
 }
 
@@ -233,6 +236,7 @@ func equityDeskFixture(
 		balance:        balance,
 		thesis:         thesis,
 		equityObserver: observer,
+		positions:      &sync.Map{},
 		ui:             make(chan []byte, 1),
 	}
 

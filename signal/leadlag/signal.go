@@ -61,7 +61,7 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceLeadLag
 }
 
-func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
+func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 
 	anchor := signal.section.CausalAnchor()
@@ -190,11 +190,6 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 
 		correlation := math.Abs(signedCorrelation)
 		sampleCount := float64(features.SampleCount)
-		sampleSupport := 0.0
-
-		if features.SampleCount > 0 {
-			sampleSupport = 1.0
-		}
 
 		metrics := map[string]types.MetricSample{
 			types.MetricKey(types.MetricCorrelation, types.SideNone): {
@@ -227,10 +222,9 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 				Normalized: &lagDirection,
 				Unit:       types.UnitDimensionless,
 			},
-			types.MetricKey(types.MetricSampleSupport, types.SideNone): {
-				Raw:        sampleCount,
-				Normalized: &sampleSupport,
-				Unit:       types.UnitDimensionless,
+			types.MetricKey(types.MetricSampleCount, types.SideNone): {
+				Raw:  sampleCount,
+				Unit: types.UnitCount,
 			},
 			types.MetricKey(types.MetricInefficient, types.SideNone): {
 				Raw:        outcome.InefficientScore,
@@ -263,20 +257,20 @@ func (signal *Signal) Measure(symbol *types.Symbol) []*types.Measurement {
 			},
 		}
 
-		snr, snrReady := types.MeasurementSignalNoiseRatio(
+		separation, separationReady := types.MeasurementHypothesisSeparation(
 			types.SourceLeadLag,
 			metrics,
 		)
-		snrSample := types.MetricSample{
-			Raw:  snr,
+		separationSample := types.MetricSample{
+			Raw:  separation,
 			Unit: types.UnitDimensionless,
 		}
 
-		if snrReady {
-			snrSample.Normalized = &snr
+		if separationReady {
+			separationSample.Normalized = &separation
 		}
 
-		metrics[types.MetricKey(types.MetricSNR, types.SideNone)] = snrSample
+		metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = separationSample
 		measurement := &types.Measurement{
 			ID:     uuid.NewString(),
 			Source: types.SourceLeadLag,

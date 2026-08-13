@@ -301,6 +301,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		ambiguity := solver.tree.MeasureBranchAmbiguity(
 			dmt.SensoryPrefixKey(activeSequenceBytes),
 		)
+		var entropyBits *float64
+		var entropyThreshold *float64
+
+		if ambiguity.Threshold < math.MaxFloat64 {
+			entropyBits = &ambiguity.EntropyBits
+			entropyThreshold = &ambiguity.Threshold
+		}
 
 		// 7. Format Lookahead Predictions for Thesis
 		predictions := solver.formatLookaheadPredictions(
@@ -387,8 +394,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			ClassConfidence:  confidence,
 			Contrast:         contrast,
 			ContrastEvidence: contrastEvidence,
-			EntropyBits:      ambiguity.EntropyBits,
-			EntropyThreshold: ambiguity.Threshold,
+			EntropyBits:      entropyBits,
+			EntropyThreshold: entropyThreshold,
 			Ambiguous:        ambiguity.Ambiguous,
 			Cohort:           solver.tree.GetSensoryWeight(activeSequenceBytes).Count,
 			LookaheadScore:   lookaheadScore,
