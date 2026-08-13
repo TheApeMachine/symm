@@ -9,8 +9,8 @@ XrayManifoldPanel is the manifold reading.
 
 The predictive network publishes its settled state one carrier at a time, so the
 panel scopes to the focused symbol's frame rather than whichever frame happens
-to sit first in the batch. Task precision, task skill, horizon, and reach are
-shown with the same names the learning package exposes.
+to sit first in the batch. Relative residual precision, task skill, horizon,
+and reach are shown with the same names the learning package exposes.
 */
 export const XrayManifoldPanel = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
@@ -30,7 +30,7 @@ export const XrayManifoldPanel = () => {
 							Manifold reading
 						</div>
 						<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-							settled predictive state · task precision · task skill
+							settled predictive state · strict-prior return resolution
 						</div>
 					</div>
 					<div
@@ -139,23 +139,15 @@ export const XrayManifoldPanel = () => {
 					</div>
 					<div data-scope="symbol" data-filter={focusSymbol} className="mt-0.5">
 						<div className="mb-1 flex justify-between text-[10px]">
-							<span className="text-(--f3)">task precision</span>
+							<span className="text-(--f3)">relative precision</span>
 							<Typography.Span
-								data-paint="taskPrecision"
+								data-paint="taskRelativePrecision"
 								data-paint-absent="—"
 								data-paint-format=".3f"
 								className="font-mono text-(--f1)"
 							>
 								—
 							</Typography.Span>
-						</div>
-						<div className="h-1.5 overflow-hidden rounded-[3px] bg-(--line)">
-							<div
-								data-set="taskPrecision"
-								data-target="style.--mode"
-								className="h-full bg-(--acc)"
-								style={{ width: "calc(var(--mode, 0) * 100%)" }}
-							/>
 						</div>
 					</div>
 				</div>

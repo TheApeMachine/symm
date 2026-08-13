@@ -51,8 +51,12 @@ func TestDeskExecute(t *testing.T) {
 
 	Convey("Given normal capacity already occupied", t, func() {
 		desk := deskFixture(t)
-		desk.positions.Store("NORMAL1/USD", &Position{Status: types.OPEN})
-		desk.positions.Store("NORMAL2/USD", &Position{Status: types.OPEN})
+		normalOne := &Position{}
+		normalOne.setStatus(types.OPEN)
+		normalTwo := &Position{}
+		normalTwo.setStatus(types.OPEN)
+		desk.positions.Store("NORMAL1/USD", normalOne)
+		desk.positions.Store("NORMAL2/USD", normalTwo)
 
 		Convey("It should reject a normal entry and admit only two reserve opportunities", func() {
 			normal := deskDecisionFixture(t, desk, "NORMAL3/USD", false)
@@ -146,13 +150,49 @@ func TestDeskPublishEquity(t *testing.T) {
 			So(observer.exposure, ShouldBeFalse)
 		})
 	})
+
+	Convey("Given a broker valuation while an execution owns mutable position state", t, func() {
+		desk, _, observer := equityDeskFixture(t)
+		position := &Position{}
+		position.setStatus(types.PENDING)
+		desk.positions.Store("SIM/USD", position)
+		stop := make(chan struct{})
+		stopped := make(chan struct{})
+
+		go func() {
+			defer close(stopped)
+
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					position.setStatus(types.OPEN)
+					position.setStatus(types.PENDING)
+				}
+			}
+		}()
+
+		err := desk.PublishEquity()
+		close(stop)
+		<-stopped
+
+		Convey("It should read lifecycle exposure atomically while the lot changes", func() {
+			So(err, ShouldBeNil)
+			So(observer.exposure, ShouldBeTrue)
+		})
+	})
 }
 
 func TestDeskOpenSlots(t *testing.T) {
 	Convey("Given two normal slots and two reserve slots", t, func() {
 		desk := deskFixture(t)
-		desk.positions.Store("NORMAL1/USD", &Position{Status: types.OPEN})
-		desk.positions.Store("NORMAL2/USD", &Position{Status: types.PENDING})
+		normalOne := &Position{}
+		normalOne.setStatus(types.OPEN)
+		normalTwo := &Position{}
+		normalTwo.setStatus(types.PENDING)
+		desk.positions.Store("NORMAL1/USD", normalOne)
+		desk.positions.Store("NORMAL2/USD", normalTwo)
 
 		Convey("Normal entries should stop while opportunities retain the reserve", func() {
 			So(desk.OpenSlots(false), ShouldEqual, 0)
@@ -162,7 +202,9 @@ func TestDeskOpenSlots(t *testing.T) {
 		Convey("Slot counts should never become negative above capacity", func() {
 			for index := range desk.maxReserved + 1 {
 				symbol := fmt.Sprintf("EXCESS%d/USD", index)
-				desk.positions.Store(symbol, &Position{Status: types.OPEN})
+				position := &Position{}
+				position.setStatus(types.OPEN)
+				desk.positions.Store(symbol, position)
 			}
 
 			So(desk.OpenSlots(false), ShouldEqual, 0)
@@ -173,8 +215,12 @@ func TestDeskOpenSlots(t *testing.T) {
 
 func BenchmarkDeskOpenSlots(b *testing.B) {
 	desk := deskFixture(b)
-	desk.positions.Store("NORMAL1/USD", &Position{Status: types.OPEN})
-	desk.positions.Store("NORMAL2/USD", &Position{Status: types.OPEN})
+	normalOne := &Position{}
+	normalOne.setStatus(types.OPEN)
+	normalTwo := &Position{}
+	normalTwo.setStatus(types.OPEN)
+	desk.positions.Store("NORMAL1/USD", normalOne)
+	desk.positions.Store("NORMAL2/USD", normalTwo)
 
 	for b.Loop() {
 		_ = desk.OpenSlots(true)

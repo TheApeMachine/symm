@@ -17,8 +17,8 @@ export const LiveResonanceTitle = () => (
         <span data-paint="forecast.nextReach" data-paint-format=".0f">
           —
         </span>
-        {" · precision "}
-        <span data-paint="taskPrecision" data-paint-format=".3f">
+        {" · relative precision "}
+        <span data-paint="taskRelativePrecision" data-paint-format=".3f">
           —
         </span>
       </span>

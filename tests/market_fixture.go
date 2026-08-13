@@ -64,6 +64,22 @@ func WithFixtureOrders(
 	symbols []*testtypes.Symbol,
 	f func(*Market),
 ) func() {
+	return WithFixtureOrderScenario(
+		t,
+		testtypes.NewScenarioConfig(symbols),
+		f,
+	)
+}
+
+/*
+WithFixtureOrderScenario runs authenticated fixture routing with an explicit
+scenario, including the exact wallet and execution policy under test.
+*/
+func WithFixtureOrderScenario(
+	t *testing.T,
+	config testtypes.ScenarioConfig,
+	f func(*Market),
+) func() {
 	return func() {
 		tradingModel := viper.GetString("trading.model")
 		apiKey, hadAPIKey := os.LookupEnv("KRAKEN_API_KEY")
@@ -89,7 +105,7 @@ func WithFixtureOrders(
 			}
 		}()
 
-		WithMarket(t, symbols, f)()
+		WithScenario(t, config, f)()
 	}
 }
 

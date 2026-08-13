@@ -33,7 +33,7 @@ bounds:
 | Control | Lower bound | Upper bound | Consumer |
 |---|---:|---:|---|
 | Entry allocation ceiling | zero | configured ceiling | `strategy.Allocation` |
-| Forecast confidence gate | configured minimum | probability one | `strategy.Planner` |
+| Forecast confidence gate | no-information probability (0.5) | probability one | `strategy.Planner` |
 | Causal search bias | zero | configured baseline | causal MCTS |
 | MCTS iterations | one simulation | configured baseline | causal MCTS |
 | MCTS exploration | zero | configured baseline | causal MCTS |

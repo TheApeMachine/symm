@@ -3,22 +3,19 @@
 package tests
 
 import (
-	"bufio"
-	"bytes"
 	"os"
-	"runtime"
 	"testing"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
-	systemconfig "github.com/theapemachine/symm/system"
+	symmsystem "github.com/theapemachine/symm/system"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -79,11 +76,13 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 		WithOrders(t, symbols, cmd.Boot, func(market *Market, system *cmd.System) {
 			market.WithAutoFill()
 
-			Convey("When a pump develops into a reversal", func() {
+			Convey("When a pump continues before reversing", func() {
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 				So(system.Desk.Holding("SIM1/USD"), ShouldBeGreaterThan, 0)
 
+				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
+				So(market.Express("SIM1/USD"), ShouldBeNil)
 				So(market.Transition("SIM1/USD", testtypes.FastDump), ShouldBeNil)
 				So(market.Flatten("SIM1/USD"), ShouldBeNil)
 
@@ -122,10 +121,18 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 	)
 }
 
-func TestMarketReplayEntryAndExit(t *testing.T) {
-	previousDepth := viper.GetInt("market.l3_depth")
+func TestMarketReplayRejectsUncalibratedEntry(t *testing.T) {
+	previousDepth, depthWasSet := viper.GetInt("market.l3_depth"),
+		viper.IsSet("market.l3_depth")
 	viper.Set("market.l3_depth", 10)
-	defer viper.Set("market.l3_depth", previousDepth)
+	defer func() {
+		if depthWasSet {
+			viper.Set("market.l3_depth", previousDepth)
+			return
+		}
+
+		viper.Set("market.l3_depth", nil)
+	}()
 	symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
 	symbol.PriceIncrement = 0.00001
 	symbol.PricePrecision = 5
@@ -133,10 +140,12 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 	symbol.TakerFeePercent = 0.4
 	symbol.MakerFeePercent = 0.23
 	symbol.BookDepthLevels = 10
+	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+	config.InitialBalances = map[string]float64{"USD": 200}
 
-	Convey("Given an exact profitable IDOS/USD Kraken tape", t,
-		WithOrders(t, []*testtypes.Symbol{symbol}, cmd.Boot,
-			func(market *Market, system *cmd.System) {
+	Convey("Given an IDOS/USD slice without baseline-beating forecast skill", t,
+		WithFixtureOrderScenario(t, config,
+			drive(t, cmd.Boot, func(market *Market, system *cmd.System) {
 				execution := market.Config.Execution
 				execution.DepthLevels = 10
 				market.WithAutoFill(execution)
@@ -147,120 +156,151 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				So(err, ShouldBeNil)
 				defer capture.Close()
 
-				reader := bufio.NewReader(capture)
-				prefix := bytes.Buffer{}
+				So(market.Replay(capture), ShouldBeNil)
+				symbolState := system.Thesis.Symbol("IDOS/USD")
+				stored, found := symbolState.Resonance.Load("IDOS/USD")
+				So(found, ShouldBeTrue)
+				coder := stored.(*learning.ResonanceManifold)
+				forecast, forecastErr := coder.RolloutTaskForecast(1)
+				skill, skillReady := coder.TaskSkill()
 
-				for record := 0; record < 3_799; record++ {
-					line, readErr := reader.ReadBytes('\n')
-					So(readErr, ShouldBeNil)
-					prefix.Write(line)
-				}
-
-				So(market.Replay(&prefix), ShouldBeNil)
-				waitForReplayCut(system.Thesis, 50, market.Config.BookApplyTimeout)
-				breakoutSymbol := system.Thesis.Symbol("IDOS/USD")
-				breakoutGraphValue, _ := breakoutSymbol.Graphs.Load("market_graph")
-				breakoutGraph, _ := breakoutGraphValue.(*logicgraph.Graph)
-				breakoutCausal, _ := breakoutSymbol.Causal.Load("IDOS/USD")
-				t.Logf(
-					"breakout decision: %#v causal=%#v graphReady=%t graph=%#v",
-					replayDecision(system.Thesis, "IDOS/USD"),
-					breakoutCausal,
-					breakoutGraph != nil && breakoutGraph.ReadyForSearch(
-						systemconfig.Cfg.Snapshot().Planner.MinimumSkill,
-					),
-					breakoutGraph,
-				)
-				So(market.Replay(reader), ShouldBeNil)
-				position := waitForClosedPosition(
-					system.Thesis.Symbol("IDOS/USD"),
-					market.Config.BookApplyTimeout,
-				)
-				if position == nil {
-					t.Logf("exact replay terminal thesis: tick=%d at=%s", system.Thesis.Tick, system.Thesis.At)
-					t.Logf("exact replay planner config: %#v", systemconfig.Cfg.Snapshot().Planner)
-					symbolState := system.Thesis.Symbol("IDOS/USD")
-					symbolState.Decisions.Range(func(key, value any) bool {
-						t.Logf("exact replay decision %v: %#v", key, value)
-						return true
-					})
-					symbolState.Positions.Range(func(key, value any) bool {
-						t.Logf("exact replay position %v: %#v", key, value)
-						return true
-					})
-					symbolState.Graphs.Range(func(key, value any) bool {
-						t.Logf("exact replay graph %v: %#v", key, value)
-						return true
-					})
-					t.Logf("exact replay economics: %#v", market.Report().Economics)
-				}
-
-				Convey("It should retain a profitable completed position on the Thesis", func() {
-					So(position, ShouldNotBeNil)
-					So(position.Decision.Action, ShouldEqual, types.ActionEnter)
-					So(position.Holding.PnL.Sign(), ShouldEqual, 1)
-					So(position.Holding.ReturnPct, ShouldBeGreaterThan, 0.0)
-					So(market.Report().Economics.NetPnL, ShouldBeGreaterThan, 0.0)
+				Convey("It should reject the apparent move instead of trading an unskilled model", func() {
+					So(forecastErr, ShouldBeNil)
+					So(forecast, ShouldNotBeEmpty)
+					So(skillReady, ShouldBeTrue)
+					So(skill, ShouldBeLessThanOrEqualTo,
+						symmsystem.Cfg.Planner.MinimumSkill)
+					So(system.Desk.Holding("IDOS/USD"), ShouldEqual, 0)
+					So(market.Report().Economics.NetPnL, ShouldEqual, 0.0)
 					So(market.Validate(), ShouldBeNil)
+					t.Logf(
+						"exact slice rejected: forecast=%#v skill=%g/%t",
+						forecast,
+						skill,
+						skillReady,
+					)
 				})
 			}),
+		),
 	)
 }
 
-func replayDecision(thesis *types.Thesis, symbol string) *types.Decision {
-	value, found := thesis.Symbol(symbol).Decisions.Load(symbol)
-
-	if !found {
-		return nil
-	}
-
-	return value.(*types.Decision)
-}
-
-func waitForReplayCut(
-	thesis *types.Thesis,
-	tick int64,
-	timeout time.Duration,
-) {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		decision := replayDecision(thesis, "IDOS/USD")
-
-		if thesis.Tick >= tick && decision != nil && decision.At.Equal(thesis.At) {
+func TestMarketCaptureEntryAndExit(t *testing.T) {
+	previousDepth, depthWasSet := viper.GetInt("market.l3_depth"),
+		viper.IsSet("market.l3_depth")
+	viper.Set("market.l3_depth", 10)
+	defer func() {
+		if depthWasSet {
+			viper.Set("market.l3_depth", previousDepth)
 			return
 		}
 
-		runtime.Gosched()
-	}
-}
+		viper.Set("market.l3_depth", nil)
+	}()
+	captureDirectory := "/Users/theapemachine/.symm/data/backtests/" +
+		"kraken/2026-08-13-live-exact-v2/"
+	pairs, err := os.Open(captureDirectory + "pairs.json")
 
-func waitForClosedPosition(
-	symbol *types.Symbol,
-	timeout time.Duration,
-) *broker.Position {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		var closed *broker.Position
-		symbol.Positions.Range(func(_, value any) bool {
-			position, ok := value.(*broker.Position)
-
-			if ok && position.Holding != nil &&
-				position.Holding.Status == types.CLOSED {
-				closed = position
-				return false
-			}
-
-			return true
-		})
-
-		if closed != nil {
-			return closed
-		}
-
-		runtime.Gosched()
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	return nil
+	defer pairs.Close()
+	metadataTickers, err := os.Open(captureDirectory + "ticker.jsonl")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer metadataTickers.Close()
+	symbols, err := CaptureSymbols(pairs, metadataTickers, 10)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config := testtypes.NewScenarioConfig(symbols)
+	config.InitialBalances = map[string]float64{"USD": 200}
+	symbolNames := make([]string, len(symbols))
+
+	for index, symbol := range symbols {
+		symbolNames[index] = symbol.Pair
+	}
+
+	Convey("Given the complete captured Kraken market", t,
+		WithFixtureOrderScenario(t, config,
+			drive(t, cmd.Boot, func(market *Market, system *cmd.System) {
+				execution := market.Config.Execution
+				execution.DepthLevels = 10
+				market.WithAutoFill(execution)
+				ticker, err := os.Open(captureDirectory + "ticker.jsonl")
+				So(err, ShouldBeNil)
+				defer ticker.Close()
+				trades, err := os.Open(captureDirectory + "trade.jsonl")
+				So(err, ShouldBeNil)
+				defer trades.Close()
+				level3, err := os.Open(captureDirectory + "level3.jsonl")
+				So(err, ShouldBeNil)
+				defer level3.Close()
+
+				So(market.ReplayCapture(
+					symbolNames,
+					ticker,
+					trades,
+					level3,
+				), ShouldBeNil)
+				profitable := make([]*broker.Position, 0)
+
+				for _, name := range symbolNames {
+					symbolState := system.Thesis.Symbol(name)
+					symbolState.Positions.Range(func(_, value any) bool {
+						position, valid := value.(*broker.Position)
+
+						if valid && position.Holding != nil &&
+							position.Holding.Status == types.CLOSED &&
+							position.Holding.PnL != nil &&
+							position.Holding.PnL.Sign() > 0 {
+							profitable = append(profitable, position)
+						}
+
+						return true
+					})
+
+					if stored, found := symbolState.Resonance.Load(name); found {
+						coder := stored.(*learning.ResonanceManifold)
+						forecast, _ := coder.RolloutTaskForecast(1)
+						skill, skillReady := coder.TaskSkill()
+						t.Logf(
+							"capture calibration %s: forecast=%#v skill=%g/%t",
+							name,
+							forecast,
+							skill,
+							skillReady,
+						)
+					}
+				}
+
+				Convey("It should retain a profitable completed position", func() {
+					So(profitable, ShouldNotBeEmpty)
+					So(market.Report().Economics.NetPnL, ShouldBeGreaterThan, 0.0)
+					So(market.Validate(), ShouldBeNil)
+
+					for _, position := range profitable {
+						t.Logf(
+							"full capture result %s: entry=%s@%s exit=%s@%s pnl=%s return=%.6f%%",
+							position.Holding.Symbol,
+							position.Holding.EntryAt,
+							position.Holding.EntryPrice,
+							position.Holding.ExitAt,
+							position.Holding.ExitPrice,
+							position.Holding.PnL,
+							position.Holding.ReturnPct,
+						)
+					}
+
+					t.Logf("full capture net PnL: %.9f", market.Report().Economics.NetPnL)
+				})
+			}),
+		),
+	)
 }

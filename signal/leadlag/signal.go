@@ -6,11 +6,13 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -62,6 +64,14 @@ func (signal *Signal) Type() types.SourceType {
 }
 
 func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
+	utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
+		string(types.SourceLeadLag), "running",
+	)))
+
+	defer utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
+		string(types.SourceLeadLag), "done",
+	)))
+
 	measurements := make([]*types.Measurement, 0)
 
 	anchor := signal.section.CausalAnchor()

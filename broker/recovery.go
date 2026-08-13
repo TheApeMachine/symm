@@ -218,7 +218,7 @@ func (recovery *Recovery) recoverAsset(
 			Volume:  quantity.String(),
 			Pair:    symbol,
 		}
-		position.Status = types.PENDING
+		position.setStatus(types.PENDING)
 		position.Holding.Status = types.PENDING
 		delete(working, orderID)
 	}
@@ -317,7 +317,7 @@ func (recovery *Recovery) recoveredPosition(
 		},
 	)
 
-	position.Status = types.OPEN
+	position.setStatus(types.OPEN)
 	position.Holding.Asset = asset
 	position.Holding.Qty = quantity
 	position.Holding.SellableQty = quantity

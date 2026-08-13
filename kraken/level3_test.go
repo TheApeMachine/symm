@@ -22,6 +22,17 @@ func TestNewLevel3(t *testing.T) {
 			So(level3.Data[0].Asks[0].OrderQty.String(), ShouldEqual, "3500.7766862600")
 		})
 	})
+
+	Convey("Given a Level-3 modification encoded in scientific notation", t, func() {
+		level3 := NewLevel3([]byte(`{"channel":"level3","type":"update","data":[{"symbol":"AKE/USD","asks":[{"event":"modify","order_id":"order","limit_price":0.00567764,"order_qty":1e-05,"timestamp":"2026-08-13T11:41:06.617465962Z"}],"bids":[]}]}`))
+
+		Convey("The minimum lot should retain its exact nonzero quantity", func() {
+			So(level3.Data, ShouldHaveLength, 1)
+			So(level3.Data[0].Asks, ShouldHaveLength, 1)
+			So(level3.Data[0].Asks[0].OrderQty.String(), ShouldEqual, "0.00001")
+			So(level3.Data[0].Asks[0].ChecksumOrderQty(), ShouldEqual, "0.00001")
+		})
+	})
 }
 
 func BenchmarkNewLevel3(b *testing.B) {

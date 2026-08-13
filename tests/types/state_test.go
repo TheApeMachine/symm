@@ -28,7 +28,7 @@ func TestRegimeProfilePrecursorExpectation(t *testing.T) {
 				PrecursorMetricExpectation{
 					Metric:            coretypes.MetricIgnition,
 					Side:              coretypes.SideBuy,
-					MinimumNormalized: EmpiricalRatioBaseline,
+					MinimumNormalized: NormalizedEmpiricalRatioBaseline,
 				})
 			So(expectation.Contract.Metrics, ShouldContain,
 				PrecursorMetricExpectation{

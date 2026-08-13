@@ -54,8 +54,8 @@ func (system *System) Holding(symbol string) int {
 }
 
 /*
-Sync waits for the streaming analytical plane to commit every feed through an
-exchange timestamp. It is used by deterministic venue replays only.
+Sync waits for the streaming analytical plane to commit all ingress delivered
+before the call. It is used by deterministic venue replays only.
 */
 func (system *System) Sync(ctx context.Context, at time.Time) error {
 	if system == nil || system.Crypto == nil {
@@ -208,6 +208,7 @@ func Boot(
 	)).Wait()
 
 	errnie.Debug("desk reported to be ready")
+	system.closers = append(system.closers, desk.Close)
 
 	tree, err := dmt.NewTree("")
 
@@ -228,6 +229,7 @@ func Boot(
 	)).Wait()
 
 	errnie.Debug("analyzer reported to be ready")
+	system.closers = append(system.closers, analyzer.Close)
 
 	planner := utils.NewWaiter[*strategy.Planner](strategy.NewPlanner(
 		ctx,
@@ -256,6 +258,7 @@ func Boot(
 	}
 
 	errnie.Debug("trader reported to be ready")
+	system.closers = append(system.closers, crypto.Close)
 
 	system.Hub = ui.NewHub(
 		ctx,
@@ -265,6 +268,7 @@ func Boot(
 		uiChannel,
 		manifoldChannel,
 	)
+	system.closers = append(system.closers, system.Hub.Close)
 
 	system.Desk = desk
 	system.Planner = planner

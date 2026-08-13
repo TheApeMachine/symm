@@ -128,9 +128,17 @@ func TestMarketReplay(t *testing.T) {
 		market, err := NewMarketWithScenario(t.Context(), config)
 		So(err, ShouldBeNil)
 		defer market.Close()
-		previousDepth := viper.GetInt("market.l3_depth")
+		previousDepth, depthWasSet := viper.GetInt("market.l3_depth"),
+			viper.IsSet("market.l3_depth")
 		viper.Set("market.l3_depth", 10)
-		defer viper.Set("market.l3_depth", previousDepth)
+		defer func() {
+			if depthWasSet {
+				viper.Set("market.l3_depth", previousDepth)
+				return
+			}
+
+			viper.Set("market.l3_depth", nil)
+		}()
 		market.private.SubL3([]string{"IDOS/USD"})
 		market.WithAutoFill()
 		capture, err := os.Open(
@@ -200,9 +208,17 @@ func BenchmarkMarketReplay(b *testing.B) {
 	symbol.QuantityPrecision = 5
 	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
 	config.Execution.DepthLevels = 10
-	previousDepth := viper.GetInt("market.l3_depth")
+	previousDepth, depthWasSet := viper.GetInt("market.l3_depth"),
+		viper.IsSet("market.l3_depth")
 	viper.Set("market.l3_depth", 10)
-	defer viper.Set("market.l3_depth", previousDepth)
+	defer func() {
+		if depthWasSet {
+			viper.Set("market.l3_depth", previousDepth)
+			return
+		}
+
+		viper.Set("market.l3_depth", nil)
+	}()
 	b.ReportAllocs()
 
 	for b.Loop() {

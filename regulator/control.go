@@ -47,8 +47,12 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 		return nil, fmt.Errorf("regulator: allocation ceiling must be in (0,1]")
 	}
 
-	if planner.MinimumConfidence < 0 || planner.MinimumConfidence > 1 {
-		return nil, fmt.Errorf("regulator: confidence gate must be in [0,1]")
+	if planner.MinimumConfidence < system.UninformativeDirectionConfidence ||
+		planner.MinimumConfidence > 1 {
+		return nil, fmt.Errorf(
+			"regulator: confidence gate must be in [%g,1]",
+			system.UninformativeDirectionConfidence,
+		)
 	}
 
 	if planner.CausalAlpha < 0 || planner.ExplorationConstant < 0 ||
@@ -68,7 +72,8 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 			maximum: planner.MaxAllocationFraction,
 		},
 		controlConfidence: {
-			name: "confidence", minimum: planner.MinimumConfidence, maximum: 1,
+			name:    "confidence",
+			minimum: system.UninformativeDirectionConfidence, maximum: 1,
 		},
 		controlCausalAlpha: {
 			name: "causal_alpha", minimum: 0, maximum: planner.CausalAlpha,

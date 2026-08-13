@@ -122,9 +122,14 @@ func TestUpdate(t *testing.T) {
 
 			var frame struct {
 				Resonance struct {
-					TaskScale    *float64 `json:"taskScale"`
-					TaskForecast *float64 `json:"taskForecast"`
-					Forecast     struct {
+					TaskScale            *float64 `json:"taskScale"`
+					TaskForecast         *float64 `json:"taskForecast"`
+					TaskCalibration      string   `json:"taskCalibration"`
+					TaskSkillStatus      string   `json:"taskSkillStatus"`
+					LastResolvedForecast *float64 `json:"lastResolvedForecast"`
+					LastRealizedReturn   *float64 `json:"lastRealizedReturn"`
+					LastForecastError    *float64 `json:"lastForecastError"`
+					Forecast             struct {
 						ForwardCurve     []float64 `json:"forwardCurve"`
 						SupportedHorizon int       `json:"supportedHorizon"`
 					} `json:"forecast"`
@@ -137,6 +142,14 @@ func TestUpdate(t *testing.T) {
 			So(frame.Resonance.TaskScale, ShouldNotBeNil)
 			So(*frame.Resonance.TaskScale, ShouldBeGreaterThan, 0)
 			So(frame.Resonance.TaskForecast, ShouldNotBeNil)
+			So(frame.Resonance.TaskCalibration, ShouldEqual, "calibrated")
+			So(frame.Resonance.TaskSkillStatus,
+				ShouldBeIn, "above baseline", "baseline", "below baseline")
+			So(frame.Resonance.LastResolvedForecast, ShouldNotBeNil)
+			So(frame.Resonance.LastRealizedReturn, ShouldNotBeNil)
+			So(frame.Resonance.LastForecastError, ShouldNotBeNil)
+			So(*frame.Resonance.LastForecastError, ShouldAlmostEqual,
+				*frame.Resonance.LastRealizedReturn-*frame.Resonance.LastResolvedForecast)
 
 			reach, found := solver.currentReach.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
@@ -171,6 +184,9 @@ func TestUpdate(t *testing.T) {
 		var actual float64
 		foundIssued := false
 		foundResolution := false
+		strictPriorStored := false
+		strictPriorRemoved := false
+		resolvedBefore := 0
 
 		for tick := int64(1); tick <= 40 && !foundResolution; tick++ {
 			mark := 100 + float64(tick) + math.Sin(float64(tick))
@@ -188,20 +204,36 @@ func TestUpdate(t *testing.T) {
 
 			if foundIssued {
 				actual = math.Log(mark / issuedMark)
-				foundResolution = true
+				historyValue, historyFound := solver.histories.Load(symbol.Symbol)
+				So(historyFound, ShouldBeTrue)
+				history := historyValue.(*sampleHistory)
+				foundResolution = history.resolved > resolvedBefore
+				_, retained := history.issued[tick-1]
+				strictPriorRemoved = !retained
 				continue
 			}
 
 			if len(forecast) > 0 && forecast[0].Ready {
 				issued = forecast[0]
 				issuedMark = mark
+				historyValue, historyFound := solver.histories.Load(symbol.Symbol)
+				So(historyFound, ShouldBeTrue)
+				history := historyValue.(*sampleHistory)
+				retained, retainedFound := history.issued[tick]
+				strictPriorStored = retainedFound &&
+					len(retained.features) > 0 &&
+					len(retained.prediction) == 1 &&
+					retained.prediction[0] == issued.Value
+				resolvedBefore = history.resolved
 				foundIssued = true
 			}
 		}
 
-		Convey("It should keep the issued forecast available for later price resolution", func() {
+		Convey("It should resolve the exact forecast that was issued", func() {
 			So(foundIssued, ShouldBeTrue)
 			So(foundResolution, ShouldBeTrue)
+			So(strictPriorStored, ShouldBeTrue)
+			So(strictPriorRemoved, ShouldBeTrue)
 			So(actual, ShouldNotEqual, 0)
 			So(issued.Ready, ShouldBeTrue)
 		})

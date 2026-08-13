@@ -215,18 +215,38 @@ func (graph *Graph) Roots() []string {
 
 /*
 ReadyForSearch reports whether the accumulated lifecycle graph has a skilled
-return forecast and at least one evidence-bearing relation reachable from it.
+return forecast and at least one reachable relation that changes path reward.
 */
 func (graph *Graph) ReadyForSearch(minimumSkill float64) bool {
 	if graph == nil || graph.Forecast == nil || !graph.Forecast.Ready ||
 		graph.Forecast.Scale <= 0 || graph.Forecast.DegreesOfFreedom <= 0 ||
-		!graph.TaskSkillReady || graph.TaskSkill < minimumSkill {
+		!graph.TaskSkillReady || graph.TaskSkill <= minimumSkill {
 		return false
 	}
 
-	for _, root := range graph.Roots() {
+	visited := make(map[string]bool)
+	queue := append([]string(nil), graph.Roots()...)
+
+	for len(queue) > 0 {
+		source := queue[0]
+		queue = queue[1:]
+
+		if visited[source] {
+			continue
+		}
+
+		visited[source] = true
+
 		for _, edge := range graph.Edges {
-			if edge.From == root && edge.Weight != 0 && edge.Confidence != 0 {
+			if edge.From != source {
+				continue
+			}
+
+			queue = append(queue, edge.To)
+			target := graph.Nodes[edge.To]
+
+			if target != nil && edge.Weight != 0 && edge.Confidence != 0 &&
+				target.Value != 0 && target.Confidence != 0 {
 				return true
 			}
 		}
@@ -321,6 +341,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		graph.At = thesis.At
+		lifecycleEmpty := len(graph.Nodes) == 0
 		measurementIndex, err := solver.measurements.addNodes(
 			symbolName,
 			symbol.MarketMeasurements("graph"),
@@ -334,6 +355,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				err,
 			))
 			return false
+		}
+
+		if lifecycleEmpty && len(measurementIndex.bySource) == 0 {
+			return true
 		}
 
 		solver.extractCategoryNodes(symbol, graph)

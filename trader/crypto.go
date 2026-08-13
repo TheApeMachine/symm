@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type Crypto struct {
 	desk          *broker.Desk
 	bookUpdates   <-chan string
 	level3Events  <-chan kraken.Level3Data
+	syncRequests  chan chan uint64
 	subscriptions map[string]*types.Subscription[any]
 	sequence      uint64
 	nextTick      int64
@@ -67,6 +69,7 @@ func NewCrypto(
 		desk:         desk,
 		bookUpdates:  api.BookUpdates(),
 		level3Events: api.Level3Events(),
+		syncRequests: make(chan chan uint64),
 		epochs:       make(map[string]symbolEpoch),
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
@@ -137,9 +140,29 @@ func (crypto *Crypto) run() {
 				crypto.onBookUpdate(symbol)
 			case level3 := <-crypto.level3Events:
 				crypto.onLevel3(level3)
+			case response := <-crypto.syncRequests:
+				crypto.drainIngress()
+				response <- crypto.sequence
 			}
 		}
 	}()
+}
+
+func (crypto *Crypto) drainIngress() {
+	for {
+		select {
+		case ticker := <-crypto.subscriptions["ticker"].Channel:
+			crypto.onTicker(ticker)
+		case trade := <-crypto.subscriptions["trade"].Channel:
+			crypto.onTrade(trade)
+		case symbol := <-crypto.bookUpdates:
+			crypto.onBookUpdate(symbol)
+		case level3 := <-crypto.level3Events:
+			crypto.onLevel3(level3)
+		default:
+			return
+		}
+	}
 }
 
 /*
@@ -288,12 +311,36 @@ func (crypto *Crypto) eventTick(symbol string) int64 {
 }
 
 /*
-Sync waits for every analytical feed family to commit through an exchange
-timestamp. Production ingress never calls it; deterministic replays use it as
-an explicit boundary instead of assuming asynchronous work finished instantly.
+Sync establishes a deterministic boundary after all ingress delivered before
+the call. Production ingress never calls it; replays use the boundary without
+requiring heterogeneous feeds to share an exchange timestamp.
 */
 func (crypto *Crypto) Sync(ctx context.Context, at time.Time) error {
-	return crypto.pipeline.Wait(ctx, at)
+	if at.IsZero() {
+		return fmt.Errorf("crypto: synchronization time required")
+	}
+
+	response := make(chan uint64, 1)
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-crypto.ctx.Done():
+		return fmt.Errorf("crypto: stopped before synchronization")
+	case crypto.syncRequests <- response:
+	}
+
+	var sequence uint64
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-crypto.ctx.Done():
+		return fmt.Errorf("crypto: stopped before synchronization")
+	case sequence = <-response:
+	}
+
+	return crypto.pipeline.Wait(ctx, sequence)
 }
 
 func (crypto *Crypto) Close() error {

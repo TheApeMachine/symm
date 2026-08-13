@@ -72,11 +72,11 @@ func (planner *Planner) Close() error {
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) error {
-	utils.Publish(planner.ui, datura.NewMap("activity", datura.NewMap(
+	utils.PublishPriority(planner.ui, datura.NewMap("activity", datura.NewMap(
 		string(types.SourcePlanner), "running",
 	)))
 
-	defer utils.Publish(planner.ui, datura.NewMap("activity", datura.NewMap(
+	defer utils.PublishPriority(planner.ui, datura.NewMap("activity", datura.NewMap(
 		string(types.SourcePlanner), "done",
 	)))
 
@@ -321,16 +321,34 @@ func graphActionLabel(roots []string, action float64) string {
 func graphEvidenceMass(graph *logicgraph.Graph) (float64, float64) {
 	supports := 0.0
 	contradicts := 0.0
+	visited := make(map[string]bool)
+	queue := append([]string(nil), graph.Roots()...)
 
-	for _, edge := range graph.Edges {
-		mass := edge.Weight * edge.Confidence
+	for len(queue) > 0 {
+		source := queue[0]
+		queue = queue[1:]
 
-		if edge.Relation == logicgraph.RelationSupports {
-			supports += mass
+		if visited[source] {
+			continue
 		}
 
-		if edge.Relation == logicgraph.RelationContradicts {
-			contradicts += mass
+		visited[source] = true
+
+		for _, edge := range graph.Edges {
+			if edge.From != source {
+				continue
+			}
+
+			queue = append(queue, edge.To)
+			mass := edge.Weight * edge.Confidence
+
+			if edge.Relation == logicgraph.RelationSupports {
+				supports += mass
+			}
+
+			if edge.Relation == logicgraph.RelationContradicts {
+				contradicts += mass
+			}
 		}
 	}
 

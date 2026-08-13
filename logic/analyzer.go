@@ -136,11 +136,11 @@ func (analyzer *Analyzer) Process(
 			}
 
 			group.Go(func() error {
-				utils.Publish(analyzer.ui, datura.NewMap("activity", datura.NewMap(
+				utils.PublishPriority(analyzer.ui, datura.NewMap("activity", datura.NewMap(
 					source, "running",
 				)))
 
-				defer utils.Publish(analyzer.ui, datura.NewMap("activity", datura.NewMap(
+				defer utils.PublishPriority(analyzer.ui, datura.NewMap("activity", datura.NewMap(
 					source, "done",
 				)))
 

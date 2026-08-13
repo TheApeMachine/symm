@@ -38,6 +38,19 @@ consume the market-data path. A full buffered channel is normal backpressure,
 so that frame is freed before serialization and the trading path continues.
 */
 func Publish(ui chan []byte, data datura.Map[any]) {
+	publish(ui, data, false)
+}
+
+/*
+PublishPriority preserves a lifecycle transition when the replaceable-state
+queue is full by evicting its oldest dashboard frame. It remains non-blocking;
+the Hub continues to own slow-client isolation.
+*/
+func PublishPriority(ui chan []byte, data datura.Map[any]) {
+	publish(ui, data, true)
+}
+
+func publish(ui chan []byte, data datura.Map[any], priority bool) {
 	if data == nil || ui == nil {
 		data.Free()
 		return
@@ -68,8 +81,15 @@ func Publish(ui chan []byte, data datura.Map[any]) {
 	}
 
 	if capacity := cap(ui); capacity > 0 && len(ui) == capacity {
-		data.Free()
-		return
+		if !priority {
+			data.Free()
+			return
+		}
+
+		select {
+		case <-ui:
+		default:
+		}
 	}
 
 	select {

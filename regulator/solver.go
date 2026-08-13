@@ -119,9 +119,22 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	currentEquity := equity.Equity.Float64()
 
 	if !exposed && !solver.hadExposure {
+		firstValuation := solver.lastRevision == 0
 		solver.lastEquity = currentEquity
 		solver.peakEquity = max(solver.peakEquity, currentEquity)
 		solver.lastRevision = revision
+
+		if firstValuation && solver.ui != nil {
+			result := optimizationResult{
+				controls: solver.optimizer.current,
+				surprise: solver.optimizer.coder.ReconstructionError(),
+				energy:   solver.optimizer.coder.Energy(),
+			}
+			payload := solver.buildPayload(0, result)
+			payload.Summary = "Waiting for market exposure before identifying control effects on wallet return."
+			utils.Publish(solver.ui, datura.NewMap("regulator", payload))
+		}
+
 		return nil
 	}
 

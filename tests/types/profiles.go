@@ -42,7 +42,7 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 				{
 					Metric:            coretypes.MetricIgnition,
 					Side:              coretypes.SideBuy,
-					MinimumNormalized: EmpiricalRatioBaseline,
+					MinimumNormalized: NormalizedEmpiricalRatioBaseline,
 				},
 				{
 					Metric:            coretypes.MetricCompression,

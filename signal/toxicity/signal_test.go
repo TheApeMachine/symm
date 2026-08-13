@@ -12,6 +12,30 @@ import (
 )
 
 func TestMeasure(t *testing.T) {
+	Convey("Given an empty Level 3 update", t, func() {
+		signal := NewSignal(context.Background(), nil, nil)
+		market := types.NewSymbol("BTC/USD", nil)
+		base := time.Unix(1_700_004_000, 0).UTC()
+		market.AppendLevel3(kraken.Level3Data{
+			Symbol: "BTC/USD", Type: "update", Timestamp: base,
+		})
+
+		Convey("It should remain pending instead of classifying a zero price", func() {
+			So(signal.Measure(market), ShouldBeEmpty)
+		})
+
+		market.AppendLevel3(toxicityLevel3(
+			"snapshot", 10, 10, base.Add(time.Second),
+		))
+
+		Convey("It should classify once both book sides establish a real midpoint", func() {
+			measurements := signal.Measure(market)
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].Sample(types.MetricMidpoint, types.SideNone).Raw,
+				ShouldEqual, 100.5)
+		})
+	})
+
 	Convey("Given toxicity book observations on one symbol", t, func() {
 		signal := NewSignal(context.Background(), nil, nil)
 		market := types.NewSymbol("BTC/USD", nil)

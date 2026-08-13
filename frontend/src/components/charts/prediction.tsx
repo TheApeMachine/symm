@@ -17,14 +17,14 @@ const ScalarDiagnostics = () => (
     {({ ref }) => (
       <div
         ref={ref}
-        className="grid grid-cols-7 gap-px overflow-hidden border border-(--line) bg-(--line)"
+        className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)"
       >
         <div className="bg-[#0a0907] px-2 py-1.5">
           <div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-            task precision
+            relative precision
           </div>
           <div
-            data-paint="taskPrecision"
+            data-paint="taskRelativePrecision"
             data-paint-format=".3f"
             className="mt-0.5 font-mono text-[11px] text-(--up)"
           >
@@ -38,6 +38,45 @@ const ScalarDiagnostics = () => (
           <div
             data-paint="taskSkill"
             data-paint-format=".3f"
+            className="mt-0.5 font-mono text-[11px] text-(--f2)"
+          >
+            —
+          </div>
+        </div>
+        <div className="bg-[#0a0907] px-2 py-1.5">
+          <div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+            issued t
+          </div>
+          <div
+            data-paint="lastResolvedForecast"
+            data-paint-format=".2bp"
+            data-paint-suffix=" bp"
+            className="mt-0.5 font-mono text-[11px] text-(--f2)"
+          >
+            —
+          </div>
+        </div>
+        <div className="bg-[#0a0907] px-2 py-1.5">
+          <div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+            realized t+1
+          </div>
+          <div
+            data-paint="lastRealizedReturn"
+            data-paint-format=".2bp"
+            data-paint-suffix=" bp"
+            className="mt-0.5 font-mono text-[11px] text-(--f2)"
+          >
+            —
+          </div>
+        </div>
+        <div className="bg-[#0a0907] px-2 py-1.5">
+          <div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+            forecast error
+          </div>
+          <div
+            data-paint="lastForecastError"
+            data-paint-format=".2bp"
+            data-paint-suffix=" bp"
             className="mt-0.5 font-mono text-[11px] text-(--f2)"
           >
             —
@@ -187,8 +226,8 @@ const VerdictRow = () => (
         ref={ref}
         className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)"
       >
-        <VerdictTile title="predictive coding" label="taskPrecisionReady" />
-        <VerdictTile title="return learner" label="taskSkillReady" />
+        <VerdictTile title="residual model" label="taskCalibration" />
+        <VerdictTile title="return skill" label="taskSkillStatus" />
         <div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
           <div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
             forecast

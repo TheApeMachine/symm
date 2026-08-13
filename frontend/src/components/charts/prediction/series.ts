@@ -30,7 +30,7 @@ export type ReturnHeadTrace = {
   lower: PredictionSample[];
   latestExpected: number | null;
   latestUncertainty: number | null;
-  taskPrecision: number | null;
+  taskRelativePrecision: number | null;
   horizon: number | null;
   reach: number | null;
   samples: number | null;
@@ -128,7 +128,7 @@ const hierarchyTrace = (
 returnHeadTrace derives the signed forecast and, where the solver publishes one,
 the residual band around it.
 
-Readiness is the solver's own task precision and the reach it says that
+Readiness is the solver's relative residual precision and the reach it says that
 precision supports. It used to be read from a forecastValidity block alongside
 an incremental MSE, a skill lower bound and a calibration count — none of which
 appear on the wire, so the lane could only ever report "CALIBRATING" beside four
@@ -159,11 +159,11 @@ const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
     }),
     latestExpected: finiteNumber(latest?.forecast?.forwardCurve?.[0]),
     latestUncertainty: finiteNumber(latest?.forecast?.posterior?.[0]?.Scale),
-    taskPrecision: finiteNumber(latest?.taskPrecision),
+    taskRelativePrecision: finiteNumber(latest?.taskRelativePrecision),
     horizon: finiteNumber(latest?.forecast?.supportedHorizon),
     reach: finiteNumber(latest?.forecast?.nextReach),
     samples: finiteNumber(latest?.samples),
-    ready: latest?.taskPrecisionReady === true,
+    ready: latest?.taskRelativePrecisionReady === true,
   };
 };
 

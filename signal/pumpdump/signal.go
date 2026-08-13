@@ -4,12 +4,14 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -85,6 +87,14 @@ func (signal *Signal) Type() types.SourceType {
 Measure produces the Measurements for the pumpdump signal.
 */
 func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
+	utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
+		string(types.SourcePumpDump), "running",
+	)))
+
+	defer utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
+		string(types.SourcePumpDump), "done",
+	)))
+
 	measurements := make([]*types.Measurement, 0)
 	signal.ingestQuotes(symbol)
 

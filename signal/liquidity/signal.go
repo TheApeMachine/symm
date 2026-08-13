@@ -11,10 +11,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -82,6 +84,14 @@ func (signal *Signal) Type() types.SourceType {
 Measure produces the Measurements for the liquidity signal.
 */
 func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
+	utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
+		string(types.SourceLiquidity), "running",
+	)))
+
+	defer utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
+		string(types.SourceLiquidity), "done",
+	)))
+
 	tickers := symbol.MarketTickers(types.SourceLiquidity)
 
 	if !signal.ingest(tickers) {

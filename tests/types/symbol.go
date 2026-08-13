@@ -20,6 +20,8 @@ const (
 	DefaultMakerFeePercent        = 0.16
 	DefaultBookDepthLevels        = 1
 	DefaultBookDepthQuantityScale = 1.0
+	DefaultOrderMinimum           = 0.0001
+	DefaultCostMinimum            = 0.50
 )
 
 /*
@@ -34,6 +36,8 @@ type Symbol struct {
 	BaseSpreadFraction float64
 	TakerFeePercent    float64
 	MakerFeePercent    float64
+	OrderMinimum       float64
+	CostMinimum        float64
 	BookDepthLevels    int
 	DepthQuantityScale float64
 	FactorLoading      float64
@@ -66,6 +70,12 @@ func validateSymbol(symbol *Symbol) error {
 		math.IsNaN(symbol.TakerFeePercent) || math.IsNaN(symbol.MakerFeePercent) ||
 		math.IsInf(symbol.TakerFeePercent, 0) || math.IsInf(symbol.MakerFeePercent, 0) {
 		return fmt.Errorf("scenario: %s fees must be finite and non-negative", symbol.Pair)
+	}
+
+	if symbol.OrderMinimum <= 0 || symbol.CostMinimum <= 0 ||
+		math.IsNaN(symbol.OrderMinimum) || math.IsNaN(symbol.CostMinimum) ||
+		math.IsInf(symbol.OrderMinimum, 0) || math.IsInf(symbol.CostMinimum, 0) {
+		return fmt.Errorf("scenario: %s order minima must be positive and finite", symbol.Pair)
 	}
 
 	if symbol.BookDepthLevels < 1 || symbol.DepthQuantityScale <= 0 ||
@@ -113,6 +123,8 @@ func NewSymbol(
 		BaseSpreadFraction: DefaultBaseSpreadFraction,
 		TakerFeePercent:    DefaultTakerFeePercent,
 		MakerFeePercent:    DefaultMakerFeePercent,
+		OrderMinimum:       DefaultOrderMinimum,
+		CostMinimum:        DefaultCostMinimum,
 		BookDepthLevels:    DefaultBookDepthLevels,
 		DepthQuantityScale: DefaultBookDepthQuantityScale,
 		Seed:               seed,

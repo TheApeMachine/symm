@@ -50,6 +50,14 @@ func subscriptionConnection(
 				requests <- wire
 			}
 		}
+
+		_ = connection.WriteMessage(
+			gorillawebsocket.CloseMessage,
+			gorillawebsocket.FormatCloseMessage(
+				gorillawebsocket.CloseNormalClosure,
+				"",
+			),
+		)
 	}))
 	return requests, "ws" + strings.TrimPrefix(server.URL, "http"), server.Close
 }
@@ -62,7 +70,6 @@ func TestRestorePublicSubscriptions(t *testing.T) {
 		client := spot.NewWebSocket()
 		client.URL = endpoint
 		So(client.Connect(), ShouldBeNil)
-		defer func() { client.DoReconnect = false }()
 		live := &Live{
 			client: client,
 			public: map[string][][]string{
@@ -127,7 +134,6 @@ func TestRestoreLevel3Subscription(t *testing.T) {
 		client := spot.NewWebSocket()
 		client.URL = endpoint
 		So(client.Connect(), ShouldBeNil)
-		defer func() { client.DoReconnect = false }()
 		symbols := make([]string, 41)
 
 		for index := range symbols {
@@ -183,13 +189,20 @@ func TestSubscribeAccount(t *testing.T) {
 
 				requests <- wire
 			}
+
+			_ = connection.WriteMessage(
+				gorillawebsocket.CloseMessage,
+				gorillawebsocket.FormatCloseMessage(
+					gorillawebsocket.CloseNormalClosure,
+					"",
+				),
+			)
 		}))
 		defer server.Close()
 
 		client := spot.NewWebSocket()
 		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
 		So(client.Connect(), ShouldBeNil)
-		defer func() { client.DoReconnect = false }()
 
 		live := &Live{client: client}
 

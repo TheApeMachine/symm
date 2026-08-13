@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"math"
-	"strings"
 	"sync"
 	"time"
 
@@ -45,7 +44,6 @@ type Solver struct {
 	recorder *audit.Recorder
 	pearls   *sync.Map
 	rows     *sync.Map
-	rowsMu   sync.Mutex
 	config   algorithm.PearlConfig
 	ui       chan []byte
 }
@@ -237,8 +235,7 @@ func (solver *Solver) measure(
 	})
 
 	if err != nil {
-		if solver.unresolvedPearlError(err) {
-			solver.pearls.Delete(symbol)
+		if errors.Is(err, io.EOF) {
 			solver.storeUnresolved(symbolState, symbol, tickerAt, rows, prediction)
 			return nil
 		}
@@ -248,6 +245,11 @@ func (solver *Solver) measure(
 			"causal: pearl evaluation failed: "+err.Error(),
 			err,
 		)
+	}
+
+	if !resolved {
+		solver.storeUnresolved(symbolState, symbol, tickerAt, rows, prediction)
+		return nil
 	}
 
 	precision, err := solver.estimatePrecision(rows)
@@ -260,40 +262,16 @@ func (solver *Solver) measure(
 		)
 	}
 
-	causalOutput := map[string]any{
-		"at":             tickerAt,
-		"historyRows":    rows,
-		"identification": "adjustedAssociation",
-		"precision":      precision,
-		"samples":        len(rows),
-		"treatmentLevel": prediction,
-	}
-
-	if resolved {
-		causalOutput = output.Outputs()
-		causalOutput["historyRows"] = rows
-		causalOutput["at"] = tickerAt
-		causalOutput["identification"] = "adjustedAssociation"
-		causalOutput["precision"] = precision
-		causalOutput["samples"] = len(rows)
-		causalOutput["treatmentLevel"] = prediction
-	}
+	causalOutput := output.Outputs()
+	causalOutput["historyRows"] = rows
+	causalOutput["at"] = tickerAt
+	causalOutput["identification"] = "adjustedAssociation"
+	causalOutput["precision"] = precision
+	causalOutput["samples"] = len(rows)
+	causalOutput["treatmentLevel"] = prediction
 
 	symbolState.Causal.Store(symbol, causalOutput)
 	return nil
-}
-
-func (solver *Solver) unresolvedPearlError(err error) bool {
-	if errors.Is(err, io.EOF) {
-		return true
-	}
-
-	message := err.Error()
-
-	return strings.Contains(message, "causal: linear structural fit failed") ||
-		strings.Contains(message, "causal: target residualization failed") ||
-		strings.Contains(message, "causal: treatment residualization failed") ||
-		strings.Contains(message, "causal: backdoor denominator is non-positive")
 }
 
 func (solver *Solver) storeUnresolved(

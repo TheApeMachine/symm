@@ -45,7 +45,7 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.Action, ShouldEqual, types.ActionEnter)
 			So(decision.Forecast, ShouldNotBeNil)
 			So(decision.Confidence, ShouldBeGreaterThan, system.Cfg.Planner.MinimumConfidence)
-			So(decision.Utility, ShouldBeGreaterThan, 0)
+			So(decision.Utility, ShouldBeGreaterThan, decision.Forecast.Value)
 			So(decision.Trace, ShouldNotBeNil)
 			So(decision.Trace.MCTS.Iterations, ShouldEqual, system.Cfg.Planner.MCTSIterations)
 			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 1)
@@ -54,6 +54,26 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.Trace.MCTS.Branches[0].Visits, ShouldBeGreaterThan, 0)
 			So(decision.Trace.MCTS.RecommendedAction,
 				ShouldEqual, "res:BTC/USD:forecast")
+		})
+	})
+
+	Convey("Given the same positive forecast with contradicting causal evidence", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := plannerGraphThesis(t, 0.9)
+		stored, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := stored.(*types.Symbol)
+		graphValue, _ := symbol.Graphs.Load("market_graph")
+		graphValue.(*logicgraph.Graph).Edges[0].Relation = logicgraph.RelationContradicts
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
+
+		err := planner.Update(thesis)
+
+		Convey("It should reduce graph utility below the unadjusted forecast", func() {
+			So(err, ShouldBeNil)
+			decisionValue, found := symbol.Decisions.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			decision := decisionValue.(*types.Decision)
+			So(decision.Utility, ShouldBeLessThan, decision.Forecast.Value)
 		})
 	})
 
@@ -165,6 +185,34 @@ func TestDecisionTrace(t *testing.T) {
 	})
 }
 
+func TestGraphEvidenceMass(t *testing.T) {
+	Convey("Given reachable and disconnected evidence around a forecast root", t, func() {
+		graph := logicgraph.NewGraph(thesisTime())
+		forecast := "res:BTC/USD:forecast"
+		graph.AddNode(&logicgraph.Node{
+			ID: forecast, Symbol: "BTC/USD", Kind: logicgraph.KindResonance,
+		})
+		graph.AddNode(&logicgraph.Node{ID: "causal"})
+		graph.AddNode(&logicgraph.Node{ID: "disconnected-source"})
+		graph.AddNode(&logicgraph.Node{ID: "disconnected-target"})
+		graph.AddEdge(&logicgraph.Edge{
+			From: forecast, To: "causal", Relation: logicgraph.RelationSupports,
+			Weight: 0.4, Confidence: 0.5,
+		})
+		graph.AddEdge(&logicgraph.Edge{
+			From: "disconnected-source", To: "disconnected-target",
+			Relation: logicgraph.RelationContradicts, Weight: 0.8, Confidence: 0.5,
+		})
+
+		supports, contradicts := graphEvidenceMass(graph)
+
+		Convey("It should report only evidence the search can traverse", func() {
+			So(supports, ShouldEqual, 0.2)
+			So(contradicts, ShouldEqual, 0.0)
+		})
+	})
+}
+
 func plannerMCTSEngine() *mcts.CausalMCTS {
 	return mcts.NewCausalMCTS(
 		mcts.DefaultCausalEngine{},
@@ -189,7 +237,7 @@ func plannerGraphThesis(t testing.TB, confidence float64) *types.Thesis {
 	forecast := &learning.RLSOutput{Value: 0.01, Ready: true, Scale: 0.001, DegreesOfFreedom: 1}
 	graph := logicgraph.NewGraph(thesis.At)
 	graph.Forecast = forecast
-	graph.TaskSkill = 1
+	graph.TaskSkill = 1.01
 	graph.TaskSkillReady = true
 	graph.AddNode(&logicgraph.Node{
 		ID: "res:BTC/USD:forecast", Symbol: "BTC/USD", Kind: logicgraph.KindResonance,
@@ -197,7 +245,7 @@ func plannerGraphThesis(t testing.TB, confidence float64) *types.Thesis {
 	})
 	graph.AddNode(&logicgraph.Node{
 		ID: "causal:BTC/USD:doExpectation", Symbol: "BTC/USD", Kind: logicgraph.KindCausal,
-		Confidence: confidence,
+		Value: 0.005, Confidence: confidence,
 	})
 	graph.AddEdge(&logicgraph.Edge{
 		From:       "res:BTC/USD:forecast",

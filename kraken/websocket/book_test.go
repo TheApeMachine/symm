@@ -74,6 +74,62 @@ func TestBookUpdate(t *testing.T) {
 		})
 	})
 
+	Convey("Given backpressure from the Level3 event consumer", t, func() {
+		managed := NewBook(t.Context())
+		managed.Create("BTC/USD", 32)
+		updates := make(chan string, 1)
+		events := make(chan kraken.Level3Data)
+		managed.SetUpdates(updates)
+		managed.SetEvents(events)
+		event := &callback.Event[*sdk.WebSocketMessage]{
+			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+		}
+		payload := &kraken.Level3{Data: []kraken.Level3Data{{
+			Symbol: "BTC/USD",
+			Bids: []kraken.Level3Order{{
+				Event: "add", OrderID: "bid", LimitPrice: decimal.NewFromInt64(100),
+				OrderQty: decimal.NewFromInt64(1), Timestamp: time.Unix(1, 0).UTC(),
+			}},
+		}}}
+		updateDone := make(chan error, 1)
+
+		go func() {
+			updateDone <- managed.Update(event, payload)
+		}()
+
+		So(<-updates, ShouldEqual, "BTC/USD")
+		readDone := make(chan struct{})
+		bestBidFound := false
+
+		go func() {
+			managed.Get("BTC/USD", func(book *spotbook.Book) {
+				bestBidFound = book.BestBid() != nil
+			})
+			close(readDone)
+		}()
+
+		readBeforeDrain := false
+
+		select {
+		case <-readDone:
+			readBeforeDrain = true
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		accepted := <-events
+
+		if !readBeforeDrain {
+			<-readDone
+		}
+
+		Convey("It should release the book before waiting for the consumer", func() {
+			So(readBeforeDrain, ShouldBeTrue)
+			So(bestBidFound, ShouldBeTrue)
+			So(accepted.Symbol, ShouldEqual, "BTC/USD")
+			So(<-updateDone, ShouldBeNil)
+		})
+	})
+
 	Convey("Given two Level3 orders at one price", t, func() {
 		managed := NewBook(t.Context())
 		managed.Create("BTC/USD", 32)
@@ -117,6 +173,51 @@ func TestBookUpdate(t *testing.T) {
 			So(managed.Update(event, deletion("bid-two")), ShouldBeNil)
 			managed.Get("BTC/USD", func(book *spotbook.Book) {
 				So(book.Bids.Levels, ShouldBeEmpty)
+			})
+		})
+	})
+
+	Convey("Given a venue frame whose intermediate state is crossed", t, func() {
+		managed := NewBook(t.Context())
+		managed.Create("APR/USD", 10)
+		event := &callback.Event[*sdk.WebSocketMessage]{
+			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+		}
+		initial := &kraken.Level3{Data: []kraken.Level3Data{{
+			Symbol: "APR/USD",
+			Asks: []kraken.Level3Order{
+				{
+					Event: "add", OrderID: "consumed", LimitPrice: decimal.NewFromInt64(99),
+					OrderQty: decimal.NewFromInt64(1), Timestamp: time.Unix(1, 0).UTC(),
+				},
+				{
+					Event: "add", OrderID: "resting", LimitPrice: decimal.NewFromInt64(100),
+					OrderQty: decimal.NewFromInt64(1), Timestamp: time.Unix(3, 0).UTC(),
+				},
+			},
+		}}}
+		So(managed.Update(event, initial), ShouldBeNil)
+		update := &kraken.Level3{Data: []kraken.Level3Data{{
+			Symbol: "APR/USD",
+			Bids: []kraken.Level3Order{{
+				Event: "add", OrderID: "new-bid", LimitPrice: decimal.NewFromInt64(100),
+				OrderQty: decimal.NewFromInt64(1), Timestamp: time.Unix(2, 0).UTC(),
+			}},
+			Asks: []kraken.Level3Order{{
+				Event: "delete", OrderID: "consumed", LimitPrice: decimal.NewFromInt64(99),
+				Timestamp: time.Unix(2, 1).UTC(),
+			}},
+		}}}
+
+		err := managed.Update(event, update)
+
+		Convey("It should retain the venue's final locked book for checksum validation", func() {
+			So(err, ShouldBeNil)
+			managed.Get("APR/USD", func(book *spotbook.Book) {
+				So(book.NoBookCrossing, ShouldBeFalse)
+				So(book.BestBid(), ShouldNotBeNil)
+				So(book.BestAsk(), ShouldNotBeNil)
+				So(book.BestBid().Price.Cmp(book.BestAsk().Price), ShouldEqual, 0)
 			})
 		})
 	})

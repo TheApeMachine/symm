@@ -80,7 +80,7 @@ const drawReturnStats = (
     top + 14,
   );
   context.fillText(
-    `precision ${head.taskPrecision?.toFixed(3) ?? "—"} · h ${head.horizon ?? "—"} · r ${head.reach ?? "—"}`,
+    `relative precision ${head.taskRelativePrecision?.toFixed(3) ?? "—"} · h ${head.horizon ?? "—"} · r ${head.reach ?? "—"}`,
     left,
     top + 28,
   );

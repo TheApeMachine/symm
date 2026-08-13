@@ -3,6 +3,8 @@ package kraken
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -135,19 +137,25 @@ func (order *Level3Order) UnmarshalJSON(data []byte) error {
 	}{}
 
 	if err := sonic.Unmarshal(data, &wire); err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "invalid level3 order", err,
+		))
 	}
 
 	limitPrice, limitPriceText, err := parseLevel3Decimal(wire.LimitPrice)
 
 	if err != nil {
-		return fmt.Errorf("level3 limit_price: %w", err)
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "level3 limit_price", err,
+		))
 	}
 
 	orderQty, orderQtyText, err := parseLevel3Decimal(wire.OrderQty)
 
 	if err != nil {
-		return fmt.Errorf("level3 order_qty: %w", err)
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "level3 order_qty", err,
+		))
 	}
 
 	order.Event = wire.Event
@@ -186,21 +194,80 @@ func parseLevel3Decimal(
 
 	if raw[0] == '"' {
 		if err := sonic.Unmarshal(raw, &text); err != nil {
-			return nil, "", err
+			return nil, "", errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, "invalid level3 decimal", err,
+			))
 		}
+	}
+
+	if strings.ContainsAny(text, "eE") {
+		expanded, err := expandLevel3Decimal(text)
+
+		if err != nil {
+			return nil, "", errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, "invalid level3 decimal", err,
+			))
+		}
+
+		text = expanded
 	}
 
 	value, err := decimal.NewFromString(text)
 
 	if err != nil {
-		return nil, "", err
-	}
-
-	if strings.ContainsAny(text, "eE") {
-		text = value.String()
+		return nil, "", errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "invalid level3 decimal", err,
+		))
 	}
 
 	return value, text, nil
+}
+
+func expandLevel3Decimal(text string) (string, error) {
+	exponentAt := strings.IndexAny(text, "eE")
+
+	if exponentAt < 1 || exponentAt == len(text)-1 {
+		return "", errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid scientific decimal",
+			fmt.Errorf("invalid scientific decimal %q", text),
+		))
+	}
+
+	exponent, err := strconv.Atoi(text[exponentAt+1:])
+
+	if err != nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid scientific decimal",
+			fmt.Errorf("invalid scientific decimal %q: %w", text, err),
+		))
+	}
+
+	mantissa := text[:exponentAt]
+	fractionDigits := 0
+
+	if decimalAt := strings.IndexByte(mantissa, '.'); decimalAt >= 0 {
+		fractionDigits = len(mantissa) - decimalAt - 1
+	}
+
+	scale := fractionDigits - exponent
+
+	if scale < 0 {
+		scale = 0
+	}
+
+	rational, valid := new(big.Rat).SetString(text)
+
+	if !valid {
+		return "", errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid scientific decimal",
+			fmt.Errorf("invalid scientific decimal %q", text),
+		))
+	}
+
+	return rational.FloatString(scale), nil
 }
 
 func NewLevel3(buf []byte) *Level3 {

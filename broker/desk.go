@@ -233,7 +233,7 @@ func (desk *Desk) OpenPositions() int {
 	count := 0
 
 	for position := range desk.Positions() {
-		if position.Status != types.CLOSED {
+		if position.status() != types.CLOSED {
 			count++
 		}
 	}
@@ -253,7 +253,7 @@ func (desk *Desk) Holding(symbol string) int {
 	held := 0
 
 	for position := range desk.Positions() {
-		if position.Status == types.CLOSED {
+		if position.status() == types.CLOSED {
 			continue
 		}
 
@@ -371,7 +371,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		if loaded {
 			position, valid := found.(*Position)
 
-			if valid && position != nil && position.Status != types.CLOSED {
+			if valid && position != nil && position.status() != types.CLOSED {
 				return nil
 			}
 		}

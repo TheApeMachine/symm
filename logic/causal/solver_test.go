@@ -98,7 +98,7 @@ func TestUpdate(t *testing.T) {
 		setCausalPrice(price, symbol, 110, firstAt.Add(time.Second))
 		err := solver.Update(thesis)
 
-		convey.Convey("Then it should retain the strictly prior resolved row", func() {
+		convey.Convey("Then it should retain the strictly prior unresolved row", func() {
 			convey.So(err, convey.ShouldBeNil)
 			stored, found := symbolState.Causal.Load(symbol)
 			convey.So(found, convey.ShouldBeTrue)
@@ -107,7 +107,7 @@ func TestUpdate(t *testing.T) {
 			convey.So(output["samples"], convey.ShouldEqual, 1)
 			convey.So(output["precision"], convey.ShouldEqual, 0.0)
 			convey.So(output["treatmentLevel"], convey.ShouldNotBeNil)
-			convey.So(output["identification"], convey.ShouldEqual, "adjustedAssociation")
+			convey.So(output["identification"], convey.ShouldEqual, "unresolved")
 			convey.So(rows, convey.ShouldHaveLength, 1)
 			convey.So(rows[0], convey.ShouldHaveLength, 4)
 			convey.So(math.IsNaN(rows[0][0]), convey.ShouldBeFalse)

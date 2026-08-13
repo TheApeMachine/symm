@@ -1,8 +1,10 @@
 package trader
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/theapemachine/symm/types"
@@ -165,13 +167,19 @@ type eventResults struct {
 	measurements []*types.Measurement
 }
 
-func (pipeline *streamPipeline) commit(wait *sync.WaitGroup) {
+func (pipeline *streamPipeline) collect(wait *sync.WaitGroup) {
 	defer wait.Done()
 	pending := make(map[uint64]*eventResults)
 	next := uint64(1)
 
 	for {
-		worked := pipeline.collect(pending)
+		worked, err := pipeline.drainResults(pending)
+
+		if err != nil {
+			pipeline.fail(err)
+			pipeline.cancel()
+			return
+		}
 
 		for {
 			results := pending[next]
@@ -182,13 +190,12 @@ func (pipeline *streamPipeline) commit(wait *sync.WaitGroup) {
 
 			delete(pending, next)
 
-			if err := pipeline.commitEvent(results); err != nil {
-				pipeline.fail(err)
-				pipeline.cancel()
+			if err := pipeline.commitInbox.Push(pipeline.ctx, results); err != nil {
 				return
 			}
 
 			next++
+			worked = true
 		}
 
 		if worked {
@@ -203,7 +210,9 @@ func (pipeline *streamPipeline) commit(wait *sync.WaitGroup) {
 	}
 }
 
-func (pipeline *streamPipeline) collect(pending map[uint64]*eventResults) bool {
+func (pipeline *streamPipeline) drainResults(
+	pending map[uint64]*eventResults,
+) (bool, error) {
 	worked := false
 
 	for _, worker := range pipeline.workers {
@@ -217,9 +226,7 @@ func (pipeline *streamPipeline) collect(pending map[uint64]*eventResults) bool {
 			worked = true
 
 			if result.err != nil {
-				pipeline.fail(result.err)
-				pipeline.cancel()
-				return worked
+				return worked, result.err
 			}
 
 			results := pending[result.event.sequence]
@@ -234,11 +241,60 @@ func (pipeline *streamPipeline) collect(pending map[uint64]*eventResults) bool {
 		}
 	}
 
-	return worked
+	return worked, nil
+}
+
+func (pipeline *streamPipeline) commit(wait *sync.WaitGroup) {
+	defer wait.Done()
+
+	for {
+		worked := false
+
+		for range pipeline.config.drainLimit {
+			results, ok := pipeline.commitInbox.Pop()
+
+			if !ok {
+				break
+			}
+
+			worked = true
+
+			if err := pipeline.commitEvent(results); err != nil {
+				pipeline.fail(err)
+				pipeline.cancel()
+				return
+			}
+		}
+
+		if worked {
+			continue
+		}
+
+		select {
+		case <-pipeline.ctx.Done():
+			return
+		case <-pipeline.commitWake:
+		}
+	}
 }
 
 func (pipeline *streamPipeline) commitEvent(results *eventResults) error {
 	event := results.event
+	slices.SortStableFunc(
+		results.measurements,
+		func(left, right *types.Measurement) int {
+			if sourceOrder := cmp.Compare(left.Source, right.Source); sourceOrder != 0 {
+				return sourceOrder
+			}
+
+			if symbolOrder := cmp.Compare(left.Symbol, right.Symbol); symbolOrder != 0 {
+				return symbolOrder
+			}
+
+			return cmp.Compare(left.Peer, right.Peer)
+		},
+	)
+
 	if event.tick > pipeline.thesis.Tick {
 		pipeline.thesis.Tick = event.tick
 	}
@@ -258,7 +314,7 @@ func (pipeline *streamPipeline) commitEvent(results *eventResults) error {
 		}
 	}
 
-	if event.kind != marketEventTrade ||
+	if event.kind != marketEventTicker ||
 		pipeline.analyzed[event.symbol.Symbol] == event.tick ||
 		!pipeline.measurementsDirty {
 		pipeline.markCommitted(event)
@@ -284,11 +340,7 @@ func (pipeline *streamPipeline) commitEvent(results *eventResults) error {
 
 func (pipeline *streamPipeline) markCommitted(event marketEvent) {
 	pipeline.progressMu.Lock()
-
-	if event.at.After(pipeline.committed[event.kind]) {
-		pipeline.committed[event.kind] = event.at
-	}
-
+	pipeline.committedSequence = event.sequence
 	pipeline.progressMu.Unlock()
 
 	select {

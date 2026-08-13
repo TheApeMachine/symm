@@ -29,6 +29,30 @@ func graphResonanceManifold() *learning.ResonanceManifold {
 }
 
 func TestUpdate(t *testing.T) {
+	Convey("Given a reset lifecycle with only stale category state", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.At = time.Unix(10, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Categories.Store("BTC/USD", []types.Category{{
+			Symbol:     "BTC/USD",
+			Type:       types.CategoryAggressiveDrive,
+			Supporting: []string{"cvd:drive"},
+		}})
+		symbol.Graphs.Store("market_graph", NewGraph(thesis.At))
+		thesis.Symbols.Store("BTC/USD", symbol)
+
+		err := NewSolver(nil, nil).Update(thesis)
+
+		Convey("It should wait for the first measurement of the new lifecycle", func() {
+			So(err, ShouldBeNil)
+			stored, found := symbol.Graphs.Load("market_graph")
+			So(found, ShouldBeTrue)
+			graph := stored.(*Graph)
+			So(graph.Nodes, ShouldBeEmpty)
+			So(graph.Edges, ShouldBeEmpty)
+		})
+	})
+
 	Convey("Given a symbol with every category-bearing signal measurement", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = time.Unix(9, 0).UTC()
@@ -194,6 +218,32 @@ func TestAddEdge(t *testing.T) {
 
 			So(graph.Edges, ShouldHaveLength, 1)
 			So(graph.Adjacency[edge.From], ShouldResemble, []string{edge.To})
+		})
+	})
+}
+
+func TestGraphReadyForSearch(t *testing.T) {
+	Convey("Given a skilled forecast with a zero-valued evidence target", t, func() {
+		graph := NewGraph(time.Unix(1, 0).UTC())
+		graph.Forecast = graphForecast(0.01)
+		graph.TaskSkill = 1
+		graph.TaskSkillReady = true
+		forecastID := "res:BTC/USD:forecast"
+		graph.AddNode(&Node{
+			ID: forecastID, Symbol: "BTC/USD", Kind: KindResonance, Value: 0.01, Confidence: 1,
+		})
+		graph.AddNode(&Node{ID: "causal", Value: 0, Confidence: 1})
+		graph.AddEdge(&Edge{
+			From: forecastID, To: "causal", Relation: RelationSupports,
+			Weight: 0.5, Confidence: 1,
+		})
+
+		Convey("It should require both predictive advantage and reward-bearing evidence", func() {
+			So(graph.ReadyForSearch(1), ShouldBeFalse)
+
+			graph.TaskSkill = 1.01
+			graph.Nodes["causal"].Value = 0.02
+			So(graph.ReadyForSearch(1), ShouldBeTrue)
 		})
 	})
 }

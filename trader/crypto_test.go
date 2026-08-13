@@ -11,10 +11,10 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
-	configsystem "github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -87,12 +87,21 @@ func TestIntegration(t *testing.T) {
 					t.Context(), thesis, market, "SIM1/USD",
 				)
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
-				stopCollector()
 				stopSnapshots()
-				decisionResult := <-collected
-				So(decisionResult.err, ShouldBeNil)
 				snapshotResult := <-snapshots
 				So(snapshotResult.err, ShouldBeNil)
+				storedSymbol, found := thesis.Symbols.Load("SIM1/USD")
+				So(found, ShouldBeTrue)
+				resonanceRaw, found := storedSymbol.(*types.Symbol).Resonance.Load("SIM1/USD")
+				So(found, ShouldBeTrue)
+				forecast, err := resonanceRaw.(*learning.ResonanceManifold).
+					RolloutTaskForecast(1)
+				So(err, ShouldBeNil)
+				snapshotResult.snapshot.resonances = forecast
+				So(market.Express("SIM1/USD"), ShouldBeNil)
+				stopCollector()
+				decisionResult := <-collected
+				So(decisionResult.err, ShouldBeNil)
 				snapshot := snapshotResult.snapshot
 				entry := findDecision(
 					decisionResult.decisions, "SIM1/USD", types.ActionEnter,
@@ -122,7 +131,7 @@ func TestIntegration(t *testing.T) {
 						ShouldBeGreaterThanOrEqualTo, expectation.MinimumStepVolume)
 
 					Convey("And each signal should expose explicitly available Thesis evidence", func() {
-						for _, source := range signalSources() {
+						for _, source := range integrationSignalSources() {
 							measurement := snapshot.measurements[source]
 
 							So(fmt.Sprintf("%s:%t", source, measurement != nil),
@@ -130,6 +139,10 @@ func TestIntegration(t *testing.T) {
 							So(measurement.At.IsZero(), ShouldBeFalse)
 							So(measurement.Metrics, ShouldNotBeEmpty)
 						}
+						leadLag := latestSourceMeasurement(thesis, types.SourceLeadLag)
+						So(leadLag, ShouldNotBeNil)
+						So(leadLag.Symbol, ShouldNotBeEmpty)
+						So(leadLag.Metrics, ShouldNotBeEmpty)
 
 						Convey("And pump evidence should meet the named precursor thresholds", func() {
 							measurement := snapshot.measurements[types.SourcePumpDump]
@@ -166,7 +179,7 @@ func TestIntegration(t *testing.T) {
 									So(math.IsNaN(expectedReturn), ShouldBeFalse)
 									So(expectedReturn, ShouldBeGreaterThan, 0.0)
 
-									Convey("Then the planner should enter before ignition is sampled", func() {
+									Convey("Then the planner should enter after the pump is observed", func() {
 										So(entry, ShouldNotBeNil)
 										So(entry.ProposedQuantity, ShouldNotBeNil)
 										So(entry.ProposedQuantity.Sign(), ShouldEqual, 1)
@@ -204,56 +217,20 @@ func TestRoundTrip(t *testing.T) {
 					t.Context(), system.Thesis,
 				)
 				/*
-					Every boundary here is one the generator owns. The entry is
-					judged at the end of the precursor, the move is observed once
-					its ignition has printed and decayed, and the lot is observed
-					once the desk is flat — so nothing in this sequence depends on
-					a number of ticks chosen to make it come out.
+					Every boundary here is one the generator owns. The first
+					ignition supplies resolved evidence for strict-prior admission,
+					the second advances the actual lot into profit lock, and the lot
+					is observed once the desk is flat.
 				*/
 				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
+				So(market.Express("SIM1/USD"), ShouldBeNil)
 				stopCollector()
 				decisionResult := <-collected
 				So(decisionResult.err, ShouldBeNil)
 				entry := findDecision(
 					decisionResult.decisions, "SIM1/USD", types.ActionEnter,
 				)
-				symbolState := system.Thesis.Symbol("SIM1/USD")
-				latestSources := make([]types.SourceType, 0)
-				symbolState.Latest.Range(func(_, value any) bool {
-					latestSources = append(latestSources, value.(*types.Measurement).Source)
-					return true
-				})
-				categories, _ := symbolState.Categories.Load("SIM1/USD")
-				graphValue, _ := symbolState.Graphs.Load("market_graph")
-				graphState, _ := graphValue.(*logicgraph.Graph)
-				causalValue, _ := symbolState.Causal.Load("SIM1/USD")
-				simDecisions := make([]types.Decision, 0)
-				maxConfidence := 0.0
-				latestReason := ""
-
-				for _, decision := range decisionResult.decisions {
-					if decision.Symbol == "SIM1/USD" {
-						simDecisions = append(simDecisions, decision)
-						maxConfidence = max(maxConfidence, decision.Confidence)
-						latestReason = decision.Reason
-					}
-				}
-				var forecast []learning.RLSOutput
-				var skill float64
-				var skillReady bool
-
-				if rawCoder, found := symbolState.Resonance.Load("SIM1/USD"); found {
-					coder := rawCoder.(*learning.ResonanceManifold)
-					forecast, _ = coder.RolloutTaskForecast(1)
-					skill, skillReady = coder.TaskSkill()
-				}
-
-				t.Logf("round trip precursor: tick=%d sources=%v categories=%#v forecast=%#v skill=%g/%t causal=%#v graph=%T ready=%t nodes=%d edges=%d graphForecast=%#v graphSkill=%g/%t decisions=%d maxConfidence=%g latestReason=%q",
-					system.Thesis.Tick, latestSources, categories, forecast, skill, skillReady, causalValue,
-					graphValue,
-					graphState != nil && graphState.ReadyForSearch(configsystem.Cfg.Planner.MinimumSkill), len(graphState.Nodes), len(graphState.Edges), graphState.Forecast, graphState.TaskSkill, graphState.TaskSkillReady,
-					len(simDecisions), maxConfidence, latestReason)
-
+				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 
 				armed := armedPositions(system, "SIM1/USD")
@@ -262,7 +239,7 @@ func TestRoundTrip(t *testing.T) {
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 				So(market.Flatten("SIM1/USD"), ShouldBeNil)
 
-				Convey("Then the strategy should have opened a lot on the precursor", func() {
+				Convey("Then the strategy should have opened a lot on resolved pump evidence", func() {
 					So(entry, ShouldNotBeNil)
 					So(entry.Cause, ShouldEqual, "opportunity_entry")
 					So(entry.ProposedQuantity.Sign(), ShouldEqual, 1)
@@ -276,13 +253,19 @@ func TestRoundTrip(t *testing.T) {
 							Convey("And the round trip should have realized a profit", func() {
 								closed := 0
 
-								for position := range system.Desk.Positions() {
+								system.Thesis.Symbol("SIM1/USD").Positions.Range(func(_, raw any) bool {
+									position, ok := raw.(*broker.Position)
+
+									if !ok {
+										return true
+									}
+
 									holding := position.Holding
 
 									if holding == nil ||
 										holding.Symbol != "SIM1/USD" ||
 										holding.Status != types.CLOSED {
-										continue
+										return true
 									}
 
 									closed++
@@ -304,7 +287,8 @@ func TestRoundTrip(t *testing.T) {
 									// positive one is edge that survived friction.
 									So(holding.PnL.Sign(), ShouldEqual, 1)
 									So(holding.ReturnPct, ShouldBeGreaterThan, 0.0)
-								}
+									return true
+								})
 
 								So(closed, ShouldBeGreaterThan, 0)
 							})
@@ -350,6 +334,8 @@ func TestCryptoRun(t *testing.T) {
 				})
 				marketGraph := logicgraph.NewGraph(thesis.At)
 				marketGraph.Forecast = forecast
+				marketGraph.TaskSkill = 1.01
+				marketGraph.TaskSkillReady = true
 				marketGraph.AddNode(&logicgraph.Node{
 					ID:         "res:SIM1/USD:forecast",
 					Symbol:     "SIM1/USD",
@@ -357,6 +343,21 @@ func TestCryptoRun(t *testing.T) {
 					Value:      forecast.Value,
 					Confidence: 0.95,
 					At:         thesis.At,
+				})
+				marketGraph.AddNode(&logicgraph.Node{
+					ID:         "causal:SIM1/USD:doExpectation",
+					Symbol:     "SIM1/USD",
+					Kind:       logicgraph.KindCausal,
+					Value:      0.02,
+					Confidence: 0.95,
+					At:         thesis.At,
+				})
+				marketGraph.AddEdge(&logicgraph.Edge{
+					From:       "res:SIM1/USD:forecast",
+					To:         "causal:SIM1/USD:doExpectation",
+					Relation:   logicgraph.RelationSupports,
+					Weight:     0.95,
+					Confidence: 0.95,
 				})
 				symbol.Graphs.Store("market_graph", marketGraph)
 
@@ -380,7 +381,7 @@ func TestCryptoRun(t *testing.T) {
 					"samples":        100,
 				})
 
-				system.Planner.Update(thesis)
+				So(system.Planner.Update(thesis), ShouldBeNil)
 				stored, found := symbol.Decisions.Load("SIM1/USD")
 				So(found, ShouldBeTrue)
 				decision := stored.(*types.Decision)
@@ -511,9 +512,12 @@ func armedPositions(system *cmd.System, symbol string) int {
 	armed := 0
 
 	for position := range system.Desk.Positions() {
-		if position.Holding == nil || position.Holding.Symbol != symbol {
+		if position.Holding == nil || position.Holding.Symbol != symbol ||
+			position.Holding.Stoploss == nil || !position.Holding.Stoploss.Locked {
 			continue
 		}
+
+		armed++
 	}
 
 	return armed
@@ -556,21 +560,20 @@ func collectIntegrationSnapshots(
 				if !integrationSnapshotReady(collection.snapshot) {
 					missing := make([]types.SourceType, 0)
 
-					for _, source := range signalSources() {
+					for _, source := range integrationSignalSources() {
 						if collection.snapshot.measurements[source] == nil {
 							missing = append(missing, source)
 						}
 					}
 
 					collection.err = fmt.Errorf(
-						"integration: incomplete snapshot for %s: tickers=%d trades=%d measurements=%d missing=%v categories=%d resonances=%d",
+						"integration: incomplete snapshot for %s: tickers=%d trades=%d measurements=%d missing=%v categories=%d",
 						symbol,
 						len(collection.snapshot.tickers),
 						len(collection.snapshot.trades),
 						len(collection.snapshot.measurements),
 						missing,
 						len(collection.snapshot.categories),
-						len(collection.snapshot.resonances),
 					)
 				}
 
@@ -613,7 +616,7 @@ func updateIntegrationSnapshot(
 		snapshot.trades = append(snapshot.trades, trade)
 	}
 
-	for _, source := range signalSources() {
+	for _, source := range integrationSignalSources() {
 		measurement := latestMeasurement(thesis, source, symbol)
 		stored := snapshot.measurements[source]
 
@@ -635,31 +638,13 @@ func updateIntegrationSnapshot(
 		snapshot.categories = mergeCategories(snapshot.categories, categories)
 	}
 
-	resonanceRaw, resonanceReady := symbolState.Resonance.Load(symbol)
-
-	if coder, ok := resonanceRaw.(*learning.ResonanceManifold); resonanceReady && ok {
-		forecast, err := coder.RolloutTaskForecast(1)
-
-		if err != nil || len(forecast) == 0 || !forecast[0].Ready {
-			return
-		}
-
-		resonance := forecast[0]
-
-		if len(snapshot.resonances) == 0 ||
-			resonance.Value != snapshot.resonances[len(snapshot.resonances)-1].Value {
-			snapshot.resonances = append(snapshot.resonances, resonance)
-			return
-		}
-	}
 }
 
 func integrationSnapshotReady(snapshot integrationSnapshot) bool {
 	return len(snapshot.tickers) > 0 &&
 		len(snapshot.trades) > 0 &&
-		len(snapshot.measurements) == len(signalSources()) &&
-		len(snapshot.categories) > 0 &&
-		len(snapshot.resonances) > 0
+		len(snapshot.measurements) == len(integrationSignalSources()) &&
+		len(snapshot.categories) > 0
 }
 
 func mergeCategories(
@@ -826,6 +811,20 @@ func signalSources() []types.SourceType {
 	}
 }
 
+func integrationSignalSources() []types.SourceType {
+	return []types.SourceType{
+		types.SourceCorrelation,
+		types.SourceCVD,
+		types.SourceDepthFlow,
+		types.SourceExhaustion,
+		types.SourceHawkes,
+		types.SourceLiquidity,
+		types.SourcePumpDump,
+		types.SourceSentiment,
+		types.SourceToxicity,
+	}
+}
+
 func latestMeasurement(
 	thesis *types.Thesis,
 	source types.SourceType,
@@ -853,6 +852,33 @@ func latestMeasurement(
 		if latest == nil || measurement.At.After(latest.At) {
 			latest = measurement
 		}
+
+		return true
+	})
+
+	return latest
+}
+
+func latestSourceMeasurement(
+	thesis *types.Thesis,
+	source types.SourceType,
+) *types.Measurement {
+	var latest *types.Measurement
+
+	thesis.Symbols.Range(func(_, value any) bool {
+		value.(*types.Symbol).Latest.Range(func(_, raw any) bool {
+			measurement, ok := raw.(*types.Measurement)
+
+			if !ok || measurement == nil || measurement.Source != source {
+				return true
+			}
+
+			if latest == nil || measurement.At.After(latest.At) {
+				latest = measurement
+			}
+
+			return true
+		})
 
 		return true
 	})

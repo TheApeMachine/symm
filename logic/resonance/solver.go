@@ -41,11 +41,23 @@ type Solver struct {
 }
 
 type sampleHistory struct {
-	inputs           map[int64][]float64
+	issued           map[int64]issuedTask
 	marks            map[int64]float64
 	ticks            []int64
 	resolved         int
 	supportedHorizon int
+	lastResolution   *taskResolution
+}
+
+type issuedTask struct {
+	features   []float64
+	prediction []float64
+}
+
+type taskResolution struct {
+	forecast float64
+	actual   float64
+	error    float64
 }
 
 /*
@@ -247,7 +259,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			historyValue, _ := solver.histories.LoadOrStore(name, &sampleHistory{
-				inputs: make(map[int64][]float64),
+				issued: make(map[int64]issuedTask),
 				marks:  make(map[int64]float64),
 			})
 
@@ -264,7 +276,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				for len(history.ticks) > 1 {
 					previousTick := history.ticks[0]
 					previousMark := history.marks[previousTick]
-					previousInput, found := history.inputs[previousTick]
+					issued, found := history.issued[previousTick]
 					futureTick := history.ticks[1]
 					futureMark, futureFound := history.marks[futureTick]
 					target := make([]float64, 1)
@@ -278,7 +290,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 						target[0] = math.Log(futureMark / previousMark)
 					}
 
-					delete(history.inputs, previousTick)
+					delete(history.issued, previousTick)
 					delete(history.marks, previousTick)
 					history.ticks = history.ticks[1:]
 
@@ -286,31 +298,34 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 						continue
 					}
 
-					if _, err := coder.SettleFromBatchOptions(
-						previousInput, target, true, false,
+					if err := coder.ObserveTask(
+						issued.features,
+						issued.prediction,
+						target,
 					); err != nil {
 						return errnie.Error(errnie.Err(
 							errnie.Internal,
-							fmt.Sprintf("resonance: settle failed [%s]", err.Error()),
+							fmt.Sprintf("resonance: resolve task failed [%s]", err.Error()),
 							err,
 						))
 					}
 
+					history.lastResolution = &taskResolution{
+						forecast: issued.prediction[0],
+						actual:   target[0],
+						error:    target[0] - issued.prediction[0],
+					}
 					history.resolved++
 				}
 			}
 
-			// 2. Perform Generative Settle on CURRENT Tick Input for Inference
-			if _, err := coder.SettleFromBatchOptions(input, nil, false, true); err != nil {
+			// 2. Settle and learn the CURRENT unsupervised state before forecasting.
+			if _, err := coder.SettleFromBatchOptions(input, nil, true, false); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
 					fmt.Sprintf("resonance: settle failed [%s]", err.Error()),
 					err,
 				))
-			}
-
-			if _, found := history.marks[tick]; found {
-				history.inputs[tick] = slices.Clone(input)
 			}
 
 			symbol.Resonance.Store(name, coder)
@@ -319,6 +334,24 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			layers, surprise, energy := coder.WireSnapshot()
 			taskPrecision, taskPrecisionReady := coder.TaskPrecision()
 			taskSkill, taskSkillReady := coder.TaskSkill()
+			taskCalibration := "calibrating"
+			taskSkillStatus := "calibrating"
+
+			if taskPrecisionReady {
+				taskCalibration = "calibrated"
+			}
+
+			if taskSkillReady {
+				taskSkillStatus = "baseline"
+
+				if taskSkill > 1 {
+					taskSkillStatus = "above baseline"
+				}
+
+				if taskSkill < 1 {
+					taskSkillStatus = "below baseline"
+				}
+			}
 			currentReach := 1
 
 			if storedReach, found := solver.currentReach.Load(name); found {
@@ -340,6 +373,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					fmt.Sprintf("resonance: forecast rollout failed [%s]", err.Error()),
 					err,
 				))
+			}
+
+			if _, found := history.marks[tick]; found && len(forecast) > 0 {
+				history.issued[tick] = issuedTask{
+					features:   coder.LatentState(),
+					prediction: []float64{forecast[0].Value},
+				}
 			}
 
 			if history.resolved > resolvedBefore {
@@ -395,10 +435,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"symbol", name,
 				"at", thesis.At,
 				"tick", thesis.Tick,
-				"taskPrecision", taskPrecision,
-				"taskPrecisionReady", taskPrecisionReady,
+				"taskRelativePrecision", taskPrecision,
+				"taskRelativePrecisionReady", taskPrecisionReady,
+				"taskCalibration", taskCalibration,
 				"taskSkill", taskSkill,
 				"taskSkillReady", taskSkillReady,
+				"taskSkillStatus", taskSkillStatus,
 				"samples", history.resolved,
 				"layers", layers,
 				"latent", layers[len(layers)-1].State,
@@ -411,6 +453,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				frame["taskScale"] = forecast[0].Scale
 				frame["taskForecast"] = forecast[0].Value
 				forecastFrame["forwardCurve"] = forwardCurve
+			}
+
+			if history.lastResolution != nil {
+				frame["lastResolvedForecast"] = history.lastResolution.forecast
+				frame["lastRealizedReturn"] = history.lastResolution.actual
+				frame["lastForecastError"] = history.lastResolution.error
 			}
 
 			utils.Publish(solver.ui, datura.NewMap("resonance", frame))

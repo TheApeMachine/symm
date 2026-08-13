@@ -266,10 +266,14 @@ func (transport *mockTransport) assetPairs() []byte {
 			"fee_volume_currency": "ZUSD",
 			"margin_call":         80,
 			"margin_stop":         40,
-			"ordermin":            "0.0001",
-			"costmin":             "0.50",
-			"tick_size":           priceIncrement,
-			"status":              "online",
+			"ordermin": strconv.FormatFloat(
+				symbol.OrderMinimum, 'f', symbol.QuantityPrecision, 64,
+			),
+			"costmin": strconv.FormatFloat(
+				symbol.CostMinimum, 'f', -1, 64,
+			),
+			"tick_size": priceIncrement,
+			"status":    "online",
 		}
 	}
 

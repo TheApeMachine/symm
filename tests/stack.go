@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/system"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -98,6 +99,11 @@ func drive[S Driven](
 ) func(*Market) {
 	return func(market *Market) {
 		var absent S
+		previousConfig := system.Cfg
+		system.Cfg = system.NewConfig()
+		defer func() {
+			system.Cfg = previousConfig
+		}()
 		previousDataPath := viper.GetString("system.data_path")
 		viper.Set("system.data_path", t.TempDir())
 		defer viper.Set("system.data_path", previousDataPath)

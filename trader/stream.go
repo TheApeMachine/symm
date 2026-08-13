@@ -94,9 +94,11 @@ type streamPipeline struct {
 	local             []*streamWorker
 	cross             []*streamWorker
 	resultWake        chan struct{}
+	commitInbox       *lane[*eventResults]
+	commitWake        chan struct{}
 	progress          chan struct{}
 	progressMu        sync.RWMutex
-	committed         [4]time.Time
+	committedSequence uint64
 	measurementsDirty bool
 	resonanceDirty    bool
 	analyzed          map[string]int64
@@ -133,6 +135,17 @@ func newStreamPipeline(
 		progress:   make(chan struct{}, 1),
 		analyzed:   make(map[string]int64),
 		fail:       fail,
+	}
+	pipeline.commitWake = make(chan struct{}, 1)
+	pipeline.commitInbox, err = newLane[*eventResults](
+		config.laneCapacity,
+		config.spinLimit,
+		pipeline.commitWake,
+	)
+
+	if err != nil {
+		pipeline.Close()
+		return nil, err
 	}
 
 	for range config.symbolShards {
@@ -173,18 +186,11 @@ func newStreamPipeline(
 
 func (pipeline *streamPipeline) Wait(
 	ctx context.Context,
-	at time.Time,
+	sequence uint64,
 ) error {
-	if at.IsZero() {
-		return fmt.Errorf("stream: synchronization time required")
-	}
-
 	for {
 		pipeline.progressMu.RLock()
-		ready := !pipeline.committed[marketEventTicker].Before(at) &&
-			!pipeline.committed[marketEventTrade].Before(at) &&
-			!pipeline.committed[marketEventBook].Before(at) &&
-			!pipeline.committed[marketEventLevel3].Before(at)
+		ready := pipeline.committedSequence >= sequence
 		pipeline.progressMu.RUnlock()
 
 		if ready {
@@ -195,7 +201,10 @@ func (pipeline *streamPipeline) Wait(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-pipeline.ctx.Done():
-			return fmt.Errorf("stream: stopped before %s was committed", at)
+			return fmt.Errorf(
+				"stream: stopped before ingress sequence %d was committed",
+				sequence,
+			)
 		case <-pipeline.progress:
 		}
 	}
@@ -247,7 +256,8 @@ func (pipeline *streamPipeline) start() {
 		go worker.run(&pipeline.wait)
 	}
 
-	pipeline.wait.Add(1)
+	pipeline.wait.Add(2)
+	go pipeline.collect(&pipeline.wait)
 	go pipeline.commit(&pipeline.wait)
 }
 

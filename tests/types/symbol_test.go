@@ -16,6 +16,8 @@ func TestSymbolNewSymbol(t *testing.T) {
 			So(symbol.StartPrice, ShouldEqual, 100.0)
 			So(symbol.PriceIncrement, ShouldEqual, 0.01)
 			So(symbol.PricePrecision, ShouldEqual, 2)
+			So(symbol.OrderMinimum, ShouldEqual, DefaultOrderMinimum)
+			So(symbol.CostMinimum, ShouldEqual, DefaultCostMinimum)
 		})
 	})
 

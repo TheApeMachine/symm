@@ -2,7 +2,9 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -31,7 +33,7 @@ type Position struct {
 	store          *PositionStore
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
-	Status         types.Status `json:"status"`
+	Status         atomic.Pointer[types.Status] `json:"-"`
 	/*
 		Decision is the arbitration that opened this lot, kept verbatim.
 
@@ -70,7 +72,6 @@ func NewPosition(
 	position := &Position{
 		ctx:            ctx,
 		cancel:         cancel,
-		Status:         types.INITIALIZING,
 		api:            api,
 		ui:             ui,
 		instrument:     instrument,
@@ -99,8 +100,35 @@ func NewPosition(
 			Stoploss:      decision.Stoploss,
 		},
 	}
+	position.setStatus(types.INITIALIZING)
 
 	return position
+}
+
+func (position *Position) status() types.Status {
+	status := position.Status.Load()
+
+	if status == nil {
+		return types.UNKNOWN
+	}
+
+	return *status
+}
+
+func (position *Position) setStatus(status types.Status) {
+	position.Status.Store(&status)
+}
+
+func (position *Position) MarshalJSON() ([]byte, error) {
+	type positionJSON Position
+
+	return json.Marshal(struct {
+		Status types.Status `json:"status"`
+		*positionJSON
+	}{
+		Status:       position.status(),
+		positionJSON: (*positionJSON)(position),
+	})
 }
 
 /*
@@ -183,7 +211,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			execution.ClientOrderID == position.ExitOrder.ClOrdId &&
 			execution.OrderStatus == "filled" {
 			if err := position.closeFill(execution); err != nil {
-				position.Status = types.ERROR
+				position.setStatus(types.ERROR)
 
 				if position.Holding != nil {
 					position.Holding.Status = types.ERROR
@@ -206,8 +234,8 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			continue
 		}
 
-		position.Status = types.MarketStatuses[execution.OrderStatus]
-		position.Holding.Status = position.Status
+		position.setStatus(types.MarketStatuses[execution.OrderStatus])
+		position.Holding.Status = position.status()
 		position.Holding.EntryAt = &execution.Timestamp
 		position.Holding.EntryPrice = decimal.NewFromInt64(0).Add(
 			execution.CumCost,
@@ -220,7 +248,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			position.Holding.EntryPrice,
 			position.Holding.Mark,
 		); err != nil {
-			position.Status = types.ERROR
+			position.setStatus(types.ERROR)
 			position.Holding.Status = types.ERROR
 			position.Holding.Stoploss.Status = types.ERROR
 			errnie.Error(err)
@@ -314,7 +342,7 @@ func (position *Position) Enter() (*Position, error) {
 	result, err := position.api.AddOrder(position.EntryOrder)
 
 	if err != nil {
-		position.Status = types.ERROR
+		position.setStatus(types.ERROR)
 		position.Holding.Status = types.ERROR
 		position.Holding.Stoploss.Status = types.ERROR
 
@@ -327,8 +355,8 @@ func (position *Position) Enter() (*Position, error) {
 
 	position.EntryOrderResult = &result
 
-	if position.Status != types.OPEN && position.Status != types.CLOSED {
-		position.Status = types.PENDING
+	if position.status() != types.OPEN && position.status() != types.CLOSED {
+		position.setStatus(types.PENDING)
 		position.Holding.Status = types.PENDING
 	}
 
@@ -361,7 +389,7 @@ func (position *Position) Exit() (*Position, error) {
 	result, err := position.api.AddOrder(position.ExitOrder)
 
 	if err != nil {
-		position.Status = types.ERROR
+		position.setStatus(types.ERROR)
 		position.Holding.Status = types.ERROR
 		position.Holding.Stoploss.Status = types.ERROR
 
@@ -373,7 +401,7 @@ func (position *Position) Exit() (*Position, error) {
 	}
 
 	position.ExitOrderResult = &result
-	position.Status = types.PENDING
+	position.setStatus(types.PENDING)
 	position.Holding.Status = types.PENDING
 
 	position.Publish()
@@ -384,7 +412,7 @@ func (position *Position) Exit() (*Position, error) {
 Close marks the lot closed once Desk drops it from the open map.
 */
 func (position *Position) Close() (err error) {
-	if position.Status == types.CLOSED {
+	if position.status() == types.CLOSED {
 		return nil
 	}
 
@@ -396,6 +424,6 @@ func (position *Position) Close() (err error) {
 		err = errors.Join(err, position.Holding.Close())
 	}
 
-	position.Status = types.CLOSED
+	position.setStatus(types.CLOSED)
 	return errnie.Error(err)
 }

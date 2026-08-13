@@ -33,14 +33,14 @@ func TestPositionOnTicker(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		position := &Position{
-			Status: types.PENDING,
-			price:  price,
+			price: price,
 			Holding: &types.Holding{
 				Qty:      decimal.NewFromInt64(0),
 				Mark:     decimal.NewFromFloat64(100),
 				Stoploss: stoploss,
 			},
 		}
+		position.setStatus(types.PENDING)
 
 		Convey("It should remember the mark without triggering an unowned lot", func() {
 			position.onTicker(kraken.TickerData{
@@ -105,7 +105,7 @@ func TestPositionOnExecution(t *testing.T) {
 			}}})
 
 			So(closed, ShouldBeTrue)
-			So(position.Status, ShouldEqual, types.CLOSED)
+			So(position.status(), ShouldEqual, types.CLOSED)
 			So(position.Holding.Status, ShouldEqual, types.CLOSED)
 			So(position.Holding.ExitAt.Equal(exitAt), ShouldBeTrue)
 			So(position.Holding.ExitPrice.Cmp(
@@ -132,12 +132,12 @@ func TestPositionOnExecution(t *testing.T) {
 func TestPositionExit(t *testing.T) {
 	Convey("Given an open lot whose regulator remains armed", t, func() {
 		position := &Position{
-			Status: types.OPEN,
 			Holding: &types.Holding{
 				Qty:      decimal.NewFromInt64(1),
 				Stoploss: newBrokerStoploss(t),
 			},
 		}
+		position.setStatus(types.OPEN)
 
 		Convey("It should reject liquidation at the order boundary", func() {
 			returned, err := position.Exit()
@@ -164,8 +164,7 @@ func TestPositionCloseFill(t *testing.T) {
 			decimal.NewFromFloat64(0.0025),
 		)
 		position := &Position{
-			Status: types.OPEN,
-			ui:     make(chan []byte, 1),
+			ui: make(chan []byte, 1),
 			Holding: &types.Holding{
 				Status:      types.OPEN,
 				Qty:         quantity,
@@ -174,6 +173,7 @@ func TestPositionCloseFill(t *testing.T) {
 				EntryFee:    entryFee,
 			},
 		}
+		position.setStatus(types.OPEN)
 		execution := kraken.ExecutionData{
 			Timestamp:   time.Now().UTC(),
 			CumQty:      quantity,
@@ -192,7 +192,7 @@ func TestPositionCloseFill(t *testing.T) {
 			So(position.Holding.ReturnPct, ShouldBeGreaterThan, 0)
 			So(position.Holding.ReturnPct, ShouldBeLessThan, 2)
 			So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
-			So(position.Status, ShouldEqual, types.CLOSED)
+			So(position.status(), ShouldEqual, types.CLOSED)
 		})
 
 		Convey("It should refuse a filled quantity that does not match inventory", func() {
@@ -201,7 +201,7 @@ func TestPositionCloseFill(t *testing.T) {
 			err := position.closeFill(execution)
 
 			So(err, ShouldNotBeNil)
-			So(position.Status, ShouldEqual, types.OPEN)
+			So(position.status(), ShouldEqual, types.OPEN)
 			So(position.Holding.ExitPrice, ShouldBeNil)
 		})
 
@@ -211,7 +211,7 @@ func TestPositionCloseFill(t *testing.T) {
 			err := position.closeFill(execution)
 
 			So(err, ShouldNotBeNil)
-			So(position.Status, ShouldEqual, types.OPEN)
+			So(position.status(), ShouldEqual, types.OPEN)
 			So(position.Holding.ExitPrice, ShouldBeNil)
 		})
 	})

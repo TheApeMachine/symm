@@ -59,9 +59,6 @@ func (solver *Solver) observe(
 		}
 	}
 
-	solver.rowsMu.Lock()
-	defer solver.rowsMu.Unlock()
-
 	stored, found := solver.rows.Load(symbol)
 
 	if !found {

@@ -55,7 +55,11 @@ func NewBook(ctx context.Context, normalizers ...*spot.Normalizer) *Book {
 		}
 
 		managed.EnableMaxDepth = true
-		managed.NoBookCrossing = true
+		// Kraken's checksum is the authority for Level 3 state. Applying the
+		// SDK's per-order crossing heuristic inside one multi-order venue frame
+		// can delete a newly added order before the later orders in that same
+		// frame resolve the transient cross.
+		managed.NoBookCrossing = false
 		book.statusMu.Lock()
 		book.status = types.READY
 		book.statusMu.Unlock()
@@ -141,7 +145,45 @@ func (book *Book) Update(
 	}
 
 	book.mu.Lock()
-	defer book.mu.Unlock()
+	accepted, err := book.apply(payload)
+	updates := book.updates
+	events := book.events
+	book.mu.Unlock()
+
+	if err != nil {
+		return err
+	}
+
+	for _, data := range accepted {
+		if updates != nil {
+			select {
+			case updates <- data.Symbol:
+			default:
+			}
+		}
+
+		if events != nil {
+			select {
+			case events <- data:
+			case <-book.ctx.Done():
+				return book.ctx.Err()
+			}
+		}
+	}
+
+	return nil
+}
+
+/*
+apply mutates one complete venue frame while the caller owns the book lock.
+Transport publication happens only after this method returns and the lock is
+released, so downstream backpressure cannot prevent pricing readers from
+observing the accepted frame.
+*/
+func (book *Book) apply(
+	payload *kraken.Level3,
+) (accepted []kraken.Level3Data, err error) {
+	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
 
 	for index, data := range payload.Data {
 		data.Type = payload.Type
@@ -182,7 +224,7 @@ func (book *Book) Update(
 					limitPrice, err = book.normalizer.FormatPrice(data.Symbol, limitPrice)
 
 					if err != nil {
-						return errnie.Err(
+						return nil, errnie.Err(
 							errnie.Validation,
 							fmt.Sprintf("level3 price precision for %s", data.Symbol),
 							err,
@@ -210,7 +252,7 @@ func (book *Book) Update(
 						)
 
 						if err != nil {
-							return errnie.Err(
+							return nil, errnie.Err(
 								errnie.Validation,
 								fmt.Sprintf("level3 quantity precision for %s", data.Symbol),
 								err,
@@ -298,35 +340,30 @@ func (book *Book) Update(
 		}
 
 		payload.Data[index] = data
-		if data.Checksum != 0 && !symbolBook.L3Checksum(strconv.FormatUint(
-			uint64(data.Checksum),
-			10,
-		)).Match {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf("level3 checksum mismatch for %s", data.Symbol),
-				nil,
+		if data.Checksum != 0 {
+			checksum := symbolBook.L3Checksum(strconv.FormatUint(
+				uint64(data.Checksum),
+				10,
 			))
-		}
 
-		if book.updates != nil {
-			select {
-			case book.updates <- data.Symbol:
-			default:
+			if !checksum.Match {
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf(
+						"level3 checksum mismatch for %s: local %s, server %s",
+						data.Symbol,
+						checksum.LocalChecksum,
+						checksum.ServerChecksum,
+					),
+					nil,
+				))
 			}
 		}
 
-		if book.events != nil {
-			select {
-			case book.events <- data:
-			case <-book.ctx.Done():
-				return book.ctx.Err()
-			}
-		}
-
+		accepted = append(accepted, data)
 	}
 
-	return nil
+	return accepted, nil
 }
 
 func (book *Book) pruneNilLevels(symbolBook *spotbook.Book) {

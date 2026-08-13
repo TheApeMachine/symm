@@ -135,6 +135,20 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
+		executableQuantity, err := price.ProfitableQuantity(
+			decision.Symbol,
+			quantity,
+			decision.Forecast.Value,
+		)
+
+		if err != nil {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: executable quantity unavailable: " + err.Error()
+			continue
+		}
+
+		quantity = executableQuantity
+
 		pair := allocation.desk.Instrument().Pair(decision.Symbol)
 
 		if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
@@ -169,7 +183,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			decimal.NewFromInt64(100),
 		)
 		decision.AvailableCapital = cash
-		decision.ProposedNotional = notional
+		decision.ProposedNotional = price.Mark(decision.Symbol, broker.BUY).Mul(quantity)
 		decision.ProposedQuantity = quantity
 		decision.ReferencePrice = tick.Ask
 		decision.EntryPrice = tick.Ask

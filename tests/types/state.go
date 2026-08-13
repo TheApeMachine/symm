@@ -8,12 +8,13 @@ import (
 )
 
 const (
-	QuantityJitterMinimum  = 0.8
-	QuantityJitterMaximum  = 1.2
-	VolumeJitterMinimum    = 0.5
-	VolumeJitterMaximum    = 1.5
-	EmpiricalRatioBaseline = 1.0
-	PositiveEvidenceFloor  = 0.0
+	QuantityJitterMinimum            = 0.8
+	QuantityJitterMaximum            = 1.2
+	VolumeJitterMinimum              = 0.5
+	VolumeJitterMaximum              = 1.5
+	EmpiricalRatioBaseline           = 1.0
+	NormalizedEmpiricalRatioBaseline = EmpiricalRatioBaseline / (1 + EmpiricalRatioBaseline)
+	PositiveEvidenceFloor            = 0.0
 )
 
 /*

@@ -97,9 +97,10 @@ ui:
 trading:
   model: paper
   resonance:
-    # Provisional strategy admission policy. Recalibrate from strategy
-    # postmortems once resolved forecast outcomes provide an empirical rule.
-    minimum_confidence: 0.80
+    # A one-sided probability of 0.5 carries no directional evidence. This is
+    # only the cold-start position; the global regulator moves the live gate
+    # within [0.5, 1] after observing exposed wallet-return outcomes.
+    minimum_confidence: 0.50
   allocation:
     # Hard per-entry quote-notional ceiling. This is not a risk target: the
     # planner may reduce it once calibrated loss and liquidity budgets exist.

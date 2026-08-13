@@ -18,10 +18,9 @@ import (
 )
 
 /*
-Hub owns the dashboard websocket and forwards flat JSON frames to clients.
-Each client has a bounded latest-by-key writer queue managed by the hub loop.
-Publish coalesces replaceable state by key, assigns a generation, and fans out
-only to registered clients so one slow peer cannot block the drain.
+Hub owns the dashboard websocket and broadcasts flat JSON frames to clients.
+Each client has a bounded writer queue; a peer that cannot keep up is closed
+with an observable error so it cannot block market telemetry for every peer.
 */
 type Hub struct {
 	ctx        context.Context
@@ -68,6 +67,7 @@ func NewHub(
 	}
 
 	go hub.fluid.Run(manifold)
+	go hub.broadcast()
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -79,6 +79,16 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
+		queueCapacity := cap(hub.Messages)
+
+		if queueCapacity < 1 {
+			queueCapacity = 1
+		}
+
+		messages := make(chan []byte, queueCapacity)
+		hub.clients.Store(conn, messages)
+		defer hub.clients.Delete(conn)
+
 		if hub.balance != nil {
 			conn.WriteMessage(websocket.TextMessage, hub.balance.Wallet())
 		}
@@ -95,11 +105,13 @@ func NewHub(
 			).MarshalAndFree())
 		}
 
+		clientDone := make(chan struct{})
 		go func() {
+			defer close(clientDone)
+
 			for {
 				select {
 				case <-hub.ctx.Done():
-					errnie.Error(hub.Close())
 					return
 				default:
 					messageType, payload, err := conn.Conn.ReadMessage()
@@ -127,13 +139,18 @@ func NewHub(
 				}
 			}
 		}()
+		defer func() {
+			_ = conn.Close()
+			<-clientDone
+		}()
 
 		for {
 			select {
 			case <-hub.ctx.Done():
-				errnie.Error(hub.Close())
 				return
-			case msg := <-hub.Messages:
+			case <-clientDone:
+				return
+			case msg := <-messages:
 				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 					if expectedDashboardWriteClosure(err) {
 						return
@@ -154,6 +171,34 @@ func NewHub(
 	hub.registerFluidWebRTC()
 
 	return hub
+}
+
+func (hub *Hub) broadcast() {
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case message := <-hub.Messages:
+			hub.clients.Range(func(key, value any) bool {
+				conn := key.(*websocket.Conn)
+				messages := value.(chan []byte)
+
+				select {
+				case messages <- message:
+				default:
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"dashboard client queue exhausted",
+						nil,
+					))
+					hub.clients.Delete(conn)
+					_ = conn.Close()
+				}
+
+				return true
+			})
+		}
+	}
 }
 
 /*

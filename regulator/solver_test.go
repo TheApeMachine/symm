@@ -85,7 +85,8 @@ func TestUpdate(t *testing.T) {
 		system.Cfg = system.NewConfig()
 		baseline := system.Cfg.Snapshot()
 		thesis := types.NewThesis(t.Context(), nil)
-		solver, err := NewSolver(t.Context(), nil)
+		ui := make(chan []byte, 1)
+		solver, err := NewSolver(t.Context(), ui)
 		So(err, ShouldBeNil)
 		defer solver.Close()
 		So(appendEquity(thesis, 200), ShouldBeNil)
@@ -99,6 +100,7 @@ func TestUpdate(t *testing.T) {
 			So(solver.optimizer.pending, ShouldBeNil)
 			So(solver.optimizer.resolved, ShouldEqual, 0)
 			So(system.Cfg.Snapshot().Planner, ShouldResemble, baseline.Planner)
+			So(len(ui), ShouldEqual, 1)
 		})
 	})
 

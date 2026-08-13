@@ -305,10 +305,15 @@ export type ResonanceFrame = Record<string, unknown> & {
   symbol: string;
   at: string;
   samples?: number;
-  taskPrecision?: number;
-  taskPrecisionReady?: boolean;
+  taskRelativePrecision?: number;
+  taskRelativePrecisionReady?: boolean;
+  taskCalibration?: "calibrating" | "calibrated";
   taskSkill?: number;
   taskSkillReady?: boolean;
+  taskSkillStatus?: "calibrating" | "below baseline" | "baseline" | "above baseline";
+  lastResolvedForecast?: number;
+  lastRealizedReturn?: number;
+  lastForecastError?: number;
   observables?: number[];
   latent?: number[];
   embedding?: number[];

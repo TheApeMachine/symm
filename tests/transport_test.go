@@ -45,9 +45,10 @@ func TestMockTransportAssetPairs(t *testing.T) {
 	Convey("Given a transport configured with one symbol", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
-		conn.Configure([]*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 50_000, 1),
-		})
+		symbol := testtypes.NewSymbol("BTC/USD", 50_000, 1)
+		symbol.OrderMinimum = 0.001
+		symbol.CostMinimum = 1.5
+		conn.Configure([]*testtypes.Symbol{symbol})
 		request, err := http.NewRequest(
 			"GET", "https://api.kraken.com/0/public/AssetPairs", nil,
 		)
@@ -67,6 +68,8 @@ func TestMockTransportAssetPairs(t *testing.T) {
 			So(pair["wsname"], ShouldEqual, "BTC/USD")
 			So(pair["base"], ShouldEqual, "BTC")
 			So(pair["quote"], ShouldEqual, "USD")
+			So(pair["ordermin"], ShouldEqual, "0.00100000")
+			So(pair["costmin"], ShouldEqual, "1.5")
 		})
 	})
 }

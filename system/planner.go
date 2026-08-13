@@ -6,6 +6,14 @@ import (
 	"github.com/spf13/viper"
 )
 
+/*
+UninformativeDirectionConfidence is the probability boundary at which a
+one-sided forecast provides no directional evidence. The regulator may tighten
+the admission gate above this boundary, but a lower gate would admit a direction
+the posterior considers less likely than its opposite.
+*/
+const UninformativeDirectionConfidence = 0.5
+
 type PlannerConfig struct {
 	MaxAllocationFraction float64
 	MinimumSkill          float64
@@ -18,8 +26,11 @@ type PlannerConfig struct {
 
 func NewPlannerConfig() *PlannerConfig {
 	viper.SetDefault("trading.allocation.max_fraction", 0.1)
-	viper.SetDefault("trading.resonance.minimum_skill", 0.5)
-	viper.SetDefault("trading.resonance.minimum_confidence", 0.8)
+	viper.SetDefault("trading.resonance.minimum_skill", 1.0)
+	viper.SetDefault(
+		"trading.resonance.minimum_confidence",
+		UninformativeDirectionConfidence,
+	)
 	viper.SetDefault("trading.utility.minimum", 0.0)
 	viper.SetDefault("trading.mcts.causal_alpha", 1.0)
 	viper.SetDefault("trading.mcts.iterations", 50)
