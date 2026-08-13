@@ -49,11 +49,11 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.Trace, ShouldNotBeNil)
 			So(decision.Trace.MCTS.Iterations, ShouldEqual, system.Cfg.Planner.MCTSIterations)
 			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 1)
-				So(decision.Trace.MCTS.Branches[0].Action,
-					ShouldEqual, "res:BTC/USD:forecast")
+			So(decision.Trace.MCTS.Branches[0].Action,
+				ShouldEqual, "res:BTC/USD:forecast")
 			So(decision.Trace.MCTS.Branches[0].Visits, ShouldBeGreaterThan, 0)
-				So(decision.Trace.MCTS.RecommendedAction,
-					ShouldEqual, "res:BTC/USD:forecast")
+			So(decision.Trace.MCTS.RecommendedAction,
+				ShouldEqual, "res:BTC/USD:forecast")
 		})
 	})
 
@@ -64,7 +64,8 @@ func TestPlannerUpdate(t *testing.T) {
 		stored, _ := thesis.Symbols.Load("BTC/USD")
 		symbol := stored.(*types.Symbol)
 		graphValue, _ := symbol.Graphs.Load("market_graph")
-		graphValue.(*logicgraph.Graph).Forecast.Scale = 1
+		graph := graphValue.(*logicgraph.Graph)
+		graph.Forecast.Scale = 1
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
 
 		err := planner.Update(thesis)
@@ -77,6 +78,9 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.Action, ShouldEqual, types.ActionNothing)
 			So(decision.Reason, ShouldEqual,
 				"planner: forecast confidence does not clear regulated entry threshold")
+			retained, found := symbol.Graphs.Load("market_graph")
+			So(found, ShouldBeTrue)
+			So(retained, ShouldEqual, graph)
 		})
 	})
 

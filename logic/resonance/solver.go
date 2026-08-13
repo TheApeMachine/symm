@@ -172,9 +172,18 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			schemaChanged := false
+			trained := false
+
+			if rawHistory, found := solver.histories.Load(name); found {
+				trained = rawHistory.(*sampleHistory).resolved > 0
+			}
 
 			for identity := range state {
 				if slices.Contains(schema, identity) {
+					continue
+				}
+
+				if trained {
 					continue
 				}
 

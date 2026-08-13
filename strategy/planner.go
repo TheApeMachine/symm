@@ -197,6 +197,27 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		symbol.Decisions.Store(decision.Symbol, decision)
 	}
 
+	decisions := make([]types.Decision, 0, len(createdDecisions))
+	actionable := false
+
+	for _, decision := range createdDecisions {
+		decisions = append(decisions, *decision)
+
+		if decision.Action != types.ActionNothing {
+			actionable = true
+		}
+	}
+
+	if !actionable {
+		utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
+			"evaluated", false,
+			"outcome", "accumulating",
+			"decisions", decisions,
+		)))
+
+		return nil
+	}
+
 	if planner.desk != nil {
 		if err = planner.desk.SaveThesis(thesis); err != nil {
 			return fmt.Errorf("planner: checkpoint evaluated thesis: %w", err)
@@ -220,12 +241,6 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			"market_graph",
 			logicgraph.NewGraph(thesis.At),
 		)
-	}
-
-	decisions := make([]types.Decision, 0, len(createdDecisions))
-
-	for _, decision := range createdDecisions {
-		decisions = append(decisions, *decision)
 	}
 
 	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(

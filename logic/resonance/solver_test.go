@@ -233,7 +233,7 @@ func TestUpdate(t *testing.T) {
 		thesis.Symbols.Store(symbol.Symbol, symbol)
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
-		for tick := int64(1); tick <= 3; tick++ {
+		for tick := int64(1); tick <= 4; tick++ {
 			appendResonanceSource(
 				symbol, types.SourceHawkes, tick, 100+float64(tick), float64(tick),
 			)
@@ -241,21 +241,32 @@ func TestUpdate(t *testing.T) {
 		}
 
 		Convey("It should settle before every configured signal has emitted", func() {
-			_, found := symbol.Resonance.Load(symbol.Symbol)
+			activeCoder, found := symbol.Resonance.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
+			activeHistory, found := solver.histories.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			resolvedBefore := activeHistory.(*sampleHistory).resolved
+			So(resolvedBefore, ShouldBeGreaterThan, 0)
 
-			for tick := int64(4); tick <= 6; tick++ {
+			for tick := int64(5); tick <= 7; tick++ {
 				appendResonanceSource(
 					symbol, types.SourceCVD, tick, 100+float64(tick), float64(tick),
 				)
 				So(solver.Update(thesis), ShouldBeNil)
 			}
 
-			appendResonanceSource(symbol, types.SourceHawkes, 7, 107, 7)
+			appendResonanceSource(symbol, types.SourceHawkes, 8, 108, 8)
 			So(solver.Update(thesis), ShouldBeNil)
 			schema, found := solver.schemas.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
-			So(schema, ShouldHaveLength, 2)
+			So(schema, ShouldHaveLength, 1)
+			retainedCoder, found := symbol.Resonance.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			So(retainedCoder, ShouldEqual, activeCoder)
+			retainedHistory, found := solver.histories.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			So(retainedHistory.(*sampleHistory).resolved,
+				ShouldBeGreaterThan, resolvedBefore)
 		})
 	})
 }

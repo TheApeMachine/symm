@@ -58,13 +58,13 @@ func TestUpdate(t *testing.T) {
 		pendingErr := solver.Update(thesis)
 		deadline := time.Now().Add(10 * time.Second)
 
-		for solver.settling.Load() != 0 && time.Now().Before(deadline) {
+		for solver.settling.Load() && time.Now().Before(deadline) {
 			runtime.Gosched()
 		}
 
 		Convey("It should wait without stamping or reporting an error", func() {
 			So(pendingErr, ShouldBeNil)
-			So(solver.settling.Load(), ShouldEqual, 0)
+			So(solver.settling.Load(), ShouldBeFalse)
 			So(solver.WaitingForBook(), ShouldBeTrue)
 			So(solver.domain.ParticleCount(), ShouldEqual, 0)
 		})
@@ -88,13 +88,13 @@ func TestUpdate(t *testing.T) {
 		err := solver.Update(thesis)
 		deadline = time.Now().Add(10 * time.Second)
 
-		for solver.settling.Load() != 0 && time.Now().Before(deadline) {
+		for solver.settling.Load() && time.Now().Before(deadline) {
 			runtime.Gosched()
 		}
 
 		Convey("It should inject the unit-energy book when the snapshot arrives", func() {
 			So(err, ShouldBeNil)
-			So(solver.settling.Load(), ShouldEqual, 0)
+			So(solver.settling.Load(), ShouldBeFalse)
 			So(solver.WaitingForBook(), ShouldBeFalse)
 			So(solver.domain.ParticleCount(), ShouldEqual, 2)
 		})
@@ -153,7 +153,7 @@ func TestUpdate(t *testing.T) {
 		err := solver.Update(thesis)
 		deadline := time.Now().Add(10 * time.Second)
 
-		for solver.settling.Load() != 0 && time.Now().Before(deadline) {
+		for solver.settling.Load() && time.Now().Before(deadline) {
 			runtime.Gosched()
 		}
 
@@ -161,7 +161,7 @@ func TestUpdate(t *testing.T) {
 
 		Convey("It should append, advance, read, and stamp one manifold cut", func() {
 			So(err, ShouldBeNil)
-			So(solver.settling.Load(), ShouldEqual, 0)
+			So(solver.settling.Load(), ShouldBeFalse)
 			So(readingErr, ShouldBeNil)
 			So(solver.domain.ParticleCount(), ShouldEqual, 2)
 			So(thesis.Manifold, ShouldResemble, reading)
@@ -202,11 +202,16 @@ func TestUpdate(t *testing.T) {
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
 		solver.api = &staticBookSource{
-			book: managed, entered: entered, release: release,
+			book: managed,
 		}
 		solver.tokenizer = NewTokenizer(solver.config, []string{"BTC/USD"})
-
-		err := solver.Update(thesis)
+		Reset(func() { So(solver.Close(), ShouldBeNil) })
+		solver.settling.Store(true)
+		go func() {
+			entered <- struct{}{}
+			<-release
+			solver.settling.Store(false)
+		}()
 
 		select {
 		case <-entered:
@@ -222,19 +227,18 @@ func TestUpdate(t *testing.T) {
 		close(release)
 		deadline := time.Now().Add(10 * time.Second)
 
-		for solver.settling.Load() != 0 && time.Now().Before(deadline) {
+		for solver.settling.Load() && time.Now().Before(deadline) {
 			runtime.Gosched()
 		}
 
-		Convey("It should return immediately and coalesce the arrivals into one follow-up cut", func() {
-			So(err, ShouldBeNil)
-			So(queuedState, ShouldEqual, 2)
-			So(solver.settling.Load(), ShouldEqual, 0)
-			So(solver.stepped, ShouldBeTrue)
-			So(solver.pending["BTC/USD"], ShouldHaveLength, 2)
+		Convey("It should ignore additional semaphores until settlement completes", func() {
+			So(queuedState, ShouldBeTrue)
+			So(solver.settling.Load(), ShouldBeFalse)
+			So(solver.stepped, ShouldBeFalse)
+			So(solver.pending["BTC/USD"], ShouldHaveLength, 0)
+			So(solver.domain.ParticleCount(), ShouldEqual, 0)
 		})
 
-		So(solver.Close(), ShouldBeNil)
 	})
 }
 
@@ -242,14 +246,15 @@ func TestStep(t *testing.T) {
 	Convey("Given one resident market carrier and a regulated relaxation budget", t, func() {
 		originalSteps := system.Cfg.Manifold.RelaxationSteps
 		originalMinimum := system.Cfg.Manifold.MinSteps
-		system.Cfg.Manifold.RelaxationSteps = 1
+		system.Cfg.Manifold.RelaxationSteps = 2
 		system.Cfg.Manifold.MinSteps = 1
 		Reset(func() {
 			system.Cfg.Manifold.RelaxationSteps = originalSteps
 			system.Cfg.Manifold.MinSteps = originalMinimum
 		})
-		ui := make(chan []byte, 1)
-		solver := NewSolver(nil, ui, nil, nil)
+		ui := make(chan []byte, 2)
+		binui := make(chan types.FluidFrame, 4)
+		solver := NewSolver(nil, ui, binui, nil)
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 		particle := pfluid.Particle{
 			Position: pfluid.Vector{X: 0.25, Y: 0.25, Z: 0.25},
@@ -270,25 +275,54 @@ func TestStep(t *testing.T) {
 			symbol: "BTC/USD", particles: particles,
 		}})
 		reading, readingErr := solver.domain.Reading()
-		var payload []byte
+		payloads := make([][]byte, 0, len(ui))
 
-		select {
-		case payload = <-ui:
-		default:
+		for len(ui) > 0 {
+			payloads = append(payloads, <-ui)
 		}
 
 		var frame struct {
 			Manifold []map[string]any `json:"manifold"`
 		}
-		marshalErr := json.Unmarshal(payload, &frame)
+		marshalErr := json.Unmarshal(payloads[len(payloads)-1], &frame)
 		stored, _ := thesis.Symbols.Load("BTC/USD")
 		_, phaseFound := stored.(*types.Symbol).Phase.Load("BTC/USD")
+		fieldFrames := 0
+		particleFrames := 0
+		waveObserved := false
 
-		Convey("It should advance, read, and publish the same completed cut", func() {
+		for len(binui) > 0 {
+			fluidFrame := <-binui
+
+			if fluidFrame.Channel == types.FluidParticlesChannel {
+				particleFrames++
+				continue
+			}
+
+			fieldFrames++
+			var fieldPayload struct {
+				Fields pfluid.Fields `json:"fields"`
+			}
+			So(json.Unmarshal(fluidFrame.Payload, &fieldPayload), ShouldBeNil)
+
+			for cell := range fieldPayload.Fields.WaveReal {
+				if fieldPayload.Fields.WaveReal[cell] != 0 ||
+					fieldPayload.Fields.WaveImaginary[cell] != 0 {
+					waveObserved = true
+					break
+				}
+			}
+		}
+
+		Convey("It should publish the manifold and wave field after every step", func() {
 			So(err, ShouldBeNil)
 			So(readingErr, ShouldBeNil)
 			So(solver.stepped, ShouldBeTrue)
 			So(thesis.Manifold, ShouldResemble, reading)
+			So(payloads, ShouldHaveLength, 2)
+			So(fieldFrames, ShouldEqual, 2)
+			So(particleFrames, ShouldEqual, 2)
+			So(waveObserved, ShouldBeTrue)
 			So(marshalErr, ShouldBeNil)
 			So(frame.Manifold, ShouldHaveLength, 1)
 			So(frame.Manifold[0]["symbol"], ShouldEqual, "BTC/USD")
@@ -360,7 +394,7 @@ func BenchmarkUpdate(b *testing.B) {
 			}
 		}
 
-		for solver.settling.Load() != 0 {
+		for solver.settling.Load() {
 			runtime.Gosched()
 		}
 	}

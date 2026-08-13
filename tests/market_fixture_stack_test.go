@@ -3,6 +3,8 @@
 package tests
 
 import (
+	"bufio"
+	"bytes"
 	"os"
 	"runtime"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
+	systemconfig "github.com/theapemachine/symm/system"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -144,11 +147,41 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				So(err, ShouldBeNil)
 				defer capture.Close()
 
-				So(market.Replay(capture), ShouldBeNil)
+				reader := bufio.NewReader(capture)
+				prefix := bytes.Buffer{}
+
+				for record := 0; record < 3_799; record++ {
+					line, readErr := reader.ReadBytes('\n')
+					So(readErr, ShouldBeNil)
+					prefix.Write(line)
+				}
+
+				So(market.Replay(&prefix), ShouldBeNil)
+				waitForReplayCut(system.Thesis, 50, market.Config.BookApplyTimeout)
+				t.Logf("breakout decision: %#v", replayDecision(system.Thesis, "IDOS/USD"))
+				So(market.Replay(reader), ShouldBeNil)
 				position := waitForClosedPosition(
 					system.Thesis.Symbol("IDOS/USD"),
 					market.Config.BookApplyTimeout,
 				)
+				if position == nil {
+					t.Logf("exact replay terminal thesis: tick=%d at=%s", system.Thesis.Tick, system.Thesis.At)
+					t.Logf("exact replay planner config: %#v", systemconfig.Cfg.Snapshot().Planner)
+					symbolState := system.Thesis.Symbol("IDOS/USD")
+					symbolState.Decisions.Range(func(key, value any) bool {
+						t.Logf("exact replay decision %v: %#v", key, value)
+						return true
+					})
+					symbolState.Positions.Range(func(key, value any) bool {
+						t.Logf("exact replay position %v: %#v", key, value)
+						return true
+					})
+					symbolState.Graphs.Range(func(key, value any) bool {
+						t.Logf("exact replay graph %v: %#v", key, value)
+						return true
+					})
+					t.Logf("exact replay economics: %#v", market.Report().Economics)
+				}
 
 				Convey("It should retain a profitable completed position on the Thesis", func() {
 					So(position, ShouldNotBeNil)
@@ -160,6 +193,34 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				})
 			}),
 	)
+}
+
+func replayDecision(thesis *types.Thesis, symbol string) *types.Decision {
+	value, found := thesis.Symbol(symbol).Decisions.Load(symbol)
+
+	if !found {
+		return nil
+	}
+
+	return value.(*types.Decision)
+}
+
+func waitForReplayCut(
+	thesis *types.Thesis,
+	tick int64,
+	timeout time.Duration,
+) {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		decision := replayDecision(thesis, "IDOS/USD")
+
+		if thesis.Tick >= tick && decision != nil && decision.At.Equal(thesis.At) {
+			return
+		}
+
+		runtime.Gosched()
+	}
 }
 
 func waitForClosedPosition(
