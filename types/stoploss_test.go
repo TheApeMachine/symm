@@ -264,6 +264,38 @@ func TestStoplossUpdate(t *testing.T) {
 
 			So(stoploss.Floor.Cmp(ratcheted), ShouldEqual, 0)
 		})
+
+		Convey("It should raise a lagged lock floor back to the lock line", func() {
+			stoploss.Update(stoploss.ArmAt)
+			stoploss.Floor = preLockFloor
+			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.01)))
+
+			So(stoploss.Locked, ShouldBeTrue)
+			So(stoploss.Floor.Cmp(stoploss.LockFloor), ShouldBeGreaterThanOrEqualTo, 0)
+			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+
+		Convey("It should take profit when a profitable mark stops making new highs", func() {
+			stoploss.Update(stoploss.ArmAt)
+			stoploss.Update(stoploss.ArmAt)
+
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+		})
+
+		Convey("It should take profit when a profitable mark oscillates under its peak", func() {
+			stoploss.Update(stoploss.ArmAt)
+			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(1)))
+			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.5)))
+
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+		})
+
+		Convey("It should hold an unprofitable mark that is not a new high", func() {
+			stoploss.Update(stoploss.ProfitLine.Sub(decimal.NewFromFloat64(0.01)))
+			stoploss.Update(stoploss.ProfitLine.Sub(decimal.NewFromFloat64(0.02)))
+
+			So(stoploss.Status, ShouldEqual, ARMED)
+		})
 	})
 }
 

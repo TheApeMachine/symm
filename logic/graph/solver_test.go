@@ -520,6 +520,7 @@ func TestExtractResonanceNodes(t *testing.T) {
 				},
 				Horizon:      3,
 				ForwardCurve: []float64{-0.001, 0.004, 0.009},
+				Call:         1,
 			},
 		)
 		thesis.Symbols.Store("BTC/USD", symbol)

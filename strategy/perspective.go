@@ -12,16 +12,17 @@ import (
 /*
 decisionPerspective combines only estimates with the same meaning: signed log
 return over the graph's forward horizon. Native log returns are converted to a
-per-tick rate before projection onto that horizon. Signal categories and
-cognition remain graph evidence because treating their scores as returns would
-mix incompatible units.
+per-tick rate before projection onto that horizon. Resonance contributes size
+only after it has already made a direction call; the call itself is not a
+return. Signal categories and cognition remain graph evidence because treating
+their scores as returns would mix incompatible units.
 */
 func decisionPerspective(
 	graph *logicgraph.Graph,
 	positiveProbability float64,
 ) (float64, float64, []types.DecisionPerspectiveSource, error) {
 	if graph == nil || graph.Forecast == nil || !graph.Forecast.Ready {
-		return 0, 0, nil, fmt.Errorf("planner: ready return forecast required")
+		return 0, 0, nil, fmt.Errorf("planner: ready direction forecast required")
 	}
 
 	forecastConfidence := max(

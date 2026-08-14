@@ -417,33 +417,65 @@ func (pipeline *streamPipeline) commit(wait *sync.WaitGroup) {
 	defer wait.Done()
 
 	for {
-		worked := false
+		batch := pipeline.takeCommitBatch()
 
-		for range pipeline.config.drainLimit {
-			results, ok := pipeline.commitInbox.Pop()
-
-			if !ok {
-				break
+		if len(batch) == 0 {
+			select {
+			case <-pipeline.ctx.Done():
+				return
+			case <-pipeline.commitWake:
 			}
 
-			worked = true
+			continue
+		}
 
+		pipeline.coalesceCommitBatch(batch)
+
+		for _, results := range batch {
 			if err := pipeline.commitEvent(results); err != nil {
 				pipeline.fail(err)
 				pipeline.cancel()
 				return
 			}
 		}
+	}
+}
 
-		if worked {
+func (pipeline *streamPipeline) takeCommitBatch() []*eventResults {
+	batch := make([]*eventResults, 0, pipeline.config.drainLimit)
+
+	for range pipeline.config.drainLimit {
+		results, ok := pipeline.commitInbox.Pop()
+
+		if !ok {
+			break
+		}
+
+		batch = append(batch, results)
+	}
+
+	return batch
+}
+
+func (pipeline *streamPipeline) coalesceCommitBatch(batch []*eventResults) {
+	latest := make(map[string]int, len(batch))
+
+	for index, results := range batch {
+		if results == nil || results.event.kind != marketEventTicker ||
+			results.event.symbol == nil {
 			continue
 		}
 
-		select {
-		case <-pipeline.ctx.Done():
-			return
-		case <-pipeline.commitWake:
+		latest[results.event.symbol.Symbol] = index
+	}
+
+	for index, results := range batch {
+		if results == nil || results.event.kind != marketEventTicker ||
+			results.event.symbol == nil {
+			continue
 		}
+
+		results.event.skipAnalysis = latest[results.event.symbol.Symbol] != index
 	}
 }
 
@@ -508,6 +540,7 @@ func (pipeline *streamPipeline) commitEvent(results *eventResults) error {
 	}
 
 	if event.kind != marketEventTicker ||
+		event.skipAnalysis ||
 		pipeline.analyzed[event.symbol.Symbol] == event.tick ||
 		(!pipeline.measurementsDirty[event.symbol.Symbol] &&
 			!pipeline.resonanceDirty[event.symbol.Symbol]) {

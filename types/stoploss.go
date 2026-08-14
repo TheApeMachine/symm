@@ -20,6 +20,10 @@ smaller than the cost of entering and exiting is not adverse evidence.
 Once Mark clears the profit line by that distance plus one executable tick,
 Floor moves above ProfitLine. Every later new Peak raises Floor by the same
 distance; no path lowers it.
+
+A profitable mark that fails to make a new peak is stagnant: the lot is
+no longer working, so Update sells it instead of waiting for a pullback
+to the floor.
 */
 type Stoploss struct {
 	ctx           context.Context
@@ -145,6 +149,11 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		return
 	}
 
+	if stoploss.Locked && stoploss.LockFloor != nil &&
+		stoploss.LockFloor.Cmp(stoploss.Floor) > 0 {
+		stoploss.Floor = stoploss.LockFloor
+	}
+
 	if mark.Cmp(stoploss.Floor) < 0 {
 		stoploss.Status = TRIGGERED
 		return
@@ -166,17 +175,20 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		return
 	}
 
-	if !stoploss.Locked || !raisedPeak {
-		return
+	if stoploss.Locked && raisedPeak {
+		candidate := floorToTick(
+			scaled(mark).Sub(stoploss.trailDistance),
+			stoploss.tickSize,
+		)
+
+		if candidate != nil && candidate.Cmp(stoploss.Floor) > 0 {
+			stoploss.Floor = candidate
+		}
 	}
 
-	candidate := floorToTick(
-		scaled(mark).Sub(stoploss.trailDistance),
-		stoploss.tickSize,
-	)
-
-	if candidate != nil && candidate.Cmp(stoploss.Floor) > 0 {
-		stoploss.Floor = candidate
+	if !raisedPeak && stoploss.ProfitLine != nil &&
+		mark.Cmp(stoploss.ProfitLine) > 0 {
+		stoploss.Status = TRIGGERED
 	}
 }
 

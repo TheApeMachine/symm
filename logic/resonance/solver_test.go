@@ -255,8 +255,8 @@ func TestUpdate(t *testing.T) {
 		history := historyValue.(*sampleHistory)
 		history.pending = make(map[int64][]issuedHorizon)
 		history.ledger = newHorizonLedger()
-		history.ledger.observe(1, 0.01, 0.01)
-		history.ledger.observe(1, 0.02, 0.02)
+		history.ledger.observe(1, 1, 0.01)
+		history.ledger.observe(1, 1, 0.02)
 		coderValue, coderFound := symbol.Resonance.Load(symbol.Symbol)
 		So(coderFound, ShouldBeTrue)
 		coder := coderValue.(*learning.ResonanceManifold)
@@ -282,11 +282,10 @@ func TestUpdate(t *testing.T) {
 		appendResonanceCut(symbol, 11, 119, 11)
 		So(solver.Update(thesis), ShouldBeNil)
 		resolved := history.ledger.horizons[2]
-		actual := math.Log(119.0 / 112.0)
-		expectedAdvantage := actual*actual -
-			(actual-issuedForecast)*(actual-issuedForecast)
+		actual := math.Log(119.0 / 109.0)
+		expectedAdvantage := signedDirection(issuedForecast) * signedDirection(actual)
 
-		Convey("It should resolve tick two only when its exact adjacent outcome arrives", func() {
+		Convey("It should resolve the two-step move only when that later mark arrives", func() {
 			So(prematurelyResolved, ShouldBeFalse)
 			So(resolved, ShouldNotBeNil)
 			So(resolved.count, ShouldEqual, 1)
@@ -454,6 +453,38 @@ func TestUpdate(t *testing.T) {
 			So(history.resolved, ShouldEqual, resolvedBefore+4)
 			So(after[0].DegreesOfFreedom,
 				ShouldBeGreaterThan, before[0].DegreesOfFreedom)
+		})
+	})
+
+	Convey("Given a consistently signed price path", t, func() {
+		previousConfig := system.Cfg
+		system.Cfg = system.NewConfig()
+		system.Cfg.Resonance.Layers = 3
+		system.Cfg.Planner.MinimumConfidence = 0.5
+		Reset(func() { system.Cfg = previousConfig })
+
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("BTC/USD", nil)
+		thesis.Symbols.Store(symbol.Symbol, symbol)
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+
+		for tick := int64(1); tick <= 16; tick++ {
+			thesis.Tick = tick
+			appendResonanceCut(symbol, tick, 100+float64(tick), float64(tick))
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		stored, found := symbol.Resonance.Load(types.ResonanceReturnForecastKey)
+		historyValue, historyFound := solver.histories.Load(symbol.Symbol)
+
+		Convey("It should call a direction and extend reach past one tick", func() {
+			So(found, ShouldBeTrue)
+			So(historyFound, ShouldBeTrue)
+			forecast := stored.(*types.ResonanceReturnForecast)
+			So(forecast.Call, ShouldNotEqual, 0)
+			So(forecast.Horizon, ShouldBeGreaterThan, 1)
+			So(historyValue.(*sampleHistory).ledger.supported(0.5),
+				ShouldBeGreaterThan, 1)
 		})
 	})
 }

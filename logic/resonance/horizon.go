@@ -3,13 +3,15 @@ package resonance
 import (
 	"math"
 
+	"github.com/theapemachine/nomagique/learning"
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
 /*
-horizonLedger retains sufficient loss statistics for every forecast horizon.
-Reach is the largest contiguous horizon whose paired squared-error advantage
-over a zero-return forecast clears the regulated confidence threshold.
+horizonLedger retains direction-skill statistics for every forecast horizon.
+Reach is the largest contiguous horizon whose issued direction calls beat a
+coin flip at the regulated confidence. The next horizon stays a live probe, so
+the model chooses how far it will stand behind a call.
 */
 type horizonLedger struct {
 	horizons map[int]*horizonStatistic
@@ -30,7 +32,8 @@ func newHorizonLedger() *horizonLedger {
 }
 
 /*
-observe records one exact horizon forecast against its aligned realized return.
+observe records one issued direction call against the realized move over that
+horizon. A zero forecast or a flat realization is not a call and is ignored.
 */
 func (ledger *horizonLedger) observe(
 	horizon int,
@@ -41,8 +44,14 @@ func (ledger *horizonLedger) observe(
 		panic("resonance: positive forecast horizon required")
 	}
 
-	modelError := actual - forecast
-	advantage := actual*actual - modelError*modelError
+	forecastDirection := signedDirection(forecast)
+	actualDirection := signedDirection(actual)
+
+	if forecastDirection == 0 || actualDirection == 0 {
+		return
+	}
+
+	advantage := forecastDirection * actualDirection
 	statistic := ledger.horizons[horizon]
 
 	if statistic == nil {
@@ -113,4 +122,41 @@ func (statistic *horizonStatistic) confidence() float64 {
 	}
 
 	return 1 - distribution.CDF(0)
+}
+
+func signedDirection(value float64) float64 {
+	if value > 0 {
+		return 1
+	}
+
+	if value < 0 {
+		return -1
+	}
+
+	return 0
+}
+
+func directionCall(output learning.RLSOutput, minimumConfidence float64) float64 {
+	if !output.Ready || output.Scale <= 0 || output.DegreesOfFreedom <= 0 {
+		return 0
+	}
+
+	lean := signedDirection(output.Value)
+
+	if lean == 0 {
+		return 0
+	}
+
+	distribution := distuv.StudentsT{
+		Mu:    output.Value,
+		Sigma: output.Scale,
+		Nu:    output.DegreesOfFreedom,
+	}
+	positiveProbability := 1 - distribution.CDF(0)
+
+	if max(positiveProbability, 1-positiveProbability) < minimumConfidence {
+		return 0
+	}
+
+	return lean
 }

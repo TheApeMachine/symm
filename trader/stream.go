@@ -86,6 +86,7 @@ type marketEvent struct {
 	dispatchedAt   time.Time
 	measuredAt     time.Time
 	collectedAt    time.Time
+	skipAnalysis   bool
 }
 
 /*

@@ -136,6 +136,7 @@ func (desk *Desk) run() {
 			case <-desk.ctx.Done():
 				return
 			case message := <-desk.subscriptions["ticker"].Channel:
+				started := time.Now()
 				ticker, ok := message.(*kraken.Ticker)
 
 				if !ok || ticker == nil {
@@ -152,6 +153,10 @@ func (desk *Desk) run() {
 							position.onTicker(tickerData)
 						}
 					}
+				}
+
+				if desk.ObserveModule != nil {
+					desk.ObserveModule("desk", time.Since(started))
 				}
 
 				/*

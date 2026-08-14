@@ -142,8 +142,10 @@ func (analyzer *Analyzer) Process(
 		group, _ := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
-			if groupIndex == 0 && !measurementsReady && solver != analyzer.resonance {
-				continue
+			if !measurementsReady && solver != analyzer.resonance {
+				if _, graphSolver := solver.(*graph.Solver); !graphSolver {
+					continue
+				}
 			}
 
 			if solver == analyzer.resonance && !resonanceReady {

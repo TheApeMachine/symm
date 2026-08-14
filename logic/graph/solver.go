@@ -549,7 +549,8 @@ func (solver *Solver) extractResonanceNodes(
 		return
 	}
 
-	if returnForecast.Horizon < 1 || !returnForecast.Distribution.Ready {
+	if returnForecast.Horizon < 1 || !returnForecast.Distribution.Ready ||
+		returnForecast.Call == 0 {
 		return
 	}
 

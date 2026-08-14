@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"sort"
 	"sync"
@@ -54,11 +53,6 @@ type issuedTask struct {
 	prediction []float64
 }
 
-type issuedHorizon struct {
-	horizon  int
-	forecast float64
-}
-
 type taskResolution struct {
 	horizon  int
 	forecast float64
@@ -101,6 +95,14 @@ Update settles one predictive-coding manifold for every symbol carrying finite,
 normalized measurements and publishes the resulting hierarchy.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
+	if solver.alpha <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"resonance: positive learning pace required",
+			nil,
+		))
+	}
+
 	if err := errnie.Require(map[string]any{
 		"alpha":     solver.alpha,
 		"thesis":    thesis,
@@ -283,61 +285,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					newObservation = true
 				}
 
-				for len(history.ticks) > 1 {
-					previousTick := history.ticks[0]
-					previousMark := history.marks[previousTick]
-					issued, found := history.issued[previousTick]
-					futureTick := history.ticks[1]
-					futureMark, futureFound := history.marks[futureTick]
-					target := make([]float64, 1)
-					complete := found && previousMark > 0
-
-					if !futureFound || futureMark <= 0 {
-						complete = false
+				if newObservation {
+					if err := history.resolve(coder, mark); err != nil {
+						return err
 					}
-
-					if complete {
-						target[0] = math.Log(futureMark / previousMark)
-
-						for _, pending := range history.pending[history.sequence] {
-							history.ledger.observe(
-								pending.horizon,
-								pending.forecast,
-								target[0],
-							)
-							history.lastResolution = &taskResolution{
-								horizon:  pending.horizon,
-								forecast: pending.forecast,
-								actual:   target[0],
-								error:    target[0] - pending.forecast,
-							}
-						}
-
-						delete(history.pending, history.sequence)
-					}
-
-					delete(history.issued, previousTick)
-					delete(history.marks, previousTick)
-					history.ticks = history.ticks[1:]
-
-					if !complete {
-						continue
-					}
-
-					if err := coder.ObserveTask(
-						issued.features,
-						issued.prediction,
-						target,
-					); err != nil {
-						return errnie.Error(errnie.Err(
-							errnie.Internal,
-							fmt.Sprintf("resonance: resolve task failed [%s]", err.Error()),
-							err,
-						))
-					}
-
-					history.resolved++
 				}
+
+				history.pruneTicks()
 			}
 
 			// 2. Settle and learn the CURRENT unsupervised state before forecasting.
@@ -350,7 +304,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			symbol.Resonance.Store(name, coder)
-			symbol.Resonance.Delete(types.ResonanceReturnForecastKey)
 
 			// 3. Extract Diagnostics & Rollout Telemetry
 			layers, surprise, energy := coder.WireSnapshot()
@@ -388,23 +341,15 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				))
 			}
 
-			if newObservation && len(forecast) > 0 {
-				history.issued[tick] = issuedTask{
-					features:   coder.LatentState(),
-					prediction: []float64{forecast[0].Value},
-				}
-
-				for index, output := range forecast {
-					if !output.Ready {
-						continue
-					}
-
-					horizon := index + 1
-					targetSequence := history.sequence + int64(horizon)
-					history.pending[targetSequence] = append(
-						history.pending[targetSequence],
-						issuedHorizon{horizon: horizon, forecast: output.Value},
-					)
+			if newObservation {
+				if err := history.issue(
+					coder,
+					tick,
+					mark,
+					probeHorizon,
+					forecast,
+				); err != nil {
+					return err
 				}
 			}
 
@@ -445,6 +390,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"forecast", forecastFrame,
 			)
 
+			publishedForecast := false
+
 			if supportedHorizon > 0 {
 				aggregate, aggregateErr := coder.RolloutTaskAggregateForecast(
 					supportedHorizon,
@@ -458,21 +405,36 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					))
 				}
 
-				if len(aggregate) > 0 && aggregate[0].Ready {
+				if len(aggregate) > 0 {
+					call := directionCall(
+						aggregate[0],
+						config.Planner.MinimumConfidence,
+					)
 					frame["taskScale"] = aggregate[0].Scale
 					frame["taskForecast"] = aggregate[0].Value
 					forecastFrame["aggregate"] = aggregate[0]
+					forecastFrame["call"] = call
 					symbol.Resonance.Store(
 						types.ResonanceReturnForecastKey,
 						&types.ResonanceReturnForecast{
 							Distribution: aggregate[0],
 							Horizon:      supportedHorizon,
 							ForwardCurve: slices.Clone(forwardCurve),
+							Call:         call,
 						},
 					)
+					publishedForecast = true
+
+					if call != 0 {
+						frame["taskDirection"] = call
+					}
 				}
 
 				forecastFrame["forwardCurve"] = forwardCurve
+			}
+
+			if !publishedForecast {
+				symbol.Resonance.Delete(types.ResonanceReturnForecastKey)
 			}
 
 			if history.lastResolution != nil {

@@ -56,6 +56,48 @@ func TestPositionOnTicker(t *testing.T) {
 			So(stoploss.Status, ShouldEqual, types.ARMED)
 		})
 	})
+
+	Convey("Given a filled profitable lot that stops making new highs", t, func() {
+		price, api := newPriceSurface(t, "SIM/USD")
+		price.Update(&kraken.TickerData{
+			Symbol: "SIM/USD",
+			Bid:    decimal.NewFromFloat64(103),
+			Ask:    decimal.NewFromFloat64(103.02),
+		})
+		stoploss := newBrokerStoploss(t)
+		stoploss.Update(stoploss.ArmAt)
+		position := &Position{
+			api:   api,
+			price: price,
+			ui:    make(chan []byte, 2),
+			pair: kraken.InstrumentPair{
+				Symbol: "SIM/USD",
+				Base:   "SIM",
+				Quote:  "USD",
+			},
+			EntryOrder: &spot.AddOrderRequest{ClOrdId: "entry"},
+			Holding: &types.Holding{
+				Qty:         decimal.NewFromInt64(1),
+				SellableQty: decimal.NewFromInt64(1),
+				EntryPrice:  decimal.NewFromFloat64(100),
+				EntryFee:    decimal.NewFromFloat64(0.25),
+				Mark:        stoploss.Mark,
+				Stoploss:    stoploss,
+			},
+		}
+		position.setStatus(types.OPEN)
+
+		Convey("It should trigger the regulator and submit the exit", func() {
+			position.onTicker(kraken.TickerData{
+				Symbol: "SIM/USD",
+				Bid:    stoploss.Mark,
+			})
+
+			So(stoploss.Status, ShouldEqual, types.TRIGGERED)
+			So(position.ExitOrder, ShouldNotBeNil)
+			So(position.status(), ShouldEqual, types.PENDING)
+		})
+	})
 }
 
 func TestPositionOnExecution(t *testing.T) {

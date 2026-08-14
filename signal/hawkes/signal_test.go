@@ -35,12 +35,69 @@ func TestMeasure(t *testing.T) {
 			So(signal.process.Symbols(), ShouldResemble, []string{"BTC/USD"})
 			So(latest.Source, ShouldEqual, types.SourceHawkes)
 			So(latest.Symbol, ShouldEqual, "BTC/USD")
+			So(latest.Maturity, ShouldBeGreaterThanOrEqualTo, 0)
 			So(latest.Sample(types.MetricEventCount, types.SideNone).Raw,
 				ShouldBeGreaterThan, 0)
 			So(latest.Sample(types.MetricEventCount, types.SideBuy).Raw,
 				ShouldBeGreaterThanOrEqualTo, 0)
 			So(latest.Sample(types.MetricEventCount, types.SideSell).Raw,
 				ShouldBeGreaterThanOrEqualTo, 0)
+			So(latest.Sample(types.MetricHypothesisSeparation, types.SideNone).Unit,
+				ShouldEqual, types.UnitDimensionless)
+		})
+	})
+
+	Convey("Given a single first trade", t, func() {
+		signal := NewSignal(context.Background(), nil, nil)
+		market := types.NewSymbol("BTC/USD", nil)
+		at := time.Unix(1_700_007_000, 0).UTC()
+		market.AppendTrade(kraken.TradeData{
+			Symbol:    "BTC/USD",
+			TradeID:   1,
+			Side:      "buy",
+			Timestamp: at,
+		})
+
+		measurements := signal.Measure(market)
+
+		Convey("It should emit an immature measurement with unready separation", func() {
+			So(measurements, ShouldHaveLength, 1)
+			measurement := measurements[0]
+			So(measurement.Source, ShouldEqual, types.SourceHawkes)
+			So(measurement.Symbol, ShouldEqual, "BTC/USD")
+			So(measurement.At, ShouldResemble, at)
+			So(measurement.Maturity, ShouldEqual, 0)
+			So(measurement.Sample(types.MetricEventCount, types.SideNone).Raw,
+				ShouldEqual, 1)
+			So(measurement.Sample(types.MetricEventCount, types.SideBuy).Raw,
+				ShouldEqual, 1)
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
+				ShouldEqual, 0)
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Normalized,
+				ShouldBeNil)
+		})
+
+		Convey("When asked again with no new trades", func() {
+			again := signal.Measure(market)
+
+			Convey("It should republish the last measurement", func() {
+				So(again, ShouldHaveLength, 1)
+				So(again[0].Symbol, ShouldEqual, "BTC/USD")
+				So(again[0].Maturity, ShouldEqual, 0)
+				So(again[0].Sample(types.MetricEventCount, types.SideNone).Raw,
+					ShouldEqual, 1)
+				So(again[0].Sample(types.MetricHypothesisSeparation, types.SideNone).Normalized,
+					ShouldBeNil)
+			})
+		})
+	})
+
+	Convey("Given a market that has never traded", t, func() {
+		signal := NewSignal(context.Background(), nil, nil)
+		market := types.NewSymbol("BTC/USD", nil)
+
+		Convey("It should not invent a measurement", func() {
+			So(signal.Measure(market), ShouldBeEmpty)
 		})
 	})
 

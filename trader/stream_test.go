@@ -208,6 +208,29 @@ func TestStreamPipelineCollect(t *testing.T) {
 	})
 }
 
+func TestStreamPipelineCoalesceCommitBatch(t *testing.T) {
+	Convey("Given two marks for one symbol and a later mark for another", t, func() {
+		first := types.NewSymbol("AAA/USD", nil)
+		second := types.NewSymbol("BBB/USD", nil)
+		batch := []*eventResults{
+			{event: marketEvent{kind: marketEventTicker, symbol: first, tick: 1}},
+			{event: marketEvent{kind: marketEventTrade, symbol: first, tick: 2}},
+			{event: marketEvent{kind: marketEventTicker, symbol: first, tick: 3}},
+			{event: marketEvent{kind: marketEventTicker, symbol: second, tick: 4}},
+		}
+		pipeline := &streamPipeline{}
+
+		pipeline.coalesceCommitBatch(batch)
+
+		Convey("It should analyze only the newest ticker of each symbol", func() {
+			So(batch[0].event.skipAnalysis, ShouldBeTrue)
+			So(batch[1].event.skipAnalysis, ShouldBeFalse)
+			So(batch[2].event.skipAnalysis, ShouldBeFalse)
+			So(batch[3].event.skipAnalysis, ShouldBeFalse)
+		})
+	})
+}
+
 func TestStreamPipelineCommitEvent(t *testing.T) {
 	Convey("Given an ordered ticker commit without normalized signal output", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
@@ -249,6 +272,47 @@ func TestStreamPipelineCommitEvent(t *testing.T) {
 			So(pipeline.measurementsDirty[symbol.Symbol], ShouldBeFalse)
 			So(pipeline.resonanceDirty[symbol.Symbol], ShouldBeTrue)
 			So(pipeline.committedSequence.Load(), ShouldEqual, uint64(1))
+		})
+	})
+
+	Convey("Given a superseded ticker whose newer mark is still in the batch", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("AKE/USD", nil)
+		thesis.Symbols.Store(symbol.Symbol, symbol)
+		pipeline := &streamPipeline{
+			ctx:               t.Context(),
+			thesis:            thesis,
+			progress:          make(chan struct{}, 1),
+			measurementsDirty: make(map[string]bool),
+			resonanceDirty:    make(map[string]bool),
+			analyzed:          make(map[string]int64),
+		}
+		results := &eventResults{event: marketEvent{
+			sequence:     1,
+			tick:         8,
+			kind:         marketEventTicker,
+			skipAnalysis: true,
+			symbol:       symbol,
+			at:           time.Unix(8, 0),
+			ticker: kraken.TickerData{
+				Symbol: "AKE/USD",
+				Ask:    decimal.NewFromFloat64(101),
+				Bid:    decimal.NewFromFloat64(99),
+			},
+		}}
+
+		So(pipeline.commitEvent(results), ShouldBeNil)
+
+		Convey("It should keep the mark without occupying the analysis turn", func() {
+			rows := make([]*types.ResonanceMeasurement, 0)
+
+			for row := range symbol.ResonanceMeasurements() {
+				rows = append(rows, row)
+			}
+
+			So(rows, ShouldHaveLength, 1)
+			So(pipeline.resonanceDirty[symbol.Symbol], ShouldBeTrue)
+			So(pipeline.analyzed[symbol.Symbol], ShouldEqual, int64(0))
 		})
 	})
 }

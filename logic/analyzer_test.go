@@ -203,9 +203,9 @@ func TestAnalyzerProcess(t *testing.T) {
 			thesis, "BTC/USD", time.Time{}, false, true,
 		)
 
-		Convey("It should advance resonance and downstream state without rerunning measurement solvers", func() {
+		Convey("It should advance only the predictor until a new measurement arrives", func() {
 			So(err, ShouldBeNil)
-			So(order, ShouldResemble, []int{1, 3})
+			So(order, ShouldResemble, []int{1})
 		})
 	})
 
