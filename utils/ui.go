@@ -1,10 +1,23 @@
 package utils
 
 import (
+	"sync/atomic"
+
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
+
+var publishSent atomic.Uint64
+var publishDropped atomic.Uint64
+
+/*
+PublishCounters reports how many dashboard frames were accepted onto the UI
+channel and how many were dropped because that channel was full.
+*/
+func PublishCounters() (sent uint64, dropped uint64) {
+	return publishSent.Load(), publishDropped.Load()
+}
 
 /*
 PublishFluid sends one manifold frame to a named fluid data channel, dropping it
@@ -23,10 +36,12 @@ func PublishFluid(
 		return
 	}
 
+	payload := data.MarshalAndFree()
+
 	select {
 	case fluid <- types.FluidFrame{
 		Channel: channel,
-		Payload: data.MarshalAndFree(),
+		Payload: payload,
 	}:
 	default:
 	}
@@ -82,6 +97,7 @@ func publish(ui chan []byte, data datura.Map[any], priority bool) {
 
 	if capacity := cap(ui); capacity > 0 && len(ui) == capacity {
 		if !priority {
+			publishDropped.Add(1)
 			data.Free()
 			return
 		}
@@ -92,10 +108,15 @@ func publish(ui chan []byte, data datura.Map[any], priority bool) {
 		}
 	}
 
+	payload := data.MarshalAndFree()
+
 	select {
-	case ui <- data.MarshalAndFree():
+	case ui <- payload:
+		publishSent.Add(1)
 		return
 	default:
+		publishDropped.Add(1)
+
 		if cap(ui) > 0 {
 			return
 		}

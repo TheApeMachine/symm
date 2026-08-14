@@ -7,6 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -30,19 +31,30 @@ type Price struct {
 	fees       *sync.Map
 	tickers    *sync.Map
 	normalizer *spot.Normalizer
+	capture    *audit.Recorder
 }
 
 /*
 NewPrice wires the price surface to the shared Kraken API.
 */
-func NewPrice(api *websocket.API) *Price {
-	return &Price{
+func NewPrice(api *websocket.API, recorders ...*audit.Recorder) *Price {
+	if len(recorders) > 1 {
+		panic("broker: at most one market capture recorder is supported")
+	}
+
+	price := &Price{
 		status:     types.READY,
 		api:        api,
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
 		normalizer: api.Normalizer(),
 	}
+
+	if len(recorders) == 1 {
+		price.capture = recorders[0]
+	}
+
+	return price
 }
 
 /*
@@ -91,7 +103,27 @@ func (price *Price) PnL(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
 ) *decimal.Decimal {
+	if holding == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: holding required for PnL",
+			nil,
+		))
+
+		return nil
+	}
+
 	tick, fee := price.Tick(pair.Symbol), price.Fee(pair.Symbol)
+
+	if tick == nil || fee == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: ticker and fee required for PnL",
+			nil,
+		))
+
+		return nil
+	}
 
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"holding":    holding,
@@ -104,7 +136,13 @@ func (price *Price) PnL(
 		return nil
 	}
 
-	return price.ExitValue(pair, holding).Sub(
+	exitValue := price.ExitValue(pair, holding)
+
+	if exitValue == nil {
+		return nil
+	}
+
+	return exitValue.Sub(
 		decimal.NewFromInt64(0).Add(holding.EntryPrice).Mul(holding.Qty),
 	).Sub(holding.EntryFee)
 }
@@ -114,7 +152,27 @@ func (price *Price) ExitValue(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
 ) *decimal.Decimal {
+	if holding == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: holding required for exit value",
+			nil,
+		))
+
+		return nil
+	}
+
 	tick := price.Tick(pair.Symbol)
+
+	if tick == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: ticker required for exit value",
+			nil,
+		))
+
+		return nil
+	}
 
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"holding":    holding,
@@ -142,24 +200,53 @@ func (price *Price) WithFriction(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
 	value *decimal.Decimal,
-) *decimal.Decimal {
+) (*decimal.Decimal, error) {
+	if holding == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: holding required for exit friction",
+			nil,
+		))
+	}
+
 	tick := price.Tick(pair.Symbol)
+	fee := price.Fee(pair.Symbol)
+
+	if tick == nil || fee == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: ticker and fee required for exit friction",
+			nil,
+		))
+	}
 
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"holding": holding,
 		"qty":     holding.Qty,
 		"value":   value,
+		"bid":     tick.Bid,
+		"fee":     fee.Fee,
 	})); err != nil {
-		return nil
+		return nil, err
 	}
 
 	var adjusted *decimal.Decimal
-	price.api.Book(price.api.Normalizer().Name(pair.Symbol), func(book *book.Book) {
+	var err error
+	price.api.Book(price.api.Normalizer().Name(pair.Symbol), func(managed *book.Book) {
+		if managed == nil || managed.Bids == nil || managed.Bids.High == nil {
+			err = errnie.Err(
+				errnie.NotFound,
+				"price: visible bid book required for exit friction",
+				nil,
+			)
+			return
+		}
+
 		zero := decimal.NewFromInt64(0)
-		remaining := holding.Qty
+		remaining := decimal.NewFromInt64(0).Add(holding.Qty)
 		bookGross := zero
 
-		for _, bid := range book.Bids.Levels {
+		for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
 			if remaining.Cmp(zero) <= 0 {
 				break
 			}
@@ -178,11 +265,11 @@ func (price *Price) WithFriction(
 		}
 
 		if remaining.Cmp(zero) > 0 {
-			errnie.Error(errnie.Err(
+			err = errnie.Err(
 				errnie.UnprocessableContent,
 				"insufficient bid liquidity to exit holding",
 				nil,
-			))
+			)
 
 			return
 		}
@@ -199,10 +286,24 @@ func (price *Price) WithFriction(
 			SELL,
 		)
 
-		adjusted = value.Sub(bestBidNet.Sub(bookNet))
+		adjusted = decimal.NewFromInt64(0).Add(value).Sub(
+			bestBidNet.Sub(bookNet),
+		)
 	})
 
-	return adjusted
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if adjusted == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"price: exit friction calculation did not complete",
+			nil,
+		))
+	}
+
+	return adjusted, nil
 }
 
 /* ReturnPct returns the holding's fee-inclusive percentage return. */
@@ -256,6 +357,16 @@ func (price *Price) Quantity(
 	notional *decimal.Decimal,
 ) *decimal.Decimal {
 	tick := price.Tick(symbol)
+
+	if tick == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: ticker required for quantity",
+			nil,
+		))
+
+		return nil
+	}
 
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"symbol":   symbol,

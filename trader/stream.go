@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -27,18 +28,20 @@ import (
 )
 
 type streamConfig struct {
-	symbolShards int
-	laneCapacity int
-	spinLimit    int
-	drainLimit   int
+	symbolShards       int
+	laneCapacity       int
+	spinLimit          int
+	drainLimit         int
+	diagnosticInterval time.Duration
 }
 
 func newStreamConfig() (streamConfig, error) {
 	config := streamConfig{
-		symbolShards: viper.GetInt("system.streaming.symbol_shards"),
-		laneCapacity: viper.GetInt("system.streaming.lane_capacity"),
-		spinLimit:    viper.GetInt("system.streaming.spin_limit"),
-		drainLimit:   viper.GetInt("system.streaming.drain_limit"),
+		symbolShards:       viper.GetInt("system.streaming.symbol_shards"),
+		laneCapacity:       viper.GetInt("system.streaming.lane_capacity"),
+		spinLimit:          viper.GetInt("system.streaming.spin_limit"),
+		drainLimit:         viper.GetInt("system.streaming.drain_limit"),
+		diagnosticInterval: viper.GetDuration("system.bus.heartbeat"),
 	}
 
 	if config.symbolShards <= 0 || config.symbolShards&(config.symbolShards-1) != 0 {
@@ -51,6 +54,10 @@ func newStreamConfig() (streamConfig, error) {
 
 	if config.spinLimit < 0 || config.drainLimit <= 0 {
 		return streamConfig{}, fmt.Errorf("stream: non-negative spin and positive drain limits required")
+	}
+
+	if config.diagnosticInterval <= 0 {
+		return streamConfig{}, fmt.Errorf("stream: positive diagnostic interval required")
 	}
 
 	return config, nil
@@ -66,15 +73,19 @@ const (
 )
 
 type marketEvent struct {
-	sequence uint64
-	tick     int64
-	parts    int
-	kind     marketEventKind
-	symbol   *types.Symbol
-	at       time.Time
-	ticker   kraken.TickerData
-	trade    kraken.TradeData
-	level3   kraken.Level3Data
+	sequence       uint64
+	tickerSequence uint64
+	tick           int64
+	parts          int
+	kind           marketEventKind
+	symbol         *types.Symbol
+	at             time.Time
+	ticker         kraken.TickerData
+	trade          kraken.TradeData
+	level3         kraken.Level3Data
+	dispatchedAt   time.Time
+	measuredAt     time.Time
+	collectedAt    time.Time
 }
 
 /*
@@ -97,11 +108,28 @@ type streamPipeline struct {
 	commitInbox       *lane[*eventResults]
 	commitWake        chan struct{}
 	progress          chan struct{}
-	progressMu        sync.RWMutex
-	committedSequence uint64
-	measurementsDirty bool
-	resonanceDirty    bool
+	committedSequence atomic.Uint64
+	ingressSequence   atomic.Uint64
+	tickerSequence    atomic.Uint64
+	nextSequence      atomic.Uint64
+	pendingCount      atomic.Int64
+	lastCommitNanos   atomic.Int64
+	tickers           atomic.Uint64
+	books             atomic.Uint64
+	trades            atomic.Uint64
+	level3            atomic.Uint64
+	coalescedBooks    atomic.Uint64
+	droppedSequences  sync.Map
+	bookQueued        sync.Map
+	dropped           atomic.Uint64
+	commitDropped     atomic.Uint64
+	startedAt         time.Time
+	lastBrokerAt      time.Time
+	clocks            clockBank
+	measurementsDirty map[string]bool
+	resonanceDirty    map[string]bool
 	analyzed          map[string]int64
+	ui                chan []byte
 	fail              func(error)
 	wait              sync.WaitGroup
 }
@@ -124,18 +152,25 @@ func newStreamPipeline(
 
 	ctx, cancel := context.WithCancel(ctx)
 	pipeline := &streamPipeline{
-		ctx:        ctx,
-		cancel:     cancel,
-		config:     config,
-		thesis:     thesis,
-		analyzer:   analyzer,
-		planner:    planner,
-		publisher:  newMeasurements(ctx, ui, nil),
-		resultWake: make(chan struct{}, 1),
-		progress:   make(chan struct{}, 1),
-		analyzed:   make(map[string]int64),
-		fail:       fail,
+		ctx:               ctx,
+		cancel:            cancel,
+		config:            config,
+		thesis:            thesis,
+		analyzer:          analyzer,
+		planner:           planner,
+		publisher:         newMeasurements(ctx, ui, nil),
+		resultWake:        make(chan struct{}, 1),
+		progress:          make(chan struct{}, 1),
+		measurementsDirty: make(map[string]bool),
+		resonanceDirty:    make(map[string]bool),
+		analyzed:          make(map[string]int64),
+		ui:                ui,
+		fail:              fail,
+		startedAt:         time.Now(),
 	}
+	pipeline.lastCommitNanos.Store(pipeline.startedAt.UnixNano())
+	pipeline.nextSequence.Store(1)
+	pipeline.bindModuleClocks(analyzer, planner)
 	pipeline.commitWake = make(chan struct{}, 1)
 	pipeline.commitInbox, err = newLane[*eventResults](
 		config.laneCapacity,
@@ -189,11 +224,7 @@ func (pipeline *streamPipeline) Wait(
 	sequence uint64,
 ) error {
 	for {
-		pipeline.progressMu.RLock()
-		ready := pipeline.committedSequence >= sequence
-		pipeline.progressMu.RUnlock()
-
-		if ready {
+		if pipeline.committedSequence.Load() >= sequence {
 			return nil
 		}
 
@@ -250,15 +281,31 @@ func newCrossMeasurements(
 	return newMeasurements(ctx, ui, []types.Signal{signal})
 }
 
+func (pipeline *streamPipeline) bindModuleClocks(
+	analyzer *logic.Analyzer,
+	planner *strategy.Planner,
+) {
+	if analyzer != nil {
+		analyzer.ObserveModule = pipeline.clocks.observe
+		analyzer.ObserveHop = pipeline.clocks.observeHop
+	}
+
+	if planner != nil {
+		planner.ObserveModule = pipeline.clocks.observe
+		planner.ObserveHop = pipeline.clocks.observeHop
+	}
+}
+
 func (pipeline *streamPipeline) start() {
 	for _, worker := range pipeline.workers {
 		pipeline.wait.Add(1)
 		go worker.run(&pipeline.wait)
 	}
 
-	pipeline.wait.Add(2)
+	pipeline.wait.Add(3)
 	go pipeline.collect(&pipeline.wait)
 	go pipeline.commit(&pipeline.wait)
+	go pipeline.publishDiagnostics(&pipeline.wait)
 }
 
 func (pipeline *streamPipeline) Close() error {

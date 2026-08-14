@@ -334,6 +334,8 @@ func TestCryptoRun(t *testing.T) {
 				})
 				marketGraph := logicgraph.NewGraph(thesis.At)
 				marketGraph.Forecast = forecast
+				marketGraph.ForecastHorizon = 1
+				marketGraph.ForwardCurve = []float64{forecast.Value}
 				marketGraph.TaskSkill = 1.01
 				marketGraph.TaskSkillReady = true
 				marketGraph.AddNode(&logicgraph.Node{
@@ -351,6 +353,7 @@ func TestCryptoRun(t *testing.T) {
 					Value:      0.02,
 					Confidence: 0.95,
 					At:         thesis.At,
+					Metadata:   map[string]any{"horizon": 1},
 				})
 				marketGraph.AddEdge(&logicgraph.Edge{
 					From:       "res:SIM1/USD:forecast",

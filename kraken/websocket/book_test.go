@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,13 +10,57 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 )
 
+func newBookFixture(
+	testingTB testing.TB,
+	symbol string,
+	pricePrecision int,
+	quantityPrecision int,
+) *Book {
+	testingTB.Helper()
+	base, quote, found := strings.Cut(symbol, "/")
+
+	if !found {
+		testingTB.Fatalf("book fixture pair required: %s", symbol)
+	}
+
+	normalizer := spot.NewNormalizer()
+	tickSizeText := "1"
+
+	if pricePrecision > 0 {
+		tickSizeText = "0." + strings.Repeat("0", pricePrecision-1) + "1"
+	}
+
+	tickSize, err := decimal.NewFromString(tickSizeText)
+
+	if err != nil {
+		testingTB.Fatalf("book fixture tick size: %v", err)
+	}
+
+	normalizer.Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{
+			base:  {AltName: base},
+			quote: {AltName: quote},
+		},
+		NewPairs: map[string]spot.AssetPair{
+			base + quote: {
+				WSName: symbol, Base: base, Quote: quote,
+				PairDecimals: pricePrecision, LotDecimals: quantityPrecision,
+				LotMultiplier: 1, TickSize: tickSize,
+			},
+		},
+	})
+
+	return NewBook(testingTB.Context(), normalizer)
+}
+
 func TestBookAll(t *testing.T) {
 	Convey("Given a reconstructed Level3 book", t, func() {
-		managed := NewBook(t.Context())
+		managed := newBookFixture(t, "BTC/USD", 0, 0)
 		managed.Create("BTC/USD", 32)
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
@@ -47,8 +92,49 @@ func TestBookAll(t *testing.T) {
 }
 
 func TestBookUpdate(t *testing.T) {
+	Convey("Given authoritative fixed-point Level 3 decimals", t, func() {
+		managed := newBookFixture(t, "CELR/USD", 7, 5)
+		managed.Create("CELR/USD", 10)
+		askPrice, err := decimal.NewFromString("0.00035")
+		So(err, ShouldBeNil)
+		askQuantity, err := decimal.NewFromString("1234.5")
+		So(err, ShouldBeNil)
+		bidPrice, err := decimal.NewFromString("0.00034")
+		So(err, ShouldBeNil)
+		bidQuantity, err := decimal.NewFromString("2000")
+		So(err, ShouldBeNil)
+		event := &callback.Event[*sdk.WebSocketMessage]{
+			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+		}
+		payload := &kraken.Level3{
+			Type: "snapshot",
+			Data: []kraken.Level3Data{{
+				Symbol:   "CELR/USD",
+				Checksum: 3152022922,
+				Bids: []kraken.Level3Order{{
+					OrderID: "bid", LimitPrice: bidPrice,
+					OrderQty: bidQuantity, Timestamp: time.Unix(1, 0).UTC(),
+				}},
+				Asks: []kraken.Level3Order{{
+					OrderID: "ask", LimitPrice: askPrice,
+					OrderQty: askQuantity, Timestamp: time.Unix(1, 0).UTC(),
+				}},
+			}},
+		}
+
+		Convey("It should restore venue precision before checksum validation", func() {
+			So(managed.Update(event, payload), ShouldBeNil)
+			managed.Get("CELR/USD", func(book *spotbook.Book) {
+				So(book.BestAsk().Price.String(), ShouldEqual, "0.0003500")
+				So(book.BestAsk().Quantity.String(), ShouldEqual, "1234.50000")
+				So(book.BestBid().Price.String(), ShouldEqual, "0.0003400")
+				So(book.BestBid().Quantity.String(), ShouldEqual, "2000.00000")
+			})
+		})
+	})
+
 	Convey("Given a Level 3 cache connected to its owning transport", t, func() {
-		managed := NewBook(t.Context())
+		managed := newBookFixture(t, "BTC/USD", 0, 0)
 		managed.Create("BTC/USD", 32)
 		updates := make(chan string, 1)
 		managed.SetUpdates(updates)
@@ -75,7 +161,7 @@ func TestBookUpdate(t *testing.T) {
 	})
 
 	Convey("Given backpressure from the Level3 event consumer", t, func() {
-		managed := NewBook(t.Context())
+		managed := newBookFixture(t, "BTC/USD", 0, 0)
 		managed.Create("BTC/USD", 32)
 		updates := make(chan string, 1)
 		events := make(chan kraken.Level3Data)
@@ -131,7 +217,7 @@ func TestBookUpdate(t *testing.T) {
 	})
 
 	Convey("Given two Level3 orders at one price", t, func() {
-		managed := NewBook(t.Context())
+		managed := newBookFixture(t, "BTC/USD", 0, 0)
 		managed.Create("BTC/USD", 32)
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
@@ -178,7 +264,7 @@ func TestBookUpdate(t *testing.T) {
 	})
 
 	Convey("Given a venue frame whose intermediate state is crossed", t, func() {
-		managed := NewBook(t.Context())
+		managed := newBookFixture(t, "APR/USD", 0, 0)
 		managed.Create("APR/USD", 10)
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
@@ -224,7 +310,7 @@ func TestBookUpdate(t *testing.T) {
 }
 
 func BenchmarkBookAll(b *testing.B) {
-	managed := NewBook(b.Context())
+	managed := newBookFixture(b, "BTC/USD", 0, 0)
 	managed.Create("BTC/USD", 256)
 	event := &callback.Event[*sdk.WebSocketMessage]{
 		Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
@@ -255,7 +341,7 @@ func BenchmarkBookAll(b *testing.B) {
 }
 
 func BenchmarkBookGet(b *testing.B) {
-	managed := NewBook(b.Context())
+	managed := newBookFixture(b, "BTC/USD", 0, 0)
 	managed.Create("BTC/USD", 32)
 	read := func(*spotbook.Book) {}
 	b.ReportAllocs()
@@ -266,7 +352,7 @@ func BenchmarkBookGet(b *testing.B) {
 }
 
 func BenchmarkBookUpdate(b *testing.B) {
-	managed := NewBook(b.Context())
+	managed := newBookFixture(b, "BTC/USD", 0, 0)
 	managed.Create("BTC/USD", 32)
 	event := &callback.Event[*sdk.WebSocketMessage]{
 		Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),

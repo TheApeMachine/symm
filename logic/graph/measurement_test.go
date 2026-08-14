@@ -99,6 +99,7 @@ func TestAddCategoryEdges(t *testing.T) {
 		})
 		symbol.Categories.Store("BTC/USD", []types.Category{{
 			Symbol: "BTC/USD", Type: types.CategoryAggressiveDrive,
+			Confidence: 0.7,
 			Supporting: []string{"cvd:drive"},
 		}})
 		graph := NewGraph(at)
@@ -116,6 +117,7 @@ func TestAddCategoryEdges(t *testing.T) {
 			So(graph.Edges, ShouldHaveLength, 1)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"current", "cvd:drive"})
+			So(graph.Edges[0].Confidence, ShouldEqual, 0.7)
 		})
 	})
 

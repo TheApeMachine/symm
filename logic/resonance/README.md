@@ -60,18 +60,21 @@ The manifold settles a latent state that serves three purposes at once:
    where symbols sit *relative to one another*, which one point cannot show.
 3. **Supervised return head (V).** Predicts forward log return over an adaptive
    horizon. Square-root recursive least squares fits this linear head with a gain
-   derived from the observed latent design covariance. This is the head that
-   produces an actionable number, and it feeds a `predictive_forecast_negative`
-   gate rule downstream.
+   derived from the observed latent design covariance. This head supplies one
+   signed return estimate and the uncertainty geometry used downstream; causal,
+   manifold, signal, and cognition evidence remain independent contributors to
+   the complete decision perspective.
 
 ## Learning is deferred, and that's the point
 
 `learnReturn` is where the supervised head is trained, and it cannot run at
 observation time — the target does not exist yet.
 
-The solver holds `pendingInput` (the feature vector) and `pendingMid` (the
-midpoint at that moment). On a **later** tick with a new midpoint, it computes
-`target = log(mid_now / mid_pending)` and re-settles the stored input. Before the
+The solver retains each issued feature vector and the mark observed at that
+analysis epoch. On a **later** ticker epoch with a new mark, it computes
+`target = log(mark_now / mark_pending)`. Producer rows can arrive between ticker
+epochs and therefore carry an older producer tick; the analysis epoch is the
+prediction clock, while the latest FIFO mark is its ground truth. Before the
 target is learned, the strictly prior prediction is scored against a zero-return
 baseline. Only then does recursive least squares observe the target. A sample is
 only spent once the future has actually arrived, and a target can never certify
@@ -126,8 +129,8 @@ to their own objective:
 
 There is no separate warming state. The head predicts from its prior immediately;
 before residual noise is identifiable its direction probability is the symmetric
-50% prior, so the existing planner gate prevents action. Each resolved innovation
-updates both coefficient uncertainty and observation noise, producing a
+50% prior, so the adaptive horizon has no supported reach. Each resolved
+innovation updates both coefficient uncertainty and observation noise, producing a
 magnitude- and design-dependent Student-t probability for the next forecast.
 
 Historical skill is reported separately. Each resolved forecast contributes a win

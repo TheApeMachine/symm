@@ -12,6 +12,8 @@ func TestNewPlannerConfig(t *testing.T) {
 
 		Convey("It should start at the no-information directional boundary", func() {
 			So(config.MinimumConfidence, ShouldEqual, UninformativeDirectionConfidence)
+			So(config.MinimumGraphScore, ShouldEqual, -1.0)
+			So(config.MinimumUtility, ShouldEqual, 0.0)
 		})
 	})
 }

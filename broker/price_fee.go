@@ -80,6 +80,10 @@ func (price *Price) GetFees(symbols []string) error {
 		price.fees.Store(symbol, fee)
 	}
 
+	if err := price.captureFeeProfiles(symbols, tradeVolumeResult); err != nil {
+		return err
+	}
+
 	price.status = types.READY
 	return nil
 }
@@ -145,6 +149,16 @@ func (price *Price) WithFee(
 	direction Direction,
 ) *decimal.Decimal {
 	fee := price.Fee(symbol)
+
+	if fee == nil || fee.Fee == nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"price: taker fee required for fee calculation",
+			nil,
+		))
+
+		return nil
+	}
 
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"symbol":    symbol,

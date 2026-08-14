@@ -96,6 +96,7 @@ type Graph struct {
 	At              time.Time           `json:"at"`
 	Forecast        *learning.RLSOutput `json:"-"`
 	ForecastHorizon int                 `json:"forecastHorizon"`
+	ForwardCurve    []float64           `json:"-"`
 	TaskSkill       float64             `json:"taskSkill"`
 	TaskSkillReady  bool                `json:"taskSkillReady"`
 	Nodes           map[string]*Node    `json:"nodes"`
@@ -115,6 +116,7 @@ func (graph *Graph) CheckpointState() any {
 		At              time.Time           `json:"at"`
 		Forecast        *learning.RLSOutput `json:"forecast,omitempty"`
 		ForecastHorizon int                 `json:"forecastHorizon"`
+		ForwardCurve    []float64           `json:"forwardCurve"`
 		TaskSkill       float64             `json:"taskSkill"`
 		TaskSkillReady  bool                `json:"taskSkillReady"`
 		Nodes           map[string]*Node    `json:"nodes"`
@@ -124,6 +126,7 @@ func (graph *Graph) CheckpointState() any {
 		At:              graph.At,
 		Forecast:        graph.Forecast,
 		ForecastHorizon: graph.ForecastHorizon,
+		ForwardCurve:    slices.Clone(graph.ForwardCurve),
 		TaskSkill:       graph.TaskSkill,
 		TaskSkillReady:  graph.TaskSkillReady,
 		Nodes:           graph.Nodes,
@@ -173,31 +176,20 @@ func (graph *Graph) AddEdge(edge *Edge) {
 
 	for index, current := range graph.Edges {
 		if current.From == edge.From && current.To == edge.To &&
-			current.Relation == edge.Relation {
+			slices.Equal(current.Evidence, edge.Evidence) {
 			graph.Edges[index] = edge
 			return
 		}
 	}
 
 	graph.Edges = append(graph.Edges, edge)
-	graph.Adjacency[edge.From] = append(graph.Adjacency[edge.From], edge.To)
+
+	if !slices.Contains(graph.Adjacency[edge.From], edge.To) {
+		graph.Adjacency[edge.From] = append(graph.Adjacency[edge.From], edge.To)
+	}
 }
 
 func (graph *Graph) Roots() []string {
-	forecastRoots := make([]string, 0, 1)
-
-	for nodeID, node := range graph.Nodes {
-		if node.Kind == KindResonance &&
-			nodeID == "res:"+node.Symbol+":forecast" {
-			forecastRoots = append(forecastRoots, nodeID)
-		}
-	}
-
-	if len(forecastRoots) > 0 {
-		slices.Sort(forecastRoots)
-		return forecastRoots
-	}
-
 	incoming := make(map[string]bool)
 
 	for _, edge := range graph.Edges {
@@ -206,8 +198,8 @@ func (graph *Graph) Roots() []string {
 
 	roots := make([]string, 0)
 
-	for nodeID := range graph.Nodes {
-		if !incoming[nodeID] {
+	for nodeID, node := range graph.Nodes {
+		if !incoming[nodeID] || node.Kind == KindCognition {
 			roots = append(roots, nodeID)
 		}
 	}
@@ -218,7 +210,7 @@ func (graph *Graph) Roots() []string {
 
 /*
 ReadyForSearch reports whether the accumulated lifecycle graph has a calibrated
-return forecast and at least one reachable relation that changes path reward.
+return forecast and at least one reachable confidence-weighted relation.
 */
 func (graph *Graph) ReadyForSearch() bool {
 	if graph == nil || graph.Forecast == nil || !graph.Forecast.Ready ||
@@ -246,10 +238,8 @@ func (graph *Graph) ReadyForSearch() bool {
 			}
 
 			queue = append(queue, edge.To)
-			target := graph.Nodes[edge.To]
-
-			if target != nil && edge.Weight != 0 && edge.Confidence != 0 &&
-				target.Value != 0 && target.Confidence != 0 {
+			if graph.Nodes[edge.To] != nil && edge.Weight != 0 &&
+				edge.Confidence != 0 {
 				return true
 			}
 		}
@@ -268,6 +258,10 @@ func (graph *Graph) NodeValue(nodeID string) (float64, float64) {
 }
 
 func (graph *Graph) EdgeValue(from, to string) (float64, float64) {
+	evidenceMass := 0.0
+	confidenceMass := 0.0
+	relationCount := 0
+
 	for _, edge := range graph.Edges {
 		if edge.From != from || edge.To != to {
 			continue
@@ -279,7 +273,14 @@ func (graph *Graph) EdgeValue(from, to string) (float64, float64) {
 			weight = -weight
 		}
 
-		return weight, edge.Confidence
+		evidenceMass += weight * edge.Confidence
+		confidenceMass += edge.Confidence
+		relationCount++
+	}
+
+	if relationCount > 0 && confidenceMass > 0 {
+		return evidenceMass / confidenceMass,
+			confidenceMass / float64(relationCount)
 	}
 
 	panic("graph: edge not found from " + from + " to " + to)
@@ -509,14 +510,17 @@ func (solver *Solver) extractManifoldNodes(
 	}
 
 	graph.AddNode(&Node{
-		ID:       fmt.Sprintf("man:%s:phase_alignment", symbol.Symbol),
-		Symbol:   symbol.Symbol,
-		Source:   "manifold",
-		Kind:     KindManifold,
-		Value:    alignment.Angle,
-		Strength: alignment.Similarity,
-		At:       reading.At,
+		ID:         fmt.Sprintf("man:%s:phase_alignment", symbol.Symbol),
+		Symbol:     symbol.Symbol,
+		Source:     "manifold",
+		Kind:       KindManifold,
+		Value:      alignment.Outcome.Return,
+		Strength:   alignment.Similarity,
+		Confidence: alignment.Similarity,
+		At:         reading.At,
 		Metadata: map[string]any{
+			"angle":      alignment.Angle,
+			"horizon":    alignment.Outcome.Horizon,
 			"observedAt": alignment.ObservedAt,
 			"outcome":    alignment.Outcome,
 		},
@@ -558,6 +562,7 @@ func (solver *Solver) extractResonanceNodes(
 	graphForecast := returnForecast.Distribution
 	graph.Forecast = &graphForecast
 	graph.ForecastHorizon = returnForecast.Horizon
+	graph.ForwardCurve = slices.Clone(returnForecast.ForwardCurve)
 
 	coderValue, found := symbol.Resonance.Load(symbol.Symbol)
 
@@ -652,6 +657,9 @@ func (field causalField) node(
 		Value:      fieldValue,
 		Strength:   strength,
 		Confidence: probabilities[field.probabilityIndex] * precision,
+		Metadata: map[string]any{
+			"horizon": 1,
+		},
 	}, true, nil
 }
 

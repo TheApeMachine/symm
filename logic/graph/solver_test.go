@@ -220,10 +220,33 @@ func TestAddEdge(t *testing.T) {
 			So(graph.Adjacency[edge.From], ShouldResemble, []string{edge.To})
 		})
 	})
+
+	Convey("Given a relationship whose direction changes over its lifecycle", t, func() {
+		graph := NewGraph(time.Unix(1, 0).UTC())
+		graph.AddNode(&Node{ID: "forecast"})
+		graph.AddNode(&Node{ID: "causal"})
+		graph.AddEdge(&Edge{
+			From: "forecast", To: "causal", Relation: RelationSupports,
+			Weight: 0.8, Confidence: 0.9,
+		})
+		graph.AddEdge(&Edge{
+			From: "forecast", To: "causal", Relation: RelationContradicts,
+			Weight: 0.6, Confidence: 0.7,
+		})
+
+		Convey("It should replace the obsolete claim without duplicating the target", func() {
+			So(graph.Edges, ShouldHaveLength, 1)
+			So(graph.Edges[0].Relation, ShouldEqual, RelationContradicts)
+			So(graph.Adjacency["forecast"], ShouldResemble, []string{"causal"})
+			weight, confidence := graph.EdgeValue("forecast", "causal")
+			So(weight, ShouldEqual, -0.6)
+			So(confidence, ShouldEqual, 0.7)
+		})
+	})
 }
 
 func TestGraphReadyForSearch(t *testing.T) {
-	Convey("Given a calibrated forecast with a zero-valued evidence target", t, func() {
+	Convey("Given a calibrated forecast with a confidence-weighted evidence edge", t, func() {
 		graph := NewGraph(time.Unix(1, 0).UTC())
 		graph.Forecast = graphForecast(0.01)
 		graph.ForecastHorizon = 2
@@ -237,11 +260,11 @@ func TestGraphReadyForSearch(t *testing.T) {
 			Weight: 0.5, Confidence: 1,
 		})
 
-		Convey("It should require reward-bearing evidence after horizon calibration", func() {
-			So(graph.ReadyForSearch(), ShouldBeFalse)
-
-			graph.Nodes["causal"].Value = 0.02
+		Convey("The dimensionless edge should be sufficient regardless of target units", func() {
 			So(graph.ReadyForSearch(), ShouldBeTrue)
+
+			graph.Edges[0].Confidence = 0
+			So(graph.ReadyForSearch(), ShouldBeFalse)
 		})
 	})
 }
@@ -456,6 +479,7 @@ func TestExtractCausalNodes(t *testing.T) {
 			So(node.Confidence, ShouldAlmostEqual, 0.29)
 			So(node.Strength, ShouldEqual, 0.4)
 			So(node.At, ShouldEqual, at)
+			So(node.Metadata["horizon"], ShouldEqual, 1)
 			So(association.Confidence, ShouldAlmostEqual, 0.06)
 			So(association.Confidence, ShouldNotEqual, node.Confidence)
 		})
@@ -494,7 +518,8 @@ func TestExtractResonanceNodes(t *testing.T) {
 					DegreesOfFreedom: 8,
 					Ready:            true,
 				},
-				Horizon: 3,
+				Horizon:      3,
+				ForwardCurve: []float64{-0.001, 0.004, 0.009},
 			},
 		)
 		thesis.Symbols.Store("BTC/USD", symbol)
@@ -511,6 +536,7 @@ func TestExtractResonanceNodes(t *testing.T) {
 			So(node.Confidence, ShouldEqual, 1)
 			So(node.At, ShouldEqual, at)
 			So(graph.ForecastHorizon, ShouldEqual, 3)
+			So(graph.ForwardCurve, ShouldResemble, []float64{-0.001, 0.004, 0.009})
 		})
 	})
 }
@@ -538,8 +564,11 @@ func TestExtractManifoldNodes(t *testing.T) {
 			node := graph.Nodes["man:BTC/USD:phase_alignment"]
 			So(node, ShouldNotBeNil)
 			So(node.Kind, ShouldEqual, KindManifold)
-			So(node.Value, ShouldEqual, 0.75)
+			So(node.Value, ShouldEqual, 0.01)
 			So(node.Strength, ShouldEqual, 0.6)
+			So(node.Confidence, ShouldEqual, 0.6)
+			So(node.Metadata["angle"], ShouldEqual, 0.75)
+			So(node.Metadata["horizon"], ShouldEqual, 2)
 			So(node.Metadata["outcome"], ShouldResemble, types.PhaseOutcome{
 				Symbol: "BTC/USD", Direction: "up", Return: 0.01, Horizon: 2,
 			})

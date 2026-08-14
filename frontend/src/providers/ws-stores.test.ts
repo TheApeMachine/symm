@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { decisionStore } from "#/collections/decisions";
 
 const mocks = vi.hoisted(() => ({
 	paintTerminalFluidChart: vi.fn(),
@@ -54,6 +55,7 @@ describe("ws-stores", () => {
 
 	beforeEach(() => {
 		animationFrame = null;
+		decisionStore.actions.reset();
 		mocks.paintTerminalFluidChart.mockClear();
 		mocks.paintTerminalResonanceChart.mockClear();
 		vi.stubGlobal(
@@ -440,6 +442,54 @@ describe("ws-stores", () => {
 		expect(retained.find((row) => row.symbol === "ETH/USD")).toEqual(eth);
 
 		unregisterResonance();
+	});
+
+	it("retains decisions by symbol across incremental planner batches", () => {
+		const worker = new MockWorker();
+		const strategyPaint = vi.fn();
+		const unregisterStrategy = registerPainter("strategy", strategyPaint);
+		const btc = { id: "btc-1", symbol: "BTC/USD", action: "nothing" };
+		const eth = { id: "eth-1", symbol: "ETH/USD", action: "enter" };
+		const updatedBTC = {
+			id: "btc-2",
+			symbol: "BTC/USD",
+			action: "nothing",
+		};
+
+		attach(worker as unknown as Worker);
+		worker.emit({
+			type: "DRAW",
+			frame: {
+				strategy: { outcome: "accumulating", decisions: [btc] },
+			},
+		});
+		worker.emit({
+			type: "DRAW",
+			frame: {
+				strategy: { outcome: "decisions", decisions: [eth] },
+			},
+		});
+		animationFrame?.(0);
+
+		expect(strategyPaint).toHaveBeenLastCalledWith({
+			outcome: "decisions",
+			decisions: [btc, eth],
+		});
+
+		worker.emit({
+			type: "DRAW",
+			frame: {
+				strategy: { outcome: "accumulating", decisions: [updatedBTC] },
+			},
+		});
+		animationFrame?.(0);
+
+		expect(strategyPaint).toHaveBeenLastCalledWith({
+			outcome: "accumulating",
+			decisions: [updatedBTC, eth],
+		});
+
+		unregisterStrategy();
 	});
 
 });

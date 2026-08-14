@@ -282,6 +282,7 @@ func (compiler *measurementCompiler) addCategoryRelations(
 				To:           targetID,
 				Relation:     relation,
 				Weight:       weight,
+				Confidence:   category.Confidence,
 				Evidence:     []string{node.MeasurementID, reference},
 				ObservedFrom: node.ObservedFrom,
 				Horizon:      node.Horizon,

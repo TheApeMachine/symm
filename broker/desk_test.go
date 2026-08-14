@@ -24,6 +24,8 @@ func TestDeskExecute(t *testing.T) {
 		decision := deskDecisionFixture(t, desk, "MARGINAL/USD", false)
 		forecast := brokerForecast(-0.0001)
 		decision.Forecast = forecast
+		decision.PerspectiveReturn = forecast.Value
+		decision.AdmissionUtilityThreshold = 0
 
 		Convey("It should refuse the order at the final atomic execution boundary", func() {
 			err := desk.Execute(decision)
@@ -130,6 +132,39 @@ func TestDeskExecute(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(retained, ShouldEqual, mustDeskPosition(desk, decision.Symbol))
+		})
+	})
+
+	Convey("Given repeated admission of the same still-open symbol", t, func() {
+		desk := deskFixture(t)
+		decision := deskDecisionFixture(t, desk, "ONCE/USD", false)
+
+		Convey("It should checkpoint and submit the accepted entry exactly once", func() {
+			So(desk.Execute(decision), ShouldBeNil)
+			So(desk.Execute(decision), ShouldBeNil)
+			var checkpoints int
+			So(desk.database.QueryRow(
+				"SELECT COUNT(*) FROM thesis_checkpoints",
+			).Scan(&checkpoints), ShouldBeNil)
+			So(checkpoints, ShouldEqual, 1)
+		})
+	})
+}
+
+func TestDeskHolding(t *testing.T) {
+	Convey("Given open lots in two symbols", t, func() {
+		desk := deskFixture(t)
+		bitcoin := &Position{pair: kraken.InstrumentPair{Symbol: "BTC/USD"}}
+		bitcoin.setStatus(types.OPEN)
+		ether := &Position{pair: kraken.InstrumentPair{Symbol: "ETH/USD"}}
+		ether.setStatus(types.OPEN)
+		desk.positions.Store("BTC/USD", bitcoin)
+		desk.positions.Store("ETH/USD", ether)
+
+		Convey("It should report only the requested symbol inventory", func() {
+			So(desk.Holding("BTC/USD"), ShouldEqual, 1)
+			So(desk.Holding("ETH/USD"), ShouldEqual, 1)
+			So(desk.Holding("ADA/USD"), ShouldEqual, 0)
 		})
 	})
 }
@@ -292,16 +327,18 @@ func equityDeskFixture(
 func deskFixture(t testing.TB) *Desk {
 	t.Helper()
 	api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
+	store := newPositionStoreFixture(t)
 
 	return &Desk{
-		ctx:          t.Context(),
-		api:          api,
-		instrument:   &Instrument{cache: &sync.Map{}},
-		price:        NewPrice(api),
-		thesis:       types.NewThesis(t.Context(), nil),
-		positions:    &sync.Map{},
-		maxPositions: 2,
-		maxReserved:  2,
+		PositionStore: store,
+		ctx:           t.Context(),
+		api:           api,
+		instrument:    &Instrument{cache: &sync.Map{}},
+		price:         NewPrice(api),
+		thesis:        types.NewThesis(t.Context(), nil),
+		positions:     &sync.Map{},
+		maxPositions:  2,
+		maxReserved:   2,
 	}
 }
 
@@ -350,6 +387,7 @@ func deskDecisionFixture(
 		entry,
 		mark,
 		forecast,
+		nil,
 		&pair.TickSize,
 		zeroRate,
 		zeroRate,
@@ -362,6 +400,8 @@ func deskDecisionFixture(
 	decision := types.NewDecision(types.ActionEnter, symbol)
 	decision.Opportunity = opportunity
 	decision.Forecast = forecast
+	decision.PerspectiveReturn = forecast.Value
+	decision.AdmissionUtilityThreshold = -1
 	decision.ProposedQuantity = decimal.NewFromInt64(1)
 	decision.EntryPrice = entry
 	decision.Mark = mark

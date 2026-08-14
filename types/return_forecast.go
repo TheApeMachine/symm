@@ -10,6 +10,7 @@ the regulated confidence.
 type ResonanceReturnForecast struct {
 	Distribution learning.RLSOutput
 	Horizon      int
+	ForwardCurve []float64
 }
 
 /*

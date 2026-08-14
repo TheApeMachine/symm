@@ -179,6 +179,8 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	previousFloor := position.Holding.Stoploss.Floor
 	previousPeak := position.Holding.Stoploss.Peak
 	position.Holding.Update(ticker)
+	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
+	position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 
 	stoploss := position.Holding.Stoploss
 	changed := previousStatus != stoploss.Status ||
@@ -208,33 +210,89 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 func (position *Position) onExecution(message kraken.Execution) bool {
 	for _, execution := range message.Data {
 		if position.ExitOrder != nil &&
-			execution.ClientOrderID == position.ExitOrder.ClOrdId &&
-			execution.OrderStatus == "filled" {
-			if err := position.closeFill(execution); err != nil {
+			execution.ClientOrderID == position.ExitOrder.ClOrdId {
+			status, err := types.StatusFromMarket(execution.OrderStatus)
+
+			if err != nil {
 				position.setStatus(types.ERROR)
-
-				if position.Holding != nil {
-					position.Holding.Status = types.ERROR
-				}
-
+				position.Holding.Status = types.ERROR
 				position.Publish()
 				errnie.Error(err)
-
 				return false
+			}
+
+			if status == types.FILLED {
+				if err = position.closeFill(execution); err != nil {
+					position.setStatus(types.ERROR)
+					position.Holding.Status = types.ERROR
+					position.Publish()
+					errnie.Error(err)
+					return false
+				}
+
+				return true
+			}
+
+			if status != types.CANCELED && status != types.REJECTED &&
+				status != types.EXPIRED {
+				continue
+			}
+
+			if execution.CumQty != nil && execution.CumQty.Sign() > 0 {
+				position.setStatus(types.ERROR)
+				position.Holding.Status = types.ERROR
+				position.Publish()
+				errnie.Error(errnie.Err(
+					errnie.Conflict,
+					"position: terminal exit retained partial inventory",
+					nil,
+				))
+				return false
+			}
+
+			position.ExitOrder = nil
+			position.ExitOrderResult = nil
+			position.setStatus(types.OPEN)
+			position.Holding.Status = types.OPEN
+			position.Publish()
+			continue
+		}
+
+		if position.EntryOrder == nil ||
+			execution.ClientOrderID != position.EntryOrder.ClOrdId {
+			continue
+		}
+
+		status, err := types.StatusFromMarket(execution.OrderStatus)
+
+		if err != nil {
+			position.setStatus(types.ERROR)
+			position.Holding.Status = types.ERROR
+			position.Publish()
+			errnie.Error(err)
+			return false
+		}
+
+		if status == types.CANCELED || status == types.REJECTED ||
+			status == types.EXPIRED {
+			position.setStatus(status)
+			position.Holding.Status = status
+			position.Publish()
+
+			if position.cancel != nil {
+				position.cancel()
 			}
 
 			return true
 		}
 
-		if position.EntryOrder == nil ||
-			execution.ClientOrderID != position.EntryOrder.ClOrdId ||
-			execution.CumQty == nil || execution.CumQty.Sign() <= 0 ||
+		if execution.CumQty == nil || execution.CumQty.Sign() <= 0 ||
 			execution.CumCost == nil || execution.CumCost.Sign() <= 0 ||
 			execution.FeeUsdEquiv == nil || execution.FeeUsdEquiv.Sign() < 0 {
 			continue
 		}
 
-		position.setStatus(types.MarketStatuses[execution.OrderStatus])
+		position.setStatus(status)
 		position.Holding.Status = position.status()
 		position.Holding.EntryAt = &execution.Timestamp
 		position.Holding.EntryPrice = decimal.NewFromInt64(0).Add(
@@ -378,7 +436,7 @@ func (position *Position) Exit() (*Position, error) {
 		)
 	}
 
-	position.ExitOrder = &spot.AddOrderRequest{
+	exitOrder := &spot.AddOrderRequest{
 		ClOrdId:   position.EntryOrder.ClOrdId + "-exit",
 		Type:      "sell",
 		OrderType: "market",
@@ -386,13 +444,9 @@ func (position *Position) Exit() (*Position, error) {
 		Pair:      position.pair.Symbol,
 	}
 
-	result, err := position.api.AddOrder(position.ExitOrder)
+	result, err := position.api.AddOrder(exitOrder)
 
 	if err != nil {
-		position.setStatus(types.ERROR)
-		position.Holding.Status = types.ERROR
-		position.Holding.Stoploss.Status = types.ERROR
-
 		return position, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market exit order",
@@ -400,6 +454,7 @@ func (position *Position) Exit() (*Position, error) {
 		))
 	}
 
+	position.ExitOrder = exitOrder
 	position.ExitOrderResult = &result
 	position.setStatus(types.PENDING)
 	position.Holding.Status = types.PENDING

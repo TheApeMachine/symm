@@ -3,6 +3,7 @@ package broker
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
@@ -137,6 +138,22 @@ func TestPricePnL(t *testing.T) {
 		})
 	})
 
+	Convey("Given a holding before its first ticker arrives", t, func() {
+		price, _ := newPriceSurface(t, "COLD/USD")
+		holding := &types.Holding{
+			Qty:        decimal.NewFromFloat64(1),
+			EntryPrice: decimal.NewFromFloat64(100),
+			EntryFee:   decimal.NewFromInt64(0),
+		}
+
+		Convey("It should reject the incomplete valuation without dereferencing it", func() {
+			So(func() {
+				So(price.PnL(kraken.InstrumentPair{Symbol: "COLD/USD"}, holding),
+					ShouldBeNil)
+			}, ShouldNotPanic)
+		})
+	})
+
 	Convey("Given a tiny quantity of a high-priced asset", t, func() {
 		price, _ := newPriceSurface(t, "PAXG/USD")
 		entryPrice := 4339.01
@@ -201,6 +218,55 @@ func TestExitValue(t *testing.T) {
 			})
 		})
 	})
+
+	Convey("Given no holding or ticker", t, func() {
+		price, _ := newPriceSurface(t, "COLD/USD")
+
+		Convey("It should reject both incomplete domains without dereferencing them", func() {
+			So(func() {
+				So(price.ExitValue(kraken.InstrumentPair{Symbol: "COLD/USD"}, nil),
+					ShouldBeNil)
+			}, ShouldNotPanic)
+		})
+	})
+}
+
+func TestPriceWithFriction(t *testing.T) {
+	Convey("Given an exit spanning ordered bid levels", t, func() {
+		managed := entryEconomicsBook(
+			t,
+			bookLevel{book.Bid, 100, 1},
+			bookLevel{book.Bid, 99, 2},
+		)
+		price := entryEconomicsManagedFixture(t, managed, 101, 100, 3)
+		pair := kraken.InstrumentPair{Symbol: "EDGE/USD"}
+		holding := &types.Holding{Qty: decimal.NewFromFloat64(2)}
+		value := decimal.NewFromFloat64(10)
+
+		adjusted, err := price.WithFriction(pair, holding, value)
+
+		Convey("It should walk best bid downward without mutating the holding", func() {
+			So(err, ShouldBeNil)
+			So(adjusted.Float64(), ShouldAlmostEqual, 9.0025, 1e-12)
+			So(holding.Qty.Float64(), ShouldEqual, 2.0)
+		})
+	})
+
+	Convey("Given no authoritative exit book", t, func() {
+		price := entryEconomicsFixture(t, 101, 100, 3)
+		holding := &types.Holding{Qty: decimal.NewFromFloat64(1)}
+
+		Convey("It should return an explicit error instead of an unexplained nil value", func() {
+			adjusted, err := price.WithFriction(
+				kraken.InstrumentPair{Symbol: "EDGE/USD"},
+				holding,
+				decimal.NewFromFloat64(10),
+			)
+
+			So(err, ShouldNotBeNil)
+			So(adjusted, ShouldBeNil)
+		})
+	})
 }
 
 func TestPriceTick(t *testing.T) {
@@ -241,6 +307,16 @@ func TestPriceQuantity(t *testing.T) {
 				So(quantity.Sign(), ShouldEqual, 1)
 				So(quantity.String(), ShouldEqual, "0.00019950")
 			})
+		})
+	})
+
+	Convey("Given a notional before its first ticker arrives", t, func() {
+		price, _ := newPriceSurface(t, "COLD/USD")
+
+		Convey("It should reject the incomplete quote without dereferencing it", func() {
+			So(func() {
+				So(price.Quantity("COLD/USD", decimal.NewFromInt64(10)), ShouldBeNil)
+			}, ShouldNotPanic)
 		})
 	})
 }
@@ -363,6 +439,25 @@ func BenchmarkPriceExitValue(b *testing.B) {
 
 	for b.Loop() {
 		price.ExitValue(pair, holding)
+	}
+}
+
+func BenchmarkPriceWithFriction(b *testing.B) {
+	managed := entryEconomicsBook(
+		b,
+		bookLevel{book.Bid, 100, 1},
+		bookLevel{book.Bid, 99, 2},
+	)
+	price := entryEconomicsManagedFixture(b, managed, 101, 100, 3)
+	pair := kraken.InstrumentPair{Symbol: "EDGE/USD"}
+	holding := &types.Holding{Qty: decimal.NewFromFloat64(2)}
+	value := decimal.NewFromFloat64(10)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := price.WithFriction(pair, holding, value); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

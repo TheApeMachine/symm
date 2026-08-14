@@ -45,6 +45,26 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 	})
 }
 
+func TestSymbolAppendResonanceMeasurement(t *testing.T) {
+	Convey("Given a market mark without new normalized signal readings", t, func() {
+		symbol := NewSymbol("BTC/USD", nil)
+		measurement := &ResonanceMeasurement{Tick: 7, Mark: 101.25}
+
+		ready := symbol.AppendResonanceMeasurement(measurement)
+
+		Convey("It should preserve the mark as predictor ground truth", func() {
+			So(ready, ShouldBeTrue)
+			rows := make([]*ResonanceMeasurement, 0)
+
+			for row := range symbol.ResonanceMeasurements() {
+				rows = append(rows, row)
+			}
+
+			So(rows, ShouldResemble, []*ResonanceMeasurement{measurement})
+		})
+	})
+}
+
 func TestSymbolResonanceInputs(t *testing.T) {
 	Convey("Given one source with a normalized observation", t, func() {
 		symbol := NewSymbol("BTC/USD", nil)
@@ -143,6 +163,19 @@ func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 	for b.Loop() {
 		symbol := NewSymbol("BTC/USD", nil)
 		symbol.AppendMeasurement(SourceHawkes, measurement)
+	}
+}
+
+func BenchmarkSymbolAppendResonanceMeasurement(b *testing.B) {
+	symbol := NewSymbol("BTC/USD", nil)
+	measurement := &ResonanceMeasurement{Tick: 1, Mark: 100}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		symbol.AppendResonanceMeasurement(measurement)
+
+		for range symbol.ResonanceMeasurements() {
+		}
 	}
 }
 

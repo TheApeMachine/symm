@@ -92,6 +92,22 @@ func (lane *lane[T]) Push(ctx context.Context, value T) error {
 }
 
 /*
+TryPush attempts a single non-blocking put. Returns false immediately when the
+ring is full, never spins or parks the caller. The lane saturation counter is
+incremented on failure so the drop is observable via telemetry.
+*/
+func (lane *lane[T]) TryPush(value T) bool {
+	if !lane.ring.Put(value) {
+		lane.saturations.Add(1)
+		return false
+	}
+
+	lane.observeDepth()
+	lane.notifyWake()
+	return true
+}
+
+/*
 Pop removes one value and notifies the sole producer that bounded capacity is
 available. The payload operation itself remains the wait-free ring Get.
 */

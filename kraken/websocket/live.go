@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -57,8 +59,7 @@ Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
 and Sub* resubscribe after the SDK reconnects.
 */
 type Live struct {
-	status       types.Status
-	statusMu     sync.RWMutex
+	status       atomic.Pointer[types.Status]
 	ctx          context.Context
 	cancel       context.CancelFunc
 	client       *spot.WebSocket
@@ -82,6 +83,8 @@ type Live struct {
 	resyncing    sync.Map
 	paper        *Paper
 	model        string
+	capture      *audit.Recorder
+	captureName  string
 
 	// Level3Client supplies the websocket client for the child connections
 	// SubL3 opens. When nil the child dials the real Level3 endpoint; tests
@@ -105,7 +108,7 @@ func (live *Live) newLevel3(
 		client = live.Level3Client()
 	}
 
-	child := NewWithClient(ctx, simulator, auth, endpoint, client)
+	child := NewWithClient(ctx, simulator, auth, endpoint, client, live.capture)
 
 	if child != nil {
 		child.Level3Client = live.Level3Client
@@ -122,8 +125,9 @@ func New(
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
+	recorders ...*audit.Recorder,
 ) *Live {
-	return NewWithClient(ctx, simulator, auth, endpoint, nil)
+	return NewWithClient(ctx, simulator, auth, endpoint, nil, recorders...)
 }
 
 /*
@@ -137,7 +141,12 @@ func NewWithClient(
 	auth bool,
 	endpoint string,
 	client *spot.WebSocket,
+	recorders ...*audit.Recorder,
 ) *Live {
+	if len(recorders) > 1 {
+		panic("websocket: at most one market capture recorder is supported")
+	}
+
 	if client == nil {
 		client = spot.NewWebSocket()
 		client.URL = endpoint
@@ -147,10 +156,19 @@ func NewWithClient(
 
 	viper.SetDefault("market.quote_currency", "USD")
 
+	captureName := "public"
+
+	if auth {
+		captureName = "private"
+	}
+
+	if endpoint == Level3WebSocketURL {
+		captureName = "level3"
+	}
+
 	live := &Live{
 		ctx:          ctx,
 		cancel:       cancel,
-		status:       types.INITIALIZING,
 		simulator:    simulator,
 		client:       client,
 		normalizer:   spot.NewNormalizer(),
@@ -163,6 +181,12 @@ func NewWithClient(
 		paper:        NewPaper(ctx, NewSimulator()),
 		model:        viper.GetViper().GetString("trading.model"),
 		quote:        viper.GetViper().GetString("market.quote_currency"),
+		captureName:  captureName,
+	}
+	live.setStatus(types.INITIALIZING)
+
+	if len(recorders) == 1 {
+		live.capture = recorders[0]
 	}
 
 	if err := live.normalizer.Use(live.client.REST); err != nil {
@@ -200,6 +224,19 @@ func NewWithClient(
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
 		raw := event.Data.Bytes()
+
+		if err := live.captureFrame(live.captureName, raw); err != nil {
+			var saturated types.SaturatedError
+
+			if !errors.As(err, &saturated) {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"websocket: market capture failed",
+					err,
+				))
+			}
+		}
+
 		channel := utils.GetString(raw, "channel")
 
 		if channel == "" {
@@ -231,9 +268,7 @@ func NewWithClient(
 					"websocket: subscription rejected: "+errMessage,
 					nil,
 				))
-				live.statusMu.Lock()
-				live.status = types.ERROR
-				live.statusMu.Unlock()
+				live.setStatus(types.ERROR)
 				return
 			}
 		}
@@ -302,9 +337,7 @@ func NewWithClient(
 
 		live.restorePublicSubscriptions()
 
-		live.statusMu.Lock()
-		live.status = types.READY
-		live.statusMu.Unlock()
+		live.setStatus(types.READY)
 	})
 
 	live.client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
@@ -321,9 +354,7 @@ func NewWithClient(
 			event.Data,
 		))
 
-		live.statusMu.Lock()
-		live.status = types.PENDING
-		live.statusMu.Unlock()
+		live.setStatus(types.PENDING)
 	})
 
 	if auth {
@@ -340,27 +371,21 @@ func NewWithClient(
 						err,
 					))
 
-					live.statusMu.Lock()
-					live.status = types.ERROR
-					live.statusMu.Unlock()
+					live.setStatus(types.ERROR)
 					return
 				}
 			}
 
 			if endpoint == Level3WebSocketURL {
-				live.restoreLevel3Subscription()
+				go live.restoreLevel3Subscription()
 			}
 
-			live.statusMu.Lock()
-			live.status = types.READY
-			live.statusMu.Unlock()
+			live.setStatus(types.READY)
 		})
 	}
 
 	errnie.Info(fmt.Sprintf("websocket: connecting to %s", live.client.URL))
-	live.statusMu.Lock()
-	live.status = types.PENDING
-	live.statusMu.Unlock()
+	live.setStatus(types.PENDING)
 
 	if err := live.client.Connect(); err != nil {
 		errnie.Error(errnie.Err(
@@ -373,11 +398,42 @@ func NewWithClient(
 	return live
 }
 
-func (live *Live) Status() types.Status {
-	live.statusMu.RLock()
-	defer live.statusMu.RUnlock()
+/*
+captureFrame records one untouched websocket payload with its receive order and
+canonical endpoint so the live feed is directly consumable by market replay.
+*/
+func (live *Live) captureFrame(endpoint string, payload []byte) error {
+	if live.capture == nil {
+		return nil
+	}
 
-	return live.status
+	if endpoint == "" || len(payload) == 0 {
+		return fmt.Errorf("websocket: capture endpoint and payload required")
+	}
+
+	return live.capture.Write(struct {
+		Endpoint   string          `json:"endpoint"`
+		Payload    json.RawMessage `json:"payload"`
+		ReceivedAt time.Time       `json:"received_at"`
+	}{
+		Endpoint:   endpoint,
+		Payload:    json.RawMessage(payload),
+		ReceivedAt: time.Now().UTC(),
+	})
+}
+
+func (live *Live) Status() types.Status {
+	status := live.status.Load()
+
+	if status == nil {
+		return types.UNKNOWN
+	}
+
+	return *status
+}
+
+func (live *Live) setStatus(status types.Status) {
+	live.status.Store(&status)
 }
 
 func (live *Live) authenticate() (err error) {
@@ -529,7 +585,6 @@ func (live *Live) restorePublicSubscriptions() {
 		}
 	}
 }
-
 func (live *Live) restoreLevel3Subscription() {
 	if len(live.symbols) == 0 {
 		return
@@ -762,6 +817,14 @@ func (live *Live) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, erro
 		kraken.NewTradeVolumeRequest(symbols),
 	)
 
+	if len(response) > 0 {
+		captureErr := live.captureFrame(TradeVolumeEndpoint, response)
+
+		if captureErr != nil {
+			return nil, captureErr
+		}
+	}
+
 	return kraken.NewTradeVolume(response), errnie.Error(err)
 }
 
@@ -879,6 +942,18 @@ func (live *Live) Post(
 
 func (live *Live) Close() {
 	live.cancel()
+
+	if live.level3 != nil {
+		live.level3.Range(func(_, value any) bool {
+			child, valid := value.(*Live)
+
+			if valid && child != nil {
+				child.Close()
+			}
+
+			return true
+		})
+	}
 
 	if live.client.IsActive() {
 		errnie.Error(live.client.Disconnect())

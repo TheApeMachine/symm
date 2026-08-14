@@ -460,7 +460,7 @@ func (solver *Solver) Step(
 			))
 		}
 
-		thesis.Manifold = reading
+		thesis.StoreManifold(reading)
 
 		for _, cut := range cuts {
 			if err := solver.publish(

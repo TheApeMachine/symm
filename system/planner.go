@@ -8,15 +8,16 @@ import (
 
 /*
 UninformativeDirectionConfidence is the probability boundary at which a
-one-sided forecast provides no directional evidence. The regulator may tighten
-the admission gate above this boundary, but a lower gate would admit a direction
-the posterior considers less likely than its opposite.
+one-sided forecast provides no directional evidence. The regulator may raise
+the confidence required to extend the adaptive forecast horizon above this
+boundary; a lower value would call an unsupported direction informative.
 */
 const UninformativeDirectionConfidence = 0.5
 
 type PlannerConfig struct {
 	MaxAllocationFraction float64
 	MinimumConfidence     float64
+	MinimumGraphScore     float64
 	MinimumUtility        float64
 	CausalAlpha           float64
 	MCTSIterations        int
@@ -29,6 +30,7 @@ func NewPlannerConfig() *PlannerConfig {
 		"trading.resonance.minimum_confidence",
 		UninformativeDirectionConfidence,
 	)
+	viper.SetDefault("trading.evidence.minimum_score", -1.0)
 	viper.SetDefault("trading.utility.minimum", 0.0)
 	viper.SetDefault("trading.mcts.causal_alpha", 1.0)
 	viper.SetDefault("trading.mcts.iterations", 50)
@@ -37,6 +39,7 @@ func NewPlannerConfig() *PlannerConfig {
 	return &PlannerConfig{
 		MaxAllocationFraction: viper.GetFloat64("trading.allocation.max_fraction"),
 		MinimumConfidence:     viper.GetFloat64("trading.resonance.minimum_confidence"),
+		MinimumGraphScore:     viper.GetFloat64("trading.evidence.minimum_score"),
 		MinimumUtility:        viper.GetFloat64("trading.utility.minimum"),
 		CausalAlpha:           viper.GetFloat64("trading.mcts.causal_alpha"),
 		MCTSIterations:        viper.GetInt("trading.mcts.iterations"),

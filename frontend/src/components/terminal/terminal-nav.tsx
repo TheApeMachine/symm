@@ -17,7 +17,8 @@ type TerminalRoutePath =
 	| "/xray"
 	| "/cortex"
 	| "/allocation"
-	| "/regulator";
+	| "/regulator"
+	| "/diagnostics";
 
 const SURFACE_ITEMS: Array<{
 	key: TerminalSurface;
@@ -26,7 +27,18 @@ const SURFACE_ITEMS: Array<{
 	to: TerminalRoutePath;
 }> = [
 	{ key: "dashboard", label: "Dashboard", icon: "dashboard", to: "/" },
-	{ key: "regulator", label: "Global regulator", icon: "cortex", to: "/regulator" },
+	{
+		key: "regulator",
+		label: "Global regulator",
+		icon: "cortex",
+		to: "/regulator",
+	},
+	{
+		key: "diagnostics",
+		label: "System diagnostics",
+		icon: "lanes",
+		to: "/diagnostics",
+	},
 	{ key: "graph", label: "Market graph", icon: "graph", to: "/graph" },
 	{ key: "fluid", label: "Fluid manifold", icon: "scan", to: "/fluid" },
 	{ key: "signals", label: "Signal insight", icon: "signal", to: "/signals" },

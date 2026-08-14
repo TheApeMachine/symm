@@ -102,7 +102,14 @@ func Boot(
 	}
 
 	manifoldChannel := make(chan types.FluidFrame, 1024)
-	auditPath := filepath.Join(utils.ResolveDataPath(), "runtime-audit.jsonl")
+	dataPath := utils.ResolveDataPath()
+
+	if dataPath == "" {
+		errnie.Error(fmt.Errorf("system data path required"))
+		return nil
+	}
+
+	auditPath := filepath.Join(dataPath, "runtime-audit.jsonl")
 
 	if viper.GetBool("system.audit.rotate_on_boot") {
 		if err := audit.Rotate(auditPath); err != nil {
@@ -118,25 +125,46 @@ func Boot(
 		return nil
 	}
 
+	var marketRecorder *audit.Recorder
+	marketPath := ""
+
+	if public == nil || private == nil {
+		marketPath = filepath.Join(dataPath, "market-frames.jsonl.zst")
+
+		if viper.GetBool("system.audit.rotate_on_boot") {
+			if err := audit.Rotate(marketPath); err != nil {
+				errnie.Error(fmt.Errorf("failed to rotate market capture: %w", err))
+				_ = recorder.Close()
+				return nil
+			}
+		}
+
+		marketRecorder, err = audit.NewRecorder(marketPath)
+
+		if err != nil {
+			errnie.Error(fmt.Errorf("failed to create market capture recorder: %w", err))
+			_ = recorder.Close()
+			return nil
+		}
+	}
+
 	thesis.Audit = recorder.Write
 
 	if err := thesis.Audit(map[string]any{
 		"channel": "orchestration",
 		"type":    "boot",
 		"value": map[string]any{
-			"at":         time.Now().UTC(),
-			"audit_path": auditPath,
+			"at":                  time.Now().UTC(),
+			"audit_path":          auditPath,
+			"market_capture_path": marketPath,
 		},
 	}); err != nil {
 		errnie.Error(fmt.Errorf("failed to write runtime audit boot event: %w", err))
-		_ = recorder.Close()
-		return nil
-	}
 
-	dataPath := utils.ResolveDataPath()
+		if marketRecorder != nil {
+			_ = marketRecorder.Close()
+		}
 
-	if dataPath == "" {
-		errnie.Error(fmt.Errorf("system data path required"))
 		_ = recorder.Close()
 		return nil
 	}
@@ -147,30 +175,57 @@ func Boot(
 
 	if err != nil {
 		errnie.Error(fmt.Errorf("failed to create position store: %w", err))
+
+		if marketRecorder != nil {
+			_ = marketRecorder.Close()
+		}
+
 		_ = recorder.Close()
 		return nil
 	}
 
-	system := &System{
-		Thesis:  thesis,
-		closers: []func() error{recorder.Close, positionStore.Close},
+	closers := []func() error{recorder.Close}
+
+	if marketRecorder != nil {
+		closers = append(closers, marketRecorder.Close)
 	}
 
+	closers = append(closers, positionStore.Close)
+	system := &System{
+		Thesis:  thesis,
+		closers: closers,
+	}
+
+	createdTransports := make([]websocket.Conn, 0, 2)
+
 	if public == nil {
-		public = websocket.New(ctx, nil, false, websocket.PublicWebSocketURL)
+		public = websocket.New(
+			ctx, nil, false, websocket.PublicWebSocketURL, marketRecorder,
+		)
+		createdTransports = append(createdTransports, public)
 	}
 
 	if private == nil {
-		private = websocket.New(ctx, nil, true, websocket.PrivateWebSocketURL)
+		private = websocket.New(
+			ctx, nil, true, websocket.PrivateWebSocketURL, marketRecorder,
+		)
+		createdTransports = append(createdTransports, private)
 	}
 
 	api := utils.NewWaiter[*websocket.API](websocket.NewAPI(
 		ctx, public, private,
 	)).Wait()
+	system.closers = append(system.closers, func() error {
+		for _, connection := range createdTransports {
+			connection.Close()
+		}
+
+		return nil
+	})
 
 	errnie.Debug("api reported to be ready")
 
-	price := utils.NewWaiter[*broker.Price](broker.NewPrice(api)).Wait()
+	price := utils.NewWaiter[*broker.Price](broker.NewPrice(api, marketRecorder)).Wait()
 	errnie.Debug("price reported to be ready")
 
 	instrument := utils.NewWaiter[*broker.Instrument](

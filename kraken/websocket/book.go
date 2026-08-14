@@ -28,14 +28,13 @@ type Book struct {
 	events     chan<- kraken.Level3Data
 }
 
-func NewBook(ctx context.Context, normalizers ...*spot.Normalizer) *Book {
+func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
+	if normalizer == nil {
+		panic("websocket: level3 book normalizer required")
+	}
+
 	errnie.Info("websocket: initializing book manager")
 	ctx, cancel := context.WithCancel(ctx)
-	var normalizer *spot.Normalizer
-
-	if len(normalizers) > 0 {
-		normalizer = normalizers[0]
-	}
 
 	book := &Book{
 		ctx:        ctx,
@@ -218,21 +217,20 @@ func (book *Book) apply(
 					continue
 				}
 
-				limitPrice := order.LimitPrice
+				order.LimitPrice, err = book.normalizer.FormatPrice(
+					data.Symbol,
+					order.LimitPrice,
+				)
 
-				if book.normalizer != nil {
-					limitPrice, err = book.normalizer.FormatPrice(data.Symbol, limitPrice)
-
-					if err != nil {
-						return nil, errnie.Err(
-							errnie.Validation,
-							fmt.Sprintf("level3 price precision for %s", data.Symbol),
-							err,
-						)
-					}
+				if err != nil {
+					return nil, fmt.Errorf(
+						"level3 normalize %s price: %w",
+						data.Symbol,
+						err,
+					)
 				}
 
-				price := limitPrice.String()
+				price := order.LimitPrice.String()
 
 				if level, ok := symbolSide.Levels[price]; ok && level == nil {
 					delete(symbolSide.Levels, price)
@@ -243,31 +241,25 @@ func (book *Book) apply(
 						continue
 					}
 
-					orderQuantity := order.OrderQty
+					order.OrderQty, err = book.normalizer.FormatSize(
+						data.Symbol,
+						order.OrderQty,
+					)
 
-					if book.normalizer != nil {
-						orderQuantity, err = book.normalizer.FormatSize(
+					if err != nil {
+						return nil, fmt.Errorf(
+							"level3 normalize %s quantity: %w",
 							data.Symbol,
-							orderQuantity,
+							err,
 						)
-
-						if err != nil {
-							return nil, errnie.Err(
-								errnie.Validation,
-								fmt.Sprintf("level3 quantity precision for %s", data.Symbol),
-								err,
-							)
-						}
 					}
 
-					if orderQuantity.Sign() == 1 {
-						order.LimitPrice = limitPrice
-						order.OrderQty = orderQuantity
+					if order.OrderQty.Sign() == 1 {
 						symbolBook.Update(&spotbook.UpdateOptions{
 							Direction: direction,
 							ID:        order.OrderID,
-							Price:     limitPrice,
-							Quantity:  orderQuantity,
+							Price:     order.LimitPrice,
+							Quantity:  order.OrderQty,
 							Timestamp: order.Timestamp,
 							Silent:    true,
 						})
@@ -280,13 +272,11 @@ func (book *Book) apply(
 						continue
 					}
 
-					order.LimitPrice = limitPrice
-					order.OrderQty = orderQuantity
 					symbolBook.Update(&spotbook.UpdateOptions{
 						Direction: direction,
 						ID:        order.OrderID,
-						Price:     limitPrice,
-						Quantity:  orderQuantity,
+						Price:     order.LimitPrice,
+						Quantity:  order.OrderQty,
 						Timestamp: order.Timestamp,
 						Silent:    true,
 					})
@@ -314,12 +304,11 @@ func (book *Book) apply(
 					continue
 				}
 
-				order.LimitPrice = limitPrice
 				order.OrderQty = decimal.NewFromInt64(0).Sub(removed)
 				symbolBook.Update(&spotbook.UpdateOptions{
 					Direction: direction,
 					ID:        order.OrderID,
-					Price:     limitPrice,
+					Price:     order.LimitPrice,
 					Quantity:  removed,
 					Timestamp: order.Timestamp,
 					Silent:    true,

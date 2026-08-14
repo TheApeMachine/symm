@@ -1,22 +1,121 @@
 package websocket
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+func TestCaptureFrame(t *testing.T) {
+	Convey("Given one raw public websocket payload", t, func() {
+		path := filepath.Join(t.TempDir(), "market-frames.jsonl")
+		recorder, err := audit.NewRecorder(path)
+		So(err, ShouldBeNil)
+		live := &Live{capture: recorder, captureName: "public"}
+		payload := []byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD"}]}`)
+
+		So(live.captureFrame("public", payload), ShouldBeNil)
+		So(recorder.Close(), ShouldBeNil)
+		file, err := os.Open(path)
+		So(err, ShouldBeNil)
+		defer file.Close()
+		var frame struct {
+			Endpoint   string          `json:"endpoint"`
+			Payload    json.RawMessage `json:"payload"`
+			ReceivedAt string          `json:"received_at"`
+		}
+		So(json.NewDecoder(bufio.NewReader(file)).Decode(&frame), ShouldBeNil)
+
+		Convey("It should retain the untouched payload in replay format", func() {
+			So(frame.Endpoint, ShouldEqual, "public")
+			So(string(frame.Payload), ShouldEqual, string(payload))
+			So(frame.ReceivedAt, ShouldNotBeBlank)
+		})
+	})
+}
+
+func TestTradeVolume(t *testing.T) {
+	Convey("Given a live fee-tier response and market recorder", t, func() {
+		response := `{"error":[],"result":{"fees":{"BTCUSD":{"fee":"0.26"}}}}`
+		client := spot.NewWebSocket()
+		client.REST.Executor = func(
+			request *http.Request,
+		) (*http.Response, error) {
+			So(request.URL.Path, ShouldEqual, TradeVolumeEndpoint)
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(response)),
+			}, nil
+		}
+		path := filepath.Join(t.TempDir(), "market-frames.jsonl")
+		recorder, err := audit.NewRecorder(path)
+		So(err, ShouldBeNil)
+		live := &Live{client: client, capture: recorder}
+
+		result, err := live.TradeVolume([]string{"BTC/USD"})
+		So(err, ShouldBeNil)
+		So(result, ShouldNotBeNil)
+		So(recorder.Close(), ShouldBeNil)
+		file, err := os.Open(path)
+		So(err, ShouldBeNil)
+		defer file.Close()
+		var frame struct {
+			Endpoint string          `json:"endpoint"`
+			Payload  json.RawMessage `json:"payload"`
+		}
+		So(json.NewDecoder(file).Decode(&frame), ShouldBeNil)
+
+		Convey("It should retain the exact REST response beside market frames", func() {
+			So(frame.Endpoint, ShouldEqual, TradeVolumeEndpoint)
+			So(string(frame.Payload), ShouldEqual, response)
+		})
+	})
+}
+
+func TestStatus(t *testing.T) {
+	Convey("Given concurrent transport lifecycle changes", t, func() {
+		live := &Live{}
+		statuses := []types.Status{types.PENDING, types.READY, types.ERROR}
+		var waitGroup sync.WaitGroup
+
+		for _, status := range statuses {
+			waitGroup.Add(1)
+
+			go func(status types.Status) {
+				defer waitGroup.Done()
+				live.setStatus(status)
+				_ = live.Status()
+			}(status)
+		}
+
+		waitGroup.Wait()
+
+		Convey("It should publish a complete atomic status", func() {
+			So(statuses, ShouldContain, live.Status())
+		})
+	})
+}
 
 func subscriptionConnection(
 	t *testing.T,
@@ -94,6 +193,49 @@ func TestRestorePublicSubscriptions(t *testing.T) {
 	})
 }
 
+func TestRestoreLevel3Subscription(t *testing.T) {
+	Convey("Given more symbols than one Level 3 subscription request", t, func() {
+		requests, endpoint, closeServer := subscriptionConnection(t, 2)
+		defer closeServer()
+
+		client := spot.NewWebSocket()
+		client.URL = endpoint
+		client.Token = "fixture-token"
+		So(client.Connect(), ShouldBeNil)
+
+		pace := 25 * time.Millisecond
+		viper.Set("market.l3_depth", 10)
+		viper.Set("market.subscribe.pace", pace)
+		Reset(func() {
+			viper.Set("market.subscribe.pace", nil)
+		})
+
+		symbols := make([]string, 41)
+
+		for index := range symbols {
+			symbols[index] = fmt.Sprintf("S%d/USD", index)
+		}
+
+		live := &Live{client: client}
+		symbolSnapshot := append([]string{}, symbols...)
+		live.symbols.Store(&symbolSnapshot)
+
+		Convey("Reconnect should pause between consecutive requests", func() {
+			started := time.Now()
+			live.restoreLevel3Subscription()
+			elapsed := time.Since(started)
+			first := <-requests
+			second := <-requests
+			firstSymbols := first["params"].(map[string]any)["symbol"].([]any)
+			secondSymbols := second["params"].(map[string]any)["symbol"].([]any)
+
+			So(len(firstSymbols), ShouldEqual, 40)
+			So(len(secondSymbols), ShouldEqual, 1)
+			So(elapsed, ShouldBeGreaterThanOrEqualTo, pace)
+		})
+	})
+}
+
 func TestRememberPublicSubscription(t *testing.T) {
 	Convey("Given public subscriptions submitted in batches", t, func() {
 		live := &Live{public: make(map[string][][]string)}
@@ -111,7 +253,7 @@ func TestRememberPublicSubscription(t *testing.T) {
 
 func TestLiveBook(t *testing.T) {
 	Convey("Given a Level 3 connection containing the requested book", t, func() {
-		managed := NewBook(t.Context())
+		managed := newBookFixture(t, "BTC/USD", 0, 0)
 		managed.Create("BTC/USD", 32)
 		live := &Live{level3: &sync.Map{}}
 		live.level3.Store("unrelated subscription key", &Live{book: managed})
@@ -122,34 +264,6 @@ func TestLiveBook(t *testing.T) {
 					So(actual, ShouldEqual, expected)
 				})
 			})
-		})
-	})
-}
-
-func TestRestoreLevel3Subscription(t *testing.T) {
-	Convey("Given remembered Level 3 symbols", t, func() {
-		requests, endpoint, closeServer := subscriptionConnection(t, 2)
-		defer closeServer()
-
-		client := spot.NewWebSocket()
-		client.URL = endpoint
-		So(client.Connect(), ShouldBeNil)
-		symbols := make([]string, 41)
-
-		for index := range symbols {
-			symbols[index] = "SIM" + fmt.Sprint(index) + "/USD"
-		}
-
-		live := &Live{client: client, symbols: symbols}
-
-		Convey("A reconnect should restore the symbols in Kraken-sized chunks", func() {
-			live.restoreLevel3Subscription()
-			first := <-requests
-			second := <-requests
-			firstSymbols := first["params"].(map[string]any)["symbol"].([]any)
-			secondSymbols := second["params"].(map[string]any)["symbol"].([]any)
-			So(len(firstSymbols), ShouldEqual, 40)
-			So(len(secondSymbols), ShouldEqual, 1)
 		})
 	})
 }
@@ -255,7 +369,7 @@ func TestLiveSubscribe(t *testing.T) {
 }
 
 func BenchmarkLiveBook(b *testing.B) {
-	managed := NewBook(b.Context())
+	managed := newBookFixture(b, "BTC/USD", 0, 0)
 	managed.Create("BTC/USD", 32)
 	live := &Live{level3: &sync.Map{}}
 	live.level3.Store("subscription", &Live{book: managed})
@@ -264,5 +378,25 @@ func BenchmarkLiveBook(b *testing.B) {
 
 	for b.Loop() {
 		live.Book("BTC/USD", read)
+	}
+}
+
+func BenchmarkCaptureFrame(b *testing.B) {
+	recorder, err := audit.NewRecorder(filepath.Join(b.TempDir(), "market-frames.jsonl"))
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer recorder.Close()
+	live := &Live{capture: recorder, captureName: "public"}
+	payload := []byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD"}]}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if err := live.captureFrame("public", payload); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

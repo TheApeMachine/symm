@@ -5,6 +5,7 @@ import (
 	"iter"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -42,6 +43,7 @@ type Desk struct {
 	executeMu      sync.Mutex
 	maxPositions   int
 	maxReserved    int
+	ObserveModule  func(string, time.Duration)
 }
 
 /*
@@ -253,7 +255,7 @@ func (desk *Desk) Holding(symbol string) int {
 	held := 0
 
 	for position := range desk.Positions() {
-		if position.status() == types.CLOSED {
+		if position.pair.Symbol != symbol || position.status() == types.CLOSED {
 			continue
 		}
 
@@ -344,6 +346,14 @@ are recorded before submission so the next arbitration round sees committed
 capacity even while the venue acknowledgement or fill is still pending.
 */
 func (desk *Desk) Execute(decision types.Decision) (err error) {
+	started := time.Now()
+
+	defer func() {
+		if desk.ObserveModule != nil {
+			desk.ObserveModule("desk", time.Since(started))
+		}
+	}()
+
 	switch decision.Action {
 	case types.ActionEnter:
 		desk.executeMu.Lock()
@@ -387,7 +397,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		economics, err := desk.price.EntryEconomics(
 			decision.Symbol,
 			decision.ProposedQuantity,
-			decision.Forecast.Value,
+			decision.PerspectiveReturn,
 		)
 
 		if err != nil {
@@ -398,10 +408,12 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		if economics.NetReturn.Sign() <= 0 {
+		if economics.NetReturn.Cmp(decimal.NewFromFloat64(
+			decision.AdmissionUtilityThreshold,
+		)) <= 0 {
 			return errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
-				"desk: forecast no longer clears current spread and taker fees",
+				"desk: perspective no longer clears its regulated utility boundary",
 				nil,
 			))
 		}
@@ -411,6 +423,14 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		decision.ExpectedSpread = economics.ExpectedSpread
 		decision.ExpectedImpact = economics.ExpectedImpact
 		decision.OpportunityMargin = economics.NetReturn.Float64()
+
+		if err = desk.SaveThesis(desk.thesis); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"desk: checkpoint admitted entry",
+				err,
+			))
+		}
 
 		position := NewPosition(
 			desk.ctx,

@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
@@ -36,19 +37,21 @@ Strategy package to make Decisions. The final output of the Logic stage is
 the Graph, which should encode everything that has been collected so far.
 */
 type Analyzer struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	status       types.Status
-	tree         *dmt.Tree
-	cognition    *cognition.Solver
-	graph        *graph.Solver
-	resonance    Solver
-	solvers      []Solver
-	solverGroups [][]Solver
-	ui           chan []byte
-	binui        chan types.FluidFrame
-	recorder     *audit.Recorder
-	thesis       *types.Thesis
+	ctx           context.Context
+	cancel        context.CancelFunc
+	status        types.Status
+	tree          *dmt.Tree
+	cognition     *cognition.Solver
+	graph         *graph.Solver
+	resonance     Solver
+	solvers       []Solver
+	solverGroups  [][]Solver
+	ui            chan []byte
+	binui         chan types.FluidFrame
+	recorder      *audit.Recorder
+	thesis        *types.Thesis
+	ObserveModule func(string, time.Duration)
+	ObserveHop    func(string, string, time.Duration)
 }
 
 /*
@@ -108,12 +111,41 @@ func NewAnalyzer(
 
 func (analyzer *Analyzer) Process(
 	thesis *types.Thesis,
+	symbol string,
+	at time.Time,
+	measurementsReady bool,
 	resonanceReady bool,
 ) error {
-	for _, solvers := range analyzer.solverGroups {
+	symbolThesis, err := thesis.ForSymbol(symbol)
+
+	if err != nil {
+		return err
+	}
+
+	symbolThesis.At = at
+	groupNames := []string{
+		string(types.SourceCategory),
+		string(types.SourceCausal),
+		string(types.SourceGraph),
+	}
+	previousEnd := time.Now()
+
+	for groupIndex, solvers := range analyzer.solverGroups {
+		if groupIndex > 0 && analyzer.ObserveHop != nil {
+			analyzer.ObserveHop(
+				groupNames[groupIndex-1],
+				groupNames[groupIndex],
+				time.Since(previousEnd),
+			)
+		}
+
 		group, _ := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
+			if groupIndex == 0 && !measurementsReady && solver != analyzer.resonance {
+				continue
+			}
+
 			if solver == analyzer.resonance && !resonanceReady {
 				continue
 			}
@@ -144,7 +176,20 @@ func (analyzer *Analyzer) Process(
 					source, "done",
 				)))
 
-				if err := solver.Update(thesis); err != nil {
+				target := symbolThesis
+
+				if _, global := solver.(*manifold.Solver); global {
+					target = thesis
+				}
+
+				started := time.Now()
+				err := solver.Update(target)
+
+				if analyzer.ObserveModule != nil {
+					analyzer.ObserveModule(source, time.Since(started))
+				}
+
+				if err != nil {
 					return errnie.Err(
 						errnie.Internal,
 						"analyzer: solver update failed",
@@ -159,6 +204,8 @@ func (analyzer *Analyzer) Process(
 		if err := group.Wait(); err != nil {
 			return err
 		}
+
+		previousEnd = time.Now()
 	}
 
 	return nil

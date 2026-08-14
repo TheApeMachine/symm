@@ -53,6 +53,7 @@ var MarketStatuses = map[string]Status{
 	"trade":            OPEN,
 	"partially_filled": PARTIAL_FILLED,
 	"filled":           FILLED,
+	"rejected":         REJECTED,
 	"canceled":         CANCELED,
 	"iceberg_filled":   FILLED,
 	"expired":          EXPIRED,

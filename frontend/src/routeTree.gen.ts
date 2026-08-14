@@ -15,6 +15,7 @@ import { Route as RegulatorRouteImport } from './routes/regulator'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as GraphRouteImport } from './routes/graph'
 import { Route as FluidRouteImport } from './routes/fluid'
+import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as DecisionsRouteImport } from './routes/decisions'
 import { Route as CortexRouteImport } from './routes/cortex'
 import { Route as AllocationRouteImport } from './routes/allocation'
@@ -50,6 +51,11 @@ const FluidRoute = FluidRouteImport.update({
   path: '/fluid',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DiagnosticsRoute = DiagnosticsRouteImport.update({
+  id: '/diagnostics',
+  path: '/diagnostics',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DecisionsRoute = DecisionsRouteImport.update({
   id: '/decisions',
   path: '/decisions',
@@ -76,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
+  '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/graph': typeof GraphRoute
   '/journal': typeof JournalRoute
@@ -88,6 +95,7 @@ export interface FileRoutesByTo {
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
+  '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/graph': typeof GraphRoute
   '/journal': typeof JournalRoute
@@ -101,6 +109,7 @@ export interface FileRoutesById {
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
   '/decisions': typeof DecisionsRoute
+  '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/graph': typeof GraphRoute
   '/journal': typeof JournalRoute
@@ -115,6 +124,7 @@ export interface FileRouteTypes {
     | '/allocation'
     | '/cortex'
     | '/decisions'
+    | '/diagnostics'
     | '/fluid'
     | '/graph'
     | '/journal'
@@ -127,6 +137,7 @@ export interface FileRouteTypes {
     | '/allocation'
     | '/cortex'
     | '/decisions'
+    | '/diagnostics'
     | '/fluid'
     | '/graph'
     | '/journal'
@@ -139,6 +150,7 @@ export interface FileRouteTypes {
     | '/allocation'
     | '/cortex'
     | '/decisions'
+    | '/diagnostics'
     | '/fluid'
     | '/graph'
     | '/journal'
@@ -152,6 +164,7 @@ export interface RootRouteChildren {
   AllocationRoute: typeof AllocationRoute
   CortexRoute: typeof CortexRoute
   DecisionsRoute: typeof DecisionsRoute
+  DiagnosticsRoute: typeof DiagnosticsRoute
   FluidRoute: typeof FluidRoute
   GraphRoute: typeof GraphRoute
   JournalRoute: typeof JournalRoute
@@ -204,6 +217,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FluidRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/diagnostics': {
+      id: '/diagnostics'
+      path: '/diagnostics'
+      fullPath: '/diagnostics'
+      preLoaderRoute: typeof DiagnosticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/decisions': {
       id: '/decisions'
       path: '/decisions'
@@ -240,6 +260,7 @@ const rootRouteChildren: RootRouteChildren = {
   AllocationRoute: AllocationRoute,
   CortexRoute: CortexRoute,
   DecisionsRoute: DecisionsRoute,
+  DiagnosticsRoute: DiagnosticsRoute,
   FluidRoute: FluidRoute,
   GraphRoute: GraphRoute,
   JournalRoute: JournalRoute,

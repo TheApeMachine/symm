@@ -40,6 +40,7 @@ func TestNewStoploss(t *testing.T) {
 			decimal.NewFromFloat64(73.72),
 			decimal.NewFromFloat64(73.70),
 			forecast,
+			nil,
 			decimal.NewFromFloat64(0.01),
 			zeroRate,
 			zeroRate,
@@ -66,6 +67,7 @@ func TestNewStoploss(t *testing.T) {
 				decimal.NewFromFloat64(100.02),
 				decimal.NewFromFloat64(100),
 				forecast,
+				nil,
 				decimal.NewFromFloat64(0.01),
 				zeroRate,
 				zeroRate,
@@ -88,6 +90,7 @@ func TestNewStoploss(t *testing.T) {
 				decimal.NewFromFloat64(100.02),
 				decimal.NewFromFloat64(100),
 				forecast,
+				nil,
 				decimal.NewFromFloat64(0.01),
 				zeroRate,
 				zeroRate,
@@ -117,6 +120,7 @@ func TestNewStoploss(t *testing.T) {
 			entryPrice,
 			mark,
 			forecast,
+			nil,
 			tick,
 			feeRate,
 			feeRate,
@@ -136,6 +140,56 @@ func TestNewStoploss(t *testing.T) {
 			stoploss.Update(oneTickLower)
 
 			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+	})
+
+	Convey("Given a positive cumulative forecast whose path first draws down", t, func() {
+		forecast := testForecast(0.03)
+		forwardCurve := []float64{-0.02, 0.01, 0.04}
+		zeroRate := decimal.NewFromInt64(0)
+		stoploss, err := NewStoploss(
+			context.Background(),
+			"BTC/USD",
+			decimal.NewFromFloat64(100),
+			decimal.NewFromFloat64(100),
+			forecast,
+			forwardCurve,
+			decimal.NewFromFloat64(0.01),
+			zeroRate,
+			zeroRate,
+		)
+		So(err, ShouldBeNil)
+
+		Convey("It should survive the deepest cumulative predicted path point", func() {
+			expected := decimal.NewFromFloat64(100 * math.Exp(-0.02))
+			So(stoploss.Floor.Cmp(expected), ShouldBeLessThanOrEqualTo, 0)
+			So(expected.Sub(stoploss.Floor).Cmp(
+				decimal.NewFromFloat64(0.01),
+			), ShouldBeLessThan, 0)
+			stoploss.Update(stoploss.Floor)
+			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+	})
+
+	Convey("Given a positive path with no predicted drawdown", t, func() {
+		forecast := testForecast(0.03)
+		forwardCurve := []float64{0.01, 0.01, 0.01}
+		zeroRate := decimal.NewFromInt64(0)
+		stoploss, err := NewStoploss(
+			context.Background(),
+			"BTC/USD",
+			decimal.NewFromFloat64(100.02),
+			decimal.NewFromFloat64(100),
+			forecast,
+			forwardCurve,
+			decimal.NewFromFloat64(0.01),
+			zeroRate,
+			zeroRate,
+		)
+
+		Convey("It should keep the executable one-tick lattice boundary", func() {
+			So(err, ShouldBeNil)
+			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(99.98)), ShouldEqual, 0)
 		})
 	})
 }
@@ -270,6 +324,7 @@ func stoplossFixture(testingTB testReporter) *Stoploss {
 		decimal.NewFromFloat64(100),
 		decimal.NewFromFloat64(100),
 		forecast,
+		nil,
 		decimal.NewFromFloat64(0.01),
 		zeroRate,
 		zeroRate,
@@ -298,6 +353,7 @@ func BenchmarkNewStoploss(b *testing.B) {
 			entry,
 			mark,
 			forecast,
+			nil,
 			tick,
 			zeroRate,
 			zeroRate,

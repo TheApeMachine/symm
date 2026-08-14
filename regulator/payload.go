@@ -30,6 +30,8 @@ type RegulatorPayload struct {
 	PnL             float64           `json:"pnl"`
 	PredictedReturn float64           `json:"predictedReturn"`
 	PredictionScale float64           `json:"predictionScale"`
+	PredictedActive float64           `json:"predictedActive"`
+	ActivityScale   float64           `json:"activityScale"`
 	Samples         int               `json:"samples"`
 	Summary         string            `json:"summary"`
 	Subsystems      []SubsystemStatus `json:"subsystems"`
@@ -60,9 +62,21 @@ var controlPresentations = [...]controlPresentation{
 	},
 	{
 		index: controlConfidence, name: "confidence",
-		label: "Forecast Confidence Gate", suffix: "% min", displayScale: 100,
+		label: "Forecast Support Confidence", suffix: "% min", displayScale: 100,
 		changed:     "tightened",
-		explanation: "Minimum posterior direction probability required before graph search may enter.",
+		explanation: "Posterior direction probability required for each retained forecast horizon.",
+	},
+	{
+		index: controlGraphThreshold, name: "graph",
+		label: "Evidence Admission Boundary", suffix: " graph", displayScale: 1,
+		changed:     "changed",
+		explanation: "Minimum signed MCTS evidence reward admitted for executable evaluation.",
+	},
+	{
+		index: controlUtilityThreshold, name: "utility",
+		label: "Net Utility Boundary", suffix: " return", displayScale: 1,
+		changed:     "changed",
+		explanation: "Minimum forecast-horizon net return admitted after observable entry costs.",
 	},
 	{
 		index: controlCausalAlpha, name: "causal",
@@ -99,10 +113,17 @@ func (solver *Solver) buildPayload(
 
 	predictedReturn := 0.0
 	predictionScale := 0.0
+	predictedActive := 0.0
+	activityScale := 0.0
 
 	if result.forecastReady {
 		predictedReturn = math.Expm1(result.forecast.Value)
 		predictionScale = result.forecast.Scale
+	}
+
+	if result.activityReady {
+		predictedActive = result.activity.Value
+		activityScale = result.activity.Scale
 	}
 
 	return RegulatorPayload{
@@ -112,6 +133,8 @@ func (solver *Solver) buildPayload(
 		PnL:             math.Expm1(periodReturn) * 100,
 		PredictedReturn: predictedReturn,
 		PredictionScale: predictionScale,
+		PredictedActive: predictedActive,
+		ActivityScale:   activityScale,
 		Samples:         solver.optimizer.resolved,
 		Summary:         summary,
 		Subsystems:      subsystems,

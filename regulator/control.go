@@ -11,6 +11,8 @@ import (
 const (
 	controlAllocation = iota
 	controlConfidence
+	controlGraphThreshold
+	controlUtilityThreshold
 	controlCausalAlpha
 	controlIterations
 	controlExploration
@@ -55,6 +57,11 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 		)
 	}
 
+	if planner.MinimumGraphScore < -1 || planner.MinimumGraphScore > 1 ||
+		planner.MinimumUtility < -1 || planner.MinimumUtility > 1 {
+		return nil, fmt.Errorf("regulator: graph and utility gates must be in [-1,1]")
+	}
+
 	if planner.CausalAlpha < 0 || planner.ExplorationConstant < 0 ||
 		planner.MCTSIterations < 1 {
 		return nil, fmt.Errorf("regulator: valid MCTS controls required")
@@ -74,6 +81,12 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 		controlConfidence: {
 			name:    "confidence",
 			minimum: system.UninformativeDirectionConfidence, maximum: 1,
+		},
+		controlGraphThreshold: {
+			name: "graph_threshold", minimum: -1, maximum: 1,
+		},
+		controlUtilityThreshold: {
+			name: "utility_threshold", minimum: -1, maximum: 1,
 		},
 		controlCausalAlpha: {
 			name: "causal_alpha", minimum: 0, maximum: planner.CausalAlpha,
@@ -97,6 +110,8 @@ func (space *controlSpace) current(config *system.Config) controlVector {
 	return controlVector{
 		space.normalize(controlAllocation, config.Planner.MaxAllocationFraction),
 		space.normalize(controlConfidence, config.Planner.MinimumConfidence),
+		space.normalize(controlGraphThreshold, config.Planner.MinimumGraphScore),
+		space.normalize(controlUtilityThreshold, config.Planner.MinimumUtility),
 		space.normalize(controlCausalAlpha, config.Planner.CausalAlpha),
 		space.normalize(controlIterations, float64(config.Planner.MCTSIterations)),
 		space.normalize(controlExploration, config.Planner.ExplorationConstant),
@@ -168,6 +183,8 @@ func (space *controlSpace) apply(
 
 	config.Planner.MaxAllocationFraction = space.value(controlAllocation, controls)
 	config.Planner.MinimumConfidence = space.value(controlConfidence, controls)
+	config.Planner.MinimumGraphScore = space.value(controlGraphThreshold, controls)
+	config.Planner.MinimumUtility = space.value(controlUtilityThreshold, controls)
 	config.Planner.CausalAlpha = space.value(controlCausalAlpha, controls)
 	config.Planner.MCTSIterations = int(math.Round(
 		space.value(controlIterations, controls),

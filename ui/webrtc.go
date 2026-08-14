@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/theapemachine/errnie"
@@ -47,6 +48,16 @@ func NewFluidRTC(ctx context.Context) *FluidRTC {
 }
 
 /*
+HasPeers checks whether any WebRTC peer connection is actively attached.
+*/
+func (transport *FluidRTC) HasPeers() bool {
+	transport.mutex.RLock()
+	defer transport.mutex.RUnlock()
+
+	return len(transport.peers) > 0
+}
+
+/*
 Run drains direct manifold publications and fans each one to the data channel
 it names. A frame carries its own destination because the solver knows which
 view it built the frame for; recovering that here by sniffing the payload's
@@ -60,6 +71,11 @@ func (transport *FluidRTC) Run(publications <-chan types.FluidFrame) {
 		case frame, open := <-publications:
 			if !open {
 				return
+			}
+
+			if !transport.HasPeers() {
+				time.Sleep(50 * time.Millisecond)
+				continue
 			}
 
 			transport.publish(frame.Channel, frame.Payload)

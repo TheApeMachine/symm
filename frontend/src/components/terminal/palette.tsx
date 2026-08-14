@@ -36,6 +36,16 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "xray", label: "Latent x-ray", hint: "State-space cross-section" },
 	{ id: "cortex", label: "Cognitive tree", hint: "Reasoning graph" },
 	{ id: "allocation", label: "Allocation", hint: "Capital & exposure" },
+	{
+		id: "regulator",
+		label: "Global regulator",
+		hint: "Predictive control · wallet return",
+	},
+	{
+		id: "diagnostics",
+		label: "System diagnostics",
+		hint: "Stream lanes · commit lag · stalls",
+	},
 ];
 
 /*

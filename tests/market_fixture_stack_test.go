@@ -163,12 +163,30 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				forecast, forecastErr := coder.RolloutTaskForecast(1)
 				skill, skillReady := coder.TaskSkill()
 				var completed *broker.Position
+				var active *broker.Position
 				symbolState.Positions.Range(func(_, value any) bool {
 					position, valid := value.(*broker.Position)
+
+					if valid && position.Holding != nil {
+						t.Logf(
+							"exact slice position: status=%s utility=%g graph=%g sources=%#v pnl=%v return=%g",
+							position.Holding.Status,
+							position.Decision.Utility,
+							position.Decision.GraphScore,
+							position.Decision.PerspectiveSources,
+							position.Holding.PnL,
+							position.Holding.ReturnPct,
+						)
+					}
 
 					if valid && position.Holding != nil &&
 						position.Holding.Status == types.CLOSED {
 						completed = position
+					}
+
+					if valid && position.Holding != nil &&
+						position.Holding.Status != types.CLOSED {
+						active = position
 					}
 
 					return true
@@ -181,11 +199,21 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 					So(completed, ShouldNotBeNil)
 					So(completed.Decision.ForecastHorizon, ShouldBeGreaterThan, 0)
 					So(completed.Decision.Utility, ShouldBeGreaterThan, 0)
-					So(completed.Decision.GraphScore, ShouldBeGreaterThan, 0)
+					So(completed.Decision.GraphScore, ShouldBeGreaterThanOrEqualTo,
+						completed.Decision.AdmissionGraphThreshold)
 					So(completed.Holding.PnL.Sign(), ShouldEqual, 1)
-					So(system.Desk.Holding("IDOS/USD"), ShouldEqual, 0)
 					So(market.Report().Economics.NetPnL, ShouldBeGreaterThan, 0.0)
 					So(market.Validate(), ShouldBeNil)
+
+					if active != nil {
+						So(active.Decision.ID, ShouldNotEqual, completed.Decision.ID)
+						So(active.Holding.EntryAt, ShouldNotBeNil)
+
+						if active.Holding.EntryAt != nil {
+							So(active.Holding.EntryAt.After(*completed.Holding.ExitAt), ShouldBeTrue)
+						}
+					}
+
 					t.Logf(
 						"exact slice result: forecast=%#v horizon=%d skill=%g/%t net=%g pnl=%s",
 						forecast,

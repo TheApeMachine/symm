@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/nomagique/physics/fluid"
@@ -32,7 +33,7 @@ type Thesis struct {
 	CrossSection   *CrossSection   `json:"crossSection"`
 	Symbols        *sync.Map       `json:"-"`
 	Audit          func(any) error `json:"-"`
-	Manifold       fluid.Reading   `json:"-"`
+	manifold       atomic.Pointer[fluid.Reading]
 }
 
 /*
@@ -51,7 +52,6 @@ func NewThesis(
 		CrossSection: NewCrossSection(),
 		Symbols:      &sync.Map{},
 		symbolIDs:    make(map[string]SymbolID),
-		Manifold:     fluid.Reading{},
 	}
 }
 
@@ -77,6 +77,64 @@ func (thesis *Thesis) Symbol(name string) *Symbol {
 	}
 
 	return symbol.(*Symbol)
+}
+
+/*
+ForSymbol returns a non-owning analytical view containing exactly one existing
+symbol. The view shares the symbol and cross-sectional evidence with its parent
+while preventing incremental solvers from rescanning unrelated symbols.
+*/
+func (thesis *Thesis) ForSymbol(name string) (*Thesis, error) {
+	if thesis == nil || name == "" {
+		return nil, fmt.Errorf("thesis: symbol scope required")
+	}
+
+	symbol, found := thesis.Symbols.Load(name)
+
+	if !found {
+		return nil, fmt.Errorf("thesis: symbol scope not found: %s", name)
+	}
+
+	symbols := &sync.Map{}
+	symbols.Store(name, symbol)
+
+	scoped := &Thesis{
+		ctx:          thesis.ctx,
+		ui:           thesis.ui,
+		Status:       thesis.Status,
+		Tick:         thesis.Tick,
+		At:           thesis.At,
+		CrossSection: thesis.CrossSection,
+		Symbols:      symbols,
+		Audit:        thesis.Audit,
+	}
+	manifold := thesis.manifold.Load()
+
+	if manifold != nil {
+		scoped.manifold.Store(manifold)
+	}
+
+	return scoped, nil
+}
+
+/*
+StoreManifold atomically publishes one immutable fluid reading.
+*/
+func (thesis *Thesis) StoreManifold(reading fluid.Reading) {
+	thesis.manifold.Store(&reading)
+}
+
+/*
+ManifoldSnapshot returns the latest complete fluid reading when one exists.
+*/
+func (thesis *Thesis) ManifoldSnapshot() (fluid.Reading, bool) {
+	reading := thesis.manifold.Load()
+
+	if reading == nil {
+		return fluid.Reading{}, false
+	}
+
+	return *reading, true
 }
 
 /*
@@ -128,7 +186,46 @@ func (thesis *Thesis) Equity() (kraken.TradeBalanceResult, bool) {
 }
 
 func (thesis *Thesis) MarshalState() ([]byte, error) {
-	return json.Marshal(thesis)
+	symbols := make(map[string]any)
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		name, valid := key.(string)
+
+		if !valid || name == "" {
+			return true
+		}
+
+		symbol, valid := value.(*Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		symbols[name] = symbol.CheckpointState()
+		return true
+	})
+
+	equity, _, hasEquity := thesis.EquitySnapshot()
+	checkpoint := struct {
+		Status       Status                     `json:"status"`
+		Tick         int64                      `json:"tick"`
+		At           time.Time                  `json:"at"`
+		CrossSection *CrossSection              `json:"crossSection"`
+		Symbols      map[string]any             `json:"symbols"`
+		Equity       *kraken.TradeBalanceResult `json:"equity,omitempty"`
+	}{
+		Status:       thesis.Status,
+		Tick:         thesis.Tick,
+		At:           thesis.At,
+		CrossSection: thesis.CrossSection,
+		Symbols:      symbols,
+	}
+
+	if hasEquity {
+		checkpoint.Equity = &equity
+	}
+
+	return json.Marshal(checkpoint)
 }
 
 func (thesis *Thesis) Close() error {

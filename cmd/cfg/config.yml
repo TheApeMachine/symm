@@ -70,7 +70,7 @@ market:
   l3_ring_capacity: 8192
   # High-liquidity run: deeper L2 book and faster subscription pacing.
   subscribe:
-    pace: 20ms
+    pace: 2s
     batch: 200
   book:
     depth: 10
@@ -100,6 +100,16 @@ trading:
     # only the cold-start position; the global regulator moves the live gate
     # within [0.5, 1] after observing exposed wallet-return outcomes.
     minimum_confidence: 0.50
+  evidence:
+    # MCTS graph reward is an average of signed confidence-weighted relations,
+    # so its natural domain is [-1, 1]. Cold start admits the full domain; the
+    # global regulator tightens this boundary from wallet outcomes.
+    minimum_score: -1.0
+  utility:
+    # Zero is the exact break-even boundary for net expected return. Cold start
+    # refuses a forecasted loss while the regulator learns from realized wallet
+    # outcomes whether this boundary should move.
+    minimum: 0.0
   allocation:
     # Hard per-entry quote-notional ceiling. This is not a risk target: the
     # planner may reduce it once calibrated loss and liquidity budgets exist.

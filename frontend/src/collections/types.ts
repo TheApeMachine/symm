@@ -184,9 +184,69 @@ export type TickFrame = Record<string, unknown> & {
 };
 
 /*
-DiagnosticsFrame is a cross-section diagnostics snapshot on the UI wire.
+LaneSnapshot is one bounded stream edge on the diagnostics wire.
 */
-export type DiagnosticsFrame = Record<string, unknown>;
+export type LaneSnapshot = {
+	name: string;
+	kind: string;
+	blocking: boolean;
+	capacity: number;
+	depth: number;
+	high_water: number;
+	saturations: number;
+	saturation_ns: number;
+};
+
+/*
+DiagnosticsFrame is the stream-pipeline snapshot on the UI wire. It reports
+sequencer lag and lane pressure, not signal activity.
+*/
+export type DiagnosticsFrame = {
+	status?: "flowing" | "queued" | "stalled" | "lossy";
+	summary?: string;
+	ingress_sequence?: number;
+	committed_sequence?: number;
+	next_sequence?: number;
+	lag?: number;
+	pending?: number;
+	dropped?: number;
+	commit_dropped?: number;
+	tickers?: number;
+	books?: number;
+	trades?: number;
+	level3?: number;
+	coalesced_books?: number;
+	stall_ns?: number;
+	ui_depth?: number;
+	ui_cap?: number;
+	ui_sent?: number;
+	ui_dropped?: number;
+	lanes?: LaneSnapshot[];
+	lossy?: boolean;
+	at_ns?: number;
+	started_ns?: number;
+	stages?: ClockSnapshot[];
+	hops?: HopSnapshot[];
+};
+
+export type ClockSnapshot = {
+	name: string;
+	kind?: string;
+	count: number;
+	total_ns: number;
+	last_ns: number;
+	max_ns?: number;
+	last_at_ns?: number;
+};
+
+export type HopSnapshot = {
+	from: string;
+	to: string;
+	count: number;
+	total_ns: number;
+	last_ns: number;
+	max_ns?: number;
+};
 
 /*
 DashboardFrame is a generic keyed UI frame used by legacy paint helpers.

@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -26,6 +29,7 @@ func TestPositionOnTicker(t *testing.T) {
 			decimal.NewFromFloat64(100.02),
 			decimal.NewFromFloat64(100),
 			forecast,
+			nil,
 			decimal.NewFromFloat64(0.01),
 			zeroRate,
 			zeroRate,
@@ -127,6 +131,78 @@ func TestPositionOnExecution(t *testing.T) {
 			So(stored, ShouldBeNil)
 		})
 	})
+
+	Convey("Given a rejected entry with no fill economics", t, func() {
+		position := &Position{
+			ui:         make(chan []byte, 1),
+			EntryOrder: &spot.AddOrderRequest{ClOrdId: "entry"},
+			Holding:    &types.Holding{},
+		}
+		position.setStatus(types.PENDING)
+
+		removed := position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{{
+			ClientOrderID: "entry",
+			OrderStatus:   "rejected",
+		}}})
+
+		Convey("It should publish the terminal state and release the desk slot", func() {
+			So(removed, ShouldBeTrue)
+			So(position.status(), ShouldEqual, types.REJECTED)
+			So(position.Holding.Status, ShouldEqual, types.REJECTED)
+		})
+	})
+
+	Convey("Given a zero-fill canceled exit", t, func() {
+		stoploss := newBrokerStoploss(t)
+		stoploss.Update(stoploss.Floor.Sub(decimal.NewFromFloat64(0.01)))
+		position := &Position{
+			ui:        make(chan []byte, 1),
+			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
+			Holding: &types.Holding{
+				Qty:      decimal.NewFromInt64(1),
+				Stoploss: stoploss,
+			},
+		}
+		position.setStatus(types.PENDING)
+
+		removed := position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{{
+			ClientOrderID: "exit",
+			OrderStatus:   "canceled",
+			CumQty:        decimal.NewFromInt64(0),
+		}}})
+
+		Convey("It should preserve inventory and reopen the submission boundary", func() {
+			So(removed, ShouldBeFalse)
+			So(position.ExitOrder, ShouldBeNil)
+			So(position.status(), ShouldEqual, types.OPEN)
+			So(position.Holding.Status, ShouldEqual, types.OPEN)
+			So(position.Holding.Stoploss.Status, ShouldEqual, types.TRIGGERED)
+		})
+	})
+
+	Convey("Given a terminal exit with partial filled quantity", t, func() {
+		position := &Position{
+			ui:        make(chan []byte, 1),
+			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
+			Holding: &types.Holding{
+				Qty: decimal.NewFromInt64(1),
+			},
+		}
+		position.setStatus(types.PENDING)
+
+		removed := position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{{
+			ClientOrderID: "exit",
+			OrderStatus:   "expired",
+			CumQty:        decimal.NewFromFloat64(0.25),
+		}}})
+
+		Convey("It should expose the unresolved inventory instead of overselling", func() {
+			So(removed, ShouldBeFalse)
+			So(position.ExitOrder, ShouldNotBeNil)
+			So(position.status(), ShouldEqual, types.ERROR)
+			So(position.Holding.Status, ShouldEqual, types.ERROR)
+		})
+	})
 }
 
 func TestPositionExit(t *testing.T) {
@@ -148,6 +224,53 @@ func TestPositionExit(t *testing.T) {
 			So(position.ExitOrder, ShouldBeNil)
 		})
 	})
+
+	Convey("Given a triggered lot whose first sell submission fails", t, func() {
+		private := &retryExitConn{Conn: mock.NewConn(), failures: 1}
+		api := websocket.NewAPI(t.Context(), mock.NewConn(), private)
+		stoploss := newBrokerStoploss(t)
+		stoploss.Update(stoploss.Floor.Sub(decimal.NewFromFloat64(0.01)))
+		position := &Position{
+			api:        api,
+			EntryOrder: &spot.AddOrderRequest{ClOrdId: "entry"},
+			pair:       kraken.InstrumentPair{Symbol: "SIM/USD"},
+			Holding: &types.Holding{
+				Qty:      decimal.NewFromInt64(1),
+				Stoploss: stoploss,
+			},
+		}
+		position.setStatus(types.OPEN)
+
+		_, firstErr := position.Exit()
+		_, secondErr := position.Exit()
+
+		Convey("It should preserve the trigger and retry the same exit on the next opportunity", func() {
+			So(firstErr, ShouldNotBeNil)
+			So(secondErr, ShouldBeNil)
+			So(stoploss.Status, ShouldEqual, types.TRIGGERED)
+			So(position.ExitOrder, ShouldNotBeNil)
+			So(position.status(), ShouldEqual, types.PENDING)
+			So(private.attempts, ShouldEqual, 2)
+		})
+	})
+}
+
+type retryExitConn struct {
+	*mock.Conn
+	failures int
+	attempts int
+}
+
+func (conn *retryExitConn) AddOrder(
+	_ *spot.AddOrderRequest,
+) (spot.AddOrderResult, error) {
+	conn.attempts++
+
+	if conn.attempts <= conn.failures {
+		return spot.AddOrderResult{}, errors.New("temporary exit rejection")
+	}
+
+	return spot.AddOrderResult{}, nil
 }
 
 func TestPositionCloseFill(t *testing.T) {

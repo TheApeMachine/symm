@@ -6,12 +6,13 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 )
 
 /*
-EntryEconomics states one candidate's forecast and current round-trip costs in
-midpoint-return units. Impact is the additional round-trip cost of walking the
-authoritative Level 3 book beyond its best quotes.
+EntryEconomics states one candidate's forecast and observable entry costs in
+midpoint-return units. The exit fee is known from the venue schedule, but no
+current bid depth is presented as the book that will exist at forecast expiry.
 */
 type EntryEconomics struct {
 	ExpectedReturn *decimal.Decimal
@@ -22,18 +23,24 @@ type EntryEconomics struct {
 }
 
 /*
-ProfitableQuantity returns the capital-limited quantity whose marginal book
-segments still pay entry, forecast move, exit, and both taker fees. Since asks
-worsen upward and bids worsen downward, stopping at the first non-positive
-segment maximizes expected absolute P&L without a guessed liquidity haircut.
+ProfitableQuantity returns the capital-limited quantity whose observable ask
+segments still clear the forecast-horizon midpoint and both taker fees. Current
+bid depth describes an immediate liquidation, not the future exit book, so it
+cannot cap or veto a forecast-horizon entry.
 */
 func (price *Price) ProfitableQuantity(
 	symbol string,
 	requested *decimal.Decimal,
 	forecastLogReturn float64,
+	minimumNetReturn float64,
 ) (*decimal.Decimal, error) {
-	if symbol == "" || requested == nil || requested.Sign() <= 0 {
-		return nil, fmt.Errorf("entry quantity: symbol and positive request required")
+	if symbol == "" || requested == nil || requested.Sign() <= 0 ||
+		minimumNetReturn < -1 || minimumNetReturn > 1 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry quantity: symbol, positive requested quantity, and minimum return within [-1,1] required",
+			nil,
+		))
 	}
 
 	tick := price.Tick(symbol)
@@ -43,15 +50,19 @@ func (price *Price) ProfitableQuantity(
 		tick.Ask.Sign() <= 0 || tick.Bid.Sign() <= 0 ||
 		fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
 		fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
-		return nil, fmt.Errorf(
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
 			"entry quantity: executable quotes and valid taker fee required",
-		)
+			nil,
+		))
 	}
 
 	if tick.Ask.Cmp(tick.Bid) < 0 {
-		return nil, fmt.Errorf(
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
 			"entry quantity: crossed best quotes cannot price a long entry",
-		)
+			nil,
+		))
 	}
 
 	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(decimal.NewFromInt64(100))
@@ -59,40 +70,43 @@ func (price *Price) ProfitableQuantity(
 	one := decimal.NewFromInt64(1)
 	entryFactor := one.Add(feeRate)
 	exitFactor := one.Sub(feeRate)
+	minimumReturn := decimal.NewFromFloat64(minimumNetReturn)
 	executable := decimal.NewFromInt64(0)
 	bookObserved := false
 	bookCrossed := false
+
 	price.api.Book(price.api.Normalizer().Name(symbol), func(managed *book.Book) {
-		if managed == nil || managed.Asks.Low == nil || managed.Bids.High == nil {
+		if managed == nil || managed.Asks.Low == nil {
 			return
 		}
 
 		bookObserved = true
+		bestBid := tick.Bid
 
-		if managed.Asks.Low.Price.Cmp(managed.Bids.High.Price) < 0 {
+		if managed.Bids.High != nil {
+			bestBid = managed.Bids.High.Price
+		}
+
+		if managed.Asks.Low.Price.Cmp(bestBid) < 0 {
 			bookCrossed = true
 			return
 		}
 
 		midpoint := decimal.NewFromInt64(0).Add(managed.Asks.Low.Price).Add(
-			managed.Bids.High.Price,
+			bestBid,
 		).Div(
 			decimal.NewFromInt64(2),
 		)
-		expectedMove := midpoint.Mul(expectedArithmeticReturn)
+		expectedExit := midpoint.Mul(one.Add(expectedArithmeticReturn)).Mul(exitFactor)
 		remaining := decimal.NewFromInt64(0).Add(requested)
 		askLevel := managed.Asks.Low
-		bidLevel := managed.Bids.High
 		askRemaining := decimal.NewFromInt64(0).Add(askLevel.Quantity)
-		bidRemaining := decimal.NewFromInt64(0).Add(bidLevel.Quantity)
 
-		for remaining.Sign() > 0 && askLevel != nil && bidLevel != nil {
+		for remaining.Sign() > 0 && askLevel != nil {
 			entryValue := decimal.NewFromInt64(0).Add(askLevel.Price).Mul(entryFactor)
-			exitValue := decimal.NewFromInt64(0).Add(bidLevel.Price).Add(
-				expectedMove,
-			).Mul(exitFactor)
+			segmentReturn := expectedExit.Sub(entryValue).Div(midpoint)
 
-			if exitValue.Cmp(entryValue) <= 0 {
+			if segmentReturn.Cmp(minimumReturn) <= 0 {
 				return
 			}
 
@@ -102,14 +116,9 @@ func (price *Price) ProfitableQuantity(
 				segment = askRemaining
 			}
 
-			if bidRemaining.Cmp(segment) < 0 {
-				segment = bidRemaining
-			}
-
 			executable = executable.Add(segment)
 			remaining = remaining.Sub(segment)
 			askRemaining = askRemaining.Sub(segment)
-			bidRemaining = bidRemaining.Sub(segment)
 
 			if askRemaining.Sign() == 0 {
 				askLevel = askLevel.Higher
@@ -119,46 +128,67 @@ func (price *Price) ProfitableQuantity(
 				}
 			}
 
-			if bidRemaining.Sign() == 0 {
-				bidLevel = bidLevel.Lower
-
-				if bidLevel != nil {
-					bidRemaining = decimal.NewFromInt64(0).Add(bidLevel.Quantity)
-				}
-			}
 		}
 	})
 
 	if bookCrossed {
-		return nil, fmt.Errorf(
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
 			"entry quantity: crossed visible book cannot price a long entry",
-		)
+			nil,
+		))
 	}
 
 	if bookObserved && executable.Sign() <= 0 {
-		return nil, fmt.Errorf("entry quantity: no visible book segment clears execution costs")
+		return nil, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"entry quantity: no visible ask segment clears forecast-horizon value for %s forecast %f log return (%.6f arithmetic return) executable quantity %s",
+				symbol,
+				forecastLogReturn,
+				expectedArithmeticReturn.Float64(),
+				executable,
+			),
+			nil,
+		)
 	}
 
 	if bookObserved {
 		return executable, nil
 	}
 
-	if tick.AskQty <= 0 || tick.BidQty <= 0 {
-		return nil, fmt.Errorf("entry quantity: positive visible quotes required")
+	if tick.AskQty <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry quantity: positive visible ask quantity required",
+			nil,
+		))
 	}
 
 	midpoint := decimal.NewFromInt64(0).Add(tick.Ask).Add(tick.Bid).Div(
 		decimal.NewFromInt64(2),
 	)
-	expectedMove := midpoint.Mul(expectedArithmeticReturn)
+	expectedExit := midpoint.Mul(one.Add(expectedArithmeticReturn)).Mul(exitFactor)
 	entryValue := decimal.NewFromInt64(0).Add(tick.Ask).Mul(entryFactor)
-	exitValue := decimal.NewFromInt64(0).Add(tick.Bid).Add(expectedMove).Mul(exitFactor)
+	netReturn := expectedExit.Sub(entryValue).Div(midpoint)
 
-	if exitValue.Cmp(entryValue) <= 0 {
-		return nil, fmt.Errorf("entry quantity: best quotes do not clear execution costs")
+	if netReturn.Cmp(minimumReturn) <= 0 {
+		return nil, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"entry quantity: observable entry costs do not clear forecast-horizon value for %s forecast %f log return (%.6f arithmetic return) expected exit value %s entry value %s executable quantity %s",
+				symbol,
+				forecastLogReturn,
+				expectedArithmeticReturn.Float64(),
+				expectedExit.String(),
+				entryValue.String(),
+				executable.String(),
+			),
+			nil,
+		)
 	}
 
-	executable = decimal.NewFromFloat64(min(tick.AskQty, tick.BidQty))
+	executable = decimal.NewFromFloat64(tick.AskQty)
 
 	if requested.Cmp(executable) < 0 {
 		executable = decimal.NewFromInt64(0).Add(requested)
@@ -168,10 +198,11 @@ func (price *Price) ProfitableQuantity(
 }
 
 /*
-EntryEconomics prices the forecast move from the midpoint where resonance
-learns log returns, converts it to an arithmetic return, then applies that move
-to the executable bid. The resulting exit value must pay the current spread and
-both taker fees before it has edge.
+EntryEconomics prices the forecast move from the current midpoint where
+resonance learns log returns. It walks only the observable ask depth needed to
+enter. The future exit is the forecast midpoint net of the known taker fee;
+future spread and depth require an outcome-calibrated model and are not inferred
+from the current bid book.
 */
 func (price *Price) EntryEconomics(
 	symbol string,
@@ -179,7 +210,11 @@ func (price *Price) EntryEconomics(
 	forecastLogReturn float64,
 ) (*EntryEconomics, error) {
 	if symbol == "" || quantity == nil || quantity.Sign() <= 0 {
-		return nil, fmt.Errorf("entry economics: symbol and positive quantity required")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry economics: symbol and positive quantity required",
+			nil,
+		))
 	}
 
 	tick := price.Tick(symbol)
@@ -189,56 +224,78 @@ func (price *Price) EntryEconomics(
 		tick.Bid == nil || tick.Bid.Sign() <= 0 || fee == nil ||
 		fee.Fee == nil || fee.Fee.Sign() < 0 ||
 		fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
-		return nil, fmt.Errorf("entry economics: executable quotes and taker fee required")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry economics: executable quotes and taker fee required",
+			nil,
+		))
 	}
 
 	if tick.Ask.Cmp(tick.Bid) < 0 {
-		return nil, fmt.Errorf("entry economics: crossed best quotes cannot price a long entry")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry economics: crossed best quotes cannot price a long entry",
+			nil,
+		))
 	}
 
-	if tick.AskQty <= 0 || tick.BidQty <= 0 {
-		return nil, fmt.Errorf("entry economics: positive best-quote quantities required")
+	if tick.AskQty <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry economics: positive visible ask quantity required",
+			nil,
+		))
 	}
 
 	ask := decimal.NewFromInt64(0).Add(tick.Ask)
 	bid := decimal.NewFromInt64(0).Add(tick.Bid)
 	entryPrice := ask
-	exitBasePrice := bid
-	depthEntry, depthExit, depthAsk, depthBid := price.depthVWAPs(symbol, quantity)
+	depthEntry, depthAsk, depthBid := price.entryDepthVWAP(symbol, quantity)
 
-	if depthAsk != nil && depthBid != nil {
-		if depthAsk.Cmp(depthBid) < 0 {
-			return nil, fmt.Errorf(
-				"entry economics: crossed visible book cannot price a long entry",
-			)
+	if depthAsk != nil {
+		if depthBid == nil {
+			depthBid = bid
 		}
 
-		if depthEntry == nil || depthExit == nil {
-			return nil, fmt.Errorf(
-				"entry economics: visible depth cannot execute complete quantity",
-			)
+		if depthAsk.Cmp(depthBid) < 0 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"entry economics: crossed visible book cannot price a long entry",
+				nil,
+			))
+		}
+
+		if depthEntry == nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"entry economics: visible ask depth cannot execute complete quantity",
+				nil,
+			))
 		}
 
 		ask = depthAsk
 		bid = depthBid
 		entryPrice = depthEntry
-		exitBasePrice = depthExit
 	}
 
-	if depthAsk == nil && (quantity.Cmp(decimal.NewFromFloat64(tick.AskQty)) > 0 ||
-		quantity.Cmp(decimal.NewFromFloat64(tick.BidQty)) > 0) {
-		return nil, fmt.Errorf(
-			"entry economics: visible depth cannot execute complete quantity",
-		)
+	if depthAsk == nil && quantity.Cmp(decimal.NewFromFloat64(tick.AskQty)) > 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry economics: visible ask quantity cannot execute complete entry",
+			nil,
+		))
 	}
 
 	midpoint := ask.Add(bid).Div(decimal.NewFromInt64(2))
 	expectedReturn := decimal.NewFromFloat64(math.Expm1(forecastLogReturn))
-	expectedMove := midpoint.Mul(expectedReturn)
-	expectedExit := exitBasePrice.Add(expectedMove)
+	expectedExit := midpoint.Mul(decimal.NewFromInt64(1).Add(expectedReturn))
 
 	if expectedExit.Sign() <= 0 {
-		return nil, fmt.Errorf("entry economics: forecast implies a non-positive exit price")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"entry economics: forecast implies a non-positive exit price",
+			nil,
+		))
 	}
 
 	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(decimal.NewFromInt64(100))
@@ -248,43 +305,45 @@ func (price *Price) EntryEconomics(
 	entryCost := entryPrice.Add(entryFee)
 	exitValue := expectedExit.Sub(exitFee)
 	netValue := exitValue.Sub(entryCost)
-	impact := entryPrice.Sub(ask).Add(bid.Sub(exitBasePrice)).Div(midpoint)
+	spread := ask.Sub(midpoint).Div(midpoint)
+	impact := entryPrice.Sub(ask).Div(midpoint)
 
 	return &EntryEconomics{
 		ExpectedReturn: expectedReturn,
 		ExpectedFees:   totalFees.Div(midpoint),
-		ExpectedSpread: ask.Sub(bid).Div(midpoint),
+		ExpectedSpread: spread,
 		ExpectedImpact: impact,
 		NetReturn:      netValue.Div(midpoint),
 	}, nil
 }
 
-func (price *Price) depthVWAPs(
+func (price *Price) entryDepthVWAP(
 	symbol string,
 	quantity *decimal.Decimal,
-) (*decimal.Decimal, *decimal.Decimal, *decimal.Decimal, *decimal.Decimal) {
+) (*decimal.Decimal, *decimal.Decimal, *decimal.Decimal) {
 	var entryPrice *decimal.Decimal
-	var exitPrice *decimal.Decimal
 	var bestAsk *decimal.Decimal
 	var bestBid *decimal.Decimal
 	price.api.Book(price.api.Normalizer().Name(symbol), func(managed *book.Book) {
-		if managed == nil || managed.Asks.Low == nil || managed.Bids.High == nil {
+		if managed == nil || managed.Asks.Low == nil {
 			return
 		}
 
 		bestAsk = decimal.NewFromInt64(0).Add(managed.Asks.Low.Price)
-		bestBid = decimal.NewFromInt64(0).Add(managed.Bids.High.Price)
-		entryPrice = price.depthVWAP(managed.Asks.Low, quantity, BUY)
-		exitPrice = price.depthVWAP(managed.Bids.High, quantity, SELL)
+
+		if managed.Bids.High != nil {
+			bestBid = decimal.NewFromInt64(0).Add(managed.Bids.High.Price)
+		}
+
+		entryPrice = price.askVWAP(managed.Asks.Low, quantity)
 	})
 
-	return entryPrice, exitPrice, bestAsk, bestBid
+	return entryPrice, bestAsk, bestBid
 }
 
-func (price *Price) depthVWAP(
+func (price *Price) askVWAP(
 	level *book.Level,
 	quantity *decimal.Decimal,
-	direction Direction,
 ) *decimal.Decimal {
 	remaining := decimal.NewFromInt64(0).Add(quantity)
 	gross := decimal.NewFromInt64(0)
@@ -301,12 +360,7 @@ func (price *Price) depthVWAP(
 		)
 		remaining = remaining.Sub(fillQuantity)
 
-		if direction == BUY {
-			level = level.Higher
-			continue
-		}
-
-		level = level.Lower
+		level = level.Higher
 	}
 
 	if remaining.Sign() > 0 {

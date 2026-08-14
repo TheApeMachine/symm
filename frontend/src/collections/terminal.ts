@@ -11,7 +11,8 @@ export type TerminalSurface =
 	| "xray"
 	| "cortex"
 	| "allocation"
-	| "regulator";
+	| "regulator"
+	| "diagnostics";
 
 export { DEFAULT_FOCUS_SYMBOL };
 

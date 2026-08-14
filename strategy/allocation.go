@@ -127,7 +127,8 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		executableQuantity, err := price.ProfitableQuantity(
 			decision.Symbol,
 			quantity,
-			decision.Forecast.Value,
+			decision.PerspectiveReturn,
+			decision.AdmissionUtilityThreshold,
 		)
 
 		if err != nil {
@@ -181,7 +182,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		economics, err := price.EntryEconomics(
 			decision.Symbol,
 			quantity,
-			decision.Forecast.Value,
+			decision.PerspectiveReturn,
 		)
 
 		if err != nil {
@@ -198,7 +199,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.OpportunityMargin = economics.NetReturn.Float64()
 		decision.Utility = economics.NetReturn.Float64()
 
-		if decision.Utility <= config.Planner.MinimumUtility {
+		if decision.Utility <= decision.AdmissionUtilityThreshold {
 			decision.Action = types.ActionNothing
 			decision.Reason = "planner: net forecast utility does not clear regulated entry threshold"
 
@@ -211,6 +212,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			tick.Ask,
 			tick.Bid,
 			decision.Forecast,
+			decision.ForwardCurve,
 			&pair.TickSize,
 			feeRate,
 			feeRate,

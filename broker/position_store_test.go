@@ -93,6 +93,7 @@ func newBrokerStoploss(testingTB testing.TB) *types.Stoploss {
 		decimal.NewFromFloat64(100.02),
 		decimal.NewFromFloat64(100),
 		forecast,
+		nil,
 		decimal.NewFromFloat64(0.01),
 		zeroRate,
 		zeroRate,

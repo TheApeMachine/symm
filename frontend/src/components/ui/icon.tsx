@@ -86,6 +86,11 @@ const GLYPHS = {
 			<rect x="17" y="4" width="3" height="14" />
 		</>
 	),
+	lanes: (
+		<>
+			<path d="M4 7h16M4 12h10M4 17h13" />
+		</>
+	),
 	grid: (
 		<>
 			<rect x="3" y="3" width="7" height="7" />

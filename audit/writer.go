@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/klauspost/compress/zstd"
 	"github.com/theapemachine/datura/structure"
 	"github.com/theapemachine/symm/types"
 )
@@ -39,6 +42,7 @@ type Recorder struct {
 	cancel   context.CancelFunc
 	filename string
 	fh       *os.File
+	encoder  *zstd.Encoder
 	ring     *structure.MPMCRing[[]byte]
 	done     chan struct{}
 	dropped  atomic.Uint64
@@ -72,12 +76,32 @@ func NewRecorder(filename string) (*Recorder, error) {
 		return nil, err
 	}
 
+	var encoder *zstd.Encoder
+
+	if strings.HasSuffix(filename, ".zst") {
+		encoder, err = zstd.NewWriter(
+			fh,
+			zstd.WithEncoderLevel(zstd.SpeedFastest),
+			zstd.WithEncoderConcurrency(1),
+		)
+
+		if err != nil {
+			_ = fh.Close()
+			return nil, fmt.Errorf("audit: create zstd writer: %w", err)
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	ring, err := structure.NewMPMCRing[[]byte](ctx, recorderCapacity)
 
 	if err != nil {
 		cancel()
+
+		if encoder != nil {
+			_ = encoder.Close()
+		}
+
 		_ = fh.Close()
 
 		return nil, err
@@ -88,6 +112,7 @@ func NewRecorder(filename string) (*Recorder, error) {
 		cancel:   cancel,
 		filename: filename,
 		fh:       fh,
+		encoder:  encoder,
 		ring:     ring,
 		done:     make(chan struct{}),
 	}
@@ -140,7 +165,13 @@ sustained saturation still records loss. It exits after cancel and quiescence.
 func (recorder *Recorder) drain() {
 	defer close(recorder.done)
 
-	writer := bufio.NewWriter(recorder.fh)
+	var destination io.Writer = recorder.fh
+
+	if recorder.encoder != nil {
+		destination = recorder.encoder
+	}
+
+	writer := bufio.NewWriter(destination)
 	pendingDropped := uint64(0)
 	ticker := time.NewTicker(overflowInterval)
 	defer ticker.Stop()
@@ -179,6 +210,21 @@ func (recorder *Recorder) drain() {
 		if err := writer.Flush(); err != nil {
 			recorder.retainErr(err)
 		}
+
+		if recorder.encoder != nil {
+			if err := recorder.encoder.Flush(); err != nil {
+				recorder.retainErr(err)
+			}
+		}
+	}
+	closeEncoder := func() {
+		if recorder.encoder == nil {
+			return
+		}
+
+		if err := recorder.encoder.Close(); err != nil {
+			recorder.retainErr(err)
+		}
 	}
 
 	for {
@@ -193,6 +239,7 @@ func (recorder *Recorder) drain() {
 					if !drained || remaining == nil {
 						recordOverflow()
 						flush()
+						closeEncoder()
 						return
 					}
 

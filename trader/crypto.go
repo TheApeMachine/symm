@@ -3,7 +3,7 @@ package trader
 import (
 	"context"
 	"fmt"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
@@ -21,8 +21,7 @@ import (
 Crypto submits desk work from thesis messages delivered by the Actor cascade.
 */
 type Crypto struct {
-	statusMu      sync.RWMutex
-	status        types.Status
+	status        atomic.Value
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
@@ -62,7 +61,6 @@ func NewCrypto(
 	crypto := &Crypto{
 		ctx:          ctx,
 		cancel:       cancel,
-		status:       types.INITIALIZING,
 		api:          api,
 		thesis:       thesis,
 		recorder:     recorder,
@@ -80,6 +78,7 @@ func NewCrypto(
 			),
 		},
 	}
+	crypto.status.Store(types.INITIALIZING)
 	pipeline, err := newStreamPipeline(
 		ctx,
 		api,
@@ -97,6 +96,7 @@ func NewCrypto(
 	}
 
 	crypto.pipeline = pipeline
+	desk.ObserveModule = pipeline.clocks.observe
 	crypto.setStatus(types.READY)
 
 	crypto.run()
@@ -105,16 +105,11 @@ func NewCrypto(
 }
 
 func (crypto *Crypto) Status() types.Status {
-	crypto.statusMu.RLock()
-	defer crypto.statusMu.RUnlock()
-
-	return crypto.status
+	return crypto.status.Load().(types.Status)
 }
 
 func (crypto *Crypto) setStatus(status types.Status) {
-	crypto.statusMu.Lock()
-	crypto.status = status
-	crypto.statusMu.Unlock()
+	crypto.status.Store(status)
 }
 
 func (crypto *Crypto) fail(err error) {
@@ -231,7 +226,9 @@ func (crypto *Crypto) onTicker(data any) {
 		crypto.epochs[ticker.Symbol] = symbolEpoch{
 			at: ticker.Timestamp, tick: crypto.nextTick,
 		}
+		brokerStarted := time.Now()
 		crypto.desk.Price().Update(&ticker)
+		crypto.pipeline.noteBroker(brokerStarted)
 		errnie.Error(crypto.pipeline.Dispatch(marketEvent{
 			sequence: crypto.sequence,
 			tick:     crypto.nextTick,

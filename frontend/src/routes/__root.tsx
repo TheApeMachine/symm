@@ -31,6 +31,7 @@ const SURFACE_VALUES = new Set<TerminalSurface>([
 	"cortex",
 	"allocation",
 	"regulator",
+	"diagnostics",
 ]);
 
 const SURFACE_ALIASES: Record<string, TerminalSurface> = {
@@ -40,6 +41,7 @@ const SURFACE_ALIASES: Record<string, TerminalSurface> = {
 	trade: "journal",
 	graphs: "graph",
 	reg: "regulator",
+	diag: "diagnostics",
 };
 
 const SURFACE_PATHS: Record<TerminalSurface, string> = {
@@ -53,6 +55,7 @@ const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	cortex: "/cortex",
 	allocation: "/allocation",
 	regulator: "/regulator",
+	diagnostics: "/diagnostics",
 };
 
 export const parseSurface = (path: unknown): TerminalSurface => {

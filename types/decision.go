@@ -13,12 +13,17 @@ Decision records the action strategy selected and the alternatives it compared.
 It is owned by one Thesis so intended behavior remains separate from execution.
 */
 type Decision struct {
-	ID         string    `json:"id" validate:"required"`
-	Action     Action    `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
-	Symbol     string    `json:"symbol" validate:"required"`
-	At         time.Time `json:"at" validate:"required"`
-	Utility    float64   `json:"utility" validate:"finite"`
-	GraphScore float64   `json:"graphScore" validate:"finite"`
+	ID                        string                      `json:"id" validate:"required"`
+	Action                    Action                      `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
+	Symbol                    string                      `json:"symbol" validate:"required"`
+	At                        time.Time                   `json:"at" validate:"required"`
+	Utility                   float64                     `json:"utility" validate:"finite"`
+	GraphScore                float64                     `json:"graphScore" validate:"finite"`
+	PerspectiveReturn         float64                     `json:"perspectiveReturn" validate:"finite"`
+	PerspectiveConfidence     float64                     `json:"perspectiveConfidence" validate:"finite,min=0,max=1"`
+	AdmissionGraphThreshold   float64                     `json:"admissionGraphThreshold" validate:"finite,min=-1,max=1"`
+	AdmissionUtilityThreshold float64                     `json:"admissionUtilityThreshold" validate:"finite,min=-1,max=1"`
+	PerspectiveSources        []DecisionPerspectiveSource `json:"perspectiveSources,omitempty"`
 	// AllocationHaircut is the fraction removed from the pre-risk notional by
 	// adverse-selection, toxicity, and executable-liquidity evidence. It is an
 	// allocation penalty, not a calibrated loss probability.
@@ -37,6 +42,7 @@ type Decision struct {
 	ForecastEpoch           uint64              `json:"forecastEpoch"`
 	Forecast                *learning.RLSOutput `json:"forecast,omitempty"`
 	ForecastHorizon         int                 `json:"forecastHorizon" validate:"min=0"`
+	ForwardCurve            []float64           `json:"forwardCurve,omitempty"`
 	CalibrationCount        uint64              `json:"calibrationCount"`
 	ExpectedReturn          *decimal.Decimal    `json:"expectedReturn" validate:"required"`
 	ExpectedFees            *decimal.Decimal    `json:"expectedFees" validate:"required"`
@@ -84,6 +90,17 @@ type Decision struct {
 		paths do not run the entry trajectory search.
 	*/
 	Trace *DecisionTrace `json:"trace,omitempty"`
+}
+
+/*
+DecisionPerspectiveSource records one compatible signed-return estimate used
+to form the decision's forecast-horizon perspective.
+*/
+type DecisionPerspectiveSource struct {
+	Source     string  `json:"source"`
+	LogReturn  float64 `json:"logReturn" validate:"finite"`
+	Horizon    int     `json:"horizon" validate:"min=1"`
+	Confidence float64 `json:"confidence" validate:"finite,min=0,max=1"`
 }
 
 /*

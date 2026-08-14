@@ -17,6 +17,8 @@ func TestNewControlSpace(t *testing.T) {
 			current := space.current(config)
 			So(current[controlAllocation], ShouldEqual, 1.0)
 			So(current[controlConfidence], ShouldEqual, 0.0)
+			So(current[controlGraphThreshold], ShouldEqual, 0.0)
+			So(current[controlUtilityThreshold], ShouldEqual, 0.5)
 			So(current[controlCausalAlpha], ShouldEqual, 1.0)
 			So(current[controlIterations], ShouldEqual, 1.0)
 			So(current[controlExploration], ShouldEqual, 1.0)
@@ -92,6 +94,8 @@ func TestControlSpaceApply(t *testing.T) {
 			So(config.Planner.MaxAllocationFraction, ShouldEqual, 0.0)
 			So(config.Planner.MinimumConfidence,
 				ShouldEqual, system.UninformativeDirectionConfidence)
+			So(config.Planner.MinimumGraphScore, ShouldEqual, -1.0)
+			So(config.Planner.MinimumUtility, ShouldEqual, -1.0)
 			So(config.Planner.CausalAlpha, ShouldEqual, 0.0)
 			So(config.Planner.MCTSIterations, ShouldEqual, 1)
 			So(config.Planner.ExplorationConstant, ShouldEqual, 0.0)

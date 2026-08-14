@@ -80,7 +80,8 @@ func (solver *Solver) Status() types.Status {
 
 /*
 Update consumes one new broker equity revision. A new unchanged valuation is a
-real zero-return outcome; only repeated delivery of the same revision is ignored.
+real zero-return outcome, and a flat interval is an explicit inactivity target;
+only repeated delivery of the same revision is ignored.
 */
 func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	if solver == nil || solver.optimizer == nil || solver.configSource == nil {
@@ -118,28 +119,9 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 
 	currentEquity := equity.Equity.Float64()
 
-	if !exposed && !solver.hadExposure {
-		firstValuation := solver.lastRevision == 0
-		solver.lastEquity = currentEquity
-		solver.peakEquity = max(solver.peakEquity, currentEquity)
-		solver.lastRevision = revision
-
-		if firstValuation && solver.ui != nil {
-			result := optimizationResult{
-				controls: solver.optimizer.current,
-				surprise: solver.optimizer.coder.ReconstructionError(),
-				energy:   solver.optimizer.coder.Energy(),
-			}
-			payload := solver.buildPayload(0, result)
-			payload.Summary = "Waiting for market exposure before identifying control effects on wallet return."
-			utils.Publish(solver.ui, datura.NewMap("regulator", payload))
-		}
-
-		return nil
-	}
-
 	periodReturn, drawdown := solver.financialFeedback(currentEquity)
-	result, err := solver.optimizer.update(periodReturn, drawdown)
+	active := exposed || solver.hadExposure
+	result, err := solver.optimizer.update(periodReturn, drawdown, active)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(

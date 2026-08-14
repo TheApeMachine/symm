@@ -22,6 +22,8 @@ type RegulatorFrame = {
 	energy?: number;
 	predictedReturn?: number;
 	predictionScale?: number;
+	predictedActive?: number;
+	activityScale?: number;
 	samples?: number;
 	summary?: string;
 	subsystems?: SubsystemStatus[];
@@ -138,6 +140,8 @@ const RouteComponent = () => {
 	const energy = frame.energy ?? 0;
 	const predictedReturn = frame.predictedReturn ?? 0;
 	const predictionScale = frame.predictionScale ?? 0;
+	const predictedActive = frame.predictedActive ?? 0;
+	const activityScale = frame.activityScale ?? 0;
 	const samples = frame.samples ?? 0;
 	const summary = frame.summary ?? DEFAULT_FRAME.summary;
 	const subsystems = frame.subsystems ?? DEFAULT_FRAME.subsystems ?? [];
@@ -172,6 +176,7 @@ const RouteComponent = () => {
 						<span>Variational Energy: <strong className="text-(--f1)">{energy.toFixed(3)}</strong></span>
 						<span>Next Equity Return: <strong className="text-(--f1)">{(predictedReturn * 100).toFixed(3)}%</strong></span>
 						<span>Posterior Scale: <strong className="text-(--f1)">{predictionScale.toFixed(4)}</strong></span>
+						<span>Next-Interval Activity: <strong className="text-(--f1)">{predictedActive.toFixed(3)} ± {activityScale.toFixed(3)}</strong></span>
 						<span>Resolved Outcomes: <strong className="text-(--f1)">{samples}</strong></span>
 					</Flex.Row>
 					{sparkline.length > 1 ? (

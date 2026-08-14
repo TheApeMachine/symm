@@ -9,6 +9,21 @@ import (
 	"github.com/theapemachine/datura"
 )
 
+func TestPublishCounters(t *testing.T) {
+	Convey("Given a saturated replaceable-state channel", t, func() {
+		ui := make(chan []byte, 1)
+		ui <- []byte("existing")
+		beforeSent, beforeDropped := PublishCounters()
+		Publish(ui, datura.NewMap("ticker", "new"))
+		sent, dropped := PublishCounters()
+
+		Convey("It should count the dropped frame", func() {
+			So(sent, ShouldEqual, beforeSent)
+			So(dropped, ShouldEqual, beforeDropped+1)
+		})
+	})
+}
+
 func TestPublish(t *testing.T) {
 	Convey("Given a saturated replaceable-state channel", t, func() {
 		ui := make(chan []byte, 1)

@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -24,10 +25,12 @@ import (
 )
 
 type Measurements struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	signals []types.Signal
-	ui      chan []byte
+	ctx          context.Context
+	cancel       context.CancelFunc
+	signals      []types.Signal
+	ui           chan []byte
+	clocks       *clockBank
+	dispatchedAt time.Time
 }
 
 func NewMeasurements(
@@ -164,6 +167,16 @@ func (measurements *Measurements) measure(
 	rows := make([]*types.Measurement, 0)
 
 	for _, signal := range signals {
+		started := time.Now()
+
+		if measurements.clocks != nil && !measurements.dispatchedAt.IsZero() {
+			measurements.clocks.observeHop(
+				"crypto",
+				string(signal.Type()),
+				started.Sub(measurements.dispatchedAt),
+			)
+		}
+
 		for _, measurement := range signal.Measure(symbol, tick) {
 			if measurement == nil {
 				continue
@@ -172,6 +185,10 @@ func (measurements *Measurements) measure(
 			measurement.Tick = tick
 
 			rows = append(rows, measurement)
+		}
+
+		if measurements.clocks != nil {
+			measurements.clocks.observe(string(signal.Type()), time.Since(started))
 		}
 	}
 

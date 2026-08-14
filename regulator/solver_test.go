@@ -83,9 +83,8 @@ func TestUpdate(t *testing.T) {
 
 	Convey("Given repeated valuations while the account has no exposure", t, func() {
 		system.Cfg = system.NewConfig()
-		baseline := system.Cfg.Snapshot()
 		thesis := types.NewThesis(t.Context(), nil)
-		ui := make(chan []byte, 1)
+		ui := make(chan []byte, 2)
 		solver, err := NewSolver(t.Context(), ui)
 		So(err, ShouldBeNil)
 		defer solver.Close()
@@ -95,12 +94,37 @@ func TestUpdate(t *testing.T) {
 
 		err = solver.Update(thesis, false)
 
-		Convey("It should retain the configured controls without fitting a response", func() {
+		Convey("It should learn explicit inactivity instead of treating no trades as success", func() {
 			So(err, ShouldBeNil)
-			So(solver.optimizer.pending, ShouldBeNil)
-			So(solver.optimizer.resolved, ShouldEqual, 0)
-			So(system.Cfg.Snapshot().Planner, ShouldResemble, baseline.Planner)
-			So(len(ui), ShouldEqual, 1)
+			So(solver.optimizer.pending, ShouldHaveLength, regulatorContextCount+controlCount)
+			So(solver.optimizer.resolved, ShouldEqual, 1)
+			So(len(ui), ShouldEqual, 2)
+		})
+	})
+
+	Convey("Given a zero allocation selected before the account becomes flat", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := types.NewThesis(t.Context(), nil)
+		solver, err := NewSolver(t.Context(), nil)
+		So(err, ShouldBeNil)
+		defer solver.Close()
+		zeroAllocation := solver.optimizer.current
+		zeroAllocation[controlAllocation] = 0
+		So(solver.applyControls(zeroAllocation), ShouldBeNil)
+		solver.optimizer.current = zeroAllocation
+		So(appendEquity(thesis, 200), ShouldBeNil)
+		So(solver.Update(thesis, false), ShouldBeNil)
+		So(appendEquity(thesis, 200), ShouldBeNil)
+
+		err = solver.Update(thesis, false)
+
+		Convey("It should identify zero allocation as inactive and explore away from it", func() {
+			So(err, ShouldBeNil)
+			So(solver.optimizer.current[controlAllocation],
+				ShouldBeGreaterThan, 0)
+			So(system.Cfg.Snapshot().Planner.MaxAllocationFraction,
+				ShouldBeGreaterThan, 0)
+			So(solver.optimizer.resolved, ShouldEqual, 1)
 		})
 	})
 

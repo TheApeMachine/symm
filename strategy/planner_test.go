@@ -46,7 +46,7 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.Forecast, ShouldNotBeNil)
 			So(decision.Confidence, ShouldBeGreaterThan, system.Cfg.Planner.MinimumConfidence)
 			So(decision.Utility, ShouldEqual, 0)
-			So(decision.GraphScore, ShouldBeGreaterThan, decision.Forecast.Value)
+			So(decision.GraphScore, ShouldBeGreaterThan, 0)
 			So(decision.Trace, ShouldNotBeNil)
 			So(decision.Trace.MCTS.Iterations, ShouldEqual, system.Cfg.Planner.MCTSIterations)
 			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 1)
@@ -60,6 +60,7 @@ func TestPlannerUpdate(t *testing.T) {
 
 	Convey("Given the same positive forecast with contradicting causal evidence", t, func() {
 		system.Cfg = system.NewConfig()
+		system.Cfg.Planner.MinimumGraphScore = 0
 		thesis := plannerGraphThesis(t, 0.9)
 		stored, _ := thesis.Symbols.Load("BTC/USD")
 		symbol := stored.(*types.Symbol)
@@ -69,13 +70,14 @@ func TestPlannerUpdate(t *testing.T) {
 
 		err := planner.Update(thesis)
 
-		Convey("It should reduce the evidence score below the unadjusted forecast", func() {
+		Convey("It should assign a negative dimensionless evidence score", func() {
 			So(err, ShouldBeNil)
 			decisionValue, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			decision := decisionValue.(*types.Decision)
 			So(decision.Utility, ShouldEqual, 0)
-			So(decision.GraphScore, ShouldBeLessThan, decision.Forecast.Value)
+			So(decision.GraphScore, ShouldBeLessThan, 0)
+			So(decision.Action, ShouldEqual, types.ActionNothing)
 		})
 	})
 
@@ -92,17 +94,42 @@ func TestPlannerUpdate(t *testing.T) {
 
 		err := planner.Update(thesis)
 
-		Convey("It should retain the evaluated decision without admitting an entry", func() {
+		Convey("It should retain confidence as evidence without making it a fixed veto", func() {
 			So(err, ShouldBeNil)
 			decisionValue, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeTrue)
 			decision := decisionValue.(*types.Decision)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
-			So(decision.Reason, ShouldEqual,
-				"planner: forecast confidence does not clear regulated entry threshold")
-			retained, found := symbol.Graphs.Load("market_graph")
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.ExpectedReturn, ShouldNotBeNil)
+			So(decision.ExpectedReturn.Float64(), ShouldAlmostEqual,
+				math.Expm1(decision.PerspectiveReturn), 1e-12)
+			So(decision.GraphScore, ShouldBeGreaterThan,
+				decision.AdmissionGraphThreshold)
+		})
+	})
+
+	Convey("Given a negative predictive forecast alongside positive causal return evidence", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := plannerGraphThesis(t, 0.9)
+		stored, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := stored.(*types.Symbol)
+		graphValue, _ := symbol.Graphs.Load("market_graph")
+		graph := graphValue.(*logicgraph.Graph)
+		graph.Forecast.Value = -0.001
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
+
+		err := planner.Update(thesis)
+
+		Convey("It should let the complete perspective rather than forecast sign decide", func() {
+			So(err, ShouldBeNil)
+			decisionValue, found := symbol.Decisions.Load("BTC/USD")
 			So(found, ShouldBeTrue)
-			So(retained, ShouldEqual, graph)
+			decision := decisionValue.(*types.Decision)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.PerspectiveSources, ShouldHaveLength, 2)
+			So(decision.ExpectedReturn, ShouldNotBeNil)
+			So(decision.ExpectedReturn.Float64(), ShouldAlmostEqual,
+				math.Expm1(decision.PerspectiveReturn), 1e-12)
 		})
 	})
 
@@ -209,9 +236,9 @@ func TestGraphEvidenceMass(t *testing.T) {
 
 		supports, contradicts := graphEvidenceMass(graph)
 
-		Convey("It should report only evidence the search can traverse", func() {
+		Convey("It should report evidence across independent graph components", func() {
 			So(supports, ShouldEqual, 0.2)
-			So(contradicts, ShouldEqual, 0.0)
+			So(contradicts, ShouldEqual, 0.4)
 		})
 	})
 }
@@ -241,6 +268,7 @@ func plannerGraphThesis(t testing.TB, confidence float64) *types.Thesis {
 	graph := logicgraph.NewGraph(thesis.At)
 	graph.Forecast = forecast
 	graph.ForecastHorizon = 3
+	graph.ForwardCurve = []float64{-0.002, 0.004, 0.008}
 	graph.TaskSkill = 1.01
 	graph.TaskSkillReady = true
 	graph.AddNode(&logicgraph.Node{
@@ -249,7 +277,7 @@ func plannerGraphThesis(t testing.TB, confidence float64) *types.Thesis {
 	})
 	graph.AddNode(&logicgraph.Node{
 		ID: "causal:BTC/USD:doExpectation", Symbol: "BTC/USD", Kind: logicgraph.KindCausal,
-		Value: 0.005, Confidence: confidence,
+		Value: 0.005, Confidence: confidence, Metadata: map[string]any{"horizon": 1},
 	})
 	graph.AddEdge(&logicgraph.Edge{
 		From:       "res:BTC/USD:forecast",

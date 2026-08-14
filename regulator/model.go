@@ -10,17 +10,57 @@ import (
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
-const regulatorContextCount = 4
+const regulatorContextCount = 5
+
+const (
+	targetReturn = iota
+	targetActivity
+	targetCount
+)
 
 type optimizationResult struct {
 	controls      controlVector
 	forecast      learning.RLSOutput
+	activity      learning.RLSOutput
 	forecastReady bool
+	activityReady bool
 	skill         float64
 	skillReady    bool
 	surprise      float64
 	energy        float64
 	exploring     bool
+}
+
+/*
+candidateScore preserves the regulator's ordered objective without blending
+loss, inactivity, and return into arbitrary weights.
+*/
+type candidateScore struct {
+	losing        bool
+	inactive      bool
+	returnFloor   float64
+	activityFloor float64
+}
+
+/*
+Better reports whether this outcome is preferable under the regulator policy:
+avoid a confidently losing wallet first, avoid confident inactivity second,
+then maximize conservative wallet return and activity evidence.
+*/
+func (score candidateScore) Better(incumbent candidateScore) bool {
+	if score.losing != incumbent.losing {
+		return !score.losing
+	}
+
+	if score.inactive != incumbent.inactive {
+		return !score.inactive
+	}
+
+	if score.returnFloor != incumbent.returnFloor {
+		return score.returnFloor > incumbent.returnFloor
+	}
+
+	return score.activityFloor > incumbent.activityFloor
 }
 
 /*
@@ -60,7 +100,7 @@ func newOptimizer(config *system.Config) (*optimizer, error) {
 	architecture := []int{inputCount, inputCount + controlCount, inputCount}
 	coder := learning.NewResonanceManifold(
 		architecture,
-		1,
+		targetCount,
 		config.Resonance.LearningRate,
 	)
 
@@ -84,18 +124,22 @@ func newOptimizer(config *system.Config) (*optimizer, error) {
 func (optimizer *optimizer) update(
 	periodReturn float64,
 	drawdown float64,
+	active bool,
 ) (optimizationResult, error) {
-	if err := optimizer.resolve(periodReturn); err != nil {
+	if err := optimizer.resolve(periodReturn, active); err != nil {
 		return optimizationResult{}, err
 	}
 
-	context, err := optimizer.context(periodReturn, drawdown)
+	context, err := optimizer.context(periodReturn, drawdown, active)
 
 	if err != nil {
 		return optimizationResult{}, err
 	}
 
-	selected, exploring, skill, skillReady, err := optimizer.selectControls(context)
+	selected, exploring, skill, skillReady, err := optimizer.selectControls(
+		context,
+		active,
+	)
 
 	if err != nil {
 		return optimizationResult{}, err
@@ -117,7 +161,7 @@ func (optimizer *optimizer) update(
 		)
 	}
 
-	forecast, forecastReady, err := optimizer.forecast()
+	forecast, activity, forecastReady, err := optimizer.forecast()
 
 	if err != nil {
 		return optimizationResult{}, err
@@ -126,7 +170,9 @@ func (optimizer *optimizer) update(
 	result := optimizationResult{
 		controls:      selected,
 		forecast:      forecast,
+		activity:      activity,
 		forecastReady: forecastReady,
+		activityReady: forecastReady,
 		skill:         skill,
 		skillReady:    skillReady,
 		surprise:      optimizer.coder.ReconstructionError(),
@@ -140,14 +186,14 @@ func (optimizer *optimizer) update(
 	return result, nil
 }
 
-func (optimizer *optimizer) resolve(periodReturn float64) error {
+func (optimizer *optimizer) resolve(periodReturn float64, active bool) error {
 	if optimizer.pending == nil {
 		return nil
 	}
 
 	if _, err := optimizer.coder.SettleFromBatchOptions(
 		optimizer.pending,
-		[]float64{periodReturn},
+		[]float64{periodReturn, readiness(active)},
 		true,
 		false,
 	); err != nil {
@@ -160,8 +206,22 @@ func (optimizer *optimizer) resolve(periodReturn float64) error {
 
 func (optimizer *optimizer) selectControls(
 	context []float64,
+	active bool,
 ) (controlVector, bool, float64, bool, error) {
 	skill, skillReady := optimizer.coder.TaskSkill()
+
+	if !active {
+		selected := optimizer.current
+		selected[controlAllocation] = 1
+		selected[controlConfidence] = 0
+		selected[controlGraphThreshold] = 0
+		selected[controlUtilityThreshold] = optimizer.space.normalize(
+			controlUtilityThreshold,
+			0,
+		)
+
+		return selected, selected != optimizer.current, skill, skillReady, nil
+	}
 
 	if optimizer.resolved == 0 {
 		return optimizer.current, false, skill, skillReady, nil
@@ -195,7 +255,12 @@ func (optimizer *optimizer) best(
 		optimizer.resolved,
 	)
 	best := optimizer.current
-	bestScore := math.Inf(-1)
+	bestScore := candidateScore{
+		losing:        true,
+		inactive:      true,
+		returnFloor:   math.Inf(-1),
+		activityFloor: math.Inf(-1),
+	}
 
 	for _, candidate := range candidates {
 		if _, err := optimizer.coder.SettleFromBatchOptions(
@@ -210,7 +275,7 @@ func (optimizer *optimizer) best(
 			)
 		}
 
-		forecast, ready, err := optimizer.forecast()
+		forecast, activity, ready, err := optimizer.forecast()
 
 		if err != nil {
 			return controlVector{}, false, err
@@ -224,14 +289,28 @@ func (optimizer *optimizer) best(
 			), true, nil
 		}
 
-		distribution := distuv.StudentsT{
+		returnDistribution := distuv.StudentsT{
 			Mu:    forecast.Value,
 			Sigma: forecast.Scale,
 			Nu:    forecast.DegreesOfFreedom,
 		}
-		score := distribution.Quantile(optimizer.confidence)
+		activityDistribution := distuv.StudentsT{
+			Mu:    activity.Value,
+			Sigma: activity.Scale,
+			Nu:    activity.DegreesOfFreedom,
+		}
+		score := candidateScore{
+			losing: returnDistribution.Quantile(optimizer.confidence) < 0,
+			inactive: activityDistribution.Quantile(
+				optimizer.confidence,
+			) < system.UninformativeDirectionConfidence,
+			returnFloor: returnDistribution.Quantile(1 - optimizer.confidence),
+			activityFloor: activityDistribution.Quantile(
+				1 - optimizer.confidence,
+			),
+		}
 
-		if score > bestScore {
+		if score.Better(bestScore) {
 			best = candidate
 			bestScore = score
 		}
@@ -243,6 +322,7 @@ func (optimizer *optimizer) best(
 func (optimizer *optimizer) context(
 	periodReturn float64,
 	drawdown float64,
+	active bool,
 ) ([]float64, error) {
 	returnOutput, err := optimizer.returnScale.Measure(periodReturn)
 
@@ -261,6 +341,7 @@ func (optimizer *optimizer) context(
 		readiness(returnOutput.Ready),
 		drawdownOutput.Value,
 		readiness(drawdownOutput.Ready),
+		readiness(active),
 	}, nil
 }
 
@@ -276,23 +357,25 @@ func (optimizer *optimizer) input(
 
 func (optimizer *optimizer) forecast() (
 	learning.RLSOutput,
+	learning.RLSOutput,
 	bool,
 	error,
 ) {
 	forecasts, err := optimizer.coder.RolloutTaskForecast(1)
 
 	if err != nil {
-		return learning.RLSOutput{}, false, fmt.Errorf(
+		return learning.RLSOutput{}, learning.RLSOutput{}, false, fmt.Errorf(
 			"regulator: forecast candidate account return: %w",
 			err,
 		)
 	}
 
-	if len(forecasts) == 0 || !forecasts[0].Ready {
-		return learning.RLSOutput{}, false, nil
+	if len(forecasts) != targetCount || !forecasts[targetReturn].Ready ||
+		!forecasts[targetActivity].Ready {
+		return learning.RLSOutput{}, learning.RLSOutput{}, false, nil
 	}
 
-	return forecasts[0], true, nil
+	return forecasts[targetReturn], forecasts[targetActivity], true, nil
 }
 
 func readiness(ready bool) float64 {

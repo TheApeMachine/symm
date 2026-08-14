@@ -15,6 +15,10 @@ func TestStatusFromMarket(t *testing.T) {
 		status, err = StatusFromMarket("partially_filled")
 		So(err, ShouldBeNil)
 		So(status, ShouldEqual, PARTIAL_FILLED)
+
+		status, err = StatusFromMarket("rejected")
+		So(err, ShouldBeNil)
+		So(status, ShouldEqual, REJECTED)
 	})
 
 	Convey("Given an unknown exec_type", t, func() {

@@ -64,6 +64,7 @@ func NewStoploss(
 	entryPrice *decimal.Decimal,
 	mark *decimal.Decimal,
 	forecast *learning.RLSOutput,
+	forwardCurve []float64,
 	tickSize *decimal.Decimal,
 	entryFeeRate *decimal.Decimal,
 	exitFeeRate *decimal.Decimal,
@@ -84,7 +85,7 @@ func NewStoploss(
 		Symbol:       symbol,
 	}
 
-	floor, trailDistance, err := stoploss.forecastGeometry(mark)
+	floor, trailDistance, err := stoploss.forecastGeometry(mark, forwardCurve)
 
 	if err != nil {
 		cancel()
@@ -252,6 +253,7 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 
 func (stoploss *Stoploss) forecastGeometry(
 	mark *decimal.Decimal,
+	forwardCurve []float64,
 ) (*decimal.Decimal, *decimal.Decimal, error) {
 	if mark == nil || mark.Sign() <= 0 {
 		return nil, nil, fmt.Errorf("stoploss: positive mark required")
@@ -273,7 +275,18 @@ func (stoploss *Stoploss) forecastGeometry(
 		return nil, nil, fmt.Errorf("stoploss: forecast distribution required")
 	}
 
-	drawdown := -math.Expm1(stoploss.forecast.Value)
+	minimumPathReturn := stoploss.forecast.Value
+	cumulativeReturn := 0.0
+
+	for _, predictedReturn := range forwardCurve {
+		cumulativeReturn += predictedReturn
+
+		if cumulativeReturn < minimumPathReturn {
+			minimumPathReturn = cumulativeReturn
+		}
+	}
+
+	drawdown := -math.Expm1(minimumPathReturn)
 
 	if drawdown < 0 {
 		drawdown = 0

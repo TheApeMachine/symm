@@ -37,6 +37,76 @@ type Symbol struct {
 }
 
 /*
+CheckpointState materializes the concurrent decision artifacts needed to audit
+an admitted entry without serializing streaming queues or solver cursors.
+*/
+func (symbol *Symbol) CheckpointState() any {
+	checkpoint := struct {
+		ID         SymbolID       `json:"id,omitempty"`
+		Symbol     string         `json:"symbol"`
+		Status     Status         `json:"status"`
+		Tick       int64          `json:"tick"`
+		Decisions  map[string]any `json:"decisions"`
+		Graphs     map[string]any `json:"graphs"`
+		Categories map[string]any `json:"categories"`
+		Phase      map[string]any `json:"phase"`
+		Cognition  map[string]any `json:"cognition"`
+		Resonance  map[string]any `json:"resonance"`
+		Causal     map[string]any `json:"causal"`
+	}{
+		ID:        symbol.ID,
+		Symbol:    symbol.Symbol,
+		Status:    symbol.Status,
+		Tick:      symbol.Tick,
+		Decisions: checkpointMap(symbol.Decisions, nil),
+		Graphs: checkpointMap(symbol.Graphs, func(value any) any {
+			graph, valid := value.(interface{ CheckpointState() any })
+
+			if !valid {
+				return value
+			}
+
+			return graph.CheckpointState()
+		}),
+		Categories: checkpointMap(symbol.Categories, nil),
+		Phase:      checkpointMap(symbol.Phase, nil),
+		Cognition:  checkpointMap(symbol.Cognition, nil),
+		Resonance:  checkpointMap(symbol.Resonance, nil),
+		Causal:     checkpointMap(symbol.Causal, nil),
+	}
+
+	return checkpoint
+}
+
+func checkpointMap(
+	source *sync.Map,
+	transform func(any) any,
+) map[string]any {
+	checkpoint := make(map[string]any)
+
+	if source == nil {
+		return checkpoint
+	}
+
+	source.Range(func(key, value any) bool {
+		name, valid := key.(string)
+
+		if !valid || name == "" {
+			return true
+		}
+
+		if transform != nil {
+			value = transform(value)
+		}
+
+		checkpoint[name] = value
+		return true
+	})
+
+	return checkpoint
+}
+
+/*
 NewSymbol creates empty measurement state for one market symbol.
 */
 func NewSymbol(name string, ui chan []byte) *Symbol {
@@ -144,9 +214,21 @@ func (symbol *Symbol) AppendMeasurement(_ SourceType, measurement *Measurement) 
 	graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 	manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 
-	resonanceMeasurement := MeasurementToResonance(symbol.Symbol, measurement)
+	return symbol.AppendResonanceMeasurement(
+		MeasurementToResonance(symbol.Symbol, measurement),
+	)
+}
 
-	if resonanceMeasurement == nil || len(resonanceMeasurement.Readings) == 0 {
+/*
+AppendResonanceMeasurement queues one ordered predictor observation. A market
+mark without new signal readings is still ground truth for forecasts issued by
+the existing model.
+*/
+func (symbol *Symbol) AppendResonanceMeasurement(
+	measurement *ResonanceMeasurement,
+) bool {
+	if measurement == nil ||
+		(measurement.Mark <= 0 && len(measurement.Readings) == 0) {
 		return false
 	}
 
@@ -154,7 +236,7 @@ func (symbol *Symbol) AppendMeasurement(_ SourceType, measurement *Measurement) 
 		"resonance",
 		lf.NewQueue[*ResonanceMeasurement](),
 	)
-	resonanceMeasurements.(*lf.Queue[*ResonanceMeasurement]).Enqueue(resonanceMeasurement)
+	resonanceMeasurements.(*lf.Queue[*ResonanceMeasurement]).Enqueue(measurement)
 
 	return true
 }

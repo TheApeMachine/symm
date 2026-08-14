@@ -101,17 +101,22 @@ Update settles one predictive-coding manifold for every symbol carrying finite,
 normalized measurements and publishes the resulting hierarchy.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if solver.alpha <= 0 {
-		return errors.New("resonance: positive learning pace required")
+	if err := errnie.Require(map[string]any{
+		"alpha":     solver.alpha,
+		"thesis":    thesis,
+		"config":    system.Cfg,
+		"resonance": system.Cfg.Resonance,
+		"planner":   system.Cfg.Planner,
+		"layers":    system.Cfg.Resonance.Layers,
+	}); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.PreconditionFailed,
+			"resonance: thesis required",
+			nil,
+		))
 	}
 
 	config := system.Cfg.Snapshot()
-
-	if config == nil || config.Resonance == nil || config.Planner == nil ||
-		config.Resonance.Layers <= 0 {
-		return errors.New("resonance: positive layer count required")
-	}
-
 	group, _ := errgroup.WithContext(solver.ctx)
 
 	thesis.Symbols.Range(func(key, value any) bool {
@@ -125,21 +130,15 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		group.Go(func() error {
 			readings := make(map[string]float64)
 			mark := 0.0
-			tick := int64(0)
-			markTick := int64(0)
+			tick := thesis.Tick
 
 			for rm := range symbol.ResonanceMeasurements() {
 				if rm == nil {
 					continue
 				}
 
-				if rm.Tick > tick {
-					tick = rm.Tick
-				}
-
-				if rm.Mark > 0 && (rm.Tick > markTick || rm.Tick == markTick && mark == 0) {
+				if rm.Mark > 0 {
 					mark = rm.Mark
-					markTick = rm.Tick
 				}
 
 				for identity, value := range rm.Readings {
@@ -147,8 +146,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				}
 			}
 
-			if len(readings) == 0 {
+			if len(readings) == 0 && mark <= 0 {
 				return nil
+			}
+
+			if tick <= 0 {
+				return errors.New("resonance: positive analysis tick required")
 			}
 
 			stateValue, _ := solver.states.LoadOrStore(name, make(map[string]float64))
@@ -181,7 +184,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				updated = true
 			}
 
-			if !updated {
+			if !updated && (mark <= 0 || len(state) == 0) {
 				return nil
 			}
 
@@ -464,6 +467,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 						&types.ResonanceReturnForecast{
 							Distribution: aggregate[0],
 							Horizon:      supportedHorizon,
+							ForwardCurve: slices.Clone(forwardCurve),
 						},
 					)
 				}

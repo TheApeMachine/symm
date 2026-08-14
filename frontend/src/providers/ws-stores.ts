@@ -1,11 +1,16 @@
 import { createStore } from "@tanstack/store";
 import { appStore } from "#/collections/app";
 import { latestValues } from "#/collections/circular";
-import { DECISION_HISTORY_LIMIT } from "#/collections/decisions";
+import {
+	DECISION_HISTORY_LIMIT,
+	decisionStore,
+	latestStrategyDecisions,
+} from "#/collections/decisions";
 import { createKeyedStore } from "#/collections/store";
 import { paintTerminalFluidChart } from "#/components/charts/fluid";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
 import type { JSONSerializable, Paint } from "#/components/ui/paint";
+import type { Decision } from "#/types/thesis";
 
 type FrameEvent = {
 	key: string;
@@ -148,6 +153,33 @@ const openPositions = (): JSONSerializable[] =>
 	});
 
 const journalEntries = (): JSONSerializable[] => journal.state.journal.values();
+
+const currentStrategy = (value: JSONSerializable): JSONSerializable => {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("strategy frame requires an object envelope");
+	}
+
+	if (value.decisions === undefined) {
+		throw new Error("strategy frame requires decisions");
+	}
+
+	const rows = frameRows(value.decisions);
+
+	for (const row of rows) {
+		if (symbolIdentity(row) === "") {
+			throw new Error("strategy decision requires symbol");
+		}
+	}
+
+	decisionStore.actions.updateFrame(rows as unknown as Decision[]);
+
+	return {
+		...value,
+		decisions: latestStrategyDecisions(
+			decisionStore.state.decisions,
+		) as unknown as JSONSerializable,
+	};
+};
 
 const frameKey = (value: JSONSerializable): string => {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -322,6 +354,11 @@ export const attach = (worker: Worker) => {
 					pendingUpdates.set(RESONANCE_FOCUS, focused);
 				}
 
+				continue;
+			}
+
+			if (key === "strategy") {
+				pendingUpdates.set(key, currentStrategy(update));
 				continue;
 			}
 

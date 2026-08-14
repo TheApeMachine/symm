@@ -158,13 +158,15 @@ func TestUpdate(t *testing.T) {
 		}
 
 		reading, readingErr := solver.domain.Reading()
+		storedReading, found := thesis.ManifoldSnapshot()
 
 		Convey("It should append, advance, read, and stamp one manifold cut", func() {
 			So(err, ShouldBeNil)
 			So(solver.settling.Load(), ShouldBeFalse)
 			So(readingErr, ShouldBeNil)
 			So(solver.domain.ParticleCount(), ShouldEqual, 2)
-			So(thesis.Manifold, ShouldResemble, reading)
+			So(found, ShouldBeTrue)
+			So(storedReading, ShouldResemble, reading)
 		})
 	})
 
@@ -275,6 +277,7 @@ func TestStep(t *testing.T) {
 			symbol: "BTC/USD", particles: particles,
 		}})
 		reading, readingErr := solver.domain.Reading()
+		storedReading, found := thesis.ManifoldSnapshot()
 		payloads := make([][]byte, 0, len(ui))
 
 		for len(ui) > 0 {
@@ -318,7 +321,8 @@ func TestStep(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(readingErr, ShouldBeNil)
 			So(solver.stepped, ShouldBeTrue)
-			So(thesis.Manifold, ShouldResemble, reading)
+			So(found, ShouldBeTrue)
+			So(storedReading, ShouldResemble, reading)
 			So(payloads, ShouldHaveLength, 2)
 			So(fieldFrames, ShouldEqual, 2)
 			So(particleFrames, ShouldEqual, 2)

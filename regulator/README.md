@@ -14,11 +14,13 @@ For valuation event `t`, the regulator retains:
   zero;
 - the exact normalized control vector applied for the interval after `t`.
 
-Only a later valuation revision resolves that input with
-`log(equity[t+1] / equity[t])`. The outcome is never present in the input it
-labels. Broker revisions and a serialized update boundary ensure a valuation is
-spent at most once. A separately observed unchanged valuation remains a genuine
-zero-return outcome; only repeat delivery of the same revision is ignored.
+Only a later valuation revision resolves that input with both
+`log(equity[t+1] / equity[t])` and whether the interval carried market exposure.
+The outcomes are never present in the input they label. Broker revisions and a
+serialized update boundary ensure a valuation is spent at most once. A
+separately observed unchanged valuation remains a genuine zero-return outcome;
+when it was also flat it is retained as explicit inactivity rather than skipped.
+Only repeat delivery of the same revision is ignored.
 
 `learning.ResonanceManifold` performs generative predictive coding over this
 state/control vector. Its supervised RLS head provides a Student-t posterior for
@@ -33,7 +35,9 @@ bounds:
 | Control | Lower bound | Upper bound | Consumer |
 |---|---:|---:|---|
 | Entry allocation ceiling | zero | configured ceiling | `strategy.Allocation` |
-| Forecast confidence gate | no-information probability (0.5) | probability one | `strategy.Planner` |
+| Forecast horizon confidence | no-information probability (0.5) | probability one | `logic/resonance` |
+| Graph admission boundary | signed reward minimum (-1) | signed reward maximum (1) | `strategy.Planner` |
+| Net utility boundary | signed return minimum (-1) | signed return maximum (1) | `strategy.Allocation`, `broker.Desk` |
 | Causal search bias | zero | configured baseline | causal MCTS |
 | MCTS iterations | one simulation | configured baseline | causal MCTS |
 | MCTS exploration | zero | configured baseline | causal MCTS |
@@ -45,16 +49,24 @@ drawdown are not relabeled as one another.
 
 ## Identification and optimization
 
-Before prequential skill beats the zero-return baseline, the regulator applies
-one-coordinate interventions. Their normalized radius is
+While the wallet has no exposure, the regulator publishes maximum permitted
+allocation, the no-information forecast-horizon confidence, the full graph
+admission domain, and exact break-even net utility. This directly encodes the
+activity objective: an inactive wallet must not become more restrictive before
+it has produced an exposed outcome to learn from.
+
+Once exposed, and before prequential skill beats the zero-return baseline, the
+regulator applies one-coordinate interventions. Their normalized radius is
 `1 / sqrt(movable controls + completed intervention cycles)`, so exploration
 shrinks as evidence accumulates without relying on a fixed perturbation size.
 
 After the model becomes predictive, it settles bounded neighboring control
 vectors without learning from or advancing temporal state on them and evaluates
-their task-head posterior. It selects the configured upper Student-t quantile,
-which balances predicted wallet return with uncertainty about settings that
-have not been sufficiently tested.
+both task-head posteriors. Candidate comparison is ordered rather than blended:
+a confidently losing wallet is worst, confident inactivity is next, and the
+lower Student-t wallet-return quantile decides between candidates in the same
+class. Activity evidence breaks an otherwise equal return comparison. The
+classification and lower quantiles use the configured optimization confidence.
 One persistent intervention per control-dimensional cycle keeps the system
 identifiable as market conditions change.
 
@@ -76,9 +88,8 @@ feed also does not label deposits and withdrawals, so an external cash flow
 would be indistinguishable from trading PnL and must not be introduced while
 the optimizer is live without first adding cash-flow attribution.
 
-Resonance learning rate, stop geometry, and the MCTS utility threshold are not
-currently optimized. The live resonance solvers do not expose a safe retained-
+Resonance learning rate and stop geometry are not currently optimized. The live
+resonance solvers do not expose a safe retained-
 state actuator for their learning pace, stop geometry has a separate execution
-contract, and no stationary configured domain yet exists for graph reward.
-Adding any of them requires a real live consumer and an explicit domain before
-it becomes another control coordinate.
+contract. Adding either requires a real live consumer and an explicit domain
+before it becomes another control coordinate.

@@ -2,11 +2,15 @@ package strategy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
+	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
@@ -19,14 +23,16 @@ import (
 )
 
 type Planner struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	status     types.Status
-	ui         chan []byte
-	recorder   *audit.Recorder
-	mctsEngine *mcts.CausalMCTS
-	allocation *Allocation
-	desk       *broker.Desk
+	ctx           context.Context
+	cancel        context.CancelFunc
+	status        types.Status
+	ui            chan []byte
+	recorder      *audit.Recorder
+	mctsEngine    *mcts.CausalMCTS
+	allocation    *Allocation
+	desk          *broker.Desk
+	ObserveModule func(string, time.Duration)
+	ObserveHop    func(string, string, time.Duration)
 }
 
 func NewPlanner(
@@ -88,6 +94,14 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 
 	createdDecisions := make([]*types.Decision, 0)
 	var err error
+	plannerStarted := time.Now()
+	lastSearchEnd := plannerStarted
+
+	defer func() {
+		if planner.ObserveModule != nil {
+			planner.ObserveModule("planner", time.Since(plannerStarted))
+		}
+	}()
 
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol := key.(string)
@@ -117,9 +131,20 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		planner.mctsEngine.C = config.Planner.ExplorationConstant
 		planner.mctsEngine.CausalAlpha = config.Planner.CausalAlpha
 
+		searchStarted := time.Now()
+
+		if planner.ObserveHop != nil {
+			planner.ObserveHop("planner", "mcts", searchStarted.Sub(lastSearchEnd))
+		}
+
 		root, action, searchErr := planner.mctsEngine.Search(
 			state, config.Planner.MCTSIterations, history,
 		)
+		lastSearchEnd = time.Now()
+
+		if planner.ObserveModule != nil {
+			planner.ObserveModule("mcts", lastSearchEnd.Sub(searchStarted))
+		}
 
 		if searchErr != nil {
 			err = fmt.Errorf("planner: graph search for %s: %w", symbol, searchErr)
@@ -130,6 +155,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		decision.At = graph.At
 		decision.Forecast = graph.Forecast
 		decision.ForecastHorizon = graph.ForecastHorizon
+		decision.ForwardCurve = slices.Clone(graph.ForwardCurve)
 		confidence, confidenceErr := forecastDirectionConfidence(graph.Forecast)
 
 		if confidenceErr != nil {
@@ -138,6 +164,20 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 
 		decision.Confidence = confidence
+		perspectiveReturn, perspectiveConfidence, perspectiveSources, perspectiveErr :=
+			decisionPerspective(graph, confidence)
+
+		if perspectiveErr != nil {
+			err = fmt.Errorf("planner: decision perspective for %s: %w", symbol, perspectiveErr)
+			return false
+		}
+
+		decision.PerspectiveReturn = perspectiveReturn
+		decision.PerspectiveConfidence = perspectiveConfidence
+		decision.PerspectiveSources = perspectiveSources
+		decision.ExpectedReturn = decimal.NewFromFloat64(math.Expm1(perspectiveReturn))
+		decision.AdmissionGraphThreshold = config.Planner.MinimumGraphScore
+		decision.AdmissionUtilityThreshold = config.Planner.MinimumUtility
 		decision.Alternatives = make(map[string]float64)
 		decision.Trace = decisionTrace(
 			graph,
@@ -155,24 +195,13 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			}
 		}
 
-		if graph.Forecast.Value > 0 &&
-			decision.GraphScore > 0 &&
-			decision.Confidence >= config.Planner.MinimumConfidence {
+		if decision.GraphScore >= config.Planner.MinimumGraphScore {
 			decision.Action = types.ActionEnter
 			decision.Cause = "opportunity_entry"
 		}
 
-		if graph.Forecast.Value <= 0 {
-			decision.Reason = "planner: forecast does not support entry"
-		}
-
-		if graph.Forecast.Value > 0 &&
-			decision.Confidence < config.Planner.MinimumConfidence {
-			decision.Reason = "planner: forecast confidence does not clear regulated entry threshold"
-		}
-
-		if decision.Action != types.ActionEnter && decision.Reason == "" {
-			decision.Reason = "planner: evidence graph does not support entry"
+		if decision.Action != types.ActionEnter {
+			decision.Reason = "planner: graph perspective does not clear regulated admission boundary"
 		}
 
 		createdDecisions = append(createdDecisions, decision)
@@ -188,9 +217,21 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if planner.allocation != nil {
+		allocationStarted := time.Now()
+
+		if planner.ObserveHop != nil {
+			planner.ObserveHop("mcts", "allocation", allocationStarted.Sub(lastSearchEnd))
+		}
+
 		if err = planner.allocation.Calculate(createdDecisions); err != nil {
 			return err
 		}
+
+		if planner.ObserveModule != nil {
+			planner.ObserveModule("allocation", time.Since(allocationStarted))
+		}
+
+		lastSearchEnd = time.Now()
 	}
 
 	for _, decision := range createdDecisions {
@@ -209,6 +250,14 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 	}
 
+	if err = audit.Record(planner.recorder, decisions); err != nil {
+		var saturated types.SaturatedError
+
+		if !errors.As(err, &saturated) {
+			errnie.Error(fmt.Errorf("planner: audit evaluated decisions: %w", err))
+		}
+	}
+
 	if !actionable {
 		utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
 			"evaluated", false,
@@ -220,20 +269,22 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if planner.desk != nil {
-		if err = planner.desk.SaveThesis(thesis); err != nil {
-			return fmt.Errorf("planner: checkpoint evaluated thesis: %w", err)
-		}
-	}
-
-	if planner.desk != nil {
 		for _, decision := range createdDecisions {
 			if decision.Action != types.ActionEnter {
 				continue
 			}
 
+			executeStarted := time.Now()
+
+			if planner.ObserveHop != nil {
+				planner.ObserveHop("allocation", "desk", executeStarted.Sub(lastSearchEnd))
+			}
+
 			if err = planner.desk.Execute(*decision); err != nil {
 				return fmt.Errorf("planner: execute %s: %w", decision.Symbol, err)
 			}
+
+			lastSearchEnd = time.Now()
 		}
 	}
 

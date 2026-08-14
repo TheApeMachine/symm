@@ -136,7 +136,7 @@ func (instrument *Instrument) Subscribe() error {
 			subscribe(batch)
 		}
 
-		time.Sleep(viper.GetViper().GetDuration("market.subscribe.delay"))
+		time.Sleep(viper.GetViper().GetDuration("market.subscribe.pace"))
 	}
 
 	instrument.status = types.READY

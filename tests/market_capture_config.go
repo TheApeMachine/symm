@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/theapemachine/symm/kraken"
 	testtypes "github.com/theapemachine/symm/tests/types"
 )
 
@@ -21,6 +22,136 @@ type capturedPair struct {
 	CostMinimum  json.Number     `json:"costmin"`
 	TickSize     json.Number     `json:"tick_size"`
 	Status       string          `json:"status"`
+}
+
+type capturedStart struct {
+	last float64
+	bid  float64
+	ask  float64
+}
+
+/*
+CaptureSymbolsFromFrames reconstructs replay configuration from one live
+capture containing market profiles and ticker frames.
+*/
+func CaptureSymbolsFromFrames(
+	reader io.Reader,
+	depth int,
+) ([]*testtypes.Symbol, error) {
+	if reader == nil || depth <= 0 {
+		return nil, fmt.Errorf("market: capture and positive depth required")
+	}
+
+	decoder := json.NewDecoder(reader)
+	profiles := make(map[string]kraken.MarketProfile)
+	starts := make(map[string]capturedStart)
+
+	for record := 1; ; record++ {
+		frame := captureFrame{}
+		err := decoder.Decode(&frame)
+
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("market: decode capture record %d: %w", record, err)
+		}
+
+		payload := struct {
+			Channel string                 `json:"channel"`
+			Type    string                 `json:"type"`
+			Data    []kraken.MarketProfile `json:"data"`
+		}{}
+
+		if err = json.Unmarshal(frame.Payload, &payload); err != nil {
+			return nil, fmt.Errorf("market: decode capture payload %d: %w", record, err)
+		}
+
+		if payload.Channel == "symm_metadata" && payload.Type == "market_profiles" {
+			for _, profile := range payload.Data {
+				profiles[profile.Symbol] = profile
+			}
+
+			continue
+		}
+
+		if payload.Channel != "ticker" {
+			continue
+		}
+
+		ticker := struct {
+			Data []struct {
+				Symbol string      `json:"symbol"`
+				Last   json.Number `json:"last"`
+				Bid    json.Number `json:"bid"`
+				Ask    json.Number `json:"ask"`
+			} `json:"data"`
+		}{}
+
+		if err = json.Unmarshal(frame.Payload, &ticker); err != nil {
+			return nil, fmt.Errorf("market: decode ticker payload %d: %w", record, err)
+		}
+
+		for _, data := range ticker.Data {
+			if _, found := starts[data.Symbol]; found {
+				continue
+			}
+
+			last, lastErr := data.Last.Float64()
+			bid, bidErr := data.Bid.Float64()
+			ask, askErr := data.Ask.Float64()
+
+			if lastErr != nil || bidErr != nil || askErr != nil ||
+				last <= 0 || bid <= 0 || ask <= bid {
+				return nil, fmt.Errorf("market: invalid first ticker for %s", data.Symbol)
+			}
+
+			starts[data.Symbol] = capturedStart{last: last, bid: bid, ask: ask}
+		}
+	}
+
+	names := make([]string, 0, len(profiles))
+
+	for symbol := range profiles {
+		if _, found := starts[symbol]; found {
+			names = append(names, symbol)
+		}
+	}
+
+	sort.Strings(names)
+	symbols := make([]*testtypes.Symbol, 0, len(names))
+
+	for index, name := range names {
+		profile := profiles[name]
+		start := starts[name]
+		pair := profile.Pair
+
+		if pair.TickSize == nil || pair.OrderMinimum == nil ||
+			pair.CostMinimum == nil || profile.Taker.Fee == nil ||
+			profile.Maker.Fee == nil {
+			return nil, fmt.Errorf("market: incomplete profile for %s", name)
+		}
+
+		midpoint := (start.ask + start.bid) / 2
+		symbol := testtypes.NewSymbol(name, start.last, int64(index+1))
+		symbol.PriceIncrement = pair.TickSize.Float64()
+		symbol.PricePrecision = pair.PairDecimals
+		symbol.QuantityPrecision = pair.LotDecimals
+		symbol.BaseSpreadFraction = (start.ask - start.bid) / midpoint
+		symbol.TakerFeePercent = profile.Taker.Fee.Float64()
+		symbol.MakerFeePercent = profile.Maker.Fee.Float64()
+		symbol.OrderMinimum = pair.OrderMinimum.Float64()
+		symbol.CostMinimum = pair.CostMinimum.Float64()
+		symbol.BookDepthLevels = depth
+		symbols = append(symbols, symbol)
+	}
+
+	if len(symbols) == 0 {
+		return nil, fmt.Errorf("market: capture has no complete market profiles")
+	}
+
+	return symbols, nil
 }
 
 /*

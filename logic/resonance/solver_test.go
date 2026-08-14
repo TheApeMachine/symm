@@ -93,6 +93,7 @@ func TestUpdate(t *testing.T) {
 		ticks := []int64{3, 11, 25, 48, 76, 109, 147, 190}
 
 		for epoch, tick := range ticks {
+			thesis.Tick = tick
 			appendResonanceCut(
 				symbol, tick, 100+float64(epoch), float64(epoch+1),
 			)
@@ -154,6 +155,7 @@ func TestUpdate(t *testing.T) {
 				*frame.Resonance.LastRealizedReturn-*frame.Resonance.LastResolvedForecast)
 
 			sequence := history.(*sampleHistory).sequence
+			thesis.Tick = 190
 			appendResonanceSource(symbol, types.SourceHawkes, 190, 107, 9)
 			So(solver.Update(thesis), ShouldBeNil)
 			So(history.(*sampleHistory).sequence, ShouldEqual, sequence)
@@ -181,6 +183,7 @@ func TestUpdate(t *testing.T) {
 
 		for tick := int64(1); tick <= 40 && !foundResolution; tick++ {
 			mark := 100 + float64(tick) + math.Sin(float64(tick))
+			thesis.Tick = tick
 			appendResonanceCut(symbol, tick, mark, math.Cos(float64(tick)))
 			So(solver.Update(thesis), ShouldBeNil)
 			stored, found := symbol.Resonance.Load(symbol.Symbol)
@@ -242,6 +245,7 @@ func TestUpdate(t *testing.T) {
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
 		for tick := int64(1); tick <= 8; tick++ {
+			thesis.Tick = tick
 			appendResonanceCut(symbol, tick, 100+float64(tick), float64(tick))
 			So(solver.Update(thesis), ShouldBeNil)
 		}
@@ -260,6 +264,7 @@ func TestUpdate(t *testing.T) {
 		So(issuedErr, ShouldBeNil)
 		So(issued[1].Ready, ShouldBeTrue)
 
+		thesis.Tick = 9
 		appendResonanceCut(symbol, 9, 109, 9)
 		So(solver.Update(thesis), ShouldBeNil)
 		issuedSequence := history.sequence
@@ -268,10 +273,12 @@ func TestUpdate(t *testing.T) {
 		So(pending[0].horizon, ShouldEqual, 2)
 		issuedForecast := pending[0].forecast
 
+		thesis.Tick = 10
 		appendResonanceCut(symbol, 10, 112, 10)
 		So(solver.Update(thesis), ShouldBeNil)
 		_, prematurelyResolved := history.ledger.horizons[2]
 
+		thesis.Tick = 11
 		appendResonanceCut(symbol, 11, 119, 11)
 		So(solver.Update(thesis), ShouldBeNil)
 		resolved := history.ledger.horizons[2]
@@ -321,6 +328,7 @@ func TestUpdate(t *testing.T) {
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
 		for tick := int64(1); tick <= 4; tick++ {
+			thesis.Tick = tick
 			appendResonanceSource(
 				symbol, types.SourceHawkes, tick, 100+float64(tick), float64(tick),
 			)
@@ -336,12 +344,14 @@ func TestUpdate(t *testing.T) {
 			So(resolvedBefore, ShouldBeGreaterThan, 0)
 
 			for tick := int64(5); tick <= 7; tick++ {
+				thesis.Tick = tick
 				appendResonanceSource(
 					symbol, types.SourceCVD, tick, 100+float64(tick), float64(tick),
 				)
 				So(solver.Update(thesis), ShouldBeNil)
 			}
 
+			thesis.Tick = 8
 			appendResonanceSource(symbol, types.SourceHawkes, 8, 108, 8)
 			So(solver.Update(thesis), ShouldBeNil)
 			schema, found := solver.schemas.Load(symbol.Symbol)
@@ -354,6 +364,96 @@ func TestUpdate(t *testing.T) {
 			So(found, ShouldBeTrue)
 			So(retainedHistory.(*sampleHistory).resolved,
 				ShouldBeGreaterThan, resolvedBefore)
+		})
+	})
+
+	Convey("Given delayed signal rows from consecutive ticker epochs", t, func() {
+		previousConfig := system.Cfg
+		system.Cfg = system.NewConfig()
+		system.Cfg.Resonance.Layers = 3
+		Reset(func() { system.Cfg = previousConfig })
+
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("SYND/USD", nil)
+		thesis.Symbols.Store(symbol.Symbol, symbol)
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+
+		for analysisTick := int64(1); analysisTick <= 8; analysisTick++ {
+			thesis.Tick = analysisTick
+			appendResonanceSource(
+				symbol,
+				types.SourceCVD,
+				1,
+				0.015+float64(analysisTick)*0.0001,
+				float64(analysisTick),
+			)
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		Convey("It should resolve each informative analysis epoch instead of freezing on the row tick", func() {
+			historyValue, found := solver.histories.Load(symbol.Symbol)
+			So(found, ShouldBeTrue)
+			history := historyValue.(*sampleHistory)
+			So(history.sequence, ShouldEqual, 6)
+			So(history.resolved, ShouldEqual, 5)
+			So(history.ticks, ShouldResemble, []int64{8})
+		})
+	})
+
+	Convey("Given an initialized model followed by ticker-only market marks", t, func() {
+		previousConfig := system.Cfg
+		system.Cfg = system.NewConfig()
+		system.Cfg.Resonance.Layers = 3
+		Reset(func() { system.Cfg = previousConfig })
+
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("AKE/USD", nil)
+		thesis.Symbols.Store(symbol.Symbol, symbol)
+		solver := NewSolver(t.Context(), nil, nil, testAlpha)
+
+		for tick := int64(1); tick <= 12; tick++ {
+			thesis.Tick = tick
+			appendResonanceSource(
+				symbol,
+				types.SourceCVD,
+				tick,
+				100+float64(tick),
+				math.Sin(float64(tick)),
+			)
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		coderValue, found := solver.coders.Load(symbol.Symbol)
+		So(found, ShouldBeTrue)
+		coder := coderValue.(*learning.ResonanceManifold)
+		before, err := coder.RolloutTaskForecast(1)
+		So(err, ShouldBeNil)
+		So(before, ShouldHaveLength, 1)
+		So(before[0].Ready, ShouldBeTrue)
+		historyValue, found := solver.histories.Load(symbol.Symbol)
+		So(found, ShouldBeTrue)
+		history := historyValue.(*sampleHistory)
+		sequenceBefore := history.sequence
+		resolvedBefore := history.resolved
+
+		for tick := int64(13); tick <= 16; tick++ {
+			thesis.Tick = tick
+			So(symbol.AppendResonanceMeasurement(&types.ResonanceMeasurement{
+				Tick: tick,
+				Mark: 112 + float64(tick-12)*2,
+			}), ShouldBeTrue)
+			So(solver.Update(thesis), ShouldBeNil)
+		}
+
+		after, err := coder.RolloutTaskForecast(1)
+		So(err, ShouldBeNil)
+		So(after, ShouldHaveLength, 1)
+
+		Convey("It should resolve issued forecasts and keep learning from every next tick", func() {
+			So(history.sequence, ShouldEqual, sequenceBefore+4)
+			So(history.resolved, ShouldEqual, resolvedBefore+4)
+			So(after[0].DegreesOfFreedom,
+				ShouldBeGreaterThan, before[0].DegreesOfFreedom)
 		})
 	})
 }
@@ -380,6 +480,7 @@ func BenchmarkUpdate(b *testing.B) {
 	solver := NewSolver(b.Context(), nil, nil, testAlpha)
 
 	for tick := int64(1); tick <= 3; tick++ {
+		thesis.Tick = tick
 		appendResonanceCut(symbol, tick, 100+float64(tick), float64(tick))
 		if err := solver.Update(thesis); err != nil {
 			b.Fatal(err)
@@ -390,6 +491,7 @@ func BenchmarkUpdate(b *testing.B) {
 
 	for index := range b.N {
 		tick := int64(index + 4)
+		thesis.Tick = tick
 		appendResonanceCut(symbol, tick, 100+float64(tick), math.Sin(float64(tick)))
 
 		if err := solver.Update(thesis); err != nil {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/physics/fluid"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -34,6 +35,13 @@ func TestThesisMarshalState(t *testing.T) {
 			So(unmarshalErr, ShouldBeNil)
 			So(checkpoint["tick"], ShouldEqual, float64(7))
 			So(checkpoint["status"], ShouldEqual, "ready")
+			symbols := checkpoint["symbols"].(map[string]any)
+			bitcoin := symbols["BTC/USD"].(map[string]any)
+			So(bitcoin["decisions"].(map[string]any), ShouldContainKey, "BTC/USD")
+			graph := bitcoin["graphs"].(map[string]any)["market_graph"].(map[string]any)
+			So(graph["ready"], ShouldEqual, true)
+			So(bitcoin["causal"].(map[string]any), ShouldContainKey, "BTC/USD")
+			So(checkpoint["equity"], ShouldNotBeNil)
 		})
 	})
 }
@@ -48,6 +56,56 @@ func TestThesisSymbol(t *testing.T) {
 		Convey("It should return the canonical symbol state", func() {
 			So(first, ShouldEqual, second)
 			So(first.Symbol, ShouldEqual, "BTC/USD")
+		})
+	})
+}
+
+func TestThesisForSymbol(t *testing.T) {
+	Convey("Given a thesis containing independent symbol state", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		bitcoin := thesis.Symbol("BTC/USD")
+		thesis.Symbol("ETH/USD")
+
+		scoped, err := thesis.ForSymbol("BTC/USD")
+
+		Convey("It should share only the selected symbol with incremental solvers", func() {
+			So(err, ShouldBeNil)
+			selected, found := scoped.Symbols.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			So(selected, ShouldEqual, bitcoin)
+			_, found = scoped.Symbols.Load("ETH/USD")
+			So(found, ShouldBeFalse)
+			So(scoped.CrossSection, ShouldEqual, thesis.CrossSection)
+		})
+
+		Convey("It should reject a symbol absent from the parent thesis", func() {
+			_, err = thesis.ForSymbol("MISSING/USD")
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestThesisStoreManifold(t *testing.T) {
+	Convey("Given a fluid reading published to a thesis", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		reading := fluid.Reading{GuidanceSpeed: 0.75}
+
+		thesis.StoreManifold(reading)
+		stored, found := thesis.ManifoldSnapshot()
+
+		Convey("It should expose one immutable atomic snapshot", func() {
+			So(found, ShouldBeTrue)
+			So(stored, ShouldResemble, reading)
+		})
+
+		Convey("It should preserve that snapshot in a symbol scope", func() {
+			thesis.Symbol("BTC/USD")
+			scoped, err := thesis.ForSymbol("BTC/USD")
+			scopedReading, scopedFound := scoped.ManifoldSnapshot()
+
+			So(err, ShouldBeNil)
+			So(scopedFound, ShouldBeTrue)
+			So(scopedReading, ShouldResemble, reading)
 		})
 	})
 }
@@ -108,4 +166,22 @@ func TestThesisEquitySnapshot(t *testing.T) {
 			So(equity.Equity.Float64(), ShouldEqual, 201.0)
 		})
 	})
+}
+
+func BenchmarkThesisStoreManifold(b *testing.B) {
+	thesis := NewThesis(b.Context(), nil)
+	reading := fluid.Reading{GuidanceSpeed: 0.75}
+
+	for b.Loop() {
+		thesis.StoreManifold(reading)
+	}
+}
+
+func BenchmarkThesisManifoldSnapshot(b *testing.B) {
+	thesis := NewThesis(b.Context(), nil)
+	thesis.StoreManifold(fluid.Reading{GuidanceSpeed: 0.75})
+
+	for b.Loop() {
+		_, _ = thesis.ManifoldSnapshot()
+	}
 }
