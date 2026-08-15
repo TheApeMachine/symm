@@ -33,6 +33,7 @@ type Planner struct {
 	desk          *broker.Desk
 	ObserveModule func(string, time.Duration)
 	ObserveHop    func(string, string, time.Duration)
+	executeEntry  func(types.Decision) error
 }
 
 func NewPlanner(
@@ -70,6 +71,29 @@ func NewPlanner(
 
 func (planner *Planner) Status() types.Status {
 	return planner.status
+}
+
+/*
+HasCapacity reports whether a new normal-slot entry can still be admitted.
+A nil desk is treated as open capacity so focused planner tests stay intact.
+*/
+func (planner *Planner) HasCapacity() bool {
+	if planner == nil || planner.desk == nil {
+		return true
+	}
+
+	return planner.desk.OpenSlots(false) > 0
+}
+
+/*
+Holding reports whether the desk already carries the named symbol.
+*/
+func (planner *Planner) Holding(symbol string) bool {
+	if planner == nil || planner.desk == nil || symbol == "" {
+		return false
+	}
+
+	return planner.desk.Holding(symbol) > 0
 }
 
 func (planner *Planner) Close() error {
@@ -269,19 +293,40 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if planner.desk != nil {
+		winners := make([]*types.Decision, 0, len(createdDecisions))
+
 		for _, decision := range createdDecisions {
 			if decision.Action != types.ActionEnter {
 				continue
 			}
 
+			winners = append(winners, decision)
+		}
+
+		slices.SortFunc(winners, admissionOrder)
+
+		for _, decision := range winners {
 			executeStarted := time.Now()
 
 			if planner.ObserveHop != nil {
 				planner.ObserveHop("allocation", "desk", executeStarted.Sub(lastSearchEnd))
 			}
 
-			if err = planner.desk.Execute(*decision); err != nil {
-				return fmt.Errorf("planner: execute %s: %w", decision.Symbol, err)
+			if planner.executeEntry != nil {
+				err = planner.executeEntry(*decision)
+			} else {
+				err = planner.desk.Execute(*decision)
+			}
+
+			if err != nil {
+				decision.Action = types.ActionNothing
+				decision.Reason = "planner: entry is no longer executable: " + err.Error()
+
+				if !errnie.IsNotAcceptable(err) {
+					return fmt.Errorf("planner: execute %s: %w", decision.Symbol, err)
+				}
+
+				continue
 			}
 
 			lastSearchEnd = time.Now()
@@ -293,6 +338,12 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			"market_graph",
 			logicgraph.NewGraph(thesis.At),
 		)
+	}
+
+	decisions = decisions[:0]
+
+	for _, decision := range createdDecisions {
+		decisions = append(decisions, *decision)
 	}
 
 	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(

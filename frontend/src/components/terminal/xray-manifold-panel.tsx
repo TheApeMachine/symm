@@ -30,7 +30,7 @@ export const XrayManifoldPanel = () => {
 							Manifold reading
 						</div>
 						<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-							settled predictive state · strict-prior return resolution
+							settled predictive state · strict-prior direction resolution
 						</div>
 					</div>
 					<div
@@ -115,11 +115,11 @@ export const XrayManifoldPanel = () => {
 							</Typography.Span>
 						</div>
 						<div className="flex justify-between gap-3">
-							<span className="text-(--f3)">forward t+1</span>
+							<span className="text-(--f3)">direction t+1</span>
 							<Typography.Span
 								data-paint="taskForecast"
 								data-paint-absent="—"
-								data-paint-format=".8f"
+								data-paint-format="dir"
 								className="text-right text-(--f1)"
 							>
 								—

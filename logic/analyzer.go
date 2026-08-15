@@ -23,6 +23,7 @@ import (
 )
 
 type Solver interface {
+	Name() string
 	Update(thesis *types.Thesis) error
 	Close() error
 }
@@ -109,25 +110,13 @@ func NewAnalyzer(
 	return analyzer
 }
 
-func (analyzer *Analyzer) Process(
-	thesis *types.Thesis,
-	symbol string,
-	at time.Time,
-	measurementsReady bool,
-	resonanceReady bool,
-) error {
-	symbolThesis, err := thesis.ForSymbol(symbol)
-
-	if err != nil {
-		return err
-	}
-
-	symbolThesis.At = at
+func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
 	groupNames := []string{
 		string(types.SourceCategory),
 		string(types.SourceCausal),
 		string(types.SourceGraph),
 	}
+
 	previousEnd := time.Now()
 
 	for groupIndex, solvers := range analyzer.solverGroups {
@@ -142,53 +131,20 @@ func (analyzer *Analyzer) Process(
 		group, _ := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
-			if !measurementsReady && solver != analyzer.resonance {
-				if _, graphSolver := solver.(*graph.Solver); !graphSolver {
-					continue
-				}
-			}
-
-			if solver == analyzer.resonance && !resonanceReady {
-				continue
-			}
-
-			source := ""
-
-			switch solver.(type) {
-			case *category.Solver:
-				source = string(types.SourceCategory)
-			case *manifold.Solver:
-				source = string(types.SourceManifold)
-			case *causal.Solver:
-				source = string(types.SourceCausal)
-			case *cognition.Solver:
-				source = string(types.SourceCognition)
-			case *graph.Solver:
-				source = string(types.SourceGraph)
-			default:
-				source = string(types.SourceResonance)
-			}
-
 			group.Go(func() error {
 				utils.PublishPriority(analyzer.ui, datura.NewMap("activity", datura.NewMap(
-					source, "running",
+					solver.Name(), "running",
 				)))
 
 				defer utils.PublishPriority(analyzer.ui, datura.NewMap("activity", datura.NewMap(
-					source, "done",
+					solver.Name(), "done",
 				)))
 
-				target := symbolThesis
-
-				if _, global := solver.(*manifold.Solver); global {
-					target = thesis
-				}
-
 				started := time.Now()
-				err := solver.Update(target)
+				err := solver.Update(thesis)
 
 				if analyzer.ObserveModule != nil {
-					analyzer.ObserveModule(source, time.Since(started))
+					analyzer.ObserveModule(solver.Name(), time.Since(started))
 				}
 
 				if err != nil {
@@ -204,7 +160,11 @@ func (analyzer *Analyzer) Process(
 		}
 
 		if err := group.Wait(); err != nil {
-			return err
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"analyzer: parallel solver update failed",
+				err,
+			))
 		}
 
 		previousEnd = time.Now()
@@ -218,6 +178,31 @@ Status reports analyzer readiness for the boot gate.
 */
 func (analyzer *Analyzer) Status() types.Status {
 	return analyzer.status
+}
+
+/*
+Settling reports whether any solver still holds work started by the last
+Process call. The manifold is the only solver that continues after Update
+returns.
+*/
+func (analyzer *Analyzer) Settling() bool {
+	if analyzer == nil {
+		return false
+	}
+
+	for _, solver := range analyzer.solvers {
+		manifold, ok := solver.(*manifold.Solver)
+
+		if !ok {
+			continue
+		}
+
+		if manifold.Settling() {
+			return true
+		}
+	}
+
+	return false
 }
 
 /*

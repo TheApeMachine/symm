@@ -1,16 +1,18 @@
 package types
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
 )
 
 /*
-QuoteHistory retains bounded causal quote context for owner-local tape signals.
-One symbol worker owns each instance; it intentionally contains no locks.
+QuoteHistory retains bounded causal quote context for tape signals. Generate
+fans the same instance across symbol workers, so the window map is serialized.
 */
 type QuoteHistory struct {
+	mutex    sync.RWMutex
 	capacity int
 	windows  map[string]*quoteWindow
 }
@@ -44,6 +46,9 @@ func (history *QuoteHistory) Observe(ticker kraken.TickerData) bool {
 		ticker.Ask.Cmp(ticker.Bid) <= 0 {
 		return false
 	}
+
+	history.mutex.Lock()
+	defer history.mutex.Unlock()
 
 	window := history.windows[ticker.Symbol]
 
@@ -79,6 +84,9 @@ func (history *QuoteHistory) At(
 	if history == nil || symbol == "" || eventTime.IsZero() {
 		return kraken.TickerData{}, false
 	}
+
+	history.mutex.RLock()
+	defer history.mutex.RUnlock()
 
 	window := history.windows[symbol]
 

@@ -2,17 +2,20 @@ import { FluidRecordReader } from "./record";
 import {
 	decodeFields,
 	decodeParticles,
+	decodePhase,
 	type FluidFields,
 	type FluidParticle,
 } from "./wire";
 
 const fieldsChannel = "fluid-fields";
 const particlesChannel = "fluid-particles";
+const phaseChannel = "fluid-phase";
 const textDecoder = new TextDecoder();
 
 export type FluidFeedHandlers = {
 	onFields: (fields: FluidFields) => void;
 	onParticles: (particles: FluidParticle[]) => void;
+	onPhase: (frame: Record<string, unknown>) => void;
 	onState: (state: RTCPeerConnectionState | "connecting") => void;
 	onError: (error: Error) => void;
 };
@@ -44,7 +47,7 @@ const errorValue = (value: unknown) =>
 	value instanceof Error ? value : new Error(String(value));
 
 /*
-FluidWebRTCFeed owns one peer connection and delivers the two direct domain
+FluidWebRTCFeed owns one peer connection and delivers the three direct domain
 publications without routing them through the dashboard WebSocket store.
 */
 export class FluidWebRTCFeed {
@@ -71,6 +74,11 @@ export class FluidWebRTCFeed {
 			connection.createDataChannel(particlesChannel, { ordered: true }),
 			decodeParticles,
 			this.handlers.onParticles,
+		);
+		this.attach(
+			connection.createDataChannel(phaseChannel, { ordered: true }),
+			decodePhase,
+			this.handlers.onPhase,
 		);
 
 		try {

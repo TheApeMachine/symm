@@ -31,7 +31,6 @@ export type TerminalPhaseResponse = {
 };
 
 export type TerminalPhaseOutcome = {
-	symbol: string;
 	direction: string;
 	forwardReturn: number;
 	horizon: number;
@@ -41,6 +40,48 @@ export type TerminalPhaseStatus = {
 	ready: boolean;
 	reason: string;
 };
+
+/*
+phaseColumnsFromScan groups the system's rotation by angle, preserving the
+backend rank order so the geodesic can be drawn without re-sorting.
+*/
+export const phaseColumnsFromScan = (
+	scan: TerminalPhaseResponse[],
+): TerminalPhaseResponse[][] => {
+	const columns = new Map<number, TerminalPhaseResponse[]>();
+
+	for (const response of scan) {
+		const column = columns.get(response.angle);
+
+		if (column === undefined) {
+			columns.set(response.angle, [response]);
+			continue;
+		}
+
+		column.push(response);
+	}
+
+	return [...columns.entries()]
+		.sort((left, right) => left[0] - right[0])
+		.map(([, column]) => column);
+};
+
+/*
+phaseLeadersFromScan keeps the most constructive match at each angle — the
+envelope the dial already drew — without discarding the rest of the rank.
+*/
+export const phaseLeadersFromScan = (
+	scan: TerminalPhaseResponse[],
+): TerminalPhaseResponse[] =>
+	phaseColumnsFromScan(scan).flatMap((column) => {
+		const leader = column[0];
+
+		if (leader === undefined) {
+			return [];
+		}
+
+		return [leader];
+	});
 
 const numberMatrix = (value: unknown): number[][] =>
 	Array.isArray(value)
@@ -146,14 +187,9 @@ export const terminalWaveModesFromFrame = (
 		const omega = finiteNumber(record.omega);
 		const real = finiteNumber(record.real);
 		const imaginary = finiteNumber(record.imaginary);
-		const linewidth = finiteNumber(record.linewidth);
+		const linewidth = finiteNumber(record.linewidth) ?? 0;
 
-		if (
-			omega === null ||
-			real === null ||
-			imaginary === null ||
-			linewidth === null
-		) {
+		if (omega === null || real === null || imaginary === null) {
 			return [];
 		}
 
@@ -173,7 +209,6 @@ export const terminalPhaseScanFromFrame = (
 		const similarity = finiteNumber(record.similarity);
 		const observedAt = stringValue(record.observedAt);
 		const outcome = asRecord(record.outcome);
-		const symbol = stringValue(outcome?.symbol);
 		const direction = stringValue(outcome?.direction);
 		const forwardReturn = finiteNumber(outcome?.return);
 		const horizon = finiteNumber(outcome?.horizon);
@@ -182,7 +217,6 @@ export const terminalPhaseScanFromFrame = (
 			angle === null ||
 			similarity === null ||
 			observedAt === "" ||
-			symbol === "" ||
 			direction === "" ||
 			forwardReturn === null ||
 			horizon === null
@@ -195,7 +229,7 @@ export const terminalPhaseScanFromFrame = (
 				angle,
 				similarity,
 				observedAt,
-				outcome: { symbol, direction, forwardReturn, horizon },
+				outcome: { direction, forwardReturn, horizon },
 			},
 		];
 	});

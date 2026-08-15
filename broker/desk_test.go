@@ -25,6 +25,9 @@ func TestDeskExecute(t *testing.T) {
 		forecast := brokerForecast(-0.0001)
 		decision.Forecast = forecast
 		decision.PerspectiveReturn = forecast.Value
+		decision.PerspectiveSources = []types.DecisionPerspectiveSource{{
+			Source: "causal", LogReturn: forecast.Value, Horizon: 1, Confidence: 1,
+		}}
 		decision.AdmissionUtilityThreshold = 0
 
 		Convey("It should refuse the order at the final atomic execution boundary", func() {
@@ -165,6 +168,17 @@ func TestDeskHolding(t *testing.T) {
 			So(desk.Holding("BTC/USD"), ShouldEqual, 1)
 			So(desk.Holding("ETH/USD"), ShouldEqual, 1)
 			So(desk.Holding("ADA/USD"), ShouldEqual, 0)
+		})
+	})
+}
+
+func TestDeskQueued(t *testing.T) {
+	Convey("Given a desk with no pending market messages", t, func() {
+		desk := &Desk{}
+
+		Convey("It should report an empty queue", func() {
+			So(desk.Queued(), ShouldEqual, 0)
+			So((*Desk)(nil).Queued(), ShouldEqual, 0)
 		})
 	})
 }

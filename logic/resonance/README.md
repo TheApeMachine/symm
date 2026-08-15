@@ -39,11 +39,10 @@ measurements (whichever signals observed this event)
         ▼
    ResonanceManifold.Settle    ──►  latent state z, layer stack, Surprise
         │
-        ├──►  recursive least squares →  fit return + predictive distribution
-        ├──►  Student-t direction p   →  confidence in this forecast
-        ├──►  Beta-Bernoulli evidence →  historical skill against zero return
-        ├──►  DynamicHorizon          →  how far ahead is supported
-        └──►  aligned forward rollout →  ResonanceForecast
+        ├──►  recursive least squares →  fit direction lean + predictive distribution
+        ├──►  Student-t direction p   →  confidence in the up/down call
+        ├──►  direction-skill ledger  →  how far the model will stand behind a call
+        └──►  ResonanceReturnForecast →  Call, Horizon, distribution (not a return)
                                              │
                                              ▼
                               thesis.Resonance[symbol]
@@ -58,12 +57,13 @@ The manifold settles a latent state that serves three purposes at once:
 2. **Latent state (z).** The settled compressed representation. Published as a
    cross-section: every symbol's embedding plotted together is a cloud showing
    where symbols sit *relative to one another*, which one point cannot show.
-3. **Supervised return head (V).** Predicts forward log return over an adaptive
-   horizon. Square-root recursive least squares fits this linear head with a gain
-   derived from the observed latent design covariance. This head supplies one
-   signed return estimate and the uncertainty geometry used downstream; causal,
-   manifold, signal, and cognition evidence remain independent contributors to
-   the complete decision perspective.
+3. **Supervised direction head (V).** Predicts whether the next marks go up or
+   down, not how far. Square-root recursive least squares fits this linear head
+   on realized sign. The published claim is a call (−1, 0, +1) over a
+   model-chosen horizon: reach grows without a configured cap and contracts to
+   the longest contiguous path whose direction calls beat a coin flip at the
+   regulated confidence. Causal and manifold remain the only priced return
+   sources downstream.
 
 ## Learning is deferred, and that's the point
 

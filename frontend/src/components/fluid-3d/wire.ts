@@ -35,6 +35,9 @@ type FluidEnvelope = {
 	particles?: unknown;
 };
 
+export const decodePhase = (value: unknown): Record<string, unknown> =>
+	objectValue(value, "fluid phase");
+
 const objectValue = (value: unknown, name: string): Record<string, unknown> => {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
 		throw new Error(`${name} must be an object`);

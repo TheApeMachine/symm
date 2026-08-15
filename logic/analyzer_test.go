@@ -6,7 +6,6 @@ import (
 	"slices"
 	"sync"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/dmt"
@@ -45,6 +44,14 @@ func (solver *orderedSolver) Update(thesis *types.Thesis) error {
 	return nil
 }
 
+func (solver *orderedSolver) Name() string {
+	if solver.source != "" {
+		return string(solver.source)
+	}
+
+	return fmt.Sprintf("solver-%d", solver.index)
+}
+
 func (solver *orderedSolver) Close() error {
 	return nil
 }
@@ -70,7 +77,7 @@ func TestNewAnalyzer(t *testing.T) {
 }
 
 func TestAnalyzerProcess(t *testing.T) {
-	Convey("Given a solver waiting for its input barrier", t, func() {
+	Convey("Given solvers in a single dependency group", t, func() {
 		order := make([]int, 0, 2)
 		mu := &sync.Mutex{}
 		first := &orderedSolver{index: 0, order: &order, mu: mu}
@@ -81,16 +88,13 @@ func TestAnalyzerProcess(t *testing.T) {
 			solverGroups: [][]Solver{{first, resonance}},
 		}
 		thesis := types.NewThesis(t.Context(), nil)
-
 		thesis.Symbol("BTC/USD")
-		So(analyzer.Process(thesis, "BTC/USD", time.Time{}, true, false), ShouldBeNil)
 
-		Convey("It should omit resonance until a normalized input is queued", func() {
-			So(order, ShouldResemble, []int{0})
+		err := analyzer.Process(thesis)
+		slices.Sort(order)
 
-			order = order[:0]
-			So(analyzer.Process(thesis, "BTC/USD", time.Time{}, true, true), ShouldBeNil)
-			slices.Sort(order)
+		Convey("It should invoke every solver in the group", func() {
+			So(err, ShouldBeNil)
 			So(order, ShouldResemble, []int{0, 1})
 		})
 	})
@@ -115,7 +119,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Symbol("BTC/USD")
 
-		err := analyzer.Process(thesis, "BTC/USD", time.Time{}, true, true)
+		err := analyzer.Process(thesis)
 
 		Convey("It should complete each dependency level before starting the next", func() {
 			So(err, ShouldBeNil)
@@ -131,7 +135,7 @@ func TestAnalyzerProcess(t *testing.T) {
 
 	Convey("Given unrelated symbols carrying analysis state", t, func() {
 		order := make([]int, 0, 1)
-		processedSymbols := make([]string, 0, 1)
+		processedSymbols := make([]string, 0, 2)
 		mu := &sync.Mutex{}
 		analyzer := &Analyzer{
 			ctx: t.Context(),
@@ -148,11 +152,12 @@ func TestAnalyzerProcess(t *testing.T) {
 		thesis.Symbol("BTC/USD")
 		thesis.Symbol("ETH/USD")
 
-		err := analyzer.Process(thesis, "ETH/USD", time.Time{}, true, true)
+		err := analyzer.Process(thesis)
+		slices.Sort(processedSymbols)
 
-		Convey("It should expose only the dirty symbol to incremental solvers", func() {
+		Convey("It should expose every symbol on the thesis", func() {
 			So(err, ShouldBeNil)
-			So(processedSymbols, ShouldResemble, []string{"ETH/USD"})
+			So(processedSymbols, ShouldResemble, []string{"BTC/USD", "ETH/USD"})
 		})
 	})
 
@@ -172,7 +177,7 @@ func TestAnalyzerProcess(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Symbol("BTC/USD")
 
-		err := analyzer.Process(thesis, "BTC/USD", time.Time{}, true, true)
+		err := analyzer.Process(thesis)
 		slices.Sort(order)
 
 		Convey("It should finish the current level and skip dependent levels", func() {
@@ -181,34 +186,17 @@ func TestAnalyzerProcess(t *testing.T) {
 		})
 	})
 
-	Convey("Given only a new ticker mark for an initialized predictor", t, func() {
-		order := make([]int, 0, 4)
-		mu := &sync.Mutex{}
-		category := &orderedSolver{index: 0, order: &order, mu: mu}
-		resonance := &orderedSolver{index: 1, order: &order, mu: mu}
-		manifold := &orderedSolver{index: 2, order: &order, mu: mu}
-		downstream := &orderedSolver{index: 3, order: &order, mu: mu}
-		analyzer := &Analyzer{
-			ctx:       t.Context(),
-			resonance: resonance,
-			solverGroups: [][]Solver{
-				{category, resonance, manifold},
-				{downstream},
-			},
-		}
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbol("BTC/USD")
+}
 
-		err := analyzer.Process(
-			thesis, "BTC/USD", time.Time{}, false, true,
-		)
+func TestSettling(t *testing.T) {
+	Convey("Given an analyzer with no relaxing solvers", t, func() {
+		analyzer := &Analyzer{}
 
-		Convey("It should advance only the predictor until a new measurement arrives", func() {
-			So(err, ShouldBeNil)
-			So(order, ShouldResemble, []int{1})
+		Convey("It should report idle", func() {
+			So(analyzer.Settling(), ShouldBeFalse)
+			So((*Analyzer)(nil).Settling(), ShouldBeFalse)
 		})
 	})
-
 }
 
 /*
@@ -240,7 +228,6 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 	}
 
 	thesis.Symbol("BTC/USD")
-	b.ReportAllocs()
 
 	for b.Loop() {
 		value, found := thesis.Symbols.Load("BTC/USD")
@@ -249,6 +236,6 @@ func BenchmarkAnalyzerProcess(b *testing.B) {
 		_ = value
 
 		order = order[:0]
-		analyzer.Process(thesis, "BTC/USD", time.Time{}, true, true)
+		analyzer.Process(thesis)
 	}
 }

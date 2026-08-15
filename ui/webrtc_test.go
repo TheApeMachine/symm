@@ -19,7 +19,7 @@ func TestFluidRTCAnswer(t *testing.T) {
 	Convey("Given a browser peer offering the direct fluid channels", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		publications := make(chan types.FluidFrame, 2)
+		publications := make(chan types.FluidFrame, 3)
 		transport := NewFluidRTC(ctx)
 		go transport.Run(publications)
 		defer func() { So(transport.Close(), ShouldBeNil) }()
@@ -30,9 +30,11 @@ func TestFluidRTCAnswer(t *testing.T) {
 
 		fieldsMessages := make(chan []byte, 8)
 		particlesMessages := make(chan []byte, 8)
-		opened := make(chan struct{}, 2)
+		phaseMessages := make(chan []byte, 8)
+		opened := make(chan struct{}, 3)
 		createFluidTestChannel(client, types.FluidFieldsChannel, fieldsMessages, opened)
 		createFluidTestChannel(client, types.FluidParticlesChannel, particlesMessages, opened)
+		createFluidTestChannel(client, types.FluidPhaseChannel, phaseMessages, opened)
 		offer, err := client.CreateOffer(nil)
 		So(err, ShouldBeNil)
 		gathered := webrtc.GatheringCompletePromise(client)
@@ -48,12 +50,15 @@ func TestFluidRTCAnswer(t *testing.T) {
 			bytes.Repeat([]byte{'d'}, fluidSegmentSize)...)
 		fields = append(fields, []byte(`"}}`)...)
 		particles := []byte(`{"particles":[{"Mass":1,"Heat":2}]}`)
+		phase := []byte(`{"phaseReady":true,"phaseReason":""}`)
 		publications <- types.FluidFrame{Channel: types.FluidFieldsChannel, Payload: fields}
 		publications <- types.FluidFrame{Channel: types.FluidParticlesChannel, Payload: particles}
+		publications <- types.FluidFrame{Channel: types.FluidPhaseChannel, Payload: phase}
 
 		Convey("It transmits each unmodified JSON value on its named channel", func() {
 			So(readFluidTestRecord(fieldsMessages), ShouldResemble, fields)
 			So(readFluidTestRecord(particlesMessages), ShouldResemble, particles)
+			So(readFluidTestRecord(phaseMessages), ShouldResemble, phase)
 		})
 	})
 }
@@ -73,7 +78,7 @@ func createFluidTestChannel(
 }
 
 func waitForFluidChannels(opened <-chan struct{}) {
-	for range 2 {
+	for range 3 {
 		select {
 		case <-opened:
 		case <-time.After(fluidTestTimeout):
@@ -91,7 +96,7 @@ func waitForFluidPeerChannels(transport *FluidRTC) {
 
 		for _, peer := range transport.peers {
 			peer.mutex.RLock()
-			ready = len(peer.channels) == 2
+			ready = len(peer.channels) == 3
 			peer.mutex.RUnlock()
 		}
 

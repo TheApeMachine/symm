@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"slices"
+	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -139,6 +140,15 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		quantity = executableQuantity
 
+		quantity = visibleAskQuantity(tick.AskQty, quantity)
+
+		if quantity == nil || quantity.Sign() <= 0 {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: visible ask quantity cannot execute complete entry"
+
+			continue
+		}
+
 		pair := allocation.desk.Instrument().Pair(decision.Symbol)
 
 		if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
@@ -192,12 +202,14 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
-		decision.ExpectedReturn = economics.ExpectedReturn
-		decision.ExpectedFees = economics.ExpectedFees
-		decision.ExpectedSpread = economics.ExpectedSpread
-		decision.ExpectedImpact = economics.ExpectedImpact
-		decision.OpportunityMargin = economics.NetReturn.Float64()
-		decision.Utility = economics.NetReturn.Float64()
+		if economics != nil {
+			decision.ExpectedReturn = economics.ExpectedReturn
+			decision.ExpectedFees = economics.ExpectedFees
+			decision.ExpectedSpread = economics.ExpectedSpread
+			decision.ExpectedImpact = economics.ExpectedImpact
+			decision.OpportunityMargin = economics.NetReturn.Float64()
+			decision.Utility = economics.NetReturn.Float64()
+		}
 
 		if decision.Utility <= decision.AdmissionUtilityThreshold {
 			decision.Action = types.ActionNothing
@@ -229,28 +241,86 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		eligible = append(eligible, decision)
 	}
 
-	slices.SortFunc(eligible, func(left, right *types.Decision) int {
-		if left.Utility == right.Utility {
-			return 0
-		}
+	admitBest(eligible, normalSlots, reserveSlots, occupiedSymbols(allocation.desk))
 
+	return nil
+}
+
+/*
+admissionOrder ranks fill candidates by the regulator-owned gates: net
+utility first, graph score second. Equal scores compare symbol identity so
+the same set always fills the same slots.
+*/
+func admissionOrder(left, right *types.Decision) int {
+	if left.Utility != right.Utility {
 		if left.Utility > right.Utility {
 			return -1
 		}
 
 		return 1
-	})
+	}
+
+	if left.GraphScore != right.GraphScore {
+		if left.GraphScore > right.GraphScore {
+			return -1
+		}
+
+		return 1
+	}
+
+	return strings.Compare(left.Symbol, right.Symbol)
+}
+
+/*
+admitBest keeps the highest-ranked candidates that still fit in open slots.
+Already-held symbols do not consume a slot another pair could fill.
+*/
+func admitBest(
+	decisions []*types.Decision,
+	normalSlots int,
+	reserveSlots int,
+	occupied map[string]bool,
+) {
+	if occupied == nil {
+		occupied = make(map[string]bool)
+	}
+
+	eligible := make([]*types.Decision, 0, len(decisions))
+
+	for _, decision := range decisions {
+		if decision == nil || decision.Action != types.ActionEnter {
+			continue
+		}
+
+		if occupied[decision.Symbol] {
+			decision.Action = types.ActionNothing
+			decision.Stoploss = nil
+			decision.Reason = "planner: symbol already occupies a slot"
+			continue
+		}
+
+		eligible = append(eligible, decision)
+	}
+
+	slices.SortFunc(eligible, admissionOrder)
 
 	for _, decision := range eligible {
+		if occupied[decision.Symbol] {
+			decision.Action = types.ActionNothing
+			decision.Stoploss = nil
+			decision.Reason = "planner: symbol already occupies a slot"
+			continue
+		}
+
 		if normalSlots > 0 {
 			normalSlots--
-
+			occupied[decision.Symbol] = true
 			continue
 		}
 
 		if decision.Opportunity && reserveSlots > 0 {
 			reserveSlots--
-
+			occupied[decision.Symbol] = true
 			continue
 		}
 
@@ -258,6 +328,41 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.Stoploss = nil
 		decision.Reason = "planner: no position slot available for allocation"
 	}
+}
 
-	return nil
+/*
+visibleAskQuantity keeps a cash-sized request inside the ticker's observable
+ask. A deeper book walk already ran when return sources exist; this is the
+ticker-only bound so a missing L3 book cannot admit more than it can fill.
+*/
+func visibleAskQuantity(askQty float64, requested *decimal.Decimal) *decimal.Decimal {
+	if requested == nil || requested.Sign() <= 0 || askQty <= 0 {
+		return requested
+	}
+
+	visible := decimal.NewFromFloat64(askQty)
+
+	if requested.Cmp(visible) <= 0 {
+		return requested
+	}
+
+	return visible
+}
+
+func occupiedSymbols(desk *broker.Desk) map[string]bool {
+	occupied := make(map[string]bool)
+
+	if desk == nil {
+		return occupied
+	}
+
+	for position := range desk.Positions() {
+		if position == nil || position.Decision.Symbol == "" {
+			continue
+		}
+
+		occupied[position.Decision.Symbol] = true
+	}
+
+	return occupied
 }

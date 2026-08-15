@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/nomagique/physics/fluid"
+	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -33,7 +33,8 @@ type Thesis struct {
 	CrossSection   *CrossSection   `json:"crossSection"`
 	Symbols        *sync.Map       `json:"-"`
 	Audit          func(any) error `json:"-"`
-	manifold       atomic.Pointer[fluid.Reading]
+	manifold       atomic.Pointer[pmanifold.Reading]
+	phase          atomic.Pointer[PhaseReading]
 }
 
 /*
@@ -114,24 +115,101 @@ func (thesis *Thesis) ForSymbol(name string) (*Thesis, error) {
 		scoped.manifold.Store(manifold)
 	}
 
+	phase := thesis.phase.Load()
+
+	if phase != nil {
+		scoped.phase.Store(phase)
+	}
+
+	return scoped, nil
+}
+
+/*
+ForSymbols returns a non-owning analytical view containing exactly the named
+existing symbols. The view shares those symbols and the cross-section with its
+parent so one admission round can rank a batch without scanning the universe.
+*/
+func (thesis *Thesis) ForSymbols(names []string) (*Thesis, error) {
+	if thesis == nil || len(names) == 0 {
+		return nil, fmt.Errorf("thesis: symbol scope required")
+	}
+
+	symbols := &sync.Map{}
+
+	for _, name := range names {
+		if name == "" {
+			return nil, fmt.Errorf("thesis: symbol scope required")
+		}
+
+		symbol, found := thesis.Symbols.Load(name)
+
+		if !found {
+			return nil, fmt.Errorf("thesis: symbol scope not found: %s", name)
+		}
+
+		symbols.Store(name, symbol)
+	}
+
+	scoped := &Thesis{
+		ctx:          thesis.ctx,
+		ui:           thesis.ui,
+		Status:       thesis.Status,
+		Tick:         thesis.Tick,
+		At:           thesis.At,
+		CrossSection: thesis.CrossSection,
+		Symbols:      symbols,
+		Audit:        thesis.Audit,
+	}
+	manifold := thesis.manifold.Load()
+
+	if manifold != nil {
+		scoped.manifold.Store(manifold)
+	}
+
+	phase := thesis.phase.Load()
+
+	if phase != nil {
+		scoped.phase.Store(phase)
+	}
+
 	return scoped, nil
 }
 
 /*
 StoreManifold atomically publishes one immutable fluid reading.
 */
-func (thesis *Thesis) StoreManifold(reading fluid.Reading) {
+func (thesis *Thesis) StoreManifold(reading pmanifold.Reading) {
 	thesis.manifold.Store(&reading)
 }
 
 /*
 ManifoldSnapshot returns the latest complete fluid reading when one exists.
 */
-func (thesis *Thesis) ManifoldSnapshot() (fluid.Reading, bool) {
+func (thesis *Thesis) ManifoldSnapshot() (pmanifold.Reading, bool) {
 	reading := thesis.manifold.Load()
 
 	if reading == nil {
-		return fluid.Reading{}, false
+		return pmanifold.Reading{}, false
+	}
+
+	return *reading, true
+}
+
+/*
+StorePhase atomically publishes one immutable universe phase sweep.
+*/
+func (thesis *Thesis) StorePhase(reading PhaseReading) {
+	thesis.phase.Store(&reading)
+}
+
+/*
+PhaseSnapshot returns the latest complete universe phase sweep when one exists.
+*/
+func (thesis *Thesis) PhaseSnapshot() (PhaseReading, bool) {
+	reading := thesis.phase.Load()
+
+	if reading == nil {
+		return PhaseReading{}, false
 	}
 
 	return *reading, true

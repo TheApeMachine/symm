@@ -48,8 +48,7 @@ const ScalarDiagnostics = () => (
 					</div>
 					<div
 						data-paint="lastResolvedForecast"
-						data-paint-format=".2bp"
-						data-paint-suffix=" bp"
+						data-paint-format="dir"
 						className="mt-0.5 font-mono text-[11px] text-(--f2)"
 					>
 						—
@@ -61,8 +60,7 @@ const ScalarDiagnostics = () => (
 					</div>
 					<div
 						data-paint="lastRealizedReturn"
-						data-paint-format=".2bp"
-						data-paint-suffix=" bp"
+						data-paint-format="dir"
 						className="mt-0.5 font-mono text-[11px] text-(--f2)"
 					>
 						—
@@ -74,8 +72,7 @@ const ScalarDiagnostics = () => (
 					</div>
 					<div
 						data-paint="lastForecastError"
-						data-paint-format=".2bp"
-						data-paint-suffix=" bp"
+						data-paint-format=".0f"
 						className="mt-0.5 font-mono text-[11px] text-(--f2)"
 					>
 						—
@@ -87,8 +84,7 @@ const ScalarDiagnostics = () => (
 					</div>
 					<div
 						data-paint="taskScale"
-						data-paint-format=".2bp"
-						data-paint-suffix=" bp"
+						data-paint-format=".3f"
 						className="mt-0.5 font-mono text-[11px] text-(--f2)"
 					>
 						—
@@ -209,8 +205,7 @@ const ForecastArrow = () => (
 		</span>
 		<span
 			data-paint="taskForecast"
-			data-paint-format=".2bp"
-			data-paint-suffix=" bp"
+			data-paint-format="dir"
 			className="truncate font-mono text-[13px] text-(--acc)"
 		>
 			—
@@ -226,7 +221,7 @@ const VerdictRow = () => (
 				className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)"
 			>
 				<VerdictTile title="residual model" label="taskCalibration" />
-				<VerdictTile title="return skill" label="taskSkillStatus" />
+				<VerdictTile title="direction skill" label="taskSkillStatus" />
 				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 						forecast
@@ -242,7 +237,7 @@ const VerdictRow = () => (
 VectorLane unrolls one vector into a bar per component.
 
 Each bar is one element straddling a zero line, which is what makes the forward
-curve legible: bar k is the return predicted k steps out, so the profile across
+curve legible: bar k is the direction lean k steps out, so the profile across
 the lane is the horizon itself. Nothing is retained and nothing is recomputed —
 the websocket writes each bar's own scale factor and React never re-renders.
 */
@@ -312,8 +307,7 @@ const VectorLane = ({
 							>
 								<span
 									data-paint="$"
-									data-paint-format=".2bp"
-									data-paint-suffix=" bp"
+									data-paint-format=".3f"
 									className="block overflow-hidden rounded-sm bg-black/65 px-1 text-center font-mono text-[10px] leading-4 text-(--f1) shadow-[0_0_8px_rgba(0,0,0,0.8)]"
 								>
 									—
@@ -401,8 +395,8 @@ export const TerminalPredictionChart = () => (
 		/>
 		<VectorLane
 			select="forecast.forwardCurve"
-			label="Forward return shape"
-			meta="predicted return values · t+1 → t+k"
+			label="Forward direction shape"
+			meta="signed direction lean · t+1 → t+k"
 			color="bg-(--acc)"
 			scale="max-abs"
 			showValues

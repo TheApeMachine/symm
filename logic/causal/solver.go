@@ -82,6 +82,10 @@ func NewSolver(price *broker.Price, ui chan []byte, recorder *audit.Recorder, op
 	return solver
 }
 
+func (solver *Solver) Name() string {
+	return "causal"
+}
+
 /*
 Update extracts aligned causal rows from Thesis, evaluates Pearl's causal
 ladder, and stores each symbol's output directly on thesis.Causal.

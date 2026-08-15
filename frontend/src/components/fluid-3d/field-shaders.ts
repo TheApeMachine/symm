@@ -80,7 +80,7 @@ export const fluidVolumeFragmentShader = /* glsl */ `
 	// exposure control so gas reads as a light haze rather than dominating
 	// the wave field.
 	const float GAS_OPACITY = 0.35;
-	const float WAVE_BRIGHTNESS = 0.35;
+	const float WAVE_BRIGHTNESS = 0.50;
 	${fieldSampling}
 
 	vec2 intersectUnitBox(vec3 origin, vec3 direction) {

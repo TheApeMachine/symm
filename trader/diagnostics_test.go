@@ -9,19 +9,18 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestStreamPipelineDiagnostics(t *testing.T) {
-	Convey("Given a pipeline whose ingress is still aligned with commit", t, func() {
-		pipeline := diagnosticPipeline(t)
+func TestCryptoDiagnostics(t *testing.T) {
+	Convey("Given a crypto trader with no frames yet", t, func() {
+		crypto := diagnosticCrypto()
 
-		Convey("It should report a flowing empty data plane", func() {
-			snapshot := pipeline.Diagnostics()
+		Convey("It should report a flowing empty measurement plane", func() {
+			snapshot := crypto.Diagnostics()
 
 			So(snapshot.Status, ShouldEqual, "flowing")
-			So(snapshot.Lag, ShouldEqual, uint64(0))
-			So(snapshot.Lanes, ShouldHaveLength, 2)
-			So(snapshot.Lanes[0].Name, ShouldEqual, "local-0.inbox")
-			So(snapshot.Lanes[0].Blocking, ShouldBeFalse)
-			So(snapshot.Lanes[1].Name, ShouldEqual, "local-0.outbox")
+			So(snapshot.Lanes, ShouldBeEmpty)
+			So(snapshot.Tickers, ShouldEqual, uint64(0))
+			So(snapshot.Trades, ShouldEqual, uint64(0))
+			So(snapshot.Level3, ShouldEqual, uint64(0))
 			So(len(snapshot.Stages), ShouldBeGreaterThan, 10)
 			So(snapshot.Stages[0].Name, ShouldEqual, "price")
 			So(snapshot.Stages[2].Name, ShouldEqual, "crypto")
@@ -30,126 +29,66 @@ func TestStreamPipelineDiagnostics(t *testing.T) {
 		})
 	})
 
-	Convey("Given a full blocking cross inbox", t, func() {
-		pipeline := diagnosticPipeline(t)
-		pipeline.workers[0].name = "correlation"
-		pipeline.workers[0].local = false
+	Convey("Given observed price and measurement clocks", t, func() {
+		crypto := diagnosticCrypto()
+		crypto.tickers.Store(4)
+		crypto.trades.Store(2)
+		crypto.level3.Store(1)
+		crypto.clocks.observe("price", time.Millisecond)
+		crypto.clocks.observeHop("price", "crypto", time.Millisecond)
+		crypto.clocks.observe("measurements", 2*time.Millisecond)
+		crypto.clocks.observeHop("crypto", "measurements", time.Millisecond)
 
-		for index := range 4 {
-			So(pipeline.workers[0].inbox.Push(t.Context(), marketEvent{
-				sequence: uint64(index + 1),
-			}), ShouldBeNil)
-		}
-
-		Convey("It should name the lane that is parking its producer", func() {
-			snapshot := pipeline.Diagnostics()
-
-			So(snapshot.Status, ShouldEqual, "stalled")
-			So(snapshot.Summary, ShouldContainSubstring, "correlation.inbox")
-			So(snapshot.Lanes[0].Depth, ShouldEqual, 4)
-			So(snapshot.Lanes[0].Blocking, ShouldBeTrue)
-		})
-	})
-
-	Convey("Given commit lag older than the diagnostic interval", t, func() {
-		pipeline := diagnosticPipeline(t)
-		pipeline.ingressSequence.Store(8)
-		pipeline.committedSequence.Store(3)
-		pipeline.nextSequence.Store(4)
-		pipeline.pendingCount.Store(2)
-		pipeline.lastCommitNanos.Store(time.Now().Add(-2 * time.Second).UnixNano())
-
-		Convey("It should report the incomplete sequence as a stall", func() {
-			snapshot := pipeline.Diagnostics()
-
-			So(snapshot.Status, ShouldEqual, "stalled")
-			So(snapshot.Lag, ShouldEqual, uint64(5))
-			So(snapshot.Pending, ShouldEqual, int64(2))
-			So(snapshot.StallNs, ShouldBeGreaterThan, uint64(time.Second))
-			So(snapshot.Summary, ShouldContainSubstring, "sequence 4")
-		})
-	})
-
-	Convey("Given a short commit lag still inside the diagnostic interval", t, func() {
-		pipeline := diagnosticPipeline(t)
-		pipeline.ingressSequence.Store(3)
-		pipeline.committedSequence.Store(2)
-		So(pipeline.workers[0].inbox.Push(t.Context(), marketEvent{
-			sequence: 3,
-		}), ShouldBeNil)
-
-		Convey("It should keep the headline flowing while work is in flight", func() {
-			snapshot := pipeline.Diagnostics()
-
-			So(snapshot.Status, ShouldEqual, "flowing")
-			So(snapshot.Lag, ShouldEqual, uint64(1))
-			So(snapshot.Lanes[0].Depth, ShouldEqual, 1)
-		})
-	})
-
-	Convey("Given a local drop after ingress and commit realigned", t, func() {
-		pipeline := diagnosticPipeline(t)
-		pipeline.dropped.Store(3)
-		pipeline.commitDropped.Store(1)
-
-		Convey("It should keep the loss on the counters without flipping the headline", func() {
-			snapshot := pipeline.Diagnostics()
-
-			So(snapshot.Status, ShouldEqual, "flowing")
-			So(snapshot.Lossy, ShouldBeTrue)
-			So(snapshot.Dropped, ShouldEqual, uint64(3))
-			So(snapshot.CommitDropped, ShouldEqual, uint64(1))
-		})
-	})
-}
-
-func TestStreamPipelineNoteBroker(t *testing.T) {
-	Convey("Given a mark update that has already finished", t, func() {
-		pipeline := diagnosticPipeline(t)
-
-		Convey("It should accumulate broker time and arm the trader hop", func() {
-			pipeline.noteBroker(time.Now().Add(-time.Millisecond))
-			snapshot := pipeline.Diagnostics()
+		Convey("It should publish those accumulators on the diagnostics wire", func() {
+			snapshot := crypto.Diagnostics()
 			price := snapshot.Stages[0]
+			measurements := stageNamed(snapshot.Stages, "measurements")
+			hop := hopNamed(snapshot.Hops, "price", "crypto")
 
+			So(snapshot.Tickers, ShouldEqual, uint64(4))
+			So(snapshot.Trades, ShouldEqual, uint64(2))
+			So(snapshot.Level3, ShouldEqual, uint64(1))
 			So(price.Name, ShouldEqual, "price")
 			So(price.Count, ShouldEqual, uint64(1))
 			So(price.LastNs, ShouldBeGreaterThan, uint64(0))
 			So(price.LastAtNs, ShouldBeGreaterThan, int64(0))
-			So(pipeline.lastBrokerAt.IsZero(), ShouldBeFalse)
-		})
-	})
-}
-
-func TestStreamPipelineStampCollected(t *testing.T) {
-	Convey("Given a measured event waiting in an outbox", t, func() {
-		pipeline := diagnosticPipeline(t)
-		event := marketEvent{measuredAt: time.Now().Add(-time.Millisecond)}
-
-		Convey("It should stamp collect time onto the hop from signals", func() {
-			pipeline.stampCollected(&event)
-			snapshot := pipeline.Diagnostics()
-			hop := hopNamed(snapshot.Hops, "signals", "collect")
-
-			So(event.collectedAt.IsZero(), ShouldBeFalse)
+			So(measurements.Count, ShouldEqual, uint64(1))
 			So(hop.Count, ShouldEqual, uint64(1))
 			So(hop.LastNs, ShouldBeGreaterThan, uint64(0))
 		})
 	})
 }
 
-func TestStreamPipelinePublishDiagnostics(t *testing.T) {
-	Convey("Given a pipeline that emits replaceable diagnostics", t, func() {
+func TestCryptoBindDiagnostics(t *testing.T) {
+	Convey("Given measurements attached to a crypto trader", t, func() {
+		crypto := diagnosticCrypto()
+		crypto.measurements = &Measurements{}
+
+		Convey("It should share the clock bank and arm the publisher interval", func() {
+			crypto.bindDiagnostics()
+
+			So(crypto.measurements.clocks, ShouldEqual, &crypto.clocks)
+			So(crypto.diagnosticInterval, ShouldBeGreaterThan, time.Duration(0))
+			So(crypto.startedAt.IsZero(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestCryptoPublishDiagnostics(t *testing.T) {
+	Convey("Given a crypto trader that emits replaceable diagnostics", t, func() {
 		ui := make(chan []byte, 1)
 		ctx, cancel := context.WithCancel(t.Context())
-		pipeline := diagnosticPipeline(t)
-		pipeline.ctx = ctx
-		pipeline.cancel = cancel
-		pipeline.ui = ui
-		pipeline.config.diagnosticInterval = 10 * time.Millisecond
+		crypto := diagnosticCrypto()
+		crypto.ctx = ctx
+		crypto.cancel = cancel
+		crypto.ui = ui
+		crypto.diagnosticInterval = 10 * time.Millisecond
 		var wait sync.WaitGroup
 		wait.Add(1)
-		go pipeline.publishDiagnostics(&wait)
+		go func() {
+			defer wait.Done()
+			crypto.publishDiagnostics()
+		}()
 		Reset(func() {
 			cancel()
 			wait.Wait()
@@ -170,34 +109,13 @@ func TestStreamPipelinePublishDiagnostics(t *testing.T) {
 	})
 }
 
-func diagnosticPipeline(testingTB testing.TB) *streamPipeline {
-	testingTB.Helper()
-	wake := make(chan struct{}, 1)
-	inbox, err := newLane[marketEvent](4, 0, wake)
+func diagnosticCrypto() *Crypto {
+	ctx, cancel := context.WithCancel(context.Background())
 
-	if err != nil {
-		testingTB.Fatalf("inbox: %v", err)
+	return &Crypto{
+		ctx:    ctx,
+		cancel: cancel,
 	}
-
-	outbox, err := newLane[measurementResult](4, 0, wake)
-
-	if err != nil {
-		testingTB.Fatalf("outbox: %v", err)
-	}
-
-	pipeline := &streamPipeline{
-		config: streamConfig{diagnosticInterval: time.Second},
-		workers: []*streamWorker{{
-			name:   "local-0",
-			local:  true,
-			inbox:  inbox,
-			outbox: outbox,
-		}},
-	}
-	pipeline.nextSequence.Store(1)
-	pipeline.lastCommitNanos.Store(time.Now().UnixNano())
-
-	return pipeline
 }
 
 func hopNamed(hops []HopSnapshot, from string, to string) HopSnapshot {
@@ -208,4 +126,14 @@ func hopNamed(hops []HopSnapshot, from string, to string) HopSnapshot {
 	}
 
 	return HopSnapshot{}
+}
+
+func stageNamed(stages []ClockSnapshot, name string) ClockSnapshot {
+	for _, stage := range stages {
+		if stage.Name == name {
+			return stage
+		}
+	}
+
+	return ClockSnapshot{}
 }

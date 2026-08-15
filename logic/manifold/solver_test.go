@@ -10,6 +10,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	pfluid "github.com/theapemachine/nomagique/physics/fluid"
+	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -52,7 +53,6 @@ func TestUpdate(t *testing.T) {
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
 		solver.api = &staticBookSource{book: managed}
-		solver.tokenizer = NewTokenizer(solver.config, []string{"BTC/USD"})
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 
 		pendingErr := solver.Update(thesis)
@@ -66,7 +66,7 @@ func TestUpdate(t *testing.T) {
 			So(pendingErr, ShouldBeNil)
 			So(solver.settling.Load(), ShouldBeFalse)
 			So(solver.WaitingForBook(), ShouldBeTrue)
-			So(solver.domain.ParticleCount(), ShouldEqual, 0)
+			So(solver.ParticleCount(), ShouldEqual, 0)
 		})
 
 		managed.Update(&mgrbook.UpdateOptions{
@@ -96,7 +96,7 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(solver.settling.Load(), ShouldBeFalse)
 			So(solver.WaitingForBook(), ShouldBeFalse)
-			So(solver.domain.ParticleCount(), ShouldEqual, 2)
+			So(solver.ParticleCount(), ShouldEqual, 2)
 		})
 	})
 
@@ -147,7 +147,6 @@ func TestUpdate(t *testing.T) {
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
 		solver.api = &staticBookSource{book: managed}
-		solver.tokenizer = NewTokenizer(solver.config, []string{"BTC/USD"})
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 
 		err := solver.Update(thesis)
@@ -157,14 +156,13 @@ func TestUpdate(t *testing.T) {
 			runtime.Gosched()
 		}
 
-		reading, readingErr := solver.domain.Reading()
+		reading := solver.reading
 		storedReading, found := thesis.ManifoldSnapshot()
 
 		Convey("It should append, advance, read, and stamp one manifold cut", func() {
 			So(err, ShouldBeNil)
 			So(solver.settling.Load(), ShouldBeFalse)
-			So(readingErr, ShouldBeNil)
-			So(solver.domain.ParticleCount(), ShouldEqual, 2)
+			So(solver.ParticleCount(), ShouldEqual, 2)
 			So(found, ShouldBeTrue)
 			So(storedReading, ShouldResemble, reading)
 		})
@@ -206,7 +204,6 @@ func TestUpdate(t *testing.T) {
 		solver.api = &staticBookSource{
 			book: managed,
 		}
-		solver.tokenizer = NewTokenizer(solver.config, []string{"BTC/USD"})
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 		solver.settling.Store(true)
 		go func() {
@@ -237,8 +234,8 @@ func TestUpdate(t *testing.T) {
 			So(queuedState, ShouldBeTrue)
 			So(solver.settling.Load(), ShouldBeFalse)
 			So(solver.stepped, ShouldBeFalse)
-			So(solver.pending["BTC/USD"], ShouldHaveLength, 0)
-			So(solver.domain.ParticleCount(), ShouldEqual, 0)
+			So(solver.pending, ShouldHaveLength, 0)
+			So(solver.ParticleCount(), ShouldEqual, 0)
 		})
 
 	})
@@ -254,29 +251,30 @@ func TestStep(t *testing.T) {
 			system.Cfg.Manifold.RelaxationSteps = originalSteps
 			system.Cfg.Manifold.MinSteps = originalMinimum
 		})
-		ui := make(chan []byte, 2)
-		binui := make(chan types.FluidFrame, 4)
+		ui := make(chan []byte, 8)
+		binui := make(chan types.FluidFrame, 8)
 		solver := NewSolver(nil, ui, binui, nil)
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
-		particle := pfluid.Particle{
-			Position: pfluid.Vector{X: 0.25, Y: 0.25, Z: 0.25},
-			Mass:     1,
-			Heat:     0.5,
-			Energy:   1,
-			Phase:    0.1,
-			Omega:    1,
-		}
-		particles := []pfluid.Particle{particle}
-		_, err := solver.domain.Append(particles, []uint32{1})
+		oscillators := []pmanifold.Oscillator{{
+			Phase:     0.1,
+			Omega:     1,
+			Amplitude: 1,
+			PosX:      0.25,
+			PosY:      0.25,
+			PosZ:      0.25,
+			Heat:      0.5,
+		}}
+		err := solver.physics.SetOscillators(oscillators)
 		So(err, ShouldBeNil)
+		solver.oscillators = oscillators
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Symbols.Store("BTC/USD", types.NewSymbol("BTC/USD", nil))
 		at := time.Unix(1, 0).UTC()
 
 		err = solver.Step(thesis, at, []manifoldCut{{
-			symbol: "BTC/USD", particles: particles,
+			symbol: "BTC/USD", oscillators: oscillators,
 		}})
-		reading, readingErr := solver.domain.Reading()
+		reading := solver.reading
 		storedReading, found := thesis.ManifoldSnapshot()
 		payloads := make([][]byte, 0, len(ui))
 
@@ -288,10 +286,10 @@ func TestStep(t *testing.T) {
 			Manifold []map[string]any `json:"manifold"`
 		}
 		marshalErr := json.Unmarshal(payloads[len(payloads)-1], &frame)
-		stored, _ := thesis.Symbols.Load("BTC/USD")
-		_, phaseFound := stored.(*types.Symbol).Phase.Load("BTC/USD")
+		_, phaseFound := thesis.PhaseSnapshot()
 		fieldFrames := 0
 		particleFrames := 0
+		phaseFrames := 0
 		waveObserved := false
 
 		for len(binui) > 0 {
@@ -299,6 +297,11 @@ func TestStep(t *testing.T) {
 
 			if fluidFrame.Channel == types.FluidParticlesChannel {
 				particleFrames++
+				continue
+			}
+
+			if fluidFrame.Channel == types.FluidPhaseChannel {
+				phaseFrames++
 				continue
 			}
 
@@ -319,17 +322,19 @@ func TestStep(t *testing.T) {
 
 		Convey("It should publish the manifold and wave field after every step", func() {
 			So(err, ShouldBeNil)
-			So(readingErr, ShouldBeNil)
 			So(solver.stepped, ShouldBeTrue)
 			So(found, ShouldBeTrue)
 			So(storedReading, ShouldResemble, reading)
 			So(payloads, ShouldHaveLength, 2)
 			So(fieldFrames, ShouldEqual, 2)
 			So(particleFrames, ShouldEqual, 2)
+			So(phaseFrames, ShouldEqual, 2)
 			So(waveObserved, ShouldBeTrue)
 			So(marshalErr, ShouldBeNil)
 			So(frame.Manifold, ShouldHaveLength, 1)
-			So(frame.Manifold[0]["symbol"], ShouldEqual, "BTC/USD")
+			So(frame.Manifold[0]["source"], ShouldEqual, "manifold")
+			_, hasSymbol := frame.Manifold[0]["symbol"]
+			So(hasSymbol, ShouldBeFalse)
 			So(phaseFound, ShouldBeTrue)
 		})
 	})
@@ -346,6 +351,109 @@ func TestStep(t *testing.T) {
 
 		Convey("It should reject the cut instead of silently stamping it", func() {
 			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestNewSolver(t *testing.T) {
+	Convey("Given the resident universe domain", t, func() {
+		solver := NewSolver(nil, nil, nil, nil)
+		Reset(func() { So(solver.Close(), ShouldBeNil) })
+
+		Convey("It should build one universe domain on the 256-mode lattice", func() {
+			So(solver.config.MaxModes, ShouldEqual, phaseLatticeWidth)
+			So(solver.config.GridX, ShouldEqual, 64)
+			So(solver.physics, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestBookOscillators(t *testing.T) {
+	Convey("Given two populated L3 books", t, func() {
+		bitcoin := mgrbook.New()
+		bitcoin.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Bid,
+			ID:        "bid",
+			Price:     decimal.NewFromInt64(99),
+			Quantity:  decimal.NewFromInt64(2),
+			Timestamp: time.Unix(1, 0).UTC(),
+			Silent:    true,
+		})
+		bitcoin.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Ask,
+			ID:        "ask",
+			Price:     decimal.NewFromInt64(101),
+			Quantity:  decimal.NewFromInt64(3),
+			Timestamp: time.Unix(2, 0).UTC(),
+			Silent:    true,
+		})
+		ether := mgrbook.New()
+		ether.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Bid,
+			ID:        "bid",
+			Price:     decimal.NewFromInt64(49),
+			Quantity:  decimal.NewFromInt64(1),
+			Timestamp: time.Unix(1, 0).UTC(),
+			Silent:    true,
+		})
+		ether.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Ask,
+			ID:        "ask",
+			Price:     decimal.NewFromInt64(51),
+			Quantity:  decimal.NewFromInt64(1),
+			Timestamp: time.Unix(2, 0).UTC(),
+			Silent:    true,
+		})
+		solver := NewSolver(nil, nil, nil, nil)
+		Reset(func() { So(solver.Close(), ShouldBeNil) })
+		solver.api = &mapBookSource{books: map[string]*mgrbook.Book{
+			"BTC/USD": bitcoin,
+			"ETH/USD": ether,
+		}}
+		solver.universe = []string{"BTC/USD", "ETH/USD"}
+		bitcoinOsc, bitcoinErr := solver.bookOscillators("BTC/USD", 0, 0, time.Unix(3, 0).UTC())
+		etherOsc, etherErr := solver.bookOscillators("ETH/USD", 0, 0, time.Unix(3, 0).UTC())
+
+		Convey("It should keep every resting order as an oscillator", func() {
+			So(bitcoinErr, ShouldBeNil)
+			So(etherErr, ShouldBeNil)
+			So(len(bitcoinOsc), ShouldEqual, 2)
+			So(len(etherOsc), ShouldEqual, 2)
+			So(bitcoinOsc[0].Amplitude, ShouldBeGreaterThan, 0)
+			So(etherOsc[0].Amplitude, ShouldBeGreaterThan, 0)
+			So(bitcoinOsc[0].PosX, ShouldNotEqual, bitcoinOsc[1].PosX)
+		})
+	})
+}
+
+func TestSettling(t *testing.T) {
+	Convey("Given a solver that is not relaxing", t, func() {
+		Convey("It should report idle", func() {
+			So((&Solver{}).Settling(), ShouldBeFalse)
+			So((*Solver)(nil).Settling(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestPhaseRow(t *testing.T) {
+	Convey("Given a ready universe sweep", t, func() {
+		solver := &Solver{}
+		at := time.Unix(1, 0).UTC()
+		reading := types.PhaseReading{
+			At:    at,
+			Ready: true,
+			Responses: []types.PhaseResponse{{
+				Angle: 0, Similarity: 0.5,
+			}},
+		}
+		row := solver.phaseRow(at, reading)
+		_, hasSymbol := row["symbol"]
+
+		Convey("It should publish the sweep without a symbol key", func() {
+			So(row["source"], ShouldEqual, "manifold")
+			So(row["phaseReady"], ShouldEqual, true)
+			So(row["phaseScan"], ShouldHaveLength, 1)
+			So(hasSymbol, ShouldBeFalse)
 		})
 	})
 }
@@ -378,7 +486,6 @@ func BenchmarkUpdate(b *testing.B) {
 	})
 	solver := NewSolver(nil, nil, nil, nil)
 	solver.api = &staticBookSource{book: managed}
-	solver.tokenizer = NewTokenizer(solver.config, []string{"BTC/USD"})
 	b.Cleanup(func() {
 		if err := solver.Close(); err != nil {
 			b.Fatal(err)
@@ -419,18 +526,21 @@ func BenchmarkStep(b *testing.B) {
 			b.Fatal(err)
 		}
 	})
-	particles := []pfluid.Particle{{
-		Position: pfluid.Vector{X: 0.25, Y: 0.25, Z: 0.25},
-		Mass:     1,
-		Heat:     0.5,
-		Energy:   1,
-		Phase:    0.1,
-		Omega:    1,
+	oscillators := []pmanifold.Oscillator{{
+		Phase:     0.1,
+		Omega:     1,
+		Amplitude: 1,
+		PosX:      0.25,
+		PosY:      0.25,
+		PosZ:      0.25,
+		Heat:      0.5,
 	}}
 
-	if _, err := solver.domain.Append(particles, []uint32{1}); err != nil {
+	if err := solver.physics.SetOscillators(oscillators); err != nil {
 		b.Fatal(err)
 	}
+
+	solver.oscillators = oscillators
 
 	thesis := types.NewThesis(b.Context(), nil)
 	b.ReportAllocs()
@@ -438,7 +548,7 @@ func BenchmarkStep(b *testing.B) {
 
 	for b.Loop() {
 		if err := solver.Step(thesis, time.Unix(1, 0), []manifoldCut{{
-			symbol: "BTC/USD", particles: particles,
+			symbol: "BTC/USD", oscillators: oscillators,
 		}}); err != nil {
 			b.Fatal(err)
 		}

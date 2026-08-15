@@ -21,7 +21,7 @@ export type HierarchyTrace = {
 };
 
 /*
-ReturnHeadTrace keeps the strict-prior return forecast separate from the
+ReturnHeadTrace keeps the strict-prior direction forecast separate from the
 unsupervised hierarchy so calibration cannot be mistaken for reconstruction.
 */
 export type ReturnHeadTrace = {

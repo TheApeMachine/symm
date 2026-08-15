@@ -57,6 +57,10 @@ func NewSolver(
 	}
 }
 
+func (solver *Solver) Name() string {
+	return "category"
+}
+
 /*
 Update scores the configured categories against the measurements this tick
 carried and records one classified artifact per symbol.

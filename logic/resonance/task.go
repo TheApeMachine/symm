@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
 )
 
@@ -29,15 +30,21 @@ func (history *sampleHistory) resolve(
 		}
 
 		actual := math.Log(mark / item.mark)
-		history.ledger.observe(item.horizon, item.forecast, actual)
+		call := signedDirection(item.forecast)
+		target := signedDirection(actual)
+		history.ledger.observe(item.horizon, call, actual)
 		history.lastResolution = &taskResolution{
 			horizon:  item.horizon,
-			forecast: item.forecast,
+			forecast: call,
 			actual:   actual,
-			error:    actual - item.forecast,
+			error:    target - call,
 		}
 
-		if !item.train {
+		if !item.train || target == 0 {
+			if item.train {
+				delete(history.issued, item.issueTick)
+			}
+
 			continue
 		}
 
@@ -51,7 +58,7 @@ func (history *sampleHistory) resolve(
 		if err := coder.ObserveTask(
 			issued.features,
 			issued.prediction,
-			[]float64{actual},
+			[]float64{target},
 		); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
@@ -77,18 +84,18 @@ func (history *sampleHistory) issue(
 		return nil
 	}
 
-	lean := forecast[0].Value
+	call := signedDirection(forecast[0].Value)
 	history.issued[tick] = issuedTask{
 		features:   coder.LatentState(),
-		prediction: []float64{lean},
+		prediction: []float64{call},
 	}
 
-	if signedDirection(lean) == 0 {
+	if call == 0 {
 		history.pending[history.sequence+1] = append(
 			history.pending[history.sequence+1],
 			issuedHorizon{
 				horizon:   1,
-				forecast:  lean,
+				forecast:  call,
 				mark:      mark,
 				issueTick: tick,
 				train:     true,
@@ -108,7 +115,7 @@ func (history *sampleHistory) issue(
 			history.pending[targetSequence],
 			issuedHorizon{
 				horizon:   horizon,
-				forecast:  lean,
+				forecast:  call,
 				mark:      mark,
 				issueTick: tick,
 				train:     horizon == 1,
@@ -117,6 +124,50 @@ func (history *sampleHistory) issue(
 	}
 
 	return nil
+}
+
+func (history *sampleHistory) observeTickMove(mark float64) error {
+	if history.moves == nil {
+		history.moves = adaptive.NewAccumulator()
+	}
+
+	if history.lastTickMark > 0 && mark > 0 && mark != history.lastTickMark {
+		deviation := math.Log(mark / history.lastTickMark)
+
+		measured, err := history.moves.Measure(deviation * deviation)
+
+		if err != nil {
+			return err
+		}
+
+		history.moveStat = measured
+	}
+
+	history.lastTickMark = mark
+
+	return nil
+}
+
+func (history *sampleHistory) moveScale() float64 {
+	if history == nil || history.moveStat.Count == 0 {
+		return 0
+	}
+
+	return math.Sqrt(history.moveStat.Value / float64(history.moveStat.Count))
+}
+
+func (history *sampleHistory) distinguishable(actual float64) bool {
+	scale := history.moveScale()
+
+	if !(scale > 0) {
+		return math.Abs(actual) > 0
+	}
+
+	return math.Abs(actual) >= scale
+}
+
+func (history *sampleHistory) inFlight() bool {
+	return history != nil && len(history.issued) > 0
 }
 
 func (history *sampleHistory) pruneTicks() {

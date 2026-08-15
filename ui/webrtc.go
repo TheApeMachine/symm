@@ -24,7 +24,7 @@ const (
 var fluidRecordMagic = [4]byte{'S', 'F', 'D', '1'}
 
 /*
-FluidRTC owns the WebRTC peers consuming direct Fields and Particle
+FluidRTC owns the WebRTC peers consuming direct Fields, Particle, and Phase
 publications from the manifold solver.
 */
 type FluidRTC struct {
@@ -230,14 +230,16 @@ type fluidPeer struct {
 func newFluidPeer(ctx context.Context) *fluidPeer {
 	return &fluidPeer{
 		ctx:      ctx,
-		channels: make(map[string]*fluidChannel, 2),
+		channels: make(map[string]*fluidChannel, 3),
 	}
 }
 
 func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 	label := dataChannel.Label()
 
-	if label != types.FluidFieldsChannel && label != types.FluidParticlesChannel {
+	if label != types.FluidFieldsChannel &&
+		label != types.FluidParticlesChannel &&
+		label != types.FluidPhaseChannel {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"webrtc: unsupported fluid data channel "+label,
@@ -288,7 +290,7 @@ func (peer *fluidPeer) enqueue(channel string, payload []byte) {
 func (peer *fluidPeer) close() {
 	peer.mutex.Lock()
 	channels := peer.channels
-	peer.channels = make(map[string]*fluidChannel, 2)
+	peer.channels = make(map[string]*fluidChannel, 3)
 	peer.mutex.Unlock()
 
 	for _, channel := range channels {

@@ -12,10 +12,10 @@ import (
 /*
 decisionPerspective combines only estimates with the same meaning: signed log
 return over the graph's forward horizon. Native log returns are converted to a
-per-tick rate before projection onto that horizon. Resonance contributes size
-only after it has already made a direction call; the call itself is not a
-return. Signal categories and cognition remain graph evidence because treating
-their scores as returns would mix incompatible units.
+per-tick rate before projection onto that horizon. Resonance is a direction
+call, not a return, so it never contributes size. Causal and manifold returns
+remain when they carry a native horizon. Signal categories and cognition stay
+graph evidence because treating their scores as returns would mix units.
 */
 func decisionPerspective(
 	graph *logicgraph.Graph,
@@ -29,10 +29,7 @@ func decisionPerspective(
 		positiveProbability,
 		1-positiveProbability,
 	)
-	sources := []types.DecisionPerspectiveSource{{
-		Source: "resonance", LogReturn: graph.Forecast.Value,
-		Horizon: graph.ForecastHorizon, Confidence: forecastConfidence,
-	}}
+	sources := make([]types.DecisionPerspectiveSource, 0)
 
 	for nodeID, node := range graph.Nodes {
 		if node == nil || node.Confidence <= 0 {
@@ -81,6 +78,10 @@ func decisionPerspective(
 	for _, source := range sources {
 		weightedReturn += source.LogReturn * source.Confidence
 		confidenceMass += source.Confidence
+	}
+
+	if len(sources) == 0 {
+		return 0, forecastConfidence, sources, nil
 	}
 
 	if confidenceMass <= 0 {

@@ -4,11 +4,9 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -58,14 +56,6 @@ func (signal *Signal) Type() types.SourceType {
 }
 
 func (signal *Signal) Measure(market *types.Symbol, _ ...int64) []*types.Measurement {
-	utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
-		string(types.SourceCorrelation), "running",
-	)))
-
-	defer utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
-		string(types.SourceCorrelation), "done",
-	)))
-
 	scoresBySymbol, err := signal.section.Measure(
 		market.MarketTickers(types.SourceCorrelation),
 	)

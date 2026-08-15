@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"encoding/json"
 	"sync/atomic"
 	"testing"
 
@@ -40,7 +41,7 @@ func (signal *measurementSignal) Close() error {
 	return nil
 }
 
-func TestMeasurementsUpdate(t *testing.T) {
+func TestMeasurementsGenerate(t *testing.T) {
 	Convey("Given ticker, trade, and book measurement signals", t, func() {
 		signals := map[types.SourceType]*measurementSignal{
 			types.SourceCorrelation: {source: types.SourceCorrelation},
@@ -79,7 +80,7 @@ func TestMeasurementsUpdate(t *testing.T) {
 		}
 
 		Convey("A ticker update should run only the ticker signals", func() {
-			ready, err := measurements.Update(thesis, types.TickerReceivers)
+			ready, err := measurements.Generate(thesis, types.TickerReceivers)
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeFalse)
 			expected := map[types.SourceType]int64{
@@ -97,7 +98,7 @@ func TestMeasurementsUpdate(t *testing.T) {
 		})
 
 		Convey("A trade update should run only the trade signals", func() {
-			ready, err := measurements.Update(thesis, types.TradeReceivers)
+			ready, err := measurements.Generate(thesis, types.TradeReceivers)
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeFalse)
 			expected := map[types.SourceType]int64{
@@ -115,7 +116,7 @@ func TestMeasurementsUpdate(t *testing.T) {
 		})
 
 		Convey("A book update should run only the book signals", func() {
-			ready, err := measurements.Update(thesis, types.BookReceivers)
+			ready, err := measurements.Generate(thesis, types.BookReceivers)
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeFalse)
 			expected := map[types.SourceType]int64{
@@ -126,6 +127,38 @@ func TestMeasurementsUpdate(t *testing.T) {
 			for source, signal := range signals {
 				So(signal.calls.Load(), ShouldEqual, expected[source])
 			}
+		})
+
+		Convey("It should publish the engine tick count for the header", func() {
+			ui := make(chan []byte, 32)
+			measurements.ui = ui
+			thesis.Tick = 41
+
+			_, err := measurements.Generate(thesis, types.TickerReceivers)
+			So(err, ShouldBeNil)
+			So(thesis.Tick, ShouldEqual, 42)
+
+			var frame struct {
+				Tick struct {
+					Count int64 `json:"count"`
+				} `json:"tick"`
+			}
+
+			for range len(ui) {
+				payload := <-ui
+
+				if json.Unmarshal(payload, &frame) != nil {
+					continue
+				}
+
+				if frame.Tick.Count == 0 {
+					continue
+				}
+
+				break
+			}
+
+			So(frame.Tick.Count, ShouldEqual, 42)
 		})
 
 		Convey("Any normalized source observation should report a queued resonance input", func() {
@@ -141,7 +174,7 @@ func TestMeasurementsUpdate(t *testing.T) {
 				},
 			}
 
-			ready, err := measurements.Update(thesis, types.TradeReceivers)
+			ready, err := measurements.Generate(thesis, types.TradeReceivers)
 			So(err, ShouldBeNil)
 			So(ready, ShouldBeTrue)
 			So(signals[types.SourceHawkes].measurement.Tick, ShouldEqual, thesis.Tick)
@@ -154,7 +187,7 @@ func TestMeasurementsUpdate(t *testing.T) {
 	})
 }
 
-func BenchmarkMeasurementsUpdate(b *testing.B) {
+func BenchmarkMeasurementsGenerate(b *testing.B) {
 	measurements := &Measurements{
 		ctx: context.Background(),
 		signals: []types.Signal{
@@ -168,7 +201,7 @@ func BenchmarkMeasurementsUpdate(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, err := measurements.Update(thesis, types.TickerReceivers); err != nil {
+		if _, err := measurements.Generate(thesis, types.TickerReceivers); err != nil {
 			b.Fatal(err)
 		}
 	}

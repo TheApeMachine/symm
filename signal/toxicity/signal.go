@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/algorithm/book/quality"
@@ -13,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -62,14 +60,6 @@ func (signal *Signal) Type() types.SourceType {
 }
 
 func (signal *Signal) Measure(market *types.Symbol, ticks ...int64) []*types.Measurement {
-	utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
-		string(types.SourceToxicity), "running",
-	)))
-
-	defer utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
-		string(types.SourceToxicity), "done",
-	)))
-
 	measurements := make([]*types.Measurement, 0)
 	tick := market.Tick
 

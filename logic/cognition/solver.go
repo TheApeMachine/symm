@@ -181,6 +181,10 @@ func NewSolver(
 	return solver
 }
 
+func (solver *Solver) Name() string {
+	return "cognition"
+}
+
 /*
 Update ingests the active Thesis categories, evaluates category transition surprisal,
 breaks/continues sequence paths, classifies market regimes, and runs lookahead beam search.

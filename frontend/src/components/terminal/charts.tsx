@@ -24,6 +24,8 @@ export {
 export { TerminalSignalHeatmap } from "#/components/charts/signal-heatmap";
 export {
 	fluidGridDimensions,
+	phaseColumnsFromScan,
+	phaseLeadersFromScan,
 	terminalPhaseScanFromFrame,
 	terminalPhaseStatusFromFrame,
 	terminalResonanceLayerMatrixFromFrame,

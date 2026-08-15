@@ -54,8 +54,10 @@ func (system *System) Holding(symbol string) int {
 }
 
 /*
-Sync waits for the streaming analytical plane to commit all ingress delivered
-before the call. It is used by deterministic venue replays only.
+Sync waits until the trader has consumed every frame already delivered and the
+manifold has settled the field those frames produced. Replay uses this so the
+next captured arrival cannot overtake the decision that belongs to the current
+one.
 */
 func (system *System) Sync(ctx context.Context, at time.Time) error {
 	if system == nil || system.Crypto == nil {

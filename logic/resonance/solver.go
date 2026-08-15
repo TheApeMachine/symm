@@ -29,7 +29,6 @@ type Solver struct {
 	recorder      *audit.Recorder
 	coders        *sync.Map
 	schemas       *sync.Map
-	schemaTicks   *sync.Map
 	standardizers *sync.Map
 	states        *sync.Map
 	histories     *sync.Map
@@ -46,6 +45,10 @@ type sampleHistory struct {
 	resolved       int
 	ledger         *horizonLedger
 	lastResolution *taskResolution
+	moves          *adaptive.Accumulator
+	moveStat       adaptive.AccumulatorOutput
+	lastTickMark   float64
+	sequencedMark  float64
 }
 
 type issuedTask struct {
@@ -81,13 +84,16 @@ func NewSolver(
 		recorder:      recorder,
 		coders:        &sync.Map{},
 		schemas:       &sync.Map{},
-		schemaTicks:   &sync.Map{},
 		standardizers: &sync.Map{},
 		states:        &sync.Map{},
 		histories:     &sync.Map{},
 		alpha:         initialAlpha,
 		ui:            ui,
 	}
+}
+
+func (solver *Solver) Name() string {
+	return "resonance"
 }
 
 /*
@@ -196,21 +202,56 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				schema = rawSchema.([]string)
 			}
 
-			schemaChanged := false
-			schemaTick := tick
-			frozen := false
+			historyValue, _ := solver.histories.LoadOrStore(name, &sampleHistory{
+				issued:  make(map[int64]issuedTask),
+				pending: make(map[int64][]issuedHorizon),
+				marks:   make(map[int64]float64),
+				ledger:  newHorizonLedger(),
+				moves:   adaptive.NewAccumulator(),
+			})
+			history := historyValue.(*sampleHistory)
+			var coder *learning.ResonanceManifold
 
-			if rawSchemaTick, found := solver.schemaTicks.Load(name); found {
-				schemaTick = rawSchemaTick.(int64)
-				frozen = tick > schemaTick
+			if rawCoder, loaded := solver.coders.Load(name); loaded {
+				coder = rawCoder.(*learning.ResonanceManifold)
 			}
+
+			newObservation := false
+
+			if mark > 0 && tick > 0 {
+				if len(history.ticks) == 0 || tick > history.ticks[len(history.ticks)-1] {
+					previousMark := history.lastTickMark
+
+					if err := history.observeTickMove(mark); err != nil {
+						return err
+					}
+
+					if previousMark <= 0 || mark != previousMark {
+						history.ticks = append(history.ticks, tick)
+						history.marks[tick] = mark
+						history.sequence++
+						history.sequencedMark = mark
+						newObservation = true
+					}
+				}
+
+				if newObservation && coder != nil {
+					if err := history.resolve(coder, mark); err != nil {
+						return err
+					}
+				}
+
+				history.pruneTicks()
+			}
+
+			schemaChanged := false
 
 			for identity := range state {
 				if slices.Contains(schema, identity) {
 					continue
 				}
 
-				if frozen {
+				if coder != nil && history.inFlight() {
 					continue
 				}
 
@@ -221,9 +262,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			if schemaChanged {
 				sort.Strings(schema)
 				solver.schemas.Store(name, schema)
-				solver.schemaTicks.Store(name, tick)
 				solver.coders.Delete(name)
-				solver.histories.Delete(name)
+				coder = nil
+				history.issued = make(map[int64]issuedTask)
+				history.pending = make(map[int64][]issuedHorizon)
 				symbol.Resonance.Delete(types.ResonanceReturnForecastKey)
 			}
 
@@ -231,13 +273,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 			for index, identity := range schema {
 				input[index] = state[identity]
-			}
-
-			var coder *learning.ResonanceManifold
-			rawCoder, loaded := solver.coders.Load(name)
-
-			if loaded {
-				coder = rawCoder.(*learning.ResonanceManifold)
 			}
 
 			if coder == nil {
@@ -264,34 +299,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				}
 
 				solver.coders.Store(name, coder)
-			}
-
-			historyValue, _ := solver.histories.LoadOrStore(name, &sampleHistory{
-				issued:  make(map[int64]issuedTask),
-				pending: make(map[int64][]issuedHorizon),
-				marks:   make(map[int64]float64),
-				ledger:  newHorizonLedger(),
-			})
-
-			history := historyValue.(*sampleHistory)
-			newObservation := false
-
-			// 1. Process Matured Historical Targets (Delayed Training)
-			if mark > 0 && tick > 0 {
-				if len(history.ticks) == 0 || tick > history.ticks[len(history.ticks)-1] {
-					history.ticks = append(history.ticks, tick)
-					history.marks[tick] = mark
-					history.sequence++
-					newObservation = true
-				}
-
-				if newObservation {
-					if err := history.resolve(coder, mark); err != nil {
-						return err
-					}
-				}
-
-				history.pruneTicks()
 			}
 
 			// 2. Settle and learn the CURRENT unsupervised state before forecasting.
@@ -357,16 +364,17 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				forecast = forecast[:supportedHorizon]
 			}
 
-			forwardCurve := coder.RolloutTaskPrediction(supportedHorizon)
-
-			if len(forwardCurve) > supportedHorizon {
-				forwardCurve = forwardCurve[:supportedHorizon]
-			}
-
 			forwardRetention := coder.RolloutRetention(supportedHorizon)
+
+			leans := make([]float64, len(forecast))
+
+			for index, step := range forecast {
+				leans[index] = step.Value
+			}
 
 			forecastFrame := datura.NewMap(
 				"posterior", forecast,
+				"forwardCurve", leans,
 				"forwardRetention", forwardRetention,
 				"supportedHorizon", supportedHorizon,
 				"probeHorizon", probeHorizon,
@@ -411,7 +419,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 						config.Planner.MinimumConfidence,
 					)
 					frame["taskScale"] = aggregate[0].Scale
-					frame["taskForecast"] = aggregate[0].Value
+					frame["taskForecast"] = call
 					forecastFrame["aggregate"] = aggregate[0]
 					forecastFrame["call"] = call
 					symbol.Resonance.Store(
@@ -419,7 +427,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 						&types.ResonanceReturnForecast{
 							Distribution: aggregate[0],
 							Horizon:      supportedHorizon,
-							ForwardCurve: slices.Clone(forwardCurve),
 							Call:         call,
 						},
 					)
@@ -429,8 +436,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 						frame["taskDirection"] = call
 					}
 				}
-
-				forecastFrame["forwardCurve"] = forwardCurve
 			}
 
 			if !publishedForecast {
@@ -438,9 +443,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			if history.lastResolution != nil {
-				frame["lastResolvedForecast"] = history.lastResolution.forecast
+				frame["lastResolvedForecast"] = signedDirection(
+					history.lastResolution.forecast,
+				)
 				frame["lastResolvedHorizon"] = history.lastResolution.horizon
-				frame["lastRealizedReturn"] = history.lastResolution.actual
+				frame["lastRealizedReturn"] = signedDirection(
+					history.lastResolution.actual,
+				)
 				frame["lastForecastError"] = history.lastResolution.error
 			}
 

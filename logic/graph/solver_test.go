@@ -518,9 +518,8 @@ func TestExtractResonanceNodes(t *testing.T) {
 					DegreesOfFreedom: 8,
 					Ready:            true,
 				},
-				Horizon:      3,
-				ForwardCurve: []float64{-0.001, 0.004, 0.009},
-				Call:         1,
+				Horizon: 3,
+				Call:    1,
 			},
 		)
 		thesis.Symbols.Store("BTC/USD", symbol)
@@ -529,40 +528,39 @@ func TestExtractResonanceNodes(t *testing.T) {
 
 		solver.extractResonanceNodes(symbol, graph)
 
-		Convey("It should publish the nomagique task forecast", func() {
+		Convey("It should publish the direction call, not a priced return path", func() {
 			node, found := graph.Nodes["res:BTC/USD:forecast"]
 
 			So(found, ShouldBeTrue)
-			So(node.Value, ShouldNotEqual, 0)
+			So(node.Value, ShouldEqual, 1)
 			So(node.Confidence, ShouldEqual, 1)
 			So(node.At, ShouldEqual, at)
 			So(graph.ForecastHorizon, ShouldEqual, 3)
-			So(graph.ForwardCurve, ShouldResemble, []float64{-0.001, 0.004, 0.009})
+			So(graph.ForwardCurve, ShouldBeEmpty)
 		})
 	})
 }
 
 func TestExtractManifoldNodes(t *testing.T) {
-	Convey("Given a ready per-symbol phase alignment", t, func() {
+	Convey("Given a ready universe phase alignment", t, func() {
 		at := time.Unix(1, 0).UTC()
-		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.Phase.Store("BTC/USD", types.PhaseReading{
-			Symbol: "BTC/USD",
-			At:     at,
-			Ready:  true,
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.StorePhase(types.PhaseReading{
+			At:    at,
+			Ready: true,
 			Responses: []types.PhaseResponse{{
 				Angle: 0.75, Similarity: 0.6, ObservedAt: at.Add(-time.Second).Format(time.RFC3339),
 				Outcome: types.PhaseOutcome{
-					Symbol: "BTC/USD", Direction: "up", Return: 0.01, Horizon: 2,
+					Direction: "up", Return: 0.01, Horizon: 2,
 				},
 			}},
 		})
 		graph := NewGraph(at)
 
-		NewSolver(nil, nil).extractManifoldNodes(symbol, graph)
+		NewSolver(nil, nil).extractManifoldNodes(thesis, graph)
 
 		Convey("It should retain the measured phase and realized historical outcome", func() {
-			node := graph.Nodes["man:BTC/USD:phase_alignment"]
+			node := graph.Nodes["man:universe:phase_alignment"]
 			So(node, ShouldNotBeNil)
 			So(node.Kind, ShouldEqual, KindManifold)
 			So(node.Value, ShouldEqual, 0.01)
@@ -571,7 +569,7 @@ func TestExtractManifoldNodes(t *testing.T) {
 			So(node.Metadata["angle"], ShouldEqual, 0.75)
 			So(node.Metadata["horizon"], ShouldEqual, 2)
 			So(node.Metadata["outcome"], ShouldResemble, types.PhaseOutcome{
-				Symbol: "BTC/USD", Direction: "up", Return: 0.01, Horizon: 2,
+				Direction: "up", Return: 0.01, Horizon: 2,
 			})
 		})
 	})

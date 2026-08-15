@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+	phaseColumnsFromScan,
+	phaseLeadersFromScan,
 	terminalPhaseScanFromFrame,
 	terminalPhaseStatusFromFrame,
 	terminalWaveModesFromFrame,
@@ -20,7 +22,6 @@ describe("terminal phase dial frame", () => {
 					similarity: 0.8,
 					observedAt: "2026-07-20T12:00:00Z",
 					outcome: {
-						symbol: "BTC/USD",
 						direction: "up",
 						return: 0.0125,
 						horizon: 8,
@@ -31,7 +32,6 @@ describe("terminal phase dial frame", () => {
 					similarity: -0.8,
 					observedAt: "2026-07-20T12:00:00Z",
 					outcome: {
-						symbol: "BTC/USD",
 						direction: "down",
 						return: -0.009,
 						horizon: 8,
@@ -47,7 +47,6 @@ describe("terminal phase dial frame", () => {
 				similarity: 0.8,
 				observedAt: "2026-07-20T12:00:00Z",
 				outcome: {
-					symbol: "BTC/USD",
 					direction: "up",
 					forwardReturn: 0.0125,
 					horizon: 8,
@@ -58,7 +57,6 @@ describe("terminal phase dial frame", () => {
 				similarity: -0.8,
 				observedAt: "2026-07-20T12:00:00Z",
 				outcome: {
-					symbol: "BTC/USD",
 					direction: "down",
 					forwardReturn: -0.009,
 					horizon: 8,
@@ -95,5 +93,31 @@ describe("terminal phase dial frame", () => {
 			ready: false,
 			reason: "awaiting a prior outcome-labeled phase observation",
 		});
+	});
+
+	it("keeps the ranked corpus at each rotation and the leader envelope", () => {
+		const scan = [
+			{
+				angle: Math.PI,
+				similarity: 0.4,
+				observedAt: "2026-07-20T12:00:01Z",
+				outcome: { direction: "flat", forwardReturn: 0, horizon: 8 },
+			},
+			{
+				angle: 0,
+				similarity: 0.9,
+				observedAt: "2026-07-20T12:00:00Z",
+				outcome: { direction: "up", forwardReturn: 0.01, horizon: 8 },
+			},
+			{
+				angle: 0,
+				similarity: 0.2,
+				observedAt: "2026-07-20T12:00:02Z",
+				outcome: { direction: "down", forwardReturn: -0.01, horizon: 8 },
+			},
+		];
+
+		expect(phaseColumnsFromScan(scan)).toEqual([[scan[1], scan[2]], [scan[0]]]);
+		expect(phaseLeadersFromScan(scan)).toEqual([scan[1], scan[0]]);
 	});
 });

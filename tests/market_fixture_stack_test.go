@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -293,35 +294,12 @@ func TestMarketCaptureEntryAndExit(t *testing.T) {
 					trades,
 					level3,
 				), ShouldBeNil)
+				rows := captureCrossSection(system, symbolNames)
 				profitable := make([]*broker.Position, 0)
 
-				for _, name := range symbolNames {
-					symbolState := system.Thesis.Symbol(name)
-					symbolState.Positions.Range(func(_, value any) bool {
-						position, valid := value.(*broker.Position)
-
-						if valid && position.Holding != nil &&
-							position.Holding.Status == types.CLOSED &&
-							position.Holding.PnL != nil &&
-							position.Holding.PnL.Sign() > 0 {
-							profitable = append(profitable, position)
-						}
-
-						return true
-					})
-
-					if stored, found := symbolState.Resonance.Load(name); found {
-						coder := stored.(*learning.ResonanceManifold)
-						forecast, _ := coder.RolloutTaskForecast(1)
-						skill, skillReady := coder.TaskSkill()
-						t.Logf(
-							"capture calibration %s: forecast=%#v skill=%g/%t",
-							name,
-							forecast,
-							skill,
-							skillReady,
-						)
-					}
+				for _, row := range rows {
+					t.Log(row.String())
+					profitable = append(profitable, row.profitable...)
 				}
 
 				Convey("It should retain a profitable completed position", func() {
@@ -347,4 +325,208 @@ func TestMarketCaptureEntryAndExit(t *testing.T) {
 			}),
 		),
 	)
+}
+
+func TestMarketCaptureHoldouts(t *testing.T) {
+	previousDepth, depthWasSet := viper.GetInt("market.l3_depth"),
+		viper.IsSet("market.l3_depth")
+	viper.Set("market.l3_depth", 10)
+	defer func() {
+		if depthWasSet {
+			viper.Set("market.l3_depth", previousDepth)
+			return
+		}
+
+		viper.Set("market.l3_depth", nil)
+	}()
+	captureDirectory := "/Users/theapemachine/.symm/data/backtests/" +
+		"kraken/2026-08-13-live-exact-v2/"
+	pairs, err := os.Open(captureDirectory + "pairs.json")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer pairs.Close()
+	metadataTickers, err := os.Open(captureDirectory + "ticker.jsonl")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer metadataTickers.Close()
+	captured, err := CaptureSymbols(pairs, metadataTickers, 10)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	holdouts := []string{"AKE/USD", "IDOS/USD", "CRV/USD"}
+	symbols := selectCaptureSymbols(captured, holdouts...)
+
+	if len(symbols) != len(holdouts) {
+		t.Fatalf("holdout symbols missing from capture: have %d want %d",
+			len(symbols), len(holdouts))
+	}
+
+	config := testtypes.NewScenarioConfig(symbols)
+	config.InitialBalances = map[string]float64{"USD": 200}
+
+	Convey("Given AKE, IDOS, and CRV from the same captured session", t,
+		WithFixtureOrderScenario(t, config,
+			drive(t, cmd.Boot, func(market *Market, system *cmd.System) {
+				execution := market.Config.Execution
+				execution.DepthLevels = 10
+				market.WithAutoFill(execution)
+				ticker, err := os.Open(captureDirectory + "ticker.jsonl")
+				So(err, ShouldBeNil)
+				defer ticker.Close()
+				trades, err := os.Open(captureDirectory + "trade.jsonl")
+				So(err, ShouldBeNil)
+				defer trades.Close()
+				level3, err := os.Open(captureDirectory + "level3.jsonl")
+				So(err, ShouldBeNil)
+				defer level3.Close()
+
+				So(market.ReplayCapture(holdouts, ticker, trades, level3), ShouldBeNil)
+				rows := captureCrossSection(system, holdouts)
+
+				for _, row := range rows {
+					t.Log(row.String())
+				}
+
+				Convey("It should report a valid session without requiring the IDOS melt-up", func() {
+					So(market.Validate(), ShouldBeNil)
+					So(rows, ShouldHaveLength, 3)
+					t.Logf(
+						"holdout net PnL: %.9f submitted=%d filled=%d",
+						market.Report().Economics.NetPnL,
+						market.Report().Mechanics.Submitted,
+						market.Report().Mechanics.Filled,
+					)
+				})
+			}),
+		),
+	)
+}
+
+type captureSymbolRow struct {
+	symbol     string
+	action     types.Action
+	reason     string
+	utility    float64
+	graph      float64
+	sources    int
+	horizon    int
+	forecast   float64
+	ready      bool
+	skill      float64
+	skillReady bool
+	open       int
+	closed     int
+	closedPnL  float64
+	profitable []*broker.Position
+}
+
+func (row captureSymbolRow) String() string {
+	return fmt.Sprintf(
+		"capture %s action=%s reason=%q utility=%.6f graph=%.6f sources=%d horizon=%d forecast=%.6f ready=%t skill=%.4f/%t open=%d closed=%d closedPnL=%.6f",
+		row.symbol,
+		row.action,
+		row.reason,
+		row.utility,
+		row.graph,
+		row.sources,
+		row.horizon,
+		row.forecast,
+		row.ready,
+		row.skill,
+		row.skillReady,
+		row.open,
+		row.closed,
+		row.closedPnL,
+	)
+}
+
+func captureCrossSection(system *cmd.System, names []string) []captureSymbolRow {
+	rows := make([]captureSymbolRow, 0, len(names))
+
+	for _, name := range names {
+		row := captureSymbolRow{symbol: name, action: types.ActionNothing}
+		symbolState := system.Thesis.Symbol(name)
+
+		if stored, found := symbolState.Decisions.Load(name); found {
+			if decision, valid := stored.(*types.Decision); valid && decision != nil {
+				row.action = decision.Action
+				row.reason = decision.Reason
+				row.utility = decision.Utility
+				row.graph = decision.GraphScore
+				row.sources = len(decision.PerspectiveSources)
+				row.horizon = decision.ForecastHorizon
+			}
+		}
+
+		if stored, found := symbolState.Resonance.Load(name); found {
+			coder := stored.(*learning.ResonanceManifold)
+			forecast, _ := coder.RolloutTaskForecast(1)
+			row.skill, row.skillReady = coder.TaskSkill()
+
+			if len(forecast) > 0 {
+				row.forecast = forecast[0].Value
+				row.ready = forecast[0].Ready
+			}
+		}
+
+		symbolState.Positions.Range(func(_, value any) bool {
+			position, valid := value.(*broker.Position)
+
+			if !valid || position == nil || position.Holding == nil {
+				return true
+			}
+
+			if position.Holding.Status == types.CLOSED {
+				row.closed++
+
+				if position.Holding.PnL != nil {
+					row.closedPnL += position.Holding.PnL.Float64()
+
+					if position.Holding.PnL.Sign() > 0 {
+						row.profitable = append(row.profitable, position)
+					}
+				}
+
+				return true
+			}
+
+			row.open++
+			return true
+		})
+
+		rows = append(rows, row)
+	}
+
+	return rows
+}
+
+func selectCaptureSymbols(
+	symbols []*testtypes.Symbol,
+	names ...string,
+) []*testtypes.Symbol {
+	wanted := make(map[string]struct{}, len(names))
+
+	for _, name := range names {
+		wanted[name] = struct{}{}
+	}
+
+	selected := make([]*testtypes.Symbol, 0, len(names))
+
+	for _, symbol := range symbols {
+		if _, found := wanted[symbol.Pair]; !found {
+			continue
+		}
+
+		selected = append(selected, symbol)
+	}
+
+	return selected
 }

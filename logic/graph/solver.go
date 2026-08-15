@@ -210,7 +210,7 @@ func (graph *Graph) Roots() []string {
 
 /*
 ReadyForSearch reports whether the accumulated lifecycle graph has a calibrated
-return forecast and at least one reachable confidence-weighted relation.
+direction forecast and at least one reachable confidence-weighted relation.
 */
 func (graph *Graph) ReadyForSearch() bool {
 	if graph == nil || graph.Forecast == nil || !graph.Forecast.Ready ||
@@ -309,6 +309,10 @@ func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
 	return solver
 }
 
+func (solver *Solver) Name() string {
+	return "graph"
+}
+
 /*
 Update streams newly available evidence into the graph owned by the current
 Thesis lifecycle. The graph is replaced only after a completed planner evaluation.
@@ -366,7 +370,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		solver.extractCategoryNodes(symbol, graph)
-		solver.extractManifoldNodes(symbol, graph)
+		solver.extractManifoldNodes(thesis, graph)
 		solver.extractResonanceNodes(symbol, graph)
 
 		causalValue, causalFound := symbol.Causal.Load(symbolName)
@@ -488,18 +492,21 @@ func (solver *Solver) extractCategoryNodes(
 }
 
 /*
-extractManifoldNodes registers the per-symbol phase alignment actually retained
-by the manifold stage. The shared fluid field is not duplicated into each
-pair's graph.
+extractManifoldNodes registers the universe phase alignment retained by the
+manifold stage. The shared fluid field is not duplicated into a per-symbol
+fingerprint; each graph reads the same sweep.
 */
 func (solver *Solver) extractManifoldNodes(
-	symbol *types.Symbol,
+	thesis *types.Thesis,
 	graph *Graph,
 ) {
-	stored, found := symbol.Phase.Load(symbol.Symbol)
-	reading, readingOK := stored.(types.PhaseReading)
+	if thesis == nil {
+		return
+	}
 
-	if !found || !readingOK {
+	reading, found := thesis.PhaseSnapshot()
+
+	if !found {
 		return
 	}
 
@@ -510,8 +517,7 @@ func (solver *Solver) extractManifoldNodes(
 	}
 
 	graph.AddNode(&Node{
-		ID:         fmt.Sprintf("man:%s:phase_alignment", symbol.Symbol),
-		Symbol:     symbol.Symbol,
+		ID:         "man:universe:phase_alignment",
 		Source:     "manifold",
 		Kind:       KindManifold,
 		Value:      alignment.Outcome.Return,
@@ -528,7 +534,8 @@ func (solver *Solver) extractManifoldNodes(
 }
 
 /*
-extractResonanceNodes registers predictive coding outcomes (surprise, expected return forecast).
+extractResonanceNodes registers predictive coding outcomes (surprise and the
+direction call). The call is not a priced return.
 */
 func (solver *Solver) extractResonanceNodes(
 	symbol *types.Symbol, graph *Graph,
@@ -563,7 +570,7 @@ func (solver *Solver) extractResonanceNodes(
 	graphForecast := returnForecast.Distribution
 	graph.Forecast = &graphForecast
 	graph.ForecastHorizon = returnForecast.Horizon
-	graph.ForwardCurve = slices.Clone(returnForecast.ForwardCurve)
+	graph.ForwardCurve = nil
 
 	coderValue, found := symbol.Resonance.Load(symbol.Symbol)
 
@@ -598,7 +605,7 @@ func (solver *Solver) extractResonanceNodes(
 		Symbol:     symbol.Symbol,
 		Source:     "resonance",
 		Kind:       KindResonance,
-		Value:      graphForecast.Value,
+		Value:      returnForecast.Call,
 		Confidence: 1,
 		At:         graph.At,
 	})

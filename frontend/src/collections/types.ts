@@ -307,7 +307,7 @@ ManifoldFrame mirrors the backend manifold wire payload.
 */
 export type ManifoldFrame = Record<string, unknown> & {
 	source: string;
-	symbol: string;
+	symbol?: string;
 	at: string;
 	oscillatorCount?: number;
 	sharedOscillatorCount?: number;

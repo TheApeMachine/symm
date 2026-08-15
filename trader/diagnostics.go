@@ -1,11 +1,11 @@
 package trader
 
 import (
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/utils"
 )
@@ -71,8 +71,7 @@ var diagnosticModules = []diagnosticModule{
 	{name: "price", kind: "broker"},
 	{name: "desk", kind: "broker"},
 	{name: "crypto", kind: "trader"},
-	{name: "collect", kind: "pipe"},
-	{name: "commit", kind: "pipe"},
+	{name: "measurements", kind: "trader"},
 	{name: "cvd", kind: "signal"},
 	{name: "pumpdump", kind: "signal"},
 	{name: "depthflow", kind: "signal"},
@@ -83,12 +82,12 @@ var diagnosticModules = []diagnosticModule{
 	{name: "leadlag", kind: "signal"},
 	{name: "liquidity", kind: "signal"},
 	{name: "sentiment", kind: "signal"},
-	{name: "category", kind: "logic"},
-	{name: "resonance", kind: "logic"},
-	{name: "manifold", kind: "logic"},
-	{name: "causal", kind: "logic"},
-	{name: "cognition", kind: "logic"},
-	{name: "graph", kind: "logic"},
+	{name: "category-solver", kind: "logic"},
+	{name: "resonance-solver", kind: "logic"},
+	{name: "manifold-solver", kind: "logic"},
+	{name: "causal-solver", kind: "logic"},
+	{name: "cognition-solver", kind: "logic"},
+	{name: "graph-solver", kind: "logic"},
 	{name: "planner", kind: "strategy"},
 	{name: "mcts", kind: "strategy"},
 	{name: "allocation", kind: "strategy"},
@@ -96,19 +95,8 @@ var diagnosticModules = []diagnosticModule{
 
 var diagnosticHops = [][2]string{
 	{"price", "crypto"},
-	{"crypto", "cvd"},
-	{"crypto", "pumpdump"},
-	{"crypto", "depthflow"},
-	{"crypto", "exhaustion"},
-	{"crypto", "hawkes"},
-	{"crypto", "toxicity"},
-	{"crypto", "correlation"},
-	{"crypto", "leadlag"},
-	{"crypto", "liquidity"},
-	{"crypto", "sentiment"},
-	{"signals", "collect"},
-	{"collect", "commit"},
-	{"commit", "category"},
+	{"crypto", "measurements"},
+	{"measurements", "category"},
 	{"category", "causal"},
 	{"causal", "graph"},
 	{"graph", "planner"},
@@ -183,8 +171,8 @@ type HopSnapshot struct {
 }
 
 /*
-LaneSnapshot is one bounded edge in the analytical data plane, named so a
-blocked Dispatch or an idle commit can be told apart from a busy Measure.
+LaneSnapshot remains on the wire so older dashboards keep parsing. The
+measurement path no longer owns bounded SPSC rings.
 */
 type LaneSnapshot struct {
 	Name         string `json:"name"`
@@ -199,145 +187,98 @@ type LaneSnapshot struct {
 
 /*
 StreamDiagnostics is the replaceable wire snapshot for the diagnostics surface.
-It reports sequencer lag, lane pressure, and measured stage times.
 */
 type StreamDiagnostics struct {
-	Status            string          `json:"status"`
-	Summary           string          `json:"summary"`
-	Lossy             bool            `json:"lossy"`
-	AtNs              int64           `json:"at_ns"`
-	StartedNs         int64           `json:"started_ns"`
-	IngressSequence   uint64          `json:"ingress_sequence"`
-	CommittedSequence uint64          `json:"committed_sequence"`
-	NextSequence      uint64          `json:"next_sequence"`
-	Lag               uint64          `json:"lag"`
-	Pending           int64           `json:"pending"`
-	Dropped           uint64          `json:"dropped"`
-	CommitDropped     uint64          `json:"commit_dropped"`
-	Tickers           uint64          `json:"tickers"`
-	Books             uint64          `json:"books"`
-	Trades            uint64          `json:"trades"`
-	Level3            uint64          `json:"level3"`
-	CoalescedBooks    uint64          `json:"coalesced_books"`
-	StallNs           uint64          `json:"stall_ns"`
-	UIDepth           int             `json:"ui_depth"`
-	UICap             int             `json:"ui_cap"`
-	UISent            uint64          `json:"ui_sent"`
-	UIDropped         uint64          `json:"ui_dropped"`
-	Lanes             []LaneSnapshot  `json:"lanes"`
-	Stages            []ClockSnapshot `json:"stages"`
-	Hops              []HopSnapshot   `json:"hops"`
+	Status    string          `json:"status"`
+	Summary   string          `json:"summary"`
+	Lossy     bool            `json:"lossy"`
+	AtNs      int64           `json:"at_ns"`
+	StartedNs int64           `json:"started_ns"`
+	Tickers   uint64          `json:"tickers"`
+	Books     uint64          `json:"books"`
+	Trades    uint64          `json:"trades"`
+	Level3    uint64          `json:"level3"`
+	UIDepth   int             `json:"ui_depth"`
+	UICap     int             `json:"ui_cap"`
+	UISent    uint64          `json:"ui_sent"`
+	UIDropped uint64          `json:"ui_dropped"`
+	Lanes     []LaneSnapshot  `json:"lanes"`
+	Stages    []ClockSnapshot `json:"stages"`
+	Hops      []HopSnapshot   `json:"hops"`
 }
 
-func (pipeline *streamPipeline) noteBroker(started time.Time) {
-	if pipeline == nil {
+func (crypto *Crypto) bindDiagnostics() {
+	if crypto == nil {
 		return
 	}
 
-	finished := time.Now()
-	pipeline.clocks.observe("price", finished.Sub(started))
-	pipeline.lastBrokerAt = finished
-}
+	crypto.startedAt = time.Now()
+	crypto.diagnosticInterval = viper.GetDuration("system.bus.heartbeat")
 
-func (pipeline *streamPipeline) stampCollected(event *marketEvent) {
-	handled := time.Now()
-
-	if !event.measuredAt.IsZero() {
-		pipeline.clocks.observeHop("signals", "collect", handled.Sub(event.measuredAt))
+	if crypto.diagnosticInterval <= 0 {
+		crypto.diagnosticInterval = 250 * time.Millisecond
 	}
 
-	event.collectedAt = handled
+	if crypto.measurements != nil {
+		crypto.measurements.clocks = &crypto.clocks
+	}
+
+	if crypto.analyzer != nil {
+		crypto.analyzer.ObserveModule = crypto.clocks.observe
+		crypto.analyzer.ObserveHop = crypto.clocks.observeHop
+	}
+
+	if crypto.planner != nil {
+		crypto.planner.ObserveModule = crypto.clocks.observe
+		crypto.planner.ObserveHop = crypto.clocks.observeHop
+	}
+
+	if crypto.desk != nil {
+		crypto.desk.ObserveModule = crypto.clocks.observe
+	}
+
+	go crypto.publishDiagnostics()
 }
 
 /*
-Diagnostics snapshots sequencer progress and every bounded lane without
-waiting on collect or commit. The diagnostic publisher can therefore still
-report a stall while those owners are parked.
+Diagnostics snapshots stage clocks and UI backpressure for the measurement path.
 */
-func (pipeline *streamPipeline) Diagnostics() StreamDiagnostics {
-	ingress := pipeline.ingressSequence.Load()
-	committed := pipeline.committedSequence.Load()
-	lag := uint64(0)
-
-	if ingress > committed {
-		lag = ingress - committed
-	}
-
-	stallNs := uint64(0)
-
-	if lag > 0 {
-		lastCommit := pipeline.lastCommitNanos.Load()
-		elapsed := time.Now().UnixNano() - lastCommit
-
-		if lastCommit > 0 && elapsed > 0 {
-			stallNs = uint64(elapsed)
-		}
-	}
-
-	lanes := pipeline.laneSnapshots()
-	blockedName := ""
-
-	for _, lane := range lanes {
-		if !lane.Blocking || lane.Capacity <= 0 || lane.Depth < lane.Capacity {
-			continue
-		}
-
-		blockedName = lane.Name
-		break
-	}
-
-	dropped := pipeline.dropped.Load()
-	commitDropped := pipeline.commitDropped.Load()
-	status, summary := diagnosticStatus(
-		blockedName,
-		lag,
-		stallNs,
-		pipeline.config.diagnosticInterval,
-		pipeline.nextSequence.Load(),
-		pipeline.pendingCount.Load(),
-	)
-	startedNs := int64(0)
-
-	if !pipeline.startedAt.IsZero() {
-		startedNs = pipeline.startedAt.UnixNano()
+func (crypto *Crypto) Diagnostics() StreamDiagnostics {
+	if crypto == nil {
+		return StreamDiagnostics{Status: "flowing", Lanes: []LaneSnapshot{}}
 	}
 
 	sent, droppedUI := utils.PublishCounters()
+	startedNs := int64(0)
+
+	if !crypto.startedAt.IsZero() {
+		startedNs = crypto.startedAt.UnixNano()
+	}
 
 	return StreamDiagnostics{
-		Status:            status,
-		Summary:           summary,
-		Lossy:             dropped > 0 || commitDropped > 0,
-		AtNs:              time.Now().UnixNano(),
-		StartedNs:         startedNs,
-		IngressSequence:   ingress,
-		CommittedSequence: committed,
-		NextSequence:      pipeline.nextSequence.Load(),
-		Lag:               lag,
-		Pending:           pipeline.pendingCount.Load(),
-		Dropped:           dropped,
-		CommitDropped:     commitDropped,
-		Tickers:           pipeline.tickers.Load(),
-		Books:             pipeline.books.Load(),
-		Trades:            pipeline.trades.Load(),
-		Level3:            pipeline.level3.Load(),
-		CoalescedBooks:    pipeline.coalescedBooks.Load(),
-		StallNs:           stallNs,
-		UIDepth:           uiDepth(pipeline.ui),
-		UICap:             uiCap(pipeline.ui),
-		UISent:            sent,
-		UIDropped:         droppedUI,
-		Lanes:             lanes,
-		Stages:            pipeline.stageSnapshots(),
-		Hops:              pipeline.hopSnapshots(),
+		Status:    "flowing",
+		Summary:   "Measurement and analysis run inline on each market frame.",
+		Lossy:     droppedUI > 0,
+		AtNs:      time.Now().UnixNano(),
+		StartedNs: startedNs,
+		Tickers:   crypto.tickers.Load(),
+		Trades:    crypto.trades.Load(),
+		Level3:    crypto.level3.Load(),
+		UIDepth:   uiDepth(crypto.ui),
+		UICap:     uiCap(crypto.ui),
+		UISent:    sent,
+		UIDropped: droppedUI,
+		Lanes:     []LaneSnapshot{},
+		Stages:    crypto.stageSnapshots(),
+		Hops:      crypto.hopSnapshots(),
 	}
 }
 
-func (pipeline *streamPipeline) stageSnapshots() []ClockSnapshot {
+func (crypto *Crypto) stageSnapshots() []ClockSnapshot {
 	stages := make([]ClockSnapshot, 0, len(diagnosticModules))
 
 	for _, module := range diagnosticModules {
-		stages = append(stages, pipeline.clocks.module(module.name).snapshot(
+		stages = append(stages, crypto.clocks.module(module.name).snapshot(
 			module.name,
 			module.kind,
 		))
@@ -346,11 +287,11 @@ func (pipeline *streamPipeline) stageSnapshots() []ClockSnapshot {
 	return stages
 }
 
-func (pipeline *streamPipeline) hopSnapshots() []HopSnapshot {
+func (crypto *Crypto) hopSnapshots() []HopSnapshot {
 	hops := make([]HopSnapshot, 0, len(diagnosticHops))
 
 	for _, pair := range diagnosticHops {
-		snap := pipeline.clocks.hop(pair[0], pair[1]).snapshot(pair[0]+"->"+pair[1], "")
+		snap := crypto.clocks.hop(pair[0], pair[1]).snapshot(pair[0]+"->"+pair[1], "")
 		hops = append(hops, HopSnapshot{
 			From:    pair[0],
 			To:      pair[1],
@@ -364,95 +305,24 @@ func (pipeline *streamPipeline) hopSnapshots() []HopSnapshot {
 	return hops
 }
 
-func (pipeline *streamPipeline) publishDiagnostics(wait *sync.WaitGroup) {
-	defer wait.Done()
-
-	if pipeline.ui == nil || pipeline.config.diagnosticInterval <= 0 {
+func (crypto *Crypto) publishDiagnostics() {
+	if crypto.ui == nil || crypto.diagnosticInterval <= 0 {
 		return
 	}
 
-	ticker := time.NewTicker(pipeline.config.diagnosticInterval)
+	ticker := time.NewTicker(crypto.diagnosticInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-pipeline.ctx.Done():
+		case <-crypto.ctx.Done():
 			return
 		case <-ticker.C:
-			utils.Publish(pipeline.ui, datura.NewMap(
+			utils.Publish(crypto.ui, datura.NewMap(
 				"diagnostics",
-				pipeline.Diagnostics(),
+				crypto.Diagnostics(),
 			))
 		}
-	}
-}
-
-func (pipeline *streamPipeline) laneSnapshots() []LaneSnapshot {
-	lanes := make([]LaneSnapshot, 0, len(pipeline.workers)*2+1)
-
-	for _, worker := range pipeline.workers {
-		inboxKind := "local_inbox"
-
-		if !worker.local {
-			inboxKind = "cross_inbox"
-		}
-
-		lanes = append(lanes, snapshotLane(
-			worker.name+".inbox",
-			inboxKind,
-			!worker.local,
-			worker.inbox,
-		))
-		lanes = append(lanes, snapshotLane(
-			worker.name+".outbox",
-			"outbox",
-			true,
-			worker.outbox,
-		))
-
-		if worker.level3 != nil {
-			lanes = append(lanes, snapshotLane(
-				worker.name+".level3",
-				"level3_inbox",
-				false,
-				worker.level3,
-			))
-		}
-	}
-
-	if pipeline.commitInbox != nil {
-		lanes = append(lanes, snapshotLane(
-			"commit",
-			"commit",
-			false,
-			pipeline.commitInbox,
-		))
-	}
-
-	return lanes
-}
-
-func snapshotLane[T any](
-	name string,
-	kind string,
-	blocking bool,
-	lane *lane[T],
-) LaneSnapshot {
-	if lane == nil {
-		return LaneSnapshot{Name: name, Kind: kind, Blocking: blocking}
-	}
-
-	telemetry := lane.telemetry()
-
-	return LaneSnapshot{
-		Name:         name,
-		Kind:         kind,
-		Blocking:     blocking,
-		Capacity:     telemetry.Capacity,
-		Depth:        telemetry.Depth,
-		HighWater:    telemetry.HighWater,
-		Saturations:  telemetry.Saturations,
-		SaturationNs: uint64(telemetry.SaturationDuration),
 	}
 }
 
@@ -470,26 +340,4 @@ func uiCap(ui chan []byte) int {
 	}
 
 	return cap(ui)
-}
-
-func diagnosticStatus(
-	blockedName string,
-	lag uint64,
-	stallNs uint64,
-	interval time.Duration,
-	next uint64,
-	pending int64,
-) (string, string) {
-	if blockedName != "" {
-		return "stalled", "Lane " + blockedName +
-			" is full; a blocking Push is parking its producer."
-	}
-
-	if lag > 0 && interval > 0 && stallNs >= uint64(interval) {
-		return "stalled", "Commit is waiting; ticker sequence " +
-			strconv.FormatUint(next, 10) + " is incomplete with " +
-			strconv.FormatInt(pending, 10) + " events queued behind it."
-	}
-
-	return "flowing", "In-flight work is moving. A few events in a lane is the healthy plane, not a stall."
 }

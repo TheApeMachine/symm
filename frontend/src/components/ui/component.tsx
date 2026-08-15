@@ -66,7 +66,7 @@ true paints at once, a false only after the flag has stayed down that many
 milliseconds. It is for latches that clear on the producer's own cycle — a
 per-epoch readiness stamp — which strobe a status light if painted raw.
 
-data-paint-format also takes "time", "date", and ".Nbp" for basis-point display
+data-paint-format also takes "time", "date", "dir", and ".Nbp" for basis-point display
 of return fractions, and the path segment "length" reads an array's size. data-paint-empty says how an empty string
 reads. data-paint-absent says how a missing row reads, and belongs on bindings
 whose wire key carries a complete map rather than a rolling batch — otherwise
@@ -255,6 +255,24 @@ const formatValue = (value: unknown, format: string | undefined): string => {
     return format === "time"
       ? instant.toISOString().slice(11, 19)
       : instant.toISOString().slice(0, 10);
+  }
+
+  if (format === "dir") {
+    const lean = typeof value === "number" ? value : Number(value);
+
+    if (!Number.isFinite(lean)) {
+      throw new Error(`data-paint-format=dir needs a signed call: ${value}`);
+    }
+
+    if (lean > 0) {
+      return "up";
+    }
+
+    if (lean < 0) {
+      return "down";
+    }
+
+    return "flat";
   }
 
   /*

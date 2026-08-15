@@ -56,6 +56,28 @@ func TestNewStoploss(t *testing.T) {
 		})
 	})
 
+	Convey("Given a direction lean and no priced return path", t, func() {
+		forecast := testForecast(0.8)
+		zeroRate := decimal.NewFromInt64(0)
+
+		Convey("It should ignore the lean magnitude and keep the one-tick lattice", func() {
+			stoploss, err := NewStoploss(
+				context.Background(),
+				"BTC/USD",
+				decimal.NewFromFloat64(100.02),
+				decimal.NewFromFloat64(100),
+				forecast,
+				nil,
+				decimal.NewFromFloat64(0.01),
+				zeroRate,
+				zeroRate,
+			)
+
+			So(err, ShouldBeNil)
+			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(99.98)), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given a forecast path that never falls below its starting price", t, func() {
 		forecast := testForecast(0.01)
 		zeroRate := decimal.NewFromInt64(0)
@@ -299,6 +321,165 @@ func TestStoplossUpdate(t *testing.T) {
 	})
 }
 
+func TestStoplossArmClock(t *testing.T) {
+	Convey("Given a stop that has already begun counting marks", t, func() {
+		stoploss := underwaterStoploss(t, 3)
+		stoploss.ArmClock()
+		stoploss.Update(decimal.NewFromFloat64(100))
+
+		Convey("It should ignore a second arm so pre-fill marks cannot be erased", func() {
+			stoploss.ArmClock()
+			So(stoploss.observed, ShouldEqual, 1)
+			So(stoploss.clockArmed, ShouldBeTrue)
+		})
+	})
+}
+
+func TestStayUtility(t *testing.T) {
+	Convey("Given a live forecast and the still-owed exit fee", t, func() {
+		Convey("It should drop the sunk entry fee and keep only the exit haircut", func() {
+			So(stayUtility(0, 0.0026), ShouldEqual, 0)
+			So(stayUtility(math.Log(1.01), 0), ShouldAlmostEqual, 0.01, 1e-12)
+			So(stayUtility(math.Log(1.01), 0.0026), ShouldAlmostEqual, 0.01*0.9974, 1e-12)
+		})
+	})
+}
+
+func TestStoplossReconsider(t *testing.T) {
+	Convey("Given a filled lot whose admitted path has not been observed", t, func() {
+		stoploss := underwaterStoploss(t, 3)
+		stoploss.ArmClock()
+		stoploss.Update(decimal.NewFromFloat64(100))
+		stoploss.Update(decimal.NewFromFloat64(99.99))
+
+		Convey("It should keep the lot even when the live forecast is already dead", func() {
+			stoploss.Reconsider(0, 0)
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.observed, ShouldEqual, 2)
+		})
+	})
+
+	Convey("Given a consumed horizon and a forecast that still gets the lot green", t, func() {
+		stoploss := underwaterStoploss(t, 2)
+		observeHorizon(stoploss)
+
+		Convey("It should keep the slot when the regulator still endorses staying", func() {
+			stoploss.Reconsider(0.01, 0)
+			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+	})
+
+	Convey("Given a consumed horizon and a forecast that cannot reach the profit line", t, func() {
+		stoploss := underwaterStoploss(t, 2)
+		observeHorizon(stoploss)
+
+		Convey("It should release the slot even though remaining utility is positive", func() {
+			stoploss.Reconsider(0.00001, 0)
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+		})
+	})
+
+	Convey("Given a consumed horizon and remaining utility at the regulated gate", t, func() {
+		stoploss := underwaterStoploss(t, 2)
+		observeHorizon(stoploss)
+		live := 0.05
+
+		Convey("It should treat the gate the same way admission does and release", func() {
+			stoploss.Reconsider(live, stayUtility(live, 0))
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+		})
+	})
+
+	Convey("Given a consumed horizon and remaining utility below the regulated gate", t, func() {
+		stoploss := underwaterStoploss(t, 2)
+		observeHorizon(stoploss)
+
+		Convey("It should release even when the path would still print green", func() {
+			stoploss.Reconsider(0.05, 0.10)
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+		})
+	})
+
+	Convey("Given a consumed horizon while the mark is already through the profit line", t, func() {
+		stoploss := underwaterStoploss(t, 2)
+		stoploss.ArmClock()
+		stoploss.Update(stoploss.ProfitLine)
+		stoploss.Update(stoploss.ProfitLine)
+
+		Convey("It should leave in-profit regulation on Update", func() {
+			So(stoploss.observed, ShouldEqual, 2)
+			stoploss.Reconsider(0, 0)
+			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+	})
+
+	Convey("Given a locked lot after its horizon has been consumed", t, func() {
+		stoploss := underwaterStoploss(t, 1)
+		stoploss.ArmClock()
+		stoploss.Update(stoploss.ArmAt)
+
+		Convey("It should not steal the profit-lock path", func() {
+			stoploss.Reconsider(0, 0)
+			So(stoploss.Locked, ShouldBeTrue)
+			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+	})
+
+	Convey("Given a clock that was never armed", t, func() {
+		stoploss := underwaterStoploss(t, 1)
+		stoploss.Update(decimal.NewFromFloat64(100))
+		stoploss.Update(decimal.NewFromFloat64(100))
+
+		Convey("It should not count pre-fill marks as path consumption", func() {
+			stoploss.Reconsider(0, 0)
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.observed, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given an admitted path with no forecast steps", t, func() {
+		zeroRate := decimal.NewFromInt64(0)
+		stoploss, err := NewStoploss(
+			context.Background(),
+			"SIM/USD",
+			decimal.NewFromFloat64(100),
+			decimal.NewFromFloat64(100),
+			testForecast(-0.02),
+			nil,
+			decimal.NewFromFloat64(0.01),
+			zeroRate,
+			zeroRate,
+		)
+		So(err, ShouldBeNil)
+		stoploss.ArmClock()
+		stoploss.Update(decimal.NewFromFloat64(99.99))
+
+		Convey("It should refuse to invent a stay horizon", func() {
+			stoploss.Reconsider(0, 0)
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.horizon, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a dead forecast presented before the horizon, then again after", t, func() {
+		stoploss := underwaterStoploss(t, 3)
+		stoploss.ArmClock()
+		stoploss.Update(decimal.NewFromFloat64(100))
+		stoploss.Reconsider(0, 0)
+		So(stoploss.Status, ShouldEqual, ARMED)
+		stoploss.Update(decimal.NewFromFloat64(99.99))
+		stoploss.Reconsider(0, 0)
+		So(stoploss.Status, ShouldEqual, ARMED)
+		stoploss.Update(decimal.NewFromFloat64(99.98))
+
+		Convey("It should fire only once the admitted path has actually elapsed", func() {
+			stoploss.Reconsider(0, 0)
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+			So(stoploss.observed, ShouldEqual, 3)
+		})
+	})
+}
+
 func TestRestoreStoploss(t *testing.T) {
 	Convey("Given a stored stoploss after its floor ratchets", t, func() {
 		original := stoplossFixture(t)
@@ -338,11 +519,64 @@ func TestRestoreStoploss(t *testing.T) {
 			So(restored, ShouldBeNil)
 		})
 	})
+
+	Convey("Given a stored stop whose stay clock had already advanced", t, func() {
+		original := underwaterStoploss(t, 3)
+		observeHorizon(original)
+		state, err := original.MarshalState()
+		So(err, ShouldBeNil)
+
+		Convey("It should resume the same remaining path length", func() {
+			restored, err := RestoreStoploss(context.Background(), state)
+			So(err, ShouldBeNil)
+			So(restored.horizon, ShouldEqual, 3)
+			So(restored.observed, ShouldEqual, 3)
+			So(restored.clockArmed, ShouldBeTrue)
+			restored.Reconsider(0, 0)
+			So(restored.Status, ShouldEqual, TRIGGERED)
+		})
+	})
 }
 
 type testReporter interface {
 	Helper()
 	Fatalf(string, ...any)
+}
+
+func underwaterStoploss(testingTB testReporter, horizon int) *Stoploss {
+	testingTB.Helper()
+	curve := make([]float64, horizon)
+
+	for index := range curve {
+		curve[index] = 0.01
+	}
+
+	zeroRate := decimal.NewFromInt64(0)
+	stoploss, err := NewStoploss(
+		context.Background(),
+		"BTC/USD",
+		decimal.NewFromFloat64(100.02),
+		decimal.NewFromFloat64(100),
+		testForecast(0.03),
+		curve,
+		decimal.NewFromFloat64(0.01),
+		zeroRate,
+		zeroRate,
+	)
+
+	if err != nil {
+		testingTB.Fatalf("stoploss: %v", err)
+	}
+
+	return stoploss
+}
+
+func observeHorizon(stoploss *Stoploss) {
+	stoploss.ArmClock()
+
+	for range stoploss.horizon {
+		stoploss.Update(decimal.NewFromFloat64(100))
+	}
 }
 
 func stoplossFixture(testingTB testReporter) *Stoploss {
@@ -356,7 +590,7 @@ func stoplossFixture(testingTB testReporter) *Stoploss {
 		decimal.NewFromFloat64(100),
 		decimal.NewFromFloat64(100),
 		forecast,
-		nil,
+		[]float64{-0.02},
 		decimal.NewFromFloat64(0.01),
 		zeroRate,
 		zeroRate,
@@ -409,5 +643,16 @@ func BenchmarkStoplossUpdate(b *testing.B) {
 
 	for b.Loop() {
 		stoploss.Update(mark)
+	}
+}
+
+func BenchmarkStoplossReconsider(b *testing.B) {
+	stoploss := underwaterStoploss(b, 2)
+	observeHorizon(stoploss)
+	b.ResetTimer()
+
+	for b.Loop() {
+		stoploss.Status = ARMED
+		stoploss.Reconsider(0.01, 0)
 	}
 }

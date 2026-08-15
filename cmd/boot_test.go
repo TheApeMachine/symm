@@ -2,9 +2,20 @@ package cmd
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+func TestSystemSync(t *testing.T) {
+	Convey("Given a system without a trader", t, func() {
+		err := (&System{}).Sync(t.Context(), time.Time{})
+
+		Convey("It should refuse to pretend the market was consumed", func() {
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
 
 func TestSystemClose(t *testing.T) {
 	Convey("Given resources recorded in acquisition order", t, func() {

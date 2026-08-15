@@ -300,6 +300,54 @@ func TestRoundTrip(t *testing.T) {
 	)
 }
 
+func TestSync(t *testing.T) {
+	Convey(
+		"Setup",
+		t, tests.WithOrders(t, symbols[:1], cmd.Boot, func(
+			_ *tests.Market,
+			system *cmd.System,
+		) {
+			Convey("Given an idle trader", func() {
+				err := system.Sync(t.Context(), time.Now())
+
+				Convey("It should return once delivered frames have been consumed", func() {
+					So(err, ShouldBeNil)
+				})
+			})
+		}),
+	)
+}
+
+func TestOnTicker(t *testing.T) {
+	Convey(
+		"Setup",
+		t, tests.WithOrders(t, symbols[:1], cmd.Boot, func(
+			market *tests.Market,
+			system *cmd.System,
+		) {
+			Convey("Given a live ticker for an executable book", func() {
+				market.Tick()
+				deadline := time.Now().Add(5 * time.Second)
+
+				for system.Desk.Price().Tick("SIM1/USD") == nil &&
+					time.Now().Before(deadline) {
+					runtime.Gosched()
+				}
+
+				tick := system.Desk.Price().Tick("SIM1/USD")
+
+				Convey("It should cache an executable bid and ask on the price surface", func() {
+					So(tick, ShouldNotBeNil)
+					So(tick.Bid, ShouldNotBeNil)
+					So(tick.Bid.Sign(), ShouldEqual, 1)
+					So(tick.Ask, ShouldNotBeNil)
+					So(tick.Ask.Sign(), ShouldEqual, 1)
+				})
+			})
+		}),
+	)
+}
+
 func TestCryptoRun(t *testing.T) {
 	Convey(
 		"Setup",

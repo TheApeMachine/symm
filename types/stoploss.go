@@ -33,6 +33,9 @@ type Stoploss struct {
 	entryFeeRate  *decimal.Decimal
 	exitFeeRate   *decimal.Decimal
 	trailDistance *decimal.Decimal
+	horizon       int
+	observed      int
+	clockArmed    bool
 	Status        Status           `json:"status"`
 	Symbol        string           `json:"symbol"`
 	Floor         *decimal.Decimal `json:"floor"`
@@ -49,6 +52,9 @@ type stoplossState struct {
 	Symbol        string           `json:"symbol"`
 	TickSize      *decimal.Decimal `json:"tick_size"`
 	TrailDistance *decimal.Decimal `json:"trail_distance"`
+	Horizon       int              `json:"horizon"`
+	Observed      int              `json:"observed"`
+	ClockArmed    bool             `json:"clock_armed"`
 	Floor         *decimal.Decimal `json:"floor"`
 	Mark          *decimal.Decimal `json:"mark"`
 	Peak          *decimal.Decimal `json:"peak"`
@@ -87,6 +93,7 @@ func NewStoploss(
 		exitFeeRate:  exitFeeRate,
 		Status:       ARMED,
 		Symbol:       symbol,
+		horizon:      len(forwardCurve),
 	}
 
 	floor, trailDistance, err := stoploss.forecastGeometry(mark, forwardCurve)
@@ -189,7 +196,81 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 	if !raisedPeak && stoploss.ProfitLine != nil &&
 		mark.Cmp(stoploss.ProfitLine) > 0 {
 		stoploss.Status = TRIGGERED
+		return
 	}
+
+	if stoploss.clockArmed && stoploss.Status == ARMED {
+		stoploss.observed++
+	}
+}
+
+/*
+ArmClock starts the lot's own forecast-horizon clock after the entry fill.
+Marks observed before the fill do not count against the admitted path.
+*/
+func (stoploss *Stoploss) ArmClock() {
+	if stoploss == nil || stoploss.clockArmed {
+		return
+	}
+
+	stoploss.clockArmed = true
+	stoploss.observed = 0
+}
+
+/*
+Reconsider releases a still-red lot after its admitted horizon has been
+observed, unless the live forecast still clears the regulated utility gate
+and is still expected to reach the profit line. Missing evidence keeps the
+lot; profit-lock and in-profit stagnation stay on Update.
+*/
+func (stoploss *Stoploss) Reconsider(
+	forecastLogReturn float64,
+	threshold float64,
+) {
+	if stoploss == nil || stoploss.Status == TRIGGERED || stoploss.Locked {
+		return
+	}
+
+	if stoploss.ProfitLine != nil && stoploss.Mark != nil &&
+		stoploss.Mark.Cmp(stoploss.ProfitLine) >= 0 {
+		return
+	}
+
+	if !stoploss.clockArmed || stoploss.horizon < 1 ||
+		stoploss.observed < stoploss.horizon {
+		return
+	}
+
+	exitRate := 0.0
+
+	if stoploss.exitFeeRate != nil {
+		exitRate = stoploss.exitFeeRate.Float64()
+	}
+
+	if stayUtility(forecastLogReturn, exitRate) > threshold &&
+		stoploss.reachesProfit(forecastLogReturn) {
+		return
+	}
+
+	stoploss.Status = TRIGGERED
+}
+
+/*
+stayUtility is the remaining arithmetic return after the exit fee still owed.
+The entry fee is sunk and is not charged again.
+*/
+func stayUtility(forecastLogReturn, exitFeeRate float64) float64 {
+	return math.Expm1(forecastLogReturn) * (1 - exitFeeRate)
+}
+
+func (stoploss *Stoploss) reachesProfit(forecastLogReturn float64) bool {
+	if stoploss.Mark == nil || stoploss.ProfitLine == nil ||
+		stoploss.Mark.Sign() <= 0 || stoploss.ProfitLine.Sign() <= 0 {
+		return false
+	}
+
+	return stoploss.Mark.Float64()*math.Exp(forecastLogReturn) >=
+		stoploss.ProfitLine.Float64()
 }
 
 /*
@@ -205,6 +286,9 @@ func (stoploss *Stoploss) MarshalState() ([]byte, error) {
 		Symbol:        stoploss.Symbol,
 		TickSize:      stoploss.tickSize,
 		TrailDistance: stoploss.trailDistance,
+		Horizon:       stoploss.horizon,
+		Observed:      stoploss.observed,
+		ClockArmed:    stoploss.clockArmed,
 		Floor:         stoploss.Floor,
 		Mark:          stoploss.Mark,
 		Peak:          stoploss.Peak,
@@ -244,6 +328,10 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 		return nil, fmt.Errorf("stoploss: stored floor must remain below peak")
 	}
 
+	if state.Horizon < 0 || state.Observed < 0 {
+		return nil, fmt.Errorf("stoploss: stored horizon clock cannot be negative")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Stoploss{
@@ -251,6 +339,9 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 		cancel:        cancel,
 		tickSize:      state.TickSize,
 		trailDistance: state.TrailDistance,
+		horizon:       state.Horizon,
+		observed:      state.Observed,
+		clockArmed:    state.ClockArmed,
 		Status:        state.Status,
 		Symbol:        state.Symbol,
 		Floor:         state.Floor,
@@ -287,7 +378,20 @@ func (stoploss *Stoploss) forecastGeometry(
 		return nil, nil, fmt.Errorf("stoploss: forecast distribution required")
 	}
 
-	minimumPathReturn := stoploss.forecast.Value
+	if len(forwardCurve) == 0 {
+		currentMark := scaled(mark)
+		floor := floorToTick(currentMark.Sub(tick), tick)
+
+		if floor == nil || floor.Sign() <= 0 || floor.Cmp(currentMark) >= 0 {
+			return nil, nil, fmt.Errorf(
+				"stoploss: cost lattice does not imply a positive floor",
+			)
+		}
+
+		return floor, tick, nil
+	}
+
+	minimumPathReturn := 0.0
 	cumulativeReturn := 0.0
 
 	for _, predictedReturn := range forwardCurve {

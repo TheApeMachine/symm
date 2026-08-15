@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -22,6 +23,7 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"golang.org/x/sync/errgroup"
 )
 
 type Measurements struct {
@@ -39,12 +41,15 @@ func NewMeasurements(
 	instrument *broker.Instrument,
 	ui chan []byte,
 ) *Measurements {
+	ctx, cancel := context.WithCancel(ctx)
+
 	quotes := types.NewQuoteHistory(system.Cfg.PumpDump.Capacity)
 
-	return newMeasurements(
-		ctx,
-		ui,
-		[]types.Signal{
+	return &Measurements{
+		ctx:    ctx,
+		cancel: cancel,
+		ui:     ui,
+		signals: []types.Signal{
 			correlation.NewSignal(ctx, api, ui),
 			cvd.NewSignalWithQuotes(ctx, api, ui, quotes),
 			depthflow.NewSignal(ctx, api, instrument, ui),
@@ -56,172 +61,104 @@ func NewMeasurements(
 			sentiment.NewSignal(ctx, api, ui),
 			toxicity.NewSignal(ctx, api, ui),
 		},
-	)
-}
-
-func newMeasurements(
-	ctx context.Context,
-	ui chan []byte,
-	signals []types.Signal,
-) *Measurements {
-	ctx, cancel := context.WithCancel(ctx)
-
-	return &Measurements{ctx: ctx, cancel: cancel, ui: ui, signals: signals}
+	}
 }
 
 /*
-Update runs selected signals serially for each symbol. Production streaming
-uses MeasureSymbol directly; this whole-thesis path remains for focused tests
-and callers that deliberately request a synchronous sweep.
+Generate calls the signals on a per-symbol basis, and runs a map-reduce to collect
+the measurements into the thesis. It returns true if any symbol is ready for
+resonance, and an error if any signal failed to measure.
 */
-func (measurements *Measurements) Update(
-	thesis *types.Thesis,
-	receivers []types.SourceType,
+func (measurements *Measurements) Generate(
+	thesis *types.Thesis, receivers []types.SourceType,
 ) (bool, error) {
-	if measurements == nil || thesis == nil {
-		return false, errnie.Err(
-			errnie.Validation,
-			"measurements: conditioner and thesis required",
-			nil,
-		)
-	}
+	var ready atomic.Bool
+	group, _ := errgroup.WithContext(measurements.ctx)
 
-	resonanceReady := false
+	thesis.Tick++
+	utils.PublishPriority(measurements.ui, datura.NewMap(
+		"tick", datura.NewMap("count", thesis.Tick),
+	))
+	defer utils.PublishPriority(measurements.ui, datura.NewMap(
+		"tick", datura.NewMap("count", thesis.Tick),
+	))
 
 	for _, signal := range measurements.signals {
 		if !slices.Contains(receivers, signal.Type()) {
 			continue
 		}
 
-		var measurementErr error
+		utils.PublishPriority(measurements.ui, datura.NewMap("activity", datura.NewMap(
+			string(signal.Type()), "running",
+		)))
 
-		thesis.Symbols.Range(func(_, value any) bool {
-			symbol, ok := value.(*types.Symbol)
+		defer utils.PublishPriority(measurements.ui, datura.NewMap("activity", datura.NewMap(
+			string(signal.Type()), "done",
+		)))
 
-			if !ok {
-				measurementErr = errnie.Err(
-					errnie.Internal,
-					"measurements: symbol type assertion failed",
-					nil,
-				)
-				return false
-			}
+		group.Go(func() error {
+			thesis.Symbols.Range(func(_, value any) bool {
+				symbol, ok := value.(*types.Symbol)
 
-			symbol.Tick = thesis.Tick
-			rows, err := measurements.measure(
-				symbol,
-				thesis.Tick,
-				[]types.Signal{signal},
-			)
+				if !ok {
+					errnie.Err(
+						errnie.Internal,
+						"measurements: symbol type assertion failed",
+						nil,
+					)
 
-			if err != nil {
-				measurementErr = err
-				return false
-			}
+					return false
+				}
 
-			resonanceReady = measurements.commit(thesis, rows) || resonanceReady
-			return true
+				group.Go(func() error {
+					symbol.Tick = thesis.Tick
+					started := time.Now()
+					measured := signal.Measure(symbol, thesis.Tick)
+
+					if measured == nil {
+						return nil
+					}
+
+					if len(measured) == 0 {
+						return nil
+					}
+
+					if measurements.clocks != nil {
+						measurements.clocks.observe(signal.Name(), time.Since(started))
+					}
+
+					for _, measurement := range measured {
+						measurement.Tick = thesis.Tick
+
+						if thesis.Symbol(measurement.Symbol).AppendMeasurement(
+							measurement.Source,
+							measurement,
+						) {
+							ready.Store(true)
+						}
+					}
+
+					utils.Publish(measurements.ui, datura.NewMap("measurements", measured))
+
+					return nil
+				})
+
+				return true
+			})
+
+			return nil
 		})
-
-		if measurementErr != nil {
-			return false, measurementErr
-		}
 	}
 
-	return resonanceReady, nil
-}
-
-/*
-MeasureSymbol advances only the selected signal owners for one market event.
-It is the streaming hot path and never scans unrelated symbols.
-*/
-func (measurements *Measurements) MeasureSymbol(
-	symbol *types.Symbol,
-	tick int64,
-	receivers []types.SourceType,
-) ([]*types.Measurement, error) {
-	if measurements == nil || symbol == nil {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"measurements: conditioner and symbol required",
-			nil,
-		)
-	}
-
-	selected := make([]types.Signal, 0, len(receivers))
-
-	for _, signal := range measurements.signals {
-		if slices.Contains(receivers, signal.Type()) {
-			selected = append(selected, signal)
-		}
-	}
-
-	return measurements.measure(symbol, tick, selected)
-}
-
-func (measurements *Measurements) measure(
-	symbol *types.Symbol,
-	tick int64,
-	signals []types.Signal,
-) ([]*types.Measurement, error) {
-	rows := make([]*types.Measurement, 0)
-
-	for _, signal := range signals {
-		started := time.Now()
-
-		if measurements.clocks != nil && !measurements.dispatchedAt.IsZero() {
-			measurements.clocks.observeHop(
-				"crypto",
-				string(signal.Type()),
-				started.Sub(measurements.dispatchedAt),
-			)
-		}
-
-		for _, measurement := range signal.Measure(symbol, tick) {
-			if measurement == nil {
-				continue
-			}
-
-			measurement.Tick = tick
-
-			rows = append(rows, measurement)
-		}
-
-		if measurements.clocks != nil {
-			measurements.clocks.observe(string(signal.Type()), time.Since(started))
-		}
-	}
-
-	return rows, nil
-}
-
-func (measurements *Measurements) commit(
-	thesis *types.Thesis,
-	rows []*types.Measurement,
-) bool {
-	resonanceReady := false
-	focused := make([]*types.Measurement, 0)
-
-	for _, measurement := range rows {
-		if thesis.Symbol(measurement.Symbol).AppendMeasurement(
-			measurement.Source,
-			measurement,
-		) {
-			resonanceReady = true
-		}
-
-		if measurement.Symbol == types.Focus() {
-			focused = append(focused, measurement)
-		}
-	}
-
-	if len(focused) > 0 {
-		utils.Publish(measurements.ui, datura.NewMap(
-			"measurements", focused,
+	if err := group.Wait(); err != nil {
+		return false, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"measurements: failed to generate measurements",
+			err,
 		))
 	}
 
-	return resonanceReady
+	return ready.Load(), nil
 }
 
 /*

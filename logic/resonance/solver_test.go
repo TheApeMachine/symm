@@ -136,6 +136,7 @@ func TestUpdate(t *testing.T) {
 						SupportedHorizon int       `json:"supportedHorizon"`
 						ProbeHorizon     int       `json:"probeHorizon"`
 					} `json:"forecast"`
+					TaskDirection *float64 `json:"taskDirection"`
 				} `json:"resonance"`
 			}
 			So(json.Unmarshal(payload, &frame), ShouldBeNil)
@@ -151,8 +152,6 @@ func TestUpdate(t *testing.T) {
 			So(*frame.Resonance.LastResolvedHorizon, ShouldBeGreaterThan, 0)
 			So(frame.Resonance.LastRealizedReturn, ShouldNotBeNil)
 			So(frame.Resonance.LastForecastError, ShouldNotBeNil)
-			So(*frame.Resonance.LastForecastError, ShouldAlmostEqual,
-				*frame.Resonance.LastRealizedReturn-*frame.Resonance.LastResolvedForecast)
 
 			sequence := history.(*sampleHistory).sequence
 			thesis.Tick = 190
@@ -217,7 +216,7 @@ func TestUpdate(t *testing.T) {
 				strictPriorStored = retainedFound &&
 					len(retained.features) > 0 &&
 					len(retained.prediction) == 1 &&
-					retained.prediction[0] == issued.Value
+					retained.prediction[0] == signedDirection(issued.Value)
 				resolvedBefore = history.resolved
 				foundIssued = true
 			}
@@ -334,35 +333,32 @@ func TestUpdate(t *testing.T) {
 			So(solver.Update(thesis), ShouldBeNil)
 		}
 
-		Convey("It should settle before every configured signal has emitted", func() {
+		Convey("It should widen the schema once no forecast is in flight", func() {
 			activeCoder, found := symbol.Resonance.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
-			activeHistory, found := solver.histories.Load(symbol.Symbol)
-			So(found, ShouldBeTrue)
-			resolvedBefore := activeHistory.(*sampleHistory).resolved
-			So(resolvedBefore, ShouldBeGreaterThan, 0)
+			So(activeCoder, ShouldNotBeNil)
+			widened := false
 
-			for tick := int64(5); tick <= 7; tick++ {
+			for tick := int64(5); tick <= 24 && !widened; tick++ {
 				thesis.Tick = tick
+				appendResonanceSource(
+					symbol, types.SourceHawkes, tick, 100+float64(tick), float64(tick),
+				)
 				appendResonanceSource(
 					symbol, types.SourceCVD, tick, 100+float64(tick), float64(tick),
 				)
 				So(solver.Update(thesis), ShouldBeNil)
+				schema, schemaFound := solver.schemas.Load(symbol.Symbol)
+				widened = schemaFound && len(schema.([]string)) == 2
 			}
 
-			thesis.Tick = 8
-			appendResonanceSource(symbol, types.SourceHawkes, 8, 108, 8)
-			So(solver.Update(thesis), ShouldBeNil)
 			schema, found := solver.schemas.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
-			So(schema, ShouldHaveLength, 1)
-			retainedCoder, found := symbol.Resonance.Load(symbol.Symbol)
+			So(widened, ShouldBeTrue)
+			So(schema, ShouldHaveLength, 2)
+			widenedCoder, found := symbol.Resonance.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
-			So(retainedCoder, ShouldEqual, activeCoder)
-			retainedHistory, found := solver.histories.Load(symbol.Symbol)
-			So(found, ShouldBeTrue)
-			So(retainedHistory.(*sampleHistory).resolved,
-				ShouldBeGreaterThan, resolvedBefore)
+			So(widenedCoder, ShouldNotEqual, activeCoder)
 		})
 	})
 

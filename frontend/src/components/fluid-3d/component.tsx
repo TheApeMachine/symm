@@ -5,7 +5,13 @@ import { Canvas } from "#/components/ui/canvas";
 import { Flex } from "#/components/ui/flex";
 import { Input } from "#/components/ui/input";
 import { Section } from "#/components/ui/section";
-import { TerminalPhaseDialChart } from "#/components/terminal/charts";
+import { paintPhaseDial } from "#/components/charts/phase-dial";
+import {
+	TerminalPhaseDialChart,
+	terminalPhaseScanFromFrame,
+	terminalPhaseStatusFromFrame,
+	terminalWaveModesFromFrame,
+} from "#/components/terminal/charts";
 import { Typography } from "#/components/ui/typography";
 import { FluidScene, type FluidSceneOptions } from "./scene";
 import { FluidWebRTCFeed } from "./transport";
@@ -122,6 +128,13 @@ export const FluidInspector = () => {
 				scene.updateParticles(particles);
 				setParticleCount(particles.length);
 			},
+			onPhase: (frame) => {
+				paintPhaseDial({
+					wave: terminalWaveModesFromFrame(frame),
+					scan: terminalPhaseScanFromFrame(frame),
+					status: terminalPhaseStatusFromFrame(frame),
+				});
+			},
 			onState: setState,
 			onError: (cause) => setError(cause.message),
 		});
@@ -231,7 +244,7 @@ export const FluidInspector = () => {
 
 			<Canvas
 				title="Phase dial"
-				meta="ω-fingerprint · signed corpus response · DMT basins"
+				meta="system α sweep · ranked corpus geodesic · realized direction"
 				topRight={
 					<div className="flex flex-col gap-0.5">
 						<span className="inline-flex items-center justify-end gap-1.5">
@@ -245,9 +258,13 @@ export const FluidInspector = () => {
 						<span className="inline-flex items-center justify-end gap-1.5">
 							<span className="inline-block h-px w-3 bg-(--line2)" />ρ = 0 ring
 						</span>
+						<span className="inline-flex items-center justify-end gap-1.5">
+							<span className="inline-block h-1.5 w-3 bg-(--acc)" />
+							corpus × α
+						</span>
 					</div>
 				}
-				className="absolute top-14 left-3 z-10 h-64 w-72 rounded border border-(--line) bg-[#0e0c0ae8]"
+				className="absolute top-14 left-3 z-10 h-[26rem] w-80 rounded border border-(--line) bg-[#0e0c0ae8]"
 			>
 				<TerminalPhaseDialChart />
 			</Canvas>

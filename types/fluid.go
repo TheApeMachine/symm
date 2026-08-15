@@ -7,6 +7,7 @@ manifold solver knows which the moment it builds one.
 const (
 	FluidFieldsChannel    = "fluid-fields"
 	FluidParticlesChannel = "fluid-particles"
+	FluidPhaseChannel     = "fluid-phase"
 )
 
 /*

@@ -6,7 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/physics/fluid"
+	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -22,7 +22,7 @@ func TestThesisMarshalState(t *testing.T) {
 		symbol.Decisions.Store("BTC/USD", decision)
 		symbol.Graphs.Store("market_graph", map[string]any{"ready": true})
 		symbol.Categories.Store("BTC/USD", []Category{{Symbol: "BTC/USD"}})
-		symbol.Phase.Store("BTC/USD", PhaseReading{Symbol: "BTC/USD"})
+		symbol.Phase.Store("BTC/USD", PhaseReading{})
 		symbol.Cognition.Store("BTC/USD", Cognition{Symbol: "BTC/USD"})
 		symbol.Causal.Store("BTC/USD", map[string]any{"precision": 0.5})
 
@@ -85,10 +85,40 @@ func TestThesisForSymbol(t *testing.T) {
 	})
 }
 
+func TestThesisForSymbols(t *testing.T) {
+	Convey("Given a thesis containing independent symbol state", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		bitcoin := thesis.Symbol("BTC/USD")
+		ether := thesis.Symbol("ETH/USD")
+		thesis.Symbol("SOL/USD")
+
+		scoped, err := thesis.ForSymbols([]string{"ETH/USD", "BTC/USD"})
+
+		Convey("It should share exactly the requested symbols", func() {
+			So(err, ShouldBeNil)
+			selected, found := scoped.Symbols.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			So(selected, ShouldEqual, bitcoin)
+			selected, found = scoped.Symbols.Load("ETH/USD")
+			So(found, ShouldBeTrue)
+			So(selected, ShouldEqual, ether)
+			_, found = scoped.Symbols.Load("SOL/USD")
+			So(found, ShouldBeFalse)
+		})
+
+		Convey("It should reject an empty scope and a missing name", func() {
+			_, err = thesis.ForSymbols(nil)
+			So(err, ShouldNotBeNil)
+			_, err = thesis.ForSymbols([]string{"BTC/USD", "MISSING/USD"})
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
 func TestThesisStoreManifold(t *testing.T) {
 	Convey("Given a fluid reading published to a thesis", t, func() {
 		thesis := NewThesis(t.Context(), nil)
-		reading := fluid.Reading{GuidanceSpeed: 0.75}
+		reading := pmanifold.Reading{GuidanceSpeed: 0.75}
 
 		thesis.StoreManifold(reading)
 		stored, found := thesis.ManifoldSnapshot()
@@ -102,6 +132,31 @@ func TestThesisStoreManifold(t *testing.T) {
 			thesis.Symbol("BTC/USD")
 			scoped, err := thesis.ForSymbol("BTC/USD")
 			scopedReading, scopedFound := scoped.ManifoldSnapshot()
+
+			So(err, ShouldBeNil)
+			So(scopedFound, ShouldBeTrue)
+			So(scopedReading, ShouldResemble, reading)
+		})
+	})
+}
+
+func TestThesisStorePhase(t *testing.T) {
+	Convey("Given a universe phase sweep published to a thesis", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		reading := PhaseReading{Ready: true, Reason: "retaining history"}
+
+		thesis.StorePhase(reading)
+		stored, found := thesis.PhaseSnapshot()
+
+		Convey("It should expose one immutable atomic snapshot", func() {
+			So(found, ShouldBeTrue)
+			So(stored, ShouldResemble, reading)
+		})
+
+		Convey("It should preserve that snapshot in a symbol scope", func() {
+			thesis.Symbol("BTC/USD")
+			scoped, err := thesis.ForSymbol("BTC/USD")
+			scopedReading, scopedFound := scoped.PhaseSnapshot()
 
 			So(err, ShouldBeNil)
 			So(scopedFound, ShouldBeTrue)
@@ -170,7 +225,7 @@ func TestThesisEquitySnapshot(t *testing.T) {
 
 func BenchmarkThesisStoreManifold(b *testing.B) {
 	thesis := NewThesis(b.Context(), nil)
-	reading := fluid.Reading{GuidanceSpeed: 0.75}
+	reading := pmanifold.Reading{GuidanceSpeed: 0.75}
 
 	for b.Loop() {
 		thesis.StoreManifold(reading)
@@ -179,9 +234,27 @@ func BenchmarkThesisStoreManifold(b *testing.B) {
 
 func BenchmarkThesisManifoldSnapshot(b *testing.B) {
 	thesis := NewThesis(b.Context(), nil)
-	thesis.StoreManifold(fluid.Reading{GuidanceSpeed: 0.75})
+	thesis.StoreManifold(pmanifold.Reading{GuidanceSpeed: 0.75})
 
 	for b.Loop() {
 		_, _ = thesis.ManifoldSnapshot()
+	}
+}
+
+func BenchmarkThesisStorePhase(b *testing.B) {
+	thesis := NewThesis(b.Context(), nil)
+	reading := PhaseReading{Ready: true}
+
+	for b.Loop() {
+		thesis.StorePhase(reading)
+	}
+}
+
+func BenchmarkThesisPhaseSnapshot(b *testing.B) {
+	thesis := NewThesis(b.Context(), nil)
+	thesis.StorePhase(PhaseReading{Ready: true})
+
+	for b.Loop() {
+		_, _ = thesis.PhaseSnapshot()
 	}
 }

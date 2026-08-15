@@ -90,11 +90,7 @@ const paintTerminalFluidCompose = (value: unknown, focusSymbol: string) => {
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as ManifoldFrame[];
-	const focused =
-		frames.find(
-			(entry) => focusSymbol === "" || entry.symbol === focusSymbol,
-		) ?? (focusSymbol === "" ? (frames.at(-1) ?? null) : null);
-	const frame = focused;
+	const frame = frames.at(-1) ?? null;
 
 	if (frame === null) {
 		return;

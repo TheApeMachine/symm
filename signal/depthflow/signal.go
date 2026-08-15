@@ -9,7 +9,6 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
@@ -18,7 +17,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -100,14 +98,6 @@ func (signal *Signal) Type() types.SourceType {
 }
 
 func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
-	utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
-		string(types.SourceDepthFlow), "running",
-	)))
-
-	defer utils.PublishPriority(signal.ui, datura.NewMap("activity", datura.NewMap(
-		string(types.SourceDepthFlow), "done",
-	)))
-
 	measurements := make([]*types.Measurement, 0)
 
 	if signal.books == nil {

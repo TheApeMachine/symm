@@ -27,8 +27,7 @@ export const CortexSurface = () => {
 							Sensory context
 						</span>
 						<span className="ml-auto shrink-0 font-mono text-[10px] text-(--f4)">
-							<span data-paint="winner" /> ·{" "}
-							<span data-paint="sequence" />
+							<span data-paint="winner" /> · <span data-paint="sequence" />
 						</span>
 					</div>
 					<div className="grid min-h-0 flex-1 grid-cols-[minmax(560px,1fr)_364px]">
@@ -56,18 +55,6 @@ export const CortexSurface = () => {
 										branch
 									</span>
 								</div>
-							</div>
-
-							<div className="flex min-h-0 flex-1 flex-col border-(--line) border-t bg-(--surface)">
-								<div className="flex shrink-0 items-center justify-between border-(--line) border-b px-3 py-2">
-									<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-										Beam search lookahead
-									</span>
-									<span className="font-mono text-[9.5px] text-(--f4)">
-										log-prob
-									</span>
-								</div>
-								<CortexBeamShell symbol={focusSymbol} />
 							</div>
 						</div>
 

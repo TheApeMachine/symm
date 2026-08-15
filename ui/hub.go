@@ -79,13 +79,7 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		queueCapacity := cap(hub.Messages)
-
-		if queueCapacity < 1 {
-			queueCapacity = 1
-		}
-
-		messages := make(chan []byte, queueCapacity)
+		messages := make(chan []byte, cap(hub.Messages))
 		hub.clients.Store(conn, messages)
 		defer hub.clients.Delete(conn)
 
@@ -106,6 +100,7 @@ func NewHub(
 		}
 
 		clientDone := make(chan struct{})
+
 		go func() {
 			defer close(clientDone)
 
@@ -139,6 +134,7 @@ func NewHub(
 				}
 			}
 		}()
+
 		defer func() {
 			_ = conn.Close()
 			<-clientDone
@@ -180,19 +176,11 @@ func (hub *Hub) broadcast() {
 			return
 		case message := <-hub.Messages:
 			hub.clients.Range(func(key, value any) bool {
-				conn := key.(*websocket.Conn)
 				messages := value.(chan []byte)
 
 				select {
 				case messages <- message:
 				default:
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"dashboard client queue exhausted",
-						nil,
-					))
-					hub.clients.Delete(conn)
-					_ = conn.Close()
 				}
 
 				return true

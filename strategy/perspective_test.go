@@ -25,17 +25,15 @@ func TestDecisionPerspective(t *testing.T) {
 
 		value, confidence, sources, err := decisionPerspective(graph, 0.9)
 
-		Convey("It should combine compatible returns by their observed reliability", func() {
+		Convey("It should combine only priced returns, never the direction lean", func() {
 			So(err, ShouldBeNil)
-			So(sources, ShouldHaveLength, 3)
+			So(sources, ShouldHaveLength, 2)
 			So(sources[0].Source, ShouldEqual, "causal")
 			So(sources[1].Source, ShouldEqual, "manifold")
-			So(sources[2].Source, ShouldEqual, "resonance")
-			So(value, ShouldAlmostEqual, (0.01*0.9-0.08*0.5+0.015)/(0.9+0.5+1), 1e-12)
-			So(confidence, ShouldAlmostEqual, (0.9+0.5+1)/3, 1e-12)
+			So(value, ShouldAlmostEqual, (-0.08*0.5+0.015)/(0.5+1), 1e-12)
+			So(confidence, ShouldAlmostEqual, (0.5+1)/2, 1e-12)
 			So(sources[0].Horizon, ShouldEqual, 4)
 			So(sources[1].Horizon, ShouldEqual, 4)
-			So(sources[2].Horizon, ShouldEqual, 4)
 		})
 
 		Convey("A materially different causal estimate should change the perspective", func() {
@@ -49,6 +47,21 @@ func TestDecisionPerspective(t *testing.T) {
 			delete(graph.Nodes["causal:BTC/USD:doExpectation"].Metadata, "horizon")
 			_, _, _, missingHorizonErr := decisionPerspective(graph, 0.9)
 			So(missingHorizonErr, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given only a ready direction forecast", t, func() {
+		graph := logicgraph.NewGraph(time.Unix(1, 0).UTC())
+		graph.Forecast = &learning.RLSOutput{Value: 0.4, Ready: true}
+		graph.ForecastHorizon = 6
+
+		value, confidence, sources, err := decisionPerspective(graph, 0.9)
+
+		Convey("It should refuse to invent a return from the direction lean", func() {
+			So(err, ShouldBeNil)
+			So(value, ShouldEqual, 0)
+			So(confidence, ShouldEqual, 0.9)
+			So(sources, ShouldBeEmpty)
 		})
 	})
 }

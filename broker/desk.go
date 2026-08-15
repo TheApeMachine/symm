@@ -119,6 +119,28 @@ func NewDesk(
 /*
 Cash returns the current cash balance in quote currency.
 */
+/*
+Queued reports market messages the desk has received but not yet applied to
+open lots. Replay waits for this to drain so a stop sees every executable mark.
+*/
+func (desk *Desk) Queued() int {
+	if desk == nil || desk.subscriptions == nil {
+		return 0
+	}
+
+	queued := 0
+
+	if ticker := desk.subscriptions["ticker"]; ticker != nil {
+		queued += len(ticker.Channel)
+	}
+
+	if executions := desk.subscriptions["executions"]; executions != nil {
+		queued += len(executions.Channel)
+	}
+
+	return queued
+}
+
 func (desk *Desk) Cash() *decimal.Decimal {
 	if desk == nil || desk.balance == nil {
 		return nil
@@ -413,9 +435,10 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		if economics.NetReturn.Cmp(decimal.NewFromFloat64(
-			decision.AdmissionUtilityThreshold,
-		)) <= 0 {
+		if len(decision.PerspectiveSources) > 0 &&
+			economics.NetReturn.Cmp(decimal.NewFromFloat64(
+				decision.AdmissionUtilityThreshold,
+			)) <= 0 {
 			return errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"desk: perspective no longer clears its regulated utility boundary",
