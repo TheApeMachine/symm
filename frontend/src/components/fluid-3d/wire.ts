@@ -20,6 +20,22 @@ export type FluidVector = {
 	Z: number;
 };
 
+export type OrderParticle = {
+	Position: FluidVector;
+	Velocity: FluidVector;
+	Mass: number;
+	Heat: number;
+	Energy: number;
+};
+
+export type OrderOscillator = {
+	Phase: number;
+	Omega: number;
+	Amplitude: number;
+	Real: number;
+	Imaginary: number;
+};
+
 export type FluidParticle = {
 	Position: FluidVector;
 	Velocity: FluidVector;
@@ -28,6 +44,9 @@ export type FluidParticle = {
 	Energy: number;
 	Phase: number;
 	Omega: number;
+	Amplitude?: number;
+	particle?: OrderParticle;
+	oscillator?: OrderOscillator;
 };
 
 type FluidEnvelope = {

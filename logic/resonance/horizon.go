@@ -136,15 +136,29 @@ func signedDirection(value float64) float64 {
 	return 0
 }
 
-func directionCall(output learning.RLSOutput, minimumConfidence float64) float64 {
+type directionEvidence struct {
+	candidate  float64
+	confidence float64
+}
+
+type stabilizedDirection struct {
+	candidate       float64
+	call            float64
+	stable          float64
+	held            bool
+	confidence      float64
+	switchThreshold float64
+}
+
+func directionPosterior(output learning.RLSOutput) directionEvidence {
 	if !output.Ready || output.Scale <= 0 || output.DegreesOfFreedom <= 0 {
-		return 0
+		return directionEvidence{}
 	}
 
-	lean := signedDirection(output.Value)
+	candidate := signedDirection(output.Value)
 
-	if lean == 0 {
-		return 0
+	if candidate == 0 {
+		return directionEvidence{}
 	}
 
 	distribution := distuv.StudentsT{
@@ -154,9 +168,62 @@ func directionCall(output learning.RLSOutput, minimumConfidence float64) float64
 	}
 	positiveProbability := 1 - distribution.CDF(0)
 
-	if max(positiveProbability, 1-positiveProbability) < minimumConfidence {
-		return 0
+	return directionEvidence{
+		candidate:  candidate,
+		confidence: max(positiveProbability, 1-positiveProbability),
+	}
+}
+
+/*
+stabilizeDirection applies a Schmitt-style posterior gate without turning a
+retained direction into a trade. A same-side call remains actionable only while
+it clears the ordinary admission confidence. Reversal requires the stronger
+system optimization confidence; otherwise the old state is retained for
+continuity while Call is zero, so strategy cannot act on stale conviction.
+*/
+func stabilizeDirection(
+	stable float64,
+	evidence directionEvidence,
+	entryThreshold float64,
+	switchThreshold float64,
+) stabilizedDirection {
+	if switchThreshold < entryThreshold {
+		switchThreshold = entryThreshold
 	}
 
-	return lean
+	result := stabilizedDirection{
+		candidate:       evidence.candidate,
+		stable:          signedDirection(stable),
+		confidence:      evidence.confidence,
+		switchThreshold: switchThreshold,
+	}
+
+	if evidence.candidate == 0 || evidence.confidence < entryThreshold {
+		result.held = result.stable != 0
+		return result
+	}
+
+	if result.stable == 0 || evidence.candidate == result.stable {
+		result.call = evidence.candidate
+		result.stable = evidence.candidate
+		return result
+	}
+
+	if evidence.confidence >= switchThreshold {
+		result.call = evidence.candidate
+		result.stable = evidence.candidate
+		return result
+	}
+
+	result.held = true
+	return result
+}
+
+func directionCall(output learning.RLSOutput, minimumConfidence float64) float64 {
+	return stabilizeDirection(
+		0,
+		directionPosterior(output),
+		minimumConfidence,
+		minimumConfidence,
+	).call
 }

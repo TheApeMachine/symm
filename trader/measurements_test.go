@@ -3,8 +3,10 @@ package trader
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
@@ -205,4 +207,115 @@ func BenchmarkMeasurementsGenerate(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+type cohortMeasurementSignal struct {
+	source  types.SourceType
+	calls   atomic.Int64
+	mu      sync.Mutex
+	symbols []string
+}
+
+func (signal *cohortMeasurementSignal) Name() string           { return string(signal.source) }
+func (signal *cohortMeasurementSignal) Type() types.SourceType { return signal.source }
+func (signal *cohortMeasurementSignal) Measure(*types.Symbol, ...int64) []*types.Measurement {
+	panic("cohort signal must be measured once for the complete dirty set")
+}
+func (signal *cohortMeasurementSignal) MeasureCohort(
+	symbols []*types.Symbol,
+	_ ...int64,
+) []*types.Measurement {
+	signal.calls.Add(1)
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
+	signal.symbols = signal.symbols[:0]
+
+	for _, symbol := range symbols {
+		signal.symbols = append(signal.symbols, symbol.Symbol)
+	}
+
+	return nil
+}
+func (signal *cohortMeasurementSignal) Close() error { return nil }
+
+type parallelMeasurementSignal struct {
+	source  types.SourceType
+	entered chan string
+	release <-chan struct{}
+}
+
+func (signal *parallelMeasurementSignal) Name() string           { return string(signal.source) }
+func (signal *parallelMeasurementSignal) Type() types.SourceType { return signal.source }
+func (signal *parallelMeasurementSignal) Measure(
+	symbol *types.Symbol,
+	_ ...int64,
+) []*types.Measurement {
+	signal.entered <- symbol.Symbol
+	<-signal.release
+	return nil
+}
+func (signal *parallelMeasurementSignal) Close() error { return nil }
+
+func TestMeasurementsStreamingOwnership(t *testing.T) {
+	Convey("Given two dirty symbols and one untouched market", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Symbol("AAA/USD")
+		thesis.Symbol("BBB/USD")
+		thesis.Symbol("CCC/USD")
+		cohort := &cohortMeasurementSignal{source: types.SourceCorrelation}
+		entered := make(chan string, 2)
+		release := make(chan struct{})
+		local := &parallelMeasurementSignal{
+			source: types.SourceCVD, entered: entered, release: release,
+		}
+		measurements := &Measurements{
+			ctx:     context.Background(),
+			signals: []types.Signal{cohort, local},
+		}
+		done := make(chan error, 1)
+
+		go func() {
+			_, err := measurements.Generate(
+				thesis,
+				[]types.SourceType{types.SourceCorrelation, types.SourceCVD},
+				"BBB/USD",
+				"AAA/USD",
+			)
+			done <- err
+		}()
+
+		observed := make(map[string]bool)
+
+		for len(observed) < 2 {
+			select {
+			case symbol := <-entered:
+				observed[symbol] = true
+			case <-time.After(time.Second):
+				t.Fatal("independent symbol workers did not enter concurrently")
+			}
+		}
+
+		close(release)
+
+		select {
+		case err := <-done:
+			So(err, ShouldBeNil)
+		case <-time.After(time.Second):
+			t.Fatal("measurement generation did not complete")
+		}
+
+		cohort.mu.Lock()
+		cohortSymbols := append([]string(nil), cohort.symbols...)
+		cohort.mu.Unlock()
+
+		Convey("It should run one complete cohort and one transient worker per dirty symbol", func() {
+			So(cohort.calls.Load(), ShouldEqual, int64(1))
+			So(cohortSymbols, ShouldResemble, []string{"AAA/USD", "BBB/USD"})
+			So(observed, ShouldResemble, map[string]bool{
+				"AAA/USD": true,
+				"BBB/USD": true,
+			})
+			So(thesis.Symbol("CCC/USD").Tick, ShouldEqual, int64(0))
+		})
+	})
 }

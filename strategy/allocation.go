@@ -209,16 +209,35 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
-		stoploss, err := types.NewStoploss(
+		riskPlan := types.NewRiskPlan(types.RiskInputs{
+			ReferencePrice: tick.Ask,
+			Spread:         decision.ExpectedSpread,
+			Impact:         decision.ExpectedImpact,
+			TickSize:       &pair.TickSize,
+			ExitFeeRate:    feeRate,
+			EntryFeeRate:   feeRate,
+			MaxLoss:        notional,
+			Multiples:      types.DefaultRiskMultiples(),
+		})
+		decision.Risk = riskPlan
+
+		horizon := decision.ForecastHorizon
+
+		if len(decision.ForwardCurve) > 0 {
+			horizon = len(decision.ForwardCurve)
+		}
+
+		stoploss, err := types.NewStoplossWithPlan(
 			allocation.ctx,
 			decision.Symbol,
 			tick.Ask,
 			tick.Bid,
 			decision.Forecast,
-			decision.ForwardCurve,
+			horizon,
 			&pair.TickSize,
 			feeRate,
 			feeRate,
+			&riskPlan,
 		)
 
 		if err != nil {

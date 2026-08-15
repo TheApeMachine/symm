@@ -25,16 +25,17 @@ imbalance with trade-pressure confirmation. Categories belong in logic; this
 signal emits numerical scores only.
 */
 type Signal struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	books      websocket.BookSource
-	instrument *broker.Instrument
-	sample     *flow.Sample
-	bookflow   *equation.Bookflow
-	ui         chan []byte
-	lastTrade  *sync.Map
-	lastBookAt *sync.Map
-	lastBook   *sync.Map
+	ctx              context.Context
+	cancel           context.CancelFunc
+	books            websocket.BookSource
+	instrument       *broker.Instrument
+	sample           *flow.Sample
+	bookflow         *equation.Bookflow
+	ui               chan []byte
+	lastTrade        *sync.Map
+	lastBookAt       *sync.Map
+	lastBookRevision *sync.Map
+	lastBook         *sync.Map
 }
 
 type tradeCursor struct {
@@ -71,16 +72,17 @@ func NewSignal(
 	}
 
 	signal := &Signal{
-		ctx:        ctx,
-		cancel:     cancel,
-		books:      books,
-		instrument: instrument,
-		sample:     sample,
-		bookflow:   equation.NewBookflow(),
-		ui:         ui,
-		lastTrade:  &sync.Map{},
-		lastBookAt: &sync.Map{},
-		lastBook:   &sync.Map{},
+		ctx:              ctx,
+		cancel:           cancel,
+		books:            books,
+		instrument:       instrument,
+		sample:           sample,
+		bookflow:         equation.NewBookflow(),
+		ui:               ui,
+		lastTrade:        &sync.Map{},
+		lastBookAt:       &sync.Map{},
+		lastBookRevision: &sync.Map{},
+		lastBook:         &sync.Map{},
 	}
 
 	return signal
@@ -100,7 +102,7 @@ func (signal *Signal) Type() types.SourceType {
 func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 
-	if signal.books == nil {
+	if signal == nil || symbol == nil || signal.books == nil {
 		return measurements
 	}
 
@@ -112,13 +114,30 @@ func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measure
 		signal.lastBookAt = &sync.Map{}
 	}
 
+	if signal.lastBookRevision == nil {
+		signal.lastBookRevision = &sync.Map{}
+	}
+
 	if signal.lastBook == nil {
 		signal.lastBook = &sync.Map{}
 	}
 
+	revision, acceptedAt := symbol.BookRevision()
+	authoritative := revision > 0
+
 	signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
-		bookAt := managedBookObservedAt(managed)
+		bookAt := acceptedAt
+
+		if bookAt.IsZero() {
+			bookAt = managedBookObservedAt(managed)
+		}
+
 		bookPending := managed != nil
+
+		if authoritative {
+			lastRevision, _ := signal.bookRevision(symbol.Symbol)
+			bookPending = managed != nil && revision > lastRevision
+		}
 
 		for trade := range symbol.MarketTrades(types.SourceDepthFlow) {
 			if !validTrade(trade) {
@@ -126,7 +145,7 @@ func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measure
 			}
 
 			if bookPending && !trade.Timestamp.Before(bookAt) {
-				bookMeasurements, err := signal.measureManagedBook(managed)
+				bookMeasurements, err := signal.measureManagedBook(managed, revision, bookAt, authoritative)
 
 				if err != nil {
 					errnie.Error(errnie.Err(
@@ -166,7 +185,7 @@ func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measure
 		}
 
 		if bookPending {
-			bookMeasurements, err := signal.measureManagedBook(managed)
+			bookMeasurements, err := signal.measureManagedBook(managed, revision, bookAt, authoritative)
 
 			if err != nil {
 				errnie.Error(errnie.Err(
@@ -207,19 +226,21 @@ func managedBookObservedAt(managed *spotbook.Book) time.Time {
 
 func (signal *Signal) measureManagedBook(
 	managed *spotbook.Book,
+	revision uint64,
+	acceptedAt time.Time,
+	authoritative bool,
 ) ([]*types.Measurement, error) {
-	bestBid, bestAsk := managed.BestBid(), managed.BestAsk()
-
-	if bestBid == nil || bestAsk == nil {
+	if managed == nil {
 		return nil, nil
 	}
 
+	bestBid, bestAsk := managed.BestBid(), managed.BestAsk()
 	current := bookSnapshot{
 		bids: make(map[int64]flow.BookLevel),
 		asks: make(map[int64]flow.BookLevel),
 	}
 
-	observedAt := time.Time{}
+	observedAt := acceptedAt
 	instrument := signal.instrument.Pair(managed.Name)
 
 	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
@@ -232,7 +253,7 @@ func (signal *Signal) measureManagedBook(
 		}
 		current.bids[level.Ticks] = level
 
-		if bid.Timestamp.After(observedAt) {
+		if !authoritative && bid.Timestamp.After(observedAt) {
 			observedAt = bid.Timestamp
 		}
 	}
@@ -247,7 +268,7 @@ func (signal *Signal) measureManagedBook(
 		}
 		current.asks[level.Ticks] = level
 
-		if ask.Timestamp.After(observedAt) {
+		if !authoritative && ask.Timestamp.After(observedAt) {
 			observedAt = ask.Timestamp
 		}
 	}
@@ -265,16 +286,20 @@ func (signal *Signal) measureManagedBook(
 			signal.lastBookAt.Store(managed.Name, observedAt)
 		}
 
+		if authoritative {
+			signal.lastBookRevision.Store(managed.Name, revision)
+		}
+
 		return nil, nil
 	}
 
 	lastBookAt, _ := signal.bookAt(managed.Name)
 
-	if observedAt.Before(lastBookAt) {
+	if !authoritative && observedAt.Before(lastBookAt) {
 		return nil, nil
 	}
 
-	input, _, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
 		Symbol:   managed.Name,
 		TickSize: instrument.TickSize.Float64(),
 		Bids:     snapshotDelta(current.bids, previous.bids),
@@ -290,6 +315,14 @@ func (signal *Signal) measureManagedBook(
 
 	signal.lastBook.Store(managed.Name, current)
 	signal.lastBookAt.Store(managed.Name, observedAt)
+
+	if authoritative {
+		signal.lastBookRevision.Store(managed.Name, revision)
+	}
+
+	if !ready || bestBid == nil || bestAsk == nil {
+		return nil, nil
+	}
 
 	output, err := signal.bookflow.Measure(input)
 
@@ -444,6 +477,22 @@ func (signal *Signal) bookAt(symbol string) (time.Time, bool) {
 	}
 
 	return raw.(time.Time), true
+}
+
+func (signal *Signal) bookRevision(symbol string) (uint64, bool) {
+	if signal.lastBookRevision == nil {
+		return 0, false
+	}
+
+	raw, exists := signal.lastBookRevision.Load(symbol)
+
+	if !exists {
+		return 0, false
+	}
+
+	revision, valid := raw.(uint64)
+
+	return revision, valid
 }
 
 func (signal *Signal) bookSnapshot(symbol string) bookSnapshot {

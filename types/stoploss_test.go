@@ -297,19 +297,27 @@ func TestStoplossUpdate(t *testing.T) {
 			So(stoploss.Status, ShouldEqual, ARMED)
 		})
 
-		Convey("It should take profit when a profitable mark stops making new highs", func() {
+		Convey("It should hold when a profitable mark repeats at the same price", func() {
 			stoploss.Update(stoploss.ArmAt)
 			stoploss.Update(stoploss.ArmAt)
 
-			So(stoploss.Status, ShouldEqual, TRIGGERED)
+			So(stoploss.Status, ShouldEqual, ARMED)
 		})
 
-		Convey("It should take profit when a profitable mark oscillates under its peak", func() {
-			stoploss.Update(stoploss.ArmAt)
-			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(1)))
-			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.5)))
+		Convey("It should take profit when multiple distinct profitable marks oscillate under peak with giveback", func() {
+			// In production RiskPlan sets noiseBand independently (trail = 2× noise).
+			// The legacy fixture has noiseBand == trailDistance, which makes stagnation
+			// impossible without also breaching the trailing floor. Set it to tick size
+			// to separate the two regimes the way a real Plan does.
+			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
+
+			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.10)))
+			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.08)))
+			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.06)))
+			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.04)))
 
 			So(stoploss.Status, ShouldEqual, TRIGGERED)
+			So(stoploss.TriggerReason, ShouldEqual, TriggerProfitStagnation)
 		})
 
 		Convey("It should hold an unprofitable mark that is not a new high", func() {

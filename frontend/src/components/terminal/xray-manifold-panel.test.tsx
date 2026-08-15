@@ -7,6 +7,9 @@ describe("XrayManifoldPanel", () => {
 		const markup = renderToStaticMarkup(<XrayManifoldPanel />);
 
 		expect(markup).toContain('data-paint="taskForecast"');
+		expect(markup).toContain('data-paint="taskCandidate"');
+		expect(markup).toContain('data-paint="taskStable"');
+		expect(markup).toContain('data-paint="taskHeld"');
 		expect(markup).toContain('data-paint="taskScale"');
 		expect(markup).toContain('data-paint-format="dir"');
 		expect(markup).toContain('data-paint-format=".8f"');
@@ -14,3 +17,5 @@ describe("XrayManifoldPanel", () => {
 		expect(markup).not.toContain('data-paint="forecast.posterior.0.Scale"');
 	});
 });
+
+

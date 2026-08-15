@@ -16,6 +16,10 @@ const reading = (overrides: Partial<CognitiveReading> = {}): CognitiveReading =>
 		cohort: 3,
 		sequence: "symbol-bonk · pump · hold",
 		winner: "pump",
+		candidateWinner: "pump",
+		stateHeld: false,
+		switchConfidence: 0.82,
+		switchThreshold: 0.95,
 		confidence: 0.82,
 		contrast: 0.31,
 		lookaheadScore: 0.41,
@@ -59,3 +63,5 @@ describe("cognitiveScopes", () => {
 		).toEqual(["AAVE/USD", "SOL/USD"]);
 	});
 });
+
+

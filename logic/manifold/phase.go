@@ -8,7 +8,6 @@ import (
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/geometry"
-	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/types"
 )
@@ -362,11 +361,20 @@ func (solver *Solver) midpoint(symbol string) float64 {
 	return midpoint
 }
 
-func oscillatorWave(oscillators []pmanifold.Oscillator) []pfluid.WaveMode {
-	wave := make([]pfluid.WaveMode, len(oscillators))
+/*
+WaveMode is one complex mode contribution on the universe phase dial.
+*/
+type WaveMode struct {
+	Omega     float32 `json:"omega"`
+	Real      float32 `json:"real"`
+	Imaginary float32 `json:"imaginary"`
+}
+
+func oscillatorWave(oscillators []pmanifold.Oscillator) []WaveMode {
+	wave := make([]WaveMode, len(oscillators))
 
 	for index, oscillator := range oscillators {
-		wave[index] = pfluid.WaveMode{
+		wave[index] = WaveMode{
 			Omega:     float32(oscillator.Omega),
 			Real:      float32(oscillator.Amplitude * math.Cos(oscillator.Phase)),
 			Imaginary: float32(oscillator.Amplitude * math.Sin(oscillator.Phase)),

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"iter"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -26,6 +28,8 @@ type Symbol struct {
 	tickers      *sync.Map                    `json:"-"`
 	trades       *sync.Map                    `json:"-"`
 	level3       *lf.Queue[kraken.Level3Data] `json:"-"`
+	bookRevision atomic.Uint64                `json:"-"`
+	bookAt       atomic.Int64                 `json:"-"`
 	Decisions    *sync.Map                    `json:"decisions,omitempty"`
 	Positions    *sync.Map                    `json:"positions,omitempty"`
 	Graphs       *sync.Map                    `json:"graphs,omitempty"`
@@ -202,6 +206,53 @@ AppendLevel3 retains one accepted order-identity frame for its symbol owner.
 */
 func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data) {
 	symbol.level3.Enqueue(level3)
+
+	if observedAt := level3ObservedAt(level3); !observedAt.IsZero() {
+		nanos := observedAt.UnixNano()
+
+		for {
+			current := symbol.bookAt.Load()
+
+			if nanos <= current || symbol.bookAt.CompareAndSwap(current, nanos) {
+				break
+			}
+		}
+	}
+
+	symbol.bookRevision.Add(1)
+}
+
+/*
+BookRevision returns the monotone accepted-frame revision and its event-time
+high-water mark. A revision belongs to the complete authoritative book state,
+not to whichever individual levels happen to survive in that state.
+*/
+func (symbol *Symbol) BookRevision() (uint64, time.Time) {
+	if symbol == nil {
+		return 0, time.Time{}
+	}
+
+	nanos := symbol.bookAt.Load()
+
+	if nanos == 0 {
+		return symbol.bookRevision.Load(), time.Time{}
+	}
+
+	return symbol.bookRevision.Load(), time.Unix(0, nanos).UTC()
+}
+
+func level3ObservedAt(level3 kraken.Level3Data) time.Time {
+	observedAt := level3.Timestamp
+
+	for _, orders := range [][]kraken.Level3Order{level3.Bids, level3.Asks} {
+		for _, order := range orders {
+			if order.Timestamp.After(observedAt) {
+				observedAt = order.Timestamp
+			}
+		}
+	}
+
+	return observedAt
 }
 
 func (symbol *Symbol) AppendMeasurement(_ SourceType, measurement *Measurement) bool {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -174,7 +175,7 @@ func (crypto *Crypto) run() {
 	}()
 }
 
-func (crypto *Crypto) Update(receivers []types.SourceType) {
+func (crypto *Crypto) Update(receivers []types.SourceType, symbols ...string) {
 	started := time.Now()
 
 	if crypto.measurements != nil {
@@ -187,7 +188,7 @@ func (crypto *Crypto) Update(receivers []types.SourceType) {
 		}
 
 		crypto.measurements.dispatchedAt = started
-		ready, err := crypto.measurements.Generate(crypto.thesis, receivers)
+		ready, err := crypto.measurements.Generate(crypto.thesis, receivers, symbols...)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -195,6 +196,7 @@ func (crypto *Crypto) Update(receivers []types.SourceType) {
 				"crypto: measurements failed",
 				err,
 			))
+			return
 		}
 
 		crypto.clocks.observe("measurements", time.Since(started))
@@ -249,7 +251,7 @@ func (crypto *Crypto) onTicker(data any) {
 
 	typedTickers, ok := data.(*kraken.Ticker)
 
-	if !ok {
+	if !ok || typedTickers == nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"crypto: unexpected ticker payload type",
@@ -260,8 +262,13 @@ func (crypto *Crypto) onTicker(data any) {
 	}
 
 	pricedAt := time.Now()
+	dirty := make(map[string]struct{}, len(typedTickers.Data))
 
 	for _, ticker := range typedTickers.Data {
+		if ticker.Symbol == "" {
+			continue
+		}
+
 		if crypto.desk != nil && crypto.desk.Price() != nil {
 			row := ticker
 			crypto.desk.Price().Update(&row)
@@ -273,12 +280,17 @@ func (crypto *Crypto) onTicker(data any) {
 
 		symbol := found.(*types.Symbol)
 		symbol.AppendTickerTo(ticker, types.TickerReceivers)
+		dirty[ticker.Symbol] = struct{}{}
+		crypto.advanceThesisAt(ticker.Timestamp)
 	}
 
 	crypto.tickers.Add(uint64(len(typedTickers.Data)))
 	crypto.clocks.observe("price", time.Since(pricedAt))
 	crypto.clocks.observeHop("price", "crypto", time.Since(pricedAt))
-	crypto.Update(types.TickerReceivers)
+
+	if len(dirty) > 0 {
+		crypto.Update(types.TickerReceivers, sortedSymbolSet(dirty)...)
+	}
 }
 
 func (crypto *Crypto) onTrade(data any) {
@@ -287,7 +299,7 @@ func (crypto *Crypto) onTrade(data any) {
 
 	typedTrades, ok := data.(*kraken.Trade)
 
-	if !ok {
+	if !ok || typedTrades == nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"crypto: unexpected trades payload type",
@@ -297,26 +309,79 @@ func (crypto *Crypto) onTrade(data any) {
 		return
 	}
 
+	dirty := make(map[string]struct{}, len(typedTrades.Data))
+
 	for _, trade := range typedTrades.Data {
+		if trade.Symbol == "" {
+			continue
+		}
+
 		found, _ := crypto.thesis.Symbols.LoadOrStore(trade.Symbol, types.NewSymbol(
 			trade.Symbol, crypto.ui,
 		))
 
 		symbol := found.(*types.Symbol)
 		symbol.AppendTradeTo(trade, types.TradeReceivers)
+		dirty[trade.Symbol] = struct{}{}
+		crypto.advanceThesisAt(trade.Timestamp)
 	}
 
 	crypto.trades.Add(uint64(len(typedTrades.Data)))
-	crypto.Update(types.TradeReceivers)
+
+	if len(dirty) > 0 {
+		crypto.Update(types.TradeReceivers, sortedSymbolSet(dirty)...)
+	}
 }
 
 func (crypto *Crypto) onLevel3(level3 kraken.Level3Data) {
 	crypto.busy.Add(1)
 	defer crypto.busy.Add(-1)
 
+	if level3.Symbol == "" {
+		return
+	}
+
 	crypto.thesis.Symbol(level3.Symbol).AppendLevel3(level3)
+	crypto.advanceThesisAt(level3EventTime(level3))
 	crypto.level3.Add(1)
-	crypto.Update(types.Level3Receivers)
+	crypto.Update(types.AcceptedBookReceivers, level3.Symbol)
+}
+
+func (crypto *Crypto) advanceThesisAt(at time.Time) {
+	if crypto == nil || crypto.thesis == nil || at.IsZero() {
+		return
+	}
+
+	at = at.UTC()
+
+	if at.After(crypto.thesis.At) {
+		crypto.thesis.At = at
+	}
+}
+
+func level3EventTime(level3 kraken.Level3Data) time.Time {
+	at := level3.Timestamp
+
+	for _, orders := range [][]kraken.Level3Order{level3.Bids, level3.Asks} {
+		for _, order := range orders {
+			if order.Timestamp.After(at) {
+				at = order.Timestamp
+			}
+		}
+	}
+
+	return at
+}
+
+func sortedSymbolSet(symbols map[string]struct{}) []string {
+	ordered := make([]string, 0, len(symbols))
+
+	for symbol := range symbols {
+		ordered = append(ordered, symbol)
+	}
+
+	sort.Strings(ordered)
+	return ordered
 }
 
 func (crypto *Crypto) Close() error {

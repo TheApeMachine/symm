@@ -426,6 +426,11 @@ export type CognitiveReading = {
 	remReplays?: number;
 	at?: string;
 	winner?: string;
+	candidateWinner?: string;
+	stateHeld?: boolean;
+	predictionsHeld?: boolean;
+	switchConfidence?: number;
+	switchThreshold?: number;
 	ready?: boolean;
 	confidence?: number;
 	contrast?: number;
@@ -504,3 +509,5 @@ export type MeasurementEpoch = {
 	readings: Measurement[];
 	publishedAt?: string;
 };
+
+

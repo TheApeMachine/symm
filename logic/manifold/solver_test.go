@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"encoding/json"
+	"math"
 	"runtime"
 	"testing"
 	"time"
@@ -9,7 +10,6 @@ import (
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -197,20 +197,17 @@ func TestUpdate(t *testing.T) {
 		entered := make(chan struct{}, 1)
 		release := make(chan struct{})
 		thesis := types.NewThesis(t.Context(), nil)
+		thesis.At = time.Unix(3, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD", nil)
 		symbol.Status = types.BUSY
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
 		solver.api = &staticBookSource{
-			book: managed,
+			book: managed, entered: entered, release: release,
 		}
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
-		solver.settling.Store(true)
-		go func() {
-			entered <- struct{}{}
-			<-release
-			solver.settling.Store(false)
-		}()
+
+		So(solver.Update(thesis), ShouldBeNil)
 
 		select {
 		case <-entered:
@@ -218,11 +215,10 @@ func TestUpdate(t *testing.T) {
 			t.Fatal("manifold owner did not enter the authoritative book read")
 		}
 
-		for request := 0; request < system.Cfg.Manifold.RelaxationSteps+1; request++ {
-			So(solver.Update(thesis), ShouldBeNil)
-		}
-
-		queuedState := solver.settling.Load()
+		thesis.At = time.Unix(4, 0).UTC()
+		So(solver.Update(thesis), ShouldBeNil)
+		thesis.At = time.Unix(5, 0).UTC()
+		So(solver.Update(thesis), ShouldBeNil)
 		close(release)
 		deadline := time.Now().Add(10 * time.Second)
 
@@ -230,14 +226,19 @@ func TestUpdate(t *testing.T) {
 			runtime.Gosched()
 		}
 
-		Convey("It should ignore additional semaphores until settlement completes", func() {
-			So(queuedState, ShouldBeTrue)
-			So(solver.settling.Load(), ShouldBeFalse)
-			So(solver.stepped, ShouldBeFalse)
-			So(solver.pending, ShouldHaveLength, 0)
-			So(solver.ParticleCount(), ShouldEqual, 0)
-		})
+		solver.requestMu.Lock()
+		requested := solver.requested
+		completed := solver.completed
+		solver.requestMu.Unlock()
 
+		Convey("It should coalesce the burst but consume its final generation", func() {
+			So(solver.settling.Load(), ShouldBeFalse)
+			So(solver.stepped, ShouldBeTrue)
+			So(requested, ShouldEqual, uint64(3))
+			So(completed, ShouldEqual, requested)
+			So(solver.priorAt, ShouldEqual, time.Unix(5, 0).UTC())
+			So(solver.ParticleCount(), ShouldEqual, 2)
+		})
 	})
 }
 
@@ -297,6 +298,15 @@ func TestStep(t *testing.T) {
 
 			if fluidFrame.Channel == types.FluidParticlesChannel {
 				particleFrames++
+				var particlePayload struct {
+					Particles []OrderNode `json:"particles"`
+				}
+				So(json.Unmarshal(fluidFrame.Payload, &particlePayload), ShouldBeNil)
+				So(particlePayload.Particles, ShouldNotBeEmpty)
+				So(math.IsNaN(float64(particlePayload.Particles[0].Position.X)), ShouldBeFalse)
+				So(math.IsNaN(float64(particlePayload.Particles[0].Position.Y)), ShouldBeFalse)
+				So(math.IsNaN(float64(particlePayload.Particles[0].Position.Z)), ShouldBeFalse)
+				So(math.IsNaN(float64(particlePayload.Particles[0].Particle.Position.X)), ShouldBeFalse)
 				continue
 			}
 
@@ -307,7 +317,7 @@ func TestStep(t *testing.T) {
 
 			fieldFrames++
 			var fieldPayload struct {
-				Fields pfluid.Fields `json:"fields"`
+				Fields ManifoldFields `json:"fields"`
 			}
 			So(json.Unmarshal(fluidFrame.Payload, &fieldPayload), ShouldBeNil)
 

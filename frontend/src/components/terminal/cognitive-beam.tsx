@@ -192,6 +192,45 @@ export const CognitiveBeam = () => {
 							</div>
 							<div className="flex justify-between">
 								<Typography.Label size="xxs" tone="f4" weight="normal">
+									candidate
+								</Typography.Label>
+								<span
+									data-paint="candidateWinner"
+									data-paint-empty="pending"
+									data-paint-absent="—"
+									className="text-(--f1)"
+								/>
+							</div>
+							<div className="flex justify-between">
+								<Typography.Label size="xxs" tone="f4" weight="normal">
+									held
+								</Typography.Label>
+								<span
+									data-paint="stateHeld"
+									data-paint-absent="false"
+									className="text-(--f1)"
+								/>
+							</div>
+							<div className="flex justify-between">
+								<Typography.Label size="xxs" tone="f4" weight="normal">
+									switch
+								</Typography.Label>
+								<span className="text-(--f1)">
+									<span
+										data-paint="switchConfidence"
+										data-paint-format=".1%"
+										data-paint-absent="—"
+									/>
+									/
+									<span
+										data-paint="switchThreshold"
+										data-paint-format=".1%"
+										data-paint-absent="—"
+									/>
+								</span>
+							</div>
+							<div className="flex justify-between">
+								<Typography.Label size="xxs" tone="f4" weight="normal">
 									paths
 								</Typography.Label>
 								<span
@@ -207,3 +246,5 @@ export const CognitiveBeam = () => {
 		</Component>
 	);
 };
+
+

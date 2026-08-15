@@ -5,24 +5,26 @@ const particleVertexShader = /* glsl */ `
 	attribute float aHeat;
 	attribute float aEnergy;
 	attribute float aMass;
+	attribute float aPhase;
 	uniform float uProjectionScale;
 	uniform float uPointDiameter;
 	varying float vHeat;
 	varying float vEnergy;
+	varying float vPhase;
 
 	void main() {
 		vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
 		vHeat = aHeat;
 		vEnergy = aEnergy;
-		// Energy modulates point size, not brightness, so it stays visually
-		// distinct from the heat-driven color temperature. Mass grows the
-		// point independently, so heavier particles read as visibly larger.
-		float energyScale = 0.6 + 0.8 * clamp(vEnergy, 0.0, 1.0);
-		float massScale = 0.7 + 1.6 * clamp(aMass, 0.0, 1.0);
-		gl_PointSize = max(
-			1.0,
+		vPhase = aPhase;
+		// Modulate point size cleanly within unit box scale
+		float energyScale = 0.8 + 0.5 * clamp(aEnergy, 0.0, 1.0);
+		float massScale = 0.8 + 0.6 * clamp(aMass, 0.0, 1.0);
+		gl_PointSize = clamp(
 			energyScale * massScale * uPointDiameter * uProjectionScale /
-				max(-viewPosition.z, 0.000001)
+				max(-viewPosition.z, 0.0001),
+			3.0,
+			48.0
 		);
 		gl_Position = projectionMatrix * viewPosition;
 	}
@@ -31,6 +33,14 @@ const particleVertexShader = /* glsl */ `
 const particleFragmentShader = /* glsl */ `
 	varying float vHeat;
 	varying float vEnergy;
+	varying float vPhase;
+
+	const float PI = 3.141592653589793;
+
+	vec3 phaseColor(float phase) {
+		vec3 phaseOffsets = vec3(0.0, 2.0 * PI / 3.0, 4.0 * PI / 3.0);
+		return 0.5 + 0.5 * cos(phase + phaseOffsets);
+	}
 
 	void main() {
 		float radius = length(gl_PointCoord - vec2(0.5));
@@ -40,21 +50,29 @@ const particleFragmentShader = /* glsl */ `
 		}
 
 		float glow = smoothstep(0.5, 0.0, radius);
+		float core = smoothstep(0.3, 0.0, radius);
+
+		// Wave domain: oscillator phase angle color
+		vec3 waveColor = phaseColor(vPhase);
+
+		// Geometric domain: thermodynamic heat temperature
 		float heat = clamp(vHeat, 0.0, 1.0);
-		vec3 cold = vec3(0.05, 0.2, 0.65);
-		vec3 mid = vec3(1.0, 0.42, 0.06);
-		vec3 white = vec3(1.0, 0.97, 0.85);
-		vec3 color = heat < 0.5
-			? mix(cold, mid, heat * 2.0)
-			: mix(mid, white, (heat - 0.5) * 2.0);
-		// Brightness comes from heat and the point's glow falloff only, so a
-		// high-energy but cold particle never reads as visually "hot".
-		float brightness = mix(0.35, 1.2, heat) * glow;
-		// A thin energy ring at the point edge gives Energy its own cue
-		// without touching color temperature or overall brightness.
-		float energyRing = smoothstep(0.42, 0.5, radius) *
-			smoothstep(0.28, 0.35, radius) * clamp(vEnergy, 0.0, 1.0);
-		gl_FragColor = vec4(color * brightness + vec3(energyRing), glow);
+		vec3 cold = vec3(0.1, 0.45, 0.9);
+		vec3 warm = vec3(1.0, 0.45, 0.08);
+		vec3 hot = vec3(1.0, 0.95, 0.8);
+		vec3 thermoColor = heat < 0.5
+			? mix(cold, warm, heat * 2.0)
+			: mix(warm, hot, (heat - 0.5) * 2.0);
+
+		// Blend geometric thermal core with wave phase hue
+		vec3 color = mix(waveColor, thermoColor, 0.45);
+
+		// Outer resonance ring reflecting wave energy
+		float energyRing = smoothstep(0.48, 0.38, radius) *
+			smoothstep(0.28, 0.38, radius) * clamp(vEnergy, 0.0, 1.0);
+
+		float brightness = mix(0.75, 1.4, heat) * glow;
+		gl_FragColor = vec4(color * brightness + waveColor * energyRing * 1.5, glow * 0.9 + core * 0.1);
 	}
 `;
 
@@ -96,6 +114,7 @@ export class FluidParticles {
 		const heat = new Float32Array(particles.length);
 		const energy = new Float32Array(particles.length);
 		const mass = new Float32Array(particles.length);
+		const phase = new Float32Array(particles.length);
 		let maximumHeat = 0;
 		let maximumEnergy = 0;
 		let maximumMass = 0;
@@ -114,6 +133,7 @@ export class FluidParticles {
 			heat[index] = finite(particle.Heat, "Heat", index);
 			energy[index] = finite(particle.Energy, "Energy", index);
 			mass[index] = finite(particle.Mass, "Mass", index);
+			phase[index] = finite(particle.Phase, "Phase", index);
 			maximumHeat = Math.max(maximumHeat, Math.abs(heat[index]));
 			maximumEnergy = Math.max(maximumEnergy, Math.abs(energy[index]));
 			maximumMass = Math.max(maximumMass, Math.abs(mass[index]));
@@ -152,6 +172,10 @@ export class FluidParticles {
 		this.points.geometry.setAttribute(
 			"aMass",
 			new THREE.BufferAttribute(mass, 1),
+		);
+		this.points.geometry.setAttribute(
+			"aPhase",
+			new THREE.BufferAttribute(phase, 1),
 		);
 		this.points.geometry.computeBoundingSphere();
 		this.particles = particles;

@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -113,6 +114,10 @@ type Solver struct {
 	// of publishing anonymous internal concept identifiers as market regimes.
 	regimes map[string]types.Category
 
+	// readings retains the accepted named regime independently of the latest
+	// challenger so weak posterior reversals cannot make the state oscillate.
+	readings map[string]types.Cognition
+
 	// branches caches the exported prefix tree per symbol. Walking the trie
 	// costs orders more than the rest of a reading, and the walk can only
 	// change for a symbol when its own sequence transitions, so a rebuild is
@@ -157,6 +162,7 @@ func NewSolver(
 		tree:           tree,
 		sequences:      make(map[string][]string),
 		regimes:        make(map[string]types.Category),
+		readings:       make(map[string]types.Cognition),
 		branches:       make(map[string][]types.CognitionBranch),
 		branchesStamp:  make(map[string]uint64),
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
@@ -190,6 +196,23 @@ Update ingests the active Thesis categories, evaluates category transition surpr
 breaks/continues sequence paths, classifies market regimes, and runs lookahead beam search.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
+	config := system.Cfg.Snapshot()
+
+	if thesis == nil || config == nil || config.Planner == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cognition: thesis and planner configuration required",
+			nil,
+		))
+	}
+
+	switchThreshold := config.Planner.MinimumConfidence
+
+	if config.Regulator != nil &&
+		config.Regulator.OptimizationConfidence > switchThreshold {
+		switchThreshold = config.Regulator.OptimizationConfidence
+	}
+
 	rows := datura.NewMap()
 	var cognitionErr error
 
@@ -372,6 +395,21 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			classes = solver.regimeClasses(categories)
 		}
 
+		candidateWinner := winner
+		candidateConfidence := confidence
+		stabilized := solver.stabilizeReading(
+			symbol,
+			candidateWinner,
+			candidateConfidence,
+			ambiguity.Ambiguous,
+			classes,
+			predictions,
+			switchThreshold,
+		)
+		winner = stabilized.winner
+		confidence = stabilized.confidence
+		predictions = stabilized.predictions
+
 		analysis := solver.tree.AnalyzeInterpolated(activeSequenceBytes)
 		contributions := make([]types.CognitionContribution, 0, len(analysis.Contributions))
 
@@ -394,6 +432,11 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			RegimePrefix:     winner,
 			Winner:           winner,
 			WinnerClass:      winner,
+			CandidateWinner:  candidateWinner,
+			StateHeld:        stabilized.held,
+			PredictionsHeld:  stabilized.held,
+			SwitchConfidence: candidateConfidence,
+			SwitchThreshold:  switchThreshold,
 			Confidence:       confidence,
 			ClassConfidence:  confidence,
 			Contrast:         contrast,
@@ -429,6 +472,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			REMConsolidating: false,
 		}
 
+		solver.readings[symbol] = cognition
 		symbolState.Cognition.Store(symbol, cognition)
 		rows[symbol] = cognition
 		return true
@@ -443,6 +487,81 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	solver.publish(rows)
 
 	return nil
+}
+
+type stabilizedReading struct {
+	winner      string
+	confidence  float64
+	predictions map[string]float64
+	held        bool
+}
+
+/*
+stabilizeReading keeps the accepted regime until an opposing posterior clears
+an independently configured system confidence. A held regime is display state
+only: its lookahead is suppressed so persistence cannot manufacture predictive
+evidence for the graph or planner.
+*/
+func (solver *Solver) stabilizeReading(
+	symbol string,
+	candidate string,
+	candidateConfidence float64,
+	ambiguous bool,
+	classes []types.CognitionClass,
+	predictions map[string]float64,
+	switchThreshold float64,
+) stabilizedReading {
+	previous, hasPrevious := solver.readings[symbol]
+
+	if !hasPrevious || previous.Winner == "" {
+		return stabilizedReading{
+			winner:      candidate,
+			confidence:  candidateConfidence,
+			predictions: predictions,
+		}
+	}
+
+	if candidate == previous.Winner && !ambiguous {
+		return stabilizedReading{
+			winner:      candidate,
+			confidence:  candidateConfidence,
+			predictions: predictions,
+		}
+	}
+
+	if candidate != "" && isRegimeName(candidate) && !ambiguous &&
+		candidateConfidence >= switchThreshold {
+		return stabilizedReading{
+			winner:      candidate,
+			confidence:  candidateConfidence,
+			predictions: predictions,
+		}
+	}
+
+	confidence, found := cognitionClassProbability(classes, previous.Winner)
+
+	if !found {
+		confidence = previous.Confidence
+	}
+
+	return stabilizedReading{
+		winner:     previous.Winner,
+		confidence: confidence,
+		held:       true,
+	}
+}
+
+func cognitionClassProbability(
+	classes []types.CognitionClass,
+	name string,
+) (float64, bool) {
+	for _, class := range classes {
+		if class.Name == name {
+			return class.Probability, true
+		}
+	}
+
+	return 0, false
 }
 
 /*

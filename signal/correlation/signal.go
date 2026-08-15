@@ -2,9 +2,11 @@ package correlation
 
 import (
 	"context"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
@@ -55,10 +57,51 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceCorrelation
 }
 
-func (signal *Signal) Measure(market *types.Symbol, _ ...int64) []*types.Measurement {
-	scoresBySymbol, err := signal.section.Measure(
-		market.MarketTickers(types.SourceCorrelation),
-	)
+func (signal *Signal) Measure(market *types.Symbol, ticks ...int64) []*types.Measurement {
+	if market == nil {
+		return nil
+	}
+
+	return signal.MeasureCohort([]*types.Symbol{market}, ticks...)
+}
+
+/*
+MeasureCohort ingests the complete ticker batch before scoring any member. The
+section remains the single owner of its cross-symbol covariance tables, while
+the measurement scheduler is free to process unrelated symbol-local signals in
+parallel.
+*/
+func (signal *Signal) MeasureCohort(
+	markets []*types.Symbol,
+	ticks ...int64,
+) []*types.Measurement {
+	ordered := make([]*types.Symbol, 0, len(markets))
+
+	for _, market := range markets {
+		if market != nil && market.Symbol != "" {
+			ordered = append(ordered, market)
+		}
+	}
+
+	sort.Slice(ordered, func(left, right int) bool {
+		return ordered[left].Symbol < ordered[right].Symbol
+	})
+
+	rows := make([]kraken.TickerData, 0)
+
+	for _, market := range ordered {
+		for row := range market.MarketTickers(types.SourceCorrelation) {
+			rows = append(rows, row)
+		}
+	}
+
+	scoresBySymbol, err := signal.section.Measure(func(yield func(kraken.TickerData) bool) {
+		for _, row := range rows {
+			if !yield(row) {
+				return
+			}
+		}
+	})
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -72,13 +115,37 @@ func (signal *Signal) Measure(market *types.Symbol, _ ...int64) []*types.Measure
 		return nil
 	}
 
-	scores, found := scoresBySymbol[market.Symbol]
+	tick := int64(0)
 
-	if !found {
-		return nil
+	if len(ticks) > 0 {
+		tick = ticks[0]
 	}
 
-	at, price, found := signal.section.Latest(market.Symbol)
+	measurements := make([]*types.Measurement, 0, len(ordered))
+
+	for _, market := range ordered {
+		scores, found := scoresBySymbol[market.Symbol]
+
+		if !found {
+			continue
+		}
+
+		measurement := signal.measurement(market.Symbol, tick, scores)
+
+		if measurement != nil {
+			measurements = append(measurements, measurement)
+		}
+	}
+
+	return measurements
+}
+
+func (signal *Signal) measurement(
+	symbol string,
+	tick int64,
+	scores map[string]float64,
+) *types.Measurement {
+	at, price, found := signal.section.Latest(symbol)
 
 	if !found {
 		return nil
@@ -93,8 +160,8 @@ func (signal *Signal) Measure(market *types.Symbol, _ ...int64) []*types.Measure
 	measurement := &types.Measurement{
 		ID:     uuid.NewString(),
 		Source: types.SourceCorrelation,
-		Symbol: market.Symbol,
-		Tick:   market.Tick,
+		Symbol: symbol,
+		Tick:   tick,
 		At:     at,
 		Metadata: map[string]float64{
 			"last_price": price,
@@ -119,7 +186,7 @@ func (signal *Signal) Measure(market *types.Symbol, _ ...int64) []*types.Measure
 		Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 	})
 
-	return []*types.Measurement{measurement}
+	return measurement
 }
 
 /*

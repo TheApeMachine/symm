@@ -5,6 +5,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,7 +15,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/geometry"
-	pfluid "github.com/theapemachine/nomagique/physics/fluid"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -59,10 +59,11 @@ type Solver struct {
 	stopped     chan struct{}
 	closing     atomic.Bool
 	settling    atomic.Bool
+	requestMu   sync.Mutex
+	requested   uint64
+	completed   uint64
+	latest      manifoldRequest
 	stepped     bool
-	thesis      *types.Thesis
-	at          time.Time
-	cuts        []manifoldCut
 	driveEta    float64
 	driveBeta   float64
 }
@@ -75,6 +76,17 @@ type manifoldCut struct {
 	symbol      string
 	carrier     uint32
 	oscillators []pmanifold.Oscillator
+}
+
+/*
+manifoldRequest is the latest state the single manifold owner has been asked to
+relax. It is a coalescing slot, not an inbox: bursts replace an obsolete request
+while the measurement queues retain every unconsumed observation.
+*/
+type manifoldRequest struct {
+	generation uint64
+	thesis     *types.Thesis
+	at         time.Time
 }
 
 /*
@@ -186,15 +198,35 @@ population and wakes settlement. Calls received while that worker is stepping
 leave their measurements queued.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if thesis == nil {
+	if solver == nil || thesis == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"manifold: thesis required",
+			"manifold: solver and thesis required",
 			nil,
 		))
 	}
 
+	if solver.physics == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: physics domain is not initialized",
+			nil,
+		))
+	}
+
+	if solver.api == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: authoritative order book source required",
+			nil,
+		))
+	}
+
+	solver.requestMu.Lock()
+
 	if solver.closing.Load() {
+		solver.requestMu.Unlock()
+
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"manifold: solver is closing",
@@ -202,36 +234,21 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
-	if !solver.settling.CompareAndSwap(false, true) {
-		return nil
+	solver.requested++
+	solver.latest = manifoldRequest{
+		generation: solver.requested,
+		thesis:     thesis,
+		at:         thesis.At,
 	}
+	wake := solver.settling.CompareAndSwap(false, true)
+	solver.requestMu.Unlock()
 
-	if solver.closing.Load() {
-		solver.settling.Store(false)
-
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: solver is closing",
-			nil,
-		))
+	if wake {
+		select {
+		case solver.semaphore <- struct{}{}:
+		default:
+		}
 	}
-
-	cuts, err := solver.load(thesis)
-
-	if err != nil {
-		solver.settling.Store(false)
-		return err
-	}
-
-	if len(cuts) == 0 {
-		solver.settling.Store(false)
-		return nil
-	}
-
-	solver.thesis = thesis
-	solver.at = thesis.At
-	solver.cuts = cuts
-	solver.semaphore <- struct{}{}
 
 	return nil
 }
@@ -243,19 +260,63 @@ func (solver *Solver) run() {
 	for {
 		select {
 		case <-solver.semaphore:
-			err := solver.Step(solver.thesis, solver.at, solver.cuts)
-			solver.settling.Store(false)
-
-			if err != nil {
-				errnie.Error(err)
-			}
+			solver.drainRequests()
 		case <-solver.stopping:
 			return
 		}
 	}
 }
 
-func (solver *Solver) load(thesis *types.Thesis) ([]manifoldCut, error) {
+/*
+drainRequests keeps the resident manifold owner active until it has consumed
+its latest requested generation. Intermediate requests may coalesce, but the
+final request in a burst cannot be stranded after settling becomes false.
+*/
+func (solver *Solver) drainRequests() {
+	for {
+		request, available := solver.nextRequest()
+
+		if !available {
+			return
+		}
+
+		cuts, err := solver.load(request.thesis, request.at)
+
+		if err == nil && len(cuts) > 0 {
+			err = solver.Step(request.thesis, request.at, cuts)
+		}
+
+		if err != nil {
+			errnie.Error(err)
+		}
+
+		solver.completeRequest(request.generation)
+	}
+}
+
+func (solver *Solver) nextRequest() (manifoldRequest, bool) {
+	solver.requestMu.Lock()
+	defer solver.requestMu.Unlock()
+
+	if solver.completed >= solver.requested {
+		solver.settling.Store(false)
+		return manifoldRequest{}, false
+	}
+
+	return solver.latest, true
+}
+
+func (solver *Solver) completeRequest(generation uint64) {
+	solver.requestMu.Lock()
+
+	if generation > solver.completed {
+		solver.completed = generation
+	}
+
+	solver.requestMu.Unlock()
+}
+
+func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, error) {
 	if solver.physics == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -362,7 +423,7 @@ func (solver *Solver) load(thesis *types.Thesis) ([]manifoldCut, error) {
 
 		drive := drives[symbolName]
 		mapped, err := solver.bookOscillators(
-			symbolName, drive.buy, drive.sell, thesis.At,
+			symbolName, drive.buy, drive.sell, at,
 		)
 
 		if err != nil {
@@ -472,7 +533,7 @@ func (solver *Solver) load(thesis *types.Thesis) ([]manifoldCut, error) {
 	}
 
 	solver.oscillators = oscillators
-	solver.priorAt = thesis.At
+	solver.priorAt = at
 
 	if driveMass > 0 {
 		solver.driveEta = etaMass / driveMass
@@ -911,7 +972,7 @@ func (solver *Solver) publishDomain() error {
 	)
 	utils.PublishFluid(
 		solver.binui, types.FluidParticlesChannel,
-		datura.NewMap("particles", oscillatorsToParticles(solver.oscillators)),
+		datura.NewMap("particles", oscillatorsToParticles(solver.config, solver.oscillators)),
 	)
 
 	return nil
@@ -1005,26 +1066,143 @@ func (solver *Solver) scale(symbol string) (float64, bool) {
 	return value, ok && value > 0
 }
 
-func oscillatorsToParticles(oscillators []pmanifold.Oscillator) []pfluid.Particle {
-	particles := make([]pfluid.Particle, len(oscillators))
+/*
+OrderVector is a 3D float32 vector in unit coordinates.
+*/
+type OrderVector struct {
+	X float32 `json:"X"`
+	Y float32 `json:"Y"`
+	Z float32 `json:"Z"`
+}
+
+/*
+OrderParticle holds the geometric state of an order in the physical domain.
+*/
+type OrderParticle struct {
+	Position OrderVector `json:"Position"`
+	Velocity OrderVector `json:"Velocity"`
+	Mass     float32     `json:"Mass"`
+	Heat     float32     `json:"Heat"`
+	Energy   float32     `json:"Energy"`
+}
+
+/*
+OrderOscillator holds the wave state of an order in the coherence layer.
+*/
+type OrderOscillator struct {
+	Phase     float32 `json:"Phase"`
+	Omega     float32 `json:"Omega"`
+	Amplitude float32 `json:"Amplitude"`
+	Real      float32 `json:"Real"`
+	Imaginary float32 `json:"Imaginary"`
+}
+
+/*
+OrderNode represents an order in the manifold possessing both a particle
+(geometric) and an oscillator (wave) representation.
+*/
+type OrderNode struct {
+	Position   OrderVector     `json:"Position"`
+	Velocity   OrderVector     `json:"Velocity"`
+	Mass       float32         `json:"Mass"`
+	Heat       float32         `json:"Heat"`
+	Energy     float32         `json:"Energy"`
+	Phase      float32         `json:"Phase"`
+	Omega      float32         `json:"Omega"`
+	Amplitude  float32         `json:"Amplitude"`
+	Particle   OrderParticle   `json:"particle"`
+	Oscillator OrderOscillator `json:"oscillator"`
+}
+
+/*
+ManifoldGrid is the 3D cell layout of the domain.
+*/
+type ManifoldGrid struct {
+	X       int     `json:"x"`
+	Y       int     `json:"y"`
+	Z       int     `json:"z"`
+	Spacing float32 `json:"spacing"`
+}
+
+/*
+ManifoldFields represents the physical fields evaluated over the grid.
+*/
+type ManifoldFields struct {
+	Grid           ManifoldGrid `json:"Grid"`
+	Density        []float32    `json:"Density"`
+	Momentum       []float32    `json:"Momentum"`
+	InternalEnergy []float32    `json:"InternalEnergy"`
+	WaveReal       []float32    `json:"WaveReal"`
+	WaveImaginary  []float32    `json:"WaveImaginary"`
+}
+
+func oscillatorsToParticles(
+	config pmanifold.Config,
+	oscillators []pmanifold.Oscillator,
+) []OrderNode {
+	particles := make([]OrderNode, len(oscillators))
+	domainX := float32(config.DomainX)
+	domainY := float32(config.DomainY)
+	domainZ := float32(config.DomainZ)
+
+	if domainX <= 0 {
+		domainX = 1
+	}
+
+	if domainY <= 0 {
+		domainY = 1
+	}
+
+	if domainZ <= 0 {
+		domainZ = 1
+	}
 
 	for index, oscillator := range oscillators {
-		particles[index] = pfluid.Particle{
-			Position: pfluid.Vector{
-				X: float32(oscillator.PosX),
-				Y: float32(oscillator.PosY),
-				Z: float32(oscillator.PosZ),
-			},
-			Velocity: pfluid.Vector{
-				X: float32(oscillator.VelX),
-				Y: float32(oscillator.VelY),
-				Z: float32(oscillator.VelZ),
-			},
-			Mass:   float32(oscillator.Amplitude),
-			Heat:   float32(oscillator.Heat),
-			Energy: float32(oscillator.Amplitude * oscillator.Amplitude),
-			Phase:  float32(oscillator.Phase),
-			Omega:  float32(oscillator.Omega),
+		normPos := OrderVector{
+			X: float32(oscillator.PosX) / domainX,
+			Y: float32(oscillator.PosY) / domainY,
+			Z: float32(oscillator.PosZ) / domainZ,
+		}
+		normVel := OrderVector{
+			X: float32(oscillator.VelX) / domainX,
+			Y: float32(oscillator.VelY) / domainY,
+			Z: float32(oscillator.VelZ) / domainZ,
+		}
+		mass := float32(oscillator.Amplitude)
+		heat := float32(oscillator.Heat)
+		energy := float32(oscillator.Amplitude * oscillator.Amplitude)
+		phase := float32(oscillator.Phase)
+		omega := float32(oscillator.Omega)
+		amp := float32(oscillator.Amplitude)
+		real := float32(oscillator.Amplitude * math.Cos(oscillator.Phase))
+		imag := float32(oscillator.Amplitude * math.Sin(oscillator.Phase))
+
+		particle := OrderParticle{
+			Position: normPos,
+			Velocity: normVel,
+			Mass:     mass,
+			Heat:     heat,
+			Energy:   energy,
+		}
+		osc := OrderOscillator{
+			Phase:     phase,
+			Omega:     omega,
+			Amplitude: amp,
+			Real:      real,
+			Imaginary: imag,
+		}
+
+		particles[index] = OrderNode{
+			Position:   normPos,
+			Velocity:   normVel,
+			Mass:       mass,
+			Heat:       heat,
+			Energy:     energy,
+			Phase:      phase,
+			Omega:      omega,
+			Amplitude:  amp,
+			Particle:   particle,
+			Oscillator: osc,
 		}
 	}
 
@@ -1035,16 +1213,16 @@ func projectFields(
 	config pmanifold.Config,
 	rho [][]float64,
 	pilot pmanifold.PilotWaveProjection,
-) pfluid.Fields {
+) ManifoldFields {
 	gridX := int(config.GridX)
 	gridZ := int(config.GridZ)
 	cells := gridX * gridZ
-	fields := pfluid.Fields{
-		Grid: pfluid.Grid{
+	fields := ManifoldFields{
+		Grid: ManifoldGrid{
 			X:       gridX,
 			Y:       1,
 			Z:       gridZ,
-			Spacing: float32(config.DomainX / float64(config.GridX)),
+			Spacing: 1.0 / float32(config.GridX),
 		},
 		Density:        make([]float32, cells),
 		Momentum:       make([]float32, cells*3),
@@ -1056,8 +1234,12 @@ func projectFields(
 	for zIndex := range gridZ {
 		for xIndex := range gridX {
 			cell := xIndex + zIndex*gridX
-			fields.Density[cell] = float32(rho[zIndex][xIndex])
-			fields.WaveReal[cell] = float32(pilot.Mag2[zIndex][xIndex])
+			cellRho := float32(rho[zIndex][xIndex])
+			waveMag := float32(pilot.Mag2[zIndex][xIndex])
+			fields.Density[cell] = cellRho
+			fields.InternalEnergy[cell] = cellRho * float32(config.CV)
+			fields.WaveReal[cell] = waveMag
+			fields.WaveImaginary[cell] = 0
 			fields.Momentum[cell*3] = float32(pilot.VelX[zIndex][xIndex])
 			fields.Momentum[cell*3+2] = float32(pilot.VelZ[zIndex][xIndex])
 		}

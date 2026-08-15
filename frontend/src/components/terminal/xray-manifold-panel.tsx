@@ -126,6 +126,33 @@ export const XrayManifoldPanel = () => {
 							</Typography.Span>
 						</div>
 						<div className="flex justify-between gap-3">
+							<span className="text-(--f3)">candidate</span>
+							<Typography.Span
+								data-paint="taskCandidate"
+								data-paint-absent="—"
+								data-paint-format="dir"
+								className="text-right text-(--f1)"
+							>
+								—
+							</Typography.Span>
+						</div>
+						<div className="flex justify-between gap-3">
+							<span className="text-(--f3)">stable / held</span>
+							<span className="text-right text-(--f1)">
+								<Typography.Span
+									data-paint="taskStable"
+									data-paint-absent="—"
+									data-paint-format="dir"
+								>
+									—
+								</Typography.Span>
+								{" / "}
+								<Typography.Span data-paint="taskHeld" data-paint-absent="false">
+									false
+								</Typography.Span>
+							</span>
+						</div>
+						<div className="flex justify-between gap-3">
 							<span className="text-(--f3)">task scale</span>
 							<Typography.Span
 								data-paint="taskScale"
@@ -155,3 +182,5 @@ export const XrayManifoldPanel = () => {
 		</Component>
 	);
 };
+
+

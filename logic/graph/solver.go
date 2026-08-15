@@ -199,7 +199,22 @@ func (graph *Graph) Roots() []string {
 	roots := make([]string, 0)
 
 	for nodeID, node := range graph.Nodes {
-		if !incoming[nodeID] || node.Kind == KindCognition {
+		if node == nil {
+			continue
+		}
+
+		if node.Kind == KindCognition {
+			held, _ := node.Metadata["held"].(bool)
+
+			if held {
+				continue
+			}
+
+			roots = append(roots, nodeID)
+			continue
+		}
+
+		if !incoming[nodeID] {
 			roots = append(roots, nodeID)
 		}
 	}
@@ -801,10 +816,18 @@ func (solver *Solver) extractCognitionNodes(
 		Confidence: cognition.Confidence,
 		At:         cognition.At,
 		Metadata: map[string]any{
-			"regime":   cognition.Winner,
-			"sequence": cognition.Sequence,
+			"regime":           cognition.Winner,
+			"candidate":        cognition.CandidateWinner,
+			"sequence":         cognition.Sequence,
+			"held":             cognition.StateHeld,
+			"switchConfidence": cognition.SwitchConfidence,
+			"switchThreshold":  cognition.SwitchThreshold,
 		},
 	})
+
+	if cognition.PredictionsHeld {
+		return
+	}
 
 	for path, probability := range cognition.Predictions {
 		if path == "" || probability <= 0 {
@@ -984,7 +1007,7 @@ func (solver *Solver) inferStructuralEdges(
 	cognition, cognitionOK := stored.(types.Cognition)
 
 	if found && cognitionOK &&
-		cognition.Winner != "" {
+		cognition.Winner != "" && !cognition.PredictionsHeld {
 		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
 
 		for path, probability := range cognition.Predictions {

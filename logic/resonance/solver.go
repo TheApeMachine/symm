@@ -49,6 +49,7 @@ type sampleHistory struct {
 	moveStat       adaptive.AccumulatorOutput
 	lastTickMark   float64
 	sequencedMark  float64
+	stableCall     float64
 }
 
 type issuedTask struct {
@@ -415,26 +416,49 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				}
 
 				if len(aggregate) > 0 {
-					call := directionCall(
-						aggregate[0],
+					switchThreshold := config.Planner.MinimumConfidence
+
+					if config.Regulator != nil &&
+						config.Regulator.OptimizationConfidence > switchThreshold {
+						switchThreshold = config.Regulator.OptimizationConfidence
+					}
+
+					stabilized := stabilizeDirection(
+						history.stableCall,
+						directionPosterior(aggregate[0]),
 						config.Planner.MinimumConfidence,
+						switchThreshold,
 					)
+					history.stableCall = stabilized.stable
 					frame["taskScale"] = aggregate[0].Scale
-					frame["taskForecast"] = call
+					frame["taskForecast"] = stabilized.call
+					frame["taskCandidate"] = stabilized.candidate
+					frame["taskStable"] = stabilized.stable
+					frame["taskHeld"] = stabilized.held
 					forecastFrame["aggregate"] = aggregate[0]
-					forecastFrame["call"] = call
+					forecastFrame["candidateCall"] = stabilized.candidate
+					forecastFrame["call"] = stabilized.call
+					forecastFrame["stableCall"] = stabilized.stable
+					forecastFrame["held"] = stabilized.held
+					forecastFrame["switchConfidence"] = stabilized.confidence
+					forecastFrame["switchThreshold"] = stabilized.switchThreshold
 					symbol.Resonance.Store(
 						types.ResonanceReturnForecastKey,
 						&types.ResonanceReturnForecast{
-							Distribution: aggregate[0],
-							Horizon:      supportedHorizon,
-							Call:         call,
+							Distribution:     aggregate[0],
+							Horizon:          supportedHorizon,
+							CandidateCall:    stabilized.candidate,
+							Call:             stabilized.call,
+							StableCall:       stabilized.stable,
+							Held:             stabilized.held,
+							SwitchConfidence: stabilized.confidence,
+							SwitchThreshold:  stabilized.switchThreshold,
 						},
 					)
 					publishedForecast = true
 
-					if call != 0 {
-						frame["taskDirection"] = call
+					if stabilized.call != 0 {
+						frame["taskDirection"] = stabilized.call
 					}
 				}
 			}

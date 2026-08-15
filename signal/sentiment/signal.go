@@ -72,10 +72,44 @@ func (signal *Signal) Type() types.SourceType {
 /*
 Measure produces the Measurements for the sentiment signal.
 */
-func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
-	tickers := symbol.MarketTickers(types.SourceSentiment)
+func (signal *Signal) Measure(symbol *types.Symbol, ticks ...int64) []*types.Measurement {
+	if symbol == nil {
+		return nil
+	}
 
-	if !signal.ingest(tickers) {
+	return signal.MeasureCohort([]*types.Symbol{symbol}, ticks...)
+}
+
+/*
+MeasureCohort ingests the full dirty ticker cohort before deriving breadth,
+leadership, and divergence. This keeps one transport message from producing a
+scheduler-dependent sequence of partial cohort readings.
+*/
+func (signal *Signal) MeasureCohort(
+	symbols []*types.Symbol,
+	ticks ...int64,
+) []*types.Measurement {
+	ordered := make([]*types.Symbol, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		if symbol != nil && symbol.Symbol != "" {
+			ordered = append(ordered, symbol)
+		}
+	}
+
+	sort.Slice(ordered, func(left, right int) bool {
+		return ordered[left].Symbol < ordered[right].Symbol
+	})
+
+	changed := make(map[string]struct{}, len(ordered))
+
+	for _, symbol := range ordered {
+		if signal.ingest(symbol.MarketTickers(types.SourceSentiment)) {
+			changed[symbol.Symbol] = struct{}{}
+		}
+	}
+
+	if len(changed) == 0 {
 		return nil
 	}
 
@@ -95,84 +129,104 @@ func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measure
 		}
 	}
 
-	measurements := make([]*types.Measurement, 0, 1)
+	tick := int64(0)
+
+	if len(ticks) > 0 {
+		tick = ticks[0]
+	}
+
+	measurements := make([]*types.Measurement, 0, len(changed))
 
 	for _, peer := range peers {
-		if peer.symbol != symbol.Symbol {
+		if _, isDirty := changed[peer.symbol]; !isDirty {
 			continue
 		}
 
-		change := peer.observation.change
-		leaderStrength := 0.0
-		leaderEvidence := 0.0
-		relativeLead := 0.0
-		peerDivergenceScore := 0.0
-		isLeader := statistics.leader == peer.symbol && statistics.leaderMagnitude > 0
-
-		if isLeader {
-			leaderStrength = statistics.leaderMagnitude
-			leaderEvidence = statistics.leaderEvidence
-			relativeLead = statistics.relativeLead
-			peerDivergenceScore = statistics.divergence
-		}
-
-		strength := math.Max(
-			statistics.surge,
-			math.Max(peerDivergenceScore, statistics.slump),
-		)
-		metrics := sentimentMetrics(
-			map[types.MetricType]float64{
-				types.MetricChange:         change,
-				types.MetricBreadth:        statistics.breadth,
-				types.MetricLeaderStrength: leaderStrength,
-				types.MetricLeaderEvidence: leaderEvidence,
-				types.MetricRelativeLead:   relativeLead,
-				types.MetricSurgeScore:     statistics.surge,
-				types.MetricDivergentScore: peerDivergenceScore,
-				types.MetricSlumpScore:     statistics.slump,
-				types.MetricStrength:       strength,
-			},
-			statistics.magnitudeBaseline,
-		)
-
-		measurement := &types.Measurement{
-			ID:     uuid.NewString(),
-			Source: types.SourceSentiment,
-			Symbol: peer.symbol,
-			Tick:   symbol.Tick,
-			At:     peer.observation.at,
-			Metadata: map[string]float64{
-				"last_price": peer.observation.price,
-			},
-			Metrics: metrics,
-		}
-		separation, separationReady := types.MeasurementHypothesisSeparation(
-			types.SourceSentiment,
-			measurement.Metrics,
-		)
-		snrSample := types.MetricSample{
-			Raw:  separation,
-			Unit: types.UnitDimensionless,
-		}
-
-		if separationReady && directionalReady {
-			snrSample.Normalized = &separation
-		}
-
-		measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
-		measurement.PutMetric(
-			types.MetricLastPrice,
-			types.SideNone,
-			types.MetricSample{
-				Raw:  peer.observation.price,
-				Unit: types.UnitQuoteCurrency,
-			},
-		)
-
-		measurements = append(measurements, measurement)
+		measurements = append(measurements, sentimentMeasurement(
+			peer,
+			statistics,
+			directionalReady,
+			tick,
+		))
 	}
 
 	return measurements
+}
+
+func sentimentMeasurement(
+	peer sentimentPeer,
+	statistics sentimentSummary,
+	directionalReady bool,
+	tick int64,
+) *types.Measurement {
+	change := peer.observation.change
+	leaderStrength := 0.0
+	leaderEvidence := 0.0
+	relativeLead := 0.0
+	peerDivergenceScore := 0.0
+	isLeader := statistics.leader == peer.symbol && statistics.leaderMagnitude > 0
+
+	if isLeader {
+		leaderStrength = statistics.leaderMagnitude
+		leaderEvidence = statistics.leaderEvidence
+		relativeLead = statistics.relativeLead
+		peerDivergenceScore = statistics.divergence
+	}
+
+	strength := math.Max(
+		statistics.surge,
+		math.Max(peerDivergenceScore, statistics.slump),
+	)
+	metrics := sentimentMetrics(
+		map[types.MetricType]float64{
+			types.MetricChange:         change,
+			types.MetricBreadth:        statistics.breadth,
+			types.MetricLeaderStrength: leaderStrength,
+			types.MetricLeaderEvidence: leaderEvidence,
+			types.MetricRelativeLead:   relativeLead,
+			types.MetricSurgeScore:     statistics.surge,
+			types.MetricDivergentScore: peerDivergenceScore,
+			types.MetricSlumpScore:     statistics.slump,
+			types.MetricStrength:       strength,
+		},
+		statistics.magnitudeBaseline,
+	)
+
+	measurement := &types.Measurement{
+		ID:     uuid.NewString(),
+		Source: types.SourceSentiment,
+		Symbol: peer.symbol,
+		Tick:   tick,
+		At:     peer.observation.at,
+		Metadata: map[string]float64{
+			"last_price": peer.observation.price,
+		},
+		Metrics: metrics,
+	}
+	separation, separationReady := types.MeasurementHypothesisSeparation(
+		types.SourceSentiment,
+		measurement.Metrics,
+	)
+	snrSample := types.MetricSample{
+		Raw:  separation,
+		Unit: types.UnitDimensionless,
+	}
+
+	if separationReady && directionalReady {
+		snrSample.Normalized = &separation
+	}
+
+	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
+	measurement.PutMetric(
+		types.MetricLastPrice,
+		types.SideNone,
+		types.MetricSample{
+			Raw:  peer.observation.price,
+			Unit: types.UnitQuoteCurrency,
+		},
+	)
+
+	return measurement
 }
 
 type sentimentPeer struct {

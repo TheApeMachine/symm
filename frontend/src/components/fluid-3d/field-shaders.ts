@@ -59,12 +59,15 @@ const fieldSampling = /* glsl */ `
 		float gasSignal = compress(max(density, momentumMagnitude));
 		float waveSignal = compress(waveMagnitude);
 
-		vec3 darkBrown = vec3(0.14, 0.09, 0.05);
-		vec3 lightBrown = vec3(0.62, 0.44, 0.28);
-		gasColor = mix(darkBrown, lightBrown, clamp(compress(energy), 0.0, 1.0));
+		vec3 deepAmber = vec3(0.18, 0.08, 0.02);
+		vec3 brightAmber = vec3(0.92, 0.52, 0.14);
+		gasColor = mix(deepAmber, brightAmber, clamp(compress(energy), 0.0, 1.0));
 		gasExtinction = uShowGas ? gasSignal : 0.0;
 
-		vec3 waveColor = phaseColor(atan(waveImaginary, waveReal));
+		float wavePhase = (abs(waveReal) > 1e-6 || abs(waveImaginary) > 1e-6)
+			? atan(waveImaginary, waveReal)
+			: 0.0;
+		vec3 waveColor = phaseColor(wavePhase);
 		waveGlow = uShowWave ? waveColor * waveSignal : vec3(0.0);
 	}
 `;

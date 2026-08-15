@@ -61,7 +61,23 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceLeadLag
 }
 
-func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
+func (signal *Signal) Measure(symbol *types.Symbol, ticks ...int64) []*types.Measurement {
+	if symbol == nil {
+		return nil
+	}
+
+	return signal.MeasureCohort([]*types.Symbol{symbol}, ticks...)
+}
+
+/*
+MeasureCohort keeps the lead-lag section under one owner and merges the dirty
+symbol queues into a deterministic event-time order. The anchor is selected
+from strictly prior section state, then the complete arrival is applied.
+*/
+func (signal *Signal) MeasureCohort(
+	symbols []*types.Symbol,
+	ticks ...int64,
+) []*types.Measurement {
 	measurements := make([]*types.Measurement, 0)
 
 	anchor := signal.section.CausalAnchor()
@@ -74,22 +90,49 @@ func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measure
 		signal.section.SetAnchor(anchor)
 	}
 
+	ordered := make([]*types.Symbol, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		if symbol != nil && symbol.Symbol != "" {
+			ordered = append(ordered, symbol)
+		}
+	}
+
+	sort.Slice(ordered, func(left, right int) bool {
+		return ordered[left].Symbol < ordered[right].Symbol
+	})
+
 	tickers := make([]kraken.TickerData, 0)
 
-	for ticker := range symbol.MarketTickers(types.SourceLeadLag) {
-		if ticker.Timestamp.IsZero() || ticker.Symbol == "" || ticker.Last == nil {
-			continue
-		}
+	for _, symbol := range ordered {
+		for ticker := range symbol.MarketTickers(types.SourceLeadLag) {
+			if ticker.Timestamp.IsZero() || ticker.Symbol == "" || ticker.Last == nil {
+				continue
+			}
 
-		if ticker.Last.Float64() <= 0 {
-			continue
-		}
+			if ticker.Last.Float64() <= 0 {
+				continue
+			}
 
-		tickers = append(tickers, ticker)
+			tickers = append(tickers, ticker)
+		}
+	}
+
+	tick := int64(0)
+
+	if len(ticks) > 0 {
+		tick = ticks[0]
 	}
 
 	sort.SliceStable(tickers, func(leftIndex, rightIndex int) bool {
-		return tickers[leftIndex].Timestamp.Before(tickers[rightIndex].Timestamp)
+		left := tickers[leftIndex]
+		right := tickers[rightIndex]
+
+		if left.Timestamp.Equal(right.Timestamp) {
+			return left.Symbol < right.Symbol
+		}
+
+		return left.Timestamp.Before(right.Timestamp)
 	})
 
 	for _, ticker := range tickers {
@@ -276,7 +319,7 @@ func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measure
 			Source: types.SourceLeadLag,
 			Symbol: ticker.Symbol,
 			Peer:   peer,
-			Tick:   symbol.Tick,
+			Tick:   tick,
 			At:     ticker.Timestamp,
 			Metadata: map[string]float64{
 				"last_price": ticker.Last.Float64(),

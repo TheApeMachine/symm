@@ -2,6 +2,7 @@ package types
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
@@ -247,4 +248,33 @@ func BenchmarkSymbolAppendTrade(b *testing.B) {
 			}
 		}
 	}
+}
+
+func TestSymbolBookRevision(t *testing.T) {
+	Convey("Given accepted Level 3 frames with surviving-order timestamps", t, func() {
+		symbol := NewSymbol("BTC/USD", nil)
+		firstAt := time.Unix(10, 0).UTC()
+		latestOrderAt := firstAt.Add(time.Second)
+		symbol.AppendLevel3(kraken.Level3Data{
+			Symbol:    symbol.Symbol,
+			Timestamp: firstAt,
+			Bids: []kraken.Level3Order{{
+				OrderID: "bid", Timestamp: latestOrderAt,
+			}},
+		})
+		symbol.AppendLevel3(kraken.Level3Data{
+			Symbol:    symbol.Symbol,
+			Timestamp: firstAt.Add(2 * time.Second),
+			Bids: []kraken.Level3Order{{
+				OrderID: "delete-old", Timestamp: firstAt,
+			}},
+		})
+
+		revision, observedAt := symbol.BookRevision()
+
+		Convey("It should advance by accepted frame and never regress event time", func() {
+			So(revision, ShouldEqual, uint64(2))
+			So(observedAt, ShouldEqual, firstAt.Add(2*time.Second))
+		})
+	})
 }

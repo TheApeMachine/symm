@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -23,14 +24,18 @@ import (
 )
 
 type Planner struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	status        types.Status
-	ui            chan []byte
-	recorder      *audit.Recorder
-	mctsEngine    *mcts.CausalMCTS
-	allocation    *Allocation
-	desk          *broker.Desk
+	ctx        context.Context
+	cancel     context.CancelFunc
+	status     types.Status
+	ui         chan []byte
+	recorder   *audit.Recorder
+	mctsEngine *mcts.CausalMCTS
+	allocation *Allocation
+	desk       *broker.Desk
+
+	candidateMu sync.Mutex
+	candidates  map[string]*types.Decision
+
 	ObserveModule func(string, time.Duration)
 	ObserveHop    func(string, string, time.Duration)
 	executeEntry  func(types.Decision) error
@@ -64,6 +69,7 @@ func NewPlanner(
 		),
 		allocation: NewAllocation(ctx, desk),
 		desk:       desk,
+		candidates: make(map[string]*types.Decision),
 	}
 
 	return planner
@@ -241,6 +247,18 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		return nil
 	}
 
+	for _, decision := range createdDecisions {
+		planner.retainCandidate(decision)
+	}
+
+	retireDecisionGraphs(thesis, createdDecisions)
+
+	createdDecisions = planner.candidateCopies()
+
+	if len(createdDecisions) == 0 {
+		return nil
+	}
+
 	if planner.allocation != nil {
 		allocationStarted := time.Now()
 
@@ -284,6 +302,10 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if !actionable {
+		// This graph was evaluated. Retaining it would cause the identical
+		// structural search to be repeated on every subsequent ready tick.
+		retireDecisionGraphs(thesis, createdDecisions)
+
 		utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
 			"evaluated", false,
 			"outcome", "accumulating",
@@ -330,16 +352,13 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 				continue
 			}
 
+			planner.removeCandidate(decision.Symbol)
+
 			lastSearchEnd = time.Now()
 		}
 	}
 
-	for _, decision := range createdDecisions {
-		thesis.Symbol(decision.Symbol).Graphs.Store(
-			"market_graph",
-			logicgraph.NewGraph(thesis.At),
-		)
-	}
+	retireDecisionGraphs(thesis, createdDecisions)
 
 	decisions = decisions[:0]
 
@@ -354,6 +373,72 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	)))
 
 	return nil
+}
+
+func (planner *Planner) removeCandidate(symbol string) {
+	planner.candidateMu.Lock()
+	delete(planner.candidates, symbol)
+	planner.candidateMu.Unlock()
+}
+
+func (planner *Planner) retainCandidate(decision *types.Decision) {
+	if planner == nil || decision == nil || decision.Symbol == "" {
+		return
+	}
+
+	planner.candidateMu.Lock()
+	defer planner.candidateMu.Unlock()
+
+	if decision.Action != types.ActionEnter {
+		// A newer structural evaluation no longer endorses entry.
+		delete(planner.candidates, decision.Symbol)
+		return
+	}
+
+	candidate := *decision
+
+	// These belong to live execution admission, not the structural candidate.
+	candidate.AvailableCapital = nil
+	candidate.ProposedNotional = nil
+	candidate.ProposedQuantity = nil
+	candidate.EntryPrice = nil
+	candidate.Mark = nil
+	candidate.Stoploss = nil
+	candidate.ExpectedFees = nil
+	candidate.ExpectedSpread = nil
+	candidate.ExpectedImpact = nil
+	candidate.Utility = 0
+	candidate.OpportunityMargin = 0
+
+	planner.candidates[decision.Symbol] = &candidate
+}
+
+func (planner *Planner) candidateCopies() []*types.Decision {
+	planner.candidateMu.Lock()
+	defer planner.candidateMu.Unlock()
+
+	decisions := make([]*types.Decision, 0, len(planner.candidates))
+
+	for symbol, retained := range planner.candidates {
+		if retained == nil {
+			delete(planner.candidates, symbol)
+			continue
+		}
+
+		if planner.Holding(symbol) {
+			delete(planner.candidates, symbol)
+			continue
+		}
+
+		candidate := *retained
+		candidate.Action = types.ActionEnter
+		candidate.Reason = ""
+		candidate.Stoploss = nil
+
+		decisions = append(decisions, &candidate)
+	}
+
+	return decisions
 }
 
 func forecastDirectionConfidence(forecast *learning.RLSOutput) (float64, error) {
@@ -457,4 +542,40 @@ func graphEvidenceMass(graph *logicgraph.Graph) (float64, float64) {
 	}
 
 	return supports, contradicts
+}
+
+func retireDecisionGraphs(
+	thesis *types.Thesis,
+	decisions []*types.Decision,
+) {
+	if thesis == nil {
+		return
+	}
+
+	for _, decision := range decisions {
+		if decision == nil || decision.Symbol == "" {
+			continue
+		}
+
+		symbol := thesis.Symbol(decision.Symbol)
+		current, found := symbol.Graphs.Load("market_graph")
+
+		if !found {
+			continue
+		}
+
+		graph, valid := current.(*logicgraph.Graph)
+
+		if !valid || graph == nil {
+			continue
+		}
+
+		// CompareAndSwap makes the lifecycle transition explicit. It also avoids
+		// replacing a newer graph should planner ownership later become async.
+		symbol.Graphs.CompareAndSwap(
+			"market_graph",
+			graph,
+			logicgraph.NewGraph(thesis.At),
+		)
+	}
 }

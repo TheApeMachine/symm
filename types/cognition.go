@@ -82,6 +82,11 @@ type Cognition struct {
 	RegimePrefix     string             `json:"regimePrefix"`
 	Winner           string             `json:"winner"`
 	WinnerClass      string             `json:"winnerClass,omitempty"`
+	CandidateWinner  string             `json:"candidateWinner,omitempty"`
+	StateHeld        bool               `json:"stateHeld,omitempty"`
+	PredictionsHeld  bool               `json:"predictionsHeld,omitempty"`
+	SwitchConfidence float64            `json:"switchConfidence,omitempty"`
+	SwitchThreshold  float64            `json:"switchThreshold,omitempty"`
 	Error            string             `json:"error,omitempty"`
 	Confidence       float64            `json:"confidence"`
 	ClassConfidence  float64            `json:"classConfidence,omitempty"`

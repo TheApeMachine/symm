@@ -77,14 +77,31 @@ const Slider = ({
 
 const particleReadout = (particle: FluidParticle | null) => {
 	if (particle === null) {
-		return "click a particle to inspect its resident state";
+		return "click an order to inspect its geometric (particle) and wave (oscillator) resident state";
 	}
 
+	const pos = particle.particle?.Position ?? particle.Position;
+	const vel = particle.particle?.Velocity ?? particle.Velocity;
+	const mass = particle.particle?.Mass ?? particle.Mass;
+	const heat = particle.particle?.Heat ?? particle.Heat;
+	const energy = particle.particle?.Energy ?? particle.Energy;
+	const phase = particle.oscillator?.Phase ?? particle.Phase;
+	const omega = particle.oscillator?.Omega ?? particle.Omega;
+	const amp =
+		particle.oscillator?.Amplitude ??
+		particle.Amplitude ??
+		Math.sqrt(energy > 0 ? energy : 0);
+	const real = particle.oscillator?.Real ?? amp * Math.cos(phase);
+	const imag = particle.oscillator?.Imaginary ?? amp * Math.sin(phase);
+
 	return [
-		`position ${particle.Position.X.toFixed(4)} ${particle.Position.Y.toFixed(4)} ${particle.Position.Z.toFixed(4)}`,
-		`velocity ${particle.Velocity.X.toFixed(4)} ${particle.Velocity.Y.toFixed(4)} ${particle.Velocity.Z.toFixed(4)}`,
-		`mass ${particle.Mass.toPrecision(4)} · heat ${particle.Heat.toPrecision(4)} · energy ${particle.Energy.toPrecision(4)}`,
-		`phase ${particle.Phase.toFixed(4)} · omega ${particle.Omega.toFixed(4)}`,
+		"── GEOMETRIC DOMAIN (PARTICLE) ──",
+		`pos  [${pos.X.toFixed(4)}, ${pos.Y.toFixed(4)}, ${pos.Z.toFixed(4)}]`,
+		`vel  [${vel.X.toFixed(4)}, ${vel.Y.toFixed(4)}, ${vel.Z.toFixed(4)}]`,
+		`mass ${mass.toPrecision(4)} · heat ${heat.toPrecision(4)} · energy ${energy.toPrecision(4)}`,
+		"── WAVE DOMAIN (OSCILLATOR) ──",
+		`phase ${phase.toFixed(4)} rad (${((phase * 180) / Math.PI).toFixed(1)}°) · ω ${omega.toFixed(4)}`,
+		`amplitude ${amp.toPrecision(4)} · phasor (${real.toFixed(4)} + ${imag.toFixed(4)}i)`,
 	].join("\n");
 };
 

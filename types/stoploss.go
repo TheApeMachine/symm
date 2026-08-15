@@ -11,62 +11,93 @@ import (
 	"github.com/theapemachine/nomagique/learning"
 )
 
+const (
+	TriggerHardFloor         = "hard_floor"
+	TriggerProtectedFloor    = "protected_floor"
+	TriggerProfitStagnation  = "profit_stagnation"
+	TriggerTrailingFloor     = "trailing_floor"
+	TriggerHorizonExpired    = "horizon_expired"
+	TriggerContinuationEV    = "continuation_ev_negative"
+	TriggerRegimeInvalidated = "execution_regime_invalidated"
+)
+
 /*
-Stoploss regulates one open lot in two regimes.
+Stoploss regulates one open lot across discovery, protected profit, and trailing regimes.
 
-Before profit lock, Floor is the lower of the trusted Resonance path boundary
-and the boundary outside the lot's measured round-trip execution cost. A move
-smaller than the cost of entering and exiting is not adverse evidence.
-Once Mark clears the profit line by that distance plus one executable tick,
-Floor moves above ProfitLine. Every later new Peak raises Floor by the same
-distance; no path lowers it.
+Hard loss floor is bounded by RiskDistance.
+Once Mark clears break-even plus MinEdge, profit is latched.
+ArmAt sits ArmBuffer above break-even; when reached, the protected floor locks at LockFloor
+(LockBuffer above break-even). New peaks ratchet the trailing floor upward by TrailDistance.
 
-A profitable mark that fails to make a new peak is stagnant: the lot is
-no longer working, so Update sells it instead of waiting for a pullback
-to the floor.
+A profitable lot triggers profit stagnation only after multiple distinct non-peak observations
+give back at least one execution noise band from the peak.
 */
 type Stoploss struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	forecast      *learning.RLSOutput
-	tickSize      *decimal.Decimal
-	entryFeeRate  *decimal.Decimal
-	exitFeeRate   *decimal.Decimal
-	trailDistance *decimal.Decimal
-	horizon       int
-	observed      int
-	clockArmed    bool
-	Status        Status           `json:"status"`
-	Symbol        string           `json:"symbol"`
-	Floor         *decimal.Decimal `json:"floor"`
-	Mark          *decimal.Decimal `json:"mark"`
-	Peak          *decimal.Decimal `json:"peak"`
-	ProfitLine    *decimal.Decimal `json:"profit_line"`
-	ArmAt         *decimal.Decimal `json:"arm_at"`
-	LockFloor     *decimal.Decimal `json:"lock_floor"`
-	Locked        bool             `json:"locked"`
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	forecast             *learning.RLSOutput
+	tickSize             *decimal.Decimal
+	entryFeeRate         *decimal.Decimal
+	exitFeeRate          *decimal.Decimal
+	riskDistance         *decimal.Decimal
+	trailDistance        *decimal.Decimal
+	armBuffer            *decimal.Decimal
+	lockBuffer           *decimal.Decimal
+	minEdge              *decimal.Decimal
+	noiseBand            *decimal.Decimal
+	confirmMarks         int
+	distinctNonPeakMarks int
+	lastStagnationMark   *decimal.Decimal
+	profitLatched        bool
+	horizon              int
+	observed             int
+	clockArmed           bool
+	Status               Status           `json:"status"`
+	Symbol               string           `json:"symbol"`
+	Floor                *decimal.Decimal `json:"floor"`
+	Mark                 *decimal.Decimal `json:"mark"`
+	Peak                 *decimal.Decimal `json:"peak"`
+	ProfitLine           *decimal.Decimal `json:"profit_line"`
+	ArmAt                *decimal.Decimal `json:"arm_at"`
+	LockFloor            *decimal.Decimal `json:"lock_floor"`
+	Locked               bool             `json:"locked"`
+	TriggerReason        string           `json:"trigger_reason,omitempty"`
+	TriggerMark          *decimal.Decimal `json:"trigger_mark,omitempty"`
+	Plan                 *RiskPlan        `json:"plan,omitempty"`
 }
 
 type stoplossState struct {
-	Status        Status           `json:"status"`
-	Symbol        string           `json:"symbol"`
-	TickSize      *decimal.Decimal `json:"tick_size"`
-	TrailDistance *decimal.Decimal `json:"trail_distance"`
-	Horizon       int              `json:"horizon"`
-	Observed      int              `json:"observed"`
-	ClockArmed    bool             `json:"clock_armed"`
-	Floor         *decimal.Decimal `json:"floor"`
-	Mark          *decimal.Decimal `json:"mark"`
-	Peak          *decimal.Decimal `json:"peak"`
-	ProfitLine    *decimal.Decimal `json:"profit_line"`
-	ArmAt         *decimal.Decimal `json:"arm_at"`
-	LockFloor     *decimal.Decimal `json:"lock_floor"`
-	Locked        bool             `json:"locked"`
+	Status               Status           `json:"status"`
+	Symbol               string           `json:"symbol"`
+	TickSize             *decimal.Decimal `json:"tick_size"`
+	EntryFeeRate         *decimal.Decimal `json:"entry_fee_rate,omitempty"`
+	ExitFeeRate          *decimal.Decimal `json:"exit_fee_rate,omitempty"`
+	RiskDistance         *decimal.Decimal `json:"risk_distance,omitempty"`
+	TrailDistance        *decimal.Decimal `json:"trail_distance"`
+	ArmBuffer            *decimal.Decimal `json:"arm_buffer,omitempty"`
+	LockBuffer           *decimal.Decimal `json:"lock_buffer,omitempty"`
+	MinEdge              *decimal.Decimal `json:"min_edge,omitempty"`
+	NoiseBand            *decimal.Decimal `json:"noise_band,omitempty"`
+	ConfirmMarks         int              `json:"confirm_marks,omitempty"`
+	DistinctNonPeakMarks int              `json:"distinct_non_peak_marks,omitempty"`
+	ProfitLatched        bool             `json:"profit_latched,omitempty"`
+	Horizon              int              `json:"horizon"`
+	Observed             int              `json:"observed"`
+	ClockArmed           bool             `json:"clock_armed"`
+	Floor                *decimal.Decimal `json:"floor"`
+	Mark                 *decimal.Decimal `json:"mark"`
+	Peak                 *decimal.Decimal `json:"peak"`
+	ProfitLine           *decimal.Decimal `json:"profit_line"`
+	ArmAt                *decimal.Decimal `json:"arm_at"`
+	LockFloor            *decimal.Decimal `json:"lock_floor"`
+	Locked               bool             `json:"locked"`
+	TriggerReason        string           `json:"trigger_reason,omitempty"`
+	TriggerMark          *decimal.Decimal `json:"trigger_mark,omitempty"`
+	Plan                 *RiskPlan        `json:"plan,omitempty"`
 }
 
 /*
-NewStoploss constructs the entry regulator from the admitted forecast and the
-venue facts needed to state executable price lines.
+NewStoploss constructs the entry regulator from the admitted forecast and venue facts.
 */
 func NewStoploss(
 	ctx context.Context,
@@ -94,6 +125,8 @@ func NewStoploss(
 		Status:       ARMED,
 		Symbol:       symbol,
 		horizon:      len(forwardCurve),
+		confirmMarks: 3,
+		minEdge:      tickSize,
 	}
 
 	floor, trailDistance, err := stoploss.forecastGeometry(mark, forwardCurve)
@@ -107,6 +140,8 @@ func NewStoploss(
 	stoploss.Peak = mark
 	stoploss.Floor = floor
 	stoploss.trailDistance = trailDistance
+	stoploss.riskDistance = trailDistance
+	stoploss.noiseBand = trailDistance
 
 	if err := stoploss.RebindFill(entryPrice, mark); err != nil {
 		cancel()
@@ -117,9 +152,99 @@ func NewStoploss(
 }
 
 /*
+NewStoplossWithPlan constructs a regulator with explicit RiskPlan geometry and supported horizon.
+*/
+func NewStoplossWithPlan(
+	ctx context.Context,
+	symbol string,
+	entryPrice *decimal.Decimal,
+	mark *decimal.Decimal,
+	forecast *learning.RLSOutput,
+	horizon int,
+	tickSize *decimal.Decimal,
+	entryFeeRate *decimal.Decimal,
+	exitFeeRate *decimal.Decimal,
+	plan *RiskPlan,
+) (*Stoploss, error) {
+	if symbol == "" {
+		return nil, fmt.Errorf("stoploss: symbol required")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	stoploss := &Stoploss{
+		ctx:          ctx,
+		cancel:       cancel,
+		forecast:     forecast,
+		tickSize:     tickSize,
+		entryFeeRate: entryFeeRate,
+		exitFeeRate:  exitFeeRate,
+		Status:       ARMED,
+		Symbol:       symbol,
+		horizon:      horizon,
+		confirmMarks: 3,
+		minEdge:      tickSize,
+	}
+
+	if plan != nil && plan.Present {
+		stoploss.SetRiskPlan(*plan)
+	}
+
+	if stoploss.trailDistance == nil {
+		floor, trailDistance, err := stoploss.forecastGeometry(mark, nil)
+
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+
+		stoploss.Floor = floor
+		stoploss.trailDistance = trailDistance
+		stoploss.riskDistance = trailDistance
+		stoploss.noiseBand = trailDistance
+	}
+
+	stoploss.Mark = mark
+	stoploss.Peak = mark
+
+	if err := stoploss.RebindFill(entryPrice, mark); err != nil {
+		cancel()
+		return nil, err
+	}
+
+	return stoploss, nil
+}
+
+/*
+SetRiskPlan updates the lot's risk plan geometry.
+*/
+func (stoploss *Stoploss) SetRiskPlan(plan RiskPlan) {
+	if stoploss == nil || !plan.Present {
+		return
+	}
+
+	stoploss.Plan = &plan
+	stoploss.riskDistance = plan.RiskDistance
+	stoploss.trailDistance = plan.TrailDistance
+	stoploss.armBuffer = plan.ArmBuffer
+	stoploss.lockBuffer = plan.LockBuffer
+	stoploss.minEdge = plan.MinEdge
+	stoploss.noiseBand = plan.NoiseBand
+	stoploss.confirmMarks = plan.ConfirmMarks
+}
+
+/*
+SetHorizon configures or updates the admitted forecast horizon for this lot.
+*/
+func (stoploss *Stoploss) SetHorizon(horizon int) {
+	if stoploss == nil || horizon < 0 {
+		return
+	}
+
+	stoploss.horizon = horizon
+}
+
+/*
 RebindFill updates the lot from its realized entry and current executable mark.
-The forecast room is retained, but never allowed to be narrower than the
-measured distance from that mark to fee-inclusive break-even.
 */
 func (stoploss *Stoploss) RebindFill(
 	entryPrice *decimal.Decimal,
@@ -138,6 +263,9 @@ func (stoploss *Stoploss) RebindFill(
 	stoploss.ArmAt = armAt
 	stoploss.LockFloor = lockFloor
 	stoploss.Locked = false
+	stoploss.profitLatched = false
+	stoploss.distinctNonPeakMarks = 0
+	stoploss.lastStagnationMark = nil
 
 	return nil
 }
@@ -163,6 +291,14 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 
 	if mark.Cmp(stoploss.Floor) < 0 {
 		stoploss.Status = TRIGGERED
+		stoploss.TriggerMark = mark
+
+		if stoploss.Locked {
+			stoploss.TriggerReason = TriggerProtectedFloor
+		} else {
+			stoploss.TriggerReason = TriggerHardFloor
+		}
+
 		return
 	}
 
@@ -170,6 +306,8 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 
 	if raisedPeak {
 		stoploss.Peak = mark
+		stoploss.distinctNonPeakMarks = 0
+		stoploss.lastStagnationMark = nil
 	}
 
 	if !stoploss.Locked && mark.Cmp(stoploss.ArmAt) >= 0 {
@@ -178,11 +316,9 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		if stoploss.LockFloor.Cmp(stoploss.Floor) > 0 {
 			stoploss.Floor = stoploss.LockFloor
 		}
-
-		return
 	}
 
-	if stoploss.Locked && raisedPeak {
+	if stoploss.Locked && raisedPeak && stoploss.trailDistance != nil {
 		candidate := floorToTick(
 			scaled(mark).Sub(stoploss.trailDistance),
 			stoploss.tickSize,
@@ -193,10 +329,49 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		}
 	}
 
-	if !raisedPeak && stoploss.ProfitLine != nil &&
+	profitThreshold := stoploss.ProfitLine
+
+	if profitThreshold != nil {
+		if stoploss.minEdge != nil && stoploss.minEdge.Sign() > 0 {
+			profitThreshold = profitThreshold.Add(stoploss.minEdge)
+		}
+
+		if mark.Cmp(profitThreshold) >= 0 {
+			stoploss.profitLatched = true
+		}
+	}
+
+	if stoploss.profitLatched && !raisedPeak && stoploss.ProfitLine != nil &&
 		mark.Cmp(stoploss.ProfitLine) > 0 {
-		stoploss.Status = TRIGGERED
-		return
+		if stoploss.lastStagnationMark == nil || mark.Cmp(stoploss.lastStagnationMark) != 0 {
+			stoploss.distinctNonPeakMarks++
+			stoploss.lastStagnationMark = mark
+		}
+
+		confirmMarks := stoploss.confirmMarks
+
+		if confirmMarks < 1 {
+			confirmMarks = 3
+		}
+
+		noiseBand := stoploss.noiseBand
+
+		if noiseBand == nil || noiseBand.Sign() <= 0 {
+			if stoploss.tickSize != nil {
+				noiseBand = stoploss.tickSize
+			} else {
+				noiseBand = decimal.NewFromInt64(0)
+			}
+		}
+
+		giveback := scaled(stoploss.Peak).Sub(scaled(mark))
+
+		if stoploss.distinctNonPeakMarks >= confirmMarks && giveback.Cmp(noiseBand) >= 0 {
+			stoploss.Status = TRIGGERED
+			stoploss.TriggerReason = TriggerProfitStagnation
+			stoploss.TriggerMark = mark
+			return
+		}
 	}
 
 	if stoploss.clockArmed && stoploss.Status == ARMED {
@@ -253,6 +428,8 @@ func (stoploss *Stoploss) Reconsider(
 	}
 
 	stoploss.Status = TRIGGERED
+	stoploss.TriggerReason = TriggerHorizonExpired
+	stoploss.TriggerMark = stoploss.Mark
 }
 
 /*
@@ -282,20 +459,33 @@ func (stoploss *Stoploss) MarshalState() ([]byte, error) {
 	}
 
 	return json.Marshal(stoplossState{
-		Status:        stoploss.Status,
-		Symbol:        stoploss.Symbol,
-		TickSize:      stoploss.tickSize,
-		TrailDistance: stoploss.trailDistance,
-		Horizon:       stoploss.horizon,
-		Observed:      stoploss.observed,
-		ClockArmed:    stoploss.clockArmed,
-		Floor:         stoploss.Floor,
-		Mark:          stoploss.Mark,
-		Peak:          stoploss.Peak,
-		ProfitLine:    stoploss.ProfitLine,
-		ArmAt:         stoploss.ArmAt,
-		LockFloor:     stoploss.LockFloor,
-		Locked:        stoploss.Locked,
+		Status:               stoploss.Status,
+		Symbol:               stoploss.Symbol,
+		TickSize:             stoploss.tickSize,
+		EntryFeeRate:         stoploss.entryFeeRate,
+		ExitFeeRate:          stoploss.exitFeeRate,
+		RiskDistance:         stoploss.riskDistance,
+		TrailDistance:        stoploss.trailDistance,
+		ArmBuffer:            stoploss.armBuffer,
+		LockBuffer:           stoploss.lockBuffer,
+		MinEdge:              stoploss.minEdge,
+		NoiseBand:            stoploss.noiseBand,
+		ConfirmMarks:         stoploss.confirmMarks,
+		DistinctNonPeakMarks: stoploss.distinctNonPeakMarks,
+		ProfitLatched:        stoploss.profitLatched,
+		Horizon:              stoploss.horizon,
+		Observed:             stoploss.observed,
+		ClockArmed:           stoploss.clockArmed,
+		Floor:                stoploss.Floor,
+		Mark:                 stoploss.Mark,
+		Peak:                 stoploss.Peak,
+		ProfitLine:           stoploss.ProfitLine,
+		ArmAt:                stoploss.ArmAt,
+		LockFloor:            stoploss.LockFloor,
+		Locked:               stoploss.Locked,
+		TriggerReason:        stoploss.TriggerReason,
+		TriggerMark:          stoploss.TriggerMark,
+		Plan:                 stoploss.Plan,
 	})
 }
 
@@ -334,23 +524,41 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 
+	confirmMarks := state.ConfirmMarks
+	if confirmMarks < 1 {
+		confirmMarks = 3
+	}
+
 	return &Stoploss{
-		ctx:           ctx,
-		cancel:        cancel,
-		tickSize:      state.TickSize,
-		trailDistance: state.TrailDistance,
-		horizon:       state.Horizon,
-		observed:      state.Observed,
-		clockArmed:    state.ClockArmed,
-		Status:        state.Status,
-		Symbol:        state.Symbol,
-		Floor:         state.Floor,
-		Mark:          state.Mark,
-		Peak:          state.Peak,
-		ProfitLine:    state.ProfitLine,
-		ArmAt:         state.ArmAt,
-		LockFloor:     state.LockFloor,
-		Locked:        state.Locked,
+		ctx:                  ctx,
+		cancel:               cancel,
+		tickSize:             state.TickSize,
+		entryFeeRate:         state.EntryFeeRate,
+		exitFeeRate:          state.ExitFeeRate,
+		riskDistance:         state.RiskDistance,
+		trailDistance:        state.TrailDistance,
+		armBuffer:            state.ArmBuffer,
+		lockBuffer:           state.LockBuffer,
+		minEdge:              state.MinEdge,
+		noiseBand:            state.NoiseBand,
+		confirmMarks:         confirmMarks,
+		distinctNonPeakMarks: state.DistinctNonPeakMarks,
+		profitLatched:        state.ProfitLatched,
+		horizon:              state.Horizon,
+		observed:             state.Observed,
+		clockArmed:           state.ClockArmed,
+		Status:               state.Status,
+		Symbol:               state.Symbol,
+		Floor:                state.Floor,
+		Mark:                 state.Mark,
+		Peak:                 state.Peak,
+		ProfitLine:           state.ProfitLine,
+		ArmAt:                state.ArmAt,
+		LockFloor:            state.LockFloor,
+		Locked:               state.Locked,
+		TriggerReason:        state.TriggerReason,
+		TriggerMark:          state.TriggerMark,
+		Plan:                 state.Plan,
 	}, nil
 }
 
@@ -413,8 +621,6 @@ func (stoploss *Stoploss) forecastGeometry(
 	survival := one.Sub(decimal.NewFromFloat64(drawdown))
 	floor := floorToTick(currentMark.Mul(survival), tick)
 
-	// A path with no predicted dip reaches the current mark. The strict stop
-	// lattice projects that boundary to the immediately preceding venue tick.
 	if floor != nil && floor.Cmp(currentMark) >= 0 {
 		floor = floorToTick(currentMark.Sub(tick), tick)
 	}
@@ -458,8 +664,8 @@ func (stoploss *Stoploss) entryGeometry(
 
 	tick := scaled(stoploss.tickSize)
 
-	if tick == nil || tick.Sign() <= 0 || stoploss.trailDistance == nil {
-		return nil, nil, nil, fmt.Errorf("stoploss: forecast geometry required")
+	if tick == nil || tick.Sign() <= 0 {
+		return nil, nil, nil, fmt.Errorf("stoploss: tick size required")
 	}
 
 	entry := scaled(entryPrice)
@@ -478,9 +684,49 @@ func (stoploss *Stoploss) entryGeometry(
 	breakEven := cost.Div(one.Sub(exitRate))
 	profitLine := ceilToTick(breakEven, tick)
 	currentMark := scaled(mark)
-	executionDistance := ceilToTick(profitLine.Sub(currentMark), tick)
-	trailDistance := largest(stoploss.trailDistance, executionDistance)
-	executionFloor := floorToTick(currentMark.Sub(trailDistance), tick)
+
+	var armAt, lockFloor *decimal.Decimal
+
+	if stoploss.armBuffer != nil && stoploss.armBuffer.Sign() > 0 &&
+		stoploss.lockBuffer != nil && stoploss.lockBuffer.Sign() > 0 {
+		armAt = ceilToTick(profitLine.Add(stoploss.armBuffer), tick)
+		lockFloor = floorToTick(profitLine.Add(stoploss.lockBuffer), tick)
+	} else {
+		trailDistance := stoploss.trailDistance
+
+		if trailDistance == nil || trailDistance.Sign() <= 0 {
+			trailDistance = tick
+		}
+
+		armAt = ceilToTick(
+			profitLine.Add(trailDistance).Add(tick),
+			tick,
+		)
+		lockFloor = floorToTick(
+			armAt.Sub(trailDistance),
+			tick,
+		)
+	}
+
+	if lockFloor == nil || lockFloor.Cmp(profitLine) <= 0 {
+		lockFloor = ceilToTick(profitLine.Add(tick), tick)
+	}
+
+	if armAt.Cmp(lockFloor) <= 0 {
+		armAt = ceilToTick(lockFloor.Add(tick), tick)
+	}
+
+	var executionFloor *decimal.Decimal
+
+	if stoploss.Plan != nil && stoploss.Plan.Present &&
+		stoploss.riskDistance != nil && stoploss.riskDistance.Sign() > 0 {
+		executionFloor = floorToTick(currentMark.Sub(stoploss.riskDistance), tick)
+	} else {
+		executionDistance := ceilToTick(profitLine.Sub(currentMark), tick)
+		riskDistance := largest(stoploss.riskDistance, executionDistance)
+		executionFloor = floorToTick(currentMark.Sub(riskDistance), tick)
+		stoploss.riskDistance = riskDistance
+	}
 
 	if executionFloor == nil || executionFloor.Sign() <= 0 {
 		return nil, nil, nil, fmt.Errorf(
@@ -488,26 +734,9 @@ func (stoploss *Stoploss) entryGeometry(
 		)
 	}
 
-	armAt := ceilToTick(
-		profitLine.Add(trailDistance).Add(tick),
-		tick,
-	)
-	lockFloor := floorToTick(
-		armAt.Sub(trailDistance),
-		tick,
-	)
-
-	if lockFloor == nil || lockFloor.Cmp(profitLine) <= 0 {
-		return nil, nil, nil, fmt.Errorf(
-			"stoploss: profit lock must clear profit line",
-		)
-	}
-
-	if executionFloor.Cmp(stoploss.Floor) < 0 {
+	if stoploss.Floor == nil || executionFloor.Cmp(stoploss.Floor) < 0 {
 		stoploss.Floor = executionFloor
 	}
-
-	stoploss.trailDistance = trailDistance
 
 	return profitLine, armAt, lockFloor, nil
 }
@@ -522,3 +751,4 @@ func (stoploss *Stoploss) Close() (err error) {
 
 	return errnie.Error(err)
 }
+

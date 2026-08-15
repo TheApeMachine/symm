@@ -85,3 +85,12 @@ Level3Receivers names the signals that consume accepted order-identity events.
 var Level3Receivers = []SourceType{
 	SourceToxicity,
 }
+
+/*
+AcceptedBookReceivers names every signal whose state changes after an accepted
+Level 3 frame has already been committed to the authoritative local book.
+*/
+var AcceptedBookReceivers = append(
+	append([]SourceType(nil), BookReceivers...),
+	Level3Receivers...,
+)

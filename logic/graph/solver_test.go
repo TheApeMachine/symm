@@ -743,3 +743,37 @@ func BenchmarkUpdate(b *testing.B) {
 		<-ui
 	}
 }
+
+func TestHeldCognitionGraphEvidence(t *testing.T) {
+	Convey("Given a hysteretically held cognition reading", t, func() {
+		at := time.Unix(1, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Cognition.Store(symbol.Symbol, types.Cognition{
+			Source:           "cognition",
+			Symbol:           symbol.Symbol,
+			At:               at,
+			Winner:           "trend",
+			CandidateWinner:  "drive",
+			Confidence:       0.2,
+			StateHeld:        true,
+			PredictionsHeld:  true,
+			SwitchConfidence: 0.8,
+			SwitchThreshold:  0.95,
+			Predictions: map[string]float64{
+				"aggressive_drive": 0.8,
+			},
+		})
+		graph := NewGraph(at)
+		solver := NewSolver(nil, nil)
+
+		solver.extractCognitionNodes(symbol, graph)
+
+		Convey("It should retain audit state without exposing a root or lookahead", func() {
+			winner, found := graph.Nodes["cog:BTC/USD:winner_regime"]
+			So(found, ShouldBeTrue)
+			So(winner.Metadata["held"], ShouldEqual, true)
+			So(graph.Nodes, ShouldHaveLength, 1)
+			So(graph.Roots(), ShouldBeEmpty)
+		})
+	})
+}

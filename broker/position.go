@@ -313,6 +313,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			continue
 		}
 
+		position.Holding.Stoploss.ArmClock()
 		position.Holding.Stoploss.Update(position.Holding.Mark)
 		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)

@@ -505,3 +505,54 @@ func TestCachedPrefixTree(t *testing.T) {
 		})
 	})
 }
+
+func TestStabilizeReading(t *testing.T) {
+	Convey("Given a retained trend regime and a weak drive challenger", t, func() {
+		solver := &Solver{readings: map[string]types.Cognition{
+			"BTC/USD": {Winner: "trend", Confidence: 0.8},
+		}}
+		predictions := map[string]float64{"aggressive_drive": 0.7}
+		reading := solver.stabilizeReading(
+			"BTC/USD",
+			"drive",
+			0.8,
+			false,
+			[]types.CognitionClass{
+				{Name: "drive", Probability: 0.8},
+				{Name: "trend", Probability: 0.15},
+			},
+			predictions,
+			0.95,
+		)
+
+		Convey("It should hold the incumbent and suppress lookahead evidence", func() {
+			So(reading.winner, ShouldEqual, "trend")
+			So(reading.confidence, ShouldEqual, 0.15)
+			So(reading.predictions, ShouldBeNil)
+			So(reading.held, ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a challenger that clears the configured switch boundary", t, func() {
+		solver := &Solver{readings: map[string]types.Cognition{
+			"BTC/USD": {Winner: "trend", Confidence: 0.8},
+		}}
+		predictions := map[string]float64{"aggressive_drive": 0.7}
+		reading := solver.stabilizeReading(
+			"BTC/USD",
+			"drive",
+			0.97,
+			false,
+			nil,
+			predictions,
+			0.95,
+		)
+
+		Convey("It should publish the new state and its current predictions", func() {
+			So(reading.winner, ShouldEqual, "drive")
+			So(reading.confidence, ShouldEqual, 0.97)
+			So(reading.predictions, ShouldResemble, predictions)
+			So(reading.held, ShouldBeFalse)
+		})
+	})
+}

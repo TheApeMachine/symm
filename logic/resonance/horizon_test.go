@@ -157,3 +157,36 @@ func BenchmarkHorizonLedgerSupported(b *testing.B) {
 		_ = ledger.supported(0.95)
 	}
 }
+
+func TestStabilizeDirection(t *testing.T) {
+	Convey("Given an accepted upward state and a weak downward challenger", t, func() {
+		stabilized := stabilizeDirection(
+			1,
+			directionEvidence{candidate: -1, confidence: 0.8},
+			0.5,
+			0.95,
+		)
+
+		Convey("It should retain continuity without publishing stale action", func() {
+			So(stabilized.candidate, ShouldEqual, -1.0)
+			So(stabilized.stable, ShouldEqual, 1.0)
+			So(stabilized.call, ShouldEqual, 0.0)
+			So(stabilized.held, ShouldBeTrue)
+		})
+	})
+
+	Convey("Given an opposing posterior that clears the switch confidence", t, func() {
+		stabilized := stabilizeDirection(
+			1,
+			directionEvidence{candidate: -1, confidence: 0.99},
+			0.5,
+			0.95,
+		)
+
+		Convey("It should accept the new direction immediately", func() {
+			So(stabilized.stable, ShouldEqual, -1.0)
+			So(stabilized.call, ShouldEqual, -1.0)
+			So(stabilized.held, ShouldBeFalse)
+		})
+	})
+}
