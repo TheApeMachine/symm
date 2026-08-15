@@ -117,6 +117,7 @@ func NewSolver(
 		phaseLatticeWidth,
 	)
 	errnie.Error(err)
+	config.MaxParticles = 65536
 	pmanifold.DefaultMarketGasBoundaries().Apply(&config)
 	physics, physicsErr := newPhysics(config)
 	errnie.Error(physicsErr)
@@ -453,56 +454,6 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 	if len(oscillators) == 0 {
 		solver.waiting.Store(true)
 		return nil, nil
-	}
-
-	limit := int(solver.config.MaxModes)
-
-	if limit > 0 && len(oscillators) > limit {
-		type cell struct {
-			x, y, z uint32
-		}
-
-		merged := make(map[cell]pmanifold.Oscillator, len(oscillators))
-		mass := make(map[cell]float64, len(oscillators))
-
-		for _, oscillator := range oscillators {
-			key := cell{
-				x: torusIndex(oscillator.PosX, solver.config.DomainX, solver.config.GridX),
-				y: torusIndex(oscillator.PosY, solver.config.DomainY, solver.config.GridY),
-				z: torusIndex(oscillator.PosZ, solver.config.DomainZ, solver.config.GridZ),
-			}
-			energy := oscillator.Amplitude * oscillator.Amplitude
-			resident := merged[key]
-			resident.Phase = math.Atan2(
-				math.Sin(resident.Phase)*mass[key]+math.Sin(oscillator.Phase)*energy,
-				math.Cos(resident.Phase)*mass[key]+math.Cos(oscillator.Phase)*energy,
-			)
-			resident.Omega = (resident.Omega*mass[key] + oscillator.Omega*energy) / (mass[key] + energy)
-			resident.PosX = (resident.PosX*mass[key] + oscillator.PosX*energy) / (mass[key] + energy)
-			resident.PosY = (resident.PosY*mass[key] + oscillator.PosY*energy) / (mass[key] + energy)
-			resident.PosZ = (resident.PosZ*mass[key] + oscillator.PosZ*energy) / (mass[key] + energy)
-			resident.VelX = (resident.VelX*mass[key] + oscillator.VelX*energy) / (mass[key] + energy)
-			resident.VelY = (resident.VelY*mass[key] + oscillator.VelY*energy) / (mass[key] + energy)
-			resident.VelZ = (resident.VelZ*mass[key] + oscillator.VelZ*energy) / (mass[key] + energy)
-			resident.Heat += oscillator.Heat
-			mass[key] += energy
-			resident.Amplitude = math.Sqrt(mass[key])
-			merged[key] = resident
-		}
-
-		oscillators = make([]pmanifold.Oscillator, 0, len(merged))
-
-		for _, oscillator := range merged {
-			oscillators = append(oscillators, oscillator)
-		}
-
-		if len(oscillators) > limit {
-			sort.Slice(oscillators, func(left, right int) bool {
-				return oscillators[left].Amplitude*oscillators[left].Amplitude >
-					oscillators[right].Amplitude*oscillators[right].Amplitude
-			})
-			oscillators = oscillators[:limit]
-		}
 	}
 
 	if err := solver.physics.ResetDeposits(); err != nil {
@@ -940,26 +891,13 @@ func (solver *Solver) publishDomain() error {
 		return nil
 	}
 
-	rho, err := solver.physics.ReadRhoProjection()
+	vol, err := solver.physics.ReadVolumetricFields(16)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf(
-				"failed to read manifold rho with %d resident oscillators: %v",
-				solver.ParticleCount(), err,
-			),
-			err,
-		))
-	}
-
-	pilot, err := solver.physics.ReadPilotWaveProjection()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"failed to read manifold pilot wave with %d resident oscillators: %v",
+				"failed to read manifold volumetric fields with %d resident oscillators: %v",
 				solver.ParticleCount(), err,
 			),
 			err,
@@ -968,7 +906,7 @@ func (solver *Solver) publishDomain() error {
 
 	utils.PublishFluid(
 		solver.binui, types.FluidFieldsChannel,
-		datura.NewMap("fields", projectFields(solver.config, rho, pilot)),
+		datura.NewMap("fields", projectFields(solver.config, vol)),
 	)
 	utils.PublishFluid(
 		solver.binui, types.FluidParticlesChannel,
@@ -1005,19 +943,29 @@ func (solver *Solver) publishPhase(
 
 /*
 phaseRow is the universe sweep as the wire already consumes it: resident wave,
-readiness, and the angular scan. There is no symbol key because the dial is
-not a per-book object.
+readiness, angular scan, and real-time hydrodynamic / Kuramoto diagnostics.
 */
 func (solver *Solver) phaseRow(
 	at time.Time,
 	reading types.PhaseReading,
 ) datura.Map[any] {
+	kuramoto := kuramotoOrderParameter(solver.oscillators)
+
 	row := datura.NewMap(
 		"source", "manifold",
 		"at", at.Format(time.RFC3339),
 		"phaseReady", reading.Ready,
 		"phaseReason", reading.Reason,
 		"wave", oscillatorWave(solver.oscillators),
+		"hydrodynamics", datura.NewMap(
+			"pressureGradNorm", solver.reading.PressureGradNorm,
+			"divergence", solver.reading.Divergence,
+			"coherenceMag2", solver.reading.CoherenceMag2,
+			"guidanceSpeed", solver.reading.GuidanceSpeed,
+			"viscosityProxy", solver.reading.ViscosityProxy,
+			"kuramotoR", kuramoto.R,
+			"kuramotoPsi", kuramoto.Psi,
+		),
 	)
 
 	if reading.Ready {
@@ -1025,6 +973,36 @@ func (solver *Solver) phaseRow(
 	}
 
 	return row
+}
+
+type KuramotoSync struct {
+	R   float64 `json:"r"`
+	Psi float64 `json:"psi"`
+}
+
+func kuramotoOrderParameter(oscillators []pmanifold.Oscillator) KuramotoSync {
+	if len(oscillators) == 0 {
+		return KuramotoSync{}
+	}
+
+	var sumCos, sumSin float64
+
+	for _, osc := range oscillators {
+		sumCos += math.Cos(osc.Phase)
+		sumSin += math.Sin(osc.Phase)
+	}
+
+	count := float64(len(oscillators))
+	meanCos := sumCos / count
+	meanSin := sumSin / count
+
+	r := math.Sqrt(meanCos*meanCos + meanSin*meanSin)
+	psi := math.Atan2(meanSin, meanCos)
+
+	return KuramotoSync{
+		R:   r,
+		Psi: psi,
+	}
 }
 
 /*
@@ -1211,41 +1189,37 @@ func oscillatorsToParticles(
 
 func projectFields(
 	config pmanifold.Config,
-	rho [][]float64,
-	pilot pmanifold.PilotWaveProjection,
+	vol pmanifold.VolumetricFields,
 ) ManifoldFields {
-	gridX := int(config.GridX)
-	gridZ := int(config.GridZ)
-	cells := gridX * gridZ
-	fields := ManifoldFields{
+	spacing := 1.0 / float32(vol.GridX)
+
+	if vol.GridX <= 0 {
+		spacing = 1.0 / 64.0
+	}
+
+	cells := len(vol.WaveReal)
+	waveMag := make([]float32, cells)
+	waveZero := make([]float32, cells)
+
+	for cell := range cells {
+		re := vol.WaveReal[cell]
+		im := vol.WaveImaginary[cell]
+		waveMag[cell] = re*re + im*im
+	}
+
+	return ManifoldFields{
 		Grid: ManifoldGrid{
-			X:       gridX,
-			Y:       1,
-			Z:       gridZ,
-			Spacing: 1.0 / float32(config.GridX),
+			X:       vol.GridX,
+			Y:       vol.GridY,
+			Z:       vol.GridZ,
+			Spacing: spacing,
 		},
-		Density:        make([]float32, cells),
-		Momentum:       make([]float32, cells*3),
-		InternalEnergy: make([]float32, cells),
-		WaveReal:       make([]float32, cells),
-		WaveImaginary:  make([]float32, cells),
+		Density:        vol.Density,
+		Momentum:       vol.Momentum,
+		InternalEnergy: vol.InternalEnergy,
+		WaveReal:       waveMag,
+		WaveImaginary:  waveZero,
 	}
-
-	for zIndex := range gridZ {
-		for xIndex := range gridX {
-			cell := xIndex + zIndex*gridX
-			cellRho := float32(rho[zIndex][xIndex])
-			waveMag := float32(pilot.Mag2[zIndex][xIndex])
-			fields.Density[cell] = cellRho
-			fields.InternalEnergy[cell] = cellRho * float32(config.CV)
-			fields.WaveReal[cell] = waveMag
-			fields.WaveImaginary[cell] = 0
-			fields.Momentum[cell*3] = float32(pilot.VelX[zIndex][xIndex])
-			fields.Momentum[cell*3+2] = float32(pilot.VelZ[zIndex][xIndex])
-		}
-	}
-
-	return fields
 }
 
 func torusIndex(position, domain float64, grid uint32) uint32 {

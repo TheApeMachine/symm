@@ -37,12 +37,14 @@ func TestCryptoDiagnostics(t *testing.T) {
 		crypto.clocks.observe("price", time.Millisecond)
 		crypto.clocks.observeHop("price", "crypto", time.Millisecond)
 		crypto.clocks.observe("measurements", 2*time.Millisecond)
+		crypto.clocks.observe("resonance", 3*time.Millisecond)
 		crypto.clocks.observeHop("crypto", "measurements", time.Millisecond)
 
 		Convey("It should publish those accumulators on the diagnostics wire", func() {
 			snapshot := crypto.Diagnostics()
 			price := snapshot.Stages[0]
 			measurements := stageNamed(snapshot.Stages, "measurements")
+			resonance := stageNamed(snapshot.Stages, "resonance")
 			hop := hopNamed(snapshot.Hops, "price", "crypto")
 
 			So(snapshot.Tickers, ShouldEqual, uint64(4))
@@ -53,6 +55,8 @@ func TestCryptoDiagnostics(t *testing.T) {
 			So(price.LastNs, ShouldBeGreaterThan, uint64(0))
 			So(price.LastAtNs, ShouldBeGreaterThan, int64(0))
 			So(measurements.Count, ShouldEqual, uint64(1))
+			So(resonance.Kind, ShouldEqual, "logic")
+			So(resonance.Count, ShouldEqual, uint64(1))
 			So(hop.Count, ShouldEqual, uint64(1))
 			So(hop.LastNs, ShouldBeGreaterThan, uint64(0))
 		})

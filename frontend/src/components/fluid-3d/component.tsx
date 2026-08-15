@@ -15,6 +15,8 @@ import {
 import { Typography } from "#/components/ui/typography";
 import { FluidScene, type FluidSceneOptions } from "./scene";
 import { FluidWebRTCFeed } from "./transport";
+import { KuramotoRing, type KuramotoRingProps } from "./kuramoto-ring";
+import { PhasePortrait, type PhasePortraitPoint } from "./phase-portrait";
 import type { FluidGrid, FluidParticle } from "./wire";
 
 const initialOptions: FluidSceneOptions = {
@@ -122,6 +124,21 @@ export const FluidInspector = () => {
 	const [selected, setSelected] = useState<FluidParticle | null>(null);
 	const [options, setOptions] = useState(initialOptions);
 	const [slices, setSlices] = useState({ x: 0.5, y: 0.5, z: 0.5 });
+	const [kuramotoProps, setKuramotoProps] = useState<KuramotoRingProps>({
+		oscillators: [],
+		kuramotoR: 0,
+		kuramotoPsi: 0,
+	});
+	const phaseHistoryRef = useRef<PhasePortraitPoint[]>([]);
+	const [phasePortrait, setPhasePortrait] = useState<{
+		history: PhasePortraitPoint[];
+		current: PhasePortraitPoint;
+	}>({
+		history: [],
+		current: { divergence: 0, pressureGradNorm: 0 },
+	});
+
+	const [hydro, setHydro] = useState<Record<string, number> | null>(null);
 
 	const connect = () => {
 		setError(null);
@@ -151,6 +168,42 @@ export const FluidInspector = () => {
 					scan: terminalPhaseScanFromFrame(frame),
 					status: terminalPhaseStatusFromFrame(frame),
 				});
+
+				// Extract hydrodynamic diagnostics
+				const hydrodynamics = frame.hydrodynamics as
+					| Record<string, number>
+					| undefined;
+
+				if (hydrodynamics !== undefined) {
+					setHydro(hydrodynamics);
+					const kuramotoR = hydrodynamics.kuramotoR ?? 0;
+					const kuramotoPsi = hydrodynamics.kuramotoPsi ?? 0;
+
+					// Build oscillator phasors from the wave modes
+					const waveArray = frame.wave as
+						| { phase: number; heat: number }[]
+						| undefined;
+					const oscillators = (waveArray ?? []).map((mode) => ({
+						phase: mode.phase ?? 0,
+						heat: mode.heat ?? 0,
+					}));
+
+					setKuramotoProps({ oscillators, kuramotoR, kuramotoPsi });
+
+					const point: PhasePortraitPoint = {
+						divergence: hydrodynamics.divergence ?? 0,
+						pressureGradNorm: hydrodynamics.pressureGradNorm ?? 0,
+					};
+
+					const history = phaseHistoryRef.current;
+					history.push(point);
+
+					if (history.length > 200) {
+						history.splice(0, history.length - 200);
+					}
+
+					setPhasePortrait({ history: [...history], current: point });
+				}
 			},
 			onState: setState,
 			onError: (cause) => setError(cause.message),
@@ -187,13 +240,20 @@ export const FluidInspector = () => {
 			<Section.Header
 				title="Fluid manifold · 3D inspection"
 				meta={
-					<Flex.Row align="center" gap={2}>
+					<Flex.Row align="center" gap={3}>
 						<Badge label={state} variant={statusVariant} size="xs" dot />
 						<Typography.Mono size="s" tone="f4">
 							{grid === null
 								? "waiting for fields"
-								: `${grid.x}×${grid.y}×${grid.z} · ${particleCount} particles`}
+								: `${grid.x}×${grid.y}×${grid.z} · ${particleCount} orders/particles`}
 						</Typography.Mono>
+						{hydro !== null ? (
+							<Flex.Row align="center" gap={2} className="text-[11px] text-(--f4)">
+								<span>η: {hydro.viscosityProxy?.toFixed(3) ?? "0"}</span>
+								<span>v_B: {hydro.guidanceSpeed?.toFixed(3) ?? "0"}</span>
+								<span>⟨|Ψ|²⟩: {hydro.coherenceMag2?.toFixed(3) ?? "0"}</span>
+							</Flex.Row>
+						) : null}
 					</Flex.Row>
 				}
 				className="absolute inset-x-0 top-0 z-10 bg-[#0e0c0ae8]"
@@ -258,6 +318,22 @@ export const FluidInspector = () => {
 			<Typography.Pre className="absolute bottom-3 left-3 z-10 m-0 whitespace-pre rounded border border-(--line) bg-[#0e0c0ae8] p-2 text-[10px] leading-4 text-(--f3)">
 				{particleReadout(selected)}
 			</Typography.Pre>
+
+			{/* Kuramoto sync ring */}
+			<div className="absolute right-3 bottom-3 z-10 h-44 w-44 rounded border border-(--line) bg-[#0e0c0ae8] p-1">
+				<Typography.Label size="xxs" tone="f4" className="mb-0.5 text-center">
+					Kuramoto sync
+				</Typography.Label>
+				<KuramotoRing {...kuramotoProps} />
+			</div>
+
+			{/* Hydrodynamic phase portrait */}
+			<div className="absolute right-50 bottom-3 z-10 h-44 w-56 rounded border border-(--line) bg-[#0e0c0ae8] p-1">
+				<Typography.Label size="xxs" tone="f4" className="mb-0.5 text-center">
+					∇·u vs ‖∇P‖
+				</Typography.Label>
+				<PhasePortrait {...phasePortrait} />
+			</div>
 
 			<Canvas
 				title="Phase dial"

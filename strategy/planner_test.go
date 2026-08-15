@@ -72,6 +72,31 @@ func TestPlannerUpdate(t *testing.T) {
 		})
 	})
 
+	Convey("Given a retained entry candidate and no newly completed graph", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Symbol("RETRY/USD")
+		candidate := types.NewDecision(types.ActionEnter, "RETRY/USD")
+		candidate.Cause = "opportunity_entry"
+		planner := &Planner{
+			mctsEngine: plannerMCTSEngine(),
+			candidates: map[string]*types.Decision{
+				candidate.Symbol: candidate,
+			},
+		}
+
+		err := planner.Update(thesis)
+
+		Convey("It should re-price the candidate instead of waiting for another graph", func() {
+			So(err, ShouldBeNil)
+			stored := decisionOf(thesis, "RETRY/USD")
+			So(stored, ShouldNotBeNil)
+			So(stored.Action, ShouldEqual, types.ActionEnter)
+			So(stored.Cause, ShouldEqual, "opportunity_entry")
+			So(planner.candidates, ShouldContainKey, "RETRY/USD")
+		})
+	})
+
 	Convey("Given contradicting graph evidence under the cold-start floor", t, func() {
 		system.Cfg = system.NewConfig()
 		thesis := plannerGraphThesis(t, 0.9)
@@ -301,6 +326,39 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decisionOf(thesis, "AAA/USD").Reason, ShouldContainSubstring,
 				"entry is no longer executable")
 			So(decisionAction(thesis, "ZZZ/USD"), ShouldEqual, types.ActionEnter)
+		})
+	})
+
+	Convey("Given a structurally accepted candidate whose first quote is not executable", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := plannerGraphThesis(t, 0.9)
+		attempts := 0
+		planner := &Planner{
+			mctsEngine: plannerMCTSEngine(),
+			desk:       &broker.Desk{},
+			executeEntry: func(types.Decision) error {
+				attempts++
+
+				if attempts == 1 {
+					return errnie.Err(
+						errnie.NotAcceptable,
+						"desk: entry is no longer executable",
+						nil,
+					)
+				}
+
+				return nil
+			},
+		}
+
+		firstErr := planner.Update(thesis)
+		secondErr := planner.Update(thesis)
+
+		Convey("It should retry the retained edge without requiring another graph", func() {
+			So(firstErr, ShouldBeNil)
+			So(secondErr, ShouldBeNil)
+			So(attempts, ShouldEqual, 2)
+			So(planner.candidates, ShouldNotContainKey, "BTC/USD")
 		})
 	})
 

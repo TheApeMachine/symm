@@ -1,6 +1,9 @@
 package types
 
-import "maps"
+import (
+	"fmt"
+	"maps"
+)
 
 /*
 Map is a named collection of comparable pairs. The Go map lives behind a
@@ -48,4 +51,19 @@ func (mapping Map[K, V]) Equals(other Map[K, V]) bool {
 	}
 
 	return maps.Equal(left, right)
+}
+
+/*
+Validate if the mapping contains all the provided keys.
+*/
+func (mapping Map[K, V]) Validate(keys ...K) (bool, []string) {
+	missing := make([]string, 0)
+
+	for _, key := range keys {
+		if _, found := mapping.Get(key); !found {
+			missing = append(missing, fmt.Sprintf("%v", key))
+		}
+	}
+
+	return len(missing) == 0, missing
 }

@@ -8,23 +8,22 @@ import (
 )
 
 /*
-Exponential is a shape. Given progress age/span it emits remaining
-exp(-progress), so one span is one e-folding and no extra rate is guessed.
+Exponential transforms a numeric value exponentially, each time
+Read is called. An initial value can be provided, or set via Write.
 */
 type Exponential struct {
-	progress types.Input[float64]
-	value    types.Value[float64]
+	initial  types.Input[float64]
+	next	 types.Input[float64]
 	err      error
 }
-
-var _ types.IO[float64] = (*Exponential)(nil)
 
 /*
 NewExponential returns an unstaged exponential shape.
 */
-func NewExponential() *Exponential {
+func NewExponential(initial types.Input[float64]) *Exponential {
 	return &Exponential{
-		progress: types.NewInput[float64](),
+		initial: initial,
+		next:    types.NewInput[float64](initial.Project()),
 	}
 }
 

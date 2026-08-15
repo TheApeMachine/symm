@@ -35,6 +35,7 @@ func TestPriceEntryEconomics(t *testing.T) {
 			)
 
 			So(err, ShouldBeNil)
+			So(economics.Midpoint.Float64(), ShouldAlmostEqual, 100.5, 1e-12)
 			So(economics.ExpectedReturn.Float64(), ShouldAlmostEqual, expectedReturn, 1e-12)
 			So(economics.ExpectedSpread.Float64(), ShouldAlmostEqual, 0.5/100.5, 1e-12)
 			So(economics.ExpectedFees.Float64(), ShouldAlmostEqual,

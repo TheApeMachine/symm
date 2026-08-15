@@ -155,6 +155,13 @@ func TestDeskExecute(t *testing.T) {
 }
 
 func TestDeskHolding(t *testing.T) {
+	Convey("Given a desk whose position registry is not initialized", t, func() {
+		Convey("It should report no inventory rather than panic", func() {
+			So((&Desk{}).Holding("BTC/USD"), ShouldEqual, 0)
+			So((*Desk)(nil).Holding("BTC/USD"), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given open lots in two symbols", t, func() {
 		desk := deskFixture(t)
 		bitcoin := &Position{pair: kraken.InstrumentPair{Symbol: "BTC/USD"}}

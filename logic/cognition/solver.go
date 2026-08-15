@@ -206,12 +206,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
+	// Regulator optimization confidence governs control-space exploration. It is
+	// not evidence about a market regime, so cognition switches on the same
+	// posterior boundary that admits market direction evidence.
 	switchThreshold := config.Planner.MinimumConfidence
-
-	if config.Regulator != nil &&
-		config.Regulator.OptimizationConfidence > switchThreshold {
-		switchThreshold = config.Regulator.OptimizationConfidence
-	}
 
 	rows := datura.NewMap()
 	var cognitionErr error
@@ -498,9 +496,9 @@ type stabilizedReading struct {
 
 /*
 stabilizeReading keeps the accepted regime until an opposing posterior clears
-an independently configured system confidence. A held regime is display state
-only: its lookahead is suppressed so persistence cannot manufacture predictive
-evidence for the graph or planner.
+the caller-supplied switch boundary. A held regime is display state only: its
+lookahead is suppressed so persistence cannot manufacture predictive evidence
+for the graph or planner.
 */
 func (solver *Solver) stabilizeReading(
 	symbol string,

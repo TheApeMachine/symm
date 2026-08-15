@@ -1,23 +1,10 @@
 package utils
 
 import (
-	"sync/atomic"
-
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
 )
-
-var publishSent atomic.Uint64
-var publishDropped atomic.Uint64
-
-/*
-PublishCounters reports how many dashboard frames were accepted onto the UI
-channel and how many were dropped because that channel was full.
-*/
-func PublishCounters() (sent uint64, dropped uint64) {
-	return publishSent.Load(), publishDropped.Load()
-}
 
 /*
 PublishFluid sends one manifold frame to a named fluid data channel, dropping it
@@ -53,19 +40,6 @@ consume the market-data path. A full buffered channel is normal backpressure,
 so that frame is freed before serialization and the trading path continues.
 */
 func Publish(ui chan []byte, data datura.Map[any]) {
-	publish(ui, data, false)
-}
-
-/*
-PublishPriority preserves a lifecycle transition when the replaceable-state
-queue is full by evicting its oldest dashboard frame. It remains non-blocking;
-the Hub continues to own slow-client isolation.
-*/
-func PublishPriority(ui chan []byte, data datura.Map[any]) {
-	publish(ui, data, true)
-}
-
-func publish(ui chan []byte, data datura.Map[any], priority bool) {
 	if data == nil || ui == nil {
 		data.Free()
 		return
@@ -95,36 +69,10 @@ func publish(ui chan []byte, data datura.Map[any], priority bool) {
 		return
 	}
 
-	if capacity := cap(ui); capacity > 0 && len(ui) == capacity {
-		if !priority {
-			publishDropped.Add(1)
-			data.Free()
-			return
-		}
-
-		select {
-		case <-ui:
-		default:
-		}
-	}
-
-	payload := data.MarshalAndFree()
-
 	select {
-	case ui <- payload:
-		publishSent.Add(1)
+	case ui <- data.MarshalAndFree():
 		return
 	default:
-		publishDropped.Add(1)
-
-		if cap(ui) > 0 {
-			return
-		}
-
-		errnie.Error(errnie.Err(
-			errnie.TooManyRequests,
-			"UI channel is saturated",
-			nil,
-		))
+		errnie.Warn("UI channel is saturated")
 	}
 }

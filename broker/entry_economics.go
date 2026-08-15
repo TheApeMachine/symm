@@ -15,6 +15,10 @@ midpoint-return units. The exit fee is known from the venue schedule, but no
 current bid depth is presented as the book that will exist at forecast expiry.
 */
 type EntryEconomics struct {
+	// Midpoint is the price denominator used by every return-unit field below.
+	// Consumers converting those fractions back into price distances must use
+	// this exact reference rather than a separately sampled quote.
+	Midpoint       *decimal.Decimal
 	ExpectedReturn *decimal.Decimal
 	ExpectedFees   *decimal.Decimal
 	ExpectedSpread *decimal.Decimal
@@ -309,6 +313,7 @@ func (price *Price) EntryEconomics(
 	impact := entryPrice.Sub(ask).Div(midpoint)
 
 	return &EntryEconomics{
+		Midpoint:       decimal.NewFromInt64(0).Add(midpoint),
 		ExpectedReturn: expectedReturn,
 		ExpectedFees:   totalFees.Div(midpoint),
 		ExpectedSpread: spread,

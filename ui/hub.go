@@ -180,7 +180,6 @@ func (hub *Hub) broadcast() {
 
 				select {
 				case messages <- message:
-				default:
 				}
 
 				return true

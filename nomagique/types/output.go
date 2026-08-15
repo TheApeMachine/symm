@@ -16,11 +16,11 @@ type OutputValue[T comparable] struct {
 	Value Value[T] `json:"value"`
 }
 
-func (output *OutputValue[T]) Read() Output[T] {
+func (output *OutputValue[T]) Read() IO[T] {
 	return output
 }
 
-func (output *OutputValue[T]) Write(next Input[T]) {
+func (output *OutputValue[T]) Write(next IO[T]) {
 	output.Value = output.Value.Write(next.Project().Read())
 }
 

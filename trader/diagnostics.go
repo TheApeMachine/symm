@@ -82,12 +82,12 @@ var diagnosticModules = []diagnosticModule{
 	{name: "leadlag", kind: "signal"},
 	{name: "liquidity", kind: "signal"},
 	{name: "sentiment", kind: "signal"},
-	{name: "category-solver", kind: "logic"},
-	{name: "resonance-solver", kind: "logic"},
-	{name: "manifold-solver", kind: "logic"},
-	{name: "causal-solver", kind: "logic"},
-	{name: "cognition-solver", kind: "logic"},
-	{name: "graph-solver", kind: "logic"},
+	{name: "category", kind: "logic"},
+	{name: "resonance", kind: "logic"},
+	{name: "manifold", kind: "logic"},
+	{name: "causal", kind: "logic"},
+	{name: "cognition", kind: "logic"},
+	{name: "graph", kind: "logic"},
 	{name: "planner", kind: "strategy"},
 	{name: "mcts", kind: "strategy"},
 	{name: "allocation", kind: "strategy"},
@@ -248,7 +248,6 @@ func (crypto *Crypto) Diagnostics() StreamDiagnostics {
 		return StreamDiagnostics{Status: "flowing", Lanes: []LaneSnapshot{}}
 	}
 
-	sent, droppedUI := utils.PublishCounters()
 	startedNs := int64(0)
 
 	if !crypto.startedAt.IsZero() {
@@ -258,7 +257,6 @@ func (crypto *Crypto) Diagnostics() StreamDiagnostics {
 	return StreamDiagnostics{
 		Status:    "flowing",
 		Summary:   "Measurement and analysis run inline on each market frame.",
-		Lossy:     droppedUI > 0,
 		AtNs:      time.Now().UnixNano(),
 		StartedNs: startedNs,
 		Tickers:   crypto.tickers.Load(),
@@ -266,8 +264,6 @@ func (crypto *Crypto) Diagnostics() StreamDiagnostics {
 		Level3:    crypto.level3.Load(),
 		UIDepth:   uiDepth(crypto.ui),
 		UICap:     uiCap(crypto.ui),
-		UISent:    sent,
-		UIDropped: droppedUI,
 		Lanes:     []LaneSnapshot{},
 		Stages:    crypto.stageSnapshots(),
 		Hops:      crypto.hopSnapshots(),

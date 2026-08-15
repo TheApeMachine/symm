@@ -18,7 +18,6 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -128,18 +127,20 @@ func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
 			)
 		}
 
+		running := datura.NewMap()
+		done := datura.NewMap()
+
+		for _, solver := range solvers {
+			running[solver.Name()] = "running"
+			done[solver.Name()] = "done"
+		}
+
 		group, _ := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
+			solver := solver
+
 			group.Go(func() error {
-				utils.PublishPriority(analyzer.ui, datura.NewMap("activity", datura.NewMap(
-					solver.Name(), "running",
-				)))
-
-				defer utils.PublishPriority(analyzer.ui, datura.NewMap("activity", datura.NewMap(
-					solver.Name(), "done",
-				)))
-
 				started := time.Now()
 				err := solver.Update(thesis)
 
@@ -159,11 +160,13 @@ func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
 			})
 		}
 
-		if err := group.Wait(); err != nil {
+		waitErr := group.Wait()
+
+		if waitErr != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				"analyzer: parallel solver update failed",
-				err,
+				waitErr,
 			))
 		}
 

@@ -193,6 +193,10 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
+		riskMidpoint := decimal.NewFromInt64(0).Add(tick.Ask).Add(tick.Bid).Div(
+			decimal.NewFromInt64(2),
+		)
+
 		if economics != nil {
 			decision.ExpectedReturn = economics.ExpectedReturn
 			decision.ExpectedFees = economics.ExpectedFees
@@ -200,6 +204,10 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			decision.ExpectedImpact = economics.ExpectedImpact
 			decision.OpportunityMargin = economics.NetReturn.Float64()
 			decision.Utility = economics.NetReturn.Float64()
+
+			if economics.Midpoint != nil && economics.Midpoint.Sign() > 0 {
+				riskMidpoint = economics.Midpoint
+			}
 		}
 
 		if decision.Utility <= decision.AdmissionUtilityThreshold {
@@ -211,13 +219,15 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		riskPlan := types.NewRiskPlan(types.RiskInputs{
 			ReferencePrice: tick.Ask,
-			Spread:         decision.ExpectedSpread,
-			Impact:         decision.ExpectedImpact,
-			TickSize:       &pair.TickSize,
-			ExitFeeRate:    feeRate,
-			EntryFeeRate:   feeRate,
-			MaxLoss:        notional,
-			Multiples:      types.DefaultRiskMultiples(),
+			// EntryEconomics reports these in midpoint-return units. RiskPlan
+			// consumes price distances, so restore the common price unit here.
+			Spread:       priceDistance(riskMidpoint, decision.ExpectedSpread),
+			Impact:       priceDistance(riskMidpoint, decision.ExpectedImpact),
+			TickSize:     &pair.TickSize,
+			ExitFeeRate:  feeRate,
+			EntryFeeRate: feeRate,
+			MaxLoss:      notional,
+			Multiples:    types.DefaultRiskMultiples(),
 		})
 		decision.Risk = riskPlan
 
@@ -338,6 +348,22 @@ func admitBest(
 		decision.Stoploss = nil
 		decision.Reason = "planner: no position slot available for allocation"
 	}
+}
+
+/*
+priceDistance converts a dimensionless midpoint-return fraction back into the
+price distance RiskPlan expects. Entry economics and risk geometry deliberately
+keep their units explicit rather than relying on similarly sized decimals.
+*/
+func priceDistance(
+	reference *decimal.Decimal,
+	fraction *decimal.Decimal,
+) *decimal.Decimal {
+	if reference == nil || reference.Sign() <= 0 || fraction == nil || fraction.Sign() < 0 {
+		return nil
+	}
+
+	return decimal.NewFromInt64(0).Add(reference).Mul(fraction)
 }
 
 /*

@@ -1,5 +1,7 @@
 package types
 
+import "iter"
+
 /*
 Input is anything a later stage can consume. A primitive, equation, metric, or
 algorithm implements Input so its result can be wired forward without copying
@@ -9,29 +11,31 @@ type Input[T comparable] interface {
 	IO[T]
 }
 
-func NewInput[T comparable]() Input[T] {
-	return &InputValue[T]{}
+func NewInput[T comparable](value Value[T]) Input[T] {
+	return &InputValue[T]{
+		Value: value,
+	}
 }
 
-func NewInputs[T comparable](count int) []Input[T] {
-	collected := make([]Input[T], count)
-
-	for index := range collected {
-		collected[index] = NewInput[T]()
+func NewInputs[T comparable](values ...Value[T]) iter.Seq[Input[T]] {
+	return func(yield func(Input[T]) bool) {
+		for _, value := range values {
+			if !yield(NewInput(value)) {
+				return
+			}
+		}
 	}
-
-	return collected
 }
 
 type InputValue[T comparable] struct {
 	Value Value[T] `json:"value"`
 }
 
-func (input *InputValue[T]) Read() Output[T] {
+func (input *InputValue[T]) Read() IO[T] {
 	return input
 }
 
-func (input *InputValue[T]) Write(next Input[T]) {
+func (input *InputValue[T]) Write(next IO[T]) {
 	input.Value = input.Value.Write(next.Project().Read())
 }
 

@@ -416,12 +416,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				}
 
 				if len(aggregate) > 0 {
+					// Regulator optimization confidence governs control-space exploration. It
+					// must not turn an otherwise admissible market posterior into a 95%
+					// direction-switch veto.
 					switchThreshold := config.Planner.MinimumConfidence
-
-					if config.Regulator != nil &&
-						config.Regulator.OptimizationConfidence > switchThreshold {
-						switchThreshold = config.Regulator.OptimizationConfidence
-					}
 
 					stabilized := stabilizeDirection(
 						history.stableCall,

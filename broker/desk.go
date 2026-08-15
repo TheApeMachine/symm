@@ -279,6 +279,10 @@ desk can ask about a symbol without guessing: is anything still on the book for
 it, or has the position been run all the way out.
 */
 func (desk *Desk) Holding(symbol string) int {
+	if desk == nil || desk.positions == nil || symbol == "" {
+		return 0
+	}
+
 	held := 0
 
 	for position := range desk.Positions() {

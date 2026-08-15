@@ -189,6 +189,41 @@ func TestAdmitBest(t *testing.T) {
 	})
 }
 
+func TestPriceDistance(t *testing.T) {
+	Convey("Given entry costs expressed as midpoint-return fractions", t, func() {
+		midpoint := decimal.NewFromFloat64(100.5)
+		halfSpreadFraction := decimal.NewFromFloat64(0.5 / 100.5)
+
+		Convey("It should restore the absolute price distance used by stop geometry", func() {
+			distance := priceDistance(midpoint, halfSpreadFraction)
+
+			So(distance, ShouldNotBeNil)
+			So(distance.Float64(), ShouldAlmostEqual, 0.5, 1e-12)
+			So(midpoint.Float64(), ShouldAlmostEqual, 100.5, 1e-12)
+		})
+	})
+
+	Convey("Given a low-priced market", t, func() {
+		midpoint := decimal.NewFromFloat64(0.015855)
+		spreadFraction := decimal.NewFromFloat64(0.000005 / 0.015855)
+
+		Convey("It should not mistake a return fraction for a whole price unit", func() {
+			distance := priceDistance(midpoint, spreadFraction)
+
+			So(distance, ShouldNotBeNil)
+			So(distance.Float64(), ShouldAlmostEqual, 0.000005, 1e-12)
+		})
+	})
+
+	Convey("Given absent or invalid inputs", t, func() {
+		So(priceDistance(nil, decimal.NewFromFloat64(0.01)), ShouldBeNil)
+		So(priceDistance(decimal.NewFromInt64(1), nil), ShouldBeNil)
+		So(priceDistance(
+			decimal.NewFromInt64(1), decimal.NewFromFloat64(-0.01),
+		), ShouldBeNil)
+	})
+}
+
 func TestVisibleAskQuantity(t *testing.T) {
 	Convey("Given a cash-sized request larger than the visible ask", t, func() {
 		requested := decimal.NewFromFloat64(2)

@@ -177,9 +177,9 @@ func directionPosterior(output learning.RLSOutput) directionEvidence {
 /*
 stabilizeDirection applies a Schmitt-style posterior gate without turning a
 retained direction into a trade. A same-side call remains actionable only while
-it clears the ordinary admission confidence. Reversal requires the stronger
-system optimization confidence; otherwise the old state is retained for
-continuity while Call is zero, so strategy cannot act on stale conviction.
+it clears the ordinary admission confidence. Reversal uses the caller-supplied
+switch boundary; otherwise the old state is retained for continuity while Call
+is zero, so strategy cannot act on stale conviction.
 */
 func stabilizeDirection(
 	stable float64,

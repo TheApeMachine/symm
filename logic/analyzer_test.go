@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -96,6 +97,47 @@ func TestAnalyzerProcess(t *testing.T) {
 		Convey("It should invoke every solver in the group", func() {
 			So(err, ShouldBeNil)
 			So(order, ShouldResemble, []int{0, 1})
+		})
+	})
+
+	Convey("Given one dependency level with several solver activities", t, func() {
+		order := make([]int, 0, 2)
+		mu := &sync.Mutex{}
+		ui := make(chan []byte, 2)
+		analyzer := &Analyzer{
+			ctx: t.Context(),
+			ui:  ui,
+			solverGroups: [][]Solver{{
+				&orderedSolver{
+					index: 0, order: &order, mu: mu, source: types.SourceCategory,
+				},
+				&orderedSolver{
+					index: 1, order: &order, mu: mu, source: types.SourceResonance,
+				},
+			}},
+		}
+
+		err := analyzer.Process(types.NewThesis(t.Context(), nil))
+		frames := make([]map[string]map[string]string, 0, len(ui))
+
+		for len(ui) > 0 {
+			frame := make(map[string]map[string]string)
+			So(json.Unmarshal(<-ui, &frame), ShouldBeNil)
+			frames = append(frames, frame)
+		}
+
+		Convey("It should publish one running map and one done map for the level", func() {
+			So(err, ShouldBeNil)
+			So(frames, ShouldResemble, []map[string]map[string]string{
+				{"activity": {
+					string(types.SourceCategory):  "running",
+					string(types.SourceResonance): "running",
+				}},
+				{"activity": {
+					string(types.SourceCategory):  "done",
+					string(types.SourceResonance): "done",
+				}},
+			})
 		})
 	})
 

@@ -108,14 +108,6 @@ func (planner *Planner) Close() error {
 }
 
 func (planner *Planner) Update(thesis *types.Thesis) error {
-	utils.PublishPriority(planner.ui, datura.NewMap("activity", datura.NewMap(
-		string(types.SourcePlanner), "running",
-	)))
-
-	defer utils.PublishPriority(planner.ui, datura.NewMap("activity", datura.NewMap(
-		string(types.SourcePlanner), "done",
-	)))
-
 	config := system.Cfg.Snapshot()
 
 	if config == nil || config.Planner == nil {
@@ -243,16 +235,17 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		return err
 	}
 
-	if len(createdDecisions) == 0 {
-		return nil
+	if len(createdDecisions) > 0 {
+		for _, decision := range createdDecisions {
+			planner.retainCandidate(decision)
+		}
+
+		retireDecisionGraphs(thesis, createdDecisions)
 	}
 
-	for _, decision := range createdDecisions {
-		planner.retainCandidate(decision)
-	}
-
-	retireDecisionGraphs(thesis, createdDecisions)
-
+	// Structural candidates survive a temporarily thin or expensive book. They
+	// are re-priced on every planner pass, including passes where no new graph
+	// completed, so a later executable quote can admit the already-earned edge.
 	createdDecisions = planner.candidateCopies()
 
 	if len(createdDecisions) == 0 {
@@ -388,6 +381,10 @@ func (planner *Planner) retainCandidate(decision *types.Decision) {
 
 	planner.candidateMu.Lock()
 	defer planner.candidateMu.Unlock()
+
+	if planner.candidates == nil {
+		planner.candidates = make(map[string]*types.Decision)
+	}
 
 	if decision.Action != types.ActionEnter {
 		// A newer structural evaluation no longer endorses entry.

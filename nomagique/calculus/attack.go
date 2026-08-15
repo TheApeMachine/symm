@@ -1,6 +1,8 @@
 package calculus
 
 import (
+	"fmt"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -10,11 +12,9 @@ Attack walks a value from silence up to a peak. It is Decay inverted: same
 clock and shape, target is the peak instead of zero.
 */
 type Attack struct {
-	clock types.IO[float64]
-	shape types.IO[float64]
-	peak  types.Input[float64]
-	value types.Value[float64]
-	err   error
+	initial types.Input[types.Map[string, float64]]
+	next    types.Input[types.Map[string, float64]]
+	err     error
 }
 
 var _ types.IO[float64] = (*Attack)(nil)
@@ -22,26 +22,39 @@ var _ types.IO[float64] = (*Attack)(nil)
 /*
 NewAttack takes a clock and an optional shape. A nil shape is linear.
 */
-func NewAttack(clock types.IO[float64], shape types.IO[float64]) *Attack {
+func NewAttack(
+	initial types.Input[types.Map[string, float64]],
+) *Attack {
+	if ok, missing := initial.Project().Read().Validate("clock", "shape"); !ok {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"attack: invalid initial input: missing "+fmt.Sprintf("%v", missing),
+			nil,
+		))
+
+		return nil
+	}
+
 	return &Attack{
-		clock: clock,
-		shape: shape,
-		peak:  types.NewInput[float64](),
+		initial: initial,
 	}
 }
 
 /*
 Write stages the peak from the source.
 */
-func (attack *Attack) Write(input types.Input[float64]) {
-	attack.peak.Write(input)
+func (attack *Attack) Write(input types.IO[float64]) {
+	attack.next.Read().Project().Read().Put(
+		"peak", input.Project().Read(),
+	)
+
 	attack.err = nil
 }
 
 /*
 Read executes the risen level and returns the attack as output.
 */
-func (attack *Attack) Read() types.Output[float64] {
+func (attack *Attack) Read() types.IO[float64] {
 	if attack.clock == nil {
 		attack.err = errnie.Error(errnie.Err(
 			errnie.Validation,

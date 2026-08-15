@@ -1,8 +1,8 @@
 package types
 
 type IO[T comparable] interface {
-	Read() Output[T]
-	Write(Input[T])
+	Read() IO[T]
+	Write(IO[T])
 	Project() Value[T]
 	Error() string
 	Close() error

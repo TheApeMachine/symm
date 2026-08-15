@@ -189,6 +189,75 @@ func TestMeasurementsGenerate(t *testing.T) {
 	})
 }
 
+func TestMeasurementsUIPublication(t *testing.T) {
+	Convey("Given two selected signals that both produce a measurement", t, func() {
+		correlation := &measurementSignal{
+			source: types.SourceCorrelation,
+			measurement: &types.Measurement{
+				Source: types.SourceCorrelation,
+				Symbol: "BTC/USD",
+			},
+		}
+		cvd := &measurementSignal{
+			source: types.SourceCVD,
+			measurement: &types.Measurement{
+				Source: types.SourceCVD,
+				Symbol: "BTC/USD",
+			},
+		}
+		ui := make(chan []byte, 4)
+		measurements := &Measurements{
+			ctx:     context.Background(),
+			ui:      ui,
+			signals: []types.Signal{correlation, cvd},
+		}
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.Symbol("BTC/USD")
+
+		_, err := measurements.Generate(thesis, []types.SourceType{
+			types.SourceCorrelation,
+			types.SourceCVD,
+		})
+		So(err, ShouldBeNil)
+
+		type wireMeasurement struct {
+			Source types.SourceType `json:"source"`
+		}
+		type wireFrame struct {
+			Tick struct {
+				Count int64 `json:"count"`
+			} `json:"tick"`
+			Activity     map[string]string `json:"activity"`
+			Measurements []wireMeasurement `json:"measurements"`
+		}
+		frames := make([]wireFrame, 0, len(ui))
+
+		for len(ui) > 0 {
+			var frame wireFrame
+			So(json.Unmarshal(<-ui, &frame), ShouldBeNil)
+			frames = append(frames, frame)
+		}
+
+		Convey("It should send one cut-start frame and one batched completion frame", func() {
+			So(frames, ShouldHaveLength, 2)
+			So(frames[0].Tick.Count, ShouldEqual, thesis.Tick)
+			So(frames[0].Activity, ShouldResemble, map[string]string{
+				string(types.SourceCorrelation): "running",
+				string(types.SourceCVD):         "running",
+			})
+			So(frames[0].Measurements, ShouldBeEmpty)
+			So(frames[1].Activity, ShouldResemble, map[string]string{
+				string(types.SourceCorrelation): "done",
+				string(types.SourceCVD):         "done",
+			})
+			So(frames[1].Measurements, ShouldResemble, []wireMeasurement{
+				{Source: types.SourceCorrelation},
+				{Source: types.SourceCVD},
+			})
+		})
+	})
+}
+
 func BenchmarkMeasurementsGenerate(b *testing.B) {
 	measurements := &Measurements{
 		ctx: context.Background(),
@@ -219,7 +288,7 @@ type cohortMeasurementSignal struct {
 func (signal *cohortMeasurementSignal) Name() string           { return string(signal.source) }
 func (signal *cohortMeasurementSignal) Type() types.SourceType { return signal.source }
 func (signal *cohortMeasurementSignal) Measure(*types.Symbol, ...int64) []*types.Measurement {
-	panic("cohort signal must be measured once for the complete dirty set")
+	panic("cohort signal must be measured once for the complete thesis set")
 }
 func (signal *cohortMeasurementSignal) MeasureCohort(
 	symbols []*types.Symbol,
@@ -257,13 +326,13 @@ func (signal *parallelMeasurementSignal) Measure(
 func (signal *parallelMeasurementSignal) Close() error { return nil }
 
 func TestMeasurementsStreamingOwnership(t *testing.T) {
-	Convey("Given two dirty symbols and one untouched market", t, func() {
+	Convey("Given three symbols in one thesis universe", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Symbol("AAA/USD")
 		thesis.Symbol("BBB/USD")
 		thesis.Symbol("CCC/USD")
 		cohort := &cohortMeasurementSignal{source: types.SourceCorrelation}
-		entered := make(chan string, 2)
+		entered := make(chan string, 3)
 		release := make(chan struct{})
 		local := &parallelMeasurementSignal{
 			source: types.SourceCVD, entered: entered, release: release,
@@ -278,15 +347,13 @@ func TestMeasurementsStreamingOwnership(t *testing.T) {
 			_, err := measurements.Generate(
 				thesis,
 				[]types.SourceType{types.SourceCorrelation, types.SourceCVD},
-				"BBB/USD",
-				"AAA/USD",
 			)
 			done <- err
 		}()
 
 		observed := make(map[string]bool)
 
-		for len(observed) < 2 {
+		for len(observed) < 3 {
 			select {
 			case symbol := <-entered:
 				observed[symbol] = true
@@ -308,14 +375,17 @@ func TestMeasurementsStreamingOwnership(t *testing.T) {
 		cohortSymbols := append([]string(nil), cohort.symbols...)
 		cohort.mu.Unlock()
 
-		Convey("It should run one complete cohort and one transient worker per dirty symbol", func() {
+		Convey("It should run one complete cohort and one transient worker per symbol", func() {
 			So(cohort.calls.Load(), ShouldEqual, int64(1))
-			So(cohortSymbols, ShouldResemble, []string{"AAA/USD", "BBB/USD"})
+			So(cohortSymbols, ShouldResemble, []string{"AAA/USD", "BBB/USD", "CCC/USD"})
 			So(observed, ShouldResemble, map[string]bool{
 				"AAA/USD": true,
 				"BBB/USD": true,
+				"CCC/USD": true,
 			})
-			So(thesis.Symbol("CCC/USD").Tick, ShouldEqual, int64(0))
+			So(thesis.Symbol("AAA/USD").Tick, ShouldEqual, thesis.Tick)
+			So(thesis.Symbol("BBB/USD").Tick, ShouldEqual, thesis.Tick)
+			So(thesis.Symbol("CCC/USD").Tick, ShouldEqual, thesis.Tick)
 		})
 	})
 }

@@ -82,20 +82,18 @@ type measuredRow struct {
 Generate measures one transport arrival without turning the stream into a
 resident inbox topology.
 
-The dirty symbols are the symbols carried by that arrival. Each dirty symbol is
-owned by one transient goroutine, and all symbol-local signals execute serially
-inside it. That preserves symbol event order while still allowing independent
-symbols to progress in parallel. Cross-sectional signals execute once each and
-receive the complete dirty cohort, so they ingest the whole message before
-scoring it.
+Each symbol is owned by one transient goroutine, and all symbol-local signals
+execute serially inside it. That preserves symbol event order while still
+allowing independent symbols to progress in parallel. Cross-sectional signals
+execute once each and receive the complete thesis universe.
 
-When no dirty symbol list is supplied, Generate retains the test and replay
-contract by measuring every symbol currently present on the Thesis.
+The UI receives one start frame for the whole measurement cut and one completion
+frame containing every produced Measurement. Signal activity is a map inside
+those frames, rather than a stream of tiny running/done messages.
 */
 func (measurements *Measurements) Generate(
 	thesis *types.Thesis,
 	receivers []types.SourceType,
-	dirtySymbols ...string,
 ) (bool, error) {
 	if measurements == nil || thesis == nil {
 		return false, errnie.Error(errnie.Err(
@@ -105,7 +103,7 @@ func (measurements *Measurements) Generate(
 		))
 	}
 
-	symbols, err := measurementSymbols(thesis, dirtySymbols)
+	symbols, err := measurementSymbols(thesis)
 
 	if err != nil {
 		return false, err
@@ -117,10 +115,6 @@ func (measurements *Measurements) Generate(
 
 	thesis.Tick++
 	tick := thesis.Tick
-	utils.PublishPriority(measurements.ui, datura.NewMap(
-		"tick", datura.NewMap("count", tick),
-	))
-
 	symbolOrder := make(map[string]int, len(symbols))
 
 	for index, symbol := range symbols {
@@ -129,6 +123,8 @@ func (measurements *Measurements) Generate(
 	}
 
 	active := make([]activeMeasurementSignal, 0, len(measurements.signals))
+	running := datura.NewMap()
+	done := datura.NewMap()
 
 	for index, signal := range measurements.signals {
 		if signal == nil || !slices.Contains(receivers, signal.Type()) {
@@ -136,10 +132,15 @@ func (measurements *Measurements) Generate(
 		}
 
 		active = append(active, activeMeasurementSignal{index: index, signal: signal})
-		utils.PublishPriority(measurements.ui, datura.NewMap("activity", datura.NewMap(
-			string(signal.Type()), "running",
-		)))
+		running[string(signal.Type())] = "running"
+		done[string(signal.Type())] = "done"
 	}
+
+	startFrame := datura.NewMap(
+		"tick", datura.NewMap("count", tick),
+	)
+
+	utils.Publish(measurements.ui, startFrame)
 
 	if len(active) == 0 {
 		return false, nil
@@ -222,15 +223,7 @@ func (measurements *Measurements) Generate(
 		})
 	}
 
-	waitErr := group.Wait()
-
-	for _, selected := range active {
-		utils.PublishPriority(measurements.ui, datura.NewMap("activity", datura.NewMap(
-			string(selected.signal.Type()), "done",
-		)))
-	}
-
-	if waitErr != nil {
+	if waitErr := group.Wait(); waitErr != nil {
 		return false, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"measurements: failed to generate measurements",
@@ -266,89 +259,50 @@ func (measurements *Measurements) Generate(
 	})
 
 	ready := false
-	published := make([]*types.Measurement, 0)
-	publishedSignal := -1
-
-	publish := func() {
-		if len(published) == 0 {
-			return
-		}
-
-		utils.Publish(measurements.ui, datura.NewMap("measurements", published))
-		published = nil
-	}
+	published := make([]*types.Measurement, 0, len(rows))
 
 	for _, measured := range rows {
-		measurement := measured.measurement
+		measured.measurement.Tick = tick
 
-		if measurement.Symbol == "" {
-			return false, fmt.Errorf("measurements: measured row requires symbol")
-		}
-
-		if publishedSignal != -1 && measured.signalIndex != publishedSignal {
-			publish()
-		}
-
-		publishedSignal = measured.signalIndex
-		measurement.Tick = tick
-
-		if thesis.Symbol(measurement.Symbol).AppendMeasurement(
-			measurement.Source,
-			measurement,
+		if thesis.Symbol(measured.measurement.Symbol).AppendMeasurement(
+			measured.measurement.Source,
+			measured.measurement,
 		) {
 			ready = true
 		}
 
-		published = append(published, measurement)
+		published = append(published, measured.measurement)
 	}
 
-	publish()
+	completionFrame := datura.NewMap("activity", done)
+
+	if len(published) > 0 {
+		completionFrame["measurements"] = published
+	}
+
+	utils.Publish(measurements.ui, completionFrame)
 	return ready, nil
 }
 
-func measurementSymbols(
-	thesis *types.Thesis,
-	dirtySymbols []string,
-) ([]*types.Symbol, error) {
+func measurementSymbols(thesis *types.Thesis) ([]*types.Symbol, error) {
 	names := make([]string, 0)
-	seen := make(map[string]struct{})
+	var rangeErr error
 
-	if len(dirtySymbols) == 0 {
-		var rangeErr error
+	thesis.Symbols.Range(func(key, value any) bool {
+		name, nameOK := key.(string)
+		symbol, symbolOK := value.(*types.Symbol)
 
-		thesis.Symbols.Range(func(key, value any) bool {
-			name, nameOK := key.(string)
-			symbol, symbolOK := value.(*types.Symbol)
-
-			if !nameOK || name == "" || !symbolOK || symbol == nil {
-				rangeErr = fmt.Errorf("measurements: invalid thesis symbol entry")
-				return false
-			}
-
-			if _, exists := seen[name]; !exists {
-				seen[name] = struct{}{}
-				names = append(names, name)
-			}
-
-			return true
-		})
-
-		if rangeErr != nil {
-			return nil, rangeErr
+		if !nameOK || name == "" || !symbolOK || symbol == nil {
+			rangeErr = fmt.Errorf("measurements: invalid thesis symbol entry")
+			return false
 		}
-	} else {
-		for _, name := range dirtySymbols {
-			if name == "" {
-				continue
-			}
 
-			if _, exists := seen[name]; exists {
-				continue
-			}
+		names = append(names, name)
+		return true
+	})
 
-			seen[name] = struct{}{}
-			names = append(names, name)
-		}
+	if rangeErr != nil {
+		return nil, rangeErr
 	}
 
 	sort.Strings(names)

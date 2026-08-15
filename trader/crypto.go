@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"sort"
 	"sync/atomic"
 	"time"
 
@@ -175,7 +174,7 @@ func (crypto *Crypto) run() {
 	}()
 }
 
-func (crypto *Crypto) Update(receivers []types.SourceType, symbols ...string) {
+func (crypto *Crypto) Update(receivers []types.SourceType) {
 	started := time.Now()
 
 	if crypto.measurements != nil {
@@ -188,7 +187,7 @@ func (crypto *Crypto) Update(receivers []types.SourceType, symbols ...string) {
 		}
 
 		crypto.measurements.dispatchedAt = started
-		ready, err := crypto.measurements.Generate(crypto.thesis, receivers, symbols...)
+		ready, err := crypto.measurements.Generate(crypto.thesis, receivers)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
@@ -262,7 +261,7 @@ func (crypto *Crypto) onTicker(data any) {
 	}
 
 	pricedAt := time.Now()
-	dirty := make(map[string]struct{}, len(typedTickers.Data))
+	measured := false
 
 	for _, ticker := range typedTickers.Data {
 		if ticker.Symbol == "" {
@@ -280,7 +279,7 @@ func (crypto *Crypto) onTicker(data any) {
 
 		symbol := found.(*types.Symbol)
 		symbol.AppendTickerTo(ticker, types.TickerReceivers)
-		dirty[ticker.Symbol] = struct{}{}
+		measured = true
 		crypto.advanceThesisAt(ticker.Timestamp)
 	}
 
@@ -288,8 +287,8 @@ func (crypto *Crypto) onTicker(data any) {
 	crypto.clocks.observe("price", time.Since(pricedAt))
 	crypto.clocks.observeHop("price", "crypto", time.Since(pricedAt))
 
-	if len(dirty) > 0 {
-		crypto.Update(types.TickerReceivers, sortedSymbolSet(dirty)...)
+	if measured {
+		crypto.Update(types.TickerReceivers)
 	}
 }
 
@@ -309,7 +308,7 @@ func (crypto *Crypto) onTrade(data any) {
 		return
 	}
 
-	dirty := make(map[string]struct{}, len(typedTrades.Data))
+	measured := false
 
 	for _, trade := range typedTrades.Data {
 		if trade.Symbol == "" {
@@ -322,14 +321,14 @@ func (crypto *Crypto) onTrade(data any) {
 
 		symbol := found.(*types.Symbol)
 		symbol.AppendTradeTo(trade, types.TradeReceivers)
-		dirty[trade.Symbol] = struct{}{}
+		measured = true
 		crypto.advanceThesisAt(trade.Timestamp)
 	}
 
 	crypto.trades.Add(uint64(len(typedTrades.Data)))
 
-	if len(dirty) > 0 {
-		crypto.Update(types.TradeReceivers, sortedSymbolSet(dirty)...)
+	if measured {
+		crypto.Update(types.TradeReceivers)
 	}
 }
 
@@ -344,7 +343,7 @@ func (crypto *Crypto) onLevel3(level3 kraken.Level3Data) {
 	crypto.thesis.Symbol(level3.Symbol).AppendLevel3(level3)
 	crypto.advanceThesisAt(level3EventTime(level3))
 	crypto.level3.Add(1)
-	crypto.Update(types.AcceptedBookReceivers, level3.Symbol)
+	crypto.Update(types.AcceptedBookReceivers)
 }
 
 func (crypto *Crypto) advanceThesisAt(at time.Time) {
@@ -371,17 +370,6 @@ func level3EventTime(level3 kraken.Level3Data) time.Time {
 	}
 
 	return at
-}
-
-func sortedSymbolSet(symbols map[string]struct{}) []string {
-	ordered := make([]string, 0, len(symbols))
-
-	for symbol := range symbols {
-		ordered = append(ordered, symbol)
-	}
-
-	sort.Strings(ordered)
-	return ordered
 }
 
 func (crypto *Crypto) Close() error {

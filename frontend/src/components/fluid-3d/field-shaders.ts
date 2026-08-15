@@ -59,9 +59,9 @@ const fieldSampling = /* glsl */ `
 		float gasSignal = compress(max(density, momentumMagnitude));
 		float waveSignal = compress(waveMagnitude);
 
-		vec3 deepAmber = vec3(0.18, 0.08, 0.02);
-		vec3 brightAmber = vec3(0.92, 0.52, 0.14);
-		gasColor = mix(deepAmber, brightAmber, clamp(compress(energy), 0.0, 1.0));
+		vec3 warmAmber = vec3(0.55, 0.22, 0.05);
+		vec3 brightAmber = vec3(1.0, 0.68, 0.20);
+		gasColor = mix(warmAmber, brightAmber, clamp(compress(energy), 0.0, 1.0));
 		gasExtinction = uShowGas ? gasSignal : 0.0;
 
 		float wavePhase = (abs(waveReal) > 1e-6 || abs(waveImaginary) > 1e-6)
@@ -79,11 +79,10 @@ export const fluidVolumeFragmentShader = /* glsl */ `
 	out vec4 outputColor;
 	uniform vec3 uGrid;
 	uniform float uExposure;
-	// Gas fog is dampened and wave glow is boosted relative to the shared
-	// exposure control so gas reads as a light haze rather than dominating
-	// the wave field.
-	const float GAS_OPACITY = 0.35;
-	const float WAVE_BRIGHTNESS = 0.50;
+	// Gas opacity and wave brightness balanced so both phenomena are clearly
+	// legible in the combined volumetric view.
+	const float GAS_OPACITY = 1.4;
+	const float WAVE_BRIGHTNESS = 0.35;
 	${fieldSampling}
 
 	vec2 intersectUnitBox(vec3 origin, vec3 direction) {
@@ -144,8 +143,8 @@ export const fluidSliceFragmentShader = /* glsl */ `
 	in vec3 vWorldPosition;
 	out vec4 outputColor;
 	uniform float uExposure;
-	const float GAS_OPACITY = 0.35;
-	const float WAVE_BRIGHTNESS = 2.5;
+	const float GAS_OPACITY = 1.2;
+	const float WAVE_BRIGHTNESS = 1.0;
 	${fieldSampling}
 
 	void main() {
