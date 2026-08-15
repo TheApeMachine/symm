@@ -140,15 +140,6 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		quantity = executableQuantity
 
-		quantity = visibleAskQuantity(tick.AskQty, quantity)
-
-		if quantity == nil || quantity.Sign() <= 0 {
-			decision.Action = types.ActionNothing
-			decision.Reason = "planner: visible ask quantity cannot execute complete entry"
-
-			continue
-		}
-
 		pair := allocation.desk.Instrument().Pair(decision.Symbol)
 
 		if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {

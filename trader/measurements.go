@@ -79,24 +79,24 @@ func (measurements *Measurements) Generate(
 	utils.PublishPriority(measurements.ui, datura.NewMap(
 		"tick", datura.NewMap("count", thesis.Tick),
 	))
-	defer utils.PublishPriority(measurements.ui, datura.NewMap(
-		"tick", datura.NewMap("count", thesis.Tick),
-	))
 
 	for _, signal := range measurements.signals {
 		if !slices.Contains(receivers, signal.Type()) {
 			continue
 		}
 
-		utils.PublishPriority(measurements.ui, datura.NewMap("activity", datura.NewMap(
-			string(signal.Type()), "running",
-		)))
-
-		defer utils.PublishPriority(measurements.ui, datura.NewMap("activity", datura.NewMap(
-			string(signal.Type()), "done",
-		)))
-
+		activeSignal := signal
 		group.Go(func() error {
+			utils.PublishPriority(measurements.ui, datura.NewMap("activity", datura.NewMap(
+				string(activeSignal.Type()), "running",
+			)))
+
+			defer utils.PublishPriority(measurements.ui, datura.NewMap("activity", datura.NewMap(
+				string(activeSignal.Type()), "done",
+			)))
+
+			var signalMeasurements []*types.Measurement
+
 			thesis.Symbols.Range(func(_, value any) bool {
 				symbol, ok := value.(*types.Symbol)
 
@@ -110,41 +110,36 @@ func (measurements *Measurements) Generate(
 					return false
 				}
 
-				group.Go(func() error {
-					symbol.Tick = thesis.Tick
-					started := time.Now()
-					measured := signal.Measure(symbol, thesis.Tick)
+				symbol.Tick = thesis.Tick
+				started := time.Now()
+				measured := activeSignal.Measure(symbol, thesis.Tick)
 
-					if measured == nil {
-						return nil
+				if len(measured) == 0 {
+					return true
+				}
+
+				if measurements.clocks != nil {
+					measurements.clocks.observe(activeSignal.Name(), time.Since(started))
+				}
+
+				for _, measurement := range measured {
+					measurement.Tick = thesis.Tick
+
+					if thesis.Symbol(measurement.Symbol).AppendMeasurement(
+						measurement.Source,
+						measurement,
+					) {
+						ready.Store(true)
 					}
+				}
 
-					if len(measured) == 0 {
-						return nil
-					}
-
-					if measurements.clocks != nil {
-						measurements.clocks.observe(signal.Name(), time.Since(started))
-					}
-
-					for _, measurement := range measured {
-						measurement.Tick = thesis.Tick
-
-						if thesis.Symbol(measurement.Symbol).AppendMeasurement(
-							measurement.Source,
-							measurement,
-						) {
-							ready.Store(true)
-						}
-					}
-
-					utils.Publish(measurements.ui, datura.NewMap("measurements", measured))
-
-					return nil
-				})
-
+				signalMeasurements = append(signalMeasurements, measured...)
 				return true
 			})
+
+			if len(signalMeasurements) > 0 {
+				utils.Publish(measurements.ui, datura.NewMap("measurements", signalMeasurements))
+			}
 
 			return nil
 		})

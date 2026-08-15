@@ -266,6 +266,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				coder = nil
 				history.issued = make(map[int64]issuedTask)
 				history.pending = make(map[int64][]issuedHorizon)
+				history.ledger = newHorizonLedger()
 				symbol.Resonance.Delete(types.ResonanceReturnForecastKey)
 			}
 

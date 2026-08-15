@@ -72,6 +72,27 @@ func TestPlannerUpdate(t *testing.T) {
 		})
 	})
 
+	Convey("Given contradicting graph evidence under the cold-start floor", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := plannerGraphThesis(t, 0.9)
+		stored, _ := thesis.Symbols.Load("BTC/USD")
+		symbol := stored.(*types.Symbol)
+		graphValue, _ := symbol.Graphs.Load("market_graph")
+		graphValue.(*logicgraph.Graph).Edges[0].Relation = logicgraph.RelationContradicts
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
+
+		err := planner.Update(thesis)
+
+		Convey("It should refuse entry when signed graph evidence is against the long", func() {
+			So(err, ShouldBeNil)
+			decisionValue, found := symbol.Decisions.Load("BTC/USD")
+			So(found, ShouldBeTrue)
+			decision := decisionValue.(*types.Decision)
+			So(decision.GraphScore, ShouldBeLessThan, 0)
+			So(decision.Action, ShouldEqual, types.ActionNothing)
+		})
+	})
+
 	Convey("Given the same positive forecast with contradicting causal evidence", t, func() {
 		system.Cfg = system.NewConfig()
 		system.Cfg.Planner.MinimumGraphScore = 0

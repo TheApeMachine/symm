@@ -217,8 +217,7 @@ func TestRestoreLevel3Subscription(t *testing.T) {
 		}
 
 		live := &Live{client: client}
-		symbolSnapshot := append([]string{}, symbols...)
-		live.symbols.Store(&symbolSnapshot)
+		live.symbols = append([]string{}, symbols...)
 
 		Convey("Reconnect should pause between consecutive requests", func() {
 			started := time.Now()

@@ -219,7 +219,8 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			}
 		}
 
-		if decision.GraphScore >= config.Planner.MinimumGraphScore {
+		if decision.GraphScore > 0 &&
+			decision.GraphScore >= config.Planner.MinimumGraphScore {
 			decision.Action = types.ActionEnter
 			decision.Cause = "opportunity_entry"
 		}

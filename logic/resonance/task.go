@@ -105,17 +105,22 @@ func (history *sampleHistory) issue(
 		return nil
 	}
 
+	cumulative := 0.0
+
 	for horizon := 1; horizon <= probeHorizon; horizon++ {
 		if horizon > len(forecast) {
 			continue
 		}
 
+		cumulative += forecast[horizon-1].Value
+		horizonCall := signedDirection(cumulative)
 		targetSequence := history.sequence + int64(horizon)
+
 		history.pending[targetSequence] = append(
 			history.pending[targetSequence],
 			issuedHorizon{
 				horizon:   horizon,
-				forecast:  call,
+				forecast:  horizonCall,
 				mark:      mark,
 				issueTick: tick,
 				train:     horizon == 1,
