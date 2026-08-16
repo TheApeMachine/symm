@@ -1,165 +1,96 @@
 package statistic
 
 import (
+	"fmt"
 	"math"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
+)
+
+var (
+	SymbolAlphaAA          = nomagique.MustIntern("alpha_aa")
+	SymbolAlphaAB          = nomagique.MustIntern("alpha_ab")
+	SymbolAlphaBA          = nomagique.MustIntern("alpha_ba")
+	SymbolAlphaBB          = nomagique.MustIntern("alpha_bb")
+	SymbolBeta             = nomagique.MustIntern("beta")
+	SymbolSpectralRadius   = nomagique.MustIntern("spectral_radius")
+	SymbolOffspringAA      = nomagique.MustIntern("offspring_aa")
+	SymbolOffspringAB      = nomagique.MustIntern("offspring_ab")
+	SymbolOffspringBA      = nomagique.MustIntern("offspring_ba")
+	SymbolOffspringBB      = nomagique.MustIntern("offspring_bb")
+	SymbolDescendantsAlpha = nomagique.MustIntern("descendants_alpha")
+	SymbolDescendantsBeta  = nomagique.MustIntern("descendants_beta")
 )
 
 /*
-Branching calculates the branching matrix, spectral radius, immediate offspring,
-and total descendants for a bivariate excitation kernel with decay beta.
+Branching calculates a bivariate branching matrix, spectral radius, immediate
+offspring, and total descendants.
 */
-type Branching struct {
-	initial types.Input[types.Map[string, types.Value[float64]]]
-	next    types.Input[types.Map[string, types.Value[float64]]]
-	err     error
-}
+func Branching(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	beta, found := input.Get(SymbolBeta)
 
-var _ types.IO[types.Map[string, types.Value[float64]]] = (*Branching)(nil)
-
-/*
-NewBranching creates a Branching analysis primitive.
-*/
-func NewBranching(
-	initial types.Input[types.Map[string, types.Value[float64]]],
-) *Branching {
-	return &Branching{
-		initial: initial,
-		next:    types.NewInput[types.Map[string, types.Value[float64]]](),
-	}
-}
-
-/*
-Write stages the parameter map containing alpha_aa, alpha_ab, alpha_ba, alpha_bb, beta.
-*/
-func (branching *Branching) Write(input types.IO[types.Map[string, types.Value[float64]]]) {
-	if input == nil {
-		branching.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			"branching: input is nil",
-			nil,
-		))
-
-		return
+	if !found || beta <= 0 || math.IsNaN(beta) || math.IsInf(beta, 0) {
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"statistic: branching requires positive finite beta",
+		)
 	}
 
-	branching.next.Write(input)
-	branching.err = nil
-}
+	alphaAA := inputValue(input, SymbolAlphaAA) / beta
+	alphaAB := inputValue(input, SymbolAlphaAB) / beta
+	alphaBA := inputValue(input, SymbolAlphaBA) / beta
+	alphaBB := inputValue(input, SymbolAlphaBB) / beta
 
-/*
-Read computes the spectral radius, offspring, and descendants.
-*/
-func (branching *Branching) Read() types.IO[types.Map[string, types.Value[float64]]] {
-	in := branching.next.Read()
-
-	if in.Error() != "" {
-		branching.err = errnie.Error(errnie.Err(
-			errnie.NotFound,
-			in.Error(),
-			nil,
-		))
-
-		return branching.next
+	if !finite(alphaAA, alphaAB, alphaBA, alphaBB) {
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"statistic: branching coefficients must be finite",
+		)
 	}
-
-	params := in.Project().Read()
-	beta := branching.number(params, "beta")
-
-	if beta <= 0 {
-		branching.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			"branching: beta must be positive",
-			nil,
-		))
-
-		return branching.next
-	}
-
-	alphaAA := branching.number(params, "alpha_aa") / beta
-	alphaAB := branching.number(params, "alpha_ab") / beta
-	alphaBA := branching.number(params, "alpha_ba") / beta
-	alphaBB := branching.number(params, "alpha_bb") / beta
 
 	trace := alphaAA + alphaBB
-	det := (alphaAA * alphaBB) - (alphaAB * alphaBA)
-	discriminant := (trace * trace) - (4 * det)
+	determinant := alphaAA*alphaBB - alphaAB*alphaBA
+	discriminant := trace*trace - 4*determinant
 
 	if discriminant < 0 {
 		discriminant = 0
 	}
 
-	spectralRadius := (trace + math.Sqrt(discriminant)) / 2.0
-
-	detIminusGamma := (1-alphaAA)*(1-alphaBB) - (alphaAB * alphaBA)
+	spectralRadius := (trace + math.Sqrt(discriminant)) / 2
+	determinantIdentity := (1-alphaAA)*(1-alphaBB) - alphaAB*alphaBA
 	descendantsAlpha := 1.0
 	descendantsBeta := 1.0
 
-	if detIminusGamma > 1e-9 {
-		descendantsAlpha = ((1 - alphaBB + alphaAB) / detIminusGamma)
-		descendantsBeta = ((alphaBA + 1 - alphaAA) / detIminusGamma)
+	if determinantIdentity > 1e-9 {
+		descendantsAlpha = (1 - alphaBB + alphaAB) / determinantIdentity
+		descendantsBeta = (alphaBA + 1 - alphaAA) / determinantIdentity
 	}
 
-	params.Put("spectral_radius", types.NewValue(spectralRadius))
-	params.Put("offspring_aa", types.NewValue(alphaAA))
-	params.Put("offspring_ab", types.NewValue(alphaAB))
-	params.Put("offspring_ba", types.NewValue(alphaBA))
-	params.Put("offspring_bb", types.NewValue(alphaBB))
-	params.Put("descendants_alpha", types.NewValue(descendantsAlpha))
-	params.Put("descendants_beta", types.NewValue(descendantsBeta))
+	output := input
+	output.Put(SymbolSpectralRadius, spectralRadius)
+	output.Put(SymbolOffspringAA, alphaAA)
+	output.Put(SymbolOffspringAB, alphaAB)
+	output.Put(SymbolOffspringBA, alphaBA)
+	output.Put(SymbolOffspringBB, alphaBB)
+	output.Put(SymbolDescendantsAlpha, descendantsAlpha)
+	output.Put(SymbolDescendantsBeta, descendantsBeta)
 
-	branching.next.Write(types.NewInput(types.NewValue(params)))
-	branching.err = nil
-
-	return branching.next
+	return state, output, nil
 }
 
-/*
-Project returns the computed branching metrics.
-*/
-func (branching *Branching) Project() types.Value[types.Map[string, types.Value[float64]]] {
-	return branching.next.Project()
+func inputValue(input nomagique.Frame, symbol nomagique.Symbol) float64 {
+	value, _ := input.Get(symbol)
+
+	return value
 }
 
-/*
-Error reports an error.
-*/
-func (branching *Branching) Error() string {
-	if branching.err != nil {
-		return branching.err.Error()
+func finite(values ...float64) bool {
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
 	}
 
-	return branching.next.Error()
-}
-
-/*
-Close releases the input state.
-*/
-func (branching *Branching) Close() error {
-	if err := branching.initial.Close(); err != nil {
-		return err
-	}
-
-	if err := branching.next.Close(); err != nil {
-		return err
-	}
-
-	branching.err = nil
-
-	return nil
-}
-
-func (branching *Branching) number(
-	params types.Map[string, types.Value[float64]],
-	name string,
-) float64 {
-	val, found := params.Get(name)
-
-	if !found {
-		return 0
-	}
-
-	return val.Read()
+	return true
 }

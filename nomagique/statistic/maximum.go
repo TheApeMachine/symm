@@ -3,94 +3,40 @@ package statistic
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
 )
 
 /*
-Maximum returns the greatest finite sample stored under "sample/" keys. An
-empty sample set is provisional and produces ready=0.
+Maximum returns the greatest populated generic sample. An empty sample set is a
+valid provisional result with ready zero.
 */
-type Maximum struct {
-	initial types.Input[types.Map[string, types.Value[float64]]]
-	next    types.Input[types.Map[string, types.Value[float64]]]
-}
-
-var _ types.IO[types.Map[string, types.Value[float64]]] = (*Maximum)(nil)
-
-func NewMaximum(
-	initial types.Input[types.Map[string, types.Value[float64]]],
-) *Maximum {
-	return &Maximum{
-		initial: initial,
-		next:    types.NewInput[types.Map[string, types.Value[float64]]](),
-	}
-}
-
-func (maximum *Maximum) Read() types.IO[types.Map[string, types.Value[float64]]] {
-	if maximum.next.Error() != "" {
-		return maximum.next
-	}
-
-	mapping := maximum.next.Project().Read()
-	values, err := collectSamples(mapping, "maximum")
+func Maximum(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	values, count, err := collectSamples(&input, "maximum")
 
 	if err != nil {
-		maximum.next = types.NewErrorInput(mapping, err)
-		return maximum.next
+		return state, nomagique.Frame{}, err
 	}
 
 	result := 0.0
 	ready := 0.0
 
-	if len(values) > 0 {
+	if count > 0 {
 		result = -math.MaxFloat64
 
-		for _, value := range values {
-			result = math.Max(result, value)
+		for index := 0; index < count; index++ {
+			result = math.Max(result, values[index])
 		}
 
 		ready = 1
 	}
 
-	mapping.Put("result", types.NewValue(result))
-	mapping.Put("ready", types.NewValue(ready))
-	mapping.Put("count", types.NewValue(float64(len(values))))
-	maximum.initial = types.NewInput(types.NewValue(mapping))
-	maximum.next = types.NewInput(types.NewValue(mapping))
+	output := input
+	output.Put(SymbolResult, result)
+	output.Put(SymbolReady, ready)
+	output.Put(SymbolCount, float64(count))
 
-	return maximum.next
-}
-
-func (maximum *Maximum) Write(
-	input types.IO[types.Map[string, types.Value[float64]]],
-) {
-	mapping, err := stageSamples(input, "maximum")
-
-	if err != nil {
-		maximum.next = types.NewErrorInput(mapping, err)
-		return
-	}
-
-	maximum.next = types.NewInput(types.NewValue(mapping))
-}
-
-func (maximum *Maximum) Project() types.Value[types.Map[string, types.Value[float64]]] {
-	return maximum.next.Project()
-}
-
-func (maximum *Maximum) Error() string { return maximum.next.Error() }
-
-func (maximum *Maximum) Close() error {
-	if maximum.initial != nil {
-		if err := maximum.initial.Close(); err != nil {
-			return err
-		}
-	}
-	if maximum.next != nil {
-		if err := maximum.next.Close(); err != nil {
-			return err
-		}
-	}
-	maximum.next = types.NewInput[types.Map[string, types.Value[float64]]]()
-	return nil
+	return state, output, nil
 }

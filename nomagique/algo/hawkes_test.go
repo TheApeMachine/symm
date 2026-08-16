@@ -2,212 +2,150 @@ package algo
 
 import (
 	"testing"
-	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
-func TestNewHawkes(t *testing.T) {
-	Convey("Given a new hawkes algorithm", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
+const hawkesTestEpoch = 1_786_099_200.0
 
-		Convey("It should implement IO", func() {
-			var input types.Input[hawkesState] = process
-			var output types.Output[hawkesState] = process
-			So(input, ShouldNotBeNil)
-			So(output, ShouldNotBeNil)
-			So(process.Error(), ShouldBeBlank)
-		})
-	})
+func TestHawkesPublishesCountsAndMetrics(t *testing.T) {
+	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	output, err := stream.Step(hawkesArrival(1, hawkesTestEpoch, 0))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertNumber(t, output, SymbolReady, 1)
+	assertNumber(t, output, SymbolEventCount, 1)
+	assertNumber(t, output, SymbolAlphaEventCount, 1)
+	assertNumber(t, output, SymbolBetaEventCount, 0)
+
+	if output.MustGet(SymbolLambdaAlpha) <= 0 ||
+		output.MustGet(SymbolLambdaBeta) <= 0 ||
+		output.MustGet(statistic.SymbolSpectralRadius) <= 0 {
+		t.Fatal("Hawkes metrics should be positive")
+	}
 }
 
-func TestWrite(t *testing.T) {
-	Convey("Given a hawkes algorithm and one arrival", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		process.Write(stageArrival("STREAM/A", "alpha", base))
+func TestHawkesProcessesTypedBurst(t *testing.T) {
+	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	var output nomagique.Frame
 
-		Convey("Write should stage without error", func() {
-			So(process.Error(), ShouldBeBlank)
-		})
-	})
+	for index := 0; index < 32; index++ {
+		mark := -1.0
 
-	Convey("Given an arrival without a timestamp", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
-		collected := types.NewMap[string, types.Value[float64]]()
-		collected.Put("mark", types.NewValue(1.0))
-		process.Write(stagePair("STREAM/A", collected))
-		process.Read()
+		if index%2 != 0 {
+			mark = 1
+		}
 
-		Convey("Read should report a validation error", func() {
-			So(process.Error(), ShouldNotBeBlank)
-		})
-	})
+		sec := hawkesTestEpoch
+		nsec := float64(index * 100_000_000)
+
+		for nsec >= 1e9 {
+			sec++
+			nsec -= 1e9
+		}
+
+		var err error
+		output, err = stream.Step(hawkesArrival(mark, sec, nsec))
+
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertNumber(t, output, SymbolEventCount, 32)
+	assertNumber(t, output, SymbolAlphaEventCount, 16)
+	assertNumber(t, output, SymbolBetaEventCount, 16)
 }
 
-func TestRead(t *testing.T) {
-	Convey("Given one event without an identifiable interval", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		process.Write(stageArrival("STREAM/A", "alpha", base))
-		process.Read()
+func TestHawkesRetainsExactTimestampCoordinates(t *testing.T) {
+	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	origin := hawkesTestEpoch
+	observations := []struct {
+		mark float64
+		sec  float64
+		nsec float64
+	}{
+		{mark: 1, sec: origin},
+		{mark: 1, sec: origin + 1},
+		{mark: -1, sec: origin + 2},
+		{mark: -1, sec: origin + 3},
+		{mark: 1, sec: origin + 4},
+	}
+	var output nomagique.Frame
 
-		Convey("It should publish the count observation", func() {
-			So(process.Error(), ShouldBeBlank)
-			So(lookup(process, "ready"), ShouldEqual, 1)
-			So(lookup(process, "observation"), ShouldEqual, 1)
-			So(lookup(process, "event_count"), ShouldEqual, 1)
-			So(lookup(process, "alpha_event_count"), ShouldEqual, 1)
-			So(lookup(process, "beta_event_count"), ShouldEqual, 0)
-		})
-	})
+	for _, observation := range observations {
+		var err error
+		output, err = stream.Step(hawkesArrival(
+			observation.mark,
+			observation.sec,
+			observation.nsec,
+		))
 
-	Convey("Given a stream without a symbol", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		process.Write(stageArrival("", "alpha", base))
-		process.Read()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 
-		Convey("Read should return a validation error", func() {
-			So(process.Error(), ShouldNotBeBlank)
-		})
-	})
-
-	Convey("Given typed arrivals over time", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		writeBurst(process, base, 32)
-
-		Convey("It should publish measured Hawkes state", func() {
-			So(process.Error(), ShouldBeBlank)
-			So(lookup(process, "ready"), ShouldEqual, 1)
-			So(lookup(process, "event_count"), ShouldEqual, 32)
-			So(lookup(process, "alpha_event_count"), ShouldEqual, 16)
-			So(lookup(process, "beta_event_count"), ShouldEqual, 16)
-			So(lookup(process, "spectral_radius"), ShouldBeGreaterThan, 0)
-			So(lookup(process, "lambda_alpha"), ShouldBeGreaterThan, 0)
-			So(lookup(process, "lambda_beta"), ShouldBeGreaterThan, 0)
-		})
-	})
-
-	Convey("Given arrival events on an observation interval", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
-		origin := time.Date(2026, 5, 30, 13, 0, 0, 0, time.UTC)
-		horizon := origin.Add(4 * time.Second)
-
-		process.Write(stageArrival("STREAM/A", "alpha", origin))
-		process.Read()
-
-		process.Write(stageArrival("STREAM/A", "alpha", origin.Add(time.Second)))
-		process.Read()
-
-		process.Write(stageArrival("STREAM/A", "beta", origin.Add(2*time.Second)))
-		process.Read()
-
-		process.Write(stageArrival("STREAM/A", "beta", origin.Add(3*time.Second)))
-		process.Read()
-
-		process.Write(stageArrival("STREAM/A", "alpha", horizon))
-		process.Read()
-
-		Convey("It should publish exact timestamps and arrival counts", func() {
-			So(process.Error(), ShouldBeBlank)
-			So(lookup(process, "observed_from_sec"), ShouldEqual, float64(origin.Unix()))
-			So(lookup(process, "observed_at_sec"), ShouldEqual, float64(horizon.Unix()))
-			So(lookup(process, "alpha_event_count"), ShouldEqual, 3)
-			So(lookup(process, "beta_event_count"), ShouldEqual, 2)
-		})
-	})
+	assertNumber(t, output, SymbolObservedFromSec, origin)
+	assertNumber(t, output, SymbolObservedAtSec, origin+4)
+	assertNumber(t, output, SymbolAlphaEventCount, 3)
+	assertNumber(t, output, SymbolBetaEventCount, 2)
 }
 
-func TestProject(t *testing.T) {
-	Convey("Given a hawkes algorithm after Read", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
-		base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-		process.Write(stageArrival("STREAM/A", "alpha", base))
-		process.Read()
+func TestHawkesRejectsTimeRegressionTransactionally(t *testing.T) {
+	stream := nomagique.NewStream(Hawkes, NewHawkesState())
 
-		Convey("Project should expose the measured pair", func() {
-			So(process.Project().Read().Key, ShouldEqual, "STREAM/A")
-			So(lookup(process, "event_count"), ShouldEqual, 1)
-		})
-	})
-}
+	if _, err := stream.Step(hawkesArrival(1, hawkesTestEpoch, 0)); err != nil {
+		t.Fatal(err)
+	}
 
-func TestClose(t *testing.T) {
-	Convey("Given a hawkes algorithm", t, func() {
-		process := NewHawkes(types.NewInput[hawkesState]())
+	committed := stream.Project()
 
-		Convey("Close should succeed", func() {
-			So(process.Close(), ShouldBeNil)
-		})
-	})
+	if _, err := stream.Step(hawkesArrival(-1, hawkesTestEpoch-1, 0)); err == nil {
+		t.Fatal("regressed timestamp should fail")
+	}
+
+	if !stream.Project().Equal(committed) {
+		t.Fatal("failed transition changed committed Hawkes state")
+	}
 }
 
 func BenchmarkHawkes(b *testing.B) {
-	process := NewHawkes(types.NewInput[hawkesState]())
-	base := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	arrival := stageArrival("STREAM/A", "alpha", base)
+	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	input := hawkesArrival(1, hawkesTestEpoch, 0)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
-		process.Write(arrival)
-		_ = process.Read()
+	for iteration := 0; iteration < b.N; iteration++ {
+		input.Put(SymbolUnixSec, hawkesTestEpoch+float64(iteration))
+		_, _ = stream.Step(input)
 	}
 }
 
-func lookup(process *Hawkes, name string) float64 {
-	val, found := process.Project().Read().Value.Get(name)
+func hawkesArrival(mark float64, sec float64, nsec float64) nomagique.Frame {
+	input := nomagique.Frame{}
+	input.Put(SymbolMark, mark)
+	input.Put(SymbolUnixSec, sec)
+	input.Put(SymbolUnixNsec, nsec)
 
-	if !found {
-		return 0
-	}
-
-	return val.Read()
+	return input
 }
 
-func stageArrival(symbol string, mark string, at time.Time) types.Input[hawkesState] {
-	sign := 1.0
+func assertNumber(
+	t *testing.T,
+	frame nomagique.Frame,
+	symbol nomagique.Symbol,
+	want float64,
+) {
+	t.Helper()
+	got := frame.MustGet(symbol)
 
-	if mark == "beta" {
-		sign = -1.0
-	}
-
-	collected := types.NewMap[string, types.Value[float64]]()
-	collected.Put("mark", types.NewValue(sign))
-	collected.Put("unix_sec", types.NewValue(float64(at.Unix())))
-	collected.Put("unix_nsec", types.NewValue(float64(at.Nanosecond())))
-
-	return stagePair(symbol, collected)
-}
-
-func stagePair(
-	symbol string,
-	collected types.Map[string, types.Value[float64]],
-) types.Input[hawkesState] {
-	return &types.InputValue[hawkesState]{
-		Value: types.NewValue(types.NewPair(symbol, collected)),
-	}
-}
-
-func writeBurst(process *Hawkes, base time.Time, count int) {
-	state := types.NewMap[string, types.Value[float64]]()
-
-	for index := range count {
-		sign := -1.0
-
-		if index%2 != 0 {
-			sign = 1.0
-		}
-
-		eventTime := base.Add(time.Duration(index) * 100 * time.Millisecond)
-		state.Put("mark", types.NewValue(sign))
-		state.Put("unix_sec", types.NewValue(float64(eventTime.Unix())))
-		state.Put("unix_nsec", types.NewValue(float64(eventTime.Nanosecond())))
-
-		process.Write(stagePair("STREAM/A", state))
-		process.Read()
+	if got != want {
+		t.Fatalf("symbol %d=%v; want %v", symbol, got, want)
 	}
 }

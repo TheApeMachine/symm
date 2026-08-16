@@ -1,67 +1,47 @@
-# Ignition map contract
+# Ignition Frame contract
 
-Ignition has no domain-specific input, output, side, or window structs. Its IO
-payload is the existing generic composition:
+Ignition has no domain-specific input, output, side, keyed-collection, or window
+struct. One ordered stream is represented by a `nomagique.Frame`, and key
+ownership is handled by `nomagique.KeyedStreams` or by the caller's transport
+layer.
 
-```go
-types.Pair[
-    string,
-    types.Map[
-        string,
-        types.Map[string, types.Value[float64]],
-    ],
-]
-```
+## Observation symbols
 
-The pair key selects the active stream. The outer map retains every keyed
-stream. Each stream map contains the latest observation, retained volume-clock
-state, bounded histories, and computed outputs.
+A valid input frame requires:
 
-## Observation keys
+- `SymbolCapacity`: integer retention bound from 1 through
+  `MaxIgnitionHistory`
+- `SymbolVolume`: positive finite executed quantity
+- `SymbolLast`: positive finite trade price
+- `SymbolBid`: positive finite executable bid
+- `SymbolAsk`: positive finite executable ask above bid
+- optional paired `SymbolUnixSec` and `SymbolUnixNsec`
 
-A staged active stream requires:
+## Public output symbols
 
-- `capacity`: positive integer retention bound
-- `volume`: positive executed quantity
-- `last`: positive trade price
-- `bid`: positive executable bid
-- `ask`: positive executable ask above `bid`
-- `unix_sec`, `unix_nsec`: optional normalized event-time coordinates; either
-  both are present or neither is present
+Every initialized state exposes:
 
-## Public output keys
+- `SymbolValue`, `SymbolRVOL`, `SymbolPrecursor`, `SymbolSpread`
+- `SymbolCompression`, `SymbolIgnition`, `SymbolTrend`
+- `SymbolExhaustion`, `SymbolStrength`, `SymbolCategory`
+- `SymbolReady`, `SymbolMaturity`
 
-The active stream map always exposes:
+Directional outputs use exported `SymbolBuy...` and `SymbolSell...` slots.
 
-- `value`, `rvol`, `precursor`, `spread`, `compression`
-- `ignition`, `trend`, `exhaustion`, `strength`, `category`
-- `ready`, `maturity`
+## Internal state
 
-Directional outputs use `buy/` and `sell/` prefixes, for example
-`buy/precursor`, `sell/exhaustion`, and `buy/strength`.
-
-## Internal map namespaces
-
-`window/` contains causal bar state. `history/<family>/` contains the bounded
-ring state produced by `transport.Window`; retained values use
+Causal bar state uses the same legacy names under `window/`, now represented by
+interned offsets. Bounded history occupies fixed slots named
 `history/<family>/sample/<slot>`.
 
-These namespaces are data, not fields on `Ignition`, so they can be projected,
-transported, persisted, or supplied to another primitive without adapters.
+Deltas use the engine's generic sample range. Rates, returns, precursors, and
+spreads use reserved Ignition ranges. Returns and precursors remain separate:
+zero moves are valid return observations but are not retained as precursors.
 
-## Legacy decomposition
+## Transaction model
 
-| Legacy ignition component | New composition |
-| --- | --- |
-| `Squash` | `calculus.Squash` |
-| `Inverse` | `calculus.Inverse` |
-| `Ratio` | `calculus.Ratio` |
-| `Mean` | `probability.Geomean` followed by `logic.Gate` |
-| `RatioScale` | `statistic.Median` followed by `calculus.Ratio` |
-| `Exhaustion` | `Difference` → `Positive` → `Ratio`, multiplied by `Squash` |
-| `ignitionWindow` | `transport.Window` plus map-carried causal clock state |
-| `IgnitionInput`, `IgnitionOutput`, `IgnitionSideOutput` | removed; all values use the map contract |
-
-A failed candidate is exposed through `next.Error()` while `initial` remains the
-last committed collection. This makes time-regression and validation failures
-transactional without an `err` field or a hidden rollback structure.
+`Ignition(state, input)` edits a local candidate frame. Validation, temporal
+regression, or calculation failure returns the original state and an error.
+`nomagique.Stream.Step` commits the candidate only when no error is returned.
+No algorithm field, hidden rollback structure, mutex, or mutable error slot is
+required.

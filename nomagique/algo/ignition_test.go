@@ -2,287 +2,427 @@ package algo
 
 import (
 	"math"
-	"reflect"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
 )
 
 const ignitionTestEpoch = 1_786_099_200.0
 
-func TestIgnitionUsesOnlyInitialAndNext(t *testing.T) {
-	structure := reflect.TypeOf(Ignition{})
-	if structure.NumField() != 2 {
-		t.Fatalf("Ignition has %d fields; want only initial and next", structure.NumField())
-	}
-	if structure.Field(0).Name != "initial" || structure.Field(1).Name != "next" {
-		t.Fatalf("Ignition fields are %q and %q", structure.Field(0).Name, structure.Field(1).Name)
-	}
-}
-
 func TestIgnitionReadinessIsCausal(t *testing.T) {
-	process := newIgnitionForTest()
-
-	first := measureIgnition(t, process, ignitionObservationForTest(
-		"BTC/USD", 128, 20, 100, 99.5, 100.5, ignitionTestEpoch,
+	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	first := measureIgnition(t, stream, ignitionObservationForTest(
+		128,
+		20,
+		100,
+		99.5,
+		100.5,
+		ignitionTestEpoch,
 	))
-	assertIgnitionNumber(t, first, "ready", 0, 0)
-	assertIgnitionNumber(t, first, "rvol", 0, 0)
-	assertIgnitionNumber(t, first, "ignition", 0, 0)
-	for _, key := range []string{"strength", "buy/strength", "sell/strength"} {
-		if _, found := first.Get(key); !found {
-			t.Fatalf("provisional output key %q is missing", key)
+	assertNumber(t, first, SymbolReady, 0)
+	assertNumber(t, first, SymbolRVOL, 0)
+	assertNumber(t, first, SymbolIgnition, 0)
+
+	for _, symbol := range []nomagique.Symbol{
+		SymbolStrength,
+		SymbolBuyStrength,
+		SymbolSellStrength,
+	} {
+		if !first.Has(symbol) {
+			t.Fatalf("provisional output symbol %d is missing", symbol)
 		}
 	}
 
-	second := measureIgnition(t, process, ignitionObservationForTest(
-		"BTC/USD", 128, 20, 101, 100.5, 101.5, ignitionTestEpoch+1,
+	second := measureIgnition(t, stream, ignitionObservationForTest(
+		128,
+		20,
+		101,
+		100.5,
+		101.5,
+		ignitionTestEpoch+1,
 	))
-	assertIgnitionNumber(t, second, "ready", 0, 0)
-	assertIgnitionNumber(t, second, "window/bars", 1, 0)
+	assertNumber(t, second, SymbolReady, 0)
+	assertNumber(t, second, SymbolIgnitionBars, 1)
 
-	third := measureIgnition(t, process, ignitionObservationForTest(
-		"BTC/USD", 128, 20, 102, 101.5, 102.5, ignitionTestEpoch+2,
+	third := measureIgnition(t, stream, ignitionObservationForTest(
+		128,
+		20,
+		102,
+		101.5,
+		102.5,
+		ignitionTestEpoch+2,
 	))
-	if ignitionNumber(third, "ready") != 1 {
-		t.Fatalf("ready=%v; want 1", ignitionNumber(third, "ready"))
-	}
-	for _, key := range []string{"rvol", "precursor", "ignition"} {
-		if ignitionNumber(third, key) <= 0 {
-			t.Fatalf("%s=%v; want positive evidence", key, ignitionNumber(third, key))
+	assertNumber(t, third, SymbolReady, 1)
+
+	for _, symbol := range []nomagique.Symbol{
+		SymbolRVOL,
+		SymbolPrecursor,
+		SymbolIgnition,
+	} {
+		if third.MustGet(symbol) <= 0 {
+			t.Fatalf("symbol %d=%v; want positive evidence", symbol, third.MustGet(symbol))
 		}
 	}
 }
 
 func TestIgnitionRejectsInvalidObservation(t *testing.T) {
-	process := newIgnitionForTest()
-	invalid := ignitionObservationForTest(
-		"BTC/USD", 0, 20, 100, 99.5, 100.5, ignitionTestEpoch,
+	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	invalidCapacity := ignitionObservationForTest(
+		0,
+		20,
+		100,
+		99.5,
+		100.5,
+		ignitionTestEpoch,
 	)
-	process.Write(invalid)
-	if process.Read().Error() == "" {
+
+	if _, err := stream.Step(invalidCapacity); err == nil {
 		t.Fatal("zero capacity should fail")
 	}
 
-	nonFinite := ignitionObservationForTest(
-		"BTC/USD", 8, math.Inf(1), 100, 99.5, 100.5, ignitionTestEpoch,
+	nonFiniteVolume := ignitionObservationForTest(
+		8,
+		math.Inf(1),
+		100,
+		99.5,
+		100.5,
+		ignitionTestEpoch,
 	)
-	process.Write(nonFinite)
-	if process.Read().Error() == "" {
+
+	if _, err := stream.Step(nonFiniteVolume); err == nil {
 		t.Fatal("non-finite volume should fail")
 	}
 }
 
 func TestIgnitionUsesEachStreamOwnScale(t *testing.T) {
-	process := newIgnitionForTest()
-	var smallOutput ignitionMap
-	var largeOutput ignitionMap
+	collection := nomagique.NewKeyedStreams[string](
+		Ignition,
+		func(string) nomagique.Frame {
+			return NewIgnitionState()
+		},
+	)
+	var smallOutput nomagique.Frame
+	var largeOutput nomagique.Frame
 
 	for index := 0; index < 8; index++ {
 		at := ignitionTestEpoch + float64(index)
-		smallOutput = measureIgnition(t, process, ignitionObservationForTest(
-			"SMALL/USD", 128, 20,
-			100+float64(index), 99.5+float64(index), 100.5+float64(index), at,
+		var err error
+		smallOutput, err = collection.Step("SMALL/USD", ignitionObservationForTest(
+			128,
+			20,
+			100+float64(index),
+			99.5+float64(index),
+			100.5+float64(index),
+			at,
 		))
-		largeOutput = measureIgnition(t, process, ignitionObservationForTest(
-			"LARGE/USD", 128, 200,
-			1000+float64(index*10), 995+float64(index*10), 1005+float64(index*10), at,
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		largeOutput, err = collection.Step("LARGE/USD", ignitionObservationForTest(
+			128,
+			200,
+			1000+float64(index*10),
+			995+float64(index*10),
+			1005+float64(index*10),
+			at,
 		))
+
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	assertIgnitionNumber(t, smallOutput, "rvol", ignitionNumber(largeOutput, "rvol"), 1e-12)
-	assertIgnitionNumber(t, smallOutput, "history/deltas/sample/0", 20, 0)
-	assertIgnitionNumber(t, largeOutput, "history/deltas/sample/0", 200, 0)
+	assertAlmostEqual(
+		t,
+		smallOutput.MustGet(SymbolRVOL),
+		largeOutput.MustGet(SymbolRVOL),
+		1e-12,
+	)
+	deltaSymbol, found := IgnitionHistorySample(HistoryDeltas, 0)
+
+	if !found {
+		t.Fatal("delta history symbol is missing")
+	}
+
+	assertNumber(t, smallOutput, deltaSymbol, 20)
+	assertNumber(t, largeOutput, deltaSymbol, 200)
 }
 
 func TestIgnitionRejectsTimeRegressionTransactionally(t *testing.T) {
-	process := newIgnitionForTest()
-	var committed ignitionMap
+	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	var committed nomagique.Frame
+
 	for index := 0; index < 5; index++ {
-		committed = measureIgnition(t, process, ignitionObservationForTest(
-			"BTC/USD", 32, 20,
-			100+float64(index), 99.5+float64(index), 100.5+float64(index),
+		committed = measureIgnition(t, stream, ignitionObservationForTest(
+			32,
+			20,
+			100+float64(index),
+			99.5+float64(index),
+			100.5+float64(index),
 			ignitionTestEpoch+float64(index),
 		))
 	}
 
-	bars := ignitionNumber(committed, "window/bars")
-	strength := ignitionNumber(committed, "strength")
+	bars := committed.MustGet(SymbolIgnitionBars)
+	strength := committed.MustGet(SymbolStrength)
 	regressed := ignitionObservationForTest(
-		"BTC/USD", 32, 20, 106, 105.5, 106.5, ignitionTestEpoch+2,
+		32,
+		20,
+		106,
+		105.5,
+		106.5,
+		ignitionTestEpoch+2,
 	)
-	process.Write(regressed)
-	failed := process.Read()
-	if failed.Error() == "" {
+
+	if _, err := stream.Step(regressed); err == nil {
 		t.Fatal("regressed time should fail")
 	}
 
-	failedState := failed.Project().Read()
-	retained, found := failedState.Value.Get("BTC/USD")
-	if !found {
-		t.Fatal("committed BTC/USD state is missing after rejection")
-	}
-	assertIgnitionNumber(t, retained, "window/bars", bars, 0)
-	assertIgnitionNumber(t, retained, "strength", strength, 0)
-
-	recovered := measureIgnition(t, process, ignitionObservationForTest(
-		"BTC/USD", 32, 20, 106, 105.5, 106.5, ignitionTestEpoch+6,
+	retained := stream.Project()
+	assertNumber(t, retained, SymbolIgnitionBars, bars)
+	assertNumber(t, retained, SymbolStrength, strength)
+	recovered := measureIgnition(t, stream, ignitionObservationForTest(
+		32,
+		20,
+		106,
+		105.5,
+		106.5,
+		ignitionTestEpoch+6,
 	))
-	if ignitionNumber(recovered, "window/bars") <= bars {
-		t.Fatalf("bars=%v after recovery; want greater than %v", ignitionNumber(recovered, "window/bars"), bars)
+
+	if recovered.MustGet(SymbolIgnitionBars) <= bars {
+		t.Fatalf(
+			"bars=%v after recovery; want greater than %v",
+			recovered.MustGet(SymbolIgnitionBars),
+			bars,
+		)
+	}
+}
+
+func TestIgnitionKeepsReturnsAndPrecursorsSemanticallyDistinct(t *testing.T) {
+	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+
+	for index := 0; index < 3; index++ {
+		measureIgnition(t, stream, ignitionObservationForTest(
+			16,
+			20,
+			100,
+			99.5,
+			100.5,
+			ignitionTestEpoch+float64(index),
+		))
+	}
+
+	state := stream.Project()
+	returns := IgnitionHistoryCount(state, HistoryReturns)
+	precursors := IgnitionHistoryCount(state, HistoryPrecursors)
+
+	if returns == 0 {
+		t.Fatal("flat closed bars should retain zero returns")
+	}
+
+	if precursors != 0 {
+		t.Fatalf("precursors=%d; flat moves should not be retained", precursors)
 	}
 }
 
 func TestIgnitionBoundsRetainedHistory(t *testing.T) {
 	const capacity = 16
-	process := newIgnitionForTest()
-	var output ignitionMap
+	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	var output nomagique.Frame
+
 	for index := 0; index < 60; index++ {
-		output = measureIgnition(t, process, ignitionObservationForTest(
-			"BTC/USD", capacity, 20,
-			100+float64(index), 99.5+float64(index), 100.5+float64(index),
+		output = measureIgnition(t, stream, ignitionObservationForTest(
+			capacity,
+			20,
+			100+float64(index),
+			99.5+float64(index),
+			100.5+float64(index),
 			ignitionTestEpoch+float64(index),
 		))
 	}
 
-	for _, name := range []string{"deltas", "rates", "returns", "precursors", "spreads"} {
-		count := ignitionNumber(output, "history/"+name+"/count")
+	for _, history := range []string{
+		HistoryDeltas,
+		HistoryRates,
+		HistoryReturns,
+		HistoryPrecursors,
+		HistorySpreads,
+	} {
+		count := IgnitionHistoryCount(output, history)
+
 		if count > capacity {
-			t.Fatalf("%s retained %v samples; capacity is %d", name, count, capacity)
+			t.Fatalf("%s retained %d samples; capacity is %d", history, count, capacity)
 		}
 	}
 }
 
 func TestIgnitionReciprocalDirectionsAreSymmetric(t *testing.T) {
-	bullish := newIgnitionForTest()
-	bearish := newIgnitionForTest()
+	bullish := nomagique.NewStream(Ignition, NewIgnitionState())
+	bearish := nomagique.NewStream(Ignition, NewIgnitionState())
 	prices := []float64{100, 101, 100, 102, 101, 104}
-	var bull ignitionMap
-	var bear ignitionMap
+	var bull nomagique.Frame
+	var bear nomagique.Frame
 
 	for index, price := range prices {
 		at := ignitionTestEpoch + float64(index)
 		bull = measureIgnition(t, bullish, ignitionObservationForTest(
-			"BULL/USD", 128, 20, price, price-0.5, price+0.5, at,
+			128,
+			20,
+			price,
+			price-0.5,
+			price+0.5,
+			at,
 		))
 		reciprocal := 1 / price
 		spread := reciprocal / 100
 		bear = measureIgnition(t, bearish, ignitionObservationForTest(
-			"BEAR/USD", 128, 20, reciprocal,
-			reciprocal-spread/2, reciprocal+spread/2, at,
+			128,
+			20,
+			reciprocal,
+			reciprocal-spread/2,
+			reciprocal+spread/2,
+			at,
 		))
 	}
 
-	for _, key := range []string{"precursor", "ignition", "exhaustion"} {
-		assertIgnitionNumber(
-			t,
-			bull,
-			"buy/"+key,
-			ignitionNumber(bear, "sell/"+key),
-			1e-12,
-		)
+	for _, pair := range []struct {
+		bull nomagique.Symbol
+		bear nomagique.Symbol
+	}{
+		{bull: SymbolBuyPrecursor, bear: SymbolSellPrecursor},
+		{bull: SymbolBuyIgnition, bear: SymbolSellIgnition},
+		{bull: SymbolBuyExhaustion, bear: SymbolSellExhaustion},
+	} {
+		assertAlmostEqual(t, bull.MustGet(pair.bull), bear.MustGet(pair.bear), 1e-12)
 	}
-	assertIgnitionNumber(t, bull, "rvol", ignitionNumber(bear, "rvol"), 1e-12)
+
+	assertAlmostEqual(t, bull.MustGet(SymbolRVOL), bear.MustGet(SymbolRVOL), 1e-12)
 }
 
 func TestIgnitionRetainsMultipleKeyedStreams(t *testing.T) {
-	process := newIgnitionForTest()
-	measureIgnition(t, process, ignitionObservationForTest(
-		"A/USD", 8, 20, 100, 99.5, 100.5, ignitionTestEpoch,
-	))
-	measureIgnition(t, process, ignitionObservationForTest(
-		"B/USD", 8, 200, 1000, 995, 1005, ignitionTestEpoch,
-	))
-	measureIgnition(t, process, ignitionObservationForTest(
-		"A/USD", 8, 20, 101, 100.5, 101.5, ignitionTestEpoch+1,
-	))
-	measureIgnition(t, process, ignitionObservationForTest(
-		"B/USD", 8, 200, 1010, 1005, 1015, ignitionTestEpoch+1,
-	))
-
-	collection := process.Project().Read().Value
-	a, hasA := collection.Get("A/USD")
-	b, hasB := collection.Get("B/USD")
-	if !hasA || !hasB {
-		t.Fatalf("collection has A=%v B=%v; want both", hasA, hasB)
+	collection := nomagique.NewKeyedStreams[string](Ignition, nil)
+	observations := []struct {
+		key    string
+		volume float64
+		last   float64
+		bid    float64
+		ask    float64
+		at     float64
+	}{
+		{key: "A/USD", volume: 20, last: 100, bid: 99.5, ask: 100.5, at: ignitionTestEpoch},
+		{key: "B/USD", volume: 200, last: 1000, bid: 995, ask: 1005, at: ignitionTestEpoch},
+		{key: "A/USD", volume: 20, last: 101, bid: 100.5, ask: 101.5, at: ignitionTestEpoch + 1},
+		{key: "B/USD", volume: 200, last: 1010, bid: 1005, ask: 1015, at: ignitionTestEpoch + 1},
 	}
-	assertIgnitionNumber(t, a, "window/bars", 1, 0)
-	assertIgnitionNumber(t, b, "window/bars", 1, 0)
-	assertIgnitionNumber(t, a, "history/deltas/sample/0", 20, 0)
-	assertIgnitionNumber(t, b, "history/deltas/sample/0", 200, 0)
+
+	for _, observation := range observations {
+		_, err := collection.Step(observation.key, ignitionObservationForTest(
+			8,
+			observation.volume,
+			observation.last,
+			observation.bid,
+			observation.ask,
+			observation.at,
+		))
+
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, hasFirst := collection.Project("A/USD")
+	second, hasSecond := collection.Project("B/USD")
+
+	if !hasFirst || !hasSecond {
+		t.Fatalf("collection has A=%v B=%v; want both", hasFirst, hasSecond)
+	}
+
+	assertNumber(t, first, SymbolIgnitionBars, 1)
+	assertNumber(t, second, SymbolIgnitionBars, 1)
+	deltaSymbol, found := IgnitionHistorySample(HistoryDeltas, 0)
+
+	if !found {
+		t.Fatal("delta history symbol is missing")
+	}
+
+	assertNumber(t, first, deltaSymbol, 20)
+	assertNumber(t, second, deltaSymbol, 200)
 }
 
-func TestIgnitionClose(t *testing.T) {
-	process := newIgnitionForTest()
-	if err := process.Close(); err != nil {
-		t.Fatal(err)
+func TestAlgorithmSymbolsFitFrame(t *testing.T) {
+	if nomagique.RegisteredSymbols() > nomagique.MaxSlots {
+		t.Fatalf(
+			"registered symbols=%d; Frame capacity is %d",
+			nomagique.RegisteredSymbols(),
+			nomagique.MaxSlots,
+		)
 	}
 }
 
 func BenchmarkIgnition(b *testing.B) {
-	process := newIgnitionForTest()
-	for index := 0; index < b.N; index++ {
+	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for iteration := 0; iteration < b.N; iteration++ {
 		input := ignitionObservationForTest(
-			"BTC/USD", 128, 20,
-			100+float64(index%100), 99.5+float64(index%100), 100.5+float64(index%100),
-			ignitionTestEpoch+float64(index),
+			128,
+			20,
+			100+float64(iteration%100),
+			99.5+float64(iteration%100),
+			100.5+float64(iteration%100),
+			ignitionTestEpoch+float64(iteration),
 		)
-		process.Write(input)
-		_ = process.Read()
+
+		if _, err := stream.Step(input); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
-func newIgnitionForTest() *Ignition {
-	return NewIgnition(types.NewInput[ignitionState]())
-}
-
 func ignitionObservationForTest(
-	symbol string,
 	capacity float64,
 	volume float64,
 	last float64,
 	bid float64,
 	ask float64,
 	unixSec float64,
-) types.Input[ignitionState] {
-	mapping := types.NewMap[string, types.Value[float64]]()
-	mapping.Put("capacity", types.NewValue(capacity))
-	mapping.Put("volume", types.NewValue(volume))
-	mapping.Put("last", types.NewValue(last))
-	mapping.Put("bid", types.NewValue(bid))
-	mapping.Put("ask", types.NewValue(ask))
-	mapping.Put("unix_sec", types.NewValue(unixSec))
-	mapping.Put("unix_nsec", types.NewValue(0.0))
-	collection := types.NewMap[string, ignitionMap]()
-	collection.Put(symbol, mapping)
-	return types.NewInput(types.NewValue(types.NewPair(symbol, collection)))
+) nomagique.Frame {
+	input := nomagique.Frame{}
+	input.Put(SymbolCapacity, capacity)
+	input.Put(SymbolVolume, volume)
+	input.Put(SymbolLast, last)
+	input.Put(SymbolBid, bid)
+	input.Put(SymbolAsk, ask)
+	input.Put(SymbolUnixSec, unixSec)
+	input.Put(SymbolUnixNsec, 0)
+
+	return input
 }
 
-func measureIgnition(t *testing.T, process *Ignition, input types.Input[ignitionState]) ignitionMap {
-	t.Helper()
-	process.Write(input)
-	output := process.Read()
-	if output.Error() != "" {
-		t.Fatal(output.Error())
-	}
-	state := output.Project().Read()
-	mapping, found := state.Value.Get(state.Key)
-	if !found {
-		t.Fatalf("active stream %q is missing", state.Key)
-	}
-	return mapping
-}
-
-func assertIgnitionNumber(
+func measureIgnition(
 	t *testing.T,
-	mapping ignitionMap,
-	key string,
-	want float64,
-	tolerance float64,
-) {
+	stream *nomagique.Stream,
+	input nomagique.Frame,
+) nomagique.Frame {
 	t.Helper()
-	got := ignitionNumber(mapping, key)
+	output, err := stream.Step(input)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return output
+}
+
+func assertAlmostEqual(t *testing.T, got float64, want float64, tolerance float64) {
+	t.Helper()
+
 	if math.Abs(got-want) > tolerance {
-		t.Fatalf("%s=%v; want %v (tolerance %v)", key, got, want, tolerance)
+		t.Fatalf("got=%v; want %v (tolerance %v)", got, want, tolerance)
 	}
 }

@@ -1,12 +1,13 @@
 package nomagique
 
-import "github.com/theapemachine/symm/nomagique/types"
-
 /*
-Number writes the datapoint into the primitive, then reads the computed result.
+Number evaluates one primitive transition. It remains as a small migration aid
+for call sites that used nomagique.Number as their composition entry point.
 */
-func Number[T comparable](datapoint types.IO[T], primitive types.IO[T]) types.IO[T] {
-	primitive.Write(datapoint)
-
-	return primitive.Read()
+func Number(
+	primitive Primitive,
+	state Frame,
+	input Frame,
+) (Frame, Frame, error) {
+	return Step(primitive, state, input)
 }

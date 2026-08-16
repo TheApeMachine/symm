@@ -3,83 +3,49 @@ package transport
 import (
 	"fmt"
 	"math"
-	"strings"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
 )
 
-type windowMap = types.Map[string, types.Value[float64]]
+var SymbolCapacity = nomagique.MustIntern("capacity")
 
 /*
-Window retains a bounded ring of scalar samples entirely inside its map. The
-map carries "capacity", the staged "sample", "count", "head", and
-"sample/<slot>" entries.
+Window retains a bounded ring of scalar samples entirely inside its Frame state.
 */
-type Window struct {
-	initial types.Input[windowMap]
-	next    types.Input[windowMap]
-}
+func Window(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	capacityValue, hasCapacity := input.Get(SymbolCapacity)
+	sample, hasSample := input.Get(nomagique.SampleValue)
 
-var _ types.IO[windowMap] = (*Window)(nil)
-
-func NewWindow(initial types.Input[windowMap]) *Window {
-	return &Window{initial: initial, next: types.NewInput[windowMap]()}
-}
-
-func (window *Window) Write(input types.IO[windowMap]) {
-	if input == nil {
-		mapping := types.NewMap[string, types.Value[float64]]()
-		window.next = types.NewErrorInput(mapping, windowError("input is nil"))
-		return
-	}
-	if input.Error() != "" {
-		mapping := types.NewMap[string, types.Value[float64]]()
-		window.next = types.NewErrorInput(mapping,
-			errnie.Error(errnie.Err(errnie.NotFound, input.Error(), nil)))
-		return
-	}
-	window.next = types.NewInput(types.NewValue(input.Project().Read()))
-}
-
-func (window *Window) Read() types.IO[windowMap] {
-	if window.next.Error() != "" {
-		return window.next
-	}
-
-	mapping := window.next.Project().Read()
-	capacityValue, hasCapacity := mapping.Get("capacity")
-	sampleValue, hasSample := mapping.Get("sample")
 	if !hasCapacity || !hasSample {
-		window.next = types.NewErrorInput(mapping,
-			windowError("missing capacity or sample"))
-		return window.next
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"transport: window requires capacity and sample",
+		)
 	}
 
-	capacityFloat := capacityValue.Read()
-	sample := sampleValue.Read()
-	if capacityFloat <= 0 || capacityFloat != math.Trunc(capacityFloat) ||
-		math.IsNaN(capacityFloat) || math.IsInf(capacityFloat, 0) {
-		window.next = types.NewErrorInput(mapping,
-			windowError("capacity must be a positive integer"))
-		return window.next
-	}
-	if math.IsNaN(sample) || math.IsInf(sample, 0) {
-		window.next = types.NewErrorInput(mapping,
-			windowError("sample must be finite"))
-		return window.next
+	if capacityValue <= 0 || capacityValue != math.Trunc(capacityValue) ||
+		capacityValue > nomagique.MaxSamples || !finite(capacityValue, sample) {
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"transport: window capacity must be an integer from 1 through %d and sample must be finite",
+			nomagique.MaxSamples,
+		)
 	}
 
-	capacity := int(capacityFloat)
-	count := windowInteger(mapping, "count")
-	head := windowInteger(mapping, "head")
+	capacity := int(capacityValue)
+	count := integer(state, nomagique.SampleCount)
+	head := integer(state, nomagique.SampleHead)
+
 	if count < 0 || count > capacity || head < 0 || head >= capacity {
-		window.next = types.NewErrorInput(mapping,
-			windowError("invalid retained window state"))
-		return window.next
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"transport: window retained state is invalid for capacity %d",
+			capacity,
+		)
 	}
 
 	slot := count
+
 	if count >= capacity {
 		slot = head
 		head = (head + 1) % capacity
@@ -87,53 +53,50 @@ func (window *Window) Read() types.IO[windowMap] {
 		count++
 	}
 
-	mapping.Put(fmt.Sprintf("sample/%d", slot), types.NewValue(sample))
-	mapping.Put("count", types.NewValue(float64(count)))
-	mapping.Put("head", types.NewValue(float64(head)))
-	mapping.Put("ready", types.NewValue(1.0))
-	window.initial = types.NewInput(types.NewValue(mapping))
-	window.next = types.NewInput(types.NewValue(mapping))
-	return window.next
-}
+	nextState := state
+	nextState.Put(SymbolCapacity, capacityValue)
+	nextState.Put(nomagique.MustSampleSymbol(slot), sample)
+	nextState.Put(nomagique.SampleCount, float64(count))
+	nextState.Put(nomagique.SampleHead, float64(head))
+	nextState.Put(nomagique.SampleReady, 1)
 
-func (window *Window) Project() types.Value[windowMap] { return window.next.Project() }
-func (window *Window) Error() string                   { return window.next.Error() }
-func (window *Window) Close() error {
-	if window.initial != nil {
-		if err := window.initial.Close(); err != nil {
-			return err
-		}
-	}
-	if window.next != nil {
-		if err := window.next.Close(); err != nil {
-			return err
-		}
-	}
-	window.next = types.NewInput[windowMap]()
-	return nil
+	return nextState, nextState, nil
 }
 
 /*
-Samples returns only retained sample slots, excluding transport metadata.
+Samples returns only populated generic sample slots.
 */
-func Samples(mapping windowMap) windowMap {
-	samples := types.NewMap[string, types.Value[float64]]()
-	for key, value := range mapping.All() {
-		if strings.HasPrefix(key, "sample/") {
-			samples.Put(key, value)
+func Samples(state nomagique.Frame) nomagique.Frame {
+	output := nomagique.Frame{}
+
+	for index := range nomagique.MaxSamples {
+		symbol := nomagique.MustSampleSymbol(index)
+		value, found := state.Get(symbol)
+
+		if found {
+			output.Put(symbol, value)
 		}
 	}
-	return samples
+
+	return output
 }
 
-func windowInteger(mapping windowMap, key string) int {
-	value, found := mapping.Get(key)
+func integer(frame nomagique.Frame, symbol nomagique.Symbol) int {
+	value, found := frame.Get(symbol)
+
 	if !found {
 		return 0
 	}
-	return int(value.Read())
+
+	return int(value)
 }
 
-func windowError(message string) error {
-	return errnie.Error(errnie.Err(errnie.Validation, "window: "+message, nil))
+func finite(values ...float64) bool {
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+
+	return true
 }

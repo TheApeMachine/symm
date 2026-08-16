@@ -2,88 +2,66 @@ package algo
 
 import (
 	"fmt"
+	"math"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
 )
 
-func (ignition *Ignition) score(
-	mapping ignitionMap,
+func scoreIgnition(
+	state *nomagique.Frame,
 	barRate float64,
 	priceMove float64,
 	spread float64,
 ) error {
-	rateBaseline, rateReady, err := ignition.historyMedian(mapping, "rates")
-	if err != nil {
-		return err
-	}
-	spreadBaseline, spreadReady, err := ignition.historyMedian(mapping, "spreads")
-	if err != nil {
-		return err
-	}
-	precursorBaseline, precursorReady, err := ignition.historyMedian(mapping, "precursors")
-	if err != nil {
-		return err
-	}
-	moveBaseline, moveReady, err := ignition.historyMedian(mapping, "returns")
+	rateBaseline, rateReady, err := ignitionHistoryMedian(state, historyRates)
+
 	if err != nil {
 		return err
 	}
 
-	rvol, err := ignition.ratio(barRate, rateBaseline, rateReady)
-	if err != nil {
-		return err
-	}
-	buyMove, err := ignition.positive(priceMove)
-	if err != nil {
-		return err
-	}
-	sellDirection, err := ignition.difference(0, priceMove)
-	if err != nil {
-		return err
-	}
-	sellMove, err := ignition.positive(sellDirection)
-	if err != nil {
-		return err
-	}
-	buyPrecursor, err := ignition.ratio(buyMove, precursorBaseline, precursorReady)
-	if err != nil {
-		return err
-	}
-	sellPrecursor, err := ignition.ratio(sellMove, precursorBaseline, precursorReady)
-	if err != nil {
-		return err
-	}
-	compression, err := ignition.compression(spread, spreadBaseline, spreadReady)
-	if err != nil {
-		return err
-	}
-	buyRejection, err := ignition.ratio(sellMove, moveBaseline, moveReady)
-	if err != nil {
-		return err
-	}
-	sellRejection, err := ignition.ratio(buyMove, moveBaseline, moveReady)
+	spreadBaseline, spreadReady, err := ignitionHistoryMedian(state, historySpreads)
+
 	if err != nil {
 		return err
 	}
 
-	rvolScale, err := ignition.ratio(rateBaseline, rateBaseline, rateReady)
-	if err != nil {
-		return err
-	}
-	precursorScale, err := ignition.ratio(precursorBaseline, precursorBaseline, precursorReady)
-	if err != nil {
-		return err
-	}
-	moveScale, err := ignition.ratio(moveBaseline, moveBaseline, moveReady)
-	if err != nil {
-		return err
-	}
-	compressionScale, err := ignition.compressionScale(mapping, spreadBaseline, spreadReady)
+	precursorBaseline, precursorReady, err := ignitionHistoryMedian(
+		state,
+		historyPrecursors,
+	)
+
 	if err != nil {
 		return err
 	}
 
-	buy, err := ignition.family(
+	moveBaseline, moveReady, err := ignitionHistoryMedian(state, historyReturns)
+
+	if err != nil {
+		return err
+	}
+
+	rvol := ignitionRatio(barRate, rateBaseline, rateReady)
+	buyMove := math.Max(priceMove, 0)
+	sellMove := math.Max(-priceMove, 0)
+	buyPrecursor := ignitionRatio(buyMove, precursorBaseline, precursorReady)
+	sellPrecursor := ignitionRatio(sellMove, precursorBaseline, precursorReady)
+	compression := ignitionCompression(spread, spreadBaseline, spreadReady)
+	buyRejection := ignitionRatio(sellMove, moveBaseline, moveReady)
+	sellRejection := ignitionRatio(buyMove, moveBaseline, moveReady)
+	rvolScale := ignitionRatio(rateBaseline, rateBaseline, rateReady)
+	precursorScale := ignitionRatio(
+		precursorBaseline,
+		precursorBaseline,
+		precursorReady,
+	)
+	moveScale := ignitionRatio(moveBaseline, moveBaseline, moveReady)
+	compressionScale, err := ignitionCompressionScale(state, spreadBaseline, spreadReady)
+
+	if err != nil {
+		return err
+	}
+
+	buyIgnition, buyTrend, buyCompression := ignitionFamily(
 		rvol,
 		buyPrecursor,
 		compression,
@@ -91,10 +69,7 @@ func (ignition *Ignition) score(
 		precursorScale,
 		compressionScale,
 	)
-	if err != nil {
-		return err
-	}
-	sell, err := ignition.family(
+	sellIgnition, sellTrend, sellCompression := ignitionFamily(
 		rvol,
 		sellPrecursor,
 		compression,
@@ -102,175 +77,131 @@ func (ignition *Ignition) score(
 		precursorScale,
 		compressionScale,
 	)
-	if err != nil {
-		return err
-	}
-
-	buyExhaustion, err := ignition.exhaustion(
-		ignitionNumber(mapping, ignitionLastRVOL),
-		rvol,
-		buyRejection,
-		moveScale,
-	)
-	if err != nil {
-		return err
-	}
-	sellExhaustion, err := ignition.exhaustion(
-		ignitionNumber(mapping, ignitionLastRVOL),
-		rvol,
-		sellRejection,
-		moveScale,
-	)
-	if err != nil {
-		return err
-	}
-	ignitionPut(buy, "exhaustion", buyExhaustion)
-	ignitionPut(sell, "exhaustion", sellExhaustion)
-
-	buyStrength, err := ignition.maximum(
-		ignitionNumber(buy, "ignition"),
-		ignitionNumber(buy, "compression"),
-		ignitionNumber(buy, "trend"),
+	priorRVOL := number(*state, SymbolIgnitionLastRVOL)
+	buyExhaustion := ignitionExhaustion(priorRVOL, rvol, buyRejection, moveScale)
+	sellExhaustion := ignitionExhaustion(priorRVOL, rvol, sellRejection, moveScale)
+	buyStrength := maximum(
+		buyIgnition,
+		buyCompression,
+		buyTrend,
 		buyExhaustion,
 	)
-	if err != nil {
-		return err
-	}
-	sellStrength, err := ignition.maximum(
-		ignitionNumber(sell, "ignition"),
-		ignitionNumber(sell, "compression"),
-		ignitionNumber(sell, "trend"),
+	sellStrength := maximum(
+		sellIgnition,
+		sellCompression,
+		sellTrend,
 		sellExhaustion,
 	)
-	if err != nil {
-		return err
-	}
-	ignitionPut(buy, "strength", buyStrength)
-	ignitionPut(buy, "value", buyStrength)
-	ignitionPut(sell, "strength", sellStrength)
-	ignitionPut(sell, "value", sellStrength)
 
-	if !ignitionFinite(buyStrength, sellStrength) {
-		return ignitionError("calculated strength must be finite")
+	if !finite(
+		rvol,
+		buyPrecursor,
+		sellPrecursor,
+		buyStrength,
+		sellStrength,
+	) {
+		return fmt.Errorf("ignition: calculated strength must be finite")
 	}
 
-	ignition.copySide(mapping, "buy", buy)
-	ignition.copySide(mapping, "sell", sell)
-	legacy := buy
+	putIgnitionSide(
+		state,
+		true,
+		rvol,
+		buyPrecursor,
+		buyCompression,
+		buyIgnition,
+		buyTrend,
+		buyExhaustion,
+		buyStrength,
+	)
+	putIgnitionSide(
+		state,
+		false,
+		rvol,
+		sellPrecursor,
+		sellCompression,
+		sellIgnition,
+		sellTrend,
+		sellExhaustion,
+		sellStrength,
+	)
+
 	if sellStrength > buyStrength {
-		legacy = sell
+		state.Put(SymbolValue, sellStrength)
+		state.Put(SymbolPrecursor, sellPrecursor)
+		state.Put(SymbolCompression, sellCompression)
+		state.Put(SymbolIgnition, sellIgnition)
+		state.Put(SymbolTrend, sellTrend)
+		state.Put(SymbolExhaustion, sellExhaustion)
+		state.Put(SymbolStrength, sellStrength)
+		state.Put(SymbolCategory, 0)
+	} else {
+		state.Put(SymbolValue, buyStrength)
+		state.Put(SymbolPrecursor, buyPrecursor)
+		state.Put(SymbolCompression, buyCompression)
+		state.Put(SymbolIgnition, buyIgnition)
+		state.Put(SymbolTrend, buyTrend)
+		state.Put(SymbolExhaustion, buyExhaustion)
+		state.Put(SymbolStrength, buyStrength)
+		state.Put(SymbolCategory, 0)
 	}
-	for _, key := range []string{
-		"value", "precursor", "compression", "ignition", "trend",
-		"exhaustion", "strength", "category",
-	} {
-		ignitionPut(mapping, key, ignitionNumber(legacy, key))
-	}
-	ignitionPut(mapping, "rvol", rvol)
-	ignitionPut(mapping, ignitionLastRVOL, rvol)
-	ignitionPut(mapping, ignitionClassified, ignitionBool(rateReady && spreadReady))
+
+	state.Put(SymbolRVOL, rvol)
+	state.Put(SymbolIgnitionLastRVOL, rvol)
+	state.Put(SymbolIgnitionClassified, boolNumber(rateReady && spreadReady))
+
 	return nil
 }
 
-func (ignition *Ignition) family(
+func ignitionFamily(
 	rvol float64,
 	precursor float64,
 	compression float64,
 	rvolScale float64,
 	precursorScale float64,
 	compressionScale float64,
-) (ignitionMap, error) {
-	scaledRVOL, err := ignition.squash(rvol, rvolScale)
-	if err != nil {
-		return ignitionMap{}, err
-	}
-	quietCompression, err := ignition.inverse(compression, compressionScale)
-	if err != nil {
-		return ignitionMap{}, err
-	}
-	quietPrecursor, err := ignition.inverse(precursor, precursorScale)
-	if err != nil {
-		return ignitionMap{}, err
-	}
-	ignitionScore, err := ignition.evidence(rvol > 0 && precursor > 0, rvol, precursor)
-	if err != nil {
-		return ignitionMap{}, err
-	}
-	trendScore, err := ignition.evidence(
+) (float64, float64, float64) {
+	scaledRVOL := ignitionSquash(rvol, rvolScale)
+	quietCompression := ignitionInverse(compression, compressionScale)
+	quietPrecursor := ignitionInverse(precursor, precursorScale)
+	ignitionScore := ignitionEvidence(rvol > 0 && precursor > 0, rvol, precursor)
+	trendScore := ignitionEvidence(
 		precursor > 0 && scaledRVOL > 0 && quietCompression > 0,
 		precursor,
 		scaledRVOL,
 		quietCompression,
 	)
-	if err != nil {
-		return ignitionMap{}, err
-	}
-	compressionScore, err := ignition.evidence(
+	compressionScore := ignitionEvidence(
 		compression > 0 && scaledRVOL > 0 && quietPrecursor > 0,
 		compression,
 		scaledRVOL,
 		quietPrecursor,
 	)
-	if err != nil {
-		return ignitionMap{}, err
-	}
 
-	output := types.NewMap[string, types.Value[float64]]()
-	ignitionPut(output, "value", 0)
-	ignitionPut(output, "rvol", rvol)
-	ignitionPut(output, "precursor", precursor)
-	ignitionPut(output, "compression", compressionScore)
-	ignitionPut(output, "ignition", ignitionScore)
-	ignitionPut(output, "trend", trendScore)
-	ignitionPut(output, "exhaustion", 0)
-	ignitionPut(output, "strength", 0)
-	ignitionPut(output, "category", 0)
-	return output, nil
+	return ignitionScore, trendScore, compressionScore
 }
 
-func (ignition *Ignition) exhaustion(
+func ignitionExhaustion(
 	priorRVOL float64,
 	rvol float64,
 	rejection float64,
 	moveScale float64,
-) (float64, error) {
-	decrease, err := ignition.difference(priorRVOL, rvol)
-	if err != nil {
-		return 0, err
-	}
-	positiveDecrease, err := ignition.positive(decrease)
-	if err != nil {
-		return 0, err
-	}
-	relativeDecrease, err := ignition.ratio(positiveDecrease, priorRVOL, priorRVOL > 0)
-	if err != nil {
-		return 0, err
-	}
-	scaledRejection, err := ignition.squash(rejection, moveScale)
-	if err != nil {
-		return 0, err
-	}
-	return ignition.product(relativeDecrease, scaledRejection)
+) float64 {
+	positiveDecrease := math.Max(priorRVOL-rvol, 0)
+	relativeDecrease := ignitionRatio(positiveDecrease, priorRVOL, priorRVOL > 0)
+	scaledRejection := ignitionSquash(rejection, moveScale)
+
+	return relativeDecrease * scaledRejection
 }
 
-func (ignition *Ignition) compression(
-	value float64,
-	baseline float64,
-	ready bool,
-) (float64, error) {
-	normalized, err := ignition.ratio(value, baseline, ready)
-	if err != nil {
-		return 0, err
-	}
-	remaining, err := ignition.difference(1, normalized)
-	if err != nil {
-		return 0, err
-	}
-	return ignition.positive(remaining)
+func ignitionCompression(value float64, baseline float64, ready bool) float64 {
+	normalized := ignitionRatio(value, baseline, ready)
+
+	return math.Max(1-normalized, 0)
 }
 
-func (ignition *Ignition) compressionScale(
-	mapping ignitionMap,
+func ignitionCompressionScale(
+	state *nomagique.Frame,
 	baseline float64,
 	ready bool,
 ) (float64, error) {
@@ -278,26 +209,137 @@ func (ignition *Ignition) compressionScale(
 		return 0, nil
 	}
 
-	samples := types.NewMap[string, types.Value[float64]]()
-	index := 0
-	for _, spread := range ignition.historyValues(mapping, "spreads") {
-		compression, err := ignition.compression(spread, baseline, true)
-		if err != nil {
-			return 0, err
+	count := int(number(*state, ignitionHistoryCounts[historySpreads]))
+	values := [MaxIgnitionHistory]float64{}
+	retained := 0
+
+	for index := 0; index < count; index++ {
+		spread, found := state.Get(ignitionHistorySamples[historySpreads][index])
+
+		if !found || !finite(spread) {
+			return 0, fmt.Errorf("ignition: spread history sample %d is invalid", index)
 		}
+
+		compression := ignitionCompression(spread, baseline, true)
+
 		if compression <= 0 {
 			continue
 		}
-		samples.Put(fmt.Sprintf("sample/%d", index), types.NewValue(compression))
-		index++
+
+		values[retained] = compression
+		retained++
 	}
 
-	median, medianReady, err := ignition.median(samples)
-	if err != nil {
-		return 0, err
-	}
-	if !medianReady || median <= 0 || !ignitionFinite(median) {
+	if retained == 0 {
 		return 0, nil
 	}
+
+	sortIgnitionValues(&values, retained)
+	middle := retained / 2
+	median := values[middle]
+
+	if retained%2 == 0 {
+		median = (values[middle-1] + values[middle]) / 2
+	}
+
+	if median <= 0 || !finite(median) {
+		return 0, nil
+	}
+
 	return median, nil
+}
+
+func ignitionEvidence(ready bool, values ...float64) float64 {
+	if !ready || len(values) == 0 {
+		return 0
+	}
+
+	logSum := 0.0
+
+	for _, value := range values {
+		if value <= 0 || !finite(value) {
+			return 0
+		}
+
+		logSum += math.Log(value)
+	}
+
+	return math.Exp(logSum / float64(len(values)))
+}
+
+func ignitionRatio(value float64, baseline float64, ready bool) float64 {
+	if !ready || value <= 0 || baseline <= 0 || !finite(value, baseline) {
+		return 0
+	}
+
+	return value / baseline
+}
+
+func ignitionSquash(value float64, scale float64) float64 {
+	if value <= 0 || scale <= 0 || !finite(value, scale) {
+		return 0
+	}
+
+	return value / (scale + value)
+}
+
+func ignitionInverse(value float64, scale float64) float64 {
+	switch {
+	case !finite(value, scale):
+		return 0
+	case value < 0:
+		return 0
+	case value == 0:
+		return 1
+	case scale <= 0:
+		return 0
+	default:
+		return scale / (scale + value)
+	}
+}
+
+func maximum(values ...float64) float64 {
+	result := 0.0
+
+	for _, value := range values {
+		result = math.Max(result, value)
+	}
+
+	return result
+}
+
+func putIgnitionSide(
+	state *nomagique.Frame,
+	buy bool,
+	rvol float64,
+	precursor float64,
+	compression float64,
+	ignitionScore float64,
+	trend float64,
+	exhaustion float64,
+	strength float64,
+) {
+	if buy {
+		state.Put(SymbolBuyValue, strength)
+		state.Put(SymbolBuyRVOL, rvol)
+		state.Put(SymbolBuyPrecursor, precursor)
+		state.Put(SymbolBuyCompression, compression)
+		state.Put(SymbolBuyIgnition, ignitionScore)
+		state.Put(SymbolBuyTrend, trend)
+		state.Put(SymbolBuyExhaustion, exhaustion)
+		state.Put(SymbolBuyStrength, strength)
+		state.Put(SymbolBuyCategory, 0)
+
+		return
+	}
+
+	state.Put(SymbolSellValue, strength)
+	state.Put(SymbolSellRVOL, rvol)
+	state.Put(SymbolSellPrecursor, precursor)
+	state.Put(SymbolSellCompression, compression)
+	state.Put(SymbolSellIgnition, ignitionScore)
+	state.Put(SymbolSellTrend, trend)
+	state.Put(SymbolSellExhaustion, exhaustion)
+	state.Put(SymbolSellStrength, strength)
+	state.Put(SymbolSellCategory, 0)
 }

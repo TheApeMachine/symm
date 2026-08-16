@@ -1,46 +1,46 @@
 package types
 
 /*
-Metric is one measured quantity. It implements Input and Output so a raw
-reading can feed the next stage, while still carrying unit, timescale, and an
-optional normalized form.
+Metric is boundary metadata for one measured quantity. It is deliberately not a
+Primitive input; numeric composition remains Frame-only.
 */
-type Metric[T comparable] struct {
-	Value      Value[T]   `json:"value"`
-	Normalized Value[T]   `json:"normalized"`
+type Metric[Value comparable] struct {
+	Value      Value      `json:"value"`
+	Normalized Value      `json:"normalized"`
 	Descriptor Descriptor `json:"descriptor"`
-	Err        error      `json:"err"`
+	Err        error      `json:"-"`
 }
 
-/*
-NewMetric returns a ready metric. Normalized stays absent until Normalize.
-*/
-func NewMetric[T comparable](
-	value Value[T], descriptor Descriptor,
-) *Metric[T] {
-	return &Metric[T]{
+func NewMetric[Value comparable](
+	value Value,
+	descriptor Descriptor,
+) *Metric[Value] {
+	return &Metric[Value]{
 		Value:      value,
 		Descriptor: descriptor,
 	}
 }
 
-/*
-Unit returns the native unit of the raw value.
-*/
-func (metric *Metric[T]) Unit() Unit {
+func (metric *Metric[Value]) Unit() Unit {
+	if metric == nil {
+		return UnitUnknown
+	}
+
 	return metric.Descriptor.Unit
 }
 
-/*
-Timescale returns the temporal grain of the raw value.
-*/
-func (metric *Metric[T]) Timescale() Timescale {
+func (metric *Metric[Value]) Timescale() Timescale {
+	if metric == nil {
+		return TimescaleUnknown
+	}
+
 	return metric.Descriptor.Timescale
 }
 
-/*
-Error reports a failure on this metric.
-*/
-func (metric *Metric[T]) Error() error {
+func (metric *Metric[Value]) Error() error {
+	if metric == nil {
+		return nil
+	}
+
 	return metric.Err
 }

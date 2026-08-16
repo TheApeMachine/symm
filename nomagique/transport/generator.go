@@ -3,69 +3,84 @@ package transport
 import (
 	"context"
 	"iter"
-
-	"github.com/theapemachine/errnie"
 )
 
-type Generator[T any] struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      errnie.ErrnieError
-	iterator iter.Seq[T]
+/*
+Generator adapts an iterator to a cancellable channel. Ordered hot paths should
+prefer RingBuffer; Generator remains useful at asynchronous system boundaries.
+*/
+type Generator[Value any] struct {
+	context context.Context
+	cancel  context.CancelFunc
+	source  iter.Seq[Value]
 }
 
-func NewGenerator[T any](
-	ctx context.Context, iterator iter.Seq[T],
-) *Generator[T] {
-	ctx, cancel := context.WithCancel(ctx)
+/*
+NewGenerator creates a cancellable iterator adapter.
+*/
+func NewGenerator[Value any](
+	parent context.Context,
+	source iter.Seq[Value],
+) *Generator[Value] {
+	generatorContext, cancel := context.WithCancel(parent)
 
-	return &Generator[T]{
-		ctx:      ctx,
-		cancel:   cancel,
-		iterator: iterator,
+	return &Generator[Value]{
+		context: generatorContext,
+		cancel:  cancel,
+		source:  source,
 	}
 }
 
-func (generator *Generator[T]) pull() iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for k := range generator.iterator {
-			if !yield(k) {
-				return
-			}
-		}
-	}
-}
+/*
+Generate emits source values until exhaustion, cancellation, or a stopped
+consumer.
+*/
+func (generator *Generator[Value]) Generate(
+	iterators ...*iter.Seq[Value],
+) <-chan Value {
+	output := make(chan Value)
+	source := iter.Seq[Value](nil)
 
-func (generator *Generator[T]) Generate(iterator *iter.Seq[T]) <-chan T {
-	out := make(chan T)
+	if generator != nil {
+		source = generator.source
+	}
+
+	if len(iterators) > 0 && iterators[0] != nil {
+		source = *iterators[0]
+	}
 
 	go func() {
-		defer close(out)
-		for {
-			select {
-			case <-generator.ctx.Done():
-				return
-			default:
-				for k := range generator.pull() {
-					select {
-					case <-generator.ctx.Done():
-						return
-					case out <- k:
-					}
-				}
+		defer close(output)
 
+		if generator == nil || source == nil {
+			return
+		}
+
+		for value := range source {
+			select {
+			case <-generator.context.Done():
 				return
+			case output <- value:
 			}
 		}
 	}()
 
-	return out
+	return output
 }
 
 /*
-Error implements the error interface, which allows the Generator
-to be used as an error type in the event of a failure.
+Close cancels generation.
 */
-func (generator *Generator[T]) Error() string {
-	return generator.err.Error()
+func (generator *Generator[Value]) Close() {
+	if generator != nil && generator.cancel != nil {
+		generator.cancel()
+	}
+}
+
+/*
+Error retains the former generator error-reporting surface. Iteration and
+cancellation are not failures, so the adapter currently reports no error.
+*/
+func (generator *Generator[Value]) Error() string {
+	return ""
 }

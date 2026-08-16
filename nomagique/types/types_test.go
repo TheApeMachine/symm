@@ -1,0 +1,30 @@
+package types
+
+import "testing"
+
+func TestMeasurementRetainsBoundaryMetadata(t *testing.T) {
+	measurement := NewMeasurement("1", "hawkes")
+	measurement.Put("event_count", NewMetric(7.0, Descriptor{
+		Unit:      UnitCount,
+		Timescale: TimescalePerSecond,
+	}))
+	metric := measurement.Metric("event_count")
+
+	if metric == nil || metric.Value != 7 || metric.Unit() != UnitCount {
+		t.Fatal("measurement did not retain its metric")
+	}
+
+	if measurement.Metric("missing") != nil || measurement.Error() == "" {
+		t.Fatal("missing metric should be reported")
+	}
+}
+
+func TestFrameMigrationAliases(t *testing.T) {
+	symbol := MustIntern("types_test/value")
+	frame := Frame{}
+	frame.Put(symbol, 3)
+
+	if frame.MustGet(symbol) != 3 {
+		t.Fatal("Frame alias did not retain the value")
+	}
+}

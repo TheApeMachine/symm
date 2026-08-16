@@ -1,212 +1,146 @@
 package algo
 
 import (
+	"fmt"
 	"math"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
 )
-
-type ignitionMap = types.Map[string, types.Value[float64]]
-type ignitionCollection = types.Map[string, ignitionMap]
-type ignitionState = types.Pair[string, ignitionCollection]
 
 const (
-	ignitionCapacity = "capacity"
-	ignitionVolume   = "volume"
-	ignitionLast     = "last"
-	ignitionBid      = "bid"
-	ignitionAsk      = "ask"
-	ignitionUnixSec  = "unix_sec"
-	ignitionUnixNsec = "unix_nsec"
+	MaxIgnitionHistory = nomagique.MaxSamples
 
-	ignitionInitialized = "window/initialized"
-	ignitionClassified  = "window/classified"
-	ignitionBars        = "window/bars"
-	ignitionHaveTime    = "window/have_time"
-	ignitionLastSec     = "window/last_sec"
-	ignitionLastNsec    = "window/last_nsec"
-	ignitionBarOpenSec  = "window/bar_open_sec"
-	ignitionBarOpenNsec = "window/bar_open_nsec"
-	ignitionBarVolume   = "window/bar_volume"
-	ignitionPrevClose   = "window/previous_close"
-	ignitionLastRVOL    = "window/previous_rvol"
+	HistoryDeltas     = "deltas"
+	HistoryRates      = "rates"
+	HistoryMoves      = "moves"
+	HistoryReturns    = "returns"
+	HistoryPrecursors = "precursors"
+	HistorySpreads    = "spreads"
+)
+
+const (
+	historyDeltas = iota
+	historyRates
+	historyReturns
+	historyPrecursors
+	historySpreads
+	historyFamilyCount
+)
+
+var (
+	SymbolCapacity = nomagique.MustIntern("capacity")
+	SymbolVolume   = nomagique.MustIntern("volume")
+	SymbolLast     = nomagique.MustIntern("last")
+	SymbolBid      = nomagique.MustIntern("bid")
+	SymbolAsk      = nomagique.MustIntern("ask")
+
+	SymbolIgnitionInitialized = nomagique.MustIntern("window/initialized")
+	SymbolIgnitionClassified  = nomagique.MustIntern("window/classified")
+	SymbolIgnitionBars        = nomagique.MustIntern("window/bars")
+	SymbolIgnitionHaveTime    = nomagique.MustIntern("window/have_time")
+	SymbolIgnitionLastSec     = nomagique.MustIntern("window/last_sec")
+	SymbolIgnitionLastNsec    = nomagique.MustIntern("window/last_nsec")
+	SymbolIgnitionBarOpenSec  = nomagique.MustIntern("window/bar_open_sec")
+	SymbolIgnitionBarOpenNsec = nomagique.MustIntern("window/bar_open_nsec")
+	SymbolIgnitionBarVolume   = nomagique.MustIntern("window/bar_volume")
+	SymbolIgnitionPrevClose   = nomagique.MustIntern("window/previous_close")
+	SymbolIgnitionLastRVOL    = nomagique.MustIntern("window/previous_rvol")
+
+	SymbolValue       = nomagique.MustIntern("value")
+	SymbolRVOL        = nomagique.MustIntern("rvol")
+	SymbolPrecursor   = nomagique.MustIntern("precursor")
+	SymbolSpread      = nomagique.MustIntern("spread")
+	SymbolCompression = nomagique.MustIntern("compression")
+	SymbolIgnition    = nomagique.MustIntern("ignition")
+	SymbolTrend       = nomagique.MustIntern("trend")
+	SymbolExhaustion  = nomagique.MustIntern("exhaustion")
+	SymbolStrength    = nomagique.MustIntern("strength")
+	SymbolCategory    = nomagique.MustIntern("category")
+	SymbolMaturity    = nomagique.MustIntern("maturity")
+
+	SymbolBuyValue       = nomagique.MustIntern("buy/value")
+	SymbolBuyRVOL        = nomagique.MustIntern("buy/rvol")
+	SymbolBuyPrecursor   = nomagique.MustIntern("buy/precursor")
+	SymbolBuyCompression = nomagique.MustIntern("buy/compression")
+	SymbolBuyIgnition    = nomagique.MustIntern("buy/ignition")
+	SymbolBuyTrend       = nomagique.MustIntern("buy/trend")
+	SymbolBuyExhaustion  = nomagique.MustIntern("buy/exhaustion")
+	SymbolBuyStrength    = nomagique.MustIntern("buy/strength")
+	SymbolBuyCategory    = nomagique.MustIntern("buy/category")
+
+	SymbolSellValue       = nomagique.MustIntern("sell/value")
+	SymbolSellRVOL        = nomagique.MustIntern("sell/rvol")
+	SymbolSellPrecursor   = nomagique.MustIntern("sell/precursor")
+	SymbolSellCompression = nomagique.MustIntern("sell/compression")
+	SymbolSellIgnition    = nomagique.MustIntern("sell/ignition")
+	SymbolSellTrend       = nomagique.MustIntern("sell/trend")
+	SymbolSellExhaustion  = nomagique.MustIntern("sell/exhaustion")
+	SymbolSellStrength    = nomagique.MustIntern("sell/strength")
+	SymbolSellCategory    = nomagique.MustIntern("sell/category")
 )
 
 /*
-Ignition is a keyed, causal volume-clock composition. All observation, retained
-history, calibration, and output state lives in the map carried by initial and
-next; the algorithm has no domain-specific state fields.
+NewIgnitionState returns an empty universal state. The first valid observation
+initializes the causal volume clock and all public output slots.
 */
-type Ignition struct {
-	initial types.Input[ignitionState]
-	next    types.Input[ignitionState]
-}
-
-var _ types.IO[ignitionState] = (*Ignition)(nil)
-
-/*
-NewIgnition creates a keyed ignition collection. The pair key selects the
-active stream; the collection map carries every stream's observation, history,
-calibration, and output map.
-*/
-func NewIgnition(initial types.Input[ignitionState]) *Ignition {
-	return &Ignition{
-		initial: initial,
-		next:    types.NewInput[ignitionState](),
-	}
+func NewIgnitionState() nomagique.Frame {
+	return nomagique.Frame{}
 }
 
 /*
-Write stages an observation collection and overlays the pair-selected stream
-map on its last committed map. Other keyed streams remain untouched.
+Ignition advances one ordered market stream through a causal volume clock. Use
+one nomagique.Stream per key; the reducer itself contains no keyed or domain
+state outside its Frame.
 */
-func (ignition *Ignition) Write(input types.IO[ignitionState]) {
-	if input == nil {
-		ignition.reject(ignitionError("input is nil"))
-		return
-	}
-	if input.Error() != "" {
-		ignition.reject(errnie.Error(errnie.Err(
-			errnie.NotFound,
-			input.Error(),
-			nil,
-		)))
-		return
-	}
+func Ignition(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	capacity, volume, last, bid, ask, sec, nsec, hasTime, err := ignitionObservation(&input)
 
-	incoming := input.Project().Read()
-	candidate := incoming.Value.Clone()
-	committed, hasCommitted := ignition.committed()
-
-	if hasCommitted {
-		candidate = committed.Value.Clone()
-		incomingMap, found := incoming.Value.Get(incoming.Key)
-		if !found {
-			ignition.reject(ignitionError("active stream is missing from collection"))
-			return
-		}
-
-		merged := incomingMap.Clone()
-		if prior, hasPrior := candidate.Get(incoming.Key); hasPrior {
-			merged = prior.Clone()
-			for key, value := range incomingMap.All() {
-				merged.Put(key, value)
-			}
-		}
-		candidate.Put(incoming.Key, merged)
-	}
-
-	ignition.next = types.NewInput(types.NewValue(types.NewPair(incoming.Key, candidate)))
-}
-
-/*
-Read advances the staged observation transactionally. Validation or primitive
-failure leaves initial untouched and exposes the failure through next.
-*/
-func (ignition *Ignition) Read() types.IO[ignitionState] {
-	if ignition.next.Error() != "" {
-		return ignition.next
-	}
-
-	staged := ignition.next.Project()
-	if !staged.Ready {
-		ignition.reject(ignitionError("input has not been written"))
-		return ignition.next
-	}
-
-	pair := staged.Read()
-	if pair.Key == "" {
-		ignition.reject(ignitionError("missing stream key"))
-		return ignition.next
-	}
-
-	stream, found := pair.Value.Get(pair.Key)
-	if !found {
-		ignition.reject(ignitionError("active stream is missing from collection"))
-		return ignition.next
-	}
-	mapping := stream.Clone()
-	capacity, volume, last, bid, ask, sec, nsec, hasTime, err :=
-		ignitionObservation(mapping)
 	if err != nil {
-		ignition.reject(err)
-		return ignition.next
+		return state, nomagique.Frame{}, err
 	}
 
+	nextState := state
+	copyIgnitionObservation(&nextState, &input)
 	spread := ask - bid
-	if !ignitionFlag(mapping, ignitionInitialized) {
-		if err := ignition.initialize(mapping, capacity, volume, last, spread, sec, nsec, hasTime); err != nil {
-			ignition.reject(err)
-			return ignition.next
+
+	if number(nextState, SymbolIgnitionInitialized) == 0 {
+		if err := initializeIgnition(
+			&nextState,
+			capacity,
+			volume,
+			last,
+			spread,
+			sec,
+			nsec,
+			hasTime,
+		); err != nil {
+			return state, nomagique.Frame{}, err
 		}
-	} else if err := ignition.advance(mapping, capacity, volume, last, spread, sec, nsec, hasTime); err != nil {
-		ignition.reject(err)
-		return ignition.next
+	} else if err := advanceIgnition(
+		&nextState,
+		capacity,
+		volume,
+		last,
+		spread,
+		sec,
+		nsec,
+		hasTime,
+	); err != nil {
+		return state, nomagique.Frame{}, err
 	}
 
-	ignition.compose(mapping, spread)
-	pair.Value.Put(pair.Key, mapping)
-	ignition.commit(pair)
-	return ignition.next
-}
+	composeIgnition(&nextState, spread)
 
-func (ignition *Ignition) Project() types.Value[ignitionState] {
-	return ignition.next.Project()
-}
-
-func (ignition *Ignition) Error() string {
-	return ignition.next.Error()
-}
-
-func (ignition *Ignition) Close() error {
-	if ignition.initial != nil {
-		if err := ignition.initial.Close(); err != nil {
-			return err
-		}
-	}
-	if ignition.next != nil {
-		if err := ignition.next.Close(); err != nil {
-			return err
-		}
-	}
-
-	ignition.initial = types.NewInput[ignitionState]()
-	ignition.next = types.NewInput[ignitionState]()
-	return nil
-}
-
-func (ignition *Ignition) commit(state ignitionState) {
-	ignition.initial = types.NewInput(types.NewValue(state))
-	ignition.next = types.NewInput(types.NewValue(state))
-}
-
-func (ignition *Ignition) reject(err error) {
-	state, found := ignition.committed()
-	if !found {
-		state = ignitionState{}
-	}
-	ignition.next = types.NewErrorInput(state, err)
-}
-
-func (ignition *Ignition) committed() (ignitionState, bool) {
-	if ignition.initial == nil {
-		return ignitionState{}, false
-	}
-	projected := ignition.initial.Project()
-	if !projected.Ready {
-		return ignitionState{}, false
-	}
-	if projected.Err != nil {
-		return projected.Zero, true
-	}
-	return projected.Read(), true
+	return nextState, nextState, nil
 }
 
 func ignitionObservation(
-	mapping ignitionMap,
+	input *nomagique.Frame,
 ) (
-	capacity float64,
+	capacity int,
 	volume float64,
 	last float64,
 	bid float64,
@@ -216,121 +150,313 @@ func ignitionObservation(
 	hasTime bool,
 	err error,
 ) {
-	var found bool
-	capacity, found = ignitionLookup(mapping, ignitionCapacity)
-	if !found || capacity <= 0 || capacity != math.Trunc(capacity) || !ignitionFinite(capacity) {
-		err = ignitionError("positive integer capacity required")
+	capacityValue, found := input.Get(SymbolCapacity)
+
+	if !found || capacityValue <= 0 || capacityValue != math.Trunc(capacityValue) ||
+		capacityValue > MaxIgnitionHistory || !finite(capacityValue) {
+		err = fmt.Errorf(
+			"ignition: capacity must be an integer from 1 through %d",
+			MaxIgnitionHistory,
+		)
 		return
 	}
 
-	for key, target := range map[string]*float64{
-		ignitionVolume: &volume,
-		ignitionLast:   &last,
-		ignitionBid:    &bid,
-		ignitionAsk:    &ask,
-	} {
-		value, present := ignitionLookup(mapping, key)
-		if !present || value <= 0 || !ignitionFinite(value) {
-			err = ignitionError("volume, last, bid, and ask must be finite and positive")
+	capacity = int(capacityValue)
+	values := []struct {
+		symbol nomagique.Symbol
+		target *float64
+	}{
+		{symbol: SymbolVolume, target: &volume},
+		{symbol: SymbolLast, target: &last},
+		{symbol: SymbolBid, target: &bid},
+		{symbol: SymbolAsk, target: &ask},
+	}
+
+	for _, required := range values {
+		value, present := input.Get(required.symbol)
+
+		if !present || value <= 0 || !finite(value) {
+			err = fmt.Errorf(
+				"ignition: volume, last, bid, and ask must be finite and positive",
+			)
 			return
 		}
-		*target = value
+
+		*required.target = value
 	}
+
 	if ask <= bid {
-		err = ignitionError("ask must be above bid")
+		err = fmt.Errorf("ignition: ask must be above bid")
 		return
 	}
 
-	sec, hasSec := ignitionLookup(mapping, ignitionUnixSec)
-	nsec, hasNsec := ignitionLookup(mapping, ignitionUnixNsec)
+	sec, hasSec := input.Get(SymbolUnixSec)
+	nsec, hasNsec := input.Get(SymbolUnixNsec)
+
 	if hasSec != hasNsec {
-		err = ignitionError("timestamp requires unix_sec and unix_nsec")
+		err = fmt.Errorf("ignition: timestamp requires unix_sec and unix_nsec")
 		return
 	}
+
 	if hasSec {
-		if !ignitionFinite(sec, nsec) || nsec < 0 || nsec >= 1e9 {
-			err = ignitionError("timestamp coordinates must be finite and normalized")
+		if !finite(sec, nsec) || nsec < 0 || nsec >= 1e9 {
+			err = fmt.Errorf(
+				"ignition: timestamp coordinates must be finite and normalized",
+			)
 			return
 		}
+
 		hasTime = sec != 0 || nsec != 0
 	}
+
 	return
 }
 
-func ignitionParams(
-	pairs ...types.Pair[string, types.Value[float64]],
-) ignitionMap {
-	mapping := types.NewMap[string, types.Value[float64]]()
-	for _, pair := range pairs {
-		mapping.Put(pair.Key, pair.Value)
+func copyIgnitionObservation(state *nomagique.Frame, input *nomagique.Frame) {
+	for _, symbol := range []nomagique.Symbol{
+		SymbolCapacity,
+		SymbolVolume,
+		SymbolLast,
+		SymbolBid,
+		SymbolAsk,
+		SymbolUnixSec,
+		SymbolUnixNsec,
+	} {
+		value, found := input.Get(symbol)
+
+		if found {
+			state.Put(symbol, value)
+		} else {
+			state.Delete(symbol)
+		}
 	}
-	return mapping
 }
 
-func ignitionParam(
-	key string,
-	value float64,
-) types.Pair[string, types.Value[float64]] {
-	return types.NewPair(key, types.NewValue(value))
-}
+func initializeIgnition(
+	state *nomagique.Frame,
+	capacity int,
+	volume float64,
+	last float64,
+	spread float64,
+	sec float64,
+	nsec float64,
+	hasTime bool,
+) error {
+	state.Put(SymbolIgnitionInitialized, 1)
+	state.Put(SymbolIgnitionClassified, 0)
+	state.Put(SymbolIgnitionBars, 0)
+	state.Put(SymbolIgnitionPrevClose, last)
+	state.Put(SymbolIgnitionLastRVOL, 0)
+	state.Put(SymbolIgnitionBarVolume, volume)
+	initializeIgnitionOutput(state)
 
-func ignitionLookup(mapping ignitionMap, key string) (float64, bool) {
-	value, found := mapping.Get(key)
-	if !found {
-		return 0, false
+	if hasTime {
+		state.Put(SymbolIgnitionHaveTime, 1)
+		state.Put(SymbolIgnitionLastSec, sec)
+		state.Put(SymbolIgnitionLastNsec, nsec)
+		state.Put(SymbolIgnitionBarOpenSec, sec)
+		state.Put(SymbolIgnitionBarOpenNsec, nsec)
 	}
-	return value.Read(), true
+
+	if err := appendIgnitionHistory(state, historyDeltas, capacity, volume, true); err != nil {
+		return err
+	}
+
+	if err := appendIgnitionHistory(state, historySpreads, capacity, spread, true); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func ignitionNumber(mapping ignitionMap, key string) float64 {
-	value, _ := ignitionLookup(mapping, key)
-	return value
+func initializeIgnitionOutput(state *nomagique.Frame) {
+	for _, symbol := range []nomagique.Symbol{
+		SymbolValue,
+		SymbolRVOL,
+		SymbolPrecursor,
+		SymbolSpread,
+		SymbolCompression,
+		SymbolIgnition,
+		SymbolTrend,
+		SymbolExhaustion,
+		SymbolStrength,
+		SymbolCategory,
+		SymbolReady,
+		SymbolMaturity,
+		SymbolBuyValue,
+		SymbolBuyRVOL,
+		SymbolBuyPrecursor,
+		SymbolBuyCompression,
+		SymbolBuyIgnition,
+		SymbolBuyTrend,
+		SymbolBuyExhaustion,
+		SymbolBuyStrength,
+		SymbolBuyCategory,
+		SymbolSellValue,
+		SymbolSellRVOL,
+		SymbolSellPrecursor,
+		SymbolSellCompression,
+		SymbolSellIgnition,
+		SymbolSellTrend,
+		SymbolSellExhaustion,
+		SymbolSellStrength,
+		SymbolSellCategory,
+	} {
+		state.Put(symbol, 0)
+	}
 }
 
-func ignitionPut(mapping ignitionMap, key string, value float64) {
-	mapping.Put(key, types.NewValue(value))
+func advanceIgnition(
+	state *nomagique.Frame,
+	capacity int,
+	volume float64,
+	last float64,
+	spread float64,
+	sec float64,
+	nsec float64,
+	hasTime bool,
+) error {
+	windowHasTime := number(*state, SymbolIgnitionHaveTime) != 0
+
+	if windowHasTime && hasTime && before(
+		sec,
+		nsec,
+		number(*state, SymbolIgnitionLastSec),
+		number(*state, SymbolIgnitionLastNsec),
+	) {
+		return fmt.Errorf("ignition: observation time cannot move backwards")
+	}
+
+	if hasTime {
+		state.Put(SymbolIgnitionLastSec, sec)
+		state.Put(SymbolIgnitionLastNsec, nsec)
+
+		if !windowHasTime {
+			windowHasTime = true
+			state.Put(SymbolIgnitionHaveTime, 1)
+			state.Put(SymbolIgnitionBarOpenSec, sec)
+			state.Put(SymbolIgnitionBarOpenNsec, nsec)
+		}
+	}
+
+	barVolume := number(*state, SymbolIgnitionBarVolume) + volume
+	state.Put(SymbolIgnitionBarVolume, barVolume)
+	barTarget, targetReady, err := ignitionHistoryMedian(state, historyDeltas)
+
+	if err != nil {
+		return err
+	}
+
+	barOpenSec := number(*state, SymbolIgnitionBarOpenSec)
+	barOpenNsec := number(*state, SymbolIgnitionBarOpenNsec)
+	closes := targetReady && barTarget > 0 && barVolume >= barTarget &&
+		windowHasTime && hasTime && after(sec, nsec, barOpenSec, barOpenNsec)
+
+	if closes {
+		if err := closeIgnitionBar(
+			state,
+			capacity,
+			last,
+			spread,
+			sec,
+			nsec,
+			barVolume,
+		); err != nil {
+			return err
+		}
+	}
+
+	if err := appendIgnitionHistory(state, historyDeltas, capacity, volume, true); err != nil {
+		return err
+	}
+
+	if err := appendIgnitionHistory(state, historySpreads, capacity, spread, true); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func ignitionFlag(mapping ignitionMap, key string) bool {
-	return ignitionNumber(mapping, key) != 0
+func closeIgnitionBar(
+	state *nomagique.Frame,
+	capacity int,
+	last float64,
+	spread float64,
+	sec float64,
+	nsec float64,
+	barVolume float64,
+) error {
+	previousClose := number(*state, SymbolIgnitionPrevClose)
+
+	if previousClose <= 0 {
+		return fmt.Errorf("ignition: previous close must be positive")
+	}
+
+	priceMove := math.Log(last / previousClose)
+	duration := elapsed(
+		sec,
+		nsec,
+		number(*state, SymbolIgnitionBarOpenSec),
+		number(*state, SymbolIgnitionBarOpenNsec),
+	)
+
+	if duration <= 0 {
+		return fmt.Errorf("ignition: volume bar requires positive elapsed event time")
+	}
+
+	barRate := barVolume / duration
+
+	if !finite(priceMove, barRate) {
+		return fmt.Errorf("ignition: calculated bar values must be finite")
+	}
+
+	if err := scoreIgnition(state, barRate, priceMove, spread); err != nil {
+		return err
+	}
+
+	if err := appendIgnitionHistory(state, historyRates, capacity, barRate, true); err != nil {
+		return err
+	}
+
+	if err := appendIgnitionHistory(state, historyReturns, capacity, math.Abs(priceMove), false); err != nil {
+		return err
+	}
+
+	if err := appendIgnitionHistory(state, historyPrecursors, capacity, math.Abs(priceMove), true); err != nil {
+		return err
+	}
+
+	state.Put(SymbolIgnitionBars, number(*state, SymbolIgnitionBars)+1)
+	state.Put(SymbolIgnitionPrevClose, last)
+	state.Put(SymbolIgnitionBarOpenSec, sec)
+	state.Put(SymbolIgnitionBarOpenNsec, nsec)
+	state.Put(SymbolIgnitionBarVolume, 0)
+
+	return nil
 }
 
-func ignitionBool(value bool) float64 {
+func composeIgnition(state *nomagique.Frame, spread float64) {
+	state.Put(SymbolSpread, spread)
+	ready := number(*state, SymbolIgnitionClassified)
+	state.Put(SymbolReady, boolNumber(ready != 0))
+	bars := number(*state, SymbolIgnitionBars)
+	maturity := 0.0
+
+	if bars >= 0 {
+		maturity = bars / (bars + 1)
+	}
+
+	state.Put(SymbolMaturity, maturity)
+}
+
+func after(sec float64, nsec float64, otherSec float64, otherNsec float64) bool {
+	return sec > otherSec || sec == otherSec && nsec > otherNsec
+}
+
+func boolNumber(value bool) float64 {
 	if value {
 		return 1
 	}
+
 	return 0
-}
-
-func ignitionFinite(values ...float64) bool {
-	for _, value := range values {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return false
-		}
-	}
-	return true
-}
-
-func ignitionBefore(sec float64, nsec float64, otherSec float64, otherNsec float64) bool {
-	return sec < otherSec || (sec == otherSec && nsec < otherNsec)
-}
-
-func ignitionAfter(sec float64, nsec float64, otherSec float64, otherNsec float64) bool {
-	return sec > otherSec || (sec == otherSec && nsec > otherNsec)
-}
-
-func positiveOnly(value float64) bool {
-	return value > 0 && ignitionFinite(value)
-}
-
-func nonNegative(value float64) bool {
-	return value >= 0 && ignitionFinite(value)
-}
-
-func ignitionError(message string) error {
-	return errnie.Error(errnie.Err(
-		errnie.Validation,
-		"ignition: "+message,
-		nil,
-	))
 }
