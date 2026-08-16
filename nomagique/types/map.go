@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"iter"
 	"maps"
 )
 
@@ -35,7 +36,63 @@ func (mapping Map[K, V]) Get(key K) (V, bool) {
 }
 
 func (mapping Map[K, V]) Put(key K, value V) {
+	if mapping.store == nil {
+		panic("types.Map.Put: zero map; use types.NewMap")
+	}
+
 	(*mapping.store)[key] = value
+}
+
+/*
+Delete removes one pair from the collection.
+*/
+func (mapping Map[K, V]) Delete(key K) {
+	if mapping.store == nil {
+		return
+	}
+
+	delete(*mapping.store, key)
+}
+
+/*
+Len returns the number of retained pairs.
+*/
+func (mapping Map[K, V]) Len() int {
+	if mapping.store == nil {
+		return 0
+	}
+
+	return len(*mapping.store)
+}
+
+/*
+All exposes the collection as an iterator without exposing its backing map.
+*/
+func (mapping Map[K, V]) All() iter.Seq2[K, V] {
+	return func(yield func(K, V) bool) {
+		if mapping.store == nil {
+			return
+		}
+
+		for key, value := range *mapping.store {
+			if !yield(key, value) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Clone returns an independently mutable collection with the same pairs.
+*/
+func (mapping Map[K, V]) Clone() Map[K, V] {
+	cloned := NewMap[K, V]()
+
+	for key, value := range mapping.All() {
+		cloned.Put(key, value)
+	}
+
+	return cloned
 }
 
 func (mapping Map[K, V]) Equals(other Map[K, V]) bool {

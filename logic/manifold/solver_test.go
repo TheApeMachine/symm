@@ -142,7 +142,7 @@ func TestUpdate(t *testing.T) {
 		}
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurement(types.SourceHawkes, measurement)
+		symbol.AppendMeasurements([]*types.Measurement{measurement})
 		symbol.Status = types.BUSY
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
@@ -497,7 +497,7 @@ func TestLoad(t *testing.T) {
 		Convey("It should admit a Hawkes reading stamped before the drain cutoff", func() {
 			buyExcitation := 0.25
 			sellExcitation := 0.5
-			symbol.AppendMeasurement(types.SourceHawkes, &types.Measurement{
+			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
 				Source: types.SourceHawkes,
 				Symbol: "BTC/USD",
 				At:     time.Now().UTC().Add(-time.Hour),
@@ -509,7 +509,7 @@ func TestLoad(t *testing.T) {
 						Normalized: &sellExcitation,
 					},
 				},
-			})
+			}})
 
 			cuts, err := solver.load(thesis, thesis.At)
 
@@ -522,7 +522,7 @@ func TestLoad(t *testing.T) {
 		Convey("It should exclude a Hawkes reading stamped after the drain cutoff", func() {
 			buyExcitation := 0.25
 			sellExcitation := 0.5
-			symbol.AppendMeasurement(types.SourceHawkes, &types.Measurement{
+			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
 				Source: types.SourceHawkes,
 				Symbol: "BTC/USD",
 				At:     time.Now().UTC().Add(time.Hour),
@@ -534,7 +534,7 @@ func TestLoad(t *testing.T) {
 						Normalized: &sellExcitation,
 					},
 				},
-			})
+			}})
 
 			cuts, err := solver.load(thesis, thesis.At)
 

@@ -15,7 +15,7 @@ func TestAddLeadLagEdges(t *testing.T) {
 		localMeasurement := leadLagFixture(
 			"local-leadlag", "ALT/USD", "BTC/USD", at, 1, 0.6, 0.2, 0.1, 1,
 		)
-		local.AppendMeasurement(types.SourceLeadLag, localMeasurement)
+		local.AppendMeasurements([]*types.Measurement{localMeasurement})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
@@ -56,9 +56,9 @@ func TestAddLeadLagEdges(t *testing.T) {
 	Convey("Given a peer comparison without one resolved return", t, func() {
 		at := time.Unix(20, 0).UTC()
 		local := types.NewSymbol("ALT/USD", nil)
-		local.AppendMeasurement(types.SourceLeadLag, leadLagFixture(
+		local.AppendMeasurements([]*types.Measurement{leadLagFixture(
 			"local-empty", "ALT/USD", "BTC/USD", at, 0, 0, 0, 0, 0,
-		))
+		)})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
@@ -87,7 +87,7 @@ func TestAddLeadLagEdges(t *testing.T) {
 		)
 		localMeasurement.PeerAt = at.Add(-3 * time.Second)
 		localMeasurement.PeerObservedFrom = localMeasurement.PeerAt.Add(-time.Second)
-		local.AppendMeasurement(types.SourceLeadLag, localMeasurement)
+		local.AppendMeasurements([]*types.Measurement{localMeasurement})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
@@ -115,18 +115,12 @@ func TestAddLeadLagEdges(t *testing.T) {
 	Convey("Given retained lead-lag relationships from different anchor epochs", t, func() {
 		at := time.Unix(40, 0).UTC()
 		local := types.NewSymbol("ALT/USD", nil)
-		local.AppendMeasurement(
-			types.SourceLeadLag,
-			leadLagFixture(
-				"old", "ALT/USD", "UNFI/USD", at.Add(-time.Second), 0, 0, 0, 0, 0,
-			),
-		)
-		local.AppendMeasurement(
-			types.SourceLeadLag,
-			leadLagFixture(
-				"current", "ALT/USD", "SOSO/USD", at, 0, 0, 0, 0, 0,
-			),
-		)
+		local.AppendMeasurements([]*types.Measurement{leadLagFixture(
+			"old", "ALT/USD", "UNFI/USD", at.Add(-time.Second), 0, 0, 0, 0, 0,
+		)})
+		local.AppendMeasurements([]*types.Measurement{leadLagFixture(
+			"current", "ALT/USD", "SOSO/USD", at, 0, 0, 0, 0, 0,
+		)})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(

@@ -62,7 +62,7 @@ func TestUpdate(t *testing.T) {
 		for index, schema := range types.CategorySchemas {
 			value := 1 / float64(index+2)
 			metricKey := types.MetricKey(schema.Metric, schema.Side)
-			symbol.AppendMeasurement(schema.Source, &types.Measurement{
+			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
 				ID:     fmt.Sprintf("%s:%s:%d", schema.Source, metricKey, index),
 				Source: schema.Source,
 				Symbol: "BTC/USD",
@@ -74,7 +74,7 @@ func TestUpdate(t *testing.T) {
 						Unit:       types.UnitDimensionless,
 					},
 				},
-			})
+			}})
 			categories[schema.Category] = struct{}{}
 		}
 		thesis.Symbols.Store("BTC/USD", symbol)
@@ -110,7 +110,7 @@ func TestUpdate(t *testing.T) {
 		bitcoin := types.NewSymbol("BTC/USD", nil)
 		drive := 0.8
 		separation := 0.75
-		bitcoin.AppendMeasurement(types.SourceCVD, &types.Measurement{
+		bitcoin.AppendMeasurements([]*types.Measurement{&types.Measurement{
 			ID:     "cvd-measurement",
 			Source: types.SourceCVD,
 			Symbol: "BTC/USD",
@@ -123,7 +123,7 @@ func TestUpdate(t *testing.T) {
 					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 				},
 			},
-		})
+		}})
 		bitcoin.Categories.Store("BTC/USD", []types.Category{{
 			Symbol:     "BTC/USD",
 			Type:       types.CategoryAggressiveDrive,
@@ -163,7 +163,7 @@ func TestUpdate(t *testing.T) {
 			symbol := types.NewSymbol(symbolName, nil)
 			drive := 0.6
 			quality := 0.7
-			symbol.AppendMeasurement(types.SourceCVD, &types.Measurement{
+			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
 				ID:     symbolName + "-measurement",
 				Source: types.SourceCVD,
 				Symbol: symbolName,
@@ -176,7 +176,7 @@ func TestUpdate(t *testing.T) {
 						Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
 					},
 				},
-			})
+			}})
 			symbol.Categories.Store(symbolName, []types.Category{{
 				Symbol: symbolName, Type: types.CategoryAggressiveDrive,
 				Strength: drive, Confidence: 0.8,
@@ -670,7 +670,7 @@ func BenchmarkUpdate(b *testing.B) {
 		symbolState := types.NewSymbol(symbol, nil)
 		separation := 0.8
 		surge := 0.5
-		symbolState.AppendMeasurement(types.SourceSentiment, &types.Measurement{
+		symbolState.AppendMeasurements([]*types.Measurement{&types.Measurement{
 			ID:     "sentiment-" + symbol,
 			Source: types.SourceSentiment,
 			Symbol: symbol,
@@ -683,7 +683,7 @@ func BenchmarkUpdate(b *testing.B) {
 					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 				},
 			},
-		})
+		}})
 		thesis.Symbols.Store(symbol, symbolState)
 
 		symbolState.Categories.Store(symbol, []types.Category{

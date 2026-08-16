@@ -15,7 +15,7 @@ func TestUpdate(t *testing.T) {
 		ignition := 0.9
 		drive := 0.8
 		bitcoin := types.NewSymbol("BTC/USD", nil)
-		bitcoin.AppendMeasurement(types.SourcePumpDump, &types.Measurement{
+		bitcoin.AppendMeasurements([]*types.Measurement{{
 			Source:   types.SourcePumpDump,
 			Symbol:   "BTC/USD",
 			Maturity: 0.75,
@@ -24,9 +24,9 @@ func TestUpdate(t *testing.T) {
 					Normalized: &ignition,
 				},
 			},
-		})
+		}})
 		ethereum := types.NewSymbol("ETH/USD", nil)
-		ethereum.AppendMeasurement(types.SourceCVD, &types.Measurement{
+		ethereum.AppendMeasurements([]*types.Measurement{{
 			Source:   types.SourceCVD,
 			Symbol:   "ETH/USD",
 			Maturity: 0.5,
@@ -35,7 +35,7 @@ func TestUpdate(t *testing.T) {
 					Normalized: &drive,
 				},
 			},
-		})
+		}})
 		thesis.Symbols.Store("BTC/USD", bitcoin)
 		thesis.Symbols.Store("ETH/USD", ethereum)
 		stampCategorySignals(thesis, "BTC/USD")
@@ -65,13 +65,13 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a symbol whose configured scores are not usable yet", t, func() {
 		thesis := categoryThesis(t)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurement(types.SourcePumpDump, &types.Measurement{
+		symbol.AppendMeasurements([]*types.Measurement{{
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricIgnition, types.SideNone): {Raw: 1},
 			},
-		})
+		}})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		stampCategorySignals(thesis, "BTC/USD")
 
@@ -93,7 +93,7 @@ func TestUpdate(t *testing.T) {
 		buy := 0.81
 		sell := 0.49
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurement(types.SourceExhaustion, &types.Measurement{
+		symbol.AppendMeasurements([]*types.Measurement{{
 			Source:   types.SourceExhaustion,
 			Symbol:   "BTC/USD",
 			Maturity: 0.6,
@@ -105,7 +105,7 @@ func TestUpdate(t *testing.T) {
 					Normalized: &sell,
 				},
 			},
-		})
+		}})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		stampCategorySignals(thesis, "BTC/USD")
 
@@ -127,7 +127,7 @@ func TestUpdate(t *testing.T) {
 		ignition := 0.9
 		drive := 0.4
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurement(types.SourcePumpDump, &types.Measurement{
+		symbol.AppendMeasurements([]*types.Measurement{{
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
@@ -135,8 +135,8 @@ func TestUpdate(t *testing.T) {
 					Normalized: &ignition,
 				},
 			},
-		})
-		symbol.AppendMeasurement(types.SourceCVD, &types.Measurement{
+		}})
+		symbol.AppendMeasurements([]*types.Measurement{{
 			Source: types.SourceCVD,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
@@ -144,7 +144,7 @@ func TestUpdate(t *testing.T) {
 					Normalized: &drive,
 				},
 			},
-		})
+		}})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		stampCategorySignals(thesis, "BTC/USD")
 
@@ -170,7 +170,7 @@ func TestUpdate(t *testing.T) {
 		thesis := categoryThesis(t)
 		spectralRadius := 0.73
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurement(types.SourceHawkes, &types.Measurement{
+		symbol.AppendMeasurements([]*types.Measurement{{
 			Source:   types.SourceHawkes,
 			Symbol:   "BTC/USD",
 			Maturity: 0.9,
@@ -179,7 +179,7 @@ func TestUpdate(t *testing.T) {
 					Normalized: &spectralRadius,
 				},
 			},
-		})
+		}})
 		thesis.Symbols.Store("BTC/USD", symbol)
 
 		err := NewSolver(nil, nil, nil).Update(thesis)
@@ -228,7 +228,7 @@ func TestUpdate(t *testing.T) {
 		oldInefficient := 1.0
 		currentSync := 0.8
 		symbol := types.NewSymbol("ALT/USD", nil)
-		symbol.AppendMeasurement(types.SourceLeadLag, &types.Measurement{
+		symbol.AppendMeasurements([]*types.Measurement{{
 			Source: types.SourceLeadLag,
 			Symbol: "ALT/USD",
 			Peer:   "UNFI/USD",
@@ -238,8 +238,8 @@ func TestUpdate(t *testing.T) {
 					Normalized: &oldInefficient,
 				},
 			},
-		})
-		symbol.AppendMeasurement(types.SourceLeadLag, &types.Measurement{
+		}})
+		symbol.AppendMeasurements([]*types.Measurement{{
 			Source: types.SourceLeadLag,
 			Symbol: "ALT/USD",
 			Peer:   "SOSO/USD",
@@ -249,7 +249,7 @@ func TestUpdate(t *testing.T) {
 					Normalized: &currentSync,
 				},
 			},
-		})
+		}})
 		thesis.Symbols.Store("ALT/USD", symbol)
 		stampCategorySignals(thesis, "ALT/USD")
 
@@ -302,7 +302,7 @@ func BenchmarkUpdate(b *testing.B) {
 	for b.Loop() {
 		thesis := types.NewThesis(b.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurement(types.SourcePumpDump, &types.Measurement{
+		symbol.AppendMeasurements([]*types.Measurement{{
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
@@ -310,7 +310,7 @@ func BenchmarkUpdate(b *testing.B) {
 					Normalized: &strength,
 				},
 			},
-		})
+		}})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		stampCategorySignals(thesis, "BTC/USD")
 

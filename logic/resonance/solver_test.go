@@ -33,7 +33,7 @@ func appendResonanceCut(
 			},
 		}
 
-		symbol.AppendMeasurement(source, measurement)
+		symbol.AppendMeasurements([]*types.Measurement{measurement})
 	}
 }
 
@@ -44,7 +44,7 @@ func appendResonanceSource(
 	mark float64,
 	value float64,
 ) {
-	symbol.AppendMeasurement(source, &types.Measurement{
+	symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
 		Source: source,
 		Symbol: symbol.Symbol,
 		Tick:   tick,
@@ -56,7 +56,7 @@ func appendResonanceSource(
 				Normalized: &value,
 			},
 		},
-	})
+	}})
 }
 
 func TestTaskSchema(t *testing.T) {
@@ -325,10 +325,10 @@ func TestUpdate(t *testing.T) {
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
 		for _, source := range types.SignalSources {
-			symbol.AppendMeasurement(source, &types.Measurement{
+			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
 				Source: source,
 				Symbol: symbol.Symbol,
-			})
+			}})
 		}
 
 		Convey("It should leave the solver dormant", func() {
