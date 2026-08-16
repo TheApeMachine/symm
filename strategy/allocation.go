@@ -78,6 +78,16 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
+		decision.OpenPositions = allocation.desk.OpenPositions()
+		decision.SlotCapacity = allocation.desk.MaxPositions() + allocation.desk.MaxReserved()
+		decision.AllocationClass = "unallocated"
+
+		if !decision.PredictiveReady {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: predictive readiness expired before allocation"
+			continue
+		}
+
 		if decision.Direction <= 0 || decision.ThesisScore <= 0 {
 			decision.Action = types.ActionNothing
 			decision.Reason = "planner: current structural thesis does not authorize a long entry"
@@ -298,6 +308,7 @@ func admitBest(
 
 		if occupied[decision.Symbol] {
 			decision.Action = types.ActionNothing
+			decision.AllocationClass = "none"
 			decision.Stoploss = nil
 			decision.Reason = "planner: symbol already occupies a slot"
 			continue
@@ -311,6 +322,7 @@ func admitBest(
 	for _, decision := range eligible {
 		if occupied[decision.Symbol] {
 			decision.Action = types.ActionNothing
+			decision.AllocationClass = "none"
 			decision.Stoploss = nil
 			decision.Reason = "planner: symbol already occupies a slot"
 			continue
@@ -318,17 +330,20 @@ func admitBest(
 
 		if normalSlots > 0 {
 			normalSlots--
+			decision.AllocationClass = "normal"
 			occupied[decision.Symbol] = true
 			continue
 		}
 
-		if decision.Opportunity && reserveSlots > 0 {
+		if decision.ReserveEligible && decision.Opportunity && reserveSlots > 0 {
 			reserveSlots--
+			decision.AllocationClass = "reserve"
 			occupied[decision.Symbol] = true
 			continue
 		}
 
 		decision.Action = types.ActionNothing
+		decision.AllocationClass = "none"
 		decision.Stoploss = nil
 		decision.Reason = "planner: no position slot available for allocation"
 	}

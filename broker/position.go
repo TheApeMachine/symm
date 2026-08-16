@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"sync/atomic"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -205,6 +207,59 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	}
 
 	position.Publish()
+}
+
+/*
+MarkFeedback snapshots the live position geometry after one ticker has updated
+the holding and its stop. Distances are dimensionless so the global regulator
+can compare instruments without confusing quote-currency price scales.
+*/
+func (position *Position) MarkFeedback(at time.Time) types.MarkFeedback {
+	feedback := types.MarkFeedback{}
+
+	if position == nil || position.Holding == nil {
+		return feedback
+	}
+
+	holding := position.Holding
+	feedback.PositionID = position.Decision.ID
+	feedback.Symbol = holding.Symbol
+	feedback.At = at.UTC()
+
+	if feedback.At.IsZero() {
+		feedback.At = time.Now().UTC()
+	}
+
+	feedback.ReturnPct = holding.ReturnPct
+	feedback.Exposed = holding.Qty != nil && holding.Qty.Sign() > 0
+
+	if holding.Mark != nil {
+		feedback.Mark = holding.Mark.Float64()
+	}
+
+	if holding.PnL != nil {
+		feedback.PnL = holding.PnL.Float64()
+	}
+
+	stoploss := holding.Stoploss
+
+	if stoploss == nil {
+		return feedback
+	}
+
+	feedback.StopStatus = stoploss.Status
+	feedback.TriggerReason = stoploss.TriggerReason
+	feedback.SurgeArmed = stoploss.SurgeArmed
+
+	if feedback.Mark > 0 && stoploss.Floor != nil {
+		feedback.FloorDistance = (feedback.Mark - stoploss.Floor.Float64()) / feedback.Mark
+	}
+
+	if feedback.Mark > 0 && stoploss.Peak != nil && stoploss.Peak.Sign() > 0 {
+		feedback.PeakDrawdown = math.Min(0, math.Log(feedback.Mark/stoploss.Peak.Float64()))
+	}
+
+	return feedback
 }
 
 func (position *Position) onExecution(message kraken.Execution) bool {

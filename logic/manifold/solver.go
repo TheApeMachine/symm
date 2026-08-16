@@ -199,35 +199,7 @@ population and wakes settlement. Calls received while that worker is stepping
 leave their measurements queued.
 */
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if solver == nil || thesis == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: solver and thesis required",
-			nil,
-		))
-	}
-
-	if solver.physics == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"manifold: physics domain is not initialized",
-			nil,
-		))
-	}
-
-	if solver.api == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: authoritative order book source required",
-			nil,
-		))
-	}
-
-	solver.requestMu.Lock()
-
 	if solver.closing.Load() {
-		solver.requestMu.Unlock()
-
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"manifold: solver is closing",
@@ -241,8 +213,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		thesis:     thesis,
 		at:         thesis.At,
 	}
+
 	wake := solver.settling.CompareAndSwap(false, true)
-	solver.requestMu.Unlock()
 
 	if wake {
 		select {
@@ -341,6 +313,11 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 	}
 	drives := make(map[string]drive)
 
+	// The measurement stage appends into the same per-symbol queue we drain here,
+	// so any reading stamped after this instant belongs to the next cut. Draining
+	// it into the current relaxation would feed this cut with future excitation.
+	cutoff := time.Now().UTC()
+
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbolName, nameOK := key.(string)
 		symbol, ok := value.(*types.Symbol)
@@ -354,7 +331,9 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 		}
 
 		for measurement := range symbol.MarketMeasurements("manifold") {
-			if measurement == nil || measurement.Source != types.SourceHawkes {
+			if measurement == nil ||
+				measurement.Source != types.SourceHawkes ||
+				measurement.At.After(cutoff) {
 				continue
 			}
 

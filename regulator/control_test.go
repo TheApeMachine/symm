@@ -18,7 +18,6 @@ func TestNewControlSpace(t *testing.T) {
 			So(current[controlAllocation], ShouldEqual, 1.0)
 			So(current[controlConfidence], ShouldEqual, 0.0)
 			So(current[controlGraphThreshold], ShouldEqual, 0.0)
-			So(current[controlUtilityThreshold], ShouldEqual, 0.5)
 			So(current[controlCausalAlpha], ShouldEqual, 1.0)
 			So(current[controlIterations], ShouldEqual, 1.0)
 			So(current[controlExploration], ShouldEqual, 1.0)
@@ -84,6 +83,7 @@ func TestControlSpaceCandidates(t *testing.T) {
 func TestControlSpaceApply(t *testing.T) {
 	Convey("Given the normalized lower endpoint of every configurable actuator", t, func() {
 		config := system.NewConfig()
+		legacyUtility := config.Planner.MinimumUtility
 		space, err := newControlSpace(config)
 		So(err, ShouldBeNil)
 
@@ -95,7 +95,7 @@ func TestControlSpaceApply(t *testing.T) {
 			So(config.Planner.MinimumConfidence,
 				ShouldEqual, system.UninformativeDirectionConfidence)
 			So(config.Planner.MinimumGraphScore, ShouldEqual, -1.0)
-			So(config.Planner.MinimumUtility, ShouldEqual, -1.0)
+			So(config.Planner.MinimumUtility, ShouldEqual, legacyUtility)
 			So(config.Planner.CausalAlpha, ShouldEqual, 0.0)
 			So(config.Planner.MCTSIterations, ShouldEqual, 1)
 			So(config.Planner.ExplorationConstant, ShouldEqual, 0.0)

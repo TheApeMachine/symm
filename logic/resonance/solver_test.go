@@ -27,7 +27,9 @@ func appendResonanceCut(
 			Tick:     tick,
 			Metadata: map[string]float64{"last_price": mark},
 			Metrics: map[string]types.MetricSample{
-				"score": {Normalized: &value},
+				types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
+					Normalized: &value,
+				},
 			},
 		}
 
@@ -50,8 +52,30 @@ func appendResonanceSource(
 			"last_price": mark,
 		},
 		Metrics: map[string]types.MetricSample{
-			"score": {Normalized: &value},
+			types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
+				Normalized: &value,
+			},
 		},
+	})
+}
+
+func TestTaskSchema(t *testing.T) {
+	Convey("Given the predictive direction task", t, func() {
+		schema := taskSchema("BTC/USD")
+		hypothesis := string(types.SourceCVD) + ":BTC/USD:" +
+			types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)
+		rawPrice := string(types.SourceCVD) + ":BTC/USD:" +
+			types.MetricKey(types.MetricTradePrice, types.SideNone)
+
+		Convey("It should fix semantic evidence and universe context without raw price coordinates", func() {
+			_, hasHypothesis := schema.known[hypothesis]
+			_, hasRawPrice := schema.known[rawPrice]
+			_, hasManifold := schema.known[manifoldContextIdentity("BTC/USD", "coherence")]
+			So(hasHypothesis, ShouldBeTrue)
+			So(hasRawPrice, ShouldBeFalse)
+			So(hasManifold, ShouldBeTrue)
+			So(len(schema.known), ShouldEqual, len(schema.identities))
+		})
 	})
 }
 
@@ -333,13 +357,17 @@ func TestUpdate(t *testing.T) {
 			So(solver.Update(thesis), ShouldBeNil)
 		}
 
-		Convey("It should widen the schema once no forecast is in flight", func() {
+		Convey("It should keep one stable semantic schema as late sources arrive", func() {
 			activeCoder, found := symbol.Resonance.Load(symbol.Symbol)
 			So(found, ShouldBeTrue)
 			So(activeCoder, ShouldNotBeNil)
-			widened := false
+			historyValue, historyFound := solver.histories.Load(symbol.Symbol)
+			So(historyFound, ShouldBeTrue)
+			history := historyValue.(*sampleHistory)
+			ledger := history.ledger
+			resolvedBefore := history.ledger.resolved
 
-			for tick := int64(5); tick <= 24 && !widened; tick++ {
+			for tick := int64(5); tick <= 12; tick++ {
 				thesis.Tick = tick
 				appendResonanceSource(
 					symbol, types.SourceHawkes, tick, 100+float64(tick), float64(tick),
@@ -348,17 +376,20 @@ func TestUpdate(t *testing.T) {
 					symbol, types.SourceCVD, tick, 100+float64(tick), float64(tick),
 				)
 				So(solver.Update(thesis), ShouldBeNil)
-				schema, schemaFound := solver.schemas.Load(symbol.Symbol)
-				widened = schemaFound && len(schema.([]string)) == 2
 			}
 
-			schema, found := solver.schemas.Load(symbol.Symbol)
-			So(found, ShouldBeTrue)
-			So(widened, ShouldBeTrue)
-			So(schema, ShouldHaveLength, 2)
-			widenedCoder, found := symbol.Resonance.Load(symbol.Symbol)
-			So(found, ShouldBeTrue)
-			So(widenedCoder, ShouldNotEqual, activeCoder)
+			schemaValue, schemaFound := solver.schemas.Load(symbol.Symbol)
+			So(schemaFound, ShouldBeTrue)
+			So(
+				schemaValue.(*featureSchema).identities,
+				ShouldResemble,
+				taskSchema(symbol.Symbol).identities,
+			)
+			retainedCoder, coderFound := symbol.Resonance.Load(symbol.Symbol)
+			So(coderFound, ShouldBeTrue)
+			So(retainedCoder, ShouldEqual, activeCoder)
+			So(history.ledger, ShouldEqual, ledger)
+			So(history.ledger.resolved, ShouldBeGreaterThanOrEqualTo, resolvedBefore)
 		})
 	})
 

@@ -10,13 +10,27 @@ import (
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
-const regulatorContextCount = 5
+const regulatorContextCount = 13
 
 const (
 	targetReturn = iota
 	targetActivity
 	targetCount
 )
+
+/*
+markContext summarizes all executable position marks observed since the prior
+account valuation. Dense marks condition the next control decision, but the
+complete broker equity revision remains the supervised wallet outcome.
+*/
+type markContext struct {
+	samples       int
+	returnSamples int
+	meanReturn    float64
+	worstDrawdown float64
+	minimumFloor  float64
+	surgeFraction float64
+}
 
 type optimizationResult struct {
 	controls      controlVector
@@ -68,16 +82,19 @@ optimizer learns the temporal response from one applied control vector to the
 next account log return and selects the next bounded intervention.
 */
 type optimizer struct {
-	coder         *learning.ResonanceManifold
-	space         *controlSpace
-	returnScale   *adaptive.Standardizer
-	drawdownScale *adaptive.Standardizer
-	confidence    float64
-	baseline      controlVector
-	current       controlVector
-	pending       []float64
-	resolved      int
-	interventions int
+	coder             *learning.ResonanceManifold
+	space             *controlSpace
+	returnScale       *adaptive.Standardizer
+	drawdownScale     *adaptive.Standardizer
+	markReturnScale   *adaptive.Standardizer
+	markDrawdownScale *adaptive.Standardizer
+	markFloorScale    *adaptive.Standardizer
+	confidence        float64
+	baseline          controlVector
+	current           controlVector
+	pending           []float64
+	resolved          int
+	interventions     int
 }
 
 func newOptimizer(config *system.Config) (*optimizer, error) {
@@ -111,13 +128,16 @@ func newOptimizer(config *system.Config) (*optimizer, error) {
 	initial := space.current(config)
 
 	return &optimizer{
-		coder:         coder,
-		space:         space,
-		returnScale:   adaptive.NewStandardizer(),
-		drawdownScale: adaptive.NewStandardizer(),
-		confidence:    config.Regulator.OptimizationConfidence,
-		baseline:      initial,
-		current:       initial,
+		coder:             coder,
+		space:             space,
+		returnScale:       adaptive.NewStandardizer(),
+		drawdownScale:     adaptive.NewStandardizer(),
+		markReturnScale:   adaptive.NewStandardizer(),
+		markDrawdownScale: adaptive.NewStandardizer(),
+		markFloorScale:    adaptive.NewStandardizer(),
+		confidence:        config.Regulator.OptimizationConfidence,
+		baseline:          initial,
+		current:           initial,
 	}, nil
 }
 
@@ -125,12 +145,13 @@ func (optimizer *optimizer) update(
 	periodReturn float64,
 	drawdown float64,
 	active bool,
+	marks markContext,
 ) (optimizationResult, error) {
 	if err := optimizer.resolve(periodReturn, active); err != nil {
 		return optimizationResult{}, err
 	}
 
-	context, err := optimizer.context(periodReturn, drawdown, active)
+	context, err := optimizer.context(periodReturn, drawdown, active, marks)
 
 	if err != nil {
 		return optimizationResult{}, err
@@ -215,10 +236,6 @@ func (optimizer *optimizer) selectControls(
 		selected[controlAllocation] = 1
 		selected[controlConfidence] = 0
 		selected[controlGraphThreshold] = 0
-		selected[controlUtilityThreshold] = optimizer.space.normalize(
-			controlUtilityThreshold,
-			0,
-		)
 
 		return selected, selected != optimizer.current, skill, skillReady, nil
 	}
@@ -323,6 +340,7 @@ func (optimizer *optimizer) context(
 	periodReturn float64,
 	drawdown float64,
 	active bool,
+	marks markContext,
 ) ([]float64, error) {
 	returnOutput, err := optimizer.returnScale.Measure(periodReturn)
 
@@ -336,12 +354,63 @@ func (optimizer *optimizer) context(
 		return nil, fmt.Errorf("regulator: standardize account drawdown: %w", err)
 	}
 
+	markReturnValue := 0.0
+	markReturnReady := false
+
+	if marks.returnSamples > 0 {
+		markReturnOutput, markErr := optimizer.markReturnScale.Measure(marks.meanReturn)
+
+		if markErr != nil {
+			return nil, fmt.Errorf("regulator: standardize mark return: %w", markErr)
+		}
+
+		markReturnValue = markReturnOutput.Value
+		markReturnReady = markReturnOutput.Ready
+	}
+
+	markDrawdownValue := 0.0
+	markDrawdownReady := false
+	markFloorValue := 0.0
+	markFloorReady := false
+
+	if marks.samples > 0 {
+		markDrawdownOutput, markErr := optimizer.markDrawdownScale.Measure(
+			marks.worstDrawdown,
+		)
+
+		if markErr != nil {
+			return nil, fmt.Errorf("regulator: standardize mark drawdown: %w", markErr)
+		}
+
+		markDrawdownValue = markDrawdownOutput.Value
+		markDrawdownReady = markDrawdownOutput.Ready
+
+		markFloorOutput, floorErr := optimizer.markFloorScale.Measure(
+			marks.minimumFloor,
+		)
+
+		if floorErr != nil {
+			return nil, fmt.Errorf("regulator: standardize stop-floor distance: %w", floorErr)
+		}
+
+		markFloorValue = markFloorOutput.Value
+		markFloorReady = markFloorOutput.Ready
+	}
+
 	return []float64{
 		returnOutput.Value,
 		readiness(returnOutput.Ready),
 		drawdownOutput.Value,
 		readiness(drawdownOutput.Ready),
 		readiness(active),
+		readiness(marks.samples > 0),
+		markReturnValue,
+		readiness(markReturnReady),
+		markDrawdownValue,
+		readiness(markDrawdownReady),
+		markFloorValue,
+		readiness(markFloorReady),
+		marks.surgeFraction,
 	}, nil
 }
 

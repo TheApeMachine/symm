@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/mcts"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/system"
@@ -35,7 +36,7 @@ func TestPlannerHasCapacity(t *testing.T) {
 }
 
 func TestPlannerUpdate(t *testing.T) {
-	Convey("Given a graph whose conditioned evidence supports a long opportunity", t, func() {
+	Convey("Given a supportive graph before predictive coding has calibrated", t, func() {
 		system.Cfg = system.NewConfig()
 		thesis := plannerGraphThesis(t, logicgraph.RelationSupports)
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
@@ -43,21 +44,50 @@ func TestPlannerUpdate(t *testing.T) {
 		err := planner.Update(thesis)
 		decision := decisionOf(thesis, "BTC/USD")
 
-		Convey("It should admit the structural thesis without requiring a price forecast", func() {
+		Convey("It should search and publish the thesis without committing capital", func() {
 			So(err, ShouldBeNil)
 			So(decision, ShouldNotBeNil)
-			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.Action, ShouldEqual, types.ActionNothing)
 			So(decision.Forecast, ShouldBeNil)
 			So(decision.Direction, ShouldEqual, float64(1))
 			So(decision.ThesisScore, ShouldBeGreaterThan, 0)
 			So(decision.ThesisSupport, ShouldBeGreaterThan, 0)
 			So(decision.ThesisContradiction, ShouldEqual, 0)
 			So(decision.GraphScore, ShouldBeGreaterThan, 0)
-			So(decision.Opportunity, ShouldBeTrue)
+			So(decision.PredictiveReady, ShouldBeFalse)
+			So(decision.PredictiveStatus, ShouldContainSubstring, "calibrating")
+			So(decision.ReserveEligible, ShouldBeFalse)
+			So(decision.Opportunity, ShouldBeFalse)
 			So(decision.OpportunityType, ShouldEqual, string(types.VerticalIgnition))
+			So(decision.Reason, ShouldContainSubstring, "predictive coder")
 			So(decision.Trace, ShouldNotBeNil)
 			So(decision.Trace.Hypothesis, ShouldContainSubstring, "long_opportunity")
 			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 1)
+		})
+	})
+
+	Convey("Given the same supportive graph with calibrated predictive evidence", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := plannerReadyGraphThesis(t, logicgraph.RelationSupports)
+		planner := &Planner{mctsEngine: plannerMCTSEngine()}
+
+		err := planner.Update(thesis)
+		decision := decisionOf(thesis, "BTC/USD")
+
+		Convey("It should admit the transition and qualify only the sudden-pump reserve lane", func() {
+			So(err, ShouldBeNil)
+			So(decision, ShouldNotBeNil)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.PredictiveReady, ShouldBeTrue)
+			So(decision.PredictiveStatus, ShouldContainSubstring, "supported transition horizon")
+			So(decision.TaskSkillReady, ShouldBeTrue)
+			So(decision.TaskSkill, ShouldBeGreaterThanOrEqualTo, float64(1))
+			So(decision.Forecast, ShouldNotBeNil)
+			So(decision.ForecastHorizon, ShouldEqual, 1)
+			So(decision.OpportunityType, ShouldEqual, string(types.VerticalIgnition))
+			So(decision.ReserveEligible, ShouldBeTrue)
+			So(decision.Opportunity, ShouldBeTrue)
+			So(decision.ReserveReason, ShouldContainSubstring, "sudden-pump")
 		})
 	})
 
@@ -88,6 +118,7 @@ func TestPlannerUpdate(t *testing.T) {
 		candidate.Direction = 1
 		candidate.ThesisScore = 0.6
 		candidate.ThesisConfidence = 0.8
+		candidate.PredictiveReady = true
 		planner := &Planner{
 			mctsEngine: plannerMCTSEngine(),
 			candidates: map[string]*types.Decision{
@@ -149,6 +180,30 @@ func plannerGraphThesis(
 	symbol := types.NewSymbol("BTC/USD", nil)
 	symbol.Graphs.Store("market_graph", plannerGraph(symbol.Symbol, relation))
 	thesis.Symbols.Store(symbol.Symbol, symbol)
+	return thesis
+}
+
+func plannerReadyGraphThesis(
+	t testing.TB,
+	relation logicgraph.RelationType,
+) *types.Thesis {
+	t.Helper()
+	thesis := plannerGraphThesis(t, relation)
+	stored, _ := thesis.Symbols.Load("BTC/USD")
+	symbol := stored.(*types.Symbol)
+	graphValue, _ := symbol.Graphs.Load("market_graph")
+	graph := graphValue.(*logicgraph.Graph)
+	graph.Forecast = &learning.RLSOutput{
+		Value:            0.01,
+		Scale:            0.005,
+		DegreesOfFreedom: 4,
+		Ready:            true,
+	}
+	graph.ForecastHorizon = 1
+	graph.ForwardCurve = []float64{0.01}
+	graph.TaskSkill = 1.05
+	graph.TaskSkillReady = true
+
 	return thesis
 }
 

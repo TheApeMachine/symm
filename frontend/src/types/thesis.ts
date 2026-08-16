@@ -1,3 +1,4 @@
+
 import type { Status } from "#/types/status";
 import type { RiskPlan, Stoploss } from "#/types/stoploss";
 
@@ -59,6 +60,12 @@ export interface Decision {
 	allocationClass: string;
 	opportunity: boolean;
 	opportunityType?: string;
+	reserveEligible: boolean;
+	reserveReason?: string;
+	predictiveReady: boolean;
+	predictiveStatus: string;
+	taskSkill: number;
+	taskSkillReady: boolean;
 	proposedNotional: string;
 	proposedQuantity: string;
 	referencePrice: string;

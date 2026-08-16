@@ -255,19 +255,24 @@ func level3ObservedAt(level3 kraken.Level3Data) time.Time {
 	return observedAt
 }
 
-func (symbol *Symbol) AppendMeasurement(_ SourceType, measurement *Measurement) bool {
-	symbol.Latest.Store(measurement.Key(), measurement)
+func (symbol *Symbol) AppendMeasurements(measurements []*Measurement) {
+	if len(measurements) == 0 {
+		return
+	}
+
 	categoryMeasurements, _ := symbol.Measurements.LoadOrStore("category", lf.NewQueue[*Measurement]())
 	graphMeasurements, _ := symbol.Measurements.LoadOrStore("graph", lf.NewQueue[*Measurement]())
 	manifoldMeasurements, _ := symbol.Measurements.LoadOrStore("manifold", lf.NewQueue[*Measurement]())
 
-	categoryMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
-	graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
-	manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+	for _, measurement := range measurements {
+		categoryMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+		graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+		manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 
-	return symbol.AppendResonanceMeasurement(
-		MeasurementToResonance(symbol.Symbol, measurement),
-	)
+		symbol.AppendResonanceMeasurement(
+			MeasurementToResonance(symbol.Symbol, measurement),
+		)
+	}
 }
 
 /*

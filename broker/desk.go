@@ -55,6 +55,15 @@ type EquityObserver interface {
 }
 
 /*
+MarkObserver consumes executable position marks as predictive context. It is a
+separate optional interface so broker valuation remains the only account-level
+outcome while intra-position evidence can arrive at ticker cadence.
+*/
+type MarkObserver interface {
+	ObserveMark(types.MarkFeedback) error
+}
+
+/*
 NewDesk constructs the serial broker owner.
 */
 func NewDesk(
@@ -173,6 +182,10 @@ func (desk *Desk) run() {
 
 						if ok && position != nil {
 							position.onTicker(tickerData)
+
+							if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
+								errnie.Error(observer.ObserveMark(position.MarkFeedback(tickerData.Timestamp)))
+							}
 						}
 					}
 				}
@@ -407,6 +420,14 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
+		if !decision.PredictiveReady {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: predictive coder has not authorized this entry",
+				nil,
+			))
+		}
+
 		found, loaded := desk.positions.Load(decision.Symbol)
 
 		if loaded {
@@ -417,13 +438,13 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			}
 		}
 
-		if desk.OpenSlots(decision.Opportunity) <= 0 {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"desk: position capacity exhausted for requested allocation",
-				nil,
-			))
+		allocationClass, allocationErr := desk.entryAllocationClass(decision)
+
+		if allocationErr != nil {
+			return allocationErr
 		}
+
+		decision.AllocationClass = allocationClass
 
 		pair := desk.instrument.Pair(decision.Symbol)
 
@@ -599,18 +620,119 @@ func (desk *Desk) MaxPositions() int {
 }
 
 /*
-OpenSlots reports normal capacity unless the decision has independently
-qualified for the reserve lane. It never reports historical over-capacity as
-new capacity.
+MaxReserved is the number of emergency slots that may only be used by a
+strategy decision independently qualified for the reserve lane.
 */
-func (desk *Desk) OpenSlots(opportunity bool) int {
-	occupied := desk.occupiedPositions()
-
-	if opportunity {
-		return max(0, (desk.maxPositions+desk.maxReserved)-occupied)
+func (desk *Desk) MaxReserved() int {
+	if desk == nil {
+		return 0
 	}
 
-	return max(0, desk.maxPositions-occupied)
+	return desk.maxReserved
+}
+
+/*
+OpenSlots reports independently occupied normal and reserve lanes while also
+respecting the absolute four-position ceiling. A reserve position therefore
+does not silently consume one of the two normal trading slots, and historical
+over-capacity never reappears as fresh capacity.
+*/
+func (desk *Desk) OpenSlots(opportunity bool) int {
+	if desk == nil {
+		return 0
+	}
+
+	normalOpen, reserveOpen := desk.slotAvailability()
+
+	if opportunity {
+		return normalOpen + reserveOpen
+	}
+
+	return normalOpen
+}
+
+func (desk *Desk) entryAllocationClass(decision types.Decision) (string, error) {
+	normalOpen, reserveOpen := desk.slotAvailability()
+	reserveQualified := decision.Opportunity && decision.ReserveEligible
+
+	switch decision.AllocationClass {
+	case "none":
+		return "", errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"desk: decision was not allocated a position slot",
+			nil,
+		))
+	case "reserve":
+		if reserveQualified && reserveOpen > 0 {
+			return "reserve", nil
+		}
+
+		if normalOpen > 0 {
+			return "normal", nil
+		}
+	case "normal", "", "unallocated":
+		if normalOpen > 0 {
+			return "normal", nil
+		}
+
+		if reserveQualified && reserveOpen > 0 {
+			return "reserve", nil
+		}
+	default:
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"desk: unknown allocation class",
+			nil,
+		))
+	}
+
+	return "", errnie.Error(errnie.Err(
+		errnie.NotAcceptable,
+		"desk: position capacity exhausted for requested allocation",
+		nil,
+	))
+}
+
+func (desk *Desk) slotAvailability() (int, int) {
+	if desk == nil {
+		return 0, 0
+	}
+
+	normal, reserve := desk.slotOccupancy()
+	totalOpen := max(0, desk.maxPositions+desk.maxReserved-normal-reserve)
+	normalOpen := min(max(0, desk.maxPositions-normal), totalOpen)
+	reserveOpen := min(
+		max(0, desk.maxReserved-reserve),
+		max(0, totalOpen-normalOpen),
+	)
+
+	return normalOpen, reserveOpen
+}
+
+func (desk *Desk) slotOccupancy() (int, int) {
+	if desk == nil || desk.positions == nil {
+		return 0, 0
+	}
+
+	normal := 0
+	reserve := 0
+	desk.positions.Range(func(_, value any) bool {
+		position, valid := value.(*Position)
+
+		if !valid || position == nil {
+			return true
+		}
+
+		if position.Decision.AllocationClass == "reserve" {
+			reserve++
+		} else {
+			normal++
+		}
+
+		return true
+	})
+
+	return normal, reserve
 }
 
 /*
@@ -619,18 +741,8 @@ status. Entries are stored before submission and removed after failure or close,
 so map membership is the race-free risk-slot boundary.
 */
 func (desk *Desk) occupiedPositions() int {
-	occupied := 0
-	desk.positions.Range(func(_, value any) bool {
-		position, valid := value.(*Position)
-
-		if valid && position != nil {
-			occupied++
-		}
-
-		return true
-	})
-
-	return occupied
+	normal, reserve := desk.slotOccupancy()
+	return normal + reserve
 }
 
 /*

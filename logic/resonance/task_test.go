@@ -82,7 +82,7 @@ func TestIssue(t *testing.T) {
 			So(history.pending[5], ShouldHaveLength, 1)
 			So(history.pending[5][0].horizon, ShouldEqual, 2)
 			So(history.pending[5][0].forecast, ShouldEqual, 1)
-			So(history.pending[5][0].train, ShouldBeFalse)
+			So(history.pending[5][0].train, ShouldBeTrue)
 		})
 	})
 }

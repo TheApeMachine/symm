@@ -4,8 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"sort"
+	"math"
 	"sync"
 
 	"github.com/theapemachine/datura"
@@ -137,7 +136,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		group.Go(func() error {
-			readings := make(map[string]float64)
+			readings := manifoldContextReadings(thesis, name)
 			mark := 0.0
 			tick := thesis.Tick
 
@@ -163,11 +162,22 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				return errors.New("resonance: positive analysis tick required")
 			}
 
+			schemaValue, loaded := solver.schemas.Load(name)
+
+			if !loaded {
+				schemaValue, _ = solver.schemas.LoadOrStore(name, taskSchema(name))
+			}
+
+			schema := schemaValue.(*featureSchema)
+
 			stateValue, _ := solver.states.LoadOrStore(name, make(map[string]float64))
 			state := stateValue.(map[string]float64)
 			updated := false
 
 			for identity, reading := range readings {
+				if _, allowed := schema.known[identity]; !allowed {
+					continue
+				}
 				rawStandardizer, found := solver.standardizers.Load(identity)
 
 				if !found {
@@ -195,12 +205,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 			if !updated && (mark <= 0 || len(state) == 0) {
 				return nil
-			}
-
-			var schema []string
-
-			if rawSchema, loaded := solver.schemas.Load(name); loaded {
-				schema = rawSchema.([]string)
 			}
 
 			historyValue, _ := solver.histories.LoadOrStore(name, &sampleHistory{
@@ -245,35 +249,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				history.pruneTicks()
 			}
 
-			schemaChanged := false
+			input := make([]float64, len(schema.identities))
 
-			for identity := range state {
-				if slices.Contains(schema, identity) {
-					continue
-				}
-
-				if coder != nil && history.inFlight() {
-					continue
-				}
-
-				schema = append(schema, identity)
-				schemaChanged = true
-			}
-
-			if schemaChanged {
-				sort.Strings(schema)
-				solver.schemas.Store(name, schema)
-				solver.coders.Delete(name)
-				coder = nil
-				history.issued = make(map[int64]issuedTask)
-				history.pending = make(map[int64][]issuedHorizon)
-				history.ledger = newHorizonLedger()
-				symbol.Resonance.Delete(types.ResonanceReturnForecastKey)
-			}
-
-			input := make([]float64, len(schema))
-
-			for index, identity := range schema {
+			for index, identity := range schema.identities {
 				input[index] = state[identity]
 			}
 
@@ -339,6 +317,15 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			supportedHorizon := history.ledger.supported(
 				config.Planner.MinimumConfidence,
 			)
+			if taskSkillReady && taskSkill >= 2.0 {
+				expansion := int(math.Floor(taskSkill)) - 1
+
+				if expansion > 3 {
+					expansion = 3
+				}
+
+				supportedHorizon += expansion
+			}
 			probeHorizon := supportedHorizon + 1
 			forecast, err := coder.RolloutTaskForecast(probeHorizon)
 

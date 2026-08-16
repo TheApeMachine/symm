@@ -33,6 +33,20 @@ func TestDeskExecute(t *testing.T) {
 		})
 	})
 
+	Convey("Given a structurally supportive entry before predictive coding is ready", t, func() {
+		desk := deskFixture(t)
+		decision := deskDecisionFixture(t, desk, "COLD/USD", false)
+		decision.PredictiveReady = false
+		decision.PredictiveStatus = "task skill is still calibrating"
+
+		Convey("It should reject the order at the final atomic boundary", func() {
+			err := desk.Execute(decision)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "predictive coder")
+			So(desk.OpenPositions(), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given an order larger than the current complete best quotes", t, func() {
 		desk := deskFixture(t)
 		decision := deskDecisionFixture(t, desk, "DEPTH/USD", false)
@@ -63,6 +77,11 @@ func TestDeskExecute(t *testing.T) {
 			So(desk.Execute(normal), ShouldNotBeNil)
 			So(desk.OpenPositions(), ShouldEqual, desk.maxPositions)
 
+			broad := deskDecisionFixture(t, desk, "BROAD/USD", true)
+			broad.ReserveEligible = false
+			broad.OpportunityType = string(types.CoiledCompression)
+			So(desk.Execute(broad), ShouldNotBeNil)
+
 			firstReserve := deskDecisionFixture(t, desk, "RESERVE1/USD", true)
 			secondReserve := deskDecisionFixture(t, desk, "RESERVE2/USD", true)
 			overflow := deskDecisionFixture(t, desk, "RESERVE3/USD", true)
@@ -75,7 +94,8 @@ func TestDeskExecute(t *testing.T) {
 			So(found, ShouldBeTrue)
 			position := stored.(*Position)
 			So(position.Holding.IsOpportunity, ShouldBeTrue)
-			So(position.Decision.OpportunityMargin, ShouldBeGreaterThan, 0)
+			So(position.Decision.ReserveEligible, ShouldBeTrue)
+			So(position.Decision.AllocationClass, ShouldEqual, "reserve")
 		})
 	})
 
@@ -264,6 +284,20 @@ func TestDeskOpenSlots(t *testing.T) {
 	})
 }
 
+func TestDeskReserveLaneIsolation(t *testing.T) {
+	Convey("Given one committed reserve position and no normal positions", t, func() {
+		desk := deskFixture(t)
+		reserved := &Position{Decision: types.Decision{AllocationClass: "reserve"}}
+		reserved.setStatus(types.OPEN)
+		desk.positions.Store("FAST/USD", reserved)
+
+		Convey("It should preserve both ordinary trading slots", func() {
+			So(desk.OpenSlots(false), ShouldEqual, desk.maxPositions)
+			So(desk.OpenSlots(true), ShouldEqual, desk.maxPositions+desk.maxReserved-1)
+		})
+	})
+}
+
 func BenchmarkDeskOpenSlots(b *testing.B) {
 	desk := deskFixture(b)
 	normalOne := &Position{}
@@ -415,6 +449,17 @@ func deskDecisionFixture(
 
 	decision := types.NewDecision(types.ActionEnter, symbol)
 	decision.Opportunity = opportunity
+	decision.ReserveEligible = opportunity
+
+	if opportunity {
+		decision.OpportunityType = string(types.VerticalIgnition)
+	}
+
+	decision.PredictiveReady = true
+	decision.PredictiveStatus = "baseline-or-better task skill with a supported transition horizon"
+	decision.TaskSkill = 1.05
+	decision.TaskSkillReady = true
+	decision.ForecastHorizon = 1
 	decision.Direction = 1
 	decision.ThesisScore = 0.6
 	decision.ThesisConfidence = 0.8

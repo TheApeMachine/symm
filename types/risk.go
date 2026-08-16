@@ -93,11 +93,9 @@ type RiskPlan struct {
 	*/
 	TickSize *decimal.Decimal `json:"tick_size"`
 	/*
-		ConfirmMarks is how many consecutive executable marks must sit at or
-		below the protected floor before it fires. A single wick through the
-		floor is not an exit; a breach that holds is.
-
-		The hard floor ignores this entirely.
+		ConfirmMarks is how many distinct profitable, non-peak marks establish
+		stagnation before the regulator exits a winner. Floor breaches never use
+		this counter: the active floor is an immediate execution boundary.
 	*/
 	ConfirmMarks int `json:"confirm_marks"`
 	/*

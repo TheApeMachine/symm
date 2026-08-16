@@ -219,10 +219,6 @@ func (crypto *Crypto) bindDiagnostics() {
 		crypto.diagnosticInterval = 250 * time.Millisecond
 	}
 
-	if crypto.measurements != nil {
-		crypto.measurements.clocks = &crypto.clocks
-	}
-
 	if crypto.analyzer != nil {
 		crypto.analyzer.ObserveModule = crypto.clocks.observe
 		crypto.analyzer.ObserveHop = crypto.clocks.observeHop

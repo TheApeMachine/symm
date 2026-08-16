@@ -59,6 +59,12 @@ type Decision struct {
 	AllocationClass         string              `json:"allocationClass"`
 	Opportunity             bool                `json:"opportunity"`
 	OpportunityType         string              `json:"opportunityType,omitempty"`
+	ReserveEligible         bool                `json:"reserveEligible"`
+	ReserveReason           string              `json:"reserveReason,omitempty"`
+	PredictiveReady         bool                `json:"predictiveReady"`
+	PredictiveStatus        string              `json:"predictiveStatus"`
+	TaskSkill               float64             `json:"taskSkill" validate:"finite,nonnegative"`
+	TaskSkillReady          bool                `json:"taskSkillReady"`
 	ProposedNotional        *decimal.Decimal    `json:"proposedNotional" validate:"required"`
 	ProposedQuantity        *decimal.Decimal    `json:"proposedQuantity" validate:"required"`
 	ReferencePrice          *decimal.Decimal    `json:"referencePrice" validate:"required"`

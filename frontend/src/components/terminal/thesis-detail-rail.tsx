@@ -1,3 +1,4 @@
+
 import { Component } from "#/components/ui/component";
 import { cn } from "#/lib/utils";
 import { Flex } from "@/components/ui/flex";
@@ -71,7 +72,12 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => (
 						<Row label="support" bind="thesisSupport" format=".4f" tone="text-(--up)" />
 						<Row label="contradiction" bind="thesisContradiction" format=".4f" tone="text-(--down)" />
 						<Row label="conditions" bind="thesisConditions" format=".4f" />
+						<Row label="predictive" bind="predictiveStatus" />
+						<Row label="task skill" bind="taskSkill" format=".3f" />
+						<Row label="supported horizon" bind="forecastHorizon" />
 						<Row label="opportunity" bind="opportunityType" />
+						<Row label="reserve" bind="reserveReason" />
+						<Row label="allocation" bind="allocationClass" />
 						<Row label="graph path" bind="graphScore" format=".5f" />
 						<Row label="entry VWAP" bind="entryCost.entryPrice" format=".8f" />
 						<Row label="break-even" bind="entryCost.breakEven" format=".8f" />
@@ -140,7 +146,12 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => (
 						<Row label="support" bind="decision.thesisSupport" format=".4f" tone="text-(--up)" />
 						<Row label="contradiction" bind="decision.thesisContradiction" format=".4f" tone="text-(--down)" />
 						<Row label="conditions" bind="decision.thesisConditions" format=".4f" />
+						<Row label="predictive" bind="decision.predictiveStatus" />
+						<Row label="task skill" bind="decision.taskSkill" format=".3f" />
+						<Row label="supported horizon" bind="decision.forecastHorizon" />
 						<Row label="opportunity" bind="decision.opportunityType" />
+						<Row label="reserve" bind="decision.reserveReason" />
+						<Row label="allocation" bind="decision.allocationClass" />
 						<Row label="graph path" bind="decision.graphScore" format=".5f" />
 						<Row label="entry VWAP" bind="decision.entryCost.entryPrice" format=".8f" />
 						<Row label="break-even" bind="decision.entryCost.breakEven" format=".8f" />

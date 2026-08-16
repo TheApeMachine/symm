@@ -16,6 +16,13 @@ func TestBuildPayload(t *testing.T) {
 		So(err, ShouldBeNil)
 		solver.optimizer.resolved = 3
 		solver.history = []float64{0.2}
+		solver.markSamples = 12
+		solver.lastMarkContext = markContext{samples: 4}
+		solver.lastMarkSymbol = "BTC/USD"
+		solver.lastMarkReturn = math.Log(1.01)
+		solver.lastMarkDrawdown = math.Log(0.98)
+		solver.lastMarkFloor = 0.015
+		solver.lastMarkSurge = true
 		result := optimizationResult{
 			controls:      solver.optimizer.current,
 			forecast:      learning.RLSOutput{Value: 0.01, Scale: 0.02, Ready: true},
@@ -36,7 +43,11 @@ func TestBuildPayload(t *testing.T) {
 			So(payload.PredictedActive, ShouldAlmostEqual, 0.75)
 			So(payload.ActivityScale, ShouldAlmostEqual, 0.1)
 			So(payload.Samples, ShouldEqual, 3)
-			So(payload.Subsystems, ShouldHaveLength, 9)
+			So(payload.MarkSamples, ShouldEqual, uint64(12))
+			So(payload.IntervalMarks, ShouldEqual, 4)
+			So(payload.LastMarkFloor, ShouldAlmostEqual, 0.015)
+			So(payload.LastMarkSurge, ShouldBeTrue)
+			So(payload.Subsystems, ShouldHaveLength, 8)
 			So(payload.Subsystems[0].Name, ShouldEqual, "model")
 			So(payload.Subsystems[1].Name, ShouldEqual, "allocation")
 			So(payload.Sparkline, ShouldResemble, []float64{0.2})

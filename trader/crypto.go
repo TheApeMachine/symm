@@ -175,73 +175,30 @@ func (crypto *Crypto) run() {
 }
 
 func (crypto *Crypto) Update(receivers []types.SourceType) {
-	started := time.Now()
-
-	if crypto.measurements != nil {
-		if !crypto.measurements.dispatchedAt.IsZero() {
-			crypto.clocks.observeHop(
-				"crypto",
-				"measurements",
-				started.Sub(crypto.measurements.dispatchedAt),
-			)
-		}
-
-		crypto.measurements.dispatchedAt = started
-		ready, err := crypto.measurements.Generate(crypto.thesis, receivers)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"crypto: measurements failed",
-				err,
-			))
-			return
-		}
-
-		crypto.clocks.observe("measurements", time.Since(started))
-
-		if !ready {
-			return
-		}
+	if err := crypto.measurements.Generate(crypto.thesis, receivers); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"crypto: measurements failed",
+			err,
+		))
+		return
 	}
 
-	analyzedAt := time.Now()
-
-	if crypto.analyzer != nil {
-		crypto.clocks.observeHop(
-			"measurements",
-			"category",
-			analyzedAt.Sub(started),
-		)
-
-		if err := crypto.analyzer.Process(crypto.thesis); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"crypto: analyzer failed",
-				err,
-			))
-		}
+	if err := crypto.analyzer.Process(crypto.thesis); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"crypto: analyzer failed",
+			err,
+		))
 	}
 
-	plannedAt := time.Now()
-
-	if crypto.planner != nil {
-		crypto.clocks.observeHop(
-			"category",
-			"planner",
-			plannedAt.Sub(analyzedAt),
-		)
-
-		if err := crypto.planner.Update(crypto.thesis); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"crypto: planner failed",
-				err,
-			))
-		}
+	if err := crypto.planner.Update(crypto.thesis); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"crypto: planner failed",
+			err,
+		))
 	}
-
-	crypto.clocks.observe("crypto", time.Since(started))
 }
 
 func (crypto *Crypto) onTicker(data any) {

@@ -1,3 +1,4 @@
+
 import { Component } from "#/components/ui/component";
 
 /*
@@ -64,7 +65,7 @@ export const AllocationMain = () => (
 										/>
 									</div>
 									<span
-										data-paint="utility"
+										data-paint="thesisScore"
 										data-paint-format=".5f"
 										className="w-16 shrink-0 text-right text-(--f2)"
 									/>

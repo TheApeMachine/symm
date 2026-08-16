@@ -123,7 +123,7 @@ func (history *sampleHistory) issue(
 				forecast:  horizonCall,
 				mark:      mark,
 				issueTick: tick,
-				train:     horizon == 1,
+				train:     true,
 			},
 		)
 	}

@@ -1,3 +1,4 @@
+
 import { Typography } from "#/components/ui/typography";
 import { Flex } from "@/components/ui/flex";
 
@@ -89,6 +90,40 @@ export const PositionStopGeometry = () => (
 			whether the floor has already ratcheted past break-even, which is the
 			difference between a lot that can still lose and one that cannot.
 		*/}
+		<div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 border-(--line) border-t pt-1 text-[8px] text-(--f4)">
+			<span>
+				surge{" "}
+				<b
+					className="font-normal"
+					data-paint="holding.stoploss.surge_armed"
+					data-paint-class="true:text-(--warn) false:text-(--f4)"
+				/>
+			</span>
+			<span>
+				momentum floor{" "}
+				<b
+					className="font-normal text-(--warn)"
+					data-paint="holding.stoploss.momentum_floor"
+					data-paint-format=".6f"
+				/>
+			</span>
+			<span>
+				last move{" "}
+				<b
+					className="font-normal text-(--f3)"
+					data-paint="holding.stoploss.last_move"
+					data-paint-format="+.6f"
+				/>
+			</span>
+			<span className="min-w-0 truncate text-right">
+				trigger{" "}
+				<b
+					className="font-normal text-(--down)"
+					data-paint="holding.stoploss.trigger_reason"
+				/>
+			</span>
+		</div>
+
 		<Flex.Row className="mt-1 items-center justify-between gap-2 text-[8px] text-(--f4)">
 			<span>
 				locked{" "}

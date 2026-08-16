@@ -1,3 +1,4 @@
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DecisionChain } from "./decision-chain";
@@ -20,6 +21,10 @@ describe("DecisionChain", () => {
 		expect(markup).toContain('data-paint="trace.graphConditions"');
 		expect(markup).toContain('data-paint="thesisScore"');
 		expect(markup).toContain('data-paint="thesisConfidence"');
+		expect(markup).toContain('data-paint="predictiveStatus"');
+		expect(markup).toContain('data-paint="taskSkill"');
+		expect(markup).toContain('data-paint="forecastHorizon"');
+		expect(markup).toContain('data-paint="reserveReason"');
 		expect(markup).toContain('data-paint="entryCost.entryPrice"');
 		expect(markup).toContain('data-paint="entryCost.breakEven"');
 		expect(markup).not.toContain('data-paint="expectedReturn"');

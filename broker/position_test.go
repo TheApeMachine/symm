@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -96,6 +97,38 @@ func TestPositionOnTicker(t *testing.T) {
 			So(stoploss.Status, ShouldEqual, types.TRIGGERED)
 			So(position.ExitOrder, ShouldNotBeNil)
 			So(position.status(), ShouldEqual, types.PENDING)
+		})
+	})
+}
+
+func TestPositionMarkFeedback(t *testing.T) {
+	Convey("Given a live marked position with stop geometry", t, func() {
+		stoploss := newBrokerStoploss(t)
+		stoploss.Peak = decimal.NewFromFloat64(105)
+		stoploss.Floor = decimal.NewFromFloat64(98)
+		stoploss.SurgeArmed = true
+		position := &Position{
+			pair: kraken.InstrumentPair{Symbol: "SIM/USD"},
+			Holding: &types.Holding{
+				Symbol:    "SIM/USD",
+				Qty:       decimal.NewFromInt64(1),
+				Mark:      decimal.NewFromFloat64(100),
+				PnL:       decimal.NewFromFloat64(1.25),
+				ReturnPct: 1.25,
+				Stoploss:  stoploss,
+			},
+		}
+
+		feedback := position.MarkFeedback(time.Unix(2, 0).UTC())
+
+		Convey("It should expose dimensionless floor and peak distances", func() {
+			So(feedback.Symbol, ShouldEqual, "SIM/USD")
+			So(feedback.Exposed, ShouldBeTrue)
+			So(feedback.Mark, ShouldEqual, 100.0)
+			So(feedback.FloorDistance, ShouldAlmostEqual, 0.02, 1e-12)
+			So(feedback.PeakDrawdown, ShouldAlmostEqual, math.Log(100.0/105.0), 1e-12)
+			So(feedback.PnL, ShouldAlmostEqual, 1.25)
+			So(feedback.SurgeArmed, ShouldBeTrue)
 		})
 	})
 }

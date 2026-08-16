@@ -4,6 +4,7 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -156,6 +157,75 @@ func TestUpdate(t *testing.T) {
 
 			So(solver.optimizer.resolved, ShouldEqual, 1)
 			So(solver.history, ShouldHaveLength, 2)
+		})
+	})
+}
+
+func TestObserveMark(t *testing.T) {
+	Convey("Given executable marks between complete account valuations", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := types.NewThesis(t.Context(), nil)
+		solver, err := NewSolver(t.Context(), nil)
+		So(err, ShouldBeNil)
+		defer solver.Close()
+		So(appendEquity(thesis, 200), ShouldBeNil)
+		So(solver.Update(thesis, true), ShouldBeNil)
+
+		So(solver.ObserveMark(types.MarkFeedback{
+			PositionID: "position-1", Symbol: "BTC/USD",
+			At: time.Unix(1, 0).UTC(), Mark: 100,
+			PeakDrawdown: 0, FloorDistance: 0.03, Exposed: true,
+		}), ShouldBeNil)
+		So(solver.ObserveMark(types.MarkFeedback{
+			PositionID: "position-1", Symbol: "BTC/USD",
+			At: time.Unix(2, 0).UTC(), Mark: 101,
+			PeakDrawdown: math.Log(101.0 / 102.0), FloorDistance: 0.02,
+			SurgeArmed: true, Exposed: true,
+		}), ShouldBeNil)
+		So(appendEquity(thesis, 201), ShouldBeNil)
+
+		err = solver.Update(thesis, true)
+
+		Convey("It should condition the next control state without counting marks as wallet outcomes", func() {
+			So(err, ShouldBeNil)
+			So(solver.markSamples, ShouldEqual, uint64(2))
+			So(solver.lastMarkContext.samples, ShouldEqual, 2)
+			So(solver.lastMarkContext.returnSamples, ShouldEqual, 1)
+			So(solver.lastMarkContext.meanReturn, ShouldAlmostEqual, math.Log(1.01), 1e-12)
+			So(solver.lastMarkContext.worstDrawdown, ShouldAlmostEqual, math.Log(101.0/102.0), 1e-12)
+			So(solver.lastMarkContext.minimumFloor, ShouldAlmostEqual, 0.02, 1e-12)
+			So(solver.lastMarkContext.surgeFraction, ShouldAlmostEqual, 0.5, 1e-12)
+			So(solver.optimizer.markReturnScale.Count(), ShouldEqual, 1)
+			So(solver.optimizer.markDrawdownScale.Count(), ShouldEqual, 1)
+			So(solver.optimizer.markFloorScale.Count(), ShouldEqual, 1)
+			So(solver.optimizer.resolved, ShouldEqual, 1)
+			So(solver.optimizer.pending, ShouldHaveLength, regulatorContextCount+controlCount)
+		})
+	})
+}
+
+func TestObserveMarkPositionBoundary(t *testing.T) {
+	Convey("Given a later position in the same symbol", t, func() {
+		system.Cfg = system.NewConfig()
+		solver, err := NewSolver(t.Context(), nil)
+		So(err, ShouldBeNil)
+		defer solver.Close()
+
+		So(solver.ObserveMark(types.MarkFeedback{
+			PositionID: "old-position", Symbol: "BTC/USD",
+			At: time.Unix(1, 0).UTC(), Mark: 100, Exposed: true,
+		}), ShouldBeNil)
+		So(solver.ObserveMark(types.MarkFeedback{
+			PositionID: "new-position", Symbol: "BTC/USD",
+			At: time.Unix(2, 0).UTC(), Mark: 200, Exposed: true,
+		}), ShouldBeNil)
+
+		Convey("It should reset return continuity while keeping memory bounded by symbol", func() {
+			context := solver.pendingMarkContext()
+			So(context.samples, ShouldEqual, 2)
+			So(context.returnSamples, ShouldEqual, 0)
+			So(solver.marks, ShouldHaveLength, 1)
+			So(solver.marks["BTC/USD"].positionID, ShouldEqual, "new-position")
 		})
 	})
 }

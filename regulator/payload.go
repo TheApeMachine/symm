@@ -4,6 +4,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"time"
 )
 
 /*
@@ -24,18 +25,26 @@ type SubsystemStatus struct {
 RegulatorPayload is the wire state published for the global regulator surface.
 */
 type RegulatorPayload struct {
-	Status          string            `json:"status"`
-	Surprise        float64           `json:"surprise"`
-	Energy          float64           `json:"energy"`
-	PnL             float64           `json:"pnl"`
-	PredictedReturn float64           `json:"predictedReturn"`
-	PredictionScale float64           `json:"predictionScale"`
-	PredictedActive float64           `json:"predictedActive"`
-	ActivityScale   float64           `json:"activityScale"`
-	Samples         int               `json:"samples"`
-	Summary         string            `json:"summary"`
-	Subsystems      []SubsystemStatus `json:"subsystems"`
-	Sparkline       []float64         `json:"sparkline"`
+	Status           string            `json:"status"`
+	Surprise         float64           `json:"surprise"`
+	Energy           float64           `json:"energy"`
+	PnL              float64           `json:"pnl"`
+	PredictedReturn  float64           `json:"predictedReturn"`
+	PredictionScale  float64           `json:"predictionScale"`
+	PredictedActive  float64           `json:"predictedActive"`
+	ActivityScale    float64           `json:"activityScale"`
+	Samples          int               `json:"samples"`
+	MarkSamples      uint64            `json:"markSamples"`
+	IntervalMarks    int               `json:"intervalMarks"`
+	LastMarkSymbol   string            `json:"lastMarkSymbol,omitempty"`
+	LastMarkAt       string            `json:"lastMarkAt,omitempty"`
+	LastMarkReturn   float64           `json:"lastMarkReturn"`
+	LastMarkDrawdown float64           `json:"lastMarkDrawdown"`
+	LastMarkFloor    float64           `json:"lastMarkFloorDistance"`
+	LastMarkSurge    bool              `json:"lastMarkSurgeArmed"`
+	Summary          string            `json:"summary"`
+	Subsystems       []SubsystemStatus `json:"subsystems"`
+	Sparkline        []float64         `json:"sparkline"`
 }
 
 /*
@@ -71,12 +80,6 @@ var controlPresentations = [...]controlPresentation{
 		label: "Evidence Admission Boundary", suffix: " graph", displayScale: 1,
 		changed:     "changed",
 		explanation: "Minimum signed MCTS evidence reward admitted for executable evaluation.",
-	},
-	{
-		index: controlUtilityThreshold, name: "utility",
-		label: "Net Utility Boundary", suffix: " return", displayScale: 1,
-		changed:     "changed",
-		explanation: "Minimum forecast-horizon net return admitted after observable entry costs.",
 	},
 	{
 		index: controlCausalAlpha, name: "causal",
@@ -126,19 +129,33 @@ func (solver *Solver) buildPayload(
 		activityScale = result.activity.Scale
 	}
 
+	lastMarkAt := ""
+
+	if !solver.lastMarkAt.IsZero() {
+		lastMarkAt = solver.lastMarkAt.Format(time.RFC3339Nano)
+	}
+
 	return RegulatorPayload{
-		Status:          status,
-		Surprise:        result.surprise,
-		Energy:          result.energy,
-		PnL:             math.Expm1(periodReturn) * 100,
-		PredictedReturn: predictedReturn,
-		PredictionScale: predictionScale,
-		PredictedActive: predictedActive,
-		ActivityScale:   activityScale,
-		Samples:         solver.optimizer.resolved,
-		Summary:         summary,
-		Subsystems:      subsystems,
-		Sparkline:       slices.Clone(solver.history),
+		Status:           status,
+		Surprise:         result.surprise,
+		Energy:           result.energy,
+		PnL:              math.Expm1(periodReturn) * 100,
+		PredictedReturn:  predictedReturn,
+		PredictionScale:  predictionScale,
+		PredictedActive:  predictedActive,
+		ActivityScale:    activityScale,
+		Samples:          solver.optimizer.resolved,
+		MarkSamples:      solver.markSamples,
+		IntervalMarks:    solver.lastMarkContext.samples,
+		LastMarkSymbol:   solver.lastMarkSymbol,
+		LastMarkAt:       lastMarkAt,
+		LastMarkReturn:   math.Expm1(solver.lastMarkReturn),
+		LastMarkDrawdown: math.Expm1(solver.lastMarkDrawdown),
+		LastMarkFloor:    solver.lastMarkFloor,
+		LastMarkSurge:    solver.lastMarkSurge,
+		Summary:          summary,
+		Subsystems:       subsystems,
+		Sparkline:        slices.Clone(solver.history),
 	}
 }
 

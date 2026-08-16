@@ -468,6 +468,83 @@ func TestPhaseRow(t *testing.T) {
 	})
 }
 
+func TestLoad(t *testing.T) {
+	Convey("Given a populated authoritative book and a symbol that is not BUSY", t, func() {
+		managed := mgrbook.New()
+		managed.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Bid,
+			ID:        "bid",
+			Price:     decimal.NewFromInt64(99),
+			Quantity:  decimal.NewFromInt64(2),
+			Timestamp: time.Unix(1, 0).UTC(),
+			Silent:    true,
+		})
+		managed.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Ask,
+			ID:        "ask",
+			Price:     decimal.NewFromInt64(101),
+			Quantity:  decimal.NewFromInt64(3),
+			Timestamp: time.Unix(2, 0).UTC(),
+			Silent:    true,
+		})
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := types.NewSymbol("BTC/USD", nil)
+		thesis.Symbols.Store("BTC/USD", symbol)
+		solver := NewSolver(nil, nil, nil, nil)
+		solver.api = &staticBookSource{book: managed}
+		Reset(func() { So(solver.Close(), ShouldBeNil) })
+
+		Convey("It should admit a Hawkes reading stamped before the drain cutoff", func() {
+			buyExcitation := 0.25
+			sellExcitation := 0.5
+			symbol.AppendMeasurement(types.SourceHawkes, &types.Measurement{
+				Source: types.SourceHawkes,
+				Symbol: "BTC/USD",
+				At:     time.Now().UTC().Add(-time.Hour),
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy): {
+						Normalized: &buyExcitation,
+					},
+					types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell): {
+						Normalized: &sellExcitation,
+					},
+				},
+			})
+
+			cuts, err := solver.load(thesis, thesis.At)
+
+			So(err, ShouldBeNil)
+			So(cuts, ShouldHaveLength, 1)
+			So(cuts[0].oscillators[0].Amplitude, ShouldAlmostEqual, math.Sqrt(1.25), 6)
+			So(cuts[0].oscillators[1].Amplitude, ShouldAlmostEqual, math.Sqrt(1.5), 6)
+		})
+
+		Convey("It should exclude a Hawkes reading stamped after the drain cutoff", func() {
+			buyExcitation := 0.25
+			sellExcitation := 0.5
+			symbol.AppendMeasurement(types.SourceHawkes, &types.Measurement{
+				Source: types.SourceHawkes,
+				Symbol: "BTC/USD",
+				At:     time.Now().UTC().Add(time.Hour),
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy): {
+						Normalized: &buyExcitation,
+					},
+					types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell): {
+						Normalized: &sellExcitation,
+					},
+				},
+			})
+
+			cuts, err := solver.load(thesis, thesis.At)
+
+			So(err, ShouldBeNil)
+			So(cuts, ShouldBeNil)
+			So(solver.WaitingForBook(), ShouldBeTrue)
+		})
+	})
+}
+
 func BenchmarkUpdate(b *testing.B) {
 	originalSteps := system.Cfg.Manifold.RelaxationSteps
 	originalMinimum := system.Cfg.Manifold.MinSteps

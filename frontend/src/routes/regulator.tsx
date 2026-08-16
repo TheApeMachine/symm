@@ -1,3 +1,4 @@
+
 import { createFileRoute } from "@tanstack/react-router";
 import { useLayoutEffect, useState } from "react";
 import { Component } from "#/components/ui/component";
@@ -25,6 +26,14 @@ type RegulatorFrame = {
 	predictedActive?: number;
 	activityScale?: number;
 	samples?: number;
+	markSamples?: number;
+	intervalMarks?: number;
+	lastMarkSymbol?: string;
+	lastMarkAt?: string;
+	lastMarkReturn?: number;
+	lastMarkDrawdown?: number;
+	lastMarkFloorDistance?: number;
+	lastMarkSurgeArmed?: boolean;
 	summary?: string;
 	subsystems?: SubsystemStatus[];
 	sparkline?: number[];
@@ -132,7 +141,7 @@ const RegulatorBridge = ({ onFrame }: { onFrame: (frame: RegulatorFrame) => void
 	return null;
 };
 
-const RouteComponent = () => {
+export const RegulatorSurface = () => {
 	const [frame, setFrame] = useState<RegulatorFrame>(DEFAULT_FRAME);
 
 	const status = frame.status ?? DEFAULT_FRAME.status ?? "observing";
@@ -143,6 +152,14 @@ const RouteComponent = () => {
 	const predictedActive = frame.predictedActive ?? 0;
 	const activityScale = frame.activityScale ?? 0;
 	const samples = frame.samples ?? 0;
+	const markSamples = frame.markSamples ?? 0;
+	const intervalMarks = frame.intervalMarks ?? 0;
+	const lastMarkSymbol = frame.lastMarkSymbol ?? "—";
+	const lastMarkReturn = frame.lastMarkReturn ?? 0;
+	const lastMarkDrawdown = frame.lastMarkDrawdown ?? 0;
+	const lastMarkFloorDistance = frame.lastMarkFloorDistance ?? 0;
+	const lastMarkSurgeArmed = frame.lastMarkSurgeArmed ?? false;
+	const lastMarkAt = frame.lastMarkAt ? new Date(frame.lastMarkAt).toLocaleTimeString() : "—";
 	const summary = frame.summary ?? DEFAULT_FRAME.summary;
 	const subsystems = frame.subsystems ?? DEFAULT_FRAME.subsystems ?? [];
 	const sparkline = frame.sparkline ?? DEFAULT_FRAME.sparkline ?? [];
@@ -178,6 +195,7 @@ const RouteComponent = () => {
 						<span>Posterior Scale: <strong className="text-(--f1)">{predictionScale.toFixed(4)}</strong></span>
 						<span>Next-Interval Activity: <strong className="text-(--f1)">{predictedActive.toFixed(3)} ± {activityScale.toFixed(3)}</strong></span>
 						<span>Resolved Outcomes: <strong className="text-(--f1)">{samples}</strong></span>
+						<span>Position Marks: <strong className="text-(--f1)">{markSamples}</strong></span>
 					</Flex.Row>
 					{sparkline.length > 1 ? (
 						<Flex.Row align="center" gap={2}>
@@ -185,6 +203,26 @@ const RouteComponent = () => {
 							<SparklineSVG points={sparkline} />
 						</Flex.Row>
 					) : null}
+				</Flex.Row>
+			</Panel>
+
+			<Panel className="p-4 border border-(--line) bg-(--surface) rounded-md font-mono text-[11px]">
+				<Flex.Row justify="between" align="center" className="gap-4">
+					<Flex.Column gap={1}>
+						<span className="text-[10px] text-(--f4) uppercase tracking-wider">Mark-level regulator context</span>
+						<span className="text-(--f3)">
+							Every executable position mark conditions the next complete account-level control update.
+						</span>
+					</Flex.Column>
+					<Flex.Row gap={5} className="shrink-0 text-(--f4)">
+						<span>last symbol <strong className="text-(--f1)">{lastMarkSymbol}</strong></span>
+						<span>observed <strong className="text-(--f1)">{lastMarkAt}</strong></span>
+						<span>interval marks <strong className="text-(--f1)">{intervalMarks}</strong></span>
+						<span>last move <strong className={lastMarkReturn < 0 ? "text-(--down)" : "text-(--up)"}>{(lastMarkReturn * 100).toFixed(4)}%</strong></span>
+						<span>peak drawdown <strong className="text-(--down)">{(lastMarkDrawdown * 100).toFixed(4)}%</strong></span>
+						<span>floor distance <strong className={lastMarkFloorDistance <= 0 ? "text-(--down)" : "text-(--warn)"}>{(lastMarkFloorDistance * 100).toFixed(3)}%</strong></span>
+						<span>surge <strong className={lastMarkSurgeArmed ? "text-(--warn)" : "text-(--f1)"}>{lastMarkSurgeArmed ? "armed" : "clear"}</strong></span>
+					</Flex.Row>
 				</Flex.Row>
 			</Panel>
 
@@ -257,5 +295,5 @@ const RouteComponent = () => {
 };
 
 export const Route = createFileRoute("/regulator")({
-	component: RouteComponent,
+	component: RegulatorSurface,
 });

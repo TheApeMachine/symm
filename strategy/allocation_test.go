@@ -176,14 +176,32 @@ func TestAdmitBest(t *testing.T) {
 		normal := admissionCandidate("NORMAL/USD", 0.10, 0.20)
 		reserve := admissionCandidate("RESERVE/USD", 0.03, 0.20)
 		reserve.Opportunity = true
+		reserve.ReserveEligible = true
 		overflow := admissionCandidate("OVERFLOW/USD", 0.02, 0.20)
 		overflow.Opportunity = true
+		overflow.ReserveEligible = true
 
 		Convey("It should spend the reserve only after ranking, and only on opportunities", func() {
 			admitBest([]*types.Decision{overflow, reserve, normal}, 1, 1, nil)
 			So(normal.Action, ShouldEqual, types.ActionEnter)
+			So(normal.AllocationClass, ShouldEqual, "normal")
 			So(reserve.Action, ShouldEqual, types.ActionEnter)
+			So(reserve.AllocationClass, ShouldEqual, "reserve")
 			So(overflow.Action, ShouldEqual, types.ActionNothing)
+			So(overflow.AllocationClass, ShouldEqual, "none")
+		})
+	})
+
+	Convey("Given a broad opportunity that is not reserve-qualified", t, func() {
+		candidate := admissionCandidate("COILED/USD", 0.10, 0.80)
+		candidate.OpportunityType = string(types.CoiledCompression)
+		candidate.Opportunity = true
+
+		Convey("It should not consume emergency capacity", func() {
+			admitBest([]*types.Decision{candidate}, 0, 1, nil)
+			So(candidate.Action, ShouldEqual, types.ActionNothing)
+			So(candidate.AllocationClass, ShouldEqual, "none")
+			So(candidate.Reason, ShouldContainSubstring, "no position slot")
 		})
 	})
 }

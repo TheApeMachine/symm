@@ -1,3 +1,4 @@
+
 import type { ReactNode } from "react";
 
 export const TraceValue = ({
@@ -60,7 +61,11 @@ export const StructuralStage = () => (
 			className="text-(--down)"
 		/>
 		<TraceValue label="conditions" path="thesisConditions" format=".4f" />
+		<TraceValue label="predictive" path="predictiveStatus" />
+		<TraceValue label="task skill" path="taskSkill" format=".3f" />
+		<TraceValue label="supported horizon" path="forecastHorizon" format=".0f" />
 		<TraceValue label="opportunity" path="opportunityType" />
+		<TraceValue label="reserve" path="reserveReason" />
 	</DecisionStage>
 );
 

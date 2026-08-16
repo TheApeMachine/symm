@@ -1,3 +1,4 @@
+
 import type { Status } from "#/types/status";
 
 export type StopPhase = "discovery" | "protected";
@@ -60,8 +61,16 @@ export type Stoploss = {
 	profit_floor?: number | string | null;
 	trail_floor?: number | string | null;
 	floor: number | string | null;
+	arm_at?: number | string | null;
+	lock_floor?: number | string | null;
+	locked?: boolean;
 	profit_armed?: boolean;
 	trigger_reason?: string;
+	trigger_mark?: number | string | null;
+	surge_armed?: boolean;
+	last_move?: number | string | null;
+	surge_move?: number | string | null;
+	momentum_floor?: number | string | null;
 	basis_confirmed?: boolean;
 	plan?: RiskPlan;
 	transitions?: StopTransition[];

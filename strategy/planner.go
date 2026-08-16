@@ -191,9 +191,16 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		decision.Confidence = perspective.Confidence
 		decision.PerspectiveConfidence = perspective.Confidence
 		decision.AdmissionGraphThreshold = config.Planner.MinimumGraphScore
-		decision.AdmissionUtilityThreshold = config.Planner.MinimumUtility
 		decision.OpportunityType = graphOpportunityType(graph)
-		decision.Opportunity = decision.OpportunityType != ""
+		decision.TaskSkill = graph.TaskSkill
+		decision.TaskSkillReady = graph.TaskSkillReady
+		decision.PredictiveReady, decision.PredictiveStatus = predictiveReadiness(graph)
+		decision.ReserveEligible, decision.ReserveReason = reserveQualification(
+			decision.OpportunityType,
+			decision.PredictiveReady,
+			decision.ForecastHorizon,
+		)
+		decision.Opportunity = decision.ReserveEligible
 		decision.Alternatives = make(map[string]float64)
 		decision.Trace = decisionTrace(
 			graph,
@@ -223,6 +230,9 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		case decision.GraphScore <= 0 ||
 			decision.GraphScore < config.Planner.MinimumGraphScore:
 			decision.Reason = "planner: causal graph search did not retain a supportive evidence path"
+		case !decision.PredictiveReady:
+			decision.Reason = "planner: predictive coder cannot yet support an entry: " +
+				decision.PredictiveStatus
 		default:
 			decision.Action = types.ActionEnter
 			decision.Cause = "structural_long_opportunity"
@@ -439,6 +449,11 @@ func (planner *Planner) candidateCopies() []*types.Decision {
 			continue
 		}
 
+		if !retained.PredictiveReady {
+			delete(planner.candidates, symbol)
+			continue
+		}
+
 		candidate := *retained
 		candidate.Action = types.ActionEnter
 		candidate.Reason = ""
@@ -512,6 +527,64 @@ func graphActionLabel(roots []string, action float64) string {
 }
 
 /*
+predictiveReadiness states whether predictive coding has earned the right to
+participate in admission. MCTS still runs while this is false so the UI can
+show the structural alternatives, but no capital is committed until the task
+head is at least baseline-skilled and owns a supported transition horizon.
+*/
+func predictiveReadiness(graph *logicgraph.Graph) (bool, string) {
+	if graph == nil {
+		return false, "market graph unavailable"
+	}
+
+	if !graph.TaskSkillReady {
+		return false, "task skill is still calibrating"
+	}
+
+	if graph.TaskSkill < 0.5 {
+		return false, "task skill is below the zero-return baseline"
+	}
+
+	if graph.Forecast == nil || !graph.Forecast.Ready {
+		return false, "no calibrated regime-transition posterior is published"
+	}
+
+	if graph.ForecastHorizon < 1 {
+		return false, "no transition horizon is statistically supported"
+	}
+
+	return true, "baseline-or-better task skill with a supported transition horizon"
+}
+
+/*
+reserveQualification protects the two reserve slots for abrupt, one-horizon
+opportunities. A broad structural opportunity remains visible through
+OpportunityType, but it cannot consume emergency capacity unless predictive
+coding independently supports the shortest transition and the category is an
+actual sudden-pump precursor.
+*/
+func reserveQualification(
+	opportunityType string,
+	predictiveReady bool,
+	horizon int,
+) (bool, string) {
+	if !predictiveReady {
+		return false, "predictive coder is not ready"
+	}
+
+	if horizon != 1 {
+		return false, "reserve lane requires the shortest supported horizon"
+	}
+
+	switch types.CategoryType(opportunityType) {
+	case types.VerticalIgnition, types.RiskOnSurge:
+		return true, "sudden-pump precursor with one-horizon predictive support"
+	default:
+		return false, "structural opportunity is not an emergency reserve setup"
+	}
+}
+
+/*
 graphOpportunityType names a precursor family only when one of the graph's
 supporting category nodes already carries that semantics. It does not infer an
 opportunity type from price movement or from a generic positive score.
@@ -523,6 +596,7 @@ func graphOpportunityType(graph *logicgraph.Graph) string {
 
 	preferred := map[types.CategoryType]bool{
 		types.VerticalIgnition:  true,
+		types.RiskOnSurge:       true,
 		types.CoiledCompression: true,
 		types.InefficientLag:    true,
 		types.HiddenAbsorption:  true,

@@ -15,6 +15,7 @@ const (
 	TriggerHardFloor         = "hard_floor"
 	TriggerProtectedFloor    = "protected_floor"
 	TriggerProfitStagnation  = "profit_stagnation"
+	TriggerPumpMomentumLost  = "pump_momentum_exhausted"
 	TriggerTrailingFloor     = "trailing_floor"
 	TriggerHorizonExpired    = "horizon_expired"
 	TriggerContinuationEV    = "continuation_ev_negative"
@@ -22,15 +23,17 @@ const (
 )
 
 /*
-Stoploss regulates one open lot across discovery, protected profit, and trailing regimes.
+Stoploss regulates one open lot across discovery, protected profit, trailing, and
+fast-surge regimes.
 
-Hard loss floor is bounded by RiskDistance.
-Once Mark clears break-even plus MinEdge, profit is latched.
-ArmAt sits ArmBuffer above break-even; when reached, the protected floor locks at LockFloor
-(LockBuffer above break-even). New peaks ratchet the trailing floor upward by TrailDistance.
+The first executable mark at or below Floor triggers immediately. Protection starts
+as soon as a new peak can place its trailing floor above ProfitLine, then every new
+peak ratchets that floor upward without ever lowering it. A statistically unusual
+profitable acceleration arms a momentum boundary so the lot exits when the burst
+stops, before a disappearing top of book reaches the slower trailing floor.
 
-A profitable lot triggers profit stagnation only after multiple distinct non-peak observations
-give back at least one execution noise band from the peak.
+Profit stagnation remains a separate low-velocity path: it requires multiple distinct
+non-peak observations and at least one execution-noise band of giveback.
 */
 type Stoploss struct {
 	ctx                  context.Context
@@ -49,6 +52,9 @@ type Stoploss struct {
 	distinctNonPeakMarks int
 	lastStagnationMark   *decimal.Decimal
 	profitLatched        bool
+	positiveMoveCount    int
+	positiveMoveMean     float64
+	positiveMoveM2       float64
 	horizon              int
 	observed             int
 	clockArmed           bool
@@ -63,6 +69,10 @@ type Stoploss struct {
 	Locked               bool             `json:"locked"`
 	TriggerReason        string           `json:"trigger_reason,omitempty"`
 	TriggerMark          *decimal.Decimal `json:"trigger_mark,omitempty"`
+	SurgeArmed           bool             `json:"surge_armed"`
+	LastMove             *decimal.Decimal `json:"last_move,omitempty"`
+	SurgeMove            *decimal.Decimal `json:"surge_move,omitempty"`
+	MomentumFloor        *decimal.Decimal `json:"momentum_floor,omitempty"`
 	Plan                 *RiskPlan        `json:"plan,omitempty"`
 }
 
@@ -81,6 +91,9 @@ type stoplossState struct {
 	ConfirmMarks         int              `json:"confirm_marks,omitempty"`
 	DistinctNonPeakMarks int              `json:"distinct_non_peak_marks,omitempty"`
 	ProfitLatched        bool             `json:"profit_latched,omitempty"`
+	PositiveMoveCount    int              `json:"positive_move_count,omitempty"`
+	PositiveMoveMean     float64          `json:"positive_move_mean,omitempty"`
+	PositiveMoveM2       float64          `json:"positive_move_m2,omitempty"`
 	Horizon              int              `json:"horizon"`
 	Observed             int              `json:"observed"`
 	ClockArmed           bool             `json:"clock_armed"`
@@ -93,6 +106,10 @@ type stoplossState struct {
 	Locked               bool             `json:"locked"`
 	TriggerReason        string           `json:"trigger_reason,omitempty"`
 	TriggerMark          *decimal.Decimal `json:"trigger_mark,omitempty"`
+	SurgeArmed           bool             `json:"surge_armed,omitempty"`
+	LastMove             *decimal.Decimal `json:"last_move,omitempty"`
+	SurgeMove            *decimal.Decimal `json:"surge_move,omitempty"`
+	MomentumFloor        *decimal.Decimal `json:"momentum_floor,omitempty"`
 	Plan                 *RiskPlan        `json:"plan,omitempty"`
 }
 
@@ -266,6 +283,15 @@ func (stoploss *Stoploss) RebindFill(
 	stoploss.profitLatched = false
 	stoploss.distinctNonPeakMarks = 0
 	stoploss.lastStagnationMark = nil
+	stoploss.positiveMoveCount = 0
+	stoploss.positiveMoveMean = 0
+	stoploss.positiveMoveM2 = 0
+	stoploss.SurgeArmed = false
+	stoploss.LastMove = nil
+	stoploss.SurgeMove = nil
+	stoploss.MomentumFloor = nil
+	stoploss.TriggerReason = ""
+	stoploss.TriggerMark = nil
 
 	return nil
 }
@@ -278,6 +304,7 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		return
 	}
 
+	previousMark := scaled(stoploss.Mark)
 	stoploss.Mark = mark
 
 	if stoploss.Status == TRIGGERED {
@@ -289,20 +316,27 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		stoploss.Floor = stoploss.LockFloor
 	}
 
-	if mark.Cmp(stoploss.Floor) < 0 {
-		stoploss.Status = TRIGGERED
-		stoploss.TriggerMark = mark
-
-		if stoploss.Locked {
-			stoploss.TriggerReason = TriggerProtectedFloor
-		} else {
-			stoploss.TriggerReason = TriggerHardFloor
-		}
-
+	// The floor is a boundary, not a debounce hint. The first executable mark
+	// at or through it owns the exit immediately.
+	if stoploss.Floor != nil && mark.Cmp(stoploss.Floor) <= 0 {
+		stoploss.triggerFloor(mark)
 		return
 	}
 
-	raisedPeak := mark.Cmp(stoploss.Peak) > 0
+	move := stoploss.markMove(previousMark, mark)
+
+	if move != nil {
+		stoploss.LastMove = move
+
+		if stoploss.SurgeArmed && stoploss.momentumDisappeared(move) {
+			stoploss.Status = TRIGGERED
+			stoploss.TriggerReason = TriggerPumpMomentumLost
+			stoploss.TriggerMark = mark
+			return
+		}
+	}
+
+	raisedPeak := stoploss.Peak == nil || mark.Cmp(stoploss.Peak) > 0
 
 	if raisedPeak {
 		stoploss.Peak = mark
@@ -310,23 +344,30 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		stoploss.lastStagnationMark = nil
 	}
 
-	if !stoploss.Locked && mark.Cmp(stoploss.ArmAt) >= 0 {
+	candidate := stoploss.trailingCandidate(mark, raisedPeak)
+
+	// Protection begins at the first peak whose own trailing floor can sit
+	// above break-even. ArmAt remains a conservative fallback, but no longer
+	// delays a valid profit floor merely because the peak rose faster than the
+	// static entry geometry expected.
+	if !stoploss.Locked && candidate != nil && stoploss.ProfitLine != nil &&
+		candidate.Cmp(stoploss.ProfitLine) > 0 {
 		stoploss.Locked = true
 
-		if stoploss.LockFloor.Cmp(stoploss.Floor) > 0 {
+		if candidate.Cmp(stoploss.Floor) > 0 {
+			stoploss.Floor = candidate
+		}
+	} else if !stoploss.Locked && stoploss.ArmAt != nil &&
+		mark.Cmp(stoploss.ArmAt) >= 0 {
+		stoploss.Locked = true
+
+		if stoploss.LockFloor != nil && stoploss.LockFloor.Cmp(stoploss.Floor) > 0 {
 			stoploss.Floor = stoploss.LockFloor
 		}
 	}
 
-	if stoploss.Locked && raisedPeak && stoploss.trailDistance != nil {
-		candidate := floorToTick(
-			scaled(mark).Sub(stoploss.trailDistance),
-			stoploss.tickSize,
-		)
-
-		if candidate != nil && candidate.Cmp(stoploss.Floor) > 0 {
-			stoploss.Floor = candidate
-		}
+	if stoploss.Locked && candidate != nil && candidate.Cmp(stoploss.Floor) > 0 {
+		stoploss.Floor = candidate
 	}
 
 	profitThreshold := stoploss.ProfitLine
@@ -339,6 +380,10 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		if mark.Cmp(profitThreshold) >= 0 {
 			stoploss.profitLatched = true
 		}
+	}
+
+	if raisedPeak && move != nil && move.Sign() > 0 {
+		stoploss.observePeakMomentum(move, mark)
 	}
 
 	if stoploss.profitLatched && !raisedPeak && stoploss.ProfitLine != nil &&
@@ -379,6 +424,133 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 	}
 }
 
+func (stoploss *Stoploss) triggerFloor(mark *decimal.Decimal) {
+	stoploss.Status = TRIGGERED
+	stoploss.TriggerMark = mark
+
+	if stoploss.Locked {
+		stoploss.TriggerReason = TriggerProtectedFloor
+		return
+	}
+
+	stoploss.TriggerReason = TriggerHardFloor
+}
+
+func (stoploss *Stoploss) markMove(
+	previous *decimal.Decimal,
+	mark *decimal.Decimal,
+) *decimal.Decimal {
+	if previous == nil || previous.Sign() <= 0 || mark == nil {
+		return nil
+	}
+
+	return scaled(mark).Sub(previous)
+}
+
+func (stoploss *Stoploss) trailingCandidate(
+	mark *decimal.Decimal,
+	raisedPeak bool,
+) *decimal.Decimal {
+	if !raisedPeak || mark == nil || stoploss.trailDistance == nil ||
+		stoploss.trailDistance.Sign() <= 0 {
+		return nil
+	}
+
+	return floorToTick(
+		scaled(mark).Sub(stoploss.trailDistance),
+		stoploss.tickSize,
+	)
+}
+
+func (stoploss *Stoploss) momentumDisappeared(move *decimal.Decimal) bool {
+	if move == nil || move.Sign() <= 0 {
+		return true
+	}
+
+	return stoploss.MomentumFloor != nil && stoploss.MomentumFloor.Sign() > 0 &&
+		move.Cmp(stoploss.MomentumFloor) <= 0
+}
+
+/*
+observePeakMomentum learns the ordinary positive-step scale and arms a one-tick
+exhaustion detector only when a new peak accelerates far beyond it. The surge
+itself is never used to set its continuation floor; otherwise one exceptional
+move would demand another equally exceptional move and guarantee an exit.
+*/
+func (stoploss *Stoploss) observePeakMomentum(
+	move *decimal.Decimal,
+	mark *decimal.Decimal,
+) {
+	if move == nil || move.Sign() <= 0 {
+		return
+	}
+
+	moveValue := move.Float64()
+	threshold := stoploss.unusualMoveThreshold()
+	continuation := stoploss.momentumContinuationFloor()
+	profitable := stoploss.Locked || stoploss.profitLatched ||
+		(stoploss.ProfitLine != nil && mark.Cmp(stoploss.ProfitLine) > 0)
+
+	if profitable && threshold > 0 && moveValue >= threshold {
+		stoploss.SurgeArmed = true
+		stoploss.SurgeMove = scaled(move)
+		stoploss.MomentumFloor = continuation
+	}
+
+	stoploss.positiveMoveCount++
+	delta := moveValue - stoploss.positiveMoveMean
+	stoploss.positiveMoveMean += delta / float64(stoploss.positiveMoveCount)
+	stoploss.positiveMoveM2 += delta * (moveValue - stoploss.positiveMoveMean)
+}
+
+func (stoploss *Stoploss) unusualMoveThreshold() float64 {
+	threshold := 0.0
+
+	if stoploss.trailDistance != nil {
+		threshold = math.Max(threshold, 2*stoploss.trailDistance.Float64())
+	}
+
+	if stoploss.noiseBand != nil {
+		threshold = math.Max(threshold, 4*stoploss.noiseBand.Float64())
+	}
+
+	if stoploss.tickSize != nil {
+		threshold = math.Max(threshold, 4*stoploss.tickSize.Float64())
+	}
+
+	if stoploss.positiveMoveCount == 1 {
+		threshold = math.Max(threshold, 2*stoploss.positiveMoveMean)
+	}
+
+	if stoploss.positiveMoveCount > 1 {
+		variance := stoploss.positiveMoveM2 / float64(stoploss.positiveMoveCount-1)
+		threshold = math.Max(
+			threshold,
+			stoploss.positiveMoveMean+3*math.Sqrt(math.Max(0, variance)),
+		)
+	}
+
+	return threshold
+}
+
+func (stoploss *Stoploss) momentumContinuationFloor() *decimal.Decimal {
+	floor := scaled(stoploss.noiseBand)
+
+	if floor == nil || floor.Sign() <= 0 {
+		floor = scaled(stoploss.tickSize)
+	}
+
+	if stoploss.positiveMoveCount > 0 && stoploss.positiveMoveMean > 0 {
+		learned := decimal.NewFromFloat64(stoploss.positiveMoveMean * 0.5)
+
+		if floor == nil || learned.Cmp(floor) > 0 {
+			floor = learned
+		}
+	}
+
+	return floor
+}
+
 /*
 ArmClock starts the lot's own forecast-horizon clock after the entry fill.
 Marks observed before the fill do not count against the admitted path.
@@ -393,15 +565,13 @@ func (stoploss *Stoploss) ArmClock() {
 }
 
 /*
-Reconsider releases a still-red lot after its admitted horizon has been
-observed, unless the live forecast still clears the regulated utility gate
-and is still expected to reach the profit line. Missing evidence keeps the
-lot; profit-lock and in-profit stagnation stay on Update.
+Reconsider releases a still-red lot once the transition horizon that justified
+its entry has elapsed. The retained parameters are ignored for source compatibility:
+future return economics no longer receive a second, hidden vote over the observed
+position. Missing horizon evidence keeps the lot; profitable and locked positions
+remain governed by Update's floor, trail, and momentum paths.
 */
-func (stoploss *Stoploss) Reconsider(
-	forecastLogReturn float64,
-	threshold float64,
-) {
+func (stoploss *Stoploss) Reconsider(_ float64, _ float64) {
 	if stoploss == nil || stoploss.Status == TRIGGERED || stoploss.Locked {
 		return
 	}
@@ -416,38 +586,9 @@ func (stoploss *Stoploss) Reconsider(
 		return
 	}
 
-	exitRate := 0.0
-
-	if stoploss.exitFeeRate != nil {
-		exitRate = stoploss.exitFeeRate.Float64()
-	}
-
-	if stayUtility(forecastLogReturn, exitRate) > threshold &&
-		stoploss.reachesProfit(forecastLogReturn) {
-		return
-	}
-
 	stoploss.Status = TRIGGERED
 	stoploss.TriggerReason = TriggerHorizonExpired
 	stoploss.TriggerMark = stoploss.Mark
-}
-
-/*
-stayUtility is the remaining arithmetic return after the exit fee still owed.
-The entry fee is sunk and is not charged again.
-*/
-func stayUtility(forecastLogReturn, exitFeeRate float64) float64 {
-	return math.Expm1(forecastLogReturn) * (1 - exitFeeRate)
-}
-
-func (stoploss *Stoploss) reachesProfit(forecastLogReturn float64) bool {
-	if stoploss.Mark == nil || stoploss.ProfitLine == nil ||
-		stoploss.Mark.Sign() <= 0 || stoploss.ProfitLine.Sign() <= 0 {
-		return false
-	}
-
-	return stoploss.Mark.Float64()*math.Exp(forecastLogReturn) >=
-		stoploss.ProfitLine.Float64()
 }
 
 /*
@@ -473,6 +614,9 @@ func (stoploss *Stoploss) MarshalState() ([]byte, error) {
 		ConfirmMarks:         stoploss.confirmMarks,
 		DistinctNonPeakMarks: stoploss.distinctNonPeakMarks,
 		ProfitLatched:        stoploss.profitLatched,
+		PositiveMoveCount:    stoploss.positiveMoveCount,
+		PositiveMoveMean:     stoploss.positiveMoveMean,
+		PositiveMoveM2:       stoploss.positiveMoveM2,
 		Horizon:              stoploss.horizon,
 		Observed:             stoploss.observed,
 		ClockArmed:           stoploss.clockArmed,
@@ -485,6 +629,10 @@ func (stoploss *Stoploss) MarshalState() ([]byte, error) {
 		Locked:               stoploss.Locked,
 		TriggerReason:        stoploss.TriggerReason,
 		TriggerMark:          stoploss.TriggerMark,
+		SurgeArmed:           stoploss.SurgeArmed,
+		LastMove:             stoploss.LastMove,
+		SurgeMove:            stoploss.SurgeMove,
+		MomentumFloor:        stoploss.MomentumFloor,
 		Plan:                 stoploss.Plan,
 	})
 }
@@ -518,8 +666,16 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 		return nil, fmt.Errorf("stoploss: stored floor must remain below peak")
 	}
 
-	if state.Horizon < 0 || state.Observed < 0 {
-		return nil, fmt.Errorf("stoploss: stored horizon clock cannot be negative")
+	if state.Horizon < 0 || state.Observed < 0 || state.PositiveMoveCount < 0 ||
+		math.IsNaN(state.PositiveMoveMean) || math.IsInf(state.PositiveMoveMean, 0) ||
+		math.IsNaN(state.PositiveMoveM2) || math.IsInf(state.PositiveMoveM2, 0) ||
+		state.PositiveMoveM2 < 0 {
+		return nil, fmt.Errorf("stoploss: stored horizon or momentum state is invalid")
+	}
+
+	if state.SurgeArmed && (state.SurgeMove == nil || state.SurgeMove.Sign() <= 0 ||
+		state.MomentumFloor == nil || state.MomentumFloor.Sign() <= 0) {
+		return nil, fmt.Errorf("stoploss: armed surge requires positive momentum geometry")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -544,6 +700,9 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 		confirmMarks:         confirmMarks,
 		distinctNonPeakMarks: state.DistinctNonPeakMarks,
 		profitLatched:        state.ProfitLatched,
+		positiveMoveCount:    state.PositiveMoveCount,
+		positiveMoveMean:     state.PositiveMoveMean,
+		positiveMoveM2:       state.PositiveMoveM2,
 		horizon:              state.Horizon,
 		observed:             state.Observed,
 		clockArmed:           state.ClockArmed,
@@ -558,6 +717,10 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 		Locked:               state.Locked,
 		TriggerReason:        state.TriggerReason,
 		TriggerMark:          state.TriggerMark,
+		SurgeArmed:           state.SurgeArmed,
+		LastMove:             state.LastMove,
+		SurgeMove:            state.SurgeMove,
+		MomentumFloor:        state.MomentumFloor,
 		Plan:                 state.Plan,
 	}, nil
 }
@@ -751,4 +914,3 @@ func (stoploss *Stoploss) Close() (err error) {
 
 	return errnie.Error(err)
 }
-

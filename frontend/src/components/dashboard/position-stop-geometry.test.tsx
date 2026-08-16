@@ -1,3 +1,4 @@
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PositionStopGeometry } from "./position-stop-geometry";
@@ -29,5 +30,9 @@ describe("PositionStopGeometry", () => {
 
 		expect(markup).toContain("holding.stoploss.locked");
 		expect(markup).toContain("holding.stoploss.status");
+		expect(markup).toContain("holding.stoploss.surge_armed");
+		expect(markup).toContain("holding.stoploss.momentum_floor");
+		expect(markup).toContain("holding.stoploss.last_move");
+		expect(markup).toContain("holding.stoploss.trigger_reason");
 	});
 });
