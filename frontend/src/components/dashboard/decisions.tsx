@@ -72,9 +72,9 @@ export const Decisions = () => {
 								/>
 								<Flex.Row className="items-center gap-2">
 									<Typography.Span className="text-[8.5px] text-(--f4)">
-										u=
+										t=
 										<span
-											data-paint="utility"
+											data-paint="thesisScore"
 											data-paint-format=".4f"
 											className="tabular-nums text-(--f2)"
 										/>

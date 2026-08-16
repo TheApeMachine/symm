@@ -17,7 +17,7 @@ describe("Decisions", () => {
 			'data-paint-empty="No rejection reason published"',
 		);
 		expect(markup).toContain('data-paint="symbol"');
-		expect(markup).toContain('data-paint="utility"');
+		expect(markup).toContain('data-paint="thesisScore"');
 		expect(markup).toContain('data-paint="action"');
 	});
 });

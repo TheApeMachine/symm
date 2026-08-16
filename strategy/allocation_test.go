@@ -4,7 +4,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
@@ -28,13 +27,13 @@ func TestAdmissionOrder(t *testing.T) {
 		higherUtility := admissionCandidate("WEAK/USD", 0.04, 0.10)
 		lowerUtility := admissionCandidate("STRONG/USD", 0.08, 0.01)
 
-		Convey("It should prefer the higher net utility even when graph score is worse", func() {
+		Convey("It should prefer the higher structural thesis even when graph score is worse", func() {
 			So(admissionOrder(lowerUtility, higherUtility), ShouldEqual, -1)
 			So(admissionOrder(higherUtility, lowerUtility), ShouldEqual, 1)
 		})
 	})
 
-	Convey("Given two candidates with the same net utility", t, func() {
+	Convey("Given two candidates with the same structural thesis", t, func() {
 		higherGraph := admissionCandidate("AAA/USD", 0.05, 0.90)
 		lowerGraph := admissionCandidate("ZZZ/USD", 0.05, 0.10)
 
@@ -62,7 +61,7 @@ func TestAdmitBest(t *testing.T) {
 		mid := admissionCandidate("MID/USD", 0.05, 0.10)
 		strong := admissionCandidate("STRONG/USD", 0.09, 0.10)
 		noise := types.NewDecision(types.ActionNothing, "NOISE/USD")
-		noise.Utility = 1
+		noise.ThesisScore = 1
 		noise.GraphScore = 1
 
 		Convey("It should fill only the best candidates regardless of arrival order", func() {
@@ -85,7 +84,7 @@ func TestAdmitBest(t *testing.T) {
 		})
 	})
 
-	Convey("Given one slot and a later-arriving higher utility", t, func() {
+	Convey("Given one slot and a later-arriving stronger thesis", t, func() {
 		early := admissionCandidate("EARLY/USD", 0.03, 0.80)
 		late := admissionCandidate("LATE/USD", 0.11, 0.20)
 
@@ -96,7 +95,7 @@ func TestAdmitBest(t *testing.T) {
 		})
 	})
 
-	Convey("Given a held symbol that still posts the highest utility", t, func() {
+	Convey("Given a held symbol that still posts the strongest thesis", t, func() {
 		held := admissionCandidate("HELD/USD", 0.20, 0.90)
 		challenger := admissionCandidate("FREE/USD", 0.04, 0.10)
 		held.Stoploss = &types.Stoploss{}
@@ -136,7 +135,7 @@ func TestAdmitBest(t *testing.T) {
 		})
 	})
 
-	Convey("Given equal utility and one better graph score", t, func() {
+	Convey("Given equal thesis score and one better graph score", t, func() {
 		lowEvidence := admissionCandidate("LOW/USD", 0.05, 0.10)
 		highEvidence := admissionCandidate("HIGH/USD", 0.05, 0.80)
 
@@ -147,7 +146,7 @@ func TestAdmitBest(t *testing.T) {
 		})
 	})
 
-	Convey("Given equal utility and graph score", t, func() {
+	Convey("Given equal thesis score and graph score", t, func() {
 		zebra := admissionCandidate("ZZZ/USD", 0.05, 0.50)
 		alpha := admissionCandidate("AAA/USD", 0.05, 0.50)
 
@@ -189,72 +188,6 @@ func TestAdmitBest(t *testing.T) {
 	})
 }
 
-func TestPriceDistance(t *testing.T) {
-	Convey("Given entry costs expressed as midpoint-return fractions", t, func() {
-		midpoint := decimal.NewFromFloat64(100.5)
-		halfSpreadFraction := decimal.NewFromFloat64(0.5 / 100.5)
-
-		Convey("It should restore the absolute price distance used by stop geometry", func() {
-			distance := priceDistance(midpoint, halfSpreadFraction)
-
-			So(distance, ShouldNotBeNil)
-			So(distance.Float64(), ShouldAlmostEqual, 0.5, 1e-12)
-			So(midpoint.Float64(), ShouldAlmostEqual, 100.5, 1e-12)
-		})
-	})
-
-	Convey("Given a low-priced market", t, func() {
-		midpoint := decimal.NewFromFloat64(0.015855)
-		spreadFraction := decimal.NewFromFloat64(0.000005 / 0.015855)
-
-		Convey("It should not mistake a return fraction for a whole price unit", func() {
-			distance := priceDistance(midpoint, spreadFraction)
-
-			So(distance, ShouldNotBeNil)
-			So(distance.Float64(), ShouldAlmostEqual, 0.000005, 1e-12)
-		})
-	})
-
-	Convey("Given absent or invalid inputs", t, func() {
-		So(priceDistance(nil, decimal.NewFromFloat64(0.01)), ShouldBeNil)
-		So(priceDistance(decimal.NewFromInt64(1), nil), ShouldBeNil)
-		So(priceDistance(
-			decimal.NewFromInt64(1), decimal.NewFromFloat64(-0.01),
-		), ShouldBeNil)
-	})
-}
-
-func TestVisibleAskQuantity(t *testing.T) {
-	Convey("Given a cash-sized request larger than the visible ask", t, func() {
-		requested := decimal.NewFromFloat64(2)
-
-		Convey("It should keep only the quantity the ticker can fill", func() {
-			capped := visibleAskQuantity(0.4, requested)
-
-			So(capped.Float64(), ShouldAlmostEqual, 0.4, 1e-12)
-			So(requested.Float64(), ShouldAlmostEqual, 2, 1e-12)
-		})
-	})
-
-	Convey("Given a request already inside the visible ask", t, func() {
-		requested := decimal.NewFromFloat64(0.2)
-
-		Convey("It should leave the request unchanged", func() {
-			So(visibleAskQuantity(1.5, requested), ShouldEqual, requested)
-		})
-	})
-
-	Convey("Given no observable ask quantity", t, func() {
-		requested := decimal.NewFromFloat64(2)
-
-		Convey("It should leave the request for later executable pricing", func() {
-			So(visibleAskQuantity(0, requested), ShouldEqual, requested)
-			So(visibleAskQuantity(-1, requested), ShouldEqual, requested)
-			So(visibleAskQuantity(1, nil), ShouldBeNil)
-		})
-	})
-}
-
 func TestOccupiedSymbols(t *testing.T) {
 	Convey("Given no desk", t, func() {
 		Convey("It should report an empty occupancy map", func() {
@@ -263,9 +196,11 @@ func TestOccupiedSymbols(t *testing.T) {
 	})
 }
 
-func admissionCandidate(symbol string, utility, graphScore float64) *types.Decision {
+func admissionCandidate(symbol string, thesisScore, graphScore float64) *types.Decision {
 	decision := types.NewDecision(types.ActionEnter, symbol)
-	decision.Utility = utility
+	decision.ThesisScore = thesisScore
+	decision.ThesisConfidence = 1
+	decision.Direction = 1
 	decision.GraphScore = graphScore
 	decision.Stoploss = &types.Stoploss{}
 

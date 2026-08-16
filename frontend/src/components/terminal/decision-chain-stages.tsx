@@ -13,7 +13,12 @@ export const TraceValue = ({
 }) => (
 	<div className="flex items-center justify-between gap-2">
 		<span className="text-(--f4)">{label}</span>
-		<span data-paint={path} data-paint-format={format} className={className} />
+		<span
+			data-paint={path}
+			data-paint-format={format}
+			data-paint-empty="—"
+			className={className}
+		/>
 	</div>
 );
 
@@ -37,20 +42,32 @@ export const DecisionStage = ({
 	</div>
 );
 
-export const ForecastStage = () => (
-	<DecisionStage title="1 · forecast" meta="net edge before sizing">
-		<TraceValue label="horizon" path="forecastHorizon" format=".0f" />
-		<TraceValue label="return" path="expectedReturn" format=".6f" />
-		<TraceValue label="fees" path="expectedFees" format=".6f" />
-		<TraceValue label="spread" path="expectedSpread" format=".6f" />
-		<TraceValue label="impact" path="expectedImpact" format=".6f" />
+export const StructuralStage = () => (
+	<DecisionStage title="1 · structural thesis" meta="conditioned market evidence">
+		<TraceValue label="direction" path="direction" format="+.0f" />
+		<TraceValue label="thesis score" path="thesisScore" format=".4f" />
+		<TraceValue label="confidence" path="thesisConfidence" format=".1%" />
+		<TraceValue
+			label="support"
+			path="thesisSupport"
+			format=".4f"
+			className="text-(--up)"
+		/>
+		<TraceValue
+			label="contradiction"
+			path="thesisContradiction"
+			format=".4f"
+			className="text-(--down)"
+		/>
+		<TraceValue label="conditions" path="thesisConditions" format=".4f" />
+		<TraceValue label="opportunity" path="opportunityType" />
 	</DecisionStage>
 );
 
 export const EvidenceStage = () => (
-	<DecisionStage title="2 · evidence graph" meta="edge mass used by search">
+	<DecisionStage title="2 · evidence graph" meta="relations addressing the thesis">
 		<div className="flex items-center justify-between gap-2">
-			<span className="text-(--f4)">supporting edges</span>
+			<span className="text-(--f4)">supporting mass</span>
 			<span
 				data-paint="trace.graphSupports"
 				data-paint-format=".3f"
@@ -67,7 +84,7 @@ export const EvidenceStage = () => (
 			/>
 		</div>
 		<div className="flex items-center justify-between gap-2">
-			<span className="text-(--f4)">contradicting edges</span>
+			<span className="text-(--f4)">contradicting mass</span>
 			<span
 				data-paint="trace.graphContradicts"
 				data-paint-format=".3f"
@@ -83,27 +100,23 @@ export const EvidenceStage = () => (
 				className="h-full bg-(--down)"
 			/>
 		</div>
+		<TraceValue label="conditioning mass" path="trace.graphConditions" format=".3f" />
+		<TraceValue label="balance" path="trace.thesisBalance" format=".4f" />
 	</DecisionStage>
 );
 
-export const CapitalStage = () => (
-	<DecisionStage title="4 · capital + slots" meta="final decision">
-		<div className="rounded-xs bg-[color-mix(in_srgb,var(--down)_12%,transparent)] px-1.5 py-1 text-(--down)">
-			<div className="flex items-center justify-between gap-2">
-				<span>flow haircut</span>
-				<span data-paint="allocation_haircut" data-paint-format=".1%" />
-			</div>
-			<div
-				data-paint="allocation_haircut_reason"
-				className="mt-0.5 truncate text-[8px] text-(--f3)"
-			/>
-		</div>
+export const ExecutionStage = () => (
+	<DecisionStage title="4 · execution + risk" meta="facts observable now">
 		<TraceValue
-			label="notional"
-			path="proposedNotional"
-			format=".2f"
+			label="entry VWAP"
+			path="entryCost.entryPrice"
+			format=".8f"
 			className="text-(--acc)"
 		/>
+		<TraceValue label="break-even" path="entryCost.breakEven" format=".8f" />
+		<TraceValue label="round-trip fees" path="entryCost.roundTripFees" format=".6f" />
+		<TraceValue label="spread" path="entryCost.spread" format=".8f" />
+		<TraceValue label="impact" path="entryCost.impact" format=".8f" />
 		<TraceValue label="quantity" path="proposedQuantity" format=".6f" />
 		<TraceValue
 			label="max loss"
@@ -111,7 +124,7 @@ export const CapitalStage = () => (
 			format=".4f"
 			className="text-(--down)"
 		/>
-		<TraceValue label="risk distance" path="risk.risk_distance" format=".6f" />
+		<TraceValue label="risk distance" path="risk.risk_distance" format=".8f" />
 		<div className="flex justify-between gap-2 text-(--f4)">
 			<span>slots</span>
 			<span>

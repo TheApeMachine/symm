@@ -65,21 +65,20 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => (
 				<div ref={ref} data-scope="symbol" data-filter={symbol}>
 					<Card title="Arbitration">
 						<Row label="action" bind="action" tone="text-(--acc) uppercase" />
-						<Row label="utility" bind="utility" format=".5f" />
-						<Row label="confidence" bind="confidence" format=".1%" />
-						<Row label="expected return" bind="expectedReturn" format=".6f" />
-						<Row label="expected fees" bind="expectedFees" format=".6f" />
-						<Row label="spread" bind="expectedSpread" format=".6f" />
-						<Row label="impact" bind="expectedImpact" format=".6f" />
-						<Row label="uncertainty" bind="uncertainty" format=".4f" />
-						<Row
-							label="haircut"
-							bind="allocation_haircut"
-							format=".1%"
-							tone="text-(--down)"
-						/>
+						<Row label="direction" bind="direction" format="+.0f" />
+						<Row label="thesis score" bind="thesisScore" format=".4f" />
+						<Row label="confidence" bind="thesisConfidence" format=".1%" />
+						<Row label="support" bind="thesisSupport" format=".4f" tone="text-(--up)" />
+						<Row label="contradiction" bind="thesisContradiction" format=".4f" tone="text-(--down)" />
+						<Row label="conditions" bind="thesisConditions" format=".4f" />
+						<Row label="opportunity" bind="opportunityType" />
+						<Row label="graph path" bind="graphScore" format=".5f" />
+						<Row label="entry VWAP" bind="entryCost.entryPrice" format=".8f" />
+						<Row label="break-even" bind="entryCost.breakEven" format=".8f" />
+						<Row label="round-trip fees" bind="entryCost.roundTripFees" format=".6f" />
+						<Row label="spread" bind="entryCost.spread" format=".8f" />
+						<Row label="impact" bind="entryCost.impact" format=".8f" />
 						<Row label="notional" bind="proposedNotional" format=".2f" />
-						<Row label="class" bind="allocationClass" />
 						<Row label="cause" bind="cause" />
 						<Row label="reason" bind="reason" />
 						<Row label="round" bind="arbitrationRound" />
@@ -135,69 +134,22 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => (
 						/>
 						<Row label="cause" bind="decision.cause" />
 						<Row label="reason" bind="decision.reason" />
-						<Row label="utility" bind="decision.utility" format=".5f" />
-						<Row label="confidence" bind="decision.confidence" format=".1%" />
-						<Row
-							label="expected return"
-							bind="decision.expectedReturn"
-							format=".6f"
-						/>
-						<Row
-							label="expected fees"
-							bind="decision.expectedFees"
-							format=".6f"
-						/>
-						<Row label="spread" bind="decision.expectedSpread" format=".6f" />
-						<Row label="impact" bind="decision.expectedImpact" format=".6f" />
-						<Row
-							label="adverse selection"
-							bind="decision.adverseSelection"
-							format=".6f"
-						/>
-						<Row label="uncertainty" bind="decision.uncertainty" format=".4f" />
-						<Row
-							label="opportunity margin"
-							bind="decision.opportunityMargin"
-							format=".4f"
-						/>
-						<Row
-							label="cognitive lead"
-							bind="decision.cognitiveLead"
-							format=".4f"
-						/>
-						<Row
-							label="basin confidence"
-							bind="decision.basinConfidence"
-							format=".4f"
-						/>
-						<Row
-							label="haircut"
-							bind="decision.allocation_haircut"
-							format=".1%"
-							tone="text-(--down)"
-						/>
-						<Row
-							label="haircut reason"
-							bind="decision.allocation_haircut_reason"
-						/>
-						<Row label="class" bind="decision.allocationClass" />
-						<Row
-							label="notional"
-							bind="decision.proposedNotional"
-							format=".2f"
-						/>
-						<Row
-							label="quantity"
-							bind="decision.proposedQuantity"
-							format=".6f"
-						/>
-						<Row
-							label="reference"
-							bind="decision.referencePrice"
-							format=".6f"
-						/>
-						<Row label="forecast model" bind="decision.forecastModel" />
-						<Row label="round" bind="decision.arbitrationRound" />
+						<Row label="direction" bind="decision.direction" format="+.0f" />
+						<Row label="thesis score" bind="decision.thesisScore" format=".4f" />
+						<Row label="confidence" bind="decision.thesisConfidence" format=".1%" />
+						<Row label="support" bind="decision.thesisSupport" format=".4f" tone="text-(--up)" />
+						<Row label="contradiction" bind="decision.thesisContradiction" format=".4f" tone="text-(--down)" />
+						<Row label="conditions" bind="decision.thesisConditions" format=".4f" />
+						<Row label="opportunity" bind="decision.opportunityType" />
+						<Row label="graph path" bind="decision.graphScore" format=".5f" />
+						<Row label="entry VWAP" bind="decision.entryCost.entryPrice" format=".8f" />
+						<Row label="break-even" bind="decision.entryCost.breakEven" format=".8f" />
+						<Row label="round-trip fees" bind="decision.entryCost.roundTripFees" format=".6f" />
+						<Row label="spread" bind="decision.entryCost.spread" format=".8f" />
+						<Row label="impact" bind="decision.entryCost.impact" format=".8f" />
+						<Row label="notional" bind="decision.proposedNotional" format=".2f" />
+						<Row label="quantity" bind="decision.proposedQuantity" format=".6f" />
+						<Row label="risk distance" bind="decision.risk.risk_distance" format=".8f" />
 						<Row label="decided" bind="decision.at" format="time" />
 					</Card>
 				</div>

@@ -1,166 +1,122 @@
 package calculus
 
 import (
-	"fmt"
-
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Attack walks a value from silence up to a peak. It is Decay inverted: same
-clock and shape, target is the peak instead of zero.
+Attack applies an excitation impulse or jump to a baseline or existing value.
+Its map carries "base", "jump", and "result".
 */
 type Attack struct {
-	initial types.Input[types.Map[string, float64]]
-	next    types.Input[types.Map[string, float64]]
+	initial types.Input[types.Map[string, types.Value[float64]]]
+	next    types.Input[types.Map[string, types.Value[float64]]]
 	err     error
 }
 
-var _ types.IO[float64] = (*Attack)(nil)
+var _ types.IO[types.Map[string, types.Value[float64]]] = (*Attack)(nil)
 
 /*
-NewAttack takes a clock and an optional shape. A nil shape is linear.
+NewAttack returns an Attack excitation primitive.
 */
 func NewAttack(
-	initial types.Input[types.Map[string, float64]],
+	initial types.Input[types.Map[string, types.Value[float64]]],
 ) *Attack {
-	if ok, missing := initial.Project().Read().Validate("clock", "shape"); !ok {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"attack: invalid initial input: missing "+fmt.Sprintf("%v", missing),
-			nil,
-		))
-
-		return nil
-	}
-
 	return &Attack{
 		initial: initial,
+		next:    types.NewInput[types.Map[string, types.Value[float64]]](),
 	}
 }
 
 /*
-Write stages the peak from the source.
+Write stages the jump map.
 */
-func (attack *Attack) Write(input types.IO[float64]) {
-	attack.next.Read().Project().Read().Put(
-		"peak", input.Project().Read(),
-	)
+func (attack *Attack) Write(input types.IO[types.Map[string, types.Value[float64]]]) {
+	if input == nil {
+		attack.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"attack: input is nil",
+			nil,
+		))
 
+		return
+	}
+
+	attack.next.Write(input)
 	attack.err = nil
 }
 
 /*
-Read executes the risen level and returns the attack as output.
+Read adds the impulse to the baseline and returns the new level.
 */
-func (attack *Attack) Read() types.IO[float64] {
-	if attack.clock == nil {
-		attack.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			"attack: clock required",
-			nil,
-		))
+func (attack *Attack) Read() types.IO[types.Map[string, types.Value[float64]]] {
+	in := attack.next.Read()
 
-		return attack
-	}
-
-	peak := attack.peak.Read()
-
-	if peak.Error() != "" {
+	if in.Error() != "" {
 		attack.err = errnie.Error(errnie.Err(
 			errnie.NotFound,
-			peak.Error(),
+			in.Error(),
 			nil,
 		))
 
-		return attack
+		return attack.next
 	}
 
-	progress := attack.clock.Read()
+	mapping := in.Project().Read()
+	baseVal, _ := mapping.Get("base")
+	jumpVal, hasJump := mapping.Get("jump")
 
-	if progress.Error() != "" {
+	if !hasJump {
 		attack.err = errnie.Error(errnie.Err(
 			errnie.Validation,
-			progress.Error(),
+			"attack: missing jump",
 			nil,
 		))
 
-		return attack
+		return attack.next
 	}
 
-	risen := progress.Project().Read()
+	result := baseVal.Read() + jumpVal.Read()
+	mapping.Put("base", types.NewValue(result))
+	mapping.Put("result", types.NewValue(result))
 
-	if risen > 1 {
-		risen = 1
-	}
-
-	if attack.shape != nil {
-		attack.shape.Write(progress)
-		shaped := attack.shape.Read()
-
-		if shaped.Error() != "" {
-			attack.err = errnie.Error(errnie.Err(
-				errnie.Validation,
-				shaped.Error(),
-				nil,
-			))
-
-			return attack
-		}
-
-		risen = 1 - shaped.Project().Read()
-	}
-
-	if risen < 0 {
-		risen = 0
-	}
-
-	attack.value = attack.value.Write(peak.Project().Read() * risen)
+	attack.next.Write(types.NewInput(types.NewValue(mapping)))
 	attack.err = nil
 
-	return attack
+	return attack.next
 }
 
 /*
-Project is the last risen level.
+Project returns the current projected map.
 */
-func (attack *Attack) Project() types.Value[float64] {
-	return attack.value
+func (attack *Attack) Project() types.Value[types.Map[string, types.Value[float64]]] {
+	return attack.next.Project()
 }
 
 /*
-Error reports a staging or execution failure.
+Error reports any execution error.
 */
 func (attack *Attack) Error() string {
-	if attack.err == nil {
-		return ""
+	if attack.err != nil {
+		return attack.err.Error()
 	}
 
-	return attack.err.Error()
+	return attack.next.Error()
 }
 
 /*
-Close resets and closes owned modifiers.
+Close resets the primitive state.
 */
 func (attack *Attack) Close() error {
-	if attack.clock != nil {
-		if err := attack.clock.Close(); err != nil {
-			return err
-		}
-	}
-
-	if attack.shape != nil {
-		if err := attack.shape.Close(); err != nil {
-			return err
-		}
-	}
-
-	if err := attack.peak.Close(); err != nil {
+	if err := attack.initial.Close(); err != nil {
 		return err
 	}
 
-	attack.value = types.Value[float64]{}
+	if err := attack.next.Close(); err != nil {
+		return err
+	}
+
 	attack.err = nil
 
 	return nil

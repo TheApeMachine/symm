@@ -293,11 +293,14 @@ const formatValue = (value: unknown, format: string | undefined): string => {
   if (format) {
     switch (typeof value) {
       case "number": {
-        if (!/^\.\d+(f|%|bp)?$/i.test(format)) {
+        const showSign = format.startsWith("+");
+        const numFmt = showSign ? format.slice(1) : format;
+
+        if (!/^\.\d+(f|%|bp)?$/i.test(numFmt)) {
           throw new Error(`invalid data-paint-format: ${format}`);
         }
 
-        const digits = Number.parseInt(format.slice(1), 10);
+        const digits = Number.parseInt(numFmt.slice(1), 10);
 
         if (!Number.isInteger(digits)) {
           throw new Error(`invalid data-paint-format: ${format}`);
@@ -309,15 +312,21 @@ const formatValue = (value: unknown, format: string | undefined): string => {
           );
         }
 
-        if (format.endsWith("%")) {
-          return `${(value * 100).toFixed(digits)}%`;
+        let formatted: string;
+
+        if (numFmt.endsWith("%")) {
+          formatted = `${(value * 100).toFixed(digits)}%`;
+        } else if (numFmt.endsWith("bp")) {
+          formatted = `${(value * 10000).toFixed(digits)}`;
+        } else {
+          formatted = value.toFixed(digits);
         }
 
-        if (format.endsWith("bp")) {
-          return `${(value * 10000).toFixed(digits)}`;
+        if (showSign && value >= 0) {
+          return `+${formatted}`;
         }
 
-        return value.toFixed(digits);
+        return formatted;
       }
     }
   }

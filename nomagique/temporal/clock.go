@@ -6,120 +6,129 @@ import (
 )
 
 /*
-Clock is a timing primitive. Age is how far the walk has gone; span is the
-characteristic duration. Read emits progress = age/span. A non-positive span
-is an error, not a guessed window.
+Clock calculates temporal progress = age / span.
+Its map carries "age", "span", and the computed "progress".
 */
 type Clock struct {
-	age   types.Input[float64]
-	span  types.Input[float64]
-	value types.Value[float64]
-	err   error
+	initial types.Input[types.Map[string, types.Value[float64]]]
+	next    types.Input[types.Map[string, types.Value[float64]]]
+	err     error
 }
 
+var _ types.IO[types.Map[string, types.Value[float64]]] = (*Clock)(nil)
+
 /*
-NewClock stages age and span in the same unit.
+NewClock instantiates a Clock primitive.
 */
-func NewClock(age types.Input[float64], span types.Input[float64]) *Clock {
+func NewClock(
+	initial types.Input[types.Map[string, types.Value[float64]]],
+) *Clock {
 	return &Clock{
-		age:  age,
-		span: span,
+		initial: initial,
+		next:    types.NewInput[types.Map[string, types.Value[float64]]](),
 	}
 }
 
 /*
-Write stages a new age from the source. Span stays the characteristic duration
-this clock was constructed with.
+Write stages the clock parameter map.
 */
-func (clock *Clock) Write(input types.Input[float64]) {
-	clock.age.Write(input)
+func (clock *Clock) Write(input types.IO[types.Map[string, types.Value[float64]]]) {
+	if input == nil {
+		clock.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"clock: input is nil",
+			nil,
+		))
+
+		return
+	}
+
+	clock.next.Write(input)
 	clock.err = nil
 }
 
 /*
-Read executes progress and returns the clock as output.
+Read computes progress = age / span.
 */
-func (clock *Clock) Read() types.Output[float64] {
-	age := clock.age.Read()
-	span := clock.span.Read()
+func (clock *Clock) Read() types.IO[types.Map[string, types.Value[float64]]] {
+	in := clock.next.Read()
 
-	if age.Error() != "" {
+	if in.Error() != "" {
 		clock.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			age.Error(),
+			errnie.NotFound,
+			in.Error(),
 			nil,
 		))
 
-		return clock
+		return clock.next
 	}
 
-	if span.Error() != "" {
+	mapping := in.Project().Read()
+	ageVal, hasAge := mapping.Get("age")
+	spanVal, hasSpan := mapping.Get("span")
+
+	if !hasAge || !hasSpan {
 		clock.err = errnie.Error(errnie.Err(
 			errnie.Validation,
-			span.Error(),
+			"clock: missing age or span",
 			nil,
 		))
 
-		return clock
+		return clock.next
 	}
 
-	if span.Project().Read() <= 0 {
+	age := ageVal.Read()
+	span := spanVal.Read()
+
+	if span <= 0 {
 		clock.err = errnie.Error(errnie.Err(
 			errnie.Validation,
 			"clock: positive span required",
 			nil,
 		))
 
-		return clock
+		return clock.next
 	}
 
-	if age.Project().Read() < 0 {
-		clock.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			"clock: age cannot be negative",
-			nil,
-		))
+	progress := age / span
+	mapping.Put("progress", types.NewValue(progress))
 
-		return clock
-	}
-
-	clock.value = clock.value.Write(age.Project().Read() / span.Project().Read())
+	clock.next.Write(types.NewInput(types.NewValue(mapping)))
 	clock.err = nil
 
-	return clock
+	return clock.next
 }
 
 /*
-Project is the last computed progress.
+Project returns the current projected map.
 */
-func (clock *Clock) Project() types.Value[float64] {
-	return clock.value
+func (clock *Clock) Project() types.Value[types.Map[string, types.Value[float64]]] {
+	return clock.next.Project()
 }
 
 /*
-Error reports a staging or execution failure.
+Error reports any execution error.
 */
 func (clock *Clock) Error() string {
-	if clock.err == nil {
-		return ""
+	if clock.err != nil {
+		return clock.err.Error()
 	}
 
-	return clock.err.Error()
+	return clock.next.Error()
 }
 
 /*
-Close releases staged state.
+Close releases internal state.
 */
 func (clock *Clock) Close() error {
-	if err := clock.age.Close(); err != nil {
+	if err := clock.initial.Close(); err != nil {
 		return err
 	}
 
-	if err := clock.span.Close(); err != nil {
+	if err := clock.next.Close(); err != nil {
 		return err
 	}
 
-	clock.value = types.Value[float64]{}
 	clock.err = nil
 
 	return nil

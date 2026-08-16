@@ -1,8 +1,8 @@
 import { type MouseEvent, useEffect, useRef } from "react";
 import {
-	CapitalStage,
 	EvidenceStage,
-	ForecastStage,
+	ExecutionStage,
+	StructuralStage,
 } from "#/components/terminal/decision-chain-stages";
 import { DecisionMCTSStage } from "#/components/terminal/decision-mcts-stage";
 import {
@@ -36,9 +36,9 @@ const selectDecision = (event: MouseEvent<HTMLButtonElement>): void => {
 };
 
 /*
-DecisionChain presents the real backend decision path. MCTS is intentionally
-shown as a root-action result: the current search API does not expose child
-visits or rewards, so the UI does not invent a tree it never received.
+DecisionChain presents the backend structural thesis, the evidence-path search,
+and the current execution facts without relabelling any of them as a future
+price forecast.
 */
 export const DecisionChain = ({ index }: { index: number }) => {
 	const rowRef = useRef<HTMLButtonElement>(null);
@@ -102,19 +102,18 @@ export const DecisionChain = ({ index }: { index: number }) => {
 				</div>
 				<div className="flex shrink-0 items-center gap-2 font-mono">
 					<span className="text-[9px] text-(--f4)">
-						edge=
+						thesis=
 						<b
-							data-paint="expectedReturn"
-							data-paint-format=".2bp"
+							data-paint="thesisScore"
+							data-paint-format=".4f"
 							className="font-normal text-(--acc)"
 						/>
-						bp
 					</span>
 					<span className="text-[9px] text-(--f4)">
-						net=
+						conf=
 						<b
-							data-paint="utility"
-							data-paint-format=".5f"
+							data-paint="thesisConfidence"
+							data-paint-format=".1%"
 							className="font-normal text-(--f2)"
 						/>
 					</span>
@@ -149,10 +148,10 @@ export const DecisionChain = ({ index }: { index: number }) => {
 			</div>
 
 			<div className="hidden grid-cols-4 gap-1.5 p-2 font-mono text-[8.5px] group-data-[selected=true]:grid">
-				<ForecastStage />
+				<StructuralStage />
 				<EvidenceStage />
 				<DecisionMCTSStage />
-				<CapitalStage />
+				<ExecutionStage />
 			</div>
 
 			<div className="hidden items-center gap-4 border-(--line) border-t px-3 py-1.5 font-mono text-[8.5px] text-(--f4) group-data-[selected=true]:flex">

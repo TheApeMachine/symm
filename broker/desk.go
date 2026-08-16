@@ -391,18 +391,18 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		defer desk.executeMu.Unlock()
 
 		if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 ||
-			decision.Stoploss == nil || decision.Forecast == nil || desk.price == nil {
+			decision.Stoploss == nil || desk.price == nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				"desk: quantity, forecast, price, and strategy stoploss required for entry",
+				"desk: quantity, price, and strategy stoploss required for entry",
 				nil,
 			))
 		}
 
-		if !decision.Forecast.Ready {
+		if decision.Direction <= 0 || decision.ThesisScore <= 0 {
 			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"desk: valid forecast required for entry",
+				errnie.NotAcceptable,
+				"desk: structural thesis no longer authorizes a long entry",
 				nil,
 			))
 		}
@@ -425,38 +425,128 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		economics, err := desk.price.EntryEconomics(
-			decision.Symbol,
-			decision.ProposedQuantity,
-			decision.PerspectiveReturn,
-		)
+		pair := desk.instrument.Pair(decision.Symbol)
 
-		if err != nil {
+		if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
 			return errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
-				"desk: entry is no longer executable",
-				err,
-			))
-		}
-
-		if len(decision.PerspectiveSources) > 0 &&
-			economics.NetReturn.Cmp(decimal.NewFromFloat64(
-				decision.AdmissionUtilityThreshold,
-			)) <= 0 {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"desk: perspective no longer clears its regulated utility boundary",
+				"desk: instrument and positive tick size required for entry",
 				nil,
 			))
 		}
 
-		decision.ExpectedReturn = economics.ExpectedReturn
-		decision.ExpectedFees = economics.ExpectedFees
-		decision.ExpectedSpread = economics.ExpectedSpread
-		decision.ExpectedImpact = economics.ExpectedImpact
-		decision.OpportunityMargin = economics.NetReturn.Float64()
+		fee := desk.price.Fee(decision.Symbol)
+
+		if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
+			fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: valid taker fee required for entry",
+				nil,
+			))
+		}
+
+		cost, costErr := desk.price.EntryCost(
+			decision.Symbol,
+			decision.ProposedQuantity,
+		)
+
+		if costErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: current entry cannot execute",
+				costErr,
+			))
+		}
+
+		feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
+			decimal.NewFromInt64(100),
+		)
+		multiples := decision.Risk.Multiples
+
+		if multiples.Risk <= 0 {
+			multiples = types.DefaultRiskMultiples()
+		}
+
+		maxLoss := decision.Risk.MaxLoss
+
+		if maxLoss == nil || maxLoss.Sign() <= 0 {
+			maxLoss = decision.ProposedNotional
+		}
+
+		plan := types.NewRiskPlan(types.RiskInputs{
+			ReferencePrice: cost.EntryPrice,
+			Spread:         cost.Spread,
+			Impact:         cost.Impact,
+			TickSize:       &pair.TickSize,
+			ExitFeeRate:    feeRate,
+			EntryFeeRate:   feeRate,
+			MaxLoss:        maxLoss,
+			Multiples:      multiples,
+		})
+
+		if !plan.Present {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: current execution geometry cannot support the admitted risk plan",
+				nil,
+			))
+		}
+
+		if maximum := plan.MaxQuantity(cost.EntryPrice); maximum != nil &&
+			maximum.Sign() > 0 && maximum.Cmp(decision.ProposedQuantity) < 0 {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: current risk budget no longer supports the admitted quantity",
+				nil,
+			))
+		}
+
+		stoploss, stopErr := types.NewStoplossWithPlan(
+			desk.ctx,
+			decision.Symbol,
+			cost.EntryPrice,
+			cost.BestBid,
+			decision.Forecast,
+			max(0, decision.ForecastHorizon),
+			&pair.TickSize,
+			feeRate,
+			feeRate,
+			&plan,
+		)
+
+		if stopErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: current risk plan cannot construct an entry stop",
+				stopErr,
+			))
+		}
+
+		if decision.Stoploss != nil {
+			_ = decision.Stoploss.Close()
+		}
+
+		decision.EntryCost = cost
+		decision.ReferencePrice = decimal.NewFromInt64(0).Add(cost.BestAsk)
+		decision.EntryPrice = decimal.NewFromInt64(0).Add(cost.EntryPrice)
+		decision.Mark = decimal.NewFromInt64(0).Add(cost.BestBid)
+		decision.ProposedNotional = decimal.NewFromInt64(0).Add(cost.GrossNotional).Add(
+			cost.EntryFee,
+		)
+		decision.Risk = plan
+		decision.Stoploss = stoploss
+		decision.ExpectedReturn = nil
+		decision.ExpectedFees = nil
+		decision.ExpectedSpread = nil
+		decision.ExpectedImpact = nil
+		decision.PerspectiveReturn = 0
+		decision.PerspectiveSources = nil
+		decision.Utility = 0
+		decision.OpportunityMargin = 0
 
 		if err = desk.SaveThesis(desk.thesis); err != nil {
+			_ = stoploss.Close()
 			return errnie.Error(errnie.Err(
 				errnie.IO,
 				"desk: checkpoint admitted entry",
@@ -473,7 +563,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.balance,
 			desk.recorder,
 			desk.PositionStore,
-			desk.instrument.Pair(decision.Symbol),
+			pair,
 			decision,
 		)
 		desk.positions.Store(decision.Symbol, position)

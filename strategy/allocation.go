@@ -32,7 +32,10 @@ func NewAllocation(
 }
 
 /*
-size adds execution quantity and forecast-derived protection to an entry.
+Calculate turns structurally admitted candidates into current executable orders.
+It observes only present book depth, fees, capital, and risk geometry. Whether a
+candidate deserves capital was decided by the evidence graph; allocation does
+not invent a future midpoint to veto that conclusion.
 */
 func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 	config := system.Cfg.Snapshot()
@@ -48,7 +51,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 	hasEntry := false
 
 	for _, decision := range decisions {
-		if decision.Action == types.ActionEnter {
+		if decision != nil && decision.Action == types.ActionEnter {
 			hasEntry = true
 			break
 		}
@@ -71,7 +74,13 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 	eligible := make([]*types.Decision, 0, len(decisions))
 
 	for _, decision := range decisions {
-		if decision.Action != types.ActionEnter {
+		if decision == nil || decision.Action != types.ActionEnter {
+			continue
+		}
+
+		if decision.Direction <= 0 || decision.ThesisScore <= 0 {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: current structural thesis does not authorize a long entry"
 			continue
 		}
 
@@ -80,17 +89,10 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		if cash == nil || cash.Sign() <= 0 {
 			decision.Action = types.ActionNothing
 			decision.Reason = "planner: positive quote cash required"
-
-			errnie.Err(
-				errnie.Validation,
-				"planner: positive quote cash required",
-				nil,
-			)
-
 			continue
 		}
 
-		notional := decimal.NewFromInt64(0).Add(cash).Mul(
+		notionalBudget := decimal.NewFromInt64(0).Add(cash).Mul(
 			decimal.NewFromFloat64(config.Planner.MaxAllocationFraction),
 		)
 		price := allocation.desk.Price()
@@ -100,148 +102,111 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			tick.Bid == nil || tick.Bid.Sign() <= 0 {
 			decision.Action = types.ActionNothing
 			decision.Reason = "planner: executable bid and ask required"
-
-			errnie.Err(
-				errnie.Validation,
-				"planner: executable bid and ask required",
-				nil,
-			)
-
 			continue
 		}
 
-		quantity := price.Quantity(decision.Symbol, notional)
+		quantity := price.Quantity(decision.Symbol, notionalBudget)
 
 		if quantity == nil || quantity.Sign() <= 0 {
 			decision.Action = types.ActionNothing
 			decision.Reason = "planner: allocation produced no executable quantity"
-
-			errnie.Err(
-				errnie.Validation,
-				"planner: allocation produced no executable quantity",
-				nil,
-			)
-
 			continue
 		}
 
-		executableQuantity, err := price.ProfitableQuantity(
-			decision.Symbol,
-			quantity,
-			decision.PerspectiveReturn,
-			decision.AdmissionUtilityThreshold,
-		)
+		executable, err := price.ExecutableQuantity(decision.Symbol, quantity)
 
-		if err != nil {
+		if err != nil || executable == nil || executable.Sign() <= 0 {
 			decision.Action = types.ActionNothing
-			decision.Reason = "planner: executable quantity unavailable: " + err.Error()
+			decision.Reason = "planner: current visible asks cannot fill an entry"
+
+			if err != nil {
+				decision.Reason += ": " + err.Error()
+			}
+
 			continue
 		}
 
-		quantity = executableQuantity
-
+		quantity = executable
 		pair := allocation.desk.Instrument().Pair(decision.Symbol)
 
 		if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
 			decision.Action = types.ActionNothing
 			decision.Reason = "planner: instrument tick size required"
-
-			errnie.Err(
-				errnie.Validation,
-				"planner: instrument tick size required",
-				nil,
-			)
-
 			continue
 		}
 
 		fee := price.Fee(decision.Symbol)
 
-		if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 {
+		if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
+			fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
 			decision.Action = types.ActionNothing
-			decision.Reason = "planner: taker fee required"
-
-			errnie.Err(
-				errnie.Validation,
-				"planner: taker fee required",
-				nil,
-			)
-
+			decision.Reason = "planner: valid taker fee required"
 			continue
 		}
 
 		feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
 			decimal.NewFromInt64(100),
 		)
-		decision.AvailableCapital = cash
-		decision.ProposedNotional = price.Mark(decision.Symbol, broker.BUY).Mul(quantity)
-		decision.ProposedQuantity = quantity
-		decision.ReferencePrice = tick.Ask
-		decision.EntryPrice = tick.Ask
-		decision.Mark = tick.Bid
-
-		economics, err := price.EntryEconomics(
-			decision.Symbol,
-			quantity,
-			decision.PerspectiveReturn,
-		)
+		cost, err := price.EntryCost(decision.Symbol, quantity)
 
 		if err != nil {
 			decision.Action = types.ActionNothing
-			decision.Reason = "planner: entry is not executable: " + err.Error()
-
-			continue
-		}
-
-		riskMidpoint := decimal.NewFromInt64(0).Add(tick.Ask).Add(tick.Bid).Div(
-			decimal.NewFromInt64(2),
-		)
-
-		if economics != nil {
-			decision.ExpectedReturn = economics.ExpectedReturn
-			decision.ExpectedFees = economics.ExpectedFees
-			decision.ExpectedSpread = economics.ExpectedSpread
-			decision.ExpectedImpact = economics.ExpectedImpact
-			decision.OpportunityMargin = economics.NetReturn.Float64()
-			decision.Utility = economics.NetReturn.Float64()
-
-			if economics.Midpoint != nil && economics.Midpoint.Sign() > 0 {
-				riskMidpoint = economics.Midpoint
-			}
-		}
-
-		if decision.Utility <= decision.AdmissionUtilityThreshold {
-			decision.Action = types.ActionNothing
-			decision.Reason = "planner: net forecast utility does not clear regulated entry threshold"
-
+			decision.Reason = "planner: current entry cannot be priced: " + err.Error()
 			continue
 		}
 
 		riskPlan := types.NewRiskPlan(types.RiskInputs{
-			ReferencePrice: tick.Ask,
-			// EntryEconomics reports these in midpoint-return units. RiskPlan
-			// consumes price distances, so restore the common price unit here.
-			Spread:       priceDistance(riskMidpoint, decision.ExpectedSpread),
-			Impact:       priceDistance(riskMidpoint, decision.ExpectedImpact),
-			TickSize:     &pair.TickSize,
-			ExitFeeRate:  feeRate,
-			EntryFeeRate: feeRate,
-			MaxLoss:      notional,
-			Multiples:    types.DefaultRiskMultiples(),
+			ReferencePrice: cost.EntryPrice,
+			Spread:         cost.Spread,
+			Impact:         cost.Impact,
+			TickSize:       &pair.TickSize,
+			ExitFeeRate:    feeRate,
+			EntryFeeRate:   feeRate,
+			MaxLoss:        notionalBudget,
+			Multiples:      types.DefaultRiskMultiples(),
 		})
-		decision.Risk = riskPlan
 
-		horizon := decision.ForecastHorizon
-
-		if len(decision.ForwardCurve) > 0 {
-			horizon = len(decision.ForwardCurve)
+		if !riskPlan.Present {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: current execution geometry cannot support a risk plan"
+			continue
 		}
 
+		if riskQuantity := riskPlan.MaxQuantity(cost.EntryPrice); riskQuantity != nil &&
+			riskQuantity.Sign() > 0 && riskQuantity.Cmp(quantity) < 0 {
+			quantity = riskQuantity
+			cost, err = price.EntryCost(decision.Symbol, quantity)
+
+			if err != nil {
+				decision.Action = types.ActionNothing
+				decision.Reason = "planner: risk-capped entry cannot be priced: " + err.Error()
+				continue
+			}
+
+			riskPlan = types.NewRiskPlan(types.RiskInputs{
+				ReferencePrice: cost.EntryPrice,
+				Spread:         cost.Spread,
+				Impact:         cost.Impact,
+				TickSize:       &pair.TickSize,
+				ExitFeeRate:    feeRate,
+				EntryFeeRate:   feeRate,
+				MaxLoss:        notionalBudget,
+				Multiples:      types.DefaultRiskMultiples(),
+			})
+
+			if !riskPlan.Present {
+				decision.Action = types.ActionNothing
+				decision.Reason = "planner: risk-capped execution geometry is invalid"
+				continue
+			}
+		}
+
+		horizon := max(0, decision.ForecastHorizon)
 		stoploss, err := types.NewStoplossWithPlan(
 			allocation.ctx,
 			decision.Symbol,
-			tick.Ask,
-			tick.Bid,
+			cost.EntryPrice,
+			cost.BestBid,
 			decision.Forecast,
 			horizon,
 			&pair.TickSize,
@@ -252,28 +217,47 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		if err != nil {
 			decision.Action = types.ActionNothing
-			decision.Reason = "planner: forecast cannot construct an executable stop: " + err.Error()
-
+			decision.Reason = "planner: current risk plan cannot construct a stop: " + err.Error()
 			continue
 		}
 
+		decision.AvailableCapital = decimal.NewFromInt64(0).Add(cash)
+		decision.ProposedQuantity = decimal.NewFromInt64(0).Add(quantity)
+		decision.ProposedNotional = decimal.NewFromInt64(0).Add(cost.GrossNotional).Add(
+			cost.EntryFee,
+		)
+		decision.ReferencePrice = decimal.NewFromInt64(0).Add(cost.BestAsk)
+		decision.EntryPrice = decimal.NewFromInt64(0).Add(cost.EntryPrice)
+		decision.Mark = decimal.NewFromInt64(0).Add(cost.BestBid)
+		decision.EntryCost = cost
+		decision.Risk = riskPlan
 		decision.Stoploss = stoploss
+
+		// Legacy forecast fields are deliberately cleared. The current execution
+		// observation is carried by EntryCost and the structural case by Thesis*.
+		decision.ExpectedReturn = nil
+		decision.ExpectedFees = nil
+		decision.ExpectedSpread = nil
+		decision.ExpectedImpact = nil
+		decision.PerspectiveReturn = 0
+		decision.PerspectiveSources = nil
+		decision.Utility = 0
+		decision.OpportunityMargin = 0
 		eligible = append(eligible, decision)
 	}
 
 	admitBest(eligible, normalSlots, reserveSlots, occupiedSymbols(allocation.desk))
-
 	return nil
 }
 
 /*
-admissionOrder ranks fill candidates by the regulator-owned gates: net
-utility first, graph score second. Equal scores compare symbol identity so
-the same set always fills the same slots.
+admissionOrder ranks current candidates by structural thesis first and the
+causal MCTS evidence path second. Equal evidence compares symbol identity so a
+replay of the same state makes the same slot decision.
 */
 func admissionOrder(left, right *types.Decision) int {
-	if left.Utility != right.Utility {
-		if left.Utility > right.Utility {
+	if left.ThesisScore != right.ThesisScore {
+		if left.ThesisScore > right.ThesisScore {
 			return -1
 		}
 
@@ -348,41 +332,6 @@ func admitBest(
 		decision.Stoploss = nil
 		decision.Reason = "planner: no position slot available for allocation"
 	}
-}
-
-/*
-priceDistance converts a dimensionless midpoint-return fraction back into the
-price distance RiskPlan expects. Entry economics and risk geometry deliberately
-keep their units explicit rather than relying on similarly sized decimals.
-*/
-func priceDistance(
-	reference *decimal.Decimal,
-	fraction *decimal.Decimal,
-) *decimal.Decimal {
-	if reference == nil || reference.Sign() <= 0 || fraction == nil || fraction.Sign() < 0 {
-		return nil
-	}
-
-	return decimal.NewFromInt64(0).Add(reference).Mul(fraction)
-}
-
-/*
-visibleAskQuantity keeps a cash-sized request inside the ticker's observable
-ask. A deeper book walk already ran when return sources exist; this is the
-ticker-only bound so a missing L3 book cannot admit more than it can fill.
-*/
-func visibleAskQuantity(askQty float64, requested *decimal.Decimal) *decimal.Decimal {
-	if requested == nil || requested.Sign() <= 0 || askQty <= 0 {
-		return requested
-	}
-
-	visible := decimal.NewFromFloat64(askQty)
-
-	if requested.Cmp(visible) <= 0 {
-		return requested
-	}
-
-	return visible
 }
 
 func occupiedSymbols(desk *broker.Desk) map[string]bool {

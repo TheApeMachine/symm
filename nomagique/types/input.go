@@ -11,10 +11,14 @@ type Input[T comparable] interface {
 	IO[T]
 }
 
-func NewInput[T comparable](value Value[T]) Input[T] {
-	return &InputValue[T]{
-		Value: value,
+func NewInput[T comparable](values ...Value[T]) Input[T] {
+	if len(values) > 0 {
+		return &InputValue[T]{
+			Value: values[0],
+		}
 	}
+
+	return &InputValue[T]{}
 }
 
 func NewInputs[T comparable](values ...Value[T]) iter.Seq[Input[T]] {

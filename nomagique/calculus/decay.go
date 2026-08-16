@@ -6,144 +6,141 @@ import (
 )
 
 /*
-Decay walks a value toward zero. With no shape that walk is linear. A shape
-IO (Exponential) and a clock IO replace the glued exp(-βt) form.
+Decay walks a numeric value toward zero. Without clock or shape, it zeroes
+out the value in one iteration. When clock or shape are provided in the map,
+it modulates the decayed level.
 */
 type Decay struct {
-	clock types.IO[float64]
-	shape types.IO[float64]
-	start types.Input[float64]
-	value types.Value[float64]
-	err   error
+	initial types.Input[types.Map[string, types.Value[float64]]]
+	next    types.Input[types.Map[string, types.Value[float64]]]
+	err     error
 }
 
-var _ types.IO[float64] = (*Decay)(nil)
+var _ types.IO[types.Map[string, types.Value[float64]]] = (*Decay)(nil)
 
 /*
-NewDecay takes a clock and an optional shape. A nil shape is linear.
+NewDecay instantiates a Decay primitive.
 */
-func NewDecay(clock types.IO[float64], shape types.IO[float64]) *Decay {
+func NewDecay(
+	initial types.Input[types.Map[string, types.Value[float64]]],
+) *Decay {
 	return &Decay{
-		clock: clock,
-		shape: shape,
-		start: types.NewInput[float64](),
+		initial: initial,
+		next:    types.NewInput[types.Map[string, types.Value[float64]]](),
 	}
 }
 
 /*
-Write stages the starting level from the source.
+Write stages the decay map.
 */
-func (decay *Decay) Write(input types.Input[float64]) {
-	decay.start.Write(input)
+func (decay *Decay) Write(input types.IO[types.Map[string, types.Value[float64]]]) {
+	if input == nil {
+		decay.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"decay: input is nil",
+			nil,
+		))
+
+		return
+	}
+
+	decay.next.Write(input)
 	decay.err = nil
 }
 
 /*
-Read executes the remaining level and returns the decay as output.
+Read computes the decayed level.
 */
-func (decay *Decay) Read() types.Output[float64] {
-	if decay.clock == nil {
-		decay.err = errnie.Error(errnie.Err(
-			errnie.Validation,
-			"decay: clock required",
-			nil,
-		))
+func (decay *Decay) Read() types.IO[types.Map[string, types.Value[float64]]] {
+	in := decay.next.Read()
 
-		return decay
-	}
-
-	start := decay.start.Read()
-
-	if start.Error() != "" {
+	if in.Error() != "" {
 		decay.err = errnie.Error(errnie.Err(
 			errnie.NotFound,
-			start.Error(),
+			in.Error(),
 			nil,
 		))
 
-		return decay
+		return decay.next
 	}
 
-	progress := decay.clock.Read()
+	mapping := in.Project().Read()
+	levelVal, hasLevel := mapping.Get("level")
 
-	if progress.Error() != "" {
+	if !hasLevel {
 		decay.err = errnie.Error(errnie.Err(
 			errnie.Validation,
-			progress.Error(),
+			"decay: missing level",
 			nil,
 		))
 
-		return decay
+		return decay.next
 	}
 
-	remaining := 1 - progress.Project().Read()
+	level := levelVal.Read()
+	clockVal, hasClock := mapping.Get("clock")
+	shapeVal, hasShape := mapping.Get("shape")
+
+	if !hasClock {
+		mapping.Put("level", types.NewValue(0.0))
+		mapping.Put("result", types.NewValue(0.0))
+
+		decay.next.Write(types.NewInput(types.NewValue(mapping)))
+		decay.err = nil
+
+		return decay.next
+	}
+
+	remaining := 1.0 - clockVal.Read()
 
 	if remaining < 0 {
 		remaining = 0
 	}
 
-	if decay.shape != nil {
-		decay.shape.Write(progress)
-		shaped := decay.shape.Read()
-
-		if shaped.Error() != "" {
-			decay.err = errnie.Error(errnie.Err(
-				errnie.Validation,
-				shaped.Error(),
-				nil,
-			))
-
-			return decay
-		}
-
-		remaining = shaped.Project().Read()
+	if hasShape {
+		remaining = shapeVal.Read()
 	}
 
-	decay.value = decay.value.Write(start.Project().Read() * remaining)
+	result := level * remaining
+	mapping.Put("level", types.NewValue(result))
+	mapping.Put("result", types.NewValue(result))
+
+	decay.next.Write(types.NewInput(types.NewValue(mapping)))
 	decay.err = nil
 
-	return decay
+	return decay.next
 }
 
 /*
-Project is the last remaining level.
+Project returns the current projected map.
 */
-func (decay *Decay) Project() types.Value[float64] {
-	return decay.value
+func (decay *Decay) Project() types.Value[types.Map[string, types.Value[float64]]] {
+	return decay.next.Project()
 }
 
 /*
-Error reports a staging or execution failure.
+Error reports any execution error.
 */
 func (decay *Decay) Error() string {
-	if decay.err == nil {
-		return ""
+	if decay.err != nil {
+		return decay.err.Error()
 	}
 
-	return decay.err.Error()
+	return decay.next.Error()
 }
 
 /*
-Close resets and closes owned modifiers.
+Close releases internal state.
 */
 func (decay *Decay) Close() error {
-	if decay.clock != nil {
-		if err := decay.clock.Close(); err != nil {
-			return err
-		}
-	}
-
-	if decay.shape != nil {
-		if err := decay.shape.Close(); err != nil {
-			return err
-		}
-	}
-
-	if err := decay.start.Close(); err != nil {
+	if err := decay.initial.Close(); err != nil {
 		return err
 	}
 
-	decay.value = types.Value[float64]{}
+	if err := decay.next.Close(); err != nil {
+		return err
+	}
+
 	decay.err = nil
 
 	return nil

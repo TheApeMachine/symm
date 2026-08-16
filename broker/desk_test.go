@@ -19,16 +19,11 @@ func brokerForecast(value float64) *learning.RLSOutput {
 }
 
 func TestDeskExecute(t *testing.T) {
-	Convey("Given a positive forecast that does not pay current execution costs", t, func() {
+	Convey("Given a decision whose long thesis is no longer supported", t, func() {
 		desk := deskFixture(t)
 		decision := deskDecisionFixture(t, desk, "MARGINAL/USD", false)
-		forecast := brokerForecast(-0.0001)
-		decision.Forecast = forecast
-		decision.PerspectiveReturn = forecast.Value
-		decision.PerspectiveSources = []types.DecisionPerspectiveSource{{
-			Source: "causal", LogReturn: forecast.Value, Horizon: 1, Confidence: 1,
-		}}
-		decision.AdmissionUtilityThreshold = 0
+		decision.Direction = -1
+		decision.ThesisScore = -0.2
 
 		Convey("It should refuse the order at the final atomic execution boundary", func() {
 			err := desk.Execute(decision)
@@ -420,6 +415,11 @@ func deskDecisionFixture(
 
 	decision := types.NewDecision(types.ActionEnter, symbol)
 	decision.Opportunity = opportunity
+	decision.Direction = 1
+	decision.ThesisScore = 0.6
+	decision.ThesisConfidence = 0.8
+	decision.ThesisSupport = 0.8
+	decision.ThesisContradiction = 0.2
 	decision.Forecast = forecast
 	decision.PerspectiveReturn = forecast.Value
 	decision.AdmissionUtilityThreshold = -1

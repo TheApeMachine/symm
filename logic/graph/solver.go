@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/theapemachine/datura"
@@ -13,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
 /*
@@ -45,6 +47,7 @@ const (
 	KindCausal      Kind = "causal"
 	KindCognition   Kind = "cognition"
 	KindPrediction  Kind = "prediction"
+	KindHypothesis  Kind = "hypothesis"
 )
 
 /*
@@ -99,6 +102,7 @@ type Graph struct {
 	ForwardCurve    []float64           `json:"-"`
 	TaskSkill       float64             `json:"taskSkill"`
 	TaskSkillReady  bool                `json:"taskSkillReady"`
+	DecisionTarget  string              `json:"decisionTarget,omitempty"`
 	Nodes           map[string]*Node    `json:"nodes"`
 	Edges           []*Edge             `json:"edges"`
 	Adjacency       map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
@@ -119,6 +123,7 @@ func (graph *Graph) CheckpointState() any {
 		ForwardCurve    []float64           `json:"forwardCurve"`
 		TaskSkill       float64             `json:"taskSkill"`
 		TaskSkillReady  bool                `json:"taskSkillReady"`
+		DecisionTarget  string              `json:"decisionTarget,omitempty"`
 		Nodes           map[string]*Node    `json:"nodes"`
 		Edges           []*Edge             `json:"edges"`
 		Adjacency       map[string][]string `json:"adjacency"`
@@ -129,6 +134,7 @@ func (graph *Graph) CheckpointState() any {
 		ForwardCurve:    slices.Clone(graph.ForwardCurve),
 		TaskSkill:       graph.TaskSkill,
 		TaskSkillReady:  graph.TaskSkillReady,
+		DecisionTarget:  graph.DecisionTarget,
 		Nodes:           graph.Nodes,
 		Edges:           graph.Edges,
 		Adjacency:       graph.Adjacency,
@@ -189,16 +195,53 @@ func (graph *Graph) AddEdge(edge *Edge) {
 	}
 }
 
+/*
+OpportunitySummary is the dimensionless evidence balance for the graph's
+explicit decision proposition. Conditions are reported separately and never
+smuggled into directional support.
+*/
+type OpportunitySummary struct {
+	Hypothesis    string
+	Support       float64
+	Contradiction float64
+	Conditions    float64
+	Balance       float64
+	Confidence    float64
+	Score         float64
+	Direction     float64
+	Ready         bool
+}
+
+/*
+Roots returns only evidence roots that can reach the configured decision
+proposition. The graph remains fully visible on the wire, but MCTS no longer
+spends simulations on disconnected explanatory islands.
+*/
 func (graph *Graph) Roots() []string {
+	if graph == nil {
+		return nil
+	}
+
+	relevant := graph.relevantNodes()
 	incoming := make(map[string]bool)
 
 	for _, edge := range graph.Edges {
+		if !relevant[edge.From] || !relevant[edge.To] {
+			continue
+		}
+
 		incoming[edge.To] = true
 	}
 
 	roots := make([]string, 0)
 
-	for nodeID, node := range graph.Nodes {
+	for nodeID := range relevant {
+		if nodeID == graph.DecisionTarget {
+			continue
+		}
+
+		node := graph.Nodes[nodeID]
+
 		if node == nil {
 			continue
 		}
@@ -209,9 +252,6 @@ func (graph *Graph) Roots() []string {
 			if held {
 				continue
 			}
-
-			roots = append(roots, nodeID)
-			continue
 		}
 
 		if !incoming[nodeID] {
@@ -219,48 +259,75 @@ func (graph *Graph) Roots() []string {
 		}
 	}
 
+	/*
+		A relevant cycle can have no conventional root. In that case the direct
+		predecessors of the decision proposition are honest entry points: every
+		one is an evidence statement the search can evaluate immediately.
+	*/
+	if len(roots) == 0 && graph.DecisionTarget != "" {
+		for _, edge := range graph.Edges {
+			if edge.To == graph.DecisionTarget && relevant[edge.From] {
+				roots = append(roots, edge.From)
+			}
+		}
+	}
+
 	slices.Sort(roots)
+	roots = slices.Compact(roots)
 	return roots
 }
 
-/*
-ReadyForSearch reports whether the accumulated lifecycle graph has a calibrated
-direction forecast and at least one reachable confidence-weighted relation.
-*/
-func (graph *Graph) ReadyForSearch() bool {
-	if graph == nil || graph.Forecast == nil || !graph.Forecast.Ready ||
-		graph.ForecastHorizon < 1 || graph.Forecast.Scale <= 0 ||
-		graph.Forecast.DegreesOfFreedom <= 0 {
-		return false
+func (graph *Graph) relevantNodes() map[string]bool {
+	relevant := make(map[string]bool)
+
+	if graph == nil {
+		return relevant
 	}
 
-	visited := make(map[string]bool)
-	queue := append([]string(nil), graph.Roots()...)
+	if graph.DecisionTarget == "" || graph.Nodes[graph.DecisionTarget] == nil {
+		for nodeID := range graph.Nodes {
+			relevant[nodeID] = true
+		}
+
+		return relevant
+	}
+
+	reverse := make(map[string][]string)
+
+	for _, edge := range graph.Edges {
+		reverse[edge.To] = append(reverse[edge.To], edge.From)
+	}
+
+	queue := []string{graph.DecisionTarget}
 
 	for len(queue) > 0 {
-		source := queue[0]
+		nodeID := queue[0]
 		queue = queue[1:]
 
-		if visited[source] {
+		if relevant[nodeID] {
 			continue
 		}
 
-		visited[source] = true
-
-		for _, edge := range graph.Edges {
-			if edge.From != source {
-				continue
-			}
-
-			queue = append(queue, edge.To)
-			if graph.Nodes[edge.To] != nil && edge.Weight != 0 &&
-				edge.Confidence != 0 {
-				return true
-			}
-		}
+		relevant[nodeID] = true
+		queue = append(queue, reverse[nodeID]...)
 	}
 
-	return false
+	return relevant
+}
+
+/*
+ReadyForSearch reports whether the lifecycle has an explicit proposition,
+directional evidence for or against it, and at least one explanatory root that
+can reach it. Predictive coding may contribute, but it is not a prerequisite.
+*/
+func (graph *Graph) ReadyForSearch() bool {
+	if graph == nil || graph.DecisionTarget == "" ||
+		graph.Nodes[graph.DecisionTarget] == nil {
+		return false
+	}
+
+	summary := graph.OpportunitySummary()
+	return summary.Ready && len(graph.Roots()) > 0
 }
 
 func (graph *Graph) Targets(nodeID string) []string {
@@ -269,9 +336,21 @@ func (graph *Graph) Targets(nodeID string) []string {
 
 func (graph *Graph) NodeValue(nodeID string) (float64, float64) {
 	node := graph.Nodes[nodeID]
+
+	if node == nil {
+		return 0, 0
+	}
+
 	return node.Value, node.Confidence
 }
 
+/*
+EdgeValue states graph relations in the reward domain used by MCTS. Supports
+and contradictions are signed evidence. Conditions, temporal links,
+redundancy, and independence remain traversable context with zero directional
+reward. Stale or incomparable claims count against a decision because they
+cannot justify risking current capital.
+*/
 func (graph *Graph) EdgeValue(from, to string) (float64, float64) {
 	evidenceMass := 0.0
 	confidenceMass := 0.0
@@ -282,13 +361,8 @@ func (graph *Graph) EdgeValue(from, to string) (float64, float64) {
 			continue
 		}
 
-		weight := edge.Weight
-
-		if edge.Relation == RelationContradicts {
-			weight = -weight
-		}
-
-		evidenceMass += weight * edge.Confidence
+		sign := relationSign(edge.Relation)
+		evidenceMass += sign * edge.Weight * edge.Confidence
 		confidenceMass += edge.Confidence
 		relationCount++
 	}
@@ -299,6 +373,75 @@ func (graph *Graph) EdgeValue(from, to string) (float64, float64) {
 	}
 
 	panic("graph: edge not found from " + from + " to " + to)
+}
+
+func relationSign(relation RelationType) float64 {
+	switch relation {
+	case RelationSupports:
+		return 1
+	case RelationContradicts, RelationStaleRelativeTo, RelationIncomparableWith:
+		return -1
+	default:
+		return 0
+	}
+}
+
+/*
+OpportunitySummary reduces only edges that directly address the proposition.
+Intermediate graph structure remains available to MCTS but is not counted a
+second time in the thesis balance.
+*/
+func (graph *Graph) OpportunitySummary() OpportunitySummary {
+	summary := OpportunitySummary{}
+
+	if graph == nil || graph.DecisionTarget == "" ||
+		graph.Nodes[graph.DecisionTarget] == nil {
+		return summary
+	}
+
+	summary.Hypothesis = graph.DecisionTarget
+	confidenceMass := 0.0
+	confidenceWeight := 0.0
+
+	for _, edge := range graph.Edges {
+		if edge.To != graph.DecisionTarget || edge.Weight <= 0 || edge.Confidence <= 0 {
+			continue
+		}
+
+		mass := edge.Weight * edge.Confidence
+
+		switch relationSign(edge.Relation) {
+		case 1:
+			summary.Support += mass
+			confidenceMass += edge.Weight * edge.Confidence
+			confidenceWeight += edge.Weight
+		case -1:
+			summary.Contradiction += mass
+			confidenceMass += edge.Weight * edge.Confidence
+			confidenceWeight += edge.Weight
+		default:
+			summary.Conditions += mass
+		}
+	}
+
+	directional := summary.Support + summary.Contradiction
+
+	if !(directional > 0) || !(confidenceWeight > 0) {
+		return summary
+	}
+
+	summary.Balance = (summary.Support - summary.Contradiction) / directional
+	summary.Confidence = confidenceMass / confidenceWeight
+	summary.Score = summary.Balance * summary.Confidence
+	summary.Ready = true
+
+	if summary.Score > 0 {
+		summary.Direction = 1
+	} else if summary.Score < 0 {
+		summary.Direction = -1
+	}
+
+	return summary
 }
 
 /*
@@ -447,6 +590,15 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
+		if err := solver.connectLongOpportunity(thesis, symbol, graph); err != nil {
+			graphErr = errnie.Error(errnie.Err(
+				errnie.Internal,
+				"graph: failed to connect long-opportunity hypothesis - "+err.Error(),
+				err,
+			))
+			return false
+		}
+
 		if symbolName == types.Focus() {
 			utils.Publish(solver.ui, datura.NewMap("graph", graph))
 		}
@@ -515,37 +667,61 @@ func (solver *Solver) extractManifoldNodes(
 	thesis *types.Thesis,
 	graph *Graph,
 ) {
-	if thesis == nil {
+	if thesis == nil || graph == nil {
 		return
 	}
 
-	reading, found := thesis.PhaseSnapshot()
+	if reading, found := thesis.PhaseSnapshot(); found {
+		if inference, ready := reading.Inference(); ready {
+			graph.AddNode(&Node{
+				ID:         "man:universe:phase_direction",
+				Source:     "manifold",
+				Kind:       KindManifold,
+				Value:      inference.Direction,
+				Strength:   inference.Confidence,
+				Confidence: inference.Confidence,
+				At:         reading.At,
+				Metadata: map[string]any{
+					"support":       inference.Support,
+					"contradiction": inference.Contradiction,
+					"balance":       inference.Balance,
+					"responses":     inference.Responses,
+				},
+			})
+		}
+	}
 
-	if !found {
+	reading, found := thesis.ManifoldSnapshot()
+
+	if !found || !reading.IsFinite() {
 		return
 	}
 
-	alignment, aligned := reading.Alignment()
-
-	if !aligned {
-		return
+	fields := []struct {
+		name  string
+		value float64
+	}{
+		{name: "divergence", value: reading.Divergence},
+		{name: "guidance_speed", value: reading.GuidanceSpeed},
+		{name: "coherence", value: reading.CoherenceMag2},
+		{name: "pressure_gradient", value: reading.PressureGradNorm},
+		{name: "viscosity", value: reading.ViscosityProxy},
 	}
 
-	graph.AddNode(&Node{
-		ID:         "man:universe:phase_alignment",
-		Source:     "manifold",
-		Kind:       KindManifold,
-		Value:      alignment.Outcome.Return,
-		Strength:   alignment.Similarity,
-		Confidence: alignment.Similarity,
-		At:         reading.At,
-		Metadata: map[string]any{
-			"angle":      alignment.Angle,
-			"horizon":    alignment.Outcome.Horizon,
-			"observedAt": alignment.ObservedAt,
-			"outcome":    alignment.Outcome,
-		},
-	})
+	for _, field := range fields {
+		graph.AddNode(&Node{
+			ID:         "man:universe:" + field.name,
+			Source:     "manifold",
+			Kind:       KindManifold,
+			Value:      field.value,
+			Strength:   math.Abs(field.value),
+			Confidence: 1,
+			At:         graph.At,
+			Metadata: map[string]any{
+				"observer": "relaxed physical field",
+			},
+		})
+	}
 }
 
 /*
@@ -555,37 +731,44 @@ direction call). The call is not a priced return.
 func (solver *Solver) extractResonanceNodes(
 	symbol *types.Symbol, graph *Graph,
 ) {
-	if symbol == nil {
+	if symbol == nil || graph == nil {
 		return
 	}
 
-	stored, found := symbol.Resonance.Load(types.ResonanceReturnForecastKey)
+	stored, forecastFound := symbol.Resonance.Load(types.ResonanceReturnForecastKey)
+	returnForecast, forecastOK := stored.(*types.ResonanceReturnForecast)
 
-	if !found {
-		return
-	}
+	if forecastFound && forecastOK && returnForecast.Distribution.Ready {
+		graphForecast := returnForecast.Distribution
+		graph.Forecast = &graphForecast
+		graph.ForecastHorizon = max(0, returnForecast.Horizon)
+		graph.ForwardCurve = nil
 
-	returnForecast, ok := stored.(*types.ResonanceReturnForecast)
+		if returnForecast.Call != 0 {
+			confidence := directionPosteriorConfidence(
+				returnForecast.Distribution,
+				returnForecast.Call,
+			)
 
-	if !ok {
-		return
-	}
-
-	if returnForecast.Horizon < 1 || !returnForecast.Distribution.Ready ||
-		returnForecast.Call == 0 {
-		return
-	}
-
-	if coderValue, coderFound := symbol.Resonance.Load(symbol.Symbol); coderFound {
-		if coder, valid := coderValue.(*learning.ResonanceManifold); valid {
-			graph.TaskSkill, graph.TaskSkillReady = coder.TaskSkill()
+			if confidence > 0 {
+				graph.AddNode(&Node{
+					ID:         fmt.Sprintf("res:%s:forecast", symbol.Symbol),
+					Symbol:     symbol.Symbol,
+					Source:     "resonance",
+					Kind:       KindResonance,
+					Value:      returnForecast.Call,
+					Strength:   confidence,
+					Confidence: confidence,
+					At:         graph.At,
+					Metadata: map[string]any{
+						"horizon":   returnForecast.Horizon,
+						"held":      returnForecast.Held,
+						"candidate": returnForecast.CandidateCall,
+					},
+				})
+			}
 		}
 	}
-
-	graphForecast := returnForecast.Distribution
-	graph.Forecast = &graphForecast
-	graph.ForecastHorizon = returnForecast.Horizon
-	graph.ForwardCurve = nil
 
 	coderValue, found := symbol.Resonance.Load(symbol.Symbol)
 
@@ -599,6 +782,7 @@ func (solver *Solver) extractResonanceNodes(
 		return
 	}
 
+	graph.TaskSkill, graph.TaskSkillReady = coder.TaskSkill()
 	layers, surprise, _ := coder.WireSnapshot()
 
 	if len(layers) == 0 || math.IsNaN(surprise) || math.IsInf(surprise, 0) {
@@ -611,19 +795,37 @@ func (solver *Solver) extractResonanceNodes(
 		Source:     "resonance",
 		Kind:       KindResonance,
 		Value:      surprise,
+		Strength:   math.Abs(surprise),
 		Confidence: 1,
 		At:         graph.At,
 	})
+}
 
-	graph.AddNode(&Node{
-		ID:         fmt.Sprintf("res:%s:forecast", symbol.Symbol),
-		Symbol:     symbol.Symbol,
-		Source:     "resonance",
-		Kind:       KindResonance,
-		Value:      returnForecast.Call,
-		Confidence: 1,
-		At:         graph.At,
-	})
+func directionPosteriorConfidence(
+	forecast learning.RLSOutput,
+	call float64,
+) float64 {
+	if !forecast.Ready || forecast.Scale <= 0 || forecast.DegreesOfFreedom <= 0 ||
+		math.IsNaN(forecast.Value) || math.IsInf(forecast.Value, 0) {
+		return 0
+	}
+
+	distribution := distuv.StudentsT{
+		Mu:    forecast.Value,
+		Sigma: forecast.Scale,
+		Nu:    forecast.DegreesOfFreedom,
+	}
+	positive := 1 - distribution.CDF(0)
+
+	if call > 0 {
+		return min(max(positive, 0), 1)
+	}
+
+	if call < 0 {
+		return min(max(1-positive, 0), 1)
+	}
+
+	return 0
 }
 
 /*
@@ -1102,6 +1304,203 @@ func (solver *Solver) inferStructuralEdges(
 	}
 
 	return nil
+}
+
+/*
+connectLongOpportunity gives every analytical module one explicit proposition
+to address: whether current conditioned evidence supports risking capital on a
+long position in this symbol. The graph remains an interpretation mechanism;
+no relation here is converted into a price forecast.
+*/
+func (solver *Solver) connectLongOpportunity(
+	thesis *types.Thesis,
+	symbol *types.Symbol,
+	graph *Graph,
+) error {
+	if symbol == nil || graph == nil {
+		return nil
+	}
+
+	target := fmt.Sprintf("hyp:%s:long_opportunity", symbol.Symbol)
+	graph.DecisionTarget = target
+	graph.AddNode(&Node{
+		ID:         target,
+		Symbol:     symbol.Symbol,
+		Source:     "strategy",
+		Kind:       KindHypothesis,
+		Confidence: 1,
+		At:         graph.At,
+		Metadata: map[string]any{
+			"question": "does the conditioned evidence support risking capital on a long position now?",
+		},
+	})
+
+	for _, node := range graph.Nodes {
+		if node == nil || node.ID == target || node.Confidence <= 0 {
+			continue
+		}
+
+		relation, reason := opportunityRelation(node)
+
+		if relation == "" {
+			continue
+		}
+
+		weight, err := nodeEvidenceWeight(node)
+
+		if err != nil {
+			return fmt.Errorf("opportunity weight for %s: %w", node.ID, err)
+		}
+
+		if weight <= 0 {
+			continue
+		}
+
+		confidence := min(max(node.Confidence, 0), 1)
+		graph.AddEdge(&Edge{
+			From:       node.ID,
+			To:         target,
+			Relation:   relation,
+			Weight:     weight,
+			Confidence: confidence,
+			Evidence:   []string{node.ID, target},
+			At:         graph.At,
+			Reason:     reason,
+		})
+	}
+
+	return nil
+}
+
+func opportunityRelation(node *Node) (RelationType, string) {
+	switch node.Kind {
+	case KindCategory:
+		category, _ := node.Metadata["type"].(string)
+		relation := categoryOpportunityRelation(types.CategoryType(category))
+		return relation, "category " + category + " addresses the long-opportunity thesis"
+	case KindResonance:
+		if strings.HasSuffix(node.ID, ":forecast") {
+			return signedOpportunityRelation(node.Value),
+				"predictive coding contributes a direction opinion"
+		}
+
+		return RelationConditions, "predictive-coding surprise conditions confidence"
+	case KindCausal:
+		if strings.HasSuffix(node.ID, ":doExpectation") ||
+			strings.HasSuffix(node.ID, ":uplift") {
+			return signedOpportunityRelation(node.Value),
+				"Pearl intervention evidence addresses the direction of the thesis"
+		}
+
+		return RelationConditions, "causal ladder context conditions the thesis"
+	case KindManifold:
+		if node.ID == "man:universe:phase_direction" {
+			return signedOpportunityRelation(node.Value),
+				"phase-geodesic consensus addresses universe direction"
+		}
+
+		return RelationConditions, "relaxed physical field conditions the thesis"
+	case KindCognition:
+		regime, _ := node.Metadata["regime"].(string)
+		return categoryOpportunityRelation(categoryFromText(regime)),
+			"cognition regime addresses thesis persistence"
+	case KindPrediction:
+		path, _ := node.Metadata["path"].(string)
+		return categoryOpportunityRelation(categoryFromText(path)),
+			"cognition lookahead addresses the next structural regime"
+	default:
+		return "", ""
+	}
+}
+
+func signedOpportunityRelation(value float64) RelationType {
+	switch {
+	case value > 0:
+		return RelationSupports
+	case value < 0:
+		return RelationContradicts
+	default:
+		return RelationConditions
+	}
+}
+
+func categoryFromText(value string) types.CategoryType {
+	if value == "" {
+		return types.CategoryTypeNone
+	}
+
+	for _, category := range types.CategoryOrder {
+		if value == string(category) || strings.Contains(value, string(category)) {
+			return category
+		}
+	}
+
+	return types.CategoryTypeNone
+}
+
+/*
+categoryOpportunityRelation states category semantics for a long-only account.
+Directional precursor and authenticity states support; manipulation, decay, and
+adverse systemic states contradict; states whose direction depends on another
+module remain conditions rather than being guessed bullish or bearish.
+*/
+func categoryOpportunityRelation(category types.CategoryType) RelationType {
+	switch category {
+	case types.VerticalIgnition,
+		types.CoiledCompression,
+		types.OrganicTrend,
+		types.AggressiveDrive,
+		types.LoadedImbalance,
+		types.InefficientLag,
+		types.DecoupledMove,
+		types.RiskOnSurge,
+		types.DivergentMove,
+		types.DecoupledAlpha,
+		types.EndogenousAlpha,
+		types.HardSupport,
+		types.Laminar,
+		types.Inertial,
+		types.Frenzy,
+		types.Organic:
+		return RelationSupports
+	case types.SpoofTrap,
+		types.BookThinning,
+		types.AnchorStall,
+		types.FadedExhaustion,
+		types.SystemicSlump,
+		types.ToxicBluff,
+		types.SystemicBeta,
+		types.CausalNoise,
+		types.MechanicalCollapse,
+		types.ThermalExhaustion,
+		types.FragileExpansion,
+		types.ActiveReversal,
+		types.VolumeStarvation,
+		types.StochasticNoise,
+		types.DivergentStress,
+		types.Turbulent,
+		types.Saturation,
+		types.Exhaustion:
+		return RelationContradicts
+	case types.CategoryTypeNone:
+		return ""
+	default:
+		return RelationConditions
+	}
+}
+
+func nodeEvidenceWeight(node *Node) (float64, error) {
+	if node == nil {
+		return 0, nil
+	}
+
+	strength := node.Strength
+
+	if !(strength > 0) {
+		strength = math.Abs(node.Value)
+	}
+
+	return magnitudeWeight(strength)
 }
 
 /*

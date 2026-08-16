@@ -204,9 +204,6 @@ func (measurements *Measurements) Generate(
 	}
 
 	for symbolIndex, symbol := range symbols {
-		symbolIndex := symbolIndex
-		symbol := symbol
-
 		group.Go(func() error {
 			for _, selected := range localSignals {
 				started := time.Now()
@@ -274,13 +271,10 @@ func (measurements *Measurements) Generate(
 		published = append(published, measured.measurement)
 	}
 
-	completionFrame := datura.NewMap("activity", done)
-
 	if len(published) > 0 {
-		completionFrame["measurements"] = published
+		utils.Publish(measurements.ui, datura.NewMap("measurements", published))
 	}
 
-	utils.Publish(measurements.ui, completionFrame)
 	return ready, nil
 }
 

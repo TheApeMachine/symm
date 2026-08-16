@@ -9,10 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -20,7 +18,6 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
-	"gonum.org/v1/gonum/stat/distuv"
 )
 
 type Planner struct {
@@ -178,28 +175,25 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		decision.Forecast = graph.Forecast
 		decision.ForecastHorizon = graph.ForecastHorizon
 		decision.ForwardCurve = slices.Clone(graph.ForwardCurve)
-		confidence, confidenceErr := forecastDirectionConfidence(graph.Forecast)
-
-		if confidenceErr != nil {
-			err = fmt.Errorf("planner: forecast confidence for %s: %w", symbol, confidenceErr)
-			return false
-		}
-
-		decision.Confidence = confidence
-		perspectiveReturn, perspectiveConfidence, perspectiveSources, perspectiveErr :=
-			decisionPerspective(graph, confidence)
+		perspective, perspectiveErr := graphPerspective(graph)
 
 		if perspectiveErr != nil {
 			err = fmt.Errorf("planner: decision perspective for %s: %w", symbol, perspectiveErr)
 			return false
 		}
 
-		decision.PerspectiveReturn = perspectiveReturn
-		decision.PerspectiveConfidence = perspectiveConfidence
-		decision.PerspectiveSources = perspectiveSources
-		decision.ExpectedReturn = decimal.NewFromFloat64(math.Expm1(perspectiveReturn))
+		decision.ThesisScore = perspective.Score
+		decision.ThesisConfidence = perspective.Confidence
+		decision.ThesisSupport = perspective.Support
+		decision.ThesisContradiction = perspective.Contradiction
+		decision.ThesisConditions = perspective.Conditions
+		decision.Direction = perspective.Direction
+		decision.Confidence = perspective.Confidence
+		decision.PerspectiveConfidence = perspective.Confidence
 		decision.AdmissionGraphThreshold = config.Planner.MinimumGraphScore
 		decision.AdmissionUtilityThreshold = config.Planner.MinimumUtility
+		decision.OpportunityType = graphOpportunityType(graph)
+		decision.Opportunity = decision.OpportunityType != ""
 		decision.Alternatives = make(map[string]float64)
 		decision.Trace = decisionTrace(
 			graph,
@@ -209,22 +203,33 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		)
 
 		for _, branch := range root.Children {
-			utility := branch.TotalReward / float64(branch.Visits)
-			decision.Alternatives[graphActionLabel(graph.Roots(), branch.Action)] = utility
+			if branch.Visits <= 0 {
+				continue
+			}
+
+			reward := branch.TotalReward / float64(branch.Visits)
+			decision.Alternatives[graphActionLabel(graph.Roots(), branch.Action)] = reward
 
 			if branch.Action == action {
-				decision.GraphScore = utility
+				decision.GraphScore = reward
 			}
 		}
 
-		if decision.GraphScore > 0 &&
-			decision.GraphScore >= config.Planner.MinimumGraphScore {
+		switch {
+		case decision.Direction <= 0 || decision.ThesisScore <= 0:
+			decision.Reason = "planner: contradiction outweighs support for the long-opportunity thesis"
+		case decision.ThesisScore < config.Planner.MinimumGraphScore:
+			decision.Reason = "planner: structural thesis does not clear the regulated evidence boundary"
+		case decision.GraphScore <= 0 ||
+			decision.GraphScore < config.Planner.MinimumGraphScore:
+			decision.Reason = "planner: causal graph search did not retain a supportive evidence path"
+		default:
 			decision.Action = types.ActionEnter
-			decision.Cause = "opportunity_entry"
-		}
+			decision.Cause = "structural_long_opportunity"
 
-		if decision.Action != types.ActionEnter {
-			decision.Reason = "planner: graph perspective does not clear regulated admission boundary"
+			if decision.OpportunityType != "" {
+				decision.Cause = decision.OpportunityType
+			}
 		}
 
 		createdDecisions = append(createdDecisions, decision)
@@ -235,18 +240,28 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		return err
 	}
 
-	if len(createdDecisions) > 0 {
-		for _, decision := range createdDecisions {
+	freshDecisions := createdDecisions
+
+	if len(freshDecisions) > 0 {
+		for _, decision := range freshDecisions {
 			planner.retainCandidate(decision)
 		}
 
-		retireDecisionGraphs(thesis, createdDecisions)
+		retireDecisionGraphs(thesis, freshDecisions)
 	}
 
-	// Structural candidates survive a temporarily thin or expensive book. They
-	// are re-priced on every planner pass, including passes where no new graph
-	// completed, so a later executable quote can admit the already-earned edge.
+	// Structural candidates survive a temporarily thin book. They are re-priced
+	// on every planner pass, including passes where no new graph completed, so a
+	// later executable quote can admit the already-supported thesis. Fresh
+	// rejections remain in the round as observable decisions instead of vanishing
+	// merely because they are not retained for execution.
 	createdDecisions = planner.candidateCopies()
+
+	for _, decision := range freshDecisions {
+		if decision != nil && decision.Action == types.ActionNothing {
+			createdDecisions = append(createdDecisions, decision)
+		}
+	}
 
 	if len(createdDecisions) == 0 {
 		return nil
@@ -295,10 +310,6 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if !actionable {
-		// This graph was evaluated. Retaining it would cause the identical
-		// structural search to be repeated on every subsequent ready tick.
-		retireDecisionGraphs(thesis, createdDecisions)
-
 		utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
 			"evaluated", false,
 			"outcome", "accumulating",
@@ -404,6 +415,7 @@ func (planner *Planner) retainCandidate(decision *types.Decision) {
 	candidate.ExpectedFees = nil
 	candidate.ExpectedSpread = nil
 	candidate.ExpectedImpact = nil
+	candidate.EntryCost = nil
 	candidate.Utility = 0
 	candidate.OpportunityMargin = 0
 
@@ -438,36 +450,27 @@ func (planner *Planner) candidateCopies() []*types.Decision {
 	return decisions
 }
 
-func forecastDirectionConfidence(forecast *learning.RLSOutput) (float64, error) {
-	if forecast == nil || !forecast.Ready || forecast.Scale <= 0 ||
-		forecast.DegreesOfFreedom <= 0 {
-		return 0, fmt.Errorf("ready posterior predictive forecast required")
-	}
-
-	distribution := distuv.StudentsT{
-		Mu:    forecast.Value,
-		Sigma: forecast.Scale,
-		Nu:    forecast.DegreesOfFreedom,
-	}
-
-	return 1 - distribution.CDF(0), nil
-}
-
 func decisionTrace(
 	graph *logicgraph.Graph,
 	root *mcts.Node,
 	recommended float64,
 	iterations int,
 ) *types.DecisionTrace {
-	supports, contradicts := graphEvidenceMass(graph)
+	summary := graph.OpportunitySummary()
 	branches := make([]types.DecisionMCTSBranch, 0, len(root.Children))
 	roots := graph.Roots()
 
 	for _, branch := range root.Children {
+		meanReward := 0.0
+
+		if branch.Visits > 0 {
+			meanReward = branch.TotalReward / float64(branch.Visits)
+		}
+
 		branches = append(branches, types.DecisionMCTSBranch{
 			Action:     graphActionLabel(roots, branch.Action),
 			Visits:     branch.Visits,
-			MeanReward: branch.TotalReward / float64(branch.Visits),
+			MeanReward: meanReward,
 		})
 	}
 
@@ -484,8 +487,12 @@ func decisionTrace(
 	})
 
 	return &types.DecisionTrace{
-		GraphSupports:    supports,
-		GraphContradicts: contradicts,
+		Hypothesis:       summary.Hypothesis,
+		GraphSupports:    summary.Support,
+		GraphContradicts: summary.Contradiction,
+		GraphConditions:  summary.Conditions,
+		ThesisBalance:    summary.Balance,
+		ThesisConfidence: summary.Confidence,
 		MCTS: types.DecisionMCTSTrace{
 			Iterations:        iterations,
 			Branches:          branches,
@@ -504,41 +511,60 @@ func graphActionLabel(roots []string, action float64) string {
 	return fmt.Sprintf("root[%g]", action)
 }
 
-func graphEvidenceMass(graph *logicgraph.Graph) (float64, float64) {
-	supports := 0.0
-	contradicts := 0.0
-	visited := make(map[string]bool)
-	queue := append([]string(nil), graph.Roots()...)
+/*
+graphOpportunityType names a precursor family only when one of the graph's
+supporting category nodes already carries that semantics. It does not infer an
+opportunity type from price movement or from a generic positive score.
+*/
+func graphOpportunityType(graph *logicgraph.Graph) string {
+	if graph == nil || graph.DecisionTarget == "" {
+		return ""
+	}
 
-	for len(queue) > 0 {
-		source := queue[0]
-		queue = queue[1:]
+	preferred := map[types.CategoryType]bool{
+		types.VerticalIgnition:  true,
+		types.CoiledCompression: true,
+		types.InefficientLag:    true,
+		types.HiddenAbsorption:  true,
+		types.AggressiveDrive:   true,
+		types.OrganicTrend:      true,
+		types.DecoupledAlpha:    true,
+		types.EndogenousAlpha:   true,
+		types.LiquidityVacuum:   true,
+		types.ExtremeScarcity:   true,
+	}
 
-		if visited[source] {
+	best := types.CategoryTypeNone
+	bestMass := 0.0
+
+	for _, edge := range graph.Edges {
+		if edge == nil || edge.To != graph.DecisionTarget ||
+			edge.Relation != logicgraph.RelationSupports {
 			continue
 		}
 
-		visited[source] = true
+		node := graph.Nodes[edge.From]
 
-		for _, edge := range graph.Edges {
-			if edge.From != source {
-				continue
-			}
+		if node == nil || node.Kind != logicgraph.KindCategory {
+			continue
+		}
 
-			queue = append(queue, edge.To)
-			mass := edge.Weight * edge.Confidence
+		categoryValue, _ := node.Metadata["type"].(string)
+		category := types.CategoryType(categoryValue)
 
-			if edge.Relation == logicgraph.RelationSupports {
-				supports += mass
-			}
+		if !preferred[category] {
+			continue
+		}
 
-			if edge.Relation == logicgraph.RelationContradicts {
-				contradicts += mass
-			}
+		mass := edge.Weight * edge.Confidence
+
+		if mass > bestMass || best == types.CategoryTypeNone {
+			best = category
+			bestMass = mass
 		}
 	}
 
-	return supports, contradicts
+	return string(best)
 }
 
 func retireDecisionGraphs(

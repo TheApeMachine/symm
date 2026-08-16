@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 /*
 PhaseOutcome is what a stored universe state is tagged with: the direction the
@@ -44,9 +47,88 @@ type PhaseReading struct {
 }
 
 /*
+PhaseInference is the directional statement supported by the entire geodesic
+scan. Similarity is signed by the phase rotation, so an antipodal match reverses
+its retained outcome rather than copying that outcome onto the present market.
+Return magnitudes remain corpus observations and never become a price forecast.
+*/
+type PhaseInference struct {
+	Direction     float64 `json:"direction"`
+	Confidence    float64 `json:"confidence"`
+	Support       float64 `json:"support"`
+	Contradiction float64 `json:"contradiction"`
+	Balance       float64 `json:"balance"`
+	Responses     int     `json:"responses"`
+}
+
+/*
+Inference reduces the ranked angular corpus to a phase-projected direction vote.
+Every response contributes its signed similarity and observed outcome class.
+The result is normalized by total directional response mass, so no fixed angle,
+return target, or hand-selected confidence boundary is introduced here.
+*/
+func (reading PhaseReading) Inference() (PhaseInference, bool) {
+	if !reading.Ready || len(reading.Responses) == 0 {
+		return PhaseInference{}, false
+	}
+
+	inference := PhaseInference{}
+
+	for _, response := range reading.Responses {
+		if math.IsNaN(response.Similarity) || math.IsInf(response.Similarity, 0) {
+			continue
+		}
+
+		direction := phaseDirection(response.Outcome.Direction)
+
+		if direction == 0 {
+			continue
+		}
+
+		vote := direction * response.Similarity
+
+		if vote > 0 {
+			inference.Support += vote
+		} else if vote < 0 {
+			inference.Contradiction -= vote
+		}
+
+		inference.Responses++
+	}
+
+	total := inference.Support + inference.Contradiction
+
+	if !(total > 0) || inference.Responses == 0 {
+		return PhaseInference{}, false
+	}
+
+	inference.Balance = (inference.Support - inference.Contradiction) / total
+	inference.Confidence = math.Abs(inference.Balance)
+
+	if inference.Balance > 0 {
+		inference.Direction = 1
+	} else if inference.Balance < 0 {
+		inference.Direction = -1
+	}
+
+	return inference, true
+}
+
+func phaseDirection(direction string) float64 {
+	switch direction {
+	case "up":
+		return 1
+	case "down":
+		return -1
+	default:
+		return 0
+	}
+}
+
+/*
 Alignment reports the angle whose retained response is most constructive, which
-is where the dial's ray points. It is the reading's single summary: the phase
-the universe field currently rhymes with history at, and what that history did.
+is where the dial's ray points. It is retained for visualization; decision code
+uses Inference so the rest of the geodesic is not discarded.
 */
 func (reading PhaseReading) Alignment() (PhaseResponse, bool) {
 	if !reading.Ready || len(reading.Responses) == 0 {

@@ -3,14 +3,18 @@ import type { RiskPlan, Stoploss } from "#/types/stoploss";
 
 /*
 Decision mirrors the backend types.Decision payload published on each
-thesis tick so the frontend can render utility, alternatives, and cause without
+thesis tick so the frontend can render structural evidence, execution cost, and cause without
 re-deriving gate verdicts from unrelated action frames.
 */
 export type Action = "enter" | "exit" | "reduce" | "hold" | "nothing";
 
 export type DecisionTrace = {
+	hypothesis?: string;
 	graphSupports: number;
 	graphContradicts: number;
+	graphConditions: number;
+	thesisBalance: number;
+	thesisConfidence: number;
 	mcts: {
 		iterations: number;
 		branches: Array<{
@@ -22,6 +26,20 @@ export type DecisionTrace = {
 	};
 };
 
+export type EntryCost = {
+	entryPrice?: string;
+	bestAsk?: string;
+	bestBid?: string;
+	midpoint?: string;
+	grossNotional?: string;
+	entryFee?: string;
+	exitFeeAtBreakEven?: string;
+	roundTripFees?: string;
+	spread?: string;
+	impact?: string;
+	breakEven?: string;
+};
+
 export interface Decision {
 	id: string;
 	action: Action;
@@ -29,11 +47,18 @@ export interface Decision {
 	at: Date;
 	utility: number;
 	graphScore: number;
+	thesisScore: number;
+	thesisConfidence: number;
+	thesisSupport: number;
+	thesisContradiction: number;
+	thesisConditions: number;
+	direction: number;
 	allocation_haircut: number;
 	allocation_haircut_reason: string;
 	alternatives: Record<string, number>;
 	allocationClass: string;
 	opportunity: boolean;
+	opportunityType?: string;
 	proposedNotional: string;
 	proposedQuantity: string;
 	referencePrice: string;
@@ -75,6 +100,7 @@ export interface Decision {
 	pnl?: string;
 	returnPct?: number;
 	mark?: string;
+	entryCost?: EntryCost;
 	stoploss?: Stoploss;
 	risk?: RiskPlan;
 	trace?: DecisionTrace;
@@ -160,7 +186,16 @@ export type ThesisCategory = {
 	missing?: string[];
 };
 
-export type GraphNodeKind = "measurement" | "category" | "concept";
+export type GraphNodeKind =
+	| "measurement"
+	| "category"
+	| "manifold"
+	| "resonance"
+	| "causal"
+	| "cognition"
+	| "prediction"
+	| "hypothesis"
+	| "concept";
 
 export type GraphNode = {
 	key: string;

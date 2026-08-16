@@ -9,6 +9,26 @@ import (
 )
 
 /*
+EntryCost is the current, observable execution boundary for one proposed long.
+It states only facts available at admission time: visible entry VWAP, the
+crossing costs paid now, and the sale price that would recover both known fees.
+It deliberately contains no future price, future spread, or expected return.
+*/
+type EntryCost struct {
+	EntryPrice         *decimal.Decimal `json:"entryPrice,omitempty"`
+	BestAsk            *decimal.Decimal `json:"bestAsk,omitempty"`
+	BestBid            *decimal.Decimal `json:"bestBid,omitempty"`
+	Midpoint           *decimal.Decimal `json:"midpoint,omitempty"`
+	GrossNotional      *decimal.Decimal `json:"grossNotional,omitempty"`
+	EntryFee           *decimal.Decimal `json:"entryFee,omitempty"`
+	ExitFeeAtBreakEven *decimal.Decimal `json:"exitFeeAtBreakEven,omitempty"`
+	RoundTripFees      *decimal.Decimal `json:"roundTripFees,omitempty"`
+	Spread             *decimal.Decimal `json:"spread,omitempty"`
+	Impact             *decimal.Decimal `json:"impact,omitempty"`
+	BreakEven          *decimal.Decimal `json:"breakEven,omitempty"`
+}
+
+/*
 Decision records the action strategy selected and the alternatives it compared.
 It is owned by one Thesis so intended behavior remains separate from execution.
 */
@@ -17,9 +37,15 @@ type Decision struct {
 	Action                    Action                      `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
 	Symbol                    string                      `json:"symbol" validate:"required"`
 	At                        time.Time                   `json:"at" validate:"required"`
-	Utility                   float64                     `json:"utility" validate:"finite"`
+	Utility                   float64                     `json:"utility,omitempty" validate:"finite"`
 	GraphScore                float64                     `json:"graphScore" validate:"finite"`
-	PerspectiveReturn         float64                     `json:"perspectiveReturn" validate:"finite"`
+	ThesisScore               float64                     `json:"thesisScore" validate:"finite,min=-1,max=1"`
+	ThesisConfidence          float64                     `json:"thesisConfidence" validate:"finite,min=0,max=1"`
+	ThesisSupport             float64                     `json:"thesisSupport" validate:"finite,nonnegative"`
+	ThesisContradiction       float64                     `json:"thesisContradiction" validate:"finite,nonnegative"`
+	ThesisConditions          float64                     `json:"thesisConditions" validate:"finite,nonnegative"`
+	Direction                 float64                     `json:"direction" validate:"finite,min=-1,max=1"`
+	PerspectiveReturn         float64                     `json:"perspectiveReturn,omitempty" validate:"finite"`
 	PerspectiveConfidence     float64                     `json:"perspectiveConfidence" validate:"finite,min=0,max=1"`
 	AdmissionGraphThreshold   float64                     `json:"admissionGraphThreshold" validate:"finite,min=-1,max=1"`
 	AdmissionUtilityThreshold float64                     `json:"admissionUtilityThreshold" validate:"finite,min=-1,max=1"`
@@ -32,6 +58,7 @@ type Decision struct {
 	Alternatives            map[string]float64  `json:"alternatives"`
 	AllocationClass         string              `json:"allocationClass"`
 	Opportunity             bool                `json:"opportunity"`
+	OpportunityType         string              `json:"opportunityType,omitempty"`
 	ProposedNotional        *decimal.Decimal    `json:"proposedNotional" validate:"required"`
 	ProposedQuantity        *decimal.Decimal    `json:"proposedQuantity" validate:"required"`
 	ReferencePrice          *decimal.Decimal    `json:"referencePrice" validate:"required"`
@@ -44,10 +71,10 @@ type Decision struct {
 	ForecastHorizon         int                 `json:"forecastHorizon" validate:"min=0"`
 	ForwardCurve            []float64           `json:"forwardCurve,omitempty"`
 	CalibrationCount        uint64              `json:"calibrationCount"`
-	ExpectedReturn          *decimal.Decimal    `json:"expectedReturn" validate:"required"`
-	ExpectedFees            *decimal.Decimal    `json:"expectedFees" validate:"required"`
-	ExpectedSpread          *decimal.Decimal    `json:"expectedSpread" validate:"required"`
-	ExpectedImpact          *decimal.Decimal    `json:"expectedImpact" validate:"required"`
+	ExpectedReturn          *decimal.Decimal    `json:"expectedReturn,omitempty"`
+	ExpectedFees            *decimal.Decimal    `json:"expectedFees,omitempty"`
+	ExpectedSpread          *decimal.Decimal    `json:"expectedSpread,omitempty"`
+	ExpectedImpact          *decimal.Decimal    `json:"expectedImpact,omitempty"`
 	AdverseSelection        *decimal.Decimal    `json:"adverseSelection" validate:"finite,nonnegative"`
 	Uncertainty             float64             `json:"uncertainty" validate:"finite,nonnegative"`
 	Confidence              float64             `json:"confidence" validate:"finite,min=0,max=1"`
@@ -75,6 +102,7 @@ type Decision struct {
 	PnL                     *decimal.Decimal    `json:"pnl,omitempty"`
 	ReturnPct               *float64            `json:"returnPct,omitempty"`
 	Mark                    *decimal.Decimal    `json:"mark,omitempty"`
+	EntryCost               *EntryCost          `json:"entryCost,omitempty"`
 	Stoploss                *Stoploss           `json:"stoploss,omitempty"`
 	/*
 		Risk is the stop geometry this entry was sized under. It travels with
@@ -93,8 +121,8 @@ type Decision struct {
 }
 
 /*
-DecisionPerspectiveSource records one compatible signed-return estimate used
-to form the decision's forecast-horizon perspective.
+DecisionPerspectiveSource is retained for checkpoint compatibility with older
+decisions. Structural admission no longer constructs a tradable return from it.
 */
 type DecisionPerspectiveSource struct {
 	Source     string  `json:"source"`
@@ -108,8 +136,12 @@ DecisionTrace is the observable entry-decision chain. It carries values already
 used by strategy rather than a frontend reconstruction of those values.
 */
 type DecisionTrace struct {
+	Hypothesis       string            `json:"hypothesis,omitempty"`
 	GraphSupports    float64           `json:"graphSupports"`
 	GraphContradicts float64           `json:"graphContradicts"`
+	GraphConditions  float64           `json:"graphConditions"`
+	ThesisBalance    float64           `json:"thesisBalance"`
+	ThesisConfidence float64           `json:"thesisConfidence"`
 	MCTS             DecisionMCTSTrace `json:"mcts"`
 }
 

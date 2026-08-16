@@ -8,83 +8,98 @@ import (
 )
 
 /*
-Exponential transforms a numeric value exponentially, each time
-Read is called. An initial value can be provided, or set via Write.
+Exponential transforms an input parameter exponentially: e^(-x).
 */
 type Exponential struct {
-	initial  types.Input[float64]
-	next	 types.Input[float64]
-	err      error
+	initial types.Input[float64]
+	next    types.Input[float64]
+	err     error
 }
 
+var _ types.IO[float64] = (*Exponential)(nil)
+
 /*
-NewExponential returns an unstaged exponential shape.
+NewExponential returns an Exponential shape primitive.
 */
 func NewExponential(initial types.Input[float64]) *Exponential {
 	return &Exponential{
 		initial: initial,
-		next:    types.NewInput[float64](initial.Project()),
+		next:    types.NewInput[float64](),
 	}
 }
 
 /*
-Write stages progress from the source.
+Write stages the progress value.
 */
-func (shape *Exponential) Write(input types.Input[float64]) {
-	shape.progress.Write(input)
-	shape.err = nil
-}
-
-/*
-Read executes the remaining fraction and returns the shape as output.
-*/
-func (shape *Exponential) Read() types.Output[float64] {
-	progress := shape.progress.Read()
-
-	if progress.Error() != "" {
-		shape.err = errnie.Error(errnie.Err(
-			errnie.NotFound,
-			progress.Error(),
+func (exponential *Exponential) Write(input types.IO[float64]) {
+	if input == nil {
+		exponential.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"exponential: input is nil",
 			nil,
 		))
 
-		return shape
+		return
 	}
 
-	shape.value = shape.value.Write(math.Exp(-progress.Project().Read()))
-	shape.err = nil
-
-	return shape
+	exponential.next.Write(input)
+	exponential.err = nil
 }
 
 /*
-Project is the last remaining fraction.
+Read computes e^(-progress) and returns the output.
 */
-func (shape *Exponential) Project() types.Value[float64] {
-	return shape.value
-}
+func (exponential *Exponential) Read() types.IO[float64] {
+	in := exponential.next.Read()
 
-/*
-Error reports a staging or execution failure.
-*/
-func (shape *Exponential) Error() string {
-	if shape.err == nil {
-		return ""
+	if in.Error() != "" {
+		exponential.err = errnie.Error(errnie.Err(
+			errnie.NotFound,
+			in.Error(),
+			nil,
+		))
+
+		return exponential.next
 	}
 
-	return shape.err.Error()
+	val := math.Exp(-in.Project().Read())
+	exponential.next.Write(types.NewInput(types.NewValue(val)))
+	exponential.err = nil
+
+	return exponential.next
 }
 
 /*
-Close releases staged state.
+Project returns the last computed exponential value.
 */
-func (shape *Exponential) Close() error {
-	if err := shape.progress.Close(); err != nil {
+func (exponential *Exponential) Project() types.Value[float64] {
+	return exponential.next.Project()
+}
+
+/*
+Error reports an execution or staging failure.
+*/
+func (exponential *Exponential) Error() string {
+	if exponential.err != nil {
+		return exponential.err.Error()
+	}
+
+	return exponential.next.Error()
+}
+
+/*
+Close resets the staged state.
+*/
+func (exponential *Exponential) Close() error {
+	if err := exponential.initial.Close(); err != nil {
 		return err
 	}
 
-	shape.value = types.Value[float64]{}
-	shape.err = nil
+	if err := exponential.next.Close(); err != nil {
+		return err
+	}
+
+	exponential.err = nil
 
 	return nil
 }
