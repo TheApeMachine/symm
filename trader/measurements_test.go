@@ -82,9 +82,8 @@ func TestMeasurementsGenerate(t *testing.T) {
 		}
 
 		Convey("A ticker update should run only the ticker signals", func() {
-			ready, err := measurements.Generate(thesis, types.TickerReceivers)
+			err := measurements.Generate(thesis, types.TickerReceivers)
 			So(err, ShouldBeNil)
-			So(ready, ShouldBeFalse)
 			expected := map[types.SourceType]int64{
 				types.SourceCorrelation: 1,
 				types.SourceCVD:         1,
@@ -100,9 +99,8 @@ func TestMeasurementsGenerate(t *testing.T) {
 		})
 
 		Convey("A trade update should run only the trade signals", func() {
-			ready, err := measurements.Generate(thesis, types.TradeReceivers)
+			err := measurements.Generate(thesis, types.TradeReceivers)
 			So(err, ShouldBeNil)
-			So(ready, ShouldBeFalse)
 			expected := map[types.SourceType]int64{
 				types.SourceCVD:        1,
 				types.SourceDepthFlow:  1,
@@ -118,9 +116,8 @@ func TestMeasurementsGenerate(t *testing.T) {
 		})
 
 		Convey("A book update should run only the book signals", func() {
-			ready, err := measurements.Generate(thesis, types.BookReceivers)
+			err := measurements.Generate(thesis, types.BookReceivers)
 			So(err, ShouldBeNil)
-			So(ready, ShouldBeFalse)
 			expected := map[types.SourceType]int64{
 				types.SourceDepthFlow:  1,
 				types.SourceExhaustion: 1,
@@ -136,7 +133,7 @@ func TestMeasurementsGenerate(t *testing.T) {
 			measurements.ui = ui
 			thesis.Tick = 41
 
-			_, err := measurements.Generate(thesis, types.TickerReceivers)
+			err := measurements.Generate(thesis, types.TickerReceivers)
 			So(err, ShouldBeNil)
 			So(thesis.Tick, ShouldEqual, 42)
 
@@ -176,9 +173,8 @@ func TestMeasurementsGenerate(t *testing.T) {
 				},
 			}
 
-			ready, err := measurements.Generate(thesis, types.TradeReceivers)
+			err := measurements.Generate(thesis, types.TradeReceivers)
 			So(err, ShouldBeNil)
-			So(ready, ShouldBeTrue)
 			So(signals[types.SourceHawkes].measurement.Tick, ShouldEqual, thesis.Tick)
 			So(thesis.Symbol("BTC/USD").Tick, ShouldEqual, thesis.Tick)
 
@@ -214,7 +210,7 @@ func TestMeasurementsUIPublication(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.Symbol("BTC/USD")
 
-		_, err := measurements.Generate(thesis, []types.SourceType{
+		err := measurements.Generate(thesis, []types.SourceType{
 			types.SourceCorrelation,
 			types.SourceCVD,
 		})
@@ -272,7 +268,7 @@ func BenchmarkMeasurementsGenerate(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, err := measurements.Generate(thesis, types.TickerReceivers); err != nil {
+		if err := measurements.Generate(thesis, types.TickerReceivers); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -344,7 +340,7 @@ func TestMeasurementsStreamingOwnership(t *testing.T) {
 		done := make(chan error, 1)
 
 		go func() {
-			_, err := measurements.Generate(
+			err := measurements.Generate(
 				thesis,
 				[]types.SourceType{types.SourceCorrelation, types.SourceCVD},
 			)

@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -17,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -75,7 +77,15 @@ func (measurements *Measurements) Generate(
 	thesis.Tick++
 	tick := thesis.Tick
 
+	utils.Publish(
+		measurements.ui,
+		datura.NewMap(
+			"tick", datura.NewMap("count", thesis.Tick),
+		),
+	)
+
 	group, _ := errgroup.WithContext(measurements.ctx)
+	out := make([]*types.Measurement, 0)
 
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, ok := value.(*types.Symbol)
@@ -88,11 +98,18 @@ func (measurements *Measurements) Generate(
 
 		group.Go(func() error {
 			for _, signal := range measurements.signals {
-				symbol.AppendMeasurements(signal.Measure(symbol))
+				measurements := signal.Measure(symbol)
+				symbol.AppendMeasurements(measurements)
+
+				if symbol.Symbol == types.Focus() {
+					out = append(out, measurements...)
+				}
 			}
 
 			return nil
 		})
+
+		utils.Publish(measurements.ui, datura.NewMap("measurements", out))
 
 		return true
 	})

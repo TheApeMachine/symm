@@ -6,6 +6,7 @@ require (
 	github.com/bytedance/sonic v1.15.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/klauspost/compress v1.18.6
 	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/mattn/go-sqlite3 v1.14.49
 	github.com/phuslu/log v1.0.124
@@ -36,7 +37,6 @@ require (
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.0 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect

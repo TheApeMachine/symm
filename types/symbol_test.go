@@ -26,7 +26,7 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 		symbol := NewSymbol("BTC/USD", nil)
 		measurement := &Measurement{ID: "first", Source: SourceHawkes, Symbol: "BTC/USD"}
 
-		ready := symbol.AppendMeasurement(SourceHawkes, measurement)
+		symbol.AppendMeasurements([]*Measurement{measurement})
 
 		Convey("It should expose the row without waking predictive coding", func() {
 			for _, solver := range []string{"category", "graph", "manifold"} {
@@ -41,7 +41,6 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 
 			_, found := symbol.Measurements.Load("resonance")
 			So(found, ShouldBeFalse)
-			So(ready, ShouldBeFalse)
 		})
 	})
 }
@@ -72,7 +71,7 @@ func TestSymbolResonanceInputs(t *testing.T) {
 		value := 0.5
 
 		Convey("It should enqueue that honest observation immediately", func() {
-			ready := symbol.AppendMeasurement(SourceHawkes, &Measurement{
+			symbol.AppendMeasurements([]*Measurement{{
 				Source: SourceHawkes,
 				Symbol: "BTC/USD",
 				Tick:   1,
@@ -82,9 +81,8 @@ func TestSymbolResonanceInputs(t *testing.T) {
 				Metrics: map[string]MetricSample{
 					"score": {Normalized: &value},
 				},
-			})
+			}})
 
-			So(ready, ShouldBeTrue)
 			rows := make([]*ResonanceMeasurement, 0)
 
 			for row := range symbol.ResonanceMeasurements() {
@@ -163,7 +161,7 @@ func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 
 	for b.Loop() {
 		symbol := NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurement(SourceHawkes, measurement)
+		symbol.AppendMeasurements([]*Measurement{measurement})
 	}
 }
 
@@ -188,13 +186,13 @@ func BenchmarkSymbolResonanceInputs(b *testing.B) {
 		value = float64(epoch)
 
 		for _, source := range SignalSources {
-			symbol.AppendMeasurement(source, &Measurement{
+			symbol.AppendMeasurements([]*Measurement{{
 				Source: source,
 				Symbol: "BTC/USD",
 				Metrics: map[string]MetricSample{
 					"score": {Normalized: &value},
 				},
-			})
+			}})
 		}
 	}
 
@@ -204,13 +202,13 @@ func BenchmarkSymbolResonanceInputs(b *testing.B) {
 		value++
 
 		for _, source := range SignalSources {
-			symbol.AppendMeasurement(source, &Measurement{
+			symbol.AppendMeasurements([]*Measurement{{
 				Source: source,
 				Symbol: "BTC/USD",
 				Metrics: map[string]MetricSample{
 					"score": {Normalized: &value},
 				},
-			})
+			}})
 		}
 
 		for _, consumer := range []string{"category", "graph", "manifold"} {

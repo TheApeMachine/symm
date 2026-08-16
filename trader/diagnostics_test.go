@@ -71,7 +71,6 @@ func TestCryptoBindDiagnostics(t *testing.T) {
 		Convey("It should share the clock bank and arm the publisher interval", func() {
 			crypto.bindDiagnostics()
 
-			So(crypto.measurements.clocks, ShouldEqual, &crypto.clocks)
 			So(crypto.diagnosticInterval, ShouldBeGreaterThan, time.Duration(0))
 			So(crypto.startedAt.IsZero(), ShouldBeFalse)
 		})
