@@ -69,13 +69,7 @@ func NewAnalyzer(
 			recorder,
 			viper.GetFloat64("resonance.learning_rate"),
 		),
-	}
-
-	// The manifold stays out of the analysis pass until its physics inputs
-	// are provably bounded: an unbounded first step poisons resident GPU
-	// state, and no downstream filter can undo that.
-	if viper.GetBool("manifold.enabled") {
-		firstGroup = append(firstGroup, manifold.NewSolver(api, ui, binui, recorder))
+		manifold.NewSolver(api, ui, binui, recorder),
 	}
 
 	analyzer := &Analyzer{

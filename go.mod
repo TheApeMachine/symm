@@ -92,15 +92,8 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
-	github.com/theapemachine/datura v1.2.9
+	github.com/theapemachine/datura v1.2.10
 	github.com/theapemachine/errnie v1.2.6
-	github.com/theapemachine/nomagique v0.0.5
+	github.com/theapemachine/nomagique v0.0.6
 	golang.design/x/lockfree v0.1.0
-)
-
-replace (
-	// github.com/bytedance/sonic => ../sonic
-	// github.com/theapemachine/errnie => ../errnie
-	github.com/theapemachine/datura => ../datura
-	github.com/theapemachine/nomagique => ../nomagique
 )

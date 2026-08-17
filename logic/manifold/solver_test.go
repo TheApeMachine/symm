@@ -364,8 +364,8 @@ func TestBookOscillators(t *testing.T) {
 			"BTC/USD": bitcoin,
 			"ETH/USD": ether,
 		}}
-		bitcoinOsc, bitcoinErr := solver.bookOscillators("BTC/USD", time.Unix(3, 0).UTC(), HawkesSignal{})
-		etherOsc, etherErr := solver.bookOscillators("ETH/USD", time.Unix(3, 0).UTC(), HawkesSignal{})
+		bitcoinOsc, bitcoinErr := solver.bookOscillators("BTC/USD", 0, 2, time.Unix(3, 0).UTC(), HawkesSignal{})
+		etherOsc, etherErr := solver.bookOscillators("ETH/USD", 1, 2, time.Unix(3, 0).UTC(), HawkesSignal{})
 
 		Convey("It should keep every resting order as an oscillator", func() {
 			So(bitcoinErr, ShouldBeNil)
@@ -375,6 +375,34 @@ func TestBookOscillators(t *testing.T) {
 			So(bitcoinOsc[0].Amplitude, ShouldBeGreaterThan, 0)
 			So(etherOsc[0].Amplitude, ShouldBeGreaterThan, 0)
 			So(bitcoinOsc[0].PosX, ShouldNotEqual, bitcoinOsc[1].PosX)
+			So(bitcoinOsc[0].PosZ, ShouldBeLessThan, solver.config.DomainZ)
+			So(bitcoinOsc[0].PosZ, ShouldBeGreaterThan, 0)
+			So(bitcoinOsc[0].Omega, ShouldBeGreaterThanOrEqualTo, solver.config.GateWidthMin())
+			So(bitcoinOsc[0].Omega, ShouldBeLessThanOrEqualTo, solver.config.GateWidthMax())
+			So(bitcoinOsc[0].Heat, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("A subsequent tick with a large price shift should clamp velocities to CFL limits", func() {
+			bitcoin.Update(&mgrbook.UpdateOptions{
+				Direction: mgrbook.Bid,
+				ID:        "bid",
+				Price:     decimal.NewFromInt64(10),
+				Quantity:  decimal.NewFromInt64(2),
+				Timestamp: time.Unix(4, 0).UTC(),
+				Silent:    true,
+			})
+
+			shiftedOsc, shiftErr := solver.bookOscillators("BTC/USD", 0, 2, time.Unix(4, 0).UTC(), HawkesSignal{})
+			So(shiftErr, ShouldBeNil)
+			So(shiftedOsc, ShouldHaveLength, 3)
+
+			maxVelocity := solver.config.MinGasCellSpacing() / solver.config.DeltaT
+
+			for _, osc := range shiftedOsc {
+				So(math.Abs(osc.VelX), ShouldBeLessThanOrEqualTo, maxVelocity)
+				So(math.Abs(osc.VelY), ShouldBeLessThanOrEqualTo, maxVelocity)
+				So(math.Abs(osc.VelZ), ShouldBeLessThanOrEqualTo, maxVelocity)
+			}
 		})
 	})
 }
@@ -403,7 +431,7 @@ func TestBookOscillatorsDegenerate(t *testing.T) {
 		solver.api = &mapBookSource{books: map[string]*mgrbook.Book{
 			"BTC/USD": book,
 		}}
-		oscillators, err := solver.bookOscillators("BTC/USD", time.Unix(3, 0).UTC(), HawkesSignal{})
+		oscillators, err := solver.bookOscillators("BTC/USD", 0, 1, time.Unix(3, 0).UTC(), HawkesSignal{})
 
 		Convey("It should exclude the zero-heat row and keep the healthy one", func() {
 			So(err, ShouldBeNil)
@@ -418,7 +446,7 @@ func TestBookOscillatorsDegenerate(t *testing.T) {
 
 		Convey("An infinite hawkes tempo should drop every field-validated row", func() {
 			deg, degErr := solver.bookOscillators(
-				"BTC/USD", time.Unix(3, 0).UTC(),
+				"BTC/USD", 0, 1, time.Unix(3, 0).UTC(),
 				HawkesSignal{LambdaBuy: math.Inf(1), LambdaSell: math.Inf(1)},
 			)
 

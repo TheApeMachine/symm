@@ -3,6 +3,7 @@ package manifold
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -49,7 +50,6 @@ type Solver struct {
 	api         websocket.BookSource
 	config      pmanifold.Config
 	physics     *pmanifold.Solver
-	quarantined atomic.Bool
 	oscillators []pmanifold.Oscillator
 	reading     pmanifold.Reading
 	recorder    *audit.Recorder
@@ -155,25 +155,14 @@ func (solver *Solver) Name() string {
 }
 
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	if solver.quarantined.Load() {
-		return nil
-	}
-
 	oscillators := make([]pmanifold.Oscillator, 0)
 	perSymbol := make(map[string][]pmanifold.Oscillator)
 
-	var (
-		bookErr         error
-		aggregateHawkes HawkesSignal
-	)
+	var aggregateHawkes HawkesSignal
 
-	symbolCount := 0
+	symbolNames := make([]string, 0)
 
 	thesis.Symbols.Range(func(key, value any) bool {
-		if bookErr != nil {
-			return true
-		}
-
 		symbolName, nameOK := key.(string)
 		symbol, ok := value.(*types.Symbol)
 
@@ -181,36 +170,64 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
+		symbolNames = append(symbolNames, symbolName)
+		return true
+	})
+
+	if len(symbolNames) == 0 {
+		return nil
+	}
+
+	slices.Sort(symbolNames)
+	totalSymbols := len(symbolNames)
+	symbolCount := 0
+
+	for symbolIndex, symbolName := range symbolNames {
+		rawSymbol, ok := thesis.Symbols.Load(symbolName)
+
+		if !ok || rawSymbol == nil {
+			continue
+		}
+
+		symbol := rawSymbol.(*types.Symbol)
 		hawkes := extractSymbolHawkes(symbol)
 		aggregateHawkes.Reflexivity += hawkes.Reflexivity
 		aggregateHawkes.AvgTradeSize += hawkes.AvgTradeSize
 		symbolCount++
 
-		mapped, err := solver.bookOscillators(symbolName, thesis.At, hawkes)
+		mapped, err := solver.bookOscillators(
+			symbolName,
+			symbolIndex,
+			totalSymbols,
+			thesis.At,
+			hawkes,
+		)
+
 		if err != nil {
-			bookErr = errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.Internal,
 				"manifold: failed to book oscillators for "+symbolName,
 				err,
-			)
-			return true
+			))
+			continue
 		}
 
 		if len(mapped) == 0 {
-			return true
+			continue
 		}
 
 		perSymbol[symbolName] = mapped
 		oscillators = append(oscillators, mapped...)
-		return true
-	})
-
-	if bookErr != nil {
-		return errnie.Error(bookErr)
 	}
 
 	if len(oscillators) == 0 {
 		return nil
+	}
+
+	maxParticles := int(solver.config.MaxParticles)
+
+	if maxParticles > 0 && len(oscillators) > maxParticles {
+		oscillators = oscillators[:maxParticles]
 	}
 
 	if symbolCount > 1 {
@@ -219,8 +236,6 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	}
 
 	if err := solver.physics.SetOscillators(oscillators); err != nil {
-		solver.quarantined.Store(true)
-
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf(
@@ -244,6 +259,8 @@ and Hawkes excitation frequency boosts.
 */
 func (solver *Solver) bookOscillators(
 	symbol string,
+	symbolIndex int,
+	totalSymbols int,
 	at time.Time,
 	hawkes HawkesSignal,
 ) ([]pmanifold.Oscillator, error) {
@@ -407,60 +424,80 @@ func (solver *Solver) bookOscillators(
 	next := make(map[string][3]float64, len(orders))
 	oscillators := make([]pmanifold.Oscillator, 0, len(orders))
 	dt := solver.config.DeltaT
+	maxVelocity := solver.config.MinGasCellSpacing() / solver.config.DeltaT
 
 	for index, order := range orders {
 		signedLog := math.Log(order.price) - math.Log(midPrice)
 
-		// 1. Position X: Relative Price Depth
+		// 1. Position X: Relative Price Depth (safely centered inside open boundary interval)
 		posX := 0.5 * solver.config.DomainX
 		omega := omegaCentre
+
 		if scale > 0 {
 			normalizedDist := math.Tanh(signedLog / scale)
-			posX = (0.5 + 0.5*normalizedDist) * solver.config.DomainX
-			// Hawkes excitation speeds up oscillator frequency tempo
+			posX = (0.5 + 0.49*normalizedDist) * solver.config.DomainX
+			// Hawkes excitation speeds up oscillator frequency tempo within lattice bounds
 			hawkesBoost := (hawkes.LambdaBuy + hawkes.LambdaSell) * 0.05
-			omega = omegaCentre + (omegaHalf+hawkesBoost)*normalizedDist
+			rawOmega := omegaCentre + (omegaHalf+hawkesBoost)*normalizedDist
+			omega = math.Max(omegaMin, math.Min(omegaMax, rawOmega))
 		}
 
-		// 2. Position Y: Book Side Channel (Bids at ~25% Y, Asks at ~75% Y)
-		posY := 0.25 * solver.config.DomainY
+		// 2. Position Y: Book Side Channel (distributed across symbol lanes)
+		if totalSymbols <= 0 {
+			totalSymbols = 1
+		}
+
+		laneSpan := solver.config.DomainY / float64(totalSymbols)
+		laneCenter := (float64(symbolIndex) + 0.5) * laneSpan
+		posY := laneCenter - 0.25*laneSpan
+
 		if order.side == mgrbook.Ask {
-			posY = 0.75 * solver.config.DomainY
+			posY = laneCenter + 0.25*laneSpan
 		}
 
-		// 3. Position Z: Queue Depth / Age Rank
+		// 3. Position Z: Queue Depth / Age Rank (cell-centered to prevent torus wrap collisions)
 		posZ := 0.5 * solver.config.DomainZ
-		if len(orders) > 1 {
-			posZ = float64(ageRank[index]) / float64(len(orders)-1) * solver.config.DomainZ
+
+		if len(orders) > 0 {
+			posZ = (float64(ageRank[index]) + 0.5) / float64(len(orders)) * solver.config.DomainZ
 		}
 
-		// 4. Amplitude / Mass: sqrt(Volume normalized to mean volume)
-		normVolume := order.quantity / math.Max(meanVol, 1e-8)
+		// 4. Amplitude / Mass: Log-normalized volume scaling to avoid explosive blast waves
+		normVolume := 1.0 + math.Log1p(order.quantity/math.Max(meanVol, 1e-8))
 		amplitude := math.Sqrt(normVolume)
 
-		// 5. Velocity derived from prior position
+		// 5. Velocity derived from prior position, bounded by CFL acoustic speed
 		var velX, velY, velZ float64
+
 		if prior, exists := priors[order.id]; exists && dt > 0 {
-			velX = (posX - prior[0]) / dt
-			velY = (posY - prior[1]) / dt
-			velZ = (posZ - prior[2]) / dt
+			rawVelX := (posX - prior[0]) / dt
+			rawVelY := (posY - prior[1]) / dt
+			rawVelZ := (posZ - prior[2]) / dt
+
+			velX = math.Max(-maxVelocity, math.Min(maxVelocity, rawVelX))
+			velY = math.Max(-maxVelocity, math.Min(maxVelocity, rawVelY))
+			velZ = math.Max(-maxVelocity, math.Min(maxVelocity, rawVelZ))
 		}
+
 		next[order.id] = [3]float64{posX, posY, posZ}
 
 		// 6. Phase: FIFO Queue Progress + Side Opposition
 		sideTotal := sideCount[order.side]
 		progress := 0.0
+
 		if sideTotal > 0 {
 			progress = float64(queueRank[index]) / float64(sideTotal)
 		}
 
 		phase := math.Pi * progress
+
 		if order.side == mgrbook.Ask {
 			phase += math.Pi
 		}
 
-		// 7. Metabolic Heat: Proportional to volume and excitation flux
-		heat := normVolume * (1.0 + (hawkes.LambdaBuy+hawkes.LambdaSell)*dt) / 32.0
+		// 7. Metabolic Heat: Proportional to volume and excitation flux in thermodynamic equilibrium
+		excitationFlux := 1.0 + (hawkes.LambdaBuy+hawkes.LambdaSell)*dt
+		heat := normVolume * solver.config.CV * excitationFlux
 
 		oscillator := pmanifold.Oscillator{
 			Phase:     math.Mod(phase, 2*math.Pi),
@@ -507,15 +544,6 @@ func (solver *Solver) Step(
 	perSymbol map[string][]pmanifold.Oscillator,
 	hawkes HawkesSignal,
 ) error {
-	// A step that produced a non-finite reading left poisoned values
-	// resident in the GPU state; the next step over that state can hang the
-	// command queue and take the whole pipeline with it. The solver
-	// quarantines itself instead: one loud error, then it stays off the GPU
-	// until process restart while the rest of the thesis keeps flowing.
-	if solver.quarantined.Load() {
-		return nil
-	}
-
 	controls := solver.config.RuntimeControls()
 	controls.DeltaT = solver.config.DeltaT
 
@@ -524,8 +552,6 @@ func (solver *Solver) Step(
 	controls.TopdownEnergyScale = math.Min(2.0, math.Max(0.0, hawkes.Reflexivity*hawkes.Reflexivity))
 
 	if err := solver.physics.SetControls(controls); err != nil {
-		solver.quarantined.Store(true)
-
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"manifold: failed to apply runtime controls",
@@ -535,8 +561,6 @@ func (solver *Solver) Step(
 
 	reading, err := solver.physics.Step()
 	if err != nil {
-		solver.quarantined.Store(true)
-
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf("failed to advance manifold: %v", err),
@@ -552,8 +576,6 @@ func (solver *Solver) Step(
 	if len(solver.oscillators) > 0 {
 		oscillators, readErr := solver.physics.ReadOscillators(len(solver.oscillators))
 		if readErr != nil {
-			solver.quarantined.Store(true)
-
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				"failed to read manifold oscillators: "+readErr.Error(),
@@ -745,7 +767,7 @@ func degenerateOscillator(oscillator pmanifold.Oscillator) bool {
 		}
 	}
 
-	return !finitePositive(oscillator.Heat) || !finitePositive(oscillator.Amplitude)
+	return !finitePositive(oscillator.Heat) || !finitePositive(oscillator.Amplitude) || !finitePositive(oscillator.Omega)
 }
 
 func extractSymbolHawkes(symbol *types.Symbol) HawkesSignal {
