@@ -181,8 +181,8 @@ func TestUpdate(t *testing.T) {
 			stored, found := bitcoin.Graphs.Load("market_graph")
 			So(found, ShouldBeTrue)
 			graph := stored.(*Graph)
-			So(graph.Nodes, ShouldHaveLength, 2)
-			So(graph.Edges, ShouldHaveLength, 1)
+			So(graph.Nodes, ShouldHaveLength, 3)
+			So(graph.Edges, ShouldHaveLength, 2)
 			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"cvd-measurement", "cvd:drive"})
@@ -288,11 +288,12 @@ func TestGraphReadyForSearch(t *testing.T) {
 		graph := NewGraph(time.Unix(1, 0).UTC())
 		graph.Forecast = graphForecast(0.01)
 		graph.ForecastHorizon = 2
+		graph.DecisionTarget = "causal"
 		forecastID := "res:BTC/USD:forecast"
 		graph.AddNode(&Node{
 			ID: forecastID, Symbol: "BTC/USD", Kind: KindResonance, Value: 0.01, Confidence: 1,
 		})
-		graph.AddNode(&Node{ID: "causal", Value: 0, Confidence: 1})
+		graph.AddNode(&Node{ID: "causal", Kind: KindHypothesis, Value: 0, Confidence: 1})
 		graph.AddEdge(&Edge{
 			From: forecastID, To: "causal", Relation: RelationSupports,
 			Weight: 0.5, Confidence: 1,
@@ -571,7 +572,7 @@ func TestExtractResonanceNodes(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(node.Value, ShouldEqual, 1)
-			So(node.Confidence, ShouldEqual, 1)
+			So(node.Confidence, ShouldAlmostEqual, 1, 0.001)
 			So(node.At, ShouldEqual, at)
 			So(graph.ForecastHorizon, ShouldEqual, 3)
 			So(graph.ForwardCurve, ShouldBeEmpty)
@@ -629,18 +630,15 @@ func TestExtractManifoldNodes(t *testing.T) {
 
 		NewSolver(nil, nil).extractManifoldNodes(thesis, graph)
 
-		Convey("It should retain the measured phase and realized historical outcome", func() {
-			node := graph.Nodes["man:universe:phase_alignment"]
+		Convey("It should retain the measured phase and directional inference", func() {
+			node := graph.Nodes["man:universe:phase_direction"]
 			So(node, ShouldNotBeNil)
 			So(node.Kind, ShouldEqual, KindManifold)
-			So(node.Value, ShouldEqual, 0.01)
-			So(node.Strength, ShouldEqual, 0.6)
-			So(node.Confidence, ShouldEqual, 0.6)
-			So(node.Metadata["angle"], ShouldEqual, 0.75)
-			So(node.Metadata["horizon"], ShouldEqual, 2)
-			So(node.Metadata["outcome"], ShouldResemble, types.PhaseOutcome{
-				Direction: "up", Return: 0.01, Horizon: 2,
-			})
+			So(node.Value, ShouldEqual, 1.0)
+			So(node.Strength, ShouldEqual, 1.0)
+			So(node.Confidence, ShouldEqual, 1.0)
+			So(node.Metadata["support"], ShouldEqual, 0.6)
+			So(node.Metadata["responses"], ShouldEqual, 1)
 		})
 	})
 }

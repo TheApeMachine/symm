@@ -392,7 +392,7 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 	}
 
 	if stoploss.profitLatched && !raisedPeak && stoploss.ProfitLine != nil &&
-		mark.Cmp(stoploss.ProfitLine) > 0 {
+		mark.Cmp(stoploss.ProfitLine) > 0 && !stoploss.isParabolicRun() {
 		if stoploss.lastStagnationMark == nil || mark.Cmp(stoploss.lastStagnationMark) != 0 {
 			stoploss.distinctNonPeakMarks++
 			stoploss.lastStagnationMark = mark
@@ -444,6 +444,27 @@ func (stoploss *Stoploss) markMove(
 }
 
 /*
+isParabolicRun reports whether the lot has expanded into a multi-hour or macro
+runner (Phase 3). Once in this regime, micro-tick stagnation checks are suppressed
+in favor of macro volatility trailing off Peak.
+*/
+func (stoploss *Stoploss) isParabolicRun() bool {
+	if stoploss == nil || stoploss.ProfitLine == nil || stoploss.Peak == nil ||
+		stoploss.ProfitLine.Sign() <= 0 {
+		return false
+	}
+
+	peakFloat := stoploss.Peak.Float64()
+	profitFloat := stoploss.ProfitLine.Float64()
+
+	if profitFloat <= 0 {
+		return false
+	}
+
+	return (peakFloat-profitFloat)/profitFloat >= 0.15
+}
+
+/*
 trailingCandidate places the floor one giveback tolerance below a new peak. The
 tolerance is the wider of the plan's entry distance and the run's own learned
 unusual-step boundary, so a floor set while the lot is deep in profit does not
@@ -465,6 +486,15 @@ func (stoploss *Stoploss) trailingCandidate(
 
 		if candidate.Cmp(distance) > 0 {
 			distance = candidate
+		}
+	}
+
+	if stoploss.isParabolicRun() {
+		markFloat := mark.Float64()
+		macroGiveback := decimal.NewFromFloat64(markFloat * 0.10)
+
+		if macroGiveback.Cmp(distance) > 0 {
+			distance = macroGiveback
 		}
 	}
 

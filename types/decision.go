@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/nomagique/mcts"
 )
 
 /*
@@ -164,15 +165,14 @@ type DecisionMCTSBranch struct {
 }
 
 /*
-DecisionMCTSTrace records every root branch the causal search actually
-explored, ranked by visit count. The recommended action is the branch with
-the most visits (the search's own robust-child rule), not a value comparison
-computed separately by the frontend.
+DecisionMCTSTrace records every root branch and the full recursive search tree
+the causal search actually explored, ranked by visit count.
 */
 type DecisionMCTSTrace struct {
 	Iterations        int                  `json:"iterations"`
 	Branches          []DecisionMCTSBranch `json:"branches"`
 	RecommendedAction string               `json:"recommendedAction,omitempty"`
+	Tree              *mcts.Node           `json:"tree,omitempty"`
 }
 
 /*

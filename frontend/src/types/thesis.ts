@@ -9,6 +9,30 @@ re-deriving gate verdicts from unrelated action frames.
 */
 export type Action = "enter" | "exit" | "reduce" | "hold" | "nothing";
 
+export type DecisionMCTSTreeNode = {
+	action: number;
+	actionName: string;
+	depth: number;
+	visits: number;
+	effectiveVisits: number;
+	observedReward?: number;
+	counterfactualReward?: number;
+	counterfactualMass?: number;
+	counterfactualPrecision?: number;
+	totalReward: number;
+	meanReward: number;
+	exploitation: number;
+	exploration: number;
+	causalExpectation: number;
+	selectionScore: number;
+	scmReady: boolean;
+	scmReason?: string;
+	selected: boolean;
+	principal: boolean;
+	state?: Record<string, number>;
+	children?: DecisionMCTSTreeNode[];
+};
+
 export type DecisionTrace = {
 	hypothesis?: string;
 	graphSupports: number;
@@ -24,6 +48,9 @@ export type DecisionTrace = {
 			meanReward: number;
 		}>;
 		recommendedAction?: string;
+		tree?: DecisionMCTSTreeNode;
+		maxDepth?: number;
+		totalNodes?: number;
 	};
 };
 

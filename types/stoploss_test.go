@@ -367,6 +367,21 @@ func TestStoplossUpdate(t *testing.T) {
 			So(stoploss.Floor.Cmp(ratcheted), ShouldEqual, 0)
 		})
 
+		Convey("It should hold through consolidation flags during a parabolic run without stagnation triggers", func() {
+			stoploss.Update(stoploss.ArmAt)
+			stoploss.Update(decimal.NewFromFloat64(120))
+			So(stoploss.isParabolicRun(), ShouldBeTrue)
+
+			stoploss.Update(decimal.NewFromFloat64(118.5))
+			stoploss.Update(decimal.NewFromFloat64(118.0))
+			stoploss.Update(decimal.NewFromFloat64(118.2))
+			stoploss.Update(decimal.NewFromFloat64(118.1))
+			stoploss.Update(decimal.NewFromFloat64(118.3))
+
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.TriggerReason, ShouldEqual, "")
+		})
+
 		Convey("It should raise a lagged lock floor back to the lock line", func() {
 			stoploss.Update(stoploss.ArmAt)
 			stoploss.Floor = preLockFloor

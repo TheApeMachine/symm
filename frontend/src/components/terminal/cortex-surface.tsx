@@ -2,7 +2,6 @@ import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { cn } from "#/lib/utils";
 import { Component } from "../ui/component";
-import { CortexBeamShell } from "./cortex-beam-shell";
 import { CortexCanvas } from "./cortex-canvas";
 import { CortexPanelsShell } from "./cortex-panels-shell";
 

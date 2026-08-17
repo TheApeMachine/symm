@@ -1,5 +1,5 @@
-import { useNavigate } from "@tanstack/react-router";
 import type { MouseEvent } from "react";
+import { terminalStore } from "#/collections/terminal";
 import {
 	setDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
@@ -17,18 +17,15 @@ const decisionSlotKeys = Array.from(
 );
 
 export const Decisions = () => {
-	const navigate = useNavigate();
-
 	/*
-		The decision tree page scopes and expands by symbol, not by row identity,
-		so a click here pins the symbol both ways: as the persistent side-rail
-		scope and as a one-shot focus the matching DecisionChain claims and
-		expands itself the moment it next paints that symbol.
+		Clicking any candidate opens the full thesis carrier modal for that symbol,
+		including its full recursive MCTS/Pearl branching tree, whether it opened a
+		position or was held/rejected.
 	*/
-	const openInDecisionTree = (event: MouseEvent<HTMLDivElement>) => {
+	const inspectDecision = (event: MouseEvent<HTMLElement>) => {
 		const symbol = event.currentTarget.querySelector<HTMLElement>(
 			"[data-paint='symbol']",
-		)?.textContent;
+		)?.textContent?.trim();
 
 		if (!symbol) {
 			return;
@@ -36,7 +33,7 @@ export const Decisions = () => {
 
 		setDecisionsScopeSymbol(symbol);
 		setDecisionsPendingFocus(symbol);
-		navigate({ to: "/decisions" });
+		terminalStore.actions.openThesis(symbol);
 	};
 
 	return (
@@ -63,8 +60,8 @@ export const Decisions = () => {
 								className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0 rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-1.5 transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)] hover:bg-(--raised)"
 								data-decision-card="true"
 								data-index={index}
-								onClick={openInDecisionTree}
-								title="Open in decision tree"
+								onClick={inspectDecision}
+								title="Inspect MCTS / Pearl decision tree"
 							>
 								<Typography.Span
 									data-paint="symbol"

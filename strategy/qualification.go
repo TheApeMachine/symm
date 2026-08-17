@@ -61,7 +61,7 @@ func reserveQualification(
 	}
 
 	switch types.CategoryType(opportunityType) {
-	case types.VerticalIgnition, types.RiskOnSurge:
+	case types.CoiledCompression, types.VerticalIgnition, types.RiskOnSurge:
 		return true, "sudden-pump precursor with one-horizon predictive support"
 	default:
 		return false, "structural opportunity is not an emergency reserve setup"
@@ -79,9 +79,9 @@ func graphOpportunityType(graph *logicgraph.Graph) string {
 	}
 
 	preferred := map[types.CategoryType]bool{
+		types.CoiledCompression: true,
 		types.VerticalIgnition:  true,
 		types.RiskOnSurge:       true,
-		types.CoiledCompression: true,
 		types.InefficientLag:    true,
 		types.HiddenAbsorption:  true,
 		types.DecoupledAlpha:    true,
@@ -114,7 +114,7 @@ func graphOpportunityType(graph *logicgraph.Graph) string {
 
 		mass := edge.Weight * edge.Confidence
 
-		if mass > bestMass || best == types.CategoryTypeNone {
+		if mass > bestMass {
 			best = category
 			bestMass = mass
 		}
@@ -170,6 +170,7 @@ func decisionTrace(
 			Iterations:        iterations,
 			Branches:          branches,
 			RecommendedAction: graphActionLabel(roots, recommended),
+			Tree:              root,
 		},
 	}
 }

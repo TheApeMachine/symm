@@ -30,7 +30,7 @@ export type MarketGraphFrame = {
 	adjacency?: Record<string, string[]>;
 };
 
-type GraphSurfaceState = {
+export type GraphSurfaceState = {
 	frame: MarketGraphFrame | null;
 	graph: RenderGraph | null;
 	displayedStructureKey: string;

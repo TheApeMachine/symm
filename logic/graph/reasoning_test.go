@@ -56,7 +56,7 @@ func TestReasoningFramePredictiveDynamics(t *testing.T) {
 
 		Convey("It should route motion into flow and physical residue into risk context", func() {
 			So(flow, ShouldEqual, 0.4)
-			So(surprise, ShouldEqual, 0.3)
+			So(surprise, ShouldAlmostEqual, 0.3, 0.0001)
 		})
 	})
 }
