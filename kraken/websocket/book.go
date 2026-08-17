@@ -251,19 +251,6 @@ func (book *Book) apply(
 					continue
 				}
 
-				order.LimitPrice, err = book.normalizer.FormatPrice(
-					data.Symbol,
-					order.LimitPrice,
-				)
-
-				if err != nil {
-					return nil, nil, fmt.Errorf(
-						"level3 normalize %s price: %w",
-						data.Symbol,
-						err,
-					)
-				}
-
 				price := order.LimitPrice.String()
 
 				if level, ok := symbolSide.Levels[price]; ok && level == nil {
@@ -273,19 +260,6 @@ func (book *Book) apply(
 				if order.Event != "delete" {
 					if order.OrderQty == nil {
 						continue
-					}
-
-					order.OrderQty, err = book.normalizer.FormatSize(
-						data.Symbol,
-						order.OrderQty,
-					)
-
-					if err != nil {
-						return nil, nil, fmt.Errorf(
-							"level3 normalize %s quantity: %w",
-							data.Symbol,
-							err,
-						)
 					}
 
 					if order.OrderQty.Sign() == 1 {

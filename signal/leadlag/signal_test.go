@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ import (
 
 func TestMeasure(t *testing.T) {
 	Convey("Given repeated multi-symbol lead-lag cuts", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("AAA/USD", nil)
 		start := time.Unix(1_700_007_000, 0).UTC()
 		var measurements []*types.Measurement
@@ -36,10 +37,10 @@ func TestMeasure(t *testing.T) {
 					Symbol:    symbol,
 					Last:      decimal.NewFromFloat64(prices[index]),
 					Timestamp: at,
-				})
+				}, types.TickerReceivers)
 			}
 
-			measurements = signal.Measure(market)
+			measurements = slices.Collect(signal.Measure(market))
 		}
 
 		Convey("It should retain symbol history and emit nomagique lag measurements", func() {
@@ -66,7 +67,7 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a retained anchor without a ticker in the current frame", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BBB/USD", nil)
 		start := time.Unix(1_700_008_000, 0).UTC()
 
@@ -89,8 +90,8 @@ func TestMeasure(t *testing.T) {
 		market.AppendTicker(kraken.TickerData{
 			Symbol: "BBB/USD", Last: decimal.NewFromFloat64(106),
 			Timestamp: start.Add(2 * time.Second),
-		})
-		measurements := signal.Measure(market)
+		}, types.TickerReceivers)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should retain the exact anchor endpoint on the relationship", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -106,7 +107,7 @@ func TestMeasure(t *testing.T) {
 }
 
 func BenchmarkMeasure(b *testing.B) {
-	signal := NewSignal(context.Background(), nil, nil)
+	signal := NewSignal(context.Background(), nil)
 	market := types.NewSymbol("AAA/USD", nil)
 	at := time.Unix(1_700_009_000, 0).UTC()
 
@@ -140,9 +141,9 @@ func BenchmarkMeasure(b *testing.B) {
 
 		for index := range tickers {
 			tickers[index].Timestamp = at
-			market.AppendTicker(tickers[index])
+			market.AppendTicker(tickers[index], types.TickerReceivers)
 		}
 
-		_ = signal.Measure(market)
+		_ = slices.Collect(signal.Measure(market))
 	}
 }

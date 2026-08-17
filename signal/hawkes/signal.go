@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"iter"
 	"maps"
 	"sync"
 	"time"
@@ -32,7 +33,6 @@ type Signal struct {
 	api       *websocket.API
 	process   *excitation.Process
 	sample    *excitation.Sample
-	ui        chan []byte
 	lastTrade *sync.Map
 	latest    *sync.Map
 }
@@ -49,7 +49,6 @@ arrival windows and fitted parameter epochs.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
-	ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -59,7 +58,6 @@ func NewSignal(
 		api:       api,
 		process:   excitation.NewProcess(),
 		sample:    excitation.NewSample(),
-		ui:        ui,
 		lastTrade: &sync.Map{},
 		latest:    &sync.Map{},
 	}
@@ -78,66 +76,86 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceHawkes
 }
 
-func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
-	measurements := make([]*types.Measurement, 0)
+func (signal *Signal) Measure(
+	symbol *types.Symbol,
+	_ ...int64,
+) iter.Seq[*types.Measurement] {
+	return func(yield func(*types.Measurement) bool) {
+		emitted := false
 
-	for trade := range symbol.MarketTrades(types.SourceHawkes) {
-		if signal.seenTrade(trade) {
-			continue
+		for trade := range symbol.MarketTrades(types.SourceHawkes) {
+			if signal.seenTrade(trade) {
+				continue
+			}
+
+			input, sampled, err := signal.sample.MeasureArrival(excitation.TradeInput{
+				Symbol:    trade.Symbol,
+				Side:      trade.Side,
+				Timestamp: trade.Timestamp,
+			})
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"excitation sample failed: "+err.Error(),
+					err,
+				))
+
+				continue
+			}
+
+			signal.commitTrade(trade)
+
+			if !sampled {
+				if !yield(signal.frame(trade.Symbol, countOutcome(trade, input))) {
+					return
+				}
+
+				emitted = true
+				continue
+			}
+
+			outcome, measured, err := signal.process.Measure(input)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"excitation measure failed: "+err.Error(),
+					err,
+				))
+
+				if !yield(signal.frame(trade.Symbol, countOutcome(trade, input))) {
+					return
+				}
+
+				emitted = true
+				continue
+			}
+
+			if !measured {
+				if !yield(signal.frame(trade.Symbol, countOutcome(trade, input))) {
+					return
+				}
+
+				emitted = true
+				continue
+			}
+
+			if !yield(signal.frame(trade.Symbol, outcome)) {
+				return
+			}
+
+			emitted = true
 		}
 
-		input, sampled, err := signal.sample.MeasureArrival(excitation.TradeInput{
-			Symbol:    trade.Symbol,
-			Side:      trade.Side,
-			Timestamp: trade.Timestamp,
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"excitation sample failed: "+err.Error(),
-				err,
-			))
-
-			continue
+		if emitted {
+			return
 		}
 
-		signal.commitTrade(trade)
-
-		if !sampled {
-			measurements = append(measurements, signal.frame(trade.Symbol, countOutcome(trade, input)))
-			continue
+		if last := signal.recall(symbol.Symbol); last != nil {
+			yield(last)
 		}
-
-		outcome, measured, err := signal.process.Measure(input)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"excitation measure failed: "+err.Error(),
-				err,
-			))
-			measurements = append(measurements, signal.frame(trade.Symbol, countOutcome(trade, input)))
-			continue
-		}
-
-		if !measured {
-			measurements = append(measurements, signal.frame(trade.Symbol, countOutcome(trade, input)))
-			continue
-		}
-
-		measurements = append(measurements, signal.frame(trade.Symbol, outcome))
 	}
-
-	if len(measurements) > 0 {
-		return measurements
-	}
-
-	if last := signal.recall(symbol.Symbol); last != nil {
-		return []*types.Measurement{last}
-	}
-
-	return measurements
 }
 
 func (signal *Signal) remember(measurement *types.Measurement) {

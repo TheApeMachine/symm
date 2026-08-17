@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,14 +14,14 @@ import (
 
 func TestMeasure(t *testing.T) {
 	Convey("Given CVD trade observations on one symbol", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Unix(1_700_003_200, 0).UTC()
-		market.AppendTicker(cvdTicker(99.99, 100.01, at))
+		market.AppendTicker(cvdTicker(99.99, 100.01, at), types.TickerReceivers)
 		trade := cvdTrade(1, "buy", 100.01, at.Add(time.Second))
-		market.AppendTrade(trade)
+		market.AppendTrade(trade, types.TradeReceivers)
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should emit flow metrics from nomagique", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -37,12 +38,12 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given alternating executions around a constant midpoint", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Unix(1_700_003_300, 0).UTC()
-		market.AppendTicker(cvdTicker(99.99, 100.01, at))
+		market.AppendTicker(cvdTicker(99.99, 100.01, at), types.TickerReceivers)
 
-		for index := range 8 {
+		for index := 0; index < 8; index++ {
 			side := "buy"
 			price := 100.01
 
@@ -56,10 +57,10 @@ func TestMeasure(t *testing.T) {
 				side,
 				price,
 				at.Add(time.Duration(index+1)*time.Second),
-			))
+			), types.TradeReceivers)
 		}
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should not turn execution bounce into directional response", func() {
 			So(measurements, ShouldHaveLength, 8)

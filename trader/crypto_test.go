@@ -10,11 +10,11 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -411,8 +411,8 @@ func TestCryptoRun(t *testing.T) {
 					Confidence: 0.95,
 				})
 
-				// The planner only searches graphs that name a decision target
-				// with a supported evidence path onto it.
+				// The planner only searches graphs that name a decision
+				// target with a supported evidence path onto it.
 				marketGraph.DecisionTarget = "hyp:SIM1/USD:long_opportunity"
 				marketGraph.AddNode(&logicgraph.Node{
 					ID:         marketGraph.DecisionTarget,
@@ -458,10 +458,13 @@ func TestCryptoRun(t *testing.T) {
 
 				Convey("Then the desk should accept the completed entry", func() {
 					So(decision.Action, ShouldEqual, types.ActionEnter)
-					So(decision.ThesisScore, ShouldBeGreaterThan, 0)
 					So(decision.ProposedQuantity, ShouldNotBeNil)
 					So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
-					So(decision.EntryCost, ShouldNotBeNil)
+					So(decision.ExpectedReturn, ShouldNotBeNil)
+					So(decision.ExpectedFees, ShouldNotBeNil)
+					So(decision.ExpectedSpread, ShouldNotBeNil)
+					So(decision.ExpectedImpact, ShouldNotBeNil)
+					So(decision.ExpectedImpact.Sign(), ShouldEqual, 0)
 					So(decision.Stoploss, ShouldNotBeNil)
 					So(decision.Stoploss.Floor, ShouldNotBeNil)
 					So(decision.Stoploss.Floor.Cmp(

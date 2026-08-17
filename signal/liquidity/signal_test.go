@@ -3,6 +3,7 @@ package liquidity
 import (
 	"context"
 	"math"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -63,10 +64,10 @@ func TestMeasure(t *testing.T) {
 		}
 
 		appendTickers(market, firstLeg...)
-		firstMeasurements := signal.Measure(market)
+		firstMeasurements := slices.Collect(signal.Measure(market))
 		So(firstMeasurements, ShouldHaveLength, 1)
 		appendTickers(market, secondLeg...)
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should normalize from the first complete cohort", func() {
 			first := measurementFor(firstMeasurements, "THIN/USD")
@@ -114,7 +115,7 @@ func TestMeasure(t *testing.T) {
 		})
 
 		Convey("It should not emit unchanged cached observations", func() {
-			So(signal.Measure(market), ShouldBeEmpty)
+			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
 		})
 	})
 
@@ -131,10 +132,10 @@ func TestMeasure(t *testing.T) {
 				ticker("PEER-B/USD", 100, 6, 30, at),
 				ticker("PEER-C/USD", 100, 8, 40, at),
 			)
-			_ = signal.Measure(market)
+			_ = slices.Collect(signal.Measure(market))
 		}
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 		So(measurements, ShouldBeEmpty)
 		at := start.Add(2 * time.Second)
 		appendTickers(market,
@@ -143,7 +144,7 @@ func TestMeasure(t *testing.T) {
 			ticker("PEER-B/USD", 100, 6, 30, at),
 			ticker("PEER-C/USD", 100, 8, 40, at),
 		)
-		measurements = signal.Measure(market)
+		measurements = slices.Collect(signal.Measure(market))
 
 		Convey("It should keep depth usable while turnover normalization stays absent", func() {
 			measurement := measurementFor(measurements, "NO-VOLUME/USD")
@@ -253,7 +254,7 @@ func TestLeaveOneOutLiquidity(t *testing.T) {
 
 func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		market.AppendTicker(row)
+		market.AppendTicker(row, types.TickerReceivers)
 	}
 }
 
@@ -271,6 +272,6 @@ func BenchmarkMeasure(b *testing.B) {
 			ticker("BBB/USD", 100, 4, 20, at),
 			ticker("CCC/USD", 100, 6, 30, at),
 		)
-		_ = signal.Measure(market)
+		_ = slices.Collect(signal.Measure(market))
 	}
 }

@@ -20,6 +20,49 @@ run-local terminal-position history derived from those same backend frames.
 const LIFECYCLE_TONE =
 	"initializing:text-(--info) pending:text-(--warning) new:text-(--info) open:text-(--up) partial:text-(--warning) partial_filled:text-(--warning) filled:text-(--up) error:text-(--down)";
 
+const EXIT_TONE =
+	"hard_floor:text-(--down) protected_floor:text-(--up) trailing_floor:text-(--up) profit_stagnation:text-(--acc) pump_momentum_exhausted:text-(--acc) horizon_expired:text-(--warning) continuation_ev_negative:text-(--warning) execution_regime_invalidated:text-(--warning)";
+
+/*
+The visit domain spans every rendered branch, so each bar states its share of
+the exploration the search actually spent, relative to the least- and
+most-visited root.
+*/
+const BRANCH_DOMAIN = Array.from(
+	{ length: 6 },
+	(_, index) => `decision.trace.mcts.branches.${index}.visits`,
+).join(",");
+
+/*
+BranchRow paints one root branch of the causal search the decision actually
+ran: the action tried, its share of all simulations, and the mean reward
+those simulations returned. Branches the search never spawned stay blank —
+every bound element is a leaf, so an absent path paints nothing instead of
+wiping its row.
+*/
+const BranchRow = ({ index }: { index: number }) => (
+	<div className="flex items-center gap-2">
+		<span
+			data-paint={`decision.trace.mcts.branches.${index}.action`}
+			className="w-40 shrink-0 truncate text-[9px] text-(--f3)"
+		/>
+		<div className="h-1.5 min-w-0 flex-1 rounded-xs bg-(--sunken)">
+			<div
+				data-set={`decision.trace.mcts.branches.${index}.visits`}
+				data-set-scale="domain-percent"
+				data-set-domain={BRANCH_DOMAIN}
+				data-target="style.width"
+				className="h-full rounded-xs bg-(--acc)"
+			/>
+		</div>
+		<b
+			data-paint={`decision.trace.mcts.branches.${index}.meanReward`}
+			data-paint-format=".4f"
+			className="w-12 shrink-0 text-right font-normal text-(--f2)"
+		/>
+	</div>
+);
+
 export const JournalSurface = () => (
 	<div className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(280px,320px)_minmax(420px,1fr)]">
 		<div className="min-h-0 overflow-auto border-(--line) border-r p-3.5">
@@ -180,6 +223,104 @@ export const JournalSurface = () => (
 													data-paint-format=".4f"
 												/>
 											</span>
+										</div>
+
+										<div className="mt-1.5 flex items-center justify-between gap-2 border-t border-(--line) pt-1.5 text-[9.5px]">
+											<span className="text-(--f4)">
+												exit{" "}
+												<b
+													data-paint="holding.stoploss.trigger_reason"
+													data-paint-class={EXIT_TONE}
+													className="font-semibold"
+												/>
+											</span>
+											<span className="text-(--f4)">
+												cause{" "}
+												<b
+													data-paint="decision.cause"
+													className="font-normal text-(--f3)"
+												/>
+											</span>
+										</div>
+
+										<div className="mt-1 grid grid-cols-4 gap-x-3 text-[9px] text-(--f4)">
+											<span>
+												floor{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.stoploss.floor"
+													data-paint-format=".6f"
+												/>
+											</span>
+											<span>
+												peak{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.stoploss.peak"
+													data-paint-format=".6f"
+												/>
+											</span>
+											<span>
+												profit{" "}
+												<b
+													className="font-normal text-(--f3)"
+													data-paint="holding.stoploss.profit_line"
+													data-paint-format=".6f"
+												/>
+											</span>
+											<span
+												data-set="holding.stoploss.locked"
+												data-set-scale="bool-color"
+												data-target="style.color"
+											>
+												<b
+													data-paint="holding.stoploss.locked"
+													className="font-normal"
+												/>
+											</span>
+										</div>
+
+										<div className="mt-1.5 border-t border-(--line) pt-1.5">
+											<div className="flex items-center justify-between text-[9px] text-(--f4)">
+												<span>
+													thesis{" "}
+													<b
+														className="font-normal text-(--f2)"
+														data-paint="decision.thesisScore"
+														data-paint-format=".4f"
+													/>
+												</span>
+												<span>
+													graph{" "}
+													<b
+														className="font-normal text-(--f2)"
+														data-paint="decision.graphScore"
+														data-paint-format=".4f"
+													/>{" "}
+													/ gate{" "}
+													<b
+														className="font-normal text-(--f3)"
+														data-paint="decision.admissionGraphThreshold"
+														data-paint-format=".4f"
+													/>
+												</span>
+												<span>
+													<b
+														className="font-normal text-(--f3)"
+														data-paint="decision.trace.mcts.iterations"
+													/>{" "}
+													sims →{" "}
+													<b
+														data-paint="decision.trace.mcts.recommendedAction"
+														className="font-semibold text-(--acc)"
+													/>
+												</span>
+											</div>
+											<div className="mt-1 flex flex-col gap-0.5">
+												{[0, 1, 2, 3, 4, 5].map((index) => (
+													<BranchRow key={index} index={index} />
+												))}
+											</div>
 										</div>
 									</Panel>
 								))

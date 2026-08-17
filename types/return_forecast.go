@@ -1,6 +1,6 @@
 package types
 
-import "github.com/theapemachine/nomagique/learning"
+import "github.com/theapemachine/symm/nomagique/learning"
 
 /*
 ResonanceReturnForecast is a direction call over the largest contiguous

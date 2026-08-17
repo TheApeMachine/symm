@@ -3,6 +3,7 @@ package sentiment
 import (
 	"context"
 	"math"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -57,11 +58,11 @@ func TestMeasure(t *testing.T) {
 		}
 
 		appendTickers(market, firstLeg...)
-		So(signal.Measure(market), ShouldHaveLength, 1)
+		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
 		appendTickers(market, secondLeg...)
-		So(signal.Measure(market), ShouldHaveLength, 1)
+		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
 		appendTickers(market, thirdLeg...)
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should use consecutive log returns and signed breadth", func() {
 			leader := measurementFor(measurements, "AAA/USD")
@@ -95,7 +96,7 @@ func TestMeasure(t *testing.T) {
 		})
 
 		Convey("It should reject repeated latest-value cache entries", func() {
-			So(signal.Measure(market), ShouldBeEmpty)
+			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
 		})
 	})
 
@@ -107,12 +108,12 @@ func TestMeasure(t *testing.T) {
 			ticker("AAA/USD", 100, start),
 			ticker("BBB/USD", 100, start),
 		)
-		So(signal.Measure(market), ShouldHaveLength, 1)
+		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
 		appendTickers(market,
 			ticker("AAA/USD", 100, start.Add(time.Second)),
 			ticker("BBB/USD", 100, start.Add(time.Second)),
 		)
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should leave the scale-dependent return unnormalized", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -127,12 +128,12 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
 		market := types.NewSymbol("AAA/USD", nil)
 		start := time.Unix(1_700_000_200, 0).UTC()
-		market.AppendTicker(ticker("AAA/USD", 100, start))
+		market.AppendTicker(ticker("AAA/USD", 100, start), types.TickerReceivers)
 
-		So(signal.Measure(market), ShouldHaveLength, 1)
+		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
 
-		market.AppendTicker(ticker("AAA/USD", 101, start.Add(time.Second)))
-		measurements := signal.Measure(market)
+		market.AppendTicker(ticker("AAA/USD", 101, start.Add(time.Second)), types.TickerReceivers)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should skip the observed row and measure the newer return", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -229,7 +230,7 @@ func TestNormalizedSentimentMetric(t *testing.T) {
 
 func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		market.AppendTicker(row)
+		market.AppendTicker(row, types.TickerReceivers)
 	}
 }
 
@@ -257,13 +258,13 @@ func BenchmarkMeasure(b *testing.B) {
 			"AAA/USD",
 			100+float64(index)/100,
 			start.Add(time.Duration(index)*time.Second),
-		))
+		), types.TickerReceivers)
 	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		_ = signal.Measure(market)
+		_ = slices.Collect(signal.Measure(market))
 	}
 }

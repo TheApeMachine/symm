@@ -176,6 +176,28 @@ func (thesis *Thesis) ForSymbols(names []string) (*Thesis, error) {
 }
 
 /*
+AnyPending reports whether any symbol in the universe still holds undrained
+market rows. The measurement pass asks this before numbering a pass, so a
+thesis tick only ever counts a pass that will actually run.
+*/
+func (thesis *Thesis) AnyPending() bool {
+	pending := false
+
+	thesis.Symbols.Range(func(_, value any) bool {
+		symbol, ok := value.(*Symbol)
+
+		if ok && symbol != nil && symbol.Pending() {
+			pending = true
+			return false
+		}
+
+		return true
+	})
+
+	return pending
+}
+
+/*
 StoreManifold atomically publishes one immutable fluid reading.
 */
 func (thesis *Thesis) StoreManifold(reading pmanifold.Reading) {

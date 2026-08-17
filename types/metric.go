@@ -36,6 +36,14 @@ const (
 	MetricPrecursor                       MetricType = "precursor"
 	MetricSpread                          MetricType = "spread"
 	MetricCompression                     MetricType = "compression"
+	MetricLadderBidDepth                  MetricType = "ladder_bid_depth"
+	MetricLadderAskDepth                  MetricType = "ladder_ask_depth"
+	MetricLadderImbalance                 MetricType = "ladder_imbalance"
+	MetricLadderBidDepletion              MetricType = "ladder_bid_depletion"
+	MetricLadderAskDepletion              MetricType = "ladder_ask_depletion"
+	MetricLadderBidReplenish              MetricType = "ladder_bid_replenish"
+	MetricLadderAskReplenish              MetricType = "ladder_ask_replenish"
+	MetricLadderSpreadBaseline            MetricType = "ladder_spread_baseline"
 	MetricIgnition                        MetricType = "ignition"
 	MetricTrend                           MetricType = "trend"
 	MetricExhaustion                      MetricType = "exhaustion"
@@ -263,6 +271,14 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 		MetricKey(MetricTradeQuantity, SideNone):        {"market", false},
 		MetricKey(MetricRVOL, SideNone):                 {"volume_clock", false},
 		MetricKey(MetricSpread, SideNone):               {"market", false},
+		MetricKey(MetricLadderBidDepth, SideNone):       {"ladder", false},
+		MetricKey(MetricLadderAskDepth, SideNone):       {"ladder", false},
+		MetricKey(MetricLadderImbalance, SideNone):      {"ladder", false},
+		MetricKey(MetricLadderSpreadBaseline, SideNone): {"ladder", false},
+		MetricKey(MetricLadderBidDepletion, SideNone):   {"dynamics", false},
+		MetricKey(MetricLadderAskDepletion, SideNone):   {"dynamics", false},
+		MetricKey(MetricLadderBidReplenish, SideNone):   {"dynamics", false},
+		MetricKey(MetricLadderAskReplenish, SideNone):   {"dynamics", false},
 		MetricKey(MetricPrecursor, SideNone):            {"legacy_summary", false},
 		MetricKey(MetricCompression, SideNone):          {"legacy_summary", false},
 		MetricKey(MetricIgnition, SideNone):             {"legacy_summary", false},

@@ -3,6 +3,7 @@ package correlation
 import (
 	"context"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func TestMeasure(t *testing.T) {
 				correlationTicker("AAA/USD", prices[0], at),
 				correlationTicker("BBB/USD", prices[1], at),
 			)
-			_ = signal.Measure(market)
+			_ = slices.Collect(signal.Measure(market))
 		}
 
 		Convey("It reuses the section group and constructs only the event subject", func() {
@@ -43,7 +44,7 @@ func TestMeasure(t *testing.T) {
 				correlationTicker("BBB/USD", 266.2, at),
 			)
 
-			measurements := signal.Measure(market)
+			measurements := slices.Collect(signal.Measure(market))
 			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Symbol, ShouldEqual, "AAA/USD")
 
@@ -68,11 +69,11 @@ func TestMeasure(t *testing.T) {
 			correlationTicker("BBB/USD", 242, start.Add(2*time.Second)),
 		)
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should consume each symbol history with its own cursor", func() {
 			So(measurements, ShouldHaveLength, 1)
-			So(signal.Measure(market), ShouldBeEmpty)
+			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
 		})
 	})
 
@@ -91,14 +92,14 @@ func TestMeasure(t *testing.T) {
 				correlationTicker("AAA/USD", prices[0], at),
 				correlationTicker("BBB/USD", prices[1], at),
 			)
-			_ = signal.Measure(market)
+			_ = slices.Collect(signal.Measure(market))
 		}
 
 		market := types.NewSymbol("BBB/USD", nil)
 		appendCorrelationTickers(market,
 			correlationTicker("BBB/USD", 266.2, start.Add(3*time.Second)),
 		)
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should emit only the peer changed by this event", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -119,7 +120,7 @@ func correlationTicker(symbol string, price float64, at time.Time) kraken.Ticker
 
 func appendCorrelationTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		market.AppendTicker(row)
+		market.AppendTicker(row, types.TickerReceivers)
 	}
 }
 
@@ -221,7 +222,7 @@ func BenchmarkMeasure(b *testing.B) {
 			correlationTicker("AAA/USD", prices[0], at),
 			correlationTicker("BBB/USD", prices[1], at),
 		)
-		_ = signal.Measure(market)
+		_ = slices.Collect(signal.Measure(market))
 	}
 
 	sequence := 3
@@ -238,6 +239,6 @@ func BenchmarkMeasure(b *testing.B) {
 				start.Add(time.Duration(sequence)*time.Second),
 			),
 		)
-		_ = signal.Measure(market)
+		_ = slices.Collect(signal.Measure(market))
 	}
 }

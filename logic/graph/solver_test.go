@@ -9,8 +9,9 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/logic/category"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -75,7 +76,7 @@ func TestUpdate(t *testing.T) {
 			}
 
 			references[reference] = struct{}{}
-			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+			symbol.AppendMeasurement(&types.Measurement{
 				ID:     fmt.Sprintf("%s:%s:%d", schema.Source, metricKey, index),
 				Source: schema.Source,
 				Symbol: "BTC/USD",
@@ -87,7 +88,7 @@ func TestUpdate(t *testing.T) {
 						Unit:       types.UnitDimensionless,
 					},
 				},
-			}})
+			})
 			categories[schema.Category] = struct{}{}
 		}
 		thesis.Symbols.Store("BTC/USD", symbol)
@@ -135,11 +136,6 @@ func TestUpdate(t *testing.T) {
 				}
 			}
 
-			// The compiled graph carries one measurement node per distinct
-			// source metric, one edge per schema row that links a measurement
-			// to its category, redundant-with links between categories that
-			// share references, one node per distinct classified category,
-			// and the single long-opportunity hypothesis.
 			So(graph.Edges, ShouldHaveLength,
 				len(types.CategorySchemas)+len(categories)+sharedLinks)
 			So(graph.Nodes, ShouldHaveLength, len(references)+len(categories)+1)
@@ -152,7 +148,7 @@ func TestUpdate(t *testing.T) {
 		bitcoin := types.NewSymbol("BTC/USD", nil)
 		drive := 0.8
 		separation := 0.75
-		bitcoin.AppendMeasurements([]*types.Measurement{&types.Measurement{
+		bitcoin.AppendMeasurement(&types.Measurement{
 			ID:     "cvd-measurement",
 			Source: types.SourceCVD,
 			Symbol: "BTC/USD",
@@ -165,7 +161,7 @@ func TestUpdate(t *testing.T) {
 					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 				},
 			},
-		}})
+		})
 		bitcoin.Categories.Store("BTC/USD", []types.Category{{
 			Symbol:     "BTC/USD",
 			Type:       types.CategoryAggressiveDrive,
@@ -185,12 +181,8 @@ func TestUpdate(t *testing.T) {
 			stored, found := bitcoin.Graphs.Load("market_graph")
 			So(found, ShouldBeTrue)
 			graph := stored.(*Graph)
-
-			// One measurement node, one category node, one hypothesis node;
-			// the measurement supports its category, the category supports
-			// the thesis.
-			So(graph.Nodes, ShouldHaveLength, 3)
-			So(graph.Edges, ShouldHaveLength, 2)
+			So(graph.Nodes, ShouldHaveLength, 2)
+			So(graph.Edges, ShouldHaveLength, 1)
 			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"cvd-measurement", "cvd:drive"})
@@ -209,7 +201,7 @@ func TestUpdate(t *testing.T) {
 			symbol := types.NewSymbol(symbolName, nil)
 			drive := 0.6
 			quality := 0.7
-			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+			symbol.AppendMeasurement(&types.Measurement{
 				ID:     symbolName + "-measurement",
 				Source: types.SourceCVD,
 				Symbol: symbolName,
@@ -222,7 +214,7 @@ func TestUpdate(t *testing.T) {
 						Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
 					},
 				},
-			}})
+			})
 			symbol.Categories.Store(symbolName, []types.Category{{
 				Symbol: symbolName, Type: types.CategoryAggressiveDrive,
 				Strength: drive, Confidence: 0.8,
@@ -301,7 +293,6 @@ func TestGraphReadyForSearch(t *testing.T) {
 			ID: forecastID, Symbol: "BTC/USD", Kind: KindResonance, Value: 0.01, Confidence: 1,
 		})
 		graph.AddNode(&Node{ID: "causal", Value: 0, Confidence: 1})
-		graph.DecisionTarget = "causal"
 		graph.AddEdge(&Edge{
 			From: forecastID, To: "causal", Relation: RelationSupports,
 			Weight: 0.5, Confidence: 1,
@@ -580,14 +571,42 @@ func TestExtractResonanceNodes(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(node.Value, ShouldEqual, 1)
-
-			// Confidence is the one-sided posterior over the lean. A six-sigma
-			// lean is near-certain but never exactly certain.
-			So(node.Confidence, ShouldBeGreaterThan, 0.99)
-			So(node.Confidence, ShouldBeLessThan, 1)
+			So(node.Confidence, ShouldEqual, 1)
 			So(node.At, ShouldEqual, at)
 			So(graph.ForecastHorizon, ShouldEqual, 3)
 			So(graph.ForwardCurve, ShouldBeEmpty)
+		})
+	})
+}
+
+func TestExtractPredictiveDynamicsNodes(t *testing.T) {
+	Convey("Given committed continuous predictive dynamics", t, func() {
+		at := time.Unix(2, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.Resonance.Store("BTC/USD", graphResonanceManifold())
+		dynamics := nomagique.Frame{}
+		dynamics.Put(learning.SymbolDynamicsReady, 1)
+		dynamics.Put(learning.SymbolDynamicsSampleCount, 8)
+		dynamics.Put(learning.SymbolDynamicsVelocity, 0.4)
+		dynamics.Put(learning.SymbolDynamicsMemory, 0.3)
+		dynamics.Put(learning.SymbolDynamicsPassivityResidue, -0.1)
+		dynamics.Put(learning.SymbolDynamicsJumpVariance, 0.02)
+		symbol.Resonance.Store(learning.PredictiveDynamicsKey, dynamics)
+		graph := NewGraph(at)
+
+		NewSolver(nil, nil).extractResonanceNodes(symbol, graph)
+
+		Convey("It should expose motion and risk as inspectable graph evidence", func() {
+			velocity, hasVelocity := graph.Nodes["res:BTC/USD:generalized_velocity"]
+			residue, hasResidue := graph.Nodes["res:BTC/USD:passivity_residue"]
+			jumpVariance, hasJumpVariance := graph.Nodes["res:BTC/USD:jump_variance"]
+
+			So(hasVelocity, ShouldBeTrue)
+			So(velocity.Value, ShouldEqual, 0.4)
+			So(hasResidue, ShouldBeTrue)
+			So(residue.Value, ShouldEqual, -0.1)
+			So(hasJumpVariance, ShouldBeTrue)
+			So(jumpVariance.Value, ShouldEqual, 0.02)
 		})
 	})
 }
@@ -610,22 +629,18 @@ func TestExtractManifoldNodes(t *testing.T) {
 
 		NewSolver(nil, nil).extractManifoldNodes(thesis, graph)
 
-		Convey("It should retain the aggregated phase direction from the realized outcomes", func() {
-			node := graph.Nodes["man:universe:phase_direction"]
+		Convey("It should retain the measured phase and realized historical outcome", func() {
+			node := graph.Nodes["man:universe:phase_alignment"]
 			So(node, ShouldNotBeNil)
 			So(node.Kind, ShouldEqual, KindManifold)
-
-			// One similar historical response that resolved up votes with its
-			// full similarity: unanimous support, so balance and confidence
-			// are exact and the direction is up.
-			So(node.Value, ShouldEqual, 1)
-			So(node.Strength, ShouldEqual, 1)
-			So(node.Confidence, ShouldEqual, 1)
-			So(node.At, ShouldEqual, at)
-			So(node.Metadata["support"], ShouldEqual, 0.6)
-			So(node.Metadata["contradiction"], ShouldEqual, 0)
-			So(node.Metadata["balance"], ShouldEqual, 1)
-			So(node.Metadata["responses"], ShouldEqual, 1)
+			So(node.Value, ShouldEqual, 0.01)
+			So(node.Strength, ShouldEqual, 0.6)
+			So(node.Confidence, ShouldEqual, 0.6)
+			So(node.Metadata["angle"], ShouldEqual, 0.75)
+			So(node.Metadata["horizon"], ShouldEqual, 2)
+			So(node.Metadata["outcome"], ShouldResemble, types.PhaseOutcome{
+				Direction: "up", Return: 0.01, Horizon: 2,
+			})
 		})
 	})
 }
@@ -725,7 +740,7 @@ func BenchmarkUpdate(b *testing.B) {
 		symbolState := types.NewSymbol(symbol, nil)
 		separation := 0.8
 		surge := 0.5
-		symbolState.AppendMeasurements([]*types.Measurement{&types.Measurement{
+		symbolState.AppendMeasurement(&types.Measurement{
 			ID:     "sentiment-" + symbol,
 			Source: types.SourceSentiment,
 			Symbol: symbol,
@@ -738,7 +753,7 @@ func BenchmarkUpdate(b *testing.B) {
 					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 				},
 			},
-		}})
+		})
 		thesis.Symbols.Store(symbol, symbolState)
 
 		symbolState.Categories.Store(symbol, []types.Category{

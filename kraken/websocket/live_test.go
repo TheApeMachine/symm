@@ -2,8 +2,8 @@ package websocket
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -193,8 +193,8 @@ func TestRestorePublicSubscriptions(t *testing.T) {
 	})
 }
 
-func TestRestoreLevel3Subscription(t *testing.T) {
-	Convey("Given more symbols than one Level 3 subscription request", t, func() {
+func TestResubscribeL3(t *testing.T) {
+	Convey("Given a level3 child reporting a checksum-diverged symbol", t, func() {
 		requests, endpoint, closeServer := subscriptionConnection(t, 2)
 		defer closeServer()
 
@@ -210,26 +210,37 @@ func TestRestoreLevel3Subscription(t *testing.T) {
 			viper.Set("market.subscribe.pace", nil)
 		})
 
-		symbols := make([]string, 41)
+		parent := &Live{level3: &sync.Map{}, level3Divergent: make(chan string, 1)}
+		child := &Live{client: client, book: NewBook(context.Background(), spot.NewNormalizer())}
+		child.symbols = append(child.symbols, "DIVERGED/USD", "QUIET/USD")
+		parent.level3.Store("group", child)
+		child.book.SetResync(child.reportDivergence(parent.level3Divergent))
 
-		for index := range symbols {
-			symbols[index] = fmt.Sprintf("S%d/USD", index)
-		}
+		Convey("The book should report divergence to the owning subscription manager", func() {
+			child.book.resync("DIVERGED/USD")
 
-		live := &Live{client: client}
-		live.symbols = append([]string{}, symbols...)
+			select {
+			case symbol := <-parent.Level3Divergences():
+				So(symbol, ShouldEqual, "DIVERGED/USD")
+			case <-time.After(time.Second):
+				t.Fatal("divergence never reached the subscription owner")
+			}
+		})
 
-		Convey("Reconnect should pause between consecutive requests", func() {
+		Convey("Recovery should pace between unsubscribe and fresh subscribe", func() {
 			started := time.Now()
-			live.restoreLevel3Subscription()
+			parent.ResubscribeL3("DIVERGED/USD")
 			elapsed := time.Since(started)
 			first := <-requests
 			second := <-requests
-			firstSymbols := first["params"].(map[string]any)["symbol"].([]any)
-			secondSymbols := second["params"].(map[string]any)["symbol"].([]any)
+			firstMethod := first["method"].(string)
+			secondParams := second["params"].(map[string]any)
+			secondSymbols := secondParams["symbol"].([]any)
 
-			So(len(firstSymbols), ShouldEqual, 40)
-			So(len(secondSymbols), ShouldEqual, 1)
+			So(firstMethod, ShouldEqual, "unsubscribe")
+			So(secondParams["channel"].(string), ShouldEqual, "level3")
+			So(secondSymbols, ShouldHaveLength, 1)
+			So(secondSymbols[0], ShouldEqual, "DIVERGED/USD")
 			So(elapsed, ShouldBeGreaterThanOrEqualTo, pace)
 		})
 	})

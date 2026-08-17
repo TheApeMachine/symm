@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -33,7 +34,7 @@ func appendResonanceCut(
 			},
 		}
 
-		symbol.AppendMeasurements([]*types.Measurement{measurement})
+		symbol.AppendMeasurement(measurement)
 	}
 }
 
@@ -44,7 +45,7 @@ func appendResonanceSource(
 	mark float64,
 	value float64,
 ) {
-	symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+	symbol.AppendMeasurement(&types.Measurement{
 		Source: source,
 		Symbol: symbol.Symbol,
 		Tick:   tick,
@@ -56,7 +57,7 @@ func appendResonanceSource(
 				Normalized: &value,
 			},
 		},
-	}})
+	})
 }
 
 func TestTaskSchema(t *testing.T) {
@@ -325,10 +326,10 @@ func TestUpdate(t *testing.T) {
 		solver := NewSolver(t.Context(), nil, nil, testAlpha)
 
 		for _, source := range types.SignalSources {
-			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+			symbol.AppendMeasurement(&types.Measurement{
 				Source: source,
 				Symbol: symbol.Symbol,
-			}})
+			})
 		}
 
 		Convey("It should leave the solver dormant", func() {
@@ -512,6 +513,29 @@ func TestUpdate(t *testing.T) {
 			So(forecast.Horizon, ShouldBeGreaterThan, 1)
 			So(historyValue.(*sampleHistory).ledger.supported(0.5),
 				ShouldBeGreaterThan, 1)
+		})
+	})
+}
+
+func TestPredictiveDynamicsWire(t *testing.T) {
+	Convey("Given a committed predictive dynamics Frame", t, func() {
+		frame := nomagique.Frame{}
+		frame.Put(learning.SymbolDynamicsReady, 1)
+		frame.Put(learning.SymbolDynamicsVelocity, 0.4)
+		frame.Put(learning.SymbolDynamicsPassivityResidue, -0.1)
+		frame.Put(learning.SymbolDynamicsJumpVariance, 0.02)
+		frame.Put(learning.SymbolDynamicsEquivarianceNorm, 1)
+
+		wire := predictiveDynamicsWire(frame)
+
+		Convey("It should expose stable UI field names without leaking interned paths", func() {
+			So(wire["ready"], ShouldEqual, 1)
+			So(wire["velocity"], ShouldEqual, 0.4)
+			So(wire["passivityResidue"], ShouldEqual, -0.1)
+			So(wire["jumpVariance"], ShouldEqual, 0.02)
+			So(wire["equivarianceNorm"], ShouldEqual, 1)
+			_, leaked := wire["predictive/velocity"]
+			So(leaked, ShouldBeFalse)
 		})
 	})
 }

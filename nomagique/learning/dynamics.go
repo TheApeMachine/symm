@@ -1,0 +1,253 @@
+package learning
+
+import (
+	"fmt"
+	"math"
+
+	"github.com/theapemachine/symm/nomagique"
+)
+
+const PredictiveDynamicsKey = "predictive_dynamics"
+
+var (
+	SymbolDynamicsTime               = nomagique.MustIntern("predictive/time")
+	SymbolDynamicsPosition           = nomagique.MustIntern("predictive/position")
+	SymbolDynamicsActivity           = nomagique.MustIntern("predictive/activity")
+	SymbolDynamicsExternalPower      = nomagique.MustIntern("predictive/external_power")
+	SymbolDynamicsPhase              = nomagique.MustIntern("predictive/phase")
+	SymbolDynamicsReady              = nomagique.MustIntern("predictive/ready")
+	SymbolDynamicsDeltaTime          = nomagique.MustIntern("predictive/delta_time")
+	SymbolDynamicsVelocity           = nomagique.MustIntern("predictive/velocity")
+	SymbolDynamicsAcceleration       = nomagique.MustIntern("predictive/acceleration")
+	SymbolDynamicsMemory             = nomagique.MustIntern("predictive/memory")
+	SymbolDynamicsMemoryScale        = nomagique.MustIntern("predictive/memory_scale")
+	SymbolDynamicsStoredEnergy       = nomagique.MustIntern("predictive/stored_energy")
+	SymbolDynamicsSuppliedPower      = nomagique.MustIntern("predictive/supplied_power")
+	SymbolDynamicsDissipation        = nomagique.MustIntern("predictive/dissipation")
+	SymbolDynamicsPassivityResidue   = nomagique.MustIntern("predictive/passivity_residue")
+	SymbolDynamicsContinuousMean     = nomagique.MustIntern("predictive/continuous_mean")
+	SymbolDynamicsContinuousM2       = nomagique.MustIntern("predictive/continuous_m2")
+	SymbolDynamicsContinuousVariance = nomagique.MustIntern("predictive/continuous_variance")
+	SymbolDynamicsJumpAmplitude      = nomagique.MustIntern("predictive/jump_amplitude")
+	SymbolDynamicsJumpMean           = nomagique.MustIntern("predictive/jump_mean")
+	SymbolDynamicsJumpM2             = nomagique.MustIntern("predictive/jump_m2")
+	SymbolDynamicsJumpVariance       = nomagique.MustIntern("predictive/jump_variance")
+	SymbolDynamicsSampleCount        = nomagique.MustIntern("predictive/sample_count")
+	SymbolDynamicsPreviousActivity   = nomagique.MustIntern("predictive/previous_activity")
+	SymbolDynamicsRotorScalar        = nomagique.MustIntern("predictive/rotor_scalar")
+	SymbolDynamicsRotorBivector      = nomagique.MustIntern("predictive/rotor_bivector")
+	SymbolDynamicsEquivarianceNorm   = nomagique.MustIntern("predictive/equivariance_norm")
+)
+
+/*
+PredictiveDynamics augments a scalar latent trajectory with continuous-time
+motion, liquid memory, port-Hamiltonian accounting, Hawkes-compatible jump
+separation, and a unit phase rotor. Every retained value is carried in Frame
+state, so keyed streams can own the primitive without hidden mutable fields.
+*/
+func PredictiveDynamics(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	observedAt, hasObservedAt := input.Get(SymbolDynamicsTime)
+	position, hasPosition := input.Get(SymbolDynamicsPosition)
+
+	if !hasObservedAt || !hasPosition {
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"predictive dynamics: time and position required",
+		)
+	}
+
+	activity, _ := input.Get(SymbolDynamicsActivity)
+	externalPower, _ := input.Get(SymbolDynamicsExternalPower)
+	phase, hasPhase := input.Get(SymbolDynamicsPhase)
+	previousAt, initialized := state.Get(SymbolDynamicsTime)
+
+	if !initialized {
+		return initializePredictiveDynamics(
+			state,
+			observedAt,
+			position,
+			activity,
+			phase,
+			hasPhase,
+		)
+	}
+
+	if observedAt < previousAt {
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"predictive dynamics: event time must not regress",
+		)
+	}
+
+	if observedAt == previousAt {
+		return state, predictiveDynamicsOutput(state), nil
+	}
+
+	deltaTime := observedAt - previousAt
+	previousPosition := state.MustGet(SymbolDynamicsPosition)
+	previousVelocity, _ := state.Get(SymbolDynamicsVelocity)
+	previousMemory, _ := state.Get(SymbolDynamicsMemory)
+	previousEnergy, _ := state.Get(SymbolDynamicsStoredEnergy)
+	previousActivity, _ := state.Get(SymbolDynamicsPreviousActivity)
+	positionDelta := position - previousPosition
+	velocity := positionDelta / deltaTime
+	acceleration := (velocity - previousVelocity) / deltaTime
+	activityMagnitude := math.Abs(activity)
+	memoryScale := deltaTime * (1 + 1/(1+activityMagnitude))
+	memoryDecay := math.Exp(-deltaTime / memoryScale)
+	memory := memoryDecay*previousMemory + (1-memoryDecay)*position
+	damping := 1 / memoryScale
+	storedEnergy := 0.5 * (position*position + velocity*velocity)
+	suppliedPower := externalPower * velocity
+	dissipation := damping * velocity * velocity
+	energyRate := (storedEnergy - previousEnergy) / deltaTime
+	passivityResidue := energyRate - suppliedPower + dissipation
+	activityDelta := activity - previousActivity
+	jumpAmplitude := activityDelta * positionDelta / (1 + math.Abs(activityDelta))
+	continuousIncrement := positionDelta - jumpAmplitude
+	continuousRate := continuousIncrement / math.Sqrt(deltaTime)
+	sampleCountValue, _ := state.Get(SymbolDynamicsSampleCount)
+	sampleCount := sampleCountValue + 1
+	continuousMean, continuousM2 := updateMoments(
+		state,
+		SymbolDynamicsContinuousMean,
+		SymbolDynamicsContinuousM2,
+		continuousRate,
+		sampleCount,
+	)
+	jumpMean, jumpM2 := updateMoments(
+		state,
+		SymbolDynamicsJumpMean,
+		SymbolDynamicsJumpM2,
+		jumpAmplitude,
+		sampleCount,
+	)
+	continuousVariance := sampleVariance(continuousM2, sampleCount)
+	jumpVariance := sampleVariance(jumpM2, sampleCount)
+
+	if !hasPhase {
+		phase = math.Atan2(velocity, position)
+	}
+
+	rotorScalar := math.Cos(phase / 2)
+	rotorBivector := math.Sin(phase / 2)
+	equivarianceNorm := rotorScalar*rotorScalar + rotorBivector*rotorBivector
+	nextState := state
+	nextState.Put(SymbolDynamicsTime, observedAt)
+	nextState.Put(SymbolDynamicsPosition, position)
+	nextState.Put(SymbolDynamicsPreviousActivity, activity)
+	nextState.Put(SymbolDynamicsReady, 1)
+	nextState.Put(SymbolDynamicsDeltaTime, deltaTime)
+	nextState.Put(SymbolDynamicsVelocity, velocity)
+	nextState.Put(SymbolDynamicsAcceleration, acceleration)
+	nextState.Put(SymbolDynamicsMemory, memory)
+	nextState.Put(SymbolDynamicsMemoryScale, memoryScale)
+	nextState.Put(SymbolDynamicsStoredEnergy, storedEnergy)
+	nextState.Put(SymbolDynamicsSuppliedPower, suppliedPower)
+	nextState.Put(SymbolDynamicsDissipation, dissipation)
+	nextState.Put(SymbolDynamicsPassivityResidue, passivityResidue)
+	nextState.Put(SymbolDynamicsContinuousMean, continuousMean)
+	nextState.Put(SymbolDynamicsContinuousM2, continuousM2)
+	nextState.Put(SymbolDynamicsContinuousVariance, continuousVariance)
+	nextState.Put(SymbolDynamicsJumpAmplitude, jumpAmplitude)
+	nextState.Put(SymbolDynamicsJumpMean, jumpMean)
+	nextState.Put(SymbolDynamicsJumpM2, jumpM2)
+	nextState.Put(SymbolDynamicsJumpVariance, jumpVariance)
+	nextState.Put(SymbolDynamicsSampleCount, sampleCount)
+	nextState.Put(SymbolDynamicsRotorScalar, rotorScalar)
+	nextState.Put(SymbolDynamicsRotorBivector, rotorBivector)
+	nextState.Put(SymbolDynamicsEquivarianceNorm, equivarianceNorm)
+
+	return nextState, predictiveDynamicsOutput(nextState), nil
+}
+
+func initializePredictiveDynamics(
+	state nomagique.Frame,
+	observedAt float64,
+	position float64,
+	activity float64,
+	phase float64,
+	hasPhase bool,
+) (nomagique.Frame, nomagique.Frame, error) {
+	if !hasPhase {
+		phase = 0
+	}
+
+	rotorScalar := math.Cos(phase / 2)
+	rotorBivector := math.Sin(phase / 2)
+	storedEnergy := 0.5 * position * position
+	nextState := state
+	nextState.Put(SymbolDynamicsTime, observedAt)
+	nextState.Put(SymbolDynamicsPosition, position)
+	nextState.Put(SymbolDynamicsPreviousActivity, activity)
+	nextState.Put(SymbolDynamicsReady, 0)
+	nextState.Put(SymbolDynamicsMemory, position)
+	nextState.Put(SymbolDynamicsStoredEnergy, storedEnergy)
+	nextState.Put(SymbolDynamicsSampleCount, 0)
+	nextState.Put(SymbolDynamicsRotorScalar, rotorScalar)
+	nextState.Put(SymbolDynamicsRotorBivector, rotorBivector)
+	nextState.Put(
+		SymbolDynamicsEquivarianceNorm,
+		rotorScalar*rotorScalar+rotorBivector*rotorBivector,
+	)
+
+	return nextState, predictiveDynamicsOutput(nextState), nil
+}
+
+func updateMoments(
+	state nomagique.Frame,
+	meanSymbol nomagique.Symbol,
+	m2Symbol nomagique.Symbol,
+	sample float64,
+	count float64,
+) (float64, float64) {
+	previousMean, _ := state.Get(meanSymbol)
+	previousM2, _ := state.Get(m2Symbol)
+	delta := sample - previousMean
+	mean := previousMean + delta/count
+	m2 := previousM2 + delta*(sample-mean)
+
+	return mean, m2
+}
+
+func sampleVariance(m2 float64, count float64) float64 {
+	if count < 2 {
+		return 0
+	}
+
+	return m2 / (count - 1)
+}
+
+func predictiveDynamicsOutput(state nomagique.Frame) nomagique.Frame {
+	output := nomagique.Frame{}
+
+	for _, symbol := range []nomagique.Symbol{
+		SymbolDynamicsReady,
+		SymbolDynamicsDeltaTime,
+		SymbolDynamicsPosition,
+		SymbolDynamicsVelocity,
+		SymbolDynamicsAcceleration,
+		SymbolDynamicsMemory,
+		SymbolDynamicsMemoryScale,
+		SymbolDynamicsStoredEnergy,
+		SymbolDynamicsSuppliedPower,
+		SymbolDynamicsDissipation,
+		SymbolDynamicsPassivityResidue,
+		SymbolDynamicsContinuousVariance,
+		SymbolDynamicsJumpAmplitude,
+		SymbolDynamicsJumpVariance,
+		SymbolDynamicsSampleCount,
+		SymbolDynamicsRotorScalar,
+		SymbolDynamicsRotorBivector,
+		SymbolDynamicsEquivarianceNorm,
+	} {
+		value, found := state.Get(symbol)
+
+		if found {
+			output.Put(symbol, value)
+		}
+	}
+
+	return output
+}

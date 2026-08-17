@@ -8,7 +8,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/learning"
 )
 
 const (

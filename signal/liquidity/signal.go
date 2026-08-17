@@ -26,7 +26,6 @@ type Signal struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	api          *websocket.API
-	ui           chan []byte
 	observations *sync.Map
 }
 
@@ -52,7 +51,6 @@ tick can compare executable liquidity across the observed cohort.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
-	ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -60,7 +58,6 @@ func NewSignal(
 		ctx:          ctx,
 		cancel:       cancel,
 		api:          api,
-		ui:           ui,
 		observations: &sync.Map{},
 	}
 
@@ -81,9 +78,12 @@ func (signal *Signal) Type() types.SourceType {
 /*
 Measure produces the Measurements for the liquidity signal.
 */
-func (signal *Signal) Measure(symbol *types.Symbol, ticks ...int64) []*types.Measurement {
+func (signal *Signal) Measure(
+	symbol *types.Symbol,
+	ticks ...int64,
+) iter.Seq[*types.Measurement] {
 	if symbol == nil {
-		return nil
+		return func(yield func(*types.Measurement) bool) {}
 	}
 
 	return signal.MeasureCohort([]*types.Symbol{symbol}, ticks...)
@@ -97,73 +97,71 @@ partially ingested version of the same message.
 func (signal *Signal) MeasureCohort(
 	symbols []*types.Symbol,
 	ticks ...int64,
-) []*types.Measurement {
-	ordered := make([]*types.Symbol, 0, len(symbols))
+) iter.Seq[*types.Measurement] {
+	return func(yield func(*types.Measurement) bool) {
+		ordered := make([]*types.Symbol, 0, len(symbols))
 
-	for _, symbol := range symbols {
-		if symbol != nil && symbol.Symbol != "" {
-			ordered = append(ordered, symbol)
-		}
-	}
-
-	sort.Slice(ordered, func(left, right int) bool {
-		return ordered[left].Symbol < ordered[right].Symbol
-	})
-
-	changed := make(map[string]struct{}, len(ordered))
-
-	for _, symbol := range ordered {
-		if signal.ingest(symbol.MarketTickers(types.SourceLiquidity)) {
-			changed[symbol.Symbol] = struct{}{}
-		}
-	}
-
-	if len(changed) == 0 {
-		return nil
-	}
-
-	peers, _, cadenceReady := signal.cohort()
-
-	if len(peers) == 0 {
-		return nil
-	}
-
-	sort.Slice(peers, func(left, right int) bool {
-		return peers[left].symbol < peers[right].symbol
-	})
-
-	cohortDepthMedian, depthCohortReady := liquidityCohortMedian(peers, true)
-	cohortNotionalMedian, notionalCohortReady := liquidityCohortMedian(peers, false)
-	tick := int64(0)
-
-	if len(ticks) > 0 {
-		tick = ticks[0]
-	}
-
-	measurements := make([]*types.Measurement, 0, len(changed))
-
-	for _, peer := range peers {
-		if _, isDirty := changed[peer.symbol]; !isDirty {
-			continue
+		for _, symbol := range symbols {
+			if symbol != nil && symbol.Symbol != "" {
+				ordered = append(ordered, symbol)
+			}
 		}
 
-		measurement := liquidityMeasurement(
-			peer,
-			peers,
-			tick,
-			cadenceReady,
-			cohortDepthMedian,
-			depthCohortReady,
-			cohortNotionalMedian,
-			notionalCohortReady,
-		)
+		sort.Slice(ordered, func(left, right int) bool {
+			return ordered[left].Symbol < ordered[right].Symbol
+		})
 
-		if measurement != nil {
-			measurements = append(measurements, measurement)
+		changed := make(map[string]struct{}, len(ordered))
+
+		for _, symbol := range ordered {
+			if signal.ingest(symbol.MarketTickers(types.SourceLiquidity)) {
+				changed[symbol.Symbol] = struct{}{}
+			}
+		}
+
+		if len(changed) == 0 {
+			return
+		}
+
+		peers, _, cadenceReady := signal.cohort()
+
+		if len(peers) == 0 {
+			return
+		}
+
+		sort.Slice(peers, func(left, right int) bool {
+			return peers[left].symbol < peers[right].symbol
+		})
+
+		cohortDepthMedian, depthCohortReady := liquidityCohortMedian(peers, true)
+		cohortNotionalMedian, notionalCohortReady := liquidityCohortMedian(peers, false)
+		tick := int64(0)
+
+		if len(ticks) > 0 {
+			tick = ticks[0]
+		}
+
+		for _, peer := range peers {
+			if _, isDirty := changed[peer.symbol]; !isDirty {
+				continue
+			}
+
+			measurement := liquidityMeasurement(
+				peer,
+				peers,
+				tick,
+				cadenceReady,
+				cohortDepthMedian,
+				depthCohortReady,
+				cohortNotionalMedian,
+				notionalCohortReady,
+			)
+
+			if measurement != nil && !yield(measurement) {
+				return
+			}
 		}
 	}
-
-	return measurements
 }
 
 func liquidityMeasurement(

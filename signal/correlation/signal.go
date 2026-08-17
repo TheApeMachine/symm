@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"iter"
 	"sort"
 
 	"github.com/google/uuid"
@@ -21,7 +22,6 @@ type Signal struct {
 	cancel  context.CancelFunc
 	api     *websocket.API
 	section *Section
-	ui      chan []byte
 }
 
 /*
@@ -31,7 +31,6 @@ successive ticks can establish real price relationships.
 func NewSignal(
 	ctx context.Context,
 	api *websocket.API,
-	ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -40,7 +39,6 @@ func NewSignal(
 		cancel:  cancel,
 		api:     api,
 		section: NewSection(),
-		ui:      ui,
 	}
 
 	return signal
@@ -57,9 +55,12 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceCorrelation
 }
 
-func (signal *Signal) Measure(market *types.Symbol, ticks ...int64) []*types.Measurement {
+func (signal *Signal) Measure(
+	market *types.Symbol,
+	ticks ...int64,
+) iter.Seq[*types.Measurement] {
 	if market == nil {
-		return nil
+		return func(yield func(*types.Measurement) bool) {}
 	}
 
 	return signal.MeasureCohort([]*types.Symbol{market}, ticks...)
@@ -74,70 +75,58 @@ parallel.
 func (signal *Signal) MeasureCohort(
 	markets []*types.Symbol,
 	ticks ...int64,
-) []*types.Measurement {
-	ordered := make([]*types.Symbol, 0, len(markets))
+) iter.Seq[*types.Measurement] {
+	return func(yield func(*types.Measurement) bool) {
+		ordered := make([]*types.Symbol, 0, len(markets))
 
-	for _, market := range markets {
-		if market != nil && market.Symbol != "" {
-			ordered = append(ordered, market)
+		for _, market := range markets {
+			if market != nil && market.Symbol != "" {
+				ordered = append(ordered, market)
+			}
 		}
-	}
 
-	sort.Slice(ordered, func(left, right int) bool {
-		return ordered[left].Symbol < ordered[right].Symbol
-	})
+		sort.Slice(ordered, func(left, right int) bool {
+			return ordered[left].Symbol < ordered[right].Symbol
+		})
 
-	rows := make([]kraken.TickerData, 0)
+		scoresBySymbol, err := signal.section.Measure(func(yield func(kraken.TickerData) bool) {
+			for _, market := range ordered {
+				for row := range market.MarketTickers(types.SourceCorrelation) {
+					if !yield(row) {
+						return
+					}
+				}
+			}
+		})
 
-	for _, market := range ordered {
-		for row := range market.MarketTickers(types.SourceCorrelation) {
-			rows = append(rows, row)
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, "correlation: failed to measure tickers", err,
+			))
+
+			return
 		}
-	}
 
-	scoresBySymbol, err := signal.section.Measure(func(yield func(kraken.TickerData) bool) {
-		for _, row := range rows {
-			if !yield(row) {
+		tick := int64(0)
+
+		if len(ticks) > 0 {
+			tick = ticks[0]
+		}
+
+		for _, market := range ordered {
+			scores, found := scoresBySymbol[market.Symbol]
+
+			if !found {
+				continue
+			}
+
+			measurement := signal.measurement(market.Symbol, tick, scores)
+
+			if measurement != nil && !yield(measurement) {
 				return
 			}
 		}
-	})
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, "correlation: failed to measure tickers", err,
-		))
-
-		return nil
 	}
-
-	if len(scoresBySymbol) == 0 {
-		return nil
-	}
-
-	tick := int64(0)
-
-	if len(ticks) > 0 {
-		tick = ticks[0]
-	}
-
-	measurements := make([]*types.Measurement, 0, len(ordered))
-
-	for _, market := range ordered {
-		scores, found := scoresBySymbol[market.Symbol]
-
-		if !found {
-			continue
-		}
-
-		measurement := signal.measurement(market.Symbol, tick, scores)
-
-		if measurement != nil {
-			measurements = append(measurements, measurement)
-		}
-	}
-
-	return measurements
 }
 
 func (signal *Signal) measurement(

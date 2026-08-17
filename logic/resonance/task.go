@@ -6,7 +6,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/learning"
 )
 
 type issuedHorizon struct {

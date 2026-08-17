@@ -3,7 +3,7 @@ package resonance
 import (
 	"math"
 
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"gonum.org/v1/gonum/stat/distuv"
 )
 

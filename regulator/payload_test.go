@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/system"
 )
 

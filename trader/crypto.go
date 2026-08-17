@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -15,33 +16,27 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
 Crypto submits desk work from thesis messages delivered by the Actor cascade.
 */
 type Crypto struct {
-	status             atomic.Value
-	ctx                context.Context
-	cancel             context.CancelFunc
-	api                *websocket.API
-	ui                 chan []byte
-	thesis             *types.Thesis
-	recorder           *audit.Recorder
-	analyzer           *logic.Analyzer
-	planner            *strategy.Planner
-	desk               *broker.Desk
-	bookUpdates        <-chan string
-	level3Events       <-chan kraken.Level3Data
-	subscriptions      map[string]*types.Subscription[any]
-	measurements       *Measurements
-	clocks             clockBank
-	startedAt          time.Time
-	diagnosticInterval time.Duration
-	tickers            atomic.Uint64
-	trades             atomic.Uint64
-	level3             atomic.Uint64
-	busy               atomic.Int32
+	status        atomic.Value
+	ctx           context.Context
+	cancel        context.CancelFunc
+	api           *websocket.API
+	ui            chan []byte
+	thesis        *types.Thesis
+	recorder      *audit.Recorder
+	analyzer      *logic.Analyzer
+	planner       *strategy.Planner
+	desk          *broker.Desk
+	bookUpdates   <-chan string
+	level3Events  <-chan kraken.Level3Data
+	subscriptions map[string]*types.Subscription[any]
+	measurements  *Measurements
 }
 
 /*
@@ -83,7 +78,6 @@ func NewCrypto(
 	}
 
 	crypto.status.Store(types.READY)
-	crypto.bindDiagnostics()
 	crypto.run()
 
 	return crypto, nil
@@ -118,23 +112,11 @@ func (crypto *Crypto) Sync(ctx context.Context, _ time.Time) error {
 }
 
 func (crypto *Crypto) idle() bool {
-	if crypto.busy.Load() != 0 {
-		return false
-	}
-
 	if crypto.queued() > 0 {
 		return false
 	}
 
-	if crypto.analyzer != nil && crypto.analyzer.Settling() {
-		return false
-	}
-
-	if crypto.desk != nil && crypto.desk.Queued() > 0 {
-		return false
-	}
-
-	return crypto.busy.Load() == 0
+	return crypto.desk == nil || crypto.desk.Queued() == 0
 }
 
 func (crypto *Crypto) queued() int {
@@ -158,6 +140,10 @@ func (crypto *Crypto) queued() int {
 }
 
 func (crypto *Crypto) run() {
+	theses := crypto.measurements.Generate(
+		crypto.thesis, crypto.analyzer,
+	)
+
 	go func() {
 		for {
 			select {
@@ -169,42 +155,20 @@ func (crypto *Crypto) run() {
 				crypto.onTrade(trade)
 			case level3 := <-crypto.level3Events:
 				crypto.onLevel3(level3)
+			case thesis := <-theses:
+				utils.Publish(crypto.ui, datura.NewMap(
+					"tick", datura.NewMap("count", thesis.Tick),
+				))
+
+				if crypto.planner != nil {
+					crypto.planner.Enqueue(thesis)
+				}
 			}
 		}
 	}()
 }
 
-func (crypto *Crypto) Update(receivers []types.SourceType) {
-	if err := crypto.measurements.Generate(crypto.thesis, receivers); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"crypto: measurements failed",
-			err,
-		))
-		return
-	}
-
-	if err := crypto.analyzer.Process(crypto.thesis); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"crypto: analyzer failed",
-			err,
-		))
-	}
-
-	if err := crypto.planner.Update(crypto.thesis); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"crypto: planner failed",
-			err,
-		))
-	}
-}
-
 func (crypto *Crypto) onTicker(data any) {
-	crypto.busy.Add(1)
-	defer crypto.busy.Add(-1)
-
 	typedTickers, ok := data.(*kraken.Ticker)
 
 	if !ok || typedTickers == nil {
@@ -217,42 +181,21 @@ func (crypto *Crypto) onTicker(data any) {
 		return
 	}
 
-	pricedAt := time.Now()
-	measured := false
-
 	for _, ticker := range typedTickers.Data {
 		if ticker.Symbol == "" {
 			continue
 		}
 
 		if crypto.desk != nil && crypto.desk.Price() != nil {
-			row := ticker
-			crypto.desk.Price().Update(&row)
+			crypto.desk.Price().Update(&ticker)
 		}
 
-		found, _ := crypto.thesis.Symbols.LoadOrStore(ticker.Symbol, types.NewSymbol(
-			ticker.Symbol, crypto.ui,
-		))
-
-		symbol := found.(*types.Symbol)
-		symbol.AppendTickerTo(ticker, types.TickerReceivers)
-		measured = true
-		crypto.advanceThesisAt(ticker.Timestamp)
-	}
-
-	crypto.tickers.Add(uint64(len(typedTickers.Data)))
-	crypto.clocks.observe("price", time.Since(pricedAt))
-	crypto.clocks.observeHop("price", "crypto", time.Since(pricedAt))
-
-	if measured {
-		crypto.Update(types.TickerReceivers)
+		symbol := crypto.thesis.Symbol(ticker.Symbol)
+		symbol.AppendTicker(ticker, types.TickerReceivers)
 	}
 }
 
 func (crypto *Crypto) onTrade(data any) {
-	crypto.busy.Add(1)
-	defer crypto.busy.Add(-1)
-
 	typedTrades, ok := data.(*kraken.Trade)
 
 	if !ok || typedTrades == nil {
@@ -265,68 +208,22 @@ func (crypto *Crypto) onTrade(data any) {
 		return
 	}
 
-	measured := false
-
 	for _, trade := range typedTrades.Data {
 		if trade.Symbol == "" {
 			continue
 		}
 
-		found, _ := crypto.thesis.Symbols.LoadOrStore(trade.Symbol, types.NewSymbol(
-			trade.Symbol, crypto.ui,
-		))
-
-		symbol := found.(*types.Symbol)
-		symbol.AppendTradeTo(trade, types.TradeReceivers)
-		measured = true
-		crypto.advanceThesisAt(trade.Timestamp)
-	}
-
-	crypto.trades.Add(uint64(len(typedTrades.Data)))
-
-	if measured {
-		crypto.Update(types.TradeReceivers)
+		symbol := crypto.thesis.Symbol(trade.Symbol)
+		symbol.AppendTrade(trade, types.TradeReceivers)
 	}
 }
 
 func (crypto *Crypto) onLevel3(level3 kraken.Level3Data) {
-	crypto.busy.Add(1)
-	defer crypto.busy.Add(-1)
-
 	if level3.Symbol == "" {
 		return
 	}
 
-	crypto.thesis.Symbol(level3.Symbol).AppendLevel3(level3)
-	crypto.advanceThesisAt(level3EventTime(level3))
-	crypto.level3.Add(1)
-	crypto.Update(types.AcceptedBookReceivers)
-}
-
-func (crypto *Crypto) advanceThesisAt(at time.Time) {
-	if crypto == nil || crypto.thesis == nil || at.IsZero() {
-		return
-	}
-
-	at = at.UTC()
-
-	if at.After(crypto.thesis.At) {
-		crypto.thesis.At = at
-	}
-}
-
-func level3EventTime(level3 kraken.Level3Data) time.Time {
-	at := level3.Timestamp
-
-	for _, orders := range [][]kraken.Level3Order{level3.Bids, level3.Asks} {
-		for _, order := range orders {
-			if order.Timestamp.After(at) {
-				at = order.Timestamp
-			}
-		}
-	}
-
-	return at
+	crypto.thesis.Symbol(level3.Symbol).AppendLevel3(level3, types.Level3Receivers)
 }
 
 func (crypto *Crypto) Close() error {

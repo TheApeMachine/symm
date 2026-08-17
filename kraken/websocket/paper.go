@@ -119,11 +119,22 @@ func (paper *Paper) Subscribe(
 }
 
 func (paper *Paper) SubInstrument(types.Subscription[any]) {}
-func (paper *Paper) SubTicker([]string)                    {}
-func (paper *Paper) SubBook([]string)                      {}
-func (paper *Paper) SubTrades([]string)                    {}
-func (paper *Paper) SubL3([]string)                        {}
-func (paper *Paper) SubCandles([]string)                   {}
+
+/*
+Level3Divergences reports none: paper never owns a live level3 delta stream,
+so no symbol can diverge from a venue checksum.
+*/
+func (paper *Paper) Level3Divergences() <-chan string { return nil }
+
+/*
+ResubscribeL3 is a no-op for the same reason Level3Divergences is.
+*/
+func (paper *Paper) ResubscribeL3(string) {}
+func (paper *Paper) SubTicker([]string)   {}
+func (paper *Paper) SubBook([]string)     {}
+func (paper *Paper) SubTrades([]string)   {}
+func (paper *Paper) SubL3([]string)       {}
+func (paper *Paper) SubCandles([]string)  {}
 
 /*
 Books returns no public book cache because paper hijacks the private transport

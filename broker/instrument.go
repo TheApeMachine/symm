@@ -3,6 +3,7 @@ package broker
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,7 +51,7 @@ func NewInstrument(
 	returned := <-callback.Channel
 
 	for _, pair := range returned.(*kraken.Instrument).Data.Pairs {
-		if pair.Quote != instrument.quote || pair.Status != "online" {
+		if pair.Quote != instrument.quote || pair.Status != "online" || isExcludedBase(pair.Base) {
 			continue
 		}
 
@@ -60,8 +61,25 @@ func NewInstrument(
 
 	instrument.status = types.PENDING
 	instrument.Subscribe()
+	go instrument.listenForDivergences()
 
 	return instrument
+}
+
+/*
+listenForDivergences recovers checksum-diverged symbols through the normal
+subscription flow. The transport only reports divergence; the instrument owns
+subscriptions, so a diverged symbol is just another paced resubscribe it
+initiates.
+*/
+func (instrument *Instrument) listenForDivergences() {
+	if instrument.api == nil {
+		return
+	}
+
+	for symbol := range instrument.api.Level3Divergences() {
+		instrument.api.ResubscribeL3(symbol)
+	}
 }
 
 /*
@@ -148,4 +166,16 @@ Symbols returns a copy of the subscribed market universe.
 */
 func (instrument *Instrument) Symbols() []string {
 	return instrument.symbols
+}
+
+func isExcludedBase(base string) bool {
+	switch strings.ToUpper(strings.TrimSpace(base)) {
+	case "USD", "EUR", "GBP", "AUD", "CAD", "CHF", "JPY", "NZD",
+		"USDT", "USDC", "DAI", "PYUSD", "FDUSD", "TUSD", "USDG",
+		"USDE", "EURT", "EURC", "GUSD", "BUSD", "FRAX", "LUSD",
+		"CUSD", "USD0", "USDS", "RLUSD", "UST":
+		return true
+	default:
+		return false
+	}
 }

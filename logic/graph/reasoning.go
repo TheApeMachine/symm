@@ -556,7 +556,7 @@ func reasoningTier(
 func reasoningRole(nodeID string, source string, metric string) string {
 	normalized := strings.ToLower(strings.Join([]string{nodeID, source, metric}, " "))
 
-	for _, marker := range []string{"ignition", "aggressor", "cvd", "flow"} {
+	for _, marker := range []string{"ignition", "aggressor", "cvd", "flow", "velocity", "jump_amplitude"} {
 		if strings.Contains(normalized, marker) {
 			return "flow"
 		}
@@ -578,13 +578,13 @@ func reasoningRole(nodeID string, source string, metric string) string {
 		}
 	}
 
-	for _, marker := range []string{"regime", "trend", "cognition"} {
+	for _, marker := range []string{"regime", "trend", "cognition", "memory"} {
 		if strings.Contains(normalized, marker) {
 			return "regime"
 		}
 	}
 
-	for _, marker := range []string{"surprise", "energy", "prediction_error"} {
+	for _, marker := range []string{"surprise", "energy", "prediction_error", "passivity", "variance", "dissipation"} {
 		if strings.Contains(normalized, marker) {
 			return "surprise"
 		}

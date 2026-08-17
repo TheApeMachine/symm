@@ -59,32 +59,33 @@ Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
 and Sub* resubscribe after the SDK reconnects.
 */
 type Live struct {
-	status       atomic.Pointer[types.Status]
-	ctx          context.Context
-	cancel       context.CancelFunc
-	client       *spot.WebSocket
-	quote        string
-	simulator    *Simulator
-	normalizer   *spot.Normalizer
-	level3       *sync.Map
-	book         *Book
-	bookUpdates  chan string
-	level3Events chan kraken.Level3Data
-	level3Active atomic.Bool
-	symbols      []string
-	publicMu     sync.RWMutex
-	public       map[string][][]string
-	auth         bool
-	nonce        *AuthNonce
-	nonceErr     error
-	subscribers  *sync.Map
-	callbacks    *sync.Map
-	priceIncr    sync.Map
-	resyncing    sync.Map
-	paper        *Paper
-	model        string
-	capture      *audit.Recorder
-	captureName  string
+	status          atomic.Pointer[types.Status]
+	ctx             context.Context
+	cancel          context.CancelFunc
+	client          *spot.WebSocket
+	quote           string
+	simulator       *Simulator
+	normalizer      *spot.Normalizer
+	level3          *sync.Map
+	book            *Book
+	bookUpdates     chan string
+	level3Events    chan kraken.Level3Data
+	level3Divergent chan string
+	level3Active    atomic.Bool
+	symbols         []string
+	publicMu        sync.RWMutex
+	public          map[string][][]string
+	auth            bool
+	nonce           *AuthNonce
+	nonceErr        error
+	subscribers     *sync.Map
+	callbacks       *sync.Map
+	priceIncr       sync.Map
+	resyncing       sync.Map
+	paper           *Paper
+	model           string
+	capture         *audit.Recorder
+	captureName     string
 
 	// Level3Client supplies the websocket client for the child connections
 	// SubL3 opens. When nil the child dials the real Level3 endpoint; tests
@@ -167,22 +168,24 @@ func NewWithClient(
 	}
 
 	live := &Live{
-		ctx:          ctx,
-		cancel:       cancel,
-		simulator:    simulator,
-		client:       client,
-		normalizer:   spot.NewNormalizer(),
-		auth:         auth,
-		subscribers:  &sync.Map{},
-		callbacks:    &sync.Map{},
-		public:       make(map[string][][]string),
-		bookUpdates:  make(chan string, max(viper.GetInt("system.actor.buffer"), 1)),
-		level3Events: make(chan kraken.Level3Data, max(viper.GetInt("system.websocket.channel.buffer"), 1)),
-		paper:        NewPaper(ctx, NewSimulator()),
-		model:        viper.GetViper().GetString("trading.model"),
-		quote:        viper.GetViper().GetString("market.quote_currency"),
-		captureName:  captureName,
+		ctx:             ctx,
+		cancel:          cancel,
+		simulator:       simulator,
+		client:          client,
+		normalizer:      spot.NewNormalizer(),
+		auth:            auth,
+		subscribers:     &sync.Map{},
+		callbacks:       &sync.Map{},
+		public:          make(map[string][][]string),
+		bookUpdates:     make(chan string, max(viper.GetInt("system.actor.buffer"), 1)),
+		level3Events:    make(chan kraken.Level3Data, max(viper.GetInt("system.websocket.channel.buffer"), 1)),
+		level3Divergent: make(chan string, max(viper.GetInt("system.websocket.channel.buffer"), 1)),
+		paper:           NewPaper(ctx, NewSimulator()),
+		model:           viper.GetViper().GetString("trading.model"),
+		quote:           viper.GetViper().GetString("market.quote_currency"),
+		captureName:     captureName,
 	}
+
 	live.setStatus(types.INITIALIZING)
 
 	if len(recorders) == 1 {
@@ -220,7 +223,6 @@ func NewWithClient(
 	if endpoint == Level3WebSocketURL {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx, live.normalizer)
-		live.book.SetResync(live.resyncLevel3Symbol)
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
@@ -244,6 +246,13 @@ func NewWithClient(
 			if method := utils.GetString(raw, "method"); method != "" {
 				channel = method
 			}
+		}
+
+		// An unsubscribe acknowledgement answers the instrument's paced
+		// recovery of a checksum-diverged symbol; there is nothing to
+		// dispatch for it.
+		if channel == "unsubscribe" {
+			return
 		}
 
 		handler, ok := entityMap[channel]
@@ -375,10 +384,6 @@ func NewWithClient(
 					live.setStatus(types.ERROR)
 					return
 				}
-			}
-
-			if endpoint == Level3WebSocketURL {
-				go live.restoreLevel3Subscription()
 			}
 
 			live.setStatus(types.READY)
@@ -569,6 +574,7 @@ func (live *Live) restorePublicSubscriptions() {
 			)
 		}
 	}
+
 	live.publicMu.RUnlock()
 
 	for channel, batches := range subscriptions {
@@ -586,31 +592,23 @@ func (live *Live) restorePublicSubscriptions() {
 		}
 	}
 }
-func (live *Live) restoreLevel3Subscription() {
-	if len(live.symbols) == 0 {
-		return
-	}
-
-	pace := viper.GetDuration("market.subscribe.pace")
-
-	for symbols := range slices.Chunk(live.symbols, 40) {
-		errnie.Error(live.client.SubL3(symbols, viper.GetInt("market.l3_depth")))
-		time.Sleep(pace)
-	}
-}
 
 /*
-resyncLevel3Symbol recovers one symbol whose local Level 3 book failed the
-venue checksum. Unsubscribe ends the diverged delta stream and the paced
-resubscribe delivers a fresh snapshot, which is the only state that restores
-the book to authority.
+resubscribeL3Symbol ends one symbol's diverged delta stream and delivers a
+fresh snapshot, the only state that restores the book to authority. It is the
+transport primitive the instrument drives; the child never resubscribes on
+its own account.
 */
-func (live *Live) resyncLevel3Symbol(symbol string) {
+func (live *Live) resubscribeL3Symbol(symbol string) {
 	if live == nil || live.client == nil || symbol == "" {
 		return
 	}
 
-	pace := viper.GetDuration("market.subscribe.pace")
+	if _, running := live.resyncing.LoadOrStore(symbol, struct{}{}); running {
+		return
+	}
+
+	defer live.resyncing.Delete(symbol)
 
 	errnie.Error(live.client.SendPrivate(map[string]any{
 		"method": "unsubscribe",
@@ -620,9 +618,53 @@ func (live *Live) resyncLevel3Symbol(symbol string) {
 		},
 	}))
 
-	time.Sleep(pace)
+	time.Sleep(viper.GetDuration("market.subscribe.pace"))
 
 	errnie.Error(live.client.SubL3([]string{symbol}, viper.GetInt("market.l3_depth")))
+}
+
+/*
+ResubscribeL3 routes one diverged symbol to the level3 child that owns it, so
+the instrument can send recovery through the normal subscription flow.
+*/
+func (live *Live) ResubscribeL3(symbol string) {
+	if live == nil || live.level3 == nil || symbol == "" {
+		return
+	}
+
+	live.level3.Range(func(_, value any) bool {
+		conn, ok := value.(*Live)
+
+		if !ok || conn.book == nil {
+			return true
+		}
+
+		if slices.Contains(conn.symbols, symbol) {
+			conn.resubscribeL3Symbol(symbol)
+			return false
+		}
+
+		return true
+	})
+}
+
+/*
+Level3Divergences exposes checksum-diverged symbols to the subscription
+owner. The transport reports divergence; it does not recover it.
+*/
+func (live *Live) Level3Divergences() <-chan string {
+	return live.level3Divergent
+}
+
+/*
+reportDivergence forwards one diverged symbol to the owning subscription
+manager. Book updates invoke it from their own goroutine, so the send blocks
+rather than dropping a symbol whose only other future is starvation.
+*/
+func (live *Live) reportDivergence(divergent chan string) func(string) {
+	return func(symbol string) {
+		divergent <- symbol
+	}
 }
 
 func (live *Live) SubL3(symbols []string) {
@@ -649,6 +691,7 @@ func (live *Live) SubL3(symbols []string) {
 		live.level3.Store(groupKey, conn)
 		conn.symbols = append([]string{}, groups...)
 		conn.book.SetUpdates(live.bookUpdates)
+		conn.book.SetResync(conn.reportDivergence(live.level3Divergent))
 
 		if live.level3Active.Load() {
 			conn.book.SetEvents(live.level3Events)

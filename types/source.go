@@ -84,6 +84,7 @@ Level3Receivers names the signals that consume accepted order-identity events.
 */
 var Level3Receivers = []SourceType{
 	SourceToxicity,
+	SourcePumpDump,
 }
 
 /*

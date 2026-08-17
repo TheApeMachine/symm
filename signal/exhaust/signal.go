@@ -2,6 +2,7 @@ package exhaust
 
 import (
 	"context"
+	"iter"
 	"math"
 	"sync"
 	"time"
@@ -32,7 +33,6 @@ type Signal struct {
 	instrument       *broker.Instrument
 	sample           *algorithm.DecaySample
 	decay            *equation.Decay
-	ui               chan []byte
 	lastTrade        *sync.Map
 	lastBookAt       *sync.Map
 	lastBookRevision *sync.Map
@@ -60,7 +60,6 @@ func NewSignal(
 	ctx context.Context,
 	books websocket.BookSource,
 	instrument *broker.Instrument,
-	ui chan []byte,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -71,7 +70,6 @@ func NewSignal(
 		instrument:       instrument,
 		sample:           algorithm.NewDecaySample(),
 		decay:            equation.NewDecay(),
-		ui:               ui,
 		lastTrade:        &sync.Map{},
 		lastBookAt:       &sync.Map{},
 		lastBookRevision: &sync.Map{},
@@ -92,52 +90,104 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceExhaustion
 }
 
-func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
-	measurements := make([]*types.Measurement, 0)
-
-	if signal == nil || symbol == nil || signal.books == nil {
-		return measurements
-	}
-
-	if signal.lastTrade == nil {
-		signal.lastTrade = &sync.Map{}
-	}
-
-	if signal.lastBookAt == nil {
-		signal.lastBookAt = &sync.Map{}
-	}
-
-	if signal.lastBookRevision == nil {
-		signal.lastBookRevision = &sync.Map{}
-	}
-
-	if signal.lastBook == nil {
-		signal.lastBook = &sync.Map{}
-	}
-
-	revision, acceptedAt := symbol.BookRevision()
-	authoritative := revision > 0
-
-	signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
-		bookAt := acceptedAt
-
-		if bookAt.IsZero() {
-			bookAt = managedBookObservedAt(managed)
+func (signal *Signal) Measure(
+	symbol *types.Symbol,
+	_ ...int64,
+) iter.Seq[*types.Measurement] {
+	return func(yield func(*types.Measurement) bool) {
+		if signal == nil || symbol == nil || signal.books == nil {
+			return
 		}
 
-		bookPending := managed != nil
-
-		if authoritative {
-			lastRevision, _ := signal.bookRevision(symbol.Symbol)
-			bookPending = managed != nil && revision > lastRevision
+		if signal.lastTrade == nil {
+			signal.lastTrade = &sync.Map{}
 		}
 
-		for trade := range symbol.MarketTrades(types.SourceExhaustion) {
-			if !validTrade(trade) {
-				continue
+		if signal.lastBookAt == nil {
+			signal.lastBookAt = &sync.Map{}
+		}
+
+		if signal.lastBookRevision == nil {
+			signal.lastBookRevision = &sync.Map{}
+		}
+
+		if signal.lastBook == nil {
+			signal.lastBook = &sync.Map{}
+		}
+
+		revision, acceptedAt := symbol.BookRevision()
+		authoritative := revision > 0
+
+		signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
+			bookAt := acceptedAt
+
+			if bookAt.IsZero() {
+				bookAt = managedBookObservedAt(managed)
 			}
 
-			if bookPending && !trade.Timestamp.Before(bookAt) {
+			bookPending := managed != nil
+
+			if authoritative {
+				lastRevision, _ := signal.bookRevision(symbol.Symbol)
+				bookPending = managed != nil && revision > lastRevision
+			}
+
+			for trade := range symbol.MarketTrades(types.SourceExhaustion) {
+				if !validTrade(trade) {
+					continue
+				}
+
+				if bookPending && !trade.Timestamp.Before(bookAt) {
+					bookMeasurements, err := signal.measureManagedBook(managed, revision, bookAt, authoritative)
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"exhaust: failed to measure book",
+							err,
+						))
+					}
+
+					for _, measurement := range bookMeasurements {
+						if !yield(measurement) {
+							return
+						}
+					}
+
+					bookPending = false
+				}
+
+				if signal.seenTrade(trade) {
+					continue
+				}
+
+				lastBookAt, hasBook := signal.bookAt(trade.Symbol)
+
+				if !hasBook || lastBookAt.IsZero() || lastBookAt.After(trade.Timestamp) {
+					continue
+				}
+
+				tradeMeasurements, err := signal.measureTrade(trade)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"exhaust: failed to measure trade",
+						err,
+					))
+					continue
+				}
+
+				signal.commitTrade(trade)
+
+				for _, measurement := range tradeMeasurements {
+					if !yield(measurement) {
+						return
+					}
+				}
+			}
+
+			if bookPending {
 				bookMeasurements, err := signal.measureManagedBook(managed, revision, bookAt, authoritative)
 
 				if err != nil {
@@ -148,51 +198,14 @@ func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measure
 					))
 				}
 
-				measurements = append(measurements, bookMeasurements...)
-				bookPending = false
+				for _, measurement := range bookMeasurements {
+					if !yield(measurement) {
+						return
+					}
+				}
 			}
-
-			if signal.seenTrade(trade) {
-				continue
-			}
-
-			lastBookAt, hasBook := signal.bookAt(trade.Symbol)
-
-			if !hasBook || lastBookAt.IsZero() || lastBookAt.After(trade.Timestamp) {
-				continue
-			}
-
-			tradeMeasurements, err := signal.measureTrade(trade)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"exhaust: failed to measure trade",
-					err,
-				))
-				continue
-			}
-
-			signal.commitTrade(trade)
-			measurements = append(measurements, tradeMeasurements...)
-		}
-
-		if bookPending {
-			bookMeasurements, err := signal.measureManagedBook(managed, revision, bookAt, authoritative)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"exhaust: failed to measure book",
-					err,
-				))
-			}
-
-			measurements = append(measurements, bookMeasurements...)
-		}
-	})
-
-	return measurements
+		})
+	}
 }
 
 func managedBookObservedAt(managed *spotbook.Book) time.Time {

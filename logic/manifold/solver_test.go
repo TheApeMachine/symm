@@ -3,7 +3,6 @@ package manifold
 import (
 	"encoding/json"
 	"math"
-	"runtime"
 	"testing"
 	"time"
 
@@ -56,16 +55,8 @@ func TestUpdate(t *testing.T) {
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 
 		pendingErr := solver.Update(thesis)
-		deadline := time.Now().Add(10 * time.Second)
-
-		for solver.settling.Load() && time.Now().Before(deadline) {
-			runtime.Gosched()
-		}
-
 		Convey("It should wait without stamping or reporting an error", func() {
 			So(pendingErr, ShouldBeNil)
-			So(solver.settling.Load(), ShouldBeFalse)
-			So(solver.WaitingForBook(), ShouldBeTrue)
 			So(solver.ParticleCount(), ShouldEqual, 0)
 		})
 
@@ -86,16 +77,9 @@ func TestUpdate(t *testing.T) {
 			Silent:    true,
 		})
 		err := solver.Update(thesis)
-		deadline = time.Now().Add(10 * time.Second)
-
-		for solver.settling.Load() && time.Now().Before(deadline) {
-			runtime.Gosched()
-		}
 
 		Convey("It should inject the unit-energy book when the snapshot arrives", func() {
 			So(err, ShouldBeNil)
-			So(solver.settling.Load(), ShouldBeFalse)
-			So(solver.WaitingForBook(), ShouldBeFalse)
 			So(solver.ParticleCount(), ShouldEqual, 2)
 		})
 	})
@@ -142,7 +126,7 @@ func TestUpdate(t *testing.T) {
 		}
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurements([]*types.Measurement{measurement})
+		symbol.AppendMeasurement(measurement)
 		symbol.Status = types.BUSY
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
@@ -150,18 +134,11 @@ func TestUpdate(t *testing.T) {
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 
 		err := solver.Update(thesis)
-		deadline := time.Now().Add(10 * time.Second)
-
-		for solver.settling.Load() && time.Now().Before(deadline) {
-			runtime.Gosched()
-		}
-
 		reading := solver.reading
 		storedReading, found := thesis.ManifoldSnapshot()
 
 		Convey("It should append, advance, read, and stamp one manifold cut", func() {
 			So(err, ShouldBeNil)
-			So(solver.settling.Load(), ShouldBeFalse)
 			So(solver.ParticleCount(), ShouldEqual, 2)
 			So(found, ShouldBeTrue)
 			So(storedReading, ShouldResemble, reading)
@@ -194,49 +171,18 @@ func TestUpdate(t *testing.T) {
 			Timestamp: time.Unix(2, 0).UTC(),
 			Silent:    true,
 		})
-		entered := make(chan struct{}, 1)
-		release := make(chan struct{})
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = time.Unix(3, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD", nil)
 		symbol.Status = types.BUSY
 		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(nil, nil, nil, nil)
-		solver.api = &staticBookSource{
-			book: managed, entered: entered, release: release,
-		}
+		solver.api = &staticBookSource{book: managed}
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 
 		So(solver.Update(thesis), ShouldBeNil)
 
-		select {
-		case <-entered:
-		case <-time.After(10 * time.Second):
-			t.Fatal("manifold owner did not enter the authoritative book read")
-		}
-
-		thesis.At = time.Unix(4, 0).UTC()
-		So(solver.Update(thesis), ShouldBeNil)
-		thesis.At = time.Unix(5, 0).UTC()
-		So(solver.Update(thesis), ShouldBeNil)
-		close(release)
-		deadline := time.Now().Add(10 * time.Second)
-
-		for solver.settling.Load() && time.Now().Before(deadline) {
-			runtime.Gosched()
-		}
-
-		solver.requestMu.Lock()
-		requested := solver.requested
-		completed := solver.completed
-		solver.requestMu.Unlock()
-
-		Convey("It should coalesce the burst but consume its final generation", func() {
-			So(solver.settling.Load(), ShouldBeFalse)
-			So(solver.stepped, ShouldBeTrue)
-			So(requested, ShouldEqual, uint64(3))
-			So(completed, ShouldEqual, requested)
-			So(solver.priorAt, ShouldEqual, time.Unix(5, 0).UTC())
+		Convey("It should map the book, step once, and publish before returning", func() {
 			So(solver.ParticleCount(), ShouldEqual, 2)
 		})
 	})
@@ -272,9 +218,7 @@ func TestStep(t *testing.T) {
 		thesis.Symbols.Store("BTC/USD", types.NewSymbol("BTC/USD", nil))
 		at := time.Unix(1, 0).UTC()
 
-		err = solver.Step(thesis, at, []manifoldCut{{
-			symbol: "BTC/USD", oscillators: oscillators,
-		}})
+		err = solver.Step(thesis, at, map[string][]pmanifold.Oscillator{"BTC/USD": oscillators}, HawkesSignal{})
 		reading := solver.reading
 		storedReading, found := thesis.ManifoldSnapshot()
 		payloads := make([][]byte, 0, len(ui))
@@ -330,17 +274,13 @@ func TestStep(t *testing.T) {
 			}
 		}
 
-		Convey("It should publish phase rows per step and the domain once per relaxation", func() {
+		Convey("It should publish one phase row and one domain frame per step", func() {
 			So(err, ShouldBeNil)
-			So(solver.stepped, ShouldBeTrue)
+			So(math.IsNaN(solver.reading.Divergence), ShouldBeFalse)
 			So(found, ShouldBeTrue)
 			So(storedReading, ShouldResemble, reading)
-			So(payloads, ShouldHaveLength, 2)
-			So(phaseFrames, ShouldEqual, 2)
-
-			// The domain snapshot serializes every resident oscillator, so it
-			// is published once per relaxation run — the converged frame —
-			// rather than once per intermediate step.
+			So(payloads, ShouldHaveLength, 1)
+			So(phaseFrames, ShouldEqual, 1)
 			So(fieldFrames, ShouldEqual, 1)
 			So(particleFrames, ShouldEqual, 1)
 			So(waveObserved, ShouldBeTrue)
@@ -360,7 +300,7 @@ func TestStep(t *testing.T) {
 		solver := &Solver{}
 
 		err := solver.Step(
-			types.NewThesis(t.Context(), nil), time.Unix(1, 0), nil,
+			types.NewThesis(t.Context(), nil), time.Unix(1, 0), nil, HawkesSignal{},
 		)
 
 		Convey("It should reject the cut instead of silently stamping it", func() {
@@ -424,9 +364,8 @@ func TestBookOscillators(t *testing.T) {
 			"BTC/USD": bitcoin,
 			"ETH/USD": ether,
 		}}
-		solver.universe = []string{"BTC/USD", "ETH/USD"}
-		bitcoinOsc, bitcoinErr := solver.bookOscillators("BTC/USD", 0, 0, time.Unix(3, 0).UTC())
-		etherOsc, etherErr := solver.bookOscillators("ETH/USD", 0, 0, time.Unix(3, 0).UTC())
+		bitcoinOsc, bitcoinErr := solver.bookOscillators("BTC/USD", time.Unix(3, 0).UTC(), HawkesSignal{})
+		etherOsc, etherErr := solver.bookOscillators("ETH/USD", time.Unix(3, 0).UTC(), HawkesSignal{})
 
 		Convey("It should keep every resting order as an oscillator", func() {
 			So(bitcoinErr, ShouldBeNil)
@@ -440,11 +379,99 @@ func TestBookOscillators(t *testing.T) {
 	})
 }
 
-func TestSettling(t *testing.T) {
-	Convey("Given a solver that is not relaxing", t, func() {
-		Convey("It should report idle", func() {
-			So((&Solver{}).Settling(), ShouldBeFalse)
-			So((*Solver)(nil).Settling(), ShouldBeFalse)
+func TestBookOscillatorsDegenerate(t *testing.T) {
+	Convey("Given one healthy order beside an underflowed dust order", t, func() {
+		book := mgrbook.New()
+		book.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Bid,
+			ID:        "healthy",
+			Price:     decimal.NewFromInt64(99),
+			Quantity:  decimal.NewFromInt64(2),
+			Timestamp: time.Unix(1, 0).UTC(),
+			Silent:    true,
+		})
+		book.Update(&mgrbook.UpdateOptions{
+			Direction: mgrbook.Bid,
+			ID:        "dust",
+			Price:     decimal.NewFromInt64(99),
+			Quantity:  decimal.NewFromFloat64(1e-340),
+			Timestamp: time.Unix(1, 0).UTC(),
+			Silent:    true,
+		})
+		solver := NewSolver(nil, nil, nil, nil)
+		Reset(func() { So(solver.Close(), ShouldBeNil) })
+		solver.api = &mapBookSource{books: map[string]*mgrbook.Book{
+			"BTC/USD": book,
+		}}
+		oscillators, err := solver.bookOscillators("BTC/USD", time.Unix(3, 0).UTC(), HawkesSignal{})
+
+		Convey("It should exclude the zero-heat row and keep the healthy one", func() {
+			So(err, ShouldBeNil)
+			So(oscillators, ShouldHaveLength, 1)
+
+			for _, oscillator := range oscillators {
+				So(oscillator.Heat, ShouldBeGreaterThan, 0)
+				So(oscillator.Amplitude, ShouldBeGreaterThan, 0)
+				So(math.IsInf(oscillator.Omega, 0), ShouldBeFalse)
+			}
+		})
+
+		Convey("An infinite hawkes tempo should drop every field-validated row", func() {
+			deg, degErr := solver.bookOscillators(
+				"BTC/USD", time.Unix(3, 0).UTC(),
+				HawkesSignal{LambdaBuy: math.Inf(1), LambdaSell: math.Inf(1)},
+			)
+
+			So(degErr, ShouldBeNil)
+			So(deg, ShouldBeEmpty)
+		})
+	})
+}
+
+func TestExtractSymbolHawkes(t *testing.T) {
+	Convey("Given a symbol retaining a fitted Hawkes measurement", t, func() {
+		symbol := types.NewSymbol("BTC/USD", nil)
+
+		Convey("When a metric sample is positive and finite it is admitted", func() {
+			symbol.Latest.Store(string(types.SourceHawkes), &types.Measurement{
+				Source: types.SourceHawkes,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricConditionalIntensity, types.SideBuy): {
+						Raw: 2.5,
+					},
+					types.MetricKey(types.MetricConditionalIntensity, types.SideSell): {
+						Raw: 1.5,
+					},
+				},
+			})
+
+			signal := extractSymbolHawkes(symbol)
+			So(signal.LambdaBuy, ShouldEqual, 2.5)
+			So(signal.LambdaSell, ShouldEqual, 1.5)
+		})
+
+		Convey("When a metric sample is infinite the defaults survive", func() {
+			symbol.Latest.Store(string(types.SourceHawkes), &types.Measurement{
+				Source: types.SourceHawkes,
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricConditionalIntensity, types.SideBuy): {
+						Raw: math.Inf(1),
+					},
+					types.MetricKey(types.MetricArrivalRate, types.SideSell): {
+						Raw: math.Inf(1),
+					},
+				},
+			})
+
+			signal := extractSymbolHawkes(symbol)
+			So(signal.LambdaBuy, ShouldEqual, 1.0)
+			So(signal.LambdaSell, ShouldEqual, 1.0)
+		})
+
+		Convey("When no measurement is retained the defaults survive", func() {
+			signal := extractSymbolHawkes(symbol)
+			So(signal.LambdaBuy, ShouldEqual, 1.0)
+			So(signal.LambdaSell, ShouldEqual, 1.0)
 		})
 	})
 }
@@ -472,8 +499,8 @@ func TestPhaseRow(t *testing.T) {
 	})
 }
 
-func TestLoad(t *testing.T) {
-	Convey("Given a populated authoritative book and a symbol that is not BUSY", t, func() {
+func TestUpdateMapping(t *testing.T) {
+	Convey("Given a populated authoritative book", t, func() {
 		managed := mgrbook.New()
 		managed.Update(&mgrbook.UpdateOptions{
 			Direction: mgrbook.Bid,
@@ -498,53 +525,13 @@ func TestLoad(t *testing.T) {
 		solver.api = &staticBookSource{book: managed}
 		Reset(func() { So(solver.Close(), ShouldBeNil) })
 
-		Convey("It should admit a Hawkes reading stamped before the drain cutoff", func() {
-			buyExcitation := 0.25
-			sellExcitation := 0.5
-			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
-				Source: types.SourceHawkes,
-				Symbol: "BTC/USD",
-				At:     time.Now().UTC().Add(-time.Hour),
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy): {
-						Normalized: &buyExcitation,
-					},
-					types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell): {
-						Normalized: &sellExcitation,
-					},
-				},
-			}})
+		err := solver.Update(thesis)
 
-			cuts, err := solver.load(thesis, thesis.At)
-
+		Convey("It should map the orders and step the field in one pass", func() {
 			So(err, ShouldBeNil)
-			So(cuts, ShouldHaveLength, 1)
-			So(cuts[0].oscillators[0].Amplitude, ShouldAlmostEqual, math.Sqrt(1.25), 6)
-			So(cuts[0].oscillators[1].Amplitude, ShouldAlmostEqual, math.Sqrt(1.5), 6)
-		})
-
-		Convey("It should exclude a Hawkes reading stamped after the drain cutoff", func() {
-			buyExcitation := 0.25
-			sellExcitation := 0.5
-			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
-				Source: types.SourceHawkes,
-				Symbol: "BTC/USD",
-				At:     time.Now().UTC().Add(time.Hour),
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy): {
-						Normalized: &buyExcitation,
-					},
-					types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell): {
-						Normalized: &sellExcitation,
-					},
-				},
-			}})
-
-			cuts, err := solver.load(thesis, thesis.At)
-
-			So(err, ShouldBeNil)
-			So(cuts, ShouldBeNil)
-			So(solver.WaitingForBook(), ShouldBeTrue)
+			So(solver.ParticleCount(), ShouldEqual, 2)
+			So(solver.oscillators[0].Amplitude, ShouldAlmostEqual, 1.0, 6)
+			So(solver.oscillators[1].Amplitude, ShouldAlmostEqual, 1.0, 6)
 		})
 	})
 }
@@ -596,9 +583,6 @@ func BenchmarkUpdate(b *testing.B) {
 			}
 		}
 
-		for solver.settling.Load() {
-			runtime.Gosched()
-		}
 	}
 }
 
@@ -638,9 +622,7 @@ func BenchmarkStep(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		if err := solver.Step(thesis, time.Unix(1, 0), []manifoldCut{{
-			symbol: "BTC/USD", oscillators: oscillators,
-		}}); err != nil {
+		if err := solver.Step(thesis, time.Unix(1, 0), map[string][]pmanifold.Oscillator{"BTC/USD": oscillators}, HawkesSignal{}); err != nil {
 			b.Fatal(err)
 		}
 	}

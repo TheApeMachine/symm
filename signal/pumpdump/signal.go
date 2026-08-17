@@ -2,44 +2,60 @@ package pumpdump
 
 import (
 	"context"
+	"iter"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal owns pump-cycle measurements derived from executed trade lift and the
-reconstructed book's midpoint and spread. It reads each market
-fact from its authoritative stream without treating them as independent
-corroborating signals.
+Signal owns the ignition perspective's metrics: the geometry and dynamics of
+the order-book ladder, plus the tape confirmation on the volume clock.
+
+The ladder is the precursor instrument. Every pass conditions the
+authoritative managed book into resting depth per side, touch spread, and the
+pass's signed depth change, and folds them into time-elastic baselines whose
+adaptation is driven by the symbol's own event-time gaps. Prints only confirm:
+each executed trade advances the volume-clocked ignition families and raises
+maturity. The signal never classifies and never judges honesty — spoof
+detection belongs to the toxicity perspective, and the pump or dump verdict is
+downstream logic combining both.
+
+It always produces: a dirty pass yields one measurement carrying whatever the
+ladder and the tape currently support, with maturity reporting the weakest
+support count.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	api    *websocket.API
-	ui     chan []byte
-	algo   *equation.Ignition
-	quotes *types.QuoteHistory
+	ctx       context.Context
+	cancel    context.CancelFunc
+	books     websocket.BookSource
+	quotes    *types.QuoteHistory
+	ladders   *nomagique.KeyedStreams[string]
+	ignitions *nomagique.KeyedStreams[string]
+	depths    *sync.Map
+	halflife  float64
+	capacity  float64
 }
 
 /*
-NewSignal creates an empty per-symbol pump state whose baseline capacity is the
-same explicit retention bound used by the production market feed.
+NewSignal creates ignition state with its own quote history.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
-	ui chan []byte,
+	books websocket.BookSource,
 ) *Signal {
 	return NewSignalWithQuotes(
 		ctx,
-		api,
-		ui,
+		books,
 		types.NewQuoteHistory(system.Cfg.PumpDump.Capacity),
 	)
 }
@@ -50,21 +66,21 @@ causal quote history.
 */
 func NewSignalWithQuotes(
 	ctx context.Context,
-	api *websocket.API,
-	ui chan []byte,
+	books websocket.BookSource,
 	quotes *types.QuoteHistory,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		api:    api,
-		ui:     ui,
-		algo: equation.NewIgnition(
-			system.Cfg.PumpDump.Capacity,
-		),
-		quotes: quotes,
+		ctx:       ctx,
+		cancel:    cancel,
+		books:     books,
+		quotes:    quotes,
+		ladders:   nomagique.NewKeyedStreams[string](algo.Ladder, nil),
+		ignitions: nomagique.NewKeyedStreams[string](algo.Ignition, nil),
+		depths:    &sync.Map{},
+		halflife:  system.Cfg.PumpDump.Halflife,
+		capacity:  float64(system.Cfg.PumpDump.Capacity),
 	}
 
 	return signal
@@ -82,194 +98,271 @@ func (signal *Signal) Type() types.SourceType {
 }
 
 /*
-Measure produces the Measurements for the pumpdump signal.
+Measure produces the ignition perspective's measurements for one dirty symbol.
 */
-func (signal *Signal) Measure(symbol *types.Symbol, _ ...int64) []*types.Measurement {
-	measurements := make([]*types.Measurement, 0)
-	signal.ingestQuotes(symbol)
+func (signal *Signal) Measure(
+	symbol *types.Symbol,
+	_ ...int64,
+) iter.Seq[*types.Measurement] {
+	return func(yield func(*types.Measurement) bool) {
+		signal.ingestQuotes(symbol)
 
-	for trade := range symbol.MarketTrades(types.SourcePumpDump) {
-		bid, ask, found := signal.quote(trade)
+		at := signal.drainLevel3(symbol)
+
+		snapshot := signal.bookSnapshot(symbol)
+
+		if snapshot.observedAt.After(at) {
+			at = snapshot.observedAt
+		}
+
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+
+		metrics := map[string]types.MetricSample{}
+		maturity := 0.0
+
+		if snapshot.ready {
+			signal.measureLadder(symbol.Symbol, snapshot, at, metrics, &maturity)
+		}
+
+		signal.measureTape(symbol, snapshot, metrics, &maturity)
+
+		if snapshot.ready {
+			snapshot.putMetrics(metrics)
+		}
+
+		separation, separationReady := types.MeasurementHypothesisSeparation(
+			types.SourcePumpDump, metrics,
+		)
+
+		if separationReady {
+			metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
+				Raw:        separation,
+				Normalized: &separation,
+				Unit:       types.UnitDimensionless,
+			}
+		}
+
+		yield(&types.Measurement{
+			ID:       uuid.NewString(),
+			Source:   types.SourcePumpDump,
+			Symbol:   symbol.Symbol,
+			Tick:     symbol.Tick,
+			At:       at,
+			Maturity: maturity,
+			Metrics:  metrics,
+		})
+	}
+}
+
+/*
+measureLadder folds one pass of book aggregates into the symbol's ladder
+stream and maps the ladder output onto measurement metrics.
+*/
+func (signal *Signal) measureLadder(
+	symbolName string,
+	snapshot bookSnapshot,
+	at time.Time,
+	metrics map[string]types.MetricSample,
+	maturity *float64,
+) {
+	previous, _ := signal.depths.LoadOrStore(symbolName, snapshot.depths())
+	prior := previous.(ladderDepths)
+	signal.depths.Store(symbolName, snapshot.depths())
+
+	input := nomagique.Frame{}
+	input.Put(algo.SymbolLadderHalflife, signal.halflife)
+	input.Put(algo.SymbolLadderBidDepth, snapshot.bidDepth)
+	input.Put(algo.SymbolLadderAskDepth, snapshot.askDepth)
+	input.Put(algo.SymbolLadderSpread, snapshot.spread)
+	input.Put(algo.SymbolLadderBidDelta, snapshot.bidDepth-prior.bid)
+	input.Put(algo.SymbolLadderAskDelta, snapshot.askDepth-prior.ask)
+	input.Put(algo.SymbolUnixSec, float64(at.Unix()))
+	input.Put(algo.SymbolUnixNsec, float64(at.Nanosecond()))
+
+	output, err := signal.ladders.Step(symbolName, input)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"pumpdump: ladder failed for "+symbolName,
+			err,
+		))
+
+		return
+	}
+
+	ladder := map[nomagique.Symbol]types.MetricType{
+		algo.SymbolLadderBidDepth:       types.MetricLadderBidDepth,
+		algo.SymbolLadderAskDepth:       types.MetricLadderAskDepth,
+		algo.SymbolLadderImbalance:      types.MetricLadderImbalance,
+		algo.SymbolLadderBidDepletion:   types.MetricLadderBidDepletion,
+		algo.SymbolLadderAskDepletion:   types.MetricLadderAskDepletion,
+		algo.SymbolLadderBidReplenish:   types.MetricLadderBidReplenish,
+		algo.SymbolLadderAskReplenish:   types.MetricLadderAskReplenish,
+		algo.SymbolLadderSpreadBaseline: types.MetricLadderSpreadBaseline,
+		algo.SymbolLadderCompression:    types.MetricCompression,
+	}
+
+	for source, metric := range ladder {
+		value, found := output.Get(source)
 
 		if !found {
 			continue
 		}
 
-		output, ready, maturity, err := signal.algo.Measure(equation.IgnitionInput{
-			Symbol: symbol.Symbol,
-			Volume: trade.Qty,
-			Last:   trade.Price.Float64(),
-			Bid:    bid,
-			Ask:    ask,
-			At:     trade.Timestamp,
-		})
+		if metric == types.MetricCompression {
+			normalized := value
+			metrics[types.MetricKey(metric, types.SideNone)] = types.MetricSample{
+				Raw:        value,
+				Normalized: &normalized,
+				Unit:       types.UnitDimensionless,
+			}
+
+			continue
+		}
+
+		metrics[types.MetricKey(metric, types.SideNone)] = types.MetricSample{
+			Raw:  value,
+			Unit: unitForLadderMetric(metric),
+		}
+	}
+
+	if value, found := output.Get(algo.SymbolLadderMaturity); found && *maturity < value {
+		*maturity = value
+	}
+}
+
+/*
+measureTape advances the volume-clocked ignition families with this pass's
+executed trades and maps the latest ignition output onto measurement metrics.
+The book's own touch answers any trade the quote history cannot, so an
+executed print is never dropped for lack of a ticker.
+*/
+func (signal *Signal) measureTape(
+	symbol *types.Symbol,
+	snapshot bookSnapshot,
+	metrics map[string]types.MetricSample,
+	maturity *float64,
+) {
+	var latest nomagique.Frame
+	haveOutput := false
+
+	for trade := range symbol.MarketTrades(types.SourcePumpDump) {
+		bid, ask, found := signal.quoteFor(trade, snapshot)
+
+		if !found {
+			continue
+		}
+
+		input := nomagique.Frame{}
+		input.Put(algo.SymbolCapacity, signal.capacity)
+		input.Put(algo.SymbolVolume, trade.Qty)
+		input.Put(algo.SymbolLast, trade.Price.Float64())
+		input.Put(algo.SymbolBid, bid)
+		input.Put(algo.SymbolAsk, ask)
+		input.Put(algo.SymbolUnixSec, float64(trade.Timestamp.Unix()))
+		input.Put(algo.SymbolUnixNsec, float64(trade.Timestamp.Nanosecond()))
+
+		output, err := signal.ignitions.Step(symbol.Symbol, input)
 
 		if err != nil {
 			errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"pumpdump: failed to measure ignition",
+				"pumpdump: ignition failed for "+symbol.Symbol,
 				err,
 			))
 
 			continue
 		}
 
-		measurement := &types.Measurement{
-			ID:       uuid.NewString(),
-			Source:   types.SourcePumpDump,
-			Symbol:   trade.Symbol,
-			Tick:     symbol.Tick,
-			At:       trade.Timestamp,
-			Maturity: maturity,
-			Metadata: map[string]float64{
-				"ask":            ask,
-				"bid":            bid,
-				"trade_price":    trade.Price.Float64(),
-				"trade_quantity": trade.Qty,
-			},
-			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricBestPrice, types.SideBuy): {
-					Raw:  bid,
-					Unit: types.UnitQuoteCurrency,
-				},
-				types.MetricKey(types.MetricBestPrice, types.SideSell): {
-					Raw:  ask,
-					Unit: types.UnitQuoteCurrency,
-				},
-				types.MetricKey(types.MetricMidpoint, types.SideNone): {
-					Raw:  (bid + ask) / 2,
-					Unit: types.UnitQuoteCurrency,
-				},
-				types.MetricKey(types.MetricTradePrice, types.SideNone): {
-					Raw:  trade.Price.Float64(),
-					Unit: types.UnitQuoteCurrency,
-				},
-				types.MetricKey(types.MetricTradeQuantity, types.SideNone): {
-					Raw:  trade.Qty,
-					Unit: types.UnitBaseCurrency,
-				},
-				types.MetricKey(types.MetricRVOL, types.SideNone): {
-					Raw:        output.RVOL,
-					Normalized: normalizedIgnitionEvidence(types.MetricRVOL, output.RVOL, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricPrecursor, types.SideNone): {
-					Raw:        output.Precursor,
-					Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Precursor, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricSpread, types.SideNone): {
-					Raw:        output.Spread,
-					Normalized: normalizedSpread(output.Spread, (bid+ask)/2),
-					Unit:       types.UnitQuoteCurrency,
-				},
-				types.MetricKey(types.MetricCompression, types.SideNone): {
-					Raw:        output.Compression,
-					Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Compression, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricIgnition, types.SideNone): {
-					Raw:        output.Ignition,
-					Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Ignition, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricTrend, types.SideNone): {
-					Raw:        output.Trend,
-					Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Trend, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricExhaustion, types.SideNone): {
-					Raw:        output.Exhaustion,
-					Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Exhaustion, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricStrength, types.SideNone): {
-					Raw:        output.Strength,
-					Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Strength, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricPrecursor, types.SideBuy): {
-					Raw:        output.Buy.Precursor,
-					Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Buy.Precursor, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricCompression, types.SideBuy): {
-					Raw:        output.Buy.Compression,
-					Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Buy.Compression, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricIgnition, types.SideBuy): {
-					Raw:        output.Buy.Ignition,
-					Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Buy.Ignition, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricTrend, types.SideBuy): {
-					Raw:        output.Buy.Trend,
-					Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Buy.Trend, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricExhaustion, types.SideBuy): {
-					Raw:        output.Buy.Exhaustion,
-					Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Buy.Exhaustion, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricStrength, types.SideBuy): {
-					Raw:        output.Buy.Strength,
-					Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Buy.Strength, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricPrecursor, types.SideSell): {
-					Raw:        output.Sell.Precursor,
-					Normalized: normalizedIgnitionEvidence(types.MetricPrecursor, output.Sell.Precursor, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricCompression, types.SideSell): {
-					Raw:        output.Sell.Compression,
-					Normalized: normalizedIgnitionEvidence(types.MetricCompression, output.Sell.Compression, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricIgnition, types.SideSell): {
-					Raw:        output.Sell.Ignition,
-					Normalized: normalizedIgnitionEvidence(types.MetricIgnition, output.Sell.Ignition, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricTrend, types.SideSell): {
-					Raw:        output.Sell.Trend,
-					Normalized: normalizedIgnitionEvidence(types.MetricTrend, output.Sell.Trend, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricExhaustion, types.SideSell): {
-					Raw:        output.Sell.Exhaustion,
-					Normalized: normalizedIgnitionEvidence(types.MetricExhaustion, output.Sell.Exhaustion, ready),
-					Unit:       types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricStrength, types.SideSell): {
-					Raw:        output.Sell.Strength,
-					Normalized: normalizedIgnitionEvidence(types.MetricStrength, output.Sell.Strength, ready),
-					Unit:       types.UnitDimensionless,
-				},
-			},
+		latest = output
+		haveOutput = true
+		metrics[types.MetricKey(types.MetricTradePrice, types.SideNone)] = types.MetricSample{
+			Raw: trade.Price.Float64(), Unit: types.UnitQuoteCurrency,
+		}
+		metrics[types.MetricKey(types.MetricTradeQuantity, types.SideNone)] = types.MetricSample{
+			Raw: trade.Qty, Unit: types.UnitBaseCurrency,
+		}
+	}
+
+	if !haveOutput {
+		return
+	}
+
+	ignition := []struct {
+		symbol nomagique.Symbol
+		metric types.MetricType
+		side   types.MeasurementSide
+	}{
+		{algo.SymbolRVOL, types.MetricRVOL, types.SideNone},
+		{algo.SymbolPrecursor, types.MetricPrecursor, types.SideNone},
+		{algo.SymbolIgnition, types.MetricIgnition, types.SideNone},
+		{algo.SymbolTrend, types.MetricTrend, types.SideNone},
+		{algo.SymbolExhaustion, types.MetricExhaustion, types.SideNone},
+		{algo.SymbolStrength, types.MetricStrength, types.SideNone},
+		{algo.SymbolBuyPrecursor, types.MetricPrecursor, types.SideBuy},
+		{algo.SymbolBuyCompression, types.MetricCompression, types.SideBuy},
+		{algo.SymbolBuyIgnition, types.MetricIgnition, types.SideBuy},
+		{algo.SymbolBuyTrend, types.MetricTrend, types.SideBuy},
+		{algo.SymbolBuyExhaustion, types.MetricExhaustion, types.SideBuy},
+		{algo.SymbolBuyStrength, types.MetricStrength, types.SideBuy},
+		{algo.SymbolSellPrecursor, types.MetricPrecursor, types.SideSell},
+		{algo.SymbolSellCompression, types.MetricCompression, types.SideSell},
+		{algo.SymbolSellIgnition, types.MetricIgnition, types.SideSell},
+		{algo.SymbolSellTrend, types.MetricTrend, types.SideSell},
+		{algo.SymbolSellExhaustion, types.MetricExhaustion, types.SideSell},
+		{algo.SymbolSellStrength, types.MetricStrength, types.SideSell},
+	}
+
+	for _, item := range ignition {
+		value, found := latest.Get(item.symbol)
+
+		if !found {
+			continue
 		}
 
-		separation, separationReady := types.MeasurementHypothesisSeparation(
-			types.SourcePumpDump,
-			measurement.Metrics,
-		)
-
-		snrSample := types.MetricSample{
-			Raw:  separation,
+		sample := types.MetricSample{
+			Raw:  value,
 			Unit: types.UnitDimensionless,
 		}
 
-		if separationReady {
-			snrSample.Normalized = &separation
+		if item.metric == types.MetricRVOL || item.metric == types.MetricPrecursor {
+			if value > 0 {
+				normalized := value / (1 + value)
+				sample.Normalized = &normalized
+			}
+		} else {
+			normalized := value
+			sample.Normalized = &normalized
 		}
 
-		measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
-		measurements = append(measurements, measurement)
+		metrics[types.MetricKey(item.metric, item.side)] = sample
 	}
 
-	return measurements
+	if value, found := latest.Get(algo.SymbolMaturity); found && *maturity < value {
+		*maturity = value
+	}
+}
+
+/*
+quoteFor answers one trade with the causal quote, falling back to the book's
+own touch so an executed print is never dropped for lack of a ticker.
+*/
+func (signal *Signal) quoteFor(
+	trade kraken.TradeData,
+	snapshot bookSnapshot,
+) (float64, float64, bool) {
+	if ticker, found := signal.quotes.At(trade.Symbol, trade.Timestamp); found {
+		return ticker.Bid.Float64(), ticker.Ask.Float64(), true
+	}
+
+	if snapshot.ready && snapshot.bid > 0 && snapshot.ask > snapshot.bid {
+		return snapshot.bid, snapshot.ask, true
+	}
+
+	return 0, 0, false
 }
 
 func (signal *Signal) ingestQuotes(symbol *types.Symbol) {
@@ -278,64 +371,127 @@ func (signal *Signal) ingestQuotes(symbol *types.Symbol) {
 	}
 }
 
-func (signal *Signal) quote(trade kraken.TradeData) (float64, float64, bool) {
-	if signal.quotes == nil {
-		return 0, 0, false
+/*
+drainLevel3 consumes this pass's accepted order frames and returns the newest
+event time they carry. The frames drive the ladder's clock, and draining
+keeps the queue honest even on passes without a book.
+*/
+func (signal *Signal) drainLevel3(symbol *types.Symbol) time.Time {
+	var latest time.Time
+
+	for frame := range symbol.MarketLevel3(types.SourcePumpDump) {
+		if frame.Timestamp.After(latest) {
+			latest = frame.Timestamp
+		}
 	}
 
-	ticker, found := signal.quotes.At(trade.Symbol, trade.Timestamp)
-
-	if !found {
-		return 0, 0, false
-	}
-
-	return ticker.Bid.Float64(), ticker.Ask.Float64(), true
+	return latest
 }
 
 /*
-normalizedIgnitionEvidence accepts only ready empirical ignition evidence.
-Unbounded baseline ratios use parity as their domain scale and map to their
-share against parity; bounded scores retain their calculated value. Before the
-volume-clock baselines mature, raw placeholders cannot enter normalized math.
+ladderDepths carries one symbol's previous pass depths so a pass can report
+its signed depth change without retaining the book itself.
 */
-func normalizedIgnitionEvidence(
-	metric types.MetricType,
-	raw float64,
-	ready bool,
-) *float64 {
-	if !ready {
-		return nil
-	}
-
-	if raw < 0 {
-		return nil
-	}
-
-	value := raw
-
-	if metric == types.MetricRVOL || metric == types.MetricPrecursor ||
-		metric == types.MetricIgnition || metric == types.MetricTrend ||
-		metric == types.MetricStrength {
-		value = raw / (1 + raw)
-	} else if raw > 1 {
-		return nil
-	}
-
-	return &value
+type ladderDepths struct {
+	bid float64
+	ask float64
 }
 
 /*
-normalizedSpread reports executable spread as a fraction of the authoritative
-book midpoint observed no later than the trade.
+bookSnapshot is one pass's conditioning of the authoritative managed book:
+full resting depth per side within the subscribed depth, the touch, and the
+book's own event-time high-water mark.
 */
-func normalizedSpread(raw, midpoint float64) *float64 {
-	if raw <= 0 || midpoint <= 0 {
-		return nil
+type bookSnapshot struct {
+	ready      bool
+	bid        float64
+	ask        float64
+	bidDepth   float64
+	askDepth   float64
+	spread     float64
+	observedAt time.Time
+}
+
+func (snapshot bookSnapshot) depths() ladderDepths {
+	return ladderDepths{bid: snapshot.bidDepth, ask: snapshot.askDepth}
+}
+
+func (snapshot bookSnapshot) putMetrics(metrics map[string]types.MetricSample) {
+	metrics[types.MetricKey(types.MetricBestPrice, types.SideBuy)] = types.MetricSample{
+		Raw: snapshot.bid, Unit: types.UnitQuoteCurrency,
+	}
+	metrics[types.MetricKey(types.MetricBestPrice, types.SideSell)] = types.MetricSample{
+		Raw: snapshot.ask, Unit: types.UnitQuoteCurrency,
+	}
+	metrics[types.MetricKey(types.MetricMidpoint, types.SideNone)] = types.MetricSample{
+		Raw: (snapshot.bid + snapshot.ask) / 2, Unit: types.UnitQuoteCurrency,
+	}
+	metrics[types.MetricKey(types.MetricSpread, types.SideNone)] = types.MetricSample{
+		Raw: snapshot.spread, Unit: types.UnitQuoteCurrency,
+	}
+}
+
+/*
+bookSnapshot conditions the managed book for one symbol. The depth band is
+the venue subscription itself, so the ladder never invents its own horizon.
+*/
+func (signal *Signal) bookSnapshot(symbol *types.Symbol) bookSnapshot {
+	snapshot := bookSnapshot{}
+
+	if signal.books == nil {
+		return snapshot
 	}
 
-	value := raw / midpoint
+	_, observedAt := symbol.BookRevision()
 
-	return &value
+	signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
+		if managed == nil {
+			return
+		}
+
+		for level := managed.Bids.High; level != nil; level = level.Lower {
+			if level.Quantity != nil {
+				snapshot.bidDepth += level.Quantity.Float64()
+			}
+		}
+
+		for level := managed.Asks.Low; level != nil; level = level.Higher {
+			if level.Quantity != nil {
+				snapshot.askDepth += level.Quantity.Float64()
+			}
+		}
+
+		if bestBid := managed.BestBid(); bestBid != nil && bestBid.Price != nil {
+			snapshot.bid = bestBid.Price.Float64()
+		}
+
+		if bestAsk := managed.BestAsk(); bestAsk != nil && bestAsk.Price != nil {
+			snapshot.ask = bestAsk.Price.Float64()
+		}
+
+		if snapshot.bid > 0 && snapshot.ask > snapshot.bid {
+			snapshot.spread = snapshot.ask - snapshot.bid
+		}
+
+		snapshot.observedAt = observedAt
+		snapshot.ready = true
+	})
+
+	return snapshot
+}
+
+func unitForLadderMetric(metric types.MetricType) types.MeasurementUnit {
+	switch metric {
+	case types.MetricLadderBidDepth,
+		types.MetricLadderAskDepth,
+		types.MetricLadderBidDepletion,
+		types.MetricLadderAskDepletion,
+		types.MetricLadderBidReplenish,
+		types.MetricLadderAskReplenish:
+		return types.UnitBaseCurrency
+	default:
+		return types.UnitDimensionless
+	}
 }
 
 /*

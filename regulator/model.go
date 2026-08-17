@@ -5,7 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/system"
 	"gonum.org/v1/gonum/stat/distuv"
 )

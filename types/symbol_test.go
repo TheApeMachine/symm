@@ -26,10 +26,10 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 		symbol := NewSymbol("BTC/USD", nil)
 		measurement := &Measurement{ID: "first", Source: SourceHawkes, Symbol: "BTC/USD"}
 
-		symbol.AppendMeasurements([]*Measurement{measurement})
+		symbol.AppendMeasurement(measurement)
 
 		Convey("It should expose the row without waking predictive coding", func() {
-			for _, solver := range []string{"category", "graph", "manifold"} {
+			for _, solver := range []string{"category", "graph"} {
 				rows := make([]*Measurement, 0)
 
 				for row := range symbol.MarketMeasurements(solver) {
@@ -38,6 +38,9 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 
 				So(rows, ShouldResemble, []*Measurement{measurement})
 			}
+
+			_, manifoldFound := symbol.Measurements.Load("manifold")
+			So(manifoldFound, ShouldBeFalse)
 
 			_, found := symbol.Measurements.Load("resonance")
 			So(found, ShouldBeFalse)
@@ -71,7 +74,7 @@ func TestSymbolResonanceInputs(t *testing.T) {
 		value := 0.5
 
 		Convey("It should enqueue a competing reading immediately", func() {
-			symbol.AppendMeasurements([]*Measurement{{
+			symbol.AppendMeasurement(&Measurement{
 				Source: SourceHawkes,
 				Symbol: "BTC/USD",
 				Tick:   1,
@@ -81,7 +84,7 @@ func TestSymbolResonanceInputs(t *testing.T) {
 				Metrics: map[string]MetricSample{
 					MetricKey(MetricEventCount, SideBuy): {Normalized: &value},
 				},
-			}})
+			})
 
 			rows := make([]*ResonanceMeasurement, 0)
 
@@ -101,7 +104,7 @@ func TestSymbolAppendTicker(t *testing.T) {
 		symbol := NewSymbol("BTC/USD", nil)
 		ticker := kraken.TickerData{Symbol: "BTC/USD"}
 
-		symbol.AppendTicker(ticker)
+		symbol.AppendTicker(ticker, TickerReceivers)
 
 		Convey("It should queue the ticker only for ticker receivers", func() {
 			for _, source := range TickerReceivers {
@@ -129,7 +132,7 @@ func TestSymbolAppendTrade(t *testing.T) {
 		symbol := NewSymbol("BTC/USD", nil)
 		trade := kraken.TradeData{Symbol: "BTC/USD"}
 
-		symbol.AppendTrade(trade)
+		symbol.AppendTrade(trade, TradeReceivers)
 
 		Convey("It should queue the trade only for trade receivers", func() {
 			for _, source := range TradeReceivers {
@@ -154,6 +157,105 @@ func TestSymbolAppendTrade(t *testing.T) {
 	})
 }
 
+func TestSymbolDrainCut(t *testing.T) {
+	Convey("Given a queue holding past rows, a future row, and more past rows", t, func() {
+		symbol := NewSymbol("BTC/USD", nil)
+
+		for range 2 {
+			symbol.AppendTicker(kraken.TickerData{
+				Symbol: "BTC/USD", Timestamp: time.Now().Add(-time.Hour),
+			}, []SourceType{SourceCVD})
+		}
+
+		symbol.AppendTicker(kraken.TickerData{
+			Symbol: "BTC/USD", Timestamp: time.Now().Add(time.Hour),
+		}, []SourceType{SourceCVD})
+
+		for range 2 {
+			symbol.AppendTicker(kraken.TickerData{
+				Symbol: "BTC/USD", Timestamp: time.Now().Add(-time.Minute),
+			}, []SourceType{SourceCVD})
+		}
+
+		Convey("It should process the boundary row and leave the rest pending", func() {
+			rows := make([]kraken.TickerData, 0)
+
+			for row := range symbol.MarketTickers(SourceCVD) {
+				rows = append(rows, row)
+			}
+
+			So(rows, ShouldHaveLength, 3)
+			So(rows[2].Timestamp, ShouldHappenAfter, rows[1].Timestamp)
+			So(symbol.Pending(), ShouldBeTrue)
+
+			remaining := 0
+
+			for range symbol.MarketTickers(SourceCVD) {
+				remaining++
+			}
+
+			So(remaining, ShouldEqual, 2)
+			So(symbol.Pending(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestSymbolPending(t *testing.T) {
+	Convey("Given a clean symbol", t, func() {
+		symbol := NewSymbol("BTC/USD", nil)
+
+		So(symbol.Pending(), ShouldBeFalse)
+
+		Convey("Appending rows marks it pending", func() {
+			symbol.AppendTicker(kraken.TickerData{Symbol: "BTC/USD"}, TickerReceivers)
+			So(symbol.Pending(), ShouldBeTrue)
+
+			Convey("Draining every receiver clears it", func() {
+				for _, source := range TickerReceivers {
+					for range symbol.MarketTickers(source) {
+					}
+				}
+
+				So(symbol.Pending(), ShouldBeFalse)
+			})
+
+			Convey("A partial drain leaves it pending", func() {
+				symbol.AppendTicker(kraken.TickerData{Symbol: "BTC/USD"}, TickerReceivers)
+				drained := 0
+
+				for _, source := range TickerReceivers {
+					for range symbol.MarketTickers(source) {
+						drained++
+						break
+					}
+				}
+
+				So(drained, ShouldEqual, len(TickerReceivers))
+				So(symbol.Pending(), ShouldBeTrue)
+			})
+		})
+
+		Convey("Trades and Level3 rows count independently", func() {
+			symbol.AppendTrade(kraken.TradeData{Symbol: "BTC/USD"}, TradeReceivers)
+			symbol.AppendLevel3(kraken.Level3Data{Symbol: "BTC/USD"}, Level3Receivers)
+
+			for _, source := range TradeReceivers {
+				for range symbol.MarketTrades(source) {
+				}
+			}
+
+			So(symbol.Pending(), ShouldBeTrue)
+
+			for _, source := range Level3Receivers {
+				for range symbol.MarketLevel3(source) {
+				}
+			}
+
+			So(symbol.Pending(), ShouldBeFalse)
+		})
+	})
+}
+
 func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 	measurement := &Measurement{
 		ID: "hawkes", Source: SourceHawkes, Symbol: "BTC/USD",
@@ -162,7 +264,7 @@ func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 
 	for b.Loop() {
 		symbol := NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurements([]*Measurement{measurement})
+		symbol.AppendMeasurement(measurement)
 	}
 }
 
@@ -187,13 +289,13 @@ func BenchmarkSymbolResonanceInputs(b *testing.B) {
 		value = float64(epoch)
 
 		for _, source := range SignalSources {
-			symbol.AppendMeasurements([]*Measurement{{
+			symbol.AppendMeasurement(&Measurement{
 				Source: source,
 				Symbol: "BTC/USD",
 				Metrics: map[string]MetricSample{
 					"score": {Normalized: &value},
 				},
-			}})
+			})
 		}
 	}
 
@@ -203,13 +305,13 @@ func BenchmarkSymbolResonanceInputs(b *testing.B) {
 		value++
 
 		for _, source := range SignalSources {
-			symbol.AppendMeasurements([]*Measurement{{
+			symbol.AppendMeasurement(&Measurement{
 				Source: source,
 				Symbol: "BTC/USD",
 				Metrics: map[string]MetricSample{
 					"score": {Normalized: &value},
 				},
-			}})
+			})
 		}
 
 		for _, consumer := range []string{"category", "graph", "manifold"} {
@@ -225,7 +327,7 @@ func BenchmarkSymbolAppendTicker(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		symbol.AppendTicker(ticker)
+		symbol.AppendTicker(ticker, TickerReceivers)
 
 		for _, source := range TickerReceivers {
 			for range symbol.MarketTickers(source) {
@@ -240,7 +342,7 @@ func BenchmarkSymbolAppendTrade(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		symbol.AppendTrade(trade)
+		symbol.AppendTrade(trade, TradeReceivers)
 
 		for _, source := range TradeReceivers {
 			for range symbol.MarketTrades(source) {
@@ -260,14 +362,14 @@ func TestSymbolBookRevision(t *testing.T) {
 			Bids: []kraken.Level3Order{{
 				OrderID: "bid", Timestamp: latestOrderAt,
 			}},
-		})
+		}, Level3Receivers)
 		symbol.AppendLevel3(kraken.Level3Data{
 			Symbol:    symbol.Symbol,
 			Timestamp: firstAt.Add(2 * time.Second),
 			Bids: []kraken.Level3Order{{
 				OrderID: "delete-old", Timestamp: firstAt,
 			}},
-		})
+		}, Level3Receivers)
 
 		revision, observedAt := symbol.BookRevision()
 

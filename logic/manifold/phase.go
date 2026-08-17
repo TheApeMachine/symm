@@ -1,6 +1,7 @@
 package manifold
 
 import (
+	"sort"
 	"math"
 	"math/cmplx"
 	"time"
@@ -105,7 +106,7 @@ rediscovering itself at alpha zero.
 func (solver *Solver) stampPhase(
 	thesis *types.Thesis,
 	at time.Time,
-	cuts []manifoldCut,
+	perSymbol map[string][]pmanifold.Oscillator,
 ) types.PhaseReading {
 	solver.mature()
 
@@ -129,7 +130,7 @@ func (solver *Solver) stampPhase(
 		return reading
 	}
 
-	if weights, complete := solver.observeWeights(cuts); complete {
+	if weights, complete := solver.observeWeights(perSymbol); complete {
 		solver.pending = append(solver.pending, pendingDial{
 			dial:    dial,
 			at:      at,
@@ -257,15 +258,24 @@ func (solver *Solver) mature() {
 observeWeights snapshots every contributing book's mid and injected mass.
 The universe outcome is only well-defined when every cut can be priced.
 */
-func (solver *Solver) observeWeights(cuts []manifoldCut) ([]phaseWeight, bool) {
-	if len(cuts) == 0 {
+func (solver *Solver) observeWeights(
+	perSymbol map[string][]pmanifold.Oscillator,
+) ([]phaseWeight, bool) {
+	if len(perSymbol) == 0 {
 		return nil, false
 	}
 
-	weights := make([]phaseWeight, 0, len(cuts))
+	symbols := make([]string, 0, len(perSymbol))
 
-	for _, cut := range cuts {
-		mid := solver.midpoint(cut.symbol)
+	for symbol := range perSymbol {
+		symbols = append(symbols, symbol)
+	}
+
+	sort.Strings(symbols)
+	weights := make([]phaseWeight, 0, len(perSymbol))
+
+	for _, symbol := range symbols {
+		mid := solver.midpoint(symbol)
 
 		if !(mid > 0) {
 			return nil, false
@@ -273,7 +283,7 @@ func (solver *Solver) observeWeights(cuts []manifoldCut) ([]phaseWeight, bool) {
 
 		var mass float64
 
-		for _, oscillator := range cut.oscillators {
+		for _, oscillator := range perSymbol[symbol] {
 			orderMass := oscillator.Amplitude * oscillator.Amplitude
 
 			if !(orderMass > 0) {
@@ -288,7 +298,7 @@ func (solver *Solver) observeWeights(cuts []manifoldCut) ([]phaseWeight, bool) {
 		}
 
 		weights = append(weights, phaseWeight{
-			symbol: cut.symbol,
+			symbol: symbol,
 			mid:    mid,
 			mass:   mass,
 		})

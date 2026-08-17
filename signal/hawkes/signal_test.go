@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -13,8 +14,7 @@ import (
 
 func TestMeasure(t *testing.T) {
 	Convey("Given Hawkes trade observations on one symbol", t, func() {
-		ui := make(chan []byte, 3)
-		signal := NewSignal(context.Background(), nil, ui)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 		start := time.Unix(1_700_005_000, 0).UTC()
 
@@ -24,10 +24,10 @@ func TestMeasure(t *testing.T) {
 				TradeID:   int64(index + 1),
 				Side:      side,
 				Timestamp: start.Add(time.Duration(index) * time.Second),
-			})
+			}, types.TradeReceivers)
 		}
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should emit excitation metrics from nomagique", func() {
 			So(len(measurements), ShouldBeGreaterThan, 0)
@@ -48,7 +48,7 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a single first trade", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Unix(1_700_007_000, 0).UTC()
 		market.AppendTrade(kraken.TradeData{
@@ -56,9 +56,9 @@ func TestMeasure(t *testing.T) {
 			TradeID:   1,
 			Side:      "buy",
 			Timestamp: at,
-		})
+		}, types.TradeReceivers)
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should emit an immature measurement with unready separation", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -78,7 +78,7 @@ func TestMeasure(t *testing.T) {
 		})
 
 		Convey("When asked again with no new trades", func() {
-			again := signal.Measure(market)
+			again := slices.Collect(signal.Measure(market))
 
 			Convey("It should republish the last measurement", func() {
 				So(again, ShouldHaveLength, 1)
@@ -93,22 +93,22 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a market that has never traded", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 
 		Convey("It should not invent a measurement", func() {
-			So(signal.Measure(market), ShouldBeEmpty)
+			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
 		})
 	})
 
 	Convey("Given trades for two independent symbols", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("AAA/USD", nil)
 		start := time.Unix(1_700_006_000, 0).UTC()
-		market.AppendTrade(kraken.TradeData{Symbol: "AAA/USD", Side: "buy", Timestamp: start})
-		market.AppendTrade(kraken.TradeData{Symbol: "BBB/USD", Side: "sell", Timestamp: start})
+		market.AppendTrade(kraken.TradeData{Symbol: "AAA/USD", Side: "buy", Timestamp: start}, types.TradeReceivers)
+		market.AppendTrade(kraken.TradeData{Symbol: "BBB/USD", Side: "sell", Timestamp: start}, types.TradeReceivers)
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should keep each symbol's estimator state apart", func() {
 			So(measurements, ShouldHaveLength, 2)
@@ -141,7 +141,7 @@ func TestSeenTrade(t *testing.T) {
 }
 
 func BenchmarkMeasure(b *testing.B) {
-	signal := NewSignal(context.Background(), nil, nil)
+	signal := NewSignal(context.Background(), nil)
 	market := types.NewSymbol("BTC/USD", nil)
 	start := time.Unix(1_700_005_000, 0).UTC()
 	iteration := 0
@@ -160,8 +160,8 @@ func BenchmarkMeasure(b *testing.B) {
 			TradeID:   int64(iteration + 1),
 			Side:      side,
 			Timestamp: start.Add(time.Duration(iteration) * time.Second),
-		})
-		signal.Measure(market)
+		}, types.TradeReceivers)
+		_ = slices.Collect(signal.Measure(market))
 		iteration++
 	}
 }

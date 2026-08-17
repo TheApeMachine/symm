@@ -28,7 +28,7 @@ func TestAddNodes(t *testing.T) {
 				},
 			},
 		}
-		symbol.AppendMeasurements([]*types.Measurement{measurement})
+		symbol.AppendMeasurement(measurement)
 		graph := NewGraph(at)
 
 		index, err := newMeasurementCompiler().addNodes(
@@ -56,13 +56,13 @@ func TestAddNodes(t *testing.T) {
 
 	Convey("Given a measurement assigned to another pair", t, func() {
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+		symbol.AppendMeasurement(&types.Measurement{
 			ID: "cvd-other", Source: types.SourceCVD, Symbol: "ETH/USD",
 			At: time.Unix(11, 0).UTC(),
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricDrive, types.SideNone): {Raw: 0.5},
 			},
-		}})
+		})
 
 		_, err := newMeasurementCompiler().addNodes(
 			"BTC/USD", symbol.MarketMeasurements("graph"),
@@ -81,22 +81,22 @@ func TestAddCategoryEdges(t *testing.T) {
 		at := time.Unix(10, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD", nil)
 		drive := 0.8
-		symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+		symbol.AppendMeasurement(&types.Measurement{
 			ID: "old", Source: types.SourceCVD, Symbol: "BTC/USD", At: at,
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricDrive, types.SideNone): {
 					Raw: 0.7, Unit: types.UnitDimensionless,
 				},
 			},
-		}})
-		symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+		})
+		symbol.AppendMeasurement(&types.Measurement{
 			ID: "current", Source: types.SourceCVD, Symbol: "BTC/USD", At: at,
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricDrive, types.SideNone): {
 					Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
 				},
 			},
-		}})
+		})
 		symbol.Categories.Store("BTC/USD", []types.Category{{
 			Symbol: "BTC/USD", Type: types.CategoryAggressiveDrive,
 			Confidence: 0.7,
@@ -124,14 +124,14 @@ func TestAddCategoryEdges(t *testing.T) {
 	Convey("Given category evidence without a normalized measurement value", t, func() {
 		at := time.Unix(20, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD", nil)
-		symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+		symbol.AppendMeasurement(&types.Measurement{
 			ID: "cvd-raw", Source: types.SourceCVD, Symbol: "BTC/USD", At: at,
 			Metrics: map[string]types.MetricSample{
 				types.MetricKey(types.MetricDrive, types.SideNone): {
 					Raw: 0.7, Unit: types.UnitDimensionless,
 				},
 			},
-		}})
+		})
 		symbol.Categories.Store("BTC/USD", []types.Category{{
 			Symbol: "BTC/USD", Type: types.CategoryAggressiveDrive,
 			Supporting: []string{"cvd:drive"},
@@ -159,7 +159,7 @@ func BenchmarkAddNodes(b *testing.B) {
 	value := 0.5
 
 	for index, schema := range types.CategorySchemas {
-		symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
+		symbol.AppendMeasurement(&types.Measurement{
 			ID:     string(schema.Source) + ":" + strconv.Itoa(index),
 			Source: schema.Source, Symbol: "BTC/USD", At: at,
 			Metrics: map[string]types.MetricSample{
@@ -167,7 +167,7 @@ func BenchmarkAddNodes(b *testing.B) {
 					Raw: value, Normalized: &value, Unit: types.UnitDimensionless,
 				},
 			},
-		}})
+		})
 	}
 
 	compiler := newMeasurementCompiler()

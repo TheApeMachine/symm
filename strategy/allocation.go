@@ -339,6 +339,14 @@ func admissionOrder(left, right *types.Decision) int {
 		return 1
 	}
 
+	if left.ForecastHorizon != right.ForecastHorizon && left.ForecastHorizon > 0 && right.ForecastHorizon > 0 {
+		if left.ForecastHorizon < right.ForecastHorizon {
+			return -1
+		}
+
+		return 1
+	}
+
 	return strings.Compare(left.Symbol, right.Symbol)
 }
 

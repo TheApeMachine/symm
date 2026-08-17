@@ -15,7 +15,10 @@ describe("XrayManifoldPanel", () => {
 		expect(markup).toContain('data-paint-format=".8f"');
 		expect(markup).not.toContain('data-paint="forecast.forwardCurve.0"');
 		expect(markup).not.toContain('data-paint="forecast.posterior.0.Scale"');
+		expect(markup).toContain('data-paint="dynamics.velocity"');
+		expect(markup).toContain('data-paint="dynamics.memoryScale"');
+		expect(markup).toContain('data-paint="dynamics.passivityResidue"');
+		expect(markup).toContain('data-paint="dynamics.jumpVariance"');
+		expect(markup).toContain('data-paint="dynamics.equivarianceNorm"');
 	});
 });
-
-

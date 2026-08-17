@@ -40,6 +40,10 @@ func (conn *Conn) BookUpdates() <-chan string { return nil }
 
 func (conn *Conn) Level3Events() <-chan kraken.Level3Data { return nil }
 
+func (conn *Conn) Level3Divergences() <-chan string { return nil }
+
+func (conn *Conn) ResubscribeL3(string) {}
+
 func (conn *Conn) SubInstrument(callback types.Subscription[any]) {}
 
 func (conn *Conn) SubTicker(symbols []string) {}

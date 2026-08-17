@@ -6,9 +6,9 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/mcts"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )

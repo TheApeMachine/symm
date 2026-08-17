@@ -12,10 +12,10 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/learning"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -193,13 +193,13 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 					return true
 				})
 
-				Convey("It should enter only on a supported structural thesis and exit profitably", func() {
+				Convey("It should enter only on calibrated positive net utility and exit profitably", func() {
 					So(forecastErr, ShouldBeNil)
 					So(forecast, ShouldNotBeEmpty)
 					So(skillReady, ShouldBeTrue)
 					So(completed, ShouldNotBeNil)
 					So(completed.Decision.ForecastHorizon, ShouldBeGreaterThan, 0)
-					So(completed.Decision.ThesisScore, ShouldBeGreaterThan, 0)
+					So(completed.Decision.Utility, ShouldBeGreaterThan, 0)
 					So(completed.Decision.GraphScore, ShouldBeGreaterThanOrEqualTo,
 						completed.Decision.AdmissionGraphThreshold)
 					So(completed.Holding.PnL.Sign(), ShouldEqual, 1)

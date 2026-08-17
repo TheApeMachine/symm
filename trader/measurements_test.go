@@ -3,22 +3,29 @@ package trader
 import (
 	"context"
 	"encoding/json"
+	"iter"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/types"
+	"golang.design/x/lockfree/lf"
 )
 
 /*
-measurementSignal records whether the measurement scheduler selected a source.
+measurementSignal records which symbols the pass measured and optionally
+yields one measurement per call.
 */
 type measurementSignal struct {
 	source      types.SourceType
 	measurement *types.Measurement
 	calls       atomic.Int64
+	seen        sync.Map
 }
 
 func (signal *measurementSignal) Name() string {
@@ -30,364 +37,363 @@ func (signal *measurementSignal) Type() types.SourceType {
 }
 
 func (signal *measurementSignal) Measure(
-	_ *types.Symbol, ticks ...int64,
-) []*types.Measurement {
-	signal.calls.Add(1)
+	symbol *types.Symbol, _ ...int64,
+) iter.Seq[*types.Measurement] {
+	return func(yield func(*types.Measurement) bool) {
+		signal.calls.Add(1)
+		signal.seen.Store(symbol.Symbol, true)
 
-	if signal.measurement == nil {
-		return nil
+		for range symbol.MarketTickers(signal.source) {
+		}
+
+		if signal.measurement == nil {
+			return
+		}
+
+		yield(signal.measurement)
 	}
-
-	if len(ticks) > 0 {
-		signal.measurement.Tick = ticks[0]
-	}
-
-	return []*types.Measurement{signal.measurement}
 }
 
 func (signal *measurementSignal) Close() error {
 	return nil
 }
 
+/*
+newTestMeasurements wires a cancellable measurement stage around fake signals.
+*/
+func newTestMeasurements(
+	t *testing.T,
+	signals []types.Signal,
+) (*Measurements, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(t.Context())
+
+	return &Measurements{
+		ctx:     ctx,
+		cancel:  cancel,
+		signals: signals,
+	}, cancel
+}
+
+/*
+awaitThesis fails the test unless one thesis arrives within a second.
+*/
+func awaitThesis(
+	t *testing.T,
+	theses <-chan *types.Thesis,
+) *types.Thesis {
+	select {
+	case thesis := <-theses:
+		return thesis
+	case <-time.After(time.Second):
+		t.Fatal("no thesis arrived")
+		return nil
+	}
+}
+
+func feedTicker(
+	symbol *types.Symbol,
+	source types.SourceType,
+	at time.Time,
+) {
+	symbol.AppendTicker(kraken.TickerData{
+		Symbol: symbol.Symbol, Timestamp: at,
+	}, []types.SourceType{source})
+}
+
 func TestMeasurementsGenerate(t *testing.T) {
-	Convey("Given ticker, trade, and book measurement signals", t, func() {
-		signals := map[types.SourceType]*measurementSignal{
-			types.SourceCorrelation: {source: types.SourceCorrelation},
-			types.SourceCVD:         {source: types.SourceCVD},
-			types.SourceDepthFlow:   {source: types.SourceDepthFlow},
-			types.SourceExhaustion:  {source: types.SourceExhaustion},
-			types.SourceHawkes:      {source: types.SourceHawkes},
-			types.SourceLeadLag:     {source: types.SourceLeadLag},
-			types.SourceLiquidity:   {source: types.SourceLiquidity},
-			types.SourcePumpDump:    {source: types.SourcePumpDump},
-			types.SourceSentiment:   {source: types.SourceSentiment},
-			types.SourceToxicity:    {source: types.SourceToxicity},
-		}
-		measurements := &Measurements{
-			ctx: context.Background(),
-			signals: []types.Signal{
-				signals[types.SourceCorrelation],
-				signals[types.SourceCVD],
-				signals[types.SourceDepthFlow],
-				signals[types.SourceExhaustion],
-				signals[types.SourceHawkes],
-				signals[types.SourceLeadLag],
-				signals[types.SourceLiquidity],
-				signals[types.SourcePumpDump],
-				signals[types.SourceSentiment],
-				signals[types.SourceToxicity],
-			},
-		}
+	Convey("Given one dirty symbol and one clean symbol", t, func() {
+		measured := &measurementSignal{source: types.SourceCVD}
+		measurements, cancel := newTestMeasurements(t, []types.Signal{measured})
+		defer cancel()
+
 		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbol("BTC/USD")
+		bitcoin := thesis.Symbol("BTC/USD")
+		thesis.Symbol("DDD/USD")
+		feedTicker(bitcoin, types.SourceCVD, time.Now())
 
-		So(signals, ShouldHaveLength, len(types.SignalSources))
+		// One Generate per thesis: a second drain loop would race the first
+		// for the same queues.
+		theses := measurements.Generate(thesis, nil)
 
-		for _, source := range types.SignalSources {
-			So(signals[source], ShouldNotBeNil)
-		}
-
-		Convey("A ticker update should run only the ticker signals", func() {
-			err := measurements.Generate(thesis, types.TickerReceivers)
-			So(err, ShouldBeNil)
-			expected := map[types.SourceType]int64{
-				types.SourceCorrelation: 1,
-				types.SourceCVD:         1,
-				types.SourceLeadLag:     1,
-				types.SourceLiquidity:   1,
-				types.SourcePumpDump:    1,
-				types.SourceSentiment:   1,
-			}
-
-			for source, signal := range signals {
-				So(signal.calls.Load(), ShouldEqual, expected[source])
-			}
+		Convey("It should drain the dirty symbol and skip the clean one", func() {
+			received := awaitThesis(t, theses)
+			So(received, ShouldEqual, thesis)
+			So(received.At.IsZero(), ShouldBeFalse)
+			_, bitcoinSeen := measured.seen.Load("BTC/USD")
+			_, dormantSeen := measured.seen.Load("DDD/USD")
+			So(bitcoinSeen, ShouldBeTrue)
+			So(dormantSeen, ShouldBeFalse)
+			So(bitcoin.Pending(), ShouldBeFalse)
 		})
 
-		Convey("A trade update should run only the trade signals", func() {
-			err := measurements.Generate(thesis, types.TradeReceivers)
-			So(err, ShouldBeNil)
-			expected := map[types.SourceType]int64{
-				types.SourceCVD:        1,
-				types.SourceDepthFlow:  1,
-				types.SourceExhaustion: 1,
-				types.SourceHawkes:     1,
-				types.SourcePumpDump:   1,
-				types.SourceToxicity:   1,
-			}
-
-			for source, signal := range signals {
-				So(signal.calls.Load(), ShouldEqual, expected[source])
-			}
-		})
-
-		Convey("A book update should run only the book signals", func() {
-			err := measurements.Generate(thesis, types.BookReceivers)
-			So(err, ShouldBeNil)
-			expected := map[types.SourceType]int64{
-				types.SourceDepthFlow:  1,
-				types.SourceExhaustion: 1,
-			}
-
-			for source, signal := range signals {
-				So(signal.calls.Load(), ShouldEqual, expected[source])
-			}
-		})
-
-		Convey("It should publish the engine tick count for the header", func() {
-			ui := make(chan []byte, 32)
-			measurements.ui = ui
-			thesis.Tick = 41
-
-			err := measurements.Generate(thesis, types.TickerReceivers)
-			So(err, ShouldBeNil)
-			So(thesis.Tick, ShouldEqual, 42)
-
-			var frame struct {
-				Tick struct {
-					Count int64 `json:"count"`
-				} `json:"tick"`
-			}
-
-			for range len(ui) {
-				payload := <-ui
-
-				if json.Unmarshal(payload, &frame) != nil {
-					continue
-				}
-
-				if frame.Tick.Count == 0 {
-					continue
-				}
-
-				break
-			}
-
-			So(frame.Tick.Count, ShouldEqual, 42)
-		})
-
-		Convey("Any normalized source observation should report a queued resonance input", func() {
-			value := 0.0
-			thesis.Tick = 27
-
-			signals[types.SourceHawkes].measurement = &types.Measurement{
-				Source: types.SourceHawkes,
-				Symbol: "BTC/USD",
-				Tick:   999,
-				Metrics: map[string]types.MetricSample{
-					"score": {Normalized: &value},
+		Convey("A yielded measurement should stream into the solver cursors", func() {
+			producing := &measurementSignal{
+				source: types.SourceCorrelation,
+				measurement: &types.Measurement{
+					Source: types.SourceCorrelation,
+					At:     time.Now().UTC(),
 				},
 			}
+			producingMeasurements, producingCancel := newTestMeasurements(
+				t, []types.Signal{producing},
+			)
+			defer producingCancel()
 
-			err := measurements.Generate(thesis, types.TradeReceivers)
-			So(err, ShouldBeNil)
-			So(signals[types.SourceHawkes].measurement.Tick, ShouldEqual, thesis.Tick)
-			So(thesis.Symbol("BTC/USD").Tick, ShouldEqual, thesis.Tick)
+			producingThesis := types.NewThesis(t.Context(), nil)
+			freshBitcoin := producingThesis.Symbol("BTC/USD")
+			feedTicker(freshBitcoin, types.SourceCorrelation, time.Now())
 
-			for row := range thesis.Symbol("BTC/USD").ResonanceMeasurements() {
-				So(row.Tick, ShouldEqual, thesis.Tick)
+			awaitThesis(t, producingMeasurements.Generate(producingThesis, nil))
+
+			_, latestOK := freshBitcoin.Latest.Load(string(types.SourceCorrelation))
+			So(latestOK, ShouldBeTrue)
+
+			categoryQueue, _ := freshBitcoin.Measurements.Load("category")
+			graphQueue, _ := freshBitcoin.Measurements.Load("graph")
+			So(categoryQueue.(*lf.Queue[*types.Measurement]).Length(), ShouldEqual, 1)
+			So(graphQueue.(*lf.Queue[*types.Measurement]).Length(), ShouldEqual, 1)
+		})
+	})
+}
+
+func TestMeasurementsIdleRest(t *testing.T) {
+	Convey("Given an always-yielding signal and symbols with no pending rows", t, func() {
+		always := &measurementSignal{
+			source:      types.SourceCVD,
+			measurement: &types.Measurement{Source: types.SourceCVD},
+		}
+		measurements, cancel := newTestMeasurements(t, []types.Signal{always})
+		defer cancel()
+
+		thesis := types.NewThesis(t.Context(), nil)
+		bitcoin := thesis.Symbol("BTC/USD")
+
+		theses := measurements.Generate(thesis, nil)
+
+		select {
+		case <-theses:
+			t.Fatal("a pass ran with no pending market rows")
+		case <-time.After(150 * time.Millisecond):
+		}
+
+		So(always.calls.Load(), ShouldEqual, int64(0))
+
+		Convey("Rows arriving wakes the drain loop", func() {
+			feedTicker(bitcoin, types.SourceCVD, time.Now())
+			awaitThesis(t, theses)
+			So(always.calls.Load(), ShouldBeGreaterThanOrEqualTo, int64(1))
+		})
+	})
+}
+
+type gatedMeasurementSignal struct {
+	source  types.SourceType
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (signal *gatedMeasurementSignal) Name() string           { return string(signal.source) }
+func (signal *gatedMeasurementSignal) Type() types.SourceType { return signal.source }
+func (signal *gatedMeasurementSignal) Measure(
+	symbol *types.Symbol,
+	_ ...int64,
+) iter.Seq[*types.Measurement] {
+	return func(yield func(*types.Measurement) bool) {
+		signal.entered <- struct{}{}
+		<-signal.release
+
+		for range symbol.MarketTickers(signal.source) {
+		}
+	}
+}
+func (signal *gatedMeasurementSignal) Close() error { return nil }
+
+func TestMeasurementsObservationPacing(t *testing.T) {
+	Convey("Given a gated signal and rows already pending", t, func() {
+		gated := &gatedMeasurementSignal{
+			source:  types.SourceCVD,
+			entered: make(chan struct{}, 1),
+			release: make(chan struct{}),
+		}
+		measurements, cancel := newTestMeasurements(t, []types.Signal{gated})
+		defer cancel()
+
+		thesis := types.NewThesis(t.Context(), nil)
+		bitcoin := thesis.Symbol("BTC/USD")
+		feedTicker(bitcoin, types.SourceCVD, time.Now())
+
+		theses := measurements.Generate(thesis, nil)
+
+		<-gated.entered
+		gated.release <- struct{}{}
+
+		Convey("The next pass should wait until the current thesis is observed", func() {
+			select {
+			case <-gated.entered:
+				t.Fatal("a pass advanced the thesis before the current one was observed")
+			case <-time.After(150 * time.Millisecond):
+			}
+
+			select {
+			case <-theses:
+			case <-time.After(time.Second):
+				t.Fatal("the completed thesis never arrived")
+			}
+
+			feedTicker(bitcoin, types.SourceCVD, time.Now())
+
+			select {
+			case <-gated.entered:
+			case <-time.After(time.Second):
+				t.Fatal("the drain loop never continued after observation")
+			}
+
+			gated.release <- struct{}{}
+			awaitThesis(t, theses)
+		})
+	})
+}
+
+func TestMeasurementsCancel(t *testing.T) {
+	Convey("Given a gated signal blocked mid-pass", t, func() {
+		gated := &gatedMeasurementSignal{
+			source:  types.SourceCVD,
+			entered: make(chan struct{}, 1),
+			release: make(chan struct{}),
+		}
+		measurements, cancel := newTestMeasurements(t, []types.Signal{gated})
+		defer cancel()
+
+		thesis := types.NewThesis(t.Context(), nil)
+		feedTicker(thesis.Symbol("BTC/USD"), types.SourceCVD, time.Now())
+
+		theses := measurements.Generate(thesis, nil)
+
+		<-gated.entered
+		cancel()
+		close(gated.release)
+
+		Convey("The thesis stream should close", func() {
+			select {
+			case _, open := <-theses:
+				So(open, ShouldBeFalse)
+			case <-time.After(time.Second):
+				t.Fatal("the thesis stream stayed open after cancellation")
 			}
 		})
 	})
 }
 
-func TestMeasurementsUIPublication(t *testing.T) {
-	Convey("Given two selected signals that both produce a measurement", t, func() {
-		correlation := &measurementSignal{
+func TestMeasurementsFocusPublication(t *testing.T) {
+	Convey("Given the focused symbol producing measurements", t, func() {
+		measured := &measurementSignal{
 			source: types.SourceCorrelation,
 			measurement: &types.Measurement{
 				Source: types.SourceCorrelation,
-				Symbol: "BTC/USD",
-			},
-		}
-		cvd := &measurementSignal{
-			source: types.SourceCVD,
-			measurement: &types.Measurement{
-				Source: types.SourceCVD,
-				Symbol: "BTC/USD",
+				Symbol: types.Focus(),
+				At:     time.Now().UTC(),
 			},
 		}
 		ui := make(chan []byte, 4)
+		ctx, cancel := context.WithCancel(t.Context())
 		measurements := &Measurements{
-			ctx:     context.Background(),
+			ctx:     ctx,
+			cancel:  cancel,
 			ui:      ui,
-			signals: []types.Signal{correlation, cvd},
+			signals: []types.Signal{measured},
 		}
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbol("BTC/USD")
+		defer cancel()
 
-		err := measurements.Generate(thesis, []types.SourceType{
-			types.SourceCorrelation,
-			types.SourceCVD,
-		})
-		So(err, ShouldBeNil)
+		thesis := types.NewThesis(t.Context(), nil)
+		feedTicker(thesis.Symbol(types.Focus()), types.SourceCorrelation, time.Now())
+
+		awaitThesis(t, measurements.Generate(thesis, nil))
 
 		type wireMeasurement struct {
 			Source types.SourceType `json:"source"`
+			Symbol string           `json:"symbol"`
 		}
 		type wireFrame struct {
-			Tick struct {
-				Count int64 `json:"count"`
-			} `json:"tick"`
-			Activity     map[string]string `json:"activity"`
 			Measurements []wireMeasurement `json:"measurements"`
 		}
-		frames := make([]wireFrame, 0, len(ui))
+		var frame wireFrame
 
-		for len(ui) > 0 {
-			var frame wireFrame
-			So(json.Unmarshal(<-ui, &frame), ShouldBeNil)
-			frames = append(frames, frame)
+		select {
+		case payload := <-ui:
+			So(json.Unmarshal(payload, &frame), ShouldBeNil)
+		case <-time.After(time.Second):
+			t.Fatal("no measurements frame arrived for the focused symbol")
 		}
 
-		Convey("It should send one cut-start frame and one batched completion frame", func() {
-			So(frames, ShouldHaveLength, 2)
-			So(frames[0].Tick.Count, ShouldEqual, thesis.Tick)
-			So(frames[0].Activity, ShouldResemble, map[string]string{
-				string(types.SourceCorrelation): "running",
-				string(types.SourceCVD):         "running",
-			})
-			So(frames[0].Measurements, ShouldBeEmpty)
-			So(frames[1].Activity, ShouldResemble, map[string]string{
-				string(types.SourceCorrelation): "done",
-				string(types.SourceCVD):         "done",
-			})
-			So(frames[1].Measurements, ShouldResemble, []wireMeasurement{
-				{Source: types.SourceCorrelation},
-				{Source: types.SourceCVD},
-			})
-		})
+		So(frame.Measurements, ShouldHaveLength, 1)
+		So(frame.Measurements[0].Source, ShouldEqual, types.SourceCorrelation)
+		So(frame.Measurements[0].Symbol, ShouldEqual, types.Focus())
+	})
+}
+
+func TestMeasurementsHawkesEndToEnd(t *testing.T) {
+	Convey("Given a real hawkes signal over real queued trades", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		measurements := &Measurements{
+			ctx:     ctx,
+			cancel:  cancel,
+			signals: []types.Signal{hawkes.NewSignal(ctx, nil)},
+		}
+		thesis := types.NewThesis(t.Context(), nil)
+		bitcoin := thesis.Symbol("BTC/USD")
+
+		for index := range 3 {
+			bitcoin.AppendTrade(kraken.TradeData{
+				Symbol:    "BTC/USD",
+				Side:      "buy",
+				Price:     *decimal.NewFromFloat64(100 + float64(index)),
+				Qty:       2,
+				TradeID:   int64(index + 1),
+				Timestamp: time.Now().Add(time.Duration(index) * time.Second),
+			}, []types.SourceType{types.SourceHawkes})
+		}
+
+		awaitThesis(t, measurements.Generate(thesis, nil))
+
+		_, latestOK := bitcoin.Latest.Load(string(types.SourceHawkes))
+		So(latestOK, ShouldBeTrue)
+
+		residual := 0
+
+		for range bitcoin.MarketTrades(types.SourceHawkes) {
+			residual++
+		}
+
+		So(residual, ShouldEqual, 0)
 	})
 }
 
 func BenchmarkMeasurementsGenerate(b *testing.B) {
+	ctx, cancel := context.WithCancel(b.Context())
+	defer cancel()
+
 	measurements := &Measurements{
-		ctx: context.Background(),
+		ctx:    ctx,
+		cancel: cancel,
 		signals: []types.Signal{
-			&measurementSignal{source: types.SourceCorrelation},
 			&measurementSignal{source: types.SourceCVD},
-			&measurementSignal{source: types.SourceDepthFlow},
+			&measurementSignal{source: types.SourceHawkes},
 		},
 	}
 	thesis := types.NewThesis(b.Context(), nil)
-	thesis.Symbol("BTC/USD")
+	bitcoin := thesis.Symbol("BTC/USD")
+	theses := measurements.Generate(thesis, nil)
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if err := measurements.Generate(thesis, types.TickerReceivers); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-type cohortMeasurementSignal struct {
-	source  types.SourceType
-	calls   atomic.Int64
-	mu      sync.Mutex
-	symbols []string
-}
-
-func (signal *cohortMeasurementSignal) Name() string           { return string(signal.source) }
-func (signal *cohortMeasurementSignal) Type() types.SourceType { return signal.source }
-func (signal *cohortMeasurementSignal) Measure(*types.Symbol, ...int64) []*types.Measurement {
-	panic("cohort signal must be measured once for the complete thesis set")
-}
-func (signal *cohortMeasurementSignal) MeasureCohort(
-	symbols []*types.Symbol,
-	_ ...int64,
-) []*types.Measurement {
-	signal.calls.Add(1)
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
-	signal.symbols = signal.symbols[:0]
-
-	for _, symbol := range symbols {
-		signal.symbols = append(signal.symbols, symbol.Symbol)
-	}
-
-	return nil
-}
-func (signal *cohortMeasurementSignal) Close() error { return nil }
-
-type parallelMeasurementSignal struct {
-	source  types.SourceType
-	entered chan string
-	release <-chan struct{}
-}
-
-func (signal *parallelMeasurementSignal) Name() string           { return string(signal.source) }
-func (signal *parallelMeasurementSignal) Type() types.SourceType { return signal.source }
-func (signal *parallelMeasurementSignal) Measure(
-	symbol *types.Symbol,
-	_ ...int64,
-) []*types.Measurement {
-	signal.entered <- symbol.Symbol
-	<-signal.release
-	return nil
-}
-func (signal *parallelMeasurementSignal) Close() error { return nil }
-
-func TestMeasurementsStreamingOwnership(t *testing.T) {
-	Convey("Given three symbols in one thesis universe", t, func() {
-		thesis := types.NewThesis(t.Context(), nil)
-		thesis.Symbol("AAA/USD")
-		thesis.Symbol("BBB/USD")
-		thesis.Symbol("CCC/USD")
-		cohort := &cohortMeasurementSignal{source: types.SourceCorrelation}
-		entered := make(chan string, 3)
-		release := make(chan struct{})
-		local := &parallelMeasurementSignal{
-			source: types.SourceCVD, entered: entered, release: release,
-		}
-		measurements := &Measurements{
-			ctx:     context.Background(),
-			signals: []types.Signal{cohort, local},
-		}
-		done := make(chan error, 1)
-
-		go func() {
-			err := measurements.Generate(
-				thesis,
-				[]types.SourceType{types.SourceCorrelation, types.SourceCVD},
-			)
-			done <- err
-		}()
-
-		observed := make(map[string]bool)
-
-		for len(observed) < 3 {
-			select {
-			case symbol := <-entered:
-				observed[symbol] = true
-			case <-time.After(time.Second):
-				t.Fatal("independent symbol workers did not enter concurrently")
-			}
-		}
-
-		close(release)
+		feedTicker(bitcoin, types.SourceCVD, time.Now())
 
 		select {
-		case err := <-done:
-			So(err, ShouldBeNil)
+		case <-theses:
 		case <-time.After(time.Second):
-			t.Fatal("measurement generation did not complete")
+			b.Fatal("no thesis arrived")
 		}
-
-		cohort.mu.Lock()
-		cohortSymbols := append([]string(nil), cohort.symbols...)
-		cohort.mu.Unlock()
-
-		Convey("It should run one complete cohort and one transient worker per symbol", func() {
-			So(cohort.calls.Load(), ShouldEqual, int64(1))
-			So(cohortSymbols, ShouldResemble, []string{"AAA/USD", "BBB/USD", "CCC/USD"})
-			So(observed, ShouldResemble, map[string]bool{
-				"AAA/USD": true,
-				"BBB/USD": true,
-				"CCC/USD": true,
-			})
-			So(thesis.Symbol("AAA/USD").Tick, ShouldEqual, thesis.Tick)
-			So(thesis.Symbol("BBB/USD").Tick, ShouldEqual, thesis.Tick)
-			So(thesis.Symbol("CCC/USD").Tick, ShouldEqual, thesis.Tick)
-		})
-	})
+	}
 }

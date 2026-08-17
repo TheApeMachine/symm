@@ -8,7 +8,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/learning"
 )
 
 func testForecast(value float64) *learning.RLSOutput {
@@ -542,7 +542,7 @@ func TestStoplossReconsider(t *testing.T) {
 
 		// The third mark must stay above the hard floor: a lot that breaches
 		// its floor has already exited and no longer consumes horizon.
-		stoploss.Update(decimal.NewFromFloat64(99.995))
+		stoploss.Update(decimal.NewFromFloat64(99.985))
 
 		Convey("It should fire only once the admitted path has actually elapsed", func() {
 			stoploss.Reconsider(0, 0)

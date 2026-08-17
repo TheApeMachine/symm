@@ -343,6 +343,27 @@ export type ResonanceForecast = {
 	}>;
 };
 
+export type ResonanceDynamics = {
+	ready?: number;
+	deltaTime?: number;
+	position?: number;
+	velocity?: number;
+	acceleration?: number;
+	memory?: number;
+	memoryScale?: number;
+	storedEnergy?: number;
+	suppliedPower?: number;
+	dissipation?: number;
+	passivityResidue?: number;
+	continuousVariance?: number;
+	jumpAmplitude?: number;
+	jumpVariance?: number;
+	sampleCount?: number;
+	rotorScalar?: number;
+	rotorBivector?: number;
+	equivarianceNorm?: number;
+};
+
 /*
 ResonanceVerdict mirrors the backend types.ResonanceVerdict. The labels are
 decided by the solver, never rederived here.
@@ -391,6 +412,7 @@ export type ResonanceFrame = Record<string, unknown> & {
 	surprise?: number;
 	targetSymbol?: string;
 	forecast?: ResonanceForecast;
+	dynamics?: ResonanceDynamics;
 	verdict?: ResonanceVerdict;
 	forecastValidity?: ForecastValidity;
 	incrementalMSE?: number;
@@ -509,5 +531,3 @@ export type MeasurementEpoch = {
 	readings: Measurement[];
 	publishedAt?: string;
 };
-
-

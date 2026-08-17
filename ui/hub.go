@@ -178,8 +178,13 @@ func (hub *Hub) broadcast() {
 			hub.clients.Range(func(key, value any) bool {
 				messages := value.(chan []byte)
 
+				// Dashboard state is replaceable: a slow client drops frames
+				// rather than stalling the broadcast for every other client
+				// and backing up the trading path's UI channel. A dead
+				// client is evicted by its own writer on the next error.
 				select {
 				case messages <- message:
+				default:
 				}
 
 				return true

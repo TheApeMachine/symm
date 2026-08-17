@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,23 +14,23 @@ import (
 
 func TestMeasure(t *testing.T) {
 	Convey("Given an empty Level 3 update", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 		base := time.Unix(1_700_004_000, 0).UTC()
 		market.AppendLevel3(kraken.Level3Data{
 			Symbol: "BTC/USD", Type: "update", Timestamp: base,
-		})
+		}, types.Level3Receivers)
 
 		Convey("It should remain pending instead of classifying a zero price", func() {
-			So(signal.Measure(market), ShouldBeEmpty)
+			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
 		})
 
 		market.AppendLevel3(toxicityLevel3(
 			"snapshot", 10, 10, base.Add(time.Second),
-		))
+		), types.Level3Receivers)
 
 		Convey("It should classify once both book sides establish a real midpoint", func() {
-			measurements := signal.Measure(market)
+			measurements := slices.Collect(signal.Measure(market))
 			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Sample(types.MetricMidpoint, types.SideNone).Raw,
 				ShouldEqual, 100.5)
@@ -37,12 +38,12 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given toxicity book observations on one symbol", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 		base := time.Unix(1_700_004_100, 0).UTC()
-		market.AppendLevel3(toxicityLevel3("snapshot", 10, 10, base))
+		market.AppendLevel3(toxicityLevel3("snapshot", 10, 10, base), types.Level3Receivers)
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should emit classified book-quality metrics from nomagique", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -58,20 +59,20 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a trade before its matching Level 3 delete", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 		base := time.Unix(1_700_004_200, 0).UTC()
-		market.AppendLevel3(toxicityLevel3("snapshot", 10, 10, base))
-		So(signal.Measure(market), ShouldHaveLength, 1)
-		market.AppendTrade(toxicityTrade(91, "sell", 100, 2, base.Add(time.Second)))
+		market.AppendLevel3(toxicityLevel3("snapshot", 10, 10, base), types.Level3Receivers)
+		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
+		market.AppendTrade(toxicityTrade(91, "sell", 100, 2, base.Add(time.Second)), types.TradeReceivers)
 		market.AppendLevel3(toxicityDelete(
 			"bid-order",
 			100,
 			10,
 			base.Add(2*time.Second),
-		))
+		), types.Level3Receivers)
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should corroborate the delete as a fill", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -81,19 +82,19 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given a changed touch with accounted cancellation flow", t, func() {
-		signal := NewSignal(context.Background(), nil, nil)
+		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
 		base := time.Unix(1_700_004_300, 0).UTC()
-		market.AppendLevel3(toxicityLevel3("snapshot", 10, 10, base))
-		So(signal.Measure(market), ShouldHaveLength, 1)
+		market.AppendLevel3(toxicityLevel3("snapshot", 10, 10, base), types.Level3Receivers)
+		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
 		market.AppendLevel3(toxicityDelete(
 			"bid-order",
 			100,
 			10,
 			base.Add(time.Second),
-		))
+		), types.Level3Receivers)
 
-		measurements := signal.Measure(market)
+		measurements := slices.Collect(signal.Measure(market))
 		So(measurements, ShouldHaveLength, 1)
 		measurement := measurements[0]
 

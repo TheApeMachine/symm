@@ -5,13 +5,15 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 	"gonum.org/v1/gonum/stat/distuv"
@@ -96,6 +98,7 @@ type Edge struct {
 Graph is the relational knowledge graph accumulated during one Thesis lifecycle.
 */
 type Graph struct {
+	mu              sync.RWMutex
 	At              time.Time           `json:"at"`
 	Forecast        *learning.RLSOutput `json:"-"`
 	ForecastHorizon int                 `json:"forecastHorizon"`
@@ -109,12 +112,55 @@ type Graph struct {
 }
 
 /*
+Clone returns an isolated point-in-time snapshot of the graph.
+*/
+func (graph *Graph) Clone() *Graph {
+	if graph == nil {
+		return nil
+	}
+
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
+	nodes := make(map[string]*Node, len(graph.Nodes))
+
+	for id, node := range graph.Nodes {
+		nodes[id] = node
+	}
+
+	edges := make([]*Edge, len(graph.Edges))
+	copy(edges, graph.Edges)
+
+	adjacency := make(map[string][]string, len(graph.Adjacency))
+
+	for id, targets := range graph.Adjacency {
+		adjacency[id] = slices.Clone(targets)
+	}
+
+	return &Graph{
+		At:              graph.At,
+		Forecast:        graph.Forecast,
+		ForecastHorizon: graph.ForecastHorizon,
+		ForwardCurve:    slices.Clone(graph.ForwardCurve),
+		TaskSkill:       graph.TaskSkill,
+		TaskSkillReady:  graph.TaskSkillReady,
+		DecisionTarget:  graph.DecisionTarget,
+		Nodes:           nodes,
+		Edges:           edges,
+		Adjacency:       adjacency,
+	}
+}
+
+/*
 CheckpointState includes the forecast omitted from the dashboard graph wire.
 */
 func (graph *Graph) CheckpointState() any {
 	if graph == nil {
 		return nil
 	}
+
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
 
 	return struct {
 		At              time.Time           `json:"at"`
@@ -161,6 +207,9 @@ func (graph *Graph) AddNode(node *Node) {
 		panic("graph: node and node ID required")
 	}
 
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
+
 	graph.Nodes[node.ID] = node
 }
 
@@ -171,6 +220,9 @@ func (graph *Graph) AddEdge(edge *Edge) {
 	if edge == nil || edge.From == "" || edge.To == "" {
 		panic("graph: edge and endpoint IDs required")
 	}
+
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
 
 	if _, found := graph.Nodes[edge.From]; !found {
 		panic("graph: source node not registered: " + edge.From)
@@ -799,6 +851,75 @@ func (solver *Solver) extractResonanceNodes(
 		Confidence: 1,
 		At:         graph.At,
 	})
+
+	dynamicsValue, dynamicsFound := symbol.Resonance.Load(
+		learning.PredictiveDynamicsKey,
+	)
+
+	if dynamicsFound {
+		dynamicsFrame, dynamicsOK := dynamicsValue.(nomagique.Frame)
+
+		if dynamicsOK {
+			solver.extractPredictiveDynamicsNodes(
+				symbol.Symbol,
+				dynamicsFrame,
+				graph,
+			)
+		}
+	}
+}
+
+func (solver *Solver) extractPredictiveDynamicsNodes(
+	symbol string,
+	dynamics nomagique.Frame,
+	graph *Graph,
+) {
+	ready, _ := dynamics.Get(learning.SymbolDynamicsReady)
+	sampleCount, _ := dynamics.Get(learning.SymbolDynamicsSampleCount)
+	confidence := sampleCount / (sampleCount + 1)
+
+	if ready > confidence {
+		confidence = ready
+	}
+
+	fields := []struct {
+		name   string
+		symbol nomagique.Symbol
+	}{
+		{name: "generalized_velocity", symbol: learning.SymbolDynamicsVelocity},
+		{name: "generalized_acceleration", symbol: learning.SymbolDynamicsAcceleration},
+		{name: "liquid_memory", symbol: learning.SymbolDynamicsMemory},
+		{name: "memory_scale", symbol: learning.SymbolDynamicsMemoryScale},
+		{name: "stored_energy", symbol: learning.SymbolDynamicsStoredEnergy},
+		{name: "passivity_residue", symbol: learning.SymbolDynamicsPassivityResidue},
+		{name: "continuous_variance", symbol: learning.SymbolDynamicsContinuousVariance},
+		{name: "jump_amplitude", symbol: learning.SymbolDynamicsJumpAmplitude},
+		{name: "jump_variance", symbol: learning.SymbolDynamicsJumpVariance},
+		{name: "equivariance_norm", symbol: learning.SymbolDynamicsEquivarianceNorm},
+	}
+
+	for _, field := range fields {
+		value, found := dynamics.Get(field.symbol)
+
+		if !found {
+			continue
+		}
+
+		graph.AddNode(&Node{
+			ID:         fmt.Sprintf("res:%s:%s", symbol, field.name),
+			Symbol:     symbol,
+			Source:     "resonance_dynamics",
+			Kind:       KindResonance,
+			Value:      value,
+			Strength:   math.Abs(value),
+			Confidence: confidence,
+			At:         graph.At,
+			Metadata: map[string]any{
+				"continuous_time": true,
+				"frame_symbol":    field.name,
+			},
+		})
+	}
 }
 
 func directionPosteriorConfidence(

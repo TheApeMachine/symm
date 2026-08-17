@@ -2,16 +2,18 @@ package resonance
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"maps"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -31,6 +33,7 @@ type Solver struct {
 	standardizers *sync.Map
 	states        *sync.Map
 	histories     *sync.Map
+	dynamics      *sync.Map
 	alpha         float64
 	ui            chan []byte
 }
@@ -87,6 +90,7 @@ func NewSolver(
 		standardizers: &sync.Map{},
 		states:        &sync.Map{},
 		histories:     &sync.Map{},
+		dynamics:      &sync.Map{},
 		alpha:         initialAlpha,
 		ui:            ui,
 	}
@@ -149,9 +153,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 					mark = rm.Mark
 				}
 
-				for identity, value := range rm.Readings {
-					readings[identity] = value
-				}
+				maps.Copy(readings, rm.Readings)
 			}
 
 			if len(readings) == 0 && mark <= 0 {
@@ -159,7 +161,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			}
 
 			if tick <= 0 {
-				return errors.New("resonance: positive analysis tick required")
+				return nil
 			}
 
 			schemaValue, loaded := solver.schemas.Load(name)
@@ -294,6 +296,24 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 			// 3. Extract Diagnostics & Rollout Telemetry
 			layers, surprise, energy := coder.WireSnapshot()
+			dynamicsOutput, err := solver.measurePredictiveDynamics(
+				name,
+				thesis,
+				layers,
+				readings,
+				surprise,
+				energy,
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf("resonance: predictive dynamics failed [%s]", err.Error()),
+					err,
+				))
+			}
+
+			symbol.Resonance.Store(learning.PredictiveDynamicsKey, dynamicsOutput)
 			taskPrecision, taskPrecisionReady := coder.TaskPrecision()
 			taskSkill, taskSkillReady := coder.TaskSkill()
 			taskCalibration := "calibrating"
@@ -384,6 +404,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 				"latent", layers[len(layers)-1].State,
 				"surprise", surprise,
 				"energy", energy,
+				"dynamics", predictiveDynamicsWire(dynamicsOutput),
 				"forecast", forecastFrame,
 			)
 
@@ -491,4 +512,167 @@ func (solver *Solver) Close() error {
 	}
 
 	return nil
+}
+
+func (solver *Solver) measurePredictiveDynamics(
+	name string,
+	thesis *types.Thesis,
+	layers []learning.ResonanceLayerWire,
+	readings map[string]float64,
+	surprise float64,
+	energy float64,
+) (nomagique.Frame, error) {
+	if solver.dynamics == nil {
+		solver.dynamics = &sync.Map{}
+	}
+
+	observedAt := float64(thesis.At.Unix()) +
+		float64(thesis.At.Nanosecond())/float64(1_000_000_000)
+
+	if thesis.At.IsZero() {
+		observedAt = float64(thesis.Tick)
+	}
+
+	input := nomagique.Frame{}
+	input.Put(learning.SymbolDynamicsTime, observedAt)
+	input.Put(learning.SymbolDynamicsPosition, predictiveLatentPosition(layers))
+	input.Put(
+		learning.SymbolDynamicsActivity,
+		predictiveActivity(readings, surprise),
+	)
+	input.Put(
+		learning.SymbolDynamicsExternalPower,
+		predictiveExternalPower(readings, energy),
+	)
+
+	if phase, found := predictivePhase(readings); found {
+		input.Put(learning.SymbolDynamicsPhase, phase)
+	}
+
+	streamValue, _ := solver.dynamics.LoadOrStore(
+		name,
+		nomagique.NewStream(learning.PredictiveDynamics, nomagique.Frame{}),
+	)
+	stream, ok := streamValue.(*nomagique.Stream)
+
+	if !ok || stream == nil {
+		return nomagique.Frame{}, fmt.Errorf(
+			"resonance: predictive dynamics stream unavailable for %s",
+			name,
+		)
+	}
+
+	return stream.Step(input)
+}
+
+func predictiveLatentPosition(layers []learning.ResonanceLayerWire) float64 {
+	if len(layers) == 0 {
+		return 0
+	}
+
+	coordinates := layers[len(layers)-1].State
+
+	if len(coordinates) == 0 {
+		return 0
+	}
+
+	position := 0.0
+
+	for _, coordinate := range coordinates {
+		position += coordinate
+	}
+
+	return position / float64(len(coordinates))
+}
+
+func predictiveActivity(
+	readings map[string]float64,
+	surprise float64,
+) float64 {
+	activity := math.Abs(surprise)
+
+	for identity, reading := range readings {
+		normalized := strings.ToLower(identity)
+
+		if strings.Contains(normalized, "spectral_radius") ||
+			strings.Contains(normalized, "arrival_rate") ||
+			strings.Contains(normalized, "urgency") ||
+			strings.Contains(normalized, "branching") {
+			activity += math.Abs(reading)
+		}
+	}
+
+	return activity
+}
+
+func predictiveExternalPower(
+	readings map[string]float64,
+	energy float64,
+) float64 {
+	power := 0.0
+	contributors := 0
+
+	for identity, reading := range readings {
+		normalized := strings.ToLower(identity)
+
+		if strings.Contains(normalized, "net_fraction") ||
+			strings.Contains(normalized, "signed") ||
+			strings.Contains(normalized, "guidance_speed") {
+			power += reading
+			contributors++
+		}
+	}
+
+	if contributors == 0 {
+		return 0
+	}
+
+	return power * energy / float64(contributors)
+}
+
+func predictivePhase(readings map[string]float64) (float64, bool) {
+	for identity, reading := range readings {
+		if strings.Contains(strings.ToLower(identity), "phase") {
+			return reading, true
+		}
+	}
+
+	return 0, false
+}
+
+func predictiveDynamicsWire(frame nomagique.Frame) map[string]float64 {
+	fields := []struct {
+		name   string
+		symbol nomagique.Symbol
+	}{
+		{name: "ready", symbol: learning.SymbolDynamicsReady},
+		{name: "deltaTime", symbol: learning.SymbolDynamicsDeltaTime},
+		{name: "position", symbol: learning.SymbolDynamicsPosition},
+		{name: "velocity", symbol: learning.SymbolDynamicsVelocity},
+		{name: "acceleration", symbol: learning.SymbolDynamicsAcceleration},
+		{name: "memory", symbol: learning.SymbolDynamicsMemory},
+		{name: "memoryScale", symbol: learning.SymbolDynamicsMemoryScale},
+		{name: "storedEnergy", symbol: learning.SymbolDynamicsStoredEnergy},
+		{name: "suppliedPower", symbol: learning.SymbolDynamicsSuppliedPower},
+		{name: "dissipation", symbol: learning.SymbolDynamicsDissipation},
+		{name: "passivityResidue", symbol: learning.SymbolDynamicsPassivityResidue},
+		{name: "continuousVariance", symbol: learning.SymbolDynamicsContinuousVariance},
+		{name: "jumpAmplitude", symbol: learning.SymbolDynamicsJumpAmplitude},
+		{name: "jumpVariance", symbol: learning.SymbolDynamicsJumpVariance},
+		{name: "sampleCount", symbol: learning.SymbolDynamicsSampleCount},
+		{name: "rotorScalar", symbol: learning.SymbolDynamicsRotorScalar},
+		{name: "rotorBivector", symbol: learning.SymbolDynamicsRotorBivector},
+		{name: "equivarianceNorm", symbol: learning.SymbolDynamicsEquivarianceNorm},
+	}
+	wire := make(map[string]float64, len(fields))
+
+	for _, field := range fields {
+		value, found := frame.Get(field.symbol)
+
+		if found {
+			wire[field.name] = value
+		}
+	}
+
+	return wire
 }

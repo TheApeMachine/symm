@@ -3,6 +3,7 @@ package depthflow
 import (
 	"context"
 	"math"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -30,15 +31,15 @@ func TestMeasure(t *testing.T) {
 		})
 
 		Convey("It completes each independent symbol pass without measurements", func() {
-			So(signal.Measure(market), ShouldBeEmpty)
-			So(signal.Measure(market), ShouldBeEmpty)
+			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
+			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
 		})
 	})
 }
 
 func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		market.AppendTicker(row)
+		market.AppendTicker(row, types.TickerReceivers)
 	}
 }
 

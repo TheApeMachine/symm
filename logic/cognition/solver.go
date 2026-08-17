@@ -563,63 +563,6 @@ func cognitionClassProbability(
 }
 
 /*
-consolidate replays the episodic window and then dreams from each settled basin,
-recording what the model invented for itself.
-
-Why:
-
-	Replay can only reinforce what was observed. Generating from a basin and
-	keeping what classifies back to it crisply is how the model fills in the
-	continuations its own statistics imply but that never happened to occur.
-
-	Symbol extraction runs on the same schedule because it reads the basin
-	weights consolidation has just rewritten. Extracting before the pass would
-	rank paths on evidence that is about to change.
-*/
-func (solver *Solver) consolidate(
-	startWindow, nowUnix uint64,
-) {
-	dreams, outcome := solver.tree.ExecuteREMSleepWithDreaming(
-		startWindow,
-		nowUnix,
-		dreamTemperature,
-		dreamMaxTokens,
-		&solver.classScratch,
-		dmt.SelectStochasticToken,
-	)
-
-	solver.remOutcome = outcome
-	solver.remFrom = time.Unix(0, int64(startWindow))
-	solver.remThrough = time.Unix(0, int64(nowUnix))
-
-	solver.dreams = solver.dreams[:0]
-
-	for _, dream := range dreams {
-		solver.dreams = append(
-			solver.dreams,
-			solver.decodeCategoryPath(dream.Sequence),
-		)
-	}
-
-	solver.symbols = solver.symbols[:0]
-
-	for _, symbol := range solver.tree.ExtractDiscriminativeSymbols(symbolLimit) {
-		class := solver.decodeCategoryToken(string(symbol.Class))
-
-		if !isRegimeName(class) {
-			continue
-		}
-
-		solver.symbols = append(solver.symbols, types.CognitionSymbol{
-			Symbol: solver.decodeCategoryPath(symbol.Symbol),
-			Class:  class,
-			Score:  symbol.Score,
-			Purity: symbol.Purity,
-		})
-	}
-}
-
-/*
 lexical reports any active token that had to be resolved onto a different known
 token, so a reading can show it was scored against a neighbour rather than
 against itself.

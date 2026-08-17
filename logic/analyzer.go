@@ -2,10 +2,9 @@ package logic
 
 import (
 	"context"
-	"time"
+	"errors"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -18,7 +17,6 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -38,21 +36,14 @@ Strategy package to make Decisions. The final output of the Logic stage is
 the Graph, which should encode everything that has been collected so far.
 */
 type Analyzer struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	status        types.Status
-	tree          *dmt.Tree
-	cognition     *cognition.Solver
-	graph         *graph.Solver
-	resonance     Solver
-	solvers       []Solver
-	solverGroups  [][]Solver
-	ui            chan []byte
-	binui         chan types.FluidFrame
-	recorder      *audit.Recorder
-	thesis        *types.Thesis
-	ObserveModule func(string, time.Duration)
-	ObserveHop    func(string, string, time.Duration)
+	ctx          context.Context
+	cancel       context.CancelFunc
+	status       types.Status
+	tree         *dmt.Tree
+	solverGroups [][]Solver
+	ui           chan []byte
+	binui        chan types.FluidFrame
+	recorder     *audit.Recorder
 }
 
 /*
@@ -70,112 +61,67 @@ func NewAnalyzer(
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
 
-	categorySolver := category.NewSolver(api, ui, recorder)
-	resonanceSolver := resonance.NewSolver(
-		ctx,
-		ui,
-		recorder,
-		viper.GetFloat64("resonance.learning_rate"),
-	)
-	manifoldSolver := manifold.NewSolver(api, ui, binui, recorder)
-	causalSolver := causal.NewSolver(price, ui, recorder)
-	cognitionSolver := cognition.NewSolver(tree, ui, recorder)
-	graphSolver := graph.NewSolver(ui, recorder)
+	firstGroup := []Solver{
+		category.NewSolver(api, ui, recorder),
+		resonance.NewSolver(
+			ctx,
+			ui,
+			recorder,
+			viper.GetFloat64("resonance.learning_rate"),
+		),
+	}
+
+	// The manifold stays out of the analysis pass until its physics inputs
+	// are provably bounded: an unbounded first step poisons resident GPU
+	// state, and no downstream filter can undo that.
+	if viper.GetBool("manifold.enabled") {
+		firstGroup = append(firstGroup, manifold.NewSolver(api, ui, binui, recorder))
+	}
 
 	analyzer := &Analyzer{
-		ctx:       ctx,
-		cancel:    cancel,
-		status:    types.READY,
-		tree:      tree,
-		resonance: resonanceSolver,
-		solvers: []Solver{
-			categorySolver,
-			resonanceSolver,
-			manifoldSolver,
-			causalSolver,
-			cognitionSolver,
-			graphSolver,
-		},
+		ctx:    ctx,
+		cancel: cancel,
+		status: types.READY,
+		tree:   tree,
 		solverGroups: [][]Solver{
-			{categorySolver, resonanceSolver, manifoldSolver},
-			{causalSolver, cognitionSolver},
-			{graphSolver},
-		},
+			append([]Solver(nil), firstGroup...),
+			{
+				causal.NewSolver(price, ui, recorder),
+				cognition.NewSolver(tree, ui, recorder),
+			}, {
+				graph.NewSolver(ui, recorder),
+			}},
 		ui:       ui,
 		binui:    binui,
 		recorder: recorder,
-		thesis:   thesis,
 	}
 
 	return analyzer
 }
 
 func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
-	groupNames := []string{
-		string(types.SourceCategory),
-		string(types.SourceCausal),
-		string(types.SourceGraph),
-	}
-
-	previousEnd := time.Now()
-
-	for groupIndex, solvers := range analyzer.solverGroups {
-		if groupIndex > 0 && analyzer.ObserveHop != nil {
-			analyzer.ObserveHop(
-				groupNames[groupIndex-1],
-				groupNames[groupIndex],
-				time.Since(previousEnd),
-			)
-		}
-
-		running := datura.NewMap()
-		done := datura.NewMap()
+	for _, solvers := range analyzer.solverGroups {
+		group, ctx := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
-			running[solver.Name()] = "running"
-			done[solver.Name()] = "done"
-		}
-
-		utils.Publish(analyzer.ui, datura.NewMap("activity", running))
-
-		group, _ := errgroup.WithContext(analyzer.ctx)
-
-		for _, solver := range solvers {
-			solver := solver
-
 			group.Go(func() error {
-				started := time.Now()
-				err := solver.Update(thesis)
-
-				if analyzer.ObserveModule != nil {
-					analyzer.ObserveModule(solver.Name(), time.Since(started))
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
 				}
 
-				if err != nil {
-					return errnie.Err(
-						errnie.Internal,
-						"analyzer: solver update failed",
-						err,
-					)
-				}
-
-				return nil
+				return solver.Update(thesis)
 			})
 		}
 
-		waitErr := group.Wait()
-
-		if waitErr != nil {
+		if err := group.Wait(); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				"analyzer: parallel solver update failed",
-				waitErr,
+				err,
 			))
 		}
-
-		utils.Publish(analyzer.ui, datura.NewMap("activity", done))
-
-		previousEnd = time.Now()
 	}
 
 	return nil
@@ -189,49 +135,16 @@ func (analyzer *Analyzer) Status() types.Status {
 }
 
 /*
-Settling reports whether any solver still holds work started by the last
-Process call. The manifold is the only solver that continues after Update
-returns.
-*/
-func (analyzer *Analyzer) Settling() bool {
-	if analyzer == nil {
-		return false
-	}
-
-	for _, solver := range analyzer.solvers {
-		manifold, ok := solver.(*manifold.Solver)
-
-		if !ok {
-			continue
-		}
-
-		if manifold.Settling() {
-			return true
-		}
-	}
-
-	return false
-}
-
-/*
 Close the analyzer and all its solvers.
 */
-func (analyzer *Analyzer) Close() error {
+func (analyzer *Analyzer) Close() (err error) {
 	analyzer.cancel()
 
-	for _, solver := range analyzer.solvers {
-		if solver == nil {
-			continue
-		}
-
-		if err := solver.Close(); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to close solver: "+err.Error(),
-				err,
-			))
+	for _, group := range analyzer.solverGroups {
+		for _, solver := range group {
+			err = errors.Join(err, errnie.Error(solver.Close()))
 		}
 	}
 
-	return nil
+	return err
 }

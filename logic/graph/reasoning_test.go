@@ -23,6 +23,44 @@ func TestReasoningFrame(t *testing.T) {
 	})
 }
 
+func TestReasoningFramePredictiveDynamics(t *testing.T) {
+	Convey("Given continuous predictive dynamics in the evidence graph", t, func() {
+		graph := NewGraph(time.Unix(1, 0).UTC())
+		graph.AddNode(&Node{
+			ID:         "res:BTC/USD:generalized_velocity",
+			Symbol:     "BTC/USD",
+			Source:     "resonance_dynamics",
+			Kind:       KindResonance,
+			Value:      0.4,
+			Confidence: 1,
+		})
+		graph.AddNode(&Node{
+			ID:         "res:BTC/USD:passivity_residue",
+			Symbol:     "BTC/USD",
+			Source:     "resonance_dynamics",
+			Kind:       KindResonance,
+			Value:      0.2,
+			Confidence: 1,
+		})
+		graph.AddNode(&Node{
+			ID:         "res:BTC/USD:jump_variance",
+			Symbol:     "BTC/USD",
+			Source:     "resonance_dynamics",
+			Kind:       KindResonance,
+			Value:      0.4,
+			Confidence: 1,
+		})
+		frame := graph.ReasoningFrame()
+		flow, _ := frame.Get(mcts.SymbolFlow)
+		surprise, _ := frame.Get(mcts.SymbolSurprise)
+
+		Convey("It should route motion into flow and physical residue into risk context", func() {
+			So(flow, ShouldEqual, 0.4)
+			So(surprise, ShouldEqual, 0.3)
+		})
+	})
+}
+
 func TestApplyReasoningIntervention(t *testing.T) {
 	Convey("Given a complete intervention state with supportive context", t, func() {
 		graph := NewGraph(time.Unix(1, 0).UTC())
