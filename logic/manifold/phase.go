@@ -1,7 +1,6 @@
 package manifold
 
 import (
-	"sort"
 	"math"
 	"math/cmplx"
 	"time"
@@ -106,7 +105,7 @@ rediscovering itself at alpha zero.
 func (solver *Solver) stampPhase(
 	thesis *types.Thesis,
 	at time.Time,
-	perSymbol map[string][]pmanifold.Oscillator,
+	cuts []manifoldCut,
 ) types.PhaseReading {
 	solver.mature()
 
@@ -130,7 +129,7 @@ func (solver *Solver) stampPhase(
 		return reading
 	}
 
-	if weights, complete := solver.observeWeights(perSymbol); complete {
+	if weights, complete := solver.observeWeights(cuts); complete {
 		solver.pending = append(solver.pending, pendingDial{
 			dial:    dial,
 			at:      at,
@@ -258,24 +257,15 @@ func (solver *Solver) mature() {
 observeWeights snapshots every contributing book's mid and injected mass.
 The universe outcome is only well-defined when every cut can be priced.
 */
-func (solver *Solver) observeWeights(
-	perSymbol map[string][]pmanifold.Oscillator,
-) ([]phaseWeight, bool) {
-	if len(perSymbol) == 0 {
+func (solver *Solver) observeWeights(cuts []manifoldCut) ([]phaseWeight, bool) {
+	if len(cuts) == 0 {
 		return nil, false
 	}
 
-	symbols := make([]string, 0, len(perSymbol))
+	weights := make([]phaseWeight, 0, len(cuts))
 
-	for symbol := range perSymbol {
-		symbols = append(symbols, symbol)
-	}
-
-	sort.Strings(symbols)
-	weights := make([]phaseWeight, 0, len(perSymbol))
-
-	for _, symbol := range symbols {
-		mid := solver.midpoint(symbol)
+	for _, cut := range cuts {
+		mid := solver.midpoint(cut.symbol)
 
 		if !(mid > 0) {
 			return nil, false
@@ -283,7 +273,7 @@ func (solver *Solver) observeWeights(
 
 		var mass float64
 
-		for _, oscillator := range perSymbol[symbol] {
+		for _, oscillator := range cut.oscillators {
 			orderMass := oscillator.Amplitude * oscillator.Amplitude
 
 			if !(orderMass > 0) {
@@ -298,7 +288,7 @@ func (solver *Solver) observeWeights(
 		}
 
 		weights = append(weights, phaseWeight{
-			symbol: symbol,
+			symbol: cut.symbol,
 			mid:    mid,
 			mass:   mass,
 		})

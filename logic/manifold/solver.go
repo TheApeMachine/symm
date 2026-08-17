@@ -3,8 +3,9 @@ package manifold
 import (
 	"fmt"
 	"math"
-	"slices"
+	"runtime"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/compute"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -28,18 +30,6 @@ universe phase dial. Each subscribed symbol occupies one carrier. Level 3
 orders on that pair are oscillators in that carrier's collection.
 */
 const phaseLatticeWidth uint32 = 256
-
-/*
-HawkesSignal encapsulates the self-exciting event rates extracted from
-the symbol's Hawkes excitation measurement.
-*/
-type HawkesSignal struct {
-	LambdaBuy    float64 // Aggressive buy intensity (events/sec)
-	LambdaSell   float64 // Aggressive sell intensity (events/sec)
-	LambdaCancel float64 // Cancellation intensity (events/sec)
-	Reflexivity  float64 // Branching ratio η ∈ [0, 1)
-	AvgTradeSize float64 // Mean trade volume
-}
 
 /*
 Solver owns one resident Sensorium domain for the complete market universe.
@@ -53,15 +43,50 @@ type Solver struct {
 	oscillators []pmanifold.Oscillator
 	reading     pmanifold.Reading
 	recorder    *audit.Recorder
+	universe    []string
 	scales      map[string]*adaptive.Accumulator
 	converged   map[string]float64
 	priorPos    map[string]map[string][3]float64
+	priorAt     time.Time
 	corpus      *geometry.Corpus[types.PhaseOutcome]
 	angles      []float64
 	pending     []pendingDial
+	waiting     atomic.Bool
 	ui          chan []byte
 	binui       chan types.FluidFrame
+	semaphore   chan struct{}
+	stopping    chan struct{}
+	stopped     chan struct{}
 	closing     atomic.Bool
+	settling    atomic.Bool
+	requestMu   sync.Mutex
+	requested   uint64
+	completed   uint64
+	latest      manifoldRequest
+	stepped     bool
+	driveEta    float64
+	driveBeta   float64
+}
+
+/*
+manifoldCut keeps the oscillators attributed to one symbol while every cut in
+the market update relaxes inside the same resident domain.
+*/
+type manifoldCut struct {
+	symbol      string
+	carrier     uint32
+	oscillators []pmanifold.Oscillator
+}
+
+/*
+manifoldRequest is the latest state the single manifold owner has been asked to
+relax. It is a coalescing slot, not an inbox: bursts replace an obsolete request
+while the measurement queues retain every unconsumed observation.
+*/
+type manifoldRequest struct {
+	generation uint64
+	thesis     *types.Thesis
+	at         time.Time
 }
 
 /*
@@ -96,19 +121,17 @@ func NewSolver(
 	pmanifold.DefaultMarketGasBoundaries().Apply(&config)
 	physics, physicsErr := newPhysics(config)
 	errnie.Error(physicsErr)
-
 	corpus, corpusErr := geometry.NewCorpus[types.PhaseOutcome](phaseCorpusCapacity)
 	errnie.Error(corpusErr)
-
 	angles, angleErr := geometry.PhasePath(phaseScanAngles)
 	errnie.Error(angleErr)
-
 	var bookSource websocket.BookSource
+
 	if api != nil {
 		bookSource = api
 	}
 
-	return &Solver{
+	solver := &Solver{
 		api:       bookSource,
 		config:    config,
 		physics:   physics,
@@ -118,10 +141,15 @@ func NewSolver(
 		priorPos:  make(map[string]map[string][3]float64),
 		corpus:    corpus,
 		angles:    angles,
-		pending:   make([]pendingDial, 0),
 		ui:        ui,
 		binui:     binui,
+		semaphore: make(chan struct{}, 1),
+		stopping:  make(chan struct{}),
+		stopped:   make(chan struct{}),
 	}
+	go solver.run()
+
+	return solver
 }
 
 func newPhysics(config pmanifold.Config) (*pmanifold.Solver, error) {
@@ -129,9 +157,11 @@ func newPhysics(config pmanifold.Config) (*pmanifold.Solver, error) {
 
 	err := compute.WithMetalInit(func() error {
 		created, err := pmanifold.NewSolver(config)
+
 		if err != nil {
 			return err
 		}
+
 		physics = created
 		return nil
 	})
@@ -147,20 +177,169 @@ func (solver *Solver) ParticleCount() int {
 	if solver == nil {
 		return 0
 	}
+
 	return len(solver.oscillators)
+}
+
+/*
+Settling reports whether a relaxation pass is still running. Replay uses this
+so the next captured frame cannot arrive before the current field has settled.
+*/
+func (solver *Solver) Settling() bool {
+	return solver != nil && solver.settling.Load()
 }
 
 func (solver *Solver) Name() string {
 	return "manifold"
 }
 
+/*
+Update walks every busy book's L3 orders into the resident oscillator
+population and wakes settlement. Calls received while that worker is stepping
+leave their measurements queued.
+*/
 func (solver *Solver) Update(thesis *types.Thesis) error {
-	oscillators := make([]pmanifold.Oscillator, 0)
-	perSymbol := make(map[string][]pmanifold.Oscillator)
+	if solver == nil || thesis == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: solver and thesis required",
+			nil,
+		))
+	}
 
-	var aggregateHawkes HawkesSignal
+	if solver.physics == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: physics domain is not initialized",
+			nil,
+		))
+	}
 
-	symbolNames := make([]string, 0)
+	if solver.api == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: authoritative order book source required",
+			nil,
+		))
+	}
+
+	solver.requestMu.Lock()
+
+	if solver.closing.Load() {
+		solver.requestMu.Unlock()
+
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: solver is closing",
+			nil,
+		))
+	}
+
+	solver.requested++
+	solver.latest = manifoldRequest{
+		generation: solver.requested,
+		thesis:     thesis,
+		at:         thesis.At,
+	}
+	wake := solver.settling.CompareAndSwap(false, true)
+	solver.requestMu.Unlock()
+
+	if wake {
+		select {
+		case solver.semaphore <- struct{}{}:
+		default:
+		}
+	}
+
+	return nil
+}
+
+func (solver *Solver) run() {
+	defer close(solver.stopped)
+	defer solver.settling.Store(false)
+
+	for {
+		select {
+		case <-solver.semaphore:
+			solver.drainRequests()
+		case <-solver.stopping:
+			return
+		}
+	}
+}
+
+/*
+drainRequests keeps the resident manifold owner active until it has consumed
+its latest requested generation. Intermediate requests may coalesce, but the
+final request in a burst cannot be stranded after settling becomes false.
+*/
+func (solver *Solver) drainRequests() {
+	for {
+		request, available := solver.nextRequest()
+
+		if !available {
+			return
+		}
+
+		cuts, err := solver.load(request.thesis, request.at)
+
+		if err == nil && len(cuts) > 0 {
+			err = solver.Step(request.thesis, request.at, cuts)
+		}
+
+		if err != nil {
+			errnie.Error(err)
+		}
+
+		solver.completeRequest(request.generation)
+	}
+}
+
+func (solver *Solver) nextRequest() (manifoldRequest, bool) {
+	solver.requestMu.Lock()
+	defer solver.requestMu.Unlock()
+
+	if solver.completed >= solver.requested {
+		solver.settling.Store(false)
+		return manifoldRequest{}, false
+	}
+
+	return solver.latest, true
+}
+
+func (solver *Solver) completeRequest(generation uint64) {
+	solver.requestMu.Lock()
+
+	if generation > solver.completed {
+		solver.completed = generation
+	}
+
+	solver.requestMu.Unlock()
+}
+
+func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, error) {
+	if solver.physics == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: physics domain is not initialized",
+			nil,
+		))
+	}
+
+	if solver.api == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: authoritative order book source required",
+			nil,
+		))
+	}
+
+	solver.waiting.Store(false)
+	type drive struct {
+		buy, sell, eta, beta float64
+		hasHawkes            bool
+	}
+	drives := make(map[string]drive)
 
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbolName, nameOK := key.(string)
@@ -170,99 +349,160 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return true
 		}
 
-		symbolNames = append(symbolNames, symbolName)
-		return true
-	})
-
-	if len(symbolNames) == 0 {
-		return nil
-	}
-
-	slices.Sort(symbolNames)
-	totalSymbols := len(symbolNames)
-	symbolCount := 0
-
-	for symbolIndex, symbolName := range symbolNames {
-		rawSymbol, ok := thesis.Symbols.Load(symbolName)
-
-		if !ok || rawSymbol == nil {
-			continue
+		if symbol.Status == types.BUSY {
+			drives[symbolName] = drive{}
 		}
 
-		symbol := rawSymbol.(*types.Symbol)
-		hawkes := extractSymbolHawkes(symbol)
-		aggregateHawkes.Reflexivity += hawkes.Reflexivity
-		aggregateHawkes.AvgTradeSize += hawkes.AvgTradeSize
-		symbolCount++
+		for measurement := range symbol.MarketMeasurements("manifold") {
+			if measurement == nil || measurement.Source != types.SourceHawkes {
+				continue
+			}
 
+			entry := drives[symbolName]
+			entry.hasHawkes = true
+			buySample := measurement.Metrics[types.MetricKey(
+				types.MetricExcitationAmplitude, types.SideBuyToBuy,
+			)]
+			sellSample := measurement.Metrics[types.MetricKey(
+				types.MetricExcitationAmplitude, types.SideSellToSell,
+			)]
+
+			if buySample.Normalized != nil {
+				entry.buy = *buySample.Normalized
+			}
+
+			if sellSample.Normalized != nil {
+				entry.sell = *sellSample.Normalized
+			}
+
+			entry.eta = measurement.Metrics[types.MetricKey(
+				types.MetricSpectralRadius, types.SideNone,
+			)].Raw
+			entry.beta = measurement.Metrics[types.MetricKey(
+				types.MetricDecayRate, types.SideNone,
+			)].Raw
+			drives[symbolName] = entry
+		}
+
+		return true
+	})
+	symbolNames := make([]string, 0, len(drives))
+
+	for symbolName := range drives {
+		symbolNames = append(symbolNames, symbolName)
+	}
+
+	sort.Strings(symbolNames)
+	cuts := make([]manifoldCut, 0, len(symbolNames))
+	oscillators := make([]pmanifold.Oscillator, 0)
+	etaMass := 0.0
+	betaMass := 0.0
+	driveMass := 0.0
+
+	for _, symbolName := range symbolNames {
+		if _, known := universeIndex(solver.universe, symbolName); !known {
+			solver.universe = sortedUniverse(append(solver.universe, symbolName))
+		}
+
+		if uint32(len(solver.universe)) > phaseLatticeWidth {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"manifold: symbol-pair carriers exceed the 256-slot lattice",
+				nil,
+			))
+		}
+
+		carrier, known := universeIndex(solver.universe, symbolName)
+
+		if !known {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"manifold: symbol "+symbolName+" is outside the pair lattice",
+				nil,
+			))
+		}
+
+		drive := drives[symbolName]
 		mapped, err := solver.bookOscillators(
-			symbolName,
-			symbolIndex,
-			totalSymbols,
-			thesis.At,
-			hawkes,
+			symbolName, drive.buy, drive.sell, at,
 		)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"manifold: failed to book oscillators for "+symbolName,
-				err,
-			))
-			continue
+			return nil, err
 		}
 
 		if len(mapped) == 0 {
+			solver.waiting.Store(true)
 			continue
 		}
 
-		perSymbol[symbolName] = mapped
 		oscillators = append(oscillators, mapped...)
+		cuts = append(cuts, manifoldCut{
+			symbol:      symbolName,
+			carrier:     carrier,
+			oscillators: mapped,
+		})
+
+		if drive.hasHawkes {
+			mass := float64(len(mapped))
+			etaMass += drive.eta * mass
+			betaMass += drive.beta * mass
+			driveMass += mass
+		}
 	}
 
 	if len(oscillators) == 0 {
-		return nil
+		solver.waiting.Store(true)
+		return nil, nil
 	}
 
-	maxParticles := int(solver.config.MaxParticles)
-
-	if maxParticles > 0 && len(oscillators) > maxParticles {
-		oscillators = oscillators[:maxParticles]
+	if err := solver.physics.ResetDeposits(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: failed to reset deposits",
+			err,
+		))
 	}
 
-	if symbolCount > 1 {
-		aggregateHawkes.Reflexivity /= float64(symbolCount)
-		aggregateHawkes.AvgTradeSize /= float64(symbolCount)
+	for _, cut := range cuts {
+		drive := drives[cut.symbol]
+
+		if err := solver.depositPair(cut.carrier, drive.buy, drive.sell); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := solver.physics.SetOscillators(oscillators); err != nil {
-		return errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf(
 				"failed to load %d manifold oscillators across %d symbols: %v",
-				len(oscillators), len(perSymbol), err,
+				len(oscillators), len(cuts), err,
 			),
 			err,
 		))
 	}
 
 	solver.oscillators = oscillators
+	solver.priorAt = at
 
-	// Advance manifold with top-down GPE controls modulated by Hawkes reflexivity
-	return solver.Step(thesis, thesis.At, perSymbol, aggregateHawkes)
+	if driveMass > 0 {
+		solver.driveEta = etaMass / driveMass
+		solver.driveBeta = betaMass / driveMass
+	}
+
+	return cuts, nil
 }
 
 /*
 bookOscillators projects every visible L3 order on one pair into oscillators
-that belong to that pair's carrier, factoring in volume scaling, prior position velocity,
-and Hawkes excitation frequency boosts.
+that belong to that pair's carrier.
 */
 func (solver *Solver) bookOscillators(
 	symbol string,
-	symbolIndex int,
-	totalSymbols int,
+	buyExcitation float64,
+	sellExcitation float64,
 	at time.Time,
-	hawkes HawkesSignal,
 ) ([]pmanifold.Oscillator, error) {
 	var orders []struct {
 		id        string
@@ -272,7 +512,6 @@ func (solver *Solver) bookOscillators(
 		timestamp time.Time
 	}
 	var midPrice float64
-
 	solver.api.Book(symbol, func(managed *mgrbook.Book) {
 		if managed == nil {
 			return
@@ -332,24 +571,26 @@ func (solver *Solver) bookOscillators(
 	}
 
 	accumulated, ok := solver.scales[symbol]
+
 	if !ok {
 		accumulated = adaptive.NewAccumulator()
 		solver.scales[symbol] = accumulated
 	}
 
+	ages := make([]float64, len(orders))
 	logSizes := make([]float64, 0, len(orders))
 	var last adaptive.AccumulatorOutput
-	totalVol := 0.0
 
-	for _, order := range orders {
+	for index, order := range orders {
 		deviation := math.Log(order.price) - math.Log(midPrice)
 		measured, err := accumulated.Measure(deviation * deviation)
+
 		if err != nil {
 			return nil, err
 		}
 
 		last = measured
-		totalVol += order.quantity
+		ages[index] = at.Sub(order.timestamp).Seconds()
 		logSizes = append(logSizes, math.Log(order.quantity))
 	}
 
@@ -359,7 +600,13 @@ func (solver *Solver) bookOscillators(
 
 	scale := math.Sqrt(last.Value / float64(last.Count))
 	solver.converged[symbol] = scale
-	meanVol := totalVol / float64(len(orders))
+	sizeMin := logSizes[0]
+	sizeMax := logSizes[0]
+
+	for _, logSize := range logSizes {
+		sizeMin = min(sizeMin, logSize)
+		sizeMax = max(sizeMax, logSize)
+	}
 
 	ageOrder := make([]int, len(orders))
 	queueOrder := make([]int, len(orders))
@@ -373,21 +620,22 @@ func (solver *Solver) bookOscillators(
 		if !orders[ageOrder[left]].timestamp.Equal(orders[ageOrder[right]].timestamp) {
 			return orders[ageOrder[left]].timestamp.Before(orders[ageOrder[right]].timestamp)
 		}
+
 		return orders[ageOrder[left]].id < orders[ageOrder[right]].id
 	})
-
 	sort.Slice(queueOrder, func(left, right int) bool {
 		first := orders[queueOrder[left]]
 		second := orders[queueOrder[right]]
 
 		if first.side != second.side {
-			return first.side < second.side
+			return first.side == mgrbook.Bid
 		}
 
 		if first.price != second.price {
 			if first.side == mgrbook.Bid {
 				return first.price > second.price
 			}
+
 			return first.price < second.price
 		}
 
@@ -397,7 +645,6 @@ func (solver *Solver) bookOscillators(
 
 		return first.id < second.id
 	})
-
 	ageRank := make([]int, len(orders))
 	queueRank := make([]int, len(orders))
 	sideCount := map[mgrbook.BookDirection]int{}
@@ -415,73 +662,61 @@ func (solver *Solver) bookOscillators(
 	omegaMax := solver.config.GateWidthMax()
 	omegaCentre := (omegaMax + omegaMin) / 2
 	omegaHalf := (omegaMax - omegaMin) / 2
+	deltaT := 0.0
 
-	priors := solver.priorPos[symbol]
-	if priors == nil {
-		priors = make(map[string][3]float64)
+	if !solver.priorAt.IsZero() && at.After(solver.priorAt) {
+		deltaT = at.Sub(solver.priorAt).Seconds()
+	}
+
+	prior := solver.priorPos[symbol]
+
+	if prior == nil {
+		prior = make(map[string][3]float64)
 	}
 
 	next := make(map[string][3]float64, len(orders))
 	oscillators := make([]pmanifold.Oscillator, 0, len(orders))
-	dt := solver.config.DeltaT
-	maxVelocity := solver.config.MinGasCellSpacing() / solver.config.DeltaT
 
 	for index, order := range orders {
-		signedLog := math.Log(order.price) - math.Log(midPrice)
-
-		// 1. Position X: Relative Price Depth (safely centered inside open boundary interval)
-		posX := 0.5 * solver.config.DomainX
-		omega := omegaCentre
-
-		if scale > 0 {
-			normalizedDist := math.Tanh(signedLog / scale)
-			posX = (0.5 + 0.49*normalizedDist) * solver.config.DomainX
-			// Hawkes excitation speeds up oscillator frequency tempo within lattice bounds
-			hawkesBoost := (hawkes.LambdaBuy + hawkes.LambdaSell) * 0.05
-			rawOmega := omegaCentre + (omegaHalf+hawkesBoost)*normalizedDist
-			omega = math.Max(omegaMin, math.Min(omegaMax, rawOmega))
-		}
-
-		// 2. Position Y: Book Side Channel (distributed across symbol lanes)
-		if totalSymbols <= 0 {
-			totalSymbols = 1
-		}
-
-		laneSpan := solver.config.DomainY / float64(totalSymbols)
-		laneCenter := (float64(symbolIndex) + 0.5) * laneSpan
-		posY := laneCenter - 0.25*laneSpan
+		energy := 1.0 + buyExcitation
 
 		if order.side == mgrbook.Ask {
-			posY = laneCenter + 0.25*laneSpan
+			energy = 1.0 + sellExcitation
 		}
 
-		// 3. Position Z: Queue Depth / Age Rank (cell-centered to prevent torus wrap collisions)
+		if energy <= 0 {
+			continue
+		}
+
+		signedLog := math.Log(order.price) - math.Log(midPrice)
+		omega := omegaCentre
+		posX := 0.5 * solver.config.DomainX
+
+		if scale > 0 {
+			omega = omegaCentre + omegaHalf*math.Tanh(signedLog/scale)
+			posX = (0.5 + 0.5*math.Tanh(signedLog/scale)) * solver.config.DomainX
+		}
+		posY := 0.5 * solver.config.DomainY
+
+		if sizeMax > sizeMin {
+			posY = (math.Log(order.quantity) - sizeMin) / (sizeMax - sizeMin) * solver.config.DomainY
+		}
+
 		posZ := 0.5 * solver.config.DomainZ
 
-		if len(orders) > 0 {
-			posZ = (float64(ageRank[index]) + 0.5) / float64(len(orders)) * solver.config.DomainZ
+		if len(orders) > 1 {
+			posZ = float64(ageRank[index]) / float64(len(orders)-1) * solver.config.DomainZ
 		}
 
-		// 4. Amplitude / Mass: Log-normalized volume scaling to avoid explosive blast waves
-		normVolume := 1.0 + math.Log1p(order.quantity/math.Max(meanVol, 1e-8))
-		amplitude := math.Sqrt(normVolume)
+		velX, velY, velZ := 0.0, 0.0, 0.0
 
-		// 5. Velocity derived from prior position, bounded by CFL acoustic speed
-		var velX, velY, velZ float64
-
-		if prior, exists := priors[order.id]; exists && dt > 0 {
-			rawVelX := (posX - prior[0]) / dt
-			rawVelY := (posY - prior[1]) / dt
-			rawVelZ := (posZ - prior[2]) / dt
-
-			velX = math.Max(-maxVelocity, math.Min(maxVelocity, rawVelX))
-			velY = math.Max(-maxVelocity, math.Min(maxVelocity, rawVelY))
-			velZ = math.Max(-maxVelocity, math.Min(maxVelocity, rawVelZ))
+		if previous, seen := prior[order.id]; seen && deltaT > 0 {
+			velX = (posX - previous[0]) / deltaT
+			velY = (posY - previous[1]) / deltaT
+			velZ = (posZ - previous[2]) / deltaT
 		}
 
 		next[order.id] = [3]float64{posX, posY, posZ}
-
-		// 6. Phase: FIFO Queue Progress + Side Opposition
 		sideTotal := sideCount[order.side]
 		progress := 0.0
 
@@ -495,42 +730,18 @@ func (solver *Solver) bookOscillators(
 			phase += math.Pi
 		}
 
-		// 7. Metabolic Heat: Proportional to volume and excitation flux in thermodynamic equilibrium
-		excitationFlux := 1.0 + (hawkes.LambdaBuy+hawkes.LambdaSell)*dt
-		heat := normVolume * solver.config.CV * excitationFlux
-
-		oscillator := pmanifold.Oscillator{
+		oscillators = append(oscillators, pmanifold.Oscillator{
 			Phase:     math.Mod(phase, 2*math.Pi),
 			Omega:     omega,
-			Amplitude: amplitude,
+			Amplitude: math.Sqrt(energy),
 			PosX:      posX,
 			PosY:      posY,
 			PosZ:      posZ,
-			Heat:      heat,
+			Heat:      1.0 / 32.0,
 			VelX:      velX,
 			VelY:      velY,
 			VelZ:      velZ,
-		}
-
-		// No oscillator's math is blindly trusted: every field is validated
-		// before it reaches the GPU. A zero heat or amplitude is divided by
-		// downstream, and any non-finite field poisons the mode integrators
-		// for every carrier sharing the lattice.
-		if degenerateOscillator(oscillator) {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf(
-					"manifold: dropping degenerate oscillator for %s order %s: %+v",
-					symbol, order.id, oscillator,
-				),
-				nil,
-			))
-
-			delete(next, order.id)
-			continue
-		}
-
-		oscillators = append(oscillators, oscillator)
+		})
 	}
 
 	solver.priorPos[symbol] = next
@@ -538,18 +749,90 @@ func (solver *Solver) bookOscillators(
 	return oscillators, nil
 }
 
+func (solver *Solver) depositPair(carrier uint32, buy float64, sell float64) error {
+	total := buy + sell
+
+	if total <= 0 {
+		return nil
+	}
+
+	maxX := float64(solver.config.GridX - 1)
+	buyCell := uint32(math.Round(buy / total * maxX))
+	sellCell := uint32(math.Round(sell / total * maxX))
+	cellY := solver.config.GridY / 2
+	cellZ := carrier % solver.config.GridZ
+	buyRho := buy / total * solver.config.RhoMin
+	sellRho := sell / total * solver.config.RhoMin
+
+	if err := solver.physics.DepositCell(
+		buyCell, cellY, cellZ,
+		buyRho, 0, 0, 0, buyRho*solver.config.CV,
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: failed to deposit buy intensity",
+			err,
+		))
+	}
+
+	return solver.physics.DepositCell(
+		sellCell, cellY, cellZ,
+		sellRho, 0, 0, 0, sellRho*solver.config.CV,
+	)
+}
+
+/*
+WaitingForBook answers whether Manifold has explicitly deferred any symbol
+until its authoritative Level 3 manager publishes another update.
+*/
+func (solver *Solver) WaitingForBook() bool {
+	return solver.waiting.Load()
+}
+
 func (solver *Solver) Step(
 	thesis *types.Thesis,
 	at time.Time,
-	perSymbol map[string][]pmanifold.Oscillator,
-	hawkes HawkesSignal,
+	cuts []manifoldCut,
 ) error {
+	config := system.Cfg.Snapshot()
+
+	if config == nil || config.Manifold == nil ||
+		config.Manifold.MinSteps <= 0 ||
+		config.Manifold.MaxSteps < config.Manifold.MinSteps ||
+		config.Manifold.RelaxationSteps < config.Manifold.MinSteps ||
+		config.Manifold.RelaxationSteps > config.Manifold.MaxSteps {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: regulated relaxation step count must be within its configured bounds",
+			nil,
+		))
+	}
+
+	if solver.physics == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: physics domain is not initialized",
+			nil,
+		))
+	}
+
 	controls := solver.config.RuntimeControls()
 	controls.DeltaT = solver.config.DeltaT
 
-	// Modulate top-down GPE controls using Hawkes reflexivity η
-	controls.TopdownPhaseScale = math.Min(1.0, math.Max(0.0, hawkes.Reflexivity))
-	controls.TopdownEnergyScale = math.Min(2.0, math.Max(0.0, hawkes.Reflexivity*hawkes.Reflexivity))
+	if solver.driveBeta > 0 {
+		advective := solver.config.AdvectiveDeltaT(solver.driveBeta)
+
+		if advective > 0 && advective < controls.DeltaT {
+			controls.DeltaT = advective
+		}
+
+		controls.EnergyDecay = solver.driveBeta
+		controls.MetabolicRate = 1 / controls.DeltaT
+	}
+
+	if solver.driveEta > 0 {
+		controls.GInteraction = solver.config.GInteraction() * solver.driveEta
+	}
 
 	if err := solver.physics.SetControls(controls); err != nil {
 		return errnie.Error(errnie.Err(
@@ -559,35 +842,45 @@ func (solver *Solver) Step(
 		))
 	}
 
-	reading, err := solver.physics.Step()
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("failed to advance manifold: %v", err),
-			err,
-		))
-	}
+	relaxationSteps := config.Manifold.RelaxationSteps
 
-	solver.reading = reading
-	thesis.StoreManifold(reading)
+	for step := range relaxationSteps {
+		reading, err := solver.physics.Step()
 
-	solver.publishPhase(thesis, at, perSymbol)
-
-	if len(solver.oscillators) > 0 {
-		oscillators, readErr := solver.physics.ReadOscillators(len(solver.oscillators))
-		if readErr != nil {
+		if err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
-				"failed to read manifold oscillators: "+readErr.Error(),
-				readErr,
+				fmt.Sprintf(
+					"failed to advance manifold at relaxation step %d of %d: %v",
+					step+1, relaxationSteps, err,
+				),
+				err,
 			))
 		}
 
-		solver.oscillators = oscillators
-	}
+		solver.stepped = true
+		solver.reading = reading
+		thesis.StoreManifold(reading)
 
-	if err := solver.publishDomain(); err != nil {
-		return err
+		if len(solver.oscillators) > 0 {
+			oscillators, readErr := solver.physics.ReadOscillators(len(solver.oscillators))
+
+			if readErr != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"failed to read manifold oscillators: "+readErr.Error(),
+					readErr,
+				))
+			}
+
+			solver.oscillators = oscillators
+		}
+
+		solver.publishPhase(thesis, at, cuts)
+
+		if err := solver.publishDomain(); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -599,6 +892,7 @@ func (solver *Solver) publishDomain() error {
 	}
 
 	vol, err := solver.physics.ReadVolumetricFields(16)
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -612,7 +906,7 @@ func (solver *Solver) publishDomain() error {
 
 	utils.PublishFluid(
 		solver.binui, types.FluidFieldsChannel,
-		datura.NewMap("fields", projectFields(vol)),
+		datura.NewMap("fields", projectFields(solver.config, vol)),
 	)
 	utils.PublishFluid(
 		solver.binui, types.FluidParticlesChannel,
@@ -625,17 +919,18 @@ func (solver *Solver) publishDomain() error {
 func (solver *Solver) publishPhase(
 	thesis *types.Thesis,
 	at time.Time,
-	perSymbol map[string][]pmanifold.Oscillator,
+	cuts []manifoldCut,
 ) {
-	reading := solver.stampPhase(thesis, at, perSymbol)
+	reading := solver.stampPhase(thesis, at, cuts)
 
-	utils.Publish(
-		solver.ui,
-		datura.NewMap(
-			"manifold",
-			[]datura.Map[any]{solver.phaseRow(at, reading)},
-		),
-	)
+	if solver.ui != nil {
+		select {
+		case solver.ui <- datura.NewMap(
+			"manifold", []datura.Map[any]{solver.phaseRow(at, reading)},
+		).MarshalAndFree():
+		default:
+		}
+	}
 
 	if solver.binui != nil {
 		utils.PublishFluid(
@@ -646,6 +941,10 @@ func (solver *Solver) publishPhase(
 	}
 }
 
+/*
+phaseRow is the universe sweep as the wire already consumes it: resident wave,
+readiness, angular scan, and real-time hydrodynamic / Kuramoto diagnostics.
+*/
 func (solver *Solver) phaseRow(
 	at time.Time,
 	reading types.PhaseReading,
@@ -706,6 +1005,9 @@ func kuramotoOrderParameter(oscillators []pmanifold.Oscillator) KuramotoSync {
 	}
 }
 
+/*
+Close releases the one resident domain and all accumulated observations.
+*/
 func (solver *Solver) Close() error {
 	if solver == nil {
 		return nil
@@ -714,6 +1016,13 @@ func (solver *Solver) Close() error {
 	if !solver.closing.CompareAndSwap(false, true) {
 		return nil
 	}
+
+	for solver.settling.Load() {
+		runtime.Gosched()
+	}
+
+	close(solver.stopping)
+	<-solver.stopped
 
 	if solver.physics == nil {
 		return nil
@@ -731,106 +1040,22 @@ func (solver *Solver) scale(symbol string) (float64, bool) {
 	}
 
 	value, ok := solver.converged[symbol]
+
 	return value, ok && value > 0
 }
 
 /*
-finitePositive admits a metric sample into the manifold only when it is a
-strictly positive, finite real number. A non-finite or non-positive fit is a
-degenerate measurement: it is excluded at this boundary rather than allowed to
-poison the GPU state it feeds.
+OrderVector is a 3D float32 vector in unit coordinates.
 */
-func finitePositive(value float64) bool {
-	return value > 0 && !math.IsInf(value, 0)
-}
-
-/*
-degenerateOscillator reports whether any field of one oscillator would poison
-the GPU lattice. Positions, tempo, and velocity only need to be finite; heat
-and amplitude are divided by downstream, so they must be strictly positive.
-*/
-func degenerateOscillator(oscillator pmanifold.Oscillator) bool {
-	fields := []float64{
-		oscillator.Phase,
-		oscillator.Omega,
-		oscillator.PosX,
-		oscillator.PosY,
-		oscillator.PosZ,
-		oscillator.VelX,
-		oscillator.VelY,
-		oscillator.VelZ,
-	}
-
-	for _, field := range fields {
-		if math.IsNaN(field) || math.IsInf(field, 0) {
-			return true
-		}
-	}
-
-	return !finitePositive(oscillator.Heat) || !finitePositive(oscillator.Amplitude) || !finitePositive(oscillator.Omega)
-}
-
-func extractSymbolHawkes(symbol *types.Symbol) HawkesSignal {
-	signal := HawkesSignal{
-		LambdaBuy:    1.0,
-		LambdaSell:   1.0,
-		LambdaCancel: 0.5,
-		Reflexivity:  0.2,
-		AvgTradeSize: 1.0,
-	}
-
-	if symbol == nil || symbol.Latest == nil {
-		return signal
-	}
-
-	raw, ok := symbol.Latest.Load(string(types.SourceHawkes))
-	if !ok || raw == nil {
-		return signal
-	}
-
-	measurement, ok := raw.(*types.Measurement)
-	if !ok || measurement == nil || measurement.Metrics == nil {
-		return signal
-	}
-
-	buyIntensityKey := types.MetricKey(types.MetricConditionalIntensity, types.SideBuy)
-
-	if sample, exists := measurement.Metrics[buyIntensityKey]; exists && finitePositive(sample.Raw) {
-		signal.LambdaBuy = sample.Raw
-	} else {
-		arrBuyKey := types.MetricKey(types.MetricArrivalRate, types.SideBuy)
-
-		if arrSample, exists := measurement.Metrics[arrBuyKey]; exists && finitePositive(arrSample.Raw) {
-			signal.LambdaBuy = arrSample.Raw
-		}
-	}
-
-	sellIntensityKey := types.MetricKey(types.MetricConditionalIntensity, types.SideSell)
-
-	if sample, exists := measurement.Metrics[sellIntensityKey]; exists && finitePositive(sample.Raw) {
-		signal.LambdaSell = sample.Raw
-	} else {
-		arrSellKey := types.MetricKey(types.MetricArrivalRate, types.SideSell)
-
-		if arrSample, exists := measurement.Metrics[arrSellKey]; exists && finitePositive(arrSample.Raw) {
-			signal.LambdaSell = arrSample.Raw
-		}
-	}
-
-	spectralRadiusKey := types.MetricKey(types.MetricSpectralRadius, types.SideNone)
-	if sample, exists := measurement.Metrics[spectralRadiusKey]; exists && sample.Raw >= 0 {
-		signal.Reflexivity = math.Min(1.0, sample.Raw)
-	}
-
-	return signal
-}
-
 type OrderVector struct {
 	X float32 `json:"X"`
 	Y float32 `json:"Y"`
 	Z float32 `json:"Z"`
 }
 
+/*
+OrderParticle holds the geometric state of an order in the physical domain.
+*/
 type OrderParticle struct {
 	Position OrderVector `json:"Position"`
 	Velocity OrderVector `json:"Velocity"`
@@ -839,6 +1064,9 @@ type OrderParticle struct {
 	Energy   float32     `json:"Energy"`
 }
 
+/*
+OrderOscillator holds the wave state of an order in the coherence layer.
+*/
 type OrderOscillator struct {
 	Phase     float32 `json:"Phase"`
 	Omega     float32 `json:"Omega"`
@@ -847,6 +1075,10 @@ type OrderOscillator struct {
 	Imaginary float32 `json:"Imaginary"`
 }
 
+/*
+OrderNode represents an order in the manifold possessing both a particle
+(geometric) and an oscillator (wave) representation.
+*/
 type OrderNode struct {
 	Position   OrderVector     `json:"Position"`
 	Velocity   OrderVector     `json:"Velocity"`
@@ -860,6 +1092,9 @@ type OrderNode struct {
 	Oscillator OrderOscillator `json:"oscillator"`
 }
 
+/*
+ManifoldGrid is the 3D cell layout of the domain.
+*/
 type ManifoldGrid struct {
 	X       int     `json:"x"`
 	Y       int     `json:"y"`
@@ -867,6 +1102,9 @@ type ManifoldGrid struct {
 	Spacing float32 `json:"spacing"`
 }
 
+/*
+ManifoldFields represents the physical fields evaluated over the grid.
+*/
 type ManifoldFields struct {
 	Grid           ManifoldGrid `json:"Grid"`
 	Density        []float32    `json:"Density"`
@@ -888,9 +1126,11 @@ func oscillatorsToParticles(
 	if domainX <= 0 {
 		domainX = 1
 	}
+
 	if domainY <= 0 {
 		domainY = 1
 	}
+
 	if domainZ <= 0 {
 		domainZ = 1
 	}
@@ -948,9 +1188,11 @@ func oscillatorsToParticles(
 }
 
 func projectFields(
+	config pmanifold.Config,
 	vol pmanifold.VolumetricFields,
 ) ManifoldFields {
 	spacing := 1.0 / float32(vol.GridX)
+
 	if vol.GridX <= 0 {
 		spacing = 1.0 / 64.0
 	}
@@ -978,4 +1220,35 @@ func projectFields(
 		WaveReal:       waveMag,
 		WaveImaginary:  waveZero,
 	}
+}
+
+func torusIndex(position, domain float64, grid uint32) uint32 {
+	if grid == 0 || domain <= 0 {
+		return 0
+	}
+
+	index := int(math.Floor(position*float64(grid)/domain)) % int(grid)
+
+	if index < 0 {
+		index += int(grid)
+	}
+
+	return uint32(index)
+}
+
+func universeIndex(names []string, symbol string) (uint32, bool) {
+	index := sort.SearchStrings(names, symbol)
+
+	if index == len(names) || names[index] != symbol {
+		return 0, false
+	}
+
+	return uint32(index), true
+}
+
+func sortedUniverse(names []string) []string {
+	universe := append([]string(nil), names...)
+	sort.Strings(universe)
+
+	return universe
 }
