@@ -88,10 +88,20 @@ func TestPositionOnTicker(t *testing.T) {
 		}
 		position.setStatus(types.OPEN)
 
-		Convey("It should trigger the regulator and submit the exit", func() {
+		Convey("It should hold a flat repeat and submit the exit when protection is breached", func() {
+			// A surge-armed lot no longer exits on the first mark that fails
+			// to advance: breathing under a peak is ordinary. The exit is
+			// owned by a boundary — here the locked profit floor.
 			position.onTicker(kraken.TickerData{
 				Symbol: "SIM/USD",
 				Bid:    stoploss.Mark,
+			})
+
+			So(stoploss.Status, ShouldEqual, types.ARMED)
+
+			position.onTicker(kraken.TickerData{
+				Symbol: "SIM/USD",
+				Bid:    decimal.NewFromFloat64(99.99),
 			})
 
 			So(stoploss.Status, ShouldEqual, types.TRIGGERED)

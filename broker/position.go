@@ -35,6 +35,7 @@ type Position struct {
 	store          *PositionStore
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
+	passage        *passageTracker
 	Status         atomic.Pointer[types.Status] `json:"-"`
 	/*
 		Decision is the arbitration that opened this lot, kept verbatim.
@@ -183,6 +184,10 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	position.Holding.Update(ticker)
 	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 	position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
+
+	if position.passage != nil {
+		position.passage.observe(position, position.Holding.Mark)
+	}
 
 	stoploss := position.Holding.Stoploss
 	changed := previousStatus != stoploss.Status ||
@@ -370,6 +375,11 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 
 		position.Holding.Stoploss.ArmClock()
 		position.Holding.Stoploss.Update(position.Holding.Mark)
+		position.passage = newPassageTracker(
+			position,
+			position.Holding.EntryPrice,
+			max(1, position.Decision.ForecastHorizon),
+		)
 		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 

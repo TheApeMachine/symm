@@ -28,12 +28,20 @@ fast-surge regimes.
 
 The first executable mark at or below Floor triggers immediately. Protection starts
 as soon as a new peak can place its trailing floor above ProfitLine, then every new
-peak ratchets that floor upward without ever lowering it. A statistically unusual
-profitable acceleration arms a momentum boundary so the lot exits when the burst
-stops, before a disappearing top of book reaches the slower trailing floor.
+peak ratchets that floor upward without ever lowering it.
 
-Profit stagnation remains a separate low-velocity path: it requires multiple distinct
-non-peak observations and at least one execution-noise band of giveback.
+Every giveback tolerance is stated in the run's own learned units. The lot keeps a
+running distribution of the positive steps its peaks advanced by, and the trail,
+stagnation, and surge boundaries are derived from that distribution, so a position
+that has run far from entry is judged against the noise of the run, not against an
+absolute distance measured when the lot was opened — a trail frozen at entry gets
+proportionally tighter as price rises and shakes winners out on ordinary breathing.
+
+A statistically unusual profitable acceleration arms a tighter regime: the armed lot
+carries a live line one central band (mean plus one sigma) below its peak, so a
+burst that unwinds as fast as it formed is exited before the slower trailing floor
+is reached, while a burst that consolidates is still given the room its own step
+distribution says is ordinary.
 */
 type Stoploss struct {
 	ctx                  context.Context
@@ -324,17 +332,7 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 	}
 
 	move := stoploss.markMove(previousMark, mark)
-
-	if move != nil {
-		stoploss.LastMove = move
-
-		if stoploss.SurgeArmed && stoploss.momentumDisappeared(move) {
-			stoploss.Status = TRIGGERED
-			stoploss.TriggerReason = TriggerPumpMomentumLost
-			stoploss.TriggerMark = mark
-			return
-		}
-	}
+	stoploss.LastMove = move
 
 	raisedPeak := stoploss.Peak == nil || mark.Cmp(stoploss.Peak) > 0
 
@@ -342,6 +340,17 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		stoploss.Peak = mark
 		stoploss.distinctNonPeakMarks = 0
 		stoploss.lastStagnationMark = nil
+	}
+
+	if stoploss.SurgeArmed && stoploss.triggerMomentumExit(mark) {
+		return
+	}
+
+	// The step is folded before the trailing candidate is placed, so the peak
+	// that produced a run-scale step is trailed by a run-scale distance rather
+	// than by the entry-time distance computed before it was observed.
+	if raisedPeak && move != nil && move.Sign() > 0 {
+		stoploss.observePeakMomentum(move, mark)
 	}
 
 	candidate := stoploss.trailingCandidate(mark, raisedPeak)
@@ -382,10 +391,6 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 		}
 	}
 
-	if raisedPeak && move != nil && move.Sign() > 0 {
-		stoploss.observePeakMomentum(move, mark)
-	}
-
 	if stoploss.profitLatched && !raisedPeak && stoploss.ProfitLine != nil &&
 		mark.Cmp(stoploss.ProfitLine) > 0 {
 		if stoploss.lastStagnationMark == nil || mark.Cmp(stoploss.lastStagnationMark) != 0 {
@@ -399,19 +404,10 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 			confirmMarks = 3
 		}
 
-		noiseBand := stoploss.noiseBand
-
-		if noiseBand == nil || noiseBand.Sign() <= 0 {
-			if stoploss.tickSize != nil {
-				noiseBand = stoploss.tickSize
-			} else {
-				noiseBand = decimal.NewFromInt64(0)
-			}
-		}
-
 		giveback := scaled(stoploss.Peak).Sub(scaled(mark))
 
-		if stoploss.distinctNonPeakMarks >= confirmMarks && giveback.Cmp(noiseBand) >= 0 {
+		if stoploss.distinctNonPeakMarks >= confirmMarks &&
+			giveback.Cmp(stoploss.stagnationTolerance()) >= 0 {
 			stoploss.Status = TRIGGERED
 			stoploss.TriggerReason = TriggerProfitStagnation
 			stoploss.TriggerMark = mark
@@ -447,6 +443,12 @@ func (stoploss *Stoploss) markMove(
 	return scaled(mark).Sub(previous)
 }
 
+/*
+trailingCandidate places the floor one giveback tolerance below a new peak. The
+tolerance is the wider of the plan's entry distance and the run's own learned
+unusual-step boundary, so a floor set while the lot is deep in profit does not
+sit an entry-scale distance under a price that now moves in run-scale steps.
+*/
 func (stoploss *Stoploss) trailingCandidate(
 	mark *decimal.Decimal,
 	raisedPeak bool,
@@ -456,26 +458,148 @@ func (stoploss *Stoploss) trailingCandidate(
 		return nil
 	}
 
+	distance := scaled(stoploss.trailDistance)
+
+	if learned := stoploss.learnedMoveBoundary(); learned > 0 {
+		candidate := decimal.NewFromFloat64(learned)
+
+		if candidate.Cmp(distance) > 0 {
+			distance = candidate
+		}
+	}
+
 	return floorToTick(
-		scaled(mark).Sub(stoploss.trailDistance),
+		scaled(mark).Sub(distance),
 		stoploss.tickSize,
 	)
 }
 
-func (stoploss *Stoploss) momentumDisappeared(move *decimal.Decimal) bool {
-	if move == nil || move.Sign() <= 0 {
-		return true
+/*
+triggerMomentumExit reports whether a surge-armed lot has unwound beyond the
+central band of its learned step distribution, and records the exhaustion
+trigger when it has. The line is recomputed from live statistics on every mark,
+so a burst that keeps extending also keeps raising its own protection.
+*/
+func (stoploss *Stoploss) triggerMomentumExit(mark *decimal.Decimal) bool {
+	stoploss.MomentumFloor = stoploss.armedTrailDistance()
+
+	if stoploss.MomentumFloor == nil || stoploss.MomentumFloor.Sign() <= 0 ||
+		stoploss.Peak == nil {
+		return false
 	}
 
-	return stoploss.MomentumFloor != nil && stoploss.MomentumFloor.Sign() > 0 &&
-		move.Cmp(stoploss.MomentumFloor) <= 0
+	momentumLine := floorToTick(
+		scaled(stoploss.Peak).Sub(stoploss.MomentumFloor),
+		stoploss.tickSize,
+	)
+
+	if momentumLine == nil || mark.Cmp(momentumLine) > 0 {
+		return false
+	}
+
+	stoploss.Status = TRIGGERED
+	stoploss.TriggerReason = TriggerPumpMomentumLost
+	stoploss.TriggerMark = mark
+
+	return true
 }
 
 /*
-observePeakMomentum learns the ordinary positive-step scale and arms a one-tick
-exhaustion detector only when a new peak accelerates far beyond it. The surge
-itself is never used to set its continuation floor; otherwise one exceptional
-move would demand another equally exceptional move and guarantee an exit.
+stagnationTolerance is the giveback below peak that ordinary run dynamics can
+still explain: the central band of the learned positive-step distribution,
+floored by one execution-noise band. A giveback inside the band is breathing; a
+confirmed drift beyond it — several distinct non-peak marks — is a thesis that
+has stopped paying for its room.
+*/
+func (stoploss *Stoploss) stagnationTolerance() *decimal.Decimal {
+	tolerance := scaled(stoploss.noiseBand)
+
+	if tolerance == nil || tolerance.Sign() <= 0 {
+		tolerance = scaled(stoploss.tickSize)
+	}
+
+	if central := stoploss.centralMoveBoundary(); central > 0 {
+		candidate := decimal.NewFromFloat64(central)
+
+		if candidate.Cmp(tolerance) > 0 {
+			return candidate
+		}
+	}
+
+	return tolerance
+}
+
+/*
+armedTrailDistance is the giveback a surge-armed lot tolerates below its peak
+before the burst is treated as unwound: the central band of the learned positive
+step distribution, floored by one execution-noise band.
+*/
+func (stoploss *Stoploss) armedTrailDistance() *decimal.Decimal {
+	distance := scaled(stoploss.noiseBand)
+
+	if distance == nil || distance.Sign() <= 0 {
+		distance = scaled(stoploss.tickSize)
+	}
+
+	if distance == nil || distance.Sign() <= 0 {
+		return nil
+	}
+
+	if central := stoploss.centralMoveBoundary(); central > 0 {
+		candidate := decimal.NewFromFloat64(central)
+
+		if candidate.Cmp(distance) > 0 {
+			return candidate
+		}
+	}
+
+	return distance
+}
+
+/*
+learnedMoveBoundary is the statistically unusual positive-step boundary of the
+run so far: twice the single observed step before dispersion exists, and the
+mean-plus-three-sigma boundary of the learned distribution after that. Zero
+means no positive peak step has been observed yet.
+*/
+func (stoploss *Stoploss) learnedMoveBoundary() float64 {
+	if stoploss.positiveMoveCount == 1 {
+		return 2 * stoploss.positiveMoveMean
+	}
+
+	if stoploss.positiveMoveCount > 1 {
+		variance := stoploss.positiveMoveM2 / float64(stoploss.positiveMoveCount-1)
+		return stoploss.positiveMoveMean + 3*math.Sqrt(math.Max(0, variance))
+	}
+
+	return 0
+}
+
+/*
+centralMoveBoundary is the mean-plus-one-sigma boundary of the same
+distribution: the ordinary scale of the run rather than its tail.
+*/
+func (stoploss *Stoploss) centralMoveBoundary() float64 {
+	if stoploss.positiveMoveCount < 1 {
+		return 0
+	}
+
+	variance := 0.0
+
+	if stoploss.positiveMoveCount > 1 {
+		variance = stoploss.positiveMoveM2 / float64(stoploss.positiveMoveCount-1)
+	}
+
+	return stoploss.positiveMoveMean + math.Sqrt(math.Max(0, variance))
+}
+
+/*
+observePeakMomentum learns the ordinary positive-step scale and arms the tighter
+surge regime only when a new peak accelerates far beyond it. The arming
+threshold is computed before the current step is folded in, so one exceptional
+move cannot be made to demand another equally exceptional move. The armed line
+itself is derived after the fold, from the distribution the burst now belongs
+to.
 */
 func (stoploss *Stoploss) observePeakMomentum(
 	move *decimal.Decimal,
@@ -487,20 +611,22 @@ func (stoploss *Stoploss) observePeakMomentum(
 
 	moveValue := move.Float64()
 	threshold := stoploss.unusualMoveThreshold()
-	continuation := stoploss.momentumContinuationFloor()
 	profitable := stoploss.Locked || stoploss.profitLatched ||
 		(stoploss.ProfitLine != nil && mark.Cmp(stoploss.ProfitLine) > 0)
 
 	if profitable && threshold > 0 && moveValue >= threshold {
 		stoploss.SurgeArmed = true
 		stoploss.SurgeMove = scaled(move)
-		stoploss.MomentumFloor = continuation
 	}
 
 	stoploss.positiveMoveCount++
 	delta := moveValue - stoploss.positiveMoveMean
 	stoploss.positiveMoveMean += delta / float64(stoploss.positiveMoveCount)
 	stoploss.positiveMoveM2 += delta * (moveValue - stoploss.positiveMoveMean)
+
+	if stoploss.SurgeArmed {
+		stoploss.MomentumFloor = stoploss.armedTrailDistance()
+	}
 }
 
 func (stoploss *Stoploss) unusualMoveThreshold() float64 {
@@ -518,37 +644,7 @@ func (stoploss *Stoploss) unusualMoveThreshold() float64 {
 		threshold = math.Max(threshold, 4*stoploss.tickSize.Float64())
 	}
 
-	if stoploss.positiveMoveCount == 1 {
-		threshold = math.Max(threshold, 2*stoploss.positiveMoveMean)
-	}
-
-	if stoploss.positiveMoveCount > 1 {
-		variance := stoploss.positiveMoveM2 / float64(stoploss.positiveMoveCount-1)
-		threshold = math.Max(
-			threshold,
-			stoploss.positiveMoveMean+3*math.Sqrt(math.Max(0, variance)),
-		)
-	}
-
-	return threshold
-}
-
-func (stoploss *Stoploss) momentumContinuationFloor() *decimal.Decimal {
-	floor := scaled(stoploss.noiseBand)
-
-	if floor == nil || floor.Sign() <= 0 {
-		floor = scaled(stoploss.tickSize)
-	}
-
-	if stoploss.positiveMoveCount > 0 && stoploss.positiveMoveMean > 0 {
-		learned := decimal.NewFromFloat64(stoploss.positiveMoveMean * 0.5)
-
-		if floor == nil || learned.Cmp(floor) > 0 {
-			floor = learned
-		}
-	}
-
-	return floor
+	return math.Max(threshold, stoploss.learnedMoveBoundary())
 }
 
 /*

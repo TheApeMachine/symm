@@ -410,6 +410,25 @@ func TestCryptoRun(t *testing.T) {
 					Weight:     0.95,
 					Confidence: 0.95,
 				})
+
+				// The planner only searches graphs that name a decision target
+				// with a supported evidence path onto it.
+				marketGraph.DecisionTarget = "hyp:SIM1/USD:long_opportunity"
+				marketGraph.AddNode(&logicgraph.Node{
+					ID:         marketGraph.DecisionTarget,
+					Symbol:     "SIM1/USD",
+					Kind:       logicgraph.KindHypothesis,
+					Value:      1,
+					Confidence: 0.95,
+					At:         thesis.At,
+				})
+				marketGraph.AddEdge(&logicgraph.Edge{
+					From:       "causal:SIM1/USD:doExpectation",
+					To:         marketGraph.DecisionTarget,
+					Relation:   logicgraph.RelationSupports,
+					Weight:     0.95,
+					Confidence: 0.95,
+				})
 				symbol.Graphs.Store("market_graph", marketGraph)
 
 				rows := make([][]float64, 100)
@@ -439,13 +458,10 @@ func TestCryptoRun(t *testing.T) {
 
 				Convey("Then the desk should accept the completed entry", func() {
 					So(decision.Action, ShouldEqual, types.ActionEnter)
+					So(decision.ThesisScore, ShouldBeGreaterThan, 0)
 					So(decision.ProposedQuantity, ShouldNotBeNil)
 					So(decision.ProposedQuantity.Sign(), ShouldEqual, 1)
-					So(decision.ExpectedReturn, ShouldNotBeNil)
-					So(decision.ExpectedFees, ShouldNotBeNil)
-					So(decision.ExpectedSpread, ShouldNotBeNil)
-					So(decision.ExpectedImpact, ShouldNotBeNil)
-					So(decision.ExpectedImpact.Sign(), ShouldEqual, 0)
+					So(decision.EntryCost, ShouldNotBeNil)
 					So(decision.Stoploss, ShouldNotBeNil)
 					So(decision.Stoploss.Floor, ShouldNotBeNil)
 					So(decision.Stoploss.Floor.Cmp(

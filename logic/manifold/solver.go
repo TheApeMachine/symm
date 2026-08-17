@@ -841,25 +841,34 @@ func (solver *Solver) Step(
 		solver.reading = reading
 		thesis.StoreManifold(reading)
 
-		if len(solver.oscillators) > 0 {
-			oscillators, readErr := solver.physics.ReadOscillators(len(solver.oscillators))
-
-			if readErr != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to read manifold oscillators: "+readErr.Error(),
-					readErr,
-				))
-			}
-
-			solver.oscillators = oscillators
-		}
-
 		solver.publishPhase(thesis, at, cuts)
+	}
 
-		if err := solver.publishDomain(); err != nil {
-			return err
+	// One oscillator readback per relaxation run, of the converged state.
+	// Reading the population inside the loop forced a synchronous GPU→CPU
+	// pipeline flush per step — twenty stalls per cut at ticker cadence —
+	// which starved every other Metal client on the machine, WindowServer
+	// included, to the point of a userspace watchdog reset.
+	if len(solver.oscillators) > 0 {
+		oscillators, readErr := solver.physics.ReadOscillators(len(solver.oscillators))
+
+		if readErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"failed to read manifold oscillators: "+readErr.Error(),
+				readErr,
+			))
 		}
+
+		solver.oscillators = oscillators
+	}
+
+	// The domain snapshot serializes every resident oscillator. Publishing it
+	// per relaxation step multiplied that cost by the step count on the
+	// analytical hot path and starved settlement; consumers receive the one
+	// converged frame instead.
+	if err := solver.publishDomain(); err != nil {
+		return err
 	}
 
 	return nil

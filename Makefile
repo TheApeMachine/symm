@@ -8,8 +8,10 @@ export GOFLAGS := -ldflags=-checklinkname=0
 LDFLAGS := $(GOFLAGS)
 
 # Metal pipeline compilation is XPC-global, so package binaries must not
-# initialize independent domains concurrently.
-GO_TEST_FLAGS := -p 1
+# initialize independent domains concurrently. The full-replay packages drive
+# the real Metal solver per frame and legitimately need more than Go's 600s
+# default per-binary budget.
+GO_TEST_FLAGS := -p 1 -timeout 30m
 
 SYMM_BIN := bin/symm
 # Leave CONFIG empty to use the binary's own default loading (cmd/cfg/infra.yml +

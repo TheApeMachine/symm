@@ -70,7 +70,7 @@ func TestSymbolResonanceInputs(t *testing.T) {
 		symbol := NewSymbol("BTC/USD", nil)
 		value := 0.5
 
-		Convey("It should enqueue that honest observation immediately", func() {
+		Convey("It should enqueue a competing reading immediately", func() {
 			symbol.AppendMeasurements([]*Measurement{{
 				Source: SourceHawkes,
 				Symbol: "BTC/USD",
@@ -79,7 +79,7 @@ func TestSymbolResonanceInputs(t *testing.T) {
 					"last_price": 100,
 				},
 				Metrics: map[string]MetricSample{
-					"score": {Normalized: &value},
+					MetricKey(MetricEventCount, SideBuy): {Normalized: &value},
 				},
 			}})
 
@@ -90,6 +90,7 @@ func TestSymbolResonanceInputs(t *testing.T) {
 			}
 
 			So(rows, ShouldHaveLength, 1)
+			So(rows[0].Mark, ShouldEqual, 100)
 			So(rows[0].Readings, ShouldHaveLength, 1)
 		})
 	})

@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -58,10 +59,22 @@ func TestUpdate(t *testing.T) {
 		thesis.At = time.Unix(9, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD", nil)
 		categories := map[types.CategoryType]struct{}{}
+		references := map[string]struct{}{}
 
 		for index, schema := range types.CategorySchemas {
 			value := 1 / float64(index+2)
 			metricKey := types.MetricKey(schema.Metric, schema.Side)
+
+			// Corroborated categories share one measurement per distinct
+			// source metric, exactly as the signals publish them.
+			reference := string(schema.Source) + ":" + metricKey
+
+			if _, seen := references[reference]; seen {
+				categories[schema.Category] = struct{}{}
+				continue
+			}
+
+			references[reference] = struct{}{}
 			symbol.AppendMeasurements([]*types.Measurement{&types.Measurement{
 				ID:     fmt.Sprintf("%s:%s:%d", schema.Source, metricKey, index),
 				Source: schema.Source,
@@ -99,8 +112,37 @@ func TestUpdate(t *testing.T) {
 				So(incident[node.ID], ShouldBeGreaterThan, 0)
 			}
 
-			So(graph.Edges, ShouldHaveLength, len(types.CategorySchemas))
-			So(graph.Nodes, ShouldHaveLength, len(types.CategorySchemas)+len(categories))
+			// Corroborated categories share supporting references with the
+			// single-axis categories they extend; each ordered sharing pair
+			// carries one redundant-with relation.
+			storedCategories, categoriesFound := symbol.Categories.Load("BTC/USD")
+			So(categoriesFound, ShouldBeTrue)
+
+			sharedLinks := 0
+
+			for _, category := range storedCategories.([]types.Category) {
+				for _, peer := range storedCategories.([]types.Category) {
+					if category.Type == peer.Type {
+						continue
+					}
+
+					for _, evidence := range category.Supporting {
+						if slices.Contains(peer.Supporting, evidence) {
+							sharedLinks++
+							break
+						}
+					}
+				}
+			}
+
+			// The compiled graph carries one measurement node per distinct
+			// source metric, one edge per schema row that links a measurement
+			// to its category, redundant-with links between categories that
+			// share references, one node per distinct classified category,
+			// and the single long-opportunity hypothesis.
+			So(graph.Edges, ShouldHaveLength,
+				len(types.CategorySchemas)+len(categories)+sharedLinks)
+			So(graph.Nodes, ShouldHaveLength, len(references)+len(categories)+1)
 		})
 	})
 
@@ -143,8 +185,12 @@ func TestUpdate(t *testing.T) {
 			stored, found := bitcoin.Graphs.Load("market_graph")
 			So(found, ShouldBeTrue)
 			graph := stored.(*Graph)
-			So(graph.Nodes, ShouldHaveLength, 2)
-			So(graph.Edges, ShouldHaveLength, 1)
+
+			// One measurement node, one category node, one hypothesis node;
+			// the measurement supports its category, the category supports
+			// the thesis.
+			So(graph.Nodes, ShouldHaveLength, 3)
+			So(graph.Edges, ShouldHaveLength, 2)
 			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"cvd-measurement", "cvd:drive"})
@@ -255,6 +301,7 @@ func TestGraphReadyForSearch(t *testing.T) {
 			ID: forecastID, Symbol: "BTC/USD", Kind: KindResonance, Value: 0.01, Confidence: 1,
 		})
 		graph.AddNode(&Node{ID: "causal", Value: 0, Confidence: 1})
+		graph.DecisionTarget = "causal"
 		graph.AddEdge(&Edge{
 			From: forecastID, To: "causal", Relation: RelationSupports,
 			Weight: 0.5, Confidence: 1,
@@ -533,7 +580,11 @@ func TestExtractResonanceNodes(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(node.Value, ShouldEqual, 1)
-			So(node.Confidence, ShouldEqual, 1)
+
+			// Confidence is the one-sided posterior over the lean. A six-sigma
+			// lean is near-certain but never exactly certain.
+			So(node.Confidence, ShouldBeGreaterThan, 0.99)
+			So(node.Confidence, ShouldBeLessThan, 1)
 			So(node.At, ShouldEqual, at)
 			So(graph.ForecastHorizon, ShouldEqual, 3)
 			So(graph.ForwardCurve, ShouldBeEmpty)
@@ -559,18 +610,22 @@ func TestExtractManifoldNodes(t *testing.T) {
 
 		NewSolver(nil, nil).extractManifoldNodes(thesis, graph)
 
-		Convey("It should retain the measured phase and realized historical outcome", func() {
-			node := graph.Nodes["man:universe:phase_alignment"]
+		Convey("It should retain the aggregated phase direction from the realized outcomes", func() {
+			node := graph.Nodes["man:universe:phase_direction"]
 			So(node, ShouldNotBeNil)
 			So(node.Kind, ShouldEqual, KindManifold)
-			So(node.Value, ShouldEqual, 0.01)
-			So(node.Strength, ShouldEqual, 0.6)
-			So(node.Confidence, ShouldEqual, 0.6)
-			So(node.Metadata["angle"], ShouldEqual, 0.75)
-			So(node.Metadata["horizon"], ShouldEqual, 2)
-			So(node.Metadata["outcome"], ShouldResemble, types.PhaseOutcome{
-				Direction: "up", Return: 0.01, Horizon: 2,
-			})
+
+			// One similar historical response that resolved up votes with its
+			// full similarity: unanimous support, so balance and confidence
+			// are exact and the direction is up.
+			So(node.Value, ShouldEqual, 1)
+			So(node.Strength, ShouldEqual, 1)
+			So(node.Confidence, ShouldEqual, 1)
+			So(node.At, ShouldEqual, at)
+			So(node.Metadata["support"], ShouldEqual, 0.6)
+			So(node.Metadata["contradiction"], ShouldEqual, 0)
+			So(node.Metadata["balance"], ShouldEqual, 1)
+			So(node.Metadata["responses"], ShouldEqual, 1)
 		})
 	})
 }

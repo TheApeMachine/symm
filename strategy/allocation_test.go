@@ -4,7 +4,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -202,6 +204,74 @@ func TestAdmitBest(t *testing.T) {
 			So(candidate.Action, ShouldEqual, types.ActionNothing)
 			So(candidate.AllocationClass, ShouldEqual, "none")
 			So(candidate.Reason, ShouldContainSubstring, "no position slot")
+		})
+	})
+}
+
+func TestApplyAdverseExcursion(t *testing.T) {
+	Convey("Given the configured default risk multiples", t, func() {
+		defaults := types.DefaultRiskMultiples()
+
+		Convey("It should keep them untouched without calibrated evidence", func() {
+			result := applyAdverseExcursion(defaults, 0.8, false)
+			So(result, ShouldResemble, defaults)
+		})
+
+		Convey("It should keep them untouched on a degenerate estimate", func() {
+			result := applyAdverseExcursion(defaults, 0, true)
+			So(result, ShouldResemble, defaults)
+		})
+
+		Convey("It should scale the risk multiple by the winners' excursion", func() {
+			result := applyAdverseExcursion(defaults, 0.8, true)
+			So(result.Risk, ShouldAlmostEqual, 0.8*defaults.Risk, 1e-12)
+
+			// The other geometry multiples are contract, not excursion.
+			So(result.Trail, ShouldEqual, defaults.Trail)
+			So(result.Arm, ShouldEqual, defaults.Arm)
+			So(result.Lock, ShouldEqual, defaults.Lock)
+		})
+	})
+}
+
+func TestVenueMinimumReason(t *testing.T) {
+	Convey("Given a pair with the venue's stated minimums", t, func() {
+		pair := kraken.InstrumentPair{
+			Symbol:  "SIM/USD",
+			QtyMin:  decimal.NewFromFloat64(0.5),
+			CostMin: decimal.NewFromFloat64(10),
+		}
+
+		Convey("It should admit an order that clears both minimums", func() {
+			So(venueMinimumReason(
+				pair,
+				decimal.NewFromFloat64(1),
+				decimal.NewFromFloat64(100),
+			), ShouldEqual, "")
+		})
+
+		Convey("It should refuse a quantity the venue would reject", func() {
+			So(venueMinimumReason(
+				pair,
+				decimal.NewFromFloat64(0.4),
+				decimal.NewFromFloat64(100),
+			), ShouldEqual, "planner: quantity is below the venue minimum order size")
+		})
+
+		Convey("It should refuse a notional the venue would reject", func() {
+			So(venueMinimumReason(
+				pair,
+				decimal.NewFromFloat64(1),
+				decimal.NewFromFloat64(9),
+			), ShouldEqual, "planner: notional is below the venue minimum order cost")
+		})
+
+		Convey("It should admit any order on a pair that states no minimums", func() {
+			So(venueMinimumReason(
+				kraken.InstrumentPair{Symbol: "SIM/USD"},
+				decimal.NewFromFloat64(0.001),
+				decimal.NewFromFloat64(0.01),
+			), ShouldEqual, "")
 		})
 	})
 }

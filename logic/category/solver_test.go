@@ -166,6 +166,124 @@ func TestUpdate(t *testing.T) {
 		})
 	})
 
+	Convey("Given the full corroborated ignition complex", t, func() {
+		thesis := categoryThesis(t)
+		ignition := 0.8
+		spectralRadius := 0.9
+		thin := 0.7
+		drive := 0.6
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.AppendMeasurements([]*types.Measurement{
+			{
+				Source: types.SourcePumpDump,
+				Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricIgnition, types.SideNone): {
+						Normalized: &ignition,
+					},
+				},
+			},
+			{
+				Source: types.SourceHawkes,
+				Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricSpectralRadius, types.SideNone): {
+						Normalized: &spectralRadius,
+					},
+				},
+			},
+			{
+				Source: types.SourceDepthFlow,
+				Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricThinScore, types.SideNone): {
+						Normalized: &thin,
+					},
+				},
+			},
+			{
+				Source: types.SourceCVD,
+				Symbol: "BTC/USD",
+				Metrics: map[string]types.MetricSample{
+					types.MetricKey(types.MetricDrive, types.SideNone): {
+						Normalized: &drive,
+					},
+				},
+			},
+		})
+		thesis.Symbols.Store("BTC/USD", symbol)
+		stampCategorySignals(thesis, "BTC/USD")
+
+		err := NewSolver(nil, nil, nil).Update(thesis)
+
+		Convey("It should carry the four-leg conjunction as one evidence mass", func() {
+			stored, found := symbol.Categories.Load("BTC/USD")
+			So(err, ShouldBeNil)
+			So(found, ShouldBeTrue)
+
+			var composite *types.Category
+
+			for index, category := range stored.([]types.Category) {
+				if category.Type == types.VerticalIgnition {
+					composite = &stored.([]types.Category)[index]
+					break
+				}
+			}
+
+			So(composite, ShouldNotBeNil)
+			So(composite.Strength, ShouldAlmostEqual, 0.741559, 1e-5)
+			So(composite.Supporting, ShouldHaveLength, 4)
+		})
+	})
+
+	Convey("Given a weak corroborating leg beside a strong ignition", t, func() {
+		thesis := categoryThesis(t)
+		ignition := 0.9
+		drive := 0.2
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.AppendMeasurements([]*types.Measurement{{
+			Source: types.SourcePumpDump,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricIgnition, types.SideNone): {
+					Normalized: &ignition,
+				},
+			},
+		}})
+		symbol.AppendMeasurements([]*types.Measurement{{
+			Source: types.SourceCVD,
+			Symbol: "BTC/USD",
+			Metrics: map[string]types.MetricSample{
+				types.MetricKey(types.MetricDrive, types.SideNone): {
+					Normalized: &drive,
+				},
+			},
+		}})
+		thesis.Symbols.Store("BTC/USD", symbol)
+		stampCategorySignals(thesis, "BTC/USD")
+
+		err := NewSolver(nil, nil, nil).Update(thesis)
+
+		Convey("It should drag the composite below its strongest leg", func() {
+			stored, found := symbol.Categories.Load("BTC/USD")
+			So(err, ShouldBeNil)
+			So(found, ShouldBeTrue)
+
+			var composite *types.Category
+
+			for index, category := range stored.([]types.Category) {
+				if category.Type == types.VerticalIgnition {
+					composite = &stored.([]types.Category)[index]
+					break
+				}
+			}
+
+			So(composite, ShouldNotBeNil)
+			So(composite.Strength, ShouldAlmostEqual, math.Sqrt(0.18), 1e-9)
+			So(composite.Strength, ShouldBeLessThan, ignition)
+		})
+	})
+
 	Convey("Given a fitted Hawkes spectral radius", t, func() {
 		thesis := categoryThesis(t)
 		spectralRadius := 0.73

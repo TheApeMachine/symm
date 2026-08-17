@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -135,6 +136,8 @@ func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
 			done[solver.Name()] = "done"
 		}
 
+		utils.Publish(analyzer.ui, datura.NewMap("activity", running))
+
 		group, _ := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
@@ -169,6 +172,8 @@ func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
 				waitErr,
 			))
 		}
+
+		utils.Publish(analyzer.ui, datura.NewMap("activity", done))
 
 		previousEnd = time.Now()
 	}

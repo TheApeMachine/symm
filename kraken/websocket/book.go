@@ -26,6 +26,8 @@ type Book struct {
 	normalizer *spot.Normalizer
 	updates    chan<- string
 	events     chan<- kraken.Level3Data
+	resync     func(string)
+	diverging  map[string]struct{}
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -42,6 +44,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 		status:     types.INITIALIZING,
 		manager:    spot.NewBookManager(),
 		normalizer: normalizer,
+		diverging:  map[string]struct{}{},
 	}
 
 	book.manager.OnCreateBook.Recurring(func(
@@ -131,6 +134,17 @@ func (book *Book) SetEvents(events chan<- kraken.Level3Data) {
 	book.mu.Unlock()
 }
 
+/*
+SetResync connects checksum-divergence recovery to the owning transport. The
+callback owns the venue conversation: unsubscribe the diverged symbol and
+resubscribe so the venue delivers a fresh snapshot.
+*/
+func (book *Book) SetResync(resync func(string)) {
+	book.mu.Lock()
+	book.resync = resync
+	book.mu.Unlock()
+}
+
 func (book *Book) Update(
 	event *callback.Event[*sdk.WebSocketMessage],
 	payload *kraken.Level3,
@@ -144,13 +158,20 @@ func (book *Book) Update(
 	}
 
 	book.mu.Lock()
-	accepted, err := book.apply(payload)
+	accepted, resynced, applyErr := book.apply(payload)
 	updates := book.updates
 	events := book.events
+	resync := book.resync
 	book.mu.Unlock()
 
-	if err != nil {
-		return err
+	if len(resynced) > 0 && resync != nil {
+		for _, symbol := range resynced {
+			go resync(symbol)
+		}
+	}
+
+	if applyErr != nil {
+		return applyErr
 	}
 
 	for _, data := range accepted {
@@ -178,10 +199,15 @@ apply mutates one complete venue frame while the caller owns the book lock.
 Transport publication happens only after this method returns and the lock is
 released, so downstream backpressure cannot prevent pricing readers from
 observing the accepted frame.
+
+A symbol whose local state has failed a venue checksum stays diverged until a
+fresh snapshot replaces it: further deltas would only decorate state that is
+already known wrong, so they are dropped. Newly diverged symbols are reported
+once, for the owning transport to resubscribe.
 */
 func (book *Book) apply(
 	payload *kraken.Level3,
-) (accepted []kraken.Level3Data, err error) {
+) (accepted []kraken.Level3Data, resynced []string, err error) {
 	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
 
 	for index, data := range payload.Data {
@@ -192,11 +218,19 @@ func (book *Book) apply(
 			continue
 		}
 
+		_, diverged := book.diverging[data.Symbol]
+
 		if payload.Type == "snapshot" {
+			delete(book.diverging, data.Symbol)
+			diverged = false
 			symbolBook = book.manager.CreateBook(
 				data.Symbol,
 				symbolBook.MaxDepth,
 			)
+		}
+
+		if diverged {
+			continue
 		}
 
 		book.pruneNilLevels(symbolBook)
@@ -223,7 +257,7 @@ func (book *Book) apply(
 				)
 
 				if err != nil {
-					return nil, fmt.Errorf(
+					return nil, nil, fmt.Errorf(
 						"level3 normalize %s price: %w",
 						data.Symbol,
 						err,
@@ -247,7 +281,7 @@ func (book *Book) apply(
 					)
 
 					if err != nil {
-						return nil, fmt.Errorf(
+						return nil, nil, fmt.Errorf(
 							"level3 normalize %s quantity: %w",
 							data.Symbol,
 							err,
@@ -336,7 +370,19 @@ func (book *Book) apply(
 			))
 
 			if !checksum.Match {
-				return nil, errnie.Error(errnie.Err(
+				// The venue checksum is authority. Local state is known wrong,
+				// so it is discarded rather than kept serving corrupt depth,
+				// the symbol is marked diverged so later deltas are dropped,
+				// and the transport is asked to resubscribe — only a fresh
+				// snapshot restores trust.
+				book.manager.CreateBook(data.Symbol, symbolBook.MaxDepth)
+
+				if _, marked := book.diverging[data.Symbol]; !marked {
+					book.diverging[data.Symbol] = struct{}{}
+					resynced = append(resynced, data.Symbol)
+				}
+
+				return nil, resynced, errnie.Error(errnie.Err(
 					errnie.Validation,
 					fmt.Sprintf(
 						"level3 checksum mismatch for %s: local %s, server %s",
@@ -352,7 +398,7 @@ func (book *Book) apply(
 		accepted = append(accepted, data)
 	}
 
-	return accepted, nil
+	return accepted, resynced, nil
 }
 
 func (book *Book) pruneNilLevels(symbolBook *spotbook.Book) {

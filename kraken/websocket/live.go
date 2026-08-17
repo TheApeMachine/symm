@@ -220,6 +220,7 @@ func NewWithClient(
 	if endpoint == Level3WebSocketURL {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx, live.normalizer)
+		live.book.SetResync(live.resyncLevel3Symbol)
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
@@ -590,9 +591,38 @@ func (live *Live) restoreLevel3Subscription() {
 		return
 	}
 
+	pace := viper.GetDuration("market.subscribe.pace")
+
 	for symbols := range slices.Chunk(live.symbols, 40) {
 		errnie.Error(live.client.SubL3(symbols, viper.GetInt("market.l3_depth")))
+		time.Sleep(pace)
 	}
+}
+
+/*
+resyncLevel3Symbol recovers one symbol whose local Level 3 book failed the
+venue checksum. Unsubscribe ends the diverged delta stream and the paced
+resubscribe delivers a fresh snapshot, which is the only state that restores
+the book to authority.
+*/
+func (live *Live) resyncLevel3Symbol(symbol string) {
+	if live == nil || live.client == nil || symbol == "" {
+		return
+	}
+
+	pace := viper.GetDuration("market.subscribe.pace")
+
+	errnie.Error(live.client.SendPrivate(map[string]any{
+		"method": "unsubscribe",
+		"params": map[string]any{
+			"channel": "level3",
+			"symbol":  []string{symbol},
+		},
+	}))
+
+	time.Sleep(pace)
+
+	errnie.Error(live.client.SubL3([]string{symbol}, viper.GetInt("market.l3_depth")))
 }
 
 func (live *Live) SubL3(symbols []string) {
@@ -632,7 +662,7 @@ func (live *Live) SubL3(symbols []string) {
 			}
 
 			conn.Client().SubL3(group, viper.GetInt("market.l3_depth"))
-			time.Sleep(viper.GetDuration("market.subscribe_pace"))
+			time.Sleep(viper.GetDuration("market.subscribe.pace"))
 		}
 	}
 }

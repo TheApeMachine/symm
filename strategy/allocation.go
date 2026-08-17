@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -32,6 +33,50 @@ func NewAllocation(
 }
 
 /*
+applyAdverseExcursion tightens the assumed risk multiple toward the excursion
+the evidence has actually observed winners survive. Excursions are stated in
+the risk distances the finishing lots carried, so the derived multiple is the
+excursion times the multiple those lots were entered under. An absent or
+degenerate estimate leaves the default geometry untouched.
+*/
+func applyAdverseExcursion(
+	multiples types.RiskMultiples,
+	excursion float64,
+	ready bool,
+) types.RiskMultiples {
+	if !ready || !(excursion > 0) || multiples.Risk <= 0 {
+		return multiples
+	}
+
+	multiples.Risk = excursion * multiples.Risk
+
+	return multiples
+}
+
+/*
+riskMultiples returns the stop geometry multiples for this entry: the
+configured defaults, tightened to the calibrated winners' adverse-excursion
+quantile once the desk's first-passage model has enough finished winners to
+speak.
+*/
+func (allocation *Allocation) riskMultiples() types.RiskMultiples {
+	multiples := types.DefaultRiskMultiples()
+	confidence := 0.95
+
+	config := system.Cfg.Snapshot()
+
+	if config != nil && config.Regulator != nil &&
+		config.Regulator.OptimizationConfidence > 0 &&
+		config.Regulator.OptimizationConfidence < 1 {
+		confidence = config.Regulator.OptimizationConfidence
+	}
+
+	excursion, ready := allocation.desk.PassageAdverseQuantile(confidence)
+
+	return applyAdverseExcursion(multiples, excursion, ready)
+}
+
+/*
 Calculate turns structurally admitted candidates into current executable orders.
 It observes only present book depth, fees, capital, and risk geometry. Whether a
 candidate deserves capital was decided by the evidence graph; allocation does
@@ -47,6 +92,8 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			nil,
 		))
 	}
+
+	multiples := allocation.riskMultiples()
 
 	hasEntry := false
 
@@ -173,7 +220,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			ExitFeeRate:    feeRate,
 			EntryFeeRate:   feeRate,
 			MaxLoss:        notionalBudget,
-			Multiples:      types.DefaultRiskMultiples(),
+			Multiples:      multiples,
 		})
 
 		if !riskPlan.Present {
@@ -201,7 +248,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 				ExitFeeRate:    feeRate,
 				EntryFeeRate:   feeRate,
 				MaxLoss:        notionalBudget,
-				Multiples:      types.DefaultRiskMultiples(),
+				Multiples:      multiples,
 			})
 
 			if !riskPlan.Present {
@@ -209,6 +256,16 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 				decision.Reason = "planner: risk-capped execution geometry is invalid"
 				continue
 			}
+		}
+
+		// The venue refuses orders below its own stated minimum quantity and
+		// cost. Refusing them here, after risk capping has settled the final
+		// size, replaces an exchange rejection at execution time with an
+		// observable decision reason.
+		if reason := venueMinimumReason(pair, quantity, cost.GrossNotional); reason != "" {
+			decision.Action = types.ActionNothing
+			decision.Reason = reason
+			continue
 		}
 
 		horizon := max(0, decision.ForecastHorizon)
@@ -347,6 +404,31 @@ func admitBest(
 		decision.Stoploss = nil
 		decision.Reason = "planner: no position slot available for allocation"
 	}
+}
+
+/*
+venueMinimumReason states why the venue would refuse the order as sized, or
+returns an empty string when the venue's stated minimums admit it. Kraken
+quotes a minimum quantity and a minimum total cost per pair; an order below
+either is rejected by the exchange at execution time, so it is refused at
+allocation with an observable reason instead.
+*/
+func venueMinimumReason(
+	pair kraken.InstrumentPair,
+	quantity *decimal.Decimal,
+	grossNotional *decimal.Decimal,
+) string {
+	if pair.QtyMin != nil && pair.QtyMin.Sign() > 0 &&
+		quantity.Cmp(pair.QtyMin) < 0 {
+		return "planner: quantity is below the venue minimum order size"
+	}
+
+	if pair.CostMin != nil && pair.CostMin.Sign() > 0 &&
+		grossNotional.Cmp(pair.CostMin) < 0 {
+		return "planner: notional is below the venue minimum order cost"
+	}
+
+	return ""
 }
 
 func occupiedSymbols(desk *broker.Desk) map[string]bool {

@@ -29,11 +29,17 @@ func (signal *measurementSignal) Type() types.SourceType {
 	return signal.source
 }
 
-func (signal *measurementSignal) Measure(*types.Symbol, ...int64) []*types.Measurement {
+func (signal *measurementSignal) Measure(
+	_ *types.Symbol, ticks ...int64,
+) []*types.Measurement {
 	signal.calls.Add(1)
 
 	if signal.measurement == nil {
 		return nil
+	}
+
+	if len(ticks) > 0 {
+		signal.measurement.Tick = ticks[0]
 	}
 
 	return []*types.Measurement{signal.measurement}

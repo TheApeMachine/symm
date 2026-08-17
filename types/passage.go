@@ -2,6 +2,7 @@ package types
 
 import (
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -212,12 +213,19 @@ does, and one seen a thousand times answers for itself. Nothing ever reaches 0%
 or 100%, because the top of the hierarchy is a uniform prior that no amount of
 evidence can be subtracted from.
 
+It also retains the realized adverse excursion of every winning episode: how
+far a lot that eventually reached profit first traveled against its entry, in
+risk distances. That distribution is what a hard floor needs to survive — a
+floor tighter than the excursions winners actually survive converts them into
+losses.
+
 The zero value is usable and answers with the prior.
 */
 type PassageModel struct {
 	mutex   sync.RWMutex
 	buckets map[string]*passageCounts
 	total   float64
+	winners []float64
 }
 
 /*
@@ -346,6 +354,86 @@ func (model *PassageModel) Total() float64 {
 	defer model.mutex.RUnlock()
 
 	return model.total
+}
+
+/*
+Fold records one finished episode into the competing-risk model and retains
+the winner's adverse excursion for stop calibration. Censored episodes — ones
+that ended for reasons unrelated to either boundary — still count for the
+passage probabilities but contribute no excursion, because their boundary was
+never allowed to decide.
+*/
+func (model *PassageModel) Fold(episode PassageEpisode) {
+	if model == nil {
+		return
+	}
+
+	model.ObserveEpisode(episode.Observations, episode.Outcome)
+
+	if episode.Censored || episode.Outcome != OutcomeProfitFirst {
+		return
+	}
+
+	if math.IsNaN(episode.MaxAdverse) || math.IsInf(episode.MaxAdverse, 0) ||
+		episode.MaxAdverse < 0 {
+		return
+	}
+
+	model.mutex.Lock()
+	defer model.mutex.Unlock()
+
+	if model.winners == nil {
+		model.winners = make([]float64, 0, passageLocalSupport)
+	}
+
+	model.winners = append(model.winners, episode.MaxAdverse)
+}
+
+/*
+AdverseQuantile states the excursion, in risk distances, that the supplied
+share of winners stayed within. It is the calibrated replacement input for the
+assumed Risk multiple: a floor at this excursion preserves that share of the
+winners the evidence has actually observed.
+
+The estimate carries a censoring bound that callers must respect: a winner's
+excursion can never exceed the floor it survived, so the distribution is
+truncated at one risk distance and the quantile is a lower bound on the
+excursions a wider floor would have revealed. It tightens geometry toward what
+was observed; it must never be read as proof deeper excursions do not exist.
+
+Not ready until enough winners have finished to speak for themselves.
+*/
+func (model *PassageModel) AdverseQuantile(confidence float64) (float64, bool) {
+	if model == nil || confidence <= 0 || confidence >= 1 {
+		return 0, false
+	}
+
+	model.mutex.RLock()
+
+	if len(model.winners) < int(passageLocalSupport) {
+		model.mutex.RUnlock()
+		return 0, false
+	}
+
+	samples := append([]float64(nil), model.winners...)
+
+	model.mutex.RUnlock()
+
+	slices.Sort(samples)
+
+	position := confidence * float64(len(samples)-1)
+
+	lower := math.Floor(position)
+	upper := math.Ceil(position)
+	weight := position - lower
+
+	value := samples[int(lower)]*(1-weight) + samples[int(upper)]*weight
+
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return 0, false
+	}
+
+	return value, true
 }
 
 /*

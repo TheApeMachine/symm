@@ -106,6 +106,33 @@ func newBrokerStoploss(testingTB testing.TB) *types.Stoploss {
 	return stoploss
 }
 
+func TestPositionStoreCheckpointRetention(t *testing.T) {
+	Convey("Given more completed rounds than the retention window", t, func() {
+		store := newPositionStoreFixture(t)
+		thesis := types.NewThesis(t.Context(), nil)
+
+		for round := range checkpointRetention + 8 {
+			thesis.Tick = int64(round)
+			So(store.SaveThesis(thesis), ShouldBeNil)
+		}
+
+		var retained int
+		So(store.database.QueryRow(
+			"SELECT COUNT(*) FROM thesis_checkpoints",
+		).Scan(&retained), ShouldBeNil)
+
+		Convey("It should keep only the newest checkpoints", func() {
+			So(retained, ShouldEqual, checkpointRetention)
+
+			var firstTick int64
+			So(store.database.QueryRow(
+				"SELECT json_extract(state, '$.tick') FROM thesis_checkpoints ORDER BY id LIMIT 1",
+			).Scan(&firstTick), ShouldBeNil)
+			So(firstTick, ShouldEqual, 8)
+		})
+	})
+}
+
 func BenchmarkPositionStoreSave(b *testing.B) {
 	store := newPositionStoreFixture(b)
 	stoploss := newBrokerStoploss(b)

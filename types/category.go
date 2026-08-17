@@ -31,6 +31,19 @@ type CategorySchema struct {
 /*
 CategorySchemas maps signal scores to the category evidence they already
 represent. Repeated categories are combined by the nomagique classifier path.
+
+VerticalIgnition is the corroborated ignition complex: PumpDump's volume
+breakout anchors it, with Hawkes' near-critical cascade clustering, DepthFlow's
+hollow ask book, and CVD's aggressive drive as corroborating legs. The
+classifier combines a category's legs by geometric mean, which is a
+conjunction — any weak leg drags the composite down, so the category only
+carries mass when the whole complex agrees, with no fixed thresholds anywhere.
+Absent legs simply do not contribute.
+
+The classifier breaks exact score ties by first appearance in this list, so
+the corroborating rows must stay after every single-axis row they extend: one
+source's evidence alone keeps its own single-axis label, and only the
+corroborated complex carries the ignition name.
 */
 var CategorySchemas = []CategorySchema{
 	{Source: SourceCorrelation, Metric: MetricHerdScore, Category: SystemicHerd},
@@ -58,7 +71,6 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceLeadLag, Metric: MetricSync, Category: SynchronizedDrift},
 	{Source: SourceLeadLag, Metric: MetricDecoupled, Category: DecoupledMove},
 	{Source: SourceLeadLag, Metric: MetricStall, Category: AnchorStall},
-	{Source: SourcePumpDump, Metric: MetricIgnition, Category: VerticalIgnition},
 	{Source: SourcePumpDump, Metric: MetricCompression, Category: CoiledCompression},
 	{Source: SourcePumpDump, Metric: MetricTrend, Category: OrganicTrend},
 	{Source: SourcePumpDump, Metric: MetricExhaustion, Category: FadedExhaustion},
@@ -66,6 +78,10 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceSentiment, Metric: MetricSurgeScore, Category: RiskOnSurge},
 	{Source: SourceSentiment, Metric: MetricDivergentScore, Category: DivergentMove},
 	{Source: SourceSentiment, Metric: MetricSlumpScore, Category: SystemicSlump},
+	{Source: SourcePumpDump, Metric: MetricIgnition, Category: VerticalIgnition},
+	{Source: SourceCVD, Metric: MetricDrive, Category: VerticalIgnition},
+	{Source: SourceHawkes, Metric: MetricSpectralRadius, Category: VerticalIgnition},
+	{Source: SourceDepthFlow, Metric: MetricThinScore, Category: VerticalIgnition},
 }
 
 type CategoryType string

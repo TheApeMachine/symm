@@ -242,6 +242,55 @@ func TestPassageScenarioHoldEV(t *testing.T) {
 	})
 }
 
+func TestPassageModelFoldAdverseQuantile(t *testing.T) {
+	Convey("Given a model folding finished winners and losers", t, func() {
+		model := types.NewPassageModel()
+
+		for index := range 10 {
+			model.Fold(types.PassageEpisode{
+				Outcome:    types.OutcomeProfitFirst,
+				MaxAdverse: 0.2 + float64(index)*0.1,
+			})
+			model.Fold(types.PassageEpisode{
+				Outcome:    types.OutcomeLossFirst,
+				MaxAdverse: 5.0,
+			})
+			model.Fold(types.PassageEpisode{
+				Outcome:    types.OutcomeProfitFirst,
+				MaxAdverse: 9.0,
+				Censored:   true,
+			})
+		}
+
+		Convey("It should refuse to speak before support", func() {
+			_, ready := model.AdverseQuantile(0.95)
+			So(ready, ShouldBeFalse)
+		})
+
+		model.Fold(types.PassageEpisode{
+			Outcome:    types.OutcomeProfitFirst,
+			MaxAdverse: 0.5,
+		})
+		model.Fold(types.PassageEpisode{
+			Outcome:    types.OutcomeProfitFirst,
+			MaxAdverse: 0.8,
+		})
+
+		Convey("It should quantify only the uncensored winners", func() {
+			excursion, ready := model.AdverseQuantile(0.5)
+			So(ready, ShouldBeTrue)
+
+			// Twelve winners retained: 0.2..1.1 plus 0.5 and 0.8. The
+			// median of the sorted samples is 0.65.
+			So(excursion, ShouldAlmostEqual, 0.65, 1e-12)
+
+			lower, stillReady := model.AdverseQuantile(1.0 / 3.0)
+			So(stillReady, ShouldBeTrue)
+			So(lower, ShouldAlmostEqual, 0.5, 1e-12)
+		})
+	})
+}
+
 func BenchmarkPassageModelObserveEpisode(b *testing.B) {
 	model := types.NewPassageModel()
 	observations := make([]types.PassageFeatures, 128)

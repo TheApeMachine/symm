@@ -2,8 +2,13 @@ package trader
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
 
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -62,14 +67,16 @@ func NewMeasurements(
 Generate measures one transport arrival without turning the stream into a
 resident inbox topology.
 
-Each symbol is owned by one transient goroutine, and all symbol-local signals
-execute serially inside it. That preserves symbol event order while still
-allowing independent symbols to progress in parallel. Cross-sectional signals
-execute once each and receive the complete thesis universe.
+Only the signals that own this arrival's receivers run, so a ticker epoch does
+not pay for book-only conditioners. Cross-sectional cohort signals execute once
+each, before any symbol-local work, in signal order: the graph solver resolves
+duplicate claims by arrival, so one arrival must always produce the same
+evidence sequence. Symbol-local signals then execute serially inside one
+transient goroutine per symbol, which preserves symbol event order while
+independent symbols progress in parallel.
 
-The UI receives one start frame for the whole measurement cut and one completion
-frame containing every produced Measurement. Signal activity is a map inside
-those frames, rather than a stream of tiny running/done messages.
+The UI receives one start frame for the whole measurement cut and one
+completion frame containing every produced Measurement.
 */
 func (measurements *Measurements) Generate(
 	thesis *types.Thesis, receivers []types.SourceType,
@@ -77,15 +84,13 @@ func (measurements *Measurements) Generate(
 	thesis.Tick++
 	tick := thesis.Tick
 
-	utils.Publish(
-		measurements.ui,
-		datura.NewMap(
-			"tick", datura.NewMap("count", thesis.Tick),
-		),
-	)
+	receiverSet := make(map[types.SourceType]struct{}, len(receivers))
 
-	group, _ := errgroup.WithContext(measurements.ctx)
-	out := make([]*types.Measurement, 0)
+	for _, receiver := range receivers {
+		receiverSet[receiver] = struct{}{}
+	}
+
+	symbols := make([]*types.Symbol, 0)
 
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbol, ok := value.(*types.Symbol)
@@ -95,26 +100,101 @@ func (measurements *Measurements) Generate(
 		}
 
 		symbol.Tick = tick
-
-		group.Go(func() error {
-			for _, signal := range measurements.signals {
-				measurements := signal.Measure(symbol)
-				symbol.AppendMeasurements(measurements)
-
-				if symbol.Symbol == types.Focus() {
-					out = append(out, measurements...)
-				}
-			}
-
-			return nil
-		})
-
-		utils.Publish(measurements.ui, datura.NewMap("measurements", out))
+		symbols = append(symbols, symbol)
 
 		return true
 	})
 
-	return group.Wait()
+	// One deterministic cut order: sync.Map range order is unspecified, and a
+	// stable sequence keeps cohort rows and completion frames replayable.
+	slices.SortFunc(symbols, func(left, right *types.Symbol) int {
+		return strings.Compare(left.Symbol, right.Symbol)
+	})
+
+	owners := make(map[string]*types.Symbol, len(symbols))
+
+	for _, symbol := range symbols {
+		owners[symbol.Symbol] = symbol
+	}
+
+	running := datura.NewMap()
+	done := datura.NewMap()
+	cohorts := make([]types.CohortSignal, 0)
+	localSignals := make([]types.Signal, 0)
+
+	for _, signal := range measurements.signals {
+		if _, selected := receiverSet[signal.Type()]; !selected {
+			continue
+		}
+
+		running[signal.Name()] = "running"
+		done[signal.Name()] = "done"
+
+		if cohort, crossSectional := signal.(types.CohortSignal); crossSectional {
+			cohorts = append(cohorts, cohort)
+			continue
+		}
+
+		localSignals = append(localSignals, signal)
+	}
+
+	utils.Publish(measurements.ui, datura.NewMap(
+		"tick", datura.NewMap("count", thesis.Tick),
+		"activity", running,
+	))
+
+	var measuredMu sync.Mutex
+	measured := make([]*types.Measurement, 0)
+
+	collect := func(rows []*types.Measurement) {
+		measuredMu.Lock()
+		defer measuredMu.Unlock()
+		measured = append(measured, rows...)
+	}
+
+	for _, cohort := range cohorts {
+		rows := cohort.MeasureCohort(symbols, tick)
+
+		for _, row := range rows {
+			owner, found := owners[row.Symbol]
+
+			if !found {
+				return fmt.Errorf(
+					"trader: cohort row for unknown symbol %s",
+					row.Symbol,
+				)
+			}
+
+			owner.AppendMeasurements([]*types.Measurement{row})
+		}
+
+		collect(rows)
+	}
+
+	group, _ := errgroup.WithContext(measurements.ctx)
+
+	for _, symbol := range symbols {
+		symbol := symbol
+
+		group.Go(func() error {
+			for _, signal := range localSignals {
+				rows := signal.Measure(symbol, tick)
+				symbol.AppendMeasurements(rows)
+				collect(rows)
+			}
+
+			return nil
+		})
+	}
+
+	err := group.Wait()
+
+	utils.Publish(measurements.ui, datura.NewMap(
+		"activity", done,
+		"measurements", measured,
+	))
+
+	return err
 }
 
 /*
@@ -133,7 +213,11 @@ func (measurements *Measurements) Close() error {
 		}
 
 		if err := signal.Close(); err != nil {
-			return err
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"trader: failed to close signal",
+				err,
+			))
 		}
 	}
 

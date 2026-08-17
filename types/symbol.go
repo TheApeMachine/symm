@@ -269,10 +269,36 @@ func (symbol *Symbol) AppendMeasurements(measurements []*Measurement) {
 		graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 		manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 
+		symbol.retainLatest(measurement)
+
 		symbol.AppendResonanceMeasurement(
 			MeasurementToResonance(symbol.Symbol, measurement),
 		)
 	}
+}
+
+/*
+retainLatest keeps the newest row each source produced. The solver queues are
+drained on every analysis cut, so the latest observation would otherwise leave
+memory with the queue and no durable per-source record would remain.
+*/
+func (symbol *Symbol) retainLatest(measurement *Measurement) {
+	if measurement == nil || measurement.Source == "" {
+		return
+	}
+
+	key := string(measurement.Source)
+	stored, found := symbol.Latest.Load(key)
+
+	if found {
+		latest, ok := stored.(*Measurement)
+
+		if ok && latest != nil && !measurement.At.After(latest.At) {
+			return
+		}
+	}
+
+	symbol.Latest.Store(key, measurement)
 }
 
 /*

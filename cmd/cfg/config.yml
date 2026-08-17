@@ -113,7 +113,9 @@ trading:
   allocation:
     # Hard per-entry quote-notional ceiling. This is not a risk target: the
     # planner may reduce it once calibrated loss and liquidity budgets exist.
-    max_fraction: 0.20
+    # Live evidence: at 0.20 a small book produced no executable quantity on
+    # every pair whose lot step exceeded the fraction's unit size.
+    max_fraction: 0.50
   slots:
     normal: 2
     # Dormant for planner-generated entries until an early-information sleeve

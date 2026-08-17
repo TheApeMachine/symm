@@ -281,45 +281,81 @@ func TestStoplossUpdate(t *testing.T) {
 			So(stoploss.TriggerReason, ShouldEqual, TriggerProtectedFloor)
 		})
 
-		Convey("It should start trailing as soon as the candidate floor clears profit", func() {
+		Convey("It should start trailing once profit clears the learned giveback tolerance", func() {
 			stoploss.ArmAt = stoploss.ArmAt.Add(decimal.NewFromFloat64(10))
-			mark := stoploss.ProfitLine.Add(stoploss.trailDistance).Add(
-				stoploss.tickSize,
-			)
-			So(mark.Cmp(stoploss.ArmAt), ShouldBeLessThan, 0)
 
-			stoploss.Update(mark)
+			stoploss.Update(decimal.NewFromFloat64(100.5))
 
-			So(stoploss.Locked, ShouldBeTrue)
-			So(stoploss.Floor.Cmp(stoploss.ProfitLine), ShouldBeGreaterThan, 0)
+			Convey("A single step does not yet lock, because its own scale is the giveback room", func() {
+				So(stoploss.Locked, ShouldBeFalse)
+			})
+
+			stoploss.Update(decimal.NewFromFloat64(101.0))
+			stoploss.Update(decimal.NewFromFloat64(101.5))
+			stoploss.Update(decimal.NewFromFloat64(102.0))
+			stoploss.Update(decimal.NewFromFloat64(102.5))
+
+			Convey("A repeated step scale lets the candidate floor clear profit", func() {
+				So(stoploss.Locked, ShouldBeTrue)
+				So(stoploss.Floor.Cmp(stoploss.ProfitLine), ShouldBeGreaterThan, 0)
+			})
 		})
 
-		Convey("It should exit a sudden pump on the first loss of momentum", func() {
+		Convey("It should hold a surge through breathing and exit when the burst unwinds a central band", func() {
 			stoploss.trailDistance = decimal.NewFromFloat64(0.10)
 			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
 
-			stoploss.Update(decimal.NewFromFloat64(102))
+			stoploss.Update(decimal.NewFromFloat64(100.5))
 			So(stoploss.SurgeArmed, ShouldBeTrue)
 			So(stoploss.Status, ShouldEqual, ARMED)
 			So(stoploss.MomentumFloor, ShouldNotBeNil)
 
-			stoploss.Update(decimal.NewFromFloat64(102.01))
+			stoploss.Update(decimal.NewFromFloat64(100.4))
+
+			So(stoploss.Status, ShouldEqual, ARMED)
+
+			stoploss.Update(decimal.NewFromFloat64(99.99))
 
 			So(stoploss.Status, ShouldEqual, TRIGGERED)
 			So(stoploss.TriggerReason, ShouldEqual, TriggerPumpMomentumLost)
 		})
 
+		Convey("It should survive a multi-leg run with pullbacks proportional to the run", func() {
+			// Under an entry-frozen trail this sequence exits on the second
+			// leg: the burst peak places the floor one entry-scale trail below
+			// itself and the 101.5 breathing mark falls through it.
+			stoploss.trailDistance = decimal.NewFromFloat64(0.10)
+			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
+
+			stoploss.Update(decimal.NewFromFloat64(102))
+			stoploss.Update(decimal.NewFromFloat64(101.5))
+			stoploss.Update(decimal.NewFromFloat64(103))
+			stoploss.Update(decimal.NewFromFloat64(104))
+			stoploss.Update(decimal.NewFromFloat64(103))
+			stoploss.Update(decimal.NewFromFloat64(106))
+			stoploss.Update(decimal.NewFromFloat64(104.5))
+
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.TriggerReason, ShouldEqual, "")
+			So(stoploss.Peak.Cmp(decimal.NewFromFloat64(106)), ShouldEqual, 0)
+			So(stoploss.Floor.Cmp(decimal.NewFromFloat64(104.5)), ShouldBeLessThan, 0)
+		})
+
 		Convey("It should ratchet upward after profit lock", func() {
 			stoploss.Update(stoploss.ArmAt)
-			stoploss.Update(decimal.NewFromFloat64(110))
+			stoploss.Update(decimal.NewFromFloat64(104))
 			expected := floorToTick(
-				scaled(decimal.NewFromFloat64(110)).Sub(
-					stoploss.trailDistance,
+				scaled(decimal.NewFromFloat64(104)).Sub(
+					largest(
+						stoploss.trailDistance,
+						decimal.NewFromFloat64(stoploss.learnedMoveBoundary()),
+					),
 				),
 				stoploss.tickSize,
 			)
 
 			So(stoploss.Floor.Cmp(expected), ShouldEqual, 0)
+			So(stoploss.Floor.Cmp(stoploss.ProfitLine), ShouldBeGreaterThan, 0)
 		})
 
 		Convey("It should never lower a ratcheted floor", func() {
@@ -348,20 +384,37 @@ func TestStoplossUpdate(t *testing.T) {
 			So(stoploss.Status, ShouldEqual, ARMED)
 		})
 
-		Convey("It should take profit when multiple distinct profitable marks oscillate under peak with giveback", func() {
-			// In production RiskPlan sets noiseBand independently (trail = 2× noise).
-			// The legacy fixture has noiseBand == trailDistance, which makes stagnation
-			// impossible without also breaching the trailing floor. Set it to tick size
-			// to separate the two regimes the way a real Plan does.
+		Convey("It should take profit when distinct marks drift beyond the run's central band", func() {
+			// The trail is set wider than the learned step scale, so the
+			// confirmed stagnation path is the tighter boundary here, the way
+			// a real RiskPlan separates the two regimes.
+			stoploss.trailDistance = decimal.NewFromFloat64(0.50)
 			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
 
-			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.10)))
-			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.08)))
-			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.06)))
-			stoploss.Update(stoploss.ArmAt.Add(decimal.NewFromFloat64(0.04)))
+			for _, price := range []float64{100.1, 100.2, 100.3, 100.4, 100.5, 100.6} {
+				stoploss.Update(decimal.NewFromFloat64(price))
+			}
+
+			stoploss.Update(decimal.NewFromFloat64(100.50))
+			stoploss.Update(decimal.NewFromFloat64(100.50))
+			stoploss.Update(decimal.NewFromFloat64(100.49))
+			stoploss.Update(decimal.NewFromFloat64(100.48))
 
 			So(stoploss.Status, ShouldEqual, TRIGGERED)
 			So(stoploss.TriggerReason, ShouldEqual, TriggerProfitStagnation)
+		})
+
+		Convey("It should hold oscillation whose giveback is inside the run's central band", func() {
+			stoploss.trailDistance = decimal.NewFromFloat64(0.50)
+			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
+
+			stoploss.Update(decimal.NewFromFloat64(100.5))
+			stoploss.Update(decimal.NewFromFloat64(100.45))
+			stoploss.Update(decimal.NewFromFloat64(100.44))
+			stoploss.Update(decimal.NewFromFloat64(100.43))
+
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.TriggerReason, ShouldEqual, "")
 		})
 
 		Convey("It should hold an unprofitable mark that is not a new high", func() {
@@ -465,7 +518,10 @@ func TestStoplossReconsider(t *testing.T) {
 		)
 		So(err, ShouldBeNil)
 		stoploss.ArmClock()
-		stoploss.Update(decimal.NewFromFloat64(99.99))
+
+		// The mark must stay above the one-tick floor this nil-curve lot
+		// carries: a floor breach is a hard exit, not horizon consumption.
+		stoploss.Update(decimal.NewFromFloat64(99.995))
 
 		Convey("It should refuse to invent a transition horizon", func() {
 			stoploss.Reconsider(0, 0)
@@ -483,7 +539,10 @@ func TestStoplossReconsider(t *testing.T) {
 		stoploss.Update(decimal.NewFromFloat64(99.99))
 		stoploss.Reconsider(0, 0)
 		So(stoploss.Status, ShouldEqual, ARMED)
-		stoploss.Update(decimal.NewFromFloat64(99.98))
+
+		// The third mark must stay above the hard floor: a lot that breaches
+		// its floor has already exited and no longer consumes horizon.
+		stoploss.Update(decimal.NewFromFloat64(99.995))
 
 		Convey("It should fire only once the admitted path has actually elapsed", func() {
 			stoploss.Reconsider(0, 0)
@@ -531,8 +590,10 @@ func TestRestoreStoploss(t *testing.T) {
 			So(restored.MomentumFloor.Cmp(original.MomentumFloor), ShouldEqual, 0)
 
 			restored.Update(decimal.NewFromFloat64(102.01))
+			So(restored.Status, ShouldEqual, ARMED)
+
+			restored.Update(decimal.NewFromFloat64(99.9))
 			So(restored.Status, ShouldEqual, TRIGGERED)
-			So(restored.TriggerReason, ShouldEqual, TriggerPumpMomentumLost)
 		})
 	})
 

@@ -40,6 +40,7 @@ type Desk struct {
 	recorder       *audit.Recorder
 	recovery       *Recovery
 	positions      *sync.Map
+	passage        *types.PassageModel
 	executeMu      sync.Mutex
 	maxPositions   int
 	maxReserved    int
@@ -101,6 +102,7 @@ func NewDesk(
 		recorder:       recorder,
 		PositionStore:  store,
 		positions:      &sync.Map{},
+		passage:        types.NewPassageModel(),
 		maxPositions:   viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:    viper.GetViper().GetInt("trading.slots.reserved"),
 	}
@@ -221,6 +223,7 @@ func (desk *Desk) run() {
 
 					if ok && position != nil {
 						if position.onExecution(*execution) {
+							desk.foldPassage(position)
 							desk.positions.CompareAndDelete(key, position)
 						}
 					}

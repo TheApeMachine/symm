@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS thesis_checkpoints (
 ) STRICT;`
 
 /*
+checkpointRetention is how many recent thesis checkpoints the store keeps.
+Checkpoints recover recently admitted entries; older ones are dead weight the
+database would otherwise carry forever.
+*/
+const checkpointRetention = 64
+
+/*
 PositionStore persists the stoploss attached to each open position.
 */
 type PositionStore struct {
@@ -112,6 +119,20 @@ INSERT INTO thesis_checkpoints (observed_at, state) VALUES (?, ?)`,
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			fmt.Sprintf("position store: save thesis failed [%s]", err.Error()),
+			err,
+		))
+	}
+
+	// Checkpoints exist for recovery of recently admitted entries; keeping
+	// every one ever written grows the database without bound.
+	if _, err = store.database.Exec(`
+DELETE FROM thesis_checkpoints
+WHERE id <= (SELECT id FROM thesis_checkpoints ORDER BY id DESC LIMIT 1 OFFSET ?)`,
+		checkpointRetention,
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("position store: checkpoint retention failed [%s]", err.Error()),
 			err,
 		))
 	}

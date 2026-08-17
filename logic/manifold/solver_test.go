@@ -330,15 +330,19 @@ func TestStep(t *testing.T) {
 			}
 		}
 
-		Convey("It should publish the manifold and wave field after every step", func() {
+		Convey("It should publish phase rows per step and the domain once per relaxation", func() {
 			So(err, ShouldBeNil)
 			So(solver.stepped, ShouldBeTrue)
 			So(found, ShouldBeTrue)
 			So(storedReading, ShouldResemble, reading)
 			So(payloads, ShouldHaveLength, 2)
-			So(fieldFrames, ShouldEqual, 2)
-			So(particleFrames, ShouldEqual, 2)
 			So(phaseFrames, ShouldEqual, 2)
+
+			// The domain snapshot serializes every resident oscillator, so it
+			// is published once per relaxation run — the converged frame —
+			// rather than once per intermediate step.
+			So(fieldFrames, ShouldEqual, 1)
+			So(particleFrames, ShouldEqual, 1)
 			So(waveObserved, ShouldBeTrue)
 			So(marshalErr, ShouldBeNil)
 			So(frame.Manifold, ShouldHaveLength, 1)

@@ -263,6 +263,88 @@ func TestBookUpdate(t *testing.T) {
 		})
 	})
 
+	Convey("Given a snapshot and updates whose checksums disagree with local state", t, func() {
+		managed := newBookFixture(t, "CELR/USD", 7, 5)
+		managed.Create("CELR/USD", 10)
+		resynced := make(chan string, 4)
+		managed.SetResync(func(symbol string) { resynced <- symbol })
+		event := &callback.Event[*sdk.WebSocketMessage]{
+			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+		}
+		knownGood := &kraken.Level3{
+			Type: "snapshot",
+			Data: []kraken.Level3Data{{
+				Symbol:   "CELR/USD",
+				Checksum: 3152022922,
+				Bids: []kraken.Level3Order{{
+					OrderID: "bid", LimitPrice: decimal.NewFromFloat64(0.00034),
+					OrderQty: decimal.NewFromInt64(2000), Timestamp: time.Unix(1, 0).UTC(),
+				}},
+				Asks: []kraken.Level3Order{{
+					OrderID: "ask", LimitPrice: decimal.NewFromFloat64(0.00035),
+					OrderQty: decimal.NewFromFloat64(1234.5), Timestamp: time.Unix(1, 0).UTC(),
+				}},
+			}},
+		}
+
+		Convey("It should diverge once, drop further deltas, and recover on the resubscription snapshot", func() {
+			So(managed.Update(event, knownGood), ShouldBeNil)
+
+			// A wrong server checksum for state that is known good: local
+			// state is untrustworthy from here on.
+			diverged := &kraken.Level3{Data: []kraken.Level3Data{{
+				Symbol:   "CELR/USD",
+				Checksum: 1,
+				Bids: []kraken.Level3Order{{
+					Event: "add", OrderID: "late-bid",
+					LimitPrice: decimal.NewFromFloat64(0.00033),
+					OrderQty:   decimal.NewFromInt64(5), Timestamp: time.Unix(2, 0).UTC(),
+				}},
+			}}}
+
+			So(managed.Update(event, diverged), ShouldNotBeNil)
+			So(<-resynced, ShouldEqual, "CELR/USD")
+			managed.Get("CELR/USD", func(book *spotbook.Book) {
+				So(book.Bids.Levels, ShouldBeEmpty)
+			})
+
+			// Deltas for a diverged symbol are dropped without touching the
+			// empty book and without asking for a second resubscription.
+			So(managed.Update(event, diverged), ShouldBeNil)
+
+			select {
+			case symbol := <-resynced:
+				So(symbol, ShouldBeNil)
+			default:
+			}
+
+			managed.Get("CELR/USD", func(book *spotbook.Book) {
+				So(book.Bids.Levels, ShouldBeEmpty)
+			})
+
+			// The resubscription snapshot is authoritative again.
+			So(managed.Update(event, knownGood), ShouldBeNil)
+			managed.Get("CELR/USD", func(book *spotbook.Book) {
+				So(book.BestBid(), ShouldNotBeNil)
+				So(book.BestAsk(), ShouldNotBeNil)
+			})
+
+			accepted := &kraken.Level3{Data: []kraken.Level3Data{{
+				Symbol: "CELR/USD",
+				Bids: []kraken.Level3Order{{
+					Event: "add", OrderID: "fresh-bid",
+					LimitPrice: decimal.NewFromFloat64(0.00033),
+					OrderQty:   decimal.NewFromInt64(5), Timestamp: time.Unix(3, 0).UTC(),
+				}},
+			}}}
+
+			So(managed.Update(event, accepted), ShouldBeNil)
+			managed.Get("CELR/USD", func(book *spotbook.Book) {
+				So(book.BestBid(), ShouldNotBeNil)
+			})
+		})
+	})
+
 	Convey("Given a venue frame whose intermediate state is crossed", t, func() {
 		managed := newBookFixture(t, "APR/USD", 0, 0)
 		managed.Create("APR/USD", 10)
