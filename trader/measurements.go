@@ -94,6 +94,7 @@ func (measurements *Measurements) Generate(
 			}
 
 			if !thesis.AnyPending() {
+				time.Sleep(idleRest)
 				continue
 			}
 
