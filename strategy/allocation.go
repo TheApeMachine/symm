@@ -129,12 +129,6 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.SlotCapacity = allocation.desk.MaxPositions() + allocation.desk.MaxReserved()
 		decision.AllocationClass = "unallocated"
 
-		if !decision.PredictiveReady {
-			decision.Action = types.ActionNothing
-			decision.Reason = "planner: predictive readiness expired before allocation"
-			continue
-		}
-
 		if decision.Direction <= 0 || decision.ThesisScore <= 0 {
 			decision.Action = types.ActionNothing
 			decision.Reason = "planner: current structural thesis does not authorize a long entry"

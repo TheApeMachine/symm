@@ -14,6 +14,7 @@ import (
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -151,6 +152,57 @@ func TestUpdate(t *testing.T) {
 			So(frame.Resonance.Latent, ShouldNotBeEmpty)
 			So(frame.Resonance.Energy, ShouldNotBeNil)
 			So(frame.Resonance.Surprise, ShouldNotBeNil)
+		})
+
+		Convey("It should publish the manifold and dynamics onto the symbol", func() {
+			features := []float64{100, 99, 1, 1, 0, 0, 101, 98, 100, 10, 99.5}
+
+			So(solver.Update("BTC/USD", at, features), ShouldBeNil)
+
+			symbol := thesis.Symbol("BTC/USD")
+			value, found := symbol.Resonance.Load("BTC/USD")
+
+			So(found, ShouldBeTrue)
+			So(value, ShouldHaveSameTypeAs, &learning.ResonanceManifold{})
+
+			_, dynamicsFound := symbol.Resonance.Load(learning.PredictiveDynamicsKey)
+			So(dynamicsFound, ShouldBeTrue)
+		})
+
+		Convey("It should supervise the task head from the previous midpoint", func() {
+			first := []float64{100, 99, 1, 1, 0, 0, 101, 98, 100, 10, 99.5}
+			second := []float64{100.5, 99.5, 1, 1, 0, 0, 102, 99, 100.5, 15, 100}
+
+			thesis.Tick = 1
+			thesis.Symbol("BTC/USD").Tick = thesis.Tick
+			So(solver.Update("BTC/USD", at, first), ShouldBeNil)
+
+			stored, found := solver.references.Load("BTC/USD")
+
+			So(found, ShouldBeTrue)
+			So(stored, ShouldEqual, 99.5)
+
+			// The first pass has no prior, so the coder receives no reference;
+			// the second pass resolves the first pending prediction, and the
+			// head is calibrated once a reliability scale exists.
+			thesis.Tick = 2
+			thesis.Symbol("BTC/USD").Tick = thesis.Tick
+			So(solver.Update("BTC/USD", at.Add(time.Second), second), ShouldBeNil)
+
+			detector, _ := solver.detectors.Load("BTC/USD")
+			coder := detector.(*learning.PredictiveCoder)
+			skill, skillReady := coder.Manifold().TaskSkill()
+
+			So(skillReady, ShouldBeFalse)
+
+			thesis.Tick = 3
+			thesis.Symbol("BTC/USD").Tick = thesis.Tick
+			So(solver.Update("BTC/USD", at.Add(2*time.Second), second), ShouldBeNil)
+
+			skill, skillReady = coder.Manifold().TaskSkill()
+
+			So(skillReady, ShouldBeTrue)
+			So(skill, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("A later observation of different width should fail the step", func() {

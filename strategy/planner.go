@@ -277,14 +277,18 @@ func (planner *Planner) evaluateSymbol(
 	case decision.GraphScore <= 0 ||
 		decision.GraphScore < config.Planner.MinimumGraphScore:
 		decision.Reason = "planner: causal graph search did not retain a supportive evidence path"
-	case !decision.PredictiveReady:
-		decision.Reason = "planner: predictive coder cannot yet support an entry: " +
-			decision.PredictiveStatus
 	case decision.OpportunityType == "":
 		decision.Reason = "planner: no qualified structural opportunity precursor identified"
 	default:
 		decision.Action = types.ActionEnter
 		decision.Cause = decision.OpportunityType
+
+		if !decision.PredictiveReady {
+			// Predictive coding enriches the observation space it is not a
+			// veto over the structural graph evidence. The strategy reasons
+			// over this alongside every other measurement.
+			decision.PredictiveStatus = "enriching: " + decision.PredictiveStatus
+		}
 	}
 
 	return decision, nil

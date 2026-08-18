@@ -44,10 +44,10 @@ func TestPlannerUpdate(t *testing.T) {
 		err := planner.Update(thesis)
 		decision := decisionOf(thesis, "BTC/USD")
 
-		Convey("It should search and publish the thesis without committing capital", func() {
+		Convey("It should admit on structural evidence while predictive coding only enriches", func() {
 			So(err, ShouldBeNil)
 			So(decision, ShouldNotBeNil)
-			So(decision.Action, ShouldEqual, types.ActionNothing)
+			So(decision.Action, ShouldEqual, types.ActionEnter)
 			So(decision.Forecast, ShouldBeNil)
 			So(decision.Direction, ShouldEqual, float64(1))
 			So(decision.ThesisScore, ShouldBeGreaterThan, 0)
@@ -55,11 +55,11 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.ThesisContradiction, ShouldEqual, 0)
 			So(decision.GraphScore, ShouldBeGreaterThan, 0)
 			So(decision.PredictiveReady, ShouldBeFalse)
-			So(decision.PredictiveStatus, ShouldContainSubstring, "calibrating")
+			So(decision.PredictiveStatus, ShouldContainSubstring, "enriching")
 			So(decision.ReserveEligible, ShouldBeFalse)
 			So(decision.Opportunity, ShouldBeFalse)
 			So(decision.OpportunityType, ShouldEqual, string(types.VerticalIgnition))
-			So(decision.Reason, ShouldContainSubstring, "predictive coder")
+			So(decision.Reason, ShouldBeEmpty)
 			So(decision.Trace, ShouldNotBeNil)
 			So(decision.Trace.Hypothesis, ShouldContainSubstring, "long_opportunity")
 			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 1)

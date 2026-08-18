@@ -70,11 +70,6 @@ func (planner *Planner) candidateCopies() []*types.Decision {
 			continue
 		}
 
-		if !retained.PredictiveReady {
-			delete(planner.candidates, symbol)
-			continue
-		}
-
 		candidate := *retained
 		candidate.Action = types.ActionEnter
 		candidate.Reason = ""
