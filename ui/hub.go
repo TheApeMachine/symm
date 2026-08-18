@@ -46,6 +46,7 @@ type playback interface {
 	Pause()
 	Seek(at time.Time)
 	Select(captureID int64)
+	Hindsight(captureID int64)
 }
 
 func NewHub(
@@ -178,6 +179,10 @@ func NewHub(
 						if hub.playback != nil {
 							hub.playback.Select(request.CaptureID)
 						}
+					case "backtest.hindsight":
+						if hub.playback != nil {
+							hub.playback.Hindsight(request.CaptureID)
+						}
 					}
 				}
 			}
@@ -227,6 +232,7 @@ func (hub *Hub) SetPlayback(
 		Pause()
 		Seek(at time.Time)
 		Select(captureID int64)
+		Hindsight(captureID int64)
 	},
 	captures func() any,
 ) {

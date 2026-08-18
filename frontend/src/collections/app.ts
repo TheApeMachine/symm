@@ -22,6 +22,51 @@ export type BacktestCapture = {
 	frames: number;
 };
 
+export type HindsightSignal = {
+	at: string | null;
+	graphScore: number;
+	thesisScore: number;
+	opportunity: boolean;
+	opportunityType?: string;
+	alternatives: Record<string, number> | null;
+};
+
+export type HindsightLeg = {
+	symbol: string;
+	buyAt: string;
+	buyPrice: number;
+	sellAt: string;
+	sellPrice: number;
+	profitPct: number;
+};
+
+export type HindsightOpportunity = {
+	leg: HindsightLeg;
+	signal: HindsightSignal;
+	captured: boolean;
+	missed: boolean;
+};
+
+export type HindsightSymbol = {
+	symbol: string;
+	upboundPct: number;
+	realizedPct: number;
+	missedPct: number;
+	legs: number;
+	missedLegs: number;
+	opportunities: HindsightOpportunity[];
+};
+
+export type HindsightReport = {
+	captureId: number;
+	status?: string;
+	symbols: HindsightSymbol[];
+	missedPct: number;
+	upboundPct: number;
+	missedLegs: number;
+	totalLegs: number;
+};
+
 export type BacktestState = {
 	captureId: number | null;
 	playing: boolean;
@@ -30,6 +75,7 @@ export type BacktestState = {
 	endedAt: string | null;
 	rebooting: boolean;
 	captures: BacktestCapture[];
+	hindsight: HindsightReport | null;
 };
 
 export const appStore = createStore(
@@ -57,6 +103,7 @@ export const appStore = createStore(
 			endedAt: null,
 			rebooting: false,
 			captures: [],
+			hindsight: null,
 		} as BacktestState,
 	},
 	({ setState }) => ({

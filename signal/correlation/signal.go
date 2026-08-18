@@ -3,15 +3,21 @@ package correlation
 import (
 	"context"
 	"iter"
-	"sort"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+historyCapacity bounds the rolling per-symbol return history the cohort sample
+retains; it is also the denominator of measurement maturity.
+*/
+const historyCapacity = 128
 
 /*
 Signal measures whether a symbol is moving with the cohort, against it, beyond
@@ -19,11 +25,11 @@ it, or without a stable relation to it. Categories belong in logic; this signal
 emits numerical scores only.
 */
 type Signal struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	api     *websocket.API
-	section *Section
-	algo    *algorithm.CohortSample
+	ctx        context.Context
+	cancel     context.CancelFunc
+	api        *websocket.API
+	algo       *algorithm.CohortSample
+	classifier *equation.Cohort
 }
 
 /*
@@ -36,17 +42,15 @@ func NewSignal(
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	signal := &Signal{
-		ctx:     ctx,
-		cancel:  cancel,
-		api:     api,
-		section: NewSection(),
+	return &Signal{
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
 		algo: algorithm.NewCohortSample(algorithm.CohortSampleConfig{
-			HistoryCap: 128,
+			HistoryCap: historyCapacity,
 		}),
+		classifier: equation.NewCohort(),
 	}
-
-	return signal
 }
 
 /*
@@ -81,181 +85,89 @@ func (signal *Signal) Measure(
 				return
 			}
 
-			
-		}
-	}
-}
+			// Readiness is maturity, never suppression: every observed ticker
+			// emits the classifier's current evidence, immature zeroes
+			// included. An incomplete schema or ineligible classification is
+			// the equation's zero output, not a missing measurement.
+			outcome, _ := signal.classifier.Measure(output)
 
-/*
-MeasureCohort ingests the complete ticker batch before scoring any member. The
-section remains the single owner of its cross-symbol covariance tables, while
-the measurement scheduler is free to process unrelated symbol-local signals in
-parallel.
-*/
-func (signal *Signal) MeasureCohort(
-	markets []*types.Symbol,
-	ticks ...int64,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		ordered := make([]*types.Symbol, 0, len(markets))
-
-		for _, market := range markets {
-			if market != nil && market.Symbol != "" {
-				ordered = append(ordered, market)
-			}
-		}
-
-		sort.Slice(ordered, func(left, right int) bool {
-			return ordered[left].Symbol < ordered[right].Symbol
-		})
-
-		scoresBySymbol, err := signal.section.Measure(func(yield func(kraken.TickerData) bool) {
-			for _, market := range ordered {
-				for row := range market.MarketTickers(types.SourceCorrelation) {
-					if !yield(row) {
-						return
-					}
-				}
-			}
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent, "correlation: failed to measure tickers", err,
-			))
-
-			return
-		}
-
-		tick := int64(0)
-
-		if len(ticks) > 0 {
-			tick = ticks[0]
-		}
-
-		for _, market := range ordered {
-			scores, found := scoresBySymbol[market.Symbol]
-
-			if !found {
-				continue
-			}
-
-			measurement := signal.measurement(market.Symbol, tick, scores)
-
-			if measurement != nil && !yield(measurement) {
+			if !yield(signal.frame(ticker, output, outcome, ready)) {
 				return
 			}
 		}
 	}
 }
 
-func (signal *Signal) measurement(
-	symbol string,
-	tick int64,
-	scores map[string]float64,
+/*
+frame materializes one ticker's cohort evidence as a measurement. The zero
+classifier output carries zero maturity, so an immature window is distinguishable
+from a classified one without either going dark.
+*/
+func (signal *Signal) frame(
+	ticker kraken.TickerData,
+	batch equation.FeatureFrame,
+	outcome equation.CohortOutput,
+	ready bool,
 ) *types.Measurement {
-	at, price, found := signal.section.Latest(symbol)
+	maturity := 0.0
 
-	if !found {
-		return nil
+	if ready && outcome.Eligible && len(batch.Features) > 0 {
+		maturity = batch.Features[0] / historyCapacity
 	}
 
-	metrics, valid := correlationMetrics(scores)
-
-	if !valid {
-		return nil
-	}
-
-	measurement := &types.Measurement{
-		ID:     uuid.NewString(),
-		Source: types.SourceCorrelation,
-		Symbol: symbol,
-		Tick:   tick,
-		At:     at,
-		Metadata: map[string]float64{
-			"last_price": price,
+	metrics := map[string]types.MetricSample{
+		types.MetricKey(types.MetricCorrelation, types.SideNone): {
+			Raw:        outcome.Correlation,
+			Normalized: &outcome.Correlation,
+			Unit:       types.UnitDimensionless,
 		},
-		Metrics: metrics,
+		types.MetricKey(types.MetricHerdScore, types.SideNone): {
+			Raw:        outcome.HerdScore,
+			Normalized: &outcome.HerdScore,
+			Unit:       types.UnitDimensionless,
+		},
+		types.MetricKey(types.MetricAlphaScore, types.SideNone): {
+			Raw:        outcome.AlphaScore,
+			Normalized: &outcome.AlphaScore,
+			Unit:       types.UnitDimensionless,
+		},
+		types.MetricKey(types.MetricNoiseScore, types.SideNone): {
+			Raw:        outcome.NoiseScore,
+			Normalized: &outcome.NoiseScore,
+			Unit:       types.UnitDimensionless,
+		},
+		types.MetricKey(types.MetricStressScore, types.SideNone): {
+			Raw:        outcome.StressScore,
+			Normalized: &outcome.StressScore,
+			Unit:       types.UnitDimensionless,
+		},
 	}
-	measurement.PutMetric(
-		types.MetricLastPrice,
-		types.SideNone,
-		types.MetricSample{Raw: price, Unit: types.UnitQuoteCurrency},
-	)
+
 	separation, separationReady := types.MeasurementHypothesisSeparation(
-		types.SourceCorrelation,
-		measurement.Metrics,
+		types.SourceCorrelation, metrics,
 	)
 
 	if !separationReady {
-		panic("correlation: competing metric groups are not measurable")
+		separation = 0
 	}
 
-	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, types.MetricSample{
+	metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
 		Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
-	})
-
-	return measurement
-}
-
-/*
-correlationMetrics maps the complete equation output onto measurement keys.
-The equation already returns dimensionless scores and ratios, so Normalized
-retains those values without applying a second transformation.
-*/
-func correlationMetrics(
-	scores map[string]float64,
-) (map[string]types.MetricSample, bool) {
-	type reading struct {
-		name   string
-		metric types.MetricType
 	}
 
-	readings := []reading{
-		{"correlation", types.MetricCorrelation},
-		{"signed", types.MetricSigned},
-		{"relativeEnergy", types.MetricRelativeEnergy},
-		{"herdScore", types.MetricHerdScore},
-		{"alphaScore", types.MetricAlphaScore},
-		{"noiseScore", types.MetricNoiseScore},
-		{"stressScore", types.MetricStressScore},
+	return &types.Measurement{
+		ID:       uuid.NewString(),
+		Source:   types.SourceCorrelation,
+		Symbol:   ticker.Symbol,
+		At:       ticker.Timestamp,
+		Maturity: maturity,
+		Metadata: map[string]float64{
+			"price":    ticker.Change.Float64(),
+			"energy":   outcome.Energy,
+			"category": float64(outcome.Category),
+		},
+		Metrics: metrics,
 	}
-
-	metrics := make(map[string]types.MetricSample, len(readings))
-	valid := true
-
-	for _, item := range readings {
-		raw, exists := scores[item.name]
-		var normalized *float64
-		domainValid := exists
-
-		if item.metric == types.MetricSigned {
-			domainValid = domainValid && raw >= -1 && raw <= 1
-		}
-
-		if item.metric == types.MetricRelativeEnergy {
-			domainValid = domainValid && raw >= 0
-		}
-
-		if item.metric != types.MetricSigned &&
-			item.metric != types.MetricRelativeEnergy {
-			domainValid = domainValid && raw >= 0 && raw <= 1
-		}
-
-		if !domainValid {
-			valid = false
-		} else {
-			normalized = &raw
-		}
-
-		metrics[types.MetricKey(item.metric, types.SideNone)] = types.MetricSample{
-			Raw:        raw,
-			Normalized: normalized,
-			Unit:       types.UnitDimensionless,
-		}
-	}
-
-	return metrics, valid
 }
 
 /*
@@ -265,10 +177,6 @@ active market-data producers.
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
-	}
-
-	if signal.section != nil {
-		signal.section.Close()
 	}
 
 	return nil

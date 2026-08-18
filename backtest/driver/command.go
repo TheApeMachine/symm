@@ -41,6 +41,10 @@ func Command() *cobra.Command {
 				Level: viper.GetString("system.log.level"),
 			})
 
+			if hindsight, hindsightErr := run.Flags().GetBool("hindsight"); hindsightErr == nil && hindsight {
+				return analyzeHindsight(run)
+			}
+
 			// Replay investigations need the same profiler escape hatch the
 			// live command has; a separate port keeps both runnable at once.
 			if os.Getenv("SYMM_PPROF") != "" || viper.GetBool("system.pprof.enabled") {
@@ -113,6 +117,8 @@ func Command() *cobra.Command {
 
 	command.Flags().Int64("capture", 0, "capture id to load (default: newest)")
 	command.Flags().String("import", "", "import a legacy market-frames capture file and exit")
+	command.Flags().Bool("hindsight", false, "run perfect-execution hindsight analysis over the given capture and exit")
+	command.Flags().String("out", "", "write the hindsight report to a file instead of stdout")
 
 	return command
 }

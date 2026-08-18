@@ -101,7 +101,7 @@ func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
-	return symbol.AlwaysYield(types.SourceDepthFlow, signal.measure(symbol))
+	return signal.measure(symbol)
 }
 
 func (signal *Signal) measure(
@@ -318,7 +318,9 @@ func (signal *Signal) measureManagedBook(
 		return nil, nil
 	}
 
-	input, ready, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+	// Readiness rides on the output's own Ready flag and the maturity; an
+	// immature window emits the zero scores rather than no row.
+	input, _, maturity, err := signal.sample.MeasureBook(flow.BookInput{
 		Symbol:   managed.Name,
 		TickSize: instrument.TickSize.Float64(),
 		Bids:     snapshotDelta(current.bids, previous.bids),
@@ -339,10 +341,6 @@ func (signal *Signal) measureManagedBook(
 		signal.lastBookRevision.Store(managed.Name, revision)
 	}
 
-	if !ready || bestBid == nil || bestAsk == nil {
-		return nil, nil
-	}
-
 	output, err := signal.bookflow.Measure(input)
 
 	if err != nil {
@@ -360,26 +358,29 @@ func (signal *Signal) measureManagedBook(
 		maturity,
 	)
 	measurement := measurements[0]
-	measurement.PutMetric(types.MetricBestPrice, types.SideBuy, types.MetricSample{
-		Raw:  bestBid.Price.Float64(),
-		Unit: types.UnitQuoteCurrency,
-	})
-	measurement.PutMetric(types.MetricBestPrice, types.SideSell, types.MetricSample{
-		Raw:  bestAsk.Price.Float64(),
-		Unit: types.UnitQuoteCurrency,
-	})
-	measurement.PutMetric(types.MetricTouchQuantity, types.SideBuy, types.MetricSample{
-		Raw:  bestBid.Quantity.Float64(),
-		Unit: types.UnitBaseCurrency,
-	})
-	measurement.PutMetric(types.MetricTouchQuantity, types.SideSell, types.MetricSample{
-		Raw:  bestAsk.Quantity.Float64(),
-		Unit: types.UnitBaseCurrency,
-	})
-	measurement.PutMetric(types.MetricMidpoint, types.SideNone, types.MetricSample{
-		Raw:  (bestBid.Price.Float64() + bestAsk.Price.Float64()) / 2,
-		Unit: types.UnitQuoteCurrency,
-	})
+
+	if bestBid != nil && bestAsk != nil {
+		measurement.PutMetric(types.MetricBestPrice, types.SideBuy, types.MetricSample{
+			Raw:  bestBid.Price.Float64(),
+			Unit: types.UnitQuoteCurrency,
+		})
+		measurement.PutMetric(types.MetricBestPrice, types.SideSell, types.MetricSample{
+			Raw:  bestAsk.Price.Float64(),
+			Unit: types.UnitQuoteCurrency,
+		})
+		measurement.PutMetric(types.MetricTouchQuantity, types.SideBuy, types.MetricSample{
+			Raw:  bestBid.Quantity.Float64(),
+			Unit: types.UnitBaseCurrency,
+		})
+		measurement.PutMetric(types.MetricTouchQuantity, types.SideSell, types.MetricSample{
+			Raw:  bestAsk.Quantity.Float64(),
+			Unit: types.UnitBaseCurrency,
+		})
+		measurement.PutMetric(types.MetricMidpoint, types.SideNone, types.MetricSample{
+			Raw:  (bestBid.Price.Float64() + bestAsk.Price.Float64()) / 2,
+			Unit: types.UnitQuoteCurrency,
+		})
+	}
 
 	return measurements, nil
 }

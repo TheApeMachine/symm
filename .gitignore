@@ -33,3 +33,7 @@ qodana.yaml
 .tmp/
 .codex/
 .codex-tmp/
+.reasonix/desktop-topic-auto-title-meta.json
+.reasonix/desktop-topic-created-at.json
+.reasonix/desktop-topic-title-sources.json
+.reasonix/desktop-topic-titles.json

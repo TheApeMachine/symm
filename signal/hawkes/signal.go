@@ -26,6 +26,7 @@ groups, not sample precision. Forecast readiness stays false until residual
 and out-of-sample validation exists.
 */
 type Signal struct {
+	latest    *sync.Map
 	ctx       context.Context
 	cancel    context.CancelFunc
 	api       *websocket.API
@@ -76,7 +77,9 @@ func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
-	return symbol.AlwaysYield(types.SourceHawkes, func(yield func(*types.Measurement) bool) {
+	return func(yield func(*types.Measurement) bool) {
+		emitted := false
+
 		for trade := range symbol.MarketTrades(types.SourceHawkes) {
 			if signal.seenTrade(trade) {
 				continue
@@ -135,8 +138,40 @@ func (signal *Signal) Measure(
 			if !yield(signal.frame(trade.Symbol, outcome)) {
 				return
 			}
+
+			emitted = true
 		}
-	})
+
+		if emitted {
+			return
+		}
+
+		if last := signal.recall(symbol.Symbol); last != nil {
+			yield(last)
+		}
+	}
+}
+
+func (signal *Signal) remember(measurement *types.Measurement) {
+	if signal.latest == nil {
+		signal.latest = &sync.Map{}
+	}
+
+	signal.latest.Store(measurement.Symbol, measurement)
+}
+
+func (signal *Signal) recall(symbolName string) *types.Measurement {
+	if signal.latest == nil {
+		return nil
+	}
+
+	stored, exists := signal.latest.Load(symbolName)
+
+	if !exists {
+		return nil
+	}
+
+	return stored.(*types.Measurement)
 }
 
 func (signal *Signal) seenTrade(row kraken.TradeData) bool {

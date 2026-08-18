@@ -30,7 +30,7 @@ const publishFocus = (symbol: string) => {
 };
 
 export const publishBacktestCommand = (
-	action: "play" | "pause" | "seek" | "select",
+	action: "play" | "pause" | "seek" | "select" | "hindsight",
 	at?: string,
 	captureId?: number,
 ) => {

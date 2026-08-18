@@ -61,7 +61,7 @@ func (signal *Signal) Measure(
 	market *types.Symbol,
 	ticks ...int64,
 ) iter.Seq[*types.Measurement] {
-	return market.AlwaysYield(types.SourceToxicity, signal.measure(market, ticks...))
+	return signal.measure(market, ticks...)
 }
 
 func (signal *Signal) measure(

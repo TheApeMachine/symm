@@ -86,7 +86,7 @@ func (signal *Signal) Measure(
 		return func(yield func(*types.Measurement) bool) {}
 	}
 
-	return symbol.AlwaysYield(types.SourceLiquidity, signal.MeasureCohort([]*types.Symbol{symbol}, ticks...))
+	return signal.MeasureCohort([]*types.Symbol{symbol}, ticks...)
 }
 
 /*

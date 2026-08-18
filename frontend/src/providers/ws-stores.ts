@@ -343,6 +343,13 @@ export const attach = (worker: Worker) => {
 				continue;
 			}
 
+			if (key === "hindsight") {
+				appStore.actions.updateBacktest({
+					hindsight: update as typeof appStore.state.backtest.hindsight,
+				});
+				continue;
+			}
+
 			if (key === "cognition") {
 				cognition.actions.updateFrame(frameRows(update));
 				pendingUpdates.set(key, currentCognition());

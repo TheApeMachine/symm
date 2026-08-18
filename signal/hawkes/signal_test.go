@@ -60,10 +60,6 @@ func TestMeasure(t *testing.T) {
 
 		measurements := slices.Collect(signal.Measure(market))
 
-		for _, measurement := range measurements {
-			market.AppendMeasurement(measurement)
-		}
-
 		Convey("It should emit an immature measurement with unready separation", func() {
 			So(measurements, ShouldHaveLength, 1)
 			measurement := measurements[0]

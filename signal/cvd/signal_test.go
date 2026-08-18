@@ -8,6 +8,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -34,6 +35,9 @@ func TestMeasure(t *testing.T) {
 			So(measurement.Sample(types.MetricMidpoint, types.SideNone).Raw, ShouldEqual, 100.0)
 			So(measurement.Sample(types.MetricNet, types.SideNone).Unit, ShouldEqual, types.UnitQuoteCurrency)
 			So(measurement.Sample(types.MetricNetFraction, types.SideNone).Normalized, ShouldNotBeNil)
+			So(measurement.Maturity, ShouldEqual, 1.0/flowHistoryCapacity)
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
+				ShouldEqual, 0)
 		})
 	})
 
@@ -65,10 +69,39 @@ func TestMeasure(t *testing.T) {
 		Convey("It should not turn execution bounce into directional response", func() {
 			So(measurements, ShouldHaveLength, 8)
 
-			for _, measurement := range measurements {
+			for index, measurement := range measurements {
 				So(measurement.Sample(types.MetricMidpoint, types.SideNone).Raw, ShouldEqual, 100.0)
 				So(measurement.Sample(types.MetricDrive, types.SideNone).Raw, ShouldEqual, 0.0)
+				So(measurement.Maturity, ShouldBeGreaterThan, 0)
+				So(measurement.Maturity,
+					ShouldBeLessThanOrEqualTo, float64(index+1)/flowHistoryCapacity)
 			}
+		})
+	})
+}
+
+func TestFrame(t *testing.T) {
+	Convey("Given the equation's first-observation boundary output", t, func() {
+		signal := NewSignal(context.Background(), nil)
+		at := time.Unix(1_700_003_400, 0).UTC()
+		trade := cvdTrade(1, "buy", 100.01, at)
+
+		measurement := signal.frame(
+			types.NewSymbol("BTC/USD", nil),
+			trade,
+			100.0,
+			equation.FlowInput{TradeCount: 1},
+			equation.FlowOutput{Balance: 0.5, Net: 200.02, NetFraction: 1.0},
+		)
+
+		Convey("It should carry the zero scores the boundary left undefined", func() {
+			So(measurement.Sample(types.MetricBalance, types.SideNone).Raw, ShouldEqual, 0.5)
+			So(measurement.Sample(types.MetricDrive, types.SideNone).Raw, ShouldEqual, 0)
+			So(measurement.Sample(types.MetricAbsorption, types.SideNone).Raw, ShouldEqual, 0)
+			So(measurement.Sample(types.MetricStarvation, types.SideNone).Raw, ShouldEqual, 0)
+			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
+				ShouldEqual, 1.0)
+			So(measurement.Maturity, ShouldEqual, 1.0/flowHistoryCapacity)
 		})
 	})
 }

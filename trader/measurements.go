@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -22,7 +21,6 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
@@ -48,21 +46,19 @@ func NewMeasurements(
 ) *Measurements {
 	ctx, cancel := context.WithCancel(ctx)
 
-	quotes := data.MustNewSeries[[2]float64](system.Cfg.PumpDump.Capacity)
-
 	return &Measurements{
 		ctx:    ctx,
 		cancel: cancel,
 		ui:     ui,
 		signals: []types.Signal{
 			correlation.NewSignal(ctx, api),
-			cvd.NewSignalWithQuotes(ctx, api, quotes),
+			cvd.NewSignal(ctx, api),
 			depthflow.NewSignal(ctx, api, instrument),
 			exhaust.NewSignal(ctx, api, instrument),
 			hawkes.NewSignal(ctx, api),
 			leadlag.NewSignal(ctx, api),
 			liquidity.NewSignal(ctx, api),
-			pumpdump.NewSignalWithQuotes(ctx, api, quotes),
+			pumpdump.NewSignal(ctx, api),
 			sentiment.NewSignal(ctx, api),
 			toxicity.NewSignal(ctx, api),
 		},

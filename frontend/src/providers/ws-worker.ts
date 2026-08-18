@@ -7,7 +7,7 @@ type WorkerInbound =
 	| { type: "CONNECT"; url: string }
 	| { type: "DISCONNECT" }
 	| { type: "FOCUS"; symbol: string }
-	| { type: "BACKTEST"; action: "play" | "pause" | "seek" | "select"; at?: string; captureId?: number };
+	| { type: "BACKTEST"; action: "play" | "pause" | "seek" | "select" | "hindsight"; at?: string; captureId?: number };
 
 type WorkerOutbound =
 	| { type: "READY" }
@@ -28,7 +28,7 @@ sendBacktest pushes one playback command to the backend driver. No-ops until
 the socket is open.
 */
 const sendBacktest = (
-	action: "play" | "pause" | "seek" | "select",
+	action: "play" | "pause" | "seek" | "select" | "hindsight",
 	at?: string,
 	captureId?: number,
 ) => {

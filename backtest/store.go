@@ -66,6 +66,7 @@ them byte-for-byte.
 */
 type Store struct {
 	database *sql.DB
+	path     string
 }
 
 /*
@@ -93,7 +94,21 @@ func NewStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("backtest: migrate store: %w", err)
 	}
 
-	return &Store{database: database}, nil
+	return &Store{database: database, path: path}, nil
+}
+
+/*
+Reopen returns an independent connection pool to the same store file. The
+playback session holds its one pooled connection for the whole stream, so an
+analysis pass that also streams must not share that pool: SQLite WAL lets the
+second reader scan concurrently instead of parking behind the playback query.
+*/
+func (store *Store) Reopen() (*Store, error) {
+	if store == nil || store.path == "" {
+		return nil, fmt.Errorf("backtest: reopen store: no path")
+	}
+
+	return NewStore(store.path)
 }
 
 /*

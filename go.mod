@@ -94,8 +94,8 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/theapemachine/datura v1.2.10
 	github.com/theapemachine/errnie v1.2.7
-	github.com/theapemachine/nomagique v0.0.8
+	github.com/theapemachine/nomagique v0.0.9
 	golang.design/x/lockfree v0.1.0
 )
 
-replace github.com/theapemachine/nomagique => ../nomagique
+// replace github.com/theapemachine/nomagique => ../nomagique

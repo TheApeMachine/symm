@@ -9,11 +9,9 @@ import (
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/system"
@@ -38,18 +36,16 @@ ladder and the tape currently support, with maturity reporting the weakest
 support count.
 */
 type Signal struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	books     websocket.BookSource
-	quotes    *data.Series[[2]float64]
-	ladders   *nomagique.KeyedStreams[string]
-	ignitions *nomagique.KeyedStreams[string]
-	anchors   *nomagique.KeyedStreams[string]
-	spreads   *nomagique.KeyedStreams[string]
-	depths    *sync.Map
-	halflife  float64
-	capacity  float64
-
+	ctx                context.Context
+	cancel             context.CancelFunc
+	api                *websocket.API
+	ladders            *nomagique.KeyedStreams[string]
+	ignitions          *nomagique.KeyedStreams[string]
+	anchors            *nomagique.KeyedStreams[string]
+	spreads            *nomagique.KeyedStreams[string]
+	depths             *sync.Map
+	halflife           float64
+	capacity           float64
 	fastHalflife       float64
 	slowHalflife       float64
 	dispersionHalflife float64
@@ -60,31 +56,14 @@ NewSignal creates ignition state with its own quote history.
 */
 func NewSignal(
 	ctx context.Context,
-	books websocket.BookSource,
-) *Signal {
-	return NewSignalWithQuotes(
-		ctx,
-		books,
-		data.MustNewSeries[[2]float64](system.Cfg.PumpDump.Capacity),
-	)
-}
-
-/*
-NewSignalWithQuotes creates ignition state sharing the owning tape shard's
-causal quote history.
-*/
-func NewSignalWithQuotes(
-	ctx context.Context,
-	books websocket.BookSource,
-	quotes *data.Series[[2]float64],
+	api *websocket.API,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		ctx:                ctx,
 		cancel:             cancel,
-		books:              books,
-		quotes:             quotes,
+		api:                api,
 		ladders:            nomagique.NewKeyedStreams[string](algo.Ladder, nil),
 		ignitions:          nomagique.NewKeyedStreams[string](algo.Ignition, nil),
 		anchors:            nomagique.NewKeyedStreams[string](detachMachine(), nil),
@@ -131,56 +110,60 @@ func (signal *Signal) Measure(
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
-		signal.ingestQuotes(symbol)
-
 		at := signal.drainLevel3(symbol)
 
-		snapshot := signal.bookSnapshot(symbol)
-
-		if snapshot.observedAt.After(at) {
-			at = snapshot.observedAt
-		}
-
-		metrics := map[string]types.MetricSample{}
-		maturity := 0.0
-
-		// The ladder clock is event time only. A pass without any observed
-		// event time carries no ladder observation; fabricating one from the
-		// local wall clock would poison the ladder's monotone clock domain.
-		if snapshot.ready && !at.IsZero() {
-			signal.measureLadder(symbol.Symbol, snapshot, at, metrics, &maturity)
-		}
-
-		if snapshot.ready && !at.IsZero() && snapshot.bid > 0 && snapshot.ask > snapshot.bid {
-			signal.measureDetach(symbol.Symbol, snapshot, at, metrics, &maturity)
-		}
-
-		signal.measureTape(symbol, snapshot, metrics, &maturity)
-
-		if snapshot.ready {
-			snapshot.putMetrics(metrics)
-		}
-
-		separation, separationReady := types.MeasurementHypothesisSeparation(
-			types.SourcePumpDump, metrics,
-		)
-
-		if separationReady {
-			metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
-				Raw:        separation,
-				Normalized: &separation,
-				Unit:       types.UnitDimensionless,
+		signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
+			snapshot := bookSnapshot{
+				ready:      true,
+				bid:        book.BestBid().Price.Float64(),
+				ask:        book.BestAsk().Price.Float64(),
+				bidDepth:   book.BestBid().Quantity.Float64(),
+				askDepth:   book.BestAsk().Quantity.Float64(),
+				spread:     book.Spread().Float64(),
+				observedAt: book.BestAsk().Timestamp,
 			}
-		}
 
-		yield(&types.Measurement{
-			ID:       uuid.NewString(),
-			Source:   types.SourcePumpDump,
-			Symbol:   symbol.Symbol,
-			Tick:     symbol.Tick,
-			At:       at,
-			Maturity: maturity,
-			Metrics:  metrics,
+			metrics := map[string]types.MetricSample{}
+			maturity := 0.0
+
+			// The ladder clock is event time only. A pass without any observed
+			// event time carries no ladder observation; fabricating one from the
+			// local wall clock would poison the ladder's monotone clock domain.
+			if snapshot.ready && !at.IsZero() {
+				signal.measureLadder(symbol.Symbol, snapshot, at, metrics, &maturity)
+			}
+
+			if snapshot.ready && !at.IsZero() && snapshot.bid > 0 && snapshot.ask > snapshot.bid {
+				signal.measureDetach(symbol.Symbol, snapshot, at, metrics, &maturity)
+			}
+
+			signal.measureTape(symbol, snapshot, metrics, &maturity)
+
+			if snapshot.ready {
+				snapshot.putMetrics(metrics)
+			}
+
+			separation, separationReady := types.MeasurementHypothesisSeparation(
+				types.SourcePumpDump, metrics,
+			)
+
+			if separationReady {
+				metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
+					Raw:        separation,
+					Normalized: &separation,
+					Unit:       types.UnitDimensionless,
+				}
+			}
+
+			yield(&types.Measurement{
+				ID:       uuid.NewString(),
+				Source:   types.SourcePumpDump,
+				Symbol:   symbol.Symbol,
+				Tick:     symbol.Tick,
+				At:       at,
+				Maturity: maturity,
+				Metrics:  metrics,
+			})
 		})
 	}
 }
@@ -399,11 +382,17 @@ func (signal *Signal) measureTape(
 	haveOutput := false
 
 	for trade := range symbol.MarketTrades(types.SourcePumpDump) {
-		bid, ask, found := signal.quoteFor(trade, snapshot)
+		var bid, ask float64
 
-		if !found {
-			continue
-		}
+		signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
+			if bestBid := book.BestBid(); bestBid != nil && bestBid.Price != nil {
+				bid = bestBid.Price.Float64()
+			}
+
+			if bestAsk := book.BestAsk(); bestAsk != nil && bestAsk.Price != nil {
+				ask = bestAsk.Price.Float64()
+			}
+		})
 
 		input := nomagique.Frame{}
 		input.Put(algo.SymbolCapacity, signal.capacity)
@@ -495,47 +484,6 @@ func (signal *Signal) measureTape(
 }
 
 /*
-quoteFor answers one trade with the causal quote, falling back to the book's
-own touch so an executed print is never dropped for lack of a ticker.
-*/
-func (signal *Signal) quoteFor(
-	trade kraken.TradeData,
-	snapshot bookSnapshot,
-) (float64, float64, bool) {
-	sides, found := signal.quotes.AsOf(
-		trade.Symbol,
-		float64(trade.Timestamp.Unix()),
-		float64(trade.Timestamp.Nanosecond()),
-	)
-
-	if found {
-		return sides[0], sides[1], true
-	}
-
-	if snapshot.ready && snapshot.bid > 0 && snapshot.ask > snapshot.bid {
-		return snapshot.bid, snapshot.ask, true
-	}
-
-	return 0, 0, false
-}
-
-func (signal *Signal) ingestQuotes(symbol *types.Symbol) {
-	for ticker := range symbol.MarketTickers(types.SourcePumpDump) {
-		if ticker.Bid == nil || ticker.Ask == nil || ticker.Timestamp.IsZero() ||
-			ticker.Bid.Sign() <= 0 || ticker.Ask.Cmp(ticker.Bid) <= 0 {
-			continue
-		}
-
-		signal.quotes.Observe(
-			ticker.Symbol,
-			float64(ticker.Timestamp.Unix()),
-			float64(ticker.Timestamp.Nanosecond()),
-			[2]float64{ticker.Bid.Float64(), ticker.Ask.Float64()},
-		)
-	}
-}
-
-/*
 drainLevel3 consumes this pass's accepted order frames and returns the newest
 event time they carry. The frames drive the ladder's clock, and draining
 keeps the queue honest even on passes without a book.
@@ -593,55 +541,6 @@ func (snapshot bookSnapshot) putMetrics(metrics map[string]types.MetricSample) {
 	metrics[types.MetricKey(types.MetricSpread, types.SideNone)] = types.MetricSample{
 		Raw: snapshot.spread, Unit: types.UnitQuoteCurrency,
 	}
-}
-
-/*
-bookSnapshot conditions the managed book for one symbol. The depth band is
-the venue subscription itself, so the ladder never invents its own horizon.
-*/
-func (signal *Signal) bookSnapshot(symbol *types.Symbol) bookSnapshot {
-	snapshot := bookSnapshot{}
-
-	if signal.books == nil {
-		return snapshot
-	}
-
-	_, observedAt := symbol.BookRevision()
-
-	signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
-		if managed == nil {
-			return
-		}
-
-		for level := managed.Bids.High; level != nil; level = level.Lower {
-			if level.Quantity != nil {
-				snapshot.bidDepth += level.Quantity.Float64()
-			}
-		}
-
-		for level := managed.Asks.Low; level != nil; level = level.Higher {
-			if level.Quantity != nil {
-				snapshot.askDepth += level.Quantity.Float64()
-			}
-		}
-
-		if bestBid := managed.BestBid(); bestBid != nil && bestBid.Price != nil {
-			snapshot.bid = bestBid.Price.Float64()
-		}
-
-		if bestAsk := managed.BestAsk(); bestAsk != nil && bestAsk.Price != nil {
-			snapshot.ask = bestAsk.Price.Float64()
-		}
-
-		if snapshot.bid > 0 && snapshot.ask > snapshot.bid {
-			snapshot.spread = snapshot.ask - snapshot.bid
-		}
-
-		snapshot.observedAt = observedAt
-		snapshot.ready = true
-	})
-
-	return snapshot
 }
 
 func unitForLadderMetric(metric types.MetricType) types.MeasurementUnit {

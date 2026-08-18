@@ -64,10 +64,6 @@ func TestMeasure(t *testing.T) {
 		appendTickers(market, thirdLeg...)
 		measurements := slices.Collect(signal.Measure(market))
 
-		for _, measurement := range measurements {
-			market.AppendMeasurement(measurement)
-		}
-
 		Convey("It should use consecutive log returns and signed breadth", func() {
 			leader := measurementFor(measurements, "AAA/USD")
 			So(leader, ShouldNotBeNil)
@@ -99,13 +95,8 @@ func TestMeasure(t *testing.T) {
 			So(leader.Metrics, ShouldHaveLength, 11)
 		})
 
-		Convey("It should re-emit the last row when nothing new arrived", func() {
-			recalled := slices.Collect(signal.Measure(market))
-
-			So(recalled, ShouldHaveLength, 1)
-			So(recalled[0].Source, ShouldEqual, types.SourceSentiment)
-			So(recalled[0].ID, ShouldEqual, measurements[0].ID)
-			So(recalled[0].At, ShouldEqual, measurements[0].At)
+		Convey("It should reject repeated latest-value cache entries", func() {
+			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
 		})
 	})
 

@@ -67,7 +67,7 @@ func (signal *Signal) Measure(
 		return func(yield func(*types.Measurement) bool) {}
 	}
 
-	return symbol.AlwaysYield(types.SourceLeadLag, signal.MeasureCohort([]*types.Symbol{symbol}, ticks...))
+	return signal.MeasureCohort([]*types.Symbol{symbol}, ticks...)
 }
 
 /*

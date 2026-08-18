@@ -94,7 +94,7 @@ func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
-	return symbol.AlwaysYield(types.SourceExhaustion, signal.measure(symbol))
+	return signal.measure(symbol)
 }
 
 func (signal *Signal) measure(

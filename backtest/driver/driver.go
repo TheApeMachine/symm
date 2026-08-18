@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
@@ -53,8 +54,9 @@ type Driver struct {
 	stateMu sync.Mutex
 	state   State
 
-	commands chan command
-	captures []backtest.CaptureInfo
+	commands         chan command
+	captures         []backtest.CaptureInfo
+	hindsightRunning atomic.Int64
 }
 
 type command struct {
@@ -182,6 +184,11 @@ func (driver *Driver) supervise() {
 			case "select":
 				captureID = next.captureID
 				holdAt = time.Time{}
+
+				// Hindsight is cheap to start and runs on its own store
+				// connection, so every capture selection refreshes the
+				// perfect-execution panel for that tape.
+				driver.Hindsight(captureID)
 			case "seek":
 				holdAt = next.at
 			case "play":
