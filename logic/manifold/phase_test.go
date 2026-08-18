@@ -83,8 +83,8 @@ func TestStampPhase(t *testing.T) {
 		thesis := types.NewThesis(t.Context(), nil)
 		at := time.Unix(1, 0).UTC()
 		reading := solver.stampPhase(thesis, at, map[string][]pmanifold.Oscillator{"BTC/USD": []pmanifold.Oscillator{{
-				Amplitude: 1, Phase: 0, Omega: 0,
-			}}})
+			Amplitude: 1, Phase: 0, Omega: 0,
+		}}})
 		stored, found := thesis.PhaseSnapshot()
 
 		Convey("It should sweep without retaining an unpriced universe cut", func() {
@@ -273,9 +273,9 @@ func TestObserveWeights(t *testing.T) {
 		})
 		solver := &Solver{api: &staticBookSource{book: managed}}
 		weights, complete := solver.observeWeights(map[string][]pmanifold.Oscillator{"BTC/USD": []pmanifold.Oscillator{
-				{Amplitude: math.Sqrt(2)},
-				{Amplitude: 1},
-			}})
+			{Amplitude: math.Sqrt(2)},
+			{Amplitude: 1},
+		}})
 
 		Convey("It should snapshot mid and injected mass for the universe cut", func() {
 			So(complete, ShouldBeTrue)

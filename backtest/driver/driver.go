@@ -23,13 +23,12 @@ State is the driver's broadcast snapshot: which capture is loaded, where
 playback stands, and the capture's time bounds, which frame the scrub slider.
 */
 type State struct {
-	CaptureID int64                  `json:"captureId"`
-	Playing   bool                   `json:"playing"`
-	Position  time.Time              `json:"position"`
-	StartedAt time.Time              `json:"startedAt"`
-	EndedAt   time.Time              `json:"endedAt"`
-	Rebooting bool                   `json:"rebooting"`
-	Captures  []backtest.CaptureInfo `json:"captures"`
+	CaptureID int64     `json:"captureId"`
+	Playing   bool      `json:"playing"`
+	Position  time.Time `json:"position"`
+	StartedAt time.Time `json:"startedAt"`
+	EndedAt   time.Time `json:"endedAt"`
+	Rebooting bool      `json:"rebooting"`
 }
 
 /*
@@ -55,6 +54,7 @@ type Driver struct {
 	state   State
 
 	commands chan command
+	captures []backtest.CaptureInfo
 }
 
 type command struct {
@@ -86,7 +86,8 @@ func NewDriver(
 		ui:       ui,
 		onState:  onState,
 		commands: make(chan command, 8),
-		state:    State{Captures: captures},
+		state:    State{},
+		captures: captures,
 	}
 
 	go driver.supervise()
@@ -150,6 +151,12 @@ func (driver *Driver) update(apply func(*State)) {
 	}
 }
 
+func (driver *Driver) silentUpdate(apply func(*State)) {
+	driver.stateMu.Lock()
+	apply(&driver.state)
+	driver.stateMu.Unlock()
+}
+
 /*
 supervise owns the one live session. Every select or seek tears the session
 down and boots a fresh stack; play and pause only toggle the pump.
@@ -158,8 +165,8 @@ func (driver *Driver) supervise() {
 	holdAt := time.Time{}
 	captureID := int64(0)
 
-	if len(driver.state.Captures) > 0 {
-		captureID = driver.state.Captures[0].ID
+	if len(driver.captures) > 0 {
+		captureID = driver.captures[0].ID
 	}
 
 	for {
@@ -348,7 +355,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 
 		select {
 		case <-paused:
-			driver.update(func(state *State) { state.Position = frame.ReceivedAt })
+			driver.silentUpdate(func(state *State) { state.Position = frame.ReceivedAt })
 
 			<-paused
 
@@ -367,7 +374,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 		driver.publishFrame(market, frame)
 		previousAt = frame.ReceivedAt
 
-		driver.update(func(state *State) { state.Position = frame.ReceivedAt })
+		driver.silentUpdate(func(state *State) { state.Position = frame.ReceivedAt })
 
 		if err := system.Sync(sessionCtx, frame.ReceivedAt); err != nil {
 			errnie.Error(errnie.Err(errnie.Internal, "backtest: sync stack", err))

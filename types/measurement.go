@@ -212,4 +212,3 @@ func ObservationCount(measurements *sync.Map) int {
 
 	return len(symbols)
 }
-
