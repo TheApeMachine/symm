@@ -95,14 +95,14 @@ func Hawkes(
 		beta,
 		delta,
 	)
-	
+
 	lambdaBeta := decayIntensity(
 		number(nextState, SymbolLambdaBeta),
 		muBeta,
 		beta,
 		delta,
 	)
-	
+
 	alphaCount := number(nextState, SymbolAlphaEventCount)
 	betaCount := number(nextState, SymbolBetaEventCount)
 

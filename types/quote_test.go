@@ -33,9 +33,9 @@ func TestQuoteHistoryObserve(t *testing.T) {
 
 func quoteTicker(midpoint float64, at time.Time) kraken.TickerData {
 	return kraken.TickerData{
-		Symbol: "BTC/USD",
-		Bid: decimal.NewFromFloat64(midpoint - 0.01),
-		Ask: decimal.NewFromFloat64(midpoint + 0.01),
+		Symbol:    "BTC/USD",
+		Bid:       decimal.NewFromFloat64(midpoint - 0.01),
+		Ask:       decimal.NewFromFloat64(midpoint + 0.01),
 		Timestamp: at,
 	}
 }
