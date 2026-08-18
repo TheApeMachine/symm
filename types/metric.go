@@ -33,6 +33,11 @@ const (
 	MetricImmediateOffspring              MetricType = "immediate_expected_offspring"
 	MetricTotalDescendants                MetricType = "expected_total_descendants"
 	MetricRVOL                            MetricType = "rvol"
+	MetricRVOLLift                        MetricType = "rvol_lift"
+	MetricAnchorDetach                    MetricType = "anchor_detach"
+	MetricAnchorLift                      MetricType = "anchor_lift"
+	MetricSpreadTightening                MetricType = "spread_tightening"
+	MetricSpreadDeviation                 MetricType = "spread_deviation"
 	MetricPrecursor                       MetricType = "precursor"
 	MetricSpread                          MetricType = "spread"
 	MetricCompression                     MetricType = "compression"
@@ -270,33 +275,25 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 		MetricKey(MetricTradePrice, SideNone):           {"market", false},
 		MetricKey(MetricTradeQuantity, SideNone):        {"market", false},
 		MetricKey(MetricRVOL, SideNone):                 {"volume_clock", false},
+		MetricKey(MetricRVOLLift, SideNone):             {"volume_clock", false},
 		MetricKey(MetricSpread, SideNone):               {"market", false},
+		MetricKey(MetricAnchorDetach, SideNone):         {"anchor", false},
+		MetricKey(MetricAnchorLift, SideNone):           {"anchor", false},
+		MetricKey(MetricSpreadTightening, SideNone):     {"spread", false},
+		MetricKey(MetricSpreadDeviation, SideNone):      {"spread", false},
 		MetricKey(MetricLadderBidDepth, SideNone):       {"ladder", false},
 		MetricKey(MetricLadderAskDepth, SideNone):       {"ladder", false},
 		MetricKey(MetricLadderImbalance, SideNone):      {"ladder", false},
 		MetricKey(MetricLadderSpreadBaseline, SideNone): {"ladder", false},
+		MetricKey(MetricCompression, SideNone):          {"ladder", false},
 		MetricKey(MetricLadderBidDepletion, SideNone):   {"dynamics", false},
 		MetricKey(MetricLadderAskDepletion, SideNone):   {"dynamics", false},
 		MetricKey(MetricLadderBidReplenish, SideNone):   {"dynamics", false},
 		MetricKey(MetricLadderAskReplenish, SideNone):   {"dynamics", false},
-		MetricKey(MetricPrecursor, SideNone):            {"legacy_summary", false},
-		MetricKey(MetricCompression, SideNone):          {"legacy_summary", false},
-		MetricKey(MetricIgnition, SideNone):             {"legacy_summary", false},
-		MetricKey(MetricTrend, SideNone):                {"legacy_summary", false},
-		MetricKey(MetricExhaustion, SideNone):           {"legacy_summary", false},
-		MetricKey(MetricStrength, SideNone):             {"legacy_summary", false},
 		MetricKey(MetricPrecursor, SideBuy):             {"buy_input", false},
-		MetricKey(MetricCompression, SideBuy):           {"buy_compression", true},
-		MetricKey(MetricIgnition, SideBuy):              {"buy_ignition", true},
-		MetricKey(MetricTrend, SideBuy):                 {"buy_trend", true},
 		MetricKey(MetricExhaustion, SideBuy):            {"buy_exhaustion", true},
-		MetricKey(MetricStrength, SideBuy):              {"buy_summary", false},
 		MetricKey(MetricPrecursor, SideSell):            {"sell_input", false},
-		MetricKey(MetricCompression, SideSell):          {"sell_compression", true},
-		MetricKey(MetricIgnition, SideSell):             {"sell_ignition", true},
-		MetricKey(MetricTrend, SideSell):                {"sell_trend", true},
 		MetricKey(MetricExhaustion, SideSell):           {"sell_exhaustion", true},
-		MetricKey(MetricStrength, SideSell):             {"sell_summary", false},
 	},
 	SourceSentiment: {
 		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},

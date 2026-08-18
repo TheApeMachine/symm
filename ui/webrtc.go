@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"sync"
-	"time"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/theapemachine/errnie"
@@ -68,17 +67,21 @@ func (transport *FluidRTC) Run(publications <-chan types.FluidFrame) {
 		select {
 		case <-transport.ctx.Done():
 			return
-		case frame, open := <-publications:
-			if !open {
-				return
-			}
+			case frame, open := <-publications:
+				if !open {
+					return
+				}
 
-			if !transport.HasPeers() {
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
+				// No viewer attached: discard immediately. Sleeping here
+				// throttled the drain to ~20 frames/s while the solver
+				// publishes per step, saturating the channel; the receive
+				// above blocks when empty, so dropping costs nothing when
+				// production stops.
+				if !transport.HasPeers() {
+					continue
+				}
 
-			transport.publish(frame.Channel, frame.Payload)
+				transport.publish(frame.Channel, frame.Payload)
 		}
 	}
 }

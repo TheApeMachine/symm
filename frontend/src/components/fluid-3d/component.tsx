@@ -1,10 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
-import { Canvas } from "#/components/ui/canvas";
-import { Flex } from "#/components/ui/flex";
-import { Input } from "#/components/ui/input";
-import { Section } from "#/components/ui/section";
 import { paintPhaseDial } from "#/components/charts/phase-dial";
 import {
 	TerminalPhaseDialChart,
@@ -12,11 +6,17 @@ import {
 	terminalPhaseStatusFromFrame,
 	terminalWaveModesFromFrame,
 } from "#/components/terminal/charts";
+import { Badge } from "#/components/ui/badge";
+import { Button } from "#/components/ui/button";
+import { Canvas } from "#/components/ui/canvas";
+import { Flex } from "#/components/ui/flex";
+import { Input } from "#/components/ui/input";
+import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
-import { FluidScene, type FluidSceneOptions } from "./scene";
-import { FluidWebRTCFeed } from "./transport";
 import { KuramotoRing, type KuramotoRingProps } from "./kuramoto-ring";
 import { PhasePortrait, type PhasePortraitPoint } from "./phase-portrait";
+import { FluidScene, type FluidSceneOptions } from "./scene";
+import { FluidWebRTCFeed } from "./transport";
 import type { FluidGrid, FluidParticle } from "./wire";
 
 const initialOptions: FluidSceneOptions = {
@@ -146,13 +146,11 @@ export const FluidInspector = () => {
 	};
 
 	useEffect(() => {
-		const viewport = viewportRef.current;
-
-		if (viewport === null) {
+		if (viewportRef.current === null) {
 			return;
 		}
 
-		const scene = new FluidScene(viewport, setSelected);
+		const scene = new FluidScene(viewportRef.current, setSelected);
 		const feed = new FluidWebRTCFeed({
 			onFields: (fields) => {
 				scene.updateFields(fields);
@@ -248,7 +246,11 @@ export const FluidInspector = () => {
 								: `${grid.x}×${grid.y}×${grid.z} · ${particleCount} orders/particles`}
 						</Typography.Mono>
 						{hydro !== null ? (
-							<Flex.Row align="center" gap={2} className="text-[11px] text-(--f4)">
+							<Flex.Row
+								align="center"
+								gap={2}
+								className="text-[11px] text-(--f4)"
+							>
 								<span>η: {hydro.viscosityProxy?.toFixed(3) ?? "0"}</span>
 								<span>v_B: {hydro.guidanceSpeed?.toFixed(3) ?? "0"}</span>
 								<span>⟨|Ψ|²⟩: {hydro.coherenceMag2?.toFixed(3) ?? "0"}</span>
@@ -357,7 +359,7 @@ export const FluidInspector = () => {
 						</span>
 					</div>
 				}
-				className="absolute top-14 left-3 z-10 h-[26rem] w-80 rounded border border-(--line) bg-[#0e0c0ae8]"
+				className="absolute top-14 left-3 z-10 h-104 w-80 rounded border border-(--line) bg-[#0e0c0ae8]"
 			>
 				<TerminalPhaseDialChart />
 			</Canvas>

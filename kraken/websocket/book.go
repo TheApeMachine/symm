@@ -24,8 +24,8 @@ type Book struct {
 	mu         sync.RWMutex
 	manager    *spot.BookManager
 	normalizer *spot.Normalizer
-	updates    chan<- string
-	events     chan<- kraken.Level3Data
+	notify     func(string)
+	emit       func(kraken.Level3Data)
 	resync     func(string)
 	diverging  map[string]struct{}
 }
@@ -116,25 +116,6 @@ func (book *Book) Create(symbol string, depth int) {
 }
 
 /*
-SetUpdates connects this cache to the owning transport's coalesced book-update
-notification channel.
-*/
-func (book *Book) SetUpdates(updates chan<- string) {
-	book.mu.Lock()
-	book.updates = updates
-	book.mu.Unlock()
-}
-
-/*
-SetEvents connects accepted Level 3 frames to the owning transport.
-*/
-func (book *Book) SetEvents(events chan<- kraken.Level3Data) {
-	book.mu.Lock()
-	book.events = events
-	book.mu.Unlock()
-}
-
-/*
 SetResync connects checksum-divergence recovery to the owning transport. The
 callback owns the venue conversation: unsubscribe the diverged symbol and
 resubscribe so the venue delivers a fresh snapshot.
@@ -159,8 +140,8 @@ func (book *Book) Update(
 
 	book.mu.Lock()
 	accepted, resynced, applyErr := book.apply(payload)
-	updates := book.updates
-	events := book.events
+	notify := book.notify
+	emit := book.emit
 	resync := book.resync
 	book.mu.Unlock()
 
@@ -175,19 +156,12 @@ func (book *Book) Update(
 	}
 
 	for _, data := range accepted {
-		if updates != nil {
-			select {
-			case updates <- data.Symbol:
-			default:
-			}
+		if notify != nil {
+			notify(data.Symbol)
 		}
 
-		if events != nil {
-			select {
-			case events <- data:
-			case <-book.ctx.Done():
-				return book.ctx.Err()
-			}
+		if emit != nil {
+			emit(data)
 		}
 	}
 

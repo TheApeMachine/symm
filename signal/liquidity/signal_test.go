@@ -69,6 +69,10 @@ func TestMeasure(t *testing.T) {
 		appendTickers(market, secondLeg...)
 		measurements := slices.Collect(signal.Measure(market))
 
+		for _, measurement := range measurements {
+			market.AppendMeasurement(measurement)
+		}
+
 		Convey("It should normalize from the first complete cohort", func() {
 			first := measurementFor(firstMeasurements, "THIN/USD")
 			So(first.Sample(types.MetricExecutableTouchDepth, types.SideNone).Normalized,
@@ -114,8 +118,13 @@ func TestMeasure(t *testing.T) {
 				ShouldNotBeNil)
 		})
 
-		Convey("It should not emit unchanged cached observations", func() {
-			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
+		Convey("It should re-emit the last row when no cohort changed", func() {
+			recalled := slices.Collect(signal.Measure(market))
+
+			So(recalled, ShouldHaveLength, 1)
+			So(recalled[0].Source, ShouldEqual, types.SourceLiquidity)
+			So(recalled[0].ID, ShouldEqual, measurements[0].ID)
+			So(recalled[0].At, ShouldEqual, measurements[0].At)
 		})
 	})
 
@@ -132,11 +141,14 @@ func TestMeasure(t *testing.T) {
 				ticker("PEER-B/USD", 100, 6, 30, at),
 				ticker("PEER-C/USD", 100, 8, 40, at),
 			)
-			_ = slices.Collect(signal.Measure(market))
+			for _, measurement := range slices.Collect(signal.Measure(market)) {
+				market.AppendMeasurement(measurement)
+			}
 		}
 
-		measurements := slices.Collect(signal.Measure(market))
-		So(measurements, ShouldBeEmpty)
+		recalled := slices.Collect(signal.Measure(market))
+		So(recalled, ShouldHaveLength, 1)
+		So(recalled[0].Source, ShouldEqual, types.SourceLiquidity)
 		at := start.Add(2 * time.Second)
 		appendTickers(market,
 			ticker("NO-VOLUME/USD", 100, 2, 0, at),
@@ -144,7 +156,7 @@ func TestMeasure(t *testing.T) {
 			ticker("PEER-B/USD", 100, 6, 30, at),
 			ticker("PEER-C/USD", 100, 8, 40, at),
 		)
-		measurements = slices.Collect(signal.Measure(market))
+		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should keep depth usable while turnover normalization stays absent", func() {
 			measurement := measurementFor(measurements, "NO-VOLUME/USD")

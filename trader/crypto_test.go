@@ -90,14 +90,8 @@ func TestIntegration(t *testing.T) {
 				stopSnapshots()
 				snapshotResult := <-snapshots
 				So(snapshotResult.err, ShouldBeNil)
-				storedSymbol, found := thesis.Symbols.Load("SIM1/USD")
+				_, found := thesis.Symbols.Load("SIM1/USD")
 				So(found, ShouldBeTrue)
-				resonanceRaw, found := storedSymbol.(*types.Symbol).Resonance.Load("SIM1/USD")
-				So(found, ShouldBeTrue)
-				forecast, err := resonanceRaw.(*learning.ResonanceManifold).
-					RolloutTaskForecast(1)
-				So(err, ShouldBeNil)
-				snapshotResult.snapshot.resonances = forecast
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 				stopCollector()
 				decisionResult := <-collected
@@ -171,21 +165,12 @@ func TestIntegration(t *testing.T) {
 									So(category.Confidence, ShouldBeGreaterThan, 0.0)
 								}
 
-								Convey("And resonance should issue a positive forecast", func() {
-									resonance, found := positiveResonance(snapshot.resonances)
-									So(found, ShouldBeTrue)
-									So(resonance, ShouldNotBeNil)
-									expectedReturn := resonance.Value
-									So(math.IsNaN(expectedReturn), ShouldBeFalse)
-									So(expectedReturn, ShouldBeGreaterThan, 0.0)
-
-									Convey("Then the planner should enter after the pump is observed", func() {
-										So(entry, ShouldNotBeNil)
-										So(entry.ProposedQuantity, ShouldNotBeNil)
-										So(entry.ProposedQuantity.Sign(), ShouldEqual, 1)
-										So(entry.Stoploss, ShouldNotBeNil)
-										So(entry.Stoploss.Floor, ShouldNotBeNil)
-									})
+								Convey("Then the planner should enter after the pump is observed", func() {
+									So(entry, ShouldNotBeNil)
+									So(entry.ProposedQuantity, ShouldNotBeNil)
+									So(entry.ProposedQuantity.Sign(), ShouldEqual, 1)
+									So(entry.Stoploss, ShouldNotBeNil)
+									So(entry.Stoploss.Floor, ShouldNotBeNil)
 								})
 							})
 						})
@@ -598,7 +583,6 @@ type integrationSnapshot struct {
 	trades       []kraken.TradeData
 	measurements map[types.SourceType]*types.Measurement
 	categories   []types.Category
-	resonances   []learning.RLSOutput
 }
 
 type integrationSnapshotCollection struct {
@@ -740,20 +724,6 @@ func mergeCategories(
 	}
 
 	return observed
-}
-
-func positiveResonance(
-	readings []learning.RLSOutput,
-) (*learning.RLSOutput, bool) {
-	for _, reading := range readings {
-		if reading.Value <= 0 {
-			continue
-		}
-
-		return &reading, true
-	}
-
-	return nil, false
 }
 
 type decisionCollection struct {

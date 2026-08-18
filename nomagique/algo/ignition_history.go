@@ -13,7 +13,6 @@ var (
 		HistoryRates,
 		HistoryReturns,
 		HistoryPrecursors,
-		HistorySpreads,
 	}
 	ignitionHistoryCounts  [historyFamilyCount]nomagique.Symbol
 	ignitionHistoryHeads   [historyFamilyCount]nomagique.Symbol
@@ -84,8 +83,6 @@ func ignitionHistoryFamily(name string) (int, bool) {
 		return historyReturns, true
 	case HistoryPrecursors:
 		return historyPrecursors, true
-	case HistorySpreads:
-		return historySpreads, true
 	default:
 		return 0, false
 	}

@@ -21,12 +21,12 @@ func TestIgnitionReadinessIsCausal(t *testing.T) {
 	))
 	assertNumber(t, first, SymbolReady, 0)
 	assertNumber(t, first, SymbolRVOL, 0)
-	assertNumber(t, first, SymbolIgnition, 0)
+	assertNumber(t, first, SymbolAlphaRVOL, 0)
 
 	for _, symbol := range []nomagique.Symbol{
-		SymbolStrength,
-		SymbolBuyStrength,
-		SymbolSellStrength,
+		SymbolAlphaRVOL,
+		SymbolAlphaPrecursor,
+		SymbolBetaRVOL,
 	} {
 		if !first.Has(symbol) {
 			t.Fatalf("provisional output symbol %d is missing", symbol)
@@ -56,8 +56,7 @@ func TestIgnitionReadinessIsCausal(t *testing.T) {
 
 	for _, symbol := range []nomagique.Symbol{
 		SymbolRVOL,
-		SymbolPrecursor,
-		SymbolIgnition,
+		SymbolAlphaPrecursor,
 	} {
 		if third.MustGet(symbol) <= 0 {
 			t.Fatalf("symbol %d=%v; want positive evidence", symbol, third.MustGet(symbol))
@@ -166,7 +165,7 @@ func TestIgnitionRejectsTimeRegressionTransactionally(t *testing.T) {
 	}
 
 	bars := committed.MustGet(SymbolIgnitionBars)
-	strength := committed.MustGet(SymbolStrength)
+	rvol := committed.MustGet(SymbolRVOL)
 	regressed := ignitionObservationForTest(
 		32,
 		20,
@@ -182,7 +181,7 @@ func TestIgnitionRejectsTimeRegressionTransactionally(t *testing.T) {
 
 	retained := stream.Project()
 	assertNumber(t, retained, SymbolIgnitionBars, bars)
-	assertNumber(t, retained, SymbolStrength, strength)
+	assertNumber(t, retained, SymbolRVOL, rvol)
 	recovered := measureIgnition(t, stream, ignitionObservationForTest(
 		32,
 		20,
@@ -249,7 +248,6 @@ func TestIgnitionBoundsRetainedHistory(t *testing.T) {
 		HistoryRates,
 		HistoryReturns,
 		HistoryPrecursors,
-		HistorySpreads,
 	} {
 		count := IgnitionHistoryCount(output, history)
 
@@ -292,9 +290,8 @@ func TestIgnitionReciprocalDirectionsAreSymmetric(t *testing.T) {
 		bull nomagique.Symbol
 		bear nomagique.Symbol
 	}{
-		{bull: SymbolBuyPrecursor, bear: SymbolSellPrecursor},
-		{bull: SymbolBuyIgnition, bear: SymbolSellIgnition},
-		{bull: SymbolBuyExhaustion, bear: SymbolSellExhaustion},
+		{bull: SymbolAlphaPrecursor, bear: SymbolBetaPrecursor},
+		{bull: SymbolAlphaExhaustion, bear: SymbolBetaExhaustion},
 	} {
 		assertAlmostEqual(t, bull.MustGet(pair.bull), bear.MustGet(pair.bear), 1e-12)
 	}

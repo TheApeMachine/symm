@@ -200,7 +200,6 @@ func newMarket(
 		ctx, nil, true,
 		websocket.PrivateWebSocketURL, market.Private.Client(),
 	)
-	market.private.Level3Client = market.Level3.Client
 
 	return market
 }

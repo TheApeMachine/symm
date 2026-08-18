@@ -143,7 +143,6 @@ func (signal *Signal) frame(symbolName string, outcome excitation.Outcome) *type
 	}
 
 	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
-	signal.remember(measurement)
 
 	return measurement
 }

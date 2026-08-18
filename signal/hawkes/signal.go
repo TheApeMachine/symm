@@ -3,11 +3,9 @@ package hawkes
 import (
 	"context"
 	"iter"
-	"maps"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/symm/kraken"
@@ -34,7 +32,6 @@ type Signal struct {
 	process   *excitation.Process
 	sample    *excitation.Sample
 	lastTrade *sync.Map
-	latest    *sync.Map
 }
 
 type tradeCursor struct {
@@ -59,7 +56,6 @@ func NewSignal(
 		process:   excitation.NewProcess(),
 		sample:    excitation.NewSample(),
 		lastTrade: &sync.Map{},
-		latest:    &sync.Map{},
 	}
 
 	return signal
@@ -80,9 +76,7 @@ func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		emitted := false
-
+	return symbol.AlwaysYield(types.SourceHawkes, func(yield func(*types.Measurement) bool) {
 		for trade := range symbol.MarketTrades(types.SourceHawkes) {
 			if signal.seenTrade(trade) {
 				continue
@@ -111,7 +105,6 @@ func (signal *Signal) Measure(
 					return
 				}
 
-				emitted = true
 				continue
 			}
 
@@ -128,7 +121,6 @@ func (signal *Signal) Measure(
 					return
 				}
 
-				emitted = true
 				continue
 			}
 
@@ -137,55 +129,14 @@ func (signal *Signal) Measure(
 					return
 				}
 
-				emitted = true
 				continue
 			}
 
 			if !yield(signal.frame(trade.Symbol, outcome)) {
 				return
 			}
-
-			emitted = true
 		}
-
-		if emitted {
-			return
-		}
-
-		if last := signal.recall(symbol.Symbol); last != nil {
-			yield(last)
-		}
-	}
-}
-
-func (signal *Signal) remember(measurement *types.Measurement) {
-	if signal.latest == nil {
-		signal.latest = &sync.Map{}
-	}
-
-	signal.latest.Store(measurement.Symbol, measurement)
-}
-
-func (signal *Signal) recall(symbolName string) *types.Measurement {
-	if signal.latest == nil {
-		return nil
-	}
-
-	raw, exists := signal.latest.Load(symbolName)
-
-	if !exists {
-		return nil
-	}
-
-	previous := raw.(*types.Measurement)
-	clone := *previous
-	clone.ID = uuid.NewString()
-
-	if previous.Metrics != nil {
-		clone.Metrics = maps.Clone(previous.Metrics)
-	}
-
-	return &clone
+	})
 }
 
 func (signal *Signal) seenTrade(row kraken.TradeData) bool {

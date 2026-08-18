@@ -24,10 +24,6 @@ func NewMeasurement(id string, source string) *Measurement {
 }
 
 func (measurement *Measurement) Put(name string, metric *Metric[float64]) {
-	if measurement == nil {
-		return
-	}
-
 	if measurement.Metrics == nil {
 		measurement.Metrics = make(map[string]*Metric[float64])
 	}
@@ -36,10 +32,6 @@ func (measurement *Measurement) Put(name string, metric *Metric[float64]) {
 }
 
 func (measurement *Measurement) Metric(name string) *Metric[float64] {
-	if measurement == nil {
-		return nil
-	}
-
 	metric, found := measurement.Metrics[name]
 
 	if !found {
@@ -50,7 +42,7 @@ func (measurement *Measurement) Metric(name string) *Metric[float64] {
 }
 
 func (measurement *Measurement) Error() string {
-	if measurement == nil || measurement.Err == nil {
+	if measurement.Err == nil {
 		return ""
 	}
 

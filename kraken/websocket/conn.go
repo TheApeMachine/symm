@@ -26,10 +26,6 @@ type Conn interface {
 	Subscribe(string, *types.Subscription[any]) *types.Subscription[any]
 	Books() *sync.Map
 	Book(string, func(*book.Book))
-	BookUpdates() <-chan string
-	Level3Events() <-chan kraken.Level3Data
-	Level3Divergences() <-chan string
-	ResubscribeL3(string)
 	SubInstrument(types.Subscription[any])
 	SubTicker([]string)
 	SubBook([]string)
@@ -128,7 +124,7 @@ func (api *API) Normalizer() *spot.Normalizer {
 func (api *API) Subscribe(
 	key string, subscription *types.Subscription[any],
 ) *types.Subscription[any] {
-	if key == "executions" || key == "add_order" {
+	if key == "executions" || key == "add_order" || key == "level3" || key == "book_updates" {
 		return api.private.Subscribe(key, subscription)
 	}
 
@@ -138,10 +134,6 @@ func (api *API) Subscribe(
 
 func (api *API) Books() *sync.Map                                 { return api.private.Books() }
 func (api *API) Book(symbol string, read func(*book.Book))        { api.private.Book(symbol, read) }
-func (api *API) BookUpdates() <-chan string                       { return api.private.BookUpdates() }
-func (api *API) Level3Events() <-chan kraken.Level3Data           { return api.private.Level3Events() }
-func (api *API) Level3Divergences() <-chan string                 { return api.private.Level3Divergences() }
-func (api *API) ResubscribeL3(symbol string)                      { api.private.ResubscribeL3(symbol) }
 func (api *API) SubInstrument(callback types.Subscription[any])   { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
 func (api *API) SubBook(symbols []string)                         { api.public.SubBook(symbols) }

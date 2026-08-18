@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -25,7 +26,7 @@ type Signal struct {
 	api    *websocket.API
 	algo   *algorithm.TradeFlowSample
 	flow   *equation.Flow
-	quotes *types.QuoteHistory
+	quotes *data.Series[[2]float64]
 }
 
 /*
@@ -39,7 +40,7 @@ func NewSignal(
 	return NewSignalWithQuotes(
 		ctx,
 		api,
-		types.NewQuoteHistory(system.Cfg.PumpDump.Capacity),
+		data.MustNewSeries[[2]float64](system.Cfg.PumpDump.Capacity),
 	)
 }
 
@@ -50,7 +51,7 @@ other tape calculations owned by the same shard.
 func NewSignalWithQuotes(
 	ctx context.Context,
 	api *websocket.API,
-	quotes *types.QuoteHistory,
+	quotes *data.Series[[2]float64],
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -81,19 +82,39 @@ func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
+	return symbol.AlwaysYield(types.SourceCVD, signal.measure(symbol))
+}
+
+func (signal *Signal) measure(
+	symbol *types.Symbol,
+) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
 		for ticker := range symbol.MarketTickers(types.SourceCVD) {
-			signal.quotes.Observe(ticker)
+			if ticker.Bid == nil || ticker.Ask == nil || ticker.Timestamp.IsZero() ||
+				ticker.Bid.Sign() <= 0 || ticker.Ask.Cmp(ticker.Bid) <= 0 {
+				continue
+			}
+
+			signal.quotes.Observe(
+				ticker.Symbol,
+				float64(ticker.Timestamp.Unix()),
+				float64(ticker.Timestamp.Nanosecond()),
+				[2]float64{ticker.Bid.Float64(), ticker.Ask.Float64()},
+			)
 		}
 
 		for trade := range symbol.MarketTrades(types.SourceCVD) {
-			quote, found := signal.quotes.At(trade.Symbol, trade.Timestamp)
+			sides, found := signal.quotes.AsOf(
+				trade.Symbol,
+				float64(trade.Timestamp.Unix()),
+				float64(trade.Timestamp.Nanosecond()),
+			)
 
 			if !found {
 				continue
 			}
 
-			responsePrice := (quote.Bid.Float64() + quote.Ask.Float64()) / 2
+			responsePrice := (sides[0] + sides[1]) / 2
 			input, ready, err := signal.algo.Measure(algorithm.TradeFlowInput{
 				Symbol:        symbol.Symbol,
 				Price:         trade.Price.Float64(),

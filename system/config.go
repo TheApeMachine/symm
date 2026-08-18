@@ -14,7 +14,6 @@ func init() {
 type Config struct {
 	mu sync.RWMutex
 	*Resonance
-	*Manifold
 	*Risk
 	Regulator *RegulatorConfig
 	Planner   *PlannerConfig
@@ -25,7 +24,6 @@ type Config struct {
 func NewConfig() *Config {
 	return &Config{
 		Resonance: NewResonance(),
-		Manifold:  NewManifold(),
 		Risk:      NewRisk(),
 		Regulator: NewRegulatorConfig(),
 		Planner:   NewPlannerConfig(),
@@ -52,11 +50,6 @@ func (config *Config) Snapshot() *Config {
 		snapshot.Resonance = &resonance
 	}
 
-	if config.Manifold != nil {
-		manifold := *config.Manifold
-		snapshot.Manifold = &manifold
-	}
-
 	if config.Risk != nil {
 		risk := *config.Risk
 		snapshot.Risk = &risk
@@ -78,18 +71,14 @@ func (config *Config) Snapshot() *Config {
 /*
 ApplyRegulation atomically publishes the regulator-owned dynamic settings.
 */
-func (config *Config) ApplyRegulation(
-	manifold Manifold,
-	planner PlannerConfig,
-) error {
-	if config == nil || config.Manifold == nil || config.Planner == nil {
-		return errors.New("system: manifold and planner configuration required for regulation")
+func (config *Config) ApplyRegulation(planner PlannerConfig) error {
+	if config == nil || config.Planner == nil {
+		return errors.New("system: planner configuration required for regulation")
 	}
 
 	config.mu.Lock()
 	defer config.mu.Unlock()
 
-	*config.Manifold = manifold
 	*config.Planner = planner
 
 	return nil

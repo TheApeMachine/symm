@@ -94,6 +94,12 @@ func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
+	return symbol.AlwaysYield(types.SourceExhaustion, signal.measure(symbol))
+}
+
+func (signal *Signal) measure(
+	symbol *types.Symbol,
+) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
 		if signal == nil || symbol == nil || signal.books == nil {
 			return
@@ -383,7 +389,7 @@ func (signal *Signal) measureTrade(
 		return nil, nil
 	}
 
-	input, _, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
+	input, ready, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
 		Symbol:   row.Symbol,
 		Price:    row.Price.Float64(),
 		Quantity: row.Qty,
@@ -397,6 +403,13 @@ func (signal *Signal) measureTrade(
 			"exhaust: failed to measure trade",
 			err,
 		))
+	}
+
+	// A trade before the window's book established its depth ratios carries no
+	// scoreable microstructure; its pressure is already ingested, so the trade
+	// is done, not failed.
+	if !ready {
+		return nil, nil
 	}
 
 	output, err := signal.decay.Measure(input)

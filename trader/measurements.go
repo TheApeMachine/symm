@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -47,7 +48,7 @@ func NewMeasurements(
 ) *Measurements {
 	ctx, cancel := context.WithCancel(ctx)
 
-	quotes := types.NewQuoteHistory(system.Cfg.PumpDump.Capacity)
+	quotes := data.MustNewSeries[[2]float64](system.Cfg.PumpDump.Capacity)
 
 	return &Measurements{
 		ctx:    ctx,

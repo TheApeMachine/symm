@@ -18,19 +18,13 @@ func PublishFluid(
 		return
 	}
 
-	if capacity := cap(fluid); capacity > 0 && len(fluid) == capacity {
-		data.Free()
-		return
-	}
-
-	payload := data.MarshalAndFree()
-
 	select {
 	case fluid <- types.FluidFrame{
 		Channel: channel,
-		Payload: payload,
+		Payload: data.MarshalAndFree(),
 	}:
 	default:
+		errnie.Warn("fluid channel is saturated")
 	}
 }
 
@@ -41,30 +35,6 @@ so that frame is freed before serialization and the trading path continues.
 */
 func Publish(ui chan []byte, data datura.Map[any]) {
 	if data == nil || ui == nil {
-		data.Free()
-		return
-	}
-
-	hasValue := false
-
-	for key, value := range data {
-		switch value := value.(type) {
-		case []any:
-			if len(value) == 0 {
-				delete(data, key)
-				continue
-			}
-		default:
-			if value == nil {
-				delete(data, key)
-				continue
-			}
-		}
-
-		hasValue = true
-	}
-
-	if !hasValue {
 		data.Free()
 		return
 	}

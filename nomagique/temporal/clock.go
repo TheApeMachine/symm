@@ -2,9 +2,9 @@ package temporal
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 var (
@@ -23,7 +23,7 @@ func Clock(
 	age, hasAge := input.Get(SymbolAge)
 	span, hasSpan := input.Get(SymbolSpan)
 
-	if !hasAge || !hasSpan || !finite(age, span) {
+	if !hasAge || !hasSpan || !utils.IsFinite(age, span) {
 		return state, nomagique.Frame{}, fmt.Errorf(
 			"temporal: clock requires finite age and span",
 		)
@@ -39,14 +39,4 @@ func Clock(
 	output.Put(SymbolProgress, age/span)
 
 	return state, output, nil
-}
-
-func finite(values ...float64) bool {
-	for _, value := range values {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return false
-		}
-	}
-
-	return true
 }

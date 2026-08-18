@@ -93,7 +93,9 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
 	github.com/theapemachine/datura v1.2.10
-	github.com/theapemachine/errnie v1.2.6
-	github.com/theapemachine/nomagique v0.0.6
+	github.com/theapemachine/errnie v1.2.7
+	github.com/theapemachine/nomagique v0.0.8
 	golang.design/x/lockfree v0.1.0
 )
+
+replace github.com/theapemachine/nomagique => ../nomagique

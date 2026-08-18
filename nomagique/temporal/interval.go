@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 var (
@@ -22,7 +23,7 @@ func Interval(
 ) (nomagique.Frame, nomagique.Frame, error) {
 	timestamp, found := input.Get(SymbolTimestamp)
 
-	if !found || !finite(timestamp) {
+	if !found || !utils.IsFinite(timestamp) {
 		return state, nomagique.Frame{}, fmt.Errorf(
 			"temporal: interval requires a finite timestamp",
 		)

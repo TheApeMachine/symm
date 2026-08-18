@@ -71,9 +71,19 @@ func TestMeasure(t *testing.T) {
 
 		measurements := slices.Collect(signal.Measure(market))
 
+		for _, measurement := range measurements {
+			market.AppendMeasurement(measurement)
+		}
+
 		Convey("It should consume each symbol history with its own cursor", func() {
 			So(measurements, ShouldHaveLength, 1)
-			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
+
+			recalled := slices.Collect(signal.Measure(market))
+
+			So(recalled, ShouldHaveLength, 1)
+			So(recalled[0].Source, ShouldEqual, types.SourceCorrelation)
+			So(recalled[0].ID, ShouldEqual, measurements[0].ID)
+			So(recalled[0].At, ShouldEqual, measurements[0].At)
 		})
 	})
 

@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/regulator"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/trader"
@@ -280,6 +281,14 @@ func BootWithHub(
 		uiChannel,
 		manifoldChannel,
 		recorder,
+		thesis,
+	)).Wait()
+
+	utils.NewWaiter[*resonance.Solver](resonance.NewSolver(
+		ctx,
+		viper.GetFloat64("resonance.learning_rate"),
+		api,
+		uiChannel,
 		thesis,
 	)).Wait()
 

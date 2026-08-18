@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 var (
@@ -32,7 +33,7 @@ func Duration(
 		)
 	}
 
-	if !finite(currentSec, currentNsec, previousSec, previousNsec) ||
+	if !utils.IsFinite(currentSec, currentNsec, previousSec, previousNsec) ||
 		currentNsec < 0 || currentNsec >= 1e9 || previousNsec < 0 || previousNsec >= 1e9 {
 		return state, nomagique.Frame{}, fmt.Errorf(
 			"temporal: duration coordinates must be finite and normalized",

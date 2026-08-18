@@ -280,61 +280,16 @@ func (symbol *Symbol) AppendMeasurement(measurement *Measurement) {
 
 	categoryMeasurements, _ := symbol.Measurements.LoadOrStore("category", lf.NewQueue[*Measurement]())
 	graphMeasurements, _ := symbol.Measurements.LoadOrStore("graph", lf.NewQueue[*Measurement]())
+	resonanceMeasurements, _ := symbol.Measurements.LoadOrStore("resonance", lf.NewQueue[*Measurement]())
+
+	if measurement.Source == SourceHawkes {
+		manifoldMeasurements, _ := symbol.Measurements.LoadOrStore("manifold", lf.NewQueue[*Measurement]())
+		manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+	}
 
 	categoryMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 	graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
-
-	symbol.retainLatest(measurement)
-
-	symbol.AppendResonanceMeasurement(
-		MeasurementToResonance(symbol.Symbol, measurement),
-	)
-}
-
-/*
-retainLatest keeps the newest row each source produced. The solver queues are
-drained on every analysis cut, so the latest observation would otherwise leave
-memory with the queue and no durable per-source record would remain.
-*/
-func (symbol *Symbol) retainLatest(measurement *Measurement) {
-	if measurement == nil || measurement.Source == "" {
-		return
-	}
-
-	key := string(measurement.Source)
-	stored, found := symbol.Latest.Load(key)
-
-	if found {
-		latest, ok := stored.(*Measurement)
-
-		if ok && latest != nil && !measurement.At.After(latest.At) {
-			return
-		}
-	}
-
-	symbol.Latest.Store(key, measurement)
-}
-
-/*
-AppendResonanceMeasurement queues one ordered predictor observation. A market
-mark without new signal readings is still ground truth for forecasts issued by
-the existing model.
-*/
-func (symbol *Symbol) AppendResonanceMeasurement(
-	measurement *ResonanceMeasurement,
-) bool {
-	if measurement == nil ||
-		(measurement.Mark <= 0 && len(measurement.Readings) == 0) {
-		return false
-	}
-
-	resonanceMeasurements, _ := symbol.Measurements.LoadOrStore(
-		"resonance",
-		lf.NewQueue[*ResonanceMeasurement](),
-	)
-	resonanceMeasurements.(*lf.Queue[*ResonanceMeasurement]).Enqueue(measurement)
-
-	return true
+	resonanceMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 }
 
 /*
@@ -475,30 +430,6 @@ func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*Measurement] {
 
 		for ok {
 			data, ok = measurements.(*lf.Queue[*Measurement]).Dequeue()
-
-			if ok {
-				if !yield(data) {
-					return
-				}
-			}
-		}
-	}
-}
-
-func (symbol *Symbol) ResonanceMeasurements() iter.Seq[*ResonanceMeasurement] {
-	measurements, found := symbol.Measurements.Load("resonance")
-
-	if !found {
-		return func(yield func(*ResonanceMeasurement) bool) {}
-	}
-
-	return func(yield func(*ResonanceMeasurement) bool) {
-		var (
-			data *ResonanceMeasurement
-			ok   bool = true
-		)
-		for ok {
-			data, ok = measurements.(*lf.Queue[*ResonanceMeasurement]).Dequeue()
 
 			if ok {
 				if !yield(data) {

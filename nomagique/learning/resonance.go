@@ -11,6 +11,24 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
+/*
+ReadoutMode defines which representation components are harvested into the
+downstream task readout and feature extraction vector.
+*/
+type ReadoutMode uint8
+
+const (
+	// ReadoutAll concatenates [z_1, ..., z_L, e_0, ..., e_{L-1}].
+	ReadoutAll ReadoutMode = iota
+	// ReadoutLatents concatenates only the settled latents [z_1, ..., z_L].
+	ReadoutLatents
+	// ReadoutInnovations concatenates only the prediction error residuals [e_0, ..., e_{L-1}].
+	ReadoutInnovations
+)
+
+/*
+ResonanceConfig configures multi-timescale, overcomplete predictive coding.
+*/
 type ResonanceConfig struct {
 	MaxInferenceSteps  int
 	MinInferenceSteps  int
@@ -24,7 +42,7 @@ type ResonanceConfig struct {
 	LrTemporal    float64
 	LrRecognition float64
 
-	TemporalWeight  float64
+	TemporalWeights []float64 // Layer-dependent temporal weights (fast -> slow timescales)
 	TopDownInitMix  float64
 	TemporalNormMax float64
 
@@ -34,49 +52,52 @@ type ResonanceConfig struct {
 	PrecisionMax  float64
 	PrecisionEps  float64
 
-	LatentDecay float64
-	Sparsity    float64
+	LatentDecay []float64 // Per-layer L2 regularization
+	Sparsity    []float64 // Per-layer L1 sparsity (dictionary learning)
 	WeightDecay float64
 	GradClip    float64
 	StateClip   float64
+
+	ReadoutMode ReadoutMode
 }
 
 /*
-AdaptiveResonanceConfig derives every single hyperparameter dynamically
-from the system-wide learning pace (alpha) and the physical depth of the network.
-
-Two families of parameter live in here and they do not behave the same way under
-a later SetAlpha. Pace terms (the learning rates, the precision tracking weight,
-the regularizer strengths) are what alpha is for, and retuning them mid-stream is
-the intended effect. Geometry terms (StateClip, TopDownInitMix, the inference
-step counts) describe the shape of the state space the retained weights and
-precisions were estimated in; moving those mid-stream changes the problem rather
-than the pace at which it is solved. SetAlpha therefore re-derives only the pace
-family. See ResonanceConfig.adoptPace.
+AdaptiveResonanceConfig derives hyperparameters dynamically from the learning pace,
+physical depth, and layer dimensions, automatically configuring dictionary sparsity
+when expanding overcomplete layers are detected.
 */
-func AdaptiveResonanceConfig(
-	alpha float64, arch []int,
-) ResonanceConfig {
+func AdaptiveResonanceConfig(alpha float64, arch []int) ResonanceConfig {
 	depth := len(arch)
 	depthFloat := float64(depth)
+	numLatents := depth - 1
 
 	topDownInitMix := (depthFloat - 1.0) / depthFloat
 	temporalNormMax := 1.0 - 1.0/depthFloat
-	temporalWeight := alpha / (alpha + 1.0/depthFloat)
 	earlyStopPatience := int(math.Max(1, math.Ceil(math.Sqrt(depthFloat))))
 	gradClip := alpha * depthFloat
-
-	// StateClip bounds the latent magnitude. Deriving it as depth/alpha makes a
-	// faster learning pace imply a tighter state space, which is backwards and
-	// couples the clip to the controller: a pace that rose by 30x would shrink
-	// the admissible latent range by the same factor and clip states that the
-	// retained weights were fit against. The bound belongs to the activation
-	// geometry instead. Every latent below the top is a tanh image bounded by 1,
-	// and the merge in initializeLatents is a convex combination of two such
-	// images, so a bound of depth admits the full reachable range with room for
-	// the transient excursions inference makes on the way to a settled state,
-	// and is invariant to pace.
 	stateClip := depthFloat
+
+	temporalWeights := make([]float64, numLatents)
+	latentDecay := make([]float64, numLatents)
+	sparsity := make([]float64, numLatents)
+
+	for latentIndex := range numLatents {
+		layerIndex := latentIndex + 1
+		layerDim := arch[layerIndex]
+		inputDim := arch[0]
+
+		timescaleProgression := float64(layerIndex) / depthFloat
+		temporalWeights[latentIndex] = alpha * timescaleProgression / (alpha + 1.0/depthFloat)
+
+		latentDecay[latentIndex] = alpha * 1e-1
+
+		if layerDim > inputDim {
+			expansionRatio := float64(layerDim) / float64(inputDim)
+			sparsity[latentIndex] = alpha * 5e-2 * math.Sqrt(expansionRatio)
+		} else {
+			sparsity[latentIndex] = alpha * 1e-2
+		}
+	}
 
 	return ResonanceConfig{
 		MaxInferenceSteps:  depth * 8,
@@ -91,7 +112,7 @@ func AdaptiveResonanceConfig(
 		LrTemporal:    alpha * 2.0,
 		LrRecognition: alpha * 0.6,
 
-		TemporalWeight:  temporalWeight,
+		TemporalWeights: temporalWeights,
 		TopDownInitMix:  topDownInitMix,
 		TemporalNormMax: temporalNormMax,
 
@@ -101,58 +122,64 @@ func AdaptiveResonanceConfig(
 		PrecisionMax:  5.0,
 		PrecisionEps:  1e-4,
 
-		LatentDecay: alpha * 1e-1,
-		Sparsity:    alpha * 1e-2,
+		LatentDecay: latentDecay,
+		Sparsity:    sparsity,
 		WeightDecay: alpha * 1e-3,
 		GradClip:    gradClip,
 		StateClip:   stateClip,
+		ReadoutMode: ReadoutAll,
 	}
 }
 
+/*
+ResonanceManifold executes hierarchical predictive coding with multi-timescale
+operators, sparse overcomplete dictionaries, and innovation feature harvesting.
+*/
 type ResonanceManifold struct {
 	cfg                    ResonanceConfig
 	arch                   []int
 	targetDim              int
+	readoutDim             int
 	generativeWeights      []*mat.Dense
 	recognitionWeights     []*mat.Dense
-	temporalOperator       *mat.Dense
+	temporalOperators      []*mat.Dense
 	taskWeights            *mat.Dense
 	taskBias               *mat.VecDense
 	taskLearners           []*RLS
 	latentStates           []*mat.VecDense
-	prevTop                *mat.VecDense
 	errorVar               []*mat.VecDense
 	precision              []*mat.VecDense
-	temporalVar            *mat.VecDense
-	temporalPrecision      *mat.VecDense
-	temporalPrior          *mat.VecDense
-	temporalPriorReady     bool
+	temporalVar            []*mat.VecDense
+	temporalPrecision      []*mat.VecDense
+	temporalPriorsReady    bool
 	settleAdvancedTemporal bool
-	taskVar                *mat.VecDense
-	taskScale              *mat.VecDense
-	taskScaleReady         []bool
-	taskPrecision          *mat.VecDense
-	taskModelLoss          *mat.VecDense
-	taskBaselineLoss       *mat.VecDense
-	taskSkillReady         []bool
-	taskSkill              *mat.VecDense
-	workspace              *resonanceWorkspace
-	streamLearn            bool
-	streamAdvanceTemporal  bool
-	lastInferenceSteps     int
-	output                 float64
+
+	taskVar          *mat.VecDense
+	taskScale        *mat.VecDense
+	taskScaleReady   []bool
+	taskPrecision    *mat.VecDense
+	taskModelLoss    *mat.VecDense
+	taskBaselineLoss *mat.VecDense
+	taskSkillReady   []bool
+	taskSkill        *mat.VecDense
+
+	workspace             *resonanceWorkspace
+	streamLearn           bool
+	streamAdvanceTemporal bool
+	lastInferenceSteps    int
+	output                float64
 }
 
-func NewResonanceManifold(
-	arch []int, targetDim int, alpha float64,
-) *ResonanceManifold {
+/*
+NewResonanceManifold constructs a multi-layer predictive coding manifold.
+*/
+func NewResonanceManifold(arch []int, targetDim int, alpha float64) *ResonanceManifold {
 	if len(arch) < 2 {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"resonance: architecture must contain at least input and one latent layer",
 			nil,
 		))
-
 		return nil
 	}
 
@@ -162,13 +189,13 @@ func NewResonanceManifold(
 			"resonance: alpha must be finite and in (0, 1]",
 			nil,
 		))
-
 		return nil
 	}
 
 	cfg := AdaptiveResonanceConfig(alpha, arch)
 	rng := rand.New(rand.NewSource(42))
 	numLinks := len(arch) - 1
+	numLatents := len(arch) - 1
 
 	weights := make([]*mat.Dense, numLinks)
 	recognition := make([]*mat.Dense, numLinks)
@@ -179,35 +206,66 @@ func NewResonanceManifold(
 		rowCount, colCount := arch[layerIndex], arch[layerIndex+1]
 		scaleW := math.Sqrt(2.0 / float64(rowCount+colCount))
 		dataW := make([]float64, rowCount*colCount)
-
 		for index := range dataW {
 			dataW[index] = rng.NormFloat64() * scaleW
 		}
-
 		weights[layerIndex] = mat.NewDense(rowCount, colCount, dataW)
+
 		scaleR := math.Sqrt(2.0 / float64(rowCount+colCount))
 		dataR := make([]float64, colCount*rowCount)
-
 		for index := range dataR {
 			dataR[index] = rng.NormFloat64() * scaleR
 		}
-
 		recognition[layerIndex] = mat.NewDense(colCount, rowCount, dataR)
+
 		errorVar[layerIndex] = mat.NewVecDense(rowCount, nil)
 		precision[layerIndex] = mat.NewVecDense(rowCount, nil)
 		denseFill(errorVar[layerIndex], 1.0)
 		denseFill(precision[layerIndex], 1.0)
 	}
 
-	topDim := arch[len(arch)-1]
-	scaleA := math.Sqrt(1.0 / float64(topDim))
-	dataA := make([]float64, topDim*topDim)
+	temporalOperators := make([]*mat.Dense, numLatents)
+	temporalVar := make([]*mat.VecDense, numLatents)
+	temporalPrecision := make([]*mat.VecDense, numLatents)
 
-	for index := range dataA {
-		dataA[index] = rng.NormFloat64() * scaleA * 0.30
+	for latentIndex := range numLatents {
+		dim := arch[latentIndex+1]
+		scaleA := math.Sqrt(1.0 / float64(dim))
+		dataA := make([]float64, dim*dim)
+		for index := range dataA {
+			dataA[index] = rng.NormFloat64() * scaleA * 0.30
+		}
+		temporalOperators[latentIndex] = mat.NewDense(dim, dim, dataA)
+
+		temporalVar[latentIndex] = mat.NewVecDense(dim, nil)
+		temporalPrecision[latentIndex] = mat.NewVecDense(dim, nil)
+		denseFill(temporalVar[latentIndex], 1.0)
+		denseFill(temporalPrecision[latentIndex], 1.0)
 	}
 
-	temporalWeights := mat.NewDense(topDim, topDim, dataA)
+	latents := make([]*mat.VecDense, len(arch))
+	for layerIndex, layerDim := range arch {
+		latents[layerIndex] = mat.NewVecDense(layerDim, nil)
+	}
+
+	totalLatentDim := 0
+	for _, dim := range arch[1:] {
+		totalLatentDim += dim
+	}
+	totalErrorDim := 0
+	for _, dim := range arch[:len(arch)-1] {
+		totalErrorDim += dim
+	}
+
+	readoutDim := 0
+	switch cfg.ReadoutMode {
+	case ReadoutAll:
+		readoutDim = totalLatentDim + totalErrorDim
+	case ReadoutLatents:
+		readoutDim = totalLatentDim
+	case ReadoutInnovations:
+		readoutDim = totalErrorDim
+	}
 
 	var taskWeights *mat.Dense
 	var taskBias *mat.VecDense
@@ -222,15 +280,7 @@ func NewResonanceManifold(
 	var taskSkill *mat.VecDense
 
 	if targetDim > 0 {
-		// The head is linear and fits a target on the caller's own scale, so it
-		// starts at zero rather than at a random draw. A random head is a
-		// nonzero forecast asserted before a single sample has been seen, and
-		// with the small-magnitude targets this head is built for that noise
-		// can exceed the signal it will eventually learn. Zero forecasts
-		// nothing until the data says otherwise, and the top latent it reads
-		// from is already randomly projected, so no symmetry needs breaking
-		// here.
-		taskWeights = mat.NewDense(targetDim, topDim, nil)
+		taskWeights = mat.NewDense(targetDim, readoutDim, nil)
 		taskBias = mat.NewVecDense(targetDim, nil)
 		taskLearners = make([]*RLS, targetDim)
 		taskVar = mat.NewVecDense(targetDim, nil)
@@ -247,40 +297,28 @@ func NewResonanceManifold(
 
 		for rowIndex := range targetDim {
 			learner, err := NewRLS(RLSConfig{
-				Dimension:       topDim,
+				Dimension:       readoutDim,
 				InitialVariance: 1,
 			})
-
 			if err != nil {
 				errnie.Error(errnie.Err(
 					errnie.Validation,
-					"resonance: task RLS learner construction failed - "+err.Error(),
+					"resonance: task RLS learner construction failed: "+err.Error(),
 					err,
 				))
 			}
-
 			taskLearners[rowIndex] = learner
 		}
 	}
-
-	latents := make([]*mat.VecDense, len(arch))
-
-	for layerIndex, layerDim := range arch {
-		latents[layerIndex] = mat.NewVecDense(layerDim, nil)
-	}
-
-	temporalVar := mat.NewVecDense(topDim, nil)
-	temporalPrecision := mat.NewVecDense(topDim, nil)
-	denseFill(temporalVar, 1.0)
-	denseFill(temporalPrecision, 1.0)
 
 	manifold := &ResonanceManifold{
 		cfg:                   cfg,
 		arch:                  arch,
 		targetDim:             targetDim,
+		readoutDim:            readoutDim,
 		generativeWeights:     weights,
 		recognitionWeights:    recognition,
-		temporalOperator:      temporalWeights,
+		temporalOperators:     temporalOperators,
 		taskWeights:           taskWeights,
 		taskBias:              taskBias,
 		taskLearners:          taskLearners,
@@ -289,7 +327,6 @@ func NewResonanceManifold(
 		precision:             precision,
 		temporalVar:           temporalVar,
 		temporalPrecision:     temporalPrecision,
-		temporalPrior:         mat.NewVecDense(topDim, nil),
 		taskVar:               taskVar,
 		taskScale:             taskScale,
 		taskScaleReady:        taskScaleReady,
@@ -303,12 +340,14 @@ func NewResonanceManifold(
 		streamAdvanceTemporal: true,
 	}
 
-	if err := manifold.projectTemporalOperatorNorm(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"resonance: constrain initial temporal weights: "+err.Error(),
-			err,
-		))
+	for latentIndex := range numLatents {
+		if err := manifold.projectTemporalOperatorNorm(latentIndex); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"resonance: constrain initial temporal weights: "+err.Error(),
+				err,
+			))
+		}
 	}
 
 	return manifold
@@ -318,8 +357,10 @@ func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 	for _, latent := range rm.latentStates {
 		latent.Zero()
 	}
-	rm.prevTop = nil
-	rm.temporalPriorReady = false
+	for latentIndex := range rm.temporalOperators {
+		rm.workspace.prevLatents[latentIndex].Zero()
+	}
+	rm.temporalPriorsReady = false
 	rm.settleAdvancedTemporal = false
 
 	if resetPrecision {
@@ -327,8 +368,10 @@ func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 			denseFill(rm.errorVar[layerIndex], 1.0)
 			denseFill(rm.precision[layerIndex], 1.0)
 		}
-		denseFill(rm.temporalVar, 1.0)
-		denseFill(rm.temporalPrecision, 1.0)
+		for latentIndex := range rm.temporalOperators {
+			denseFill(rm.temporalVar[latentIndex], 1.0)
+			denseFill(rm.temporalPrecision[latentIndex], 1.0)
+		}
 
 		if rm.targetDim > 0 {
 			denseFill(rm.taskVar, 1.0)
@@ -397,8 +440,51 @@ func (rm *ResonanceManifold) ReconstructionOutput() float64 {
 }
 
 /*
-Settle performs generative inference without supervised target contamination.
-Supervised targets belong in Learn and only affect weight updates.
+ReadoutDimension returns the total dimension of the combined latent + innovation vector.
+*/
+func (rm *ResonanceManifold) ReadoutDimension() int {
+	return rm.readoutDim
+}
+
+/*
+ReadoutVectorInto writes the multi-layer readout [z_1..z_L, e_0..e_{L-1}] directly
+into dst without heap allocation.
+*/
+func (rm *ResonanceManifold) ReadoutVectorInto(dst []float64) int {
+	_, layerErrors := rm.predictAdjacentLayers()
+	offset := 0
+
+	if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutLatents {
+		for layerIndex := 1; layerIndex < len(rm.latentStates); layerIndex++ {
+			data := rm.latentStates[layerIndex].RawVector().Data
+			copy(dst[offset:offset+len(data)], data)
+			offset += len(data)
+		}
+	}
+
+	if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutInnovations {
+		for linkIndex := range layerErrors {
+			data := layerErrors[linkIndex].RawVector().Data
+			copy(dst[offset:offset+len(data)], data)
+			offset += len(data)
+		}
+	}
+
+	return offset
+}
+
+/*
+ReadoutVector returns a copied slice of the multi-layer representation.
+*/
+func (rm *ResonanceManifold) ReadoutVector() []float64 {
+	vector := make([]float64, rm.readoutDim)
+	rm.ReadoutVectorInto(vector)
+	return vector
+}
+
+/*
+Settle performs generative inference by minimizing precision-weighted prediction
+error, multi-timescale temporal priors, and overcomplete dictionary sparsity.
 */
 func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error {
 	if len(input) != rm.arch[0] {
@@ -412,11 +498,6 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 	copy(xCol.RawVector().Data, input)
 
 	rm.initializeLatents(xCol)
-	rm.temporalPriorReady = rm.prevTop != nil
-
-	if rm.temporalPriorReady {
-		rm.temporalPrior.CopyVec(rm.workspace.topPrior)
-	}
 
 	settledEnergy := rm.Energy()
 	stableSteps := 0
@@ -441,8 +522,7 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 			rm.latentStates[0].CopyVec(xCol)
 			candidateEnergy = rm.Energy()
 
-			if !rm.cfg.MonotoneStateSteps ||
-				candidateEnergy <= math.Nextafter(settledEnergy, math.Inf(1)) {
+			if !rm.cfg.MonotoneStateSteps || candidateEnergy <= math.Nextafter(settledEnergy, math.Inf(1)) {
 				accepted = true
 				break
 			}
@@ -455,7 +535,6 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 			rm.restoreStates()
 			rm.latentStates[0].CopyVec(xCol)
 			stableSteps = 0
-
 			continue
 		}
 
@@ -466,12 +545,10 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 
 		if step+1 < rm.cfg.MinInferenceSteps || relativeDelta >= rm.cfg.EarlyStopTol {
 			stableSteps = 0
-
 			continue
 		}
 
 		stableSteps++
-
 		if stableSteps >= rm.cfg.EarlyStopPatience {
 			break
 		}
@@ -485,32 +562,25 @@ func (rm *ResonanceManifold) Settle(input []float64, advanceTemporal bool) error
 	return nil
 }
 
+/*
+Learn updates generative, recognition, multi-timescale temporal matrices, and
+the downstream multi-layer task head via RLS.
+*/
 func (rm *ResonanceManifold) Learn(target []float64) error {
 	if rm.settleAdvancedTemporal {
 		return errors.New("resonance: temporal state advanced before learning")
 	}
 
 	if target != nil && len(target) != rm.targetDim {
-		return fmt.Errorf(
-			"resonance: target dimension mismatch: expected %d, got %d",
-			rm.targetDim,
-			len(target),
-		)
+		return fmt.Errorf("resonance: target dimension mismatch: expected %d, got %d", rm.targetDim, len(target))
 	}
 
 	predictions, layerErrors := rm.predictAdjacentLayers()
-	topIndex := len(rm.latentStates) - 1
 
-	var targetCol *mat.VecDense
-	if target != nil && rm.targetDim > 0 {
-		targetCol = rm.workspace.yCol
-		copy(targetCol.RawVector().Data, target)
-	}
-
+	// 1. Generative weights update
 	for layerIndex, weightMatrix := range rm.generativeWeights {
 		localSignal := rm.workspace.localSignal[layerIndex]
 		denseApplyOneMinusSquareInto(localSignal, predictions[layerIndex])
-
 		precision := rm.precisionFor(layerIndex)
 		localSignal.MulElemVec(localSignal, layerErrors[layerIndex])
 		localSignal.MulElemVec(localSignal, precision)
@@ -527,13 +597,11 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		weightMatrix.Add(weightMatrix, update)
 
 		if rm.cfg.WeightDecay > 0 {
-			denseScaleInPlace(
-				weightMatrix,
-				1.0-rm.cfg.LrGenerative*rm.cfg.WeightDecay,
-			)
+			denseScaleInPlace(weightMatrix, 1.0-rm.cfg.LrGenerative*rm.cfg.WeightDecay)
 		}
 	}
 
+	// 2. Recognition weights update
 	for layerIndex, recognitionMatrix := range rm.recognitionWeights {
 		proposal := rm.workspace.recProposal[layerIndex]
 		proposal.MulVec(recognitionMatrix, rm.latentStates[layerIndex])
@@ -558,96 +626,82 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		recognitionMatrix.Add(recognitionMatrix, update)
 
 		if rm.cfg.WeightDecay > 0 {
-			denseScaleInPlace(
-				recognitionMatrix,
-				1.0-rm.cfg.LrRecognition*rm.cfg.WeightDecay,
-			)
+			denseScaleInPlace(recognitionMatrix, 1.0-rm.cfg.LrRecognition*rm.cfg.WeightDecay)
 		}
 	}
 
-	var taskError *mat.VecDense
+	// 3. Multi-timescale temporal operators update across all latent layers
+	temporalErrors := make([]*mat.VecDense, len(rm.temporalOperators))
+	if rm.temporalPriorsReady {
+		for latentIndex, operator := range rm.temporalOperators {
+			layerIndex := latentIndex + 1
+			temporalError := rm.workspace.temporalErrors[latentIndex]
+			temporalError.SubVec(rm.latentStates[layerIndex], rm.workspace.temporalPriors[latentIndex])
+			temporalErrors[latentIndex] = temporalError
 
-	if targetCol != nil && rm.taskWeights != nil {
+			temporalSignal := rm.workspace.temporalSignals[latentIndex]
+			denseApplyOneMinusSquareInto(temporalSignal, rm.workspace.temporalPriors[latentIndex])
+			precision := rm.temporalPrecision[latentIndex]
+			temporalSignal.MulElemVec(temporalSignal, temporalError)
+			temporalSignal.MulElemVec(temporalSignal, precision)
+			temporalSignal.ScaleVec(rm.cfg.TemporalWeights[latentIndex], temporalSignal)
+
+			update := rm.workspace.temporalUpdates[latentIndex]
+			denseOuterColsInto(update, temporalSignal, rm.workspace.prevLatents[latentIndex], 1.0)
+
+			scale := rm.cfg.LrTemporal
+			if norm := mat.Norm(update, 2); norm > rm.cfg.GradClip {
+				scale *= rm.cfg.GradClip / norm
+			}
+
+			denseScaleInPlace(update, scale)
+			operator.Add(operator, update)
+
+			if rm.cfg.WeightDecay > 0 {
+				denseScaleInPlace(operator, 1.0-rm.cfg.LrTemporal*rm.cfg.WeightDecay)
+			}
+
+			if err := rm.projectTemporalOperatorNorm(latentIndex); err != nil {
+				return fmt.Errorf("resonance: constrain temporal operator %d: %w", latentIndex, err)
+			}
+		}
+	}
+
+	// 4. Multi-layer & innovation task head update (RLS)
+	var targetCol *mat.VecDense
+	var taskError *mat.VecDense
+	if target != nil && rm.taskWeights != nil {
+		targetCol = rm.workspace.yCol
+		copy(targetCol.RawVector().Data, target)
+
 		taskPred := rm.workspace.taskPred
 		rm.taskPredictionInto(taskPred)
 
 		taskError = rm.workspace.taskError
 		taskError.SubVec(targetCol, taskPred)
 
-		/*
-			The return head is a linear regression, so square-root recursive least
-			squares is the exact online learner for its objective. Its gain follows
-			from retained design covariance; sharing the manifold's scalar alpha
-			with unrelated generative, recognition, temporal, precision, and
-			regularization updates made the task fit move for reasons outside its
-			own forecast error.
-
-			Initial covariance is the identity because the top latent is a tanh
-			image on a unit scale. Forgetting is one: no evidence is discarded
-			without an observed regime-reset rule.
-		*/
-		topState := rm.latentStates[topIndex].RawVector().Data
+		readoutData := rm.workspace.readoutBuf.RawVector().Data
+		rm.ReadoutVectorInto(readoutData)
 		targetData := targetCol.RawVector().Data
 		biasData := rm.taskBias.RawVector().Data
 
 		for rowIndex, learner := range rm.taskLearners {
-			_, err := learner.Observe(RLSSample{
-				Features: topState,
+			if _, err := learner.Observe(RLSSample{
+				Features: readoutData,
 				Target:   targetData[rowIndex],
-			})
-
-			if err != nil {
+			}); err != nil {
 				return fmt.Errorf("resonance: task learner update: %w", err)
 			}
 
 			intercept, err := learner.copyCoefficients(rm.taskWeights.RawRowView(rowIndex))
-
 			if err != nil {
 				return fmt.Errorf("resonance: task learner coefficients: %w", err)
 			}
-
 			biasData[rowIndex] = intercept
 		}
 	}
 
-	var temporalError *mat.VecDense
-
-	if rm.temporalPriorReady {
-		temporalError = rm.workspace.temporalError
-		temporalError.SubVec(rm.latentStates[topIndex], rm.temporalPrior)
-
-		temporalSignal := rm.workspace.temporalSignal
-		denseApplyOneMinusSquareInto(temporalSignal, rm.temporalPrior)
-
-		precision := rm.temporalPrecisionVec()
-		temporalSignal.MulElemVec(temporalSignal, temporalError)
-		temporalSignal.MulElemVec(temporalSignal, precision)
-		temporalSignal.ScaleVec(rm.cfg.TemporalWeight, temporalSignal)
-
-		update := rm.workspace.temporalUpdate
-		denseOuterColsInto(update, temporalSignal, rm.prevTop, 1.0)
-
-		scale := rm.cfg.LrTemporal
-		if norm := mat.Norm(update, 2); norm > rm.cfg.GradClip {
-			scale *= rm.cfg.GradClip / norm
-		}
-
-		denseScaleInPlace(update, scale)
-		rm.temporalOperator.Add(rm.temporalOperator, update)
-
-		if rm.cfg.WeightDecay > 0 {
-			denseScaleInPlace(
-				rm.temporalOperator,
-				1.0-rm.cfg.LrTemporal*rm.cfg.WeightDecay,
-			)
-		}
-
-		if err := rm.projectTemporalOperatorNorm(); err != nil {
-			return fmt.Errorf("resonance: constrain learned temporal weights: %w", err)
-		}
-	}
-
-	if err := rm.updatePrecision(layerErrors, temporalError, targetCol, taskError); err != nil {
+	if err := rm.updatePrecision(layerErrors, temporalErrors, targetCol, taskError); err != nil {
 		return err
 	}
 
@@ -656,31 +710,21 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 }
 
 /*
-Energy is the variational objective the inference line search minimizes. It is
-the sum of precision-weighted prediction error and the regularizer penalties
-that shape the latent state.
-
-Do not report this as a measure of how well the network is predicting. The
-regularizer terms are a function of the latent magnitudes and of alpha, not of
-market surprise, so a pace change moves this number without any change in
-prediction quality. PredictionEnergy isolates the part that is prediction error.
+Energy is the variational free energy combining precision-weighted error,
+multi-timescale temporal priors, $L_2$ decay, and $L_1$ dictionary sparsity.
 */
 func (rm *ResonanceManifold) Energy() float64 {
 	energy := rm.PredictionEnergy()
 
-	if rm.cfg.LatentDecay > 0 {
-		for layerIndex := 1; layerIndex < len(rm.latentStates); layerIndex++ {
-			norm := denseColNorm(rm.latentStates[layerIndex])
-			energy += 0.5 * rm.cfg.LatentDecay * norm * norm
+	for latentIndex := range rm.temporalOperators {
+		layerIndex := latentIndex + 1
+		latent := rm.latentStates[layerIndex]
+		if rm.cfg.LatentDecay[latentIndex] > 0 {
+			norm := denseColNorm(latent)
+			energy += 0.5 * rm.cfg.LatentDecay[latentIndex] * norm * norm
 		}
-	}
-
-	if rm.cfg.Sparsity > 0 {
-		for layerIndex := 1; layerIndex < len(rm.latentStates); layerIndex++ {
-			energy += rm.cfg.Sparsity * floats.Norm(
-				rm.latentStates[layerIndex].RawVector().Data,
-				1,
-			)
+		if rm.cfg.Sparsity[latentIndex] > 0 {
+			energy += rm.cfg.Sparsity[latentIndex] * floats.Norm(latent.RawVector().Data, 1)
 		}
 	}
 
@@ -688,13 +732,8 @@ func (rm *ResonanceManifold) Energy() float64 {
 }
 
 /*
-PredictionEnergy is the precision-weighted prediction error alone: the
-generative residual at every link plus the temporal residual at the top,
-excluding the latent-decay and sparsity penalties that Energy adds.
-
-This is the quantity to report and to compare across ticks. It responds only to
-how well the network predicts, so unlike Energy it does not move when the
-learning pace is retuned.
+PredictionEnergy computes total precision-weighted prediction error across all
+generative links and multi-timescale temporal links.
 */
 func (rm *ResonanceManifold) PredictionEnergy() float64 {
 	_, layerErrors := rm.predictAdjacentLayers()
@@ -705,23 +744,25 @@ func (rm *ResonanceManifold) PredictionEnergy() float64 {
 			weightedError := rm.workspace.weightedErr[layerIndex]
 			weightedError.MulElemVec(rm.precisionFor(layerIndex), layerError)
 			energy += 0.5 * denseColDot(weightedError, layerError)
-
-			continue
+		} else {
+			energy += 0.5 * denseColDot(layerError, layerError)
 		}
-
-		energy += 0.5 * denseColDot(layerError, layerError)
 	}
 
-	if rm.temporalPriorReady {
-		temporalError := rm.workspace.temporalError
-		temporalError.SubVec(rm.latentStates[len(rm.latentStates)-1], rm.temporalPrior)
+	if rm.temporalPriorsReady {
+		for latentIndex := range rm.temporalOperators {
+			layerIndex := latentIndex + 1
+			temporalError := rm.workspace.temporalErrors[latentIndex]
+			temporalError.SubVec(rm.latentStates[layerIndex], rm.workspace.temporalPriors[latentIndex])
 
-		if rm.cfg.UsePrecision {
-			weightedError := rm.workspace.temporalWeightedErr
-			weightedError.MulElemVec(rm.temporalPrecisionVec(), temporalError)
-			energy += 0.5 * rm.cfg.TemporalWeight * denseColDot(weightedError, temporalError)
-		} else {
-			energy += 0.5 * rm.cfg.TemporalWeight * denseColDot(temporalError, temporalError)
+			weight := rm.cfg.TemporalWeights[latentIndex]
+			if rm.cfg.UsePrecision {
+				weightedError := rm.workspace.temporalWeightedErrs[latentIndex]
+				weightedError.MulElemVec(rm.temporalPrecision[latentIndex], temporalError)
+				energy += 0.5 * weight * denseColDot(weightedError, temporalError)
+			} else {
+				energy += 0.5 * weight * denseColDot(temporalError, temporalError)
+			}
 		}
 	}
 
@@ -739,21 +780,11 @@ func (rm *ResonanceManifold) ReconstructionError() float64 {
 	return denseColNorm(diff)
 }
 
-/*
-taskPredictionInto evaluates the supervised head y = V * z into dst.
-
-The head is deliberately linear, unlike every generative and recognition link in
-the network, which are tanh. Those links reconstruct latent states that are
-themselves bounded tanh images, so squashing them is what makes prediction and
-target commensurate. The supervised target is not such a state: it is whatever
-scale the caller's regression lives on. For a log return that scale is order
-1e-4, which sits so deep inside tanh's linear region that the squash contributes
-nothing but a systematically attenuated gradient, while capping the head at +/-1
-would silently truncate any caller whose target is larger. A linear head fits the
-target on its own scale and leaves saturation to the caller who chose it.
-*/
 func (rm *ResonanceManifold) taskPredictionInto(dst *mat.VecDense) {
-	dst.MulVec(rm.taskWeights, rm.latentStates[len(rm.latentStates)-1])
+	readoutData := rm.workspace.readoutBuf.RawVector().Data
+	rm.ReadoutVectorInto(readoutData)
+
+	dst.MulVec(rm.taskWeights, rm.workspace.readoutBuf)
 	dst.AddVec(dst, rm.taskBias)
 }
 
@@ -764,15 +795,9 @@ func (rm *ResonanceManifold) TaskPrediction() []float64 {
 
 	taskPred := rm.workspace.taskPred
 	rm.taskPredictionInto(taskPred)
-
 	return append([]float64(nil), taskPred.RawVector().Data...)
 }
 
-/*
-ObserveTask resolves one strict-prior task forecast against its later target.
-Features and prediction must be the exact values retained when the forecast was
-issued; the current manifold state may already describe a newer market tick.
-*/
 func (rm *ResonanceManifold) ObserveTask(
 	features []float64,
 	prediction []float64,
@@ -782,10 +807,10 @@ func (rm *ResonanceManifold) ObserveTask(
 		return errors.New("resonance: supervised task head required")
 	}
 
-	if len(features) != rm.arch[len(rm.arch)-1] {
+	if len(features) != rm.readoutDim {
 		return fmt.Errorf(
 			"resonance: expected %d task features, got %d",
-			rm.arch[len(rm.arch)-1],
+			rm.readoutDim,
 			len(features),
 		)
 	}
@@ -853,13 +878,6 @@ func (rm *ResonanceManifold) LatentState() []float64 {
 	return append([]float64(nil), rm.latentStates[len(rm.latentStates)-1].RawVector().Data...)
 }
 
-/*
-ResonanceLayerWire exports one settled layer for UI x-ray visualization.
-
-Temporal reports whether ErrorNorm is a temporal mismatch rather than a
-generative one. Only the top layer carries a temporal error, because it is the
-only layer no other layer predicts top-down.
-*/
 type ResonanceLayerWire struct {
 	State      []float64 `json:"state"`
 	Prediction []float64 `json:"prediction"`
@@ -867,34 +885,16 @@ type ResonanceLayerWire struct {
 	Temporal   bool      `json:"temporal"`
 }
 
-/*
-TemporalError reports the norm of the top layer's temporal prediction residual,
-z_top - tanh(A * z_prev), and whether that residual is defined at all.
-
-The top latent has no generative error term: layerErrors is indexed by link, of
-which there are len(arch)-1, so the top layer is not predicted from above by any
-weight matrix. Its prediction error is temporal, carried by A across ticks, and
-it is undefined on the very first settle because no prior top state exists yet.
-Callers driving a controller off this must honour the ok flag, because a zero
-returned as if it were a measurement reads as perfect temporal prediction and
-inverts whatever ratio it feeds.
-*/
 func (rm *ResonanceManifold) TemporalError() (float64, bool) {
-	if !rm.temporalPriorReady {
+	if !rm.temporalPriorsReady || len(rm.temporalOperators) == 0 {
 		return 0, false
 	}
 
-	temporalError := rm.workspace.temporalError
-	temporalError.SubVec(rm.latentStates[len(rm.latentStates)-1], rm.temporalPrior)
-
+	topLatentIdx := len(rm.temporalOperators) - 1
+	temporalError := rm.workspace.temporalErrors[topLatentIdx]
 	return denseColNorm(temporalError), true
 }
 
-/*
-WireSnapshot exports settled states, top-down predictions, and layer errors.
-Its scalar diagnostics are the root-mean-square reconstruction error and mean
-prediction energy, so architecture width cannot inflate either reading.
-*/
 func (rm *ResonanceManifold) WireSnapshot() (
 	layers []ResonanceLayerWire,
 	surprise float64,
@@ -915,8 +915,8 @@ func (rm *ResonanceManifold) WireSnapshot() (
 			copy(prediction, predictions[layerIndex].RawVector().Data)
 		}
 
-		if layerIndex == topIndex && rm.temporalPriorReady {
-			copy(prediction, rm.temporalPrior.RawVector().Data)
+		if layerIndex == topIndex && rm.temporalPriorsReady {
+			copy(prediction, rm.workspace.temporalPriors[len(rm.temporalOperators)-1].RawVector().Data)
 		}
 
 		errorNorm := 0.0
@@ -926,9 +926,6 @@ func (rm *ResonanceManifold) WireSnapshot() (
 		case layerIndex < len(layerErrors):
 			errorNorm = denseColNorm(layerErrors[layerIndex])
 		case layerIndex == topIndex && hasTemporal:
-			// The top layer's only residual is the temporal one. Reporting it
-			// here is what makes the wire's last row a measurement rather than
-			// a structural zero.
 			errorNorm = temporalNorm
 			temporal = true
 		}
@@ -957,37 +954,6 @@ func (rm *ResonanceManifold) WireSnapshot() (
 		rm.PredictionEnergy() / float64(predictionDimensions)
 }
 
-func (rm *ResonanceManifold) advanceTemporalState() {
-	topIndex := len(rm.latentStates) - 1
-
-	if rm.prevTop == nil {
-		rm.prevTop = mat.NewVecDense(rm.arch[topIndex], nil)
-	}
-
-	rm.prevTop.CopyVec(rm.latentStates[topIndex])
-}
-
-func (rm *ResonanceManifold) precisionFor(layerIndex int) *mat.VecDense {
-	return rm.precision[layerIndex]
-}
-
-func (rm *ResonanceManifold) temporalPrecisionVec() *mat.VecDense {
-	return rm.temporalPrecision
-}
-
-/*
-TaskPrecision reports how reliable the supervised head currently is, relative to
-its own retained residual scale, and whether it has seen enough to say.
-
-The value is scale-free by construction: one means the head is predicting at its
-typical accuracy, above one means it is currently doing better than its own
-history, below one means worse. That makes it the quantity a caller should use
-to decide how far ahead to trust the head, because it means the same thing
-whatever scale the caller's target is on and whatever the market is doing.
-
-ok is false before any supervised sample has been resolved, when the head has no
-basis for a claim at all.
-*/
 func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
 	if rm.taskWeights == nil || rm.targetDim <= 0 {
 		return 0, false
@@ -1003,11 +969,6 @@ func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
 		float64(rm.targetDim), true
 }
 
-/*
-TaskSkill reports the supervised head's scale-free prequential skill against a
-zero-change baseline. Values above one mean the head has lower retained squared
-error than forecasting no change; values below one mean the baseline is better.
-*/
 func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
 	if rm.taskWeights == nil || rm.targetDim <= 0 {
 		return 0, false
@@ -1023,20 +984,81 @@ func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
 		float64(rm.targetDim), true
 }
 
-func (rm *ResonanceManifold) predictAdjacentLayers() (
-	[]*mat.VecDense,
-	[]*mat.VecDense,
-) {
-	for layerIndex := 0; layerIndex < len(rm.generativeWeights); layerIndex++ {
-		prediction := rm.workspace.predictions[layerIndex]
-		prediction.MulVec(rm.generativeWeights[layerIndex], rm.latentStates[layerIndex+1])
-		denseApplyTanhInPlace(prediction)
+func (rm *ResonanceManifold) stateGradients(
+	predictions []*mat.VecDense,
+	layerErrors []*mat.VecDense,
+) []*mat.VecDense {
+	topIndex := len(rm.latentStates) - 1
 
-		layerError := rm.workspace.errors[layerIndex]
-		layerError.SubVec(rm.latentStates[layerIndex], prediction)
+	for layerIndex := 1; layerIndex <= topIndex; layerIndex++ {
+		gradient := rm.workspace.grads[layerIndex]
+		gradient.Zero()
+		latentIndex := layerIndex - 1
+
+		if layerIndex < topIndex {
+			if rm.cfg.UsePrecision {
+				weightedError := rm.workspace.weightedErr[layerIndex]
+				weightedError.MulElemVec(rm.precisionFor(layerIndex), layerErrors[layerIndex])
+				gradient.AddVec(gradient, weightedError)
+			} else {
+				gradient.AddVec(gradient, layerErrors[layerIndex])
+			}
+		}
+
+		belowSignal := rm.workspace.belowSignal[layerIndex-1]
+		denseApplyOneMinusSquareInto(belowSignal, predictions[layerIndex-1])
+		if rm.cfg.UsePrecision {
+			belowSignal.MulElemVec(belowSignal, layerErrors[layerIndex-1])
+			belowSignal.MulElemVec(belowSignal, rm.precisionFor(layerIndex-1))
+		} else {
+			belowSignal.MulElemVec(belowSignal, layerErrors[layerIndex-1])
+		}
+
+		correction := rm.workspace.correction[layerIndex]
+		denseMulWeightTransposeInto(correction, rm.generativeWeights[layerIndex-1], belowSignal)
+		gradient.SubVec(gradient, correction)
+
+		if rm.temporalPriorsReady {
+			temporalError := rm.workspace.temporalErrors[latentIndex]
+			temporalError.SubVec(rm.latentStates[layerIndex], rm.workspace.temporalPriors[latentIndex])
+
+			if rm.cfg.UsePrecision {
+				temporalError.MulElemVec(temporalError, rm.temporalPrecision[latentIndex])
+			}
+
+			temporalError.ScaleVec(rm.cfg.TemporalWeights[latentIndex], temporalError)
+			gradient.AddVec(gradient, temporalError)
+		}
+
+		if rm.cfg.LatentDecay[latentIndex] > 0 {
+			floats.AddScaled(
+				gradient.RawVector().Data,
+				rm.cfg.LatentDecay[latentIndex],
+				rm.latentStates[layerIndex].RawVector().Data,
+			)
+		}
+
+		if rm.cfg.Sparsity[latentIndex] > 0 {
+			gradientData := gradient.RawVector().Data
+			latentData := rm.latentStates[layerIndex].RawVector().Data
+			s := rm.cfg.Sparsity[latentIndex]
+
+			for index, val := range latentData {
+				if val > 0 {
+					gradientData[index] += s
+				} else if val < 0 {
+					gradientData[index] -= s
+				}
+			}
+		}
+
+		gradientNorm := denseColNorm(gradient)
+		if gradientNorm > rm.cfg.GradClip {
+			gradient.ScaleVec(rm.cfg.GradClip/gradientNorm, gradient)
+		}
 	}
 
-	return rm.workspace.predictions, rm.workspace.errors
+	return rm.workspace.grads
 }
 
 func (rm *ResonanceManifold) initializeLatents(xCol *mat.VecDense) {
@@ -1051,30 +1073,22 @@ func (rm *ResonanceManifold) initializeLatents(xCol *mat.VecDense) {
 
 	rm.latentStates[0].CopyVec(xCol)
 
-	if rm.prevTop == nil {
+	if !rm.temporalPriorsReady {
 		for layerIndex := 1; layerIndex < len(rm.latentStates); layerIndex++ {
 			rm.latentStates[layerIndex].CopyVec(bottomUp[layerIndex])
 		}
-
 		return
 	}
 
-	topPrior := rm.workspace.topPrior
-	topPrior.MulVec(rm.temporalOperator, rm.prevTop)
-
-	denseApplyTanhInPlace(topPrior)
-
 	topDown := rm.workspace.topDown
-	topDown[len(topDown)-1].CopyVec(topPrior)
-
-	for layerIndex := len(rm.generativeWeights) - 1; layerIndex > 0; layerIndex-- {
-		proposal := topDown[layerIndex]
-		proposal.MulVec(rm.generativeWeights[layerIndex], topDown[layerIndex+1])
-		denseApplyTanhInPlace(proposal)
+	for latentIndex, operator := range rm.temporalOperators {
+		prior := rm.workspace.temporalPriors[latentIndex]
+		prior.MulVec(operator, rm.workspace.prevLatents[latentIndex])
+		denseApplyTanhInPlace(prior)
+		topDown[latentIndex+1].CopyVec(prior)
 	}
 
 	initMix := rm.cfg.TopDownInitMix
-
 	for layerIndex := 1; layerIndex < len(rm.latentStates); layerIndex++ {
 		merged := rm.latentStates[layerIndex]
 		merged.ScaleVec(initMix, topDown[layerIndex])
@@ -1087,95 +1101,42 @@ func (rm *ResonanceManifold) initializeLatents(xCol *mat.VecDense) {
 	}
 }
 
-func (rm *ResonanceManifold) stateGradients(
-	predictions []*mat.VecDense,
-	layerErrors []*mat.VecDense,
-) []*mat.VecDense {
-	topIndex := len(rm.latentStates) - 1
+func (rm *ResonanceManifold) advanceTemporalState() {
+	for latentIndex := range rm.temporalOperators {
+		layerIndex := latentIndex + 1
+		rm.workspace.prevLatents[latentIndex].CopyVec(rm.latentStates[layerIndex])
+	}
+	rm.temporalPriorsReady = true
+}
 
-	for layerIndex := 1; layerIndex <= topIndex; layerIndex++ {
-		gradient := rm.workspace.grads[layerIndex]
-		gradient.Zero()
+func (rm *ResonanceManifold) precisionFor(layerIndex int) *mat.VecDense {
+	return rm.precision[layerIndex]
+}
 
-		if layerIndex < topIndex {
-			if rm.cfg.UsePrecision {
-				weightedError := rm.workspace.weightedErr[layerIndex]
-				weightedError.MulElemVec(
-					rm.precisionFor(layerIndex),
-					layerErrors[layerIndex],
-				)
-				gradient.AddVec(gradient, weightedError)
-			}
-
-			if !rm.cfg.UsePrecision {
-				gradient.AddVec(gradient, layerErrors[layerIndex])
-			}
-		}
-
-		belowSignal := rm.workspace.belowSignal[layerIndex-1]
-		denseApplyOneMinusSquareInto(belowSignal, predictions[layerIndex-1])
-
-		if rm.cfg.UsePrecision {
-			belowSignal.MulElemVec(belowSignal, layerErrors[layerIndex-1])
-			belowSignal.MulElemVec(
-				belowSignal,
-				rm.precisionFor(layerIndex-1),
-			)
-		}
-
-		if !rm.cfg.UsePrecision {
-			belowSignal.MulElemVec(belowSignal, layerErrors[layerIndex-1])
-		}
-
-		correction := rm.workspace.correction[layerIndex]
-		denseMulWeightTransposeInto(correction, rm.generativeWeights[layerIndex-1], belowSignal)
-		gradient.SubVec(gradient, correction)
-
-		if layerIndex == topIndex && rm.temporalPriorReady {
-			temporalError := rm.workspace.temporalError
-			temporalError.SubVec(rm.latentStates[topIndex], rm.temporalPrior)
-
-			if rm.cfg.UsePrecision {
-				temporalError.MulElemVec(
-					temporalError,
-					rm.temporalPrecisionVec(),
-				)
-			}
-
-			temporalError.ScaleVec(rm.cfg.TemporalWeight, temporalError)
-			gradient.AddVec(gradient, temporalError)
-		}
-
-		if rm.cfg.LatentDecay > 0 {
-			floats.AddScaled(
-				gradient.RawVector().Data,
-				rm.cfg.LatentDecay,
-				rm.latentStates[layerIndex].RawVector().Data,
-			)
-		}
-
-		if rm.cfg.Sparsity > 0 {
-			gradientData := gradient.RawVector().Data
-			latentData := rm.latentStates[layerIndex].RawVector().Data
-
-			for index, latentValue := range latentData {
-				switch {
-				case latentValue > 0:
-					gradientData[index] += rm.cfg.Sparsity
-				case latentValue < 0:
-					gradientData[index] -= rm.cfg.Sparsity
-				}
-			}
-		}
-
-		gradientNorm := denseColNorm(gradient)
-
-		if gradientNorm > rm.cfg.GradClip {
-			gradient.ScaleVec(rm.cfg.GradClip/gradientNorm, gradient)
-		}
+func (rm *ResonanceManifold) projectTemporalOperatorNorm(latentIndex int) error {
+	if !(rm.cfg.TemporalNormMax > 0) || rm.cfg.TemporalNormMax >= 1 {
+		return errors.New("resonance: temporal operator-norm limit must be in (0, 1)")
 	}
 
-	return rm.workspace.grads
+	decomposition := &rm.workspace.temporalSVDs[latentIndex]
+	operator := rm.temporalOperators[latentIndex]
+
+	if ok := decomposition.Factorize(operator, mat.SVDNone); !ok {
+		return errors.New("resonance: temporal singular-value decomposition failed")
+	}
+
+	singularValues := decomposition.Values(rm.workspace.layerSVDValues[latentIndex])
+	if len(singularValues) == 0 || math.IsNaN(singularValues[0]) || math.IsInf(singularValues[0], 0) {
+		return errors.New("resonance: temporal operator norm must be finite")
+	}
+
+	operatorNorm := singularValues[0]
+	if operatorNorm <= rm.cfg.TemporalNormMax {
+		return nil
+	}
+
+	denseScaleInPlace(operator, rm.cfg.TemporalNormMax/operatorNorm)
+	return nil
 }
 
 func (rm *ResonanceManifold) saveStates() {
@@ -1190,14 +1151,10 @@ func (rm *ResonanceManifold) restoreStates() {
 	}
 }
 
-func (rm *ResonanceManifold) tryStateUpdate(
-	gradients []*mat.VecDense,
-	stepSize float64,
-) {
+func (rm *ResonanceManifold) tryStateUpdate(gradients []*mat.VecDense, stepSize float64) {
 	for layerIndex := 1; layerIndex < len(rm.latentStates); layerIndex++ {
 		step := rm.workspace.stepBuf[layerIndex]
 		step.ScaleVec(stepSize, gradients[layerIndex])
-
 		nextState := rm.latentStates[layerIndex]
 		nextState.SubVec(rm.workspace.savedStates[layerIndex], step)
 		denseClipColInPlace(nextState, rm.cfg.StateClip)
@@ -1206,7 +1163,7 @@ func (rm *ResonanceManifold) tryStateUpdate(
 
 func (rm *ResonanceManifold) updatePrecision(
 	layerErrors []*mat.VecDense,
-	temporalError *mat.VecDense,
+	temporalErrors []*mat.VecDense,
 	targetCol *mat.VecDense,
 	taskError *mat.VecDense,
 ) error {
@@ -1218,57 +1175,17 @@ func (rm *ResonanceManifold) updatePrecision(
 
 	for layerIndex, layerError := range layerErrors {
 		variance := rm.errorVar[layerIndex]
-		denseVarianceEMAInto(
-			variance,
-			layerError,
-			beta,
-			rm.cfg.PrecisionEps,
-		)
-
-		varianceData := variance.RawVector().Data
-
-		if !(floats.Min(varianceData) > 0) ||
-			!finite(floats.Norm(varianceData, 2)) {
-			return errnie.Err(
-				errnie.Validation,
-				"resonance: precision variance must be finite and strictly positive",
-				nil,
-			)
-		}
-
-		densePrecisionFromVarianceInto(
-			rm.precision[layerIndex],
-			variance,
-			rm.cfg.PrecisionMin,
-			rm.cfg.PrecisionMax,
-		)
+		denseVarianceEMAInto(variance, layerError, beta, rm.cfg.PrecisionEps)
+		densePrecisionFromVarianceInto(rm.precision[layerIndex], variance, rm.cfg.PrecisionMin, rm.cfg.PrecisionMax)
 	}
 
-	if temporalError != nil {
-		denseVarianceEMAInto(
-			rm.temporalVar,
-			temporalError,
-			beta,
-			rm.cfg.PrecisionEps,
-		)
-
-		temporalVarianceData := rm.temporalVar.RawVector().Data
-
-		if !(floats.Min(temporalVarianceData) > 0) ||
-			!finite(floats.Norm(temporalVarianceData, 2)) {
-			return errnie.Err(
-				errnie.Validation,
-				"resonance: temporal precision variance must be finite and strictly positive",
-				nil,
-			)
+	for latentIndex, tempErr := range temporalErrors {
+		if tempErr == nil {
+			continue
 		}
-
-		densePrecisionFromVarianceInto(
-			rm.temporalPrecision,
-			rm.temporalVar,
-			rm.cfg.PrecisionMin,
-			rm.cfg.PrecisionMax,
-		)
+		variance := rm.temporalVar[latentIndex]
+		denseVarianceEMAInto(variance, tempErr, beta, rm.cfg.PrecisionEps)
+		densePrecisionFromVarianceInto(rm.temporalPrecision[latentIndex], variance, rm.cfg.PrecisionMin, rm.cfg.PrecisionMax)
 	}
 
 	if targetCol != nil && taskError != nil && rm.taskWeights != nil {
@@ -1278,13 +1195,11 @@ func (rm *ResonanceManifold) updatePrecision(
 	return nil
 }
 
-func (rm *ResonanceManifold) updateTaskReliability(
-	targetCol *mat.VecDense,
-	taskError *mat.VecDense,
-) error {
+func (rm *ResonanceManifold) updateTaskReliability(targetCol *mat.VecDense, taskError *mat.VecDense) error {
 	beta := rm.cfg.PrecisionBeta
 	squaredError := rm.workspace.taskSignal
 	squaredError.MulElemVec(taskError, taskError)
+
 	candidateVariance := taskError
 	candidateVariance.ScaleVec(1.0-beta, rm.taskVar)
 
@@ -1307,14 +1222,10 @@ func (rm *ResonanceManifold) updateTaskReliability(
 			if squaredErrorData[rowIndex] > 0 {
 				taskVarianceData[rowIndex] = squaredErrorData[rowIndex]
 			}
-
 			continue
 		}
 
-		taskVarianceData[rowIndex] = math.Max(
-			candidateVarianceData[rowIndex],
-			varianceFloorData[rowIndex],
-		)
+		taskVarianceData[rowIndex] = math.Max(candidateVarianceData[rowIndex], varianceFloorData[rowIndex])
 	}
 
 	for rowIndex, logScale := range taskScaleData {
@@ -1322,7 +1233,6 @@ func (rm *ResonanceManifold) updateTaskReliability(
 			if squaredErrorData[rowIndex] > 0 {
 				taskScaleData[rowIndex] = math.Log(squaredErrorData[rowIndex])
 			}
-
 			continue
 		}
 
@@ -1330,23 +1240,13 @@ func (rm *ResonanceManifold) updateTaskReliability(
 			continue
 		}
 
-		taskScaleData[rowIndex] = (1.0-beta)*logScale +
-			beta*math.Log(taskVarianceData[rowIndex])
+		taskScaleData[rowIndex] = (1.0-beta)*logScale + beta*math.Log(taskVarianceData[rowIndex])
 	}
 
 	for rowIndex, ready := range rm.taskScaleReady {
 		if !ready && squaredErrorData[rowIndex] > 0 {
 			rm.taskScaleReady[rowIndex] = true
 		}
-	}
-
-	if !(floats.Min(taskVarianceData) > 0) ||
-		!finite(floats.Norm(taskVarianceData, 2)) {
-		return errnie.Err(
-			errnie.Validation,
-			"resonance: task precision variance must be finite and strictly positive",
-			nil,
-		)
 	}
 
 	for rowIndex, logScale := range taskScaleData {
@@ -1359,14 +1259,10 @@ func (rm *ResonanceManifold) updateTaskReliability(
 	for rowIndex, value := range taskPrecisionData {
 		if !rm.taskScaleReady[rowIndex] {
 			taskPrecisionData[rowIndex] = 1.0
-
 			continue
 		}
 
-		taskPrecisionData[rowIndex] = math.Min(
-			rm.cfg.PrecisionMax,
-			math.Max(rm.cfg.PrecisionMin, value),
-		)
+		taskPrecisionData[rowIndex] = math.Min(rm.cfg.PrecisionMax, math.Max(rm.cfg.PrecisionMin, value))
 	}
 
 	rm.updateTaskSkill(targetCol, squaredError)
@@ -1431,7 +1327,6 @@ func (rm *ResonanceManifold) updateTaskSkill(
 	for rowIndex, value := range taskSkillData {
 		if lossScaleData[rowIndex] == 0 {
 			taskSkillData[rowIndex] = 1.0
-
 			continue
 		}
 
@@ -1442,261 +1337,247 @@ func (rm *ResonanceManifold) updateTaskSkill(
 	}
 }
 
-/*
-adoptPace copies the learning-pace family of another config over this one and
-leaves the geometry family untouched.
+func (rm *ResonanceManifold) predictAdjacentLayers() ([]*mat.VecDense, []*mat.VecDense) {
+	for layerIndex := 0; layerIndex < len(rm.generativeWeights); layerIndex++ {
+		prediction := rm.workspace.predictions[layerIndex]
+		prediction.MulVec(rm.generativeWeights[layerIndex], rm.latentStates[layerIndex+1])
+		denseApplyTanhInPlace(prediction)
 
-The split exists because the retained weights, error variances and precisions
-were all estimated under one state geometry. Re-deriving StateClip,
-TopDownInitMix or the inference step counts mid-stream would move the state
-space those estimates describe, so a pace change would silently invalidate
-learned state instead of merely speeding it up or slowing it down.
-*/
-func (cfg *ResonanceConfig) adoptPace(pace ResonanceConfig) {
-	cfg.LrState = pace.LrState
-	cfg.LrGenerative = pace.LrGenerative
-	cfg.LrTemporal = pace.LrTemporal
-	cfg.LrRecognition = pace.LrRecognition
-	cfg.PrecisionBeta = pace.PrecisionBeta
+		layerError := rm.workspace.errors[layerIndex]
+		layerError.SubVec(rm.latentStates[layerIndex], prediction)
+	}
 
-	// TemporalWeight is deliberately absent. It scales the temporal term of
-	// the variational objective relative to the generative terms, so it
-	// describes the shape of the energy landscape rather than the rate at
-	// which the landscape is descended. Moving it with the pace would change
-	// what the network is minimizing, and would make the reported prediction
-	// energy move whenever the controller retuned alpha with no change in how
-	// well the network predicts.
-	cfg.LatentDecay = pace.LatentDecay
-	cfg.Sparsity = pace.Sparsity
-	cfg.WeightDecay = pace.WeightDecay
-	cfg.GradClip = pace.GradClip
+	return rm.workspace.predictions, rm.workspace.errors
 }
 
-func (rm *ResonanceManifold) projectTemporalOperatorNorm() error {
-	if !(rm.cfg.TemporalNormMax > 0) || rm.cfg.TemporalNormMax >= 1 {
-		return errors.New("resonance: temporal operator-norm limit must be in (0, 1)")
-	}
-
-	decomposition := &rm.workspace.temporalSVD
-
-	if ok := decomposition.Factorize(rm.temporalOperator, mat.SVDNone); !ok {
-		return errors.New("resonance: temporal singular-value decomposition failed")
-	}
-
-	singularValues := decomposition.Values(rm.workspace.svdValues)
-
-	if len(singularValues) == 0 || math.IsNaN(singularValues[0]) ||
-		math.IsInf(singularValues[0], 0) {
-		return errors.New("resonance: temporal operator norm must be finite")
-	}
-
-	operatorNorm := singularValues[0]
-
-	if operatorNorm <= rm.cfg.TemporalNormMax {
-		return nil
-	}
-
-	denseScaleInPlace(rm.temporalOperator, rm.cfg.TemporalNormMax/operatorNorm)
-
-	return nil
-}
-
-/*
-SetAlpha retunes the learning pace of the manifold dynamically.
-
-Only the pace family moves. The state geometry the retained weights and
-precisions were fit in stays fixed, so a controller may drive alpha across its
-whole range without invalidating what the network has already learned.
-*/
 func (rm *ResonanceManifold) SetAlpha(alpha float64) error {
 	if alpha <= 0 || alpha > 1 || math.IsNaN(alpha) || math.IsInf(alpha, 0) {
 		return errors.New("resonance: alpha must be finite and in (0, 1]")
 	}
 
-	rm.cfg.adoptPace(AdaptiveResonanceConfig(alpha, rm.arch))
+	newCfg := AdaptiveResonanceConfig(alpha, rm.arch)
+	rm.cfg.LrState = newCfg.LrState
+	rm.cfg.LrGenerative = newCfg.LrGenerative
+	rm.cfg.LrTemporal = newCfg.LrTemporal
+	rm.cfg.LrRecognition = newCfg.LrRecognition
+	rm.cfg.PrecisionBeta = newCfg.PrecisionBeta
+	rm.cfg.LatentDecay = newCfg.LatentDecay
+	rm.cfg.Sparsity = newCfg.Sparsity
+	rm.cfg.WeightDecay = newCfg.WeightDecay
+	rm.cfg.GradClip = newCfg.GradClip
 
 	return nil
 }
 
-/*
-RolloutRetention reports how much of the initial latent magnitude survives at
-each step of a rollout, as a fraction in (0, 1].
-
-The temporal recursion z <- tanh(A * z) is a contraction: tanh is 1-Lipschitz
-and every temporal update projects A back inside TemporalNormMax in induced
-Euclidean norm, so the trajectory relaxes toward the origin and every task
-reading taken along it shrinks with it.
-That relaxation is genuine learned dynamics, not an artifact, but it means a
-k-step curve is not k equally informative forecasts. Past the point where
-retention has decayed, the curve carries the decay envelope rather than any
-statement about the market, and a caller that averages or sums across the whole
-curve is mostly averaging the envelope.
-
-Retention makes that envelope explicit so callers can weight, truncate, or
-simply read only as far as the dynamics still support.
-*/
 func (rm *ResonanceManifold) RolloutRetention(steps int) []float64 {
-	if rm.temporalOperator == nil || steps < 1 {
+	if len(rm.temporalOperators) == 0 || steps < 1 {
 		return nil
 	}
 
-	topDim := rm.arch[len(rm.arch)-1]
-	currentState := mat.VecDenseCopyOf(rm.latentStates[len(rm.latentStates)-1])
-	nextState := mat.NewVecDense(topDim, nil)
+	numLatents := len(rm.temporalOperators)
+	currentLatents := make([]*mat.VecDense, numLatents)
+	nextLatents := make([]*mat.VecDense, numLatents)
+	for i := range numLatents {
+		currentLatents[i] = mat.VecDenseCopyOf(rm.latentStates[i+1])
+		nextLatents[i] = mat.NewVecDense(rm.arch[i+1], nil)
+	}
 
-	initialNorm := denseColNorm(currentState)
+	initialNormSq := 0.0
+	for i := range numLatents {
+		norm := denseColNorm(currentLatents[i])
+		initialNormSq += norm * norm
+	}
+	initialNorm := math.Sqrt(initialNormSq)
+
 	retention := make([]float64, steps)
 
 	for step := range steps {
-		if step == 0 {
-			retention[step] = 1
-		}
-
-		if step > 0 && initialNorm > 0 {
-			retention[step] = denseColNorm(currentState) / initialNorm
+		if step == 0 || initialNorm == 0 {
+			retention[step] = 1.0
+		} else {
+			normSq := 0.0
+			for i := range numLatents {
+				norm := denseColNorm(currentLatents[i])
+				normSq += norm * norm
+			}
+			retention[step] = math.Sqrt(normSq) / initialNorm
 		}
 
 		if step+1 < steps {
-			nextState.MulVec(rm.temporalOperator, currentState)
-			denseApplyTanhInPlace(nextState)
-			currentState, nextState = nextState, currentState
+			for i := range numLatents {
+				nextLatents[i].MulVec(rm.temporalOperators[i], currentLatents[i])
+				denseApplyTanhInPlace(nextLatents[i])
+				currentLatents[i], nextLatents[i] = nextLatents[i], currentLatents[i]
+			}
 		}
 	}
 
 	return retention
 }
 
-/*
-RolloutTaskForecast returns the posterior predictive task distribution at every
-supported step. Step zero evaluates the currently settled state because that is
-the state the supervised head learned against for the next realized target. Only
-later steps advance through the temporal prior.
-*/
 func (rm *ResonanceManifold) RolloutTaskForecast(steps int) ([]RLSOutput, error) {
-	if rm.taskWeights == nil || rm.temporalOperator == nil || rm.targetDim <= 0 || steps < 1 {
+	if rm.taskWeights == nil || rm.targetDim <= 0 || steps < 1 {
 		return nil, nil
 	}
 
-	topDim := rm.arch[len(rm.arch)-1]
-	currentState := mat.VecDenseCopyOf(rm.latentStates[len(rm.latentStates)-1])
-	nextState := mat.NewVecDense(topDim, nil)
+	numLatents := len(rm.temporalOperators)
+	currentLatents := make([]*mat.VecDense, numLatents)
+	nextLatents := make([]*mat.VecDense, numLatents)
+	for i := range numLatents {
+		currentLatents[i] = mat.VecDenseCopyOf(rm.latentStates[i+1])
+		nextLatents[i] = mat.NewVecDense(rm.arch[i+1], nil)
+	}
+
 	forecast := make([]RLSOutput, steps*rm.targetDim)
+	readoutBuf := make([]float64, rm.readoutDim)
 
 	for step := range steps {
-		features := currentState.RawVector().Data
+		offset := 0
+		if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutLatents {
+			for i := range numLatents {
+				data := currentLatents[i].RawVector().Data
+				copy(readoutBuf[offset:offset+len(data)], data)
+				offset += len(data)
+			}
+		}
+		if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutInnovations {
+			if step == 0 {
+				_, layerErrors := rm.predictAdjacentLayers()
+				for link := range layerErrors {
+					data := layerErrors[link].RawVector().Data
+					copy(readoutBuf[offset:offset+len(data)], data)
+					offset += len(data)
+				}
+			} else {
+				for link := 0; link < len(rm.generativeWeights); link++ {
+					pred := rm.workspace.predictions[link]
+					pred.MulVec(rm.generativeWeights[link], currentLatents[link])
+					denseApplyTanhInPlace(pred)
+					if link == 0 {
+						dim := rm.arch[0]
+						for d := 0; d < dim; d++ {
+							readoutBuf[offset+d] = 0
+						}
+						offset += dim
+					} else {
+						belowData := currentLatents[link-1].RawVector().Data
+						predData := pred.RawVector().Data
+						for d := 0; d < len(predData); d++ {
+							readoutBuf[offset+d] = belowData[d] - predData[d]
+						}
+						offset += len(predData)
+					}
+				}
+			}
+		}
 
 		for rowIndex, learner := range rm.taskLearners {
-			output, err := learner.Predict(features)
-
+			output, err := learner.Predict(readoutBuf)
 			if err != nil {
 				return nil, fmt.Errorf("resonance: task forecast: %w", err)
 			}
-
 			forecast[step*rm.targetDim+rowIndex] = output
 		}
 
 		if step+1 < steps {
-			nextState.MulVec(rm.temporalOperator, currentState)
-			denseApplyTanhInPlace(nextState)
-			currentState, nextState = nextState, currentState
+			for i := range numLatents {
+				nextLatents[i].MulVec(rm.temporalOperators[i], currentLatents[i])
+				denseApplyTanhInPlace(nextLatents[i])
+				currentLatents[i], nextLatents[i] = nextLatents[i], currentLatents[i]
+			}
 		}
 	}
 
 	return forecast, nil
 }
 
-/*
-RolloutTaskAggregateForecast returns the posterior predictive distribution of
-the cumulative target from t+1 through t+steps. Every rollout row shares the
-same task-head coefficient posterior, so RLS.PredictSum retains their covariance.
-*/
 func (rm *ResonanceManifold) RolloutTaskAggregateForecast(
 	steps int,
 ) ([]RLSOutput, error) {
-	if rm.taskWeights == nil || rm.temporalOperator == nil || rm.targetDim <= 0 || steps < 1 {
+	if rm.taskWeights == nil || rm.targetDim <= 0 || steps < 1 {
 		return nil, nil
 	}
 
-	topDim := rm.arch[len(rm.arch)-1]
-	currentState := mat.VecDenseCopyOf(rm.latentStates[len(rm.latentStates)-1])
-	nextState := mat.NewVecDense(topDim, nil)
+	numLatents := len(rm.temporalOperators)
+	currentLatents := make([]*mat.VecDense, numLatents)
+	nextLatents := make([]*mat.VecDense, numLatents)
+	for i := range numLatents {
+		currentLatents[i] = mat.VecDenseCopyOf(rm.latentStates[i+1])
+		nextLatents[i] = mat.NewVecDense(rm.arch[i+1], nil)
+	}
+
 	featureRows := make([][]float64, steps)
 
 	for step := range steps {
-		featureRows[step] = append(
-			[]float64(nil),
-			currentState.RawVector().Data...,
-		)
+		readoutBuf := make([]float64, rm.readoutDim)
+		offset := 0
+		if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutLatents {
+			for i := range numLatents {
+				data := currentLatents[i].RawVector().Data
+				copy(readoutBuf[offset:offset+len(data)], data)
+				offset += len(data)
+			}
+		}
+		if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutInnovations {
+			if step == 0 {
+				_, layerErrors := rm.predictAdjacentLayers()
+				for link := range layerErrors {
+					data := layerErrors[link].RawVector().Data
+					copy(readoutBuf[offset:offset+len(data)], data)
+					offset += len(data)
+				}
+			} else {
+				for link := 0; link < len(rm.generativeWeights); link++ {
+					pred := rm.workspace.predictions[link]
+					pred.MulVec(rm.generativeWeights[link], currentLatents[link])
+					denseApplyTanhInPlace(pred)
+					if link == 0 {
+						dim := rm.arch[0]
+						offset += dim
+					} else {
+						belowData := currentLatents[link-1].RawVector().Data
+						predData := pred.RawVector().Data
+						for d := 0; d < len(predData); d++ {
+							readoutBuf[offset+d] = belowData[d] - predData[d]
+						}
+						offset += len(predData)
+					}
+				}
+			}
+		}
+
+		featureRows[step] = readoutBuf
 
 		if step+1 < steps {
-			nextState.MulVec(rm.temporalOperator, currentState)
-			denseApplyTanhInPlace(nextState)
-			currentState, nextState = nextState, currentState
+			for i := range numLatents {
+				nextLatents[i].MulVec(rm.temporalOperators[i], currentLatents[i])
+				denseApplyTanhInPlace(nextLatents[i])
+				currentLatents[i], nextLatents[i] = nextLatents[i], currentLatents[i]
+			}
 		}
 	}
 
 	forecast := make([]RLSOutput, rm.targetDim)
-
 	for rowIndex, learner := range rm.taskLearners {
 		output, err := learner.PredictSum(featureRows)
-
 		if err != nil {
 			return nil, fmt.Errorf("resonance: aggregate task forecast: %w", err)
 		}
-
 		forecast[rowIndex] = output
 	}
 
 	return forecast, nil
 }
 
-/*
-RolloutTaskPrediction projects the top latent state forward k steps into the future
-using the temporal prior matrix A, evaluating task head V at each step.
-Returns a slice of return predictions [y_t+1, y_t+2, ..., y_t+k].
-
-The latent recursion keeps its tanh, which is what bounds the trajectory and
-makes the dynamics stable. The task head does not, for the reason given on
-taskPredictionInto: squashing a small-magnitude target only attenuates it.
-
-Callers reading more than the first step should pair this with RolloutRetention,
-which reports how much of the latent magnitude still survives at each step and
-therefore how much of the curve is forecast rather than relaxation.
-*/
 func (rm *ResonanceManifold) RolloutTaskPrediction(steps int) []float64 {
-	// Guard checks (including len(rm.latentStates) == 0 to prevent index-out-of-range panics)
-	if rm.taskWeights == nil || rm.temporalOperator == nil || rm.targetDim <= 0 || steps < 1 || len(rm.latentStates) == 0 {
+	forecasts, err := rm.RolloutTaskForecast(steps)
+	if err != nil || len(forecasts) == 0 {
 		return nil
 	}
 
-	// Pre-allocate working state buffers once
-	currentState := mat.VecDenseCopyOf(rm.latentStates[len(rm.latentStates)-1])
-	nextState := mat.NewVecDense(currentState.Len(), nil)
-	taskPred := mat.NewVecDense(rm.targetDim, nil)
-
-	// Cache slice header to avoid calling RawVector repeatedly in the loop.
-	taskPredData := taskPred.RawVector().Data
-
-	curve := make([]float64, steps*rm.targetDim)
-
-	for step := range steps {
-		// Predict return for current state
-		taskPred.MulVec(rm.taskWeights, currentState)
-
-		if rm.taskBias != nil {
-			taskPred.AddVec(taskPred, rm.taskBias)
-		}
-
-		start := step * rm.targetDim
-		copy(curve[start:start+rm.targetDim], taskPredData)
-
-		if step+1 < steps {
-			nextState.MulVec(rm.temporalOperator, currentState)
-			denseApplyTanhInPlace(nextState)
-
-			// Zero-copy swap of matrix pointers instead of copying memory
-			currentState, nextState = nextState, currentState
-		}
+	curve := make([]float64, len(forecasts))
+	for index, f := range forecasts {
+		curve[index] = f.Value
 	}
 
 	return curve

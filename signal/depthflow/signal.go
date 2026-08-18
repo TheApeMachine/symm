@@ -101,6 +101,12 @@ func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
+	return symbol.AlwaysYield(types.SourceDepthFlow, signal.measure(symbol))
+}
+
+func (signal *Signal) measure(
+	symbol *types.Symbol,
+) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
 		if signal == nil || symbol == nil || signal.books == nil {
 			return

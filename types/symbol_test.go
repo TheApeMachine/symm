@@ -28,8 +28,8 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 
 		symbol.AppendMeasurement(measurement)
 
-		Convey("It should expose the row without waking predictive coding", func() {
-			for _, solver := range []string{"category", "graph"} {
+		Convey("It should expose the row to every consuming solver", func() {
+			for _, solver := range []string{"category", "graph", "resonance", "manifold"} {
 				rows := make([]*Measurement, 0)
 
 				for row := range symbol.MarketMeasurements(solver) {
@@ -38,63 +38,6 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 
 				So(rows, ShouldResemble, []*Measurement{measurement})
 			}
-
-			_, manifoldFound := symbol.Measurements.Load("manifold")
-			So(manifoldFound, ShouldBeFalse)
-
-			_, found := symbol.Measurements.Load("resonance")
-			So(found, ShouldBeFalse)
-		})
-	})
-}
-
-func TestSymbolAppendResonanceMeasurement(t *testing.T) {
-	Convey("Given a market mark without new normalized signal readings", t, func() {
-		symbol := NewSymbol("BTC/USD", nil)
-		measurement := &ResonanceMeasurement{Tick: 7, Mark: 101.25}
-
-		ready := symbol.AppendResonanceMeasurement(measurement)
-
-		Convey("It should preserve the mark as predictor ground truth", func() {
-			So(ready, ShouldBeTrue)
-			rows := make([]*ResonanceMeasurement, 0)
-
-			for row := range symbol.ResonanceMeasurements() {
-				rows = append(rows, row)
-			}
-
-			So(rows, ShouldResemble, []*ResonanceMeasurement{measurement})
-		})
-	})
-}
-
-func TestSymbolResonanceInputs(t *testing.T) {
-	Convey("Given one source with a normalized observation", t, func() {
-		symbol := NewSymbol("BTC/USD", nil)
-		value := 0.5
-
-		Convey("It should enqueue a competing reading immediately", func() {
-			symbol.AppendMeasurement(&Measurement{
-				Source: SourceHawkes,
-				Symbol: "BTC/USD",
-				Tick:   1,
-				Metadata: map[string]float64{
-					"last_price": 100,
-				},
-				Metrics: map[string]MetricSample{
-					MetricKey(MetricEventCount, SideBuy): {Normalized: &value},
-				},
-			})
-
-			rows := make([]*ResonanceMeasurement, 0)
-
-			for row := range symbol.ResonanceMeasurements() {
-				rows = append(rows, row)
-			}
-
-			So(rows, ShouldHaveLength, 1)
-			So(rows[0].Mark, ShouldEqual, 100)
-			So(rows[0].Readings, ShouldHaveLength, 1)
 		})
 	})
 }
@@ -268,59 +211,6 @@ func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 	}
 }
 
-func BenchmarkSymbolAppendResonanceMeasurement(b *testing.B) {
-	symbol := NewSymbol("BTC/USD", nil)
-	measurement := &ResonanceMeasurement{Tick: 1, Mark: 100}
-	b.ReportAllocs()
-
-	for b.Loop() {
-		symbol.AppendResonanceMeasurement(measurement)
-
-		for range symbol.ResonanceMeasurements() {
-		}
-	}
-}
-
-func BenchmarkSymbolResonanceInputs(b *testing.B) {
-	symbol := NewSymbol("BTC/USD", nil)
-	value := 0.0
-
-	for epoch := range 2 {
-		value = float64(epoch)
-
-		for _, source := range SignalSources {
-			symbol.AppendMeasurement(&Measurement{
-				Source: source,
-				Symbol: "BTC/USD",
-				Metrics: map[string]MetricSample{
-					"score": {Normalized: &value},
-				},
-			})
-		}
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		value++
-
-		for _, source := range SignalSources {
-			symbol.AppendMeasurement(&Measurement{
-				Source: source,
-				Symbol: "BTC/USD",
-				Metrics: map[string]MetricSample{
-					"score": {Normalized: &value},
-				},
-			})
-		}
-
-		for _, consumer := range []string{"category", "graph", "manifold"} {
-			for range symbol.MarketMeasurements(consumer) {
-			}
-		}
-	}
-}
-
 func BenchmarkSymbolAppendTicker(b *testing.B) {
 	symbol := NewSymbol("BTC/USD", nil)
 	ticker := kraken.TickerData{Symbol: "BTC/USD"}
@@ -349,33 +239,4 @@ func BenchmarkSymbolAppendTrade(b *testing.B) {
 			}
 		}
 	}
-}
-
-func TestSymbolBookRevision(t *testing.T) {
-	Convey("Given accepted Level 3 frames with surviving-order timestamps", t, func() {
-		symbol := NewSymbol("BTC/USD", nil)
-		firstAt := time.Unix(10, 0).UTC()
-		latestOrderAt := firstAt.Add(time.Second)
-		symbol.AppendLevel3(kraken.Level3Data{
-			Symbol:    symbol.Symbol,
-			Timestamp: firstAt,
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid", Timestamp: latestOrderAt,
-			}},
-		}, Level3Receivers)
-		symbol.AppendLevel3(kraken.Level3Data{
-			Symbol:    symbol.Symbol,
-			Timestamp: firstAt.Add(2 * time.Second),
-			Bids: []kraken.Level3Order{{
-				OrderID: "delete-old", Timestamp: firstAt,
-			}},
-		}, Level3Receivers)
-
-		revision, observedAt := symbol.BookRevision()
-
-		Convey("It should advance by accepted frame and never regress event time", func() {
-			So(revision, ShouldEqual, uint64(2))
-			So(observedAt, ShouldEqual, firstAt.Add(2*time.Second))
-		})
-	})
 }

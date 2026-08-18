@@ -36,10 +36,6 @@ func (conn *Conn) Books() *sync.Map { return nil }
 
 func (conn *Conn) Book(_ string, read func(*book.Book)) { read(nil) }
 
-func (conn *Conn) BookUpdates() <-chan string { return nil }
-
-func (conn *Conn) Level3Events() <-chan kraken.Level3Data { return nil }
-
 func (conn *Conn) Level3Divergences() <-chan string { return nil }
 
 func (conn *Conn) ResubscribeL3(string) {}

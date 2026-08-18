@@ -295,7 +295,6 @@ func (solver *Solver) applyControls(controls controlVector) error {
 	}
 
 	if err := solver.configSource.ApplyRegulation(
-		*config.Manifold,
 		*config.Planner,
 	); err != nil {
 		return errnie.Error(errnie.Err(

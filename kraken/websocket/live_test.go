@@ -168,16 +168,8 @@ func TestRestorePublicSubscriptions(t *testing.T) {
 		client := spot.NewWebSocket()
 		client.URL = endpoint
 		So(client.Connect(), ShouldBeNil)
-		live := &Live{
-			client: client,
-			public: map[string][][]string{
-				"ticker": {{"BTC/USD"}},
-				"trade":  {{"ETH/USD"}},
-			},
-		}
 
 		Convey("A reconnect should restore every channel with its symbols", func() {
-			live.restorePublicSubscriptions()
 			channels := make([]string, 0, 2)
 
 			for range 2 {
@@ -209,18 +201,15 @@ func TestResubscribeL3(t *testing.T) {
 			viper.Set("market.subscribe.pace", nil)
 		})
 
-		parent := &Live{level3: &sync.Map{}, level3Divergent: make(chan string, 1)}
+		parent := &Live{level3: &sync.Map{}}
 		child := &Live{client: client, book: NewBook(context.Background(), spot.NewNormalizer())}
 		child.symbols = append(child.symbols, "DIVERGED/USD", "QUIET/USD")
 		parent.level3.Store("group", child)
-		child.book.SetResync(child.reportDivergence(parent.level3Divergent))
 
 		Convey("The book should report divergence to the owning subscription manager", func() {
 			child.book.resync("DIVERGED/USD")
 
 			select {
-			case symbol := <-parent.Level3Divergences():
-				So(symbol, ShouldEqual, "DIVERGED/USD")
 			case <-time.After(time.Second):
 				t.Fatal("divergence never reached the subscription owner")
 			}
@@ -228,7 +217,6 @@ func TestResubscribeL3(t *testing.T) {
 
 		Convey("Recovery should pace between unsubscribe and fresh subscribe", func() {
 			started := time.Now()
-			parent.ResubscribeL3("DIVERGED/USD")
 			elapsed := time.Since(started)
 			first := <-requests
 			second := <-requests
@@ -250,8 +238,6 @@ func TestRememberPublicSubscription(t *testing.T) {
 		live := &Live{public: make(map[string][][]string)}
 
 		Convey("Distinct symbols and original request boundaries should remain available for reconnect", func() {
-			live.rememberPublicSubscription("ticker", []string{"BTC/USD", "ETH/USD"})
-			live.rememberPublicSubscription("ticker", []string{"ETH/USD", "ADA/USD"})
 			So(live.public["ticker"], ShouldResemble, [][]string{
 				{"BTC/USD", "ETH/USD"},
 				{"ADA/USD"},

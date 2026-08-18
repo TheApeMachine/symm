@@ -71,9 +71,13 @@ func (compiler *measurementCompiler) addMeasurement(
 	graph *Graph,
 	index *measurementIndex,
 ) error {
+	// Measurement arrival is volume-clock driven: identity routes the row,
+	// while At and metrics are insight decoration a quiet pass may legitimately
+	// lack. Lead-lag is the one temporal insight and enforces its own peer
+	// timestamps below.
 	if measurement == nil || measurement.ID == "" || measurement.Source == "" ||
-		measurement.Symbol == "" || measurement.At.IsZero() || len(measurement.Metrics) == 0 {
-		return fmt.Errorf("identified, timestamped measurement metrics required")
+		measurement.Symbol == "" {
+		return fmt.Errorf("identified measurement required")
 	}
 
 	if measurement.Source == types.SourceLeadLag && measurement.Peer != "" {

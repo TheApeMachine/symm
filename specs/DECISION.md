@@ -232,6 +232,7 @@ The next signals to map are **PumpDump**, **Liquidity (Basis)**, **Sentiment**, 
 ### 4. PumpDump Signal: The Ignition Perspective
 
 #### **What it measures exactly (in isolation)**
+
 The **PumpDump signal** identifies pre-pump microstructure by looking for sudden "verticality" in volume and price.
 *   **Volume Lift (RVOL):** Measures fast and medium-term volume spikes against a median hourly baseline.
 *   **Precursor Move:** Uses a $PositiveMove$ dynamic to score how much the price has already begun to detach from its recent anchor.

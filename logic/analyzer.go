@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
@@ -15,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
 	"golang.org/x/sync/errgroup"
 )
@@ -61,25 +59,16 @@ func NewAnalyzer(
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
 
-	firstGroup := []Solver{
-		category.NewSolver(api, ui, recorder),
-		resonance.NewSolver(
-			ctx,
-			ui,
-			recorder,
-			viper.GetFloat64("resonance.learning_rate"),
-		),
-		manifold.NewSolver(api, ui, binui, recorder),
-	}
-
 	analyzer := &Analyzer{
 		ctx:    ctx,
 		cancel: cancel,
 		status: types.READY,
 		tree:   tree,
 		solverGroups: [][]Solver{
-			append([]Solver(nil), firstGroup...),
 			{
+				category.NewSolver(api, ui, recorder),
+				manifold.NewSolver(api, ui, binui, recorder),
+			}, {
 				causal.NewSolver(price, ui, recorder),
 				cognition.NewSolver(tree, ui, recorder),
 			}, {

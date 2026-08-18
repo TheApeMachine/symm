@@ -99,12 +99,6 @@ var controlPresentations = [...]controlPresentation{
 		changed:     "reduced",
 		explanation: "Exploration weight used when balancing visited and uncertain graph branches.",
 	},
-	{
-		index: controlRelaxation, name: "manifold",
-		label: "Manifold Relaxation", suffix: "steps", integer: true,
-		changed:     "changed",
-		explanation: "Physics relaxation work completed before downstream evidence is compiled.",
-	},
 }
 
 func (solver *Solver) buildPayload(

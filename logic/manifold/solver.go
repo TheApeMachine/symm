@@ -19,7 +19,6 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/compute"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -30,6 +29,16 @@ universe phase dial. Each subscribed symbol occupies one carrier. Level 3
 orders on that pair are oscillators in that carrier's collection.
 */
 const phaseLatticeWidth uint32 = 256
+
+/*
+oscillatorPoolCapacity reserves room for every visible Level 3 order loaded in
+one pass. The universe is whatever Kraken lists online in the quote currency
+at boot; the symbol registry budget is 1024, and live books show ~68 visible
+orders per symbol, so the pool is their product. It is allocated once —
+headroom costs memory, not per-step time — and a deeper universe fails loudly
+here rather than truncating the physics.
+*/
+const oscillatorPoolCapacity uint32 = 1024 * 68
 
 /*
 Solver owns one resident Sensorium domain for the complete market universe.
@@ -115,9 +124,9 @@ func NewSolver(
 		deltaT,
 		5.0/3.0,
 		phaseLatticeWidth,
+		oscillatorPoolCapacity,
 	)
 	errnie.Error(err)
-	config.MaxParticles = 65536
 	pmanifold.DefaultMarketGasBoundaries().Apply(&config)
 	physics, physicsErr := newPhysics(config)
 	errnie.Error(physicsErr)
@@ -182,8 +191,9 @@ func (solver *Solver) ParticleCount() int {
 }
 
 /*
-Settling reports whether a relaxation pass is still running. Replay uses this
-so the next captured frame cannot arrive before the current field has settled.
+Settling reports whether a loaded iteration's single physics step is still
+running. Replay uses this so the next captured frame cannot arrive before the
+current field has settled.
 */
 func (solver *Solver) Settling() bool {
 	return solver != nil && solver.settling.Load()
@@ -794,20 +804,6 @@ func (solver *Solver) Step(
 	at time.Time,
 	cuts []manifoldCut,
 ) error {
-	config := system.Cfg.Snapshot()
-
-	if config == nil || config.Manifold == nil ||
-		config.Manifold.MinSteps <= 0 ||
-		config.Manifold.MaxSteps < config.Manifold.MinSteps ||
-		config.Manifold.RelaxationSteps < config.Manifold.MinSteps ||
-		config.Manifold.RelaxationSteps > config.Manifold.MaxSteps {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: regulated relaxation step count must be within its configured bounds",
-			nil,
-		))
-	}
-
 	if solver.physics == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -842,48 +838,40 @@ func (solver *Solver) Step(
 		))
 	}
 
-	relaxationSteps := config.Manifold.RelaxationSteps
+	// One physics step per loaded iteration: throughput is dominated by new
+	// order flow, so the field advances exactly once over each fresh batch
+	// rather than relaxing between observations that already arrived.
+	reading, err := solver.physics.Step()
 
-	for step := range relaxationSteps {
-		reading, err := solver.physics.Step()
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("failed to advance manifold: %v", err),
+			err,
+		))
+	}
 
-		if err != nil {
+	solver.stepped = true
+	solver.reading = reading
+	thesis.StoreManifold(reading)
+
+	if len(solver.oscillators) > 0 {
+		oscillators, readErr := solver.physics.ReadOscillators(len(solver.oscillators))
+
+		if readErr != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
-				fmt.Sprintf(
-					"failed to advance manifold at relaxation step %d of %d: %v",
-					step+1, relaxationSteps, err,
-				),
-				err,
+				"failed to read manifold oscillators: "+readErr.Error(),
+				readErr,
 			))
 		}
 
-		solver.stepped = true
-		solver.reading = reading
-		thesis.StoreManifold(reading)
-
-		if len(solver.oscillators) > 0 {
-			oscillators, readErr := solver.physics.ReadOscillators(len(solver.oscillators))
-
-			if readErr != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"failed to read manifold oscillators: "+readErr.Error(),
-					readErr,
-				))
-			}
-
-			solver.oscillators = oscillators
-		}
-
-		solver.publishPhase(thesis, at, cuts)
-
-		if err := solver.publishDomain(); err != nil {
-			return err
-		}
+		solver.oscillators = oscillators
 	}
 
-	return nil
+	solver.publishPhase(thesis, at, cuts)
+
+	return solver.publishDomain()
 }
 
 func (solver *Solver) publishDomain() error {
@@ -891,23 +879,7 @@ func (solver *Solver) publishDomain() error {
 		return nil
 	}
 
-	vol, err := solver.physics.ReadVolumetricFields(16)
 
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"failed to read manifold volumetric fields with %d resident oscillators: %v",
-				solver.ParticleCount(), err,
-			),
-			err,
-		))
-	}
-
-	utils.PublishFluid(
-		solver.binui, types.FluidFieldsChannel,
-		datura.NewMap("fields", projectFields(solver.config, vol)),
-	)
 	utils.PublishFluid(
 		solver.binui, types.FluidParticlesChannel,
 		datura.NewMap("particles", oscillatorsToParticles(solver.config, solver.oscillators)),
@@ -922,15 +894,6 @@ func (solver *Solver) publishPhase(
 	cuts []manifoldCut,
 ) {
 	reading := solver.stampPhase(thesis, at, cuts)
-
-	if solver.ui != nil {
-		select {
-		case solver.ui <- datura.NewMap(
-			"manifold", []datura.Map[any]{solver.phaseRow(at, reading)},
-		).MarshalAndFree():
-		default:
-		}
-	}
 
 	if solver.binui != nil {
 		utils.PublishFluid(
@@ -1185,41 +1148,6 @@ func oscillatorsToParticles(
 	}
 
 	return particles
-}
-
-func projectFields(
-	config pmanifold.Config,
-	vol pmanifold.VolumetricFields,
-) ManifoldFields {
-	spacing := 1.0 / float32(vol.GridX)
-
-	if vol.GridX <= 0 {
-		spacing = 1.0 / 64.0
-	}
-
-	cells := len(vol.WaveReal)
-	waveMag := make([]float32, cells)
-	waveZero := make([]float32, cells)
-
-	for cell := range cells {
-		re := vol.WaveReal[cell]
-		im := vol.WaveImaginary[cell]
-		waveMag[cell] = re*re + im*im
-	}
-
-	return ManifoldFields{
-		Grid: ManifoldGrid{
-			X:       vol.GridX,
-			Y:       vol.GridY,
-			Z:       vol.GridZ,
-			Spacing: spacing,
-		},
-		Density:        vol.Density,
-		Momentum:       vol.Momentum,
-		InternalEnergy: vol.InternalEnergy,
-		WaveReal:       waveMag,
-		WaveImaginary:  waveZero,
-	}
 }
 
 func torusIndex(position, domain float64, grid uint32) uint32 {

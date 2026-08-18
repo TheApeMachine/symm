@@ -13,6 +13,9 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -38,12 +41,18 @@ type Signal struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	books     websocket.BookSource
-	quotes    *types.QuoteHistory
+	quotes    *data.Series[[2]float64]
 	ladders   *nomagique.KeyedStreams[string]
 	ignitions *nomagique.KeyedStreams[string]
+	anchors   *nomagique.KeyedStreams[string]
+	spreads   *nomagique.KeyedStreams[string]
 	depths    *sync.Map
 	halflife  float64
 	capacity  float64
+
+	fastHalflife       float64
+	slowHalflife       float64
+	dispersionHalflife float64
 }
 
 /*
@@ -56,7 +65,7 @@ func NewSignal(
 	return NewSignalWithQuotes(
 		ctx,
 		books,
-		types.NewQuoteHistory(system.Cfg.PumpDump.Capacity),
+		data.MustNewSeries[[2]float64](system.Cfg.PumpDump.Capacity),
 	)
 }
 
@@ -67,23 +76,40 @@ causal quote history.
 func NewSignalWithQuotes(
 	ctx context.Context,
 	books websocket.BookSource,
-	quotes *types.QuoteHistory,
+	quotes *data.Series[[2]float64],
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:       ctx,
-		cancel:    cancel,
-		books:     books,
-		quotes:    quotes,
-		ladders:   nomagique.NewKeyedStreams[string](algo.Ladder, nil),
-		ignitions: nomagique.NewKeyedStreams[string](algo.Ignition, nil),
-		depths:    &sync.Map{},
-		halflife:  system.Cfg.PumpDump.Halflife,
-		capacity:  float64(system.Cfg.PumpDump.Capacity),
+		ctx:                ctx,
+		cancel:             cancel,
+		books:              books,
+		quotes:             quotes,
+		ladders:            nomagique.NewKeyedStreams[string](algo.Ladder, nil),
+		ignitions:          nomagique.NewKeyedStreams[string](algo.Ignition, nil),
+		anchors:            nomagique.NewKeyedStreams[string](detachMachine(), nil),
+		spreads:            nomagique.NewKeyedStreams[string](detachMachine(), nil),
+		depths:             &sync.Map{},
+		halflife:           system.Cfg.PumpDump.Halflife,
+		capacity:           float64(system.Cfg.PumpDump.Capacity),
+		fastHalflife:       system.Cfg.PumpDump.FastHalflife,
+		slowHalflife:       system.Cfg.PumpDump.SlowHalflife,
+		dispersionHalflife: system.Cfg.PumpDump.DispersionHalflife,
 	}
 
 	return signal
+}
+
+/*
+detachMachine is the adaptive anchor: retention first, the efficiency-driven
+baseline observing the retained window, and the residual dispersion observing
+the baseline.
+*/
+func detachMachine() nomagique.Primitive {
+	return nomagique.Pipe(
+		temporal.Window,
+		nomagique.Fork(statistic.Baseline, statistic.ZScore),
+	)
 }
 
 /*
@@ -115,15 +141,18 @@ func (signal *Signal) Measure(
 			at = snapshot.observedAt
 		}
 
-		if at.IsZero() {
-			at = time.Now().UTC()
-		}
-
 		metrics := map[string]types.MetricSample{}
 		maturity := 0.0
 
-		if snapshot.ready {
+		// The ladder clock is event time only. A pass without any observed
+		// event time carries no ladder observation; fabricating one from the
+		// local wall clock would poison the ladder's monotone clock domain.
+		if snapshot.ready && !at.IsZero() {
 			signal.measureLadder(symbol.Symbol, snapshot, at, metrics, &maturity)
+		}
+
+		if snapshot.ready && !at.IsZero() && snapshot.bid > 0 && snapshot.ask > snapshot.bid {
+			signal.measureDetach(symbol.Symbol, snapshot, at, metrics, &maturity)
 		}
 
 		signal.measureTape(symbol, snapshot, metrics, &maturity)
@@ -235,8 +264,128 @@ func (signal *Signal) measureLadder(
 }
 
 /*
+measureDetach feeds this pass's midpoint and touch spread through the
+adaptive anchor machines and maps the readings onto measurement metrics: the
+value's deviation and lift from its own anchor, and the spread's deviation
+and lift — a tightening spread reads as a negative lift.
+*/
+func (signal *Signal) measureDetach(
+	symbolName string,
+	snapshot bookSnapshot,
+	at time.Time,
+	metrics map[string]types.MetricSample,
+	maturity *float64,
+) {
+	midpoint := (snapshot.bid + snapshot.ask) / 2
+
+	anchorOutput, err := signal.anchors.Step(
+		symbolName, signal.detachInput(midpoint, at),
+	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"pumpdump: anchor machine failed for "+symbolName,
+			err,
+		))
+
+		return
+	}
+
+	spreadOutput, err := signal.spreads.Step(
+		symbolName, signal.detachInput(snapshot.spread, at),
+	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"pumpdump: spread machine failed for "+symbolName,
+			err,
+		))
+
+		return
+	}
+
+	detach, _ := anchorOutput.Get(statistic.SymbolZScore)
+	metrics[types.MetricKey(types.MetricAnchorDetach, types.SideNone)] = types.MetricSample{
+		Raw: detach, Unit: types.UnitDimensionless,
+	}
+
+	anchorBaseline, hasAnchorBaseline := anchorOutput.Get(statistic.SymbolBaselineValue)
+
+	if hasAnchorBaseline {
+		lift := signal.liftOver(midpoint, anchorBaseline)
+
+		metrics[types.MetricKey(types.MetricAnchorLift, types.SideNone)] = types.MetricSample{
+			Raw: lift, Unit: types.UnitDimensionless,
+		}
+	}
+
+	deviation, _ := spreadOutput.Get(statistic.SymbolZScore)
+	metrics[types.MetricKey(types.MetricSpreadDeviation, types.SideNone)] = types.MetricSample{
+		Raw: deviation, Unit: types.UnitDimensionless,
+	}
+
+	spreadBaseline, hasSpreadBaseline := spreadOutput.Get(statistic.SymbolBaselineValue)
+
+	if hasSpreadBaseline {
+		tightening := signal.liftOver(snapshot.spread, spreadBaseline)
+
+		metrics[types.MetricKey(types.MetricSpreadTightening, types.SideNone)] = types.MetricSample{
+			Raw: tightening, Unit: types.UnitDimensionless,
+		}
+	}
+
+	if count, found := anchorOutput.Get(nomagique.SampleCount); found {
+		window := count / (count + 1)
+
+		if *maturity < window {
+			*maturity = window
+		}
+	}
+}
+
+/*
+detachInput builds one observation for the anchor machines: the value on the
+pass's event time with the composed adaptation horizons.
+*/
+func (signal *Signal) detachInput(value float64, at time.Time) nomagique.Frame {
+	input := nomagique.Frame{}
+	input.Put(nomagique.SampleValue, value)
+	input.Put(temporal.SymbolCapacity, signal.capacity)
+	input.Put(statistic.SymbolUnixSec, float64(at.Unix()))
+	input.Put(statistic.SymbolUnixNsec, float64(at.Nanosecond()))
+	input.Put(statistic.SymbolBaselineFastHalflife, signal.fastHalflife)
+	input.Put(statistic.SymbolBaselineSlowHalflife, signal.slowHalflife)
+	input.Put(statistic.SymbolDispersionHalflife, signal.dispersionHalflife)
+
+	return input
+}
+
+/*
+liftOver answers the lift equation for one value over one baseline.
+*/
+func (signal *Signal) liftOver(value float64, baseline float64) float64 {
+	input := nomagique.Frame{}
+	input.Put(nomagique.SampleValue, value)
+	input.Put(statistic.SymbolBaseline, baseline)
+
+	_, output, err := statistic.Lift(nomagique.Frame{}, input)
+
+	if err != nil {
+		panic(err)
+	}
+
+	lift, _ := output.Get(statistic.SymbolResult)
+
+	return lift
+}
+
+/*
 measureTape advances the volume-clocked ignition families with this pass's
-executed trades and maps the latest ignition output onto measurement metrics.
+executed trades and maps the latest tape output onto measurement metrics: the
+relative volume against the tape's own median baseline, per-side price
+precursors, and per-side exhaustion. Prints confirm; they never classify.
 The book's own touch answers any trade the quote history cannot, so an
 executed print is never dropped for lack of a ticker.
 */
@@ -297,23 +446,10 @@ func (signal *Signal) measureTape(
 		side   types.MeasurementSide
 	}{
 		{algo.SymbolRVOL, types.MetricRVOL, types.SideNone},
-		{algo.SymbolPrecursor, types.MetricPrecursor, types.SideNone},
-		{algo.SymbolIgnition, types.MetricIgnition, types.SideNone},
-		{algo.SymbolTrend, types.MetricTrend, types.SideNone},
-		{algo.SymbolExhaustion, types.MetricExhaustion, types.SideNone},
-		{algo.SymbolStrength, types.MetricStrength, types.SideNone},
-		{algo.SymbolBuyPrecursor, types.MetricPrecursor, types.SideBuy},
-		{algo.SymbolBuyCompression, types.MetricCompression, types.SideBuy},
-		{algo.SymbolBuyIgnition, types.MetricIgnition, types.SideBuy},
-		{algo.SymbolBuyTrend, types.MetricTrend, types.SideBuy},
-		{algo.SymbolBuyExhaustion, types.MetricExhaustion, types.SideBuy},
-		{algo.SymbolBuyStrength, types.MetricStrength, types.SideBuy},
-		{algo.SymbolSellPrecursor, types.MetricPrecursor, types.SideSell},
-		{algo.SymbolSellCompression, types.MetricCompression, types.SideSell},
-		{algo.SymbolSellIgnition, types.MetricIgnition, types.SideSell},
-		{algo.SymbolSellTrend, types.MetricTrend, types.SideSell},
-		{algo.SymbolSellExhaustion, types.MetricExhaustion, types.SideSell},
-		{algo.SymbolSellStrength, types.MetricStrength, types.SideSell},
+		{algo.SymbolAlphaPrecursor, types.MetricPrecursor, types.SideBuy},
+		{algo.SymbolAlphaExhaustion, types.MetricExhaustion, types.SideBuy},
+		{algo.SymbolBetaPrecursor, types.MetricPrecursor, types.SideSell},
+		{algo.SymbolBetaExhaustion, types.MetricExhaustion, types.SideSell},
 	}
 
 	for _, item := range ignition {
@@ -341,6 +477,18 @@ func (signal *Signal) measureTape(
 		metrics[types.MetricKey(item.metric, item.side)] = sample
 	}
 
+	rate, hasRate := latest.Get(algo.SymbolIgnitionBarRate)
+	rateBaseline, hasRateBaseline := latest.Get(algo.SymbolIgnitionRateBaseline)
+
+	if hasRate && hasRateBaseline {
+		rvolLift := signal.liftOver(rate, rateBaseline)
+
+		metrics[types.MetricKey(types.MetricRVOLLift, types.SideNone)] = types.MetricSample{
+			Raw:  rvolLift,
+			Unit: types.UnitDimensionless,
+		}
+	}
+
 	if value, found := latest.Get(algo.SymbolMaturity); found && *maturity < value {
 		*maturity = value
 	}
@@ -354,8 +502,14 @@ func (signal *Signal) quoteFor(
 	trade kraken.TradeData,
 	snapshot bookSnapshot,
 ) (float64, float64, bool) {
-	if ticker, found := signal.quotes.At(trade.Symbol, trade.Timestamp); found {
-		return ticker.Bid.Float64(), ticker.Ask.Float64(), true
+	sides, found := signal.quotes.AsOf(
+		trade.Symbol,
+		float64(trade.Timestamp.Unix()),
+		float64(trade.Timestamp.Nanosecond()),
+	)
+
+	if found {
+		return sides[0], sides[1], true
 	}
 
 	if snapshot.ready && snapshot.bid > 0 && snapshot.ask > snapshot.bid {
@@ -367,7 +521,17 @@ func (signal *Signal) quoteFor(
 
 func (signal *Signal) ingestQuotes(symbol *types.Symbol) {
 	for ticker := range symbol.MarketTickers(types.SourcePumpDump) {
-		signal.quotes.Observe(ticker)
+		if ticker.Bid == nil || ticker.Ask == nil || ticker.Timestamp.IsZero() ||
+			ticker.Bid.Sign() <= 0 || ticker.Ask.Cmp(ticker.Bid) <= 0 {
+			continue
+		}
+
+		signal.quotes.Observe(
+			ticker.Symbol,
+			float64(ticker.Timestamp.Unix()),
+			float64(ticker.Timestamp.Nanosecond()),
+			[2]float64{ticker.Bid.Float64(), ticker.Ask.Float64()},
+		)
 	}
 }
 

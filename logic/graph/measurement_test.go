@@ -74,6 +74,24 @@ func TestAddNodes(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "does not match graph symbol")
 		})
 	})
+
+	Convey("Given an identified quiet-pass measurement without timestamp or metrics", t, func() {
+		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol.AppendMeasurement(&types.Measurement{
+			ID: "pumpdump-quiet", Source: types.SourcePumpDump, Symbol: "BTC/USD",
+		})
+		graph := NewGraph(time.Unix(12, 0).UTC())
+
+		index, err := newMeasurementCompiler().addNodes(
+			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
+		)
+
+		Convey("It should accept the volume-clock row and contribute no nodes", func() {
+			So(err, ShouldBeNil)
+			So(graph.Nodes, ShouldHaveLength, 0)
+			So(index.bySource[types.SourcePumpDump], ShouldHaveLength, 1)
+		})
+	})
 }
 
 func TestAddCategoryEdges(t *testing.T) {

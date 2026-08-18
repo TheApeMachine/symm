@@ -21,12 +21,13 @@ A valid input frame requires:
 
 Every initialized state exposes:
 
-- `SymbolValue`, `SymbolRVOL`, `SymbolPrecursor`, `SymbolSpread`
-- `SymbolCompression`, `SymbolIgnition`, `SymbolTrend`
-- `SymbolExhaustion`, `SymbolStrength`, `SymbolCategory`
+- `SymbolRVOL`, `SymbolSpread`
+- `SymbolIgnitionBarRate`, `SymbolIgnitionRateBaseline`
 - `SymbolReady`, `SymbolMaturity`
 
-Directional outputs use exported `SymbolBuy...` and `SymbolSell...` slots.
+Directional outputs use exported `SymbolAlpha...` and `SymbolBeta...` slots:
+per-side `rvol`, `precursor`, and `exhaustion`. The tape measures and stores;
+fusion, winning sides, and categories are downstream decisions.
 
 ## Internal state
 
@@ -34,8 +35,8 @@ Causal bar state uses the same legacy names under `window/`, now represented by
 interned offsets. Bounded history occupies fixed slots named
 `history/<family>/sample/<slot>`.
 
-Deltas use the engine's generic sample range. Rates, returns, precursors, and
-spreads use reserved Ignition ranges. Returns and precursors remain separate:
+Deltas use the engine's generic sample range. Rates, returns, and precursors
+use reserved Ignition ranges. Returns and precursors remain separate:
 zero moves are valid return observations but are not retained as precursors.
 
 ## Transaction model

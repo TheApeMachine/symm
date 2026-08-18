@@ -68,7 +68,7 @@ func TestNewAnalyzer(t *testing.T) {
 
 		Convey("Then it should build dependency levels over the production solvers", func() {
 			So(analyzer.solverGroups, ShouldHaveLength, 3)
-			So(analyzer.solverGroups[0], ShouldHaveLength, 3)
+			So(analyzer.solverGroups[0], ShouldHaveLength, 2)
 			So(analyzer.solverGroups[1], ShouldHaveLength, 2)
 			So(analyzer.solverGroups[2], ShouldHaveLength, 1)
 		})

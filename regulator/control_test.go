@@ -21,7 +21,6 @@ func TestNewControlSpace(t *testing.T) {
 			So(current[controlCausalAlpha], ShouldEqual, 1.0)
 			So(current[controlIterations], ShouldEqual, 1.0)
 			So(current[controlExploration], ShouldEqual, 1.0)
-			So(current[controlRelaxation], ShouldBeBetweenOrEqual, 0.0, 1.0)
 		})
 	})
 
@@ -99,7 +98,6 @@ func TestControlSpaceApply(t *testing.T) {
 			So(config.Planner.CausalAlpha, ShouldEqual, 0.0)
 			So(config.Planner.MCTSIterations, ShouldEqual, 1)
 			So(config.Planner.ExplorationConstant, ShouldEqual, 0.0)
-			So(config.Manifold.RelaxationSteps, ShouldEqual, config.Manifold.MinSteps)
 		})
 	})
 }

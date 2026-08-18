@@ -20,7 +20,7 @@ func TestUpdate(t *testing.T) {
 			Symbol:   "BTC/USD",
 			Maturity: 0.75,
 			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricIgnition, types.SideNone): {
+				types.MetricKey(types.MetricRVOL, types.SideNone): {
 					Normalized: &ignition,
 				},
 			},
@@ -55,7 +55,7 @@ func TestUpdate(t *testing.T) {
 				Surprisal:  -math.Log2(bitcoinCategory.Confidence),
 				Strength:   ignition,
 				Maturity:   0.75,
-				Supporting: []string{"pumpdump:ignition"},
+				Supporting: []string{"pumpdump:rvol"},
 			})
 			So(categoryAt(thesis, "ETH/USD").Type, ShouldEqual, types.AggressiveDrive)
 			So(categoryAt(thesis, "ETH/USD").Strength, ShouldEqual, drive)
@@ -69,7 +69,7 @@ func TestUpdate(t *testing.T) {
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricIgnition, types.SideNone): {Raw: 1},
+				types.MetricKey(types.MetricRVOL, types.SideNone): {Raw: 1},
 			},
 		})
 		thesis.Symbols.Store("BTC/USD", symbol)
@@ -131,7 +131,7 @@ func TestUpdate(t *testing.T) {
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricIgnition, types.SideNone): {
+				types.MetricKey(types.MetricRVOL, types.SideNone): {
 					Normalized: &ignition,
 				},
 			},
@@ -177,7 +177,7 @@ func TestUpdate(t *testing.T) {
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricIgnition, types.SideNone): {
+				types.MetricKey(types.MetricRVOL, types.SideNone): {
 					Normalized: &ignition,
 				},
 			},
@@ -243,7 +243,7 @@ func TestUpdate(t *testing.T) {
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricIgnition, types.SideNone): {
+				types.MetricKey(types.MetricRVOL, types.SideNone): {
 					Normalized: &ignition,
 				},
 			},
@@ -422,7 +422,7 @@ func BenchmarkUpdate(b *testing.B) {
 			Source: types.SourcePumpDump,
 			Symbol: "BTC/USD",
 			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricIgnition, types.SideNone): {
+				types.MetricKey(types.MetricRVOL, types.SideNone): {
 					Normalized: &strength,
 				},
 			},

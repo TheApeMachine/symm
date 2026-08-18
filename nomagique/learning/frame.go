@@ -6,17 +6,25 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 )
 
-const MaxFrameFeatures = 64
+const (
+	MaxFrameFeatures = 32
+	MaxFrameLayers   = 4
+	MaxLayerDim      = 32
+)
 
 var (
-	SymbolFeatureCount   = nomagique.MustIntern("resonance/feature_count")
-	SymbolInferenceSteps = nomagique.MustIntern("resonance/inference_steps")
-	SymbolInvocation     = nomagique.MustIntern("resonance/invocation")
-	SymbolEnergy         = nomagique.MustIntern("resonance/energy")
-	SymbolSurprise       = nomagique.MustIntern("resonance/surprise")
-	SymbolLatentCount    = nomagique.MustIntern("resonance/latent_count")
-	featureSymbols       [MaxFrameFeatures]nomagique.Symbol
-	latentSymbols        [MaxFrameFeatures]nomagique.Symbol
+	SymbolFeatureCount         = nomagique.MustIntern("resonance/feature_count")
+	SymbolInferenceSteps       = nomagique.MustIntern("resonance/inference_steps")
+	SymbolInvocation           = nomagique.MustIntern("resonance/invocation")
+	SymbolEnergy               = nomagique.MustIntern("resonance/energy")
+	SymbolSurprise             = nomagique.MustIntern("resonance/surprise")
+	SymbolReconstructionError  = nomagique.MustIntern("resonance/reconstruction_error")
+	SymbolLatentCount          = nomagique.MustIntern("resonance/latent_count")
+	SymbolInnovationCount      = nomagique.MustIntern("resonance/innovation_count")
+
+	featureSymbols    [MaxFrameFeatures]nomagique.Symbol
+	layerLatentSyms   [MaxFrameLayers][MaxLayerDim]nomagique.Symbol
+	layerInnoSyms     [MaxFrameLayers][MaxLayerDim]nomagique.Symbol
 )
 
 func init() {
@@ -24,106 +32,81 @@ func init() {
 		featureSymbols[featureIndex] = nomagique.MustIntern(
 			fmt.Sprintf("resonance/feature/%d", featureIndex),
 		)
-		latentSymbols[featureIndex] = nomagique.MustIntern(
-			fmt.Sprintf("resonance/latent/%d", featureIndex),
-		)
+	}
+
+	for layer := range MaxFrameLayers {
+		for index := range MaxLayerDim {
+			layerLatentSyms[layer][index] = nomagique.MustIntern(
+				fmt.Sprintf("resonance/layer/%d/latent/%d", layer+1, index),
+			)
+			layerInnoSyms[layer][index] = nomagique.MustIntern(
+				fmt.Sprintf("resonance/layer/%d/innovation/%d", layer, index),
+			)
+		}
 	}
 }
 
-/*
-FeatureSymbol returns the interned Frame slot used for one ordered resonance
-feature. Feature order remains the caller-owned schema contract.
-*/
 func FeatureSymbol(featureIndex int) nomagique.Symbol {
 	if featureIndex < 0 || featureIndex >= MaxFrameFeatures {
-		panic(fmt.Sprintf(
-			"resonance: feature index %d is outside Frame capacity",
-			featureIndex,
-		))
+		panic(fmt.Sprintf("resonance: feature index %d is outside Frame capacity", featureIndex))
 	}
-
 	return featureSymbols[featureIndex]
 }
 
-/*
-LatentSymbol returns the interned Frame slot used for one settled top-layer
-coordinate.
-*/
-func LatentSymbol(latentIndex int) nomagique.Symbol {
-	if latentIndex < 0 || latentIndex >= MaxFrameFeatures {
-		panic(fmt.Sprintf(
-			"resonance: latent index %d is outside Frame capacity",
-			latentIndex,
-		))
+func LatentSymbol(layerIndex int, index int) nomagique.Symbol {
+	if layerIndex < 0 || layerIndex >= MaxFrameLayers || index < 0 || index >= MaxLayerDim {
+		panic("resonance: layer or latent index outside Frame capacity")
 	}
+	return layerLatentSyms[layerIndex][index]
+}
 
-	return latentSymbols[latentIndex]
+func InnovationSymbol(layerIndex int, index int) nomagique.Symbol {
+	if layerIndex < 0 || layerIndex >= MaxFrameLayers || index < 0 || index >= MaxLayerDim {
+		panic("resonance: layer or innovation index outside Frame capacity")
+	}
+	return layerInnoSyms[layerIndex][index]
 }
 
 /*
-FramePrimitive adapts the dense model to nomagique's universal Frame boundary.
-The manifold retains its preallocated matrices and workspace; the reducer state
-only records successful invocations. This keeps model geometry out of transport
-payloads while removing string maps and per-step feature allocation at the
-boundary.
+FramePrimitive adapts the multi-timescale, overcomplete predictive coding manifold
+into nomagique's universal Frame reducer interface.
 */
-func FramePrimitive(
-	manifold *ResonanceManifold,
-	learn bool,
-) nomagique.Primitive {
-	return func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
+func FramePrimitive(manifold *ResonanceManifold, learn bool) nomagique.Primitive {
+	return func(state nomagique.Frame, input nomagique.Frame) (nomagique.Frame, nomagique.Frame, error) {
 		if manifold == nil {
-			return state, nomagique.Frame{}, fmt.Errorf(
-				"resonance: manifold required",
-			)
+			return state, nomagique.Frame{}, fmt.Errorf("resonance: manifold required")
 		}
 
 		featureCountValue, hasFeatureCount := input.Get(SymbolFeatureCount)
-
-		if !hasFeatureCount {
-			return state, nomagique.Frame{}, fmt.Errorf(
-				"resonance: feature count required",
-			)
+		featureCount := manifold.arch[0]
+		if hasFeatureCount {
+			featureCount = int(featureCountValue)
 		}
 
-		featureCount := int(featureCountValue)
-
-		if featureCount <= 0 || featureCount > MaxFrameFeatures ||
-			featureCount != manifold.arch[0] {
+		if featureCount <= 0 || featureCount > MaxFrameFeatures || featureCount != manifold.arch[0] {
 			return state, nomagique.Frame{}, fmt.Errorf(
 				"resonance: feature count %d does not match input width %d",
-				featureCount,
-				manifold.arch[0],
+				featureCount, manifold.arch[0],
 			)
 		}
 
 		var featureStorage [MaxFrameFeatures]float64
-
 		for featureIndex := range featureCount {
 			feature, found := input.Get(featureSymbols[featureIndex])
-
 			if !found {
-				return state, nomagique.Frame{}, fmt.Errorf(
-					"resonance: feature %d required",
-					featureIndex,
-				)
+				return state, nomagique.Frame{}, fmt.Errorf("resonance: feature %d required", featureIndex)
 			}
-
 			featureStorage[featureIndex] = feature
 		}
 
-		_, err := manifold.SettleFromBatchOptions(
-			featureStorage[:featureCount],
-			nil,
-			learn,
-			false,
-		)
-
-		if err != nil {
+		if err := manifold.Settle(featureStorage[:featureCount], !learn); err != nil {
 			return state, nomagique.Frame{}, err
+		}
+
+		if learn {
+			if err := manifold.Learn(nil); err != nil {
+				return state, nomagique.Frame{}, err
+			}
 		}
 
 		invocation, _ := state.Get(SymbolInvocation)
@@ -133,15 +116,36 @@ func FramePrimitive(
 		output := nomagique.Frame{}
 		output.Put(SymbolEnergy, manifold.Energy())
 		output.Put(SymbolSurprise, manifold.ReconstructionError())
+		output.Put(SymbolReconstructionError, manifold.ReconstructionError())
 		output.Put(SymbolInferenceSteps, float64(manifold.lastInferenceSteps))
 
-		topLayer := manifold.latentStates[len(manifold.latentStates)-1].RawVector().Data
-		latentCount := min(len(topLayer), MaxFrameFeatures)
-		output.Put(SymbolLatentCount, float64(latentCount))
-
-		for latentIndex := range latentCount {
-			output.Put(latentSymbols[latentIndex], topLayer[latentIndex])
+		// Export multi-layer dictionary latents
+		totalLatents := 0
+		for layer := 1; layer < len(manifold.latentStates) && layer-1 < MaxFrameLayers; layer++ {
+			data := manifold.latentStates[layer].RawVector().Data
+			count := min(len(data), MaxLayerDim)
+			for i := range count {
+				output.Put(layerLatentSyms[layer-1][i], data[i])
+			}
+			totalLatents += count
 		}
+		output.Put(SymbolLatentCount, float64(totalLatents))
+
+		// Export multi-layer prediction error innovations
+		_, layerErrors := manifold.predictAdjacentLayers()
+		totalInnovations := 0
+		for layer := range layerErrors {
+			if layer >= MaxFrameLayers {
+				break
+			}
+			data := layerErrors[layer].RawVector().Data
+			count := min(len(data), MaxLayerDim)
+			for i := range count {
+				output.Put(layerInnoSyms[layer][i], data[i])
+			}
+			totalInnovations += count
+		}
+		output.Put(SymbolInnovationCount, float64(totalInnovations))
 
 		return nextState, output, nil
 	}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -39,6 +40,14 @@ func Command() *cobra.Command {
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetString("system.log.level"),
 			})
+
+			// Replay investigations need the same profiler escape hatch the
+			// live command has; a separate port keeps both runnable at once.
+			if os.Getenv("SYMM_PPROF") != "" || viper.GetBool("system.pprof.enabled") {
+				go func() {
+					errnie.Error(http.ListenAndServe("127.0.0.1:6061", nil))
+				}()
+			}
 
 			ctx := run.Context()
 			uiChannel := make(chan []byte, 1024)

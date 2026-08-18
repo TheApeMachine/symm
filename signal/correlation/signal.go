@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -22,6 +23,7 @@ type Signal struct {
 	cancel  context.CancelFunc
 	api     *websocket.API
 	section *Section
+	algo    *algorithm.CohortSample
 }
 
 /*
@@ -39,6 +41,9 @@ func NewSignal(
 		cancel:  cancel,
 		api:     api,
 		section: NewSection(),
+		algo: algorithm.NewCohortSample(algorithm.CohortSampleConfig{
+			HistoryCap: 128,
+		}),
 	}
 
 	return signal
@@ -56,14 +61,29 @@ func (signal *Signal) Type() types.SourceType {
 }
 
 func (signal *Signal) Measure(
-	market *types.Symbol,
-	ticks ...int64,
+	symbol *types.Symbol, ticks ...int64,
 ) iter.Seq[*types.Measurement] {
-	if market == nil {
-		return func(yield func(*types.Measurement) bool) {}
-	}
+	return func(yield func(*types.Measurement) bool) {
+		for ticker := range symbol.MarketTickers(types.SourceCorrelation) {
+			output, ready, err := signal.algo.Measure(algorithm.CohortSampleInput{
+				Symbol: ticker.Symbol,
+				At:     ticker.Timestamp,
+				Price:  ticker.Change.Float64(),
+			})
 
-	return signal.MeasureCohort([]*types.Symbol{market}, ticks...)
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"correlation: failed to measure ticker",
+					err,
+				))
+
+				return
+			}
+
+			
+		}
+	}
 }
 
 /*

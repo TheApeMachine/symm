@@ -61,25 +61,8 @@ func NewInstrument(
 
 	instrument.status = types.PENDING
 	instrument.Subscribe()
-	go instrument.listenForDivergences()
 
 	return instrument
-}
-
-/*
-listenForDivergences recovers checksum-diverged symbols through the normal
-subscription flow. The transport only reports divergence; the instrument owns
-subscriptions, so a diverged symbol is just another paced resubscribe it
-initiates.
-*/
-func (instrument *Instrument) listenForDivergences() {
-	if instrument.api == nil {
-		return
-	}
-
-	for symbol := range instrument.api.Level3Divergences() {
-		instrument.api.ResubscribeL3(symbol)
-	}
 }
 
 /*

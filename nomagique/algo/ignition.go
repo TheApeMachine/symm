@@ -15,7 +15,6 @@ const (
 	HistoryMoves      = "moves"
 	HistoryReturns    = "returns"
 	HistoryPrecursors = "precursors"
-	HistorySpreads    = "spreads"
 )
 
 const (
@@ -23,7 +22,6 @@ const (
 	historyRates
 	historyReturns
 	historyPrecursors
-	historySpreads
 	historyFamilyCount
 )
 
@@ -46,37 +44,20 @@ var (
 	SymbolIgnitionPrevClose   = nomagique.MustIntern("window/previous_close")
 	SymbolIgnitionLastRVOL    = nomagique.MustIntern("window/previous_rvol")
 
-	SymbolValue       = nomagique.MustIntern("value")
-	SymbolRVOL        = nomagique.MustIntern("rvol")
-	SymbolPrecursor   = nomagique.MustIntern("precursor")
-	SymbolSpread      = nomagique.MustIntern("spread")
-	SymbolCompression = nomagique.MustIntern("compression")
-	SymbolIgnition    = nomagique.MustIntern("ignition")
-	SymbolTrend       = nomagique.MustIntern("trend")
-	SymbolExhaustion  = nomagique.MustIntern("exhaustion")
-	SymbolStrength    = nomagique.MustIntern("strength")
-	SymbolCategory    = nomagique.MustIntern("category")
-	SymbolMaturity    = nomagique.MustIntern("maturity")
+	SymbolRVOL     = nomagique.MustIntern("rvol")
+	SymbolSpread   = nomagique.MustIntern("spread")
+	SymbolMaturity = nomagique.MustIntern("maturity")
 
-	SymbolBuyValue       = nomagique.MustIntern("buy/value")
-	SymbolBuyRVOL        = nomagique.MustIntern("buy/rvol")
-	SymbolBuyPrecursor   = nomagique.MustIntern("buy/precursor")
-	SymbolBuyCompression = nomagique.MustIntern("buy/compression")
-	SymbolBuyIgnition    = nomagique.MustIntern("buy/ignition")
-	SymbolBuyTrend       = nomagique.MustIntern("buy/trend")
-	SymbolBuyExhaustion  = nomagique.MustIntern("buy/exhaustion")
-	SymbolBuyStrength    = nomagique.MustIntern("buy/strength")
-	SymbolBuyCategory    = nomagique.MustIntern("buy/category")
+	SymbolIgnitionBarRate     = nomagique.MustIntern("window/bar_rate")
+	SymbolIgnitionRateBaseline = nomagique.MustIntern("window/rate_baseline")
 
-	SymbolSellValue       = nomagique.MustIntern("sell/value")
-	SymbolSellRVOL        = nomagique.MustIntern("sell/rvol")
-	SymbolSellPrecursor   = nomagique.MustIntern("sell/precursor")
-	SymbolSellCompression = nomagique.MustIntern("sell/compression")
-	SymbolSellIgnition    = nomagique.MustIntern("sell/ignition")
-	SymbolSellTrend       = nomagique.MustIntern("sell/trend")
-	SymbolSellExhaustion  = nomagique.MustIntern("sell/exhaustion")
-	SymbolSellStrength    = nomagique.MustIntern("sell/strength")
-	SymbolSellCategory    = nomagique.MustIntern("sell/category")
+	SymbolAlphaRVOL       = nomagique.MustIntern("alpha/rvol")
+	SymbolAlphaPrecursor  = nomagique.MustIntern("alpha/precursor")
+	SymbolAlphaExhaustion = nomagique.MustIntern("alpha/exhaustion")
+
+	SymbolBetaRVOL       = nomagique.MustIntern("beta/rvol")
+	SymbolBetaPrecursor  = nomagique.MustIntern("beta/precursor")
+	SymbolBetaExhaustion = nomagique.MustIntern("beta/exhaustion")
 )
 
 /*
@@ -112,7 +93,6 @@ func Ignition(
 			capacity,
 			volume,
 			last,
-			spread,
 			sec,
 			nsec,
 			hasTime,
@@ -124,7 +104,6 @@ func Ignition(
 		capacity,
 		volume,
 		last,
-		spread,
 		sec,
 		nsec,
 		hasTime,
@@ -237,7 +216,6 @@ func initializeIgnition(
 	capacity int,
 	volume float64,
 	last float64,
-	spread float64,
 	sec float64,
 	nsec float64,
 	hasTime bool,
@@ -258,49 +236,23 @@ func initializeIgnition(
 		state.Put(SymbolIgnitionBarOpenNsec, nsec)
 	}
 
-	if err := appendIgnitionHistory(state, historyDeltas, capacity, volume, true); err != nil {
-		return err
-	}
-
-	if err := appendIgnitionHistory(state, historySpreads, capacity, spread, true); err != nil {
-		return err
-	}
-
-	return nil
+	return appendIgnitionHistory(state, historyDeltas, capacity, volume, true)
 }
 
 func initializeIgnitionOutput(state *nomagique.Frame) {
 	for _, symbol := range []nomagique.Symbol{
-		SymbolValue,
 		SymbolRVOL,
-		SymbolPrecursor,
 		SymbolSpread,
-		SymbolCompression,
-		SymbolIgnition,
-		SymbolTrend,
-		SymbolExhaustion,
-		SymbolStrength,
-		SymbolCategory,
+		SymbolIgnitionBarRate,
+		SymbolIgnitionRateBaseline,
 		SymbolReady,
 		SymbolMaturity,
-		SymbolBuyValue,
-		SymbolBuyRVOL,
-		SymbolBuyPrecursor,
-		SymbolBuyCompression,
-		SymbolBuyIgnition,
-		SymbolBuyTrend,
-		SymbolBuyExhaustion,
-		SymbolBuyStrength,
-		SymbolBuyCategory,
-		SymbolSellValue,
-		SymbolSellRVOL,
-		SymbolSellPrecursor,
-		SymbolSellCompression,
-		SymbolSellIgnition,
-		SymbolSellTrend,
-		SymbolSellExhaustion,
-		SymbolSellStrength,
-		SymbolSellCategory,
+		SymbolAlphaRVOL,
+		SymbolAlphaPrecursor,
+		SymbolAlphaExhaustion,
+		SymbolBetaRVOL,
+		SymbolBetaPrecursor,
+		SymbolBetaExhaustion,
 	} {
 		state.Put(symbol, 0)
 	}
@@ -311,7 +263,6 @@ func advanceIgnition(
 	capacity int,
 	volume float64,
 	last float64,
-	spread float64,
 	sec float64,
 	nsec float64,
 	hasTime bool,
@@ -357,7 +308,6 @@ func advanceIgnition(
 			state,
 			capacity,
 			last,
-			spread,
 			sec,
 			nsec,
 			barVolume,
@@ -366,22 +316,13 @@ func advanceIgnition(
 		}
 	}
 
-	if err := appendIgnitionHistory(state, historyDeltas, capacity, volume, true); err != nil {
-		return err
-	}
-
-	if err := appendIgnitionHistory(state, historySpreads, capacity, spread, true); err != nil {
-		return err
-	}
-
-	return nil
+	return appendIgnitionHistory(state, historyDeltas, capacity, volume, true)
 }
 
 func closeIgnitionBar(
 	state *nomagique.Frame,
 	capacity int,
 	last float64,
-	spread float64,
 	sec float64,
 	nsec float64,
 	barVolume float64,
@@ -410,7 +351,7 @@ func closeIgnitionBar(
 		return fmt.Errorf("ignition: calculated bar values must be finite")
 	}
 
-	if err := scoreIgnition(state, barRate, priceMove, spread); err != nil {
+	if err := scoreIgnition(state, barRate, priceMove); err != nil {
 		return err
 	}
 

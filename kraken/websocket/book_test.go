@@ -114,7 +114,6 @@ func TestBookUpdate(t *testing.T) {
 		managed := newBookFixture(t, "BTC/USD", 0, 0)
 		managed.Create("BTC/USD", 32)
 		updates := make(chan string, 1)
-		managed.SetUpdates(updates)
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
 		}
@@ -142,8 +141,6 @@ func TestBookUpdate(t *testing.T) {
 		managed.Create("BTC/USD", 32)
 		updates := make(chan string, 1)
 		events := make(chan kraken.Level3Data)
-		managed.SetUpdates(updates)
-		managed.SetEvents(events)
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
 		}

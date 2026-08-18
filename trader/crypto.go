@@ -3,12 +3,10 @@ package trader
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -18,6 +16,14 @@ import (
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
+
+/*
+syncRest parks the replay sync poll between passes. Gosched spun the scheduler
+through every poll (measured as the dominant profile entry during replay); the
+queue depths change at tick pace, so a short rest is indistinguishable from
+spinning to the pump and far cheaper to every other goroutine.
+*/
+const syncRest = time.Millisecond
 
 /*
 Crypto submits desk work from thesis messages delivered by the Actor cascade.
@@ -33,8 +39,6 @@ type Crypto struct {
 	analyzer      *logic.Analyzer
 	planner       *strategy.Planner
 	desk          *broker.Desk
-	bookUpdates   <-chan string
-	level3Events  <-chan kraken.Level3Data
 	subscriptions map[string]*types.Subscription[any]
 	measurements  *Measurements
 }
@@ -55,23 +59,24 @@ func NewCrypto(
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{
-		ctx:          ctx,
-		cancel:       cancel,
-		api:          api,
-		ui:           ui,
-		thesis:       thesis,
-		recorder:     recorder,
-		analyzer:     analyzer,
-		planner:      planner,
-		desk:         desk,
-		bookUpdates:  api.BookUpdates(),
-		level3Events: api.Level3Events(),
+		ctx:      ctx,
+		cancel:   cancel,
+		api:      api,
+		ui:       ui,
+		thesis:   thesis,
+		recorder: recorder,
+		analyzer: analyzer,
+		planner:  planner,
+		desk:     desk,
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
 				"ticker", types.NewSubscription[any](),
 			),
 			"trade": api.Subscribe(
 				"trade", types.NewSubscription[any](),
+			),
+			"level3": api.Subscribe(
+				"level3", types.NewSubscription[any](),
 			),
 		},
 		measurements: NewMeasurements(ctx, api, desk.Instrument(), ui),
@@ -89,7 +94,7 @@ func (crypto *Crypto) Status() types.Status {
 
 /*
 Sync waits until every market frame already delivered has been measured,
-analyzed, planned, and the manifold has finished the relaxation those frames
+analyzed, planned, and the manifold has finished the step those frames
 queued. Replay uses this so the next captured arrival cannot overtake the
 decision that belongs to the current one.
 */
@@ -107,7 +112,7 @@ func (crypto *Crypto) Sync(ctx context.Context, _ time.Time) error {
 			return nil
 		}
 
-		runtime.Gosched()
+		time.Sleep(syncRest)
 	}
 }
 
@@ -132,8 +137,8 @@ func (crypto *Crypto) queued() int {
 		}
 	}
 
-	if crypto.level3Events != nil {
-		queued += len(crypto.level3Events)
+	if level3 := crypto.subscriptions["level3"]; level3 != nil {
+		queued += len(level3.Channel)
 	}
 
 	return queued
@@ -150,11 +155,11 @@ func (crypto *Crypto) run() {
 			case <-crypto.ctx.Done():
 				return
 			case ticker := <-crypto.subscriptions["ticker"].Channel:
-				crypto.onTicker(ticker)
+				crypto.onTicker(ticker.(*kraken.Ticker))
 			case trade := <-crypto.subscriptions["trade"].Channel:
-				crypto.onTrade(trade)
-			case level3 := <-crypto.level3Events:
-				crypto.onLevel3(level3)
+				crypto.onTrade(trade.(*kraken.Trade))
+			case level3 := <-crypto.subscriptions["level3"].Channel:
+				crypto.onLevel3(level3.(kraken.Level3Data))
 			case thesis := <-theses:
 				utils.Publish(crypto.ui, datura.NewMap(
 					"tick", datura.NewMap("count", thesis.Tick),
@@ -168,47 +173,28 @@ func (crypto *Crypto) run() {
 	}()
 }
 
-func (crypto *Crypto) onTicker(data any) {
-	typedTickers, ok := data.(*kraken.Ticker)
-
-	if !ok || typedTickers == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"crypto: unexpected ticker payload type",
-			nil,
-		))
-
+func (crypto *Crypto) onTicker(tickers *kraken.Ticker) {
+	if tickers == nil {
 		return
 	}
 
-	for _, ticker := range typedTickers.Data {
+	for _, ticker := range tickers.Data {
 		if ticker.Symbol == "" {
 			continue
 		}
 
-		if crypto.desk != nil && crypto.desk.Price() != nil {
-			crypto.desk.Price().Update(&ticker)
-		}
-
+		crypto.desk.Price().Update(&ticker)
 		symbol := crypto.thesis.Symbol(ticker.Symbol)
 		symbol.AppendTicker(ticker, types.TickerReceivers)
 	}
 }
 
-func (crypto *Crypto) onTrade(data any) {
-	typedTrades, ok := data.(*kraken.Trade)
-
-	if !ok || typedTrades == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"crypto: unexpected trades payload type",
-			nil,
-		))
-
+func (crypto *Crypto) onTrade(trades *kraken.Trade) {
+	if trades == nil {
 		return
 	}
 
-	for _, trade := range typedTrades.Data {
+	for _, trade := range trades.Data {
 		if trade.Symbol == "" {
 			continue
 		}

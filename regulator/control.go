@@ -15,7 +15,6 @@ const (
 	controlCausalAlpha
 	controlIterations
 	controlExploration
-	controlRelaxation
 	controlCount
 )
 
@@ -37,12 +36,11 @@ type controlSpace struct {
 }
 
 func newControlSpace(config *system.Config) (*controlSpace, error) {
-	if config == nil || config.Planner == nil || config.Manifold == nil {
-		return nil, fmt.Errorf("regulator: planner and manifold configuration required")
+	if config == nil || config.Planner == nil {
+		return nil, fmt.Errorf("regulator: planner configuration required")
 	}
 
 	planner := config.Planner
-	manifold := config.Manifold
 
 	if planner.MaxAllocationFraction <= 0 || planner.MaxAllocationFraction > 1 {
 		return nil, fmt.Errorf("regulator: allocation ceiling must be in (0,1]")
@@ -63,12 +61,6 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 	if planner.CausalAlpha < 0 || planner.ExplorationConstant < 0 ||
 		planner.MCTSIterations < 1 {
 		return nil, fmt.Errorf("regulator: valid MCTS controls required")
-	}
-
-	if manifold.MinSteps < 1 || manifold.MaxSteps < manifold.MinSteps ||
-		manifold.RelaxationSteps < manifold.MinSteps ||
-		manifold.RelaxationSteps > manifold.MaxSteps {
-		return nil, fmt.Errorf("regulator: valid manifold relaxation bounds required")
 	}
 
 	return &controlSpace{bounds: [controlCount]controlBound{
@@ -94,10 +86,6 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 			name: "mcts_exploration", minimum: 0,
 			maximum: planner.ExplorationConstant,
 		},
-		controlRelaxation: {
-			name: "manifold_relaxation", minimum: float64(manifold.MinSteps),
-			maximum: float64(manifold.MaxSteps), integer: true,
-		},
 	}}, nil
 }
 
@@ -109,7 +97,6 @@ func (space *controlSpace) current(config *system.Config) controlVector {
 		space.normalize(controlCausalAlpha, config.Planner.CausalAlpha),
 		space.normalize(controlIterations, float64(config.Planner.MCTSIterations)),
 		space.normalize(controlExploration, config.Planner.ExplorationConstant),
-		space.normalize(controlRelaxation, float64(config.Manifold.RelaxationSteps)),
 	}
 }
 
@@ -162,8 +149,8 @@ func (space *controlSpace) apply(
 	controls controlVector,
 	config *system.Config,
 ) error {
-	if config == nil || config.Planner == nil || config.Manifold == nil {
-		return fmt.Errorf("regulator: mutable planner and manifold required")
+	if config == nil || config.Planner == nil {
+		return fmt.Errorf("regulator: mutable planner required")
 	}
 
 	for index, value := range controls {
@@ -183,9 +170,6 @@ func (space *controlSpace) apply(
 		space.value(controlIterations, controls),
 	))
 	config.Planner.ExplorationConstant = space.value(controlExploration, controls)
-	config.Manifold.RelaxationSteps = int(math.Round(
-		space.value(controlRelaxation, controls),
-	))
 
 	return nil
 }

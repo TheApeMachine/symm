@@ -47,7 +47,7 @@ func TestBuildPayload(t *testing.T) {
 			So(payload.IntervalMarks, ShouldEqual, 4)
 			So(payload.LastMarkFloor, ShouldAlmostEqual, 0.015)
 			So(payload.LastMarkSurge, ShouldBeTrue)
-			So(payload.Subsystems, ShouldHaveLength, 8)
+			So(payload.Subsystems, ShouldHaveLength, 7)
 			So(payload.Subsystems[0].Name, ShouldEqual, "model")
 			So(payload.Subsystems[1].Name, ShouldEqual, "allocation")
 			So(payload.Sparkline, ShouldResemble, []float64{0.2})
