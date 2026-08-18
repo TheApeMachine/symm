@@ -39,6 +39,7 @@ type Conn struct {
 	clock     time.Time
 
 	mu                   sync.Mutex
+	writeMu              sync.Mutex
 	accepted             *websocket.Conn
 	connectionGeneration uint64
 	ready                chan struct{}
@@ -280,12 +281,20 @@ func (conn *Conn) publish(payload []byte) {
 
 	defer conn.ws.OnReceived.Deregister(handler)
 
+	// Gorilla permits one writer at a time: the replay pump and subscription
+	// responders publish concurrently once the venue stops pacing, so every
+	// server-side write serializes here.
+	conn.writeMu.Lock()
+
 	if err := accepted.WriteMessage(
 		websocket.TextMessage, payload,
 	); err != nil {
+		conn.writeMu.Unlock()
 		errnie.Error(err)
 		return
 	}
+
+	conn.writeMu.Unlock()
 
 	select {
 	case <-delivered:

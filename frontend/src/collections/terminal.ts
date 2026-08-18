@@ -12,7 +12,8 @@ export type TerminalSurface =
 	| "cortex"
 	| "allocation"
 	| "regulator"
-	| "diagnostics";
+	| "diagnostics"
+	| "backtest";
 
 export { DEFAULT_FOCUS_SYMBOL };
 

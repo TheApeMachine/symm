@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,7 +24,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -84,7 +84,7 @@ type Live struct {
 	resyncing       sync.Map
 	paper           *Paper
 	model           string
-	capture         *audit.Recorder
+	capture         CaptureSink
 	captureName     string
 
 	// Level3Client supplies the websocket client for the child connections
@@ -126,7 +126,7 @@ func New(
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
-	recorders ...*audit.Recorder,
+	recorders ...CaptureSink,
 ) *Live {
 	return NewWithClient(ctx, simulator, auth, endpoint, nil, recorders...)
 }
@@ -142,10 +142,10 @@ func NewWithClient(
 	auth bool,
 	endpoint string,
 	client *spot.WebSocket,
-	recorders ...*audit.Recorder,
+	recorders ...CaptureSink,
 ) *Live {
 	if len(recorders) > 1 {
-		panic("websocket: at most one market capture recorder is supported")
+		panic("websocket: at most one market capture sink is supported")
 	}
 
 	if client == nil {
@@ -417,15 +417,18 @@ func (live *Live) captureFrame(endpoint string, payload []byte) error {
 		return fmt.Errorf("websocket: capture endpoint and payload required")
 	}
 
-	return live.capture.Write(struct {
-		Endpoint   string          `json:"endpoint"`
-		Payload    json.RawMessage `json:"payload"`
-		ReceivedAt time.Time       `json:"received_at"`
-	}{
-		Endpoint:   endpoint,
-		Payload:    json.RawMessage(payload),
-		ReceivedAt: time.Now().UTC(),
-	})
+	// The SDK hands back a view into a buffer it reuses for the next frame,
+	// so an asynchronously flushed recorder would write neighbouring frames
+	// concatenated into it. The capture owns its own copy of the exact bytes.
+	return live.capture.Capture(endpoint, bytes.Clone(payload), time.Now().UTC())
+}
+
+/*
+CaptureSink receives one untouched transport payload with its endpoint and
+arrival time. Implementations own persistence; the transport only reports.
+*/
+type CaptureSink interface {
+	Capture(endpoint string, payload []byte, receivedAt time.Time) error
 }
 
 func (live *Live) Status() types.Status {

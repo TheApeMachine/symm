@@ -15,6 +15,23 @@ export const DEFAULT_KERNELS = [
 
 export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
 
+export type BacktestCapture = {
+	id: number;
+	startedAt: string;
+	endedAt?: string;
+	frames: number;
+};
+
+export type BacktestState = {
+	captureId: number | null;
+	playing: boolean;
+	position: string | null;
+	startedAt: string | null;
+	endedAt: string | null;
+	rebooting: boolean;
+	captures: BacktestCapture[];
+};
+
 export const appStore = createStore(
 	{
 		online: false,
@@ -32,8 +49,27 @@ export const appStore = createStore(
 		*/
 		symbols: [] as string[],
 		startedAtMs: null as number | null,
+		backtest: {
+			captureId: null,
+			playing: false,
+			position: null,
+			startedAt: null,
+			endedAt: null,
+			rebooting: false,
+			captures: [],
+		} as BacktestState,
 	},
 	({ setState }) => ({
+		updateBacktest: (frame: Partial<BacktestState>) =>
+			setState((prev) => ({
+				...prev,
+				backtest: { ...prev.backtest, ...frame },
+			})),
+		setBacktestCaptures: (captures: BacktestCapture[]) =>
+			setState((prev) => ({
+				...prev,
+				backtest: { ...prev.backtest, captures },
+			})),
 		updateOnline: (online: boolean) =>
 			setState((prev) => ({
 				...prev,

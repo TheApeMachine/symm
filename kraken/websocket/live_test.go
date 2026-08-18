@@ -1,14 +1,11 @@
 package websocket
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -20,35 +17,48 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
+type memoryCaptureSink struct {
+	endpoint string
+	payload  []byte
+	at       time.Time
+}
+
+func (sink *memoryCaptureSink) Capture(
+	endpoint string, payload []byte, receivedAt time.Time,
+) error {
+	sink.endpoint = endpoint
+	sink.payload = payload
+	sink.at = receivedAt
+
+	return nil
+}
+
 func TestCaptureFrame(t *testing.T) {
 	Convey("Given one raw public websocket payload", t, func() {
-		path := filepath.Join(t.TempDir(), "market-frames.jsonl")
-		recorder, err := audit.NewRecorder(path)
-		So(err, ShouldBeNil)
-		live := &Live{capture: recorder, captureName: "public"}
+		sink := &memoryCaptureSink{}
+		live := &Live{capture: sink, captureName: "public"}
 		payload := []byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD"}]}`)
 
 		So(live.captureFrame("public", payload), ShouldBeNil)
-		So(recorder.Close(), ShouldBeNil)
-		file, err := os.Open(path)
-		So(err, ShouldBeNil)
-		defer file.Close()
-		var frame struct {
-			Endpoint   string          `json:"endpoint"`
-			Payload    json.RawMessage `json:"payload"`
-			ReceivedAt string          `json:"received_at"`
-		}
-		So(json.NewDecoder(bufio.NewReader(file)).Decode(&frame), ShouldBeNil)
 
-		Convey("It should retain the untouched payload in replay format", func() {
-			So(frame.Endpoint, ShouldEqual, "public")
-			So(string(frame.Payload), ShouldEqual, string(payload))
-			So(frame.ReceivedAt, ShouldNotBeBlank)
+		Convey("It should retain the untouched payload", func() {
+			So(sink.endpoint, ShouldEqual, "public")
+			So(string(sink.payload), ShouldEqual, string(payload))
+			So(sink.at.IsZero(), ShouldBeFalse)
+		})
+
+		Convey("It should own its bytes when the SDK reuses the buffer", func() {
+			captured := string(sink.payload)
+
+			for index := range payload {
+				payload[index] = 'X'
+			}
+
+			So(string(sink.payload), ShouldEqual, captured)
 		})
 	})
 }
@@ -68,27 +78,16 @@ func TestTradeVolume(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(response)),
 			}, nil
 		}
-		path := filepath.Join(t.TempDir(), "market-frames.jsonl")
-		recorder, err := audit.NewRecorder(path)
-		So(err, ShouldBeNil)
-		live := &Live{client: client, capture: recorder}
+		sink := &memoryCaptureSink{}
+		live := &Live{client: client, capture: sink}
 
 		result, err := live.TradeVolume([]string{"BTC/USD"})
 		So(err, ShouldBeNil)
 		So(result, ShouldNotBeNil)
-		So(recorder.Close(), ShouldBeNil)
-		file, err := os.Open(path)
-		So(err, ShouldBeNil)
-		defer file.Close()
-		var frame struct {
-			Endpoint string          `json:"endpoint"`
-			Payload  json.RawMessage `json:"payload"`
-		}
-		So(json.NewDecoder(file).Decode(&frame), ShouldBeNil)
 
 		Convey("It should retain the exact REST response beside market frames", func() {
-			So(frame.Endpoint, ShouldEqual, TradeVolumeEndpoint)
-			So(string(frame.Payload), ShouldEqual, response)
+			So(sink.endpoint, ShouldEqual, TradeVolumeEndpoint)
+			So(string(sink.payload), ShouldEqual, response)
 		})
 	})
 }
@@ -392,17 +391,10 @@ func BenchmarkLiveBook(b *testing.B) {
 }
 
 func BenchmarkCaptureFrame(b *testing.B) {
-	recorder, err := audit.NewRecorder(filepath.Join(b.TempDir(), "market-frames.jsonl"))
-
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	defer recorder.Close()
-	live := &Live{capture: recorder, captureName: "public"}
+	sink := &memoryCaptureSink{}
+	live := &Live{capture: sink, captureName: "public"}
 	payload := []byte(`{"channel":"ticker","data":[{"symbol":"BTC/USD"}]}`)
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	for b.Loop() {
 		if err := live.captureFrame("public", payload); err != nil {

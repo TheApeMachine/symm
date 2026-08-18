@@ -37,6 +37,11 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{ id: "cortex", label: "Cognitive tree", hint: "Reasoning graph" },
 	{ id: "allocation", label: "Allocation", hint: "Capital & exposure" },
 	{
+		id: "backtest",
+		label: "Backtest",
+		hint: "Captured sessions · play, pause, scrub",
+	},
+	{
 		id: "regulator",
 		label: "Global regulator",
 		hint: "Predictive control · wallet return",

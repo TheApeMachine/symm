@@ -6,7 +6,8 @@ const RECONNECT_MAX_MS = 5000;
 type WorkerInbound =
 	| { type: "CONNECT"; url: string }
 	| { type: "DISCONNECT" }
-	| { type: "FOCUS"; symbol: string };
+	| { type: "FOCUS"; symbol: string }
+	| { type: "BACKTEST"; action: "play" | "pause" | "seek" | "select"; at?: string; captureId?: number };
 
 type WorkerOutbound =
 	| { type: "READY" }
@@ -21,6 +22,24 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let activeUrl = "";
 let focusSymbol = "";
+
+/*
+sendBacktest pushes one playback command to the backend driver. No-ops until
+the socket is open.
+*/
+const sendBacktest = (
+	action: "play" | "pause" | "seek" | "select",
+	at?: string,
+	captureId?: number,
+) => {
+	if (socket === null || socket.readyState !== WebSocket.OPEN) {
+		return;
+	}
+
+	socket.send(
+		JSON.stringify({ type: `backtest.${action}`, at, captureId }),
+	);
+};
 
 /*
 sendFocus pushes the dashboard focus to the backend so signal-metric publishes
@@ -198,6 +217,11 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 		case "FOCUS": {
 			sendFocus(message.symbol);
+			return;
+		}
+
+		case "BACKTEST": {
+			sendBacktest(message.action, message.at, message.captureId);
 			return;
 		}
 

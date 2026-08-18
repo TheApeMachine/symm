@@ -373,7 +373,14 @@ directional evidence for or against it, and at least one explanatory root that
 can reach it. Predictive coding may contribute, but it is not a prerequisite.
 */
 func (graph *Graph) ReadyForSearch() bool {
-	if graph == nil || graph.DecisionTarget == "" ||
+	if graph == nil {
+		return false
+	}
+
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
+	if graph.DecisionTarget == "" ||
 		graph.Nodes[graph.DecisionTarget] == nil {
 		return false
 	}

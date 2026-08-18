@@ -590,6 +590,20 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			pair,
 			decision,
 		)
+
+		// The exit snapshot belongs to the stoploss moment: the trigger is
+		// the decision that closes the lot, so the thesis is checkpointed
+		// exactly there, mirroring the entry checkpoint above.
+		position.checkpoint = func() {
+			if err := desk.SaveThesis(desk.thesis); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"desk: checkpoint triggered exit",
+					err,
+				))
+			}
+		}
+
 		desk.positions.Store(decision.Symbol, position)
 
 		_, err = position.Enter()

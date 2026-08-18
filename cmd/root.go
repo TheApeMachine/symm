@@ -67,6 +67,13 @@ var (
 	}
 )
 
+/*
+Register attaches an external subcommand to the root command.
+*/
+func Register(command *cobra.Command) {
+	rootCmd.AddCommand(command)
+}
+
 func Execute() {
 	err := rootCmd.Execute()
 

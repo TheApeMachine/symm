@@ -336,6 +336,13 @@ export const attach = (worker: Worker) => {
 				continue;
 			}
 
+			if (key === "backtest") {
+				appStore.actions.updateBacktest(
+					update as Partial<typeof appStore.state.backtest>,
+				);
+				continue;
+			}
+
 			if (key === "cognition") {
 				cognition.actions.updateFrame(frameRows(update));
 				pendingUpdates.set(key, currentCognition());

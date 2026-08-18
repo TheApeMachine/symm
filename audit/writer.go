@@ -38,6 +38,13 @@ file handle and drains the ring, so no producer ever blocks on file I/O or a
 mutex. This mirrors the rest of the system's lock-free single-consumer wiring.
 */
 type Recorder struct {
+	/*
+		EventSink, when set, receives every analytical event instead of the
+		compressed file — the sqlite audit stream. Only decision moments flow
+		through Record, so the sink stays tiny by construction.
+	*/
+	EventSink func(kind string, payload []byte) error
+
 	ctx      context.Context
 	cancel   context.CancelFunc
 	filename string

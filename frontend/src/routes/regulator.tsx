@@ -1,10 +1,9 @@
-
 import { createFileRoute } from "@tanstack/react-router";
 import { useLayoutEffect, useState } from "react";
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
-import { Panel } from "#/components/ui/panel";
 import type { JSONSerializable } from "#/components/ui/paint";
+import { Panel } from "#/components/ui/panel";
 import { getLastFrame, registerPainter } from "#/providers/ws-stores";
 
 type SubsystemStatus = {
@@ -43,12 +42,17 @@ const DEFAULT_FRAME: RegulatorFrame = {
 	status: "observing",
 	surprise: 0.0,
 	energy: 0.0,
-	summary: "Waiting for a later account valuation to resolve the first applied control vector.",
+	summary:
+		"Waiting for a later account valuation to resolve the first applied control vector.",
 	subsystems: [],
 	sparkline: [],
 };
 
-const HealthPulse = ({ status }: { status: "healthy" | "adapting" | "strained" | "observing" }) => {
+const HealthPulse = ({
+	status,
+}: {
+	status: "healthy" | "adapting" | "strained" | "observing";
+}) => {
 	const colors = {
 		observing: {
 			bg: "bg-(--acc)",
@@ -84,8 +88,12 @@ const HealthPulse = ({ status }: { status: "healthy" | "adapting" | "strained" |
 
 	return (
 		<Flex.Row align="center" gap={3} className="shrink-0">
-			<div className={`relative h-4 w-4 rounded-full ${config.bg} ${config.ring} animate-pulse`} />
-			<span className={`font-mono text-[13px] font-semibold tracking-wider uppercase ${config.text}`}>
+			<div
+				className={`relative h-4 w-4 rounded-full ${config.bg} ${config.ring} animate-pulse`}
+			/>
+			<span
+				className={`font-mono text-[13px] font-semibold tracking-wider uppercase ${config.text}`}
+			>
 				{config.label}
 			</span>
 		</Flex.Row>
@@ -115,12 +123,22 @@ const SparklineSVG = ({ points }: { points: number[] }) => {
 	return (
 		<svg width={width} height={height} className="overflow-visible">
 			<title>Recent predictive-coding reconstruction error</title>
-			<path d={pathD} fill="none" stroke="var(--acc)" strokeWidth="2" strokeLinecap="round" />
+			<path
+				d={pathD}
+				fill="none"
+				stroke="var(--acc)"
+				strokeWidth="2"
+				strokeLinecap="round"
+			/>
 		</svg>
 	);
 };
 
-const RegulatorBridge = ({ onFrame }: { onFrame: (frame: RegulatorFrame) => void }) => {
+const RegulatorBridge = ({
+	onFrame,
+}: {
+	onFrame: (frame: RegulatorFrame) => void;
+}) => {
 	useLayoutEffect(() => {
 		const paint = (updates: JSONSerializable) => {
 			if (updates && typeof updates === "object" && !Array.isArray(updates)) {
@@ -141,7 +159,7 @@ const RegulatorBridge = ({ onFrame }: { onFrame: (frame: RegulatorFrame) => void
 	return null;
 };
 
-export const RegulatorSurface = () => {
+const RegulatorSurface = () => {
 	const [frame, setFrame] = useState<RegulatorFrame>(DEFAULT_FRAME);
 
 	const status = frame.status ?? DEFAULT_FRAME.status ?? "observing";
@@ -159,7 +177,9 @@ export const RegulatorSurface = () => {
 	const lastMarkDrawdown = frame.lastMarkDrawdown ?? 0;
 	const lastMarkFloorDistance = frame.lastMarkFloorDistance ?? 0;
 	const lastMarkSurgeArmed = frame.lastMarkSurgeArmed ?? false;
-	const lastMarkAt = frame.lastMarkAt ? new Date(frame.lastMarkAt).toLocaleTimeString() : "—";
+	const lastMarkAt = frame.lastMarkAt
+		? new Date(frame.lastMarkAt).toLocaleTimeString()
+		: "—";
 	const summary = frame.summary ?? DEFAULT_FRAME.summary;
 	const subsystems = frame.subsystems ?? DEFAULT_FRAME.subsystems ?? [];
 	const sparkline = frame.sparkline ?? DEFAULT_FRAME.sparkline ?? [];
@@ -187,19 +207,52 @@ export const RegulatorSurface = () => {
 					{summary}
 				</p>
 
-				<Flex.Row justify="between" align="center" className="pt-2 border-t border-(--line) text-[11px] font-mono text-(--f4)">
+				<Flex.Row
+					justify="between"
+					align="center"
+					className="pt-2 border-t border-(--line) text-[11px] font-mono text-(--f4)"
+				>
 					<Flex.Row gap={4}>
-						<span>Reconstruction Error: <strong className="text-(--f1)">{surprise.toFixed(4)}</strong></span>
-						<span>Variational Energy: <strong className="text-(--f1)">{energy.toFixed(3)}</strong></span>
-						<span>Next Equity Return: <strong className="text-(--f1)">{(predictedReturn * 100).toFixed(3)}%</strong></span>
-						<span>Posterior Scale: <strong className="text-(--f1)">{predictionScale.toFixed(4)}</strong></span>
-						<span>Next-Interval Activity: <strong className="text-(--f1)">{predictedActive.toFixed(3)} ± {activityScale.toFixed(3)}</strong></span>
-						<span>Resolved Outcomes: <strong className="text-(--f1)">{samples}</strong></span>
-						<span>Position Marks: <strong className="text-(--f1)">{markSamples}</strong></span>
+						<span>
+							Reconstruction Error:{" "}
+							<strong className="text-(--f1)">{surprise.toFixed(4)}</strong>
+						</span>
+						<span>
+							Variational Energy:{" "}
+							<strong className="text-(--f1)">{energy.toFixed(3)}</strong>
+						</span>
+						<span>
+							Next Equity Return:{" "}
+							<strong className="text-(--f1)">
+								{(predictedReturn * 100).toFixed(3)}%
+							</strong>
+						</span>
+						<span>
+							Posterior Scale:{" "}
+							<strong className="text-(--f1)">
+								{predictionScale.toFixed(4)}
+							</strong>
+						</span>
+						<span>
+							Next-Interval Activity:{" "}
+							<strong className="text-(--f1)">
+								{predictedActive.toFixed(3)} ± {activityScale.toFixed(3)}
+							</strong>
+						</span>
+						<span>
+							Resolved Outcomes:{" "}
+							<strong className="text-(--f1)">{samples}</strong>
+						</span>
+						<span>
+							Position Marks:{" "}
+							<strong className="text-(--f1)">{markSamples}</strong>
+						</span>
 					</Flex.Row>
 					{sparkline.length > 1 ? (
 						<Flex.Row align="center" gap={2}>
-							<span className="text-[10px] uppercase tracking-wider text-(--f4)">Recent Surprisal Trend</span>
+							<span className="text-[10px] uppercase tracking-wider text-(--f4)">
+								Recent Surprisal Trend
+							</span>
 							<SparklineSVG points={sparkline} />
 						</Flex.Row>
 					) : null}
@@ -209,19 +262,58 @@ export const RegulatorSurface = () => {
 			<Panel className="p-4 border border-(--line) bg-(--surface) rounded-md font-mono text-[11px]">
 				<Flex.Row justify="between" align="center" className="gap-4">
 					<Flex.Column gap={1}>
-						<span className="text-[10px] text-(--f4) uppercase tracking-wider">Mark-level regulator context</span>
+						<span className="text-[10px] text-(--f4) uppercase tracking-wider">
+							Mark-level regulator context
+						</span>
 						<span className="text-(--f3)">
-							Every executable position mark conditions the next complete account-level control update.
+							Every executable position mark conditions the next complete
+							account-level control update.
 						</span>
 					</Flex.Column>
 					<Flex.Row gap={5} className="shrink-0 text-(--f4)">
-						<span>last symbol <strong className="text-(--f1)">{lastMarkSymbol}</strong></span>
-						<span>observed <strong className="text-(--f1)">{lastMarkAt}</strong></span>
-						<span>interval marks <strong className="text-(--f1)">{intervalMarks}</strong></span>
-						<span>last move <strong className={lastMarkReturn < 0 ? "text-(--down)" : "text-(--up)"}>{(lastMarkReturn * 100).toFixed(4)}%</strong></span>
-						<span>peak drawdown <strong className="text-(--down)">{(lastMarkDrawdown * 100).toFixed(4)}%</strong></span>
-						<span>floor distance <strong className={lastMarkFloorDistance <= 0 ? "text-(--down)" : "text-(--warn)"}>{(lastMarkFloorDistance * 100).toFixed(3)}%</strong></span>
-						<span>surge <strong className={lastMarkSurgeArmed ? "text-(--warn)" : "text-(--f1)"}>{lastMarkSurgeArmed ? "armed" : "clear"}</strong></span>
+						<span>
+							last symbol{" "}
+							<strong className="text-(--f1)">{lastMarkSymbol}</strong>
+						</span>
+						<span>
+							observed <strong className="text-(--f1)">{lastMarkAt}</strong>
+						</span>
+						<span>
+							interval marks{" "}
+							<strong className="text-(--f1)">{intervalMarks}</strong>
+						</span>
+						<span>
+							last move{" "}
+							<strong
+								className={lastMarkReturn < 0 ? "text-(--down)" : "text-(--up)"}
+							>
+								{(lastMarkReturn * 100).toFixed(4)}%
+							</strong>
+						</span>
+						<span>
+							peak drawdown{" "}
+							<strong className="text-(--down)">
+								{(lastMarkDrawdown * 100).toFixed(4)}%
+							</strong>
+						</span>
+						<span>
+							floor distance{" "}
+							<strong
+								className={
+									lastMarkFloorDistance <= 0 ? "text-(--down)" : "text-(--warn)"
+								}
+							>
+								{(lastMarkFloorDistance * 100).toFixed(3)}%
+							</strong>
+						</span>
+						<span>
+							surge{" "}
+							<strong
+								className={lastMarkSurgeArmed ? "text-(--warn)" : "text-(--f1)"}
+							>
+								{lastMarkSurgeArmed ? "armed" : "clear"}
+							</strong>
+						</span>
 					</Flex.Row>
 				</Flex.Row>
 			</Panel>
@@ -232,7 +324,11 @@ export const RegulatorSurface = () => {
 					{({ ref }) => (
 						<div ref={ref} className="contents">
 							{subsystems.map((sub) => {
-								const isChanged = !["configured", "resolving", "validated"].includes(sub.direction);
+								const isChanged = ![
+									"configured",
+									"resolving",
+									"validated",
+								].includes(sub.direction);
 								const healthColor =
 									sub.health === "healthy"
 										? "text-(--up) border-(--up)/30"
@@ -243,12 +339,17 @@ export const RegulatorSurface = () => {
 												: "text-(--down) border-(--down)/30";
 
 								return (
-									<Panel key={sub.name} className="p-4 border border-(--line) bg-(--surface) rounded-md flex flex-col gap-2 justify-between hover:border-(--line2) transition-colors">
+									<Panel
+										key={sub.name}
+										className="p-4 border border-(--line) bg-(--surface) rounded-md flex flex-col gap-2 justify-between hover:border-(--line2) transition-colors"
+									>
 										<Flex.Row justify="between" align="center">
 											<span className="font-semibold font-mono text-[11px] text-(--f3) uppercase tracking-wider">
 												{sub.label}
 											</span>
-											<span className={`px-2 py-0.5 rounded font-mono text-[10px] font-medium border uppercase ${healthColor}`}>
+											<span
+												className={`px-2 py-0.5 rounded font-mono text-[10px] font-medium border uppercase ${healthColor}`}
+											>
 												{sub.health}
 											</span>
 										</Flex.Row>
@@ -257,7 +358,9 @@ export const RegulatorSurface = () => {
 											<span className="text-2xl font-bold font-mono text-(--f1)">
 												{sub.valueText}
 											</span>
-											<span className={`font-mono text-[11px] font-semibold ${isChanged ? "text-(--warn)" : "text-(--f4)"}`}>
+											<span
+												className={`font-mono text-[11px] font-semibold ${isChanged ? "text-(--warn)" : "text-(--f4)"}`}
+											>
 												● {sub.direction}
 											</span>
 										</Flex.Row>
@@ -276,17 +379,23 @@ export const RegulatorSurface = () => {
 			{/* Interpretation legend */}
 			<Panel className="p-4 border border-(--line) bg-(--surface)/50 rounded-md font-mono text-[11px] text-(--f4) flex flex-col gap-1.5">
 				<span className="font-semibold text-(--f3) uppercase tracking-wider text-[10px]">
-						How to Interpret the Regulator
+					How to Interpret the Regulator
 				</span>
 				<div className="grid grid-cols-3 gap-3 pt-1 text-[10.5px]">
 					<div>
-						<strong className="text-(--up)">Green (Predictive)</strong>: Prior parameter/outcome pairs beat the zero-return baseline and bounded posterior search is selecting controls.
+						<strong className="text-(--up)">Green (Predictive)</strong>: Prior
+						parameter/outcome pairs beat the zero-return baseline and bounded
+						posterior search is selecting controls.
 					</div>
 					<div>
-						<strong className="text-(--warn)">Amber (Identifying)</strong>: The return model is applying one shrinking coordinate intervention and waiting for its subsequent equity outcome.
+						<strong className="text-(--warn)">Amber (Identifying)</strong>: The
+						return model is applying one shrinking coordinate intervention and
+						waiting for its subsequent equity outcome.
 					</div>
 					<div>
-						<strong className="text-(--down)">Red (Adverse Forecast)</strong>: The selected control vector has a negative posterior mean for next account return.
+						<strong className="text-(--down)">Red (Adverse Forecast)</strong>:
+						The selected control vector has a negative posterior mean for next
+						account return.
 					</div>
 				</div>
 			</Panel>

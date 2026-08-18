@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/bytedance/sonic"
 	fastwebsocket "github.com/fasthttp/websocket"
@@ -31,6 +32,8 @@ type Hub struct {
 	desk       *broker.Desk
 	price      *broker.Price
 	balance    *broker.Balance
+	playback   playback
+	captures   func() any
 	fluid      *FluidRTC
 	clients    sync.Map
 }
@@ -38,6 +41,13 @@ type Hub struct {
 /*
 NewHub constructs the dashboard hub from an injected UI config address.
 */
+type playback interface {
+	Play()
+	Pause()
+	Seek(at time.Time)
+	Select(captureID int64)
+}
+
 func NewHub(
 	ctx context.Context,
 	desk *broker.Desk,
@@ -78,6 +88,14 @@ func NewHub(
 		return fiber.ErrUpgradeRequired
 	})
 
+	hub.app.Get("/backtest/captures", func(c fiber.Ctx) error {
+		if hub.captures == nil {
+			return c.JSON([]any{})
+		}
+
+		return c.JSON(hub.captures())
+	})
+
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		messages := make(chan []byte, cap(hub.Messages))
 		hub.clients.Store(conn, messages)
@@ -96,6 +114,15 @@ func NewHub(
 
 			conn.WriteMessage(websocket.TextMessage, datura.NewMap(
 				"positions", out,
+			).MarshalAndFree())
+		}
+
+		// The capture list rides the websocket with the rest of the
+		// dashboard state: the dev-server origin cannot fetch the REST
+		// route cross-origin, and the socket already reaches every client.
+		if hub.captures != nil {
+			conn.WriteMessage(websocket.TextMessage, datura.NewMap(
+				"backtest", datura.NewMap("captures", hub.captures()),
 			).MarshalAndFree())
 		}
 
@@ -120,16 +147,37 @@ func NewHub(
 					}
 
 					var request struct {
-						Type   string `json:"type"`
-						Symbol string `json:"symbol"`
+						Type      string `json:"type"`
+						Symbol    string `json:"symbol"`
+						At        string `json:"at"`
+						CaptureID int64  `json:"captureId"`
 					}
 
 					if err := sonic.Unmarshal(payload, &request); err != nil {
 						continue
 					}
 
-					if request.Type == "focus" {
+					switch request.Type {
+					case "focus":
 						types.SetFocus(request.Symbol)
+					case "backtest.play":
+						if hub.playback != nil {
+							hub.playback.Play()
+						}
+					case "backtest.pause":
+						if hub.playback != nil {
+							hub.playback.Pause()
+						}
+					case "backtest.seek":
+						if hub.playback != nil {
+							if at, err := time.Parse(time.RFC3339Nano, request.At); err == nil {
+								hub.playback.Seek(at)
+							}
+						}
+					case "backtest.select":
+						if hub.playback != nil {
+							hub.playback.Select(request.CaptureID)
+						}
 					}
 				}
 			}
@@ -167,6 +215,30 @@ func NewHub(
 	hub.registerFluidWebRTC()
 
 	return hub
+}
+
+/*
+SetPlayback attaches the backtest driver and its capture listing so websocket
+commands and the REST route reach it. Without a driver the controls are inert.
+*/
+func (hub *Hub) SetPlayback(
+	controller interface {
+		Play()
+		Pause()
+		Seek(at time.Time)
+		Select(captureID int64)
+	},
+	captures func() any,
+) {
+	// Upgrade-only: a session re-boot passes a nil controller with a fresh
+	// capture list and must never displace the driving playback controller.
+	if controller != nil {
+		hub.playback = controller
+	}
+
+	if captures != nil {
+		hub.captures = captures
+	}
 }
 
 func (hub *Hub) broadcast() {

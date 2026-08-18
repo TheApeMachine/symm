@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
@@ -94,6 +95,22 @@ func Boot(
 	private websocket.Conn,
 	uiChannel chan []byte,
 ) *System {
+	return BootWithHub(ctx, thesis, public, private, uiChannel, nil)
+}
+
+/*
+BootWithHub boots the full system reusing an already-serving hub, which the
+backtest driver needs: one hub survives every seek's stack rebuild, so the
+dashboard connection and playback controls never drop.
+*/
+func BootWithHub(
+	ctx context.Context,
+	thesis *types.Thesis,
+	public websocket.Conn,
+	private websocket.Conn,
+	uiChannel chan []byte,
+	existingHub *ui.Hub,
+) *System {
 	viper.SetDefault("system.actor.buffer", 1024)
 
 	if !viper.IsSet("market.subscribe.batch") {
@@ -127,48 +144,36 @@ func Boot(
 		return nil
 	}
 
-	var marketRecorder *audit.Recorder
-	marketPath := ""
+	// The analytical audit stream lives in sqlite beside the captures: only
+	// decision moments are written, so the events table stays tiny while the
+	// file recorder remains as a fallback for sessions without a store.
+	captureStore, storeErr := backtest.NewStore(
+		filepath.Join(dataPath, "symm.sqlite"),
+	)
 
-	if public == nil || private == nil {
-		marketPath = filepath.Join(dataPath, "market-frames.jsonl.zst")
-
-		if viper.GetBool("system.audit.rotate_on_boot") {
-			if err := audit.Rotate(marketPath); err != nil {
-				errnie.Error(fmt.Errorf("failed to rotate market capture: %w", err))
-				_ = recorder.Close()
-				return nil
-			}
-		}
-
-		marketRecorder, err = audit.NewRecorder(marketPath)
-
-		if err != nil {
-			errnie.Error(fmt.Errorf("failed to create market capture recorder: %w", err))
-			_ = recorder.Close()
-			return nil
-		}
-	}
-
-	thesis.Audit = recorder.Write
-
-	if err := thesis.Audit(map[string]any{
-		"channel": "orchestration",
-		"type":    "boot",
-		"value": map[string]any{
-			"at":                  time.Now().UTC(),
-			"audit_path":          auditPath,
-			"market_capture_path": marketPath,
-		},
-	}); err != nil {
-		errnie.Error(fmt.Errorf("failed to write runtime audit boot event: %w", err))
-
-		if marketRecorder != nil {
-			_ = marketRecorder.Close()
-		}
-
+	if storeErr != nil {
+		errnie.Error(fmt.Errorf("failed to open capture store: %w", storeErr))
 		_ = recorder.Close()
 		return nil
+	}
+
+	recorder.EventSink = captureStore.WriteEvent
+
+	closers := []func() error{recorder.Close, captureStore.Close}
+	var marketRecorder websocket.CaptureSink
+
+	if public == nil || private == nil {
+		captureWriter, writeErr := captureStore.OpenCapture()
+
+		if writeErr != nil {
+			errnie.Error(fmt.Errorf("failed to open capture: %w", writeErr))
+			_ = recorder.Close()
+			_ = captureStore.Close()
+			return nil
+		}
+
+		marketRecorder = captureWriter
+		closers = append(closers, captureWriter.Close)
 	}
 
 	positionStore, err := broker.NewPositionStore(
@@ -178,18 +183,11 @@ func Boot(
 	if err != nil {
 		errnie.Error(fmt.Errorf("failed to create position store: %w", err))
 
-		if marketRecorder != nil {
-			_ = marketRecorder.Close()
+		for _, close := range closers {
+			_ = close()
 		}
 
-		_ = recorder.Close()
 		return nil
-	}
-
-	closers := []func() error{recorder.Close}
-
-	if marketRecorder != nil {
-		closers = append(closers, marketRecorder.Close)
 	}
 
 	closers = append(closers, positionStore.Close)
@@ -227,7 +225,7 @@ func Boot(
 
 	errnie.Debug("api reported to be ready")
 
-	price := utils.NewWaiter[*broker.Price](broker.NewPrice(api, marketRecorder)).Wait()
+	price := utils.NewWaiter[*broker.Price](broker.NewPrice(api)).Wait()
 	errnie.Debug("price reported to be ready")
 
 	instrument := utils.NewWaiter[*broker.Instrument](
@@ -317,15 +315,44 @@ func Boot(
 	errnie.Debug("trader reported to be ready")
 	system.closers = append(system.closers, crypto.Close)
 
-	system.Hub = ui.NewHub(
-		ctx,
-		desk,
-		price,
-		balance,
-		uiChannel,
-		manifoldChannel,
-	)
-	system.closers = append(system.closers, system.Hub.Close)
+	if existingHub != nil {
+		system.Hub = existingHub
+
+		existingHub.SetPlayback(nil, func() any {
+			captures, listErr := captureStore.ListCaptures()
+
+			if listErr != nil {
+				return []backtest.CaptureInfo{}
+			}
+
+			return captures
+		})
+
+		errnie.Debug("reusing served hub")
+	} else {
+		system.Hub = ui.NewHub(
+			ctx,
+			desk,
+			price,
+			balance,
+			uiChannel,
+			manifoldChannel,
+		)
+
+		// Live runs have no playback driver, but the capture history is
+		// still real: the dashboard lists captured sessions read-only.
+		system.Hub.SetPlayback(nil, func() any {
+			captures, listErr := captureStore.ListCaptures()
+
+			if listErr != nil {
+				return []backtest.CaptureInfo{}
+			}
+
+			return captures
+		})
+
+		system.closers = append(system.closers, system.Hub.Close)
+	}
 
 	system.Desk = desk
 	system.Planner = planner

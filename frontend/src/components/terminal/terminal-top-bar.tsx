@@ -1,3 +1,4 @@
+import { BacktestControls } from "./backtest-controls";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
@@ -54,6 +55,7 @@ export const TerminalTopBar = () => {
 			<Count />
 
 			<Toolbar.Spacer />
+			<BacktestControls />
 
 			<Toolbar.Group className="gap-6">
 				<Button

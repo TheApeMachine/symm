@@ -205,7 +205,7 @@ const RateCell = ({ label, rate }: { label: string; rate: string }) => (
 	</Flex.Column>
 );
 
-export const DiagnosticsSurface = () => {
+const DiagnosticsSurface = () => {
 	const [frame, setFrame] = useState<DiagnosticsFrame>(DEFAULT_FRAME);
 	const [rates, setRates] = useState({
 		committed: 0,

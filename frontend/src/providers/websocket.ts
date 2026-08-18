@@ -29,6 +29,14 @@ const publishFocus = (symbol: string) => {
 	worker?.postMessage({ type: "FOCUS", symbol });
 };
 
+export const publishBacktestCommand = (
+	action: "play" | "pause" | "seek" | "select",
+	at?: string,
+	captureId?: number,
+) => {
+	worker?.postMessage({ type: "BACKTEST", action, at, captureId });
+};
+
 const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
 	const message = event.data;
 

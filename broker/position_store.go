@@ -61,7 +61,7 @@ func NewPositionStore(path string) (*PositionStore, error) {
 		))
 	}
 
-	database, err := sql.Open("sqlite3", path)
+	database, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

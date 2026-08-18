@@ -33,6 +33,7 @@ type Position struct {
 	balance        *Balance
 	recorder       *audit.Recorder
 	store          *PositionStore
+	checkpoint     func()
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
 	passage        *passageTracker
@@ -206,6 +207,10 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	}
 
 	if stoploss.Status == types.TRIGGERED && position.ExitOrder == nil {
+		if position.checkpoint != nil {
+			position.checkpoint()
+		}
+
 		if _, err := position.Exit(); err != nil {
 			errnie.Error(err)
 		}
