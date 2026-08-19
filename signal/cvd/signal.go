@@ -7,18 +7,52 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
+var (
+	SymbolNetFlow     = nomagique.MustIntern("cvd/net_flow")
+	SymbolImpactRatio = nomagique.MustIntern("cvd/impact_ratio")
+	SymbolAbsorption  = nomagique.MustIntern("cvd/absorption")
+)
+
 /*
-Signal is the CVD perspective: signed aggressor flow conditioned per symbol.
-It is ONLY a nomagique pipeline composing the shared math primitives — the
-difference of the two flow channels, an adaptive window tracking its own
-baseline, and the departure from that baseline.
+cvdPipeline is a pure composition of calculus, temporal, and logic primitives.
+The signal owns no calculation: the recipe expresses signed aggressor flow,
+impact efficiency, and absorption entirely from shared atomic reducers.
 */
+func cvdPipeline() nomagique.Primitive {
+	return nomagique.Pipe(
+		nomagique.Fork(
+			calculus.Difference,
+			calculus.Sum,
+		),
+		nomagique.Relay(calculus.SymbolResult, SymbolNetFlow),
+		nomagique.Relay(SymbolNetFlow, nomagique.SampleValue),
+		nomagique.Configure(
+			statistic.Baseline,
+			nmtypes.Span,
+			temporal.Window,
+		),
+		nomagique.Fork(
+			statistic.ZScore,
+			statistic.Deviation,
+		),
+		nomagique.Fork(
+			nomagique.Pipe(
+				calculus.Ratio,
+				calculus.Inverse,
+				nomagique.Relay(calculus.SymbolResult, SymbolAbsorption),
+			),
+			logic.Gate,
+		),
+	)
+}
+
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -26,44 +60,22 @@ type Signal struct {
 	number nomagique.Number[string]
 }
 
-func NewSignal(
-	ctx context.Context,
-	thesis *types.Thesis,
-) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		thesis: thesis,
-		number: nomagique.NewNumber[string](
-			nomagique.Pipe(
-				calculus.Difference,
-				nomagique.Relay(calculus.SymbolResult, nomagique.SampleValue),
-				nomagique.Configure(
-					statistic.Baseline,
-					nmtypes.Span,
-					temporal.Window,
-				),
-				nomagique.Fork(
-					statistic.ZScore,
-					statistic.Deviation,
-				),
-			),
-		),
+		number: nomagique.NewNumber[string](cvdPipeline()),
 	}
 
 	signal.run()
 	return signal
 }
 
-func (signal *Signal) Name() string {
-	return string(types.SourceCVD)
-}
-
-func (signal *Signal) Type() types.SourceType {
-	return types.SourceCVD
-}
+func (signal *Signal) Name() string { return string(types.SourceCVD) }
+func (signal *Signal) Type() types.SourceType { return types.SourceCVD }
 
 func (signal *Signal) run() {
 	for {
@@ -82,11 +94,12 @@ func (signal *Signal) run() {
 					notional := trade.Price.Float64() * trade.Qty
 
 					input := nomagique.Frame{}
-					input.Put(nmtypes.AlphaQuantity, notional)
 					input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
 					input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+					input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
 					if trade.Side == "sell" {
+						input.Put(nmtypes.AlphaQuantity, 0)
 						input.Put(nmtypes.BetaQuantity, notional)
 					} else {
 						input.Put(nmtypes.AlphaQuantity, notional)
@@ -98,19 +111,19 @@ func (signal *Signal) run() {
 					if err != nil {
 						errnie.Error(errnie.Err(
 							errnie.Validation,
-							"cvd: number step failed for "+symbol.Symbol,
+							"cvd: failed for "+symbol.Symbol,
 							err,
 						))
 						continue
 					}
 
-					symbol.Measurements.Push(nmtypes.NewMeasurement(
+					measurement := nmtypes.NewMeasurement(
 						uuid.NewString(),
 						signal.Name(),
 						trade.Timestamp.UnixNano(),
 						trade.Timestamp.UnixNano(),
 					).AddMetrics(
-						nmtypes.NewMetric("flow_imbalance", output.MustGet(nmtypes.Quantity), nmtypes.Descriptor{
+						nmtypes.NewMetric("net_flow", output.MustGet(SymbolNetFlow), nmtypes.Descriptor{
 							Unit:      nmtypes.UnitQuoteCurrency,
 							Timescale: nmtypes.TimescalePerTick,
 						}),
@@ -122,11 +135,13 @@ func (signal *Signal) run() {
 							Unit:      nmtypes.UnitDimensionless,
 							Timescale: nmtypes.TimescaleInstantaneous,
 						}),
-						nmtypes.NewMetric("flow_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+						nmtypes.NewMetric("absorption", output.MustGet(SymbolAbsorption), nmtypes.Descriptor{
 							Unit:      nmtypes.UnitDimensionless,
 							Timescale: nmtypes.TimescaleInstantaneous,
 						}),
-					))
+					)
+
+					symbol.Measurements.Push(measurement)
 				}
 
 				return true

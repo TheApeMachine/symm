@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -14,12 +15,33 @@ import (
 )
 
 /*
-Signal is the Toxicity perspective: touch-liquidity honesty conditioned per
-symbol. It is ONLY a nomagique pipeline — each accepted order frame's net
-retreating quantity (cancelled minus filled) feeds an adaptive baseline whose
-deviation reports how far the current book honesty stands from the symbol's
-own established behavior.
+toxicityPipeline is a pure composition: net pulled liquidity is the difference
+of the retreated and filled channels, conditioned through the adaptive
+baseline, then scored both as dispersion and as a squashed non-negative
+toxicity intensity.
 */
+func toxicityPipeline() nomagique.Primitive {
+	return nomagique.Pipe(
+		calculus.Difference,
+		nomagique.Relay(calculus.SymbolResult, nomagique.SampleValue),
+		nomagique.Configure(
+			statistic.Baseline,
+			nmtypes.Span,
+			temporal.Window,
+		),
+		nomagique.Fork(
+			statistic.ZScore,
+			nomagique.Fork(
+				statistic.Deviation,
+				nomagique.Pipe(
+					calculus.Positive,
+					calculus.Squash,
+				),
+			),
+		),
+	)
+}
+
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -27,36 +49,22 @@ type Signal struct {
 	number nomagique.Number[string]
 }
 
-func NewSignal(
-	ctx context.Context,
-	thesis *types.Thesis,
-) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		thesis: thesis,
-		number: nomagique.NewNumber[string](
-			nomagique.Pipe(
-				temporal.Window,
-				statistic.Baseline,
-				statistic.Deviation,
-			),
-		),
+		number: nomagique.NewNumber[string](toxicityPipeline()),
 	}
 
 	signal.run()
 	return signal
 }
 
-func (signal *Signal) Name() string {
-	return string(types.SourceToxicity)
-}
-
-func (signal *Signal) Type() types.SourceType {
-	return types.SourceToxicity
-}
+func (signal *Signal) Name() string { return string(types.SourceToxicity) }
+func (signal *Signal) Type() types.SourceType { return types.SourceToxicity }
 
 func (signal *Signal) run() {
 	for {
@@ -72,8 +80,11 @@ func (signal *Signal) run() {
 				}
 
 				for frame := range symbol.MarketLevel3(types.SourceToxicity) {
+					filled, retreated := level3Flow(frame)
+
 					input := nomagique.Frame{}
-					input.Put(nmtypes.Quantity, honesty(frame))
+					input.Put(nmtypes.AlphaQuantity, filled)
+					input.Put(nmtypes.BetaQuantity, retreated)
 					input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
 					input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
 
@@ -82,7 +93,7 @@ func (signal *Signal) run() {
 					if err != nil {
 						errnie.Error(errnie.Err(
 							errnie.Validation,
-							"toxicity: number step failed for "+symbol.Symbol,
+							"toxicity: failed for "+symbol.Symbol,
 							err,
 						))
 						continue
@@ -94,13 +105,17 @@ func (signal *Signal) run() {
 						frame.Timestamp.UnixNano(),
 						frame.Timestamp.UnixNano(),
 					).AddMetrics(
+						nmtypes.NewMetric("honesty_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
+						}),
 						nmtypes.NewMetric("honesty_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
 							Unit:      nmtypes.UnitDimensionless,
 							Timescale: nmtypes.TimescaleInstantaneous,
 						}),
-						nmtypes.NewMetric("honesty_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitBaseCurrency,
-							Timescale: nmtypes.TimescalePerSecond,
+						nmtypes.NewMetric("toxicity_intensity", output.MustGet(calculus.SymbolResult), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
 						}),
 					))
 				}
@@ -111,28 +126,28 @@ func (signal *Signal) run() {
 	}
 }
 
-func honesty(frame kraken.Level3Data) float64 {
-	filled := 0.0
-	retreated := 0.0
-
+/*
+level3Flow lifts one accepted order frame into the two generic quantity
+channels: filled quantity (Alpha) and retreated quantity (Beta). The
+iteration here is input conversion, not calculation.
+*/
+func level3Flow(frame kraken.Level3Data) (filled float64, retreated float64) {
 	for _, orders := range [][]kraken.Level3Order{frame.Bids, frame.Asks} {
 		for _, order := range orders {
 			if order.OrderQty == nil {
 				continue
 			}
 
-			quantity := order.OrderQty.Float64()
-
 			switch order.Event {
 			case "fill":
-				filled += quantity
+				filled += order.OrderQty.Float64()
 			case "delete":
-				retreated += quantity
+				retreated += order.OrderQty.Float64()
 			}
 		}
 	}
 
-	return retreated - filled
+	return filled, retreated
 }
 
 func (signal *Signal) Close() error {

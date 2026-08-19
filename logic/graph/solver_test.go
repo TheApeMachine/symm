@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -76,19 +77,14 @@ func TestUpdate(t *testing.T) {
 			}
 
 			references[reference] = struct{}{}
-			symbol.AppendMeasurement(&types.Measurement{
-				ID:     fmt.Sprintf("%s:%s:%d", schema.Source, metricKey, index),
-				Source: schema.Source,
-				Symbol: "BTC/USD",
-				At:     thesis.At,
-				Metrics: map[string]types.MetricSample{
-					metricKey: {
-						Raw:        value,
-						Normalized: &value,
-						Unit:       types.UnitDimensionless,
-					},
-				},
-			})
+			measurement := newTestMeasurement(
+				fmt.Sprintf("%s:%s:%d", schema.Source, metricKey, index),
+				schema.Source,
+				"BTC/USD",
+				thesis.At,
+			)
+			putTestMetric(measurement, schema.Metric, value, &value, nmtypes.UnitDimensionless)
+			symbol.AppendMeasurement(measurement)
 			categories[schema.Category] = struct{}{}
 		}
 		thesis.Symbols.Store("BTC/USD", symbol)
@@ -158,20 +154,10 @@ func TestUpdate(t *testing.T) {
 		bitcoin := types.NewSymbol("BTC/USD", nil)
 		drive := 0.8
 		separation := 0.75
-		bitcoin.AppendMeasurement(&types.Measurement{
-			ID:     "cvd-measurement",
-			Source: types.SourceCVD,
-			Symbol: "BTC/USD",
-			At:     thesis.At,
-			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricDrive, types.SideNone): {
-					Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
-					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
-				},
-			},
-		})
+		bitcoinMeasurement := newTestMeasurement("cvd-measurement", types.SourceCVD, "BTC/USD", thesis.At)
+		putTestMetric(bitcoinMeasurement, types.MetricDrive, drive, &drive, nmtypes.UnitDimensionless)
+		putTestMetric(bitcoinMeasurement, types.MetricHypothesisSeparation, separation, &separation, nmtypes.UnitDimensionless)
+		bitcoin.AppendMeasurement(bitcoinMeasurement)
 		bitcoin.Categories.Store("BTC/USD", []types.Category{{
 			Symbol:     "BTC/USD",
 			Type:       types.CategoryAggressiveDrive,
@@ -211,20 +197,15 @@ func TestUpdate(t *testing.T) {
 			symbol := types.NewSymbol(symbolName, nil)
 			drive := 0.6
 			quality := 0.7
-			symbol.AppendMeasurement(&types.Measurement{
-				ID:     symbolName + "-measurement",
-				Source: types.SourceCVD,
-				Symbol: symbolName,
-				At:     thesis.At,
-				Metrics: map[string]types.MetricSample{
-					types.MetricKey(types.MetricDrive, types.SideNone): {
-						Raw: drive, Normalized: &drive, Unit: types.UnitDimensionless,
-					},
-					types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
-						Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
-					},
-				},
-			})
+			measurement := newTestMeasurement(
+				symbolName+"-measurement",
+				types.SourceCVD,
+				symbolName,
+				thesis.At,
+			)
+			putTestMetric(measurement, types.MetricDrive, drive, &drive, nmtypes.UnitDimensionless)
+			putTestMetric(measurement, types.MetricHypothesisSeparation, quality, &quality, nmtypes.UnitDimensionless)
+			symbol.AppendMeasurement(measurement)
 			symbol.Categories.Store(symbolName, []types.Category{{
 				Symbol: symbolName, Type: types.CategoryAggressiveDrive,
 				Strength: drive, Confidence: 0.8,
@@ -787,20 +768,15 @@ func BenchmarkUpdate(b *testing.B) {
 		symbolState := types.NewSymbol(symbol, nil)
 		separation := 0.8
 		surge := 0.5
-		symbolState.AppendMeasurement(&types.Measurement{
-			ID:     "sentiment-" + symbol,
-			Source: types.SourceSentiment,
-			Symbol: symbol,
-			At:     at,
-			Metrics: map[string]types.MetricSample{
-				types.MetricKey(types.MetricSurgeScore, types.SideNone): {
-					Raw: surge, Normalized: &surge, Unit: types.UnitDimensionless,
-				},
-				types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
-					Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
-				},
-			},
-		})
+		sentiment := newTestMeasurement(
+			"sentiment-"+symbol,
+			types.SourceSentiment,
+			symbol,
+			at,
+		)
+		putTestMetric(sentiment, types.MetricSurgeScore, surge, &surge, nmtypes.UnitDimensionless)
+		putTestMetric(sentiment, types.MetricHypothesisSeparation, separation, &separation, nmtypes.UnitDimensionless)
+		symbolState.AppendMeasurement(sentiment)
 		thesis.Symbols.Store(symbol, symbolState)
 
 		symbolState.Categories.Store(symbol, []types.Category{
