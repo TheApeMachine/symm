@@ -12,10 +12,6 @@ var (
 	SymbolMark             = nomagique.MustIntern("mark")
 	SymbolUnixSec          = nomagique.MustIntern("unix_sec")
 	SymbolUnixNsec         = nomagique.MustIntern("unix_nsec")
-	SymbolFirstSec         = nomagique.MustIntern("first_sec")
-	SymbolFirstNsec        = nomagique.MustIntern("first_nsec")
-	SymbolLastSec          = nomagique.MustIntern("last_sec")
-	SymbolLastNsec         = nomagique.MustIntern("last_nsec")
 	SymbolEventCount       = nomagique.MustIntern("event_count")
 	SymbolAlphaEventCount  = nomagique.MustIntern("alpha_event_count")
 	SymbolBetaEventCount   = nomagique.MustIntern("beta_event_count")
@@ -28,15 +24,21 @@ var (
 	SymbolAlphaArrivalRate = nomagique.MustIntern("alpha_arrival_rate")
 	SymbolBetaArrivalRate  = nomagique.MustIntern("beta_arrival_rate")
 	SymbolFold             = nomagique.MustIntern("fold")
-	SymbolObservedFromSec  = nomagique.MustIntern("observed_from_sec")
-	SymbolObservedFromNsec = nomagique.MustIntern("observed_from_nsec")
 	SymbolObservedAtSec    = nomagique.MustIntern("observed_at_sec")
 	SymbolObservedAtNsec   = nomagique.MustIntern("observed_at_nsec")
+	SymbolObservedFromSec  = nomagique.MustIntern("observed_from_sec")
+	SymbolObservedFromNsec = nomagique.MustIntern("observed_from_nsec")
+
+	symbolFirstSec  = nomagique.MustIntern("state/first_sec")
+	symbolFirstNsec = nomagique.MustIntern("state/first_nsec")
+	symbolLastSec   = nomagique.MustIntern("state/last_sec")
+	symbolLastNsec  = nomagique.MustIntern("state/last_nsec")
 )
 
 /*
-NewHawkesState returns the universal Frame defaults for a bivariate Hawkes
-process. A separate nomagique.Stream should be owned by each ordered event key.
+NewHawkesState returns a Frame seed carrying the bivariate process defaults.
+The intensity reducer applies the same defaults lazily, so the seed is only
+needed by callers that construct a Stream explicitly.
 */
 func NewHawkesState() nomagique.Frame {
 	state := nomagique.Frame{}
@@ -50,70 +52,90 @@ func NewHawkesState() nomagique.Frame {
 }
 
 /*
-Hawkes is a pure bivariate self- and cross-exciting process transition. Input
-carries mark, unix_sec, and unix_nsec; state and output remain universal Frames.
+Hawkes is a composite Primitive assembled from the shared atomic units:
+
+	temporal.Duration -> intensity transition (decay + mark jump + rates)
+	                 -> statistic.Branching (branching matrix, spectral radius)
+	                 -> statistic.Likelihood (log-likelihood differentials)
 */
-func Hawkes(
+func Hawkes() nomagique.Primitive {
+	return nomagique.Pipe(
+		hawkesIntensity,
+		statistic.Branching,
+		statistic.Likelihood,
+	)
+}
+
+/*
+hawkesIntensity is the single-purpose intensity reducer: it persists the two
+channel intensities between events, decays them by the observed delta, adds the
+arriving mark's jump, and emits the rates and likelihood inputs that Branching
+and Likelihood consume.
+*/
+func hawkesIntensity(
 	state nomagique.Frame,
 	input nomagique.Frame,
 ) (nomagique.Frame, nomagique.Frame, error) {
-	mark, sec, nsec, err := hawkesObservation(&input)
+	mark, hasMark := input.Get(SymbolMark)
+	sec, hasSec := input.Get(SymbolUnixSec)
+	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
-	if err != nil {
-		return state, nomagique.Frame{}, err
+	if !hasMark || mark == 0 || !finite(mark) {
+		return state, nomagique.Frame{}, fmt.Errorf("hawkes: a finite non-zero mark is required")
 	}
 
-	nextState := withHawkesDefaults(state)
-	eventCount := number(nextState, SymbolEventCount)
-	lastSec := number(nextState, SymbolLastSec)
-	lastNsec := number(nextState, SymbolLastNsec)
-
-	if eventCount > 0 && before(sec, nsec, lastSec, lastNsec) {
+	if !hasSec || !hasNsec || !finite(sec, nsec) || nsec < 0 || nsec >= 1e9 {
 		return state, nomagique.Frame{}, fmt.Errorf(
-			"hawkes: observation time cannot move backwards",
+			"hawkes: timestamp coordinates must be finite and normalized",
 		)
 	}
 
-	firstSec := number(nextState, SymbolFirstSec)
-	firstNsec := number(nextState, SymbolFirstNsec)
-	delta := 0.0
+	next := state
+	next.Put(statistic.SymbolBeta, value(next, statistic.SymbolBeta, 1))
+	next.Put(statistic.SymbolAlphaAA, value(next, statistic.SymbolAlphaAA, 0.2))
+	next.Put(statistic.SymbolAlphaAB, value(next, statistic.SymbolAlphaAB, 0.1))
+	next.Put(statistic.SymbolAlphaBA, value(next, statistic.SymbolAlphaBA, 0.1))
+	next.Put(statistic.SymbolAlphaBB, value(next, statistic.SymbolAlphaBB, 0.2))
+
+	eventCount := value(next, SymbolEventCount, 0)
+	lastSec := value(next, symbolLastSec, sec)
+	lastNsec := value(next, symbolLastNsec, nsec)
+	firstSec := value(next, symbolFirstSec, sec)
+	firstNsec := value(next, symbolFirstNsec, nsec)
 
 	if eventCount == 0 {
-		firstSec = sec
-		firstNsec = nsec
-	} else {
+		next.Put(symbolFirstSec, sec)
+		next.Put(symbolFirstNsec, nsec)
+	} else if elapsed(sec, nsec, lastSec, lastNsec) < 0 {
+		return state, nomagique.Frame{}, fmt.Errorf("hawkes: observation time cannot move backwards")
+	}
+
+	beta := value(next, statistic.SymbolBeta, 1)
+	muAlpha := value(next, SymbolMuAlpha, 0)
+	muBeta := value(next, SymbolMuBeta, 0)
+	lambdaAlpha := value(next, SymbolLambdaAlpha, 0)
+	lambdaBeta := value(next, SymbolLambdaBeta, 0)
+
+	delta := 0.0
+
+	if eventCount > 0 {
 		delta = elapsed(sec, nsec, lastSec, lastNsec)
 	}
 
-	beta := number(nextState, statistic.SymbolBeta)
-	muAlpha := number(nextState, SymbolMuAlpha)
-	muBeta := number(nextState, SymbolMuBeta)
+	lambdaAlpha = decay(lambdaAlpha, muAlpha, beta, delta)
+	lambdaBeta = decay(lambdaBeta, muBeta, beta, delta)
 
-	lambdaAlpha := decayIntensity(
-		number(nextState, SymbolLambdaAlpha),
-		muAlpha,
-		beta,
-		delta,
-	)
-	
-	lambdaBeta := decayIntensity(
-		number(nextState, SymbolLambdaBeta),
-		muBeta,
-		beta,
-		delta,
-	)
-	
-	alphaCount := number(nextState, SymbolAlphaEventCount)
-	betaCount := number(nextState, SymbolBetaEventCount)
+	alphaCount := value(next, SymbolAlphaEventCount, 0)
+	betaCount := value(next, SymbolBetaEventCount, 0)
 
 	if mark > 0 {
 		alphaCount++
-		lambdaAlpha += number(nextState, statistic.SymbolAlphaAA)
-		lambdaBeta += number(nextState, statistic.SymbolAlphaBA)
+		lambdaAlpha += value(next, statistic.SymbolAlphaAA, 0.2)
+		lambdaBeta += value(next, statistic.SymbolAlphaBA, 0.1)
 	} else {
 		betaCount++
-		lambdaBeta += number(nextState, statistic.SymbolAlphaBB)
-		lambdaAlpha += number(nextState, statistic.SymbolAlphaAB)
+		lambdaBeta += value(next, statistic.SymbolAlphaBB, 0.2)
+		lambdaAlpha += value(next, statistic.SymbolAlphaAB, 0.1)
 	}
 
 	eventCount++
@@ -125,141 +147,77 @@ func Hawkes(
 
 	rateAlpha := alphaCount / duration
 	rateBeta := betaCount / duration
-	muAlpha = rateAlpha
-	muBeta = rateBeta
 	lambdaAlpha = math.Max(lambdaAlpha, rateAlpha)
 	lambdaBeta = math.Max(lambdaBeta, rateBeta)
 
-	nextState.Merge(input)
-	nextState.Put(SymbolFirstSec, firstSec)
-	nextState.Put(SymbolFirstNsec, firstNsec)
-	nextState.Put(SymbolLastSec, sec)
-	nextState.Put(SymbolLastNsec, nsec)
-	nextState.Put(SymbolEventCount, eventCount)
-	nextState.Put(SymbolAlphaEventCount, alphaCount)
-	nextState.Put(SymbolBetaEventCount, betaCount)
-	nextState.Put(SymbolMuAlpha, muAlpha)
-	nextState.Put(SymbolMuBeta, muBeta)
-	nextState.Put(SymbolLambdaAlpha, lambdaAlpha)
-	nextState.Put(SymbolLambdaBeta, lambdaBeta)
-	nextState.Put(SymbolReady, 1)
-	nextState.Put(SymbolObservation, 1)
-	nextState.Put(SymbolAlphaArrivalRate, rateAlpha)
-	nextState.Put(SymbolBetaArrivalRate, rateBeta)
-	nextState.Put(SymbolFold, 1/beta)
-	nextState.Put(SymbolObservedFromSec, firstSec)
-	nextState.Put(SymbolObservedFromNsec, firstNsec)
-	nextState.Put(SymbolObservedAtSec, sec)
-	nextState.Put(SymbolObservedAtNsec, nsec)
+	next.Put(symbolLastSec, sec)
+	next.Put(symbolLastNsec, nsec)
+	next.Put(SymbolEventCount, eventCount)
+	next.Put(SymbolAlphaEventCount, alphaCount)
+	next.Put(SymbolBetaEventCount, betaCount)
+	next.Put(SymbolMuAlpha, rateAlpha)
+	next.Put(SymbolMuBeta, rateBeta)
+	next.Put(SymbolLambdaAlpha, lambdaAlpha)
+	next.Put(SymbolLambdaBeta, lambdaBeta)
+	next.Put(SymbolReady, 1)
+	next.Put(SymbolObservation, 1)
+	next.Put(SymbolAlphaArrivalRate, rateAlpha)
+	next.Put(SymbolBetaArrivalRate, rateBeta)
+	next.Put(SymbolFold, 1/beta)
+	next.Put(SymbolObservedAtSec, sec)
+	next.Put(SymbolObservedAtNsec, nsec)
+	next.Put(SymbolObservedFromSec, firstSec)
+	next.Put(SymbolObservedFromNsec, firstNsec)
 
-	if err := appendHawkesStatistics(&nextState, lambdaAlpha, lambdaBeta, rateAlpha, rateBeta); err != nil {
-		return state, nomagique.Frame{}, err
-	}
+	output := input
+	output.Put(statistic.SymbolBeta, beta)
+	output.Put(statistic.SymbolAlphaAA, value(next, statistic.SymbolAlphaAA, 0.2))
+	output.Put(statistic.SymbolAlphaAB, value(next, statistic.SymbolAlphaAB, 0.1))
+	output.Put(statistic.SymbolAlphaBA, value(next, statistic.SymbolAlphaBA, 0.1))
+	output.Put(statistic.SymbolAlphaBB, value(next, statistic.SymbolAlphaBB, 0.2))
+	output.Put(statistic.SymbolLLHawkes, logSum(lambdaAlpha, lambdaBeta))
+	output.Put(statistic.SymbolLLPoisson, logSum(rateAlpha, rateBeta))
+	output.Put(statistic.SymbolLLSelf, logSum(rateAlpha, rateBeta)*1.1)
+	output.Put(SymbolLambdaAlpha, lambdaAlpha)
+	output.Put(SymbolLambdaBeta, lambdaBeta)
+	output.Put(SymbolMuAlpha, rateAlpha)
+	output.Put(SymbolMuBeta, rateBeta)
+	output.Put(SymbolReady, 1)
+	output.Put(SymbolEventCount, eventCount)
+	output.Put(SymbolAlphaEventCount, alphaCount)
+	output.Put(SymbolBetaEventCount, betaCount)
+	output.Put(SymbolAlphaArrivalRate, rateAlpha)
+	output.Put(SymbolBetaArrivalRate, rateBeta)
+	output.Put(SymbolObservation, 1)
+	output.Put(SymbolObservedAtSec, sec)
+	output.Put(SymbolObservedAtNsec, nsec)
+	output.Put(SymbolObservedFromSec, firstSec)
+	output.Put(SymbolObservedFromNsec, firstNsec)
 
-	return nextState, nextState, nil
+	return next, output, nil
 }
 
-func hawkesObservation(input *nomagique.Frame) (float64, float64, float64, error) {
-	mark, hasMark := input.Get(SymbolMark)
-	sec, hasSec := input.Get(SymbolUnixSec)
-	nsec, hasNsec := input.Get(SymbolUnixNsec)
-
-	if !hasMark || mark == 0 || !finite(mark) {
-		return 0, 0, 0, fmt.Errorf("hawkes: a finite non-zero mark is required")
-	}
-
-	if !hasSec || !hasNsec {
-		return 0, 0, 0, fmt.Errorf("hawkes: unix_sec and unix_nsec are required")
-	}
-
-	if !finite(sec, nsec) || nsec < 0 || nsec >= 1e9 {
-		return 0, 0, 0, fmt.Errorf(
-			"hawkes: timestamp coordinates must be finite and normalized",
-		)
-	}
-
-	return mark, sec, nsec, nil
-}
-
-func withHawkesDefaults(state nomagique.Frame) nomagique.Frame {
-	putHawkesDefault(&state, statistic.SymbolBeta, 1)
-	putHawkesDefault(&state, statistic.SymbolAlphaAA, 0.2)
-	putHawkesDefault(&state, statistic.SymbolAlphaAB, 0.1)
-	putHawkesDefault(&state, statistic.SymbolAlphaBA, 0.1)
-	putHawkesDefault(&state, statistic.SymbolAlphaBB, 0.2)
-
-	return state
-}
-
-func putHawkesDefault(
-	state *nomagique.Frame,
-	symbol nomagique.Symbol,
-	value float64,
-) {
-	if !state.Has(symbol) {
-		state.Put(symbol, value)
-	}
-}
-
-func decayIntensity(lambda float64, baseline float64, beta float64, delta float64) float64 {
+func decay(lambda float64, baseline float64, beta float64, delta float64) float64 {
 	excess := math.Max(lambda-baseline, 0)
 
 	return baseline + excess*math.Exp(-beta*delta)
 }
 
-func appendHawkesStatistics(
-	state *nomagique.Frame,
-	lambdaAlpha float64,
-	lambdaBeta float64,
-	rateAlpha float64,
-	rateBeta float64,
-) error {
-	branchingInput := nomagique.Frame{}
-	branchingInput.Put(statistic.SymbolAlphaAA, number(*state, statistic.SymbolAlphaAA))
-	branchingInput.Put(statistic.SymbolAlphaAB, number(*state, statistic.SymbolAlphaAB))
-	branchingInput.Put(statistic.SymbolAlphaBA, number(*state, statistic.SymbolAlphaBA))
-	branchingInput.Put(statistic.SymbolAlphaBB, number(*state, statistic.SymbolAlphaBB))
-	branchingInput.Put(statistic.SymbolBeta, number(*state, statistic.SymbolBeta))
-	_, branchingOutput, err := statistic.Branching(nomagique.Frame{}, branchingInput)
+func logSum(left float64, right float64) float64 {
+	safeLeft := math.Max(left, 1e-6)
+	safeRight := math.Max(right, 1e-6)
 
-	if err != nil {
-		return err
+	return math.Log(safeLeft) + math.Log(safeRight)
+}
+
+func value(frame nomagique.Frame, symbol nomagique.Symbol, fallback float64) float64 {
+	if frame.Has(symbol) {
+		result, _ := frame.Get(symbol)
+
+		return result
 	}
 
-	state.Merge(branchingOutput)
-
-	likelihoodInput := nomagique.Frame{}
-	likelihoodInput.Put(
-		statistic.SymbolLLHawkes,
-		math.Log(math.Max(lambdaAlpha, 1e-6))+math.Log(math.Max(lambdaBeta, 1e-6)),
-	)
-
-	likelihoodPoisson := math.Log(math.Max(rateAlpha, 1e-6)) +
-		math.Log(math.Max(rateBeta, 1e-6))
-	likelihoodInput.Put(statistic.SymbolLLPoisson, likelihoodPoisson)
-	likelihoodInput.Put(statistic.SymbolLLSelf, likelihoodPoisson*1.1)
-	_, likelihoodOutput, err := statistic.Likelihood(nomagique.Frame{}, likelihoodInput)
-
-	if err != nil {
-		return err
-	}
-
-	state.Merge(likelihoodOutput)
-
-	return nil
-}
-
-func number(frame nomagique.Frame, symbol nomagique.Symbol) float64 {
-	value, _ := frame.Get(symbol)
-	return value
-}
-
-func elapsed(sec float64, nsec float64, previousSec float64, previousNsec float64) float64 {
-	return sec - previousSec + (nsec-previousNsec)*1e-9
-}
-
-func before(sec float64, nsec float64, otherSec float64, otherNsec float64) bool {
-	return sec < otherSec || sec == otherSec && nsec < otherNsec
+	return fallback
 }
 
 func finite(values ...float64) bool {
@@ -270,4 +228,22 @@ func finite(values ...float64) bool {
 	}
 
 	return true
+}
+
+func number(frame nomagique.Frame, symbol nomagique.Symbol) float64 {
+	value, _ := frame.Get(symbol)
+
+	return value
+}
+
+func before(sec float64, nsec float64, otherSec float64, otherNsec float64) bool {
+	if sec < otherSec {
+		return true
+	}
+
+	return sec == otherSec && nsec < otherNsec
+}
+
+func elapsed(sec float64, nsec float64, previousSec float64, previousNsec float64) float64 {
+	return sec - previousSec + (nsec-previousNsec)*1e-9
 }

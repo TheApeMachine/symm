@@ -38,7 +38,7 @@ func NewSignal(
 		cancel: cancel,
 		thesis: thesis,
 		number: nomagique.NewNumber[string](
-			nomagique.Pipe(algo.Hawkes),
+			nomagique.Pipe(algo.Hawkes()),
 		),
 	}
 

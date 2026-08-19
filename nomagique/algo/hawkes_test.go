@@ -10,7 +10,7 @@ import (
 const hawkesTestEpoch = 1_786_099_200.0
 
 func TestHawkesPublishesCountsAndMetrics(t *testing.T) {
-	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	stream := nomagique.NewStream(Hawkes(), NewHawkesState())
 	output, err := stream.Step(hawkesArrival(1, hawkesTestEpoch, 0))
 
 	if err != nil {
@@ -30,7 +30,7 @@ func TestHawkesPublishesCountsAndMetrics(t *testing.T) {
 }
 
 func TestHawkesProcessesTypedBurst(t *testing.T) {
-	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	stream := nomagique.NewStream(Hawkes(), NewHawkesState())
 	var output nomagique.Frame
 
 	for index := 0; index < 32; index++ {
@@ -62,7 +62,7 @@ func TestHawkesProcessesTypedBurst(t *testing.T) {
 }
 
 func TestHawkesRetainsExactTimestampCoordinates(t *testing.T) {
-	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	stream := nomagique.NewStream(Hawkes(), NewHawkesState())
 	origin := hawkesTestEpoch
 	observations := []struct {
 		mark float64
@@ -97,7 +97,7 @@ func TestHawkesRetainsExactTimestampCoordinates(t *testing.T) {
 }
 
 func TestHawkesRejectsTimeRegressionTransactionally(t *testing.T) {
-	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	stream := nomagique.NewStream(Hawkes(), NewHawkesState())
 
 	if _, err := stream.Step(hawkesArrival(1, hawkesTestEpoch, 0)); err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestHawkesRejectsTimeRegressionTransactionally(t *testing.T) {
 }
 
 func BenchmarkHawkes(b *testing.B) {
-	stream := nomagique.NewStream(Hawkes, NewHawkesState())
+	stream := nomagique.NewStream(Hawkes(), NewHawkesState())
 	input := hawkesArrival(1, hawkesTestEpoch, 0)
 
 	b.ReportAllocs()

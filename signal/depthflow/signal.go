@@ -6,18 +6,72 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
+var (
+	SymbolTouchImbalance   = nomagique.MustIntern("depthflow/touch_imbalance")
+	SymbolDeepImbalance    = nomagique.MustIntern("depthflow/deep_imbalance")
+	SymbolSpoofScore       = nomagique.MustIntern("depthflow/spoof_score")
+	SymbolLoadedScore      = nomagique.MustIntern("depthflow/loaded_score")
+	SymbolThinScore        = nomagique.MustIntern("depthflow/thin_score")
+)
+
 /*
-Signal is the DepthFlow perspective: touch-level scarcity conditioned per
-symbol. It is ONLY a nomagique pipeline — each trade's signed execution feeds
-an adaptive baseline whose deviation reports how far the current flow stands
-from the symbol's own established pressure.
+depthflowPipeline composes the real book-flow classification:
+
+  - Touch imbalance and deep-book (decay-weighted) imbalance are computed in
+    parallel.
+  - The book notional is remembered through the adaptive baseline.
+  - Spoof is the sign disagreement between touch and deep imbalance, loaded is
+    a strong aligned imbalance, and thinning is notional falling below its own
+    baseline.
 */
+func depthflowPipeline() nomagique.Primitive {
+	return nomagique.Pipe(
+		nomagique.Fork(
+			nomagique.Pipe(
+				calculus.Difference,
+				nomagique.Relay(calculus.SymbolResult, SymbolTouchImbalance),
+			),
+			nomagique.Pipe(
+				calculus.Decay,
+				calculus.Difference,
+				nomagique.Relay(calculus.SymbolResult, SymbolDeepImbalance),
+			),
+		),
+		nomagique.Configure(
+			statistic.Baseline,
+			nmtypes.Span,
+			temporal.Window,
+		),
+		nomagique.Fork(
+			nomagique.Fork(
+				nomagique.Pipe(
+					calculus.Product,
+					calculus.Positive,
+					calculus.Squash,
+					nomagique.Relay(calculus.SymbolResult, SymbolSpoofScore),
+				),
+				nomagique.Pipe(
+					statistic.ZScore,
+					calculus.Squash,
+					nomagique.Relay(calculus.SymbolResult, SymbolLoadedScore),
+				),
+			),
+			nomagique.Pipe(
+				statistic.Lift,
+				calculus.Inverse,
+				nomagique.Relay(calculus.SymbolResult, SymbolThinScore),
+			),
+		),
+	)
+}
+
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -25,39 +79,22 @@ type Signal struct {
 	number nomagique.Number[string]
 }
 
-func NewSignal(
-	ctx context.Context,
-	thesis *types.Thesis,
-) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		thesis: thesis,
-		number: nomagique.NewNumber[string](
-			nomagique.Pipe(
-				nomagique.Configure(
-					temporal.Window,
-					nmtypes.Span,
-					statistic.Baseline,
-				),
-				statistic.Deviation,
-			),
-		),
+		number: nomagique.NewNumber[string](depthflowPipeline()),
 	}
 
 	signal.run()
 	return signal
 }
 
-func (signal *Signal) Name() string {
-	return string(types.SourceDepthFlow)
-}
-
-func (signal *Signal) Type() types.SourceType {
-	return types.SourceDepthFlow
-}
+func (signal *Signal) Name() string { return string(types.SourceDepthFlow) }
+func (signal *Signal) Type() types.SourceType { return types.SourceDepthFlow }
 
 func (signal *Signal) run() {
 	for {
@@ -72,18 +109,26 @@ func (signal *Signal) run() {
 					return true
 				}
 
-				for trade := range symbol.MarketTrades(types.SourceDepthFlow) {
+				for ticker := range symbol.MarketTickers(types.SourceDepthFlow) {
 					input := nomagique.Frame{}
-					input.Put(nmtypes.Quantity, trade.Qty)
-					input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
-					input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+					input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
+					input.Put(nmtypes.BetaQuantity, ticker.AskQty)
+					input.Put(calculus.SymbolLeft, ticker.BidQty)
+					input.Put(calculus.SymbolRight, ticker.AskQty)
+					input.Put(calculus.SymbolLevel, ticker.BidQty+ticker.AskQty)
+					input.Put(calculus.SymbolClock, 0)
+					input.Put(statistic.SymbolBaseline, ticker.BidQty+ticker.AskQty)
+					input.Put(nmtypes.Quantity, ticker.BidQty+ticker.AskQty)
+					input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+					input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+					input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
 					output, err := signal.number(symbol.Symbol, input)
 
 					if err != nil {
 						errnie.Error(errnie.Err(
 							errnie.Validation,
-							"depthflow: number step failed for "+symbol.Symbol,
+							"depthflow: failed for "+symbol.Symbol,
 							err,
 						))
 						continue
@@ -92,14 +137,26 @@ func (signal *Signal) run() {
 					symbol.Measurements.Push(nmtypes.NewMeasurement(
 						uuid.NewString(),
 						signal.Name(),
-						trade.Timestamp.UnixNano(),
-						trade.Timestamp.UnixNano(),
+						ticker.Timestamp.UnixNano(),
+						ticker.Timestamp.UnixNano(),
 					).AddMetrics(
-						nmtypes.NewMetric("depth_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitBaseCurrency,
-							Timescale: nmtypes.TimescalePerSecond,
+						nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
 						}),
-						nmtypes.NewMetric("depth_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+						nmtypes.NewMetric("deep_imbalance", output.MustGet(SymbolDeepImbalance), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
+						}),
+						nmtypes.NewMetric("spoof_score", output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
+						}),
+						nmtypes.NewMetric("loaded_score", output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
+						}),
+						nmtypes.NewMetric("thin_score", output.MustGet(SymbolThinScore), nmtypes.Descriptor{
 							Unit:      nmtypes.UnitDimensionless,
 							Timescale: nmtypes.TimescaleInstantaneous,
 						}),
