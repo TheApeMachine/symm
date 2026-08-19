@@ -35,9 +35,9 @@ func TestAddNodes(t *testing.T) {
 			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
 		)
 
-		Convey("It should retain provenance without presenting separation as quality", func() {
+		Convey("It should retain provenance and keep every emitted metric as evidence", func() {
 			So(err, ShouldBeNil)
-			So(graph.Nodes, ShouldHaveLength, 1)
+			So(graph.Nodes, ShouldHaveLength, 2)
 			node := graph.Nodes[measurementNodeID(measurement, "drive")]
 			So(node, ShouldNotBeNil)
 			So(node.ID, ShouldEqual, "meas:BTC/USD:cvd:drive")
@@ -51,6 +51,13 @@ func TestAddNodes(t *testing.T) {
 			So(node.ObservedFrom, ShouldEqual, observedFrom)
 			So(node.Horizon, ShouldEqual, time.Second)
 			So(index.byReference["cvd:drive"], ShouldHaveLength, 1)
+
+			separationNode := graph.Nodes[measurementNodeID(
+				measurement,
+				string(types.MetricHypothesisSeparation),
+			)]
+			So(separationNode, ShouldNotBeNil)
+			So(separationNode.Metric, ShouldEqual, types.MetricHypothesisSeparation)
 		})
 	})
 

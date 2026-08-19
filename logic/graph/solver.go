@@ -1545,6 +1545,8 @@ func (solver *Solver) connectLongOpportunity(
 
 func opportunityRelation(node *Node) (RelationType, string) {
 	switch node.Kind {
+	case KindMeasurement:
+		return measurementOpportunityRelation(node), "measurement addresses the long-opportunity thesis on its own evidence"
 	case KindCategory:
 		category, _ := node.Metadata["type"].(string)
 		relation := categoryOpportunityRelation(types.CategoryType(category))
@@ -1607,6 +1609,47 @@ func categoryFromText(value string) types.CategoryType {
 	}
 
 	return types.CategoryTypeNone
+}
+
+/*
+measurementOpportunityRelation states how one raw measurement addresses the
+long-opportunity thesis on its own signed semantics. Aggressor-side alignment is
+the voice: buy-side pressure supports, sell-side pressure contradicts. Metrics
+whose semantic group is explicitly contextual or uninformative stay conditions.
+The verdict is independent of what a category classifier later claims about the
+same measurement; the category path is additional enrichment.
+*/
+func measurementOpportunityRelation(node *Node) RelationType {
+	groups, known := types.SignalMetricGroups[types.SourceType(node.Source)]
+
+	if !known {
+		return RelationConditions
+	}
+
+	membership, known := groups[types.MetricKey(node.Metric, node.Side)]
+
+	if !known || !membership.Competes {
+		return RelationConditions
+	}
+
+	switch node.Side {
+	case types.SideBuy, types.SideBuyToBuy, types.SideBuyToSell:
+		return signedOpportunityRelation(node.Value)
+	case types.SideSell, types.SideSellToSell, types.SideSellToBuy:
+		relation := signedOpportunityRelation(node.Value)
+
+		if relation == RelationSupports {
+			return RelationContradicts
+		}
+
+		if relation == RelationContradicts {
+			return RelationSupports
+		}
+
+		return RelationConditions
+	default:
+		return signedOpportunityRelation(node.Value)
+	}
 }
 
 /*

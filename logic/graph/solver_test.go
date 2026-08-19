@@ -136,8 +136,18 @@ func TestUpdate(t *testing.T) {
 				}
 			}
 
-			So(graph.Edges, ShouldHaveLength,
-				len(types.CategorySchemas)+len(categories)+sharedLinks)
+			thesisEdges := 0
+
+			for _, edge := range graph.Edges {
+				if edge.To == graph.DecisionTarget {
+					thesisEdges++
+				}
+			}
+
+			// Every measurement earns its own voice on the thesis and the
+			// category classifier adds its supporting/contradicting/shared
+			// enrichment on top of it; neither path replaces the other.
+			So(thesisEdges, ShouldEqual, len(graph.Nodes)-1)
 			So(graph.Nodes, ShouldHaveLength, len(references)+len(categories)+1)
 		})
 	})
@@ -176,13 +186,13 @@ func TestUpdate(t *testing.T) {
 
 		err := solver.Update(thesis)
 
-		Convey("It should compile only graph-bearing evidence and stamp the graph", func() {
+		Convey("It should compile the measurement, its category, the hypothesis, and both enrichment layers", func() {
 			So(err, ShouldBeNil)
 			stored, found := bitcoin.Graphs.Load("market_graph")
 			So(found, ShouldBeTrue)
 			graph := stored.(*Graph)
-			So(graph.Nodes, ShouldHaveLength, 3)
-			So(graph.Edges, ShouldHaveLength, 2)
+			So(graph.Nodes, ShouldHaveLength, 4)
+			So(graph.Edges, ShouldHaveLength, 4)
 			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"cvd-measurement", "cvd:drive"})

@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -129,13 +130,17 @@ func (compiler *measurementCompiler) graphMetric(
 		return false
 	}
 
-	for _, schema := range types.CategorySchemas {
-		if schema.Source == source && schema.Metric == metric && schema.Side == side {
-			return true
-		}
+	// Every metric a signal emits is evidence. The category classifier is an
+	// additional interpretation on top of the raw measurement, never a gate
+	// that decides whether the measurement may enter the graph at all.
+	groups, known := types.SignalMetricGroups[source]
+
+	if !known {
+		return false
 	}
 
-	return false
+	_, known = groups[types.MetricKey(metric, side)]
+	return known
 }
 
 func measurementNode(
@@ -161,6 +166,10 @@ func measurementNode(
 		ObservedFrom:  measurement.ObservedFrom,
 		Horizon:       measurement.Horizon,
 		At:            measurement.At,
+	}
+
+	if sample.Normalized != nil && *sample.Normalized > 0 {
+		node.Confidence = measurementConfidence(*sample.Normalized)
 	}
 
 	if metric != types.MetricPeerLastPrice {
@@ -196,6 +205,26 @@ func measurementNodeID(
 
 func measurementReference(source types.SourceType, metricKey string) string {
 	return string(source) + ":" + metricKey
+}
+
+/*
+measurementConfidence maps a normalized measurement strength to an open unit
+interval using the same magnitude margin as every other graph mass. The caller
+already requires a strictly positive normalized value, so zero and negative
+inputs never reach this helper. NaN or infinity are left to fail loudly.
+*/
+func measurementConfidence(normalized float64) float64 {
+	weight, err := probability.MagnitudeMargin(normalized)
+
+	if err != nil {
+		panic("graph: invalid normalized measurement strength: " + err.Error())
+	}
+
+	if weight >= 1 {
+		return math.Nextafter(1, 0)
+	}
+
+	return weight
 }
 
 func cloneFloat(value *float64) *float64 {
