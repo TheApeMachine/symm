@@ -9,15 +9,19 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/mcts"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 portfolioLeg is one selectable candidate: a snapshot of the symbol's
-directional evidence summary and its position in the current desk.
+directional evidence summary, its identifiable opportunity archetype, its
+epistemic trust, and its position in the current desk.
 */
 type portfolioLeg struct {
 	Symbol          string
 	Summary         logicgraph.OpportunitySummary
+	Opportunity     logicgraph.OpportunityScore
+	Trust           float64
 	ReserveEligible bool
 	Held            bool
 }
@@ -179,11 +183,48 @@ func (state *PortfolioState) GetReward() float64 {
 		}
 
 		score := leg.Summary.Score
+		trust := leg.Trust
 		decay := 1 / math.Sqrt(float64(state.step+1))
-		reward += score * leg.Summary.Confidence * decay
+
+		// A leg that never classified an opportunity still carries structural
+		// evidence; its trust and lifecycle fall back to the summary, so the
+		// search does not silently zero a candidate the planner admitted.
+		if trust <= 0 {
+			trust = leg.Summary.Confidence
+		}
+
+		lifecycleWeight := 1.0
+
+		if leg.Opportunity.Type != "" {
+			lifecycleWeight = opportunityLifecycleWeight(leg.Opportunity.Lifecycle)
+		}
+
+		reward += score * trust * lifecycleWeight * decay
 	}
 
 	return reward
+}
+
+/*
+opportunityLifecycleWeight states how much an open slot is worth in each
+lifecycle phase. Confirming and Accelerating are the entry windows the system
+may hold; Climax still carries value but no longer compounds; Emergent and
+Exhausting earn nothing because the evidence is not yet coherent or has
+already decayed.
+*/
+func opportunityLifecycleWeight(
+	lifecycle types.OpportunityLifecycle,
+) float64 {
+	switch lifecycle {
+	case types.LifecycleConfirming:
+		return 0.6
+	case types.LifecycleAccelerating:
+		return 1
+	case types.LifecycleClimax:
+		return 0.4
+	default:
+		return 0
+	}
 }
 
 func (state *PortfolioState) ApplyAction(action float64) mcts.State {

@@ -201,6 +201,15 @@ func newMarket(
 		websocket.PrivateWebSocketURL, market.Private.Client(),
 	)
 
+	// The venue's level3 feed is an authenticated child connection of the
+	// private session. In the fixture its listener is the level3 conn, so the
+	// private session's level3 children must dial that listener instead of the
+	// real venue. Captured and generated level3 frames published to
+	// market.Level3 then update the same book manager the broker prices from.
+	market.private.SetLevel3Client(func() *spot.WebSocket {
+		return market.Level3.Client()
+	})
+
 	return market
 }
 

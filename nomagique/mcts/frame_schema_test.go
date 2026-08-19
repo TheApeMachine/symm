@@ -41,5 +41,10 @@ func completeReasoningFrame() nomagique.Frame {
 	frame.Put(SymbolPosition, 0)
 	frame.Put(SymbolHorizon, 0)
 	frame.Put(SymbolMaximumHorizon, 3)
+	frame.Put(SymbolArchetype, 0)
+	frame.Put(SymbolVelocity, 0)
+	frame.Put(SymbolStoredEnergy, 0)
+	frame.Put(SymbolCausalExpectation, 0)
+	frame.Put(SymbolSpread, 0)
 	return frame
 }

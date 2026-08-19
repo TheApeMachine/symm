@@ -82,6 +82,11 @@ type Live struct {
 	model       string
 	capture     CaptureSink
 	captureName string
+
+	// level3Client overrides the venue client SubL3 dials when set. Fixtures
+	// inject the level3 listener's client here so a replay's level3 frames
+	// feed the session's book manager instead of dialing the real venue.
+	level3Client func() *spot.WebSocket
 }
 
 /*
@@ -504,19 +509,12 @@ func (live *Live) SubL3(symbols []string) {
 	}
 
 	for groups := range slices.Chunk(symbols, 200) {
-		var client *spot.WebSocket
-
-		if client == nil {
-			client = spot.NewWebSocket()
-			client.URL = Level3WebSocketURL
-		}
-
 		conn := NewWithClient(
 			live.ctx,
 			live.simulator,
 			live.auth,
 			Level3WebSocketURL,
-			client,
+			live.level3ClientFor(),
 			live.capture,
 		)
 
@@ -545,6 +543,48 @@ func (live *Live) SubL3(symbols []string) {
 			time.Sleep(viper.GetDuration("market.subscribe.pace"))
 		}
 	}
+}
+
+/*
+AttachLevel3 installs an already-constructed level3 child connection into the
+session's level3 map, so a fixture or injected transport can serve the book
+manager without dialing the venue. It is the same registration SubL3 performs,
+minus the venue client construction, and keeps the book lookup path unchanged.
+*/
+func (live *Live) AttachLevel3(groupKey string, conn *Live) {
+	if live == nil || conn == nil || groupKey == "" {
+		return
+	}
+
+	if live.level3 == nil {
+		live.level3 = &sync.Map{}
+	}
+
+	live.level3.Store(groupKey, conn)
+}
+
+/*
+SetLevel3Client overrides the venue client SubL3 constructs for its child
+connections. Fixtures set this to the level3 listener's own client so level3
+subscriptions complete against the fixture instead of the real venue.
+*/
+func (live *Live) SetLevel3Client(factory func() *spot.WebSocket) {
+	if live == nil {
+		return
+	}
+
+	live.level3Client = factory
+}
+
+func (live *Live) level3ClientFor() *spot.WebSocket {
+	if live != nil && live.level3Client != nil {
+		return live.level3Client()
+	}
+
+	client := spot.NewWebSocket()
+	client.URL = Level3WebSocketURL
+
+	return client
 }
 
 func (live *Live) Books() *sync.Map {

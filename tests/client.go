@@ -136,6 +136,29 @@ func (conn *Conn) Connect() error {
 }
 
 /*
+WaitReady blocks until the fixture websocket has accepted its subscription
+connection or the context ends. Replay publishes frames immediately after a
+stack boot, while the SDK dials the fixture listener asynchronously; without
+this gate the first frames race the handshake and are dropped as undelivered.
+*/
+func (conn *Conn) WaitReady(ctx context.Context) error {
+	for {
+		select {
+		case <-conn.ready:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(fixtureDeliveryTimeout):
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"tests: fixture websocket did not connect",
+				nil,
+			))
+		}
+	}
+}
+
+/*
 serve reads every frame the system under test writes, and answers the
 requests that Kraken would acknowledge.
 */

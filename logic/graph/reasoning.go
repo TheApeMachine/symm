@@ -6,9 +6,11 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/mcts"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -102,9 +104,17 @@ type reasoningNodeView struct {
 /*
 ReasoningFrame compiles graph evidence into named market variables. It is the
 simulation state, not an observational causal row with a fabricated outcome.
+
+The archetype is the identifiable opportunity the graph currently expresses;
+the physical fields (velocity/energy/causal expectation/spread) are the
+trust-attenuated readings the archetype's rollout dynamics consume.
 */
 func (graph *Graph) ReasoningFrame() nomagique.Frame {
 	frame := nomagique.Frame{}
+
+	now := time.Now().UTC()
+	active := graph.ActiveOpportunity(now)
+
 	frame.Put(mcts.SymbolContextConfidence, graph.reasoningConfidence())
 	frame.Put(mcts.SymbolTreatment, mcts.ActionWait)
 	frame.Put(mcts.SymbolTarget, graph.reasoningTarget())
@@ -117,7 +127,30 @@ func (graph *Graph) ReasoningFrame() nomagique.Frame {
 	frame.Put(mcts.SymbolPosition, 0)
 	frame.Put(mcts.SymbolHorizon, 0)
 	frame.Put(mcts.SymbolMaximumHorizon, float64(graph.reasoningHorizon()))
+	frame.Put(mcts.SymbolArchetype, float64(opportunityArchetypeIndex(active.Type)))
+	frame.Put(mcts.SymbolVelocity, graph.reasoningSignal("velocity"))
+	frame.Put(mcts.SymbolStoredEnergy, graph.reasoningSignal("energy"))
+	frame.Put(mcts.SymbolCausalExpectation, graph.reasoningSignal("causal"))
+	frame.Put(mcts.SymbolSpread, math.Abs(graph.reasoningSignal("spread")))
+
 	return frame
+}
+
+func opportunityArchetypeIndex(archetype types.OpportunityType) int {
+	switch archetype {
+	case types.OpportunitySuddenPump:
+		return 1
+	case types.OpportunityCoiledCompression:
+		return 2
+	case types.OpportunityDailyRiser:
+		return 3
+	case types.OpportunityInefficientLag:
+		return 4
+	case types.OpportunityAbsorptionReversal:
+		return 5
+	default:
+		return 0
+	}
 }
 
 /*
@@ -155,7 +188,14 @@ func (graph *Graph) ReasoningKey() string {
 
 /*
 ApplyReasoningIntervention evolves position and reward over a graph-derived
-horizon while keeping evidence fields fixed for the snapshot being evaluated.
+horizon using the dynamics of the archetype the graph currently expresses.
+
+A sudden pump decays through its Hawkes kernel, a coiled compression converts
+stored potential energy into directional velocity, a daily riser rolls under
+light damping, an inefficient lag mean-reverts toward its leader, and an
+absorption reversal bounces off the absorbed wall. Every step still pays its
+crossing cost (spread + impact) and a time penalty, so the search discovers
+real opportunity geometry instead of adding monolith scalars.
 */
 func (graph *Graph) ApplyReasoningIntervention(
 	state nomagique.Frame,
@@ -192,27 +232,80 @@ func (graph *Graph) ApplyReasoningIntervention(
 		return state, fmt.Errorf("graph: unknown intervention %g", action)
 	}
 
-	flow, _ := state.Get(mcts.SymbolFlow)
+	archetype, _ := state.Get(mcts.SymbolArchetype)
+	velocity, _ := state.Get(mcts.SymbolVelocity)
+	storedEnergy, _ := state.Get(mcts.SymbolStoredEnergy)
+	causalExpectation, _ := state.Get(mcts.SymbolCausalExpectation)
+	spread, _ := state.Get(mcts.SymbolSpread)
 	liquidityImpact, _ := state.Get(mcts.SymbolLiquidityImpact)
-	hawkes, _ := state.Get(mcts.SymbolHawkes)
-	coherence, _ := state.Get(mcts.SymbolCoherence)
-	regime, _ := state.Get(mcts.SymbolRegime)
-	surprise, _ := state.Get(mcts.SymbolSurprise)
 	contextConfidence, _ := state.Get(mcts.SymbolContextConfidence)
 	currentReward, _ := state.Get(mcts.SymbolTarget)
 	currentHorizon, _ := state.Get(mcts.SymbolHorizon)
 	nextHorizon := currentHorizon + 1
-	marketDrive := meanValues(flow, hawkes, coherence, regime, -surprise)
-	liquidityDenominator := 1 + math.Abs(liquidityImpact)
-	horizonDenominator := math.Sqrt(nextHorizon)
-	rewardDelta := nextPosition * marketDrive * contextConfidence /
-		(liquidityDenominator * horizonDenominator)
+
+	crossingCost := math.Abs(spread) + math.Abs(liquidityImpact)
+	decayFactor := math.Exp(-0.5 * float64(currentHorizon+1))
+
+	stepReturn := 0.0
+	nextVelocity := velocity
+	nextEnergy := storedEnergy
+
+	switch int(archetype) {
+	case 1: // sudden pump: explosive entry, Hawkes exponential decay
+		stepReturn = (velocity*1.5 + confidenceDrive(contextConfidence)) * decayFactor
+		stepReturn += 0.3 * causalExpectation
+		stepReturn -= crossingCost
+		nextVelocity = velocity * decayFactor
+		nextEnergy = storedEnergy * 0.7
+	case 2: // coiled compression: potential-to-kinetic release
+		kineticRelease := math.Sqrt(math.Max(0, storedEnergy)) * 0.05
+		stepReturn = kineticRelease - crossingCost
+		nextVelocity = velocity + kineticRelease
+		nextEnergy = storedEnergy * 0.2
+	case 3: // daily riser: light damping trend roll
+		damping := 0.95
+		nextVelocity = velocity * damping
+		stepReturn = nextVelocity - crossingCost*0.5
+		nextEnergy = storedEnergy * damping
+	case 4: // inefficient lag: leader catch-up mean reversion
+		stepReturn = causalExpectation/math.Sqrt(float64(nextHorizon)) - crossingCost
+		nextVelocity = 0
+		nextEnergy = storedEnergy * 0.5
+	case 5: // absorption reversal: counterfactual bounce off the wall
+		stepReturn = -velocity - crossingCost
+		nextVelocity = -velocity * 0.5
+		nextEnergy = storedEnergy * 0.9
+	default: // equilibrium/noise
+		stepReturn = velocity*0.5 - crossingCost
+		nextVelocity = velocity * 0.5
+		nextEnergy = storedEnergy * 0.9
+	}
+
+	timePenalty := 0.0001 * float64(currentHorizon)
+	rewardDelta := nextPosition*stepReturn - timePenalty
 
 	state.Put(mcts.SymbolTreatment, action)
 	state.Put(mcts.SymbolPosition, nextPosition)
 	state.Put(mcts.SymbolHorizon, nextHorizon)
+	state.Put(mcts.SymbolVelocity, nextVelocity)
+	state.Put(mcts.SymbolStoredEnergy, nextEnergy)
 	state.Put(mcts.SymbolTarget, currentReward+rewardDelta)
+
 	return state, mcts.ValidateReasoningFrame(state)
+}
+
+/*
+confidenceDrive converts the context-confidence posterior mass into the
+directional drive a pump roll adds above its kinematic velocity. It is the
+probability mass itself, clamped to the unit interval — not a scaled multiplier
+— so a confident reading contributes at most one unit of drive.
+*/
+func confidenceDrive(contextConfidence float64) float64 {
+	if math.IsNaN(contextConfidence) || math.IsInf(contextConfidence, 0) {
+		return 0
+	}
+
+	return math.Max(0, math.Min(1, contextConfidence))
 }
 
 /*

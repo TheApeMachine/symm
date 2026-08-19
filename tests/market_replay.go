@@ -128,6 +128,10 @@ func (market *Market) replayFrame(
 			symbols = append(symbols, data.Symbol)
 		}
 
+		if err := market.Level3.WaitReady(market.ctx); err != nil {
+			return fmt.Errorf("level3 connection not ready: %w", err)
+		}
+
 		if !market.Level3.Publish(channel, payload) {
 			return fmt.Errorf("level3 frame was not delivered")
 		}
@@ -139,6 +143,10 @@ func (market *Market) replayFrame(
 		return market.processReplayOrders(symbols, receivedAt)
 	default:
 		return fmt.Errorf("unsupported %s/%s frame", endpoint, channel)
+	}
+
+	if err := market.Public.WaitReady(market.ctx); err != nil {
+		return fmt.Errorf("public connection not ready: %w", err)
 	}
 
 	if !market.Public.Publish(channel, payload) {

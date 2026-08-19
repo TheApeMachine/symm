@@ -202,8 +202,8 @@ func (planner *Planner) decisionFromGraph(
 	decision.ThesisContradiction = perspective.Contradiction
 	decision.ThesisConditions = perspective.Conditions
 	decision.Direction = perspective.Direction
-	decision.Confidence = perspective.Confidence
-	decision.PerspectiveConfidence = perspective.Confidence
+	decision.Confidence = perspective.TradeConfidence
+	decision.PerspectiveConfidence = perspective.TradeConfidence
 	decision.AdmissionGraphThreshold = config.Planner.MinimumGraphScore
 	decision.OpportunityType = graphOpportunityType(cloned)
 	decision.TaskSkill = cloned.TaskSkill
@@ -246,8 +246,6 @@ func (planner *Planner) decisionFromGraph(
 		decision.Reason = "planner: thesis does not clear the minimum confidence floor"
 	case decision.ThesisScore < config.Planner.MinimumGraphScore:
 		decision.Reason = "planner: structural thesis does not clear the regulated evidence boundary"
-	case decision.OpportunityType == "":
-		decision.Reason = "planner: no qualified structural opportunity precursor identified"
 	default:
 		if !decision.PredictiveReady {
 			// Predictive coding enriches the observation space it is not a
@@ -255,6 +253,12 @@ func (planner *Planner) decisionFromGraph(
 			// over this alongside every other measurement.
 			decision.PredictiveStatus = "enriching: " + decision.PredictiveStatus
 		}
+
+		// A named precursor type qualifies the reserve lane; its absence must
+		// not veto an otherwise strong structural thesis. The category label
+		// is a classification convenience, not additional evidence: direction,
+		// thesis score, calibrated confidence, and predictive readiness have
+		// already cleared, so the opportunity is admitted on that evidence.
 	}
 
 	return decision, nil
@@ -319,6 +323,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			}
 
 			graphs[symbolState.Symbol] = cloned
+			now := cloned.At
 			opportunityType := graphOpportunityType(cloned)
 			predictiveReady, _ := predictiveReadiness(cloned)
 			reserveEligible, _ := reserveQualification(
@@ -330,6 +335,8 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			legs = append(legs, portfolioLeg{
 				Symbol:          symbolState.Symbol,
 				Summary:         summary,
+				Opportunity:     cloned.ActiveOpportunity(now),
+				Trust:           cloned.MeanTrust(now),
 				ReserveEligible: reserveEligible,
 			})
 		}

@@ -26,6 +26,11 @@ const (
 	ColumnPosition
 	ColumnHorizon
 	ColumnMaximumHorizon
+	ColumnArchetype
+	ColumnVelocity
+	ColumnStoredEnergy
+	ColumnCausalExpectation
+	ColumnSpread
 	ReasoningColumnCount
 )
 
@@ -42,6 +47,11 @@ var (
 	SymbolPosition          = nomagique.MustIntern("position")
 	SymbolHorizon           = nomagique.MustIntern("horizon")
 	SymbolMaximumHorizon    = nomagique.MustIntern("max_horizon")
+	SymbolArchetype         = nomagique.MustIntern("archetype")
+	SymbolVelocity          = nomagique.MustIntern("velocity")
+	SymbolStoredEnergy      = nomagique.MustIntern("stored_energy")
+	SymbolCausalExpectation = nomagique.MustIntern("causal_expectation")
+	SymbolSpread            = nomagique.MustIntern("spread")
 )
 
 var reasoningSymbols = [...]nomagique.Symbol{
@@ -57,6 +67,11 @@ var reasoningSymbols = [...]nomagique.Symbol{
 	SymbolPosition,
 	SymbolHorizon,
 	SymbolMaximumHorizon,
+	SymbolArchetype,
+	SymbolVelocity,
+	SymbolStoredEnergy,
+	SymbolCausalExpectation,
+	SymbolSpread,
 }
 
 var reasoningSymbolNames = [...]string{
@@ -72,6 +87,11 @@ var reasoningSymbolNames = [...]string{
 	"position",
 	"horizon",
 	"max_horizon",
+	"archetype",
+	"velocity",
+	"stored_energy",
+	"causal_expectation",
+	"spread",
 }
 
 var DefaultControlColumns = []int{

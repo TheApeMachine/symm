@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/nomagique/learning"
 )
 
 func TestGraphPerspective(t *testing.T) {
@@ -40,6 +41,33 @@ func TestGraphPerspective(t *testing.T) {
 			So(perspective.Balance, ShouldAlmostEqual, 5.0/7.0)
 			So(perspective.Confidence, ShouldAlmostEqual, 0.7)
 			So(perspective.Score, ShouldAlmostEqual, 0.5)
+			So(perspective.Direction, ShouldEqual, 1)
+		})
+
+		Convey("It should carry the structural confidence as the admission proxy", func() {
+			So(perspective.TradeConfidence, ShouldAlmostEqual, 0.7)
+		})
+	})
+
+	Convey("Given a ready forecast whose posterior mass is below structural confidence", t, func() {
+		graph := logicgraph.NewGraph(time.Unix(1, 0).UTC())
+		graph.DecisionTarget = "hyp:BTC/USD:long_opportunity"
+		graph.AddNode(&logicgraph.Node{ID: graph.DecisionTarget, Kind: logicgraph.KindHypothesis})
+		graph.AddNode(&logicgraph.Node{ID: "support", Kind: logicgraph.KindCategory})
+		graph.AddEdge(&logicgraph.Edge{
+			From: "support", To: graph.DecisionTarget,
+			Relation: logicgraph.RelationSupports, Weight: 1, Confidence: 0.9,
+		})
+		graph.Forecast = &learning.RLSOutput{
+			Value: -0.5, Scale: 0.5, DegreesOfFreedom: 4, Ready: true,
+		}
+
+		perspective, err := graphPerspective(graph)
+
+		Convey("It should let the calibrated posterior own admission, not the label", func() {
+			So(err, ShouldBeNil)
+			So(perspective.Confidence, ShouldAlmostEqual, 0.9)
+			So(perspective.TradeConfidence, ShouldBeLessThan, 0.5)
 			So(perspective.Direction, ShouldEqual, 1)
 		})
 	})
