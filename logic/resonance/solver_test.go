@@ -3,6 +3,7 @@ package resonance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -108,6 +109,69 @@ func TestNewSolver(t *testing.T) {
 
 			_, found := solver.detectors.Load("BTC/USD")
 			So(found, ShouldBeFalse)
+		})
+	})
+}
+
+func TestRunDrainsTickerBurst(t *testing.T) {
+	Convey("Given a running solver on an idle transport", t, func() {
+		ui := make(chan []byte, 4096)
+		thesis := types.NewThesis(t.Context(), nil)
+		solver := NewSolver(
+			t.Context(), testAlpha,
+			websocket.NewAPI(t.Context(), stubConn{}, stubConn{}),
+			ui, thesis,
+		)
+
+		feed := func(count int) {
+			price := decimal.NewFromFloat64(100.0)
+
+			for range count {
+				solver.subscriptions["ticker"].Channel <- &kraken.Ticker{
+					Data: []kraken.TickerData{{
+						Symbol:    "BTC/USD",
+						Bid:       price,
+						Ask:       price,
+						High:      price,
+						Low:       price,
+						Last:      price,
+						Change:    decimal.NewFromFloat64(0.0),
+						ChangePct: 0.0,
+						Timestamp: time.Now().UTC(),
+					}},
+				}
+			}
+		}
+
+		Convey("It should drain a burst of ticker observations through the real run loop", func() {
+			const burstCount = 64
+
+			go feed(burstCount)
+
+			drained := make(chan error, 1)
+
+			go func() {
+				count := 0
+
+				for {
+					select {
+					case <-solver.ctx.Done():
+						drained <- fmt.Errorf("solver stopped before draining")
+						return
+					case <-ui:
+						count++
+						if count == burstCount {
+							drained <- nil
+							return
+						}
+					case <-time.After(5 * time.Second):
+						drained <- fmt.Errorf("drained %d of %d ticker events", count, burstCount)
+						return
+					}
+				}
+			}()
+
+			So(<-drained, ShouldBeNil)
 		})
 	})
 }

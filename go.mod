@@ -98,4 +98,4 @@ require (
 	golang.design/x/lockfree v0.1.0
 )
 
-// replace github.com/theapemachine/nomagique => ../nomagique
+replace github.com/theapemachine/nomagique => ../nomagique

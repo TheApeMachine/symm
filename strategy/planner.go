@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ type Planner struct {
 
 	candidateMu sync.Mutex
 	candidates  map[string]*types.Decision
+	lastTick    int64
 
 	ObserveModule func(string, time.Duration)
 	ObserveHop    func(string, string, time.Duration)
@@ -91,6 +93,13 @@ func (planner *Planner) Close() error {
 	return nil
 }
 
+/*
+plannerRest parks the planner loop between measurement passes. It is not a
+time horizon: the loop wakes immediately when a new thesis tick is observed;
+the sleep only prevents a bare spin when the market is producing no new rows.
+*/
+const plannerRest = 5 * time.Millisecond
+
 func (planner *Planner) run() {
 	for {
 		select {
@@ -98,6 +107,19 @@ func (planner *Planner) run() {
 			return
 		default:
 		}
+
+		var tick int64
+
+		if planner.thesis != nil {
+			tick = planner.thesis.Tick
+		}
+
+		if tick == planner.lastTick && !planner.hasCandidates() {
+			time.Sleep(plannerRest)
+			continue
+		}
+
+		planner.lastTick = tick
 
 		if err := planner.Update(planner.thesis); err != nil {
 			errnie.Error(errnie.Err(
@@ -109,8 +131,20 @@ func (planner *Planner) run() {
 	}
 }
 
+/*
+readySymbols is the planner's pre-scan over the whole thesis: it cheaply walks
+every symbol's market graph and keeps only the ones whose decision proposition
+has accumulated enough confidence to be worth a causal search. Sparse graphs
+are left to accumulate more observations instead of spending search effort.
+*/
 func (planner *Planner) readySymbols(thesis *types.Thesis) []*types.Symbol {
 	ready := make([]*types.Symbol, 0)
+
+	minimumConfidence := 0.0
+
+	if config := system.Cfg.Snapshot(); config != nil && config.Planner != nil {
+		minimumConfidence = config.Planner.MinimumConfidence
+	}
 
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbolState, ok := value.(*types.Symbol)
@@ -133,7 +167,7 @@ func (planner *Planner) readySymbols(thesis *types.Thesis) []*types.Symbol {
 
 		graph, valid := stored.(*logicgraph.Graph)
 
-		if !valid || graph == nil || !graph.ReadyForSearch() {
+		if !valid || !graph.SearchableEnough(minimumConfidence) {
 			return true
 		}
 
@@ -301,6 +335,12 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 
 		group, ctx := errgroup.WithContext(parentCtx)
+
+		// One concurrent causal search per scheduler thread, not one per
+		// symbol: each search is a dense SVD-bound fit that allocates freely,
+		// and fanning hundreds of them out at once only forces them to fight
+		// over the same CPU via GC assist waits.
+		group.SetLimit(runtime.GOMAXPROCS(0))
 
 		for _, symbolState := range readySymbols {
 			group.Go(func() error {

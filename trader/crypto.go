@@ -101,6 +101,19 @@ func (crypto *Crypto) Status() types.Status {
 }
 
 /*
+ObserveModule returns the diagnostics module clock hook so stages that live
+outside the analyzer/measurements wiring (like the resonance solver) can still
+report their per-step duration into the same clock bank.
+*/
+func (crypto *Crypto) ObserveModule() func(string, time.Duration) {
+	if crypto == nil || crypto.diagnostics == nil {
+		return nil
+	}
+
+	return crypto.diagnostics.applyModule
+}
+
+/*
 Sync waits until every market frame already delivered has been measured,
 analyzed, planned, and the manifold has finished the step those frames
 queued. Replay uses this so the next captured arrival cannot overtake the

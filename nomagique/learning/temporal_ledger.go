@@ -5,11 +5,13 @@ import (
 )
 
 /*
-PendingReference records features and a predicted value at a sequence step
-to resolve against future reference signals.
+PendingReference records features and a predicted value at one issue sequence
+to resolve against future reference signals. The sequence is internal to the
+ledger: callers hand it delayed observations without having to guarantee
+consecutive or unique external step numbers.
 */
 type PendingReference struct {
-	Step       int64
+	Seq        int64
 	Reference  float64
 	Features   []float64
 	Prediction float64
@@ -28,16 +30,20 @@ type ResolutionOutcome struct {
 }
 
 /*
-TemporalLedger manages multi-horizon delayed target matching without any domain assumptions.
+TemporalLedger manages delayed target matching without any domain assumptions.
+Issue and Resolve walk an internal monotonic sequence rather than the caller
+supplied step, so a burst of observations sharing one external step number can
+no longer overwrite an unresolved prediction before its reference arrives.
 */
 type TemporalLedger struct {
-	maxHorizon     int
-	transform      TargetTransform
-	pending        map[int64]PendingReference
-	references     map[int64]float64
-	steps          []int64
-	resolvedCount  int
-	lastResolution *ResolutionOutcome
+	maxHorizon    int
+	transform     TargetTransform
+	pending       map[int64]PendingReference
+	references    map[int64]float64
+	seq           int64
+	oldest        int64
+	resolvedCount int
+	last          *ResolutionOutcome
 }
 
 /*
@@ -55,94 +61,119 @@ func NewTemporalLedger(maxHorizon int, transform TargetTransform) *TemporalLedge
 		transform:  transform,
 		pending:    make(map[int64]PendingReference),
 		references: make(map[int64]float64),
-		steps:      make([]int64, 0, 128),
+		oldest:     1,
 	}
 }
 
 /*
-Issue records a prediction and feature state for delayed evaluation.
+Issue records a prediction and feature state for delayed evaluation. The
+caller's step is retained only for outcome telemetry; the ledger assigns its
+own strictly increasing sequence so resolution order is unambiguous.
 */
 func (tl *TemporalLedger) Issue(step int64, reference float64, features []float64, prediction float64, horizon int) {
-	if step <= 0 || !finite(reference) || len(features) == 0 {
+	if !finite(reference) || len(features) == 0 {
 		return
 	}
 
+	tl.seq++
+	if horizon < 1 {
+		horizon = 1
+	}
+	if horizon > tl.maxHorizon {
+		horizon = tl.maxHorizon
+	}
+
 	featCopy := append([]float64(nil), features...)
-	tl.pending[step] = PendingReference{
-		Step:       step,
+	tl.pending[tl.seq] = PendingReference{
+		Seq:        tl.seq,
 		Reference:  reference,
 		Features:   featCopy,
 		Prediction: prediction,
 		Horizon:    horizon,
 	}
-	tl.references[step] = reference
-	tl.steps = append(tl.steps, step)
+	tl.references[tl.seq] = reference
 	tl.prune()
 }
 
 /*
-Resolve matches previous steps against the current reference value using the configured TargetTransform.
+Resolve observes the current reference and settles every pending prediction
+whose issued horizon has elapsed, in issue order. A prediction is held until
+its horizon of subsequent references has arrived, so a coder that steps once
+per reference resolves one sample per step regardless of how the external
+step numbers jump or repeat.
 */
 func (tl *TemporalLedger) Resolve(manifold *ResonanceManifold, currentStep int64, currentReference float64) (*ResolutionOutcome, error) {
-	if manifold == nil || currentStep <= 0 || !finite(currentReference) {
+	if manifold == nil || !finite(currentReference) || tl.seq == 0 || tl.maxHorizon < 1 {
 		return nil, nil
 	}
 
-	var latest *ResolutionOutcome
+	var outcome *ResolutionOutcome
 
-	for horizon := 1; horizon <= tl.maxHorizon; horizon++ {
-		targetStep := currentStep - int64(horizon)
-		item, found := tl.pending[targetStep]
+	for key := tl.oldest; key <= tl.seq; key++ {
+		item, found := tl.pending[key]
 		if !found {
 			continue
 		}
 
+		// The current reference is the first one observed after an issue at
+		// seq=item.Seq counts as age 1; a prediction with horizon h is due
+		// once h subsequent references have arrived.
+		age := tl.seq - item.Seq + 1
+
+		if age < int64(item.Horizon) {
+			break
+		}
+
 		target, valid := tl.transform(currentReference, item.Reference)
+
 		if !valid {
 			continue
 		}
 
 		// Update the RLS readout head with the generated target
-		err := manifold.ObserveTask(
+		if err := manifold.ObserveTask(
 			item.Features,
 			[]float64{item.Prediction},
 			[]float64{target},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("ledger: resolve failed for horizon %d: %w", horizon, err)
+		); err != nil {
+			return nil, fmt.Errorf("ledger: resolve failed for horizon %d: %w", item.Horizon, err)
 		}
 
-		res := &ResolutionOutcome{
-			Horizon:    horizon,
+		outcome = &ResolutionOutcome{
+			Horizon:    item.Horizon,
 			Prediction: item.Prediction,
 			Target:     target,
 			Error:      target - item.Prediction,
 			Step:       currentStep,
 		}
-		latest = res
-		tl.lastResolution = res
+		tl.last = outcome
 		tl.resolvedCount++
 
-		delete(tl.pending, targetStep)
+		delete(tl.pending, key)
+		delete(tl.references, key)
 	}
 
-	return latest, nil
+	tl.oldest = tl.seq - int64(tl.maxHorizon) + 1
+	if tl.oldest < 1 {
+		tl.oldest = 1
+	}
+
+	return outcome, nil
 }
 
 func (tl *TemporalLedger) prune() {
-	if len(tl.steps) > 256 {
-		cutoff := tl.steps[len(tl.steps)-128]
-		filtered := tl.steps[:0]
-		for _, s := range tl.steps {
-			if s >= cutoff {
-				filtered = append(filtered, s)
-			} else {
-				delete(tl.references, s)
-				delete(tl.pending, s)
-			}
-		}
-		tl.steps = filtered
+	if tl.seq-tl.oldest <= int64(tl.maxHorizon) {
+		return
 	}
+
+	purgeBelow := tl.seq - int64(tl.maxHorizon)
+
+	for key := tl.oldest; key < purgeBelow; key++ {
+		delete(tl.pending, key)
+		delete(tl.references, key)
+	}
+
+	tl.oldest = purgeBelow
 }
 
 func (tl *TemporalLedger) ResolvedCount() int {
@@ -150,5 +181,5 @@ func (tl *TemporalLedger) ResolvedCount() int {
 }
 
 func (tl *TemporalLedger) LastResolution() *ResolutionOutcome {
-	return tl.lastResolution
+	return tl.last
 }

@@ -387,6 +387,28 @@ func (graph *Graph) ReadyForSearch() bool {
 	return summary.Ready && len(graph.Roots()) > 0
 }
 
+/*
+SearchableEnough is the defer gate the planner runs before spending search
+effort. A graph is searchable only once its decision proposition carries
+directional evidence whose confidence mass clears minimumConfidence. Anything
+below that is a sparse proposition — the honest move is to defer and let the
+thesis accumulate more observations, not to search an opportunity that barely
+exists yet.
+*/
+func (graph *Graph) SearchableEnough(minimumConfidence float64) bool {
+	if graph == nil {
+		return false
+	}
+
+	summary := graph.OpportunitySummary()
+
+	if !summary.Ready {
+		return false
+	}
+
+	return summary.Confidence >= minimumConfidence
+}
+
 func (graph *Graph) Targets(nodeID string) []string {
 	return slices.Clone(graph.Adjacency[nodeID])
 }

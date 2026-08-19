@@ -466,6 +466,7 @@ func stageNames() []string {
 		"hawkes", "leadlag", "liquidity", "pumpdump",
 		"sentiment", "toxicity",
 		"category", "manifold", "causal", "cognition", "graph",
+		"resonance",
 		"planner", "mcts", "allocation",
 		"desk",
 	}

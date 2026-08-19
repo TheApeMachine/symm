@@ -308,6 +308,45 @@ func TestGraphReadyForSearch(t *testing.T) {
 	})
 }
 
+func TestGraphSearchableEnough(t *testing.T) {
+	Convey("Given a decision proposition with one supporting evidence edge", t, func() {
+		newGraph := func(confidence float64) *Graph {
+			graph := NewGraph(time.Unix(1, 0).UTC())
+			graph.DecisionTarget = "hyp:long"
+			graph.AddNode(&Node{
+				ID: "hyp:long", Symbol: "BTC/USD",
+				Kind: KindHypothesis, Confidence: 1,
+			})
+			graph.AddNode(&Node{
+				ID: "cat:ignition", Symbol: "BTC/USD",
+				Kind: KindCategory, Value: 0.9, Strength: 0.9, Confidence: confidence,
+			})
+			graph.AddEdge(&Edge{
+				From: "cat:ignition", To: "hyp:long",
+				Relation: RelationSupports, Weight: 0.9, Confidence: confidence,
+			})
+			return graph
+		}
+
+		Convey("A sparse proposition below the confidence floor should defer, not search", func() {
+			So(newGraph(0.1).SearchableEnough(0.5), ShouldBeFalse)
+		})
+
+		Convey("A decisive proposition at or above the floor should be searchable", func() {
+			So(newGraph(0.8).SearchableEnough(0.5), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a graph with no decision proposition", t, func() {
+		graph := NewGraph(time.Unix(1, 0).UTC())
+
+		Convey("It should never be searchable", func() {
+			So(graph.SearchableEnough(0), ShouldBeFalse)
+			So((*Graph)(nil).SearchableEnough(0), ShouldBeFalse)
+		})
+	})
+}
+
 func TestAddNode(t *testing.T) {
 	Convey("Given a node without an identity", t, func() {
 		graph := NewGraph(time.Unix(1, 0).UTC())

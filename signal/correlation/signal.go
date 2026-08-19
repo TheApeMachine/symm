@@ -106,11 +106,25 @@ func (signal *Signal) Measure(
 			// The classifier only speaks once the cohort sampler has a complete
 			// peer window; before that the schema is genuinely incomplete and a
 			// zero-eligibility outcome is the correct representation, not an
-			// error to log per tick.
+			// error to log per tick. Once ready, an ineligible frame is also a
+			// plain reading from equation.Cohort (zero outcome, no error); only
+			// a malformed schema is a genuine failure worth surfacing.
 			outcome := equation.CohortOutput{}
 
 			if ready {
-				outcome, _ = signal.classifier.Measure(output)
+				classified, classifyErr := signal.classifier.Measure(output)
+
+				if classifyErr != nil {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"correlation: classifier rejected cohort frame",
+						classifyErr,
+					))
+
+					return
+				}
+
+				outcome = classified
 			}
 
 			if !yield(signal.frame(ticker, price, output, outcome, ready)) {

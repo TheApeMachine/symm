@@ -285,7 +285,7 @@ func BootWithHub(
 		thesis,
 	)).Wait()
 
-	utils.NewWaiter[*resonance.Solver](resonance.NewSolver(
+	resonanceSolver := utils.NewWaiter[*resonance.Solver](resonance.NewSolver(
 		ctx,
 		viper.GetFloat64("resonance.learning_rate"),
 		api,
@@ -325,6 +325,8 @@ func BootWithHub(
 
 	errnie.Debug("trader reported to be ready")
 	system.closers = append(system.closers, crypto.Close)
+
+	resonanceSolver.ObserveModule = crypto.ObserveModule()
 
 	if existingHub != nil {
 		system.Hub = existingHub

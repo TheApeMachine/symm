@@ -280,7 +280,6 @@ func (symbol *Symbol) AppendMeasurement(measurement *Measurement) {
 
 	categoryMeasurements, _ := symbol.Measurements.LoadOrStore("category", lf.NewQueue[*Measurement]())
 	graphMeasurements, _ := symbol.Measurements.LoadOrStore("graph", lf.NewQueue[*Measurement]())
-	resonanceMeasurements, _ := symbol.Measurements.LoadOrStore("resonance", lf.NewQueue[*Measurement]())
 
 	if measurement.Source == SourceHawkes {
 		manifoldMeasurements, _ := symbol.Measurements.LoadOrStore("manifold", lf.NewQueue[*Measurement]())
@@ -289,7 +288,6 @@ func (symbol *Symbol) AppendMeasurement(measurement *Measurement) {
 
 	categoryMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 	graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
-	resonanceMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
 }
 
 /*

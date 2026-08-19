@@ -192,7 +192,6 @@ func NewWithClient(
 		raw := event.Data.Bytes()
 
 		if err := live.captureFrame(live.captureName, raw); err != nil {
-
 			if _, ok := errors.AsType[types.SaturatedError](err); !ok {
 				errnie.Error(errnie.Err(
 					errnie.IO,

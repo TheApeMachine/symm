@@ -2,7 +2,6 @@ package resonance
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,7 +9,6 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"golang.design/x/lockfree/lf"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken"
@@ -20,6 +18,12 @@ import (
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
+
+/*
+idleRest parks the drain goroutine between passes while no event queue holds
+work, instead of busy-spinning the queue range.
+*/
+const idleRest = 10 * time.Millisecond
 
 /*
 Solver runs one feature detector per symbol over the standardized measurement
@@ -40,16 +44,20 @@ type Solver struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	thesis        *types.Thesis
+
+	// ObserveModule is an optional diagnostics hook reporting per-step coder
+	// duration so the wiring diagram can profile the resonance stage like
+	// every other pipeline node.
+	ObserveModule func(string, time.Duration)
 }
 
 /*
-Event is one enqueued observation routed to a single feature detector.
-Keying the queue by entity+symbol makes every observation that shares a coder
-land in the same lock-free FIFO; a drain goroutine replays that queue serially
-so the manifold is only ever touched by one goroutine at a time.
+Event is one enqueued ticker observation routed to a single feature detector.
+Keying the queue by symbol makes every observation that shares a coder land in
+the same lock-free FIFO; a drain goroutine replays that queue serially so the
+manifold is only ever touched by one goroutine at a time.
 */
 type Event struct {
-	entity   string
 	symbol   string
 	at       time.Time
 	features []float64
@@ -107,6 +115,35 @@ func (solver *Solver) Status() types.Status {
 func (solver *Solver) run() {
 	go func() {
 		for {
+			drained := false
+
+			solver.queues.Range(func(_ any, value any) bool {
+				queue := value.(*lf.Queue[Event])
+
+				for {
+					event, ok := queue.Dequeue()
+					if !ok {
+						break
+					}
+
+					drained = true
+
+					if err := solver.Update(
+						event.symbol,
+						event.at,
+						event.features,
+					); err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Internal,
+							"resonance: detector update failed",
+							err,
+						))
+					}
+				}
+
+				return true
+			})
+
 			select {
 			case <-solver.ctx.Done():
 				return
@@ -117,41 +154,8 @@ func (solver *Solver) run() {
 			case level3 := <-solver.subscriptions["level3"].Channel:
 				solver.onLevel3(level3.(kraken.Level3Data))
 			default:
-				group, ctx := errgroup.WithContext(solver.ctx)
-
-				solver.queues.Range(func(key, value any) bool {
-					queue := value.(*lf.Queue[Event])
-
-					group.Go(func() (err error) {
-						select {
-						case <-ctx.Done():
-							return ctx.Err()
-						default:
-						}
-
-						event, ok := queue.Dequeue()
-
-						if ok {
-							return errors.Join(err, solver.Update(
-								event.entity,
-								event.symbol,
-								event.at,
-								event.features,
-							))
-						}
-
-						return err
-					})
-
-					return true
-				})
-
-				if err := group.Wait(); err != nil {
-					errnie.Error(errnie.Err(
-						errnie.Internal,
-						"resonance: parallel solver update failed",
-						err,
-					))
+				if !drained {
+					time.Sleep(idleRest)
 				}
 			}
 		}
@@ -165,14 +169,13 @@ func (solver *Solver) onTicker(ticker any) {
 
 	for _, tick := range ticker.(*kraken.Ticker).Data {
 		tickerQueue, _ := solver.queues.LoadOrStore(
-			"ticker"+tick.Symbol,
+			tick.Symbol,
 			lf.NewQueue[Event](),
 		)
 
 		queue := tickerQueue.(*lf.Queue[Event])
 
 		queue.Enqueue(Event{
-			entity: "ticker",
 			symbol: tick.Symbol,
 			at:     tick.Timestamp,
 			features: []float64{
@@ -192,94 +195,16 @@ func (solver *Solver) onTicker(ticker any) {
 	}
 }
 
-var orderTypes = map[string]float64{
-	"limit":  1,
-	"market": -1,
-}
+/*
+Predictive coding runs on the ticker stream only. Trade and level3 carry
+order-by-order book microevents; they are not the multi-timescale sensory
+frame the coder settles, and their rows have no reference midpoint, so feeding
+them through the full settle+learn loop would burn manifold updates for no
+honest target. They are dropped here rather than enqueued.
+*/
+func (solver *Solver) onTrade(trade any) {}
 
-var side = map[string]float64{
-	"buy":  1,
-	"sell": -1,
-}
-
-func (solver *Solver) onTrade(trade any) {
-	if trade == nil {
-		return
-	}
-
-	for _, trade := range trade.(*kraken.Trade).Data {
-		tradeQueue, _ := solver.queues.LoadOrStore(
-			"trade"+trade.Symbol,
-			lf.NewQueue[Event](),
-		)
-
-		queue := tradeQueue.(*lf.Queue[Event])
-
-		queue.Enqueue(Event{
-			entity: "trade",
-			symbol: trade.Symbol,
-			at:     trade.Timestamp,
-			features: []float64{
-				trade.Qty,
-				trade.Price.Float64(),
-				orderTypes[trade.OrderType],
-				side[trade.Side],
-			},
-		})
-	}
-}
-
-var typeMap = map[string]float64{
-	"add":    1,
-	"modify": 0,
-	"delete": -1,
-}
-
-func (solver *Solver) onLevel3(level3 kraken.Level3Data) {
-	if level3.Symbol == "" {
-		return
-	}
-
-	for _, order := range level3.Asks {
-		l3Queue, _ := solver.queues.LoadOrStore(
-			"level3"+level3.Symbol,
-			lf.NewQueue[Event](),
-		)
-
-		queue := l3Queue.(*lf.Queue[Event])
-
-		queue.Enqueue(Event{
-			entity: "level3",
-			symbol: level3.Symbol,
-			at:     order.Timestamp,
-			features: []float64{
-				order.LimitPrice.Float64(),
-				order.OrderQty.Float64(),
-				typeMap[order.Event],
-			},
-		})
-	}
-
-	for _, order := range level3.Bids {
-		l3Queue, _ := solver.queues.LoadOrStore(
-			"level3"+level3.Symbol,
-			lf.NewQueue[Event](),
-		)
-
-		queue := l3Queue.(*lf.Queue[Event])
-
-		queue.Enqueue(Event{
-			entity: "level3",
-			symbol: level3.Symbol,
-			at:     order.Timestamp,
-			features: []float64{
-				order.LimitPrice.Float64(),
-				order.OrderQty.Float64(),
-				typeMap[order.Event],
-			},
-		})
-	}
-}
+func (solver *Solver) onLevel3(level3 kraken.Level3Data) {}
 
 /*
 Update steps one feature detector for one symbol and publishes the settled
@@ -296,14 +221,13 @@ otherwise the skill posterior never calibrates regardless of how long the
 stream runs.
 */
 func (solver *Solver) Update(
-	entity string,
 	symbolName string,
 	at time.Time,
 	features []float64,
 ) error {
 	symbol := solver.thesis.Symbol(symbolName)
 	detector, _ := solver.detectors.LoadOrStore(
-		entity+symbolName,
+		symbolName,
 		learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
 			MaxHorizon: 8,                                                                         // Multi-step forward rollouts up to t+8
@@ -334,6 +258,8 @@ func (solver *Solver) Update(
 		hasReference = valid && priorMidpoint > 0
 	}
 
+	stepStarted := time.Now()
+
 	out, err := coder.Step(learning.PredictiveInput{
 		Features:     standardized,
 		Reference:    midpoint,
@@ -341,6 +267,10 @@ func (solver *Solver) Update(
 		Step:         symbol.Tick,
 		Time:         float64(at.UnixNano()) / 1e9,
 	})
+
+	if solver.ObserveModule != nil {
+		solver.ObserveModule("resonance", time.Since(stepStarted))
+	}
 
 	if err != nil {
 		return errnie.Error(errnie.Err(

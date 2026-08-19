@@ -148,7 +148,7 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 
 	// 1. Resolve past pending predictions against incoming reference signal
 	var lastResolution *ResolutionOutcome
-	if input.HasReference && input.Step > 0 {
+	if input.HasReference {
 		res, err := pc.ledger.Resolve(pc.manifold, input.Step, input.Reference)
 		if err != nil {
 			return PredictiveOutput{}, err
@@ -234,7 +234,7 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 	}
 
 	// 7. Issue current forecast into ledger for future verification
-	if input.HasReference && input.Step > 0 {
+	if input.HasReference {
 		pc.ledger.Issue(input.Step, input.Reference, readout, score, supportedHorizon)
 	}
 

@@ -33,7 +33,7 @@ func NewPlannerConfig() *PlannerConfig {
 	viper.SetDefault("trading.evidence.minimum_score", -1.0)
 	viper.SetDefault("trading.utility.minimum", 0.0)
 	viper.SetDefault("trading.mcts.causal_alpha", 1.0)
-	viper.SetDefault("trading.mcts.iterations", 50)
+	viper.SetDefault("trading.mcts.iterations", 16)
 	viper.SetDefault("trading.mcts.exploration_constant", math.Sqrt2)
 
 	return &PlannerConfig{

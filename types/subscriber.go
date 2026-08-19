@@ -29,17 +29,5 @@ block the market-data fan-out; the freshest observation always reaches the
 buffer. Every consumer was already expected to tolerate coalesced frames.
 */
 func (subscription *Subscription[T]) Send(message T) {
-	select {
-	case subscription.Channel <- message:
-	default:
-		select {
-		case <-subscription.Channel:
-		default:
-		}
-
-		select {
-		case subscription.Channel <- message:
-		default:
-		}
-	}
+	subscription.Channel <- message
 }
