@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"time"
 
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -81,11 +80,6 @@ func (signal *Signal) Measure(
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
-		// One wall-clock cut anchors the pass. A book advanced past this cut by
-		// the decoupled producer is deferred, so this pass conditions its flow
-		// against book state that was actually live at the pass boundary.
-		passCut := time.Now().UTC()
-
 		for trade := range symbol.MarketTrades(types.SourceCVD) {
 			var responsePrice float64
 
@@ -94,19 +88,6 @@ func (signal *Signal) Measure(
 			if signal.api != nil {
 				signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
 					if book == nil {
-						return
-					}
-
-					// Only accept book state that has not advanced past this
-					// pass's cut.
-					_, acceptedAt := symbol.BookRevision()
-					bookAt := acceptedAt
-
-					if bookAt.IsZero() {
-						bookAt = managedBookObservedAt(book)
-					}
-
-					if bookAt.IsZero() || bookAt.After(passCut) {
 						return
 					}
 
@@ -259,32 +240,4 @@ func (signal *Signal) Close() error {
 	}
 
 	return nil
-}
-
-/*
-managedBookObservedAt derives the book's event-time high-water mark from its own
-levels. This is the fallback when the symbol's level3 queue path is not
-populated (live mode fills the managed book directly); BookRevision() is
-preferred when present.
-*/
-func managedBookObservedAt(managed *spotbook.Book) time.Time {
-	observedAt := time.Time{}
-
-	if managed == nil {
-		return observedAt
-	}
-
-	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
-		if bid.Timestamp.After(observedAt) {
-			observedAt = bid.Timestamp
-		}
-	}
-
-	for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
-		if ask.Timestamp.After(observedAt) {
-			observedAt = ask.Timestamp
-		}
-	}
-
-	return observedAt
 }

@@ -123,9 +123,25 @@ func (signal *Signal) MeasureCohort(
 			return
 		}
 
+		tick := int64(0)
+
+		if len(ticks) > 0 {
+			tick = ticks[0]
+		}
+
 		peers, _, cadenceReady := signal.cohort()
 
 		if len(peers) == 0 {
+			// Dirty ticks arrived but the cohort has no ready member yet. Emit
+			// an honest zero reading per dirty symbol instead of going dark.
+			for symbol := range changed {
+				if observation, found := signal.observation(symbol); found {
+					if !yield(immatureLiquidity(symbol, observation, tick)) {
+						return
+					}
+				}
+			}
+
 			return
 		}
 
@@ -135,11 +151,6 @@ func (signal *Signal) MeasureCohort(
 
 		cohortDepthMedian, depthCohortReady := liquidityCohortMedian(peers, true)
 		cohortNotionalMedian, notionalCohortReady := liquidityCohortMedian(peers, false)
-		tick := int64(0)
-
-		if len(ticks) > 0 {
-			tick = ticks[0]
-		}
 
 		for _, peer := range peers {
 			if _, isDirty := changed[peer.symbol]; !isDirty {
@@ -402,6 +413,53 @@ type liquidityPeer struct {
 	observation liquidityObservation
 }
 
+/*
+observation returns the retained liquidity observation for a symbol, if any.
+*/
+func (signal *Signal) observation(symbol string) (liquidityObservation, bool) {
+	if signal.observations == nil {
+		return liquidityObservation{}, false
+	}
+
+	raw, found := signal.observations.Load(symbol)
+
+	if !found {
+		return liquidityObservation{}, false
+	}
+
+	return raw.(liquidityObservation), true
+}
+
+/*
+immatureLiquidity is the honest zero reading for a dirty symbol whose cohort
+has no ready member yet. It carries the observed touch without inventing
+scarce/loaded scores.
+*/
+func immatureLiquidity(
+	symbol string,
+	observation liquidityObservation,
+	tick int64,
+) *types.Measurement {
+	return &types.Measurement{
+		ID:       uuid.NewString(),
+		Source:   types.SourceLiquidity,
+		Symbol:   symbol,
+		Tick:     tick,
+		At:       observation.at,
+		Maturity: 0,
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
+				Raw:  observation.bid,
+				Unit: types.UnitQuoteCurrency,
+			},
+			types.MetricKey(types.MetricBestPrice, types.SideSell): {
+				Raw:  observation.ask,
+				Unit: types.UnitQuoteCurrency,
+			},
+		},
+	}
+}
+
 func (signal *Signal) ingest(rows iter.Seq[kraken.TickerData]) bool {
 	if signal.observations == nil {
 		signal.observations = &sync.Map{}
@@ -533,6 +591,12 @@ func leaveOneOutLiquidity(
 	return depths, notionals
 }
 
+/*
+absoluteDeviations returns each value's distance from the group center. The
+signal's scarcity denominator is the median of these MAD-around-median
+deviations — a group-relative dispersion that nomagique's MedianAbsoluteOf (the
+median of absolute values, no center) does not express.
+*/
 func absoluteDeviations(values []float64, center float64) []float64 {
 	deviations := make([]float64, 0, len(values))
 

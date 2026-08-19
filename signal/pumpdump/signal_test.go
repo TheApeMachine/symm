@@ -107,11 +107,9 @@ func TestMeasure(t *testing.T) {
 		})
 	})
 
-	Convey("Given a book advanced past this pass's cut", t, func() {
-		// A book whose levels are stamped in the future is beyond the pass cut.
-		// The ladder must not be measured from state that the decoupled producer
-		// has already advanced past the pass boundary, but the tape must still
-		// yield its measurement.
+	Convey("Given a trade without any observed ladder event time", t, func() {
+		// The ladder clock is event time only. A pass with no level3 event time
+		// carries no ladder observation, but the trade tape still yields.
 		future := seededBook()
 		future.Update(&spotbook.UpdateOptions{
 			Direction: mgrBid(), ID: "bid", Price: decimal.NewFromFloat64(99),
@@ -130,10 +128,9 @@ func TestMeasure(t *testing.T) {
 
 		measurements := slices.Collect(signal.Measure(market))
 
-		Convey("It should defer the book but still measure the tape", func() {
+		Convey("It should skip the ladder but still measure the tape", func() {
 			So(measurements, ShouldHaveLength, 1)
-			// The racked book is beyond the pass cut, so ladder geometry is not
-			// measured; only the trade tape answer is present.
+			// No level3 event time was observed, so ladder geometry is absent.
 			_, ladderBidDepth := measurements[0].Metrics[
 				types.MetricKey(types.MetricLadderBidDepth, types.SideNone),
 			]

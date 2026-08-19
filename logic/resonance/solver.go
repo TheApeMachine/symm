@@ -2,12 +2,15 @@ package resonance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"golang.design/x/lockfree/lf"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken"
@@ -28,6 +31,7 @@ type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	detectors     *sync.Map
+	queues        *sync.Map
 	schemas       *sync.Map
 	standardizers *sync.Map
 	states        *sync.Map
@@ -36,6 +40,19 @@ type Solver struct {
 	ui            chan []byte
 	subscriptions map[string]*types.Subscription[any]
 	thesis        *types.Thesis
+}
+
+/*
+Event is one enqueued observation routed to a single feature detector.
+Keying the queue by entity+symbol makes every observation that shares a coder
+land in the same lock-free FIFO; a drain goroutine replays that queue serially
+so the manifold is only ever touched by one goroutine at a time.
+*/
+type Event struct {
+	entity   string
+	symbol   string
+	at       time.Time
+	features []float64
 }
 
 /*
@@ -54,6 +71,7 @@ func NewSolver(
 		ctx:           ctx,
 		cancel:        cancel,
 		detectors:     &sync.Map{},
+		queues:        &sync.Map{},
 		schemas:       &sync.Map{},
 		standardizers: &sync.Map{},
 		states:        &sync.Map{},
@@ -98,6 +116,43 @@ func (solver *Solver) run() {
 				solver.onTrade(trade)
 			case level3 := <-solver.subscriptions["level3"].Channel:
 				solver.onLevel3(level3.(kraken.Level3Data))
+			default:
+				group, ctx := errgroup.WithContext(solver.ctx)
+
+				solver.queues.Range(func(key, value any) bool {
+					queue := value.(*lf.Queue[Event])
+
+					group.Go(func() (err error) {
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						default:
+						}
+
+						event, ok := queue.Dequeue()
+
+						if ok {
+							return errors.Join(err, solver.Update(
+								event.entity,
+								event.symbol,
+								event.at,
+								event.features,
+							))
+						}
+
+						return err
+					})
+
+					return true
+				})
+
+				if err := group.Wait(); err != nil {
+					errnie.Error(errnie.Err(
+						errnie.Internal,
+						"resonance: parallel solver update failed",
+						err,
+					))
+				}
 			}
 		}
 	}()
@@ -109,31 +164,120 @@ func (solver *Solver) onTicker(ticker any) {
 	}
 
 	for _, tick := range ticker.(*kraken.Ticker).Data {
-		solver.Update(tick.Symbol, tick.Timestamp, []float64{
-			tick.Ask.Float64(),
-			tick.Bid.Float64(),
-			tick.AskQty,
-			tick.BidQty,
-			tick.Change.Float64(),
-			tick.ChangePct,
-			tick.High.Float64(),
-			tick.Low.Float64(),
-			tick.Last.Float64(),
-			tick.Volume,
-			tick.Vwap,
+		tickerQueue, _ := solver.queues.LoadOrStore(
+			"ticker"+tick.Symbol,
+			lf.NewQueue[Event](),
+		)
+
+		queue := tickerQueue.(*lf.Queue[Event])
+
+		queue.Enqueue(Event{
+			entity: "ticker",
+			symbol: tick.Symbol,
+			at:     tick.Timestamp,
+			features: []float64{
+				tick.Ask.Float64(),
+				tick.Bid.Float64(),
+				tick.AskQty,
+				tick.BidQty,
+				tick.Change.Float64(),
+				tick.ChangePct,
+				tick.High.Float64(),
+				tick.Low.Float64(),
+				tick.Last.Float64(),
+				tick.Volume,
+				tick.Vwap,
+			},
 		})
 	}
+}
+
+var orderTypes = map[string]float64{
+	"limit":  1,
+	"market": -1,
+}
+
+var side = map[string]float64{
+	"buy":  1,
+	"sell": -1,
 }
 
 func (solver *Solver) onTrade(trade any) {
 	if trade == nil {
 		return
 	}
+
+	for _, trade := range trade.(*kraken.Trade).Data {
+		tradeQueue, _ := solver.queues.LoadOrStore(
+			"trade"+trade.Symbol,
+			lf.NewQueue[Event](),
+		)
+
+		queue := tradeQueue.(*lf.Queue[Event])
+
+		queue.Enqueue(Event{
+			entity: "trade",
+			symbol: trade.Symbol,
+			at:     trade.Timestamp,
+			features: []float64{
+				trade.Qty,
+				trade.Price.Float64(),
+				orderTypes[trade.OrderType],
+				side[trade.Side],
+			},
+		})
+	}
+}
+
+var typeMap = map[string]float64{
+	"add":    1,
+	"modify": 0,
+	"delete": -1,
 }
 
 func (solver *Solver) onLevel3(level3 kraken.Level3Data) {
 	if level3.Symbol == "" {
 		return
+	}
+
+	for _, order := range level3.Asks {
+		l3Queue, _ := solver.queues.LoadOrStore(
+			"level3"+level3.Symbol,
+			lf.NewQueue[Event](),
+		)
+
+		queue := l3Queue.(*lf.Queue[Event])
+
+		queue.Enqueue(Event{
+			entity: "level3",
+			symbol: level3.Symbol,
+			at:     order.Timestamp,
+			features: []float64{
+				order.LimitPrice.Float64(),
+				order.OrderQty.Float64(),
+				typeMap[order.Event],
+			},
+		})
+	}
+
+	for _, order := range level3.Bids {
+		l3Queue, _ := solver.queues.LoadOrStore(
+			"level3"+level3.Symbol,
+			lf.NewQueue[Event](),
+		)
+
+		queue := l3Queue.(*lf.Queue[Event])
+
+		queue.Enqueue(Event{
+			entity: "level3",
+			symbol: level3.Symbol,
+			at:     order.Timestamp,
+			features: []float64{
+				order.LimitPrice.Float64(),
+				order.OrderQty.Float64(),
+				typeMap[order.Event],
+			},
+		})
 	}
 }
 
@@ -152,13 +296,14 @@ otherwise the skill posterior never calibrates regardless of how long the
 stream runs.
 */
 func (solver *Solver) Update(
+	entity string,
 	symbolName string,
 	at time.Time,
 	features []float64,
 ) error {
 	symbol := solver.thesis.Symbol(symbolName)
 	detector, _ := solver.detectors.LoadOrStore(
-		symbolName,
+		entity+symbolName,
 		learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
 			MaxHorizon: 8,                                                                         // Multi-step forward rollouts up to t+8

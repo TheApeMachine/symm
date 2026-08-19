@@ -3,6 +3,7 @@ package correlation
 import (
 	"context"
 	"iter"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -30,6 +31,12 @@ type Signal struct {
 	api        *websocket.API
 	algo       *algorithm.CohortSample
 	classifier *equation.Cohort
+
+	// CohortSample keeps an unsynchronized internal map, and the measurement
+	// loop fans one goroutine per dirty symbol into this single signal. The
+	// signal is the sole owner of the sampler, so it defends its own shared
+	// state here rather than trusting the dependency to be thread-safe.
+	algoMu sync.Mutex
 }
 
 /*
@@ -78,11 +85,13 @@ func (signal *Signal) Measure(
 				continue
 			}
 
+			signal.algoMu.Lock()
 			output, ready, err := signal.algo.Measure(algorithm.CohortSampleInput{
 				Symbol: ticker.Symbol,
 				At:     ticker.Timestamp,
 				Price:  price,
 			})
+			signal.algoMu.Unlock()
 
 			if err != nil {
 				errnie.Error(errnie.Err(

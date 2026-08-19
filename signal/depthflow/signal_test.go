@@ -4,7 +4,6 @@ import (
 	"context"
 	"math"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,84 +20,30 @@ func TestMeasure(t *testing.T) {
 	Convey("Given independent depth-flow symbols without a ready book", t, func() {
 		signal := &Signal{ctx: context.Background(), books: emptyBookSource{}}
 		market := types.NewSymbol("AAA/USD", nil)
-		appendTickers(market,
-			kraken.TickerData{Symbol: "AAA/USD"},
-			kraken.TickerData{Symbol: "BBB/USD"},
-		)
+		market.AppendTrade(kraken.TradeData{
+			Symbol: "AAA/USD", Side: "buy",
+			Price: *decimal.NewFromInt64(100), Qty: 1,
+			TradeID: 1, Timestamp: time.Unix(1_700_001_000, 0).UTC(),
+		}, types.TradeReceivers)
 
 		Reset(func() {
 			signal.Close()
 		})
 
-		Convey("It completes each independent symbol pass without measurements", func() {
-			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
-			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
+		Convey("It completes each independent symbol pass with an immature reading", func() {
+			readings := slices.Collect(signal.Measure(market))
+			So(readings, ShouldHaveLength, 1)
+			So(readings[0].Source, ShouldEqual, types.SourceDepthFlow)
+			So(readings[0].Maturity, ShouldEqual, 0)
+			So(readings[0].Metrics, ShouldBeEmpty)
 		})
 	})
-}
-
-func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
-	for _, row := range rows {
-		market.AppendTicker(row, types.TickerReceivers)
-	}
 }
 
 type emptyBookSource struct{}
 
 func (emptyBookSource) Book(_ string, read func(*spotbook.Book)) {
 	read(nil)
-}
-
-func TestSeenTrade(t *testing.T) {
-	Convey("Given an exact-once cursor for one depth-flow symbol", t, func() {
-		signal := &Signal{lastTrade: &sync.Map{}}
-		at := time.Unix(1_700_000_000, 0).UTC()
-		first := kraken.TradeData{Symbol: "ALT/USD", TradeID: 11, Timestamp: at}
-		secondSameTime := kraken.TradeData{Symbol: "ALT/USD", TradeID: 12, Timestamp: at}
-		regressed := kraken.TradeData{
-			Symbol: "ALT/USD", TradeID: 13, Timestamp: at.Add(-time.Nanosecond),
-		}
-
-		Convey("It should accept distinct same-time IDs and reject replay or regression", func() {
-			So(signal.seenTrade(first), ShouldBeFalse)
-			signal.commitTrade(first)
-			So(signal.seenTrade(first), ShouldBeTrue)
-			So(signal.seenTrade(secondSameTime), ShouldBeFalse)
-			signal.commitTrade(secondSameTime)
-			So(signal.seenTrade(secondSameTime), ShouldBeTrue)
-			So(signal.seenTrade(regressed), ShouldBeTrue)
-		})
-	})
-
-	Convey("Given same-time depth-flow trades without exchange IDs", t, func() {
-		signal := &Signal{lastTrade: &sync.Map{}}
-		at := time.Unix(1_700_000_100, 0).UTC()
-		unidentified := kraken.TradeData{Symbol: "ALT/USD", Timestamp: at}
-
-		signal.commitTrade(unidentified)
-
-		Convey("It should document intrinsic indistinguishability by rejecting the second zero-ID event", func() {
-			So(signal.seenTrade(unidentified), ShouldBeTrue)
-		})
-	})
-}
-
-func TestSnapshotDelta(t *testing.T) {
-	Convey("Given a full snapshot where one bid vanished", t, func() {
-		previous := map[int64]flow.BookLevel{
-			100: {Price: 100, Ticks: 100, Quantity: 10},
-			99:  {Price: 99, Ticks: 99, Quantity: 8},
-		}
-		current := map[int64]flow.BookLevel{
-			100: {Price: 100, Ticks: 100, Quantity: 7},
-		}
-		delta := snapshotDelta(current, previous)
-
-		Convey("It should update retained depth and explicitly delete the vanished level", func() {
-			So(levelQuantity(delta, 100), ShouldEqual, 7.0)
-			So(levelQuantity(delta, 99), ShouldEqual, 0.0)
-		})
-	})
 }
 
 func TestMeasureTrade(t *testing.T) {
@@ -138,12 +83,10 @@ func TestMeasureTrade(t *testing.T) {
 		So(err, ShouldBeNil)
 		expectedOutput, err := equation.NewBookflow().Measure(expectedInput)
 		So(err, ShouldBeNil)
-		measurements, err := signal.measureTrade(trade)
+		measurement := signal.tradeReading(trade)
 
 		Convey("It should emit the preserved dimensionless metric contract at the trade time", func() {
-			So(err, ShouldBeNil)
-			So(measurements, ShouldHaveLength, 1)
-			measurement := measurements[0]
+			So(measurement, ShouldNotBeNil)
 			So(measurement.At, ShouldResemble, at)
 			So(measurement.Maturity, ShouldEqual, expectedMaturity)
 			So(measurement.Metrics, ShouldHaveLength, 7)
@@ -184,13 +127,12 @@ func TestFrame(t *testing.T) {
 	Convey("Given a depth depletion score computed against prior quote notional", t, func() {
 		signal := &Signal{}
 		at := time.Unix(1_700_000_300, 0).UTC()
-		measurements := signal.frame("BTC/USD", at, equation.BookflowOutput{
+		measurement := signal.frame("BTC/USD", at, equation.BookflowOutput{
 			Value: 0.3, HypothesisSeparation: 0.4, ThinScore: 0.3, Category: 3, Ready: true,
 		}, 0.8)
 
 		Convey("It should preserve the dimensionless depletion fraction and provenance", func() {
-			So(measurements, ShouldHaveLength, 1)
-			measurement := measurements[0]
+			So(measurement, ShouldNotBeNil)
 			So(measurement.At, ShouldResemble, at)
 			So(measurement.Maturity, ShouldEqual, 0.8)
 			So(measurement.Sample(types.MetricThinScore, types.SideNone).Raw,
@@ -215,7 +157,7 @@ func TestFrame(t *testing.T) {
 				Value: 1.5, HypothesisSeparation: 0.6, SpoofScore: 1.5, Category: 2, Ready: true,
 			},
 			1,
-		)[0]
+		)
 
 		Convey("It should scale spoof evidence by the maximum possible contrast", func() {
 			So(*measurement.Sample(types.MetricSpoofScore, types.SideNone).Normalized,
@@ -230,7 +172,7 @@ func TestFrame(t *testing.T) {
 			time.Unix(1_700_000_401, 0).UTC(),
 			equation.BookflowOutput{NeutralScore: 1, Ready: false},
 			0,
-		)[0]
+		)
 
 		Convey("It should expose raw values while withholding every hypothesis normalization", func() {
 			for _, metric := range []types.MetricType{

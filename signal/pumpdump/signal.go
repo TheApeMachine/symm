@@ -129,37 +129,15 @@ func (signal *Signal) Measure(
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
-		// One wall-clock cut anchors the whole pass. Reading the book beyond
-		// this cut would let a decoupled producer keep advancing the manager
-		// while this pass reads it — the book equivalent of endless queue
-		// draining. So the book is only measured when its latest accepted
-		// frame is at-or-before the pass cut; a frame stamped later belongs to
-		// the next pass.
-		passCut := time.Now().UTC()
-
 		at := signal.drainLevel3(symbol)
 
-		// Produce the measurement body from a possibly-absent book. When the
-		// venue source is nil, or the book has advanced past this pass's cut
-		// (deferred to the next pass), the snapshot is empty — but a dirty pass
-		// still yields one measurement from the trade tape, because the pump/dump
-		// contract is about the tape, not book availability.
+		// Produce the measurement body from a possibly-absent book. The venue
+		// book is read once per pass; a dirty pass always yields one measurement
+		// (the tape contract), whether or not the book is populated.
 		read := func(book *spotbook.Book) {
 			snapshot := bookSnapshot{}
 
-			// Prefer the symbol's authoritative book high-water mark; fall back
-			// to the managed book's own level timestamps when the queue path
-			// is not populated (live mode fills the manager directly).
-			_, acceptedAt := symbol.BookRevision()
-			bookAt := acceptedAt
-
-			if bookAt.IsZero() && book != nil {
-				bookAt = managedBookObservedAt(book)
-			}
-
-			bookLive := book != nil && !bookAt.IsZero() && !bookAt.After(passCut)
-
-			if bookLive {
+			if book != nil {
 				if bestBid := book.BestBid(); bestBid != nil {
 					snapshot.bid = bestBid.Price.Float64()
 					snapshot.bidDepth = bestBid.Quantity.Float64()
@@ -172,7 +150,7 @@ func (signal *Signal) Measure(
 
 				if snapshot.bid > 0 && snapshot.ask > snapshot.bid {
 					snapshot.ready = true
-					snapshot.observedAt = bookAt
+					snapshot.observedAt = managedBookObservedAt(book)
 					snapshot.spread = book.Spread().Float64()
 				}
 			}
@@ -597,9 +575,7 @@ func (snapshot bookSnapshot) depths() ladderDepths {
 
 /*
 managedBookObservedAt derives the book's event-time high-water mark from its own
-levels. This is the fallback when the symbol's level3 queue path is not
-populated (live mode fills the managed book directly); the authoritative
-BookRevision() high-water is preferred when present.
+levels. It is the timing anchor for the ladder snapshot.
 */
 func managedBookObservedAt(managed *spotbook.Book) time.Time {
 	observedAt := time.Time{}

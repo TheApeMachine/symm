@@ -3,12 +3,10 @@ package depthflow
 import (
 	"context"
 	"iter"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 
@@ -24,28 +22,18 @@ import (
 Signal is the "Weight of the Book" perspective, measuring touch-level book
 imbalance with trade-pressure confirmation. Categories belong in logic; this
 signal emits numerical scores only.
+
+The signal is thin: nomagique's flow.Sample owns every per-symbol window and
+equation.Bookflow owns the scoring. This file only feeds frames in and maps the
+output back out.
 */
 type Signal struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	books            websocket.BookSource
-	instrument       *broker.Instrument
-	sample           *flow.Sample
-	bookflow         *equation.Bookflow
-	lastTrade        *sync.Map
-	lastBookAt       *sync.Map
-	lastBookRevision *sync.Map
-	lastBook         *sync.Map
-}
-
-type tradeCursor struct {
-	at  time.Time
-	ids map[int64]struct{}
-}
-
-type bookSnapshot struct {
-	bids map[int64]flow.BookLevel
-	asks map[int64]flow.BookLevel
+	ctx        context.Context
+	cancel     context.CancelFunc
+	books      websocket.BookSource
+	instrument *broker.Instrument
+	sample     *flow.Sample
+	bookflow   *equation.Bookflow
 }
 
 /*
@@ -67,23 +55,18 @@ func NewSignal(
 			"depthflow: failed to create flow sample",
 			err,
 		))
+
 		return nil
 	}
 
-	signal := &Signal{
-		ctx:              ctx,
-		cancel:           cancel,
-		books:            books,
-		instrument:       instrument,
-		sample:           sample,
-		bookflow:         equation.NewBookflow(),
-		lastTrade:        &sync.Map{},
-		lastBookAt:       &sync.Map{},
-		lastBookRevision: &sync.Map{},
-		lastBook:         &sync.Map{},
+	return &Signal{
+		ctx:        ctx,
+		cancel:     cancel,
+		books:      books,
+		instrument: instrument,
+		sample:     sample,
+		bookflow:   equation.NewBookflow(),
 	}
-
-	return signal
 }
 
 /*
@@ -112,252 +95,84 @@ func (signal *Signal) measure(
 			return
 		}
 
-		if signal.lastTrade == nil {
-			signal.lastTrade = &sync.Map{}
-		}
+		tickSize := 1.0
 
-		if signal.lastBookAt == nil {
-			signal.lastBookAt = &sync.Map{}
+		if signal.instrument != nil {
+			pair := signal.instrument.Pair(symbol.Symbol)
+			tickSize = pair.TickSize.Float64()
 		}
-
-		if signal.lastBookRevision == nil {
-			signal.lastBookRevision = &sync.Map{}
-		}
-
-		if signal.lastBook == nil {
-			signal.lastBook = &sync.Map{}
-		}
-
-		revision, acceptedAt := symbol.BookRevision()
-		authoritative := revision > 0
 
 		signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
-			bookAt := acceptedAt
-
-			if bookAt.IsZero() {
-				bookAt = managedBookObservedAt(managed)
-			}
-
-			bookPending := managed != nil
-
-			if authoritative {
-				lastRevision, _ := signal.bookRevision(symbol.Symbol)
-				bookPending = managed != nil && revision > lastRevision
-			}
-
-			for trade := range symbol.MarketTrades(types.SourceDepthFlow) {
-				if !validTrade(trade) {
-					continue
-				}
-
-				if bookPending && !trade.Timestamp.Before(bookAt) {
-					bookMeasurements, err := signal.measureManagedBook(managed, revision, bookAt, authoritative)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"depthflow: failed to measure book",
-							err,
-						))
-					}
-
-					for _, measurement := range bookMeasurements {
-						if !yield(measurement) {
-							return
-						}
-					}
-
-					bookPending = false
-				}
-
-				if signal.seenTrade(trade) {
-					continue
-				}
-
-				lastBookAt, hasBook := signal.bookAt(trade.Symbol)
-
-				if !hasBook || lastBookAt.IsZero() || lastBookAt.After(trade.Timestamp) {
-					continue
-				}
-
-				tradeMeasurements, err := signal.measureTrade(trade)
-
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"depthflow: failed to measure trade",
-						err,
-					))
-					continue
-				}
-
-				signal.commitTrade(trade)
-
-				for _, measurement := range tradeMeasurements {
-					if !yield(measurement) {
-						return
-					}
-				}
-			}
-
-			if bookPending {
-				bookMeasurements, err := signal.measureManagedBook(managed, revision, bookAt, authoritative)
-
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"depthflow: failed to measure book",
-						err,
-					))
-				}
-
-				for _, measurement := range bookMeasurements {
-					if !yield(measurement) {
-						return
-					}
+			if managed != nil {
+				if !yield(signal.bookReading(managed, tickSize)) {
+					return
 				}
 			}
 		})
+
+		for trade := range symbol.MarketTrades(types.SourceDepthFlow) {
+			if !validTrade(trade) {
+				continue
+			}
+
+			if !yield(signal.tradeReading(trade)) {
+				return
+			}
+		}
 	}
 }
 
-func managedBookObservedAt(managed *spotbook.Book) time.Time {
-	observedAt := time.Time{}
-
-	if managed == nil {
-		return observedAt
-	}
-
-	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
-		if bid.Timestamp.After(observedAt) {
-			observedAt = bid.Timestamp
-		}
-	}
-
-	for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
-		if ask.Timestamp.After(observedAt) {
-			observedAt = ask.Timestamp
-		}
-	}
-
-	return observedAt
-}
-
-func (signal *Signal) measureManagedBook(
+/*
+bookReading folds the current managed book into the per-symbol flow window and
+returns one measurement. An immature window is still an honest zero reading.
+*/
+func (signal *Signal) bookReading(
 	managed *spotbook.Book,
-	revision uint64,
-	acceptedAt time.Time,
-	authoritative bool,
-) ([]*types.Measurement, error) {
-	if managed == nil {
-		return nil, nil
+	tickSize float64,
+) *types.Measurement {
+	if signal.sample == nil || signal.bookflow == nil {
+		return immatureReading(managed.Name, managedBookObservedAt(managed))
 	}
 
+	observedAt := managedBookObservedAt(managed)
 	bestBid, bestAsk := managed.BestBid(), managed.BestAsk()
-	current := bookSnapshot{
-		bids: make(map[int64]flow.BookLevel),
-		asks: make(map[int64]flow.BookLevel),
-	}
 
-	observedAt := acceptedAt
-	instrument := signal.instrument.Pair(managed.Name)
-
-	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
-		level := flow.BookLevel{
-			Price:    bid.Price.Float64(),
-			Quantity: bid.Quantity.Float64(),
-			Ticks: decimal.NewFromInt64(0).Add(bid.Price).Div(
-				&instrument.PriceIncrement,
-			).Int64(),
-		}
-		current.bids[level.Ticks] = level
-
-		if !authoritative && bid.Timestamp.After(observedAt) {
-			observedAt = bid.Timestamp
-		}
-	}
-
-	for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
-		level := flow.BookLevel{
-			Price:    ask.Price.Float64(),
-			Quantity: ask.Quantity.Float64(),
-			Ticks: decimal.NewFromInt64(0).Add(ask.Price).Div(
-				&instrument.PriceIncrement,
-			).Int64(),
-		}
-		current.asks[level.Ticks] = level
-
-		if !authoritative && ask.Timestamp.After(observedAt) {
-			observedAt = ask.Timestamp
-		}
-	}
-
-	if observedAt.IsZero() {
-		return nil, nil
-	}
-
-	previous := signal.bookSnapshot(managed.Name)
-
-	if sameSnapshot(current, previous) {
-		lastBookAt, _ := signal.bookAt(managed.Name)
-
-		if observedAt.After(lastBookAt) {
-			signal.lastBookAt.Store(managed.Name, observedAt)
-		}
-
-		if authoritative {
-			signal.lastBookRevision.Store(managed.Name, revision)
-		}
-
-		return nil, nil
-	}
-
-	lastBookAt, _ := signal.bookAt(managed.Name)
-
-	if !authoritative && observedAt.Before(lastBookAt) {
-		return nil, nil
-	}
-
-	// Readiness rides on the output's own Ready flag and the maturity; an
-	// immature window emits the zero scores rather than no row.
-	input, _, maturity, err := signal.sample.MeasureBook(flow.BookInput{
+	input := flow.BookInput{
 		Symbol:   managed.Name,
-		TickSize: instrument.TickSize.Float64(),
-		Bids:     snapshotDelta(current.bids, previous.bids),
-		Asks:     snapshotDelta(current.asks, previous.asks),
-	})
+		TickSize: tickSize,
+		Bids:     bookSide(managed, false, tickSize),
+		Asks:     bookSide(managed, true, tickSize),
+	}
+
+	bookflowInput, ready, maturity, err := signal.sample.MeasureBook(input)
+
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"depthflow: failed to measure book",
 			err,
 		))
+
+		return immatureReading(managed.Name, observedAt)
 	}
 
-	signal.lastBook.Store(managed.Name, current)
-	signal.lastBookAt.Store(managed.Name, observedAt)
-
-	if authoritative {
-		signal.lastBookRevision.Store(managed.Name, revision)
+	if !ready {
+		return immatureReading(managed.Name, observedAt)
 	}
 
-	output, err := signal.bookflow.Measure(input)
+	output, err := signal.bookflow.Measure(bookflowInput)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"depthflow: failed to measure bookflow",
 			err,
 		))
+
+		return immatureReading(managed.Name, observedAt)
 	}
 
-	measurements := signal.frame(
-		managed.Name,
-		observedAt,
-		output,
-		maturity,
-	)
-	measurement := measurements[0]
+	measurement := signal.frame(managed.Name, observedAt, output, maturity)
 
 	if bestBid != nil && bestAsk != nil {
 		measurement.PutMetric(types.MetricBestPrice, types.SideBuy, types.MetricSample{
@@ -382,19 +197,16 @@ func (signal *Signal) measureManagedBook(
 		})
 	}
 
-	return measurements, nil
+	return measurement
 }
 
 /*
-measureTrade applies one trade event to the shared flow sample at its causal
-position in the merged entity timeline.
+tradeReading applies one trade event to the shared flow window and returns one
+measurement.
 */
-func (signal *Signal) measureTrade(
-	row kraken.TradeData,
-) ([]*types.Measurement, error) {
-	if row.Symbol == "" || row.Timestamp.IsZero() || row.Price.Sign() <= 0 ||
-		row.Qty <= 0 || row.Side != "buy" && row.Side != "sell" {
-		return nil, nil
+func (signal *Signal) tradeReading(row kraken.TradeData) *types.Measurement {
+	if signal.sample == nil || signal.bookflow == nil {
+		return immatureReading(row.Symbol, row.Timestamp)
 	}
 
 	input, _, maturity, err := signal.sample.MeasureTrade(flow.TradeInput{
@@ -406,30 +218,28 @@ func (signal *Signal) measureTrade(
 	})
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"depthflow: failed to measure trade",
 			err,
 		))
+
+		return immatureReading(row.Symbol, row.Timestamp)
 	}
 
 	output, err := signal.bookflow.Measure(input)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"depthflow: failed to measure bookflow",
 			err,
 		))
+
+		return immatureReading(row.Symbol, row.Timestamp)
 	}
 
-	measurements := signal.frame(
-		row.Symbol,
-		row.Timestamp,
-		output,
-		maturity,
-	)
-	measurement := measurements[0]
+	measurement := signal.frame(row.Symbol, row.Timestamp, output, maturity)
 	measurement.PutMetric(types.MetricTradePrice, types.SideNone, types.MetricSample{
 		Raw:  row.Price.Float64(),
 		Unit: types.UnitQuoteCurrency,
@@ -439,7 +249,71 @@ func (signal *Signal) measureTrade(
 		Unit: types.UnitBaseCurrency,
 	})
 
-	return measurements, nil
+	return measurement
+}
+
+/*
+immatureReading is the honest zero reading for a frame the flow window cannot
+score yet.
+*/
+func immatureReading(symbol string, at time.Time) *types.Measurement {
+	return &types.Measurement{
+		ID:       uuid.NewString(),
+		Source:   types.SourceDepthFlow,
+		Symbol:   symbol,
+		At:       at,
+		Maturity: 0,
+		Metrics:  map[string]types.MetricSample{},
+	}
+}
+
+/*
+bookSide flattens one managed book side into the nomagique book-level shape.
+*/
+func bookSide(managed *spotbook.Book, ask bool, tickSize float64) []flow.BookLevel {
+	var levels []flow.BookLevel
+
+	if ask {
+		for level := managed.Asks.Low; level != nil; level = level.Higher {
+			levels = append(levels, flow.BookLevel{
+				Price:    level.Price.Float64(),
+				Quantity: level.Quantity.Float64(),
+				Ticks:    int64(level.Price.Float64()/tickSize + 0.5),
+			})
+		}
+
+		return levels
+	}
+
+	for level := managed.Bids.High; level != nil; level = level.Lower {
+		levels = append(levels, flow.BookLevel{
+			Price:    level.Price.Float64(),
+			Quantity: level.Quantity.Float64(),
+			Ticks:    int64(level.Price.Float64()/tickSize + 0.5),
+		})
+	}
+
+	return levels
+}
+
+func managedBookObservedAt(managed *spotbook.Book) time.Time {
+	if managed == nil {
+		return time.Time{}
+	}
+
+	bestBid := managed.BestBid()
+	bestAsk := managed.BestAsk()
+	var observedAt time.Time
+
+	if bestBid != nil {
+		observedAt = bestBid.Timestamp
+	}
+
+	if bestAsk != nil && bestAsk.Timestamp.After(observedAt) {
+		observedAt = bestAsk.Timestamp
+	}
+
+	return observedAt
 }
 
 func validTrade(row kraken.TradeData) bool {
@@ -447,134 +321,15 @@ func validTrade(row kraken.TradeData) bool {
 		row.Qty > 0 && (row.Side == "buy" || row.Side == "sell")
 }
 
-func (signal *Signal) seenTrade(row kraken.TradeData) bool {
-	raw, exists := signal.lastTrade.Load(row.Symbol)
-
-	if !exists {
-		return false
-	}
-
-	previous := raw.(tradeCursor)
-
-	if row.Timestamp.Before(previous.at) {
-		return true
-	}
-
-	if row.Timestamp.After(previous.at) {
-		return false
-	}
-
-	_, seen := previous.ids[row.TradeID]
-
-	return seen
-}
-
-func (signal *Signal) commitTrade(row kraken.TradeData) {
-	previous := tradeCursor{}
-	raw, exists := signal.lastTrade.Load(row.Symbol)
-
-	if exists {
-		previous = raw.(tradeCursor)
-	}
-
-	if row.Timestamp.After(previous.at) {
-		previous = tradeCursor{at: row.Timestamp, ids: make(map[int64]struct{})}
-	}
-
-	if previous.ids == nil {
-		previous.ids = make(map[int64]struct{})
-	}
-
-	previous.ids[row.TradeID] = struct{}{}
-	signal.lastTrade.Store(row.Symbol, previous)
-}
-
-func (signal *Signal) bookAt(symbol string) (time.Time, bool) {
-	raw, exists := signal.lastBookAt.Load(symbol)
-
-	if !exists {
-		return time.Time{}, false
-	}
-
-	return raw.(time.Time), true
-}
-
-func (signal *Signal) bookRevision(symbol string) (uint64, bool) {
-	if signal.lastBookRevision == nil {
-		return 0, false
-	}
-
-	raw, exists := signal.lastBookRevision.Load(symbol)
-
-	if !exists {
-		return 0, false
-	}
-
-	revision, valid := raw.(uint64)
-
-	return revision, valid
-}
-
-func (signal *Signal) bookSnapshot(symbol string) bookSnapshot {
-	raw, exists := signal.lastBook.Load(symbol)
-
-	if !exists {
-		return bookSnapshot{}
-	}
-
-	return raw.(bookSnapshot)
-}
-
-func sameSnapshot(current, previous bookSnapshot) bool {
-	return sameLevels(current.bids, previous.bids) && sameLevels(current.asks, previous.asks)
-}
-
-func sameLevels(current, previous map[int64]flow.BookLevel) bool {
-	if len(current) != len(previous) {
-		return false
-	}
-
-	for ticks, level := range current {
-		prior, ok := previous[ticks]
-
-		if !ok || prior.Price != level.Price || prior.Quantity != level.Quantity {
-			return false
-		}
-	}
-
-	return true
-}
-
-func snapshotDelta(
-	current, previous map[int64]flow.BookLevel,
-) []flow.BookLevel {
-	levels := make([]flow.BookLevel, 0, len(current)+len(previous))
-
-	for _, level := range current {
-		levels = append(levels, level)
-	}
-
-	for ticks, level := range previous {
-		if _, exists := current[ticks]; exists {
-			continue
-		}
-
-		level.Quantity = 0
-		levels = append(levels, level)
-	}
-
-	return levels
-}
-
 /*
-frame converts a bookflow calculator output into one source×symbol row so both
-the book-driven and trade-driven observation paths emit the same metric set.
+frame converts a bookflow output into the shared Measurement shape.
 */
 func (signal *Signal) frame(
-	symbol string, at time.Time,
+	symbol string,
+	at time.Time,
 	output equation.BookflowOutput,
 	maturity float64,
-) []*types.Measurement {
+) *types.Measurement {
 	loaded := normalizedBookflowScore(types.MetricLoadedScore, output.LoadedScore)
 	spoof := normalizedBookflowScore(types.MetricSpoofScore, output.SpoofScore)
 	thin := normalizedBookflowScore(types.MetricThinScore, output.ThinScore)
@@ -635,7 +390,7 @@ func (signal *Signal) frame(
 
 	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
 
-	return []*types.Measurement{measurement}
+	return measurement
 }
 
 const maxBookImbalanceContrast = 2.0
@@ -673,7 +428,7 @@ Close releases the receiver's owned resources so shutdown does not leave
 active market-data producers.
 */
 func (signal *Signal) Close() error {
-	if signal.cancel != nil {
+	if signal != nil && signal.cancel != nil {
 		signal.cancel()
 	}
 

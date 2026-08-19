@@ -21,8 +21,12 @@ func TestMeasure(t *testing.T) {
 			Symbol: "BTC/USD", Type: "update", Timestamp: base,
 		}, types.Level3Receivers)
 
-		Convey("It should remain pending instead of classifying a zero price", func() {
-			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
+		Convey("It should emit an immature zero reading instead of going dark", func() {
+			measurements := slices.Collect(signal.Measure(market))
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].Source, ShouldEqual, types.SourceToxicity)
+			So(measurements[0].Maturity, ShouldEqual, 0)
+			So(measurements[0].Metrics, ShouldBeEmpty)
 		})
 
 		market.AppendLevel3(toxicityLevel3(
@@ -31,8 +35,8 @@ func TestMeasure(t *testing.T) {
 
 		Convey("It should classify once both book sides establish a real midpoint", func() {
 			measurements := slices.Collect(signal.Measure(market))
-			So(measurements, ShouldHaveLength, 1)
-			So(measurements[0].Sample(types.MetricMidpoint, types.SideNone).Raw,
+			So(measurements, ShouldHaveLength, 2)
+			So(measurements[1].Sample(types.MetricMidpoint, types.SideNone).Raw,
 				ShouldEqual, 100.5)
 		})
 	})

@@ -52,10 +52,11 @@ const particleFragmentShader = /* glsl */ `
 		float glow = smoothstep(0.5, 0.0, radius);
 		float core = smoothstep(0.3, 0.0, radius);
 
-		// Wave domain: oscillator phase angle color
-		vec3 waveColor = phaseColor(vPhase);
-
-		// Geometric domain: thermodynamic heat temperature
+		// Geometric domain: thermodynamic heat temperature. In the kernel the
+		// particle's heat is the entropic store Q (metabolic bank): it pays the
+		// coupling work W = metabolic_rate·A²·dt and is re-filled from the gas
+		// field temperature T = e_int/(ρ·c_v). The inner circle shows this
+		// particle identity alone — no wave contribution.
 		float heat = clamp(vHeat, 0.0, 1.0);
 		vec3 cold = vec3(0.1, 0.45, 0.9);
 		vec3 warm = vec3(1.0, 0.45, 0.08);
@@ -64,10 +65,14 @@ const particleFragmentShader = /* glsl */ `
 			? mix(cold, warm, heat * 2.0)
 			: mix(warm, hot, (heat - 0.5) * 2.0);
 
-		// Blend geometric thermal core with wave phase hue
-		vec3 color = mix(waveColor, thermoColor, 0.45);
+		// Wave domain: oscillator phase angle hue, confined to the outer ring
+		// so the coherence identity never contaminates the thermal core.
+		vec3 waveColor = phaseColor(vPhase);
 
-		// Outer resonance ring reflecting wave energy
+		// Inner circle = geometric heat only; outer ring = wave phase hue.
+		vec3 color = mix(waveColor, thermoColor, core);
+
+		// Outer resonance ring reflecting wave energy (A²)
 		float energyRing = smoothstep(0.48, 0.38, radius) *
 			smoothstep(0.28, 0.38, radius) * clamp(vEnergy, 0.0, 1.0);
 

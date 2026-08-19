@@ -244,6 +244,8 @@ func (planner *Planner) evaluateSymbol(
 	switch {
 	case decision.Direction <= 0 || decision.ThesisScore <= 0:
 		decision.Reason = "planner: contradiction outweighs support for the long-opportunity thesis"
+	case decision.Confidence < config.Planner.MinimumConfidence:
+		decision.Reason = "planner: thesis does not clear the minimum confidence floor"
 	case decision.ThesisScore < config.Planner.MinimumGraphScore:
 		decision.Reason = "planner: structural thesis does not clear the regulated evidence boundary"
 	case decision.GraphScore <= 0 ||

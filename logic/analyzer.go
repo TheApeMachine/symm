@@ -103,8 +103,6 @@ func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
 		group, ctx := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
-			solver := solver
-
 			group.Go(func() error {
 				select {
 				case <-ctx.Done():

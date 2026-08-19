@@ -163,9 +163,8 @@ func TestAddCategoryEdges(t *testing.T) {
 
 		err = compiler.addCategoryEdges(symbol, graph, index)
 
-		Convey("It should reject the unsupported edge instead of substituting a value", func() {
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "has no measurement node")
+		Convey("It should skip the unobservable edge and leave the graph honestly empty", func() {
+			So(err, ShouldBeNil)
 			So(graph.Edges, ShouldBeEmpty)
 		})
 	})

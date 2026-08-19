@@ -106,10 +106,10 @@ func TestMeasure(t *testing.T) {
 		})
 	})
 
-	Convey("Given a book advanced past this pass's cut", t, func() {
-		// A book whose touch is stamped in the future is beyond the pass cut, so
-		// CVD must not respond against that book. The flow conditions against the
-		// trade price instead — mirroring the queue-drain stop rule.
+	Convey("Given a book present on every pass", t, func() {
+		// CVD reads the resident book on each pass — it does not invent a
+		// wall-clock cut over the venue book. The response price is the book's
+		// own touch regardless of level timestamps.
 		future := seededBook()
 		future.Update(&spotbook.UpdateOptions{
 			Direction: spotbook.Bid, ID: "bid", Price: decimal.NewFromFloat64(99),
@@ -129,10 +129,10 @@ func TestMeasure(t *testing.T) {
 
 		measurements := slices.Collect(signal.Measure(market))
 
-		Convey("It should respond against the trade price, not the future book", func() {
+		Convey("It should respond against the book's own touch", func() {
 			So(measurements, ShouldHaveLength, 1)
 			So(measurements[0].Sample(types.MetricMidpoint, types.SideNone).Raw,
-				ShouldEqual, 100.5)
+				ShouldEqual, 100.0)
 		})
 	})
 }

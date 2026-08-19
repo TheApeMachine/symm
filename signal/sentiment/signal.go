@@ -114,9 +114,26 @@ func (signal *Signal) MeasureCohort(
 			return
 		}
 
+		tick := int64(0)
+
+		if len(ticks) > 0 {
+			tick = ticks[0]
+		}
+
 		peers, _, _ := signal.cohort()
 
 		if len(peers) == 0 {
+			// Dirty rows arrived but the cohort has no ready member yet. Emit
+			// an honest zero reading for each dirty symbol instead of going
+			// dark; the next pass classifies once a peer is ready.
+			for symbol := range changed {
+				if observation, found := signal.observation(symbol); found {
+					if !yield(immatureSentiment(symbol, observation, tick)) {
+						return
+					}
+				}
+			}
+
 			return
 		}
 
@@ -128,12 +145,6 @@ func (signal *Signal) MeasureCohort(
 				directionalReady = true
 				break
 			}
-		}
-
-		tick := int64(0)
-
-		if len(ticks) > 0 {
-			tick = ticks[0]
 		}
 
 		for _, peer := range peers {
@@ -232,6 +243,52 @@ func sentimentMeasurement(
 type sentimentPeer struct {
 	symbol      string
 	observation returnObservation
+}
+
+/*
+observation returns the retained return observation for a symbol, if any.
+*/
+func (signal *Signal) observation(symbol string) (returnObservation, bool) {
+	if signal.observations == nil {
+		return returnObservation{}, false
+	}
+
+	raw, found := signal.observations.Load(symbol)
+
+	if !found {
+		return returnObservation{}, false
+	}
+
+	return raw.(returnObservation), true
+}
+
+/*
+immatureSentiment is the honest zero reading for a dirty symbol whose cohort
+has no ready member yet. It carries the observed time and price without
+inventing breadth/leadership scores.
+*/
+func immatureSentiment(
+	symbol string,
+	observation returnObservation,
+	tick int64,
+) *types.Measurement {
+	return &types.Measurement{
+		ID:       uuid.NewString(),
+		Source:   types.SourceSentiment,
+		Symbol:   symbol,
+		Tick:     tick,
+		At:       observation.at,
+		Maturity: 0,
+		Metadata: map[string]float64{
+			"last_price": observation.price,
+		},
+		Metrics: map[string]types.MetricSample{
+			types.MetricKey(types.MetricLastPrice, types.SideNone): {
+				Raw:  observation.price,
+				Unit: types.UnitQuoteCurrency,
+			},
+		},
+	}
 }
 
 type sentimentSummary struct {

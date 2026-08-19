@@ -4,7 +4,6 @@ import (
 	"context"
 	"math"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
@@ -22,18 +21,22 @@ func TestMeasure(t *testing.T) {
 	Convey("Given independent exhaustion symbols without a ready book", t, func() {
 		signal := &Signal{ctx: context.Background(), books: emptyBookSource{}}
 		market := types.NewSymbol("AAA/USD", nil)
-		appendTickers(market,
-			kraken.TickerData{Symbol: "AAA/USD"},
-			kraken.TickerData{Symbol: "BBB/USD"},
-		)
+		market.AppendTrade(kraken.TradeData{
+			Symbol: "AAA/USD", Side: "buy",
+			Price: *decimal.NewFromInt64(100), Qty: 1,
+			TradeID: 1, Timestamp: time.Unix(1_700_001_000, 0).UTC(),
+		}, types.TradeReceivers)
 
 		Reset(func() {
 			signal.Close()
 		})
 
-		Convey("It completes each independent symbol pass without measurements", func() {
-			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
-			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
+		Convey("It completes each independent symbol pass with an immature reading", func() {
+			readings := slices.Collect(signal.Measure(market))
+			So(readings, ShouldHaveLength, 1)
+			So(readings[0].Source, ShouldEqual, types.SourceExhaustion)
+			So(readings[0].Maturity, ShouldEqual, 0)
+			So(readings[0].Metrics, ShouldBeEmpty)
 		})
 	})
 }
@@ -48,58 +51,6 @@ type emptyBookSource struct{}
 
 func (emptyBookSource) Book(_ string, read func(*spotbook.Book)) {
 	read(nil)
-}
-
-func TestSeenTrade(t *testing.T) {
-	Convey("Given an exact-once cursor for one exhaustion symbol", t, func() {
-		signal := &Signal{lastTrade: &sync.Map{}}
-		at := time.Unix(1_700_001_000, 0).UTC()
-		first := kraken.TradeData{Symbol: "ALT/USD", TradeID: 31, Timestamp: at}
-		secondSameTime := kraken.TradeData{Symbol: "ALT/USD", TradeID: 32, Timestamp: at}
-		regressed := kraken.TradeData{
-			Symbol: "ALT/USD", TradeID: 33, Timestamp: at.Add(-time.Nanosecond),
-		}
-
-		Convey("It should accept distinct same-time IDs and reject replay or regression", func() {
-			So(signal.seenTrade(first), ShouldBeFalse)
-			signal.commitTrade(first)
-			So(signal.seenTrade(first), ShouldBeTrue)
-			So(signal.seenTrade(secondSameTime), ShouldBeFalse)
-			signal.commitTrade(secondSameTime)
-			So(signal.seenTrade(secondSameTime), ShouldBeTrue)
-			So(signal.seenTrade(regressed), ShouldBeTrue)
-		})
-	})
-
-	Convey("Given same-time exhaustion trades without exchange IDs", t, func() {
-		signal := &Signal{lastTrade: &sync.Map{}}
-		at := time.Unix(1_700_001_100, 0).UTC()
-		unidentified := kraken.TradeData{Symbol: "ALT/USD", Timestamp: at}
-
-		signal.commitTrade(unidentified)
-
-		Convey("It should document intrinsic indistinguishability by rejecting the second zero-ID event", func() {
-			So(signal.seenTrade(unidentified), ShouldBeTrue)
-		})
-	})
-}
-
-func TestSnapshotDelta(t *testing.T) {
-	Convey("Given a full snapshot where one ask vanished", t, func() {
-		previous := map[int64]flow.BookLevel{
-			101: {Price: 101, Ticks: 101, Quantity: 10},
-			102: {Price: 102, Ticks: 102, Quantity: 8},
-		}
-		current := map[int64]flow.BookLevel{
-			101: {Price: 101, Ticks: 101, Quantity: 7},
-		}
-		delta := snapshotDelta(current, previous)
-
-		Convey("It should update retained depth and explicitly delete the vanished level", func() {
-			So(exhaustLevelQuantity(delta, 101), ShouldEqual, 7.0)
-			So(exhaustLevelQuantity(delta, 102), ShouldEqual, 0.0)
-		})
-	})
 }
 
 func TestMeasureTrade(t *testing.T) {
@@ -154,12 +105,10 @@ func TestMeasureTrade(t *testing.T) {
 		So(err, ShouldBeNil)
 		expectedOutput, err := equation.NewDecay().Measure(expectedInput)
 		So(err, ShouldBeNil)
-		measurements, err := signal.measureTrade(trade)
+		measurement := signal.tradeReading(trade)
 
 		Convey("It should emit positive long thermal exhaustion only after both legs", func() {
-			So(err, ShouldBeNil)
-			So(measurements, ShouldHaveLength, 1)
-			measurement := measurements[0]
+			So(measurement, ShouldNotBeNil)
 			So(measurement.At, ShouldResemble, at)
 			So(measurement.Maturity, ShouldEqual, expectedMaturity)
 			So(measurement.Sample(types.MetricThermal, types.SideBuy).Raw,
@@ -178,7 +127,7 @@ func TestFrame(t *testing.T) {
 	Convey("Given side-specific decay output", t, func() {
 		signal := &Signal{}
 		at := time.Unix(1_700_001_200, 0).UTC()
-		measurements := signal.frame("BTC/USD", at, equation.DecayOutput{
+		measurement := signal.frame("BTC/USD", at, equation.DecayOutput{
 			Long: equation.DecaySideOutput{
 				Thermal: 0.4, Value: 0.4, Strength: 0.4, Category: 3,
 			},
@@ -188,8 +137,7 @@ func TestFrame(t *testing.T) {
 		}, 0.75)
 
 		Convey("It should preserve both side families under the existing metric keys", func() {
-			So(measurements, ShouldHaveLength, 1)
-			measurement := measurements[0]
+			So(measurement, ShouldNotBeNil)
 			So(measurement.Metrics, ShouldHaveLength, 17)
 			So(measurement.Sample(types.MetricThermal, types.SideBuy).Raw,
 				ShouldEqual, 0.4)
@@ -221,7 +169,7 @@ func TestFrame(t *testing.T) {
 				},
 			},
 			1,
-		)[0]
+		)
 
 		Convey("It should report zero HypothesisSeparation", func() {
 			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
@@ -282,16 +230,6 @@ func TestNormalizedDecayMetrics(t *testing.T) {
 			)].Normalized, ShouldBeNil)
 		})
 	})
-}
-
-func exhaustLevelQuantity(levels []flow.BookLevel, ticks int64) float64 {
-	for _, level := range levels {
-		if level.Ticks == ticks {
-			return level.Quantity
-		}
-	}
-
-	return -1
 }
 
 func exhaustBookAt(

@@ -423,6 +423,8 @@ func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*Measurement] {
 	}
 
 	return func(yield func(*Measurement) bool) {
+		cut := time.Now().UTC()
+
 		for {
 			data, ok := measurements.(*lf.Queue[*Measurement]).Dequeue()
 
@@ -431,6 +433,14 @@ func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*Measurement] {
 			}
 
 			if !yield(data) {
+				return
+			}
+
+			// The streaming volume clock: stop once a record stamped past the
+			// drain cut is read. Whatever remains stays queued for the next
+			// pass; without this bound a decoupled producer can keep the
+			// cursor draining forever.
+			if data.At.After(cut) {
 				return
 			}
 		}

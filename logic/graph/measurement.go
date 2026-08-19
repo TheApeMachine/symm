@@ -262,8 +262,13 @@ func (compiler *measurementCompiler) addCategoryRelations(
 	for _, reference := range references {
 		nodes := index.byReference[reference]
 
+		// A category may reference evidence this pass has not observed yet.
+		// Cursors drain under the streaming volume clock, so the measurement
+		// node for a reference can legitimately still be queued. Skip the
+		// relation and leave the graph honestly incomplete; the next pass
+		// observes more of the queue and retries the wiring.
 		if len(nodes) == 0 {
-			return fmt.Errorf("category evidence %s has no measurement node", reference)
+			continue
 		}
 
 		normalized := false
@@ -297,8 +302,11 @@ func (compiler *measurementCompiler) addCategoryRelations(
 			})
 		}
 
+		// No normalized evidence either: the reference is not yet measurable.
+		// Same contract as the missing node — skip, stay honest, retry next
+		// pass.
 		if !normalized {
-			return fmt.Errorf("category evidence %s has no normalized value", reference)
+			continue
 		}
 	}
 

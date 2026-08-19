@@ -114,7 +114,17 @@ func (signal *Signal) measure(
 				continue
 			}
 
-			if !ready {
+			at := level3Time(level3)
+
+			if !ready || at.IsZero() {
+				// The classifier only speaks once the quality sampler has a
+				// complete frame. An immature frame is still an honest reading:
+				// zero maturity, no scores, distinguishable from a wholly absent
+				// pass — never a silent skip.
+				if !yield(immatureToxicity(level3.Symbol, at, tick)) {
+					return
+				}
+
 				continue
 			}
 
@@ -126,12 +136,6 @@ func (signal *Signal) measure(
 					"toxicity: failed to classify book quality",
 					err,
 				))
-				continue
-			}
-
-			at := level3Time(level3)
-
-			if at.IsZero() {
 				continue
 			}
 
@@ -181,6 +185,23 @@ func level3Time(level3 kraken.Level3Data) time.Time {
 	}
 
 	return at
+}
+
+/*
+immatureToxicity is the honest zero-reading for a dirty frame the quality
+sampler cannot yet classify. It carries the symbol and event time so the pass
+is observable without inventing scores.
+*/
+func immatureToxicity(symbol string, at time.Time, tick int64) *types.Measurement {
+	return &types.Measurement{
+		ID:       uuid.NewString(),
+		Source:   types.SourceToxicity,
+		Symbol:   symbol,
+		Tick:     tick,
+		At:       at,
+		Maturity: 0,
+		Metrics:  map[string]types.MetricSample{},
+	}
 }
 
 func toxicityMetrics(

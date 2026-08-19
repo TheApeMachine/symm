@@ -32,24 +32,23 @@ func (compiler *measurementCompiler) relateLeadLag(
 	localPrice, err := priceNode(measurement, graph)
 
 	if err != nil {
-		return err
+		// The measurement node this pass needs is still queued behind the
+		// streaming cursor. Skip the relation; the next pass retries with
+		// more of the queue observed.
+		return nil
 	}
 
 	peerPrice, err := peerPriceNode(measurement, graph)
 
 	if err != nil {
-		return err
+		return nil
 	}
 
 	supportKey := types.MetricKey(types.MetricSampleCount, types.SideNone)
 	support, supportFound := measurement.Metrics[supportKey]
 
 	if !supportFound {
-		return fmt.Errorf(
-			"lead-lag metric %s for %s required",
-			types.MetricSampleCount,
-			measurement.Symbol,
-		)
+		return nil
 	}
 
 	if support.Raw <= 0 {
@@ -161,33 +160,19 @@ func (compiler *measurementCompiler) addCorrelationRelations(
 	peerPrice *Node,
 	graph *Graph,
 ) error {
-	inefficient, err := normalizedMetric(measurement, types.MetricInefficient)
-
-	if err != nil {
-		return err
-	}
-
-	synchronized, err := normalizedMetric(measurement, types.MetricSync)
-
-	if err != nil {
-		return err
-	}
-
-	decoupled, err := normalizedMetric(measurement, types.MetricDecoupled)
-
-	if err != nil {
-		return err
-	}
-
-	direction, err := normalizedMetric(
+	// Each correlation family is independent evidence. A family that is not
+	// yet observed is skipped; observed families still wire this pass.
+	inefficient, inefficientErr := normalizedMetric(
+		measurement, types.MetricInefficient,
+	)
+	synchronized, _ := normalizedMetric(measurement, types.MetricSync)
+	decoupled, _ := normalizedMetric(measurement, types.MetricDecoupled)
+	direction, directionErr := normalizedMetric(
 		measurement, types.MetricSignedLagDirection,
 	)
 
-	if err != nil {
-		return err
-	}
-
-	if inefficient > 0 && math.Abs(direction) == 1 {
+	if inefficientErr == nil && inefficient > 0 &&
+		directionErr == nil && math.Abs(direction) == 1 {
 		leader := peerPrice
 		follower := localPrice
 
