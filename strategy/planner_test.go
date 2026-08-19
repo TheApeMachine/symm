@@ -62,7 +62,15 @@ func TestPlannerUpdate(t *testing.T) {
 			So(decision.Reason, ShouldBeEmpty)
 			So(decision.Trace, ShouldNotBeNil)
 			So(decision.Trace.Hypothesis, ShouldContainSubstring, "long_opportunity")
-			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 1)
+			So(decision.Trace.MCTS.Branches, ShouldHaveLength, 3)
+
+			actions := make([]string, 0, 3)
+
+			for _, branch := range decision.Trace.MCTS.Branches {
+				actions = append(actions, branch.Action)
+			}
+
+			So(actions, ShouldContain, "BTC/USD:enter")
 		})
 	})
 

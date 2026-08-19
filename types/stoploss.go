@@ -691,6 +691,44 @@ func (stoploss *Stoploss) ArmClock() {
 }
 
 /*
+TriggerStrategyExit arms the regulator's strategy exit cause: the planner's
+continuation value decided this lot stopped earning its slot. It refuses while
+the lot is already running out or when a profitable, locked floor is still
+protecting an advancing position, so a search result can never yank a healthy
+winner out ahead of its own trail.
+*/
+func (stoploss *Stoploss) TriggerStrategyExit() error {
+	if stoploss == nil {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"stoploss: strategy exit requires a stoploss",
+			nil,
+		)
+	}
+
+	if stoploss.Status == TRIGGERED {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"stoploss: already triggered",
+			nil,
+		)
+	}
+
+	if stoploss.Locked {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"stoploss: locked floor protects an advancing position",
+			nil,
+		)
+	}
+
+	stoploss.Status = TRIGGERED
+	stoploss.TriggerReason = TriggerContinuationEV
+	stoploss.TriggerMark = stoploss.Mark
+	return nil
+}
+
+/*
 Reconsider releases a still-red lot once the transition horizon that justified
 its entry has elapsed. The retained parameters are ignored for source compatibility:
 future return economics no longer receive a second, hidden vote over the observed

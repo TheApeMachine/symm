@@ -141,7 +141,7 @@ func decisionTrace(
 		}
 
 		branches = append(branches, types.DecisionMCTSBranch{
-			Action:     graphActionLabel(roots, branch.Action),
+			Action:     portfolioActionLabel(root, roots, branch.Action),
 			Visits:     branch.Visits,
 			MeanReward: meanReward,
 		})
@@ -169,9 +169,52 @@ func decisionTrace(
 		MCTS: types.DecisionMCTSTrace{
 			Iterations:        iterations,
 			Branches:          branches,
-			RecommendedAction: graphActionLabel(roots, recommended),
+			RecommendedAction: portfolioActionLabel(root, roots, recommended),
 			Tree:              root,
 		},
+	}
+}
+
+/*
+portfolioActionLabel names one branch action depending on what kind of tree
+produced it. Portfolio-tree actions address (symbol, intervention) pairs while
+single-symbol graph trees address graph roots, so both stay honest in the same
+trace contract.
+*/
+func portfolioActionLabel(
+	root *mcts.Node,
+	roots []string,
+	action float64,
+) string {
+	state, portfolio := root.State.(*PortfolioState)
+
+	if !portfolio {
+		return graphActionLabel(roots, action)
+	}
+
+	if action == portfolioDoneAction {
+		return "done"
+	}
+
+	index, intervened := decodePortfolioAction(action)
+
+	if index < 0 || index >= len(state.legs) {
+		return "done"
+	}
+
+	symbol := state.legs[index].Symbol
+
+	switch {
+	case action == portfolioEnterReference(index):
+		return symbol + ":enter"
+	case action == portfolioExitReference(index):
+		return symbol + ":exit"
+	case action == portfolioHoldReference(index):
+		return symbol + ":hold"
+	case !intervened:
+		return symbol + ":done"
+	default:
+		return fmt.Sprintf("%s:%g", symbol, action)
 	}
 }
 
@@ -183,6 +226,42 @@ func graphActionLabel(roots []string, action float64) string {
 	}
 
 	return fmt.Sprintf("root[%g]", action)
+}
+
+/*
+decisionTracePortfolio builds the observable trace for a held-lot exit decision
+produced by the portfolio search: just the branches that touched this symbol.
+*/
+func decisionTracePortfolio(root *mcts.Node, symbol string) *types.DecisionTrace {
+	branches := make([]types.DecisionMCTSBranch, 0, len(root.Children))
+
+	for _, branch := range root.Children {
+		label := portfolioActionLabel(root, nil, branch.Action)
+
+		if !strings.Contains(label, symbol+":") {
+			continue
+		}
+
+		meanReward := 0.0
+
+		if branch.Visits > 0 {
+			meanReward = branch.TotalReward / float64(branch.Visits)
+		}
+
+		branches = append(branches, types.DecisionMCTSBranch{
+			Action:     label,
+			Visits:     branch.Visits,
+			MeanReward: meanReward,
+		})
+	}
+
+	return &types.DecisionTrace{
+		Hypothesis: "held:" + symbol + ":continuation",
+		MCTS: types.DecisionMCTSTrace{
+			Branches: branches,
+			Tree:     root,
+		},
+	}
 }
 
 func isExcludedSymbol(symbol string) bool {

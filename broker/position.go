@@ -535,6 +535,26 @@ func (position *Position) Exit() (*Position, error) {
 }
 
 /*
+RequestStrategyExit asks the lot's own regulator to trigger a sell because the
+strategy's continuation value turned negative, instead of the planner bypassing
+the regulator with a raw market order. The trigger is the same seam every other
+exit cause uses; the position's ticker loop sees the armed stop trigger and
+places the sell through Exit.
+*/
+func (position *Position) RequestStrategyExit() error {
+	if position == nil || position.Holding == nil ||
+		position.Holding.Stoploss == nil {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"position: an armed holding is required for a strategy exit",
+			nil,
+		)
+	}
+
+	return position.Holding.Stoploss.TriggerStrategyExit()
+}
+
+/*
 Close marks the lot closed once Desk drops it from the open map.
 */
 func (position *Position) Close() (err error) {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -19,7 +18,6 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
-	"golang.org/x/sync/errgroup"
 )
 
 type Planner struct {
@@ -178,51 +176,14 @@ func (planner *Planner) readySymbols(thesis *types.Thesis) []*types.Symbol {
 	return ready
 }
 
-func (planner *Planner) evaluateSymbol(
-	symbolState *types.Symbol,
+func (planner *Planner) decisionFromGraph(
+	symbol string,
+	cloned *logicgraph.Graph,
 	config *system.Config,
+	searchRoot *mcts.Node,
+	recommended float64,
+	iterations int,
 ) (*types.Decision, error) {
-	symbol := symbolState.Symbol
-	stored, found := symbolState.Graphs.Load("market_graph")
-
-	if !found {
-		return nil, nil
-	}
-
-	graph, valid := stored.(*logicgraph.Graph)
-
-	if !valid || graph == nil {
-		return nil, nil
-	}
-
-	cloned := graph.Clone()
-
-	if cloned == nil || !cloned.ReadyForSearch() {
-		return nil, nil
-	}
-
-	state, stateErr := mcts.NewGraphState(cloned)
-
-	if stateErr != nil {
-		return nil, fmt.Errorf("planner: graph state for %s: %w", symbol, stateErr)
-	}
-
-	history := state.History()
-	mctsEngine := newMCTSEngine(config)
-
-	searchStarted := time.Now()
-	root, action, searchErr := mctsEngine.Search(
-		state, config.Planner.MCTSIterations, history,
-	)
-
-	if planner.ObserveModule != nil {
-		planner.ObserveModule("mcts", time.Since(searchStarted))
-	}
-
-	if searchErr != nil {
-		return nil, fmt.Errorf("planner: graph search for %s: %w", symbol, searchErr)
-	}
-
 	decision := types.NewDecision(types.ActionNothing, symbol)
 	decision.At = cloned.At
 	decision.Forecast = cloned.Forecast
@@ -255,23 +216,26 @@ func (planner *Planner) evaluateSymbol(
 	)
 	decision.Opportunity = decision.ReserveEligible
 	decision.Alternatives = make(map[string]float64)
-	decision.Trace = decisionTrace(
-		cloned,
-		root,
-		action,
-		config.Planner.MCTSIterations,
-	)
 
-	for _, branch := range root.Children {
-		if branch.Visits <= 0 {
-			continue
-		}
+	if searchRoot != nil {
+		decision.Trace = decisionTrace(
+			cloned,
+			searchRoot,
+			recommended,
+			iterations,
+		)
 
-		reward := branch.TotalReward / float64(branch.Visits)
-		decision.Alternatives[graphActionLabel(cloned.Roots(), branch.Action)] = reward
+		for _, branch := range searchRoot.Children {
+			if branch.Visits <= 0 {
+				continue
+			}
 
-		if branch.Action == action {
-			decision.GraphScore = reward
+			reward := branch.TotalReward / float64(branch.Visits)
+			decision.Alternatives[graphActionLabel(cloned.Roots(), branch.Action)] = reward
+
+			if branch.Action == recommended {
+				decision.GraphScore = reward
+			}
 		}
 	}
 
@@ -282,15 +246,9 @@ func (planner *Planner) evaluateSymbol(
 		decision.Reason = "planner: thesis does not clear the minimum confidence floor"
 	case decision.ThesisScore < config.Planner.MinimumGraphScore:
 		decision.Reason = "planner: structural thesis does not clear the regulated evidence boundary"
-	case decision.GraphScore <= 0 ||
-		decision.GraphScore < config.Planner.MinimumGraphScore:
-		decision.Reason = "planner: causal graph search did not retain a supportive evidence path"
 	case decision.OpportunityType == "":
 		decision.Reason = "planner: no qualified structural opportunity precursor identified"
 	default:
-		decision.Action = types.ActionEnter
-		decision.Cause = decision.OpportunityType
-
 		if !decision.PredictiveReady {
 			// Predictive coding enriches the observation space it is not a
 			// veto over the structural graph evidence. The strategy reasons
@@ -319,55 +277,159 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}()
 
 	readySymbols := planner.readySymbols(thesis)
+	heldLegs := planner.heldLegs(thesis)
 
-	if len(readySymbols) == 0 && !planner.hasCandidates() {
+	if len(readySymbols) == 0 && len(heldLegs) == 0 && !planner.hasCandidates() {
 		return nil
 	}
 
 	createdDecisions := make([]*types.Decision, 0, len(readySymbols))
+	choices := make(map[string]float64, len(readySymbols))
+	rejections := make([]struct {
+		symbol string
+		graph  *logicgraph.Graph
+	}, 0)
 
-	if len(readySymbols) > 0 {
-		var decisionMu sync.Mutex
-		parentCtx := planner.ctx
-
-		if parentCtx == nil {
-			parentCtx = context.Background()
-		}
-
-		group, ctx := errgroup.WithContext(parentCtx)
-
-		// One concurrent causal search per scheduler thread, not one per
-		// symbol: each search is a dense SVD-bound fit that allocates freely,
-		// and fanning hundreds of them out at once only forces them to fight
-		// over the same CPU via GC assist waits.
-		group.SetLimit(runtime.GOMAXPROCS(0))
+	if len(readySymbols) > 0 || len(heldLegs) > 0 {
+		legs := make([]portfolioLeg, 0, len(readySymbols)+len(heldLegs))
+		graphs := make(map[string]*logicgraph.Graph, len(readySymbols))
 
 		for _, symbolState := range readySymbols {
-			group.Go(func() error {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
+			stored, found := symbolState.Graphs.Load("market_graph")
 
-				decision, searchErr := planner.evaluateSymbol(symbolState, config)
+			if !found {
+				continue
+			}
 
-				if searchErr != nil {
-					return searchErr
-				}
+			graph, valid := stored.(*logicgraph.Graph)
 
-				if decision != nil {
-					decisionMu.Lock()
-					createdDecisions = append(createdDecisions, decision)
-					decisionMu.Unlock()
-				}
+			if !valid || graph == nil || !graph.ReadyForSearch() {
+				continue
+			}
 
-				return nil
+			summary := graph.OpportunitySummary()
+			cloned := graph.Clone()
+
+			if !summary.Ready || summary.Score <= 0 {
+				rejections = append(rejections, struct {
+					symbol string
+					graph  *logicgraph.Graph
+				}{symbolState.Symbol, cloned})
+				continue
+			}
+
+			graphs[symbolState.Symbol] = cloned
+			opportunityType := graphOpportunityType(cloned)
+			predictiveReady, _ := predictiveReadiness(cloned)
+			reserveEligible, _ := reserveQualification(
+				opportunityType,
+				predictiveReady,
+				cloned.ForecastHorizon,
+			)
+
+			legs = append(legs, portfolioLeg{
+				Symbol:          symbolState.Symbol,
+				Summary:         summary,
+				ReserveEligible: reserveEligible,
 			})
 		}
 
-		if err := group.Wait(); err != nil {
-			return err
+		// Held lots join the same search so the tree can retire one that has
+		// stopped earning its slot in favour of a stronger flat candidate.
+		legs = append(legs, heldLegs...)
+
+		// Without a desk the planner still evaluates the round; capacity must
+		// not collapse the search, so the leg count itself is the bound.
+		normalSlots := planner.normalSlots()
+
+		if planner.desk == nil {
+			normalSlots = len(legs)
+		}
+
+		reserveSlots := planner.reserveSlots()
+
+		searchRoot, searchErr := portfolioSearch(
+			NewPortfolioState(legs, normalSlots, reserveSlots),
+			config.Planner.MCTSIterations*max(1, len(legs)),
+		)
+
+		if searchErr != nil {
+			return searchErr
+		}
+
+		choices = planner.portfolioChoices(searchRoot, len(legs))
+
+		for index, leg := range legs {
+			if leg.Held {
+				if action := choices[leg.Symbol]; action == portfolioExitReference(index) {
+					decision := types.NewDecision(types.ActionExit, leg.Symbol)
+					decision.At = thesis.At
+					decision.Cause = "continuation value negative"
+					decision.Reason = "planner: MCTS retired the held lot to free its slot"
+					decision.GraphScore = -leg.Summary.Score
+					decision.Trace = decisionTracePortfolio(searchRoot, leg.Symbol)
+					createdDecisions = append(createdDecisions, decision)
+				}
+
+				continue
+			}
+
+			cloned := graphs[leg.Symbol]
+
+			if cloned == nil {
+				continue
+			}
+
+			decision, decisionErr := planner.decisionFromGraph(
+				leg.Symbol,
+				cloned,
+				config,
+				searchRoot,
+				choices[leg.Symbol],
+				config.Planner.MCTSIterations,
+			)
+
+			if decisionErr != nil {
+				return decisionErr
+			}
+
+			if decision == nil {
+				continue
+			}
+
+			if action := choices[leg.Symbol]; action == portfolioEnterReference(index) {
+				decision.Action = types.ActionEnter
+				decision.Cause = decision.OpportunityType
+			} else {
+				decision.Reason = "planner: MCTS did not select this candidate for the available slots"
+			}
+
+			createdDecisions = append(createdDecisions, decision)
+		}
+
+		// Contradicted or not-yet-ready graphs still owe the round an
+		// observable rejection instead of vanishing from the decision set.
+		for _, rejection := range rejections {
+			if rejection.graph == nil {
+				continue
+			}
+
+			decision, decisionErr := planner.decisionFromGraph(
+				rejection.symbol,
+				rejection.graph,
+				config,
+				nil,
+				0,
+				0,
+			)
+
+			if decisionErr != nil {
+				return decisionErr
+			}
+
+			if decision != nil {
+				createdDecisions = append(createdDecisions, decision)
+			}
 		}
 	}
 
@@ -384,7 +446,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	createdDecisions = planner.candidateCopies()
 
 	for _, decision := range freshDecisions {
-		if decision != nil && decision.Action == types.ActionNothing {
+		if decision != nil && decision.Action != types.ActionEnter {
 			createdDecisions = append(createdDecisions, decision)
 		}
 	}
@@ -471,18 +533,31 @@ func (planner *Planner) executeDecisions(
 	lastSearchEnd time.Time,
 ) error {
 	winners := make([]*types.Decision, 0, len(createdDecisions))
+	exits := make([]*types.Decision, 0, len(createdDecisions))
 
 	for _, decision := range createdDecisions {
-		if decision.Action != types.ActionEnter {
+		switch decision.Action {
+		case types.ActionEnter:
+			winners = append(winners, decision)
+		case types.ActionExit:
+			exits = append(exits, decision)
+		default:
 			planner.removeCandidate(decision.Symbol)
-			continue
 		}
-
-		winners = append(winners, decision)
 	}
 
 	if planner.desk == nil {
 		return nil
+	}
+
+	for _, decision := range exits {
+		if err := planner.desk.Execute(*decision); err != nil {
+			decision.Reason = "planner: exit is no longer executable: " + err.Error()
+
+			if !errnie.IsNotAcceptable(err) {
+				return fmt.Errorf("planner: execute exit %s: %w", decision.Symbol, err)
+			}
+		}
 	}
 
 	slices.SortFunc(winners, admissionOrder)
@@ -539,4 +614,149 @@ func newMCTSEngine(config *system.Config) *mcts.CausalMCTS {
 	}
 
 	return engine
+}
+
+/*
+heldLegs builds one portfolio leg per open desk position so the same search that
+admits new entries can decide which held lot has decayed past its slot.
+A lot without a fresh graph still participates with a neutral summary: the only
+question the search must answer for it is whether freeing the slot is worth it.
+*/
+func (planner *Planner) heldLegs(thesis *types.Thesis) []portfolioLeg {
+	if planner == nil || planner.desk == nil || thesis == nil {
+		return nil
+	}
+
+	held := make([]portfolioLeg, 0)
+
+	for position := range planner.desk.Positions() {
+		if position == nil || position.Decision.Symbol == "" {
+			continue
+		}
+
+		status := position.Status.Load()
+
+		if status != nil && *status == types.CLOSED {
+			continue
+		}
+
+		symbol := thesis.Symbol(position.Decision.Symbol)
+
+		if symbol == nil {
+			continue
+		}
+
+		summary := logicgraph.OpportunitySummary{}
+
+		if stored, found := symbol.Graphs.Load("market_graph"); found {
+			if graph, valid := stored.(*logicgraph.Graph); valid && graph != nil {
+				summary = graph.OpportunitySummary()
+			}
+		}
+
+		held = append(held, portfolioLeg{
+			Symbol:  position.Decision.Symbol,
+			Summary: summary,
+			Held:    true,
+		})
+	}
+
+	return held
+}
+
+/*
+normalSlots and reserveSlots expose the desk capacity the portfolio state
+consumes. A nil desk is treated as capacity-free so the planner's decision
+logic still evaluates under test without a broker.
+*/
+func (planner *Planner) normalSlots() int {
+	if planner == nil || planner.desk == nil {
+		return 0
+	}
+
+	return planner.desk.OpenSlots(false)
+}
+
+func (planner *Planner) reserveSlots() int {
+	if planner == nil || planner.desk == nil {
+		return 0
+	}
+
+	return planner.desk.OpenSlots(true) - planner.desk.OpenSlots(false)
+}
+
+/*
+portfolioChoices walks the principal variation and records the first genuine
+intervention selected for each leg. Later hold branches on the same variation
+are follow-on positions, not reversals of the entry choice, so the first enter
+or exit is the decision that owns the round.
+*/
+func (planner *Planner) portfolioChoices(
+	root *mcts.Node,
+	legCount int,
+) map[string]float64 {
+	choices := make(map[string]float64, legCount)
+	settled := make(map[string]bool, legCount)
+
+	for index := 0; index < legCount; index++ {
+		choices[portfolioSymbol(root, index)] = portfolioHoldReference(index)
+	}
+
+	current := root
+
+	for current != nil {
+		if index, intervened := decodePortfolioAction(current.Action); intervened {
+			symbol := portfolioSymbol(root, index)
+
+			if !settled[symbol] {
+				choices[symbol] = current.Action
+				settled[symbol] = true
+			}
+		}
+
+		if len(current.Children) == 0 {
+			break
+		}
+
+		current = mostVisitedPortfolioChild(current)
+	}
+
+	return choices
+}
+
+/*
+portfolioSymbol resolves one index back to its leg symbol by walking the root
+state's legs. The index is positional within this search round only.
+*/
+func portfolioSymbol(root *mcts.Node, index int) string {
+	if root == nil || root.State == nil {
+		return ""
+	}
+
+	state, supported := root.State.(*PortfolioState)
+
+	if !supported || index < 0 || index >= len(state.legs) {
+		return ""
+	}
+
+	return state.legs[index].Symbol
+}
+
+/*
+decodePortfolioAction splits a composite action into its leg index and whether
+it was a real enter/exit intervention (hold and done are structural, not held).
+*/
+func decodePortfolioAction(action float64) (int, bool) {
+	if action == portfolioDoneAction {
+		return 0, false
+	}
+
+	index := int(math.Floor((action - 1) / 3))
+	kind := math.Mod(action, 3)
+
+	if kind == 0 {
+		kind = 3
+	}
+
+	return index, kind == portfolioEnterOffset || kind == portfolioExitOffset
 }

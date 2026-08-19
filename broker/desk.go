@@ -610,11 +610,20 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			position,
 		)
 	case types.ActionExit:
-		err = errnie.Err(
+		for position := range desk.Positions() {
+			if position == nil || position.Decision.Symbol != decision.Symbol ||
+				position.status() == types.CLOSED {
+				continue
+			}
+
+			return errnie.Error(position.RequestStrategyExit())
+		}
+
+		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
-			"desk: strategy exits are disabled; only a triggered stoploss may submit a sell",
+			"desk: no open position matches the requested exit",
 			nil,
-		)
+		))
 	}
 
 	return errnie.Error(err)
