@@ -107,6 +107,42 @@ func TestMeasure(t *testing.T) {
 		})
 	})
 
+	Convey("Given a book advanced past this pass's cut", t, func() {
+		// A book whose levels are stamped in the future is beyond the pass cut.
+		// The ladder must not be measured from state that the decoupled producer
+		// has already advanced past the pass boundary, but the tape must still
+		// yield its measurement.
+		future := seededBook()
+		future.Update(&spotbook.UpdateOptions{
+			Direction: mgrBid(), ID: "bid", Price: decimal.NewFromFloat64(99),
+			Quantity: decimal.NewFromFloat64(40), Timestamp: time.Now().UTC().Add(time.Hour),
+			Silent: true,
+		})
+		future.Update(&spotbook.UpdateOptions{
+			Direction: mgrAsk(), ID: "ask", Price: decimal.NewFromFloat64(101),
+			Quantity: decimal.NewFromFloat64(10), Timestamp: time.Now().UTC().Add(time.Hour),
+			Silent: true,
+		})
+
+		signal := NewSignal(context.Background(), staticBookSource{book: future})
+		market := types.NewSymbol("BTC/USD", nil)
+		market.AppendTrade(pumpdumpTrade(3, "buy", 100, time.Now().UTC()), types.TradeReceivers)
+
+		measurements := slices.Collect(signal.Measure(market))
+
+		Convey("It should defer the book but still measure the tape", func() {
+			So(measurements, ShouldHaveLength, 1)
+			// The racked book is beyond the pass cut, so ladder geometry is not
+			// measured; only the trade tape answer is present.
+			_, ladderBidDepth := measurements[0].Metrics[
+				types.MetricKey(types.MetricLadderBidDepth, types.SideNone),
+			]
+			So(ladderBidDepth, ShouldBeFalse)
+			So(measurements[0].Sample(types.MetricTradePrice, types.SideNone).Raw,
+				ShouldEqual, 100.0)
+		})
+	})
+
 	Convey("Given a coiling ask side across passes", t, func() {
 		base := time.Unix(1_700_002_600, 0).UTC()
 		book := seededBook()
@@ -144,6 +180,42 @@ func TestMeasure(t *testing.T) {
 				ShouldBeGreaterThan, 0.0)
 		})
 	})
+
+	Convey("Given a live book and a dirty trade tape", t, func() {
+		reads := 0
+		signal := NewSignal(context.Background(), countingBookSource{
+			book: seededBook(), count: &reads,
+		})
+		market := types.NewSymbol("BTC/USD", nil)
+		market.AppendLevel3(kraken.Level3Data{
+			Symbol: "BTC/USD", Type: "update",
+			Timestamp: time.Unix(1_700_002_700, 0).UTC(),
+		}, types.Level3Receivers)
+		market.AppendTrade(
+			pumpdumpTrade(4, "buy", 100, time.Unix(1_700_002_701, 0).UTC()),
+			types.TradeReceivers,
+		)
+
+		measurements := slices.Collect(signal.Measure(market))
+
+		Convey("It should read the book exactly once per pass", func() {
+			// A second read re-enters Book.Get while the first callback still
+			// holds the manager read lock, deadlocking as soon as a level3
+			// writer queues for the write lock.
+			So(measurements, ShouldHaveLength, 1)
+			So(reads, ShouldEqual, 1)
+		})
+	})
+}
+
+type countingBookSource struct {
+	book  *spotbook.Book
+	count *int
+}
+
+func (source countingBookSource) Book(_ string, read func(*spotbook.Book)) {
+	*source.count++
+	read(source.book)
 }
 
 func pumpdumpTrade(

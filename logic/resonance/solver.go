@@ -9,8 +9,10 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -178,6 +180,8 @@ func (solver *Solver) Update(
 
 	midpoint := midpointOrLast(features)
 
+	standardized := solver.standardize(symbolName, features)
+
 	hasReference := false
 
 	if prior, found := solver.references.Load(symbolName); found {
@@ -186,7 +190,7 @@ func (solver *Solver) Update(
 	}
 
 	out, err := coder.Step(learning.PredictiveInput{
-		Features:     features,
+		Features:     standardized,
 		Reference:    midpoint,
 		HasReference: hasReference,
 		Step:         symbol.Tick,
@@ -207,18 +211,10 @@ func (solver *Solver) Update(
 
 	solver.publishReturns(symbol, symbolName, coder, out)
 
-	utils.Publish(solver.ui, datura.NewMap("resonance", datura.NewMap(
-		"source", types.SourceResonance,
-		"symbol", symbolName,
-		"at", at,
-		"latent", out.Readout,
-		"energy", out.Energy,
-		"surprise", out.Surprise,
-		"score", out.Score,
-		"direction", out.Direction,
-		"confidence", out.Confidence,
-		"calibrated", out.Calibrated,
-	)))
+	utils.Publish(solver.ui, datura.NewMap(
+		"resonance",
+		solver.resonanceWire(symbolName, at, coder, out),
+	))
 
 	return nil
 }
@@ -241,6 +237,55 @@ func midpointOrLast(features []float64) float64 {
 	}
 
 	return 0
+}
+
+/*
+standardize z-scores one symbol's feature row per feature, using Welford
+moments retained on the standardizers map. Raw ticker fields span wildly
+different magnitudes (price vs quantity vs percentage), so the manifold is fed
+adaptive z-scores rather than heterogeneous magnitudes; the target reference
+stays in raw price so delayed resolution remains wall-clock honest.
+*/
+func (solver *Solver) standardize(
+	symbolName string,
+	features []float64,
+) []float64 {
+	if len(features) == 0 {
+		return features
+	}
+
+	loaded, _ := solver.standardizers.LoadOrStore(
+		symbolName,
+		make([]*adaptive.Standardizer, len(features)),
+	)
+	standardizers, valid := loaded.([]*adaptive.Standardizer)
+
+	if !valid || len(standardizers) != len(features) {
+		// A symbol whose feature width shifts cannot reuse the scored schema;
+		// build a fresh one so the coder's own width validation reports the
+		// mismatch instead of an index panic.
+		standardizers = make([]*adaptive.Standardizer, len(features))
+		solver.standardizers.Store(symbolName, standardizers)
+	}
+
+	standardized := make([]float64, len(features))
+
+	for index, value := range features {
+		if standardizers[index] == nil {
+			standardizers[index] = adaptive.NewStandardizer()
+		}
+
+		score, err := standardizers[index].Measure(value)
+
+		if err != nil {
+			standardized[index] = 0
+			continue
+		}
+
+		standardized[index] = score.Value
+	}
+
+	return standardized
 }
 
 /*
@@ -305,6 +350,180 @@ func (solver *Solver) publishReturns(
 			StableCall:    call,
 		},
 	)
+}
+
+/*
+resonanceWire assembles the full per-symbol resonance frame the dashboard
+predictive-coding panel renders. It mirrors the frontend ResonanceFrame schema:
+the per-layer state/prediction vectors from the manifold's wire snapshot, the
+supervised return head's forward curve and posterior, and the physical dynamics
+frame as named scalars.
+*/
+func (solver *Solver) resonanceWire(
+	symbolName string,
+	at time.Time,
+	coder *learning.PredictiveCoder,
+	out learning.PredictiveOutput,
+) datura.Map[any] {
+	manifold := coder.Manifold()
+	layers, surprise, energy := manifold.WireSnapshot()
+
+	wireLayers := make([]datura.Map[any], 0, len(layers))
+
+	for _, layer := range layers {
+		wireLayers = append(wireLayers, datura.NewMap(
+			"state", layer.State,
+			"prediction", layer.Prediction,
+			"errorNorm", layer.ErrorNorm,
+			"temporal", layer.Temporal,
+		))
+	}
+
+	skill, skillReady := manifold.TaskSkill()
+	precision, precisionReady := manifold.TaskPrecision()
+
+	forecast := datura.NewMap(
+		"forwardCurve", out.ForwardCurve,
+		"forwardRetention", out.ForwardRetention,
+		"supportedHorizon", out.SupportedHorizon,
+		"probeHorizon", out.SupportedHorizon,
+	)
+
+	if horizon := max(1, out.SupportedHorizon); horizon > 0 {
+		rollouts, err := manifold.RolloutTaskForecast(horizon)
+
+		if err == nil && len(rollouts) > 0 {
+			posterior := make([]datura.Map[any], 0, len(rollouts))
+
+			for _, roll := range rollouts {
+				posterior = append(posterior, datura.NewMap(
+					"Value", roll.Value,
+					"Scale", roll.Scale,
+					"DegreesOfFreedom", roll.DegreesOfFreedom,
+					"Ready", roll.Ready,
+				))
+			}
+
+			forecast["posterior"] = posterior
+		}
+	}
+
+	call := 0.0
+
+	if len(out.ForwardCurve) > 0 {
+		first := out.ForwardCurve[0]
+
+		if first > 0 {
+			call = 1
+		} else if first < 0 {
+			call = -1
+		}
+	}
+
+	resolved := 0.0
+
+	if out.LastResolution != nil {
+		resolved = out.LastResolution.Target
+	}
+
+	lastError := 0.0
+
+	if out.LastResolution != nil {
+		lastError = out.LastResolution.Error
+	}
+
+	calibration := "calibrating"
+
+	if out.Calibrated {
+		calibration = "calibrated"
+	}
+
+	skillStatus := "calibrating"
+
+	if skillReady {
+		switch {
+		case skill > 1:
+			skillStatus = "above baseline"
+		case skill == 1:
+			skillStatus = "baseline"
+		case skill >= 0.5:
+			skillStatus = "baseline"
+		default:
+			skillStatus = "below baseline"
+		}
+	}
+
+	return datura.NewMap(
+		"source", string(types.SourceResonance),
+		"symbol", symbolName,
+		"at", at,
+		"samples", out.ResolvedSteps,
+		"taskRelativePrecision", precision,
+		"taskRelativePrecisionReady", precisionReady,
+		"taskCalibration", calibration,
+		"taskSkill", skill,
+		"taskSkillReady", skillReady,
+		"taskSkillStatus", skillStatus,
+		"lastResolvedForecast", resolved,
+		"lastRealizedReturn", resolved,
+		"lastForecastError", lastError,
+		"observables", out.Readout,
+		"latent", manifold.LatentState(),
+		"embedding", manifold.LatentState(),
+		"layers", wireLayers,
+		"energy", energy,
+		"surprise", surprise,
+		"forecast", forecast,
+		"dynamics", dynamicsWire(out.Dynamics),
+		"verdict", datura.NewMap(
+			"learning", "observing",
+			"tuning", "recursive least squares",
+			"learningHealth", precision,
+			"tuningHealth", precision,
+			"direction", call,
+			"conviction", out.Confidence,
+		),
+	)
+}
+
+/*
+dynamicsWire extracts the physical predictive dynamics frame into named scalars
+matching the frontend ResonanceDynamics schema.
+*/
+func dynamicsWire(dynamics nomagique.Frame) datura.Map[any] {
+	wire := datura.NewMap()
+
+	fields := []struct {
+		wireName string
+		symbol   nomagique.Symbol
+	}{
+		{"ready", learning.SymbolDynamicsReady},
+		{"deltaTime", learning.SymbolDynamicsDeltaTime},
+		{"position", learning.SymbolDynamicsPosition},
+		{"velocity", learning.SymbolDynamicsVelocity},
+		{"acceleration", learning.SymbolDynamicsAcceleration},
+		{"memory", learning.SymbolDynamicsMemory},
+		{"memoryScale", learning.SymbolDynamicsMemoryScale},
+		{"storedEnergy", learning.SymbolDynamicsStoredEnergy},
+		{"suppliedPower", learning.SymbolDynamicsSuppliedPower},
+		{"dissipation", learning.SymbolDynamicsDissipation},
+		{"passivityResidue", learning.SymbolDynamicsPassivityResidue},
+		{"continuousVariance", learning.SymbolDynamicsContinuousVariance},
+		{"jumpAmplitude", learning.SymbolDynamicsJumpAmplitude},
+		{"jumpVariance", learning.SymbolDynamicsJumpVariance},
+		{"sampleCount", learning.SymbolDynamicsSampleCount},
+		{"rotorScalar", learning.SymbolDynamicsRotorScalar},
+		{"rotorBivector", learning.SymbolDynamicsRotorBivector},
+		{"equivarianceNorm", learning.SymbolDynamicsEquivarianceNorm},
+	}
+
+	for _, field := range fields {
+		if value, found := dynamics.Get(field.symbol); found {
+			wire[field.wireName] = value
+		}
+	}
+
+	return wire
 }
 
 /*

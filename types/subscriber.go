@@ -23,8 +23,23 @@ func NewSubscription[T any]() *Subscription[T] {
 }
 
 /*
-Send publishes one message onto the subscription channel.
+Send publishes one message onto the subscription channel. When the channel is
+already full the oldest message is drained first so one slow consumer cannot
+block the market-data fan-out; the freshest observation always reaches the
+buffer. Every consumer was already expected to tolerate coalesced frames.
 */
 func (subscription *Subscription[T]) Send(message T) {
-	subscription.Channel <- message
+	select {
+	case subscription.Channel <- message:
+	default:
+		select {
+		case <-subscription.Channel:
+		default:
+		}
+
+		select {
+		case subscription.Channel <- message:
+		default:
+		}
+	}
 }

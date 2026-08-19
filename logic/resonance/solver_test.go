@@ -143,6 +143,16 @@ func TestUpdate(t *testing.T) {
 					Latent   []float64 `json:"latent"`
 					Energy   *float64  `json:"energy"`
 					Surprise *float64  `json:"surprise"`
+					Layers   []struct {
+						State      []float64 `json:"state"`
+						Prediction []float64 `json:"prediction"`
+					} `json:"layers"`
+					Forecast struct {
+						ForwardCurve []float64 `json:"forwardCurve"`
+					} `json:"forecast"`
+					Verdict struct {
+						Direction float64 `json:"direction"`
+					} `json:"verdict"`
 				} `json:"resonance"`
 			}
 			So(json.Unmarshal(payload, &frame), ShouldBeNil)
@@ -152,6 +162,7 @@ func TestUpdate(t *testing.T) {
 			So(frame.Resonance.Latent, ShouldNotBeEmpty)
 			So(frame.Resonance.Energy, ShouldNotBeNil)
 			So(frame.Resonance.Surprise, ShouldNotBeNil)
+			So(frame.Resonance.Layers, ShouldNotBeEmpty)
 		})
 
 		Convey("It should publish the manifold and dynamics onto the symbol", func() {

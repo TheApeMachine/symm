@@ -227,6 +227,8 @@ export type DiagnosticsFrame = {
 	started_ns?: number;
 	stages?: ClockSnapshot[];
 	hops?: HopSnapshot[];
+	errors?: ErrorSnapshot[];
+	pass?: PassStatus;
 };
 
 export type ClockSnapshot = {
@@ -246,6 +248,20 @@ export type HopSnapshot = {
 	total_ns: number;
 	last_ns: number;
 	max_ns?: number;
+};
+
+export type ErrorSnapshot = {
+	source: string;
+	message: string;
+	caller?: string;
+	at_ns?: number;
+};
+
+export type PassStatus = {
+	state: "idle" | "running" | "blocked";
+	in_flight_ns?: number;
+	last_pass_ns?: number;
+	since_last_ns?: number;
 };
 
 /*

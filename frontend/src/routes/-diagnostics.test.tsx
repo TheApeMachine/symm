@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import { DiagnosticsSurface } from "#/routes/diagnostics";
 
 describe("DiagnosticsSurface", () => {
-	it("renders sequencer labels before the first snapshot", () => {
+	it("renders the wiring map labels before any frame arrives", () => {
 		const markup = renderToStaticMarkup(<DiagnosticsSurface />);
 
 		expect(markup).toContain("System diagnostics");
-		expect(markup).toContain("Stage map");
-		expect(markup).toContain("Stall log");
-		expect(markup).toContain("No lane snapshot yet");
+		expect(markup).toContain("Wiring map");
+		expect(markup).toContain("Ingress");
+		expect(markup).toContain("execution");
+		expect(markup).toContain("wire latency");
 	});
 });

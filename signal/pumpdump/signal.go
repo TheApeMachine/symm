@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -35,10 +34,30 @@ It always produces: a dirty pass yields one measurement carrying whatever the
 ladder and the tape currently support, with maturity reporting the weakest
 support count.
 */
+/*
+BookSource is the narrow dependency pumpdump needs from the venue: the ability
+to read the resident book for one symbol. It is an interface so tests can inject
+a deterministic book (or nil, to exercise the empty-book guard) instead of a live
+websocket API.
+*/
+type BookSource interface {
+	Book(symbol string, read func(*spotbook.Book))
+}
+
+/*
+Signal classifies pumping vs dumping from quote-ladder ignition and trade-tape
+pullback, not from ticker aggregates. It never classifies and never judges
+honesty — spoof detection belongs to the toxicity perspective, and the pump or
+dump verdict is downstream logic combining both.
+
+It always produces: a dirty pass yields one measurement carrying whatever the
+ladder and the tape currently support, with maturity reporting the weakest
+support count.
+*/
 type Signal struct {
 	ctx                context.Context
 	cancel             context.CancelFunc
-	api                *websocket.API
+	api                BookSource
 	ladders            *nomagique.KeyedStreams[string]
 	ignitions          *nomagique.KeyedStreams[string]
 	anchors            *nomagique.KeyedStreams[string]
@@ -56,7 +75,7 @@ NewSignal creates ignition state with its own quote history.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	api BookSource,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -110,17 +129,52 @@ func (signal *Signal) Measure(
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
+		// One wall-clock cut anchors the whole pass. Reading the book beyond
+		// this cut would let a decoupled producer keep advancing the manager
+		// while this pass reads it — the book equivalent of endless queue
+		// draining. So the book is only measured when its latest accepted
+		// frame is at-or-before the pass cut; a frame stamped later belongs to
+		// the next pass.
+		passCut := time.Now().UTC()
+
 		at := signal.drainLevel3(symbol)
 
-		signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
-			snapshot := bookSnapshot{
-				ready:      true,
-				bid:        book.BestBid().Price.Float64(),
-				ask:        book.BestAsk().Price.Float64(),
-				bidDepth:   book.BestBid().Quantity.Float64(),
-				askDepth:   book.BestAsk().Quantity.Float64(),
-				spread:     book.Spread().Float64(),
-				observedAt: book.BestAsk().Timestamp,
+		// Produce the measurement body from a possibly-absent book. When the
+		// venue source is nil, or the book has advanced past this pass's cut
+		// (deferred to the next pass), the snapshot is empty — but a dirty pass
+		// still yields one measurement from the trade tape, because the pump/dump
+		// contract is about the tape, not book availability.
+		read := func(book *spotbook.Book) {
+			snapshot := bookSnapshot{}
+
+			// Prefer the symbol's authoritative book high-water mark; fall back
+			// to the managed book's own level timestamps when the queue path
+			// is not populated (live mode fills the manager directly).
+			_, acceptedAt := symbol.BookRevision()
+			bookAt := acceptedAt
+
+			if bookAt.IsZero() && book != nil {
+				bookAt = managedBookObservedAt(book)
+			}
+
+			bookLive := book != nil && !bookAt.IsZero() && !bookAt.After(passCut)
+
+			if bookLive {
+				if bestBid := book.BestBid(); bestBid != nil {
+					snapshot.bid = bestBid.Price.Float64()
+					snapshot.bidDepth = bestBid.Quantity.Float64()
+				}
+
+				if bestAsk := book.BestAsk(); bestAsk != nil {
+					snapshot.ask = bestAsk.Price.Float64()
+					snapshot.askDepth = bestAsk.Quantity.Float64()
+				}
+
+				if snapshot.bid > 0 && snapshot.ask > snapshot.bid {
+					snapshot.ready = true
+					snapshot.observedAt = bookAt
+					snapshot.spread = book.Spread().Float64()
+				}
 			}
 
 			metrics := map[string]types.MetricSample{}
@@ -164,7 +218,14 @@ func (signal *Signal) Measure(
 				Maturity: maturity,
 				Metrics:  metrics,
 			})
-		})
+		}
+
+		if signal.api == nil {
+			read(nil)
+			return
+		}
+
+		signal.api.Book(symbol.Symbol, read)
 	}
 }
 
@@ -381,18 +442,30 @@ func (signal *Signal) measureTape(
 	var latest nomagique.Frame
 	haveOutput := false
 
+	// The book touch was captured once by the outer pass read. Re-reading it
+	// here would re-enter Book.Get while that outer callback still holds the
+	// manager's read lock — a guaranteed deadlock as soon as the live level3
+	// writer queues for the write lock (Go blocks new readers while a writer
+	// waits).
+	bid, ask := snapshot.bid, snapshot.ask
+
 	for trade := range symbol.MarketTrades(types.SourcePumpDump) {
-		var bid, ask float64
+		// An executed print is always observable, even without a live book
+		// touch, so the tape metrics are written before the ignition step.
+		metrics[types.MetricKey(types.MetricTradePrice, types.SideNone)] = types.MetricSample{
+			Raw: trade.Price.Float64(), Unit: types.UnitQuoteCurrency,
+		}
+		metrics[types.MetricKey(types.MetricTradeQuantity, types.SideNone)] = types.MetricSample{
+			Raw: trade.Qty, Unit: types.UnitBaseCurrency,
+		}
 
-		signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
-			if bestBid := book.BestBid(); bestBid != nil && bestBid.Price != nil {
-				bid = bestBid.Price.Float64()
-			}
-
-			if bestAsk := book.BestAsk(); bestAsk != nil && bestAsk.Price != nil {
-				ask = bestAsk.Price.Float64()
-			}
-		})
+		// Without a live book touch (deferred past the pass cut, empty, or no
+		// venue source), the print has no book response and the ignition
+		// cannot enrich it, so the step is skipped rather than fed a fabricated
+		// bid/ask pair.
+		if !snapshot.ready {
+			continue
+		}
 
 		input := nomagique.Frame{}
 		input.Put(algo.SymbolCapacity, signal.capacity)
@@ -417,12 +490,6 @@ func (signal *Signal) measureTape(
 
 		latest = output
 		haveOutput = true
-		metrics[types.MetricKey(types.MetricTradePrice, types.SideNone)] = types.MetricSample{
-			Raw: trade.Price.Float64(), Unit: types.UnitQuoteCurrency,
-		}
-		metrics[types.MetricKey(types.MetricTradeQuantity, types.SideNone)] = types.MetricSample{
-			Raw: trade.Qty, Unit: types.UnitBaseCurrency,
-		}
 	}
 
 	if !haveOutput {
@@ -526,6 +593,34 @@ type bookSnapshot struct {
 
 func (snapshot bookSnapshot) depths() ladderDepths {
 	return ladderDepths{bid: snapshot.bidDepth, ask: snapshot.askDepth}
+}
+
+/*
+managedBookObservedAt derives the book's event-time high-water mark from its own
+levels. This is the fallback when the symbol's level3 queue path is not
+populated (live mode fills the managed book directly); the authoritative
+BookRevision() high-water is preferred when present.
+*/
+func managedBookObservedAt(managed *spotbook.Book) time.Time {
+	observedAt := time.Time{}
+
+	if managed == nil {
+		return observedAt
+	}
+
+	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
+		if bid.Timestamp.After(observedAt) {
+			observedAt = bid.Timestamp
+		}
+	}
+
+	for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
+		if ask.Timestamp.After(observedAt) {
+			observedAt = ask.Timestamp
+		}
+	}
+
+	return observedAt
 }
 
 func (snapshot bookSnapshot) putMetrics(metrics map[string]types.MetricSample) {

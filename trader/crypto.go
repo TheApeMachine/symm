@@ -34,6 +34,7 @@ type Crypto struct {
 	cancel        context.CancelFunc
 	api           *websocket.API
 	ui            chan []byte
+	manifold      chan types.FluidFrame
 	thesis        *types.Thesis
 	recorder      *audit.Recorder
 	analyzer      *logic.Analyzer
@@ -41,6 +42,7 @@ type Crypto struct {
 	desk          *broker.Desk
 	subscriptions map[string]*types.Subscription[any]
 	measurements  *Measurements
+	diagnostics   *Diagnostics
 }
 
 /*
@@ -50,6 +52,7 @@ func NewCrypto(
 	ctx context.Context,
 	api *websocket.API,
 	ui chan []byte,
+	manifold chan types.FluidFrame,
 	recorder *audit.Recorder,
 	desk *broker.Desk,
 	analyzer *logic.Analyzer,
@@ -63,11 +66,15 @@ func NewCrypto(
 		cancel:   cancel,
 		api:      api,
 		ui:       ui,
+		manifold: manifold,
 		thesis:   thesis,
 		recorder: recorder,
 		analyzer: analyzer,
 		planner:  planner,
 		desk:     desk,
+		diagnostics: &Diagnostics{
+			started: time.Now(),
+		},
 		subscriptions: map[string]*types.Subscription[any]{
 			"ticker": api.Subscribe(
 				"ticker", types.NewSubscription[any](),
@@ -83,6 +90,7 @@ func NewCrypto(
 	}
 
 	crypto.status.Store(types.READY)
+	crypto.bindDiagnostics()
 	crypto.run()
 
 	return crypto, nil
@@ -164,10 +172,6 @@ func (crypto *Crypto) run() {
 				utils.Publish(crypto.ui, datura.NewMap(
 					"tick", datura.NewMap("count", thesis.Tick),
 				))
-
-				if crypto.planner != nil {
-					crypto.planner.Enqueue(thesis)
-				}
 			}
 		}
 	}()

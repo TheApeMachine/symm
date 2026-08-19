@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
@@ -42,6 +43,12 @@ type Analyzer struct {
 	ui           chan []byte
 	binui        chan types.FluidFrame
 	recorder     *audit.Recorder
+
+	// ObserveModule / ObserveHop are optional diagnostics hooks. When set, the
+	// analyzer reports each solver's work time and the wait between solver
+	// groups so the wiring diagram can render per-system profiling and latency.
+	ObserveModule func(string, time.Duration)
+	ObserveHop    func(string, string, time.Duration)
 }
 
 /*
@@ -83,10 +90,21 @@ func NewAnalyzer(
 }
 
 func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
-	for _, solvers := range analyzer.solverGroups {
+	previousGroupEnd := time.Now()
+
+	for groupIndex, solvers := range analyzer.solverGroups {
+		groupStarted := time.Now()
+
+		if analyzer.ObserveHop != nil && groupIndex > 0 && len(solvers) > 0 {
+			previous := analyzer.solverGroups[groupIndex-1][0].Name()
+			analyzer.ObserveHop(previous, solvers[0].Name(), groupStarted.Sub(previousGroupEnd))
+		}
+
 		group, ctx := errgroup.WithContext(analyzer.ctx)
 
 		for _, solver := range solvers {
+			solver := solver
+
 			group.Go(func() error {
 				select {
 				case <-ctx.Done():
@@ -94,7 +112,14 @@ func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
 				default:
 				}
 
-				return solver.Update(thesis)
+				solverStarted := time.Now()
+				err := solver.Update(thesis)
+
+				if analyzer.ObserveModule != nil {
+					analyzer.ObserveModule(solver.Name(), time.Since(solverStarted))
+				}
+
+				return err
 			})
 		}
 
@@ -105,6 +130,8 @@ func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
 				err,
 			))
 		}
+
+		previousGroupEnd = time.Now()
 	}
 
 	return nil

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/equation"
@@ -13,9 +14,35 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+type staticBookSource struct {
+	book *spotbook.Book
+}
+
+func (source staticBookSource) Book(_ string, read func(*spotbook.Book)) {
+	read(source.book)
+}
+
+// seededBook returns a 99.99/100.01 touch so the observed midpoint is 100.0.
+func seededBook() *spotbook.Book {
+	book := spotbook.New()
+
+	book.Update(&spotbook.UpdateOptions{
+		Direction: spotbook.Bid, ID: "bid", Price: decimal.NewFromFloat64(99.99),
+		Quantity: decimal.NewFromInt64(40), Timestamp: time.Unix(1, 0).UTC(),
+		Silent: true,
+	})
+	book.Update(&spotbook.UpdateOptions{
+		Direction: spotbook.Ask, ID: "ask", Price: decimal.NewFromFloat64(100.01),
+		Quantity: decimal.NewFromInt64(10), Timestamp: time.Unix(1, 0).UTC(),
+		Silent: true,
+	})
+
+	return book
+}
+
 func TestMeasure(t *testing.T) {
 	Convey("Given CVD trade observations on one symbol", t, func() {
-		signal := NewSignal(context.Background(), nil)
+		signal := NewSignal(context.Background(), staticBookSource{book: seededBook()})
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Unix(1_700_003_200, 0).UTC()
 		market.AppendTicker(cvdTicker(99.99, 100.01, at), types.TickerReceivers)
@@ -42,7 +69,7 @@ func TestMeasure(t *testing.T) {
 	})
 
 	Convey("Given alternating executions around a constant midpoint", t, func() {
-		signal := NewSignal(context.Background(), nil)
+		signal := NewSignal(context.Background(), staticBookSource{book: seededBook()})
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Unix(1_700_003_300, 0).UTC()
 		market.AppendTicker(cvdTicker(99.99, 100.01, at), types.TickerReceivers)
@@ -76,6 +103,36 @@ func TestMeasure(t *testing.T) {
 				So(measurement.Maturity,
 					ShouldBeLessThanOrEqualTo, float64(index+1)/flowHistoryCapacity)
 			}
+		})
+	})
+
+	Convey("Given a book advanced past this pass's cut", t, func() {
+		// A book whose touch is stamped in the future is beyond the pass cut, so
+		// CVD must not respond against that book. The flow conditions against the
+		// trade price instead — mirroring the queue-drain stop rule.
+		future := seededBook()
+		future.Update(&spotbook.UpdateOptions{
+			Direction: spotbook.Bid, ID: "bid", Price: decimal.NewFromFloat64(99),
+			Quantity: decimal.NewFromInt64(40), Timestamp: time.Now().UTC().Add(time.Hour),
+			Silent: true,
+		})
+		future.Update(&spotbook.UpdateOptions{
+			Direction: spotbook.Ask, ID: "ask", Price: decimal.NewFromFloat64(101),
+			Quantity: decimal.NewFromInt64(10), Timestamp: time.Now().UTC().Add(time.Hour),
+			Silent: true,
+		})
+
+		signal := NewSignal(context.Background(), staticBookSource{book: future})
+		market := types.NewSymbol("BTC/USD", nil)
+		at := time.Now().UTC()
+		market.AppendTrade(cvdTrade(9, "buy", 100.5, at), types.TradeReceivers)
+
+		measurements := slices.Collect(signal.Measure(market))
+
+		Convey("It should respond against the trade price, not the future book", func() {
+			So(measurements, ShouldHaveLength, 1)
+			So(measurements[0].Sample(types.MetricMidpoint, types.SideNone).Raw,
+				ShouldEqual, 100.5)
 		})
 	})
 }

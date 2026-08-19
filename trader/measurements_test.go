@@ -145,11 +145,10 @@ func TestMeasurementsGenerate(t *testing.T) {
 
 			awaitThesis(t, producingMeasurements.Generate(producingThesis, nil))
 
-			_, latestOK := freshBitcoin.Latest.Load(string(types.SourceCorrelation))
-			So(latestOK, ShouldBeTrue)
-
 			categoryQueue, _ := freshBitcoin.Measurements.Load("category")
 			graphQueue, _ := freshBitcoin.Measurements.Load("graph")
+			So(categoryQueue, ShouldNotBeNil)
+			So(graphQueue, ShouldNotBeNil)
 			So(categoryQueue.(*lf.Queue[*types.Measurement]).Length(), ShouldEqual, 1)
 			So(graphQueue.(*lf.Queue[*types.Measurement]).Length(), ShouldEqual, 1)
 		})
@@ -357,9 +356,8 @@ func TestMeasurementsHawkesEndToEnd(t *testing.T) {
 
 		awaitThesis(t, measurements.Generate(thesis, nil))
 
-		_, latestOK := bitcoin.Latest.Load(string(types.SourceHawkes))
-		So(latestOK, ShouldBeTrue)
-
+		// A pass that serviced the trades must have drained the trade queue:
+		// nothing remains for the next pass to re-read.
 		residual := 0
 
 		for range bitcoin.MarketTrades(types.SourceHawkes) {

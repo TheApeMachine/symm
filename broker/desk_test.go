@@ -39,11 +39,11 @@ func TestDeskExecute(t *testing.T) {
 		decision.PredictiveReady = false
 		decision.PredictiveStatus = "task skill is still calibrating"
 
-		Convey("It should reject the order at the final atomic boundary", func() {
+		Convey("It should not veto the entry on predictive readiness alone", func() {
 			err := desk.Execute(decision)
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "predictive coder")
-			So(desk.OpenPositions(), ShouldEqual, 0)
+
+			So(err, ShouldBeNil)
+			So(desk.OpenPositions(), ShouldEqual, 1)
 		})
 	})
 

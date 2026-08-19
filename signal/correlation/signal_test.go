@@ -86,7 +86,7 @@ func TestFrame(t *testing.T) {
 		ticker := correlationTicker("AAA/USD", 100, at)
 
 		measurement := signal.frame(
-			ticker, equation.FeatureFrame{}, equation.CohortOutput{}, false,
+			ticker, 100, equation.FeatureFrame{}, equation.CohortOutput{}, false,
 		)
 
 		Convey("It should carry the complete immature metric set", func() {

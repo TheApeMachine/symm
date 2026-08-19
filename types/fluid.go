@@ -8,6 +8,11 @@ const (
 	FluidFieldsChannel    = "fluid-fields"
 	FluidParticlesChannel = "fluid-particles"
 	FluidPhaseChannel     = "fluid-phase"
+
+	// DiagnosticsChannel carries the replaceable diagnostics snapshot. It rides
+	// the same WebRTC transport as the fluid channels so the diagram can be
+	// opened without the orchestrating websocket bus in front of the data.
+	DiagnosticsChannel = "diagnostics"
 )
 
 /*

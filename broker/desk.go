@@ -423,14 +423,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		if !decision.PredictiveReady {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"desk: predictive coder has not authorized this entry",
-				nil,
-			))
-		}
-
 		found, loaded := desk.positions.Load(decision.Symbol)
 
 		if loaded {

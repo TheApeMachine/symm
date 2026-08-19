@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
@@ -309,6 +310,7 @@ func BootWithHub(
 		ctx,
 		api,
 		uiChannel,
+		manifoldChannel,
 		recorder,
 		desk,
 		analyzer,
@@ -369,5 +371,28 @@ func BootWithHub(
 	system.Crypto = crypto
 	system.Regulator = regulatorSolver
 
+	attachDiagnosticsErrorBridge(system.Hub, crypto)
+
 	return system
+}
+
+/*
+diagnosticsBridgeOnce ensures the error bridge is attached to the global logger
+only once per process, even though Boot may run many times in the test suite.
+The bridge feeds subsystem-attributed errors into the diagnostics WebRTC frame.
+*/
+var diagnosticsBridgeOnce sync.Once
+
+func attachDiagnosticsErrorBridge(hub *ui.Hub, crypto *trader.Crypto) {
+	if hub == nil || crypto == nil {
+		return
+	}
+
+	diagnosticsBridgeOnce.Do(func() {
+		errnie.AttachWriter(ui.NewErrorBridge(
+			hub,
+			nil,
+			crypto.ObserveDiagnosticError,
+		))
+	})
 }

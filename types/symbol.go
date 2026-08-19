@@ -314,7 +314,7 @@ func (symbol *Symbol) MarketTickers(source SourceType) iter.Seq[kraken.TickerDat
 	}
 
 	return func(yield func(kraken.TickerData) bool) {
-		cut := time.Now()
+		cut := time.Now().UTC()
 
 		var (
 			data kraken.TickerData
@@ -353,7 +353,7 @@ func (symbol *Symbol) MarketTrades(source SourceType) iter.Seq[kraken.TradeData]
 	}
 
 	return func(yield func(kraken.TradeData) bool) {
-		cut := time.Now()
+		cut := time.Now().UTC()
 
 		var (
 			data kraken.TradeData
@@ -393,7 +393,7 @@ func (symbol *Symbol) MarketLevel3(source SourceType) iter.Seq[kraken.Level3Data
 	}
 
 	return func(yield func(kraken.Level3Data) bool) {
-		cut := time.Now()
+		cut := time.Now().UTC()
 
 		for {
 			data, ok := queue.(*lf.Queue[kraken.Level3Data]).Dequeue()
@@ -423,18 +423,15 @@ func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*Measurement] {
 	}
 
 	return func(yield func(*Measurement) bool) {
-		var (
-			data *Measurement
-			ok   bool = true
-		)
+		for {
+			data, ok := measurements.(*lf.Queue[*Measurement]).Dequeue()
 
-		for ok {
-			data, ok = measurements.(*lf.Queue[*Measurement]).Dequeue()
+			if !ok {
+				return
+			}
 
-			if ok {
-				if !yield(data) {
-					return
-				}
+			if !yield(data) {
+				return
 			}
 		}
 	}

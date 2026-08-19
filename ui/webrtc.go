@@ -242,7 +242,8 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 
 	if label != types.FluidFieldsChannel &&
 		label != types.FluidParticlesChannel &&
-		label != types.FluidPhaseChannel {
+		label != types.FluidPhaseChannel &&
+		label != types.DiagnosticsChannel {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
 			"webrtc: unsupported fluid data channel "+label,

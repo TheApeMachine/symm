@@ -274,6 +274,9 @@ func (graph *Graph) Roots() []string {
 		return nil
 	}
 
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
 	relevant := graph.relevantNodes()
 	incoming := make(map[string]bool)
 
@@ -377,14 +380,9 @@ func (graph *Graph) ReadyForSearch() bool {
 		return false
 	}
 
-	graph.mu.RLock()
-	defer graph.mu.RUnlock()
-
-	if graph.DecisionTarget == "" ||
-		graph.Nodes[graph.DecisionTarget] == nil {
-		return false
-	}
-
+	// OpportunitySummary and Roots each take their own read lock, so no field
+	// is read here outside a lock. Reading graph.Nodes/DecisionTarget directly
+	// would race the analyzer's Update and fatally corrupt the map.
 	summary := graph.OpportunitySummary()
 	return summary.Ready && len(graph.Roots()) > 0
 }
@@ -453,7 +451,15 @@ second time in the thesis balance.
 func (graph *Graph) OpportunitySummary() OpportunitySummary {
 	summary := OpportunitySummary{}
 
-	if graph == nil || graph.DecisionTarget == "" ||
+	if graph == nil {
+		return summary
+	}
+
+	graph.mu.RLock()
+	defer graph.mu.RUnlock()
+
+	if graph.DecisionTarget == "" ||
+		graph.Nodes == nil ||
 		graph.Nodes[graph.DecisionTarget] == nil {
 		return summary
 	}
@@ -554,9 +560,9 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			"market_graph",
 			NewGraph(thesis.At),
 		)
-		graph, valid := storedGraph.(*Graph)
+		current, valid := storedGraph.(*Graph)
 
-		if !valid || graph == nil {
+		if !valid || current == nil {
 			graphErr = errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: invalid lifecycle graph for "+symbolName,
@@ -565,6 +571,13 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			return false
 		}
 
+		// Build this pass into an isolated clone and publish it only when
+		// complete. Readers (the planner's ReadyForSearch/OpportunitySummary/
+		// Roots) can therefore never observe a half-built graph, and no map is
+		// ever read while it is being written — the fatal concurrent map
+		// read-and-write cannot happen. The published graph is never mutated
+		// again; the next pass clones it.
+		graph := current.Clone()
 		graph.At = thesis.At
 		lifecycleEmpty := len(graph.Nodes) == 0
 		measurementIndex, err := solver.measurements.addNodes(
@@ -657,6 +670,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 			))
 			return false
 		}
+
+		symbol.Graphs.Store("market_graph", graph)
 
 		if symbolName == types.Focus() {
 			utils.Publish(solver.ui, datura.NewMap("graph", graph))
@@ -799,9 +814,11 @@ func (solver *Solver) extractResonanceNodes(
 
 	if forecastFound && forecastOK && returnForecast.Distribution.Ready {
 		graphForecast := returnForecast.Distribution
+		graph.mu.Lock()
 		graph.Forecast = &graphForecast
 		graph.ForecastHorizon = max(0, returnForecast.Horizon)
 		graph.ForwardCurve = nil
+		graph.mu.Unlock()
 
 		if returnForecast.Call != 0 {
 			confidence := directionPosteriorConfidence(
@@ -841,7 +858,9 @@ func (solver *Solver) extractResonanceNodes(
 		return
 	}
 
+	graph.mu.Lock()
 	graph.TaskSkill, graph.TaskSkillReady = coder.TaskSkill()
+	graph.mu.Unlock()
 	layers, surprise, _ := coder.WireSnapshot()
 
 	if len(layers) == 0 || math.IsNaN(surprise) || math.IsInf(surprise, 0) {
@@ -1450,7 +1469,9 @@ func (solver *Solver) connectLongOpportunity(
 	}
 
 	target := fmt.Sprintf("hyp:%s:long_opportunity", symbol.Symbol)
+	graph.mu.Lock()
 	graph.DecisionTarget = target
+	graph.mu.Unlock()
 	graph.AddNode(&Node{
 		ID:         target,
 		Symbol:     symbol.Symbol,

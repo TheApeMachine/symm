@@ -36,6 +36,19 @@ type Measurements struct {
 	cancel  context.CancelFunc
 	signals []types.Signal
 	ui      chan []byte
+
+	// ObserveModule is an optional diagnostics hook reported for each signal's
+	// total measurement time so the wiring diagram can profile the signal chain.
+	ObserveModule func(string, time.Duration)
+	// ObserveHop is an optional diagnostics hook reported at the boundary where
+	// the measurement chain hands off to the analyzer.
+	ObserveHop func(string, string, time.Duration)
+	// ObservePassStart / ObservePassEnd / ObserveIdleCheck report the pass
+	// lifecycle so the diagram can distinguish a gated-idle measurement engine
+	// from one that is blocked inside a signal or analyzer pass.
+	ObservePassStart func(time.Time)
+	ObservePassEnd   func(time.Time, time.Duration)
+	ObserveIdleCheck func(time.Time)
 }
 
 func NewMeasurements(
@@ -91,11 +104,20 @@ func (measurements *Measurements) Generate(
 			}
 
 			if !thesis.AnyPending() {
+				if measurements.ObserveIdleCheck != nil {
+					measurements.ObserveIdleCheck(time.Now())
+				}
+
 				time.Sleep(idleRest)
 				continue
 			}
 
 			thesis.Tick++
+			passStarted := time.Now()
+
+			if measurements.ObservePassStart != nil {
+				measurements.ObservePassStart(passStarted)
+			}
 
 			group, ctx := errgroup.WithContext(measurements.ctx)
 			focus := types.Focus()
@@ -119,6 +141,8 @@ func (measurements *Measurements) Generate(
 					}
 
 					for _, signal := range measurements.signals {
+						signalStarted := time.Now()
+
 						for measurement := range signal.Measure(symbol) {
 							measurement.Tick = thesis.Tick
 							symbol.AppendMeasurement(measurement)
@@ -128,6 +152,10 @@ func (measurements *Measurements) Generate(
 								out = append(out, measurement)
 								outMu.Unlock()
 							}
+						}
+
+						if measurements.ObserveModule != nil {
+							measurements.ObserveModule(signal.Name(), time.Since(signalStarted))
 						}
 					}
 
@@ -147,12 +175,20 @@ func (measurements *Measurements) Generate(
 
 			thesis.At = time.Now()
 
+			if measurements.ObserveHop != nil {
+				measurements.ObserveHop("measurements", "category", time.Since(passStarted))
+			}
+
 			if len(out) > 0 {
 				utils.Publish(measurements.ui, datura.NewMap("measurements", out))
 			}
 
 			if analyzer != nil {
 				errnie.Error(analyzer.Process(thesis))
+			}
+
+			if measurements.ObservePassEnd != nil {
+				measurements.ObservePassEnd(time.Now(), time.Since(passStarted))
 			}
 
 			select {

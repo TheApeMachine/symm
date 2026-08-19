@@ -69,10 +69,19 @@ func (signal *Signal) Measure(
 ) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
 		for ticker := range symbol.MarketTickers(types.SourceCorrelation) {
+			// The cohort sampler needs the observed traded price to build
+			// per-symbol return history; Change is a signed delta, not a
+			// price, and fails the positive-price validation.
+			price := ticker.Last.Float64()
+
+			if price <= 0 {
+				continue
+			}
+
 			output, ready, err := signal.algo.Measure(algorithm.CohortSampleInput{
 				Symbol: ticker.Symbol,
 				At:     ticker.Timestamp,
-				Price:  ticker.Change.Float64(),
+				Price:  price,
 			})
 
 			if err != nil {
@@ -85,13 +94,17 @@ func (signal *Signal) Measure(
 				return
 			}
 
-			// Readiness is maturity, never suppression: every observed ticker
-			// emits the classifier's current evidence, immature zeroes
-			// included. An incomplete schema or ineligible classification is
-			// the equation's zero output, not a missing measurement.
-			outcome, _ := signal.classifier.Measure(output)
+			// The classifier only speaks once the cohort sampler has a complete
+			// peer window; before that the schema is genuinely incomplete and a
+			// zero-eligibility outcome is the correct representation, not an
+			// error to log per tick.
+			outcome := equation.CohortOutput{}
 
-			if !yield(signal.frame(ticker, output, outcome, ready)) {
+			if ready {
+				outcome, _ = signal.classifier.Measure(output)
+			}
+
+			if !yield(signal.frame(ticker, price, output, outcome, ready)) {
 				return
 			}
 		}
@@ -105,6 +118,7 @@ from a classified one without either going dark.
 */
 func (signal *Signal) frame(
 	ticker kraken.TickerData,
+	price float64,
 	batch equation.FeatureFrame,
 	outcome equation.CohortOutput,
 	ready bool,
@@ -162,7 +176,7 @@ func (signal *Signal) frame(
 		At:       ticker.Timestamp,
 		Maturity: maturity,
 		Metadata: map[string]float64{
-			"price":    ticker.Change.Float64(),
+			"price":    price,
 			"energy":   outcome.Energy,
 			"category": float64(outcome.Category),
 		},

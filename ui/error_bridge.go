@@ -24,17 +24,26 @@ gaps never open the overlay.
 type ErrorBridge struct {
 	messages chan<- []byte
 	ready    func() bool
-	mu       sync.Mutex
-	lastKey  string
-	lastAt   time.Time
+	// onError receives each distinct error as (source, message, caller) so the
+	// diagnostics WebRTC frame can surface subsystem-attributed errors. Nil
+	// keeps the bridge limited to the websocket overlay.
+	onError func(source string, message string, caller string)
+	mu      sync.Mutex
+	lastKey string
+	lastAt  time.Time
 }
 
 /*
 NewErrorBridge constructs a phuslu Writer that publishes compact error frames
 on hub.Messages. Nil hub or Messages yields a no-op writer. ready may be nil
-(always open) or gate publishes until the boot stage allows them.
+(always open) or gate publishes until the boot stage allows them. onError, when
+non-nil, is invoked once per distinct error with a subsystem-attributed source.
 */
-func NewErrorBridge(hub *Hub, ready func() bool) log.Writer {
+func NewErrorBridge(
+	hub *Hub,
+	ready func() bool,
+	onError func(source string, message string, caller string),
+) log.Writer {
 	if hub == nil || hub.Messages == nil {
 		return log.WriterFunc(func(*log.Entry) (int, error) {
 			return 0, nil
@@ -44,6 +53,7 @@ func NewErrorBridge(hub *Hub, ready func() bool) log.Writer {
 	return log.IOWriter{Writer: &ErrorBridge{
 		messages: hub.Messages,
 		ready:    ready,
+		onError:  onError,
 	}}
 }
 
@@ -76,6 +86,14 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 
 	if bridge.duplicate(fingerprint) {
 		return len(payload), nil
+	}
+
+	if bridge.onError != nil {
+		bridge.onError(
+			attributedErrorSource(fields),
+			errorMessage(fields),
+			callerField(fields),
+		)
 	}
 
 	select {
@@ -137,6 +155,32 @@ func errorFingerprint(fields map[string]any) string {
 		strings.TrimSpace(caller),
 		errorMessage(fields),
 	}, "|")
+}
+
+/*
+callerField returns the raw phuslu caller string, if present.
+*/
+func callerField(fields map[string]any) string {
+	caller, _ := fields["caller"].(string)
+
+	return strings.TrimSpace(caller)
+}
+
+/*
+attributedErrorSource maps a phuslu caller package to the coarsest diagnostics
+section the wiring diagram draws. Individual nodes share packages, so attribution
+is honest at the section level rather than guessing a specific solver.
+*/
+func attributedErrorSource(fields map[string]any) string {
+	caller := callerField(fields)
+
+	for _, packageName := range []string{"/broker/", "/signal/", "/logic/", "/strategy/", "/trader/"} {
+		if strings.Contains(caller, packageName) {
+			return strings.Trim(packageName, "/")
+		}
+	}
+
+	return "system"
 }
 
 func (bridge *ErrorBridge) duplicate(fingerprint string) bool {

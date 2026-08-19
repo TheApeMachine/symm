@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"time"
 
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -12,9 +13,17 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+BookSource is the narrow dependency CVD needs from the venue: read the resident
+book for one symbol. It is an interface so tests can inject a deterministic book
+instead of a live websocket API.
+*/
+type BookSource interface {
+	Book(symbol string, read func(*spotbook.Book))
+}
 
 /*
 Signal is the Absorption perspective, measuring signed aggressor flow against
@@ -24,7 +33,7 @@ only.
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	api    *websocket.API
+	api    BookSource
 	algo   *algorithm.TradeFlowSample
 	flow   *equation.Flow
 }
@@ -35,7 +44,7 @@ symbol so one market's aggressor history cannot leak into another's evidence.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	api BookSource,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -72,22 +81,48 @@ func (signal *Signal) Measure(
 	_ ...int64,
 ) iter.Seq[*types.Measurement] {
 	return func(yield func(*types.Measurement) bool) {
+		// One wall-clock cut anchors the pass. A book advanced past this cut by
+		// the decoupled producer is deferred, so this pass conditions its flow
+		// against book state that was actually live at the pass boundary.
+		passCut := time.Now().UTC()
+
 		for trade := range symbol.MarketTrades(types.SourceCVD) {
 			var responsePrice float64
 
-			signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
-				// Get the response price from the book's best bid and ask.
-				bestBid := book.BestBid()
-				bestAsk := book.BestAsk()
+			responsePrice = trade.Price.Float64()
 
-				if bestBid != nil && bestAsk != nil {
-					responsePrice = bestBid.Price.Add(
-						bestAsk.Price,
-					).Div(
-						decimal.NewFromInt64(2),
-					).Float64()
-				}
-			})
+			if signal.api != nil {
+				signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
+					if book == nil {
+						return
+					}
+
+					// Only accept book state that has not advanced past this
+					// pass's cut.
+					_, acceptedAt := symbol.BookRevision()
+					bookAt := acceptedAt
+
+					if bookAt.IsZero() {
+						bookAt = managedBookObservedAt(book)
+					}
+
+					if bookAt.IsZero() || bookAt.After(passCut) {
+						return
+					}
+
+					// Get the response price from the book's best bid and ask.
+					bestBid := book.BestBid()
+					bestAsk := book.BestAsk()
+
+					if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
+						responsePrice = bestBid.Price.Add(
+							bestAsk.Price,
+						).Div(
+							decimal.NewFromInt64(2),
+						).Float64()
+					}
+				})
+			}
 
 			input, _, err := signal.algo.Measure(algorithm.TradeFlowInput{
 				Symbol:        symbol.Symbol,
@@ -224,4 +259,32 @@ func (signal *Signal) Close() error {
 	}
 
 	return nil
+}
+
+/*
+managedBookObservedAt derives the book's event-time high-water mark from its own
+levels. This is the fallback when the symbol's level3 queue path is not
+populated (live mode fills the managed book directly); BookRevision() is
+preferred when present.
+*/
+func managedBookObservedAt(managed *spotbook.Book) time.Time {
+	observedAt := time.Time{}
+
+	if managed == nil {
+		return observedAt
+	}
+
+	for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
+		if bid.Timestamp.After(observedAt) {
+			observedAt = bid.Timestamp
+		}
+	}
+
+	for ask := managed.Asks.Low; ask != nil; ask = ask.Higher {
+		if ask.Timestamp.After(observedAt) {
+			observedAt = ask.Timestamp
+		}
+	}
+
+	return observedAt
 }

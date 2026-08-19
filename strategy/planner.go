@@ -30,7 +30,7 @@ type Planner struct {
 	mctsEngine *mcts.CausalMCTS
 	allocation *Allocation
 	desk       *broker.Desk
-	theses     chan *types.Thesis
+	thesis     *types.Thesis
 
 	candidateMu sync.Mutex
 	candidates  map[string]*types.Decision
@@ -58,12 +58,11 @@ func NewPlanner(
 		mctsEngine: newMCTSEngine(system.Cfg.Snapshot()),
 		allocation: NewAllocation(ctx, desk),
 		desk:       desk,
-		theses:     make(chan *types.Thesis, 1),
+		thesis:     thesis,
 		candidates: make(map[string]*types.Decision),
 	}
 
-	go planner.loop()
-
+	go planner.run()
 	return planner
 }
 
@@ -92,52 +91,25 @@ func (planner *Planner) Close() error {
 	return nil
 }
 
-func (planner *Planner) Enqueue(thesis *types.Thesis) {
-	if planner == nil || thesis == nil {
-		return
-	}
-
-	select {
-	case planner.theses <- thesis:
-	default:
-		select {
-		case <-planner.theses:
-		default:
-		}
-
-		select {
-		case planner.theses <- thesis:
-		default:
-		}
-	}
-}
-
-func (planner *Planner) loop() {
+func (planner *Planner) run() {
 	for {
 		select {
 		case <-planner.ctx.Done():
 			return
-		case thesis, ok := <-planner.theses:
-			if !ok {
-				return
-			}
+		default:
+		}
 
-			if err := planner.Update(thesis); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Internal,
-					"planner: background update failed",
-					err,
-				))
-			}
+		if err := planner.Update(planner.thesis); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"planner: background update failed",
+				err,
+			))
 		}
 	}
 }
 
 func (planner *Planner) readySymbols(thesis *types.Thesis) []*types.Symbol {
-	if thesis == nil || thesis.Symbols == nil {
-		return nil
-	}
-
 	ready := make([]*types.Symbol, 0)
 
 	thesis.Symbols.Range(func(key, value any) bool {
