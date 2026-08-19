@@ -2,274 +2,40 @@ package depthflow
 
 import (
 	"context"
-	"math"
-	"slices"
 	"testing"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/algorithm/book/flow"
-	"github.com/theapemachine/nomagique/equation"
+
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
-func TestMeasure(t *testing.T) {
-	Convey("Given independent depth-flow symbols without a ready book", t, func() {
-		signal := &Signal{ctx: context.Background(), books: emptyBookSource{}}
-		market := types.NewSymbol("AAA/USD", nil)
+func TestDepthFlowNumber(t *testing.T) {
+	Convey("Given trades on one symbol", t, func() {
+		thesis := types.NewThesis(context.Background(), nil)
+		market := thesis.Symbol("AAA/USD")
+
 		market.AppendTrade(kraken.TradeData{
 			Symbol: "AAA/USD", Side: "buy",
 			Price: *decimal.NewFromInt64(100), Qty: 1,
 			TradeID: 1, Timestamp: time.Unix(1_700_001_000, 0).UTC(),
 		})
 
-		Reset(func() {
-			signal.Close()
-		})
+		signal := NewSignal(context.Background(), thesis)
+		defer signal.Close()
 
-		Convey("It completes each independent symbol pass with an immature reading", func() {
-			err := signal.Measure(market)
-			So(err, ShouldBeNil)
-			readings := slices.Collect(market.MarketMeasurements("category"))
-			So(readings, ShouldHaveLength, 1)
-			So(readings[0].Source, ShouldEqual, types.SourceDepthFlow)
-			So(readings[0].Maturity, ShouldEqual, 0)
-			So(readings[0].Metrics, ShouldBeEmpty)
-		})
-	})
-}
+		Convey("It should emit a depth deviation reading", func() {
+			measurements := []*nmtypes.Measurement{}
 
-type emptyBookSource struct{}
-
-func (emptyBookSource) Book(_ string, read func(*spotbook.Book)) {
-	read(nil)
-}
-
-func TestMeasureTrade(t *testing.T) {
-	Convey("Given a multi-leg book baseline before aligned aggressive flow", t, func() {
-		sample, err := flow.NewSample(8)
-		So(err, ShouldBeNil)
-		expectedSample, err := flow.NewSample(8)
-		So(err, ShouldBeNil)
-		signal := &Signal{
-			sample:   sample,
-			bookflow: equation.NewBookflow(),
-		}
-
-		for range 3 {
-			_, _, _, err = sample.MeasureBook(depthflowBookInput(10, 10))
-			So(err, ShouldBeNil)
-			_, _, _, err = expectedSample.MeasureBook(depthflowBookInput(10, 10))
-			So(err, ShouldBeNil)
-		}
-
-		_, _, _, err = sample.MeasureBook(depthflowBookInput(20, 8))
-		So(err, ShouldBeNil)
-		_, _, _, err = expectedSample.MeasureBook(depthflowBookInput(20, 8))
-		So(err, ShouldBeNil)
-
-		at := time.Unix(1_700_000_200, 0).UTC()
-		trade := kraken.TradeData{
-			Symbol: "BTC/USD", Side: "buy", Price: *decimal.NewFromInt64(100),
-			Qty: 5, TradeID: 21, Timestamp: at,
-		}
-		expectedInput, _, expectedMaturity, err := expectedSample.MeasureTrade(
-			flow.TradeInput{
-				Symbol: trade.Symbol, Price: 100, Quantity: trade.Qty,
-				Side: flow.TradeBuy, At: trade.Timestamp,
-			},
-		)
-		So(err, ShouldBeNil)
-		expectedOutput, err := equation.NewBookflow().Measure(expectedInput)
-		So(err, ShouldBeNil)
-		measurement := signal.tradeReading(trade)
-
-		Convey("It should emit the preserved dimensionless metric contract at the trade time", func() {
-			So(measurement, ShouldNotBeNil)
-			So(measurement.At, ShouldResemble, at)
-			So(measurement.Maturity, ShouldEqual, expectedMaturity)
-			So(measurement.Metrics, ShouldHaveLength, 7)
-			So(measurement.Sample(types.MetricLoadedScore, types.SideNone).Raw,
-				ShouldEqual, expectedOutput.LoadedScore)
-			So(measurement.Sample(types.MetricSpoofScore, types.SideNone).Raw,
-				ShouldEqual, expectedOutput.SpoofScore)
-			So(measurement.Sample(types.MetricThinScore, types.SideNone).Raw,
-				ShouldEqual, expectedOutput.ThinScore)
-			So(measurement.Sample(types.MetricNeutralScore, types.SideNone).Raw,
-				ShouldEqual, expectedOutput.NeutralScore)
-			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
-				ShouldEqual, measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Normalized)
-
-			for _, sample := range measurement.Metrics {
-				if sample.Unit == types.UnitDimensionless {
-					continue
-				}
-
-				So(sample.Unit, ShouldBeIn, types.UnitQuoteCurrency, types.UnitBaseCurrency)
-			}
-			strengthKey := types.MetricKey(types.MetricStrength, types.SideNone)
-			valueKey := types.MetricKey(types.MetricValue, types.SideNone)
-			_, hasStrength := measurement.Metrics[strengthKey]
-			_, hasValue := measurement.Metrics[valueKey]
-			So(hasStrength, ShouldBeFalse)
-			So(hasValue, ShouldBeFalse)
-		})
-	})
-}
-
-func TestFrame(t *testing.T) {
-	Convey("Given a depth depletion score computed against prior quote notional", t, func() {
-		signal := &Signal{}
-		at := time.Unix(1_700_000_300, 0).UTC()
-		measurement := signal.frame("BTC/USD", at, equation.BookflowOutput{
-			Value: 0.3, HypothesisSeparation: 0.4, ThinScore: 0.3, Category: 3, Ready: true,
-		}, 0.8)
-
-		Convey("It should preserve the dimensionless depletion fraction and provenance", func() {
-			So(measurement, ShouldNotBeNil)
-			So(measurement.At, ShouldResemble, at)
-			So(measurement.Maturity, ShouldEqual, 0.8)
-			So(measurement.Sample(types.MetricThinScore, types.SideNone).Raw,
-				ShouldEqual, 0.3)
-			So(*measurement.Sample(types.MetricThinScore, types.SideNone).Normalized,
-				ShouldEqual, 0.3)
-			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
-				ShouldEqual, 1.0)
-			So(measurement.Metrics, ShouldHaveLength, 5)
-
-			for _, sample := range measurement.Metrics {
-				So(sample.Unit, ShouldEqual, types.UnitDimensionless)
-			}
-		})
-	})
-
-	Convey("Given the full domain contrast between opposite book imbalances", t, func() {
-		measurement := (&Signal{}).frame(
-			"BTC/USD",
-			time.Unix(1_700_000_400, 0).UTC(),
-			equation.BookflowOutput{
-				Value: 1.5, HypothesisSeparation: 0.6, SpoofScore: 1.5, Category: 2, Ready: true,
-			},
-			1,
-		)
-
-		Convey("It should scale spoof evidence by the maximum possible contrast", func() {
-			So(*measurement.Sample(types.MetricSpoofScore, types.SideNone).Normalized,
-				ShouldEqual, 1.5/maxBookImbalanceContrast)
-			So(measurement.Metrics, ShouldHaveLength, 5)
-		})
-	})
-
-	Convey("Given a mathematically provisional bookflow output", t, func() {
-		measurement := (&Signal{}).frame(
-			"BTC/USD",
-			time.Unix(1_700_000_401, 0).UTC(),
-			equation.BookflowOutput{NeutralScore: 1, Ready: false},
-			0,
-		)
-
-		Convey("It should expose raw values while withholding every hypothesis normalization", func() {
-			for _, metric := range []types.MetricType{
-				types.MetricLoadedScore,
-				types.MetricSpoofScore,
-				types.MetricThinScore,
-				types.MetricNeutralScore,
-			} {
-				So(measurement.Sample(metric, types.SideNone).Normalized, ShouldBeNil)
+			for measurement := range market.MarketMeasurements("category") {
+				measurements = append(measurements, measurement)
 			}
 
-			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
-				ShouldEqual, 0.0)
-			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Normalized,
-				ShouldBeNil)
+			So(len(measurements), ShouldEqual, 1)
+			So(measurements[0].Source, ShouldEqual, string(types.SourceDepthFlow))
 		})
 	})
-}
-
-func TestNormalizedBookflowScore(t *testing.T) {
-	Convey("Given the complete bookflow score domains", t, func() {
-		loaded := normalizedBookflowScore(types.MetricLoadedScore, 0.4)
-		thin := normalizedBookflowScore(types.MetricThinScore, 0.6)
-		neutral := normalizedBookflowScore(types.MetricNeutralScore, 0.8)
-		spoofMidpoint := normalizedBookflowScore(types.MetricSpoofScore, 1)
-		spoofMaximum := normalizedBookflowScore(types.MetricSpoofScore, 2)
-
-		Convey("It should preserve unit scores and scale contrast by its full domain", func() {
-			So(*loaded, ShouldEqual, 0.4)
-			So(*thin, ShouldEqual, 0.6)
-			So(*neutral, ShouldEqual, 0.8)
-			So(*spoofMidpoint, ShouldEqual, 1.0/maxBookImbalanceContrast)
-			So(*spoofMaximum, ShouldEqual, 1.0)
-		})
-	})
-
-	Convey("Given scores one representable value outside their domains", t, func() {
-		Convey("It should reject negative evidence and overflow instead of poisoning HypothesisSeparation", func() {
-			So(normalizedBookflowScore(
-				types.MetricLoadedScore,
-				math.Nextafter(0, -1),
-			), ShouldBeNil)
-			So(normalizedBookflowScore(
-				types.MetricThinScore,
-				math.Nextafter(1, 2),
-			), ShouldBeNil)
-			So(normalizedBookflowScore(
-				types.MetricSpoofScore,
-				math.Nextafter(maxBookImbalanceContrast, 3),
-			), ShouldBeNil)
-			So(func() {
-				(&Signal{}).frame(
-					"BTC/USD",
-					time.Unix(1_700_000_402, 0).UTC(),
-					equation.BookflowOutput{
-						LoadedScore: math.Nextafter(1, 2),
-						Ready:       true,
-					},
-					1,
-				)
-			}, ShouldPanic)
-		})
-	})
-}
-
-func levelQuantity(levels []flow.BookLevel, ticks int64) float64 {
-	for _, level := range levels {
-		if level.Ticks == ticks {
-			return level.Quantity
-		}
-	}
-
-	return -1
-}
-
-func depthflowBookInput(bidQuantity, askQuantity float64) flow.BookInput {
-	return flow.BookInput{
-		Symbol:   "BTC/USD",
-		TickSize: 1,
-		Bids: []flow.BookLevel{
-			{Price: 100, Ticks: 100, Quantity: bidQuantity},
-			{Price: 99, Ticks: 99, Quantity: bidQuantity},
-		},
-		Asks: []flow.BookLevel{
-			{Price: 101, Ticks: 101, Quantity: askQuantity},
-			{Price: 102, Ticks: 102, Quantity: askQuantity},
-		},
-	}
-}
-
-func BenchmarkFrame(b *testing.B) {
-	signal := &Signal{}
-	at := time.Unix(1_700_000_500, 0).UTC()
-	output := equation.BookflowOutput{
-		Value: 0.7, HypothesisSeparation: 0.6, LoadedScore: 0.7, Category: 1, Ready: true,
-	}
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = signal.frame("BTC/USD", at, output, 1)
-	}
 }

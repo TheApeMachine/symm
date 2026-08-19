@@ -57,7 +57,7 @@ func TestLiquidityPipeline(t *testing.T) {
 			value, found := last.Metrics["executable_touch_depth"]
 
 			So(found, ShouldBeTrue)
-			So(value.Value, ShouldBeGreaterThan, 0)
+			So(value.Raw, ShouldBeGreaterThan, 0)
 		})
 	})
 }

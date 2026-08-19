@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -156,43 +157,44 @@ func leadLagFixture(
 	synchronized float64,
 	decoupled float64,
 	direction float64,
-) *types.Measurement {
+) *nmtypes.Measurement {
 	price := 100.0
 	peerPrice := 200.0
 	quality := 0.8
 	zero := 0.0
 
-	measurement := &types.Measurement{
-		ID: id, Source: types.SourceLeadLag, Symbol: symbol, Peer: peer, At: at,
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricLastPrice, types.SideNone): {
-				Raw: price, Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricSampleCount, types.SideNone): {
-				Raw: support, Unit: types.UnitCount,
-			},
-			types.MetricKey(types.MetricInefficient, types.SideNone): {
-				Raw: inefficient, Normalized: &inefficient, Unit: types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricSync, types.SideNone): {
-				Raw: synchronized, Normalized: &synchronized, Unit: types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricDecoupled, types.SideNone): {
-				Raw: decoupled, Normalized: &decoupled, Unit: types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricSignedLagDirection, types.SideNone): {
-				Raw: direction, Normalized: &direction, Unit: types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricSignedContempCorrelation, types.SideNone): {
-				Raw: zero, Normalized: &zero, Unit: types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricSignedLagCorrelation, types.SideNone): {
-				Raw: zero, Normalized: &zero, Unit: types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): {
-				Raw: quality, Normalized: &quality, Unit: types.UnitDimensionless,
-			},
-		},
+	measurement := nmtypes.NewMeasurement(id, string(types.SourceLeadLag), 0, 0)
+	measurement.Symbol = symbol
+	measurement.Peer = peer
+	measurement.At = at
+	measurement.Metrics = map[string]*nmtypes.Metric[float64]{
+		types.MetricKey(types.MetricLastPrice, types.SideNone): nmtypes.NewMetric(
+			"", price, nmtypes.Descriptor{Unit: nmtypes.UnitQuoteCurrency},
+		),
+		types.MetricKey(types.MetricSampleCount, types.SideNone): nmtypes.NewMetric(
+			"", support, nmtypes.Descriptor{Unit: nmtypes.UnitCount},
+		),
+		types.MetricKey(types.MetricInefficient, types.SideNone): nmtypes.NewNormalizedMetric(
+			"", inefficient, inefficient, nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless},
+		),
+		types.MetricKey(types.MetricSync, types.SideNone): nmtypes.NewNormalizedMetric(
+			"", synchronized, synchronized, nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless},
+		),
+		types.MetricKey(types.MetricDecoupled, types.SideNone): nmtypes.NewNormalizedMetric(
+			"", decoupled, decoupled, nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless},
+		),
+		types.MetricKey(types.MetricSignedLagDirection, types.SideNone): nmtypes.NewNormalizedMetric(
+			"", direction, direction, nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless},
+		),
+		types.MetricKey(types.MetricSignedContempCorrelation, types.SideNone): nmtypes.NewNormalizedMetric(
+			"", zero, zero, nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless},
+		),
+		types.MetricKey(types.MetricSignedLagCorrelation, types.SideNone): nmtypes.NewNormalizedMetric(
+			"", zero, zero, nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless},
+		),
+		types.MetricKey(types.MetricHypothesisSeparation, types.SideNone): nmtypes.NewNormalizedMetric(
+			"", quality, quality, nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless},
+		),
 	}
 
 	if peer != "" {
@@ -201,7 +203,7 @@ func leadLagFixture(
 		measurement.Metrics[types.MetricKey(
 			types.MetricPeerLastPrice,
 			types.SideNone,
-		)] = types.MetricSample{Raw: peerPrice, Unit: types.UnitQuoteCurrency}
+		)] = nmtypes.NewMetric("", peerPrice, nmtypes.Descriptor{Unit: nmtypes.UnitQuoteCurrency})
 	}
 
 	return measurement

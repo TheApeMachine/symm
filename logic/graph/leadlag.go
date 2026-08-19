@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -12,7 +13,7 @@ func (compiler *measurementCompiler) addLeadLagEdges(
 	graph *Graph,
 	index *measurementIndex,
 ) error {
-	for _, measurement := range index.bySource[types.SourceLeadLag] {
+	for _, measurement := range index.bySource[string(types.SourceLeadLag)] {
 		if measurement.Symbol != symbol.Symbol || measurement.Peer == "" {
 			continue
 		}
@@ -26,7 +27,7 @@ func (compiler *measurementCompiler) addLeadLagEdges(
 }
 
 func (compiler *measurementCompiler) relateLeadLag(
-	measurement *types.Measurement,
+	measurement *nmtypes.Measurement,
 	graph *Graph,
 ) error {
 	localPrice, err := priceNode(measurement, graph)
@@ -77,9 +78,9 @@ func (compiler *measurementCompiler) relateLeadLag(
 	return nil
 }
 
-func peerPriceNode(measurement *types.Measurement, graph *Graph) (*Node, error) {
+func peerPriceNode(measurement *nmtypes.Measurement, graph *Graph) (*Node, error) {
 	metricKey := types.MetricKey(types.MetricPeerLastPrice, types.SideNone)
-	node := graph.Nodes[measurementNodeID(*measurement, metricKey)]
+	node := graph.Nodes[measurementNodeID(measurement, metricKey)]
 
 	if node == nil {
 		return nil, fmt.Errorf(
@@ -90,9 +91,9 @@ func peerPriceNode(measurement *types.Measurement, graph *Graph) (*Node, error) 
 	return node, nil
 }
 
-func priceNode(measurement *types.Measurement, graph *Graph) (*Node, error) {
+func priceNode(measurement *nmtypes.Measurement, graph *Graph) (*Node, error) {
 	metricKey := types.MetricKey(types.MetricLastPrice, types.SideNone)
-	node := graph.Nodes[measurementNodeID(*measurement, metricKey)]
+	node := graph.Nodes[measurementNodeID(measurement, metricKey)]
 
 	if node == nil {
 		return nil, fmt.Errorf("lead-lag price node for %s required", measurement.Symbol)
@@ -102,7 +103,7 @@ func priceNode(measurement *types.Measurement, graph *Graph) (*Node, error) {
 }
 
 func normalizedMetric(
-	measurement *types.Measurement,
+	measurement *nmtypes.Measurement,
 	metric types.MetricType,
 ) (float64, error) {
 	metricKey := types.MetricKey(metric, types.SideNone)
@@ -118,7 +119,7 @@ func normalizedMetric(
 }
 
 func (compiler *measurementCompiler) addTemporalRelation(
-	measurement *types.Measurement,
+	measurement *nmtypes.Measurement,
 	localPrice *Node,
 	peerPrice *Node,
 	graph *Graph,
@@ -155,7 +156,7 @@ func (compiler *measurementCompiler) addTemporalRelation(
 }
 
 func (compiler *measurementCompiler) addCorrelationRelations(
-	measurement *types.Measurement,
+	measurement *nmtypes.Measurement,
 	localPrice *Node,
 	peerPrice *Node,
 	graph *Graph,
@@ -210,7 +211,7 @@ func (compiler *measurementCompiler) addCorrelationRelations(
 }
 
 func (compiler *measurementCompiler) addDirectedPair(
-	measurement *types.Measurement,
+	measurement *nmtypes.Measurement,
 	leader *Node,
 	follower *Node,
 	weight float64,
@@ -238,7 +239,7 @@ func (compiler *measurementCompiler) addDirectedPair(
 }
 
 func (compiler *measurementCompiler) addSymmetricRelation(
-	measurement *types.Measurement,
+	measurement *nmtypes.Measurement,
 	left *Node,
 	right *Node,
 	relation RelationType,
@@ -259,7 +260,7 @@ func (compiler *measurementCompiler) addSymmetricRelation(
 }
 
 func leadLagEvidence(
-	measurement *types.Measurement,
+	measurement *nmtypes.Measurement,
 	metrics ...types.MetricType,
 ) []string {
 	evidence := make([]string, 1, len(metrics)+1)

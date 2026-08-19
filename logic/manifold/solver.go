@@ -364,7 +364,7 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 		}
 
 		for measurement := range symbol.MarketMeasurements("manifold") {
-			if measurement.Source != types.SourceHawkes {
+			if string(measurement.Source) != string(types.SourceHawkes) {
 				continue
 			}
 

@@ -47,7 +47,11 @@ func Window(
 		)
 	}
 
-	capacity := windowCapacity(state, input)
+	capacity, err := windowCapacity(state, input)
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
 
 	if capacity <= 0 || capacity > nomagique.MaxSamples {
 		return state, nomagique.Frame{}, fmt.Errorf(
@@ -93,32 +97,47 @@ func Window(
 
 /*
 windowCapacity resolves how many slots the ring may retain. The Span control
-channel wins when present: the baseline emits the target size, and the window
-slides, grows, or shrinks to it. Until a Span has been composed in, the window
-bootstraps one slot and doubles only when the count reaches the current
+channel wins when present, from the input first (a Configure-wired producer
+emitted it this step) and then from state (a previous step's baseline verdict
+that Configure merged into state). Until a Span has been composed in, the
+window bootstraps one slot and doubles only when the count reaches the current
 capacity, bounded by the engine's sample ceiling.
 */
-func windowCapacity(state nomagique.Frame, input nomagique.Frame) int {
-	if capacityValue, found := input.Get(nmtypes.Span); found &&
-		capacityValue > 0 &&
-		capacityValue == math.Trunc(capacityValue) &&
-		capacityValue <= nomagique.MaxSamples {
-		return int(capacityValue)
+func windowCapacity(state nomagique.Frame, input nomagique.Frame) (int, error) {
+	var (
+		capacityValue float64
+		found         bool
+	)
+
+	if capacityValue, found = input.Get(nmtypes.Span); !found {
+		capacityValue, found = state.Get(nmtypes.Span)
+	}
+
+	if found {
+		if capacityValue <= 0 || capacityValue != math.Trunc(capacityValue) ||
+			capacityValue > nomagique.MaxSamples {
+			return 0, fmt.Errorf(
+				"temporal: span control channel must be an integer from 1 through %d",
+				nomagique.MaxSamples,
+			)
+		}
+
+		return int(capacityValue), nil
 	}
 
 	current := windowCount(state)
 
 	if current < 1 {
-		return 1
+		return 1, nil
 	}
 
 	next := current * 2
 
 	if next > nomagique.MaxSamples {
-		return nomagique.MaxSamples
+		return nomagique.MaxSamples, nil
 	}
 
-	return next
+	return next, nil
 }
 
 func windowCount(state nomagique.Frame) int {

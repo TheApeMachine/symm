@@ -2,64 +2,61 @@ package cvd
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/google/uuid"
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm"
-	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-BookSource is the narrow dependency CVD needs from the venue: read the resident
-book for one symbol. It is an interface so tests can inject a deterministic book
-instead of a live websocket API.
-*/
-type BookSource interface {
-	Book(symbol string, read func(*spotbook.Book))
-}
-
-/*
-Signal is the Absorption perspective, measuring signed aggressor flow against
-price response. Categories belong in logic; this signal emits numerical scores
-only.
+Signal is the CVD perspective: signed aggressor flow conditioned per symbol.
+It is ONLY a nomagique pipeline composing the shared math primitives — the
+difference of the two flow channels, an adaptive window tracking its own
+baseline, and the departure from that baseline.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	api    BookSource
-	algo   *algorithm.TradeFlowSample
-	flow   *equation.Flow
+	thesis *types.Thesis
+	number nomagique.Number[string]
 }
 
-/*
-NewSignal creates the CVD perspective with independent rolling state for each
-symbol so one market's aggressor history cannot leak into another's evidence.
-*/
 func NewSignal(
 	ctx context.Context,
-	api BookSource,
+	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		api:    api,
-		algo:   algorithm.NewTradeFlowSample(),
-		flow:   equation.NewFlow(),
+		thesis: thesis,
+		number: nomagique.NewNumber[string](
+			nomagique.Pipe(
+				calculus.Difference,
+				nomagique.Relay(calculus.SymbolResult, nomagique.SampleValue),
+				nomagique.Configure(
+					statistic.Baseline,
+					nmtypes.Span,
+					temporal.Window,
+				),
+				nomagique.Fork(
+					statistic.ZScore,
+					statistic.Deviation,
+				),
+			),
+		),
 	}
 
+	signal.run()
 	return signal
 }
 
-/*
-Name returns the signal source identity.
-*/
 func (signal *Signal) Name() string {
 	return string(types.SourceCVD)
 }
@@ -68,167 +65,76 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceCVD
 }
 
-/*
-flowHistoryCapacity mirrors the trade-flow sample's per-symbol history bound;
-it is the denominator of measurement maturity.
-*/
-const flowHistoryCapacity = 128
+func (signal *Signal) run() {
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return
+		default:
+			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+				symbol, valid := value.(*types.Symbol)
 
-func (signal *Signal) Measure(
-	symbol *types.Symbol,
-	_ ...int64,
-) error {
-	if symbol == nil {
-		return nil
-	}
-
-	for trade := range symbol.MarketTrades(types.SourceCVD) {
-		var responsePrice float64
-
-		responsePrice = trade.Price.Float64()
-
-		if signal.api != nil {
-			signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
-				if book == nil {
-					return
+				if !valid || symbol == nil {
+					return true
 				}
 
-				// Get the response price from the book's best bid and ask.
-				bestBid := book.BestBid()
-				bestAsk := book.BestAsk()
+				for trade := range symbol.MarketTrades(types.SourceCVD) {
+					notional := trade.Price.Float64() * trade.Qty
 
-				if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
-					responsePrice = bestBid.Price.Add(
-						bestAsk.Price,
-					).Div(
-						decimal.NewFromInt64(2),
-					).Float64()
+					input := nomagique.Frame{}
+					input.Put(nmtypes.AlphaQuantity, notional)
+					input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+					input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+
+					if trade.Side == "sell" {
+						input.Put(nmtypes.BetaQuantity, notional)
+					} else {
+						input.Put(nmtypes.AlphaQuantity, notional)
+						input.Put(nmtypes.BetaQuantity, 0)
+					}
+
+					output, err := signal.number(symbol.Symbol, input)
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"cvd: number step failed for "+symbol.Symbol,
+							err,
+						))
+						continue
+					}
+
+					symbol.Measurements.Push(nmtypes.NewMeasurement(
+						uuid.NewString(),
+						signal.Name(),
+						trade.Timestamp.UnixNano(),
+						trade.Timestamp.UnixNano(),
+					).AddMetrics(
+						nmtypes.NewMetric("flow_imbalance", output.MustGet(nmtypes.Quantity), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitQuoteCurrency,
+							Timescale: nmtypes.TimescalePerTick,
+						}),
+						nmtypes.NewMetric("flow_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitQuoteCurrency,
+							Timescale: nmtypes.TimescalePerSecond,
+						}),
+						nmtypes.NewMetric("flow_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
+						}),
+						nmtypes.NewMetric("flow_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
+						}),
+					))
 				}
+
+				return true
 			})
 		}
-
-		input, _, err := signal.algo.Measure(algorithm.TradeFlowInput{
-			Symbol:        symbol.Symbol,
-			Price:         trade.Price.Float64(),
-			ResponsePrice: responsePrice,
-			Quantity:      trade.Qty,
-			Side:          trade.Side,
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf("cvd: trade-flow-sample [%s]", err.Error()),
-				err,
-			))
-			continue
-		}
-
-		// The equation's own boundary is defined output: a single price
-		// yields the balance reading, so every classified trade emits.
-		output, err := signal.flow.Measure(input)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf("cvd: flow [%s]", err.Error()),
-				err,
-			))
-			continue
-		}
-
-		if err := symbol.AppendMeasurement(*signal.frame(symbol, trade, responsePrice, input, output)); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"cvd: failed to emit reading",
-				err,
-			))
-		}
-	}
-
-	return nil
-}
-
-/*
-frame materializes one trade's flow evidence as a measurement. Partial output
-from the equation's first-observation boundary carries the zero scores it did
-not define rather than suppressing the row.
-*/
-func (signal *Signal) frame(
-	symbol *types.Symbol,
-	trade kraken.TradeData,
-	responsePrice float64,
-	input equation.FlowInput,
-	output equation.FlowOutput,
-) *types.Measurement {
-	metrics := map[string]types.MetricSample{
-		types.MetricKey(types.MetricAbsorption, types.SideNone): {
-			Raw:        output.Absorption,
-			Normalized: &output.Absorption,
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricDrive, types.SideNone): {
-			Raw:        output.Drive,
-			Normalized: &output.Drive,
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricBalance, types.SideNone): {
-			Raw:        output.Balance,
-			Normalized: &output.Balance,
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricStarvation, types.SideNone): {
-			Raw:        output.Starvation,
-			Normalized: &output.Starvation,
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricStrength, types.SideNone): {
-			Raw:        output.Value,
-			Normalized: &output.Value,
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricNetFraction, types.SideNone): {
-			Raw:        output.NetFraction,
-			Normalized: &output.NetFraction,
-			Unit:       types.UnitDimensionless,
-		},
-		types.MetricKey(types.MetricNet, types.SideNone): {
-			Raw:  output.Net,
-			Unit: types.UnitQuoteCurrency,
-		},
-		types.MetricKey(types.MetricTradePrice, types.SideNone): {
-			Raw:  trade.Price.Float64(),
-			Unit: types.UnitQuoteCurrency,
-		},
-		types.MetricKey(types.MetricTradeQuantity, types.SideNone): {
-			Raw:  trade.Qty,
-			Unit: types.UnitBaseCurrency,
-		},
-		types.MetricKey(types.MetricMidpoint, types.SideNone): {
-			Raw:  responsePrice,
-			Unit: types.UnitQuoteCurrency,
-		},
-	}
-
-	return &types.Measurement{
-		ID:       uuid.NewString(),
-		Source:   types.SourceCVD,
-		Symbol:   symbol.Symbol,
-		Tick:     symbol.Tick,
-		At:       trade.Timestamp,
-		Maturity: float64(input.TradeCount) / flowHistoryCapacity,
-		Metadata: map[string]float64{
-			"trade_price":    trade.Price.Float64(),
-			"trade_quantity": trade.Qty,
-		},
-		Metrics: metrics,
 	}
 }
 
-/*
-Close releases the receiver's owned resources so shutdown does not leave
-active market-data producers.
-*/
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

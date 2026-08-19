@@ -116,7 +116,61 @@ func Configure(producer Primitive, channel Symbol, consumer Primitive) Primitive
 			return state, Frame{}, err
 		}
 
+		// Merge the producer's output so every control metric it computed —
+		// baseline value, stability, efficiency — survives alongside the
+		// consumer's output instead of being discarded.
+		output.Merge(controlOutput)
+
 		return nextState, output, nil
+	}
+}
+
+/*
+Relay lifts one named slot into another, keeping every other slot intact. It is
+the composition bridge between primitives that disagree on the slot naming of
+the same number — for example routing a calculus result into the engine's
+universal SampleValue slot so a downstream window or baseline can consume it.
+*/
+func Relay(from Symbol, to Symbol) Primitive {
+	return func(state Frame, input Frame) (Frame, Frame, error) {
+		value, found := input.Get(from)
+
+		if !found {
+			return state, Frame{}, primitiveError("relay: source slot missing")
+		}
+
+		output := input
+		output.Put(to, value)
+
+		return state, output, nil
+	}
+}
+
+/*
+Join evaluates two source adapters against the same input and merges their
+output slots into one Frame before the downstream stage consumes it. It is the
+dual-input combinator: two channels (for example the touch prices from one
+source and the executed quantity from another) become a single numeric input
+without either side owning the other's queue. State changes made by the first
+adapter are visible to the second, and both outputs overlay deterministically.
+*/
+func Join(first Primitive, second Primitive) Primitive {
+	return func(state Frame, input Frame) (Frame, Frame, error) {
+		nextState, firstOutput, err := Step(first, state, input)
+
+		if err != nil {
+			return state, Frame{}, err
+		}
+
+		nextState, secondOutput, err := Step(second, nextState, input)
+
+		if err != nil {
+			return state, Frame{}, err
+		}
+
+		firstOutput.Merge(secondOutput)
+
+		return nextState, firstOutput, nil
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -27,6 +28,7 @@ type Symbol struct {
 	tickers      *transport.MapReduce[kraken.TickerData]  `json:"-"`
 	trades       *transport.MapReduce[kraken.TradeData]   `json:"-"`
 	level3       *transport.MapReduce[kraken.Level3Data]  `json:"-"`
+	books        *transport.MapReduce[*spotbook.Book]     `json:"-"`
 	pending      atomic.Int64                             `json:"-"`
 	bookRevision atomic.Uint64                            `json:"-"`
 	bookAt       atomic.Int64                             `json:"-"`
@@ -285,9 +287,9 @@ func (symbol *Symbol) MarketLevel3(source SourceType) iter.Seq[kraken.Level3Data
 }
 
 func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*types.Measurement] {
-	cut := time.Now().UTC().Unix()
+	cut := time.Now().UTC()
 
 	return symbol.Measurements.Drain(solver, func(measurement *types.Measurement) bool {
-		return measurement.At <= cut
+		return measurement.At.Before(cut) || measurement.At.Equal(cut)
 	})
 }

@@ -86,7 +86,7 @@ func NewCrypto(
 				"level3", types.NewSubscription[any](),
 			),
 		},
-		measurements: NewMeasurements(ctx, api, desk.Instrument(), ui),
+		measurements: NewMeasurements(ctx, thesis, ui),
 	}
 
 	crypto.status.Store(types.READY)

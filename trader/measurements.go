@@ -2,14 +2,10 @@ package trader
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -21,7 +17,6 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -33,7 +28,6 @@ type Measurements struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	signals []types.Signal
-	streams map[string]*nomagique.KeyedStreams[string]
 	ui      chan []byte
 
 	// ObserveModule is an optional diagnostics hook reported for each signal's
@@ -52,29 +46,22 @@ type Measurements struct {
 
 func NewMeasurements(
 	ctx context.Context,
-	api *websocket.API,
-	instrument *broker.Instrument,
+	thesis *types.Thesis,
 	ui chan []byte,
 ) *Measurements {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signals := []types.Signal{
-		correlation.NewSignal(ctx, api),
-		cvd.NewSignal(ctx, api),
-		depthflow.NewSignal(ctx, api, instrument),
-		exhaust.NewSignal(ctx, api, instrument),
-		hawkes.NewSignal(ctx, api),
-		leadlag.NewSignal(ctx, api),
-		liquidity.NewSignal(ctx, api),
-		pumpdump.NewSignal(ctx, api),
-		sentiment.NewSignal(ctx, api),
-		toxicity.NewSignal(ctx, api),
-	}
-
-	streams := make(map[string]*nomagique.KeyedStreams[string], len(signals))
-
-	for _, signal := range signals {
-		streams[signal.Name()] = nomagique.NewKeyedStreams[string](signal.Pipeline(), nil)
+		correlation.NewSignal(ctx, thesis),
+		cvd.NewSignal(ctx, thesis),
+		depthflow.NewSignal(ctx, thesis),
+		exhaust.NewSignal(ctx, thesis),
+		hawkes.NewSignal(ctx, thesis),
+		leadlag.NewSignal(ctx, thesis),
+		liquidity.NewSignal(ctx, thesis),
+		pumpdump.NewSignal(ctx, thesis),
+		sentiment.NewSignal(ctx, thesis),
+		toxicity.NewSignal(ctx, thesis),
 	}
 
 	return &Measurements{
@@ -82,7 +69,6 @@ func NewMeasurements(
 		cancel:  cancel,
 		ui:      ui,
 		signals: signals,
-		streams: streams,
 	}
 }
 
@@ -127,8 +113,6 @@ func (measurements *Measurements) Generate(
 				measurements.ObservePassStart(passStarted)
 			}
 
-			group, ctx := errgroup.WithContext(measurements.ctx)
-
 			thesis.Symbols.Range(func(_, value any) bool {
 				symbol, ok := value.(*types.Symbol)
 
@@ -138,42 +122,8 @@ func (measurements *Measurements) Generate(
 
 				symbol.Tick = thesis.Tick
 
-				group.Go(func() error {
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					default:
-					}
-
-					for _, signal := range measurements.signals {
-						signalStarted := time.Now()
-
-						if err := measurements.runSignal(signal, symbol); err != nil {
-							errnie.Error(errnie.Err(
-								errnie.Validation,
-								"trader: signal failed for "+signal.Name(),
-								err,
-							))
-						}
-
-						if measurements.ObserveModule != nil {
-							measurements.ObserveModule(signal.Name(), time.Since(signalStarted))
-						}
-					}
-
-					return nil
-				})
-
 				return true
 			})
-
-			if err := group.Wait(); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Internal,
-					fmt.Sprintf("trader: failed to measure signals - [%s]", err.Error()),
-					err,
-				))
-			}
 
 			thesis.At = time.Now()
 
@@ -198,53 +148,6 @@ func (measurements *Measurements) Generate(
 	}()
 
 	return theses
-}
-
-/*
-runSignal drives one symbol's raw rows through the signal's composed nomagique
-pipeline and appends the resulting measurement. The runner owns the per-symbol
-stream and the drain; the signal contributes only its pipeline and the three
-boundary adapters (Rows, Encode, Emit).
-*/
-func (measurements *Measurements) runSignal(
-	signal types.Signal,
-	symbol *types.Symbol,
-) error {
-	if symbol == nil {
-		return nil
-	}
-
-	stream := measurements.streams[signal.Name()]
-
-	if stream == nil {
-		return nil
-	}
-
-	for row := range signal.Rows(symbol) {
-		input, ok := signal.Encode(row)
-
-		if !ok {
-			continue
-		}
-
-		output, err := stream.Step(symbol.Symbol, input)
-
-		if err != nil {
-			continue
-		}
-
-		measurement, ok := signal.Emit(symbol.Symbol, output)
-
-		if !ok {
-			continue
-		}
-
-		if err := symbol.AppendMeasurement(measurement); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 /*

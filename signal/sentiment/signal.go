@@ -2,62 +2,58 @@ package sentiment
 
 import (
 	"context"
-	"iter"
-	"math"
-	"sort"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal measures global market conviction from breadth and leadership
-performance. Categories belong in logic; this signal emits numerical scores only.
+Signal is the Sentiment perspective: per-symbol return conditioning. It is ONLY
+a nomagique pipeline — the velocity of each symbol's own price (its return
+delta) feeds an adaptive baseline whose deviation reports how far the current
+move stands from the symbol's own established cadence. No cross-symbol breadth:
+every symbol decides readiness from its own stream.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	api          *websocket.API
-	observations *sync.Map
+	ctx    context.Context
+	cancel context.CancelFunc
+	thesis *types.Thesis
+	number nomagique.Number[string]
 }
 
-type returnObservation struct {
-	at      time.Time
-	price   float64
-	change  float64
-	cadence time.Duration
-	ready   bool
-}
-
-/*
-NewSignal creates sentiment measurement state for central market cuts so every
-tick can compare breadth with current leadership.
-*/
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		api:          api,
-		observations: &sync.Map{},
+		ctx:    ctx,
+		cancel: cancel,
+		thesis: thesis,
+		number: nomagique.NewNumber[string](
+			nomagique.Pipe(
+				statistic.Velocity,
+				nomagique.Relay(statistic.SymbolVelocityDelta, nomagique.SampleValue),
+				nomagique.Configure(
+					statistic.Baseline,
+					nmtypes.Span,
+					temporal.Window,
+				),
+				statistic.Deviation,
+			),
+		),
 	}
 
+	signal.run()
 	return signal
 }
 
-/*
-Name returns the signal source identity.
-*/
 func (signal *Signal) Name() string {
 	return string(types.SourceSentiment)
 }
@@ -66,508 +62,59 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceSentiment
 }
 
-/*
-Measure produces the Measurements for the sentiment signal.
-*/
-func (signal *Signal) Measure(
-	symbol *types.Symbol,
-	ticks ...int64,
-) error {
-	if symbol == nil {
-		return nil
-	}
+func (signal *Signal) run() {
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return
+		default:
+			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+				symbol, valid := value.(*types.Symbol)
 
-	return signal.MeasureCohort([]*types.Symbol{symbol}, ticks...)
-}
-
-/*
-MeasureCohort ingests the full dirty ticker cohort before deriving breadth,
-leadership, and divergence. This keeps one transport message from producing a
-scheduler-dependent sequence of partial cohort readings.
-*/
-func (signal *Signal) MeasureCohort(
-	symbols []*types.Symbol,
-	ticks ...int64,
-) error {
-	ordered := make([]*types.Symbol, 0, len(symbols))
-	bySymbol := make(map[string]*types.Symbol, len(symbols))
-
-	for _, symbol := range symbols {
-		if symbol != nil && symbol.Symbol != "" {
-			ordered = append(ordered, symbol)
-			bySymbol[symbol.Symbol] = symbol
-		}
-	}
-
-	sort.Slice(ordered, func(left, right int) bool {
-		return ordered[left].Symbol < ordered[right].Symbol
-	})
-
-	changed := make(map[string]struct{}, len(ordered))
-
-	for _, symbol := range ordered {
-		if signal.ingest(symbol.MarketTickers(types.SourceSentiment)) {
-			changed[symbol.Symbol] = struct{}{}
-		}
-	}
-
-	if len(changed) == 0 {
-		return nil
-	}
-
-	tick := int64(0)
-
-	if len(ticks) > 0 {
-		tick = ticks[0]
-	}
-
-	peers, _, _ := signal.cohort()
-
-	if len(peers) == 0 {
-		// Dirty rows arrived but the cohort has no ready member yet. Emit
-		// an honest zero reading for each dirty symbol instead of going
-		// dark; the next pass classifies once a peer is ready.
-		for symbol := range changed {
-			if observation, found := signal.observation(symbol); found {
-				if owner, ok := bySymbol[symbol]; ok && owner != nil {
-					if err := owner.AppendMeasurement(*immatureSentiment(symbol, observation, tick)); err != nil {
-						return err
-					}
+				if !valid || symbol == nil {
+					return true
 				}
-			}
+
+				for ticker := range symbol.MarketTickers(types.SourceSentiment) {
+					input := nomagique.Frame{}
+					input.Put(nmtypes.Quantity, ticker.Last.Float64())
+					input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+					input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+
+					output, err := signal.number(symbol.Symbol, input)
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"sentiment: number step failed for "+symbol.Symbol,
+							err,
+						))
+						continue
+					}
+
+					symbol.Measurements.Push(nmtypes.NewMeasurement(
+						uuid.NewString(),
+						signal.Name(),
+						ticker.Timestamp.UnixNano(),
+						ticker.Timestamp.UnixNano(),
+					).AddMetrics(
+						nmtypes.NewMetric("sentiment_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
+						}),
+						nmtypes.NewMetric("sentiment_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitBaseCurrency,
+							Timescale: nmtypes.TimescalePerSecond,
+						}),
+					))
+				}
+
+				return true
+			})
 		}
-
-		return nil
-	}
-
-	statistics := sentimentStatistics(peers)
-	directionalReady := false
-
-	for _, peer := range peers {
-		if peer.observation.ready {
-			directionalReady = true
-			break
-		}
-	}
-
-	for _, peer := range peers {
-		if _, isDirty := changed[peer.symbol]; !isDirty {
-			continue
-		}
-
-		if owner, ok := bySymbol[peer.symbol]; ok && owner != nil {
-			if err := owner.AppendMeasurement(*sentimentMeasurement(
-				peer,
-				statistics,
-				directionalReady,
-				tick,
-			)); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func sentimentMeasurement(
-	peer sentimentPeer,
-	statistics sentimentSummary,
-	directionalReady bool,
-	tick int64,
-) *types.Measurement {
-	change := peer.observation.change
-	leaderStrength := 0.0
-	leaderEvidence := 0.0
-	relativeLead := 0.0
-	peerDivergenceScore := 0.0
-	isLeader := statistics.leader == peer.symbol && statistics.leaderMagnitude > 0
-
-	if isLeader {
-		leaderStrength = statistics.leaderMagnitude
-		leaderEvidence = statistics.leaderEvidence
-		relativeLead = statistics.relativeLead
-		peerDivergenceScore = statistics.divergence
-	}
-
-	strength := math.Max(
-		statistics.surge,
-		math.Max(peerDivergenceScore, statistics.slump),
-	)
-	metrics := sentimentMetrics(
-		map[types.MetricType]float64{
-			types.MetricChange:         change,
-			types.MetricBreadth:        statistics.breadth,
-			types.MetricLeaderStrength: leaderStrength,
-			types.MetricLeaderEvidence: leaderEvidence,
-			types.MetricRelativeLead:   relativeLead,
-			types.MetricSurgeScore:     statistics.surge,
-			types.MetricDivergentScore: peerDivergenceScore,
-			types.MetricSlumpScore:     statistics.slump,
-			types.MetricStrength:       strength,
-		},
-		statistics.magnitudeBaseline,
-	)
-
-	measurement := &types.Measurement{
-		ID:     uuid.NewString(),
-		Source: types.SourceSentiment,
-		Symbol: peer.symbol,
-		Tick:   tick,
-		At:     peer.observation.at,
-		Metadata: map[string]float64{
-			"last_price": peer.observation.price,
-		},
-		Metrics: metrics,
-	}
-	measurement.PutMetric(
-		types.MetricLastPrice,
-		types.SideNone,
-		types.MetricSample{
-			Raw:  peer.observation.price,
-			Unit: types.UnitQuoteCurrency,
-		},
-	)
-
-	return measurement
-}
-
-type sentimentPeer struct {
-	symbol      string
-	observation returnObservation
-}
-
-/*
-observation returns the retained return observation for a symbol, if any.
-*/
-func (signal *Signal) observation(symbol string) (returnObservation, bool) {
-	if signal.observations == nil {
-		return returnObservation{}, false
-	}
-
-	raw, found := signal.observations.Load(symbol)
-
-	if !found {
-		return returnObservation{}, false
-	}
-
-	return raw.(returnObservation), true
-}
-
-/*
-immatureSentiment is the honest zero reading for a dirty symbol whose cohort
-has no ready member yet. It carries the observed time and price without
-inventing breadth/leadership scores.
-*/
-func immatureSentiment(
-	symbol string,
-	observation returnObservation,
-	tick int64,
-) *types.Measurement {
-	return &types.Measurement{
-		ID:       uuid.NewString(),
-		Source:   types.SourceSentiment,
-		Symbol:   symbol,
-		Tick:     tick,
-		At:       observation.at,
-		Maturity: 0,
-		Metadata: map[string]float64{
-			"last_price": observation.price,
-		},
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricLastPrice, types.SideNone): {
-				Raw:  observation.price,
-				Unit: types.UnitQuoteCurrency,
-			},
-		},
 	}
 }
 
-type sentimentSummary struct {
-	leader            string
-	leaderMagnitude   float64
-	leaderEvidence    float64
-	relativeLead      float64
-	breadth           float64
-	surge             float64
-	slump             float64
-	divergence        float64
-	magnitudeBaseline float64
-	scaleReady        bool
-}
-
-func (signal *Signal) ingest(rows iter.Seq[kraken.TickerData]) bool {
-	if signal.observations == nil {
-		signal.observations = &sync.Map{}
-	}
-
-	rowBatches := make(map[string][]kraken.TickerData)
-	symbols := make([]string, 0)
-
-	for row := range rows {
-		symbol := strings.TrimSpace(row.Symbol)
-
-		if symbol == "" || row.Timestamp.IsZero() || row.Last == nil {
-			continue
-		}
-
-		if _, exists := rowBatches[symbol]; !exists {
-			symbols = append(symbols, symbol)
-		}
-
-		row.Symbol = symbol
-		rowBatches[symbol] = append(rowBatches[symbol], row)
-	}
-	sort.Strings(symbols)
-	changed := false
-
-	for _, symbol := range symbols {
-		symbolRows := rowBatches[symbol]
-		sort.SliceStable(symbolRows, func(leftIndex, rightIndex int) bool {
-			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
-		})
-
-		for _, row := range symbolRows {
-			price := row.Last.Float64()
-
-			if price <= 0 {
-				continue
-			}
-
-			raw, exists := signal.observations.Load(symbol)
-			previous := returnObservation{}
-
-			if exists {
-				previous = raw.(returnObservation)
-			}
-
-			if exists && !row.Timestamp.After(previous.at) {
-				continue
-			}
-
-			observation := returnObservation{at: row.Timestamp, price: price}
-
-			if exists {
-				observation.change = math.Log(price / previous.price)
-				observation.cadence = row.Timestamp.Sub(previous.at)
-				observation.ready = true
-			}
-
-			signal.observations.Store(symbol, observation)
-			changed = true
-		}
-	}
-
-	return changed
-}
-
-func (signal *Signal) cohort() ([]sentimentPeer, time.Duration, bool) {
-	latest := time.Time{}
-	cadences := make([]float64, 0)
-
-	signal.observations.Range(func(key, value any) bool {
-		observation := value.(returnObservation)
-
-		if !observation.ready {
-			return true
-		}
-
-		if observation.at.After(latest) {
-			latest = observation.at
-		}
-
-		if observation.cadence > 0 {
-			cadences = append(cadences, float64(observation.cadence))
-		}
-
-		return true
-	})
-
-	medianCadence, cadenceReady := statistic.MedianOf(cadences)
-	freshness := time.Duration(medianCadence)
-	peers := make([]sentimentPeer, 0)
-
-	signal.observations.Range(func(key, value any) bool {
-		symbol := key.(string)
-		observation := value.(returnObservation)
-
-		if cadenceReady && freshness > 0 && latest.Sub(observation.at) > freshness {
-			return true
-		}
-
-		peers = append(peers, sentimentPeer{symbol: symbol, observation: observation})
-		return true
-	})
-
-	sort.Slice(peers, func(left, right int) bool {
-		return peers[left].symbol < peers[right].symbol
-	})
-
-	return peers, freshness, cadenceReady && freshness > 0
-}
-
-func sentimentStatistics(peers []sentimentPeer) sentimentSummary {
-	summary := sentimentSummary{}
-	changes := make([]float64, 0, len(peers))
-	magnitudes := make([]float64, 0, len(peers))
-	advances := 0
-	declines := 0
-	totalMagnitude := 0.0
-
-	for _, peer := range peers {
-		change := peer.observation.change
-		magnitude := math.Abs(change)
-		changes = append(changes, change)
-		magnitudes = append(magnitudes, magnitude)
-		totalMagnitude += magnitude
-
-		if change > 0 {
-			advances++
-		}
-
-		if change < 0 {
-			declines++
-		}
-
-		if magnitude > summary.leaderMagnitude {
-			summary.leader = peer.symbol
-			summary.leaderMagnitude = magnitude
-		}
-	}
-
-	if len(peers) == 0 {
-		return summary
-	}
-
-	summary.breadth = float64(advances-declines) / float64(len(peers))
-	medianChange, hasMedianChange := statistic.MedianOf(changes)
-	medianMagnitude, hasMedianMagnitude := statistic.MedianOf(magnitudes)
-
-	if hasMedianChange && hasMedianMagnitude && medianMagnitude > 0 {
-		summary.magnitudeBaseline = medianMagnitude
-		summary.scaleReady = true
-		agreement := float64(max(advances, declines)) / float64(len(peers))
-		summary.surge = math.Max(0, medianChange) * agreement / medianMagnitude
-		summary.slump = math.Max(0, -medianChange) * agreement / medianMagnitude
-	}
-
-	if summary.leader == "" || totalMagnitude <= 0 {
-		return summary
-	}
-
-	summary.relativeLead = summary.leaderMagnitude / totalMagnitude
-	peerMagnitudes := make([]float64, 0, len(peers)-1)
-	nonconfirming := 0
-	leaderChange := 0.0
-
-	for _, peer := range peers {
-		if peer.symbol == summary.leader {
-			leaderChange = peer.observation.change
-
-			break
-		}
-	}
-
-	for _, peer := range peers {
-		if peer.symbol == summary.leader {
-			continue
-		}
-
-		peerMagnitudes = append(peerMagnitudes, math.Abs(peer.observation.change))
-
-		if leaderChange != 0 && leaderChange*peer.observation.change <= 0 {
-			nonconfirming++
-		}
-	}
-
-	peerMedian, peerMedianOK := statistic.MedianOf(peerMagnitudes)
-
-	if !peerMedianOK || summary.leaderMagnitude <= peerMedian {
-		return summary
-	}
-
-	deviations := make([]float64, 0, len(peerMagnitudes))
-
-	for _, magnitude := range peerMagnitudes {
-		deviations = append(deviations, math.Abs(magnitude-peerMedian))
-	}
-
-	peerDispersion, _ := statistic.MedianOf(deviations)
-	excess := summary.leaderMagnitude - peerMedian
-	denominator := excess + peerDispersion
-
-	if denominator <= 0 {
-		return summary
-	}
-
-	summary.leaderEvidence = excess / denominator
-
-	if len(peerMagnitudes) > 0 {
-		summary.divergence = summary.leaderEvidence *
-			float64(nonconfirming) / float64(len(peerMagnitudes))
-	}
-
-	return summary
-}
-
-/*
-sentimentMetrics maps raw log returns and leader magnitude against the current
-cohort's median absolute return while preserving direction. Breadth and the
-remaining evidence scores are already cohort fractions derived from that cut.
-*/
-func sentimentMetrics(
-	readings map[types.MetricType]float64,
-	magnitudeBaseline float64,
-) map[string]types.MetricSample {
-	metrics := make(map[string]types.MetricSample, len(readings))
-
-	for metric, raw := range readings {
-		sample := types.MetricSample{Raw: raw, Unit: types.UnitDimensionless}
-
-		sample.Normalized = normalizedSentimentMetric(
-			metric,
-			raw,
-			magnitudeBaseline,
-		)
-
-		metrics[types.MetricKey(metric, types.SideNone)] = sample
-	}
-
-	return metrics
-}
-
-func normalizedSentimentMetric(
-	metric types.MetricType,
-	raw float64,
-	magnitudeBaseline float64,
-) *float64 {
-	if metric == types.MetricChange || metric == types.MetricLeaderStrength {
-		if magnitudeBaseline <= 0 || metric == types.MetricLeaderStrength && raw < 0 {
-			return nil
-		}
-
-		value := raw / (math.Abs(raw) + magnitudeBaseline)
-
-		return &value
-	}
-
-	if metric == types.MetricBreadth {
-		if raw < -1 || raw > 1 {
-			return nil
-		}
-	} else if raw < 0 || raw > 1 {
-		return nil
-	}
-
-	value := raw
-
-	return &value
-}
-
-/*
-Close releases the receiver's owned resources so shutdown does not leave
-active market-data producers.
-*/
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

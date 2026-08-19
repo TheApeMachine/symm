@@ -3,8 +3,9 @@ package temporal
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func windowObservationForTest(value float64, capacity int) nomagique.Frame {
@@ -12,7 +13,7 @@ func windowObservationForTest(value float64, capacity int) nomagique.Frame {
 	input.Put(nomagique.SampleValue, value)
 	input.Put(SymbolUnixSec, float64(capacity*1000))
 	input.Put(SymbolUnixNsec, 0)
-	input.Put(SymbolCapacity, float64(capacity))
+	input.Put(nmtypes.Span, float64(capacity))
 
 	return input
 }
@@ -60,7 +61,7 @@ func TestWindow(t *testing.T) {
 		})
 	})
 
-	Convey("Given an observation without a value or capacity", t, func() {
+	Convey("Given an observation without a value or event time", t, func() {
 		Convey("It should fail the transition", func() {
 			_, _, err := Window(nomagique.Frame{}, nomagique.Frame{})
 			So(err, ShouldNotBeNil)

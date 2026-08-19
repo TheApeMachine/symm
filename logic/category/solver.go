@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -130,7 +131,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 func (solver *Solver) classify(
 	symbol string,
-	measurements iter.Seq[types.Measurement],
+	measurements iter.Seq[*nmtypes.Measurement],
 ) ([]types.Category, bool, error) {
 	evidence := make(map[types.CategoryType][]float64, len(solver.categories))
 	supporting := make(map[types.CategoryType][]string, len(solver.categories))
@@ -142,7 +143,7 @@ func (solver *Solver) classify(
 		measured = true
 
 		for _, schema := range types.CategorySchemas {
-			if schema.Source != measurement.Source {
+			if string(schema.Source) != measurement.Source {
 				continue
 			}
 

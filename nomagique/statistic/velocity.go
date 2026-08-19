@@ -7,13 +7,13 @@ import (
 )
 
 var (
-	SymbolVelocityDelta       = nomagique.MustIntern("velocity/delta")
+	SymbolVelocityDelta        = nomagique.MustIntern("velocity/delta")
 	SymbolVelocityAcceleration = nomagique.MustIntern("velocity/acceleration")
-	SymbolVelocityElapsed     = nomagique.MustIntern("velocity/elapsed_sec")
-	SymbolVelocityLastValue   = nomagique.MustIntern("velocity/last_value")
-	SymbolVelocityLastDelta   = nomagique.MustIntern("velocity/last_delta")
-	SymbolVelocityLastSec     = nomagique.MustIntern("velocity/last_sec")
-	SymbolVelocityLastNsec    = nomagique.MustIntern("velocity/last_nsec")
+	SymbolVelocityElapsed      = nomagique.MustIntern("velocity/elapsed_sec")
+	SymbolVelocityLastValue    = nomagique.MustIntern("velocity/last_value")
+	SymbolVelocityLastDelta    = nomagique.MustIntern("velocity/last_delta")
+	SymbolVelocityLastSec      = nomagique.MustIntern("velocity/last_sec")
+	SymbolVelocityLastNsec     = nomagique.MustIntern("velocity/last_nsec")
 )
 
 /*

@@ -2,62 +2,47 @@ package hawkes
 
 import (
 	"context"
-	"sync"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/algorithm/excitation"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/algo"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal measures the buy/sell trade-arrival process as
-
-	λ(t) = μ + Σ A exp(-β(t-ti)).
-
-Measure always emits when asked: a counts observation on the first trade, a
-fitted reading once the kernel is identifiable, or the last published reading
-if nothing new has arrived. Maturity is closeness to a trustworthy fit.
-hypothesis_separation is the category margin between buy and sell process
-groups, not sample precision. Forecast readiness stays false until residual
-and out-of-sample validation exists.
+Signal measures the buy/sell trade-arrival process as a bivariate Hawkes
+process. It is ONLY a nomagique Number: one self-adapting numeric unit per
+symbol that maps each signed trade mark into fitted self- and cross-exciting
+intensities.
 */
 type Signal struct {
-	latest    *sync.Map
-	ctx       context.Context
-	cancel    context.CancelFunc
-	api       *websocket.API
-	process   *excitation.Process
-	sample    *excitation.Sample
-	lastTrade *sync.Map
-}
-
-type tradeCursor struct {
-	at  time.Time
-	ids map[int64]struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
+	thesis *types.Thesis
+	number nomagique.Number[string]
 }
 
 /*
-NewSignal constructs the excitation pipeline. Nomagique owns the symbol-local
-arrival windows and fitted parameter epochs.
+NewSignal constructs the Hawkes pipeline and starts it in its own goroutine.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:       ctx,
-		cancel:    cancel,
-		api:       api,
-		process:   excitation.NewProcess(),
-		sample:    excitation.NewSample(),
-		lastTrade: &sync.Map{},
+		ctx:    ctx,
+		cancel: cancel,
+		thesis: thesis,
+		number: nomagique.NewNumber[string](
+			nomagique.Pipe(algo.Hawkes),
+		),
 	}
 
+	signal.run()
 	return signal
 }
 
@@ -72,175 +57,86 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceHawkes
 }
 
-func (signal *Signal) Measure(
-	symbol *types.Symbol,
-	_ ...int64,
-) error {
-	if symbol == nil {
-		return nil
-	}
+func (signal *Signal) run() {
+	for {
+		select {
+		case <-signal.ctx.Done():
+			return
+		default:
+			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+				symbol, valid := value.(*types.Symbol)
 
-	emitted := false
+				if !valid || symbol == nil {
+					return true
+				}
 
-	for trade := range symbol.MarketTrades(types.SourceHawkes) {
-		if signal.seenTrade(trade) {
-			continue
+				for trade := range symbol.MarketTrades(types.SourceHawkes) {
+					input := nomagique.Frame{}
+					input.Put(algo.SymbolMark, markForSide(trade.Side))
+					input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+					input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+
+					output, err := signal.number(symbol.Symbol, input)
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"hawkes: number step failed for "+symbol.Symbol,
+							err,
+						))
+						continue
+					}
+
+					symbol.Measurements.Push(nmtypes.NewMeasurement(
+						uuid.NewString(),
+						signal.Name(),
+						trade.Timestamp.UnixNano(),
+						trade.Timestamp.UnixNano(),
+					).AddMetrics(
+						nmtypes.NewMetric("buy_intensity", output.MustGet(algo.SymbolLambdaAlpha), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitRate,
+							Timescale: nmtypes.TimescalePerSecond,
+						}),
+						nmtypes.NewMetric("sell_intensity", output.MustGet(algo.SymbolLambdaBeta), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitRate,
+							Timescale: nmtypes.TimescalePerSecond,
+						}),
+						nmtypes.NewMetric("buy_arrival_rate", output.MustGet(algo.SymbolAlphaArrivalRate), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitRate,
+							Timescale: nmtypes.TimescalePerSecond,
+						}),
+						nmtypes.NewMetric("sell_arrival_rate", output.MustGet(algo.SymbolBetaArrivalRate), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitRate,
+							Timescale: nmtypes.TimescalePerSecond,
+						}),
+						nmtypes.NewMetric("event_count", output.MustGet(algo.SymbolEventCount), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitCount,
+							Timescale: nmtypes.TimescalePerTick,
+						}),
+					))
+				}
+
+				return true
+			})
 		}
-
-		input, sampled, err := signal.sample.MeasureArrival(excitation.TradeInput{
-			Symbol:    trade.Symbol,
-			Side:      trade.Side,
-			Timestamp: trade.Timestamp,
-		})
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"excitation sample failed: "+err.Error(),
-				err,
-			))
-
-			continue
-		}
-
-		signal.commitTrade(trade)
-
-		if !sampled {
-			if err := signal.emit(symbol, trade.Symbol, countOutcome(trade, input)); err != nil {
-				return err
-			}
-
-			continue
-		}
-
-		outcome, measured, err := signal.process.Measure(input)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"excitation measure failed: "+err.Error(),
-				err,
-			))
-
-			if err := signal.emit(symbol, trade.Symbol, countOutcome(trade, input)); err != nil {
-				return err
-			}
-
-			continue
-		}
-
-		if !measured {
-			if err := signal.emit(symbol, trade.Symbol, countOutcome(trade, input)); err != nil {
-				return err
-			}
-
-			continue
-		}
-
-		if err := signal.emit(symbol, trade.Symbol, outcome); err != nil {
-			return err
-		}
-
-		emitted = true
 	}
-
-	if emitted {
-		return nil
-	}
-
-	if last := signal.recall(symbol.Symbol); last != nil {
-		return symbol.AppendMeasurement(*last)
-	}
-
-	return nil
-}
-
-// emit builds the measurement frame and pushes it upstream through the owning
-// symbol. frame() already remembers the row for the recall fallback.
-func (signal *Signal) emit(symbol *types.Symbol, symbolName string, outcome excitation.Outcome) error {
-	measurement := signal.frame(symbolName, outcome)
-
-	return errnie.Error(errnie.Err(
-		errnie.Validation,
-		"hawkes: failed to emit reading",
-		symbol.AppendMeasurement(*measurement),
-	))
-}
-
-func (signal *Signal) remember(measurement *types.Measurement) {
-	if signal.latest == nil {
-		signal.latest = &sync.Map{}
-	}
-
-	signal.latest.Store(measurement.Symbol, measurement)
-}
-
-func (signal *Signal) recall(symbolName string) *types.Measurement {
-	if signal.latest == nil {
-		return nil
-	}
-
-	stored, exists := signal.latest.Load(symbolName)
-
-	if !exists {
-		return nil
-	}
-
-	return stored.(*types.Measurement)
-}
-
-func (signal *Signal) seenTrade(row kraken.TradeData) bool {
-	if signal.lastTrade == nil {
-		return false
-	}
-
-	raw, exists := signal.lastTrade.Load(row.Symbol)
-
-	if !exists {
-		return false
-	}
-
-	previous := raw.(tradeCursor)
-
-	if row.Timestamp.Before(previous.at) {
-		return true
-	}
-
-	if row.Timestamp.After(previous.at) {
-		return false
-	}
-
-	_, seen := previous.ids[row.TradeID]
-
-	return seen
-}
-
-func (signal *Signal) commitTrade(row kraken.TradeData) {
-	if signal.lastTrade == nil {
-		signal.lastTrade = &sync.Map{}
-	}
-
-	previous := tradeCursor{}
-	raw, exists := signal.lastTrade.Load(row.Symbol)
-
-	if exists {
-		previous = raw.(tradeCursor)
-	}
-
-	if row.Timestamp.After(previous.at) {
-		previous = tradeCursor{at: row.Timestamp, ids: make(map[int64]struct{})}
-	}
-
-	if previous.ids == nil {
-		previous.ids = make(map[int64]struct{})
-	}
-
-	previous.ids[row.TradeID] = struct{}{}
-	signal.lastTrade.Store(row.Symbol, previous)
 }
 
 /*
-Close releases the receiver's owned resources.
+markForSide encodes one trade's aggressor side into the process mark: buy is
+the positive (alpha) channel, sell the negative (beta) channel.
+*/
+func markForSide(side string) float64 {
+	if side == "buy" {
+		return 1
+	}
+
+	return -1
+}
+
+/*
+Close releases the receiver's owned resources so shutdown does not leave active
+market-data producers.
 */
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {

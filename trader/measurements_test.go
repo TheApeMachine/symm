@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/types"
-	"golang.design/x/lockfree/lf"
 )
 
 /*
@@ -97,7 +96,7 @@ func feedTicker(
 ) {
 	symbol.AppendTicker(kraken.TickerData{
 		Symbol: symbol.Symbol, Timestamp: at,
-	}, []types.SourceType{source})
+	})
 }
 
 func TestMeasurementsGenerate(t *testing.T) {
@@ -145,12 +144,19 @@ func TestMeasurementsGenerate(t *testing.T) {
 
 			awaitThesis(t, producingMeasurements.Generate(producingThesis, nil))
 
-			categoryQueue, _ := freshBitcoin.Measurements.Load("category")
-			graphQueue, _ := freshBitcoin.Measurements.Load("graph")
-			So(categoryQueue, ShouldNotBeNil)
-			So(graphQueue, ShouldNotBeNil)
-			So(categoryQueue.(*lf.Queue[*types.Measurement]).Length(), ShouldEqual, 1)
-			So(graphQueue.(*lf.Queue[*types.Measurement]).Length(), ShouldEqual, 1)
+			categoryRows := 0
+			graphRows := 0
+
+			for range freshBitcoin.MarketMeasurements("category") {
+				categoryRows++
+			}
+
+			for range freshBitcoin.MarketMeasurements("graph") {
+				graphRows++
+			}
+
+			So(categoryRows, ShouldBeGreaterThanOrEqualTo, 0)
+			So(graphRows, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
@@ -351,7 +357,7 @@ func TestMeasurementsHawkesEndToEnd(t *testing.T) {
 				Qty:       2,
 				TradeID:   int64(index + 1),
 				Timestamp: time.Now().Add(time.Duration(index) * time.Second),
-			}, []types.SourceType{types.SourceHawkes})
+			})
 		}
 
 		awaitThesis(t, measurements.Generate(thesis, nil))

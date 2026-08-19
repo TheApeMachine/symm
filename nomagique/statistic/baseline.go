@@ -12,12 +12,12 @@ var (
 	SymbolUnixSec  = nomagique.MustIntern("unix_sec")
 	SymbolUnixNsec = nomagique.MustIntern("unix_nsec")
 
-	SymbolBaselineValue       = nomagique.MustIntern("baseline/value")
-	SymbolBaselineEfficiency  = nomagique.MustIntern("baseline/efficiency")
-	SymbolBaselineWindow      = nomagique.MustIntern("baseline/effective_window")
-	SymbolBaselineLastSec     = nomagique.MustIntern("baseline/last_sec")
-	SymbolBaselineLastNsec    = nomagique.MustIntern("baseline/last_nsec")
-	SymbolBaselineSpan        = nomagique.MustIntern("baseline/observed_span_sec")
+	SymbolBaselineValue        = nomagique.MustIntern("baseline/value")
+	SymbolBaselineEfficiency   = nomagique.MustIntern("baseline/efficiency")
+	SymbolBaselineWindow       = nomagique.MustIntern("baseline/effective_window")
+	SymbolBaselineLastSec      = nomagique.MustIntern("baseline/last_sec")
+	SymbolBaselineLastNsec     = nomagique.MustIntern("baseline/last_nsec")
+	SymbolBaselineSpan         = nomagique.MustIntern("baseline/observed_span_sec")
 	SymbolBaselineFastHalflife = nomagique.MustIntern("baseline/fast_halflife_sec")
 	SymbolBaselineSlowHalflife = nomagique.MustIntern("baseline/slow_halflife_sec")
 
@@ -236,6 +236,23 @@ func windowModifier(
 
 	if capacity <= 0 {
 		capacity = float64(count)
+	}
+
+	// A single retained sample cannot prove stability: the ring has no range to
+	// judge dispersion against. It must always grow to reach the minimum
+	// evidence count before any shrink verdict is possible.
+	if count < 2 {
+		next := capacity * 2
+
+		if next < 2 {
+			next = 2
+		}
+
+		if next > nomagique.MaxSamples {
+			return nomagique.MaxSamples
+		}
+
+		return next
 	}
 
 	if stability < previousStability {

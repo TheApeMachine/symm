@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/theapemachine/nomagique/probability"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -16,7 +18,7 @@ relationship artifacts without reconstructing identity from node labels.
 */
 type measurementIndex struct {
 	byReference map[string][]*Node
-	bySource    map[types.SourceType][]*types.Measurement
+	bySource    map[string][]*nmtypes.Measurement
 }
 
 /*
@@ -31,12 +33,12 @@ func newMeasurementCompiler() *measurementCompiler {
 
 func (compiler *measurementCompiler) addNodes(
 	symbol string,
-	measurements iter.Seq[types.Measurement],
+	measurements iter.Seq[*nmtypes.Measurement],
 	graph *Graph,
 ) (*measurementIndex, error) {
 	index := &measurementIndex{
 		byReference: make(map[string][]*Node),
-		bySource:    make(map[types.SourceType][]*types.Measurement),
+		bySource:    make(map[string][]*nmtypes.Measurement),
 	}
 	for measurement := range measurements {
 		if measurement.Symbol != symbol {
@@ -58,7 +60,7 @@ func (compiler *measurementCompiler) addNodes(
 		}
 
 		reference := measurementReference(
-			types.SourceType(node.Source),
+			node.Source,
 			types.MetricKey(node.Metric, node.Side),
 		)
 		index.byReference[reference] = append(index.byReference[reference], node)
@@ -68,20 +70,16 @@ func (compiler *measurementCompiler) addNodes(
 }
 
 func (compiler *measurementCompiler) addMeasurement(
-	measurement types.Measurement,
+	measurement *nmtypes.Measurement,
 	graph *Graph,
 	index *measurementIndex,
 ) error {
-	// Measurement arrival is volume-clock driven: identity routes the row,
-	// while At and metrics are insight decoration a quiet pass may legitimately
-	// lack. Lead-lag is the one temporal insight and enforces its own peer
-	// timestamps below.
 	if measurement.ID == "" || measurement.Source == "" ||
 		measurement.Symbol == "" {
 		return fmt.Errorf("identified measurement required")
 	}
 
-	if measurement.Source == types.SourceLeadLag && measurement.Peer != "" {
+	if string(measurement.Source) == string(types.SourceLeadLag) && measurement.Peer != "" {
 		_, peerPriceFound := measurement.Metrics[types.MetricKey(
 			types.MetricPeerLastPrice,
 			types.SideNone,
@@ -95,33 +93,39 @@ func (compiler *measurementCompiler) addMeasurement(
 	}
 
 	index.bySource[measurement.Source] = append(
-		index.bySource[measurement.Source], &measurement,
+		index.bySource[measurement.Source], measurement,
 	)
-	measurement.EachMetric(func(
-		metric types.MetricType,
-		side types.MeasurementSide,
-		sample types.MetricSample,
-	) bool {
+
+	keys := make([]string, 0, len(measurement.Metrics))
+
+	for key := range measurement.Metrics {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	for _, metricKey := range keys {
+		sample := measurement.Metrics[metricKey]
+		metric, side := types.ParseMetricKey(metricKey)
+
 		if !compiler.graphMetric(measurement.Source, metric, side, sample) {
-			return true
+			continue
 		}
 
-		metricKey := types.MetricKey(metric, side)
 		node := measurementNode(measurement, metricKey, metric, side, sample)
 		graph.AddNode(node)
-		return true
-	})
+	}
 
 	return nil
 }
 
 func (compiler *measurementCompiler) graphMetric(
-	source types.SourceType,
+	source string,
 	metric types.MetricType,
 	side types.MeasurementSide,
-	sample types.MetricSample,
+	sample *nmtypes.Metric[float64],
 ) bool {
-	if source == types.SourceLeadLag &&
+	if source == string(types.SourceLeadLag) &&
 		(metric == types.MetricLastPrice || metric == types.MetricPeerLastPrice) {
 		return true
 	}
@@ -130,10 +134,7 @@ func (compiler *measurementCompiler) graphMetric(
 		return false
 	}
 
-	// Every metric a signal emits is evidence. The category classifier is an
-	// additional interpretation on top of the raw measurement, never a gate
-	// that decides whether the measurement may enter the graph at all.
-	groups, known := types.SignalMetricGroups[source]
+	groups, known := types.SignalMetricGroups[types.SourceType(source)]
 
 	if !known {
 		return false
@@ -144,17 +145,17 @@ func (compiler *measurementCompiler) graphMetric(
 }
 
 func measurementNode(
-	measurement types.Measurement,
+	measurement *nmtypes.Measurement,
 	metricKey string,
 	metric types.MetricType,
 	side types.MeasurementSide,
-	sample types.MetricSample,
+	sample *nmtypes.Metric[float64],
 ) *Node {
 	node := &Node{
 		ID:            measurementNodeID(measurement, metricKey),
 		Symbol:        measurement.Symbol,
 		Peer:          measurement.Peer,
-		Source:        string(measurement.Source),
+		Source:        measurement.Source,
 		MeasurementID: measurement.ID,
 		Metric:        metric,
 		Side:          side,
@@ -162,7 +163,7 @@ func measurementNode(
 		Value:         sample.Raw,
 		Normalized:    cloneFloat(sample.Normalized),
 		Maturity:      measurement.Maturity,
-		Unit:          sample.Unit,
+		Unit:          types.MeasurementUnit(sample.Unit.String()),
 		ObservedFrom:  measurement.ObservedFrom,
 		Horizon:       measurement.Horizon,
 		At:            measurement.At,
@@ -186,15 +187,15 @@ func measurementNode(
 }
 
 func measurementNodeID(
-	measurement types.Measurement,
+	measurement *nmtypes.Measurement,
 	metricKey string,
 ) string {
 	if metricKey == types.MetricKey(types.MetricPeerLastPrice, types.SideNone) {
-		return "meas:" + measurement.Peer + ":" + string(measurement.Source) + ":" +
+		return "meas:" + measurement.Peer + ":" + measurement.Source + ":" +
 			measurement.Symbol + ":" + metricKey
 	}
 
-	nodeID := "meas:" + measurement.Symbol + ":" + string(measurement.Source) + ":"
+	nodeID := "meas:" + measurement.Symbol + ":" + measurement.Source + ":"
 
 	if measurement.Peer != "" {
 		nodeID += measurement.Peer + ":"
@@ -203,8 +204,8 @@ func measurementNodeID(
 	return nodeID + metricKey
 }
 
-func measurementReference(source types.SourceType, metricKey string) string {
-	return string(source) + ":" + metricKey
+func measurementReference(source string, metricKey string) string {
+	return source + ":" + metricKey
 }
 
 /*

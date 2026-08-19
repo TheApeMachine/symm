@@ -127,6 +127,6 @@ func BenchmarkMeasurementHypothesisSeparation(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = MeasurementHypothesisSeparation(SourceCorrelation, metrics)
+		_ = MeasurementHypothesisSeparation(SourceCorrelation, metrics)
 	}
 }
