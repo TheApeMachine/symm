@@ -11,13 +11,12 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 	Convey("Given two equally defined sentiment hypotheses", t, func() {
 		surge := 0.5
 		slump := 0.5
-		separation, ready := MeasurementHypothesisSeparation(SourceSentiment, map[string]MetricSample{
+		separation := MeasurementHypothesisSeparation(SourceSentiment, map[string]MetricSample{
 			MetricKey(MetricSurgeScore, SideNone): {Normalized: &surge},
 			MetricKey(MetricSlumpScore, SideNone): {Normalized: &slump},
 		})
 
 		Convey("It reports no separation between the competing hypotheses", func() {
-			So(ready, ShouldBeTrue)
 			So(separation, ShouldEqual, 0.0)
 		})
 	})
@@ -26,7 +25,7 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 		firstExecution := 0.6
 		secondExecution := 0.8
 		retreat := math.Sqrt(0.5)
-		separation, ready := MeasurementHypothesisSeparation(SourceToxicity, map[string]MetricSample{
+		separation := MeasurementHypothesisSeparation(SourceToxicity, map[string]MetricSample{
 			MetricKey(MetricFillVolume, SideBuy):  {Normalized: &firstExecution},
 			MetricKey(MetricFillVolume, SideSell): {Normalized: &secondExecution},
 			MetricKey(MetricRetreatingQuantity, SideBuy): {
@@ -35,7 +34,6 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 		})
 
 		Convey("It combines support without rewarding the larger group", func() {
-			So(ready, ShouldBeTrue)
 			So(separation, ShouldAlmostEqual, 0, 1e-12)
 		})
 	})
@@ -45,7 +43,7 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 		alpha := 0.3
 		noise := 0.4
 		stress := 0.0
-		separation, ready := MeasurementHypothesisSeparation(SourceCorrelation, map[string]MetricSample{
+		separation := MeasurementHypothesisSeparation(SourceCorrelation, map[string]MetricSample{
 			MetricKey(MetricHerdScore, SideNone):   {Normalized: &herd},
 			MetricKey(MetricAlphaScore, SideNone):  {Normalized: &alpha},
 			MetricKey(MetricNoiseScore, SideNone):  {Normalized: &noise},
@@ -53,7 +51,6 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 		})
 
 		Convey("It uses the total competing energy as the alternative floor", func() {
-			So(ready, ShouldBeTrue)
 			So(separation, ShouldAlmostEqual, (0.9-0.5)/0.9, 1e-12)
 		})
 	})
@@ -61,7 +58,7 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 	Convey("Given one active hypothesis and explicitly measured zero alternatives", t, func() {
 		herd := 0.9
 		inactive := 0.0
-		separation, ready := MeasurementHypothesisSeparation(
+		separation := MeasurementHypothesisSeparation(
 			SourceCorrelation,
 			map[string]MetricSample{
 				MetricKey(MetricHerdScore, SideNone):   {Normalized: &herd},
@@ -72,7 +69,6 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 		)
 
 		Convey("It reports complete category separation without claiming perfect precision", func() {
-			So(ready, ShouldBeTrue)
 			So(separation, ShouldEqual, 1.0)
 		})
 	})
@@ -82,7 +78,7 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 		slump := 0.2
 		divergence := 1.0
 		leaderEvidence := 1.0
-		separation, ready := MeasurementHypothesisSeparation(SourceSentiment, map[string]MetricSample{
+		separation := MeasurementHypothesisSeparation(SourceSentiment, map[string]MetricSample{
 			MetricKey(MetricSurgeScore, SideNone):     {Normalized: &surge},
 			MetricKey(MetricSlumpScore, SideNone):     {Normalized: &slump},
 			MetricKey(MetricDivergentScore, SideNone): {Normalized: &divergence},
@@ -90,19 +86,17 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 		})
 
 		Convey("It does not turn complementary context into competing noise", func() {
-			So(ready, ShouldBeTrue)
 			So(separation, ShouldAlmostEqual, 0.75, 1e-12)
 		})
 	})
 
 	Convey("Given fewer than two measured competing groups", t, func() {
 		herd := 0.9
-		separation, ready := MeasurementHypothesisSeparation(SourceCorrelation, map[string]MetricSample{
+		separation := MeasurementHypothesisSeparation(SourceCorrelation, map[string]MetricSample{
 			MetricKey(MetricHerdScore, SideNone): {Normalized: &herd},
 		})
 
 		Convey("It leaves hypothesis separation undefined", func() {
-			So(ready, ShouldBeFalse)
 			So(separation, ShouldEqual, 0.0)
 		})
 	})

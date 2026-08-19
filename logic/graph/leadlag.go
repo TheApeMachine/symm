@@ -79,7 +79,7 @@ func (compiler *measurementCompiler) relateLeadLag(
 
 func peerPriceNode(measurement *types.Measurement, graph *Graph) (*Node, error) {
 	metricKey := types.MetricKey(types.MetricPeerLastPrice, types.SideNone)
-	node := graph.Nodes[measurementNodeID(measurement, metricKey)]
+	node := graph.Nodes[measurementNodeID(*measurement, metricKey)]
 
 	if node == nil {
 		return nil, fmt.Errorf(
@@ -92,7 +92,7 @@ func peerPriceNode(measurement *types.Measurement, graph *Graph) (*Node, error) 
 
 func priceNode(measurement *types.Measurement, graph *Graph) (*Node, error) {
 	metricKey := types.MetricKey(types.MetricLastPrice, types.SideNone)
-	node := graph.Nodes[measurementNodeID(measurement, metricKey)]
+	node := graph.Nodes[measurementNodeID(*measurement, metricKey)]
 
 	if node == nil {
 		return nil, fmt.Errorf("lead-lag price node for %s required", measurement.Symbol)

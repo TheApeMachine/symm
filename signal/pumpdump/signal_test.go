@@ -53,10 +53,12 @@ func TestMeasure(t *testing.T) {
 		at := time.Unix(1_700_002_300, 0).UTC()
 		market.AppendLevel3(kraken.Level3Data{
 			Symbol: "BTC/USD", Type: "update", Timestamp: at,
-		}, types.Level3Receivers)
-		market.AppendTrade(pumpdumpTrade(1, "buy", 100, at.Add(time.Second)), types.TradeReceivers)
+		})
+		market.AppendTrade(pumpdumpTrade(1, "buy", 100, at.Add(time.Second)))
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should always yield the ladder geometry with tape confirmation", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -80,10 +82,12 @@ func TestMeasure(t *testing.T) {
 		at := time.Unix(1_700_002_400, 0).UTC()
 		market.AppendLevel3(kraken.Level3Data{
 			Symbol: "BTC/USD", Type: "update", Timestamp: at,
-		}, types.Level3Receivers)
-		market.AppendTrade(pumpdumpTrade(7, "buy", 100, at.Add(time.Second)), types.TradeReceivers)
+		})
+		market.AppendTrade(pumpdumpTrade(7, "buy", 100, at.Add(time.Second)))
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should never drop an executed print for lack of a ticker", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -95,9 +99,11 @@ func TestMeasure(t *testing.T) {
 	Convey("Given no book, no level3, and one trade without a quote", t, func() {
 		signal := NewSignal(context.Background(), nil)
 		market := types.NewSymbol("BTC/USD", nil)
-		market.AppendTrade(pumpdumpTrade(2, "sell", 100, time.Unix(1_700_002_500, 0).UTC()), types.TradeReceivers)
+		market.AppendTrade(pumpdumpTrade(2, "sell", 100, time.Unix(1_700_002_500, 0).UTC()))
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should still always produce one measurement", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -124,9 +130,11 @@ func TestMeasure(t *testing.T) {
 
 		signal := NewSignal(context.Background(), staticBookSource{book: future})
 		market := types.NewSymbol("BTC/USD", nil)
-		market.AppendTrade(pumpdumpTrade(3, "buy", 100, time.Now().UTC()), types.TradeReceivers)
+		market.AppendTrade(pumpdumpTrade(3, "buy", 100, time.Now().UTC()))
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should skip the ladder but still measure the tape", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -146,12 +154,16 @@ func TestMeasure(t *testing.T) {
 		signal := NewSignal(context.Background(), staticBookSource{book: book})
 		market := types.NewSymbol("BTC/USD", nil)
 
-		feed := func(at time.Time) []*types.Measurement {
+		feed := func(at time.Time) []types.Measurement {
 			market.AppendLevel3(kraken.Level3Data{
 				Symbol: "BTC/USD", Type: "update", Timestamp: at,
-			}, types.Level3Receivers)
+			})
 
-			return slices.Collect(signal.Measure(market))
+			if signal.Measure(market) != nil {
+				panic("pumpdump: measure failed")
+			}
+
+			return slices.Collect(market.MarketMeasurements("category"))
 		}
 
 		first := feed(base)
@@ -187,13 +199,14 @@ func TestMeasure(t *testing.T) {
 		market.AppendLevel3(kraken.Level3Data{
 			Symbol: "BTC/USD", Type: "update",
 			Timestamp: time.Unix(1_700_002_700, 0).UTC(),
-		}, types.Level3Receivers)
+		})
 		market.AppendTrade(
 			pumpdumpTrade(4, "buy", 100, time.Unix(1_700_002_701, 0).UTC()),
-			types.TradeReceivers,
 		)
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should read the book exactly once per pass", func() {
 			// A second read re-enters Book.Get while the first callback still

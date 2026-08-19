@@ -123,6 +123,12 @@ const (
 	MetricExecutableTouchDepth         MetricType = "executable_touch_depth"
 	MetricExecutableTouchDepthMedian   MetricType = "executable_touch_depth_median"
 	MetricRelativeTouchDepth           MetricType = "relative_touch_depth"
+	MetricLiquidityPresence            MetricType = "liquidity_presence"
+	MetricLiquidityDepthBaseline       MetricType = "liquidity_depth_baseline"
+	MetricLiquidityNotionalBaseline    MetricType = "liquidity_notional_baseline"
+	MetricLiquidityDepthDeviation      MetricType = "liquidity_depth_deviation"
+	MetricLiquidityNotionalDeviation   MetricType = "liquidity_notional_deviation"
+	MetricLiquidityWindow              MetricType = "liquidity_window"
 
 	// toxicity (level3 touch liquidity honesty)
 	MetricTouchQuantity      MetricType = "touch_quantity"
@@ -252,20 +258,22 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 		MetricKey(MetricStrength, SideNone):                 {"summary", false},
 	},
 	SourceLiquidity: {
-		MetricKey(MetricHypothesisSeparation, SideNone):         {"hypothesis_separation", false},
-		MetricKey(MetricBestPrice, SideBuy):                     {"market", false},
-		MetricKey(MetricBestPrice, SideSell):                    {"market", false},
-		MetricKey(MetricTouchQuantity, SideBuy):                 {"market", false},
-		MetricKey(MetricTouchQuantity, SideSell):                {"market", false},
-		MetricKey(MetricMidpoint, SideNone):                     {"market", false},
-		MetricKey(MetricVWAP, SideNone):                         {"market", false},
-		MetricKey(MetricReportedVolume, SideNone):               {"market", false},
-		MetricKey(MetricExecutableTouchDepth, SideNone):         {"available", true},
-		MetricKey(MetricRelativeTouchDepth, SideNone):           {"available", true},
-		MetricKey(MetricReportedVolumeNotional, SideNone):       {"available", true},
-		MetricKey(MetricScarcityScore, SideNone):                {"scarce", true},
-		MetricKey(MetricExecutableTouchDepthMedian, SideNone):   {"cohort_scale", false},
-		MetricKey(MetricReportedVolumeNotionalMedian, SideNone): {"cohort_scale", false},
+		MetricKey(MetricHypothesisSeparation, SideNone):            {"hypothesis_separation", false},
+		MetricKey(MetricBestPrice, SideBuy):                        {"market", false},
+		MetricKey(MetricBestPrice, SideSell):                       {"market", false},
+		MetricKey(MetricTouchQuantity, SideBuy):                    {"market", false},
+		MetricKey(MetricTouchQuantity, SideSell):                   {"market", false},
+		MetricKey(MetricMidpoint, SideNone):                        {"market", false},
+		MetricKey(MetricVWAP, SideNone):                            {"market", false},
+		MetricKey(MetricReportedVolume, SideNone):                  {"market", false},
+		MetricKey(MetricExecutableTouchDepth, SideNone):            {"available", true},
+		MetricKey(MetricReportedVolumeNotional, SideNone):          {"available", true},
+		MetricKey(MetricLiquidityPresence, SideNone):               {"available", false},
+		MetricKey(MetricLiquidityDepthBaseline, SideNone):          {"baseline", false},
+		MetricKey(MetricLiquidityNotionalBaseline, SideNone):       {"baseline", false},
+		MetricKey(MetricLiquidityDepthDeviation, SideNone):         {"deviation", true},
+		MetricKey(MetricLiquidityNotionalDeviation, SideNone):      {"deviation", true},
+		MetricKey(MetricLiquidityWindow, SideNone):                 {"baseline", false},
 	},
 	SourcePumpDump: {
 		MetricKey(MetricHypothesisSeparation, SideNone): {"hypothesis_separation", false},
@@ -342,7 +350,7 @@ root-sum-square alternatives, so every material competitor raises the floor.
 func MeasurementHypothesisSeparation(
 	source SourceType,
 	metrics map[string]MetricSample,
-) (float64, bool) {
+) float64 {
 	mapping, found := SignalMetricGroups[source]
 
 	if !found {
@@ -377,8 +385,18 @@ func MeasurementHypothesisSeparation(
 		groups[membership.Group] = group
 	}
 
-	if len(groups) < 2 {
-		return 0, false
+	if len(groups) == 0 {
+		// No competing hypothesis has produced evidence yet. This is an honest
+		// separation of zero — the field is always reported — not "unavailable":
+		// without evidence there is nothing to separate.
+		return 0
+	}
+
+	if len(groups) == 1 {
+		// A single competing hypothesis holds the field unopposed: maximum
+		// separation. Reporting 1 here (rather than "unavailable") is what lets
+		// a fresh estimator start contributing evidence immediately.
+		return 1
 	}
 
 	winnerGroup := ""
@@ -407,12 +425,12 @@ func MeasurementHypothesisSeparation(
 	noiseFloor := math.Sqrt(noiseEnergy)
 
 	if winnerStrength == 0 && noiseFloor == 0 {
-		return 0, true
+		return 0
 	}
 
 	if noiseFloor >= winnerStrength {
-		return 0, true
+		return 0
 	}
 
-	return (winnerStrength - noiseFloor) / winnerStrength, true
+	return (winnerStrength - noiseFloor) / winnerStrength
 }

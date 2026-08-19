@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -123,7 +124,7 @@ type Measurement struct {
 	Horizon          time.Duration           `json:"horizon,omitempty" validate:"nonnegative"`
 	PeerAt           time.Time               `json:"peerAt,omitempty"`
 	PeerObservedFrom time.Time               `json:"peerObservedFrom,omitempty"`
-	Maturity         float64                 `json:"maturity,omitempty" validate:"finite"`
+	Maturity         float64                 `json:"maturity" validate:"finite"`
 	Uncertainty      *MeasurementUncertainty `json:"uncertainty,omitempty"`
 	Metrics          map[string]MetricSample `json:"metrics,omitempty"`
 	Metadata         map[string]float64      `json:"metadata,omitempty"`
@@ -158,6 +159,66 @@ func (measurement *Measurement) Key() string {
 	}
 
 	return string(measurement.Source) + ":" + measurement.Symbol + ":" + measurement.Peer
+}
+
+/*
+Finalize is the single exit a Measurement crosses before it can reach the
+thesis or the wire. It owns the two non-negotiable contracts:
+
+  - Maturity is already on every row (the omitempty tag was removed); Finalize
+    only guarantees the value stays finite.
+  - Hypothesis separation is derived exactly once, here, from the measuring
+    signal's own metric groups. Divergence is computed by nobody else.
+
+It refuses to publish a competing hypothesis metric without a normalized value:
+a directional score without a common nonnegative domain is not evidence, and
+silently emitting it raw-only hides the estimator defect.
+*/
+func (measurement *Measurement) Finalize() error {
+	if measurement == nil {
+		return fmt.Errorf("measurement: cannot finalize nil measurement")
+	}
+
+	if measurement.Source == "" || measurement.Symbol == "" {
+		return fmt.Errorf("measurement: source and symbol required")
+	}
+
+	mapping, found := SignalMetricGroups[measurement.Source]
+
+	if !found {
+		return fmt.Errorf("measurement: unknown signal metric groups for %s", measurement.Source)
+	}
+
+	for metricKey, sample := range measurement.Metrics {
+		membership, exists := mapping[metricKey]
+
+		if !exists {
+			return fmt.Errorf(
+				"measurement: %s metric %s has no signal group",
+				measurement.Source, metricKey,
+			)
+		}
+
+		if membership.Competes && sample.Normalized == nil {
+			return fmt.Errorf(
+				"measurement: %s competing metric %s lacks a normalized value",
+				measurement.Source, metricKey,
+			)
+		}
+	}
+
+	separation := MeasurementHypothesisSeparation(
+		measurement.Source,
+		measurement.Metrics,
+	)
+
+	measurement.Metrics[MetricKey(MetricHypothesisSeparation, SideNone)] = MetricSample{
+		Raw:        separation,
+		Normalized: &separation,
+		Unit:       UnitDimensionless,
+	}
+
+	return nil
 }
 
 /*

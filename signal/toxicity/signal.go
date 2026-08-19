@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"context"
-	"iter"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,98 +59,104 @@ func (signal *Signal) Type() types.SourceType {
 func (signal *Signal) Measure(
 	market *types.Symbol,
 	ticks ...int64,
-) iter.Seq[*types.Measurement] {
+) error {
 	return signal.measure(market, ticks...)
 }
 
 func (signal *Signal) measure(
 	market *types.Symbol,
 	ticks ...int64,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		tick := market.Tick
+) error {
+	if market == nil {
+		return nil
+	}
 
-		if len(ticks) > 0 {
-			tick = ticks[0]
+	tick := market.Tick
+
+	if len(ticks) > 0 {
+		tick = ticks[0]
+	}
+
+	for trade := range market.MarketTrades(types.SourceToxicity) {
+		_, _, _, err := signal.sample.MeasureTrade(flow.TradeInput{
+			Symbol:   trade.Symbol,
+			Price:    trade.Price.Float64(),
+			Quantity: trade.Qty,
+			Side:     flow.TradeSide(trade.Side),
+			At:       trade.Timestamp,
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"toxicity: failed to sample trade",
+				err,
+			))
+
+			continue
 		}
 
-		for trade := range market.MarketTrades(types.SourceToxicity) {
-			_, _, _, err := signal.sample.MeasureTrade(flow.TradeInput{
-				Symbol:   trade.Symbol,
-				Price:    trade.Price.Float64(),
-				Quantity: trade.Qty,
-				Side:     flow.TradeSide(trade.Side),
-				At:       trade.Timestamp,
-			})
+	}
 
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"toxicity: failed to sample trade",
-					err,
-				))
+	for level3 := range market.MarketLevel3(types.SourceToxicity) {
+		input, ready, maturity, err := signal.sample.MeasureLevel3(
+			quality.Level3Input{
+				Symbol: level3.Symbol,
+				Bids:   qualityEvents(level3.Bids),
+				Asks:   qualityEvents(level3.Asks),
+			},
+		)
 
-				continue
-			}
-
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"toxicity: failed to sample Level 3 frame",
+				err,
+			))
+			continue
 		}
 
-		for level3 := range market.MarketLevel3(types.SourceToxicity) {
-			input, ready, maturity, err := signal.sample.MeasureLevel3(
-				quality.Level3Input{
-					Symbol: level3.Symbol,
-					Bids:   qualityEvents(level3.Bids),
-					Asks:   qualityEvents(level3.Asks),
-				},
-			)
+		at := level3Time(level3)
 
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"toxicity: failed to sample Level 3 frame",
-					err,
-				))
-				continue
+		if !ready || at.IsZero() {
+			// The classifier only speaks once the quality sampler has a
+			// complete frame. An immature frame is still an honest reading:
+			// zero maturity, no scores, distinguishable from a wholly absent
+			// pass — never a silent skip.
+			measurementOut := *immatureToxicity(level3.Symbol, at, tick)
+
+			if err := market.AppendMeasurement(measurementOut); err != nil {
+				return err
 			}
 
-			at := level3Time(level3)
+			continue
+		}
 
-			if !ready || at.IsZero() {
-				// The classifier only speaks once the quality sampler has a
-				// complete frame. An immature frame is still an honest reading:
-				// zero maturity, no scores, distinguishable from a wholly absent
-				// pass — never a silent skip.
-				if !yield(immatureToxicity(level3.Symbol, at, tick)) {
-					return
-				}
+		output, err := signal.bookQuality.Measure(input)
 
-				continue
-			}
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"toxicity: failed to classify book quality",
+				err,
+			))
+			continue
+		}
 
-			output, err := signal.bookQuality.Measure(input)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"toxicity: failed to classify book quality",
-					err,
-				))
-				continue
-			}
-
-			if !yield(&types.Measurement{
-				ID:       uuid.NewString(),
-				Source:   types.SourceToxicity,
-				Symbol:   level3.Symbol,
-				Tick:     tick,
-				At:       at,
-				Maturity: maturity,
-				Metrics:  toxicityMetrics(input, output),
-			}) {
-				return
-			}
+		if err := market.AppendMeasurement(types.Measurement{
+			ID:       uuid.NewString(),
+			Source:   types.SourceToxicity,
+			Symbol:   level3.Symbol,
+			Tick:     tick,
+			At:       at,
+			Maturity: maturity,
+			Metrics:  toxicityMetrics(input, output),
+		}); err != nil {
+			return err
 		}
 	}
+
+	return nil
 }
 
 func qualityEvents(orders []kraken.Level3Order) []quality.OrderEvent {
@@ -283,18 +288,6 @@ func normalizeAttribution(
 		sample := metrics[key]
 		sample.Normalized = &value
 		metrics[key] = sample
-	}
-
-	separation, ready := types.MeasurementHypothesisSeparation(types.SourceToxicity, metrics)
-
-	if !ready {
-		return
-	}
-
-	metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
-		Raw:        separation,
-		Normalized: &separation,
-		Unit:       types.UnitDimensionless,
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 func windowObservationForTest(value float64, capacity int) nomagique.Frame {
 	input := nomagique.Frame{}
 	input.Put(nomagique.SampleValue, value)
+	input.Put(SymbolUnixSec, float64(capacity*1000))
+	input.Put(SymbolUnixNsec, 0)
 	input.Put(SymbolCapacity, float64(capacity))
 
 	return input

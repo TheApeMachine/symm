@@ -72,9 +72,9 @@ Measure produces the Measurements for the sentiment signal.
 func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	ticks ...int64,
-) iter.Seq[*types.Measurement] {
+) error {
 	if symbol == nil {
-		return func(yield func(*types.Measurement) bool) {}
+		return nil
 	}
 
 	return signal.MeasureCohort([]*types.Symbol{symbol}, ticks...)
@@ -88,80 +88,86 @@ scheduler-dependent sequence of partial cohort readings.
 func (signal *Signal) MeasureCohort(
 	symbols []*types.Symbol,
 	ticks ...int64,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		ordered := make([]*types.Symbol, 0, len(symbols))
+) error {
+	ordered := make([]*types.Symbol, 0, len(symbols))
+	bySymbol := make(map[string]*types.Symbol, len(symbols))
 
-		for _, symbol := range symbols {
-			if symbol != nil && symbol.Symbol != "" {
-				ordered = append(ordered, symbol)
-			}
+	for _, symbol := range symbols {
+		if symbol != nil && symbol.Symbol != "" {
+			ordered = append(ordered, symbol)
+			bySymbol[symbol.Symbol] = symbol
 		}
+	}
 
-		sort.Slice(ordered, func(left, right int) bool {
-			return ordered[left].Symbol < ordered[right].Symbol
-		})
+	sort.Slice(ordered, func(left, right int) bool {
+		return ordered[left].Symbol < ordered[right].Symbol
+	})
 
-		changed := make(map[string]struct{}, len(ordered))
+	changed := make(map[string]struct{}, len(ordered))
 
-		for _, symbol := range ordered {
-			if signal.ingest(symbol.MarketTickers(types.SourceSentiment)) {
-				changed[symbol.Symbol] = struct{}{}
-			}
+	for _, symbol := range ordered {
+		if signal.ingest(symbol.MarketTickers(types.SourceSentiment)) {
+			changed[symbol.Symbol] = struct{}{}
 		}
+	}
 
-		if len(changed) == 0 {
-			return
-		}
+	if len(changed) == 0 {
+		return nil
+	}
 
-		tick := int64(0)
+	tick := int64(0)
 
-		if len(ticks) > 0 {
-			tick = ticks[0]
-		}
+	if len(ticks) > 0 {
+		tick = ticks[0]
+	}
 
-		peers, _, _ := signal.cohort()
+	peers, _, _ := signal.cohort()
 
-		if len(peers) == 0 {
-			// Dirty rows arrived but the cohort has no ready member yet. Emit
-			// an honest zero reading for each dirty symbol instead of going
-			// dark; the next pass classifies once a peer is ready.
-			for symbol := range changed {
-				if observation, found := signal.observation(symbol); found {
-					if !yield(immatureSentiment(symbol, observation, tick)) {
-						return
+	if len(peers) == 0 {
+		// Dirty rows arrived but the cohort has no ready member yet. Emit
+		// an honest zero reading for each dirty symbol instead of going
+		// dark; the next pass classifies once a peer is ready.
+		for symbol := range changed {
+			if observation, found := signal.observation(symbol); found {
+				if owner, ok := bySymbol[symbol]; ok && owner != nil {
+					if err := owner.AppendMeasurement(*immatureSentiment(symbol, observation, tick)); err != nil {
+						return err
 					}
 				}
 			}
-
-			return
 		}
 
-		statistics := sentimentStatistics(peers)
-		directionalReady := false
+		return nil
+	}
 
-		for _, peer := range peers {
-			if peer.observation.ready {
-				directionalReady = true
-				break
-			}
+	statistics := sentimentStatistics(peers)
+	directionalReady := false
+
+	for _, peer := range peers {
+		if peer.observation.ready {
+			directionalReady = true
+			break
+		}
+	}
+
+	for _, peer := range peers {
+		if _, isDirty := changed[peer.symbol]; !isDirty {
+			continue
 		}
 
-		for _, peer := range peers {
-			if _, isDirty := changed[peer.symbol]; !isDirty {
-				continue
-			}
-
-			if !yield(sentimentMeasurement(
+		if owner, ok := bySymbol[peer.symbol]; ok && owner != nil {
+			if err := owner.AppendMeasurement(*sentimentMeasurement(
 				peer,
 				statistics,
 				directionalReady,
 				tick,
-			)) {
-				return
+			)); err != nil {
+				return err
 			}
 		}
 	}
+
+	return nil
 }
 
 func sentimentMeasurement(
@@ -214,20 +220,6 @@ func sentimentMeasurement(
 		},
 		Metrics: metrics,
 	}
-	separation, separationReady := types.MeasurementHypothesisSeparation(
-		types.SourceSentiment,
-		measurement.Metrics,
-	)
-	snrSample := types.MetricSample{
-		Raw:  separation,
-		Unit: types.UnitDimensionless,
-	}
-
-	if separationReady && directionalReady {
-		snrSample.Normalized = &separation
-	}
-
-	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
 	measurement.PutMetric(
 		types.MetricLastPrice,
 		types.SideNone,

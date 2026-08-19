@@ -46,6 +46,25 @@ var SignalSources = []SourceType{
 	SourceToxicity,
 }
 
+var SignalSourceStrings = []string{
+	"correlation",
+	"cvd",
+	"depthflow",
+	"exhaustion",
+	"hawkes",
+	"leadlag",
+	"liquidity",
+	"pumpdump",
+	"sentiment",
+	"toxicity",
+}
+
+var LogicSourceStrings = []string{
+	"category",
+	"manifold",
+	"graph",
+}
+
 /*
 TickerReceivers names the signals that drain per-symbol ticker queues.
 */
@@ -58,6 +77,15 @@ var TickerReceivers = []SourceType{
 	SourceSentiment,
 }
 
+var TickerReceiverStrings = []string{
+	"correlation",
+	"cvd",
+	"leadlag",
+	"liquidity",
+	"pumpdump",
+	"sentiment",
+}
+
 /*
 TradeReceivers names the signals that drain per-symbol trade queues.
 */
@@ -68,6 +96,15 @@ var TradeReceivers = []SourceType{
 	SourceHawkes,
 	SourcePumpDump,
 	SourceToxicity,
+}
+
+var TradeReceiverStrings = []string{
+	"cvd",
+	"depthflow",
+	"exhaustion",
+	"hawkes",
+	"pumpdump",
+	"toxicity",
 }
 
 /*
@@ -85,6 +122,11 @@ Level3Receivers names the signals that consume accepted order-identity events.
 var Level3Receivers = []SourceType{
 	SourceToxicity,
 	SourcePumpDump,
+}
+
+var Level3ReceiverStrings = []string{
+	"toxicity",
+	"pumpdump",
 }
 
 /*

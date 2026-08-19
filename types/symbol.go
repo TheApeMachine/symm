@@ -1,15 +1,14 @@
 package types
 
 import (
-	"fmt"
 	"iter"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"golang.design/x/lockfree/lf"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -19,26 +18,26 @@ It should be kept extremely simple, and lean, and is not an invitation to
 start adding additional complexity beyond what is truly earned.
 */
 type Symbol struct {
-	ID           SymbolID      `json:"id,omitempty"`
-	Symbol       string        `json:"symbol,omitempty"`
-	Status       Status        `json:"status,omitempty"`
-	Tick         int64         `json:"tick,omitempty"`
-	Measurements *sync.Map     `json:"-"`
-	Latest       *sync.Map     `json:"-"`
-	tickers      *sync.Map     `json:"-"`
-	trades       *sync.Map     `json:"-"`
-	level3       *sync.Map     `json:"-"`
-	pending      atomic.Int64  `json:"-"`
-	bookRevision atomic.Uint64 `json:"-"`
-	bookAt       atomic.Int64  `json:"-"`
-	Decisions    *sync.Map     `json:"decisions,omitempty"`
-	Positions    *sync.Map     `json:"positions,omitempty"`
-	Graphs       *sync.Map     `json:"graphs,omitempty"`
-	Categories   *sync.Map     `json:"categories,omitempty"`
-	Phase        *sync.Map     `json:"-"`
-	Cognition    *sync.Map     `json:"-"`
-	Resonance    *sync.Map     `json:"-"`
-	Causal       *sync.Map     `json:"-"`
+	ID           SymbolID                                 `json:"id,omitempty"`
+	Symbol       string                                   `json:"symbol,omitempty"`
+	Status       Status                                   `json:"status,omitempty"`
+	Tick         int64                                    `json:"tick,omitempty"`
+	Measurements *transport.MapReduce[*types.Measurement] `json:"-"`
+	Latest       *sync.Map                                `json:"-"`
+	tickers      *transport.MapReduce[kraken.TickerData]  `json:"-"`
+	trades       *transport.MapReduce[kraken.TradeData]   `json:"-"`
+	level3       *transport.MapReduce[kraken.Level3Data]  `json:"-"`
+	pending      atomic.Int64                             `json:"-"`
+	bookRevision atomic.Uint64                            `json:"-"`
+	bookAt       atomic.Int64                             `json:"-"`
+	Decisions    *sync.Map                                `json:"decisions,omitempty"`
+	Positions    *sync.Map                                `json:"positions,omitempty"`
+	Graphs       *sync.Map                                `json:"graphs,omitempty"`
+	Categories   *sync.Map                                `json:"categories,omitempty"`
+	Phase        *sync.Map                                `json:"-"`
+	Cognition    *sync.Map                                `json:"-"`
+	Resonance    *sync.Map                                `json:"-"`
+	Causal       *sync.Map                                `json:"-"`
 }
 
 /*
@@ -116,33 +115,29 @@ NewSymbol creates empty measurement state for one market symbol.
 */
 func NewSymbol(name string, ui chan []byte) *Symbol {
 	symbol := &Symbol{
-		Symbol:       name,
-		Status:       READY,
-		tickers:      &sync.Map{},
-		trades:       &sync.Map{},
-		level3:       &sync.Map{},
-		Measurements: &sync.Map{},
-		Latest:       &sync.Map{},
-		Decisions:    &sync.Map{},
-		Positions:    &sync.Map{},
-		Graphs:       &sync.Map{},
-		Categories:   &sync.Map{},
-		Phase:        &sync.Map{},
-		Cognition:    &sync.Map{},
-		Resonance:    &sync.Map{},
-		Causal:       &sync.Map{},
-	}
-
-	for _, source := range TickerReceivers {
-		symbol.tickers.Store(source, lf.NewQueue[kraken.TickerData]())
-	}
-
-	for _, source := range TradeReceivers {
-		symbol.trades.Store(source, lf.NewQueue[kraken.TradeData]())
-	}
-
-	for _, source := range Level3Receivers {
-		symbol.level3.Store(source, lf.NewQueue[kraken.Level3Data]())
+		Symbol: name,
+		Status: READY,
+		tickers: transport.NewMapReduce[kraken.TickerData](
+			TickerReceiverStrings, nil, nil,
+		),
+		trades: transport.NewMapReduce[kraken.TradeData](
+			TradeReceiverStrings, nil, nil,
+		),
+		level3: transport.NewMapReduce[kraken.Level3Data](
+			Level3ReceiverStrings, nil, nil,
+		),
+		Measurements: transport.NewMapReduce[*types.Measurement](
+			LogicSourceStrings, nil, nil,
+		),
+		Latest:     &sync.Map{},
+		Decisions:  &sync.Map{},
+		Positions:  &sync.Map{},
+		Graphs:     &sync.Map{},
+		Categories: &sync.Map{},
+		Phase:      &sync.Map{},
+		Cognition:  &sync.Map{},
+		Resonance:  &sync.Map{},
+		Causal:     &sync.Map{},
 	}
 
 	return symbol
@@ -152,73 +147,24 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 AppendTicker routes a ticker only to the signal owners
 selected by the streaming topology.
 */
-func (symbol *Symbol) AppendTicker(
-	ticker kraken.TickerData, receivers []SourceType,
-) {
-	for _, source := range receivers {
-		value, ok := symbol.tickers.Load(source)
-
-		if !ok {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				fmt.Sprintf("ticker cursor not found for source %s", source),
-				nil,
-			))
-
-			continue
-		}
-
-		value.(*lf.Queue[kraken.TickerData]).Enqueue(ticker)
-		symbol.pending.Add(1)
-	}
+func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
+	symbol.tickers.Push(ticker)
 }
 
 /*
 AppendTrade routes a trade only to the signal owners
 selected by the streaming topology.
 */
-func (symbol *Symbol) AppendTrade(
-	trade kraken.TradeData, receivers []SourceType,
-) {
-	for _, source := range receivers {
-		value, ok := symbol.trades.Load(source)
-
-		if !ok {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				fmt.Sprintf("trade cursor not found for source %s", source),
-				nil,
-			))
-
-			continue
-		}
-
-		value.(*lf.Queue[kraken.TradeData]).Enqueue(trade)
-		symbol.pending.Add(1)
-	}
+func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
+	symbol.trades.Push(trade)
 }
 
 /*
 AppendLevel3 retains one accepted order-identity frame for the signal owners
 selected by the streaming topology.
 */
-func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data, receivers []SourceType) {
-	for _, source := range receivers {
-		value, ok := symbol.level3.Load(source)
-
-		if !ok {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				fmt.Sprintf("level3 cursor not found for source %s", source),
-				nil,
-			))
-
-			continue
-		}
-
-		value.(*lf.Queue[kraken.Level3Data]).Enqueue(level3)
-		symbol.pending.Add(1)
-	}
+func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data) {
+	symbol.level3.Push(level3)
 
 	if observedAt := level3ObservedAt(level3); !observedAt.IsZero() {
 		nanos := observedAt.UnixNano()
@@ -269,25 +215,14 @@ func level3ObservedAt(level3 kraken.Level3Data) time.Time {
 }
 
 /*
-AppendMeasurement routes one measurement to every solver cursor that consumes
-it, retains the latest row per source, and mirrors it into the resonance
-predictor queue. Measurements stream in one at a time; no batch is formed.
+AppendMeasurement pushes one measured measurement — stamping the owning
+symbol's tick at the boundary — and routes it to every solver cursor that
+consumes it. Signals project their numeric Frame output into the nomagique
+Measurement shape via AddMetrics and push that shape here.
 */
-func (symbol *Symbol) AppendMeasurement(measurement *Measurement) {
-	if measurement == nil {
-		return
-	}
-
-	categoryMeasurements, _ := symbol.Measurements.LoadOrStore("category", lf.NewQueue[*Measurement]())
-	graphMeasurements, _ := symbol.Measurements.LoadOrStore("graph", lf.NewQueue[*Measurement]())
-
-	if measurement.Source == SourceHawkes {
-		manifoldMeasurements, _ := symbol.Measurements.LoadOrStore("manifold", lf.NewQueue[*Measurement]())
-		manifoldMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
-	}
-
-	categoryMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
-	graphMeasurements.(*lf.Queue[*Measurement]).Enqueue(measurement)
+func (symbol *Symbol) AppendMeasurement(measurement *types.Measurement) error {
+	symbol.Measurements.Push(measurement)
+	return nil
 }
 
 /*
@@ -305,38 +240,15 @@ queue emptiness would never end under sustained load; rows stamped after the
 cut are processed one last time and then left for the next pass.
 */
 func (symbol *Symbol) MarketTickers(source SourceType) iter.Seq[kraken.TickerData] {
-	ticker, ok := symbol.tickers.Load(source)
+	cut := time.Now().UTC()
 
-	if !ok {
-		return func(yield func(kraken.TickerData) bool) {}
-	}
-
-	return func(yield func(kraken.TickerData) bool) {
-		cut := time.Now().UTC()
-
-		var (
-			data kraken.TickerData
-			open bool = true
-		)
-
-		for open {
-			data, open = ticker.(*lf.Queue[kraken.TickerData]).Dequeue()
-
-			if !open {
-				return
-			}
-
-			symbol.pending.Add(-1)
-
-			if !yield(data) {
-				return
-			}
-
-			if data.Timestamp.After(cut) {
-				return
-			}
+	return symbol.tickers.Drain(string(source), func(ticker kraken.TickerData) bool {
+		if ticker.Timestamp.After(cut) {
+			return false
 		}
-	}
+
+		return true
+	})
 }
 
 /*
@@ -344,38 +256,15 @@ MarketTrades drains this source's trade queue up to an event-time cut taken
 when the drain starts, on the same terms as MarketTickers.
 */
 func (symbol *Symbol) MarketTrades(source SourceType) iter.Seq[kraken.TradeData] {
-	trade, ok := symbol.trades.Load(source)
+	cut := time.Now().UTC()
 
-	if !ok {
-		return func(yield func(kraken.TradeData) bool) {}
-	}
-
-	return func(yield func(kraken.TradeData) bool) {
-		cut := time.Now().UTC()
-
-		var (
-			data kraken.TradeData
-			open bool = true
-		)
-
-		for open {
-			data, open = trade.(*lf.Queue[kraken.TradeData]).Dequeue()
-
-			if !open {
-				return
-			}
-
-			symbol.pending.Add(-1)
-
-			if !yield(data) {
-				return
-			}
-
-			if data.Timestamp.After(cut) {
-				return
-			}
+	return symbol.trades.Drain(string(source), func(trade kraken.TradeData) bool {
+		if trade.Timestamp.After(cut) {
+			return false
 		}
-	}
+
+		return true
+	})
 }
 
 /*
@@ -384,63 +273,21 @@ order, up to an event-time cut taken when the drain starts, on the same terms
 as MarketTickers.
 */
 func (symbol *Symbol) MarketLevel3(source SourceType) iter.Seq[kraken.Level3Data] {
-	queue, ok := symbol.level3.Load(source)
+	cut := time.Now().UTC()
 
-	if !ok {
-		return func(yield func(kraken.Level3Data) bool) {}
-	}
-
-	return func(yield func(kraken.Level3Data) bool) {
-		cut := time.Now().UTC()
-
-		for {
-			data, ok := queue.(*lf.Queue[kraken.Level3Data]).Dequeue()
-
-			if !ok {
-				return
-			}
-
-			symbol.pending.Add(-1)
-
-			if !yield(data) {
-				return
-			}
-
-			if data.Timestamp.After(cut) {
-				return
-			}
+	return symbol.level3.Drain(string(source), func(level3 kraken.Level3Data) bool {
+		if observedAt := level3ObservedAt(level3); !observedAt.IsZero() && observedAt.After(cut) {
+			return false
 		}
-	}
+
+		return true
+	})
 }
 
-func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*Measurement] {
-	measurements, found := symbol.Measurements.Load(solver)
+func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*types.Measurement] {
+	cut := time.Now().UTC().Unix()
 
-	if !found {
-		return func(yield func(*Measurement) bool) {}
-	}
-
-	return func(yield func(*Measurement) bool) {
-		cut := time.Now().UTC()
-
-		for {
-			data, ok := measurements.(*lf.Queue[*Measurement]).Dequeue()
-
-			if !ok {
-				return
-			}
-
-			if !yield(data) {
-				return
-			}
-
-			// The streaming volume clock: stop once a record stamped past the
-			// drain cut is read. Whatever remains stays queued for the next
-			// pass; without this bound a decoupled producer can keep the
-			// cursor draining forever.
-			if data.At.After(cut) {
-				return
-			}
-		}
-	}
+	return symbol.Measurements.Drain(solver, func(measurement *types.Measurement) bool {
+		return measurement.At <= cut
+	})
 }

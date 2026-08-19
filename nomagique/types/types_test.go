@@ -4,7 +4,7 @@ import "testing"
 
 func TestMeasurementRetainsBoundaryMetadata(t *testing.T) {
 	measurement := NewMeasurement("1", "hawkes")
-	measurement.Put("event_count", NewMetric(7.0, Descriptor{
+	measurement.Put("event_count", NewMetric("event_count", 7.0, Descriptor{
 		Unit:      UnitCount,
 		Timescale: TimescalePerSecond,
 	}))

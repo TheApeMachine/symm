@@ -130,7 +130,7 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 func (solver *Solver) classify(
 	symbol string,
-	measurements iter.Seq[*types.Measurement],
+	measurements iter.Seq[types.Measurement],
 ) ([]types.Category, bool, error) {
 	evidence := make(map[types.CategoryType][]float64, len(solver.categories))
 	supporting := make(map[types.CategoryType][]string, len(solver.categories))
@@ -139,10 +139,6 @@ func (solver *Solver) classify(
 	measured := false
 
 	for measurement := range measurements {
-		if measurement == nil {
-			continue
-		}
-
 		measured = true
 
 		for _, schema := range types.CategorySchemas {

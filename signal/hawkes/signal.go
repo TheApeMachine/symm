@@ -2,7 +2,6 @@ package hawkes
 
 import (
 	"context"
-	"iter"
 	"sync"
 	"time"
 
@@ -76,80 +75,96 @@ func (signal *Signal) Type() types.SourceType {
 func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		emitted := false
-
-		for trade := range symbol.MarketTrades(types.SourceHawkes) {
-			if signal.seenTrade(trade) {
-				continue
-			}
-
-			input, sampled, err := signal.sample.MeasureArrival(excitation.TradeInput{
-				Symbol:    trade.Symbol,
-				Side:      trade.Side,
-				Timestamp: trade.Timestamp,
-			})
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"excitation sample failed: "+err.Error(),
-					err,
-				))
-
-				continue
-			}
-
-			signal.commitTrade(trade)
-
-			if !sampled {
-				if !yield(signal.frame(trade.Symbol, countOutcome(trade, input))) {
-					return
-				}
-
-				continue
-			}
-
-			outcome, measured, err := signal.process.Measure(input)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"excitation measure failed: "+err.Error(),
-					err,
-				))
-
-				if !yield(signal.frame(trade.Symbol, countOutcome(trade, input))) {
-					return
-				}
-
-				continue
-			}
-
-			if !measured {
-				if !yield(signal.frame(trade.Symbol, countOutcome(trade, input))) {
-					return
-				}
-
-				continue
-			}
-
-			if !yield(signal.frame(trade.Symbol, outcome)) {
-				return
-			}
-
-			emitted = true
-		}
-
-		if emitted {
-			return
-		}
-
-		if last := signal.recall(symbol.Symbol); last != nil {
-			yield(last)
-		}
+) error {
+	if symbol == nil {
+		return nil
 	}
+
+	emitted := false
+
+	for trade := range symbol.MarketTrades(types.SourceHawkes) {
+		if signal.seenTrade(trade) {
+			continue
+		}
+
+		input, sampled, err := signal.sample.MeasureArrival(excitation.TradeInput{
+			Symbol:    trade.Symbol,
+			Side:      trade.Side,
+			Timestamp: trade.Timestamp,
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"excitation sample failed: "+err.Error(),
+				err,
+			))
+
+			continue
+		}
+
+		signal.commitTrade(trade)
+
+		if !sampled {
+			if err := signal.emit(symbol, trade.Symbol, countOutcome(trade, input)); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		outcome, measured, err := signal.process.Measure(input)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"excitation measure failed: "+err.Error(),
+				err,
+			))
+
+			if err := signal.emit(symbol, trade.Symbol, countOutcome(trade, input)); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if !measured {
+			if err := signal.emit(symbol, trade.Symbol, countOutcome(trade, input)); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if err := signal.emit(symbol, trade.Symbol, outcome); err != nil {
+			return err
+		}
+
+		emitted = true
+	}
+
+	if emitted {
+		return nil
+	}
+
+	if last := signal.recall(symbol.Symbol); last != nil {
+		return symbol.AppendMeasurement(*last)
+	}
+
+	return nil
+}
+
+// emit builds the measurement frame and pushes it upstream through the owning
+// symbol. frame() already remembers the row for the recall fallback.
+func (signal *Signal) emit(symbol *types.Symbol, symbolName string, outcome excitation.Outcome) error {
+	measurement := signal.frame(symbolName, outcome)
+
+	return errnie.Error(errnie.Err(
+		errnie.Validation,
+		"hawkes: failed to emit reading",
+		symbol.AppendMeasurement(*measurement),
+	))
 }
 
 func (signal *Signal) remember(measurement *types.Measurement) {

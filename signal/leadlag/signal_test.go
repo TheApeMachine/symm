@@ -37,7 +37,7 @@ func TestMeasure(t *testing.T) {
 					Symbol:    symbol,
 					Last:      decimal.NewFromFloat64(prices[index]),
 					Timestamp: at,
-				}, types.TickerReceivers)
+				})
 			}
 
 			measurements = slices.Collect(signal.Measure(market))
@@ -90,7 +90,7 @@ func TestMeasure(t *testing.T) {
 		market.AppendTicker(kraken.TickerData{
 			Symbol: "BBB/USD", Last: decimal.NewFromFloat64(106),
 			Timestamp: start.Add(2 * time.Second),
-		}, types.TickerReceivers)
+		})
 		measurements := slices.Collect(signal.Measure(market))
 
 		Convey("It should retain the exact anchor endpoint on the relationship", func() {
@@ -141,7 +141,7 @@ func BenchmarkMeasure(b *testing.B) {
 
 		for index := range tickers {
 			tickers[index].Timestamp = at
-			market.AppendTicker(tickers[index], types.TickerReceivers)
+			market.AppendTicker(tickers[index])
 		}
 
 		_ = slices.Collect(signal.Measure(market))

@@ -2,65 +2,54 @@ package liquidity
 
 import (
 	"context"
-	"iter"
-	"math"
-	"sort"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/theapemachine/nomagique/statistic"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal is the Scarcity perspective, identifying opportunities where current
-executable touch depth is thin relative to peers. Reported-volume notional is
-retained as a separate turnover context and never mixed into the book-depth score.
+Signal is the Liquidity perspective. It is ONLY a nomagique Number pipeline:
+depth extraction, adaptive window, adaptive baseline, and deviation compose a
+single numeric unit that maps an encoded ticker row to a measurement. The
+signal owns nothing except that composed number and its own goroutine.
 */
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	api          *websocket.API
-	observations *sync.Map
+	ctx    context.Context
+	cancel context.CancelFunc
+	thesis *types.Thesis
+	number nomagique.Number
 }
-
-type liquidityObservation struct {
-	at              time.Time
-	bid             float64
-	ask             float64
-	bidQuantity     float64
-	askQuantity     float64
-	reportedPrice   float64
-	reportedVolume  float64
-	executableDepth float64
-	quoteNotional   float64
-	cadence         time.Duration
-}
-
-const minimumLiquidityCohort = 3
 
 /*
-NewSignal creates liquidity measurement state for central market cuts so each
-tick can compare executable liquidity across the observed cohort.
+NewSignal constructs the liquidity pipeline as one composed nomagique.Number
+and starts it in its own goroutine. Nothing else is owned by the signal.
 */
 func NewSignal(
 	ctx context.Context,
-	api *websocket.API,
+	thesis *types.Thesis,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		api:          api,
-		observations: &sync.Map{},
+		ctx:    ctx,
+		cancel: cancel,
+		thesis: thesis,
+		number: nomagique.NewNumber(
+			statistic.ExtractDepth,
+			nomagique.Configure(
+				statistic.Baseline,
+				nmtypes.Span,
+				temporal.Window,
+			),
+		),
 	}
 
+	signal.run()
 	return signal
 }
 
@@ -75,584 +64,61 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceLiquidity
 }
 
-/*
-Measure produces the Measurements for the liquidity signal.
-*/
-func (signal *Signal) Measure(
-	symbol *types.Symbol,
-	ticks ...int64,
-) iter.Seq[*types.Measurement] {
-	if symbol == nil {
-		return func(yield func(*types.Measurement) bool) {}
-	}
-
-	return signal.MeasureCohort([]*types.Symbol{symbol}, ticks...)
-}
-
-/*
-MeasureCohort first ingests every ticker queue carried by the transport message,
-then takes one leave-one-out cohort reading. No symbol can therefore score a
-partially ingested version of the same message.
-*/
-func (signal *Signal) MeasureCohort(
-	symbols []*types.Symbol,
-	ticks ...int64,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		ordered := make([]*types.Symbol, 0, len(symbols))
-
-		for _, symbol := range symbols {
-			if symbol != nil && symbol.Symbol != "" {
-				ordered = append(ordered, symbol)
-			}
-		}
-
-		sort.Slice(ordered, func(left, right int) bool {
-			return ordered[left].Symbol < ordered[right].Symbol
-		})
-
-		changed := make(map[string]struct{}, len(ordered))
-
-		for _, symbol := range ordered {
-			if signal.ingest(symbol.MarketTickers(types.SourceLiquidity)) {
-				changed[symbol.Symbol] = struct{}{}
-			}
-		}
-
-		if len(changed) == 0 {
+func (signal *Signal) run() {
+	for {
+		select {
+		case <-signal.ctx.Done():
 			return
-		}
+		default:
+			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+				symbol, valid := value.(*types.Symbol)
 
-		tick := int64(0)
-
-		if len(ticks) > 0 {
-			tick = ticks[0]
-		}
-
-		peers, _, cadenceReady := signal.cohort()
-
-		if len(peers) == 0 {
-			// Dirty ticks arrived but the cohort has no ready member yet. Emit
-			// an honest zero reading per dirty symbol instead of going dark.
-			for symbol := range changed {
-				if observation, found := signal.observation(symbol); found {
-					if !yield(immatureLiquidity(symbol, observation, tick)) {
-						return
-					}
+				if !valid || symbol == nil {
+					return true
 				}
-			}
 
-			return
-		}
+				for ticker := range symbol.MarketTickers(types.SourceLiquidity) {
+					input := nomagique.Frame{}
+					input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
+					input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
+					input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
+					input.Put(nmtypes.BetaQuantity, ticker.AskQty)
+					input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+					input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
 
-		sort.Slice(peers, func(left, right int) bool {
-			return peers[left].symbol < peers[right].symbol
-		})
+					output, err := signal.number(input)
 
-		cohortDepthMedian, depthCohortReady := liquidityCohortMedian(peers, true)
-		cohortNotionalMedian, notionalCohortReady := liquidityCohortMedian(peers, false)
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"liquidity: signal failed for "+symbol.Symbol,
+							err,
+						))
+					}
 
-		for _, peer := range peers {
-			if _, isDirty := changed[peer.symbol]; !isDirty {
-				continue
-			}
+					value, _ := output.Get(nomagique.SampleValue)
 
-			measurement := liquidityMeasurement(
-				peer,
-				peers,
-				tick,
-				cadenceReady,
-				cohortDepthMedian,
-				depthCohortReady,
-				cohortNotionalMedian,
-				notionalCohortReady,
-			)
+					symbol.Measurements.Push(nmtypes.NewMeasurement(
+						uuid.NewString(),
+						signal.Name(),
+					).AddMetrics(
+						nmtypes.NewMetric(
+							"executable_touch_depth",
+							value,
+							nmtypes.Descriptor{Unit: nmtypes.UnitRate},
+						),
+					))
+				}
 
-			if measurement != nil && !yield(measurement) {
-				return
-			}
-		}
-	}
-}
-
-func liquidityMeasurement(
-	peer liquidityPeer,
-	peers []liquidityPeer,
-	tick int64,
-	cadenceReady bool,
-	cohortDepthMedian float64,
-	depthCohortReady bool,
-	cohortNotionalMedian float64,
-	notionalCohortReady bool,
-) *types.Measurement {
-	executableDepth := peer.observation.executableDepth
-	depthPeers, notionalPeers := leaveOneOutLiquidity(peer.symbol, peers)
-	depthMedian, depthOK := statistic.MedianOf(depthPeers)
-	peerReady := len(depthPeers) >= 2 && depthOK && depthMedian > 0
-	notionalMedian, hasNotionalMedian := statistic.MedianOf(notionalPeers)
-	reportedNotional := peer.observation.quoteNotional
-	reportedReady := len(notionalPeers) >= 2 && hasNotionalMedian &&
-		notionalMedian > 0 && reportedNotional > 0 && notionalCohortReady
-
-	relativeDepth := 0.0
-	scarcity := 0.0
-	median := 0.0
-
-	if peerReady && executableDepth > 0 {
-		relativeDepth = executableDepth / depthMedian
-		median = depthMedian
-		deficit := math.Max(0, depthMedian-executableDepth)
-
-		if deficit > 0 {
-			deviations := absoluteDeviations(depthPeers, depthMedian)
-			dispersion, _ := statistic.MedianOf(deviations)
-			scarcity = deficit / (deficit + dispersion)
+				return true
+			})
 		}
 	}
-
-	reportedMedian := 0.0
-
-	if hasNotionalMedian && notionalMedian > 0 {
-		reportedMedian = notionalMedian
-	}
-
-	normalizedDepth := normalizedLiquidityRatio(executableDepth, depthMedian)
-	var normalizedRelativeDepth *float64
-	var normalizedScarcity *float64
-
-	if peerReady && executableDepth > 0 {
-		normalizedRelativeDepth = normalizedRelativeLiquidity(relativeDepth)
-		normalizedScarcity = normalizedLiquidityScore(scarcity)
-	}
-
-	normalizedDepthMedian := normalizedLiquidityRatio(
-		depthMedian,
-		cohortDepthMedian,
-	)
-	normalizedReportedNotional := normalizedLiquidityRatio(
-		reportedNotional,
-		notionalMedian,
-	)
-
-	if reportedNotional <= 0 {
-		normalizedReportedNotional = nil
-	}
-
-	normalizedReportedMedian := normalizedLiquidityRatio(
-		notionalMedian,
-		cohortNotionalMedian,
-	)
-	maturity := 0.0
-
-	if cadenceReady && peerReady && depthCohortReady && reportedReady {
-		maturity = 1
-	}
-
-	measurement := &types.Measurement{
-		ID:       uuid.NewString(),
-		Source:   types.SourceLiquidity,
-		Symbol:   peer.symbol,
-		Tick:     tick,
-		At:       peer.observation.at,
-		Maturity: maturity,
-		Metadata: map[string]float64{
-			"ask":             peer.observation.ask,
-			"ask_quantity":    peer.observation.askQuantity,
-			"bid":             peer.observation.bid,
-			"bid_quantity":    peer.observation.bidQuantity,
-			"reported_price":  peer.observation.reportedPrice,
-			"reported_volume": peer.observation.reportedVolume,
-		},
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
-				Raw:  peer.observation.bid,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricBestPrice, types.SideSell): {
-				Raw:  peer.observation.ask,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricTouchQuantity, types.SideBuy): {
-				Raw:  peer.observation.bidQuantity,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricTouchQuantity, types.SideSell): {
-				Raw:  peer.observation.askQuantity,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricMidpoint, types.SideNone): {
-				Raw:  (peer.observation.bid + peer.observation.ask) / 2,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricVWAP, types.SideNone): {
-				Raw:  peer.observation.reportedPrice,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricReportedVolume, types.SideNone): {
-				Raw:  peer.observation.reportedVolume,
-				Unit: types.UnitBaseCurrency,
-			},
-			types.MetricKey(types.MetricExecutableTouchDepth, types.SideNone): {
-				Raw:        executableDepth,
-				Normalized: normalizedDepth,
-				Unit:       types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricRelativeTouchDepth, types.SideNone): {
-				Raw:        relativeDepth,
-				Normalized: normalizedRelativeDepth,
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricScarcityScore, types.SideNone): {
-				Raw:        scarcity,
-				Normalized: normalizedScarcity,
-				Unit:       types.UnitDimensionless,
-			},
-			types.MetricKey(types.MetricExecutableTouchDepthMedian, types.SideNone): {
-				Raw:        median,
-				Normalized: normalizedDepthMedian,
-				Unit:       types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricReportedVolumeNotional, types.SideNone): {
-				Raw:        reportedNotional,
-				Normalized: normalizedReportedNotional,
-				Unit:       types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricReportedVolumeNotionalMedian, types.SideNone): {
-				Raw:        reportedMedian,
-				Normalized: normalizedReportedMedian,
-				Unit:       types.UnitQuoteCurrency,
-			},
-		},
-	}
-	separation, separationReady := types.MeasurementHypothesisSeparation(
-		types.SourceLiquidity,
-		measurement.Metrics,
-	)
-	snrSample := types.MetricSample{
-		Raw:  separation,
-		Unit: types.UnitDimensionless,
-	}
-
-	if separationReady {
-		snrSample.Normalized = &separation
-	}
-
-	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
-	return measurement
 }
 
 /*
-normalizedRelativeLiquidity maps a leave-one-out depth ratio to its share
-against empirical parity. A raw ratio of one therefore maps to one half.
-*/
-func normalizedRelativeLiquidity(raw float64) *float64 {
-	if raw < 0 {
-		return nil
-	}
-
-	value := raw / (1 + raw)
-
-	return &value
-}
-
-/*
-liquidityCohortMedian derives the common cross-sectional scale used to make
-each leave-one-out median itself comparable. It reads only the current cohort;
-no normalization history is retained here.
-*/
-func liquidityCohortMedian(
-	peers []liquidityPeer,
-	depth bool,
-) (float64, bool) {
-	values := make([]float64, 0, len(peers))
-
-	for _, peer := range peers {
-		value := peer.observation.quoteNotional
-
-		if depth {
-			value = peer.observation.executableDepth
-		}
-
-		if value > 0 {
-			values = append(values, value)
-		}
-	}
-
-	median, ready := statistic.MedianOf(values)
-
-	return median, ready && len(values) >= minimumLiquidityCohort && median > 0
-}
-
-/*
-normalizedLiquidityRatio reports raw as its share of raw plus a positive
-empirical cohort baseline. Zero is accepted only as a measured numerator; a
-missing or malformed scale stays nil.
-*/
-func normalizedLiquidityRatio(raw, baseline float64) *float64 {
-	if raw < 0 || baseline <= 0 {
-		return nil
-	}
-
-	value := raw / (raw + baseline)
-
-	return &value
-}
-
-func normalizedLiquidityScore(raw float64) *float64 {
-	if raw < 0 || raw > 1 {
-		return nil
-	}
-
-	value := raw
-
-	return &value
-}
-
-type liquidityPeer struct {
-	symbol      string
-	observation liquidityObservation
-}
-
-/*
-observation returns the retained liquidity observation for a symbol, if any.
-*/
-func (signal *Signal) observation(symbol string) (liquidityObservation, bool) {
-	if signal.observations == nil {
-		return liquidityObservation{}, false
-	}
-
-	raw, found := signal.observations.Load(symbol)
-
-	if !found {
-		return liquidityObservation{}, false
-	}
-
-	return raw.(liquidityObservation), true
-}
-
-/*
-immatureLiquidity is the honest zero reading for a dirty symbol whose cohort
-has no ready member yet. It carries the observed touch without inventing
-scarce/loaded scores.
-*/
-func immatureLiquidity(
-	symbol string,
-	observation liquidityObservation,
-	tick int64,
-) *types.Measurement {
-	return &types.Measurement{
-		ID:       uuid.NewString(),
-		Source:   types.SourceLiquidity,
-		Symbol:   symbol,
-		Tick:     tick,
-		At:       observation.at,
-		Maturity: 0,
-		Metrics: map[string]types.MetricSample{
-			types.MetricKey(types.MetricBestPrice, types.SideBuy): {
-				Raw:  observation.bid,
-				Unit: types.UnitQuoteCurrency,
-			},
-			types.MetricKey(types.MetricBestPrice, types.SideSell): {
-				Raw:  observation.ask,
-				Unit: types.UnitQuoteCurrency,
-			},
-		},
-	}
-}
-
-func (signal *Signal) ingest(rows iter.Seq[kraken.TickerData]) bool {
-	if signal.observations == nil {
-		signal.observations = &sync.Map{}
-	}
-
-	rowBatches := make(map[string][]kraken.TickerData)
-	symbols := make([]string, 0)
-
-	for row := range rows {
-		symbol := strings.TrimSpace(row.Symbol)
-
-		if symbol == "" || row.Timestamp.IsZero() {
-			continue
-		}
-
-		if _, exists := rowBatches[symbol]; !exists {
-			symbols = append(symbols, symbol)
-		}
-
-		row.Symbol = symbol
-		rowBatches[symbol] = append(rowBatches[symbol], row)
-	}
-
-	sort.Strings(symbols)
-	changed := false
-
-	for _, symbol := range symbols {
-		symbolRows := rowBatches[symbol]
-		sort.SliceStable(symbolRows, func(leftIndex, rightIndex int) bool {
-			return symbolRows[leftIndex].Timestamp.Before(symbolRows[rightIndex].Timestamp)
-		})
-
-		for _, row := range symbolRows {
-			raw, exists := signal.observations.Load(symbol)
-			previous := liquidityObservation{}
-
-			if exists {
-				previous = raw.(liquidityObservation)
-			}
-
-			if exists && !row.Timestamp.After(previous.at) {
-				continue
-			}
-
-			bid, ask, bidQuantity, askQuantity := tickerTouch(row)
-			reportedPrice, reportedVolume := reportedTurnover(row)
-			observation := liquidityObservation{
-				at:              row.Timestamp,
-				bid:             bid,
-				ask:             ask,
-				bidQuantity:     bidQuantity,
-				askQuantity:     askQuantity,
-				reportedPrice:   reportedPrice,
-				reportedVolume:  reportedVolume,
-				executableDepth: executableDepth(row),
-				quoteNotional:   quoteNotional(row),
-			}
-
-			if exists {
-				observation.cadence = row.Timestamp.Sub(previous.at)
-			}
-
-			signal.observations.Store(symbol, observation)
-			changed = true
-		}
-	}
-
-	return changed
-}
-
-func (signal *Signal) cohort() ([]liquidityPeer, time.Duration, bool) {
-	latest := time.Time{}
-	cadences := make([]float64, 0)
-
-	signal.observations.Range(func(key, value any) bool {
-		observation := value.(liquidityObservation)
-
-		if observation.at.After(latest) {
-			latest = observation.at
-		}
-
-		if observation.cadence > 0 {
-			cadences = append(cadences, float64(observation.cadence))
-		}
-
-		return true
-	})
-
-	medianCadence, cadenceReady := statistic.MedianOf(cadences)
-	freshness := time.Duration(medianCadence)
-	peers := make([]liquidityPeer, 0)
-
-	signal.observations.Range(func(key, value any) bool {
-		symbol := key.(string)
-		observation := value.(liquidityObservation)
-
-		if cadenceReady && freshness > 0 && latest.Sub(observation.at) > freshness {
-			return true
-		}
-
-		peers = append(peers, liquidityPeer{symbol: symbol, observation: observation})
-		return true
-	})
-
-	return peers, freshness, cadenceReady && freshness > 0
-}
-
-func leaveOneOutLiquidity(
-	symbol string,
-	peers []liquidityPeer,
-) ([]float64, []float64) {
-	depths := make([]float64, 0, len(peers)-1)
-	notionals := make([]float64, 0, len(peers)-1)
-
-	for _, peer := range peers {
-		if peer.symbol == symbol {
-			continue
-		}
-
-		if peer.observation.executableDepth > 0 {
-			depths = append(depths, peer.observation.executableDepth)
-		}
-
-		if peer.observation.quoteNotional > 0 {
-			notionals = append(notionals, peer.observation.quoteNotional)
-		}
-	}
-
-	return depths, notionals
-}
-
-/*
-absoluteDeviations returns each value's distance from the group center. The
-signal's scarcity denominator is the median of these MAD-around-median
-deviations — a group-relative dispersion that nomagique's MedianAbsoluteOf (the
-median of absolute values, no center) does not express.
-*/
-func absoluteDeviations(values []float64, center float64) []float64 {
-	deviations := make([]float64, 0, len(values))
-
-	for _, value := range values {
-		deviations = append(deviations, math.Abs(value-center))
-	}
-
-	return deviations
-}
-
-func executableDepth(row kraken.TickerData) float64 {
-	if row.Bid == nil || row.Ask == nil || row.BidQty <= 0 || row.AskQty <= 0 {
-		return 0
-	}
-
-	bid := row.Bid.Float64()
-	ask := row.Ask.Float64()
-
-	if bid <= 0 || ask <= bid {
-		return 0
-	}
-
-	return math.Min(row.BidQty, row.AskQty) * (bid + ask) / 2
-}
-
-func quoteNotional(row kraken.TickerData) float64 {
-	price, volume := reportedTurnover(row)
-
-	return price * volume
-}
-
-func tickerTouch(row kraken.TickerData) (float64, float64, float64, float64) {
-	if row.Bid == nil || row.Ask == nil || row.BidQty <= 0 || row.AskQty <= 0 {
-		return 0, 0, 0, 0
-	}
-
-	return row.Bid.Float64(), row.Ask.Float64(), row.BidQty, row.AskQty
-}
-
-func reportedTurnover(row kraken.TickerData) (float64, float64) {
-	price := row.Vwap
-
-	if price <= 0 && row.Last != nil {
-		price = row.Last.Float64()
-	}
-
-	if price <= 0 || row.Volume <= 0 {
-		return 0, 0
-	}
-
-	return price, row.Volume
-}
-
-/*
-Close releases the receiver's owned resources so shutdown does not leave
-active market-data producers.
+Close releases the receiver's owned resources so shutdown does not leave active
+market-data producers.
 */
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {

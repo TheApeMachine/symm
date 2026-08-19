@@ -202,7 +202,7 @@ func (crypto *Crypto) onTicker(tickers *kraken.Ticker) {
 
 		crypto.desk.Price().Update(&ticker)
 		symbol := crypto.thesis.Symbol(ticker.Symbol)
-		symbol.AppendTicker(ticker, types.TickerReceivers)
+		symbol.AppendTicker(ticker)
 	}
 }
 
@@ -217,7 +217,7 @@ func (crypto *Crypto) onTrade(trades *kraken.Trade) {
 		}
 
 		symbol := crypto.thesis.Symbol(trade.Symbol)
-		symbol.AppendTrade(trade, types.TradeReceivers)
+		symbol.AppendTrade(trade)
 	}
 }
 
@@ -226,7 +226,7 @@ func (crypto *Crypto) onLevel3(level3 kraken.Level3Data) {
 		return
 	}
 
-	crypto.thesis.Symbol(level3.Symbol).AppendLevel3(level3, types.Level3Receivers)
+	crypto.thesis.Symbol(level3.Symbol).AppendLevel3(level3)
 }
 
 func (crypto *Crypto) Close() error {

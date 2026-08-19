@@ -2,7 +2,6 @@ package correlation
 
 import (
 	"context"
-	"iter"
 	"sync"
 
 	"github.com/google/uuid"
@@ -72,66 +71,75 @@ func (signal *Signal) Type() types.SourceType {
 }
 
 func (signal *Signal) Measure(
-	symbol *types.Symbol, ticks ...int64,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		for ticker := range symbol.MarketTickers(types.SourceCorrelation) {
-			// The cohort sampler needs the observed traded price to build
-			// per-symbol return history; Change is a signed delta, not a
-			// price, and fails the positive-price validation.
-			price := ticker.Last.Float64()
+	symbol *types.Symbol,
+	_ ...int64,
+) error {
+	if symbol == nil {
+		return nil
+	}
 
-			if price <= 0 {
-				continue
-			}
+	for ticker := range symbol.MarketTickers(types.SourceCorrelation) {
+		// The cohort sampler needs the observed traded price to build
+		// per-symbol return history; Change is a signed delta, not a
+		// price, and fails the positive-price validation.
+		price := ticker.Last.Float64()
 
-			signal.algoMu.Lock()
-			output, ready, err := signal.algo.Measure(algorithm.CohortSampleInput{
-				Symbol: ticker.Symbol,
-				At:     ticker.Timestamp,
-				Price:  price,
-			})
-			signal.algoMu.Unlock()
+		if price <= 0 {
+			continue
+		}
 
-			if err != nil {
+		signal.algoMu.Lock()
+		output, ready, err := signal.algo.Measure(algorithm.CohortSampleInput{
+			Symbol: ticker.Symbol,
+			At:     ticker.Timestamp,
+			Price:  price,
+		})
+		signal.algoMu.Unlock()
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"correlation: failed to measure ticker",
+				err,
+			))
+
+			return nil
+		}
+
+		// The classifier only speaks once the cohort sampler has a complete
+		// peer window; before that the schema is genuinely incomplete and a
+		// zero-eligibility outcome is the correct representation, not an
+		// error to log per tick. Once ready, an ineligible frame is also a
+		// plain reading from equation.Cohort (zero outcome, no error); only
+		// a malformed schema is a genuine failure worth surfacing.
+		outcome := equation.CohortOutput{}
+
+		if ready {
+			classified, classifyErr := signal.classifier.Measure(output)
+
+			if classifyErr != nil {
 				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"correlation: failed to measure ticker",
-					err,
+					errnie.Validation,
+					"correlation: classifier rejected cohort frame",
+					classifyErr,
 				))
 
-				return
+				return nil
 			}
 
-			// The classifier only speaks once the cohort sampler has a complete
-			// peer window; before that the schema is genuinely incomplete and a
-			// zero-eligibility outcome is the correct representation, not an
-			// error to log per tick. Once ready, an ineligible frame is also a
-			// plain reading from equation.Cohort (zero outcome, no error); only
-			// a malformed schema is a genuine failure worth surfacing.
-			outcome := equation.CohortOutput{}
+			outcome = classified
+		}
 
-			if ready {
-				classified, classifyErr := signal.classifier.Measure(output)
-
-				if classifyErr != nil {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"correlation: classifier rejected cohort frame",
-						classifyErr,
-					))
-
-					return
-				}
-
-				outcome = classified
-			}
-
-			if !yield(signal.frame(ticker, price, output, outcome, ready)) {
-				return
-			}
+		if err := symbol.AppendMeasurement(*signal.frame(ticker, price, output, outcome, ready)); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"correlation: failed to emit reading",
+				err,
+			))
 		}
 	}
+
+	return nil
 }
 
 /*
@@ -178,18 +186,6 @@ func (signal *Signal) frame(
 			Normalized: &outcome.StressScore,
 			Unit:       types.UnitDimensionless,
 		},
-	}
-
-	separation, separationReady := types.MeasurementHypothesisSeparation(
-		types.SourceCorrelation, metrics,
-	)
-
-	if !separationReady {
-		separation = 0
-	}
-
-	metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
-		Raw: separation, Normalized: &separation, Unit: types.UnitDimensionless,
 	}
 
 	return &types.Measurement{

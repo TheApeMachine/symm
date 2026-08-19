@@ -129,20 +129,6 @@ func (signal *Signal) frame(symbolName string, outcome excitation.Outcome) *type
 			},
 		},
 	}
-	separation, separationReady := types.MeasurementHypothesisSeparation(
-		types.SourceHawkes,
-		measurement.Metrics,
-	)
-	snrSample := types.MetricSample{
-		Raw:  separation,
-		Unit: types.UnitDimensionless,
-	}
-
-	if separationReady {
-		snrSample.Normalized = &separation
-	}
-
-	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
 
 	signal.remember(measurement)
 	return measurement

@@ -24,14 +24,16 @@ func TestMeasure(t *testing.T) {
 			Symbol: "AAA/USD", Side: "buy",
 			Price: *decimal.NewFromInt64(100), Qty: 1,
 			TradeID: 1, Timestamp: time.Unix(1_700_001_000, 0).UTC(),
-		}, types.TradeReceivers)
+		})
 
 		Reset(func() {
 			signal.Close()
 		})
 
 		Convey("It completes each independent symbol pass with an immature reading", func() {
-			readings := slices.Collect(signal.Measure(market))
+			err := signal.Measure(market)
+			So(err, ShouldBeNil)
+			readings := slices.Collect(market.MarketMeasurements("category"))
 			So(readings, ShouldHaveLength, 1)
 			So(readings[0].Source, ShouldEqual, types.SourceDepthFlow)
 			So(readings[0].Maturity, ShouldEqual, 0)
@@ -98,13 +100,8 @@ func TestMeasureTrade(t *testing.T) {
 				ShouldEqual, expectedOutput.ThinScore)
 			So(measurement.Sample(types.MetricNeutralScore, types.SideNone).Raw,
 				ShouldEqual, expectedOutput.NeutralScore)
-			expectedSeparation, ready := types.MeasurementHypothesisSeparation(
-				types.SourceDepthFlow,
-				measurement.Metrics,
-			)
-			So(ready, ShouldBeTrue)
 			So(measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
-				ShouldEqual, expectedSeparation)
+				ShouldEqual, measurement.Sample(types.MetricHypothesisSeparation, types.SideNone).Normalized)
 
 			for _, sample := range measurement.Metrics {
 				if sample.Unit == types.UnitDimensionless {

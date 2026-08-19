@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"context"
-	"iter"
 	"sync"
 	"time"
 
@@ -127,84 +126,81 @@ Measure produces the ignition perspective's measurements for one dirty symbol.
 func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
+) error {
+	if symbol == nil {
+		return nil
+	}
+
+	var emitErr error
+	read := func(book *spotbook.Book) {
 		at := signal.drainLevel3(symbol)
 
-		// Produce the measurement body from a possibly-absent book. The venue
-		// book is read once per pass; a dirty pass always yields one measurement
-		// (the tape contract), whether or not the book is populated.
-		read := func(book *spotbook.Book) {
-			snapshot := bookSnapshot{}
+		snapshot := bookSnapshot{}
 
-			if book != nil {
-				if bestBid := book.BestBid(); bestBid != nil {
-					snapshot.bid = bestBid.Price.Float64()
-					snapshot.bidDepth = bestBid.Quantity.Float64()
-				}
-
-				if bestAsk := book.BestAsk(); bestAsk != nil {
-					snapshot.ask = bestAsk.Price.Float64()
-					snapshot.askDepth = bestAsk.Quantity.Float64()
-				}
-
-				if snapshot.bid > 0 && snapshot.ask > snapshot.bid {
-					snapshot.ready = true
-					snapshot.observedAt = managedBookObservedAt(book)
-					snapshot.spread = book.Spread().Float64()
-				}
+		if book != nil {
+			if bestBid := book.BestBid(); bestBid != nil {
+				snapshot.bid = bestBid.Price.Float64()
+				snapshot.bidDepth = bestBid.Quantity.Float64()
 			}
 
-			metrics := map[string]types.MetricSample{}
-			maturity := 0.0
-
-			// The ladder clock is event time only. A pass without any observed
-			// event time carries no ladder observation; fabricating one from the
-			// local wall clock would poison the ladder's monotone clock domain.
-			if snapshot.ready && !at.IsZero() {
-				signal.measureLadder(symbol.Symbol, snapshot, at, metrics, &maturity)
+			if bestAsk := book.BestAsk(); bestAsk != nil {
+				snapshot.ask = bestAsk.Price.Float64()
+				snapshot.askDepth = bestAsk.Quantity.Float64()
 			}
 
-			if snapshot.ready && !at.IsZero() && snapshot.bid > 0 && snapshot.ask > snapshot.bid {
-				signal.measureDetach(symbol.Symbol, snapshot, at, metrics, &maturity)
+			if snapshot.bid > 0 && snapshot.ask > snapshot.bid {
+				snapshot.ready = true
+				snapshot.observedAt = managedBookObservedAt(book)
+				snapshot.spread = book.Spread().Float64()
 			}
-
-			signal.measureTape(symbol, snapshot, metrics, &maturity)
-
-			if snapshot.ready {
-				snapshot.putMetrics(metrics)
-			}
-
-			separation, separationReady := types.MeasurementHypothesisSeparation(
-				types.SourcePumpDump, metrics,
-			)
-
-			if separationReady {
-				metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
-					Raw:        separation,
-					Normalized: &separation,
-					Unit:       types.UnitDimensionless,
-				}
-			}
-
-			yield(&types.Measurement{
-				ID:       uuid.NewString(),
-				Source:   types.SourcePumpDump,
-				Symbol:   symbol.Symbol,
-				Tick:     symbol.Tick,
-				At:       at,
-				Maturity: maturity,
-				Metrics:  metrics,
-			})
 		}
 
-		if signal.api == nil {
-			read(nil)
-			return
+		metrics := map[string]types.MetricSample{}
+		maturity := 0.0
+
+		// The ladder clock is event time only. A pass without any observed
+		// event time carries no ladder observation; fabricating one from the
+		// local wall clock would poison the ladder's monotone clock domain.
+		if snapshot.ready && !at.IsZero() {
+			signal.measureLadder(symbol.Symbol, snapshot, at, metrics, &maturity)
 		}
 
-		signal.api.Book(symbol.Symbol, read)
+		if snapshot.ready && !at.IsZero() && snapshot.bid > 0 && snapshot.ask > snapshot.bid {
+			signal.measureDetach(symbol.Symbol, snapshot, at, metrics, &maturity)
+		}
+
+		signal.measureTape(symbol, snapshot, metrics, &maturity)
+
+		if snapshot.ready {
+			snapshot.putMetrics(metrics)
+		}
+
+		if err := symbol.AppendMeasurement(types.Measurement{
+			ID:       uuid.NewString(),
+			Source:   types.SourcePumpDump,
+			Symbol:   symbol.Symbol,
+			Tick:     symbol.Tick,
+			At:       at,
+			Maturity: maturity,
+			Metrics:  metrics,
+		}); err != nil {
+			emitErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"pumpdump: failed to emit reading",
+				err,
+			))
+		}
 	}
+
+	if signal.api == nil {
+		read(nil)
+
+		return nil
+	}
+
+	signal.api.Book(symbol.Symbol, read)
+
+	return emitErr
 }
 
 /*

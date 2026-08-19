@@ -3,7 +3,6 @@ package cvd
 import (
 	"context"
 	"fmt"
-	"iter"
 
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -78,68 +77,76 @@ const flowHistoryCapacity = 128
 func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		for trade := range symbol.MarketTrades(types.SourceCVD) {
-			var responsePrice float64
+) error {
+	if symbol == nil {
+		return nil
+	}
 
-			responsePrice = trade.Price.Float64()
+	for trade := range symbol.MarketTrades(types.SourceCVD) {
+		var responsePrice float64
 
-			if signal.api != nil {
-				signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
-					if book == nil {
-						return
-					}
+		responsePrice = trade.Price.Float64()
 
-					// Get the response price from the book's best bid and ask.
-					bestBid := book.BestBid()
-					bestAsk := book.BestAsk()
+		if signal.api != nil {
+			signal.api.Book(symbol.Symbol, func(book *spotbook.Book) {
+				if book == nil {
+					return
+				}
 
-					if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
-						responsePrice = bestBid.Price.Add(
-							bestAsk.Price,
-						).Div(
-							decimal.NewFromInt64(2),
-						).Float64()
-					}
-				})
-			}
+				// Get the response price from the book's best bid and ask.
+				bestBid := book.BestBid()
+				bestAsk := book.BestAsk()
 
-			input, _, err := signal.algo.Measure(algorithm.TradeFlowInput{
-				Symbol:        symbol.Symbol,
-				Price:         trade.Price.Float64(),
-				ResponsePrice: responsePrice,
-				Quantity:      trade.Qty,
-				Side:          trade.Side,
+				if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
+					responsePrice = bestBid.Price.Add(
+						bestAsk.Price,
+					).Div(
+						decimal.NewFromInt64(2),
+					).Float64()
+				}
 			})
+		}
 
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf("cvd: trade-flow-sample [%s]", err.Error()),
-					err,
-				))
-				continue
-			}
+		input, _, err := signal.algo.Measure(algorithm.TradeFlowInput{
+			Symbol:        symbol.Symbol,
+			Price:         trade.Price.Float64(),
+			ResponsePrice: responsePrice,
+			Quantity:      trade.Qty,
+			Side:          trade.Side,
+		})
 
-			// The equation's own boundary is defined output: a single price
-			// yields the balance reading, so every classified trade emits.
-			output, err := signal.flow.Measure(input)
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("cvd: trade-flow-sample [%s]", err.Error()),
+				err,
+			))
+			continue
+		}
 
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf("cvd: flow [%s]", err.Error()),
-					err,
-				))
-				continue
-			}
+		// The equation's own boundary is defined output: a single price
+		// yields the balance reading, so every classified trade emits.
+		output, err := signal.flow.Measure(input)
 
-			if !yield(signal.frame(symbol, trade, responsePrice, input, output)) {
-				return
-			}
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("cvd: flow [%s]", err.Error()),
+				err,
+			))
+			continue
+		}
+
+		if err := symbol.AppendMeasurement(*signal.frame(symbol, trade, responsePrice, input, output)); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"cvd: failed to emit reading",
+				err,
+			))
 		}
 	}
+
+	return nil
 }
 
 /*
@@ -201,18 +208,6 @@ func (signal *Signal) frame(
 			Raw:  responsePrice,
 			Unit: types.UnitQuoteCurrency,
 		},
-	}
-
-	separation, separationReady := types.MeasurementHypothesisSeparation(types.SourceCVD, metrics)
-
-	if !separationReady {
-		separation = 0
-	}
-
-	metrics[types.MetricKey(types.MetricHypothesisSeparation, types.SideNone)] = types.MetricSample{
-		Raw:        separation,
-		Normalized: &separation,
-		Unit:       types.UnitDimensionless,
 	}
 
 	return &types.Measurement{

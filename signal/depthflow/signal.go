@@ -2,7 +2,6 @@ package depthflow
 
 import (
 	"context"
-	"iter"
 	"time"
 
 	"github.com/google/uuid"
@@ -83,43 +82,61 @@ func (signal *Signal) Type() types.SourceType {
 func (signal *Signal) Measure(
 	symbol *types.Symbol,
 	_ ...int64,
-) iter.Seq[*types.Measurement] {
+) error {
 	return signal.measure(symbol)
 }
 
-func (signal *Signal) measure(
-	symbol *types.Symbol,
-) iter.Seq[*types.Measurement] {
-	return func(yield func(*types.Measurement) bool) {
-		if signal == nil || symbol == nil || signal.books == nil {
+func (signal *Signal) measure(symbol *types.Symbol) error {
+	if signal == nil || signal.books == nil {
+		return nil
+	}
+
+	if symbol == nil {
+		return nil
+	}
+
+	tickSize := 1.0
+
+	if signal.instrument != nil {
+		pair := signal.instrument.Pair(symbol.Symbol)
+		tickSize = pair.TickSize.Float64()
+	}
+
+	var emitErr error
+
+	signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
+		if managed == nil || emitErr != nil {
 			return
 		}
 
-		tickSize := 1.0
+		if err := symbol.AppendMeasurement(*signal.bookReading(managed, tickSize)); err != nil {
+			emitErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"depthflow: failed to emit book reading",
+				err,
+			))
+		}
+	})
 
-		if signal.instrument != nil {
-			pair := signal.instrument.Pair(symbol.Symbol)
-			tickSize = pair.TickSize.Float64()
+	if emitErr != nil {
+		return emitErr
+	}
+
+	for trade := range symbol.MarketTrades(types.SourceDepthFlow) {
+		if !validTrade(trade) {
+			continue
 		}
 
-		signal.books.Book(symbol.Symbol, func(managed *spotbook.Book) {
-			if managed != nil {
-				if !yield(signal.bookReading(managed, tickSize)) {
-					return
-				}
-			}
-		})
-
-		for trade := range symbol.MarketTrades(types.SourceDepthFlow) {
-			if !validTrade(trade) {
-				continue
-			}
-
-			if !yield(signal.tradeReading(trade)) {
-				return
-			}
+		if err := symbol.AppendMeasurement(*signal.tradeReading(trade)); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"depthflow: failed to emit trade reading",
+				err,
+			))
 		}
 	}
+
+	return nil
 }
 
 /*
@@ -375,20 +392,6 @@ func (signal *Signal) frame(
 			},
 		},
 	}
-	separation, separationReady := types.MeasurementHypothesisSeparation(
-		types.SourceDepthFlow,
-		measurement.Metrics,
-	)
-	snrSample := types.MetricSample{
-		Raw:  separation,
-		Unit: types.UnitDimensionless,
-	}
-
-	if separationReady {
-		snrSample.Normalized = &separation
-	}
-
-	measurement.PutMetric(types.MetricHypothesisSeparation, types.SideNone, snrSample)
 
 	return measurement
 }

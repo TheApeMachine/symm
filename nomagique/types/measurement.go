@@ -31,6 +31,27 @@ func (measurement *Measurement) Put(name string, metric *Metric[float64]) {
 	measurement.Metrics[name] = metric
 }
 
+/*
+AddMetrics appends the given boundary metrics in one expression, indexing each
+one by the name the metric carries. The projection from a numeric Frame to a
+Measurement therefore stays a single chained statement at the hot-path exit.
+*/
+func (measurement *Measurement) AddMetrics(metrics ...*Metric[float64]) *Measurement {
+	if measurement == nil {
+		return nil
+	}
+
+	for _, metric := range metrics {
+		if metric == nil || metric.Name == "" {
+			continue
+		}
+
+		measurement.Put(metric.Name, metric)
+	}
+
+	return measurement
+}
+
 func (measurement *Measurement) Metric(name string) *Metric[float64] {
 	metric, found := measurement.Metrics[name]
 

@@ -1,10 +1,13 @@
 package types
 
 /*
-Metric is boundary metadata for one measured quantity. It is deliberately not a
-Primitive input; numeric composition remains Frame-only.
+Metric is boundary metadata for one measured quantity. It carries its own name
+so a producer can project several Frame slots into one Measurement with a
+single AddMetrics expression. It is deliberately not a Primitive input; numeric
+composition remains Frame-only.
 */
 type Metric[Value comparable] struct {
+	Name       string     `json:"name"`
 	Value      Value      `json:"value"`
 	Normalized Value      `json:"normalized"`
 	Descriptor Descriptor `json:"descriptor"`
@@ -12,10 +15,12 @@ type Metric[Value comparable] struct {
 }
 
 func NewMetric[Value comparable](
+	name string,
 	value Value,
 	descriptor Descriptor,
 ) *Metric[Value] {
 	return &Metric[Value]{
+		Name:       name,
 		Value:      value,
 		Descriptor: descriptor,
 	}

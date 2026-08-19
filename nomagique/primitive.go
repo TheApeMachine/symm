@@ -80,6 +80,47 @@ func Fork(first Primitive, second Primitive) Primitive {
 }
 
 /*
+Configure wires a control channel between two primitives.
+
+The producer runs on the incoming input and emits a control value in one named
+slot. The consumer then runs on the ORIGINAL input with that slot overlaid, so
+the producer contributes only the control parameter while the primary data
+continues straight into the consumer unmodified.
+
+	nomagique.Configure(temporal.Baseline, nmtypes.Span, temporal.Window)
+
+Here Baseline reads the input and emits Span; Window still receives the original
+input, now carrying Span, and uses it to size itself. Any slot-based control
+parameter composes this way without signal-specific plumbing.
+*/
+func Configure(producer Primitive, channel Symbol, consumer Primitive) Primitive {
+	return func(state Frame, input Frame) (Frame, Frame, error) {
+		nextState, controlOutput, err := Step(producer, state, input)
+
+		if err != nil {
+			return state, Frame{}, err
+		}
+
+		controlValue, found := controlOutput.Get(channel)
+
+		if !found {
+			return state, Frame{}, primitiveError("configure: control channel missing")
+		}
+
+		consumerInput := input
+		consumerInput.Put(channel, controlValue)
+
+		nextState, output, err := Step(consumer, nextState, consumerInput)
+
+		if err != nil {
+			return state, Frame{}, err
+		}
+
+		return nextState, output, nil
+	}
+}
+
+/*
 Identity passes input through unchanged.
 */
 func Identity(state Frame, input Frame) (Frame, Frame, error) {

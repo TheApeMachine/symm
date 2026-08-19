@@ -25,14 +25,17 @@ func TestMeasure(t *testing.T) {
 			Symbol: "AAA/USD", Side: "buy",
 			Price: *decimal.NewFromInt64(100), Qty: 1,
 			TradeID: 1, Timestamp: time.Unix(1_700_001_000, 0).UTC(),
-		}, types.TradeReceivers)
+		})
 
 		Reset(func() {
 			signal.Close()
 		})
 
 		Convey("It completes each independent symbol pass with an immature reading", func() {
-			readings := slices.Collect(signal.Measure(market))
+			err := signal.Measure(market)
+			So(err, ShouldBeNil)
+
+			readings := slices.Collect(market.MarketMeasurements("category"))
 			So(readings, ShouldHaveLength, 1)
 			So(readings[0].Source, ShouldEqual, types.SourceExhaustion)
 			So(readings[0].Maturity, ShouldEqual, 0)
@@ -43,7 +46,7 @@ func TestMeasure(t *testing.T) {
 
 func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		market.AppendTicker(row, types.TickerReceivers)
+		market.AppendTicker(row)
 	}
 }
 

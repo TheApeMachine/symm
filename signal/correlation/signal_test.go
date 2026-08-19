@@ -20,7 +20,9 @@ func TestMeasure(t *testing.T) {
 		at := time.Unix(1_700_000_000, 0).UTC()
 		appendCorrelationTickers(market, correlationTicker("AAA/USD", 100, at))
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should emit the immature zero evidence rather than nothing", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -60,7 +62,9 @@ func TestMeasure(t *testing.T) {
 			)
 		}
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should emit one row per observed ticker and classify the herd", func() {
 			So(measurements, ShouldHaveLength, 12)
@@ -110,6 +114,6 @@ func correlationTicker(symbol string, price float64, at time.Time) kraken.Ticker
 
 func appendCorrelationTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		market.AppendTicker(row, types.TickerReceivers)
+		market.AppendTicker(row)
 	}
 }

@@ -31,7 +31,7 @@ func newMeasurementCompiler() *measurementCompiler {
 
 func (compiler *measurementCompiler) addNodes(
 	symbol string,
-	measurements iter.Seq[*types.Measurement],
+	measurements iter.Seq[types.Measurement],
 	graph *Graph,
 ) (*measurementIndex, error) {
 	index := &measurementIndex{
@@ -39,7 +39,7 @@ func (compiler *measurementCompiler) addNodes(
 		bySource:    make(map[types.SourceType][]*types.Measurement),
 	}
 	for measurement := range measurements {
-		if measurement != nil && measurement.Symbol != symbol {
+		if measurement.Symbol != symbol {
 			return nil, fmt.Errorf(
 				"measurement symbol %s does not match graph symbol %s",
 				measurement.Symbol,
@@ -68,7 +68,7 @@ func (compiler *measurementCompiler) addNodes(
 }
 
 func (compiler *measurementCompiler) addMeasurement(
-	measurement *types.Measurement,
+	measurement types.Measurement,
 	graph *Graph,
 	index *measurementIndex,
 ) error {
@@ -76,7 +76,7 @@ func (compiler *measurementCompiler) addMeasurement(
 	// while At and metrics are insight decoration a quiet pass may legitimately
 	// lack. Lead-lag is the one temporal insight and enforces its own peer
 	// timestamps below.
-	if measurement == nil || measurement.ID == "" || measurement.Source == "" ||
+	if measurement.ID == "" || measurement.Source == "" ||
 		measurement.Symbol == "" {
 		return fmt.Errorf("identified measurement required")
 	}
@@ -95,7 +95,7 @@ func (compiler *measurementCompiler) addMeasurement(
 	}
 
 	index.bySource[measurement.Source] = append(
-		index.bySource[measurement.Source], measurement,
+		index.bySource[measurement.Source], &measurement,
 	)
 	measurement.EachMetric(func(
 		metric types.MetricType,
@@ -144,7 +144,7 @@ func (compiler *measurementCompiler) graphMetric(
 }
 
 func measurementNode(
-	measurement *types.Measurement,
+	measurement types.Measurement,
 	metricKey string,
 	metric types.MetricType,
 	side types.MeasurementSide,
@@ -186,7 +186,7 @@ func measurementNode(
 }
 
 func measurementNodeID(
-	measurement *types.Measurement,
+	measurement types.Measurement,
 	metricKey string,
 ) string {
 	if metricKey == types.MetricKey(types.MetricPeerLastPrice, types.SideNone) {

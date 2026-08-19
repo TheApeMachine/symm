@@ -45,11 +45,13 @@ func TestMeasure(t *testing.T) {
 		signal := NewSignal(context.Background(), staticBookSource{book: seededBook()})
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Unix(1_700_003_200, 0).UTC()
-		market.AppendTicker(cvdTicker(99.99, 100.01, at), types.TickerReceivers)
+		market.AppendTicker(cvdTicker(99.99, 100.01, at))
 		trade := cvdTrade(1, "buy", 100.01, at.Add(time.Second))
-		market.AppendTrade(trade, types.TradeReceivers)
+		market.AppendTrade(trade)
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should emit flow metrics from nomagique", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -72,7 +74,7 @@ func TestMeasure(t *testing.T) {
 		signal := NewSignal(context.Background(), staticBookSource{book: seededBook()})
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Unix(1_700_003_300, 0).UTC()
-		market.AppendTicker(cvdTicker(99.99, 100.01, at), types.TickerReceivers)
+		market.AppendTicker(cvdTicker(99.99, 100.01, at))
 
 		for index := 0; index < 8; index++ {
 			side := "buy"
@@ -88,10 +90,12 @@ func TestMeasure(t *testing.T) {
 				side,
 				price,
 				at.Add(time.Duration(index+1)*time.Second),
-			), types.TradeReceivers)
+			))
 		}
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should not turn execution bounce into directional response", func() {
 			So(measurements, ShouldHaveLength, 8)
@@ -125,9 +129,11 @@ func TestMeasure(t *testing.T) {
 		signal := NewSignal(context.Background(), staticBookSource{book: future})
 		market := types.NewSymbol("BTC/USD", nil)
 		at := time.Now().UTC()
-		market.AppendTrade(cvdTrade(9, "buy", 100.5, at), types.TradeReceivers)
+		market.AppendTrade(cvdTrade(9, "buy", 100.5, at))
 
-		measurements := slices.Collect(signal.Measure(market))
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should respond against the book's own touch", func() {
 			So(measurements, ShouldHaveLength, 1)

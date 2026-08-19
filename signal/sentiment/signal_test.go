@@ -23,12 +23,12 @@ func ticker(symbol string, price float64, at time.Time) kraken.TickerData {
 }
 
 func measurementFor(
-	measurements []*types.Measurement,
+	measurements []types.Measurement,
 	symbol string,
 ) *types.Measurement {
-	for _, measurement := range measurements {
-		if measurement.Symbol == symbol {
-			return measurement
+	for index := range measurements {
+		if measurements[index].Symbol == symbol {
+			return &measurements[index]
 		}
 	}
 
@@ -38,7 +38,10 @@ func measurementFor(
 func TestMeasure(t *testing.T) {
 	Convey("Given a causal multi-leg return cohort", t, func() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		market := types.NewSymbol("AAA/USD", nil)
+		aaa := types.NewSymbol("AAA/USD", nil)
+		bbb := types.NewSymbol("BBB/USD", nil)
+		ccc := types.NewSymbol("CCC/USD", nil)
+		cohort := []*types.Symbol{aaa, bbb, ccc}
 		start := time.Unix(1_700_000_000, 0).UTC()
 
 		firstLeg := []kraken.TickerData{
@@ -57,14 +60,20 @@ func TestMeasure(t *testing.T) {
 			ticker("CCC/USD", 98, start.Add(2*time.Second)),
 		}
 
-		appendTickers(market, firstLeg...)
-		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
-		appendTickers(market, secondLeg...)
-		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
-		appendTickers(market, thirdLeg...)
-		measurements := slices.Collect(signal.Measure(market))
+		appendTickersBySymbol(cohort, firstLeg)
+		err := signal.MeasureCohort(cohort)
+		So(err, ShouldBeNil)
+		So(slices.Collect(aaa.MarketMeasurements("category")), ShouldHaveLength, 1)
+		appendTickersBySymbol(cohort, secondLeg)
+		err = signal.MeasureCohort(cohort)
+		So(err, ShouldBeNil)
+		So(slices.Collect(aaa.MarketMeasurements("category")), ShouldHaveLength, 1)
+		appendTickersBySymbol(cohort, thirdLeg)
+		err = signal.MeasureCohort(cohort)
+		So(err, ShouldBeNil)
 
 		Convey("It should use consecutive log returns and signed breadth", func() {
+			measurements := slices.Collect(aaa.MarketMeasurements("category"))
 			leader := measurementFor(measurements, "AAA/USD")
 			So(leader, ShouldNotBeNil)
 			change := leader.Metrics[types.MetricKey(types.MetricChange, types.SideNone)].Raw
@@ -96,27 +105,35 @@ func TestMeasure(t *testing.T) {
 		})
 
 		Convey("It should reject repeated latest-value cache entries", func() {
-			So(slices.Collect(signal.Measure(market)), ShouldBeEmpty)
+			err := signal.MeasureCohort(cohort)
+			So(err, ShouldBeNil)
+			So(slices.Collect(aaa.MarketMeasurements("category")), ShouldBeEmpty)
 		})
 	})
 
 	Convey("Given a cohort with real cadence but no return dispersion", t, func() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		market := types.NewSymbol("AAA/USD", nil)
+		aaa := types.NewSymbol("AAA/USD", nil)
+		bbb := types.NewSymbol("BBB/USD", nil)
+		cohort := []*types.Symbol{aaa, bbb}
 		start := time.Unix(1_700_000_100, 0).UTC()
-		appendTickers(market,
+		appendTickersBySymbol(cohort, []kraken.TickerData{
 			ticker("AAA/USD", 100, start),
 			ticker("BBB/USD", 100, start),
-		)
-		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
-		appendTickers(market,
+		})
+		err := signal.MeasureCohort(cohort)
+		So(err, ShouldBeNil)
+		So(slices.Collect(aaa.MarketMeasurements("category")), ShouldHaveLength, 1)
+		appendTickersBySymbol(cohort, []kraken.TickerData{
 			ticker("AAA/USD", 100, start.Add(time.Second)),
 			ticker("BBB/USD", 100, start.Add(time.Second)),
-		)
-		measurements := slices.Collect(signal.Measure(market))
+		})
+		err = signal.MeasureCohort(cohort)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(aaa.MarketMeasurements("category"))
 
 		Convey("It should leave the scale-dependent return unnormalized", func() {
-			So(measurements, ShouldHaveLength, 1)
+			So(len(measurements), ShouldEqual, 1)
 			So(measurements[0].Sample(types.MetricChange, types.SideNone).Normalized,
 				ShouldBeNil)
 			So(measurements[0].Sample(types.MetricHypothesisSeparation, types.SideNone).Raw,
@@ -128,12 +145,16 @@ func TestMeasure(t *testing.T) {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
 		market := types.NewSymbol("AAA/USD", nil)
 		start := time.Unix(1_700_000_200, 0).UTC()
-		market.AppendTicker(ticker("AAA/USD", 100, start), types.TickerReceivers)
+		market.AppendTicker(ticker("AAA/USD", 100, start))
 
-		So(slices.Collect(signal.Measure(market)), ShouldHaveLength, 1)
+		err := signal.Measure(market)
+		So(err, ShouldBeNil)
+		So(slices.Collect(market.MarketMeasurements("category")), ShouldHaveLength, 1)
 
-		market.AppendTicker(ticker("AAA/USD", 101, start.Add(time.Second)), types.TickerReceivers)
-		measurements := slices.Collect(signal.Measure(market))
+		market.AppendTicker(ticker("AAA/USD", 101, start.Add(time.Second)))
+		err = signal.Measure(market)
+		So(err, ShouldBeNil)
+		measurements := slices.Collect(market.MarketMeasurements("category"))
 
 		Convey("It should skip the observed row and measure the newer return", func() {
 			So(measurements, ShouldHaveLength, 1)
@@ -230,7 +251,24 @@ func TestNormalizedSentimentMetric(t *testing.T) {
 
 func appendTickers(market *types.Symbol, rows ...kraken.TickerData) {
 	for _, row := range rows {
-		market.AppendTicker(row, types.TickerReceivers)
+		market.AppendTicker(row)
+	}
+}
+
+func appendTickersBySymbol(
+	symbols []*types.Symbol,
+	rows []kraken.TickerData,
+) {
+	bySymbol := make(map[string]*types.Symbol, len(symbols))
+
+	for _, symbol := range symbols {
+		bySymbol[symbol.Symbol] = symbol
+	}
+
+	for _, row := range rows {
+		if owner, found := bySymbol[row.Symbol]; found {
+			owner.AppendTicker(row)
+		}
 	}
 }
 
@@ -258,13 +296,13 @@ func BenchmarkMeasure(b *testing.B) {
 			"AAA/USD",
 			100+float64(index)/100,
 			start.Add(time.Duration(index)*time.Second),
-		), types.TickerReceivers)
+		))
 	}
 
 	b.ReportAllocs()
 
 	for b.Loop() {
 		signal := &Signal{ctx: context.Background(), observations: &sync.Map{}}
-		_ = slices.Collect(signal.Measure(market))
+		_ = signal.Measure(market)
 	}
 }
