@@ -3,6 +3,9 @@ export type CircularBuffer<T> = {
 	array: () => unknown[];
 	replaceTail: (value: T) => void;
 	values: () => T[];
+	latest: () => T | undefined;
+	forEach: (visit: (value: T, index: number) => void) => void;
+	physical: () => { buffer: Array<T>; start: number; count: number };
 	length: () => number;
 	capacity: () => number;
 };
@@ -44,6 +47,14 @@ export const Circular = <T>(positions: number): CircularBuffer<T> => {
 	};
 
 	const length = () => count;
+	const latest = () =>
+		count === 0 ? undefined : buffer[(start + count - 1) % positions];
+
+	const forEach = (visit: (value: T, index: number) => void) => {
+		for (let index = 0; index < count; index += 1) {
+			visit(buffer[(start + index) % positions] as T, index);
+		}
+	};
 
 	const values = () => {
 		const result: T[] = [];
@@ -55,25 +66,40 @@ export const Circular = <T>(positions: number): CircularBuffer<T> => {
 		return result;
 	};
 
-	return { push, array, replaceTail, values, length, capacity: () => positions };
+	return {
+		push,
+		array,
+		replaceTail,
+		values,
+		latest,
+		forEach,
+		physical: () => ({ buffer, start, count }),
+		length,
+		capacity: () => positions,
+	};
 };
 
 /*
 latestOf returns the newest retained value in a circular buffer.
 */
 export const latestOf = <T>(buffer?: CircularBuffer<T>): T | undefined =>
-	buffer?.values().at(-1);
+	buffer?.latest();
 
 /*
 latestValues returns the newest retained value for each key, sorted by key.
 */
 export const latestValues = <T>(
 	index: Record<string, CircularBuffer<T>>,
-): T[] =>
-	Object.keys(index)
-		.sort()
-		.flatMap((key) => {
-			const value = latestOf(index[key]);
+): T[] => {
+	const result: T[] = [];
 
-			return value === undefined ? [] : [value];
-		});
+	for (const buffer of Object.values(index)) {
+		const value = buffer.latest();
+
+		if (value !== undefined) {
+			result.push(value);
+		}
+	}
+
+	return result;
+};

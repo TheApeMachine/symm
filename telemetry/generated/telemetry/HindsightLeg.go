@@ -7,10 +7,10 @@ import (
 )
 
 type HindsightLegT struct {
-	Symbol string `json:"symbol"`
-	BuyAt int64 `json:"buyAt"`
-	SellAt int64 `json:"sellAt"`
-	BuyPrice float64 `json:"buyPrice"`
+	Symbol    string  `json:"symbol"`
+	BuyAt     int64   `json:"buyAt"`
+	SellAt    int64   `json:"sellAt"`
+	BuyPrice  float64 `json:"buyPrice"`
 	SellPrice float64 `json:"sellPrice"`
 	ProfitPct float64 `json:"profitPct"`
 }

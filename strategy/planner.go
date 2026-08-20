@@ -13,9 +13,7 @@ import (
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	logicgraph "github.com/theapemachine/symm/types"
@@ -24,8 +22,8 @@ import (
 type Planner struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
+	err        error
 	status     types.Status
-	ui         *transport.MapReduce[[]byte]
 	recorder   *audit.Recorder
 	mctsEngine *mcts.CausalMCTS
 	allocation *Allocation
@@ -43,7 +41,6 @@ type Planner struct {
 
 func NewPlanner(
 	ctx context.Context,
-	uiHub *transport.MapReduce[[]byte],
 	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	desk *broker.Desk,
@@ -54,7 +51,6 @@ func NewPlanner(
 		ctx:        ctx,
 		cancel:     cancel,
 		status:     types.READY,
-		ui:         uiHub,
 		recorder:   recorder,
 		mctsEngine: newMCTSEngine(system.Cfg.Snapshot()),
 		allocation: NewAllocation(ctx, desk),
@@ -63,9 +59,12 @@ func NewPlanner(
 		candidates: make(map[string]*types.Decision),
 	}
 
-	go planner.run()
 	return planner
 }
+
+func (planner *Planner) Name() string { return "planner" }
+
+func (planner *Planner) Error() error { return planner.err }
 
 func (planner *Planner) Status() types.Status {
 	return planner.status
@@ -93,41 +92,40 @@ func (planner *Planner) Close() error {
 }
 
 /*
-plannerRest parks the planner loop between measurement passes. It is not a
-time horizon: the loop wakes immediately when a new thesis tick is observed;
-the sleep only prevents a bare spin when the market is producing no new rows.
+Run evaluates completed graph passes until cancellation or the first planner
+error. Construction only wires the planner; the system supervisor owns this
+lifecycle.
 */
-const plannerRest = 5 * time.Millisecond
+func (planner *Planner) Run() error {
+	for planner.err == nil {
+		work := planner.thesis.Work(types.SourcePlanner)
+		_, available := work.WaitPop(
+			planner.ctx,
+			string(types.SourcePlanner),
+		)
 
-func (planner *Planner) run() {
-	for {
-		select {
-		case <-planner.ctx.Done():
-			return
-		default:
+		if !available {
+			return planner.ctx.Err()
 		}
 
-		var tick int64
-
-		if planner.thesis != nil {
-			tick = planner.thesis.Tick
+		for range work.Drain(string(types.SourcePlanner), func(*types.Symbol) bool {
+			return true
+		}) {
 		}
 
-		if tick == planner.lastTick && !planner.hasCandidates() {
-			time.Sleep(plannerRest)
-			continue
-		}
-
+		tick := planner.thesis.Tick
 		planner.lastTick = tick
 
 		if err := planner.Update(planner.thesis); err != nil {
-			errnie.Error(errnie.Err(
+			planner.err = errnie.Error(errnie.Err(
 				errnie.Internal,
 				"planner: background update failed",
 				err,
 			))
 		}
 	}
+
+	return planner.err
 }
 
 /*
@@ -500,7 +498,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if !actionable {
-		planner.publishStrategy(false, "accumulating", decisions)
+		planner.publishStrategy(thesis, false, "accumulating", decisions)
 
 		return nil
 	}
@@ -517,13 +515,16 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		decisions = append(decisions, *decision)
 	}
 
-	planner.publishStrategy(true, "decisions", decisions)
+	planner.publishStrategy(thesis, true, "decisions", decisions)
 
 	return nil
 }
 
 func (planner *Planner) publishStrategy(
-	evaluated bool, outcome string, decisions []types.Decision,
+	thesis *types.Thesis,
+	evaluated bool,
+	outcome string,
+	decisions []types.Decision,
 ) {
 	rows := make([]*wire.DecisionT, 0, len(decisions))
 
@@ -531,14 +532,14 @@ func (planner *Planner) publishStrategy(
 		rows = append(rows, types.DecisionWire(decision))
 	}
 
-	planner.ui.Push(telemetry.Encode(&wire.FrameT{
+	thesis.Publish(&wire.FrameT{
 		Type: wire.FrameStrategyFrame,
 		Value: &wire.StrategyFrameT{
 			Evaluated: evaluated,
 			Outcome:   outcome,
 			Decisions: rows,
 		},
-	}))
+	})
 }
 
 func (planner *Planner) executeDecisions(

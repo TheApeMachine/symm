@@ -1,8 +1,8 @@
 package types
 
 /*
-The fluid view's two data channels. A frame belongs to one of them, and the
-manifold solver knows which the moment it builds one.
+The fluid view's data channels. A frame belongs to one of them, and the
+producer knows which the moment it builds one.
 */
 const (
 	FluidFieldsChannel    = "fluid-fields"

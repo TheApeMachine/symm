@@ -2,7 +2,6 @@ package correlation
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -71,80 +70,72 @@ func (signal *Signal) Type() types.SourceType {
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		symbol, available := signal.thesis.Work(types.SourceCorrelation).WaitPop(
+			signal.ctx,
+			string(types.SourceCorrelation),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
-			if !signal.pending() {
-				// Nothing queued for this signal; yield before polling again.
-				runtime.Gosched()
-				continue
-			}
+		}
 
-			signal.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, valid := value.(*types.Symbol)
+		if symbol == nil {
+			continue
+		}
 
-				if !valid || symbol == nil {
+		peer := peerFor(signal.thesis, symbol.Symbol)
+
+		if peer == "" {
+			continue
+		}
+
+		for ticker := range symbol.MarketTickers(types.SourceCorrelation) {
+			signal.thesis.Symbols.Range(func(peerKey, peerValue any) bool {
+				peerSymbol, ok := peerValue.(*types.Symbol)
+
+				if !ok || peerSymbol == nil || peerSymbol.Symbol != peer {
 					return true
 				}
 
-				peer := peerFor(signal.thesis, symbol.Symbol)
+				for peerTicker := range peerSymbol.MarketTickers(types.SourceCorrelation) {
+					input := nomagique.Frame{}
+					input.Put(calculus.SymbolCurrent, ticker.Last.Float64())
+					input.Put(calculus.SymbolPrevious, ticker.Last.Float64())
+					input.Put(calculus.SymbolLeft, ticker.Last.Float64())
+					input.Put(calculus.SymbolRight, peerTicker.Last.Float64())
+					input.Put(calculus.SymbolScale, 1.0)
+					input.Put(nomagique.SampleValue, ticker.Last.Float64())
+					input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+					input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+					input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-				if peer == "" {
-					return true
-				}
+					output, err := signal.number(
+						[2]string{symbol.Symbol, peer},
+						input,
+					)
 
-				for ticker := range symbol.MarketTickers(types.SourceCorrelation) {
-					signal.thesis.Symbols.Range(func(peerKey, peerValue any) bool {
-						peerSymbol, ok := peerValue.(*types.Symbol)
+					if err != nil {
+						signal.err = errnie.Error(errnie.Err(
+							errnie.Validation,
+							"correlation: failed for "+symbol.Symbol,
+							err,
+						))
+						return false
+					}
 
-						if !ok || peerSymbol == nil || peerSymbol.Symbol != peer {
-							return true
-						}
+					symbol.AppendMeasurement(nmtypes.NewMeasurement(
+						uuid.NewString(),
+						signal.Name(),
+						ticker.Timestamp.UnixNano(),
+						ticker.Timestamp.UnixNano(),
+					).AddMetrics(
+						nmtypes.NewMetric("relation", output.MustGet(SymbolCohortRelation), nmtypes.Descriptor{
+							Unit:      nmtypes.UnitDimensionless,
+							Timescale: nmtypes.TimescaleInstantaneous,
+						}),
+					))
 
-						for peerTicker := range peerSymbol.MarketTickers(types.SourceCorrelation) {
-							input := nomagique.Frame{}
-							input.Put(calculus.SymbolCurrent, ticker.Last.Float64())
-							input.Put(calculus.SymbolPrevious, ticker.Last.Float64())
-							input.Put(calculus.SymbolLeft, ticker.Last.Float64())
-							input.Put(calculus.SymbolRight, peerTicker.Last.Float64())
-							input.Put(calculus.SymbolScale, 1.0)
-							input.Put(nomagique.SampleValue, ticker.Last.Float64())
-							input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-							input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-							input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-							output, err := signal.number(
-								[2]string{symbol.Symbol, peer},
-								input,
-							)
-
-							if err != nil {
-								signal.err = errnie.Error(errnie.Err(
-									errnie.Validation,
-									"correlation: failed for "+symbol.Symbol,
-									err,
-								))
-								return false
-							}
-
-							symbol.AppendMeasurement(nmtypes.NewMeasurement(
-								uuid.NewString(),
-								signal.Name(),
-								ticker.Timestamp.UnixNano(),
-								ticker.Timestamp.UnixNano(),
-							).AddMetrics(
-								nmtypes.NewMetric("relation", output.MustGet(SymbolCohortRelation), nmtypes.Descriptor{
-									Unit:      nmtypes.UnitDimensionless,
-									Timescale: nmtypes.TimescaleInstantaneous,
-								}),
-							))
-
-							return false
-						}
-
-						return true
-					})
+					return false
 				}
 
 				return true
@@ -153,36 +144,6 @@ func (signal *Signal) Run() error {
 	}
 
 	return signal.err
-}
-
-/*
-pending reports whether any symbol queues a Tickers frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasTickers() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
 }
 
 /*

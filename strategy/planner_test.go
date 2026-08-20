@@ -16,7 +16,7 @@ import (
 func TestNewPlanner(t *testing.T) {
 	Convey("Given the running system configuration", t, func() {
 		system.NewConfig()
-		planner := NewPlanner(t.Context(), nil, nil, nil, nil)
+		planner := NewPlanner(t.Context(), nil, nil, nil)
 		defer planner.Close()
 
 		Convey("It should initialize the reusable causal graph search", func() {
@@ -215,6 +215,7 @@ func plannerReadyGraphThesis(
 	graph.ForwardCurve = []float64{0.01}
 	graph.TaskSkill = 1.05
 	graph.TaskSkillReady = true
+	symbol.Graphs.Push(graph)
 
 	return thesis
 }

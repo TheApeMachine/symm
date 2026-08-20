@@ -192,6 +192,16 @@ func (book *Book) apply(
 			continue
 		}
 
+		pair, pairErr := book.normalizer.PairInfo(data.Symbol)
+
+		if pairErr != nil {
+			return nil, nil, fmt.Errorf(
+				"level3 normalize pair %s: %w",
+				data.Symbol,
+				pairErr,
+			)
+		}
+
 		_, diverged := book.diverging[data.Symbol]
 
 		if payload.Type == "snapshot" {
@@ -223,6 +233,16 @@ func (book *Book) apply(
 			for _, order := range *level3data {
 				if order.LimitPrice == nil {
 					continue
+				}
+
+				order.LimitPrice = order.LimitPrice.
+					SetSize(pair.TickSize).
+					SetScale(int64(pair.PairDecimals))
+
+				if order.OrderQty != nil {
+					order.OrderQty = order.OrderQty.
+						SetScale(int64(pair.LotDecimals)).
+						SetIncrement(int64(pair.LotMultiplier))
 				}
 
 				price := order.LimitPrice.String()

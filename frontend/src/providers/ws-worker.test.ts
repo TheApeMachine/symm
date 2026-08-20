@@ -1,4 +1,9 @@
+import * as flatbuffers from "flatbuffers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BatchT } from "#/providers/telemetry/telemetry/batch";
+import { FrameEntryT } from "#/providers/telemetry/telemetry/frame-entry";
+import { Frame } from "#/providers/telemetry/telemetry/frame";
+import { TickFrameT } from "#/providers/telemetry/telemetry/tick-frame";
 
 type EventListener = (event: MessageEvent) => void | Promise<void>;
 
@@ -27,7 +32,7 @@ class MockWebSocket {
 	readyState = MockWebSocket.CONNECTING;
 	binaryType = "";
 	listeners = new Map<string, EventListener>();
-	sent: string[] = [];
+	sent: unknown[] = [];
 
 	constructor(_url: string) {
 		MockWebSocket.latest = this;
@@ -41,7 +46,7 @@ class MockWebSocket {
 		this.readyState = 3;
 	}
 
-	send(message: string) {
+	send(message: unknown) {
 		this.sent.push(message);
 	}
 
@@ -50,31 +55,42 @@ class MockWebSocket {
 	}
 }
 
-const encodeFrameBatch = (frames: Record<string, unknown>[]): ArrayBuffer => {
-	const encoder = new TextEncoder();
-	const encoded = frames.map((frame) =>
-		encoder.encode(JSON.stringify(frame)),
-	);
-	const size = encoded.reduce(
-		(total, frame) => total + Uint32Array.BYTES_PER_ELEMENT + frame.byteLength,
-		Uint32Array.BYTES_PER_ELEMENT,
-	);
-	const payload = new ArrayBuffer(size);
-	const bytes = new Uint8Array(payload);
-	const view = new DataView(payload);
-	let offset = 0;
+const encodeTick = (count: number): FrameEntryT =>
+	new FrameEntryT(Frame.TickFrame, new TickFrameT(BigInt(count)));
 
-	view.setUint32(offset, encoded.length, true);
-	offset += Uint32Array.BYTES_PER_ELEMENT;
+const encodeFrameBatch = (counts: number[]): ArrayBuffer => {
+	const builder = new flatbuffers.Builder(64);
+	const offset = new BatchT(
+		BigInt(counts.at(-1) ?? 0),
+		counts.map(encodeTick),
+	).pack(builder);
+	builder.finish(offset, "SYMB");
+	const bytes = builder.asUint8Array();
+	return bytes.buffer.slice(
+		bytes.byteOffset,
+		bytes.byteOffset + bytes.byteLength,
+	) as ArrayBuffer;
+};
 
-	for (const frame of encoded) {
-		view.setUint32(offset, frame.byteLength, true);
-		offset += Uint32Array.BYTES_PER_ELEMENT;
-		bytes.set(frame, offset);
-		offset += frame.byteLength;
+const connectWorker = async () => {
+	const scope = new MockWorkerScope();
+
+	vi.stubGlobal("self", scope);
+	vi.stubGlobal("WebSocket", MockWebSocket);
+	await import("#/providers/ws-worker");
+	await scope.emit("message", {
+		type: "CONNECT",
+		url: "ws://127.0.0.1:8765/ws",
+	});
+
+	const socket = MockWebSocket.latest;
+
+	if (socket === null) {
+		throw new Error("worker did not create a websocket");
 	}
 
-	return payload;
+	socket.readyState = MockWebSocket.OPEN;
+	return { scope, socket };
 };
 
 describe("ws-worker", () => {
@@ -83,126 +99,49 @@ describe("ws-worker", () => {
 		MockWebSocket.latest = null;
 	});
 
-	it("batches every websocket frame in order for the paint thread", async () => {
-		vi.useFakeTimers();
-		const scope = new MockWorkerScope();
+	it("advances ingestion while presenting only the newest state", async () => {
+		const { scope, socket } = await connectWorker();
 
-		vi.stubGlobal("self", scope);
-		vi.stubGlobal("WebSocket", MockWebSocket);
-		await import("#/providers/ws-worker");
-		await scope.emit("message", {
-			type: "CONNECT",
-			url: "ws://127.0.0.1:8765/ws",
+		await socket.emit("message", encodeFrameBatch([1]));
+		await socket.emit("message", encodeFrameBatch([2]));
+		await socket.emit("message", encodeFrameBatch([3]));
+
+		expect(scope.messages).toEqual([
+			{ type: "READY" },
+			{ type: "DRAW_BATCH", frames: [{ tick: { count: 1 } }] },
+		]);
+		expect(socket.sent).toEqual([
+			Uint8Array.of(1),
+			Uint8Array.of(1),
+			Uint8Array.of(1),
+		]);
+
+		await scope.emit("message", { type: "PAINTED", acknowledgeBackend: false });
+		expect(scope.messages.at(-1)).toEqual({
+			type: "DRAW_BATCH",
+			frames: [{ tick: { count: 3 } }],
 		});
 
-		const socket = MockWebSocket.latest;
+		await scope.emit("message", { type: "PAINTED", acknowledgeBackend: false });
+		expect(scope.messages).toHaveLength(3);
+		expect(socket.sent).toEqual([
+			Uint8Array.of(1),
+			Uint8Array.of(1),
+			Uint8Array.of(1),
+		]);
+	});
 
-		expect(socket).not.toBeNull();
-		await socket?.emit(
-			"message",
-			JSON.stringify({
-				resonance: [{ symbol: "BTC/USD", confidence: 0.5 }],
-				cognition: { "BTC/USD": { regime: "coil" } },
-			}),
-		);
-		await socket?.emit(
-			"message",
-			JSON.stringify({
-				resonance: [{ symbol: "ETH/USD", confidence: 0.25 }],
-				cognition: { "ETH/USD": { regime: "lift" } },
-			}),
-		);
-		await socket?.emit(
-			"message",
-			JSON.stringify({
-				resonance: [{ symbol: "BTC/USD", confidence: 0.75 }],
-				cognition: { "BTC/USD": { regime: "break" } },
-			}),
-		);
+	it("coalesces repeated state tables from one backend batch", async () => {
+		const { scope, socket } = await connectWorker();
+
+		await socket.emit("message", encodeFrameBatch([1, 2, 3]));
 		expect(scope.messages).toEqual([
 			{ type: "READY" },
 			{
 				type: "DRAW_BATCH",
-				frames: [
-					{
-						resonance: [{ symbol: "BTC/USD", confidence: 0.5 }],
-						cognition: { "BTC/USD": { regime: "coil" } },
-					},
-				],
-				acknowledgeBackend: false,
+				frames: [{ tick: { count: 3 } }],
 			},
 		]);
-
-		await scope.emit("message", {
-			type: "PAINTED",
-			acknowledgeBackend: false,
-		});
-		expect(scope.messages[2]).toEqual({
-			type: "DRAW_BATCH",
-			frames: [
-				{
-					resonance: [{ symbol: "ETH/USD", confidence: 0.25 }],
-					cognition: { "ETH/USD": { regime: "lift" } },
-				},
-				{
-					resonance: [{ symbol: "BTC/USD", confidence: 0.75 }],
-					cognition: { "BTC/USD": { regime: "break" } },
-				},
-			],
-			acknowledgeBackend: false,
-		});
-
-		await socket?.emit(
-			"message",
-			JSON.stringify({ measurements: { epoch: 4 } }),
-		);
-		expect(scope.messages).toHaveLength(3);
-
-		await scope.emit("message", {
-			type: "PAINTED",
-			acknowledgeBackend: false,
-		});
-		expect(scope.messages).toHaveLength(4);
-		expect(scope.messages[3]).toEqual({
-			type: "DRAW_BATCH",
-			frames: [{ measurements: { epoch: 4 } }],
-			acknowledgeBackend: false,
-		});
-	});
-
-	it("decodes every frame from a binary backend batch", async () => {
-		vi.useFakeTimers();
-		const scope = new MockWorkerScope();
-
-		vi.stubGlobal("self", scope);
-		vi.stubGlobal("WebSocket", MockWebSocket);
-		await import("#/providers/ws-worker");
-		await scope.emit("message", {
-			type: "CONNECT",
-			url: "ws://127.0.0.1:8765/ws",
-		});
-
-		const frames = [
-			{ measurements: { tick: 1 } },
-			{ measurements: { tick: 2 } },
-			{ measurements: { tick: 3 } },
-		];
-		await MockWebSocket.latest?.emit("message", encodeFrameBatch(frames));
-		expect(scope.messages).toEqual([
-			{ type: "READY" },
-			{ type: "DRAW_BATCH", frames, acknowledgeBackend: true },
-		]);
-
-		if (MockWebSocket.latest !== null) {
-			MockWebSocket.latest.readyState = MockWebSocket.OPEN;
-		}
-
-		await scope.emit("message", {
-			type: "PAINTED",
-			acknowledgeBackend: true,
-		});
-		expect(MockWebSocket.latest?.sent).toEqual([
-			JSON.stringify({ type: "painted" }),
-		]);
+		expect(socket.sent).toEqual([Uint8Array.of(1)]);
 	});
 });

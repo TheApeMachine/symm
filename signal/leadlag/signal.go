@@ -2,7 +2,6 @@ package leadlag
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -72,106 +71,68 @@ func (signal *Signal) Type() types.SourceType { return types.SourceLeadLag }
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		symbol, available := signal.thesis.Work(types.SourceLeadLag).WaitPop(
+			signal.ctx,
+			string(types.SourceLeadLag),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
 		}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
+		if symbol == nil {
 			continue
 		}
 
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-			symbol, valid := value.(*types.Symbol)
+		for ticker := range symbol.MarketTickers(types.SourceLeadLag) {
+			anchor, anchorPrice := pairedPrice(signal.thesis, symbol.Symbol)
 
-			if !valid || symbol == nil {
-				return true
+			if anchor == "" {
+				continue
 			}
 
-			for ticker := range symbol.MarketTickers(types.SourceLeadLag) {
-				anchor, anchorPrice := pairedPrice(signal.thesis, symbol.Symbol)
+			input := nomagique.Frame{}
+			input.Put(nomagique.SampleValue, ticker.Last.Float64())
+			input.Put(calculus.SymbolLeft, anchorPrice)
+			input.Put(calculus.SymbolRight, ticker.Last.Float64())
+			input.Put(calculus.SymbolValue, ticker.Last.Float64())
+			input.Put(calculus.SymbolScale, 1.0)
+			input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+			input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+			input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-				if anchor == "" {
-					continue
-				}
+			output, err := signal.number([2]string{anchor, symbol.Symbol}, input)
 
-				input := nomagique.Frame{}
-				input.Put(nomagique.SampleValue, ticker.Last.Float64())
-				input.Put(calculus.SymbolLeft, anchorPrice)
-				input.Put(calculus.SymbolRight, ticker.Last.Float64())
-				input.Put(calculus.SymbolValue, ticker.Last.Float64())
-				input.Put(calculus.SymbolScale, 1.0)
-				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-				input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-				output, err := signal.number([2]string{anchor, symbol.Symbol}, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"leadlag: failed for "+symbol.Symbol,
-						err,
-					))
-					return false
-				}
-
-				symbol.AppendMeasurement(nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					ticker.Timestamp.UnixNano(),
-					ticker.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("inefficiency", output.MustGet(SymbolLagRatio), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("significance", safeGet(output, statistic.SymbolZScore), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
+			if err != nil {
+				signal.err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"leadlag: failed for "+symbol.Symbol,
+					err,
 				))
+				break
 			}
 
-			return true
-		})
+			symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				uuid.NewString(),
+				signal.Name(),
+				ticker.Timestamp.UnixNano(),
+				ticker.Timestamp.UnixNano(),
+			).AddMetrics(
+				nmtypes.NewMetric("inefficiency", output.MustGet(SymbolLagRatio), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("significance", safeGet(output, statistic.SymbolZScore), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+			))
+		}
 	}
 
 	return signal.err
 }
 
-/*
-pending reports whether any symbol queues a Tickers frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasTickers() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
-}
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

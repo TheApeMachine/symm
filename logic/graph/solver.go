@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"gonum.org/v1/gonum/stat/distuv"
@@ -31,14 +29,14 @@ type Solver struct {
 	thesis       *types.Thesis
 	recorder     *audit.Recorder
 	measurements *measurementCompiler
-	ui           *transport.MapReduce[[]byte]
+	ui           *transport.MapReduce[*types.UIFrame]
 	lastBuilt    map[string]*types.Graph
 }
 
 /*
 NewSolver creates a graph solver.
 */
-func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[[]byte], recorder *audit.Recorder) *Solver {
+func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[*types.UIFrame], recorder *audit.Recorder) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	solver := &Solver{
@@ -72,69 +70,24 @@ func (solver *Solver) Run() error {
 	}
 
 	for solver.err == nil {
-		select {
-		case <-solver.ctx.Done():
+		symbol, available := solver.thesis.Work(types.SourceGraph).WaitPop(
+			solver.ctx,
+			string(types.SourceGraph),
+		)
+
+		if !available {
 			return solver.ctx.Err()
-		default:
 		}
 
-		if !solver.pending() {
-			// No symbol has an unconsumed lifecycle graph request; yield before
-			// re-scanning the stage instead of draining empty graphs.
-			runtime.Gosched()
+		if symbol == nil ||
+			symbol.Graphs.ConsumerLength(string(types.SourcePlanner)) == 0 {
 			continue
 		}
 
-		solver.thesis.Symbols.Range(func(key, value any) bool {
-			symbol, ok := value.(*types.Symbol)
-
-			if !ok || symbol == nil {
-				return true
-			}
-
-			symbolName, ok := key.(string)
-
-			if !ok || symbolName == "" {
-				return true
-			}
-
-			if symbol.Graphs.Length() == 0 {
-				return true
-			}
-
-			solver.buildGraph(symbolName, symbol)
-
-			return true
-		})
+		solver.buildGraph(symbol.Symbol, symbol)
 	}
 
 	return solver.err
-}
-
-/*
-pending reports whether any symbol has an unconsumed graph request on its input
-MapReduce, so the run loop can yield without processing when idle.
-*/
-func (solver *Solver) pending() bool {
-	hasWork := false
-
-	solver.thesis.Symbols.Range(func(_, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.Graphs.Length() > 0 {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
 }
 
 /*
@@ -142,23 +95,40 @@ buildGraph streams every lifecycle graph queued for this symbol and rebuilds
 each into an isolated clone before publishing it back to the Graphs output.
 */
 func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
-	symbol.Graphs.Drain(string(SourcePlanner), func(graph *types.Graph) bool {
+	graphs := make([]*types.Graph, 0, 1)
+
+	for graph := range symbol.MarketGraphs(SourcePlanner) {
 		if graph == nil {
-			errnie.Error(errnie.Err(
+			solver.err = errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: invalid lifecycle graph for "+symbolName,
 				nil,
 			))
 
-			return false
+			return
 		}
 
 		// The re-published graph sits back on the same output MapReduce the
 		// planner pushes requests onto. Skip our own output so the stage does
 		// not livelock rebuilding the graph it just wrote.
 		if graph == solver.lastBuilt[symbolName] {
-			return true
+			continue
 		}
+
+		graphs = append(graphs, graph)
+	}
+
+	if len(graphs) == 0 {
+		graph := solver.lastBuilt[symbolName]
+
+		if graph == nil {
+			graph = types.NewGraph(solver.thesis.At)
+		}
+
+		graphs = append(graphs, graph)
+	}
+
+	for _, graph := range graphs {
 
 		// Build this pass into an isolated clone and publish it only when
 		// complete. Readers (the planner's ReadyForSearch/OpportunitySummary/
@@ -169,6 +139,8 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
 		graph = graph.Clone()
 		graph.At = solver.thesis.At
 		lifecycleEmpty := len(graph.Nodes) == 0
+		categories := solver.popCategories(symbol)
+		cognition, _ := solver.popCognition(symbol)
 		measurementIndex, err := solver.measurements.addNodes(
 			symbolName,
 			symbol.MarketMeasurements("graph"),
@@ -176,105 +148,101 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
 		)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
+			solver.err = errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: failed to extract measurement nodes - "+err.Error(),
 				err,
 			))
 
-			return false
+			return
 		}
 
 		if lifecycleEmpty && len(measurementIndex.bySource) == 0 {
-			return true
+			continue
 		}
 
-		solver.extractCategoryNodes(symbol, graph)
+		solver.extractCategoryNodes(symbol, categories, graph)
 		solver.extractManifoldNodes(solver.thesis, graph)
 		solver.extractResonanceNodes(symbol, graph)
 
 		if err := solver.extractCausalNodes(symbol, graph); err != nil {
-			errnie.Error(errnie.Err(
+			solver.err = errnie.Error(errnie.Err(
 				errnie.Internal,
 				"graph: failed to extract causal nodes - "+err.Error(),
 				err,
 			))
 
-			return false
+			return
 		}
 
-		solver.extractCognitionNodes(symbol, graph)
+		solver.extractCognitionNodes(symbol, cognition, graph)
 
 		if err := solver.measurements.addCategoryEdges(
-			symbol, graph, measurementIndex,
+			categories, symbol.Symbol, graph, measurementIndex,
 		); err != nil {
-			errnie.Error(errnie.Err(
+			solver.err = errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: failed to relate measurements and categories - "+err.Error(),
 				err,
 			))
 
-			return false
+			return
 		}
 
 		if err := solver.measurements.addLeadLagEdges(
 			symbol, graph, measurementIndex,
 		); err != nil {
-			errnie.Error(errnie.Err(
+			solver.err = errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: failed to relate lead-lag measurements - "+err.Error(),
 				err,
 			))
 
-			return false
+			return
 		}
 
-		if err := solver.inferStructuralEdges(symbol, graph); err != nil {
-			errnie.Error(errnie.Err(
+		if err := solver.inferStructuralEdges(
+			symbol, categories, cognition, graph,
+		); err != nil {
+			solver.err = errnie.Error(errnie.Err(
 				errnie.Internal,
 				"graph: failed to infer structural edges - "+err.Error(),
 				err,
 			))
 
-			return false
+			return
 		}
 
 		if err := solver.connectLongOpportunity(symbol, graph); err != nil {
-			errnie.Error(errnie.Err(
+			solver.err = errnie.Error(errnie.Err(
 				errnie.Internal,
 				"graph: failed to connect long-opportunity hypothesis - "+err.Error(),
 				err,
 			))
 
-			return false
+			return
 		}
 
 		if symbolName == types.Focus() {
-			solver.ui.Push(telemetry.Encode(&wire.FrameT{
+			solver.thesis.Publish(&wire.FrameT{
 				Type:  wire.FrameGraphFrame,
 				Value: graph.Wire(),
-			}))
+			})
 		}
 
 		solver.lastBuilt[symbolName] = graph
 		symbol.Graphs.Push(graph)
-
-		return true
-	})
+	}
 }
 
 /*
 extractCategoryNodes registers active categories as nodes.
 */
 func (solver *Solver) extractCategoryNodes(
-	symbol *types.Symbol, graph *types.Graph,
+	symbol *types.Symbol,
+	categories []types.Category,
+	graph *types.Graph,
 ) {
-	var categories []types.Category
-
-	for batch := range symbol.MarketCategories(types.SourceGraph) {
-		categories = batch
-	}
-
 	for _, cat := range categories {
 		if cat.Type == types.CategoryTypeNone {
 			continue
@@ -308,6 +276,16 @@ func (solver *Solver) extractCategoryNodes(
 			Metadata:   metadata,
 		})
 	}
+}
+
+func (solver *Solver) popCategories(symbol *types.Symbol) []types.Category {
+	var categories []types.Category
+
+	for batch := range symbol.MarketCategories(types.SourceGraph) {
+		categories = batch
+	}
+
+	return categories
 }
 
 /*
@@ -727,12 +705,11 @@ func (solver *Solver) extractCausalNodes(
 extractCognitionNodes registers active category sequences and lookahead predictions.
 */
 func (solver *Solver) extractCognitionNodes(
-	symbol *types.Symbol, graph *types.Graph,
+	symbol *types.Symbol,
+	cognition types.Cognition,
+	graph *types.Graph,
 ) {
-	cognition, ok := solver.popCognition(symbol)
-
-	if !ok ||
-		cognition.Winner == "" {
+	if cognition.Winner == "" {
 		return
 	}
 
@@ -811,7 +788,10 @@ evidence-bearing relationship. Zero-confidence pair relations are not
 materialized because their decision weight is necessarily zero.
 */
 func (solver *Solver) inferStructuralEdges(
-	symbol *types.Symbol, graph *types.Graph,
+	symbol *types.Symbol,
+	categories []types.Category,
+	cognition types.Cognition,
+	graph *types.Graph,
 ) error {
 	nodes := graph.Nodes
 	resonanceBySymbol := make(map[string][]*types.Node)
@@ -933,10 +913,7 @@ func (solver *Solver) inferStructuralEdges(
 	}
 
 	// 2. Evaluate Leads & Lags from Cognition Beam Search
-	cognition, cognitionOK := solver.popCognition(symbol)
-
-	if cognitionOK &&
-		cognition.Winner != "" && !cognition.PredictionsHeld {
+	if cognition.Winner != "" && !cognition.PredictionsHeld {
 		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
 
 		for path, probability := range cognition.Predictions {
@@ -969,12 +946,6 @@ func (solver *Solver) inferStructuralEdges(
 	}
 
 	// 3. Relate categories through the evidence they actually share.
-	var categories []types.Category
-
-	for batch := range symbol.MarketCategories(types.SourceGraph) {
-		categories = batch
-	}
-
 	for _, category := range categories {
 		for _, peer := range categories {
 			if category.Type == types.CategoryTypeNone ||

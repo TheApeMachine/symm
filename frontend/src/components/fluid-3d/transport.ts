@@ -4,7 +4,7 @@ import {
 	decodeParticles,
 	decodePhase,
 	type FluidFields,
-	type FluidParticle,
+	type FluidParticleFrame,
 } from "./wire";
 
 const fieldsChannel = "fluid-fields";
@@ -13,7 +13,7 @@ const phaseChannel = "fluid-phase";
 
 export type FluidFeedHandlers = {
 	onFields: (fields: FluidFields) => void;
-	onParticles: (particles: FluidParticle[]) => void;
+	onParticles: (particles: FluidParticleFrame) => void;
 	onPhase: (frame: Record<string, unknown>) => void;
 	onState: (state: RTCPeerConnectionState | "connecting") => void;
 	onError: (error: Error) => void;

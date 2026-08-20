@@ -21,9 +21,13 @@ func TestFluidRTCAnswer(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		publications := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
-		transport := NewFluidRTC(ctx)
-		go transport.Run(publications, "test-fluid")
-		defer func() { So(transport.Close(), ShouldBeNil) }()
+		transport := NewFluidRTC(ctx, publications, "test-fluid")
+		runDone := make(chan error, 1)
+		go func() { runDone <- transport.Run() }()
+		defer func() {
+			So(transport.Close(), ShouldBeNil)
+			So(<-runDone, ShouldBeNil)
+		}()
 
 		client, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 		So(err, ShouldBeNil)
@@ -44,24 +48,83 @@ func TestFluidRTCAnswer(t *testing.T) {
 		answer, err := transport.Answer(*client.LocalDescription())
 		So(err, ShouldBeNil)
 		So(client.SetRemoteDescription(answer), ShouldBeNil)
-		waitForFluidChannels(opened)
+		waitForFluidChannels(opened, 3)
 		waitForFluidPeerChannels(transport)
 
-		fields := append([]byte(`{"fields":{"Grid":{"x":64,"y":64,"z":64},"Density":"`),
-			bytes.Repeat([]byte{'d'}, fluidSegmentSize)...)
-		fields = append(fields, []byte(`"}}`)...)
-		particles := []byte(`{"particles":[{"Mass":1,"Heat":2}]}`)
-		phase := []byte(`{"phaseReady":true,"phaseReason":""}`)
+		fields := append([]byte("SFF1"), bytes.Repeat([]byte{'d'}, fluidSegmentSize)...)
+		particles := []byte("SPF1-particles")
+		phase := []byte("SYMM-phase")
 		publications.Push(types.FluidFrame{Channel: types.FluidFieldsChannel, Payload: fields})
 		publications.Push(types.FluidFrame{Channel: types.FluidParticlesChannel, Payload: particles})
 		publications.Push(types.FluidFrame{Channel: types.FluidPhaseChannel, Payload: phase})
 
-		Convey("It transmits each unmodified JSON value on its named channel", func() {
+		Convey("It transmits each unmodified binary record on its named channel", func() {
 			So(readFluidTestRecord(fieldsMessages), ShouldResemble, fields)
 			So(readFluidTestRecord(particlesMessages), ShouldResemble, particles)
 			So(readFluidTestRecord(phaseMessages), ShouldResemble, phase)
 		})
 	})
+}
+
+func TestFluidRTCDiagnosticsPeer(t *testing.T) {
+	Convey("Given separate manifold and diagnostics browser peers", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		publications := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
+		transport := NewFluidRTC(ctx, publications, "test-fluid")
+		runDone := make(chan error, 1)
+		go func() { runDone <- transport.Run() }()
+		defer func() {
+			So(transport.Close(), ShouldBeNil)
+			So(<-runDone, ShouldBeNil)
+		}()
+
+		manifold, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+		So(err, ShouldBeNil)
+		defer func() { So(manifold.Close(), ShouldBeNil) }()
+		manifoldOpened := make(chan struct{}, 3)
+		createFluidTestChannel(manifold, types.FluidFieldsChannel, make(chan []byte, 1), manifoldOpened)
+		createFluidTestChannel(manifold, types.FluidParticlesChannel, make(chan []byte, 1), manifoldOpened)
+		createFluidTestChannel(manifold, types.FluidPhaseChannel, make(chan []byte, 1), manifoldOpened)
+		answerFluidTestPeer(manifold, transport)
+		waitForFluidChannels(manifoldOpened, 3)
+
+		diagnostics, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+		So(err, ShouldBeNil)
+		defer func() { So(diagnostics.Close(), ShouldBeNil) }()
+		diagnosticsMessages := make(chan []byte, 2)
+		diagnosticsOpened := make(chan struct{}, 1)
+		createFluidTestChannel(
+			diagnostics,
+			types.DiagnosticsChannel,
+			diagnosticsMessages,
+			diagnosticsOpened,
+		)
+		answerFluidTestPeer(diagnostics, transport)
+		waitForFluidChannels(diagnosticsOpened, 1)
+
+		payload := []byte("SYMM-diagnostics")
+		publications.Push(types.FluidFrame{
+			Channel: types.DiagnosticsChannel,
+			Payload: payload,
+		})
+
+		Convey("It should route only to the peer that owns that channel", func() {
+			So(readFluidTestRecord(diagnosticsMessages), ShouldResemble, payload)
+			So(transport.Error(), ShouldBeNil)
+		})
+	})
+}
+
+func answerFluidTestPeer(client *webrtc.PeerConnection, transport *FluidRTC) {
+	offer, err := client.CreateOffer(nil)
+	So(err, ShouldBeNil)
+	gathered := webrtc.GatheringCompletePromise(client)
+	So(client.SetLocalDescription(offer), ShouldBeNil)
+	<-gathered
+	answer, err := transport.Answer(*client.LocalDescription())
+	So(err, ShouldBeNil)
+	So(client.SetRemoteDescription(answer), ShouldBeNil)
 }
 
 func createFluidTestChannel(
@@ -78,8 +141,8 @@ func createFluidTestChannel(
 	})
 }
 
-func waitForFluidChannels(opened <-chan struct{}) {
-	for range 3 {
+func waitForFluidChannels(opened <-chan struct{}, count int) {
+	for range count {
 		select {
 		case <-opened:
 		case <-time.After(fluidTestTimeout):
@@ -92,7 +155,7 @@ func waitForFluidPeerChannels(transport *FluidRTC) {
 	deadline := time.Now().Add(fluidTestTimeout)
 
 	for time.Now().Before(deadline) {
-		transport.mutex.RLock()
+		transport.peersMutex.RLock()
 		ready := false
 
 		for _, peer := range transport.peers {
@@ -101,7 +164,7 @@ func waitForFluidPeerChannels(transport *FluidRTC) {
 			peer.mutex.RUnlock()
 		}
 
-		transport.mutex.RUnlock()
+		transport.peersMutex.RUnlock()
 
 		if ready {
 			return

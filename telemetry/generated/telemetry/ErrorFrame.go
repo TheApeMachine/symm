@@ -7,13 +7,13 @@ import (
 )
 
 type ErrorFrameT struct {
-	Level string `json:"level"`
-	Source string `json:"source"`
-	Error string `json:"error"`
+	Level   string `json:"level"`
+	Source  string `json:"source"`
+	Error   string `json:"error"`
 	Message string `json:"message"`
-	Msg string `json:"msg"`
-	Caller string `json:"caller"`
-	Time string `json:"time"`
+	Msg     string `json:"msg"`
+	Caller  string `json:"caller"`
+	Time    string `json:"time"`
 }
 
 func (t *ErrorFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

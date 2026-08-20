@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -32,7 +31,7 @@ type Desk struct {
 	err            error
 	status         types.Status
 	api            *websocket.API
-	ui             *transport.MapReduce[[]byte]
+	ui             *transport.MapReduce[*types.UIFrame]
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -66,13 +65,6 @@ type MarkObserver interface {
 }
 
 /*
-deskRest parks the desk drain loop between passes when the thesis queues have no
-new rows. It prevents a bare spin and paces the account readout to the ticker
-cadence: balance and equity refetches run only after a drained pass.
-*/
-const deskRest = 5 * time.Millisecond
-
-/*
 NewDesk constructs the serial broker owner.
 */
 func NewDesk(
@@ -85,7 +77,7 @@ func NewDesk(
 	equityObserver EquityObserver,
 	recorder *audit.Recorder,
 	store *PositionStore,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -146,70 +138,71 @@ func (desk *Desk) Run() error {
 	balanceRefreshing := &atomic.Bool{}
 
 	for desk.err == nil {
-		select {
-		case <-desk.ctx.Done():
+		symbol, available := desk.thesis.Work(types.SourceDesk).WaitPop(
+			desk.ctx,
+			string(types.SourceDesk),
+		)
+
+		if !available {
 			return desk.ctx.Err()
-		default:
+		}
+
+		if symbol == nil {
+			continue
 		}
 
 		started := time.Now()
 		drained := false
 
-		desk.thesis.Symbols.Range(func(_ any, value any) bool {
-			symbol, ok := value.(*types.Symbol)
+		for ticker := range symbol.MarketTickers(types.SourceDesk) {
+			drained = true
+			found, ok := desk.positions.Load(symbol.Symbol)
 
-			if !ok || symbol == nil {
-				return true
-			}
+			if ok && found != nil {
+				position, ok := found.(*Position)
 
-			for ticker := range symbol.MarketTickers(types.SourceDesk) {
-				drained = true
-				found, ok := desk.positions.Load(symbol.Symbol)
+				if ok && position != nil {
+					position.onTicker(ticker)
 
-				if ok && found != nil {
-					position, ok := found.(*Position)
+					if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
+						err := observer.ObserveMark(position.MarkFeedback(ticker.Timestamp))
 
-					if ok && position != nil {
-						position.onTicker(ticker)
-
-						if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
-							err := observer.ObserveMark(position.MarkFeedback(ticker.Timestamp))
-
-							if err != nil {
-								desk.err = errnie.Error(err)
-								return false
-							}
+						if err != nil {
+							desk.err = errnie.Error(err)
+							break
 						}
 					}
 				}
 			}
+		}
 
-			for execution := range symbol.MarketExecutions(types.SourceDesk) {
-				drained = true
-				found, ok := desk.positions.Load(symbol.Symbol)
+		if desk.err != nil {
+			continue
+		}
 
-				if !ok || found == nil {
-					continue
-				}
+		for execution := range symbol.MarketExecutions(types.SourceDesk) {
+			drained = true
+			found, ok := desk.positions.Load(symbol.Symbol)
 
-				position, ok := found.(*Position)
-
-				if !ok || position == nil {
-					continue
-				}
-
-				if position.onExecution(kraken.Execution{
-					Channel: "executions",
-					Type:    "update",
-					Data:    []kraken.ExecutionData{execution},
-				}) {
-					desk.foldPassage(position)
-					desk.positions.CompareAndDelete(symbol.Symbol, position)
-				}
+			if !ok || found == nil {
+				continue
 			}
 
-			return true
-		})
+			position, ok := found.(*Position)
+
+			if !ok || position == nil {
+				continue
+			}
+
+			if position.onExecution(kraken.Execution{
+				Channel: "executions",
+				Type:    "update",
+				Data:    []kraken.ExecutionData{execution},
+			}) {
+				desk.foldPassage(position)
+				desk.positions.CompareAndDelete(symbol.Symbol, position)
+			}
+		}
 
 		if desk.ObserveModule != nil {
 			desk.ObserveModule("desk", time.Since(started))
@@ -223,7 +216,6 @@ func (desk *Desk) Run() error {
 			readout stays live without adding venue traffic of its own.
 		*/
 		if !drained {
-			time.Sleep(deskRest)
 			continue
 		}
 
@@ -362,14 +354,14 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
-	desk.ui.Push(telemetry.Encode(&wire.FrameT{
+	desk.thesis.Publish(&wire.FrameT{
 		Type: wire.FrameEquityFrame,
 		Value: &wire.EquityFrameT{
 			Cash:       desk.balance.Cash().String(),
 			Unrealized: tradeBalance.UnrealizedPnL.String(),
 			Equity:     tradeBalance.Equity.String(),
 		},
-	}))
+	})
 
 	return nil
 }
@@ -616,13 +608,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			return err
 		}
 
-		positionFrame, err := marshalPosition(position)
-
-		if err != nil {
-			return err
-		}
-
-		desk.thesis.Symbol(decision.Symbol).Positions.Push(positionFrame)
+		desk.thesis.Symbol(decision.Symbol).Positions.Push(position)
 	case types.ActionExit:
 		for position := range desk.Positions() {
 			if position == nil || position.Decision.Symbol != decision.Symbol ||

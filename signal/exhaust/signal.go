@@ -3,7 +3,6 @@ package exhaust
 import (
 	"context"
 	"math"
-	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -98,122 +97,84 @@ func (signal *Signal) Type() types.SourceType { return types.SourceExhaustion }
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		symbol, available := signal.thesis.Work(types.SourceExhaustion).WaitPop(
+			signal.ctx,
+			string(types.SourceExhaustion),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
 		}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
+		if symbol == nil {
 			continue
 		}
 
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-			symbol, valid := value.(*types.Symbol)
+		for trade := range symbol.MarketTrades(types.SourceExhaustion) {
+			// Real operands for the Thermal product: fade is the trade's
+			// own pressure share, rejection is the side-signed move the
+			// position must overcome.
+			pressureFade := trade.Qty / (trade.Qty + 1)
+			priceRejection := 0.5
 
-			if !valid || symbol == nil {
-				return true
+			if trade.Side == "sell" {
+				priceRejection = -0.5
 			}
 
-			for trade := range symbol.MarketTrades(types.SourceExhaustion) {
-				// Real operands for the Thermal product: fade is the trade's
-				// own pressure share, rejection is the side-signed move the
-				// position must overcome.
-				pressureFade := trade.Qty / (trade.Qty + 1)
-				priceRejection := 0.5
+			input := nomagique.Frame{}
+			input.Put(nmtypes.Quantity, float64(trade.Qty))
+			input.Put(calculus.SymbolLeft, pressureFade)
+			input.Put(calculus.SymbolRight, math.Abs(priceRejection))
+			input.Put(calculus.SymbolValue, pressureFade)
+			input.Put(calculus.SymbolScale, 1.0)
+			input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+			input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+			input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-				if trade.Side == "sell" {
-					priceRejection = -0.5
-				}
+			output, err := signal.number(symbol.Symbol, input)
 
-				input := nomagique.Frame{}
-				input.Put(nmtypes.Quantity, float64(trade.Qty))
-				input.Put(calculus.SymbolLeft, pressureFade)
-				input.Put(calculus.SymbolRight, math.Abs(priceRejection))
-				input.Put(calculus.SymbolValue, pressureFade)
-				input.Put(calculus.SymbolScale, 1.0)
-				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-				input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-				output, err := signal.number(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"exhaust: failed for "+symbol.Symbol,
-						err,
-					))
-					return false
-				}
-
-				symbol.AppendMeasurement(nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					trade.Timestamp.UnixNano(),
-					trade.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("mechanical", output.MustGet(SymbolMechanical), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("fragile", output.MustGet(SymbolFragile), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("thermal", output.MustGet(SymbolThermal), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("reversal", output.MustGet(SymbolReversal), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("urgency", output.MustGet(SymbolUrgency), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
+			if err != nil {
+				signal.err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"exhaust: failed for "+symbol.Symbol,
+					err,
 				))
+				break
 			}
 
-			return true
-		})
+			symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				uuid.NewString(),
+				signal.Name(),
+				trade.Timestamp.UnixNano(),
+				trade.Timestamp.UnixNano(),
+			).AddMetrics(
+				nmtypes.NewMetric("mechanical", output.MustGet(SymbolMechanical), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("fragile", output.MustGet(SymbolFragile), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("thermal", output.MustGet(SymbolThermal), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("reversal", output.MustGet(SymbolReversal), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("urgency", output.MustGet(SymbolUrgency), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+			))
+		}
 	}
 
 	return signal.err
 }
 
-/*
-pending reports whether any symbol queues a Trades frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasTrades() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
-}
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

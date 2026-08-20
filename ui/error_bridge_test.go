@@ -4,8 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/theapemachine/symm/nomagique/transport"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -14,7 +15,7 @@ TestErrorBridgeForwardsErrorLevel publishes error frames and ignores info.
 func TestErrorBridgeForwardsErrorLevel(t *testing.T) {
 	t.Parallel()
 
-	ui := transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil)
+	ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
 	bridge := &ErrorBridge{ui: ui, ready: func() bool { return true }}
 
 	info := []byte(`{"level":"info","message":"noise"}`)
@@ -36,19 +37,14 @@ func TestErrorBridgeForwardsErrorLevel(t *testing.T) {
 	}
 
 	frame, _ := ui.Pop("test")
-	var parsed map[string]any
 
-	if err := sonic.Unmarshal(frame, &parsed); err != nil {
-		t.Fatal(err)
+	if frame.Type != wire.FrameErrorFrame {
+		t.Fatalf("want error frame, got %s", frame.Type.String())
 	}
 
-	payload, ok := parsed["error"].(map[string]any)
+	payload := frame.Value.(*wire.ErrorFrameT)
 
-	if !ok {
-		t.Fatalf("want error object, got %#v", parsed)
-	}
-
-	if payload["error"] != "logic causal: manifold chronology regressed" {
+	if payload.Error != "logic causal: manifold chronology regressed" {
 		t.Fatalf("unexpected payload %#v", payload)
 	}
 }
@@ -59,7 +55,7 @@ TestErrorBridgeDedupesIdenticalFlood drops repeats inside the debounce window.
 func TestErrorBridgeDedupesIdenticalFlood(t *testing.T) {
 	t.Parallel()
 
-	ui := transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil)
+	ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
 	bridge := &ErrorBridge{ui: ui, ready: func() bool { return true }}
 	line := []byte(`{"level":"error","error":"same"}`)
 
@@ -77,7 +73,7 @@ TestErrorBridgeWithholdsUntilReady drops error frames before the Warmup gate.
 func TestErrorBridgeWithholdsUntilReady(t *testing.T) {
 	t.Parallel()
 
-	ui := transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil)
+	ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
 	open := false
 	bridge := &ErrorBridge{
 		ui:    ui,
@@ -106,7 +102,7 @@ because the underlying transport is an unbounded lock-free queue.
 func TestErrorBridgeDoesNotBlock(t *testing.T) {
 	t.Parallel()
 
-	ui := transport.NewMapReduce[[]byte](nil, nil, nil)
+	ui := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
 	bridge := &ErrorBridge{ui: ui, ready: func() bool { return true }}
 	done := make(chan struct{})
 

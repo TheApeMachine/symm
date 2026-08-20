@@ -26,7 +26,7 @@ type Recovery struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	api        *websocket.API
-	ui         *transport.MapReduce[[]byte]
+	ui         *transport.MapReduce[*types.UIFrame]
 	instrument *Instrument
 	price      *Price
 	balance    *Balance
@@ -41,7 +41,7 @@ NewRecovery instantiates a Recovery processor with all broker dependencies.
 func NewRecovery(
 	ctx context.Context,
 	api *websocket.API,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,

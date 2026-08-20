@@ -7,12 +7,12 @@ import (
 )
 
 type HindsightSignalT struct {
-	At int64 `json:"at"`
-	GraphScore float64 `json:"graphScore"`
-	ThesisScore float64 `json:"thesisScore"`
-	Opportunity bool `json:"opportunity"`
-	OpportunityType string `json:"opportunityType"`
-	Alternatives []*NamedNumberT `json:"alternatives"`
+	At              int64           `json:"at"`
+	GraphScore      float64         `json:"graphScore"`
+	ThesisScore     float64         `json:"thesisScore"`
+	Opportunity     bool            `json:"opportunity"`
+	OpportunityType string          `json:"opportunityType"`
+	Alternatives    []*NamedNumberT `json:"alternatives"`
 }
 
 func (t *HindsightSignalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

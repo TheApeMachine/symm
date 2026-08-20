@@ -61,7 +61,7 @@ func TestSentimentNumber(t *testing.T) {
 
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
-		err := signal.step()
+		err := signal.step([]*types.Symbol{market})
 
 		Convey("It should process every observation in event-time order", func() {
 			measurements := make([]*nmtypes.Measurement, 0, 2)
@@ -84,11 +84,11 @@ func TestSentimentNumber(t *testing.T) {
 		defer signal.Close()
 
 		market.AppendTicker(kraken.TickerData{Symbol: "AAA/USD", Timestamp: start.Add(time.Second)})
-		err := signal.step()
+		err := signal.step([]*types.Symbol{market})
 		So(err, ShouldBeNil)
 
 		market.AppendTicker(kraken.TickerData{Symbol: "AAA/USD", Timestamp: start})
-		err = signal.step()
+		err = signal.step([]*types.Symbol{market})
 
 		Convey("It should retain the late observation without regressing the cohort clock", func() {
 			measurements := make([]*nmtypes.Measurement, 0, 2)
@@ -112,9 +112,11 @@ func BenchmarkSentimentNumber(b *testing.B) {
 
 	for range b.N {
 		thesis := types.NewThesis(context.Background(), nil)
+		symbols := make([]*types.Symbol, 0, cohortSize)
 
 		for symbolIndex := range cohortSize {
 			symbol := thesis.Symbol(strconv.Itoa(symbolIndex) + "/USD")
+			symbols = append(symbols, symbol)
 			symbol.AppendTicker(kraken.TickerData{
 				Symbol:    symbol.Symbol,
 				Timestamp: start.Add(time.Duration(cohortSize-symbolIndex) * time.Nanosecond),
@@ -123,7 +125,7 @@ func BenchmarkSentimentNumber(b *testing.B) {
 
 		signal := NewSignal(context.Background(), thesis)
 
-		if err := signal.step(); err != nil {
+		if err := signal.step(symbols); err != nil {
 			b.Fatal(err)
 		}
 	}

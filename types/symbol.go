@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -19,7 +18,7 @@ It should be kept extremely simple, and lean, and is not an invitation to
 start adding additional complexity beyond what is truly earned.
 */
 type Symbol struct {
-	ui           *transport.MapReduce[[]byte]               `json:"-"`
+	ui           *transport.MapReduce[*UIFrame]             `json:"-"`
 	ID           SymbolID                                   `json:"id,omitempty"`
 	Symbol       string                                     `json:"symbol,omitempty"`
 	Status       Status                                     `json:"status,omitempty"`
@@ -42,8 +41,8 @@ type Symbol struct {
 /*
 NewSymbol creates empty measurement state for one market symbol.
 */
-func NewSymbol(name string, uiChannels ...*transport.MapReduce[[]byte]) *Symbol {
-	var ui *transport.MapReduce[[]byte]
+func NewSymbol(name string, uiChannels ...*transport.MapReduce[*UIFrame]) *Symbol {
+	var ui *transport.MapReduce[*UIFrame]
 
 	if len(uiChannels) > 0 {
 		ui = uiChannels[0]
@@ -106,8 +105,66 @@ func NewSymbol(name string, uiChannels ...*transport.MapReduce[[]byte]) *Symbol 
 	symbol.Decisions.Register("audit")
 	symbol.Graphs.Register("audit")
 	symbol.Measurements.Register("audit")
+	symbol.Positions.Register("audit")
 
 	return symbol
+}
+
+func (symbol *Symbol) setNotify(notifyFn func(SourceType, *Symbol)) {
+	direct := func(consumerID string) {
+		notifyFn(SourceType(consumerID), symbol)
+	}
+	symbol.tickers.SetNotify(direct)
+	symbol.trades.SetNotify(direct)
+	symbol.level3.SetNotify(direct)
+	symbol.executions.SetNotify(direct)
+	symbol.Measurements.SetNotify(func(consumerID string) {
+		switch SourceType(consumerID) {
+		case SourceCategory:
+			notifyFn(SourceCategory, symbol)
+		case SourceGraph:
+			notifyFn(SourceGraph, symbol)
+		}
+	})
+	symbol.Graphs.SetNotify(func(consumerID string) {
+		switch SourceType(consumerID) {
+		case SourcePlanner:
+			notifyFn(SourceGraph, symbol)
+		case SourceGraph:
+			notifyFn(SourcePlanner, symbol)
+		}
+	})
+	symbol.Categories.SetNotify(func(consumerID string) {
+		switch SourceType(consumerID) {
+		case SourceCognition:
+			notifyFn(SourceCognition, symbol)
+		case SourceGraph:
+			notifyFn(SourceGraph, symbol)
+		}
+	})
+	symbol.Resonance.SetNotify(func(consumerID string) {
+		switch SourceType(consumerID) {
+		case SourceCausal:
+			notifyFn(SourceCausal, symbol)
+		case SourceGraph:
+			notifyFn(SourceGraph, symbol)
+		}
+	})
+	symbol.Phase.SetNotify(func(consumerID string) {
+		if SourceType(consumerID) == SourceGraph {
+			notifyFn(SourceGraph, symbol)
+		}
+	})
+	symbol.Cognition.SetNotify(func(consumerID string) {
+		if SourceType(consumerID) == SourceGraph {
+			notifyFn(SourceGraph, symbol)
+		}
+	})
+	symbol.Causal.SetNotify(func(consumerID string) {
+		if SourceType(consumerID) == SourceGraph {
+			notifyFn(SourceGraph, symbol)
+		}
+	})
 }
 
 /*
@@ -126,12 +183,20 @@ func (symbol *Symbol) HasTickers() bool {
 	return symbol.tickers.Length() > 0
 }
 
+func (symbol *Symbol) HasTickersFor(source SourceType) bool {
+	return symbol.tickers.ConsumerLength(string(source)) > 0
+}
+
 /*
 HasTrades reports whether this symbol has an unconsumed trade queued for the
 signal owners.
 */
 func (symbol *Symbol) HasTrades() bool {
 	return symbol.trades.Length() > 0
+}
+
+func (symbol *Symbol) HasTradesFor(source SourceType) bool {
+	return symbol.trades.ConsumerLength(string(source)) > 0
 }
 
 /*
@@ -142,8 +207,16 @@ func (symbol *Symbol) HasLevel3() bool {
 	return symbol.level3.Length() > 0
 }
 
+func (symbol *Symbol) HasLevel3For(source SourceType) bool {
+	return symbol.level3.ConsumerLength(string(source)) > 0
+}
+
 func (symbol *Symbol) HasExecutions() bool {
 	return symbol.executions.Length() > 0
+}
+
+func (symbol *Symbol) HasExecutionsFor(source SourceType) bool {
+	return symbol.executions.ConsumerLength(string(source)) > 0
 }
 
 /*
@@ -195,12 +268,12 @@ func (symbol *Symbol) AppendMeasurement(measurement *types.Measurement) {
 		return
 	}
 
-	symbol.ui.Push(telemetry.Encode(&wire.FrameT{
+	symbol.ui.Push(&wire.FrameT{
 		Type: wire.FrameMeasurementsFrame,
 		Value: &wire.MeasurementsFrameT{
 			Rows: []*wire.MeasurementT{measurementWire(symbol.Symbol, measurement)},
 		},
-	}))
+	})
 }
 
 func measurementWire(

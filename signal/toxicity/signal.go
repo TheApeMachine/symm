@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -70,107 +69,68 @@ func (signal *Signal) Type() types.SourceType { return types.SourceToxicity }
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		symbol, available := signal.thesis.Work(types.SourceToxicity).WaitPop(
+			signal.ctx,
+			string(types.SourceToxicity),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
 		}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
+		if symbol == nil {
 			continue
 		}
 
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-			symbol, valid := value.(*types.Symbol)
+		for frame := range symbol.MarketLevel3(types.SourceToxicity) {
+			filled, retreated := level3Flow(frame)
 
-			if !valid || symbol == nil {
-				return true
-			}
+			input := nomagique.Frame{}
+			input.Put(nmtypes.AlphaQuantity, filled)
+			input.Put(nmtypes.BetaQuantity, retreated)
+			input.Put(calculus.SymbolLeft, filled)
+			input.Put(calculus.SymbolRight, retreated)
+			input.Put(nomagique.SampleValue, retreated-filled)
+			input.Put(calculus.SymbolValue, retreated-filled)
+			input.Put(calculus.SymbolScale, 1.0)
+			input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
+			input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
+			input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-			for frame := range symbol.MarketLevel3(types.SourceToxicity) {
-				filled, retreated := level3Flow(frame)
+			output, err := signal.number(symbol.Symbol, input)
 
-				input := nomagique.Frame{}
-				input.Put(nmtypes.AlphaQuantity, filled)
-				input.Put(nmtypes.BetaQuantity, retreated)
-				input.Put(calculus.SymbolLeft, filled)
-				input.Put(calculus.SymbolRight, retreated)
-				input.Put(nomagique.SampleValue, retreated-filled)
-				input.Put(calculus.SymbolValue, retreated-filled)
-				input.Put(calculus.SymbolScale, 1.0)
-				input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
-				input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-				output, err := signal.number(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"toxicity: failed for "+symbol.Symbol,
-						err,
-					))
-					return false
-				}
-
-				symbol.AppendMeasurement(nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					frame.Timestamp.UnixNano(),
-					frame.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("honesty_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("honesty_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("toxicity_intensity", output.MustGet(calculus.SymbolResult), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
+			if err != nil {
+				signal.err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"toxicity: failed for "+symbol.Symbol,
+					err,
 				))
+				break
 			}
 
-			return true
-		})
+			symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				uuid.NewString(),
+				signal.Name(),
+				frame.Timestamp.UnixNano(),
+				frame.Timestamp.UnixNano(),
+			).AddMetrics(
+				nmtypes.NewMetric("honesty_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("honesty_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("toxicity_intensity", output.MustGet(calculus.SymbolResult), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+			))
+		}
 	}
 
 	return signal.err
-}
-
-/*
-pending reports whether any symbol queues a Level3 frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasLevel3() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
 }
 
 /*

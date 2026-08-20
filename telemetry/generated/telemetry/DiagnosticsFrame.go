@@ -7,14 +7,14 @@ import (
 )
 
 type DiagnosticsFrameT struct {
-	Status string `json:"status"`
-	AtNs int64 `json:"atNs"`
-	StartedNs int64 `json:"startedNs"`
-	Stages []*DiagnosticClockT `json:"stages"`
-	Hops []*DiagnosticHopT `json:"hops"`
-	Queues []*DiagnosticQueueT `json:"queues"`
-	Errors []*DiagnosticErrorT `json:"errors"`
-	Pass *DiagnosticPassT `json:"pass"`
+	Status    string              `json:"status"`
+	AtNs      int64               `json:"atNs"`
+	StartedNs int64               `json:"startedNs"`
+	Stages    []*DiagnosticClockT `json:"stages"`
+	Hops      []*DiagnosticHopT   `json:"hops"`
+	Queues    []*DiagnosticQueueT `json:"queues"`
+	Errors    []*DiagnosticErrorT `json:"errors"`
+	Pass      *DiagnosticPassT    `json:"pass"`
 }
 
 func (t *DiagnosticsFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

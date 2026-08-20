@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/backtest/hindsight"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/utils"
 )
@@ -330,10 +329,10 @@ func (driver *Driver) buildHindsight(captureID int64) (RealizedReport, error) {
 publishHindsight emits one hindsight wire frame for the dashboard.
 */
 func (driver *Driver) publishHindsight(report RealizedReport) {
-	driver.ui.Push(telemetry.Encode(&wire.FrameT{
+	driver.ui.Push(&wire.FrameT{
 		Type:  wire.FrameHindsightFrame,
 		Value: hindsightWire(report),
-	}))
+	})
 }
 
 func hindsightWire(report RealizedReport) *wire.HindsightFrameT {

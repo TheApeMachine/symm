@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -29,7 +28,7 @@ type Solver struct {
 	mu                  sync.Mutex
 	configSource        *system.Config
 	optimizer           *optimizer
-	ui                  *transport.MapReduce[[]byte]
+	ui                  *transport.MapReduce[*types.UIFrame]
 	history             []float64
 	historyCapacity     int
 	lastEquity          float64
@@ -60,7 +59,7 @@ configuration.
 */
 func NewSolver(
 	_ context.Context,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 ) (*Solver, error) {
 	configSource := system.Cfg
 
@@ -168,10 +167,10 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	payload := solver.buildPayload(periodReturn, result)
 
 	if solver.ui != nil {
-		solver.ui.Push(telemetry.Encode(&wire.FrameT{
+		solver.ui.Push(&wire.FrameT{
 			Type:  wire.FrameRegulatorFrame,
 			Value: regulatorWire(payload),
-		}))
+		})
 	}
 
 	return nil

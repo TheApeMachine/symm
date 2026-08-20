@@ -25,6 +25,19 @@ func putTestMetric(
 	normalized *float64,
 	unit nmtypes.Unit,
 ) {
+	putTestMetricSide(
+		measurement, metric, types.SideNone, raw, normalized, unit,
+	)
+}
+
+func putTestMetricSide(
+	measurement *nmtypes.Measurement,
+	metric types.MetricType,
+	side types.MeasurementSide,
+	raw float64,
+	normalized *float64,
+	unit nmtypes.Unit,
+) {
 	sample := &nmtypes.Metric[float64]{
 		Name: "",
 		Raw:  raw,
@@ -36,7 +49,7 @@ func putTestMetric(
 		sample.Normalized = &value
 	}
 
-	measurement.Metrics[types.MetricKey(metric, types.SideNone)] = sample
+	measurement.Metrics[types.MetricKey(metric, side)] = sample
 }
 
 func TestAddNodes(t *testing.T) {
@@ -138,13 +151,15 @@ func TestAddCategoryEdges(t *testing.T) {
 		}})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		NewSolver(nil, nil, nil).extractCategoryNodes(symbol, graph)
+		solver := NewSolver(nil, nil, nil)
+		categories := solver.popCategories(symbol)
+		solver.extractCategoryNodes(symbol, categories, graph)
 		index, err := compiler.addNodes(
 			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
 		)
 		So(err, ShouldBeNil)
 
-		err = compiler.addCategoryEdges(symbol, graph, index)
+		err = compiler.addCategoryEdges(categories, symbol.Symbol, graph, index)
 
 		Convey("It should relate the usable evidence and skip the raw stale node", func() {
 			So(err, ShouldBeNil)
@@ -167,12 +182,13 @@ func TestAddCategoryEdges(t *testing.T) {
 		}})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
+		categories := NewSolver(nil, nil, nil).popCategories(symbol)
 		index, err := compiler.addNodes(
 			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
 		)
 		So(err, ShouldBeNil)
 
-		err = compiler.addCategoryEdges(symbol, graph, index)
+		err = compiler.addCategoryEdges(categories, symbol.Symbol, graph, index)
 
 		Convey("It should skip the unobservable edge and leave the graph honestly empty", func() {
 			So(err, ShouldBeNil)

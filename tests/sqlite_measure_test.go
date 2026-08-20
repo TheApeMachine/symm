@@ -103,7 +103,7 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 
 	market.WithAutoFill(config.Execution)
 
-	uiChannel := transport.NewMapReduce[[]byte](nil, nil, nil)
+	uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
 	publicFeed, privateFeed := market.Feeds()
 	thesis := types.NewThesis(context.Background(), uiChannel)
 	system := cmd.BootWithHub(

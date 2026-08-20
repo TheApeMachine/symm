@@ -168,6 +168,14 @@ func TestRestorePublicSubscriptions(t *testing.T) {
 		client := spot.NewWebSocket()
 		client.URL = endpoint
 		So(client.Connect(), ShouldBeNil)
+		live := &Live{
+			client: client,
+			public: map[string][][]string{
+				"ticker": {{"BTC/USD"}},
+				"trade":  {{"ETH/USD"}},
+			},
+		}
+		So(live.restorePublicSubscriptions(), ShouldBeNil)
 
 		Convey("A reconnect should restore every channel with its symbols", func() {
 			channels := make([]string, 0, 2)
@@ -201,25 +209,23 @@ func TestResubscribeL3(t *testing.T) {
 			viper.Set("market.subscribe.pace", nil)
 		})
 
-		parent := &Live{level3: &sync.Map{}}
-		child := &Live{client: client, book: NewBook(context.Background(), spot.NewNormalizer())}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		child := &Live{
+			ctx: ctx, client: client,
+			book: NewBook(context.Background(), spot.NewNormalizer()),
+		}
 		child.symbols = append(child.symbols, "DIVERGED/USD", "QUIET/USD")
-		parent.level3.Store("group", child)
-
-		Convey("The book should report divergence to the owning subscription manager", func() {
-			child.book.resync("DIVERGED/USD")
-
-			select {
-			case <-time.After(time.Second):
-				t.Fatal("divergence never reached the subscription owner")
-			}
+		child.book.SetResync(func(symbol string) {
+			So(child.resubscribeL3(symbol), ShouldBeNil)
 		})
 
 		Convey("Recovery should pace between unsubscribe and fresh subscribe", func() {
 			started := time.Now()
-			elapsed := time.Since(started)
+			child.book.resync("DIVERGED/USD")
 			first := <-requests
 			second := <-requests
+			elapsed := time.Since(started)
 			firstMethod := first["method"].(string)
 			secondParams := second["params"].(map[string]any)
 			secondSymbols := secondParams["symbol"].([]any)
@@ -236,6 +242,8 @@ func TestResubscribeL3(t *testing.T) {
 func TestRememberPublicSubscription(t *testing.T) {
 	Convey("Given public subscriptions submitted in batches", t, func() {
 		live := &Live{public: make(map[string][][]string)}
+		live.rememberPublicSubscription("ticker", []string{"BTC/USD", "ETH/USD"})
+		live.rememberPublicSubscription("ticker", []string{"ADA/USD"})
 
 		Convey("Distinct symbols and original request boundaries should remain available for reconnect", func() {
 			So(live.public["ticker"], ShouldResemble, [][]string{

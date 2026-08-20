@@ -2,7 +2,6 @@ package cvd
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -81,115 +80,77 @@ func (signal *Signal) Type() types.SourceType { return types.SourceCVD }
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		symbol, available := signal.thesis.Work(types.SourceCVD).WaitPop(
+			signal.ctx,
+			string(types.SourceCVD),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
 		}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
+		if symbol == nil {
 			continue
 		}
 
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-			symbol, valid := value.(*types.Symbol)
+		for trade := range symbol.MarketTrades(types.SourceCVD) {
+			notional := trade.Price.Float64() * trade.Qty
 
-			if !valid || symbol == nil {
-				return true
+			input := nomagique.Frame{}
+			input.Put(calculus.SymbolRight, notional)
+			input.Put(calculus.SymbolLeft, 0)
+
+			if trade.Side != "sell" {
+				input.Put(calculus.SymbolLeft, notional)
+				input.Put(calculus.SymbolRight, 0)
 			}
 
-			for trade := range symbol.MarketTrades(types.SourceCVD) {
-				notional := trade.Price.Float64() * trade.Qty
+			input.Put(calculus.SymbolValue, notional)
+			input.Put(calculus.SymbolScale, 1.0)
+			input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+			input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+			input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-				input := nomagique.Frame{}
-				input.Put(calculus.SymbolRight, notional)
-				input.Put(calculus.SymbolLeft, 0)
+			output, err := signal.number(symbol.Symbol, input)
 
-				if trade.Side != "sell" {
-					input.Put(calculus.SymbolLeft, notional)
-					input.Put(calculus.SymbolRight, 0)
-				}
-
-				input.Put(calculus.SymbolValue, notional)
-				input.Put(calculus.SymbolScale, 1.0)
-				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-				input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-				output, err := signal.number(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"cvd: failed for "+symbol.Symbol,
-						err,
-					))
-					return false
-				}
-
-				symbol.AppendMeasurement(nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					trade.Timestamp.UnixNano(),
-					trade.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("net", output.MustGet(SymbolNetFlow), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitQuoteCurrency,
-						Timescale: nmtypes.TimescalePerTick,
-					}),
-					nmtypes.NewMetric("flow_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitQuoteCurrency,
-						Timescale: nmtypes.TimescalePerSecond,
-					}),
-					nmtypes.NewMetric("flow_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("absorption", output.MustGet(SymbolAbsorption), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
+			if err != nil {
+				signal.err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"cvd: failed for "+symbol.Symbol,
+					err,
 				))
+				break
 			}
 
-			return true
-		})
+			symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				uuid.NewString(),
+				signal.Name(),
+				trade.Timestamp.UnixNano(),
+				trade.Timestamp.UnixNano(),
+			).AddMetrics(
+				nmtypes.NewMetric("net", output.MustGet(SymbolNetFlow), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitQuoteCurrency,
+					Timescale: nmtypes.TimescalePerTick,
+				}),
+				nmtypes.NewMetric("flow_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitQuoteCurrency,
+					Timescale: nmtypes.TimescalePerSecond,
+				}),
+				nmtypes.NewMetric("flow_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("absorption", output.MustGet(SymbolAbsorption), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+			))
+		}
 	}
 
 	return signal.err
 }
 
-/*
-pending reports whether any symbol queues a Trades frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasTrades() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
-}
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

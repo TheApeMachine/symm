@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"math"
-	"runtime"
 	"sync"
 	"time"
 
@@ -16,10 +15,8 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -50,7 +47,7 @@ type Solver struct {
 	pearls   *sync.Map
 	rows     *sync.Map
 	config   algorithm.PearlConfig
-	ui       *transport.MapReduce[[]byte]
+	ui       *transport.MapReduce[*types.UIFrame]
 }
 
 /*
@@ -61,7 +58,7 @@ Default layout (4-column row):
   - Col 2: Treatment (Resonance Task Prediction / Expected Return)
   - Col 3: Target (Realized Price Return)
 */
-func NewSolver(thesis *types.Thesis, price *broker.Price, ui *transport.MapReduce[[]byte], recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(thesis *types.Thesis, price *broker.Price, ui *transport.MapReduce[*types.UIFrame], recorder *audit.Recorder, opts ...Option) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
 	defaultConfig := algorithm.PearlConfig{
 		Target:                  3,
@@ -103,86 +100,33 @@ so each pass gets a fresh group.
 */
 func (solver *Solver) Run() error {
 	for solver.err == nil {
-		select {
-		case <-solver.ctx.Done():
+		symbolState, available := solver.thesis.Work(types.SourceCausal).WaitPop(
+			solver.ctx,
+			string(types.SourceCausal),
+		)
+
+		if !available {
 			return solver.ctx.Err()
-		default:
 		}
 
-		if !solver.pending() {
-			// No symbol has new resonance to evaluate; yield instead of spinning
-			// through an empty stage.
-			runtime.Gosched()
+		if symbolState == nil ||
+			symbolState.Resonance.ConsumerLength(string(types.SourceCausal)) == 0 {
 			continue
 		}
 
-		group, _ := errgroup.WithContext(solver.ctx)
-		updated := false
-
-		solver.thesis.Symbols.Range(func(key, value any) bool {
-			symbol, symbolOK := key.(string)
-			symbolState, stateOK := value.(*types.Symbol)
-
-			if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
-				return true
-			}
-
-			if symbolState.Resonance.Length() == 0 {
-				return true
-			}
-
-			updated = true
-			group.Go(func() error {
-				return solver.measure(solver.thesis, symbol)
-			})
-
-			return true
-		})
-
-		if err := group.Wait(); err != nil {
+		if err := solver.measure(solver.thesis, symbolState.Symbol); err != nil {
 			solver.err = errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
-				"causal: parallel evaluation failed: "+err.Error(),
+				"causal: evaluation failed: "+err.Error(),
 				err,
 			))
+			continue
 		}
 
-		if updated {
-			solver.publish(solver.thesis)
-		}
+		solver.publish(solver.thesis)
 	}
 
 	return solver.err
-}
-
-/*
-pending reports whether any symbol has unconsumed resonance on its input
-MapReduce, so the run loop can yield without processing when idle.
-*/
-func (solver *Solver) pending() bool {
-	if solver.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	solver.thesis.Symbols.Range(func(_, value any) bool {
-		symbolState, valid := value.(*types.Symbol)
-
-		if !valid || symbolState == nil {
-			return true
-		}
-
-		if symbolState.Resonance.Length() > 0 {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
 }
 
 /*
@@ -429,12 +373,12 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 			encoded = append(encoded, causalWire(row))
 		}
 
-		solver.ui.Push(telemetry.Encode(&wire.FrameT{
+		solver.thesis.Publish(&wire.FrameT{
 			Type: wire.FrameCausalFrame,
 			Value: &wire.CausalFrameT{
 				Rows: encoded,
 			},
-		}))
+		})
 	}
 }
 

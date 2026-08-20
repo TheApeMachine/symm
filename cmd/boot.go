@@ -131,7 +131,7 @@ func Boot(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel *transport.MapReduce[[]byte],
+	uiChannel *transport.MapReduce[*types.UIFrame],
 ) *System {
 	return BootWithHub(ctx, thesis, public, private, uiChannel, nil)
 }
@@ -141,12 +141,21 @@ func BootWithHub(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel *transport.MapReduce[[]byte],
+	uiChannel *transport.MapReduce[*types.UIFrame],
 	hub *ui.Hub,
 ) *System {
 	viper.SetDefault("system.actor.buffer", 1024)
 
 	systemCtx, cancel := context.WithCancel(ctx)
+
+	if live, ok := public.(*websocket.Live); ok {
+		live.SetThesis(thesis)
+	}
+
+	if live, ok := private.(*websocket.Live); ok {
+		live.SetThesis(thesis)
+	}
+
 	manifoldChannel := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
 
 	tree, err := dmt.NewTree("")
@@ -211,7 +220,7 @@ func BootWithHub(
 	}
 
 	resonanceSolver.ObserveModule = crypto.ObserveModule()
-	planner := strategy.NewPlanner(systemCtx, uiChannel, thesis, nil, desk)
+	planner := strategy.NewPlanner(systemCtx, thesis, nil, desk)
 	existingHub := hub != nil
 
 	if hub == nil {
@@ -219,13 +228,20 @@ func BootWithHub(
 	}
 
 	attachDiagnosticsErrorBridge(hub, crypto)
-	systems := make([]Runnable, 0, len(signals)+5)
+	systems := make([]Runnable, 0, len(signals)+6)
 
 	for _, signal := range signals {
 		systems = append(systems, signal)
 	}
 
-	systems = append(systems, desk, analyzer, resonanceSolver, crypto)
+	systems = append(
+		systems,
+		desk,
+		analyzer,
+		resonanceSolver,
+		crypto,
+		planner,
+	)
 
 	if existingHub == false {
 		systems = append(systems, hub)

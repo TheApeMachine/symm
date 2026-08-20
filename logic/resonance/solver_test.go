@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -92,8 +93,8 @@ func (conn stubConn) Close() {}
 
 func TestNewSolver(t *testing.T) {
 	Convey("Given a configured pace and idle transport", t, func() {
-		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
-		thesis := types.NewThesis(t.Context(), nil)
+		ui := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
+		thesis := types.NewThesis(t.Context(), ui)
 		solver := NewSolver(
 			t.Context(), testAlpha,
 			websocket.NewAPI(t.Context(), stubConn{}, stubConn{}),
@@ -111,21 +112,38 @@ func TestNewSolver(t *testing.T) {
 
 func TestRunDrainsTickerBurst(t *testing.T) {
 	Convey("Given a running solver on an idle transport", t, func() {
-		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
-		thesis := types.NewThesis(t.Context(), nil)
+		ui := transport.NewMapReduce[*types.UIFrame](
+			[]string{resonanceTestConsumer},
+			nil,
+			nil,
+		)
+		thesis := types.NewThesis(t.Context(), ui)
 		solver := NewSolver(
 			t.Context(), testAlpha,
 			websocket.NewAPI(t.Context(), stubConn{}, stubConn{}),
 			ui, thesis,
 		)
+		defer solver.Close()
+		go func() { _ = solver.Run() }()
+		symbol := thesis.Symbol("BTC/USD")
+
+		const burstCount = 64
+
+		for index := range burstCount {
+			price := decimal.NewFromInt64(int64(index + 1))
+			symbol.AppendTicker(kraken.TickerData{
+				Symbol: "BTC/USD", Timestamp: time.Unix(int64(index+1), 0).UTC(),
+				Ask: price, Bid: price, High: price, Low: price, Last: price,
+				Change: decimal.NewFromInt64(0),
+			})
+		}
 
 		Convey("It should drain a burst of ticker observations through the real run loop", func() {
-			const burstCount = 64
-
 			drained := make(chan error, 1)
 
 			go func() {
 				count := 0
+				deadline := time.Now().Add(5 * time.Second)
 
 				for {
 					select {
@@ -134,8 +152,6 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 						return
 					default:
 					}
-
-					ui.Register(resonanceTestConsumer)
 
 					if _, ok := ui.Pop(resonanceTestConsumer); ok {
 						count++
@@ -148,13 +164,12 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 						continue
 					}
 
-					select {
-					case <-time.After(5 * time.Second):
+					if time.Now().After(deadline) {
 						drained <- fmt.Errorf("drained %d of %d ticker events", count, burstCount)
 						return
-					default:
-						time.Sleep(time.Millisecond)
 					}
+
+					time.Sleep(time.Millisecond)
 				}
 			}()
 			So(<-drained, ShouldBeNil)
@@ -164,8 +179,12 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	Convey("Given a solver over an idle transport", t, func() {
-		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
-		thesis := types.NewThesis(t.Context(), nil)
+		ui := transport.NewMapReduce[*types.UIFrame](
+			[]string{resonanceTestConsumer},
+			nil,
+			nil,
+		)
+		thesis := types.NewThesis(t.Context(), ui)
 		solver := NewSolver(
 			t.Context(), testAlpha,
 			websocket.NewAPI(t.Context(), stubConn{}, stubConn{}),
@@ -177,7 +196,7 @@ func TestUpdate(t *testing.T) {
 			So(solver.Update("BTC/USD", at, make([]float64, 11)), ShouldBeNil)
 			So(solver.Update("BTC/USD", at.Add(time.Second), make([]float64, 11)), ShouldBeNil)
 
-			var payload []byte
+			var payload *types.UIFrame
 
 			ui.Register(resonanceTestConsumer)
 
@@ -193,34 +212,15 @@ func TestUpdate(t *testing.T) {
 
 			So(payload, ShouldNotBeEmpty)
 
-			var frame struct {
-				Resonance struct {
-					Source   string    `json:"source"`
-					Symbol   string    `json:"symbol"`
-					At       string    `json:"at"`
-					Latent   []float64 `json:"latent"`
-					Energy   *float64  `json:"energy"`
-					Surprise *float64  `json:"surprise"`
-					Layers   []struct {
-						State      []float64 `json:"state"`
-						Prediction []float64 `json:"prediction"`
-					} `json:"layers"`
-					Forecast struct {
-						ForwardCurve []float64 `json:"forwardCurve"`
-					} `json:"forecast"`
-					Verdict struct {
-						Direction float64 `json:"direction"`
-					} `json:"verdict"`
-				} `json:"resonance"`
-			}
-			So(json.Unmarshal(payload, &frame), ShouldBeNil)
-			So(frame.Resonance.Source, ShouldEqual, string(types.SourceResonance))
-			So(frame.Resonance.Symbol, ShouldEqual, "BTC/USD")
-			So(frame.Resonance.At, ShouldNotBeEmpty)
-			So(frame.Resonance.Latent, ShouldNotBeEmpty)
-			So(frame.Resonance.Energy, ShouldNotBeNil)
-			So(frame.Resonance.Surprise, ShouldNotBeNil)
-			So(frame.Resonance.Layers, ShouldNotBeEmpty)
+			envelope := payload
+			So(envelope.Type, ShouldEqual, wire.FrameResonanceFrame)
+			rows := envelope.Value.(*wire.ResonanceFrameT).Rows
+			So(rows, ShouldHaveLength, 1)
+			So(rows[0].Source, ShouldEqual, string(types.SourceResonance))
+			So(rows[0].Symbol, ShouldEqual, "BTC/USD")
+			So(rows[0].At, ShouldNotEqual, int64(0))
+			So(rows[0].Latent, ShouldNotBeEmpty)
+			So(rows[0].Layers, ShouldNotBeEmpty)
 		})
 
 		Convey("It should publish the manifold and dynamics onto the symbol", func() {
@@ -293,9 +293,10 @@ func TestClose(t *testing.T) {
 		solver := NewSolver(
 			context.Background(), testAlpha,
 			websocket.NewAPI(context.Background(), stubConn{}, stubConn{}),
-			transport.NewMapReduce[[]byte](nil, nil, nil),
+			transport.NewMapReduce[*types.UIFrame](nil, nil, nil),
 			types.NewThesis(context.Background(), nil),
 		)
+		go func() { _ = solver.Run() }()
 
 		Convey("It should close without error", func() {
 			So(solver.Close(), ShouldBeNil)

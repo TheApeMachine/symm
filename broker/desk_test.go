@@ -362,7 +362,7 @@ func equityDeskFixture(
 		thesis:         thesis,
 		equityObserver: observer,
 		positions:      &sync.Map{},
-		ui:             transport.NewMapReduce[[]byte](nil, nil, nil),
+		ui:             transport.NewMapReduce[*types.UIFrame](nil, nil, nil),
 	}
 
 	return desk, thesis, observer

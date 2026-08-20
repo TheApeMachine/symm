@@ -29,7 +29,12 @@ OPTIMIZE_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry
+
+generate-telemetry:
+	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
+	flatc --no-warnings --ts --gen-object-api -o frontend/src/providers/telemetry telemetry/telemetry.fbs
+	find frontend/src/providers/telemetry -type f -name '*.ts' -print0 | xargs -0 perl -pi -e 'if ($$.-eq 1 && $$_ ne "// \@ts-nocheck\n") { print "// \@ts-nocheck\n" } close ARGV if eof'
 
 test: test-go test-race test-frontend
 

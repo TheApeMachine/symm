@@ -82,19 +82,16 @@ const particleReadout = (particle: FluidParticle | null) => {
 		return "click an order to inspect its geometric (particle) and wave (oscillator) resident state";
 	}
 
-	const pos = particle.particle?.Position ?? particle.Position;
-	const vel = particle.particle?.Velocity ?? particle.Velocity;
-	const mass = particle.particle?.Mass ?? particle.Mass;
-	const heat = particle.particle?.Heat ?? particle.Heat;
-	const energy = particle.particle?.Energy ?? particle.Energy;
-	const phase = particle.oscillator?.Phase ?? particle.Phase;
-	const omega = particle.oscillator?.Omega ?? particle.Omega;
-	const amp =
-		particle.oscillator?.Amplitude ??
-		particle.Amplitude ??
-		Math.sqrt(energy > 0 ? energy : 0);
-	const real = particle.oscillator?.Real ?? amp * Math.cos(phase);
-	const imag = particle.oscillator?.Imaginary ?? amp * Math.sin(phase);
+	const pos = particle.Position;
+	const vel = particle.Velocity;
+	const mass = particle.Mass;
+	const heat = particle.Heat;
+	const energy = particle.Energy;
+	const phase = particle.Phase;
+	const omega = particle.Omega;
+	const amp = particle.Amplitude;
+	const real = amp * Math.cos(phase);
+	const imag = amp * Math.sin(phase);
 
 	return [
 		"── GEOMETRIC DOMAIN (PARTICLE) ──",
@@ -154,11 +151,11 @@ export const FluidInspector = () => {
 		const feed = new FluidWebRTCFeed({
 			onFields: (fields) => {
 				scene.updateFields(fields);
-				setGrid(fields.Grid);
+				setGrid(fields.grid);
 			},
 			onParticles: (particles) => {
 				scene.updateParticles(particles);
-				setParticleCount(particles.length);
+				setParticleCount(particles.count);
 			},
 			onPhase: (frame) => {
 				paintPhaseDial({

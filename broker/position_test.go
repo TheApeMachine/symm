@@ -2,11 +2,8 @@ package broker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"math"
-	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
@@ -73,7 +71,7 @@ func TestPositionOnTicker(t *testing.T) {
 		position := &Position{
 			api:   api,
 			price: price,
-			ui:    transport.NewMapReduce[[]byte](nil, nil, nil),
+			ui:    newPositionUI(),
 			pair: kraken.InstrumentPair{
 				Symbol: "SIM/USD",
 				Base:   "SIM",
@@ -158,7 +156,7 @@ func TestPositionOnExecution(t *testing.T) {
 		position := &Position{
 			price: price,
 			store: store,
-			ui:    transport.NewMapReduce[[]byte](nil, nil, nil),
+			ui:    newPositionUI(),
 			pair: kraken.InstrumentPair{
 				Symbol: "SIM/USD",
 				Base:   "SIM",
@@ -206,14 +204,11 @@ func TestPositionOnExecution(t *testing.T) {
 			So(position.Holding.PnL.Cmp(
 				decimal.NewFromFloat64(19.54),
 			), ShouldEqual, 0)
-			frame := struct {
-				Positions []struct {
-					Status types.Status `json:"status"`
-				} `json:"positions"`
-			}{}
-			So(json.Unmarshal(nextFrame(position.ui), &frame), ShouldBeNil)
-			So(frame.Positions, ShouldHaveLength, 1)
-			So(frame.Positions[0].Status, ShouldEqual, types.CLOSED)
+			frame := nextFrame(position.ui)
+			So(frame.Type, ShouldEqual, wire.FramePositionsFrame)
+			positions := frame.Value.(*wire.PositionsFrameT).Rows
+			So(positions, ShouldHaveLength, 1)
+			So(positions[0].Status, ShouldEqual, string(types.CLOSED))
 			stored, err = store.Load(t.Context(), "SIM/USD")
 			So(err, ShouldBeNil)
 			So(stored, ShouldBeNil)
@@ -222,7 +217,7 @@ func TestPositionOnExecution(t *testing.T) {
 
 	Convey("Given a rejected entry with no fill economics", t, func() {
 		position := &Position{
-			ui:         transport.NewMapReduce[[]byte](nil, nil, nil),
+			ui:         newPositionUI(),
 			EntryOrder: &spot.AddOrderRequest{ClOrdId: "entry"},
 			Holding:    &types.Holding{},
 		}
@@ -244,7 +239,7 @@ func TestPositionOnExecution(t *testing.T) {
 		stoploss := newBrokerStoploss(t)
 		stoploss.Update(stoploss.Floor.Sub(decimal.NewFromFloat64(0.01)))
 		position := &Position{
-			ui:        transport.NewMapReduce[[]byte](nil, nil, nil),
+			ui:        newPositionUI(),
 			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
 			Holding: &types.Holding{
 				Qty:      decimal.NewFromInt64(1),
@@ -270,7 +265,7 @@ func TestPositionOnExecution(t *testing.T) {
 
 	Convey("Given a terminal exit with partial filled quantity", t, func() {
 		position := &Position{
-			ui:        transport.NewMapReduce[[]byte](nil, nil, nil),
+			ui:        newPositionUI(),
 			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
 			Holding: &types.Holding{
 				Qty: decimal.NewFromInt64(1),
@@ -375,7 +370,7 @@ func TestPositionCloseFill(t *testing.T) {
 			decimal.NewFromFloat64(0.0025),
 		)
 		position := &Position{
-			ui: transport.NewMapReduce[[]byte](nil, nil, nil),
+			ui: newPositionUI(),
 			Holding: &types.Holding{
 				Status:      types.OPEN,
 				Qty:         quantity,
@@ -430,13 +425,19 @@ func TestPositionCloseFill(t *testing.T) {
 
 /*
 nextFrame drains one wire frame from a test ui transport, registering a local
-consumer cursor so the read does not contend with any other test consumer.
+consumer cursor so publications exist before the behavior under test runs.
 */
-var testSeq atomic.Uint64
+const positionTestConsumer = "position-test"
 
-func nextFrame(ui *transport.MapReduce[[]byte]) []byte {
-	consumer := "test-" + strconv.Itoa(int(testSeq.Add(1)))
-	ui.Register(consumer)
-	frame, _ := ui.Pop(consumer)
+func newPositionUI() *transport.MapReduce[*types.UIFrame] {
+	return transport.NewMapReduce[*types.UIFrame](
+		[]string{positionTestConsumer},
+		nil,
+		nil,
+	)
+}
+
+func nextFrame(ui *transport.MapReduce[*types.UIFrame]) *types.UIFrame {
+	frame, _ := ui.Pop(positionTestConsumer)
 	return frame
 }

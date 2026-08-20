@@ -2,12 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { decisionStore } from "#/collections/decisions";
 
 const mocks = vi.hoisted(() => ({
-	paintTerminalFluidChart: vi.fn(),
 	paintTerminalResonanceChart: vi.fn(),
-}));
-
-vi.mock("#/components/charts/fluid", () => ({
-	paintTerminalFluidChart: mocks.paintTerminalFluidChart,
 }));
 
 vi.mock("#/components/charts/resonance", () => ({
@@ -56,7 +51,6 @@ describe("ws-stores", () => {
 	beforeEach(() => {
 		animationFrame = null;
 		decisionStore.actions.reset();
-		mocks.paintTerminalFluidChart.mockClear();
 		mocks.paintTerminalResonanceChart.mockClear();
 		vi.stubGlobal(
 			"requestAnimationFrame",
@@ -97,7 +91,7 @@ describe("ws-stores", () => {
 
 		expect(paint).toHaveBeenNthCalledWith(1, [cvd]);
 		expect(paint).toHaveBeenNthCalledWith(2, [correlation]);
-		expect(getLastFrame("measurements")).toEqual([correlation, cvd]);
+		expect(getLastFrame("measurements")).toEqual([cvd, correlation]);
 
 		unregister();
 	});
@@ -243,7 +237,7 @@ describe("ws-stores", () => {
 
 		animationFrame?.(0);
 
-		expect(batchPaint).toHaveBeenCalledWith([other, focused]);
+		expect(batchPaint).toHaveBeenCalledWith([focused, other]);
 		expect(focusPaint).toHaveBeenCalledWith(focused);
 
 		unregisterBatch();
@@ -272,25 +266,6 @@ describe("ws-stores", () => {
 		expect(focusPaint).toHaveBeenLastCalledWith(focused);
 
 		unregisterFocus();
-	});
-
-	it("dispatches manifold batches to the fluid chart painter", () => {
-		const worker = new MockWorker();
-		const row = { source: "manifold", symbol: "BTC/USD" };
-
-		attach(worker as unknown as Worker);
-		worker.emit({
-			type: "DRAW",
-			frame: { manifold: [row] },
-		});
-
-		animationFrame?.(0);
-
-		expect(mocks.paintTerminalFluidChart).toHaveBeenCalledOnce();
-		expect(mocks.paintTerminalFluidChart).toHaveBeenCalledWith(
-			[row],
-			"BTC/USD",
-		);
 	});
 
 	it("retains independently published open positions by identity", () => {

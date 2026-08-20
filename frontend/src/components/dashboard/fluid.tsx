@@ -12,7 +12,7 @@ export const FluidLegend = () => (
 		</Flex.Row>
 		<Flex.Row align="center" className="gap-1.5">
 			<span className="size-2 bg-[linear-gradient(135deg,var(--info),var(--acc))]" />
-			backend GPU image
+			interactive field volume
 		</Flex.Row>
 	</Flex.Row>
 );

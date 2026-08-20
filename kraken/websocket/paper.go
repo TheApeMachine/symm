@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/book"
@@ -32,7 +33,7 @@ type Paper struct {
 	simulator *Simulator
 	commandMu sync.Mutex
 	books     *spot.BookManager
-	thesis    *types.Thesis
+	thesis    atomic.Pointer[types.Thesis]
 }
 
 /*
@@ -49,10 +50,24 @@ func NewPaper(
 		ctx:       ctx,
 		cancel:    cancel,
 		simulator: simulator,
-		thesis:    thesis,
+	}
+
+	if thesis != nil {
+		paper.SetThesis(thesis)
 	}
 
 	return paper
+}
+
+/*
+SetThesis attaches the canonical execution destination.
+*/
+func (paper *Paper) SetThesis(thesis *types.Thesis) {
+	if paper == nil || thesis == nil {
+		panic("websocket: paper thesis required")
+	}
+
+	paper.thesis.Store(thesis)
 }
 
 /*
@@ -634,7 +649,7 @@ func (paper *Paper) publish(channel string, message any) {
 		}
 
 		for index := range execution.Data {
-			paper.thesis.Symbol(execution.Data[index].Symbol).AppendExecution(
+			paper.thesis.Load().Symbol(execution.Data[index].Symbol).AppendExecution(
 				execution.Data[index],
 			)
 		}

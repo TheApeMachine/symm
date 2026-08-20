@@ -1,13 +1,12 @@
 import { createStore } from "@tanstack/store";
 import { appStore } from "#/collections/app";
-import { latestValues } from "#/collections/circular";
+import { latestOf, latestValues } from "#/collections/circular";
 import {
 	DECISION_HISTORY_LIMIT,
 	decisionStore,
 	latestStrategyDecisions,
 } from "#/collections/decisions";
 import { createKeyedStore } from "#/collections/store";
-import { paintTerminalFluidChart } from "#/components/charts/fluid";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
 import type { JSONSerializable, Paint } from "#/components/ui/paint";
 import type { Decision } from "#/types/thesis";
@@ -141,7 +140,7 @@ const positionIsTerminal = (value: JSONSerializable): boolean =>
 const currentCognition = (): Record<string, JSONSerializable | undefined> =>
 	Object.fromEntries(
 		Object.entries(cognition.state.cognition).flatMap(([symbol, buffer]) => {
-			const value = buffer.values().at(-1);
+			const value = buffer.latest();
 
 			return value === undefined ? [] : [[symbol, value]];
 		}),
@@ -149,7 +148,7 @@ const currentCognition = (): Record<string, JSONSerializable | undefined> =>
 
 const openPositions = (): JSONSerializable[] =>
 	Object.values(positions.state.positions).flatMap((buffer) => {
-		const value = buffer.values().at(-1);
+		const value = buffer.latest();
 
 		return value === undefined || positionIsTerminal(value) ? [] : [value];
 	});
@@ -196,7 +195,7 @@ const retainFrame = (key: string, value: JSONSerializable): void => {
 };
 
 const retainedFrame = (key: string): JSONSerializable | undefined => {
-	const row = retainedFrames.state.frames[key]?.values().at(-1);
+	const row = retainedFrames.state.frames[key]?.latest();
 
 	if (row === null || typeof row !== "object" || Array.isArray(row)) {
 		return undefined;
@@ -301,10 +300,6 @@ export const paintRegistered = (
 
 	observeFrame(key, updates);
 
-	if (key === "manifold") {
-		paintTerminalFluidChart(updates, appStore.state.focusSymbol);
-	}
-
 	if (key === "resonance") {
 		paintTerminalResonanceChart(updates, appStore.state.focusSymbol);
 	}
@@ -361,9 +356,9 @@ export const attach = (worker: Worker) => {
 				resonance.actions.updateFrame(frameRows(update));
 				const rows = latestValues(resonance.state.resonance);
 				paintRegistered(key, rows);
-				const focused = resonance.state.resonance[appStore.state.focusSymbol]
-					?.values()
-					.at(-1);
+				const focused = latestOf(
+					resonance.state.resonance[appStore.state.focusSymbol],
+				);
 
 				if (focused !== undefined) {
 					paintRegistered(RESONANCE_FOCUS, focused);

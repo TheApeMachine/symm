@@ -1,9 +1,9 @@
 import * as flatbuffers from "flatbuffers";
+import { Batch } from "#/providers/telemetry/telemetry/batch";
 import { Envelope } from "#/providers/telemetry/telemetry/envelope";
-import { Frame } from "#/providers/telemetry/telemetry/frame";
+import { Frame, unionToFrame } from "#/providers/telemetry/telemetry/frame";
 import type { JSONSerializable } from "#/components/ui/paint";
 
-const BATCH_HEADER_BYTES = 4;
 const timestampFields = new Set([
 	"at",
 	"observedFrom",
@@ -68,7 +68,11 @@ const timestamp = (nanoseconds: bigint): string | undefined => {
 	return new Date(Number(nanoseconds / 1_000_000n)).toISOString();
 };
 
-const plain = (value: unknown, field = ""): JSONSerializable | undefined => {
+const plain = (
+	value: unknown,
+	field = "",
+	frameType?: Frame,
+): JSONSerializable | undefined => {
 	if (value === null || value === undefined) {
 		return undefined;
 	}
@@ -86,7 +90,10 @@ const plain = (value: unknown, field = ""): JSONSerializable | undefined => {
 	}
 
 	if (Array.isArray(value)) {
-		if (namedNumberFields.has(field)) {
+		if (
+			namedNumberFields.has(field) &&
+			!(frameType === Frame.ResonanceFrame && field === "state")
+		) {
 			return Object.fromEntries(
 				value.flatMap((entry) => {
 					if (entry === null || typeof entry !== "object") {
@@ -132,7 +139,7 @@ const plain = (value: unknown, field = ""): JSONSerializable | undefined => {
 		}
 
 		return value.flatMap((entry) => {
-			const converted = plain(entry, field);
+			const converted = plain(entry, field, frameType);
 			return converted === undefined ? [] : [converted];
 		});
 	}
@@ -207,7 +214,7 @@ const plain = (value: unknown, field = ""): JSONSerializable | undefined => {
 		}
 
 		const outputName = names[name] ?? name;
-		const output = plain(entry, name);
+		const output = plain(entry, name, frameType);
 
 		if (output !== undefined) {
 			converted[outputName] = output;
@@ -273,17 +280,11 @@ const diagnosticsPayload = (payload: Record<string, JSONSerializable>) => {
 	return convert(payload);
 };
 
-export const decodeTelemetryFrame = (
-	bytes: Uint8Array,
+export const decodeTelemetryTable = (
+	frameType: Frame,
+	frame: flatbuffers.IUnpackableObject<unknown> | null,
 ): Record<string, JSONSerializable> => {
-	const byteBuffer = new flatbuffers.ByteBuffer(bytes);
-
-	if (!Envelope.bufferHasIdentifier(byteBuffer)) {
-		throw new Error("telemetry frame has no SYMM FlatBuffers identifier");
-	}
-
-	const envelope = Envelope.getRootAsEnvelope(byteBuffer).unpack();
-	const payload = plain(envelope.frame);
+	const payload = plain(frame?.unpack(), "", frameType);
 
 	if (
 		payload === undefined ||
@@ -294,7 +295,7 @@ export const decodeTelemetryFrame = (
 		throw new Error("telemetry envelope has no frame payload");
 	}
 
-	switch (envelope.frameType) {
+	switch (frameType) {
 		case Frame.MeasurementsFrame:
 			return { measurements: payload.rows ?? [] };
 		case Frame.TickFrame:
@@ -346,52 +347,6 @@ export const decodeTelemetryFrame = (
 			return { hindsight: payload };
 		case Frame.ErrorFrame:
 			return { error: payload };
-		case Frame.FluidParticlesFrame:
-			return {
-				fluidParticles: (Array.isArray(payload.particles)
-					? payload.particles
-					: []
-				).map((particle) => {
-					if (
-						particle === null ||
-						typeof particle !== "object" ||
-						Array.isArray(particle)
-					) {
-						throw new Error("fluid particle must be an object");
-					}
-
-					const position = particle.position as Record<
-						string,
-						JSONSerializable
-					>;
-					const velocity = particle.velocity as Record<
-						string,
-						JSONSerializable
-					>;
-
-					return {
-						Position: { X: position.x, Y: position.y, Z: position.z },
-						Velocity: { X: velocity.x, Y: velocity.y, Z: velocity.z },
-						Mass: particle.mass,
-						Heat: particle.heat,
-						Energy: particle.energy,
-						Phase: particle.phase,
-						Omega: particle.omega,
-						Amplitude: particle.amplitude,
-					};
-				}),
-			};
-		case Frame.FluidFieldsFrame:
-			return {
-				fluidFields: {
-					Grid: payload.grid,
-					Density: payload.density,
-					Momentum: payload.momentum,
-					InternalEnergy: payload.internalEnergy,
-					WaveReal: payload.waveReal,
-					WaveImaginary: payload.waveImaginary,
-				},
-			};
 		case Frame.FluidPhaseFrame:
 			return {
 				fluidPhase: {
@@ -427,41 +382,57 @@ export const decodeTelemetryFrame = (
 				),
 			};
 		default:
-			throw new Error(`unsupported telemetry schema tag ${envelope.frameType}`);
+			throw new Error(`unsupported telemetry schema tag ${frameType}`);
 	}
+};
+
+export const decodeTelemetryFrame = (
+	bytes: Uint8Array,
+): Record<string, JSONSerializable> => {
+	const byteBuffer = new flatbuffers.ByteBuffer(bytes);
+
+	if (!Envelope.bufferHasIdentifier(byteBuffer)) {
+		throw new Error("telemetry frame has no SYMM FlatBuffers identifier");
+	}
+
+	const envelope = Envelope.getRootAsEnvelope(byteBuffer);
+	const frameType = envelope.frameType();
+	const frame = unionToFrame(frameType, envelope.frame.bind(envelope));
+
+	return decodeTelemetryTable(frameType, frame);
 };
 
 export const decodeTelemetryBatch = (
 	batch: ArrayBuffer,
 ): Record<string, JSONSerializable>[] => {
-	const view = new DataView(batch);
+	const byteBuffer = new flatbuffers.ByteBuffer(new Uint8Array(batch));
 
-	if (view.byteLength < BATCH_HEADER_BYTES) {
-		throw new Error("telemetry batch is truncated");
+	if (!byteBuffer.__has_identifier("SYMB")) {
+		throw new Error("telemetry batch has no SYMB FlatBuffers identifier");
 	}
 
-	const count = view.getUint32(0, true);
+	const encoded = Batch.getRootAsBatch(byteBuffer);
 	const frames: Record<string, JSONSerializable>[] = [];
-	let offset = BATCH_HEADER_BYTES;
 
-	for (let index = 0; index < count; index += 1) {
-		if (offset + BATCH_HEADER_BYTES > view.byteLength) {
-			throw new Error("telemetry frame header is truncated");
+	for (let index = 0; index < encoded.framesLength(); index += 1) {
+		const entry = encoded.frames(index);
+
+		if (entry === null) {
+			throw new Error(`telemetry batch frame ${index} is missing`);
 		}
 
-		const length = view.getUint32(offset, true);
-		offset += BATCH_HEADER_BYTES;
+		const frameType = entry.frameType();
+		const frame = unionToFrame(frameType, entry.frame.bind(entry));
 
-		if (offset + length > view.byteLength) {
-			throw new Error("telemetry frame body is truncated");
+		if (frame === null) {
+			throw new Error(`telemetry batch frame ${index} has no payload`);
 		}
 
-		frames.push(decodeTelemetryFrame(new Uint8Array(batch, offset, length)));
-		offset += length;
+		frames.push(decodeTelemetryTable(frameType, frame));
 	}
 
-	if (offset !== view.byteLength) {
-		throw new Error("telemetry batch has trailing bytes");
+	if (frames.length === 0) {
+		throw new Error("telemetry batch is truncated");
 	}
 
 	return frames;

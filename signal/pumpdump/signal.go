@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -57,107 +56,68 @@ func (signal *Signal) Type() types.SourceType {
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		symbol, available := signal.thesis.Work(types.SourcePumpDump).WaitPop(
+			signal.ctx,
+			string(types.SourcePumpDump),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
 		}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
+		if symbol == nil {
 			continue
 		}
 
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-			symbol, valid := value.(*types.Symbol)
+		for trade := range symbol.MarketTrades(types.SourcePumpDump) {
+			input := nomagique.Frame{}
+			input.Put(algo.SymbolVolume, trade.Qty)
+			input.Put(algo.SymbolLast, trade.Price.Float64())
+			input.Put(algo.SymbolCapacity, nomagique.MaxSamples)
+			input.Put(algo.SymbolUnixSec, float64(trade.Timestamp.Unix()))
+			input.Put(algo.SymbolUnixNsec, float64(trade.Timestamp.Nanosecond()))
 
-			if !valid || symbol == nil {
-				return true
+			// The touch prices are the print's book response; without a
+			// ticker touch the ignition cannot enrich the print, so the
+			// step is skipped rather than fed a fabricated bid/ask pair.
+			if !touch(symbol, trade, &input) {
+				continue
 			}
 
-			for trade := range symbol.MarketTrades(types.SourcePumpDump) {
-				input := nomagique.Frame{}
-				input.Put(algo.SymbolVolume, trade.Qty)
-				input.Put(algo.SymbolLast, trade.Price.Float64())
-				input.Put(algo.SymbolCapacity, nomagique.MaxSamples)
-				input.Put(algo.SymbolUnixSec, float64(trade.Timestamp.Unix()))
-				input.Put(algo.SymbolUnixNsec, float64(trade.Timestamp.Nanosecond()))
+			output, err := signal.number(symbol.Symbol, input)
 
-				// The touch prices are the print's book response; without a
-				// ticker touch the ignition cannot enrich the print, so the
-				// step is skipped rather than fed a fabricated bid/ask pair.
-				if !touch(symbol, trade, &input) {
-					continue
-				}
-
-				output, err := signal.number(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"pumpdump: number step failed for "+symbol.Symbol,
-						err,
-					))
-					return false
-				}
-
-				symbol.AppendMeasurement(nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					trade.Timestamp.UnixNano(),
-					trade.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("rvol", output.MustGet(algo.SymbolRVOL), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescalePerTick,
-					}),
-					nmtypes.NewMetric("precursor", output.MustGet(algo.SymbolAlphaPrecursor), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("exhaustion", output.MustGet(algo.SymbolAlphaExhaustion), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
+			if err != nil {
+				signal.err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"pumpdump: number step failed for "+symbol.Symbol,
+					err,
 				))
+				break
 			}
 
-			return true
-		})
+			symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				uuid.NewString(),
+				signal.Name(),
+				trade.Timestamp.UnixNano(),
+				trade.Timestamp.UnixNano(),
+			).AddMetrics(
+				nmtypes.NewMetric("rvol", output.MustGet(algo.SymbolRVOL), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescalePerTick,
+				}),
+				nmtypes.NewMetric("precursor", output.MustGet(algo.SymbolAlphaPrecursor), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("exhaustion", output.MustGet(algo.SymbolAlphaExhaustion), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+			))
+		}
 	}
 
 	return signal.err
-}
-
-/*
-pending reports whether any symbol queues a Trades frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasTrades() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
 }
 
 /*

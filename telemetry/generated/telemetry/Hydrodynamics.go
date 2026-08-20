@@ -8,12 +8,12 @@ import (
 
 type HydrodynamicsT struct {
 	PressureGradNorm float64 `json:"pressureGradNorm"`
-	Divergence float64 `json:"divergence"`
-	CoherenceMag2 float64 `json:"coherenceMag2"`
-	GuidanceSpeed float64 `json:"guidanceSpeed"`
-	ViscosityProxy float64 `json:"viscosityProxy"`
-	KuramotoR float64 `json:"kuramotoR"`
-	KuramotoPsi float64 `json:"kuramotoPsi"`
+	Divergence       float64 `json:"divergence"`
+	CoherenceMag2    float64 `json:"coherenceMag2"`
+	GuidanceSpeed    float64 `json:"guidanceSpeed"`
+	ViscosityProxy   float64 `json:"viscosityProxy"`
+	KuramotoR        float64 `json:"kuramotoR"`
+	KuramotoPsi      float64 `json:"kuramotoPsi"`
 }
 
 func (t *HydrodynamicsT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

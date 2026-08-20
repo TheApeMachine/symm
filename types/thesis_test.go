@@ -9,7 +9,52 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/transport"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
+
+func TestThesisAdvanceTick(t *testing.T) {
+	Convey("Given successive real market observation times", t, func() {
+		ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
+		thesis := NewThesis(t.Context(), ui)
+		firstAt := time.Unix(1, 0)
+		secondAt := time.Unix(2, 0)
+
+		firstTick := thesis.AdvanceTick(firstAt)
+		secondTick := thesis.AdvanceTick(secondAt)
+		firstFrame, firstFound := ui.Pop("dashboard")
+		secondFrame, secondFound := ui.Pop("dashboard")
+
+		Convey("It should advance exactly once per observation and publish each transition", func() {
+			So(firstTick, ShouldEqual, int64(1))
+			So(secondTick, ShouldEqual, int64(2))
+			So(thesis.Tick, ShouldEqual, int64(2))
+			So(thesis.At, ShouldResemble, secondAt)
+			So(firstFound, ShouldBeTrue)
+			So(secondFound, ShouldBeTrue)
+			So(firstFrame.Type, ShouldEqual, wire.FrameTickFrame)
+			So(firstFrame.Value.(*wire.TickFrameT).Count, ShouldEqual, int64(1))
+			So(secondFrame.Value.(*wire.TickFrameT).Count, ShouldEqual, int64(2))
+		})
+	})
+}
+
+func TestThesisWork(t *testing.T) {
+	Convey("Given a stage waiting on its MapReduce work queue", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		symbol := thesis.Symbol("BTC/USD")
+		symbol.AppendTicker(kraken.TickerData{})
+		ready, available := thesis.Work(SourceCVD).WaitPop(
+			t.Context(),
+			string(SourceCVD),
+		)
+
+		Convey("It should deliver the owning symbol directly to that reader", func() {
+			So(available, ShouldBeTrue)
+			So(ready, ShouldEqual, symbol)
+		})
+	})
+}
 
 func TestThesisMarshalState(t *testing.T) {
 	Convey("Given a thesis carrying symbol and equity state", t, func() {
@@ -254,5 +299,16 @@ func BenchmarkThesisPhaseSnapshot(b *testing.B) {
 
 	for b.Loop() {
 		_, _ = thesis.PhaseSnapshot()
+	}
+}
+
+func BenchmarkThesisAdvanceTick(b *testing.B) {
+	ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
+	thesis := NewThesis(b.Context(), ui)
+	observedAt := time.Unix(1, 0)
+
+	for b.Loop() {
+		thesis.AdvanceTick(observedAt)
+		_, _ = ui.Pop("dashboard")
 	}
 }

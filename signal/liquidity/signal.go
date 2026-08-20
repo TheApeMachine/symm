@@ -2,7 +2,6 @@ package liquidity
 
 import (
 	"context"
-	"runtime"
 	"time"
 
 	"github.com/google/uuid"
@@ -77,88 +76,79 @@ func (signal *Signal) Type() types.SourceType {
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		symbol, available := signal.thesis.Work(types.SourceLiquidity).WaitPop(
+			signal.ctx,
+			string(types.SourceLiquidity),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
 		}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
+		if symbol == nil {
 			continue
 		}
 
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-			symbol, valid := value.(*types.Symbol)
-
-			if !valid || symbol == nil {
-				return true
+		for ticker := range symbol.MarketTickers(types.SourceLiquidity) {
+			if ticker.Bid == nil || ticker.Ask == nil {
+				continue
 			}
 
-			for ticker := range symbol.MarketTickers(types.SourceLiquidity) {
-				if ticker.Bid == nil || ticker.Ask == nil {
-					continue
-				}
+			eventTime := signal.eventTime(symbol.Symbol, ticker.Timestamp)
+			input := nomagique.Frame{}
+			input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
+			input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
+			input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
+			input.Put(nmtypes.BetaQuantity, ticker.AskQty)
+			input.Put(nmtypes.EventTimeSec, float64(eventTime.Unix()))
+			input.Put(nmtypes.EventTimeNsec, float64(eventTime.Nanosecond()))
+			input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-				eventTime := signal.eventTime(symbol.Symbol, ticker.Timestamp)
-				input := nomagique.Frame{}
-				input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
-				input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
-				input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
-				input.Put(nmtypes.BetaQuantity, ticker.AskQty)
-				input.Put(nmtypes.EventTimeSec, float64(eventTime.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(eventTime.Nanosecond()))
-				input.Put(statistic.SymbolDispersionHalflife, 30.0)
+			output, err := signal.number(symbol.Symbol, input)
 
-				output, err := signal.number(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"liquidity: number step failed for "+symbol.Symbol,
-						err,
-					))
-					return false
-				}
-
-				measurement := nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					ticker.Timestamp.UnixNano(),
-					ticker.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("executable_touch_depth", output.MustGet(nmtypes.Quantity), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitPrice,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("depth_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitPrice,
-						Timescale: nmtypes.TimescalePerSecond,
-					}),
-					nmtypes.NewMetric("depth_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("depth_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitPercent,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("depth_stability", output.MustGet(statistic.SymbolBaselineStability), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitPercent,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("effective_window", output.MustGet(nmtypes.Span), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitCount,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-				)
-
-				symbol.AppendMeasurement(measurement)
+			if err != nil {
+				signal.err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"liquidity: number step failed for "+symbol.Symbol,
+					err,
+				))
+				break
 			}
 
-			return true
-		})
+			measurement := nmtypes.NewMeasurement(
+				uuid.NewString(),
+				signal.Name(),
+				ticker.Timestamp.UnixNano(),
+				ticker.Timestamp.UnixNano(),
+			).AddMetrics(
+				nmtypes.NewMetric("executable_touch_depth", output.MustGet(nmtypes.Quantity), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitPrice,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("depth_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitPrice,
+					Timescale: nmtypes.TimescalePerSecond,
+				}),
+				nmtypes.NewMetric("depth_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("depth_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitPercent,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("depth_stability", output.MustGet(statistic.SymbolBaselineStability), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitPercent,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric("effective_window", output.MustGet(nmtypes.Span), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitCount,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+			)
+
+			symbol.AppendMeasurement(measurement)
+		}
 	}
 
 	return signal.err
@@ -176,35 +166,6 @@ func (signal *Signal) eventTime(symbol string, observedAt time.Time) time.Time {
 	return observedAt
 }
 
-/*
-pending reports whether any symbol queues a Tickers frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasTickers() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
-}
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

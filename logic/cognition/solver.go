@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -16,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -83,7 +81,7 @@ type Solver struct {
 	maxSeqLen      int
 	surprisalLimit float64
 	tickCounter    uint64
-	ui             *transport.MapReduce[[]byte]
+	ui             *transport.MapReduce[*types.UIFrame]
 
 	// Beam search shape. Held as fields rather than call-site constants so the
 	// lookahead can be tuned without also reshaping what Cortex draws — the two
@@ -142,7 +140,7 @@ func NewSolver(
 	ctx context.Context,
 	thesis *types.Thesis,
 	tree *dmt.Tree,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 	recorder *audit.Recorder,
 	opts ...Option,
 ) *Solver {
@@ -195,89 +193,48 @@ is never materialized into a longer-lived slice.
 */
 func (solver *Solver) Run() error {
 	for solver.err == nil {
-		select {
-		case <-solver.ctx.Done():
+		symbolState, available := solver.thesis.Work(types.SourceCognition).WaitPop(
+			solver.ctx,
+			string(types.SourceCognition),
+		)
+
+		if !available {
 			return solver.ctx.Err()
-		default:
 		}
 
-		if !solver.pending() {
-			// No symbol has unconsumed categories; yield before re-scanning the
-			// whole stage instead of rebuilding the pass on an empty stream.
-			runtime.Gosched()
+		if symbolState == nil ||
+			symbolState.Categories.ConsumerLength(string(types.SourceCognition)) == 0 {
 			continue
 		}
 
 		config := system.Cfg.Snapshot()
 		switchThreshold := config.Planner.MinimumConfidence
 		rows := make(map[string]types.Cognition)
-		var cognitionErr error
 
-		solver.thesis.Symbols.Range(func(key, value interface{}) bool {
-			symbol, symbolOK := key.(string)
-			symbolState, stateOK := value.(*types.Symbol)
-
-			if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
-				return true
+		for batch := range symbolState.MarketCategories(types.SourceCognition) {
+			if len(batch) == 0 {
+				continue
 			}
 
-			for batch := range symbolState.MarketCategories(types.SourceCognition) {
-				if len(batch) == 0 {
-					continue
-				}
-
-				if err := solver.processBatch(
-					symbol,
-					batch,
-					switchThreshold,
-					rows,
-				); err != nil {
-					cognitionErr = errnie.Error(err)
-					return false
-				}
+			if err := solver.processBatch(
+				symbolState.Symbol,
+				batch,
+				switchThreshold,
+				rows,
+			); err != nil {
+				solver.err = errnie.Error(err)
+				break
 			}
+		}
 
-			return true
-		})
+		if solver.err != nil {
+			continue
+		}
 
 		solver.publish(rows)
-
-		if cognitionErr != nil {
-			solver.err = cognitionErr
-		}
 	}
 
 	return solver.err
-}
-
-/*
-pending reports whether any symbol has unconsumed categories on its input
-MapReduce, so the run loop can yield without processing when idle.
-*/
-func (solver *Solver) pending() bool {
-	if solver.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	solver.thesis.Symbols.Range(func(_, value any) bool {
-		symbolState, valid := value.(*types.Symbol)
-
-		if !valid || symbolState == nil {
-			return true
-		}
-
-		if symbolState.Categories.Length() > 0 {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
 }
 
 /*
@@ -1080,12 +1037,12 @@ func (solver *Solver) publish(rows map[string]types.Cognition) {
 		encoded = append(encoded, cognitionWire(row))
 	}
 
-	solver.ui.Push(telemetry.Encode(&wire.FrameT{
+	solver.thesis.Publish(&wire.FrameT{
 		Type: wire.FrameCognitionFrame,
 		Value: &wire.CognitionFrameT{
 			Rows: encoded,
 		},
-	}))
+	})
 }
 
 /*
@@ -1100,6 +1057,7 @@ func (solver *Solver) Reset() {
 Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
+	solver.cancel()
 	solver.sequences = nil
 	solver.regimes = nil
 	return nil

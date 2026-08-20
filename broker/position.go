@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -28,7 +27,7 @@ type Position struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	api            *websocket.API
-	ui             *transport.MapReduce[[]byte]
+	ui             *transport.MapReduce[*types.UIFrame]
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -62,7 +61,7 @@ NewPosition constructs one desk-owned lot shell.
 func NewPosition(
 	ctx context.Context,
 	api *websocket.API,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -136,20 +135,20 @@ func (position *Position) MarshalJSON() ([]byte, error) {
 }
 
 /*
-Publish the position to the UI, which will automatically marshal the Holding
-and its Stoploss into the JSON payload. For clarity, the balance is kept out
-of this, as there must be a way to get that more accurate to reality, where
-the exchange publishes the wallet state at the sensible moments. The paper
-trading implementation we use is based on the kraken-cli, where under normal
-use you would also not be manually managing the balances.
+Publish sends the position's typed FlatBuffers object to the UI queue. Wallet
+state remains a separate balance publication owned by the account readout.
 */
 func (position *Position) Publish() {
-	position.ui.Push(telemetry.Encode(&wire.FrameT{
+	if position.ui == nil {
+		return
+	}
+
+	position.ui.Push(&wire.FrameT{
 		Type: wire.FramePositionsFrame,
 		Value: &wire.PositionsFrameT{
 			Rows: []*wire.PositionT{position.Wire()},
 		},
-	}))
+	})
 }
 
 func (position *Position) Wire() *wire.PositionT {
@@ -583,12 +582,4 @@ func (position *Position) Close() (err error) {
 
 	position.setStatus(types.CLOSED)
 	return errnie.Error(err)
-}
-
-/*
-marshalPosition encodes one position into the wire-frame bytes the Positions
-column carries on the lock-free transport.
-*/
-func marshalPosition(position *Position) ([]byte, error) {
-	return json.Marshal(position)
 }

@@ -8,10 +8,6 @@ import {
 import { requirePositiveLength } from "#/lib/domain";
 
 export {
-	paintTerminalFluidChart,
-	TerminalFluidChart,
-} from "#/components/charts/fluid";
-export {
 	paintTerminalManifoldChart,
 	TerminalManifoldChart,
 } from "#/components/charts/manifold";

@@ -7,13 +7,13 @@ import (
 )
 
 type BacktestFrameT struct {
-	CaptureId int64 `json:"captureId"`
-	Playing bool `json:"playing"`
-	Position int64 `json:"position"`
-	StartedAt int64 `json:"startedAt"`
-	EndedAt int64 `json:"endedAt"`
-	Rebooting bool `json:"rebooting"`
-	Captures []*CaptureT `json:"captures"`
+	CaptureId int64       `json:"captureId"`
+	Playing   bool        `json:"playing"`
+	Position  int64       `json:"position"`
+	StartedAt int64       `json:"startedAt"`
+	EndedAt   int64       `json:"endedAt"`
+	Rebooting bool        `json:"rebooting"`
+	Captures  []*CaptureT `json:"captures"`
 }
 
 func (t *BacktestFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

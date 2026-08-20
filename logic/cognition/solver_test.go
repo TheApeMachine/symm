@@ -2,7 +2,6 @@ package cognition
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/nomagique/transport"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -53,6 +53,7 @@ func TestUpdate(t *testing.T) {
 			WithSurprisalLimit(math.Inf(1)),
 		)
 		defer solver.Close()
+		go func() { _ = solver.Run() }()
 
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
@@ -142,6 +143,7 @@ func TestUpdate(t *testing.T) {
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
 		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
 		defer solver.Close()
+		go func() { _ = solver.Run() }()
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
 		symbol := storedSymbol.(*types.Symbol)
@@ -165,6 +167,7 @@ func TestUpdate(t *testing.T) {
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
 		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
 		defer solver.Close()
+		go func() { _ = solver.Run() }()
 		vertical := solver.encodeCategory(types.CategoryVerticalIgnition)
 		reversal := solver.encodeCategory(types.CategoryActiveReversal)
 		exhaustion := solver.encodeCategory(types.CategoryExhaustion)
@@ -199,6 +202,7 @@ func TestUpdate(t *testing.T) {
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
 		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
 		defer solver.Close()
+		go func() { _ = solver.Run() }()
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
 		symbol := storedSymbol.(*types.Symbol)
@@ -215,22 +219,26 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a broad thesis whose categories do not change", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
+		ui := transport.NewMapReduce[*types.UIFrame](
+			[]string{frameConsumer},
+			nil,
+			nil,
+		)
 		thesis := types.NewThesis(t.Context(), ui)
 		thesis.At = time.Unix(1, 0).UTC()
 		solver := NewSolver(t.Context(), thesis, tree, ui, nil)
 		defer solver.Close()
+		go func() { _ = solver.Run() }()
 
 		for index := 0; index < 129; index++ {
 			symbolName := fmt.Sprintf("SYMBOL-%d/USD", index)
-			symbol := types.NewSymbol(symbolName)
+			symbol := thesis.Symbol(symbolName)
 			symbol.Categories.Push([]types.Category{{
 				Symbol:     symbolName,
 				Type:       types.CategoryVerticalIgnition,
 				Confidence: 1,
 				Strength:   1,
 			}})
-			thesis.Symbols.Store(symbolName, symbol)
 		}
 
 		// Let the first observation pass settle and the publish flush.
@@ -255,15 +263,13 @@ func TestUpdate(t *testing.T) {
 		}})
 		waitSequence(solver, "SYMBOL-64/USD", []string{solver.encodeCategory(types.CategoryActiveReversal)})
 
-		var payload struct {
-			Cognition map[string]json.RawMessage `json:"cognition"`
-		}
-		So(json.Unmarshal(pullFrame(ui), &payload), ShouldBeNil)
+		envelope := pullFrame(ui)
+		So(envelope.Type, ShouldEqual, wire.FrameCognitionFrame)
+		rows := envelope.Value.(*wire.CognitionFrameT).Rows
 
 		Convey("Then only the changed symbol is published without automatic REM", func() {
-			So(payload.Cognition, ShouldHaveLength, 1)
-			_, published := payload.Cognition["SYMBOL-64/USD"]
-			So(published, ShouldBeTrue)
+			So(rows, ShouldHaveLength, 1)
+			So(rows[0].Symbol, ShouldEqual, "SYMBOL-64/USD")
 			var cognition types.Cognition
 			for stored := range symbol.MarketCognition(types.SourceGraph) {
 				cognition = stored
@@ -310,7 +316,7 @@ waitSettled pumps the run goroutine until the cognition stage has drained every
 currently-available category stream: tickCounter stops advancing (no symbol is
 still on its first observation) and the publish channel is flushed.
 */
-func waitSettled(solver *Solver, ui *transport.MapReduce[[]byte]) {
+func waitSettled(solver *Solver, ui *transport.MapReduce[*types.UIFrame]) {
 	deadline := time.Now().Add(3 * time.Second)
 	var last uint64
 	stable := 0
@@ -339,7 +345,7 @@ func waitSettled(solver *Solver, ui *transport.MapReduce[[]byte]) {
 pullFrame consumes one wire frame from a test UI transport under a registered
 test consumer cursor.
 */
-func pullFrame(ui *transport.MapReduce[[]byte]) []byte {
+func pullFrame(ui *transport.MapReduce[*types.UIFrame]) *types.UIFrame {
 	ui.Register(frameConsumer)
 	frame, _ := ui.Pop(frameConsumer)
 	return frame
@@ -347,7 +353,7 @@ func pullFrame(ui *transport.MapReduce[[]byte]) []byte {
 
 const frameConsumer = "cognition-test"
 
-func consumeOneFrame(ui *transport.MapReduce[[]byte]) {
+func consumeOneFrame(ui *transport.MapReduce[*types.UIFrame]) {
 	pullFrame(ui)
 }
 
@@ -411,7 +417,7 @@ func TestFormatLookaheadPredictions(t *testing.T) {
 func cognitionThesis(category types.CategoryType) *types.Thesis {
 	thesis := types.NewThesis(context.Background(), nil)
 	thesis.At = time.Unix(1, 0).UTC()
-	symbol := types.NewSymbol("BTC/USD")
+	symbol := thesis.Symbol("BTC/USD")
 	symbol.Categories.Push([]types.Category{
 		{
 			Symbol:     "BTC/USD",
@@ -426,8 +432,6 @@ func cognitionThesis(category types.CategoryType) *types.Thesis {
 			Strength:   0.8,
 		},
 	})
-	thesis.Symbols.Store("BTC/USD", symbol)
-
 	return thesis
 }
 
@@ -564,14 +568,13 @@ func BenchmarkCognitionRun(b *testing.B) {
 
 	for index := range 129 {
 		symbolName := fmt.Sprintf("SYMBOL-%d/USD", index)
-		symbol := types.NewSymbol(symbolName)
+		symbol := thesis.Symbol(symbolName)
 		symbol.Categories.Push([]types.Category{{
 			Symbol:     symbolName,
 			Type:       types.CategoryDenseNeutrality,
 			Confidence: 1,
 			Strength:   1,
 		}})
-		thesis.Symbols.Store(symbolName, symbol)
 	}
 
 	b.ResetTimer()

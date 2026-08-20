@@ -7,6 +7,7 @@ import {
 import {
 	createFluidFieldTextures,
 	type FluidFieldTextures,
+	updateFluidFieldTextures,
 } from "./field-textures";
 import type { FluidFields } from "./wire";
 
@@ -21,8 +22,7 @@ export type FluidFieldOptions = {
 type FieldUniforms = ReturnType<typeof fieldUniforms>;
 
 const fieldUniforms = (textures: FluidFieldTextures) => ({
-	uDensity: { value: textures.density },
-	uMomentum: { value: textures.momentum },
+	uMomRho: { value: textures.momRho },
 	uInternalEnergy: { value: textures.internalEnergy },
 	uWaveReal: { value: textures.waveReal },
 	uWaveImaginary: { value: textures.waveImaginary },
@@ -85,15 +85,15 @@ export class FluidFieldView {
 	};
 
 	update(fields: FluidFields) {
-		const textures = createFluidFieldTextures(fields);
-
-		if (this.uniforms === null) {
-			this.build(textures);
-		} else {
-			this.replaceTextures(textures);
+		if (this.textures !== null) {
+			updateFluidFieldTextures(this.textures, fields);
+			this.refreshUniforms(this.textures);
+			this.applyOptions();
+			return;
 		}
 
-		this.textures?.dispose();
+		const textures = createFluidFieldTextures(fields);
+		this.build(textures);
 		this.textures = textures;
 		this.applyOptions();
 	}
@@ -149,15 +149,14 @@ export class FluidFieldView {
 		this.setSlices(0.5, 0.5, 0.5);
 	}
 
-	private replaceTextures(textures: FluidFieldTextures) {
+	private refreshUniforms(textures: FluidFieldTextures) {
 		const uniforms = this.uniforms;
 
 		if (uniforms === null) {
 			return;
 		}
 
-		uniforms.uDensity.value = textures.density;
-		uniforms.uMomentum.value = textures.momentum;
+		uniforms.uMomRho.value = textures.momRho;
 		uniforms.uInternalEnergy.value = textures.internalEnergy;
 		uniforms.uWaveReal.value = textures.waveReal;
 		uniforms.uWaveImaginary.value = textures.waveImaginary;

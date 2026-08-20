@@ -35,7 +35,7 @@ func TestUpdate(t *testing.T) {
 		system.Cfg = system.NewConfig()
 		baseline := system.Cfg.Snapshot()
 		thesis := types.NewThesis(t.Context(), nil)
-		ui := transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil)
+		ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
 		solver, err := NewSolver(t.Context(), ui)
 		So(err, ShouldBeNil)
 		defer solver.Close()
@@ -86,7 +86,7 @@ func TestUpdate(t *testing.T) {
 	Convey("Given repeated valuations while the account has no exposure", t, func() {
 		system.Cfg = system.NewConfig()
 		thesis := types.NewThesis(t.Context(), nil)
-		ui := transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil)
+		ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
 		solver, err := NewSolver(t.Context(), ui)
 		So(err, ShouldBeNil)
 		defer solver.Close()

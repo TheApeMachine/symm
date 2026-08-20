@@ -2,13 +2,12 @@ package ui
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
@@ -17,171 +16,218 @@ import (
 const (
 	fluidRecordHeaderSize = 8
 	// RFC 8831 recommends messages no larger than 16 KiB when SCTP message
-	// interleaving is unavailable. Ordered records are reassembled unchanged.
+	// interleaving is unavailable. Records are segmented and reassembled.
 	fluidSegmentSize = 16 * 1024
 )
 
 var fluidRecordMagic = [4]byte{'S', 'F', 'D', '1'}
 
 /*
-FluidRTC owns the WebRTC peers consuming direct Fields, Particle, and Phase
-publications from the manifold solver.
+FluidRTC owns the lossless, ordered WebRTC manifold publication plane.
 */
 type FluidRTC struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	mutex  sync.RWMutex
-	peers  map[*webrtc.PeerConnection]*fluidPeer
+	ctx           context.Context
+	cancel        context.CancelFunc
+	errMutex      sync.RWMutex
+	err           error
+	peersMutex    sync.RWMutex
+	peers         map[*webrtc.PeerConnection]*fluidPeer
+	publications  *transport.MapReduce[types.FluidFrame]
+	consumerID    string
+	queueLimit    int
+	bufferedLimit uint64
 }
 
 /*
-NewFluidRTC creates an empty WebRTC manifold transport.
+NewFluidRTC configures the manifold transport without starting its Run loop.
 */
-func NewFluidRTC(ctx context.Context) *FluidRTC {
+func NewFluidRTC(
+	ctx context.Context,
+	publications *transport.MapReduce[types.FluidFrame],
+	consumerID string,
+) *FluidRTC {
 	ctx, cancel := context.WithCancel(ctx)
-
-	return &FluidRTC{
-		ctx:    ctx,
-		cancel: cancel,
-		peers:  make(map[*webrtc.PeerConnection]*fluidPeer),
+	viper.SetDefault("ui.webrtc.client_queue_frames", 4)
+	viper.SetDefault("ui.webrtc.buffered_segments", 64)
+	queueLimit := viper.GetInt("ui.webrtc.client_queue_frames")
+	bufferedSegments := viper.GetUint64("ui.webrtc.buffered_segments")
+	fluidTransport := &FluidRTC{
+		ctx:           ctx,
+		cancel:        cancel,
+		peers:         make(map[*webrtc.PeerConnection]*fluidPeer),
+		publications:  publications,
+		consumerID:    consumerID,
+		queueLimit:    queueLimit,
+		bufferedLimit: bufferedSegments * fluidSegmentSize,
 	}
+
+	if queueLimit < 1 || bufferedSegments < 1 {
+		fluidTransport.err = fmt.Errorf(
+			"webrtc: client_queue_frames and buffered_segments must be positive",
+		)
+	}
+
+	return fluidTransport
+}
+
+func (fluidTransport *FluidRTC) Name() string { return "fluid-webrtc" }
+
+func (fluidTransport *FluidRTC) Error() error {
+	fluidTransport.errMutex.RLock()
+	defer fluidTransport.errMutex.RUnlock()
+
+	return fluidTransport.err
+}
+
+func (fluidTransport *FluidRTC) Active() bool {
+	return fluidTransport.publications != nil
 }
 
 /*
-HasPeers checks whether any WebRTC peer connection is actively attached.
+Run drains direct manifold publications until shutdown or the first transport
+failure. A live viewer never loses a queued state silently: overflow is fatal.
 */
-func (transport *FluidRTC) HasPeers() bool {
-	transport.mutex.RLock()
-	defer transport.mutex.RUnlock()
+func (fluidTransport *FluidRTC) Run() error {
+	if err := fluidTransport.Error(); err != nil {
+		return err
+	}
 
-	return len(transport.peers) > 0
-}
+	if fluidTransport.publications == nil {
+		return nil
+	}
 
-/*
-Run drains direct manifold publications and fans each one to the data channel
-it names. A frame carries its own destination because the solver knows which
-view it built the frame for; recovering that here by sniffing the payload's
-leading bytes only re-derived it, and tied routing to the encoding.
-*/
-/*
-Run polls the lock-free fluid transport and fans each published frame to the
-data channel it names, then parks when the queue is empty. A frame carries its
-own destination because the solver knows which view it built the frame for;
-recovering that here by sniffing the payload's leading bytes only re-derived it,
-and tied routing to the encoding.
-*/
-func (transport *FluidRTC) Run(publications *transport.MapReduce[types.FluidFrame], consumerID string) {
-	publications.Register(consumerID)
-	defer publications.Unregister(consumerID)
+	fluidTransport.publications.Register(fluidTransport.consumerID)
+	defer fluidTransport.publications.Unregister(fluidTransport.consumerID)
 
-	for {
-		frame, ok := publications.WaitPop(transport.ctx, consumerID)
+	for fluidTransport.Error() == nil {
+		frame, ok := fluidTransport.publications.WaitPop(
+			fluidTransport.ctx,
+			fluidTransport.consumerID,
+		)
 
 		if !ok {
-			return
+			break
 		}
 
-		// No viewer attached: discard immediately. Dropping an empty queue
-		// costs nothing when production stops.
-		if !transport.HasPeers() {
+		if !fluidTransport.HasChannel(frame.Channel) {
 			continue
 		}
 
-		transport.publish(frame.Channel, frame.Payload)
+		if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
+			fluidTransport.fail(err)
+		}
 	}
+
+	return fluidTransport.Error()
+}
+
+/*
+HasChannel reports whether any connected viewer owns the frame's named data
+channel. Diagnostics and manifold viewers use separate peer connections.
+*/
+func (fluidTransport *FluidRTC) HasChannel(channel string) bool {
+	fluidTransport.peersMutex.RLock()
+	defer fluidTransport.peersMutex.RUnlock()
+
+	for _, peer := range fluidTransport.peers {
+		if peer.has(channel) {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
+HasPeers reports whether a peer has registered every required domain channel.
+*/
+func (fluidTransport *FluidRTC) HasPeers() bool {
+	fluidTransport.peersMutex.RLock()
+	defer fluidTransport.peersMutex.RUnlock()
+
+	for _, peer := range fluidTransport.peers {
+		if peer.ready() {
+			return true
+		}
+	}
+
+	return false
 }
 
 /*
 Answer accepts one browser offer and returns a complete non-trickle answer.
 */
-func (transport *FluidRTC) Answer(
+func (fluidTransport *FluidRTC) Answer(
 	offer webrtc.SessionDescription,
 ) (webrtc.SessionDescription, error) {
 	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 
 	if err != nil {
-		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
-			errnie.IO,
-			"webrtc: unable create new peer connection - "+err.Error(),
+		return webrtc.SessionDescription{}, fluidError(
+			"unable to create peer connection",
 			err,
-		))
+		)
 	}
 
-	peer := newFluidPeer(transport.ctx)
-	transport.add(peerConnection, peer)
+	peer := newFluidPeer(
+		fluidTransport.ctx,
+		fluidTransport.fail,
+		fluidTransport.queueLimit,
+		fluidTransport.bufferedLimit,
+	)
+	fluidTransport.add(peerConnection, peer)
 	peerConnection.OnDataChannel(peer.attach)
-
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
-			transport.remove(peerConnection)
+			fluidTransport.remove(peerConnection)
 		}
 	})
 
 	if err = peerConnection.SetRemoteDescription(offer); err != nil {
-		transport.remove(peerConnection)
-
-		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
-			errnie.IO,
-			"webrtc: unable to set remove description - "+err.Error(),
-			err,
-		))
+		fluidTransport.remove(peerConnection)
+		return webrtc.SessionDescription{}, fluidError("unable to set remote description", err)
 	}
 
 	answer, err := peerConnection.CreateAnswer(nil)
 
 	if err != nil {
-		transport.remove(peerConnection)
-
-		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
-			errnie.IO,
-			"webrtc: unable to create answer - "+err.Error(),
-			err,
-		))
+		fluidTransport.remove(peerConnection)
+		return webrtc.SessionDescription{}, fluidError("unable to create answer", err)
 	}
 
 	gathered := webrtc.GatheringCompletePromise(peerConnection)
 
 	if err = peerConnection.SetLocalDescription(answer); err != nil {
-		transport.remove(peerConnection)
-
-		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
-			errnie.IO,
-			"webrtc: unable to set local description - "+err.Error(),
-			err,
-		))
+		fluidTransport.remove(peerConnection)
+		return webrtc.SessionDescription{}, fluidError("unable to set local description", err)
 	}
 
 	select {
-	case <-transport.ctx.Done():
-		transport.remove(peerConnection)
-		return webrtc.SessionDescription{}, transport.ctx.Err()
+	case <-fluidTransport.ctx.Done():
+		fluidTransport.remove(peerConnection)
+		return webrtc.SessionDescription{}, fluidTransport.ctx.Err()
 	case <-gathered:
 	}
 
 	local := peerConnection.LocalDescription()
 
 	if local == nil {
-		transport.remove(peerConnection)
-
-		return webrtc.SessionDescription{}, errnie.Error(errnie.Err(
-			errnie.IO,
-			"webrtc: peer connection has no local description",
-			err,
-		))
+		fluidTransport.remove(peerConnection)
+		return webrtc.SessionDescription{}, fluidError("peer connection has no local description", nil)
 	}
 
 	return *local, nil
 }
 
 /*
-Close terminates every fluid peer and stops publication fanout.
+Close terminates every peer and stops publication fanout.
 */
-func (transport *FluidRTC) Close() error {
-	transport.cancel()
-	transport.mutex.Lock()
-	peers := transport.peers
-	transport.peers = make(map[*webrtc.PeerConnection]*fluidPeer)
-	transport.mutex.Unlock()
+func (fluidTransport *FluidRTC) Close() error {
+	fluidTransport.cancel()
+	fluidTransport.peersMutex.Lock()
+	peers := fluidTransport.peers
+	fluidTransport.peers = make(map[*webrtc.PeerConnection]*fluidPeer)
+	fluidTransport.peersMutex.Unlock()
 	var err error
 
 	for peerConnection, peer := range peers {
@@ -192,20 +238,35 @@ func (transport *FluidRTC) Close() error {
 	return err
 }
 
-func (transport *FluidRTC) add(
+func (fluidTransport *FluidRTC) fail(err error) {
+	if err == nil {
+		return
+	}
+
+	fluidTransport.errMutex.Lock()
+
+	if fluidTransport.err == nil {
+		fluidTransport.err = fluidError("publication transport failed", err)
+	}
+
+	fluidTransport.errMutex.Unlock()
+	fluidTransport.cancel()
+}
+
+func (fluidTransport *FluidRTC) add(
 	peerConnection *webrtc.PeerConnection,
 	peer *fluidPeer,
 ) {
-	transport.mutex.Lock()
-	transport.peers[peerConnection] = peer
-	transport.mutex.Unlock()
+	fluidTransport.peersMutex.Lock()
+	fluidTransport.peers[peerConnection] = peer
+	fluidTransport.peersMutex.Unlock()
 }
 
-func (transport *FluidRTC) remove(peerConnection *webrtc.PeerConnection) {
-	transport.mutex.Lock()
-	peer := transport.peers[peerConnection]
-	delete(transport.peers, peerConnection)
-	transport.mutex.Unlock()
+func (fluidTransport *FluidRTC) remove(peerConnection *webrtc.PeerConnection) {
+	fluidTransport.peersMutex.Lock()
+	peer := fluidTransport.peers[peerConnection]
+	delete(fluidTransport.peers, peerConnection)
+	fluidTransport.peersMutex.Unlock()
 
 	if peer != nil {
 		peer.close()
@@ -214,193 +275,16 @@ func (transport *FluidRTC) remove(peerConnection *webrtc.PeerConnection) {
 	_ = peerConnection.Close()
 }
 
-func (transport *FluidRTC) publish(channel string, payload []byte) {
-	transport.mutex.RLock()
-	peers := make([]*fluidPeer, 0, len(transport.peers))
+func (fluidTransport *FluidRTC) publish(channel string, payload []byte) error {
+	fluidTransport.peersMutex.RLock()
+	defer fluidTransport.peersMutex.RUnlock()
 
-	for _, peer := range transport.peers {
-		peers = append(peers, peer)
-	}
-
-	transport.mutex.RUnlock()
-
-	for _, peer := range peers {
-		peer.enqueue(channel, payload)
-	}
-}
-
-type fluidPeer struct {
-	ctx      context.Context
-	mutex    sync.RWMutex
-	channels map[string]*fluidChannel
-}
-
-func newFluidPeer(ctx context.Context) *fluidPeer {
-	return &fluidPeer{
-		ctx:      ctx,
-		channels: make(map[string]*fluidChannel, 3),
-	}
-}
-
-func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
-	label := dataChannel.Label()
-
-	if label != types.FluidFieldsChannel &&
-		label != types.FluidParticlesChannel &&
-		label != types.FluidPhaseChannel &&
-		label != types.DiagnosticsChannel {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"webrtc: unsupported fluid data channel "+label,
-			nil,
-		))
-		_ = dataChannel.Close()
-		return
-	}
-
-	if !dataChannel.Ordered() || dataChannel.MaxPacketLifeTime() != nil ||
-		dataChannel.MaxRetransmits() != nil {
-
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"webrtc: fluid data channels must be ordered and reliable",
-			nil,
-		))
-
-		_ = dataChannel.Close()
-		return
-	}
-
-	dataChannel.OnOpen(func() {
-		channel := newFluidChannel(peer.ctx, dataChannel)
-		peer.mutex.Lock()
-		previous := peer.channels[label]
-		peer.channels[label] = channel
-		peer.mutex.Unlock()
-
-		if previous != nil {
-			previous.close()
+	for _, peer := range fluidTransport.peers {
+		if !peer.has(channel) {
+			continue
 		}
 
-		go channel.run()
-	})
-}
-
-func (peer *fluidPeer) enqueue(channel string, payload []byte) {
-	peer.mutex.RLock()
-	writer := peer.channels[channel]
-	peer.mutex.RUnlock()
-
-	if writer != nil {
-		writer.enqueue(payload)
-	}
-}
-
-func (peer *fluidPeer) close() {
-	peer.mutex.Lock()
-	channels := peer.channels
-	peer.channels = make(map[string]*fluidChannel, 3)
-	peer.mutex.Unlock()
-
-	for _, channel := range channels {
-		channel.close()
-	}
-}
-
-type fluidChannel struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	dataChannel *webrtc.DataChannel
-	pending     chan []byte
-	drained     chan struct{}
-}
-
-func newFluidChannel(
-	ctx context.Context,
-	dataChannel *webrtc.DataChannel,
-) *fluidChannel {
-	ctx, cancel := context.WithCancel(ctx)
-	channel := &fluidChannel{
-		ctx:         ctx,
-		cancel:      cancel,
-		dataChannel: dataChannel,
-		pending:     make(chan []byte, 1),
-		drained:     make(chan struct{}, 1),
-	}
-
-	dataChannel.SetBufferedAmountLowThreshold(0)
-	dataChannel.OnBufferedAmountLow(func() {
-		select {
-		case channel.drained <- struct{}{}:
-		default:
-		}
-	})
-
-	dataChannel.OnClose(cancel)
-	dataChannel.OnError(func(err error) {
-		errnie.Error(errnie.Err(errnie.IO, "fluid data channel failed: "+err.Error(), err))
-		cancel()
-	})
-
-	return channel
-}
-
-func (channel *fluidChannel) enqueue(payload []byte) {
-	select {
-	case channel.pending <- payload:
-		return
-	default:
-	}
-
-	select {
-	case <-channel.pending:
-	default:
-	}
-
-	select {
-	case channel.pending <- payload:
-	case <-channel.ctx.Done():
-	}
-}
-
-func (channel *fluidChannel) run() {
-	for {
-		select {
-		case <-channel.ctx.Done():
-			return
-		case payload, open := <-channel.pending:
-			if !open {
-				return
-			}
-
-			if err := channel.send(payload); err != nil {
-				errnie.Error(errnie.Err(errnie.IO, "send fluid record: "+err.Error(), err))
-				channel.cancel()
-				return
-			}
-
-			channel.waitUntilDrained()
-		}
-	}
-}
-
-func (channel *fluidChannel) send(payload []byte) error {
-	if len(payload) > math.MaxUint32 {
-		return fmt.Errorf("fluid publication exceeds uint32 transport record")
-	}
-
-	header := make([]byte, fluidRecordHeaderSize)
-	copy(header[:4], fluidRecordMagic[:])
-	binary.LittleEndian.PutUint32(header[4:8], uint32(len(payload)))
-
-	if err := channel.dataChannel.Send(header); err != nil {
-		return err
-	}
-
-	for offset := 0; offset < len(payload); offset += fluidSegmentSize {
-		end := min(offset+fluidSegmentSize, len(payload))
-
-		if err := channel.dataChannel.Send(payload[offset:end]); err != nil {
+		if err := peer.enqueue(channel, payload); err != nil && !errors.Is(err, context.Canceled) {
 			return err
 		}
 	}
@@ -408,17 +292,6 @@ func (channel *fluidChannel) send(payload []byte) error {
 	return nil
 }
 
-func (channel *fluidChannel) waitUntilDrained() {
-	for channel.dataChannel.BufferedAmount() > 0 {
-		select {
-		case <-channel.ctx.Done():
-			return
-		case <-channel.drained:
-		}
-	}
-}
-
-func (channel *fluidChannel) close() {
-	channel.cancel()
-	_ = channel.dataChannel.Close()
+func fluidError(message string, err error) error {
+	return errnie.Err(errnie.IO, "webrtc: "+message, err)
 }

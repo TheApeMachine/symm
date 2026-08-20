@@ -11,8 +11,7 @@ export const fluidFieldVertexShader = /* glsl */ `
 `;
 
 const fieldSampling = /* glsl */ `
-	uniform highp sampler3D uDensity;
-	uniform highp sampler3D uMomentum;
+	uniform highp sampler3D uMomRho;
 	uniform highp sampler3D uInternalEnergy;
 	uniform highp sampler3D uWaveReal;
 	uniform highp sampler3D uWaveImaginary;
@@ -47,8 +46,9 @@ const fieldSampling = /* glsl */ `
 		out vec3 waveGlow
 	) {
 		vec3 textureCoordinate = coordinate.zyx;
-		float density = abs(texture(uDensity, textureCoordinate).r) * uDensityScale;
-		vec3 momentum = texture(uMomentum, textureCoordinate).rgb;
+		vec4 momRho = texture(uMomRho, textureCoordinate);
+		float density = abs(momRho.a) * uDensityScale;
+		vec3 momentum = momRho.rgb;
 		float momentumMagnitude = length(momentum) * uMomentumScale;
 		float energy = abs(texture(uInternalEnergy, textureCoordinate).r) * uEnergyScale;
 		float waveReal = texture(uWaveReal, textureCoordinate).r;

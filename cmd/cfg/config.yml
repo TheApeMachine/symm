@@ -92,6 +92,13 @@ market:
 
 ui:
   addr: 127.0.0.1:8765
+  webrtc:
+    # Per-channel records retained for an attached manifold viewer. Reaching
+    # this bound is fatal rather than silently replacing an unpainted state.
+    client_queue_frames: 4
+    # SCTP buffered-amount high-water expressed in RFC 8831 16 KiB segments.
+    # Flow control waits for capacity before enqueueing the next segment.
+    buffered_segments: 64
   websocket:
     # Upper bound for one ordered dashboard batch. Later frames remain queued
     # for the next message; no telemetry record is truncated or discarded.

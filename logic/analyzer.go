@@ -42,7 +42,7 @@ type Analyzer struct {
 	status       types.Status
 	tree         *dmt.Tree
 	solverGroups [][]Solver
-	ui           *transport.MapReduce[[]byte]
+	ui           *transport.MapReduce[*types.UIFrame]
 	binui        *transport.MapReduce[types.FluidFrame]
 	recorder     *audit.Recorder
 
@@ -61,7 +61,7 @@ func NewAnalyzer(
 	price *broker.Price,
 	api *websocket.API,
 	tree *dmt.Tree,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 	binui *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
 	thesis *types.Thesis,

@@ -576,29 +576,6 @@ table ErrorFrame {
   time:string;
 }
 
-table FluidVector { x:float; y:float; z:float; }
-table FluidParticle {
-  position:FluidVector (required);
-  velocity:FluidVector (required);
-  mass:float;
-  heat:float;
-  energy:float;
-  phase:float;
-  omega:float;
-  amplitude:float;
-}
-table FluidParticlesFrame { particles:[FluidParticle] (required); }
-
-table FluidGrid { x:uint; y:uint; z:uint; spacing:float; }
-table FluidFieldsFrame {
-  grid:FluidGrid (required);
-  density:[float] (required);
-  momentum:[float] (required);
-  internalEnergy:[float] (required);
-  waveReal:[float] (required);
-  waveImaginary:[float] (required);
-}
-
 table WaveMode { omega:float; real:float; imaginary:float; }
 table PhaseOutcome { direction:string; returnValue:double; horizon:long; }
 table PhaseResponse {
@@ -690,8 +667,6 @@ union Frame {
   BacktestFrame,
   HindsightFrame,
   ErrorFrame,
-  FluidParticlesFrame,
-  FluidFieldsFrame,
   FluidPhaseFrame,
   DiagnosticsFrame
 }
@@ -699,6 +674,12 @@ union Frame {
 table Envelope {
   sequence:ulong;
   frame:Frame (required);
+}
+
+table FrameEntry { frame:Frame (required); }
+table Batch {
+  sequence:ulong;
+  frames:[FrameEntry] (required);
 }
 
 root_type Envelope;

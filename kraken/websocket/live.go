@@ -33,6 +33,7 @@ const (
 	PublicWebSocketURL  = "wss://ws.kraken.com/v2"
 	PrivateWebSocketURL = "wss://ws-auth.kraken.com/v2"
 	Level3WebSocketURL  = "wss://ws-l3.kraken.com/v2"
+	publicBookDepth     = 10
 )
 
 var entityMap = map[string]func([]byte) any{
@@ -64,7 +65,7 @@ type Live struct {
 	cancel      context.CancelFunc
 	client      *spot.WebSocket
 	quote       string
-	thesis      *types.Thesis
+	thesis      atomic.Pointer[types.Thesis]
 	simulator   *Simulator
 	normalizer  *spot.Normalizer
 	level3      *sync.Map
@@ -91,6 +92,22 @@ type Live struct {
 }
 
 /*
+SetThesis attaches the canonical event destination before subscriptions begin
+producing market frames.
+*/
+func (live *Live) SetThesis(thesis *types.Thesis) {
+	if live == nil || thesis == nil {
+		panic("websocket: thesis required")
+	}
+
+	live.thesis.Store(thesis)
+
+	if live.paper != nil {
+		live.paper.SetThesis(thesis)
+	}
+}
+
+/*
 New opens a spot websocket session and wires SDK callbacks in the constructor.
 */
 func New(
@@ -106,8 +123,8 @@ func New(
 
 /*
 NewWithClient opens a spot websocket session using an injected spot.WebSocket client instance.
-This allows simulation and tests to supply a mock WebSocket client as the data source while
-retaining full production parsing, event routing, and book handling in Live.
+A nil Thesis creates an explicit parsing-only session; SetThesis attaches event routing before
+the connection becomes part of a running system.
 */
 func NewWithClient(
 	ctx context.Context,
@@ -144,7 +161,6 @@ func NewWithClient(
 	live := &Live{
 		ctx:         ctx,
 		cancel:      cancel,
-		thesis:      thesis,
 		simulator:   simulator,
 		client:      client,
 		normalizer:  spot.NewNormalizer(),
@@ -156,6 +172,10 @@ func NewWithClient(
 		model:       viper.GetViper().GetString("trading.model"),
 		quote:       viper.GetViper().GetString("market.quote_currency"),
 		captureName: captureName,
+	}
+
+	if thesis != nil {
+		live.SetThesis(thesis)
 	}
 
 	live.setStatus(types.INITIALIZING)
@@ -255,20 +275,40 @@ func NewWithClient(
 
 		switch entity := out.(type) {
 		case *kraken.Ticker:
-			for index := range entity.Data {
-				live.thesis.Symbol(entity.Data[index].Symbol).AppendTicker(entity.Data[index])
+			thesis := live.thesis.Load()
+
+			if thesis != nil {
+				for index := range entity.Data {
+					ticker := entity.Data[index]
+					tick := thesis.AdvanceTick(ticker.Timestamp)
+					symbol := thesis.Symbol(ticker.Symbol)
+					symbol.Tick = tick
+					symbol.AppendTicker(ticker)
+				}
 			}
 		case *kraken.Trade:
-			for index := range entity.Data {
-				live.thesis.Symbol(entity.Data[index].Symbol).AppendTrade(entity.Data[index])
+			thesis := live.thesis.Load()
+
+			if thesis != nil {
+				for index := range entity.Data {
+					thesis.Symbol(entity.Data[index].Symbol).AppendTrade(entity.Data[index])
+				}
 			}
 		case *kraken.Level3:
-			for index := range entity.Data {
-				live.thesis.Symbol(entity.Data[index].Symbol).AppendLevel3(entity.Data[index])
+			thesis := live.thesis.Load()
+
+			if thesis != nil {
+				for index := range entity.Data {
+					thesis.Symbol(entity.Data[index].Symbol).AppendLevel3(entity.Data[index])
+				}
 			}
 		case *kraken.Execution:
-			for index := range entity.Data {
-				live.thesis.Symbol(entity.Data[index].Symbol).AppendExecution(entity.Data[index])
+			thesis := live.thesis.Load()
+
+			if thesis != nil {
+				for index := range entity.Data {
+					thesis.Symbol(entity.Data[index].Symbol).AppendExecution(entity.Data[index])
+				}
 			}
 		}
 
@@ -323,6 +363,16 @@ func NewWithClient(
 
 		if auth {
 			errnie.Error(live.authenticate())
+			return
+		}
+
+		if err := live.restorePublicSubscriptions(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"websocket: failed to restore public subscriptions",
+				err,
+			))
+			live.setStatus(types.ERROR)
 			return
 		}
 
@@ -484,19 +534,71 @@ func (live *Live) SubInstrument(callback chan any) {
 }
 
 func (live *Live) SubTicker(symbols []string) {
+	live.rememberPublicSubscription("ticker", symbols)
 	errnie.Error(live.client.SubTicker(symbols))
 }
 
 func (live *Live) SubBook(symbols []string) {
-	errnie.Error(live.client.SubBook(symbols, 10))
+	live.rememberPublicSubscription("book", symbols)
+	errnie.Error(live.client.SubBook(symbols, publicBookDepth))
 }
 
 func (live *Live) SubTrades(symbols []string) {
+	live.rememberPublicSubscription("trade", symbols)
 	errnie.Error(live.client.SubTrades(symbols))
 }
 
 func (live *Live) SubCandles(symbols []string) {
+	live.rememberPublicSubscription("ohlc", symbols)
 	errnie.Error(live.client.SubCandles(symbols))
+}
+
+func (live *Live) rememberPublicSubscription(channel string, symbols []string) {
+	if len(symbols) == 0 {
+		return
+	}
+
+	live.publicMu.Lock()
+	live.public[channel] = append(live.public[channel], slices.Clone(symbols))
+	live.publicMu.Unlock()
+}
+
+func (live *Live) restorePublicSubscriptions() error {
+	live.publicMu.RLock()
+	subscriptions := make(map[string][][]string, len(live.public))
+
+	for channel, batches := range live.public {
+		subscriptions[channel] = make([][]string, len(batches))
+
+		for index, symbols := range batches {
+			subscriptions[channel][index] = slices.Clone(symbols)
+		}
+	}
+
+	live.publicMu.RUnlock()
+	var err error
+
+	for channel, batches := range subscriptions {
+		for _, symbols := range batches {
+			switch channel {
+			case "ticker":
+				err = errors.Join(err, live.client.SubTicker(symbols))
+			case "book":
+				err = errors.Join(err, live.client.SubBook(symbols, publicBookDepth))
+			case "trade":
+				err = errors.Join(err, live.client.SubTrades(symbols))
+			case "ohlc":
+				err = errors.Join(err, live.client.SubCandles(symbols))
+			default:
+				err = errors.Join(err, fmt.Errorf(
+					"websocket: unsupported public subscription %s",
+					channel,
+				))
+			}
+		}
+	}
+
+	return err
 }
 
 func (live *Live) SubL3(symbols []string) {
@@ -507,7 +609,7 @@ func (live *Live) SubL3(symbols []string) {
 	for groups := range slices.Chunk(symbols, 200) {
 		conn := NewWithClient(
 			live.ctx,
-			live.thesis,
+			live.thesis.Load(),
 			live.simulator,
 			live.auth,
 			Level3WebSocketURL,
@@ -528,6 +630,12 @@ func (live *Live) SubL3(symbols []string) {
 		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
 		conn.symbols = append([]string{}, groups...)
+		conn.book.SetResync(func(symbol string) {
+			if err := conn.resubscribeL3(symbol); err != nil {
+				errnie.Error(err)
+				conn.setStatus(types.ERROR)
+			}
+		})
 
 		for group := range slices.Chunk(groups, 40) {
 			if conn.book != nil {
@@ -540,6 +648,36 @@ func (live *Live) SubL3(symbols []string) {
 			time.Sleep(viper.GetDuration("market.subscribe.pace"))
 		}
 	}
+}
+
+func (live *Live) resubscribeL3(symbol string) error {
+	if !slices.Contains(live.symbols, symbol) {
+		return fmt.Errorf("websocket: level3 symbol is not owned by this connection: %s", symbol)
+	}
+
+	if _, loaded := live.resyncing.LoadOrStore(symbol, struct{}{}); loaded {
+		return nil
+	}
+
+	defer live.resyncing.Delete(symbol)
+
+	if err := live.Write(kraken.NewLevel3Unsubscription(
+		[]string{symbol},
+		live.client.Token,
+	)); err != nil {
+		return err
+	}
+
+	timer := time.NewTimer(viper.GetDuration("market.subscribe.pace"))
+	defer timer.Stop()
+
+	select {
+	case <-live.ctx.Done():
+		return live.ctx.Err()
+	case <-timer.C:
+	}
+
+	return live.client.SubL3([]string{symbol}, viper.GetInt("market.l3_depth"))
 }
 
 /*

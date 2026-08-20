@@ -7,19 +7,19 @@ import (
 )
 
 type GraphEdgeT struct {
-	From string `json:"from"`
-	To string `json:"to"`
-	Relation string `json:"relation"`
-	Weight float64 `json:"weight"`
-	Confidence float64 `json:"confidence"`
-	Quality float64 `json:"quality"`
-	HasQuality bool `json:"hasQuality"`
-	Evidence []string `json:"evidence"`
-	ObservedFrom int64 `json:"observedFrom"`
-	Horizon int64 `json:"horizon"`
-	At int64 `json:"at"`
-	Reason string `json:"reason"`
-	Derived bool `json:"derived"`
+	From         string   `json:"from"`
+	To           string   `json:"to"`
+	Relation     string   `json:"relation"`
+	Weight       float64  `json:"weight"`
+	Confidence   float64  `json:"confidence"`
+	Quality      float64  `json:"quality"`
+	HasQuality   bool     `json:"hasQuality"`
+	Evidence     []string `json:"evidence"`
+	ObservedFrom int64    `json:"observedFrom"`
+	Horizon      int64    `json:"horizon"`
+	At           int64    `json:"at"`
+	Reason       string   `json:"reason"`
+	Derived      bool     `json:"derived"`
 }
 
 func (t *GraphEdgeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

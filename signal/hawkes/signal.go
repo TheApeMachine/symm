@@ -2,12 +2,12 @@ package hawkes
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -62,106 +62,91 @@ func (signal *Signal) Type() types.SourceType {
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		symbol, available := signal.thesis.Work(types.SourceHawkes).WaitPop(
+			signal.ctx,
+			string(types.SourceHawkes),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
 		}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
+		if symbol == nil {
 			continue
 		}
 
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-			symbol, valid := value.(*types.Symbol)
+		for trade := range symbol.MarketTrades(types.SourceHawkes) {
+			input := nomagique.Frame{}
+			input.Put(algo.SymbolMark, markForSide(trade.Side))
+			input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+			input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
 
-			if !valid || symbol == nil {
-				return true
-			}
+			output, err := signal.number(symbol.Symbol, input)
 
-			for trade := range symbol.MarketTrades(types.SourceHawkes) {
-				input := nomagique.Frame{}
-				input.Put(algo.SymbolMark, markForSide(trade.Side))
-				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-
-				output, err := signal.number(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"hawkes: number step failed for "+symbol.Symbol,
-						err,
-					))
-					return false
-				}
-
-				symbol.AppendMeasurement(nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					trade.Timestamp.UnixNano(),
-					trade.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("buy_intensity", output.MustGet(algo.SymbolLambdaAlpha), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitRate,
-						Timescale: nmtypes.TimescalePerSecond,
-					}),
-					nmtypes.NewMetric("sell_intensity", output.MustGet(algo.SymbolLambdaBeta), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitRate,
-						Timescale: nmtypes.TimescalePerSecond,
-					}),
-					nmtypes.NewMetric("buy_arrival_rate", output.MustGet(algo.SymbolAlphaArrivalRate), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitRate,
-						Timescale: nmtypes.TimescalePerSecond,
-					}),
-					nmtypes.NewMetric("sell_arrival_rate", output.MustGet(algo.SymbolBetaArrivalRate), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitRate,
-						Timescale: nmtypes.TimescalePerSecond,
-					}),
-					nmtypes.NewMetric("event_count", output.MustGet(algo.SymbolEventCount), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitCount,
-						Timescale: nmtypes.TimescalePerTick,
-					}),
+			if err != nil {
+				signal.err = errnie.Error(errnie.Err(
+					errnie.Validation,
+					"hawkes: number step failed for "+symbol.Symbol,
+					err,
 				))
+				break
 			}
 
-			return true
-		})
+			symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				uuid.NewString(),
+				signal.Name(),
+				trade.Timestamp.UnixNano(),
+				trade.Timestamp.UnixNano(),
+			).AddMetrics(
+				nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideNone), output.MustGet(algo.SymbolEventCount), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitCount,
+					Timescale: nmtypes.TimescalePerTick,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideBuy), output.MustGet(algo.SymbolAlphaEventCount), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitCount,
+					Timescale: nmtypes.TimescalePerTick,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideSell), output.MustGet(algo.SymbolBetaEventCount), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitCount,
+					Timescale: nmtypes.TimescalePerTick,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricConditionalIntensity, types.SideBuy), output.MustGet(algo.SymbolLambdaAlpha), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitEventsPerSecond,
+					Timescale: nmtypes.TimescalePerSecond,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricConditionalIntensity, types.SideSell), output.MustGet(algo.SymbolLambdaBeta), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitEventsPerSecond,
+					Timescale: nmtypes.TimescalePerSecond,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricBaselineIntensity, types.SideBuy), output.MustGet(algo.SymbolMuAlpha), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitEventsPerSecond,
+					Timescale: nmtypes.TimescalePerSecond,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricBaselineIntensity, types.SideSell), output.MustGet(algo.SymbolMuBeta), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitEventsPerSecond,
+					Timescale: nmtypes.TimescalePerSecond,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy), output.MustGet(statistic.SymbolAlphaAA), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitInverseSecond,
+					Timescale: nmtypes.TimescalePerSecond,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricDecayRate, types.SideNone), output.MustGet(statistic.SymbolBeta), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitInverseSecond,
+					Timescale: nmtypes.TimescalePerSecond,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), output.MustGet(statistic.SymbolSpectralRadius), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+				nmtypes.NewMetric(types.MetricKey(types.MetricTotalDescendants, types.SideBuy), output.MustGet(statistic.SymbolDescendantsAlpha), nmtypes.Descriptor{
+					Unit:      nmtypes.UnitCount,
+					Timescale: nmtypes.TimescaleInstantaneous,
+				}),
+			))
+		}
 	}
 
 	return signal.err
-}
-
-/*
-pending reports whether any symbol queues a Trades frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasTrades() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
 }
 
 /*

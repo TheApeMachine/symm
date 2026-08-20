@@ -7,8 +7,8 @@ Pulse is the run strip above the dashboard.
 
 Every reading on it is owned by a different wire key, so the strip is a row of
 small Components rather than one: the sequence counter comes from tick, the
-arbitration phase and its candidate count from strategy, the batch sizes from
-the batches themselves, and the fluid occupancy from the manifold frame. Binding
+arbitration phase and its candidate count from strategy, and the batch sizes from
+the batches themselves. Binding
 them all to one key was why most of the strip never left its placeholder — tick
 only ever carries a count.
 */
@@ -71,6 +71,5 @@ export const Pulse = () => (
 			bind="length"
 		/>
 		<Reading label="open" registerKey="positions" bind="length" />
-		<Reading label="fluid" registerKey="manifold" bind="RhoOccupied" row={0} />
 	</Flex.Row>
 );

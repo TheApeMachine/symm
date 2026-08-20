@@ -3,7 +3,6 @@ package resonance
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"sync"
 	"time"
 
@@ -16,16 +15,9 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
-
-/*
-idleRest parks the drain goroutine between passes while no event queue holds
-work, instead of busy-spinning the queue range.
-*/
-const idleRest = 10 * time.Millisecond
 
 /*
 Solver runs one feature detector per symbol over the standardized measurement
@@ -44,7 +36,7 @@ type Solver struct {
 	states        *sync.Map
 	references    *sync.Map
 	pace          float64
-	ui            *transport.MapReduce[[]byte]
+	ui            *transport.MapReduce[*types.UIFrame]
 	thesis        *types.Thesis
 
 	// ObserveModule is an optional diagnostics hook reporting per-step coder
@@ -72,7 +64,7 @@ func NewSolver(
 	ctx context.Context,
 	pace float64,
 	api *websocket.API,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 	thesis *types.Thesis,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
@@ -105,47 +97,44 @@ func (solver *Solver) Status() types.Status {
 
 func (solver *Solver) Run() error {
 	for solver.err == nil {
-		select {
-		case <-solver.ctx.Done():
+		symbol, available := solver.thesis.Work(types.SourceResonance).WaitPop(
+			solver.ctx,
+			string(types.SourceResonance),
+		)
+
+		if !available {
 			return solver.ctx.Err()
-		default:
-			solver.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, ok := value.(*types.Symbol)
+		}
 
-				if !ok || symbol == nil || symbol.HasTickers() == false {
-					runtime.Gosched()
-					return true
-				}
+		if symbol == nil || !symbol.HasTickersFor(types.SourceResonance) {
+			continue
+		}
 
-				for ticker := range symbol.MarketTickers(types.SourceResonance) {
-					if err := solver.Update(
-						ticker.Symbol,
-						ticker.Timestamp,
-						[]float64{
-							ticker.Ask.Float64(),
-							ticker.Bid.Float64(),
-							ticker.AskQty,
-							ticker.BidQty,
-							ticker.Change.Float64(),
-							ticker.ChangePct,
-							ticker.High.Float64(),
-							ticker.Low.Float64(),
-							ticker.Last.Float64(),
-							ticker.Volume,
-							ticker.Vwap,
-						},
-					); err != nil {
-						solver.err = errnie.Error(errnie.Err(
-							errnie.Internal,
-							"resonance: detector update failed",
-							err,
-						))
-						return false
-					}
-				}
-
-				return true
-			})
+		for ticker := range symbol.MarketTickers(types.SourceResonance) {
+			if err := solver.Update(
+				ticker.Symbol,
+				ticker.Timestamp,
+				[]float64{
+					ticker.Ask.Float64(),
+					ticker.Bid.Float64(),
+					ticker.AskQty,
+					ticker.BidQty,
+					ticker.Change.Float64(),
+					ticker.ChangePct,
+					ticker.High.Float64(),
+					ticker.Low.Float64(),
+					ticker.Last.Float64(),
+					ticker.Volume,
+					ticker.Vwap,
+				},
+			); err != nil {
+				solver.err = errnie.Error(errnie.Err(
+					errnie.Internal,
+					"resonance: detector update failed",
+					err,
+				))
+				break
+			}
 		}
 	}
 
@@ -276,14 +265,14 @@ func (solver *Solver) Update(
 
 	solver.publishReturns(symbol, coder, out)
 
-	solver.ui.Push(telemetry.Encode(&wire.FrameT{
+	solver.thesis.Publish(&wire.FrameT{
 		Type: wire.FrameResonanceFrame,
 		Value: &wire.ResonanceFrameT{
 			Rows: []*wire.ResonanceT{
 				solver.resonanceWire(symbolName, at, coder, out),
 			},
 		},
-	}))
+	})
 
 	return nil
 }

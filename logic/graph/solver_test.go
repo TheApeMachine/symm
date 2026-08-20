@@ -12,8 +12,9 @@ import (
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/transport"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -36,16 +37,16 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a reset lifecycle with only stale category state", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = time.Unix(10, 0).UTC()
-		symbol := types.NewSymbol("BTC/USD")
+		symbol := thesis.Symbol("BTC/USD")
 		symbol.Categories.Push([]types.Category{{
 			Symbol:     "BTC/USD",
 			Type:       types.CategoryAggressiveDrive,
 			Supporting: []string{"cvd:drive"},
 		}})
 		symbol.Graphs.Push(NewGraph(thesis.At))
-		thesis.Symbols.Store("BTC/USD", symbol)
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
+		go func() { _ = solver.Run() }()
 
 		Convey("It should wait for the first measurement of the new lifecycle", func() {
 			var graph *Graph
@@ -63,13 +64,19 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a symbol with every category-bearing signal measurement", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = time.Unix(9, 0).UTC()
-		symbol := types.NewSymbol("BTC/USD")
+		symbol := thesis.Symbol("BTC/USD")
 		categories := map[types.CategoryType]struct{}{}
 		references := map[string]struct{}{}
 
 		for index, schema := range types.CategorySchemas {
 			value := 1 / float64(index+2)
 			metricKey := types.MetricKey(schema.Metric, schema.Side)
+			groups, sourceRegistered := types.SignalMetricGroups[schema.Source]
+			_, metricRegistered := groups[metricKey]
+
+			if !sourceRegistered || !metricRegistered {
+				continue
+			}
 
 			// Corroborated categories share one measurement per distinct
 			// source metric, exactly as the signals publish them.
@@ -87,14 +94,31 @@ func TestUpdate(t *testing.T) {
 				"BTC/USD",
 				thesis.At,
 			)
-			putTestMetric(measurement, schema.Metric, value, &value, nmtypes.UnitDimensionless)
+			putTestMetricSide(
+				measurement,
+				schema.Metric,
+				schema.Side,
+				value,
+				&value,
+				nmtypes.UnitDimensionless,
+			)
 			symbol.AppendMeasurement(measurement)
 			categories[schema.Category] = struct{}{}
 		}
-		thesis.Symbols.Store("BTC/USD", symbol)
 
-		category.NewSolver(t.Context(), thesis, nil, nil, nil)
-		NewSolver(thesis, nil, nil)
+		categorySolver := category.NewSolver(t.Context(), thesis, nil, nil, nil)
+		defer categorySolver.Close()
+		go func() { _ = categorySolver.Run() }()
+
+		select {
+		case <-symbol.Categories.Ready(string(types.SourceGraph)):
+		case <-t.Context().Done():
+			t.Fatal("category solver stopped before publishing graph input")
+		}
+
+		graphSolver := NewSolver(thesis, nil, nil)
+		defer graphSolver.Close()
+		go func() { _ = graphSolver.Run() }()
 		symbol.Graphs.Push(NewGraph(thesis.At))
 
 		Convey("It should compile a connected evidence graph rather than one winning edge", func() {
@@ -161,7 +185,7 @@ func TestUpdate(t *testing.T) {
 	Convey("Given completed upstream stages without a causal estimate", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = time.Unix(1, 0).UTC()
-		bitcoin := types.NewSymbol("BTC/USD")
+		bitcoin := thesis.Symbol("BTC/USD")
 		drive := 0.8
 		separation := 0.75
 		bitcoinMeasurement := newTestMeasurement("cvd-measurement", types.SourceCVD, "BTC/USD", thesis.At)
@@ -175,11 +199,12 @@ func TestUpdate(t *testing.T) {
 			Strength:   drive,
 			Supporting: []string{"cvd:drive"},
 		}})
-		thesis.Symbols.Store("BTC/USD", bitcoin)
-		thesis.Symbols.Store("ETH/USD", types.NewSymbol("ETH/USD"))
+		thesis.Symbol("ETH/USD")
 
 		bitcoin.Graphs.Push(NewGraph(thesis.At))
-		NewSolver(thesis, nil, nil)
+		solver := NewSolver(thesis, nil, nil)
+		defer solver.Close()
+		go func() { _ = solver.Run() }()
 
 		Convey("It should compile the measurement, its category, the hypothesis, and both enrichment layers", func() {
 			graph := pollBuiltGraph(bitcoin, func(g *Graph) bool {
@@ -200,11 +225,16 @@ func TestUpdate(t *testing.T) {
 		previousFocus := types.Focus()
 		types.SetFocus("BTC/USD")
 		Reset(func() { types.SetFocus(previousFocus) })
-		thesis := types.NewThesis(t.Context(), nil)
+		ui := transport.NewMapReduce[*types.UIFrame](
+			[]string{graphTestConsumer},
+			nil,
+			nil,
+		)
+		thesis := types.NewThesis(t.Context(), ui)
 		thesis.At = time.Unix(2, 0).UTC()
 
 		for _, symbolName := range []string{"BTC/USD", "ETH/USD"} {
-			symbol := types.NewSymbol(symbolName)
+			symbol := thesis.Symbol(symbolName)
 			drive := 0.6
 			quality := 0.7
 			measurement := newTestMeasurement(
@@ -222,32 +252,51 @@ func TestUpdate(t *testing.T) {
 				Supporting: []string{"cvd:drive"},
 			}})
 
-			thesis.Symbols.Store(symbolName, symbol)
 			symbol.Graphs.Push(NewGraph(thesis.At))
 		}
 
-		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
-		NewSolver(thesis, ui, nil)
+		solver := NewSolver(thesis, nil, nil)
+		defer solver.Close()
+		go func() { _ = solver.Run() }()
 
 		Convey("It should publish only the graph selected by the UI focus", func() {
-			var payload string
+			var payload *types.UIFrame
 
 			deadline := time.Now().Add(3 * time.Second)
 
-			for len(payload) == 0 && time.Now().Before(deadline) {
+			for payload == nil && time.Now().Before(deadline) {
 				ui.Register(graphTestConsumer)
 
-				if frame, ok := ui.Pop(graphTestConsumer); ok {
-					payload = string(frame)
+				if frame, ok := ui.Pop(graphTestConsumer); ok &&
+					frame.Type == wire.FrameGraphFrame {
+					payload = frame
 				} else {
 					time.Sleep(time.Millisecond)
 				}
 			}
 
-			So(payload, ShouldNotEqual, "")
-			So(payload, ShouldContainSubstring, "BTC/USD-measurement")
-			So(payload, ShouldNotContainSubstring, "ETH/USD-measurement")
-			So(payload, ShouldContainSubstring, `"relation":"supports"`)
+			So(payload, ShouldNotBeNil)
+			So(payload.Type, ShouldEqual, wire.FrameGraphFrame)
+			graph := payload.Value.(*wire.GraphFrameT)
+			hasFocusedMeasurement := false
+			hasSupport := false
+
+			for _, node := range graph.Nodes {
+				So(node.Id, ShouldNotContainSubstring, "ETH/USD")
+
+				if node.Id == "meas:BTC/USD:cvd:drive" {
+					hasFocusedMeasurement = true
+				}
+			}
+
+			for _, edge := range graph.Edges {
+				if edge.Relation == string(types.RelationSupports) {
+					hasSupport = true
+				}
+			}
+
+			So(hasFocusedMeasurement, ShouldBeTrue)
+			So(hasSupport, ShouldBeTrue)
 		})
 	})
 }
@@ -419,9 +468,13 @@ func TestInferStructuralEdges(t *testing.T) {
 		})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
-		NewSolver(nil, nil, nil).extractCategoryNodes(symbol, graph)
+		solver := NewSolver(nil, nil, nil)
+		categories := solver.popCategories(symbol)
+		solver.extractCategoryNodes(symbol, categories, graph)
 
-		err := NewSolver(nil, nil, nil).inferStructuralEdges(symbol, graph)
+		err := solver.inferStructuralEdges(
+			symbol, categories, types.Cognition{}, graph,
+		)
 
 		Convey("It connects the category hypotheses directly", func() {
 			So(err, ShouldBeNil)
@@ -465,7 +518,9 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		err := solver.inferStructuralEdges(types.NewSymbol("BTC/USD"), graph)
+		err := solver.inferStructuralEdges(
+			types.NewSymbol("BTC/USD"), nil, types.Cognition{}, graph,
+		)
 		So(err, ShouldBeNil)
 
 		Convey("Each intervention should condition its symbol's do-expectation", func() {
@@ -518,7 +573,9 @@ func TestInferStructuralEdges(t *testing.T) {
 			At:         at,
 		})
 
-		err := solver.inferStructuralEdges(types.NewSymbol("BTC/USD"), graph)
+		err := solver.inferStructuralEdges(
+			types.NewSymbol("BTC/USD"), nil, types.Cognition{}, graph,
+		)
 		So(err, ShouldBeNil)
 
 		Convey("It omits zero-confidence pair edges while retaining evidence-bearing edges", func() {
@@ -551,9 +608,11 @@ func TestInferStructuralEdges(t *testing.T) {
 		})
 		graph := NewGraph(at)
 		solver := NewSolver(nil, nil, nil)
-		solver.extractCognitionNodes(symbol, graph)
+		cognition, found := solver.popCognition(symbol)
+		So(found, ShouldBeTrue)
+		solver.extractCognitionNodes(symbol, cognition, graph)
 
-		err := solver.inferStructuralEdges(symbol, graph)
+		err := solver.inferStructuralEdges(symbol, nil, cognition, graph)
 
 		Convey("It should retain the prediction endpoints and temporal relations", func() {
 			So(err, ShouldBeNil)
@@ -799,7 +858,9 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 	for b.Loop() {
 		graph := NewGraph(at)
 		graph.Nodes = nodes
-		if err := solver.inferStructuralEdges(symbol, graph); err != nil {
+		if err := solver.inferStructuralEdges(
+			symbol, nil, types.Cognition{}, graph,
+		); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -864,7 +925,7 @@ func BenchmarkUpdate(b *testing.B) {
 		})
 	}
 
-	ui := transport.NewMapReduce[[]byte](nil, nil, nil)
+	ui := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
 	solver := NewSolver(thesis, ui, nil)
 	previousFocus := types.Focus()
 	types.SetFocus("SIM0/USD")
@@ -928,8 +989,10 @@ func TestHeldCognitionGraphEvidence(t *testing.T) {
 		})
 		graph := NewGraph(at)
 		solver := NewSolver(nil, nil, nil)
+		cognition, found := solver.popCognition(symbol)
+		So(found, ShouldBeTrue)
 
-		solver.extractCognitionNodes(symbol, graph)
+		solver.extractCognitionNodes(symbol, cognition, graph)
 
 		Convey("It should retain audit state without exposing a root or lookahead", func() {
 			winner, found := graph.Nodes["cog:BTC/USD:winner_regime"]

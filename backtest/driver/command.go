@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -56,7 +55,7 @@ func Command() *cobra.Command {
 			}
 
 			ctx := run.Context()
-			uiChannel := transport.NewMapReduce[[]byte](nil, nil, nil)
+			uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
 			manifoldChannel := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
 
 			dataPath := utils.ResolveDataPath()
@@ -72,7 +71,7 @@ func Command() *cobra.Command {
 			hub := ui.NewHub(ctx, thesis, nil, nil, nil, manifoldChannel)
 			replay := NewDriver(ctx, store, hub, uiChannel,
 				func(state State) {
-					uiChannel.Push(telemetry.Encode(&wire.FrameT{
+					uiChannel.Push(&wire.FrameT{
 						Type: wire.FrameBacktestFrame,
 						Value: &wire.BacktestFrameT{
 							CaptureId: state.CaptureID,
@@ -82,7 +81,7 @@ func Command() *cobra.Command {
 							EndedAt:   state.EndedAt.UnixNano(),
 							Rebooting: state.Rebooting,
 						},
-					}))
+					})
 				},
 			)
 

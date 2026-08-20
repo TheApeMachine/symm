@@ -7,22 +7,22 @@ import (
 )
 
 type StoplossT struct {
-	Status string `json:"status"`
-	Symbol string `json:"symbol"`
-	Floor string `json:"floor"`
-	Mark string `json:"mark"`
-	Peak string `json:"peak"`
-	ProfitLine string `json:"profitLine"`
-	ArmAt string `json:"armAt"`
-	LockFloor string `json:"lockFloor"`
-	Locked bool `json:"locked"`
-	TriggerReason string `json:"triggerReason"`
-	TriggerMark string `json:"triggerMark"`
-	SurgeArmed bool `json:"surgeArmed"`
-	LastMove string `json:"lastMove"`
-	SurgeMove string `json:"surgeMove"`
-	MomentumFloor string `json:"momentumFloor"`
-	Plan *RiskPlanT `json:"plan"`
+	Status        string     `json:"status"`
+	Symbol        string     `json:"symbol"`
+	Floor         string     `json:"floor"`
+	Mark          string     `json:"mark"`
+	Peak          string     `json:"peak"`
+	ProfitLine    string     `json:"profitLine"`
+	ArmAt         string     `json:"armAt"`
+	LockFloor     string     `json:"lockFloor"`
+	Locked        bool       `json:"locked"`
+	TriggerReason string     `json:"triggerReason"`
+	TriggerMark   string     `json:"triggerMark"`
+	SurgeArmed    bool       `json:"surgeArmed"`
+	LastMove      string     `json:"lastMove"`
+	SurgeMove     string     `json:"surgeMove"`
+	MomentumFloor string     `json:"momentumFloor"`
+	Plan          *RiskPlanT `json:"plan"`
 }
 
 func (t *StoplossT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

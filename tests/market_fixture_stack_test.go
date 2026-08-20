@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -172,10 +173,19 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				skill, skillReady := coder.TaskSkill()
 				var completed *broker.Position
 				var active *broker.Position
+				positionCtx, cancel := context.WithTimeout(
+					market.ctx,
+					market.Config.BookApplyTimeout,
+				)
+				defer cancel()
 
-				for stored := range symbolState.Positions.Drain("audit", func(any) bool {
-					return true
-				}) {
+				for completed == nil {
+					stored, available := symbolState.Positions.WaitPop(positionCtx, "audit")
+
+					if !available {
+						break
+					}
+
 					position, valid := stored.(*broker.Position)
 
 					if valid && position.Holding != nil {
@@ -194,6 +204,17 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 						position.Holding.Status == types.CLOSED {
 						completed = position
 					}
+
+					if valid && position.Holding != nil &&
+						position.Holding.Status != types.CLOSED {
+						active = position
+					}
+				}
+
+				for stored := range symbolState.Positions.Drain("audit", func(any) bool {
+					return true
+				}) {
+					position, valid := stored.(*broker.Position)
 
 					if valid && position.Holding != nil &&
 						position.Holding.Status != types.CLOSED {

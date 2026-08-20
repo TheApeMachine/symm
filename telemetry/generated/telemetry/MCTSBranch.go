@@ -7,8 +7,8 @@ import (
 )
 
 type MCTSBranchT struct {
-	Action string `json:"action"`
-	Visits int64 `json:"visits"`
+	Action     string  `json:"action"`
+	Visits     int64   `json:"visits"`
 	MeanReward float64 `json:"meanReward"`
 }
 

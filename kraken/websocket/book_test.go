@@ -114,6 +114,7 @@ func TestBookUpdate(t *testing.T) {
 		managed := newBookFixture(t, "BTC/USD", 0, 0)
 		managed.Create("BTC/USD", 32)
 		updates := make(chan string, 1)
+		managed.notify = func(symbol string) { updates <- symbol }
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
 		}
@@ -141,6 +142,8 @@ func TestBookUpdate(t *testing.T) {
 		managed.Create("BTC/USD", 32)
 		updates := make(chan string, 1)
 		events := make(chan kraken.Level3Data)
+		managed.notify = func(symbol string) { updates <- symbol }
+		managed.emit = func(data kraken.Level3Data) { events <- data }
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
 		}
@@ -245,13 +248,13 @@ func TestBookUpdate(t *testing.T) {
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
 		}
-		bidPrice, err := decimal.NewFromString("0.0003400")
+		bidPrice, err := decimal.NewFromString("0.00034")
 		So(err, ShouldBeNil)
-		bidQuantity, err := decimal.NewFromString("2000.00000")
+		bidQuantity, err := decimal.NewFromString("2000")
 		So(err, ShouldBeNil)
-		askPrice, err := decimal.NewFromString("0.0003500")
+		askPrice, err := decimal.NewFromString("0.00035")
 		So(err, ShouldBeNil)
-		askQuantity, err := decimal.NewFromString("1234.50000")
+		askQuantity, err := decimal.NewFromString("1234.5")
 		So(err, ShouldBeNil)
 		lateBidPrice, err := decimal.NewFromString("0.0003300")
 		So(err, ShouldBeNil)

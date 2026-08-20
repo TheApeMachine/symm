@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -25,7 +24,7 @@ visible the same way everything else does — on the next refresh.
 type Balance struct {
 	status types.Status
 	api    *websocket.API
-	ui     *transport.MapReduce[[]byte]
+	ui     *transport.MapReduce[*types.UIFrame]
 	wallet *sync.Map
 	quote  string
 }
@@ -35,7 +34,7 @@ NewBalance constructs an empty wallet owner for exchange balances only.
 */
 func NewBalance(
 	api *websocket.API,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 ) *Balance {
 	balance := &Balance{
 		status: types.READY,
@@ -56,7 +55,7 @@ func (balance *Balance) Status() types.Status {
 	return balance.status
 }
 
-func (balance *Balance) Wallet() []byte {
+func (balance *Balance) Wallet() *types.UIFrame {
 	balances := make([]*wire.BalanceT, 0)
 
 	balance.wallet.Range(func(key, value any) bool {
@@ -84,12 +83,12 @@ func (balance *Balance) Wallet() []byte {
 		return balances[left].Asset < balances[right].Asset
 	})
 
-	return telemetry.Encode(&wire.FrameT{
+	return &wire.FrameT{
 		Type: wire.FrameBalancesFrame,
 		Value: &wire.BalancesFrameT{
 			Balances: balances,
 		},
-	})
+	}
 }
 
 func (balance *Balance) Update() {

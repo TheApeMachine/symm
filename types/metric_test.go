@@ -96,8 +96,8 @@ func TestMeasurementHypothesisSeparation(t *testing.T) {
 			MetricKey(MetricHerdScore, SideNone): {Normalized: &herd},
 		})
 
-		Convey("It leaves hypothesis separation undefined", func() {
-			So(separation, ShouldEqual, 0.0)
+		Convey("It reports the unopposed hypothesis as completely separated", func() {
+			So(separation, ShouldEqual, 1.0)
 		})
 	})
 

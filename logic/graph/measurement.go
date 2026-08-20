@@ -239,35 +239,34 @@ func cloneFloat(value *float64) *float64 {
 }
 
 func (compiler *measurementCompiler) addCategoryEdges(
-	symbol *types.Symbol,
+	categories []types.Category,
+	symbol string,
 	graph *types.Graph,
 	index *measurementIndex,
 ) error {
-	for batch := range symbol.MarketCategories(types.SourceGraph) {
-		for _, category := range batch {
-			if category.Type == types.CategoryTypeNone {
-				continue
-			}
+	for _, category := range categories {
+		if category.Type == types.CategoryTypeNone {
+			continue
+		}
 
-			if category.Symbol != symbol.Symbol {
-				return fmt.Errorf(
-					"category symbol %s does not match graph symbol %s",
-					category.Symbol,
-					symbol.Symbol,
-				)
-			}
+		if category.Symbol != symbol {
+			return fmt.Errorf(
+				"category symbol %s does not match graph symbol %s",
+				category.Symbol,
+				symbol,
+			)
+		}
 
-			if err := compiler.addCategoryRelations(
-				category, category.Supporting, types.RelationSupports, graph, index,
-			); err != nil {
-				return err
-			}
+		if err := compiler.addCategoryRelations(
+			category, category.Supporting, types.RelationSupports, graph, index,
+		); err != nil {
+			return err
+		}
 
-			if err := compiler.addCategoryRelations(
-				category, category.Opposing, types.RelationContradicts, graph, index,
-			); err != nil {
-				return err
-			}
+		if err := compiler.addCategoryRelations(
+			category, category.Opposing, types.RelationContradicts, graph, index,
+		); err != nil {
+			return err
 		}
 	}
 

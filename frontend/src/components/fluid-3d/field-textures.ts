@@ -8,8 +8,7 @@ export const MAXIMUM_VOLUME_STEPS = Math.ceil(
 
 export type FluidFieldTextures = {
 	grid: FluidGrid;
-	density: THREE.Data3DTexture;
-	momentum: THREE.Data3DTexture;
+	momRho: THREE.Data3DTexture;
 	internalEnergy: THREE.Data3DTexture;
 	waveReal: THREE.Data3DTexture;
 	waveImaginary: THREE.Data3DTexture;
@@ -20,16 +19,13 @@ export type FluidFieldTextures = {
 	dispose: () => void;
 };
 
-export const fluidWaveMagnitude = (real: number, imaginary: number) =>
-	real * real + imaginary * imaginary;
-
 const texture = (
 	values: Float32Array,
 	grid: FluidGrid,
 	format: THREE.PixelFormat,
 ) => {
-	// The native arrays have Z varying fastest. Giving Three the dimensions in
-	// Z,Y,X order preserves those bytes; shaders sample with coordinate.zyx.
+	// Metal and the wire both keep Z varying fastest. Three receives Z,Y,X so
+	// shaders can sample coordinate.zyx without transposing the volume.
 	const result = new THREE.Data3DTexture(values, grid.z, grid.y, grid.x);
 	result.format = format;
 	result.type = THREE.FloatType;
@@ -41,21 +37,7 @@ const texture = (
 	return result;
 };
 
-const finite = (value: number, name: string, index: number) => {
-	if (!Number.isFinite(value)) {
-		throw new Error(`${name}[${index}] is not finite`);
-	}
-
-	return value;
-};
-
-const inverseMaximum = (maximum: number) => (maximum > 0 ? 1 / maximum : 0);
-
-export const createFluidFieldTextures = (
-	fields: FluidFields,
-): FluidFieldTextures => {
-	const { Grid: grid } = fields;
-
+const validateGrid = (grid: FluidGrid) => {
 	if (
 		grid.x > MAXIMUM_FLUID_GRID_AXIS ||
 		grid.y > MAXIMUM_FLUID_GRID_AXIS ||
@@ -69,80 +51,63 @@ export const createFluidFieldTextures = (
 	if (grid.spacing <= 0) {
 		throw new Error("fluid grid spacing must be positive");
 	}
+};
 
-	const density = new Float32Array(fields.Density.length);
-	const momentum = new Float32Array(fields.Momentum.length);
-	const internalEnergy = new Float32Array(fields.InternalEnergy.length);
-	const waveReal = new Float32Array(fields.WaveReal.length);
-	const waveImaginary = new Float32Array(fields.WaveImaginary.length);
-	let maximumDensity = 0;
-	let maximumMomentum = 0;
-	let maximumEnergy = 0;
-	let maximumWaveMagnitude = 0;
-
-	for (let cell = 0; cell < density.length; cell += 1) {
-		density[cell] = finite(fields.Density[cell], "Density", cell);
-		internalEnergy[cell] = finite(
-			fields.InternalEnergy[cell],
-			"InternalEnergy",
-			cell,
-		);
-		waveReal[cell] = finite(fields.WaveReal[cell], "WaveReal", cell);
-		waveImaginary[cell] = finite(
-			fields.WaveImaginary[cell],
-			"WaveImaginary",
-			cell,
-		);
-		const momentumOffset = cell * 3;
-		const momentumX = finite(
-			fields.Momentum[momentumOffset],
-			"Momentum",
-			momentumOffset,
-		);
-		const momentumY = finite(
-			fields.Momentum[momentumOffset + 1],
-			"Momentum",
-			momentumOffset + 1,
-		);
-		const momentumZ = finite(
-			fields.Momentum[momentumOffset + 2],
-			"Momentum",
-			momentumOffset + 2,
-		);
-		momentum[momentumOffset] = momentumX;
-		momentum[momentumOffset + 1] = momentumY;
-		momentum[momentumOffset + 2] = momentumZ;
-		maximumDensity = Math.max(maximumDensity, Math.abs(density[cell]));
-		maximumEnergy = Math.max(maximumEnergy, Math.abs(internalEnergy[cell]));
-		maximumMomentum = Math.max(
-			maximumMomentum,
-			Math.hypot(momentumX, momentumY, momentumZ),
-		);
-		maximumWaveMagnitude = Math.max(
-			maximumWaveMagnitude,
-			fluidWaveMagnitude(waveReal[cell], waveImaginary[cell]),
-		);
-	}
-
+export const createFluidFieldTextures = (
+	fields: FluidFields,
+): FluidFieldTextures => {
+	validateGrid(fields.grid);
 	const textures = {
-		density: texture(density, grid, THREE.RedFormat),
-		momentum: texture(momentum, grid, THREE.RGBFormat),
-		internalEnergy: texture(internalEnergy, grid, THREE.RedFormat),
-		waveReal: texture(waveReal, grid, THREE.RedFormat),
-		waveImaginary: texture(waveImaginary, grid, THREE.RedFormat),
+		momRho: texture(fields.momRho, fields.grid, THREE.RGBAFormat),
+		internalEnergy: texture(
+			fields.internalEnergy,
+			fields.grid,
+			THREE.RedFormat,
+		),
+		waveReal: texture(fields.waveReal, fields.grid, THREE.RedFormat),
+		waveImaginary: texture(fields.waveImaginary, fields.grid, THREE.RedFormat),
 	};
 
 	return {
-		grid,
+		grid: fields.grid,
 		...textures,
-		densityScale: inverseMaximum(maximumDensity),
-		momentumScale: inverseMaximum(maximumMomentum),
-		energyScale: inverseMaximum(maximumEnergy),
-		waveScale: inverseMaximum(maximumWaveMagnitude),
+		densityScale: fields.densityScale,
+		momentumScale: fields.momentumScale,
+		energyScale: fields.energyScale,
+		waveScale: fields.waveScale,
 		dispose: () => {
 			for (const value of Object.values(textures)) {
 				value.dispose();
 			}
 		},
 	};
+};
+
+export const updateFluidFieldTextures = (
+	textures: FluidFieldTextures,
+	fields: FluidFields,
+) => {
+	validateGrid(fields.grid);
+
+	if (
+		textures.grid.x !== fields.grid.x ||
+		textures.grid.y !== fields.grid.y ||
+		textures.grid.z !== fields.grid.z
+	) {
+		throw new Error("fluid grid dimensions changed during a resident session");
+	}
+
+	textures.momRho.image.data = fields.momRho;
+	textures.internalEnergy.image.data = fields.internalEnergy;
+	textures.waveReal.image.data = fields.waveReal;
+	textures.waveImaginary.image.data = fields.waveImaginary;
+	textures.momRho.needsUpdate = true;
+	textures.internalEnergy.needsUpdate = true;
+	textures.waveReal.needsUpdate = true;
+	textures.waveImaginary.needsUpdate = true;
+	textures.grid = fields.grid;
+	textures.densityScale = fields.densityScale;
+	textures.momentumScale = fields.momentumScale;
+	textures.energyScale = fields.energyScale;
+	textures.waveScale = fields.waveScale;
 };

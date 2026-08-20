@@ -2,7 +2,6 @@ package sentiment
 
 import (
 	"context"
-	"runtime"
 	"sort"
 	"time"
 
@@ -74,19 +73,31 @@ func (signal *Signal) Type() types.SourceType {
 
 func (signal *Signal) Run() error {
 	for signal.err == nil {
-		select {
-		case <-signal.ctx.Done():
+		work := signal.thesis.Work(types.SourceSentiment)
+		first, available := work.WaitPop(
+			signal.ctx,
+			string(types.SourceSentiment),
+		)
+
+		if !available {
 			return signal.ctx.Err()
-		default:
 		}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
-			continue
+		ready := make([]*types.Symbol, 0, 1)
+
+		if first != nil {
+			ready = append(ready, first)
 		}
 
-		if signal.err = signal.step(); signal.err != nil {
+		for symbol := range work.Drain(string(types.SourceSentiment), func(*types.Symbol) bool {
+			return true
+		}) {
+			if symbol != nil {
+				ready = append(ready, symbol)
+			}
+		}
+
+		if signal.err = signal.step(ready); signal.err != nil {
 			return signal.err
 		}
 	}
@@ -94,17 +105,15 @@ func (signal *Signal) Run() error {
 	return signal.err
 }
 
-func (signal *Signal) step() error {
+func (signal *Signal) step(symbols []*types.Symbol) error {
 	observations := make([]struct {
 		symbol *types.Symbol
 		ticker kraken.TickerData
 	}, 0)
 
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
+	for _, symbol := range symbols {
+		if symbol == nil {
+			continue
 		}
 
 		for ticker := range symbol.MarketTickers(types.SourceSentiment) {
@@ -114,8 +123,7 @@ func (signal *Signal) step() error {
 			}{symbol: symbol, ticker: ticker})
 		}
 
-		return true
-	})
+	}
 
 	sort.SliceStable(observations, func(leftIndex int, rightIndex int) bool {
 		return observations[leftIndex].ticker.Timestamp.Before(
@@ -175,35 +183,6 @@ func (signal *Signal) measure(symbol *types.Symbol, ticker kraken.TickerData) er
 	return nil
 }
 
-/*
-pending reports whether any symbol queues a Tickers frame, so the
-run loop can yield without draining empty input.
-*/
-func (signal *Signal) pending() bool {
-	if signal.thesis == nil {
-		return false
-	}
-
-	hasWork := false
-
-	signal.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, valid := value.(*types.Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		if symbol.HasTickers() {
-			hasWork = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasWork
-}
 func signedReturn(ticker kraken.TickerData) float64 {
 	if ticker.Change == nil {
 		return 0

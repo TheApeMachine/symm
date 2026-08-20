@@ -7,12 +7,12 @@ import (
 )
 
 type DiagnosticClockT struct {
-	Name string `json:"name"`
-	Count uint64 `json:"count"`
-	TotalNs uint64 `json:"totalNs"`
-	LastNs uint64 `json:"lastNs"`
-	MaxNs uint64 `json:"maxNs"`
-	LastAtNs int64 `json:"lastAtNs"`
+	Name     string `json:"name"`
+	Count    uint64 `json:"count"`
+	TotalNs  uint64 `json:"totalNs"`
+	LastNs   uint64 `json:"lastNs"`
+	MaxNs    uint64 `json:"maxNs"`
+	LastAtNs int64  `json:"lastAtNs"`
 }
 
 func (t *DiagnosticClockT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

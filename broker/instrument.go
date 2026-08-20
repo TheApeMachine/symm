@@ -35,7 +35,7 @@ used by subscriptions and order validation.
 func NewInstrument(
 	api *websocket.API,
 	price *Price,
-	channel *transport.MapReduce[[]byte],
+	channel *transport.MapReduce[*types.UIFrame],
 ) *Instrument {
 	instrument := &Instrument{
 		status:  types.INITIALIZING,

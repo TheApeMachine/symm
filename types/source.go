@@ -46,6 +46,20 @@ var SignalSources = []SourceType{
 	SourceToxicity,
 }
 
+/*
+WorkerSources names the independently scheduled readers that own Run loops.
+Their ready queues carry symbols whose MapReduce input changed.
+*/
+var WorkerSources = append(append([]SourceType(nil), SignalSources...),
+	SourceCategory,
+	SourceCausal,
+	SourceCognition,
+	SourceGraph,
+	SourceResonance,
+	SourcePlanner,
+	SourceDesk,
+)
+
 var SignalSourceStrings = []string{
 	"correlation",
 	"cvd",
@@ -71,7 +85,6 @@ TickerReceivers names the signals that drain per-symbol ticker queues.
 */
 var TickerReceivers = []SourceType{
 	SourceCorrelation,
-	SourceCVD,
 	SourceLeadLag,
 	SourceLiquidity,
 	SourcePumpDump,
@@ -80,7 +93,6 @@ var TickerReceivers = []SourceType{
 
 var TickerReceiverStrings = []string{
 	"correlation",
-	"cvd",
 	"leadlag",
 	"liquidity",
 	"pumpdump",
@@ -92,20 +104,16 @@ TradeReceivers names the signals that drain per-symbol trade queues.
 */
 var TradeReceivers = []SourceType{
 	SourceCVD,
-	SourceDepthFlow,
 	SourceExhaustion,
 	SourceHawkes,
 	SourcePumpDump,
-	SourceToxicity,
 }
 
 var TradeReceiverStrings = []string{
 	"cvd",
-	"depthflow",
 	"exhaustion",
 	"hawkes",
 	"pumpdump",
-	"toxicity",
 }
 
 /*
@@ -121,13 +129,13 @@ var BookReceivers = []SourceType{
 Level3Receivers names the signals that consume accepted order-identity events.
 */
 var Level3Receivers = []SourceType{
+	SourceDepthFlow,
 	SourceToxicity,
-	SourcePumpDump,
 }
 
 var Level3ReceiverStrings = []string{
+	"depthflow",
 	"toxicity",
-	"pumpdump",
 }
 
 /*

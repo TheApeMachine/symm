@@ -14,13 +14,9 @@ shape. Drawing straight lines between arrivals would assert a linear decay the
 fit explicitly denies, and spacing them evenly would erase the inter-arrival
 timing, which in a self-exciting process is the whole signal.
 
-The plotted series is the observed arrival count, because that is what the
-kernel publishes from its first tick. λ, μ and the branching ratio come from a
-bivariate fit that needs enough arrivals to estimate, and binding the curve to
-the fitted intensity left the panel blank for the whole warm-up — a symbol with
-five trades in the window has an arrival process worth showing and no fit worth
-reporting. The fitted readings sit beside the curve and fill in when the
-estimate lands, so the panel states which of the two it currently has.
+The plotted series is the conditional buy intensity emitted on every arrival.
+The fitted baseline and decay rate let the renderer relax λ toward μ between
+observations without inventing linearly interpolated samples.
 
 The branching ratio comes from the fitted spectral radius, so the bar states how
 close the cascade sits to criticality without labelling a regime the kernel
@@ -41,7 +37,7 @@ export const XrayHawkesPanel = () => {
 							data-stream-filter={`source=hawkes,symbol=${focusSymbol}`}
 							data-stream-id="at"
 							data-stream-time="at"
-							data-stream-value="metrics.event_count.raw"
+							data-stream-value="metrics.conditional_intensity:buy.raw"
 							data-stream-baseline="metrics.baseline_intensity:buy.raw"
 							data-stream-decay="metrics.decay_rate.raw"
 							data-stream-window="120"

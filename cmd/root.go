@@ -51,7 +51,7 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			uiChannel := transport.NewMapReduce[[]byte](nil, nil, nil)
+			uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
 
 			thesis := types.NewThesis(cmd.Context(), uiChannel)
 

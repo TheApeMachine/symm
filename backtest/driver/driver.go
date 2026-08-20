@@ -48,7 +48,7 @@ so only a fresh boot replays history honestly.
 type Driver struct {
 	ctx     context.Context
 	store   *backtest.Store
-	ui      *transport.MapReduce[[]byte]
+	ui      *transport.MapReduce[*types.UIFrame]
 	hub     *ui.Hub
 	onState func(State)
 
@@ -73,7 +73,7 @@ func NewDriver(
 	ctx context.Context,
 	store *backtest.Store,
 	hub *ui.Hub,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 	onState func(State),
 ) *Driver {
 	captures, err := store.ListCaptures()

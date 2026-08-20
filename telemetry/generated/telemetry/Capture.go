@@ -7,11 +7,11 @@ import (
 )
 
 type CaptureT struct {
-	Id int64 `json:"id"`
-	StartedAt int64 `json:"startedAt"`
-	EndedAt int64 `json:"endedAt"`
-	HasEndedAt bool `json:"hasEndedAt"`
-	Frames int64 `json:"frames"`
+	Id         int64 `json:"id"`
+	StartedAt  int64 `json:"startedAt"`
+	EndedAt    int64 `json:"endedAt"`
+	HasEndedAt bool  `json:"hasEndedAt"`
+	Frames     int64 `json:"frames"`
 }
 
 func (t *CaptureT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

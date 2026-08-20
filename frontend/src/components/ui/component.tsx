@@ -6,6 +6,10 @@ import {
 	useState,
 } from "react";
 import { getLastFrame, registerPainter } from "#/providers/ws-stores";
+import {
+	registerStreamCanvas,
+	unregisterStreamCanvas,
+} from "#/providers/stream-canvas";
 import type { JSONSerializable, Paint } from "./paint";
 
 /*
@@ -861,444 +865,6 @@ const appendTargetValue = (
 	);
 };
 
-/*
-streamMatchesFilter keeps only the rows a stream canvas is plotting. Conditions
-are comma separated so one canvas can pin both the kernel that produced a row
-and the symbol it was measured on.
-*/
-const streamMatchesFilter = (
-	entry: JSONSerializable,
-	filter: string | undefined,
-): boolean => {
-	if (!filter) {
-		return true;
-	}
-
-	return splitList(filter).every((condition) => {
-		const separator = condition.indexOf("=");
-
-		if (separator === -1) {
-			throw new Error(`data-stream-filter needs path=value: ${condition}`);
-		}
-
-		const path = condition.slice(0, separator).trim();
-		const expected = condition.slice(separator + 1).trim();
-
-		return String(readPath(entry, path)) === expected;
-	});
-};
-
-const streamEntries = (
-	updates: JSONSerializable,
-	dataset: PaintDataset,
-): JSONSerializable[] => {
-	const entries = Array.isArray(updates) ? updates : [updates];
-
-	return entries.filter((entry) =>
-		streamMatchesFilter(entry, dataset.streamFilter),
-	);
-};
-
-/*
-A stream sample is one observation: when it was taken, what was read, and the
-level it relaxes toward at what rate. Baseline and decay are per sample because
-they come from a fit that is re-estimated as evidence arrives, so an interval
-must be drawn with the parameters that were current across it.
-*/
-type StreamSample = {
-	time: number;
-	value: number;
-	baseline: number | null;
-	decay: number | null;
-};
-
-type StreamBuffer = {
-	values: Float64Array;
-	count: number;
-	filter: string;
-	lastId: string;
-};
-
-const STREAM_SAMPLE_WIDTH = 4;
-const streamBuffers = new WeakMap<HTMLCanvasElement, StreamBuffer>();
-
-const readOptionalNumber = (
-	entry: JSONSerializable,
-	path: string | undefined,
-): number | null => {
-	if (!path) {
-		return null;
-	}
-
-	const value = Number(readPath(entry, path));
-
-	return Number.isFinite(value) ? value : null;
-};
-
-const streamSamples = (buffer: StreamBuffer): StreamSample[] => {
-	const samples = new Array<StreamSample>(buffer.count);
-
-	for (let index = 0; index < buffer.count; index += 1) {
-		const offset = index * STREAM_SAMPLE_WIDTH;
-		const baseline = buffer.values[offset + 2];
-		const decay = buffer.values[offset + 3];
-
-		samples[index] = {
-			time: buffer.values[offset] ?? 0,
-			value: buffer.values[offset + 1] ?? 0,
-			baseline: Number.isNaN(baseline) ? null : (baseline ?? null),
-			decay: Number.isNaN(decay) ? null : (decay ?? null),
-		};
-	}
-
-	return samples;
-};
-
-const retainStreamSamples = (
-	buffer: StreamBuffer,
-	samples: StreamSample[],
-): void => {
-	const required = samples.length * STREAM_SAMPLE_WIDTH;
-
-	if (buffer.values.length < required) {
-		buffer.values = new Float64Array(required);
-	}
-
-	for (const [index, sample] of samples.entries()) {
-		const offset = index * STREAM_SAMPLE_WIDTH;
-		buffer.values[offset] = sample.time;
-		buffer.values[offset + 1] = sample.value;
-		buffer.values[offset + 2] = sample.baseline ?? Number.NaN;
-		buffer.values[offset + 3] = sample.decay ?? Number.NaN;
-	}
-
-	buffer.count = samples.length;
-};
-
-/*
-collectStreamSamples folds this batch's rows into the retained series. Rows are
-stamped with the instant they were observed when data-stream-time names one, so
-an irregular process keeps its real spacing instead of being spread evenly.
-*/
-const collectStreamSamples = (
-	retained: StreamSample[],
-	entries: JSONSerializable[],
-	dataset: PaintDataset,
-	buffer: StreamBuffer,
-): StreamSample[] => {
-	const samples = [...retained];
-
-	for (const entry of entries) {
-		const identity = dataset.streamId
-			? readPath(entry, dataset.streamId)
-			: undefined;
-
-		if (identity !== undefined && String(identity) === buffer.lastId) {
-			continue;
-		}
-
-		const value = Number(readPath(entry, dataset.streamValue));
-
-		if (!Number.isFinite(value)) {
-			continue;
-		}
-
-		const time = dataset.streamTime
-			? Date.parse(String(readPath(entry, dataset.streamTime)))
-			: (samples.at(-1)?.time ?? -1) + 1;
-
-		if (!Number.isFinite(time)) {
-			continue;
-		}
-
-		if (identity !== undefined) {
-			buffer.lastId = String(identity);
-		}
-
-		samples.push({
-			time,
-			value,
-			baseline: readOptionalNumber(entry, dataset.streamBaseline),
-			decay: readOptionalNumber(entry, dataset.streamDecay),
-		});
-	}
-
-	samples.sort((left, right) => left.time - right.time);
-
-	const window = Number(dataset.streamWindow);
-	const latest = samples.at(-1);
-
-	if (dataset.streamTime && latest && Number.isFinite(window) && window > 0) {
-		const oldest = latest.time - window * 1000;
-
-		while (samples.length > 1 && (samples[0]?.time ?? 0) < oldest) {
-			samples.shift();
-		}
-	}
-
-	const limit = Number.parseInt(dataset.appendLimit ?? "96", 10);
-
-	if (Number.isInteger(limit) && limit > 1 && samples.length > limit) {
-		samples.splice(0, samples.length - limit);
-	}
-
-	return samples;
-};
-
-/*
-streamCurve walks the retained samples into a polyline.
-
-Between two observations the series is not a straight line: data-stream-decay
-names the rate at which it relaxes toward its baseline, which is the shape the
-producer's own fit claims. Every measured point is still hit exactly, so what
-the curve adds between them is the model, and the step up onto each observation
-is the part the model did not account for.
-*/
-const streamCurve = (
-	samples: StreamSample[],
-	plotX: (time: number) => number,
-	plotY: (value: number) => number,
-): Array<[number, number]> => {
-	const points: Array<[number, number]> = [];
-
-	for (const [index, sample] of samples.entries()) {
-		points.push([plotX(sample.time), plotY(sample.value)]);
-
-		const next = samples[index + 1];
-
-		if (next === undefined) {
-			continue;
-		}
-
-		const baseline = sample.baseline;
-		const decay = sample.decay;
-
-		if (baseline === null || decay === null || !(decay > 0)) {
-			continue;
-		}
-
-		const from = plotX(sample.time);
-		const steps = Math.min(
-			240,
-			Math.max(1, Math.round((plotX(next.time) - from) / 2)),
-		);
-
-		for (let step = 1; step <= steps; step += 1) {
-			const time = sample.time + ((next.time - sample.time) * step) / steps;
-			const relaxed =
-				baseline +
-				(sample.value - baseline) *
-					Math.exp((-decay * (time - sample.time)) / 1000);
-
-			points.push([plotX(time), plotY(relaxed)]);
-		}
-	}
-
-	return points;
-};
-
-/*
-drawStreamCanvas plots a retained series onto a canvas.
-
-The scale is anchored at zero and topped by the largest sample so the picture
-reads as a rate rather than a shape: a series that barely moves must look flat,
-not full-scale. data-stream-time puts the samples where they actually happened,
-data-stream-baseline draws the level they relax toward, and data-stream-decay
-supplies the shape they take between observations.
-*/
-const drawStreamCanvas = (
-	element: HTMLElement,
-	dataset: PaintDataset,
-	updates: JSONSerializable,
-): void => {
-	if (!(element instanceof HTMLCanvasElement)) {
-		return;
-	}
-
-	const width = Math.max(1, element.clientWidth);
-	const height = Math.max(1, element.clientHeight);
-	const ratio = window.devicePixelRatio || 1;
-
-	if (
-		element.width !== Math.floor(width * ratio) ||
-		element.height !== Math.floor(height * ratio)
-	) {
-		element.width = Math.floor(width * ratio);
-		element.height = Math.floor(height * ratio);
-	}
-
-	const context = element.getContext("2d");
-
-	if (context === null) {
-		return;
-	}
-
-	/*
-		Retained history belongs to the rows the filter selected. Re-pointing a
-		canvas at another symbol or kernel starts a new series rather than splicing
-		two unrelated ones into one line.
-	*/
-	const filter = dataset.streamFilter ?? "";
-	let buffer = streamBuffers.get(element);
-
-	if (buffer === undefined || buffer.filter !== filter) {
-		buffer = {
-			values: new Float64Array(0),
-			count: 0,
-			filter,
-			lastId: "",
-		};
-		streamBuffers.set(element, buffer);
-	}
-
-	const samples = collectStreamSamples(
-		streamSamples(buffer),
-		streamEntries(updates, dataset),
-		dataset,
-		buffer,
-	);
-
-	retainStreamSamples(buffer, samples);
-	context.setTransform(ratio, 0, 0, ratio, 0, 0);
-	context.clearRect(0, 0, width, height);
-
-	const styles = getComputedStyle(element);
-	const line = styles.getPropertyValue("--line").trim() || "#2b251e";
-	const lineStrong = styles.getPropertyValue("--line2").trim() || "#3a342b";
-	const accent = styles.getPropertyValue("--acc").trim() || "#e8a33d";
-	const muted = styles.getPropertyValue("--f4").trim() || "#938a7e";
-	const pad = 14;
-	const base = height - 26;
-	const top = Math.min(30, base);
-	const baseline = samples.at(-1)?.baseline ?? null;
-	const ceiling =
-		Math.max(
-			...samples.map((sample) => sample.value),
-			baseline ?? 0,
-			Number.MIN_VALUE,
-		) * 1.15;
-
-	context.strokeStyle = line;
-	context.lineWidth = 1;
-
-	for (let index = 0; index <= 4; index += 1) {
-		const y = top + index * ((base - top) / 4);
-
-		context.beginPath();
-		context.moveTo(pad, y);
-		context.lineTo(width - pad, y);
-		context.stroke();
-	}
-
-	const first = samples[0];
-	const last = samples.at(-1);
-
-	if (first === undefined || last === undefined || !(ceiling > 0)) {
-		return;
-	}
-
-	const span = last.time - first.time;
-	const plotX = (time: number) =>
-		span > 0
-			? pad + ((time - first.time) / span) * (width - pad * 2)
-			: width / 2;
-	const plotY = (value: number) =>
-		base - Math.min(1, Math.max(0, value / ceiling)) * (base - top);
-
-	context.fillStyle = muted;
-	context.font = "9px JetBrains Mono, monospace";
-	context.fillText(ceiling.toPrecision(3), pad, top - 6);
-	context.fillText("0", pad, base + 12);
-
-	if (dataset.streamTime && span > 0) {
-		const elapsed = `${(span / 1000).toFixed(0)}s of arrivals · ${samples.length} observed`;
-
-		context.fillText(
-			elapsed,
-			width - pad - context.measureText(elapsed).width,
-			base + 12,
-		);
-	}
-
-	if (baseline !== null) {
-		context.strokeStyle = lineStrong;
-		context.lineWidth = 1;
-		context.setLineDash([3, 3]);
-		context.beginPath();
-		context.moveTo(pad, plotY(baseline));
-		context.lineTo(width - pad, plotY(baseline));
-		context.stroke();
-		context.setLineDash([]);
-	}
-
-	/*
-		The rug marks every observation the series was actually built from, so a
-		stretch of curve that is the model relaxing is never mistaken for a stretch
-		of curve that was measured.
-	*/
-	if (dataset.streamRug !== undefined) {
-		context.strokeStyle = muted;
-		context.lineWidth = 1;
-
-		for (const sample of samples) {
-			const x = plotX(sample.time);
-
-			context.beginPath();
-			context.moveTo(x, base + 2);
-			context.lineTo(x, base + 7);
-			context.stroke();
-		}
-	}
-
-	const points = streamCurve(samples, plotX, plotY);
-	const head = points[0];
-
-	if (head === undefined) {
-		return;
-	}
-
-	if (points.length < 2) {
-		context.fillStyle = accent;
-		context.beginPath();
-		context.arc(head[0], head[1], 2.6, 0, Math.PI * 2);
-		context.fill();
-		return;
-	}
-
-	context.beginPath();
-	context.moveTo(head[0], base);
-
-	for (const [x, y] of points) {
-		context.lineTo(x, y);
-	}
-
-	context.lineTo(points.at(-1)?.[0] ?? head[0], base);
-	context.closePath();
-	context.globalAlpha = 0.14;
-	context.fillStyle = accent;
-	context.fill();
-	context.globalAlpha = 1;
-
-	context.strokeStyle = accent;
-	context.lineWidth = 1.6;
-	context.beginPath();
-	context.moveTo(head[0], head[1]);
-
-	for (const [x, y] of points.slice(1)) {
-		context.lineTo(x, y);
-	}
-
-	context.stroke();
-	context.fillStyle = accent;
-	context.beginPath();
-	context.arc(plotX(last.time), plotY(last.value), 2.6, 0, Math.PI * 2);
-	context.fill();
-};
-
-/*
-isRaised reads a flag the way a status light does: only a real true counts as
-raised, so a numeric or textual reading never latches the hold open.
-*/
 const isRaised = (value: JSONSerializable): boolean =>
 	value === true || value === "true";
 
@@ -1341,7 +907,6 @@ const updateTargets = (
 	for (const targetsByKey of targets.values()) {
 		for (const target of targetsByKey) {
 			if (target.mode === "stream") {
-				drawStreamCanvas(target.element, target.dataset, updates);
 				continue;
 			}
 
@@ -1460,8 +1025,32 @@ export const Component = ({
 		*/
 		ref.current.setAttribute(COMPONENT_ROOT, "");
 		targets.current = scanTargets(ref.current);
+
+		for (const bindings of targets.current.values()) {
+			for (const binding of bindings) {
+				if (
+					binding.mode === "stream" &&
+					binding.element instanceof HTMLCanvasElement
+				) {
+					registerStreamCanvas(binding.element, binding.dataset);
+				}
+			}
+		}
+
 		repaint();
 	});
+
+	useLayoutEffect(() => {
+		const root = ref.current;
+
+		return () => {
+			for (const canvas of root?.querySelectorAll<HTMLCanvasElement>(
+				"canvas[data-stream-value]",
+			) ?? []) {
+				unregisterStreamCanvas(canvas);
+			}
+		};
+	}, []);
 
 	/*
 		A canvas sizes itself from the box it was painted into. Nothing republishes

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { appStore } from "#/collections/app";
 import { attach } from "#/providers/ws-stores";
+import { bindStreamWorker } from "#/providers/stream-canvas";
 
 const socketUrl =
 	import.meta.env.VITE_SYMM_WS_URL?.trim() || "ws://127.0.0.1:8765/ws";
@@ -13,16 +14,29 @@ type WorkerOutbound =
 
 let worker: Worker | null = null;
 let focusUnsubscribe: (() => void) | null = null;
+let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-const disconnectTransport = () => {
+const disconnectTransportNow = () => {
 	focusUnsubscribe?.();
 	focusUnsubscribe = null;
 
 	if (worker !== null) {
+		bindStreamWorker(null);
 		worker.postMessage({ type: "DISCONNECT" });
 		worker.terminate();
 		worker = null;
 	}
+};
+
+const scheduleDisconnect = () => {
+	if (disconnectTimer !== null) {
+		return;
+	}
+
+	disconnectTimer = setTimeout(() => {
+		disconnectTimer = null;
+		disconnectTransportNow();
+	}, 0);
 };
 
 const publishFocus = (symbol: string) => {
@@ -67,11 +81,19 @@ const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
 };
 
 const connect = () => {
-	disconnectTransport();
+	if (disconnectTimer !== null) {
+		clearTimeout(disconnectTimer);
+		disconnectTimer = null;
+	}
+
+	if (worker !== null) {
+		return;
+	}
 
 	worker = new Worker(new URL("./ws-worker.ts", import.meta.url), {
 		type: "module",
 	});
+	bindStreamWorker(worker);
 
 	attach(worker);
 	worker.addEventListener("message", handleWorkerMessage);
@@ -104,7 +126,7 @@ export const WsFeed = () => {
 		connect();
 
 		return () => {
-			disconnectTransport();
+			scheduleDisconnect();
 		};
 	}, []);
 

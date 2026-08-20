@@ -1,30 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { createFluidFieldTextures, fluidWaveMagnitude } from "./field-textures";
+import {
+	createFluidFieldTextures,
+	updateFluidFieldTextures,
+} from "./field-textures";
 import type { FluidFields } from "./wire";
 
 const fields = (): FluidFields => ({
-	Grid: { x: 2, y: 2, z: 2, spacing: 0.5 },
-	Density: [0, 1, 0, 0, 0, 0, 0, 0],
-	Momentum: [
-		3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	],
-	InternalEnergy: [0, 2, 0, 0, 0, 0, 0, 0],
-	WaveReal: [0, 2, 0, 0, 0, 0, 0, 0],
-	WaveImaginary: [0, 0, 0, 0, 0, 0, 0, 0],
+	sequence: 1n,
+	grid: { x: 2, y: 2, z: 2, spacing: 0.5 },
+	momRho: new Float32Array(8 * 4),
+	internalEnergy: new Float32Array(8),
+	waveReal: new Float32Array(8),
+	waveImaginary: new Float32Array(8),
+	densityScale: 1,
+	momentumScale: 0.2,
+	energyScale: 0.5,
+	waveScale: 0.25,
 });
 
 describe("createFluidFieldTextures", () => {
-	it("preserves native Z-fastest bytes and derives field scales", () => {
-		const result = createFluidFieldTextures(fields());
+	it("binds the received slab views without copying their values", () => {
+		const frame = fields();
+		const result = createFluidFieldTextures(frame);
 
-		expect(result.density.image).toMatchObject({
+		expect(result.momRho.image).toMatchObject({
 			width: 2,
 			height: 2,
 			depth: 2,
 		});
-		expect(result.density.image.data).toEqual(
-			new Float32Array([0, 1, 0, 0, 0, 0, 0, 0]),
-		);
+		expect(result.momRho.image.data).toBe(frame.momRho);
+		expect(result.internalEnergy.image.data).toBe(frame.internalEnergy);
+		expect(result.waveReal.image.data).toBe(frame.waveReal);
+		expect(result.waveImaginary.image.data).toBe(frame.waveImaginary);
 		expect(result.densityScale).toBe(1);
 		expect(result.momentumScale).toBe(0.2);
 		expect(result.energyScale).toBe(0.5);
@@ -32,30 +39,18 @@ describe("createFluidFieldTextures", () => {
 		result.dispose();
 	});
 
-	it("rejects a non-finite field value", () => {
-		const invalid = fields();
-		invalid.WaveReal[3] = Number.NaN;
+	it("reuses resident texture objects for the next same-grid slab", () => {
+		const first = fields();
+		const second = fields();
+		second.sequence = 2n;
+		const result = createFluidFieldTextures(first);
 
-		expect(() => createFluidFieldTextures(invalid)).toThrow(
-			"WaveReal[3] is not finite",
-		);
-	});
+		updateFluidFieldTextures(result, second);
 
-	it("measures the complex wave independently of gas density", () => {
-		const current = fields();
-		current.Density.fill(0);
-		current.Momentum.fill(0);
-		current.InternalEnergy.fill(0);
-		current.WaveReal[4] = 3;
-		current.WaveImaginary[4] = 4;
-
-		const result = createFluidFieldTextures(current);
-
-		expect(fluidWaveMagnitude(3, 4)).toBe(25);
-		expect(result.densityScale).toBe(0);
-		expect(result.momentumScale).toBe(0);
-		expect(result.energyScale).toBe(0);
-		expect(result.waveScale).toBe(1 / 25);
+		expect(result.momRho.image.data).toBe(second.momRho);
+		expect(result.internalEnergy.image.data).toBe(second.internalEnergy);
+		expect(result.waveReal.image.data).toBe(second.waveReal);
+		expect(result.waveImaginary.image.data).toBe(second.waveImaginary);
 		result.dispose();
 	});
 });

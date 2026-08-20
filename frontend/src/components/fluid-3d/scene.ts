@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { type FluidFieldOptions, FluidFieldView } from "./fields";
 import { FluidParticles } from "./particles";
-import type { FluidFields, FluidParticle } from "./wire";
+import type { FluidFields, FluidParticle, FluidParticleFrame } from "./wire";
 
 export type FluidSceneOptions = FluidFieldOptions & {
 	particles: boolean;
@@ -24,6 +24,7 @@ export class FluidScene {
 	private readonly boundaryMaterial: THREE.LineBasicMaterial;
 	private readonly resizeObserver: ResizeObserver;
 	private animationFrame = 0;
+	private invalidated = false;
 	private gridSpacing = 1 / 64;
 
 	constructor(
@@ -39,6 +40,7 @@ export class FluidScene {
 		this.controls = new OrbitControls(this.camera, this.renderer.domElement);
 		this.controls.target.setScalar(0.5);
 		this.controls.enableDamping = true;
+		this.controls.addEventListener("change", this.invalidate);
 		this.scene.add(this.fields.group, this.particles.points);
 		const boundary = this.createBoundary();
 		this.boundaryGeometry = boundary.geometry;
@@ -48,32 +50,37 @@ export class FluidScene {
 		this.resizeObserver = new ResizeObserver(this.resize);
 		this.resizeObserver.observe(this.container);
 		this.resize();
-		this.render();
+		this.invalidate();
 	}
 
 	updateFields(fields: FluidFields) {
 		this.fields.update(fields);
-		this.gridSpacing = fields.Grid.spacing;
-		this.particles.setGridSpacing(fields.Grid.spacing);
+		this.gridSpacing = fields.grid.spacing;
+		this.particles.setGridSpacing(fields.grid.spacing);
+		this.invalidate();
 	}
 
-	updateParticles(particles: FluidParticle[]) {
+	updateParticles(particles: FluidParticleFrame) {
 		this.particles.update(particles);
+		this.invalidate();
 	}
 
 	setOptions(options: FluidSceneOptions) {
 		this.fields.setOptions(options);
 		this.particles.points.visible = options.particles;
+		this.invalidate();
 	}
 
 	setSlices(x: number, y: number, z: number) {
 		this.fields.setSlices(x, y, z);
+		this.invalidate();
 	}
 
 	dispose() {
 		cancelAnimationFrame(this.animationFrame);
 		this.resizeObserver.disconnect();
 		this.renderer.domElement.removeEventListener("pointerup", this.pick);
+		this.controls.removeEventListener("change", this.invalidate);
 		this.controls.dispose();
 		this.fields.dispose();
 		this.particles.dispose();
@@ -101,12 +108,26 @@ export class FluidScene {
 			0.5 *
 			this.camera.projectionMatrix.elements[5];
 		this.particles.setProjectionScale(projectionScale);
+		this.invalidate();
 	};
 
 	private readonly render = () => {
-		this.controls.update();
+		this.animationFrame = 0;
+		this.invalidated = false;
+		const controlsChanged = this.controls.update();
 		this.renderer.render(this.scene, this.camera);
-		this.animationFrame = requestAnimationFrame(this.render);
+
+		if (controlsChanged || this.invalidated) {
+			this.animationFrame = requestAnimationFrame(this.render);
+		}
+	};
+
+	private readonly invalidate = () => {
+		this.invalidated = true;
+
+		if (this.animationFrame === 0) {
+			this.animationFrame = requestAnimationFrame(this.render);
+		}
 	};
 
 	private readonly pick = (event: PointerEvent) => {

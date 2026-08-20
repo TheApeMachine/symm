@@ -17,6 +17,7 @@ type consumer[T any] struct {
 	limit       uint64
 	queued      atomic.Uint64
 	overflowed  atomic.Bool
+	scheduled   atomic.Bool
 	stageMu     sync.Mutex
 }
 
@@ -30,6 +31,18 @@ type MapReduce[T any] struct {
 	consumers   map[string]*consumer[T]
 	mapFn       func(T) T
 	reduceFn    func(T, T) T
+	onReady     func(string)
+}
+
+/*
+SetNotify attaches a reader-aware activity callback. It runs only when that
+reader's queue transitions from empty to non-empty, after the mapped value is
+retained, so a scheduler can route the owning key without polling every queue.
+*/
+func (mapReduce *MapReduce[T]) SetNotify(notifyFn func(string)) {
+	mapReduce.consumersMu.Lock()
+	mapReduce.onReady = notifyFn
+	mapReduce.consumersMu.Unlock()
 }
 
 func NewMapReduce[T any](
@@ -120,9 +133,9 @@ func (mapReduce *MapReduce[T]) Unregister(consumerID string) {
 
 func (mapReduce *MapReduce[T]) Push(item T) {
 	mapReduce.consumersMu.RLock()
-	defer mapReduce.consumersMu.RUnlock()
+	readyConsumers := make([]string, 0)
 
-	for _, consumer := range mapReduce.consumers {
+	for consumerID, consumer := range mapReduce.consumers {
 		if consumer.overflowed.Load() {
 			continue
 		}
@@ -134,6 +147,22 @@ func (mapReduce *MapReduce[T]) Push(item T) {
 
 		consumer.queue.Enqueue(mapReduce.mapFn(item))
 		notify(consumer.ready)
+
+		if onReady := mapReduce.onReady; onReady != nil &&
+			consumer.scheduled.CompareAndSwap(false, true) {
+			readyConsumers = append(readyConsumers, consumerID)
+		}
+	}
+
+	onReady := mapReduce.onReady
+	mapReduce.consumersMu.RUnlock()
+
+	if onReady == nil {
+		return
+	}
+
+	for _, consumerID := range readyConsumers {
+		onReady(consumerID)
 	}
 }
 
@@ -249,13 +278,18 @@ func (mapReduce *MapReduce[T]) Drain(
 	var item T
 
 	return func(yield func(T) bool) {
-		for predicate(item) {
+		defer mapReduce.rearm(consumerID)
+		remaining := mapReduce.ConsumerLength(consumerID)
+
+		for remaining > 0 && predicate(item) {
 			var ok bool
 			item, ok = mapReduce.Pop(consumerID)
 
 			if !ok || !yield(item) {
 				return
 			}
+
+			remaining--
 		}
 	}
 }
@@ -280,4 +314,24 @@ func (mapReduce *MapReduce[T]) stage(consumer *consumer[T]) (T, bool) {
 	consumer.previous = item
 	consumer.hasPrevious = true
 	return item, true
+}
+
+func (mapReduce *MapReduce[T]) rearm(consumerID string) {
+	consumer, found := mapReduce.consumer(consumerID)
+
+	if !found {
+		return
+	}
+
+	consumer.scheduled.Store(false)
+	mapReduce.consumersMu.RLock()
+	onReady := mapReduce.onReady
+	mapReduce.consumersMu.RUnlock()
+
+	if onReady == nil || consumer.queued.Load() == 0 ||
+		!consumer.scheduled.CompareAndSwap(false, true) {
+		return
+	}
+
+	onReady(consumerID)
 }

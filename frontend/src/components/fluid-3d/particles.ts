@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { FluidParticle } from "./wire";
+import type { FluidParticleFrame } from "./wire";
 
 const particleVertexShader = /* glsl */ `
 	attribute float aHeat;
@@ -8,18 +8,21 @@ const particleVertexShader = /* glsl */ `
 	attribute float aPhase;
 	uniform float uProjectionScale;
 	uniform float uPointDiameter;
+	uniform float uHeatScale;
+	uniform float uEnergyScale;
+	uniform float uMassScale;
 	varying float vHeat;
 	varying float vEnergy;
 	varying float vPhase;
 
 	void main() {
 		vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
-		vHeat = aHeat;
-		vEnergy = aEnergy;
+		vHeat = aHeat * uHeatScale;
+		vEnergy = aEnergy * uEnergyScale;
 		vPhase = aPhase;
 		// Modulate point size cleanly within unit box scale
 		float energyScale = 0.8 + 0.5 * clamp(aEnergy, 0.0, 1.0);
-		float massScale = 0.8 + 0.6 * clamp(aMass, 0.0, 1.0);
+		float massScale = 0.8 + 0.6 * clamp(aMass * uMassScale, 0.0, 1.0);
 		gl_PointSize = clamp(
 			energyScale * massScale * uPointDiameter * uProjectionScale /
 				max(-viewPosition.z, 0.0001),
@@ -81,28 +84,24 @@ const particleFragmentShader = /* glsl */ `
 	}
 `;
 
-const finite = (value: number, name: string, index: number) => {
-	if (!Number.isFinite(value)) {
-		throw new Error(`particle ${index} ${name} is not finite`);
-	}
-
-	return value;
-};
-
 /*
 FluidParticles is one GPU point buffer and one draw call for the complete
 resident particle selection. No particle owns a mesh or expanded geometry.
 */
 export class FluidParticles {
 	readonly points: THREE.Points;
-	private particles: FluidParticle[] = [];
+	private frame: FluidParticleFrame | null = null;
 	private readonly material: THREE.ShaderMaterial;
+	private interleaved: THREE.InterleavedBuffer | null = null;
 
 	constructor() {
 		this.material = new THREE.ShaderMaterial({
 			uniforms: {
 				uProjectionScale: { value: 1 },
 				uPointDiameter: { value: 1 / 64 },
+				uHeatScale: { value: 0 },
+				uEnergyScale: { value: 0 },
+				uMassScale: { value: 0 },
 			},
 			vertexShader: particleVertexShader,
 			fragmentShader: particleFragmentShader,
@@ -114,76 +113,60 @@ export class FluidParticles {
 		this.points.renderOrder = 2;
 	}
 
-	update(particles: FluidParticle[]) {
-		const positions = new Float32Array(particles.length * 3);
-		const heat = new Float32Array(particles.length);
-		const energy = new Float32Array(particles.length);
-		const mass = new Float32Array(particles.length);
-		const phase = new Float32Array(particles.length);
-		let maximumHeat = 0;
-		let maximumEnergy = 0;
-		let maximumMass = 0;
-
-		for (let index = 0; index < particles.length; index += 1) {
-			const particle = particles[index];
-
-			if (particle === undefined) {
-				throw new Error(`particle ${index} is missing`);
-			}
-
-			const offset = index * 3;
-			positions[offset] = finite(particle.Position.X, "Position.X", index);
-			positions[offset + 1] = finite(particle.Position.Y, "Position.Y", index);
-			positions[offset + 2] = finite(particle.Position.Z, "Position.Z", index);
-			heat[index] = finite(particle.Heat, "Heat", index);
-			energy[index] = finite(particle.Energy, "Energy", index);
-			mass[index] = finite(particle.Mass, "Mass", index);
-			phase[index] = finite(particle.Phase, "Phase", index);
-			maximumHeat = Math.max(maximumHeat, Math.abs(heat[index]));
-			maximumEnergy = Math.max(maximumEnergy, Math.abs(energy[index]));
-			maximumMass = Math.max(maximumMass, Math.abs(mass[index]));
+	update(frame: FluidParticleFrame) {
+		if (
+			this.interleaved !== null &&
+			this.interleaved.stride === frame.stride &&
+			this.interleaved.array.length === frame.values.length
+		) {
+			this.interleaved.array = frame.values;
+			this.interleaved.needsUpdate = true;
+			this.points.geometry.setDrawRange(0, frame.count);
+			this.updateScales(frame);
+			this.frame = frame;
+			return;
 		}
 
-		if (maximumHeat > 0) {
-			for (let index = 0; index < heat.length; index += 1) {
-				heat[index] /= maximumHeat;
-			}
-		}
-
-		if (maximumEnergy > 0) {
-			for (let index = 0; index < energy.length; index += 1) {
-				energy[index] /= maximumEnergy;
-			}
-		}
-
-		if (maximumMass > 0) {
-			for (let index = 0; index < mass.length; index += 1) {
-				mass[index] /= maximumMass;
-			}
-		}
-
-		this.points.geometry.setAttribute(
+		const interleaved = new THREE.InterleavedBuffer(frame.values, frame.stride);
+		interleaved.setUsage(THREE.StreamDrawUsage);
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute(
 			"position",
-			new THREE.BufferAttribute(positions, 3),
+			new THREE.InterleavedBufferAttribute(interleaved, 3, 0, false),
 		);
-		this.points.geometry.setAttribute(
-			"aHeat",
-			new THREE.BufferAttribute(heat, 1),
-		);
-		this.points.geometry.setAttribute(
-			"aEnergy",
-			new THREE.BufferAttribute(energy, 1),
-		);
-		this.points.geometry.setAttribute(
+		geometry.setAttribute(
 			"aMass",
-			new THREE.BufferAttribute(mass, 1),
+			new THREE.InterleavedBufferAttribute(interleaved, 1, 6, false),
 		);
-		this.points.geometry.setAttribute(
+		geometry.setAttribute(
+			"aHeat",
+			new THREE.InterleavedBufferAttribute(interleaved, 1, 7, false),
+		);
+		geometry.setAttribute(
+			"aEnergy",
+			new THREE.InterleavedBufferAttribute(interleaved, 1, 8, false),
+		);
+		geometry.setAttribute(
 			"aPhase",
-			new THREE.BufferAttribute(phase, 1),
+			new THREE.InterleavedBufferAttribute(interleaved, 1, 9, false),
 		);
-		this.points.geometry.computeBoundingSphere();
-		this.particles = particles;
+		geometry.setDrawRange(0, frame.count);
+		geometry.boundingSphere = new THREE.Sphere(
+			new THREE.Vector3(0.5, 0.5, 0.5),
+			Math.sqrt(3) / 2,
+		);
+		const previous = this.points.geometry;
+		this.points.geometry = geometry;
+		this.interleaved = interleaved;
+		previous.dispose();
+		this.updateScales(frame);
+		this.frame = frame;
+	}
+
+	private updateScales(frame: FluidParticleFrame) {
+		this.material.uniforms.uHeatScale.value = frame.heatScale;
+		this.material.uniforms.uEnergyScale.value = frame.energyScale;
+		this.material.uniforms.uMassScale.value = frame.massScale;
 	}
 
 	setGridSpacing(spacing: number) {
@@ -195,7 +178,7 @@ export class FluidParticles {
 	}
 
 	particle(index: number) {
-		return this.particles[index] ?? null;
+		return this.frame?.particle(index) ?? null;
 	}
 
 	dispose() {

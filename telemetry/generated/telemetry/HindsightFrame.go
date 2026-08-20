@@ -7,13 +7,13 @@ import (
 )
 
 type HindsightFrameT struct {
-	CaptureId int64 `json:"captureId"`
-	Status string `json:"status"`
-	Symbols []*HindsightSymbolT `json:"symbols"`
-	MissedPct float64 `json:"missedPct"`
-	UpboundPct float64 `json:"upboundPct"`
-	MissedLegs int64 `json:"missedLegs"`
-	TotalLegs int64 `json:"totalLegs"`
+	CaptureId  int64               `json:"captureId"`
+	Status     string              `json:"status"`
+	Symbols    []*HindsightSymbolT `json:"symbols"`
+	MissedPct  float64             `json:"missedPct"`
+	UpboundPct float64             `json:"upboundPct"`
+	MissedLegs int64               `json:"missedLegs"`
+	TotalLegs  int64               `json:"totalLegs"`
 }
 
 func (t *HindsightFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

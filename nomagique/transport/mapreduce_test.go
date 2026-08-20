@@ -111,6 +111,36 @@ func TestPush(t *testing.T) {
 	})
 }
 
+func TestSetNotify(t *testing.T) {
+	Convey("Given a reader-aware MapReduce activity callback", t, func() {
+		mapReduce := Setup[int]([]string{"consumer"}, nil, nil)
+		notified := make(chan string, 2)
+		mapReduce.SetNotify(func(consumerID string) {
+			notified <- consumerID
+		})
+
+		mapReduce.Push(42)
+		mapReduce.Push(43)
+
+		Convey("It should notify only the empty-to-ready transition", func() {
+			So(<-notified, ShouldEqual, "consumer")
+			So(len(notified), ShouldEqual, 0)
+			values := make([]int, 0, 2)
+
+			for value := range mapReduce.Drain("consumer", func(int) bool {
+				return true
+			}) {
+				values = append(values, value)
+			}
+
+			So(values, ShouldResemble, []int{42, 43})
+
+			mapReduce.Push(44)
+			So(<-notified, ShouldEqual, "consumer")
+		})
+	})
+}
+
 func TestPop(t *testing.T) {
 	Convey("Setup", t, func() {
 		Convey("Given a MapReduce instance with a reducer", func() {
@@ -311,6 +341,29 @@ func TestDrain(t *testing.T) {
 				})
 			})
 		})
+
+		Convey("Given a producer that remains active during a drain", func() {
+			mapReduce := Setup[int]([]string{"A"}, nil, nil)
+			mapReduce.Push(1)
+			mapReduce.Push(2)
+
+			Convey("Then the drain should stop at its starting queue boundary", func() {
+				collected := make([]int, 0, 2)
+
+				for item := range mapReduce.Drain("A", func(int) bool {
+					return true
+				}) {
+					collected = append(collected, item)
+
+					if item == 1 {
+						mapReduce.Push(3)
+					}
+				}
+
+				So(collected, ShouldResemble, []int{1, 2})
+				So(mapReduce.ConsumerLength("A"), ShouldEqual, uint64(1))
+			})
+		})
 	})
 }
 
@@ -375,6 +428,16 @@ func BenchmarkPush(b *testing.B) {
 
 	for i := 0; b.Loop(); i++ {
 		mr.Push(i)
+	}
+}
+
+func BenchmarkPushNotify(b *testing.B) {
+	mapReduce := Setup[int]([]string{"consumer"}, nil, nil)
+	mapReduce.SetNotify(func(string) {})
+
+	for index := 0; b.Loop(); index++ {
+		mapReduce.Push(index)
+		_, _ = mapReduce.Pop("consumer")
 	}
 }
 

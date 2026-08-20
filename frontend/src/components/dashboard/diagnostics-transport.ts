@@ -74,7 +74,9 @@ export class DiagnosticsWebRTCFeed {
 				const record = reader.push(event.data);
 
 				if (record !== null) {
-					const frame = decodeTelemetryFrame(new Uint8Array(record)).diagnostics;
+					const frame = decodeTelemetryFrame(
+						new Uint8Array(record),
+					).diagnostics;
 
 					if (
 						frame === null ||

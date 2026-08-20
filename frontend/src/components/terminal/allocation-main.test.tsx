@@ -6,8 +6,8 @@ describe("AllocationMain", () => {
 	it("reports the structural thesis rather than the retired future-utility score", () => {
 		const markup = renderToStaticMarkup(<AllocationMain />);
 
-		expect(markup).toContain('data-paint="thesisScore"');
-		expect(markup).toContain('data-paint="allocationClass"');
-		expect(markup).not.toContain('data-paint="utility"');
+		expect(markup).toContain("ranked by structural thesis");
+		expect(markup).toContain("structural thesis");
+		expect(markup).not.toContain("future utility");
 	});
 });

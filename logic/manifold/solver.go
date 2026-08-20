@@ -51,6 +51,7 @@ type Solver struct {
 	api         websocket.BookSource
 	config      pmanifold.Config
 	physics     *pmanifold.Solver
+	slabs       slabEncoder
 	oscillators []pmanifold.Oscillator
 	reading     pmanifold.Reading
 	recorder    *audit.Recorder
@@ -63,7 +64,7 @@ type Solver struct {
 	angles      []float64
 	pending     []pendingDial
 	waiting     atomic.Bool
-	ui          *transport.MapReduce[[]byte]
+	ui          *transport.MapReduce[*types.UIFrame]
 	binui       *transport.MapReduce[types.FluidFrame]
 	semaphore   chan struct{}
 	stopping    chan struct{}
@@ -107,7 +108,7 @@ by the same explicit event-history capacity as the live market feed.
 */
 func NewSolver(
 	api *websocket.API,
-	ui *transport.MapReduce[[]byte],
+	ui *transport.MapReduce[*types.UIFrame],
 	binui *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
 ) *Solver {
@@ -147,6 +148,7 @@ func NewSolver(
 		api:       bookSource,
 		config:    config,
 		physics:   physics,
+		slabs:     slabEncoder{config: config},
 		recorder:  recorder,
 		scales:    make(map[string]*adaptive.Accumulator),
 		converged: make(map[string]float64),
@@ -900,28 +902,23 @@ func (solver *Solver) publishDomain() error {
 		return nil
 	}
 
-	particles := oscillatorsToParticles(solver.config, solver.oscillators)
-	rows := make([]*wire.FluidParticleT, len(particles))
+	fields, err := solver.slabs.Fields(solver.physics)
 
-	for index, particle := range particles {
-		rows[index] = &wire.FluidParticleT{
-			Position:  fluidVectorWire(particle.Position),
-			Velocity:  fluidVectorWire(particle.Velocity),
-			Mass:      particle.Mass,
-			Heat:      particle.Heat,
-			Energy:    particle.Energy,
-			Phase:     particle.Phase,
-			Omega:     particle.Omega,
-			Amplitude: particle.Amplitude,
-		}
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: failed to read resident fields",
+			err,
+		))
 	}
 
 	solver.binui.Push(types.FluidFrame{
+		Channel: types.FluidFieldsChannel,
+		Payload: fields,
+	})
+	solver.binui.Push(types.FluidFrame{
 		Channel: types.FluidParticlesChannel,
-		Payload: telemetry.Encode(&wire.FrameT{
-			Type:  wire.FrameFluidParticlesFrame,
-			Value: &wire.FluidParticlesFrameT{Particles: rows},
-		}),
+		Payload: solver.slabs.Particles(solver.oscillators),
 	})
 
 	return nil
@@ -980,10 +977,6 @@ func (solver *Solver) phaseRow(
 		},
 		PhaseScan: phaseResponsesWire(reading.Responses),
 	}
-}
-
-func fluidVectorWire(vector OrderVector) *wire.FluidVectorT {
-	return &wire.FluidVectorT{X: vector.X, Y: vector.Y, Z: vector.Z}
 }
 
 func phaseResponsesWire(responses []types.PhaseResponse) []*wire.PhaseResponseT {
@@ -1075,149 +1068,6 @@ func (solver *Solver) scale(symbol string) (float64, bool) {
 	value, ok := solver.converged[symbol]
 
 	return value, ok && value > 0
-}
-
-/*
-OrderVector is a 3D float32 vector in unit coordinates.
-*/
-type OrderVector struct {
-	X float32 `json:"X"`
-	Y float32 `json:"Y"`
-	Z float32 `json:"Z"`
-}
-
-/*
-OrderParticle holds the geometric state of an order in the physical domain.
-*/
-type OrderParticle struct {
-	Position OrderVector `json:"Position"`
-	Velocity OrderVector `json:"Velocity"`
-	Mass     float32     `json:"Mass"`
-	Heat     float32     `json:"Heat"`
-	Energy   float32     `json:"Energy"`
-}
-
-/*
-OrderOscillator holds the wave state of an order in the coherence layer.
-*/
-type OrderOscillator struct {
-	Phase     float32 `json:"Phase"`
-	Omega     float32 `json:"Omega"`
-	Amplitude float32 `json:"Amplitude"`
-	Real      float32 `json:"Real"`
-	Imaginary float32 `json:"Imaginary"`
-}
-
-/*
-OrderNode represents an order in the manifold possessing both a particle
-(geometric) and an oscillator (wave) representation.
-*/
-type OrderNode struct {
-	Position   OrderVector     `json:"Position"`
-	Velocity   OrderVector     `json:"Velocity"`
-	Mass       float32         `json:"Mass"`
-	Heat       float32         `json:"Heat"`
-	Energy     float32         `json:"Energy"`
-	Phase      float32         `json:"Phase"`
-	Omega      float32         `json:"Omega"`
-	Amplitude  float32         `json:"Amplitude"`
-	Particle   OrderParticle   `json:"particle"`
-	Oscillator OrderOscillator `json:"oscillator"`
-}
-
-/*
-ManifoldGrid is the 3D cell layout of the domain.
-*/
-type ManifoldGrid struct {
-	X       int     `json:"x"`
-	Y       int     `json:"y"`
-	Z       int     `json:"z"`
-	Spacing float32 `json:"spacing"`
-}
-
-/*
-ManifoldFields represents the physical fields evaluated over the grid.
-*/
-type ManifoldFields struct {
-	Grid           ManifoldGrid `json:"Grid"`
-	Density        []float32    `json:"Density"`
-	Momentum       []float32    `json:"Momentum"`
-	InternalEnergy []float32    `json:"InternalEnergy"`
-	WaveReal       []float32    `json:"WaveReal"`
-	WaveImaginary  []float32    `json:"WaveImaginary"`
-}
-
-func oscillatorsToParticles(
-	config pmanifold.Config,
-	oscillators []pmanifold.Oscillator,
-) []OrderNode {
-	particles := make([]OrderNode, len(oscillators))
-	domainX := float32(config.DomainX)
-	domainY := float32(config.DomainY)
-	domainZ := float32(config.DomainZ)
-
-	if domainX <= 0 {
-		domainX = 1
-	}
-
-	if domainY <= 0 {
-		domainY = 1
-	}
-
-	if domainZ <= 0 {
-		domainZ = 1
-	}
-
-	for index, oscillator := range oscillators {
-		normPos := OrderVector{
-			X: float32(oscillator.PosX) / domainX,
-			Y: float32(oscillator.PosY) / domainY,
-			Z: float32(oscillator.PosZ) / domainZ,
-		}
-		normVel := OrderVector{
-			X: float32(oscillator.VelX) / domainX,
-			Y: float32(oscillator.VelY) / domainY,
-			Z: float32(oscillator.VelZ) / domainZ,
-		}
-		mass := float32(oscillator.Amplitude)
-		heat := float32(oscillator.Heat)
-		energy := float32(oscillator.Amplitude * oscillator.Amplitude)
-		phase := float32(oscillator.Phase)
-		omega := float32(oscillator.Omega)
-		amp := float32(oscillator.Amplitude)
-		real := float32(oscillator.Amplitude * math.Cos(oscillator.Phase))
-		imag := float32(oscillator.Amplitude * math.Sin(oscillator.Phase))
-
-		particle := OrderParticle{
-			Position: normPos,
-			Velocity: normVel,
-			Mass:     mass,
-			Heat:     heat,
-			Energy:   energy,
-		}
-		osc := OrderOscillator{
-			Phase:     phase,
-			Omega:     omega,
-			Amplitude: amp,
-			Real:      real,
-			Imaginary: imag,
-		}
-
-		particles[index] = OrderNode{
-			Position:   normPos,
-			Velocity:   normVel,
-			Mass:       mass,
-			Heat:       heat,
-			Energy:     energy,
-			Phase:      phase,
-			Omega:      omega,
-			Amplitude:  amp,
-			Particle:   particle,
-			Oscillator: osc,
-		}
-	}
-
-	return particles
 }
 
 func torusIndex(position, domain float64, grid uint32) uint32 {

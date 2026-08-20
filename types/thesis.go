@@ -11,6 +11,7 @@ import (
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/transport"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 /*
@@ -21,11 +22,12 @@ broker execution and settlement continue in their own lifecycle.
 type Thesis struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
-	ui             *transport.MapReduce[[]byte]
+	ui             *transport.MapReduce[*UIFrame]
 	balance        kraken.BalanceData
 	equityMu       sync.RWMutex
 	equity         *kraken.TradeBalanceResult
 	equityRevision uint64
+	clockMu        sync.Mutex
 	symbolMu       sync.Mutex
 	symbolIDs      map[string]SymbolID
 	nextSymbolID   SymbolID
@@ -37,15 +39,49 @@ type Thesis struct {
 	Audit          func(any) error `json:"-"`
 	manifold       atomic.Pointer[pmanifold.Reading]
 	phase          atomic.Pointer[PhaseReading]
+	work           map[SourceType]*transport.MapReduce[*Symbol]
+}
+
+/*
+AdvanceTick commits one real market observation to the engine clock and
+publishes that exact clock transition to the focused dashboard stream.
+*/
+func (thesis *Thesis) AdvanceTick(at time.Time) int64 {
+	if thesis == nil {
+		panic("thesis: market clock required")
+	}
+
+	thesis.clockMu.Lock()
+	thesis.Tick++
+	thesis.At = at
+	tick := thesis.Tick
+	thesis.clockMu.Unlock()
+	thesis.work[SourcePlanner].Push(nil)
+
+	thesis.Publish(&UIFrame{
+		Type: wire.FrameTickFrame,
+		Value: &wire.TickFrameT{
+			Count: tick,
+		},
+	})
+
+	return tick
 }
 
 /*
 NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
 func NewThesis(
-	ctx context.Context, ui *transport.MapReduce[[]byte],
+	ctx context.Context, ui *transport.MapReduce[*UIFrame],
 ) *Thesis {
 	ctx, cancel := context.WithCancel(ctx)
+	work := make(map[SourceType]*transport.MapReduce[*Symbol], len(WorkerSources))
+
+	for _, source := range WorkerSources {
+		work[source] = transport.NewMapReduce[*Symbol](
+			[]string{string(source)}, nil, nil,
+		)
+	}
 
 	return &Thesis{
 		ctx:          ctx,
@@ -55,10 +91,37 @@ func NewThesis(
 		CrossSection: NewCrossSection(),
 		Symbols:      &sync.Map{},
 		symbolIDs:    make(map[string]SymbolID),
+		work:         work,
 	}
 }
 
-func (thesis *Thesis) UI() *transport.MapReduce[[]byte] {
+/*
+Work returns the lossless ready-symbol queue owned by one running stage.
+MapReduce producers append only on an input reader's empty-to-ready transition.
+*/
+func (thesis *Thesis) Work(source SourceType) *transport.MapReduce[*Symbol] {
+	if thesis == nil {
+		panic("thesis: work scheduler required")
+	}
+
+	work, found := thesis.work[source]
+
+	if !found || work == nil {
+		panic("thesis: unsupported work source " + string(source))
+	}
+
+	return work
+}
+
+func (thesis *Thesis) notifyWork(source SourceType, symbol *Symbol) {
+	work, found := thesis.work[source]
+
+	if found {
+		work.Push(symbol)
+	}
+}
+
+func (thesis *Thesis) UI() *transport.MapReduce[*UIFrame] {
 	return thesis.ui
 }
 
@@ -67,7 +130,7 @@ Publish appends one marshaled dashboard wire frame to the lock-free UI
 transport. The frame is retained until the hub consumer drains it; a producer
 never blocks and never drops, regardless of transport backpressure.
 */
-func (thesis *Thesis) Publish(frame []byte) {
+func (thesis *Thesis) Publish(frame *UIFrame) {
 	if thesis == nil || thesis.ui == nil {
 		return
 	}
@@ -89,6 +152,7 @@ func (thesis *Thesis) Symbol(name string) *Symbol {
 
 	if !ok {
 		created := NewSymbol(name, thesis.ui)
+		created.setNotify(thesis.notifyWork)
 		created.ID = thesis.nextSymbolID
 		thesis.symbolIDs[name] = thesis.nextSymbolID
 		thesis.nextSymbolID++
@@ -127,6 +191,7 @@ func (thesis *Thesis) ForSymbol(name string) (*Thesis, error) {
 		CrossSection: thesis.CrossSection,
 		Symbols:      symbols,
 		Audit:        thesis.Audit,
+		work:         thesis.work,
 	}
 	manifold := thesis.manifold.Load()
 
@@ -178,6 +243,7 @@ func (thesis *Thesis) ForSymbols(names []string) (*Thesis, error) {
 		CrossSection: thesis.CrossSection,
 		Symbols:      symbols,
 		Audit:        thesis.Audit,
+		work:         thesis.work,
 	}
 	manifold := thesis.manifold.Load()
 

@@ -29,6 +29,7 @@ type Stack interface {
 		rather than for a number of ticks picked to make a test come out.
 	*/
 	Holding(symbol string) int
+	Run() error
 	Close() error
 }
 
@@ -54,7 +55,7 @@ type Boot[S Driven] func(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel *transport.MapReduce[[]byte],
+	uiChannel *transport.MapReduce[*types.UIFrame],
 ) S
 
 /*
@@ -106,16 +107,47 @@ func drive[S Driven](
 		previousDataPath := viper.GetString("system.data_path")
 		viper.Set("system.data_path", t.TempDir())
 		defer viper.Set("system.data_path", previousDataPath)
+		previousBatch := viper.Get("market.subscribe.batch")
+		previousPace := viper.Get("market.subscribe.pace")
+		previousDepth := viper.Get("market.l3_depth")
+		bookDepth := 0
+
+		for _, symbol := range market.Symbols {
+			bookDepth = max(bookDepth, symbol.BookDepthLevels)
+		}
+
+		viper.Set("market.subscribe.batch", len(market.Symbols))
+		viper.Set("market.subscribe.pace", 0)
+		viper.Set("market.l3_depth", bookDepth)
+		defer viper.Set("market.subscribe.batch", previousBatch)
+		defer viper.Set("market.subscribe.pace", previousPace)
+		defer viper.Set("market.l3_depth", previousDepth)
 
 		public, private := market.Feeds()
-		system := boot(t.Context(), types.NewThesis(t.Context(), nil), public, private, nil)
+		ui := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
+		thesis := types.NewThesis(t.Context(), ui)
+		system := boot(t.Context(), thesis, public, private, ui)
 
 		if system == absent {
 			t.Fatal("tests: boot produced no system")
 			return
 		}
 
-		defer system.Close()
+		runErr := make(chan error, 1)
+
+		go func() {
+			runErr <- system.Run()
+		}()
+
+		defer func() {
+			if err := system.Close(); err != nil {
+				t.Errorf("tests: close system: %v", err)
+			}
+
+			if err := <-runErr; err != nil {
+				t.Errorf("tests: run system: %v", err)
+			}
+		}()
 
 		market.Drive(system)
 		f(market, system)

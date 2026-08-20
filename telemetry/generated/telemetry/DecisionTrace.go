@@ -7,16 +7,16 @@ import (
 )
 
 type DecisionTraceT struct {
-	Hypothesis string `json:"hypothesis"`
-	GraphSupports float64 `json:"graphSupports"`
-	GraphContradicts float64 `json:"graphContradicts"`
-	GraphConditions float64 `json:"graphConditions"`
-	ThesisBalance float64 `json:"thesisBalance"`
-	ThesisConfidence float64 `json:"thesisConfidence"`
-	Iterations int64 `json:"iterations"`
-	Branches []*MCTSBranchT `json:"branches"`
-	RecommendedAction string `json:"recommendedAction"`
-	Tree *MCTSNodeT `json:"tree"`
+	Hypothesis        string         `json:"hypothesis"`
+	GraphSupports     float64        `json:"graphSupports"`
+	GraphContradicts  float64        `json:"graphContradicts"`
+	GraphConditions   float64        `json:"graphConditions"`
+	ThesisBalance     float64        `json:"thesisBalance"`
+	ThesisConfidence  float64        `json:"thesisConfidence"`
+	Iterations        int64          `json:"iterations"`
+	Branches          []*MCTSBranchT `json:"branches"`
+	RecommendedAction string         `json:"recommendedAction"`
+	Tree              *MCTSNodeT     `json:"tree"`
 }
 
 func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
