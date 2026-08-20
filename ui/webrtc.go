@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -62,27 +64,37 @@ it names. A frame carries its own destination because the solver knows which
 view it built the frame for; recovering that here by sniffing the payload's
 leading bytes only re-derived it, and tied routing to the encoding.
 */
-func (transport *FluidRTC) Run(publications <-chan types.FluidFrame) {
+/*
+Run polls the lock-free fluid transport and fans each published frame to the
+data channel it names, then parks when the queue is empty. A frame carries its
+own destination because the solver knows which view it built the frame for;
+recovering that here by sniffing the payload's leading bytes only re-derived it,
+and tied routing to the encoding.
+*/
+func (transport *FluidRTC) Run(publications *transport.MapReduce[types.FluidFrame], consumerID string) {
+	publications.Register(consumerID)
+
 	for {
 		select {
 		case <-transport.ctx.Done():
 			return
-			case frame, open := <-publications:
-				if !open {
-					return
-				}
-
-				// No viewer attached: discard immediately. Sleeping here
-				// throttled the drain to ~20 frames/s while the solver
-				// publishes per step, saturating the channel; the receive
-				// above blocks when empty, so dropping costs nothing when
-				// production stops.
-				if !transport.HasPeers() {
-					continue
-				}
-
-				transport.publish(frame.Channel, frame.Payload)
+		default:
 		}
+
+		frame, ok := publications.Pop(consumerID)
+
+		if !ok {
+			runtime.Gosched()
+			continue
+		}
+
+		// No viewer attached: discard immediately. Dropping an empty queue
+		// costs nothing when production stops.
+		if !transport.HasPeers() {
+			continue
+		}
+
+		transport.publish(frame.Channel, frame.Payload)
 	}
 }
 

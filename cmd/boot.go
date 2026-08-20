@@ -108,7 +108,7 @@ func BootWithHub(
 		}
 	}
 
-	manifoldChannel := make(chan types.FluidFrame, 1024)
+	manifoldChannel := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
 	dataPath := utils.ResolveDataPath()
 
 	if dataPath == "" {

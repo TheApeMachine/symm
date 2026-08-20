@@ -63,7 +63,7 @@ type Solver struct {
 	pending     []pendingDial
 	waiting     atomic.Bool
 	ui          *transport.MapReduce[[]byte]
-	binui       chan types.FluidFrame
+	binui       *transport.MapReduce[types.FluidFrame]
 	semaphore   chan struct{}
 	stopping    chan struct{}
 	stopped     chan struct{}
@@ -106,7 +106,7 @@ by the same explicit event-history capacity as the live market feed.
 func NewSolver(
 	api *websocket.API,
 	ui *transport.MapReduce[[]byte],
-	binui chan types.FluidFrame,
+	binui *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
 ) *Solver {
 	deltaT := 0.01

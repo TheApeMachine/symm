@@ -10,6 +10,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -19,9 +20,9 @@ func TestFluidRTCAnswer(t *testing.T) {
 	Convey("Given a browser peer offering the direct fluid channels", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		publications := make(chan types.FluidFrame, 3)
+		publications := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
 		transport := NewFluidRTC(ctx)
-		go transport.Run(publications)
+		go transport.Run(publications, "test-fluid")
 		defer func() { So(transport.Close(), ShouldBeNil) }()
 
 		client, err := webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -51,9 +52,9 @@ func TestFluidRTCAnswer(t *testing.T) {
 		fields = append(fields, []byte(`"}}`)...)
 		particles := []byte(`{"particles":[{"Mass":1,"Heat":2}]}`)
 		phase := []byte(`{"phaseReady":true,"phaseReason":""}`)
-		publications <- types.FluidFrame{Channel: types.FluidFieldsChannel, Payload: fields}
-		publications <- types.FluidFrame{Channel: types.FluidParticlesChannel, Payload: particles}
-		publications <- types.FluidFrame{Channel: types.FluidPhaseChannel, Payload: phase}
+		publications.Push(types.FluidFrame{Channel: types.FluidFieldsChannel, Payload: fields})
+		publications.Push(types.FluidFrame{Channel: types.FluidParticlesChannel, Payload: particles})
+		publications.Push(types.FluidFrame{Channel: types.FluidPhaseChannel, Payload: phase})
 
 		Convey("It transmits each unmodified JSON value on its named channel", func() {
 			So(readFluidTestRecord(fieldsMessages), ShouldResemble, fields)

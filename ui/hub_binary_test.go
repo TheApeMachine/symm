@@ -21,7 +21,7 @@ func TestHubForecastPublication(t *testing.T) {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		So(err, ShouldBeNil)
 		thesis := types.NewThesis(context.Background(), transport.NewMapReduce[[]byte](nil, nil, nil))
-		hub := NewHub(context.Background(), thesis, nil, nil, nil, make(chan types.FluidFrame, 1))
+		hub := NewHub(context.Background(), thesis, nil, nil, nil, transport.NewMapReduce[types.FluidFrame](nil, nil, nil))
 		serveErr := make(chan error, 1)
 
 		go func() {
@@ -99,7 +99,7 @@ func TestHubReadinessPublication(t *testing.T) {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		So(err, ShouldBeNil)
 		thesis := types.NewThesis(context.Background(), transport.NewMapReduce[[]byte](nil, nil, nil))
-		hub := NewHub(context.Background(), thesis, nil, nil, nil, make(chan types.FluidFrame, 1))
+		hub := NewHub(context.Background(), thesis, nil, nil, nil, transport.NewMapReduce[types.FluidFrame](nil, nil, nil))
 		serveErr := make(chan error, 1)
 
 		go func() {

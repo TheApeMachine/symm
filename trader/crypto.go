@@ -32,7 +32,7 @@ type Crypto struct {
 	cancel        context.CancelFunc
 	api           *websocket.API
 	ui            *transport.MapReduce[[]byte]
-	manifold      chan types.FluidFrame
+	manifold      *transport.MapReduce[types.FluidFrame]
 	thesis        *types.Thesis
 	recorder      *audit.Recorder
 	analyzer      *logic.Analyzer
@@ -49,7 +49,7 @@ func NewCrypto(
 	ctx context.Context,
 	api *websocket.API,
 	ui *transport.MapReduce[[]byte],
-	manifold chan types.FluidFrame,
+	manifold *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
 	desk *broker.Desk,
 	analyzer *logic.Analyzer,

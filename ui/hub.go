@@ -48,6 +48,7 @@ type Hub struct {
 	playback   playback
 	captures   func() any
 	fluid      *FluidRTC
+	manifold   *transport.MapReduce[types.FluidFrame]
 }
 
 /*
@@ -67,7 +68,7 @@ func NewHub(
 	desk *broker.Desk,
 	price *broker.Price,
 	balance *broker.Balance,
-	manifold chan types.FluidFrame,
+	manifold *transport.MapReduce[types.FluidFrame],
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -84,9 +85,14 @@ func NewHub(
 			ReadBufferSize:  4 * 1024 * 1024,
 			WriteBufferSize: 4 * 1024 * 1024,
 		}),
-		price:   price,
-		balance: balance,
-		fluid:   NewFluidRTC(ctx),
+		price:     price,
+		balance:   balance,
+		fluid:     NewFluidRTC(ctx),
+		manifold:  manifold,
+	}
+
+	if manifold != nil {
+		go hub.fluid.Run(manifold, "fluid")
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {

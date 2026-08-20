@@ -2,31 +2,27 @@ package utils
 
 import (
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-PublishFluid sends one manifold frame to a named fluid data channel, dropping it
-when the transport is already saturated on the same terms as Publish.
+PublishFluid appends one manifold frame to the lock-free fluid transport. The
+transport is an unbounded MapReduce queue, so a publish never blocks and never
+drops; the WebRTC hub consumer drains it onto the channel it names.
 */
 func PublishFluid(
-	fluid chan types.FluidFrame, channel string, data datura.Map[any],
+	fluid *transport.MapReduce[types.FluidFrame], channel string, data datura.Map[any],
 ) {
 	if data == nil || fluid == nil {
 		data.Free()
 		return
 	}
 
-	select {
-	case fluid <- types.FluidFrame{
+	fluid.Push(types.FluidFrame{
 		Channel: channel,
 		Payload: data.MarshalAndFree(),
-	}:
-	default:
-		errnie.Warn("fluid channel is saturated")
-	}
+	})
 }
 
 /*

@@ -40,7 +40,7 @@ type Analyzer struct {
 	tree         *dmt.Tree
 	solverGroups [][]Solver
 	ui           *transport.MapReduce[[]byte]
-	binui        chan types.FluidFrame
+	binui        *transport.MapReduce[types.FluidFrame]
 	recorder     *audit.Recorder
 
 	// ObserveModule / ObserveHop are optional diagnostics hooks. When set, the
@@ -59,7 +59,7 @@ func NewAnalyzer(
 	api *websocket.API,
 	tree *dmt.Tree,
 	ui *transport.MapReduce[[]byte],
-	binui chan types.FluidFrame,
+	binui *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
 	thesis *types.Thesis,
 ) *Analyzer {
