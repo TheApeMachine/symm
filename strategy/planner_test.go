@@ -7,10 +7,10 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/mcts"
-	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	logicgraph "github.com/theapemachine/symm/types"
 )
 
 func TestNewPlanner(t *testing.T) {
@@ -185,8 +185,8 @@ func plannerGraphThesis(
 ) *types.Thesis {
 	t.Helper()
 	thesis := types.NewThesis(t.Context(), nil)
-	symbol := types.NewSymbol("BTC/USD", nil)
-	symbol.Graphs.Store("market_graph", plannerGraph(symbol.Symbol, relation))
+	symbol := types.NewSymbol("BTC/USD")
+	symbol.Graphs.Push(plannerGraph(symbol.Symbol, relation))
 	thesis.Symbols.Store(symbol.Symbol, symbol)
 	return thesis
 }
@@ -199,8 +199,12 @@ func plannerReadyGraphThesis(
 	thesis := plannerGraphThesis(t, relation)
 	stored, _ := thesis.Symbols.Load("BTC/USD")
 	symbol := stored.(*types.Symbol)
-	graphValue, _ := symbol.Graphs.Load("market_graph")
-	graph := graphValue.(*logicgraph.Graph)
+	var graph *logicgraph.Graph
+
+	for candidate := range symbol.MarketGraphs(types.SourceGraph) {
+		graph = candidate
+	}
+
 	graph.Forecast = &learning.RLSOutput{
 		Value:            0.01,
 		Scale:            0.005,
@@ -243,13 +247,19 @@ func decisionOf(thesis *types.Thesis, symbol string) *types.Decision {
 		return nil
 	}
 
-	decisionValue, found := stored.(*types.Symbol).Decisions.Load(symbol)
+	var decision types.Decision
 
-	if !found {
+	for candidate := range stored.(*types.Symbol).Decisions.Drain("audit", func(types.Decision) bool {
+		return true
+	}) {
+		decision = candidate
+	}
+
+	if decision.Symbol == "" {
 		return nil
 	}
 
-	return decisionValue.(*types.Decision)
+	return &decision
 }
 
 func BenchmarkPlannerUpdate(b *testing.B) {

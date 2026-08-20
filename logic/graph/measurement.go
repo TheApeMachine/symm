@@ -17,7 +17,7 @@ measurementIndex resolves the exact metric samples named by category and
 relationship artifacts without reconstructing identity from node labels.
 */
 type measurementIndex struct {
-	byReference map[string][]*Node
+	byReference map[string][]*types.Node
 	bySource    map[string][]*nmtypes.Measurement
 }
 
@@ -34,10 +34,10 @@ func newMeasurementCompiler() *measurementCompiler {
 func (compiler *measurementCompiler) addNodes(
 	symbol string,
 	measurements iter.Seq[*nmtypes.Measurement],
-	graph *Graph,
+	graph *types.Graph,
 ) (*measurementIndex, error) {
 	index := &measurementIndex{
-		byReference: make(map[string][]*Node),
+		byReference: make(map[string][]*types.Node),
 		bySource:    make(map[string][]*nmtypes.Measurement),
 	}
 	for measurement := range measurements {
@@ -55,7 +55,7 @@ func (compiler *measurementCompiler) addNodes(
 	}
 
 	for _, node := range graph.Nodes {
-		if node.Kind != KindMeasurement {
+		if node.Kind != types.KindMeasurement {
 			continue
 		}
 
@@ -71,7 +71,7 @@ func (compiler *measurementCompiler) addNodes(
 
 func (compiler *measurementCompiler) addMeasurement(
 	measurement *nmtypes.Measurement,
-	graph *Graph,
+	graph *types.Graph,
 	index *measurementIndex,
 ) error {
 	if measurement.ID == "" || measurement.Source == "" ||
@@ -150,8 +150,8 @@ func measurementNode(
 	metric types.MetricType,
 	side types.MeasurementSide,
 	sample *nmtypes.Metric[float64],
-) *Node {
-	node := &Node{
+) *types.Node {
+	node := &types.Node{
 		ID:            measurementNodeID(measurement, metricKey),
 		Symbol:        measurement.Symbol,
 		Peer:          measurement.Peer,
@@ -159,7 +159,7 @@ func measurementNode(
 		MeasurementID: measurement.ID,
 		Metric:        metric,
 		Side:          side,
-		Kind:          KindMeasurement,
+		Kind:          types.KindMeasurement,
 		Value:         sample.Raw,
 		Normalized:    cloneFloat(sample.Normalized),
 		Maturity:      measurement.Maturity,
@@ -240,40 +240,34 @@ func cloneFloat(value *float64) *float64 {
 
 func (compiler *measurementCompiler) addCategoryEdges(
 	symbol *types.Symbol,
-	graph *Graph,
+	graph *types.Graph,
 	index *measurementIndex,
 ) error {
-	stored, found := symbol.Categories.Load(symbol.Symbol)
+	for batch := range symbol.MarketCategories(types.SourceGraph) {
+		for _, category := range batch {
+			if category.Type == types.CategoryTypeNone {
+				continue
+			}
 
-	if !found {
-		return nil
-	}
+			if category.Symbol != symbol.Symbol {
+				return fmt.Errorf(
+					"category symbol %s does not match graph symbol %s",
+					category.Symbol,
+					symbol.Symbol,
+				)
+			}
 
-	categories := stored.([]types.Category)
+			if err := compiler.addCategoryRelations(
+				category, category.Supporting, types.RelationSupports, graph, index,
+			); err != nil {
+				return err
+			}
 
-	for _, category := range categories {
-		if category.Type == types.CategoryTypeNone {
-			continue
-		}
-
-		if category.Symbol != symbol.Symbol {
-			return fmt.Errorf(
-				"category symbol %s does not match graph symbol %s",
-				category.Symbol,
-				symbol.Symbol,
-			)
-		}
-
-		if err := compiler.addCategoryRelations(
-			category, category.Supporting, RelationSupports, graph, index,
-		); err != nil {
-			return err
-		}
-
-		if err := compiler.addCategoryRelations(
-			category, category.Opposing, RelationContradicts, graph, index,
-		); err != nil {
-			return err
+			if err := compiler.addCategoryRelations(
+				category, category.Opposing, types.RelationContradicts, graph, index,
+			); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -283,8 +277,8 @@ func (compiler *measurementCompiler) addCategoryEdges(
 func (compiler *measurementCompiler) addCategoryRelations(
 	category types.Category,
 	references []string,
-	relation RelationType,
-	graph *Graph,
+	relation types.RelationType,
+	graph *types.Graph,
 	index *measurementIndex,
 ) error {
 	targetID := fmt.Sprintf("cat:%s:%s", category.Symbol, category.Type)
@@ -316,7 +310,7 @@ func (compiler *measurementCompiler) addCategoryRelations(
 				continue
 			}
 
-			graph.AddEdge(&Edge{
+			graph.AddEdge(&types.Edge{
 				From:         node.ID,
 				To:           targetID,
 				Relation:     relation,

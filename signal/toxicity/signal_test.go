@@ -28,6 +28,7 @@ func TestToxicityNumber(t *testing.T) {
 		Convey("It should emit an honesty reading per frame", func() {
 			measurements := []*nmtypes.Measurement{}
 
+			time.Sleep(50 * time.Millisecond)
 			for measurement := range market.MarketMeasurements("category") {
 				measurements = append(measurements, measurement)
 			}

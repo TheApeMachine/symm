@@ -1,16 +1,18 @@
 package causal
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestObserve(t *testing.T) {
 	Convey("Given one pending causal forecast", t, func() {
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(types.NewThesis(context.Background(), nil), nil, nil, nil)
 		at := time.Unix(1, 0)
 		features := [3]float64{0.25, 0.5, 0.01}
 		_, _, resolved, err := solver.observe(
@@ -72,7 +74,7 @@ func TestObserve(t *testing.T) {
 }
 
 func BenchmarkObserve(b *testing.B) {
-	solver := NewSolver(nil, nil, nil)
+	solver := NewSolver(types.NewThesis(context.Background(), nil), nil, nil, nil)
 	at := time.Unix(1, 0)
 	midpoint := 100.0
 	features := [3]float64{0.25, 0.5, 0.01}

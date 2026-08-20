@@ -1,9 +1,10 @@
 package category
 
 import (
-	"fmt"
+	"context"
 	"iter"
 	"math"
+	"runtime"
 	"slices"
 
 	"github.com/theapemachine/errnie"
@@ -20,6 +21,9 @@ tick. A category is a hypothesis about what the market is doing, and each
 metric that carries affinity is typed evidence for or against it.
 */
 type Solver struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	thesis     *types.Thesis
 	classifier *probability.Classifier
 	categories []types.CategoryType
 	api        *websocket.API
@@ -31,10 +35,14 @@ type Solver struct {
 NewSolver creates a new Solver for the category logic.
 */
 func NewSolver(
+	ctx context.Context,
+	thesis *types.Thesis,
 	api *websocket.API,
 	ui chan []byte,
 	recorder *audit.Recorder,
 ) *Solver {
+	ctx, cancel := context.WithCancel(ctx)
+
 	categories := make([]types.CategoryType, 0, len(types.CategorySchemas))
 	categoryNames := make([]string, 0, len(types.CategorySchemas))
 
@@ -47,7 +55,10 @@ func NewSolver(
 		categoryNames = append(categoryNames, string(schema.Category))
 	}
 
-	return &Solver{
+	solver := &Solver{
+		ctx:    ctx,
+		cancel: cancel,
+		thesis: thesis,
 		classifier: probability.NewClassifier(
 			probability.ClassifierSchema{Categories: categoryNames},
 		),
@@ -56,6 +67,9 @@ func NewSolver(
 		recorder:   recorder,
 		ui:         ui,
 	}
+
+	go solver.run()
+	return solver
 }
 
 func (solver *Solver) Name() string {
@@ -63,70 +77,95 @@ func (solver *Solver) Name() string {
 }
 
 /*
-Update scores the configured categories against the measurements this tick
-carried and records one classified artifact per symbol.
-Categories are the substrate the graph and the cognition tree are built from,
-so they are derived before either runs.
+run consumes each symbol's measurement stream from its own input MapReduce (the
+symbol Measurements column) and pushes the derived category batches to the
+output MapReduce the downstream cognition and graph solvers consume. The
+category stage never re-materializes the iterator; each measurement batch is
+classified and forwarded inline.
 */
-func (solver *Solver) Update(thesis *types.Thesis) error {
-	var classificationErr error
-
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbolName, nameOK := key.(string)
-		symbol, symbolOK := value.(*types.Symbol)
-
-		if !nameOK || symbolName == "" || !symbolOK || symbol == nil {
-			classificationErr = errnie.Error(errnie.Err(
-				errnie.Internal,
-				fmt.Sprintf(
-					"category: failed to classify symbol - invalid key or value: %v, %v",
-					key, value,
-				),
-				nil,
-			))
-
-			return false
+func (solver *Solver) run() {
+	for {
+		select {
+		case <-solver.ctx.Done():
+			return
+		default:
 		}
 
-		categories, measured, err := solver.classify(
-			symbolName,
-			symbol.MarketMeasurements("category"),
-		)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				fmt.Sprintf(
-					"category: failed to classify symbol %s - %v",
-					symbolName, err,
-				),
-				err,
-			))
-			classificationErr = err
-			return false
+		if !solver.pending() {
+			// No symbol has new measurements; yield before polling again instead
+			// of draining the whole stage on an empty queue.
+			runtime.Gosched()
+			continue
 		}
 
-		if measured {
-			for index := range categories {
-				categories[index].At = thesis.At
+		solver.thesis.Symbols.Range(func(key, value any) bool {
+			symbolName, nameOK := key.(string)
+			symbol, symbolOK := value.(*types.Symbol)
+
+			if !nameOK || symbolName == "" || !symbolOK || symbol == nil {
+				return true
 			}
 
-			symbol.Categories.Store(symbolName, categories)
+			if symbol.Measurements.Length() == 0 {
+				return true
+			}
+
+			categories, measured, err := solver.classify(
+				symbolName,
+				symbol.MarketMeasurements("category"),
+			)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.Internal,
+					"category: failed to classify symbol",
+					err,
+				).With("symbol", symbolName))
+
+				return true
+			}
+
+			if measured {
+				for index := range categories {
+					categories[index].At = solver.thesis.At
+				}
+
+				symbol.Categories.Push(categories)
+			}
+
 			return true
+		})
+	}
+}
+
+/*
+pending reports whether any symbol has unconsumed measurements on its input
+MapReduce, so the run loop can yield without processing when idle.
+*/
+func (solver *Solver) pending() bool {
+	if solver.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	solver.thesis.Symbols.Range(func(_, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		if symbol.Measurements.Length() > 0 {
+			hasWork = true
+
+			return false
 		}
 
 		return true
 	})
 
-	if classificationErr != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"category: failed to classify categories - "+classificationErr.Error(),
-			classificationErr,
-		))
-	}
-
-	return nil
+	return hasWork
 }
 
 func (solver *Solver) classify(

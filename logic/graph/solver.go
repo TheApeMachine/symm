@@ -1,12 +1,12 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"slices"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
@@ -20,537 +20,36 @@ import (
 )
 
 /*
-RelationType describes directional edge relationships between market nodes.
-*/
-type RelationType string
-
-const (
-	RelationSupports         RelationType = "supports"
-	RelationContradicts      RelationType = "contradicts"
-	RelationConditions       RelationType = "conditions"
-	RelationLeads            RelationType = "leads"
-	RelationLags             RelationType = "lags"
-	RelationRedundantWith    RelationType = "redundant_with"
-	RelationIndependentOf    RelationType = "independent_of"
-	RelationStaleRelativeTo  RelationType = "stale_relative_to"
-	RelationIncomparableWith RelationType = "incomparable_with"
-)
-
-/*
-Kind describes the type of node in the knowledge graph.
-*/
-type Kind string
-
-const (
-	KindMeasurement Kind = "measurement"
-	KindCategory    Kind = "category"
-	KindManifold    Kind = "manifold"
-	KindResonance   Kind = "resonance"
-	KindCausal      Kind = "causal"
-	KindCognition   Kind = "cognition"
-	KindPrediction  Kind = "prediction"
-	KindHypothesis  Kind = "hypothesis"
-)
-
-/*
-Node represents a discrete market entity, metric, category, or latent state.
-*/
-type Node struct {
-	ID            string                `json:"id"`
-	Symbol        string                `json:"symbol,omitempty"`
-	Peer          string                `json:"peer,omitempty"`
-	Source        string                `json:"source,omitempty"`
-	MeasurementID string                `json:"measurementId,omitempty"`
-	Metric        types.MetricType      `json:"metric,omitempty"`
-	Side          types.MeasurementSide `json:"side,omitempty"`
-	Kind          Kind                  `json:"kind"`
-	Value         float64               `json:"value"`
-	Normalized    *float64              `json:"normalized,omitempty"`
-	Quality       *float64              `json:"quality,omitempty"`
-	Strength      float64               `json:"strength,omitempty"`
-	Confidence    float64               `json:"confidence"`
-	Maturity      float64               `json:"maturity,omitempty"`
-	Unit          types.MeasurementUnit `json:"unit,omitempty"`
-	ObservedFrom  time.Time             `json:"observedFrom,omitempty"`
-	Horizon       time.Duration         `json:"horizon,omitempty"`
-	At            time.Time             `json:"at"`
-	Metadata      map[string]any        `json:"metadata,omitempty"`
-}
-
-/*
-Edge represents a directed, weighted relationship from Node A to Node B.
-*/
-type Edge struct {
-	From         string        `json:"from"`
-	To           string        `json:"to"`
-	Relation     RelationType  `json:"relation"`
-	Weight       float64       `json:"weight"`
-	Confidence   float64       `json:"confidence"`
-	Quality      *float64      `json:"quality,omitempty"`
-	Evidence     []string      `json:"evidence,omitempty"`
-	ObservedFrom time.Time     `json:"observedFrom,omitempty"`
-	Horizon      time.Duration `json:"horizon,omitempty"`
-	At           time.Time     `json:"at"`
-	Reason       string        `json:"reason,omitempty"`
-}
-
-/*
-Graph is the relational knowledge graph accumulated during one Thesis lifecycle.
-*/
-type Graph struct {
-	mu              sync.RWMutex
-	At              time.Time           `json:"at"`
-	Forecast        *learning.RLSOutput `json:"-"`
-	ForecastHorizon int                 `json:"forecastHorizon"`
-	ForwardCurve    []float64           `json:"-"`
-	TaskSkill       float64             `json:"taskSkill"`
-	TaskSkillReady  bool                `json:"taskSkillReady"`
-	DecisionTarget  string              `json:"decisionTarget,omitempty"`
-	Nodes           map[string]*Node    `json:"nodes"`
-	Edges           []*Edge             `json:"edges"`
-	Adjacency       map[string][]string `json:"adjacency"` // Fast lookup: NodeID -> []TargetNodeIDs
-}
-
-/*
-Clone returns an isolated point-in-time snapshot of the graph.
-*/
-func (graph *Graph) Clone() *Graph {
-	if graph == nil {
-		return nil
-	}
-
-	graph.mu.RLock()
-	defer graph.mu.RUnlock()
-
-	nodes := make(map[string]*Node, len(graph.Nodes))
-
-	for id, node := range graph.Nodes {
-		nodes[id] = node
-	}
-
-	edges := make([]*Edge, len(graph.Edges))
-	copy(edges, graph.Edges)
-
-	adjacency := make(map[string][]string, len(graph.Adjacency))
-
-	for id, targets := range graph.Adjacency {
-		adjacency[id] = slices.Clone(targets)
-	}
-
-	return &Graph{
-		At:              graph.At,
-		Forecast:        graph.Forecast,
-		ForecastHorizon: graph.ForecastHorizon,
-		ForwardCurve:    slices.Clone(graph.ForwardCurve),
-		TaskSkill:       graph.TaskSkill,
-		TaskSkillReady:  graph.TaskSkillReady,
-		DecisionTarget:  graph.DecisionTarget,
-		Nodes:           nodes,
-		Edges:           edges,
-		Adjacency:       adjacency,
-	}
-}
-
-/*
-CheckpointState includes the forecast omitted from the dashboard graph wire.
-*/
-func (graph *Graph) CheckpointState() any {
-	if graph == nil {
-		return nil
-	}
-
-	graph.mu.RLock()
-	defer graph.mu.RUnlock()
-
-	return struct {
-		At              time.Time           `json:"at"`
-		Forecast        *learning.RLSOutput `json:"forecast,omitempty"`
-		ForecastHorizon int                 `json:"forecastHorizon"`
-		ForwardCurve    []float64           `json:"forwardCurve"`
-		TaskSkill       float64             `json:"taskSkill"`
-		TaskSkillReady  bool                `json:"taskSkillReady"`
-		DecisionTarget  string              `json:"decisionTarget,omitempty"`
-		Nodes           map[string]*Node    `json:"nodes"`
-		Edges           []*Edge             `json:"edges"`
-		Adjacency       map[string][]string `json:"adjacency"`
-	}{
-		At:              graph.At,
-		Forecast:        graph.Forecast,
-		ForecastHorizon: graph.ForecastHorizon,
-		ForwardCurve:    slices.Clone(graph.ForwardCurve),
-		TaskSkill:       graph.TaskSkill,
-		TaskSkillReady:  graph.TaskSkillReady,
-		DecisionTarget:  graph.DecisionTarget,
-		Nodes:           graph.Nodes,
-		Edges:           graph.Edges,
-		Adjacency:       graph.Adjacency,
-	}
-}
-
-/*
-NewGraph creates an empty graph initialized with node and adjacency maps.
-*/
-func NewGraph(at time.Time) *Graph {
-	return &Graph{
-		At:        at,
-		Nodes:     make(map[string]*Node),
-		Edges:     make([]*Edge, 0),
-		Adjacency: make(map[string][]string),
-	}
-}
-
-/*
-AddNode registers the latest value for a stable node identity.
-*/
-func (graph *Graph) AddNode(node *Node) {
-	if node == nil || node.ID == "" {
-		panic("graph: node and node ID required")
-	}
-
-	graph.mu.Lock()
-	defer graph.mu.Unlock()
-
-	graph.Nodes[node.ID] = node
-}
-
-/*
-AddEdge connects two nodes with a directional, weighted relationship.
-*/
-func (graph *Graph) AddEdge(edge *Edge) {
-	if edge == nil || edge.From == "" || edge.To == "" {
-		panic("graph: edge and endpoint IDs required")
-	}
-
-	graph.mu.Lock()
-	defer graph.mu.Unlock()
-
-	if _, found := graph.Nodes[edge.From]; !found {
-		panic("graph: source node not registered: " + edge.From)
-	}
-
-	if _, found := graph.Nodes[edge.To]; !found {
-		panic("graph: target node not registered: " + edge.To)
-	}
-
-	for index, current := range graph.Edges {
-		if current.From == edge.From && current.To == edge.To &&
-			slices.Equal(current.Evidence, edge.Evidence) {
-			graph.Edges[index] = edge
-			return
-		}
-	}
-
-	graph.Edges = append(graph.Edges, edge)
-
-	if !slices.Contains(graph.Adjacency[edge.From], edge.To) {
-		graph.Adjacency[edge.From] = append(graph.Adjacency[edge.From], edge.To)
-	}
-}
-
-/*
-OpportunitySummary is the dimensionless evidence balance for the graph's
-explicit decision proposition. Conditions are reported separately and never
-smuggled into directional support.
-*/
-type OpportunitySummary struct {
-	Hypothesis    string
-	Support       float64
-	Contradiction float64
-	Conditions    float64
-	Balance       float64
-	Confidence    float64
-	Score         float64
-	Direction     float64
-	Ready         bool
-}
-
-/*
-Roots returns only evidence roots that can reach the configured decision
-proposition. The graph remains fully visible on the wire, but MCTS no longer
-spends simulations on disconnected explanatory islands.
-*/
-func (graph *Graph) Roots() []string {
-	if graph == nil {
-		return nil
-	}
-
-	graph.mu.RLock()
-	defer graph.mu.RUnlock()
-
-	relevant := graph.relevantNodes()
-	incoming := make(map[string]bool)
-
-	for _, edge := range graph.Edges {
-		if !relevant[edge.From] || !relevant[edge.To] {
-			continue
-		}
-
-		incoming[edge.To] = true
-	}
-
-	roots := make([]string, 0)
-
-	for nodeID := range relevant {
-		if nodeID == graph.DecisionTarget {
-			continue
-		}
-
-		node := graph.Nodes[nodeID]
-
-		if node == nil {
-			continue
-		}
-
-		if node.Kind == KindCognition {
-			held, _ := node.Metadata["held"].(bool)
-
-			if held {
-				continue
-			}
-		}
-
-		if !incoming[nodeID] {
-			roots = append(roots, nodeID)
-		}
-	}
-
-	/*
-		A relevant cycle can have no conventional root. In that case the direct
-		predecessors of the decision proposition are honest entry points: every
-		one is an evidence statement the search can evaluate immediately.
-	*/
-	if len(roots) == 0 && graph.DecisionTarget != "" {
-		for _, edge := range graph.Edges {
-			if edge.To == graph.DecisionTarget && relevant[edge.From] {
-				roots = append(roots, edge.From)
-			}
-		}
-	}
-
-	slices.Sort(roots)
-	roots = slices.Compact(roots)
-	return roots
-}
-
-func (graph *Graph) relevantNodes() map[string]bool {
-	relevant := make(map[string]bool)
-
-	if graph == nil {
-		return relevant
-	}
-
-	if graph.DecisionTarget == "" || graph.Nodes[graph.DecisionTarget] == nil {
-		for nodeID := range graph.Nodes {
-			relevant[nodeID] = true
-		}
-
-		return relevant
-	}
-
-	reverse := make(map[string][]string)
-
-	for _, edge := range graph.Edges {
-		reverse[edge.To] = append(reverse[edge.To], edge.From)
-	}
-
-	queue := []string{graph.DecisionTarget}
-
-	for len(queue) > 0 {
-		nodeID := queue[0]
-		queue = queue[1:]
-
-		if relevant[nodeID] {
-			continue
-		}
-
-		relevant[nodeID] = true
-		queue = append(queue, reverse[nodeID]...)
-	}
-
-	return relevant
-}
-
-/*
-ReadyForSearch reports whether the lifecycle has an explicit proposition,
-directional evidence for or against it, and at least one explanatory root that
-can reach it. Predictive coding may contribute, but it is not a prerequisite.
-*/
-func (graph *Graph) ReadyForSearch() bool {
-	if graph == nil {
-		return false
-	}
-
-	// OpportunitySummary and Roots each take their own read lock, so no field
-	// is read here outside a lock. Reading graph.Nodes/DecisionTarget directly
-	// would race the analyzer's Update and fatally corrupt the map.
-	summary := graph.OpportunitySummary()
-	return summary.Ready && len(graph.Roots()) > 0
-}
-
-/*
-SearchableEnough is the defer gate the planner runs before spending search
-effort. A graph is searchable only once its decision proposition carries
-directional evidence whose confidence mass clears minimumConfidence. Anything
-below that is a sparse proposition — the honest move is to defer and let the
-thesis accumulate more observations, not to search an opportunity that barely
-exists yet.
-*/
-func (graph *Graph) SearchableEnough(minimumConfidence float64) bool {
-	if graph == nil {
-		return false
-	}
-
-	summary := graph.OpportunitySummary()
-
-	if !summary.Ready {
-		return false
-	}
-
-	return summary.Confidence >= minimumConfidence
-}
-
-func (graph *Graph) Targets(nodeID string) []string {
-	return slices.Clone(graph.Adjacency[nodeID])
-}
-
-func (graph *Graph) NodeValue(nodeID string) (float64, float64) {
-	node := graph.Nodes[nodeID]
-
-	if node == nil {
-		return 0, 0
-	}
-
-	return node.Value, node.Confidence
-}
-
-/*
-EdgeValue states graph relations in the reward domain used by MCTS. Supports
-and contradictions are signed evidence. Conditions, temporal links,
-redundancy, and independence remain traversable context with zero directional
-reward. Stale or incomparable claims count against a decision because they
-cannot justify risking current capital.
-*/
-func (graph *Graph) EdgeValue(from, to string) (float64, float64) {
-	evidenceMass := 0.0
-	confidenceMass := 0.0
-	relationCount := 0
-
-	for _, edge := range graph.Edges {
-		if edge.From != from || edge.To != to {
-			continue
-		}
-
-		sign := relationSign(edge.Relation)
-		evidenceMass += sign * edge.Weight * edge.Confidence
-		confidenceMass += edge.Confidence
-		relationCount++
-	}
-
-	if relationCount > 0 && confidenceMass > 0 {
-		return evidenceMass / confidenceMass,
-			confidenceMass / float64(relationCount)
-	}
-
-	panic("graph: edge not found from " + from + " to " + to)
-}
-
-func relationSign(relation RelationType) float64 {
-	switch relation {
-	case RelationSupports:
-		return 1
-	case RelationContradicts, RelationStaleRelativeTo, RelationIncomparableWith:
-		return -1
-	default:
-		return 0
-	}
-}
-
-/*
-OpportunitySummary reduces only edges that directly address the proposition.
-Intermediate graph structure remains available to MCTS but is not counted a
-second time in the thesis balance.
-*/
-func (graph *Graph) OpportunitySummary() OpportunitySummary {
-	summary := OpportunitySummary{}
-
-	if graph == nil {
-		return summary
-	}
-
-	graph.mu.RLock()
-	defer graph.mu.RUnlock()
-
-	if graph.DecisionTarget == "" ||
-		graph.Nodes == nil ||
-		graph.Nodes[graph.DecisionTarget] == nil {
-		return summary
-	}
-
-	summary.Hypothesis = graph.DecisionTarget
-	confidenceMass := 0.0
-	confidenceWeight := 0.0
-
-	for _, edge := range graph.Edges {
-		if edge.To != graph.DecisionTarget || edge.Weight <= 0 || edge.Confidence <= 0 {
-			continue
-		}
-
-		mass := edge.Weight * edge.Confidence
-
-		switch relationSign(edge.Relation) {
-		case 1:
-			summary.Support += mass
-			confidenceMass += edge.Weight * edge.Confidence
-			confidenceWeight += edge.Weight
-		case -1:
-			summary.Contradiction += mass
-			confidenceMass += edge.Weight * edge.Confidence
-			confidenceWeight += edge.Weight
-		default:
-			summary.Conditions += mass
-		}
-	}
-
-	directional := summary.Support + summary.Contradiction
-
-	if !(directional > 0) || !(confidenceWeight > 0) {
-		return summary
-	}
-
-	summary.Balance = (summary.Support - summary.Contradiction) / directional
-	summary.Confidence = confidenceMass / confidenceWeight
-	summary.Score = summary.Balance * summary.Confidence
-	summary.Ready = true
-
-	if summary.Score > 0 {
-		summary.Direction = 1
-	} else if summary.Score < 0 {
-		summary.Direction = -1
-	}
-
-	return summary
-}
-
-/*
 Solver compiles all upstream evidence (Measurements, Manifold, Resonance, Causal, Cognition)
 into a Directed Knowledge Graph for the Strategy package.
 */
 type Solver struct {
+	ctx          context.Context
+	cancel       context.CancelFunc
+	thesis       *types.Thesis
 	recorder     *audit.Recorder
 	measurements *measurementCompiler
 	ui           chan []byte
+	lastBuilt    map[string]*types.Graph
 }
 
 /*
 NewSolver creates a graph solver.
 */
-func NewSolver(ui chan []byte, recorder *audit.Recorder) *Solver {
+func NewSolver(thesis *types.Thesis, ui chan []byte, recorder *audit.Recorder) *Solver {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	solver := &Solver{
+		ctx:          ctx,
+		cancel:       cancel,
+		thesis:       thesis,
 		recorder:     recorder,
 		measurements: newMeasurementCompiler(),
 		ui:           ui,
+		lastBuilt:    make(map[string]*types.Graph),
 	}
 
+	go solver.run()
 	return solver
 }
 
@@ -559,38 +58,101 @@ func (solver *Solver) Name() string {
 }
 
 /*
-Update streams newly available evidence into the graph owned by the current
-Thesis lifecycle. The graph is replaced only after a completed planner evaluation.
+run consumes each symbol's lifecycle-graph stream (the planner backfeed pushed
+onto the Graphs MapReduce) and rebuilds the fully-connected graph from all
+upstream evidence, writing the result back to the same Graphs output MapReduce
+the next stage consumes.
 */
-func (solver *Solver) Update(thesis *types.Thesis) error {
-	var graphErr error
+func (solver *Solver) run() {
+	if solver.thesis == nil {
+		return
+	}
 
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbol, ok := value.(*types.Symbol)
+	for {
+		select {
+		case <-solver.ctx.Done():
+			return
+		default:
+		}
 
-		if !ok || symbol == nil {
+		if !solver.pending() {
+			// No symbol has an unconsumed lifecycle graph request; yield before
+			// re-scanning the stage instead of draining empty graphs.
+			runtime.Gosched()
+			continue
+		}
+
+		solver.thesis.Symbols.Range(func(key, value any) bool {
+			symbol, ok := value.(*types.Symbol)
+
+			if !ok || symbol == nil {
+				return true
+			}
+
+			symbolName, ok := key.(string)
+
+			if !ok || symbolName == "" {
+				return true
+			}
+
+			if symbol.Graphs.Length() == 0 {
+				return true
+			}
+
+			solver.buildGraph(symbolName, symbol)
+
+			return true
+		})
+	}
+}
+
+/*
+pending reports whether any symbol has an unconsumed graph request on its input
+MapReduce, so the run loop can yield without processing when idle.
+*/
+func (solver *Solver) pending() bool {
+	hasWork := false
+
+	solver.thesis.Symbols.Range(func(_, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
 			return true
 		}
 
-		symbolName, ok := key.(string)
+		if symbol.Graphs.Length() > 0 {
+			hasWork = true
 
-		if !ok || symbolName == "" {
-			return true
+			return false
 		}
 
-		storedGraph, _ := symbol.Graphs.LoadOrStore(
-			"market_graph",
-			NewGraph(thesis.At),
-		)
-		current, valid := storedGraph.(*Graph)
+		return true
+	})
 
-		if !valid || current == nil {
-			graphErr = errnie.Error(errnie.Err(
+	return hasWork
+}
+
+/*
+buildGraph streams every lifecycle graph queued for this symbol and rebuilds
+each into an isolated clone before publishing it back to the Graphs output.
+*/
+func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
+	symbol.Graphs.Drain(string(SourcePlanner), func(graph *types.Graph) bool {
+		if graph == nil {
+			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: invalid lifecycle graph for "+symbolName,
 				nil,
 			))
+
 			return false
+		}
+
+		// The re-published graph sits back on the same output MapReduce the
+		// planner pushes requests onto. Skip our own output so the stage does
+		// not livelock rebuilding the graph it just wrote.
+		if graph == solver.lastBuilt[symbolName] {
+			return true
 		}
 
 		// Build this pass into an isolated clone and publish it only when
@@ -599,8 +161,8 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		// ever read while it is being written — the fatal concurrent map
 		// read-and-write cannot happen. The published graph is never mutated
 		// again; the next pass clones it.
-		graph := current.Clone()
-		graph.At = thesis.At
+		graph = graph.Clone()
+		graph.At = solver.thesis.At
 		lifecycleEmpty := len(graph.Nodes) == 0
 		measurementIndex, err := solver.measurements.addNodes(
 			symbolName,
@@ -609,11 +171,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		)
 
 		if err != nil {
-			graphErr = errnie.Error(errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: failed to extract measurement nodes - "+err.Error(),
 				err,
 			))
+
 			return false
 		}
 
@@ -622,33 +185,17 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		}
 
 		solver.extractCategoryNodes(symbol, graph)
-		solver.extractManifoldNodes(thesis, graph)
+		solver.extractManifoldNodes(solver.thesis, graph)
 		solver.extractResonanceNodes(symbol, graph)
 
-		causalValue, causalFound := symbol.Causal.Load(symbolName)
+		if err := solver.extractCausalNodes(symbol, graph); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"graph: failed to extract causal nodes - "+err.Error(),
+				err,
+			))
 
-		if causalFound {
-			causalMap, mapOK := causalValue.(map[string]any)
-
-			if !mapOK {
-				graphErr = errnie.Error(errnie.Err(
-					errnie.Validation,
-					"graph: invalid causal artifact for "+symbolName,
-					nil,
-				))
-				return false
-			}
-
-			if causalValuesPresent(causalMap) {
-				if err := solver.extractCausalNodes(symbol, graph); err != nil {
-					graphErr = errnie.Error(errnie.Err(
-						errnie.Internal,
-						"graph: failed to extract causal nodes - "+err.Error(),
-						err,
-					))
-					return false
-				}
-			}
+			return false
 		}
 
 		solver.extractCognitionNodes(symbol, graph)
@@ -656,68 +203,69 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		if err := solver.measurements.addCategoryEdges(
 			symbol, graph, measurementIndex,
 		); err != nil {
-			graphErr = errnie.Error(errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: failed to relate measurements and categories - "+err.Error(),
 				err,
 			))
+
 			return false
 		}
 
 		if err := solver.measurements.addLeadLagEdges(
 			symbol, graph, measurementIndex,
 		); err != nil {
-			graphErr = errnie.Error(errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"graph: failed to relate lead-lag measurements - "+err.Error(),
 				err,
 			))
+
 			return false
 		}
 
 		if err := solver.inferStructuralEdges(symbol, graph); err != nil {
-			graphErr = errnie.Error(errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.Internal,
 				"graph: failed to infer structural edges - "+err.Error(),
 				err,
 			))
+
 			return false
 		}
 
-		if err := solver.connectLongOpportunity(thesis, symbol, graph); err != nil {
-			graphErr = errnie.Error(errnie.Err(
+		if err := solver.connectLongOpportunity(symbol, graph); err != nil {
+			errnie.Error(errnie.Err(
 				errnie.Internal,
 				"graph: failed to connect long-opportunity hypothesis - "+err.Error(),
 				err,
 			))
+
 			return false
 		}
-
-		symbol.Graphs.Store("market_graph", graph)
 
 		if symbolName == types.Focus() {
 			utils.Publish(solver.ui, datura.NewMap("graph", graph))
 		}
 
+		solver.lastBuilt[symbolName] = graph
+		symbol.Graphs.Push(graph)
+
 		return true
 	})
-
-	return graphErr
 }
 
 /*
 extractCategoryNodes registers active categories as nodes.
 */
 func (solver *Solver) extractCategoryNodes(
-	symbol *types.Symbol, graph *Graph,
+	symbol *types.Symbol, graph *types.Graph,
 ) {
-	stored, found := symbol.Categories.Load(symbol.Symbol)
+	var categories []types.Category
 
-	if !found {
-		return
+	for batch := range symbol.MarketCategories(types.SourceGraph) {
+		categories = batch
 	}
-
-	categories := stored.([]types.Category)
 
 	for _, cat := range categories {
 		if cat.Type == types.CategoryTypeNone {
@@ -761,7 +309,7 @@ fingerprint; each graph reads the same sweep.
 */
 func (solver *Solver) extractManifoldNodes(
 	thesis *types.Thesis,
-	graph *Graph,
+	graph *types.Graph,
 ) {
 	if thesis == nil || graph == nil {
 		return
@@ -825,22 +373,32 @@ extractResonanceNodes registers predictive coding outcomes (surprise and the
 direction call). The call is not a priced return.
 */
 func (solver *Solver) extractResonanceNodes(
-	symbol *types.Symbol, graph *Graph,
+	symbol *types.Symbol, graph *types.Graph,
 ) {
 	if symbol == nil || graph == nil {
 		return
 	}
 
-	stored, forecastFound := symbol.Resonance.Load(types.ResonanceReturnForecastKey)
-	returnForecast, forecastOK := stored.(*types.ResonanceReturnForecast)
+	var (
+		returnForecast *types.ResonanceReturnForecast
+		coder          *learning.ResonanceManifold
+		dynamics       nomagique.Frame
+	)
 
-	if forecastFound && forecastOK && returnForecast.Distribution.Ready {
+	for stored := range symbol.MarketResonance(types.SourceGraph) {
+		switch value := stored.(type) {
+		case *types.ResonanceReturnForecast:
+			returnForecast = value
+		case *learning.ResonanceManifold:
+			coder = value
+		case nomagique.Frame:
+			dynamics = value
+		}
+	}
+
+	if returnForecast != nil && returnForecast.Distribution.Ready {
 		graphForecast := returnForecast.Distribution
-		graph.mu.Lock()
-		graph.Forecast = &graphForecast
-		graph.ForecastHorizon = max(0, returnForecast.Horizon)
-		graph.ForwardCurve = nil
-		graph.mu.Unlock()
+		graph.SetResonanceOutput(&graphForecast, max(0, returnForecast.Horizon))
 
 		if returnForecast.Call != 0 {
 			confidence := directionPosteriorConfidence(
@@ -849,7 +407,7 @@ func (solver *Solver) extractResonanceNodes(
 			)
 
 			if confidence > 0 {
-				graph.AddNode(&Node{
+				graph.AddNode(&types.Node{
 					ID:         fmt.Sprintf("res:%s:forecast", symbol.Symbol),
 					Symbol:     symbol.Symbol,
 					Source:     "resonance",
@@ -868,28 +426,19 @@ func (solver *Solver) extractResonanceNodes(
 		}
 	}
 
-	coderValue, found := symbol.Resonance.Load(symbol.Symbol)
-
-	if !found {
+	if coder == nil {
 		return
 	}
 
-	coder, ok := coderValue.(*learning.ResonanceManifold)
-
-	if !ok {
-		return
-	}
-
-	graph.mu.Lock()
-	graph.TaskSkill, graph.TaskSkillReady = coder.TaskSkill()
-	graph.mu.Unlock()
+	skill, skillReady := coder.TaskSkill()
+	graph.SetTaskSkill(skill, skillReady)
 	layers, surprise, _ := coder.WireSnapshot()
 
 	if len(layers) == 0 || math.IsNaN(surprise) || math.IsInf(surprise, 0) {
 		return
 	}
 
-	graph.AddNode(&Node{
+	graph.AddNode(&types.Node{
 		ID:         fmt.Sprintf("res:%s:surprise", symbol.Symbol),
 		Symbol:     symbol.Symbol,
 		Source:     "resonance",
@@ -900,27 +449,31 @@ func (solver *Solver) extractResonanceNodes(
 		At:         graph.At,
 	})
 
-	dynamicsValue, dynamicsFound := symbol.Resonance.Load(
-		learning.PredictiveDynamicsKey,
+	solver.extractPredictiveDynamicsNodes(
+		symbol.Symbol,
+		dynamics,
+		graph,
 	)
+}
 
-	if dynamicsFound {
-		dynamicsFrame, dynamicsOK := dynamicsValue.(nomagique.Frame)
+func (solver *Solver) popCognition(symbol *types.Symbol) (types.Cognition, bool) {
+	var cognition types.Cognition
 
-		if dynamicsOK {
-			solver.extractPredictiveDynamicsNodes(
-				symbol.Symbol,
-				dynamicsFrame,
-				graph,
-			)
-		}
+	for stored := range symbol.MarketCognition(types.SourceGraph) {
+		cognition = stored
 	}
+
+	if cognition.Winner == "" {
+		return types.Cognition{}, false
+	}
+
+	return cognition, true
 }
 
 func (solver *Solver) extractPredictiveDynamicsNodes(
 	symbol string,
 	dynamics nomagique.Frame,
-	graph *Graph,
+	graph *types.Graph,
 ) {
 	ready, _ := dynamics.Get(learning.SymbolDynamicsReady)
 	sampleCount, _ := dynamics.Get(learning.SymbolDynamicsSampleCount)
@@ -953,11 +506,11 @@ func (solver *Solver) extractPredictiveDynamicsNodes(
 			continue
 		}
 
-		graph.AddNode(&Node{
+		graph.AddNode(&types.Node{
 			ID:         fmt.Sprintf("res:%s:%s", symbol, field.name),
 			Symbol:     symbol,
 			Source:     "resonance_dynamics",
-			Kind:       KindResonance,
+			Kind:       types.KindResonance,
 			Value:      value,
 			Strength:   math.Abs(value),
 			Confidence: confidence,
@@ -1022,7 +575,7 @@ func (field causalField) node(
 	causalMap map[string]any,
 	probabilities []float64,
 	precision float64,
-) (*Node, bool, error) {
+) (*types.Node, bool, error) {
 	fieldValue, found := causalMap[field.value].(float64)
 
 	if !found {
@@ -1043,11 +596,11 @@ func (field causalField) node(
 		)
 	}
 
-	return &Node{
+	return &types.Node{
 		ID:         fmt.Sprintf("causal:%s:%s", symbol, field.value),
 		Symbol:     symbol,
 		Source:     "causal",
-		Kind:       KindCausal,
+		Kind:       types.KindCausal,
 		Value:      fieldValue,
 		Strength:   strength,
 		Confidence: probabilities[field.probabilityIndex] * precision,
@@ -1105,17 +658,16 @@ func causalValuesPresent(causalMap map[string]any) bool {
 extractCausalNodes registers Pearl do-calculus and counterfactual uplift outputs.
 */
 func (solver *Solver) extractCausalNodes(
-	symbol *types.Symbol, graph *Graph,
+	symbol *types.Symbol, graph *types.Graph,
 ) error {
-	stored, found := symbol.Causal.Load(symbol.Symbol)
-	causalMap, mapOK := stored.(map[string]any)
+	var causalMap map[string]any
 
-	if !found || !mapOK || !causalValuesPresent(causalMap) {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"causal: no causal values found for symbol "+symbol.Symbol,
-			nil,
-		))
+	for stored := range symbol.MarketCausal(types.SourceGraph) {
+		causalMap = stored
+	}
+
+	if !causalValuesPresent(causalMap) {
+		return nil
 	}
 
 	probabilities, err := causalProbabilities(symbol.Symbol, causalMap)
@@ -1167,22 +719,21 @@ func (solver *Solver) extractCausalNodes(
 extractCognitionNodes registers active category sequences and lookahead predictions.
 */
 func (solver *Solver) extractCognitionNodes(
-	symbol *types.Symbol, graph *Graph,
+	symbol *types.Symbol, graph *types.Graph,
 ) {
-	stored, found := symbol.Cognition.Load(symbol.Symbol)
-	cognition, cognitionOK := stored.(types.Cognition)
+	cognition, ok := solver.popCognition(symbol)
 
-	if !found || !cognitionOK ||
+	if !ok ||
 		cognition.Winner == "" {
 		return
 	}
 
 	nodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
-	graph.AddNode(&Node{
+	graph.AddNode(&types.Node{
 		ID:         nodeID,
 		Symbol:     symbol.Symbol,
 		Source:     cognition.Source,
-		Kind:       KindCognition,
+		Kind:       types.KindCognition,
 		Value:      cognition.Confidence,
 		Confidence: cognition.Confidence,
 		At:         cognition.At,
@@ -1205,11 +756,11 @@ func (solver *Solver) extractCognitionNodes(
 			continue
 		}
 
-		graph.AddNode(&Node{
+		graph.AddNode(&types.Node{
 			ID:         fmt.Sprintf("cog:%s:prediction:%s", symbol.Symbol, path),
 			Symbol:     symbol.Symbol,
 			Source:     cognition.Source,
-			Kind:       KindPrediction,
+			Kind:       types.KindPrediction,
 			Value:      probability,
 			Confidence: probability,
 			At:         cognition.At,
@@ -1252,13 +803,13 @@ evidence-bearing relationship. Zero-confidence pair relations are not
 materialized because their decision weight is necessarily zero.
 */
 func (solver *Solver) inferStructuralEdges(
-	symbol *types.Symbol, graph *Graph,
+	symbol *types.Symbol, graph *types.Graph,
 ) error {
 	nodes := graph.Nodes
-	resonanceBySymbol := make(map[string][]*Node)
-	causalBySymbol := make(map[string][]*Node)
-	interventions := make([]*Node, 0)
-	expectationsBySymbol := make(map[string][]*Node)
+	resonanceBySymbol := make(map[string][]*types.Node)
+	causalBySymbol := make(map[string][]*types.Node)
+	interventions := make([]*types.Node, 0)
+	expectationsBySymbol := make(map[string][]*types.Node)
 
 	for _, node := range nodes {
 		switch node.Kind {
@@ -1307,7 +858,7 @@ func (solver *Solver) inferStructuralEdges(
 				}
 
 				if resonanceNode.Value > 0 && causalNode.Value > 0 {
-					graph.AddEdge(&Edge{
+					graph.AddEdge(&types.Edge{
 						From:       resonanceNode.ID,
 						To:         causalNode.ID,
 						Relation:   RelationSupports,
@@ -1323,7 +874,7 @@ func (solver *Solver) inferStructuralEdges(
 
 				if (resonanceNode.Value > 0 && causalNode.Value < 0) ||
 					(resonanceNode.Value < 0 && causalNode.Value > 0) {
-					graph.AddEdge(&Edge{
+					graph.AddEdge(&types.Edge{
 						From:       resonanceNode.ID,
 						To:         causalNode.ID,
 						Relation:   RelationContradicts,
@@ -1354,7 +905,7 @@ func (solver *Solver) inferStructuralEdges(
 				continue
 			}
 
-			graph.AddEdge(&Edge{
+			graph.AddEdge(&types.Edge{
 				From:     intervention.ID,
 				To:       expectation.ID,
 				Relation: RelationConditions,
@@ -1374,10 +925,9 @@ func (solver *Solver) inferStructuralEdges(
 	}
 
 	// 2. Evaluate Leads & Lags from Cognition Beam Search
-	stored, found := symbol.Cognition.Load(symbol.Symbol)
-	cognition, cognitionOK := stored.(types.Cognition)
+	cognition, cognitionOK := solver.popCognition(symbol)
 
-	if found && cognitionOK &&
+	if cognitionOK &&
 		cognition.Winner != "" && !cognition.PredictionsHeld {
 		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
 
@@ -1387,7 +937,7 @@ func (solver *Solver) inferStructuralEdges(
 			}
 
 			targetNodeID := fmt.Sprintf("cog:%s:prediction:%s", symbol.Symbol, path)
-			graph.AddEdge(&Edge{
+			graph.AddEdge(&types.Edge{
 				From:       currentNodeID,
 				To:         targetNodeID,
 				Relation:   RelationLeads,
@@ -1397,7 +947,7 @@ func (solver *Solver) inferStructuralEdges(
 				At:         graph.At,
 				Reason:     "cognition beam search lookahead prediction",
 			})
-			graph.AddEdge(&Edge{
+			graph.AddEdge(&types.Edge{
 				From:       targetNodeID,
 				To:         currentNodeID,
 				Relation:   RelationLags,
@@ -1411,13 +961,11 @@ func (solver *Solver) inferStructuralEdges(
 	}
 
 	// 3. Relate categories through the evidence they actually share.
-	stored, found = symbol.Categories.Load(symbol.Symbol)
+	var categories []types.Category
 
-	if !found {
-		return nil
+	for batch := range symbol.MarketCategories(types.SourceGraph) {
+		categories = batch
 	}
-
-	categories := stored.([]types.Category)
 
 	for _, category := range categories {
 		for _, peer := range categories {
@@ -1459,7 +1007,7 @@ func (solver *Solver) inferStructuralEdges(
 				))
 			}
 
-			graph.AddEdge(&Edge{
+			graph.AddEdge(&types.Edge{
 				From:       fmt.Sprintf("cat:%s:%s", symbol.Symbol, category.Type),
 				To:         fmt.Sprintf("cat:%s:%s", symbol.Symbol, peer.Type),
 				Relation:   relation,
@@ -1482,7 +1030,6 @@ long position in this symbol. The graph remains an interpretation mechanism;
 no relation here is converted into a price forecast.
 */
 func (solver *Solver) connectLongOpportunity(
-	thesis *types.Thesis,
 	symbol *types.Symbol,
 	graph *Graph,
 ) error {
@@ -1491,10 +1038,8 @@ func (solver *Solver) connectLongOpportunity(
 	}
 
 	target := fmt.Sprintf("hyp:%s:long_opportunity", symbol.Symbol)
-	graph.mu.Lock()
-	graph.DecisionTarget = target
-	graph.mu.Unlock()
-	graph.AddNode(&Node{
+	graph.SetDecisionTarget(target)
+	graph.AddNode(&types.Node{
 		ID:         target,
 		Symbol:     symbol.Symbol,
 		Source:     "strategy",
@@ -1528,7 +1073,7 @@ func (solver *Solver) connectLongOpportunity(
 		}
 
 		confidence := min(max(node.Confidence, 0), 1)
-		graph.AddEdge(&Edge{
+		graph.AddEdge(&types.Edge{
 			From:       node.ID,
 			To:         target,
 			Relation:   relation,
@@ -1543,7 +1088,7 @@ func (solver *Solver) connectLongOpportunity(
 	return nil
 }
 
-func opportunityRelation(node *Node) (RelationType, string) {
+func opportunityRelation(node *types.Node) (types.RelationType, string) {
 	switch node.Kind {
 	case KindMeasurement:
 		return measurementOpportunityRelation(node), "measurement addresses the long-opportunity thesis on its own evidence"
@@ -1551,14 +1096,14 @@ func opportunityRelation(node *Node) (RelationType, string) {
 		category, _ := node.Metadata["type"].(string)
 		relation := categoryOpportunityRelation(types.CategoryType(category))
 		return relation, "category " + category + " addresses the long-opportunity thesis"
-	case KindResonance:
+	case types.KindResonance:
 		if strings.HasSuffix(node.ID, ":forecast") {
 			return signedOpportunityRelation(node.Value),
 				"predictive coding contributes a direction opinion"
 		}
 
 		return RelationConditions, "predictive-coding surprise conditions confidence"
-	case KindCausal:
+	case types.KindCausal:
 		if strings.HasSuffix(node.ID, ":doExpectation") ||
 			strings.HasSuffix(node.ID, ":uplift") {
 			return signedOpportunityRelation(node.Value),
@@ -1566,18 +1111,18 @@ func opportunityRelation(node *Node) (RelationType, string) {
 		}
 
 		return RelationConditions, "causal ladder context conditions the thesis"
-	case KindManifold:
+	case types.KindManifold:
 		if node.ID == "man:universe:phase_direction" {
 			return signedOpportunityRelation(node.Value),
 				"phase-geodesic consensus addresses universe direction"
 		}
 
 		return RelationConditions, "relaxed physical field conditions the thesis"
-	case KindCognition:
+	case types.KindCognition:
 		regime, _ := node.Metadata["regime"].(string)
 		return categoryOpportunityRelation(categoryFromText(regime)),
 			"cognition regime addresses thesis persistence"
-	case KindPrediction:
+	case types.KindPrediction:
 		path, _ := node.Metadata["path"].(string)
 		return categoryOpportunityRelation(categoryFromText(path)),
 			"cognition lookahead addresses the next structural regime"
@@ -1619,17 +1164,17 @@ whose semantic group is explicitly contextual or uninformative stay conditions.
 The verdict is independent of what a category classifier later claims about the
 same measurement; the category path is additional enrichment.
 */
-func measurementOpportunityRelation(node *Node) RelationType {
+func measurementOpportunityRelation(node *types.Node) types.RelationType {
 	groups, known := types.SignalMetricGroups[types.SourceType(node.Source)]
 
 	if !known {
-		return RelationConditions
+		return types.RelationConditions
 	}
 
 	membership, known := groups[types.MetricKey(node.Metric, node.Side)]
 
 	if !known || !membership.Competes {
-		return RelationConditions
+		return types.RelationConditions
 	}
 
 	switch node.Side {
@@ -1638,15 +1183,15 @@ func measurementOpportunityRelation(node *Node) RelationType {
 	case types.SideSell, types.SideSellToSell, types.SideSellToBuy:
 		relation := signedOpportunityRelation(node.Value)
 
-		if relation == RelationSupports {
-			return RelationContradicts
+		if relation == types.RelationSupports {
+			return types.RelationContradicts
 		}
 
-		if relation == RelationContradicts {
-			return RelationSupports
+		if relation == types.RelationContradicts {
+			return types.RelationSupports
 		}
 
-		return RelationConditions
+		return types.RelationConditions
 	default:
 		return signedOpportunityRelation(node.Value)
 	}
@@ -1755,5 +1300,6 @@ func magnitudeWeight(strength float64) (float64, error) {
 Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
+	solver.cancel()
 	return nil
 }

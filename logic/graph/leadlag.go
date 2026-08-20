@@ -10,7 +10,7 @@ import (
 
 func (compiler *measurementCompiler) addLeadLagEdges(
 	symbol *types.Symbol,
-	graph *Graph,
+	graph *types.Graph,
 	index *measurementIndex,
 ) error {
 	for _, measurement := range index.bySource[string(types.SourceLeadLag)] {
@@ -28,7 +28,7 @@ func (compiler *measurementCompiler) addLeadLagEdges(
 
 func (compiler *measurementCompiler) relateLeadLag(
 	measurement *nmtypes.Measurement,
-	graph *Graph,
+	graph *types.Graph,
 ) error {
 	localPrice, err := priceNode(measurement, graph)
 
@@ -57,7 +57,7 @@ func (compiler *measurementCompiler) relateLeadLag(
 			measurement,
 			localPrice,
 			peerPrice,
-			RelationIncomparableWith,
+			types.RelationIncomparableWith,
 			1,
 			"lead-lag comparison has no resolved return support",
 			graph,
@@ -78,7 +78,7 @@ func (compiler *measurementCompiler) relateLeadLag(
 	return nil
 }
 
-func peerPriceNode(measurement *nmtypes.Measurement, graph *Graph) (*Node, error) {
+func peerPriceNode(measurement *nmtypes.Measurement, graph *types.Graph) (*types.Node, error) {
 	metricKey := types.MetricKey(types.MetricPeerLastPrice, types.SideNone)
 	node := graph.Nodes[measurementNodeID(measurement, metricKey)]
 
@@ -91,7 +91,7 @@ func peerPriceNode(measurement *nmtypes.Measurement, graph *Graph) (*Node, error
 	return node, nil
 }
 
-func priceNode(measurement *nmtypes.Measurement, graph *Graph) (*Node, error) {
+func priceNode(measurement *nmtypes.Measurement, graph *types.Graph) (*types.Node, error) {
 	metricKey := types.MetricKey(types.MetricLastPrice, types.SideNone)
 	node := graph.Nodes[measurementNodeID(measurement, metricKey)]
 
@@ -120,9 +120,9 @@ func normalizedMetric(
 
 func (compiler *measurementCompiler) addTemporalRelation(
 	measurement *nmtypes.Measurement,
-	localPrice *Node,
-	peerPrice *Node,
-	graph *Graph,
+	localPrice *types.Node,
+	peerPrice *types.Node,
+	graph *types.Graph,
 ) {
 	older := localPrice
 	newer := peerPrice
@@ -142,10 +142,10 @@ func (compiler *measurementCompiler) addTemporalRelation(
 		return
 	}
 
-	graph.AddEdge(&Edge{
+	graph.AddEdge(&types.Edge{
 		From:         older.ID,
 		To:           newer.ID,
-		Relation:     RelationStaleRelativeTo,
+		Relation:     types.RelationStaleRelativeTo,
 		Weight:       float64(age) / float64(older.Horizon),
 		Evidence:     []string{measurement.ID, older.MeasurementID, newer.MeasurementID},
 		ObservedFrom: older.ObservedFrom,
@@ -157,9 +157,9 @@ func (compiler *measurementCompiler) addTemporalRelation(
 
 func (compiler *measurementCompiler) addCorrelationRelations(
 	measurement *nmtypes.Measurement,
-	localPrice *Node,
-	peerPrice *Node,
-	graph *Graph,
+	localPrice *types.Node,
+	peerPrice *types.Node,
+	graph *types.Graph,
 ) error {
 	// Each correlation family is independent evidence. A family that is not
 	// yet observed is skipped; observed families still wire this pass.
@@ -189,7 +189,7 @@ func (compiler *measurementCompiler) addCorrelationRelations(
 
 	if synchronized > 0 {
 		compiler.addSymmetricRelation(
-			measurement, localPrice, peerPrice, RelationRedundantWith,
+			measurement, localPrice, peerPrice, types.RelationRedundantWith,
 			synchronized, "contemporaneous price paths carry synchronized evidence", graph,
 			types.MetricSync,
 			types.MetricSignedContempCorrelation,
@@ -199,10 +199,10 @@ func (compiler *measurementCompiler) addCorrelationRelations(
 
 	if decoupled > 0 {
 		compiler.addSymmetricRelation(
-			measurement, localPrice, peerPrice, RelationIndependentOf,
+			measurement, localPrice, peerPrice, types.RelationIndependentOf,
 			decoupled, "price paths carry decoupled correlation evidence", graph,
 			types.MetricDecoupled,
-			types.MetricSignedCorrelation,
+			types.MetricSignedLagCorrelation,
 			types.MetricSampleCount,
 		)
 	}
@@ -212,10 +212,10 @@ func (compiler *measurementCompiler) addCorrelationRelations(
 
 func (compiler *measurementCompiler) addDirectedPair(
 	measurement *nmtypes.Measurement,
-	leader *Node,
-	follower *Node,
+	leader *types.Node,
+	follower *types.Node,
 	weight float64,
-	graph *Graph,
+	graph *types.Graph,
 ) {
 	evidence := leadLagEvidence(
 		measurement,
@@ -224,14 +224,14 @@ func (compiler *measurementCompiler) addDirectedPair(
 		types.MetricSignedLagCorrelation,
 		types.MetricSampleCount,
 	)
-	graph.AddEdge(&Edge{
-		From: leader.ID, To: follower.ID, Relation: RelationLeads,
+	graph.AddEdge(&types.Edge{
+		From: leader.ID, To: follower.ID, Relation: types.RelationLeads,
 		Weight: weight, Evidence: evidence,
 		ObservedFrom: measurement.ObservedFrom, Horizon: measurement.Horizon,
 		At: measurement.At, Reason: "lagged price correlation identifies temporal leader",
 	})
-	graph.AddEdge(&Edge{
-		From: follower.ID, To: leader.ID, Relation: RelationLags,
+	graph.AddEdge(&types.Edge{
+		From: follower.ID, To: leader.ID, Relation: types.RelationLags,
 		Weight: weight, Evidence: evidence,
 		ObservedFrom: measurement.ObservedFrom, Horizon: measurement.Horizon,
 		At: measurement.At, Reason: "inverse of measured temporal lead",
@@ -240,17 +240,17 @@ func (compiler *measurementCompiler) addDirectedPair(
 
 func (compiler *measurementCompiler) addSymmetricRelation(
 	measurement *nmtypes.Measurement,
-	left *Node,
-	right *Node,
-	relation RelationType,
+	left *types.Node,
+	right *types.Node,
+	relation types.RelationType,
 	weight float64,
 	reason string,
-	graph *Graph,
+	graph *types.Graph,
 	metrics ...types.MetricType,
 ) {
 	evidence := leadLagEvidence(measurement, metrics...)
-	for _, endpoints := range [][2]*Node{{left, right}, {right, left}} {
-		graph.AddEdge(&Edge{
+	for _, endpoints := range [][2]*types.Node{{left, right}, {right, left}} {
+		graph.AddEdge(&types.Edge{
 			From: endpoints[0].ID, To: endpoints[1].ID, Relation: relation,
 			Weight: weight, Evidence: evidence,
 			ObservedFrom: measurement.ObservedFrom, Horizon: measurement.Horizon,

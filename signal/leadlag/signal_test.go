@@ -3,42 +3,40 @@ package leadlag
 import (
 	"context"
 	"testing"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestLeadLagNumber(t *testing.T) {
-	Convey("Given repeated ticks on one symbol", t, func() {
+	Convey("Given an anchor and follower price pair", t, func() {
 		thesis := types.NewThesis(context.Background(), nil)
-		market := thesis.Symbol("AAA/USD")
-		start := time.Unix(1_700_007_000, 0).UTC()
-
-		for leg, price := range []float64{100, 110, 121, 133} {
-			market.AppendTicker(kraken.TickerData{
-				Symbol:    "AAA/USD",
-				Last:      decimal.NewFromFloat64(price),
-				Timestamp: start.Add(time.Duration(leg) * time.Second),
-			})
-		}
-
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
 
-		Convey("It should emit velocity-conditioned lag evidence per tick", func() {
-			measurements := []*nmtypes.Measurement{}
+		Convey("It should compose pairwise inefficiency and significance", func() {
+			input := nomagique.Frame{}
+			input.Put(nomagique.SampleValue, 110.0)
+			input.Put(calculus.SymbolLeft, 100.0)
+			input.Put(calculus.SymbolRight, 110.0)
+			input.Put(calculus.SymbolValue, 110.0)
+			input.Put(calculus.SymbolScale, 1.0)
+			input.Put(nmtypes.EventTimeSec, float64(1_700_007_000))
+			input.Put(nmtypes.EventTimeNsec, 0)
+			input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-			for measurement := range market.MarketMeasurements("category") {
-				measurements = append(measurements, measurement)
-			}
+			output, err := signal.number(
+				[2]string{"AAA/USD", "BBB/USD"},
+				input,
+			)
 
-			So(len(measurements), ShouldEqual, 4)
-			So(measurements[0].Source, ShouldEqual, string(types.SourceLeadLag))
+			So(err, ShouldBeNil)
+			So(output.MustGet(SymbolLagRatio), ShouldBeGreaterThan, 0)
 		})
 	})
 }

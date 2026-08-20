@@ -30,6 +30,7 @@ func TestExhaustNumber(t *testing.T) {
 		Convey("It should emit an exhaustion z-score reading", func() {
 			measurements := []*nmtypes.Measurement{}
 
+			time.Sleep(50 * time.Millisecond)
 			for measurement := range market.MarketMeasurements("category") {
 				measurements = append(measurements, measurement)
 			}

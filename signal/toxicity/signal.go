@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -59,7 +60,7 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[string](toxicityPipeline()),
 	}
 
-	signal.run()
+	go signal.run()
 	return signal
 }
 
@@ -72,7 +73,15 @@ func (signal *Signal) run() {
 		case <-signal.ctx.Done():
 			return
 		default:
-			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		}
+
+		if !signal.pending() {
+			// Nothing queued for this signal; yield before polling again.
+			runtime.Gosched()
+			continue
+		}
+
+		signal.thesis.Symbols.Range(func(_ any, value any) bool {
 				symbol, valid := value.(*types.Symbol)
 
 				if !valid || symbol == nil {
@@ -85,8 +94,14 @@ func (signal *Signal) run() {
 					input := nomagique.Frame{}
 					input.Put(nmtypes.AlphaQuantity, filled)
 					input.Put(nmtypes.BetaQuantity, retreated)
+					input.Put(calculus.SymbolLeft, filled)
+					input.Put(calculus.SymbolRight, retreated)
+					input.Put(nomagique.SampleValue, retreated-filled)
+					input.Put(calculus.SymbolValue, retreated-filled)
+					input.Put(calculus.SymbolScale, 1.0)
 					input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
 					input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
+					input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
 					output, err := signal.number(symbol.Symbol, input)
 
@@ -122,10 +137,38 @@ func (signal *Signal) run() {
 
 				return true
 			})
-		}
 	}
 }
 
+/*
+pending reports whether any symbol queues a Level3 frame, so the
+run loop can yield without draining empty input.
+*/
+func (signal *Signal) pending() bool {
+	if signal.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		if symbol.HasLevel3() {
+			hasWork = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return hasWork
+}
 /*
 level3Flow lifts one accepted order frame into the two generic quantity
 channels: filled quantity (Alpha) and retreated quantity (Beta). The

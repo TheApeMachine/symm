@@ -49,7 +49,7 @@ func ZScore(
 	baseline, hasBaseline := state.Get(SymbolBaselineValue)
 
 	if !hasBaseline {
-		output := nomagique.Frame{}
+		output := input
 		output.Put(nomagique.SampleValue, value)
 		output.Put(SymbolReady, 0)
 
@@ -91,7 +91,7 @@ func ZScore(
 		score = residual / currentDispersion
 	}
 
-	output := nomagique.Frame{}
+	output := input
 	output.Put(nomagique.SampleValue, value)
 	output.Put(SymbolResidual, residual)
 	output.Put(SymbolDispersion, currentDispersion)

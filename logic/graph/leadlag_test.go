@@ -12,12 +12,12 @@ import (
 func TestAddLeadLagEdges(t *testing.T) {
 	Convey("Given supported price relationships against a measured peer", t, func() {
 		at := time.Unix(10, 0).UTC()
-		local := types.NewSymbol("ALT/USD", nil)
+		local := types.NewSymbol("ALT/USD")
 		localMeasurement := leadLagFixture(
 			"local-leadlag", "ALT/USD", "BTC/USD", at, 1, 0.6, 0.2, 0.1, 1,
 		)
 		local.AppendMeasurement(localMeasurement)
-		graph := NewGraph(at)
+		graph := types.NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
 			"ALT/USD", local.MarketMeasurements("graph"), graph,
@@ -35,7 +35,7 @@ func TestAddLeadLagEdges(t *testing.T) {
 			So(peerPrice.Symbol, ShouldEqual, "BTC/USD")
 			So(peerPrice.Value, ShouldEqual, 200.0)
 			So(peerPrice.At, ShouldEqual, at)
-			counts := make(map[RelationType]int)
+			counts := make(map[types.RelationType]int)
 
 			for _, edge := range graph.Edges {
 				counts[edge.Relation]++
@@ -43,10 +43,10 @@ func TestAddLeadLagEdges(t *testing.T) {
 				So(edge.Quality, ShouldBeNil)
 			}
 
-			So(counts[RelationLeads], ShouldEqual, 1)
-			So(counts[RelationLags], ShouldEqual, 1)
-			So(counts[RelationRedundantWith], ShouldEqual, 2)
-			So(counts[RelationIndependentOf], ShouldEqual, 2)
+			So(counts[types.RelationLeads], ShouldEqual, 1)
+			So(counts[types.RelationLags], ShouldEqual, 1)
+			So(counts[types.RelationRedundantWith], ShouldEqual, 2)
+			So(counts[types.RelationIndependentOf], ShouldEqual, 2)
 			So(graph.Edges[0].Evidence, ShouldContain,
 				"leadlag:inefficient")
 			So(graph.Edges[0].Evidence, ShouldContain,
@@ -56,11 +56,11 @@ func TestAddLeadLagEdges(t *testing.T) {
 
 	Convey("Given a peer comparison without one resolved return", t, func() {
 		at := time.Unix(20, 0).UTC()
-		local := types.NewSymbol("ALT/USD", nil)
+		local := types.NewSymbol("ALT/USD")
 		local.AppendMeasurement(leadLagFixture(
 			"local-empty", "ALT/USD", "BTC/USD", at, 0, 0, 0, 0, 0,
 		))
-		graph := NewGraph(at)
+		graph := types.NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
 			"ALT/USD", local.MarketMeasurements("graph"), graph,
@@ -72,8 +72,8 @@ func TestAddLeadLagEdges(t *testing.T) {
 		Convey("It should state that the price paths are incomparable", func() {
 			So(err, ShouldBeNil)
 			So(graph.Edges, ShouldHaveLength, 2)
-			So(graph.Edges[0].Relation, ShouldEqual, RelationIncomparableWith)
-			So(graph.Edges[1].Relation, ShouldEqual, RelationIncomparableWith)
+			So(graph.Edges[0].Relation, ShouldEqual, types.RelationIncomparableWith)
+			So(graph.Edges[1].Relation, ShouldEqual, types.RelationIncomparableWith)
 			So(graph.Edges[0].Weight, ShouldEqual, 1.0)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"local-empty", "leadlag:sample_count"})
@@ -82,14 +82,14 @@ func TestAddLeadLagEdges(t *testing.T) {
 
 	Convey("Given price observations separated beyond the older evidence horizon", t, func() {
 		at := time.Unix(30, 0).UTC()
-		local := types.NewSymbol("ALT/USD", nil)
+		local := types.NewSymbol("ALT/USD")
 		localMeasurement := leadLagFixture(
 			"local-stale", "ALT/USD", "BTC/USD", at, 1, 0, 0, 0, 0,
 		)
 		localMeasurement.PeerAt = at.Add(-3 * time.Second)
 		localMeasurement.PeerObservedFrom = localMeasurement.PeerAt.Add(-time.Second)
 		local.AppendMeasurement(localMeasurement)
-		graph := NewGraph(at)
+		graph := types.NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
 			"ALT/USD", local.MarketMeasurements("graph"), graph,
@@ -101,7 +101,7 @@ func TestAddLeadLagEdges(t *testing.T) {
 		Convey("It should state the exact horizon-relative staleness", func() {
 			So(err, ShouldBeNil)
 			So(graph.Edges, ShouldHaveLength, 1)
-			So(graph.Edges[0].Relation, ShouldEqual, RelationStaleRelativeTo)
+			So(graph.Edges[0].Relation, ShouldEqual, types.RelationStaleRelativeTo)
 			So(graph.Edges[0].From, ShouldEqual,
 				measurementNodeID(
 					localMeasurement,
@@ -115,14 +115,14 @@ func TestAddLeadLagEdges(t *testing.T) {
 
 	Convey("Given retained lead-lag relationships from different anchor epochs", t, func() {
 		at := time.Unix(40, 0).UTC()
-		local := types.NewSymbol("ALT/USD", nil)
+		local := types.NewSymbol("ALT/USD")
 		local.AppendMeasurement(leadLagFixture(
 			"old", "ALT/USD", "UNFI/USD", at.Add(-time.Second), 0, 0, 0, 0, 0,
 		))
 		local.AppendMeasurement(leadLagFixture(
 			"current", "ALT/USD", "SOSO/USD", at, 0, 0, 0, 0, 0,
 		))
-		graph := NewGraph(at)
+		graph := types.NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
 			"ALT/USD", local.MarketMeasurements("graph"), graph,

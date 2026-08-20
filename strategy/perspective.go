@@ -6,7 +6,7 @@ import (
 
 	"gonum.org/v1/gonum/stat/distuv"
 
-	logicgraph "github.com/theapemachine/symm/logic/graph"
+	logicgraph "github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/nomagique/learning"
 )
 

@@ -605,10 +605,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			return err
 		}
 
-		desk.thesis.Symbol(decision.Symbol).Positions.Store(
-			decision.ID,
-			position,
-		)
+		desk.thesis.Symbol(decision.Symbol).Positions.Push(position)
 	case types.ActionExit:
 		for position := range desk.Positions() {
 			if position == nil || position.Decision.Symbol != decision.Symbol ||
@@ -751,16 +748,6 @@ func (desk *Desk) slotOccupancy() (int, int) {
 	})
 
 	return normal, reserve
-}
-
-/*
-occupiedPositions counts committed desk entries without reading mutable order
-status. Entries are stored before submission and removed after failure or close,
-so map membership is the race-free risk-slot boundary.
-*/
-func (desk *Desk) occupiedPositions() int {
-	normal, reserve := desk.slotOccupancy()
-	return normal + reserve
 }
 
 /*

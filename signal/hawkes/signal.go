@@ -2,6 +2,7 @@ package hawkes
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -42,7 +43,7 @@ func NewSignal(
 		),
 	}
 
-	signal.run()
+	go signal.run()
 	return signal
 }
 
@@ -63,7 +64,15 @@ func (signal *Signal) run() {
 		case <-signal.ctx.Done():
 			return
 		default:
-			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		}
+
+		if !signal.pending() {
+			// Nothing queued for this signal; yield before polling again.
+			runtime.Gosched()
+			continue
+		}
+
+		signal.thesis.Symbols.Range(func(_ any, value any) bool {
 				symbol, valid := value.(*types.Symbol)
 
 				if !valid || symbol == nil {
@@ -118,10 +127,38 @@ func (signal *Signal) run() {
 
 				return true
 			})
-		}
 	}
 }
 
+/*
+pending reports whether any symbol queues a Trades frame, so the
+run loop can yield without draining empty input.
+*/
+func (signal *Signal) pending() bool {
+	if signal.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		if symbol.HasTrades() {
+			hasWork = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return hasWork
+}
 /*
 markForSide encodes one trade's aggressor side into the process mark: buy is
 the positive (alpha) channel, sell the negative (beta) channel.
@@ -134,10 +171,6 @@ func markForSide(side string) float64 {
 	return -1
 }
 
-/*
-Close releases the receiver's owned resources so shutdown does not leave active
-market-data producers.
-*/
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

@@ -144,11 +144,15 @@ func TestDeskExecute(t *testing.T) {
 
 		Convey("It should retain the submitted position on the thesis symbol", func() {
 			So(desk.Execute(decision), ShouldBeNil)
-			retained, found := desk.thesis.Symbol(decision.Symbol).Positions.Load(
-				decision.ID,
-			)
+			var retained any
 
-			So(found, ShouldBeTrue)
+			for candidate := range desk.thesis.Symbol(decision.Symbol).Positions.Drain("audit", func(any) bool {
+				return true
+			}) {
+				retained = candidate
+			}
+
+			So(retained, ShouldNotBeNil)
 			So(retained, ShouldEqual, mustDeskPosition(desk, decision.Symbol))
 		})
 	})

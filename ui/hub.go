@@ -28,6 +28,7 @@ type Hub struct {
 	cancel     context.CancelFunc
 	app        *fiber.App
 	listenAddr string
+	thesis     *types.Thesis
 	Messages   chan []byte
 	desk       *broker.Desk
 	price      *broker.Price
@@ -77,7 +78,6 @@ func NewHub(
 		fluid:   NewFluidRTC(ctx),
 	}
 
-	go hub.fluid.Run(manifold)
 	go hub.broadcast()
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {

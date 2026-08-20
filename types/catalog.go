@@ -1,31 +1,20 @@
-/*
-Package opportunity defines the identifiable, actable opportunity archetypes
-the strategy reasons over, and scores the current observations against them.
-
-The category solver classifies microstructure texture; this package answers
-"which opportunity is this, which lifecycle phase is it in, and is the evidence
-trustworthy enough to act?" Every archetype is a conjunction of conditioned
-observations across the pipeline, attenuated by each leg's epistemic trust.
-*/
-package opportunity
-
-import "github.com/theapemachine/symm/types"
+package types
 
 /*
 Catalog is the authoritative opportunity taxonomy. Order matters only for
 deterministic ties; scoring consults every archetype, not just the first match.
 */
-var Catalog = []types.OpportunityArchetype{
+var Catalog = []OpportunityArchetype{
 	{
-		Type: types.OpportunitySuddenPump,
-		Precursors: []types.CategoryType{
-			types.VerticalIgnition,
-			types.RiskOnSurge,
+		Type: OpportunitySuddenPump,
+		Precursors: []CategoryType{
+			VerticalIgnition,
+			RiskOnSurge,
 		},
-		Supports: []types.ObservationCondition{
+		Supports: []ObservationCondition{
 			{
-				Source:          types.SourcePumpDump,
-				Metric:          string(types.MetricRVOL),
+				Source:          SourcePumpDump,
+				Metric:          string(MetricRVOL),
 				Name:            "rvol surge",
 				State:           "rvol above its own recent median while lift stays positive",
 				Supports:        true,
@@ -33,8 +22,8 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 			{
-				Source:          types.SourceHawkes,
-				Metric:          string(types.MetricSpectralRadius),
+				Source:          SourceHawkes,
+				Metric:          string(MetricSpectralRadius),
 				Name:            "near-critical cascade",
 				State:           "spectral radius approaching one with positive branching",
 				Supports:        true,
@@ -42,8 +31,8 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 			{
-				Source:          types.SourceDepthFlow,
-				Metric:          string(types.MetricThinScore),
+				Source:          SourceDepthFlow,
+				Metric:          string(MetricThinScore),
 				Name:            "hollow ask book",
 				State:           "thin ask depth below the symbol's own touch-depth median",
 				Supports:        true,
@@ -51,8 +40,8 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.3,
 			},
 			{
-				Source:          types.SourceCVD,
-				Metric:          string(types.MetricDrive),
+				Source:          SourceCVD,
+				Metric:          string(MetricDrive),
 				Name:            "aggressive buy drive",
 				State:           "buy aggressor flow dominant and still accelerating",
 				Supports:        true,
@@ -60,10 +49,10 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 		},
-		Opposes: []types.ObservationCondition{
+		Opposes: []ObservationCondition{
 			{
-				Source:          types.SourceToxicity,
-				Metric:          string(types.MetricBluffScore),
+				Source:          SourceToxicity,
+				Metric:          string(MetricBluffScore),
 				Name:            "spoofed wall",
 				State:           "cancelled retreating quantity marks the wall as fake",
 				Contradicts:     true,
@@ -71,9 +60,9 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.3,
 			},
 			{
-				Source:          types.SourceExhaustion,
-				Metric:          string(types.MetricExhaustion),
-				Side:            types.SideSell,
+				Source:          SourceExhaustion,
+				Metric:          string(MetricExhaustion),
+				Side:            SideSell,
 				Name:            "late seller exhaustion",
 				State:           "the move is already decelerating into rejection",
 				Contradicts:     true,
@@ -84,12 +73,12 @@ var Catalog = []types.OpportunityArchetype{
 		RolloutDynamics: "pump",
 	},
 	{
-		Type:       types.OpportunityCoiledCompression,
-		Precursors: []types.CategoryType{types.CoiledCompression},
-		Supports: []types.ObservationCondition{
+		Type:       OpportunityCoiledCompression,
+		Precursors: []CategoryType{CoiledCompression},
+		Supports: []ObservationCondition{
 			{
-				Source:          types.SourcePumpDump,
-				Metric:          string(types.MetricCompression),
+				Source:          SourcePumpDump,
+				Metric:          string(MetricCompression),
 				Name:            "spread compression",
 				State:           "spread tightening below its own baseline",
 				Supports:        true,
@@ -97,7 +86,7 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 			{
-				Source:          types.SourceManifold,
+				Source:          SourceManifold,
 				Metric:          "pressure_gradient",
 				Name:            "coiled pressure",
 				State:           "pressure gradient accumulating without divergence release",
@@ -106,7 +95,7 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 			{
-				Source:          types.SourceManifold,
+				Source:          SourceManifold,
 				Metric:          "coherence",
 				Name:            "oscillator phase sync",
 				State:           "phase coherence rising toward synchronized release",
@@ -115,10 +104,10 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 		},
-		Opposes: []types.ObservationCondition{
+		Opposes: []ObservationCondition{
 			{
-				Source:          types.SourceDepthFlow,
-				Metric:          string(types.MetricNeutralScore),
+				Source:          SourceDepthFlow,
+				Metric:          string(MetricNeutralScore),
 				Name:            "dense neutrality",
 				State:           "deep two-sided book absorbs without releasing",
 				Contradicts:     true,
@@ -129,11 +118,11 @@ var Catalog = []types.OpportunityArchetype{
 		RolloutDynamics: "coiled",
 	},
 	{
-		Type:       types.OpportunityDailyRiser,
-		Precursors: []types.CategoryType{types.OrganicTrend},
-		Supports: []types.ObservationCondition{
+		Type:       OpportunityDailyRiser,
+		Precursors: []CategoryType{OrganicTrend},
+		Supports: []ObservationCondition{
 			{
-				Source:          types.SourceResonance,
+				Source:          SourceResonance,
 				Metric:          "generalized_velocity",
 				Name:            "latent velocity",
 				State:           "positive generalized velocity with low residual",
@@ -142,8 +131,8 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 			{
-				Source:          types.SourceSentiment,
-				Metric:          string(types.MetricBreadth),
+				Source:          SourceSentiment,
+				Metric:          string(MetricBreadth),
 				Name:            "positive breadth",
 				State:           "cohort breadth supporting the leader",
 				Supports:        true,
@@ -151,7 +140,7 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 			{
-				Source:          types.SourceManifold,
+				Source:          SourceManifold,
 				Metric:          "divergence",
 				Name:            "laminar flow",
 				State:           "low divergence across the fluid field",
@@ -160,10 +149,10 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.3,
 			},
 		},
-		Opposes: []types.ObservationCondition{
+		Opposes: []ObservationCondition{
 			{
-				Source:          types.SourceExhaustion,
-				Metric:          string(types.MetricFragile),
+				Source:          SourceExhaustion,
+				Metric:          string(MetricFragile),
 				Name:            "fragile expansion",
 				State:           "the trend is built on fragile marginal volume",
 				Contradicts:     true,
@@ -174,12 +163,12 @@ var Catalog = []types.OpportunityArchetype{
 		RolloutDynamics: "riser",
 	},
 	{
-		Type:       types.OpportunityInefficientLag,
-		Precursors: []types.CategoryType{types.InefficientLag},
-		Supports: []types.ObservationCondition{
+		Type:       OpportunityInefficientLag,
+		Precursors: []CategoryType{InefficientLag},
+		Supports: []ObservationCondition{
 			{
-				Source:          types.SourceLeadLag,
-				Metric:          string(types.MetricInefficient),
+				Source:          SourceLeadLag,
+				Metric:          string(MetricInefficient),
 				Name:            "lag correlation",
 				State:           "leader path predicts this symbol's next move",
 				Supports:        true,
@@ -187,8 +176,8 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.5,
 			},
 			{
-				Source:          types.SourceCorrelation,
-				Metric:          string(types.MetricAlphaScore),
+				Source:          SourceCorrelation,
+				Metric:          string(MetricAlphaScore),
 				Name:            "decoupled alpha",
 				State:           "own path carries signal beyond cohort beta",
 				Supports:        true,
@@ -196,10 +185,10 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 		},
-		Opposes: []types.ObservationCondition{
+		Opposes: []ObservationCondition{
 			{
-				Source:          types.SourceLeadLag,
-				Metric:          string(types.MetricStall),
+				Source:          SourceLeadLag,
+				Metric:          string(MetricStall),
 				Name:            "anchor stall",
 				State:           "the presumed leader has stopped moving",
 				Contradicts:     true,
@@ -210,12 +199,12 @@ var Catalog = []types.OpportunityArchetype{
 		RolloutDynamics: "lag",
 	},
 	{
-		Type:       types.OpportunityAbsorptionReversal,
-		Precursors: []types.CategoryType{types.HiddenAbsorption},
-		Supports: []types.ObservationCondition{
+		Type:       OpportunityAbsorptionReversal,
+		Precursors: []CategoryType{HiddenAbsorption},
+		Supports: []ObservationCondition{
 			{
-				Source:          types.SourceCVD,
-				Metric:          string(types.MetricAbsorption),
+				Source:          SourceCVD,
+				Metric:          string(MetricAbsorption),
 				Name:            "massive absorption",
 				State:           "passive absorption outlasting the aggressive flow",
 				Supports:        true,
@@ -223,8 +212,8 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.4,
 			},
 			{
-				Source:          types.SourceToxicity,
-				Metric:          string(types.MetricBluffScore),
+				Source:          SourceToxicity,
+				Metric:          string(MetricBluffScore),
 				Name:            "bluff wall",
 				State:           "cancellation marks the pressure as fake",
 				Supports:        true,
@@ -232,10 +221,10 @@ var Catalog = []types.OpportunityArchetype{
 				SeparationFloor: 0.3,
 			},
 		},
-		Opposes: []types.ObservationCondition{
+		Opposes: []ObservationCondition{
 			{
-				Source:          types.SourceHawkes,
-				Metric:          string(types.MetricSpectralRadius),
+				Source:          SourceHawkes,
+				Metric:          string(MetricSpectralRadius),
 				Name:            "still-critical cascade",
 				State:           "the arrival process is still self-exciting upward",
 				Contradicts:     true,

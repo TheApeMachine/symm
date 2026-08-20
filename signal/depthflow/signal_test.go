@@ -3,39 +3,44 @@ package depthflow
 import (
 	"context"
 	"testing"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestDepthFlowNumber(t *testing.T) {
-	Convey("Given trades on one symbol", t, func() {
+	Convey("Given touch and deep book quantities on one symbol", t, func() {
 		thesis := types.NewThesis(context.Background(), nil)
-		market := thesis.Symbol("AAA/USD")
-
-		market.AppendTrade(kraken.TradeData{
-			Symbol: "AAA/USD", Side: "buy",
-			Price: *decimal.NewFromInt64(100), Qty: 1,
-			TradeID: 1, Timestamp: time.Unix(1_700_001_000, 0).UTC(),
-		})
-
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
 
-		Convey("It should emit a depth deviation reading", func() {
-			measurements := []*nmtypes.Measurement{}
+		Convey("It should compose the touch/deep imbalance family", func() {
+			touch := 2.0
+			deep := 8.0
 
-			for measurement := range market.MarketMeasurements("category") {
-				measurements = append(measurements, measurement)
-			}
+			input := nomagique.Frame{}
+			input.Put(calculus.SymbolLeft, touch)
+			input.Put(calculus.SymbolRight, deep)
+			input.Put(calculus.SymbolLevel, deep)
+			input.Put(calculus.SymbolClock, touch/(touch+deep))
+			input.Put(nomagique.SampleValue, touch+deep)
+			input.Put(statistic.SymbolBaseline, touch+deep)
+			input.Put(calculus.SymbolValue, touch)
+			input.Put(calculus.SymbolScale, touch+deep)
+			input.Put(nmtypes.EventTimeSec, float64(1_700_001_000))
+			input.Put(nmtypes.EventTimeNsec, 0)
+			input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-			So(len(measurements), ShouldEqual, 1)
-			So(measurements[0].Source, ShouldEqual, string(types.SourceDepthFlow))
+			output, err := signal.number("AAA/USD", input)
+
+			So(err, ShouldBeNil)
+			So(output.MustGet(SymbolTouchImbalance), ShouldNotEqual, 0)
+			So(output.MustGet(SymbolDeepImbalance), ShouldNotEqual, 0)
 		})
 	})
 }

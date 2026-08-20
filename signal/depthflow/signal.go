@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -10,26 +11,27 @@ import (
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
 var (
-	SymbolTouchImbalance   = nomagique.MustIntern("depthflow/touch_imbalance")
-	SymbolDeepImbalance    = nomagique.MustIntern("depthflow/deep_imbalance")
-	SymbolSpoofScore       = nomagique.MustIntern("depthflow/spoof_score")
-	SymbolLoadedScore      = nomagique.MustIntern("depthflow/loaded_score")
-	SymbolThinScore        = nomagique.MustIntern("depthflow/thin_score")
+	SymbolTouchImbalance = nomagique.MustIntern("depthflow/touch_imbalance")
+	SymbolDeepImbalance  = nomagique.MustIntern("depthflow/deep_imbalance")
+	SymbolSpoofScore     = nomagique.MustIntern("depthflow/spoof_score")
+	SymbolLoadedScore    = nomagique.MustIntern("depthflow/loaded_score")
+	SymbolThinScore      = nomagique.MustIntern("depthflow/thin_score")
 )
 
 /*
-depthflowPipeline composes the real book-flow classification:
+depthflowPipeline is slot-aligned with the calculus atoms:
 
-  - Touch imbalance and deep-book (decay-weighted) imbalance are computed in
-    parallel.
-  - The book notional is remembered through the adaptive baseline.
-  - Spoof is the sign disagreement between touch and deep imbalance, loaded is
-    a strong aligned imbalance, and thinning is notional falling below its own
-    baseline.
+  - TouchImbalance is the Difference of best bid/ask quantity.
+  - DeepImbalance is the Difference of the distance-decayed resting book, whose
+    decay remainder is the book's own depth share (not a zero clock).
+  - Spoof is the positive product of the two imbalances' disagreement, loaded
+    is a squashed z-score of that alignment, and thinning is the inverse lift
+    of the total notional below its own baseline.
 */
 func depthflowPipeline() nomagique.Primitive {
 	return nomagique.Pipe(
@@ -89,11 +91,11 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[string](depthflowPipeline()),
 	}
 
-	signal.run()
+	go signal.run()
 	return signal
 }
 
-func (signal *Signal) Name() string { return string(types.SourceDepthFlow) }
+func (signal *Signal) Name() string  { return string(types.SourceDepthFlow) }
 func (signal *Signal) Type() types.SourceType { return types.SourceDepthFlow }
 
 func (signal *Signal) run() {
@@ -102,25 +104,41 @@ func (signal *Signal) run() {
 		case <-signal.ctx.Done():
 			return
 		default:
-			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		}
+
+		if !signal.pending() {
+			// Nothing queued for this signal; yield before polling again.
+			runtime.Gosched()
+			continue
+		}
+
+		signal.thesis.Symbols.Range(func(_ any, value any) bool {
 				symbol, valid := value.(*types.Symbol)
 
 				if !valid || symbol == nil {
 					return true
 				}
 
-				for ticker := range symbol.MarketTickers(types.SourceDepthFlow) {
+				for frame := range symbol.MarketLevel3(types.SourceDepthFlow) {
+					touch := frameTouch(frame)
+					deep := frameDeep(frame)
+					total := touch + deep
+
 					input := nomagique.Frame{}
-					input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
-					input.Put(nmtypes.BetaQuantity, ticker.AskQty)
-					input.Put(calculus.SymbolLeft, ticker.BidQty)
-					input.Put(calculus.SymbolRight, ticker.AskQty)
-					input.Put(calculus.SymbolLevel, ticker.BidQty+ticker.AskQty)
-					input.Put(calculus.SymbolClock, 0)
-					input.Put(statistic.SymbolBaseline, ticker.BidQty+ticker.AskQty)
-					input.Put(nmtypes.Quantity, ticker.BidQty+ticker.AskQty)
-					input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-					input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+					input.Put(calculus.SymbolLeft, touch)
+					input.Put(calculus.SymbolRight, deep)
+					input.Put(calculus.SymbolLevel, deep)
+
+					if total > 0 {
+						input.Put(calculus.SymbolClock, touch/total)
+					}
+
+					input.Put(nomagique.SampleValue, total)
+					input.Put(statistic.SymbolBaseline, total)
+					input.Put(calculus.SymbolValue, touch)
+					input.Put(calculus.SymbolScale, total)
+					input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
+					input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
 					input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
 					output, err := signal.number(symbol.Symbol, input)
@@ -137,8 +155,8 @@ func (signal *Signal) run() {
 					symbol.Measurements.Push(nmtypes.NewMeasurement(
 						uuid.NewString(),
 						signal.Name(),
-						ticker.Timestamp.UnixNano(),
-						ticker.Timestamp.UnixNano(),
+						frame.Timestamp.UnixNano(),
+						frame.Timestamp.UnixNano(),
 					).AddMetrics(
 						nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
 							Unit:      nmtypes.UnitDimensionless,
@@ -165,8 +183,86 @@ func (signal *Signal) run() {
 
 				return true
 			})
+	}
+}
+
+/*
+pending reports whether any symbol queues a Level3 frame, so the
+run loop can yield without draining empty input.
+*/
+func (signal *Signal) pending() bool {
+	if signal.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		if symbol.HasLevel3() {
+			hasWork = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return hasWork
+}
+/*
+frameTouch returns the best level's resting quantity on the heavier side, and
+frameDeep returns the total resting quantity across all other levels — the L3
+depth the touch sits on top of. Both are real book quantities, so the decay
+clock (touch share) genuinely discounts the deep book by its distance share.
+*/
+func frameTouch(frame kraken.Level3Data) float64 {
+	bestBid, bestAsk := 0.0, 0.0
+
+	for _, order := range frame.Bids {
+		if order.OrderQty == nil {
+			continue
+		}
+
+		if order.OrderQty.Float64() > bestBid {
+			bestBid = order.OrderQty.Float64()
 		}
 	}
+
+	for _, order := range frame.Asks {
+		if order.OrderQty == nil {
+			continue
+		}
+
+		if order.OrderQty.Float64() > bestAsk {
+			bestAsk = order.OrderQty.Float64()
+		}
+	}
+
+	if bestBid > bestAsk {
+		return bestBid
+	}
+
+	return bestAsk
+}
+
+func frameDeep(frame kraken.Level3Data) float64 {
+	total := 0.0
+
+	for _, orders := range [][]kraken.Level3Order{frame.Bids, frame.Asks} {
+		for _, order := range orders {
+			if order.OrderQty != nil {
+				total += order.OrderQty.Float64()
+			}
+		}
+	}
+
+	return total
 }
 
 func (signal *Signal) Close() error {

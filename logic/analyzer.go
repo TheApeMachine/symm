@@ -16,12 +16,10 @@ import (
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 type Solver interface {
 	Name() string
-	Update(thesis *types.Thesis) error
 	Close() error
 }
 
@@ -73,13 +71,13 @@ func NewAnalyzer(
 		tree:   tree,
 		solverGroups: [][]Solver{
 			{
-				category.NewSolver(api, ui, recorder),
+				category.NewSolver(ctx, thesis, api, ui, recorder),
 				manifold.NewSolver(api, ui, binui, recorder),
 			}, {
-				causal.NewSolver(price, ui, recorder),
-				cognition.NewSolver(tree, ui, recorder),
+				causal.NewSolver(thesis, price, ui, recorder),
+				cognition.NewSolver(ctx, thesis, tree, ui, recorder),
 			}, {
-				graph.NewSolver(ui, recorder),
+				graph.NewSolver(thesis, ui, recorder),
 			}},
 		ui:       ui,
 		binui:    binui,
@@ -89,49 +87,13 @@ func NewAnalyzer(
 	return analyzer
 }
 
-func (analyzer *Analyzer) Process(thesis *types.Thesis) error {
-	previousGroupEnd := time.Now()
-
-	for groupIndex, solvers := range analyzer.solverGroups {
-		groupStarted := time.Now()
-
-		if analyzer.ObserveHop != nil && groupIndex > 0 && len(solvers) > 0 {
-			previous := analyzer.solverGroups[groupIndex-1][0].Name()
-			analyzer.ObserveHop(previous, solvers[0].Name(), groupStarted.Sub(previousGroupEnd))
-		}
-
-		group, ctx := errgroup.WithContext(analyzer.ctx)
-
-		for _, solver := range solvers {
-			group.Go(func() error {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-
-				solverStarted := time.Now()
-				err := solver.Update(thesis)
-
-				if analyzer.ObserveModule != nil {
-					analyzer.ObserveModule(solver.Name(), time.Since(solverStarted))
-				}
-
-				return err
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"analyzer: parallel solver update failed",
-				err,
-			))
-		}
-
-		previousGroupEnd = time.Now()
-	}
-
+/*
+Process begins the analysis stage. Every solver is self-running (each was
+started by its own constructor, consuming its own input MapReduce and writing
+to its own output MapReduce), so this step is the no-op coordinator: it returns
+after confirming the stage is alive.
+*/
+func (analyzer *Analyzer) Process(_ *types.Thesis) error {
 	return nil
 }
 

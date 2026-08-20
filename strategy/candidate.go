@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -95,22 +94,14 @@ func retireDecisionGraphs(
 		}
 
 		symbol := thesis.Symbol(decision.Symbol)
-		current, found := symbol.Graphs.Load("market_graph")
+		found := false
 
-		if !found {
-			continue
+		for range symbol.MarketGraphs(types.SourcePlanner) {
+			found = true
 		}
 
-		graph, valid := current.(*logicgraph.Graph)
-
-		if !valid || graph == nil {
-			continue
+		if found {
+			symbol.Graphs.Push(types.NewGraph(thesis.At))
 		}
-
-		symbol.Graphs.CompareAndSwap(
-			"market_graph",
-			graph,
-			logicgraph.NewGraph(thesis.At),
-		)
 	}
 }

@@ -2,65 +2,68 @@ package correlation
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
+var (
+	SymbolCohortRelation = nomagique.MustIntern("correlation/relation")
+	SymbolCohortSign     = nomagique.MustIntern("correlation/sign")
+)
+
 /*
-Signal is the Correlation perspective, reduced to a per-symbol price-motion
-pipeline. It is ONLY a nomagique pipeline: the price return is windowed,
-tracked by its own adaptive baseline, and scored by how far the current move
-stands from the symbol's own established behavior. No cross-symbol cohort is
-required for a symbol to establish its own relation to itself.
+correlationPairPipeline composes the pairwise relation from the shared atomic
+math units: the two returns are referenced against each other through
+log-ratio and ratio, then standardized around the pair's own baseline so a
+symbol is measured against its peer rather than against itself.
 */
+func correlationPairPipeline() nomagique.Primitive {
+	return nomagique.Pipe(
+		calculus.Difference,
+		nomagique.Relay(calculus.SymbolResult, calculus.SymbolLeft),
+		nomagique.Relay(calculus.SymbolResult, calculus.SymbolRight),
+		calculus.Product,
+		nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
+		nomagique.Relay(calculus.SymbolValue, calculus.SymbolBaseline),
+		nomagique.Fork(
+			nomagique.Pipe(
+				calculus.Squash,
+				nomagique.Relay(calculus.SymbolResult, SymbolCohortRelation),
+			),
+			statistic.ZScore,
+		),
+	)
+}
+
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	thesis *types.Thesis
-	number nomagique.Number[string]
+	number nomagique.Number[[2]string]
 }
 
-func NewSignal(
-	ctx context.Context,
-	thesis *types.Thesis,
-) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		thesis: thesis,
-		number: nomagique.NewNumber[string](
-			nomagique.Pipe(
-				statistic.Velocity,
-				nomagique.Relay(statistic.SymbolVelocityDelta, nomagique.SampleValue),
-				nomagique.Configure(
-					statistic.Baseline,
-					nmtypes.Span,
-					temporal.Window,
-				),
-				nomagique.Fork(
-					statistic.ZScore,
-					statistic.Deviation,
-				),
-			),
-		),
+		number: nomagique.NewNumber[[2]string](correlationPairPipeline()),
 	}
 
-	signal.run()
+	go signal.run()
 	return signal
 }
 
-func (signal *Signal) Name() string {
-	return string(types.SourceCorrelation)
-}
-
+func (signal *Signal) Name() string  { return string(types.SourceCorrelation) }
 func (signal *Signal) Type() types.SourceType {
 	return types.SourceCorrelation
 }
@@ -71,59 +74,142 @@ func (signal *Signal) run() {
 		case <-signal.ctx.Done():
 			return
 		default:
-			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		}
+
+		if !signal.pending() {
+			// Nothing queued for this signal; yield before polling again.
+			runtime.Gosched()
+			continue
+		}
+
+		signal.thesis.Symbols.Range(func(_ any, value any) bool {
 				symbol, valid := value.(*types.Symbol)
 
 				if !valid || symbol == nil {
 					return true
 				}
 
+				peer := peerFor(signal.thesis, symbol.Symbol)
+
+				if peer == "" {
+					return true
+				}
+
 				for ticker := range symbol.MarketTickers(types.SourceCorrelation) {
-					input := nomagique.Frame{}
-					input.Put(nmtypes.Quantity, ticker.Last.Float64())
-					input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-					input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+					signal.thesis.Symbols.Range(func(peerKey, peerValue any) bool {
+						peerSymbol, ok := peerValue.(*types.Symbol)
 
-					output, err := signal.number(symbol.Symbol, input)
+						if !ok || peerSymbol == nil || peerSymbol.Symbol != peer {
+							return true
+						}
 
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"correlation: number step failed for "+symbol.Symbol,
-							err,
-						))
-						continue
-					}
+						for peerTicker := range peerSymbol.MarketTickers(types.SourceCorrelation) {
+							input := nomagique.Frame{}
+							input.Put(calculus.SymbolCurrent, ticker.Last.Float64())
+							input.Put(calculus.SymbolPrevious, ticker.Last.Float64())
+							input.Put(calculus.SymbolLeft, ticker.Last.Float64())
+							input.Put(calculus.SymbolRight, peerTicker.Last.Float64())
+							input.Put(calculus.SymbolScale, 1.0)
+							input.Put(nomagique.SampleValue, ticker.Last.Float64())
+							input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+							input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+							input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-					symbol.Measurements.Push(nmtypes.NewMeasurement(
-						uuid.NewString(),
-						signal.Name(),
-						ticker.Timestamp.UnixNano(),
-						ticker.Timestamp.UnixNano(),
-					).AddMetrics(
-						nmtypes.NewMetric("price_velocity", output.MustGet(statistic.SymbolVelocityDelta), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitRate,
-							Timescale: nmtypes.TimescalePerSecond,
-						}),
-						nmtypes.NewMetric("motion_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitRate,
-							Timescale: nmtypes.TimescalePerSecond,
-						}),
-						nmtypes.NewMetric("motion_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("motion_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-					))
+							output, err := signal.number(
+								[2]string{symbol.Symbol, peer},
+								input,
+							)
+
+							if err != nil {
+								errnie.Error(errnie.Err(
+									errnie.Validation,
+									"correlation: failed for "+symbol.Symbol,
+									err,
+								))
+								return false
+							}
+
+							symbol.Measurements.Push(nmtypes.NewMeasurement(
+								uuid.NewString(),
+								signal.Name(),
+								ticker.Timestamp.UnixNano(),
+								ticker.Timestamp.UnixNano(),
+							).AddMetrics(
+								nmtypes.NewMetric("relation", output.MustGet(SymbolCohortRelation), nmtypes.Descriptor{
+									Unit:      nmtypes.UnitDimensionless,
+									Timescale: nmtypes.TimescaleInstantaneous,
+								}),
+							))
+
+							return false
+						}
+
+						return true
+					})
 				}
 
 				return true
 			})
-		}
 	}
+}
+
+/*
+pending reports whether any symbol queues a Tickers frame, so the
+run loop can yield without draining empty input.
+*/
+func (signal *Signal) pending() bool {
+	if signal.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		if symbol.HasTickers() {
+			hasWork = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return hasWork
+}
+/*
+peerFor returns some other registered symbol against which this symbol's
+relation is measured. The pair key isolates each relation in its own stream.
+*/
+func peerFor(thesis *types.Thesis, self string) string {
+	if thesis == nil {
+		return ""
+	}
+
+	var peer string
+
+	thesis.Symbols.Range(func(key, _ any) bool {
+		symbolName, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		if symbolName != self {
+			peer = symbolName
+
+			return false
+		}
+
+		return true
+	})
+
+	return peer
 }
 
 func (signal *Signal) Close() error {

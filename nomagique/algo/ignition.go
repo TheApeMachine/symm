@@ -73,7 +73,23 @@ Ignition advances one ordered market stream through a causal volume clock. Use
 one nomagique.Stream per key; the reducer itself contains no keyed or domain
 state outside its Frame.
 */
-func Ignition(
+/*
+Ignition is a composite Primitive: the causal volume-clock transition runs
+first, and the classified output projection runs second. Both steps are plain
+primitives; the score path already composes the shared calculus.Ratio and
+calculus.Squash atoms through ignitionScore.
+*/
+func Ignition() nomagique.Primitive {
+	return nomagique.Pipe(ignitionTransition, ignitionClassify)
+}
+
+/*
+ignitionTransition advances one ordered market stream through the causal
+volume clock: it validates the observation, initializes or advances the
+current bar, and, when the bar's volume reaches its history median target,
+closes it and scores the tape.
+*/
+func ignitionTransition(
 	state nomagique.Frame,
 	input nomagique.Frame,
 ) (nomagique.Frame, nomagique.Frame, error) {
@@ -111,6 +127,21 @@ func Ignition(
 		return state, nomagique.Frame{}, err
 	}
 
+	nextState.Put(SymbolSpread, spread)
+
+	return nextState, nextState, nil
+}
+
+/*
+ignitionClassify projects the transition's state into the public output slots:
+spread, readiness, and bar-driven maturity.
+*/
+func ignitionClassify(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	nextState := state
+	spread := number(nextState, SymbolSpread)
 	composeIgnition(&nextState, spread)
 
 	return nextState, nextState, nil

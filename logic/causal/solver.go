@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"runtime"
 	"sync"
 	"time"
 
@@ -40,6 +41,7 @@ physics fluid metrics, and predictive coding resonance predictions.
 type Solver struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
+	thesis   *types.Thesis
 	price    *broker.Price
 	recorder *audit.Recorder
 	pearls   *sync.Map
@@ -56,7 +58,8 @@ Default layout (4-column row):
   - Col 2: Treatment (Resonance Task Prediction / Expected Return)
   - Col 3: Target (Realized Price Return)
 */
-func NewSolver(price *broker.Price, ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(thesis *types.Thesis, price *broker.Price, ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
+	ctx, cancel := context.WithCancel(context.Background())
 	defaultConfig := algorithm.PearlConfig{
 		Target:                  3,
 		Treatment:               2,
@@ -65,8 +68,9 @@ func NewSolver(price *broker.Price, ui chan []byte, recorder *audit.Recorder, op
 	}
 
 	solver := &Solver{
-		ctx:      context.Background(),
-		cancel:   func() {},
+		ctx:      ctx,
+		cancel:   cancel,
+		thesis:   thesis,
 		price:    price,
 		recorder: recorder,
 		pearls:   &sync.Map{},
@@ -79,6 +83,7 @@ func NewSolver(price *broker.Price, ui chan []byte, recorder *audit.Recorder, op
 		opt(solver)
 	}
 
+	go solver.run()
 	return solver
 }
 
@@ -87,57 +92,111 @@ func (solver *Solver) Name() string {
 }
 
 /*
-Update extracts aligned causal rows from Thesis, evaluates Pearl's causal
-ladder, and stores each symbol's output directly on thesis.Causal.
+run consumes each symbol's resonance stream from the Resonance input MapReduce
+and pushes derived causal outputs to the Causal output MapReduce. A failed pass
+cancels the pond group; causal evaluation is retried on every enriched thesis,
+so each pass gets a fresh group.
 */
-func (solver *Solver) Update(thesis *types.Thesis) error {
-	// A failed pass cancels a pond group permanently. Causal evaluation is
-	// retried on every enriched Thesis, so it requires a new group per pass.
-	group, _ := errgroup.WithContext(solver.ctx)
-	updated := false
-
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbol, symbolOK := key.(string)
-		symbolState, stateOK := value.(*types.Symbol)
-
-		if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
-			return true
+func (solver *Solver) run() {
+	for {
+		select {
+		case <-solver.ctx.Done():
+			return
+		default:
 		}
 
-		resonanceValue, found := symbolState.Resonance.Load(symbol)
-
-		if !found {
-			return true
+		if !solver.pending() {
+			// No symbol has new resonance to evaluate; yield instead of spinning
+			// through an empty stage.
+			runtime.Gosched()
+			continue
 		}
 
-		_, valid := resonanceValue.(*learning.ResonanceManifold)
+		group, _ := errgroup.WithContext(solver.ctx)
+		updated := false
 
-		if !valid {
+		solver.thesis.Symbols.Range(func(key, value any) bool {
+			symbol, symbolOK := key.(string)
+			symbolState, stateOK := value.(*types.Symbol)
+
+			if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
+				return true
+			}
+
+			if symbolState.Resonance.Length() == 0 {
+				return true
+			}
+
+			updated = true
+			group.Go(func() error {
+				return solver.measure(solver.thesis, symbol)
+			})
+
 			return true
-		}
-
-		updated = true
-		group.Go(func() error {
-			return solver.measure(thesis, symbol)
 		})
+
+		if err := group.Wait(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"causal: parallel evaluation failed: "+err.Error(),
+				err,
+			))
+		}
+
+		if updated {
+			solver.publish(solver.thesis)
+		}
+	}
+}
+
+/*
+pending reports whether any symbol has unconsumed resonance on its input
+MapReduce, so the run loop can yield without processing when idle.
+*/
+func (solver *Solver) pending() bool {
+	if solver.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	solver.thesis.Symbols.Range(func(_, value any) bool {
+		symbolState, valid := value.(*types.Symbol)
+
+		if !valid || symbolState == nil {
+			return true
+		}
+
+		if symbolState.Resonance.Length() > 0 {
+			hasWork = true
+
+			return false
+		}
 
 		return true
 	})
 
-	if err := group.Wait(); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"causal: parallel evaluation failed: "+err.Error(),
-			err,
-		))
+	return hasWork
+}
+
+/*
+popResonanceManifold drains this symbol's resonance artifacts to the causal
+stage and hands back the most recent predictive manifold it finds.
+*/
+func (solver *Solver) popResonanceManifold(symbolState *types.Symbol) (*learning.ResonanceManifold, bool) {
+	var manifold *learning.ResonanceManifold
+
+	for stored := range symbolState.MarketResonance(types.SourceCausal) {
+		if coder, valid := stored.(*learning.ResonanceManifold); valid && coder != nil {
+			manifold = coder
+		}
 	}
 
-	if !updated {
-		return nil
+	if manifold == nil {
+		return nil, false
 	}
 
-	solver.publish(thesis)
-	return nil
+	return manifold, true
 }
 
 func (solver *Solver) measure(
@@ -151,20 +210,11 @@ func (solver *Solver) measure(
 	}
 
 	symbolState := symbolValue.(*types.Symbol)
-	stored, found := symbolState.Resonance.Load(symbol)
 
-	if !found {
-		return nil
-	}
-
-	coder, ok := stored.(*learning.ResonanceManifold)
+	coder, ok := solver.popResonanceManifold(symbolState)
 
 	if !ok {
-		return errnie.Err(
-			errnie.Validation,
-			"causal: resonance manifold has an invalid type",
-			nil,
-		)
+		return nil
 	}
 
 	forecast, err := coder.RolloutTaskForecast(1)
@@ -240,7 +290,7 @@ func (solver *Solver) measure(
 
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			solver.storeUnresolved(symbolState, symbol, tickerAt, rows, prediction)
+			solver.storeUnresolved(symbolState, tickerAt, rows, prediction)
 			return nil
 		}
 
@@ -252,7 +302,7 @@ func (solver *Solver) measure(
 	}
 
 	if !resolved {
-		solver.storeUnresolved(symbolState, symbol, tickerAt, rows, prediction)
+		solver.storeUnresolved(symbolState, tickerAt, rows, prediction)
 		return nil
 	}
 
@@ -274,13 +324,12 @@ func (solver *Solver) measure(
 	causalOutput["samples"] = len(rows)
 	causalOutput["treatmentLevel"] = prediction
 
-	symbolState.Causal.Store(symbol, causalOutput)
+	symbolState.Causal.Push(causalOutput)
 	return nil
 }
 
 func (solver *Solver) storeUnresolved(
 	symbolState *types.Symbol,
-	symbol string,
 	at time.Time,
 	rows [][]float64,
 	prediction float64,
@@ -295,7 +344,7 @@ func (solver *Solver) storeUnresolved(
 		return
 	}
 
-	symbolState.Causal.Store(symbol, map[string]any{
+	symbolState.Causal.Push(map[string]any{
 		"at":             at,
 		"historyRows":    rows,
 		"identification": "unresolved",
@@ -356,18 +405,14 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 			return true
 		}
 
-		stored, found := symbolState.Causal.Load(symbol)
-		causalMap, ok := stored.(map[string]any)
+		for causalMap := range symbolState.MarketCausal(types.SourceCausal) {
+			if _, present := causalMap["symbol"]; !present {
+				causalMap["symbol"] = symbol
+			}
 
-		if !found || !ok {
-			return true
+			rows = append(rows, causalMap)
 		}
 
-		if _, present := causalMap["symbol"]; !present {
-			causalMap["symbol"] = symbol
-		}
-
-		rows = append(rows, causalMap)
 		return true
 	})
 

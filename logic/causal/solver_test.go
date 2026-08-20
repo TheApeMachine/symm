@@ -1,6 +1,7 @@
 package causal
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -51,58 +52,67 @@ func setCausalPrice(
 }
 
 func causalSymbol(thesis *types.Thesis, symbol string) *types.Symbol {
-	stored, _ := thesis.Symbols.LoadOrStore(symbol, types.NewSymbol(symbol, nil))
+	stored, _ := thesis.Symbols.LoadOrStore(symbol, types.NewSymbol(symbol))
 
 	return stored.(*types.Symbol)
+}
+
+func lastCausal(symbolState *types.Symbol) (map[string]any, bool) {
+	var output map[string]any
+
+	for stored := range symbolState.MarketCausal(types.SourceCausal) {
+		output = stored
+	}
+
+	return output, output != nil
 }
 
 func TestUpdate(t *testing.T) {
 	convey.Convey("Given a predictive-coding reading without a forecast", t, func() {
 		price := broker.NewPrice(websocket.NewAPI(t.Context(), nil, nil))
-		solver := NewSolver(price, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbolState := causalSymbol(thesis, "BTC/USD")
-		symbolState.Resonance.Store("BTC/USD", learning.NewResonanceManifold([]int{1, 2, 1}, 1, 0.1))
+		symbolState.Resonance.Push(learning.NewResonanceManifold([]int{1, 2, 1}, 1, 0.1))
+		solver := NewSolver(types.NewThesis(t.Context(), nil), price, nil, nil)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
 
-		err := solver.Update(thesis)
+		err := solver.measure(thesis, "BTC/USD")
 
 		convey.Convey("Then causal should complete without inventing an estimate", func() {
 			convey.So(err, convey.ShouldBeNil)
-			_, found := symbolState.Causal.Load("BTC/USD")
+			_, found := lastCausal(symbolState)
 			convey.So(found, convey.ShouldBeFalse)
 		})
 	})
 
 	convey.Convey("Given a forecast followed by a later executable midpoint", t, func() {
 		price := broker.NewPrice(websocket.NewAPI(t.Context(), nil, nil))
-		solver := NewSolver(price, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := "BTC/USD"
 		firstAt := time.Unix(1, 0)
 		symbolState := causalSymbol(thesis, symbol)
-		symbolState.Resonance.Store(symbol, testResonanceManifold(0.5, 0.25, []float64{0.1}))
+		symbolState.Resonance.Push(testResonanceManifold(0.5, 0.25, []float64{0.1}))
 		setCausalPrice(price, symbol, 100, firstAt)
+		solver := NewSolver(types.NewThesis(t.Context(), nil), price, nil, nil)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
 
-		convey.So(solver.Update(thesis), convey.ShouldBeNil)
-		_, found := symbolState.Causal.Load(symbol)
+		convey.So(solver.measure(thesis, symbol), convey.ShouldBeNil)
+		_, found := lastCausal(symbolState)
 		convey.So(found, convey.ShouldBeFalse)
 
 		thesis.At = thesis.At.Add(time.Second)
-		symbolState.Resonance.Store(symbol, testResonanceManifold(0.75, 0.5, []float64{0.2}))
+		symbolState.Resonance.Push(testResonanceManifold(0.75, 0.5, []float64{0.2}))
 		setCausalPrice(price, symbol, 110, firstAt.Add(time.Second))
-		err := solver.Update(thesis)
+		err := solver.measure(thesis, symbol)
 
 		convey.Convey("Then it should retain the strictly prior unresolved row", func() {
 			convey.So(err, convey.ShouldBeNil)
-			stored, found := symbolState.Causal.Load(symbol)
+			output, found := lastCausal(symbolState)
 			convey.So(found, convey.ShouldBeTrue)
-			output := stored.(map[string]any)
 			rows := output["historyRows"].([][]float64)
 			convey.So(output["samples"], convey.ShouldEqual, 1)
 			convey.So(output["precision"], convey.ShouldEqual, 0.0)
@@ -121,7 +131,12 @@ func TestUpdate(t *testing.T) {
 
 	convey.Convey("Given an invalid causal row configuration", t, func() {
 		price := broker.NewPrice(websocket.NewAPI(t.Context(), nil, nil))
+		thesis := types.NewThesis(t.Context(), nil)
+		symbol := "BTC/USD"
+		symbolState := causalSymbol(thesis, symbol)
+		baseAt := time.Unix(1, 0)
 		solver := NewSolver(
+			makeEmptyThesis(),
 			price,
 			nil,
 			nil,
@@ -131,17 +146,13 @@ func TestUpdate(t *testing.T) {
 				Controls:  []int{0, 1},
 			}),
 		)
-		thesis := types.NewThesis(t.Context(), nil)
-		symbol := "BTC/USD"
-		symbolState := causalSymbol(thesis, symbol)
-		baseAt := time.Unix(1, 0)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
 
 		for index := range 4 {
 			thesis.At = baseAt.Add(time.Duration(index) * time.Second)
-			symbolState.Resonance.Store(symbol, testResonanceManifold(
+			symbolState.Resonance.Push(testResonanceManifold(
 				float64(index+1)/10,
 				float64(index+2)/10,
 				[]float64{float64(index+3) / 10},
@@ -149,22 +160,21 @@ func TestUpdate(t *testing.T) {
 			setCausalPrice(price, symbol, 100+float64(index), thesis.At)
 
 			if index < 3 {
-				_ = solver.Update(thesis)
+				_ = solver.measure(thesis, symbol)
 			}
 		}
 
-		err := solver.Update(thesis)
+		err := solver.measure(thesis, symbol)
 
 		convey.Convey("Then it should not hide real bad configuration as unresolved evidence", func() {
 			convey.So(err, convey.ShouldNotBeNil)
-			_, found := symbolState.Causal.Load(symbol)
+			_, found := lastCausal(symbolState)
 			convey.So(found, convey.ShouldBeFalse)
 		})
 	})
 
 	convey.Convey("Given a causal evidence stream for one symbol", t, func() {
 		price := broker.NewPrice(websocket.NewAPI(t.Context(), nil, nil))
-		solver := NewSolver(price, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		symbol := "BTC/USD"
 		symbolState := causalSymbol(thesis, symbol)
@@ -173,6 +183,7 @@ func TestUpdate(t *testing.T) {
 		previousEnergy := 0.0
 		previousSurprise := 0.0
 		previousPrediction := 0.0
+		solver := NewSolver(makeEmptyThesis(), price, nil, nil)
 		convey.Reset(func() {
 			convey.So(solver.Close(), convey.ShouldBeNil)
 		})
@@ -189,19 +200,18 @@ func TestUpdate(t *testing.T) {
 				surprise := float64((index*2)%5) / 1_000
 				prediction := float64(index+1) / 1_000
 				thesis.At = baseAt.Add(time.Duration(index) * time.Second)
-				symbolState.Resonance.Store(symbol, testResonanceManifold(energy, surprise, []float64{prediction}))
+				symbolState.Resonance.Push(testResonanceManifold(energy, surprise, []float64{prediction}))
 				setCausalPrice(price, symbol, midpoint, thesis.At)
 
-				err := solver.Update(thesis)
+				err := solver.measure(thesis, symbol)
 				convey.So(err, convey.ShouldBeNil)
 				previousEnergy = energy
 				previousSurprise = surprise
 				previousPrediction = prediction
 			}
 
-			stored, found := symbolState.Causal.Load(symbol)
+			output, found := lastCausal(symbolState)
 			convey.So(found, convey.ShouldBeTrue)
-			output := stored.(map[string]any)
 
 			convey.So(output["association"], convey.ShouldNotBeNil)
 			convey.So(output["samples"], convey.ShouldEqual, 12)
@@ -214,14 +224,23 @@ func TestUpdate(t *testing.T) {
 	})
 }
 
-func BenchmarkUpdate(b *testing.B) {
-	solver := NewSolver(nil, nil, nil)
+/*
+makeEmptyThesis returns a thesis without symbols so a solver's self-running goroutine
+has nothing to consume; the tests drive measure(thesis, symbol) synchronously on an
+explicit thesis.
+*/
+func makeEmptyThesis() *types.Thesis {
+	return types.NewThesis(context.Background(), nil)
+}
+
+func BenchmarkCausalRun(b *testing.B) {
+	thesis := types.NewThesis(b.Context(), nil)
+	solver := NewSolver(thesis, nil, nil, nil)
 	b.Cleanup(func() {
 		if err := solver.Close(); err != nil {
 			b.Fatal(err)
 		}
 	})
-	thesis := types.NewThesis(b.Context(), nil)
 	baseAt := time.Unix(1, 0)
 	symbols := make([]string, 640)
 
@@ -229,42 +248,35 @@ func BenchmarkUpdate(b *testing.B) {
 		symbol := fmt.Sprintf("SYMBOL-%03d/USD", index)
 		symbols[index] = symbol
 		storedSymbol, _ := thesis.Symbols.Load(symbol)
-		storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceManifold(
+		storedSymbol.(*types.Symbol).Resonance.Push(testResonanceManifold(
 			float64(index),
 			float64(index)/float64(index+1),
 			[]float64{float64(index) / float64(index+1)},
 		))
 	}
 
-	if err := solver.Update(thesis); err != nil {
-		b.Fatal(err)
-	}
-
-	tick := 1
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
 		b.StopTimer()
-		thesis.At = thesis.At.Add(time.Second)
-		at := baseAt.Add(time.Duration(tick) * time.Second)
 
 		for index, symbol := range symbols {
 			storedSymbol, _ := thesis.Symbols.Load(symbol)
-			storedSymbol.(*types.Symbol).Resonance.Store(symbol, testResonanceManifold(
+			storedSymbol.(*types.Symbol).Resonance.Push(testResonanceManifold(
 				float64(index),
 				float64(index)/float64(index+1),
 				[]float64{float64(index) / float64(index+1)},
 			))
-			_ = at
 		}
 
 		b.StartTimer()
 
-		if err := solver.Update(thesis); err != nil {
-			b.Fatal(err)
+		for _, symbol := range symbols {
+			storedSymbol, _ := thesis.Symbols.Load(symbol)
+			storedSymbol.(*types.Symbol).MarketResonance(types.SourceCausal)
 		}
 
-		tick++
+		thesis.At = baseAt.Add(1 * time.Second)
 	}
 }

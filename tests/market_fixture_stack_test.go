@@ -90,17 +90,19 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 					So(system.Desk.Holding("SIM1/USD"), ShouldEqual, 0)
 					closed := 0
 
-					system.Thesis.Symbol("SIM1/USD").Positions.Range(func(_, value any) bool {
-						position, ok := value.(*broker.Position)
+					for stored := range system.Thesis.Symbol("SIM1/USD").Positions.Drain("audit", func(any) bool {
+						return true
+					}) {
+						position, ok := stored.(*broker.Position)
 
 						if !ok {
-							return true
+							continue
 						}
 
 						if position.Holding == nil ||
 							position.Holding.Symbol != "SIM1/USD" ||
 							position.Holding.Status != types.CLOSED {
-							return true
+							continue
 						}
 
 						closed++
@@ -111,8 +113,7 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 						So(position.Holding.PnL, ShouldNotBeNil)
 						So(position.Holding.PnL.Sign(), ShouldEqual, 1)
 						So(position.Holding.ReturnPct, ShouldBeGreaterThan, 0.0)
-						return true
-					})
+					}
 
 					So(closed, ShouldBeGreaterThan, 0)
 				})
@@ -158,15 +159,24 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 
 				So(market.Replay(capture), ShouldBeNil)
 				symbolState := system.Thesis.Symbol("IDOS/USD")
-				stored, found := symbolState.Resonance.Load("IDOS/USD")
-				So(found, ShouldBeTrue)
-				coder := stored.(*learning.ResonanceManifold)
+				var coder *learning.ResonanceManifold
+
+				for stored := range symbolState.MarketResonance(types.SourceGraph) {
+					if candidate, valid := stored.(*learning.ResonanceManifold); valid && candidate != nil {
+						coder = candidate
+					}
+				}
+
+				So(coder, ShouldNotBeNil)
 				forecast, forecastErr := coder.RolloutTaskForecast(1)
 				skill, skillReady := coder.TaskSkill()
 				var completed *broker.Position
 				var active *broker.Position
-				symbolState.Positions.Range(func(_, value any) bool {
-					position, valid := value.(*broker.Position)
+
+				for stored := range symbolState.Positions.Drain("audit", func(any) bool {
+					return true
+				}) {
+					position, valid := stored.(*broker.Position)
 
 					if valid && position.Holding != nil {
 						t.Logf(
@@ -189,9 +199,7 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 						position.Holding.Status != types.CLOSED {
 						active = position
 					}
-
-					return true
-				})
+				}
 
 				Convey("It should enter only on calibrated positive net utility and exit profitably", func() {
 					So(forecastErr, ShouldBeNil)
@@ -455,19 +463,32 @@ func captureCrossSection(system *cmd.System, names []string) []captureSymbolRow 
 		row := captureSymbolRow{symbol: name, action: types.ActionNothing}
 		symbolState := system.Thesis.Symbol(name)
 
-		if stored, found := symbolState.Decisions.Load(name); found {
-			if decision, valid := stored.(*types.Decision); valid && decision != nil {
-				row.action = decision.Action
-				row.reason = decision.Reason
-				row.utility = decision.Utility
-				row.graph = decision.GraphScore
-				row.sources = len(decision.PerspectiveSources)
-				row.horizon = decision.ForecastHorizon
+		var decision types.Decision
+
+		for candidate := range symbolState.Decisions.Drain("audit", func(types.Decision) bool {
+			return true
+		}) {
+			decision = candidate
+		}
+
+		if decision.Symbol != "" {
+			row.action = decision.Action
+			row.reason = decision.Reason
+			row.utility = decision.Utility
+			row.graph = decision.GraphScore
+			row.sources = len(decision.PerspectiveSources)
+			row.horizon = decision.ForecastHorizon
+		}
+
+		var coder *learning.ResonanceManifold
+
+		for stored := range symbolState.MarketResonance(types.SourceGraph) {
+			if candidate, valid := stored.(*learning.ResonanceManifold); valid && candidate != nil {
+				coder = candidate
 			}
 		}
 
-		if stored, found := symbolState.Resonance.Load(name); found {
-			coder := stored.(*learning.ResonanceManifold)
+		if coder != nil {
 			forecast, _ := coder.RolloutTaskForecast(1)
 			row.skill, row.skillReady = coder.TaskSkill()
 
@@ -477,11 +498,13 @@ func captureCrossSection(system *cmd.System, names []string) []captureSymbolRow 
 			}
 		}
 
-		symbolState.Positions.Range(func(_, value any) bool {
-			position, valid := value.(*broker.Position)
+		for stuck := range symbolState.Positions.Drain("audit", func(any) bool {
+			return true
+		}) {
+			position, valid := stuck.(*broker.Position)
 
 			if !valid || position == nil || position.Holding == nil {
-				return true
+				continue
 			}
 
 			if position.Holding.Status == types.CLOSED {
@@ -495,12 +518,11 @@ func captureCrossSection(system *cmd.System, names []string) []captureSymbolRow 
 					}
 				}
 
-				return true
+				continue
 			}
 
 			row.open++
-			return true
-		})
+		}
 
 		rows = append(rows, row)
 	}

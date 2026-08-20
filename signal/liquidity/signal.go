@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -55,7 +56,7 @@ func NewSignal(
 		),
 	}
 
-	signal.run()
+	go signal.run()
 	return signal
 }
 
@@ -76,7 +77,15 @@ func (signal *Signal) run() {
 		case <-signal.ctx.Done():
 			return
 		default:
-			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		}
+
+		if !signal.pending() {
+			// Nothing queued for this signal; yield before polling again.
+			runtime.Gosched()
+			continue
+		}
+
+		signal.thesis.Symbols.Range(func(_ any, value any) bool {
 				symbol, valid := value.(*types.Symbol)
 
 				if !valid || symbol == nil {
@@ -84,6 +93,10 @@ func (signal *Signal) run() {
 				}
 
 				for ticker := range symbol.MarketTickers(types.SourceLiquidity) {
+					if ticker.Bid == nil || ticker.Ask == nil {
+						continue
+					}
+
 					input := nomagique.Frame{}
 					input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
 					input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
@@ -141,14 +154,38 @@ func (signal *Signal) run() {
 
 				return true
 			})
-		}
 	}
 }
 
 /*
-Close releases the receiver's owned resources so shutdown does not leave active
-market-data producers.
+pending reports whether any symbol queues a Tickers frame, so the
+run loop can yield without draining empty input.
 */
+func (signal *Signal) pending() bool {
+	if signal.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		if symbol.HasTickers() {
+			hasWork = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return hasWork
+}
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

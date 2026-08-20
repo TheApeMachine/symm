@@ -59,6 +59,23 @@ func NewMapReduce[T any](
 	return mr
 }
 
+func (mr *MapReduce[T]) Length() uint64 {
+	return mr.data.Length()
+}
+
+/*
+Register a new consumer with a unique ID.
+This creates a new Queue for the consumer to read from.
+If the consumer ID already exists, it will be ignored.
+*/
+func (mr *MapReduce[T]) Register(consumerID string) {
+	if slices.Index(mr.consumerIDs, consumerID) < 0 {
+		mr.consumerIDs = append(mr.consumerIDs, consumerID)
+		mr.consumerQueues = append(mr.consumerQueues, lf.NewQueue[T]())
+		mr.previous = append(mr.previous, nil)
+	}
+}
+
 func (mr *MapReduce[T]) Push(item T) {
 	mr.data.Enqueue(item)
 }

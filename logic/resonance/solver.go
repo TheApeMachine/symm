@@ -383,10 +383,10 @@ func (solver *Solver) publishReturns(
 	}
 
 	if coder != nil && coder.Manifold() != nil {
-		symbol.Resonance.Store(symbolName, coder.Manifold())
+		symbol.Resonance.Push(coder.Manifold())
 	}
 
-	symbol.Resonance.Store(learning.PredictiveDynamicsKey, out.Dynamics)
+	symbol.Resonance.Push(out.Dynamics)
 
 	if !out.Calibrated {
 		return
@@ -415,8 +415,7 @@ func (solver *Solver) publishReturns(
 		}
 	}
 
-	symbol.Resonance.Store(
-		types.ResonanceReturnForecastKey,
+	symbol.Resonance.Push(
 		&types.ResonanceReturnForecast{
 			Distribution:  forecast,
 			Horizon:       horizon,

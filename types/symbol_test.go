@@ -10,7 +10,7 @@ import (
 
 func TestSymbolNewSymbol(t *testing.T) {
 	Convey("Given a symbol name", t, func() {
-		symbol := NewSymbol("BTC/USD", nil)
+		symbol := NewSymbol("BTC/USD")
 
 		Convey("It should initialize empty symbol stream state", func() {
 			So(symbol.Symbol, ShouldEqual, "BTC/USD")
@@ -23,7 +23,7 @@ func TestSymbolNewSymbol(t *testing.T) {
 
 func TestSymbolAppendMeasurement(t *testing.T) {
 	Convey("Given one raw-only measurement appended to a symbol", t, func() {
-		symbol := NewSymbol("BTC/USD", nil)
+		symbol := NewSymbol("BTC/USD")
 		measurement := nmtypes.NewMeasurement("first", string(SourceHawkes), 0, 0)
 
 		symbol.AppendMeasurement(measurement)
@@ -48,7 +48,7 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 
 func TestSymbolAppendTicker(t *testing.T) {
 	Convey("Given one ticker appended to a symbol", t, func() {
-		symbol := NewSymbol("BTC/USD", nil)
+		symbol := NewSymbol("BTC/USD")
 		ticker := kraken.TickerData{Symbol: "BTC/USD"}
 
 		symbol.AppendTicker(ticker)
@@ -67,7 +67,7 @@ func TestSymbolAppendTicker(t *testing.T) {
 
 func TestSymbolAppendTrade(t *testing.T) {
 	Convey("Given one trade appended to a symbol", t, func() {
-		symbol := NewSymbol("BTC/USD", nil)
+		symbol := NewSymbol("BTC/USD")
 		trade := kraken.TradeData{Symbol: "BTC/USD"}
 
 		symbol.AppendTrade(trade)

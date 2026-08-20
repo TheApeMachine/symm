@@ -14,9 +14,9 @@ import (
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	logicgraph "github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -135,8 +135,10 @@ every symbol's market graph and keeps only the ones whose decision proposition
 has accumulated enough confidence to be worth a causal search. Sparse graphs
 are left to accumulate more observations instead of spending search effort.
 */
-func (planner *Planner) readySymbols(thesis *types.Thesis) []*types.Symbol {
-	ready := make([]*types.Symbol, 0)
+func (planner *Planner) readySymbols(
+	thesis *types.Thesis,
+) map[string]*logicgraph.Graph {
+	ready := make(map[string]*logicgraph.Graph)
 
 	minimumConfidence := 0.0
 
@@ -157,19 +159,17 @@ func (planner *Planner) readySymbols(thesis *types.Thesis) []*types.Symbol {
 			return true
 		}
 
-		stored, found := symbolState.Graphs.Load("market_graph")
+		var graph *logicgraph.Graph
 
-		if !found {
+		for stored := range symbolState.MarketGraphs(types.SourceGraph) {
+			graph = stored
+		}
+
+		if graph == nil || !graph.SearchableEnough(minimumConfidence) {
 			return true
 		}
 
-		graph, valid := stored.(*logicgraph.Graph)
-
-		if !valid || !graph.SearchableEnough(minimumConfidence) {
-			return true
-		}
-
-		ready = append(ready, symbolState)
+		ready[symbolName] = graph
 		return true
 	})
 
@@ -298,16 +298,10 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		legs := make([]portfolioLeg, 0, len(readySymbols)+len(heldLegs))
 		graphs := make(map[string]*logicgraph.Graph, len(readySymbols))
 
-		for _, symbolState := range readySymbols {
-			stored, found := symbolState.Graphs.Load("market_graph")
+		for symbolName, symbolGraph := range readySymbols {
+			graph := symbolGraph
 
-			if !found {
-				continue
-			}
-
-			graph, valid := stored.(*logicgraph.Graph)
-
-			if !valid || graph == nil || !graph.ReadyForSearch() {
+			if graph == nil || !graph.ReadyForSearch() {
 				continue
 			}
 
@@ -318,11 +312,11 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 				rejections = append(rejections, struct {
 					symbol string
 					graph  *logicgraph.Graph
-				}{symbolState.Symbol, cloned})
+				}{symbolName, cloned})
 				continue
 			}
 
-			graphs[symbolState.Symbol] = cloned
+			graphs[symbolName] = cloned
 			now := cloned.At
 			opportunityType := graphOpportunityType(cloned)
 			predictiveReady, _ := predictiveReadiness(cloned)
@@ -333,7 +327,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			)
 
 			legs = append(legs, portfolioLeg{
-				Symbol:          symbolState.Symbol,
+				Symbol:          symbolName,
 				Summary:         summary,
 				Opportunity:     cloned.ActiveOpportunity(now),
 				Trust:           cloned.MeanTrust(now),
@@ -482,7 +476,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 
 	for _, decision := range createdDecisions {
 		symbol := thesis.Symbol(decision.Symbol)
-		symbol.Decisions.Store(decision.Symbol, decision)
+		symbol.Decisions.Push(*decision)
 	}
 
 	decisions := make([]types.Decision, 0, len(createdDecisions))
@@ -655,8 +649,8 @@ func (planner *Planner) heldLegs(thesis *types.Thesis) []portfolioLeg {
 
 		summary := logicgraph.OpportunitySummary{}
 
-		if stored, found := symbol.Graphs.Load("market_graph"); found {
-			if graph, valid := stored.(*logicgraph.Graph); valid && graph != nil {
+		for graph := range symbol.MarketGraphs(types.SourceGraph) {
+			if graph != nil {
 				summary = graph.OpportunitySummary()
 			}
 		}

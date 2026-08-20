@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/nomagique/learning"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -238,11 +239,13 @@ func TestRoundTrip(t *testing.T) {
 							Convey("And the round trip should have realized a profit", func() {
 								closed := 0
 
-								system.Thesis.Symbol("SIM1/USD").Positions.Range(func(_, raw any) bool {
+								for raw := range system.Thesis.Symbol("SIM1/USD").Positions.Drain("audit", func(any) bool {
+									return true
+								}) {
 									position, ok := raw.(*broker.Position)
 
 									if !ok {
-										return true
+										continue
 									}
 
 									holding := position.Holding
@@ -250,7 +253,7 @@ func TestRoundTrip(t *testing.T) {
 									if holding == nil ||
 										holding.Symbol != "SIM1/USD" ||
 										holding.Status != types.CLOSED {
-										return true
+										continue
 									}
 
 									closed++
@@ -272,8 +275,7 @@ func TestRoundTrip(t *testing.T) {
 									// positive one is edge that survived friction.
 									So(holding.PnL.Sign(), ShouldEqual, 1)
 									So(holding.ReturnPct, ShouldBeGreaterThan, 0.0)
-									return true
-								})
+								}
 
 								So(closed, ShouldBeGreaterThan, 0)
 							})
@@ -359,9 +361,9 @@ func TestCryptoRun(t *testing.T) {
 				}
 
 				thesis := types.NewThesis(t.Context(), nil)
-				symbol := types.NewSymbol("SIM1/USD", nil)
+				symbol := types.NewSymbol("SIM1/USD")
 				thesis.Symbols.Store("SIM1/USD", symbol)
-				symbol.Cognition.Store("SIM1/USD", types.Cognition{
+				symbol.Cognition.Push(types.Cognition{
 					Symbol:     "SIM1/USD",
 					Confidence: 0.95,
 				})
@@ -414,7 +416,7 @@ func TestCryptoRun(t *testing.T) {
 					Weight:     0.95,
 					Confidence: 0.95,
 				})
-				symbol.Graphs.Store("market_graph", marketGraph)
+				symbol.Graphs.Push(marketGraph)
 
 				rows := make([][]float64, 100)
 
@@ -428,7 +430,7 @@ func TestCryptoRun(t *testing.T) {
 					}
 				}
 
-				symbol.Causal.Store("SIM1/USD", map[string]any{
+				symbol.Causal.Push(map[string]any{
 					"ready":          true,
 					"historyRows":    rows,
 					"treatmentLevel": 1.0,
@@ -437,9 +439,15 @@ func TestCryptoRun(t *testing.T) {
 				})
 
 				So(system.Planner.Update(thesis), ShouldBeNil)
-				stored, found := symbol.Decisions.Load("SIM1/USD")
-				So(found, ShouldBeTrue)
-				decision := stored.(*types.Decision)
+				var decision types.Decision
+
+				for candidate := range symbol.Decisions.Drain("audit", func(types.Decision) bool {
+					return true
+				}) {
+					decision = candidate
+				}
+
+				So(decision.Symbol, ShouldEqual, "SIM1/USD")
 
 				Convey("Then the desk should accept the completed entry", func() {
 					So(decision.Action, ShouldEqual, types.ActionEnter)
@@ -455,7 +463,7 @@ func TestCryptoRun(t *testing.T) {
 					So(decision.Stoploss.Floor.Cmp(
 						decision.Stoploss.Peak,
 					), ShouldBeLessThan, 0)
-					So(system.Desk.Execute(*decision), ShouldBeNil)
+					So(system.Desk.Execute(decision), ShouldBeNil)
 				})
 			})
 		}),
@@ -493,7 +501,13 @@ func TestRegimeDiscrimination(t *testing.T) {
 				for {
 					storedSymbol, _ := thesis.Symbols.Load("REG1/USD")
 					symbolState := storedSymbol.(*types.Symbol)
-					_, decided := symbolState.Decisions.Load("REG1/USD")
+					decided := false
+
+					for range symbolState.Decisions.Drain("audit", func(types.Decision) bool {
+						return true
+					}) {
+						decided = true
+					}
 
 					if decided {
 						break
@@ -686,12 +700,10 @@ func updateIntegrationSnapshot(
 	}
 
 	symbolState := storedSymbol.(*types.Symbol)
-	categoriesRaw, categoriesReady := symbolState.Categories.Load(symbol)
 
-	if categories, ok := categoriesRaw.([]types.Category); categoriesReady && ok {
-		snapshot.categories = mergeCategories(snapshot.categories, categories)
+	for batch := range symbolState.MarketCategories(types.SourceGraph) {
+		snapshot.categories = mergeCategories(snapshot.categories, batch)
 	}
-
 }
 
 func integrationSnapshotReady(snapshot integrationSnapshot) bool {
@@ -754,26 +766,16 @@ func collectDecisionBatches(
 					return false
 				}
 
-				symbol.Decisions.Range(func(_, value any) bool {
-					decision, ok := value.(*types.Decision)
-
-					if !ok {
-						collection.err = fmt.Errorf(
-							"planner: expected decision, got %T", value,
-						)
-
-						return false
-					}
-
+				for decision := range symbol.Decisions.Drain("audit", func(types.Decision) bool {
+					return true
+				}) {
 					if _, found := collectedIDs[decision.ID]; found {
-						return true
+						continue
 					}
 
 					collectedIDs[decision.ID] = struct{}{}
-					collection.decisions = append(collection.decisions, *decision)
-
-					return true
-				})
+					collection.decisions = append(collection.decisions, decision)
+				}
 
 				return collection.err == nil
 			})
@@ -876,54 +878,69 @@ func latestMeasurement(
 		return nil
 	}
 
-	var latest *types.Measurement
+	var latest *nmtypes.Measurement
 
-	stored.(*types.Symbol).Latest.Range(func(_, value any) bool {
-		measurement, ok := value.(*types.Measurement)
-
-		if !ok {
-			return true
-		}
-
-		if measurement == nil || measurement.Source != source || measurement.Symbol != symbol {
-			return true
-		}
-
-		if latest == nil || measurement.At.After(latest.At) {
-			latest = measurement
-		}
-
+	for candidate := range stored.(*types.Symbol).Measurements.Drain("audit", func(*nmtypes.Measurement) bool {
 		return true
-	})
+	}) {
+		if candidate == nil || candidate.Source != string(source) || candidate.Symbol != symbol {
+			continue
+		}
 
-	return latest
+		if latest == nil || candidate.At.After(latest.At) {
+			latest = candidate
+		}
+	}
+
+	if latest == nil {
+		return nil
+	}
+
+	return &types.Measurement{
+		Source: source,
+		Symbol: symbol,
+		At:     latest.At,
+	}
 }
 
 func latestSourceMeasurement(
 	thesis *types.Thesis,
 	source types.SourceType,
 ) *types.Measurement {
-	var latest *types.Measurement
+	var latestAt time.Time
+	var latestFound bool
 
 	thesis.Symbols.Range(func(_, value any) bool {
-		value.(*types.Symbol).Latest.Range(func(_, raw any) bool {
-			measurement, ok := raw.(*types.Measurement)
+		symbol, ok := value.(*types.Symbol)
 
-			if !ok || measurement == nil || measurement.Source != source {
-				return true
-			}
-
-			if latest == nil || measurement.At.After(latest.At) {
-				latest = measurement
-			}
-
+		if !ok || symbol == nil {
 			return true
-		})
+		}
+
+		for candidate := range symbol.Measurements.Drain("audit", func(*nmtypes.Measurement) bool {
+			return true
+		}) {
+			if candidate == nil || candidate.Source != string(source) {
+				continue
+			}
+
+			if !latestFound || candidate.At.After(latestAt) {
+				latestAt = candidate.At
+				latestFound = true
+			}
+		}
 
 		return true
 	})
 
-	return latest
+	if !latestFound {
+		return nil
+	}
+
+	return &types.Measurement{
+		Source: source,
+		At:     latestAt,
+	}
 }
 
 func findCategory(

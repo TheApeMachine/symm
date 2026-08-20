@@ -45,8 +45,16 @@ func TestCVDNumber(t *testing.T) {
 		Convey("It should emit flow decomposition from the nomagique pipeline", func() {
 			measurements := []*nmtypes.Measurement{}
 
-			for measurement := range market.MarketMeasurements("category") {
-				measurements = append(measurements, measurement)
+			deadline := time.Now().Add(2 * time.Second)
+
+			for len(measurements) < 2 && time.Now().Before(deadline) {
+				measurements = measurements[:0]
+
+				for measurement := range market.MarketMeasurements("category") {
+					measurements = append(measurements, measurement)
+				}
+
+				time.Sleep(time.Millisecond)
 			}
 
 			So(len(measurements), ShouldEqual, 2)

@@ -2,11 +2,8 @@ package types
 
 import (
 	"iter"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -24,98 +21,23 @@ type Symbol struct {
 	Status       Status                                   `json:"status,omitempty"`
 	Tick         int64                                    `json:"tick,omitempty"`
 	Measurements *transport.MapReduce[*types.Measurement] `json:"-"`
-	Latest       *sync.Map                                `json:"-"`
 	tickers      *transport.MapReduce[kraken.TickerData]  `json:"-"`
 	trades       *transport.MapReduce[kraken.TradeData]   `json:"-"`
 	level3       *transport.MapReduce[kraken.Level3Data]  `json:"-"`
-	books        *transport.MapReduce[*spotbook.Book]     `json:"-"`
-	pending      atomic.Int64                             `json:"-"`
-	bookRevision atomic.Uint64                            `json:"-"`
-	bookAt       atomic.Int64                             `json:"-"`
-	Decisions    *sync.Map                                `json:"decisions,omitempty"`
-	Positions    *sync.Map                                `json:"positions,omitempty"`
-	Graphs       *sync.Map                                `json:"graphs,omitempty"`
-	Categories   *sync.Map                                `json:"categories,omitempty"`
-	Phase        *sync.Map                                `json:"-"`
-	Cognition    *sync.Map                                `json:"-"`
-	Resonance    *sync.Map                                `json:"-"`
-	Causal       *sync.Map                                `json:"-"`
-}
-
-/*
-CheckpointState materializes the concurrent decision artifacts needed to audit
-an admitted entry without serializing streaming queues or solver cursors.
-*/
-func (symbol *Symbol) CheckpointState() any {
-	checkpoint := struct {
-		ID         SymbolID       `json:"id,omitempty"`
-		Symbol     string         `json:"symbol"`
-		Status     Status         `json:"status"`
-		Tick       int64          `json:"tick"`
-		Decisions  map[string]any `json:"decisions"`
-		Graphs     map[string]any `json:"graphs"`
-		Categories map[string]any `json:"categories"`
-		Phase      map[string]any `json:"phase"`
-		Cognition  map[string]any `json:"cognition"`
-		Resonance  map[string]any `json:"resonance"`
-		Causal     map[string]any `json:"causal"`
-	}{
-		ID:        symbol.ID,
-		Symbol:    symbol.Symbol,
-		Status:    symbol.Status,
-		Tick:      symbol.Tick,
-		Decisions: checkpointMap(symbol.Decisions, nil),
-		Graphs: checkpointMap(symbol.Graphs, func(value any) any {
-			graph, valid := value.(interface{ CheckpointState() any })
-
-			if !valid {
-				return value
-			}
-
-			return graph.CheckpointState()
-		}),
-		Categories: checkpointMap(symbol.Categories, nil),
-		Phase:      checkpointMap(symbol.Phase, nil),
-		Cognition:  checkpointMap(symbol.Cognition, nil),
-		Resonance:  checkpointMap(symbol.Resonance, nil),
-		Causal:     checkpointMap(symbol.Causal, nil),
-	}
-
-	return checkpoint
-}
-
-func checkpointMap(
-	source *sync.Map,
-	transform func(any) any,
-) map[string]any {
-	checkpoint := make(map[string]any)
-
-	if source == nil {
-		return checkpoint
-	}
-
-	source.Range(func(key, value any) bool {
-		name, valid := key.(string)
-
-		if !valid || name == "" {
-			return true
-		}
-
-		if transform != nil {
-			value = transform(value)
-		}
-
-		checkpoint[name] = value
-		return true
-	})
-
-	return checkpoint
+	Decisions    *transport.MapReduce[Decision]           `json:"decisions,omitempty"`
+	Positions    *transport.MapReduce[any]                `json:"positions,omitempty"`
+	Graphs       *transport.MapReduce[*Graph]             `json:"graphs,omitempty"`
+	Categories   *transport.MapReduce[[]Category]         `json:"categories,omitempty"`
+	Phase        *transport.MapReduce[PhaseReading]       `json:"-"`
+	Cognition    *transport.MapReduce[Cognition]          `json:"-"`
+	Resonance    *transport.MapReduce[any]                `json:"-"`
+	Causal       *transport.MapReduce[map[string]any]     `json:"-"`
 }
 
 /*
 NewSymbol creates empty measurement state for one market symbol.
 */
-func NewSymbol(name string, ui chan []byte) *Symbol {
+func NewSymbol(name string) *Symbol {
 	symbol := &Symbol{
 		Symbol: name,
 		Status: READY,
@@ -131,16 +53,40 @@ func NewSymbol(name string, ui chan []byte) *Symbol {
 		Measurements: transport.NewMapReduce[*types.Measurement](
 			LogicSourceStrings, nil, nil,
 		),
-		Latest:     &sync.Map{},
-		Decisions:  &sync.Map{},
-		Positions:  &sync.Map{},
-		Graphs:     &sync.Map{},
-		Categories: &sync.Map{},
-		Phase:      &sync.Map{},
-		Cognition:  &sync.Map{},
-		Resonance:  &sync.Map{},
-		Causal:     &sync.Map{},
+		Decisions: transport.NewMapReduce[Decision](
+			[]string{}, nil, nil,
+		),
+		Positions: transport.NewMapReduce[any](
+			[]string{}, nil, nil,
+		),
+		Graphs: transport.NewMapReduce[*Graph](
+			[]string{string(SourcePlanner), string(SourceGraph)}, nil, nil,
+		),
+		Categories: transport.NewMapReduce[[]Category](
+			[]string{string(SourceGraph), string(SourceCognition)}, nil, nil,
+		),
+		Phase: transport.NewMapReduce[PhaseReading](
+			[]string{string(SourceGraph)}, nil, nil,
+		),
+		Cognition: transport.NewMapReduce[Cognition](
+			[]string{string(SourceGraph)}, nil, nil,
+		),
+		Resonance: transport.NewMapReduce[any](
+			[]string{string(SourceCausal), string(SourceGraph)}, nil, nil,
+		),
+		Causal: transport.NewMapReduce[map[string]any](
+			[]string{string(SourceGraph), string(SourceCausal)}, nil, nil,
+		),
 	}
+
+	symbol.Phase.Register("audit")
+	symbol.Cognition.Register("audit")
+	symbol.Resonance.Register("audit")
+	symbol.Causal.Register("audit")
+	symbol.Categories.Register("audit")
+	symbol.Decisions.Register("audit")
+	symbol.Graphs.Register("audit")
+	symbol.Measurements.Register("audit")
 
 	return symbol
 }
@@ -151,6 +97,30 @@ selected by the streaming topology.
 */
 func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
 	symbol.tickers.Push(ticker)
+}
+
+/*
+HasTickers reports whether this symbol has an unconsumed ticker queued for the
+signal owners, letting a self-run consumer probe for work before draining.
+*/
+func (symbol *Symbol) HasTickers() bool {
+	return symbol.tickers.Length() > 0
+}
+
+/*
+HasTrades reports whether this symbol has an unconsumed trade queued for the
+signal owners.
+*/
+func (symbol *Symbol) HasTrades() bool {
+	return symbol.trades.Length() > 0
+}
+
+/*
+HasLevel3 reports whether this symbol has an unconsumed level-3 frame queued
+for the signal owners.
+*/
+func (symbol *Symbol) HasLevel3() bool {
+	return symbol.level3.Length() > 0
 }
 
 /*
@@ -167,53 +137,6 @@ selected by the streaming topology.
 */
 func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data) {
 	symbol.level3.Push(level3)
-
-	if observedAt := level3ObservedAt(level3); !observedAt.IsZero() {
-		nanos := observedAt.UnixNano()
-
-		for {
-			current := symbol.bookAt.Load()
-
-			if nanos <= current || symbol.bookAt.CompareAndSwap(current, nanos) {
-				break
-			}
-		}
-	}
-
-	symbol.bookRevision.Add(1)
-}
-
-/*
-BookRevision returns the monotone accepted-frame revision and its event-time
-high-water mark. A revision belongs to the complete authoritative book state,
-not to whichever individual levels happen to survive in that state.
-*/
-func (symbol *Symbol) BookRevision() (uint64, time.Time) {
-	if symbol == nil {
-		return 0, time.Time{}
-	}
-
-	nanos := symbol.bookAt.Load()
-
-	if nanos == 0 {
-		return symbol.bookRevision.Load(), time.Time{}
-	}
-
-	return symbol.bookRevision.Load(), time.Unix(0, nanos).UTC()
-}
-
-func level3ObservedAt(level3 kraken.Level3Data) time.Time {
-	observedAt := level3.Timestamp
-
-	for _, orders := range [][]kraken.Level3Order{level3.Bids, level3.Asks} {
-		for _, order := range orders {
-			if order.Timestamp.After(observedAt) {
-				observedAt = order.Timestamp
-			}
-		}
-	}
-
-	return observedAt
 }
 
 /*
@@ -228,11 +151,61 @@ func (symbol *Symbol) AppendMeasurement(measurement *types.Measurement) error {
 }
 
 /*
-Pending reports whether any market queue still holds undrained rows. Appends
-count rows in, the drain seqs count them out, so the check is one load.
+CheckpointState materializes the drained decision artifacts needed to audit a
+completed thesis lifecycle. Each MapReduce column is drained on a dedicated
+audit cursor so the checkpoint does not collide with live solver consumption.
 */
-func (symbol *Symbol) Pending() bool {
-	return symbol.pending.Load() > 0
+func (symbol *Symbol) CheckpointState() any {
+	checkpoint := struct {
+		ID         SymbolID `json:"id,omitempty"`
+		Symbol     string   `json:"symbol"`
+		Status     Status   `json:"status"`
+		Tick       int64    `json:"tick"`
+		Decisions  any      `json:"decisions"`
+		Graphs     any      `json:"graphs"`
+		Categories any      `json:"categories"`
+		Phase      any      `json:"phase"`
+		Cognition  any      `json:"cognition"`
+		Resonance  any      `json:"resonance"`
+		Causal     any      `json:"causal"`
+	}{
+		ID:         symbol.ID,
+		Symbol:     symbol.Symbol,
+		Status:     symbol.Status,
+		Tick:       symbol.Tick,
+		Decisions:  drained(symbol.Decisions),
+		Graphs:     drained(symbol.Graphs),
+		Categories: drainedCategories(symbol),
+		Phase:      drained(symbol.Phase),
+		Cognition:  drained(symbol.Cognition),
+		Resonance:  drained(symbol.Resonance),
+		Causal:     drained(symbol.Causal),
+	}
+
+	return checkpoint
+}
+
+func drained[T any](mr *transport.MapReduce[T]) []T {
+	rows := make([]T, 0)
+
+	sink := func(item T) bool { return true }
+	for item := range mr.Drain("audit", sink) {
+		rows = append(rows, item)
+	}
+
+	return rows
+}
+
+func drainedCategories(symbol *Symbol) []Category {
+	rows := make([]Category, 0)
+
+	for batch := range symbol.Categories.Drain("audit", func(_ []Category) bool {
+		return true
+	}) {
+		rows = append(rows, batch...)
+	}
+
+	return rows
 }
 
 /*
@@ -278,7 +251,7 @@ func (symbol *Symbol) MarketLevel3(source SourceType) iter.Seq[kraken.Level3Data
 	cut := time.Now().UTC()
 
 	return symbol.level3.Drain(string(source), func(level3 kraken.Level3Data) bool {
-		if observedAt := level3ObservedAt(level3); !observedAt.IsZero() && observedAt.After(cut) {
+		if level3.Timestamp.After(cut) {
 			return false
 		}
 
@@ -290,6 +263,64 @@ func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*types.Measurem
 	cut := time.Now().UTC()
 
 	return symbol.Measurements.Drain(solver, func(measurement *types.Measurement) bool {
+		if measurement == nil {
+			return true
+		}
+
 		return measurement.At.Before(cut) || measurement.At.Equal(cut)
+	})
+}
+
+/*
+MarketPhase drains this symbol's universe phase sweep to the consuming stage.
+*/
+func (symbol *Symbol) MarketPhase(stage SourceType) iter.Seq[PhaseReading] {
+	return symbol.Phase.Drain(string(stage), func(_ PhaseReading) bool {
+		return true
+	})
+}
+
+/*
+MarketCognition drains this symbol's cognition readings to the consuming stage.
+*/
+func (symbol *Symbol) MarketCognition(stage SourceType) iter.Seq[Cognition] {
+	return symbol.Cognition.Drain(string(stage), func(_ Cognition) bool {
+		return true
+	})
+}
+
+/*
+MarketCategories drains this symbol's category batches to the consuming stage.
+*/
+func (symbol *Symbol) MarketCategories(stage SourceType) iter.Seq[[]Category] {
+	return symbol.Categories.Drain(string(stage), func(_ []Category) bool {
+		return true
+	})
+}
+
+/*
+MarketResonance drains this symbol's resonance artifacts to the consuming stage.
+*/
+func (symbol *Symbol) MarketResonance(stage SourceType) iter.Seq[any] {
+	return symbol.Resonance.Drain(string(stage), func(_ any) bool {
+		return true
+	})
+}
+
+/*
+MarketCausal drains this symbol's causal artifacts to the consuming stage.
+*/
+func (symbol *Symbol) MarketCausal(stage SourceType) iter.Seq[map[string]any] {
+	return symbol.Causal.Drain(string(stage), func(_ map[string]any) bool {
+		return true
+	})
+}
+
+/*
+MarketGraphs drains this symbol's lifecycle graphs to the consuming stage.
+*/
+func (symbol *Symbol) MarketGraphs(stage SourceType) iter.Seq[*Graph] {
+	return symbol.Graphs.Drain(string(stage), func(_ *Graph) bool {
+		return true
 	})
 }

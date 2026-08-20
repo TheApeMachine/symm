@@ -10,30 +10,58 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/types"
 )
+
+func lastCognition(symbol *types.Symbol) (types.Cognition, bool) {
+	var cognition types.Cognition
+
+	deadline := time.Now().Add(3 * time.Second)
+
+	for time.Now().Before(deadline) {
+		for stored := range symbol.MarketCognition(types.SourceGraph) {
+			cognition = stored
+		}
+
+		if cognition.Winner != "" {
+			return cognition, true
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	return types.Cognition{}, false
+}
 
 func TestUpdate(t *testing.T) {
 	Convey("Given repeated observations around a real category transition", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
+		thesis := cognitionThesis(types.CategoryVerticalIgnition)
+		vertical := encodeForTest(types.CategoryVerticalIgnition)
+		reversal := encodeForTest(types.CategoryActiveReversal)
+		exhaustion := encodeForTest(types.CategoryExhaustion)
 		solver := NewSolver(
+			t.Context(),
+			thesis,
 			tree,
 			nil,
 			nil,
 			WithMaxSequenceLength(2),
 			WithSurprisalLimit(math.Inf(1)),
 		)
-		thesis := cognitionThesis(types.CategoryVerticalIgnition)
-		vertical := solver.encodeCategory(types.CategoryVerticalIgnition)
-		reversal := solver.encodeCategory(types.CategoryActiveReversal)
+		defer solver.Close()
 
-		So(solver.Update(thesis), ShouldBeNil)
-		firstCount := tree.GetSensoryWeight(solver.sequenceBytes([]string{vertical})).Count
-		So(solver.Update(thesis), ShouldBeNil)
+		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		symbol := storedSymbol.(*types.Symbol)
 
 		Convey("Then observing an active category should not train before completion", func() {
+			waitSequence(t, solver, "BTC/USD", []string{vertical})
+			firstCount := tree.GetSensoryWeight(solver.sequenceBytes([]string{vertical})).Count
+
 			So(solver.sequences["BTC/USD"], ShouldResemble, []string{vertical})
 			So(tree.GetSensoryWeight(
 				solver.sequenceBytes([]string{vertical}),
@@ -43,22 +71,20 @@ func TestUpdate(t *testing.T) {
 			).Count, ShouldEqual, uint64(0))
 		})
 
-		state, found := thesis.Symbols.Load("BTC/USD")
-		So(found, ShouldBeTrue)
-		symbol := state.(*types.Symbol)
-		symbol.Categories.Store("BTC/USD", []types.Category{{
-			Symbol:     "BTC/USD",
-			Type:       types.CategoryActiveReversal,
-			Confidence: 1,
-			Strength:   1,
-		}})
-		So(solver.Update(thesis), ShouldBeNil)
-		transitionCount := tree.GetSensoryWeight(
-			solver.sequenceBytes([]string{vertical, reversal}),
-		).Count
-		So(solver.Update(thesis), ShouldBeNil)
-
 		Convey("Then only the observed category change should extend the active sequence", func() {
+			waitSequence(t, solver, "BTC/USD", []string{vertical})
+
+			symbol.Categories.Push([]types.Category{{
+				Symbol:     "BTC/USD",
+				Type:       types.CategoryActiveReversal,
+				Confidence: 1,
+				Strength:   1,
+			}})
+			waitSequence(t, solver, "BTC/USD", []string{vertical, reversal})
+			transitionCount := tree.GetSensoryWeight(
+				solver.sequenceBytes([]string{vertical, reversal}),
+			).Count
+
 			So(solver.sequences["BTC/USD"], ShouldResemble, []string{vertical, reversal})
 			So(transitionCount, ShouldEqual, uint64(0))
 			So(tree.GetSensoryWeight(
@@ -66,15 +92,25 @@ func TestUpdate(t *testing.T) {
 			).Count, ShouldEqual, transitionCount)
 		})
 
-		symbol.Categories.Store("BTC/USD", []types.Category{{
-			Symbol:     "BTC/USD",
-			Type:       types.CategoryExhaustion,
-			Confidence: 1,
-			Strength:   1,
-		}})
-		So(solver.Update(thesis), ShouldBeNil)
-
 		Convey("Then completing the sequence should learn it exactly once", func() {
+			waitSequence(t, solver, "BTC/USD", []string{vertical})
+
+			symbol.Categories.Push([]types.Category{{
+				Symbol:     "BTC/USD",
+				Type:       types.CategoryActiveReversal,
+				Confidence: 1,
+				Strength:   1,
+			}})
+			waitSequence(t, solver, "BTC/USD", []string{vertical, reversal})
+
+			symbol.Categories.Push([]types.Category{{
+				Symbol:     "BTC/USD",
+				Type:       types.CategoryExhaustion,
+				Confidence: 1,
+				Strength:   1,
+			}})
+			waitSequence(t, solver, "BTC/USD", []string{exhaustion})
+
 			So(tree.GetSensoryWeight(
 				solver.sequenceBytes([]string{vertical, reversal}),
 			).Count, ShouldEqual, uint64(1))
@@ -85,13 +121,10 @@ func TestUpdate(t *testing.T) {
 			)
 			So(predictions, ShouldHaveLength, 1)
 			So(string(predictions[0].Token), ShouldEqual, reversal)
-			So(solver.sequences["BTC/USD"], ShouldResemble, []string{
-				solver.encodeCategory(types.CategoryExhaustion),
-			})
+			So(solver.sequences["BTC/USD"], ShouldResemble, []string{exhaustion})
 
-			storedCognition, found := symbol.Cognition.Load("BTC/USD")
+			cognition, found := lastCognition(symbol)
 			So(found, ShouldBeTrue)
-			cognition := storedCognition.(types.Cognition)
 			So(cognition.Winner, ShouldEqual, "trend")
 			So(cognition.WinnerClass, ShouldEqual, "trend")
 			So(cognition.RegimePrefix, ShouldEqual, "trend")
@@ -106,16 +139,14 @@ func TestUpdate(t *testing.T) {
 		outcome, err := tree.ExperienceSequence([]byte("legacy_internal"), &scratch)
 		So(err, ShouldBeNil)
 		So(string(outcome.Class), ShouldStartWith, "concept_")
-		solver := NewSolver(tree, nil, nil)
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
-
-		So(solver.Update(thesis), ShouldBeNil)
+		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
+		defer solver.Close()
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
 		symbol := storedSymbol.(*types.Symbol)
-		storedCognition, found := symbol.Cognition.Load("BTC/USD")
+		cognition, found := lastCognition(symbol)
 		So(found, ShouldBeTrue)
-		cognition := storedCognition.(types.Cognition)
 
 		Convey("Then only the named regime-radar taxonomy crosses the Thesis boundary", func() {
 			So(cognition.Winner, ShouldEqual, "trend")
@@ -131,7 +162,9 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a learned prefix with two measured continuations", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		solver := NewSolver(tree, nil, nil)
+		thesis := cognitionThesis(types.CategoryVerticalIgnition)
+		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
+		defer solver.Close()
 		vertical := solver.encodeCategory(types.CategoryVerticalIgnition)
 		reversal := solver.encodeCategory(types.CategoryActiveReversal)
 		exhaustion := solver.encodeCategory(types.CategoryExhaustion)
@@ -145,14 +178,12 @@ func TestUpdate(t *testing.T) {
 			solver.sequenceBytes([]string{vertical, exhaustion}),
 			dmt.CognitiveState{Count: 3, Probability: 0.5},
 		)
-		thesis := cognitionThesis(types.CategoryVerticalIgnition)
-
-		So(solver.Update(thesis), ShouldBeNil)
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
-		stored, found := storedSymbol.(*types.Symbol).Cognition.Load("BTC/USD")
+		symbol := storedSymbol.(*types.Symbol)
+		waitSequence(t, solver, "BTC/USD", []string{vertical})
+		cognition, found := lastCognition(symbol)
 		So(found, ShouldBeTrue)
-		cognition := stored.(types.Cognition)
 
 		Convey("Then it reports positive Shannon entropy and its empirical gate", func() {
 			So(cognition.EntropyBits, ShouldNotBeNil)
@@ -165,13 +196,15 @@ func TestUpdate(t *testing.T) {
 	Convey("Given an active prefix without competing continuations", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		solver := NewSolver(tree, nil, nil)
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
-
-		So(solver.Update(thesis), ShouldBeNil)
-		storedSymbol, _ := thesis.Symbols.Load("BTC/USD")
-		stored, _ := storedSymbol.(*types.Symbol).Cognition.Load("BTC/USD")
-		cognition := stored.(types.Cognition)
+		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
+		defer solver.Close()
+		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
+		So(found, ShouldBeTrue)
+		symbol := storedSymbol.(*types.Symbol)
+		waitSequence(t, solver, "BTC/USD", []string{solver.encodeCategory(types.CategoryVerticalIgnition)})
+		cognition, found := lastCognition(symbol)
+		So(found, ShouldBeTrue)
 
 		Convey("Then it leaves branch entropy absent instead of publishing zero", func() {
 			So(cognition.EntropyBits, ShouldBeNil)
@@ -182,15 +215,16 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a broad thesis whose categories do not change", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		ui := make(chan []byte, 2)
-		solver := NewSolver(tree, ui, nil)
-		thesis := types.NewThesis(context.Background(), nil)
+		ui := make(chan []byte, 8)
+		thesis := types.NewThesis(t.Context(), ui)
 		thesis.At = time.Unix(1, 0).UTC()
+		solver := NewSolver(t.Context(), thesis, tree, ui, nil)
+		defer solver.Close()
 
-		for index := range 129 {
+		for index := 0; index < 129; index++ {
 			symbolName := fmt.Sprintf("SYMBOL-%d/USD", index)
-			symbol := types.NewSymbol(symbolName, nil)
-			symbol.Categories.Store(symbolName, []types.Category{{
+			symbol := types.NewSymbol(symbolName)
+			symbol.Categories.Push([]types.Category{{
 				Symbol:     symbolName,
 				Type:       types.CategoryVerticalIgnition,
 				Confidence: 1,
@@ -199,10 +233,11 @@ func TestUpdate(t *testing.T) {
 			thesis.Symbols.Store(symbolName, symbol)
 		}
 
-		So(solver.Update(thesis), ShouldBeNil)
-		<-ui
+		// Let the first observation pass settle and the publish flush.
+		vertical := solver.encodeCategory(types.CategoryVerticalIgnition)
+		waitSequence(t, solver, "SYMBOL-64/USD", []string{vertical})
+		waitSettled(t, solver, ui)
 		initialTick := solver.tickCounter
-		So(solver.Update(thesis), ShouldBeNil)
 
 		Convey("Then unchanged observations do not retrain or publish the tree", func() {
 			So(solver.tickCounter, ShouldEqual, initialTick)
@@ -212,14 +247,13 @@ func TestUpdate(t *testing.T) {
 		stored, found := thesis.Symbols.Load("SYMBOL-64/USD")
 		So(found, ShouldBeTrue)
 		symbol := stored.(*types.Symbol)
-		symbol.Categories.Store("SYMBOL-64/USD", []types.Category{{
+		symbol.Categories.Push([]types.Category{{
 			Symbol:     "SYMBOL-64/USD",
 			Type:       types.CategoryActiveReversal,
 			Confidence: 1,
 			Strength:   1,
 		}})
-		solver.tickCounter = 127
-		So(solver.Update(thesis), ShouldBeNil)
+		waitSequence(t, solver, "SYMBOL-64/USD", []string{solver.encodeCategory(types.CategoryActiveReversal)})
 
 		var payload struct {
 			Cognition map[string]json.RawMessage `json:"cognition"`
@@ -230,12 +264,82 @@ func TestUpdate(t *testing.T) {
 			So(payload.Cognition, ShouldHaveLength, 1)
 			_, published := payload.Cognition["SYMBOL-64/USD"]
 			So(published, ShouldBeTrue)
-			storedCognition, cognitionFound := symbol.Cognition.Load("SYMBOL-64/USD")
-			So(cognitionFound, ShouldBeTrue)
-			So(storedCognition.(types.Cognition).REMConsolidating, ShouldBeFalse)
+			var cognition types.Cognition
+			for stored := range symbol.MarketCognition(types.SourceGraph) {
+				cognition = stored
+			}
+			So(cognition.REMConsolidating, ShouldBeFalse)
 			So(solver.remOutcome.ReplayedObservations, ShouldEqual, uint64(0))
 		})
 	})
+}
+
+/*
+waitSequence polls the solver's active category sequence for a symbol until it
+reaches the expected tokens, so the asynchronous self-run goroutine has advanced
+the state machine to the assertion point.
+*/
+func waitSequence(t *testing.T, solver *Solver, symbol string, want []string) {
+	deadline := time.Now().Add(3 * time.Second)
+
+	for time.Now().Before(deadline) {
+		if slicesEqual(solver.sequences[symbol], want) {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+
+	return true
+}
+
+/*
+waitSettled pumps the run goroutine until the cognition stage has drained every
+currently-available category stream: tickCounter stops advancing (no symbol is
+still on its first observation) and the publish channel is flushed.
+*/
+func waitSettled(t *testing.T, solver *Solver, ui chan []byte) {
+	deadline := time.Now().Add(3 * time.Second)
+	var last uint64
+	stable := 0
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ui:
+			last = solver.tickCounter
+			stable = 0
+		default:
+			if solver.tickCounter == last {
+				stable++
+			} else {
+				last = solver.tickCounter
+				stable = 0
+			}
+		}
+
+		if stable >= 20 {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+}
+
+/* encodeForTest mirrors Solver.encodeCategory for assertions before construction. */
+func encodeForTest(category types.CategoryType) string {
+	return new(Solver).encodeCategory(category)
 }
 
 func TestEncodeCategory(t *testing.T) {
@@ -293,8 +397,8 @@ func TestFormatLookaheadPredictions(t *testing.T) {
 func cognitionThesis(category types.CategoryType) *types.Thesis {
 	thesis := types.NewThesis(context.Background(), nil)
 	thesis.At = time.Unix(1, 0).UTC()
-	symbol := types.NewSymbol("BTC/USD", nil)
-	symbol.Categories.Store("BTC/USD", []types.Category{
+	symbol := types.NewSymbol("BTC/USD")
+	symbol.Categories.Push([]types.Category{
 		{
 			Symbol:     "BTC/USD",
 			Type:       category,
@@ -317,7 +421,7 @@ func TestPrefixTreeBranches(t *testing.T) {
 	Convey("Given a trie holding divergent continuations of one prefix", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		solver := NewSolver(tree, nil, nil)
+		solver := NewSolver(t.Context(), types.NewThesis(t.Context(), nil), tree, nil, nil)
 
 		ignition := solver.encodeCategory(types.CategoryVerticalIgnition)
 		reversal := solver.encodeCategory(types.CategoryActiveReversal)
@@ -368,7 +472,7 @@ func TestPrefixTreeBranchesPinsActivePath(t *testing.T) {
 	Convey("Given an active continuation weaker than the render width allows", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		solver := NewSolver(tree, nil, nil, WithPrefixTreeShape(1, 4, 64))
+		solver := NewSolver(t.Context(), types.NewThesis(t.Context(), nil), tree, nil, nil, WithPrefixTreeShape(1, 4, 64))
 
 		ignition := solver.encodeCategory(types.CategoryVerticalIgnition)
 		reversal := solver.encodeCategory(types.CategoryActiveReversal)
@@ -401,7 +505,7 @@ measure a fan-out the walk actually has to bound.
 */
 func prefixTreeFixture() (*Solver, []string) {
 	tree, _ := dmt.NewTree("")
-	solver := NewSolver(tree, nil, nil)
+	solver := NewSolver(context.Background(), types.NewThesis(context.Background(), nil), tree, nil, nil)
 
 	for first := range 8 {
 		for second := range 8 {
@@ -436,16 +540,18 @@ func BenchmarkCachedPrefixTree(b *testing.B) {
 	}
 }
 
-func BenchmarkUpdate(b *testing.B) {
+func BenchmarkCognitionRun(b *testing.B) {
 	tree, _ := dmt.NewTree("")
-	solver := NewSolver(tree, nil, nil)
 	thesis := types.NewThesis(context.Background(), nil)
 	thesis.At = time.Unix(1, 0).UTC()
+	solver := NewSolver(context.Background(), thesis, tree, nil, nil)
+	defer solver.Close()
+	rows := datura.NewMap()
 
 	for index := range 129 {
 		symbolName := fmt.Sprintf("SYMBOL-%d/USD", index)
-		symbol := types.NewSymbol(symbolName, nil)
-		symbol.Categories.Store(symbolName, []types.Category{{
+		symbol := types.NewSymbol(symbolName)
+		symbol.Categories.Push([]types.Category{{
 			Symbol:     symbolName,
 			Type:       types.CategoryDenseNeutrality,
 			Confidence: 1,
@@ -454,12 +560,26 @@ func BenchmarkUpdate(b *testing.B) {
 		thesis.Symbols.Store(symbolName, symbol)
 	}
 
-	_ = solver.Update(thesis)
 	b.ResetTimer()
 
 	for b.Loop() {
-		_ = solver.Update(thesis)
+		solver.thesis.Symbols.Range(func(key, value interface{}) bool {
+			symbol, symbolOK := key.(string)
+			symbolState, stateOK := value.(*types.Symbol)
+
+			if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
+				return true
+			}
+
+			for batch := range symbolState.MarketCategories(types.SourceCognition) {
+				_ = solver.processBatch(symbol, batch, 0, rows)
+			}
+
+			return true
+		})
 	}
+
+	rows.Free()
 }
 
 func TestCachedPrefixTree(t *testing.T) {

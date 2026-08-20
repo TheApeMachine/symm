@@ -10,6 +10,7 @@ import (
 
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -20,7 +21,7 @@ broker execution and settlement continue in their own lifecycle.
 type Thesis struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
-	ui             chan []byte
+	ui             *transport.MapReduce[any]
 	equityMu       sync.RWMutex
 	equity         *kraken.TradeBalanceResult
 	equityRevision uint64
@@ -41,7 +42,7 @@ type Thesis struct {
 NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
 func NewThesis(
-	ctx context.Context, ui chan []byte,
+	ctx context.Context, ui *transport.MapReduce[any],
 ) *Thesis {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -69,7 +70,7 @@ func (thesis *Thesis) Symbol(name string) *Symbol {
 	symbol, ok = thesis.Symbols.Load(name)
 
 	if !ok {
-		created := NewSymbol(name, thesis.ui)
+		created := NewSymbol(name)
 		created.ID = thesis.nextSymbolID
 		thesis.symbolIDs[name] = thesis.nextSymbolID
 		thesis.nextSymbolID++
@@ -173,28 +174,6 @@ func (thesis *Thesis) ForSymbols(names []string) (*Thesis, error) {
 	}
 
 	return scoped, nil
-}
-
-/*
-AnyPending reports whether any symbol in the universe still holds undrained
-market rows. The measurement pass asks this before numbering a pass, so a
-thesis tick only ever counts a pass that will actually run.
-*/
-func (thesis *Thesis) AnyPending() bool {
-	pending := false
-
-	thesis.Symbols.Range(func(_, value any) bool {
-		symbol, ok := value.(*Symbol)
-
-		if ok && symbol != nil && symbol.Pending() {
-			pending = true
-			return false
-		}
-
-		return true
-	})
-
-	return pending
 }
 
 /*
@@ -304,7 +283,6 @@ func (thesis *Thesis) MarshalState() ([]byte, error) {
 		symbols[name] = symbol.CheckpointState()
 		return true
 	})
-
 	equity, _, hasEquity := thesis.EquitySnapshot()
 	checkpoint := struct {
 		Status       Status                     `json:"status"`

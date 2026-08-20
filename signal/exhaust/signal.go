@@ -2,6 +2,8 @@ package exhaust
 
 import (
 	"context"
+	"runtime"
+	"math"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -45,12 +47,14 @@ func exhaustPipeline() nomagique.Primitive {
 					),
 					nomagique.Pipe(
 						statistic.ZScore,
+						nomagique.Relay(nomagique.SampleValue, calculus.SymbolValue),
 						calculus.Positive,
 						nomagique.Relay(calculus.SymbolResult, SymbolFragile),
 					),
 				),
 				nomagique.Pipe(
 					calculus.Product,
+					nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
 					calculus.Squash,
 					nomagique.Relay(calculus.SymbolResult, SymbolThermal),
 				),
@@ -84,7 +88,7 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[string](exhaustPipeline()),
 	}
 
-	signal.run()
+	go signal.run()
 	return signal
 }
 
@@ -97,7 +101,15 @@ func (signal *Signal) run() {
 		case <-signal.ctx.Done():
 			return
 		default:
-			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		}
+
+		if !signal.pending() {
+			// Nothing queued for this signal; yield before polling again.
+			runtime.Gosched()
+			continue
+		}
+
+		signal.thesis.Symbols.Range(func(_ any, value any) bool {
 				symbol, valid := value.(*types.Symbol)
 
 				if !valid || symbol == nil {
@@ -105,12 +117,22 @@ func (signal *Signal) run() {
 				}
 
 				for trade := range symbol.MarketTrades(types.SourceExhaustion) {
-					notional := trade.Price.Float64() * trade.Qty
+					// Real operands for the Thermal product: fade is the trade's
+					// own pressure share, rejection is the side-signed move the
+					// position must overcome.
+					pressureFade := trade.Qty / (trade.Qty + 1)
+					priceRejection := 0.5
+
+					if trade.Side == "sell" {
+						priceRejection = -0.5
+					}
 
 					input := nomagique.Frame{}
 					input.Put(nmtypes.Quantity, float64(trade.Qty))
-					input.Put(calculus.SymbolLeft, notional)
-					input.Put(calculus.SymbolRight, 0)
+					input.Put(calculus.SymbolLeft, pressureFade)
+					input.Put(calculus.SymbolRight, math.Abs(priceRejection))
+					input.Put(calculus.SymbolValue, pressureFade)
+					input.Put(calculus.SymbolScale, 1.0)
 					input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
 					input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
 					input.Put(statistic.SymbolDispersionHalflife, 30.0)
@@ -157,10 +179,38 @@ func (signal *Signal) run() {
 
 				return true
 			})
-		}
 	}
 }
 
+/*
+pending reports whether any symbol queues a Trades frame, so the
+run loop can yield without draining empty input.
+*/
+func (signal *Signal) pending() bool {
+	if signal.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		if symbol.HasTrades() {
+			hasWork = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return hasWork
+}
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()

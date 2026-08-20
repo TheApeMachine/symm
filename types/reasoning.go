@@ -1,4 +1,4 @@
-package graph
+package types
 
 import (
 	"fmt"
@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/mcts"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -136,17 +135,17 @@ func (graph *Graph) ReasoningFrame() nomagique.Frame {
 	return frame
 }
 
-func opportunityArchetypeIndex(archetype types.OpportunityType) int {
+func opportunityArchetypeIndex(archetype OpportunityType) int {
 	switch archetype {
-	case types.OpportunitySuddenPump:
+	case OpportunitySuddenPump:
 		return 1
-	case types.OpportunityCoiledCompression:
+	case OpportunityCoiledCompression:
 		return 2
-	case types.OpportunityDailyRiser:
+	case OpportunityDailyRiser:
 		return 3
-	case types.OpportunityInefficientLag:
+	case OpportunityInefficientLag:
 		return 4
-	case types.OpportunityAbsorptionReversal:
+	case OpportunityAbsorptionReversal:
 		return 5
 	default:
 		return 0
@@ -714,18 +713,4 @@ func reasoningRow(value interface{}) ([]float64, bool) {
 	}
 
 	return row, true
-}
-
-func meanValues(values ...float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-
-	total := 0.0
-
-	for _, value := range values {
-		total += value
-	}
-
-	return total / float64(len(values))
 }

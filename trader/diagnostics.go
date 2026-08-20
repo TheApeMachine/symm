@@ -342,14 +342,6 @@ func (crypto *Crypto) bindDiagnostics() {
 		crypto.analyzer.ObserveHop = crypto.diagnostics.applyHop
 	}
 
-	if crypto.measurements != nil {
-		crypto.measurements.ObserveModule = crypto.diagnostics.applyModule
-		crypto.measurements.ObserveHop = crypto.diagnostics.applyHop
-		crypto.measurements.ObservePassStart = crypto.diagnostics.ObservePassStart
-		crypto.measurements.ObservePassEnd = crypto.diagnostics.ObservePassEnd
-		crypto.measurements.ObserveIdleCheck = crypto.diagnostics.ObserveIdleCheck
-	}
-
 	if crypto.planner != nil {
 		crypto.planner.ObserveModule = crypto.diagnostics.applyModule
 		crypto.planner.ObserveHop = crypto.diagnostics.applyHop
@@ -403,9 +395,9 @@ func (diagnostics *Diagnostics) passStatus(now time.Time) PassStatus {
 		if inFlight > blockedPassThreshold {
 			diagnostics.dumpBlockedStack()
 			return PassStatus{
-				State:       "blocked",
-				InFlightNs:  inFlight.Nanoseconds(),
-				LastPassNs:  int64(lastPass),
+				State:      "blocked",
+				InFlightNs: inFlight.Nanoseconds(),
+				LastPassNs: int64(lastPass),
 			}
 		}
 

@@ -372,7 +372,7 @@ func mostVisitedPortfolioChild(node *mcts.Node) *mcts.Node {
 			continue
 		}
 
-		if best != nil && child.Visits == best.Visits &&
+		if child.Visits == best.Visits &&
 			child.MeanReward() > best.MeanReward() {
 			best = child
 		}

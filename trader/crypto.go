@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -14,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -41,7 +39,6 @@ type Crypto struct {
 	planner       *strategy.Planner
 	desk          *broker.Desk
 	subscriptions map[string]*types.Subscription[any]
-	measurements  *Measurements
 	diagnostics   *Diagnostics
 }
 
@@ -86,7 +83,6 @@ func NewCrypto(
 				"level3", types.NewSubscription[any](),
 			),
 		},
-		measurements: NewMeasurements(ctx, thesis, ui),
 	}
 
 	crypto.status.Store(types.READY)
@@ -166,10 +162,6 @@ func (crypto *Crypto) queued() int {
 }
 
 func (crypto *Crypto) run() {
-	theses := crypto.measurements.Generate(
-		crypto.thesis, crypto.analyzer,
-	)
-
 	go func() {
 		for {
 			select {
@@ -181,10 +173,6 @@ func (crypto *Crypto) run() {
 				crypto.onTrade(trade.(*kraken.Trade))
 			case level3 := <-crypto.subscriptions["level3"].Channel:
 				crypto.onLevel3(level3.(kraken.Level3Data))
-			case thesis := <-theses:
-				utils.Publish(crypto.ui, datura.NewMap(
-					"tick", datura.NewMap("count", thesis.Tick),
-				))
 			}
 		}
 	}()
@@ -201,8 +189,7 @@ func (crypto *Crypto) onTicker(tickers *kraken.Ticker) {
 		}
 
 		crypto.desk.Price().Update(&ticker)
-		symbol := crypto.thesis.Symbol(ticker.Symbol)
-		symbol.AppendTicker(ticker)
+		crypto.thesis.Symbol(ticker.Symbol).AppendTicker(ticker)
 	}
 }
 
@@ -216,8 +203,7 @@ func (crypto *Crypto) onTrade(trades *kraken.Trade) {
 			continue
 		}
 
-		symbol := crypto.thesis.Symbol(trade.Symbol)
-		symbol.AppendTrade(trade)
+		crypto.thesis.Symbol(trade.Symbol).AppendTrade(trade)
 	}
 }
 
@@ -231,10 +217,5 @@ func (crypto *Crypto) onLevel3(level3 kraken.Level3Data) {
 
 func (crypto *Crypto) Close() error {
 	crypto.cancel()
-
-	if crypto.measurements != nil {
-		return crypto.measurements.Close()
-	}
-
 	return nil
 }

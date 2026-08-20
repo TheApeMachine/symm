@@ -46,7 +46,7 @@ func TestLiquidityPipeline(t *testing.T) {
 		defer signal.Close()
 
 		Convey("It should emit one measurement per tick through its own pipeline", func() {
-			readings := drainMeasurements(market)
+			readings := drainMeasurements(market, 8)
 
 			So(len(readings), ShouldEqual, 8)
 
@@ -62,11 +62,21 @@ func TestLiquidityPipeline(t *testing.T) {
 	})
 }
 
-func drainMeasurements(symbol *types.Symbol) []*nmtypes.Measurement {
+func drainMeasurements(symbol *types.Symbol, expected int) []*nmtypes.Measurement {
 	readings := []*nmtypes.Measurement{}
 
-	for measurement := range symbol.MarketMeasurements("category") {
-		readings = append(readings, measurement)
+	deadline := time.Now().Add(2 * time.Second)
+
+	for len(readings) < expected && time.Now().Before(deadline) {
+		for measurement := range symbol.MarketMeasurements("category") {
+			readings = append(readings, measurement)
+		}
+
+		if len(readings) >= expected {
+			break
+		}
+
+		time.Sleep(time.Millisecond)
 	}
 
 	return readings

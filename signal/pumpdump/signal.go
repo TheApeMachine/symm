@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -36,11 +37,11 @@ func NewSignal(
 		cancel: cancel,
 		thesis: thesis,
 		number: nomagique.NewNumber[string](
-			nomagique.Pipe(algo.Ignition),
+			nomagique.Pipe(algo.Ignition()),
 		),
 	}
 
-	signal.run()
+	go signal.run()
 	return signal
 }
 
@@ -58,7 +59,15 @@ func (signal *Signal) run() {
 		case <-signal.ctx.Done():
 			return
 		default:
-			signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		}
+
+		if !signal.pending() {
+			// Nothing queued for this signal; yield before polling again.
+			runtime.Gosched()
+			continue
+		}
+
+		signal.thesis.Symbols.Range(func(_ any, value any) bool {
 				symbol, valid := value.(*types.Symbol)
 
 				if !valid || symbol == nil {
@@ -114,10 +123,38 @@ func (signal *Signal) run() {
 
 				return true
 			})
-		}
 	}
 }
 
+/*
+pending reports whether any symbol queues a Trades frame, so the
+run loop can yield without draining empty input.
+*/
+func (signal *Signal) pending() bool {
+	if signal.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		if symbol.HasTrades() {
+			hasWork = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return hasWork
+}
 /*
 touch finds the most recent ticker quote at or before the print and writes its
 bid and ask into the input frame. It returns false when no executable touch

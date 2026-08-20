@@ -15,6 +15,7 @@ import (
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 )
@@ -235,13 +236,20 @@ func TestUpdate(t *testing.T) {
 			So(solver.Update("BTC/USD", at, features), ShouldBeNil)
 
 			symbol := thesis.Symbol("BTC/USD")
-			value, found := symbol.Resonance.Load("BTC/USD")
+			var manifold *learning.ResonanceManifold
+			var hasDynamics bool
 
-			So(found, ShouldBeTrue)
-			So(value, ShouldHaveSameTypeAs, &learning.ResonanceManifold{})
+			for stored := range symbol.MarketResonance(types.SourceGraph) {
+				switch value := stored.(type) {
+				case *learning.ResonanceManifold:
+					manifold = value
+				case nomagique.Frame:
+					hasDynamics = true
+				}
+			}
 
-			_, dynamicsFound := symbol.Resonance.Load(learning.PredictiveDynamicsKey)
-			So(dynamicsFound, ShouldBeTrue)
+			So(manifold, ShouldNotBeNil)
+			So(hasDynamics, ShouldBeTrue)
 		})
 
 		Convey("It should supervise the task head from the previous midpoint", func() {

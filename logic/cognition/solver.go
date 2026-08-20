@@ -2,8 +2,10 @@ package cognition
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -70,6 +72,9 @@ Solver uses dmt.Tree to learn, score, and forecast market category transition se
 classify macro regimes via attractor basins, and predict future category paths using beam search.
 */
 type Solver struct {
+	ctx            context.Context
+	cancel         context.CancelFunc
+	thesis         *types.Thesis
 	recorder       *audit.Recorder
 	tree           *dmt.Tree
 	sequences      map[string][]string // Active category token buffer per symbol
@@ -152,12 +157,19 @@ const symbolLimit = 32
 NewSolver returns a new cognition solver bound to a radix tree.
 */
 func NewSolver(
+	ctx context.Context,
+	thesis *types.Thesis,
 	tree *dmt.Tree,
 	ui chan []byte,
 	recorder *audit.Recorder,
 	opts ...Option,
 ) *Solver {
+	ctx, cancel := context.WithCancel(ctx)
+
 	solver := &Solver{
+		ctx:            ctx,
+		cancel:         cancel,
+		thesis:         thesis,
 		recorder:       recorder,
 		tree:           tree,
 		sequences:      make(map[string][]string),
@@ -184,6 +196,7 @@ func NewSolver(
 		opt(solver)
 	}
 
+	go solver.run()
 	return solver
 }
 
@@ -192,300 +205,358 @@ func (solver *Solver) Name() string {
 }
 
 /*
-Update ingests the active Thesis categories, evaluates category transition surprisal,
-breaks/continues sequence paths, classifies market regimes, and runs lookahead beam search.
+Update runs one cognition pass over the active thesis categories.
+/*
+run consumes each symbol's category stream from the Categories input MapReduce
+and pushes the derived cognition readings to the Cognition output MapReduce.
+Each category batch is classified and forwarded inline as a stream; the batch
+is never materialized into a longer-lived slice.
 */
-func (solver *Solver) Update(thesis *types.Thesis) error {
-	config := system.Cfg.Snapshot()
-
-	if thesis == nil || config == nil || config.Planner == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"cognition: thesis and planner configuration required",
-			nil,
-		))
-	}
-
-	// Regulator optimization confidence governs control-space exploration. It is
-	// not evidence about a market regime, so cognition switches on the same
-	// posterior boundary that admits market direction evidence.
-	switchThreshold := config.Planner.MinimumConfidence
-
-	rows := datura.NewMap()
-	var cognitionErr error
-
-	// 1. Process active categories per symbol
-	thesis.Symbols.Range(func(key, value interface{}) bool {
-		symbol := key.(string)
-		symbolState := value.(*types.Symbol)
-
-		stored, found := symbolState.Categories.Load(symbol)
-
-		if !found {
-			return true
+func (solver *Solver) run() {
+	for {
+		select {
+		case <-solver.ctx.Done():
+			return
+		default:
 		}
 
-		categories := stored.([]types.Category)
-		if len(categories) == 0 {
-			return true
+		if !solver.pending() {
+			// No symbol has unconsumed categories; yield before re-scanning the
+			// whole stage instead of rebuilding the pass on an empty stream.
+			runtime.Gosched()
+			continue
 		}
 
-		// Select the dominant category for this symbol on this tick
-		dominantCategory := solver.selectDominantCategory(categories)
+		config := system.Cfg.Snapshot()
+		switchThreshold := config.Planner.MinimumConfidence
+		rows := datura.NewMap()
+		var cognitionErr error
 
-		if dominantCategory == types.CategoryTypeNone {
-			return true
-		}
+		solver.thesis.Symbols.Range(func(key, value interface{}) bool {
+			symbol, symbolOK := key.(string)
+			symbolState, stateOK := value.(*types.Symbol)
 
-		categoryToken := solver.encodeCategory(dominantCategory)
-		observedRegime := solver.selectRegime(categories)
-		activeTokens := solver.sequences[symbol]
-		activeRegime := solver.regimes[symbol]
-		transitioned := len(activeTokens) == 0 ||
-			activeTokens[len(activeTokens)-1] != categoryToken
+			if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
+				return true
+			}
 
-		if !transitioned {
-			return true
-		}
+			for batch := range symbolState.MarketCategories(types.SourceCognition) {
+				if len(batch) == 0 {
+					continue
+				}
 
-		if len(rows) == 0 {
-			solver.tickCounter++
-		}
-
-		// 2. Evaluate if appending this category causes a Sequence Break
-		broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
-
-		if broken && len(activeTokens) > 0 {
-			// --- SEQUENCE BREAK DETECTED ---
-			oldSequenceBytes := solver.sequenceBytes(activeTokens)
-
-			// Commit completed sequence to episodic buffer for REM replay
-			_, _ = solver.tree.CommitToEpisodicBuffer(
-				uint64(thesis.At.UnixNano()), oldSequenceBytes,
-			)
-
-			if activeRegime.Type != types.CategoryTypeNone {
-				err := solver.tree.TeachSequence(
-					oldSequenceBytes, []byte(regimeName(activeRegime.Type)),
-				)
-
-				if err != nil {
-					cognitionErr = errnie.Error(errnie.Err(
-						errnie.Internal,
-						fmt.Sprintf(
-							"cognition: failed to learn %s regime for %s",
-							regimeName(activeRegime.Type), symbol,
-						),
-						err,
-					))
-
+				if err := solver.processBatch(
+					symbol,
+					batch,
+					switchThreshold,
+					rows,
+				); err != nil {
+					cognitionErr = errnie.Error(err)
 					return false
 				}
 			}
 
-			// Start fresh sequence buffer with new category
-			activeTokens = []string{categoryToken}
+			return true
+		})
 
-			if observedRegime.Type != types.CategoryTypeNone {
-				activeRegime = observedRegime
-			}
-		} else {
-			// --- SEQUENCE CONTINUES ---
-			activeTokens = append(activeTokens, categoryToken)
+		solver.publish(rows)
 
-			if observedRegime.Type != types.CategoryTypeNone {
-				activeRegime = observedRegime
-			}
+		if cognitionErr != nil {
+			rows.Free()
+		}
+	}
+}
+
+/*
+pending reports whether any symbol has unconsumed categories on its input
+MapReduce, so the run loop can yield without processing when idle.
+*/
+func (solver *Solver) pending() bool {
+	if solver.thesis == nil {
+		return false
+	}
+
+	hasWork := false
+
+	solver.thesis.Symbols.Range(func(_, value any) bool {
+		symbolState, valid := value.(*types.Symbol)
+
+		if !valid || symbolState == nil {
+			return true
 		}
 
-		solver.sequences[symbol] = activeTokens
-		solver.regimes[symbol] = activeRegime
+		if symbolState.Categories.Length() > 0 {
+			hasWork = true
 
-		activeSequenceBytes := solver.sequenceBytes(activeTokens)
-
-		// 4. Classify macro market regime / concept attractor basin
-		classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)
-
-		// 5. Lookahead Beam Search: Predict next 2–3 likely category hops
-		beamPaths := solver.tree.ExecuteBeamSearch(
-			activeSequenceBytes,
-			solver.beamWidth,
-			solver.maxHops,
-			&solver.beamScratch,
-		)
-
-		/*
-			6. Measure Branch Ambiguity (Shannon Entropy)
-
-			MeasureBranchAmbiguity seeks the storage key verbatim — unlike
-			GetSensoryWeight and PredictNextSensoryTokens, which namespace their
-			argument internally. Handing it a bare sequence searched a namespace
-			nothing is written to, so every prefix reported zero bits and the
-			entropy gate could never open.
-		*/
-		ambiguity := solver.tree.MeasureBranchAmbiguity(
-			dmt.SensoryPrefixKey(activeSequenceBytes),
-		)
-		var entropyBits *float64
-		var entropyThreshold *float64
-
-		if ambiguity.Threshold < math.MaxFloat64 {
-			entropyBits = &ambiguity.EntropyBits
-			entropyThreshold = &ambiguity.Threshold
+			return false
 		}
 
-		// 7. Format Lookahead Predictions for Thesis
-		predictions := solver.formatLookaheadPredictions(
-			beamPaths, activeSequenceBytes,
-		)
-
-		classes := make([]types.CognitionClass, 0, len(classResult.Scores))
-
-		for _, score := range classResult.Scores {
-			if !isRegimeName(string(score.ClassName)) {
-				continue
-			}
-
-			classes = append(classes, types.CognitionClass{
-				Name:        string(score.ClassName),
-				Probability: score.Value,
-			})
-		}
-
-		beams := make([]types.CognitionBeam, 0, len(beamPaths))
-
-		for _, path := range beamPaths {
-			beams = append(beams, types.CognitionBeam{
-				Sequence: solver.decodeCategoryPath(path.Sequence),
-				Key:      string(path.Sequence),
-				Score:    path.Score,
-			})
-		}
-
-		branches := solver.cachedPrefixTree(symbol, activeTokens, transitioned)
-
-		contrast := 0.0
-		contrastEvidence := 0.0
-
-		if len(classResult.Scores) > 1 {
-			contrast = classResult.Scores[0].Value - classResult.Scores[1].Value
-			evidence := solver.tree.ComputeBasinContrastiveEvidence(
-				classResult.Scores[0].ClassName,
-				classResult.Scores[1].ClassName,
-				activeSequenceBytes,
-			)
-			contrastEvidence = evidence.Divergence
-		}
-
-		lookaheadScore := 0.0
-
-		if len(beamPaths) > 0 {
-			lookaheadScore = beamPaths[0].Score
-		}
-
-		winner := string(classResult.Winner)
-		confidence := classResult.Highest
-		classificationReady := len(classes) > 1 && isRegimeName(winner)
-
-		if !classificationReady && activeRegime.Type != types.CategoryTypeNone {
-			winner = regimeName(activeRegime.Type)
-			confidence = activeRegime.Confidence
-			classes = solver.regimeClasses(categories)
-		}
-
-		candidateWinner := winner
-		candidateConfidence := confidence
-		stabilized := solver.stabilizeReading(
-			symbol,
-			candidateWinner,
-			candidateConfidence,
-			ambiguity.Ambiguous,
-			classes,
-			predictions,
-			switchThreshold,
-		)
-		winner = stabilized.winner
-		confidence = stabilized.confidence
-		predictions = stabilized.predictions
-
-		analysis := solver.tree.AnalyzeInterpolated(activeSequenceBytes)
-		contributions := make([]types.CognitionContribution, 0, len(analysis.Contributions))
-
-		for _, contribution := range analysis.Contributions {
-			contributions = append(contributions, types.CognitionContribution{
-				Token: solver.decodeCategoryToken(string(contribution.Token)),
-				Bits:  contribution.Bits,
-			})
-		}
-
-		if len(contributions) == 0 {
-			contributions = nil
-		}
-
-		cognition := types.Cognition{
-			Source:           "cognition",
-			Symbol:           symbol,
-			At:               thesis.At,
-			Sequence:         solver.decodeCategoryPath(activeSequenceBytes),
-			RegimePrefix:     winner,
-			Winner:           winner,
-			WinnerClass:      winner,
-			CandidateWinner:  candidateWinner,
-			StateHeld:        stabilized.held,
-			PredictionsHeld:  stabilized.held,
-			SwitchConfidence: candidateConfidence,
-			SwitchThreshold:  switchThreshold,
-			Confidence:       confidence,
-			ClassConfidence:  confidence,
-			Contrast:         contrast,
-			ContrastEvidence: contrastEvidence,
-			EntropyBits:      entropyBits,
-			EntropyThreshold: entropyThreshold,
-			Ambiguous:        ambiguity.Ambiguous,
-			Cohort:           solver.tree.GetSensoryWeight(activeSequenceBytes).Count,
-			LookaheadScore:   lookaheadScore,
-			LookaheadPaths:   len(beamPaths),
-			BeamWidth:        solver.beamWidth,
-			MaxHops:          solver.maxHops,
-			NodeCount:        len(branches),
-			Predictions:      predictions,
-			Branches:         branches,
-			Beams:            beams,
-			Classes:          classes,
-
-			InterpolatedSurprisal: analysis.AverageSurprisal,
-			Contributions:         contributions,
-			Lexical:               solver.lexical(activeTokens),
-			Symbols:               solver.symbols,
-			Dreams:                solver.dreams,
-			REMFrom:               solver.remFrom,
-			REMThrough:            solver.remThrough,
-			REMReplays:            int(solver.remOutcome.ReplayedObservations),
-			REMDecayFactor:        solver.remOutcome.DecayFactor,
-			REMInhibitionPct:      solver.remOutcome.RetroactiveInhibitionPct,
-			// A pass runs synchronously inline on the 128-tick schedule
-			// below, so "consolidating" is true only for the reading
-			// published on the very tick that triggered it — every other
-			// tick reports the awake state between passes.
-			REMConsolidating: false,
-		}
-
-		solver.readings[symbol] = cognition
-		symbolState.Cognition.Store(symbol, cognition)
-		rows[symbol] = cognition
 		return true
 	})
 
-	if cognitionErr != nil {
-		rows.Free()
+	return hasWork
+}
 
-		return cognitionErr
+/*
+processBatch advances one symbol's cognition state machine from a single
+category batch, publishing its reading to the downstream Cognition output.
+*/
+func (solver *Solver) processBatch(
+	symbol string,
+	categories []types.Category,
+	switchThreshold float64,
+	rows datura.Map[any],
+) error {
+	symbolState, found := solver.thesis.Symbols.Load(symbol)
+
+	if !found || symbolState == nil {
+		return nil
 	}
 
-	solver.publish(rows)
+	// Select the dominant category for this symbol on this observation.
+	dominantCategory := solver.selectDominantCategory(categories)
 
+	if dominantCategory == types.CategoryTypeNone {
+		return nil
+	}
+
+	categoryToken := solver.encodeCategory(dominantCategory)
+	observedRegime := solver.selectRegime(categories)
+	activeTokens := solver.sequences[symbol]
+	activeRegime := solver.regimes[symbol]
+	transitioned := len(activeTokens) == 0 ||
+		activeTokens[len(activeTokens)-1] != categoryToken
+
+	if !transitioned {
+		return nil
+	}
+
+	if len(rows) == 0 {
+		solver.tickCounter++
+	}
+
+	// 2. Evaluate if appending this category causes a Sequence Break
+	broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
+
+	if broken && len(activeTokens) > 0 {
+		// --- SEQUENCE BREAK DETECTED ---
+		oldSequenceBytes := solver.sequenceBytes(activeTokens)
+
+		// Commit completed sequence to episodic buffer for REM replay
+		_, _ = solver.tree.CommitToEpisodicBuffer(
+			uint64(solver.thesis.At.UnixNano()), oldSequenceBytes,
+		)
+
+		if activeRegime.Type != types.CategoryTypeNone {
+			err := solver.tree.TeachSequence(
+				oldSequenceBytes, []byte(regimeName(activeRegime.Type)),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf(
+						"cognition: failed to learn %s regime for %s",
+						regimeName(activeRegime.Type), symbol,
+					),
+					err,
+				))
+			}
+		}
+
+		// Start fresh sequence buffer with new category
+		activeTokens = []string{categoryToken}
+
+		if observedRegime.Type != types.CategoryTypeNone {
+			activeRegime = observedRegime
+		}
+	} else {
+		// --- SEQUENCE CONTINUES ---
+		activeTokens = append(activeTokens, categoryToken)
+
+		if observedRegime.Type != types.CategoryTypeNone {
+			activeRegime = observedRegime
+		}
+	}
+
+	solver.sequences[symbol] = activeTokens
+	solver.regimes[symbol] = activeRegime
+
+	activeSequenceBytes := solver.sequenceBytes(activeTokens)
+
+	// 4. Classify macro market regime / concept attractor basin
+	classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)
+
+	// 5. Lookahead Beam Search: Predict next 2-3 likely category hops
+	beamPaths := solver.tree.ExecuteBeamSearch(
+		activeSequenceBytes,
+		solver.beamWidth,
+		solver.maxHops,
+		&solver.beamScratch,
+	)
+
+	/*
+		6. Measure Branch Ambiguity (Shannon Entropy)
+
+		MeasureBranchAmbiguity seeks the storage key verbatim — unlike
+		GetSensoryWeight and PredictNextSensoryTokens, which namespace their
+		argument internally. Handing it a bare sequence searched a namespace
+		nothing is written to, so every prefix reported zero bits and the
+		entropy gate could never open.
+	*/
+	ambiguity := solver.tree.MeasureBranchAmbiguity(
+		dmt.SensoryPrefixKey(activeSequenceBytes),
+	)
+	var entropyBits *float64
+	var entropyThreshold *float64
+
+	if ambiguity.Threshold < math.MaxFloat64 {
+		entropyBits = &ambiguity.EntropyBits
+		entropyThreshold = &ambiguity.Threshold
+	}
+
+	// 7. Format Lookahead Predictions for Thesis
+	predictions := solver.formatLookaheadPredictions(
+		beamPaths, activeSequenceBytes,
+	)
+
+	classes := make([]types.CognitionClass, 0, len(classResult.Scores))
+
+	for _, score := range classResult.Scores {
+		if !isRegimeName(string(score.ClassName)) {
+			continue
+		}
+
+		classes = append(classes, types.CognitionClass{
+			Name:        string(score.ClassName),
+			Probability: score.Value,
+		})
+	}
+
+	beams := make([]types.CognitionBeam, 0, len(beamPaths))
+
+	for _, path := range beamPaths {
+		beams = append(beams, types.CognitionBeam{
+			Sequence: solver.decodeCategoryPath(path.Sequence),
+			Key:      string(path.Sequence),
+			Score:    path.Score,
+		})
+	}
+
+	branches := solver.cachedPrefixTree(symbol, activeTokens, transitioned)
+
+	contrast := 0.0
+	contrastEvidence := 0.0
+
+	if len(classResult.Scores) > 1 {
+		contrast = classResult.Scores[0].Value - classResult.Scores[1].Value
+		evidence := solver.tree.ComputeBasinContrastiveEvidence(
+			classResult.Scores[0].ClassName,
+			classResult.Scores[1].ClassName,
+			activeSequenceBytes,
+		)
+		contrastEvidence = evidence.Divergence
+	}
+
+	lookaheadScore := 0.0
+
+	if len(beamPaths) > 0 {
+		lookaheadScore = beamPaths[0].Score
+	}
+
+	winner := string(classResult.Winner)
+	confidence := classResult.Highest
+	classificationReady := len(classes) > 1 && isRegimeName(winner)
+
+	if !classificationReady && activeRegime.Type != types.CategoryTypeNone {
+		winner = regimeName(activeRegime.Type)
+		confidence = activeRegime.Confidence
+		classes = solver.regimeClasses(categories)
+	}
+
+	candidateWinner := winner
+	candidateConfidence := confidence
+	stabilized := solver.stabilizeReading(
+		symbol,
+		candidateWinner,
+		candidateConfidence,
+		ambiguity.Ambiguous,
+		classes,
+		predictions,
+		switchThreshold,
+	)
+	winner = stabilized.winner
+	confidence = stabilized.confidence
+	predictions = stabilized.predictions
+
+	analysis := solver.tree.AnalyzeInterpolated(activeSequenceBytes)
+	contributions := make([]types.CognitionContribution, 0, len(analysis.Contributions))
+
+	for _, contribution := range analysis.Contributions {
+		contributions = append(contributions, types.CognitionContribution{
+			Token: solver.decodeCategoryToken(string(contribution.Token)),
+			Bits:  contribution.Bits,
+		})
+	}
+
+	if len(contributions) == 0 {
+		contributions = nil
+	}
+
+	cognition := types.Cognition{
+		Source:           "cognition",
+		Symbol:           symbol,
+		At:               solver.thesis.At,
+		Sequence:         solver.decodeCategoryPath(activeSequenceBytes),
+		RegimePrefix:     winner,
+		Winner:           winner,
+		WinnerClass:      winner,
+		CandidateWinner:  candidateWinner,
+		StateHeld:        stabilized.held,
+		PredictionsHeld:  stabilized.held,
+		SwitchConfidence: candidateConfidence,
+		SwitchThreshold:  switchThreshold,
+		Confidence:       confidence,
+		ClassConfidence:  confidence,
+		Contrast:         contrast,
+		ContrastEvidence: contrastEvidence,
+		EntropyBits:      entropyBits,
+		EntropyThreshold: entropyThreshold,
+		Ambiguous:        ambiguity.Ambiguous,
+		Cohort:           solver.tree.GetSensoryWeight(activeSequenceBytes).Count,
+		LookaheadScore:   lookaheadScore,
+		LookaheadPaths:   len(beamPaths),
+		BeamWidth:        solver.beamWidth,
+		MaxHops:          solver.maxHops,
+		NodeCount:        len(branches),
+		Predictions:      predictions,
+		Branches:         branches,
+		Beams:            beams,
+		Classes:          classes,
+
+		InterpolatedSurprisal: analysis.AverageSurprisal,
+		Contributions:         contributions,
+		Lexical:               solver.lexical(activeTokens),
+		Symbols:               solver.symbols,
+		Dreams:                solver.dreams,
+		REMFrom:               solver.remFrom,
+		REMThrough:            solver.remThrough,
+		REMReplays:            int(solver.remOutcome.ReplayedObservations),
+		REMDecayFactor:        solver.remOutcome.DecayFactor,
+		REMInhibitionPct:      solver.remOutcome.RetroactiveInhibitionPct,
+		// A pass runs synchronously inline on the 128-tick schedule
+		// below, so "consolidating" is true only for the reading
+		// published on the very tick that triggered it — every other
+		// tick reports the awake state between passes.
+		REMConsolidating: false,
+	}
+
+	solver.readings[symbol] = cognition
+	symbolState.(*types.Symbol).Cognition.Push(cognition)
+	rows[symbol] = cognition
 	return nil
 }
+
 
 type stabilizedReading struct {
 	winner      string

@@ -45,7 +45,7 @@ func TestAddNodes(t *testing.T) {
 		observedFrom := at.Add(-time.Second)
 		drive := 0.7
 		separation := 0.8
-		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol := types.NewSymbol("BTC/USD")
 		measurement := newTestMeasurement("cvd-1", types.SourceCVD, "BTC/USD", at)
 		measurement.ObservedFrom = observedFrom
 		measurement.Horizon = time.Second
@@ -85,7 +85,7 @@ func TestAddNodes(t *testing.T) {
 	})
 
 	Convey("Given a measurement assigned to another pair", t, func() {
-		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol := types.NewSymbol("BTC/USD")
 		other := newTestMeasurement("cvd-other", types.SourceCVD, "ETH/USD", time.Unix(11, 0).UTC())
 		putTestMetric(other, types.MetricDrive, 0.5, nil, nmtypes.UnitDimensionless)
 		symbol.AppendMeasurement(other)
@@ -102,7 +102,7 @@ func TestAddNodes(t *testing.T) {
 	})
 
 	Convey("Given an identified quiet-pass measurement without timestamp or metrics", t, func() {
-		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol := types.NewSymbol("BTC/USD")
 		symbol.AppendMeasurement(newTestMeasurement(
 			"pumpdump-quiet", types.SourcePumpDump, "BTC/USD", time.Time{},
 		))
@@ -123,7 +123,7 @@ func TestAddNodes(t *testing.T) {
 func TestAddCategoryEdges(t *testing.T) {
 	Convey("Given retained category evidence with old raw and current normalized values", t, func() {
 		at := time.Unix(10, 0).UTC()
-		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol := types.NewSymbol("BTC/USD")
 		drive := 0.8
 		old := newTestMeasurement("old", types.SourceCVD, "BTC/USD", at)
 		putTestMetric(old, types.MetricDrive, 0.7, nil, nmtypes.UnitDimensionless)
@@ -131,14 +131,14 @@ func TestAddCategoryEdges(t *testing.T) {
 		current := newTestMeasurement("current", types.SourceCVD, "BTC/USD", at)
 		putTestMetric(current, types.MetricDrive, drive, &drive, nmtypes.UnitDimensionless)
 		symbol.AppendMeasurement(current)
-		symbol.Categories.Store("BTC/USD", []types.Category{{
+		symbol.Categories.Push([]types.Category{{
 			Symbol: "BTC/USD", Type: types.CategoryAggressiveDrive,
 			Confidence: 0.7,
 			Supporting: []string{"cvd:drive"},
 		}})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		NewSolver(nil, nil).extractCategoryNodes(symbol, graph)
+		NewSolver(nil, nil, nil).extractCategoryNodes(symbol, graph)
 		index, err := compiler.addNodes(
 			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
 		)
@@ -157,11 +157,11 @@ func TestAddCategoryEdges(t *testing.T) {
 
 	Convey("Given category evidence without a normalized measurement value", t, func() {
 		at := time.Unix(20, 0).UTC()
-		symbol := types.NewSymbol("BTC/USD", nil)
+		symbol := types.NewSymbol("BTC/USD")
 		raw := newTestMeasurement("cvd-raw", types.SourceCVD, "BTC/USD", at)
 		putTestMetric(raw, types.MetricDrive, 0.7, nil, nmtypes.UnitDimensionless)
 		symbol.AppendMeasurement(raw)
-		symbol.Categories.Store("BTC/USD", []types.Category{{
+		symbol.Categories.Push([]types.Category{{
 			Symbol: "BTC/USD", Type: types.CategoryAggressiveDrive,
 			Supporting: []string{"cvd:drive"},
 		}})
@@ -183,7 +183,7 @@ func TestAddCategoryEdges(t *testing.T) {
 
 func BenchmarkAddNodes(b *testing.B) {
 	at := time.Unix(30, 0).UTC()
-	symbol := types.NewSymbol("BTC/USD", nil)
+	symbol := types.NewSymbol("BTC/USD")
 	value := 0.5
 
 	for index, schema := range types.CategorySchemas {

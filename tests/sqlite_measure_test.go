@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/backtest/hindsight"
 	"github.com/theapemachine/symm/cmd"
+	"github.com/theapemachine/symm/nomagique/transport"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -104,7 +105,7 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 
 	uiChannel := make(chan []byte, 1024)
 	publicFeed, privateFeed := market.Feeds()
-	thesis := types.NewThesis(context.Background(), uiChannel)
+	thesis := types.NewThesis(context.Background(), transport.NewMapReduce[any]([]string{"test"}, nil, nil))
 	system := cmd.BootWithHub(
 		context.Background(), thesis, publicFeed, privateFeed, uiChannel, nil,
 	)

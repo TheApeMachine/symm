@@ -1,11 +1,8 @@
-package graph
+package types
 
 import (
 	"strings"
 	"time"
-
-	"github.com/theapemachine/symm/logic/opportunity"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -15,11 +12,11 @@ of contradicting legs that hold. A leg holds when a graph node carries that
 source/metric identity with a strength above the leg's epistemic floors.
 */
 type OpportunityScore struct {
-	Type       types.OpportunityType
+	Type       OpportunityType
 	Support    float64
 	Opposition float64
 	Score      float64
-	Lifecycle  types.OpportunityLifecycle
+	Lifecycle  OpportunityLifecycle
 }
 
 /*
@@ -34,12 +31,12 @@ func (graph *Graph) classifyOpportunities(now time.Time) []OpportunityScore {
 	}
 
 	views := graph.reasoningNodeViews()
-	scores := make([]OpportunityScore, 0, len(opportunity.Catalog))
+	scores := make([]OpportunityScore, 0, len(Catalog))
 
-	for _, archetype := range opportunity.Catalog {
+	for _, archetype := range Catalog {
 		score := OpportunityScore{
 			Type:      archetype.Type,
-			Lifecycle: types.LifecycleEmergent,
+			Lifecycle: LifecycleEmergent,
 		}
 
 		var supportSum float64
@@ -84,7 +81,7 @@ ActiveOpportunity returns the archetype with the strongest positive evidence for
 the current graph, or None when no archetype carries net support.
 */
 func (graph *Graph) ActiveOpportunity(now time.Time) OpportunityScore {
-	best := OpportunityScore{Type: types.OpportunityNone, Lifecycle: types.LifecycleEmergent}
+	best := OpportunityScore{Type: OpportunityNone, Lifecycle: LifecycleEmergent}
 
 	for _, score := range graph.classifyOpportunities(now) {
 		if score.Score > best.Score {
@@ -128,7 +125,7 @@ func (graph *Graph) MeanTrust(now time.Time) float64 {
 
 func (graph *Graph) legTrust(
 	views []reasoningNodeView,
-	leg types.ObservationCondition,
+	leg ObservationCondition,
 	now time.Time,
 ) float64 {
 	for _, view := range views {
@@ -162,7 +159,7 @@ func (graph *Graph) legTrust(
 	return 0
 }
 
-func legMatches(view reasoningNodeView, leg types.ObservationCondition) bool {
+func legMatches(view reasoningNodeView, leg ObservationCondition) bool {
 	if leg.Source != "" && !strings.EqualFold(view.Source, string(leg.Source)) {
 		return false
 	}
@@ -174,17 +171,17 @@ func legMatches(view reasoningNodeView, leg types.ObservationCondition) bool {
 	return true
 }
 
-func opportunityLifecycle(support float64, opposition float64) types.OpportunityLifecycle {
+func opportunityLifecycle(support float64, opposition float64) OpportunityLifecycle {
 	switch {
 	case opposition > support:
-		return types.LifecycleExhausting
+		return LifecycleExhausting
 	case support > 0.8:
-		return types.LifecycleClimax
+		return LifecycleClimax
 	case support > 0.55:
-		return types.LifecycleAccelerating
+		return LifecycleAccelerating
 	case support > 0.3:
-		return types.LifecycleConfirming
+		return LifecycleConfirming
 	default:
-		return types.LifecycleEmergent
+		return LifecycleEmergent
 	}
 }

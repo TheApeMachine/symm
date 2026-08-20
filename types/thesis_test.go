@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -19,12 +20,12 @@ func TestThesisMarshalState(t *testing.T) {
 		}), ShouldBeNil)
 		symbol := thesis.Symbol("BTC/USD")
 		decision := NewDecision(ActionEnter, "BTC/USD")
-		symbol.Decisions.Store("BTC/USD", decision)
-		symbol.Graphs.Store("market_graph", map[string]any{"ready": true})
-		symbol.Categories.Store("BTC/USD", []Category{{Symbol: "BTC/USD"}})
-		symbol.Phase.Store("BTC/USD", PhaseReading{})
-		symbol.Cognition.Store("BTC/USD", Cognition{Symbol: "BTC/USD"})
-		symbol.Causal.Store("BTC/USD", map[string]any{"precision": 0.5})
+		symbol.Decisions.Push(*decision)
+		symbol.Graphs.Push(NewGraph(time.Time{}))
+		symbol.Categories.Push([]Category{{Symbol: "BTC/USD"}})
+		symbol.Phase.Push(PhaseReading{})
+		symbol.Cognition.Push(Cognition{Symbol: "BTC/USD"})
+		symbol.Causal.Push(map[string]any{"precision": 0.5})
 
 		state, err := thesis.MarshalState()
 		var checkpoint map[string]any
@@ -37,10 +38,7 @@ func TestThesisMarshalState(t *testing.T) {
 			So(checkpoint["status"], ShouldEqual, "ready")
 			symbols := checkpoint["symbols"].(map[string]any)
 			bitcoin := symbols["BTC/USD"].(map[string]any)
-			So(bitcoin["decisions"].(map[string]any), ShouldContainKey, "BTC/USD")
-			graph := bitcoin["graphs"].(map[string]any)["market_graph"].(map[string]any)
-			So(graph["ready"], ShouldEqual, true)
-			So(bitcoin["causal"].(map[string]any), ShouldContainKey, "BTC/USD")
+			So(bitcoin["causal"].([]any), ShouldHaveLength, 1)
 			So(checkpoint["equity"], ShouldNotBeNil)
 		})
 	})

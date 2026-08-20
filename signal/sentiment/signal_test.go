@@ -33,6 +33,7 @@ func TestSentimentNumber(t *testing.T) {
 		Convey("It should emit a sentiment deviation reading per tick", func() {
 			measurements := []*nmtypes.Measurement{}
 
+			time.Sleep(50 * time.Millisecond)
 			for measurement := range market.MarketMeasurements("category") {
 				measurements = append(measurements, measurement)
 			}

@@ -10,7 +10,7 @@ import (
 const ignitionTestEpoch = 1_786_099_200.0
 
 func TestIgnitionReadinessIsCausal(t *testing.T) {
-	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	stream := nomagique.NewStream(Ignition(), NewIgnitionState())
 	first := measureIgnition(t, stream, ignitionObservationForTest(
 		128,
 		20,
@@ -65,7 +65,7 @@ func TestIgnitionReadinessIsCausal(t *testing.T) {
 }
 
 func TestIgnitionRejectsInvalidObservation(t *testing.T) {
-	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	stream := nomagique.NewStream(Ignition(), NewIgnitionState())
 	invalidCapacity := ignitionObservationForTest(
 		0,
 		20,
@@ -95,7 +95,7 @@ func TestIgnitionRejectsInvalidObservation(t *testing.T) {
 
 func TestIgnitionUsesEachStreamOwnScale(t *testing.T) {
 	collection := nomagique.NewKeyedStreams[string](
-		Ignition,
+		Ignition(),
 		func(string) nomagique.Frame {
 			return NewIgnitionState()
 		},
@@ -150,7 +150,7 @@ func TestIgnitionUsesEachStreamOwnScale(t *testing.T) {
 }
 
 func TestIgnitionRejectsTimeRegressionTransactionally(t *testing.T) {
-	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	stream := nomagique.NewStream(Ignition(), NewIgnitionState())
 	var committed nomagique.Frame
 
 	for index := 0; index < 5; index++ {
@@ -201,7 +201,7 @@ func TestIgnitionRejectsTimeRegressionTransactionally(t *testing.T) {
 }
 
 func TestIgnitionKeepsReturnsAndPrecursorsSemanticallyDistinct(t *testing.T) {
-	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	stream := nomagique.NewStream(Ignition(), NewIgnitionState())
 
 	for index := 0; index < 3; index++ {
 		measureIgnition(t, stream, ignitionObservationForTest(
@@ -229,7 +229,7 @@ func TestIgnitionKeepsReturnsAndPrecursorsSemanticallyDistinct(t *testing.T) {
 
 func TestIgnitionBoundsRetainedHistory(t *testing.T) {
 	const capacity = 16
-	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	stream := nomagique.NewStream(Ignition(), NewIgnitionState())
 	var output nomagique.Frame
 
 	for index := 0; index < 60; index++ {
@@ -258,8 +258,8 @@ func TestIgnitionBoundsRetainedHistory(t *testing.T) {
 }
 
 func TestIgnitionReciprocalDirectionsAreSymmetric(t *testing.T) {
-	bullish := nomagique.NewStream(Ignition, NewIgnitionState())
-	bearish := nomagique.NewStream(Ignition, NewIgnitionState())
+	bullish := nomagique.NewStream(Ignition(), NewIgnitionState())
+	bearish := nomagique.NewStream(Ignition(), NewIgnitionState())
 	prices := []float64{100, 101, 100, 102, 101, 104}
 	var bull nomagique.Frame
 	var bear nomagique.Frame
@@ -300,7 +300,7 @@ func TestIgnitionReciprocalDirectionsAreSymmetric(t *testing.T) {
 }
 
 func TestIgnitionRetainsMultipleKeyedStreams(t *testing.T) {
-	collection := nomagique.NewKeyedStreams[string](Ignition, nil)
+	collection := nomagique.NewKeyedStreams[string](Ignition(), nil)
 	observations := []struct {
 		key    string
 		volume float64
@@ -360,7 +360,7 @@ func TestAlgorithmSymbolsFitFrame(t *testing.T) {
 }
 
 func BenchmarkIgnition(b *testing.B) {
-	stream := nomagique.NewStream(Ignition, NewIgnitionState())
+	stream := nomagique.NewStream(Ignition(), NewIgnitionState())
 
 	b.ReportAllocs()
 	b.ResetTimer()

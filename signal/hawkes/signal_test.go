@@ -32,7 +32,8 @@ func TestHawkesPipeline(t *testing.T) {
 
 		measurements := []*nmtypes.Measurement{}
 
-		for measurement := range market.MarketMeasurements("category") {
+		time.Sleep(50 * time.Millisecond)
+			for measurement := range market.MarketMeasurements("category") {
 			measurements = append(measurements, measurement)
 		}
 
@@ -40,7 +41,7 @@ func TestHawkesPipeline(t *testing.T) {
 			So(len(measurements), ShouldBeGreaterThan, 0)
 
 			latest := measurements[len(measurements)-1]
-			So(latest.Source, ShouldEqual, types.SourceHawkes)
+			So(latest.Source, ShouldEqual, string(types.SourceHawkes))
 
 			_, found := latest.Metrics["buy_intensity"]
 			So(found, ShouldBeTrue)
