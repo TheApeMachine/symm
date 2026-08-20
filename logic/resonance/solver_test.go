@@ -32,12 +32,6 @@ type stubConn struct{}
 
 func (conn stubConn) Status() types.Status { return types.READY }
 
-func (conn stubConn) Subscribe(
-	_ string, subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	return subscription
-}
-
 func (conn stubConn) Books() *sync.Map { return &sync.Map{} }
 
 func (conn stubConn) Book(_ string, _ func(*book.Book)) {}

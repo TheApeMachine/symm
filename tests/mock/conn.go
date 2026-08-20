@@ -28,9 +28,7 @@ func (conn *Conn) Client() *spot.WebSocket { return nil }
 
 func (conn *Conn) Status() types.Status { return conn.status }
 
-func (conn *Conn) Subscribe(string, *types.Subscription[any]) *types.Subscription[any] {
-	return nil
-}
+func (conn *Conn) SubInstrument(callback chan any) {}
 
 func (conn *Conn) Books() *sync.Map { return nil }
 
@@ -39,8 +37,6 @@ func (conn *Conn) Book(_ string, read func(*book.Book)) { read(nil) }
 func (conn *Conn) Level3Divergences() <-chan string { return nil }
 
 func (conn *Conn) ResubscribeL3(string) {}
-
-func (conn *Conn) SubInstrument(callback types.Subscription[any]) {}
 
 func (conn *Conn) SubTicker(symbols []string) {}
 

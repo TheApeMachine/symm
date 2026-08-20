@@ -20,10 +20,10 @@ import (
 )
 
 /*
-Desk is the broker Actor entrypoint and persistent position owner. It consumes
-one market ticker and one account execution subscription, then routes each
-message to the positions it owns so closed lots leave no abandoned fan-out
-subscriber behind.
+Desk is the broker Actor entrypoint and persistent position owner. It drains
+market tickers and account executions from the shared thesis symbol queues and
+routes each message to the positions it owns so closed lots leave no abandoned
+fan-out behind.
 */
 type Desk struct {
 	*PositionStore
@@ -31,7 +31,6 @@ type Desk struct {
 	cancel         context.CancelFunc
 	status         types.Status
 	api            *websocket.API
-	subscriptions  map[string]*types.Subscription[any]
 	ui             *transport.MapReduce[[]byte]
 	instrument     *Instrument
 	price          *Price
@@ -124,50 +123,6 @@ func NewDesk(
 	return desk
 }
 
-/*
-Cash returns the current cash balance in quote currency.
-*/
-/*
-Queued reports market messages the desk has received but not yet applied to
-open lots. Replay waits for this to drain so a stop sees every executable mark.
-*/
-func (desk *Desk) Queued() int {
-	if desk == nil || desk.subscriptions == nil {
-		return 0
-	}
-
-	queued := 0
-
-	if ticker := desk.subscriptions["ticker"]; ticker != nil {
-		queued += len(ticker.Channel)
-	}
-
-	if executions := desk.subscriptions["executions"]; executions != nil {
-		queued += len(executions.Channel)
-	}
-
-	return queued
-}
-
-/*
-QueueDepth reports the pending item count of one named desk subscription
-channel, or zero when the channel does not exist. This gives the diagnostics
-page the live broker wire pressure without exposing the channel itself.
-*/
-func (desk *Desk) QueueDepth(name string) int {
-	if desk == nil || desk.subscriptions == nil {
-		return 0
-	}
-
-	subscription := desk.subscriptions[name]
-
-	if subscription == nil {
-		return 0
-	}
-
-	return len(subscription.Channel)
-}
-
 func (desk *Desk) Cash() *decimal.Decimal {
 	if desk == nil || desk.balance == nil {
 		return nil
@@ -190,7 +145,7 @@ func (desk *Desk) run() {
 				desk.thesis.Symbols.Range(func(_ any, value any) bool {
 					symbol, ok := value.(*types.Symbol)
 
-					if !ok || symbol == nil || symbol.HasTickers() == false {
+					if !ok || symbol == nil {
 						return true
 					}
 
@@ -207,6 +162,29 @@ func (desk *Desk) run() {
 									errnie.Error(observer.ObserveMark(position.MarkFeedback(ticker.Timestamp)))
 								}
 							}
+						}
+					}
+
+					for execution := range symbol.MarketExecutions(types.SourceDesk) {
+						found, ok := desk.positions.Load(symbol.Symbol)
+
+						if !ok || found == nil {
+							continue
+						}
+
+						position, ok := found.(*Position)
+
+						if !ok || position == nil {
+							continue
+						}
+
+						if position.onExecution(kraken.Execution{
+							Channel: "executions",
+							Type:    "update",
+							Data:    []kraken.ExecutionData{execution},
+						}) {
+							desk.foldPassage(position)
+							desk.positions.CompareAndDelete(symbol.Symbol, position)
 						}
 					}
 
@@ -232,25 +210,6 @@ func (desk *Desk) run() {
 						errnie.Error(desk.PublishEquity())
 					}()
 				}
-			case message := <-desk.subscriptions["executions"].Channel:
-				execution, ok := message.(*kraken.Execution)
-
-				if !ok || execution == nil {
-					continue
-				}
-
-				desk.positions.Range(func(key, value any) bool {
-					position, ok := value.(*Position)
-
-					if ok && position != nil {
-						if position.onExecution(*execution) {
-							desk.foldPassage(position)
-							desk.positions.CompareAndDelete(key, position)
-						}
-					}
-
-					return true
-				})
 			}
 		}
 	}()

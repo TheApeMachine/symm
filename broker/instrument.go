@@ -46,10 +46,10 @@ func NewInstrument(
 		quote:   viper.GetViper().GetString("market.quote_currency"),
 	}
 
-	callback := types.NewSubscription[any]()
-	api.SubInstrument(*callback)
+	callback := make(chan any, 1)
+	api.SubInstrument(callback)
 
-	returned := <-callback.Channel
+	returned := <-callback
 
 	for _, pair := range returned.(*kraken.Instrument).Data.Pairs {
 		if pair.Quote != instrument.quote || pair.Status != "online" || isExcludedBase(pair.Base) {

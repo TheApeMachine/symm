@@ -9,9 +9,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,19 +25,16 @@ const syncRest = time.Millisecond
 Crypto submits desk work from thesis messages delivered by the Actor cascade.
 */
 type Crypto struct {
-	status        atomic.Value
-	ctx           context.Context
-	cancel        context.CancelFunc
-	api           *websocket.API
-	ui            *transport.MapReduce[[]byte]
-	manifold      *transport.MapReduce[types.FluidFrame]
-	thesis        *types.Thesis
-	recorder      *audit.Recorder
-	analyzer      *logic.Analyzer
-	planner       *strategy.Planner
-	desk          *broker.Desk
-	subscriptions map[string]*types.Subscription[any]
-	diagnostics   *Diagnostics
+	status      atomic.Value
+	ctx         context.Context
+	cancel      context.CancelFunc
+	api         *websocket.API
+	ui          *transport.MapReduce[[]byte]
+	manifold    *transport.MapReduce[types.FluidFrame]
+	thesis      *types.Thesis
+	recorder    *audit.Recorder
+	desk        *broker.Desk
+	diagnostics *Diagnostics
 }
 
 /*
@@ -52,8 +47,6 @@ func NewCrypto(
 	manifold *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
 	desk *broker.Desk,
-	analyzer *logic.Analyzer,
-	planner *strategy.Planner,
 	thesis *types.Thesis,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -66,8 +59,6 @@ func NewCrypto(
 		manifold: manifold,
 		thesis:   thesis,
 		recorder: recorder,
-		analyzer: analyzer,
-		planner:  planner,
 		desk:     desk,
 		diagnostics: &Diagnostics{
 			started: time.Now(),
@@ -76,8 +67,8 @@ func NewCrypto(
 
 	crypto.status.Store(types.READY)
 	crypto.bindDiagnostics()
-	crypto.run()
 
+	crypto.run()
 	return crypto, nil
 }
 

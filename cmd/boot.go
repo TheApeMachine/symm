@@ -299,8 +299,6 @@ func BootWithHub(
 		manifoldChannel,
 		recorder,
 		desk,
-		analyzer,
-		planner,
 		thesis,
 	)
 

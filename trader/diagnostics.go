@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
@@ -358,16 +357,6 @@ func (crypto *Crypto) bindDiagnostics() {
 		return
 	}
 
-	if crypto.analyzer != nil {
-		crypto.analyzer.ObserveModule = crypto.diagnostics.applyModule
-		crypto.analyzer.ObserveHop = crypto.diagnostics.applyHop
-	}
-
-	if crypto.planner != nil {
-		crypto.planner.ObserveModule = crypto.diagnostics.applyModule
-		crypto.planner.ObserveHop = crypto.diagnostics.applyHop
-	}
-
 	if crypto.desk != nil {
 		crypto.desk.ObserveModule = crypto.diagnostics.applyModule
 	}
@@ -458,20 +447,10 @@ func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
 		uiManifoldDepth = crypto.manifold.Length()
 	}
 
-	// Broker subscription channels are bounded, so their cap is the buffer size.
-	brokerCap := uint64(1024)
-
-	if viper.GetInt("system.actor.buffer") > 0 {
-		brokerCap = uint64(viper.GetInt("system.actor.buffer"))
-	}
-
-	var tickerDepth uint64
-	var executionsDepth uint64
-
-	if crypto.desk != nil {
-		tickerDepth = uint64(crypto.desk.QueueDepth("ticker"))
-		executionsDepth = uint64(crypto.desk.QueueDepth("executions"))
-	}
+	// Broker queue buffers are unbounded per-symbol stage buffers, so their cap
+	// is reported as zero; the depth values are the aggregated symbol queues.
+	var tickerDepth uint64 = perSymbol["tickers"]
+	var executionsDepth uint64 = perSymbol["executions"]
 
 	return []QueueSnapshot{
 		collect(
@@ -554,7 +533,6 @@ func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
 			Writers:   []string{"websocket-api"},
 			Readers:   []string{"desk"},
 			Depth:     tickerDepth,
-			Cap:       brokerCap,
 			HighWater: crypto.diagnostics.highWater("desk.ticker", tickerDepth),
 		},
 		{
@@ -563,7 +541,6 @@ func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
 			Writers:   []string{"websocket-api"},
 			Readers:   []string{"desk"},
 			Depth:     executionsDepth,
-			Cap:       brokerCap,
 			HighWater: crypto.diagnostics.highWater("desk.executions", executionsDepth),
 		},
 	}

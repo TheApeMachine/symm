@@ -134,7 +134,6 @@ func (symbol *Symbol) HasLevel3() bool {
 func (symbol *Symbol) HasExecutions() bool {
 	return symbol.executions.Length() > 0
 }
-
 /*
 AppendTrade routes a trade only to the signal owners
 selected by the streaming topology.
@@ -153,6 +152,22 @@ func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data) {
 
 func (symbol *Symbol) AppendExecution(execution kraken.ExecutionData) {
 	symbol.executions.Push(execution)
+}
+
+/*
+MarketExecutions drains this source's execution queue up to an event-time cut
+taken when the drain starts, on the same terms as MarketTickers.
+*/
+func (symbol *Symbol) MarketExecutions(source SourceType) iter.Seq[kraken.ExecutionData] {
+	cut := time.Now().UTC()
+
+	return symbol.executions.Drain(string(source), func(execution kraken.ExecutionData) bool {
+		if execution.Timestamp.After(cut) {
+			return false
+		}
+
+		return true
+	})
 }
 
 /*
@@ -245,6 +260,9 @@ func (symbol *Symbol) QueueDepths() map[string]uint64 {
 	}
 	if symbol.level3 != nil {
 		out["level3"] = symbol.level3.Length()
+	}
+	if symbol.executions != nil {
+		out["executions"] = symbol.executions.Length()
 	}
 	if symbol.Measurements != nil {
 		out["measurements"] = symbol.Measurements.Length()

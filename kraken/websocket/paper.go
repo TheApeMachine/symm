@@ -27,14 +27,12 @@ Private frames publish onto explicit typed subscriptions so Desk and tests use
 the same direct wiring as the live transport.
 */
 type Paper struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	simulator   *Simulator
-	commandMu   sync.Mutex
-	subMu       sync.Mutex
-	subscribers map[string][]*types.Subscription[any]
-	books       *spot.BookManager
-	thesis      *types.Thesis
+	ctx       context.Context
+	cancel    context.CancelFunc
+	simulator *Simulator
+	commandMu sync.Mutex
+	books     *spot.BookManager
+	thesis    *types.Thesis
 }
 
 /*
@@ -106,7 +104,7 @@ func (paper *Paper) Balances() (map[string]*decimal.Decimal, error) {
 	return kraken.NewPaperBalance(raw).Totals(), nil
 }
 
-func (paper *Paper) SubInstrument(types.Subscription[any]) {}
+func (paper *Paper) SubInstrument(chan any) {}
 
 /*
 Level3Divergences reports none: paper never owns a live level3 delta stream,
@@ -628,25 +626,20 @@ func (paper *Paper) placeOrder(
 
 func (paper *Paper) publish(channel string, message any) {
 	switch channel {
-	case "balances":
-		paper.subMu.Lock()
-		defer paper.subMu.Unlock()
-
-		for _, subscription := range paper.subscribers[channel] {
-			subscription.Send(message)
-		}
 	case "executions":
-		paper.thesis.Symbol(
-			message.(kraken.ExecutionData).Symbol,
-		).AppendExecution(
-			message.(kraken.ExecutionData),
-		)
-	case "add_order":
-		paper.subMu.Lock()
-		defer paper.subMu.Unlock()
+		execution, ok := message.(*kraken.Execution)
 
-		for _, subscription := range paper.subscribers[channel] {
-			subscription.Send(message)
+		if !ok || execution == nil {
+			return
 		}
+
+		for index := range execution.Data {
+			paper.thesis.Symbol(execution.Data[index].Symbol).AppendExecution(
+				execution.Data[index],
+			)
+		}
+	case "balances", "add_order":
+		// Balances and order acks are consumed through the explicit REST
+		// methods (Balance, AddOrder) rather than a private fan-out channel.
 	}
 }

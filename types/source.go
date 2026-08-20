@@ -14,7 +14,6 @@ const (
 	SourceCategory    SourceType = "category"
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
-	SourceAnalyzer    SourceType = "analyzer"
 	SourceManifold    SourceType = "manifold"
 	SourceResonance   SourceType = "resonance"
 	SourceCausal      SourceType = "causal"

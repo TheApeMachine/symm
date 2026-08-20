@@ -199,17 +199,6 @@ func TestDeskHolding(t *testing.T) {
 	})
 }
 
-func TestDeskQueued(t *testing.T) {
-	Convey("Given a desk with no pending market messages", t, func() {
-		desk := &Desk{}
-
-		Convey("It should report an empty queue", func() {
-			So(desk.Queued(), ShouldEqual, 0)
-			So((*Desk)(nil).Queued(), ShouldEqual, 0)
-		})
-	})
-}
-
 func TestDeskPublishEquity(t *testing.T) {
 	Convey("Given a refreshed complete broker valuation", t, func() {
 		desk, thesis, observer := equityDeskFixture(t)

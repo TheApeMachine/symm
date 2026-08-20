@@ -266,6 +266,10 @@ func NewWithClient(
 			for index := range entity.Data {
 				live.thesis.Symbol(entity.Data[index].Symbol).AppendLevel3(entity.Data[index])
 			}
+		case *kraken.Execution:
+			for index := range entity.Data {
+				live.thesis.Symbol(entity.Data[index].Symbol).AppendExecution(entity.Data[index])
+			}
 		}
 
 		if channel == "level3" && live.book != nil {
@@ -305,11 +309,11 @@ func NewWithClient(
 		found, ok := live.callbacks.LoadAndDelete(channel)
 
 		if ok && found != nil {
-			subscription, ok := found.(types.Subscription[any])
+			callback, ok := found.(chan any)
 
 			if ok {
-				subscription.Send(out)
-				close(subscription.Channel)
+				callback <- out
+				close(callback)
 			}
 		}
 	})
@@ -470,12 +474,12 @@ func (live *Live) Client() *spot.WebSocket {
 	return live.client
 }
 
-func (live *Live) SubInstrument(callback types.Subscription[any]) {
+func (live *Live) SubInstrument(callback chan any) {
 	errnie.Info("websocket: subscribing to instrument")
 
 	live.Write(kraken.NewInstrumentSubscription(), Callback[any]{
-		Channel:      "instrument",
-		Subscription: callback,
+		Channel: "instrument",
+		Message: callback,
 	})
 }
 
@@ -766,7 +770,7 @@ func (live *Live) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, er
 
 func (live *Live) Write(params json.Marshaler, callbacks ...Callback[any]) error {
 	for _, callback := range callbacks {
-		live.callbacks.Store(callback.Channel, callback.Subscription)
+		live.callbacks.Store(callback.Channel, callback.Message)
 	}
 
 	raw, err := params.MarshalJSON()

@@ -25,7 +25,7 @@ type Conn interface {
 	Status() types.Status
 	Books() *sync.Map
 	Book(string, func(*book.Book))
-	SubInstrument(types.Subscription[any])
+	SubInstrument(chan any)
 	SubTicker([]string)
 	SubBook([]string)
 	SubTrades([]string)
@@ -51,14 +51,19 @@ type BookSource interface {
 	Book(string, func(*book.Book))
 }
 
+/*
+Callback pairs one one-shot response channel with the wire channel name that
+produces it. The instrument snapshot is the only one-shot callback left; market
+frames now fan out onto the thesis symbol queues.
+*/
 type Callback[T any] struct {
-	Channel      string
-	Subscription types.Subscription[T]
+	Channel string
+	Message chan T
 }
 
 func (callback Callback[T]) Send(message T) {
-	defer close(callback.Subscription.Channel)
-	callback.Subscription.Send(message)
+	defer close(callback.Message)
+	callback.Message <- message
 }
 
 /*
@@ -122,7 +127,7 @@ func (api *API) Normalizer() *spot.Normalizer {
 
 func (api *API) Books() *sync.Map                                 { return api.private.Books() }
 func (api *API) Book(symbol string, read func(*book.Book))        { api.private.Book(symbol, read) }
-func (api *API) SubInstrument(callback types.Subscription[any])   { api.public.SubInstrument(callback) }
+func (api *API) SubInstrument(callback chan any)         { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
 func (api *API) SubBook(symbols []string)                         { api.public.SubBook(symbols) }
 func (api *API) SubL3(symbols []string)                           { api.private.SubL3(symbols) }
