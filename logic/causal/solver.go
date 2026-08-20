@@ -48,6 +48,7 @@ type Solver struct {
 	rows     *sync.Map
 	config   algorithm.PearlConfig
 	ui       *transport.MapReduce[*types.UIFrame]
+	work     *transport.Consumer[*types.Symbol]
 }
 
 /*
@@ -83,6 +84,9 @@ func NewSolver(thesis *types.Thesis, price *broker.Price, ui *transport.MapReduc
 		opt(solver)
 	}
 
+	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
+	thesis.Work(types.SourceCausal).Register(solver.work)
+
 	return solver
 }
 
@@ -93,40 +97,48 @@ func (solver *Solver) Name() string {
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Run consumes each symbol's resonance stream from the Resonance input MapReduce
+consume reads each symbol's resonance stream from the Resonance input MapReduce
 and pushes derived causal outputs to the Causal output MapReduce. A failed pass
-cancels the pond group; causal evaluation is retried on every enriched thesis,
-so each pass gets a fresh group.
+halts the system through the thesis failure handler.
 */
-func (solver *Solver) Run() error {
-	for solver.err == nil {
-		symbolState, available := solver.thesis.Work(types.SourceCausal).WaitPop(
-			solver.ctx,
-			string(types.SourceCausal),
-		)
+func (solver *Solver) consume() {
+	go func() {
+		defer func() {
+			solver.thesis.Fail(solver.err)
+		}()
 
-		if !available {
-			return solver.ctx.Err()
+		for symbolState := range solver.thesis.Work(types.SourceCausal).Drain(
+			solver.work, nil,
+		) {
+			select {
+			case <-solver.ctx.Done():
+				solver.err = solver.ctx.Err()
+				return
+			default:
+			}
+
+			if symbolState == nil {
+				continue
+			}
+
+			consumer := symbolState.ResonanceConsumers[types.ResonanceConsumerCausal]
+
+			if symbolState.Resonance.Length(consumer) == 0 {
+				continue
+			}
+
+			if err := solver.measure(solver.thesis, symbolState.Symbol); err != nil {
+				solver.err = errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"causal: evaluation failed: "+err.Error(),
+					err,
+				))
+				return
+			}
+
+			solver.publish(solver.thesis)
 		}
-
-		if symbolState == nil ||
-			symbolState.Resonance.ConsumerLength(string(types.SourceCausal)) == 0 {
-			continue
-		}
-
-		if err := solver.measure(solver.thesis, symbolState.Symbol); err != nil {
-			solver.err = errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"causal: evaluation failed: "+err.Error(),
-				err,
-			))
-			continue
-		}
-
-		solver.publish(solver.thesis)
-	}
-
-	return solver.err
+	}()
 }
 
 /*
@@ -136,7 +148,9 @@ stage and hands back the most recent predictive manifold it finds.
 func (solver *Solver) popResonanceManifold(symbolState *types.Symbol) (*learning.ResonanceManifold, bool) {
 	var manifold *learning.ResonanceManifold
 
-	for stored := range symbolState.MarketResonance(types.SourceCausal) {
+	for stored := range symbolState.MarketResonance(
+		symbolState.ResonanceConsumers[types.ResonanceConsumerCausal],
+	) {
 		if coder, valid := stored.(*learning.ResonanceManifold); valid && coder != nil {
 			manifold = coder
 		}

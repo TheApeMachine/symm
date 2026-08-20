@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -79,6 +80,7 @@ type Signal struct {
 	err    error
 	thesis *types.Thesis
 	number nomagique.Number[string]
+	work   *transport.Consumer[*types.Symbol]
 }
 
 func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
@@ -90,6 +92,8 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		thesis: thesis,
 		number: nomagique.NewNumber[string](depthflowPipeline()),
 	}
+	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
+	thesis.Work(types.SourceDepthFlow).Register(signal.work)
 
 	return signal
 }
@@ -98,85 +102,89 @@ func (signal *Signal) Name() string           { return string(types.SourceDepthF
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceDepthFlow }
 
-func (signal *Signal) Run() error {
-	for signal.err == nil {
-		symbol, available := signal.thesis.Work(types.SourceDepthFlow).WaitPop(
-			signal.ctx,
-			string(types.SourceDepthFlow),
-		)
+func (signal *Signal) consume() {
+	go func() {
+		defer func() {
+			signal.thesis.Fail(signal.err)
+		}()
 
-		if !available {
-			return signal.ctx.Err()
-		}
-
-		if symbol == nil {
-			continue
-		}
-
-		for frame := range symbol.MarketLevel3(types.SourceDepthFlow) {
-			touch := frameTouch(frame)
-			deep := frameDeep(frame)
-			total := touch + deep
-
-			input := nomagique.Frame{}
-			input.Put(calculus.SymbolLeft, touch)
-			input.Put(calculus.SymbolRight, deep)
-			input.Put(calculus.SymbolLevel, deep)
-
-			if total > 0 {
-				input.Put(calculus.SymbolClock, touch/total)
+		for symbol := range signal.thesis.Work(types.SourceDepthFlow).Drain(signal.work, nil) {
+			select {
+			case <-signal.ctx.Done():
+				signal.err = signal.ctx.Err()
+				return
+			default:
 			}
 
-			input.Put(nomagique.SampleValue, total)
-			input.Put(statistic.SymbolBaseline, total)
-			input.Put(calculus.SymbolValue, touch)
-			input.Put(calculus.SymbolScale, total)
-			input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
-			input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
-			input.Put(statistic.SymbolDispersionHalflife, 30.0)
+			if symbol == nil {
+				continue
+			}
 
-			output, err := signal.number(symbol.Symbol, input)
+			for frame := range symbol.MarketLevel3(
+				symbol.Level3Consumers[types.Level3ConsumerDepthFlow],
+			) {
+				touch := frameTouch(frame)
+				deep := frameDeep(frame)
+				total := touch + deep
 
-			if err != nil {
-				signal.err = errnie.Error(errnie.Err(
-					errnie.Validation,
-					"depthflow: failed for "+symbol.Symbol,
-					err,
+				input := nomagique.Frame{}
+				input.Put(calculus.SymbolLeft, touch)
+				input.Put(calculus.SymbolRight, deep)
+				input.Put(calculus.SymbolLevel, deep)
+
+				if total > 0 {
+					input.Put(calculus.SymbolClock, touch/total)
+				}
+
+				input.Put(nomagique.SampleValue, total)
+				input.Put(statistic.SymbolBaseline, total)
+				input.Put(calculus.SymbolValue, touch)
+				input.Put(calculus.SymbolScale, total)
+				input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
+				input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
+				input.Put(statistic.SymbolDispersionHalflife, 30.0)
+
+				output, err := signal.number(symbol.Symbol, input)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"depthflow: failed for "+symbol.Symbol,
+						err,
+					))
+					break
+				}
+
+				symbol.AppendMeasurement(nmtypes.NewMeasurement(
+					uuid.NewString(),
+					signal.Name(),
+					frame.Timestamp.UnixNano(),
+					frame.Timestamp.UnixNano(),
+				).AddMetrics(
+					nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("deep_imbalance", output.MustGet(SymbolDeepImbalance), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewNormalizedMetric("spoof_score", output.MustGet(SymbolSpoofScore), output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewNormalizedMetric("loaded_score", output.MustGet(SymbolLoadedScore), output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewNormalizedMetric("thin_score", output.MustGet(SymbolThinScore), output.MustGet(SymbolThinScore), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
 				))
-				break
 			}
-
-			symbol.AppendMeasurement(nmtypes.NewMeasurement(
-				uuid.NewString(),
-				signal.Name(),
-				frame.Timestamp.UnixNano(),
-				frame.Timestamp.UnixNano(),
-			).AddMetrics(
-				nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-				nmtypes.NewMetric("deep_imbalance", output.MustGet(SymbolDeepImbalance), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-				nmtypes.NewNormalizedMetric("spoof_score", output.MustGet(SymbolSpoofScore), output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-				nmtypes.NewNormalizedMetric("loaded_score", output.MustGet(SymbolLoadedScore), output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-				nmtypes.NewNormalizedMetric("thin_score", output.MustGet(SymbolThinScore), output.MustGet(SymbolThinScore), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-			))
 		}
-	}
-
-	return signal.err
+	}()
 }
 
 /*

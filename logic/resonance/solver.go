@@ -38,6 +38,7 @@ type Solver struct {
 	pace          float64
 	ui            *transport.MapReduce[*types.UIFrame]
 	thesis        *types.Thesis
+	work          *transport.Consumer[*types.Symbol]
 
 	// ObserveModule is an optional diagnostics hook reporting per-step coder
 	// duration so the wiring diagram can profile the resonance stage like
@@ -81,6 +82,8 @@ func NewSolver(
 		ui:            ui,
 		thesis:        thesis,
 	}
+	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
+	thesis.Work(types.SourceResonance).Register(solver.work)
 
 	return solver
 }
@@ -95,50 +98,60 @@ func (solver *Solver) Status() types.Status {
 	return types.READY
 }
 
-func (solver *Solver) Run() error {
-	for solver.err == nil {
-		symbol, available := solver.thesis.Work(types.SourceResonance).WaitPop(
-			solver.ctx,
-			string(types.SourceResonance),
-		)
+func (solver *Solver) consume() {
+	go func() {
+		defer func() {
+			solver.thesis.Fail(solver.err)
+		}()
 
-		if !available {
-			return solver.ctx.Err()
-		}
+		for symbol := range solver.thesis.Work(types.SourceResonance).Drain(
+			solver.work, nil,
+		) {
+			select {
+			case <-solver.ctx.Done():
+				solver.err = solver.ctx.Err()
+				return
+			default:
+			}
 
-		if symbol == nil || !symbol.HasTickersFor(types.SourceResonance) {
-			continue
-		}
+			if symbol == nil {
+				continue
+			}
 
-		for ticker := range symbol.MarketTickers(types.SourceResonance) {
-			if err := solver.Update(
-				ticker.Symbol,
-				ticker.Timestamp,
-				[]float64{
-					ticker.Ask.Float64(),
-					ticker.Bid.Float64(),
-					ticker.AskQty,
-					ticker.BidQty,
-					ticker.Change.Float64(),
-					ticker.ChangePct,
-					ticker.High.Float64(),
-					ticker.Low.Float64(),
-					ticker.Last.Float64(),
-					ticker.Volume,
-					ticker.Vwap,
-				},
-			); err != nil {
-				solver.err = errnie.Error(errnie.Err(
-					errnie.Internal,
-					"resonance: detector update failed",
-					err,
-				))
-				break
+			consumer := symbol.TickerConsumers[types.TickerConsumerResonance]
+
+			if !symbol.HasTickersFor(consumer) {
+				continue
+			}
+
+			for ticker := range symbol.MarketTickers(consumer) {
+				if err := solver.Update(
+					ticker.Symbol,
+					ticker.Timestamp,
+					[]float64{
+						ticker.Ask.Float64(),
+						ticker.Bid.Float64(),
+						ticker.AskQty,
+						ticker.BidQty,
+						ticker.Change.Float64(),
+						ticker.ChangePct,
+						ticker.High.Float64(),
+						ticker.Low.Float64(),
+						ticker.Last.Float64(),
+						ticker.Volume,
+						ticker.Vwap,
+					},
+				); err != nil {
+					solver.err = errnie.Error(errnie.Err(
+						errnie.Internal,
+						"resonance: detector update failed",
+						err,
+					))
+					return
+				}
 			}
 		}
-	}
-
-	return solver.err
+	}()
 }
 
 func (solver *Solver) onTicker(ticker any) {

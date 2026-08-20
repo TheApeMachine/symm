@@ -21,7 +21,6 @@ import (
 
 type Solver interface {
 	Name() string
-	Run() error
 	Error() error
 	Close() error
 }
@@ -101,30 +100,6 @@ func (analyzer *Analyzer) Process(_ *types.Thesis) error {
 func (analyzer *Analyzer) Name() string { return "analyzer" }
 
 func (analyzer *Analyzer) Error() error { return analyzer.err }
-
-func (analyzer *Analyzer) Run() error {
-	runErrors := make(chan error, len(analyzer.solverGroups)*2)
-
-	for _, group := range analyzer.solverGroups {
-		for _, solver := range group {
-			go func(system Solver) {
-				runErrors <- system.Run()
-			}(solver)
-		}
-	}
-
-	select {
-	case <-analyzer.ctx.Done():
-		return analyzer.ctx.Err()
-	case err := <-runErrors:
-		if err == nil {
-			return nil
-		}
-
-		analyzer.err = err
-		return analyzer.err
-	}
-}
 
 /*
 Status reports analyzer readiness for the boot gate.

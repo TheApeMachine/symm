@@ -3,6 +3,7 @@ package leadlag
 import (
 	"context"
 
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -12,6 +13,7 @@ type Signal struct {
 	err     error
 	thesis  *types.Thesis
 	section *Section
+	work    *transport.Consumer[*types.Symbol]
 }
 
 func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
@@ -23,6 +25,8 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		thesis:  thesis,
 		section: NewSection(),
 	}
+	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
+	thesis.Work(types.SourceLeadLag).Register(signal.work)
 
 	return signal
 }
@@ -31,40 +35,40 @@ func (signal *Signal) Name() string           { return string(types.SourceLeadLa
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceLeadLag }
 
-func (signal *Signal) Run() error {
-	for signal.err == nil {
-		symbol, available := signal.thesis.Work(types.SourceLeadLag).WaitPop(
-			signal.ctx,
-			string(types.SourceLeadLag),
-		)
-
-		if !available {
-			return signal.ctx.Err()
-		}
-
-		if symbol == nil {
-			continue
-		}
-
-		for ticker := range symbol.MarketTickers(types.SourceLeadLag) {
-			anchor := signal.section.CausalAnchor()
-
-			if anchor == "" {
-				signal.section.ClearAnchor()
-			} else {
-				signal.section.SetAnchor(anchor)
+func (signal *Signal) consume() {
+	go func() {
+		for symbol := range signal.thesis.Work(types.SourceLeadLag).Drain(signal.work, nil) {
+			select {
+			case <-signal.ctx.Done():
+				signal.err = signal.ctx.Err()
+				return
+			default:
 			}
 
-			signal.section.ObservePrice(
-				symbol.Symbol,
-				ticker.Last.Float64(),
-				ticker.Timestamp,
-			)
-			symbol.AppendMeasurement(signal.measurement(symbol.Symbol, ticker.Timestamp))
-		}
-	}
+			if symbol == nil {
+				continue
+			}
 
-	return signal.err
+			for ticker := range symbol.MarketTickers(
+				symbol.TickerConsumers[types.TickerConsumerLeadLag],
+			) {
+				anchor := signal.section.CausalAnchor()
+
+				if anchor == "" {
+					signal.section.ClearAnchor()
+				} else {
+					signal.section.SetAnchor(anchor)
+				}
+
+				signal.section.ObservePrice(
+					symbol.Symbol,
+					ticker.Last.Float64(),
+					ticker.Timestamp,
+				)
+				symbol.AppendMeasurement(signal.measurement(symbol.Symbol, ticker.Timestamp))
+			}
+		}
+	}()
 }
 
 func (signal *Signal) Close() error {

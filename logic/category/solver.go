@@ -30,6 +30,7 @@ type Solver struct {
 	api        *websocket.API
 	recorder   *audit.Recorder
 	ui         *transport.MapReduce[*types.UIFrame]
+	work       *transport.Consumer[*types.Symbol]
 }
 
 /*
@@ -68,6 +69,8 @@ func NewSolver(
 		recorder:   recorder,
 		ui:         ui,
 	}
+	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
+	thesis.Work(types.SourceCategory).Register(solver.work)
 
 	return solver
 }
@@ -85,48 +88,57 @@ output MapReduce the downstream cognition and graph solvers consume. The
 category stage never re-materializes the iterator; each measurement batch is
 classified and forwarded inline.
 */
-func (solver *Solver) Run() error {
-	for solver.err == nil {
-		symbol, available := solver.thesis.Work(types.SourceCategory).WaitPop(
-			solver.ctx,
-			string(types.SourceCategory),
-		)
+func (solver *Solver) consume() {
+	go func() {
+		defer func() {
+			solver.thesis.Fail(solver.err)
+		}()
 
-		if !available {
-			return solver.ctx.Err()
+		for symbol := range solver.thesis.Work(types.SourceCategory).Drain(
+			solver.work, nil,
+		) {
+			select {
+			case <-solver.ctx.Done():
+				solver.err = solver.ctx.Err()
+				return
+			default:
+			}
+
+			if symbol == nil {
+				continue
+			}
+
+			consumer := symbol.MeasurementConsumers[types.MeasurementConsumerCategory]
+
+			if symbol.Measurements.Length(consumer) == 0 {
+				continue
+			}
+
+			categories, measured, err := solver.classify(
+				symbol.Symbol,
+				symbol.MarketMeasurements(consumer),
+			)
+
+			if err != nil {
+				solver.err = errnie.Error(errnie.Err(
+					errnie.Internal,
+					"category: failed to classify symbol",
+					err,
+				).With("symbol", symbol.Symbol))
+				return
+			}
+
+			if !measured {
+				continue
+			}
+
+			for index := range categories {
+				categories[index].At = solver.thesis.At
+			}
+
+			symbol.Categories.Push(categories)
 		}
-
-		if symbol == nil ||
-			symbol.Measurements.ConsumerLength(string(types.SourceCategory)) == 0 {
-			continue
-		}
-
-		categories, measured, err := solver.classify(
-			symbol.Symbol,
-			symbol.MarketMeasurements("category"),
-		)
-
-		if err != nil {
-			solver.err = errnie.Error(errnie.Err(
-				errnie.Internal,
-				"category: failed to classify symbol",
-				err,
-			).With("symbol", symbol.Symbol))
-			continue
-		}
-
-		if !measured {
-			continue
-		}
-
-		for index := range categories {
-			categories[index].At = solver.thesis.At
-		}
-
-		symbol.Categories.Push(categories)
-	}
-
-	return solver.err
+	}()
 }
 
 func (solver *Solver) classify(

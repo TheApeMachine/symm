@@ -33,6 +33,7 @@ type Solver struct {
 	ui           *transport.MapReduce[*types.UIFrame]
 	building     map[string]*types.Graph
 	ready        map[string]*types.Symbol
+	work         *transport.Consumer[*types.Symbol]
 }
 
 /*
@@ -51,6 +52,8 @@ func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[*types.UIFrame], re
 		building:     make(map[string]*types.Graph),
 		ready:        make(map[string]*types.Symbol),
 	}
+	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
+	thesis.Work(types.SourceGraph).Register(solver.work)
 
 	return solver
 }
@@ -62,34 +65,30 @@ func (solver *Solver) Name() string {
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Run rebuilds the graph whenever one of its upstream evidence cursors becomes
+consume rebuilds the graph whenever one of its upstream evidence cursors becomes
 ready. Graph output flows one way to the planner.
 */
-func (solver *Solver) Run() error {
+func (solver *Solver) consume() {
 	if solver.thesis == nil {
-		return nil
+		return
 	}
 
-	for solver.err == nil {
-		work := solver.thesis.Work(types.SourceGraph)
-		symbol, available := work.WaitPop(
-			solver.ctx,
-			string(types.SourceGraph),
-		)
-
-		if !available {
-			return solver.ctx.Err()
-		}
-
+	go func() {
+		defer func() {
+			solver.thesis.Fail(solver.err)
+		}()
 		clear(solver.ready)
 
-		if symbol != nil {
-			solver.ready[symbol.Symbol] = symbol
-		}
+		for queued := range solver.thesis.Work(types.SourceGraph).Drain(
+			solver.work, nil,
+		) {
+			select {
+			case <-solver.ctx.Done():
+				solver.err = solver.ctx.Err()
+				return
+			default:
+			}
 
-		for queued := range work.Drain(string(types.SourceGraph), func(*types.Symbol) bool {
-			return true
-		}) {
 			if queued != nil {
 				solver.ready[queued.Symbol] = queued
 			}
@@ -97,10 +96,12 @@ func (solver *Solver) Run() error {
 
 		for symbolName, symbolState := range solver.ready {
 			solver.buildGraph(symbolName, symbolState)
-		}
-	}
 
-	return solver.err
+			if solver.err != nil {
+				return
+			}
+		}
+	}()
 }
 
 /*
@@ -109,7 +110,7 @@ publishes that graph once it is informed enough for planner search, then starts
 a fresh accumulation for the symbol.
 */
 func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
-	if symbol.Graphs.ConsumerLength(string(types.SourcePlanner)) > 0 {
+	if symbol.Graphs.Length(symbol.GraphConsumers[types.GraphConsumerPlanner]) > 0 {
 		return
 	}
 
@@ -125,7 +126,9 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
 	cognition, _ := solver.popCognition(symbol)
 	measurementIndex, err := solver.measurements.addNodes(
 		symbolName,
-		symbol.MarketMeasurements("graph"),
+		symbol.MarketMeasurements(
+			symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+		),
 		graph,
 	)
 
@@ -273,7 +276,9 @@ func (solver *Solver) extractCategoryNodes(
 func (solver *Solver) popCategories(symbol *types.Symbol) []types.Category {
 	var categories []types.Category
 
-	for batch := range symbol.MarketCategories(types.SourceGraph) {
+	for batch := range symbol.MarketCategories(
+		symbol.CategoryConsumers[types.CategoryConsumerGraph],
+	) {
 		categories = batch
 	}
 
@@ -363,7 +368,9 @@ func (solver *Solver) extractResonanceNodes(
 		dynamics       nomagique.Frame
 	)
 
-	for stored := range symbol.MarketResonance(types.SourceGraph) {
+	for stored := range symbol.MarketResonance(
+		symbol.ResonanceConsumers[types.ResonanceConsumerGraph],
+	) {
 		switch value := stored.(type) {
 		case *types.ResonanceReturnForecast:
 			returnForecast = value
@@ -437,7 +444,9 @@ func (solver *Solver) extractResonanceNodes(
 func (solver *Solver) popCognition(symbol *types.Symbol) (types.Cognition, bool) {
 	var cognition types.Cognition
 
-	for stored := range symbol.MarketCognition(types.SourceGraph) {
+	for stored := range symbol.MarketCognition(
+		symbol.CognitionConsumers[types.StateConsumerStage],
+	) {
 		cognition = stored
 	}
 
@@ -640,7 +649,9 @@ func (solver *Solver) extractCausalNodes(
 ) error {
 	var causalMap map[string]any
 
-	for stored := range symbol.MarketCausal(types.SourceGraph) {
+	for stored := range symbol.MarketCausal(
+		symbol.CausalConsumers[types.CausalConsumerGraph],
+	) {
 		causalMap = stored
 	}
 

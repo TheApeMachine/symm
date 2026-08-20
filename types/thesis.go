@@ -40,6 +40,17 @@ type Thesis struct {
 	manifold       atomic.Pointer[pmanifold.Reading]
 	phase          atomic.Pointer[PhaseReading]
 	work           map[SourceType]*transport.MapReduce[*Symbol]
+	failure        func(error)
+}
+
+func (thesis *Thesis) SetFailureHandler(handler func(error)) {
+	thesis.failure = handler
+}
+
+func (thesis *Thesis) Fail(err error) {
+	if err != nil && thesis.failure != nil {
+		thesis.failure(err)
+	}
 }
 
 /*

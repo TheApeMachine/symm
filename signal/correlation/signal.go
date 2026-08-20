@@ -22,9 +22,9 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	signal := &Signal{
 		ctx: ctx, cancel: cancel, thesis: thesis, section: NewSection(),
 	}
-	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), func() {
-		go signal.consume()
-	})
+
+	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
+
 	thesis.Work(types.SourceCorrelation).Register(signal.work)
 
 	return signal
@@ -34,39 +34,39 @@ func (signal *Signal) Name() string           { return string(types.SourceCorrel
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceCorrelation }
 
-func (signal *Signal) Run() error {
-	<-signal.ctx.Done()
-
-	if signal.err != nil {
-		return signal.err
-	}
-
-	return signal.ctx.Err()
-}
-
 func (signal *Signal) consume() {
-	for symbol := range signal.thesis.Work(types.SourceCorrelation).Drain(
-		signal.work, nil,
-	) {
-		if symbol == nil {
-			continue
-		}
-
-		for ticker := range symbol.MarketTickers(
-			symbol.TickerConsumers[types.TickerConsumerCorrelation],
+	go func() {
+		for symbol := range signal.thesis.Work(types.SourceCorrelation).Drain(
+			signal.work, nil,
 		) {
-			signal.section.Observe(
-				symbol.Symbol,
-				ticker.Last.Float64(),
-				ticker.Timestamp,
-			)
-			measurement, ready := signal.measurement(symbol.Symbol, ticker.Timestamp)
+			select {
+			case <-signal.ctx.Done():
+				signal.err = signal.ctx.Err()
+				return
+			default:
+			}
 
-			if ready {
-				symbol.AppendMeasurement(measurement)
+			if symbol == nil {
+				continue
+			}
+
+			for ticker := range symbol.MarketTickers(
+				symbol.TickerConsumers[types.TickerConsumerCorrelation],
+			) {
+				signal.section.Observe(
+					symbol.Symbol,
+					ticker.Last.Float64(),
+					ticker.Timestamp,
+				)
+				
+				measurement, ready := signal.measurement(symbol.Symbol, ticker.Timestamp)
+
+				if ready {
+					symbol.AppendMeasurement(measurement)
+				}
 			}
 		}
-	}
+	}()
 }
 
 func (signal *Signal) Close() error {

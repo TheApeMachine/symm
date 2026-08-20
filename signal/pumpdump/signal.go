@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -24,6 +25,7 @@ type Signal struct {
 	err    error
 	thesis *types.Thesis
 	number nomagique.Number[string]
+	work   *transport.Consumer[*types.Symbol]
 }
 
 func NewSignal(
@@ -40,6 +42,8 @@ func NewSignal(
 			nomagique.Pipe(algo.Ignition()),
 		),
 	}
+	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
+	thesis.Work(types.SourcePumpDump).Register(signal.work)
 
 	return signal
 }
@@ -54,70 +58,74 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourcePumpDump
 }
 
-func (signal *Signal) Run() error {
-	for signal.err == nil {
-		symbol, available := signal.thesis.Work(types.SourcePumpDump).WaitPop(
-			signal.ctx,
-			string(types.SourcePumpDump),
-		)
+func (signal *Signal) consume() {
+	go func() {
+		defer func() {
+			signal.thesis.Fail(signal.err)
+		}()
 
-		if !available {
-			return signal.ctx.Err()
-		}
+		for symbol := range signal.thesis.Work(types.SourcePumpDump).Drain(signal.work, nil) {
+			select {
+			case <-signal.ctx.Done():
+				signal.err = signal.ctx.Err()
+				return
+			default:
+			}
 
-		if symbol == nil {
-			continue
-		}
-
-		for trade := range symbol.MarketTrades(types.SourcePumpDump) {
-			input := nomagique.Frame{}
-			input.Put(algo.SymbolVolume, trade.Qty)
-			input.Put(algo.SymbolLast, trade.Price.Float64())
-			input.Put(algo.SymbolCapacity, nomagique.MaxSamples)
-			input.Put(algo.SymbolUnixSec, float64(trade.Timestamp.Unix()))
-			input.Put(algo.SymbolUnixNsec, float64(trade.Timestamp.Nanosecond()))
-
-			// The touch prices are the print's book response; without a
-			// ticker touch the ignition cannot enrich the print, so the
-			// step is skipped rather than fed a fabricated bid/ask pair.
-			if !touch(symbol, trade, &input) {
+			if symbol == nil {
 				continue
 			}
 
-			output, err := signal.number(symbol.Symbol, input)
+			for trade := range symbol.MarketTrades(
+				symbol.TradeConsumers[types.TradeConsumerPumpDump],
+			) {
+				input := nomagique.Frame{}
+				input.Put(algo.SymbolVolume, trade.Qty)
+				input.Put(algo.SymbolLast, trade.Price.Float64())
+				input.Put(algo.SymbolCapacity, nomagique.MaxSamples)
+				input.Put(algo.SymbolUnixSec, float64(trade.Timestamp.Unix()))
+				input.Put(algo.SymbolUnixNsec, float64(trade.Timestamp.Nanosecond()))
 
-			if err != nil {
-				signal.err = errnie.Error(errnie.Err(
-					errnie.Validation,
-					"pumpdump: number step failed for "+symbol.Symbol,
-					err,
+				// The touch prices are the print's book response; without a
+				// ticker touch the ignition cannot enrich the print, so the
+				// step is skipped rather than fed a fabricated bid/ask pair.
+				if !touch(symbol, trade, &input) {
+					continue
+				}
+
+				output, err := signal.number(symbol.Symbol, input)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"pumpdump: number step failed for "+symbol.Symbol,
+						err,
+					))
+					break
+				}
+
+				symbol.AppendMeasurement(nmtypes.NewMeasurement(
+					uuid.NewString(),
+					signal.Name(),
+					trade.Timestamp.UnixNano(),
+					trade.Timestamp.UnixNano(),
+				).AddMetrics(
+					nmtypes.NewMetric("rvol", output.MustGet(algo.SymbolRVOL), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescalePerTick,
+					}),
+					nmtypes.NewMetric("precursor", output.MustGet(algo.SymbolAlphaPrecursor), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("exhaustion", output.MustGet(algo.SymbolAlphaExhaustion), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
 				))
-				break
 			}
-
-			symbol.AppendMeasurement(nmtypes.NewMeasurement(
-				uuid.NewString(),
-				signal.Name(),
-				trade.Timestamp.UnixNano(),
-				trade.Timestamp.UnixNano(),
-			).AddMetrics(
-				nmtypes.NewMetric("rvol", output.MustGet(algo.SymbolRVOL), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescalePerTick,
-				}),
-				nmtypes.NewMetric("precursor", output.MustGet(algo.SymbolAlphaPrecursor), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-				nmtypes.NewMetric("exhaustion", output.MustGet(algo.SymbolAlphaExhaustion), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-			))
 		}
-	}
-
-	return signal.err
+	}()
 }
 
 /*
@@ -130,7 +138,9 @@ func touch(
 	trade kraken.TradeData,
 	input *nomagique.Frame,
 ) bool {
-	for ticker := range symbol.MarketTickers(types.SourcePumpDump) {
+	for ticker := range symbol.MarketTickers(
+		symbol.TickerConsumers[types.TickerConsumerPumpDump],
+	) {
 		if ticker.Timestamp.After(trade.Timestamp) {
 			continue
 		}

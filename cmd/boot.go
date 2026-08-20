@@ -60,7 +60,23 @@ type System struct {
 
 func (stack *System) Name() string { return "system" }
 
-func (stack *System) Error() error { return stack.err }
+func (stack *System) Error() error {
+	stack.runMu.Lock()
+	defer stack.runMu.Unlock()
+
+	return stack.err
+}
+
+func (stack *System) fail(err error) {
+	stack.runMu.Lock()
+
+	if stack.err == nil {
+		stack.err = err
+	}
+
+	stack.runMu.Unlock()
+	stack.cancel()
+}
 
 func (stack *System) Holding(symbol string) int {
 	if stack == nil || stack.Desk == nil {
@@ -139,9 +155,13 @@ func (stack *System) Run() error {
 		})
 	}
 
-	stack.err = group.Wait()
+	err := group.Wait()
 
-	return stack.err
+	if err != nil {
+		stack.fail(err)
+	}
+
+	return stack.Error()
 }
 
 /*
@@ -270,21 +290,14 @@ func BootWithHub(
 	}
 
 	attachDiagnosticsErrorBridge(hub, crypto)
-	systems := make([]Runnable, 0, len(signals)+6)
-
-	for _, signal := range signals {
-		systems = append(systems, signal)
-	}
-
-	systems = append(
-		systems,
+	systems := []Runnable{
 		api,
 		desk,
 		analyzer,
 		resonanceSolver,
 		crypto,
 		planner,
-	)
+	}
 
 	if existingHub == false {
 		systems = append(systems, hub)
@@ -312,7 +325,7 @@ func BootWithHub(
 		hub.Close,
 	)
 
-	return &System{
+	stack := &System{
 		ctx:       systemCtx,
 		cancel:    cancel,
 		Hub:       hub,
@@ -328,6 +341,9 @@ func BootWithHub(
 		resources: []func() error{positionStore.Close},
 		runDone:   make(chan struct{}),
 	}
+	thesis.SetFailureHandler(stack.fail)
+
+	return stack
 }
 
 /*

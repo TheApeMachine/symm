@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -50,6 +51,7 @@ type Signal struct {
 	cohortAt time.Time
 	thesis   *types.Thesis
 	number   nomagique.Number[string]
+	work     *transport.Consumer[*types.Symbol]
 }
 
 func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
@@ -61,6 +63,8 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		thesis: thesis,
 		number: nomagique.NewNumber[string](sentimentPipeline()),
 	}
+	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
+	thesis.Work(types.SourceSentiment).Register(signal.work)
 
 	return signal
 }
@@ -71,38 +75,29 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceSentiment
 }
 
-func (signal *Signal) Run() error {
-	for signal.err == nil {
-		work := signal.thesis.Work(types.SourceSentiment)
-		first, available := work.WaitPop(
-			signal.ctx,
-			string(types.SourceSentiment),
-		)
-
-		if !available {
-			return signal.ctx.Err()
-		}
-
+func (signal *Signal) consume() {
+	go func() {
 		ready := make([]*types.Symbol, 0, 1)
 
-		if first != nil {
-			ready = append(ready, first)
-		}
+		for symbol := range signal.thesis.Work(types.SourceSentiment).Drain(
+			signal.work, nil,
+		) {
+			select {
+			case <-signal.ctx.Done():
+				signal.err = signal.ctx.Err()
+				return
+			default:
+			}
 
-		for symbol := range work.Drain(string(types.SourceSentiment), func(*types.Symbol) bool {
-			return true
-		}) {
 			if symbol != nil {
 				ready = append(ready, symbol)
 			}
 		}
 
 		if signal.err = signal.step(ready); signal.err != nil {
-			return signal.err
+			signal.thesis.Fail(signal.err)
 		}
-	}
-
-	return signal.err
+	}()
 }
 
 func (signal *Signal) step(symbols []*types.Symbol) error {
@@ -116,7 +111,9 @@ func (signal *Signal) step(symbols []*types.Symbol) error {
 			continue
 		}
 
-		for ticker := range symbol.MarketTickers(types.SourceSentiment) {
+		for ticker := range symbol.MarketTickers(
+			symbol.TickerConsumers[types.TickerConsumerSentiment],
+		) {
 			observations = append(observations, struct {
 				symbol *types.Symbol
 				ticker kraken.TickerData

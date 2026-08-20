@@ -82,6 +82,7 @@ type Solver struct {
 	surprisalLimit float64
 	tickCounter    uint64
 	ui             *transport.MapReduce[*types.UIFrame]
+	work           *transport.Consumer[*types.Symbol]
 
 	// Beam search shape. Held as fields rather than call-site constants so the
 	// lookahead can be tuned without also reshaping what Cortex draws — the two
@@ -176,6 +177,9 @@ func NewSolver(
 		opt(solver)
 	}
 
+	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
+	thesis.Work(types.SourceCognition).Register(solver.work)
+
 	return solver
 }
 
@@ -186,55 +190,60 @@ func (solver *Solver) Name() string {
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Run consumes each symbol's category stream from the Categories input MapReduce
+consume reads each symbol's category stream from the Categories input MapReduce
 and pushes the derived cognition readings to the Cognition output MapReduce.
 Each category batch is classified and forwarded inline as a stream; the batch
 is never materialized into a longer-lived slice.
 */
-func (solver *Solver) Run() error {
-	for solver.err == nil {
-		symbolState, available := solver.thesis.Work(types.SourceCognition).WaitPop(
-			solver.ctx,
-			string(types.SourceCognition),
-		)
+func (solver *Solver) consume() {
+	go func() {
+		defer func() {
+			solver.thesis.Fail(solver.err)
+		}()
 
-		if !available {
-			return solver.ctx.Err()
-		}
+		for symbolState := range solver.thesis.Work(types.SourceCognition).Drain(
+			solver.work, nil,
+		) {
+			select {
+			case <-solver.ctx.Done():
+				solver.err = solver.ctx.Err()
+				return
+			default:
+			}
 
-		if symbolState == nil ||
-			symbolState.Categories.ConsumerLength(string(types.SourceCognition)) == 0 {
-			continue
-		}
-
-		config := system.Cfg.Snapshot()
-		switchThreshold := config.Planner.MinimumConfidence
-		rows := make(map[string]types.Cognition)
-
-		for batch := range symbolState.MarketCategories(types.SourceCognition) {
-			if len(batch) == 0 {
+			if symbolState == nil {
 				continue
 			}
 
-			if err := solver.processBatch(
-				symbolState.Symbol,
-				batch,
-				switchThreshold,
-				rows,
-			); err != nil {
-				solver.err = errnie.Error(err)
-				break
+			consumer := symbolState.CategoryConsumers[types.CategoryConsumerCognition]
+
+			if symbolState.Categories.Length(consumer) == 0 {
+				continue
 			}
+
+			config := system.Cfg.Snapshot()
+			switchThreshold := config.Planner.MinimumConfidence
+			rows := make(map[string]types.Cognition)
+
+			for batch := range symbolState.MarketCategories(consumer) {
+				if len(batch) == 0 {
+					continue
+				}
+
+				if err := solver.processBatch(
+					symbolState.Symbol,
+					batch,
+					switchThreshold,
+					rows,
+				); err != nil {
+					solver.err = errnie.Error(err)
+					return
+				}
+			}
+
+			solver.publish(rows)
 		}
-
-		if solver.err != nil {
-			continue
-		}
-
-		solver.publish(rows)
-	}
-
-	return solver.err
+	}()
 }
 
 /*
