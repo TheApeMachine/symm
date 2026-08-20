@@ -6,13 +6,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -115,11 +115,12 @@ func (crypto *Crypto) Run() error {
 				return true
 			})
 
-			utils.Publish(
-				crypto.ui, datura.NewMap(
-					"tick", datura.NewMap("count", crypto.thesis.Tick),
-				),
-			)
+			crypto.ui.Push(telemetry.Encode(&wire.FrameT{
+				Type: wire.FrameTickFrame,
+				Value: &wire.TickFrameT{
+					Count: crypto.thesis.Tick,
+				},
+			}))
 		}
 	}
 

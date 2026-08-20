@@ -11,7 +11,6 @@ import { paintTerminalFluidChart } from "#/components/charts/fluid";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
 import type { JSONSerializable, Paint } from "#/components/ui/paint";
 import type { Decision } from "#/types/thesis";
-import { decodeTelemetryBatch } from "#/providers/ws-codec";
 
 type FrameEvent = {
 	key: string;
@@ -56,6 +55,8 @@ const journal = createKeyedStore<JSONSerializable>()(
 	"journal",
 	JOURNAL_ENTRY_LIMIT,
 );
+const observedSymbols = new Set<string>();
+const observedSources = new Set<string>();
 
 const frameRows = (value: JSONSerializable): JSONSerializable[] => {
 	if (Array.isArray(value)) {
@@ -234,7 +235,19 @@ export const registerPainter = (key: string, paint: Paint): (() => void) => {
 
 const observeFrame = (key: string, updates: JSONSerializable): void => {
 	if (key === "cognition") {
-		appStore.actions.observeSymbols(Object.keys(currentCognition()));
+		const symbols = Object.keys(currentCognition()).filter((symbol) => {
+			if (observedSymbols.has(symbol)) {
+				return false;
+			}
+
+			observedSymbols.add(symbol);
+			return true;
+		});
+
+		if (symbols.length > 0) {
+			appStore.actions.observeSymbols(symbols);
+		}
+
 		return;
 	}
 
@@ -243,12 +256,13 @@ const observeFrame = (key: string, updates: JSONSerializable): void => {
 	}
 
 	const symbols: string[] = [];
-	const sources = new Set<string>();
+	const sources: string[] = [];
 
 	for (const row of frameRows(updates)) {
 		const symbol = symbolIdentity(row) || positionIdentity(row);
 
-		if (symbol !== "") {
+		if (symbol !== "" && !observedSymbols.has(symbol)) {
+			observedSymbols.add(symbol);
 			symbols.push(symbol);
 		}
 
@@ -257,14 +271,21 @@ const observeFrame = (key: string, updates: JSONSerializable): void => {
 			row !== null &&
 			typeof row === "object" &&
 			!Array.isArray(row) &&
-			typeof row.source === "string"
+			typeof row.source === "string" &&
+			!observedSources.has(row.source)
 		) {
-			sources.add(row.source);
+			observedSources.add(row.source);
+			sources.push(row.source);
 		}
 	}
 
-	appStore.actions.observeSymbols(symbols);
-	appStore.actions.observeSources(sources);
+	if (symbols.length > 0) {
+		appStore.actions.observeSymbols(symbols);
+	}
+
+	if (sources.length > 0) {
+		appStore.actions.observeSources(new Set(sources));
+	}
 };
 
 export const paintRegistered = (
@@ -304,8 +325,7 @@ frame is applied in arrival order during one browser paint callback; batching
 reduces scheduling overhead without coalescing intermediate samples.
 */
 export const attach = (worker: Worker) => {
-	let pendingBatches: ArrayBuffer[] = [];
-	let acknowledgeBackend = false;
+	let pendingFrames: Record<string, unknown>[] = [];
 	let animationFrame: number | null = null;
 
 	const applyFrame = (frame: Record<string, unknown>) => {
@@ -395,18 +415,15 @@ export const attach = (worker: Worker) => {
 
 	const flush = () => {
 		animationFrame = null;
-		const batches = pendingBatches;
-		pendingBatches = [];
+		const frames = pendingFrames;
+		pendingFrames = [];
 
 		try {
-			for (const batch of batches) {
-				for (const frame of decodeTelemetryBatch(batch)) {
-					applyFrame(frame);
-				}
+			for (const frame of frames) {
+				applyFrame(frame);
 			}
 		} finally {
-			worker.postMessage({ type: "PAINTED", acknowledgeBackend });
-			acknowledgeBackend = false;
+			worker.postMessage({ type: "PAINTED", acknowledgeBackend: false });
 		}
 	};
 
@@ -425,12 +442,11 @@ export const attach = (worker: Worker) => {
 			return;
 		}
 
-		if (event.data.type !== "DRAW_BATCH" || !Array.isArray(event.data.batches)) {
+		if (event.data.type !== "DRAW_BATCH" || !Array.isArray(event.data.frames)) {
 			return;
 		}
 
-		pendingBatches.push(...event.data.batches);
-		acknowledgeBackend ||= event.data.acknowledgeBackend === true;
+		pendingFrames.push(...event.data.frames);
 		schedule();
 	});
 };

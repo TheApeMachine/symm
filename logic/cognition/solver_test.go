@@ -10,7 +10,6 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
@@ -561,7 +560,7 @@ func BenchmarkCognitionRun(b *testing.B) {
 	thesis.At = time.Unix(1, 0).UTC()
 	solver := NewSolver(context.Background(), thesis, tree, nil, nil)
 	defer solver.Close()
-	rows := datura.NewMap()
+	rows := make(map[string]types.Cognition)
 
 	for index := range 129 {
 		symbolName := fmt.Sprintf("SYMBOL-%d/USD", index)
@@ -594,7 +593,6 @@ func BenchmarkCognitionRun(b *testing.B) {
 		})
 	}
 
-	rows.Free()
 }
 
 func TestCachedPrefixTree(t *testing.T) {

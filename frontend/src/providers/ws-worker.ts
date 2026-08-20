@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
 
+import { decodeTelemetryBatch } from "#/providers/ws-flatbuffers";
+
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 5000;
 
@@ -16,8 +18,7 @@ type WorkerOutbound =
 	| { type: "DRAW"; frame: Record<string, unknown> }
 	| {
 			type: "DRAW_BATCH";
-			batches: ArrayBuffer[];
-			acknowledgeBackend: boolean;
+			frames: Record<string, unknown>[];
 	  }
 	| { type: "ERROR_FRAME"; frame: Record<string, unknown> }
 	| { type: "ERROR"; message: string };
@@ -28,39 +29,39 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let activeUrl = "";
 let focusSymbol = "";
-let pendingBatches: ArrayBuffer[] = [];
+let pendingBatches: Record<string, unknown>[][] = [];
 let paintInFlight = false;
-let backendAckPending = false;
 
 /*
-flushBatches transfers every binary telemetry batch to the main thread without
-copying or decoding it in the worker. The main thread decodes the bytes inside
-the paint callback, so no JavaScript telemetry object crosses this boundary.
+flushFrames sends every schema-decoded frame to the main thread in wire order.
+FlatBuffers verification and object materialization stay outside the browser's
+paint budget; the main thread only applies the already-decoded updates.
 */
-const flushBatches = () => {
+const flushFrames = () => {
 	if (paintInFlight || pendingBatches.length === 0) {
 		return;
 	}
 
-	const batches = pendingBatches;
-	const acknowledgeBackend = backendAckPending;
-	pendingBatches = [];
-	backendAckPending = false;
+	const frames = pendingBatches.shift();
+
+	if (frames === undefined) {
+		return;
+	}
+
 	paintInFlight = true;
-	self.postMessage(
-		{
-			type: "DRAW_BATCH",
-			batches,
-			acknowledgeBackend,
-		} satisfies WorkerOutbound,
-		batches,
-	);
+	self.postMessage({
+		type: "DRAW_BATCH",
+		frames,
+	} satisfies WorkerOutbound);
+
+	if (socket !== null && socket.readyState === WebSocket.OPEN) {
+		socket.send(Uint8Array.of(1));
+	}
 };
 
 const stopFrameFlush = () => {
 	pendingBatches = [];
 	paintInFlight = false;
-	backendAckPending = false;
 };
 
 /*
@@ -195,9 +196,8 @@ const connect = (url: string) => {
 					throw new Error("telemetry websocket requires a binary frame");
 				}
 
-				pendingBatches.push(event.data);
-				backendAckPending = true;
-				flushBatches();
+				pendingBatches.push(decodeTelemetryBatch(event.data));
+				flushFrames();
 			} catch (err) {
 				console.log(event);
 
@@ -242,16 +242,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 		case "PAINTED": {
 			paintInFlight = false;
-
-			if (
-				message.acknowledgeBackend &&
-				socket !== null &&
-				socket.readyState === WebSocket.OPEN
-			) {
-				socket.send(JSON.stringify({ type: "painted" }));
-			}
-
-			flushBatches();
+			flushFrames();
 			return;
 		}
 

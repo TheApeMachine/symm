@@ -9,16 +9,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	logicgraph "github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 type Planner struct {
@@ -500,11 +500,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if !actionable {
-		utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
-			"evaluated", false,
-			"outcome", "accumulating",
-			"decisions", decisions,
-		)))
+		planner.publishStrategy(false, "accumulating", decisions)
 
 		return nil
 	}
@@ -521,13 +517,28 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		decisions = append(decisions, *decision)
 	}
 
-	utils.Publish(planner.ui, datura.NewMap("strategy", datura.NewMap(
-		"evaluated", true,
-		"outcome", "decisions",
-		"decisions", decisions,
-	)))
+	planner.publishStrategy(true, "decisions", decisions)
 
 	return nil
+}
+
+func (planner *Planner) publishStrategy(
+	evaluated bool, outcome string, decisions []types.Decision,
+) {
+	rows := make([]*wire.DecisionT, 0, len(decisions))
+
+	for _, decision := range decisions {
+		rows = append(rows, types.DecisionWire(decision))
+	}
+
+	planner.ui.Push(telemetry.Encode(&wire.FrameT{
+		Type: wire.FrameStrategyFrame,
+		Value: &wire.StrategyFrameT{
+			Evaluated: evaluated,
+			Outcome:   outcome,
+			Decisions: rows,
+		},
+	}))
 }
 
 func (planner *Planner) executeDecisions(

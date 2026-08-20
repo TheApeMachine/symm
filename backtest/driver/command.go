@@ -12,10 +12,11 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/utils"
@@ -55,7 +56,7 @@ func Command() *cobra.Command {
 			}
 
 			ctx := run.Context()
-			uiChannel := transport.NewMapReduce[[]byte]([]string{"dashboard"}, nil, nil)
+			uiChannel := transport.NewMapReduce[[]byte](nil, nil, nil)
 			manifoldChannel := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
 
 			dataPath := utils.ResolveDataPath()
@@ -71,11 +72,21 @@ func Command() *cobra.Command {
 			hub := ui.NewHub(ctx, thesis, nil, nil, nil, manifoldChannel)
 			replay := NewDriver(ctx, store, hub, uiChannel,
 				func(state State) {
-					utils.Publish(uiChannel, datura.NewMap("backtest", state))
+					uiChannel.Push(telemetry.Encode(&wire.FrameT{
+						Type: wire.FrameBacktestFrame,
+						Value: &wire.BacktestFrameT{
+							CaptureId: state.CaptureID,
+							Playing:   state.Playing,
+							Position:  state.Position.UnixNano(),
+							StartedAt: state.StartedAt.UnixNano(),
+							EndedAt:   state.EndedAt.UnixNano(),
+							Rebooting: state.Rebooting,
+						},
+					}))
 				},
 			)
 
-			hub.SetPlayback(replay, func() any {
+			hub.SetPlayback(replay, func() []backtest.CaptureInfo {
 				captures, listErr := store.ListCaptures()
 
 				if listErr != nil {

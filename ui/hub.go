@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"runtime"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -16,10 +15,12 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -39,20 +40,22 @@ Each client has a bounded writer queue; a peer that cannot keep up is closed
 with an observable error so it cannot block market telemetry for every peer.
 */
 type Hub struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	err             error
-	app             *fiber.App
-	listenAddr      string
-	thesis          *types.Thesis
-	desk            *broker.Desk
-	price           *broker.Price
-	balance         *broker.Balance
-	playback        playback
-	captures        func() any
-	fluid           *FluidRTC
-	manifold        *transport.MapReduce[types.FluidFrame]
-	maxMessageBytes int
+	ctx              context.Context
+	cancel           context.CancelFunc
+	err              error
+	app              *fiber.App
+	listenAddr       string
+	thesis           *types.Thesis
+	desk             *broker.Desk
+	price            *broker.Price
+	balance          *broker.Balance
+	playback         playback
+	captures         func() []backtest.CaptureInfo
+	fluid            *FluidRTC
+	manifold         *transport.MapReduce[types.FluidFrame]
+	maxMessageBytes  int
+	clientQueueLimit uint64
+	writeWindow      uint64
 }
 
 /*
@@ -76,6 +79,8 @@ func NewHub(
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
+	viper.SetDefault("ui.websocket.client_queue_frames", 16384)
+	viper.SetDefault("ui.websocket.write_window", 4)
 
 	hub := &Hub{
 		ctx:        ctx,
@@ -90,11 +95,19 @@ func NewHub(
 			ReadBufferSize:  4 * 1024 * 1024,
 			WriteBufferSize: 4 * 1024 * 1024,
 		}),
-		price:           price,
-		balance:         balance,
-		fluid:           NewFluidRTC(ctx),
-		manifold:        manifold,
-		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
+		price:            price,
+		balance:          balance,
+		fluid:            NewFluidRTC(ctx),
+		manifold:         manifold,
+		maxMessageBytes:  viper.GetInt("ui.websocket.max_message_bytes"),
+		clientQueueLimit: uint64(viper.GetInt("ui.websocket.client_queue_frames")),
+		writeWindow:      uint64(viper.GetInt("ui.websocket.write_window")),
+	}
+
+	if hub.clientQueueLimit == 0 || hub.writeWindow == 0 {
+		hub.err = fmt.Errorf(
+			"dashboard: client_queue_frames and write_window must be positive",
+		)
 	}
 
 	if manifold != nil {
@@ -119,6 +132,9 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
+		if hub.err != nil {
+			return
+		}
 		var ui *transport.MapReduce[[]byte]
 
 		if hub.thesis != nil {
@@ -132,11 +148,17 @@ func NewHub(
 		// consumer, so each client receives each frame without any shared
 		// broadcast or client-fan-out machinery on the hub.
 		if ui != nil {
-			ui.Register(consumerID)
+			ui.RegisterBounded(consumerID, hub.clientQueueLimit)
+			defer ui.Unregister(consumerID)
 		}
 
 		if hub.balance != nil {
-			conn.WriteMessage(websocket.TextMessage, hub.balance.Wallet())
+			if err := conn.WriteMessage(
+				websocket.BinaryMessage,
+				encodeFrameBatch([][]byte{hub.balance.Wallet()}),
+			); err != nil {
+				return
+			}
 		}
 
 		if hub.desk != nil {
@@ -146,22 +168,48 @@ func NewHub(
 				out = append(out, position)
 			}
 
-			conn.WriteMessage(websocket.TextMessage, datura.NewMap(
-				"positions", out,
-			).MarshalAndFree())
+			rows := make([]*wire.PositionT, 0, len(out))
+
+			for _, position := range out {
+				rows = append(rows, position.Wire())
+			}
+
+			frame := telemetry.Encode(&wire.FrameT{
+				Type: wire.FramePositionsFrame,
+				Value: &wire.PositionsFrameT{
+					Rows: rows,
+				},
+			})
+
+			if err := conn.WriteMessage(
+				websocket.BinaryMessage,
+				encodeFrameBatch([][]byte{frame}),
+			); err != nil {
+				return
+			}
 		}
 
 		// The capture list rides the websocket with the rest of the
 		// dashboard state: the dev-server origin cannot fetch the REST
 		// route cross-origin, and the socket already reaches every client.
 		if hub.captures != nil {
-			conn.WriteMessage(websocket.TextMessage, datura.NewMap(
-				"backtest", datura.NewMap("captures", hub.captures()),
-			).MarshalAndFree())
+			frame := telemetry.Encode(&wire.FrameT{
+				Type: wire.FrameBacktestFrame,
+				Value: &wire.BacktestFrameT{
+					Captures: captureWire(hub.captures()),
+				},
+			})
+
+			if err := conn.WriteMessage(
+				websocket.BinaryMessage,
+				encodeFrameBatch([][]byte{frame}),
+			); err != nil {
+				return
+			}
 		}
 
 		clientDone := make(chan struct{})
-		painted := make(chan struct{}, 1)
+		received := make(chan struct{}, hub.writeWindow)
 
 		go func() {
 			defer close(clientDone)
@@ -175,6 +223,14 @@ func NewHub(
 
 					if err != nil {
 						return
+					}
+
+					if messageType == websocket.BinaryMessage && len(payload) == 1 && payload[0] == 1 {
+						select {
+						case received <- struct{}{}:
+						default:
+						}
+						continue
 					}
 
 					if messageType != websocket.TextMessage {
@@ -195,11 +251,6 @@ func NewHub(
 					switch request.Type {
 					case "focus":
 						types.SetFocus(request.Symbol)
-					case "painted":
-						select {
-						case painted <- struct{}{}:
-						default:
-						}
 					case "backtest.play":
 						if hub.playback != nil {
 							hub.playback.Play()
@@ -232,8 +283,29 @@ func NewHub(
 			<-clientDone
 		}()
 		var deferredFrame []byte
+		var inFlight uint64
 
 		for {
+			for inFlight >= hub.writeWindow {
+				select {
+				case <-hub.ctx.Done():
+					return
+				case <-clientDone:
+					return
+				case <-received:
+					inFlight--
+				case <-ui.Ready(consumerID):
+					if ui.Overflowed(consumerID) {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"dashboard: client telemetry queue exceeded its configured limit",
+							nil,
+						))
+						return
+					}
+				}
+			}
+
 			select {
 			case <-hub.ctx.Done():
 				return
@@ -245,12 +317,19 @@ func NewHub(
 				ok := frame != nil
 
 				if !ok {
-					frame, ok = ui.Pop(consumerID)
+					frame, ok = ui.WaitPop(hub.ctx, consumerID)
 				}
 
 				if !ok {
-					runtime.Gosched()
-					continue
+					if ui.Overflowed(consumerID) {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"dashboard: client telemetry queue exceeded its configured limit",
+							nil,
+						))
+					}
+
+					return
 				}
 
 				frames := [][]byte{frame}
@@ -265,7 +344,7 @@ func NewHub(
 					return
 				}
 
-				pending := ui.Length()
+				pending := ui.ConsumerLength(consumerID)
 
 				for range pending {
 					candidate, found := ui.Pop(consumerID)
@@ -300,13 +379,7 @@ func NewHub(
 					return
 				}
 
-				select {
-				case <-hub.ctx.Done():
-					return
-				case <-clientDone:
-					return
-				case <-painted:
-				}
+				inFlight++
 			}
 		}
 	}))
@@ -328,7 +401,7 @@ func (hub *Hub) SetPlayback(
 		Select(captureID int64)
 		Hindsight(captureID int64)
 	},
-	captures func() any,
+	captures func() []backtest.CaptureInfo,
 ) {
 	// Upgrade-only: a session re-boot passes a nil controller with a fresh
 	// capture list and must never displace the driving playback controller.
@@ -339,6 +412,27 @@ func (hub *Hub) SetPlayback(
 	if captures != nil {
 		hub.captures = captures
 	}
+}
+
+func captureWire(captures []backtest.CaptureInfo) []*wire.CaptureT {
+	rows := make([]*wire.CaptureT, 0, len(captures))
+
+	for _, capture := range captures {
+		row := &wire.CaptureT{
+			Id:        capture.ID,
+			StartedAt: capture.StartedAt.UnixNano(),
+			Frames:    capture.Frames,
+		}
+
+		if capture.EndedAt != nil {
+			row.EndedAt = capture.EndedAt.UnixNano()
+			row.HasEndedAt = true
+		}
+
+		rows = append(rows, row)
+	}
+
+	return rows
 }
 
 /*
@@ -368,6 +462,10 @@ func (hub *Hub) Error() error { return hub.err }
 Serve listens for dashboard websocket clients.
 */
 func (hub *Hub) Run() error {
+	if hub.err != nil {
+		return hub.err
+	}
+
 	listener, err := net.Listen("tcp", hub.listenAddr)
 
 	if err != nil {

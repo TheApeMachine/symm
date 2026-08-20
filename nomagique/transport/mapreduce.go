@@ -1,159 +1,283 @@
 package transport
 
 import (
+	"context"
 	"iter"
-	"slices"
+	"sync"
+	"sync/atomic"
 
 	"golang.design/x/lockfree/lf"
 )
 
+type consumer[T any] struct {
+	queue       *lf.Queue[T]
+	ready       chan struct{}
+	previous    T
+	hasPrevious bool
+	limit       uint64
+	queued      atomic.Uint64
+	overflowed  atomic.Bool
+	stageMu     sync.Mutex
+}
+
 /*
-MapReduce uses lf.Queue to stage data where multiple consumers need
-to read from the same Queue.
+MapReduce fans each pushed value to independently drained consumer queues.
+Consumer lookup is O(1), registration is safe while producers are running, and
+each consumer owns a wake channel so idle readers sleep instead of polling.
 */
 type MapReduce[T any] struct {
-	data           *lf.Queue[T]
-	consumerIDs    []string
-	consumerQueues []*lf.Queue[T]
-	mapFn          func(T) T
-	reduceFn       func(T, T) T
-	previous       []*T
+	consumersMu sync.RWMutex
+	consumers   map[string]*consumer[T]
+	mapFn       func(T) T
+	reduceFn    func(T, T) T
 }
 
 func NewMapReduce[T any](
 	consumerIDs []string, mapFn func(T) T, reduceFn func(T, T) T,
 ) *MapReduce[T] {
-	mr := &MapReduce[T]{
-		data:        lf.NewQueue[T](),
-		consumerIDs: consumerIDs,
+	mapReduce := &MapReduce[T]{
+		consumers: make(map[string]*consumer[T], len(consumerIDs)),
+		mapFn: func(item T) T {
+			return item
+		},
+		reduceFn: func(_ T, item T) T {
+			return item
+		},
 	}
 
-	mr.consumerQueues = make([]*lf.Queue[T], len(consumerIDs))
-
-	for id := range consumerIDs {
-		mr.consumerQueues[id] = lf.NewQueue[T]()
-	}
-
-	mr.previous = make([]*T, len(consumerIDs))
-
-	// Define a noop function as a default mapper.
-	mr.mapFn = func(item T) T {
-		return item
-	}
-
-	// Override the default map function if a custom one is provided.
 	if mapFn != nil {
-		mr.mapFn = mapFn
+		mapReduce.mapFn = mapFn
 	}
 
-	// Define a noop function as a default for reduce.
-	mr.reduceFn = func(a, b T) T {
-		return b
-	}
-
-	// Override the default reduce function if a custom one is provided.
 	if reduceFn != nil {
-		mr.reduceFn = reduceFn
+		mapReduce.reduceFn = reduceFn
 	}
 
-	return mr
+	for _, consumerID := range consumerIDs {
+		mapReduce.consumers[consumerID] = newConsumer[T](0)
+	}
+
+	return mapReduce
 }
 
-func (mr *MapReduce[T]) Length() uint64 {
-	return mr.data.Length()
-}
-
-/*
-Register a new consumer with a unique ID.
-This creates a new Queue for the consumer to read from.
-If the consumer ID already exists, it will be ignored.
-*/
-func (mr *MapReduce[T]) Register(consumerID string) {
-	if slices.Index(mr.consumerIDs, consumerID) < 0 {
-		mr.consumerIDs = append(mr.consumerIDs, consumerID)
-		mr.consumerQueues = append(mr.consumerQueues, lf.NewQueue[T]())
-		mr.previous = append(mr.previous, nil)
+func newConsumer[T any](limit uint64) *consumer[T] {
+	return &consumer[T]{
+		queue: lf.NewQueue[T](),
+		ready: make(chan struct{}, 1),
+		limit: limit,
 	}
 }
 
-func (mr *MapReduce[T]) Push(item T) {
-	mr.data.Enqueue(item)
+/*
+Length reports the deepest active consumer queue. It therefore represents the
+actual retained backlog rather than a staging queue already copied elsewhere.
+*/
+func (mapReduce *MapReduce[T]) Length() uint64 {
+	mapReduce.consumersMu.RLock()
+	defer mapReduce.consumersMu.RUnlock()
+
+	var depth uint64
+
+	for _, consumer := range mapReduce.consumers {
+		if queued := consumer.queued.Load(); queued > depth {
+			depth = queued
+		}
+	}
+
+	return depth
+}
+
+func (mapReduce *MapReduce[T]) Register(consumerID string) {
+	mapReduce.RegisterBounded(consumerID, 0)
 }
 
 /*
-Pop an item from the Queue.
-
-First we write the item to every consumer's Queue,
-then we dequeue from the consumer's Queue.
-This ensures that all consumers see the same data,
-while maintaining the ergonomics of a single write Queue.
+RegisterBounded creates a consumer with an optional retained-item limit. Once a
+bounded consumer reaches its limit it is marked overflowed and accepts no more
+items; callers can close that consumer explicitly without silently losing an
+unknown suffix of its stream.
 */
-func (mr *MapReduce[T]) Pop(consumerID string) (T, bool) {
-	var (
-		zero T
-		id   = slices.Index(mr.consumerIDs, consumerID)
-	)
+func (mapReduce *MapReduce[T]) RegisterBounded(consumerID string, limit uint64) {
+	mapReduce.consumersMu.Lock()
+	defer mapReduce.consumersMu.Unlock()
 
-	if id < 0 {
+	if _, exists := mapReduce.consumers[consumerID]; exists {
+		return
+	}
+
+	mapReduce.consumers[consumerID] = newConsumer[T](limit)
+}
+
+/*
+Unregister releases a consumer queue and all values retained exclusively for
+it. Producers stop including it in fan-out before this method returns.
+*/
+func (mapReduce *MapReduce[T]) Unregister(consumerID string) {
+	mapReduce.consumersMu.Lock()
+	delete(mapReduce.consumers, consumerID)
+	mapReduce.consumersMu.Unlock()
+}
+
+func (mapReduce *MapReduce[T]) Push(item T) {
+	mapReduce.consumersMu.RLock()
+	defer mapReduce.consumersMu.RUnlock()
+
+	for _, consumer := range mapReduce.consumers {
+		if consumer.overflowed.Load() {
+			continue
+		}
+
+		if !consumer.reserve() {
+			notify(consumer.ready)
+			continue
+		}
+
+		consumer.queue.Enqueue(mapReduce.mapFn(item))
+		notify(consumer.ready)
+	}
+}
+
+func (consumer *consumer[T]) reserve() bool {
+	if consumer.limit == 0 {
+		consumer.queued.Add(1)
+		return true
+	}
+
+	for {
+		queued := consumer.queued.Load()
+
+		if queued >= consumer.limit {
+			consumer.overflowed.Store(true)
+			return false
+		}
+
+		if consumer.queued.CompareAndSwap(queued, queued+1) {
+			return true
+		}
+	}
+}
+
+func notify(ready chan struct{}) {
+	select {
+	case ready <- struct{}{}:
+	default:
+	}
+}
+
+func (mapReduce *MapReduce[T]) Pop(consumerID string) (T, bool) {
+	consumer, found := mapReduce.consumer(consumerID)
+
+	if !found {
+		var zero T
 		return zero, false
 	}
 
-	consumerQueue := mr.consumerQueues[id]
-
-	if consumerQueue.Length() > 0 {
-		return mr.stage(id, consumerQueue)
-	}
-
-	item, ok := mr.data.Dequeue()
-
-	if !ok {
-		return zero, false
-	}
-
-	for consumerIndex := range mr.consumerQueues {
-		mr.consumerQueues[consumerIndex].Enqueue(mr.mapFn(item))
-	}
-
-	return mr.stage(id, consumerQueue)
+	return mapReduce.stage(consumer)
 }
 
 /*
-Drain reads a cut of the Queue.
-
-It is essentially a series of Pop calls, with a defined cut-off point.
-This prevents infinite draining of a Queue that is continuously being written to.
-
-Pass in a function that returns true to continue draining, or false to stop.
-It must return true if the item passed in is empty, as the first call to
-Drain will always pass in a zero-value item.
+WaitPop blocks until a value, cancellation, unregister, or overflow is visible.
+The boolean is false for every terminal/no-value result; callers distinguish a
+slow-consumer overflow with Overflowed.
 */
-func (mr *MapReduce[T]) Drain(consumerID string, fn func(item T) bool) iter.Seq[T] {
-	var (
-		item T
-	)
+func (mapReduce *MapReduce[T]) WaitPop(
+	ctx context.Context, consumerID string,
+) (T, bool) {
+	for {
+		consumer, found := mapReduce.consumer(consumerID)
+
+		if !found {
+			var zero T
+			return zero, false
+		}
+
+		if item, ok := mapReduce.stage(consumer); ok {
+			return item, true
+		}
+
+		if consumer.overflowed.Load() {
+			var zero T
+			return zero, false
+		}
+
+		select {
+		case <-ctx.Done():
+			var zero T
+			return zero, false
+		case <-consumer.ready:
+		}
+	}
+}
+
+func (mapReduce *MapReduce[T]) Overflowed(consumerID string) bool {
+	consumer, found := mapReduce.consumer(consumerID)
+	return found && consumer.overflowed.Load()
+}
+
+func (mapReduce *MapReduce[T]) ConsumerLength(consumerID string) uint64 {
+	consumer, found := mapReduce.consumer(consumerID)
+
+	if !found {
+		return 0
+	}
+
+	return consumer.queued.Load()
+}
+
+func (mapReduce *MapReduce[T]) Ready(consumerID string) <-chan struct{} {
+	consumer, found := mapReduce.consumer(consumerID)
+
+	if !found {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+
+	return consumer.ready
+}
+
+func (mapReduce *MapReduce[T]) consumer(consumerID string) (*consumer[T], bool) {
+	mapReduce.consumersMu.RLock()
+	consumer, found := mapReduce.consumers[consumerID]
+	mapReduce.consumersMu.RUnlock()
+	return consumer, found
+}
+
+func (mapReduce *MapReduce[T]) Drain(
+	consumerID string, predicate func(item T) bool,
+) iter.Seq[T] {
+	var item T
 
 	return func(yield func(T) bool) {
-		for fn(item) {
-			item, ok := mr.Pop(consumerID)
+		for predicate(item) {
+			var ok bool
+			item, ok = mapReduce.Pop(consumerID)
 
-			if !ok {
-				return
-			}
-
-			if !yield(item) {
+			if !ok || !yield(item) {
 				return
 			}
 		}
 	}
 }
 
-func (mr *MapReduce[T]) stage(id int, queue *lf.Queue[T]) (item T, ok bool) {
-	item, ok = queue.Dequeue()
+func (mapReduce *MapReduce[T]) stage(consumer *consumer[T]) (T, bool) {
+	consumer.stageMu.Lock()
+	defer consumer.stageMu.Unlock()
 
-	if mr.previous[id] != nil {
-		item = mr.reduceFn(*mr.previous[id], item)
+	item, ok := consumer.queue.Dequeue()
+
+	if !ok {
+		var zero T
+		return zero, false
 	}
 
-	mr.previous[id] = &item
-	return item, ok
+	consumer.queued.Add(^uint64(0))
+
+	if consumer.hasPrevious {
+		item = mapReduce.reduceFn(consumer.previous, item)
+	}
+
+	consumer.previous = item
+	consumer.hasPrevious = true
+	return item, true
 }

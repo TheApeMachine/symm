@@ -9,14 +9,14 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -362,11 +362,14 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
-	utils.Publish(desk.ui, datura.NewMap("equity", datura.NewMap(
-		"cash", desk.balance.Cash(),
-		"unrealized", tradeBalance.UnrealizedPnL,
-		"equity", tradeBalance.Equity,
-	)))
+	desk.ui.Push(telemetry.Encode(&wire.FrameT{
+		Type: wire.FrameEquityFrame,
+		Value: &wire.EquityFrameT{
+			Cash:       desk.balance.Cash().String(),
+			Unrealized: tradeBalance.UnrealizedPnL.String(),
+			Equity:     tradeBalance.Equity.String(),
+		},
+	}))
 
 	return nil
 }

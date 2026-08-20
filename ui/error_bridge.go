@@ -7,9 +7,9 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/phuslu/log"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/utils"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 const errorDebounce = 250 * time.Millisecond
@@ -24,8 +24,8 @@ until ready() reports the boot gate has passed (Warmup), so preflight ticker
 gaps never open the overlay.
 */
 type ErrorBridge struct {
-	ui      *transport.MapReduce[[]byte]
-	ready   func() bool
+	ui    *transport.MapReduce[[]byte]
+	ready func() bool
 	// onError receives each distinct error as (source, message, caller) so the
 	// diagnostics WebRTC frame can surface subsystem-attributed errors. Nil
 	// keeps the bridge limited to the websocket overlay.
@@ -105,12 +105,24 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 		)
 	}
 
-	utils.Publish(bridge.ui, datura.NewMap(
-		"error", safeErrorFields(fields),
-	))
+	safe := safeErrorFields(fields)
+	bridge.ui.Push(telemetry.Encode(&wire.FrameT{
+		Type: wire.FrameErrorFrame,
+		Value: &wire.ErrorFrameT{
+			Level: stringMapField(safe, "level"), Source: attributedErrorSource(fields),
+			Error: stringMapField(safe, "error"), Message: stringMapField(safe, "message"),
+			Msg: stringMapField(safe, "msg"), Caller: stringMapField(safe, "caller"),
+			Time: stringMapField(safe, "time"),
+		},
+	}))
 	bridge.commit(fingerprint)
 
 	return len(payload), nil
+}
+
+func stringMapField(fields map[string]any, name string) string {
+	value, _ := fields[name].(string)
+	return value
 }
 
 func isErrorLevel(level string) bool {

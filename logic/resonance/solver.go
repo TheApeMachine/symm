@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"golang.design/x/lockfree/lf"
 
@@ -17,8 +16,9 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -276,10 +276,14 @@ func (solver *Solver) Update(
 
 	solver.publishReturns(symbol, coder, out)
 
-	utils.Publish(solver.ui, datura.NewMap(
-		"resonance",
-		solver.resonanceWire(symbolName, at, coder, out),
-	))
+	solver.ui.Push(telemetry.Encode(&wire.FrameT{
+		Type: wire.FrameResonanceFrame,
+		Value: &wire.ResonanceFrameT{
+			Rows: []*wire.ResonanceT{
+				solver.resonanceWire(symbolName, at, coder, out),
+			},
+		},
+	}))
 
 	return nil
 }
@@ -427,47 +431,41 @@ func (solver *Solver) resonanceWire(
 	at time.Time,
 	coder *learning.PredictiveCoder,
 	out learning.PredictiveOutput,
-) datura.Map[any] {
+) *wire.ResonanceT {
 	manifold := coder.Manifold()
 	layers, surprise, energy := manifold.WireSnapshot()
 
-	wireLayers := make([]datura.Map[any], 0, len(layers))
+	wireLayers := make([]*wire.ResonanceLayerT, 0, len(layers))
 
 	for _, layer := range layers {
-		wireLayers = append(wireLayers, datura.NewMap(
-			"state", layer.State,
-			"prediction", layer.Prediction,
-			"errorNorm", layer.ErrorNorm,
-			"temporal", layer.Temporal,
-		))
+		wireLayers = append(wireLayers, &wire.ResonanceLayerT{
+			State: layer.State, Prediction: layer.Prediction,
+			ErrorNorm: layer.ErrorNorm, Temporal: layer.Temporal,
+		})
 	}
 
 	skill, skillReady := manifold.TaskSkill()
 	precision, precisionReady := manifold.TaskPrecision()
 
-	forecast := datura.NewMap(
-		"forwardCurve", out.ForwardCurve,
-		"forwardRetention", out.ForwardRetention,
-		"supportedHorizon", out.SupportedHorizon,
-		"probeHorizon", out.SupportedHorizon,
-	)
+	forecast := &wire.ResonanceForecastT{
+		ForwardCurve: out.ForwardCurve, ForwardRetention: out.ForwardRetention,
+		SupportedHorizon: int64(out.SupportedHorizon), ProbeHorizon: int64(out.SupportedHorizon),
+	}
 
 	if horizon := max(1, out.SupportedHorizon); horizon > 0 {
 		rollouts, err := manifold.RolloutTaskForecast(horizon)
 
 		if err == nil && len(rollouts) > 0 {
-			posterior := make([]datura.Map[any], 0, len(rollouts))
+			posterior := make([]*wire.PosteriorT, 0, len(rollouts))
 
 			for _, roll := range rollouts {
-				posterior = append(posterior, datura.NewMap(
-					"Value", roll.Value,
-					"Scale", roll.Scale,
-					"DegreesOfFreedom", roll.DegreesOfFreedom,
-					"Ready", roll.Ready,
-				))
+				posterior = append(posterior, &wire.PosteriorT{
+					Value: roll.Value, Scale: roll.Scale,
+					DegreesOfFreedom: roll.DegreesOfFreedom, Ready: roll.Ready,
+				})
 			}
 
-			forecast["posterior"] = posterior
+			forecast.Posterior = posterior
 		}
 	}
 
@@ -516,77 +514,45 @@ func (solver *Solver) resonanceWire(
 		}
 	}
 
-	return datura.NewMap(
-		"source", string(types.SourceResonance),
-		"symbol", symbolName,
-		"at", at,
-		"samples", out.ResolvedSteps,
-		"taskRelativePrecision", precision,
-		"taskRelativePrecisionReady", precisionReady,
-		"taskCalibration", calibration,
-		"taskSkill", skill,
-		"taskSkillReady", skillReady,
-		"taskSkillStatus", skillStatus,
-		"lastResolvedForecast", resolved,
-		"lastRealizedReturn", resolved,
-		"lastForecastError", lastError,
-		"observables", out.Readout,
-		"latent", manifold.LatentState(),
-		"embedding", manifold.LatentState(),
-		"layers", wireLayers,
-		"energy", energy,
-		"surprise", surprise,
-		"forecast", forecast,
-		"dynamics", dynamicsWire(out.Dynamics),
-		"verdict", datura.NewMap(
-			"learning", "observing",
-			"tuning", "recursive least squares",
-			"learningHealth", precision,
-			"tuningHealth", precision,
-			"direction", call,
-			"conviction", out.Confidence,
-		),
-	)
+	return &wire.ResonanceT{
+		Source: string(types.SourceResonance), Symbol: symbolName, At: at.UnixNano(),
+		Samples: int64(out.ResolvedSteps), TaskRelativePrecision: precision,
+		TaskRelativePrecisionReady: precisionReady, TaskCalibration: calibration,
+		TaskSkill: skill, TaskSkillReady: skillReady, TaskSkillStatus: skillStatus,
+		LastResolvedForecast: resolved, LastRealizedReturn: resolved,
+		LastForecastError: lastError, Observables: out.Readout,
+		Latent: manifold.LatentState(), Embedding: manifold.LatentState(),
+		Layers: wireLayers, Energy: energy, Surprise: surprise, Forecast: forecast,
+		Dynamics: dynamicsWire(out.Dynamics),
+		Verdict: &wire.ResonanceVerdictT{
+			Learning: "observing", Tuning: "recursive least squares",
+			LearningHealth: precision, TuningHealth: precision,
+			Direction: call, Conviction: out.Confidence,
+		},
+	}
 }
 
 /*
 dynamicsWire extracts the physical predictive dynamics frame into named scalars
 matching the frontend ResonanceDynamics schema.
 */
-func dynamicsWire(dynamics nomagique.Frame) datura.Map[any] {
-	wire := datura.NewMap()
-
-	fields := []struct {
-		wireName string
-		symbol   nomagique.Symbol
-	}{
-		{"ready", learning.SymbolDynamicsReady},
-		{"deltaTime", learning.SymbolDynamicsDeltaTime},
-		{"position", learning.SymbolDynamicsPosition},
-		{"velocity", learning.SymbolDynamicsVelocity},
-		{"acceleration", learning.SymbolDynamicsAcceleration},
-		{"memory", learning.SymbolDynamicsMemory},
-		{"memoryScale", learning.SymbolDynamicsMemoryScale},
-		{"storedEnergy", learning.SymbolDynamicsStoredEnergy},
-		{"suppliedPower", learning.SymbolDynamicsSuppliedPower},
-		{"dissipation", learning.SymbolDynamicsDissipation},
-		{"passivityResidue", learning.SymbolDynamicsPassivityResidue},
-		{"continuousVariance", learning.SymbolDynamicsContinuousVariance},
-		{"jumpAmplitude", learning.SymbolDynamicsJumpAmplitude},
-		{"jumpVariance", learning.SymbolDynamicsJumpVariance},
-		{"sampleCount", learning.SymbolDynamicsSampleCount},
-		{"rotorScalar", learning.SymbolDynamicsRotorScalar},
-		{"rotorBivector", learning.SymbolDynamicsRotorBivector},
-		{"equivarianceNorm", learning.SymbolDynamicsEquivarianceNorm},
+func dynamicsWire(dynamics nomagique.Frame) *wire.ResonanceDynamicsT {
+	value := func(symbol nomagique.Symbol) float64 {
+		reading, _ := dynamics.Get(symbol)
+		return reading
 	}
 
-	for _, field := range fields {
-		if value, found := dynamics.Get(field.symbol); found {
-			wire[field.wireName] = value
-		}
+	return &wire.ResonanceDynamicsT{
+		Ready: value(learning.SymbolDynamicsReady), DeltaTime: value(learning.SymbolDynamicsDeltaTime),
+		Position: value(learning.SymbolDynamicsPosition), Velocity: value(learning.SymbolDynamicsVelocity),
+		Acceleration: value(learning.SymbolDynamicsAcceleration), Memory: value(learning.SymbolDynamicsMemory),
+		MemoryScale: value(learning.SymbolDynamicsMemoryScale), StoredEnergy: value(learning.SymbolDynamicsStoredEnergy),
+		SuppliedPower: value(learning.SymbolDynamicsSuppliedPower), Dissipation: value(learning.SymbolDynamicsDissipation),
+		PassivityResidue: value(learning.SymbolDynamicsPassivityResidue), ContinuousVariance: value(learning.SymbolDynamicsContinuousVariance),
+		JumpAmplitude: value(learning.SymbolDynamicsJumpAmplitude), JumpVariance: value(learning.SymbolDynamicsJumpVariance),
+		SampleCount: value(learning.SymbolDynamicsSampleCount), RotorScalar: value(learning.SymbolDynamicsRotorScalar),
+		RotorBivector: value(learning.SymbolDynamicsRotorBivector), EquivarianceNorm: value(learning.SymbolDynamicsEquivarianceNorm),
 	}
-
-	return wire
 }
 
 /*

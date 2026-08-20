@@ -24,18 +24,3 @@ func PublishFluid(
 		Payload: data.MarshalAndFree(),
 	})
 }
-
-/*
-Publish appends one replaceable dashboard wire frame to the thesis's lock-free
-UI transport. The frame is retained until the hub consumer drains it, so a
-publish never blocks and never drops a frame regardless of marketplace heat.
-*/
-func Publish(ui *transport.MapReduce[[]byte], data datura.Map[any]) {
-	frame := data.MarshalAndFree()
-
-	if ui == nil {
-		return
-	}
-
-	ui.Push(frame)
-}

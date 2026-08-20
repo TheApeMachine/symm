@@ -150,7 +150,20 @@ type PaintBinding = {
   element: HTMLElement;
   dataset: PaintDataset;
   mode: "paint" | "set" | "append" | "stream";
+  read: PathReader;
 };
+
+type PathReader = (
+  updates: JSONSerializable,
+) => JSONSerializable | undefined;
+
+const pathReaders = new Map<string, PathReader>();
+const listParts = new Map<string, string[]>();
+const appendBuffers = new WeakMap<HTMLElement, Float64Array>();
+const paintClassRules = new Map<
+  string,
+  Array<{ expected: string; tokens: string[] }>
+>();
 
 /*
 COMPONENT_ROOT marks the element a Component hands its ref to, so a scan can
@@ -224,6 +237,7 @@ const scanTargets = (root: HTMLElement) => {
       key,
       element,
       dataset,
+      read: compilePath(key),
       mode: element.dataset.streamValue
         ? "stream"
         : element.dataset.append
@@ -337,47 +351,70 @@ const formatValue = (value: unknown, format: string | undefined): string => {
 const readPath = (
   updates: JSONSerializable,
   path: string | undefined,
-): JSONSerializable | undefined => {
+): JSONSerializable | undefined => compilePath(path)(updates);
+
+const compilePath = (path: string | undefined): PathReader => {
   if (!path || path === "$") {
-    return updates;
+	return (updates) => updates;
+  }
+
+  const cached = pathReaders.get(path);
+
+  if (cached !== undefined) {
+	return cached;
   }
 
   const parts = path.split(".");
-  let value: JSONSerializable | undefined = updates;
+	const reader: PathReader = (updates) => {
+		let value: JSONSerializable | undefined = updates;
 
-  for (const part of parts) {
-    if (value === undefined || value === null) {
-      return undefined;
-    }
+		for (const part of parts) {
+			if (value === undefined || value === null) {
+				return undefined;
+			}
 
-    if (Array.isArray(value)) {
-      if (part === "length") {
-        value = value.length;
-        continue;
-      }
+			if (Array.isArray(value)) {
+				if (part === "length") {
+					value = value.length;
+					continue;
+				}
 
-      const index = Number.parseInt(part, 10);
+				const index = Number.parseInt(part, 10);
 
-      if (!Number.isInteger(index)) {
-        return undefined;
-      }
+				if (!Number.isInteger(index)) {
+					return undefined;
+				}
 
-      value = value[index];
-      continue;
-    }
+				value = value[index];
+				continue;
+			}
 
-    if (typeof value === "object" && !Array.isArray(value)) {
-      value = (value as JSONRecord)[part];
-    } else {
-      return undefined;
-    }
-  }
+			if (typeof value === "object" && !Array.isArray(value)) {
+				value = (value as JSONRecord)[part];
+				continue;
+			}
 
-  return value;
+			return undefined;
+		}
+
+		return value;
+	};
+
+	pathReaders.set(path, reader);
+	return reader;
 };
 
-const splitList = (value: string): string[] =>
-  value.split(",").map((entry) => entry.trim());
+const splitList = (value: string): string[] => {
+	const cached = listParts.get(value);
+
+	if (cached !== undefined) {
+		return cached;
+	}
+
+	const parts = value.split(",").map((entry) => entry.trim());
+	listParts.set(value, parts);
+	return parts;
+};
 
 /*
 matchesScope answers whether one wire row is the row a binding asked for.
@@ -470,58 +507,65 @@ const applyPaintClass = (
     return;
   }
 
-  const splitClassList = (classList: string) => {
-    const tokens: string[] = [];
-    let depth = 0;
-    let start = 0;
+	let rules = paintClassRules.get(spec);
 
-    for (let index = 0; index < classList.length; index += 1) {
-      const char = classList[index];
+	if (rules === undefined) {
+		rules = compilePaintClasses(spec);
+		paintClassRules.set(spec, rules);
+	}
 
-      if (char === "[" || char === "(") {
-        depth += 1;
-      }
-
-      if ((char === "]" || char === ")") && depth > 0) {
-        depth -= 1;
-      }
-
-      if (char !== "," || depth !== 0) {
-        continue;
-      }
-
-      tokens.push(classList.slice(start, index));
-      start = index + 1;
-    }
-
-    tokens.push(classList.slice(start));
-
-    return tokens;
-  };
-
-  for (const rule of spec.split(/\s+/)) {
-    const separator = rule.indexOf(":");
-
-    if (separator === -1) {
-      continue;
-    }
-
-    const expected = rule.slice(0, separator);
-    const className = rule.slice(separator + 1);
-
-    if (!className) {
-      continue;
-    }
-
-    for (const token of splitClassList(className)) {
-      if (!token) {
-        continue;
+	for (const { expected, tokens } of rules) {
+		for (const token of tokens) {
+			if (!token) {
+				continue;
       }
 
       element.classList.toggle(token, String(value) === expected);
     }
   }
 };
+
+const compilePaintClasses = (
+  spec: string,
+): Array<{ expected: string; tokens: string[] }> =>
+  spec.split(/\s+/).flatMap((rule) => {
+		const separator = rule.indexOf(":");
+
+		if (separator === -1) {
+			return [];
+		}
+
+		const expected = rule.slice(0, separator);
+		const className = rule.slice(separator + 1);
+
+		if (className === "") {
+			return [];
+		}
+
+		const tokens: string[] = [];
+		let depth = 0;
+		let start = 0;
+
+		for (let index = 0; index < className.length; index += 1) {
+			const char = className[index];
+
+			if (char === "[" || char === "(") {
+				depth += 1;
+			}
+
+			if ((char === "]" || char === ")") && depth > 0) {
+				depth -= 1;
+			}
+
+			if (char === "," && depth === 0) {
+				tokens.push(className.slice(start, index));
+				start = index + 1;
+			}
+		}
+
+		tokens.push(className.slice(start));
+		return [{ expected, tokens }];
+	});
 
 const setTargetValue = (
   element: HTMLElement,
@@ -771,23 +815,21 @@ const appendTargetValue = (
     return;
   }
 
-  const values = (element.dataset.appendValues ?? "")
-    .split(",")
-    .filter(Boolean)
-    .map(Number)
-    .filter(Number.isFinite);
+	let values = appendBuffers.get(element);
 
-  values.push(numericValue);
+	if (values === undefined || values.length !== limit) {
+		values = new Float64Array(limit);
+		values.fill(Number.NaN);
+		appendBuffers.set(element, values);
+	}
 
-  if (values.length > limit) {
-    values.splice(0, values.length - limit);
-  }
+	values.copyWithin(0, 1);
+	values[values.length - 1] = numericValue;
+	const retained = Array.from(values).filter(Number.isFinite);
 
-  element.dataset.appendValues = values.join(",");
-
-  const points = values
+	const points = retained
     .map((entry, index) => {
-      const denominator = Math.max(values.length - 1, 1);
+			const denominator = Math.max(retained.length - 1, 1);
       const x = (index / denominator) * width;
       const clamped = Math.min(Math.max(entry, 0), 1);
       const y = height - 1 - clamped * (height - 4);
@@ -855,10 +897,15 @@ type StreamSample = {
   decay: number | null;
 };
 
-const optionalNumber = (raw: string | undefined): number | null =>
-  raw === undefined || raw === "" || !Number.isFinite(Number(raw))
-    ? null
-    : Number(raw);
+type StreamBuffer = {
+  values: Float64Array;
+  count: number;
+  filter: string;
+  lastId: string;
+};
+
+const STREAM_SAMPLE_WIDTH = 4;
+const streamBuffers = new WeakMap<HTMLCanvasElement, StreamBuffer>();
 
 const readOptionalNumber = (
   entry: JSONSerializable,
@@ -873,40 +920,45 @@ const readOptionalNumber = (
   return Number.isFinite(value) ? value : null;
 };
 
-const decodeStreamSamples = (encoded: string): StreamSample[] =>
-  encoded
-    .split(",")
-    .filter(Boolean)
-    .flatMap((entry) => {
-      const [time, value, baseline, decay] = entry.split("|");
-      const sampleTime = optionalNumber(time);
-      const sampleValue = optionalNumber(value);
+const streamSamples = (buffer: StreamBuffer): StreamSample[] => {
+  const samples = new Array<StreamSample>(buffer.count);
 
-      if (sampleTime === null || sampleValue === null) {
-        return [];
-      }
+  for (let index = 0; index < buffer.count; index += 1) {
+    const offset = index * STREAM_SAMPLE_WIDTH;
+    const baseline = buffer.values[offset + 2];
+    const decay = buffer.values[offset + 3];
 
-      return [
-        {
-          time: sampleTime,
-          value: sampleValue,
-          baseline: optionalNumber(baseline),
-          decay: optionalNumber(decay),
-        },
-      ];
-    });
+    samples[index] = {
+      time: buffer.values[offset] ?? 0,
+      value: buffer.values[offset + 1] ?? 0,
+      baseline: Number.isNaN(baseline) ? null : (baseline ?? null),
+      decay: Number.isNaN(decay) ? null : (decay ?? null),
+    };
+  }
 
-const encodeStreamSamples = (samples: StreamSample[]): string =>
-  samples
-    .map((sample) =>
-      [
-        sample.time,
-        sample.value,
-        sample.baseline ?? "",
-        sample.decay ?? "",
-      ].join("|"),
-    )
-    .join(",");
+  return samples;
+};
+
+const retainStreamSamples = (
+  buffer: StreamBuffer,
+  samples: StreamSample[],
+): void => {
+  const required = samples.length * STREAM_SAMPLE_WIDTH;
+
+  if (buffer.values.length < required) {
+    buffer.values = new Float64Array(required);
+  }
+
+  for (const [index, sample] of samples.entries()) {
+    const offset = index * STREAM_SAMPLE_WIDTH;
+    buffer.values[offset] = sample.time;
+    buffer.values[offset + 1] = sample.value;
+    buffer.values[offset + 2] = sample.baseline ?? Number.NaN;
+    buffer.values[offset + 3] = sample.decay ?? Number.NaN;
+  }
+
+  buffer.count = samples.length;
+};
 
 /*
 collectStreamSamples folds this batch's rows into the retained series. Rows are
@@ -917,7 +969,7 @@ const collectStreamSamples = (
   retained: StreamSample[],
   entries: JSONSerializable[],
   dataset: PaintDataset,
-  element: HTMLElement,
+  buffer: StreamBuffer,
 ): StreamSample[] => {
   const samples = [...retained];
 
@@ -928,7 +980,7 @@ const collectStreamSamples = (
 
     if (
       identity !== undefined &&
-      String(identity) === element.dataset.streamLastId
+      String(identity) === buffer.lastId
     ) {
       continue;
     }
@@ -948,7 +1000,7 @@ const collectStreamSamples = (
     }
 
     if (identity !== undefined) {
-      element.dataset.streamLastId = String(identity);
+      buffer.lastId = String(identity);
     }
 
     samples.push({
@@ -1075,21 +1127,26 @@ const drawStreamCanvas = (
 		two unrelated ones into one line.
 	*/
   const filter = dataset.streamFilter ?? "";
+	let buffer = streamBuffers.get(element);
 
-  if (element.dataset.streamAppliedFilter !== filter) {
-    element.dataset.streamAppliedFilter = filter;
-    element.dataset.streamValues = "";
-    element.dataset.streamLastId = "";
-  }
+	if (buffer === undefined || buffer.filter !== filter) {
+		buffer = {
+			values: new Float64Array(0),
+			count: 0,
+			filter,
+			lastId: "",
+		};
+		streamBuffers.set(element, buffer);
+	}
 
   const samples = collectStreamSamples(
-    decodeStreamSamples(element.dataset.streamValues ?? ""),
+	streamSamples(buffer),
     streamEntries(updates, dataset),
     dataset,
-    element,
+	buffer,
   );
 
-  element.dataset.streamValues = encodeStreamSamples(samples);
+	retainStreamSamples(buffer, samples);
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.clearRect(0, 0, width, height);
 
@@ -1269,7 +1326,7 @@ const updateTargets = (
     return;
   }
 
-  for (const [key, targetsByKey] of targets) {
+  for (const targetsByKey of targets.values()) {
     for (const target of targetsByKey) {
       if (target.mode === "stream") {
         drawStreamCanvas(target.element, target.dataset, updates);
@@ -1297,7 +1354,7 @@ const updateTargets = (
         continue;
       }
 
-      const value = readPath(scopedUpdates, key);
+      const value = target.read(scopedUpdates);
 
       if (value === undefined || value === null) {
         continue;

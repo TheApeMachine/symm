@@ -11,14 +11,14 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -210,7 +210,7 @@ func (solver *Solver) Run() error {
 
 		config := system.Cfg.Snapshot()
 		switchThreshold := config.Planner.MinimumConfidence
-		rows := datura.NewMap()
+		rows := make(map[string]types.Cognition)
 		var cognitionErr error
 
 		solver.thesis.Symbols.Range(func(key, value interface{}) bool {
@@ -243,7 +243,6 @@ func (solver *Solver) Run() error {
 		solver.publish(rows)
 
 		if cognitionErr != nil {
-			rows.Free()
 			solver.err = cognitionErr
 		}
 	}
@@ -289,7 +288,7 @@ func (solver *Solver) processBatch(
 	symbol string,
 	categories []types.Category,
 	switchThreshold float64,
-	rows datura.Map[any],
+	rows map[string]types.Cognition,
 ) error {
 	symbolState, found := solver.thesis.Symbols.Load(symbol)
 
@@ -1070,13 +1069,23 @@ func (solver *Solver) formatLookaheadPredictions(
 /*
 publish emits one cognition wire frame per symbol observed on this tick.
 */
-func (solver *Solver) publish(rows datura.Map[any]) {
+func (solver *Solver) publish(rows map[string]types.Cognition) {
 	if len(rows) == 0 {
-		rows.Free()
 		return
 	}
 
-	utils.Publish(solver.ui, datura.NewMap("cognition", rows))
+	encoded := make([]*wire.CognitionT, 0, len(rows))
+
+	for _, row := range rows {
+		encoded = append(encoded, cognitionWire(row))
+	}
+
+	solver.ui.Push(telemetry.Encode(&wire.FrameT{
+		Type: wire.FrameCognitionFrame,
+		Value: &wire.CognitionFrameT{
+			Rows: encoded,
+		},
+	}))
 }
 
 /*

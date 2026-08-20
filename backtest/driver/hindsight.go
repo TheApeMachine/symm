@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/backtest/hindsight"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -328,5 +330,63 @@ func (driver *Driver) buildHindsight(captureID int64) (RealizedReport, error) {
 publishHindsight emits one hindsight wire frame for the dashboard.
 */
 func (driver *Driver) publishHindsight(report RealizedReport) {
-	utils.Publish(driver.ui, datura.NewMap("hindsight", report))
+	driver.ui.Push(telemetry.Encode(&wire.FrameT{
+		Type:  wire.FrameHindsightFrame,
+		Value: hindsightWire(report),
+	}))
+}
+
+func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
+	symbols := make([]*wire.HindsightSymbolT, 0, len(report.Symbols))
+
+	for _, symbol := range report.Symbols {
+		opportunities := make([]*wire.HindsightOpportunityT, 0, len(symbol.Opportunities))
+
+		for _, opportunity := range symbol.Opportunities {
+			opportunities = append(opportunities, &wire.HindsightOpportunityT{
+				Leg: &wire.HindsightLegT{
+					Symbol: opportunity.Leg.Symbol, BuyAt: opportunity.Leg.BuyAt.UnixNano(),
+					SellAt: opportunity.Leg.SellAt.UnixNano(), BuyPrice: opportunity.Leg.BuyPrice,
+					SellPrice: opportunity.Leg.SellPrice, ProfitPct: opportunity.Leg.ProfitPct,
+				},
+				Signal: &wire.HindsightSignalT{
+					At: opportunity.Signal.At.UnixNano(), GraphScore: opportunity.Signal.GraphScore,
+					ThesisScore: opportunity.Signal.ThesisScore, Opportunity: opportunity.Signal.Opportunity,
+					OpportunityType: opportunity.Signal.Type,
+					Alternatives:    hindsightNumbers(opportunity.Signal.Alternatives),
+				},
+				Captured: opportunity.Captured, Missed: opportunity.Missed,
+			})
+		}
+
+		symbols = append(symbols, &wire.HindsightSymbolT{
+			Symbol: symbol.Symbol, UpboundPct: symbol.UpboundPct,
+			RealizedPct: symbol.RealizedPct, MissedPct: symbol.MissedPct,
+			Legs: int64(symbol.Legs), MissedLegs: int64(symbol.MissedLegs),
+			Opportunities: opportunities,
+		})
+	}
+
+	return &wire.HindsightFrameT{
+		CaptureId: report.CaptureID, Status: report.Status, Symbols: symbols,
+		MissedPct: report.MissedPct, UpboundPct: report.UpboundPct,
+		MissedLegs: int64(report.MissedLegs), TotalLegs: int64(report.TotalLegs),
+	}
+}
+
+func hindsightNumbers(values map[string]float64) []*wire.NamedNumberT {
+	names := make([]string, 0, len(values))
+
+	for name := range values {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+	result := make([]*wire.NamedNumberT, 0, len(names))
+
+	for _, name := range names {
+		result = append(result, &wire.NamedNumberT{Name: name, Value: values[name]})
+	}
+
+	return result
 }

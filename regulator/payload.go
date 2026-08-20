@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 /*
@@ -45,6 +47,45 @@ type RegulatorPayload struct {
 	Summary          string            `json:"summary"`
 	Subsystems       []SubsystemStatus `json:"subsystems"`
 	Sparkline        []float64         `json:"sparkline"`
+}
+
+func regulatorWire(payload RegulatorPayload) *wire.RegulatorFrameT {
+	subsystems := make([]*wire.SubsystemT, 0, len(payload.Subsystems))
+
+	for _, subsystem := range payload.Subsystems {
+		subsystems = append(subsystems, &wire.SubsystemT{
+			Name:        subsystem.Name,
+			Label:       subsystem.Label,
+			Health:      subsystem.Health,
+			Direction:   subsystem.Direction,
+			ValueText:   subsystem.ValueText,
+			Explanation: subsystem.Explanation,
+			Value:       subsystem.Value,
+		})
+	}
+
+	return &wire.RegulatorFrameT{
+		Status:                payload.Status,
+		Surprise:              payload.Surprise,
+		Energy:                payload.Energy,
+		Pnl:                   payload.PnL,
+		PredictedReturn:       payload.PredictedReturn,
+		PredictionScale:       payload.PredictionScale,
+		PredictedActive:       payload.PredictedActive,
+		ActivityScale:         payload.ActivityScale,
+		Samples:               int64(payload.Samples),
+		MarkSamples:           payload.MarkSamples,
+		IntervalMarks:         int64(payload.IntervalMarks),
+		LastMarkSymbol:        payload.LastMarkSymbol,
+		LastMarkAt:            payload.LastMarkAt,
+		LastMarkReturn:        payload.LastMarkReturn,
+		LastMarkDrawdown:      payload.LastMarkDrawdown,
+		LastMarkFloorDistance: payload.LastMarkFloor,
+		LastMarkSurgeArmed:    payload.LastMarkSurge,
+		Summary:               payload.Summary,
+		Subsystems:            subsystems,
+		Sparkline:             payload.Sparkline,
+	}
 }
 
 /*

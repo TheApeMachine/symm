@@ -23,9 +23,7 @@ func TestNewMapReduce(t *testing.T) {
 
 				Convey("Then it should initialize correctly", func() {
 					So(mr, ShouldNotBeNil)
-					So(len(mr.consumerIDs), ShouldEqual, 2)
-					So(len(mr.consumerQueues), ShouldEqual, 2)
-					So(mr.data, ShouldNotBeNil)
+					So(len(mr.consumers), ShouldEqual, 2)
 					So(mr.mapFn, ShouldNotBeNil)
 					So(mr.reduceFn, ShouldNotBeNil)
 				})
@@ -38,8 +36,7 @@ func TestNewMapReduce(t *testing.T) {
 
 				Convey("Then it should initialize with empty slices", func() {
 					So(mr, ShouldNotBeNil)
-					So(len(mr.consumerIDs), ShouldEqual, 0)
-					So(len(mr.consumerQueues), ShouldEqual, 0)
+					So(len(mr.consumers), ShouldEqual, 0)
 				})
 			})
 		})
@@ -83,7 +80,7 @@ func TestPush(t *testing.T) {
 				mr.Push(42)
 
 				Convey("Then all consumers should receive the item", func() {
-					for _, consumerID := range mr.consumerIDs {
+					for consumerID := range mr.consumers {
 						item, ok := mr.Pop(consumerID)
 						So(ok, ShouldBeTrue)
 						So(item, ShouldEqual, 42)
@@ -392,7 +389,7 @@ func BenchmarkPop(b *testing.B) {
 
 func BenchmarkDrain(b *testing.B) {
 	mr := Setup[int]([]string{"A"}, nil, nil)
-	
+
 	for i := range 1000 {
 		mr.Push(i)
 	}

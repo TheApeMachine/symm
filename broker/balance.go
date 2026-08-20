@@ -1,13 +1,15 @@
 package broker
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -55,7 +57,7 @@ func (balance *Balance) Status() types.Status {
 }
 
 func (balance *Balance) Wallet() []byte {
-	mapped := datura.NewMap()
+	balances := make([]*wire.BalanceT, 0)
 
 	balance.wallet.Range(func(key, value any) bool {
 		asset, ok := key.(string)
@@ -70,15 +72,24 @@ func (balance *Balance) Wallet() []byte {
 			return true
 		}
 
-		mapped[asset] = amount
+		balances = append(balances, &wire.BalanceT{
+			Asset:  asset,
+			Amount: amount.String(),
+		})
 
 		return true
 	})
 
-	out := datura.NewMap()
-	out["balances"] = mapped
+	sort.Slice(balances, func(left, right int) bool {
+		return balances[left].Asset < balances[right].Asset
+	})
 
-	return out.MarshalAndFree()
+	return telemetry.Encode(&wire.FrameT{
+		Type: wire.FrameBalancesFrame,
+		Value: &wire.BalancesFrameT{
+			Balances: balances,
+		},
+	})
 }
 
 func (balance *Balance) Update() {

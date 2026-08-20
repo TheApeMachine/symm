@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"runtime"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
@@ -73,19 +72,13 @@ and tied routing to the encoding.
 */
 func (transport *FluidRTC) Run(publications *transport.MapReduce[types.FluidFrame], consumerID string) {
 	publications.Register(consumerID)
+	defer publications.Unregister(consumerID)
 
 	for {
-		select {
-		case <-transport.ctx.Done():
-			return
-		default:
-		}
-
-		frame, ok := publications.Pop(consumerID)
+		frame, ok := publications.WaitPop(transport.ctx, consumerID)
 
 		if !ok {
-			runtime.Gosched()
-			continue
+			return
 		}
 
 		// No viewer attached: discard immediately. Dropping an empty queue

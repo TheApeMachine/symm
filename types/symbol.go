@@ -2,12 +2,14 @@ package types
 
 import (
 	"iter"
+	"sort"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 /*
@@ -193,11 +195,86 @@ func (symbol *Symbol) AppendMeasurement(measurement *types.Measurement) {
 		return
 	}
 
-	symbol.ui.Push(
-		datura.NewMap(
-			"measurements", datura.NewMap(symbol.Symbol, measurement),
-		).MarshalAndFree(),
-	)
+	symbol.ui.Push(telemetry.Encode(&wire.FrameT{
+		Type: wire.FrameMeasurementsFrame,
+		Value: &wire.MeasurementsFrameT{
+			Rows: []*wire.MeasurementT{measurementWire(symbol.Symbol, measurement)},
+		},
+	}))
+}
+
+func measurementWire(
+	symbolName string, measurement *types.Measurement,
+) *wire.MeasurementT {
+	metrics := make([]*wire.MetricT, 0, len(measurement.Metrics))
+	metricNames := make([]string, 0, len(measurement.Metrics))
+
+	for name := range measurement.Metrics {
+		metricNames = append(metricNames, name)
+	}
+
+	sort.Strings(metricNames)
+
+	for _, name := range metricNames {
+		metric := measurement.Metrics[name]
+
+		if metric == nil {
+			continue
+		}
+
+		encoded := &wire.MetricT{
+			Name: name,
+			Raw:  metric.Raw,
+			Unit: string(metric.Unit),
+		}
+
+		if metric.Normalized != nil {
+			encoded.Normalized = *metric.Normalized
+			encoded.HasNormalized = true
+		}
+
+		metrics = append(metrics, encoded)
+	}
+
+	metadata := make([]*wire.NamedNumberT, 0, len(measurement.Metadata))
+	metadataNames := make([]string, 0, len(measurement.Metadata))
+
+	for name := range measurement.Metadata {
+		metadataNames = append(metadataNames, name)
+	}
+
+	sort.Strings(metadataNames)
+
+	for _, name := range metadataNames {
+		metadata = append(metadata, &wire.NamedNumberT{
+			Name:  name,
+			Value: measurement.Metadata[name],
+		})
+	}
+
+	return &wire.MeasurementT{
+		Id:               measurement.ID,
+		Source:           measurement.Source,
+		Symbol:           symbolName,
+		Tick:             measurement.Tick,
+		Peer:             measurement.Peer,
+		At:               timestampNano(measurement.At),
+		ObservedFrom:     timestampNano(measurement.ObservedFrom),
+		Horizon:          int64(measurement.Horizon),
+		PeerAt:           timestampNano(measurement.PeerAt),
+		PeerObservedFrom: timestampNano(measurement.PeerObservedFrom),
+		Maturity:         measurement.Maturity,
+		Metrics:          metrics,
+		Metadata:         metadata,
+	}
+}
+
+func timestampNano(at time.Time) int64 {
+	if at.IsZero() {
+		return 0
+	}
+
+	return at.UnixNano()
 }
 
 /*

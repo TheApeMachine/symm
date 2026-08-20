@@ -1,0 +1,602 @@
+namespace telemetry;
+
+table NamedNumber { name:string (required); value:double; }
+table NamedString { name:string (required); value:string; }
+table NamedBool { name:string (required); value:bool; }
+table NamedStrings { name:string (required); values:[string]; }
+
+table Metric {
+  name:string (required);
+  raw:double;
+  normalized:double;
+  hasNormalized:bool;
+  unit:string;
+}
+
+table Measurement {
+  id:string;
+  source:string (required);
+  symbol:string (required);
+  tick:long;
+  peer:string;
+  at:long;
+  observedFrom:long;
+  horizon:long;
+  peerAt:long;
+  peerObservedFrom:long;
+  maturity:double;
+  metrics:[Metric];
+  metadata:[NamedNumber];
+}
+
+table MeasurementsFrame { rows:[Measurement] (required); }
+table TickFrame { count:long; }
+table EquityFrame { cash:string; unrealized:string; equity:string; }
+table Balance { asset:string (required); amount:string (required); }
+table BalancesFrame { balances:[Balance]; }
+
+table ResonanceLayer {
+  state:[double];
+  prediction:[double];
+  errorNorm:double;
+  temporal:bool;
+}
+
+table Posterior {
+  value:double;
+  scale:double;
+  degreesOfFreedom:double;
+  ready:bool;
+}
+
+table ResonanceForecast {
+  forwardCurve:[double];
+  forwardRetention:[double];
+  supportedHorizon:long;
+  probeHorizon:long;
+  aggregate:Posterior;
+  posterior:[Posterior];
+}
+
+table ResonanceDynamics {
+  ready:double;
+  deltaTime:double;
+  position:double;
+  velocity:double;
+  acceleration:double;
+  memory:double;
+  memoryScale:double;
+  storedEnergy:double;
+  suppliedPower:double;
+  dissipation:double;
+  passivityResidue:double;
+  continuousVariance:double;
+  jumpAmplitude:double;
+  jumpVariance:double;
+  sampleCount:double;
+  rotorScalar:double;
+  rotorBivector:double;
+  equivarianceNorm:double;
+}
+
+table ResonanceVerdict {
+  learning:string;
+  tuning:string;
+  learningHealth:double;
+  tuningHealth:double;
+  direction:double;
+  conviction:double;
+}
+
+table Resonance {
+  source:string (required);
+  symbol:string (required);
+  at:long;
+  samples:long;
+  taskRelativePrecision:double;
+  taskRelativePrecisionReady:bool;
+  taskCalibration:string;
+  taskSkill:double;
+  taskSkillReady:bool;
+  taskSkillStatus:string;
+  lastResolvedForecast:double;
+  lastRealizedReturn:double;
+  lastForecastError:double;
+  observables:[double];
+  latent:[double];
+  embedding:[double];
+  layers:[ResonanceLayer];
+  energy:double;
+  surprise:double;
+  forecast:ResonanceForecast;
+  dynamics:ResonanceDynamics;
+  verdict:ResonanceVerdict;
+}
+
+table ResonanceFrame { rows:[Resonance] (required); }
+
+table CognitionBranch {
+  id:long;
+  parentId:long;
+  token:string;
+  prefix:string;
+  key:string;
+  depth:long;
+  probability:double;
+  count:ulong;
+}
+table CognitionBeam { sequence:string; key:string; score:double; }
+table CognitionClass { name:string; probability:double; }
+table CognitionContribution { token:string; bits:double; }
+table CognitionSymbol { symbol:string; className:string; score:double; purity:double; }
+table CognitionLexical { original:string; mapped:string; similarity:double; }
+table Cognition {
+  source:string;
+  symbol:string (required);
+  at:long;
+  sequence:string;
+  regimePrefix:string;
+  winner:string;
+  winnerClass:string;
+  candidateWinner:string;
+  stateHeld:bool;
+  predictionsHeld:bool;
+  switchConfidence:double;
+  switchThreshold:double;
+  error:string;
+  confidence:double;
+  classConfidence:double;
+  contrast:double;
+  contrastEvidence:double;
+  entropyBits:double;
+  hasEntropyBits:bool;
+  entropyThreshold:double;
+  hasEntropyThreshold:bool;
+  ambiguous:bool;
+  cohort:ulong;
+  lookaheadScore:double;
+  lookaheadPaths:long;
+  beamWidth:long;
+  maxHops:long;
+  nodeCount:long;
+  predictions:[NamedNumber];
+  branches:[CognitionBranch];
+  beams:[CognitionBeam];
+  classes:[CognitionClass];
+  remFrom:long;
+  remThrough:long;
+  remReplays:long;
+  remDecayFactor:double;
+  remInhibitionPct:double;
+  remConsolidating:bool;
+  interpolatedSurprisal:double;
+  contributions:[CognitionContribution];
+  symbols:[CognitionSymbol];
+  lexical:[CognitionLexical];
+  dreams:[string];
+}
+table CognitionFrame { rows:[Cognition] (required); }
+
+table Causal {
+  source:string;
+  symbol:string (required);
+  at:long;
+  samples:long;
+  precision:double;
+  hypothesis:string;
+  treatment:string;
+  controls:[string];
+  target:string;
+  value:double;
+  category:double;
+  confidence:double;
+  confidenceBaseline:double;
+  entryBaseline:double;
+  exitBaseline:double;
+  strength:double;
+  association:double;
+  associationScore:double;
+  intervention:double;
+  interventionScore:double;
+  doExpectation:double;
+  uplift:double;
+  upliftScore:double;
+  residual:double;
+  counterfactual:double;
+  noise:double;
+  noiseScore:double;
+  contagion:double;
+  condition:double;
+  inverted:bool;
+  probabilities:[double];
+  distribution:[NamedNumber];
+}
+table CausalFrame { rows:[Causal] (required); }
+
+table GraphMetadata {
+  numbers:[NamedNumber];
+  strings:[NamedString];
+  bools:[NamedBool];
+  stringLists:[NamedStrings];
+}
+table GraphNode {
+  id:string (required);
+  label:string;
+  symbol:string;
+  peer:string;
+  source:string;
+  measurementId:string;
+  metric:string;
+  side:string;
+  kind:string;
+  value:double;
+  normalized:double;
+  hasNormalized:bool;
+  quality:double;
+  hasQuality:bool;
+  strength:double;
+  confidence:double;
+  maturity:double;
+  unit:string;
+  observedFrom:long;
+  horizon:long;
+  at:long;
+  metadata:GraphMetadata;
+  derived:bool;
+}
+table GraphEdge {
+  from:string (required);
+  to:string (required);
+  relation:string;
+  weight:double;
+  confidence:double;
+  quality:double;
+  hasQuality:bool;
+  evidence:[string];
+  observedFrom:long;
+  horizon:long;
+  at:long;
+  reason:string;
+  derived:bool;
+}
+table ReasoningNode {
+  id:string;
+  label:string;
+  symbol:string;
+  tier:string;
+  role:string;
+  source:string;
+  value:double;
+  confidence:double;
+  derived:bool;
+}
+table ReasoningLink {
+  from:string;
+  to:string;
+  relation:string;
+  weight:double;
+  confidence:double;
+  derived:bool;
+}
+table Reasoning {
+  symbol:string;
+  ready:bool;
+  reason:string;
+  observedRows:long;
+  maximumHorizon:long;
+  treatment:string;
+  mediator:string;
+  target:string;
+  controls:[string];
+  currentState:[NamedNumber];
+  nodes:[ReasoningNode];
+  links:[ReasoningLink];
+}
+table GraphFrame {
+  at:long;
+  forecastHorizon:long;
+  taskSkill:double;
+  taskSkillReady:bool;
+  decisionTarget:string;
+  nodes:[GraphNode];
+  edges:[GraphEdge];
+  reasoning:Reasoning;
+}
+
+table MCTSBranch { action:string; visits:long; meanReward:double; }
+table MCTSNode {
+  action:long;
+  actionName:string;
+  depth:long;
+  visits:long;
+  effectiveVisits:double;
+  observedReward:double;
+  counterfactualReward:double;
+  counterfactualMass:double;
+  counterfactualPrecision:double;
+  totalReward:double;
+  meanReward:double;
+  exploitation:double;
+  exploration:double;
+  causalExpectation:double;
+  selectionScore:double;
+  scmReady:bool;
+  scmReason:string;
+  selected:bool;
+  principal:bool;
+  state:[NamedNumber];
+  children:[MCTSNode];
+}
+table DecisionTrace {
+  hypothesis:string;
+  graphSupports:double;
+  graphContradicts:double;
+  graphConditions:double;
+  thesisBalance:double;
+  thesisConfidence:double;
+  iterations:long;
+  branches:[MCTSBranch];
+  recommendedAction:string;
+  tree:MCTSNode;
+}
+table EntryCost {
+  entryPrice:string;
+  bestAsk:string;
+  bestBid:string;
+  midpoint:string;
+  grossNotional:string;
+  entryFee:string;
+  exitFeeAtBreakEven:string;
+  roundTripFees:string;
+  spread:string;
+  impact:string;
+  breakEven:string;
+}
+table RiskPlan {
+  present:bool;
+  entryNoiseBand:string;
+  noiseBand:string;
+  riskDistance:string;
+  trailDistance:string;
+  armBuffer:string;
+  lockBuffer:string;
+  minEdge:string;
+  maxLoss:string;
+  exitFeeRate:string;
+  entryFeeRate:string;
+}
+table Stoploss {
+  status:string;
+  symbol:string;
+  floor:string;
+  mark:string;
+  peak:string;
+  profitLine:string;
+  armAt:string;
+  lockFloor:string;
+  locked:bool;
+  triggerReason:string;
+  triggerMark:string;
+  surgeArmed:bool;
+  lastMove:string;
+  surgeMove:string;
+  momentumFloor:string;
+  plan:RiskPlan;
+}
+table Decision {
+  id:string;
+  action:string;
+  symbol:string;
+  at:long;
+  utility:double;
+  graphScore:double;
+  thesisScore:double;
+  thesisConfidence:double;
+  thesisSupport:double;
+  thesisContradiction:double;
+  thesisConditions:double;
+  direction:double;
+  perspectiveReturn:double;
+  perspectiveConfidence:double;
+  admissionGraphThreshold:double;
+  admissionUtilityThreshold:double;
+  allocationHaircut:double;
+  allocationHaircutReason:string;
+  alternatives:[NamedNumber];
+  allocationClass:string;
+  opportunity:bool;
+  opportunityType:string;
+  reserveEligible:bool;
+  reserveReason:string;
+  predictiveReady:bool;
+  predictiveStatus:string;
+  taskSkill:double;
+  taskSkillReady:bool;
+  proposedNotional:string;
+  proposedQuantity:string;
+  referencePrice:string;
+  validThroughEpoch:ulong;
+  arbitrationRound:long;
+  forecastSource:string;
+  forecastModel:string;
+  forecastEpoch:ulong;
+  forecastHorizon:long;
+  forwardCurve:[double];
+  calibrationCount:ulong;
+  expectedReturn:string;
+  expectedFees:string;
+  expectedSpread:string;
+  expectedImpact:string;
+  adverseSelection:string;
+  uncertainty:double;
+  confidence:double;
+  causalPrecision:double;
+  opportunityMargin:double;
+  cognitiveLead:double;
+  basinConfidence:double;
+  availableCapital:string;
+  openPositions:long;
+  slotCapacity:long;
+  cause:string;
+  reason:string;
+  displaces:string;
+  displacedQuantity:string;
+  displacedPrice:string;
+  reservationId:string;
+  positionStatus:string;
+  sellableQty:string;
+  entryAt:long;
+  exitAt:long;
+  entryPrice:string;
+  entryFee:string;
+  exitPrice:string;
+  exitFee:string;
+  pnl:string;
+  returnPct:double;
+  mark:string;
+  entryCost:EntryCost;
+  stoploss:Stoploss;
+  risk:RiskPlan;
+  trace:DecisionTrace;
+}
+table StrategyFrame { evaluated:bool; outcome:string; decisions:[Decision]; }
+
+table Holding {
+  status:string;
+  symbol:string;
+  asset:string;
+  qty:string;
+  sellableQty:string;
+  entryAt:long;
+  exitAt:long;
+  entryPrice:string;
+  entryFee:string;
+  exitPrice:string;
+  exitFee:string;
+  pnl:string;
+  profitThreshold:string;
+  returnPct:double;
+  mark:string;
+  isOpportunity:bool;
+  reservationId:string;
+  stoploss:Stoploss;
+}
+table Position { status:string; decision:Decision; holding:Holding; }
+table PositionsFrame { rows:[Position]; }
+
+table Subsystem {
+  name:string;
+  label:string;
+  health:string;
+  direction:string;
+  valueText:string;
+  explanation:string;
+  value:double;
+}
+table RegulatorFrame {
+  status:string;
+  surprise:double;
+  energy:double;
+  pnl:double;
+  predictedReturn:double;
+  predictionScale:double;
+  predictedActive:double;
+  activityScale:double;
+  samples:long;
+  markSamples:ulong;
+  intervalMarks:long;
+  lastMarkSymbol:string;
+  lastMarkAt:string;
+  lastMarkReturn:double;
+  lastMarkDrawdown:double;
+  lastMarkFloorDistance:double;
+  lastMarkSurgeArmed:bool;
+  summary:string;
+  subsystems:[Subsystem];
+  sparkline:[double];
+}
+
+table Capture { id:long; startedAt:long; endedAt:long; hasEndedAt:bool; frames:long; }
+table BacktestFrame {
+  captureId:long;
+  playing:bool;
+  position:long;
+  startedAt:long;
+  endedAt:long;
+  rebooting:bool;
+  captures:[Capture];
+}
+table HindsightLeg {
+  symbol:string;
+  buyAt:long;
+  sellAt:long;
+  buyPrice:double;
+  sellPrice:double;
+  profitPct:double;
+}
+table HindsightSignal {
+  at:long;
+  graphScore:double;
+  thesisScore:double;
+  opportunity:bool;
+  opportunityType:string;
+  alternatives:[NamedNumber];
+}
+table HindsightOpportunity {
+  leg:HindsightLeg;
+  signal:HindsightSignal;
+  captured:bool;
+  missed:bool;
+}
+table HindsightSymbol {
+  symbol:string;
+  upboundPct:double;
+  realizedPct:double;
+  missedPct:double;
+  legs:long;
+  missedLegs:long;
+  opportunities:[HindsightOpportunity];
+}
+table HindsightFrame {
+  captureId:long;
+  status:string;
+  symbols:[HindsightSymbol];
+  missedPct:double;
+  upboundPct:double;
+  missedLegs:long;
+  totalLegs:long;
+}
+table ErrorFrame {
+  level:string;
+  source:string;
+  error:string;
+  message:string;
+  msg:string;
+  caller:string;
+  time:string;
+}
+
+union Frame {
+  MeasurementsFrame,
+  TickFrame,
+  EquityFrame,
+  BalancesFrame,
+  ResonanceFrame,
+  CognitionFrame,
+  CausalFrame,
+  GraphFrame,
+  StrategyFrame,
+  PositionsFrame,
+  RegulatorFrame,
+  BacktestFrame,
+  HindsightFrame,
+  ErrorFrame
+}
+
+table Envelope {
+  sequence:ulong;
+  frame:Frame (required);
+}
+
+root_type Envelope;
+file_identifier "SYMM";

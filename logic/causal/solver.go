@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/algorithm"
@@ -17,8 +16,9 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -423,7 +423,18 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 	})
 
 	if len(rows) > 0 {
-		utils.Publish(solver.ui, datura.NewMap("causal", rows))
+		encoded := make([]*wire.CausalT, 0, len(rows))
+
+		for _, row := range rows {
+			encoded = append(encoded, causalWire(row))
+		}
+
+		solver.ui.Push(telemetry.Encode(&wire.FrameT{
+			Type: wire.FrameCausalFrame,
+			Value: &wire.CausalFrameT{
+				Rows: encoded,
+			},
+		}))
 	}
 }
 

@@ -8,15 +8,15 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
@@ -250,7 +250,10 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
 		}
 
 		if symbolName == types.Focus() {
-			utils.Publish(solver.ui, datura.NewMap("graph", graph))
+			solver.ui.Push(telemetry.Encode(&wire.FrameT{
+				Type:  wire.FrameGraphFrame,
+				Value: graph.Wire(),
+			}))
 		}
 
 		solver.lastBuilt[symbolName] = graph

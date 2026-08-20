@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -168,7 +168,10 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	payload := solver.buildPayload(periodReturn, result)
 
 	if solver.ui != nil {
-		utils.Publish(solver.ui, datura.NewMap("regulator", payload))
+		solver.ui.Push(telemetry.Encode(&wire.FrameT{
+			Type:  wire.FrameRegulatorFrame,
+			Value: regulatorWire(payload),
+		}))
 	}
 
 	return nil

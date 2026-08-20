@@ -10,14 +10,14 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -132,7 +132,7 @@ func (position *Position) MarshalJSON() ([]byte, error) {
 		*positionJSON
 	}{
 		Status:       position.status(),
-		positionJSON: (*positionJSON)(position),	})
+		positionJSON: (*positionJSON)(position)})
 }
 
 /*
@@ -144,9 +144,20 @@ trading implementation we use is based on the kraken-cli, where under normal
 use you would also not be manually managing the balances.
 */
 func (position *Position) Publish() {
-	out := datura.NewMap()
-	out["positions"] = []*Position{position}
-	utils.Publish(position.ui, out)
+	position.ui.Push(telemetry.Encode(&wire.FrameT{
+		Type: wire.FramePositionsFrame,
+		Value: &wire.PositionsFrameT{
+			Rows: []*wire.PositionT{position.Wire()},
+		},
+	}))
+}
+
+func (position *Position) Wire() *wire.PositionT {
+	return &wire.PositionT{
+		Status:   string(position.status()),
+		Decision: types.DecisionWire(position.Decision),
+		Holding:  types.HoldingWire(position.Holding),
+	}
 }
 
 /*

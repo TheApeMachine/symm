@@ -3,18 +3,16 @@ package ui
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 func TestHubForecastPublication(t *testing.T) {
@@ -54,18 +52,19 @@ func TestHubForecastPublication(t *testing.T) {
 		So(err, ShouldBeNil)
 		Reset(func() { So(peer.Close(), ShouldBeNil) })
 
-		reading := map[string]any{
-			"source": types.SourceResonance,
-			"symbol": "BTC/USD",
-			"forecast": learning.RLSOutput{
-				Value:            0.02,
-				Scale:            0.01,
-				DegreesOfFreedom: 2,
-				Ready:            true,
+		thesis.UI().Push(telemetry.Encode(&wire.FrameT{
+			Type: wire.FrameResonanceFrame,
+			Value: &wire.ResonanceFrameT{
+				Rows: []*wire.ResonanceT{{
+					Source: string(types.SourceResonance), Symbol: "BTC/USD",
+					Forecast: &wire.ResonanceForecastT{
+						Aggregate: &wire.PosteriorT{
+							Value: 0.02, Scale: 0.01, DegreesOfFreedom: 2, Ready: true,
+						},
+					},
+				}},
 			},
-		}
-
-		utils.Publish(thesis.UI(), datura.NewMap("resonance", []any{reading}))
+		}))
 		So(conn.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
 
 		messageType, received, err := conn.ReadMessage()
@@ -79,21 +78,16 @@ func TestHubForecastPublication(t *testing.T) {
 		length := int(binary.LittleEndian.Uint32(received[frameBatchHeaderSize:]))
 		received = received[frameBatchHeaderSize*2 : frameBatchHeaderSize*2+length]
 
-		var frame struct {
-			Resonance []struct {
-				Source   types.SourceType   `json:"source"`
-				Symbol   string             `json:"symbol"`
-				Forecast learning.RLSOutput `json:"forecast"`
-			} `json:"resonance"`
-		}
-		So(json.Unmarshal(received, &frame), ShouldBeNil)
+		envelope := wire.GetRootAsEnvelope(received, 0).UnPack()
+		So(envelope.Frame.Type, ShouldEqual, wire.FrameResonanceFrame)
+		frame := envelope.Frame.Value.(*wire.ResonanceFrameT)
 
 		Convey("It should receive the explicit supported-horizon forecast", func() {
-			So(frame.Resonance, ShouldHaveLength, 1)
-			So(frame.Resonance[0].Source, ShouldEqual, types.SourceResonance)
-			So(frame.Resonance[0].Symbol, ShouldEqual, "BTC/USD")
-			So(frame.Resonance[0].Forecast.Ready, ShouldBeTrue)
-			So(frame.Resonance[0].Forecast.Value, ShouldEqual, 0.02)
+			So(frame.Rows, ShouldHaveLength, 1)
+			So(frame.Rows[0].Source, ShouldEqual, string(types.SourceResonance))
+			So(frame.Rows[0].Symbol, ShouldEqual, "BTC/USD")
+			So(frame.Rows[0].Forecast.Aggregate.Ready, ShouldBeTrue)
+			So(frame.Rows[0].Forecast.Aggregate.Value, ShouldEqual, 0.02)
 		})
 	})
 }
