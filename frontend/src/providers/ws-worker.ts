@@ -6,6 +6,7 @@ const RECONNECT_MAX_MS = 5000;
 type WorkerInbound =
 	| { type: "CONNECT"; url: string }
 	| { type: "DISCONNECT" }
+	| { type: "PAINTED"; acknowledgeBackend: boolean }
 	| { type: "FOCUS"; symbol: string }
 	| { type: "BACKTEST"; action: "play" | "pause" | "seek" | "select" | "hindsight"; at?: string; captureId?: number };
 
@@ -13,6 +14,11 @@ type WorkerOutbound =
 	| { type: "READY" }
 	| { type: "ONLINE"; online: boolean }
 	| { type: "DRAW"; frame: Record<string, unknown> }
+	| {
+			type: "DRAW_BATCH";
+			batches: ArrayBuffer[];
+			acknowledgeBackend: boolean;
+	  }
 	| { type: "ERROR_FRAME"; frame: Record<string, unknown> }
 	| { type: "ERROR"; message: string };
 
@@ -22,6 +28,40 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let activeUrl = "";
 let focusSymbol = "";
+let pendingBatches: ArrayBuffer[] = [];
+let paintInFlight = false;
+let backendAckPending = false;
+
+/*
+flushBatches transfers every binary telemetry batch to the main thread without
+copying or decoding it in the worker. The main thread decodes the bytes inside
+the paint callback, so no JavaScript telemetry object crosses this boundary.
+*/
+const flushBatches = () => {
+	if (paintInFlight || pendingBatches.length === 0) {
+		return;
+	}
+
+	const batches = pendingBatches;
+	const acknowledgeBackend = backendAckPending;
+	pendingBatches = [];
+	backendAckPending = false;
+	paintInFlight = true;
+	self.postMessage(
+		{
+			type: "DRAW_BATCH",
+			batches,
+			acknowledgeBackend,
+		} satisfies WorkerOutbound,
+		batches,
+	);
+};
+
+const stopFrameFlush = () => {
+	pendingBatches = [];
+	paintInFlight = false;
+	backendAckPending = false;
+};
 
 /*
 sendBacktest pushes one playback command to the backend driver. No-ops until
@@ -86,6 +126,7 @@ const connect = (url: string) => {
 
 	socketListeners = new AbortController();
 	socket = new WebSocket(url);
+	socket.binaryType = "arraybuffer";
 
 	socket.addEventListener(
 		"open",
@@ -148,32 +189,15 @@ const connect = (url: string) => {
 
 	socket.addEventListener(
 		"message",
-		async (event) => {
+		(event) => {
 			try {
-				const frame = JSON.parse(event.data) as Record<string, unknown>;
-
-				if (
-					frame === null ||
-					typeof frame !== "object" ||
-					Array.isArray(frame)
-				) {
-					throw new Error("wire frame must be an object");
+				if (!(event.data instanceof ArrayBuffer)) {
+					throw new Error("telemetry websocket requires a binary frame");
 				}
 
-				if (
-					frame.error !== undefined &&
-					frame.error !== null &&
-					typeof frame.error === "object"
-				) {
-					self.postMessage({
-						type: "ERROR_FRAME",
-						frame: frame.error as Record<string, unknown>,
-					} satisfies WorkerOutbound);
-
-					return;
-				}
-
-				self.postMessage({ type: "DRAW", frame } satisfies WorkerOutbound);
+				pendingBatches.push(event.data);
+				backendAckPending = true;
+				flushBatches();
 			} catch (err) {
 				console.log(event);
 
@@ -201,6 +225,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 
 		case "DISCONNECT": {
 			activeUrl = "";
+			stopFrameFlush();
 
 			if (reconnectTimer !== null) {
 				clearTimeout(reconnectTimer);
@@ -212,6 +237,21 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 				type: "ONLINE",
 				online: false,
 			} satisfies WorkerOutbound);
+			return;
+		}
+
+		case "PAINTED": {
+			paintInFlight = false;
+
+			if (
+				message.acknowledgeBackend &&
+				socket !== null &&
+				socket.readyState === WebSocket.OPEN
+			) {
+				socket.send(JSON.stringify({ type: "painted" }));
+			}
+
+			flushBatches();
 			return;
 		}
 

@@ -14,6 +14,8 @@ numeric Frame cannot carry it.
 */
 type Signal interface {
 	Name() string
+	Run() error
+	Error() error
 	Type() SourceType
 	Close() error
 }

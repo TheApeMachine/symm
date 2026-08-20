@@ -21,12 +21,13 @@ intensities.
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	err    error
 	thesis *types.Thesis
 	number nomagique.Number[string]
 }
 
 /*
-NewSignal constructs the Hawkes pipeline and starts it in its own goroutine.
+NewSignal constructs the Hawkes pipeline.
 */
 func NewSignal(
 	ctx context.Context,
@@ -43,7 +44,6 @@ func NewSignal(
 		),
 	}
 
-	go signal.run()
 	return signal
 }
 
@@ -54,15 +54,17 @@ func (signal *Signal) Name() string {
 	return string(types.SourceHawkes)
 }
 
+func (signal *Signal) Error() error { return signal.err }
+
 func (signal *Signal) Type() types.SourceType {
 	return types.SourceHawkes
 }
 
-func (signal *Signal) run() {
-	for {
+func (signal *Signal) Run() error {
+	for signal.err == nil {
 		select {
 		case <-signal.ctx.Done():
-			return
+			return signal.ctx.Err()
 		default:
 		}
 
@@ -73,61 +75,63 @@ func (signal *Signal) run() {
 		}
 
 		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, valid := value.(*types.Symbol)
+			symbol, valid := value.(*types.Symbol)
 
-				if !valid || symbol == nil {
-					return true
-				}
-
-				for trade := range symbol.MarketTrades(types.SourceHawkes) {
-					input := nomagique.Frame{}
-					input.Put(algo.SymbolMark, markForSide(trade.Side))
-					input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
-					input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-
-					output, err := signal.number(symbol.Symbol, input)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"hawkes: number step failed for "+symbol.Symbol,
-							err,
-						))
-						continue
-					}
-
-					symbol.Measurements.Push(nmtypes.NewMeasurement(
-						uuid.NewString(),
-						signal.Name(),
-						trade.Timestamp.UnixNano(),
-						trade.Timestamp.UnixNano(),
-					).AddMetrics(
-						nmtypes.NewMetric("buy_intensity", output.MustGet(algo.SymbolLambdaAlpha), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitRate,
-							Timescale: nmtypes.TimescalePerSecond,
-						}),
-						nmtypes.NewMetric("sell_intensity", output.MustGet(algo.SymbolLambdaBeta), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitRate,
-							Timescale: nmtypes.TimescalePerSecond,
-						}),
-						nmtypes.NewMetric("buy_arrival_rate", output.MustGet(algo.SymbolAlphaArrivalRate), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitRate,
-							Timescale: nmtypes.TimescalePerSecond,
-						}),
-						nmtypes.NewMetric("sell_arrival_rate", output.MustGet(algo.SymbolBetaArrivalRate), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitRate,
-							Timescale: nmtypes.TimescalePerSecond,
-						}),
-						nmtypes.NewMetric("event_count", output.MustGet(algo.SymbolEventCount), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitCount,
-							Timescale: nmtypes.TimescalePerTick,
-						}),
-					))
-				}
-
+			if !valid || symbol == nil {
 				return true
-			})
+			}
+
+			for trade := range symbol.MarketTrades(types.SourceHawkes) {
+				input := nomagique.Frame{}
+				input.Put(algo.SymbolMark, markForSide(trade.Side))
+				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+
+				output, err := signal.number(symbol.Symbol, input)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"hawkes: number step failed for "+symbol.Symbol,
+						err,
+					))
+					return false
+				}
+
+				symbol.AppendMeasurement(nmtypes.NewMeasurement(
+					uuid.NewString(),
+					signal.Name(),
+					trade.Timestamp.UnixNano(),
+					trade.Timestamp.UnixNano(),
+				).AddMetrics(
+					nmtypes.NewMetric("buy_intensity", output.MustGet(algo.SymbolLambdaAlpha), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitRate,
+						Timescale: nmtypes.TimescalePerSecond,
+					}),
+					nmtypes.NewMetric("sell_intensity", output.MustGet(algo.SymbolLambdaBeta), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitRate,
+						Timescale: nmtypes.TimescalePerSecond,
+					}),
+					nmtypes.NewMetric("buy_arrival_rate", output.MustGet(algo.SymbolAlphaArrivalRate), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitRate,
+						Timescale: nmtypes.TimescalePerSecond,
+					}),
+					nmtypes.NewMetric("sell_arrival_rate", output.MustGet(algo.SymbolBetaArrivalRate), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitRate,
+						Timescale: nmtypes.TimescalePerSecond,
+					}),
+					nmtypes.NewMetric("event_count", output.MustGet(algo.SymbolEventCount), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitCount,
+						Timescale: nmtypes.TimescalePerTick,
+					}),
+				))
+			}
+
+			return true
+		})
 	}
+
+	return signal.err
 }
 
 /*
@@ -159,6 +163,7 @@ func (signal *Signal) pending() bool {
 
 	return hasWork
 }
+
 /*
 markForSide encodes one trade's aggressor side into the process mark: buy is
 the positive (alpha) channel, sell the negative (beta) channel.

@@ -1,11 +1,13 @@
 package types
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/transport"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestSymbolNewSymbol(t *testing.T) {
@@ -23,7 +25,12 @@ func TestSymbolNewSymbol(t *testing.T) {
 
 func TestSymbolAppendMeasurement(t *testing.T) {
 	Convey("Given one raw-only measurement appended to a symbol", t, func() {
-		symbol := NewSymbol("BTC/USD")
+		previousFocus := Focus()
+		SetFocus("BTC/USD")
+		Reset(func() { SetFocus(previousFocus) })
+
+		ui := transport.NewMapReduce[[]byte]([]string{"dashboard"}, nil, nil)
+		symbol := NewSymbol("BTC/USD", ui)
 		measurement := nmtypes.NewMeasurement("first", string(SourceHawkes), 0, 0)
 
 		symbol.AppendMeasurement(measurement)
@@ -42,6 +49,35 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 					So(rows[0].ID, ShouldEqual, "first")
 				}
 			}
+		})
+
+		Convey("It should publish the measurement to the dashboard transport", func() {
+			frame, found := ui.Pop("dashboard")
+			So(found, ShouldBeTrue)
+			var envelope map[string]map[string]nmtypes.Measurement
+			So(json.Unmarshal(frame, &envelope), ShouldBeNil)
+			So(envelope["measurements"]["BTC/USD"].ID, ShouldEqual, "first")
+		})
+	})
+
+	Convey("Given a measurement appended outside the dashboard focus", t, func() {
+		previousFocus := Focus()
+		SetFocus("BTC/USD")
+		Reset(func() { SetFocus(previousFocus) })
+
+		ui := transport.NewMapReduce[[]byte]([]string{"dashboard"}, nil, nil)
+		symbol := NewSymbol("ETH/USD", ui)
+		measurement := nmtypes.NewMeasurement("unfocused", string(SourceHawkes), 0, 0)
+
+		symbol.AppendMeasurement(measurement)
+
+		Convey("It should retain the measurement without publishing a UI frame", func() {
+			row, found := symbol.Measurements.Pop("audit")
+			So(found, ShouldBeTrue)
+			So(row.ID, ShouldEqual, "unfocused")
+
+			_, found = ui.Pop("dashboard")
+			So(found, ShouldBeFalse)
 		})
 	})
 }
@@ -81,5 +117,42 @@ func TestSymbolAppendTrade(t *testing.T) {
 
 			So(rows, ShouldResemble, []kraken.TradeData{trade})
 		})
+	})
+}
+
+func BenchmarkSymbolAppendMeasurement(b *testing.B) {
+	previousFocus := Focus()
+	SetFocus("BTC/USD")
+	b.Cleanup(func() { SetFocus(previousFocus) })
+
+	ui := transport.NewMapReduce[[]byte]([]string{"dashboard"}, nil, nil)
+	measurement := nmtypes.NewMeasurement("benchmark", string(SourceHawkes), 0, 0)
+	consumers := append(append([]string{}, LogicSourceStrings...), "audit")
+
+	b.Run("focused", func(b *testing.B) {
+		symbol := NewSymbol("BTC/USD", ui)
+		b.ReportAllocs()
+
+		for range b.N {
+			symbol.AppendMeasurement(measurement)
+			ui.Pop("dashboard")
+
+			for _, consumer := range consumers {
+				symbol.Measurements.Pop(consumer)
+			}
+		}
+	})
+
+	b.Run("unfocused", func(b *testing.B) {
+		symbol := NewSymbol("ETH/USD", ui)
+		b.ReportAllocs()
+
+		for range b.N {
+			symbol.AppendMeasurement(measurement)
+
+			for _, consumer := range consumers {
+				symbol.Measurements.Pop(consumer)
+			}
+		}
 	})
 }

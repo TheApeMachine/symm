@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"runtime"
 	"sync/atomic"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 	fastwebsocket "github.com/fasthttp/websocket"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -37,18 +39,20 @@ Each client has a bounded writer queue; a peer that cannot keep up is closed
 with an observable error so it cannot block market telemetry for every peer.
 */
 type Hub struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	app        *fiber.App
-	listenAddr string
-	thesis     *types.Thesis
-	desk       *broker.Desk
-	price      *broker.Price
-	balance    *broker.Balance
-	playback   playback
-	captures   func() any
-	fluid      *FluidRTC
-	manifold   *transport.MapReduce[types.FluidFrame]
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	app             *fiber.App
+	listenAddr      string
+	thesis          *types.Thesis
+	desk            *broker.Desk
+	price           *broker.Price
+	balance         *broker.Balance
+	playback        playback
+	captures        func() any
+	fluid           *FluidRTC
+	manifold        *transport.MapReduce[types.FluidFrame]
+	maxMessageBytes int
 }
 
 /*
@@ -71,6 +75,7 @@ func NewHub(
 	manifold *transport.MapReduce[types.FluidFrame],
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
+	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
 
 	hub := &Hub{
 		ctx:        ctx,
@@ -85,10 +90,11 @@ func NewHub(
 			ReadBufferSize:  4 * 1024 * 1024,
 			WriteBufferSize: 4 * 1024 * 1024,
 		}),
-		price:     price,
-		balance:   balance,
-		fluid:     NewFluidRTC(ctx),
-		manifold:  manifold,
+		price:           price,
+		balance:         balance,
+		fluid:           NewFluidRTC(ctx),
+		manifold:        manifold,
+		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
 	}
 
 	if manifold != nil {
@@ -155,6 +161,7 @@ func NewHub(
 		}
 
 		clientDone := make(chan struct{})
+		painted := make(chan struct{}, 1)
 
 		go func() {
 			defer close(clientDone)
@@ -188,6 +195,11 @@ func NewHub(
 					switch request.Type {
 					case "focus":
 						types.SetFocus(request.Symbol)
+					case "painted":
+						select {
+						case painted <- struct{}{}:
+						default:
+						}
 					case "backtest.play":
 						if hub.playback != nil {
 							hub.playback.Play()
@@ -219,6 +231,7 @@ func NewHub(
 			_ = conn.Close()
 			<-clientDone
 		}()
+		var deferredFrame []byte
 
 		for {
 			select {
@@ -227,14 +240,55 @@ func NewHub(
 			case <-clientDone:
 				return
 			default:
-				frame, ok := ui.Pop(consumerID)
+				frame := deferredFrame
+				deferredFrame = nil
+				ok := frame != nil
+
+				if !ok {
+					frame, ok = ui.Pop(consumerID)
+				}
 
 				if !ok {
 					runtime.Gosched()
 					continue
 				}
 
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+				frames := [][]byte{frame}
+				batchBytes := encodedFrameBatchSize(frames)
+
+				if batchBytes > hub.maxMessageBytes {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"dashboard: frame exceeds websocket message limit",
+						nil,
+					))
+					return
+				}
+
+				pending := ui.Length()
+
+				for range pending {
+					candidate, found := ui.Pop(consumerID)
+
+					if !found {
+						break
+					}
+
+					candidateBytes := frameBatchHeaderSize + len(candidate)
+
+					if batchBytes+candidateBytes > hub.maxMessageBytes {
+						deferredFrame = candidate
+						break
+					}
+
+					frames = append(frames, candidate)
+					batchBytes += candidateBytes
+				}
+
+				if err := conn.Conn.WriteMessage(
+					websocket.BinaryMessage,
+					encodeFrameBatch(frames),
+				); err != nil {
 					if !expectedDashboardWriteClosure(err) {
 						errnie.Error(errnie.Err(
 							errnie.UnprocessableContent,
@@ -244,6 +298,14 @@ func NewHub(
 					}
 
 					return
+				}
+
+				select {
+				case <-hub.ctx.Done():
+					return
+				case <-clientDone:
+					return
+				case <-painted:
 				}
 			}
 		}
@@ -299,11 +361,42 @@ func expectedDashboardWriteClosure(err error) bool {
 	return false
 }
 
+func (hub *Hub) Name() string { return "hub" }
+func (hub *Hub) Error() error { return hub.err }
+
 /*
 Serve listens for dashboard websocket clients.
 */
-func (hub *Hub) Serve() error {
-	return hub.app.Listen(hub.listenAddr)
+func (hub *Hub) Run() error {
+	listener, err := net.Listen("tcp", hub.listenAddr)
+
+	if err != nil {
+		hub.err = err
+		return hub.err
+	}
+
+	runDone := make(chan struct{})
+	closeDone := make(chan error, 1)
+
+	go func() {
+		select {
+		case <-hub.ctx.Done():
+			closeDone <- listener.Close()
+		case <-runDone:
+			closeDone <- nil
+		}
+	}()
+
+	hub.err = hub.app.Listener(listener)
+	close(runDone)
+
+	if errors.Is(hub.err, net.ErrClosed) && hub.ctx.Err() != nil {
+		hub.err = nil
+	}
+
+	hub.err = errors.Join(hub.err, <-closeDone)
+
+	return hub.err
 }
 
 /*

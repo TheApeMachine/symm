@@ -8,8 +8,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/kraken"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -44,6 +44,7 @@ func TestLiquidityPipeline(t *testing.T) {
 
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
+		go signal.Run()
 
 		Convey("It should emit one measurement per tick through its own pipeline", func() {
 			readings := drainMeasurements(market, 8)
@@ -58,6 +59,29 @@ func TestLiquidityPipeline(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(value.Raw, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given an older ticker arriving after a completed liquidity step", t, func() {
+		thesis := types.NewThesis(context.Background(), nil)
+		market := thesis.Symbol("AAA/USD")
+		start := time.Unix(1_700_000_000, 0).UTC()
+
+		market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, start.Add(time.Second)))
+
+		signal := NewSignal(context.Background(), thesis)
+		defer signal.Close()
+		go signal.Run()
+		firstReadings := drainMeasurements(market, 1)
+		market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, start))
+
+		Convey("It should retain both readings without regressing its adaptive clock", func() {
+			secondReadings := drainMeasurements(market, 1)
+
+			So(signal.Error(), ShouldBeNil)
+			So(len(firstReadings), ShouldEqual, 1)
+			So(len(secondReadings), ShouldEqual, 1)
+			So(secondReadings[0].At.Equal(start), ShouldBeTrue)
 		})
 	})
 }
@@ -99,4 +123,15 @@ func BenchmarkLiquidityPipeline(b *testing.B) {
 			_ = signal
 		}
 	})
+}
+
+func BenchmarkSignalEventTime(b *testing.B) {
+	signal := NewSignal(context.Background(), nil)
+	observedAt := time.Unix(1_700_000_000, 0).UTC()
+	signal.eventTime("AAA/USD", observedAt.Add(time.Second))
+	b.ReportAllocs()
+
+	for range b.N {
+		signal.eventTime("AAA/USD", observedAt)
+	}
 }

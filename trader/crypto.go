@@ -30,6 +30,7 @@ type Crypto struct {
 	status      atomic.Value
 	ctx         context.Context
 	cancel      context.CancelFunc
+	err         error
 	api         *websocket.API
 	ui          *transport.MapReduce[[]byte]
 	manifold    *transport.MapReduce[types.FluidFrame]
@@ -70,9 +71,12 @@ func NewCrypto(
 	crypto.status.Store(types.READY)
 	crypto.bindDiagnostics()
 
-	go crypto.run()
 	return crypto, nil
 }
+
+func (crypto *Crypto) Name() string { return "crypto" }
+
+func (crypto *Crypto) Error() error { return crypto.err }
 
 func (crypto *Crypto) Status() types.Status {
 	return crypto.status.Load().(types.Status)
@@ -91,11 +95,11 @@ func (crypto *Crypto) ObserveModule() func(string, time.Duration) {
 	return crypto.diagnostics.applyModule
 }
 
-func (crypto *Crypto) run() {
-	for {
+func (crypto *Crypto) Run() error {
+	for crypto.err == nil {
 		select {
 		case <-crypto.ctx.Done():
-			return
+			return crypto.ctx.Err()
 		default:
 			crypto.thesis.Tick++
 
@@ -118,6 +122,8 @@ func (crypto *Crypto) run() {
 			)
 		}
 	}
+
+	return crypto.err
 }
 
 func (crypto *Crypto) Close() error {

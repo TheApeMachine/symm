@@ -11,8 +11,8 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/transport"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -24,6 +24,7 @@ metric that carries affinity is typed evidence for or against it.
 type Solver struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
+	err        error
 	thesis     *types.Thesis
 	classifier *probability.Classifier
 	categories []types.CategoryType
@@ -69,7 +70,6 @@ func NewSolver(
 		ui:         ui,
 	}
 
-	go solver.run()
 	return solver
 }
 
@@ -77,18 +77,20 @@ func (solver *Solver) Name() string {
 	return "category"
 }
 
+func (solver *Solver) Error() error { return solver.err }
+
 /*
-run consumes each symbol's measurement stream from its own input MapReduce (the
+Run consumes each symbol's measurement stream from its own input MapReduce (the
 symbol Measurements column) and pushes the derived category batches to the
 output MapReduce the downstream cognition and graph solvers consume. The
 category stage never re-materializes the iterator; each measurement batch is
 classified and forwarded inline.
 */
-func (solver *Solver) run() {
-	for {
+func (solver *Solver) Run() error {
+	for solver.err == nil {
 		select {
 		case <-solver.ctx.Done():
-			return
+			return solver.ctx.Err()
 		default:
 		}
 
@@ -117,13 +119,13 @@ func (solver *Solver) run() {
 			)
 
 			if err != nil {
-				errnie.Error(errnie.Err(
+				solver.err = errnie.Error(errnie.Err(
 					errnie.Internal,
 					"category: failed to classify symbol",
 					err,
 				).With("symbol", symbolName))
 
-				return true
+				return false
 			}
 
 			if measured {
@@ -137,6 +139,8 @@ func (solver *Solver) run() {
 			return true
 		})
 	}
+
+	return solver.err
 }
 
 /*

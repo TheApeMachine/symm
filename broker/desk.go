@@ -29,6 +29,7 @@ type Desk struct {
 	*PositionStore
 	ctx            context.Context
 	cancel         context.CancelFunc
+	err            error
 	status         types.Status
 	api            *websocket.API
 	ui             *transport.MapReduce[[]byte]
@@ -117,7 +118,7 @@ func NewDesk(
 	if err := desk.recovery.Recover(); err != nil {
 		desk.status = types.ERROR
 
-		errnie.Error(errnie.Err(
+		desk.err = errnie.Error(errnie.Err(
 			errnie.Internal,
 			"desk: failed to recover account positions",
 			err,
@@ -126,9 +127,12 @@ func NewDesk(
 		return desk
 	}
 
-	desk.run()
 	return desk
 }
+
+func (desk *Desk) Name() string { return "desk" }
+
+func (desk *Desk) Error() error { return desk.err }
 
 func (desk *Desk) Cash() *decimal.Decimal {
 	if desk == nil || desk.balance == nil {
@@ -138,96 +142,105 @@ func (desk *Desk) Cash() *decimal.Decimal {
 	return desk.balance.Cash()
 }
 
-func (desk *Desk) run() {
-	go func() {
-		balanceRefreshing := &atomic.Bool{}
+func (desk *Desk) Run() error {
+	balanceRefreshing := &atomic.Bool{}
 
-		for {
-			select {
-			case <-desk.ctx.Done():
-				return
-			default:
+	for desk.err == nil {
+		select {
+		case <-desk.ctx.Done():
+			return desk.ctx.Err()
+		default:
+		}
+
+		started := time.Now()
+		drained := false
+
+		desk.thesis.Symbols.Range(func(_ any, value any) bool {
+			symbol, ok := value.(*types.Symbol)
+
+			if !ok || symbol == nil {
+				return true
 			}
 
-			started := time.Now()
-			drained := false
+			for ticker := range symbol.MarketTickers(types.SourceDesk) {
+				drained = true
+				found, ok := desk.positions.Load(symbol.Symbol)
 
-			desk.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, ok := value.(*types.Symbol)
+				if ok && found != nil {
+					position, ok := found.(*Position)
 
-				if !ok || symbol == nil {
-					return true
-				}
+					if ok && position != nil {
+						position.onTicker(ticker)
 
-				for ticker := range symbol.MarketTickers(types.SourceDesk) {
-					drained = true
-					found, ok := desk.positions.Load(symbol.Symbol)
+						if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
+							err := observer.ObserveMark(position.MarkFeedback(ticker.Timestamp))
 
-					if ok && found != nil {
-						position, ok := found.(*Position)
-
-						if ok && position != nil {
-							position.onTicker(ticker)
-
-							if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
-								errnie.Error(observer.ObserveMark(position.MarkFeedback(ticker.Timestamp)))
+							if err != nil {
+								desk.err = errnie.Error(err)
+								return false
 							}
 						}
 					}
 				}
+			}
 
-				for execution := range symbol.MarketExecutions(types.SourceDesk) {
-					drained = true
-					found, ok := desk.positions.Load(symbol.Symbol)
+			for execution := range symbol.MarketExecutions(types.SourceDesk) {
+				drained = true
+				found, ok := desk.positions.Load(symbol.Symbol)
 
-					if !ok || found == nil {
-						continue
-					}
-
-					position, ok := found.(*Position)
-
-					if !ok || position == nil {
-						continue
-					}
-
-					if position.onExecution(kraken.Execution{
-						Channel: "executions",
-						Type:    "update",
-						Data:    []kraken.ExecutionData{execution},
-					}) {
-						desk.foldPassage(position)
-						desk.positions.CompareAndDelete(symbol.Symbol, position)
-					}
+				if !ok || found == nil {
+					continue
 				}
 
-				return true
-			})
+				position, ok := found.(*Position)
 
-			if desk.ObserveModule != nil {
-				desk.ObserveModule("desk", time.Since(started))
+				if !ok || position == nil {
+					continue
+				}
+
+				if position.onExecution(kraken.Execution{
+					Channel: "executions",
+					Type:    "update",
+					Data:    []kraken.ExecutionData{execution},
+				}) {
+					desk.foldPassage(position)
+					desk.positions.CompareAndDelete(symbol.Symbol, position)
+				}
 			}
 
-			/*
-				Cash and equity are refreshed together because they answer the
-				same question at the same instant: what the account holds, and
-				what it would settle at if every open lot were closed now. The
-				drained guard paces both against the ticker rate, so the account
-				readout stays live without adding venue traffic of its own.
-			*/
-			if !drained {
-				time.Sleep(deskRest)
-				continue
-			}
+			return true
+		})
 
-			if balanceRefreshing.CompareAndSwap(false, true) {
-				go func() {
-					defer balanceRefreshing.Store(false)
-					desk.balance.Update()
-					errnie.Error(desk.PublishEquity())
-				}()
-			}
+		if desk.ObserveModule != nil {
+			desk.ObserveModule("desk", time.Since(started))
 		}
-	}()
+
+		/*
+			Cash and equity are refreshed together because they answer the
+			same question at the same instant: what the account holds, and
+			what it would settle at if every open lot were closed now. The
+			drained guard paces both against the ticker rate, so the account
+			readout stays live without adding venue traffic of its own.
+		*/
+		if !drained {
+			time.Sleep(deskRest)
+			continue
+		}
+
+		if balanceRefreshing.CompareAndSwap(false, true) {
+			go func() {
+				defer balanceRefreshing.Store(false)
+				desk.balance.Update()
+				err := desk.PublishEquity()
+
+				if err != nil {
+					desk.err = errnie.Error(err)
+				}
+			}()
+		}
+	}
+
+	return desk.err
 }
 
 /*

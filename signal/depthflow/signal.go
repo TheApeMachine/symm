@@ -6,12 +6,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -77,6 +77,7 @@ func depthflowPipeline() nomagique.Primitive {
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	err    error
 	thesis *types.Thesis
 	number nomagique.Number[string]
 }
@@ -91,18 +92,18 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[string](depthflowPipeline()),
 	}
 
-	go signal.run()
 	return signal
 }
 
-func (signal *Signal) Name() string  { return string(types.SourceDepthFlow) }
+func (signal *Signal) Name() string           { return string(types.SourceDepthFlow) }
+func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceDepthFlow }
 
-func (signal *Signal) run() {
-	for {
+func (signal *Signal) Run() error {
+	for signal.err == nil {
 		select {
 		case <-signal.ctx.Done():
-			return
+			return signal.ctx.Err()
 		default:
 		}
 
@@ -113,77 +114,79 @@ func (signal *Signal) run() {
 		}
 
 		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, valid := value.(*types.Symbol)
+			symbol, valid := value.(*types.Symbol)
 
-				if !valid || symbol == nil {
-					return true
-				}
-
-				for frame := range symbol.MarketLevel3(types.SourceDepthFlow) {
-					touch := frameTouch(frame)
-					deep := frameDeep(frame)
-					total := touch + deep
-
-					input := nomagique.Frame{}
-					input.Put(calculus.SymbolLeft, touch)
-					input.Put(calculus.SymbolRight, deep)
-					input.Put(calculus.SymbolLevel, deep)
-
-					if total > 0 {
-						input.Put(calculus.SymbolClock, touch/total)
-					}
-
-					input.Put(nomagique.SampleValue, total)
-					input.Put(statistic.SymbolBaseline, total)
-					input.Put(calculus.SymbolValue, touch)
-					input.Put(calculus.SymbolScale, total)
-					input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
-					input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
-					input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-					output, err := signal.number(symbol.Symbol, input)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"depthflow: failed for "+symbol.Symbol,
-							err,
-						))
-						continue
-					}
-
-					symbol.Measurements.Push(nmtypes.NewMeasurement(
-						uuid.NewString(),
-						signal.Name(),
-						frame.Timestamp.UnixNano(),
-						frame.Timestamp.UnixNano(),
-					).AddMetrics(
-						nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("deep_imbalance", output.MustGet(SymbolDeepImbalance), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("spoof_score", output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("loaded_score", output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("thin_score", output.MustGet(SymbolThinScore), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-					))
-				}
-
+			if !valid || symbol == nil {
 				return true
-			})
+			}
+
+			for frame := range symbol.MarketLevel3(types.SourceDepthFlow) {
+				touch := frameTouch(frame)
+				deep := frameDeep(frame)
+				total := touch + deep
+
+				input := nomagique.Frame{}
+				input.Put(calculus.SymbolLeft, touch)
+				input.Put(calculus.SymbolRight, deep)
+				input.Put(calculus.SymbolLevel, deep)
+
+				if total > 0 {
+					input.Put(calculus.SymbolClock, touch/total)
+				}
+
+				input.Put(nomagique.SampleValue, total)
+				input.Put(statistic.SymbolBaseline, total)
+				input.Put(calculus.SymbolValue, touch)
+				input.Put(calculus.SymbolScale, total)
+				input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
+				input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
+				input.Put(statistic.SymbolDispersionHalflife, 30.0)
+
+				output, err := signal.number(symbol.Symbol, input)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"depthflow: failed for "+symbol.Symbol,
+						err,
+					))
+					return false
+				}
+
+				symbol.AppendMeasurement(nmtypes.NewMeasurement(
+					uuid.NewString(),
+					signal.Name(),
+					frame.Timestamp.UnixNano(),
+					frame.Timestamp.UnixNano(),
+				).AddMetrics(
+					nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("deep_imbalance", output.MustGet(SymbolDeepImbalance), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("spoof_score", output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("loaded_score", output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("thin_score", output.MustGet(SymbolThinScore), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+				))
+			}
+
+			return true
+		})
 	}
+
+	return signal.err
 }
 
 /*
@@ -215,6 +218,7 @@ func (signal *Signal) pending() bool {
 
 	return hasWork
 }
+
 /*
 frameTouch returns the best level's resting quantity on the heavier side, and
 frameDeep returns the total resting quantity across all other levels — the L3

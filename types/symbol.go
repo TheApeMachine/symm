@@ -4,6 +4,7 @@ import (
 	"iter"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -16,6 +17,7 @@ It should be kept extremely simple, and lean, and is not an invitation to
 start adding additional complexity beyond what is truly earned.
 */
 type Symbol struct {
+	ui           *transport.MapReduce[[]byte]               `json:"-"`
 	ID           SymbolID                                   `json:"id,omitempty"`
 	Symbol       string                                     `json:"symbol,omitempty"`
 	Status       Status                                     `json:"status,omitempty"`
@@ -38,7 +40,13 @@ type Symbol struct {
 /*
 NewSymbol creates empty measurement state for one market symbol.
 */
-func NewSymbol(name string) *Symbol {
+func NewSymbol(name string, uiChannels ...*transport.MapReduce[[]byte]) *Symbol {
+	var ui *transport.MapReduce[[]byte]
+
+	if len(uiChannels) > 0 {
+		ui = uiChannels[0]
+	}
+
 	symbol := &Symbol{
 		Symbol: name,
 		Status: READY,
@@ -49,6 +57,7 @@ func NewSymbol(name string) *Symbol {
 				string(SourceDesk),
 			), nil, nil,
 		),
+		ui: ui,
 		trades: transport.NewMapReduce[kraken.TradeData](
 			TradeReceiverStrings, nil, nil,
 		),
@@ -134,6 +143,7 @@ func (symbol *Symbol) HasLevel3() bool {
 func (symbol *Symbol) HasExecutions() bool {
 	return symbol.executions.Length() > 0
 }
+
 /*
 AppendTrade routes a trade only to the signal owners
 selected by the streaming topology.
@@ -176,9 +186,18 @@ symbol's tick at the boundary — and routes it to every solver cursor that
 consumes it. Signals project their numeric Frame output into the nomagique
 Measurement shape via AddMetrics and push that shape here.
 */
-func (symbol *Symbol) AppendMeasurement(measurement *types.Measurement) error {
+func (symbol *Symbol) AppendMeasurement(measurement *types.Measurement) {
 	symbol.Measurements.Push(measurement)
-	return nil
+
+	if symbol.ui == nil || symbol.Symbol != Focus() {
+		return
+	}
+
+	symbol.ui.Push(
+		datura.NewMap(
+			"measurements", datura.NewMap(symbol.Symbol, measurement),
+		).MarshalAndFree(),
+	)
 }
 
 /*

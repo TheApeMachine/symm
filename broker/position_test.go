@@ -16,9 +16,9 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestPositionOnTicker(t *testing.T) {
@@ -244,7 +244,7 @@ func TestPositionOnExecution(t *testing.T) {
 		stoploss := newBrokerStoploss(t)
 		stoploss.Update(stoploss.Floor.Sub(decimal.NewFromFloat64(0.01)))
 		position := &Position{
-			ui:         transport.NewMapReduce[[]byte](nil, nil, nil),
+			ui:        transport.NewMapReduce[[]byte](nil, nil, nil),
 			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
 			Holding: &types.Holding{
 				Qty:      decimal.NewFromInt64(1),
@@ -270,7 +270,7 @@ func TestPositionOnExecution(t *testing.T) {
 
 	Convey("Given a terminal exit with partial filled quantity", t, func() {
 		position := &Position{
-			ui:         transport.NewMapReduce[[]byte](nil, nil, nil),
+			ui:        transport.NewMapReduce[[]byte](nil, nil, nil),
 			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
 			Holding: &types.Holding{
 				Qty: decimal.NewFromInt64(1),

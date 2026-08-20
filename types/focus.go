@@ -15,8 +15,8 @@ func init() {
 }
 
 /*
-SetFocus records the symbol the dashboard wants signal metrics for. Empty
-clears the gate so publishers may emit the full cross-section again.
+SetFocus records the only symbol whose signal metrics may be published to the
+dashboard. Empty suppresses all signal metric publication.
 */
 func SetFocus(symbol string) {
 	uiFocus.Store(symbol)

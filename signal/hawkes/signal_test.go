@@ -7,8 +7,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/kraken"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -29,11 +29,12 @@ func TestHawkesPipeline(t *testing.T) {
 
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
+		go signal.Run()
 
 		measurements := []*nmtypes.Measurement{}
 
 		time.Sleep(50 * time.Millisecond)
-			for measurement := range market.MarketMeasurements("category") {
+		for measurement := range market.MarketMeasurements("category") {
 			measurements = append(measurements, measurement)
 		}
 

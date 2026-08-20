@@ -12,10 +12,12 @@ direct Frame offset and never hash or compare strings.
 type Symbol uint16
 
 const (
+	frameMaskWordBits  = 64
+	fullStackMaskWords = 17
 	// MaxSlots bounds both the registry and the universal Frame representation.
-	// The capacity leaves room for the fixed 128-sample histories used by Ignition
-	// while retaining startup space for application-owned symbols.
-	MaxSlots = 1024
+	// The complete runtime registers 1,028 symbols. Seventeen uint64 mask words
+	// are the smallest aligned frame that can represent that composition.
+	MaxSlots = frameMaskWordBits * fullStackMaskWords
 )
 
 var symbols = struct {

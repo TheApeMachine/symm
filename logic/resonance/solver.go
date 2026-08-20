@@ -36,6 +36,7 @@ readings in, features shaped, output stored on the symbol.
 type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
+	err           error
 	detectors     *sync.Map
 	queues        *sync.Map
 	schemas       *sync.Map
@@ -89,7 +90,6 @@ func NewSolver(
 		thesis:        thesis,
 	}
 
-	solver.run()
 	return solver
 }
 
@@ -97,56 +97,59 @@ func (solver *Solver) Name() string {
 	return "resonance"
 }
 
+func (solver *Solver) Error() error { return solver.err }
+
 func (solver *Solver) Status() types.Status {
 	return types.READY
 }
 
-func (solver *Solver) run() {
-	go func() {
-		for {
-			select {
-			case <-solver.ctx.Done():
-				return
-			default:
-				solver.thesis.Symbols.Range(func(_ any, value any) bool {
-					symbol, ok := value.(*types.Symbol)
+func (solver *Solver) Run() error {
+	for solver.err == nil {
+		select {
+		case <-solver.ctx.Done():
+			return solver.ctx.Err()
+		default:
+			solver.thesis.Symbols.Range(func(_ any, value any) bool {
+				symbol, ok := value.(*types.Symbol)
 
-					if !ok || symbol == nil || symbol.HasTickers() == false {
-						runtime.Gosched()
-						return true
-					}
-
-					for ticker := range symbol.MarketTickers(types.SourceResonance) {
-						if err := solver.Update(
-							ticker.Symbol,
-							ticker.Timestamp,
-							[]float64{
-								ticker.Ask.Float64(),
-								ticker.Bid.Float64(),
-								ticker.AskQty,
-								ticker.BidQty,
-								ticker.Change.Float64(),
-								ticker.ChangePct,
-								ticker.High.Float64(),
-								ticker.Low.Float64(),
-								ticker.Last.Float64(),
-								ticker.Volume,
-								ticker.Vwap,
-							},
-						); err != nil {
-							errnie.Error(errnie.Err(
-								errnie.Internal,
-								"resonance: detector update failed",
-								err,
-							))
-						}
-					}
-
+				if !ok || symbol == nil || symbol.HasTickers() == false {
+					runtime.Gosched()
 					return true
-				})
-			}
+				}
+
+				for ticker := range symbol.MarketTickers(types.SourceResonance) {
+					if err := solver.Update(
+						ticker.Symbol,
+						ticker.Timestamp,
+						[]float64{
+							ticker.Ask.Float64(),
+							ticker.Bid.Float64(),
+							ticker.AskQty,
+							ticker.BidQty,
+							ticker.Change.Float64(),
+							ticker.ChangePct,
+							ticker.High.Float64(),
+							ticker.Low.Float64(),
+							ticker.Last.Float64(),
+							ticker.Volume,
+							ticker.Vwap,
+						},
+					); err != nil {
+						solver.err = errnie.Error(errnie.Err(
+							errnie.Internal,
+							"resonance: detector update failed",
+							err,
+						))
+						return false
+					}
+				}
+
+				return true
+			})
 		}
-	}()
+	}
+
+	return solver.err
 }
 
 func (solver *Solver) onTicker(ticker any) {

@@ -6,10 +6,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -22,6 +22,7 @@ with no cross-symbol aggregation and no injected venue dependency.
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	err    error
 	thesis *types.Thesis
 	number nomagique.Number[string]
 }
@@ -41,7 +42,6 @@ func NewSignal(
 		),
 	}
 
-	go signal.run()
 	return signal
 }
 
@@ -49,15 +49,17 @@ func (signal *Signal) Name() string {
 	return string(types.SourcePumpDump)
 }
 
+func (signal *Signal) Error() error { return signal.err }
+
 func (signal *Signal) Type() types.SourceType {
 	return types.SourcePumpDump
 }
 
-func (signal *Signal) run() {
-	for {
+func (signal *Signal) Run() error {
+	for signal.err == nil {
 		select {
 		case <-signal.ctx.Done():
-			return
+			return signal.ctx.Err()
 		default:
 		}
 
@@ -68,62 +70,64 @@ func (signal *Signal) run() {
 		}
 
 		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, valid := value.(*types.Symbol)
+			symbol, valid := value.(*types.Symbol)
 
-				if !valid || symbol == nil {
-					return true
-				}
-
-				for trade := range symbol.MarketTrades(types.SourcePumpDump) {
-					input := nomagique.Frame{}
-					input.Put(algo.SymbolVolume, trade.Qty)
-					input.Put(algo.SymbolLast, trade.Price.Float64())
-					input.Put(algo.SymbolCapacity, nomagique.MaxSamples)
-					input.Put(algo.SymbolUnixSec, float64(trade.Timestamp.Unix()))
-					input.Put(algo.SymbolUnixNsec, float64(trade.Timestamp.Nanosecond()))
-
-					// The touch prices are the print's book response; without a
-					// ticker touch the ignition cannot enrich the print, so the
-					// step is skipped rather than fed a fabricated bid/ask pair.
-					if !touch(symbol, trade, &input) {
-						continue
-					}
-
-					output, err := signal.number(symbol.Symbol, input)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"pumpdump: number step failed for "+symbol.Symbol,
-							err,
-						))
-						continue
-					}
-
-					symbol.Measurements.Push(nmtypes.NewMeasurement(
-						uuid.NewString(),
-						signal.Name(),
-						trade.Timestamp.UnixNano(),
-						trade.Timestamp.UnixNano(),
-					).AddMetrics(
-						nmtypes.NewMetric("rvol", output.MustGet(algo.SymbolRVOL), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescalePerTick,
-						}),
-						nmtypes.NewMetric("precursor", output.MustGet(algo.SymbolAlphaPrecursor), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("exhaustion", output.MustGet(algo.SymbolAlphaExhaustion), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-					))
-				}
-
+			if !valid || symbol == nil {
 				return true
-			})
+			}
+
+			for trade := range symbol.MarketTrades(types.SourcePumpDump) {
+				input := nomagique.Frame{}
+				input.Put(algo.SymbolVolume, trade.Qty)
+				input.Put(algo.SymbolLast, trade.Price.Float64())
+				input.Put(algo.SymbolCapacity, nomagique.MaxSamples)
+				input.Put(algo.SymbolUnixSec, float64(trade.Timestamp.Unix()))
+				input.Put(algo.SymbolUnixNsec, float64(trade.Timestamp.Nanosecond()))
+
+				// The touch prices are the print's book response; without a
+				// ticker touch the ignition cannot enrich the print, so the
+				// step is skipped rather than fed a fabricated bid/ask pair.
+				if !touch(symbol, trade, &input) {
+					continue
+				}
+
+				output, err := signal.number(symbol.Symbol, input)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"pumpdump: number step failed for "+symbol.Symbol,
+						err,
+					))
+					return false
+				}
+
+				symbol.AppendMeasurement(nmtypes.NewMeasurement(
+					uuid.NewString(),
+					signal.Name(),
+					trade.Timestamp.UnixNano(),
+					trade.Timestamp.UnixNano(),
+				).AddMetrics(
+					nmtypes.NewMetric("rvol", output.MustGet(algo.SymbolRVOL), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescalePerTick,
+					}),
+					nmtypes.NewMetric("precursor", output.MustGet(algo.SymbolAlphaPrecursor), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("exhaustion", output.MustGet(algo.SymbolAlphaExhaustion), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+				))
+			}
+
+			return true
+		})
 	}
+
+	return signal.err
 }
 
 /*
@@ -155,6 +159,7 @@ func (signal *Signal) pending() bool {
 
 	return hasWork
 }
+
 /*
 touch finds the most recent ticker quote at or before the print and writes its
 bid and ask into the input frame. It returns false when no executable touch

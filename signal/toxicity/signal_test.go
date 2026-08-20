@@ -7,8 +7,8 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/kraken"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -24,6 +24,7 @@ func TestToxicityNumber(t *testing.T) {
 
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
+		go signal.Run()
 
 		Convey("It should emit an honesty reading per frame", func() {
 			measurements := []*nmtypes.Measurement{}

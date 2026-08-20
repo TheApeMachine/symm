@@ -21,6 +21,8 @@ import (
 
 type Solver interface {
 	Name() string
+	Run() error
+	Error() error
 	Close() error
 }
 
@@ -36,6 +38,7 @@ the Graph, which should encode everything that has been collected so far.
 type Analyzer struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
+	err          error
 	status       types.Status
 	tree         *dmt.Tree
 	solverGroups [][]Solver
@@ -89,13 +92,38 @@ func NewAnalyzer(
 }
 
 /*
-Process begins the analysis stage. Every solver is self-running (each was
-started by its own constructor, consuming its own input MapReduce and writing
-to its own output MapReduce), so this step is the no-op coordinator: it returns
-after confirming the stage is alive.
+Process confirms the analysis stage is ready. Run owns solver scheduling.
 */
 func (analyzer *Analyzer) Process(_ *types.Thesis) error {
 	return nil
+}
+
+func (analyzer *Analyzer) Name() string { return "analyzer" }
+
+func (analyzer *Analyzer) Error() error { return analyzer.err }
+
+func (analyzer *Analyzer) Run() error {
+	runErrors := make(chan error, len(analyzer.solverGroups)*2)
+
+	for _, group := range analyzer.solverGroups {
+		for _, solver := range group {
+			go func(system Solver) {
+				runErrors <- system.Run()
+			}(solver)
+		}
+	}
+
+	select {
+	case <-analyzer.ctx.Done():
+		return analyzer.ctx.Err()
+	case err := <-runErrors:
+		if err == nil {
+			return nil
+		}
+
+		analyzer.err = err
+		return analyzer.err
+	}
 }
 
 /*

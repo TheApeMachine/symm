@@ -43,6 +43,7 @@ physics fluid metrics, and predictive coding resonance predictions.
 type Solver struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
+	err      error
 	thesis   *types.Thesis
 	price    *broker.Price
 	recorder *audit.Recorder
@@ -85,7 +86,6 @@ func NewSolver(thesis *types.Thesis, price *broker.Price, ui *transport.MapReduc
 		opt(solver)
 	}
 
-	go solver.run()
 	return solver
 }
 
@@ -93,17 +93,19 @@ func (solver *Solver) Name() string {
 	return "causal"
 }
 
+func (solver *Solver) Error() error { return solver.err }
+
 /*
-run consumes each symbol's resonance stream from the Resonance input MapReduce
+Run consumes each symbol's resonance stream from the Resonance input MapReduce
 and pushes derived causal outputs to the Causal output MapReduce. A failed pass
 cancels the pond group; causal evaluation is retried on every enriched thesis,
 so each pass gets a fresh group.
 */
-func (solver *Solver) run() {
-	for {
+func (solver *Solver) Run() error {
+	for solver.err == nil {
 		select {
 		case <-solver.ctx.Done():
-			return
+			return solver.ctx.Err()
 		default:
 		}
 
@@ -138,7 +140,7 @@ func (solver *Solver) run() {
 		})
 
 		if err := group.Wait(); err != nil {
-			errnie.Error(errnie.Err(
+			solver.err = errnie.Error(errnie.Err(
 				errnie.UnprocessableContent,
 				"causal: parallel evaluation failed: "+err.Error(),
 				err,
@@ -149,6 +151,8 @@ func (solver *Solver) run() {
 			solver.publish(solver.thesis)
 		}
 	}
+
+	return solver.err
 }
 
 /*

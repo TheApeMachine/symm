@@ -6,7 +6,7 @@ import (
 	"math"
 )
 
-const frameMaskWords = (MaxSlots + 63) / 64
+const frameMaskWords = (MaxSlots + frameMaskWordBits - 1) / frameMaskWordBits
 
 /*
 Frame is the universal numeric payload and state representation. Values occupy

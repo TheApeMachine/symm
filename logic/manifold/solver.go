@@ -18,8 +18,8 @@ import (
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -47,6 +47,7 @@ Symbols contribute observations to the same gas and wave fields; they are not
 split into independent simulations that cannot interfere.
 */
 type Solver struct {
+	err         error
 	api         websocket.BookSource
 	config      pmanifold.Config
 	physics     *pmanifold.Solver
@@ -68,6 +69,7 @@ type Solver struct {
 	stopping    chan struct{}
 	stopped     chan struct{}
 	closing     atomic.Bool
+	running     atomic.Bool
 	settling    atomic.Bool
 	requestMu   sync.Mutex
 	requested   uint64
@@ -157,8 +159,6 @@ func NewSolver(
 		stopping:  make(chan struct{}),
 		stopped:   make(chan struct{}),
 	}
-	go solver.run()
-
 	return solver
 }
 
@@ -203,6 +203,8 @@ func (solver *Solver) Settling() bool {
 func (solver *Solver) Name() string {
 	return "manifold"
 }
+
+func (solver *Solver) Error() error { return solver.err }
 
 /*
 Update walks every busy book's L3 orders into the resident oscillator
@@ -265,18 +267,36 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	return nil
 }
 
-func (solver *Solver) run() {
+func (solver *Solver) Run() error {
+	if solver.closing.Load() {
+		return nil
+	}
+
+	if !solver.running.CompareAndSwap(false, true) {
+		solver.err = errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"manifold: solver is already running",
+			nil,
+		))
+
+		return solver.err
+	}
+
 	defer close(solver.stopped)
 	defer solver.settling.Store(false)
 
-	for {
+	for solver.err == nil {
 		select {
 		case <-solver.semaphore:
-			solver.drainRequests()
+			if err := solver.drainRequests(); err != nil {
+				solver.err = err
+			}
 		case <-solver.stopping:
-			return
+			return nil
 		}
 	}
+
+	return solver.err
 }
 
 /*
@@ -284,12 +304,12 @@ drainRequests keeps the resident manifold owner active until it has consumed
 its latest requested generation. Intermediate requests may coalesce, but the
 final request in a burst cannot be stranded after settling becomes false.
 */
-func (solver *Solver) drainRequests() {
+func (solver *Solver) drainRequests() error {
 	for {
 		request, available := solver.nextRequest()
 
 		if !available {
-			return
+			return nil
 		}
 
 		cuts, err := solver.load(request.thesis, request.at)
@@ -299,7 +319,7 @@ func (solver *Solver) drainRequests() {
 		}
 
 		if err != nil {
-			errnie.Error(err)
+			return errnie.Error(err)
 		}
 
 		solver.completeRequest(request.generation)
@@ -880,7 +900,6 @@ func (solver *Solver) publishDomain() error {
 		return nil
 	}
 
-
 	utils.PublishFluid(
 		solver.binui, types.FluidParticlesChannel,
 		datura.NewMap("particles", oscillatorsToParticles(solver.config, solver.oscillators)),
@@ -986,7 +1005,10 @@ func (solver *Solver) Close() error {
 	}
 
 	close(solver.stopping)
-	<-solver.stopped
+
+	if solver.running.Load() {
+		<-solver.stopped
+	}
 
 	if solver.physics == nil {
 		return nil

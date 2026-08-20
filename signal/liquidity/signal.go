@@ -3,6 +3,7 @@ package liquidity
 import (
 	"context"
 	"runtime"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -22,13 +23,14 @@ other's windows or event clocks.
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	err    error
+	clock  map[string]time.Time
 	thesis *types.Thesis
 	number nomagique.Number[string]
 }
 
 /*
-NewSignal constructs the liquidity signal as one living nomagique.Number and
-starts it in its own goroutine. Nothing else is owned by the signal.
+NewSignal constructs the liquidity signal as one living nomagique.Number.
 */
 func NewSignal(
 	ctx context.Context,
@@ -39,6 +41,7 @@ func NewSignal(
 	signal := &Signal{
 		ctx:    ctx,
 		cancel: cancel,
+		clock:  make(map[string]time.Time),
 		thesis: thesis,
 		number: nomagique.NewNumber[string](
 			nomagique.Pipe(
@@ -56,7 +59,6 @@ func NewSignal(
 		),
 	}
 
-	go signal.run()
 	return signal
 }
 
@@ -67,15 +69,17 @@ func (signal *Signal) Name() string {
 	return string(types.SourceLiquidity)
 }
 
+func (signal *Signal) Error() error { return signal.err }
+
 func (signal *Signal) Type() types.SourceType {
 	return types.SourceLiquidity
 }
 
-func (signal *Signal) run() {
-	for {
+func (signal *Signal) Run() error {
+	for signal.err == nil {
 		select {
 		case <-signal.ctx.Done():
-			return
+			return signal.ctx.Err()
 		default:
 		}
 
@@ -86,75 +90,90 @@ func (signal *Signal) run() {
 		}
 
 		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, valid := value.(*types.Symbol)
+			symbol, valid := value.(*types.Symbol)
 
-				if !valid || symbol == nil {
-					return true
-				}
-
-				for ticker := range symbol.MarketTickers(types.SourceLiquidity) {
-					if ticker.Bid == nil || ticker.Ask == nil {
-						continue
-					}
-
-					input := nomagique.Frame{}
-					input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
-					input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
-					input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
-					input.Put(nmtypes.BetaQuantity, ticker.AskQty)
-					input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-					input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-					input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-					output, err := signal.number(symbol.Symbol, input)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"liquidity: number step failed for "+symbol.Symbol,
-							err,
-						))
-						continue
-					}
-
-					measurement := nmtypes.NewMeasurement(
-						uuid.NewString(),
-						signal.Name(),
-						ticker.Timestamp.UnixNano(),
-						ticker.Timestamp.UnixNano(),
-					).AddMetrics(
-						nmtypes.NewMetric("executable_touch_depth", output.MustGet(nmtypes.Quantity), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitPrice,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("depth_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitPrice,
-							Timescale: nmtypes.TimescalePerSecond,
-						}),
-						nmtypes.NewMetric("depth_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("depth_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitPercent,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("depth_stability", output.MustGet(statistic.SymbolBaselineStability), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitPercent,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("effective_window", output.MustGet(nmtypes.Span), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitCount,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-					)
-
-					symbol.Measurements.Push(measurement)
-				}
-
+			if !valid || symbol == nil {
 				return true
-			})
+			}
+
+			for ticker := range symbol.MarketTickers(types.SourceLiquidity) {
+				if ticker.Bid == nil || ticker.Ask == nil {
+					continue
+				}
+
+				eventTime := signal.eventTime(symbol.Symbol, ticker.Timestamp)
+				input := nomagique.Frame{}
+				input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
+				input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
+				input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
+				input.Put(nmtypes.BetaQuantity, ticker.AskQty)
+				input.Put(nmtypes.EventTimeSec, float64(eventTime.Unix()))
+				input.Put(nmtypes.EventTimeNsec, float64(eventTime.Nanosecond()))
+				input.Put(statistic.SymbolDispersionHalflife, 30.0)
+
+				output, err := signal.number(symbol.Symbol, input)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"liquidity: number step failed for "+symbol.Symbol,
+						err,
+					))
+					return false
+				}
+
+				measurement := nmtypes.NewMeasurement(
+					uuid.NewString(),
+					signal.Name(),
+					ticker.Timestamp.UnixNano(),
+					ticker.Timestamp.UnixNano(),
+				).AddMetrics(
+					nmtypes.NewMetric("executable_touch_depth", output.MustGet(nmtypes.Quantity), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitPrice,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("depth_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitPrice,
+						Timescale: nmtypes.TimescalePerSecond,
+					}),
+					nmtypes.NewMetric("depth_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("depth_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitPercent,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("depth_stability", output.MustGet(statistic.SymbolBaselineStability), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitPercent,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("effective_window", output.MustGet(nmtypes.Span), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitCount,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+				)
+
+				symbol.AppendMeasurement(measurement)
+			}
+
+			return true
+		})
 	}
+
+	return signal.err
+}
+
+func (signal *Signal) eventTime(symbol string, observedAt time.Time) time.Time {
+	previousAt := signal.clock[symbol]
+
+	if observedAt.Before(previousAt) {
+		return previousAt
+	}
+
+	signal.clock[symbol] = observedAt
+
+	return observedAt
 }
 
 /*

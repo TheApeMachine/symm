@@ -1,10 +1,55 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+/*
+runnableFixture provides one controllable lifecycle component for System.Run.
+*/
+type runnableFixture struct {
+	ctx context.Context
+	err error
+}
+
+func (fixture *runnableFixture) Name() string { return "fixture" }
+func (fixture *runnableFixture) Error() error { return fixture.err }
+
+func (fixture *runnableFixture) Run() error {
+	if fixture.err != nil {
+		return fixture.err
+	}
+
+	<-fixture.ctx.Done()
+
+	return fixture.ctx.Err()
+}
+
+func TestSystemRun(t *testing.T) {
+	Convey("Given one failed system and one context-bound peer", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		failure := errors.New("fixture failed")
+		system := &System{
+			ctx:    ctx,
+			cancel: cancel,
+			Systems: []Runnable{
+				&runnableFixture{ctx: ctx, err: failure},
+				&runnableFixture{ctx: ctx},
+			},
+		}
+
+		err := system.Run()
+
+		Convey("It should cancel its peer and return the originating error", func() {
+			So(errors.Is(err, failure), ShouldBeTrue)
+			So(ctx.Err(), ShouldEqual, context.Canceled)
+		})
+	})
+}
 
 func TestSystemClose(t *testing.T) {
 	Convey("Given resources recorded in acquisition order", t, func() {

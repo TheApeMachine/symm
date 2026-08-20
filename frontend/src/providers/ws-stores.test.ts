@@ -102,7 +102,7 @@ describe("ws-stores", () => {
 		unregister();
 	});
 
-	it("paints every sparse measurement frame before coalescing display state", () => {
+	it("paints every ordered frame during the scheduled browser paint", () => {
 		const worker = new MockWorker();
 		const measurementsPaint = vi.fn();
 		const healthPaint = vi.fn();
@@ -126,19 +126,47 @@ describe("ws-stores", () => {
 		});
 
 		expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
-		expect(measurementsPaint).toHaveBeenCalledTimes(2);
-		expect(measurementsPaint).toHaveBeenNthCalledWith(1, { epoch: 1 });
-		expect(measurementsPaint).toHaveBeenNthCalledWith(2, { epoch: 2 });
+		expect(measurementsPaint).not.toHaveBeenCalled();
 		expect(healthPaint).not.toHaveBeenCalled();
 
 		animationFrame?.(0);
 
+		expect(measurementsPaint).toHaveBeenCalledTimes(2);
+		expect(measurementsPaint).toHaveBeenNthCalledWith(1, { epoch: 1 });
+		expect(measurementsPaint).toHaveBeenNthCalledWith(2, { epoch: 2 });
 		expect(healthPaint).toHaveBeenCalledOnce();
 		expect(healthPaint).toHaveBeenCalledWith({ online: true });
-		expect(worker.messages).toEqual([]);
+		expect(worker.messages).toEqual([
+			{ type: "PAINTED", acknowledgeBackend: false },
+		]);
 
 		unregisterMeasurements();
 		unregisterHealth();
+	});
+
+	it("preserves every frame in an ordered worker batch", () => {
+		const worker = new MockWorker();
+		const paint = vi.fn();
+		const unregister = registerPainter("measurements", paint);
+
+		attach(worker as unknown as Worker);
+		worker.emit({
+			type: "DRAW_BATCH",
+			frames: [
+				{ measurements: { epoch: 1 } },
+				{ measurements: { epoch: 2 } },
+				{ measurements: { epoch: 3 } },
+			],
+		});
+
+		expect(requestAnimationFrame).toHaveBeenCalledOnce();
+		animationFrame?.(0);
+		expect(paint).toHaveBeenCalledTimes(3);
+		expect(paint).toHaveBeenNthCalledWith(1, { epoch: 1 });
+		expect(paint).toHaveBeenNthCalledWith(2, { epoch: 2 });
+		expect(paint).toHaveBeenNthCalledWith(3, { epoch: 3 });
+
+		unregister();
 	});
 
 	it("dispatches resonance batches under the backend resonance key", () => {
@@ -297,8 +325,8 @@ describe("ws-stores", () => {
 
 		animationFrame?.(0);
 
-		expect(positionsPaint).toHaveBeenCalledOnce();
-		expect(positionsPaint).toHaveBeenCalledWith([
+		expect(positionsPaint).toHaveBeenCalledTimes(4);
+		expect(positionsPaint).toHaveBeenLastCalledWith([
 			position("btc", "BTC/USD"),
 			position("eth", "ETH/USD"),
 			position("sol", "SOL/USD"),
@@ -350,24 +378,27 @@ describe("ws-stores", () => {
 			`bounded-${JOURNAL_ENTRY_LIMIT}`,
 		);
 
-		expect(() =>
-			worker.emit({
-				type: "DRAW",
-				frame: {
-					positions: [{ decision: { id: "missing-symbol" }, status: "open" }],
-				},
-			}),
-		).toThrow("position frame requires holding.symbol");
-		expect(() =>
-			worker.emit({
-				type: "DRAW",
-				frame: {
-					positions: [
-						{ decision: {}, status: "closed", holding: { symbol: "BAD/USD" } },
-					],
-				},
-			}),
-		).toThrow("terminal position frame requires decision.id");
+		worker.emit({
+			type: "DRAW",
+			frame: {
+				positions: [{ decision: { id: "missing-symbol" }, status: "open" }],
+			},
+		});
+		expect(() => animationFrame?.(0)).toThrow(
+			"position frame requires holding.symbol",
+		);
+
+		worker.emit({
+			type: "DRAW",
+			frame: {
+				positions: [
+					{ decision: {}, status: "closed", holding: { symbol: "BAD/USD" } },
+				],
+			},
+		});
+		expect(() => animationFrame?.(0)).toThrow(
+			"terminal position frame requires decision.id",
+		);
 
 		unregisterJournal();
 	});

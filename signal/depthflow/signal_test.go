@@ -18,6 +18,7 @@ func TestDepthFlowNumber(t *testing.T) {
 		thesis := types.NewThesis(context.Background(), nil)
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
+		go signal.Run()
 
 		Convey("It should compose the touch/deep imbalance family", func() {
 			touch := 2.0

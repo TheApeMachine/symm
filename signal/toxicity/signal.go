@@ -6,12 +6,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -46,6 +46,7 @@ func toxicityPipeline() nomagique.Primitive {
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	err    error
 	thesis *types.Thesis
 	number nomagique.Number[string]
 }
@@ -60,18 +61,18 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[string](toxicityPipeline()),
 	}
 
-	go signal.run()
 	return signal
 }
 
-func (signal *Signal) Name() string { return string(types.SourceToxicity) }
+func (signal *Signal) Name() string           { return string(types.SourceToxicity) }
+func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceToxicity }
 
-func (signal *Signal) run() {
-	for {
+func (signal *Signal) Run() error {
+	for signal.err == nil {
 		select {
 		case <-signal.ctx.Done():
-			return
+			return signal.ctx.Err()
 		default:
 		}
 
@@ -82,62 +83,64 @@ func (signal *Signal) run() {
 		}
 
 		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, valid := value.(*types.Symbol)
+			symbol, valid := value.(*types.Symbol)
 
-				if !valid || symbol == nil {
-					return true
-				}
-
-				for frame := range symbol.MarketLevel3(types.SourceToxicity) {
-					filled, retreated := level3Flow(frame)
-
-					input := nomagique.Frame{}
-					input.Put(nmtypes.AlphaQuantity, filled)
-					input.Put(nmtypes.BetaQuantity, retreated)
-					input.Put(calculus.SymbolLeft, filled)
-					input.Put(calculus.SymbolRight, retreated)
-					input.Put(nomagique.SampleValue, retreated-filled)
-					input.Put(calculus.SymbolValue, retreated-filled)
-					input.Put(calculus.SymbolScale, 1.0)
-					input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
-					input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
-					input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-					output, err := signal.number(symbol.Symbol, input)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"toxicity: failed for "+symbol.Symbol,
-							err,
-						))
-						continue
-					}
-
-					symbol.Measurements.Push(nmtypes.NewMeasurement(
-						uuid.NewString(),
-						signal.Name(),
-						frame.Timestamp.UnixNano(),
-						frame.Timestamp.UnixNano(),
-					).AddMetrics(
-						nmtypes.NewMetric("honesty_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("honesty_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-						nmtypes.NewMetric("toxicity_intensity", output.MustGet(calculus.SymbolResult), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-					))
-				}
-
+			if !valid || symbol == nil {
 				return true
-			})
+			}
+
+			for frame := range symbol.MarketLevel3(types.SourceToxicity) {
+				filled, retreated := level3Flow(frame)
+
+				input := nomagique.Frame{}
+				input.Put(nmtypes.AlphaQuantity, filled)
+				input.Put(nmtypes.BetaQuantity, retreated)
+				input.Put(calculus.SymbolLeft, filled)
+				input.Put(calculus.SymbolRight, retreated)
+				input.Put(nomagique.SampleValue, retreated-filled)
+				input.Put(calculus.SymbolValue, retreated-filled)
+				input.Put(calculus.SymbolScale, 1.0)
+				input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
+				input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
+				input.Put(statistic.SymbolDispersionHalflife, 30.0)
+
+				output, err := signal.number(symbol.Symbol, input)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"toxicity: failed for "+symbol.Symbol,
+						err,
+					))
+					return false
+				}
+
+				symbol.AppendMeasurement(nmtypes.NewMeasurement(
+					uuid.NewString(),
+					signal.Name(),
+					frame.Timestamp.UnixNano(),
+					frame.Timestamp.UnixNano(),
+				).AddMetrics(
+					nmtypes.NewMetric("honesty_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("honesty_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+					nmtypes.NewMetric("toxicity_intensity", output.MustGet(calculus.SymbolResult), nmtypes.Descriptor{
+						Unit:      nmtypes.UnitDimensionless,
+						Timescale: nmtypes.TimescaleInstantaneous,
+					}),
+				))
+			}
+
+			return true
+		})
 	}
+
+	return signal.err
 }
 
 /*
@@ -169,6 +172,7 @@ func (signal *Signal) pending() bool {
 
 	return hasWork
 }
+
 /*
 level3Flow lifts one accepted order frame into the two generic quantity
 channels: filled quantity (Alpha) and retreated quantity (Beta). The

@@ -45,6 +45,7 @@ func correlationPairPipeline() nomagique.Primitive {
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	err    error
 	thesis *types.Thesis
 	number nomagique.Number[[2]string]
 }
@@ -59,30 +60,28 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[[2]string](correlationPairPipeline()),
 	}
 
-	go signal.run()
 	return signal
 }
 
-func (signal *Signal) Name() string  { return string(types.SourceCorrelation) }
+func (signal *Signal) Name() string { return string(types.SourceCorrelation) }
+func (signal *Signal) Error() error { return signal.err }
 func (signal *Signal) Type() types.SourceType {
 	return types.SourceCorrelation
 }
 
-func (signal *Signal) run() {
-	for {
+func (signal *Signal) Run() error {
+	for signal.err == nil {
 		select {
 		case <-signal.ctx.Done():
-			return
+			return signal.ctx.Err()
 		default:
-		}
+			if !signal.pending() {
+				// Nothing queued for this signal; yield before polling again.
+				runtime.Gosched()
+				continue
+			}
 
-		if !signal.pending() {
-			// Nothing queued for this signal; yield before polling again.
-			runtime.Gosched()
-			continue
-		}
-
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
+			signal.thesis.Symbols.Range(func(_ any, value any) bool {
 				symbol, valid := value.(*types.Symbol)
 
 				if !valid || symbol == nil {
@@ -121,7 +120,7 @@ func (signal *Signal) run() {
 							)
 
 							if err != nil {
-								errnie.Error(errnie.Err(
+								signal.err = errnie.Error(errnie.Err(
 									errnie.Validation,
 									"correlation: failed for "+symbol.Symbol,
 									err,
@@ -129,7 +128,7 @@ func (signal *Signal) run() {
 								return false
 							}
 
-							symbol.Measurements.Push(nmtypes.NewMeasurement(
+							symbol.AppendMeasurement(nmtypes.NewMeasurement(
 								uuid.NewString(),
 								signal.Name(),
 								ticker.Timestamp.UnixNano(),
@@ -150,7 +149,10 @@ func (signal *Signal) run() {
 
 				return true
 			})
+		}
 	}
+
+	return signal.err
 }
 
 /*
@@ -182,6 +184,7 @@ func (signal *Signal) pending() bool {
 
 	return hasWork
 }
+
 /*
 peerFor returns some other registered symbol against which this symbol's
 relation is measured. The pair key isolates each relation in its own stream.

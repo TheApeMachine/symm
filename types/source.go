@@ -62,6 +62,7 @@ var SignalSourceStrings = []string{
 var LogicSourceStrings = []string{
 	"category",
 	"manifold",
+	"resonance",
 	"graph",
 }
 

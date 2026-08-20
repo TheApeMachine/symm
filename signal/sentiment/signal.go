@@ -3,15 +3,17 @@ package sentiment
 import (
 	"context"
 	"runtime"
+	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -43,10 +45,12 @@ func sentimentPipeline() nomagique.Primitive {
 }
 
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	thesis *types.Thesis
-	number nomagique.Number[string]
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
+	cohortAt time.Time
+	thesis   *types.Thesis
+	number   nomagique.Number[string]
 }
 
 func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
@@ -59,20 +63,20 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[string](sentimentPipeline()),
 	}
 
-	go signal.run()
 	return signal
 }
 
 func (signal *Signal) Name() string { return string(types.SourceSentiment) }
+func (signal *Signal) Error() error { return signal.err }
 func (signal *Signal) Type() types.SourceType {
 	return types.SourceSentiment
 }
 
-func (signal *Signal) run() {
-	for {
+func (signal *Signal) Run() error {
+	for signal.err == nil {
 		select {
 		case <-signal.ctx.Done():
-			return
+			return signal.ctx.Err()
 		default:
 		}
 
@@ -82,48 +86,93 @@ func (signal *Signal) run() {
 			continue
 		}
 
-		signal.thesis.Symbols.Range(func(_ any, value any) bool {
-				symbol, valid := value.(*types.Symbol)
-
-				if !valid || symbol == nil {
-					return true
-				}
-
-				for ticker := range symbol.MarketTickers(types.SourceSentiment) {
-					input := nomagique.Frame{}
-					input.Put(calculus.SymbolDelta, signedReturn(ticker))
-					input.Put(calculus.SymbolCount, 1)
-					input.Put(calculus.SymbolDuration, 1)
-					input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-					input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-
-					output, err := signal.number("cohort", input)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Validation,
-							"sentiment: failed for "+symbol.Symbol,
-							err,
-						))
-						continue
-					}
-
-					symbol.Measurements.Push(nmtypes.NewMeasurement(
-						uuid.NewString(),
-						signal.Name(),
-						ticker.Timestamp.UnixNano(),
-						ticker.Timestamp.UnixNano(),
-					).AddMetrics(
-						nmtypes.NewMetric("breadth", output.MustGet(SymbolBreadth), nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						}),
-					))
-				}
-
-				return true
-			})
+		if signal.err = signal.step(); signal.err != nil {
+			return signal.err
+		}
 	}
+
+	return signal.err
+}
+
+func (signal *Signal) step() error {
+	observations := make([]struct {
+		symbol *types.Symbol
+		ticker kraken.TickerData
+	}, 0)
+
+	signal.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, valid := value.(*types.Symbol)
+
+		if !valid || symbol == nil {
+			return true
+		}
+
+		for ticker := range symbol.MarketTickers(types.SourceSentiment) {
+			observations = append(observations, struct {
+				symbol *types.Symbol
+				ticker kraken.TickerData
+			}{symbol: symbol, ticker: ticker})
+		}
+
+		return true
+	})
+
+	sort.SliceStable(observations, func(leftIndex int, rightIndex int) bool {
+		return observations[leftIndex].ticker.Timestamp.Before(
+			observations[rightIndex].ticker.Timestamp,
+		)
+	})
+
+	for _, observation := range observations {
+		if err := signal.measure(observation.symbol, observation.ticker); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (signal *Signal) measure(symbol *types.Symbol, ticker kraken.TickerData) error {
+	cohortAt := ticker.Timestamp
+
+	if cohortAt.Before(signal.cohortAt) {
+		cohortAt = signal.cohortAt
+	}
+
+	if cohortAt.After(signal.cohortAt) {
+		signal.cohortAt = cohortAt
+	}
+
+	input := nomagique.Frame{}
+	input.Put(calculus.SymbolDelta, signedReturn(ticker))
+	input.Put(calculus.SymbolCount, 1)
+	input.Put(calculus.SymbolDuration, 1)
+	input.Put(nmtypes.EventTimeSec, float64(cohortAt.Unix()))
+	input.Put(nmtypes.EventTimeNsec, float64(cohortAt.Nanosecond()))
+
+	output, err := signal.number("cohort", input)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"sentiment: failed for "+symbol.Symbol,
+			err,
+		))
+	}
+
+	symbol.AppendMeasurement(nmtypes.NewMeasurement(
+		uuid.NewString(),
+		signal.Name(),
+		ticker.Timestamp.UnixNano(),
+		ticker.Timestamp.UnixNano(),
+	).AddMetrics(
+		nmtypes.NewMetric("breadth", output.MustGet(SymbolBreadth), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+	))
+
+	return nil
 }
 
 /*

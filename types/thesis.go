@@ -88,7 +88,7 @@ func (thesis *Thesis) Symbol(name string) *Symbol {
 	symbol, ok = thesis.Symbols.Load(name)
 
 	if !ok {
-		created := NewSymbol(name)
+		created := NewSymbol(name, thesis.ui)
 		created.ID = thesis.nextSymbolID
 		thesis.symbolIDs[name] = thesis.nextSymbolID
 		thesis.nextSymbolID++

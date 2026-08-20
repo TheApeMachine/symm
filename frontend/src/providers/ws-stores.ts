@@ -11,6 +11,7 @@ import { paintTerminalFluidChart } from "#/components/charts/fluid";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
 import type { JSONSerializable, Paint } from "#/components/ui/paint";
 import type { Decision } from "#/types/thesis";
+import { decodeTelemetryBatch } from "#/providers/ws-codec";
 
 type FrameEvent = {
 	key: string;
@@ -298,37 +299,17 @@ export const RESONANCE_FOCUS = "resonance.focus";
 export const JOURNAL = "journal";
 
 /*
-attach routes DRAW frames into bounded TanStack stores. Sparse measurements
-paint immediately; complete aggregate domains coalesce to one animation frame.
+attach routes ordered worker batches into bounded TanStack stores. Every wire
+frame is applied in arrival order during one browser paint callback; batching
+reduces scheduling overhead without coalescing intermediate samples.
 */
 export const attach = (worker: Worker) => {
-	const pendingUpdates = new Map<string, JSONSerializable>();
+	let pendingBatches: ArrayBuffer[] = [];
+	let acknowledgeBackend = false;
 	let animationFrame: number | null = null;
 
-	const flush = () => {
-		animationFrame = null;
-		const updates = [...pendingUpdates];
-		pendingUpdates.clear();
-
-		for (const [key, value] of updates) {
-			paintRegistered(key, value);
-		}
-	};
-
-	const schedule = () => {
-		if (animationFrame !== null) {
-			return;
-		}
-
-		animationFrame = requestAnimationFrame(flush);
-	};
-
-	worker.addEventListener("message", (event: MessageEvent) => {
-		if (event.data.type !== "DRAW" || event.data.frame === undefined) {
-			return;
-		}
-
-		for (const [key, value] of Object.entries(event.data.frame)) {
+	const applyFrame = (frame: Record<string, unknown>) => {
+		for (const [key, value] of Object.entries(frame)) {
 			const update = value as JSONSerializable;
 
 			if (key === "activity" || key === "measurements") {
@@ -352,32 +333,32 @@ export const attach = (worker: Worker) => {
 
 			if (key === "cognition") {
 				cognition.actions.updateFrame(frameRows(update));
-				pendingUpdates.set(key, currentCognition());
+				paintRegistered(key, currentCognition());
 				continue;
 			}
 
 			if (key === "resonance") {
 				resonance.actions.updateFrame(frameRows(update));
 				const rows = latestValues(resonance.state.resonance);
-				pendingUpdates.set(key, rows);
+				paintRegistered(key, rows);
 				const focused = resonance.state.resonance[
 					appStore.state.focusSymbol
 				]?.values().at(-1);
 
 				if (focused !== undefined) {
-					pendingUpdates.set(RESONANCE_FOCUS, focused);
+					paintRegistered(RESONANCE_FOCUS, focused);
 				}
 
 				continue;
 			}
 
 			if (key === "strategy") {
-				pendingUpdates.set(key, currentStrategy(update));
+				paintRegistered(key, currentStrategy(update));
 				continue;
 			}
 
 			if (key !== "positions") {
-				pendingUpdates.set(key, update);
+				paintRegistered(key, update);
 				continue;
 			}
 
@@ -407,12 +388,49 @@ export const attach = (worker: Worker) => {
 				}
 			}
 
-			pendingUpdates.set("positions", openPositions());
-			pendingUpdates.set(JOURNAL, journalEntries());
+			paintRegistered("positions", openPositions());
+			paintRegistered(JOURNAL, journalEntries());
+		}
+	};
+
+	const flush = () => {
+		animationFrame = null;
+		const batches = pendingBatches;
+		pendingBatches = [];
+
+		try {
+			for (const batch of batches) {
+				for (const frame of decodeTelemetryBatch(batch)) {
+					applyFrame(frame);
+				}
+			}
+		} finally {
+			worker.postMessage({ type: "PAINTED", acknowledgeBackend });
+			acknowledgeBackend = false;
+		}
+	};
+
+	const schedule = () => {
+		if (animationFrame !== null) {
+			return;
 		}
 
-		if (pendingUpdates.size > 0) {
+		animationFrame = requestAnimationFrame(flush);
+	};
+
+	worker.addEventListener("message", (event: MessageEvent) => {
+		if (event.data.type === "DRAW" && event.data.frame !== undefined) {
+			pendingFrames.push(event.data.frame as Record<string, unknown>);
 			schedule();
+			return;
 		}
+
+		if (event.data.type !== "DRAW_BATCH" || !Array.isArray(event.data.batches)) {
+			return;
+		}
+
+		pendingBatches.push(...event.data.batches);
+		acknowledgeBackend ||= event.data.acknowledgeBackend === true;
+		schedule();
 	});
 };

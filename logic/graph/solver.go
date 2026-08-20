@@ -27,6 +27,7 @@ into a Directed Knowledge Graph for the Strategy package.
 type Solver struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
+	err          error
 	thesis       *types.Thesis
 	recorder     *audit.Recorder
 	measurements *measurementCompiler
@@ -50,7 +51,6 @@ func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[[]byte], recorder *
 		lastBuilt:    make(map[string]*types.Graph),
 	}
 
-	go solver.run()
 	return solver
 }
 
@@ -58,21 +58,23 @@ func (solver *Solver) Name() string {
 	return "graph"
 }
 
+func (solver *Solver) Error() error { return solver.err }
+
 /*
-run consumes each symbol's lifecycle-graph stream (the planner backfeed pushed
+Run consumes each symbol's lifecycle-graph stream (the planner backfeed pushed
 onto the Graphs MapReduce) and rebuilds the fully-connected graph from all
 upstream evidence, writing the result back to the same Graphs output MapReduce
 the next stage consumes.
 */
-func (solver *Solver) run() {
+func (solver *Solver) Run() error {
 	if solver.thesis == nil {
-		return
+		return nil
 	}
 
-	for {
+	for solver.err == nil {
 		select {
 		case <-solver.ctx.Done():
-			return
+			return solver.ctx.Err()
 		default:
 		}
 
@@ -105,6 +107,8 @@ func (solver *Solver) run() {
 			return true
 		})
 	}
+
+	return solver.err
 }
 
 /*

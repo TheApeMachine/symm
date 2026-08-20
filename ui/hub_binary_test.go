@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"net"
 	"testing"
@@ -69,11 +70,14 @@ func TestHubForecastPublication(t *testing.T) {
 
 		messageType, received, err := conn.ReadMessage()
 		So(err, ShouldBeNil)
-		So(messageType, ShouldEqual, websocket.TextMessage)
+		So(messageType, ShouldEqual, websocket.BinaryMessage)
 		So(peer.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
 		_, peerReceived, err := peer.ReadMessage()
 		So(err, ShouldBeNil)
 		So(peerReceived, ShouldResemble, received)
+		So(binary.LittleEndian.Uint32(received), ShouldEqual, uint32(1))
+		length := int(binary.LittleEndian.Uint32(received[frameBatchHeaderSize:]))
+		received = received[frameBatchHeaderSize*2 : frameBatchHeaderSize*2+length]
 
 		var frame struct {
 			Resonance []struct {

@@ -113,7 +113,7 @@ func Command() *cobra.Command {
 
 			errnie.Info("symm backtest ready — dashboard: cd frontend && pnpm dev")
 
-			return hub.Serve()
+			return hub.Run()
 		},
 	}
 

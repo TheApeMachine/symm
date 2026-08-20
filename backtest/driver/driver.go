@@ -277,6 +277,8 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 		return
 	}
 
+	go errnie.Error(system.Run())
+
 	market.Drive(system)
 
 	defer func() {

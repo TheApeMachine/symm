@@ -8,8 +8,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/kraken"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -41,6 +41,7 @@ func TestCVDNumber(t *testing.T) {
 
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
+		go signal.Run()
 
 		Convey("It should emit flow decomposition from the nomagique pipeline", func() {
 			measurements := []*nmtypes.Measurement{}

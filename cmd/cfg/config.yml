@@ -92,6 +92,10 @@ market:
 
 ui:
   addr: 127.0.0.1:8765
+  websocket:
+    # Upper bound for one ordered dashboard batch. Later frames remain queued
+    # for the next message; no telemetry record is truncated or discarded.
+    max_message_bytes: 4194304
 
 trading:
   model: paper

@@ -5,10 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -47,12 +45,4 @@ func TestCorrelationNumber(t *testing.T) {
 			}
 		})
 	})
-}
-
-func correlationTicker(symbol string, price float64, at time.Time) kraken.TickerData {
-	return kraken.TickerData{
-		Symbol:    symbol,
-		Last:      decimal.NewFromFloat64(price),
-		Timestamp: at,
-	}
 }

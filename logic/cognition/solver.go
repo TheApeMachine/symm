@@ -75,6 +75,7 @@ classify macro regimes via attractor basins, and predict future category paths u
 type Solver struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
+	err            error
 	thesis         *types.Thesis
 	recorder       *audit.Recorder
 	tree           *dmt.Tree
@@ -177,7 +178,6 @@ func NewSolver(
 		opt(solver)
 	}
 
-	go solver.run()
 	return solver
 }
 
@@ -185,19 +185,19 @@ func (solver *Solver) Name() string {
 	return "cognition"
 }
 
+func (solver *Solver) Error() error { return solver.err }
+
 /*
-Update runs one cognition pass over the active thesis categories.
-/*
-run consumes each symbol's category stream from the Categories input MapReduce
+Run consumes each symbol's category stream from the Categories input MapReduce
 and pushes the derived cognition readings to the Cognition output MapReduce.
 Each category batch is classified and forwarded inline as a stream; the batch
 is never materialized into a longer-lived slice.
 */
-func (solver *Solver) run() {
-	for {
+func (solver *Solver) Run() error {
+	for solver.err == nil {
 		select {
 		case <-solver.ctx.Done():
-			return
+			return solver.ctx.Err()
 		default:
 		}
 
@@ -244,8 +244,11 @@ func (solver *Solver) run() {
 
 		if cognitionErr != nil {
 			rows.Free()
+			solver.err = cognitionErr
 		}
 	}
+
+	return solver.err
 }
 
 /*

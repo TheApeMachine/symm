@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
@@ -53,18 +54,32 @@ var (
 			uiChannel := transport.NewMapReduce[[]byte]([]string{"dashboard"}, nil, nil)
 
 			thesis := types.NewThesis(cmd.Context(), uiChannel)
-			system := Boot(cmd.Context(), thesis, nil, nil, uiChannel)
+
+			system := Boot(
+				cmd.Context(),
+				thesis,
+				websocket.New(
+					cmd.Context(),
+					thesis,
+					websocket.NewSimulator(),
+					false,
+					websocket.PublicWebSocketURL,
+				),
+				websocket.New(
+					cmd.Context(),
+					thesis,
+					websocket.NewSimulator(),
+					true,
+					websocket.PrivateWebSocketURL,
+				),
+				uiChannel,
+			)
 
 			if system == nil {
-				return errnie.Error(fmt.Errorf("failed to boot symm"))
+				return fmt.Errorf("symm: boot failed")
 			}
 
-			defer func() {
-				errnie.Error(system.Close())
-			}()
-
-			errnie.Info("ui hub reported to be ready")
-			return system.Hub.Serve()
+			return system.Run()
 		},
 	}
 )
