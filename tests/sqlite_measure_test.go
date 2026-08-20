@@ -105,7 +105,7 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 
 	uiChannel := make(chan []byte, 1024)
 	publicFeed, privateFeed := market.Feeds()
-	thesis := types.NewThesis(context.Background(), transport.NewMapReduce[any]([]string{"test"}, nil, nil))
+	thesis := types.NewThesis(context.Background(), transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil))
 	system := cmd.BootWithHub(
 		context.Background(), thesis, publicFeed, privateFeed, uiChannel, nil,
 	)

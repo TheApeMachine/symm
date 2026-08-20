@@ -3,8 +3,10 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
-	"sync"
+	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -15,8 +17,19 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+consumerSeq numbers each websocket client's private consumer cursor so clients
+drain the shared lock-free transport independently without sharing a cursor.
+*/
+var consumerSeq atomic.Uint64
+
+func consumerIDFor() string {
+	return "dashboard-" + fmt.Sprint(consumerSeq.Add(1))
+}
 
 /*
 Hub owns the dashboard websocket and broadcasts flat JSON frames to clients.
@@ -29,14 +42,12 @@ type Hub struct {
 	app        *fiber.App
 	listenAddr string
 	thesis     *types.Thesis
-	Messages   chan []byte
 	desk       *broker.Desk
 	price      *broker.Price
 	balance    *broker.Balance
 	playback   playback
 	captures   func() any
 	fluid      *FluidRTC
-	clients    sync.Map
 }
 
 /*
@@ -52,10 +63,10 @@ type playback interface {
 
 func NewHub(
 	ctx context.Context,
+	thesis *types.Thesis,
 	desk *broker.Desk,
 	price *broker.Price,
 	balance *broker.Balance,
-	channel chan []byte,
 	manifold chan types.FluidFrame,
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
@@ -64,7 +75,7 @@ func NewHub(
 		ctx:        ctx,
 		cancel:     cancel,
 		listenAddr: "127.0.0.1:8765",
-		Messages:   channel,
+		thesis:     thesis,
 		desk:       desk,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
@@ -77,8 +88,6 @@ func NewHub(
 		balance: balance,
 		fluid:   NewFluidRTC(ctx),
 	}
-
-	go hub.broadcast()
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -98,9 +107,21 @@ func NewHub(
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		messages := make(chan []byte, cap(hub.Messages))
-		hub.clients.Store(conn, messages)
-		defer hub.clients.Delete(conn)
+		var ui *transport.MapReduce[[]byte]
+
+		if hub.thesis != nil {
+			ui = hub.thesis.UI()
+		}
+
+		consumerID := consumerIDFor()
+
+		// Each client drains the lock-free UI transport under its own consumer
+		// cursor. MapReduce fans every pushed frame out to every registered
+		// consumer, so each client receives each frame without any shared
+		// broadcast or client-fan-out machinery on the hub.
+		if ui != nil {
+			ui.Register(consumerID)
+		}
 
 		if hub.balance != nil {
 			conn.WriteMessage(websocket.TextMessage, hub.balance.Wallet())
@@ -199,17 +220,22 @@ func NewHub(
 				return
 			case <-clientDone:
 				return
-			case msg := <-messages:
-				if err := conn.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					if expectedDashboardWriteClosure(err) {
-						return
-					}
+			default:
+				frame, ok := ui.Pop(consumerID)
 
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"failed to write dashboard websocket message: "+err.Error(),
-						err,
-					))
+				if !ok {
+					runtime.Gosched()
+					continue
+				}
+
+				if err := conn.Conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+					if !expectedDashboardWriteClosure(err) {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"dashboard: write failed: "+err.Error(),
+							err,
+						))
+					}
 
 					return
 				}
@@ -244,30 +270,6 @@ func (hub *Hub) SetPlayback(
 
 	if captures != nil {
 		hub.captures = captures
-	}
-}
-
-func (hub *Hub) broadcast() {
-	for {
-		select {
-		case <-hub.ctx.Done():
-			return
-		case message := <-hub.Messages:
-			hub.clients.Range(func(key, value any) bool {
-				messages := value.(chan []byte)
-
-				// Dashboard state is replaceable: a slow client drops frames
-				// rather than stalling the broadcast for every other client
-				// and backing up the trading path's UI channel. A dead
-				// client is evicted by its own writer on the next error.
-				select {
-				case messages <- message:
-				default:
-				}
-
-				return true
-			})
-		}
 	}
 }
 

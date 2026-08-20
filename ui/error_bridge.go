@@ -8,6 +8,8 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/phuslu/log"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/utils"
 )
 
 const errorDebounce = 250 * time.Millisecond
@@ -22,8 +24,8 @@ until ready() reports the boot gate has passed (Warmup), so preflight ticker
 gaps never open the overlay.
 */
 type ErrorBridge struct {
-	messages chan<- []byte
-	ready    func() bool
+	ui      *transport.MapReduce[[]byte]
+	ready   func() bool
 	// onError receives each distinct error as (source, message, caller) so the
 	// diagnostics WebRTC frame can surface subsystem-attributed errors. Nil
 	// keeps the bridge limited to the websocket overlay.
@@ -35,25 +37,32 @@ type ErrorBridge struct {
 
 /*
 NewErrorBridge constructs a phuslu Writer that publishes compact error frames
-on hub.Messages. Nil hub or Messages yields a no-op writer. ready may be nil
-(always open) or gate publishes until the boot stage allows them. onError, when
-non-nil, is invoked once per distinct error with a subsystem-attributed source.
+onto the thesis UI transport. Nil hub or thesis yields a no-op writer. ready may
+be nil (always open) or gate publishes until the boot stage allows them.
+onError, when non-nil, is invoked once per distinct error with a
+subsystem-attributed source.
 */
 func NewErrorBridge(
 	hub *Hub,
 	ready func() bool,
 	onError func(source string, message string, caller string),
 ) log.Writer {
-	if hub == nil || hub.Messages == nil {
+	var ui *transport.MapReduce[[]byte]
+
+	if hub != nil && hub.thesis != nil {
+		ui = hub.thesis.UI()
+	}
+
+	if ui == nil {
 		return log.WriterFunc(func(*log.Entry) (int, error) {
 			return 0, nil
 		})
 	}
 
 	return log.IOWriter{Writer: &ErrorBridge{
-		messages: hub.Messages,
-		ready:    ready,
-		onError:  onError,
+		ui:      ui,
+		ready:   ready,
+		onError: onError,
 	}}
 }
 
@@ -62,7 +71,7 @@ Write receives one JSON log line from phuslu IOWriter and, when the level is
 error or higher, non-blocking-publishes it as an error frame for the overlay.
 */
 func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
-	if bridge == nil || bridge.messages == nil || len(payload) == 0 {
+	if bridge == nil || bridge.ui == nil || len(payload) == 0 {
 		return len(payload), nil
 	}
 
@@ -96,15 +105,10 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 		)
 	}
 
-	select {
-	case bridge.messages <- datura.NewMap(
+	utils.Publish(bridge.ui, datura.NewMap(
 		"error", safeErrorFields(fields),
-	).MarshalAndFree():
-		bridge.commit(fingerprint)
-	default:
-		// Best-effort drop when the hub is saturated; the line still lands in
-		// the on-disk log and can be retried on the next distinct fingerprint.
-	}
+	))
+	bridge.commit(fingerprint)
 
 	return len(payload), nil
 }

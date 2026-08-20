@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -31,7 +32,7 @@ type Desk struct {
 	status         types.Status
 	api            *websocket.API
 	subscriptions  map[string]*types.Subscription[any]
-	ui             chan []byte
+	ui             *transport.MapReduce[[]byte]
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -77,7 +78,7 @@ func NewDesk(
 	equityObserver EquityObserver,
 	recorder *audit.Recorder,
 	store *PositionStore,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -605,7 +606,13 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			return err
 		}
 
-		desk.thesis.Symbol(decision.Symbol).Positions.Push(position)
+		positionFrame, err := marshalPosition(position)
+
+		if err != nil {
+			return err
+		}
+
+		desk.thesis.Symbol(decision.Symbol).Positions.Push(positionFrame)
 	case types.ActionExit:
 		for position := range desk.Positions() {
 			if position == nil || position.Decision.Symbol != decision.Symbol ||

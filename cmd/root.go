@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -49,7 +50,8 @@ var (
 			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
 			startPprof()
 
-			uiChannel := make(chan []byte, 1024)
+			uiChannel := transport.NewMapReduce[[]byte]([]string{"dashboard"}, nil, nil)
+
 			thesis := types.NewThesis(cmd.Context(), uiChannel)
 			system := Boot(cmd.Context(), thesis, nil, nil, uiChannel)
 

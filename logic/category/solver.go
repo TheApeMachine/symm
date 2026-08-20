@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -28,7 +29,7 @@ type Solver struct {
 	categories []types.CategoryType
 	api        *websocket.API
 	recorder   *audit.Recorder
-	ui         chan []byte
+	ui         *transport.MapReduce[[]byte]
 }
 
 /*
@@ -38,7 +39,7 @@ func NewSolver(
 	ctx context.Context,
 	thesis *types.Thesis,
 	api *websocket.API,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	recorder *audit.Recorder,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)

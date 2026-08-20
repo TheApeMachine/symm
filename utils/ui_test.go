@@ -2,21 +2,24 @@ package utils
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestPublish(t *testing.T) {
-	Convey("Given a saturated replaceable-state channel", t, func() {
-		ui := make(chan []byte, 1)
-		ui <- []byte("existing")
+	Convey("Given a lock-free UI transport", t, func() {
+		ui := transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil)
 
-		Publish(ui, datura.NewMap("ticker", "new"))
+		Convey("It should enqueue a marshaled frame without blocking", func() {
+			Publish(ui, datura.NewMap("ticker", "new"))
 
-		Convey("It should retain the already queued frame without blocking", func() {
-			So(<-ui, ShouldResemble, []byte("existing"))
+			frame, ok := ui.Pop("test")
+			So(ok, ShouldBeTrue)
+			So(string(frame), ShouldContainSubstring, `"ticker":"new"`)
 		})
 	})
 }
@@ -24,12 +27,13 @@ func TestPublish(t *testing.T) {
 func BenchmarkPublish(b *testing.B) {
 	const payloadBytes = 4096
 
-	ui := make(chan []byte, 1)
-	ui <- []byte("existing")
+	ui := transport.NewMapReduce[[]byte]([]string{"bench"}, nil, nil)
 	payload := strings.Repeat("x", payloadBytes)
 	b.ReportAllocs()
 
 	for b.Loop() {
 		Publish(ui, datura.NewMap("frame", payload))
 	}
+
+	_ = atomic.Uint64{}
 }

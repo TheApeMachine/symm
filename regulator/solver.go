@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -28,7 +29,7 @@ type Solver struct {
 	mu                  sync.Mutex
 	configSource        *system.Config
 	optimizer           *optimizer
-	ui                  chan []byte
+	ui                  *transport.MapReduce[[]byte]
 	history             []float64
 	historyCapacity     int
 	lastEquity          float64
@@ -59,7 +60,7 @@ configuration.
 */
 func NewSolver(
 	_ context.Context,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 ) (*Solver, error) {
 	configSource := system.Cfg
 

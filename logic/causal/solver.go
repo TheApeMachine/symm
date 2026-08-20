@@ -16,7 +16,9 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -47,7 +49,7 @@ type Solver struct {
 	pearls   *sync.Map
 	rows     *sync.Map
 	config   algorithm.PearlConfig
-	ui       chan []byte
+	ui       *transport.MapReduce[[]byte]
 }
 
 /*
@@ -58,7 +60,7 @@ Default layout (4-column row):
   - Col 2: Treatment (Resonance Task Prediction / Expected Return)
   - Col 3: Target (Realized Price Return)
 */
-func NewSolver(thesis *types.Thesis, price *broker.Price, ui chan []byte, recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(thesis *types.Thesis, price *broker.Price, ui *transport.MapReduce[[]byte], recorder *audit.Recorder, opts ...Option) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
 	defaultConfig := algorithm.PearlConfig{
 		Target:                  3,
@@ -417,10 +419,7 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 	})
 
 	if len(rows) > 0 {
-		select {
-		case solver.ui <- datura.NewMap("causal", rows).MarshalAndFree():
-		default:
-		}
+		utils.Publish(solver.ui, datura.NewMap("causal", rows))
 	}
 }
 

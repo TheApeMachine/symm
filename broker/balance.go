@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -22,7 +23,7 @@ visible the same way everything else does — on the next refresh.
 type Balance struct {
 	status types.Status
 	api    *websocket.API
-	ui     chan []byte
+	ui     *transport.MapReduce[[]byte]
 	wallet *sync.Map
 	quote  string
 }
@@ -32,7 +33,7 @@ NewBalance constructs an empty wallet owner for exchange balances only.
 */
 func NewBalance(
 	api *websocket.API,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 ) *Balance {
 	balance := &Balance{
 		status: types.READY,

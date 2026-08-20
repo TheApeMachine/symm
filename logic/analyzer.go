@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -38,7 +39,7 @@ type Analyzer struct {
 	status       types.Status
 	tree         *dmt.Tree
 	solverGroups [][]Solver
-	ui           chan []byte
+	ui           *transport.MapReduce[[]byte]
 	binui        chan types.FluidFrame
 	recorder     *audit.Recorder
 
@@ -57,7 +58,7 @@ func NewAnalyzer(
 	price *broker.Price,
 	api *websocket.API,
 	tree *dmt.Tree,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	binui chan types.FluidFrame,
 	recorder *audit.Recorder,
 	thesis *types.Thesis,

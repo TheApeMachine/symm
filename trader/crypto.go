@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -31,7 +32,7 @@ type Crypto struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	api           *websocket.API
-	ui            chan []byte
+	ui            *transport.MapReduce[[]byte]
 	manifold      chan types.FluidFrame
 	thesis        *types.Thesis
 	recorder      *audit.Recorder
@@ -48,7 +49,7 @@ NewCrypto constructs Crypto; Boot Initialize attaches planner and desk.
 func NewCrypto(
 	ctx context.Context,
 	api *websocket.API,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	manifold chan types.FluidFrame,
 	recorder *audit.Recorder,
 	desk *broker.Desk,

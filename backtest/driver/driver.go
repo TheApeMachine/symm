@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -47,7 +48,7 @@ so only a fresh boot replays history honestly.
 type Driver struct {
 	ctx     context.Context
 	store   *backtest.Store
-	ui      chan []byte
+	ui      *transport.MapReduce[[]byte]
 	hub     *ui.Hub
 	onState func(State)
 
@@ -72,7 +73,7 @@ func NewDriver(
 	ctx context.Context,
 	store *backtest.Store,
 	hub *ui.Hub,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	onState func(State),
 ) *Driver {
 	captures, err := store.ListCaptures()

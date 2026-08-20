@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 	"gonum.org/v1/gonum/stat/distuv"
@@ -29,14 +30,14 @@ type Solver struct {
 	thesis       *types.Thesis
 	recorder     *audit.Recorder
 	measurements *measurementCompiler
-	ui           chan []byte
+	ui           *transport.MapReduce[[]byte]
 	lastBuilt    map[string]*types.Graph
 }
 
 /*
 NewSolver creates a graph solver.
 */
-func NewSolver(thesis *types.Thesis, ui chan []byte, recorder *audit.Recorder) *Solver {
+func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[[]byte], recorder *audit.Recorder) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	solver := &Solver{

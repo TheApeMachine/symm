@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/utils"
@@ -54,7 +55,7 @@ func Command() *cobra.Command {
 			}
 
 			ctx := run.Context()
-			uiChannel := make(chan []byte, 1024)
+			uiChannel := transport.NewMapReduce[[]byte]([]string{"dashboard"}, nil, nil)
 			manifoldChannel := make(chan types.FluidFrame, 1024)
 
 			dataPath := utils.ResolveDataPath()
@@ -66,7 +67,8 @@ func Command() *cobra.Command {
 
 			defer store.Close()
 
-			hub := ui.NewHub(ctx, nil, nil, nil, uiChannel, manifoldChannel)
+			thesis := types.NewThesis(ctx, uiChannel)
+			hub := ui.NewHub(ctx, thesis, nil, nil, nil, manifoldChannel)
 			replay := NewDriver(ctx, store, hub, uiChannel,
 				func(state State) {
 					utils.Publish(uiChannel, datura.NewMap("backtest", state))

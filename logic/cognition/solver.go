@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -81,7 +82,7 @@ type Solver struct {
 	maxSeqLen      int
 	surprisalLimit float64
 	tickCounter    uint64
-	ui             chan []byte
+	ui             *transport.MapReduce[[]byte]
 
 	// Beam search shape. Held as fields rather than call-site constants so the
 	// lookahead can be tuned without also reshaping what Cortex draws — the two
@@ -160,7 +161,7 @@ func NewSolver(
 	ctx context.Context,
 	thesis *types.Thesis,
 	tree *dmt.Tree,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	recorder *audit.Recorder,
 	opts ...Option,
 ) *Solver {

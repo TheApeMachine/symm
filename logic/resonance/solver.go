@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -41,7 +42,7 @@ type Solver struct {
 	states        *sync.Map
 	references    *sync.Map
 	pace          float64
-	ui            chan []byte
+	ui            *transport.MapReduce[[]byte]
 	subscriptions map[string]*types.Subscription[any]
 	thesis        *types.Thesis
 
@@ -70,7 +71,7 @@ func NewSolver(
 	ctx context.Context,
 	pace float64,
 	api *websocket.API,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	thesis *types.Thesis,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)

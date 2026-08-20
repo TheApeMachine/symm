@@ -19,6 +19,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/signal/compute"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -61,7 +62,7 @@ type Solver struct {
 	angles      []float64
 	pending     []pendingDial
 	waiting     atomic.Bool
-	ui          chan []byte
+	ui          *transport.MapReduce[[]byte]
 	binui       chan types.FluidFrame
 	semaphore   chan struct{}
 	stopping    chan struct{}
@@ -104,7 +105,7 @@ by the same explicit event-history capacity as the live market feed.
 */
 func NewSolver(
 	api *websocket.API,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	binui chan types.FluidFrame,
 	recorder *audit.Recorder,
 ) *Solver {

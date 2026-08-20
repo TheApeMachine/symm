@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func brokerForecast(value float64) *learning.RLSOutput {
@@ -372,7 +373,7 @@ func equityDeskFixture(
 		thesis:         thesis,
 		equityObserver: observer,
 		positions:      &sync.Map{},
-		ui:             make(chan []byte, 1),
+		ui:             transport.NewMapReduce[[]byte](nil, nil, nil),
 	}
 
 	return desk, thesis, observer

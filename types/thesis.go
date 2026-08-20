@@ -21,7 +21,7 @@ broker execution and settlement continue in their own lifecycle.
 type Thesis struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
-	ui             *transport.MapReduce[any]
+	ui             *transport.MapReduce[[]byte]
 	equityMu       sync.RWMutex
 	equity         *kraken.TradeBalanceResult
 	equityRevision uint64
@@ -42,7 +42,7 @@ type Thesis struct {
 NewThesis creates a Thesis with empty durable maps and no tick evidence yet.
 */
 func NewThesis(
-	ctx context.Context, ui *transport.MapReduce[any],
+	ctx context.Context, ui *transport.MapReduce[[]byte],
 ) *Thesis {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -55,6 +55,23 @@ func NewThesis(
 		Symbols:      &sync.Map{},
 		symbolIDs:    make(map[string]SymbolID),
 	}
+}
+
+func (thesis *Thesis) UI() *transport.MapReduce[[]byte] {
+	return thesis.ui
+}
+
+/*
+Publish appends one marshaled dashboard wire frame to the lock-free UI
+transport. The frame is retained until the hub consumer drains it; a producer
+never blocks and never drops, regardless of transport backpressure.
+*/
+func (thesis *Thesis) Publish(frame []byte) {
+	if thesis == nil || thesis.ui == nil {
+		return
+	}
+
+	thesis.ui.Push(frame)
 }
 
 func (thesis *Thesis) Symbol(name string) *Symbol {

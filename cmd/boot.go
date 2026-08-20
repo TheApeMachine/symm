@@ -20,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/regulator"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/trader"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/utils"
@@ -95,7 +96,7 @@ func Boot(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel chan []byte,
+	uiChannel *transport.MapReduce[[]byte],
 ) *System {
 	return BootWithHub(ctx, thesis, public, private, uiChannel, nil)
 }
@@ -110,7 +111,7 @@ func BootWithHub(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel chan []byte,
+	uiChannel *transport.MapReduce[[]byte],
 	existingHub *ui.Hub,
 ) *System {
 	viper.SetDefault("system.actor.buffer", 1024)
@@ -345,10 +346,10 @@ func BootWithHub(
 	} else {
 		system.Hub = ui.NewHub(
 			ctx,
+			thesis,
 			desk,
 			price,
 			balance,
-			uiChannel,
 			manifoldChannel,
 		)
 

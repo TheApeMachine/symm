@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -25,7 +26,7 @@ type Recovery struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	api        *websocket.API
-	ui         chan []byte
+	ui         *transport.MapReduce[[]byte]
 	instrument *Instrument
 	price      *Price
 	balance    *Balance
@@ -40,7 +41,7 @@ NewRecovery instantiates a Recovery processor with all broker dependencies.
 func NewRecovery(
 	ctx context.Context,
 	api *websocket.API,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,

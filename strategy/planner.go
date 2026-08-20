@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	logicgraph "github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -24,7 +25,7 @@ type Planner struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	status     types.Status
-	ui         chan []byte
+	ui         *transport.MapReduce[[]byte]
 	recorder   *audit.Recorder
 	mctsEngine *mcts.CausalMCTS
 	allocation *Allocation
@@ -42,7 +43,7 @@ type Planner struct {
 
 func NewPlanner(
 	ctx context.Context,
-	uiHub chan []byte,
+	uiHub *transport.MapReduce[[]byte],
 	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	desk *broker.Desk,

@@ -3,6 +3,7 @@ package utils
 import (
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -29,20 +30,16 @@ func PublishFluid(
 }
 
 /*
-Publish sends replaceable dashboard state without letting an absent or slow UI
-consume the market-data path. A full buffered channel is normal backpressure,
-so that frame is freed before serialization and the trading path continues.
+Publish appends one replaceable dashboard wire frame to the thesis's lock-free
+UI transport. The frame is retained until the hub consumer drains it, so a
+publish never blocks and never drops a frame regardless of marketplace heat.
 */
-func Publish(ui chan []byte, data datura.Map[any]) {
-	if data == nil || ui == nil {
-		data.Free()
+func Publish(ui *transport.MapReduce[[]byte], data datura.Map[any]) {
+	frame := data.MarshalAndFree()
+
+	if ui == nil {
 		return
 	}
 
-	select {
-	case ui <- data.MarshalAndFree():
-		return
-	default:
-		errnie.Warn("UI channel is saturated")
-	}
+	ui.Push(frame)
 }

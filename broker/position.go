@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -27,7 +28,7 @@ type Position struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	api            *websocket.API
-	ui             chan []byte
+	ui             *transport.MapReduce[[]byte]
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -61,7 +62,7 @@ NewPosition constructs one desk-owned lot shell.
 func NewPosition(
 	ctx context.Context,
 	api *websocket.API,
-	ui chan []byte,
+	ui *transport.MapReduce[[]byte],
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -131,8 +132,7 @@ func (position *Position) MarshalJSON() ([]byte, error) {
 		*positionJSON
 	}{
 		Status:       position.status(),
-		positionJSON: (*positionJSON)(position),
-	})
+		positionJSON: (*positionJSON)(position),	})
 }
 
 /*
@@ -572,4 +572,12 @@ func (position *Position) Close() (err error) {
 
 	position.setStatus(types.CLOSED)
 	return errnie.Error(err)
+}
+
+/*
+marshalPosition encodes one position into the wire-frame bytes the Positions
+column carries on the lock-free transport.
+*/
+func marshalPosition(position *Position) ([]byte, error) {
+	return json.Marshal(position)
 }

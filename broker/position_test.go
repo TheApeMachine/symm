@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestPositionOnTicker(t *testing.T) {
@@ -70,7 +73,7 @@ func TestPositionOnTicker(t *testing.T) {
 		position := &Position{
 			api:   api,
 			price: price,
-			ui:    make(chan []byte, 2),
+			ui:    transport.NewMapReduce[[]byte](nil, nil, nil),
 			pair: kraken.InstrumentPair{
 				Symbol: "SIM/USD",
 				Base:   "SIM",
@@ -155,7 +158,7 @@ func TestPositionOnExecution(t *testing.T) {
 		position := &Position{
 			price: price,
 			store: store,
-			ui:    make(chan []byte, 1),
+			ui:    transport.NewMapReduce[[]byte](nil, nil, nil),
 			pair: kraken.InstrumentPair{
 				Symbol: "SIM/USD",
 				Base:   "SIM",
@@ -208,7 +211,7 @@ func TestPositionOnExecution(t *testing.T) {
 					Status types.Status `json:"status"`
 				} `json:"positions"`
 			}{}
-			So(json.Unmarshal(<-position.ui, &frame), ShouldBeNil)
+			So(json.Unmarshal(nextFrame(position.ui), &frame), ShouldBeNil)
 			So(frame.Positions, ShouldHaveLength, 1)
 			So(frame.Positions[0].Status, ShouldEqual, types.CLOSED)
 			stored, err = store.Load(t.Context(), "SIM/USD")
@@ -219,7 +222,7 @@ func TestPositionOnExecution(t *testing.T) {
 
 	Convey("Given a rejected entry with no fill economics", t, func() {
 		position := &Position{
-			ui:         make(chan []byte, 1),
+			ui:         transport.NewMapReduce[[]byte](nil, nil, nil),
 			EntryOrder: &spot.AddOrderRequest{ClOrdId: "entry"},
 			Holding:    &types.Holding{},
 		}
@@ -241,7 +244,7 @@ func TestPositionOnExecution(t *testing.T) {
 		stoploss := newBrokerStoploss(t)
 		stoploss.Update(stoploss.Floor.Sub(decimal.NewFromFloat64(0.01)))
 		position := &Position{
-			ui:        make(chan []byte, 1),
+			ui:         transport.NewMapReduce[[]byte](nil, nil, nil),
 			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
 			Holding: &types.Holding{
 				Qty:      decimal.NewFromInt64(1),
@@ -267,7 +270,7 @@ func TestPositionOnExecution(t *testing.T) {
 
 	Convey("Given a terminal exit with partial filled quantity", t, func() {
 		position := &Position{
-			ui:        make(chan []byte, 1),
+			ui:         transport.NewMapReduce[[]byte](nil, nil, nil),
 			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
 			Holding: &types.Holding{
 				Qty: decimal.NewFromInt64(1),
@@ -372,7 +375,7 @@ func TestPositionCloseFill(t *testing.T) {
 			decimal.NewFromFloat64(0.0025),
 		)
 		position := &Position{
-			ui: make(chan []byte, 1),
+			ui: transport.NewMapReduce[[]byte](nil, nil, nil),
 			Holding: &types.Holding{
 				Status:      types.OPEN,
 				Qty:         quantity,
@@ -423,4 +426,17 @@ func TestPositionCloseFill(t *testing.T) {
 			So(position.Holding.ExitPrice, ShouldBeNil)
 		})
 	})
+}
+
+/*
+nextFrame drains one wire frame from a test ui transport, registering a local
+consumer cursor so the read does not contend with any other test consumer.
+*/
+var testSeq atomic.Uint64
+
+func nextFrame(ui *transport.MapReduce[[]byte]) []byte {
+	consumer := "test-" + strconv.Itoa(int(testSeq.Add(1)))
+	ui.Register(consumer)
+	frame, _ := ui.Pop(consumer)
+	return frame
 }

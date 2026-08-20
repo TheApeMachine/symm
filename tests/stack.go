@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/system"
 	testtypes "github.com/theapemachine/symm/tests/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -55,7 +56,7 @@ type Boot[S Driven] func(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel chan []byte,
+	uiChannel *transport.MapReduce[[]byte],
 ) S
 
 /*
