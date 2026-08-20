@@ -11,7 +11,6 @@ import (
 
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/geometry"
@@ -20,8 +19,9 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/signal/compute"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -900,10 +900,29 @@ func (solver *Solver) publishDomain() error {
 		return nil
 	}
 
-	utils.PublishFluid(
-		solver.binui, types.FluidParticlesChannel,
-		datura.NewMap("particles", oscillatorsToParticles(solver.config, solver.oscillators)),
-	)
+	particles := oscillatorsToParticles(solver.config, solver.oscillators)
+	rows := make([]*wire.FluidParticleT, len(particles))
+
+	for index, particle := range particles {
+		rows[index] = &wire.FluidParticleT{
+			Position:  fluidVectorWire(particle.Position),
+			Velocity:  fluidVectorWire(particle.Velocity),
+			Mass:      particle.Mass,
+			Heat:      particle.Heat,
+			Energy:    particle.Energy,
+			Phase:     particle.Phase,
+			Omega:     particle.Omega,
+			Amplitude: particle.Amplitude,
+		}
+	}
+
+	solver.binui.Push(types.FluidFrame{
+		Channel: types.FluidParticlesChannel,
+		Payload: telemetry.Encode(&wire.FrameT{
+			Type:  wire.FrameFluidParticlesFrame,
+			Value: &wire.FluidParticlesFrameT{Particles: rows},
+		}),
+	})
 
 	return nil
 }
@@ -916,11 +935,13 @@ func (solver *Solver) publishPhase(
 	reading := solver.stampPhase(thesis, at, cuts)
 
 	if solver.binui != nil {
-		utils.PublishFluid(
-			solver.binui,
-			types.FluidPhaseChannel,
-			solver.phaseRow(at, reading),
-		)
+		solver.binui.Push(types.FluidFrame{
+			Channel: types.FluidPhaseChannel,
+			Payload: telemetry.Encode(&wire.FrameT{
+				Type:  wire.FrameFluidPhaseFrame,
+				Value: solver.phaseRow(at, reading),
+			}),
+		})
 	}
 }
 
@@ -931,31 +952,57 @@ readiness, angular scan, and real-time hydrodynamic / Kuramoto diagnostics.
 func (solver *Solver) phaseRow(
 	at time.Time,
 	reading types.PhaseReading,
-) datura.Map[any] {
+) *wire.FluidPhaseFrameT {
 	kuramoto := kuramotoOrderParameter(solver.oscillators)
+	wave := oscillatorWave(solver.oscillators)
+	waveWire := make([]*wire.WaveModeT, len(wave))
 
-	row := datura.NewMap(
-		"source", "manifold",
-		"at", at.Format(time.RFC3339),
-		"phaseReady", reading.Ready,
-		"phaseReason", reading.Reason,
-		"wave", oscillatorWave(solver.oscillators),
-		"hydrodynamics", datura.NewMap(
-			"pressureGradNorm", solver.reading.PressureGradNorm,
-			"divergence", solver.reading.Divergence,
-			"coherenceMag2", solver.reading.CoherenceMag2,
-			"guidanceSpeed", solver.reading.GuidanceSpeed,
-			"viscosityProxy", solver.reading.ViscosityProxy,
-			"kuramotoR", kuramoto.R,
-			"kuramotoPsi", kuramoto.Psi,
-		),
-	)
-
-	if reading.Ready {
-		row["phaseScan"] = reading.Responses
+	for index, mode := range wave {
+		waveWire[index] = &wire.WaveModeT{
+			Omega: mode.Omega, Real: mode.Real, Imaginary: mode.Imaginary,
+		}
 	}
 
-	return row
+	return &wire.FluidPhaseFrameT{
+		Source:      "manifold",
+		At:          at.UnixNano(),
+		PhaseReady:  reading.Ready,
+		PhaseReason: reading.Reason,
+		Wave:        waveWire,
+		Hydrodynamics: &wire.HydrodynamicsT{
+			PressureGradNorm: solver.reading.PressureGradNorm,
+			Divergence:       solver.reading.Divergence,
+			CoherenceMag2:    solver.reading.CoherenceMag2,
+			GuidanceSpeed:    solver.reading.GuidanceSpeed,
+			ViscosityProxy:   solver.reading.ViscosityProxy,
+			KuramotoR:        kuramoto.R,
+			KuramotoPsi:      kuramoto.Psi,
+		},
+		PhaseScan: phaseResponsesWire(reading.Responses),
+	}
+}
+
+func fluidVectorWire(vector OrderVector) *wire.FluidVectorT {
+	return &wire.FluidVectorT{X: vector.X, Y: vector.Y, Z: vector.Z}
+}
+
+func phaseResponsesWire(responses []types.PhaseResponse) []*wire.PhaseResponseT {
+	rows := make([]*wire.PhaseResponseT, len(responses))
+
+	for index, response := range responses {
+		rows[index] = &wire.PhaseResponseT{
+			Angle:      response.Angle,
+			Similarity: response.Similarity,
+			ObservedAt: response.ObservedAt,
+			Outcome: &wire.PhaseOutcomeT{
+				Direction:   response.Outcome.Direction,
+				ReturnValue: response.Outcome.Return,
+				Horizon:     int64(response.Outcome.Horizon),
+			},
+		}
+	}
+
+	return rows
 }
 
 type KuramotoSync struct {

@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -627,11 +627,13 @@ func (crypto *Crypto) publishDiagnostics() {
 		case <-crypto.ctx.Done():
 			return
 		case <-ticker.C:
-			utils.PublishFluid(
-				crypto.manifold,
-				types.DiagnosticsChannel,
-				datura.NewMap("diagnostics", crypto.Diagnostics()),
-			)
+			crypto.manifold.Push(types.FluidFrame{
+				Channel: types.DiagnosticsChannel,
+				Payload: telemetry.Encode(&wire.FrameT{
+					Type:  wire.FrameDiagnosticsFrame,
+					Value: crypto.Diagnostics().Wire(),
+				}),
+			})
 		}
 	}
 }

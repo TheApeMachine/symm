@@ -35,6 +35,9 @@ const fieldNames: Record<string, string> = {
 	entryBaseline: "entry_baseline",
 	exitBaseline: "exit_baseline",
 	noiseScore: "noiseScore",
+};
+
+const positionFieldNames: Record<string, string> = {
 	profitLine: "profit_line",
 	armAt: "arm_at",
 	lockFloor: "lock_floor",
@@ -112,13 +115,18 @@ const plain = (value: unknown, field = ""): JSONSerializable | undefined => {
 						return [];
 					}
 
-					return [[name, {
-						raw: plain(metric.raw),
-						...(metric.hasNormalized === true
-							? { normalized: plain(metric.normalized) }
-							: {}),
-						...(metric.unit ? { unit: plain(metric.unit) } : {}),
-					}]];
+					return [
+						[
+							name,
+							{
+								raw: plain(metric.raw),
+								...(metric.hasNormalized === true
+									? { normalized: plain(metric.normalized) }
+									: {}),
+								...(metric.unit ? { unit: plain(metric.unit) } : {}),
+							},
+						],
+					];
 				}),
 			) as JSONSerializable;
 		}
@@ -170,14 +178,35 @@ const plain = (value: unknown, field = ""): JSONSerializable | undefined => {
 		return Object.fromEntries(entries) as JSONSerializable;
 	}
 
-	const converted: Record<string, JSONSerializable | undefined> = {};
+	const converted: Record<string, JSONSerializable> = {};
+	const record = value as Record<string, unknown>;
+	const names =
+		field === "holding" || field === "stoploss"
+			? { ...fieldNames, ...positionFieldNames }
+			: fieldNames;
 
 	for (const [name, entry] of Object.entries(value)) {
 		if (name.startsWith("has") && typeof entry === "boolean") {
 			continue;
 		}
 
-		const outputName = fieldNames[name] ?? name;
+		if (name === "normalized" && record.hasNormalized === false) {
+			continue;
+		}
+
+		if (name === "quality" && record.hasQuality === false) {
+			continue;
+		}
+
+		if (name === "entropyBits" && record.hasEntropyBits === false) {
+			continue;
+		}
+
+		if (name === "entropyThreshold" && record.hasEntropyThreshold === false) {
+			continue;
+		}
+
+		const outputName = names[name] ?? name;
 		const output = plain(entry, name);
 
 		if (output !== undefined) {
@@ -208,7 +237,45 @@ const keyedRows = (
 	) as JSONSerializable;
 };
 
-const decodeEnvelope = (bytes: Uint8Array): Record<string, JSONSerializable> => {
+const diagnosticNames: Record<string, string> = {
+	atNs: "at_ns",
+	startedNs: "started_ns",
+	totalNs: "total_ns",
+	lastNs: "last_ns",
+	maxNs: "max_ns",
+	lastAtNs: "last_at_ns",
+	capacity: "cap",
+	highWater: "high_water",
+	inFlightNs: "in_flight_ns",
+	lastPassNs: "last_pass_ns",
+	sinceLastNs: "since_last_ns",
+};
+
+const diagnosticsPayload = (payload: Record<string, JSONSerializable>) => {
+	const convert = (value: JSONSerializable): JSONSerializable => {
+		if (Array.isArray(value)) {
+			return value.map(convert);
+		}
+
+		if (value === null || typeof value !== "object") {
+			return value;
+		}
+
+		return Object.fromEntries(
+			Object.entries(value).flatMap(([name, entry]) =>
+				entry === undefined
+					? []
+					: [[diagnosticNames[name] ?? name, convert(entry)]],
+			),
+		) as JSONSerializable;
+	};
+
+	return convert(payload);
+};
+
+export const decodeTelemetryFrame = (
+	bytes: Uint8Array,
+): Record<string, JSONSerializable> => {
 	const byteBuffer = new flatbuffers.ByteBuffer(bytes);
 
 	if (!Envelope.bufferHasIdentifier(byteBuffer)) {
@@ -218,7 +285,12 @@ const decodeEnvelope = (bytes: Uint8Array): Record<string, JSONSerializable> => 
 	const envelope = Envelope.getRootAsEnvelope(byteBuffer).unpack();
 	const payload = plain(envelope.frame);
 
-	if (payload === undefined || payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+	if (
+		payload === undefined ||
+		payload === null ||
+		typeof payload !== "object" ||
+		Array.isArray(payload)
+	) {
 		throw new Error("telemetry envelope has no frame payload");
 	}
 
@@ -230,7 +302,25 @@ const decodeEnvelope = (bytes: Uint8Array): Record<string, JSONSerializable> => 
 		case Frame.EquityFrame:
 			return { equity: payload };
 		case Frame.BalancesFrame:
-			return { balances: keyedRows(payload.balances, "asset") };
+			return {
+				balances: Object.fromEntries(
+					(Array.isArray(payload.balances) ? payload.balances : []).flatMap(
+						(balance) => {
+							if (
+								balance === null ||
+								typeof balance !== "object" ||
+								Array.isArray(balance)
+							) {
+								return [];
+							}
+
+							return typeof balance.asset === "string"
+								? [[balance.asset, balance.amount]]
+								: [];
+						},
+					),
+				) as JSONSerializable,
+			};
 		case Frame.ResonanceFrame:
 			return { resonance: payload.rows ?? [] };
 		case Frame.CognitionFrame:
@@ -256,6 +346,86 @@ const decodeEnvelope = (bytes: Uint8Array): Record<string, JSONSerializable> => 
 			return { hindsight: payload };
 		case Frame.ErrorFrame:
 			return { error: payload };
+		case Frame.FluidParticlesFrame:
+			return {
+				fluidParticles: (Array.isArray(payload.particles)
+					? payload.particles
+					: []
+				).map((particle) => {
+					if (
+						particle === null ||
+						typeof particle !== "object" ||
+						Array.isArray(particle)
+					) {
+						throw new Error("fluid particle must be an object");
+					}
+
+					const position = particle.position as Record<
+						string,
+						JSONSerializable
+					>;
+					const velocity = particle.velocity as Record<
+						string,
+						JSONSerializable
+					>;
+
+					return {
+						Position: { X: position.x, Y: position.y, Z: position.z },
+						Velocity: { X: velocity.x, Y: velocity.y, Z: velocity.z },
+						Mass: particle.mass,
+						Heat: particle.heat,
+						Energy: particle.energy,
+						Phase: particle.phase,
+						Omega: particle.omega,
+						Amplitude: particle.amplitude,
+					};
+				}),
+			};
+		case Frame.FluidFieldsFrame:
+			return {
+				fluidFields: {
+					Grid: payload.grid,
+					Density: payload.density,
+					Momentum: payload.momentum,
+					InternalEnergy: payload.internalEnergy,
+					WaveReal: payload.waveReal,
+					WaveImaginary: payload.waveImaginary,
+				},
+			};
+		case Frame.FluidPhaseFrame:
+			return {
+				fluidPhase: {
+					...payload,
+					phaseScan: Array.isArray(payload.phaseScan)
+						? payload.phaseScan.map((response) => {
+								if (
+									response === null ||
+									typeof response !== "object" ||
+									Array.isArray(response)
+								) {
+									throw new Error("phase response must be an object");
+								}
+
+								const outcome = response.outcome;
+
+								return outcome !== null &&
+									typeof outcome === "object" &&
+									!Array.isArray(outcome)
+									? {
+											...response,
+											outcome: { ...outcome, return: outcome.returnValue },
+										}
+									: response;
+							})
+						: [],
+				},
+			};
+		case Frame.DiagnosticsFrame:
+			return {
+				diagnostics: diagnosticsPayload(
+					payload as Record<string, JSONSerializable>,
+				),
+			};
 		default:
 			throw new Error(`unsupported telemetry schema tag ${envelope.frameType}`);
 	}
@@ -286,7 +456,7 @@ export const decodeTelemetryBatch = (
 			throw new Error("telemetry frame body is truncated");
 		}
 
-		frames.push(decodeEnvelope(new Uint8Array(batch, offset, length)));
+		frames.push(decodeTelemetryFrame(new Uint8Array(batch, offset, length)));
 		offset += length;
 	}
 

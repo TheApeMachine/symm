@@ -49,13 +49,10 @@ export type FluidParticle = {
 	oscillator?: OrderOscillator;
 };
 
-type FluidEnvelope = {
-	fields?: unknown;
-	particles?: unknown;
+export const decodePhase = (bytes: Uint8Array): Record<string, unknown> => {
+	const frame = decodeTelemetryFrame(bytes);
+	return objectValue(frame.fluidPhase, "fluid phase");
 };
-
-export const decodePhase = (value: unknown): Record<string, unknown> =>
-	objectValue(value, "fluid phase");
 
 const objectValue = (value: unknown, name: string): Record<string, unknown> => {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -91,9 +88,9 @@ const numberArray = (value: unknown, length: number, name: string) => {
 	return value as number[];
 };
 
-export const decodeFields = (value: unknown): FluidFields => {
-	const envelope = objectValue(value, "fluid envelope") as FluidEnvelope;
-	const fields = objectValue(envelope.fields, "fields");
+export const decodeFields = (bytes: Uint8Array): FluidFields => {
+	const frame = decodeTelemetryFrame(bytes);
+	const fields = objectValue(frame.fluidFields, "fields");
 	const gridValue = objectValue(fields.Grid, "fields.Grid");
 	const Grid = {
 		x: positiveInteger(gridValue.x, "fields.Grid.x"),
@@ -121,12 +118,13 @@ export const decodeFields = (value: unknown): FluidFields => {
 	};
 };
 
-export const decodeParticles = (value: unknown): FluidParticle[] => {
-	const envelope = objectValue(value, "fluid envelope") as FluidEnvelope;
+export const decodeParticles = (bytes: Uint8Array): FluidParticle[] => {
+	const frame = decodeTelemetryFrame(bytes);
 
-	if (!Array.isArray(envelope.particles)) {
+	if (!Array.isArray(frame.fluidParticles)) {
 		throw new Error("particles must be an array");
 	}
 
-	return envelope.particles as FluidParticle[];
+	return frame.fluidParticles as FluidParticle[];
 };
+import { decodeTelemetryFrame } from "#/providers/ws-flatbuffers";

@@ -1,9 +1,9 @@
 import {
-  type ReactNode,
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
+	type ReactNode,
+	useCallback,
+	useLayoutEffect,
+	useRef,
+	useState,
 } from "react";
 import { getLastFrame, registerPainter } from "#/providers/ws-stores";
 import type { JSONSerializable, Paint } from "./paint";
@@ -94,75 +94,78 @@ data-stream-rug ticks each observation so modelled stretches stay distinguishabl
 from measured ones.
 */
 interface ComponentRenderProps {
-  ref: React.RefObject<HTMLDivElement | null>;
-  className?: string;
-  slots: number[];
+	ref: React.RefObject<HTMLDivElement | null>;
+	className?: string;
+	slots: number[];
 }
 
 interface ComponentProps {
-  className?: string;
-  registerKey?: string;
-  repeat?: boolean;
-  select?: string;
-  children: (props: ComponentRenderProps) => ReactNode;
+	className?: string;
+	registerKey?: string;
+	repeat?: boolean;
+	select?: string;
+	children: (props: ComponentRenderProps) => ReactNode;
 }
 
 type JSONRecord = { [key: string]: JSONSerializable | undefined };
 
 type PaintDataset = DOMStringMap & {
-  paint?: string;
-  paintProp?: string;
-  paintSuffix?: string;
-  set?: string;
-  setScale?: string;
-  setDomain?: string;
-  setThreshold?: string;
-  append?: string;
-  appendLimit?: string;
-  appendWidth?: string;
-  appendHeight?: string;
-  streamFilter?: string;
-  streamId?: string;
-  streamValue?: string;
-  streamValues?: string;
-  streamLastId?: string;
-  streamBaseline?: string;
-  streamBaselineValue?: string;
-  streamTime?: string;
-  streamWindow?: string;
-  streamDecay?: string;
-  streamRug?: string;
-  streamAppliedFilter?: string;
-  target?: string;
-  scope?: string;
-  filter?: string;
-  index?: string;
-  paintFormat?: string;
-  paintClass?: string;
-  paintEmpty?: string;
-  paintAbsent?: string;
-  paintHold?: string;
-  paintRaisedAt?: string;
+	paint?: string;
+	paintProp?: string;
+	paintSuffix?: string;
+	set?: string;
+	setScale?: string;
+	setDomain?: string;
+	setThreshold?: string;
+	append?: string;
+	appendLimit?: string;
+	appendWidth?: string;
+	appendHeight?: string;
+	streamFilter?: string;
+	streamId?: string;
+	streamValue?: string;
+	streamValues?: string;
+	streamLastId?: string;
+	streamBaseline?: string;
+	streamBaselineValue?: string;
+	streamTime?: string;
+	streamWindow?: string;
+	streamDecay?: string;
+	streamRug?: string;
+	streamAppliedFilter?: string;
+	target?: string;
+	scope?: string;
+	filter?: string;
+	index?: string;
+	paintFormat?: string;
+	paintClass?: string;
+	paintEmpty?: string;
+	paintAbsent?: string;
+	paintHold?: string;
+	paintRaisedAt?: string;
 };
 
 type PaintBinding = {
-  key: string;
-  element: HTMLElement;
-  dataset: PaintDataset;
-  mode: "paint" | "set" | "append" | "stream";
-  read: PathReader;
+	key: string;
+	element: HTMLElement;
+	dataset: PaintDataset;
+	mode: "paint" | "set" | "append" | "stream";
+	read: PathReader;
+	write: TargetWriter;
+	writePaintProperty: TargetWriter;
 };
 
-type PathReader = (
-  updates: JSONSerializable,
-) => JSONSerializable | undefined;
+type PathReader = (updates: JSONSerializable) => JSONSerializable | undefined;
+
+type TargetWriter = (element: HTMLElement, value: JSONSerializable) => void;
 
 const pathReaders = new Map<string, PathReader>();
+const targetWriters = new Map<string, TargetWriter>();
 const listParts = new Map<string, string[]>();
 const appendBuffers = new WeakMap<HTMLElement, Float64Array>();
 const paintClassRules = new Map<
-  string,
-  Array<{ expected: string; tokens: string[] }>
+	string,
+	Array<{ expected: string; tokens: string[] }>
 >();
 
 /*
@@ -183,188 +186,190 @@ have — so every gate resolved to absent and every badge stayed on standby. A
 selector only applies within the Component that declared it.
 */
 const inherited = (
-  root: HTMLElement,
-  element: HTMLElement,
-  selector: string,
+	root: HTMLElement,
+	element: HTMLElement,
+	selector: string,
 ): HTMLElement | undefined => {
-  const ancestor = element.closest<HTMLElement>(selector);
+	const ancestor = element.closest<HTMLElement>(selector);
 
-  return ancestor !== null && (ancestor === root || root.contains(ancestor))
-    ? ancestor
-    : undefined;
+	return ancestor !== null && (ancestor === root || root.contains(ancestor))
+		? ancestor
+		: undefined;
 };
 
 const scanTargets = (root: HTMLElement) => {
-  const rootTargets = new Map<string, PaintBinding[]>();
+	const rootTargets = new Map<string, PaintBinding[]>();
 
-  for (const element of root.querySelectorAll<HTMLElement>(
-    "[data-paint], [data-set], [data-append], [data-stream-value]",
-  )) {
-    const key =
-      element.dataset.paint ??
-      element.dataset.set ??
-      element.dataset.append ??
-      element.dataset.streamValue;
+	for (const element of root.querySelectorAll<HTMLElement>(
+		"[data-paint], [data-set], [data-append], [data-stream-value]",
+	)) {
+		const key =
+			element.dataset.paint ??
+			element.dataset.set ??
+			element.dataset.append ??
+			element.dataset.streamValue;
 
-    if (!key) {
-      continue;
-    }
+		if (!key) {
+			continue;
+		}
 
-    /*
+		/*
 			A binding belongs to the nearest Component above it. Without this an
 			outer Component would also paint the bindings of any Component nested
 			inside it, writing one key's frame into a surface bound to another's.
 		*/
-    if (element.closest(`[${COMPONENT_ROOT}]`) !== root) {
-      continue;
-    }
+		if (element.closest(`[${COMPONENT_ROOT}]`) !== root) {
+			continue;
+		}
 
-    const scopedParent = inherited(root, element, "[data-scope][data-filter]");
-    const dataset: PaintDataset = {
-      ...element.dataset,
-      scope: element.dataset.scope ?? scopedParent?.dataset.scope,
-      filter: element.dataset.filter ?? scopedParent?.dataset.filter,
-      index:
-        element.dataset.index ??
-        inherited(root, element, "[data-index]")?.dataset.index,
-    };
+		const scopedParent = inherited(root, element, "[data-scope][data-filter]");
+		const dataset: PaintDataset = {
+			...element.dataset,
+			scope: element.dataset.scope ?? scopedParent?.dataset.scope,
+			filter: element.dataset.filter ?? scopedParent?.dataset.filter,
+			index:
+				element.dataset.index ??
+				inherited(root, element, "[data-index]")?.dataset.index,
+		};
 
-    if (!rootTargets.has(key)) {
-      rootTargets.set(key, []);
-    }
+		if (!rootTargets.has(key)) {
+			rootTargets.set(key, []);
+		}
 
-    rootTargets.get(key)?.push({
-      key,
-      element,
-      dataset,
-      read: compilePath(key),
-      mode: element.dataset.streamValue
-        ? "stream"
-        : element.dataset.append
-          ? "append"
-          : element.dataset.set
-            ? "set"
-            : "paint",
-    });
-  }
+		rootTargets.get(key)?.push({
+			key,
+			element,
+			dataset,
+			read: compilePath(key),
+			write: compileTargetWriter(dataset.target),
+			writePaintProperty: compileTargetWriter(dataset.paintProp),
+			mode: element.dataset.streamValue
+				? "stream"
+				: element.dataset.append
+					? "append"
+					: element.dataset.set
+						? "set"
+						: "paint",
+		});
+	}
 
-  return rootTargets;
+	return rootTargets;
 };
 
 const formatValue = (value: unknown, format: string | undefined): string => {
-  /*
+	/*
 		A wall clock arrives as an RFC 3339 stamp. The terminal shows the engine's
 		own time, so the stamp is read as an instant and printed in UTC rather than
 		reformatted against whatever timezone the browser happens to sit in.
 	*/
-  if (format === "time" || format === "date") {
-    const instant = new Date(String(value));
+	if (format === "time" || format === "date") {
+		const instant = new Date(String(value));
 
-    if (!Number.isFinite(instant.getTime())) {
-      throw new Error(
-        `data-paint-format=${format} needs a timestamp: ${value}`,
-      );
-    }
+		if (!Number.isFinite(instant.getTime())) {
+			throw new Error(
+				`data-paint-format=${format} needs a timestamp: ${value}`,
+			);
+		}
 
-    return format === "time"
-      ? instant.toISOString().slice(11, 19)
-      : instant.toISOString().slice(0, 10);
-  }
+		return format === "time"
+			? instant.toISOString().slice(11, 19)
+			: instant.toISOString().slice(0, 10);
+	}
 
-  if (format === "dir") {
-    const lean = typeof value === "number" ? value : Number(value);
+	if (format === "dir") {
+		const lean = typeof value === "number" ? value : Number(value);
 
-    if (!Number.isFinite(lean)) {
-      throw new Error(`data-paint-format=dir needs a signed call: ${value}`);
-    }
+		if (!Number.isFinite(lean)) {
+			throw new Error(`data-paint-format=dir needs a signed call: ${value}`);
+		}
 
-    if (lean > 0) {
-      return "up";
-    }
+		if (lean > 0) {
+			return "up";
+		}
 
-    if (lean < 0) {
-      return "down";
-    }
+		if (lean < 0) {
+			return "down";
+		}
 
-    return "flat";
-  }
+		return "flat";
+	}
 
-  /*
+	/*
 		Money arrives as a string, because a decimal that survived the wire
 		without losing precision cannot be a float. A formatted field asks for
 		a number, so a value that reads as one is treated as one — otherwise
 		every price and balance would print at full stored precision.
 	*/
-  if (
-    format &&
-    typeof value === "string" &&
-    value.trim() !== "" &&
-    Number.isFinite(Number(value))
-  ) {
-    value = Number(value);
-  }
+	if (
+		format &&
+		typeof value === "string" &&
+		value.trim() !== "" &&
+		Number.isFinite(Number(value))
+	) {
+		value = Number(value);
+	}
 
-  if (format) {
-    switch (typeof value) {
-      case "number": {
-        const showSign = format.startsWith("+");
-        const numFmt = showSign ? format.slice(1) : format;
+	if (format) {
+		switch (typeof value) {
+			case "number": {
+				const showSign = format.startsWith("+");
+				const numFmt = showSign ? format.slice(1) : format;
 
-        if (!/^\.\d+(f|%|bp)?$/i.test(numFmt)) {
-          throw new Error(`invalid data-paint-format: ${format}`);
-        }
+				if (!/^\.\d+(f|%|bp)?$/i.test(numFmt)) {
+					throw new Error(`invalid data-paint-format: ${format}`);
+				}
 
-        const digits = Number.parseInt(numFmt.slice(1), 10);
+				const digits = Number.parseInt(numFmt.slice(1), 10);
 
-        if (!Number.isInteger(digits)) {
-          throw new Error(`invalid data-paint-format: ${format}`);
-        }
+				if (!Number.isInteger(digits)) {
+					throw new Error(`invalid data-paint-format: ${format}`);
+				}
 
-        if (digits < 0 || digits > 100) {
-          throw new Error(
-            `data-paint-format fractional digits out of range: ${format}`,
-          );
-        }
+				if (digits < 0 || digits > 100) {
+					throw new Error(
+						`data-paint-format fractional digits out of range: ${format}`,
+					);
+				}
 
-        let formatted: string;
+				let formatted: string;
 
-        if (numFmt.endsWith("%")) {
-          formatted = `${(value * 100).toFixed(digits)}%`;
-        } else if (numFmt.endsWith("bp")) {
-          formatted = `${(value * 10000).toFixed(digits)}`;
-        } else {
-          formatted = value.toFixed(digits);
-        }
+				if (numFmt.endsWith("%")) {
+					formatted = `${(value * 100).toFixed(digits)}%`;
+				} else if (numFmt.endsWith("bp")) {
+					formatted = `${(value * 10000).toFixed(digits)}`;
+				} else {
+					formatted = value.toFixed(digits);
+				}
 
-        if (showSign && value >= 0) {
-          return `+${formatted}`;
-        }
+				if (showSign && value >= 0) {
+					return `+${formatted}`;
+				}
 
-        return formatted;
-      }
-    }
-  }
+				return formatted;
+			}
+		}
+	}
 
-  return String(value);
+	return String(value);
 };
 
 const readPath = (
-  updates: JSONSerializable,
-  path: string | undefined,
+	updates: JSONSerializable,
+	path: string | undefined,
 ): JSONSerializable | undefined => compilePath(path)(updates);
 
 const compilePath = (path: string | undefined): PathReader => {
-  if (!path || path === "$") {
-	return (updates) => updates;
-  }
+	if (!path || path === "$") {
+		return (updates) => updates;
+	}
 
-  const cached = pathReaders.get(path);
+	const cached = pathReaders.get(path);
 
-  if (cached !== undefined) {
-	return cached;
-  }
+	if (cached !== undefined) {
+		return cached;
+	}
 
-  const parts = path.split(".");
+	const parts = path.split(".");
 	const reader: PathReader = (updates) => {
 		let value: JSONSerializable | undefined = updates;
 
@@ -423,89 +428,89 @@ more than one field at once — a measurement belongs to both a source and a
 symbol, and either alone selects the wrong row.
 */
 const matchesScope = (
-  item: JSONSerializable,
-  scope: string,
-  filter: string,
+	item: JSONSerializable,
+	scope: string,
+	filter: string,
 ): boolean => {
-  const scopes = splitList(scope);
-  const filters = splitList(filter);
+	const scopes = splitList(scope);
+	const filters = splitList(filter);
 
-  if (scopes.length !== filters.length) {
-    throw new Error(
-      `data-scope and data-filter must pair up: ${scope} / ${filter}`,
-    );
-  }
+	if (scopes.length !== filters.length) {
+		throw new Error(
+			`data-scope and data-filter must pair up: ${scope} / ${filter}`,
+		);
+	}
 
-  return scopes.every(
-    (path, index) => String(readPath(item, path)) === filters[index],
-  );
+	return scopes.every(
+		(path, index) => String(readPath(item, path)) === filters[index],
+	);
 };
 
 const selectScopedUpdates = (
-  updates: JSONSerializable,
-  dataset: PaintDataset,
+	updates: JSONSerializable,
+	dataset: PaintDataset,
 ): JSONSerializable | undefined => {
-  /*
+	/*
 		A symbol-keyed map answers a scoped binding by lookup, and a miss is an
 		answer: the engine has published nothing for that symbol. Falling back to
 		the whole map would leave the previous symbol's reading on screen under the
 		new symbol's name.
 	*/
-  if (
-    !Array.isArray(updates) &&
-    dataset.scope &&
-    dataset.filter !== undefined &&
-    typeof updates === "object" &&
-    updates !== null
-  ) {
-    const keyed = (updates as JSONRecord)[dataset.filter];
+	if (
+		!Array.isArray(updates) &&
+		dataset.scope &&
+		dataset.filter !== undefined &&
+		typeof updates === "object" &&
+		updates !== null
+	) {
+		const keyed = (updates as JSONRecord)[dataset.filter];
 
-    return typeof keyed === "object" && keyed !== null && !Array.isArray(keyed)
-      ? keyed
-      : undefined;
-  }
+		return typeof keyed === "object" && keyed !== null && !Array.isArray(keyed)
+			? keyed
+			: undefined;
+	}
 
-  if (!Array.isArray(updates)) {
-    return updates;
-  }
+	if (!Array.isArray(updates)) {
+		return updates;
+	}
 
-  if (!dataset.scope || dataset.filter === undefined) {
-    const index = Number.parseInt(dataset.index ?? "", 10);
+	if (!dataset.scope || dataset.filter === undefined) {
+		const index = Number.parseInt(dataset.index ?? "", 10);
 
-    /*
+		/*
 			A binding that names no row is asking about the batch itself — its
 			length, say. Paths that only make sense on a row read as absent against
 			an array and are skipped, so nothing is invented here.
 		*/
-    if (!Number.isInteger(index)) {
-      return updates;
-    }
+		if (!Number.isInteger(index)) {
+			return updates;
+		}
 
-    return index >= 0 && index < updates.length ? updates[index] : undefined;
-  }
+		return index >= 0 && index < updates.length ? updates[index] : undefined;
+	}
 
-  for (const item of updates) {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) {
-      continue;
-    }
+	for (const item of updates) {
+		if (item === null || typeof item !== "object" || Array.isArray(item)) {
+			continue;
+		}
 
-    if (matchesScope(item as JSONSerializable, dataset.scope, dataset.filter)) {
-      return item;
-    }
-  }
+		if (matchesScope(item as JSONSerializable, dataset.scope, dataset.filter)) {
+			return item;
+		}
+	}
 
-  return undefined;
+	return undefined;
 };
 
 const applyPaintClass = (
-  element: HTMLElement,
-  value: JSONSerializable,
+	element: HTMLElement,
+	value: JSONSerializable,
 ): void => {
-  const spec = element.dataset.paintClass;
+	const spec = element.dataset.paintClass;
 
-  if (!spec) {
-    return;
-  }
+	if (!spec) {
+		return;
+	}
 
 	let rules = paintClassRules.get(spec);
 
@@ -518,17 +523,17 @@ const applyPaintClass = (
 		for (const token of tokens) {
 			if (!token) {
 				continue;
-      }
+			}
 
-      element.classList.toggle(token, String(value) === expected);
-    }
-  }
+			element.classList.toggle(token, String(value) === expected);
+		}
+	}
 };
 
 const compilePaintClasses = (
-  spec: string,
+	spec: string,
 ): Array<{ expected: string; tokens: string[] }> =>
-  spec.split(/\s+/).flatMap((rule) => {
+	spec.split(/\s+/).flatMap((rule) => {
 		const separator = rule.indexOf(":");
 
 		if (separator === -1) {
@@ -567,253 +572,263 @@ const compilePaintClasses = (
 		return [{ expected, tokens }];
 	});
 
-const setTargetValue = (
-  element: HTMLElement,
-  target: string | undefined,
-  value: JSONSerializable,
-): void => {
-  if (!target) {
-    return;
-  }
+const compileTargetWriter = (target: string | undefined): TargetWriter => {
+	if (!target) {
+		return () => {};
+	}
 
-  if (target.startsWith("style.--")) {
-    const property = target.slice("style.".length);
-    const formatted = String(value);
+	const cached = targetWriters.get(target);
 
-    if (element.style.getPropertyValue(property) !== formatted) {
-      element.style.setProperty(property, formatted);
-    }
+	if (cached !== undefined) {
+		return cached;
+	}
 
-    return;
-  }
+	if (target.startsWith("style.--")) {
+		const property = target.slice("style.".length);
+		const writer: TargetWriter = (element, value) => {
+			const formatted = String(value);
 
-  const parts = target.split(".");
-  let current: unknown = element;
+			if (element.style.getPropertyValue(property) !== formatted) {
+				element.style.setProperty(property, formatted);
+			}
+		};
 
-  for (const part of parts.slice(0, -1)) {
-    if (
-      current === null ||
-      current === undefined ||
-      typeof current !== "object"
-    ) {
-      return;
-    }
+		targetWriters.set(target, writer);
+		return writer;
+	}
 
-    current = (current as Record<string, unknown>)[part];
-  }
+	const parts = target.split(".");
+	const property = parts.at(-1);
+	const parents = parts.slice(0, -1);
+	const writer: TargetWriter = (element, value) => {
+		let current: unknown = element;
 
-  const property = parts.at(-1);
+		for (const part of parents) {
+			if (
+				current === null ||
+				current === undefined ||
+				typeof current !== "object"
+			) {
+				return;
+			}
 
-  if (
-    !property ||
-    current === null ||
-    current === undefined ||
-    typeof current !== "object"
-  ) {
-    return;
-  }
+			current = (current as Record<string, unknown>)[part];
+		}
 
-  const targetObject = current as Record<string, unknown>;
+		if (
+			!property ||
+			current === null ||
+			current === undefined ||
+			typeof current !== "object"
+		) {
+			return;
+		}
 
-  if (targetObject[property] !== value) {
-    targetObject[property] = value;
-  }
+		const targetObject = current as Record<string, unknown>;
+
+		if (targetObject[property] !== value) {
+			targetObject[property] = value;
+		}
+	};
+
+	targetWriters.set(target, writer);
+	return writer;
 };
 
 const scaleSetValue = (
-  value: JSONSerializable,
-  dataset: PaintDataset,
-  updates: JSONSerializable,
-  scopedUpdates: JSONSerializable,
+	value: JSONSerializable,
+	dataset: PaintDataset,
+	updates: JSONSerializable,
+	scopedUpdates: JSONSerializable,
 ): JSONSerializable => {
-  if (dataset.setScale === "sign-color") {
-    const numericValue = Number(value);
+	if (dataset.setScale === "sign-color") {
+		const numericValue = Number(value);
 
-    if (!Number.isFinite(numericValue)) {
-      return "var(--f3)";
-    }
+		if (!Number.isFinite(numericValue)) {
+			return "var(--f3)";
+		}
 
-    if (numericValue > 0) {
-      return "var(--up)";
-    }
+		if (numericValue > 0) {
+			return "var(--up)";
+		}
 
-    if (numericValue < 0) {
-      return "var(--down)";
-    }
+		if (numericValue < 0) {
+			return "var(--down)";
+		}
 
-    return "var(--f3)";
-  }
+		return "var(--f3)";
+	}
 
-  /*
+	/*
 		Health is a separate colour language from direction on purpose. A red
 		"up/down" tone and a red "this is broken" tone in one panel are read as
 		the same statement, so system state gets its own hue and leaves --up and
 		--down to mean price and nothing else.
 	*/
-  if (dataset.setScale === "health-color") {
-    const numericValue = Number(value);
+	if (dataset.setScale === "health-color") {
+		const numericValue = Number(value);
 
-    if (!Number.isFinite(numericValue)) {
-      return "var(--f3)";
-    }
+		if (!Number.isFinite(numericValue)) {
+			return "var(--f3)";
+		}
 
-    if (numericValue > 0) {
-      return "var(--info)";
-    }
+		if (numericValue > 0) {
+			return "var(--info)";
+		}
 
-    if (numericValue < 0) {
-      return "var(--error)";
-    }
+		if (numericValue < 0) {
+			return "var(--error)";
+		}
 
-    return "var(--warn)";
-  }
+		return "var(--warn)";
+	}
 
-  if (dataset.setScale === "bool-color") {
-    return value === true ? "var(--up)" : "var(--line2)";
-  }
+	if (dataset.setScale === "bool-color") {
+		return value === true ? "var(--up)" : "var(--line2)";
+	}
 
-  if (dataset.setScale === "activity-color") {
-    if (value === "running") {
-      return "var(--down)";
-    }
+	if (dataset.setScale === "activity-color") {
+		if (value === "running") {
+			return "var(--down)";
+		}
 
-    if (value === "done") {
-      return "var(--up)";
-    }
+		if (value === "done") {
+			return "var(--up)";
+		}
 
-    return "var(--line2)";
-  }
+		return "var(--line2)";
+	}
 
-  if (dataset.setScale === "presence") {
-    return true;
-  }
+	if (dataset.setScale === "presence") {
+		return true;
+	}
 
-  if (dataset.setScale === "presence-color") {
-    return "var(--up)";
-  }
+	if (dataset.setScale === "presence-color") {
+		return "var(--up)";
+	}
 
-  if (dataset.setScale === "above-threshold") {
-    const numericValue = Number(value);
+	if (dataset.setScale === "above-threshold") {
+		const numericValue = Number(value);
 
-    if (!Number.isFinite(numericValue) || !dataset.setThreshold) {
-      return "var(--f3)";
-    }
+		if (!Number.isFinite(numericValue) || !dataset.setThreshold) {
+			return "var(--f3)";
+		}
 
-    const threshold = Number(readPath(scopedUpdates, dataset.setThreshold));
+		const threshold = Number(readPath(scopedUpdates, dataset.setThreshold));
 
-    if (!Number.isFinite(threshold)) {
-      return "var(--f3)";
-    }
+		if (!Number.isFinite(threshold)) {
+			return "var(--f3)";
+		}
 
-    if (numericValue > threshold) {
-      return "var(--up)";
-    }
+		if (numericValue > threshold) {
+			return "var(--up)";
+		}
 
-    return "var(--down)";
-  }
+		return "var(--down)";
+	}
 
-  if (dataset.setScale === "domain-percent") {
-    const numericValue =
-      typeof value === "number"
-        ? value
-        : typeof value === "string" && value.trim() !== ""
-          ? Number(value)
-          : Number.NaN;
+	if (dataset.setScale === "domain-percent") {
+		const numericValue =
+			typeof value === "number"
+				? value
+				: typeof value === "string" && value.trim() !== ""
+					? Number(value)
+					: Number.NaN;
 
-    if (!Number.isFinite(numericValue) || !dataset.setDomain) {
-      return "";
-    }
+		if (!Number.isFinite(numericValue) || !dataset.setDomain) {
+			return "";
+		}
 
-    const values = dataset.setDomain.split(",").flatMap((path) => {
-      const domainValue = readPath(scopedUpdates, path.trim());
+		const values = splitList(dataset.setDomain).flatMap((path) => {
+			const domainValue = readPath(scopedUpdates, path);
 
-      if (typeof domainValue === "number" && Number.isFinite(domainValue)) {
-        return [domainValue];
-      }
+			if (typeof domainValue === "number" && Number.isFinite(domainValue)) {
+				return [domainValue];
+			}
 
-      if (
-        typeof domainValue === "string" &&
-        domainValue.trim() !== "" &&
-        Number.isFinite(Number(domainValue))
-      ) {
-        return [Number(domainValue)];
-      }
+			if (
+				typeof domainValue === "string" &&
+				domainValue.trim() !== "" &&
+				Number.isFinite(Number(domainValue))
+			) {
+				return [Number(domainValue)];
+			}
 
-      return [];
-    });
+			return [];
+		});
 
-    if (values.length < 2) {
-      return "";
-    }
+		if (values.length < 2) {
+			return "";
+		}
 
-    const low = Math.min(...values);
-    const high = Math.max(...values);
+		const low = Math.min(...values);
+		const high = Math.max(...values);
 
-    if (!(high > low)) {
-      return "50%";
-    }
+		if (!(high > low)) {
+			return "50%";
+		}
 
-    const pad = Math.max((high - low) * 0.15, 1e-6);
-    const domainLow = low - pad;
-    const domainHigh = high + pad;
-    const percent =
-      ((numericValue - domainLow) / (domainHigh - domainLow)) * 100;
+		const pad = Math.max((high - low) * 0.15, 1e-6);
+		const domainLow = low - pad;
+		const domainHigh = high + pad;
+		const percent =
+			((numericValue - domainLow) / (domainHigh - domainLow)) * 100;
 
-    return `${Math.min(100, Math.max(0, percent)).toFixed(3)}%`;
-  }
+		return `${Math.min(100, Math.max(0, percent)).toFixed(3)}%`;
+	}
 
-  if (dataset.setScale !== "max-abs") {
-    return value;
-  }
+	if (dataset.setScale !== "max-abs") {
+		return value;
+	}
 
-  const numericValue = Number(value);
+	const numericValue = Number(value);
 
-  if (!Number.isFinite(numericValue) || !Array.isArray(updates)) {
-    return value;
-  }
+	if (!Number.isFinite(numericValue) || !Array.isArray(updates)) {
+		return value;
+	}
 
-  let denominator = 0;
+	let denominator = 0;
 
-  for (const entry of updates) {
-    const numericEntry = Number(entry);
+	for (const entry of updates) {
+		const numericEntry = Number(entry);
 
-    if (!Number.isFinite(numericEntry)) {
-      continue;
-    }
+		if (!Number.isFinite(numericEntry)) {
+			continue;
+		}
 
-    denominator = Math.max(denominator, Math.abs(numericEntry));
-  }
+		denominator = Math.max(denominator, Math.abs(numericEntry));
+	}
 
-  if (denominator <= 0) {
-    return 0;
-  }
+	if (denominator <= 0) {
+		return 0;
+	}
 
-  return numericValue / denominator;
+	return numericValue / denominator;
 };
 
 const appendTargetValue = (
-  element: HTMLElement,
-  dataset: PaintDataset,
-  value: JSONSerializable,
+	element: HTMLElement,
+	dataset: PaintDataset,
+	value: JSONSerializable,
 ): void => {
-  const numericValue = Number(value);
+	const numericValue = Number(value);
 
-  if (!Number.isFinite(numericValue)) {
-    return;
-  }
+	if (!Number.isFinite(numericValue)) {
+		return;
+	}
 
-  const limit = Number.parseInt(dataset.appendLimit ?? "40", 10);
-  const width = Number.parseFloat(dataset.appendWidth ?? "150");
-  const height = Number.parseFloat(dataset.appendHeight ?? "30");
+	const limit = Number.parseInt(dataset.appendLimit ?? "40", 10);
+	const width = Number.parseFloat(dataset.appendWidth ?? "150");
+	const height = Number.parseFloat(dataset.appendHeight ?? "30");
 
-  if (
-    !Number.isInteger(limit) ||
-    limit < 2 ||
-    !Number.isFinite(width) ||
-    !Number.isFinite(height)
-  ) {
-    return;
-  }
+	if (
+		!Number.isInteger(limit) ||
+		limit < 2 ||
+		!Number.isFinite(width) ||
+		!Number.isFinite(height)
+	) {
+		return;
+	}
 
 	let values = appendBuffers.get(element);
 
@@ -828,22 +843,22 @@ const appendTargetValue = (
 	const retained = Array.from(values).filter(Number.isFinite);
 
 	const points = retained
-    .map((entry, index) => {
+		.map((entry, index) => {
 			const denominator = Math.max(retained.length - 1, 1);
-      const x = (index / denominator) * width;
-      const clamped = Math.min(Math.max(entry, 0), 1);
-      const y = height - 1 - clamped * (height - 4);
+			const x = (index / denominator) * width;
+			const clamped = Math.min(Math.max(entry, 0), 1);
+			const y = height - 1 - clamped * (height - 4);
 
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+			return `${x.toFixed(1)},${y.toFixed(1)}`;
+		})
+		.join(" ");
 
-  element.setAttribute(
-    dataset.target ?? "points",
-    element.tagName === "polygon"
-      ? `${points} ${width.toFixed(1)},${height.toFixed(1)} 0.0,${height.toFixed(1)}`
-      : points,
-  );
+	element.setAttribute(
+		dataset.target ?? "points",
+		element.tagName === "polygon"
+			? `${points} ${width.toFixed(1)},${height.toFixed(1)} 0.0,${height.toFixed(1)}`
+			: points,
+	);
 };
 
 /*
@@ -852,36 +867,36 @@ are comma separated so one canvas can pin both the kernel that produced a row
 and the symbol it was measured on.
 */
 const streamMatchesFilter = (
-  entry: JSONSerializable,
-  filter: string | undefined,
+	entry: JSONSerializable,
+	filter: string | undefined,
 ): boolean => {
-  if (!filter) {
-    return true;
-  }
+	if (!filter) {
+		return true;
+	}
 
-  return splitList(filter).every((condition) => {
-    const separator = condition.indexOf("=");
+	return splitList(filter).every((condition) => {
+		const separator = condition.indexOf("=");
 
-    if (separator === -1) {
-      throw new Error(`data-stream-filter needs path=value: ${condition}`);
-    }
+		if (separator === -1) {
+			throw new Error(`data-stream-filter needs path=value: ${condition}`);
+		}
 
-    const path = condition.slice(0, separator).trim();
-    const expected = condition.slice(separator + 1).trim();
+		const path = condition.slice(0, separator).trim();
+		const expected = condition.slice(separator + 1).trim();
 
-    return String(readPath(entry, path)) === expected;
-  });
+		return String(readPath(entry, path)) === expected;
+	});
 };
 
 const streamEntries = (
-  updates: JSONSerializable,
-  dataset: PaintDataset,
+	updates: JSONSerializable,
+	dataset: PaintDataset,
 ): JSONSerializable[] => {
-  const entries = Array.isArray(updates) ? updates : [updates];
+	const entries = Array.isArray(updates) ? updates : [updates];
 
-  return entries.filter((entry) =>
-    streamMatchesFilter(entry, dataset.streamFilter),
-  );
+	return entries.filter((entry) =>
+		streamMatchesFilter(entry, dataset.streamFilter),
+	);
 };
 
 /*
@@ -891,73 +906,73 @@ they come from a fit that is re-estimated as evidence arrives, so an interval
 must be drawn with the parameters that were current across it.
 */
 type StreamSample = {
-  time: number;
-  value: number;
-  baseline: number | null;
-  decay: number | null;
+	time: number;
+	value: number;
+	baseline: number | null;
+	decay: number | null;
 };
 
 type StreamBuffer = {
-  values: Float64Array;
-  count: number;
-  filter: string;
-  lastId: string;
+	values: Float64Array;
+	count: number;
+	filter: string;
+	lastId: string;
 };
 
 const STREAM_SAMPLE_WIDTH = 4;
 const streamBuffers = new WeakMap<HTMLCanvasElement, StreamBuffer>();
 
 const readOptionalNumber = (
-  entry: JSONSerializable,
-  path: string | undefined,
+	entry: JSONSerializable,
+	path: string | undefined,
 ): number | null => {
-  if (!path) {
-    return null;
-  }
+	if (!path) {
+		return null;
+	}
 
-  const value = Number(readPath(entry, path));
+	const value = Number(readPath(entry, path));
 
-  return Number.isFinite(value) ? value : null;
+	return Number.isFinite(value) ? value : null;
 };
 
 const streamSamples = (buffer: StreamBuffer): StreamSample[] => {
-  const samples = new Array<StreamSample>(buffer.count);
+	const samples = new Array<StreamSample>(buffer.count);
 
-  for (let index = 0; index < buffer.count; index += 1) {
-    const offset = index * STREAM_SAMPLE_WIDTH;
-    const baseline = buffer.values[offset + 2];
-    const decay = buffer.values[offset + 3];
+	for (let index = 0; index < buffer.count; index += 1) {
+		const offset = index * STREAM_SAMPLE_WIDTH;
+		const baseline = buffer.values[offset + 2];
+		const decay = buffer.values[offset + 3];
 
-    samples[index] = {
-      time: buffer.values[offset] ?? 0,
-      value: buffer.values[offset + 1] ?? 0,
-      baseline: Number.isNaN(baseline) ? null : (baseline ?? null),
-      decay: Number.isNaN(decay) ? null : (decay ?? null),
-    };
-  }
+		samples[index] = {
+			time: buffer.values[offset] ?? 0,
+			value: buffer.values[offset + 1] ?? 0,
+			baseline: Number.isNaN(baseline) ? null : (baseline ?? null),
+			decay: Number.isNaN(decay) ? null : (decay ?? null),
+		};
+	}
 
-  return samples;
+	return samples;
 };
 
 const retainStreamSamples = (
-  buffer: StreamBuffer,
-  samples: StreamSample[],
+	buffer: StreamBuffer,
+	samples: StreamSample[],
 ): void => {
-  const required = samples.length * STREAM_SAMPLE_WIDTH;
+	const required = samples.length * STREAM_SAMPLE_WIDTH;
 
-  if (buffer.values.length < required) {
-    buffer.values = new Float64Array(required);
-  }
+	if (buffer.values.length < required) {
+		buffer.values = new Float64Array(required);
+	}
 
-  for (const [index, sample] of samples.entries()) {
-    const offset = index * STREAM_SAMPLE_WIDTH;
-    buffer.values[offset] = sample.time;
-    buffer.values[offset + 1] = sample.value;
-    buffer.values[offset + 2] = sample.baseline ?? Number.NaN;
-    buffer.values[offset + 3] = sample.decay ?? Number.NaN;
-  }
+	for (const [index, sample] of samples.entries()) {
+		const offset = index * STREAM_SAMPLE_WIDTH;
+		buffer.values[offset] = sample.time;
+		buffer.values[offset + 1] = sample.value;
+		buffer.values[offset + 2] = sample.baseline ?? Number.NaN;
+		buffer.values[offset + 3] = sample.decay ?? Number.NaN;
+	}
 
-  buffer.count = samples.length;
+	buffer.count = samples.length;
 };
 
 /*
@@ -966,71 +981,68 @@ stamped with the instant they were observed when data-stream-time names one, so
 an irregular process keeps its real spacing instead of being spread evenly.
 */
 const collectStreamSamples = (
-  retained: StreamSample[],
-  entries: JSONSerializable[],
-  dataset: PaintDataset,
-  buffer: StreamBuffer,
+	retained: StreamSample[],
+	entries: JSONSerializable[],
+	dataset: PaintDataset,
+	buffer: StreamBuffer,
 ): StreamSample[] => {
-  const samples = [...retained];
+	const samples = [...retained];
 
-  for (const entry of entries) {
-    const identity = dataset.streamId
-      ? readPath(entry, dataset.streamId)
-      : undefined;
+	for (const entry of entries) {
+		const identity = dataset.streamId
+			? readPath(entry, dataset.streamId)
+			: undefined;
 
-    if (
-      identity !== undefined &&
-      String(identity) === buffer.lastId
-    ) {
-      continue;
-    }
+		if (identity !== undefined && String(identity) === buffer.lastId) {
+			continue;
+		}
 
-    const value = Number(readPath(entry, dataset.streamValue));
+		const value = Number(readPath(entry, dataset.streamValue));
 
-    if (!Number.isFinite(value)) {
-      continue;
-    }
+		if (!Number.isFinite(value)) {
+			continue;
+		}
 
-    const time = dataset.streamTime
-      ? Date.parse(String(readPath(entry, dataset.streamTime)))
-      : (samples.at(-1)?.time ?? -1) + 1;
+		const time = dataset.streamTime
+			? Date.parse(String(readPath(entry, dataset.streamTime)))
+			: (samples.at(-1)?.time ?? -1) + 1;
 
-    if (!Number.isFinite(time)) {
-      continue;
-    }
+		if (!Number.isFinite(time)) {
+			continue;
+		}
 
-    if (identity !== undefined) {
-      buffer.lastId = String(identity);
-    }
+		if (identity !== undefined) {
+			buffer.lastId = String(identity);
+		}
 
-    samples.push({
-      time,
-      value,
-      baseline: readOptionalNumber(entry, dataset.streamBaseline),
-      decay: readOptionalNumber(entry, dataset.streamDecay),
-    });
-  }
+		samples.push({
+			time,
+			value,
+			baseline: readOptionalNumber(entry, dataset.streamBaseline),
+			decay: readOptionalNumber(entry, dataset.streamDecay),
+		});
+	}
 
-  samples.sort((left, right) => left.time - right.time);
+	samples.sort((left, right) => left.time - right.time);
 
-  const window = Number(dataset.streamWindow);
-  const latest = samples.at(-1);
+	const window = Number(dataset.streamWindow);
+	const latest = samples.at(-1);
 
-  if (dataset.streamTime && latest && Number.isFinite(window) && window > 0) {
-    const oldest = latest.time - window * 1000;
+	if (dataset.streamTime && latest && Number.isFinite(window) && window > 0) {
+		const oldest = latest.time - window * 1000;
 
-    while (samples.length > 1 && (samples[0]?.time ?? 0) < oldest) {
-      samples.shift();
-    }
-  }
+		while (samples.length > 1 && (samples[0]?.time ?? 0) < oldest) {
+			samples.shift();
+		}
+	}
 
-  const limit = Number.parseInt(dataset.appendLimit ?? "96", 10);
+	const limit = Number.parseInt(dataset.appendLimit ?? "96", 10);
 
-  if (Number.isInteger(limit) && limit > 1 && samples.length > limit) {
-    samples.splice(0, samples.length - limit);
-  }
+	if (Number.isInteger(limit) && limit > 1 && samples.length > limit) {
+		samples.splice(0, samples.length - limit);
+	}
 
-  return samples;
+	return samples;
 };
 
 /*
@@ -1043,46 +1055,46 @@ the curve adds between them is the model, and the step up onto each observation
 is the part the model did not account for.
 */
 const streamCurve = (
-  samples: StreamSample[],
-  plotX: (time: number) => number,
-  plotY: (value: number) => number,
+	samples: StreamSample[],
+	plotX: (time: number) => number,
+	plotY: (value: number) => number,
 ): Array<[number, number]> => {
-  const points: Array<[number, number]> = [];
+	const points: Array<[number, number]> = [];
 
-  for (const [index, sample] of samples.entries()) {
-    points.push([plotX(sample.time), plotY(sample.value)]);
+	for (const [index, sample] of samples.entries()) {
+		points.push([plotX(sample.time), plotY(sample.value)]);
 
-    const next = samples[index + 1];
+		const next = samples[index + 1];
 
-    if (next === undefined) {
-      continue;
-    }
+		if (next === undefined) {
+			continue;
+		}
 
-    const baseline = sample.baseline;
-    const decay = sample.decay;
+		const baseline = sample.baseline;
+		const decay = sample.decay;
 
-    if (baseline === null || decay === null || !(decay > 0)) {
-      continue;
-    }
+		if (baseline === null || decay === null || !(decay > 0)) {
+			continue;
+		}
 
-    const from = plotX(sample.time);
-    const steps = Math.min(
-      240,
-      Math.max(1, Math.round((plotX(next.time) - from) / 2)),
-    );
+		const from = plotX(sample.time);
+		const steps = Math.min(
+			240,
+			Math.max(1, Math.round((plotX(next.time) - from) / 2)),
+		);
 
-    for (let step = 1; step <= steps; step += 1) {
-      const time = sample.time + ((next.time - sample.time) * step) / steps;
-      const relaxed =
-        baseline +
-        (sample.value - baseline) *
-          Math.exp((-decay * (time - sample.time)) / 1000);
+		for (let step = 1; step <= steps; step += 1) {
+			const time = sample.time + ((next.time - sample.time) * step) / steps;
+			const relaxed =
+				baseline +
+				(sample.value - baseline) *
+					Math.exp((-decay * (time - sample.time)) / 1000);
 
-      points.push([plotX(time), plotY(relaxed)]);
-    }
-  }
+			points.push([plotX(time), plotY(relaxed)]);
+		}
+	}
 
-  return points;
+	return points;
 };
 
 /*
@@ -1095,38 +1107,38 @@ data-stream-baseline draws the level they relax toward, and data-stream-decay
 supplies the shape they take between observations.
 */
 const drawStreamCanvas = (
-  element: HTMLElement,
-  dataset: PaintDataset,
-  updates: JSONSerializable,
+	element: HTMLElement,
+	dataset: PaintDataset,
+	updates: JSONSerializable,
 ): void => {
-  if (!(element instanceof HTMLCanvasElement)) {
-    return;
-  }
+	if (!(element instanceof HTMLCanvasElement)) {
+		return;
+	}
 
-  const width = Math.max(1, element.clientWidth);
-  const height = Math.max(1, element.clientHeight);
-  const ratio = window.devicePixelRatio || 1;
+	const width = Math.max(1, element.clientWidth);
+	const height = Math.max(1, element.clientHeight);
+	const ratio = window.devicePixelRatio || 1;
 
-  if (
-    element.width !== Math.floor(width * ratio) ||
-    element.height !== Math.floor(height * ratio)
-  ) {
-    element.width = Math.floor(width * ratio);
-    element.height = Math.floor(height * ratio);
-  }
+	if (
+		element.width !== Math.floor(width * ratio) ||
+		element.height !== Math.floor(height * ratio)
+	) {
+		element.width = Math.floor(width * ratio);
+		element.height = Math.floor(height * ratio);
+	}
 
-  const context = element.getContext("2d");
+	const context = element.getContext("2d");
 
-  if (context === null) {
-    return;
-  }
+	if (context === null) {
+		return;
+	}
 
-  /*
+	/*
 		Retained history belongs to the rows the filter selected. Re-pointing a
 		canvas at another symbol or kernel starts a new series rather than splicing
 		two unrelated ones into one line.
 	*/
-  const filter = dataset.streamFilter ?? "";
+	const filter = dataset.streamFilter ?? "";
 	let buffer = streamBuffers.get(element);
 
 	if (buffer === undefined || buffer.filter !== filter) {
@@ -1139,148 +1151,148 @@ const drawStreamCanvas = (
 		streamBuffers.set(element, buffer);
 	}
 
-  const samples = collectStreamSamples(
-	streamSamples(buffer),
-    streamEntries(updates, dataset),
-    dataset,
-	buffer,
-  );
+	const samples = collectStreamSamples(
+		streamSamples(buffer),
+		streamEntries(updates, dataset),
+		dataset,
+		buffer,
+	);
 
 	retainStreamSamples(buffer, samples);
-  context.setTransform(ratio, 0, 0, ratio, 0, 0);
-  context.clearRect(0, 0, width, height);
+	context.setTransform(ratio, 0, 0, ratio, 0, 0);
+	context.clearRect(0, 0, width, height);
 
-  const styles = getComputedStyle(element);
-  const line = styles.getPropertyValue("--line").trim() || "#2b251e";
-  const lineStrong = styles.getPropertyValue("--line2").trim() || "#3a342b";
-  const accent = styles.getPropertyValue("--acc").trim() || "#e8a33d";
-  const muted = styles.getPropertyValue("--f4").trim() || "#938a7e";
-  const pad = 14;
-  const base = height - 26;
-  const top = Math.min(30, base);
-  const baseline = samples.at(-1)?.baseline ?? null;
-  const ceiling =
-    Math.max(
-      ...samples.map((sample) => sample.value),
-      baseline ?? 0,
-      Number.MIN_VALUE,
-    ) * 1.15;
+	const styles = getComputedStyle(element);
+	const line = styles.getPropertyValue("--line").trim() || "#2b251e";
+	const lineStrong = styles.getPropertyValue("--line2").trim() || "#3a342b";
+	const accent = styles.getPropertyValue("--acc").trim() || "#e8a33d";
+	const muted = styles.getPropertyValue("--f4").trim() || "#938a7e";
+	const pad = 14;
+	const base = height - 26;
+	const top = Math.min(30, base);
+	const baseline = samples.at(-1)?.baseline ?? null;
+	const ceiling =
+		Math.max(
+			...samples.map((sample) => sample.value),
+			baseline ?? 0,
+			Number.MIN_VALUE,
+		) * 1.15;
 
-  context.strokeStyle = line;
-  context.lineWidth = 1;
+	context.strokeStyle = line;
+	context.lineWidth = 1;
 
-  for (let index = 0; index <= 4; index += 1) {
-    const y = top + index * ((base - top) / 4);
+	for (let index = 0; index <= 4; index += 1) {
+		const y = top + index * ((base - top) / 4);
 
-    context.beginPath();
-    context.moveTo(pad, y);
-    context.lineTo(width - pad, y);
-    context.stroke();
-  }
+		context.beginPath();
+		context.moveTo(pad, y);
+		context.lineTo(width - pad, y);
+		context.stroke();
+	}
 
-  const first = samples[0];
-  const last = samples.at(-1);
+	const first = samples[0];
+	const last = samples.at(-1);
 
-  if (first === undefined || last === undefined || !(ceiling > 0)) {
-    return;
-  }
+	if (first === undefined || last === undefined || !(ceiling > 0)) {
+		return;
+	}
 
-  const span = last.time - first.time;
-  const plotX = (time: number) =>
-    span > 0
-      ? pad + ((time - first.time) / span) * (width - pad * 2)
-      : width / 2;
-  const plotY = (value: number) =>
-    base - Math.min(1, Math.max(0, value / ceiling)) * (base - top);
+	const span = last.time - first.time;
+	const plotX = (time: number) =>
+		span > 0
+			? pad + ((time - first.time) / span) * (width - pad * 2)
+			: width / 2;
+	const plotY = (value: number) =>
+		base - Math.min(1, Math.max(0, value / ceiling)) * (base - top);
 
-  context.fillStyle = muted;
-  context.font = "9px JetBrains Mono, monospace";
-  context.fillText(ceiling.toPrecision(3), pad, top - 6);
-  context.fillText("0", pad, base + 12);
+	context.fillStyle = muted;
+	context.font = "9px JetBrains Mono, monospace";
+	context.fillText(ceiling.toPrecision(3), pad, top - 6);
+	context.fillText("0", pad, base + 12);
 
-  if (dataset.streamTime && span > 0) {
-    const elapsed = `${(span / 1000).toFixed(0)}s of arrivals · ${samples.length} observed`;
+	if (dataset.streamTime && span > 0) {
+		const elapsed = `${(span / 1000).toFixed(0)}s of arrivals · ${samples.length} observed`;
 
-    context.fillText(
-      elapsed,
-      width - pad - context.measureText(elapsed).width,
-      base + 12,
-    );
-  }
+		context.fillText(
+			elapsed,
+			width - pad - context.measureText(elapsed).width,
+			base + 12,
+		);
+	}
 
-  if (baseline !== null) {
-    context.strokeStyle = lineStrong;
-    context.lineWidth = 1;
-    context.setLineDash([3, 3]);
-    context.beginPath();
-    context.moveTo(pad, plotY(baseline));
-    context.lineTo(width - pad, plotY(baseline));
-    context.stroke();
-    context.setLineDash([]);
-  }
+	if (baseline !== null) {
+		context.strokeStyle = lineStrong;
+		context.lineWidth = 1;
+		context.setLineDash([3, 3]);
+		context.beginPath();
+		context.moveTo(pad, plotY(baseline));
+		context.lineTo(width - pad, plotY(baseline));
+		context.stroke();
+		context.setLineDash([]);
+	}
 
-  /*
+	/*
 		The rug marks every observation the series was actually built from, so a
 		stretch of curve that is the model relaxing is never mistaken for a stretch
 		of curve that was measured.
 	*/
-  if (dataset.streamRug !== undefined) {
-    context.strokeStyle = muted;
-    context.lineWidth = 1;
+	if (dataset.streamRug !== undefined) {
+		context.strokeStyle = muted;
+		context.lineWidth = 1;
 
-    for (const sample of samples) {
-      const x = plotX(sample.time);
+		for (const sample of samples) {
+			const x = plotX(sample.time);
 
-      context.beginPath();
-      context.moveTo(x, base + 2);
-      context.lineTo(x, base + 7);
-      context.stroke();
-    }
-  }
+			context.beginPath();
+			context.moveTo(x, base + 2);
+			context.lineTo(x, base + 7);
+			context.stroke();
+		}
+	}
 
-  const points = streamCurve(samples, plotX, plotY);
-  const head = points[0];
+	const points = streamCurve(samples, plotX, plotY);
+	const head = points[0];
 
-  if (head === undefined) {
-    return;
-  }
+	if (head === undefined) {
+		return;
+	}
 
-  if (points.length < 2) {
-    context.fillStyle = accent;
-    context.beginPath();
-    context.arc(head[0], head[1], 2.6, 0, Math.PI * 2);
-    context.fill();
-    return;
-  }
+	if (points.length < 2) {
+		context.fillStyle = accent;
+		context.beginPath();
+		context.arc(head[0], head[1], 2.6, 0, Math.PI * 2);
+		context.fill();
+		return;
+	}
 
-  context.beginPath();
-  context.moveTo(head[0], base);
+	context.beginPath();
+	context.moveTo(head[0], base);
 
-  for (const [x, y] of points) {
-    context.lineTo(x, y);
-  }
+	for (const [x, y] of points) {
+		context.lineTo(x, y);
+	}
 
-  context.lineTo(points.at(-1)?.[0] ?? head[0], base);
-  context.closePath();
-  context.globalAlpha = 0.14;
-  context.fillStyle = accent;
-  context.fill();
-  context.globalAlpha = 1;
+	context.lineTo(points.at(-1)?.[0] ?? head[0], base);
+	context.closePath();
+	context.globalAlpha = 0.14;
+	context.fillStyle = accent;
+	context.fill();
+	context.globalAlpha = 1;
 
-  context.strokeStyle = accent;
-  context.lineWidth = 1.6;
-  context.beginPath();
-  context.moveTo(head[0], head[1]);
+	context.strokeStyle = accent;
+	context.lineWidth = 1.6;
+	context.beginPath();
+	context.moveTo(head[0], head[1]);
 
-  for (const [x, y] of points.slice(1)) {
-    context.lineTo(x, y);
-  }
+	for (const [x, y] of points.slice(1)) {
+		context.lineTo(x, y);
+	}
 
-  context.stroke();
-  context.fillStyle = accent;
-  context.beginPath();
-  context.arc(plotX(last.time), plotY(last.value), 2.6, 0, Math.PI * 2);
-  context.fill();
+	context.stroke();
+	context.fillStyle = accent;
+	context.beginPath();
+	context.arc(plotX(last.time), plotY(last.value), 2.6, 0, Math.PI * 2);
+	context.fill();
 };
 
 /*
@@ -1288,7 +1300,7 @@ isRaised reads a flag the way a status light does: only a real true counts as
 raised, so a numeric or textual reading never latches the hold open.
 */
 const isRaised = (value: JSONSerializable): boolean =>
-  value === true || value === "true";
+	value === true || value === "true";
 
 /*
 holdSuppresses answers whether this paint should be skipped because the flag it
@@ -1296,71 +1308,71 @@ carries has not been down long enough to believe. Returns false for every
 binding that did not ask for a hold, which is all of them by default.
 */
 const holdSuppresses = (
-  element: HTMLElement,
-  dataset: PaintDataset,
-  value: JSONSerializable,
+	element: HTMLElement,
+	dataset: PaintDataset,
+	value: JSONSerializable,
 ): boolean => {
-  const window = Number(dataset.paintHold);
+	const window = Number(dataset.paintHold);
 
-  if (!Number.isFinite(window) || window <= 0) {
-    return false;
-  }
+	if (!Number.isFinite(window) || window <= 0) {
+		return false;
+	}
 
-  const now = performance.now();
+	const now = performance.now();
 
-  if (isRaised(value)) {
-    element.dataset.paintRaisedAt = String(now);
-    return false;
-  }
+	if (isRaised(value)) {
+		element.dataset.paintRaisedAt = String(now);
+		return false;
+	}
 
-  const raisedAt = Number(element.dataset.paintRaisedAt);
+	const raisedAt = Number(element.dataset.paintRaisedAt);
 
-  return Number.isFinite(raisedAt) && now - raisedAt < window;
+	return Number.isFinite(raisedAt) && now - raisedAt < window;
 };
 
 const updateTargets = (
-  targets: Map<string, PaintBinding[]>,
-  updates: JSONSerializable,
+	targets: Map<string, PaintBinding[]>,
+	updates: JSONSerializable,
 ) => {
-  if (updates === undefined || updates === null) {
-    return;
-  }
+	if (updates === undefined || updates === null) {
+		return;
+	}
 
-  for (const targetsByKey of targets.values()) {
-    for (const target of targetsByKey) {
-      if (target.mode === "stream") {
-        drawStreamCanvas(target.element, target.dataset, updates);
-        continue;
-      }
+	for (const targetsByKey of targets.values()) {
+		for (const target of targetsByKey) {
+			if (target.mode === "stream") {
+				drawStreamCanvas(target.element, target.dataset, updates);
+				continue;
+			}
 
-      const scopedUpdates = selectScopedUpdates(updates, target.dataset);
+			const scopedUpdates = selectScopedUpdates(updates, target.dataset);
 
-      if (scopedUpdates === undefined || scopedUpdates === null) {
-        /*
+			if (scopedUpdates === undefined || scopedUpdates === null) {
+				/*
 					Direct paint retains by nature, which is what keeps a surface alive
 					between the sparse batches a rolling kernel publishes. Where the batch
 					is instead a complete map — every symbol the engine currently holds —
 					a miss is a real answer, and data-paint-absent says how it reads.
 				*/
-        if (
-          target.mode === "paint" &&
-          target.dataset.paintAbsent !== undefined
-        ) {
-          if (target.element.textContent !== target.dataset.paintAbsent) {
-            target.element.textContent = target.dataset.paintAbsent;
-          }
-        }
+				if (
+					target.mode === "paint" &&
+					target.dataset.paintAbsent !== undefined
+				) {
+					if (target.element.textContent !== target.dataset.paintAbsent) {
+						target.element.textContent = target.dataset.paintAbsent;
+					}
+				}
 
-        continue;
-      }
+				continue;
+			}
 
-      const value = target.read(scopedUpdates);
+			const value = target.read(scopedUpdates);
 
-      if (value === undefined || value === null) {
-        continue;
-      }
+			if (value === undefined || value === null) {
+				continue;
+			}
 
-      /*
+			/*
 				Some flags are latches that clear on the producer's own cycle rather
 				than states that persist: a per-epoch readiness stamp is true from the
 				moment its stage reports until the next epoch resets it. Painted
@@ -1372,163 +1384,162 @@ const updateTargets = (
 				goes false when the producer genuinely stops raising it, just not on
 				the gap between two raises.
 			*/
-      if (holdSuppresses(target.element, target.dataset, value)) {
-        continue;
-      }
+			if (holdSuppresses(target.element, target.dataset, value)) {
+				continue;
+			}
 
-      if (target.mode === "set") {
-        setTargetValue(
-          target.element,
-          target.dataset.target,
-          scaleSetValue(value, target.dataset, updates, scopedUpdates),
-        );
-        continue;
-      }
+			if (target.mode === "set") {
+				target.write(
+					target.element,
+					scaleSetValue(value, target.dataset, updates, scopedUpdates),
+				);
+				continue;
+			}
 
-      if (target.mode === "append") {
-        appendTargetValue(target.element, target.dataset, value);
-        continue;
-      }
+			if (target.mode === "append") {
+				appendTargetValue(target.element, target.dataset, value);
+				continue;
+			}
 
-      /*
+			/*
 				An empty string is a real answer — the model ran and named nothing.
 				data-paint-empty says how that reads, so the slot states the absence
 				instead of looking like a panel that never received data.
 			*/
-      const formatted =
-        value === "" && target.dataset.paintEmpty !== undefined
-          ? target.dataset.paintEmpty
-          : `${formatValue(value, target.dataset.paintFormat)}${target.dataset.paintSuffix ?? ""}`;
+			const formatted =
+				value === "" && target.dataset.paintEmpty !== undefined
+					? target.dataset.paintEmpty
+					: `${formatValue(value, target.dataset.paintFormat)}${target.dataset.paintSuffix ?? ""}`;
 
-      if (target.dataset.paintProp) {
-        setTargetValue(target.element, target.dataset.paintProp, formatted);
-      } else if (target.element.textContent !== formatted) {
-        target.element.textContent = formatted;
-      }
+			if (target.dataset.paintProp) {
+				target.writePaintProperty(target.element, formatted);
+			} else if (target.element.textContent !== formatted) {
+				target.element.textContent = formatted;
+			}
 
-      applyPaintClass(target.element, value);
-    }
-  }
+			applyPaintClass(target.element, value);
+		}
+	}
 };
 
 export const Component = ({
-  className,
-  registerKey,
-  repeat = false,
-  select,
-  children,
+	className,
+	registerKey,
+	repeat = false,
+	select,
+	children,
 }: ComponentProps) => {
-  const ref = useRef<HTMLDivElement>(null);
-  const targets = useRef<Map<string, PaintBinding[]>>(new Map());
-  const latest = useRef<JSONSerializable | undefined>(undefined);
-  const [slots, setSlots] = useState<number[]>([]);
+	const ref = useRef<HTMLDivElement>(null);
+	const targets = useRef<Map<string, PaintBinding[]>>(new Map());
+	const latest = useRef<JSONSerializable | undefined>(undefined);
+	const [slots, setSlots] = useState<number[]>([]);
 
-  const repaint = useCallback(() => {
-    if (latest.current === undefined) {
-      return;
-    }
+	const repaint = useCallback(() => {
+		if (latest.current === undefined) {
+			return;
+		}
 
-    const updates = select ? readPath(latest.current, select) : latest.current;
+		const updates = select ? readPath(latest.current, select) : latest.current;
 
-    if (updates === undefined || updates === null) {
-      return;
-    }
+		if (updates === undefined || updates === null) {
+			return;
+		}
 
-    updateTargets(targets.current, updates);
-  }, [select]);
+		updateTargets(targets.current, updates);
+	}, [select]);
 
-  useLayoutEffect(() => {
-    if (!ref.current) {
-      return;
-    }
+	useLayoutEffect(() => {
+		if (!ref.current) {
+			return;
+		}
 
-    /*
+		/*
 			The marker is stamped rather than passed through the render props: call
 			sites hand the ref to whatever element suits them, and a surface should
 			not have to remember to spread an extra attribute for nesting to work.
 		*/
-    ref.current.setAttribute(COMPONENT_ROOT, "");
-    targets.current = scanTargets(ref.current);
-    repaint();
-  });
+		ref.current.setAttribute(COMPONENT_ROOT, "");
+		targets.current = scanTargets(ref.current);
+		repaint();
+	});
 
-  /*
+	/*
 		A canvas sizes itself from the box it was painted into. Nothing republishes
 		when the window changes, so without this a resized chart keeps drawing at
 		the geometry it last saw.
 	*/
-  useLayoutEffect(() => {
-    const root = ref.current;
+	useLayoutEffect(() => {
+		const root = ref.current;
 
-    if (root === null) {
-      return;
-    }
+		if (root === null) {
+			return;
+		}
 
-    const observer = new ResizeObserver(repaint);
+		const observer = new ResizeObserver(repaint);
 
-    observer.observe(root);
+		observer.observe(root);
 
-    return () => observer.disconnect();
-  }, [repaint]);
+		return () => observer.disconnect();
+	}, [repaint]);
 
-  useLayoutEffect(() => {
-    if (!registerKey) {
-      return;
-    }
+	useLayoutEffect(() => {
+		if (!registerKey) {
+			return;
+		}
 
-    const paint: Paint = (updates) => {
-      latest.current = updates;
+		const paint: Paint = (updates) => {
+			latest.current = updates;
 
-      if (updates === undefined || updates === null) {
-        return;
-      }
+			if (updates === undefined || updates === null) {
+				return;
+			}
 
-      if (select) {
-        const selectedUpdates = readPath(updates, select);
+			if (select) {
+				const selectedUpdates = readPath(updates, select);
 
-        if (selectedUpdates === undefined || selectedUpdates === null) {
-          return;
-        }
+				if (selectedUpdates === undefined || selectedUpdates === null) {
+					return;
+				}
 
-        updates = selectedUpdates;
-      }
+				updates = selectedUpdates;
+			}
 
-      if (repeat && Array.isArray(updates)) {
-        setSlots((current) => {
-          if (current.length === updates.length) {
-            return current;
-          }
+			if (repeat && Array.isArray(updates)) {
+				setSlots((current) => {
+					if (current.length === updates.length) {
+						return current;
+					}
 
-          return Array.from({ length: updates.length }, (_, index) => index);
-        });
-      }
+					return Array.from({ length: updates.length }, (_, index) => index);
+				});
+			}
 
-      updateTargets(targets.current, updates);
-    };
+			updateTargets(targets.current, updates);
+		};
 
-    const unregister = registerPainter(registerKey, paint);
+		const unregister = registerPainter(registerKey, paint);
 
-    /*
+		/*
 			A fresh mount has an empty `latest` ref even when the registerKey
 			already has data flowing — routing tears the previous instance's
 			ref down along with its DOM. Replaying the retained last frame here
 			is what makes revisiting a page show its data immediately instead
 			of sitting blank until the next websocket tick.
 		*/
-    const seed = latest.current ?? getLastFrame(registerKey);
+		const seed = latest.current ?? getLastFrame(registerKey);
 
-    if (seed !== undefined) {
-      paint(seed);
-    }
+		if (seed !== undefined) {
+			paint(seed);
+		}
 
-    return () => {
-      unregister?.();
-    };
-  }, [registerKey, repeat, select]);
+		return () => {
+			unregister?.();
+		};
+	}, [registerKey, repeat, select]);
 
-  return children({
-    ref,
-    className,
-    slots,
-  });
+	return children({
+		ref,
+		className,
+		slots,
+	});
 };

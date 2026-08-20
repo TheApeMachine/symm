@@ -10,7 +10,12 @@ type WorkerInbound =
 	| { type: "DISCONNECT" }
 	| { type: "PAINTED"; acknowledgeBackend: boolean }
 	| { type: "FOCUS"; symbol: string }
-	| { type: "BACKTEST"; action: "play" | "pause" | "seek" | "select" | "hindsight"; at?: string; captureId?: number };
+	| {
+			type: "BACKTEST";
+			action: "play" | "pause" | "seek" | "select" | "hindsight";
+			at?: string;
+			captureId?: number;
+	  };
 
 type WorkerOutbound =
 	| { type: "READY" }
@@ -77,9 +82,7 @@ const sendBacktest = (
 		return;
 	}
 
-	socket.send(
-		JSON.stringify({ type: `backtest.${action}`, at, captureId }),
-	);
+	socket.send(JSON.stringify({ type: `backtest.${action}`, at, captureId }));
 };
 
 /*

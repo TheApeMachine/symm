@@ -35,7 +35,7 @@ func consumerIDFor() string {
 }
 
 /*
-Hub owns the dashboard websocket and broadcasts flat JSON frames to clients.
+Hub owns the dashboard websocket and broadcasts schema-tagged binary frames.
 Each client has a bounded writer queue; a peer that cannot keep up is closed
 with an observable error so it cannot block market telemetry for every peer.
 */
@@ -135,10 +135,20 @@ func NewHub(
 		if hub.err != nil {
 			return
 		}
+
 		var ui *transport.MapReduce[[]byte]
 
 		if hub.thesis != nil {
 			ui = hub.thesis.UI()
+		}
+
+		if ui == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"dashboard: UI telemetry transport is unavailable",
+				nil,
+			))
+			return
 		}
 
 		consumerID := consumerIDFor()
@@ -147,18 +157,12 @@ func NewHub(
 		// cursor. MapReduce fans every pushed frame out to every registered
 		// consumer, so each client receives each frame without any shared
 		// broadcast or client-fan-out machinery on the hub.
-		if ui != nil {
-			ui.RegisterBounded(consumerID, hub.clientQueueLimit)
-			defer ui.Unregister(consumerID)
-		}
+		ui.RegisterBounded(consumerID, hub.clientQueueLimit)
+		defer ui.Unregister(consumerID)
+		initialFrames := make([][]byte, 0, 3)
 
 		if hub.balance != nil {
-			if err := conn.WriteMessage(
-				websocket.BinaryMessage,
-				encodeFrameBatch([][]byte{hub.balance.Wallet()}),
-			); err != nil {
-				return
-			}
+			initialFrames = append(initialFrames, hub.balance.Wallet())
 		}
 
 		if hub.desk != nil {
@@ -181,12 +185,7 @@ func NewHub(
 				},
 			})
 
-			if err := conn.WriteMessage(
-				websocket.BinaryMessage,
-				encodeFrameBatch([][]byte{frame}),
-			); err != nil {
-				return
-			}
+			initialFrames = append(initialFrames, frame)
 		}
 
 		// The capture list rides the websocket with the rest of the
@@ -200,19 +199,17 @@ func NewHub(
 				},
 			})
 
-			if err := conn.WriteMessage(
-				websocket.BinaryMessage,
-				encodeFrameBatch([][]byte{frame}),
-			); err != nil {
-				return
-			}
+			initialFrames = append(initialFrames, frame)
 		}
 
 		clientDone := make(chan struct{})
 		received := make(chan struct{}, hub.writeWindow)
+		clientCtx, cancelClient := context.WithCancel(hub.ctx)
+		defer cancelClient()
 
 		go func() {
 			defer close(clientDone)
+			defer cancelClient()
 
 			for {
 				select {
@@ -285,6 +282,26 @@ func NewHub(
 		var deferredFrame []byte
 		var inFlight uint64
 
+		if len(initialFrames) > 0 {
+			if encodedFrameBatchSize(initialFrames) > hub.maxMessageBytes {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"dashboard: initial state exceeds websocket message limit",
+					nil,
+				))
+				return
+			}
+
+			if err := conn.Conn.WriteMessage(
+				websocket.BinaryMessage,
+				encodeFrameBatch(initialFrames),
+			); err != nil {
+				return
+			}
+
+			inFlight = 1
+		}
+
 		for {
 			for inFlight >= hub.writeWindow {
 				select {
@@ -306,81 +323,74 @@ func NewHub(
 				}
 			}
 
-			select {
-			case <-hub.ctx.Done():
-				return
-			case <-clientDone:
-				return
-			default:
-				frame := deferredFrame
-				deferredFrame = nil
-				ok := frame != nil
+			frame := deferredFrame
+			deferredFrame = nil
+			ok := frame != nil
 
-				if !ok {
-					frame, ok = ui.WaitPop(hub.ctx, consumerID)
-				}
+			if !ok {
+				frame, ok = ui.WaitPop(clientCtx, consumerID)
+			}
 
-				if !ok {
-					if ui.Overflowed(consumerID) {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"dashboard: client telemetry queue exceeded its configured limit",
-							nil,
-						))
-					}
-
-					return
-				}
-
-				frames := [][]byte{frame}
-				batchBytes := encodedFrameBatchSize(frames)
-
-				if batchBytes > hub.maxMessageBytes {
+			if !ok {
+				if ui.Overflowed(consumerID) {
 					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"dashboard: frame exceeds websocket message limit",
+						errnie.UnprocessableContent,
+						"dashboard: client telemetry queue exceeded its configured limit",
 						nil,
 					))
-					return
 				}
 
-				pending := ui.ConsumerLength(consumerID)
-
-				for range pending {
-					candidate, found := ui.Pop(consumerID)
-
-					if !found {
-						break
-					}
-
-					candidateBytes := frameBatchHeaderSize + len(candidate)
-
-					if batchBytes+candidateBytes > hub.maxMessageBytes {
-						deferredFrame = candidate
-						break
-					}
-
-					frames = append(frames, candidate)
-					batchBytes += candidateBytes
-				}
-
-				if err := conn.Conn.WriteMessage(
-					websocket.BinaryMessage,
-					encodeFrameBatch(frames),
-				); err != nil {
-					if !expectedDashboardWriteClosure(err) {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"dashboard: write failed: "+err.Error(),
-							err,
-						))
-					}
-
-					return
-				}
-
-				inFlight++
+				return
 			}
+
+			frames := [][]byte{frame}
+			batchBytes := encodedFrameBatchSize(frames)
+
+			if batchBytes > hub.maxMessageBytes {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"dashboard: frame exceeds websocket message limit",
+					nil,
+				))
+				return
+			}
+
+			pending := ui.ConsumerLength(consumerID)
+
+			for range pending {
+				candidate, found := ui.Pop(consumerID)
+
+				if !found {
+					break
+				}
+
+				candidateBytes := frameBatchHeaderSize + len(candidate)
+
+				if batchBytes+candidateBytes > hub.maxMessageBytes {
+					deferredFrame = candidate
+					break
+				}
+
+				frames = append(frames, candidate)
+				batchBytes += candidateBytes
+			}
+
+			if err := conn.Conn.WriteMessage(
+				websocket.BinaryMessage,
+				encodeFrameBatch(frames),
+			); err != nil {
+				if !expectedDashboardWriteClosure(err) {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"dashboard: write failed: "+err.Error(),
+						err,
+					))
+				}
+
+				return
+			}
+
+			inFlight++
 		}
 	}))
 

@@ -10,7 +10,6 @@ import {
 const fieldsChannel = "fluid-fields";
 const particlesChannel = "fluid-particles";
 const phaseChannel = "fluid-phase";
-const textDecoder = new TextDecoder();
 
 export type FluidFeedHandlers = {
 	onFields: (fields: FluidFields) => void;
@@ -128,7 +127,7 @@ export class FluidWebRTCFeed {
 
 	private attach<T>(
 		channel: RTCDataChannel,
-		decode: (value: unknown) => T,
+		decode: (value: Uint8Array) => T,
 		publish: (value: T) => void,
 	) {
 		const reader = new FluidRecordReader();
@@ -142,7 +141,7 @@ export class FluidWebRTCFeed {
 				const record = reader.push(event.data);
 
 				if (record !== null) {
-					publish(decode(JSON.parse(textDecoder.decode(record))));
+					publish(decode(new Uint8Array(record)));
 				}
 			} catch (error) {
 				this.handlers.onError(errorValue(error));

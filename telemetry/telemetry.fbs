@@ -576,6 +576,105 @@ table ErrorFrame {
   time:string;
 }
 
+table FluidVector { x:float; y:float; z:float; }
+table FluidParticle {
+  position:FluidVector (required);
+  velocity:FluidVector (required);
+  mass:float;
+  heat:float;
+  energy:float;
+  phase:float;
+  omega:float;
+  amplitude:float;
+}
+table FluidParticlesFrame { particles:[FluidParticle] (required); }
+
+table FluidGrid { x:uint; y:uint; z:uint; spacing:float; }
+table FluidFieldsFrame {
+  grid:FluidGrid (required);
+  density:[float] (required);
+  momentum:[float] (required);
+  internalEnergy:[float] (required);
+  waveReal:[float] (required);
+  waveImaginary:[float] (required);
+}
+
+table WaveMode { omega:float; real:float; imaginary:float; }
+table PhaseOutcome { direction:string; returnValue:double; horizon:long; }
+table PhaseResponse {
+  angle:double;
+  similarity:double;
+  observedAt:string;
+  outcome:PhaseOutcome (required);
+}
+table Hydrodynamics {
+  pressureGradNorm:double;
+  divergence:double;
+  coherenceMag2:double;
+  guidanceSpeed:double;
+  viscosityProxy:double;
+  kuramotoR:double;
+  kuramotoPsi:double;
+}
+table FluidPhaseFrame {
+  source:string (required);
+  at:long;
+  phaseReady:bool;
+  phaseReason:string;
+  wave:[WaveMode] (required);
+  hydrodynamics:Hydrodynamics (required);
+  phaseScan:[PhaseResponse];
+}
+
+table DiagnosticClock {
+  name:string (required);
+  count:ulong;
+  totalNs:ulong;
+  lastNs:ulong;
+  maxNs:ulong;
+  lastAtNs:long;
+}
+table DiagnosticHop {
+  from:string (required);
+  to:string (required);
+  count:ulong;
+  totalNs:ulong;
+  lastNs:ulong;
+  maxNs:ulong;
+}
+table DiagnosticQueue {
+  name:string (required);
+  kind:string (required);
+  writers:[string] (required);
+  readers:[string] (required);
+  depth:ulong;
+  capacity:ulong;
+  highWater:ulong;
+  symbols:ulong;
+}
+table DiagnosticError {
+  source:string (required);
+  message:string (required);
+  caller:string;
+  atNs:long;
+}
+table DiagnosticPass {
+  state:string (required);
+  inFlightNs:long;
+  lastPassNs:long;
+  sinceLastNs:long;
+}
+table DiagnosticsFrame {
+  status:string (required);
+  atNs:long;
+  startedNs:long;
+  stages:[DiagnosticClock] (required);
+  hops:[DiagnosticHop] (required);
+  queues:[DiagnosticQueue] (required);
+  errors:[DiagnosticError] (required);
+  pass:DiagnosticPass (required);
+}
+
 union Frame {
   MeasurementsFrame,
   TickFrame,
@@ -590,7 +689,11 @@ union Frame {
   RegulatorFrame,
   BacktestFrame,
   HindsightFrame,
-  ErrorFrame
+  ErrorFrame,
+  FluidParticlesFrame,
+  FluidFieldsFrame,
+  FluidPhaseFrame,
+  DiagnosticsFrame
 }
 
 table Envelope {

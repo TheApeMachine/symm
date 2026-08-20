@@ -1,8 +1,8 @@
 import { FluidRecordReader } from "#/components/fluid-3d/record";
 import type { DiagnosticsFrame } from "#/collections/types";
+import { decodeTelemetryFrame } from "#/providers/ws-flatbuffers";
 
 const diagnosticsChannel = "diagnostics";
-const textDecoder = new TextDecoder();
 
 export type DiagnosticsFeedHandlers = {
 	onFrame: (frame: DiagnosticsFrame) => void;
@@ -74,17 +74,17 @@ export class DiagnosticsWebRTCFeed {
 				const record = reader.push(event.data);
 
 				if (record !== null) {
-					const envelope = JSON.parse(textDecoder.decode(record)) as unknown;
-					const frame =
-						envelope !== null &&
-						typeof envelope === "object" &&
-						"diagnostics" in envelope &&
-						typeof (envelope as Record<string, unknown>).diagnostics ===
-							"object"
-							? ((envelope as Record<string, unknown>).diagnostics as DiagnosticsFrame)
-							: (envelope as DiagnosticsFrame);
+					const frame = decodeTelemetryFrame(new Uint8Array(record)).diagnostics;
 
-					this.handlers.onFrame(frame);
+					if (
+						frame === null ||
+						typeof frame !== "object" ||
+						Array.isArray(frame)
+					) {
+						throw new Error("diagnostics FlatBuffer has no diagnostics frame");
+					}
+
+					this.handlers.onFrame(frame as DiagnosticsFrame);
 				}
 			} catch (error) {
 				this.handlers.onError(errorValue(error));

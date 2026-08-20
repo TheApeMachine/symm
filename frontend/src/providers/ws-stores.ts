@@ -361,9 +361,9 @@ export const attach = (worker: Worker) => {
 				resonance.actions.updateFrame(frameRows(update));
 				const rows = latestValues(resonance.state.resonance);
 				paintRegistered(key, rows);
-				const focused = resonance.state.resonance[
-					appStore.state.focusSymbol
-				]?.values().at(-1);
+				const focused = resonance.state.resonance[appStore.state.focusSymbol]
+					?.values()
+					.at(-1);
 
 				if (focused !== undefined) {
 					paintRegistered(RESONANCE_FOCUS, focused);
@@ -399,9 +399,9 @@ export const attach = (worker: Worker) => {
 					throw new Error("terminal position frame requires decision.id");
 				}
 
-				const duplicate = journal.state.journal.values().some(
-					(entry) => decisionIdentity(entry) === identity,
-				);
+				const duplicate = journal.state.journal
+					.values()
+					.some((entry) => decisionIdentity(entry) === identity);
 
 				if (!duplicate) {
 					journal.actions.updateFrame([position]);

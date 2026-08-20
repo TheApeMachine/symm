@@ -7,8 +7,12 @@ import { BacktestFrame, BacktestFrameT } from '../telemetry/backtest-frame.js';
 import { BalancesFrame, BalancesFrameT } from '../telemetry/balances-frame.js';
 import { CausalFrame, CausalFrameT } from '../telemetry/causal-frame.js';
 import { CognitionFrame, CognitionFrameT } from '../telemetry/cognition-frame.js';
+import { DiagnosticsFrame, DiagnosticsFrameT } from '../telemetry/diagnostics-frame.js';
 import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
 import { ErrorFrame, ErrorFrameT } from '../telemetry/error-frame.js';
+import { FluidFieldsFrame, FluidFieldsFrameT } from '../telemetry/fluid-fields-frame.js';
+import { FluidParticlesFrame, FluidParticlesFrameT } from '../telemetry/fluid-particles-frame.js';
+import { FluidPhaseFrame, FluidPhaseFrameT } from '../telemetry/fluid-phase-frame.js';
 import { GraphFrame, GraphFrameT } from '../telemetry/graph-frame.js';
 import { HindsightFrame, HindsightFrameT } from '../telemetry/hindsight-frame.js';
 import { MeasurementsFrame, MeasurementsFrameT } from '../telemetry/measurements-frame.js';
@@ -34,13 +38,17 @@ export enum Frame {
   RegulatorFrame = 11,
   BacktestFrame = 12,
   HindsightFrame = 13,
-  ErrorFrame = 14
+  ErrorFrame = 14,
+  FluidParticlesFrame = 15,
+  FluidFieldsFrame = 16,
+  FluidPhaseFrame = 17,
+  DiagnosticsFrame = 18
 }
 
 export function unionToFrame(
   type: Frame,
-  accessor: (obj:BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|EquityFrame|ErrorFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|EquityFrame|ErrorFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null
-): BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|EquityFrame|ErrorFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
+  accessor: (obj:BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidFieldsFrame|FluidParticlesFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidFieldsFrame|FluidParticlesFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null
+): BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidFieldsFrame|FluidParticlesFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
   switch(Frame[type]) {
     case 'NONE': return null; 
     case 'MeasurementsFrame': return accessor(new MeasurementsFrame())! as MeasurementsFrame;
@@ -57,15 +65,19 @@ export function unionToFrame(
     case 'BacktestFrame': return accessor(new BacktestFrame())! as BacktestFrame;
     case 'HindsightFrame': return accessor(new HindsightFrame())! as HindsightFrame;
     case 'ErrorFrame': return accessor(new ErrorFrame())! as ErrorFrame;
+    case 'FluidParticlesFrame': return accessor(new FluidParticlesFrame())! as FluidParticlesFrame;
+    case 'FluidFieldsFrame': return accessor(new FluidFieldsFrame())! as FluidFieldsFrame;
+    case 'FluidPhaseFrame': return accessor(new FluidPhaseFrame())! as FluidPhaseFrame;
+    case 'DiagnosticsFrame': return accessor(new DiagnosticsFrame())! as DiagnosticsFrame;
     default: return null;
   }
 }
 
 export function unionListToFrame(
   type: Frame, 
-  accessor: (index: number, obj:BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|EquityFrame|ErrorFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|EquityFrame|ErrorFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null, 
+  accessor: (index: number, obj:BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidFieldsFrame|FluidParticlesFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidFieldsFrame|FluidParticlesFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null, 
   index: number
-): BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|EquityFrame|ErrorFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
+): BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidFieldsFrame|FluidParticlesFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
   switch(Frame[type]) {
     case 'NONE': return null; 
     case 'MeasurementsFrame': return accessor(index, new MeasurementsFrame())! as MeasurementsFrame;
@@ -82,6 +94,10 @@ export function unionListToFrame(
     case 'BacktestFrame': return accessor(index, new BacktestFrame())! as BacktestFrame;
     case 'HindsightFrame': return accessor(index, new HindsightFrame())! as HindsightFrame;
     case 'ErrorFrame': return accessor(index, new ErrorFrame())! as ErrorFrame;
+    case 'FluidParticlesFrame': return accessor(index, new FluidParticlesFrame())! as FluidParticlesFrame;
+    case 'FluidFieldsFrame': return accessor(index, new FluidFieldsFrame())! as FluidFieldsFrame;
+    case 'FluidPhaseFrame': return accessor(index, new FluidPhaseFrame())! as FluidPhaseFrame;
+    case 'DiagnosticsFrame': return accessor(index, new DiagnosticsFrame())! as DiagnosticsFrame;
     default: return null;
   }
 }
