@@ -156,6 +156,7 @@ func (desk *Desk) Run() error {
 
 		for ticker := range symbol.MarketTickers(types.SourceDesk) {
 			drained = true
+			desk.price.Update(&ticker)
 			found, ok := desk.positions.Load(symbol.Symbol)
 
 			if ok && found != nil {

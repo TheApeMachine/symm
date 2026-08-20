@@ -24,6 +24,7 @@ export type XrayLayer = {
 	index: number;
 	label: string;
 	state: number[];
+	prediction: number[];
 	error_norm: number;
 };
 
@@ -122,6 +123,7 @@ export const xrayLayersFromResonance = (
 			index,
 			label: `L${index} · ${semanticLayerName(index, layers.length)}`,
 			state,
+			prediction,
 			error_norm: reported ?? layerError(state, prediction, frame?.surprise),
 		};
 	});

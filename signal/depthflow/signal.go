@@ -160,15 +160,15 @@ func (signal *Signal) Run() error {
 					Unit:      nmtypes.UnitDimensionless,
 					Timescale: nmtypes.TimescaleInstantaneous,
 				}),
-				nmtypes.NewMetric("spoof_score", output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
+				nmtypes.NewNormalizedMetric("spoof_score", output.MustGet(SymbolSpoofScore), output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
 					Unit:      nmtypes.UnitDimensionless,
 					Timescale: nmtypes.TimescaleInstantaneous,
 				}),
-				nmtypes.NewMetric("loaded_score", output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
+				nmtypes.NewNormalizedMetric("loaded_score", output.MustGet(SymbolLoadedScore), output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
 					Unit:      nmtypes.UnitDimensionless,
 					Timescale: nmtypes.TimescaleInstantaneous,
 				}),
-				nmtypes.NewMetric("thin_score", output.MustGet(SymbolThinScore), nmtypes.Descriptor{
+				nmtypes.NewNormalizedMetric("thin_score", output.MustGet(SymbolThinScore), output.MustGet(SymbolThinScore), nmtypes.Descriptor{
 					Unit:      nmtypes.UnitDimensionless,
 					Timescale: nmtypes.TimescaleInstantaneous,
 				}),

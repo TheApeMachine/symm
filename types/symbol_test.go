@@ -31,11 +31,15 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 
 		ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
 		symbol := NewSymbol("BTC/USD", ui)
+		symbol.Tick = 42
 		measurement := nmtypes.NewMeasurement("first", string(SourceHawkes), 0, 0)
 
 		symbol.AppendMeasurement(measurement)
 
 		Convey("It should expose the row to every consuming solver", func() {
+			So(measurement.Symbol, ShouldEqual, "BTC/USD")
+			So(measurement.Tick, ShouldEqual, 42)
+
 			for _, solver := range []string{"category", "graph", "resonance", "manifold"} {
 				rows := make([]*nmtypes.Measurement, 0)
 
@@ -58,6 +62,16 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 			rows := frame.Value.(*wire.MeasurementsFrameT).Rows
 			So(rows, ShouldHaveLength, 1)
 			So(rows[0].Id, ShouldEqual, "first")
+		})
+	})
+
+	Convey("Given a measurement identified as a different symbol", t, func() {
+		symbol := NewSymbol("BTC/USD")
+		measurement := nmtypes.NewMeasurement("wrong", string(SourceHawkes), 0, 0)
+		measurement.Symbol = "ETH/USD"
+
+		Convey("It should reject corrupted provenance", func() {
+			So(func() { symbol.AppendMeasurement(measurement) }, ShouldPanic)
 		})
 	})
 
@@ -158,11 +172,11 @@ func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 	b.Cleanup(func() { SetFocus(previousFocus) })
 
 	ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
-	measurement := nmtypes.NewMeasurement("benchmark", string(SourceHawkes), 0, 0)
 	consumers := append(append([]string{}, LogicSourceStrings...), "audit")
 
 	b.Run("focused", func(b *testing.B) {
 		symbol := NewSymbol("BTC/USD", ui)
+		measurement := nmtypes.NewMeasurement("benchmark", string(SourceHawkes), 0, 0)
 		b.ReportAllocs()
 
 		for range b.N {
@@ -177,6 +191,7 @@ func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 
 	b.Run("unfocused", func(b *testing.B) {
 		symbol := NewSymbol("ETH/USD", ui)
+		measurement := nmtypes.NewMeasurement("benchmark", string(SourceHawkes), 0, 0)
 		b.ReportAllocs()
 
 		for range b.N {

@@ -19,6 +19,10 @@ import (
 	logicgraph "github.com/theapemachine/symm/types"
 )
 
+// strategyWireBranchCount matches the two ranked branch slots rendered for
+// each live candidate decision.
+const strategyWireBranchCount = 2
+
 type Planner struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -128,53 +132,6 @@ func (planner *Planner) Run() error {
 	return planner.err
 }
 
-/*
-readySymbols is the planner's pre-scan over the whole thesis: it cheaply walks
-every symbol's market graph and keeps only the ones whose decision proposition
-has accumulated enough confidence to be worth a causal search. Sparse graphs
-are left to accumulate more observations instead of spending search effort.
-*/
-func (planner *Planner) readySymbols(
-	thesis *types.Thesis,
-) map[string]*logicgraph.Graph {
-	ready := make(map[string]*logicgraph.Graph)
-
-	minimumConfidence := 0.0
-
-	if config := system.Cfg.Snapshot(); config != nil && config.Planner != nil {
-		minimumConfidence = config.Planner.MinimumConfidence
-	}
-
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbolState, ok := value.(*types.Symbol)
-
-		if !ok || symbolState == nil {
-			return true
-		}
-
-		symbolName, ok := key.(string)
-
-		if !ok || symbolName == "" || isExcludedSymbol(symbolName) {
-			return true
-		}
-
-		var graph *logicgraph.Graph
-
-		for stored := range symbolState.MarketGraphs(types.SourceGraph) {
-			graph = stored
-		}
-
-		if graph == nil || !graph.SearchableEnough(minimumConfidence) {
-			return true
-		}
-
-		ready[symbolName] = graph
-		return true
-	})
-
-	return ready
-}
-
 func (planner *Planner) decisionFromGraph(
 	symbol string,
 	cloned *logicgraph.Graph,
@@ -271,7 +228,6 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	plannerStarted := time.Now()
-	lastSearchEnd := plannerStarted
 
 	defer func() {
 		if planner.ObserveModule != nil {
@@ -279,8 +235,63 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 	}()
 
-	readySymbols := planner.readySymbols(thesis)
-	heldLegs := planner.heldLegs(thesis)
+	var err error
+	evaluated := false
+
+	thesis.Symbols.Range(func(key, value any) bool {
+		symbolName, symbolOK := key.(string)
+		symbolState, stateOK := value.(*types.Symbol)
+
+		if !symbolOK || symbolName == "" || !stateOK || symbolState == nil ||
+			isExcludedSymbol(symbolName) {
+			return true
+		}
+
+		consumedGraph := false
+
+		for graph := range symbolState.MarketGraphs(types.SourcePlanner) {
+			consumedGraph = true
+
+			if graph == nil || !graph.SearchableEnough(config.Planner.MinimumConfidence) {
+				continue
+			}
+
+			evaluated = true
+			err = planner.updateGraph(thesis, config, symbolName, graph)
+
+			if err != nil {
+				return false
+			}
+		}
+
+		if consumedGraph && symbolState.HasGraphInputs() {
+			thesis.Work(types.SourceGraph).Push(symbolState)
+		}
+
+		return err == nil
+	})
+
+	if err != nil || evaluated {
+		return err
+	}
+
+	return planner.updateGraph(thesis, config, "", nil)
+}
+
+func (planner *Planner) updateGraph(
+	thesis *types.Thesis,
+	config *system.Config,
+	symbolName string,
+	graph *logicgraph.Graph,
+) error {
+	readySymbols := make(map[string]*logicgraph.Graph, 1)
+
+	if graph != nil {
+		readySymbols[symbolName] = graph
+	}
+
+	lastSearchEnd := time.Now()
+	heldLegs := planner.heldLegs(readySymbols)
 
 	if len(readySymbols) == 0 && len(heldLegs) == 0 && !planner.hasCandidates() {
 		return nil
@@ -298,6 +309,10 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		graphs := make(map[string]*logicgraph.Graph, len(readySymbols))
 
 		for symbolName, symbolGraph := range readySymbols {
+			if planner.Holding(symbolName) {
+				continue
+			}
+
 			graph := symbolGraph
 
 			if graph == nil || !graph.ReadyForSearch() {
@@ -305,31 +320,30 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			}
 
 			summary := graph.OpportunitySummary()
-			cloned := graph.Clone()
 
 			if !summary.Ready || summary.Score <= 0 {
 				rejections = append(rejections, struct {
 					symbol string
 					graph  *logicgraph.Graph
-				}{symbolName, cloned})
+				}{symbolName, graph})
 				continue
 			}
 
-			graphs[symbolName] = cloned
-			now := cloned.At
-			opportunityType := graphOpportunityType(cloned)
-			predictiveReady, _ := predictiveReadiness(cloned)
+			graphs[symbolName] = graph
+			now := graph.At
+			opportunityType := graphOpportunityType(graph)
+			predictiveReady, _ := predictiveReadiness(graph)
 			reserveEligible, _ := reserveQualification(
 				opportunityType,
 				predictiveReady,
-				cloned.ForecastHorizon,
+				graph.ForecastHorizon,
 			)
 
 			legs = append(legs, portfolioLeg{
 				Symbol:          symbolName,
 				Summary:         summary,
-				Opportunity:     cloned.ActiveOpportunity(now),
-				Trust:           cloned.MeanTrust(now),
+				Opportunity:     graph.ActiveOpportunity(now),
+				Trust:           graph.MeanTrust(now),
 				ReserveEligible: reserveEligible,
 			})
 		}
@@ -440,7 +454,6 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			planner.retainCandidate(decision)
 		}
 
-		retireDecisionGraphs(thesis, freshDecisions)
 	}
 
 	createdDecisions = planner.candidateCopies()
@@ -507,8 +520,6 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		return err
 	}
 
-	retireDecisionGraphs(thesis, createdDecisions)
-
 	decisions = decisions[:0]
 
 	for _, decision := range createdDecisions {
@@ -529,7 +540,11 @@ func (planner *Planner) publishStrategy(
 	rows := make([]*wire.DecisionT, 0, len(decisions))
 
 	for _, decision := range decisions {
-		rows = append(rows, types.DecisionWire(decision))
+		rows = append(rows, types.DecisionWire(
+			decision,
+			strategyWireBranchCount,
+			false,
+		))
 	}
 
 	thesis.Publish(&wire.FrameT{
@@ -633,11 +648,13 @@ func newMCTSEngine(config *system.Config) *mcts.CausalMCTS {
 /*
 heldLegs builds one portfolio leg per open desk position so the same search that
 admits new entries can decide which held lot has decayed past its slot.
-A lot without a fresh graph still participates with a neutral summary: the only
-question the search must answer for it is whether freeing the slot is worth it.
+A held lot uses the graph already consumed by the current evaluation pass, so
+the planner never reads the stream twice or retains a shadow graph state.
 */
-func (planner *Planner) heldLegs(thesis *types.Thesis) []portfolioLeg {
-	if planner == nil || planner.desk == nil || thesis == nil {
+func (planner *Planner) heldLegs(
+	graphs map[string]*logicgraph.Graph,
+) []portfolioLeg {
+	if planner == nil || planner.desk == nil {
 		return nil
 	}
 
@@ -654,19 +671,19 @@ func (planner *Planner) heldLegs(thesis *types.Thesis) []portfolioLeg {
 			continue
 		}
 
-		symbol := thesis.Symbol(position.Decision.Symbol)
+		if position.Holding != nil && position.Holding.Stoploss != nil &&
+			position.Holding.Stoploss.Status == types.TRIGGERED {
+			continue
+		}
 
-		if symbol == nil {
+		graph := graphs[position.Decision.Symbol]
+
+		if graph == nil {
 			continue
 		}
 
 		summary := logicgraph.OpportunitySummary{}
-
-		for graph := range symbol.MarketGraphs(types.SourceGraph) {
-			if graph != nil {
-				summary = graph.OpportunitySummary()
-			}
-		}
+		summary = graph.OpportunitySummary()
 
 		held = append(held, portfolioLeg{
 			Symbol:  position.Decision.Symbol,

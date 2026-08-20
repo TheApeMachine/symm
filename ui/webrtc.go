@@ -85,7 +85,8 @@ func (fluidTransport *FluidRTC) Active() bool {
 
 /*
 Run drains direct manifold publications until shutdown or the first transport
-failure. A live viewer never loses a queued state silently: overflow is fatal.
+failure. A live viewer never loses a queued state silently: when its bounded
+queue fills, publication applies backpressure until the reliable channel drains.
 */
 func (fluidTransport *FluidRTC) Run() error {
 	if err := fluidTransport.Error(); err != nil {

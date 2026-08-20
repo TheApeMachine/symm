@@ -55,6 +55,7 @@ func TestHawkesPipeline(t *testing.T) {
 				types.MetricKey(types.MetricBaselineIntensity, types.SideBuy),
 				types.MetricKey(types.MetricBaselineIntensity, types.SideSell),
 				types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy),
+				types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell),
 				types.MetricKey(types.MetricDecayRate, types.SideNone),
 				types.MetricKey(types.MetricSpectralRadius, types.SideNone),
 				types.MetricKey(types.MetricTotalDescendants, types.SideBuy),
@@ -67,6 +68,8 @@ func TestHawkesPipeline(t *testing.T) {
 
 			eventCount := latest.Metrics[types.MetricKey(types.MetricEventCount, types.SideNone)]
 			So(eventCount.Raw, ShouldBeGreaterThan, 0)
+			So(latest.Metrics[types.MetricKey(types.MetricSpectralRadius, types.SideNone)].Normalized, ShouldNotBeNil)
+			So(latest.Metrics[types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy)].Normalized, ShouldNotBeNil)
 			_, found := latest.Metrics["buy_intensity"]
 			So(found, ShouldBeFalse)
 		})

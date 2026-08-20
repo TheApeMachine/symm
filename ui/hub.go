@@ -40,21 +40,20 @@ Each client has a bounded writer queue; a peer that cannot keep up is closed
 with an observable error so it cannot block market telemetry for every peer.
 */
 type Hub struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	err              error
-	app              *fiber.App
-	listenAddr       string
-	thesis           *types.Thesis
-	desk             *broker.Desk
-	price            *broker.Price
-	balance          *broker.Balance
-	playback         playback
-	captures         func() []backtest.CaptureInfo
-	fluid            *FluidRTC
-	maxMessageBytes  int
-	clientQueueLimit uint64
-	writeWindow      uint64
+	ctx             context.Context
+	cancel          context.CancelFunc
+	err             error
+	app             *fiber.App
+	listenAddr      string
+	thesis          *types.Thesis
+	desk            *broker.Desk
+	price           *broker.Price
+	balance         *broker.Balance
+	playback        playback
+	captures        func() []backtest.CaptureInfo
+	fluid           *FluidRTC
+	maxMessageBytes int
+	writeWindow     uint64
 }
 
 /*
@@ -80,35 +79,32 @@ func NewHub(
 	manifold *transport.MapReduce[types.FluidFrame],
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
+	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
-	viper.SetDefault("ui.websocket.client_queue_frames", 16384)
 	viper.SetDefault("ui.websocket.write_window", 4)
 
 	hub := &Hub{
 		ctx:        ctx,
 		cancel:     cancel,
-		listenAddr: "127.0.0.1:8765",
+		listenAddr: viper.GetString("ui.addr"),
 		thesis:     thesis,
 		desk:       desk,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
 			StrictRouting:   true,
-			ReadBufferSize:  4 * 1024 * 1024,
-			WriteBufferSize: 4 * 1024 * 1024,
+			ReadBufferSize:  4194304,
+			WriteBufferSize: 4194304,
 		}),
-		price:            price,
-		balance:          balance,
-		fluid:            NewFluidRTC(ctx, manifold, "fluid"),
-		maxMessageBytes:  viper.GetInt("ui.websocket.max_message_bytes"),
-		clientQueueLimit: uint64(viper.GetInt("ui.websocket.client_queue_frames")),
-		writeWindow:      uint64(viper.GetInt("ui.websocket.write_window")),
+		price:           price,
+		balance:         balance,
+		fluid:           NewFluidRTC(ctx, manifold, "fluid"),
+		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
+		writeWindow:     uint64(viper.GetInt("ui.websocket.write_window")),
 	}
 
-	if hub.clientQueueLimit == 0 || hub.writeWindow == 0 {
-		hub.err = fmt.Errorf(
-			"dashboard: client_queue_frames and write_window must be positive",
-		)
+	if hub.writeWindow == 0 {
+		hub.err = fmt.Errorf("dashboard: write_window must be positive")
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -154,7 +150,7 @@ func NewHub(
 		// cursor. MapReduce fans every pushed frame out to every registered
 		// consumer, so each client receives each frame without any shared
 		// broadcast or client-fan-out machinery on the hub.
-		ui.RegisterBounded(consumerID, hub.clientQueueLimit)
+		ui.Register(consumerID)
 		defer ui.Unregister(consumerID)
 		initialFrames := make([]*types.UIFrame, 0, 3)
 
@@ -311,15 +307,6 @@ func NewHub(
 					return
 				case <-received:
 					inFlight--
-				case <-ui.Ready(consumerID):
-					if ui.Overflowed(consumerID) {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"dashboard: client telemetry queue exceeded its configured limit",
-							nil,
-						))
-						return
-					}
 				}
 			}
 
@@ -330,14 +317,6 @@ func NewHub(
 				frame, ok := ui.WaitPop(clientCtx, consumerID)
 
 				if !ok {
-					if ui.Overflowed(consumerID) {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"dashboard: client telemetry queue exceeded its configured limit",
-							nil,
-						))
-					}
-
 					return
 				}
 
@@ -360,18 +339,30 @@ func NewHub(
 
 			for {
 				batch = telemetry.EncodeBatch(frames[:batchCount])
+				batchBytes := len(batch.Bytes)
 
-				if len(batch.Bytes) <= hub.maxMessageBytes {
+				if batchBytes <= hub.maxMessageBytes {
 					break
 				}
 
 				batch.Release()
 
 				if batchCount == 1 {
+					splitFrames, err := splitDashboardFrame(
+						frames[0],
+						hub.maxMessageBytes,
+					)
+
+					if err == nil {
+						frames = append(splitFrames, frames[1:]...)
+						batchCount = len(frames)
+						continue
+					}
+
 					errnie.Error(errnie.Err(
 						errnie.Validation,
-						"dashboard: frame exceeds websocket message limit",
-						nil,
+						err.Error(),
+						err,
 					))
 					return
 				}
@@ -468,6 +459,63 @@ func expectedDashboardWriteClosure(err error) bool {
 	}
 
 	return false
+}
+
+/*
+splitDashboardFrame divides a strategy update at decision boundaries until
+every resulting FlatBuffers message fits the configured websocket limit.
+*/
+func splitDashboardFrame(
+	frame *types.UIFrame,
+	maxMessageBytes int,
+) ([]*types.UIFrame, error) {
+	batch := telemetry.EncodeBatch([]*types.UIFrame{frame})
+	frameBytes := len(batch.Bytes)
+	batch.Release()
+
+	if frameBytes <= maxMessageBytes {
+		return []*types.UIFrame{frame}, nil
+	}
+
+	strategy, valid := frame.Value.(*wire.StrategyFrameT)
+
+	if frame.Type != wire.FrameStrategyFrame || !valid || len(strategy.Decisions) < 2 {
+		return nil, fmt.Errorf(
+			"dashboard: %v frame is %d bytes and exceeds websocket message limit %d",
+			frame.Type,
+			frameBytes,
+			maxMessageBytes,
+		)
+	}
+
+	middle := len(strategy.Decisions) / 2
+	left, err := splitDashboardFrame(&wire.FrameT{
+		Type: frame.Type,
+		Value: &wire.StrategyFrameT{
+			Evaluated: strategy.Evaluated,
+			Outcome:   strategy.Outcome,
+			Decisions: strategy.Decisions[:middle],
+		},
+	}, maxMessageBytes)
+
+	if err != nil {
+		return nil, err
+	}
+
+	right, err := splitDashboardFrame(&wire.FrameT{
+		Type: frame.Type,
+		Value: &wire.StrategyFrameT{
+			Evaluated: strategy.Evaluated,
+			Outcome:   strategy.Outcome,
+			Decisions: strategy.Decisions[middle:],
+		},
+	}, maxMessageBytes)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return append(left, right...), nil
 }
 
 func (hub *Hub) Name() string { return "hub" }

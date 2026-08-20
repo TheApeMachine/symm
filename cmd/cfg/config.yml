@@ -94,7 +94,7 @@ ui:
   addr: 127.0.0.1:8765
   webrtc:
     # Per-channel records retained for an attached manifold viewer. Reaching
-    # this bound is fatal rather than silently replacing an unpainted state.
+    # this bound backpressures publication rather than dropping an unpainted state.
     client_queue_frames: 4
     # SCTP buffered-amount high-water expressed in RFC 8831 16 KiB segments.
     # Flow control waits for capacity before enqueueing the next segment.

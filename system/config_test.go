@@ -45,6 +45,18 @@ func TestSnapshot(t *testing.T) {
 	})
 }
 
+func TestPlannerMinimumConfidence(t *testing.T) {
+	Convey("Given a configured planner admission boundary", t, func() {
+		config := NewConfig()
+		confidence, err := config.PlannerMinimumConfidence()
+
+		Convey("It should read the scalar without materializing a snapshot", func() {
+			So(err, ShouldBeNil)
+			So(confidence, ShouldEqual, config.Planner.MinimumConfidence)
+		})
+	})
+}
+
 func TestApplyRegulation(t *testing.T) {
 	Convey("Given a regulator-owned planner update", t, func() {
 		config := NewConfig()

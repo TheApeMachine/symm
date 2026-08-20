@@ -18,24 +18,38 @@ It should be kept extremely simple, and lean, and is not an invitation to
 start adding additional complexity beyond what is truly earned.
 */
 type Symbol struct {
-	ui           *transport.MapReduce[*UIFrame]             `json:"-"`
-	ID           SymbolID                                   `json:"id,omitempty"`
-	Symbol       string                                     `json:"symbol,omitempty"`
-	Status       Status                                     `json:"status,omitempty"`
-	Tick         int64                                      `json:"tick,omitempty"`
-	Measurements *transport.MapReduce[*types.Measurement]   `json:"-"`
-	tickers      *transport.MapReduce[kraken.TickerData]    `json:"-"`
-	trades       *transport.MapReduce[kraken.TradeData]     `json:"-"`
-	level3       *transport.MapReduce[kraken.Level3Data]    `json:"-"`
-	executions   *transport.MapReduce[kraken.ExecutionData] `json:"-"`
-	Decisions    *transport.MapReduce[Decision]             `json:"decisions,omitempty"`
-	Positions    *transport.MapReduce[any]                  `json:"positions,omitempty"`
-	Graphs       *transport.MapReduce[*Graph]               `json:"graphs,omitempty"`
-	Categories   *transport.MapReduce[[]Category]           `json:"categories,omitempty"`
-	Phase        *transport.MapReduce[PhaseReading]         `json:"-"`
-	Cognition    *transport.MapReduce[Cognition]            `json:"-"`
-	Resonance    *transport.MapReduce[any]                  `json:"-"`
-	Causal       *transport.MapReduce[map[string]any]       `json:"-"`
+	ui                   *transport.MapReduce[*UIFrame]              `json:"-"`
+	notify               func(SourceType, *Symbol)                   `json:"-"`
+	ID                   SymbolID                                    `json:"id,omitempty"`
+	Symbol               string                                      `json:"symbol,omitempty"`
+	Status               Status                                      `json:"status,omitempty"`
+	Tick                 int64                                       `json:"tick,omitempty"`
+	Measurements         *transport.MapReduce[*types.Measurement]    `json:"-"`
+	TickerConsumers      []*transport.Consumer[kraken.TickerData]    `json:"-"`
+	TradeConsumers       []*transport.Consumer[kraken.TradeData]     `json:"-"`
+	Level3Consumers      []*transport.Consumer[kraken.Level3Data]    `json:"-"`
+	ExecutionConsumers   []*transport.Consumer[kraken.ExecutionData] `json:"-"`
+	MeasurementConsumers []*transport.Consumer[*types.Measurement]   `json:"-"`
+	DecisionConsumers    []*transport.Consumer[Decision]             `json:"-"`
+	PositionConsumers    []*transport.Consumer[any]                  `json:"-"`
+	GraphConsumers       []*transport.Consumer[*Graph]               `json:"-"`
+	CategoryConsumers    []*transport.Consumer[[]Category]           `json:"-"`
+	PhaseConsumers       []*transport.Consumer[PhaseReading]         `json:"-"`
+	CognitionConsumers   []*transport.Consumer[Cognition]            `json:"-"`
+	ResonanceConsumers   []*transport.Consumer[any]                  `json:"-"`
+	CausalConsumers      []*transport.Consumer[map[string]any]       `json:"-"`
+	tickers              *transport.MapReduce[kraken.TickerData]     `json:"-"`
+	trades               *transport.MapReduce[kraken.TradeData]      `json:"-"`
+	level3               *transport.MapReduce[kraken.Level3Data]     `json:"-"`
+	executions           *transport.MapReduce[kraken.ExecutionData]  `json:"-"`
+	Decisions            *transport.MapReduce[Decision]              `json:"decisions,omitempty"`
+	Positions            *transport.MapReduce[any]                   `json:"positions,omitempty"`
+	Graphs               *transport.MapReduce[*Graph]                `json:"graphs,omitempty"`
+	Categories           *transport.MapReduce[[]Category]            `json:"categories,omitempty"`
+	Phase                *transport.MapReduce[PhaseReading]          `json:"-"`
+	Cognition            *transport.MapReduce[Cognition]             `json:"-"`
+	Resonance            *transport.MapReduce[any]                   `json:"-"`
+	Causal               *transport.MapReduce[map[string]any]        `json:"-"`
 }
 
 /*
@@ -48,121 +62,96 @@ func NewSymbol(name string, uiChannels ...*transport.MapReduce[*UIFrame]) *Symbo
 		ui = uiChannels[0]
 	}
 
-	symbol := &Symbol{
-		Symbol: name,
-		Status: READY,
-		tickers: transport.NewMapReduce[kraken.TickerData](
-			append(
-				TickerReceiverStrings,
-				string(SourceResonance),
-				string(SourceDesk),
-			), nil, nil,
-		),
-		ui: ui,
-		trades: transport.NewMapReduce[kraken.TradeData](
-			TradeReceiverStrings, nil, nil,
-		),
-		level3: transport.NewMapReduce[kraken.Level3Data](
-			Level3ReceiverStrings, nil, nil,
-		),
-		executions: transport.NewMapReduce[kraken.ExecutionData](
-			[]string{string(SourceDesk)}, nil, nil,
-		),
-		Measurements: transport.NewMapReduce[*types.Measurement](
-			LogicSourceStrings, nil, nil,
-		),
-		Decisions: transport.NewMapReduce[Decision](
-			[]string{}, nil, nil,
-		),
-		Positions: transport.NewMapReduce[any](
-			[]string{}, nil, nil,
-		),
-		Graphs: transport.NewMapReduce[*Graph](
-			[]string{string(SourcePlanner), string(SourceGraph)}, nil, nil,
-		),
-		Categories: transport.NewMapReduce[[]Category](
-			[]string{string(SourceGraph), string(SourceCognition)}, nil, nil,
-		),
-		Phase: transport.NewMapReduce[PhaseReading](
-			[]string{string(SourceGraph)}, nil, nil,
-		),
-		Cognition: transport.NewMapReduce[Cognition](
-			[]string{string(SourceGraph)}, nil, nil,
-		),
-		Resonance: transport.NewMapReduce[any](
-			[]string{string(SourceCausal), string(SourceGraph)}, nil, nil,
-		),
-		Causal: transport.NewMapReduce[map[string]any](
-			[]string{string(SourceGraph), string(SourceCausal)}, nil, nil,
-		),
+	symbol := &Symbol{Symbol: name, Status: READY, ui: ui}
+	symbol.TickerConsumers = []*transport.Consumer[kraken.TickerData]{
+		newSymbolConsumer[kraken.TickerData](symbol, SourceCorrelation),
+		newSymbolConsumer[kraken.TickerData](symbol, SourceLeadLag),
+		newSymbolConsumer[kraken.TickerData](symbol, SourceLiquidity),
+		newSymbolConsumer[kraken.TickerData](symbol, SourcePumpDump),
+		newSymbolConsumer[kraken.TickerData](symbol, SourceSentiment),
+		newSymbolConsumer[kraken.TickerData](symbol, SourceResonance),
+		newSymbolConsumer[kraken.TickerData](symbol, SourceDesk),
 	}
-
-	symbol.Phase.Register("audit")
-	symbol.Cognition.Register("audit")
-	symbol.Resonance.Register("audit")
-	symbol.Causal.Register("audit")
-	symbol.Categories.Register("audit")
-	symbol.Decisions.Register("audit")
-	symbol.Graphs.Register("audit")
-	symbol.Measurements.Register("audit")
-	symbol.Positions.Register("audit")
+	symbol.TradeConsumers = []*transport.Consumer[kraken.TradeData]{
+		newSymbolConsumer[kraken.TradeData](symbol, SourceCVD),
+		newSymbolConsumer[kraken.TradeData](symbol, SourceExhaustion),
+		newSymbolConsumer[kraken.TradeData](symbol, SourceHawkes),
+		newSymbolConsumer[kraken.TradeData](symbol, SourcePumpDump),
+	}
+	symbol.Level3Consumers = []*transport.Consumer[kraken.Level3Data]{
+		newSymbolConsumer[kraken.Level3Data](symbol, SourceDepthFlow),
+		newSymbolConsumer[kraken.Level3Data](symbol, SourceToxicity),
+	}
+	symbol.ExecutionConsumers = []*transport.Consumer[kraken.ExecutionData]{
+		newSymbolConsumer[kraken.ExecutionData](symbol, SourceDesk),
+	}
+	symbol.MeasurementConsumers = []*transport.Consumer[*types.Measurement]{
+		newSymbolConsumer[*types.Measurement](symbol, SourceCategory),
+		newSymbolConsumer[*types.Measurement](symbol, SourceManifold),
+		newSymbolConsumer[*types.Measurement](symbol, SourceResonance),
+		newSymbolConsumer[*types.Measurement](symbol, SourceGraph),
+		newSymbolConsumer[*types.Measurement](symbol, SourceAudit),
+	}
+	symbol.DecisionConsumers = []*transport.Consumer[Decision]{
+		newSymbolConsumer[Decision](symbol, SourceAudit),
+	}
+	symbol.PositionConsumers = []*transport.Consumer[any]{
+		newSymbolConsumer[any](symbol, SourceAudit),
+	}
+	symbol.GraphConsumers = []*transport.Consumer[*Graph]{
+		newSymbolConsumer[*Graph](symbol, SourcePlanner),
+		newSymbolConsumer[*Graph](symbol, SourceAudit),
+	}
+	symbol.CategoryConsumers = []*transport.Consumer[[]Category]{
+		newSymbolConsumer[[]Category](symbol, SourceGraph),
+		newSymbolConsumer[[]Category](symbol, SourceCognition),
+		newSymbolConsumer[[]Category](symbol, SourceAudit),
+	}
+	symbol.PhaseConsumers = []*transport.Consumer[PhaseReading]{
+		newSymbolConsumer[PhaseReading](symbol, SourceGraph),
+		newSymbolConsumer[PhaseReading](symbol, SourceAudit),
+	}
+	symbol.CognitionConsumers = []*transport.Consumer[Cognition]{
+		newSymbolConsumer[Cognition](symbol, SourceGraph),
+		newSymbolConsumer[Cognition](symbol, SourceAudit),
+	}
+	symbol.ResonanceConsumers = []*transport.Consumer[any]{
+		newSymbolConsumer[any](symbol, SourceCausal),
+		newSymbolConsumer[any](symbol, SourceGraph),
+		newSymbolConsumer[any](symbol, SourceAudit),
+	}
+	symbol.CausalConsumers = []*transport.Consumer[map[string]any]{
+		newSymbolConsumer[map[string]any](symbol, SourceGraph),
+		newSymbolConsumer[map[string]any](symbol, SourceCausal),
+		newSymbolConsumer[map[string]any](symbol, SourceAudit),
+	}
+	symbol.tickers = transport.NewMapReduce(symbol.TickerConsumers, nil, nil)
+	symbol.trades = transport.NewMapReduce(symbol.TradeConsumers, nil, nil)
+	symbol.level3 = transport.NewMapReduce(symbol.Level3Consumers, nil, nil)
+	symbol.executions = transport.NewMapReduce(symbol.ExecutionConsumers, nil, nil)
+	symbol.Measurements = transport.NewMapReduce(symbol.MeasurementConsumers, nil, nil)
+	symbol.Decisions = transport.NewMapReduce(symbol.DecisionConsumers, nil, nil)
+	symbol.Positions = transport.NewMapReduce(symbol.PositionConsumers, nil, nil)
+	symbol.Graphs = transport.NewMapReduce(symbol.GraphConsumers, nil, nil)
+	symbol.Categories = transport.NewMapReduce(symbol.CategoryConsumers, nil, nil)
+	symbol.Phase = transport.NewMapReduce(symbol.PhaseConsumers, nil, nil)
+	symbol.Cognition = transport.NewMapReduce(symbol.CognitionConsumers, nil, nil)
+	symbol.Resonance = transport.NewMapReduce(symbol.ResonanceConsumers, nil, nil)
+	symbol.Causal = transport.NewMapReduce(symbol.CausalConsumers, nil, nil)
 
 	return symbol
 }
 
 func (symbol *Symbol) setNotify(notifyFn func(SourceType, *Symbol)) {
-	direct := func(consumerID string) {
-		notifyFn(SourceType(consumerID), symbol)
-	}
-	symbol.tickers.SetNotify(direct)
-	symbol.trades.SetNotify(direct)
-	symbol.level3.SetNotify(direct)
-	symbol.executions.SetNotify(direct)
-	symbol.Measurements.SetNotify(func(consumerID string) {
-		switch SourceType(consumerID) {
-		case SourceCategory:
-			notifyFn(SourceCategory, symbol)
-		case SourceGraph:
-			notifyFn(SourceGraph, symbol)
-		}
-	})
-	symbol.Graphs.SetNotify(func(consumerID string) {
-		switch SourceType(consumerID) {
-		case SourcePlanner:
-			notifyFn(SourceGraph, symbol)
-		case SourceGraph:
-			notifyFn(SourcePlanner, symbol)
-		}
-	})
-	symbol.Categories.SetNotify(func(consumerID string) {
-		switch SourceType(consumerID) {
-		case SourceCognition:
-			notifyFn(SourceCognition, symbol)
-		case SourceGraph:
-			notifyFn(SourceGraph, symbol)
-		}
-	})
-	symbol.Resonance.SetNotify(func(consumerID string) {
-		switch SourceType(consumerID) {
-		case SourceCausal:
-			notifyFn(SourceCausal, symbol)
-		case SourceGraph:
-			notifyFn(SourceGraph, symbol)
-		}
-	})
-	symbol.Phase.SetNotify(func(consumerID string) {
-		if SourceType(consumerID) == SourceGraph {
-			notifyFn(SourceGraph, symbol)
-		}
-	})
-	symbol.Cognition.SetNotify(func(consumerID string) {
-		if SourceType(consumerID) == SourceGraph {
-			notifyFn(SourceGraph, symbol)
-		}
-	})
-	symbol.Causal.SetNotify(func(consumerID string) {
-		if SourceType(consumerID) == SourceGraph {
-			notifyFn(SourceGraph, symbol)
+	symbol.notify = notifyFn
+}
+
+func newSymbolConsumer[T any](
+	symbol *Symbol, source SourceType,
+) *transport.Consumer[T] {
+	return transport.NewConsumer[T](string(source), func() {
+		if symbol.notify != nil {
+			symbol.notify(source, symbol)
 		}
 	})
 }
@@ -175,48 +164,28 @@ func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
 	symbol.tickers.Push(ticker)
 }
 
-/*
-HasTickers reports whether this symbol has an unconsumed ticker queued for the
-signal owners, letting a self-run consumer probe for work before draining.
-*/
-func (symbol *Symbol) HasTickers() bool {
-	return symbol.tickers.Length() > 0
+func (symbol *Symbol) HasTickersFor(
+	consumer *transport.Consumer[kraken.TickerData],
+) bool {
+	return symbol.tickers.Length(consumer) > 0
 }
 
-func (symbol *Symbol) HasTickersFor(source SourceType) bool {
-	return symbol.tickers.ConsumerLength(string(source)) > 0
+func (symbol *Symbol) HasTradesFor(
+	consumer *transport.Consumer[kraken.TradeData],
+) bool {
+	return symbol.trades.Length(consumer) > 0
 }
 
-/*
-HasTrades reports whether this symbol has an unconsumed trade queued for the
-signal owners.
-*/
-func (symbol *Symbol) HasTrades() bool {
-	return symbol.trades.Length() > 0
+func (symbol *Symbol) HasLevel3For(
+	consumer *transport.Consumer[kraken.Level3Data],
+) bool {
+	return symbol.level3.Length(consumer) > 0
 }
 
-func (symbol *Symbol) HasTradesFor(source SourceType) bool {
-	return symbol.trades.ConsumerLength(string(source)) > 0
-}
-
-/*
-HasLevel3 reports whether this symbol has an unconsumed level-3 frame queued
-for the signal owners.
-*/
-func (symbol *Symbol) HasLevel3() bool {
-	return symbol.level3.Length() > 0
-}
-
-func (symbol *Symbol) HasLevel3For(source SourceType) bool {
-	return symbol.level3.ConsumerLength(string(source)) > 0
-}
-
-func (symbol *Symbol) HasExecutions() bool {
-	return symbol.executions.Length() > 0
-}
-
-func (symbol *Symbol) HasExecutionsFor(source SourceType) bool {
-	return symbol.executions.ConsumerLength(string(source)) > 0
+func (symbol *Symbol) HasExecutionsFor(
+	consumer *transport.Consumer[kraken.ExecutionData],
+) bool {
+	return symbol.executions.Length(consumer) > 0
 }
 
 /*
@@ -243,10 +212,12 @@ func (symbol *Symbol) AppendExecution(execution kraken.ExecutionData) {
 MarketExecutions drains this source's execution queue up to an event-time cut
 taken when the drain starts, on the same terms as MarketTickers.
 */
-func (symbol *Symbol) MarketExecutions(source SourceType) iter.Seq[kraken.ExecutionData] {
+func (symbol *Symbol) MarketExecutions(
+	consumer *transport.Consumer[kraken.ExecutionData],
+) iter.Seq[kraken.ExecutionData] {
 	cut := time.Now().UTC()
 
-	return symbol.executions.Drain(string(source), func(execution kraken.ExecutionData) bool {
+	return symbol.executions.Drain(consumer, func(execution kraken.ExecutionData) bool {
 		if execution.Timestamp.After(cut) {
 			return false
 		}
@@ -262,6 +233,17 @@ consumes it. Signals project their numeric Frame output into the nomagique
 Measurement shape via AddMetrics and push that shape here.
 */
 func (symbol *Symbol) AppendMeasurement(measurement *types.Measurement) {
+	if measurement == nil {
+		panic("symbol: measurement required")
+	}
+
+	if measurement.Symbol != "" && measurement.Symbol != symbol.Symbol {
+		panic("symbol: measurement belongs to " + measurement.Symbol +
+			", not " + symbol.Symbol)
+	}
+
+	measurement.Symbol = symbol.Symbol
+	measurement.Tick = symbol.Tick
 	symbol.Measurements.Push(measurement)
 
 	if symbol.ui == nil || symbol.Symbol != Focus() {
@@ -369,43 +351,78 @@ func (symbol *Symbol) CheckpointState() any {
 		Resonance  any      `json:"resonance"`
 		Causal     any      `json:"causal"`
 	}{
-		ID:         symbol.ID,
-		Symbol:     symbol.Symbol,
-		Status:     symbol.Status,
-		Tick:       symbol.Tick,
-		Decisions:  drained(symbol.Decisions),
-		Graphs:     drained(symbol.Graphs),
-		Categories: drainedCategories(symbol),
-		Phase:      drained(symbol.Phase),
-		Cognition:  drained(symbol.Cognition),
-		Resonance:  drained(symbol.Resonance),
-		Causal:     drained(symbol.Causal),
+		ID:     symbol.ID,
+		Symbol: symbol.Symbol,
+		Status: symbol.Status,
+		Tick:   symbol.Tick,
+		Decisions: drainedLatest(
+			symbol.Decisions, symbol.DecisionConsumers[0],
+		),
+		Graphs: drainedLatest(
+			symbol.Graphs, symbol.GraphConsumers[GraphConsumerAudit],
+		),
+		Categories: drainedLatestCategories(symbol),
+		Phase: drainedLatest(
+			symbol.Phase, symbol.PhaseConsumers[StateConsumerAudit],
+		),
+		Cognition: drainedLatest(
+			symbol.Cognition, symbol.CognitionConsumers[StateConsumerAudit],
+		),
+		Resonance: drainedLatest(
+			symbol.Resonance, symbol.ResonanceConsumers[ResonanceConsumerAudit],
+		),
+		Causal: drainedLatest(
+			symbol.Causal, symbol.CausalConsumers[CausalConsumerAudit],
+		),
 	}
 
 	return checkpoint
 }
 
-func drained[T any](mr *transport.MapReduce[T]) []T {
-	rows := make([]T, 0)
-
-	sink := func(item T) bool { return true }
-	for item := range mr.Drain("audit", sink) {
-		rows = append(rows, item)
-	}
-
-	return rows
+func (symbol *Symbol) HasGraphInputs() bool {
+	return symbol.Measurements.Length(
+		symbol.MeasurementConsumers[MeasurementConsumerGraph],
+	) > 0 || symbol.Categories.Length(
+		symbol.CategoryConsumers[CategoryConsumerGraph],
+	) > 0 || symbol.Resonance.Length(
+		symbol.ResonanceConsumers[ResonanceConsumerGraph],
+	) > 0 || symbol.Cognition.Length(
+		symbol.CognitionConsumers[StateConsumerStage],
+	) > 0 || symbol.Causal.Length(
+		symbol.CausalConsumers[CausalConsumerGraph],
+	) > 0 || symbol.Phase.Length(
+		symbol.PhaseConsumers[StateConsumerStage],
+	) > 0
 }
 
-func drainedCategories(symbol *Symbol) []Category {
-	rows := make([]Category, 0)
+func drainedLatest[T any](
+	mapReduce *transport.MapReduce[T], consumer *transport.Consumer[T],
+) []T {
+	var latest T
+	found := false
 
-	for batch := range symbol.Categories.Drain("audit", func(_ []Category) bool {
-		return true
-	}) {
-		rows = append(rows, batch...)
+	for item := range mapReduce.Drain(consumer, nil) {
+		latest = item
+		found = true
 	}
 
-	return rows
+	if !found {
+		return nil
+	}
+
+	return []T{latest}
+}
+
+func drainedLatestCategories(symbol *Symbol) []Category {
+	var latest []Category
+
+	for batch := range symbol.Categories.Drain(
+		symbol.CategoryConsumers[CategoryConsumerAudit], nil,
+	) {
+		latest = batch
+	}
+
+	return latest
 }
 
 /*
@@ -470,10 +487,12 @@ when the drain starts. Ingress can outpace the reader, so a drain that chased
 queue emptiness would never end under sustained load; rows stamped after the
 cut are processed one last time and then left for the next pass.
 */
-func (symbol *Symbol) MarketTickers(source SourceType) iter.Seq[kraken.TickerData] {
+func (symbol *Symbol) MarketTickers(
+	consumer *transport.Consumer[kraken.TickerData],
+) iter.Seq[kraken.TickerData] {
 	cut := time.Now().UTC()
 
-	return symbol.tickers.Drain(string(source), func(ticker kraken.TickerData) bool {
+	return symbol.tickers.Drain(consumer, func(ticker kraken.TickerData) bool {
 		if ticker.Timestamp.After(cut) {
 			return false
 		}
@@ -486,10 +505,12 @@ func (symbol *Symbol) MarketTickers(source SourceType) iter.Seq[kraken.TickerDat
 MarketTrades drains this source's trade queue up to an event-time cut taken
 when the drain starts, on the same terms as MarketTickers.
 */
-func (symbol *Symbol) MarketTrades(source SourceType) iter.Seq[kraken.TradeData] {
+func (symbol *Symbol) MarketTrades(
+	consumer *transport.Consumer[kraken.TradeData],
+) iter.Seq[kraken.TradeData] {
 	cut := time.Now().UTC()
 
-	return symbol.trades.Drain(string(source), func(trade kraken.TradeData) bool {
+	return symbol.trades.Drain(consumer, func(trade kraken.TradeData) bool {
 		if trade.Timestamp.After(cut) {
 			return false
 		}
@@ -503,10 +524,12 @@ MarketLevel3 drains this source's accepted order-identity frames in transport
 order, up to an event-time cut taken when the drain starts, on the same terms
 as MarketTickers.
 */
-func (symbol *Symbol) MarketLevel3(source SourceType) iter.Seq[kraken.Level3Data] {
+func (symbol *Symbol) MarketLevel3(
+	consumer *transport.Consumer[kraken.Level3Data],
+) iter.Seq[kraken.Level3Data] {
 	cut := time.Now().UTC()
 
-	return symbol.level3.Drain(string(source), func(level3 kraken.Level3Data) bool {
+	return symbol.level3.Drain(consumer, func(level3 kraken.Level3Data) bool {
 		if level3.Timestamp.After(cut) {
 			return false
 		}
@@ -515,10 +538,12 @@ func (symbol *Symbol) MarketLevel3(source SourceType) iter.Seq[kraken.Level3Data
 	})
 }
 
-func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*types.Measurement] {
+func (symbol *Symbol) MarketMeasurements(
+	consumer *transport.Consumer[*types.Measurement],
+) iter.Seq[*types.Measurement] {
 	cut := time.Now().UTC()
 
-	return symbol.Measurements.Drain(solver, func(measurement *types.Measurement) bool {
+	return symbol.Measurements.Drain(consumer, func(measurement *types.Measurement) bool {
 		if measurement == nil {
 			return true
 		}
@@ -530,8 +555,10 @@ func (symbol *Symbol) MarketMeasurements(solver string) iter.Seq[*types.Measurem
 /*
 MarketPhase drains this symbol's universe phase sweep to the consuming stage.
 */
-func (symbol *Symbol) MarketPhase(stage SourceType) iter.Seq[PhaseReading] {
-	return symbol.Phase.Drain(string(stage), func(_ PhaseReading) bool {
+func (symbol *Symbol) MarketPhase(
+	consumer *transport.Consumer[PhaseReading],
+) iter.Seq[PhaseReading] {
+	return symbol.Phase.Drain(consumer, func(_ PhaseReading) bool {
 		return true
 	})
 }
@@ -539,8 +566,10 @@ func (symbol *Symbol) MarketPhase(stage SourceType) iter.Seq[PhaseReading] {
 /*
 MarketCognition drains this symbol's cognition readings to the consuming stage.
 */
-func (symbol *Symbol) MarketCognition(stage SourceType) iter.Seq[Cognition] {
-	return symbol.Cognition.Drain(string(stage), func(_ Cognition) bool {
+func (symbol *Symbol) MarketCognition(
+	consumer *transport.Consumer[Cognition],
+) iter.Seq[Cognition] {
+	return symbol.Cognition.Drain(consumer, func(_ Cognition) bool {
 		return true
 	})
 }
@@ -548,8 +577,10 @@ func (symbol *Symbol) MarketCognition(stage SourceType) iter.Seq[Cognition] {
 /*
 MarketCategories drains this symbol's category batches to the consuming stage.
 */
-func (symbol *Symbol) MarketCategories(stage SourceType) iter.Seq[[]Category] {
-	return symbol.Categories.Drain(string(stage), func(_ []Category) bool {
+func (symbol *Symbol) MarketCategories(
+	consumer *transport.Consumer[[]Category],
+) iter.Seq[[]Category] {
+	return symbol.Categories.Drain(consumer, func(_ []Category) bool {
 		return true
 	})
 }
@@ -557,8 +588,10 @@ func (symbol *Symbol) MarketCategories(stage SourceType) iter.Seq[[]Category] {
 /*
 MarketResonance drains this symbol's resonance artifacts to the consuming stage.
 */
-func (symbol *Symbol) MarketResonance(stage SourceType) iter.Seq[any] {
-	return symbol.Resonance.Drain(string(stage), func(_ any) bool {
+func (symbol *Symbol) MarketResonance(
+	consumer *transport.Consumer[any],
+) iter.Seq[any] {
+	return symbol.Resonance.Drain(consumer, func(_ any) bool {
 		return true
 	})
 }
@@ -566,8 +599,10 @@ func (symbol *Symbol) MarketResonance(stage SourceType) iter.Seq[any] {
 /*
 MarketCausal drains this symbol's causal artifacts to the consuming stage.
 */
-func (symbol *Symbol) MarketCausal(stage SourceType) iter.Seq[map[string]any] {
-	return symbol.Causal.Drain(string(stage), func(_ map[string]any) bool {
+func (symbol *Symbol) MarketCausal(
+	consumer *transport.Consumer[map[string]any],
+) iter.Seq[map[string]any] {
+	return symbol.Causal.Drain(consumer, func(_ map[string]any) bool {
 		return true
 	})
 }
@@ -575,8 +610,10 @@ func (symbol *Symbol) MarketCausal(stage SourceType) iter.Seq[map[string]any] {
 /*
 MarketGraphs drains this symbol's lifecycle graphs to the consuming stage.
 */
-func (symbol *Symbol) MarketGraphs(stage SourceType) iter.Seq[*Graph] {
-	return symbol.Graphs.Drain(string(stage), func(_ *Graph) bool {
+func (symbol *Symbol) MarketGraphs(
+	consumer *transport.Consumer[*Graph],
+) iter.Seq[*Graph] {
+	return symbol.Graphs.Drain(consumer, func(_ *Graph) bool {
 		return true
 	})
 }

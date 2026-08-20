@@ -16,9 +16,7 @@ describe("KernelList", () => {
 		expect(traceBindings).toHaveLength(DEFAULT_KERNELS.length * 2);
 		expect(new Set(traceBindings)).toEqual(
 			new Set(
-				DEFAULT_KERNELS.map(
-					(source) => `${sourceHeadlineMetric(source)}.normalized`,
-				),
+				DEFAULT_KERNELS.map((source) => `${sourceHeadlineMetric(source)}.raw`),
 			),
 		);
 

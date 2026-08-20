@@ -92,30 +92,6 @@ type BookUnsubscription struct {
 	Pairs []string
 }
 
-/*
-Level3Unsubscription requests a fresh authenticated Level 3 snapshot for the
-specified pairs when the resident checksum diverges from the venue.
-*/
-type Level3Unsubscription struct {
-	Pairs []string
-	Token string
-}
-
-func NewLevel3Unsubscription(pairs []string, token string) Level3Unsubscription {
-	return Level3Unsubscription{Pairs: pairs, Token: token}
-}
-
-func (unsubscription Level3Unsubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "unsubscribe",
-		"params": map[string]any{
-			"channel": "level3",
-			"symbol":  unsubscription.Pairs,
-			"token":   unsubscription.Token,
-		},
-	})
-}
-
 func NewBookUnsubscription(pairs []string) BookUnsubscription {
 	return BookUnsubscription{Pairs: pairs}
 }

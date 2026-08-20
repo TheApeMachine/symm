@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -50,6 +52,10 @@ type System struct {
 	Thesis    *types.Thesis
 	Systems   []Runnable
 	closers   []func() error
+	resources []func() error
+	runDone   chan struct{}
+	runMu     sync.Mutex
+	running   bool
 }
 
 func (stack *System) Name() string { return "system" }
@@ -79,10 +85,36 @@ func (stack *System) Close() error {
 		}
 	}
 
+	stack.runMu.Lock()
+	running := stack.running
+	runDone := stack.runDone
+	stack.runMu.Unlock()
+
+	if running && runDone != nil {
+		<-runDone
+	}
+
+	for _, closeResource := range slices.Backward(stack.resources) {
+		if err := closeResource(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 func (stack *System) Run() error {
+	stack.runMu.Lock()
+
+	if stack.runDone == nil {
+		stack.runDone = make(chan struct{})
+	}
+
+	stack.running = true
+	runDone := stack.runDone
+	stack.runMu.Unlock()
+	defer close(runDone)
+
 	group, _ := errgroup.WithContext(stack.ctx)
 
 	for _, system := range stack.Systems {
@@ -191,6 +223,16 @@ func BootWithHub(
 	price := broker.NewPrice(api)
 	instrument := broker.NewInstrument(api, price, uiChannel)
 	balance := broker.NewBalance(api, uiChannel)
+	positionStore, err := broker.NewPositionStore(
+		filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
+	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Internal, "boot: open position store", err))
+		cancel()
+		return nil
+	}
+
 	desk := broker.NewDesk(
 		systemCtx,
 		api,
@@ -200,7 +242,7 @@ func BootWithHub(
 		thesis,
 		regulatorSolver,
 		nil,
-		nil,
+		positionStore,
 		uiChannel,
 	)
 	analyzer := logic.NewAnalyzer(systemCtx, price, api, tree, uiChannel, manifoldChannel, nil, thesis)
@@ -236,6 +278,7 @@ func BootWithHub(
 
 	systems = append(
 		systems,
+		api,
 		desk,
 		analyzer,
 		resonanceSolver,
@@ -247,7 +290,13 @@ func BootWithHub(
 		systems = append(systems, hub)
 	}
 
-	closers := []func() error{regulatorSolver.Close}
+	closers := []func() error{
+		regulatorSolver.Close,
+		func() error {
+			api.Close()
+			return nil
+		},
+	}
 
 	for _, signal := range signals {
 		closers = append(closers, signal.Close)
@@ -276,6 +325,8 @@ func BootWithHub(
 		Thesis:    thesis,
 		Systems:   systems,
 		closers:   closers,
+		resources: []func() error{positionStore.Close},
+		runDone:   make(chan struct{}),
 	}
 }
 

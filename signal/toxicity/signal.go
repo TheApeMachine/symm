@@ -15,33 +15,34 @@ import (
 )
 
 /*
-toxicityPipeline is a pure composition: net pulled liquidity is the difference
-of the retreated and filled channels, conditioned through the adaptive
-baseline, then scored both as dispersion and as a squashed non-negative
-toxicity intensity.
-*/
-func toxicityPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		calculus.Difference,
-		nomagique.Relay(calculus.SymbolResult, nomagique.SampleValue),
-		nomagique.Configure(
-			statistic.Baseline,
-			nmtypes.Span,
-			temporal.Window,
-		),
-		nomagique.Fork(
-			statistic.ZScore,
-			nomagique.Fork(
-				statistic.Deviation,
-				nomagique.Pipe(
-					calculus.Positive,
-					calculus.Squash,
-				),
-			),
-		),
-	)
-}
+Signal: Toxicity (BookFlow) - The Quality Perspective
 
+**What it measures exactly (in isolation)**
+
+The **Toxicity signal** analyzes the "honesty" of the book by tracking how makers behave when a trade approaches.
+
+  - **Cancel-to-Fill Asymmetry:** Measures the ratio of liquidity being "pulled" (cancelled) versus
+    liquidity being "hit" (filled).
+  - **Toxic Level Detection:** Flags large, young, near-touch blocks that disappear rather than
+    fill—this is the signature of a bluff.
+  - **Directional BookFlow:** Emits a directional read based on which side of the book is
+    "retreating" (vacuum effect).
+
+**Semantically, what story does it tell?**
+
+  - **The "Bluffing" Story:** It exposes makers who are "fake-bidding" to create an illusion of support,
+    warning the engine that a wall is not "real" and will crumble upon contact.
+  - **The "Vacuum" Story:** It identifies a "liquidity vacuum" where one side pulls away so aggressively
+    that the resulting void "sucks" the price in that direction.
+
+**Probability Categories**
+
+| Category             | Cancel/Fill Ratio | Side Retracting | Market "Feel"          |
+|:---------------------|:------------------|:----------------|:-----------------------|
+| **Liquidity Vacuum** | High Asymmetry    | One Side        | **Vacuum Surcharge**   |
+| **Toxic Bluff**      | High              | Near-Touch      | **Manipulated / Fake** |
+| **Hard Support**     | Low (High Fill)   | None            | **Robust / Sincere**   |
+*/
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -50,6 +51,9 @@ type Signal struct {
 	number nomagique.Number[string]
 }
 
+/*
+NewSignal creates a new Signal instance for the Toxicity (BookFlow) analysis.
+*/
 func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -57,7 +61,28 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		ctx:    ctx,
 		cancel: cancel,
 		thesis: thesis,
-		number: nomagique.NewNumber[string](toxicityPipeline()),
+		number: nomagique.NewNumber[string](nomagique.Pipe(
+			calculus.Difference,
+			nomagique.Relay(
+				calculus.SymbolResult,
+				nomagique.SampleValue,
+			),
+			nomagique.Configure(
+				statistic.Baseline,
+				nmtypes.Span,
+				temporal.Window,
+			),
+			nomagique.Fork(
+				statistic.ZScore,
+				nomagique.Fork(
+					statistic.Deviation,
+					nomagique.Pipe(
+						calculus.Positive,
+						calculus.Squash,
+					),
+				),
+			),
+		)),
 	}
 
 	return signal
@@ -83,7 +108,22 @@ func (signal *Signal) Run() error {
 		}
 
 		for frame := range symbol.MarketLevel3(types.SourceToxicity) {
-			filled, retreated := level3Flow(frame)
+			var filled, retreated float64
+
+			for _, orders := range [][]kraken.Level3Order{frame.Bids, frame.Asks} {
+				for _, order := range orders {
+					if order.OrderQty == nil {
+						continue
+					}
+
+					switch order.Event {
+					case "fill":
+						filled += order.OrderQty.Float64()
+					case "delete":
+						retreated += order.OrderQty.Float64()
+					}
+				}
+			}
 
 			input := nomagique.Frame{}
 			input.Put(nmtypes.AlphaQuantity, filled)
@@ -131,30 +171,6 @@ func (signal *Signal) Run() error {
 	}
 
 	return signal.err
-}
-
-/*
-level3Flow lifts one accepted order frame into the two generic quantity
-channels: filled quantity (Alpha) and retreated quantity (Beta). The
-iteration here is input conversion, not calculation.
-*/
-func level3Flow(frame kraken.Level3Data) (filled float64, retreated float64) {
-	for _, orders := range [][]kraken.Level3Order{frame.Bids, frame.Asks} {
-		for _, order := range orders {
-			if order.OrderQty == nil {
-				continue
-			}
-
-			switch order.Event {
-			case "fill":
-				filled += order.OrderQty.Float64()
-			case "delete":
-				retreated += order.OrderQty.Float64()
-			}
-		}
-	}
-
-	return filled, retreated
 }
 
 func (signal *Signal) Close() error {

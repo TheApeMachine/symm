@@ -46,10 +46,8 @@ const kernelOrderIndex = (source: string): number => {
 
 /*
 Each kernel publishes its own vocabulary, so the headline is named per source
-rather than assumed. A generic "strength" was asked of every kernel, and the
-ones that do not publish one — hawkes reports a fitted intensity, liquidity
-scores scarcity, exhaustion and toxicity split their readings by side — showed
-nothing at all.
+rather than assumed. The binding must name a metric that the live producer
+actually emits; otherwise the row can be live while its trace remains empty.
 
 Hawkes leads with its fitted branching ratio. Conditional intensity is measured
 in events per second and has no intrinsic unit interval, while spectral radius
@@ -57,16 +55,16 @@ is the dimensionless cascade measure the row describes and already carries the
 model's normalized estimate.
 */
 const SOURCE_HEADLINE: Record<string, string> = {
-	correlation: "hypothesis_separation",
-	cvd: "strength",
-	depthflow: "hypothesis_separation",
-	exhaustion: "strength:buy",
+	correlation: "herd_score",
+	cvd: "absorption",
+	depthflow: "loaded_score",
+	exhaustion: "urgency",
 	hawkes: "spectral_radius",
-	leadlag: "strength",
-	liquidity: "scarcity_score",
-	pumpdump: "strength",
-	sentiment: "strength",
-	toxicity: "strength",
+	leadlag: "inefficient",
+	liquidity: "executable_touch_depth",
+	pumpdump: "rvol",
+	sentiment: "breadth",
+	toxicity: "toxicity_intensity",
 };
 
 /*
@@ -93,7 +91,6 @@ zero, so the panel understates rather than invents.
 */
 const SOURCE_METRICS: Record<string, string[]> = {
 	correlation: [
-		"hypothesis_separation",
 		"correlation",
 		"signed",
 		"relative_energy",
@@ -101,74 +98,52 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"alpha_score",
 		"noise_score",
 		"stress_score",
-	],
-	cvd: [
-		"strength",
-		"absorption",
-		"drive",
-		"balance",
-		"starvation",
-		"net_fraction",
-	],
-	depthflow: [
 		"hypothesis_separation",
+	],
+	cvd: ["net", "flow_baseline", "flow_zscore", "absorption"],
+	depthflow: [
+		"touch_imbalance",
+		"deep_imbalance",
 		"loaded_score",
 		"spoof_score",
 		"thin_score",
-		"neutral_score",
 	],
-	exhaustion: [
-		"strength:buy",
-		"strength:sell",
-		"urgency:buy",
-		"reversal:buy",
-		"mechanical:buy",
-		"fragile:buy",
-	],
+	exhaustion: ["mechanical", "fragile", "thermal", "reversal", "urgency"],
 	hawkes: [
 		"conditional_intensity:buy",
 		"conditional_intensity:sell",
 		"baseline_intensity:buy",
 		"excitation_amplitude:buy_to_buy",
+		"excitation_amplitude:sell_to_sell",
+		"decay_rate",
 		"spectral_radius",
 		"expected_total_descendants:buy",
 	],
 	leadlag: [
-		"strength",
 		"correlation",
 		"signed_correlation",
+		"signed_contemp_correlation",
+		"signed_lag_correlation",
 		"lag_fraction",
-		"sample_support",
+		"sample_count",
+		"inefficient",
+		"sync",
+		"decoupled",
+		"stall",
+		"strength",
+		"signed_lag_direction",
 	],
 	liquidity: [
-		"scarcity_score",
-		"relative_touch_depth",
 		"executable_touch_depth",
-		"reported_volume_notional",
+		"depth_baseline",
+		"depth_zscore",
+		"depth_deviation",
+		"depth_stability",
+		"effective_window",
 	],
-	pumpdump: [
-		"strength",
-		"ignition",
-		"compression",
-		"precursor",
-		"trend",
-		"exhaustion",
-	],
-	sentiment: [
-		"strength",
-		"breadth",
-		"change",
-		"divergent_score",
-		"leader_strength",
-	],
-	toxicity: [
-		"touch_quantity:buy",
-		"touch_quantity:sell",
-		"cancelled_quantity:buy",
-		"cancelled_quantity:sell",
-		"fill_volume:buy",
-		"fill_volume:sell",
-	],
+	pumpdump: ["rvol", "precursor", "exhaustion"],
+	sentiment: ["breadth"],
+	toxicity: ["honesty_zscore", "honesty_deviation", "toxicity_intensity"],
 };
 
 /*

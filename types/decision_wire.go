@@ -9,7 +9,11 @@ import (
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
-func DecisionWire(decision Decision) *wire.DecisionT {
+func DecisionWire(
+	decision Decision,
+	branchLimit int,
+	includeTree bool,
+) *wire.DecisionT {
 	alternatives := namedNumbers(decision.Alternatives)
 
 	return &wire.DecisionT{
@@ -86,7 +90,11 @@ func DecisionWire(decision Decision) *wire.DecisionT {
 		EntryCost:                 entryCostWire(decision.EntryCost),
 		Stoploss:                  StoplossWire(decision.Stoploss),
 		Risk:                      riskWire(&decision.Risk),
-		Trace:                     decisionTraceWire(decision.Trace),
+		Trace: decisionTraceWire(
+			decision.Trace,
+			branchLimit,
+			includeTree,
+		),
 	}
 }
 
@@ -107,20 +115,25 @@ func namedNumbers(values map[string]float64) []*wire.NamedNumberT {
 	return result
 }
 
-func decisionTraceWire(trace *DecisionTrace) *wire.DecisionTraceT {
+func decisionTraceWire(
+	trace *DecisionTrace,
+	branchLimit int,
+	includeTree bool,
+) *wire.DecisionTraceT {
 	if trace == nil {
 		return nil
 	}
 
-	branches := make([]*wire.MCTSBranchT, 0, len(trace.MCTS.Branches))
+	branchCount := min(len(trace.MCTS.Branches), max(branchLimit, 0))
+	branches := make([]*wire.MCTSBranchT, 0, branchCount)
 
-	for _, branch := range trace.MCTS.Branches {
+	for _, branch := range trace.MCTS.Branches[:branchCount] {
 		branches = append(branches, &wire.MCTSBranchT{
 			Action: branch.Action, Visits: int64(branch.Visits), MeanReward: branch.MeanReward,
 		})
 	}
 
-	return &wire.DecisionTraceT{
+	encoded := &wire.DecisionTraceT{
 		Hypothesis:        trace.Hypothesis,
 		GraphSupports:     trace.GraphSupports,
 		GraphContradicts:  trace.GraphContradicts,
@@ -130,8 +143,13 @@ func decisionTraceWire(trace *DecisionTrace) *wire.DecisionTraceT {
 		Iterations:        int64(trace.MCTS.Iterations),
 		Branches:          branches,
 		RecommendedAction: trace.MCTS.RecommendedAction,
-		Tree:              mctsNodeWire(trace.MCTS.Tree),
 	}
+
+	if includeTree {
+		encoded.Tree = mctsNodeWire(trace.MCTS.Tree)
+	}
+
+	return encoded
 }
 
 func mctsNodeWire(node *nomcts.Node) *wire.MCTSNodeT {

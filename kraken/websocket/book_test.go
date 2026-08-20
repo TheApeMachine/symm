@@ -92,6 +92,23 @@ func TestBookAll(t *testing.T) {
 }
 
 func TestBookUpdate(t *testing.T) {
+	Convey("Given a captured REQ/USD snapshot whose venue prices are finer than tick_size", t, func() {
+		managed := newBookFixture(t, "REQ/USD", 5, 8)
+		managed.Create("REQ/USD", 10)
+		event := &callback.Event[*sdk.WebSocketMessage]{
+			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+		}
+		rawSnapshot := []byte(`{"channel":"level3","type":"snapshot","data":[{"symbol":"REQ/USD","checksum":1486857161,"timestamp":"2026-08-20T19:57:57.591480850Z","bids":[{"order_id":"OA3AFC-2D3KM-5MFCCU","limit_price":0.05360,"order_qty":2798.32724800,"timestamp":"2026-08-20T19:55:05.454511612Z"},{"order_id":"OI2DPS-HSXFX-CO5HH6","limit_price":0.05351,"order_qty":1242.76277667,"timestamp":"2026-08-20T19:55:38.985339680Z"},{"order_id":"OUF6WS-NPREG-DZQGQ5","limit_price":0.05350,"order_qty":4670.90027169,"timestamp":"2026-08-20T19:55:38.982564626Z"},{"order_id":"OUN627-W4T2U-ZM4IR6","limit_price":0.05340,"order_qty":6554.29458387,"timestamp":"2026-08-20T19:55:16.136103282Z"},{"order_id":"OAN6Z4-YO6DX-OLWC5G","limit_price":0.05155,"order_qty":102.71455223,"timestamp":"2026-08-20T19:55:34.404510296Z"},{"order_id":"OPBS2I-WS6A6-TJM3HO","limit_price":0.05140,"order_qty":194.50778210,"timestamp":"2026-08-20T19:57:57.591480850Z"},{"order_id":"O445JS-3OOON-FZKUHM","limit_price":0.05139,"order_qty":30737.99886492,"timestamp":"2026-08-20T19:56:25.242939832Z"},{"order_id":"OOZVRU-6ZUEC-GBVTPX","limit_price":0.05138,"order_qty":14983.31936000,"timestamp":"2026-08-20T19:56:25.241898454Z"},{"order_id":"OY6EMJ-FKIA3-A3E3T6","limit_price":0.05082,"order_qty":327.29354428,"timestamp":"2026-08-20T19:57:07.950480680Z"},{"order_id":"O2HRLW-SZ24N-UZ6YPI","limit_price":0.05081,"order_qty":9141.39848000,"timestamp":"2026-08-20T19:39:48.020300208Z"}],"asks":[{"order_id":"OGOFHM-5RDC2-XU44TY","limit_price":0.05378,"order_qty":471.79608648,"timestamp":"2026-08-20T19:55:42.072660612Z"},{"order_id":"OIEZYA-X4J6S-ZPGDJC","limit_price":0.05378,"order_qty":5482.13376683,"timestamp":"2026-08-20T19:55:42.076256976Z"},{"order_id":"OHYBE3-MRHFZ-GGVRU2","limit_price":0.05380,"order_qty":2791.10381840,"timestamp":"2026-08-20T19:55:04.837186124Z"},{"order_id":"OE4RYR-ACEWG-6RI5MH","limit_price":0.05390,"order_qty":4642.93603745,"timestamp":"2026-08-20T19:42:30.570285800Z"},{"order_id":"O2BYR6-JS7Q7-DLAXYX","limit_price":0.05409,"order_qty":367.92704526,"timestamp":"2026-08-20T19:55:39.548807274Z"},{"order_id":"OJ4COX-MLDR2-TIG2Y7","limit_price":0.05410,"order_qty":6472.04946053,"timestamp":"2026-08-20T19:55:06.086471678Z"},{"order_id":"OEMSCX-PDNUY-VBM3TQ","limit_price":0.05585,"order_qty":633.54402596,"timestamp":"2026-08-20T19:49:03.084839126Z"},{"order_id":"OZC2VW-VPNBP-33XEH7","limit_price":0.05665,"order_qty":633.68181283,"timestamp":"2026-08-20T19:51:47.839102736Z"},{"order_id":"OULCXC-5X35B-GUCDMY","limit_price":0.05748,"order_qty":633.41883119,"timestamp":"2026-08-20T19:52:21.030817952Z"},{"order_id":"ONJ634-5UMD4-3VCPTV","limit_price":0.05790,"order_qty":1577.90927021,"timestamp":"2026-08-19T11:54:51.953783466Z"},{"order_id":"OAU3JD-JICNM-EOO4PR","limit_price":0.05861,"order_qty":313.43011870,"timestamp":"2026-08-18T16:04:01.379790100Z"}]}]}`)
+
+		Convey("It should checksum the authoritative fixed-point values without rounding", func() {
+			So(managed.Update(event, kraken.NewLevel3(rawSnapshot)), ShouldBeNil)
+			managed.Get("REQ/USD", func(book *spotbook.Book) {
+				So(book.BestAsk().Price.String(), ShouldEqual, "0.05378")
+				So(book.BestBid().Price.String(), ShouldEqual, "0.05360")
+			})
+		})
+	})
+
 	Convey("Given authoritative fixed-point Level 3 decimals", t, func() {
 		managed := newBookFixture(t, "BTC/USD", 1, 8)
 		managed.Create("BTC/USD", 10)
@@ -240,11 +257,9 @@ func TestBookUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given a snapshot and updates whose checksums disagree with local state", t, func() {
+	Convey("Given a frame whose checksum disagrees with local state", t, func() {
 		managed := newBookFixture(t, "CELR/USD", 7, 5)
 		managed.Create("CELR/USD", 10)
-		resynced := make(chan string, 4)
-		managed.SetResync(func(symbol string) { resynced <- symbol })
 		event := &callback.Event[*sdk.WebSocketMessage]{
 			Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
 		}
@@ -265,7 +280,7 @@ func TestBookUpdate(t *testing.T) {
 			Type: "snapshot",
 			Data: []kraken.Level3Data{{
 				Symbol:   "CELR/USD",
-				Checksum: 3152022922,
+				Checksum: 22467435,
 				Bids: []kraken.Level3Order{{
 					OrderID: "bid", LimitPrice: bidPrice,
 					OrderQty: bidQuantity, Timestamp: time.Unix(1, 0).UTC(),
@@ -277,11 +292,9 @@ func TestBookUpdate(t *testing.T) {
 			}},
 		}
 
-		Convey("It should diverge once, drop further deltas, and recover on the resubscription snapshot", func() {
+		Convey("It should return the fatal mismatch", func() {
 			So(managed.Update(event, knownGood), ShouldBeNil)
 
-			// A wrong server checksum for state that is known good: local
-			// state is untrustworthy from here on.
 			diverged := &kraken.Level3{Data: []kraken.Level3Data{{
 				Symbol:   "CELR/USD",
 				Checksum: 1,
@@ -293,45 +306,6 @@ func TestBookUpdate(t *testing.T) {
 			}}}
 
 			So(managed.Update(event, diverged), ShouldNotBeNil)
-			So(<-resynced, ShouldEqual, "CELR/USD")
-			managed.Get("CELR/USD", func(book *spotbook.Book) {
-				So(book.Bids.Levels, ShouldBeEmpty)
-			})
-
-			// Deltas for a diverged symbol are dropped without touching the
-			// empty book and without asking for a second resubscription.
-			So(managed.Update(event, diverged), ShouldBeNil)
-
-			select {
-			case symbol := <-resynced:
-				So(symbol, ShouldBeNil)
-			default:
-			}
-
-			managed.Get("CELR/USD", func(book *spotbook.Book) {
-				So(book.Bids.Levels, ShouldBeEmpty)
-			})
-
-			// The resubscription snapshot is authoritative again.
-			So(managed.Update(event, knownGood), ShouldBeNil)
-			managed.Get("CELR/USD", func(book *spotbook.Book) {
-				So(book.BestBid(), ShouldNotBeNil)
-				So(book.BestAsk(), ShouldNotBeNil)
-			})
-
-			accepted := &kraken.Level3{Data: []kraken.Level3Data{{
-				Symbol: "CELR/USD",
-				Bids: []kraken.Level3Order{{
-					Event: "add", OrderID: "fresh-bid",
-					LimitPrice: lateBidPrice,
-					OrderQty:   lateBidQuantity, Timestamp: time.Unix(3, 0).UTC(),
-				}},
-			}}}
-
-			So(managed.Update(event, accepted), ShouldBeNil)
-			managed.Get("CELR/USD", func(book *spotbook.Book) {
-				So(book.BestBid(), ShouldNotBeNil)
-			})
 		})
 	})
 

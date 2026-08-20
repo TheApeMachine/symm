@@ -27,6 +27,65 @@ const (
 	SourceEquity      SourceType = "equity"
 	SourceRegulator   SourceType = "regulator"
 	SourceDesk        SourceType = "desk"
+	SourceAudit       SourceType = "audit"
+)
+
+const (
+	TickerConsumerCorrelation = iota
+	TickerConsumerLeadLag
+	TickerConsumerLiquidity
+	TickerConsumerPumpDump
+	TickerConsumerSentiment
+	TickerConsumerResonance
+	TickerConsumerDesk
+)
+
+const (
+	TradeConsumerCVD = iota
+	TradeConsumerExhaustion
+	TradeConsumerHawkes
+	TradeConsumerPumpDump
+)
+
+const (
+	Level3ConsumerDepthFlow = iota
+	Level3ConsumerToxicity
+)
+
+const (
+	MeasurementConsumerCategory = iota
+	MeasurementConsumerManifold
+	MeasurementConsumerResonance
+	MeasurementConsumerGraph
+	MeasurementConsumerAudit
+)
+
+const (
+	CategoryConsumerGraph = iota
+	CategoryConsumerCognition
+	CategoryConsumerAudit
+)
+
+const (
+	ResonanceConsumerCausal = iota
+	ResonanceConsumerGraph
+	ResonanceConsumerAudit
+)
+
+const (
+	CausalConsumerGraph = iota
+	CausalConsumerCausal
+	CausalConsumerAudit
+)
+
+const (
+	GraphConsumerPlanner = iota
+	GraphConsumerAudit
+)
+
+const (
+	StateConsumerStage = iota
+	StateConsumerAudit
 )
 
 /*
@@ -52,6 +111,7 @@ Their ready queues carry symbols whose MapReduce input changed.
 */
 var WorkerSources = append(append([]SourceType(nil), SignalSources...),
 	SourceCategory,
+	SourceManifold,
 	SourceCausal,
 	SourceCognition,
 	SourceGraph,

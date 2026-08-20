@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/theapemachine/errnie"
+	"golang.design/x/lockfree/lf"
 )
 
 /*
@@ -146,6 +149,7 @@ func (store *Store) OpenCapture() (*CaptureWriter, error) {
 		store:     store,
 		id:        id,
 		committed: make([]Frame, 0, captureBatchSize),
+		pending:   lf.NewQueue[Frame](),
 	}, nil
 }
 
@@ -159,25 +163,88 @@ type CaptureWriter struct {
 	id        int64
 	seq       int64
 	committed []Frame
+	pending   *lf.Queue[Frame]
+	queued    atomic.Uint64
+	draining  atomic.Bool
+	failure   atomic.Pointer[captureFailure]
+}
+
+type captureFailure struct {
+	err error
 }
 
 /*
 Write buffers one captured frame; the batch commits when full.
 */
 func (writer *CaptureWriter) Write(frame Frame) error {
+	if failure := writer.failure.Load(); failure != nil {
+		return failure.err
+	}
+
+	writer.queued.Add(1)
+	writer.pending.Enqueue(frame)
+	return writer.drain()
+}
+
+func (writer *CaptureWriter) write(frame Frame) error {
 	writer.committed = append(writer.committed, frame)
 
 	if len(writer.committed) < captureBatchSize {
 		return nil
 	}
 
-	return writer.Flush()
+	return writer.flush()
 }
 
 /*
 Flush commits the buffered batch in one transaction.
 */
 func (writer *CaptureWriter) Flush() error {
+	if err := writer.drain(); err != nil {
+		return err
+	}
+
+	return writer.flush()
+}
+
+func (writer *CaptureWriter) drain() error {
+	if !writer.draining.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	for {
+		for {
+			frame, found := writer.pending.Dequeue()
+
+			if !found {
+				break
+			}
+
+			writer.queued.Add(^uint64(0))
+
+			if err := writer.write(frame); err != nil {
+				writer.failure.Store(&captureFailure{err: err})
+				writer.draining.Store(false)
+				return err
+			}
+		}
+
+		writer.draining.Store(false)
+
+		if writer.queued.Load() == 0 ||
+			!writer.draining.CompareAndSwap(false, true) {
+			break
+		}
+	}
+
+	if failure := writer.failure.Load(); failure != nil {
+		return failure.err
+	}
+
+	return nil
+}
+
+func (writer *CaptureWriter) flush() error {
 	if len(writer.committed) == 0 {
 		return nil
 	}
@@ -265,6 +332,10 @@ func (writer *CaptureWriter) Capture(
 Close flushes the final batch and stamps the run's end time.
 */
 func (writer *CaptureWriter) Close() error {
+	for writer.draining.Load() {
+		runtime.Gosched()
+	}
+
 	if err := writer.Flush(); err != nil {
 		return err
 	}

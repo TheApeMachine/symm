@@ -63,6 +63,7 @@ func TestCVDNumber(t *testing.T) {
 			for _, measurement := range measurements {
 				_, hasNet := measurement.Metrics["net"]
 				So(hasNet, ShouldBeTrue)
+				So(measurement.Metrics["absorption"].Normalized, ShouldNotBeNil)
 			}
 		})
 	})

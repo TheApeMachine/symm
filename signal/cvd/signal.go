@@ -140,7 +140,7 @@ func (signal *Signal) Run() error {
 					Unit:      nmtypes.UnitDimensionless,
 					Timescale: nmtypes.TimescaleInstantaneous,
 				}),
-				nmtypes.NewMetric("absorption", output.MustGet(SymbolAbsorption), nmtypes.Descriptor{
+				nmtypes.NewNormalizedMetric("absorption", output.MustGet(SymbolAbsorption), output.MustGet(SymbolAbsorption), nmtypes.Descriptor{
 					Unit:      nmtypes.UnitDimensionless,
 					Timescale: nmtypes.TimescaleInstantaneous,
 				}),

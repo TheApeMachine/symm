@@ -462,41 +462,41 @@ func backpropagatePortfolio(leaf *mcts.Node, reward float64) {
 }
 
 func errStrategyMissingState() error {
-	return errnie.Error(errnie.Err(
+	return errnie.Err(
 		errnie.Validation,
 		"strategy: portfolio state required",
 		nil,
-	))
+	)
 }
 
 func errStrategyNoPaths() error {
-	return errnie.Error(errnie.Err(
+	return errnie.Err(
 		errnie.Validation,
 		"strategy: portfolio search explored no paths",
 		nil,
-	))
+	)
 }
 
 func errStrategyUnknownAction() error {
-	return errnie.Error(errnie.Err(
+	return errnie.Err(
 		errnie.Validation,
 		"strategy: portfolio action does not address a leg",
 		nil,
-	))
+	)
 }
 
 func errStrategyAlreadyHeld() error {
-	return errnie.Error(errnie.Err(
+	return errnie.Err(
 		errnie.Validation,
 		"strategy: cannot re-enter a held portfolio leg",
 		nil,
-	))
+	)
 }
 
 func errStrategyNotHeld() error {
-	return errnie.Error(errnie.Err(
+	return errnie.Err(
 		errnie.Validation,
 		"strategy: cannot exit a flat portfolio leg",
 		nil,
-	))
+	)
 }

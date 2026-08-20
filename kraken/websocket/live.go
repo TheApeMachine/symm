@@ -79,16 +79,58 @@ type Live struct {
 	subscribers *sync.Map
 	callbacks   *sync.Map
 	priceIncr   sync.Map
-	resyncing   sync.Map
 	paper       *Paper
 	model       string
 	capture     CaptureSink
 	captureName string
+	failureMu   sync.RWMutex
+	failure     func(error)
 
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
 	// feed the session's book manager instead of dialing the real venue.
 	level3Client func() *spot.WebSocket
+}
+
+/*
+SetFailureHandler connects fatal ingestion failures to the transport owner.
+Level 3 child sessions inherit the same handler when they are attached.
+*/
+func (live *Live) SetFailureHandler(handler func(error)) {
+	if live == nil {
+		return
+	}
+
+	live.failureMu.Lock()
+	live.failure = handler
+	live.failureMu.Unlock()
+
+	if live.level3 == nil {
+		return
+	}
+
+	live.level3.Range(func(_, value any) bool {
+		if child, valid := value.(*Live); valid && child != nil {
+			child.SetFailureHandler(handler)
+		}
+
+		return true
+	})
+}
+
+func (live *Live) reportFailure(err error) {
+	if live == nil || err == nil {
+		return
+	}
+
+	live.setStatus(types.ERROR)
+	live.failureMu.RLock()
+	handler := live.failure
+	live.failureMu.RUnlock()
+
+	if handler != nil {
+		handler(err)
+	}
 }
 
 /*
@@ -259,6 +301,34 @@ func NewWithClient(
 
 		out := handler(raw)
 
+		if channel == "level3" && live.book != nil {
+			level3, ok := out.(*kraken.Level3)
+
+			if !ok {
+				live.reportFailure(errnie.Err(
+					errnie.Validation,
+					"websocket: unexpected level3 payload type",
+					nil,
+				))
+				return
+			}
+
+			if err := live.book.Update(event, level3); err != nil {
+				live.reportFailure(err)
+				return
+			}
+
+			thesis := live.thesis.Load()
+
+			if thesis != nil {
+				for index := range level3.Data {
+					thesis.Symbol(level3.Data[index].Symbol).AppendLevel3(level3.Data[index])
+				}
+			}
+
+			return
+		}
+
 		if channel == "subscribe" {
 			errMessage := utils.GetString(raw, "error")
 
@@ -294,14 +364,6 @@ func NewWithClient(
 					thesis.Symbol(entity.Data[index].Symbol).AppendTrade(entity.Data[index])
 				}
 			}
-		case *kraken.Level3:
-			thesis := live.thesis.Load()
-
-			if thesis != nil {
-				for index := range entity.Data {
-					thesis.Symbol(entity.Data[index].Symbol).AppendLevel3(entity.Data[index])
-				}
-			}
 		case *kraken.Execution:
 			thesis := live.thesis.Load()
 
@@ -310,23 +372,6 @@ func NewWithClient(
 					thesis.Symbol(entity.Data[index].Symbol).AppendExecution(entity.Data[index])
 				}
 			}
-		}
-
-		if channel == "level3" && live.book != nil {
-			level3, ok := out.(*kraken.Level3)
-
-			if !ok {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"websocket: unexpected level3 payload type",
-					nil,
-				))
-
-				return
-			}
-
-			errnie.Error(live.book.Update(event, level3))
-			return
 		}
 
 		if channel == "pong" {
@@ -629,13 +674,8 @@ func (live *Live) SubL3(symbols []string) {
 
 		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
+		conn.SetFailureHandler(live.reportFailure)
 		conn.symbols = append([]string{}, groups...)
-		conn.book.SetResync(func(symbol string) {
-			if err := conn.resubscribeL3(symbol); err != nil {
-				errnie.Error(err)
-				conn.setStatus(types.ERROR)
-			}
-		})
 
 		for group := range slices.Chunk(groups, 40) {
 			if conn.book != nil {
@@ -648,36 +688,6 @@ func (live *Live) SubL3(symbols []string) {
 			time.Sleep(viper.GetDuration("market.subscribe.pace"))
 		}
 	}
-}
-
-func (live *Live) resubscribeL3(symbol string) error {
-	if !slices.Contains(live.symbols, symbol) {
-		return fmt.Errorf("websocket: level3 symbol is not owned by this connection: %s", symbol)
-	}
-
-	if _, loaded := live.resyncing.LoadOrStore(symbol, struct{}{}); loaded {
-		return nil
-	}
-
-	defer live.resyncing.Delete(symbol)
-
-	if err := live.Write(kraken.NewLevel3Unsubscription(
-		[]string{symbol},
-		live.client.Token,
-	)); err != nil {
-		return err
-	}
-
-	timer := time.NewTimer(viper.GetDuration("market.subscribe.pace"))
-	defer timer.Stop()
-
-	select {
-	case <-live.ctx.Done():
-		return live.ctx.Err()
-	case <-timer.C:
-	}
-
-	return live.client.SubL3([]string{symbol}, viper.GetInt("market.l3_depth"))
 }
 
 /*
@@ -696,6 +706,7 @@ func (live *Live) AttachLevel3(groupKey string, conn *Live) {
 	}
 
 	live.level3.Store(groupKey, conn)
+	conn.SetFailureHandler(live.reportFailure)
 }
 
 /*

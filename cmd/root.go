@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
@@ -13,9 +14,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -54,6 +57,28 @@ var (
 			uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
 
 			thesis := types.NewThesis(cmd.Context(), uiChannel)
+			captureStore, err := backtest.NewStore(
+				filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: open capture store",
+					err,
+				))
+			}
+
+			capture, err := captureStore.OpenCapture()
+
+			if err != nil {
+				_ = captureStore.Close()
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: open live capture",
+					err,
+				))
+			}
 
 			system := Boot(
 				cmd.Context(),
@@ -64,6 +89,7 @@ var (
 					websocket.NewSimulator(),
 					false,
 					websocket.PublicWebSocketURL,
+					capture,
 				),
 				websocket.New(
 					cmd.Context(),
@@ -71,15 +97,41 @@ var (
 					websocket.NewSimulator(),
 					true,
 					websocket.PrivateWebSocketURL,
+					capture,
 				),
 				uiChannel,
 			)
 
 			if system == nil {
-				return fmt.Errorf("symm: boot failed")
+				return errors.Join(
+					fmt.Errorf("symm: boot failed"),
+					capture.Close(),
+					captureStore.Close(),
+				)
 			}
 
-			return system.Run()
+			system.Hub.SetPlayback(nil, func() []backtest.CaptureInfo {
+				captures, err := captureStore.ListCaptures()
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.Internal,
+						"symm: list captures",
+						err,
+					))
+					return nil
+				}
+
+				return captures
+			})
+
+			err = system.Run()
+			return errors.Join(
+				err,
+				system.Close(),
+				capture.Close(),
+				captureStore.Close(),
+			)
 		},
 	}
 )

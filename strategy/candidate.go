@@ -79,29 +79,3 @@ func (planner *Planner) candidateCopies() []*types.Decision {
 
 	return decisions
 }
-
-func retireDecisionGraphs(
-	thesis *types.Thesis,
-	decisions []*types.Decision,
-) {
-	if thesis == nil {
-		return
-	}
-
-	for _, decision := range decisions {
-		if decision == nil || decision.Symbol == "" {
-			continue
-		}
-
-		symbol := thesis.Symbol(decision.Symbol)
-		found := false
-
-		for range symbol.MarketGraphs(types.SourcePlanner) {
-			found = true
-		}
-
-		if found {
-			symbol.Graphs.Push(types.NewGraph(thesis.At))
-		}
-	}
-}

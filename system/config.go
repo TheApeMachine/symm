@@ -69,6 +69,25 @@ func (config *Config) Snapshot() *Config {
 }
 
 /*
+PlannerMinimumConfidence reads the current graph admission boundary without
+allocating a configuration snapshot.
+*/
+func (config *Config) PlannerMinimumConfidence() (float64, error) {
+	if config == nil {
+		return 0, errors.New("system: configuration required")
+	}
+
+	config.mu.RLock()
+	defer config.mu.RUnlock()
+
+	if config.Planner == nil {
+		return 0, errors.New("system: planner configuration required")
+	}
+
+	return config.Planner.MinimumConfidence, nil
+}
+
+/*
 ApplyRegulation atomically publishes the regulator-owned dynamic settings.
 */
 func (config *Config) ApplyRegulation(planner PlannerConfig) error {

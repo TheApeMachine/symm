@@ -6,33 +6,31 @@ describe("sourceHeadlineMetric", () => {
 		expect(sourceHeadlineMetric("hawkes")).toBe("metrics.spectral_radius");
 	});
 
-	it("uses classifier hypothesis separation as depthflow's headline", () => {
-		expect(sourceHeadlineMetric("depthflow")).toBe(
-			"metrics.hypothesis_separation",
-		);
+	it("uses a metric the live depthflow measurement publishes", () => {
+		expect(sourceHeadlineMetric("depthflow")).toBe("metrics.loaded_score");
 		expect(sourceMetrics("depthflow")).toEqual([
-			"hypothesis_separation",
+			"touch_imbalance",
+			"deep_imbalance",
 			"loaded_score",
 			"spoof_score",
 			"thin_score",
-			"neutral_score",
 		]);
-		expect(sourceMetrics("depthflow")).not.toContain("strength");
-		expect(sourceMetrics("depthflow")).not.toContain("value");
 	});
 
-	it("uses classifier hypothesis separation as correlation's headline", () => {
-		expect(sourceHeadlineMetric("correlation")).toBe(
-			"metrics.hypothesis_separation",
+	it("uses the live correlation hypothesis as its headline", () => {
+		expect(sourceHeadlineMetric("correlation")).toBe("metrics.herd_score");
+		expect(sourceMetrics("correlation")).toContain("herd_score");
+	});
+
+	it("uses the anchor evidence names emitted by leadlag", () => {
+		expect(sourceHeadlineMetric("leadlag")).toBe("metrics.inefficient");
+		expect(sourceMetrics("leadlag")).toContain("sync");
+	});
+
+	it("uses toxicity's emitted intensity rather than an absent summary", () => {
+		expect(sourceHeadlineMetric("toxicity")).toBe(
+			"metrics.toxicity_intensity",
 		);
-		expect(sourceMetrics("correlation")).toContain("hypothesis_separation");
-		expect(sourceMetrics("correlation")).not.toContain("snr");
-		expect(sourceMetrics("correlation")).not.toContain("strength");
-		expect(sourceMetrics("correlation")).not.toContain("peak_score");
-	});
-
-	it("uses toxicity's normalized summary rather than raw touch size", () => {
-		expect(sourceHeadlineMetric("toxicity")).toBe("metrics.strength");
 	});
 
 	it("rejects unsupported sources instead of inventing a metric fallback", () => {

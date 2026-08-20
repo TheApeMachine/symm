@@ -10,6 +10,9 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/gofiber/fiber/v3"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/types"
 )
 
 const hubLifecycleTestTimeout = 5 * time.Second
@@ -63,4 +66,88 @@ func TestExpectedDashboardWriteClosure(t *testing.T) {
 			So(expectedDashboardWriteClosure(err), ShouldBeFalse)
 		})
 	})
+}
+
+func TestSplitDashboardFrame(t *testing.T) {
+	Convey("Given a strategy frame larger than one configured message", t, func() {
+		decisions := []*wire.DecisionT{
+			{Symbol: "BTC/USD"},
+			{Symbol: "ETH/USD"},
+			{Symbol: "SOL/USD"},
+			{Symbol: "XRP/USD"},
+		}
+		oneDecision := &wire.FrameT{
+			Type: wire.FrameStrategyFrame,
+			Value: &wire.StrategyFrameT{
+				Outcome:   "accumulating",
+				Decisions: decisions[:1],
+			},
+		}
+		encoded := telemetry.EncodeBatch([]*types.UIFrame{oneDecision})
+		maxMessageBytes := len(encoded.Bytes)
+		encoded.Release()
+		frame := &wire.FrameT{
+			Type: wire.FrameStrategyFrame,
+			Value: &wire.StrategyFrameT{
+				Outcome:   "accumulating",
+				Decisions: decisions,
+			},
+		}
+
+		frames, err := splitDashboardFrame(frame, maxMessageBytes)
+
+		Convey("It should preserve every decision in order without exceeding the limit", func() {
+			So(err, ShouldBeNil)
+			var symbols []string
+
+			for _, splitFrame := range frames {
+				batch := telemetry.EncodeBatch([]*types.UIFrame{splitFrame})
+				So(len(batch.Bytes), ShouldBeLessThanOrEqualTo, maxMessageBytes)
+				batch.Release()
+				strategy := splitFrame.Value.(*wire.StrategyFrameT)
+
+				for _, decision := range strategy.Decisions {
+					symbols = append(symbols, decision.Symbol)
+				}
+			}
+
+			So(symbols, ShouldResemble, []string{
+				"BTC/USD",
+				"ETH/USD",
+				"SOL/USD",
+				"XRP/USD",
+			})
+		})
+	})
+}
+
+func BenchmarkSplitDashboardFrame(b *testing.B) {
+	decisions := make([]*wire.DecisionT, 512)
+
+	for index := range decisions {
+		decisions[index] = &wire.DecisionT{Symbol: fmt.Sprintf("symbol-%d", index)}
+	}
+
+	frame := &wire.FrameT{
+		Type: wire.FrameStrategyFrame,
+		Value: &wire.StrategyFrameT{
+			Outcome:   "accumulating",
+			Decisions: decisions,
+		},
+	}
+	maxMessageBytes := len(telemetry.Encode(frame)) / 2
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for range b.N {
+		frames, err := splitDashboardFrame(frame, maxMessageBytes)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if len(frames) < 2 {
+			b.Fatal("strategy frame was not split")
+		}
+	}
 }

@@ -43,7 +43,6 @@ func TestUpdate(t *testing.T) {
 			Type:       types.CategoryAggressiveDrive,
 			Supporting: []string{"cvd:drive"},
 		}})
-		symbol.Graphs.Push(NewGraph(thesis.At))
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
 		go func() { _ = solver.Run() }()
@@ -51,13 +50,11 @@ func TestUpdate(t *testing.T) {
 		Convey("It should wait for the first measurement of the new lifecycle", func() {
 			var graph *Graph
 
-			for candidate := range symbol.MarketGraphs(types.SourceGraph) {
+			for candidate := range symbol.MarketGraphs(types.SourcePlanner) {
 				graph = candidate
 			}
 
-			So(graph, ShouldNotBeNil)
-			So(graph.Nodes, ShouldBeEmpty)
-			So(graph.Edges, ShouldBeEmpty)
+			So(graph, ShouldBeNil)
 		})
 	})
 
@@ -118,13 +115,10 @@ func TestUpdate(t *testing.T) {
 
 		graphSolver := NewSolver(thesis, nil, nil)
 		defer graphSolver.Close()
-		go func() { _ = graphSolver.Run() }()
-		symbol.Graphs.Push(NewGraph(thesis.At))
+		graphSolver.buildGraph("BTC/USD", symbol)
 
 		Convey("It should compile a connected evidence graph rather than one winning edge", func() {
-			graph := pollBuiltGraph(symbol, func(g *Graph) bool {
-				return len(g.Nodes) > 0
-			})
+			graph := graphSolver.building["BTC/USD"]
 
 			So(graph, ShouldNotBeNil)
 			incident := make(map[string]int, len(graph.Nodes))
@@ -201,7 +195,6 @@ func TestUpdate(t *testing.T) {
 		}})
 		thesis.Symbol("ETH/USD")
 
-		bitcoin.Graphs.Push(NewGraph(thesis.At))
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
 		go func() { _ = solver.Run() }()
@@ -221,7 +214,7 @@ func TestUpdate(t *testing.T) {
 		})
 	})
 
-	Convey("Given completed graphs for the focused and unfocused pairs", t, func() {
+	Convey("Given graph evidence for the focused and unfocused pairs", t, func() {
 		previousFocus := types.Focus()
 		types.SetFocus("BTC/USD")
 		Reset(func() { types.SetFocus(previousFocus) })
@@ -252,14 +245,13 @@ func TestUpdate(t *testing.T) {
 				Supporting: []string{"cvd:drive"},
 			}})
 
-			symbol.Graphs.Push(NewGraph(thesis.At))
 		}
 
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
 		go func() { _ = solver.Run() }()
 
-		Convey("It should publish only the graph selected by the UI focus", func() {
+		Convey("It should bootstrap and publish only the graph selected by the UI focus", func() {
 			var payload *types.UIFrame
 
 			deadline := time.Now().Add(3 * time.Second)
@@ -313,7 +305,7 @@ func pollBuiltGraph(symbol *types.Symbol, ready func(*Graph) bool) *Graph {
 	for time.Now().Before(deadline) {
 		graph = nil
 
-		for candidate := range symbol.MarketGraphs(types.SourceGraph) {
+		for candidate := range symbol.MarketGraphs(types.SourcePlanner) {
 			graph = candidate
 		}
 
@@ -930,10 +922,6 @@ func BenchmarkUpdate(b *testing.B) {
 	previousFocus := types.Focus()
 	types.SetFocus("SIM0/USD")
 	defer types.SetFocus(previousFocus)
-
-	for _, symbolState := range allSymbols(thesis) {
-		symbolState.Graphs.Push(NewGraph(at))
-	}
 
 	b.ReportAllocs()
 	b.ResetTimer()

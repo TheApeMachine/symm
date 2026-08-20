@@ -3,63 +3,25 @@ package leadlag
 import (
 	"context"
 
-	"github.com/google/uuid"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
-var (
-	SymbolLagRatio   = nomagique.MustIntern("leadlag/inefficiency")
-	SymbolLagMeaning = nomagique.MustIntern("leadlag/significance")
-)
-
-/*
-leadlagPairPipeline is slot-aligned: the follower's velocity and the
-anchor-follower displacement (a real Difference between the two prices) are
-forked together, then the displacement's ratio and standardized significance
-classify the lag without any dummy operands.
-*/
-func leadlagPairPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Fork(
-			statistic.Velocity,
-			calculus.Difference,
-		),
-		nomagique.Fork(
-			nomagique.Pipe(
-				nomagique.Relay(calculus.SymbolResult, calculus.SymbolLeft),
-				nomagique.Relay(calculus.SymbolResult, calculus.SymbolRight),
-				calculus.Product,
-				nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
-				nomagique.Relay(nomagique.SampleValue, calculus.SymbolScale),
-				calculus.Squash,
-				nomagique.Relay(calculus.SymbolResult, SymbolLagRatio),
-			),
-			statistic.ZScore,
-		),
-	)
-}
-
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	thesis *types.Thesis
-	number nomagique.Number[[2]string]
+	ctx     context.Context
+	cancel  context.CancelFunc
+	err     error
+	thesis  *types.Thesis
+	section *Section
 }
 
 func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		thesis: thesis,
-		number: nomagique.NewNumber[[2]string](leadlagPairPipeline()),
+		ctx:     ctx,
+		cancel:  cancel,
+		thesis:  thesis,
+		section: NewSection(),
 	}
 
 	return signal
@@ -85,48 +47,20 @@ func (signal *Signal) Run() error {
 		}
 
 		for ticker := range symbol.MarketTickers(types.SourceLeadLag) {
-			anchor, anchorPrice := pairedPrice(signal.thesis, symbol.Symbol)
+			anchor := signal.section.CausalAnchor()
 
 			if anchor == "" {
-				continue
+				signal.section.ClearAnchor()
+			} else {
+				signal.section.SetAnchor(anchor)
 			}
 
-			input := nomagique.Frame{}
-			input.Put(nomagique.SampleValue, ticker.Last.Float64())
-			input.Put(calculus.SymbolLeft, anchorPrice)
-			input.Put(calculus.SymbolRight, ticker.Last.Float64())
-			input.Put(calculus.SymbolValue, ticker.Last.Float64())
-			input.Put(calculus.SymbolScale, 1.0)
-			input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-			input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-			input.Put(statistic.SymbolDispersionHalflife, 30.0)
-
-			output, err := signal.number([2]string{anchor, symbol.Symbol}, input)
-
-			if err != nil {
-				signal.err = errnie.Error(errnie.Err(
-					errnie.Validation,
-					"leadlag: failed for "+symbol.Symbol,
-					err,
-				))
-				break
-			}
-
-			symbol.AppendMeasurement(nmtypes.NewMeasurement(
-				uuid.NewString(),
-				signal.Name(),
-				ticker.Timestamp.UnixNano(),
-				ticker.Timestamp.UnixNano(),
-			).AddMetrics(
-				nmtypes.NewMetric("inefficiency", output.MustGet(SymbolLagRatio), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-				nmtypes.NewMetric("significance", safeGet(output, statistic.SymbolZScore), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
-			))
+			signal.section.ObservePrice(
+				symbol.Symbol,
+				ticker.Last.Float64(),
+				ticker.Timestamp,
+			)
+			symbol.AppendMeasurement(signal.measurement(symbol.Symbol, ticker.Timestamp))
 		}
 	}
 
@@ -139,52 +73,4 @@ func (signal *Signal) Close() error {
 	}
 
 	return nil
-}
-
-func safeGet(frame nomagique.Frame, slot nomagique.Symbol) float64 {
-	value, found := frame.Get(slot)
-
-	if !found {
-		return 0
-	}
-
-	return value
-}
-
-/*
-pairedPrice returns the anchor symbol and its latest ticker price for this
-follower, so the Difference uses two real prices rather than a zero operand.
-*/
-func pairedPrice(thesis *types.Thesis, follower string) (string, float64) {
-	if thesis == nil {
-		return "", 0
-	}
-
-	var anchor string
-	var anchorPrice float64
-
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbolName, ok := key.(string)
-
-		if !ok || symbolName == follower {
-			return true
-		}
-
-		symbol, ok := value.(*types.Symbol)
-
-		if !ok || symbol == nil {
-			return true
-		}
-
-		for ticker := range symbol.MarketTickers(types.SourceLeadLag) {
-			anchor = symbolName
-			anchorPrice = ticker.Last.Float64()
-
-			return false
-		}
-
-		return true
-	})
-
-	return anchor, anchorPrice
 }

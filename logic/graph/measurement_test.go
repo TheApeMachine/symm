@@ -101,7 +101,7 @@ func TestAddNodes(t *testing.T) {
 		symbol := types.NewSymbol("BTC/USD")
 		other := newTestMeasurement("cvd-other", types.SourceCVD, "ETH/USD", time.Unix(11, 0).UTC())
 		putTestMetric(other, types.MetricDrive, 0.5, nil, nmtypes.UnitDimensionless)
-		symbol.AppendMeasurement(other)
+		symbol.Measurements.Push(other)
 
 		_, err := newMeasurementCompiler().addNodes(
 			"BTC/USD", symbol.MarketMeasurements("graph"),

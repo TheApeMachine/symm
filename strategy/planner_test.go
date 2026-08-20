@@ -201,7 +201,7 @@ func plannerReadyGraphThesis(
 	symbol := stored.(*types.Symbol)
 	var graph *logicgraph.Graph
 
-	for candidate := range symbol.MarketGraphs(types.SourceGraph) {
+	for candidate := range symbol.MarketGraphs(types.SourcePlanner) {
 		graph = candidate
 	}
 

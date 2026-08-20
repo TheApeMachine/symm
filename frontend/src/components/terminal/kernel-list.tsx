@@ -26,21 +26,21 @@ const interactive = (compact: boolean, source: string) => {
 const KernelTrace = ({ metric }: { metric: string }) => (
 	<div>
 		<Sparkline
-			bind={`metrics.${metric}.normalized`}
+			bind={`metrics.${metric}.raw`}
 			title={`${metricLabel(metric)} trace`}
 			className="h-6.5"
 		/>
 		<div className="mt-1 flex items-center gap-2">
 			<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
 				<div
-					data-set={`metrics.${metric}.normalized`}
+					data-set={`metrics.${metric}.raw`}
 					data-target="style.--strength"
 					className="h-full bg-(--acc)"
 					style={{ width: "calc(var(--strength, 0) * 100%)" }}
 				/>
 			</div>
 			<span
-				data-paint={`metrics.${metric}.normalized`}
+				data-paint={`metrics.${metric}.raw`}
 				data-paint-format=".0%"
 				className="w-8 shrink-0 text-right font-mono text-[10px] text-(--f2)"
 			/>
@@ -125,7 +125,7 @@ export const KernelList = ({
 						*/}
 								<div className="mt-0.5 flex items-baseline gap-1.5 truncate font-mono text-[9.5px] text-(--f4)">
 									<span
-										data-paint={`metrics.${headline}.normalized`}
+										data-paint={`metrics.${headline}.raw`}
 										data-paint-format=".0%"
 										className="text-(--acc)"
 									/>

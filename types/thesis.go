@@ -78,9 +78,7 @@ func NewThesis(
 	work := make(map[SourceType]*transport.MapReduce[*Symbol], len(WorkerSources))
 
 	for _, source := range WorkerSources {
-		work[source] = transport.NewMapReduce[*Symbol](
-			[]string{string(source)}, nil, nil,
-		)
+		work[source] = transport.NewMapReduce[*Symbol](nil, nil, nil)
 	}
 
 	return &Thesis{

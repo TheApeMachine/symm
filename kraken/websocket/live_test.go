@@ -1,7 +1,6 @@
 package websocket
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
@@ -188,53 +186,6 @@ func TestRestorePublicSubscriptions(t *testing.T) {
 
 			slices.Sort(channels)
 			So(channels, ShouldResemble, []string{"ticker", "trade"})
-		})
-	})
-}
-
-func TestResubscribeL3(t *testing.T) {
-	Convey("Given a level3 child reporting a checksum-diverged symbol", t, func() {
-		requests, endpoint, closeServer := subscriptionConnection(t, 2)
-		defer closeServer()
-
-		client := spot.NewWebSocket()
-		client.URL = endpoint
-		client.Token = "fixture-token"
-		So(client.Connect(), ShouldBeNil)
-
-		pace := 25 * time.Millisecond
-		viper.Set("market.l3_depth", 10)
-		viper.Set("market.subscribe.pace", pace)
-		Reset(func() {
-			viper.Set("market.subscribe.pace", nil)
-		})
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		child := &Live{
-			ctx: ctx, client: client,
-			book: NewBook(context.Background(), spot.NewNormalizer()),
-		}
-		child.symbols = append(child.symbols, "DIVERGED/USD", "QUIET/USD")
-		child.book.SetResync(func(symbol string) {
-			So(child.resubscribeL3(symbol), ShouldBeNil)
-		})
-
-		Convey("Recovery should pace between unsubscribe and fresh subscribe", func() {
-			started := time.Now()
-			child.book.resync("DIVERGED/USD")
-			first := <-requests
-			second := <-requests
-			elapsed := time.Since(started)
-			firstMethod := first["method"].(string)
-			secondParams := second["params"].(map[string]any)
-			secondSymbols := secondParams["symbol"].([]any)
-
-			So(firstMethod, ShouldEqual, "unsubscribe")
-			So(secondParams["channel"].(string), ShouldEqual, "level3")
-			So(secondSymbols, ShouldHaveLength, 1)
-			So(secondSymbols[0], ShouldEqual, "DIVERGED/USD")
-			So(elapsed, ShouldBeGreaterThanOrEqualTo, pace)
 		})
 	})
 }

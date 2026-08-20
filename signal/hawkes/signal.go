@@ -92,6 +92,30 @@ func (signal *Signal) Run() error {
 				break
 			}
 
+			beta := output.MustGet(statistic.SymbolBeta)
+			buyExcitation := output.MustGet(statistic.SymbolAlphaAA)
+			sellExcitation := output.MustGet(statistic.SymbolAlphaBB)
+			spectralRadius := output.MustGet(statistic.SymbolSpectralRadius)
+			buyMetric := nmtypes.NewMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy), buyExcitation, nmtypes.Descriptor{
+				Unit: nmtypes.UnitInverseSecond, Timescale: nmtypes.TimescalePerSecond,
+			})
+			sellMetric := nmtypes.NewMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell), sellExcitation, nmtypes.Descriptor{
+				Unit: nmtypes.UnitInverseSecond, Timescale: nmtypes.TimescalePerSecond,
+			})
+
+			if beta > 0 {
+				buyMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy), buyExcitation, buyExcitation/beta, buyMetric.Descriptor)
+				sellMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell), sellExcitation, sellExcitation/beta, sellMetric.Descriptor)
+			}
+
+			spectralMetric := nmtypes.NewMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), spectralRadius, nmtypes.Descriptor{
+				Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous,
+			})
+
+			if spectralRadius >= 0 && spectralRadius < 1 {
+				spectralMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), spectralRadius, spectralRadius, spectralMetric.Descriptor)
+			}
+
 			symbol.AppendMeasurement(nmtypes.NewMeasurement(
 				uuid.NewString(),
 				signal.Name(),
@@ -126,18 +150,13 @@ func (signal *Signal) Run() error {
 					Unit:      nmtypes.UnitEventsPerSecond,
 					Timescale: nmtypes.TimescalePerSecond,
 				}),
-				nmtypes.NewMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy), output.MustGet(statistic.SymbolAlphaAA), nmtypes.Descriptor{
+				buyMetric,
+				sellMetric,
+				nmtypes.NewMetric(types.MetricKey(types.MetricDecayRate, types.SideNone), beta, nmtypes.Descriptor{
 					Unit:      nmtypes.UnitInverseSecond,
 					Timescale: nmtypes.TimescalePerSecond,
 				}),
-				nmtypes.NewMetric(types.MetricKey(types.MetricDecayRate, types.SideNone), output.MustGet(statistic.SymbolBeta), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitInverseSecond,
-					Timescale: nmtypes.TimescalePerSecond,
-				}),
-				nmtypes.NewMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), output.MustGet(statistic.SymbolSpectralRadius), nmtypes.Descriptor{
-					Unit:      nmtypes.UnitDimensionless,
-					Timescale: nmtypes.TimescaleInstantaneous,
-				}),
+				spectralMetric,
 				nmtypes.NewMetric(types.MetricKey(types.MetricTotalDescendants, types.SideBuy), output.MustGet(statistic.SymbolDescendantsAlpha), nmtypes.Descriptor{
 					Unit:      nmtypes.UnitCount,
 					Timescale: nmtypes.TimescaleInstantaneous,

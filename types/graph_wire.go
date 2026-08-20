@@ -12,7 +12,7 @@ func (graph *Graph) Wire() *wire.GraphFrameT {
 		return nil
 	}
 
-	return graph.Clone().wireSnapshot()
+	return graph.wireSnapshot()
 }
 
 func (graph *Graph) wireSnapshot() *wire.GraphFrameT {

@@ -1,6 +1,8 @@
 package manifold
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -47,7 +49,9 @@ Symbols contribute observations to the same gas and wave fields; they are not
 split into independent simulations that cannot interfere.
 */
 type Solver struct {
+	ctx         context.Context
 	err         error
+	thesis      *types.Thesis
 	api         websocket.BookSource
 	config      pmanifold.Config
 	physics     *pmanifold.Solver
@@ -107,6 +111,8 @@ NewSolver creates the single shared Metal domain and a spectral corpus bounded
 by the same explicit event-history capacity as the live market feed.
 */
 func NewSolver(
+	ctx context.Context,
+	thesis *types.Thesis,
 	api *websocket.API,
 	ui *transport.MapReduce[*types.UIFrame],
 	binui *transport.MapReduce[types.FluidFrame],
@@ -145,6 +151,8 @@ func NewSolver(
 	}
 
 	solver := &Solver{
+		ctx:       ctx,
+		thesis:    thesis,
 		api:       bookSource,
 		config:    config,
 		physics:   physics,
@@ -286,6 +294,13 @@ func (solver *Solver) Run() error {
 
 	defer close(solver.stopped)
 	defer solver.settling.Store(false)
+	scheduleCtx, cancel := context.WithCancel(solver.ctx)
+	defer cancel()
+	scheduleErrors := make(chan error, 1)
+
+	go func() {
+		scheduleErrors <- solver.schedule(scheduleCtx)
+	}()
 
 	for solver.err == nil {
 		select {
@@ -295,10 +310,39 @@ func (solver *Solver) Run() error {
 			}
 		case <-solver.stopping:
 			return nil
+		case err := <-scheduleErrors:
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+
+			if err != nil {
+				solver.err = errnie.Error(err)
+			}
 		}
 	}
 
 	return solver.err
+}
+
+func (solver *Solver) schedule(ctx context.Context) error {
+	work := solver.thesis.Work(types.SourceManifold)
+
+	for {
+		_, available := work.WaitPop(ctx, string(types.SourceManifold))
+
+		if !available {
+			return ctx.Err()
+		}
+
+		for range work.Drain(string(types.SourceManifold), func(*types.Symbol) bool {
+			return true
+		}) {
+		}
+
+		if err := solver.Update(solver.thesis); err != nil {
+			return err
+		}
+	}
 }
 
 /*
@@ -374,6 +418,10 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 	}
 	drives := make(map[string]drive)
 
+	for _, symbolName := range solver.universe {
+		drives[symbolName] = drive{}
+	}
+
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbolName, nameOK := key.(string)
 		symbol, ok := value.(*types.Symbol)
@@ -382,13 +430,17 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 			return true
 		}
 
-		if symbol.Status == types.BUSY {
-			drives[symbolName] = drive{}
-		}
-
 		for measurement := range symbol.MarketMeasurements("manifold") {
 			if string(measurement.Source) != string(types.SourceHawkes) {
 				continue
+			}
+
+			if _, admitted := drives[symbolName]; !admitted {
+				if !solver.admit(symbolName) {
+					continue
+				}
+
+				drives[symbolName] = drive{}
 			}
 
 			entry := drives[symbolName]
@@ -433,18 +485,6 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 	driveMass := 0.0
 
 	for _, symbolName := range symbolNames {
-		if _, known := universeIndex(solver.universe, symbolName); !known {
-			solver.universe = sortedUniverse(append(solver.universe, symbolName))
-		}
-
-		if uint32(len(solver.universe)) > phaseLatticeWidth {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"manifold: symbol-pair carriers exceed the 256-slot lattice",
-				nil,
-			))
-		}
-
 		carrier, known := universeIndex(solver.universe, symbolName)
 
 		if !known {
@@ -525,6 +565,20 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 	}
 
 	return cuts, nil
+}
+
+func (solver *Solver) admit(symbol string) bool {
+	if _, admitted := universeIndex(solver.universe, symbol); admitted {
+		return true
+	}
+
+	if uint32(len(solver.universe)) >= phaseLatticeWidth {
+		return false
+	}
+
+	solver.universe = sortedUniverse(append(solver.universe, symbol))
+
+	return true
 }
 
 /*

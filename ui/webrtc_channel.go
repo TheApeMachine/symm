@@ -149,6 +149,11 @@ func newFluidChannel(
 	})
 	dataChannel.OnClose(cancel)
 	dataChannel.OnError(func(err error) {
+		if channel.ctx.Err() != nil ||
+			dataChannel.ReadyState() != webrtc.DataChannelStateOpen {
+			return
+		}
+
 		errnie.Error(fluidError("viewer data channel failed", err))
 		cancel()
 	})
@@ -166,12 +171,6 @@ func (channel *fluidChannel) enqueue(payload []byte) error {
 		return channel.ctx.Err()
 	case channel.pending <- payload:
 		return nil
-	default:
-		return fmt.Errorf(
-			"webrtc: %s lossless queue reached capacity %d",
-			channel.dataChannel.Label(),
-			cap(channel.pending),
-		)
 	}
 }
 
@@ -182,12 +181,22 @@ func (channel *fluidChannel) run() {
 			return
 		case payload := <-channel.pending:
 			if err := channel.send(payload); err != nil {
-				channel.fail(fluidError("unable to send record", err))
-				channel.cancel()
+				channel.failSend(err)
 				return
 			}
 		}
 	}
+}
+
+func (channel *fluidChannel) failSend(err error) {
+	if channel.ctx.Err() != nil ||
+		(channel.dataChannel != nil &&
+			channel.dataChannel.ReadyState() != webrtc.DataChannelStateOpen) {
+		return
+	}
+
+	channel.fail(fluidError("unable to send record", err))
+	channel.cancel()
 }
 
 func (channel *fluidChannel) send(payload []byte) error {

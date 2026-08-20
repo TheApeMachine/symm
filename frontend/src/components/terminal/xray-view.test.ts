@@ -45,6 +45,7 @@ describe("xray-view", () => {
 		expect(layers[0]?.label).toBe("L0 · sensory");
 		expect(layers[1]?.label).toBe("L1 · macro");
 		expect(layers[0]?.state).toEqual([0.1, -0.2, 0.3]);
+		expect(layers[0]?.prediction).toEqual([0.0, -0.1, 0.2]);
 		expect(layers[0]?.error_norm).toBeCloseTo(0.1, 5);
 	});
 

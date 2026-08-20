@@ -10,6 +10,7 @@ import (
 	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/transport"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -44,12 +45,29 @@ func TestThesisWork(t *testing.T) {
 		thesis := NewThesis(t.Context(), nil)
 		symbol := thesis.Symbol("BTC/USD")
 		symbol.AppendTicker(kraken.TickerData{})
-		ready, available := thesis.Work(SourceCVD).WaitPop(
+		ready, available := thesis.Work(SourceLiquidity).WaitPop(
 			t.Context(),
-			string(SourceCVD),
+			string(SourceLiquidity),
 		)
 
 		Convey("It should deliver the owning symbol directly to that reader", func() {
+			So(available, ShouldBeTrue)
+			So(ready, ShouldEqual, symbol)
+		})
+	})
+
+	Convey("Given a fresh measurement for the manifold consumer", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		symbol := thesis.Symbol("BTC/USD")
+		symbol.AppendMeasurement(nmtypes.NewMeasurement(
+			"hawkes", string(SourceHawkes), time.Now().UnixNano(), 0,
+		))
+		ready, available := thesis.Work(SourceManifold).WaitPop(
+			t.Context(),
+			string(SourceManifold),
+		)
+
+		Convey("It should wake the manifold worker with the owning symbol", func() {
 			So(available, ShouldBeTrue)
 			So(ready, ShouldEqual, symbol)
 		})
@@ -66,7 +84,7 @@ func TestThesisMarshalState(t *testing.T) {
 		symbol := thesis.Symbol("BTC/USD")
 		decision := NewDecision(ActionEnter, "BTC/USD")
 		symbol.Decisions.Push(*decision)
-		symbol.Graphs.Push(NewGraph(time.Time{}))
+		symbol.Graphs.Push(NewGraph(time.Unix(1, 0).UTC()))
 		symbol.Categories.Push([]Category{{Symbol: "BTC/USD"}})
 		symbol.Phase.Push(PhaseReading{})
 		symbol.Cognition.Push(Cognition{Symbol: "BTC/USD"})
@@ -84,6 +102,7 @@ func TestThesisMarshalState(t *testing.T) {
 			symbols := checkpoint["symbols"].(map[string]any)
 			bitcoin := symbols["BTC/USD"].(map[string]any)
 			So(bitcoin["causal"].([]any), ShouldHaveLength, 1)
+			So(bitcoin["graphs"].([]any), ShouldHaveLength, 1)
 			So(checkpoint["equity"], ShouldNotBeNil)
 		})
 	})

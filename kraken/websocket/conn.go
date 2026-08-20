@@ -71,11 +71,15 @@ API is the single Kraken transport surface for symm.
 Callers subscribe, order, and listen through named methods only.
 */
 type API struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	normalizer *spot.Normalizer
-	public     Conn
-	private    Conn
+	ctx         context.Context
+	cancel      context.CancelFunc
+	errMu       sync.RWMutex
+	err         error
+	failures    chan error
+	failureOnce sync.Once
+	normalizer  *spot.Normalizer
+	public      Conn
+	private     Conn
 }
 
 func NewAPI(
@@ -96,11 +100,50 @@ func NewAPI(
 		ctx:        ctx,
 		cancel:     cancel,
 		normalizer: normalizer,
+		failures:   make(chan error, 1),
 		public:     public,
 		private:    private,
 	}
 
+	for _, connection := range []Conn{public, private} {
+		if live, valid := connection.(*Live); valid && live != nil {
+			live.SetFailureHandler(api.reportFailure)
+		}
+	}
+
 	return api
+}
+
+func (api *API) Name() string { return "kraken" }
+
+func (api *API) Error() error {
+	api.errMu.RLock()
+	defer api.errMu.RUnlock()
+
+	return api.err
+}
+
+func (api *API) Run() error {
+	select {
+	case <-api.ctx.Done():
+		return api.ctx.Err()
+	case err := <-api.failures:
+		api.errMu.Lock()
+		api.err = err
+		api.errMu.Unlock()
+		api.cancel()
+		return err
+	}
+}
+
+func (api *API) reportFailure(err error) {
+	if api == nil || err == nil {
+		return
+	}
+
+	api.failureOnce.Do(func() {
+		api.failures <- err
+	})
 }
 
 /*
@@ -127,7 +170,7 @@ func (api *API) Normalizer() *spot.Normalizer {
 
 func (api *API) Books() *sync.Map                                 { return api.private.Books() }
 func (api *API) Book(symbol string, read func(*book.Book))        { api.private.Book(symbol, read) }
-func (api *API) SubInstrument(callback chan any)         { api.public.SubInstrument(callback) }
+func (api *API) SubInstrument(callback chan any)                  { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
 func (api *API) SubBook(symbols []string)                         { api.public.SubBook(symbols) }
 func (api *API) SubL3(symbols []string)                           { api.private.SubL3(symbols) }

@@ -66,6 +66,7 @@ const paintHierarchyRows = (
 		const error = row.querySelector<HTMLSpanElement>("[data-error]");
 		const fill = row.querySelector<HTMLDivElement>("[data-fill]");
 		const values = layerCellsFromState(layer.state);
+		const predictions = layerCellsFromState(layer.prediction);
 
 		if (label !== null) {
 			label.textContent = layer.label;
@@ -100,6 +101,11 @@ const paintHierarchyRows = (
 			}
 
 			cell.style.background = heatColor((value + 1) / 2);
+			const prediction = predictions[cellIndex];
+			cell.style.boxShadow =
+				typeof prediction === "number"
+					? `inset 0 -3px ${heatColor((prediction + 1) / 2)}`
+					: "";
 		}
 	}
 };

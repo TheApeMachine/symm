@@ -76,7 +76,7 @@ func NewAnalyzer(
 		solverGroups: [][]Solver{
 			{
 				category.NewSolver(ctx, thesis, api, ui, recorder),
-				manifold.NewSolver(api, ui, binui, recorder),
+				manifold.NewSolver(ctx, thesis, api, ui, binui, recorder),
 			}, {
 				causal.NewSolver(thesis, price, ui, recorder),
 				cognition.NewSolver(ctx, thesis, tree, ui, recorder),

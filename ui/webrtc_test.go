@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -114,6 +115,109 @@ func TestFluidRTCDiagnosticsPeer(t *testing.T) {
 			So(transport.Error(), ShouldBeNil)
 		})
 	})
+}
+
+func TestFluidChannelEnqueue(t *testing.T) {
+	Convey("Given a full lossless channel queue", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		channel := &fluidChannel{
+			ctx:     ctx,
+			pending: make(chan []byte, 1),
+		}
+		So(channel.enqueue([]byte("first")), ShouldBeNil)
+		started := make(chan struct{})
+		done := make(chan error, 1)
+
+		go func() {
+			close(started)
+			done <- channel.enqueue([]byte("second"))
+		}()
+
+		<-started
+
+		Convey("It should backpressure the producer and resume without loss", func() {
+			select {
+			case err := <-done:
+				So(err, ShouldNotBeNil)
+			default:
+			}
+
+			So(<-channel.pending, ShouldResemble, []byte("first"))
+			So(<-done, ShouldBeNil)
+			So(<-channel.pending, ShouldResemble, []byte("second"))
+		})
+	})
+}
+
+func TestFluidChannelFailSend(t *testing.T) {
+	Convey("Given a viewer channel canceled by its close callback", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		failed := false
+		channel := &fluidChannel{
+			ctx:    ctx,
+			cancel: cancel,
+			fail:   func(error) { failed = true },
+		}
+
+		channel.failSend(context.Canceled)
+
+		Convey("It should not escalate the canceled send to the system transport", func() {
+			So(failed, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given an active viewer channel with a real send failure", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		var received error
+		channel := &fluidChannel{
+			ctx:    ctx,
+			cancel: cancel,
+			fail:   func(err error) { received = err },
+		}
+
+		channel.failSend(errors.New("write failed"))
+
+		Convey("It should preserve the failure and cancel the failed channel", func() {
+			So(received, ShouldNotBeNil)
+			So(received.Error(), ShouldContainSubstring, "write failed")
+			So(channel.ctx.Err(), ShouldEqual, context.Canceled)
+		})
+	})
+}
+
+func BenchmarkFluidChannelEnqueue(b *testing.B) {
+	ctx, cancel := context.WithCancel(b.Context())
+	channel := &fluidChannel{
+		ctx:     ctx,
+		pending: make(chan []byte, 4),
+	}
+	drained := make(chan struct{})
+
+	go func() {
+		defer close(drained)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-channel.pending:
+			}
+		}
+	}()
+
+	b.ReportAllocs()
+	payload := []byte("fluid-frame")
+
+	for range b.N {
+		if err := channel.enqueue(payload); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	cancel()
+	<-drained
 }
 
 func answerFluidTestPeer(client *webrtc.PeerConnection, transport *FluidRTC) {

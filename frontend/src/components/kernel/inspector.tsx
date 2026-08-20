@@ -162,7 +162,7 @@ export const KernelInspector = () => {
 								</Flex.Row>
 								<Panel size="bare" className="px-0 py-0">
 									<Sparkline
-										bind={`metrics.${headline}.normalized`}
+										bind={`metrics.${headline}.raw`}
 										title={`${metricLabel(headline)} history`}
 										limit={150}
 										className="h-13"
