@@ -6,11 +6,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -95,6 +97,8 @@ func (crypto *Crypto) run() {
 		case <-crypto.ctx.Done():
 			return
 		default:
+			crypto.thesis.Tick++
+
 			crypto.thesis.Symbols.Range(func(key, value any) bool {
 				symbol, ok := value.(*types.Symbol)
 
@@ -106,6 +110,12 @@ func (crypto *Crypto) run() {
 				// Process each symbol here.
 				return true
 			})
+
+			utils.Publish(
+				crypto.ui, datura.NewMap(
+					"tick", datura.NewMap("count", crypto.thesis.Tick),
+				),
+			)
 		}
 	}
 }
