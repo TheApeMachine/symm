@@ -65,6 +65,13 @@ type MarkObserver interface {
 }
 
 /*
+deskRest parks the desk drain loop between passes when the thesis queues have no
+new rows. It prevents a bare spin and paces the account readout to the ticker
+cadence: balance and equity refetches run only after a drained pass.
+*/
+const deskRest = 5 * time.Millisecond
+
+/*
 NewDesk constructs the serial broker owner.
 */
 func NewDesk(
@@ -140,76 +147,84 @@ func (desk *Desk) run() {
 			case <-desk.ctx.Done():
 				return
 			default:
-				started := time.Now()
+			}
 
-				desk.thesis.Symbols.Range(func(_ any, value any) bool {
-					symbol, ok := value.(*types.Symbol)
+			started := time.Now()
+			drained := false
 
-					if !ok || symbol == nil {
-						return true
-					}
+			desk.thesis.Symbols.Range(func(_ any, value any) bool {
+				symbol, ok := value.(*types.Symbol)
 
-					for ticker := range symbol.MarketTickers(types.SourceDesk) {
-						found, ok := desk.positions.Load(symbol.Symbol)
+				if !ok || symbol == nil {
+					return true
+				}
 
-						if ok && found != nil {
-							position, ok := found.(*Position)
+				for ticker := range symbol.MarketTickers(types.SourceDesk) {
+					drained = true
+					found, ok := desk.positions.Load(symbol.Symbol)
 
-							if ok && position != nil {
-								position.onTicker(ticker)
+					if ok && found != nil {
+						position, ok := found.(*Position)
 
-								if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
-									errnie.Error(observer.ObserveMark(position.MarkFeedback(ticker.Timestamp)))
-								}
+						if ok && position != nil {
+							position.onTicker(ticker)
+
+							if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
+								errnie.Error(observer.ObserveMark(position.MarkFeedback(ticker.Timestamp)))
 							}
 						}
 					}
+				}
 
-					for execution := range symbol.MarketExecutions(types.SourceDesk) {
-						found, ok := desk.positions.Load(symbol.Symbol)
+				for execution := range symbol.MarketExecutions(types.SourceDesk) {
+					drained = true
+					found, ok := desk.positions.Load(symbol.Symbol)
 
-						if !ok || found == nil {
-							continue
-						}
-
-						position, ok := found.(*Position)
-
-						if !ok || position == nil {
-							continue
-						}
-
-						if position.onExecution(kraken.Execution{
-							Channel: "executions",
-							Type:    "update",
-							Data:    []kraken.ExecutionData{execution},
-						}) {
-							desk.foldPassage(position)
-							desk.positions.CompareAndDelete(symbol.Symbol, position)
-						}
+					if !ok || found == nil {
+						continue
 					}
 
-					return true
-				})
+					position, ok := found.(*Position)
 
-				if desk.ObserveModule != nil {
-					desk.ObserveModule("desk", time.Since(started))
+					if !ok || position == nil {
+						continue
+					}
+
+					if position.onExecution(kraken.Execution{
+						Channel: "executions",
+						Type:    "update",
+						Data:    []kraken.ExecutionData{execution},
+					}) {
+						desk.foldPassage(position)
+						desk.positions.CompareAndDelete(symbol.Symbol, position)
+					}
 				}
 
-				/*
-					Cash and equity are refreshed together because they answer the
-					same question at the same instant: what the account holds, and
-					what it would settle at if every open lot were closed now. The
-					in-flight guard already paces both against the ticker rate, so
-					the account readout stays live without adding venue traffic of
-					its own.
-				*/
-				if balanceRefreshing.CompareAndSwap(false, true) {
-					go func() {
-						defer balanceRefreshing.Store(false)
-						desk.balance.Update()
-						errnie.Error(desk.PublishEquity())
-					}()
-				}
+				return true
+			})
+
+			if desk.ObserveModule != nil {
+				desk.ObserveModule("desk", time.Since(started))
+			}
+
+			/*
+				Cash and equity are refreshed together because they answer the
+				same question at the same instant: what the account holds, and
+				what it would settle at if every open lot were closed now. The
+				drained guard paces both against the ticker rate, so the account
+				readout stays live without adding venue traffic of its own.
+			*/
+			if !drained {
+				time.Sleep(deskRest)
+				continue
+			}
+
+			if balanceRefreshing.CompareAndSwap(false, true) {
+				go func() {
+					defer balanceRefreshing.Store(false)
+					desk.balance.Update()
+					errnie.Error(desk.PublishEquity())
+				}()
 			}
 		}
 	}()

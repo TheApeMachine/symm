@@ -40,7 +40,7 @@ func (conn stubConn) Level3Divergences() <-chan string { return nil }
 
 func (conn stubConn) ResubscribeL3(_ string) {}
 
-func (conn stubConn) SubInstrument(_ types.Subscription[any]) {}
+func (conn stubConn) SubInstrument(_ chan any) {}
 
 func (conn stubConn) SubTicker(_ []string) {}
 

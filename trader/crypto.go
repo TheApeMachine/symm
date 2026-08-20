@@ -68,7 +68,7 @@ func NewCrypto(
 	crypto.status.Store(types.READY)
 	crypto.bindDiagnostics()
 
-	crypto.run()
+	go crypto.run()
 	return crypto, nil
 }
 
