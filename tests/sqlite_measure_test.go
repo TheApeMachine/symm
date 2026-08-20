@@ -103,9 +103,9 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 
 	market.WithAutoFill(config.Execution)
 
-	uiChannel := make(chan []byte, 1024)
+	uiChannel := transport.NewMapReduce[[]byte](nil, nil, nil)
 	publicFeed, privateFeed := market.Feeds()
-	thesis := types.NewThesis(context.Background(), transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil))
+	thesis := types.NewThesis(context.Background(), uiChannel)
 	system := cmd.BootWithHub(
 		context.Background(), thesis, publicFeed, privateFeed, uiChannel, nil,
 	)
@@ -156,10 +156,6 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 			t.Logf("TRACE frame %d %s/%s delivered=%v tick=%d", replayed, frame.Endpoint, header.Channel, delivered, system.Thesis.Tick)
 		} else {
 			publishCapturedFrame(market, frame)
-		}
-
-		if err := system.Sync(context.Background(), frame.ReceivedAt); err != nil {
-			t.Fatalf("sync stack at %s: %v", frame.ReceivedAt, err)
 		}
 
 		replayed++

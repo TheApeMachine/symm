@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -225,7 +226,7 @@ func TestUpdate(t *testing.T) {
 			symbol.Graphs.Push(NewGraph(thesis.At))
 		}
 
-		ui := make(chan []byte, 2)
+		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
 		NewSolver(thesis, ui, nil)
 
 		Convey("It should publish only the graph selected by the UI focus", func() {
@@ -234,10 +235,11 @@ func TestUpdate(t *testing.T) {
 			deadline := time.Now().Add(3 * time.Second)
 
 			for len(payload) == 0 && time.Now().Before(deadline) {
-				select {
-				case message := <-ui:
-					payload = string(message)
-				default:
+				ui.Register(graphTestConsumer)
+
+				if frame, ok := ui.Pop(graphTestConsumer); ok {
+					payload = string(frame)
+				} else {
 					time.Sleep(time.Millisecond)
 				}
 			}
@@ -862,7 +864,7 @@ func BenchmarkUpdate(b *testing.B) {
 		})
 	}
 
-	ui := make(chan []byte, 1)
+	ui := transport.NewMapReduce[[]byte](nil, nil, nil)
 	solver := NewSolver(thesis, ui, nil)
 	previousFocus := types.Focus()
 	types.SetFocus("SIM0/USD")
@@ -883,10 +885,8 @@ func BenchmarkUpdate(b *testing.B) {
 				solver.buildGraph(symbolState.Symbol, symbolState)
 			}
 
-			select {
-			case <-ui:
-			default:
-			}
+			ui.Register(graphTestConsumer)
+			_, _ = ui.Pop(graphTestConsumer)
 
 			return true
 		})
@@ -940,3 +940,5 @@ func TestHeldCognitionGraphEvidence(t *testing.T) {
 		})
 	})
 }
+
+const graphTestConsumer = "graph-test"

@@ -11,6 +11,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -19,8 +20,8 @@ func TestHubForecastPublication(t *testing.T) {
 	Convey("Given a dashboard client subscribed before a typed forecast is published", t, func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		So(err, ShouldBeNil)
-		messages := make(chan []byte, 1)
-		hub := NewHub(context.Background(), nil, nil, nil, messages, make(chan types.FluidFrame, 1))
+		thesis := types.NewThesis(context.Background(), transport.NewMapReduce[[]byte](nil, nil, nil))
+		hub := NewHub(context.Background(), thesis, nil, nil, nil, make(chan types.FluidFrame, 1))
 		serveErr := make(chan error, 1)
 
 		go func() {
@@ -63,7 +64,7 @@ func TestHubForecastPublication(t *testing.T) {
 			},
 		}
 
-		utils.Publish(messages, datura.NewMap("resonance", []any{reading}))
+		utils.Publish(thesis.UI(), datura.NewMap("resonance", []any{reading}))
 		So(conn.SetReadDeadline(time.Now().Add(time.Second)), ShouldBeNil)
 
 		messageType, received, err := conn.ReadMessage()
@@ -97,8 +98,8 @@ func TestHubReadinessPublication(t *testing.T) {
 	Convey("Given a dashboard client subscribed before readiness changes", t, func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		So(err, ShouldBeNil)
-		messages := make(chan []byte, 1)
-		hub := NewHub(context.Background(), nil, nil, nil, messages, make(chan types.FluidFrame, 1))
+		thesis := types.NewThesis(context.Background(), transport.NewMapReduce[[]byte](nil, nil, nil))
+		hub := NewHub(context.Background(), thesis, nil, nil, nil, make(chan types.FluidFrame, 1))
 		serveErr := make(chan error, 1)
 
 		go func() {

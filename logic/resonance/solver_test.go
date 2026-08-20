@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -97,7 +98,7 @@ func (conn stubConn) Close() {}
 
 func TestNewSolver(t *testing.T) {
 	Convey("Given a configured pace and idle transport", t, func() {
-		ui := make(chan []byte, 16)
+		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		solver := NewSolver(
 			t.Context(), testAlpha,
@@ -116,7 +117,7 @@ func TestNewSolver(t *testing.T) {
 
 func TestRunDrainsTickerBurst(t *testing.T) {
 	Convey("Given a running solver on an idle transport", t, func() {
-		ui := make(chan []byte, 4096)
+		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		solver := NewSolver(
 			t.Context(), testAlpha,
@@ -159,19 +160,31 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 					case <-solver.ctx.Done():
 						drained <- fmt.Errorf("solver stopped before draining")
 						return
-					case <-ui:
+					default:
+					}
+
+					ui.Register(resonanceTestConsumer)
+
+					if _, ok := ui.Pop(resonanceTestConsumer); ok {
 						count++
+
 						if count == burstCount {
 							drained <- nil
 							return
 						}
+
+						continue
+					}
+
+					select {
 					case <-time.After(5 * time.Second):
 						drained <- fmt.Errorf("drained %d of %d ticker events", count, burstCount)
 						return
+					default:
+						time.Sleep(time.Millisecond)
 					}
 				}
 			}()
-
 			So(<-drained, ShouldBeNil)
 		})
 	})
@@ -179,7 +192,7 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	Convey("Given a solver over an idle transport", t, func() {
-		ui := make(chan []byte, 16)
+		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), nil)
 		solver := NewSolver(
 			t.Context(), testAlpha,
@@ -194,8 +207,16 @@ func TestUpdate(t *testing.T) {
 
 			var payload []byte
 
-			for len(ui) > 0 {
-				payload = <-ui
+			ui.Register(resonanceTestConsumer)
+
+			for {
+				frame, ok := ui.Pop(resonanceTestConsumer)
+
+				if !ok {
+					break
+				}
+
+				payload = frame
 			}
 
 			So(payload, ShouldNotBeEmpty)
@@ -300,7 +321,7 @@ func TestClose(t *testing.T) {
 		solver := NewSolver(
 			context.Background(), testAlpha,
 			websocket.NewAPI(context.Background(), stubConn{}, stubConn{}),
-			make(chan []byte, 16),
+			transport.NewMapReduce[[]byte](nil, nil, nil),
 			types.NewThesis(context.Background(), nil),
 		)
 
@@ -309,3 +330,5 @@ func TestClose(t *testing.T) {
 		})
 	})
 }
+
+const resonanceTestConsumer = "resonance-test"

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
@@ -17,10 +16,10 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/regulator"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/trader"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/utils"
@@ -55,20 +54,6 @@ func (system *System) Holding(symbol string) int {
 	}
 
 	return system.Desk.Holding(symbol)
-}
-
-/*
-Sync waits until the trader has consumed every frame already delivered and the
-manifold has settled the field those frames produced. Replay uses this so the
-next captured arrival cannot overtake the decision that belongs to the current
-one.
-*/
-func (system *System) Sync(ctx context.Context, at time.Time) error {
-	if system == nil || system.Crypto == nil {
-		return fmt.Errorf("system: streaming trader required")
-	}
-
-	return system.Crypto.Sync(ctx, at)
 }
 
 /*
@@ -203,14 +188,14 @@ func BootWithHub(
 
 	if public == nil {
 		public = websocket.New(
-			ctx, nil, false, websocket.PublicWebSocketURL, marketRecorder,
+			ctx, thesis, nil, false, websocket.PublicWebSocketURL, marketRecorder,
 		)
 		createdTransports = append(createdTransports, public)
 	}
 
 	if private == nil {
 		private = websocket.New(
-			ctx, nil, true, websocket.PrivateWebSocketURL, marketRecorder,
+			ctx, thesis, nil, true, websocket.PrivateWebSocketURL, marketRecorder,
 		)
 		createdTransports = append(createdTransports, private)
 	}

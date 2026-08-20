@@ -15,8 +15,8 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -133,26 +133,6 @@ type Solver struct {
 }
 
 const categoryTokenSeparator = "\x1f"
-
-/*
-dreamTemperature is how far consolidation strays from the strongest continuation
-when generating from a settled basin. Zero would replay the modal path the model
-already holds, which teaches it nothing; the value keeps generation exploratory
-while consolidation's own novelty and confidence gates discard what does not
-come back crisp.
-*/
-const dreamTemperature = 0.8
-
-/*
-dreamMaxTokens bounds a generated sequence to the same window a lived one gets,
-so an invented regime cannot claim more context than an observed one.
-*/
-const dreamMaxTokens = 6
-
-/*
-symbolLimit is how many discriminative category paths are retained for display.
-*/
-const symbolLimit = 32
 
 /*
 NewSolver returns a new cognition solver bound to a radix tree.
@@ -557,7 +537,6 @@ func (solver *Solver) processBatch(
 	rows[symbol] = cognition
 	return nil
 }
-
 
 type stabilizedReading struct {
 	winner      string

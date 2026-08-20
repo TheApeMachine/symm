@@ -13,9 +13,9 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/cmd"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/tests"
 	testtypes "github.com/theapemachine/symm/tests/types"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -383,10 +383,6 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 		previousAt = frame.ReceivedAt
 
 		driver.silentUpdate(func(state *State) { state.Position = frame.ReceivedAt })
-
-		if err := system.Sync(sessionCtx, frame.ReceivedAt); err != nil {
-			errnie.Error(errnie.Err(errnie.Internal, "backtest: sync stack", err))
-		}
 	}
 }
 

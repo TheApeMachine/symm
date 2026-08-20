@@ -12,6 +12,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/datura/dmt"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -59,7 +60,7 @@ func TestUpdate(t *testing.T) {
 		symbol := storedSymbol.(*types.Symbol)
 
 		Convey("Then observing an active category should not train before completion", func() {
-			waitSequence(t, solver, "BTC/USD", []string{vertical})
+			waitSequence(solver, "BTC/USD", []string{vertical})
 			firstCount := tree.GetSensoryWeight(solver.sequenceBytes([]string{vertical})).Count
 
 			So(solver.sequences["BTC/USD"], ShouldResemble, []string{vertical})
@@ -72,7 +73,7 @@ func TestUpdate(t *testing.T) {
 		})
 
 		Convey("Then only the observed category change should extend the active sequence", func() {
-			waitSequence(t, solver, "BTC/USD", []string{vertical})
+			waitSequence(solver, "BTC/USD", []string{vertical})
 
 			symbol.Categories.Push([]types.Category{{
 				Symbol:     "BTC/USD",
@@ -80,7 +81,7 @@ func TestUpdate(t *testing.T) {
 				Confidence: 1,
 				Strength:   1,
 			}})
-			waitSequence(t, solver, "BTC/USD", []string{vertical, reversal})
+			waitSequence(solver, "BTC/USD", []string{vertical, reversal})
 			transitionCount := tree.GetSensoryWeight(
 				solver.sequenceBytes([]string{vertical, reversal}),
 			).Count
@@ -93,7 +94,7 @@ func TestUpdate(t *testing.T) {
 		})
 
 		Convey("Then completing the sequence should learn it exactly once", func() {
-			waitSequence(t, solver, "BTC/USD", []string{vertical})
+			waitSequence(solver, "BTC/USD", []string{vertical})
 
 			symbol.Categories.Push([]types.Category{{
 				Symbol:     "BTC/USD",
@@ -101,7 +102,7 @@ func TestUpdate(t *testing.T) {
 				Confidence: 1,
 				Strength:   1,
 			}})
-			waitSequence(t, solver, "BTC/USD", []string{vertical, reversal})
+			waitSequence(solver, "BTC/USD", []string{vertical, reversal})
 
 			symbol.Categories.Push([]types.Category{{
 				Symbol:     "BTC/USD",
@@ -109,7 +110,7 @@ func TestUpdate(t *testing.T) {
 				Confidence: 1,
 				Strength:   1,
 			}})
-			waitSequence(t, solver, "BTC/USD", []string{exhaustion})
+			waitSequence(solver, "BTC/USD", []string{exhaustion})
 
 			So(tree.GetSensoryWeight(
 				solver.sequenceBytes([]string{vertical, reversal}),
@@ -181,7 +182,7 @@ func TestUpdate(t *testing.T) {
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
 		symbol := storedSymbol.(*types.Symbol)
-		waitSequence(t, solver, "BTC/USD", []string{vertical})
+		waitSequence(solver, "BTC/USD", []string{vertical})
 		cognition, found := lastCognition(symbol)
 		So(found, ShouldBeTrue)
 
@@ -202,7 +203,7 @@ func TestUpdate(t *testing.T) {
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
 		symbol := storedSymbol.(*types.Symbol)
-		waitSequence(t, solver, "BTC/USD", []string{solver.encodeCategory(types.CategoryVerticalIgnition)})
+		waitSequence(solver, "BTC/USD", []string{solver.encodeCategory(types.CategoryVerticalIgnition)})
 		cognition, found := lastCognition(symbol)
 		So(found, ShouldBeTrue)
 
@@ -215,7 +216,7 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a broad thesis whose categories do not change", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
-		ui := make(chan []byte, 8)
+		ui := transport.NewMapReduce[[]byte](nil, nil, nil)
 		thesis := types.NewThesis(t.Context(), ui)
 		thesis.At = time.Unix(1, 0).UTC()
 		solver := NewSolver(t.Context(), thesis, tree, ui, nil)
@@ -235,13 +236,13 @@ func TestUpdate(t *testing.T) {
 
 		// Let the first observation pass settle and the publish flush.
 		vertical := solver.encodeCategory(types.CategoryVerticalIgnition)
-		waitSequence(t, solver, "SYMBOL-64/USD", []string{vertical})
-		waitSettled(t, solver, ui)
+		waitSequence(solver, "SYMBOL-64/USD", []string{vertical})
+		waitSettled(solver, ui)
 		initialTick := solver.tickCounter
 
 		Convey("Then unchanged observations do not retrain or publish the tree", func() {
 			So(solver.tickCounter, ShouldEqual, initialTick)
-			So(len(ui), ShouldEqual, 0)
+			So(int(ui.Length()), ShouldEqual, 0)
 		})
 
 		stored, found := thesis.Symbols.Load("SYMBOL-64/USD")
@@ -253,12 +254,12 @@ func TestUpdate(t *testing.T) {
 			Confidence: 1,
 			Strength:   1,
 		}})
-		waitSequence(t, solver, "SYMBOL-64/USD", []string{solver.encodeCategory(types.CategoryActiveReversal)})
+		waitSequence(solver, "SYMBOL-64/USD", []string{solver.encodeCategory(types.CategoryActiveReversal)})
 
 		var payload struct {
 			Cognition map[string]json.RawMessage `json:"cognition"`
 		}
-		So(json.Unmarshal(<-ui, &payload), ShouldBeNil)
+		So(json.Unmarshal(pullFrame(ui), &payload), ShouldBeNil)
 
 		Convey("Then only the changed symbol is published without automatic REM", func() {
 			So(payload.Cognition, ShouldHaveLength, 1)
@@ -279,7 +280,7 @@ waitSequence polls the solver's active category sequence for a symbol until it
 reaches the expected tokens, so the asynchronous self-run goroutine has advanced
 the state machine to the assertion point.
 */
-func waitSequence(t *testing.T, solver *Solver, symbol string, want []string) {
+func waitSequence(solver *Solver, symbol string, want []string) {
 	deadline := time.Now().Add(3 * time.Second)
 
 	for time.Now().Before(deadline) {
@@ -310,23 +311,21 @@ waitSettled pumps the run goroutine until the cognition stage has drained every
 currently-available category stream: tickCounter stops advancing (no symbol is
 still on its first observation) and the publish channel is flushed.
 */
-func waitSettled(t *testing.T, solver *Solver, ui chan []byte) {
+func waitSettled(solver *Solver, ui *transport.MapReduce[[]byte]) {
 	deadline := time.Now().Add(3 * time.Second)
 	var last uint64
 	stable := 0
 
 	for time.Now().Before(deadline) {
-		select {
-		case <-ui:
+		if ui.Length() > 0 {
+			consumeOneFrame(ui)
 			last = solver.tickCounter
 			stable = 0
-		default:
-			if solver.tickCounter == last {
-				stable++
-			} else {
-				last = solver.tickCounter
-				stable = 0
-			}
+		} else if solver.tickCounter == last {
+			stable++
+		} else {
+			last = solver.tickCounter
+			stable = 0
 		}
 
 		if stable >= 20 {
@@ -335,6 +334,22 @@ func waitSettled(t *testing.T, solver *Solver, ui chan []byte) {
 
 		time.Sleep(time.Millisecond)
 	}
+}
+
+/*
+pullFrame consumes one wire frame from a test UI transport under a registered
+test consumer cursor.
+*/
+func pullFrame(ui *transport.MapReduce[[]byte]) []byte {
+	ui.Register(frameConsumer)
+	frame, _ := ui.Pop(frameConsumer)
+	return frame
+}
+
+const frameConsumer = "cognition-test"
+
+func consumeOneFrame(ui *transport.MapReduce[[]byte]) {
+	pullFrame(ui)
 }
 
 /* encodeForTest mirrors Solver.encodeCategory for assertions before construction. */

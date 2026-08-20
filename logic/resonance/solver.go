@@ -285,7 +285,7 @@ func (solver *Solver) Update(
 		solver.references.Store(symbolName, midpoint)
 	}
 
-	solver.publishReturns(symbol, symbolName, coder, out)
+	solver.publishReturns(symbol, coder, out)
 
 	utils.Publish(solver.ui, datura.NewMap(
 		"resonance",
@@ -375,7 +375,6 @@ posterior before outcomes exist.
 */
 func (solver *Solver) publishReturns(
 	symbol *types.Symbol,
-	symbolName string,
 	coder *learning.PredictiveCoder,
 	out learning.PredictiveOutput,
 ) {

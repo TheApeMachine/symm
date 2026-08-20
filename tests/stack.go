@@ -3,13 +3,12 @@ package tests
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
 	testtypes "github.com/theapemachine/symm/tests/types"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -30,7 +29,6 @@ type Stack interface {
 		rather than for a number of ticks picked to make a test come out.
 	*/
 	Holding(symbol string) int
-	Sync(ctx context.Context, at time.Time) error
 	Close() error
 }
 

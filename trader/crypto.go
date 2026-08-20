@@ -2,17 +2,16 @@ package trader
 
 import (
 	"context"
-	"fmt"
+	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -73,17 +72,6 @@ func NewCrypto(
 		diagnostics: &Diagnostics{
 			started: time.Now(),
 		},
-		subscriptions: map[string]*types.Subscription[any]{
-			"ticker": api.Subscribe(
-				"ticker", types.NewSubscription[any](),
-			),
-			"trade": api.Subscribe(
-				"trade", types.NewSubscription[any](),
-			),
-			"level3": api.Subscribe(
-				"level3", types.NewSubscription[any](),
-			),
-		},
 	}
 
 	crypto.status.Store(types.READY)
@@ -110,110 +98,25 @@ func (crypto *Crypto) ObserveModule() func(string, time.Duration) {
 	return crypto.diagnostics.applyModule
 }
 
-/*
-Sync waits until every market frame already delivered has been measured,
-analyzed, planned, and the manifold has finished the step those frames
-queued. Replay uses this so the next captured arrival cannot overtake the
-decision that belongs to the current one.
-*/
-func (crypto *Crypto) Sync(ctx context.Context, _ time.Time) error {
-	if crypto == nil {
-		return fmt.Errorf("crypto: trader required")
-	}
-
-	for {
-		if ctx != nil && ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		if crypto.idle() {
-			return nil
-		}
-
-		time.Sleep(syncRest)
-	}
-}
-
-func (crypto *Crypto) idle() bool {
-	if crypto.queued() > 0 {
-		return false
-	}
-
-	return crypto.desk == nil || crypto.desk.Queued() == 0
-}
-
-func (crypto *Crypto) queued() int {
-	queued := 0
-
-	if crypto.subscriptions != nil {
-		if ticker := crypto.subscriptions["ticker"]; ticker != nil {
-			queued += len(ticker.Channel)
-		}
-
-		if trade := crypto.subscriptions["trade"]; trade != nil {
-			queued += len(trade.Channel)
-		}
-	}
-
-	if level3 := crypto.subscriptions["level3"]; level3 != nil {
-		queued += len(level3.Channel)
-	}
-
-	return queued
-}
-
 func (crypto *Crypto) run() {
-	go func() {
-		for {
-			select {
-			case <-crypto.ctx.Done():
-				return
-			case ticker := <-crypto.subscriptions["ticker"].Channel:
-				crypto.onTicker(ticker.(*kraken.Ticker))
-			case trade := <-crypto.subscriptions["trade"].Channel:
-				crypto.onTrade(trade.(*kraken.Trade))
-			case level3 := <-crypto.subscriptions["level3"].Channel:
-				crypto.onLevel3(level3.(kraken.Level3Data))
-			}
+	for {
+		select {
+		case <-crypto.ctx.Done():
+			return
+		default:
+			crypto.thesis.Symbols.Range(func(key, value any) bool {
+				symbol, ok := value.(*types.Symbol)
+
+				if !ok || symbol == nil || symbol.Decisions.Length() == 0 {
+					runtime.Gosched()
+					return true
+				}
+
+				// Process each symbol here.
+				return true
+			})
 		}
-	}()
-}
-
-func (crypto *Crypto) onTicker(tickers *kraken.Ticker) {
-	if tickers == nil {
-		return
 	}
-
-	for _, ticker := range tickers.Data {
-		if ticker.Symbol == "" {
-			continue
-		}
-
-		crypto.desk.Price().Update(&ticker)
-		crypto.thesis.Symbol(ticker.Symbol).AppendTicker(ticker)
-	}
-}
-
-func (crypto *Crypto) onTrade(trades *kraken.Trade) {
-	if trades == nil {
-		return
-	}
-
-	for _, trade := range trades.Data {
-		if trade.Symbol == "" {
-			continue
-		}
-
-		crypto.thesis.Symbol(trade.Symbol).AppendTrade(trade)
-	}
-}
-
-func (crypto *Crypto) onLevel3(level3 kraken.Level3Data) {
-	if level3.Symbol == "" {
-		return
-	}
-
-	crypto.thesis.Symbol(level3.Symbol).AppendLevel3(level3)
 }
 
 func (crypto *Crypto) Close() error {

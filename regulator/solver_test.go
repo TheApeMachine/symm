@@ -10,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -34,7 +35,7 @@ func TestUpdate(t *testing.T) {
 		system.Cfg = system.NewConfig()
 		baseline := system.Cfg.Snapshot()
 		thesis := types.NewThesis(t.Context(), nil)
-		ui := make(chan []byte, 2)
+		ui := transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil)
 		solver, err := NewSolver(t.Context(), ui)
 		So(err, ShouldBeNil)
 		defer solver.Close()
@@ -59,7 +60,7 @@ func TestUpdate(t *testing.T) {
 			So(solver.lastEquity, ShouldEqual, 180.0)
 			So(solver.peakEquity, ShouldEqual, 200.0)
 			So(solver.history, ShouldHaveLength, 2)
-			So(len(ui), ShouldEqual, 2)
+			So(int(ui.Length()), ShouldEqual, 2)
 		})
 	})
 
@@ -85,7 +86,7 @@ func TestUpdate(t *testing.T) {
 	Convey("Given repeated valuations while the account has no exposure", t, func() {
 		system.Cfg = system.NewConfig()
 		thesis := types.NewThesis(t.Context(), nil)
-		ui := make(chan []byte, 2)
+		ui := transport.NewMapReduce[[]byte]([]string{"test"}, nil, nil)
 		solver, err := NewSolver(t.Context(), ui)
 		So(err, ShouldBeNil)
 		defer solver.Close()
@@ -99,7 +100,7 @@ func TestUpdate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(solver.optimizer.pending, ShouldHaveLength, regulatorContextCount+controlCount)
 			So(solver.optimizer.resolved, ShouldEqual, 1)
-			So(len(ui), ShouldEqual, 2)
+			So(int(ui.Length()), ShouldEqual, 2)
 		})
 	})
 

@@ -80,16 +80,6 @@ func (market *Market) ReplayCapture(symbols []string, readers ...io.Reader) erro
 			return fmt.Errorf("market: replay capture frame %d: %w", replayed+1, err)
 		}
 
-		if market.stack != nil {
-			if err := market.stack.Sync(market.ctx, frame.ReceivedAt); err != nil {
-				return fmt.Errorf(
-					"market: synchronize capture frame %d: %w",
-					replayed+1,
-					err,
-				)
-			}
-		}
-
 		previousAt = frame.ReceivedAt
 		replayed++
 

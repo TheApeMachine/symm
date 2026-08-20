@@ -32,12 +32,6 @@ func (market *Market) Replay(reader io.Reader) error {
 				return fmt.Errorf("market: replay requires at least one frame")
 			}
 
-			if market.stack != nil {
-				if err = market.stack.Sync(market.ctx, previousAt); err != nil {
-					return fmt.Errorf("market: synchronize replay: %w", err)
-				}
-			}
-
 			return nil
 		}
 
@@ -67,12 +61,6 @@ func (market *Market) Replay(reader io.Reader) error {
 			receivedAt,
 		); err != nil {
 			return fmt.Errorf("market: replay record %d: %w", record, err)
-		}
-
-		if market.stack != nil {
-			if err = market.stack.Sync(market.ctx, receivedAt); err != nil {
-				return fmt.Errorf("market: synchronize replay record %d: %w", record, err)
-			}
 		}
 
 		previousAt = receivedAt

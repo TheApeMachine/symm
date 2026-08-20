@@ -280,14 +280,6 @@ func (transport *mockTransport) assetPairs() []byte {
 	return envelope(result)
 }
 
-/*
-takerFee returns the USD-equivalent fee charged by the simulated venue.
-Simulator pairs quote in USD, so their quote fee is already USD-equivalent.
-*/
-func (transport *mockTransport) takerFee(cost float64) float64 {
-	return cost * simulatedTakerFeePercent / percentDenominator
-}
-
 func (transport *mockTransport) orderFee(
 	symbol string,
 	cost float64,

@@ -64,6 +64,7 @@ type Live struct {
 	cancel      context.CancelFunc
 	client      *spot.WebSocket
 	quote       string
+	thesis      *types.Thesis
 	simulator   *Simulator
 	normalizer  *spot.Normalizer
 	level3      *sync.Map
@@ -94,12 +95,13 @@ New opens a spot websocket session and wires SDK callbacks in the constructor.
 */
 func New(
 	ctx context.Context,
+	thesis *types.Thesis,
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
 	recorders ...CaptureSink,
 ) *Live {
-	return NewWithClient(ctx, simulator, auth, endpoint, nil, recorders...)
+	return NewWithClient(ctx, thesis, simulator, auth, endpoint, nil, recorders...)
 }
 
 /*
@@ -109,6 +111,7 @@ retaining full production parsing, event routing, and book handling in Live.
 */
 func NewWithClient(
 	ctx context.Context,
+	thesis *types.Thesis,
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
@@ -141,6 +144,7 @@ func NewWithClient(
 	live := &Live{
 		ctx:         ctx,
 		cancel:      cancel,
+		thesis:      thesis,
 		simulator:   simulator,
 		client:      client,
 		normalizer:  spot.NewNormalizer(),
@@ -249,6 +253,25 @@ func NewWithClient(
 			}
 		}
 
+		// Market data is written straight onto the thesis symbol queues here,
+		// removing the extra Subscribe-fan-out hop the streaming trader used.
+		if live.thesis != nil {
+			switch entity := out.(type) {
+			case *kraken.Ticker:
+				for index := range entity.Data {
+					live.thesis.Symbol(entity.Data[index].Symbol).AppendTicker(entity.Data[index])
+				}
+			case *kraken.Trade:
+				for index := range entity.Data {
+					live.thesis.Symbol(entity.Data[index].Symbol).AppendTrade(entity.Data[index])
+				}
+			case *kraken.Level3:
+				for index := range entity.Data {
+					live.thesis.Symbol(entity.Data[index].Symbol).AppendLevel3(entity.Data[index])
+				}
+			}
+		}
+
 		if channel == "level3" && live.book != nil {
 			level3, ok := out.(*kraken.Level3)
 
@@ -292,16 +315,6 @@ func NewWithClient(
 				subscription.Send(out)
 				close(subscription.Channel)
 			}
-		}
-
-		subscribers, ok := live.subscribers.Load(channel)
-
-		if !ok || subscribers == nil {
-			return
-		}
-
-		for _, subscriber := range subscribers.([]*types.Subscription[any]) {
-			subscriber.Send(out)
 		}
 	})
 
@@ -511,6 +524,7 @@ func (live *Live) SubL3(symbols []string) {
 	for groups := range slices.Chunk(symbols, 200) {
 		conn := NewWithClient(
 			live.ctx,
+			live.thesis,
 			live.simulator,
 			live.auth,
 			Level3WebSocketURL,

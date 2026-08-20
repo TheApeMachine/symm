@@ -2,7 +2,6 @@ package utils
 
 import (
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -34,6 +33,4 @@ func BenchmarkPublish(b *testing.B) {
 	for b.Loop() {
 		Publish(ui, datura.NewMap("frame", payload))
 	}
-
-	_ = atomic.Uint64{}
 }

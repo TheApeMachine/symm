@@ -193,11 +193,12 @@ func newMarket(
 	}
 
 	market.public = websocket.NewWithClient(
-		ctx, nil, false,
+		ctx, nil, nil, false,
 		websocket.PublicWebSocketURL, market.Public.Client(),
+
 	)
 	market.private = websocket.NewWithClient(
-		ctx, nil, true,
+		ctx, nil, nil, true,
 		websocket.PrivateWebSocketURL, market.Private.Client(),
 	)
 
