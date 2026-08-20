@@ -70,7 +70,7 @@ market:
   l3_ring_capacity: 8192
   # High-liquidity run: deeper L2 book and faster subscription pacing.
   subscribe:
-    pace: 2s
+    pace: 1s
     batch: 200
   book:
     depth: 10

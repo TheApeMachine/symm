@@ -184,15 +184,20 @@ export type TickFrame = Record<string, unknown> & {
 };
 
 /*
-LaneSnapshot is one bounded stream edge on the diagnostics wire.
+LaneSnapshot is one bounded stream edge on the diagnostics wire. It describes
+which components push into and pull from a queue, its current depth, and the
+capacity budget when bounded.
 */
 export type LaneSnapshot = {
 	name: string;
 	kind: string;
-	blocking: boolean;
-	capacity: number;
+	writers: string[];
+	readers: string[];
 	depth: number;
+	cap?: number;
 	high_water: number;
+	blocking: boolean;
+	symbols?: number;
 	saturations: number;
 	saturation_ns: number;
 };
@@ -222,6 +227,7 @@ export type DiagnosticsFrame = {
 	ui_sent?: number;
 	ui_dropped?: number;
 	lanes?: LaneSnapshot[];
+	queues?: QueueSnapshot[];
 	lossy?: boolean;
 	at_ns?: number;
 	started_ns?: number;
@@ -229,6 +235,22 @@ export type DiagnosticsFrame = {
 	hops?: HopSnapshot[];
 	errors?: ErrorSnapshot[];
 	pass?: PassStatus;
+};
+
+/*
+QueueSnapshot is one observable queue's live pressure read on the wire. It names
+which components write into and read from the queue, its current item depth,
+capacity when bounded, and the peak depth observed during the session.
+*/
+export type QueueSnapshot = {
+	name: string;
+	kind: "ingress" | "rail" | "derived" | "strategy" | "ui" | "broker";
+	writers: string[];
+	readers: string[];
+	depth: number;
+	cap?: number;
+	high_water: number;
+	symbols?: number;
 };
 
 export type ClockSnapshot = {

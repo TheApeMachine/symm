@@ -16,22 +16,23 @@ It should be kept extremely simple, and lean, and is not an invitation to
 start adding additional complexity beyond what is truly earned.
 */
 type Symbol struct {
-	ID           SymbolID                                 `json:"id,omitempty"`
-	Symbol       string                                   `json:"symbol,omitempty"`
-	Status       Status                                   `json:"status,omitempty"`
-	Tick         int64                                    `json:"tick,omitempty"`
-	Measurements *transport.MapReduce[*types.Measurement] `json:"-"`
-	tickers      *transport.MapReduce[kraken.TickerData]  `json:"-"`
-	trades       *transport.MapReduce[kraken.TradeData]   `json:"-"`
-	level3       *transport.MapReduce[kraken.Level3Data]  `json:"-"`
-	Decisions    *transport.MapReduce[Decision]           `json:"decisions,omitempty"`
-	Positions    *transport.MapReduce[any]                `json:"positions,omitempty"`
-	Graphs       *transport.MapReduce[*Graph]             `json:"graphs,omitempty"`
-	Categories   *transport.MapReduce[[]Category]         `json:"categories,omitempty"`
-	Phase        *transport.MapReduce[PhaseReading]       `json:"-"`
-	Cognition    *transport.MapReduce[Cognition]          `json:"-"`
-	Resonance    *transport.MapReduce[any]                `json:"-"`
-	Causal       *transport.MapReduce[map[string]any]     `json:"-"`
+	ID           SymbolID                                   `json:"id,omitempty"`
+	Symbol       string                                     `json:"symbol,omitempty"`
+	Status       Status                                     `json:"status,omitempty"`
+	Tick         int64                                      `json:"tick,omitempty"`
+	Measurements *transport.MapReduce[*types.Measurement]   `json:"-"`
+	tickers      *transport.MapReduce[kraken.TickerData]    `json:"-"`
+	trades       *transport.MapReduce[kraken.TradeData]     `json:"-"`
+	level3       *transport.MapReduce[kraken.Level3Data]    `json:"-"`
+	executions   *transport.MapReduce[kraken.ExecutionData] `json:"-"`
+	Decisions    *transport.MapReduce[Decision]             `json:"decisions,omitempty"`
+	Positions    *transport.MapReduce[any]                  `json:"positions,omitempty"`
+	Graphs       *transport.MapReduce[*Graph]               `json:"graphs,omitempty"`
+	Categories   *transport.MapReduce[[]Category]           `json:"categories,omitempty"`
+	Phase        *transport.MapReduce[PhaseReading]         `json:"-"`
+	Cognition    *transport.MapReduce[Cognition]            `json:"-"`
+	Resonance    *transport.MapReduce[any]                  `json:"-"`
+	Causal       *transport.MapReduce[map[string]any]       `json:"-"`
 }
 
 /*
@@ -42,13 +43,20 @@ func NewSymbol(name string) *Symbol {
 		Symbol: name,
 		Status: READY,
 		tickers: transport.NewMapReduce[kraken.TickerData](
-			TickerReceiverStrings, nil, nil,
+			append(
+				TickerReceiverStrings,
+				string(SourceResonance),
+				string(SourceDesk),
+			), nil, nil,
 		),
 		trades: transport.NewMapReduce[kraken.TradeData](
 			TradeReceiverStrings, nil, nil,
 		),
 		level3: transport.NewMapReduce[kraken.Level3Data](
 			Level3ReceiverStrings, nil, nil,
+		),
+		executions: transport.NewMapReduce[kraken.ExecutionData](
+			[]string{string(SourceDesk)}, nil, nil,
 		),
 		Measurements: transport.NewMapReduce[*types.Measurement](
 			LogicSourceStrings, nil, nil,
@@ -123,6 +131,10 @@ func (symbol *Symbol) HasLevel3() bool {
 	return symbol.level3.Length() > 0
 }
 
+func (symbol *Symbol) HasExecutions() bool {
+	return symbol.executions.Length() > 0
+}
+
 /*
 AppendTrade routes a trade only to the signal owners
 selected by the streaming topology.
@@ -137,6 +149,10 @@ selected by the streaming topology.
 */
 func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data) {
 	symbol.level3.Push(level3)
+}
+
+func (symbol *Symbol) AppendExecution(execution kraken.ExecutionData) {
+	symbol.executions.Push(execution)
 }
 
 /*
@@ -206,6 +222,59 @@ func drainedCategories(symbol *Symbol) []Category {
 	}
 
 	return rows
+}
+
+/*
+QueueDepths reports the current pending item count of every per-symbol stage
+buffer. The keys are stable wire names the diagnostics page renders as labeled
+lanes; a nil queue is reported with a zero entry rather than omitted so the
+consumer can render a full row even before the producer first writes.
+*/
+func (symbol *Symbol) QueueDepths() map[string]uint64 {
+	out := make(map[string]uint64, 12)
+
+	if symbol == nil {
+		return out
+	}
+
+	if symbol.tickers != nil {
+		out["tickers"] = symbol.tickers.Length()
+	}
+	if symbol.trades != nil {
+		out["trades"] = symbol.trades.Length()
+	}
+	if symbol.level3 != nil {
+		out["level3"] = symbol.level3.Length()
+	}
+	if symbol.Measurements != nil {
+		out["measurements"] = symbol.Measurements.Length()
+	}
+	if symbol.Decisions != nil {
+		out["decisions"] = symbol.Decisions.Length()
+	}
+	if symbol.Positions != nil {
+		out["positions"] = symbol.Positions.Length()
+	}
+	if symbol.Graphs != nil {
+		out["graphs"] = symbol.Graphs.Length()
+	}
+	if symbol.Categories != nil {
+		out["categories"] = symbol.Categories.Length()
+	}
+	if symbol.Phase != nil {
+		out["phase"] = symbol.Phase.Length()
+	}
+	if symbol.Cognition != nil {
+		out["cognition"] = symbol.Cognition.Length()
+	}
+	if symbol.Resonance != nil {
+		out["resonance"] = symbol.Resonance.Length()
+	}
+	if symbol.Causal != nil {
+		out["causal"] = symbol.Causal.Length()
+	}
+
+	return out
 }
 
 /*

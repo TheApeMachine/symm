@@ -125,30 +125,8 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 			ui, thesis,
 		)
 
-		feed := func(count int) {
-			price := decimal.NewFromFloat64(100.0)
-
-			for range count {
-				solver.subscriptions["ticker"].Channel <- &kraken.Ticker{
-					Data: []kraken.TickerData{{
-						Symbol:    "BTC/USD",
-						Bid:       price,
-						Ask:       price,
-						High:      price,
-						Low:       price,
-						Last:      price,
-						Change:    decimal.NewFromFloat64(0.0),
-						ChangePct: 0.0,
-						Timestamp: time.Now().UTC(),
-					}},
-				}
-			}
-		}
-
 		Convey("It should drain a burst of ticker observations through the real run loop", func() {
 			const burstCount = 64
-
-			go feed(burstCount)
 
 			drained := make(chan error, 1)
 

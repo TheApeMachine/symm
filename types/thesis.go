@@ -22,6 +22,7 @@ type Thesis struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	ui             *transport.MapReduce[[]byte]
+	balance        kraken.BalanceData
 	equityMu       sync.RWMutex
 	equity         *kraken.TradeBalanceResult
 	equityRevision uint64

@@ -86,14 +86,10 @@ func NewDesk(
 	viper.SetDefault("trading.slots.reserved", 2)
 
 	desk := &Desk{
-		ctx:    ctx,
-		cancel: cancel,
-		status: types.READY,
-		api:    api,
-		subscriptions: map[string]*types.Subscription[any]{
-			"ticker":     api.Subscribe("ticker", types.NewSubscription[any]()),
-			"executions": api.Subscribe("executions", types.NewSubscription[any]()),
-		},
+		ctx:            ctx,
+		cancel:         cancel,
+		status:         types.READY,
+		api:            api,
 		ui:             ui,
 		instrument:     instrument,
 		price:          price,
@@ -153,6 +149,25 @@ func (desk *Desk) Queued() int {
 	return queued
 }
 
+/*
+QueueDepth reports the pending item count of one named desk subscription
+channel, or zero when the channel does not exist. This gives the diagnostics
+page the live broker wire pressure without exposing the channel itself.
+*/
+func (desk *Desk) QueueDepth(name string) int {
+	if desk == nil || desk.subscriptions == nil {
+		return 0
+	}
+
+	subscription := desk.subscriptions[name]
+
+	if subscription == nil {
+		return 0
+	}
+
+	return len(subscription.Channel)
+}
+
 func (desk *Desk) Cash() *decimal.Decimal {
 	if desk == nil || desk.balance == nil {
 		return nil
@@ -169,29 +184,34 @@ func (desk *Desk) run() {
 			select {
 			case <-desk.ctx.Done():
 				return
-			case message := <-desk.subscriptions["ticker"].Channel:
+			default:
 				started := time.Now()
-				ticker, ok := message.(*kraken.Ticker)
 
-				if !ok || ticker == nil {
-					continue
-				}
+				desk.thesis.Symbols.Range(func(_ any, value any) bool {
+					symbol, ok := value.(*types.Symbol)
 
-				for _, tickerData := range ticker.Data {
-					found, ok := desk.positions.Load(tickerData.Symbol)
+					if !ok || symbol == nil || symbol.HasTickers() == false {
+						return true
+					}
 
-					if ok && found != nil {
-						position, ok := found.(*Position)
+					for ticker := range symbol.MarketTickers(types.SourceDesk) {
+						found, ok := desk.positions.Load(symbol.Symbol)
 
-						if ok && position != nil {
-							position.onTicker(tickerData)
+						if ok && found != nil {
+							position, ok := found.(*Position)
 
-							if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
-								errnie.Error(observer.ObserveMark(position.MarkFeedback(tickerData.Timestamp)))
+							if ok && position != nil {
+								position.onTicker(ticker)
+
+								if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
+									errnie.Error(observer.ObserveMark(position.MarkFeedback(ticker.Timestamp)))
+								}
 							}
 						}
 					}
-				}
+
+					return true
+				})
 
 				if desk.ObserveModule != nil {
 					desk.ObserveModule("desk", time.Since(started))

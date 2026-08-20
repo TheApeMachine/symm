@@ -1,10 +1,13 @@
 package trader
 
 import (
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/theapemachine/symm/kraken"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestDiagnosticsObserve(t *testing.T) {
@@ -121,6 +124,69 @@ func TestDiagnosticsObserve(t *testing.T) {
 			status := diagnostics.passStatus(time.Now())
 			So(status.State, ShouldEqual, "blocked")
 			So(status.InFlightNs, ShouldBeGreaterThan, int64(blockedPassThreshold))
+		})
+	})
+
+	Convey("Queue snapshots aggregate per-symbol buffers across the universe", t, func() {
+		thesis := &types.Thesis{
+			Symbols: &sync.Map{},
+		}
+		tickerA := types.NewSymbol("AAA")
+		tickerB := types.NewSymbol("BBB")
+
+		thesis.Symbols.Store("AAA", tickerA)
+		thesis.Symbols.Store("BBB", tickerB)
+
+		diagnostics := &Diagnostics{
+			started: time.Now(),
+		}
+
+		crypto := &Crypto{
+			thesis:      thesis,
+			diagnostics: diagnostics,
+			desk:        nil,
+		}
+
+		Convey("Reports zero depths when no items have been written", func() {
+			queues := crypto.queueSnapshots()
+			So(queues, ShouldNotBeEmpty)
+			So(len(queues), ShouldEqual, 15)
+
+			Convey("Lists every pipeline wire static writer/reader annotation", func() {
+				found := false
+				for _, q := range queues {
+					if q.Name == "ingress.tickers" {
+						found = true
+						So(q.Kind, ShouldEqual, "ingress")
+						So(q.Readers, ShouldContain, "correlation")
+						So(q.Readers, ShouldContain, "pumpdump")
+					}
+
+					if q.Name == "measurements" {
+						So(q.Kind, ShouldEqual, "rail")
+						So(q.Readers, ShouldContain, "category")
+						So(q.Readers, ShouldContain, "graph")
+					}
+				}
+				So(found, ShouldBeTrue)
+			})
+		})
+
+		Convey("Sums depths across every live symbol", func() {
+			tickerA.AppendTicker(kraken.TickerData{})
+			tickerB.AppendTicker(kraken.TickerData{})
+
+			queues := crypto.queueSnapshots()
+
+			var tickersQueue QueueSnapshot
+			for _, q := range queues {
+				if q.Name == "ingress.tickers" {
+					tickersQueue = q
+				}
+			}
+
+			So(tickersQueue.Depth, ShouldEqual, 2)
+			So(tickersQueue.Symbols, ShouldEqual, 2)
 		})
 	})
 }

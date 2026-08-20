@@ -27,6 +27,7 @@ const (
 	SourceTrader      SourceType = "trader"
 	SourceEquity      SourceType = "equity"
 	SourceRegulator   SourceType = "regulator"
+	SourceDesk        SourceType = "desk"
 )
 
 /*

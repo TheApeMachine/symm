@@ -23,7 +23,6 @@ Conn is the internal websocket and REST transport.
 */
 type Conn interface {
 	Status() types.Status
-	Subscribe(string, *types.Subscription[any]) *types.Subscription[any]
 	Books() *sync.Map
 	Book(string, func(*book.Book))
 	SubInstrument(types.Subscription[any])
@@ -119,17 +118,6 @@ Normalizer returns the internal [spot.Normalizer] used to normalize asset names.
 */
 func (api *API) Normalizer() *spot.Normalizer {
 	return api.normalizer
-}
-
-func (api *API) Subscribe(
-	key string, subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	if key == "executions" || key == "add_order" || key == "level3" || key == "book_updates" {
-		return api.private.Subscribe(key, subscription)
-	}
-
-	return api.public.Subscribe(key, subscription)
-
 }
 
 func (api *API) Books() *sync.Map                                 { return api.private.Books() }

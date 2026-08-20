@@ -3,6 +3,7 @@ package resonance
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -43,7 +44,6 @@ type Solver struct {
 	references    *sync.Map
 	pace          float64
 	ui            *transport.MapReduce[[]byte]
-	subscriptions map[string]*types.Subscription[any]
 	thesis        *types.Thesis
 
 	// ObserveModule is an optional diagnostics hook reporting per-step coder
@@ -80,25 +80,13 @@ func NewSolver(
 		ctx:           ctx,
 		cancel:        cancel,
 		detectors:     &sync.Map{},
-		queues:        &sync.Map{},
 		schemas:       &sync.Map{},
 		standardizers: &sync.Map{},
 		states:        &sync.Map{},
 		references:    &sync.Map{},
 		pace:          pace,
 		ui:            ui,
-		subscriptions: map[string]*types.Subscription[any]{
-			"ticker": api.Subscribe(
-				"ticker", types.NewSubscription[any](),
-			),
-			"trade": api.Subscribe(
-				"trade", types.NewSubscription[any](),
-			),
-			"level3": api.Subscribe(
-				"level3", types.NewSubscription[any](),
-			),
-		},
-		thesis: thesis,
+		thesis:        thesis,
 	}
 
 	solver.run()
@@ -116,48 +104,46 @@ func (solver *Solver) Status() types.Status {
 func (solver *Solver) run() {
 	go func() {
 		for {
-			drained := false
-
-			solver.queues.Range(func(_ any, value any) bool {
-				queue := value.(*lf.Queue[Event])
-
-				for {
-					event, ok := queue.Dequeue()
-					if !ok {
-						break
-					}
-
-					drained = true
-
-					if err := solver.Update(
-						event.symbol,
-						event.at,
-						event.features,
-					); err != nil {
-						errnie.Error(errnie.Err(
-							errnie.Internal,
-							"resonance: detector update failed",
-							err,
-						))
-					}
-				}
-
-				return true
-			})
-
 			select {
 			case <-solver.ctx.Done():
 				return
-			case ticker := <-solver.subscriptions["ticker"].Channel:
-				solver.onTicker(ticker)
-			case trade := <-solver.subscriptions["trade"].Channel:
-				solver.onTrade(trade)
-			case level3 := <-solver.subscriptions["level3"].Channel:
-				solver.onLevel3(level3.(kraken.Level3Data))
 			default:
-				if !drained {
-					time.Sleep(idleRest)
-				}
+				solver.thesis.Symbols.Range(func(_ any, value any) bool {
+					symbol, ok := value.(*types.Symbol)
+
+					if !ok || symbol == nil || symbol.HasTickers() == false {
+						runtime.Gosched()
+						return true
+					}
+
+					for ticker := range symbol.MarketTickers(types.SourceResonance) {
+						if err := solver.Update(
+							ticker.Symbol,
+							ticker.Timestamp,
+							[]float64{
+								ticker.Ask.Float64(),
+								ticker.Bid.Float64(),
+								ticker.AskQty,
+								ticker.BidQty,
+								ticker.Change.Float64(),
+								ticker.ChangePct,
+								ticker.High.Float64(),
+								ticker.Low.Float64(),
+								ticker.Last.Float64(),
+								ticker.Volume,
+								ticker.Vwap,
+							},
+						); err != nil {
+							errnie.Error(errnie.Err(
+								errnie.Internal,
+								"resonance: detector update failed",
+								err,
+							))
+						}
+					}
+
+					return true
+				})
 			}
 		}
 	}()

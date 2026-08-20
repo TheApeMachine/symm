@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
@@ -171,8 +172,26 @@ type StreamDiagnostics struct {
 	StartedNs int64           `json:"started_ns"`
 	Stages    []ClockSnapshot `json:"stages"`
 	Hops      []HopSnapshot   `json:"hops"`
+	Queues    []QueueSnapshot `json:"queues"`
 	Errors    []ErrorSnapshot `json:"errors"`
 	Pass      PassStatus      `json:"pass"`
+}
+
+/*
+QueueSnapshot is one observable queue's live pressure read on the diagnostics
+wire. It names the stages that write into and read from the queue, its current
+depth, and its capacity budget when bounded. Kind groups the queue by what it
+carries so the diagram can color lanes semantically.
+*/
+type QueueSnapshot struct {
+	Name      string   `json:"name"`
+	Kind      string   `json:"kind"`
+	Writers   []string `json:"writers"`
+	Readers   []string `json:"readers"`
+	Depth     uint64   `json:"depth"`
+	Cap       uint64   `json:"cap"`
+	HighWater uint64   `json:"high_water"`
+	Symbols   uint64   `json:"symbols"`
 }
 
 /*
@@ -186,6 +205,8 @@ type Diagnostics struct {
 
 	mutex sync.RWMutex
 	errs  []ErrorSnapshot
+
+	watermarks sync.Map // name → *atomic.Uint64 peak depth
 
 	passMu        sync.Mutex
 	passStart     time.Time
@@ -374,8 +395,198 @@ func (crypto *Crypto) Diagnostics() StreamDiagnostics {
 		StartedNs: crypto.diagnostics.started.UnixNano(),
 		Stages:    crypto.diagnostics.stageSnapshots(),
 		Hops:      crypto.diagnostics.hopSnapshots(),
+		Queues:    crypto.queueSnapshots(),
 		Errors:    crypto.diagnostics.errorSnapshots(),
 		Pass:      crypto.diagnostics.passStatus(time.Now()),
+	}
+}
+
+/*
+queueSnapshots aggregates every observable stage buffer across the live symbol
+universe into one pipeline-level pressure read. Per-symbol depths sum into each
+logical queue so the diagram reports system-wide backpressure rather than a
+per-ticker count. The writer/reader lists are static pipeline knowledge; the
+depth values are read live on every heartbeat.
+*/
+func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
+	if crypto == nil || crypto.thesis == nil {
+		return []QueueSnapshot{}
+	}
+
+	// Aggregate every per-symbol stage buffer depth once per heartbeat.
+	perSymbol := make(map[string]uint64)
+	symbolCount := make(map[string]uint64)
+
+	crypto.thesis.Symbols.Range(func(_ any, value any) bool {
+		symbol, ok := value.(*types.Symbol)
+
+		if !ok || symbol == nil {
+			return true
+		}
+
+		for key, depth := range symbol.QueueDepths() {
+			symbolCount[key]++
+			perSymbol[key] += depth
+		}
+
+		return true
+	})
+
+	collect := func(name string, kind string, writers []string, readers []string, key string) QueueSnapshot {
+		depth := perSymbol[key]
+		return QueueSnapshot{
+			Name:      name,
+			Kind:      kind,
+			Writers:   writers,
+			Readers:   readers,
+			Depth:     depth,
+			Cap:       0, // per-symbol stage buffers are unbounded
+			HighWater: crypto.diagnostics.highWater(name, depth),
+			Symbols:   symbolCount[key],
+		}
+	}
+
+	// Shared transport depths are not per-symbol, so they are read directly.
+	var uiDashDepth uint64
+	var uiManifoldDepth uint64
+
+	if crypto.ui != nil {
+		uiDashDepth = crypto.ui.Length()
+	}
+
+	if crypto.manifold != nil {
+		uiManifoldDepth = crypto.manifold.Length()
+	}
+
+	// Broker subscription channels are bounded, so their cap is the buffer size.
+	brokerCap := uint64(1024)
+
+	if viper.GetInt("system.actor.buffer") > 0 {
+		brokerCap = uint64(viper.GetInt("system.actor.buffer"))
+	}
+
+	var tickerDepth uint64
+	var executionsDepth uint64
+
+	if crypto.desk != nil {
+		tickerDepth = uint64(crypto.desk.QueueDepth("ticker"))
+		executionsDepth = uint64(crypto.desk.QueueDepth("executions"))
+	}
+
+	return []QueueSnapshot{
+		collect(
+			"ingress.tickers", "ingress", []string{"ingress"},
+			[]string{"correlation", "cvd", "leadlag", "liquidity", "pumpdump", "sentiment"},
+			"tickers",
+		),
+		collect(
+			"ingress.trades", "ingress", []string{"ingress"},
+			[]string{"cvd", "depthflow", "exhaustion", "hawkes", "pumpdump", "toxicity"},
+			"trades",
+		),
+		collect(
+			"ingress.level3", "ingress", []string{"ingress"},
+			[]string{"toxicity", "pumpdump"},
+			"level3",
+		),
+		collect(
+			"measurements", "rail",
+			[]string{"correlation", "cvd", "depthflow", "exhaustion", "hawkes", "leadlag", "liquidity", "pumpdump", "sentiment", "toxicity"},
+			[]string{"category", "manifold", "graph"},
+			"measurements",
+		),
+		collect(
+			"derived.category", "derived", []string{"category"},
+			[]string{"graph", "cognition"},
+			"categories",
+		),
+		collect(
+			"derived.causal", "derived", []string{"causal"},
+			[]string{"graph", "causal"},
+			"causal",
+		),
+		collect(
+			"derived.cognition", "derived", []string{"cognition"},
+			[]string{"graph"},
+			"cognition",
+		),
+		collect(
+			"derived.graph", "derived", []string{"graph"},
+			[]string{"planner", "graph"},
+			"graphs",
+		),
+		collect(
+			"derived.resonance", "derived", []string{"resonance"},
+			[]string{"causal", "graph"},
+			"resonance",
+		),
+		collect(
+			"decisions", "strategy", []string{"planner"},
+			[]string{"audit"},
+			"decisions",
+		),
+		collect(
+			"positions", "strategy", []string{"desk"},
+			[]string{"audit"},
+			"positions",
+		),
+		{
+			Name:      "ui.dashboard",
+			Kind:      "ui",
+			Writers:   []string{"category", "manifold", "causal", "cognition", "graph", "resonance", "planner", "desk"},
+			Readers:   []string{"hub"},
+			Depth:     uiDashDepth,
+			Cap:       0,
+			HighWater: crypto.diagnostics.highWater("ui.dashboard", uiDashDepth),
+		},
+		{
+			Name:      "ui.manifold",
+			Kind:      "ui",
+			Writers:   []string{"manifold", "resonance", "diagnostics"},
+			Readers:   []string{"webrtc-hub"},
+			Depth:     uiManifoldDepth,
+			Cap:       0,
+			HighWater: crypto.diagnostics.highWater("ui.manifold", uiManifoldDepth),
+		},
+		{
+			Name:      "desk.ticker",
+			Kind:      "broker",
+			Writers:   []string{"websocket-api"},
+			Readers:   []string{"desk"},
+			Depth:     tickerDepth,
+			Cap:       brokerCap,
+			HighWater: crypto.diagnostics.highWater("desk.ticker", tickerDepth),
+		},
+		{
+			Name:      "desk.executions",
+			Kind:      "broker",
+			Writers:   []string{"websocket-api"},
+			Readers:   []string{"desk"},
+			Depth:     executionsDepth,
+			Cap:       brokerCap,
+			HighWater: crypto.diagnostics.highWater("desk.executions", executionsDepth),
+		},
+	}
+}
+
+/*
+highWater tracks the running peak depth observed for a named queue. Each call
+updates the peak if the new depth is higher and returns the stored peak.
+*/
+func (diagnostics *Diagnostics) highWater(name string, depth uint64) uint64 {
+	if diagnostics == nil {
+		return depth
+	}
+
+	entry, _ := diagnostics.watermarks.LoadOrStore(name, &atomic.Uint64{})
+	watermark := entry.(*atomic.Uint64)
+
+	for {
+		current := watermark.Load()
+
+		if depth <= current || watermark.CompareAndSwap(current, depth) {
+			return watermark.Load()
+		}
 	}
 }
 

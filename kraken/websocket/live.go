@@ -152,7 +152,7 @@ func NewWithClient(
 		subscribers: &sync.Map{},
 		callbacks:   &sync.Map{},
 		public:      make(map[string][][]string),
-		paper:       NewPaper(ctx, NewSimulator()),
+		paper:       NewPaper(ctx, NewSimulator(), thesis),
 		model:       viper.GetViper().GetString("trading.model"),
 		quote:       viper.GetViper().GetString("market.quote_currency"),
 		captureName: captureName,
@@ -253,22 +253,18 @@ func NewWithClient(
 			}
 		}
 
-		// Market data is written straight onto the thesis symbol queues here,
-		// removing the extra Subscribe-fan-out hop the streaming trader used.
-		if live.thesis != nil {
-			switch entity := out.(type) {
-			case *kraken.Ticker:
-				for index := range entity.Data {
-					live.thesis.Symbol(entity.Data[index].Symbol).AppendTicker(entity.Data[index])
-				}
-			case *kraken.Trade:
-				for index := range entity.Data {
-					live.thesis.Symbol(entity.Data[index].Symbol).AppendTrade(entity.Data[index])
-				}
-			case *kraken.Level3:
-				for index := range entity.Data {
-					live.thesis.Symbol(entity.Data[index].Symbol).AppendLevel3(entity.Data[index])
-				}
+		switch entity := out.(type) {
+		case *kraken.Ticker:
+			for index := range entity.Data {
+				live.thesis.Symbol(entity.Data[index].Symbol).AppendTicker(entity.Data[index])
+			}
+		case *kraken.Trade:
+			for index := range entity.Data {
+				live.thesis.Symbol(entity.Data[index].Symbol).AppendTrade(entity.Data[index])
+			}
+		case *kraken.Level3:
+			for index := range entity.Data {
+				live.thesis.Symbol(entity.Data[index].Symbol).AppendLevel3(entity.Data[index])
 			}
 		}
 
@@ -468,23 +464,6 @@ func (live *Live) subscribeAccount(token string) error {
 	}
 
 	return live.Write(kraken.NewExecutionSubscription(token))
-}
-
-func (live *Live) Subscribe(
-	key string, subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	errnie.Info(fmt.Sprintf("websocket: new subscriber %s", key))
-
-	if live.model != "real" &&
-		(key == "balances" || key == "executions" || key == "add_order") {
-		return live.paper.Subscribe(key, subscription)
-	}
-
-	registered := utils.Subscribe(
-		live.subscribers, key, subscription,
-	)
-
-	return registered
 }
 
 func (live *Live) Client() *spot.WebSocket {

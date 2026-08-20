@@ -343,26 +343,6 @@ func TestSubscribeAccount(t *testing.T) {
 	})
 }
 
-func TestLiveSubscribe(t *testing.T) {
-	Convey("Given a paper-mode private transport", t, func() {
-		paper := NewPaper(t.Context(), NewLatencySimulator(t.Context(), nil, 1))
-		live := &Live{
-			model:       "paper",
-			paper:       paper,
-			subscribers: &sync.Map{},
-		}
-		subscription := live.Subscribe("executions", &types.Subscription[any]{
-			Channel: make(chan any, 1),
-		})
-		execution := &kraken.Execution{Channel: "executions", Type: "update"}
-
-		Convey("A paper fill should reach the live execution subscriber", func() {
-			paper.publish("executions", execution)
-			So(<-subscription.Channel, ShouldEqual, execution)
-		})
-	})
-}
-
 func BenchmarkLiveBook(b *testing.B) {
 	managed := newBookFixture(b, "BTC/USD", 0, 0)
 	managed.Create("BTC/USD", 32)

@@ -34,6 +34,7 @@ type Paper struct {
 	subMu       sync.Mutex
 	subscribers map[string][]*types.Subscription[any]
 	books       *spot.BookManager
+	thesis      *types.Thesis
 }
 
 /*
@@ -42,14 +43,15 @@ NewPaper opens the paper spot transport with explicit private subscriptions.
 func NewPaper(
 	ctx context.Context,
 	simulator *Simulator,
+	thesis *types.Thesis,
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
 	paper := &Paper{
-		ctx:         ctx,
-		cancel:      cancel,
-		simulator:   simulator,
-		subscribers: map[string][]*types.Subscription[any]{},
+		ctx:       ctx,
+		cancel:    cancel,
+		simulator: simulator,
+		thesis:    thesis,
 	}
 
 	return paper
@@ -102,20 +104,6 @@ func (paper *Paper) Balances() (map[string]*decimal.Decimal, error) {
 	}
 
 	return kraken.NewPaperBalance(raw).Totals(), nil
-}
-
-/*
-Subscribe registers one consumer for a named paper channel.
-*/
-func (paper *Paper) Subscribe(
-	key string,
-	subscription *types.Subscription[any],
-) *types.Subscription[any] {
-	paper.subMu.Lock()
-	paper.subscribers[key] = append(paper.subscribers[key], subscription)
-	paper.subMu.Unlock()
-
-	return subscription
 }
 
 func (paper *Paper) SubInstrument(types.Subscription[any]) {}
@@ -639,11 +627,26 @@ func (paper *Paper) placeOrder(
 }
 
 func (paper *Paper) publish(channel string, message any) {
-	paper.subMu.Lock()
-	subscribers := append([]*types.Subscription[any](nil), paper.subscribers[channel]...)
-	paper.subMu.Unlock()
+	switch channel {
+	case "balances":
+		paper.subMu.Lock()
+		defer paper.subMu.Unlock()
 
-	for _, subscriber := range subscribers {
-		subscriber.Send(message)
+		for _, subscription := range paper.subscribers[channel] {
+			subscription.Send(message)
+		}
+	case "executions":
+		paper.thesis.Symbol(
+			message.(kraken.ExecutionData).Symbol,
+		).AppendExecution(
+			message.(kraken.ExecutionData),
+		)
+	case "add_order":
+		paper.subMu.Lock()
+		defer paper.subMu.Unlock()
+
+		for _, subscription := range paper.subscribers[channel] {
+			subscription.Send(message)
+		}
 	}
 }

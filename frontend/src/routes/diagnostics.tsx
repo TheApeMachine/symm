@@ -1,17 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-	type ReactNode,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
 	ClockSnapshot,
 	DiagnosticsFrame,
 	ErrorSnapshot,
 	HopSnapshot,
 	PassStatus,
+	QueueSnapshot,
 } from "#/collections/types";
 import { DiagnosticsWebRTCFeed } from "#/components/dashboard/diagnostics-transport";
 
@@ -21,6 +16,7 @@ const DEFAULT_FRAME: DiagnosticsFrame = {
 	started_ns: 0,
 	stages: [],
 	hops: [],
+	queues: [],
 	errors: [],
 	pass: { state: "idle" },
 };
@@ -92,10 +88,22 @@ const LANES: Array<{
 			"toxicity",
 		],
 	},
-	{ label: "logic · G1", hint: "dimensionality + manifold", nodes: ["category", "manifold"] },
-	{ label: "logic · G2", hint: "causal + cognition", nodes: ["causal", "cognition"] },
+	{
+		label: "logic · G1",
+		hint: "dimensionality + manifold",
+		nodes: ["category", "manifold"],
+	},
+	{
+		label: "logic · G2",
+		hint: "causal + cognition",
+		nodes: ["causal", "cognition"],
+	},
 	{ label: "logic · G3", hint: "graph assembly", nodes: ["graph"] },
-	{ label: "strategy", hint: "search · size · send", nodes: ["planner", "mcts", "allocation"] },
+	{
+		label: "strategy",
+		hint: "search · size · send",
+		nodes: ["planner", "mcts", "allocation"],
+	},
 	{ label: "execution", hint: "broker desk", nodes: ["desk"] },
 ];
 
@@ -114,10 +122,10 @@ const EDGES: Array<{ from: string; to: string }> = [
 	{ from: "allocation", to: "desk" },
 ];
 
-const NODE_W = 150;
-const NODE_H = 74;
-const NODE_GAP = 18;
-const COLUMN_GAP = 210;
+const NODE_W = 160;
+const NODE_H = 96;
+const NODE_GAP = 16;
+const COLUMN_GAP = 200;
 const RAIL_TOP_PAD = 40;
 
 type Point = { x: number; y: number };
@@ -142,7 +150,7 @@ const describe = (): Record<string, Layout> => {
 
 		const total = count * NODE_H + (count - 1) * NODE_GAP;
 		const top = yCenter - total / 2;
-		const x = (column * COLUMN_GAP) + NODE_W / 2;
+		const x = column * COLUMN_GAP + NODE_W / 2;
 
 		lane.nodes.forEach((name, index) => {
 			positions[name] = {
@@ -153,9 +161,9 @@ const describe = (): Record<string, Layout> => {
 	});
 
 	// The measurements stage is the signals rail's bounding box.
-	if (positions["correlation"]) {
-		positions["measurements"] = {
-			x: (1 * COLUMN_GAP) + NODE_W / 2,
+	if (positions.correlation) {
+		positions.measurements = {
+			x: 1 * COLUMN_GAP + NODE_W / 2,
 			y: yCenter,
 		};
 	}
@@ -183,10 +191,7 @@ const formatNanos = (nanos: number | undefined): string => {
 	return `${(nanos / 1_000_000_000).toFixed(2)}s`;
 };
 
-const averageNanos = (clock: {
-	count?: number;
-	total_ns?: number;
-}): number => {
+const averageNanos = (clock: { count?: number; total_ns?: number }): number => {
 	if ((clock.count ?? 0) <= 0) {
 		return 0;
 	}
@@ -197,16 +202,18 @@ const averageNanos = (clock: {
 const stageMap = (frame: DiagnosticsFrame): Map<string, ClockSnapshot> =>
 	new Map((frame.stages ?? []).map((stage) => [stage.name, stage]));
 
+const queueMap = (frame: DiagnosticsFrame): Map<string, QueueSnapshot> =>
+	new Map((frame.queues ?? []).map((queue) => [queue.name, queue]));
+
 const hopBetween = (
 	hops: HopSnapshot[],
 	from: string,
 	to: string,
-): HopSnapshot | undefined => hops.find((hop) => hop.from === from && hop.to === to);
+): HopSnapshot | undefined =>
+	hops.find((hop) => hop.from === from && hop.to === to);
 
-const errorCount = (
-	errors: ErrorSnapshot[] = [],
-	source: string,
-): number => errors.filter((err) => err.source === source).length;
+const errorCount = (errors: ErrorSnapshot[] = [], source: string): number =>
+	errors.filter((err) => err.source === source).length;
 
 const formatAge = (atNs: number, lastAtNs: number | undefined): string => {
 	if (lastAtNs === undefined || lastAtNs <= 0) {
@@ -254,11 +261,94 @@ const activityOf = (
 	return "live";
 };
 
-const ACTIVITY_TONE: Record<Activity, { dot: string; ring: string; label: string }> = {
-	live: { dot: "bg-(--up)", ring: "shadow-[0_0_12px_rgba(34,197,94,0.45)]", label: "live" },
+const ACTIVITY_TONE: Record<
+	Activity,
+	{ dot: string; ring: string; label: string }
+> = {
+	live: {
+		dot: "bg-(--up)",
+		ring: "shadow-[0_0_12px_rgba(34,197,94,0.45)]",
+		label: "live",
+	},
 	stale: { dot: "bg-(--warn)", ring: "", label: "stale" },
-	error: { dot: "bg-(--down)", ring: "shadow-[0_0_14px_rgba(239,68,68,0.55)]", label: "error" },
+	error: {
+		dot: "bg-(--down)",
+		ring: "shadow-[0_0_14px_rgba(239,68,68,0.55)]",
+		label: "error",
+	},
 };
+
+/*
+COMPONENT_QUEUES maps every pipeline component to the queues it writes to and
+reads from. This is the golden source of the "who is connected to what" view.
+*/
+const COMPONENT_QUEUES: Record<string, { writes: string[]; reads: string[] }> =
+	{
+		crypto: {
+			writes: ["ingress.tickers", "ingress.trades", "ingress.level3"],
+			reads: ["ui.manifold"],
+		},
+		correlation: { writes: ["measurements"], reads: ["ingress.tickers"] },
+		cvd: {
+			writes: ["measurements"],
+			reads: ["ingress.tickers", "ingress.trades"],
+		},
+		depthflow: { writes: ["measurements"], reads: ["ingress.trades"] },
+		exhaustion: { writes: ["measurements"], reads: ["ingress.trades"] },
+		hawkes: { writes: ["measurements"], reads: ["ingress.trades"] },
+		leadlag: { writes: ["measurements"], reads: ["ingress.tickers"] },
+		liquidity: { writes: ["measurements"], reads: ["ingress.tickers"] },
+		pumpdump: {
+			writes: ["measurements"],
+			reads: ["ingress.tickers", "ingress.trades", "ingress.level3"],
+		},
+		sentiment: { writes: ["measurements"], reads: ["ingress.tickers"] },
+		toxicity: {
+			writes: ["measurements"],
+			reads: ["ingress.trades", "ingress.level3"],
+		},
+		category: {
+			writes: ["derived.category", "ui.dashboard"],
+			reads: ["measurements"],
+		},
+		manifold: {
+			writes: ["ui.dashboard", "ui.manifold"],
+			reads: ["measurements"],
+		},
+		causal: {
+			writes: ["derived.causal", "ui.dashboard"],
+			reads: ["derived.causal", "derived.resonance", "measurements"],
+		},
+		cognition: {
+			writes: ["derived.cognition", "ui.dashboard"],
+			reads: ["derived.category", "measurements"],
+		},
+		graph: {
+			writes: ["derived.graph", "ui.dashboard"],
+			reads: [
+				"derived.category",
+				"derived.causal",
+				"derived.cognition",
+				"derived.resonance",
+				"measurements",
+			],
+		},
+		resonance: {
+			writes: ["derived.resonance", "ui.dashboard", "ui.manifold"],
+			reads: ["measurements"],
+		},
+		planner: {
+			writes: ["decisions", "ui.dashboard"],
+			reads: ["derived.graph"],
+		},
+		mcts: { writes: [], reads: ["derived.graph"] },
+		allocation: { writes: [], reads: ["derived.graph"] },
+		desk: {
+			writes: ["positions", "ui.dashboard"],
+			reads: ["desk.ticker", "desk.executions"],
+		},
+		measurements: { writes: [], reads: ["measurements"] },
+	};
 
 const NodeCard = ({
 	name,
@@ -266,16 +356,32 @@ const NodeCard = ({
 	activity,
 	atNs,
 	errors,
+	queues,
 }: {
 	name: string;
 	stage: ClockSnapshot | undefined;
 	activity: Activity;
 	atNs: number;
 	errors: ErrorSnapshot[];
+	queues: Map<string, QueueSnapshot>;
 }) => {
 	const tone = ACTIVITY_TONE[activity];
 	const errorBadges = errorCount(errors, name);
-	const mean = averageNanos(stage ?? { name, count: 0, total_ns: 0, last_ns: 0 });
+	const mean = averageNanos(
+		stage ?? { name, count: 0, total_ns: 0, last_ns: 0 },
+	);
+	const queueLinks = COMPONENT_QUEUES[name];
+
+	// Pending count for queues this component reads from → the items waiting on
+	// it right now.
+	const readDepth = (queueLinks?.reads ?? []).reduce(
+		(total, qName) => total + (queues.get(qName)?.depth ?? 0),
+		0,
+	);
+	const writeDepth = (queueLinks?.writes ?? []).reduce(
+		(total, qName) => total + (queues.get(qName)?.depth ?? 0),
+		0,
+	);
 
 	return (
 		<div
@@ -288,7 +394,7 @@ const NodeCard = ({
 						: "border-(--line2) bg-(--surface)"
 			} ${tone.ring}`}
 		>
-			<FlexRow className="items-center gap-1.5">
+			<div className="flex items-center gap-1.5">
 				<span className={`h-2 w-2 shrink-0 rounded-full ${tone.dot}`} />
 				<span className="truncate font-mono text-[10px] font-semibold uppercase tracking-wider text-(--f1)">
 					{MODULE_LABEL[name] ?? name}
@@ -298,50 +404,130 @@ const NodeCard = ({
 						{errorBadges}
 					</span>
 				) : null}
-			</FlexRow>
-			<FlexRow justify="between" className="items-baseline">
+			</div>
+
+			{/* Queue read/write presence bar */}
+			<div className="mt-1 flex items-center gap-2">
+				{readDepth > 0 ? (
+					<span className="flex h-3.5 min-w-5 items-center justify-center rounded-sm bg-(--info)/25 px-1 font-mono text-[8px] font-bold tabular-nums text-(--info)">
+						←{readDepth}
+					</span>
+				) : null}
+				{writeDepth > 0 ? (
+					<span className="flex h-3.5 min-w-5 items-center justify-center rounded-sm bg-(--acc)/25 px-1 font-mono text-[8px] font-bold tabular-nums text-(--acc)">
+						{writeDepth}→
+					</span>
+				) : null}
+				{(queueLinks?.reads?.length ?? 0) + (queueLinks?.writes?.length ?? 0) >
+				0 ? (
+					<span className="ml-auto font-mono text-[8px] uppercase tracking-wide text-(--f4)">
+						{(queueLinks?.reads?.length ?? 0) +
+							(queueLinks?.writes?.length ?? 0)}{" "}
+						queues
+					</span>
+				) : null}
+			</div>
+
+			<div className="flex items-baseline justify-between">
 				<span className="font-mono text-[13px] font-semibold tabular-nums text-(--acc)">
 					{formatNanos(mean)}
 				</span>
-				<span className="font-mono text-[9px] uppercase text-(--f4)">
-					avg
-				</span>
-			</FlexRow>
-			<FlexRow justify="between" className="font-mono text-[8.5px] text-(--f4)">
+				<span className="font-mono text-[9px] uppercase text-(--f4)">avg</span>
+			</div>
+
+			<div className="flex items-baseline justify-between font-mono text-[8.5px] text-(--f4)">
 				<span>now {formatNanos(stage?.last_ns)}</span>
 				<span>age {formatAge(atNs, stage?.last_at_ns)}</span>
-			</FlexRow>
+			</div>
+
+			{/* Mini queue-duration sparkline */}
+			<div className="mt-0.5 flex h-1 gap-px">
+				{Array.from({ length: 12 }).map((_, i) => {
+					const active =
+						i <
+						Math.max(
+							1,
+							Math.min(11, Math.ceil((readDepth + writeDepth) * 1.5)),
+						);
+
+					return (
+						<div
+							key={`sparkline-bar-${i}-${name}`}
+							className={`flex-1 rounded-full ${active ? "bg-(--info)/40" : "bg-(--line)"}`}
+						/>
+					);
+				})}
+			</div>
 		</div>
 	);
 };
 
-const FlexRow = ({
-	children,
-	className = "",
-	justify,
+/*
+QueueDepthLabel draws the live count + a fill bar for one queue. Used both on
+the wiring edges and inside the queue inspector cards.
+*/
+const QueueDepthLabel = ({
+	queue,
+	orientation = "horizontal",
 }: {
-	children: ReactNode;
-	className?: string;
-	justify?: "between";
-}) => (
-	<div
-		className={`flex ${justify === "between" ? "justify-between" : ""} ${className}`}
-	>
-		{children}
-	</div>
-);
+	queue: QueueSnapshot;
+	orientation?: "horizontal" | "vertical";
+}) => {
+	const depth = queue.depth;
+	const cap = queue.cap ?? 0;
+	const peak = Math.max(queue.high_water, queue.cap ?? 0, 1);
+	const pct =
+		cap > 0
+			? Math.min(100, Math.round((depth / cap) * 100))
+			: Math.min(100, Math.round((depth / Math.max(peak, 1)) * 100));
+	const tone =
+		cap > 0 && depth >= cap
+			? "bg-(--down)"
+			: pct >= 70
+				? "bg-(--warn)"
+				: depth > 0
+					? "bg-(--info)"
+					: "bg-(--line2)";
+
+	return (
+		<div
+			className={`flex items-center gap-1.5 ${orientation === "vertical" ? "flex-col" : ""}`}
+		>
+			<span
+				className={`min-w-4 text-center font-mono text-[11px] font-bold tabular-nums ${
+					depth > 0 ? "text-(--f1)" : "text-(--f4)"
+				}`}
+				title={queue.name}
+			>
+				{depth > 999 ? `${(depth / 1000).toFixed(1)}k` : depth}
+			</span>
+			<div
+				className={`h-1 flex-1 overflow-hidden rounded-full bg-(--line) ${orientation === "vertical" ? "min-w-8" : ""}`}
+			>
+				<div
+					className={`h-full rounded-full transition-all duration-500 ${tone}`}
+					style={{ width: `${Math.max(pct, depth > 0 ? 4 : 0)}%` }}
+				/>
+			</div>
+			{cap > 0 ? (
+				<span className="font-mono text-[8px] text-(--f4)">/ {cap}</span>
+			) : null}
+		</div>
+	);
+};
 
 const EdgePath = ({
 	from,
 	to,
 	hop,
+	queue,
 }: {
 	from: Point;
 	to: Point;
 	hop: HopSnapshot | undefined;
+	queue: QueueSnapshot | undefined;
 }) => {
 	const mean = hop ? averageNanos(hop) : 0;
-	const last = hop?.last_ns ?? 0;
 	const highLatency = mean > 150_000_000 && (hop?.count ?? 0) > 0;
 	const startX = from.x + NODE_W / 2;
 	const startY = from.y + NODE_H / 2;
@@ -351,6 +537,7 @@ const EdgePath = ({
 	const curve = `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`;
 	const color = highLatency ? "var(--warn)" : "var(--line2)";
 	const dotted = (hop?.count ?? 0) === 0;
+	const hasQueue = queue !== undefined && queue.depth > 0;
 
 	return (
 		<g>
@@ -358,29 +545,57 @@ const EdgePath = ({
 				d={curve}
 				fill="none"
 				stroke={color}
-				strokeWidth={highLatency ? 2 : 1.5}
-				strokeDasharray={dotted ? "4 5" : undefined}
+				strokeWidth={highLatency ? 2 : hasQueue ? 2 : 1.5}
+				strokeDasharray={dotted && !hasQueue ? "4 5" : undefined}
 				markerEnd="url(#diag-arrow)"
+				className={hasQueue ? "animate-pulse" : ""}
 			/>
+			{queue !== undefined ? (
+				<g>
+					<foreignObject
+						x={midX - 38}
+						y={Math.min(startY, endY) - 24}
+						width={76}
+						height={26}
+					>
+						<div
+							className="overflow-hidden rounded-sm border px-1.5 py-0.5"
+							style={{
+								borderColor:
+									queue.depth > 0
+										? "color-mix(in srgb, var(--info) 40%, transparent)"
+										: "var(--line)",
+								background:
+									queue.depth > 0
+										? "color-mix(in srgb, var(--info) 8%, var(--surface))"
+										: "var(--sunken)",
+							}}
+						>
+							<div className="flex items-center justify-center font-mono text-[9px] font-bold tabular-nums">
+								{queue.depth > 0 ? (
+									<span className="text-(--info)">{queue.depth}</span>
+								) : (
+									<span className="text-(--f4)">0</span>
+								)}
+								<span className="ml-1 text-[7px] uppercase text-(--f4)">
+									{queue.kind}
+								</span>
+							</div>
+							<QueueDepthLabel queue={queue} />
+						</div>
+					</foreignObject>
+				</g>
+			) : null}
 			{(hop?.count ?? 0) > 0 ? (
 				<g>
 					<text
 						x={midX}
-						y={Math.min(startY, endY) - 6}
-						textAnchor="middle"
-						className="fill-(--f4) font-mono"
-						fontSize={9}
-					>
-						wire {formatNanos(mean)}
-					</text>
-					<text
-						x={midX}
-						y={Math.min(startY, endY) + 6}
+						y={Math.min(startY, endY) + 14}
 						textAnchor="middle"
 						className="fill-(--f4) font-mono"
 						fontSize={8}
 					>
-						last {formatNanos(last)}{last > 150_000_000 ? " · slow" : ""}
+						wire {formatNanos(mean)}
 					</text>
 				</g>
 			) : null}
@@ -396,6 +611,7 @@ const WiringDiagram = ({
 	fromNode: (name: string) => Layout;
 }) => {
 	const stages = stageMap(frame);
+	const queues = queueMap(frame);
 	const width = LANES.length * COLUMN_GAP;
 	const maxHeight =
 		Math.max(
@@ -412,9 +628,10 @@ const WiringDiagram = ({
 		<div className="overflow-x-auto">
 			<svg
 				viewBox={`0 0 ${width} ${maxHeight}`}
-				className="min-w-[820px]"
+				className="min-w-230"
 				style={{ height: `${maxHeight}px` }}
 			>
+				<title>Symm diagnostics wiring diagram</title>
 				<defs>
 					<marker
 						id="diag-arrow"
@@ -437,18 +654,25 @@ const WiringDiagram = ({
 						return null;
 					}
 
+					// Find the queue that visualises this hop, if any.
+					const queue = [...queues.values()].find(
+						(q) =>
+							q.writers.includes(edge.from) || q.readers.includes(edge.from),
+					);
+
 					return (
 						<EdgePath
 							key={`${edge.from}-${edge.to}`}
 							from={{ x: from.x, y: from.y }}
 							to={{ x: to.x, y: to.y }}
 							hop={hopBetween(frame.hops ?? [], edge.from, edge.to)}
+							queue={queue}
 						/>
 					);
 				})}
 
 				{LANES.map((lane, column) => (
-					<g key={column}>
+					<g key={`column-${column}-${lane.label}`}>
 						<text
 							x={column * COLUMN_GAP + NODE_W / 2}
 							y={10}
@@ -493,6 +717,7 @@ const WiringDiagram = ({
 										)}
 										atNs={frame.at_ns ?? 0}
 										errors={frame.errors ?? []}
+										queues={queues}
 									/>
 								</foreignObject>
 							);
@@ -558,8 +783,7 @@ const PASS_TONE: Record<
 /*
 PassBanner surfaces the measurement engine's pass state — the single most
 important discriminator between "nothing to do" (gated idle) and "stuck doing
-nothing" (a pass started but never completed). A blocked pass is the liar that
-hides behind every upstream stage sitting stale while planner/desk keep going.
+nothing" (a pass started but never completed).
 */
 const PassBanner = ({ pass }: { pass?: PassStatus }) => {
 	const state = pass?.state ?? "idle";
@@ -584,10 +808,14 @@ const PassBanner = ({ pass }: { pass?: PassStatus }) => {
 				: "measurement pass idle";
 
 	return (
-		<div className={`flex items-center gap-3 rounded-md border px-4 py-2.5 ${tone.bar}`}>
+		<div
+			className={`flex items-center gap-3 rounded-md border px-4 py-2.5 ${tone.bar}`}
+		>
 			<span className={`h-2.5 w-2.5 shrink-0 rounded-full ${tone.dot}`} />
 			<div className="min-w-0">
-				<div className={`font-mono text-[11px] font-semibold uppercase tracking-wider ${tone.text}`}>
+				<div
+					className={`font-mono text-[11px] font-semibold uppercase tracking-wider ${tone.text}`}
+				>
 					{label}
 				</div>
 				<div className="truncate font-mono text-[11px] text-(--f2)">
@@ -598,7 +826,174 @@ const PassBanner = ({ pass }: { pass?: PassStatus }) => {
 	);
 };
 
-export const DiagnosticsSurface = () => {
+/*
+QueueKindTone maps a queue category to a semantic color for chips/badges.
+*/
+const QUEUE_KIND_TONE: Record<string, { chip: string; label: string }> = {
+	ingress: {
+		chip: "border-(--info)/40 bg-(--info)/10 text-(--info)",
+		label: "inbound",
+	},
+	rail: {
+		chip: "border-(--up)/40 bg-(--up)/10 text-(--up)",
+		label: "measurement rail",
+	},
+	derived: {
+		chip: "border-(--acc)/40 bg-(--acc)/10 text-(--acc)",
+		label: "derived state",
+	},
+	strategy: {
+		chip: "border-(--warn)/40 bg-(--warn)/10 text-(--warn)",
+		label: "decision",
+	},
+	ui: {
+		chip: "border-(--brand)/40 bg-(--brand)/10 text-(--brand)",
+		label: "ui wire",
+	},
+	broker: {
+		chip: "border-(--down)/40 bg-(--down)/10 text-(--down)",
+		label: "broker",
+	},
+};
+
+/*
+QueueInspector renders everything the user asked for: each queue with its live
+depth, meter, and clearly labelled writer → reader chips.
+*/
+const QueueInspector = ({ queues }: { queues: QueueSnapshot[] }) => {
+	if (queues.length === 0) {
+		return (
+			<div className="rounded-md border border-(--line) bg-(--sunken) px-4 py-6 text-center font-mono text-[11px] uppercase tracking-wider text-(--f4)">
+				Waiting for the diagnostics WebRTC frame to report queue pressure…
+			</div>
+		);
+	}
+
+	const pendingTotal = queues.reduce((t, q) => t + q.depth, 0);
+
+	return (
+		<div className="rounded-md border border-(--line) bg-(--surface) p-4">
+			<div className="mb-3 flex items-baseline justify-between">
+				<div>
+					<div className="font-mono text-[10px] font-semibold uppercase tracking-wider text-(--f3)">
+						Queue pressure board
+					</div>
+					<div className="font-mono text-[9px] uppercase text-(--f4)">
+						live item count per queue · writer → reader linkage
+					</div>
+				</div>
+				<span className="font-mono text-[10px] font-bold tabular-nums text-(--info)">
+					{pendingTotal} pending
+				</span>
+			</div>
+			<div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+				{queues.map((queue) => {
+					const kindTone =
+						QUEUE_KIND_TONE[queue.kind] ?? QUEUE_KIND_TONE.derived;
+					const peak = Math.max(queue.high_water, queue.cap ?? 0, 1);
+					const pct =
+						queue.cap !== undefined && queue.cap > 0
+							? Math.min(100, Math.round((queue.depth / queue.cap) * 100))
+							: Math.min(
+									100,
+									Math.round((queue.depth / Math.max(peak, 1)) * 100),
+								);
+					const pressureTone =
+						queue.cap !== undefined && queue.cap > 0 && queue.depth >= queue.cap
+							? "text-(--down)"
+							: pct >= 70
+								? "text-(--warn)"
+								: queue.depth > 0
+									? "text-(--info)"
+									: "text-(--f4)";
+
+					return (
+						<div
+							key={queue.name}
+							className="rounded-md border border-(--line) bg-(--sunken) px-3 py-2.5 transition-colors hover:border-(--line2)"
+						>
+							<div className="flex items-center justify-between gap-2">
+								<div className="flex items-center gap-2">
+									<span className="font-mono text-[11px] font-bold uppercase tracking-wide text-(--f1)">
+										{queue.name}
+									</span>
+									<span
+										className={`rounded-sm border px-1 py-px font-mono text-[7.5px] uppercase tracking-wide ${kindTone.chip}`}
+									>
+										{kindTone.label}
+									</span>
+								</div>
+								<span
+									className={`font-mono text-[15px] font-bold tabular-nums leading-none ${pressureTone}`}
+								>
+									{queue.depth}
+								</span>
+							</div>
+
+							{/* Meter */}
+							<div className="mt-2">
+								<QueueDepthLabel queue={queue} />
+							</div>
+
+							<div className="mt-1.5 flex items-baseline justify-between font-mono text-[8.5px] uppercase tracking-wide text-(--f4)">
+								<span>
+									peak{" "}
+									<strong className="text-(--f3)">{queue.high_water}</strong>
+								</span>
+								{queue.cap !== undefined && queue.cap > 0 ? (
+									<span>
+										cap <strong className="text-(--f3)">{queue.cap}</strong>
+									</span>
+								) : queue.symbols !== undefined && queue.symbols > 0 ? (
+									<span>
+										<strong className="text-(--f3)">{queue.symbols} sym</strong>
+									</span>
+								) : null}
+							</div>
+
+							{/* Writer / reader chips */}
+							<div className="mt-2 space-y-1">
+								{queue.writers.length > 0 ? (
+									<div className="flex flex-wrap items-center gap-1">
+										<span className="font-mono text-[7.5px] uppercase tracking-wider text-(--f4)">
+											W
+										</span>
+										{queue.writers.map((writer) => (
+											<span
+												key={writer}
+												className="rounded-sm bg-(--acc)/15 px-1 py-px font-mono text-[8px] text-(--acc)"
+											>
+												{MODULE_LABEL[writer] ?? writer}
+											</span>
+										))}
+										<span className="font-mono text-[8px] text-(--f4)">→</span>
+									</div>
+								) : null}
+								{queue.readers.length > 0 ? (
+									<div className="flex flex-wrap items-center gap-1">
+										<span className="font-mono text-[7.5px] uppercase tracking-wider text-(--f4)">
+											R
+										</span>
+										{queue.readers.map((reader) => (
+											<span
+												key={reader}
+												className="rounded-sm bg-(--info)/15 px-1 py-px font-mono text-[8px] text-(--info)"
+											>
+												{MODULE_LABEL[reader] ?? reader}
+											</span>
+										))}
+									</div>
+								) : null}
+							</div>
+						</div>
+					);
+				})}
+			</div>
+		</div>
+	);
+};
+
+const DiagnosticsSurface = () => {
 	const [frame, setFrame] = useState<DiagnosticsFrame>(DEFAULT_FRAME);
 	const [state, setState] = useState<RTCPeerConnectionState | "connecting">(
 		"connecting",
@@ -624,12 +1019,21 @@ export const DiagnosticsSurface = () => {
 	const layout = useMemo(() => describe(), []);
 	const fromNode = (name: string): Layout => layout[name];
 	const atNs = frame.at_ns ?? 0;
-	const lifetime =
-		frame.started_ns && atNs > 0 ? atNs - frame.started_ns : 0;
+	const lifetime = frame.started_ns && atNs > 0 ? atNs - frame.started_ns : 0;
 	const liveCount =
 		frame.stages?.filter(
-			(stage) => activityOf(stage, atNs, frame.errors ?? [], stage.name) === "live",
+			(stage) =>
+				activityOf(stage, atNs, frame.errors ?? [], stage.name) === "live",
 		).length ?? 0;
+	const queues = frame.queues ?? [];
+	const pendingTotal = queues.reduce((t, q) => t + q.depth, 0);
+	const pressuredQueues = queues.filter((q) => {
+		if (q.cap !== undefined && q.cap > 0) {
+			return q.depth >= q.cap;
+		}
+
+		return q.depth > 0 && q.depth >= Math.max(q.high_water, 1);
+	}).length;
 
 	return (
 		<div className="flex h-full min-w-275 flex-col gap-4 overflow-auto bg-(--bg) p-5">
@@ -658,6 +1062,56 @@ export const DiagnosticsSurface = () => {
 				</div>
 			</header>
 
+			{/* Summary stat strip */}
+			<div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+				<div className="rounded-md border border-(--line) bg-(--surface) px-3 py-2.5">
+					<div className="text-[9px] font-mono uppercase tracking-wider text-(--f4)">
+						stages live
+					</div>
+					<div className="mt-0.5 font-mono text-lg font-bold tabular-nums text-(--up)">
+						{liveCount}
+						<span className="ml-1 text-[10px] font-normal text-(--f4)">
+							/ {frame.stages?.length ?? 0}
+						</span>
+					</div>
+				</div>
+				<div className="rounded-md border border-(--line) bg-(--surface) px-3 py-2.5">
+					<div className="text-[9px] font-mono uppercase tracking-wider text-(--f4)">
+						items pending
+					</div>
+					<div
+						className={`mt-0.5 font-mono text-lg font-bold tabular-nums ${
+							pendingTotal > 0 ? "text-(--info)" : "text-(--f1)"
+						}`}
+					>
+						{pendingTotal}
+					</div>
+				</div>
+				<div className="rounded-md border border-(--line) bg-(--surface) px-3 py-2.5">
+					<div className="text-[9px] font-mono uppercase tracking-wider text-(--f4)">
+						queues under pressure
+					</div>
+					<div
+						className={`mt-0.5 font-mono text-lg font-bold tabular-nums ${
+							pressuredQueues > 0 ? "text-(--warn)" : "text-(--f1)"
+						}`}
+					>
+						{pressuredQueues}
+						<span className="ml-1 text-[10px] font-normal text-(--f4)">
+							/ {queues.length}
+						</span>
+					</div>
+				</div>
+				<div className="rounded-md border border-(--line) bg-(--surface) px-3 py-2.5">
+					<div className="text-[9px] font-mono uppercase tracking-wider text-(--f4)">
+						uptime
+					</div>
+					<div className="mt-0.5 font-mono text-lg font-bold tabular-nums text-(--f1)">
+						{lifetime > 0 ? `${(lifetime / 1_000_000_000).toFixed(0)}s` : "—"}
+					</div>
+				</div>
+			</div>
+
 			<Warning errors={frame.errors ?? []} frame={frame} />
 
 			<PassBanner pass={frame.pass} />
@@ -676,8 +1130,19 @@ export const DiagnosticsSurface = () => {
 					<span className="h-px w-6 bg-(--line2)" /> wire latency
 				</span>
 				<span className="flex items-center gap-1.5">
-					<span className="h-px w-6 border-t border-dashed border-(--line2)" />
-					unmeasured hop
+					<span className="h-1.5 w-3 rounded-full bg-(--info)/40" /> queue depth
+				</span>
+				<span className="flex items-center gap-1.5">
+					<span className="rounded-sm bg-(--acc)/15 px-1 font-mono text-[8px] text-(--acc)">
+						W
+					</span>
+					writer
+				</span>
+				<span className="flex items-center gap-1.5">
+					<span className="rounded-sm bg-(--info)/15 px-1 font-mono text-[8px] text-(--info)">
+						R
+					</span>
+					reader
 				</span>
 			</div>
 
@@ -685,18 +1150,20 @@ export const DiagnosticsSurface = () => {
 				<div className="mb-3 flex items-baseline justify-between">
 					<div>
 						<div className="font-mono text-[10px] font-semibold uppercase tracking-wider text-(--f3)">
-							Wiring map
+							Pipeline wiring map
 						</div>
 						<div className="font-mono text-[9px] uppercase text-(--f4)">
-							node = mean/iteration · now/age = current wall-clock · edge = wire latency
+							node = work time · edge = wire latency · badge = live queue count
 						</div>
 					</div>
 					<span className="font-mono text-[9px] uppercase text-(--f4)">
-						up {lifetime > 0 ? `${(lifetime / 1_000_000_000).toFixed(0)}s` : "—"}
+						{pendingTotal} items in queues
 					</span>
 				</div>
 				<WiringDiagram frame={frame} fromNode={fromNode} />
 			</div>
+
+			<QueueInspector queues={queues} />
 		</div>
 	);
 };
