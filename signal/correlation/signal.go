@@ -100,15 +100,20 @@ func (signal *Signal) consume() {
 				}
 
 				ready, _ := output.Get(nmcorrelation.SymbolReady)
+				separation := 0.0
+				measured := reduced && ready != 0
 
-				if !reduced || ready == 0 {
-					continue
+				if measured {
+					separation, _ = output.Get(algo.SymbolHypothesisSeparation)
 				}
 
 				symbol.AppendMeasurement(signal.measurement(
 					symbol.Symbol,
 					ticker.Timestamp,
 					output,
+					measured,
+					separation,
+					signal.support(symbol.Symbol),
 				))
 			}
 		}

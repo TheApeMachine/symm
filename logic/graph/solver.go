@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
@@ -30,8 +31,9 @@ type Solver struct {
 	recorder     *audit.Recorder
 	measurements *measurementCompiler
 	ui           *transport.MapReduce[*types.UIFrame]
-	building     map[string]*types.Graph
+	building     sync.Map
 	work         *transport.Consumer[*types.Symbol]
+	pool         *types.SymbolPool
 }
 
 /*
@@ -47,7 +49,8 @@ func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[*types.UIFrame], re
 		recorder:     recorder,
 		measurements: newMeasurementCompiler(),
 		ui:           ui,
-		building:     make(map[string]*types.Graph),
+		building:     sync.Map{},
+		pool:         types.NewSymbolPool(types.ShardWorkers()),
 	}
 	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
 	thesis.Work(types.SourceGraph).Register(solver.work)
@@ -72,6 +75,10 @@ func (solver *Solver) consume() {
 
 	go func() {
 		defer func() {
+			if err := solver.pool.Error(); err != nil {
+				solver.err = err
+			}
+
 			solver.thesis.Fail(solver.err)
 		}()
 		for queued := range solver.thesis.Work(types.SourceGraph).Drain(
@@ -79,7 +86,7 @@ func (solver *Solver) consume() {
 		) {
 			select {
 			case <-solver.ctx.Done():
-				solver.err = solver.ctx.Err()
+				solver.pool.CaptureError(solver.ctx.Err())
 				return
 			default:
 			}
@@ -88,11 +95,13 @@ func (solver *Solver) consume() {
 				continue
 			}
 
-			solver.buildGraph(queued.Symbol, queued)
+			symbol := queued
 
-			if solver.err != nil {
-				return
-			}
+			solver.pool.Submit(symbol.Symbol, func() {
+				if err := solver.buildGraph(symbol.Symbol, symbol); err != nil {
+					solver.pool.CaptureError(err)
+				}
+			})
 		}
 	}()
 }
@@ -100,18 +109,20 @@ func (solver *Solver) consume() {
 /*
 buildGraph adds current upstream evidence to one in-progress graph. It
 publishes that graph once it is informed enough for planner search, then starts
-a fresh accumulation for the symbol.
+a fresh accumulation for the symbol. The in-progress registry is a sync.Map, so
+parallel symbol workers can load-or-store their own building graph while
+evidence compilation and publication run outside any lock.
 */
-func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
+func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error {
 	if symbol.Graphs.Length(symbol.GraphConsumers[types.GraphConsumerPlanner]) > 0 {
-		return
+		return nil
 	}
 
-	graph := solver.building[symbolName]
+	graph := types.NewGraph(solver.thesis.At)
+	stored, _ := solver.building.LoadOrStore(symbolName, graph)
 
-	if graph == nil {
-		graph = types.NewGraph(solver.thesis.At)
-		solver.building[symbolName] = graph
+	if existing, ok := stored.(*types.Graph); ok {
+		graph = existing
 	}
 
 	graph.At = solver.thesis.At
@@ -126,13 +137,11 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
 	)
 
 	if err != nil {
-		solver.err = errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"graph: failed to extract measurement nodes - "+err.Error(),
 			err,
 		))
-
-		return
 	}
 
 	solver.extractCategoryNodes(symbol, categories, graph)
@@ -140,65 +149,55 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
 	solver.extractResonanceNodes(symbol, graph)
 
 	if err := solver.extractCausalNodes(symbol, graph); err != nil {
-		solver.err = errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"graph: failed to extract causal nodes - "+err.Error(),
 			err,
 		))
-
-		return
 	}
 
 	solver.extractCognitionNodes(symbol, cognition, graph)
 
 	if len(graph.Nodes) == 0 {
-		return
+		return nil
 	}
 
 	if err := solver.measurements.addCategoryEdges(
 		categories, symbol.Symbol, graph, measurementIndex,
 	); err != nil {
-		solver.err = errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"graph: failed to relate measurements and categories - "+err.Error(),
 			err,
 		))
-
-		return
 	}
 
 	if err := solver.measurements.addLeadLagEdges(
 		symbol, graph, measurementIndex,
 	); err != nil {
-		solver.err = errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"graph: failed to relate lead-lag measurements - "+err.Error(),
 			err,
 		))
-
-		return
 	}
 
 	if err := solver.inferStructuralEdges(
 		symbol, categories, cognition, graph,
 	); err != nil {
-		solver.err = errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"graph: failed to infer structural edges - "+err.Error(),
 			err,
 		))
-
-		return
 	}
 
 	if err := solver.connectLongOpportunity(symbol, graph); err != nil {
-		solver.err = errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"graph: failed to connect long-opportunity hypothesis - "+err.Error(),
 			err,
 		))
-
-		return
 	}
 
 	if symbolName == types.Focus() {
@@ -209,11 +208,13 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
 	}
 
 	if !graph.ReadyForSearch() {
-		return
+		return nil
 	}
 
 	symbol.Graphs.Push(graph)
-	delete(solver.building, symbolName)
+	solver.building.Delete(symbolName)
+
+	return nil
 }
 
 /*
@@ -1271,5 +1272,10 @@ Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
 	solver.cancel()
+
+	if solver.pool != nil {
+		solver.pool.Close()
+	}
+
 	return nil
 }

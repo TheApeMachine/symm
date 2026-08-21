@@ -31,6 +31,7 @@ type Solver struct {
 	recorder   *audit.Recorder
 	ui         *transport.MapReduce[*types.UIFrame]
 	work       *transport.Consumer[*types.Symbol]
+	pool       *types.SymbolPool
 }
 
 /*
@@ -68,6 +69,7 @@ func NewSolver(
 		api:        api,
 		recorder:   recorder,
 		ui:         ui,
+		pool:       types.NewSymbolPool(types.ShardWorkers()),
 	}
 	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
 	thesis.Work(types.SourceCategory).Register(solver.work)
@@ -91,6 +93,10 @@ classified and forwarded inline.
 func (solver *Solver) consume() {
 	go func() {
 		defer func() {
+			if err := solver.pool.Error(); err != nil {
+				solver.err = err
+			}
+
 			solver.thesis.Fail(solver.err)
 		}()
 
@@ -99,7 +105,7 @@ func (solver *Solver) consume() {
 		) {
 			select {
 			case <-solver.ctx.Done():
-				solver.err = solver.ctx.Err()
+				solver.pool.CaptureError(solver.ctx.Err())
 				return
 			default:
 			}
@@ -108,37 +114,48 @@ func (solver *Solver) consume() {
 				continue
 			}
 
-			consumer := symbol.MeasurementConsumers[types.MeasurementConsumerCategory]
+			symbolName := symbol.Symbol
 
-			if symbol.Measurements.Length(consumer) == 0 {
-				continue
-			}
-
-			categories, measured, err := solver.classify(
-				symbol.Symbol,
-				symbol.MarketMeasurements(consumer),
-			)
-
-			if err != nil {
-				solver.err = errnie.Error(errnie.Err(
-					errnie.Internal,
-					"category: failed to classify symbol",
-					err,
-				).With("symbol", symbol.Symbol))
-				return
-			}
-
-			if !measured {
-				continue
-			}
-
-			for index := range categories {
-				categories[index].At = solver.thesis.At
-			}
-
-			symbol.Categories.Push(categories)
+			solver.pool.Submit(symbolName, func() {
+				if err := solver.consumeSymbol(symbol); err != nil {
+					solver.pool.CaptureError(errnie.Error(errnie.Err(
+						errnie.Internal,
+						"category: failed to classify symbol",
+						err,
+					).With("symbol", symbolName)))
+				}
+			})
 		}
 	}()
+}
+
+func (solver *Solver) consumeSymbol(symbol *types.Symbol) error {
+	consumer := symbol.MeasurementConsumers[types.MeasurementConsumerCategory]
+
+	if symbol.Measurements.Length(consumer) == 0 {
+		return nil
+	}
+
+	categories, measured, err := solver.classify(
+		symbol.Symbol,
+		symbol.MarketMeasurements(consumer),
+	)
+
+	if err != nil {
+		return err
+	}
+
+	if !measured {
+		return nil
+	}
+
+	for index := range categories {
+		categories[index].At = solver.thesis.At
+	}
+
+	symbol.Categories.Push(categories)
+
+	return nil
 }
 
 func (solver *Solver) classify(
@@ -285,5 +302,10 @@ resources of their own.
 */
 func (solver *Solver) Close() error {
 	solver.cancel()
+
+	if solver.pool != nil {
+		solver.pool.Close()
+	}
+
 	return nil
 }

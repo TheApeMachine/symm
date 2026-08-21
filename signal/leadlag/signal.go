@@ -116,6 +116,10 @@ func (signal *Signal) consume() {
 				}
 
 				if !hasAnchor || anchor == symbol.Symbol {
+					symbol.AppendMeasurement(signal.neutralMeasurement(
+						symbol.Symbol, ticker.Timestamp, price,
+					))
+
 					continue
 				}
 
@@ -123,6 +127,10 @@ func (signal *Signal) consume() {
 				followerPath, hasFollowerPath := signal.number.Project(symbol.Symbol)
 
 				if !hasAnchorPath || !hasFollowerPath {
+					symbol.AppendMeasurement(signal.neutralMeasurement(
+						symbol.Symbol, ticker.Timestamp, price,
+					))
+
 					continue
 				}
 
@@ -140,10 +148,6 @@ func (signal *Signal) consume() {
 
 				ready, _ := output.Get(equation.SymbolLeadLagReady)
 
-				if ready == 0 {
-					continue
-				}
-
 				symbol.AppendMeasurement(signal.measurement(
 					symbol.Symbol,
 					anchor,
@@ -151,6 +155,7 @@ func (signal *Signal) consume() {
 					anchorPath,
 					followerPath,
 					output,
+					ready != 0,
 				))
 			}
 		}

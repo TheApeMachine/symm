@@ -131,7 +131,7 @@ func (signal *Signal) consume() {
 					break
 				}
 
-				symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				measurement := nmtypes.NewMeasurement(
 					uuid.NewString(),
 					signal.Name(),
 					trade.Timestamp.UnixNano(),
@@ -153,7 +153,13 @@ func (signal *Signal) consume() {
 						Unit:      nmtypes.UnitDimensionless,
 						Timescale: nmtypes.TimescaleInstantaneous,
 					}),
-				))
+				)
+				measurement.StampQuality(
+					statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
+					output.MustGet(nomagique.SampleCount),
+				)
+
+				symbol.AppendMeasurement(measurement)
 			}
 		}
 	}()

@@ -15,11 +15,12 @@ This allows us to maintain O(1) lookups, while maintaining concurrency safety wi
 the need for locks.
 */
 type Consumer[T any] struct {
-	id     string
-	wait   func()
-	index  int
-	queue  *lf.Queue[T]
-	status atomic.Uint32
+	id       string
+	wait     func()
+	index    int
+	queue    *lf.Queue[T]
+	status   atomic.Uint32
+	previous atomic.Pointer[T]
 }
 
 func NewConsumer[T any](
@@ -36,14 +37,15 @@ func NewConsumer[T any](
 
 /*
 MapReduce uses lf.Queue to stage data where multiple consumers need
-to read from the same Queue.
+to read from the same Queue. The registered consumer table is an immutable
+atomic snapshot, so producers may iterate it while a stage registers or
+unregisters a reader without locking.
 */
 type MapReduce[T any] struct {
-	consumers []*Consumer[T]
+	consumers atomic.Pointer[[]*Consumer[T]]
 	callbacks []func()
 	mapFn     func(T) T
 	reduceFn  func(T, T) T
-	previous  []*T
 	observer  atomic.Pointer[drainObserver]
 }
 
@@ -60,11 +62,8 @@ func NewMapReduce[T any](
 		consumers[i].status.Store(uint32(types.READY))
 	}
 
-	mr := &MapReduce[T]{
-		consumers: consumers,
-	}
-
-	mr.previous = make([]*T, len(consumers))
+	mr := &MapReduce[T]{}
+	mr.consumers.Store(&consumers)
 
 	// Define a noop function as a default mapper.
 	mr.mapFn = func(item T) T {
@@ -87,6 +86,25 @@ func NewMapReduce[T any](
 	}
 
 	return mr
+}
+
+/*
+consumersSnapshot loads the immutable consumer table published by the last
+registration. Push iterates this snapshot so a concurrent Register can replace
+it without making the wire slices racy.
+*/
+func (mr *MapReduce[T]) consumersSnapshot() []*Consumer[T] {
+	if mr == nil {
+		return nil
+	}
+
+	current := mr.consumers.Load()
+
+	if current == nil {
+		return nil
+	}
+
+	return *current
 }
 
 /*
@@ -123,7 +141,7 @@ func (mr *MapReduce[T]) Length(consumers ...*Consumer[T]) uint64 {
 		return length
 	}
 
-	for _, consumer := range mr.consumers {
+	for _, consumer := range mr.consumersSnapshot() {
 		length += consumer.queue.Length()
 	}
 
@@ -134,7 +152,7 @@ func (mr *MapReduce[T]) Length(consumers ...*Consumer[T]) uint64 {
 Idle reports whether every registered consumer is ready with no queued work.
 */
 func (mr *MapReduce[T]) Idle() bool {
-	for _, consumer := range mr.consumers {
+	for _, consumer := range mr.consumersSnapshot() {
 		if consumer.status.Load() != uint32(types.READY) {
 			return false
 		}
@@ -155,15 +173,36 @@ func (mr *MapReduce[T]) Idle() bool {
 Register a new consumer with a unique ID.
 This creates a new Queue for the consumer to read from.
 If the consumer ID already exists, it will be ignored.
+Registration publishes a fresh immutable consumer table with a compare-and-swap,
+so concurrent Push iterations never observe a partially appended slice.
 */
 func (mr *MapReduce[T]) Register(consumers ...*Consumer[T]) {
-	for _, consumer := range consumers {
-		consumer.index = len(mr.consumers)
-		consumer.queue = lf.NewQueue[T]()
-		consumer.status.Store(uint32(types.READY))
+	for {
+		current := mr.consumers.Load()
 
-		mr.consumers = append(mr.consumers, consumer)
-		mr.previous = append(mr.previous, nil)
+		if current == nil {
+			current = new([]*Consumer[T])
+			*current = nil
+
+			if !mr.consumers.CompareAndSwap(nil, current) {
+				current = mr.consumers.Load()
+			}
+		}
+
+		existing := *current
+		next := make([]*Consumer[T], len(existing), len(existing)+len(consumers))
+		copy(next, existing)
+
+		for _, consumer := range consumers {
+			consumer.index = len(next)
+			consumer.queue = lf.NewQueue[T]()
+			consumer.status.Store(uint32(types.READY))
+			next = append(next, consumer)
+		}
+
+		if mr.consumers.CompareAndSwap(current, &next) {
+			return
+		}
 	}
 }
 
@@ -180,21 +219,21 @@ func (mr *MapReduce[T]) Unregister(consumer *Consumer[T]) {
 		}
 	}
 
-	mr.previous[consumer.index] = nil
+	consumer.previous.Store(nil)
 }
 
 func (mr *MapReduce[T]) Push(item T) {
-	for i := 0; i < len(mr.consumers); i++ {
-		if mr.consumers[i].status.Load() == uint32(types.STOPPED) {
+	for _, consumer := range mr.consumersSnapshot() {
+		if consumer.status.Load() == uint32(types.STOPPED) {
 			continue
 		}
 
-		mr.consumers[i].queue.Enqueue(mr.mapFn(item))
+		consumer.queue.Enqueue(mr.mapFn(item))
 
-		if mr.Length(mr.consumers[i]) > 0 && mr.consumers[i].status.CompareAndSwap(
+		if mr.Length(consumer) > 0 && consumer.status.CompareAndSwap(
 			uint32(types.READY), uint32(types.BUSY),
 		) {
-			mr.consumers[i].wait()
+			consumer.wait()
 		}
 	}
 }
@@ -216,7 +255,7 @@ func (mr *MapReduce[T]) Pop(consumer *Consumer[T]) (T, bool) {
 		return zero, false
 	}
 
-	return mr.stage(consumer.index, consumer.queue)
+	return mr.stage(consumer)
 }
 
 /*
@@ -293,13 +332,14 @@ func (mr *MapReduce[T]) Drain(
 	}
 }
 
-func (mr *MapReduce[T]) stage(id int, queue *lf.Queue[T]) (item T, ok bool) {
-	item, ok = queue.Dequeue()
+func (mr *MapReduce[T]) stage(consumer *Consumer[T]) (item T, ok bool) {
+	item, ok = consumer.queue.Dequeue()
 
-	if mr.previous[id] != nil {
-		item = mr.reduceFn(*mr.previous[id], item)
+	if previous := consumer.previous.Load(); previous != nil {
+		item = mr.reduceFn(*previous, item)
 	}
 
-	mr.previous[id] = &item
+	consumer.previous.Store(&item)
+
 	return item, ok
 }

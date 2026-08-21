@@ -125,7 +125,23 @@ func (signal *Signal) consume() {
 					spectralMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), spectralRadius, spectralRadius, spectralMetric.Descriptor)
 				}
 
-				symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				separationInput := nomagique.Frame{}
+				separationInput.Put(nmtypes.AlphaQuantity, output.MustGet(algo.SymbolLambdaAlpha))
+				separationInput.Put(nmtypes.BetaQuantity, output.MustGet(algo.SymbolLambdaBeta))
+				_, separationFrame, err := nomagique.Step(
+					statistic.Separation, nomagique.Frame{}, separationInput,
+				)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"hawkes: separation failed for "+symbol.Symbol,
+						err,
+					))
+					break
+				}
+
+				measurement := nmtypes.NewMeasurement(
 					uuid.NewString(),
 					signal.Name(),
 					trade.Timestamp.UnixNano(),
@@ -170,7 +186,13 @@ func (signal *Signal) consume() {
 						Unit:      nmtypes.UnitCount,
 						Timescale: nmtypes.TimescaleInstantaneous,
 					}),
-				))
+				)
+				measurement.StampQuality(
+					separationFrame.MustGet(statistic.SymbolSeparation),
+					output.MustGet(algo.SymbolEventCount),
+				)
+
+				symbol.AppendMeasurement(measurement)
 			}
 		}
 	}()

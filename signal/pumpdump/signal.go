@@ -50,6 +50,7 @@ type Signal struct {
 	polarize     nomagique.Primitive
 	separate     nomagique.Primitive
 	work         *transport.Consumer[*types.Symbol]
+	pool         *types.SymbolPool
 }
 
 func NewSignal(
@@ -77,6 +78,7 @@ func NewSignal(
 		decompose: equation.Decompose(),
 		polarize:  equation.Polarize(),
 		separate:  statistic.Separation,
+		pool:      types.NewSymbolPool(types.ShardWorkers()),
 	}
 	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
 	thesis.Work(types.SourcePumpDump).Register(signal.work)
@@ -92,12 +94,18 @@ func (signal *Signal) Type() types.SourceType { return types.SourcePumpDump }
 
 func (signal *Signal) consume() {
 	go func() {
-		defer func() { signal.thesis.Fail(signal.err) }()
+		defer func() {
+			if err := signal.pool.Error(); err != nil {
+				signal.err = err
+			}
+
+			signal.thesis.Fail(signal.err)
+		}()
 
 		for symbol := range signal.thesis.Work(types.SourcePumpDump).Drain(signal.work, nil) {
 			select {
 			case <-signal.ctx.Done():
-				signal.err = signal.ctx.Err()
+				signal.pool.CaptureError(signal.ctx.Err())
 				return
 			default:
 			}
@@ -106,14 +114,17 @@ func (signal *Signal) consume() {
 				continue
 			}
 
-			if err := signal.consumeSymbol(symbol); err != nil {
-				signal.err = errnie.Error(errnie.Err(
-					errnie.Validation,
-					"pumpdump: condition "+symbol.Symbol,
-					err,
-				))
-				return
-			}
+			symbolName := symbol.Symbol
+
+			signal.pool.Submit(symbolName, func() {
+				if err := signal.consumeSymbol(symbol); err != nil {
+					signal.pool.CaptureError(errnie.Error(errnie.Err(
+						errnie.Validation,
+						"pumpdump: condition "+symbolName,
+						err,
+					)))
+				}
+			})
 		}
 	}()
 }
@@ -149,6 +160,10 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
+	}
+
+	if signal.pool != nil {
+		signal.pool.Close()
 	}
 
 	return nil

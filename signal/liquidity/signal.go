@@ -2,7 +2,6 @@ package liquidity
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -125,8 +124,6 @@ func (signal *Signal) consume() {
 					break
 				}
 
-				separation := liquiditySeparation(output.MustGet(statistic.SymbolZScore))
-
 				measurement := nmtypes.NewMeasurement(
 					uuid.NewString(),
 					signal.Name(),
@@ -157,15 +154,10 @@ func (signal *Signal) consume() {
 						Unit:      nmtypes.UnitCount,
 						Timescale: nmtypes.TimescaleInstantaneous,
 					}),
-					nmtypes.NewNormalizedMetric(
-						string(types.MetricHypothesisSeparation),
-						separation,
-						separation,
-						nmtypes.Descriptor{
-							Unit:      nmtypes.UnitDimensionless,
-							Timescale: nmtypes.TimescaleInstantaneous,
-						},
-					),
+				)
+				measurement.StampQuality(
+					statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
+					output.MustGet(nomagique.SampleCount),
 				)
 
 				symbol.AppendMeasurement(measurement)
@@ -184,35 +176,6 @@ func (signal *Signal) eventTime(symbol string, observedAt time.Time) time.Time {
 	signal.clock[symbol] = observedAt
 
 	return observedAt
-}
-
-/*
-liquiditySeparation turns the executable-touch-depth z-score into the margin
-the "depth has moved" hypothesis holds over the "depth sits at baseline" null.
-The z-score is already self-standardizing (residual over its own dispersion
-estimate). Mapping its magnitude through the standard-normal CDF as the mass
-inside ±z, 2·Φ(|x|) − 1, yields a value that starts near zero at the baseline
-and rises toward one as the reading separates from it. This is real statistical
-distance, not an arbitrary rescale, and it stays bounded in [0, 1] so the
-reading can be painted as a percentage.
-*/
-func liquiditySeparation(zScore float64) float64 {
-	return standardNormalMass(math.Abs(zScore))
-}
-
-/*
-standardNormalMass is the probability mass inside ±z of a standard normal:
-2·Φ(z) − 1, where Φ(z) = (1 + erf(z/√2))/2.
-*/
-func standardNormalMass(z float64) float64 {
-	accumulated := 0.5 * (1 + math.Erf(z/math.Sqrt2))
-	mass := 2*accumulated - 1
-
-	if mass > 0 {
-		return mass
-	}
-
-	return 0
 }
 
 func (signal *Signal) Close() error {

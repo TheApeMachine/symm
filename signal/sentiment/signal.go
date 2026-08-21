@@ -133,7 +133,7 @@ func (signal *Signal) measure(symbol *types.Symbol, ticker kraken.TickerData) er
 		))
 	}
 
-	symbol.AppendMeasurement(nmtypes.NewMeasurement(
+	measurement := nmtypes.NewMeasurement(
 		uuid.NewString(),
 		signal.Name(),
 		ticker.Timestamp.UnixNano(),
@@ -143,7 +143,16 @@ func (signal *Signal) measure(symbol *types.Symbol, ticker kraken.TickerData) er
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-	))
+	)
+
+	/*
+		Sentiment has one cohort-wide breadth reading with no competing
+		hypothesis pair, so its separation stays honestly zero while maturity
+		marks the accumulating evidence.
+	*/
+	measurement.StampQuality(0, output.MustGet(nomagique.SampleCount))
+
+	symbol.AppendMeasurement(measurement)
 
 	return nil
 }

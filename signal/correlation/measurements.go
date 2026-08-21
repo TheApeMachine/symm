@@ -15,6 +15,9 @@ func (signal *Signal) measurement(
 	symbol string,
 	at time.Time,
 	output nomagique.Frame,
+	measured bool,
+	separation float64,
+	support float64,
 ) *nmtypes.Measurement {
 	descriptor := nmtypes.Descriptor{
 		Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous,
@@ -30,16 +33,53 @@ func (signal *Signal) measurement(
 		}
 	}
 
+	/*
+		Before the cross-section has any peer evidence the correlation scores do
+		not exist yet. Emit honest neutral readings — zero correlation, zero
+		energy, zero scores — and let hypothesis_separation (zero) and maturity
+		(low) mark how much those readings are worth. A silent skip would hide
+		the observation and stall downstream consumers waiting for first data.
+	*/
 	measurement.AddMetrics(
-		nmtypes.NewMetric(string(types.MetricCorrelation), output.MustGet(algo.SymbolCohortCorrelation), descriptor),
-		nmtypes.NewMetric(string(types.MetricSigned), output.MustGet(algo.SymbolSignedCorrelation), descriptor),
-		nmtypes.NewMetric(string(types.MetricRelativeEnergy), output.MustGet(algo.SymbolRelativeEnergy), descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricHerdScore), output.MustGet(algo.SymbolHerd), output.MustGet(algo.SymbolHerd), descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricAlphaScore), output.MustGet(algo.SymbolAlpha), output.MustGet(algo.SymbolAlpha), descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricNoiseScore), output.MustGet(algo.SymbolNoise), output.MustGet(algo.SymbolNoise), descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricStressScore), output.MustGet(algo.SymbolStress), output.MustGet(algo.SymbolStress), descriptor),
-		nmtypes.NewMetric(string(types.MetricHypothesisSeparation), output.MustGet(algo.SymbolHypothesisSeparation), descriptor),
+		nmtypes.NewMetric(string(types.MetricCorrelation), metricValue(output, algo.SymbolCohortCorrelation, measured), descriptor),
+		nmtypes.NewMetric(string(types.MetricSigned), metricValue(output, algo.SymbolSignedCorrelation, measured), descriptor),
+		nmtypes.NewMetric(string(types.MetricRelativeEnergy), metricValue(output, algo.SymbolRelativeEnergy, measured), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricHerdScore), metricValue(output, algo.SymbolHerd, measured), metricValue(output, algo.SymbolHerd, measured), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricAlphaScore), metricValue(output, algo.SymbolAlpha, measured), metricValue(output, algo.SymbolAlpha, measured), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricNoiseScore), metricValue(output, algo.SymbolNoise, measured), metricValue(output, algo.SymbolNoise, measured), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricStressScore), metricValue(output, algo.SymbolStress, measured), metricValue(output, algo.SymbolStress, measured), descriptor),
 	)
+	measurement.StampQuality(separation, support)
 
 	return measurement
+}
+
+func (signal *Signal) support(symbol string) float64 {
+	path, found := signal.number.Project(symbol)
+
+	if !found {
+		return 0
+	}
+
+	value, _ := path.Get(nomagique.SampleCount)
+
+	return value
+}
+
+func metricValue(
+	frame nomagique.Frame,
+	symbol nomagique.Symbol,
+	measured bool,
+) float64 {
+	if !measured {
+		return 0
+	}
+
+	value, found := frame.Get(symbol)
+
+	if found {
+		return value
+	}
+
+	return 0
 }

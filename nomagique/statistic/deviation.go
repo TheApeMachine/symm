@@ -46,3 +46,22 @@ func relativeDeviation(value float64, baseline float64) float64 {
 
 	return math.Abs(value-baseline) / baseline
 }
+
+/*
+StandardSeparation maps a self-standardizing z-score into a normalized
+hypothesis margin. The probability mass inside ±z of a standard normal,
+2·Φ(|z|)−1, is zero at the baseline and tends to one as the reading separates
+from it. It carries no imposed threshold: the reading's own dispersion is the
+denominator, and low magnitude honestly stays near zero while the estimator
+has seen little evidence.
+*/
+func StandardSeparation(zScore float64) float64 {
+	accumulated := 0.5 * (1 + math.Erf(math.Abs(zScore)/math.Sqrt2))
+	mass := 2*accumulated - 1
+
+	if mass > 0 {
+		return mass
+	}
+
+	return 0
+}

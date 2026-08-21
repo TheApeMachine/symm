@@ -4,14 +4,10 @@ import "sync"
 
 /*
 Number is a state-carrying, self-adapting numeric pipeline keyed by a
-comparable stream identity. It owns each keyed Stream and exposes projections
-so cross-sectional equations can compare committed numeric state without
-reconstructing or copying histories in signal packages.
-
-	number := nomagique.NewNumber[string](primitives...)
-	output, err := number.Step(symbol, input)
-
-Each key keeps an isolated window, baseline, and event clock.
+comparable stream identity. Each key publishes its committed state through an
+immutable atomic snapshot so concurrent per-symbol workers can project peer
+state without tearing, while every key still keeps an isolated window,
+baseline, and event clock.
 */
 type Number[Key comparable] struct {
 	primitive Primitive
@@ -65,7 +61,7 @@ func (number *Number[Key]) Range(yield func(Key, Frame) bool) {
 
 	number.streams.Range(func(storedKey any, storedValue any) bool {
 		key, validKey := storedKey.(Key)
-		stream, validStream := storedValue.(*Stream)
+		stream, validStream := storedValue.(*AtomicStream)
 
 		if !validKey || !validStream {
 			return true
@@ -255,7 +251,7 @@ func selectValue(values []float64, target int) float64 {
 	return values[target]
 }
 
-func (number *Number[Key]) stream(key Key) (*Stream, error) {
+func (number *Number[Key]) stream(key Key) (*AtomicStream, error) {
 	if number == nil || number.primitive == nil {
 		return nil, primitiveError("number primitive is nil")
 	}
@@ -264,9 +260,9 @@ func (number *Number[Key]) stream(key Key) (*Stream, error) {
 		return stream, nil
 	}
 
-	candidate := NewStream(number.primitive, Frame{})
+	candidate := NewAtomicStream(number.primitive, Frame{})
 	stored, _ := number.streams.LoadOrStore(key, candidate)
-	stream, valid := stored.(*Stream)
+	stream, valid := stored.(*AtomicStream)
 
 	if !valid {
 		return nil, primitiveError("number registry contains an invalid stream")
@@ -275,7 +271,7 @@ func (number *Number[Key]) stream(key Key) (*Stream, error) {
 	return stream, nil
 }
 
-func (number *Number[Key]) load(key Key) (*Stream, bool) {
+func (number *Number[Key]) load(key Key) (*AtomicStream, bool) {
 	if number == nil {
 		return nil, false
 	}
@@ -286,7 +282,7 @@ func (number *Number[Key]) load(key Key) (*Stream, bool) {
 		return nil, false
 	}
 
-	stream, valid := stored.(*Stream)
+	stream, valid := stored.(*AtomicStream)
 
 	return stream, valid
 }

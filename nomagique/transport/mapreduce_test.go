@@ -31,7 +31,7 @@ func TestNewMapReduce(t *testing.T) {
 
 				Convey("Then it should initialize correctly", func() {
 					So(mr, ShouldNotBeNil)
-					So(len(mr.consumers), ShouldEqual, 2)
+					So(len(mr.consumersSnapshot()), ShouldEqual, 2)
 					So(mr.mapFn, ShouldNotBeNil)
 					So(mr.reduceFn, ShouldNotBeNil)
 				})
@@ -44,7 +44,7 @@ func TestNewMapReduce(t *testing.T) {
 
 				Convey("Then it should initialize with empty slices", func() {
 					So(mr, ShouldNotBeNil)
-					So(len(mr.consumers), ShouldEqual, 0)
+					So(len(mr.consumersSnapshot()), ShouldEqual, 0)
 				})
 			})
 		})
@@ -55,7 +55,7 @@ func TestNewMapReduce(t *testing.T) {
 
 				Convey("Then it should use noop defaults", func() {
 					mr.Push(42)
-					item, ok := mr.Pop(mr.consumers[0])
+					item, ok := mr.Pop(mr.consumersSnapshot()[0])
 					So(ok, ShouldBeTrue)
 					So(item, ShouldEqual, 42)
 				})
@@ -70,7 +70,7 @@ func TestNewMapReduce(t *testing.T) {
 
 				Convey("Then it should apply transformations correctly", func() {
 					mr.Push(5)
-					item, ok := mr.Pop(mr.consumers[0])
+					item, ok := mr.Pop(mr.consumersSnapshot()[0])
 					So(ok, ShouldBeTrue)
 					So(item, ShouldEqual, 10)
 				})
@@ -83,7 +83,7 @@ func TestPush(t *testing.T) {
 	Convey("Setup", t, func() {
 		Convey("Given a MapReduce instance", func() {
 			mr := Setup[int]([]string{"A", "B"}, nil, nil)
-			consumers := mr.consumers
+			consumers := mr.consumersSnapshot()
 
 			Convey("When pushing a single item", func() {
 				mr.Push(42)
@@ -156,7 +156,7 @@ func TestPop(t *testing.T) {
 		Convey("Given a MapReduce instance with a reducer", func() {
 			reducer := func(a, b int) int { return a + b }
 			mr := Setup([]string{"A"}, nil, reducer)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 
 			Convey("When popping the first item", func() {
 				mr.Push(10)
@@ -190,7 +190,7 @@ func TestPop(t *testing.T) {
 		Convey("Given multiple consumers", func() {
 			reducer := func(a, b int) int { return a + b }
 			mr := Setup([]string{"A", "B"}, nil, reducer)
-			consumers := mr.consumers
+			consumers := mr.consumersSnapshot()
 			consumerA := consumers[0]
 			consumerB := consumers[1]
 
@@ -239,7 +239,7 @@ func TestPop(t *testing.T) {
 
 		Convey("Given an empty data queue", func() {
 			mr := Setup[int]([]string{"A"}, nil, nil)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 
 			Convey("When popping from an empty queue", func() {
 				item, ok := mr.Pop(consumerA)
@@ -255,7 +255,7 @@ func TestPop(t *testing.T) {
 			mapper := func(x int) int { return x * 2 }
 			reducer := func(a, b int) int { return a + b }
 			mr := Setup([]string{"A"}, mapper, reducer)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 
 			Convey("When pushing and popping", func() {
 				mr.Push(5)
@@ -296,7 +296,7 @@ func TestDrain(t *testing.T) {
 
 		Convey("Given a MapReduce instance with items", func() {
 			mr := Setup[int]([]string{"A"}, nil, nil)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 			mr.Push(1)
 			mr.Push(2)
 			mr.Push(3)
@@ -320,7 +320,7 @@ func TestDrain(t *testing.T) {
 
 		Convey("Given a MapReduce instance", func() {
 			mr := Setup[int]([]string{"A"}, nil, nil)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 			mr.Push(1)
 			mr.Push(2)
 
@@ -340,7 +340,7 @@ func TestDrain(t *testing.T) {
 
 		Convey("Given an empty queue", func() {
 			mr := Setup[int]([]string{"A"}, nil, nil)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 
 			Convey("When draining an empty queue", func() {
 				var collected []int
@@ -359,7 +359,7 @@ func TestDrain(t *testing.T) {
 		Convey("Given a reducer", func() {
 			reducer := func(a, b int) int { return a + b }
 			mr := Setup([]string{"A"}, nil, reducer)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 			mr.Push(10)
 			mr.Push(20)
 			mr.Push(30)
@@ -430,7 +430,7 @@ func TestStage(t *testing.T) {
 		Convey("Given a MapReduce instance with a reducer", func() {
 			reducer := func(a, b int) int { return a + b }
 			mr := Setup([]string{"A"}, nil, reducer)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 
 			Convey("When staging the first item", func() {
 				mr.Push(10)
@@ -465,7 +465,7 @@ func TestNonComparableType(t *testing.T) {
 				return result
 			}
 			mr := Setup[[]int]([]string{"A"}, nil, reducer)
-			consumerA := mr.consumers[0]
+			consumerA := mr.consumersSnapshot()[0]
 
 			Convey("When pushing and popping slice items", func() {
 				mr.Push([]int{1})
@@ -496,7 +496,7 @@ func BenchmarkPop(b *testing.B) {
 	mr.Push(1)
 
 	for b.Loop() {
-		mr.Pop(mr.consumers[0])
+		mr.Pop(mr.consumersSnapshot()[0])
 	}
 }
 
