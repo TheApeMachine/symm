@@ -85,11 +85,41 @@ type Live struct {
 	captureName string
 	failureMu   sync.RWMutex
 	failure     func(error)
+	observer    atomic.Pointer[func(string, time.Duration)]
 
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
 	// feed the session's book manager instead of dialing the real venue.
 	level3Client func() *spot.WebSocket
+}
+
+/*
+SetObserver attaches the ingress processing clock. Existing and future Level 3
+children share the same observer so all venue messages contribute to the one
+ingress stage shown by diagnostics.
+*/
+func (live *Live) SetObserver(observer func(string, time.Duration)) {
+	if live == nil {
+		return
+	}
+
+	if observer == nil {
+		live.observer.Store(nil)
+	} else {
+		live.observer.Store(&observer)
+	}
+
+	if live.level3 == nil {
+		return
+	}
+
+	live.level3.Range(func(_, value any) bool {
+		if child, valid := value.(*Live); valid && child != nil {
+			child.SetObserver(observer)
+		}
+
+		return true
+	})
 }
 
 /*
@@ -260,6 +290,15 @@ func NewWithClient(
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		observer := live.observer.Load()
+
+		if observer != nil {
+			started := time.Now()
+			defer func() {
+				(*observer)("crypto", time.Since(started))
+			}()
+		}
+
 		raw := event.Data.Bytes()
 
 		if err := live.captureFrame(live.captureName, raw); err != nil {
@@ -675,6 +714,11 @@ func (live *Live) SubL3(symbols []string) {
 		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
 		conn.SetFailureHandler(live.reportFailure)
+
+		if observer := live.observer.Load(); observer != nil {
+			conn.SetObserver(*observer)
+		}
+
 		conn.symbols = append([]string{}, groups...)
 
 		for group := range slices.Chunk(groups, 40) {
@@ -707,6 +751,10 @@ func (live *Live) AttachLevel3(groupKey string, conn *Live) {
 
 	live.level3.Store(groupKey, conn)
 	conn.SetFailureHandler(live.reportFailure)
+
+	if observer := live.observer.Load(); observer != nil {
+		conn.SetObserver(*observer)
+	}
 }
 
 /*

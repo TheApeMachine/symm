@@ -69,7 +69,9 @@ func TestAddNodes(t *testing.T) {
 		graph := NewGraph(at)
 
 		index, err := newMeasurementCompiler().addNodes(
-			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
+			"BTC/USD", symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), graph,
 		)
 
 		Convey("It should retain provenance and keep every emitted metric as evidence", func() {
@@ -104,7 +106,9 @@ func TestAddNodes(t *testing.T) {
 		symbol.Measurements.Push(other)
 
 		_, err := newMeasurementCompiler().addNodes(
-			"BTC/USD", symbol.MarketMeasurements("graph"),
+			"BTC/USD", symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			),
 			NewGraph(time.Unix(11, 0).UTC()),
 		)
 
@@ -122,7 +126,9 @@ func TestAddNodes(t *testing.T) {
 		graph := NewGraph(time.Unix(12, 0).UTC())
 
 		index, err := newMeasurementCompiler().addNodes(
-			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
+			"BTC/USD", symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), graph,
 		)
 
 		Convey("It should accept the volume-clock row and contribute no nodes", func() {
@@ -151,11 +157,13 @@ func TestAddCategoryEdges(t *testing.T) {
 		}})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(types.NewThesis(t.Context(), nil), nil, nil)
 		categories := solver.popCategories(symbol)
 		solver.extractCategoryNodes(symbol, categories, graph)
 		index, err := compiler.addNodes(
-			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
+			"BTC/USD", symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), graph,
 		)
 		So(err, ShouldBeNil)
 
@@ -182,9 +190,13 @@ func TestAddCategoryEdges(t *testing.T) {
 		}})
 		graph := NewGraph(at)
 		compiler := newMeasurementCompiler()
-		categories := NewSolver(nil, nil, nil).popCategories(symbol)
+		categories := NewSolver(
+			types.NewThesis(t.Context(), nil), nil, nil,
+		).popCategories(symbol)
 		index, err := compiler.addNodes(
-			"BTC/USD", symbol.MarketMeasurements("graph"), graph,
+			"BTC/USD", symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), graph,
 		)
 		So(err, ShouldBeNil)
 
@@ -218,7 +230,9 @@ func BenchmarkAddNodes(b *testing.B) {
 
 	for b.Loop() {
 		if _, err := compiler.addNodes(
-			"BTC/USD", symbol.MarketMeasurements("graph"), NewGraph(at),
+			"BTC/USD", symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), NewGraph(at),
 		); err != nil {
 			b.Fatal(err)
 		}

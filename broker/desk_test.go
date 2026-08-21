@@ -10,9 +10,9 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func brokerForecast(value float64) *learning.RLSOutput {
@@ -147,7 +147,9 @@ func TestDeskExecute(t *testing.T) {
 			So(desk.Execute(decision), ShouldBeNil)
 			var retained any
 
-			for candidate := range desk.thesis.Symbol(decision.Symbol).Positions.Drain("audit", func(any) bool {
+			symbol := desk.thesis.Symbol(decision.Symbol)
+
+			for candidate := range symbol.Positions.Drain(symbol.PositionConsumers[0], func(any) bool {
 				return true
 			}) {
 				retained = candidate

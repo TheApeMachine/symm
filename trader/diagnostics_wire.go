@@ -12,6 +12,7 @@ func (diagnostics StreamDiagnostics) Wire() *wire.DiagnosticsFrameT {
 		stages[index] = &wire.DiagnosticClockT{
 			Name: stage.Name, Count: stage.Count, TotalNs: stage.TotalNs,
 			LastNs: stage.LastNs, MaxNs: stage.MaxNs, LastAtNs: stage.LastAtNs,
+			Active: stage.Active, StartedNs: stage.StartedNs,
 		}
 	}
 

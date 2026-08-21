@@ -17,20 +17,20 @@ func TestToxicityNumber(t *testing.T) {
 		thesis := types.NewThesis(context.Background(), nil)
 		market := thesis.Symbol("BTC/USD")
 		base := time.Unix(1_700_004_000, 0).UTC()
+		signal := NewSignal(context.Background(), thesis)
+		defer signal.Close()
 
 		market.AppendLevel3(kraken.Level3Data{
 			Symbol: "BTC/USD", Type: "update", Timestamp: base,
 		})
 
-		signal := NewSignal(context.Background(), thesis)
-		defer signal.Close()
-		go signal.Run()
-
 		Convey("It should emit an honesty reading per frame", func() {
 			measurements := []*nmtypes.Measurement{}
 
 			time.Sleep(50 * time.Millisecond)
-			for measurement := range market.MarketMeasurements("category") {
+			for measurement := range market.MarketMeasurements(
+				market.MeasurementConsumers[types.MeasurementConsumerCategory],
+			) {
 				measurements = append(measurements, measurement)
 			}
 

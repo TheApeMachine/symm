@@ -13,8 +13,11 @@ import (
 func startCategorySolver(t *testing.T, thesis *types.Thesis) *Solver {
 	t.Helper()
 	solver := NewSolver(t.Context(), thesis, nil, nil, nil)
-	go func() { _ = solver.Run() }()
 	t.Cleanup(func() { _ = solver.Close() })
+	thesis.Symbols.Range(func(_, value any) bool {
+		thesis.Work(types.SourceCategory).Push(value.(*types.Symbol))
+		return true
+	})
 
 	return solver
 }
@@ -31,7 +34,9 @@ func lastCategories(symbol *types.Symbol) []types.Category {
 	for len(categories) == 0 && time.Now().Before(deadline) {
 		categories = nil
 
-		for batch := range symbol.MarketCategories(types.SourceGraph) {
+		for batch := range symbol.MarketCategories(
+			symbol.CategoryConsumers[types.CategoryConsumerGraph],
+		) {
 			categories = append(categories, batch...)
 		}
 
@@ -381,7 +386,6 @@ func BenchmarkCategoryRun(b *testing.B) {
 	thesis := types.NewThesis(b.Context(), nil)
 	solver := NewSolver(b.Context(), thesis, nil, nil, nil)
 	defer solver.Close()
-	go func() { _ = solver.Run() }()
 	strength := 0.9
 
 	for b.Loop() {

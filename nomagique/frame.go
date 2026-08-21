@@ -24,7 +24,11 @@ type Frame struct {
 /*
 Get returns the value stored at symbol.
 */
-func (frame Frame) Get(symbol Symbol) (float64, bool) {
+func (frame *Frame) Get(symbol Symbol) (float64, bool) {
+	if frame == nil {
+		return 0, false
+	}
+
 	index := int(symbol)
 
 	if index < 0 || index >= MaxSlots {
@@ -156,7 +160,7 @@ backing storage.
 */
 func (frame Frame) All() iter.Seq2[Symbol, float64] {
 	return func(yield func(Symbol, float64) bool) {
-		for index := 0; index < MaxSlots; index++ {
+		for index := range MaxSlots {
 			symbol := Symbol(index)
 			value, found := frame.Get(symbol)
 
@@ -188,7 +192,7 @@ func (frame Frame) Equal(other Frame) bool {
 		return false
 	}
 
-	for index := 0; index < MaxSlots; index++ {
+	for index := range MaxSlots {
 		if frame.Data[index] != other.Data[index] {
 			return false
 		}

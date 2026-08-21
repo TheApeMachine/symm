@@ -9,15 +9,24 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
-func TestPumpDumpNumber(t *testing.T) {
+func TestSignalConsume(t *testing.T) {
 	Convey("Given a ticker touch and one executed trade", t, func() {
 		thesis := types.NewThesis(context.Background(), nil)
 		market := thesis.Symbol("BTC/USD")
 		at := time.Unix(1_700_002_300, 0).UTC()
+		measurementReady := make(chan struct{}, 1)
+		observer := transport.NewConsumer[*types.Symbol]("pumpdump-test", func() {
+			measurementReady <- struct{}{}
+		})
+		thesis.Work(types.SourceCategory).Register(observer)
+		signal := NewSignal(context.Background(), thesis)
+		defer signal.Close()
+		defer thesis.Work(types.SourceCategory).Unregister(observer)
 
 		market.AppendTicker(kraken.TickerData{
 			Symbol:    "BTC/USD",
@@ -34,20 +43,24 @@ func TestPumpDumpNumber(t *testing.T) {
 			Timestamp: at.Add(time.Second),
 		})
 
-		signal := NewSignal(context.Background(), thesis)
-		defer signal.Close()
-		go signal.Run()
-
 		Convey("It should emit ignition evidence for the print", func() {
-			measurements := []*nmtypes.Measurement{}
+			select {
+			case <-measurementReady:
+			case <-time.After(time.Second):
+				t.Fatal("pumpdump measurement was not emitted")
+			}
 
-			time.Sleep(50 * time.Millisecond)
-			for measurement := range market.MarketMeasurements("category") {
+			measurements := []*nmtypes.Measurement{}
+			for measurement := range market.MarketMeasurements(
+				market.MeasurementConsumers[types.MeasurementConsumerCategory],
+			) {
 				measurements = append(measurements, measurement)
 			}
 
 			So(len(measurements), ShouldEqual, 1)
 			So(measurements[0].Source, ShouldEqual, string(types.SourcePumpDump))
+			So(len(measurements[0].Metrics), ShouldEqual, 13)
+			So(measurements[0].ObservedFrom, ShouldResemble, at.Add(time.Second))
 		})
 	})
 }

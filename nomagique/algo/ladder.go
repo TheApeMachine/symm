@@ -18,6 +18,12 @@ var (
 
 	SymbolLadderImbalance      = nomagique.MustIntern("ladder/imbalance")
 	SymbolLadderCompression    = nomagique.MustIntern("ladder/compression")
+	SymbolLadderSpreadTightening = nomagique.MustIntern(
+		"ladder/spread_tightening",
+	)
+	SymbolLadderSpreadDeviation = nomagique.MustIntern(
+		"ladder/spread_deviation",
+	)
 	SymbolLadderBidDepletion   = nomagique.MustIntern("ladder/bid_depletion")
 	SymbolLadderAskDepletion   = nomagique.MustIntern("ladder/ask_depletion")
 	SymbolLadderBidReplenish   = nomagique.MustIntern("ladder/bid_replenish")
@@ -42,10 +48,9 @@ var (
 )
 
 /*
-Ladder is the book-ladder conditioning primitive. It receives one pass of
-band-limited book aggregates — resting depth per side, touch spread, the
-signed depth change per side carried by this pass's accepted order events,
-and the pass's event time — and emits the ladder's raw precursor metrics.
+Ladder composes the book-ladder conditioning transition. It receives one pass
+of the committed resident book — resting depth per side, touch prices, and
+event time — and derives signed depth changes from its own prior observation.
 
 Every baseline is time-elastic: an exponentially decayed estimate whose
 adaptation rate is set by the event-time gaps the symbol itself produces.
@@ -59,11 +64,15 @@ The ladder judges nothing. Whether depth left the book because it was bought
 or because it was pulled belongs to the honesty perspective; the ladder only
 reports geometry and its dynamics.
 */
-func Ladder(
+func Ladder() nomagique.Primitive {
+	return nomagique.Pipe(ladderTransition)
+}
+
+func ladderTransition(
 	state nomagique.Frame,
 	input nomagique.Frame,
 ) (nomagique.Frame, nomagique.Frame, error) {
-	observation, err := ladderObservation(input)
+	observation, err := ladderObservation(state, input)
 
 	if err != nil {
 		return state, nomagique.Frame{}, err
@@ -75,6 +84,17 @@ func Ladder(
 	if err != nil {
 		return state, nomagique.Frame{}, err
 	}
+
+	nextState.Put(SymbolLadderBidDepth, observation.bidDepth)
+	nextState.Put(SymbolLadderAskDepth, observation.askDepth)
+	nextState.Put(SymbolLadderSpread, observation.spread)
+	nextState.Put(SymbolLadderBidDelta, observation.bidDelta)
+	nextState.Put(SymbolLadderAskDelta, observation.askDelta)
+	nextState.Put(SymbolBid, observation.bid)
+	nextState.Put(SymbolAsk, observation.ask)
+	nextState.Put(SymbolMidpoint, observation.midpoint)
+	nextState.Put(SymbolUnixSec, observation.sec)
+	nextState.Put(SymbolUnixNsec, observation.nsec)
 
 	alpha := 0.0
 
@@ -118,41 +138,62 @@ func Ladder(
 /*
 ladderObservation validates one pass of ladder inputs.
 */
-func ladderObservation(input nomagique.Frame) (ladderInputs, error) {
+func ladderObservation(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (ladderInputs, error) {
 	halflife, hasHalflife := input.Get(SymbolLadderHalflife)
 	bidDepth, hasBid := input.Get(SymbolLadderBidDepth)
 	askDepth, hasAsk := input.Get(SymbolLadderAskDepth)
-	spread, hasSpread := input.Get(SymbolLadderSpread)
-	bidDelta, hasBidDelta := input.Get(SymbolLadderBidDelta)
-	askDelta, hasAskDelta := input.Get(SymbolLadderAskDelta)
+	bid, hasBidPrice := input.Get(SymbolBid)
+	ask, hasAskPrice := input.Get(SymbolAsk)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
-	if !hasHalflife || !hasBid || !hasAsk || !hasSpread ||
-		!hasBidDelta || !hasAskDelta || !hasSec || !hasNsec {
+	if !hasHalflife || !hasBid || !hasAsk || !hasBidPrice ||
+		!hasAskPrice || !hasSec || !hasNsec {
 		return ladderInputs{}, fmt.Errorf(
-			"ladder: halflife, depths, spread, deltas, and event time are required",
+			"ladder: halflife, depths, touch prices, and event time are required",
 		)
 	}
 
-	if halflife <= 0 || nsec < 0 || nsec >= 1e9 {
+	spread := ask - bid
+
+	if halflife <= 0 || bid <= 0 || ask <= bid ||
+		nsec < 0 || nsec >= 1e9 {
 		return ladderInputs{}, fmt.Errorf(
-			"ladder: halflife must be positive and nanoseconds within one second",
+			"ladder: halflife and touch must be positive and nanoseconds normalized",
 		)
 	}
 
-	if bidDepth < 0 || askDepth < 0 || spread < 0 ||
+	if bidDepth < 0 || askDepth < 0 ||
 		!finite(bidDepth) || !finite(askDepth) || !finite(spread) ||
-		!finite(bidDelta) || !finite(askDelta) {
+		!finite(bid) || !finite(ask) {
 		return ladderInputs{}, fmt.Errorf(
-			"ladder: depths and spread must be finite and non-negative, deltas finite",
+			"ladder: depths and touch prices must be finite",
 		)
+	}
+
+	previousBidDepth, hasPreviousBid := state.Get(SymbolLadderBidDepth)
+	previousAskDepth, hasPreviousAsk := state.Get(SymbolLadderAskDepth)
+	previousSpread, hasPreviousSpread := state.Get(SymbolLadderSpread)
+	bidDelta := 0.0
+	askDelta := 0.0
+
+	if hasPreviousBid && hasPreviousAsk {
+		bidDelta = bidDepth - previousBidDepth
+		askDelta = askDepth - previousAskDepth
 	}
 
 	return ladderInputs{
 		halflife: halflife,
 		bidDepth: bidDepth,
 		askDepth: askDepth,
+		bid:      bid,
+		ask:      ask,
+		midpoint: bid + spread/2,
+		previousSpread: previousSpread,
+		hasPreviousSpread: hasPreviousSpread,
 		spread:   spread,
 		bidDelta: bidDelta,
 		askDelta: askDelta,
@@ -165,6 +206,11 @@ type ladderInputs struct {
 	halflife float64
 	bidDepth float64
 	askDepth float64
+	bid      float64
+	ask      float64
+	midpoint float64
+	previousSpread float64
+	hasPreviousSpread bool
 	spread   float64
 	bidDelta float64
 	askDelta float64
@@ -236,10 +282,24 @@ func composeLadder(
 	state nomagique.Frame,
 	observation ladderInputs,
 ) (nomagique.Frame, error) {
-	output := nomagique.Frame{}
+	output := state
 	output.Put(SymbolLadderBidDepth, observation.bidDepth)
 	output.Put(SymbolLadderAskDepth, observation.askDepth)
 	output.Put(SymbolLadderSpread, observation.spread)
+	output.Put(SymbolLadderBidDepletion, 0)
+	output.Put(SymbolLadderAskDepletion, 0)
+	output.Put(SymbolLadderBidReplenish, 0)
+	output.Put(SymbolLadderAskReplenish, 0)
+
+	if observation.hasPreviousSpread && observation.previousSpread > 0 {
+		output.Put(
+			SymbolLadderSpreadTightening,
+			math.Max(
+				observation.previousSpread-observation.spread,
+				0,
+			)/observation.previousSpread,
+		)
+	}
 
 	if observation.bidDepth > 0 && observation.askDepth > 0 {
 		output.Put(SymbolLadderImbalance,
@@ -254,6 +314,10 @@ func composeLadder(
 		output.Put(SymbolLadderSpreadBaseline, spreadBaseline)
 
 		if spreadBaseline > 0 {
+			output.Put(
+				SymbolLadderSpreadDeviation,
+				(observation.spread-spreadBaseline)/spreadBaseline,
+			)
 			output.Put(SymbolLadderCompression,
 				math.Max(0, 1-observation.spread/spreadBaseline),
 			)

@@ -57,8 +57,18 @@ lastAtNs():bigint {
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
+active():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+startedNs():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startDiagnosticClock(builder:flatbuffers.Builder) {
-  builder.startObject(6);
+  builder.startObject(8);
 }
 
 static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
@@ -85,13 +95,21 @@ static addLastAtNs(builder:flatbuffers.Builder, lastAtNs:bigint) {
   builder.addFieldInt64(5, lastAtNs, BigInt('0'));
 }
 
+static addActive(builder:flatbuffers.Builder, active:bigint) {
+  builder.addFieldInt64(6, active, BigInt('0'));
+}
+
+static addStartedNs(builder:flatbuffers.Builder, startedNs:bigint) {
+  builder.addFieldInt64(7, startedNs, BigInt('0'));
+}
+
 static endDiagnosticClock(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 4) // name
   return offset;
 }
 
-static createDiagnosticClock(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, count:bigint, totalNs:bigint, lastNs:bigint, maxNs:bigint, lastAtNs:bigint):flatbuffers.Offset {
+static createDiagnosticClock(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, count:bigint, totalNs:bigint, lastNs:bigint, maxNs:bigint, lastAtNs:bigint, active:bigint, startedNs:bigint):flatbuffers.Offset {
   DiagnosticClock.startDiagnosticClock(builder);
   DiagnosticClock.addName(builder, nameOffset);
   DiagnosticClock.addCount(builder, count);
@@ -99,6 +117,8 @@ static createDiagnosticClock(builder:flatbuffers.Builder, nameOffset:flatbuffers
   DiagnosticClock.addLastNs(builder, lastNs);
   DiagnosticClock.addMaxNs(builder, maxNs);
   DiagnosticClock.addLastAtNs(builder, lastAtNs);
+  DiagnosticClock.addActive(builder, active);
+  DiagnosticClock.addStartedNs(builder, startedNs);
   return DiagnosticClock.endDiagnosticClock(builder);
 }
 
@@ -109,7 +129,9 @@ unpack(): DiagnosticClockT {
     this.totalNs(),
     this.lastNs(),
     this.maxNs(),
-    this.lastAtNs()
+    this.lastAtNs(),
+    this.active(),
+    this.startedNs()
   );
 }
 
@@ -121,6 +143,8 @@ unpackTo(_o: DiagnosticClockT): void {
   _o.lastNs = this.lastNs();
   _o.maxNs = this.maxNs();
   _o.lastAtNs = this.lastAtNs();
+  _o.active = this.active();
+  _o.startedNs = this.startedNs();
 }
 }
 
@@ -131,7 +155,9 @@ constructor(
   public totalNs: bigint = BigInt('0'),
   public lastNs: bigint = BigInt('0'),
   public maxNs: bigint = BigInt('0'),
-  public lastAtNs: bigint = BigInt('0')
+  public lastAtNs: bigint = BigInt('0'),
+  public active: bigint = BigInt('0'),
+  public startedNs: bigint = BigInt('0')
 ){}
 
 
@@ -144,7 +170,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.totalNs,
     this.lastNs,
     this.maxNs,
-    this.lastAtNs
+    this.lastAtNs,
+    this.active,
+    this.startedNs
   );
 }
 }

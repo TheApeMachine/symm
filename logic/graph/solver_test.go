@@ -45,12 +45,14 @@ func TestUpdate(t *testing.T) {
 		}})
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
+		thesis.Work(types.SourceGraph).Push(symbol)
 
 		Convey("It should wait for the first measurement of the new lifecycle", func() {
 			var graph *Graph
 
-			for candidate := range symbol.MarketGraphs(types.SourcePlanner) {
+			for candidate := range symbol.MarketGraphs(
+				symbol.GraphConsumers[types.GraphConsumerPlanner],
+			) {
 				graph = candidate
 			}
 
@@ -105,11 +107,18 @@ func TestUpdate(t *testing.T) {
 
 		categorySolver := category.NewSolver(t.Context(), thesis, nil, nil, nil)
 		defer categorySolver.Close()
-		go func() { _ = categorySolver.Run() }()
+		thesis.Work(types.SourceCategory).Push(symbol)
+		deadline := time.Now().Add(3 * time.Second)
 
-		select {
-		case <-symbol.Categories.Ready(string(types.SourceGraph)):
-		case <-t.Context().Done():
+		for symbol.Categories.Length(
+			symbol.CategoryConsumers[types.CategoryConsumerGraph],
+		) == 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+
+		if symbol.Categories.Length(
+			symbol.CategoryConsumers[types.CategoryConsumerGraph],
+		) == 0 {
 			t.Fatal("category solver stopped before publishing graph input")
 		}
 
@@ -197,7 +206,7 @@ func TestUpdate(t *testing.T) {
 
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
+		thesis.Work(types.SourceGraph).Push(bitcoin)
 
 		Convey("It should compile the measurement, its category, the hypothesis, and both enrichment layers", func() {
 			graph := pollBuiltGraph(bitcoin, func(g *Graph) bool {
@@ -218,8 +227,11 @@ func TestUpdate(t *testing.T) {
 		previousFocus := types.Focus()
 		types.SetFocus("BTC/USD")
 		Reset(func() { types.SetFocus(previousFocus) })
+		consumer := transport.NewConsumer[*types.UIFrame](
+			graphTestConsumer, func() {},
+		)
 		ui := transport.NewMapReduce[*types.UIFrame](
-			[]string{graphTestConsumer},
+			[]*transport.Consumer[*types.UIFrame]{consumer},
 			nil,
 			nil,
 		)
@@ -249,7 +261,10 @@ func TestUpdate(t *testing.T) {
 
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
+		thesis.Symbols.Range(func(_, value any) bool {
+			thesis.Work(types.SourceGraph).Push(value.(*types.Symbol))
+			return true
+		})
 
 		Convey("It should bootstrap and publish only the graph selected by the UI focus", func() {
 			var payload *types.UIFrame
@@ -257,9 +272,7 @@ func TestUpdate(t *testing.T) {
 			deadline := time.Now().Add(3 * time.Second)
 
 			for payload == nil && time.Now().Before(deadline) {
-				ui.Register(graphTestConsumer)
-
-				if frame, ok := ui.Pop(graphTestConsumer); ok &&
+				if frame, ok := ui.Pop(consumer); ok &&
 					frame.Type == wire.FrameGraphFrame {
 					payload = frame
 				} else {
@@ -305,7 +318,9 @@ func pollBuiltGraph(symbol *types.Symbol, ready func(*Graph) bool) *Graph {
 	for time.Now().Before(deadline) {
 		graph = nil
 
-		for candidate := range symbol.MarketGraphs(types.SourcePlanner) {
+		for candidate := range symbol.MarketGraphs(
+			symbol.GraphConsumers[types.GraphConsumerPlanner],
+		) {
 			graph = candidate
 		}
 
@@ -346,16 +361,17 @@ func TestAddEdge(t *testing.T) {
 		graph.AddNode(&Node{ID: "causal"})
 		graph.AddEdge(&Edge{
 			From: "forecast", To: "causal", Relation: RelationSupports,
-			Weight: 0.8, Confidence: 0.9,
+			Weight: 0.8, Confidence: 0.9, Evidence: []string{"older"},
 		})
 		graph.AddEdge(&Edge{
 			From: "forecast", To: "causal", Relation: RelationContradicts,
-			Weight: 0.6, Confidence: 0.7,
+			Weight: 0.6, Confidence: 0.7, Evidence: []string{"newer"},
 		})
 
 		Convey("It should replace the obsolete claim without duplicating the target", func() {
 			So(graph.Edges, ShouldHaveLength, 1)
 			So(graph.Edges[0].Relation, ShouldEqual, RelationContradicts)
+			So(graph.Edges[0].Evidence, ShouldResemble, []string{"newer"})
 			So(graph.Adjacency["forecast"], ShouldResemble, []string{"causal"})
 			weight, confidence := graph.EdgeValue("forecast", "causal")
 			So(weight, ShouldEqual, -0.6)
@@ -460,7 +476,7 @@ func TestInferStructuralEdges(t *testing.T) {
 		})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(thesis, nil, nil)
 		categories := solver.popCategories(symbol)
 		solver.extractCategoryNodes(symbol, categories, graph)
 
@@ -480,7 +496,7 @@ func TestInferStructuralEdges(t *testing.T) {
 	Convey("Given canonical causal intervention and expectation nodes", t, func() {
 		at := time.Unix(1, 0).UTC()
 		graph := NewGraph(at)
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(types.NewThesis(t.Context(), nil), nil, nil)
 
 		for _, symbol := range []string{"BTC/USD", "ETH/USD"} {
 			graph.AddNode(&Node{
@@ -536,7 +552,7 @@ func TestInferStructuralEdges(t *testing.T) {
 	Convey("Given unrelated graph nodes", t, func() {
 		at := time.Unix(10, 0).UTC()
 		graph := NewGraph(at)
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(types.NewThesis(t.Context(), nil), nil, nil)
 
 		for index := 0; index < 256; index++ {
 			nodeID := "cat:BTC/USD:inactive:" + strconv.Itoa(index)
@@ -599,7 +615,7 @@ func TestInferStructuralEdges(t *testing.T) {
 			},
 		})
 		graph := NewGraph(at)
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(types.NewThesis(t.Context(), nil), nil, nil)
 		cognition, found := solver.popCognition(symbol)
 		So(found, ShouldBeTrue)
 		solver.extractCognitionNodes(symbol, cognition, graph)
@@ -635,7 +651,7 @@ func TestExtractCausalNodes(t *testing.T) {
 		})
 		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(thesis, nil, nil)
 
 		err := solver.extractCausalNodes(symbol, graph)
 		So(err, ShouldBeNil)
@@ -660,7 +676,7 @@ func TestExtractCausalNodes(t *testing.T) {
 		symbol.Causal.Push(map[string]any{"intervention": 1.0})
 		thesis.Symbols.Store("BTC/USD", symbol)
 
-		err := NewSolver(nil, nil, nil).extractCausalNodes(
+		err := NewSolver(thesis, nil, nil).extractCausalNodes(
 			symbol,
 			NewGraph(time.Unix(1, 0).UTC()),
 		)
@@ -692,7 +708,7 @@ func TestExtractResonanceNodes(t *testing.T) {
 		)
 		thesis.Symbols.Store("BTC/USD", symbol)
 		graph := NewGraph(at)
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(thesis, nil, nil)
 
 		solver.extractResonanceNodes(symbol, graph)
 
@@ -724,7 +740,9 @@ func TestExtractPredictiveDynamicsNodes(t *testing.T) {
 		symbol.Resonance.Push(dynamics)
 		graph := NewGraph(at)
 
-		NewSolver(nil, nil, nil).extractResonanceNodes(symbol, graph)
+		NewSolver(
+			types.NewThesis(t.Context(), nil), nil, nil,
+		).extractResonanceNodes(symbol, graph)
 
 		Convey("It should expose motion and risk as inspectable graph evidence", func() {
 			velocity, hasVelocity := graph.Nodes["res:BTC/USD:generalized_velocity"]
@@ -757,7 +775,7 @@ func TestExtractManifoldNodes(t *testing.T) {
 		})
 		graph := NewGraph(at)
 
-		NewSolver(nil, nil, nil).extractManifoldNodes(thesis, graph)
+		NewSolver(thesis, nil, nil).extractManifoldNodes(thesis, graph)
 
 		Convey("It should retain the measured phase and directional inference", func() {
 			node := graph.Nodes["man:universe:phase_direction"]
@@ -842,7 +860,7 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 		}
 	}
 
-	solver := NewSolver(nil, nil, nil)
+	solver := NewSolver(types.NewThesis(b.Context(), nil), nil, nil)
 	symbol := types.NewSymbol("BTC/USD")
 
 	b.ReportAllocs()
@@ -917,7 +935,12 @@ func BenchmarkUpdate(b *testing.B) {
 		})
 	}
 
-	ui := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
+	consumer := transport.NewConsumer[*types.UIFrame](
+		graphTestConsumer, func() {},
+	)
+	ui := transport.NewMapReduce[*types.UIFrame](
+		[]*transport.Consumer[*types.UIFrame]{consumer}, nil, nil,
+	)
 	solver := NewSolver(thesis, ui, nil)
 	previousFocus := types.Focus()
 	types.SetFocus("SIM0/USD")
@@ -934,8 +957,7 @@ func BenchmarkUpdate(b *testing.B) {
 				solver.buildGraph(symbolState.Symbol, symbolState)
 			}
 
-			ui.Register(graphTestConsumer)
-			_, _ = ui.Pop(graphTestConsumer)
+			_, _ = ui.Pop(consumer)
 
 			return true
 		})
@@ -976,7 +998,7 @@ func TestHeldCognitionGraphEvidence(t *testing.T) {
 			},
 		})
 		graph := NewGraph(at)
-		solver := NewSolver(nil, nil, nil)
+		solver := NewSolver(types.NewThesis(t.Context(), nil), nil, nil)
 		cognition, found := solver.popCognition(symbol)
 		So(found, ShouldBeTrue)
 

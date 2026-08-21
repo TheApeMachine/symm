@@ -29,7 +29,10 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 		SetFocus("BTC/USD")
 		Reset(func() { SetFocus(previousFocus) })
 
-		ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
+		dashboard := transport.NewConsumer[*UIFrame]("dashboard", func() {})
+		ui := transport.NewMapReduce[*UIFrame](
+			[]*transport.Consumer[*UIFrame]{dashboard}, nil, nil,
+		)
 		symbol := NewSymbol("BTC/USD", ui)
 		symbol.Tick = 42
 		measurement := nmtypes.NewMeasurement("first", string(SourceHawkes), 0, 0)
@@ -40,10 +43,14 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 			So(measurement.Symbol, ShouldEqual, "BTC/USD")
 			So(measurement.Tick, ShouldEqual, 42)
 
-			for _, solver := range []string{"category", "graph", "resonance", "manifold"} {
+			for _, consumer := range []*transport.Consumer[*nmtypes.Measurement]{
+				symbol.MeasurementConsumers[MeasurementConsumerCategory],
+				symbol.MeasurementConsumers[MeasurementConsumerGraph],
+				symbol.MeasurementConsumers[MeasurementConsumerManifold],
+			} {
 				rows := make([]*nmtypes.Measurement, 0)
 
-				for row := range symbol.MarketMeasurements(solver) {
+				for row := range symbol.MarketMeasurements(consumer) {
 					rows = append(rows, row)
 				}
 
@@ -56,7 +63,7 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 		})
 
 		Convey("It should publish the measurement to the dashboard transport", func() {
-			frame, found := ui.Pop("dashboard")
+			frame, found := ui.Pop(dashboard)
 			So(found, ShouldBeTrue)
 			So(frame.Type, ShouldEqual, wire.FrameMeasurementsFrame)
 			rows := frame.Value.(*wire.MeasurementsFrameT).Rows
@@ -80,18 +87,23 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 		SetFocus("BTC/USD")
 		Reset(func() { SetFocus(previousFocus) })
 
-		ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
+		dashboard := transport.NewConsumer[*UIFrame]("dashboard", func() {})
+		ui := transport.NewMapReduce[*UIFrame](
+			[]*transport.Consumer[*UIFrame]{dashboard}, nil, nil,
+		)
 		symbol := NewSymbol("ETH/USD", ui)
 		measurement := nmtypes.NewMeasurement("unfocused", string(SourceHawkes), 0, 0)
 
 		symbol.AppendMeasurement(measurement)
 
 		Convey("It should retain the measurement without publishing a UI frame", func() {
-			row, found := symbol.Measurements.Pop("audit")
+			row, found := symbol.Measurements.Pop(
+				symbol.MeasurementConsumers[MeasurementConsumerAudit],
+			)
 			So(found, ShouldBeTrue)
 			So(row.ID, ShouldEqual, "unfocused")
 
-			_, found = ui.Pop("dashboard")
+			_, found = ui.Pop(dashboard)
 			So(found, ShouldBeFalse)
 		})
 	})
@@ -105,17 +117,18 @@ func TestSymbolAppendTicker(t *testing.T) {
 		symbol.AppendTicker(ticker)
 
 		Convey("It should queue the ticker", func() {
-			So(symbol.HasTickersFor(SourceLiquidity), ShouldBeTrue)
-			So(symbol.HasTickersFor(SourceCVD), ShouldBeFalse)
+			liquidity := symbol.TickerConsumers[TickerConsumerLiquidity]
+			sentiment := symbol.TickerConsumers[TickerConsumerSentiment]
+			So(symbol.HasTickersFor(liquidity), ShouldBeTrue)
 			rows := make([]kraken.TickerData, 0)
 
-			for row := range symbol.MarketTickers(SourceLiquidity) {
+			for row := range symbol.MarketTickers(liquidity) {
 				rows = append(rows, row)
 			}
 
 			So(rows, ShouldResemble, []kraken.TickerData{ticker})
-			So(symbol.HasTickersFor(SourceLiquidity), ShouldBeFalse)
-			So(symbol.HasTickersFor(SourceSentiment), ShouldBeTrue)
+			So(symbol.HasTickersFor(liquidity), ShouldBeFalse)
+			So(symbol.HasTickersFor(sentiment), ShouldBeTrue)
 		})
 	})
 }
@@ -128,18 +141,19 @@ func TestSymbolAppendTrade(t *testing.T) {
 		symbol.AppendTrade(trade)
 
 		Convey("It should queue the trade", func() {
-			So(symbol.HasTradesFor(SourceCVD), ShouldBeTrue)
-			So(symbol.HasTradesFor(SourceDepthFlow), ShouldBeFalse)
-			So(symbol.HasTradesFor(SourceToxicity), ShouldBeFalse)
+			cvd := symbol.TradeConsumers[TradeConsumerCVD]
+			hawkes := symbol.TradeConsumers[TradeConsumerHawkes]
+			So(symbol.HasTradesFor(cvd), ShouldBeTrue)
+			So(symbol.HasTradesFor(hawkes), ShouldBeTrue)
 			rows := make([]kraken.TradeData, 0)
 
-			for row := range symbol.MarketTrades(SourceCVD) {
+			for row := range symbol.MarketTrades(cvd) {
 				rows = append(rows, row)
 			}
 
 			So(rows, ShouldResemble, []kraken.TradeData{trade})
-			So(symbol.HasTradesFor(SourceCVD), ShouldBeFalse)
-			So(symbol.HasTradesFor(SourceHawkes), ShouldBeTrue)
+			So(symbol.HasTradesFor(cvd), ShouldBeFalse)
+			So(symbol.HasTradesFor(hawkes), ShouldBeTrue)
 		})
 	})
 }
@@ -152,12 +166,13 @@ func TestSymbolAppendLevel3(t *testing.T) {
 		symbol.AppendLevel3(level3)
 
 		Convey("It should queue the frame only for Level 3 consumers", func() {
-			So(symbol.HasLevel3For(SourceDepthFlow), ShouldBeTrue)
-			So(symbol.HasLevel3For(SourceToxicity), ShouldBeTrue)
-			So(symbol.HasLevel3For(SourcePumpDump), ShouldBeFalse)
+			depthFlow := symbol.Level3Consumers[Level3ConsumerDepthFlow]
+			toxicity := symbol.Level3Consumers[Level3ConsumerToxicity]
+			So(symbol.HasLevel3For(depthFlow), ShouldBeTrue)
+			So(symbol.HasLevel3For(toxicity), ShouldBeTrue)
 			rows := make([]kraken.Level3Data, 0)
 
-			for row := range symbol.MarketLevel3(SourceDepthFlow) {
+			for row := range symbol.MarketLevel3(depthFlow) {
 				rows = append(rows, row)
 			}
 
@@ -171,17 +186,20 @@ func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 	SetFocus("BTC/USD")
 	b.Cleanup(func() { SetFocus(previousFocus) })
 
-	ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
-	consumers := append(append([]string{}, LogicSourceStrings...), "audit")
+	dashboard := transport.NewConsumer[*UIFrame]("dashboard", func() {})
+	ui := transport.NewMapReduce[*UIFrame](
+		[]*transport.Consumer[*UIFrame]{dashboard}, nil, nil,
+	)
 
 	b.Run("focused", func(b *testing.B) {
 		symbol := NewSymbol("BTC/USD", ui)
+		consumers := symbol.MeasurementConsumers
 		measurement := nmtypes.NewMeasurement("benchmark", string(SourceHawkes), 0, 0)
 		b.ReportAllocs()
 
 		for range b.N {
 			symbol.AppendMeasurement(measurement)
-			ui.Pop("dashboard")
+			ui.Pop(dashboard)
 
 			for _, consumer := range consumers {
 				symbol.Measurements.Pop(consumer)
@@ -191,6 +209,7 @@ func BenchmarkSymbolAppendMeasurement(b *testing.B) {
 
 	b.Run("unfocused", func(b *testing.B) {
 		symbol := NewSymbol("ETH/USD", ui)
+		consumers := symbol.MeasurementConsumers
 		measurement := nmtypes.NewMeasurement("benchmark", string(SourceHawkes), 0, 0)
 		b.ReportAllocs()
 

@@ -61,7 +61,6 @@ func NewInstrument(
 	}
 
 	instrument.status = types.PENDING
-	instrument.Subscribe()
 
 	return instrument
 }

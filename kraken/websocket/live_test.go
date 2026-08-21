@@ -114,6 +114,31 @@ func TestStatus(t *testing.T) {
 	})
 }
 
+func TestSetObserver(t *testing.T) {
+	Convey("Given a live session with an existing Level 3 child", t, func() {
+		parent := &Live{level3: &sync.Map{}}
+		child := &Live{}
+		parent.level3.Store("BTC/USD", child)
+		observed := make(chan string, 2)
+		parent.SetObserver(func(name string, _ time.Duration) {
+			observed <- name
+		})
+
+		parentObserver := parent.observer.Load()
+		childObserver := child.observer.Load()
+
+		So(parentObserver, ShouldNotBeNil)
+		So(childObserver, ShouldNotBeNil)
+		(*parentObserver)("crypto", time.Millisecond)
+		(*childObserver)("crypto", time.Millisecond)
+
+		Convey("Both ingress paths should report through the same clock", func() {
+			So(<-observed, ShouldEqual, "crypto")
+			So(<-observed, ShouldEqual, "crypto")
+		})
+	})
+}
+
 func subscriptionConnection(
 	t *testing.T,
 	requestCount int,

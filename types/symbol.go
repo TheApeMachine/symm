@@ -81,6 +81,7 @@ func NewSymbol(name string, uiChannels ...*transport.MapReduce[*UIFrame]) *Symbo
 	symbol.Level3Consumers = []*transport.Consumer[kraken.Level3Data]{
 		newSymbolConsumer[kraken.Level3Data](symbol, SourceDepthFlow),
 		newSymbolConsumer[kraken.Level3Data](symbol, SourceToxicity),
+		newSymbolConsumer[kraken.Level3Data](symbol, SourcePumpDump),
 	}
 	symbol.ExecutionConsumers = []*transport.Consumer[kraken.ExecutionData]{
 		newSymbolConsumer[kraken.ExecutionData](symbol, SourceDesk),
@@ -88,7 +89,6 @@ func NewSymbol(name string, uiChannels ...*transport.MapReduce[*UIFrame]) *Symbo
 	symbol.MeasurementConsumers = []*transport.Consumer[*types.Measurement]{
 		newSymbolConsumer[*types.Measurement](symbol, SourceCategory),
 		newSymbolConsumer[*types.Measurement](symbol, SourceManifold),
-		newSymbolConsumer[*types.Measurement](symbol, SourceResonance),
 		newSymbolConsumer[*types.Measurement](symbol, SourceGraph),
 		newSymbolConsumer[*types.Measurement](symbol, SourceAudit),
 	}

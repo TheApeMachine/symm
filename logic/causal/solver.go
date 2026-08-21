@@ -369,7 +369,9 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 			return true
 		}
 
-		for causalMap := range symbolState.MarketCausal(types.SourceCausal) {
+		for causalMap := range symbolState.MarketCausal(
+			symbolState.CausalConsumers[types.CausalConsumerCausal],
+		) {
 			if _, present := causalMap["symbol"]; !present {
 				causalMap["symbol"] = symbol
 			}

@@ -19,6 +19,8 @@ func TestHawkesPipeline(t *testing.T) {
 		thesis := types.NewThesis(context.Background(), nil)
 		market := thesis.Symbol("BTC/USD")
 		start := time.Unix(1_700_005_000, 0).UTC()
+		signal := NewSignal(context.Background(), thesis)
+		defer signal.Close()
 
 		for index, side := range []string{"buy", "sell", "buy"} {
 			market.AppendTrade(kraken.TradeData{
@@ -29,14 +31,12 @@ func TestHawkesPipeline(t *testing.T) {
 			})
 		}
 
-		signal := NewSignal(context.Background(), thesis)
-		defer signal.Close()
-		go signal.Run()
-
 		measurements := []*nmtypes.Measurement{}
 
 		time.Sleep(50 * time.Millisecond)
-		for measurement := range market.MarketMeasurements("category") {
+		for measurement := range market.MarketMeasurements(
+			market.MeasurementConsumers[types.MeasurementConsumerCategory],
+		) {
 			measurements = append(measurements, measurement)
 		}
 
@@ -87,7 +87,7 @@ func BenchmarkHawkesPipeline(b *testing.B) {
 		input.Put(nmtypes.EventTimeSec, float64(start.Unix()+int64(index)))
 		input.Put(nmtypes.EventTimeNsec, 0)
 
-		_, err := signal.number("BTC/USD", input)
+		_, err := signal.number.Step("BTC/USD", input)
 
 		if err != nil {
 			b.Fatal(err)

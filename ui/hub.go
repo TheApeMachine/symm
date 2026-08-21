@@ -145,13 +145,20 @@ func NewHub(
 		}
 
 		consumerID := consumerIDFor()
+		ready := make(chan struct{}, 1)
+		consumer := transport.NewConsumer[*types.UIFrame](consumerID, func() {
+			select {
+			case ready <- struct{}{}:
+			default:
+			}
+		})
 
 		// Each client drains the lock-free UI transport under its own consumer
 		// cursor. MapReduce fans every pushed frame out to every registered
 		// consumer, so each client receives each frame without any shared
 		// broadcast or client-fan-out machinery on the hub.
-		ui.Register(consumerID)
-		defer ui.Unregister(consumerID)
+		ui.Register(consumer)
+		defer ui.Unregister(consumer)
 		initialFrames := make([]*types.UIFrame, 0, 3)
 
 		if hub.balance != nil {
@@ -313,24 +320,15 @@ func NewHub(
 			frames := deferredFrames
 			deferredFrames = nil
 
-			if len(frames) == 0 {
-				frame, ok := ui.WaitPop(clientCtx, consumerID)
-
-				if !ok {
+			for len(frames) == 0 {
+				select {
+				case <-clientCtx.Done():
 					return
+				case <-ready:
 				}
 
-				frames = append(frames, frame)
-				pending := ui.ConsumerLength(consumerID)
-
-				for range pending {
-					candidate, found := ui.Pop(consumerID)
-
-					if !found {
-						break
-					}
-
-					frames = append(frames, candidate)
+				for frame := range ui.Drain(consumer, nil) {
+					frames = append(frames, frame)
 				}
 			}
 

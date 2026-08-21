@@ -2,7 +2,6 @@ package sentiment
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,7 +49,7 @@ type Signal struct {
 	err      error
 	cohortAt time.Time
 	thesis   *types.Thesis
-	number   nomagique.Number[string]
+	number   *nomagique.Number[string]
 	work     *transport.Consumer[*types.Symbol]
 }
 
@@ -77,8 +76,6 @@ func (signal *Signal) Type() types.SourceType {
 
 func (signal *Signal) consume() {
 	go func() {
-		ready := make([]*types.Symbol, 0, 1)
-
 		for symbol := range signal.thesis.Work(types.SourceSentiment).Drain(
 			signal.work, nil,
 		) {
@@ -89,52 +86,23 @@ func (signal *Signal) consume() {
 			default:
 			}
 
-			if symbol != nil {
-				ready = append(ready, symbol)
+			if symbol == nil {
+				continue
+			}
+
+			for ticker := range symbol.MarketTickers(
+				symbol.TickerConsumers[types.TickerConsumerSentiment],
+			) {
+				err := signal.measure(symbol, ticker)
+
+				if err != nil {
+					signal.err = err
+					signal.thesis.Fail(signal.err)
+					return
+				}
 			}
 		}
-
-		if signal.err = signal.step(ready); signal.err != nil {
-			signal.thesis.Fail(signal.err)
-		}
 	}()
-}
-
-func (signal *Signal) step(symbols []*types.Symbol) error {
-	observations := make([]struct {
-		symbol *types.Symbol
-		ticker kraken.TickerData
-	}, 0)
-
-	for _, symbol := range symbols {
-		if symbol == nil {
-			continue
-		}
-
-		for ticker := range symbol.MarketTickers(
-			symbol.TickerConsumers[types.TickerConsumerSentiment],
-		) {
-			observations = append(observations, struct {
-				symbol *types.Symbol
-				ticker kraken.TickerData
-			}{symbol: symbol, ticker: ticker})
-		}
-
-	}
-
-	sort.SliceStable(observations, func(leftIndex int, rightIndex int) bool {
-		return observations[leftIndex].ticker.Timestamp.Before(
-			observations[rightIndex].ticker.Timestamp,
-		)
-	})
-
-	for _, observation := range observations {
-		if err := signal.measure(observation.symbol, observation.ticker); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func (signal *Signal) measure(symbol *types.Symbol, ticker kraken.TickerData) error {
@@ -155,7 +123,7 @@ func (signal *Signal) measure(symbol *types.Symbol, ticker kraken.TickerData) er
 	input.Put(nmtypes.EventTimeSec, float64(cohortAt.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(cohortAt.Nanosecond()))
 
-	output, err := signal.number("cohort", input)
+	output, err := signal.number.Step("cohort", input)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(

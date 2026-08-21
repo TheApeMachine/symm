@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -33,6 +34,7 @@ type Planner struct {
 	allocation *Allocation
 	desk       *broker.Desk
 	thesis     *types.Thesis
+	work       *transport.Consumer[*types.Symbol]
 
 	candidateMu sync.Mutex
 	candidates  map[string]*types.Decision
@@ -62,6 +64,8 @@ func NewPlanner(
 		thesis:     thesis,
 		candidates: make(map[string]*types.Decision),
 	}
+	planner.work = transport.NewConsumer[*types.Symbol](planner.Name(), planner.consume)
+	thesis.Work(types.SourcePlanner).Register(planner.work)
 
 	return planner
 }
@@ -95,41 +99,29 @@ func (planner *Planner) Close() error {
 	return nil
 }
 
-/*
-Run evaluates completed graph passes until cancellation or the first planner
-error. Construction only wires the planner; the system supervisor owns this
-lifecycle.
-*/
-func (planner *Planner) Run() error {
-	for planner.err == nil {
-		work := planner.thesis.Work(types.SourcePlanner)
-		_, available := work.WaitPop(
-			planner.ctx,
-			string(types.SourcePlanner),
-		)
+func (planner *Planner) consume() {
+	go func() {
+		for range planner.thesis.Work(types.SourcePlanner).Drain(planner.work, nil) {
+			select {
+			case <-planner.ctx.Done():
+				planner.err = planner.ctx.Err()
+				return
+			default:
+			}
 
-		if !available {
-			return planner.ctx.Err()
+			planner.lastTick = planner.thesis.Tick
+
+			if err := planner.Update(planner.thesis); err != nil {
+				planner.err = errnie.Error(errnie.Err(
+					errnie.Internal,
+					"planner: background update failed",
+					err,
+				))
+				planner.thesis.Fail(planner.err)
+				return
+			}
 		}
-
-		for range work.Drain(string(types.SourcePlanner), func(*types.Symbol) bool {
-			return true
-		}) {
-		}
-
-		tick := planner.thesis.Tick
-		planner.lastTick = tick
-
-		if err := planner.Update(planner.thesis); err != nil {
-			planner.err = errnie.Error(errnie.Err(
-				errnie.Internal,
-				"planner: background update failed",
-				err,
-			))
-		}
-	}
-
-	return planner.err
+	}()
 }
 
 func (planner *Planner) decisionFromGraph(
@@ -249,7 +241,9 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 
 		consumedGraph := false
 
-		for graph := range symbolState.MarketGraphs(types.SourcePlanner) {
+		for graph := range symbolState.MarketGraphs(
+			symbolState.GraphConsumers[types.GraphConsumerPlanner],
+		) {
 			consumedGraph = true
 
 			if graph == nil || !graph.SearchableEnough(config.Planner.MinimumConfidence) {
@@ -362,10 +356,17 @@ func (planner *Planner) updateGraph(
 
 		reserveSlots := planner.reserveSlots()
 
+		searchStarted := time.Now()
 		searchRoot, searchErr := portfolioSearch(
 			NewPortfolioState(legs, normalSlots, reserveSlots),
 			config.Planner.MCTSIterations*max(1, len(legs)),
 		)
+
+		if planner.ObserveModule != nil {
+			planner.ObserveModule("mcts", time.Since(searchStarted))
+		}
+
+		lastSearchEnd = time.Now()
 
 		if searchErr != nil {
 			return searchErr

@@ -35,13 +35,11 @@ func TestCVDNumber(t *testing.T) {
 		thesis := types.NewThesis(context.Background(), nil)
 		market := thesis.Symbol("BTC/USD")
 		start := time.Unix(1_700_003_200, 0).UTC()
+		signal := NewSignal(context.Background(), thesis)
+		defer signal.Close()
 
 		market.AppendTrade(cvdTrade(1, "buy", 100.0, 2, start))
 		market.AppendTrade(cvdTrade(2, "sell", 100.1, 1, start.Add(time.Second)))
-
-		signal := NewSignal(context.Background(), thesis)
-		defer signal.Close()
-		go signal.Run()
 
 		Convey("It should emit flow decomposition from the nomagique pipeline", func() {
 			measurements := []*nmtypes.Measurement{}
@@ -51,7 +49,9 @@ func TestCVDNumber(t *testing.T) {
 			for len(measurements) < 2 && time.Now().Before(deadline) {
 				measurements = measurements[:0]
 
-				for measurement := range market.MarketMeasurements("category") {
+				for measurement := range market.MarketMeasurements(
+					market.MeasurementConsumers[types.MeasurementConsumerCategory],
+				) {
 					measurements = append(measurements, measurement)
 				}
 

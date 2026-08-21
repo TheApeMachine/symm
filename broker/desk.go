@@ -41,6 +41,8 @@ type Desk struct {
 	recovery       *Recovery
 	positions      *sync.Map
 	passage        *types.PassageModel
+	work           *transport.Consumer[*types.Symbol]
+	balanceRefresh atomic.Bool
 	executeMu      sync.Mutex
 	maxPositions   int
 	maxReserved    int
@@ -106,6 +108,8 @@ func NewDesk(
 	desk.recovery = NewRecovery(
 		ctx, api, ui, instrument, price, balance, recorder, store, desk.positions,
 	)
+	desk.work = transport.NewConsumer[*types.Symbol](desk.Name(), desk.consume)
+	thesis.Work(types.SourceDesk).Register(desk.work)
 
 	if err := desk.recovery.Recover(); err != nil {
 		desk.status = types.ERROR
@@ -134,106 +138,102 @@ func (desk *Desk) Cash() *decimal.Decimal {
 	return desk.balance.Cash()
 }
 
-func (desk *Desk) Run() error {
-	balanceRefreshing := &atomic.Bool{}
+func (desk *Desk) consume() {
+	go func() {
+		defer func() {
+			desk.thesis.Fail(desk.err)
+		}()
 
-	for desk.err == nil {
-		symbol, available := desk.thesis.Work(types.SourceDesk).WaitPop(
-			desk.ctx,
-			string(types.SourceDesk),
-		)
+		for symbol := range desk.thesis.Work(types.SourceDesk).Drain(desk.work, nil) {
+			select {
+			case <-desk.ctx.Done():
+				desk.err = desk.ctx.Err()
+				return
+			default:
+			}
 
-		if !available {
-			return desk.ctx.Err()
-		}
+			if symbol == nil {
+				continue
+			}
 
-		if symbol == nil {
-			continue
-		}
+			drained := false
 
-		started := time.Now()
-		drained := false
+			for ticker := range symbol.MarketTickers(
+				symbol.TickerConsumers[types.TickerConsumerDesk],
+			) {
+				drained = true
+				desk.price.Update(&ticker)
+				found, ok := desk.positions.Load(symbol.Symbol)
 
-		for ticker := range symbol.MarketTickers(types.SourceDesk) {
-			drained = true
-			desk.price.Update(&ticker)
-			found, ok := desk.positions.Load(symbol.Symbol)
+				if ok && found != nil {
+					position, ok := found.(*Position)
 
-			if ok && found != nil {
-				position, ok := found.(*Position)
+					if ok && position != nil {
+						position.onTicker(ticker)
 
-				if ok && position != nil {
-					position.onTicker(ticker)
+						if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
+							err := observer.ObserveMark(position.MarkFeedback(ticker.Timestamp))
 
-					if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
-						err := observer.ObserveMark(position.MarkFeedback(ticker.Timestamp))
-
-						if err != nil {
-							desk.err = errnie.Error(err)
-							break
+							if err != nil {
+								desk.err = errnie.Error(err)
+								return
+							}
 						}
 					}
 				}
 			}
-		}
 
-		if desk.err != nil {
-			continue
-		}
+			for execution := range symbol.MarketExecutions(
+				symbol.ExecutionConsumers[types.ExecutionConsumerDesk],
+			) {
+				drained = true
+				found, ok := desk.positions.Load(symbol.Symbol)
 
-		for execution := range symbol.MarketExecutions(types.SourceDesk) {
-			drained = true
-			found, ok := desk.positions.Load(symbol.Symbol)
-
-			if !ok || found == nil {
-				continue
-			}
-
-			position, ok := found.(*Position)
-
-			if !ok || position == nil {
-				continue
-			}
-
-			if position.onExecution(kraken.Execution{
-				Channel: "executions",
-				Type:    "update",
-				Data:    []kraken.ExecutionData{execution},
-			}) {
-				desk.foldPassage(position)
-				desk.positions.CompareAndDelete(symbol.Symbol, position)
-			}
-		}
-
-		if desk.ObserveModule != nil {
-			desk.ObserveModule("desk", time.Since(started))
-		}
-
-		/*
-			Cash and equity are refreshed together because they answer the
-			same question at the same instant: what the account holds, and
-			what it would settle at if every open lot were closed now. The
-			drained guard paces both against the ticker rate, so the account
-			readout stays live without adding venue traffic of its own.
-		*/
-		if !drained {
-			continue
-		}
-
-		if balanceRefreshing.CompareAndSwap(false, true) {
-			go func() {
-				defer balanceRefreshing.Store(false)
-				desk.balance.Update()
-				err := desk.PublishEquity()
-
-				if err != nil {
-					desk.err = errnie.Error(err)
+				if !ok || found == nil {
+					continue
 				}
-			}()
-		}
-	}
 
-	return desk.err
+				position, ok := found.(*Position)
+
+				if !ok || position == nil {
+					continue
+				}
+
+				if position.onExecution(kraken.Execution{
+					Channel: "executions",
+					Type:    "update",
+					Data:    []kraken.ExecutionData{execution},
+				}) {
+					desk.foldPassage(position)
+					desk.positions.CompareAndDelete(symbol.Symbol, position)
+				}
+			}
+
+			/*
+				Cash and equity are refreshed together because they answer the
+				same question at the same instant: what the account holds, and
+				what it would settle at if every open lot were closed now. The
+				drained guard paces both against the ticker rate, so the account
+				readout stays live without adding venue traffic of its own.
+			*/
+			if !drained {
+				continue
+			}
+
+			if desk.balanceRefresh.CompareAndSwap(false, true) {
+				go func() {
+					defer desk.balanceRefresh.Store(false)
+					desk.balance.Update()
+					err := desk.PublishEquity()
+
+					if err != nil {
+						desk.err = errnie.Error(err)
+						desk.thesis.Fail(desk.err)
+					}
+				}()
+			}
+		}
+	}()
 }
 
 /*

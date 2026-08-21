@@ -21,7 +21,9 @@ func lastCognition(symbol *types.Symbol) (types.Cognition, bool) {
 	deadline := time.Now().Add(3 * time.Second)
 
 	for time.Now().Before(deadline) {
-		for stored := range symbol.MarketCognition(types.SourceGraph) {
+		for stored := range symbol.MarketCognition(
+			symbol.CognitionConsumers[types.StateConsumerStage],
+		) {
 			cognition = stored
 		}
 
@@ -53,7 +55,7 @@ func TestUpdate(t *testing.T) {
 			WithSurprisalLimit(math.Inf(1)),
 		)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
+		thesis.Work(types.SourceCognition).Push(thesis.Symbol("BTC/USD"))
 
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
@@ -143,7 +145,7 @@ func TestUpdate(t *testing.T) {
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
 		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
+		thesis.Work(types.SourceCognition).Push(thesis.Symbol("BTC/USD"))
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
 		symbol := storedSymbol.(*types.Symbol)
@@ -167,7 +169,7 @@ func TestUpdate(t *testing.T) {
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
 		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
+		thesis.Work(types.SourceCognition).Push(thesis.Symbol("BTC/USD"))
 		vertical := solver.encodeCategory(types.CategoryVerticalIgnition)
 		reversal := solver.encodeCategory(types.CategoryActiveReversal)
 		exhaustion := solver.encodeCategory(types.CategoryExhaustion)
@@ -202,7 +204,7 @@ func TestUpdate(t *testing.T) {
 		thesis := cognitionThesis(types.CategoryVerticalIgnition)
 		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
+		thesis.Work(types.SourceCognition).Push(thesis.Symbol("BTC/USD"))
 		storedSymbol, found := thesis.Symbols.Load("BTC/USD")
 		So(found, ShouldBeTrue)
 		symbol := storedSymbol.(*types.Symbol)
@@ -219,8 +221,11 @@ func TestUpdate(t *testing.T) {
 	Convey("Given a broad thesis whose categories do not change", t, func() {
 		tree, err := dmt.NewTree("")
 		So(err, ShouldBeNil)
+		frameConsumer := transport.NewConsumer[*types.UIFrame](
+			"cognition-test", func() {},
+		)
 		ui := transport.NewMapReduce[*types.UIFrame](
-			[]string{frameConsumer},
+			[]*transport.Consumer[*types.UIFrame]{frameConsumer},
 			nil,
 			nil,
 		)
@@ -228,7 +233,6 @@ func TestUpdate(t *testing.T) {
 		thesis.At = time.Unix(1, 0).UTC()
 		solver := NewSolver(t.Context(), thesis, tree, ui, nil)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
 
 		for index := 0; index < 129; index++ {
 			symbolName := fmt.Sprintf("SYMBOL-%d/USD", index)
@@ -244,7 +248,7 @@ func TestUpdate(t *testing.T) {
 		// Let the first observation pass settle and the publish flush.
 		vertical := solver.encodeCategory(types.CategoryVerticalIgnition)
 		waitSequence(solver, "SYMBOL-64/USD", []string{vertical})
-		waitSettled(solver, ui)
+		waitSettled(solver, ui, frameConsumer)
 		initialTick := solver.tickCounter
 
 		Convey("Then unchanged observations do not retrain or publish the tree", func() {
@@ -263,7 +267,7 @@ func TestUpdate(t *testing.T) {
 		}})
 		waitSequence(solver, "SYMBOL-64/USD", []string{solver.encodeCategory(types.CategoryActiveReversal)})
 
-		envelope := pullFrame(ui)
+		envelope := pullFrame(ui, frameConsumer)
 		So(envelope.Type, ShouldEqual, wire.FrameCognitionFrame)
 		rows := envelope.Value.(*wire.CognitionFrameT).Rows
 
@@ -271,7 +275,9 @@ func TestUpdate(t *testing.T) {
 			So(rows, ShouldHaveLength, 1)
 			So(rows[0].Symbol, ShouldEqual, "SYMBOL-64/USD")
 			var cognition types.Cognition
-			for stored := range symbol.MarketCognition(types.SourceGraph) {
+			for stored := range symbol.MarketCognition(
+				symbol.CognitionConsumers[types.StateConsumerStage],
+			) {
 				cognition = stored
 			}
 			So(cognition.REMConsolidating, ShouldBeFalse)
@@ -316,14 +322,18 @@ waitSettled pumps the run goroutine until the cognition stage has drained every
 currently-available category stream: tickCounter stops advancing (no symbol is
 still on its first observation) and the publish channel is flushed.
 */
-func waitSettled(solver *Solver, ui *transport.MapReduce[*types.UIFrame]) {
+func waitSettled(
+	solver *Solver,
+	ui *transport.MapReduce[*types.UIFrame],
+	consumer *transport.Consumer[*types.UIFrame],
+) {
 	deadline := time.Now().Add(3 * time.Second)
 	var last uint64
 	stable := 0
 
 	for time.Now().Before(deadline) {
 		if ui.Length() > 0 {
-			consumeOneFrame(ui)
+			consumeOneFrame(ui, consumer)
 			last = solver.tickCounter
 			stable = 0
 		} else if solver.tickCounter == last {
@@ -345,16 +355,19 @@ func waitSettled(solver *Solver, ui *transport.MapReduce[*types.UIFrame]) {
 pullFrame consumes one wire frame from a test UI transport under a registered
 test consumer cursor.
 */
-func pullFrame(ui *transport.MapReduce[*types.UIFrame]) *types.UIFrame {
-	ui.Register(frameConsumer)
-	frame, _ := ui.Pop(frameConsumer)
+func pullFrame(
+	ui *transport.MapReduce[*types.UIFrame],
+	consumer *transport.Consumer[*types.UIFrame],
+) *types.UIFrame {
+	frame, _ := ui.Pop(consumer)
 	return frame
 }
 
-const frameConsumer = "cognition-test"
-
-func consumeOneFrame(ui *transport.MapReduce[*types.UIFrame]) {
-	pullFrame(ui)
+func consumeOneFrame(
+	ui *transport.MapReduce[*types.UIFrame],
+	consumer *transport.Consumer[*types.UIFrame],
+) {
+	pullFrame(ui, consumer)
 }
 
 /* encodeForTest mirrors Solver.encodeCategory for assertions before construction. */
@@ -588,7 +601,9 @@ func BenchmarkCognitionRun(b *testing.B) {
 				return true
 			}
 
-			for batch := range symbolState.MarketCategories(types.SourceCognition) {
+			for batch := range symbolState.MarketCategories(
+				symbolState.CategoryConsumers[types.CategoryConsumerCognition],
+			) {
 				_ = solver.processBatch(symbol, batch, 0, rows)
 			}
 

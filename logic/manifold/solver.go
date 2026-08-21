@@ -2,7 +2,6 @@ package manifold
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -80,6 +79,7 @@ type Solver struct {
 	requested   uint64
 	completed   uint64
 	latest      manifoldRequest
+	work        *transport.Consumer[*types.Symbol]
 	stepped     bool
 	driveEta    float64
 	driveBeta   float64
@@ -169,6 +169,9 @@ func NewSolver(
 		stopping:  make(chan struct{}),
 		stopped:   make(chan struct{}),
 	}
+	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
+	thesis.Work(types.SourceManifold).Register(solver.work)
+
 	return solver
 }
 
@@ -264,85 +267,36 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		thesis:     thesis,
 		at:         thesis.At,
 	}
-	wake := solver.settling.CompareAndSwap(false, true)
+	solver.settling.Store(true)
 	solver.requestMu.Unlock()
-
-	if wake {
-		select {
-		case solver.semaphore <- struct{}{}:
-		default:
-		}
-	}
 
 	return nil
 }
 
-func (solver *Solver) Run() error {
-	if solver.closing.Load() {
-		return nil
-	}
-
-	if !solver.running.CompareAndSwap(false, true) {
-		solver.err = errnie.Error(errnie.Err(
-			errnie.Conflict,
-			"manifold: solver is already running",
-			nil,
-		))
-
-		return solver.err
-	}
-
-	defer close(solver.stopped)
-	defer solver.settling.Store(false)
-	scheduleCtx, cancel := context.WithCancel(solver.ctx)
-	defer cancel()
-	scheduleErrors := make(chan error, 1)
-
+func (solver *Solver) consume() {
 	go func() {
-		scheduleErrors <- solver.schedule(scheduleCtx)
-	}()
-
-	for solver.err == nil {
-		select {
-		case <-solver.semaphore:
-			if err := solver.drainRequests(); err != nil {
-				solver.err = err
-			}
-		case <-solver.stopping:
-			return nil
-		case err := <-scheduleErrors:
-			if errors.Is(err, context.Canceled) {
-				return nil
+		for range solver.thesis.Work(types.SourceManifold).Drain(solver.work, nil) {
+			select {
+			case <-solver.ctx.Done():
+				solver.err = solver.ctx.Err()
+				return
+			default:
 			}
 
-			if err != nil {
+			if err := solver.Update(solver.thesis); err != nil {
 				solver.err = errnie.Error(err)
+				solver.thesis.Fail(solver.err)
+
+				return
+			}
+
+			if err := solver.drainRequests(); err != nil {
+				solver.err = errnie.Error(err)
+				solver.thesis.Fail(solver.err)
+				return
 			}
 		}
-	}
-
-	return solver.err
-}
-
-func (solver *Solver) schedule(ctx context.Context) error {
-	work := solver.thesis.Work(types.SourceManifold)
-
-	for {
-		_, available := work.WaitPop(ctx, string(types.SourceManifold))
-
-		if !available {
-			return ctx.Err()
-		}
-
-		for range work.Drain(string(types.SourceManifold), func(*types.Symbol) bool {
-			return true
-		}) {
-		}
-
-		if err := solver.Update(solver.thesis); err != nil {
-			return err
-		}
-	}
+	}()
 }
 
 /*
@@ -430,7 +384,9 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 			return true
 		}
 
-		for measurement := range symbol.MarketMeasurements("manifold") {
+		for measurement := range symbol.MarketMeasurements(
+			symbol.MeasurementConsumers[types.MeasurementConsumerManifold],
+		) {
 			if string(measurement.Source) != string(types.SourceHawkes) {
 				continue
 			}

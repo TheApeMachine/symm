@@ -16,15 +16,18 @@ import (
 
 func TestThesisAdvanceTick(t *testing.T) {
 	Convey("Given successive real market observation times", t, func() {
-		ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
+		dashboard := transport.NewConsumer[*UIFrame]("dashboard", func() {})
+		ui := transport.NewMapReduce[*UIFrame](
+			[]*transport.Consumer[*UIFrame]{dashboard}, nil, nil,
+		)
 		thesis := NewThesis(t.Context(), ui)
 		firstAt := time.Unix(1, 0)
 		secondAt := time.Unix(2, 0)
 
 		firstTick := thesis.AdvanceTick(firstAt)
 		secondTick := thesis.AdvanceTick(secondAt)
-		firstFrame, firstFound := ui.Pop("dashboard")
-		secondFrame, secondFound := ui.Pop("dashboard")
+		firstFrame, firstFound := ui.Pop(dashboard)
+		secondFrame, secondFound := ui.Pop(dashboard)
 
 		Convey("It should advance exactly once per observation and publish each transition", func() {
 			So(firstTick, ShouldEqual, int64(1))
@@ -43,33 +46,45 @@ func TestThesisAdvanceTick(t *testing.T) {
 func TestThesisWork(t *testing.T) {
 	Convey("Given a stage waiting on its MapReduce work queue", t, func() {
 		thesis := NewThesis(t.Context(), nil)
+		ready := make(chan struct{}, 1)
+		consumer := transport.NewConsumer[*Symbol]("liquidity", func() {
+			ready <- struct{}{}
+		})
+		thesis.Work(SourceLiquidity).Register(consumer)
 		symbol := thesis.Symbol("BTC/USD")
 		symbol.AppendTicker(kraken.TickerData{})
-		ready, available := thesis.Work(SourceLiquidity).WaitPop(
-			t.Context(),
-			string(SourceLiquidity),
-		)
+		<-ready
+		var scheduled *Symbol
+
+		for candidate := range thesis.Work(SourceLiquidity).Drain(consumer, nil) {
+			scheduled = candidate
+		}
 
 		Convey("It should deliver the owning symbol directly to that reader", func() {
-			So(available, ShouldBeTrue)
-			So(ready, ShouldEqual, symbol)
+			So(scheduled, ShouldEqual, symbol)
 		})
 	})
 
 	Convey("Given a fresh measurement for the manifold consumer", t, func() {
 		thesis := NewThesis(t.Context(), nil)
+		ready := make(chan struct{}, 1)
+		consumer := transport.NewConsumer[*Symbol]("manifold", func() {
+			ready <- struct{}{}
+		})
+		thesis.Work(SourceManifold).Register(consumer)
 		symbol := thesis.Symbol("BTC/USD")
 		symbol.AppendMeasurement(nmtypes.NewMeasurement(
 			"hawkes", string(SourceHawkes), time.Now().UnixNano(), 0,
 		))
-		ready, available := thesis.Work(SourceManifold).WaitPop(
-			t.Context(),
-			string(SourceManifold),
-		)
+		<-ready
+		var scheduled *Symbol
+
+		for candidate := range thesis.Work(SourceManifold).Drain(consumer, nil) {
+			scheduled = candidate
+		}
 
 		Convey("It should wake the manifold worker with the owning symbol", func() {
-			So(available, ShouldBeTrue)
-			So(ready, ShouldEqual, symbol)
+			So(scheduled, ShouldEqual, symbol)
 		})
 	})
 }
@@ -322,12 +337,15 @@ func BenchmarkThesisPhaseSnapshot(b *testing.B) {
 }
 
 func BenchmarkThesisAdvanceTick(b *testing.B) {
-	ui := transport.NewMapReduce[*UIFrame]([]string{"dashboard"}, nil, nil)
+	dashboard := transport.NewConsumer[*UIFrame]("dashboard", func() {})
+	ui := transport.NewMapReduce[*UIFrame](
+		[]*transport.Consumer[*UIFrame]{dashboard}, nil, nil,
+	)
 	thesis := NewThesis(b.Context(), ui)
 	observedAt := time.Unix(1, 0)
 
 	for b.Loop() {
 		thesis.AdvanceTick(observedAt)
-		_, _ = ui.Pop("dashboard")
+		_, _ = ui.Pop(dashboard)
 	}
 }

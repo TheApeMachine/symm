@@ -16,7 +16,9 @@ import (
 func TestNewPlanner(t *testing.T) {
 	Convey("Given the running system configuration", t, func() {
 		system.NewConfig()
-		planner := NewPlanner(t.Context(), nil, nil, nil)
+		planner := NewPlanner(
+			t.Context(), types.NewThesis(t.Context(), nil), nil, nil,
+		)
 		defer planner.Close()
 
 		Convey("It should initialize the reusable causal graph search", func() {
@@ -40,6 +42,10 @@ func TestPlannerUpdate(t *testing.T) {
 		system.Cfg = system.NewConfig()
 		thesis := plannerGraphThesis(t, logicgraph.RelationSupports)
 		planner := &Planner{mctsEngine: plannerMCTSEngine()}
+		observed := map[string]int{}
+		planner.ObserveModule = func(name string, _ time.Duration) {
+			observed[name]++
+		}
 
 		err := planner.Update(thesis)
 		decision := decisionOf(thesis, "BTC/USD")
@@ -71,6 +77,8 @@ func TestPlannerUpdate(t *testing.T) {
 			}
 
 			So(actions, ShouldContain, "BTC/USD:enter")
+			So(observed["planner"], ShouldEqual, 1)
+			So(observed["mcts"], ShouldEqual, 1)
 		})
 	})
 
@@ -201,7 +209,9 @@ func plannerReadyGraphThesis(
 	symbol := stored.(*types.Symbol)
 	var graph *logicgraph.Graph
 
-	for candidate := range symbol.MarketGraphs(types.SourcePlanner) {
+	for candidate := range symbol.MarketGraphs(
+		symbol.GraphConsumers[types.GraphConsumerPlanner],
+	) {
 		graph = candidate
 	}
 
@@ -250,7 +260,9 @@ func decisionOf(thesis *types.Thesis, symbol string) *types.Decision {
 
 	var decision types.Decision
 
-	for candidate := range stored.(*types.Symbol).Decisions.Drain("audit", func(types.Decision) bool {
+	symbolState := stored.(*types.Symbol)
+
+	for candidate := range symbolState.Decisions.Drain(symbolState.DecisionConsumers[0], func(types.Decision) bool {
 		return true
 	}) {
 		decision = candidate

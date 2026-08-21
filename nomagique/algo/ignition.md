@@ -21,13 +21,22 @@ A valid input frame requires:
 
 Every initialized state exposes:
 
-- `SymbolRVOL`, `SymbolSpread`
+- raw `SymbolRVOL` and its baseline-ratio squash in `SymbolRVOLNormalized`
+- `SymbolMidpoint`, raw `SymbolSpread`, and midpoint-relative
+  `SymbolSpreadNormalized`
+- prior retained `SymbolSpreadBaseline` and current `SymbolCompression`,
+  calculated as `max(0, 1 - spread/spreadBaseline)`
 - `SymbolIgnitionBarRate`, `SymbolIgnitionRateBaseline`
-- `SymbolReady`, `SymbolMaturity`
+- `SymbolReady`, `SymbolMaturity`, `SymbolIgnitionHypothesisSeparation`
+- `SymbolIgnitionObservedFromSec` and `SymbolIgnitionObservedFromNsec`, which
+  preserve the opening event time of the bar that produced the current score
 
 Directional outputs use exported `SymbolAlpha...` and `SymbolBeta...` slots:
-per-side `rvol`, `precursor`, and `exhaustion`. The tape measures and stores;
-fusion, winning sides, and categories are downstream decisions.
+per-side `rvol`, `precursor`, normalized precursor, and `exhaustion`. Ratio
+normalization uses the natural ratio baseline of one, so an estimator reading
+at its own median maps to one half without a fitted or global threshold. The
+tape measures and stores; fusion, winning sides, and categories are downstream
+decisions.
 
 ## Internal state
 
@@ -35,9 +44,10 @@ Causal bar state uses the same legacy names under `window/`, now represented by
 interned offsets. Bounded history occupies fixed slots named
 `history/<family>/sample/<slot>`.
 
-Deltas use the engine's generic sample range. Rates, returns, and precursors
-use reserved Ignition ranges. Returns and precursors remain separate:
-zero moves are valid return observations but are not retained as precursors.
+Deltas use the engine's generic sample range. Rates, returns, and spreads use
+reserved Ignition ranges. The positive-only precursor baseline is derived from
+the returns range; zero moves remain valid return observations but do not enter
+that positive median.
 
 ## Transaction model
 

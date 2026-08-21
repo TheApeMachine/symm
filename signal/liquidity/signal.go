@@ -26,7 +26,7 @@ type Signal struct {
 	err    error
 	clock  map[string]time.Time
 	thesis *types.Thesis
-	number nomagique.Number[string]
+	number *nomagique.Number[string]
 	work   *transport.Consumer[*types.Symbol]
 }
 
@@ -113,7 +113,7 @@ func (signal *Signal) consume() {
 				input.Put(nmtypes.EventTimeNsec, float64(eventTime.Nanosecond()))
 				input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-				output, err := signal.number(symbol.Symbol, input)
+				output, err := signal.number.Step(symbol.Symbol, input)
 
 				if err != nil {
 					signal.err = errnie.Error(errnie.Err(

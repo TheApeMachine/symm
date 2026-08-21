@@ -27,6 +27,24 @@ describe("sourceHeadlineMetric", () => {
 		expect(sourceMetrics("leadlag")).toContain("sync");
 	});
 
+	it("shows PumpDump's complete side-aware measurement contract", () => {
+		expect(sourceMetrics("pumpdump")).toEqual([
+			"hypothesis_separation",
+			"best_price:buy",
+			"best_price:sell",
+			"midpoint",
+			"trade_price",
+			"trade_quantity",
+			"rvol",
+			"spread",
+			"compression",
+			"precursor:buy",
+			"precursor:sell",
+			"exhaustion:buy",
+			"exhaustion:sell",
+		]);
+	});
+
 	it("uses toxicity's emitted intensity rather than an absent summary", () => {
 		expect(sourceHeadlineMetric("toxicity")).toBe(
 			"metrics.toxicity_intensity",

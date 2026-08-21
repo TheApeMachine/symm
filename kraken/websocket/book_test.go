@@ -280,7 +280,7 @@ func TestBookUpdate(t *testing.T) {
 			Type: "snapshot",
 			Data: []kraken.Level3Data{{
 				Symbol:   "CELR/USD",
-				Checksum: 22467435,
+				Checksum: 3152022922,
 				Bids: []kraken.Level3Order{{
 					OrderID: "bid", LimitPrice: bidPrice,
 					OrderQty: bidQuantity, Timestamp: time.Unix(1, 0).UTC(),

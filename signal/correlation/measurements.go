@@ -4,32 +4,42 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
-func (signal *Signal) measurement(symbol string, at time.Time) (*nmtypes.Measurement, bool) {
-	scores, ready := signal.section.Scores(symbol)
-
-	if !ready {
-		return nil, false
-	}
-
+func (signal *Signal) measurement(
+	symbol string,
+	at time.Time,
+	output nomagique.Frame,
+) *nmtypes.Measurement {
 	descriptor := nmtypes.Descriptor{
 		Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous,
 	}
 	measurement := nmtypes.NewMeasurement(uuid.NewString(), signal.Name(), at.UnixNano(), at.UnixNano())
-	measurement.ObservedFrom = scores.ObservedFrom
+	path, found := signal.number.Project(symbol)
+
+	if found {
+		observedFrom, _, hasObservation := temporal.PathSample(&path, 0)
+
+		if hasObservation {
+			measurement.ObservedFrom = time.Unix(0, observedFrom)
+		}
+	}
+
 	measurement.AddMetrics(
-		nmtypes.NewMetric(string(types.MetricCorrelation), scores.Correlation, descriptor),
-		nmtypes.NewMetric(string(types.MetricSigned), scores.Signed, descriptor),
-		nmtypes.NewMetric(string(types.MetricRelativeEnergy), scores.RelativeEnergy, descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricHerdScore), scores.Herd, scores.Herd, descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricAlphaScore), scores.Alpha, scores.Alpha, descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricNoiseScore), scores.Noise, scores.Noise, descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricStressScore), scores.Stress, scores.Stress, descriptor),
-		nmtypes.NewMetric(string(types.MetricHypothesisSeparation), scores.SNR, descriptor),
+		nmtypes.NewMetric(string(types.MetricCorrelation), output.MustGet(algo.SymbolCohortCorrelation), descriptor),
+		nmtypes.NewMetric(string(types.MetricSigned), output.MustGet(algo.SymbolSignedCorrelation), descriptor),
+		nmtypes.NewMetric(string(types.MetricRelativeEnergy), output.MustGet(algo.SymbolRelativeEnergy), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricHerdScore), output.MustGet(algo.SymbolHerd), output.MustGet(algo.SymbolHerd), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricAlphaScore), output.MustGet(algo.SymbolAlpha), output.MustGet(algo.SymbolAlpha), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricNoiseScore), output.MustGet(algo.SymbolNoise), output.MustGet(algo.SymbolNoise), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricStressScore), output.MustGet(algo.SymbolStress), output.MustGet(algo.SymbolStress), descriptor),
+		nmtypes.NewMetric(string(types.MetricHypothesisSeparation), output.MustGet(algo.SymbolHypothesisSeparation), descriptor),
 	)
 
-	return measurement, true
+	return measurement
 }

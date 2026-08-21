@@ -82,6 +82,7 @@ func NewSolver(
 		ui:            ui,
 		thesis:        thesis,
 	}
+
 	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
 	thesis.Work(types.SourceResonance).Register(solver.work)
 

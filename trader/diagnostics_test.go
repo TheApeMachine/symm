@@ -1,14 +1,59 @@
 package trader
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/kraken"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
+
+func TestBindDiagnostics(t *testing.T) {
+	Convey("Given registered signal, resonance, and desk workers", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		thesis := types.NewThesis(ctx, nil)
+		diagnostics := &Diagnostics{
+			started:  time.Now(),
+			interval: time.Hour,
+		}
+		crypto := &Crypto{
+			ctx:         ctx,
+			thesis:      thesis,
+			diagnostics: diagnostics,
+			manifold:    transport.NewMapReduce[types.FluidFrame](nil, nil, nil),
+		}
+		crypto.bindDiagnostics()
+		sources := []types.SourceType{
+			types.SourceCorrelation,
+			types.SourceResonance,
+			types.SourceDesk,
+		}
+
+		for _, source := range sources {
+			consumer := transport.NewConsumer[*types.Symbol](string(source), func() {})
+			work := thesis.Work(source)
+			work.Register(consumer)
+			work.Push(thesis.Symbol("BTC/USD"))
+
+			for range work.Drain(consumer, nil) {
+			}
+		}
+
+		Convey("Each completed drain should update its matching stage clock", func() {
+			for _, source := range sources {
+				clock := diagnostics.module(string(source))
+				So(clock.count.Load(), ShouldEqual, 1)
+				So(clock.lastAtNs.Load(), ShouldNotEqual, 0)
+			}
+		})
+	})
+}
 
 func TestDiagnosticsObserve(t *testing.T) {
 	Convey("Score computations roll up into stage clocks", t, func() {
@@ -29,6 +74,22 @@ func TestDiagnosticsObserve(t *testing.T) {
 		Convey("An empty name is ignored", func() {
 			diagnostics.applyModule("", 10*time.Millisecond)
 			So(diagnostics.module("").count.Load(), ShouldEqual, 0)
+		})
+
+		Convey("An in-flight operation remains distinct from completed work", func() {
+			diagnostics.beginModule("category")
+			started := diagnostics.module("category").snapshot("category")
+
+			So(started.Active, ShouldEqual, 1)
+			So(started.Count, ShouldEqual, 0)
+			So(started.StartedNs, ShouldNotEqual, 0)
+
+			diagnostics.completeModule("category", 25*time.Millisecond)
+			completed := diagnostics.module("category").snapshot("category")
+
+			So(completed.Active, ShouldEqual, 0)
+			So(completed.Count, ShouldEqual, 1)
+			So(completed.LastNs, ShouldEqual, 25_000_000)
 		})
 	})
 
@@ -185,7 +246,8 @@ func TestDiagnosticsObserve(t *testing.T) {
 				}
 			}
 
-			So(tickersQueue.Depth, ShouldEqual, 2)
+			So(tickersQueue.Depth, ShouldEqual,
+				uint64(2*len(tickerA.TickerConsumers)))
 			So(tickersQueue.Symbols, ShouldEqual, 2)
 		})
 	})

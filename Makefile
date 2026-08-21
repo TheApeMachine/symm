@@ -29,7 +29,7 @@ OPTIMIZE_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -94,6 +94,11 @@ dump:
 strip-trailing-newlines:
 	git ls-files '*.go' | python3 scripts/strip-trailing-newlines.py
 
-build:
+physics-metallib: physics-manifold-metallib
+
+physics-manifold-metallib:
+	cd nomagique/physics/sensorium && go run ./metallibgen
+
+build: physics-metallib
 	@mkdir -p bin
 	go build $(LDFLAGS) -race -o $(SYMM_BIN) .

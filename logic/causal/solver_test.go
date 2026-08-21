@@ -60,7 +60,9 @@ func causalSymbol(thesis *types.Thesis, symbol string) *types.Symbol {
 func lastCausal(symbolState *types.Symbol) (map[string]any, bool) {
 	var output map[string]any
 
-	for stored := range symbolState.MarketCausal(types.SourceCausal) {
+	for stored := range symbolState.MarketCausal(
+		symbolState.CausalConsumers[types.CausalConsumerCausal],
+	) {
 		output = stored
 	}
 
@@ -274,7 +276,10 @@ func BenchmarkCausalRun(b *testing.B) {
 
 		for _, symbol := range symbols {
 			storedSymbol, _ := thesis.Symbols.Load(symbol)
-			storedSymbol.(*types.Symbol).MarketResonance(types.SourceCausal)
+			symbolState := storedSymbol.(*types.Symbol)
+			symbolState.MarketResonance(
+				symbolState.ResonanceConsumers[types.ResonanceConsumerCausal],
+			)
 		}
 
 		thesis.At = baseAt.Add(1 * time.Second)

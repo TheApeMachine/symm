@@ -15,7 +15,10 @@ TestErrorBridgeForwardsErrorLevel publishes error frames and ignores info.
 func TestErrorBridgeForwardsErrorLevel(t *testing.T) {
 	t.Parallel()
 
-	ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
+	consumer := transport.NewConsumer[*types.UIFrame]("test", func() {})
+	ui := transport.NewMapReduce[*types.UIFrame](
+		[]*transport.Consumer[*types.UIFrame]{consumer}, nil, nil,
+	)
 	bridge := &ErrorBridge{ui: ui, ready: func() bool { return true }}
 
 	info := []byte(`{"level":"info","message":"noise"}`)
@@ -36,7 +39,7 @@ func TestErrorBridgeForwardsErrorLevel(t *testing.T) {
 		t.Fatalf("want 1 error frame, got %d", ui.Length())
 	}
 
-	frame, _ := ui.Pop("test")
+	frame, _ := ui.Pop(consumer)
 
 	if frame.Type != wire.FrameErrorFrame {
 		t.Fatalf("want error frame, got %s", frame.Type.String())
@@ -55,7 +58,10 @@ TestErrorBridgeDedupesIdenticalFlood drops repeats inside the debounce window.
 func TestErrorBridgeDedupesIdenticalFlood(t *testing.T) {
 	t.Parallel()
 
-	ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
+	consumer := transport.NewConsumer[*types.UIFrame]("test", func() {})
+	ui := transport.NewMapReduce[*types.UIFrame](
+		[]*transport.Consumer[*types.UIFrame]{consumer}, nil, nil,
+	)
 	bridge := &ErrorBridge{ui: ui, ready: func() bool { return true }}
 	line := []byte(`{"level":"error","error":"same"}`)
 
@@ -73,7 +79,10 @@ TestErrorBridgeWithholdsUntilReady drops error frames before the Warmup gate.
 func TestErrorBridgeWithholdsUntilReady(t *testing.T) {
 	t.Parallel()
 
-	ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
+	consumer := transport.NewConsumer[*types.UIFrame]("test", func() {})
+	ui := transport.NewMapReduce[*types.UIFrame](
+		[]*transport.Consumer[*types.UIFrame]{consumer}, nil, nil,
+	)
 	open := false
 	bridge := &ErrorBridge{
 		ui:    ui,

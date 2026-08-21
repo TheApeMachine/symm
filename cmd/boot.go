@@ -68,6 +68,10 @@ func (stack *System) Error() error {
 }
 
 func (stack *System) fail(err error) {
+	if errors.Is(err, context.Canceled) && stack.ctx.Err() != nil {
+		return
+	}
+
 	stack.runMu.Lock()
 
 	if stack.err == nil {
@@ -235,7 +239,7 @@ func BootWithHub(
 		signalhawkes.NewSignal(systemCtx, thesis),
 		signalleadlag.NewSignal(systemCtx, thesis),
 		signalliquidity.NewSignal(systemCtx, thesis),
-		signalpumpdump.NewSignal(systemCtx, thesis),
+		signalpumpdump.NewSignal(systemCtx, thesis, api),
 		signalsentiment.NewSignal(systemCtx, thesis),
 		signaltoxicity.NewSignal(systemCtx, thesis),
 	}
@@ -281,8 +285,9 @@ func BootWithHub(
 		return nil
 	}
 
-	resonanceSolver.ObserveModule = crypto.ObserveModule()
 	planner := strategy.NewPlanner(systemCtx, thesis, nil, desk)
+	planner.ObserveModule = crypto.ObserveModule()
+	planner.ObserveHop = crypto.ObserveHop()
 	existingHub := hub != nil
 
 	if hub == nil {
@@ -292,11 +297,6 @@ func BootWithHub(
 	attachDiagnosticsErrorBridge(hub, crypto)
 	systems := []Runnable{
 		api,
-		desk,
-		analyzer,
-		resonanceSolver,
-		crypto,
-		planner,
 	}
 
 	if existingHub == false {
@@ -342,6 +342,16 @@ func BootWithHub(
 		runDone:   make(chan struct{}),
 	}
 	thesis.SetFailureHandler(stack.fail)
+
+	if err := instrument.Subscribe(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"boot: subscribe instruments",
+			err,
+		))
+		cancel()
+		return nil
+	}
 
 	return stack
 }

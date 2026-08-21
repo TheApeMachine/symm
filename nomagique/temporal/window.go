@@ -86,7 +86,8 @@ func Window(
 	nextState.Put(nomagique.SampleReady, 1)
 	nextState.Put(SymbolCapacity, float64(capacity))
 
-	output := input
+	output := nextState
+	output.Merge(input)
 	output.Put(nomagique.SampleCount, float64(count))
 	output.Put(nomagique.SampleHead, float64(head))
 	output.Put(nomagique.SampleReady, 1)
@@ -131,7 +132,13 @@ func windowCapacity(state nomagique.Frame, input nomagique.Frame) (int, error) {
 		return 1, nil
 	}
 
-	next := current * 2
+	capacityValue, hasCapacity := state.Get(SymbolCapacity)
+
+	if hasCapacity && current < int(capacityValue) {
+		return int(capacityValue), nil
+	}
+
+	next := int(capacityValue + capacityValue)
 
 	if next > nomagique.MaxSamples {
 		return nomagique.MaxSamples, nil

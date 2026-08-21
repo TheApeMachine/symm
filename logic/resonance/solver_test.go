@@ -112,8 +112,11 @@ func TestNewSolver(t *testing.T) {
 
 func TestRunDrainsTickerBurst(t *testing.T) {
 	Convey("Given a running solver on an idle transport", t, func() {
+		consumer := transport.NewConsumer[*types.UIFrame](
+			resonanceTestConsumer, func() {},
+		)
 		ui := transport.NewMapReduce[*types.UIFrame](
-			[]string{resonanceTestConsumer},
+			[]*transport.Consumer[*types.UIFrame]{consumer},
 			nil,
 			nil,
 		)
@@ -124,7 +127,6 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 			ui, thesis,
 		)
 		defer solver.Close()
-		go func() { _ = solver.Run() }()
 		symbol := thesis.Symbol("BTC/USD")
 
 		const burstCount = 64
@@ -153,7 +155,7 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 					default:
 					}
 
-					if _, ok := ui.Pop(resonanceTestConsumer); ok {
+					if _, ok := ui.Pop(consumer); ok {
 						count++
 
 						if count == burstCount {
@@ -179,8 +181,11 @@ func TestRunDrainsTickerBurst(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	Convey("Given a solver over an idle transport", t, func() {
+		consumer := transport.NewConsumer[*types.UIFrame](
+			resonanceTestConsumer, func() {},
+		)
 		ui := transport.NewMapReduce[*types.UIFrame](
-			[]string{resonanceTestConsumer},
+			[]*transport.Consumer[*types.UIFrame]{consumer},
 			nil,
 			nil,
 		)
@@ -198,10 +203,8 @@ func TestUpdate(t *testing.T) {
 
 			var payload *types.UIFrame
 
-			ui.Register(resonanceTestConsumer)
-
 			for {
-				frame, ok := ui.Pop(resonanceTestConsumer)
+				frame, ok := ui.Pop(consumer)
 
 				if !ok {
 					break
@@ -232,7 +235,9 @@ func TestUpdate(t *testing.T) {
 			var manifold *learning.ResonanceManifold
 			var hasDynamics bool
 
-			for stored := range symbol.MarketResonance(types.SourceGraph) {
+			for stored := range symbol.MarketResonance(
+				symbol.ResonanceConsumers[types.ResonanceConsumerGraph],
+			) {
 				switch value := stored.(type) {
 				case *learning.ResonanceManifold:
 					manifold = value
@@ -296,8 +301,6 @@ func TestClose(t *testing.T) {
 			transport.NewMapReduce[*types.UIFrame](nil, nil, nil),
 			types.NewThesis(context.Background(), nil),
 		)
-		go func() { _ = solver.Run() }()
-
 		Convey("It should close without error", func() {
 			So(solver.Close(), ShouldBeNil)
 		})

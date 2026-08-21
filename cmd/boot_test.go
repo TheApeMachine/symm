@@ -49,6 +49,18 @@ func TestSystemRun(t *testing.T) {
 			So(ctx.Err(), ShouldEqual, context.Canceled)
 		})
 	})
+
+	Convey("Given expected component cancellation after system shutdown", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		system := &System{ctx: ctx, cancel: cancel}
+		cancel()
+
+		system.fail(context.Canceled)
+
+		Convey("It should not retain shutdown as a system failure", func() {
+			So(system.Error(), ShouldBeNil)
+		})
+	})
 }
 
 func TestSystemClose(t *testing.T) {

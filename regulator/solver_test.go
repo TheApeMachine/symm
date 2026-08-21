@@ -9,8 +9,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -35,7 +35,10 @@ func TestUpdate(t *testing.T) {
 		system.Cfg = system.NewConfig()
 		baseline := system.Cfg.Snapshot()
 		thesis := types.NewThesis(t.Context(), nil)
-		ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
+		consumer := transport.NewConsumer[*types.UIFrame]("test", func() {})
+		ui := transport.NewMapReduce[*types.UIFrame](
+			[]*transport.Consumer[*types.UIFrame]{consumer}, nil, nil,
+		)
 		solver, err := NewSolver(t.Context(), ui)
 		So(err, ShouldBeNil)
 		defer solver.Close()
@@ -86,7 +89,10 @@ func TestUpdate(t *testing.T) {
 	Convey("Given repeated valuations while the account has no exposure", t, func() {
 		system.Cfg = system.NewConfig()
 		thesis := types.NewThesis(t.Context(), nil)
-		ui := transport.NewMapReduce[*types.UIFrame]([]string{"test"}, nil, nil)
+		consumer := transport.NewConsumer[*types.UIFrame]("test", func() {})
+		ui := transport.NewMapReduce[*types.UIFrame](
+			[]*transport.Consumer[*types.UIFrame]{consumer}, nil, nil,
+		)
 		solver, err := NewSolver(t.Context(), ui)
 		So(err, ShouldBeNil)
 		defer solver.Close()

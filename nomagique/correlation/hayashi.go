@@ -2,53 +2,122 @@ package correlation
 
 import (
 	"math"
-	"time"
+
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/temporal"
+)
+
+var (
+	SymbolCorrelation   = nomagique.MustIntern("correlation")
+	SymbolCovariance    = nomagique.MustIntern("covariance")
+	SymbolLeftVariance  = nomagique.MustIntern("correlation/left_variance")
+	SymbolRightVariance = nomagique.MustIntern("correlation/right_variance")
+	SymbolSupport       = nomagique.MustIntern("support")
+	SymbolReady         = nomagique.MustIntern("ready")
+	SymbolLeftShift     = nomagique.MustIntern("correlation/left_shift_nanos")
 )
 
 /*
-Sample is one time-stamped observation in an asynchronous price path.
+Hayashi evaluates two asynchronous Path projections using every overlapping
+return interval, without resampling either path onto an invented clock. State
+is the left path and input is the right path; neither projection is mutated.
 */
-type Sample struct {
-	At    time.Time
-	Value float64
+func Hayashi(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	shiftValue, hasShift := input.Get(SymbolLeftShift)
+
+	if hasShift && shiftValue != math.Trunc(shiftValue) {
+		return state, nomagique.Frame{}, correlationError(
+			"left shift must contain integral nanoseconds",
+		)
+	}
+
+	left, leftCount := pathPoints(&state)
+	right, rightCount := pathPoints(&input)
+	correlation, covariance, leftVariance, rightVariance, support, ready :=
+		hayashiPoints(&left, leftCount, &right, rightCount, int64(shiftValue))
+
+	output := input
+	output.Put(SymbolCorrelation, correlation)
+	output.Put(SymbolCovariance, covariance)
+	output.Put(SymbolLeftVariance, leftVariance)
+	output.Put(SymbolRightVariance, rightVariance)
+	output.Put(SymbolSupport, float64(support))
+	output.Put(SymbolReady, truth(ready))
+
+	return state, output, nil
 }
 
-/*
-HayashiYoshida calculates correlation from every pair of overlapping return
-intervals without resampling either input path onto an invented common clock.
-*/
-func HayashiYoshida(
-	left []Sample,
-	right []Sample,
-	maxInterval time.Duration,
-) (float64, bool) {
-	if len(left) < 2 || len(right) < 2 {
-		return 0, false
-	}
+type point struct {
+	timestamp int64
+	value     float64
+}
 
-	leftVariance := varianceSum(left, maxInterval)
-	rightVariance := varianceSum(right, maxInterval)
+func pathPoints(path *nomagique.Frame) ([temporal.MaxPathSamples]point, int) {
+	points := [temporal.MaxPathSamples]point{}
+	countValue, _ := path.Get(nomagique.SampleCount)
+	count := int(countValue)
 
-	if leftVariance <= 0 || rightVariance <= 0 {
-		return 0, false
-	}
+	for index := 0; index < count; index++ {
+		timestamp, value, found := temporal.PathSample(path, index)
 
-	covariance := 0.0
-	rightStart := 0
-
-	for leftIndex := 0; leftIndex < len(left)-1; leftIndex++ {
-		leftStart := left[leftIndex].At
-		leftEnd := left[leftIndex+1].At
-
-		if !validInterval(left[leftIndex], left[leftIndex+1], maxInterval) {
+		if !found {
 			continue
 		}
 
-		leftReturn := math.Log(left[leftIndex+1].Value / left[leftIndex].Value)
+		points[index] = point{timestamp: timestamp, value: value}
+	}
 
-		for rightStart < len(right)-1 {
-			if !validInterval(right[rightStart], right[rightStart+1], maxInterval) ||
-				!leftStart.Before(right[rightStart+1].At) {
+	return points, count
+}
+
+func pathVariance(points *[temporal.MaxPathSamples]point, count int) float64 {
+	variance := 0.0
+
+	for index := 1; index < count; index++ {
+		previous := points[index-1]
+		current := points[index]
+
+		if previous.timestamp >= current.timestamp ||
+			previous.value <= 0 || current.value <= 0 {
+			continue
+		}
+
+		value := math.Log(current.value / previous.value)
+		variance += value * value
+	}
+
+	return variance
+}
+
+func hayashiPoints(
+	left *[temporal.MaxPathSamples]point,
+	leftCount int,
+	right *[temporal.MaxPathSamples]point,
+	rightCount int,
+	leftShift int64,
+) (float64, float64, float64, float64, int, bool) {
+	leftVariance := pathVariance(left, leftCount)
+	rightVariance := pathVariance(right, rightCount)
+	covariance := 0.0
+	support := 0
+	rightStart := 0
+
+	for leftIndex := 0; leftIndex < leftCount-1; leftIndex++ {
+		leftFrom := left[leftIndex]
+		leftTo := left[leftIndex+1]
+		leftFrom.timestamp += leftShift
+		leftTo.timestamp += leftShift
+
+		if leftFrom.timestamp >= leftTo.timestamp ||
+			leftFrom.value <= 0 || leftTo.value <= 0 {
+			continue
+		}
+
+		for rightStart < rightCount-1 {
+			if leftFrom.timestamp >= right[rightStart+1].timestamp {
 				rightStart++
 				continue
 			}
@@ -56,59 +125,52 @@ func HayashiYoshida(
 			break
 		}
 
-		for rightIndex := rightStart; rightIndex < len(right)-1; rightIndex++ {
-			if !right[rightIndex].At.Before(leftEnd) {
+		leftReturn := math.Log(leftTo.value / leftFrom.value)
+
+		for rightIndex := rightStart; rightIndex < rightCount-1; rightIndex++ {
+			rightFrom := right[rightIndex]
+			rightTo := right[rightIndex+1]
+
+			if rightFrom.timestamp >= leftTo.timestamp {
 				break
 			}
 
-			if !validInterval(right[rightIndex], right[rightIndex+1], maxInterval) {
+			if rightFrom.timestamp >= rightTo.timestamp ||
+				rightFrom.value <= 0 || rightTo.value <= 0 {
 				continue
 			}
 
-			covariance += leftReturn * math.Log(
-				right[rightIndex+1].Value/right[rightIndex].Value,
-			)
+			covariance += leftReturn * math.Log(rightTo.value/rightFrom.value)
+			support++
 		}
 	}
 
-	denominator := math.Sqrt(leftVariance * rightVariance)
-
-	if denominator <= 0 {
-		return 0, false
+	if support == 0 || leftVariance <= 0 || rightVariance <= 0 {
+		return 0, covariance, leftVariance, rightVariance, support, false
 	}
 
-	correlation := covariance / denominator
+	correlation := covariance / math.Sqrt(leftVariance*rightVariance)
+	correlation = math.Max(-1, math.Min(1, correlation))
 
-	if correlation > 1 {
-		return 1, true
-	}
-
-	if correlation < -1 {
-		return -1, true
-	}
-
-	return correlation, true
+	return correlation, covariance, leftVariance, rightVariance, support, true
 }
 
-func varianceSum(samples []Sample, maxInterval time.Duration) float64 {
-	sum := 0.0
-
-	for index := 1; index < len(samples); index++ {
-		if !validInterval(samples[index-1], samples[index], maxInterval) {
-			continue
-		}
-
-		value := math.Log(samples[index].Value / samples[index-1].Value)
-		sum += value * value
+func truth(value bool) float64 {
+	if value {
+		return 1
 	}
 
-	return sum
+	return 0
 }
 
-func validInterval(left Sample, right Sample, maxInterval time.Duration) bool {
-	if !left.At.Before(right.At) || left.Value <= 0 || right.Value <= 0 {
-		return false
-	}
+func correlationError(message string) error {
+	return &hayashiError{message: message}
+}
 
-	return maxInterval <= 0 || right.At.Sub(left.At) <= maxInterval
+type hayashiError struct {
+	message string
+}
+
+func (err *hayashiError) Error() string {
+	return "correlation: hayashi " + err.message
 }

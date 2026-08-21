@@ -17,6 +17,8 @@ func TestExhaustNumber(t *testing.T) {
 	Convey("Given trades on one symbol", t, func() {
 		thesis := types.NewThesis(context.Background(), nil)
 		market := thesis.Symbol("AAA/USD")
+		signal := NewSignal(context.Background(), thesis)
+		defer signal.Close()
 
 		market.AppendTrade(kraken.TradeData{
 			Symbol: "AAA/USD", Side: "buy",
@@ -24,15 +26,13 @@ func TestExhaustNumber(t *testing.T) {
 			TradeID: 1, Timestamp: time.Unix(1_700_001_000, 0).UTC(),
 		})
 
-		signal := NewSignal(context.Background(), thesis)
-		defer signal.Close()
-		go signal.Run()
-
 		Convey("It should emit an exhaustion z-score reading", func() {
 			measurements := []*nmtypes.Measurement{}
 
 			time.Sleep(50 * time.Millisecond)
-			for measurement := range market.MarketMeasurements("category") {
+			for measurement := range market.MarketMeasurements(
+				market.MeasurementConsumers[types.MeasurementConsumerCategory],
+			) {
 				measurements = append(measurements, measurement)
 			}
 

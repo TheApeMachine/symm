@@ -166,6 +166,16 @@ func (book *Book) apply(
 			continue
 		}
 
+		pair, err := book.normalizer.PairInfo(data.Symbol)
+
+		if err != nil {
+			return nil, errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("level3 pair metadata for %s", data.Symbol),
+				err,
+			)
+		}
+
 		if payload.Type == "snapshot" {
 			symbolBook = book.manager.CreateBook(
 				data.Symbol,
@@ -191,7 +201,8 @@ func (book *Book) apply(
 					continue
 				}
 
-				price := order.LimitPrice.String()
+				limitPrice := order.LimitPrice.SetScale(int64(pair.PairDecimals))
+				price := limitPrice.String()
 
 				if level, ok := symbolSide.Levels[price]; ok && level == nil {
 					delete(symbolSide.Levels, price)
@@ -202,12 +213,14 @@ func (book *Book) apply(
 						continue
 					}
 
-					if order.OrderQty.Sign() == 1 {
+					orderQuantity := order.OrderQty.SetScale(int64(pair.LotDecimals))
+
+					if orderQuantity.Sign() == 1 {
 						symbolBook.Update(&spotbook.UpdateOptions{
 							Direction: direction,
 							ID:        order.OrderID,
-							Price:     order.LimitPrice,
-							Quantity:  order.OrderQty,
+							Price:     limitPrice,
+							Quantity:  orderQuantity,
 							Timestamp: order.Timestamp,
 							Silent:    true,
 						})
@@ -223,8 +236,8 @@ func (book *Book) apply(
 					symbolBook.Update(&spotbook.UpdateOptions{
 						Direction: direction,
 						ID:        order.OrderID,
-						Price:     order.LimitPrice,
-						Quantity:  order.OrderQty,
+						Price:     limitPrice,
+						Quantity:  orderQuantity,
 						Timestamp: order.Timestamp,
 						Silent:    true,
 					})
@@ -256,7 +269,7 @@ func (book *Book) apply(
 				symbolBook.Update(&spotbook.UpdateOptions{
 					Direction: direction,
 					ID:        order.OrderID,
-					Price:     order.LimitPrice,
+					Price:     limitPrice,
 					Quantity:  removed,
 					Timestamp: order.Timestamp,
 					Silent:    true,

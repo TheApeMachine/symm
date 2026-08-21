@@ -97,25 +97,35 @@ func (fluidTransport *FluidRTC) Run() error {
 		return nil
 	}
 
-	fluidTransport.publications.Register(fluidTransport.consumerID)
-	defer fluidTransport.publications.Unregister(fluidTransport.consumerID)
+	ready := make(chan struct{}, 1)
+	consumer := transport.NewConsumer[types.FluidFrame](
+		fluidTransport.consumerID,
+		func() {
+			select {
+			case ready <- struct{}{}:
+			default:
+			}
+		},
+	)
+	fluidTransport.publications.Register(consumer)
+	defer fluidTransport.publications.Unregister(consumer)
 
 	for fluidTransport.Error() == nil {
-		frame, ok := fluidTransport.publications.WaitPop(
-			fluidTransport.ctx,
-			fluidTransport.consumerID,
-		)
-
-		if !ok {
-			break
+		select {
+		case <-fluidTransport.ctx.Done():
+			return fluidTransport.Error()
+		case <-ready:
 		}
 
-		if !fluidTransport.HasChannel(frame.Channel) {
-			continue
-		}
+		for frame := range fluidTransport.publications.Drain(consumer, nil) {
+			if !fluidTransport.HasChannel(frame.Channel) {
+				continue
+			}
 
-		if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
-			fluidTransport.fail(err)
+			if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
+				fluidTransport.fail(err)
+				return fluidTransport.Error()
+			}
 		}
 	}
 

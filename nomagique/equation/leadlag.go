@@ -1,0 +1,124 @@
+package equation
+
+import (
+	"math"
+
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/temporal"
+)
+
+var (
+	SymbolLagBars             = nomagique.MustIntern("leadlag/lag_bars")
+	SymbolLagCorrelation      = nomagique.MustIntern("leadlag/lag_correlation")
+	SymbolContempCorrelation  = nomagique.MustIntern("leadlag/contemporaneous_correlation")
+	SymbolLagFraction         = nomagique.MustIntern("leadlag/lag_fraction")
+	SymbolSignificance        = nomagique.MustIntern("leadlag/significance")
+	SymbolContempSignificance = nomagique.MustIntern("leadlag/contemporaneous_significance")
+	SymbolLagReady            = nomagique.MustIntern("leadlag/lag_ready")
+	SymbolLeadLagReady        = nomagique.MustIntern("leadlag/ready")
+	SymbolLeadLagSampleCount  = nomagique.MustIntern("leadlag/sample_count")
+	SymbolLeadLagSearchCount  = nomagique.MustIntern("leadlag/search_count")
+)
+
+const minimumLagPathSamples = 3
+const bonferroniTailFactor = 2
+
+/*
+CrossLag searches every shift that leaves enough retained returns to estimate
+correlation. Hayashi evaluates each asynchronous pair and the actual search
+count determines the Bonferroni threshold.
+*/
+func CrossLag() nomagique.Primitive {
+	return crossLag
+}
+
+func crossLag(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	leftCount, _ := state.Get(nomagique.SampleCount)
+	rightCount, _ := input.Get(nomagique.SampleCount)
+	sampleCount := int(math.Min(leftCount, rightCount))
+	output := input
+
+	if sampleCount < minimumLagPathSamples {
+		output.Put(SymbolLeadLagReady, 0)
+
+		return state, output, nil
+	}
+
+	_, leftSpacing, err := temporal.Spacing(nomagique.Frame{}, state)
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	_, rightSpacing, err := temporal.Spacing(nomagique.Frame{}, input)
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	spacing := math.Min(
+		leftSpacing.MustGet(temporal.SymbolSpacingNanos),
+		rightSpacing.MustGet(temporal.SymbolSpacingNanos),
+	)
+	maximumLag := sampleCount - minimumLagPathSamples + 1
+	lagInput := input
+	lagInput.Put(correlation.SymbolLagSpacing, spacing)
+	lagInput.Put(correlation.SymbolMaximumLag, float64(maximumLag))
+	_, scan, err := correlation.Lag(state, lagInput)
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	bestLag := int(scan.MustGet(correlation.SymbolBestLag))
+	bestCorrelation := scan.MustGet(correlation.SymbolBestLagCorrelation)
+	bestMagnitude := math.Abs(bestCorrelation)
+	contemporaneousCorrelation := scan.MustGet(correlation.SymbolContemporaneous)
+	searchCount := int(scan.MustGet(correlation.SymbolSearchCount))
+
+	if searchCount == 0 {
+		output.Put(SymbolLeadLagReady, 0)
+
+		return state, output, nil
+	}
+
+	returnCount := sampleCount - 1
+	significance := math.Sqrt(
+		bonferroniTailFactor * math.Log(float64(searchCount+1)) / float64(returnCount),
+	)
+	contemporaneousSignificance := math.Sqrt(
+		bonferroniTailFactor * math.Log(2) / float64(returnCount),
+	)
+	lagReady := bestMagnitude > significance &&
+		bestMagnitude > math.Abs(contemporaneousCorrelation)
+	lagFraction := 0.0
+
+	if lagReady {
+		lagFraction = math.Abs(float64(bestLag)) / float64(maximumLag)
+	}
+
+	output.Put(SymbolLagBars, float64(bestLag))
+	output.Put(SymbolLagCorrelation, bestCorrelation)
+	output.Put(SymbolContempCorrelation, contemporaneousCorrelation)
+	output.Put(SymbolLagFraction, lagFraction)
+	output.Put(SymbolSignificance, significance)
+	output.Put(SymbolContempSignificance, contemporaneousSignificance)
+	output.Put(SymbolLagReady, truth(lagReady))
+	output.Put(SymbolLeadLagReady, 1)
+	output.Put(SymbolLeadLagSampleCount, float64(sampleCount))
+	output.Put(SymbolLeadLagSearchCount, float64(searchCount))
+
+	return state, output, nil
+}
+
+func truth(value bool) float64 {
+	if value {
+		return 1
+	}
+
+	return 0
+}

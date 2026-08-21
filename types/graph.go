@@ -270,8 +270,14 @@ func (graph *Graph) AddEdge(edge *Edge) {
 	}
 
 	for index, current := range graph.Edges {
+		sameDecisionClaim :=
+			(current.Relation == RelationSupports ||
+				current.Relation == RelationContradicts) &&
+				(edge.Relation == RelationSupports ||
+					edge.Relation == RelationContradicts)
+
 		if current.From == edge.From && current.To == edge.To &&
-			slices.Equal(current.Evidence, edge.Evidence) {
+			(current.Relation == edge.Relation || sameDecisionClaim) {
 			graph.Edges[index] = edge
 			return
 		}

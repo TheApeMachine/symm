@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -115,6 +116,17 @@ func NewAPI(
 }
 
 func (api *API) Name() string { return "kraken" }
+
+/*
+SetObserver attaches the shared ingress clock to every live venue connection.
+*/
+func (api *API) SetObserver(observer func(string, time.Duration)) {
+	for _, connection := range []Conn{api.public, api.private} {
+		if live, valid := connection.(*Live); valid && live != nil {
+			live.SetObserver(observer)
+		}
+	}
+}
 
 func (api *API) Error() error {
 	api.errMu.RLock()

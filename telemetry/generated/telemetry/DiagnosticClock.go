@@ -7,12 +7,14 @@ import (
 )
 
 type DiagnosticClockT struct {
-	Name     string `json:"name"`
-	Count    uint64 `json:"count"`
-	TotalNs  uint64 `json:"totalNs"`
-	LastNs   uint64 `json:"lastNs"`
-	MaxNs    uint64 `json:"maxNs"`
-	LastAtNs int64  `json:"lastAtNs"`
+	Name      string `json:"name"`
+	Count     uint64 `json:"count"`
+	TotalNs   uint64 `json:"totalNs"`
+	LastNs    uint64 `json:"lastNs"`
+	MaxNs     uint64 `json:"maxNs"`
+	LastAtNs  int64  `json:"lastAtNs"`
+	Active    uint64 `json:"active"`
+	StartedNs int64  `json:"startedNs"`
 }
 
 func (t *DiagnosticClockT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -27,6 +29,8 @@ func (t *DiagnosticClockT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffse
 	DiagnosticClockAddLastNs(builder, t.LastNs)
 	DiagnosticClockAddMaxNs(builder, t.MaxNs)
 	DiagnosticClockAddLastAtNs(builder, t.LastAtNs)
+	DiagnosticClockAddActive(builder, t.Active)
+	DiagnosticClockAddStartedNs(builder, t.StartedNs)
 	return DiagnosticClockEnd(builder)
 }
 
@@ -37,6 +41,8 @@ func (rcv *DiagnosticClock) UnPackTo(t *DiagnosticClockT) {
 	t.LastNs = rcv.LastNs()
 	t.MaxNs = rcv.MaxNs()
 	t.LastAtNs = rcv.LastAtNs()
+	t.Active = rcv.Active()
+	t.StartedNs = rcv.StartedNs()
 }
 
 func (rcv *DiagnosticClock) UnPack() *DiagnosticClockT {
@@ -151,8 +157,32 @@ func (rcv *DiagnosticClock) MutateLastAtNs(n int64) bool {
 	return rcv._tab.MutateInt64Slot(14, n)
 }
 
+func (rcv *DiagnosticClock) Active() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *DiagnosticClock) MutateActive(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(16, n)
+}
+
+func (rcv *DiagnosticClock) StartedNs() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *DiagnosticClock) MutateStartedNs(n int64) bool {
+	return rcv._tab.MutateInt64Slot(18, n)
+}
+
 func DiagnosticClockStart(builder *flatbuffers.Builder) {
-	builder.StartObject(6)
+	builder.StartObject(8)
 }
 func DiagnosticClockAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(name), 0)
@@ -171,6 +201,12 @@ func DiagnosticClockAddMaxNs(builder *flatbuffers.Builder, maxNs uint64) {
 }
 func DiagnosticClockAddLastAtNs(builder *flatbuffers.Builder, lastAtNs int64) {
 	builder.PrependInt64Slot(5, lastAtNs, 0)
+}
+func DiagnosticClockAddActive(builder *flatbuffers.Builder, active uint64) {
+	builder.PrependUint64Slot(6, active, 0)
+}
+func DiagnosticClockAddStartedNs(builder *flatbuffers.Builder, startedNs int64) {
+	builder.PrependInt64Slot(7, startedNs, 0)
 }
 func DiagnosticClockEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

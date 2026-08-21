@@ -261,6 +261,8 @@ export type ClockSnapshot = {
 	last_ns: number;
 	max_ns?: number;
 	last_at_ns?: number;
+	active?: number;
+	started_ns?: number;
 };
 
 export type HopSnapshot = {

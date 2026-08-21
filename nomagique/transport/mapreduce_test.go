@@ -2,6 +2,7 @@ package transport
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -242,6 +243,25 @@ func TestPop(t *testing.T) {
 
 func TestDrain(t *testing.T) {
 	Convey("Setup", t, func() {
+		Convey("Given an unbounded drain that reaches an empty queue", func() {
+			wakeCount := 0
+			consumer := NewConsumer[int]("A", func() { wakeCount++ })
+			mr := NewMapReduce([]*Consumer[int]{consumer}, nil, nil)
+			mr.Push(1)
+
+			for range mr.Drain(consumer, func(int) bool { return true }) {
+			}
+
+			Convey("Then the next empty-to-non-empty transition should wake it again", func() {
+				mr.Push(2)
+				item, ok := mr.Pop(consumer)
+
+				So(wakeCount, ShouldEqual, 2)
+				So(ok, ShouldBeTrue)
+				So(item, ShouldEqual, 2)
+			})
+		})
+
 		Convey("Given a MapReduce instance with items", func() {
 			mr := Setup[int]([]string{"A"}, nil, nil)
 			consumerA := mr.consumers[0]
@@ -328,6 +348,48 @@ func TestDrain(t *testing.T) {
 				})
 			})
 		})
+
+		Convey("Given an observed consumer drain", func() {
+			consumer := NewConsumer[int]("measurement", func() {})
+			mr := NewMapReduce([]*Consumer[int]{consumer}, nil, nil)
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			observed := make(chan string, 1)
+			started := make(chan string, 1)
+			mr.SetObserver(
+				func(name string) { started <- name },
+				func(name string, _ time.Duration) { observed <- name },
+			)
+			mr.Push(1)
+
+			go func() {
+				for range mr.Drain(consumer, nil) {
+					close(entered)
+					<-release
+				}
+			}()
+
+			<-entered
+
+			Convey("Then the stage is reported only after its real work completes", func() {
+				So(<-started, ShouldEqual, "measurement")
+
+				select {
+				case <-observed:
+					t.Fatal("observer ran before the drain work completed")
+				default:
+				}
+
+				close(release)
+
+				select {
+				case name := <-observed:
+					So(name, ShouldEqual, "measurement")
+				case <-time.After(time.Second):
+					t.Fatal("observer did not receive the completed drain")
+				}
+			})
+		})
 	})
 }
 
@@ -407,15 +469,29 @@ func BenchmarkPop(b *testing.B) {
 }
 
 func BenchmarkDrain(b *testing.B) {
-	mr := Setup[int]([]string{"A"}, nil, nil)
+	for _, observed := range []bool{false, true} {
+		name := "unobserved"
 
-	for i := range 1000 {
-		mr.Push(i)
-	}
-
-	for b.Loop() {
-		fn := func(item int) bool { return true }
-		for range mr.Drain(mr.consumers[0], fn) {
+		if observed {
+			name = "observed"
 		}
+
+		b.Run(name, func(b *testing.B) {
+			consumer := NewConsumer[int]("A", func() {})
+			mr := NewMapReduce([]*Consumer[int]{consumer}, nil, nil)
+
+			if observed {
+				mr.SetObserver(func(string) {}, func(string, time.Duration) {})
+			}
+
+			b.ReportAllocs()
+
+			for item := 0; b.Loop(); item++ {
+				mr.Push(item)
+
+				for range mr.Drain(consumer, nil) {
+				}
+			}
+		})
 	}
 }

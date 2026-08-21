@@ -50,12 +50,16 @@ const (
 const (
 	Level3ConsumerDepthFlow = iota
 	Level3ConsumerToxicity
+	Level3ConsumerPumpDump
+)
+
+const (
+	ExecutionConsumerDesk = iota
 )
 
 const (
 	MeasurementConsumerCategory = iota
 	MeasurementConsumerManifold
-	MeasurementConsumerResonance
 	MeasurementConsumerGraph
 	MeasurementConsumerAudit
 )
@@ -191,11 +195,13 @@ Level3Receivers names the signals that consume accepted order-identity events.
 var Level3Receivers = []SourceType{
 	SourceDepthFlow,
 	SourceToxicity,
+	SourcePumpDump,
 }
 
 var Level3ReceiverStrings = []string{
 	"depthflow",
 	"toxicity",
+	"pumpdump",
 }
 
 /*

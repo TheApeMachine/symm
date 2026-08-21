@@ -3,47 +3,66 @@ package correlation
 import (
 	"math"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-func TestHayashiYoshida(t *testing.T) {
-	Convey("Given two asynchronously sampled proportional paths", t, func() {
-		left := []Sample{
-			{At: time.Unix(0, 0), Value: 100},
-			{At: time.Unix(1, 0), Value: 110},
-			{At: time.Unix(2, 0), Value: 121},
-			{At: time.Unix(3, 0), Value: 133.1},
-		}
-		right := []Sample{
-			{At: time.Unix(0, int64(time.Millisecond)), Value: 50},
-			{At: time.Unix(1, int64(time.Millisecond)), Value: 55},
-			{At: time.Unix(2, int64(time.Millisecond)), Value: 60.5},
-			{At: time.Unix(3, int64(time.Millisecond)), Value: 66.55},
-		}
+func TestHayashi(t *testing.T) {
+	Convey("Given asynchronously sampled proportional paths", t, func() {
+		left := hayashiPath([]int64{0, 1_000_000_000, 2_000_000_000, 3_000_000_000},
+			[]float64{100, 110, 121, 133.1})
+		right := hayashiPath([]int64{1, 1_000_000_001, 2_000_000_001, 3_000_000_001},
+			[]float64{50, 55, 60.5, 66.55})
 
-		value, ready := HayashiYoshida(left, right, 0)
+		_, output, err := Hayashi(left, right)
 
-		Convey("It should correlate overlapping return intervals", func() {
-			So(ready, ShouldBeTrue)
-			So(math.Abs(value-1), ShouldBeLessThan, 1e-9)
+		Convey("It should correlate every overlapping return interval", func() {
+			So(err, ShouldBeNil)
+			So(output.MustGet(SymbolReady), ShouldEqual, 1.0)
+			So(math.Abs(output.MustGet(SymbolCorrelation)-1), ShouldBeLessThan, 1e-9)
+			So(output.MustGet(SymbolSupport), ShouldEqual, 5.0)
 		})
 	})
 }
 
-func BenchmarkHayashiYoshida(benchmark *testing.B) {
-	left := make([]Sample, 128)
-	right := make([]Sample, 128)
+func hayashiPath(timestamps []int64, values []float64) nomagique.Frame {
+	stream := nomagique.NewStream(temporal.Path, nomagique.Frame{})
 
-	for index := range left {
-		left[index] = Sample{At: time.Unix(int64(index), 0), Value: 100 + float64(index)}
-		right[index] = Sample{At: time.Unix(int64(index), int64(time.Millisecond)), Value: 200 + 2*float64(index)}
+	for index, timestamp := range timestamps {
+		input := nomagique.Frame{}
+		input.Put(nomagique.SampleValue, values[index])
+		input.Put(temporal.SymbolUnixSec, float64(timestamp/1_000_000_000))
+		input.Put(temporal.SymbolUnixNsec, float64(timestamp%1_000_000_000))
+		input.Put(nmtypes.Span, float64(len(timestamps)))
+		_, err := stream.Step(input)
+
+		if err != nil {
+			panic(err)
+		}
 	}
 
+	return stream.Project()
+}
+
+func BenchmarkHayashi(benchmark *testing.B) {
+	timestamps := make([]int64, temporal.MaxPathSamples)
+	leftValues := make([]float64, temporal.MaxPathSamples)
+	rightValues := make([]float64, temporal.MaxPathSamples)
+
+	for index := range temporal.MaxPathSamples {
+		timestamps[index] = int64(index) * 1_000_000_000
+		leftValues[index] = 100 + float64(index)
+		rightValues[index] = 200 + float64(index)
+	}
+
+	left := hayashiPath(timestamps, leftValues)
+	right := hayashiPath(timestamps, rightValues)
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		HayashiYoshida(left, right, 0)
+		_, _, _ = Hayashi(left, right)
 	}
 }

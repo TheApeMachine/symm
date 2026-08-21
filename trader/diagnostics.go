@@ -24,6 +24,13 @@ type durationClock struct {
 	lastNs   atomic.Uint64
 	maxNs    atomic.Uint64
 	lastAtNs atomic.Int64
+	active   atomic.Uint64
+	started  atomic.Int64
+}
+
+func (clock *durationClock) begin() {
+	clock.active.Add(1)
+	clock.started.Store(time.Now().UnixNano())
 }
 
 func (clock *durationClock) observe(duration time.Duration) {
@@ -42,14 +49,28 @@ func (clock *durationClock) observe(duration time.Duration) {
 	}
 }
 
+func (clock *durationClock) complete(duration time.Duration) {
+	clock.observe(duration)
+
+	for {
+		active := clock.active.Load()
+
+		if active == 0 || clock.active.CompareAndSwap(active, active-1) {
+			return
+		}
+	}
+}
+
 func (clock *durationClock) snapshot(name string) ClockSnapshot {
 	return ClockSnapshot{
-		Name:     name,
-		Count:    clock.count.Load(),
-		TotalNs:  clock.totalNs.Load(),
-		LastNs:   clock.lastNs.Load(),
-		MaxNs:    clock.maxNs.Load(),
-		LastAtNs: clock.lastAtNs.Load(),
+		Name:      name,
+		Count:     clock.count.Load(),
+		TotalNs:   clock.totalNs.Load(),
+		LastNs:    clock.lastNs.Load(),
+		MaxNs:     clock.maxNs.Load(),
+		LastAtNs:  clock.lastAtNs.Load(),
+		Active:    clock.active.Load(),
+		StartedNs: clock.started.Load(),
 	}
 }
 
@@ -107,12 +128,14 @@ func (bank *clockBank) observeHop(from string, to string, duration time.Duration
 ClockSnapshot is one named stage clock on the diagnostics wire.
 */
 type ClockSnapshot struct {
-	Name     string `json:"name"`
-	Count    uint64 `json:"count"`
-	TotalNs  uint64 `json:"total_ns"`
-	LastNs   uint64 `json:"last_ns"`
-	MaxNs    uint64 `json:"max_ns"`
-	LastAtNs int64  `json:"last_at_ns"`
+	Name      string `json:"name"`
+	Count     uint64 `json:"count"`
+	TotalNs   uint64 `json:"total_ns"`
+	LastNs    uint64 `json:"last_ns"`
+	MaxNs     uint64 `json:"max_ns"`
+	LastAtNs  int64  `json:"last_at_ns"`
+	Active    uint64 `json:"active"`
+	StartedNs int64  `json:"started_ns"`
 }
 
 /*
@@ -221,6 +244,22 @@ measurements, planner, and desk.
 */
 func (diagnostics *Diagnostics) applyModule(name string, duration time.Duration) {
 	diagnostics.clocks.observe(name, duration)
+}
+
+func (diagnostics *Diagnostics) beginModule(name string) {
+	if name == "" {
+		return
+	}
+
+	diagnostics.module(name).begin()
+}
+
+func (diagnostics *Diagnostics) completeModule(name string, duration time.Duration) {
+	if name == "" {
+		return
+	}
+
+	diagnostics.module(name).complete(duration)
 }
 
 /*
@@ -357,8 +396,21 @@ func (crypto *Crypto) bindDiagnostics() {
 		return
 	}
 
-	if crypto.desk != nil {
-		crypto.desk.ObserveModule = crypto.diagnostics.applyModule
+	if crypto.api != nil {
+		crypto.api.SetObserver(crypto.diagnostics.applyModule)
+	}
+
+	if crypto.thesis != nil {
+		for _, source := range types.WorkerSources {
+			if source == types.SourcePlanner {
+				continue
+			}
+
+			crypto.thesis.Work(source).SetObserver(
+				crypto.diagnostics.beginModule,
+				crypto.diagnostics.completeModule,
+			)
+		}
 	}
 
 	if crypto.diagnostics.interval <= 0 {

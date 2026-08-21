@@ -32,7 +32,6 @@ type Solver struct {
 	measurements *measurementCompiler
 	ui           *transport.MapReduce[*types.UIFrame]
 	building     map[string]*types.Graph
-	ready        map[string]*types.Symbol
 	work         *transport.Consumer[*types.Symbol]
 }
 
@@ -50,7 +49,6 @@ func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[*types.UIFrame], re
 		measurements: newMeasurementCompiler(),
 		ui:           ui,
 		building:     make(map[string]*types.Graph),
-		ready:        make(map[string]*types.Symbol),
 	}
 	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
 	thesis.Work(types.SourceGraph).Register(solver.work)
@@ -77,8 +75,6 @@ func (solver *Solver) consume() {
 		defer func() {
 			solver.thesis.Fail(solver.err)
 		}()
-		clear(solver.ready)
-
 		for queued := range solver.thesis.Work(types.SourceGraph).Drain(
 			solver.work, nil,
 		) {
@@ -89,13 +85,11 @@ func (solver *Solver) consume() {
 			default:
 			}
 
-			if queued != nil {
-				solver.ready[queued.Symbol] = queued
+			if queued == nil {
+				continue
 			}
-		}
 
-		for symbolName, symbolState := range solver.ready {
-			solver.buildGraph(symbolName, symbolState)
+			solver.buildGraph(queued.Symbol, queued)
 
 			if solver.err != nil {
 				return

@@ -92,6 +92,18 @@ func (crypto *Crypto) ObserveModule() func(string, time.Duration) {
 	return crypto.diagnostics.applyModule
 }
 
+/*
+ObserveHop returns the diagnostics handoff clock used by strategy stages whose
+transitions happen synchronously rather than through a thesis work queue.
+*/
+func (crypto *Crypto) ObserveHop() func(string, string, time.Duration) {
+	if crypto == nil || crypto.diagnostics == nil {
+		return nil
+	}
+
+	return crypto.diagnostics.applyHop
+}
+
 func (crypto *Crypto) Run() error {
 	<-crypto.ctx.Done()
 	return crypto.ctx.Err()

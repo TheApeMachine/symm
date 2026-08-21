@@ -5,6 +5,8 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/logic"
 )
 
 const (
@@ -21,7 +23,6 @@ const (
 	historyDeltas = iota
 	historyRates
 	historyReturns
-	historyPrecursors
 	historyFamilyCount
 )
 
@@ -29,71 +30,109 @@ var (
 	SymbolCapacity = nomagique.MustIntern("capacity")
 	SymbolVolume   = nomagique.MustIntern("volume")
 	SymbolLast     = nomagique.MustIntern("last")
+	SymbolTradePrice = nomagique.MustIntern("trade/price")
+	SymbolTradeQuantity = nomagique.MustIntern("trade/quantity")
 	SymbolBid      = nomagique.MustIntern("bid")
 	SymbolAsk      = nomagique.MustIntern("ask")
 
-	SymbolIgnitionInitialized = nomagique.MustIntern("window/initialized")
-	SymbolIgnitionClassified  = nomagique.MustIntern("window/classified")
-	SymbolIgnitionBars        = nomagique.MustIntern("window/bars")
-	SymbolIgnitionHaveTime    = nomagique.MustIntern("window/have_time")
-	SymbolIgnitionLastSec     = nomagique.MustIntern("window/last_sec")
-	SymbolIgnitionLastNsec    = nomagique.MustIntern("window/last_nsec")
-	SymbolIgnitionBarOpenSec  = nomagique.MustIntern("window/bar_open_sec")
-	SymbolIgnitionBarOpenNsec = nomagique.MustIntern("window/bar_open_nsec")
-	SymbolIgnitionBarVolume   = nomagique.MustIntern("window/bar_volume")
-	SymbolIgnitionPrevClose   = nomagique.MustIntern("window/previous_close")
-	SymbolIgnitionLastRVOL    = nomagique.MustIntern("window/previous_rvol")
+	SymbolIgnitionInitialized     = nomagique.MustIntern("window/initialized")
+	SymbolIgnitionClassified      = nomagique.MustIntern("window/classified")
+	SymbolIgnitionBars            = nomagique.MustIntern("window/bars")
+	SymbolIgnitionHaveTime        = nomagique.MustIntern("window/have_time")
+	SymbolIgnitionLastSec         = nomagique.MustIntern("window/last_sec")
+	SymbolIgnitionLastNsec        = nomagique.MustIntern("window/last_nsec")
+	SymbolIgnitionBarOpenSec      = nomagique.MustIntern("window/bar_open_sec")
+	SymbolIgnitionBarOpenNsec     = nomagique.MustIntern("window/bar_open_nsec")
+	SymbolIgnitionObservedFromSec = nomagique.MustIntern(
+		"window/observed_from_sec",
+	)
+	SymbolIgnitionObservedFromNsec = nomagique.MustIntern(
+		"window/observed_from_nsec",
+	)
+	SymbolIgnitionBarVolume = nomagique.MustIntern("window/bar_volume")
+	SymbolIgnitionPrevClose = nomagique.MustIntern("window/previous_close")
+	SymbolIgnitionLastRVOL  = nomagique.MustIntern("window/previous_rvol")
+	SymbolIgnitionBarClosed = nomagique.MustIntern("window/bar_closed")
+	SymbolIgnitionMaturity  = nomagique.MustIntern("ignition/maturity")
 
-	SymbolRVOL     = nomagique.MustIntern("rvol")
-	SymbolSpread   = nomagique.MustIntern("spread")
-	SymbolMaturity = nomagique.MustIntern("maturity")
+	SymbolRVOL                         = nomagique.MustIntern("rvol")
+	SymbolRVOLNormalized               = nomagique.MustIntern("rvol/normalized")
+	SymbolRVOLLift                     = nomagique.MustIntern("rvol/lift")
+	SymbolMidpoint                     = nomagique.MustIntern("midpoint")
+	SymbolSpread                       = nomagique.MustIntern("spread")
+	SymbolSpreadNormalized             = nomagique.MustIntern("spread/normalized")
+	SymbolSpreadBaseline               = nomagique.MustIntern("spread/baseline")
+	SymbolCompression                  = nomagique.MustIntern("compression")
+	SymbolMaturity                     = nomagique.MustIntern("maturity")
+	SymbolIgnitionHypothesisSeparation = nomagique.MustIntern(
+		"ignition/hypothesis_separation",
+	)
 
-	SymbolIgnitionBarRate     = nomagique.MustIntern("window/bar_rate")
+	SymbolIgnitionBarRate      = nomagique.MustIntern("window/bar_rate")
+	SymbolIgnitionReturn       = nomagique.MustIntern("window/log_return")
 	SymbolIgnitionRateBaseline = nomagique.MustIntern("window/rate_baseline")
 
-	SymbolAlphaRVOL       = nomagique.MustIntern("alpha/rvol")
-	SymbolAlphaPrecursor  = nomagique.MustIntern("alpha/precursor")
+	SymbolAlphaRVOL                = nomagique.MustIntern("alpha/rvol")
+	SymbolAlphaPrecursor           = nomagique.MustIntern("alpha/precursor")
+	SymbolAlphaPrecursorNormalized = nomagique.MustIntern(
+		"alpha/precursor/normalized",
+	)
 	SymbolAlphaExhaustion = nomagique.MustIntern("alpha/exhaustion")
 
-	SymbolBetaRVOL       = nomagique.MustIntern("beta/rvol")
-	SymbolBetaPrecursor  = nomagique.MustIntern("beta/precursor")
+	SymbolBetaRVOL                = nomagique.MustIntern("beta/rvol")
+	SymbolBetaPrecursor           = nomagique.MustIntern("beta/precursor")
+	SymbolBetaPrecursorNormalized = nomagique.MustIntern(
+		"beta/precursor/normalized",
+	)
 	SymbolBetaExhaustion = nomagique.MustIntern("beta/exhaustion")
 )
 
 /*
-NewIgnitionState returns an empty universal state. The first valid observation
-initializes the causal volume clock and all public output slots.
+NewIgnitionState returns an empty universal state.
 */
 func NewIgnitionState() nomagique.Frame {
 	return nomagique.Frame{}
 }
 
 /*
-Ignition advances one ordered market stream through a causal volume clock. Use
-one nomagique.Stream per key; the reducer itself contains no keyed or domain
-state outside its Frame.
-*/
-/*
-Ignition is a composite Primitive: the causal volume-clock transition runs
-first, and the classified output projection runs second. Both steps are plain
-primitives; the score path already composes the shared calculus.Ratio and
-calculus.Squash atoms through ignitionScore.
+Ignition composes the executed-trade volume clock. A trade first advances the
+data-derived bar. Only a closed bar is routed through the universal Rate and
+LogRatio atoms; the resulting tape observation is scored against causal
+history and committed. Book geometry and venue anchors are deliberately not
+part of this algorithm.
 */
 func Ignition() nomagique.Primitive {
-	return nomagique.Pipe(ignitionTransition, ignitionClassify)
+	return nomagique.Pipe(
+		ignitionVolumeClock,
+		logic.If(
+			ignitionBarClosed,
+			nomagique.Pipe(
+				nomagique.Fork(calculus.Rate, calculus.LogRatio),
+				nomagique.Relay(calculus.SymbolResult, SymbolIgnitionReturn),
+				ignitionBaselines,
+				ignitionRelativeVolume(),
+				nomagique.Fork(
+					ignitionDirectionalExhaustion(sideAlpha),
+					ignitionDirectionalExhaustion(sideBeta),
+				),
+				ignitionSeparation,
+				ignitionCommit,
+			),
+			nomagique.Identity,
+		),
+		ignitionProject,
+	)
 }
 
 /*
-ignitionTransition advances one ordered market stream through the causal
-volume clock: it validates the observation, initializes or advances the
-current bar, and, when the bar's volume reaches its history median target,
-closes it and scores the tape.
+ignitionVolumeClock advances the data-derived volume bar. A closed bar exposes
+the operands consumed by calculus.Rate and calculus.LogRatio.
 */
-func ignitionTransition(
+func ignitionVolumeClock(
 	state nomagique.Frame,
 	input nomagique.Frame,
 ) (nomagique.Frame, nomagique.Frame, error) {
-	capacity, volume, last, bid, ask, sec, nsec, hasTime, err := ignitionObservation(&input)
+	capacity, volume, last, sec, nsec, hasTime, err := ignitionObservation(&input)
 
 	if err != nil {
 		return state, nomagique.Frame{}, err
@@ -101,10 +140,10 @@ func ignitionTransition(
 
 	nextState := state
 	copyIgnitionObservation(&nextState, &input)
-	spread := ask - bid
+	nextState.Put(SymbolIgnitionBarClosed, 0)
 
 	if number(nextState, SymbolIgnitionInitialized) == 0 {
-		if err := initializeIgnition(
+		err = initializeIgnition(
 			&nextState,
 			capacity,
 			volume,
@@ -112,39 +151,45 @@ func ignitionTransition(
 			sec,
 			nsec,
 			hasTime,
-		); err != nil {
-			return state, nomagique.Frame{}, err
-		}
-	} else if err := advanceIgnition(
-		&nextState,
-		capacity,
-		volume,
-		last,
-		sec,
-		nsec,
-		hasTime,
-	); err != nil {
-		return state, nomagique.Frame{}, err
+		)
+	} else {
+		err = advanceIgnition(
+			&nextState,
+			capacity,
+			volume,
+			last,
+			sec,
+			nsec,
+			hasTime,
+		)
 	}
 
-	nextState.Put(SymbolSpread, spread)
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
 
 	return nextState, nextState, nil
 }
 
 /*
-ignitionClassify projects the transition's state into the public output slots:
-spread, readiness, and bar-driven maturity.
+ignitionBarClosed exposes the volume clock's explicit routing condition.
 */
-func ignitionClassify(
+func ignitionBarClosed(
 	state nomagique.Frame,
 	input nomagique.Frame,
 ) (nomagique.Frame, nomagique.Frame, error) {
-	nextState := state
-	spread := number(nextState, SymbolSpread)
-	composeIgnition(&nextState, spread)
+	closed, found := input.Get(SymbolIgnitionBarClosed)
 
-	return nextState, nextState, nil
+	if !found {
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"ignition: volume clock did not report bar state",
+		)
+	}
+
+	output := input
+	output.Put(logic.SymbolCondition, closed)
+
+	return state, output, nil
 }
 
 func ignitionObservation(
@@ -153,8 +198,6 @@ func ignitionObservation(
 	capacity int,
 	volume float64,
 	last float64,
-	bid float64,
-	ask float64,
 	sec float64,
 	nsec float64,
 	hasTime bool,
@@ -172,31 +215,17 @@ func ignitionObservation(
 	}
 
 	capacity = int(capacityValue)
-	values := []struct {
-		symbol nomagique.Symbol
-		target *float64
-	}{
-		{symbol: SymbolVolume, target: &volume},
-		{symbol: SymbolLast, target: &last},
-		{symbol: SymbolBid, target: &bid},
-		{symbol: SymbolAsk, target: &ask},
+	volume, found = input.Get(SymbolVolume)
+
+	if !found || volume <= 0 || !finite(volume) {
+		err = fmt.Errorf("ignition: trade volume must be finite and positive")
+		return
 	}
 
-	for _, required := range values {
-		value, present := input.Get(required.symbol)
+	last, found = input.Get(SymbolLast)
 
-		if !present || value <= 0 || !finite(value) {
-			err = fmt.Errorf(
-				"ignition: volume, last, bid, and ask must be finite and positive",
-			)
-			return
-		}
-
-		*required.target = value
-	}
-
-	if ask <= bid {
-		err = fmt.Errorf("ignition: ask must be above bid")
+	if !found || last <= 0 || !finite(last) {
+		err = fmt.Errorf("ignition: trade price must be finite and positive")
 		return
 	}
 
@@ -227,8 +256,8 @@ func copyIgnitionObservation(state *nomagique.Frame, input *nomagique.Frame) {
 		SymbolCapacity,
 		SymbolVolume,
 		SymbolLast,
-		SymbolBid,
-		SymbolAsk,
+		SymbolTradePrice,
+		SymbolTradeQuantity,
 		SymbolUnixSec,
 		SymbolUnixNsec,
 	} {
@@ -236,9 +265,10 @@ func copyIgnitionObservation(state *nomagique.Frame, input *nomagique.Frame) {
 
 		if found {
 			state.Put(symbol, value)
-		} else {
-			state.Delete(symbol)
+			continue
 		}
+
+		state.Delete(symbol)
 	}
 }
 
@@ -265,6 +295,8 @@ func initializeIgnition(
 		state.Put(SymbolIgnitionLastNsec, nsec)
 		state.Put(SymbolIgnitionBarOpenSec, sec)
 		state.Put(SymbolIgnitionBarOpenNsec, nsec)
+		state.Put(SymbolIgnitionObservedFromSec, sec)
+		state.Put(SymbolIgnitionObservedFromNsec, nsec)
 	}
 
 	return appendIgnitionHistory(state, historyDeltas, capacity, volume, true)
@@ -273,16 +305,17 @@ func initializeIgnition(
 func initializeIgnitionOutput(state *nomagique.Frame) {
 	for _, symbol := range []nomagique.Symbol{
 		SymbolRVOL,
-		SymbolSpread,
+		SymbolRVOLNormalized,
+		SymbolRVOLLift,
 		SymbolIgnitionBarRate,
 		SymbolIgnitionRateBaseline,
 		SymbolReady,
 		SymbolMaturity,
+		SymbolIgnitionMaturity,
+		SymbolIgnitionHypothesisSeparation,
 		SymbolAlphaRVOL,
-		SymbolAlphaPrecursor,
 		SymbolAlphaExhaustion,
 		SymbolBetaRVOL,
-		SymbolBetaPrecursor,
 		SymbolBetaExhaustion,
 	} {
 		state.Put(symbol, 0)
@@ -318,6 +351,8 @@ func advanceIgnition(
 			state.Put(SymbolIgnitionHaveTime, 1)
 			state.Put(SymbolIgnitionBarOpenSec, sec)
 			state.Put(SymbolIgnitionBarOpenNsec, nsec)
+			state.Put(SymbolIgnitionObservedFromSec, sec)
+			state.Put(SymbolIgnitionObservedFromNsec, nsec)
 		}
 	}
 
@@ -335,90 +370,45 @@ func advanceIgnition(
 		windowHasTime && hasTime && after(sec, nsec, barOpenSec, barOpenNsec)
 
 	if closes {
-		if err := closeIgnitionBar(
-			state,
-			capacity,
-			last,
+		previousClose := number(*state, SymbolIgnitionPrevClose)
+
+		if previousClose <= 0 {
+			return fmt.Errorf("ignition: previous close must be positive")
+		}
+
+		state.Put(SymbolIgnitionBarClosed, 1)
+		state.Put(calculus.SymbolCount, barVolume)
+		state.Put(calculus.SymbolDuration, elapsed(
 			sec,
 			nsec,
-			barVolume,
-		); err != nil {
-			return err
-		}
+			barOpenSec,
+			barOpenNsec,
+		))
+		state.Put(calculus.SymbolCurrent, last)
+		state.Put(calculus.SymbolPrevious, previousClose)
 	}
 
 	return appendIgnitionHistory(state, historyDeltas, capacity, volume, true)
 }
 
-func closeIgnitionBar(
-	state *nomagique.Frame,
-	capacity int,
-	last float64,
-	sec float64,
-	nsec float64,
-	barVolume float64,
-) error {
-	previousClose := number(*state, SymbolIgnitionPrevClose)
+/*
+ignitionProject derives public readiness and maturity from committed tape
+state.
+*/
+func ignitionProject(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	nextState := state
+	nextState.Merge(input)
+	ready := number(nextState, SymbolIgnitionClassified)
+	nextState.Put(SymbolReady, boolNumber(ready != 0))
+	bars := number(nextState, SymbolIgnitionBars)
+	maturity := bars / (bars + 1)
+	nextState.Put(SymbolMaturity, maturity)
+	nextState.Put(SymbolIgnitionMaturity, maturity)
 
-	if previousClose <= 0 {
-		return fmt.Errorf("ignition: previous close must be positive")
-	}
-
-	priceMove := math.Log(last / previousClose)
-	duration := elapsed(
-		sec,
-		nsec,
-		number(*state, SymbolIgnitionBarOpenSec),
-		number(*state, SymbolIgnitionBarOpenNsec),
-	)
-
-	if duration <= 0 {
-		return fmt.Errorf("ignition: volume bar requires positive elapsed event time")
-	}
-
-	barRate := barVolume / duration
-
-	if !finite(priceMove, barRate) {
-		return fmt.Errorf("ignition: calculated bar values must be finite")
-	}
-
-	if err := scoreIgnition(state, barRate, priceMove); err != nil {
-		return err
-	}
-
-	if err := appendIgnitionHistory(state, historyRates, capacity, barRate, true); err != nil {
-		return err
-	}
-
-	if err := appendIgnitionHistory(state, historyReturns, capacity, math.Abs(priceMove), false); err != nil {
-		return err
-	}
-
-	if err := appendIgnitionHistory(state, historyPrecursors, capacity, math.Abs(priceMove), true); err != nil {
-		return err
-	}
-
-	state.Put(SymbolIgnitionBars, number(*state, SymbolIgnitionBars)+1)
-	state.Put(SymbolIgnitionPrevClose, last)
-	state.Put(SymbolIgnitionBarOpenSec, sec)
-	state.Put(SymbolIgnitionBarOpenNsec, nsec)
-	state.Put(SymbolIgnitionBarVolume, 0)
-
-	return nil
-}
-
-func composeIgnition(state *nomagique.Frame, spread float64) {
-	state.Put(SymbolSpread, spread)
-	ready := number(*state, SymbolIgnitionClassified)
-	state.Put(SymbolReady, boolNumber(ready != 0))
-	bars := number(*state, SymbolIgnitionBars)
-	maturity := 0.0
-
-	if bars >= 0 {
-		maturity = bars / (bars + 1)
-	}
-
-	state.Put(SymbolMaturity, maturity)
+	return nextState, nextState, nil
 }
 
 func after(sec float64, nsec float64, otherSec float64, otherNsec float64) bool {

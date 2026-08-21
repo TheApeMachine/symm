@@ -4,6 +4,8 @@ import (
 	"math"
 	"testing"
 
+	. "github.com/smartystreets/goconvey/convey"
+
 	"github.com/theapemachine/symm/nomagique"
 )
 
@@ -27,6 +29,7 @@ func TestIgnitionReadinessIsCausal(t *testing.T) {
 		SymbolAlphaRVOL,
 		SymbolAlphaPrecursor,
 		SymbolBetaRVOL,
+		SymbolIgnitionHypothesisSeparation,
 	} {
 		if !first.Has(symbol) {
 			t.Fatalf("provisional output symbol %d is missing", symbol)
@@ -62,6 +65,68 @@ func TestIgnitionReadinessIsCausal(t *testing.T) {
 			t.Fatalf("symbol %d=%v; want positive evidence", symbol, third.MustGet(symbol))
 		}
 	}
+
+	assertAlmostEqual(
+		t,
+		third.MustGet(SymbolRVOLNormalized),
+		ignitionSquash(third.MustGet(SymbolRVOL), 1),
+		1e-12,
+	)
+	assertAlmostEqual(
+		t,
+		third.MustGet(SymbolAlphaPrecursorNormalized),
+		ignitionSquash(third.MustGet(SymbolAlphaPrecursor), 1),
+		1e-12,
+	)
+}
+
+func TestIgnitionHypothesisSeparation(t *testing.T) {
+	Convey("Given reciprocal directional exhaustion hypotheses", t, func() {
+		cases := []struct {
+			name  string
+			alpha float64
+			beta  float64
+			want  float64
+		}{
+			{name: "no evidence", alpha: 0, beta: 0, want: 0},
+			{name: "indistinguishable", alpha: 0.8, beta: 0.8, want: 0},
+			{name: "unopposed alpha", alpha: 0.8, beta: 0, want: 1},
+			{name: "unopposed beta", alpha: 0, beta: 0.8, want: 1},
+			{name: "separated", alpha: 0.8, beta: 0.2, want: 0.75},
+			{name: "reciprocal separated", alpha: 0.2, beta: 0.8, want: 0.75},
+		}
+
+		for _, testCase := range cases {
+			Convey(testCase.name, func() {
+				So(ignitionHypothesisSeparation(testCase.alpha, testCase.beta),
+					ShouldAlmostEqual, testCase.want)
+			})
+		}
+	})
+}
+
+func TestIgnitionPreservesCompletedBarInterval(t *testing.T) {
+	Convey("Given successive causal volume bars", t, func() {
+		stream := nomagique.NewStream(Ignition(), NewIgnitionState())
+		measureIgnition(t, stream, ignitionObservationForTest(
+			128, 20, 100, 99, 101, ignitionTestEpoch,
+		))
+		second := measureIgnition(t, stream, ignitionObservationForTest(
+			128, 20, 101, 100.5, 101.5, ignitionTestEpoch+2,
+		))
+
+		Convey("The completed score retains the bar's actual opening time", func() {
+			So(second.MustGet(SymbolIgnitionObservedFromSec),
+				ShouldEqual, ignitionTestEpoch)
+			So(second.MustGet(SymbolIgnitionObservedFromNsec), ShouldEqual, 0.0)
+			So(second.MustGet(SymbolMidpoint), ShouldEqual, 101.0)
+			So(second.MustGet(SymbolSpread), ShouldEqual, 1.0)
+			So(second.MustGet(SymbolSpreadNormalized),
+				ShouldAlmostEqual, 1.0/101.0)
+			So(second.MustGet(SymbolSpreadBaseline), ShouldEqual, 2.0)
+			So(second.MustGet(SymbolCompression), ShouldEqual, 0.5)
+		})
+	})
 }
 
 func TestIgnitionRejectsInvalidObservation(t *testing.T) {
@@ -248,6 +313,7 @@ func TestIgnitionBoundsRetainedHistory(t *testing.T) {
 		HistoryRates,
 		HistoryReturns,
 		HistoryPrecursors,
+		HistorySpreads,
 	} {
 		count := IgnitionHistoryCount(output, history)
 

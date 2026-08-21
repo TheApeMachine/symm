@@ -3,6 +3,7 @@ package transport
 import (
 	"iter"
 	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/symm/nomagique/types"
 	"golang.design/x/lockfree/lf"
@@ -14,6 +15,7 @@ This allows us to maintain O(1) lookups, while maintaining concurrency safety wi
 the need for locks.
 */
 type Consumer[T any] struct {
+	id     string
 	wait   func()
 	index  int
 	queue  *lf.Queue[T]
@@ -24,6 +26,7 @@ func NewConsumer[T any](
 	id string, wait func(),
 ) *Consumer[T] {
 	return &Consumer[T]{
+		id:     id,
 		wait:   wait,
 		index:  0,
 		queue:  lf.NewQueue[T](),
@@ -41,6 +44,12 @@ type MapReduce[T any] struct {
 	mapFn     func(T) T
 	reduceFn  func(T, T) T
 	previous  []*T
+	observer  atomic.Pointer[drainObserver]
+}
+
+type drainObserver struct {
+	begin func(string)
+	end   func(string, time.Duration)
 }
 
 func NewMapReduce[T any](
@@ -81,6 +90,24 @@ func NewMapReduce[T any](
 }
 
 /*
+SetObserver installs the optional clock around each yielded work item. Begin
+makes in-flight work visible before a long-running item completes; end receives
+the exact time spent in the consumer's processing body, including output writes.
+The observer is replaced atomically because diagnostics can be attached after
+market ingestion has started.
+*/
+func (mr *MapReduce[T]) SetObserver(
+	begin func(string), end func(string, time.Duration),
+) {
+	if begin == nil && end == nil {
+		mr.observer.Store(nil)
+		return
+	}
+
+	mr.observer.Store(&drainObserver{begin: begin, end: end})
+}
+
+/*
 Length returns the total depth of the Queue, optionally including
 any staged items in the consumer Queues. If no consumers are provided,
 it will return the length of the main Queue only.
@@ -88,12 +115,15 @@ it will return the length of the main Queue only.
 func (mr *MapReduce[T]) Length(consumers ...*Consumer[T]) uint64 {
 	length := uint64(0)
 
-	for _, consumer := range mr.consumers {
-		if len(consumers) > 0 {
+	if len(consumers) > 0 {
+		for _, consumer := range consumers {
 			length += consumer.queue.Length()
-			continue
 		}
 
+		return length
+	}
+
+	for _, consumer := range mr.consumers {
 		length += consumer.queue.Length()
 	}
 
@@ -116,8 +146,28 @@ func (mr *MapReduce[T]) Register(consumers ...*Consumer[T]) {
 	}
 }
 
+/*
+Unregister stops publication to a dynamically registered consumer and releases
+the frames still retained by its private queue.
+*/
+func (mr *MapReduce[T]) Unregister(consumer *Consumer[T]) {
+	consumer.status.Store(uint32(types.STOPPED))
+
+	for consumer.queue.Length() > 0 {
+		if _, ok := consumer.queue.Dequeue(); !ok {
+			return
+		}
+	}
+
+	mr.previous[consumer.index] = nil
+}
+
 func (mr *MapReduce[T]) Push(item T) {
 	for i := 0; i < len(mr.consumers); i++ {
+		if mr.consumers[i].status.Load() == uint32(types.STOPPED) {
+			continue
+		}
+
 		mr.consumers[i].queue.Enqueue(mr.mapFn(item))
 
 		if mr.Length(mr.consumers[i]) > 0 && mr.consumers[i].status.CompareAndSwap(
@@ -176,6 +226,20 @@ func (mr *MapReduce[T]) Drain(
 	}
 
 	return func(yield func(T) bool) {
+		defer func() {
+			if !consumer.status.CompareAndSwap(
+				uint32(types.BUSY), uint32(types.READY),
+			) {
+				return
+			}
+
+			if mr.Length(consumer) > 0 && consumer.status.CompareAndSwap(
+				uint32(types.READY), uint32(types.BUSY),
+			) {
+				consumer.wait()
+			}
+		}()
+
 		for fn(item) {
 			item, ok := mr.Pop(consumer)
 
@@ -183,17 +247,27 @@ func (mr *MapReduce[T]) Drain(
 				return
 			}
 
-			if !yield(item) {
+			observer := mr.observer.Load()
+
+			if observer != nil && observer.begin != nil {
+				observer.begin(consumer.id)
+			}
+
+			started := time.Time{}
+
+			if observer != nil && observer.end != nil {
+				started = time.Now()
+			}
+
+			continued := yield(item)
+
+			if observer != nil && observer.end != nil {
+				observer.end(consumer.id, time.Since(started))
+			}
+
+			if !continued {
 				return
 			}
-		}
-
-		consumer.status.Store(uint32(types.READY))
-
-		if mr.Length(consumer) > 0 && consumer.status.CompareAndSwap(
-			uint32(types.READY), uint32(types.BUSY),
-		) {
-			consumer.wait()
 		}
 	}
 }

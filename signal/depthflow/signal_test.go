@@ -18,7 +18,6 @@ func TestDepthFlowNumber(t *testing.T) {
 		thesis := types.NewThesis(context.Background(), nil)
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
-		go signal.Run()
 
 		Convey("It should compose the touch/deep imbalance family", func() {
 			touch := 2.0
@@ -37,7 +36,7 @@ func TestDepthFlowNumber(t *testing.T) {
 			input.Put(nmtypes.EventTimeNsec, 0)
 			input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
-			output, err := signal.number("AAA/USD", input)
+			output, err := signal.number.Step("AAA/USD", input)
 
 			So(err, ShouldBeNil)
 			So(output.MustGet(SymbolTouchImbalance), ShouldNotEqual, 0)

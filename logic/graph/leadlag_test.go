@@ -20,7 +20,9 @@ func TestAddLeadLagEdges(t *testing.T) {
 		graph := types.NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
-			"ALT/USD", local.MarketMeasurements("graph"), graph,
+			"ALT/USD", local.MarketMeasurements(
+				local.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), graph,
 		)
 		So(err, ShouldBeNil)
 
@@ -63,7 +65,9 @@ func TestAddLeadLagEdges(t *testing.T) {
 		graph := types.NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
-			"ALT/USD", local.MarketMeasurements("graph"), graph,
+			"ALT/USD", local.MarketMeasurements(
+				local.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), graph,
 		)
 		So(err, ShouldBeNil)
 
@@ -92,7 +96,9 @@ func TestAddLeadLagEdges(t *testing.T) {
 		graph := types.NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
-			"ALT/USD", local.MarketMeasurements("graph"), graph,
+			"ALT/USD", local.MarketMeasurements(
+				local.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), graph,
 		)
 		So(err, ShouldBeNil)
 
@@ -125,7 +131,9 @@ func TestAddLeadLagEdges(t *testing.T) {
 		graph := types.NewGraph(at)
 		compiler := newMeasurementCompiler()
 		index, err := compiler.addNodes(
-			"ALT/USD", local.MarketMeasurements("graph"), graph,
+			"ALT/USD", local.MarketMeasurements(
+				local.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), graph,
 		)
 		So(err, ShouldBeNil)
 

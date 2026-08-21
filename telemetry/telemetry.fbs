@@ -610,6 +610,8 @@ table DiagnosticClock {
   lastNs:ulong;
   maxNs:ulong;
   lastAtNs:long;
+  active:ulong;
+  startedNs:long;
 }
 table DiagnosticHop {
   from:string (required);

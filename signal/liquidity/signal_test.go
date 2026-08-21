@@ -36,15 +36,13 @@ func TestLiquidityPipeline(t *testing.T) {
 		thesis := types.NewThesis(context.Background(), nil)
 		market := thesis.Symbol("AAA/USD")
 		start := time.Unix(1_700_000_000, 0).UTC()
+		signal := NewSignal(context.Background(), thesis)
+		defer signal.Close()
 
 		for index := range 8 {
 			at := start.Add(time.Duration(index) * time.Second)
 			market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, at))
 		}
-
-		signal := NewSignal(context.Background(), thesis)
-		defer signal.Close()
-		go signal.Run()
 
 		Convey("It should emit one measurement per tick through its own pipeline", func() {
 			readings := drainMeasurements(market, 8)
@@ -66,12 +64,10 @@ func TestLiquidityPipeline(t *testing.T) {
 		thesis := types.NewThesis(context.Background(), nil)
 		market := thesis.Symbol("AAA/USD")
 		start := time.Unix(1_700_000_000, 0).UTC()
-
-		market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, start.Add(time.Second)))
-
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
-		go signal.Run()
+
+		market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, start.Add(time.Second)))
 		firstReadings := drainMeasurements(market, 1)
 		market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, start))
 
@@ -92,7 +88,9 @@ func drainMeasurements(symbol *types.Symbol, expected int) []*nmtypes.Measuremen
 	deadline := time.Now().Add(2 * time.Second)
 
 	for len(readings) < expected && time.Now().Before(deadline) {
-		for measurement := range symbol.MarketMeasurements("category") {
+		for measurement := range symbol.MarketMeasurements(
+			symbol.MeasurementConsumers[types.MeasurementConsumerCategory],
+		) {
 			readings = append(readings, measurement)
 		}
 

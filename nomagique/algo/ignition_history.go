@@ -12,7 +12,6 @@ var (
 		HistoryDeltas,
 		HistoryRates,
 		HistoryReturns,
-		HistoryPrecursors,
 	}
 	ignitionHistoryCounts  [historyFamilyCount]nomagique.Symbol
 	ignitionHistoryHeads   [historyFamilyCount]nomagique.Symbol
@@ -46,9 +45,9 @@ func init() {
 
 /*
 IgnitionHistorySample returns the symbol used by one retained history position.
-HistoryMoves is a compatibility name for the returns family. Returns and
-precursors retain separate rings because zero returns are accepted only by the
-returns family.
+HistoryMoves is a compatibility name for the returns family. HistoryPrecursors
+selects that same return family because the positive-only precursor baseline is
+derived from it without retaining a duplicate ring.
 */
 func IgnitionHistorySample(name string, index int) (nomagique.Symbol, bool) {
 	family, found := ignitionHistoryFamily(name)
@@ -64,6 +63,10 @@ func IgnitionHistorySample(name string, index int) (nomagique.Symbol, bool) {
 IgnitionHistoryCount returns the number of retained samples for one family.
 */
 func IgnitionHistoryCount(state nomagique.Frame, name string) int {
+	if name == HistoryPrecursors {
+		return ignitionHistoryPositiveCount(state, historyReturns)
+	}
+
 	family, found := ignitionHistoryFamily(name)
 
 	if !found {
@@ -79,13 +82,26 @@ func ignitionHistoryFamily(name string) (int, bool) {
 		return historyDeltas, true
 	case HistoryRates:
 		return historyRates, true
-	case HistoryMoves, HistoryReturns:
+	case HistoryMoves, HistoryReturns, HistoryPrecursors:
 		return historyReturns, true
-	case HistoryPrecursors:
-		return historyPrecursors, true
 	default:
 		return 0, false
 	}
+}
+
+func ignitionHistoryPositiveCount(state nomagique.Frame, family int) int {
+	count := int(number(state, ignitionHistoryCounts[family]))
+	positive := 0
+
+	for index := 0; index < count; index++ {
+		value, found := state.Get(ignitionHistorySamples[family][index])
+
+		if found && value > 0 {
+			positive++
+		}
+	}
+
+	return positive
 }
 
 func appendIgnitionHistory(
@@ -173,6 +189,60 @@ func ignitionHistoryMedian(
 			"ignition: %s history median is not finite",
 			ignitionHistoryNames[family],
 		)
+	}
+
+	return median, true, nil
+}
+
+func ignitionHistoryPositiveMedian(
+	state *nomagique.Frame,
+	family int,
+) (float64, bool, error) {
+	count := int(number(*state, ignitionHistoryCounts[family]))
+
+	if count == 0 {
+		return 0, false, nil
+	}
+
+	if count < 0 || count > MaxIgnitionHistory {
+		return 0, false, fmt.Errorf(
+			"ignition: %s history count is invalid",
+			ignitionHistoryNames[family],
+		)
+	}
+
+	values := [MaxIgnitionHistory]float64{}
+	positive := 0
+
+	for index := range count {
+		value, found := state.Get(ignitionHistorySamples[family][index])
+
+		if !found || !finite(value) {
+			return 0, false, fmt.Errorf(
+				"ignition: %s history sample %d is invalid",
+				ignitionHistoryNames[family],
+				index,
+			)
+		}
+
+		if value <= 0 {
+			continue
+		}
+
+		values[positive] = value
+		positive++
+	}
+
+	if positive == 0 {
+		return 0, false, nil
+	}
+
+	sortIgnitionValues(&values, positive)
+	middle := positive / 2
+	median := values[middle]
+
+	if positive%2 == 0 {
+		median = (values[middle-1] + values[middle]) / 2
 	}
 
 	return median, true, nil

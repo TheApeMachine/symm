@@ -17,13 +17,24 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 	testtypes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
 func runAutoFillStackTest(t *testing.T, symbols []*testtypes.Symbol) {
 	Convey("Given an executable production-stack position lifecycle", t,
-		WithOrders(t, symbols, cmd.Boot, func(market *Market, _ *cmd.System) {
+		WithOrders(t, symbols, cmd.Boot, func(market *Market, system *cmd.System) {
+			names := make([]string, len(system.Signals))
+
+			for index, signal := range system.Signals {
+				names[index] = signal.Name()
+			}
+
+			So(names, ShouldResemble, []string{
+				"correlation", "cvd", "depthflow", "exhaustion", "hawkes",
+				"leadlag", "liquidity", "pumpdump", "sentiment", "toxicity",
+			})
 			market.WithAutoFill()
 			market.Tick()
 			_, private := market.Feeds()
@@ -91,7 +102,9 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 					So(system.Desk.Holding("SIM1/USD"), ShouldEqual, 0)
 					closed := 0
 
-					for stored := range system.Thesis.Symbol("SIM1/USD").Positions.Drain("audit", func(any) bool {
+					symbolState := system.Thesis.Symbol("SIM1/USD")
+
+					for stored := range symbolState.Positions.Drain(symbolState.PositionConsumers[0], func(any) bool {
 						return true
 					}) {
 						position, ok := stored.(*broker.Position)
@@ -158,8 +171,26 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				So(err, ShouldBeNil)
 				defer capture.Close()
 
-				So(market.Replay(capture), ShouldBeNil)
 				symbolState := system.Thesis.Symbol("IDOS/USD")
+				resonanceReady := make(chan struct{}, 1)
+				resonanceConsumer := transport.NewConsumer[any]("replay-resonance", func() {
+					select {
+					case resonanceReady <- struct{}{}:
+					default:
+					}
+				})
+				positionReady := make(chan struct{}, 1)
+				positionConsumer := transport.NewConsumer[any]("replay-position", func() {
+					select {
+					case positionReady <- struct{}{}:
+					default:
+					}
+				})
+				symbolState.Resonance.Register(resonanceConsumer)
+				defer symbolState.Resonance.Unregister(resonanceConsumer)
+				symbolState.Positions.Register(positionConsumer)
+				defer symbolState.Positions.Unregister(positionConsumer)
+				So(market.Replay(capture), ShouldBeNil)
 				var coder *learning.ResonanceManifold
 				resonanceCtx, cancelResonance := context.WithTimeout(
 					market.ctx,
@@ -167,18 +198,18 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				)
 				defer cancelResonance()
 
+			resonanceLoop:
 				for coder == nil {
-					stored, available := symbolState.Resonance.WaitPop(
-						resonanceCtx,
-						"audit",
-					)
-
-					if !available {
-						break
+					select {
+					case <-resonanceCtx.Done():
+						break resonanceLoop
+					case <-resonanceReady:
 					}
 
-					if candidate, valid := stored.(*learning.ResonanceManifold); valid && candidate != nil {
-						coder = candidate
+					for stored := range symbolState.Resonance.Drain(resonanceConsumer, nil) {
+						if candidate, valid := stored.(*learning.ResonanceManifold); valid && candidate != nil {
+							coder = candidate
+						}
 					}
 				}
 
@@ -193,39 +224,42 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				)
 				defer cancel()
 
+			positionLoop:
 				for completed == nil {
-					stored, available := symbolState.Positions.WaitPop(positionCtx, "audit")
-
-					if !available {
-						break
+					select {
+					case <-positionCtx.Done():
+						break positionLoop
+					case <-positionReady:
 					}
 
-					position, valid := stored.(*broker.Position)
+					for stored := range symbolState.Positions.Drain(positionConsumer, nil) {
+						position, valid := stored.(*broker.Position)
 
-					if valid && position.Holding != nil {
-						t.Logf(
-							"exact slice position: status=%s utility=%g graph=%g sources=%#v pnl=%v return=%g",
-							position.Holding.Status,
-							position.Decision.Utility,
-							position.Decision.GraphScore,
-							position.Decision.PerspectiveSources,
-							position.Holding.PnL,
-							position.Holding.ReturnPct,
-						)
-					}
+						if valid && position.Holding != nil {
+							t.Logf(
+								"exact slice position: status=%s utility=%g graph=%g sources=%#v pnl=%v return=%g",
+								position.Holding.Status,
+								position.Decision.Utility,
+								position.Decision.GraphScore,
+								position.Decision.PerspectiveSources,
+								position.Holding.PnL,
+								position.Holding.ReturnPct,
+							)
+						}
 
-					if valid && position.Holding != nil &&
-						position.Holding.Status == types.CLOSED {
-						completed = position
-					}
+						if valid && position.Holding != nil &&
+							position.Holding.Status == types.CLOSED {
+							completed = position
+						}
 
-					if valid && position.Holding != nil &&
-						position.Holding.Status != types.CLOSED {
-						active = position
+						if valid && position.Holding != nil &&
+							position.Holding.Status != types.CLOSED {
+							active = position
+						}
 					}
 				}
 
-				for stored := range symbolState.Positions.Drain("audit", func(any) bool {
+				for stored := range symbolState.Positions.Drain(symbolState.PositionConsumers[0], func(any) bool {
 					return true
 				}) {
 					position, valid := stored.(*broker.Position)
@@ -487,7 +521,7 @@ func captureCrossSection(system *cmd.System, names []string) []captureSymbolRow 
 
 		var decision types.Decision
 
-		for candidate := range symbolState.Decisions.Drain("audit", func(types.Decision) bool {
+		for candidate := range symbolState.Decisions.Drain(symbolState.DecisionConsumers[0], func(types.Decision) bool {
 			return true
 		}) {
 			decision = candidate
@@ -504,9 +538,12 @@ func captureCrossSection(system *cmd.System, names []string) []captureSymbolRow 
 
 		var coder *learning.ResonanceManifold
 
-		for stored := range symbolState.Resonance.Drain("audit", func(any) bool {
-			return true
-		}) {
+		for stored := range symbolState.Resonance.Drain(
+			symbolState.ResonanceConsumers[types.ResonanceConsumerAudit],
+			func(any) bool {
+				return true
+			},
+		) {
 			if candidate, valid := stored.(*learning.ResonanceManifold); valid && candidate != nil {
 				coder = candidate
 			}
@@ -522,7 +559,7 @@ func captureCrossSection(system *cmd.System, names []string) []captureSymbolRow 
 			}
 		}
 
-		for stuck := range symbolState.Positions.Drain("audit", func(any) bool {
+		for stuck := range symbolState.Positions.Drain(symbolState.PositionConsumers[0], func(any) bool {
 			return true
 		}) {
 			position, valid := stuck.(*broker.Position)

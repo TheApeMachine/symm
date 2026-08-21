@@ -427,17 +427,24 @@ func TestPositionCloseFill(t *testing.T) {
 nextFrame drains one wire frame from a test ui transport, registering a local
 consumer cursor so publications exist before the behavior under test runs.
 */
-const positionTestConsumer = "position-test"
+var positionTestConsumer = transport.NewConsumer[*types.UIFrame](
+	"position-test", func() {},
+)
 
 func newPositionUI() *transport.MapReduce[*types.UIFrame] {
 	return transport.NewMapReduce[*types.UIFrame](
-		[]string{positionTestConsumer},
+		[]*transport.Consumer[*types.UIFrame]{positionTestConsumer},
 		nil,
 		nil,
 	)
 }
 
 func nextFrame(ui *transport.MapReduce[*types.UIFrame]) *types.UIFrame {
-	frame, _ := ui.Pop(positionTestConsumer)
+	var frame *types.UIFrame
+
+	for candidate := range ui.Drain(positionTestConsumer, nil) {
+		frame = candidate
+	}
+
 	return frame
 }
