@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func Setup[T any](
@@ -115,6 +116,37 @@ func TestPush(t *testing.T) {
 					So(third, ShouldEqual, 3)
 				})
 			})
+		})
+	})
+}
+
+func TestIdle(t *testing.T) {
+	Convey("Given a MapReduce with one registered consumer", t, func() {
+		consumer := NewConsumer[int]("A", func() {})
+		mr := NewMapReduce([]*Consumer[int]{consumer}, nil, nil)
+
+		Convey("When the consumer is ready and its queue is empty", func() {
+			So(consumer.status.Load(), ShouldEqual, uint32(types.READY))
+			So(mr.Length(consumer), ShouldEqual, uint64(0))
+			So(mr.Idle(), ShouldBeTrue)
+		})
+
+		Convey("When the consumer has dequeued its only item but is still busy", func() {
+			mr.Push(42)
+			item, ok := mr.Pop(consumer)
+
+			So(ok, ShouldBeTrue)
+			So(item, ShouldEqual, 42)
+			So(mr.Length(consumer), ShouldEqual, uint64(0))
+			So(consumer.status.Load(), ShouldEqual, uint32(types.BUSY))
+			So(mr.Idle(), ShouldBeFalse)
+
+			for range mr.Drain(consumer, nil) {
+			}
+
+			So(consumer.status.Load(), ShouldEqual, uint32(types.READY))
+			So(mr.Length(consumer), ShouldEqual, uint64(0))
+			So(mr.Idle(), ShouldBeTrue)
 		})
 	})
 }
@@ -493,5 +525,20 @@ func BenchmarkDrain(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkIdle(b *testing.B) {
+	mr := Setup[int](
+		[]string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"},
+		nil,
+		nil,
+	)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if !mr.Idle() {
+			b.Fatal("ready empty consumers reported active")
+		}
 	}
 }

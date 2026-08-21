@@ -18,3 +18,19 @@ func AdaptiveBaseline() nomagique.Primitive {
 		temporal.Governor,
 	)
 }
+
+/*
+CausalBaseline exposes the center of committed samples before retaining the
+current observation. Stability and capacity control still observe the updated
+ring, so adaptation remains closed-loop without letting an observation dilute
+the baseline used to score itself.
+*/
+func CausalBaseline() nomagique.Primitive {
+	return nomagique.Pipe(
+		nomagique.Retained(statistic.Mean),
+		temporal.Window,
+		statistic.Stability,
+		temporal.Governor,
+		nomagique.Relay(statistic.SymbolMean, statistic.SymbolBaseline),
+	)
+}

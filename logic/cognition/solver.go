@@ -1067,7 +1067,5 @@ Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
 	solver.cancel()
-	solver.sequences = nil
-	solver.regimes = nil
 	return nil
 }

@@ -29,6 +29,7 @@ type Stack interface {
 		rather than for a number of ticks picked to make a test come out.
 	*/
 	Holding(symbol string) int
+	Error() error
 	Run() error
 	Close() error
 }
@@ -135,6 +136,8 @@ func drive[S Driven](
 			t.Fatal("tests: boot produced no system")
 			return
 		}
+
+		market.WithStagedReplay(thesis, system.Error)
 
 		runErr := make(chan error, 1)
 

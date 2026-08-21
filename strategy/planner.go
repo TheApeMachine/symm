@@ -1,12 +1,12 @@
 package strategy
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -36,10 +36,6 @@ type Planner struct {
 	thesis     *types.Thesis
 	work       *transport.Consumer[*types.Symbol]
 
-	candidateMu sync.Mutex
-	candidates  map[string]*types.Decision
-	lastTick    int64
-
 	ObserveModule func(string, time.Duration)
 	ObserveHop    func(string, string, time.Duration)
 	executeEntry  func(types.Decision) error
@@ -62,7 +58,6 @@ func NewPlanner(
 		allocation: NewAllocation(ctx, desk),
 		desk:       desk,
 		thesis:     thesis,
-		candidates: make(map[string]*types.Decision),
 	}
 	planner.work = transport.NewConsumer[*types.Symbol](planner.Name(), planner.consume)
 	thesis.Work(types.SourcePlanner).Register(planner.work)
@@ -101,7 +96,12 @@ func (planner *Planner) Close() error {
 
 func (planner *Planner) consume() {
 	go func() {
-		for range planner.thesis.Work(types.SourcePlanner).Drain(planner.work, nil) {
+		work := planner.thesis.Work(types.SourcePlanner)
+		remaining := work.Length(planner.work)
+
+		for range work.Drain(planner.work, func(_ *types.Symbol) bool {
+			return remaining > 0
+		}) {
 			select {
 			case <-planner.ctx.Done():
 				planner.err = planner.ctx.Err()
@@ -109,7 +109,11 @@ func (planner *Planner) consume() {
 			default:
 			}
 
-			planner.lastTick = planner.thesis.Tick
+			remaining--
+
+			if remaining > 0 {
+				continue
+			}
 
 			if err := planner.Update(planner.thesis); err != nil {
 				planner.err = errnie.Error(errnie.Err(
@@ -153,16 +157,17 @@ func (planner *Planner) decisionFromGraph(
 	decision.Confidence = perspective.TradeConfidence
 	decision.PerspectiveConfidence = perspective.TradeConfidence
 	decision.AdmissionGraphThreshold = config.Planner.MinimumGraphScore
-	decision.OpportunityType = graphOpportunityType(cloned)
+	opportunity := cloned.ActiveOpportunity(cloned.At)
+	decision.OpportunityType = string(opportunity.Type)
 	decision.TaskSkill = cloned.TaskSkill
 	decision.TaskSkillReady = cloned.TaskSkillReady
 	decision.PredictiveReady, decision.PredictiveStatus = predictiveReadiness(cloned)
 	decision.ReserveEligible, decision.ReserveReason = reserveQualification(
-		decision.OpportunityType,
+		opportunity.Type,
 		decision.PredictiveReady,
 		decision.ForecastHorizon,
 	)
-	decision.Opportunity = decision.ReserveEligible
+	decision.Opportunity = opportunity.Type != types.OpportunityNone
 	decision.Alternatives = make(map[string]float64)
 
 	if searchRoot != nil {
@@ -190,23 +195,15 @@ func (planner *Planner) decisionFromGraph(
 	switch {
 	case decision.Direction <= 0 || decision.ThesisScore <= 0:
 		decision.Reason = "planner: contradiction outweighs support for the long-opportunity thesis"
+	case !decision.Opportunity:
+		decision.Reason = "planner: graph does not identify an actable opportunity"
+	case !decision.PredictiveReady:
+		decision.Reason = "planner: opportunity has no calibrated holding horizon: " +
+			decision.PredictiveStatus
 	case decision.Confidence < config.Planner.MinimumConfidence:
 		decision.Reason = "planner: thesis does not clear the minimum confidence floor"
 	case decision.ThesisScore < config.Planner.MinimumGraphScore:
 		decision.Reason = "planner: structural thesis does not clear the regulated evidence boundary"
-	default:
-		if !decision.PredictiveReady {
-			// Predictive coding enriches the observation space it is not a
-			// veto over the structural graph evidence. The strategy reasons
-			// over this alongside every other measurement.
-			decision.PredictiveStatus = "enriching: " + decision.PredictiveStatus
-		}
-
-		// A named precursor type qualifies the reserve lane; its absence must
-		// not veto an otherwise strong structural thesis. The category label
-		// is a classification convenience, not additional evidence: direction,
-		// thesis score, calibrated confidence, and predictive readiness have
-		// already cleared, so the opportunity is admitted on that evidence.
 	}
 
 	return decision, nil
@@ -227,8 +224,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 	}()
 
-	var err error
-	evaluated := false
+	readySymbols := make(map[string]*logicgraph.Graph)
 
 	thesis.Symbols.Range(func(key, value any) bool {
 		symbolName, symbolOK := key.(string)
@@ -246,48 +242,36 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		) {
 			consumedGraph = true
 
-			if graph == nil || !graph.SearchableEnough(config.Planner.MinimumConfidence) {
+			if graph == nil || !graph.ReadyForSearch() {
 				continue
 			}
 
-			evaluated = true
-			err = planner.updateGraph(thesis, config, symbolName, graph)
-
-			if err != nil {
-				return false
-			}
+			readySymbols[symbolName] = graph
 		}
 
 		if consumedGraph && symbolState.HasGraphInputs() {
-			thesis.Work(types.SourceGraph).Push(symbolState)
+			thesis.ScheduleWork(types.SourceGraph, symbolState)
 		}
 
-		return err == nil
+		return true
 	})
 
-	if err != nil || evaluated {
-		return err
+	if len(readySymbols) == 0 {
+		return nil
 	}
 
-	return planner.updateGraph(thesis, config, "", nil)
+	return planner.updateGraph(thesis, config, readySymbols)
 }
 
 func (planner *Planner) updateGraph(
 	thesis *types.Thesis,
 	config *system.Config,
-	symbolName string,
-	graph *logicgraph.Graph,
+	readySymbols map[string]*logicgraph.Graph,
 ) error {
-	readySymbols := make(map[string]*logicgraph.Graph, 1)
-
-	if graph != nil {
-		readySymbols[symbolName] = graph
-	}
-
 	lastSearchEnd := time.Now()
 	heldLegs := planner.heldLegs(readySymbols)
 
-	if len(readySymbols) == 0 && len(heldLegs) == 0 && !planner.hasCandidates() {
+	if len(readySymbols) == 0 && len(heldLegs) == 0 {
 		return nil
 	}
 
@@ -323,12 +307,21 @@ func (planner *Planner) updateGraph(
 				continue
 			}
 
-			graphs[symbolName] = graph
 			now := graph.At
-			opportunityType := graphOpportunityType(graph)
+			opportunity := graph.ActiveOpportunity(now)
 			predictiveReady, _ := predictiveReadiness(graph)
+
+			if opportunity.Type == types.OpportunityNone || !predictiveReady {
+				rejections = append(rejections, struct {
+					symbol string
+					graph  *logicgraph.Graph
+				}{symbolName, graph})
+				continue
+			}
+
+			graphs[symbolName] = graph
 			reserveEligible, _ := reserveQualification(
-				opportunityType,
+				opportunity.Type,
 				predictiveReady,
 				graph.ForecastHorizon,
 			)
@@ -336,8 +329,7 @@ func (planner *Planner) updateGraph(
 			legs = append(legs, portfolioLeg{
 				Symbol:          symbolName,
 				Summary:         summary,
-				Opportunity:     graph.ActiveOpportunity(now),
-				Trust:           graph.MeanTrust(now),
+				Opportunity:     opportunity,
 				ReserveEligible: reserveEligible,
 			})
 		}
@@ -345,6 +337,9 @@ func (planner *Planner) updateGraph(
 		// Held lots join the same search so the tree can retire one that has
 		// stopped earning its slot in favour of a stronger flat candidate.
 		legs = append(legs, heldLegs...)
+		slices.SortFunc(legs, func(left, right portfolioLeg) int {
+			return cmp.Compare(left.Symbol, right.Symbol)
+		})
 
 		// Without a desk the planner still evaluates the round; capacity must
 		// not collapse the search, so the leg count itself is the bound.
@@ -412,10 +407,10 @@ func (planner *Planner) updateGraph(
 				continue
 			}
 
-			if action := choices[leg.Symbol]; action == portfolioEnterReference(index) {
+			if action := choices[leg.Symbol]; action == portfolioEnterReference(index) && decision.Reason == "" {
 				decision.Action = types.ActionEnter
 				decision.Cause = decision.OpportunityType
-			} else {
+			} else if decision.Reason == "" {
 				decision.Reason = "planner: MCTS did not select this candidate for the available slots"
 			}
 
@@ -445,23 +440,6 @@ func (planner *Planner) updateGraph(
 			if decision != nil {
 				createdDecisions = append(createdDecisions, decision)
 			}
-		}
-	}
-
-	freshDecisions := createdDecisions
-
-	if len(freshDecisions) > 0 {
-		for _, decision := range freshDecisions {
-			planner.retainCandidate(decision)
-		}
-
-	}
-
-	createdDecisions = planner.candidateCopies()
-
-	for _, decision := range freshDecisions {
-		if decision != nil && decision.Action != types.ActionEnter {
-			createdDecisions = append(createdDecisions, decision)
 		}
 	}
 
@@ -571,8 +549,6 @@ func (planner *Planner) executeDecisions(
 			winners = append(winners, decision)
 		case types.ActionExit:
 			exits = append(exits, decision)
-		default:
-			planner.removeCandidate(decision.Symbol)
 		}
 	}
 
@@ -618,7 +594,6 @@ func (planner *Planner) executeDecisions(
 			continue
 		}
 
-		planner.removeCandidate(decision.Symbol)
 		lastSearchEnd = time.Now()
 	}
 

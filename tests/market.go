@@ -20,36 +20,40 @@ Market drives real production websocket consumers with one coherent, replayable
 simulated venue timeline.
 */
 type Market struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	Public     *Conn
-	Private    *Conn
-	Level3     *Conn
-	Symbols    []*testtypes.Symbol
-	State      testtypes.MarketState
-	Config     testtypes.ScenarioConfig
-	public     *websocket.Live
-	private    *websocket.Live
-	generators map[string]*signal.Generator
-	latest     map[string]testtypes.Sample
-	history    map[string][]testtypes.Sample
-	previous   map[string]testtypes.Sample
-	states     map[string]testtypes.MarketState
-	candles    map[string]*candleState
-	execution  *executionModel
-	stack      Stack
-	autoFill   bool
-	primed     bool
-	clockSet   bool
-	clockAt    time.Time
-	sampleAt   time.Time
-	tick       uint64
-	factorRNG  *rand.Rand
-	factors    []float64
-	timeline   []RegimeObservation
-	exposure   map[string]map[testtypes.MarketState]uint64
-	published  map[string]bool
-	sampleMu   sync.RWMutex
+	ctx               context.Context
+	cancel            context.CancelFunc
+	Public            *Conn
+	Private           *Conn
+	Level3            *Conn
+	Symbols           []*testtypes.Symbol
+	State             testtypes.MarketState
+	Config            testtypes.ScenarioConfig
+	public            *websocket.Live
+	private           *websocket.Live
+	generators        map[string]*signal.Generator
+	latest            map[string]testtypes.Sample
+	history           map[string][]testtypes.Sample
+	previous          map[string]testtypes.Sample
+	states            map[string]testtypes.MarketState
+	candles           map[string]*candleState
+	execution         *executionModel
+	stack             Stack
+	autoFill          bool
+	primed            bool
+	clockSet          bool
+	clockAt           time.Time
+	sampleAt          time.Time
+	tick              uint64
+	factorRNG         *rand.Rand
+	factors           []float64
+	timeline          []RegimeObservation
+	exposure          map[string]map[testtypes.MarketState]uint64
+	published         map[string]bool
+	sampleMu          sync.RWMutex
+	replayStart       func()
+	replayObservation func() error
+	replaySettlement  func() error
+	replayStarted     bool
 }
 
 /*
@@ -195,7 +199,6 @@ func newMarket(
 	market.public = websocket.NewWithClient(
 		ctx, nil, nil, false,
 		websocket.PublicWebSocketURL, market.Public.Client(),
-
 	)
 	market.private = websocket.NewWithClient(
 		ctx, nil, nil, true,

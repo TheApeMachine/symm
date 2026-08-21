@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -9,58 +10,73 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
-func TestSignalConsume(t *testing.T) {
-	Convey("Given a ticker touch and one executed trade", t, func() {
+func TestSignalConsumeTicker(t *testing.T) {
+	Convey("Given ticker rows for one symbol", t, func() {
 		thesis := types.NewThesis(context.Background(), nil)
-		market := thesis.Symbol("BTC/USD")
+		symbol := thesis.Symbol("BTC/USD")
+		signal := NewSignal(context.Background(), thesis, nil)
 		at := time.Unix(1_700_002_300, 0).UTC()
-		measurementReady := make(chan struct{}, 1)
-		observer := transport.NewConsumer[*types.Symbol]("pumpdump-test", func() {
-			measurementReady <- struct{}{}
-		})
-		thesis.Work(types.SourceCategory).Register(observer)
-		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
-		defer thesis.Work(types.SourceCategory).Unregister(observer)
 
-		market.AppendTicker(kraken.TickerData{
-			Symbol:    "BTC/USD",
-			Bid:       decimal.NewFromInt64(99),
-			Ask:       decimal.NewFromInt64(101),
-			Timestamp: at,
-		})
-		market.AppendTrade(kraken.TradeData{
-			Symbol:    "BTC/USD",
-			Side:      "buy",
-			Price:     *decimal.NewFromInt64(100),
-			Qty:       2,
-			TradeID:   1,
-			Timestamp: at.Add(time.Second),
-		})
+		Convey("A zero last is an absent observation and does not poison state", func() {
+			zero := decimal.NewFromInt64(0)
+			err := signal.consumeTicker(symbol, kraken.TickerData{
+				Symbol:    symbol.Symbol,
+				Last:      zero,
+				Timestamp: at,
+			})
 
-		Convey("It should emit ignition evidence for the print", func() {
-			select {
-			case <-measurementReady:
-			case <-time.After(time.Second):
-				t.Fatal("pumpdump measurement was not emitted")
+			So(err, ShouldBeNil)
+			So(drainMeasurements(symbol), ShouldBeEmpty)
+
+			for offset, value := range []int64{100, 110, 121} {
+				last := decimal.NewFromInt64(value)
+				err = signal.consumeTicker(symbol, kraken.TickerData{
+					Symbol:    symbol.Symbol,
+					Last:      last,
+					Timestamp: at.Add(time.Duration(offset+1) * time.Second),
+				})
+				So(err, ShouldBeNil)
 			}
 
-			measurements := []*nmtypes.Measurement{}
-			for measurement := range market.MarketMeasurements(
-				market.MeasurementConsumers[types.MeasurementConsumerCategory],
-			) {
-				measurements = append(measurements, measurement)
-			}
+			measurements := drainMeasurements(symbol)
+			So(len(measurements), ShouldEqual, 3)
+			precursor := measurements[2].Metrics[types.MetricKey(
+				types.MetricPrecursor,
+				types.SideBuy,
+			)]
+			So(precursor.Raw, ShouldAlmostEqual, math.Log(1.1), 1e-15)
+			So(precursor.Normalized, ShouldNotBeNil)
+			So(*precursor.Normalized, ShouldAlmostEqual, 0.5, 1e-15)
+			So(measurements[2].ObservedFrom, ShouldResemble,
+				measurements[2].At)
+		})
 
-			So(len(measurements), ShouldEqual, 1)
-			So(measurements[0].Source, ShouldEqual, string(types.SourcePumpDump))
-			So(len(measurements[0].Metrics), ShouldEqual, 13)
-			So(measurements[0].ObservedFrom, ShouldResemble, at.Add(time.Second))
+		Convey("A missing last remains a visible error", func() {
+			err := signal.consumeTicker(symbol, kraken.TickerData{
+				Symbol:    symbol.Symbol,
+				Timestamp: at,
+			})
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldEqual,
+				"pumpdump: ticker requires a last price")
 		})
 	})
+}
+
+func drainMeasurements(symbol *types.Symbol) []*nmtypes.Measurement {
+	measurements := []*nmtypes.Measurement{}
+
+	for measurement := range symbol.MarketMeasurements(
+		symbol.MeasurementConsumers[types.MeasurementConsumerCategory],
+	) {
+		measurements = append(measurements, measurement)
+	}
+
+	return measurements
 }

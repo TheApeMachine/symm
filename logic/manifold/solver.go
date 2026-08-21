@@ -275,7 +275,12 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 func (solver *Solver) consume() {
 	go func() {
-		for range solver.thesis.Work(types.SourceManifold).Drain(solver.work, nil) {
+		work := solver.thesis.Work(types.SourceManifold)
+		remaining := work.Length(solver.work)
+
+		for range work.Drain(solver.work, func(*types.Symbol) bool {
+			return remaining > 0
+		}) {
 			select {
 			case <-solver.ctx.Done():
 				solver.err = solver.ctx.Err()
@@ -288,6 +293,12 @@ func (solver *Solver) consume() {
 				solver.thesis.Fail(solver.err)
 
 				return
+			}
+
+			remaining--
+
+			if remaining > 0 {
+				continue
 			}
 
 			if err := solver.drainRequests(); err != nil {
@@ -613,6 +624,29 @@ func (solver *Solver) bookOscillators(
 		return nil, nil
 	}
 
+	sort.Slice(orders, func(left, right int) bool {
+		first := orders[left]
+		second := orders[right]
+
+		if first.side != second.side {
+			return first.side == mgrbook.Bid
+		}
+
+		if first.price != second.price {
+			if first.side == mgrbook.Bid {
+				return first.price > second.price
+			}
+
+			return first.price < second.price
+		}
+
+		if !first.timestamp.Equal(second.timestamp) {
+			return first.timestamp.Before(second.timestamp)
+		}
+
+		return first.id < second.id
+	})
+
 	accumulated, ok := solver.scales[symbol]
 
 	if !ok {
@@ -652,11 +686,9 @@ func (solver *Solver) bookOscillators(
 	}
 
 	ageOrder := make([]int, len(orders))
-	queueOrder := make([]int, len(orders))
 
 	for index := range orders {
 		ageOrder[index] = index
-		queueOrder[index] = index
 	}
 
 	sort.Slice(ageOrder, func(left, right int) bool {
@@ -666,28 +698,6 @@ func (solver *Solver) bookOscillators(
 
 		return orders[ageOrder[left]].id < orders[ageOrder[right]].id
 	})
-	sort.Slice(queueOrder, func(left, right int) bool {
-		first := orders[queueOrder[left]]
-		second := orders[queueOrder[right]]
-
-		if first.side != second.side {
-			return first.side == mgrbook.Bid
-		}
-
-		if first.price != second.price {
-			if first.side == mgrbook.Bid {
-				return first.price > second.price
-			}
-
-			return first.price < second.price
-		}
-
-		if !first.timestamp.Equal(second.timestamp) {
-			return first.timestamp.Before(second.timestamp)
-		}
-
-		return first.id < second.id
-	})
 	ageRank := make([]int, len(orders))
 	queueRank := make([]int, len(orders))
 	sideCount := map[mgrbook.BookDirection]int{}
@@ -696,9 +706,9 @@ func (solver *Solver) bookOscillators(
 		ageRank[index] = rank
 	}
 
-	for _, index := range queueOrder {
-		queueRank[index] = sideCount[orders[index].side]
-		sideCount[orders[index].side]++
+	for index, order := range orders {
+		queueRank[index] = sideCount[order.side]
+		sideCount[order.side]++
 	}
 
 	omegaMin := solver.config.GateWidthMin()

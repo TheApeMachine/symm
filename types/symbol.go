@@ -395,6 +395,87 @@ func (symbol *Symbol) HasGraphInputs() bool {
 	) > 0
 }
 
+/*
+HasPendingWork reports whether a deferred derived stage retains input on its
+own registered cursor. It never inspects audit cursors or unrelated readers.
+*/
+func (symbol *Symbol) HasPendingWork(source SourceType) bool {
+	if symbol == nil {
+		return false
+	}
+
+	switch source {
+	case SourceCorrelation:
+		return symbol.HasTickersFor(
+			symbol.TickerConsumers[TickerConsumerCorrelation],
+		)
+	case SourceCVD:
+		return symbol.HasTradesFor(symbol.TradeConsumers[TradeConsumerCVD])
+	case SourceDepthFlow:
+		return symbol.HasLevel3For(
+			symbol.Level3Consumers[Level3ConsumerDepthFlow],
+		)
+	case SourceExhaustion:
+		return symbol.HasTradesFor(
+			symbol.TradeConsumers[TradeConsumerExhaustion],
+		)
+	case SourceHawkes:
+		return symbol.HasTradesFor(symbol.TradeConsumers[TradeConsumerHawkes])
+	case SourceLeadLag:
+		return symbol.HasTickersFor(
+			symbol.TickerConsumers[TickerConsumerLeadLag],
+		)
+	case SourceLiquidity:
+		return symbol.HasTickersFor(
+			symbol.TickerConsumers[TickerConsumerLiquidity],
+		)
+	case SourcePumpDump:
+		return symbol.HasTickersFor(
+			symbol.TickerConsumers[TickerConsumerPumpDump],
+		) || symbol.HasTradesFor(
+			symbol.TradeConsumers[TradeConsumerPumpDump],
+		) || symbol.HasLevel3For(
+			symbol.Level3Consumers[Level3ConsumerPumpDump],
+		)
+	case SourceSentiment:
+		return symbol.HasTickersFor(
+			symbol.TickerConsumers[TickerConsumerSentiment],
+		)
+	case SourceToxicity:
+		return symbol.HasLevel3For(
+			symbol.Level3Consumers[Level3ConsumerToxicity],
+		)
+	case SourceResonance:
+		return symbol.HasTickersFor(
+			symbol.TickerConsumers[TickerConsumerResonance],
+		)
+	case SourceCategory:
+		return symbol.Measurements.Length(
+			symbol.MeasurementConsumers[MeasurementConsumerCategory],
+		) > 0
+	case SourceManifold:
+		return symbol.Measurements.Length(
+			symbol.MeasurementConsumers[MeasurementConsumerManifold],
+		) > 0
+	case SourceCausal:
+		return symbol.Resonance.Length(
+			symbol.ResonanceConsumers[ResonanceConsumerCausal],
+		) > 0
+	case SourceCognition:
+		return symbol.Categories.Length(
+			symbol.CategoryConsumers[CategoryConsumerCognition],
+		) > 0
+	case SourceGraph:
+		return symbol.HasGraphInputs()
+	case SourcePlanner:
+		return symbol.Graphs.Length(
+			symbol.GraphConsumers[GraphConsumerPlanner],
+		) > 0
+	default:
+		panic("symbol: source cannot be deferred: " + string(source))
+	}
+}
+
 func drainedLatest[T any](
 	mapReduce *transport.MapReduce[T], consumer *transport.Consumer[T],
 ) []T {

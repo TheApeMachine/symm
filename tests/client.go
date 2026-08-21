@@ -3,10 +3,12 @@ package tests
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -42,6 +44,7 @@ type Conn struct {
 	writeMu              sync.Mutex
 	accepted             *websocket.Conn
 	connectionGeneration uint64
+	fenceSequence        atomic.Uint64
 	ready                chan struct{}
 }
 
@@ -268,19 +271,36 @@ func (conn *Conn) Publish(channel string, payload []byte) bool {
 	}
 
 	for _, frame := range delivery.frames {
-		conn.publish(frame)
+		if !conn.publish(frame) {
+			return false
+		}
 	}
 
 	return true
 }
 
-func (conn *Conn) publish(payload []byte) {
+/*
+Fence proves that every receive callback for earlier frames on this connection
+has returned. It bypasses fault injection because a replay boundary must not be
+dropped, delayed, or reordered with the captured stream it closes.
+*/
+func (conn *Conn) Fence() bool {
+	sequence := conn.fenceSequence.Add(1)
+	payload := []byte(fmt.Sprintf(
+		`{"channel":"heartbeat","type":"update","sequence":%d}`,
+		sequence,
+	))
+
+	return conn.publish(payload)
+}
+
+func (conn *Conn) publish(payload []byte) bool {
 	conn.mu.Lock()
 	accepted := conn.accepted
 	conn.mu.Unlock()
 
 	if accepted == nil {
-		return
+		return false
 	}
 
 	/*
@@ -314,18 +334,21 @@ func (conn *Conn) publish(payload []byte) {
 	); err != nil {
 		conn.writeMu.Unlock()
 		errnie.Error(err)
-		return
+		return false
 	}
 
 	conn.writeMu.Unlock()
 
 	select {
 	case <-delivered:
+		return true
 	case <-conn.ctx.Done():
+		return false
 	case <-time.After(fixtureDeliveryTimeout):
 		errnie.Error(errnie.Err(
 			errnie.IO, "tests: frame delivery timed out", nil,
 		))
+		return false
 	}
 }
 

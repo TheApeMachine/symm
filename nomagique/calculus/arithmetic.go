@@ -73,6 +73,90 @@ func Product(
 }
 
 /*
+Quotient divides a finite numerator by a strictly positive denominator. The
+numerator remains signed, which distinguishes it from evidence-only Ratio.
+*/
+func Quotient(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	numerator, err := number(&input, SymbolLeft, "quotient")
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	denominator, err := number(&input, SymbolRight, "quotient")
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	if denominator <= 0 {
+		return state, nomagique.Frame{}, &calculusError{
+			primitive: "quotient",
+			message:   "denominator must be positive",
+		}
+	}
+
+	return state, resultFrame(input, numerator/denominator), nil
+}
+
+/*
+Average returns the arithmetic center of two finite operands.
+*/
+func Average(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	left, err := number(&input, SymbolLeft, "average")
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	right, err := number(&input, SymbolRight, "average")
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	return state, resultFrame(input, left+(right-left)/2), nil
+}
+
+/*
+Absolute projects a finite scalar onto its magnitude.
+*/
+func Absolute(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	value, err := number(&input, SymbolValue, "absolute")
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	return state, resultFrame(input, math.Abs(value)), nil
+}
+
+/*
+Negative reflects a finite scalar through zero.
+*/
+func Negative(
+	state nomagique.Frame,
+	input nomagique.Frame,
+) (nomagique.Frame, nomagique.Frame, error) {
+	value, err := number(&input, SymbolValue, "negative")
+
+	if err != nil {
+		return state, nomagique.Frame{}, err
+	}
+
+	return state, resultFrame(input, -value), nil
+}
+
+/*
 Positive projects a finite scalar onto the non-negative half-line.
 */
 func Positive(

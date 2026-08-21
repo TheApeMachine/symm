@@ -1,7 +1,9 @@
 package types
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -87,6 +89,267 @@ func TestThesisWork(t *testing.T) {
 			So(scheduled, ShouldEqual, symbol)
 		})
 	})
+
+}
+
+func TestThesisHoldWork(t *testing.T) {
+	Convey("Given a derived stage held across an external observation cut", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		ready := make(chan struct{}, 1)
+		consumer := transport.NewConsumer[*Symbol]("category", func() {
+			ready <- struct{}{}
+		})
+		thesis.Work(SourceCategory).Register(consumer)
+		thesis.HoldWork(SourceCategory)
+		symbol := thesis.Symbol("BTC/USD")
+
+		for observed := int64(1); observed <= 3; observed++ {
+			symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				"measurement", string(SourceHawkes), observed, 0,
+			))
+		}
+
+		Convey("It should retain the complete input cut without waking the stage", func() {
+			So(thesis.Work(SourceCategory).Length(consumer), ShouldEqual, uint64(0))
+			So(symbol.Measurements.Length(
+				symbol.MeasurementConsumers[MeasurementConsumerCategory],
+			), ShouldEqual, uint64(3))
+
+			select {
+			case <-ready:
+				t.Fatal("held category stage was scheduled")
+			default:
+			}
+		})
+
+		Convey("It should schedule the owning symbol exactly once when released", func() {
+			thesis.ReleaseWork(SourceCategory)
+			<-ready
+			var scheduled []*Symbol
+
+			for candidate := range thesis.Work(SourceCategory).Drain(consumer, nil) {
+				scheduled = append(scheduled, candidate)
+			}
+
+			So(scheduled, ShouldResemble, []*Symbol{symbol})
+
+			thesis.HoldWork(SourceCategory)
+			thesis.ReleaseWork(SourceCategory)
+
+			select {
+			case <-ready:
+				t.Fatal("category stage reused a cleared deferred wake")
+			default:
+			}
+		})
+	})
+
+	Convey("Given planner clock wakes while planner work is held", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		ready := make(chan struct{}, 1)
+		consumer := transport.NewConsumer[*Symbol]("planner", func() {
+			ready <- struct{}{}
+		})
+		thesis.Work(SourcePlanner).Register(consumer)
+		thesis.HoldWork(SourcePlanner)
+		thesis.ScheduleWork(SourcePlanner, nil)
+		thesis.ScheduleWork(SourcePlanner, nil)
+
+		Convey("It should coalesce them into one clock pass on release", func() {
+			thesis.ReleaseWork(SourcePlanner)
+			<-ready
+			var scheduled []*Symbol
+
+			for candidate := range thesis.Work(SourcePlanner).Drain(consumer, nil) {
+				scheduled = append(scheduled, candidate)
+			}
+
+			So(scheduled, ShouldResemble, []*Symbol{nil})
+		})
+	})
+
+	Convey("Given graph-backed planner work and a deferred clock wake", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		ready := make(chan struct{}, 1)
+		consumer := transport.NewConsumer[*Symbol]("planner", func() {
+			ready <- struct{}{}
+		})
+		thesis.Work(SourcePlanner).Register(consumer)
+		thesis.HoldWork(SourcePlanner)
+		symbol := thesis.Symbol("BTC/USD")
+		symbol.Graphs.Push(NewGraph(time.Unix(1, 0)))
+		thesis.ScheduleWork(SourcePlanner, nil)
+
+		Convey("It should schedule one cross-sectional pass without an extra clock pass", func() {
+			thesis.ReleaseWork(SourcePlanner)
+			<-ready
+			var scheduled []*Symbol
+
+			for candidate := range thesis.Work(SourcePlanner).Drain(consumer, nil) {
+				scheduled = append(scheduled, candidate)
+			}
+
+			So(scheduled, ShouldResemble, []*Symbol{nil})
+			So(symbol.HasPendingWork(SourcePlanner), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given manifold measurements retained for multiple symbols", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		ready := make(chan struct{}, 1)
+		consumer := transport.NewConsumer[*Symbol]("manifold", func() {
+			ready <- struct{}{}
+		})
+		thesis.Work(SourceManifold).Register(consumer)
+		thesis.HoldWork(SourceManifold)
+		bitcoin := thesis.Symbol("BTC/USD")
+		ether := thesis.Symbol("ETH/USD")
+		bitcoin.AppendMeasurement(nmtypes.NewMeasurement(
+			"bitcoin", string(SourceHawkes), 1, 0,
+		))
+		ether.AppendMeasurement(nmtypes.NewMeasurement(
+			"ether", string(SourceHawkes), 2, 0,
+		))
+
+		Convey("It should expose the complete universe cut before one wake", func() {
+			thesis.ReleaseWork(SourceManifold)
+			<-ready
+			var scheduled []*Symbol
+
+			for candidate := range thesis.Work(SourceManifold).Drain(consumer, nil) {
+				scheduled = append(scheduled, candidate)
+			}
+
+			So(scheduled, ShouldResemble, []*Symbol{nil})
+			So(bitcoin.HasPendingWork(SourceManifold), ShouldBeTrue)
+			So(ether.HasPendingWork(SourceManifold), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given per-symbol derived work registered in creation order", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		consumer := transport.NewConsumer[*Symbol]("category", func() {})
+		thesis.Work(SourceCategory).Register(consumer)
+		thesis.HoldWork(SourceCategory)
+		bitcoin := thesis.Symbol("BTC/USD")
+		ether := thesis.Symbol("ETH/USD")
+		solana := thesis.Symbol("SOL/USD")
+
+		for index, symbol := range []*Symbol{bitcoin, ether, solana} {
+			symbol.AppendMeasurement(nmtypes.NewMeasurement(
+				symbol.Symbol, string(SourceHawkes), int64(index+1), 0,
+			))
+		}
+
+		Convey("It should release the retained symbols in stable order", func() {
+			thesis.ReleaseWork(SourceCategory)
+			var scheduled []*Symbol
+
+			for symbol := range thesis.Work(SourceCategory).Drain(consumer, nil) {
+				scheduled = append(scheduled, symbol)
+			}
+
+			So(scheduled, ShouldResemble, []*Symbol{bitcoin, ether, solana})
+		})
+	})
+
+	Convey("Given every raw analytical source held across one replay cut", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		sources := append([]SourceType(nil), SignalSources...)
+		sources = append(sources, SourceResonance)
+		consumers := make(map[SourceType]*transport.Consumer[*Symbol], len(sources))
+
+		for _, source := range sources {
+			consumer := transport.NewConsumer[*Symbol](string(source), func() {})
+			thesis.Work(source).Register(consumer)
+			consumers[source] = consumer
+		}
+
+		thesis.HoldWork(sources...)
+		symbol := thesis.Symbol("BTC/USD")
+		symbol.AppendTicker(kraken.TickerData{})
+		symbol.AppendTrade(kraken.TradeData{})
+		symbol.AppendLevel3(kraken.Level3Data{})
+
+		Convey("It should retain every source cursor and release one wake per source", func() {
+			for _, source := range sources {
+				consumer := consumers[source]
+				So(thesis.Work(source).Length(consumer), ShouldEqual, uint64(0))
+				So(symbol.HasPendingWork(source), ShouldBeTrue)
+
+				thesis.ReleaseWork(source)
+				var scheduled []*Symbol
+
+				for candidate := range thesis.Work(source).Drain(consumer, nil) {
+					scheduled = append(scheduled, candidate)
+				}
+
+				So(scheduled, ShouldResemble, []*Symbol{symbol})
+			}
+		})
+	})
+}
+
+func TestThesisWaitForQuiescence(t *testing.T) {
+	Convey("Given work that schedules another worker before it completes", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		upstreamStarted := make(chan struct{})
+		releaseUpstream := make(chan struct{})
+		downstreamStarted := make(chan struct{})
+		releaseDownstream := make(chan struct{})
+		var upstream *transport.Consumer[*Symbol]
+		var downstream *transport.Consumer[*Symbol]
+
+		upstream = transport.NewConsumer[*Symbol]("liquidity", func() {
+			go func() {
+				for symbol := range thesis.Work(SourceLiquidity).Drain(upstream, nil) {
+					close(upstreamStarted)
+					<-releaseUpstream
+					thesis.ScheduleWork(SourceCategory, symbol)
+				}
+			}()
+		})
+		downstream = transport.NewConsumer[*Symbol]("category", func() {
+			go func() {
+				for range thesis.Work(SourceCategory).Drain(downstream, nil) {
+					close(downstreamStarted)
+					<-releaseDownstream
+				}
+			}()
+		})
+		thesis.Work(SourceLiquidity).Register(upstream)
+		thesis.Work(SourceCategory).Register(downstream)
+		thesis.ScheduleWork(SourceLiquidity, thesis.Symbol("BTC/USD"))
+		<-upstreamStarted
+
+		waitCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		waited := make(chan error, 1)
+
+		go func() {
+			waited <- thesis.WaitForQuiescence(waitCtx)
+		}()
+
+		Convey("It should not report idle while dequeued upstream work is active", func() {
+			select {
+			case err := <-waited:
+				t.Fatalf("quiescence returned during upstream work: %v", err)
+			default:
+			}
+
+			close(releaseUpstream)
+			<-downstreamStarted
+
+			select {
+			case err := <-waited:
+				t.Fatalf("quiescence returned during downstream work: %v", err)
+			default:
+			}
+
+			close(releaseDownstream)
+			So(<-waited, ShouldBeNil)
+		})
+	})
 }
 
 func TestThesisMarshalState(t *testing.T) {
@@ -153,6 +416,7 @@ func TestThesisForSymbol(t *testing.T) {
 			_, found = scoped.Symbols.Load("ETH/USD")
 			So(found, ShouldBeFalse)
 			So(scoped.CrossSection, ShouldEqual, thesis.CrossSection)
+			So(scoped.workRevision, ShouldEqual, thesis.workRevision)
 		})
 
 		Convey("It should reject a symbol absent from the parent thesis", func() {
@@ -181,6 +445,7 @@ func TestThesisForSymbols(t *testing.T) {
 			So(selected, ShouldEqual, ether)
 			_, found = scoped.Symbols.Load("SOL/USD")
 			So(found, ShouldBeFalse)
+			So(scoped.workRevision, ShouldEqual, thesis.workRevision)
 		})
 
 		Convey("It should reject an empty scope and a missing name", func() {
@@ -347,5 +612,38 @@ func BenchmarkThesisAdvanceTick(b *testing.B) {
 	for b.Loop() {
 		thesis.AdvanceTick(observedAt)
 		_, _ = ui.Pop(dashboard)
+	}
+}
+
+func BenchmarkThesisScheduleWork(b *testing.B) {
+	thesis := NewThesis(b.Context(), nil)
+	var consumer *transport.Consumer[*Symbol]
+	consumer = transport.NewConsumer[*Symbol]("liquidity", func() {
+		for range thesis.Work(SourceLiquidity).Drain(consumer, nil) {
+		}
+	})
+	thesis.Work(SourceLiquidity).Register(consumer)
+	symbol := thesis.Symbol("BTC/USD")
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		thesis.ScheduleWork(SourceLiquidity, symbol)
+	}
+}
+
+func BenchmarkThesisReleaseWork(b *testing.B) {
+	thesis := NewThesis(b.Context(), nil)
+
+	for index := 0; index < 620; index++ {
+		thesis.Symbol(fmt.Sprintf("%d/USD", index))
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		thesis.HoldWork(SourceCategory)
+		thesis.ReleaseWork(SourceCategory)
 	}
 }

@@ -1,6 +1,7 @@
 package types
 
 import (
+	"cmp"
 	"slices"
 	"sync"
 	"time"
@@ -291,6 +292,43 @@ func (graph *Graph) AddEdge(edge *Edge) {
 }
 
 /*
+CanonicalizeDecisionEdges orders proposition edges by stable evidence identity
+while preserving the construction order of every non-decision edge.
+*/
+func (graph *Graph) CanonicalizeDecisionEdges() {
+	if graph == nil {
+		return
+	}
+
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
+
+	target := graph.DecisionTarget
+	slices.SortStableFunc(graph.Edges, func(left, right *Edge) int {
+		leftDecision := left.To == target
+		rightDecision := right.To == target
+
+		if !leftDecision && !rightDecision {
+			return 0
+		}
+
+		if !leftDecision {
+			return -1
+		}
+
+		if !rightDecision {
+			return 1
+		}
+
+		if order := cmp.Compare(left.From, right.From); order != 0 {
+			return order
+		}
+
+		return cmp.Compare(left.Relation, right.Relation)
+	})
+}
+
+/*
 OpportunitySummary is the dimensionless evidence balance for the graph's
 explicit decision proposition. Conditions are reported separately and never
 smuggled into directional support.
@@ -431,12 +469,9 @@ func (graph *Graph) ReadyForSearch() bool {
 }
 
 /*
-SearchableEnough is the defer gate the planner runs before spending search
-effort. A graph is searchable only once its decision proposition carries
-directional evidence whose confidence mass clears minimumConfidence. Anything
-below that is a sparse proposition — the honest move is to defer and let the
-thesis accumulate more observations, not to search an opportunity that barely
-exists yet.
+SearchableEnough reports whether a structurally ready graph clears a caller's
+relation-confidence floor. Relation confidence is not the directional forecast
+probability used for trade admission.
 */
 func (graph *Graph) SearchableEnough(minimumConfidence float64) bool {
 	if graph == nil {

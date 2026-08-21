@@ -92,9 +92,30 @@ func NewMarket(symbols []*testtypes.Symbol) *Fixture {
 		priceText := strconv.FormatFloat(
 			symbol.PriceIncrement, 'f', symbol.PricePrecision, 64,
 		)
+		quantityIncrement := "1"
+
+		if symbol.QuantityPrecision > 0 {
+			quantityIncrement = "0." +
+				strings.Repeat("0", symbol.QuantityPrecision-1) + "1"
+		}
+
 		pair["symbol"] = symbol.Pair
 		pair["base"] = parts[0]
 		pair["quote"] = parts[1]
+		pair["qty_precision"] = symbol.QuantityPrecision
+		pair["qty_increment"] = json.Number(quantityIncrement)
+		pair["qty_min"] = json.Number(strconv.FormatFloat(
+			symbol.OrderMinimum,
+			'f',
+			symbol.QuantityPrecision,
+			64,
+		))
+		pair["cost_min"] = json.Number(strconv.FormatFloat(
+			symbol.CostMinimum,
+			'f',
+			-1,
+			64,
+		))
 		pair["price_precision"] = symbol.PricePrecision
 		pair["tick_size"] = json.Number(priceText)
 		pair["price_increment"] = json.Number(priceText)

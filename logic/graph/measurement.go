@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/theapemachine/nomagique/probability"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -170,7 +169,11 @@ func measurementNode(
 	}
 
 	if sample.Normalized != nil && *sample.Normalized > 0 {
-		node.Confidence = measurementConfidence(*sample.Normalized)
+		node.Confidence = measurementConfidence(
+			measurement,
+			metricKey,
+			*sample.Normalized,
+		)
 	}
 
 	if metric != types.MetricPeerLastPrice {
@@ -209,23 +212,25 @@ func measurementReference(source string, metricKey string) string {
 }
 
 /*
-measurementConfidence maps a normalized measurement strength to an open unit
-interval using the same magnitude margin as every other graph mass. The caller
-already requires a strictly positive normalized value, so zero and negative
-inputs never reach this helper. NaN or infinity are left to fail loudly.
+measurementConfidence preserves the metric's normalized common [0,1] domain.
 */
-func measurementConfidence(normalized float64) float64 {
-	weight, err := probability.MagnitudeMargin(normalized)
-
-	if err != nil {
-		panic("graph: invalid normalized measurement strength: " + err.Error())
+func measurementConfidence(
+	measurement *nmtypes.Measurement,
+	metricKey string,
+	normalized float64,
+) float64 {
+	if !(normalized >= 0 && normalized <= 1) {
+		panic(fmt.Sprintf(
+			"graph: normalized measurement strength must be in [0,1]: "+
+				"source=%s symbol=%s metric=%s value=%g",
+			measurement.Source,
+			measurement.Symbol,
+			metricKey,
+			normalized,
+		))
 	}
 
-	if weight >= 1 {
-		return math.Nextafter(1, 0)
-	}
-
-	return weight
+	return normalized
 }
 
 func cloneFloat(value *float64) *float64 {

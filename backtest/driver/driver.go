@@ -2,8 +2,6 @@ package driver
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -218,7 +216,27 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 		return
 	}
 
-	symbols, err := driver.captureSymbols(captureID)
+	profileFrames, releaseProfiles, err := driver.store.Frames(
+		captureID,
+		time.Time{},
+	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"backtest: open capture profiles",
+			err,
+		))
+
+		return
+	}
+
+	depth := viper.GetInt("market.l3_depth")
+	symbols, err := tests.CaptureSymbolsFromStoredFrames(
+		profileFrames,
+		depth,
+	)
+	releaseProfiles()
 
 	if err != nil || len(symbols) == 0 {
 		errnie.Error(errnie.Err(errnie.Internal, "backtest: capture has no symbols", err))
@@ -250,7 +268,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 	config := testtypes.NewScenarioConfig(symbols)
 	config.StartTime = startedAt
 	config.InitialBalances = map[string]float64{"USD": 200}
-	config.Execution.DepthLevels = 10
+	config.Execution.DepthLevels = depth
 
 	market, marketErr := tests.NewMarketWithScenario(sessionCtx, config)
 
@@ -265,8 +283,9 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 	market.WithAutoFill(config.Execution)
 
 	publicFeed, privateFeed := market.Feeds()
+	thesis := types.NewThesis(sessionCtx, driver.ui)
 	system := cmd.BootWithHub(
-		sessionCtx, types.NewThesis(sessionCtx, driver.ui),
+		sessionCtx, thesis,
 		publicFeed, privateFeed, driver.ui, driver.hub,
 	)
 
@@ -276,6 +295,8 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 		viper.Set("market.subscribe.pace", previousPace)
 		return
 	}
+
+	market.WithStagedReplay(thesis, system.Error)
 
 	go errnie.Error(system.Run())
 
@@ -353,6 +374,16 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 		frame, ok := frames()
 
 		if !ok {
+			if err := market.SettleReplay(); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.Internal,
+					"backtest: settle replay",
+					err,
+				))
+
+				return
+			}
+
 			driver.update(func(state *State) {
 				state.Playing = false
 				state.Position = endedAt
@@ -381,100 +412,20 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 			}
 		}
 
-		driver.publishFrame(market, frame)
+		if err := market.ReplayFrame(frame); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"backtest: replay captured frame",
+				err,
+			))
+
+			return
+		}
+
 		previousAt = frame.ReceivedAt
 
 		driver.silentUpdate(func(state *State) { state.Position = frame.ReceivedAt })
 	}
-}
-
-/*
-publishFrame routes one captured payload to the fixture connection the live
-transport would have received it on, byte-for-byte.
-*/
-func (driver *Driver) publishFrame(market *tests.Market, frame backtest.Frame) {
-	channel := wireChannel(frame.Payload)
-
-	switch frame.Endpoint {
-	case "level3":
-		market.Level3.Publish(channel, frame.Payload)
-	case "public":
-		market.Public.Publish(channel, frame.Payload)
-	case "private":
-		market.Private.Publish(channel, frame.Payload)
-	}
-}
-
-/*
-captureSymbols pre-scans one capture's ticker frames for the traded universe
-and a starting price per symbol, which the fixture venue needs to configure
-instruments and execution pricing.
-*/
-func (driver *Driver) captureSymbols(captureID int64) ([]*testtypes.Symbol, error) {
-	frames, release, err := driver.store.Frames(captureID, time.Time{})
-
-	if err != nil {
-		return nil, err
-	}
-
-	defer release()
-
-	prices := map[string]float64{}
-	scanned := 0
-	const symbolScanLimit = 20000
-
-	for {
-		if scanned >= symbolScanLimit {
-			break
-		}
-
-		frame, ok := frames()
-
-		if !ok {
-			break
-		}
-
-		scanned++
-
-		if frame.Endpoint != "public" || channelIsNot(frame.Payload, "ticker") {
-			continue
-		}
-
-		var ticker struct {
-			Data []struct {
-				Symbol string  `json:"symbol"`
-				Last   float64 `json:"last"`
-			} `json:"data"`
-		}
-
-		if err := json.Unmarshal(frame.Payload, &ticker); err != nil {
-			continue
-		}
-
-		for _, row := range ticker.Data {
-			if row.Symbol != "" && row.Last > 0 {
-				prices[row.Symbol] = row.Last
-			}
-		}
-
-		if len(prices) >= 512 {
-			break
-		}
-	}
-
-	symbols := make([]*testtypes.Symbol, 0, len(prices))
-	index := int64(1)
-
-	for pair, price := range prices {
-		symbols = append(symbols, testtypes.NewSymbol(pair, price, index))
-		index++
-	}
-
-	errnie.Info(fmt.Sprintf(
-		"backtest: capture %d spans %d symbols", captureID, len(symbols),
-	))
-
-	return symbols, nil
 }
 
 func (driver *Driver) awaitCommand() {
@@ -498,20 +449,4 @@ func fixtureAuth() func() {
 		os.Setenv("KRAKEN_API_KEY", previousKey)
 		os.Setenv("KRAKEN_API_SECRET", previousSecret)
 	}
-}
-
-func wireChannel(payload []byte) string {
-	var header struct {
-		Channel string `json:"channel"`
-	}
-
-	if err := json.Unmarshal(payload, &header); err != nil {
-		return ""
-	}
-
-	return header.Channel
-}
-
-func channelIsNot(payload []byte, channel string) bool {
-	return wireChannel(payload) != channel
 }

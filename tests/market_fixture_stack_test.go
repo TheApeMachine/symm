@@ -191,6 +191,11 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 				symbolState.Positions.Register(positionConsumer)
 				defer symbolState.Positions.Unregister(positionConsumer)
 				So(market.Replay(capture), ShouldBeNil)
+				So(market.Public.Fence(), ShouldBeTrue)
+				So(market.Private.Fence(), ShouldBeTrue)
+				So(market.Level3.Fence(), ShouldBeTrue)
+				So(system.Thesis.WaitForQuiescence(t.Context()), ShouldBeNil)
+
 				var coder *learning.ResonanceManifold
 				resonanceCtx, cancelResonance := context.WithTimeout(
 					market.ctx,

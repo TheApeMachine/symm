@@ -2,8 +2,10 @@ package leadlag
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/correlation"
@@ -65,6 +67,22 @@ func (signal *Signal) consume() {
 			for ticker := range symbol.MarketTickers(
 				symbol.TickerConsumers[types.TickerConsumerLeadLag],
 			) {
+				price, observed, err := tickerPrice(ticker)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"leadlag: invalid ticker for "+symbol.Symbol,
+						err,
+					))
+
+					return
+				}
+
+				if !observed {
+					continue
+				}
+
 				anchor, _, _, hasAnchor, err := signal.number.ArgMax(
 					correlation.Return,
 					correlation.SymbolMagnitude,
@@ -82,7 +100,7 @@ func (signal *Signal) consume() {
 				}
 
 				input := nomagique.Frame{}
-				input.Put(nomagique.SampleValue, ticker.Last.Float64())
+				input.Put(nomagique.SampleValue, price)
 				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
 				_, err = signal.number.Step(symbol.Symbol, input)
@@ -137,6 +155,22 @@ func (signal *Signal) consume() {
 			}
 		}
 	}()
+}
+
+func tickerPrice(ticker kraken.TickerData) (float64, bool, error) {
+	if ticker.Last == nil {
+		return 0, false, fmt.Errorf("leadlag: ticker requires a last price")
+	}
+
+	if ticker.Last.Sign() < 0 {
+		return 0, false, fmt.Errorf("leadlag: ticker last price cannot be negative")
+	}
+
+	if ticker.Last.Sign() == 0 {
+		return 0, false, nil
+	}
+
+	return ticker.Last.Float64(), true, nil
 }
 
 func (signal *Signal) Close() error {

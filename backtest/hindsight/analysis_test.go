@@ -37,6 +37,9 @@ func TestAnalyze(t *testing.T) {
 				"meas:TEST/USD:depthflow:neutral_score": 0.05,
 			}),
 		}
+		decisions[0].Reason = "planner: structural thesis below admission"
+		decisions[0].ThesisConfidence = 0.4
+		decisions[0].AdmissionThreshold = 0.5
 
 		reports, err := Analyze(reducer, decisions)
 		So(err, ShouldBeNil)
@@ -57,6 +60,10 @@ func TestAnalyze(t *testing.T) {
 				So(opp.Missed, ShouldBeTrue)
 				So(opp.Leg.BuyPrice, ShouldAlmostEqual, 100, 1e-9)
 				So(opp.Leg.SellPrice, ShouldAlmostEqual, 120, 1e-9)
+				So(opp.Signal.Action, ShouldEqual, "nothing")
+				So(opp.Signal.Reason, ShouldEqual, "planner: structural thesis below admission")
+				So(opp.Signal.ThesisConfidence, ShouldAlmostEqual, 0.4, 1e-9)
+				So(opp.Signal.AdmissionThreshold, ShouldAlmostEqual, 0.5, 1e-9)
 				So(opp.Signal.Alternatives["meas:TEST/USD:depthflow:neutral_score"], ShouldAlmostEqual, 0.05, 1e-9)
 			})
 		})

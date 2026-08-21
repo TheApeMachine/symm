@@ -287,6 +287,13 @@ func NewWithClient(
 	if endpoint == Level3WebSocketURL {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx, live.normalizer)
+		live.book.emit = func(data kraken.Level3Data) {
+			thesis := live.thesis.Load()
+
+			if thesis != nil {
+				thesis.Symbol(data.Symbol).AppendLevel3(data)
+			}
+		}
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
@@ -355,14 +362,6 @@ func NewWithClient(
 			if err := live.book.Update(event, level3); err != nil {
 				live.reportFailure(err)
 				return
-			}
-
-			thesis := live.thesis.Load()
-
-			if thesis != nil {
-				for index := range level3.Data {
-					thesis.Symbol(level3.Data[index].Symbol).AppendLevel3(level3.Data[index])
-				}
 			}
 
 			return

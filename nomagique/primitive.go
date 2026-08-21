@@ -147,6 +147,40 @@ func Relay(from Symbol, to Symbol) Primitive {
 }
 
 /*
+Retained evaluates a primitive over committed state and overlays its projection
+onto the current input. It is the causal bridge for estimators that must score
+an observation against evidence that existed before that observation.
+*/
+func Retained(primitive Primitive) Primitive {
+	return func(state Frame, input Frame) (Frame, Frame, error) {
+		nextState, retained, err := Step(primitive, state, state)
+
+		if err != nil {
+			return state, Frame{}, err
+		}
+
+		output := input
+		output.Merge(retained)
+
+		return nextState, output, nil
+	}
+}
+
+/*
+Assign writes one configured scalar into the output without mutating state.
+Constants such as algebraic identities and explicit control flags can thereby
+participate in a visible composition rather than hiding in adapter functions.
+*/
+func Assign(symbol Symbol, value float64) Primitive {
+	return func(state Frame, input Frame) (Frame, Frame, error) {
+		output := input
+		output.Put(symbol, value)
+
+		return state, output, nil
+	}
+}
+
+/*
 Join evaluates two source adapters against the same input and merges their
 output slots into one Frame before the downstream stage consumes it. It is the
 dual-input combinator: two channels (for example the touch prices from one

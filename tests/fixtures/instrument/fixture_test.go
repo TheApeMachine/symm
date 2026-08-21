@@ -56,11 +56,13 @@ func TestNewFixture(t *testing.T) {
 		})
 
 		Convey("When a simulated market snapshot is created", func() {
-			fixture := NewMarket([]*testtypes.Symbol{
-				testtypes.NewSymbol("SIM1/USD", 100.0, 42),
-			})
+			symbol := testtypes.NewSymbol("SIM1/USD", 100.0, 42)
+			symbol.QuantityPrecision = 5
+			symbol.OrderMinimum = 0.01234
+			symbol.CostMinimum = 2.75
+			fixture := NewMarket([]*testtypes.Symbol{symbol})
 
-			Convey("Then Kraken decimal increments retain their exact JSON values", func() {
+			Convey("Then Kraken execution rules retain their exact JSON values", func() {
 				var frame map[string]any
 
 				for payload := range fixture.Generate() {
@@ -71,7 +73,10 @@ func TestNewFixture(t *testing.T) {
 
 				data := frame["data"].(map[string]any)
 				pair := data["pairs"].([]any)[0].(map[string]any)
-				So(pair["qty_increment"].(json.Number).String(), ShouldEqual, "0.00000001")
+				So(pair["qty_precision"].(json.Number).String(), ShouldEqual, "5")
+				So(pair["qty_increment"].(json.Number).String(), ShouldEqual, "0.00001")
+				So(pair["qty_min"].(json.Number).String(), ShouldEqual, "0.01234")
+				So(pair["cost_min"].(json.Number).String(), ShouldEqual, "2.75")
 				So(pair["tick_size"].(json.Number).String(), ShouldEqual, "0.01")
 				So(pair["price_increment"].(json.Number).String(), ShouldEqual, "0.01")
 			})

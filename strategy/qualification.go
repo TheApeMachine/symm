@@ -41,14 +41,14 @@ func predictiveReadiness(graph *logicgraph.Graph) (bool, string) {
 }
 
 /*
-reserveQualification protects the two reserve slots for abrupt, one-horizon
+reserveQualification protects reserve slots for abrupt, one-horizon
 opportunities. A broad structural opportunity remains visible through
 OpportunityType, but it cannot consume emergency capacity unless predictive
-coding independently supports the shortest transition and the category is an
-actual sudden-pump precursor.
+coding independently supports the shortest transition and the graph has
+classified an actual sudden-pump opportunity.
 */
 func reserveQualification(
-	opportunityType string,
+	opportunityType types.OpportunityType,
 	predictiveReady bool,
 	horizon int,
 ) (bool, string) {
@@ -60,8 +60,8 @@ func reserveQualification(
 		return false, "reserve lane requires the shortest supported horizon"
 	}
 
-	switch types.CategoryType(opportunityType) {
-	case types.CoiledCompression, types.VerticalIgnition, types.RiskOnSurge:
+	switch opportunityType {
+	case types.OpportunitySuddenPump:
 		return true, "sudden-pump precursor with one-horizon predictive support"
 	default:
 		return false, "structural opportunity is not an emergency reserve setup"

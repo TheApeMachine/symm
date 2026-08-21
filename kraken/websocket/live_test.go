@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +14,11 @@ import (
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -243,6 +246,104 @@ func TestLiveBook(t *testing.T) {
 					So(actual, ShouldEqual, expected)
 				})
 			})
+		})
+	})
+}
+
+func TestNewWithClient(t *testing.T) {
+	Convey("Given a Level3 child with one resident book", t, func() {
+		assets := `{"error":[],"result":{"BTC":{"altname":"BTC"},"USD":{"altname":"USD"}}}`
+		pairs := `{"error":[],"result":{"BTCUSD":{"altname":"BTCUSD","wsname":"BTC/USD","base":"BTC","quote":"USD","pair_decimals":1,"lot_decimals":8,"lot_multiplier":1,"tick_size":"0.1"}}}`
+		client := spot.NewWebSocket()
+		client.REST.Executor = func(request *http.Request) (*http.Response, error) {
+			body := assets
+
+			if request.URL.Path == "/0/public/AssetPairs" {
+				body = pairs
+			}
+
+			if request.URL.Path != "/0/public/Assets" &&
+				request.URL.Path != "/0/public/AssetPairs" {
+				return nil, fmt.Errorf("unexpected normalizer request: %s", request.URL.Path)
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}
+
+		upgrader := gorillawebsocket.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(
+			responseWriter http.ResponseWriter,
+			request *http.Request,
+		) {
+			connection, err := upgrader.Upgrade(responseWriter, request, nil)
+
+			if err != nil {
+				return
+			}
+
+			defer connection.Close()
+
+			for {
+				if _, _, err := connection.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}))
+		defer server.Close()
+		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
+
+		thesis := types.NewThesis(t.Context(), nil)
+		defer thesis.Close()
+		child := NewWithClient(
+			t.Context(), thesis, nil, false, Level3WebSocketURL, client,
+		)
+		So(child, ShouldNotBeNil)
+		defer child.Close()
+		child.book.Create("BTC/USD", 10)
+
+		resident := thesis.Symbol("BTC/USD")
+		nonresident := thesis.Symbol("ETH/USD")
+		residentDepthFlow := resident.Level3Consumers[types.Level3ConsumerDepthFlow]
+		nonresidentDepthFlow := nonresident.Level3Consumers[types.Level3ConsumerDepthFlow]
+		notifications := 0
+		residentQueuedAtNotification := false
+		nonresidentQueuedAtNotification := false
+		touchReadyAtNotification := false
+		workConsumer := transport.NewConsumer[*types.Symbol]("level3-routing-test", func() {
+			notifications++
+			residentQueuedAtNotification = resident.HasLevel3For(residentDepthFlow)
+			nonresidentQueuedAtNotification = nonresident.HasLevel3For(nonresidentDepthFlow)
+			child.book.Get("BTC/USD", func(current *book.Book) {
+				touchReadyAtNotification = current.BestBid() != nil && current.BestAsk() != nil
+			})
+		})
+		thesis.Work(types.SourceDepthFlow).Register(workConsumer)
+
+		raw := []byte(`{"channel":"level3","type":"snapshot","data":[{"symbol":"ETH/USD","timestamp":"2024-01-01T00:00:00Z","bids":[{"order_id":"foreign-bid","limit_price":"10.0","order_qty":"1.00000000","timestamp":"2024-01-01T00:00:00Z"}],"asks":[{"order_id":"foreign-ask","limit_price":"11.0","order_qty":"1.00000000","timestamp":"2024-01-01T00:00:00Z"}]},{"symbol":"BTC/USD","timestamp":"2024-01-01T00:00:01Z","bids":[{"order_id":"resident-bid","limit_price":"100.0","order_qty":"2.00000000","timestamp":"2024-01-01T00:00:01Z"}],"asks":[{"order_id":"resident-ask","limit_price":"101.0","order_qty":"3.00000000","timestamp":"2024-01-01T00:00:01Z"}]}]}`)
+		client.OnReceived.Call(sdkkraken.NewWebSocketMessage(raw))
+
+		Convey("Only the accepted resident frame should wake readers after its touch is executable", func() {
+			So(notifications, ShouldEqual, 1)
+			So(residentQueuedAtNotification, ShouldBeTrue)
+			So(nonresidentQueuedAtNotification, ShouldBeFalse)
+			So(touchReadyAtNotification, ShouldBeTrue)
+
+			accepted := make([]kraken.Level3Data, 0, 1)
+
+			for frame := range resident.MarketLevel3(residentDepthFlow) {
+				accepted = append(accepted, frame)
+			}
+
+			So(accepted, ShouldHaveLength, 1)
+			So(accepted[0].Symbol, ShouldEqual, "BTC/USD")
+			So(accepted[0].Bids, ShouldHaveLength, 1)
+			So(accepted[0].Asks, ShouldHaveLength, 1)
+			So(nonresident.HasLevel3For(nonresidentDepthFlow), ShouldBeFalse)
 		})
 	})
 }

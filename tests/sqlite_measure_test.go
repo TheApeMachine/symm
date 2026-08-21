@@ -5,12 +5,14 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/backtest/hindsight"
 	"github.com/theapemachine/symm/cmd"
@@ -35,6 +37,12 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 		t.Skip("SYMM_MEASURE not set; skipping sqlite replay measurement")
 	}
 
+	viper.SetConfigFile(filepath.Join("..", "cmd", "cfg", "config.yml"))
+
+	if err := viper.ReadInConfig(); err != nil {
+		t.Fatal(err)
+	}
+
 	dataPath := "/Users/theapemachine/.symm/data"
 
 	sourceStore, err := backtest.NewStore(filepath.Join(dataPath, "symm.sqlite"))
@@ -43,28 +51,45 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 	}
 	defer sourceStore.Close()
 
-	captures, err := sourceStore.ListCaptures()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(captures) == 0 {
-		t.Skip("no captures recorded")
-	}
-
-	captureID := captures[0].ID
+	captureID := int64(0)
 
 	if os.Getenv("SYMM_MEASURE_CAPTURE") != "" {
 		if value, parseErr := json.Number(os.Getenv("SYMM_MEASURE_CAPTURE")).Int64(); parseErr == nil && value > 0 {
 			captureID = value
 		}
 	}
+
+	if captureID == 0 {
+		captures, listErr := sourceStore.ListCaptures()
+
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+
+		if len(captures) == 0 {
+			t.Skip("no captures recorded")
+		}
+
+		captureID = captures[0].ID
+	}
 	startedAt, endedAt, err := sourceStore.Bounds(captureID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	symbols, err := captureSymbolsFromStore(sourceStore, captureID)
+	profileFrames, releaseProfiles, err := sourceStore.Frames(
+		captureID,
+		time.Time{},
+	)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	depth := viper.GetInt("market.l3_depth")
+	symbols, err := CaptureSymbolsFromStoredFrames(profileFrames, depth)
+	releaseProfiles()
+
 	if err != nil || len(symbols) == 0 {
 		t.Fatalf("capture has no symbols: %v", err)
 	}
@@ -72,7 +97,7 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 	config := testtypes.NewScenarioConfig(symbols)
 	config.StartTime = startedAt
 	config.InitialBalances = map[string]float64{"USD": 200}
-	config.Execution.DepthLevels = 10
+	config.Execution.DepthLevels = depth
 
 	previousModel := viper.Get("trading.model")
 	viper.Set("trading.model", "real")
@@ -95,7 +120,8 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 		os.Setenv("KRAKEN_API_SECRET", previousSecret)
 	})
 
-	market, err := NewMarketWithScenario(context.Background(), config)
+	ctx := t.Context()
+	market, err := NewMarketWithScenario(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,15 +131,60 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 
 	uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
 	publicFeed, privateFeed := market.Feeds()
-	thesis := types.NewThesis(context.Background(), uiChannel)
+	thesis := types.NewThesis(ctx, uiChannel)
+	replayStore, err := backtest.NewStore(filepath.Join(tmpDataPath, "symm.sqlite"))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer replayStore.Close()
+	decisions, err := replayDecisions(replayStore)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(decisions) != 0 {
+		t.Fatalf("fresh replay store contains %d decisions", len(decisions))
+	}
+
+	recorder := &audit.Recorder{EventSink: replayStore.WriteEvent}
+	previousUIAddr := viper.Get("ui.addr")
+	viper.Set("ui.addr", "127.0.0.1:0")
+	t.Cleanup(func() {
+		viper.Set("ui.addr", previousUIAddr)
+	})
 	system := cmd.BootWithHub(
-		context.Background(), thesis, publicFeed, privateFeed, uiChannel, nil,
+		ctx,
+		thesis,
+		publicFeed,
+		privateFeed,
+		uiChannel,
+		nil,
+		recorder,
 	)
 
 	if system == nil {
 		t.Fatal("boot produced no system")
 	}
-	defer system.Close()
+
+	market.WithStagedReplay(thesis, system.Error)
+	runErr := make(chan error, 1)
+
+	go func() {
+		runErr <- system.Run()
+	}()
+
+	defer func() {
+		if err := system.Close(); err != nil {
+			t.Errorf("close replay system: %v", err)
+		}
+
+		if err := <-runErr; err != nil {
+			t.Errorf("run replay system: %v", err)
+		}
+	}()
 
 	market.Drive(system)
 
@@ -121,10 +192,13 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer release()
 
 	replayed := 0
 	frameLimit := 0
+	firstArrival := time.Time{}
+	lastArrival := time.Time{}
+	previousArrival := time.Time{}
+	reachedEOF := false
 
 	if os.Getenv("SYMM_MEASURE_LIMIT") != "" {
 		if value, parseErr := json.Number(os.Getenv("SYMM_MEASURE_LIMIT")).Int64(); parseErr == nil && value > 0 {
@@ -135,27 +209,37 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 	for {
 		frame, ok := frames()
 		if !ok {
+			reachedEOF = true
 			break
 		}
 
-		if os.Getenv("SYMM_MEASURE_TRACE") != "" && replayed < 20 && frame.Endpoint != "level3" {
+		if err := waitReplayArrival(ctx, previousArrival, frame.ReceivedAt); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := market.ReplayFrame(frame); err != nil {
+			t.Fatalf("replay frame %d: %v", replayed, err)
+		}
+
+		if replayed == 0 {
+			firstArrival = frame.ReceivedAt
+		}
+
+		lastArrival = frame.ReceivedAt
+		previousArrival = frame.ReceivedAt
+
+		if os.Getenv("SYMM_MEASURE_TRACE") != "" && replayed < 20 {
 			var header struct {
 				Channel string `json:"channel"`
 			}
 			_ = json.Unmarshal(frame.Payload, &header)
-
-			delivered := false
-
-			switch frame.Endpoint {
-			case "public":
-				delivered = market.Public.Publish(header.Channel, frame.Payload)
-			case "private":
-				delivered = market.Private.Publish(header.Channel, frame.Payload)
-			}
-
-			t.Logf("TRACE frame %d %s/%s delivered=%v tick=%d", replayed, frame.Endpoint, header.Channel, delivered, system.Thesis.Tick)
-		} else {
-			publishCapturedFrame(market, frame)
+			t.Logf(
+				"TRACE frame %d %s/%s tick=%d",
+				replayed,
+				frame.Endpoint,
+				header.Channel,
+				system.Thesis.Tick,
+			)
 		}
 
 		replayed++
@@ -164,9 +248,70 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 			break
 		}
 	}
+	release()
+
+	if err := market.SettleReplay(); err != nil {
+		t.Fatalf("settle replay: %v", err)
+	}
+
+	if !market.Public.Fence() {
+		t.Fatal("public replay ingress fence failed")
+	}
+
+	if !market.Private.Fence() {
+		t.Fatal("private replay ingress fence failed")
+	}
+
+	if !market.Level3.Fence() {
+		t.Fatal("level3 replay ingress fence failed")
+	}
+
+	if err := system.Error(); err != nil {
+		t.Fatalf("replay system failed before quiescence: %v", err)
+	}
+
+	if os.Getenv("SYMM_MEASURE_TRACE") != "" {
+		for _, source := range types.WorkerSources {
+			work := thesis.Work(source)
+			t.Logf(
+				"QUIESCENCE source=%s depth=%d idle=%t",
+				source,
+				work.Length(),
+				work.Idle(),
+			)
+		}
+	}
+
+	if err := thesis.WaitForQuiescence(ctx); err != nil {
+		t.Fatalf("wait for replay quiescence: %v", err)
+	}
+
+	if err := system.Error(); err != nil {
+		t.Fatalf("replay system failed at quiescence: %v", err)
+	}
+
+	if replayed == 0 {
+		t.Fatal("capture contains no replayable frames")
+	}
+
+	if !firstArrival.Equal(startedAt) {
+		t.Fatalf("replay began at %s, capture begins at %s", firstArrival, startedAt)
+	}
+
+	if reachedEOF && !lastArrival.Equal(endedAt) {
+		t.Fatalf("replay ended at %s, capture ends at %s", lastArrival, endedAt)
+	}
 
 	report := market.Report()
-	tape := sqliteHindsightCeiling(t, sourceStore, captureID, startedAt, tmpDataPath)
+	tape := sqliteHindsightCeiling(
+		t,
+		sourceStore,
+		captureID,
+		replayed,
+		firstArrival,
+		lastArrival,
+		replayStore,
+	)
 	realizedPct := report.Economics.NetPnL / 200 * 100
 
 	t.Logf(
@@ -175,7 +320,10 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 		replayed,
 		report.Economics.NetPnL, realizedPct, report.Economics.GrossPnL, report.Economics.Fees,
 		report.Mechanics.Filled,
-		tape.Total.UpboundPct, tape.Total.RealizedPct, tape.Total.MissedPct, tape.Total.Legs,
+		tape.Total.UpboundPct*100,
+		tape.Total.RealizedPct*100,
+		tape.Total.MissedPct*100,
+		tape.Total.Legs,
 		len(tape.Decisions),
 	)
 
@@ -191,7 +339,7 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 				}
 
 				t.Logf(
-					"MISSED %s buy=%s@%.6f sell=%s@%.6f profit=%.4f%% signalAt=%s thesis=%.4f graph=%.4f opp=%v type=%s",
+					"MISSED %s buy=%s@%.6f sell=%s@%.6f profit=%.4f%% signalAt=%s action=%s thesis=%.4f confidence=%.4f direction=%.4f graph=%.4f threshold=%.4f opp=%v type=%s predictive=%v status=%q reason=%q cause=%q",
 					symbol.Symbol,
 					opportunity.Leg.BuyAt.Format("15:04:05"),
 					opportunity.Leg.BuyPrice,
@@ -199,110 +347,77 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 					opportunity.Leg.SellPrice,
 					opportunity.Leg.ProfitPct*100,
 					opportunity.Signal.At.Format("15:04:05"),
+					opportunity.Signal.Action,
 					opportunity.Signal.ThesisScore,
+					opportunity.Signal.Confidence,
+					opportunity.Signal.Direction,
 					opportunity.Signal.GraphScore,
+					opportunity.Signal.AdmissionThreshold,
 					opportunity.Signal.Opportunity,
 					opportunity.Signal.Type,
+					opportunity.Signal.PredictiveReady,
+					opportunity.Signal.PredictiveStatus,
+					opportunity.Signal.Reason,
+					opportunity.Signal.Cause,
 				)
 			}
 		}
 	}
-}
 
-func publishCapturedFrame(market *Market, frame backtest.Frame) {
-	var header struct {
-		Channel string `json:"channel"`
-	}
-	_ = json.Unmarshal(frame.Payload, &header)
-
-	switch frame.Endpoint {
-	case "level3":
-		if err := market.Level3.WaitReady(market.ctx); err != nil {
-			return
+	if os.Getenv("SYMM_MEASURE_DECISIONS") != "" {
+		for _, decision := range tape.Decisions {
+			t.Logf(
+				"DECISION %s at=%s action=%s thesis=%.17g support=%.17g contradiction=%.17g conditions=%.17g confidence=%.17g direction=%.17g graph=%.17g threshold=%.17g opp=%v type=%s predictive=%v status=%q reason=%q cause=%q",
+				decision.Symbol,
+				decision.At.Format("15:04:05.000"),
+				decision.Action,
+				decision.ThesisScore,
+				decision.ThesisSupport,
+				decision.ThesisContradiction,
+				decision.ThesisConditions,
+				decision.Confidence,
+				decision.Direction,
+				decision.GraphScore,
+				decision.AdmissionThreshold,
+				decision.Opportunity,
+				decision.OpportunityType,
+				decision.PredictiveReady,
+				decision.PredictiveStatus,
+				decision.Reason,
+				decision.Cause,
+			)
 		}
-
-		market.Level3.Publish(header.Channel, frame.Payload)
-	case "public":
-		if err := market.Public.WaitReady(market.ctx); err != nil {
-			return
-		}
-
-		market.Public.Publish(header.Channel, frame.Payload)
-	case "private":
-		if err := market.Private.WaitReady(market.ctx); err != nil {
-			return
-		}
-
-		market.Private.Publish(header.Channel, frame.Payload)
 	}
 }
 
-func captureSymbolsFromStore(
-	store *backtest.Store,
-	captureID int64,
-) ([]*testtypes.Symbol, error) {
-	frames, release, err := store.Frames(captureID, time.Time{})
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	prices := map[string]float64{}
-	scanned := 0
-
-	for {
-		if scanned >= 20000 {
-			break
-		}
-
-		frame, ok := frames()
-		if !ok {
-			break
-		}
-
-		scanned++
-
-		if frame.Endpoint != "public" {
-			continue
-		}
-
-		var header struct {
-			Channel string `json:"channel"`
-		}
-		if json.Unmarshal(frame.Payload, &header) != nil || header.Channel != "ticker" {
-			continue
-		}
-
-		var ticker struct {
-			Data []struct {
-				Symbol string  `json:"symbol"`
-				Last   float64 `json:"last"`
-			} `json:"data"`
-		}
-		if json.Unmarshal(frame.Payload, &ticker) != nil {
-			continue
-		}
-
-		for _, row := range ticker.Data {
-			if row.Symbol != "" && row.Last > 0 {
-				prices[row.Symbol] = row.Last
-			}
-		}
-
-		if len(prices) >= 512 {
-			break
-		}
+func waitReplayArrival(
+	ctx context.Context,
+	previous time.Time,
+	current time.Time,
+) error {
+	if current.IsZero() {
+		return fmt.Errorf("replay frame has no arrival time")
 	}
 
-	symbols := make([]*testtypes.Symbol, 0, len(prices))
-	index := int64(1)
-
-	for pair, price := range prices {
-		symbols = append(symbols, testtypes.NewSymbol(pair, price, index))
-		index++
+	if previous.IsZero() {
+		return nil
 	}
 
-	return symbols, nil
+	if !current.After(previous) {
+		return nil
+	}
+
+	delay := current.Sub(previous)
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 /*
@@ -325,23 +440,35 @@ func sqliteHindsightCeiling(
 	t *testing.T,
 	sourceStore *backtest.Store,
 	captureID int64,
-	from time.Time,
-	tmpDataPath string,
+	replayed int,
+	firstArrival time.Time,
+	lastArrival time.Time,
+	replayStore *backtest.Store,
 ) measuredTape {
 	t.Helper()
 
 	reducer := hindsight.NewReducer()
-	frames, release, err := sourceStore.Frames(captureID, from)
+	frames, release, err := sourceStore.Frames(captureID, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
+	scanned := 0
+	scannedFirst := time.Time{}
+	scannedLast := time.Time{}
 
-	for {
+	for scanned < replayed {
 		frame, ok := frames()
 		if !ok {
 			break
 		}
+
+		if scanned == 0 {
+			scannedFirst = frame.ReceivedAt
+		}
+
+		scannedLast = frame.ReceivedAt
+		scanned++
 
 		if frame.Endpoint != "public" {
 			continue
@@ -359,8 +486,21 @@ func sqliteHindsightCeiling(
 			t.Fatalf("reduce trade frame: %v", err)
 		}
 	}
+	if scanned != replayed {
+		t.Fatalf("hindsight scanned %d frames, replay consumed %d", scanned, replayed)
+	}
 
-	decisions, err := replayDecisions(tmpDataPath, from)
+	if !scannedFirst.Equal(firstArrival) || !scannedLast.Equal(lastArrival) {
+		t.Fatalf(
+			"hindsight slice %s→%s differs from replay %s→%s",
+			scannedFirst,
+			scannedLast,
+			firstArrival,
+			lastArrival,
+		)
+	}
+
+	decisions, err := replayDecisions(replayStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,17 +529,9 @@ func sqliteHindsightCeiling(
 }
 
 /*
-replayDecisions reads the decision moments the replay itself recorded into its
-fresh store, gated to decisions at or after the capture start so a leg can only
-be attributed to the decision stream of this replay.
+replayDecisions reads every decision moment from the isolated replay store.
 */
-func replayDecisions(dataPath string, from time.Time) ([]hindsight.Decision, error) {
-	store, err := backtest.NewStore(filepath.Join(dataPath, "symm.sqlite"))
-	if err != nil {
-		return nil, err
-	}
-	defer store.Close()
-
+func replayDecisions(store *backtest.Store) ([]hindsight.Decision, error) {
 	next, err := store.Events()
 	if err != nil {
 		return nil, err
@@ -408,12 +540,12 @@ func replayDecisions(dataPath string, from time.Time) ([]hindsight.Decision, err
 	decisions := []hindsight.Decision{}
 
 	for {
-		kind, payload, at, ok := next()
+		kind, payload, _, ok := next()
 		if !ok {
 			break
 		}
 
-		if kind != "[]types.Decision" || at.Before(from) {
+		if kind != "[]types.Decision" {
 			continue
 		}
 

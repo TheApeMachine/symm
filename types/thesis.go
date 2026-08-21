@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,7 +30,7 @@ type Thesis struct {
 	equityRevision uint64
 	clockMu        sync.Mutex
 	symbolMu       sync.Mutex
-	symbolIDs      map[string]SymbolID
+	symbols        []*Symbol
 	nextSymbolID   SymbolID
 	Status         Status          `json:"status"`
 	Tick           int64           `json:"tick"`
@@ -40,6 +41,9 @@ type Thesis struct {
 	manifold       atomic.Pointer[pmanifold.Reading]
 	phase          atomic.Pointer[PhaseReading]
 	work           map[SourceType]*transport.MapReduce[*Symbol]
+	workRevision   *atomic.Uint64
+	workHeld       *atomic.Uint64
+	workDeferred   *atomic.Uint64
 	failure        func(error)
 }
 
@@ -67,7 +71,7 @@ func (thesis *Thesis) AdvanceTick(at time.Time) int64 {
 	thesis.At = at
 	tick := thesis.Tick
 	thesis.clockMu.Unlock()
-	thesis.work[SourcePlanner].Push(nil)
+	thesis.ScheduleWork(SourcePlanner, nil)
 
 	thesis.Publish(&UIFrame{
 		Type: wire.FrameTickFrame,
@@ -87,6 +91,9 @@ func NewThesis(
 ) *Thesis {
 	ctx, cancel := context.WithCancel(ctx)
 	work := make(map[SourceType]*transport.MapReduce[*Symbol], len(WorkerSources))
+	workRevision := &atomic.Uint64{}
+	workHeld := &atomic.Uint64{}
+	workDeferred := &atomic.Uint64{}
 
 	for _, source := range WorkerSources {
 		work[source] = transport.NewMapReduce[*Symbol](nil, nil, nil)
@@ -99,8 +106,10 @@ func NewThesis(
 		Status:       READY,
 		CrossSection: NewCrossSection(),
 		Symbols:      &sync.Map{},
-		symbolIDs:    make(map[string]SymbolID),
 		work:         work,
+		workRevision: workRevision,
+		workHeld:     workHeld,
+		workDeferred: workDeferred,
 	}
 }
 
@@ -122,12 +131,197 @@ func (thesis *Thesis) Work(source SourceType) *transport.MapReduce[*Symbol] {
 	return work
 }
 
+/*
+ScheduleWork publishes one worker transition and advances the shared progress
+revision after the queue has accepted it.
+*/
+func (thesis *Thesis) ScheduleWork(source SourceType, symbol *Symbol) {
+	if thesis.workIsHeld(source) {
+		thesis.workDeferred.Or(deferredWorkBit(source))
+
+		return
+	}
+
+	thesis.Work(source).Push(symbol)
+	thesis.workRevision.Add(1)
+}
+
+/*
+HoldWork defers selected derived stages at an external observation boundary.
+The source input queues remain authoritative; releasing the stage schedules
+exactly the symbols whose existing consumer cursor still has pending input.
+*/
+func (thesis *Thesis) HoldWork(sources ...SourceType) {
+	if thesis == nil || thesis.workHeld == nil {
+		panic("thesis: work scheduler required")
+	}
+
+	for _, source := range sources {
+		bit := deferredWorkBit(source)
+		thesis.workHeld.Or(bit)
+	}
+}
+
+/*
+ReleaseWork re-enables one held stage and schedules its retained symbol input.
+Ingress must be fenced while a held stage is released so the retained cut has
+one unambiguous external boundary.
+*/
+func (thesis *Thesis) ReleaseWork(source SourceType) {
+	if thesis == nil || thesis.workHeld == nil {
+		panic("thesis: work scheduler required")
+	}
+
+	bit := deferredWorkBit(source)
+	previous := thesis.workHeld.And(^bit)
+
+	if previous&bit == 0 {
+		return
+	}
+
+	deferred := thesis.workDeferred.And(^bit)&bit != 0
+
+	if !deferred {
+		return
+	}
+
+	pending := false
+	crossSection := source == SourceManifold || source == SourcePlanner
+	thesis.symbolMu.Lock()
+
+	for _, symbol := range thesis.symbols {
+		if symbol == nil || !symbol.HasPendingWork(source) {
+			continue
+		}
+
+		pending = true
+
+		if !crossSection {
+			thesis.ScheduleWork(source, symbol)
+		}
+	}
+
+	thesis.symbolMu.Unlock()
+
+	if source == SourceManifold && pending {
+		thesis.ScheduleWork(SourceManifold, nil)
+	}
+
+	if source != SourcePlanner {
+		return
+	}
+
+	if pending || deferred {
+		thesis.ScheduleWork(SourcePlanner, nil)
+	}
+}
+
+func (thesis *Thesis) workIsHeld(source SourceType) bool {
+	if thesis == nil || thesis.workHeld == nil {
+		return false
+	}
+
+	bit, deferred := deferredWorkBitOK(source)
+
+	return deferred && thesis.workHeld.Load()&bit != 0
+}
+
+func deferredWorkBit(source SourceType) uint64 {
+	bit, valid := deferredWorkBitOK(source)
+
+	if !valid {
+		panic("thesis: source cannot be deferred: " + string(source))
+	}
+
+	return bit
+}
+
+func deferredWorkBitOK(source SourceType) (uint64, bool) {
+	switch source {
+	case SourceCorrelation:
+		return 1 << 0, true
+	case SourceCVD:
+		return 1 << 1, true
+	case SourceDepthFlow:
+		return 1 << 2, true
+	case SourceExhaustion:
+		return 1 << 3, true
+	case SourceHawkes:
+		return 1 << 4, true
+	case SourceLeadLag:
+		return 1 << 5, true
+	case SourceLiquidity:
+		return 1 << 6, true
+	case SourcePumpDump:
+		return 1 << 7, true
+	case SourceSentiment:
+		return 1 << 8, true
+	case SourceToxicity:
+		return 1 << 9, true
+	case SourceResonance:
+		return 1 << 10, true
+	case SourceCategory:
+		return 1 << 11, true
+	case SourceManifold:
+		return 1 << 12, true
+	case SourceCausal:
+		return 1 << 13, true
+	case SourceCognition:
+		return 1 << 14, true
+	case SourceGraph:
+		return 1 << 15, true
+	case SourcePlanner:
+		return 1 << 16, true
+	default:
+		return 0, false
+	}
+}
+
+/*
+WaitForQuiescence waits for a stable fixed point across every worker queue.
+Ingress must be fenced before calling it so no external producer can begin a
+new generation after the fixed point is observed.
+*/
+func (thesis *Thesis) WaitForQuiescence(ctx context.Context) error {
+	for {
+		revision := thesis.workRevision.Load()
+		idle := true
+
+		for _, source := range WorkerSources {
+			if !thesis.Work(source).Idle() {
+				idle = false
+				break
+			}
+		}
+
+		if idle && thesis.workRevision.Load() == revision {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			runtime.Gosched()
+		}
+	}
+}
+
 func (thesis *Thesis) notifyWork(source SourceType, symbol *Symbol) {
+	if thesis.workIsHeld(source) {
+		thesis.workDeferred.Or(deferredWorkBit(source))
+
+		return
+	}
+
 	work, found := thesis.work[source]
 
-	if found {
-		work.Push(symbol)
+	if !found {
+		return
 	}
+
+	work.Push(symbol)
+	thesis.workRevision.Add(1)
 }
 
 func (thesis *Thesis) UI() *transport.MapReduce[*UIFrame] {
@@ -163,8 +357,8 @@ func (thesis *Thesis) Symbol(name string) *Symbol {
 		created := NewSymbol(name, thesis.ui)
 		created.setNotify(thesis.notifyWork)
 		created.ID = thesis.nextSymbolID
-		thesis.symbolIDs[name] = thesis.nextSymbolID
 		thesis.nextSymbolID++
+		thesis.symbols = append(thesis.symbols, created)
 		symbol = created
 		thesis.Symbols.Store(name, symbol)
 	}
@@ -199,8 +393,12 @@ func (thesis *Thesis) ForSymbol(name string) (*Thesis, error) {
 		At:           thesis.At,
 		CrossSection: thesis.CrossSection,
 		Symbols:      symbols,
+		symbols:      []*Symbol{symbol.(*Symbol)},
 		Audit:        thesis.Audit,
 		work:         thesis.work,
+		workRevision: thesis.workRevision,
+		workHeld:     thesis.workHeld,
+		workDeferred: thesis.workDeferred,
 	}
 	manifold := thesis.manifold.Load()
 
@@ -228,6 +426,7 @@ func (thesis *Thesis) ForSymbols(names []string) (*Thesis, error) {
 	}
 
 	symbols := &sync.Map{}
+	ordered := make([]*Symbol, 0, len(names))
 
 	for _, name := range names {
 		if name == "" {
@@ -241,6 +440,7 @@ func (thesis *Thesis) ForSymbols(names []string) (*Thesis, error) {
 		}
 
 		symbols.Store(name, symbol)
+		ordered = append(ordered, symbol.(*Symbol))
 	}
 
 	scoped := &Thesis{
@@ -251,8 +451,12 @@ func (thesis *Thesis) ForSymbols(names []string) (*Thesis, error) {
 		At:           thesis.At,
 		CrossSection: thesis.CrossSection,
 		Symbols:      symbols,
+		symbols:      ordered,
 		Audit:        thesis.Audit,
 		work:         thesis.work,
+		workRevision: thesis.workRevision,
+		workHeld:     thesis.workHeld,
+		workDeferred: thesis.workDeferred,
 	}
 	manifold := thesis.manifold.Load()
 

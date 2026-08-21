@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"gonum.org/v1/gonum/stat/distuv"
@@ -209,14 +208,7 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) {
 		})
 	}
 
-	minimumConfidence, err := system.Cfg.PlannerMinimumConfidence()
-
-	if err != nil {
-		solver.err = err
-		return
-	}
-
-	if !graph.SearchableEnough(minimumConfidence) {
+	if !graph.ReadyForSearch() {
 		return
 	}
 
@@ -1060,6 +1052,8 @@ func (solver *Solver) connectLongOpportunity(
 			Reason:     reason,
 		})
 	}
+
+	graph.CanonicalizeDecisionEdges()
 
 	return nil
 }

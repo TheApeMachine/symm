@@ -12,12 +12,21 @@ decision stream recorded so a missed leg can be traced back to the exact
 measurement that (or the exact admission gate that) kept the system flat.
 */
 type SignalContext struct {
-	At           time.Time          `json:"at"`
-	GraphScore   float64            `json:"graphScore"`
-	ThesisScore  float64            `json:"thesisScore"`
-	Opportunity  bool               `json:"opportunity"`
-	Type         string             `json:"opportunityType,omitempty"`
-	Alternatives map[string]float64 `json:"alternatives"`
+	At                 time.Time          `json:"at"`
+	Action             string             `json:"action"`
+	Reason             string             `json:"reason"`
+	Cause              string             `json:"cause"`
+	GraphScore         float64            `json:"graphScore"`
+	ThesisScore        float64            `json:"thesisScore"`
+	ThesisConfidence   float64            `json:"thesisConfidence"`
+	Direction          float64            `json:"direction"`
+	Confidence         float64            `json:"confidence"`
+	AdmissionThreshold float64            `json:"admissionGraphThreshold"`
+	Opportunity        bool               `json:"opportunity"`
+	Type               string             `json:"opportunityType,omitempty"`
+	PredictiveReady    bool               `json:"predictiveReady"`
+	PredictiveStatus   string             `json:"predictiveStatus"`
+	Alternatives       map[string]float64 `json:"alternatives"`
 }
 
 /*
@@ -117,12 +126,21 @@ func truthFor(symbol string, decisions []Decision, leg Leg) MissedLeg {
 	if !captured {
 		if decision := latestDecisionBefore(decisions, leg.BuyAt); decision != nil {
 			context = SignalContext{
-				At:           decision.At,
-				GraphScore:   decision.GraphScore,
-				ThesisScore:  decision.ThesisScore,
-				Opportunity:  decision.Opportunity,
-				Type:         decision.OpportunityType,
-				Alternatives: decision.Alternatives,
+				At:                 decision.At,
+				Action:             decision.Action,
+				Reason:             decision.Reason,
+				Cause:              decision.Cause,
+				GraphScore:         decision.GraphScore,
+				ThesisScore:        decision.ThesisScore,
+				ThesisConfidence:   decision.ThesisConfidence,
+				Direction:          decision.Direction,
+				Confidence:         decision.Confidence,
+				AdmissionThreshold: decision.AdmissionThreshold,
+				Opportunity:        decision.Opportunity,
+				Type:               decision.OpportunityType,
+				PredictiveReady:    decision.PredictiveReady,
+				PredictiveStatus:   decision.PredictiveStatus,
+				Alternatives:       decision.Alternatives,
 			}
 		}
 	}

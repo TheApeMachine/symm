@@ -20,76 +20,64 @@ type OpportunityScore struct {
 }
 
 /*
-classifyOpportunities scores every catalog archetype against the graph's nodes.
-It never invents an observation: a leg with no matching node contributes zero,
-and every leg's vote is scaled by the node's epistemic trust, so a fresh,
-ambiguous, or stale reading can support nothing.
-*/
-func (graph *Graph) classifyOpportunities(now time.Time) []OpportunityScore {
-	if graph == nil {
-		return nil
-	}
-
-	views := graph.reasoningNodeViews()
-	scores := make([]OpportunityScore, 0, len(Catalog))
-
-	for _, archetype := range Catalog {
-		score := OpportunityScore{
-			Type:      archetype.Type,
-			Lifecycle: LifecycleEmergent,
-		}
-
-		var supportSum float64
-		var supportMax float64
-		var opposeSum float64
-		var opposeMax float64
-
-		for _, leg := range archetype.Supports {
-			trust := graph.legTrust(views, leg, now)
-			supportSum += trust
-			supportMax++
-		}
-
-		for _, leg := range archetype.Opposes {
-			trust := graph.legTrust(views, leg, now)
-			opposeSum += trust
-			opposeMax++
-		}
-
-		if supportMax > 0 {
-			score.Support = supportSum / supportMax
-		}
-
-		if opposeMax > 0 {
-			score.Opposition = opposeSum / opposeMax
-		}
-
-		score.Score = score.Support - score.Opposition
-
-		if score.Score > 0 {
-			score.Lifecycle = opportunityLifecycle(score.Support, score.Opposition)
-		}
-
-		scores = append(scores, score)
-	}
-
-	return scores
-}
-
-/*
 ActiveOpportunity returns the archetype with the strongest positive evidence for
 the current graph, or None when no archetype carries net support.
 */
 func (graph *Graph) ActiveOpportunity(now time.Time) OpportunityScore {
 	best := OpportunityScore{Type: OpportunityNone, Lifecycle: LifecycleEmergent}
 
-	for _, score := range graph.classifyOpportunities(now) {
+	if graph == nil {
+		return best
+	}
+
+	for _, archetype := range Catalog {
+		score := graph.opportunityScore(archetype, now)
+
 		if score.Score > best.Score {
 			best = score
 		}
 	}
 
 	return best
+}
+
+func (graph *Graph) opportunityScore(
+	archetype OpportunityArchetype,
+	now time.Time,
+) OpportunityScore {
+	score := OpportunityScore{Type: archetype.Type, Lifecycle: LifecycleEmergent}
+	supportCount := 0
+	oppositionCount := 0
+
+	for _, leg := range archetype.Supports {
+		if !leg.Supports {
+			continue
+		}
+
+		score.Support += graph.legTrust(leg, now)
+		supportCount++
+	}
+
+	for _, leg := range archetype.Opposes {
+		if !leg.Contradicts {
+			continue
+		}
+
+		score.Opposition += graph.legTrust(leg, now)
+		oppositionCount++
+	}
+
+	if supportCount > 0 {
+		score.Support /= float64(supportCount)
+	}
+
+	if oppositionCount > 0 {
+		score.Opposition /= float64(oppositionCount)
+	}
+
+	score.Score = score.Support - score.Opposition
+
+	return score
 }
 
 /*
@@ -124,64 +112,86 @@ func (graph *Graph) MeanTrust(now time.Time) float64 {
 }
 
 func (graph *Graph) legTrust(
-	views []reasoningNodeView,
 	leg ObservationCondition,
 	now time.Time,
 ) float64 {
-	for _, view := range views {
-		if !legMatches(view, leg) {
+	bestTrust := 0.0
+
+	for _, node := range graph.Nodes {
+		if node == nil || !legMatches(node, leg) {
 			continue
 		}
 
-		if leg.MaturityFloor > 0 && view.Confidence <= 0 {
-			return 0
+		if node.Maturity < leg.MaturityFloor {
+			continue
 		}
 
-		if view.Value <= 0 {
-			return 0
+		if node.Value <= 0 {
+			continue
 		}
 
-		node := graph.Nodes[view.ID]
+		separation, embedded, found := graph.observationSeparation(node)
 
-		if node == nil {
+		if leg.SeparationFloor > 0 &&
+			(!found || separation < leg.SeparationFloor) {
 			continue
 		}
 
 		trust := computeObservationTrust(node, now)
 
-		if trust <= 0 {
-			return 0
+		if found && !embedded {
+			trust *= separation
 		}
 
-		return trust
+		if trust > bestTrust {
+			bestTrust = trust
+		}
 	}
 
-	return 0
+	return bestTrust
 }
 
-func legMatches(view reasoningNodeView, leg ObservationCondition) bool {
-	if leg.Source != "" && !strings.EqualFold(view.Source, string(leg.Source)) {
+func legMatches(
+	node *Node,
+	leg ObservationCondition,
+) bool {
+	if leg.Source != "" && !strings.EqualFold(node.Source, string(leg.Source)) {
 		return false
 	}
 
-	if leg.Metric != "" && !strings.EqualFold(view.Metric, leg.Metric) {
+	if leg.Metric != "" && !strings.EqualFold(string(node.Metric), leg.Metric) {
+		return false
+	}
+
+	if leg.Side != SideNone && node.Side != leg.Side {
 		return false
 	}
 
 	return true
 }
 
-func opportunityLifecycle(support float64, opposition float64) OpportunityLifecycle {
-	switch {
-	case opposition > support:
-		return LifecycleExhausting
-	case support > 0.8:
-		return LifecycleClimax
-	case support > 0.55:
-		return LifecycleAccelerating
-	case support > 0.3:
-		return LifecycleConfirming
-	default:
-		return LifecycleEmergent
+func (graph *Graph) observationSeparation(
+	node *Node,
+) (float64, bool, bool) {
+	separation, found := node.Metadata["hypothesis_separation"].(float64)
+
+	if found {
+		return separation, true, true
 	}
+
+	if node.MeasurementID == "" {
+		return 0, false, false
+	}
+
+	for _, candidate := range graph.Nodes {
+		if candidate == nil || candidate.MeasurementID != node.MeasurementID ||
+			!strings.EqualFold(candidate.Source, node.Source) ||
+			candidate.Metric != MetricHypothesisSeparation {
+			continue
+		}
+
+		return candidate.Value, false, true
+	}
+
+	return 0, false, false
 }

@@ -131,6 +131,27 @@ func (mr *MapReduce[T]) Length(consumers ...*Consumer[T]) uint64 {
 }
 
 /*
+Idle reports whether every registered consumer is ready with no queued work.
+*/
+func (mr *MapReduce[T]) Idle() bool {
+	for _, consumer := range mr.consumers {
+		if consumer.status.Load() != uint32(types.READY) {
+			return false
+		}
+
+		if consumer.queue.Length() != 0 {
+			return false
+		}
+
+		if consumer.status.Load() != uint32(types.READY) {
+			return false
+		}
+	}
+
+	return true
+}
+
+/*
 Register a new consumer with a unique ID.
 This creates a new Queue for the consumer to read from.
 If the consumer ID already exists, it will be ignored.

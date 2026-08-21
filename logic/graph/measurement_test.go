@@ -85,6 +85,7 @@ func TestAddNodes(t *testing.T) {
 			So(node.Metric, ShouldEqual, types.MetricDrive)
 			So(node.Value, ShouldEqual, drive)
 			So(*node.Normalized, ShouldEqual, drive)
+			So(node.Confidence, ShouldEqual, drive)
 			So(node.Maturity, ShouldEqual, 0.6)
 			So(node.ObservedFrom, ShouldEqual, observedFrom)
 			So(node.Horizon, ShouldEqual, time.Second)
@@ -135,6 +136,39 @@ func TestAddNodes(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(graph.Nodes, ShouldHaveLength, 0)
 			So(index.bySource[string(types.SourcePumpDump)], ShouldHaveLength, 1)
+		})
+	})
+
+	Convey("Given a metric outside the normalized strength domain", t, func() {
+		symbol := types.NewSymbol("BTC/USD")
+		measurement := newTestMeasurement(
+			"cvd-invalid",
+			types.SourceCVD,
+			"BTC/USD",
+			time.Unix(13, 0).UTC(),
+		)
+		invalid := 1.01
+		putTestMetric(
+			measurement,
+			types.MetricDrive,
+			invalid,
+			&invalid,
+			nmtypes.UnitDimensionless,
+		)
+		symbol.AppendMeasurement(measurement)
+
+		Convey("It should fail with the exact producer and value", func() {
+			So(func() {
+				_, _ = newMeasurementCompiler().addNodes(
+					"BTC/USD",
+					symbol.MarketMeasurements(
+						symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+					),
+					NewGraph(time.Unix(13, 0).UTC()),
+				)
+			}, ShouldPanicWith,
+				"graph: normalized measurement strength must be in [0,1]: "+
+					"source=cvd symbol=BTC/USD metric=drive value=1.01")
 		})
 	})
 }

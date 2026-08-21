@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/theapemachine/symm/backtest"
 )
 
 type captureFrame struct {
@@ -63,7 +65,7 @@ func (market *Market) ReplayCapture(symbols []string, readers ...io.Reader) erro
 				return fmt.Errorf("market: capture has no frames for requested symbols")
 			}
 
-			return nil
+			return market.SettleReplay()
 		}
 
 		frame := cursors[selected].frame
@@ -72,11 +74,11 @@ func (market *Market) ReplayCapture(symbols []string, readers ...io.Reader) erro
 			return fmt.Errorf("market: merged capture chronology regressed")
 		}
 
-		if err := market.replayFrame(
-			frame.Endpoint,
-			frame.Payload,
-			frame.ReceivedAt,
-		); err != nil {
+		if err := market.ReplayFrame(backtest.Frame{
+			Endpoint:   frame.Endpoint,
+			Payload:    frame.Payload,
+			ReceivedAt: frame.ReceivedAt,
+		}); err != nil {
 			return fmt.Errorf("market: replay capture frame %d: %w", replayed+1, err)
 		}
 

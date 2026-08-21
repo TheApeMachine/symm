@@ -72,6 +72,55 @@ func TestConnPublish(t *testing.T) {
 
 }
 
+func TestConnFence(t *testing.T) {
+	Convey("Given an earlier receive callback that has not returned", t, func() {
+		conn := NewConn(context.Background())
+		defer conn.Close()
+		So(conn.Connect(), ShouldBeNil)
+		prior := []byte(`{"channel":"ticker","type":"update"}`)
+		priorStarted := make(chan struct{})
+		releasePrior := make(chan struct{})
+		priorDone := make(chan struct{})
+
+		conn.Client().OnReceived.Recurring(
+			func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+				if string(event.Data.Bytes()) != string(prior) {
+					return
+				}
+
+				close(priorStarted)
+				<-releasePrior
+				close(priorDone)
+			},
+		)
+		published := make(chan bool, 1)
+
+		go func() {
+			published <- conn.Publish("ticker", prior)
+		}()
+
+		<-priorStarted
+		fenced := make(chan bool, 1)
+
+		go func() {
+			fenced <- conn.Fence()
+		}()
+
+		Convey("The fence should complete only after the prior callback", func() {
+			select {
+			case result := <-fenced:
+				t.Fatalf("fence returned before prior callback: %v", result)
+			default:
+			}
+
+			close(releasePrior)
+			So(<-published, ShouldBeTrue)
+			So(<-fenced, ShouldBeTrue)
+			<-priorDone
+		})
+	})
+}
+
 func BenchmarkConnPublish(b *testing.B) {
 	conn := NewConn(context.Background())
 	defer conn.Close()

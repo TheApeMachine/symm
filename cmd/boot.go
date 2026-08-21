@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
@@ -199,8 +200,14 @@ func BootWithHub(
 	private websocket.Conn,
 	uiChannel *transport.MapReduce[*types.UIFrame],
 	hub *ui.Hub,
+	recorders ...*audit.Recorder,
 ) *System {
 	viper.SetDefault("system.actor.buffer", 1024)
+	var recorder *audit.Recorder
+
+	if len(recorders) > 0 {
+		recorder = recorders[0]
+	}
 
 	systemCtx, cancel := context.WithCancel(ctx)
 
@@ -269,7 +276,16 @@ func BootWithHub(
 		positionStore,
 		uiChannel,
 	)
-	analyzer := logic.NewAnalyzer(systemCtx, price, api, tree, uiChannel, manifoldChannel, nil, thesis)
+	analyzer := logic.NewAnalyzer(
+		systemCtx,
+		price,
+		api,
+		tree,
+		uiChannel,
+		manifoldChannel,
+		nil,
+		thesis,
+	)
 	resonanceSolver := resonance.NewSolver(
 		systemCtx,
 		viper.GetFloat64("resonance.learning_rate"),
@@ -277,7 +293,15 @@ func BootWithHub(
 		uiChannel,
 		thesis,
 	)
-	crypto, err := trader.NewCrypto(systemCtx, api, uiChannel, manifoldChannel, nil, desk, thesis)
+	crypto, err := trader.NewCrypto(
+		systemCtx,
+		api,
+		uiChannel,
+		manifoldChannel,
+		nil,
+		desk,
+		thesis,
+	)
 
 	if err != nil {
 		errnie.Error(errnie.Err(errnie.Internal, "boot: create crypto", err))
@@ -285,7 +309,7 @@ func BootWithHub(
 		return nil
 	}
 
-	planner := strategy.NewPlanner(systemCtx, thesis, nil, desk)
+	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk)
 	planner.ObserveModule = crypto.ObserveModule()
 	planner.ObserveHop = crypto.ObserveHop()
 	existingHub := hub != nil

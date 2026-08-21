@@ -46,7 +46,7 @@ Every trade with an executable touch emits one `pumpdump` measurement carrying:
 | `midpoint` | Midpoint of that executable touch. |
 | `trade_price`, `trade_quantity` | Raw print used to advance the volume clock. |
 | `rvol` | Current completed-bar rate relative to its causal rate baseline. |
-| `spread` | Raw ask-minus-bid; its normalized value is spread divided by midpoint. |
+| `spread` | Raw ask-minus-bid; its normalized value is the symmetric price dissimilarity `spread / (bid + ask)`. |
 | `compression` | Current spread tightening relative to the prior spread median. |
 | `precursor:buy`, `precursor:sell` | Reciprocal directional price-move evidence. |
 | `exhaustion:buy`, `exhaustion:sell` | Reciprocal directional exhaustion evidence. |
@@ -64,12 +64,15 @@ Every measurement also sets:
 - `Horizon` to `At - ObservedFrom`.
 - `Maturity` to `completedBars / (completedBars + 1)`.
 - numeric metadata for capacity, raw trade and touch values, event-time
-  coordinates, completed-bar rate, rate baseline, and spread baseline.
+  coordinates, completed-bar rate, rate baseline, spread baseline, and the
+  unbounded midpoint-relative spread.
 
-Hypothesis separation is zero when neither exhaustion hypothesis has evidence,
-one when only one is supported, and otherwise the winner's normalized margin
-over its competitor. It is populated on every measurement and becomes
-classified normalized evidence with the rest of the directional output.
+Hypothesis separation is populated on every measurement. Trade observations
+use the normalized margin between the reciprocal exhaustion hypotheses. Book
+observations use the same statistic over the current executable spread and its
+causal retained spread baseline. The book margin is zero until that baseline
+exists, stays zero when the spread equals its baseline, and grows with an
+observed contraction or expansion without imposing a classification threshold.
 
 ## Downstream meaning
 

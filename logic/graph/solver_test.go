@@ -34,6 +34,46 @@ func graphResonanceManifold() *learning.ResonanceManifold {
 }
 
 func TestUpdate(t *testing.T) {
+	Convey("Given a structurally ready graph below the trade-confidence floor", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.At = time.Unix(8, 0).UTC()
+		symbol := thesis.Symbol("BOUNDARY/USD")
+		relationConfidence := 0.4933118837060111
+		measurement := newTestMeasurement(
+			"boundary-drive",
+			types.SourceCVD,
+			symbol.Symbol,
+			thesis.At,
+		)
+		putTestMetric(
+			measurement,
+			types.MetricDrive,
+			relationConfidence,
+			&relationConfidence,
+			nmtypes.UnitDimensionless,
+		)
+		symbol.AppendMeasurement(measurement)
+		solver := NewSolver(thesis, nil, nil)
+		defer solver.Close()
+
+		solver.buildGraph(symbol.Symbol, symbol)
+
+		Convey("It should publish the complete structure for forecast evaluation", func() {
+			var graph *Graph
+
+			for candidate := range symbol.MarketGraphs(
+				symbol.GraphConsumers[types.GraphConsumerPlanner],
+			) {
+				graph = candidate
+			}
+
+			So(graph, ShouldNotBeNil)
+			So(graph.ReadyForSearch(), ShouldBeTrue)
+			So(graph.OpportunitySummary().Confidence,
+				ShouldEqual, relationConfidence)
+		})
+	})
+
 	Convey("Given a reset lifecycle with only stale category state", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
 		thesis.At = time.Unix(10, 0).UTC()
@@ -127,7 +167,13 @@ func TestUpdate(t *testing.T) {
 		graphSolver.buildGraph("BTC/USD", symbol)
 
 		Convey("It should compile a connected evidence graph rather than one winning edge", func() {
-			graph := graphSolver.building["BTC/USD"]
+			var graph *Graph
+
+			for candidate := range symbol.MarketGraphs(
+				symbol.GraphConsumers[types.GraphConsumerPlanner],
+			) {
+				graph = candidate
+			}
 
 			So(graph, ShouldNotBeNil)
 			incident := make(map[string]int, len(graph.Nodes))
@@ -440,6 +486,179 @@ func TestGraphSearchableEnough(t *testing.T) {
 		Convey("It should never be searchable", func() {
 			So(graph.SearchableEnough(0), ShouldBeFalse)
 			So((*Graph)(nil).SearchableEnough(0), ShouldBeFalse)
+		})
+	})
+}
+
+func TestConnectLongOpportunity(t *testing.T) {
+	Convey("Given identical evidence nodes registered in opposite orders", t, func() {
+		at := time.Unix(3, 0).UTC()
+		symbol := types.NewSymbol("ORDER/USD")
+		categoryTypes := []types.CategoryType{
+			types.AggressiveDrive,
+			types.MechanicalCollapse,
+			types.DenseNeutrality,
+		}
+		nodes := make([]*Node, 0, 48)
+
+		for index := range 48 {
+			categoryType := categoryTypes[index%len(categoryTypes)]
+			nodes = append(nodes, &Node{
+				ID:         fmt.Sprintf("cat:ORDER/USD:%02d", index),
+				Symbol:     symbol.Symbol,
+				Kind:       KindCategory,
+				Value:      float64(index+1) / float64(index%7+2),
+				Strength:   float64(index+1) / float64(index%7+2),
+				Confidence: float64((index*17)%47+1) / 48,
+				At:         at,
+				Metadata: map[string]any{
+					"type": string(categoryType),
+				},
+			})
+		}
+
+		buildGraph := func(reverse bool) *Graph {
+			graph := NewGraph(at)
+
+			if reverse {
+				for index := len(nodes) - 1; index >= 0; index-- {
+					graph.AddNode(nodes[index])
+				}
+			} else {
+				for _, node := range nodes {
+					graph.AddNode(node)
+				}
+			}
+
+			err := (&Solver{}).connectLongOpportunity(symbol, graph)
+			So(err, ShouldBeNil)
+
+			return graph
+		}
+
+		forward := buildGraph(false)
+		reverse := buildGraph(true)
+
+		Convey("It should produce bit-identical ordered evidence and reductions", func() {
+			So(forward.Edges, ShouldResemble, reverse.Edges)
+			forwardSummary := forward.OpportunitySummary()
+			reverseSummary := reverse.OpportunitySummary()
+			So(forwardSummary.Hypothesis, ShouldEqual, reverseSummary.Hypothesis)
+			So(math.Float64bits(forwardSummary.Support), ShouldEqual,
+				math.Float64bits(reverseSummary.Support))
+			So(math.Float64bits(forwardSummary.Contradiction), ShouldEqual,
+				math.Float64bits(reverseSummary.Contradiction))
+			So(math.Float64bits(forwardSummary.Conditions), ShouldEqual,
+				math.Float64bits(reverseSummary.Conditions))
+			So(math.Float64bits(forwardSummary.Balance), ShouldEqual,
+				math.Float64bits(reverseSummary.Balance))
+			So(math.Float64bits(forwardSummary.Confidence), ShouldEqual,
+				math.Float64bits(reverseSummary.Confidence))
+			So(math.Float64bits(forwardSummary.Score), ShouldEqual,
+				math.Float64bits(reverseSummary.Score))
+			So(math.Float64bits(forwardSummary.Direction), ShouldEqual,
+				math.Float64bits(reverseSummary.Direction))
+			So(forwardSummary.Ready, ShouldEqual, reverseSummary.Ready)
+		})
+	})
+
+	Convey("Given a normalized directional measurement at the admission boundary", t, func() {
+		at := time.Unix(1, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD")
+		drive := 0.8
+		separation := 0.9
+		measurement := newTestMeasurement(
+			"cvd-drive", types.SourceCVD, symbol.Symbol, at,
+		)
+		measurement.Maturity = 0.9
+		putTestMetric(
+			measurement,
+			types.MetricDrive,
+			drive,
+			&drive,
+			nmtypes.UnitDimensionless,
+		)
+		putTestMetric(
+			measurement,
+			types.MetricHypothesisSeparation,
+			separation,
+			&separation,
+			nmtypes.UnitDimensionless,
+		)
+		symbol.AppendMeasurement(measurement)
+		graph := NewGraph(at)
+		_, err := newMeasurementCompiler().addNodes(
+			symbol.Symbol,
+			symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			),
+			graph,
+		)
+		So(err, ShouldBeNil)
+
+		err = (&Solver{}).connectLongOpportunity(symbol, graph)
+
+		Convey("It should preserve confidence and admit the supported proposition", func() {
+			So(err, ShouldBeNil)
+			driveNode := graph.Nodes[measurementNodeID(measurement, "drive")]
+			So(driveNode, ShouldNotBeNil)
+			So(driveNode.Confidence, ShouldEqual, drive)
+			So(driveNode.Maturity, ShouldEqual, 0.9)
+			separationNode := graph.Nodes[measurementNodeID(
+				measurement,
+				string(types.MetricHypothesisSeparation),
+			)]
+			So(separationNode, ShouldNotBeNil)
+			So(*separationNode.Normalized, ShouldEqual, separation)
+
+			var directional *Edge
+
+			for _, edge := range graph.Edges {
+				if edge.From == driveNode.ID && edge.To == graph.DecisionTarget {
+					directional = edge
+					break
+				}
+			}
+
+			So(directional, ShouldNotBeNil)
+			So(directional.Relation, ShouldEqual, RelationSupports)
+			So(directional.Weight, ShouldAlmostEqual, 0.4721359549995794)
+			So(directional.Confidence, ShouldEqual, drive)
+			So(graph.OpportunitySummary().Confidence, ShouldEqual, drive)
+			So(graph.SearchableEnough(0.5), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a directional measurement without a normalized value", t, func() {
+		at := time.Unix(2, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD")
+		measurement := newTestMeasurement(
+			"cvd-raw", types.SourceCVD, symbol.Symbol, at,
+		)
+		putTestMetric(
+			measurement,
+			types.MetricDrive,
+			0.8,
+			nil,
+			nmtypes.UnitDimensionless,
+		)
+		symbol.AppendMeasurement(measurement)
+		graph := NewGraph(at)
+		_, err := newMeasurementCompiler().addNodes(
+			symbol.Symbol,
+			symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			),
+			graph,
+		)
+		So(err, ShouldBeNil)
+
+		err = (&Solver{}).connectLongOpportunity(symbol, graph)
+
+		Convey("It should remain non-directional and defer search", func() {
+			So(err, ShouldBeNil)
+			So(graph.Edges, ShouldBeEmpty)
+			So(graph.SearchableEnough(0.5), ShouldBeFalse)
 		})
 	})
 }
@@ -872,6 +1091,52 @@ func BenchmarkInferStructuralEdges(b *testing.B) {
 			symbol, nil, types.Cognition{}, graph,
 		); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkConnectLongOpportunity(b *testing.B) {
+	at := time.Unix(1, 0).UTC()
+	symbol := types.NewSymbol("BENCH/USD")
+	categoryTypes := []types.CategoryType{
+		types.AggressiveDrive,
+		types.MechanicalCollapse,
+		types.DenseNeutrality,
+	}
+	nodes := make([]*Node, 0, 64)
+
+	for index := range 64 {
+		categoryType := categoryTypes[index%len(categoryTypes)]
+		nodes = append(nodes, &Node{
+			ID:         fmt.Sprintf("cat:BENCH/USD:%02d", index),
+			Symbol:     symbol.Symbol,
+			Kind:       KindCategory,
+			Value:      float64(index+1) / float64(index%7+2),
+			Strength:   float64(index+1) / float64(index%7+2),
+			Confidence: float64((index*17)%63+1) / 64,
+			At:         at,
+			Metadata: map[string]any{
+				"type": string(categoryType),
+			},
+		})
+	}
+
+	solver := &Solver{}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		graph := NewGraph(at)
+
+		for _, node := range nodes {
+			graph.AddNode(node)
+		}
+
+		if err := solver.connectLongOpportunity(symbol, graph); err != nil {
+			b.Fatal(err)
+		}
+
+		if !graph.OpportunitySummary().Ready {
+			b.Fatal("decision summary is not ready")
 		}
 	}
 }

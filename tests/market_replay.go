@@ -6,12 +6,204 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/kraken"
 	testtypes "github.com/theapemachine/symm/tests/types"
+	"github.com/theapemachine/symm/types"
 )
+
+/*
+WithStagedReplay defers each analytical stage until replay closes one
+engine-clock interval. PumpDump advances at each trade and committed Level 3
+observation because it spans all three raw queues and reads the resident book;
+the ticker boundary releases every other retained source and the analyzer
+groups in dependency order before graph, planner, and desk settle.
+*/
+func (market *Market) WithStagedReplay(
+	thesis *types.Thesis,
+	failure func() error,
+) *Market {
+	if thesis == nil {
+		panic("market: staged replay requires a thesis")
+	}
+
+	market.replayStart = func() {
+		thesis.HoldWork(types.SignalSources...)
+		thesis.HoldWork(
+			types.SourceResonance,
+			types.SourceCategory,
+			types.SourceManifold,
+			types.SourceCausal,
+			types.SourceCognition,
+			types.SourceGraph,
+			types.SourcePlanner,
+		)
+	}
+	market.replayObservation = func() error {
+		if failure != nil {
+			if err := failure(); err != nil {
+				return err
+			}
+		}
+
+		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+			return err
+		}
+
+		thesis.ReleaseWork(types.SourcePumpDump)
+
+		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+			return err
+		}
+
+		if failure != nil {
+			if err := failure(); err != nil {
+				return err
+			}
+		}
+
+		thesis.HoldWork(types.SourcePumpDump)
+
+		return nil
+	}
+	market.replaySettlement = func() error {
+		if failure != nil {
+			if err := failure(); err != nil {
+				return err
+			}
+		}
+
+		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+			return err
+		}
+
+		for _, source := range types.SignalSources {
+			thesis.ReleaseWork(source)
+
+			if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+				return err
+			}
+
+			if failure != nil {
+				if err := failure(); err != nil {
+					return err
+				}
+			}
+		}
+
+		thesis.ReleaseWork(types.SourceResonance)
+
+		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+			return err
+		}
+
+		thesis.ReleaseWork(types.SourceCategory)
+		thesis.ReleaseWork(types.SourceManifold)
+
+		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+			return err
+		}
+
+		thesis.ReleaseWork(types.SourceCausal)
+		thesis.ReleaseWork(types.SourceCognition)
+
+		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+			return err
+		}
+
+		thesis.ReleaseWork(types.SourceGraph)
+
+		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+			return err
+		}
+
+		thesis.ReleaseWork(types.SourcePlanner)
+
+		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
+			return err
+		}
+
+		if failure != nil {
+			if err := failure(); err != nil {
+				return err
+			}
+		}
+
+		market.replayStart()
+
+		return nil
+	}
+
+	return market
+}
+
+/*
+SettleReplay fences every captured ingress connection before committing the
+current derived interval. A settlement failure stops replay before another
+captured frame can cross the boundary.
+*/
+func (market *Market) SettleReplay() error {
+	market.beginReplay()
+
+	if market.replaySettlement == nil {
+		return nil
+	}
+
+	if !market.Public.Fence() {
+		return fmt.Errorf("market: public replay ingress fence failed")
+	}
+
+	if !market.Private.Fence() {
+		return fmt.Errorf("market: private replay ingress fence failed")
+	}
+
+	if !market.Level3.Fence() {
+		return fmt.Errorf("market: level3 replay ingress fence failed")
+	}
+
+	if err := market.replaySettlement(); err != nil {
+		return fmt.Errorf("market: settle replay stages: %w", err)
+	}
+
+	return nil
+}
+
+/*
+settleReplayObservation fences one raw capture connection before advancing the
+PumpDump estimator over that exact trade or resident-book observation. Derived
+reasoning remains held until the next engine-clock settlement.
+*/
+func (market *Market) settleReplayObservation(connection *Conn) error {
+	if market.replayObservation == nil {
+		return nil
+	}
+
+	if connection == nil || !connection.Fence() {
+		return fmt.Errorf("market: replay observation ingress fence failed")
+	}
+
+	if err := market.replayObservation(); err != nil {
+		return fmt.Errorf("market: settle replay observation: %w", err)
+	}
+
+	return nil
+}
+
+func (market *Market) beginReplay() {
+	if market.replayStarted {
+		return
+	}
+
+	market.replayStarted = true
+
+	if market.replayStart != nil {
+		market.replayStart()
+	}
+}
 
 /*
 Replay streams captured Kraken frames unchanged through the existing Market
@@ -32,7 +224,7 @@ func (market *Market) Replay(reader io.Reader) error {
 				return fmt.Errorf("market: replay requires at least one frame")
 			}
 
-			return nil
+			return market.SettleReplay()
 		}
 
 		if err != nil {
@@ -55,11 +247,11 @@ func (market *Market) Replay(reader io.Reader) error {
 			return fmt.Errorf("market: replay record %d has invalid arrival time", record)
 		}
 
-		if err = market.replayFrame(
-			endpoint,
-			frame["payload"],
-			receivedAt,
-		); err != nil {
+		if err = market.ReplayFrame(backtest.Frame{
+			Endpoint:   endpoint,
+			Payload:    frame["payload"],
+			ReceivedAt: receivedAt,
+		}); err != nil {
 			return fmt.Errorf("market: replay record %d: %w", record, err)
 		}
 
@@ -68,49 +260,60 @@ func (market *Market) Replay(reader io.Reader) error {
 	}
 }
 
-func (market *Market) replayFrame(
-	endpoint string,
-	payload []byte,
-	receivedAt time.Time,
-) error {
-	header := map[string]json.RawMessage{}
+/*
+ReplayFrame applies one stored capture frame through the fixture transport.
+Ticker and trade frames advance Market's observed sample once before their one
+transport publication. PumpDump consumes each trade and committed Level 3
+state in capture order. Level 3 execution advances only after that exact frame
+has been published, applied to the production resident book, and checksummed.
+*/
+func (market *Market) ReplayFrame(frame backtest.Frame) error {
+	if frame.ReceivedAt.IsZero() {
+		return fmt.Errorf("market: replay frame has no arrival time")
+	}
+	market.beginReplay()
 
-	if err := json.Unmarshal(payload, &header); err != nil {
+	if strings.HasPrefix(frame.Endpoint, "/") ||
+		frame.Endpoint == "symm_metadata" {
+		return nil
+	}
+
+	var header struct {
+		Channel string `json:"channel"`
+		Type    string `json:"type"`
+	}
+
+	if err := json.Unmarshal(frame.Payload, &header); err != nil {
 		return fmt.Errorf("decode payload: %w", err)
 	}
 
-	var channel string
-
-	if err := json.Unmarshal(header["channel"], &channel); err != nil {
-		return fmt.Errorf("decode channel: %w", err)
-	}
-
-	var symbols []string
+	isData := header.Type == "snapshot" || header.Type == "update"
 
 	switch {
-	case endpoint == "public" && channel == "ticker":
+	case frame.Endpoint == "public" && header.Channel == "ticker" && isData:
 		ticker := &kraken.Ticker{}
 
-		if err := json.Unmarshal(payload, ticker); err != nil {
+		if err := json.Unmarshal(frame.Payload, ticker); err != nil {
 			return fmt.Errorf("decode ticker: %w", err)
 		}
 
-		symbols = market.replayTicker(ticker)
+		market.replayTicker(ticker)
 		market.tick++
-	case endpoint == "public" && channel == "trade":
+	case frame.Endpoint == "public" && header.Channel == "trade" && isData:
 		trade := &kraken.Trade{}
 
-		if err := json.Unmarshal(payload, trade); err != nil {
+		if err := json.Unmarshal(frame.Payload, trade); err != nil {
 			return fmt.Errorf("decode trade: %w", err)
 		}
 
-		symbols = market.replayTrade(trade)
-	case endpoint == "level3" && channel == "level3":
+		market.replayTrade(trade)
+	case frame.Endpoint == "level3" && header.Channel == "level3" && isData:
 		level3 := &kraken.Level3{}
 
-		if err := json.Unmarshal(payload, level3); err != nil {
+		if err := json.Unmarshal(frame.Payload, level3); err != nil {
 			return fmt.Errorf("decode level3: %w", err)
 		}
+		symbols := make([]string, 0, len(level3.Data))
 
 		for _, data := range level3.Data {
 			symbols = append(symbols, data.Symbol)
@@ -120,7 +323,7 @@ func (market *Market) replayFrame(
 			return fmt.Errorf("level3 connection not ready: %w", err)
 		}
 
-		if !market.Level3.Publish(channel, payload) {
+		if !market.Level3.Publish(header.Channel, frame.Payload) {
 			return fmt.Errorf("level3 frame was not delivered")
 		}
 
@@ -128,24 +331,52 @@ func (market *Market) replayFrame(
 			return err
 		}
 
-		return market.processReplayOrders(symbols, receivedAt)
+		if err := market.settleReplayObservation(market.Level3); err != nil {
+			return err
+		}
+
+		return market.processReplayOrders(symbols, frame.ReceivedAt)
+	}
+
+	var connection *Conn
+	settle := frame.Endpoint == "public" && header.Channel == "ticker" && isData
+	observe := frame.Endpoint == "public" && header.Channel == "trade" && isData
+
+	switch frame.Endpoint {
+	case "level3":
+		connection = market.Level3
+	case "public":
+		connection = market.Public
+	case "private":
+		connection = market.Private
 	default:
-		return fmt.Errorf("unsupported %s/%s frame", endpoint, channel)
+		return fmt.Errorf("unsupported replay endpoint %s", frame.Endpoint)
 	}
 
-	if err := market.Public.WaitReady(market.ctx); err != nil {
-		return fmt.Errorf("public connection not ready: %w", err)
+	if err := connection.WaitReady(market.ctx); err != nil {
+		return fmt.Errorf("%s connection not ready: %w", frame.Endpoint, err)
 	}
 
-	if !market.Public.Publish(channel, payload) {
-		return fmt.Errorf("public %s frame was not delivered", channel)
+	if !connection.Publish(header.Channel, frame.Payload) {
+		return fmt.Errorf(
+			"%s/%s frame was not delivered",
+			frame.Endpoint,
+			header.Channel,
+		)
 	}
 
-	return market.processReplayOrders(symbols, receivedAt)
+	if settle {
+		return market.SettleReplay()
+	}
+
+	if observe {
+		return market.settleReplayObservation(market.Public)
+	}
+
+	return nil
 }
 
-func (market *Market) replayTicker(ticker *kraken.Ticker) []string {
-	symbols := make([]string, 0, len(ticker.Data))
+func (market *Market) replayTicker(ticker *kraken.Ticker) {
 	market.sampleMu.Lock()
 	defer market.sampleMu.Unlock()
 
@@ -167,14 +398,10 @@ func (market *Market) replayTicker(ticker *kraken.Ticker) []string {
 			ChangePct: data.ChangePct, Timestamp: data.Timestamp,
 		}
 		market.Private.transport.setPrice(data.Symbol, data.Bid.Float64())
-		symbols = append(symbols, data.Symbol)
 	}
-
-	return symbols
 }
 
-func (market *Market) replayTrade(trade *kraken.Trade) []string {
-	symbols := make([]string, 0, len(trade.Data))
+func (market *Market) replayTrade(trade *kraken.Trade) {
 	market.sampleMu.Lock()
 	defer market.sampleMu.Unlock()
 
@@ -187,11 +414,7 @@ func (market *Market) replayTrade(trade *kraken.Trade) []string {
 			sample.AggressorSide = data.Side
 			market.latest[data.Symbol] = sample
 		}
-
-		symbols = append(symbols, data.Symbol)
 	}
-
-	return symbols
 }
 
 func (market *Market) processReplayOrders(

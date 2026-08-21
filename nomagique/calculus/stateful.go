@@ -44,6 +44,25 @@ func Accumulate(
 }
 
 /*
+Clear removes configured coordinates from committed state while preserving the
+current output. It is the reset atom used by bounded accumulation equations.
+*/
+func Clear(symbols ...nomagique.Symbol) nomagique.Primitive {
+	return func(
+		state nomagique.Frame,
+		input nomagique.Frame,
+	) (nomagique.Frame, nomagique.Frame, error) {
+		nextState := state
+
+		for _, symbol := range symbols {
+			nextState.Delete(symbol)
+		}
+
+		return nextState, input, nil
+	}
+}
+
+/*
 Decay walks a retained level toward zero. Input level initializes or replaces
 state; input clock controls linear progress, while optional shape overrides the
 remaining fraction.

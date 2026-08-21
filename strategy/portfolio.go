@@ -4,7 +4,6 @@ import (
 	"math"
 	"math/rand"
 	"slices"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/mcts"
@@ -15,13 +14,12 @@ import (
 /*
 portfolioLeg is one selectable candidate: a snapshot of the symbol's
 directional evidence summary, its identifiable opportunity archetype, its
-epistemic trust, and its position in the current desk.
+reserve qualification, and its position in the current desk.
 */
 type portfolioLeg struct {
 	Symbol          string
 	Summary         logicgraph.OpportunitySummary
 	Opportunity     logicgraph.OpportunityScore
-	Trust           float64
 	ReserveEligible bool
 	Held            bool
 }
@@ -59,6 +57,8 @@ const (
 	portfolioExitOffset  float64 = 2
 	portfolioHoldOffset  float64 = 3
 	portfolioDoneAction  float64 = 0
+	portfolioFNVOffset   uint64  = 14695981039346656037
+	portfolioFNVPrime    uint64  = 1099511628211
 )
 
 var (
@@ -155,8 +155,7 @@ func (state *PortfolioState) GetPossibleActions() []float64 {
 
 func (state *PortfolioState) IsTerminal() bool {
 	return state == nil || state.err != nil || state.done ||
-		(state.step >= state.maxSteps &&
-			state.reserveSlots+state.slots <= 0)
+		state.step >= state.maxSteps
 }
 
 func (state *PortfolioState) ToVector() []float64 {
@@ -182,49 +181,16 @@ func (state *PortfolioState) GetReward() float64 {
 			continue
 		}
 
-		score := leg.Summary.Score
-		trust := leg.Trust
-		decay := 1 / math.Sqrt(float64(state.step+1))
+		score := leg.Opportunity.Score
 
-		// A leg that never classified an opportunity still carries structural
-		// evidence; its trust and lifecycle fall back to the summary, so the
-		// search does not silently zero a candidate the planner admitted.
-		if trust <= 0 {
-			trust = leg.Summary.Confidence
+		if leg.Opportunity.Type == types.OpportunityNone {
+			score = leg.Summary.Score
 		}
 
-		lifecycleWeight := 1.0
-
-		if leg.Opportunity.Type != "" {
-			lifecycleWeight = opportunityLifecycleWeight(leg.Opportunity.Lifecycle)
-		}
-
-		reward += score * trust * lifecycleWeight * decay
+		reward += score
 	}
 
 	return reward
-}
-
-/*
-opportunityLifecycleWeight states how much an open slot is worth in each
-lifecycle phase. Confirming and Accelerating are the entry windows the system
-may hold; Climax still carries value but no longer compounds; Emergent and
-Exhausting earn nothing because the evidence is not yet coherent or has
-already decayed.
-*/
-func opportunityLifecycleWeight(
-	lifecycle types.OpportunityLifecycle,
-) float64 {
-	switch lifecycle {
-	case types.LifecycleConfirming:
-		return 0.6
-	case types.LifecycleAccelerating:
-		return 1
-	case types.LifecycleClimax:
-		return 0.4
-	default:
-		return 0
-	}
 }
 
 func (state *PortfolioState) ApplyAction(action float64) mcts.State {
@@ -322,7 +288,7 @@ func portfolioSearch(rootState *PortfolioState, iterations int) (*mcts.Node, err
 		State:          rootState,
 		UntakenActions: slices.Clone(rootState.GetPossibleActions()),
 	}
-	random := rand.New(rand.NewSource(time.Now().UnixNano()))
+	random := rand.New(rand.NewSource(portfolioSeed(rootState)))
 
 	for iteration := 0; iteration < iterations; iteration++ {
 		selected := selectPortfolioNode(root)
@@ -343,6 +309,61 @@ func portfolioSearch(rootState *PortfolioState, iterations int) (*mcts.Node, err
 
 	markPortfolioPrincipal(root)
 	return root, nil
+}
+
+/*
+portfolioSeed fingerprints the complete ordered root state with FNV-1a. The
+same replay state therefore explores the same rollout paths, while materially
+different candidates do not all reuse one arbitrary random stream.
+*/
+func portfolioSeed(state *PortfolioState) int64 {
+	fingerprint := portfolioFNVOffset
+	mix := func(value byte) {
+		fingerprint ^= uint64(value)
+		fingerprint *= portfolioFNVPrime
+	}
+	mixNumber := func(value uint64) {
+		for shift := 0; shift < 64; shift += 8 {
+			mix(byte(value >> shift))
+		}
+	}
+	mixNumber(uint64(state.slots))
+	mixNumber(uint64(state.reserveSlots))
+	mixNumber(uint64(len(state.legs)))
+
+	for index, leg := range state.legs {
+		mixNumber(uint64(index))
+		mixNumber(uint64(len(leg.Symbol)))
+
+		for symbolIndex := 0; symbolIndex < len(leg.Symbol); symbolIndex++ {
+			mix(leg.Symbol[symbolIndex])
+		}
+
+		mixNumber(math.Float64bits(leg.Summary.Score))
+		mixNumber(math.Float64bits(leg.Opportunity.Score))
+		mixNumber(uint64(len(leg.Opportunity.Type)))
+
+		for typeIndex := 0; typeIndex < len(leg.Opportunity.Type); typeIndex++ {
+			mix(leg.Opportunity.Type[typeIndex])
+		}
+
+		reserveEligible := byte(0)
+
+		if leg.ReserveEligible {
+			reserveEligible = 1
+		}
+
+		mix(reserveEligible)
+		held := byte(0)
+
+		if leg.Held {
+			held = 1
+		}
+
+		mix(held)
+	}
+
+	return int64(fingerprint)
 }
 
 /*

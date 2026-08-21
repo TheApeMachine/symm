@@ -286,6 +286,42 @@ func TestUpdate(t *testing.T) {
 	})
 }
 
+func TestClose(t *testing.T) {
+	Convey("Given cognition work already in flight when the solver closes", t, func() {
+		tree, err := dmt.NewTree("")
+		So(err, ShouldBeNil)
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.At = time.Unix(1, 0).UTC()
+		thesis.Symbol("BTC/USD")
+		solver := NewSolver(t.Context(), thesis, tree, nil, nil)
+
+		So(solver.Close(), ShouldBeNil)
+
+		rows := make(map[string]types.Cognition)
+		err = solver.processBatch(
+			"BTC/USD",
+			[]types.Category{{
+				Symbol:     "BTC/USD",
+				Type:       types.CategoryVerticalIgnition,
+				Confidence: 1,
+				Strength:   1,
+			}},
+			0,
+			rows,
+		)
+
+		Convey("Then the accepted callback can finish against its owned state", func() {
+			So(err, ShouldBeNil)
+			So(
+				solver.sequences["BTC/USD"],
+				ShouldResemble,
+				[]string{solver.encodeCategory(types.CategoryVerticalIgnition)},
+			)
+			So(rows, ShouldContainKey, "BTC/USD")
+		})
+	})
+}
+
 /*
 waitSequence polls the solver's active category sequence for a symbol until it
 reaches the expected tokens, so the asynchronous self-run goroutine has advanced
