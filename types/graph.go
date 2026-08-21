@@ -573,7 +573,7 @@ func (graph *Graph) OpportunitySummary() OpportunitySummary {
 			continue
 		}
 
-		mass := edge.Weight * edge.Confidence
+		mass := edge.Weight
 
 		switch relationSign(edge.Relation) {
 		case 1:
@@ -597,7 +597,17 @@ func (graph *Graph) OpportunitySummary() OpportunitySummary {
 
 	summary.Balance = (summary.Support - summary.Contradiction) / directional
 	summary.Confidence = confidenceMass / confidenceWeight
-	summary.Score = summary.Balance * summary.Confidence
+
+	// A single vote already lives in [0, 1] (Ω × |normalized|). Until total
+	// directional mass reaches one full-strength vote, the thesis is that mass
+	// times the fight ratio — a unanimous 0.2-mass reading is 0.2, not 1.0.
+	evidence := directional
+
+	if evidence > 1 {
+		evidence = 1
+	}
+
+	summary.Score = summary.Balance * evidence
 	summary.Ready = true
 
 	if summary.Score > 0 {

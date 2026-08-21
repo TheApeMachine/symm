@@ -7,28 +7,28 @@ import (
 )
 
 type ResonanceT struct {
-	Source                     string              `json:"source"`
-	Symbol                     string              `json:"symbol"`
-	At                         int64               `json:"at"`
-	Samples                    int64               `json:"samples"`
-	TaskRelativePrecision      float64             `json:"taskRelativePrecision"`
-	TaskRelativePrecisionReady bool                `json:"taskRelativePrecisionReady"`
-	TaskCalibration            string              `json:"taskCalibration"`
-	TaskSkill                  float64             `json:"taskSkill"`
-	TaskSkillReady             bool                `json:"taskSkillReady"`
-	TaskSkillStatus            string              `json:"taskSkillStatus"`
-	LastResolvedForecast       float64             `json:"lastResolvedForecast"`
-	LastRealizedReturn         float64             `json:"lastRealizedReturn"`
-	LastForecastError          float64             `json:"lastForecastError"`
-	Observables                []float64           `json:"observables"`
-	Latent                     []float64           `json:"latent"`
-	Embedding                  []float64           `json:"embedding"`
-	Layers                     []*ResonanceLayerT  `json:"layers"`
-	Energy                     float64             `json:"energy"`
-	Surprise                   float64             `json:"surprise"`
-	Forecast                   *ResonanceForecastT `json:"forecast"`
-	Dynamics                   *ResonanceDynamicsT `json:"dynamics"`
-	Verdict                    *ResonanceVerdictT  `json:"verdict"`
+	Source string `json:"source"`
+	Symbol string `json:"symbol"`
+	At int64 `json:"at"`
+	Samples int64 `json:"samples"`
+	TaskRelativePrecision float64 `json:"taskRelativePrecision"`
+	TaskRelativePrecisionReady bool `json:"taskRelativePrecisionReady"`
+	TaskCalibration string `json:"taskCalibration"`
+	TaskSkill float64 `json:"taskSkill"`
+	TaskSkillReady bool `json:"taskSkillReady"`
+	TaskSkillStatus string `json:"taskSkillStatus"`
+	LastResolvedForecast float64 `json:"lastResolvedForecast"`
+	LastRealizedReturn float64 `json:"lastRealizedReturn"`
+	LastForecastError float64 `json:"lastForecastError"`
+	Observables []float64 `json:"observables"`
+	Latent []float64 `json:"latent"`
+	Embedding []float64 `json:"embedding"`
+	Layers []*ResonanceLayerT `json:"layers"`
+	Energy float64 `json:"energy"`
+	Surprise float64 `json:"surprise"`
+	Forecast *ResonanceForecastT `json:"forecast"`
+	Dynamics *ResonanceDynamicsT `json:"dynamics"`
+	Verdict *ResonanceVerdictT `json:"verdict"`
 }
 
 func (t *ResonanceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -78,26 +78,30 @@ func TestActiveOpportunity(t *testing.T) {
 			}},
 		}}
 
-		Convey("Maturity below the floor should carry no vote", func() {
+		Convey("Maturity below the catalog floor should dampen rather than silence", func() {
 			graph := opportunityGraph(
 				now,
 				opportunityNode("immature", "measurement", SourcePumpDump,
 					MetricRVOL, SideNone, 1, 0.39, now),
 				opportunitySeparation("separation", "measurement", SourcePumpDump, 1, now),
 			)
+			active := graph.ActiveOpportunity(now)
 
-			So(graph.ActiveOpportunity(now).Type, ShouldEqual, OpportunityNone)
+			So(active.Type, ShouldEqual, OpportunitySuddenPump)
+			So(active.Score, ShouldAlmostEqual, 0.39, 1e-12)
 		})
 
-		Convey("Separation below the floor should carry no vote", func() {
+		Convey("Separation below the catalog floor should dampen rather than silence", func() {
 			graph := opportunityGraph(
 				now,
 				opportunityNode("ambiguous", "measurement", SourcePumpDump,
 					MetricRVOL, SideNone, 1, 1, now),
 				opportunitySeparation("separation", "measurement", SourcePumpDump, 0.39, now),
 			)
+			active := graph.ActiveOpportunity(now)
 
-			So(graph.ActiveOpportunity(now).Type, ShouldEqual, OpportunityNone)
+			So(active.Type, ShouldEqual, OpportunitySuddenPump)
+			So(active.Score, ShouldAlmostEqual, 0.39, 1e-12)
 		})
 
 		Convey("Missing separation should carry no vote", func() {
@@ -266,6 +270,26 @@ func opportunityGraph(now time.Time, nodes ...*Node) *Graph {
 		graph.Nodes[node.ID] = node
 	}
 
+	for _, node := range nodes {
+		if node == nil || node.Metric != MetricHypothesisSeparation {
+			continue
+		}
+
+		for _, other := range nodes {
+			if other == nil || other.MeasurementID != node.MeasurementID ||
+				other.Source != node.Source ||
+				other.Metric == MetricHypothesisSeparation {
+				continue
+			}
+
+			if other.Metadata == nil {
+				other.Metadata = map[string]any{}
+			}
+
+			other.Metadata["hypothesis_separation"] = node.Value
+		}
+	}
+
 	return graph
 }
 
@@ -275,13 +299,15 @@ func opportunityNode(
 	source SourceType,
 	metric MetricType,
 	side MeasurementSide,
-	confidence float64,
+	magnitude float64,
 	maturity float64,
 	at time.Time,
 ) *Node {
+	normalized := magnitude
+
 	return &Node{
 		ID: id, MeasurementID: measurementID, Source: string(source), Metric: metric,
-		Side: side, Kind: KindMeasurement, Value: 1, Confidence: confidence,
+		Side: side, Kind: KindMeasurement, Value: magnitude, Normalized: &normalized,
 		Maturity: maturity, At: at,
 	}
 }

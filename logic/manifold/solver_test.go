@@ -14,7 +14,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/adaptive"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	pmanifold "github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
@@ -45,7 +45,7 @@ func (source *residentBookSource) Book(_ string, read func(*mgrbook.Book)) {
 func bookOscillatorSolver(resident *mgrbook.Book) *Solver {
 	return &Solver{
 		api: &residentBookSource{resident: resident},
-		config: pmanifold.Config{
+		config: Domain{
 			DomainX:  2,
 			DomainY:  3,
 			DomainZ:  4,
@@ -84,7 +84,7 @@ func residentBook(
 	return resident
 }
 
-func oscillatorBits(oscillator pmanifold.Oscillator) [10]uint64 {
+func oscillatorBits(oscillator Oscillator) [10]uint64 {
 	return [10]uint64{
 		math.Float64bits(oscillator.Phase),
 		math.Float64bits(oscillator.Omega),
@@ -99,7 +99,7 @@ func oscillatorBits(oscillator pmanifold.Oscillator) [10]uint64 {
 	}
 }
 
-func oscillatorSequenceBits(oscillators []pmanifold.Oscillator) [][10]uint64 {
+func oscillatorSequenceBits(oscillators []Oscillator) [][10]uint64 {
 	bits := make([][10]uint64, len(oscillators))
 
 	for index, oscillator := range oscillators {
@@ -158,7 +158,7 @@ func consumeTestSolver(
 		ctx:      ctx,
 		thesis:   thesis,
 		api:      source,
-		physics:  &pmanifold.Solver{},
+		physics:  &pmanifold.Manifold{},
 		universe: []string{"BTC/USD"},
 	}
 	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), func() {

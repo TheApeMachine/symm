@@ -47,6 +47,37 @@ func (hub *Hub) registerFluidWebRTC() {
 
 		return ctx.JSON(fluidOffer{Type: answer.Type.String(), SDP: answer.SDP})
 	})
+
+	hub.app.Options("/diagnostics", func(ctx fiber.Ctx) error {
+		setFluidCORS(ctx)
+		return ctx.SendStatus(fiber.StatusNoContent)
+	})
+	hub.app.Get("/diagnostics", func(ctx fiber.Ctx) error {
+		setFluidCORS(ctx)
+
+		return ctx.JSON(diagnosticsToggleRequest{
+			Enabled: hub.diagnostics != nil && hub.diagnostics.DiagnosticsEnabled(),
+		})
+	})
+	hub.app.Post("/diagnostics", func(ctx fiber.Ctx) error {
+		setFluidCORS(ctx)
+		var request diagnosticsToggleRequest
+
+		if err := ctx.Bind().Body(&request); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid diagnostics toggle")
+		}
+
+		if hub.diagnostics == nil {
+			return fiber.NewError(
+				fiber.StatusServiceUnavailable,
+				"diagnostics collector is unavailable",
+			)
+		}
+
+		hub.diagnostics.SetDiagnosticsEnabled(request.Enabled)
+
+		return ctx.JSON(diagnosticsToggleRequest{Enabled: request.Enabled})
+	})
 }
 
 func setFluidCORS(ctx fiber.Ctx) {

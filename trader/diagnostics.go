@@ -1,8 +1,12 @@
 package trader
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -189,14 +193,27 @@ const blockedPassThreshold = 2 * time.Second
 StreamDiagnostics is the wire snapshot of the whole wired analysis pipeline.
 */
 type StreamDiagnostics struct {
-	Status    string          `json:"status"`
-	AtNs      int64           `json:"at_ns"`
-	StartedNs int64           `json:"started_ns"`
-	Stages    []ClockSnapshot `json:"stages"`
-	Hops      []HopSnapshot   `json:"hops"`
-	Queues    []QueueSnapshot `json:"queues"`
-	Errors    []ErrorSnapshot `json:"errors"`
-	Pass      PassStatus      `json:"pass"`
+	Status     string           `json:"status"`
+	Enabled    bool             `json:"enabled"`
+	AtNs       int64            `json:"at_ns"`
+	StartedNs  int64            `json:"started_ns"`
+	Stages     []ClockSnapshot  `json:"stages"`
+	Hops       []HopSnapshot    `json:"hops"`
+	Queues     []QueueSnapshot  `json:"queues"`
+	Errors     []ErrorSnapshot  `json:"errors"`
+	Pass       PassStatus       `json:"pass"`
+	Goroutines []GoroutineOwner `json:"goroutines"`
+}
+
+/*
+GoroutineOwner buckets the live goroutine inventory by the pipeline component
+that owns each goroutine, so the dashboard can show which thing is running how
+much instead of one opaque process-wide number.
+*/
+type GoroutineOwner struct {
+	Owner string `json:"owner"`
+	Count int64  `json:"count"`
+	State string `json:"state"`
 }
 
 /*
@@ -224,6 +241,7 @@ type Diagnostics struct {
 	clocks   clockBank
 	started  time.Time
 	interval time.Duration
+	disabled atomic.Bool
 
 	mutex sync.RWMutex
 	errs  []ErrorSnapshot
@@ -236,6 +254,37 @@ type Diagnostics struct {
 	lastIdleCheck time.Time
 	lastPassNs    atomic.Uint64
 	blockedLogged bool
+
+	routinesMu      sync.Mutex
+	routinesAt      time.Time
+	routineCounters []GoroutineOwner
+}
+
+/*
+Enable resets the diagnostics switch to on. Observation hooks under normal
+load only pay the single atomic load this method's checks add on the hot path.
+*/
+func (diagnostics *Diagnostics) Enable() {
+	diagnostics.disabled.Store(false)
+}
+
+/*
+Disable turns the diagnostics switch off. Every hot-path hook above returns
+after one atomic load, and the heartbeat publisher drops to a slow idle cadence
+so the pipeline incurs no per-observation or per-heartbeat collection cost.
+*/
+func (diagnostics *Diagnostics) Disable() {
+	diagnostics.disabled.Store(true)
+}
+
+/*
+Enabled reports whether diagnostics collection is currently switched on.
+A nil receiver is not collecting, so it reports false. A zero-value receiver
+defaults to enabled so unconfigured tests and short-lived call sites keep the
+historical always-on behavior.
+*/
+func (diagnostics *Diagnostics) Enabled() bool {
+	return diagnostics != nil && !diagnostics.disabled.Load()
 }
 
 /*
@@ -243,11 +292,15 @@ applyModule implements the ObserveModule callback signature used by analyzer,
 measurements, planner, and desk.
 */
 func (diagnostics *Diagnostics) applyModule(name string, duration time.Duration) {
+	if !diagnostics.Enabled() {
+		return
+	}
+
 	diagnostics.clocks.observe(name, duration)
 }
 
 func (diagnostics *Diagnostics) beginModule(name string) {
-	if name == "" {
+	if name == "" || !diagnostics.Enabled() {
 		return
 	}
 
@@ -255,7 +308,7 @@ func (diagnostics *Diagnostics) beginModule(name string) {
 }
 
 func (diagnostics *Diagnostics) completeModule(name string, duration time.Duration) {
-	if name == "" {
+	if name == "" || !diagnostics.Enabled() {
 		return
 	}
 
@@ -267,6 +320,10 @@ applyHop implements the ObserveHop callback signature used by analyzer and
 planner.
 */
 func (diagnostics *Diagnostics) applyHop(from string, to string, duration time.Duration) {
+	if !diagnostics.Enabled() {
+		return
+	}
+
 	diagnostics.clocks.observeHop(from, to, duration)
 }
 
@@ -282,6 +339,10 @@ ObserveError records a subsystem-attributed error for the idiot-proofing hint.
 The most recent errors are kept so the diagram stays readable without flooding.
 */
 func (diagnostics *Diagnostics) ObserveError(source string, message string, caller string) {
+	if !diagnostics.Enabled() {
+		return
+	}
+
 	diagnostics.mutex.Lock()
 	defer diagnostics.mutex.Unlock()
 
@@ -319,6 +380,10 @@ ObservePassStart marks the moment a measurement pass begins servicing pending
 market rows. Until ObservePassEnd is called the pass is considered in-flight.
 */
 func (diagnostics *Diagnostics) ObservePassStart(at time.Time) {
+	if !diagnostics.Enabled() {
+		return
+	}
+
 	diagnostics.passMu.Lock()
 	defer diagnostics.passMu.Unlock()
 
@@ -332,6 +397,10 @@ ObservePassEnd marks the completion of a measurement pass and records how long
 it took.
 */
 func (diagnostics *Diagnostics) ObservePassEnd(at time.Time, duration time.Duration) {
+	if !diagnostics.Enabled() {
+		return
+	}
+
 	diagnostics.passMu.Lock()
 	defer diagnostics.passMu.Unlock()
 
@@ -367,6 +436,10 @@ ObserveIdleCheck records the last loop iteration that found no pending rows, so
 the diagram can report the engine is gated idle rather than blocked.
 */
 func (diagnostics *Diagnostics) ObserveIdleCheck(at time.Time) {
+	if !diagnostics.Enabled() {
+		return
+	}
+
 	diagnostics.passMu.Lock()
 	defer diagnostics.passMu.Unlock()
 
@@ -422,6 +495,8 @@ func (crypto *Crypto) bindDiagnostics() {
 
 /*
 Diagnostics returns a snapshot of the whole wired pipeline for a heartbeat.
+When the switch is off it returns only the status and toggle flag so the
+frontend can show "disabled" without paying any collection cost.
 */
 func (crypto *Crypto) Diagnostics() StreamDiagnostics {
 	if crypto == nil || crypto.diagnostics == nil {
@@ -430,15 +505,31 @@ func (crypto *Crypto) Diagnostics() StreamDiagnostics {
 		}
 	}
 
+	if !crypto.diagnostics.Enabled() {
+		return StreamDiagnostics{
+			Status:    "disabled",
+			Enabled:   false,
+			AtNs:      time.Now().UnixNano(),
+			StartedNs: crypto.diagnostics.started.UnixNano(),
+			Stages:    []ClockSnapshot{},
+			Hops:      []HopSnapshot{},
+			Queues:    []QueueSnapshot{},
+			Errors:    []ErrorSnapshot{},
+			Pass:      PassStatus{State: "idle"},
+		}
+	}
+
 	return StreamDiagnostics{
-		Status:    "flowing",
-		AtNs:      time.Now().UnixNano(),
-		StartedNs: crypto.diagnostics.started.UnixNano(),
-		Stages:    crypto.diagnostics.stageSnapshots(),
-		Hops:      crypto.diagnostics.hopSnapshots(),
-		Queues:    crypto.queueSnapshots(),
-		Errors:    crypto.diagnostics.errorSnapshots(),
-		Pass:      crypto.diagnostics.passStatus(time.Now()),
+		Status:     "flowing",
+		Enabled:    true,
+		AtNs:       time.Now().UnixNano(),
+		StartedNs:  crypto.diagnostics.started.UnixNano(),
+		Stages:     crypto.diagnostics.stageSnapshots(),
+		Hops:       crypto.diagnostics.hopSnapshots(),
+		Queues:     crypto.queueSnapshots(),
+		Errors:     crypto.diagnostics.errorSnapshots(),
+		Pass:       crypto.diagnostics.passStatus(time.Now()),
+		Goroutines: crypto.diagnostics.goroutineInventory(),
 	}
 }
 
@@ -662,23 +753,35 @@ func (diagnostics *Diagnostics) passStatus(now time.Time) PassStatus {
 }
 
 /*
-publishDiagnostics sends one snapshot every heartbeat onto the diagnostics
-WebRTC channel. No peer attached means the manifold transport drops it — the
-frame is replaceable state, not a ledger, and an empty canvas costs nothing.
+publishDiagnostics sends one snapshot per heartbeat onto the diagnostics
+WebRTC channel. When switched off it slows to an idle cadence and ships only
+the tiny "disabled" status frame, so a viewer can still re-enable collection
+while the pipeline pays nothing per heartbeat. No peer attached means the
+manifold transport drops it — the frame is replaceable state, not a ledger.
 */
 func (crypto *Crypto) publishDiagnostics() {
 	if crypto == nil || crypto.diagnostics == nil {
 		return
 	}
 
-	ticker := time.NewTicker(crypto.diagnostics.interval)
-	defer ticker.Stop()
-
 	for {
+		interval := crypto.diagnostics.interval
+
+		if interval <= 0 {
+			interval = 250 * time.Millisecond
+		}
+
+		if !crypto.diagnostics.Enabled() {
+			interval = diagnosticsIdleInterval
+		}
+
+		timer := time.NewTimer(interval)
+
 		select {
 		case <-crypto.ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			crypto.manifold.Push(types.FluidFrame{
 				Channel: types.DiagnosticsChannel,
 				Payload: telemetry.Encode(&wire.FrameT{
@@ -691,8 +794,145 @@ func (crypto *Crypto) publishDiagnostics() {
 }
 
 /*
-stageNames is the fixed ordering of observable pipeline nodes.
+diagnosticsIdleInterval is the heartbeat cadence while collection is switched
+off: six times slower than the live cadence, still fast enough that a viewer
+sees a toggle response within a beat or two.
 */
+const diagnosticsIdleInterval = 1500 * time.Millisecond
+
+/*
+goroutineInventory buckets every live goroutine by the function that owns it,
+refreshed at a slow cadence because a full runtime stack dump is the most
+expensive diagnostics read by far. The owner is the first non-runtime frame,
+so the dashboard reports "thesis", "kraken", "planner" and friends instead of
+one process-wide total. It runs only while diagnostics are enabled; the caller
+short-circuits it when the switch is off.
+*/
+const goroutineInventoryInterval = 2 * time.Second
+
+func (diagnostics *Diagnostics) goroutineInventory() []GoroutineOwner {
+	diagnostics.routinesMu.Lock()
+	defer diagnostics.routinesMu.Unlock()
+
+	now := time.Now()
+
+	if now.Sub(diagnostics.routinesAt) < goroutineInventoryInterval {
+		return diagnostics.routineCounters
+	}
+
+	stack := make([]byte, 1<<20)
+	size := runtime.Stack(stack, true)
+
+	if size >= len(stack) {
+		stack = make([]byte, size*2)
+		size = runtime.Stack(stack, true)
+	}
+
+	counts := make(map[string]GoroutineOwner)
+	scanner := bufio.NewScanner(bytes.NewReader(stack[:size]))
+	scanner.Buffer(make([]byte, 64*1024), 1<<20)
+
+	var currentOwner string
+	var currentState string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.HasPrefix(line, "goroutine ") {
+			if stateStart := strings.Index(line, "["); stateStart >= 0 {
+				currentState = line[stateStart:]
+			} else {
+				currentState = ""
+			}
+
+			currentOwner = ""
+
+			continue
+		}
+
+		if currentOwner != "" || currentState == "" {
+			continue
+		}
+
+		function := strings.TrimSpace(line)
+
+		if function == "" {
+			continue
+		}
+
+		// Skip the runtime scheduler frames so the owner is the first
+		// business frame that created or currently occupies this goroutine.
+		if strings.HasPrefix(function, "runtime.") ||
+			strings.HasPrefix(function, "internal/") {
+			continue
+		}
+
+		if paren := strings.Index(function, "("); paren >= 0 {
+			function = function[:paren]
+		}
+
+		currentOwner = ownerOf(function)
+		entry := counts[currentOwner]
+		entry.Owner = currentOwner
+		entry.Count++
+		entry.State = currentState
+		counts[currentOwner] = entry
+	}
+
+	owners := make([]GoroutineOwner, 0, len(counts))
+
+	for _, owner := range counts {
+		owners = append(owners, owner)
+	}
+
+	sort.Slice(owners, func(first int, second int) bool {
+		if owners[first].Count != owners[second].Count {
+			return owners[first].Count > owners[second].Count
+		}
+
+		return owners[first].Owner < owners[second].Owner
+	})
+
+	diagnostics.routinesAt = now
+	diagnostics.routineCounters = owners
+
+	return owners
+}
+
+/*
+ownerOf maps the first stack frame to the pipeline component it belongs to.
+The mapping is derived from import paths rather than the pipeline's stage
+names because goroutines live one level below the diagnostics stage labels.
+*/
+func ownerOf(function string) string {
+	switch {
+	case strings.Contains(function, "/kraken/"):
+		return "kraken"
+	case strings.Contains(function, "/signal/"):
+		return "signals"
+	case strings.Contains(function, "/logic/"):
+		return "logic"
+	case strings.Contains(function, "/strategy/"):
+		return "strategy"
+	case strings.Contains(function, "/broker/"):
+		return "broker"
+	case strings.Contains(function, "/ui/"):
+		return "ui"
+	case strings.Contains(function, "/trader/"):
+		return "trader"
+	case strings.Contains(function, "/types."):
+		return "thesis"
+	case strings.Contains(function, "/audit/"):
+		return "audit"
+	case strings.Contains(function, "/telemetry/"):
+		return "telemetry"
+	case strings.Contains(function, "/regulator/"):
+		return "regulator"
+	default:
+		return function
+	}
+}
+
 func stageNames() []string {
 	return []string{
 		"crypto",
@@ -705,6 +945,10 @@ func stageNames() []string {
 		"desk",
 	}
 }
+
+/*
+stageNames reports the fixed ordering of observable pipeline nodes.
+*/
 
 /*
 stageSnapshots enumerates every observable pipeline node in wiring order. The

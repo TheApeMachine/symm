@@ -6,45 +6,59 @@ import (
 )
 
 /*
-computeObservationTrust returns the epistemic trust coefficient Ω ∈ [0,1] for
-one node: the degree to which this observation deserves to drive a decision.
+computeObservationTrust is the node's influence mass Ω ∈ [0,1]:
 
-Ω = Separation × Maturity × TemporalFreshness × Skill
+	Ω = Maturity × HypothesisSeparation × Freshness × Skill
 
-Every factor is measured from the node's own provenance; an absent factor
-contributes its neutral value (1) rather than silently zeroing the observation,
-so only a genuinely degenerate reading — a separation that is literally muddy,
-a maturity floor that fails, a stale timestamp, or below-baseline skill —
-attenuates it.
+Signals emit Maturity and HypothesisSeparation. Freshness is age since At
+scaled by the observation's own Horizon (At − ObservedFrom). Skill applies
+only when a predictive coder published it. There is no invented strength or
+confidence term: a young, ambiguous, or stale reading simply carries little
+mass.
 */
+/*
+ObservationMass is the public name for the node's Ω used at graph compile.
+*/
+func ObservationMass(node *Node, now time.Time) float64 {
+	return computeObservationTrust(node, now)
+}
+
 func computeObservationTrust(node *Node, now time.Time) float64 {
-	if node == nil || node.Confidence <= 0 {
+	if node == nil || node.Kind == "" {
 		return 0
 	}
 
-	separation := nodeSeparation(node)
-	maturity := nodeMaturity(node)
-	freshness := nodeFreshness(node, now)
-	skill := nodeSkill(node)
+	trust := nodeMaturity(node) * nodeSeparation(node) *
+		nodeFreshness(node, now) * nodeSkill(node)
 
-	trust := node.Confidence * separation * maturity * freshness * skill
 	return math.Max(0, math.Min(1, trust))
 }
 
 /*
-nodeSeparation reads the competing-hypothesis sharpness stored by a signal as
-hypothesis_separation in the node's metadata. When a signal did not publish the
-separation, the reading is treated as unambiguously separated (1): the absence
-of a competing score is not evidence of ambiguity.
+nodeSeparation is the margin between competing hypotheses. Measurements that
+never stamped one honestly report zero — nothing has been shown to stand out.
+Non-measurement nodes have no rival-kernel census, so absence is neutral (1).
 */
 func nodeSeparation(node *Node) float64 {
+	if node == nil {
+		return 0
+	}
+
 	separation, found := node.Metadata["hypothesis_separation"].(float64)
 
 	if !found {
+		if node.Kind == KindMeasurement {
+			return 0
+		}
+
 		return 1
 	}
 
 	if math.IsNaN(separation) || math.IsInf(separation, 0) {
+		if node.Kind == KindMeasurement {
+			return 0
+		}
+
 		return 1
 	}
 
@@ -52,76 +66,62 @@ func nodeSeparation(node *Node) float64 {
 }
 
 /*
-nodeMaturity converts the signal's estimator maturity into a confidence factor.
-Maturity is already the fraction of a signal's own capacity the estimator has
-observed, so it is used directly. A provisional observation that never reported
-its maturity is kept at a defensible floor rather than trusted fully.
+nodeMaturity is the estimator's own filled fraction. Measurements start at
+zero and rise as support accumulates. Other kinds have no warmup census, so
+an unset maturity is treated as fully present rather than invented.
 */
 func nodeMaturity(node *Node) float64 {
+	if node == nil {
+		return 0
+	}
+
 	if node.Maturity <= 0 {
-		return 0.1
+		if node.Kind == KindMeasurement {
+			return 0
+		}
+
+		return 1
 	}
 
 	if math.IsNaN(node.Maturity) || math.IsInf(node.Maturity, 0) {
-		return 0.1
+		if node.Kind == KindMeasurement {
+			return 0
+		}
+
+		return 1
 	}
 
 	return math.Max(0, math.Min(1, node.Maturity))
 }
 
 /*
-nodeFreshness attenuates an observation as its natural relaxation time elapses.
-Each source owns a decay half-life matched to its physical timescale: order-flow
-touch reads die in under a second, lead-lag survives tens of seconds, and the
-fluid/cognitive fields relax over minutes. A node with no timestamp is treated
-as fresh (1) because staleness cannot be established without a clock.
+nodeFreshness is exp(−age / τ) where τ is the observation window that produced
+the node (Horizon, or At − ObservedFrom). Without a window there is no
+memory scale to invent, so the reading is treated as current.
 */
 func nodeFreshness(node *Node, now time.Time) float64 {
 	if node == nil || node.At.IsZero() || now.IsZero() {
 		return 1
 	}
 
-	halfLife := nodeHalflife(node)
 	elapsed := now.Sub(node.At).Seconds()
 
 	if elapsed < 0 {
 		elapsed = 0
 	}
 
-	return math.Exp(-elapsed / halfLife)
-}
+	horizon := node.Horizon.Seconds()
 
-/*
-nodeHalflife is the physical relaxation time of one observation source. The
-half-lives are stated in the source's own event-time: a touch-level depth or
-arrival read ages in hundreds of milliseconds, a volume-clock pump reading in
-seconds, cross-symbol dispersion in tens of seconds, and the manifold/cognition
-fields in minutes.
-*/
-func nodeHalflife(node *Node) float64 {
-	if node == nil {
-		return 10
+	if horizon <= 0 && !node.ObservedFrom.IsZero() &&
+		!node.At.Before(node.ObservedFrom) {
+		horizon = node.At.Sub(node.ObservedFrom).Seconds()
 	}
 
-	switch node.Kind {
-	case KindManifold:
-		return 30
-	case KindCognition:
-		return 60
+	if horizon <= 0 {
+		return 1
 	}
 
-	switch node.Source {
-	case "depthflow", "hawkes", "toxicity":
-		return 0.5
-	case "cvd", "pumpdump":
-		return 3
-	case "leadlag", "sentiment":
-		return 15
-	case "liquidity", "correlation", "exhaustion":
-		return 8
-	default:
-		return 10
-	}
+	return math.Exp(-elapsed / horizon)
 }
 
 /*

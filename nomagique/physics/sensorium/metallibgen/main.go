@@ -164,6 +164,10 @@ func (generator *Generator) SourceFiles() ([]string, error) {
 			return nil
 		}
 
+		if filepath.Base(path) == "helpers.metal" {
+			return nil
+		}
+
 		sources = append(sources, path)
 
 		return nil

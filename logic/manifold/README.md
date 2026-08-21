@@ -75,5 +75,12 @@ change trading decisions.
 | `phase.go` | Retains outcomes and performs the angular phase sweep. |
 | `constants.go` | Defines documented domain bounds. |
 
-Metal shader changes in `nomagique/physics/manifold/manifold.metal` require the
-package's metallib generation step before Go embeds the updated library.
+Metal shader changes in `nomagique/physics/sensorium/manifold.metal` require
+`make physics-manifold-metallib` before Go embeds `kernels.metallib`. The
+original kernel is the live engine; do not edit that Metal. The Go/ObjC host
+in the same package binds the uploaded ABI.
+
+The manifold is an active BVP solver: after each observational step it
+snapshots the field, injects do(Enter)/do(Join)/do(Hold) probes, relaxes
+`sqrt(MaxModes)` GPE/gas steps, and publishes crystallization scores as
+`E[Y | do(A)]`.

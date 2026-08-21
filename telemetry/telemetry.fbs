@@ -643,8 +643,14 @@ table DiagnosticPass {
   lastPassNs:long;
   sinceLastNs:long;
 }
+table DiagnosticGoroutine {
+  owner:string (required);
+  count:long;
+  state:string;
+}
 table DiagnosticsFrame {
   status:string (required);
+  enabled:bool;
   atNs:long;
   startedNs:long;
   stages:[DiagnosticClock] (required);
@@ -652,6 +658,7 @@ table DiagnosticsFrame {
   queues:[DiagnosticQueue] (required);
   errors:[DiagnosticError] (required);
   pass:DiagnosticPass (required);
+  goroutines:[DiagnosticGoroutine];
 }
 
 union Frame {

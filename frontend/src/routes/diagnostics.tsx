@@ -447,6 +447,8 @@ const StageDetail = ({
 
 const OverviewDetail = ({ frame }: { frame: DiagnosticsFrame }) => {
 	const latestError = frame.errors?.[0];
+	const owners = frame.goroutines ?? [];
+	const total = owners.reduce((sum, owner) => sum + owner.count, 0);
 
 	return (
 		<>
@@ -463,6 +465,31 @@ const OverviewDetail = ({ frame }: { frame: DiagnosticsFrame }) => {
 						{latestError.message}
 					</div>
 				) : null}
+			</div>
+			<div className="border-(--line) border-b px-3 py-2.5 font-mono text-[12px] font-bold text-(--f1)">
+				Goroutines <span className="text-(--acc)">{total.toLocaleString()}</span>
+			</div>
+			<div className="min-h-0 flex-1 overflow-auto px-3 py-2">
+				{owners.length === 0 ? (
+					<div className="font-mono text-[9px] text-(--f4)">
+						No goroutine inventory reported yet.
+					</div>
+				) : (
+					<div className="flex flex-col gap-px">
+						{owners.map((owner) => (
+							<div
+								key={owner.owner}
+								className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-2 border-(--line)/40 border-b py-1 last:border-b-0"
+								title={owner.state}
+							>
+								<span className="truncate text-(--f2)">{owner.owner}</span>
+								<span className="text-right tabular-nums text-(--acc)">
+									{owner.count.toLocaleString()}
+								</span>
+							</div>
+						))}
+					</div>
+				)}
 			</div>
 		</>
 	);
@@ -548,10 +575,14 @@ const StatusStrip = ({
 	frame,
 	connection,
 	deltas,
+	enabled,
+	onToggle,
 }: {
 	frame: DiagnosticsFrame;
 	connection: RTCPeerConnectionState | "connecting";
 	deltas: Map<string, number>;
+	enabled: boolean;
+	onToggle: (enabled: boolean) => void;
 }) => {
 	const queues = frame.queues ?? [];
 	const pending = queues.reduce((total, queue) => total + queue.depth, 0);
@@ -565,6 +596,10 @@ const StatusStrip = ({
 		(stage) => stage.count > 0 || (stage.active ?? 0) > 0,
 	).length;
 	const errored = (frame.errors ?? []).length;
+	const goroutines = (frame.goroutines ?? []).reduce(
+		(total, owner) => total + owner.count,
+		0,
+	);
 	const lifetime =
 		frame.started_ns && frame.at_ns
 			? formatNanos(frame.at_ns - frame.started_ns)
@@ -610,6 +645,12 @@ const StatusStrip = ({
 					{draining}
 				</strong>
 			</span>
+			<span>
+				goroutines{" "}
+				<strong className="inline-block w-[5ch] text-right tabular-nums text-(--acc)">
+					{formatCount(goroutines)}
+				</strong>
+			</span>
 			{errored > 0 ? (
 				<span>
 					errors{" "}
@@ -622,7 +663,22 @@ const StatusStrip = ({
 				pass{" "}
 				<strong className="text-(--f1)">{frame.pass?.state ?? "idle"}</strong>
 			</span>
-			<span className="ml-auto">
+			<button
+				type="button"
+				onClick={() => onToggle(!enabled)}
+				className={`ml-auto flex cursor-pointer items-center gap-1.5 rounded-sm border px-1.5 py-0.5 uppercase ${enabled ? "border-(--up)/60 text-(--up)" : "border-(--warn)/60 text-(--warn)"}`}
+				title={
+					enabled
+						? "Switch diagnostics collection off"
+						: "Switch diagnostics collection on"
+				}
+			>
+				<span
+					className={`size-1.5 rounded-full ${enabled ? "bg-(--up)" : "bg-(--warn)"}`}
+				/>
+				{enabled ? "on" : "off"}
+			</button>
+			<span>
 				uptime{" "}
 				<span className="inline-block w-[9ch] text-right tabular-nums">
 					{lifetime}
@@ -633,6 +689,14 @@ const StatusStrip = ({
 };
 
 /*
+DiagnosticsControlURL locates the hub's runtime on/off endpoint, mirroring the
+WebRTC signaling origin (env override with a localhost default).
+*/
+const diagnosticsControlURL = () =>
+	import.meta.env.VITE_SYMM_WEBRTC_URL?.trim().replace(/\/webrtc\/manifold$/, "") ||
+	"http://127.0.0.1:8765";
+
+/*
 DiagnosticsDataflow renders the live analytical data plane as a wiring graph:
 signals, logic, strategy, desks, and the queues between them, with edges that
 animate with the direction and state of flow. The server-reported queue
@@ -641,9 +705,13 @@ topology is the only source of edges; nothing is invented.
 export const DiagnosticsDataflow = ({
 	frame,
 	connection = "connected",
+	enabled = true,
+	onToggleEnabled,
 }: {
 	frame: DiagnosticsFrame;
 	connection?: RTCPeerConnectionState | "connecting";
+	enabled?: boolean;
+	onToggleEnabled?: (enabled: boolean) => void;
 }) => {
 	const [selection, setSelection] = useState<DiagnosticsSelection | null>(null);
 	const previousDepths = useRef(new Map<string, number>());
@@ -690,18 +758,37 @@ export const DiagnosticsDataflow = ({
 					frame={frame}
 					connection={connection}
 					deltas={queueDeltas}
+					enabled={enabled}
+					onToggle={onToggleEnabled ?? (() => {})}
 				/>
 				<div className="flex h-6 shrink-0 items-center border-(--line) border-b bg-(--surface)">
 					<Legend />
 				</div>
 				<div className="min-h-0 flex-1 overflow-hidden p-6">
-					<DiagnosticsGraph
-						frame={frame}
-						queueDeltas={queueDeltas}
-						hopDeltas={hopDeltas}
-						selection={selection}
-						onSelect={setSelection}
-					/>
+					{enabled ? (
+						<DiagnosticsGraph
+							frame={frame}
+							queueDeltas={queueDeltas}
+							hopDeltas={hopDeltas}
+							selection={selection}
+							onSelect={setSelection}
+						/>
+					) : (
+						<div className="flex h-full items-center justify-center">
+							<div className="text-center font-mono">
+								<div className="text-[10px] uppercase tracking-widest text-(--f4)">
+									Diagnostics collection is switched off
+								</div>
+								<Button
+									variant="outline"
+									onClick={() => onToggleEnabled?.(true)}
+									className="mt-3"
+								>
+									Switch on
+								</Button>
+							</div>
+						</div>
+					)}
 				</div>
 			</section>
 			<aside className="flex min-h-0 flex-col overflow-hidden bg-(--surface)">
@@ -721,10 +808,17 @@ const DiagnosticsSurface = () => {
 	const [connection, setConnection] = useState<
 		RTCPeerConnectionState | "connecting"
 	>("connecting");
+	const [enabled, setEnabled] = useState<boolean>(true);
 
 	useEffect(() => {
 		const feed = new DiagnosticsWebRTCFeed({
-			onFrame: setFrame,
+			onFrame: (next) => {
+				setFrame(next);
+
+				if (next.enabled !== undefined) {
+					setEnabled(next.enabled);
+				}
+			},
 			onState: setConnection,
 			onError: (error) => {
 				setConnection("connecting");
@@ -736,7 +830,64 @@ const DiagnosticsSurface = () => {
 		return () => feed.close();
 	}, []);
 
-	return <DiagnosticsDataflow frame={frame} connection={connection} />;
+	useEffect(() => {
+		const controller = new AbortController();
+
+		fetch(`${diagnosticsControlURL()}/diagnostics`, {
+			signal: controller.signal,
+		})
+			.then((response) => response.ok && response.json())
+			.then((state: { enabled?: boolean } | false) => {
+				if (state && typeof state.enabled === "boolean") {
+					setEnabled(state.enabled);
+				}
+			})
+			.catch((error: unknown) => {
+				if (
+					error instanceof DOMException &&
+					error.name === "AbortError"
+				) {
+					return;
+				}
+
+				console.warn(
+					"diagnostics state read:",
+					error instanceof Error ? error.message : String(error),
+				);
+			});
+
+		return () => controller.abort();
+	}, []);
+
+	const toggleEnabled = async (next: boolean) => {
+		setEnabled(next);
+
+		try {
+			const response = await fetch(`${diagnosticsControlURL()}/diagnostics`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ enabled: next }),
+			});
+
+			if (!response.ok) {
+				throw new Error(`diagnostics toggle failed with ${response.status}`);
+			}
+		} catch (error) {
+			console.warn(
+				"diagnostics toggle:",
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	};
+
+	return (
+		<DiagnosticsDataflow
+			frame={frame}
+			connection={connection}
+			enabled={enabled}
+			onToggleEnabled={toggleEnabled}
+		/>
+	);
 };
 
 export const Route = createFileRoute("/diagnostics")({

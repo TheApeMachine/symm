@@ -483,6 +483,50 @@ func TestNonComparableType(t *testing.T) {
 	})
 }
 
+func TestCoalesce(t *testing.T) {
+	Convey("Given a coalescing consumer", t, func() {
+		consumer := NewConsumer[int]("audit", func() {}).Coalesce()
+		mr := NewMapReduce([]*Consumer[int]{consumer}, nil, nil)
+
+		Convey("When many values are pushed", func() {
+			mr.Push(1)
+			mr.Push(2)
+			mr.Push(3)
+
+			Convey("It should retain only the newest unpublished value", func() {
+				So(mr.Length(consumer), ShouldEqual, uint64(1))
+				item, ok := mr.Pop(consumer)
+				So(ok, ShouldBeTrue)
+				So(item, ShouldEqual, 3)
+				So(mr.Length(consumer), ShouldEqual, uint64(0))
+			})
+		})
+	})
+}
+
+func TestPushLatest(t *testing.T) {
+	Convey("Given a FIFO consumer", t, func() {
+		mr := Setup[int]([]string{"A", "B"}, nil, nil)
+		consumers := mr.consumersSnapshot()
+
+		Convey("When later values replace unpublished ones", func() {
+			mr.PushLatest(1)
+			mr.PushLatest(2)
+			mr.PushLatest(3)
+
+			Convey("It should leave each consumer with only the newest value", func() {
+				for _, consumer := range consumers {
+					So(mr.Length(consumer), ShouldEqual, uint64(1))
+					item, ok := mr.Pop(consumer)
+					So(ok, ShouldBeTrue)
+					So(item, ShouldEqual, 3)
+					So(mr.Length(consumer), ShouldEqual, uint64(0))
+				}
+			})
+		})
+	})
+}
+
 func BenchmarkPush(b *testing.B) {
 	mr := Setup[int]([]string{"A"}, nil, nil)
 

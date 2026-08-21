@@ -11,65 +11,69 @@ import (
 func TestComputeObservationTrust(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 
-	Convey("Given a fresh, mature, unambiguous, skilled observation", t, func() {
+	Convey("Given a fresh, mature, unambiguous measurement", t, func() {
 		node := &Node{
-			Confidence: 0.9,
-			Maturity:   1,
-			At:         now,
-			Kind:       KindMeasurement,
-			Source:     "hawkes",
+			Maturity: 1,
+			At:       now,
+			Horizon:  time.Second,
+			Kind:     KindMeasurement,
+			Source:   "hawkes",
 			Metadata: map[string]any{
-				"task_skill": 2.0,
+				"hypothesis_separation": 1.0,
+				"task_skill":            2.0,
 			},
 		}
 
 		trust := computeObservationTrust(node, now)
 
-		Convey("It should be trusted near fully", func() {
-			So(trust, ShouldAlmostEqual, 0.9, 1e-9)
+		Convey("It should be trusted fully", func() {
+			So(trust, ShouldAlmostEqual, 1.0, 1e-9)
 		})
 	})
 
-	Convey("Given a stale touch-level order flow observation", t, func() {
+	Convey("Given a stale measurement whose own horizon has elapsed", t, func() {
 		node := &Node{
-			Confidence: 0.9,
-			Maturity:   1,
-			At:         now.Add(-3 * time.Second),
-			Kind:       KindMeasurement,
-			Source:     "hawkes",
+			Maturity: 1,
+			At:       now.Add(-time.Second),
+			Horizon:  time.Second,
+			Kind:     KindMeasurement,
+			Source:   "hawkes",
+			Metadata: map[string]any{
+				"hypothesis_separation": 1.0,
+			},
 		}
 
 		trust := computeObservationTrust(node, now)
 
-		Convey("It should be heavily attenuated by temporal freshness", func() {
-			So(trust, ShouldBeLessThan, 0.02)
-			So(trust, ShouldBeGreaterThan, 0)
+		Convey("It should decay by exp(-age/horizon)", func() {
+			So(trust, ShouldAlmostEqual, math.Exp(-1), 1e-9)
 		})
 	})
 
-	Convey("Given an immature observation below its maturity floor", t, func() {
+	Convey("Given an immature measurement", t, func() {
 		node := &Node{
-			Confidence: 0.9,
-			Maturity:   0.05,
-			At:         now,
-			Kind:       KindMeasurement,
-			Source:     "cvd",
+			Maturity: 0.05,
+			At:       now,
+			Kind:     KindMeasurement,
+			Source:   "cvd",
+			Metadata: map[string]any{
+				"hypothesis_separation": 1.0,
+			},
 		}
 
 		trust := computeObservationTrust(node, now)
 
 		Convey("It should be attenuated by maturity", func() {
-			So(trust, ShouldAlmostEqual, 0.045, 1e-9)
+			So(trust, ShouldAlmostEqual, 0.05, 1e-9)
 		})
 	})
 
-	Convey("Given an ambiguous observation with separation zero", t, func() {
+	Convey("Given an ambiguous measurement with separation zero", t, func() {
 		node := &Node{
-			Confidence: 0.9,
-			Maturity:   1,
-			At:         now,
-			Kind:       KindMeasurement,
-			Source:     "liquidity",
+			Maturity: 1,
+			At:       now,
+			Kind:     KindMeasurement,
+			Source:   "liquidity",
 			Metadata: map[string]any{
 				"hypothesis_separation": 0.0,
 			},
@@ -82,12 +86,24 @@ func TestComputeObservationTrust(t *testing.T) {
 		})
 	})
 
+	Convey("Given a measurement that never stamped separation", t, func() {
+		node := &Node{
+			Maturity: 1,
+			At:       now,
+			Kind:     KindMeasurement,
+			Source:   "cvd",
+		}
+
+		Convey("It should carry no mass", func() {
+			So(computeObservationTrust(node, now), ShouldEqual, 0)
+		})
+	})
+
 	Convey("Given an unskilled predictive coder", t, func() {
 		node := &Node{
-			Confidence: 0.9,
-			Maturity:   1,
-			At:         now,
-			Kind:       KindResonance,
+			Maturity: 1,
+			At:       now,
+			Kind:     KindResonance,
 			Metadata: map[string]any{
 				"task_skill": 0.0,
 			},
@@ -100,7 +116,7 @@ func TestComputeObservationTrust(t *testing.T) {
 		})
 	})
 
-	Convey("Given a nil or zero-confidence node", t, func() {
+	Convey("Given a nil node", t, func() {
 		So(computeObservationTrust(nil, now), ShouldEqual, 0)
 		So(computeObservationTrust(&Node{}, now), ShouldEqual, 0)
 	})
@@ -108,11 +124,13 @@ func TestComputeObservationTrust(t *testing.T) {
 	Convey("Trust must remain in the closed unit interval", t, func() {
 		for maturity := 0.0; maturity <= 2; maturity += 0.25 {
 			node := &Node{
-				Confidence: 1.5,
-				Maturity:   maturity,
-				At:         now,
-				Kind:       KindMeasurement,
-				Source:     "sentiment",
+				Maturity: maturity,
+				At:       now,
+				Kind:     KindMeasurement,
+				Source:   "sentiment",
+				Metadata: map[string]any{
+					"hypothesis_separation": 1.0,
+				},
 			}
 
 			trust := computeObservationTrust(node, now)

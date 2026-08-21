@@ -44,8 +44,17 @@ func (diagnostics StreamDiagnostics) Wire() *wire.DiagnosticsFrameT {
 		}
 	}
 
+	goroutines := make([]*wire.DiagnosticGoroutineT, len(diagnostics.Goroutines))
+
+	for index, goroutine := range diagnostics.Goroutines {
+		goroutines[index] = &wire.DiagnosticGoroutineT{
+			Owner: goroutine.Owner, Count: goroutine.Count, State: goroutine.State,
+		}
+	}
+
 	return &wire.DiagnosticsFrameT{
 		Status:    diagnostics.Status,
+		Enabled:   diagnostics.Enabled,
 		AtNs:      diagnostics.AtNs,
 		StartedNs: diagnostics.StartedNs,
 		Stages:    stages,
@@ -57,5 +66,6 @@ func (diagnostics StreamDiagnostics) Wire() *wire.DiagnosticsFrameT {
 			LastPassNs:  diagnostics.Pass.LastPassNs,
 			SinceLastNs: diagnostics.Pass.SinceLastNs,
 		},
+		Goroutines: goroutines,
 	}
 }

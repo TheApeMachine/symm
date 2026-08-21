@@ -1,6 +1,7 @@
 package types
 
 import (
+	"math"
 	"strings"
 	"time"
 )
@@ -96,11 +97,17 @@ func (graph *Graph) MeanTrust(now time.Time) float64 {
 	for _, view := range graph.reasoningNodeViews() {
 		node := graph.Nodes[view.ID]
 
-		if node == nil || node.Confidence <= 0 {
+		if node == nil {
 			continue
 		}
 
-		total += computeObservationTrust(node, now)
+		trust := computeObservationTrust(node, now)
+
+		if trust <= 0 {
+			continue
+		}
+
+		total += trust
 		count++
 	}
 
@@ -122,26 +129,11 @@ func (graph *Graph) legTrust(
 			continue
 		}
 
-		if node.Maturity < leg.MaturityFloor {
+		if node.Value <= 0 && (node.Normalized == nil || *node.Normalized <= 0) {
 			continue
 		}
 
-		if node.Value <= 0 {
-			continue
-		}
-
-		separation, embedded, found := graph.observationSeparation(node)
-
-		if leg.SeparationFloor > 0 &&
-			(!found || separation < leg.SeparationFloor) {
-			continue
-		}
-
-		trust := computeObservationTrust(node, now)
-
-		if found && !embedded {
-			trust *= separation
-		}
+		trust := computeObservationTrust(node, now) * NodeInfluence(node)
 
 		if trust > bestTrust {
 			bestTrust = trust
@@ -149,6 +141,24 @@ func (graph *Graph) legTrust(
 	}
 
 	return bestTrust
+}
+
+/*
+nodeInfluence is the relational magnitude of a claim: the unit-interval
+normalized metric when the producer emitted one, otherwise presence (1) so a
+raw-only physics reading still participates without treating a price as a
+weight.
+*/
+func NodeInfluence(node *Node) float64 {
+	if node == nil {
+		return 0
+	}
+
+	if node.Normalized != nil {
+		return math.Abs(*node.Normalized)
+	}
+
+	return 1
 }
 
 func legMatches(

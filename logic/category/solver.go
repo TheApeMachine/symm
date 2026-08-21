@@ -153,7 +153,7 @@ func (solver *Solver) consumeSymbol(symbol *types.Symbol) error {
 		categories[index].At = solver.thesis.At
 	}
 
-	symbol.Categories.Push(categories)
+	symbol.Categories.PushLatest(categories)
 
 	return nil
 }

@@ -7,15 +7,15 @@ import (
 )
 
 type ReasoningNodeT struct {
-	Id         string  `json:"id"`
-	Label      string  `json:"label"`
-	Symbol     string  `json:"symbol"`
-	Tier       string  `json:"tier"`
-	Role       string  `json:"role"`
-	Source     string  `json:"source"`
-	Value      float64 `json:"value"`
+	Id string `json:"id"`
+	Label string `json:"label"`
+	Symbol string `json:"symbol"`
+	Tier string `json:"tier"`
+	Role string `json:"role"`
+	Source string `json:"source"`
+	Value float64 `json:"value"`
 	Confidence float64 `json:"confidence"`
-	Derived    bool    `json:"derived"`
+	Derived bool `json:"derived"`
 }
 
 func (t *ReasoningNodeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

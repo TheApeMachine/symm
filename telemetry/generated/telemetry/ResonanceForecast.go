@@ -7,12 +7,12 @@ import (
 )
 
 type ResonanceForecastT struct {
-	ForwardCurve     []float64     `json:"forwardCurve"`
-	ForwardRetention []float64     `json:"forwardRetention"`
-	SupportedHorizon int64         `json:"supportedHorizon"`
-	ProbeHorizon     int64         `json:"probeHorizon"`
-	Aggregate        *PosteriorT   `json:"aggregate"`
-	Posterior        []*PosteriorT `json:"posterior"`
+	ForwardCurve []float64 `json:"forwardCurve"`
+	ForwardRetention []float64 `json:"forwardRetention"`
+	SupportedHorizon int64 `json:"supportedHorizon"`
+	ProbeHorizon int64 `json:"probeHorizon"`
+	Aggregate *PosteriorT `json:"aggregate"`
+	Posterior []*PosteriorT `json:"posterior"`
 }
 
 func (t *ResonanceForecastT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

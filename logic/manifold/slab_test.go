@@ -6,17 +6,16 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 )
 
 func TestSlabEncoderParticles(t *testing.T) {
 	Convey("Given one resident oscillator", t, func() {
-		encoder := slabEncoder{config: pmanifold.Config{
+		encoder := slabEncoder{config: Domain{
 			DomainX: 2,
 			DomainY: 4,
 			DomainZ: 8,
 		}}
-		payload := encoder.Particles([]pmanifold.Oscillator{{
+		payload := encoder.Particles([]Oscillator{{
 			PosX:      1,
 			PosY:      2,
 			PosZ:      4,
@@ -58,12 +57,12 @@ func TestSlabEncoderParticles(t *testing.T) {
 }
 
 func BenchmarkSlabEncoderParticles(b *testing.B) {
-	encoder := slabEncoder{config: pmanifold.Config{
+	encoder := slabEncoder{config: Domain{
 		DomainX: 1,
 		DomainY: 1,
 		DomainZ: 1,
 	}}
-	oscillators := make([]pmanifold.Oscillator, oscillatorPoolCapacity)
+	oscillators := make([]Oscillator, oscillatorPoolCapacity)
 	b.ReportAllocs()
 
 	for b.Loop() {

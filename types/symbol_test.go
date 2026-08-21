@@ -72,6 +72,33 @@ func TestSymbolAppendMeasurement(t *testing.T) {
 		})
 	})
 
+	Convey("Given many measurements appended for audit and live solvers", t, func() {
+		symbol := NewSymbol("BTC/USD")
+
+		for index := range 8 {
+			measurement := nmtypes.NewMeasurement(
+				"row-"+string(rune('a'+index)),
+				string(SourceHawkes),
+				0,
+				0,
+			)
+			symbol.AppendMeasurement(measurement)
+		}
+
+		Convey("It should keep the audit cursor at the newest row", func() {
+			audit := symbol.MeasurementConsumers[MeasurementConsumerAudit]
+			So(symbol.Measurements.Length(audit), ShouldEqual, uint64(1))
+			row, found := symbol.Measurements.Pop(audit)
+			So(found, ShouldBeTrue)
+			So(row.ID, ShouldEqual, "row-h")
+		})
+
+		Convey("It should retain the full FIFO for live solvers", func() {
+			category := symbol.MeasurementConsumers[MeasurementConsumerCategory]
+			So(symbol.Measurements.Length(category), ShouldEqual, uint64(8))
+		})
+	})
+
 	Convey("Given a measurement identified as a different symbol", t, func() {
 		symbol := NewSymbol("BTC/USD")
 		measurement := nmtypes.NewMeasurement("wrong", string(SourceHawkes), 0, 0)
@@ -177,6 +204,46 @@ func TestSymbolAppendLevel3(t *testing.T) {
 			}
 
 			So(rows, ShouldResemble, []kraken.Level3Data{level3})
+		})
+	})
+
+	Convey("Given many Level 3 frames appended to a symbol", t, func() {
+		symbol := NewSymbol("BTC/USD")
+
+		for index := range 4 {
+			symbol.AppendLevel3(kraken.Level3Data{
+				Symbol:   "BTC/USD",
+				Checksum: uint32(index + 1),
+			})
+		}
+
+		Convey("It should keep one frame for geometry readers and every frame for toxicity", func() {
+			depthFlow := symbol.Level3Consumers[Level3ConsumerDepthFlow]
+			pumpDump := symbol.Level3Consumers[Level3ConsumerPumpDump]
+			toxicity := symbol.Level3Consumers[Level3ConsumerToxicity]
+			So(symbol.level3.Length(depthFlow), ShouldEqual, uint64(1))
+			So(symbol.level3.Length(pumpDump), ShouldEqual, uint64(1))
+			So(symbol.level3.Length(toxicity), ShouldEqual, uint64(4))
+		})
+	})
+}
+
+func TestSymbolQueueDepths(t *testing.T) {
+	Convey("Given measurements appended to one symbol", t, func() {
+		symbol := NewSymbol("BTC/USD")
+
+		for range 5 {
+			symbol.AppendMeasurement(
+				nmtypes.NewMeasurement("row", string(SourceHawkes), 0, 0),
+			)
+		}
+
+		Convey("It should report live solver pressure without the audit cursor", func() {
+			depths := symbol.QueueDepths()
+			So(depths["measurements"], ShouldEqual, uint64(15))
+			So(symbol.Measurements.Length(
+				symbol.MeasurementConsumers[MeasurementConsumerAudit],
+			), ShouldEqual, uint64(1))
 		})
 	})
 }

@@ -22,6 +22,7 @@ export { Decision, DecisionT } from './telemetry/decision.js';
 export { DecisionTrace, DecisionTraceT } from './telemetry/decision-trace.js';
 export { DiagnosticClock, DiagnosticClockT } from './telemetry/diagnostic-clock.js';
 export { DiagnosticError, DiagnosticErrorT } from './telemetry/diagnostic-error.js';
+export { DiagnosticGoroutine, DiagnosticGoroutineT } from './telemetry/diagnostic-goroutine.js';
 export { DiagnosticHop, DiagnosticHopT } from './telemetry/diagnostic-hop.js';
 export { DiagnosticPass, DiagnosticPassT } from './telemetry/diagnostic-pass.js';
 export { DiagnosticQueue, DiagnosticQueueT } from './telemetry/diagnostic-queue.js';

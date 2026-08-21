@@ -7,12 +7,12 @@ import (
 )
 
 type HindsightSymbolT struct {
-	Symbol        string                   `json:"symbol"`
-	UpboundPct    float64                  `json:"upboundPct"`
-	RealizedPct   float64                  `json:"realizedPct"`
-	MissedPct     float64                  `json:"missedPct"`
-	Legs          int64                    `json:"legs"`
-	MissedLegs    int64                    `json:"missedLegs"`
+	Symbol string `json:"symbol"`
+	UpboundPct float64 `json:"upboundPct"`
+	RealizedPct float64 `json:"realizedPct"`
+	MissedPct float64 `json:"missedPct"`
+	Legs int64 `json:"legs"`
+	MissedLegs int64 `json:"missedLegs"`
 	Opportunities []*HindsightOpportunityT `json:"opportunities"`
 }
 

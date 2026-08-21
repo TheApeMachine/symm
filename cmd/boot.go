@@ -319,6 +319,9 @@ func BootWithHub(
 	}
 
 	attachDiagnosticsErrorBridge(hub, crypto)
+	if hub != nil {
+		hub.SetDiagnosticsControl(crypto)
+	}
 	systems := []Runnable{
 		api,
 	}

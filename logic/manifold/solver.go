@@ -15,11 +15,10 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/geometry"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
+	pmanifold "github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/signal/compute"
 	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -52,10 +51,10 @@ type Solver struct {
 	err         error
 	thesis      *types.Thesis
 	api         websocket.BookSource
-	config      pmanifold.Config
-	physics     *pmanifold.Solver
+	config      Domain
+	physics     *pmanifold.Manifold
 	slabs       slabEncoder
-	oscillators []pmanifold.Oscillator
+	oscillators []Oscillator
 	reading     pmanifold.Reading
 	recorder    *audit.Recorder
 	universe    []string
@@ -92,7 +91,7 @@ the market update relaxes inside the same resident domain.
 type manifoldCut struct {
 	symbol      string
 	carrier     uint32
-	oscillators []pmanifold.Oscillator
+	oscillators []Oscillator
 }
 
 /*
@@ -125,20 +124,12 @@ func NewSolver(
 		deltaT = configuredDelta.Seconds()
 	}
 
-	config, err := pmanifold.NewConfig(
-		64,
-		64,
-		64,
-		1,
-		32,
-		deltaT,
-		5.0/3.0,
-		phaseLatticeWidth,
-		oscillatorPoolCapacity,
+	config := liveDomain(deltaT)
+	physics, physicsErr := pmanifold.NewManifold(
+		int(config.GridX),
+		int(config.GridY),
+		int(config.GridZ),
 	)
-	errnie.Error(err)
-	pmanifold.DefaultMarketGasBoundaries().Apply(&config)
-	physics, physicsErr := newPhysics(config)
 	errnie.Error(physicsErr)
 	corpus, corpusErr := geometry.NewCorpus[types.PhaseOutcome](phaseCorpusCapacity)
 	errnie.Error(corpusErr)
@@ -173,27 +164,6 @@ func NewSolver(
 	thesis.Work(types.SourceManifold).Register(solver.work)
 
 	return solver
-}
-
-func newPhysics(config pmanifold.Config) (*pmanifold.Solver, error) {
-	var physics *pmanifold.Solver
-
-	err := compute.WithMetalInit(func() error {
-		created, err := pmanifold.NewSolver(config)
-
-		if err != nil {
-			return err
-		}
-
-		physics = created
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return physics, nil
 }
 
 func (solver *Solver) ParticleCount() int {
@@ -446,7 +416,7 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 
 	sort.Strings(symbolNames)
 	cuts := make([]manifoldCut, 0, len(symbolNames))
-	oscillators := make([]pmanifold.Oscillator, 0)
+	oscillators := make([]Oscillator, 0)
 	etaMass := 0.0
 	betaMass := 0.0
 	driveMass := 0.0
@@ -496,33 +466,6 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 		return nil, nil
 	}
 
-	if err := solver.physics.ResetDeposits(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"manifold: failed to reset deposits",
-			err,
-		))
-	}
-
-	for _, cut := range cuts {
-		drive := drives[cut.symbol]
-
-		if err := solver.depositPair(cut.carrier, drive.buy, drive.sell); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := solver.physics.SetOscillators(oscillators); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"failed to load %d manifold oscillators across %d symbols: %v",
-				len(oscillators), len(cuts), err,
-			),
-			err,
-		))
-	}
-
 	solver.oscillators = oscillators
 	solver.priorAt = at
 
@@ -557,7 +500,7 @@ func (solver *Solver) bookOscillators(
 	buyExcitation float64,
 	sellExcitation float64,
 	at time.Time,
-) ([]pmanifold.Oscillator, error) {
+) ([]Oscillator, error) {
 	var orders []struct {
 		id        string
 		side      mgrbook.BookDirection
@@ -728,7 +671,7 @@ func (solver *Solver) bookOscillators(
 	}
 
 	next := make(map[string][3]float64, len(orders))
-	oscillators := make([]pmanifold.Oscillator, 0, len(orders))
+	oscillators := make([]Oscillator, 0, len(orders))
 
 	for index, order := range orders {
 		energy := 1.0 + buyExcitation
@@ -783,7 +726,7 @@ func (solver *Solver) bookOscillators(
 			phase += math.Pi
 		}
 
-		oscillators = append(oscillators, pmanifold.Oscillator{
+		oscillators = append(oscillators, Oscillator{
 			Phase:     math.Mod(phase, 2*math.Pi),
 			Omega:     omega,
 			Amplitude: math.Sqrt(energy),
@@ -800,38 +743,6 @@ func (solver *Solver) bookOscillators(
 	solver.priorPos[symbol] = next
 
 	return oscillators, nil
-}
-
-func (solver *Solver) depositPair(carrier uint32, buy float64, sell float64) error {
-	total := buy + sell
-
-	if total <= 0 {
-		return nil
-	}
-
-	maxX := float64(solver.config.GridX - 1)
-	buyCell := uint32(math.Round(buy / total * maxX))
-	sellCell := uint32(math.Round(sell / total * maxX))
-	cellY := solver.config.GridY / 2
-	cellZ := carrier % solver.config.GridZ
-	buyRho := buy / total * solver.config.RhoMin
-	sellRho := sell / total * solver.config.RhoMin
-
-	if err := solver.physics.DepositCell(
-		buyCell, cellY, cellZ,
-		buyRho, 0, 0, 0, buyRho*solver.config.CV,
-	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"manifold: failed to deposit buy intensity",
-			err,
-		))
-	}
-
-	return solver.physics.DepositCell(
-		sellCell, cellY, cellZ,
-		sellRho, 0, 0, 0, sellRho*solver.config.CV,
-	)
 }
 
 /*
@@ -855,36 +766,7 @@ func (solver *Solver) Step(
 		))
 	}
 
-	controls := solver.config.RuntimeControls()
-	controls.DeltaT = solver.config.DeltaT
-
-	if solver.driveBeta > 0 {
-		advective := solver.config.AdvectiveDeltaT(solver.driveBeta)
-
-		if advective > 0 && advective < controls.DeltaT {
-			controls.DeltaT = advective
-		}
-
-		controls.EnergyDecay = solver.driveBeta
-		controls.MetabolicRate = 1 / controls.DeltaT
-	}
-
-	if solver.driveEta > 0 {
-		controls.GInteraction = solver.config.GInteraction() * solver.driveEta
-	}
-
-	if err := solver.physics.SetControls(controls); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"manifold: failed to apply runtime controls",
-			err,
-		))
-	}
-
-	// One physics step per loaded iteration: throughput is dominated by new
-	// order flow, so the field advances exactly once over each fresh batch
-	// rather than relaxing between observations that already arrived.
-	reading, err := solver.physics.Step()
+	_, err := solver.physics.Step(oscillatorsToState(solver.oscillators))
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -895,23 +777,9 @@ func (solver *Solver) Step(
 	}
 
 	solver.stepped = true
-	solver.reading = reading
-	thesis.StoreManifold(reading)
-
-	if len(solver.oscillators) > 0 {
-		oscillators, readErr := solver.physics.ReadOscillators(len(solver.oscillators))
-
-		if readErr != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"failed to read manifold oscillators: "+readErr.Error(),
-				readErr,
-			))
-		}
-
-		solver.oscillators = oscillators
-	}
-
+	solver.reading = solver.physics.Reading()
+	thesis.StoreManifold(solver.reading)
+	solver.oscillators = stateToOscillators(solver.physics.State())
 	solver.publishPhase(thesis, at, cuts)
 
 	return solver.publishDomain()
@@ -1023,7 +891,7 @@ type KuramotoSync struct {
 	Psi float64 `json:"psi"`
 }
 
-func kuramotoOrderParameter(oscillators []pmanifold.Oscillator) KuramotoSync {
+func kuramotoOrderParameter(oscillators []Oscillator) KuramotoSync {
 	if len(oscillators) == 0 {
 		return KuramotoSync{}
 	}

@@ -467,7 +467,7 @@ func (planner *Planner) updateGraph(
 
 	for _, decision := range createdDecisions {
 		symbol := thesis.Symbol(decision.Symbol)
-		symbol.Decisions.Push(*decision)
+		symbol.Decisions.PushLatest(*decision)
 	}
 
 	decisions := make([]types.Decision, 0, len(createdDecisions))

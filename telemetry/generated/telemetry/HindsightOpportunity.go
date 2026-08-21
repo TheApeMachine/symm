@@ -7,10 +7,10 @@ import (
 )
 
 type HindsightOpportunityT struct {
-	Leg      *HindsightLegT    `json:"leg"`
-	Signal   *HindsightSignalT `json:"signal"`
-	Captured bool              `json:"captured"`
-	Missed   bool              `json:"missed"`
+	Leg *HindsightLegT `json:"leg"`
+	Signal *HindsightSignalT `json:"signal"`
+	Captured bool `json:"captured"`
+	Missed bool `json:"missed"`
 }
 
 func (t *HindsightOpportunityT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

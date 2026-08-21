@@ -91,6 +91,30 @@ func TestDiagnosticsObserve(t *testing.T) {
 			So(completed.Count, ShouldEqual, 1)
 			So(completed.LastNs, ShouldEqual, 25_000_000)
 		})
+
+		Convey("A disabled collector ignores every observation hook", func() {
+			diagnostics.Disable()
+
+			diagnostics.applyModule("category", 100*time.Millisecond)
+			diagnostics.beginModule("category")
+			diagnostics.completeModule("category", 25*time.Millisecond)
+			diagnostics.applyHop("category", "causal", 5*time.Millisecond)
+			diagnostics.ObserveError("planner", "boom", "strategy/planner.go:120")
+
+			So(diagnostics.Enabled(), ShouldBeFalse)
+			So(diagnostics.module("category").count.Load(), ShouldEqual, 0)
+			So(diagnostics.errorSnapshots(), ShouldHaveLength, 0)
+
+			Convey("Re-enabling restores collection", func() {
+				diagnostics.Enable()
+				diagnostics.applyModule("category", 100*time.Millisecond)
+
+				So(diagnostics.Enabled(), ShouldBeTrue)
+				So(diagnostics.module("category").count.Load(), ShouldEqual, 1)
+
+				diagnostics.Disable()
+			})
+		})
 	})
 
 	Convey("Hops record the wait between two systems", t, func() {
@@ -148,6 +172,18 @@ func TestDiagnosticsObserve(t *testing.T) {
 			So(nilCrypto.Diagnostics().Status, ShouldEqual, "idle")
 			So(nilCrypto.Diagnostics().Stages, ShouldHaveLength, 0)
 		})
+	})
+
+	Convey("The goroutine inventory buckets the live process by owner", t, func() {
+		diagnostics := &Diagnostics{}
+
+		inventory := diagnostics.goroutineInventory()
+		So(inventory, ShouldNotBeEmpty)
+
+		for _, owner := range inventory {
+			So(owner.Owner, ShouldNotBeBlank)
+			So(owner.Count, ShouldBeGreaterThan, 0)
+		}
 	})
 
 	Convey("The measurement pass distinguishes idle from blocked", t, func() {

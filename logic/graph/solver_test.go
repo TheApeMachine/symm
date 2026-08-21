@@ -33,6 +33,60 @@ func graphResonanceManifold() *learning.ResonanceManifold {
 	return coder
 }
 
+func TestBuildGraph(t *testing.T) {
+	Convey("Given a planner graph still unpublished", t, func() {
+		thesis := types.NewThesis(t.Context(), nil)
+		thesis.At = time.Unix(8, 0).UTC()
+		symbol := thesis.Symbol("BOUNDARY/USD")
+		stale := types.NewGraph(time.Unix(1, 0).UTC())
+		symbol.Graphs.Push(stale)
+		relationConfidence := 0.4933118837060111
+		measurement := newTestMeasurement(
+			"boundary-drive",
+			types.SourceCVD,
+			symbol.Symbol,
+			thesis.At,
+		)
+		putTestMetric(
+			measurement,
+			types.MetricDrive,
+			relationConfidence,
+			&relationConfidence,
+			nmtypes.UnitDimensionless,
+		)
+		measurement.Maturity = 1
+		putTestMetric(
+			measurement,
+			types.MetricHypothesisSeparation,
+			1,
+			nil,
+			nmtypes.UnitDimensionless,
+		)
+		symbol.AppendMeasurement(measurement)
+		solver := NewSolver(thesis, nil, nil)
+		defer solver.Close()
+		solver.buildGraph(symbol.Symbol, symbol)
+
+		Convey("It should drain measurements and replace the unpublished graph", func() {
+			So(symbol.Measurements.Length(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			), ShouldEqual, uint64(0))
+
+			var graph *Graph
+
+			for candidate := range symbol.MarketGraphs(
+				symbol.GraphConsumers[types.GraphConsumerPlanner],
+			) {
+				graph = candidate
+			}
+
+			So(graph, ShouldNotBeNil)
+			So(graph, ShouldNotEqual, stale)
+			So(graph.ReadyForSearch(), ShouldBeTrue)
+		})
+	})
+}
+
 func TestUpdate(t *testing.T) {
 	Convey("Given a structurally ready graph below the trade-confidence floor", t, func() {
 		thesis := types.NewThesis(t.Context(), nil)
@@ -52,6 +106,14 @@ func TestUpdate(t *testing.T) {
 			&relationConfidence,
 			nmtypes.UnitDimensionless,
 		)
+		measurement.Maturity = 1
+		putTestMetric(
+			measurement,
+			types.MetricHypothesisSeparation,
+			1,
+			nil,
+			nmtypes.UnitDimensionless,
+		)
 		symbol.AppendMeasurement(measurement)
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
@@ -69,8 +131,8 @@ func TestUpdate(t *testing.T) {
 
 			So(graph, ShouldNotBeNil)
 			So(graph.ReadyForSearch(), ShouldBeTrue)
-			So(graph.OpportunitySummary().Confidence,
-				ShouldEqual, relationConfidence)
+			So(graph.OpportunitySummary().Confidence, ShouldEqual, 1)
+			So(graph.OpportunitySummary().Score, ShouldAlmostEqual, relationConfidence, 1e-12)
 		})
 	})
 
@@ -139,6 +201,14 @@ func TestUpdate(t *testing.T) {
 				schema.Side,
 				value,
 				&value,
+				nmtypes.UnitDimensionless,
+			)
+			measurement.Maturity = 1
+			putTestMetric(
+				measurement,
+				types.MetricHypothesisSeparation,
+				1,
+				nil,
 				nmtypes.UnitDimensionless,
 			)
 			symbol.AppendMeasurement(measurement)
@@ -240,6 +310,7 @@ func TestUpdate(t *testing.T) {
 		bitcoinMeasurement := newTestMeasurement("cvd-measurement", types.SourceCVD, "BTC/USD", thesis.At)
 		putTestMetric(bitcoinMeasurement, types.MetricDrive, drive, &drive, nmtypes.UnitDimensionless)
 		putTestMetric(bitcoinMeasurement, types.MetricHypothesisSeparation, separation, &separation, nmtypes.UnitDimensionless)
+		bitcoinMeasurement.Maturity = 1
 		bitcoin.AppendMeasurement(bitcoinMeasurement)
 		bitcoin.Categories.Push([]types.Category{{
 			Symbol:     "BTC/USD",
@@ -260,8 +331,8 @@ func TestUpdate(t *testing.T) {
 			})
 
 			So(graph, ShouldNotBeNil)
-			So(graph.Nodes, ShouldHaveLength, 4)
-			So(graph.Edges, ShouldHaveLength, 4)
+			So(graph.Nodes, ShouldHaveLength, 3)
+			So(graph.Edges, ShouldHaveLength, 3)
 			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"cvd-measurement", "cvd:drive"})
@@ -598,18 +669,13 @@ func TestConnectLongOpportunity(t *testing.T) {
 
 		err = (&Solver{}).connectLongOpportunity(symbol, graph)
 
-		Convey("It should preserve confidence and admit the supported proposition", func() {
+		Convey("It should weight the vote by maturity, separation, and magnitude", func() {
 			So(err, ShouldBeNil)
 			driveNode := graph.Nodes[measurementNodeID(measurement, "drive")]
 			So(driveNode, ShouldNotBeNil)
-			So(driveNode.Confidence, ShouldEqual, drive)
+			So(driveNode.Confidence, ShouldAlmostEqual, 0.9*0.9, 1e-12)
 			So(driveNode.Maturity, ShouldEqual, 0.9)
-			separationNode := graph.Nodes[measurementNodeID(
-				measurement,
-				string(types.MetricHypothesisSeparation),
-			)]
-			So(separationNode, ShouldNotBeNil)
-			So(*separationNode.Normalized, ShouldEqual, separation)
+			So(driveNode.Metadata["hypothesis_separation"], ShouldEqual, separation)
 
 			var directional *Edge
 
@@ -622,9 +688,9 @@ func TestConnectLongOpportunity(t *testing.T) {
 
 			So(directional, ShouldNotBeNil)
 			So(directional.Relation, ShouldEqual, RelationSupports)
-			So(directional.Weight, ShouldAlmostEqual, 0.4721359549995794)
-			So(directional.Confidence, ShouldEqual, drive)
-			So(graph.OpportunitySummary().Confidence, ShouldEqual, drive)
+			So(directional.Weight, ShouldAlmostEqual, 0.9*0.9*drive, 1e-12)
+			So(directional.Confidence, ShouldAlmostEqual, 0.9*0.9, 1e-12)
+			So(graph.OpportunitySummary().Confidence, ShouldAlmostEqual, 0.9*0.9, 1e-12)
 			So(graph.SearchableEnough(0.5), ShouldBeTrue)
 		})
 	})
@@ -655,10 +721,68 @@ func TestConnectLongOpportunity(t *testing.T) {
 
 		err = (&Solver{}).connectLongOpportunity(symbol, graph)
 
-		Convey("It should remain non-directional and defer search", func() {
+		Convey("It should keep the raw metric but not invent a directional vote without quality stamps", func() {
 			So(err, ShouldBeNil)
+			So(graph.Nodes[measurementNodeID(measurement, "drive")], ShouldNotBeNil)
 			So(graph.Edges, ShouldBeEmpty)
 			So(graph.SearchableEnough(0.5), ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a raw-only directional measurement with quality stamps", t, func() {
+		at := time.Unix(3, 0).UTC()
+		symbol := types.NewSymbol("BTC/USD")
+		measurement := newTestMeasurement(
+			"cvd-raw-quality", types.SourceCVD, symbol.Symbol, at,
+		)
+		measurement.Maturity = 0.8
+		putTestMetric(
+			measurement,
+			types.MetricDrive,
+			0.7,
+			nil,
+			nmtypes.UnitDimensionless,
+		)
+		putTestMetric(
+			measurement,
+			types.MetricHypothesisSeparation,
+			0.9,
+			nil,
+			nmtypes.UnitDimensionless,
+		)
+		symbol.AppendMeasurement(measurement)
+		graph := NewGraph(at)
+		_, err := newMeasurementCompiler().addNodes(
+			symbol.Symbol,
+			symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			),
+			graph,
+		)
+		So(err, ShouldBeNil)
+		err = (&Solver{}).connectLongOpportunity(symbol, graph)
+
+		Convey("It should vote with maturity times separation, keeping the raw value", func() {
+			So(err, ShouldBeNil)
+			driveNode := graph.Nodes[measurementNodeID(measurement, "drive")]
+			So(driveNode, ShouldNotBeNil)
+			So(driveNode.Normalized, ShouldBeNil)
+			So(driveNode.Value, ShouldEqual, 0.7)
+			So(driveNode.Confidence, ShouldAlmostEqual, 0.8*0.9, 1e-12)
+
+			var directional *Edge
+
+			for _, edge := range graph.Edges {
+				if edge.From == driveNode.ID && edge.To == graph.DecisionTarget {
+					directional = edge
+					break
+				}
+			}
+
+			So(directional, ShouldNotBeNil)
+			So(directional.Relation, ShouldEqual, RelationSupports)
+			So(directional.Weight, ShouldAlmostEqual, 0.8*0.9, 1e-12)
+			So(graph.OpportunitySummary().Ready, ShouldBeTrue)
 		})
 	})
 }
@@ -1001,7 +1125,6 @@ func TestExtractManifoldNodes(t *testing.T) {
 			So(node, ShouldNotBeNil)
 			So(node.Kind, ShouldEqual, KindManifold)
 			So(node.Value, ShouldEqual, 1.0)
-			So(node.Strength, ShouldEqual, 1.0)
 			So(node.Confidence, ShouldEqual, 1.0)
 			So(node.Metadata["support"], ShouldEqual, 0.6)
 			So(node.Metadata["responses"], ShouldEqual, 1)

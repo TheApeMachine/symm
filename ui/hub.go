@@ -52,8 +52,30 @@ type Hub struct {
 	playback        playback
 	captures        func() []backtest.CaptureInfo
 	fluid           *FluidRTC
+	diagnostics     DiagnosticsControl
 	maxMessageBytes int
 	writeWindow     uint64
+}
+
+type diagnosticsToggleRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+/*
+DiagnosticsControl is the runtime switch the diagnostics page drives. It is a
+narrow seam so the UI package never imports the trader package that owns the
+collector.
+*/
+type DiagnosticsControl interface {
+	SetDiagnosticsEnabled(enabled bool)
+	DiagnosticsEnabled() bool
+}
+
+/*
+SetDiagnosticsControl wires the runtime on/off switch into the dashboard hub.
+*/
+func (hub *Hub) SetDiagnosticsControl(control DiagnosticsControl) {
+	hub.diagnostics = control
 }
 
 /*

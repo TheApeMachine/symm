@@ -109,15 +109,13 @@ func (solver *Solver) consume() {
 /*
 buildGraph adds current upstream evidence to one in-progress graph. It
 publishes that graph once it is informed enough for planner search, then starts
-a fresh accumulation for the symbol. The in-progress registry is a sync.Map, so
-parallel symbol workers can load-or-store their own building graph while
-evidence compilation and publication run outside any lock.
+a fresh accumulation for the symbol. A later ready graph replaces any
+unpublished planner artifact so measurements keep draining while search is
+busy. The in-progress registry is a sync.Map, so parallel symbol workers can
+load-or-store their own building graph while evidence compilation and
+publication run outside any lock.
 */
 func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error {
-	if symbol.Graphs.Length(symbol.GraphConsumers[types.GraphConsumerPlanner]) > 0 {
-		return nil
-	}
-
 	graph := types.NewGraph(solver.thesis.At)
 	stored, _ := solver.building.LoadOrStore(symbolName, graph)
 
@@ -211,7 +209,7 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error 
 		return nil
 	}
 
-	symbol.Graphs.Push(graph)
+	symbol.Graphs.PushLatest(graph)
 	solver.building.Delete(symbolName)
 
 	return nil
@@ -246,17 +244,24 @@ func (solver *Solver) extractCategoryNodes(
 			metadata["maturity"] = cat.Maturity
 		}
 
-		graph.AddNode(&Node{
-			ID:         nodeID,
-			Symbol:     symbol.Symbol,
-			Source:     "category",
-			Kind:       KindCategory,
-			Value:      cat.Strength,
-			Confidence: cat.Confidence,
-			Maturity:   cat.Maturity,
-			At:         graph.At,
-			Metadata:   metadata,
-		})
+		confidence := cat.Confidence
+		node := &Node{
+			ID:       nodeID,
+			Symbol:   symbol.Symbol,
+			Source:   "category",
+			Kind:     KindCategory,
+			Value:    cat.Strength,
+			Maturity: cat.Maturity,
+			At:       graph.At,
+			Metadata: metadata,
+		}
+
+		if confidence >= 0 && confidence <= 1 {
+			node.Normalized = &confidence
+		}
+
+		node.Confidence = types.ObservationMass(node, graph.At)
+		graph.AddNode(node)
 	}
 }
 
@@ -287,21 +292,27 @@ func (solver *Solver) extractManifoldNodes(
 
 	if reading, found := thesis.PhaseSnapshot(); found {
 		if inference, ready := reading.Inference(); ready {
-			graph.AddNode(&Node{
-				ID:         "man:universe:phase_direction",
-				Source:     "manifold",
-				Kind:       KindManifold,
-				Value:      inference.Direction,
-				Strength:   inference.Confidence,
-				Confidence: inference.Confidence,
-				At:         reading.At,
+			confidence := inference.Confidence
+			node := &Node{
+				ID:     "man:universe:phase_direction",
+				Source: "manifold",
+				Kind:   KindManifold,
+				Value:  inference.Direction,
+				At:     reading.At,
 				Metadata: map[string]any{
 					"support":       inference.Support,
 					"contradiction": inference.Contradiction,
 					"balance":       inference.Balance,
 					"responses":     inference.Responses,
 				},
-			})
+			}
+
+			if confidence >= 0 && confidence <= 1 {
+				node.Normalized = &confidence
+			}
+
+			node.Confidence = types.ObservationMass(node, graph.At)
+			graph.AddNode(node)
 		}
 	}
 
@@ -320,21 +331,47 @@ func (solver *Solver) extractManifoldNodes(
 		{name: "coherence", value: reading.CoherenceMag2},
 		{name: "pressure_gradient", value: reading.PressureGradNorm},
 		{name: "viscosity", value: reading.ViscosityProxy},
+		{name: "kuramoto_r", value: reading.KuramotoR},
 	}
 
 	for _, field := range fields {
-		graph.AddNode(&Node{
-			ID:         "man:universe:" + field.name,
-			Source:     "manifold",
-			Kind:       KindManifold,
-			Value:      field.value,
-			Strength:   math.Abs(field.value),
-			Confidence: 1,
-			At:         graph.At,
+		node := &Node{
+			ID:     "man:universe:" + field.name,
+			Source: "manifold",
+			Kind:   KindManifold,
+			Value:  field.value,
+			At:     graph.At,
 			Metadata: map[string]any{
 				"observer": "relaxed physical field",
 			},
-		})
+		}
+		node.Confidence = types.ObservationMass(node, graph.At)
+		graph.AddNode(node)
+	}
+
+	scores, scored := thesis.InterventionSnapshot()
+
+	if !scored {
+		return
+	}
+
+	for _, score := range scores {
+		node := &Node{
+			ID:     "man:universe:do_" + score.Action,
+			Source: "manifold",
+			Kind:   KindManifold,
+			Value:  score.Score,
+			At:     graph.At,
+			Metadata: map[string]any{
+				"observer":           "bvp crystallization",
+				"mass_gain":          score.MassGain,
+				"energy_gain":        score.EnergyGain,
+				"heat_shock":         score.HeatShock,
+				"spectral_resonance": score.SpectralResonance,
+			},
+		}
+		node.Confidence = types.ObservationMass(node, graph.At)
+		graph.AddNode(node)
 	}
 }
 
@@ -1021,7 +1058,7 @@ func (solver *Solver) connectLongOpportunity(
 	})
 
 	for _, node := range graph.Nodes {
-		if node == nil || node.ID == target || node.Confidence <= 0 {
+		if node == nil || node.ID == target {
 			continue
 		}
 
@@ -1031,26 +1068,24 @@ func (solver *Solver) connectLongOpportunity(
 			continue
 		}
 
-		weight, err := nodeEvidenceWeight(node)
+		omega := types.ObservationMass(node, graph.At)
+		weight := types.NodeInfluence(node)
 
-		if err != nil {
-			return fmt.Errorf("opportunity weight for %s: %w", node.ID, err)
-		}
-
-		if weight <= 0 {
+		if omega <= 0 || weight <= 0 {
 			continue
 		}
 
-		confidence := min(max(node.Confidence, 0), 1)
 		graph.AddEdge(&types.Edge{
-			From:       node.ID,
-			To:         target,
-			Relation:   relation,
-			Weight:     weight,
-			Confidence: confidence,
-			Evidence:   []string{node.ID, target},
-			At:         graph.At,
-			Reason:     reason,
+			From:         node.ID,
+			To:           target,
+			Relation:     relation,
+			Weight:       omega * weight,
+			Confidence:   omega,
+			Evidence:     []string{node.ID, target},
+			ObservedFrom: node.ObservedFrom,
+			Horizon:      node.Horizon,
+			At:           graph.At,
+			Reason:       reason,
 		})
 	}
 
@@ -1217,20 +1252,6 @@ func categoryOpportunityRelation(category types.CategoryType) RelationType {
 	default:
 		return RelationConditions
 	}
-}
-
-func nodeEvidenceWeight(node *Node) (float64, error) {
-	if node == nil {
-		return 0, nil
-	}
-
-	strength := node.Strength
-
-	if !(strength > 0) {
-		strength = math.Abs(node.Value)
-	}
-
-	return magnitudeWeight(strength)
 }
 
 /*

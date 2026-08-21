@@ -7,12 +7,12 @@ import (
 )
 
 type ReasoningLinkT struct {
-	From       string  `json:"from"`
-	To         string  `json:"to"`
-	Relation   string  `json:"relation"`
-	Weight     float64 `json:"weight"`
+	From string `json:"from"`
+	To string `json:"to"`
+	Relation string `json:"relation"`
+	Weight float64 `json:"weight"`
 	Confidence float64 `json:"confidence"`
-	Derived    bool    `json:"derived"`
+	Derived bool `json:"derived"`
 }
 
 func (t *ReasoningLinkT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

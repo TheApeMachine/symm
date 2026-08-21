@@ -80,6 +80,31 @@ func (crypto *Crypto) Status() types.Status {
 }
 
 /*
+SetDiagnosticsEnabled switches the diagnostics collector on or off at runtime.
+Passing false stops per-observation timing and drops the heartbeat to an idle
+cadence, leaving near-zero overhead on the market data path.
+*/
+func (crypto *Crypto) SetDiagnosticsEnabled(enabled bool) {
+	if crypto == nil || crypto.diagnostics == nil {
+		return
+	}
+
+	if enabled {
+		crypto.diagnostics.Enable()
+		return
+	}
+
+	crypto.diagnostics.Disable()
+}
+
+/*
+DiagnosticsEnabled reports whether the diagnostics collector is switched on.
+*/
+func (crypto *Crypto) DiagnosticsEnabled() bool {
+	return crypto != nil && crypto.diagnostics != nil && crypto.diagnostics.Enabled()
+}
+
+/*
 ObserveModule returns the diagnostics module clock hook so stages that live
 outside the analyzer/measurements wiring (like the resonance solver) can still
 report their per-step duration into the same clock bank.

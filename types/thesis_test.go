@@ -9,8 +9,8 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
+	pmanifold "github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -478,6 +478,24 @@ func TestThesisStoreManifold(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(scopedFound, ShouldBeTrue)
 			So(scopedReading, ShouldResemble, reading)
+		})
+	})
+}
+
+func TestThesisStoreInterventions(t *testing.T) {
+	Convey("Given crystallization scores published to a thesis", t, func() {
+		thesis := NewThesis(t.Context(), nil)
+		scores := []InterventionScore{{
+			Action: "enter_buy",
+			Score:  0.4,
+		}}
+
+		thesis.StoreInterventions(scores)
+		stored, found := thesis.InterventionSnapshot()
+
+		Convey("It should expose one immutable atomic snapshot", func() {
+			So(found, ShouldBeTrue)
+			So(stored, ShouldResemble, scores)
 		})
 	})
 }

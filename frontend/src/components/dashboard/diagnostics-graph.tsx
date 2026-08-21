@@ -127,6 +127,50 @@ const NODE_LABEL: Record<string, string> = {
 const LIVE_WINDOW_NS = 2_000_000_000;
 
 /*
+HEARTBEAT_NS is the diagnostics collection period the publisher uses. Edge
+health thresholds are expressed as fractions of it rather than as free-floating
+magic numbers: a handoff under a tenth of a beat is healthy, one beyond that
+but still inside a beat is slight latency, and anything past a full beat is
+high latency.
+*/
+const HEARTBEAT_NS = 250_000_000;
+
+type HealthTone = "healthy" | "slight" | "high";
+
+const edgeHealth = (latencyNs: number | undefined): HealthTone => {
+	if (latencyNs === undefined || !Number.isFinite(latencyNs) || latencyNs <= 0) {
+		return "healthy";
+	}
+
+	if (latencyNs < HEARTBEAT_NS / 10) {
+		return "healthy";
+	}
+
+	if (latencyNs < HEARTBEAT_NS) {
+		return "slight";
+	}
+
+	return "high";
+};
+
+/*
+EDGE_HEALTH_STROKE maps latency health to muted, low-saturation light tones.
+Grey is deliberately excluded: even the inactive/idle lanes keep a healthy
+muted green so the wiring never falls to an undifferentiated grey field.
+*/
+const EDGE_HEALTH_STROKE: Record<HealthTone, string> = {
+	healthy: "hsl(140 32% 62%)",
+	slight: "hsl(48 42% 61%)",
+	high: "hsl(0 44% 64%)",
+};
+
+const NODE_HEALTH_STROKE: Record<HealthTone, string> = {
+	healthy: "hsl(140 30% 55%)",
+	slight: "hsl(48 40% 57%)",
+	high: "hsl(0 42% 60%)",
+};
+
+/*
 HALF is each node's half-extent in the same percent units as NODE_POS, so edge
 routes can attach to the actual card borders. Stages are 12% wide, 8% tall;
 queue tanks are 9.5% wide and 4.4% tall.
@@ -237,33 +281,39 @@ const stageState = (
 	return "stale";
 };
 
+/*
+STAGE_TONE maps a stage's health state to its border/dot/text tone. Border
+colors use the same muted health palette as the edges (healthy green, slightly
+amber latency, high red latency) so a node border reads as the health of the
+component it represents. Only the unseen neutral is allowed off-palette.
+*/
 const STAGE_TONE: Record<
 	StageState,
-	{ dot: string; border: string; text: string }
+	{ dot: string; borderColor: string; text: string }
 > = {
 	error: {
 		dot: "bg-(--down)",
-		border: "border-(--down)/60",
+		borderColor: NODE_HEALTH_STROKE.high,
 		text: "text-(--down)",
 	},
 	live: {
 		dot: "bg-(--up)",
-		border: "border-(--up)/50",
+		borderColor: NODE_HEALTH_STROKE.healthy,
 		text: "text-(--up)",
 	},
 	running: {
 		dot: "bg-(--info)",
-		border: "border-(--info)/60",
+		borderColor: NODE_HEALTH_STROKE.healthy,
 		text: "text-(--info)",
 	},
 	stale: {
 		dot: "bg-(--warn)",
-		border: "border-(--warn)/40",
+		borderColor: NODE_HEALTH_STROKE.slight,
 		text: "text-(--warn)",
 	},
 	unseen: {
 		dot: "bg-(--line2)",
-		border: "border-(--line)",
+		borderColor: "hsl(220 10% 52%)",
 		text: "text-(--f4)",
 	},
 };
@@ -332,11 +382,18 @@ const PORT_INSET = 0.8;
 /*
 Routing costs make crossings more expensive than any plausible canvas detour,
 then overlapping an existing lane more expensive still. Bend cost only breaks
-ties between otherwise equivalent clear routes.
+ties between otherwise equivalent clear routes. LANE_SPACING keeps parallel
+same-direction segments a visible distance apart so two edges leaving one node
+never run length-wise on top of each other.
 */
 const ROUTE_CROSSING_COST = 120;
-const ROUTE_OVERLAP_COST = 180;
+// A strong finite cost instead of Infinity: it dominates detours so parallel
+// lanes separate cleanly, but a trivial corner graze stays cheaper than an
+// absurd full-canvas detour.
+const ROUTE_OVERLAP_COST_MASSIVE = 900;
 const ROUTE_BEND_COST = 0.35;
+const LANE_SPACING = 0.6;
+const ROUTE_NEAR_COST = 90;
 
 export const placementBounds = (
 	placement: Placement,
@@ -484,6 +541,54 @@ export const routeIntersectsPlacement = (
 const segmentLength = (from: Point, to: Point): number =>
 	Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
 
+/*
+parallelNearMiss reports whether two axis-aligned segments run in the same
+direction within LANE_SPACING of each other while their spans overlap. This is
+what separates two edges sharing an exit direction without forbidding clean
+perpendicular crossings, which the user wants to keep allowing.
+*/
+const parallelNearMiss = (
+	from: Point,
+	to: Point,
+	otherFrom: Point,
+	otherTo: Point,
+): boolean => {
+	const horizontal = from.y === to.y;
+	const otherHorizontal = otherFrom.y === otherTo.y;
+
+	if (horizontal !== otherHorizontal) {
+		return false;
+	}
+
+	if (horizontal) {
+		const gap = Math.abs(from.y - otherFrom.y);
+
+		if (gap === 0 || gap >= LANE_SPACING) {
+			return false;
+		}
+
+		const firstStart = Math.min(from.x, to.x);
+		const firstEnd = Math.max(from.x, to.x);
+		const secondStart = Math.min(otherFrom.x, otherTo.x);
+		const secondEnd = Math.max(otherFrom.x, otherTo.x);
+
+		return Math.min(firstEnd, secondEnd) > Math.max(firstStart, secondStart);
+	}
+
+	const gap = Math.abs(from.x - otherFrom.x);
+
+	if (gap === 0 || gap >= LANE_SPACING) {
+		return false;
+	}
+
+	const firstStart = Math.min(from.y, to.y);
+	const firstEnd = Math.max(from.y, to.y);
+	const secondStart = Math.min(otherFrom.y, otherTo.y);
+	const secondEnd = Math.max(otherFrom.y, otherTo.y);
+
+	return Math.min(firstEnd, secondEnd) > Math.max(firstStart, secondStart);
+};
+
 const segmentOverlap = (
 	from: Point,
 	to: Point,
@@ -537,32 +642,68 @@ const segmentOverlap = (
 	};
 };
 
+type RouteCost = {
+	score: number;
+	lanePenalties: number;
+};
+
+type TaggedSegment = {
+	from: Point;
+	to: Point;
+	source: string;
+};
+
 const routeScore = (
 	points: Point[],
 	obstacles: Placement[],
-	existingSegments: Array<[Point, Point]>,
-): number => {
+	existingSegments: TaggedSegment[],
+): RouteCost => {
 	if (
 		obstacles.some((placement) => routeIntersectsPlacement(points, placement))
 	) {
-		return Number.POSITIVE_INFINITY;
+		return { score: Number.POSITIVE_INFINITY, lanePenalties: 0 };
 	}
 
 	let score = 0;
+	let lanePenalties = 0;
 
 	for (let index = 1; index < points.length; index++) {
 		const from = points[index - 1];
 		const to = points[index];
 		score += segmentLength(from, to);
 
-		for (const [otherFrom, otherTo] of existingSegments) {
+		for (const existing of existingSegments) {
+			const otherFrom = existing.from;
+			const otherTo = existing.to;
 			const relation = segmentOverlap(from, to, otherFrom, otherTo);
-			score += relation.crossing ? ROUTE_CROSSING_COST : 0;
-			score += relation.overlap * ROUTE_OVERLAP_COST;
+
+			if (relation.crossing) {
+				score += ROUTE_CROSSING_COST;
+			}
+
+			if (relation.overlap > 0) {
+				/*
+				Length-wise overlap carries a dominating but finite cost:
+				crossings stay allowed, but running on top of another lane is
+				avoided whenever the router has any reasonable detour. Finite
+				keeps a genuinely constrained edge from degrading into a
+				through-node route.
+				*/
+				score += relation.overlap * ROUTE_OVERLAP_COST_MASSIVE;
+				lanePenalties++;
+			}
+
+			if (parallelNearMiss(from, to, otherFrom, otherTo)) {
+				score += ROUTE_NEAR_COST;
+				lanePenalties++;
+			}
 		}
 	}
 
-	return score + Math.max(0, points.length - 2) * ROUTE_BEND_COST;
+	return {
+		score: score + Math.max(0, points.length - 2) * ROUTE_BEND_COST,
+		lanePenalties,
+	};
 };
 
 const labelPointOf = (points: Point[]): Point => {
@@ -598,7 +739,7 @@ const routeEdge = (
 	fromSide: NodeSide,
 	toSide: NodeSide,
 	placements: Map<string, Placement>,
-	existingSegments: Array<[Point, Point]>,
+	existingSegments: TaggedSegment[],
 ): Point[] => {
 	const start = stubPoint(fromPort, fromSide);
 	const end = stubPoint(toPort, toSide);
@@ -614,6 +755,34 @@ const routeEdge = (
 		horizontalChannels.add(bounds.bottom);
 		verticalChannels.add(bounds.left);
 		verticalChannels.add(bounds.right);
+	}
+
+	/*
+	Existing lanes seed the channel set from both directions so a parallel edge
+	has an explicit offset lane to choose instead of sharing a lane and paying
+	the overlap cost on the only candidate that exists. The offset lanes sit one
+	LANE_SPACING off the occupied lane, which the near-miss penalty then keeps
+	clear for opposite-direction or crossing traffic.
+	*/
+	for (const existing of existingSegments) {
+		const segmentFrom = existing.from;
+		const segmentTo = existing.to;
+
+		if (segmentFrom.y === segmentTo.y) {
+			horizontalChannels.add(segmentFrom.y - LANE_SPACING);
+			horizontalChannels.add(segmentFrom.y + LANE_SPACING);
+			verticalChannels.add(segmentFrom.x);
+			verticalChannels.add(segmentTo.x);
+
+			continue;
+		}
+
+		if (segmentFrom.x === segmentTo.x) {
+			verticalChannels.add(segmentFrom.x - LANE_SPACING);
+			verticalChannels.add(segmentFrom.x + LANE_SPACING);
+			horizontalChannels.add(segmentFrom.y);
+			horizontalChannels.add(segmentTo.y);
+		}
 	}
 
 	const candidates: Point[][] = [
@@ -644,15 +813,22 @@ const routeEdge = (
 	}
 
 	let best = simplifyPoints(candidates[0]);
-	let bestScore = Number.POSITIVE_INFINITY;
+	let bestCost = routeScore(best, obstacles, existingSegments);
 
 	for (const candidate of candidates) {
 		const points = simplifyPoints(candidate);
-		const score = routeScore(points, obstacles, existingSegments);
+		const cost = routeScore(points, obstacles, existingSegments);
+		if (from.id === "graph" && to.id === "ui.dashboard") {
 
-		if (score < bestScore) {
+		}
+
+		if (
+			cost.score < bestCost.score ||
+			(cost.score === bestCost.score &&
+				cost.lanePenalties < bestCost.lanePenalties)
+		) {
 			best = points;
-			bestScore = score;
+			bestCost = cost;
 		}
 	}
 
@@ -689,12 +865,6 @@ const edgeActivity = (
 	}
 
 	return depth > 0 ? "held" : "idle";
-};
-
-const EDGE_ACTIVITY_CLASS: Record<EdgeActivity, string> = {
-	flowing: "diag-flow",
-	held: "diag-hold",
-	idle: "diag-idle",
 };
 
 type RoutingCache = {
@@ -878,10 +1048,18 @@ export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
 		const secondSpan =
 			Math.abs(secondFrom.x - secondTo.x) + Math.abs(secondFrom.y - secondTo.y);
 
+		if (first.from === second.from) {
+			if (secondTo.x !== firstTo.x) {
+				return secondTo.x - firstTo.x;
+			}
+
+			return secondTo.y - firstTo.y || first.id.localeCompare(second.id);
+		}
+
 		return firstSpan - secondSpan || first.id.localeCompare(second.id);
 	});
 	const edges: DiagEdge[] = [];
-	const routedSegments: Array<[Point, Point]> = [];
+	const routedSegments: TaggedSegment[] = [];
 
 	for (const edge of routingOrder) {
 		const from = placements.get(edge.from);
@@ -912,7 +1090,11 @@ export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
 		);
 
 		for (let index = 1; index < points.length; index++) {
-			routedSegments.push([points[index - 1], points[index]]);
+			routedSegments.push({
+				from: points[index - 1],
+				to: points[index],
+				source: edge.from,
+			});
 		}
 
 		edges.push({
@@ -1022,9 +1204,8 @@ const StageNode = ({
 			onClick={() => onSelect({ kind: "stage", name: placement.id })}
 			aria-label={`Inspect ${placement.label}`}
 			className={cn(
-				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-md border bg-(--surface) px-2 py-1.5 text-left transition-opacity hover:bg-(--raised)",
+				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-md border-2 bg-(--surface) px-2 py-1.5 text-left transition-opacity hover:bg-(--raised)",
 				"flex flex-col justify-between",
-				tone.border,
 				selected && "outline outline-(--acc) outline-offset-1",
 				highlight === "up" && !selected && "outline outline-(--warn)/60",
 				highlight === "down" && !selected && "outline outline-(--info)/60",
@@ -1035,6 +1216,7 @@ const StageNode = ({
 				top: `${placement.y}%`,
 				width: `${HALF.stage.w * 2}%`,
 				height: `${HALF.stage.h * 2}%`,
+				borderColor: tone.borderColor,
 			}}
 		>
 			<div className="flex items-center gap-1">
@@ -1226,16 +1408,14 @@ const EdgePath = ({
 	dimmed: boolean;
 	highlight: "up" | "down" | null;
 }) => {
+	const health = edgeHealth(edge.latencyNs);
+	const active = activity === "flowing";
 	const stroke =
 		highlight === "up"
 			? "var(--warn)"
 			: highlight === "down"
 				? "var(--info)"
-				: edge.kind === "write" && activity !== "idle"
-					? "var(--acc)"
-					: edge.kind === "read" && activity !== "idle"
-						? "var(--info)"
-						: "var(--line)";
+				: EDGE_HEALTH_STROKE[health];
 
 	return (
 		<path
@@ -1243,6 +1423,7 @@ const EdgePath = ({
 			data-from={edge.from}
 			data-to={edge.to}
 			data-kind={edge.kind}
+			data-health={health}
 			fill="none"
 			stroke={stroke}
 			strokeWidth={edge.kind === "hop" ? 1 : 1.4}
@@ -1250,11 +1431,11 @@ const EdgePath = ({
 			pathLength={100}
 			strokeLinecap="round"
 			strokeLinejoin="round"
-			strokeDasharray={edge.kind === "hop" ? "3 6" : undefined}
+			strokeDasharray={active ? "4 5" : undefined}
 			className={cn(
 				"diag-edge",
-				edge.kind !== "hop" && EDGE_ACTIVITY_CLASS[activity],
-				edge.kind === "hop" && activity === "flowing" && "diag-hop-flow",
+				active && "diag-flow",
+				!active && "diag-solid",
 				dimmed && "opacity-10",
 			)}
 			data-queue={queue?.name}
@@ -1330,26 +1511,14 @@ export const DiagnosticsGraph = ({
 					from { stroke-dashoffset: 0; }
 					to { stroke-dashoffset: -27; }
 				}
-				@keyframes diag-dash-hop {
-					from { stroke-dashoffset: 0; }
-					to { stroke-dashoffset: -18; }
-				}
-				@keyframes diag-hold-pulse {
-					0%, 100% { opacity: 0.55; }
-					50% { opacity: 1; }
-				}
 				.diag-edge { stroke-linecap: round; }
 				.diag-flow {
 					stroke-dasharray: 4 5;
 					animation: diag-dash-flow 0.9s linear infinite;
 				}
-				.diag-hold {
+				.diag-solid {
 					stroke-dasharray: none;
-					animation: diag-hold-pulse 1.5s ease-in-out infinite;
-				}
-				.diag-idle { opacity: 0.45; }
-				.diag-hop-flow {
-					animation: diag-dash-hop 1.4s linear infinite;
+					animation: none;
 				}
 			`}</style>
 			<svg

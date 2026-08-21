@@ -66,8 +66,9 @@ describe("DiagnosticsDataflow", () => {
 		expect(markup).toMatch(/<path d="M [^"]*\bL\b [^"]*"/);
 		expect(markup).toContain('data-from="correlation"');
 		expect(markup).toContain('data-to="measurements"');
-		expect(markup).toContain('stroke="var(--acc)"');
-		expect(markup).toContain('stroke="var(--info)"');
+		// Edges use the muted latency-health palette, never a grey line.
+		expect(markup).toContain('data-health="healthy"');
+		expect(markup).toContain('stroke="hsl(140 32% 62%)"');
 		// Numeric columns reserve their widest expected footprint so changing
 		// counts and durations cannot move neighboring labels or controls.
 		expect(markup).toContain("grid-cols-[2.5ch_7ch_6ch]");

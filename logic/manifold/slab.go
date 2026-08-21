@@ -2,11 +2,12 @@ package manifold
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"sync/atomic"
 	"unsafe"
 
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
+	pmanifold "github.com/theapemachine/symm/nomagique/physics/sensorium"
 )
 
 const (
@@ -23,7 +24,7 @@ slabEncoder writes manifold state in the exact Float32 layouts consumed by the
 browser GPU. Field payloads preserve Metal's momentum.xyz/density.w texture.
 */
 type slabEncoder struct {
-	config   pmanifold.Config
+	config   Domain
 	sequence atomic.Uint64
 }
 
@@ -31,7 +32,11 @@ type slabEncoder struct {
 Fields copies one complete resident domain through one cgo call into its final
 wire allocation. The payload is immediately usable as four GPU texture views.
 */
-func (encoder *slabEncoder) Fields(physics *pmanifold.Solver) ([]byte, error) {
+func (encoder *slabEncoder) Fields(physics *pmanifold.Manifold) ([]byte, error) {
+	if physics == nil {
+		return nil, fmt.Errorf("manifold: physics domain is not initialized")
+	}
+
 	cellCount := int(encoder.config.GridX * encoder.config.GridY * encoder.config.GridZ)
 	momRhoOffset := slabHeaderBytes
 	energyOffset := momRhoOffset + cellCount*4*4
@@ -39,17 +44,12 @@ func (encoder *slabEncoder) Fields(physics *pmanifold.Solver) ([]byte, error) {
 	waveImaginaryOffset := waveRealOffset + cellCount*4
 	byteLength := waveImaginaryOffset + cellCount*4
 	payload := make([]byte, byteLength)
-
-	scale, err := physics.ReadDomainInto(
+	density, momentum, energyPeak, wave := physics.PackFields(
 		float32View(payload, momRhoOffset, cellCount*4),
 		float32View(payload, energyOffset, cellCount),
 		float32View(payload, waveRealOffset, cellCount),
 		float32View(payload, waveImaginaryOffset, cellCount),
 	)
-
-	if err != nil {
-		return nil, err
-	}
 
 	copy(payload, fieldSlabMagic[:])
 	putUint16(payload, 4, slabVersion)
@@ -59,10 +59,10 @@ func (encoder *slabEncoder) Fields(physics *pmanifold.Solver) ([]byte, error) {
 	putUint32(payload, 20, encoder.config.GridY)
 	putUint32(payload, 24, encoder.config.GridZ)
 	putFloat32(payload, 28, normalizedGridSpacing(encoder.config))
-	putFloat32(payload, 32, inverseScale(scale.Density))
-	putFloat32(payload, 36, inverseScale(scale.Momentum))
-	putFloat32(payload, 40, inverseScale(scale.Energy))
-	putFloat32(payload, 44, inverseScale(scale.Wave))
+	putFloat32(payload, 32, inverseScale(density))
+	putFloat32(payload, 36, inverseScale(momentum))
+	putFloat32(payload, 40, inverseScale(energyPeak))
+	putFloat32(payload, 44, inverseScale(wave))
 	putUint32(payload, 48, uint32(energyOffset))
 	putUint32(payload, 52, uint32(waveRealOffset))
 	putUint32(payload, 56, uint32(waveImaginaryOffset))
@@ -76,7 +76,7 @@ Particles writes one interleaved particle buffer. No per-particle wire objects
 are allocated; the browser binds attributes at these fixed float offsets.
 */
 func (encoder *slabEncoder) Particles(
-	oscillators []pmanifold.Oscillator,
+	oscillators []Oscillator,
 ) []byte {
 	byteLength := slabHeaderBytes + len(oscillators)*particleStrideFloats*4
 	payload := make([]byte, byteLength)
@@ -135,7 +135,7 @@ func inverseScale(maximum float32) float32 {
 	return 1 / maximum
 }
 
-func normalizedGridSpacing(config pmanifold.Config) float32 {
+func normalizedGridSpacing(config Domain) float32 {
 	maximumAxis := max(config.GridX, config.GridY, config.GridZ)
 	return 1 / float32(maximumAxis)
 }

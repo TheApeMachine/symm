@@ -7,10 +7,10 @@ import (
 )
 
 type CognitionSymbolT struct {
-	Symbol    string  `json:"symbol"`
-	ClassName string  `json:"className"`
-	Score     float64 `json:"score"`
-	Purity    float64 `json:"purity"`
+	Symbol string `json:"symbol"`
+	ClassName string `json:"className"`
+	Score float64 `json:"score"`
+	Purity float64 `json:"purity"`
 }
 
 func (t *CognitionSymbolT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

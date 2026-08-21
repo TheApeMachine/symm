@@ -76,7 +76,7 @@ func TestAddNodes(t *testing.T) {
 
 		Convey("It should retain provenance and keep every emitted metric as evidence", func() {
 			So(err, ShouldBeNil)
-			So(graph.Nodes, ShouldHaveLength, 2)
+			So(graph.Nodes, ShouldHaveLength, 1)
 			node := graph.Nodes[measurementNodeID(measurement, "drive")]
 			So(node, ShouldNotBeNil)
 			So(node.ID, ShouldEqual, "meas:BTC/USD:cvd:drive")
@@ -85,18 +85,13 @@ func TestAddNodes(t *testing.T) {
 			So(node.Metric, ShouldEqual, types.MetricDrive)
 			So(node.Value, ShouldEqual, drive)
 			So(*node.Normalized, ShouldEqual, drive)
-			So(node.Confidence, ShouldEqual, drive)
+			So(node.Confidence, ShouldAlmostEqual, 0.6*0.8, 1e-12)
 			So(node.Maturity, ShouldEqual, 0.6)
+			So(node.Metadata["hypothesis_separation"], ShouldEqual, separation)
 			So(node.ObservedFrom, ShouldEqual, observedFrom)
 			So(node.Horizon, ShouldEqual, time.Second)
 			So(index.byReference["cvd:drive"], ShouldHaveLength, 1)
-
-			separationNode := graph.Nodes[measurementNodeID(
-				measurement,
-				string(types.MetricHypothesisSeparation),
-			)]
-			So(separationNode, ShouldNotBeNil)
-			So(separationNode.Metric, ShouldEqual, types.MetricHypothesisSeparation)
+			So(graph.Nodes, ShouldHaveLength, 1)
 		})
 	})
 
@@ -182,7 +177,9 @@ func TestAddCategoryEdges(t *testing.T) {
 		putTestMetric(old, types.MetricDrive, 0.7, nil, nmtypes.UnitDimensionless)
 		symbol.AppendMeasurement(old)
 		current := newTestMeasurement("current", types.SourceCVD, "BTC/USD", at)
+		current.Maturity = 1
 		putTestMetric(current, types.MetricDrive, drive, &drive, nmtypes.UnitDimensionless)
+		putTestMetric(current, types.MetricHypothesisSeparation, 1, nil, nmtypes.UnitDimensionless)
 		symbol.AppendMeasurement(current)
 		symbol.Categories.Push([]types.Category{{
 			Symbol: "BTC/USD", Type: types.CategoryAggressiveDrive,
@@ -203,12 +200,13 @@ func TestAddCategoryEdges(t *testing.T) {
 
 		err = compiler.addCategoryEdges(categories, symbol.Symbol, graph, index)
 
-		Convey("It should relate the usable evidence and skip the raw stale node", func() {
+		Convey("It should relate the quality-stamped evidence and skip the unstamped raw node", func() {
 			So(err, ShouldBeNil)
 			So(graph.Edges, ShouldHaveLength, 1)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"current", "cvd:drive"})
-			So(graph.Edges[0].Confidence, ShouldEqual, 0.7)
+			So(graph.Edges[0].Weight, ShouldAlmostEqual, drive, 1e-12)
+			So(graph.Edges[0].Confidence, ShouldEqual, 1)
 		})
 	})
 

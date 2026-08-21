@@ -7,8 +7,8 @@ import (
 )
 
 type WaveModeT struct {
-	Omega     float32 `json:"omega"`
-	Real      float32 `json:"real"`
+	Omega float32 `json:"omega"`
+	Real float32 `json:"real"`
 	Imaginary float32 `json:"imaginary"`
 }
 

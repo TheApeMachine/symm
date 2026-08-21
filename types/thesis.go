@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/kraken"
+	pmanifold "github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/transport"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
@@ -40,6 +40,7 @@ type Thesis struct {
 	Audit          func(any) error `json:"-"`
 	manifold       atomic.Pointer[pmanifold.Reading]
 	phase          atomic.Pointer[PhaseReading]
+	interventions  atomic.Pointer[[]InterventionScore]
 	work           map[SourceType]*transport.MapReduce[*Symbol]
 	workRevision   *atomic.Uint64
 	workHeld       *atomic.Uint64
@@ -412,6 +413,12 @@ func (thesis *Thesis) ForSymbol(name string) (*Thesis, error) {
 		scoped.phase.Store(phase)
 	}
 
+	interventions := thesis.interventions.Load()
+
+	if interventions != nil {
+		scoped.interventions.Store(interventions)
+	}
+
 	return scoped, nil
 }
 
@@ -470,6 +477,12 @@ func (thesis *Thesis) ForSymbols(names []string) (*Thesis, error) {
 		scoped.phase.Store(phase)
 	}
 
+	interventions := thesis.interventions.Load()
+
+	if interventions != nil {
+		scoped.interventions.Store(interventions)
+	}
+
 	return scoped, nil
 }
 
@@ -491,6 +504,39 @@ func (thesis *Thesis) ManifoldSnapshot() (pmanifold.Reading, bool) {
 	}
 
 	return *reading, true
+}
+
+/*
+InterventionScore is the crystallization diagnostic of one do(X) BVP probe.
+*/
+type InterventionScore struct {
+	Action            string  `json:"action"`
+	Score             float64 `json:"score"`
+	MassGain          float64 `json:"massGain"`
+	EnergyGain        float64 `json:"energyGain"`
+	HeatShock         float64 `json:"heatShock"`
+	SpectralResonance float64 `json:"spectralResonance"`
+}
+
+/*
+StoreInterventions publishes the latest manifold do(X) crystallization scores.
+*/
+func (thesis *Thesis) StoreInterventions(scores []InterventionScore) {
+	copied := append([]InterventionScore(nil), scores...)
+	thesis.interventions.Store(&copied)
+}
+
+/*
+InterventionSnapshot returns the latest do(X) crystallization scores.
+*/
+func (thesis *Thesis) InterventionSnapshot() ([]InterventionScore, bool) {
+	scores := thesis.interventions.Load()
+
+	if scores == nil {
+		return nil, false
+	}
+
+	return *scores, true
 }
 
 /*

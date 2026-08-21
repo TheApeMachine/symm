@@ -79,9 +79,9 @@ func NewSymbol(name string, uiChannels ...*transport.MapReduce[*UIFrame]) *Symbo
 		newSymbolConsumer[kraken.TradeData](symbol, SourcePumpDump),
 	}
 	symbol.Level3Consumers = []*transport.Consumer[kraken.Level3Data]{
-		newSymbolConsumer[kraken.Level3Data](symbol, SourceDepthFlow),
+		newSymbolConsumer[kraken.Level3Data](symbol, SourceDepthFlow).Coalesce(),
 		newSymbolConsumer[kraken.Level3Data](symbol, SourceToxicity),
-		newSymbolConsumer[kraken.Level3Data](symbol, SourcePumpDump),
+		newSymbolConsumer[kraken.Level3Data](symbol, SourcePumpDump).Coalesce(),
 	}
 	symbol.ExecutionConsumers = []*transport.Consumer[kraken.ExecutionData]{
 		newSymbolConsumer[kraken.ExecutionData](symbol, SourceDesk),
@@ -149,11 +149,17 @@ func (symbol *Symbol) setNotify(notifyFn func(SourceType, *Symbol)) {
 func newSymbolConsumer[T any](
 	symbol *Symbol, source SourceType,
 ) *transport.Consumer[T] {
-	return transport.NewConsumer[T](string(source), func() {
+	consumer := transport.NewConsumer[T](string(source), func() {
 		if symbol.notify != nil {
 			symbol.notify(source, symbol)
 		}
 	})
+
+	if source == SourceAudit {
+		return consumer.Coalesce()
+	}
+
+	return consumer
 }
 
 /*
@@ -197,8 +203,8 @@ func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
 }
 
 /*
-AppendLevel3 retains one accepted order-identity frame for the signal owners
-selected by the streaming topology.
+AppendLevel3 retains one accepted order-identity frame for book-geometry
+readers. Toxicity still observes every fill and delete on its own FIFO.
 */
 func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data) {
 	symbol.level3.Push(level3)
@@ -508,9 +514,11 @@ func drainedLatestCategories(symbol *Symbol) []Category {
 
 /*
 QueueDepths reports the current pending item count of every per-symbol stage
-buffer. The keys are stable wire names the diagnostics page renders as labeled
-lanes; a nil queue is reported with a zero entry rather than omitted so the
-consumer can render a full row even before the producer first writes.
+buffer. Audit cursors are omitted because they retain only the newest artifact
+for checkpoints and would otherwise dominate live pressure. The keys are stable
+wire names the diagnostics page renders as labeled lanes; a nil queue is
+reported with a zero entry rather than omitted so the consumer can render a
+full row even before the producer first writes.
 */
 func (symbol *Symbol) QueueDepths() map[string]uint64 {
 	out := make(map[string]uint64, 12)
@@ -522,41 +530,76 @@ func (symbol *Symbol) QueueDepths() map[string]uint64 {
 	if symbol.tickers != nil {
 		out["tickers"] = symbol.tickers.Length()
 	}
+
 	if symbol.trades != nil {
 		out["trades"] = symbol.trades.Length()
 	}
+
 	if symbol.level3 != nil {
 		out["level3"] = symbol.level3.Length()
 	}
+
 	if symbol.executions != nil {
 		out["executions"] = symbol.executions.Length()
 	}
+
 	if symbol.Measurements != nil {
-		out["measurements"] = symbol.Measurements.Length()
+		out["measurements"] = symbol.Measurements.Length(
+			symbol.MeasurementConsumers[MeasurementConsumerCategory],
+			symbol.MeasurementConsumers[MeasurementConsumerManifold],
+			symbol.MeasurementConsumers[MeasurementConsumerGraph],
+		)
 	}
+
 	if symbol.Decisions != nil {
-		out["decisions"] = symbol.Decisions.Length()
+		out["decisions"] = symbol.Decisions.Length(
+			symbol.DecisionConsumers[0],
+		)
 	}
+
 	if symbol.Positions != nil {
-		out["positions"] = symbol.Positions.Length()
+		out["positions"] = symbol.Positions.Length(
+			symbol.PositionConsumers[0],
+		)
 	}
+
 	if symbol.Graphs != nil {
-		out["graphs"] = symbol.Graphs.Length()
+		out["graphs"] = symbol.Graphs.Length(
+			symbol.GraphConsumers[GraphConsumerPlanner],
+		)
 	}
+
 	if symbol.Categories != nil {
-		out["categories"] = symbol.Categories.Length()
+		out["categories"] = symbol.Categories.Length(
+			symbol.CategoryConsumers[CategoryConsumerGraph],
+			symbol.CategoryConsumers[CategoryConsumerCognition],
+		)
 	}
+
 	if symbol.Phase != nil {
-		out["phase"] = symbol.Phase.Length()
+		out["phase"] = symbol.Phase.Length(
+			symbol.PhaseConsumers[StateConsumerStage],
+		)
 	}
+
 	if symbol.Cognition != nil {
-		out["cognition"] = symbol.Cognition.Length()
+		out["cognition"] = symbol.Cognition.Length(
+			symbol.CognitionConsumers[StateConsumerStage],
+		)
 	}
+
 	if symbol.Resonance != nil {
-		out["resonance"] = symbol.Resonance.Length()
+		out["resonance"] = symbol.Resonance.Length(
+			symbol.ResonanceConsumers[ResonanceConsumerCausal],
+			symbol.ResonanceConsumers[ResonanceConsumerGraph],
+		)
 	}
+
 	if symbol.Causal != nil {
-		out["causal"] = symbol.Causal.Length()
+		out["causal"] = symbol.Causal.Length(
+			symbol.CausalConsumers[CausalConsumerGraph],
+			symbol.CausalConsumers[CausalConsumerCausal],
+		)
 	}
 
 	return out

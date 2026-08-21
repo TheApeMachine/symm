@@ -287,9 +287,36 @@ func (solver *Solver) measure(
 	causalOutput["precision"] = precision
 	causalOutput["samples"] = len(rows)
 	causalOutput["treatmentLevel"] = prediction
+	solver.conditionOnManifold(thesis, causalOutput)
 
-	symbolState.Causal.Push(causalOutput)
+	symbolState.Causal.PushLatest(causalOutput)
 	return nil
+}
+
+func (solver *Solver) conditionOnManifold(thesis *types.Thesis, causalOutput map[string]any) {
+	reading, hasReading := thesis.ManifoldSnapshot()
+	scores, hasScores := thesis.InterventionSnapshot()
+
+	if !hasReading || !hasScores || len(scores) == 0 {
+		return
+	}
+
+	best := scores[0]
+
+	for _, score := range scores[1:] {
+		if score.Score > best.Score {
+			best = score
+		}
+	}
+
+	gate := reading.KuramotoR * reading.CoherenceMag2 / (1 + math.Abs(reading.Divergence))
+	uplift := best.Score * gate
+	causalOutput["doExpectation"] = uplift
+	causalOutput["intervention"] = uplift
+	causalOutput["interventionScore"] = math.Abs(uplift)
+	causalOutput["identification"] = "manifoldBVP"
+	causalOutput["manifoldAction"] = best.Action
+	causalOutput["treatmentLevel"] = uplift
 }
 
 func (solver *Solver) storeUnresolved(
@@ -308,7 +335,7 @@ func (solver *Solver) storeUnresolved(
 		return
 	}
 
-	symbolState.Causal.Push(map[string]any{
+	symbolState.Causal.PushLatest(map[string]any{
 		"at":             at,
 		"historyRows":    rows,
 		"identification": "unresolved",

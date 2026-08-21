@@ -77,7 +77,7 @@ func (v Frame) String() string {
 }
 
 type FrameT struct {
-	Type  Frame
+	Type Frame
 	Value interface{}
 }
 

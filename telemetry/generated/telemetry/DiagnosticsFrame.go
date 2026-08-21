@@ -7,14 +7,16 @@ import (
 )
 
 type DiagnosticsFrameT struct {
-	Status    string              `json:"status"`
-	AtNs      int64               `json:"atNs"`
-	StartedNs int64               `json:"startedNs"`
-	Stages    []*DiagnosticClockT `json:"stages"`
-	Hops      []*DiagnosticHopT   `json:"hops"`
-	Queues    []*DiagnosticQueueT `json:"queues"`
-	Errors    []*DiagnosticErrorT `json:"errors"`
-	Pass      *DiagnosticPassT    `json:"pass"`
+	Status string `json:"status"`
+	Enabled bool `json:"enabled"`
+	AtNs int64 `json:"atNs"`
+	StartedNs int64 `json:"startedNs"`
+	Stages []*DiagnosticClockT `json:"stages"`
+	Hops []*DiagnosticHopT `json:"hops"`
+	Queues []*DiagnosticQueueT `json:"queues"`
+	Errors []*DiagnosticErrorT `json:"errors"`
+	Pass *DiagnosticPassT `json:"pass"`
+	Goroutines []*DiagnosticGoroutineT `json:"goroutines"`
 }
 
 func (t *DiagnosticsFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -75,8 +77,22 @@ func (t *DiagnosticsFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffs
 		errorsOffset = builder.EndVector(errorsLength)
 	}
 	passOffset := t.Pass.Pack(builder)
+	goroutinesOffset := flatbuffers.UOffsetT(0)
+	if t.Goroutines != nil {
+		goroutinesLength := len(t.Goroutines)
+		goroutinesOffsets := make([]flatbuffers.UOffsetT, goroutinesLength)
+		for j := 0; j < goroutinesLength; j++ {
+			goroutinesOffsets[j] = t.Goroutines[j].Pack(builder)
+		}
+		DiagnosticsFrameStartGoroutinesVector(builder, goroutinesLength)
+		for j := goroutinesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(goroutinesOffsets[j])
+		}
+		goroutinesOffset = builder.EndVector(goroutinesLength)
+	}
 	DiagnosticsFrameStart(builder)
 	DiagnosticsFrameAddStatus(builder, statusOffset)
+	DiagnosticsFrameAddEnabled(builder, t.Enabled)
 	DiagnosticsFrameAddAtNs(builder, t.AtNs)
 	DiagnosticsFrameAddStartedNs(builder, t.StartedNs)
 	DiagnosticsFrameAddStages(builder, stagesOffset)
@@ -84,11 +100,13 @@ func (t *DiagnosticsFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffs
 	DiagnosticsFrameAddQueues(builder, queuesOffset)
 	DiagnosticsFrameAddErrors(builder, errorsOffset)
 	DiagnosticsFrameAddPass(builder, passOffset)
+	DiagnosticsFrameAddGoroutines(builder, goroutinesOffset)
 	return DiagnosticsFrameEnd(builder)
 }
 
 func (rcv *DiagnosticsFrame) UnPackTo(t *DiagnosticsFrameT) {
 	t.Status = string(rcv.Status())
+	t.Enabled = rcv.Enabled()
 	t.AtNs = rcv.AtNs()
 	t.StartedNs = rcv.StartedNs()
 	stagesLength := rcv.StagesLength()
@@ -120,6 +138,13 @@ func (rcv *DiagnosticsFrame) UnPackTo(t *DiagnosticsFrameT) {
 		t.Errors[j] = x.UnPack()
 	}
 	t.Pass = rcv.Pass(nil).UnPack()
+	goroutinesLength := rcv.GoroutinesLength()
+	t.Goroutines = make([]*DiagnosticGoroutineT, goroutinesLength)
+	for j := 0; j < goroutinesLength; j++ {
+		x := DiagnosticGoroutine{}
+		rcv.Goroutines(&x, j)
+		t.Goroutines[j] = x.UnPack()
+	}
 }
 
 func (rcv *DiagnosticsFrame) UnPack() *DiagnosticsFrameT {
@@ -174,19 +199,19 @@ func (rcv *DiagnosticsFrame) Status() []byte {
 	return nil
 }
 
-func (rcv *DiagnosticsFrame) AtNs() int64 {
+func (rcv *DiagnosticsFrame) Enabled() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
-	return 0
+	return false
 }
 
-func (rcv *DiagnosticsFrame) MutateAtNs(n int64) bool {
-	return rcv._tab.MutateInt64Slot(6, n)
+func (rcv *DiagnosticsFrame) MutateEnabled(n bool) bool {
+	return rcv._tab.MutateBoolSlot(6, n)
 }
 
-func (rcv *DiagnosticsFrame) StartedNs() int64 {
+func (rcv *DiagnosticsFrame) AtNs() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
@@ -194,12 +219,24 @@ func (rcv *DiagnosticsFrame) StartedNs() int64 {
 	return 0
 }
 
-func (rcv *DiagnosticsFrame) MutateStartedNs(n int64) bool {
+func (rcv *DiagnosticsFrame) MutateAtNs(n int64) bool {
 	return rcv._tab.MutateInt64Slot(8, n)
 }
 
-func (rcv *DiagnosticsFrame) Stages(obj *DiagnosticClock, j int) bool {
+func (rcv *DiagnosticsFrame) StartedNs() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *DiagnosticsFrame) MutateStartedNs(n int64) bool {
+	return rcv._tab.MutateInt64Slot(10, n)
+}
+
+func (rcv *DiagnosticsFrame) Stages(obj *DiagnosticClock, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -211,7 +248,7 @@ func (rcv *DiagnosticsFrame) Stages(obj *DiagnosticClock, j int) bool {
 }
 
 func (rcv *DiagnosticsFrame) StagesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -219,7 +256,7 @@ func (rcv *DiagnosticsFrame) StagesLength() int {
 }
 
 func (rcv *DiagnosticsFrame) Hops(obj *DiagnosticHop, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -231,7 +268,7 @@ func (rcv *DiagnosticsFrame) Hops(obj *DiagnosticHop, j int) bool {
 }
 
 func (rcv *DiagnosticsFrame) HopsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -239,7 +276,7 @@ func (rcv *DiagnosticsFrame) HopsLength() int {
 }
 
 func (rcv *DiagnosticsFrame) Queues(obj *DiagnosticQueue, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -251,7 +288,7 @@ func (rcv *DiagnosticsFrame) Queues(obj *DiagnosticQueue, j int) bool {
 }
 
 func (rcv *DiagnosticsFrame) QueuesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -259,7 +296,7 @@ func (rcv *DiagnosticsFrame) QueuesLength() int {
 }
 
 func (rcv *DiagnosticsFrame) Errors(obj *DiagnosticError, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -271,7 +308,7 @@ func (rcv *DiagnosticsFrame) Errors(obj *DiagnosticError, j int) bool {
 }
 
 func (rcv *DiagnosticsFrame) ErrorsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -279,7 +316,7 @@ func (rcv *DiagnosticsFrame) ErrorsLength() int {
 }
 
 func (rcv *DiagnosticsFrame) Pass(obj *DiagnosticPass) *DiagnosticPass {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -291,44 +328,73 @@ func (rcv *DiagnosticsFrame) Pass(obj *DiagnosticPass) *DiagnosticPass {
 	return nil
 }
 
+func (rcv *DiagnosticsFrame) Goroutines(obj *DiagnosticGoroutine, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *DiagnosticsFrame) GoroutinesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func DiagnosticsFrameStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(10)
 }
 func DiagnosticsFrameAddStatus(builder *flatbuffers.Builder, status flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(status), 0)
 }
+func DiagnosticsFrameAddEnabled(builder *flatbuffers.Builder, enabled bool) {
+	builder.PrependBoolSlot(1, enabled, false)
+}
 func DiagnosticsFrameAddAtNs(builder *flatbuffers.Builder, atNs int64) {
-	builder.PrependInt64Slot(1, atNs, 0)
+	builder.PrependInt64Slot(2, atNs, 0)
 }
 func DiagnosticsFrameAddStartedNs(builder *flatbuffers.Builder, startedNs int64) {
-	builder.PrependInt64Slot(2, startedNs, 0)
+	builder.PrependInt64Slot(3, startedNs, 0)
 }
 func DiagnosticsFrameAddStages(builder *flatbuffers.Builder, stages flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(stages), 0)
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(stages), 0)
 }
 func DiagnosticsFrameStartStagesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func DiagnosticsFrameAddHops(builder *flatbuffers.Builder, hops flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(hops), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(hops), 0)
 }
 func DiagnosticsFrameStartHopsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func DiagnosticsFrameAddQueues(builder *flatbuffers.Builder, queues flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(queues), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(queues), 0)
 }
 func DiagnosticsFrameStartQueuesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func DiagnosticsFrameAddErrors(builder *flatbuffers.Builder, errors flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(errors), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(errors), 0)
 }
 func DiagnosticsFrameStartErrorsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func DiagnosticsFrameAddPass(builder *flatbuffers.Builder, pass flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(pass), 0)
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(pass), 0)
+}
+func DiagnosticsFrameAddGoroutines(builder *flatbuffers.Builder, goroutines flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(goroutines), 0)
+}
+func DiagnosticsFrameStartGoroutinesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func DiagnosticsFrameEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -69,7 +69,7 @@ export function unionToFrame(
 
 export function unionListToFrame(
   type: Frame, 
-  accessor: (index: number, obj:BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null,
+  accessor: (index: number, obj:BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null, 
   index: number
 ): BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
   switch(Frame[type]) {

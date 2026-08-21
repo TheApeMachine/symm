@@ -207,7 +207,8 @@ DiagnosticsFrame is the stream-pipeline snapshot on the UI wire. It reports
 sequencer lag and lane pressure, not signal activity.
 */
 export type DiagnosticsFrame = {
-	status?: "flowing" | "queued" | "stalled" | "lossy";
+	status?: "flowing" | "queued" | "stalled" | "lossy" | "disabled";
+	enabled?: boolean;
 	summary?: string;
 	ingress_sequence?: number;
 	committed_sequence?: number;
@@ -235,6 +236,13 @@ export type DiagnosticsFrame = {
 	hops?: HopSnapshot[];
 	errors?: ErrorSnapshot[];
 	pass?: PassStatus;
+	goroutines?: GoroutineOwner[];
+};
+
+export type GoroutineOwner = {
+	owner: string;
+	count: number;
+	state?: string;
 };
 
 /*

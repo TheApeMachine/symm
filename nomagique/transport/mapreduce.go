@@ -21,6 +21,8 @@ type Consumer[T any] struct {
 	queue    *lf.Queue[T]
 	status   atomic.Uint32
 	previous atomic.Pointer[T]
+	latest   atomic.Pointer[T]
+	coalesce bool
 }
 
 func NewConsumer[T any](
@@ -33,6 +35,35 @@ func NewConsumer[T any](
 		queue:  lf.NewQueue[T](),
 		status: atomic.Uint32{},
 	}
+}
+
+/*
+Coalesce keeps only the newest unpublished item for this consumer. Concurrent
+producers overwrite the slot instead of growing an unbounded FIFO, which is
+the right bound for audit cursors and other latest-wins readers.
+*/
+func (consumer *Consumer[T]) Coalesce() *Consumer[T] {
+	if consumer != nil {
+		consumer.coalesce = true
+	}
+
+	return consumer
+}
+
+func (consumer *Consumer[T]) depth() uint64 {
+	if consumer == nil {
+		return 0
+	}
+
+	if consumer.coalesce {
+		if consumer.latest.Load() != nil {
+			return 1
+		}
+
+		return 0
+	}
+
+	return consumer.queue.Length()
 }
 
 /*
@@ -132,17 +163,14 @@ it will return the length of the main Queue only.
 */
 func (mr *MapReduce[T]) Length(consumers ...*Consumer[T]) uint64 {
 	length := uint64(0)
+	listed := consumers
 
-	if len(consumers) > 0 {
-		for _, consumer := range consumers {
-			length += consumer.queue.Length()
-		}
-
-		return length
+	if len(listed) == 0 {
+		listed = mr.consumersSnapshot()
 	}
 
-	for _, consumer := range mr.consumersSnapshot() {
-		length += consumer.queue.Length()
+	for _, consumer := range listed {
+		length += consumer.depth()
 	}
 
 	return length
@@ -157,7 +185,7 @@ func (mr *MapReduce[T]) Idle() bool {
 			return false
 		}
 
-		if consumer.queue.Length() != 0 {
+		if consumer.depth() != 0 {
 			return false
 		}
 
@@ -212,6 +240,7 @@ the frames still retained by its private queue.
 */
 func (mr *MapReduce[T]) Unregister(consumer *Consumer[T]) {
 	consumer.status.Store(uint32(types.STOPPED))
+	consumer.latest.Store(nil)
 
 	for consumer.queue.Length() > 0 {
 		if _, ok := consumer.queue.Dequeue(); !ok {
@@ -223,18 +252,52 @@ func (mr *MapReduce[T]) Unregister(consumer *Consumer[T]) {
 }
 
 func (mr *MapReduce[T]) Push(item T) {
+	mr.publish(item, false)
+}
+
+/*
+PushLatest replaces any unpublished FIFO items so each consumer holds the
+newest value. Event streams that must observe every row should keep using
+Push; snapshot columns that only read the current artifact should use this.
+*/
+func (mr *MapReduce[T]) PushLatest(item T) {
+	mr.publish(item, true)
+}
+
+func (mr *MapReduce[T]) publish(item T, latest bool) {
+	mapped := mr.mapFn(item)
+
 	for _, consumer := range mr.consumersSnapshot() {
 		if consumer.status.Load() == uint32(types.STOPPED) {
 			continue
 		}
 
-		consumer.queue.Enqueue(mr.mapFn(item))
-
-		if mr.Length(consumer) > 0 && consumer.status.CompareAndSwap(
-			uint32(types.READY), uint32(types.BUSY),
-		) {
-			consumer.wait()
+		if consumer.coalesce {
+			held := new(T)
+			*held = mapped
+			consumer.latest.Store(held)
+			mr.wake(consumer)
+			continue
 		}
+
+		if latest {
+			for consumer.queue.Length() > 0 {
+				if _, ok := consumer.queue.Dequeue(); !ok {
+					break
+				}
+			}
+		}
+
+		consumer.queue.Enqueue(mapped)
+		mr.wake(consumer)
+	}
+}
+
+func (mr *MapReduce[T]) wake(consumer *Consumer[T]) {
+	if mr.Length(consumer) > 0 && consumer.status.CompareAndSwap(
+		uint32(types.READY), uint32(types.BUSY),
+	) {
+		consumer.wait()
 	}
 }
 
@@ -250,6 +313,10 @@ func (mr *MapReduce[T]) Pop(consumer *Consumer[T]) (T, bool) {
 	var (
 		zero T
 	)
+
+	if consumer != nil && consumer.coalesce {
+		return mr.stageLatest(consumer)
+	}
 
 	if mr.Length(consumer) == 0 {
 		return zero, false
@@ -342,4 +409,22 @@ func (mr *MapReduce[T]) stage(consumer *Consumer[T]) (item T, ok bool) {
 	consumer.previous.Store(&item)
 
 	return item, ok
+}
+
+func (mr *MapReduce[T]) stageLatest(consumer *Consumer[T]) (item T, ok bool) {
+	held := consumer.latest.Swap(nil)
+
+	if held == nil {
+		return item, false
+	}
+
+	item = *held
+
+	if previous := consumer.previous.Load(); previous != nil {
+		item = mr.reduceFn(*previous, item)
+	}
+
+	consumer.previous.Store(&item)
+
+	return item, true
 }

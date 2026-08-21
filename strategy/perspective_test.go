@@ -5,8 +5,8 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	logicgraph "github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/nomagique/learning"
+	logicgraph "github.com/theapemachine/symm/types"
 )
 
 func TestGraphPerspective(t *testing.T) {
@@ -35,12 +35,12 @@ func TestGraphPerspective(t *testing.T) {
 		Convey("It should preserve semantics without manufacturing a return", func() {
 			So(err, ShouldBeNil)
 			So(perspective.Hypothesis, ShouldEqual, graph.DecisionTarget)
-			So(perspective.Support, ShouldAlmostEqual, 0.6)
-			So(perspective.Contradiction, ShouldAlmostEqual, 0.1)
-			So(perspective.Conditions, ShouldAlmostEqual, 0.4)
-			So(perspective.Balance, ShouldAlmostEqual, 5.0/7.0)
+			So(perspective.Support, ShouldAlmostEqual, 0.8)
+			So(perspective.Contradiction, ShouldAlmostEqual, 0.2)
+			So(perspective.Conditions, ShouldAlmostEqual, 1)
+			So(perspective.Balance, ShouldAlmostEqual, 0.6)
 			So(perspective.Confidence, ShouldAlmostEqual, 0.7)
-			So(perspective.Score, ShouldAlmostEqual, 0.5)
+			So(perspective.Score, ShouldAlmostEqual, 0.6)
 			So(perspective.Direction, ShouldEqual, 1)
 		})
 

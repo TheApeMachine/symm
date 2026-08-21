@@ -501,7 +501,7 @@ func (solver *Solver) processBatch(
 	}
 
 	solver.readings[symbol] = cognition
-	symbolState.(*types.Symbol).Cognition.Push(cognition)
+	symbolState.(*types.Symbol).Cognition.PushLatest(cognition)
 	rows[symbol] = cognition
 	return nil
 }

@@ -3,7 +3,6 @@ package graph
 import (
 	"fmt"
 	"iter"
-	"math"
 	"sort"
 	"strings"
 
@@ -112,6 +111,7 @@ func (compiler *measurementCompiler) addMeasurement(
 		}
 
 		node := measurementNode(measurement, metricKey, metric, side, sample)
+		node.Confidence = types.ObservationMass(node, graph.At)
 		graph.AddNode(node)
 	}
 
@@ -124,13 +124,21 @@ func (compiler *measurementCompiler) graphMetric(
 	side types.MeasurementSide,
 	sample *nmtypes.Metric[float64],
 ) bool {
+	if sample == nil {
+		return false
+	}
+
+	if metric == types.MetricHypothesisSeparation {
+		return false
+	}
+
 	if source == string(types.SourceLeadLag) &&
 		(metric == types.MetricLastPrice || metric == types.MetricPeerLastPrice) {
 		return true
 	}
 
-	if sample.Normalized == nil || *sample.Normalized <= 0 {
-		return false
+	if sample.Normalized != nil && *sample.Normalized > 1 {
+		return true
 	}
 
 	groups, known := types.SignalMetricGroups[types.SourceType(source)]
@@ -150,6 +158,17 @@ func measurementNode(
 	side types.MeasurementSide,
 	sample *nmtypes.Metric[float64],
 ) *types.Node {
+	if sample.Normalized != nil {
+		measurementConfidence(measurement, metricKey, *sample.Normalized)
+	}
+
+	horizon := measurement.Horizon
+
+	if horizon <= 0 && !measurement.ObservedFrom.IsZero() &&
+		!measurement.At.Before(measurement.ObservedFrom) {
+		horizon = measurement.At.Sub(measurement.ObservedFrom)
+	}
+
 	node := &types.Node{
 		ID:            measurementNodeID(measurement, metricKey),
 		Symbol:        measurement.Symbol,
@@ -164,16 +183,11 @@ func measurementNode(
 		Maturity:      measurement.Maturity,
 		Unit:          types.MeasurementUnit(sample.Unit.String()),
 		ObservedFrom:  measurement.ObservedFrom,
-		Horizon:       measurement.Horizon,
+		Horizon:       horizon,
 		At:            measurement.At,
-	}
-
-	if sample.Normalized != nil && *sample.Normalized > 0 {
-		node.Confidence = measurementConfidence(
-			measurement,
-			metricKey,
-			*sample.Normalized,
-		)
+		Metadata: map[string]any{
+			"hypothesis_separation": measurementSeparation(measurement),
+		},
 	}
 
 	if metric != types.MetricPeerLastPrice {
@@ -218,7 +232,7 @@ func measurementConfidence(
 	measurement *nmtypes.Measurement,
 	metricKey string,
 	normalized float64,
-) float64 {
+) {
 	if !(normalized >= 0 && normalized <= 1) {
 		panic(fmt.Sprintf(
 			"graph: normalized measurement strength must be in [0,1]: "+
@@ -229,8 +243,31 @@ func measurementConfidence(
 			normalized,
 		))
 	}
+}
 
-	return normalized
+func measurementSeparation(measurement *nmtypes.Measurement) float64 {
+	if measurement == nil {
+		return 0
+	}
+
+	sample := measurement.Metrics[types.MetricKey(
+		types.MetricHypothesisSeparation,
+		types.SideNone,
+	)]
+
+	if sample == nil {
+		return 0
+	}
+
+	if sample.Normalized != nil {
+		return *sample.Normalized
+	}
+
+	if sample.Raw >= 0 && sample.Raw <= 1 {
+		return sample.Raw
+	}
+
+	return 0
 }
 
 func cloneFloat(value *float64) *float64 {
@@ -299,18 +336,11 @@ func (compiler *measurementCompiler) addCategoryRelations(
 			continue
 		}
 
-		normalized := false
-
 		for _, node := range nodes {
-			if node.Normalized == nil {
-				continue
-			}
+			omega := types.ObservationMass(node, graph.At)
+			weight := omega * types.NodeInfluence(node)
 
-			normalized = true
-
-			weight := math.Abs(*node.Normalized)
-
-			if weight == 0 {
+			if weight <= 0 {
 				continue
 			}
 
@@ -319,7 +349,7 @@ func (compiler *measurementCompiler) addCategoryRelations(
 				To:           targetID,
 				Relation:     relation,
 				Weight:       weight,
-				Confidence:   category.Confidence,
+				Confidence:   omega,
 				Evidence:     []string{node.MeasurementID, reference},
 				ObservedFrom: node.ObservedFrom,
 				Horizon:      node.Horizon,
@@ -328,13 +358,6 @@ func (compiler *measurementCompiler) addCategoryRelations(
 					reference, string(relation), string(category.Type),
 				}, " "),
 			})
-		}
-
-		// No normalized evidence either: the reference is not yet measurable.
-		// Same contract as the missing node — skip, stay honest, retry next
-		// pass.
-		if !normalized {
-			continue
 		}
 	}
 

@@ -8,7 +8,6 @@ import (
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/geometry"
-	pmanifold "github.com/theapemachine/nomagique/physics/manifold"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -370,7 +369,7 @@ type WaveMode struct {
 	Imaginary float32 `json:"imaginary"`
 }
 
-func oscillatorWave(oscillators []pmanifold.Oscillator) []WaveMode {
+func oscillatorWave(oscillators []Oscillator) []WaveMode {
 	wave := make([]WaveMode, len(oscillators))
 
 	for index, oscillator := range oscillators {
@@ -385,7 +384,7 @@ func oscillatorWave(oscillators []pmanifold.Oscillator) []WaveMode {
 }
 
 func projectSourceDial(
-	oscillators []pmanifold.Oscillator,
+	oscillators []Oscillator,
 	omegaMin float64,
 	omegaMax float64,
 ) (geometry.PhaseDial, error) {
