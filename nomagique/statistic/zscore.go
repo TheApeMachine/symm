@@ -30,20 +30,37 @@ func ZScore(
 	input nomagique.Frame,
 ) (nomagique.Frame, nomagique.Frame, error) {
 	value, hasValue := input.Get(nomagique.SampleValue)
-	halflife, hasHalflife := input.Get(SymbolDispersionHalflife)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
-	if !hasValue || !hasHalflife || !hasSec || !hasNsec {
+	if !hasValue || !hasSec || !hasNsec {
 		return state, nomagique.Frame{}, fmt.Errorf(
-			"statistic: z-score requires a value, a dispersion halflife, and event time",
+			"statistic: z-score requires a value and event time",
 		)
 	}
 
-	if halflife <= 0 || nsec < 0 || nsec >= 1e9 {
+	if nsec < 0 || nsec >= 1e9 {
 		return state, nomagique.Frame{}, fmt.Errorf(
-			"statistic: z-score requires a positive dispersion halflife and normalized nanoseconds",
+			"statistic: z-score requires normalized nanoseconds",
 		)
+	}
+
+	halflife, hasHalflife := input.Get(SymbolDispersionHalflife)
+
+	if hasHalflife && halflife < 0 {
+		return state, nomagique.Frame{}, fmt.Errorf(
+			"statistic: z-score requires a non-negative dispersion halflife",
+		)
+	}
+
+	if !hasHalflife || halflife == 0 {
+		if span, hasSpan := input.Get(SymbolBaselineSpan); hasSpan && span > 0 {
+			halflife = span
+		} else if span, hasSpan := state.Get(SymbolBaselineSpan); hasSpan && span > 0 {
+			halflife = span
+		} else {
+			halflife = 1.0
+		}
 	}
 
 	baseline, hasBaseline := state.Get(SymbolBaselineValue)

@@ -13,10 +13,9 @@ rest (a leader), and if so, is the rest of the cohort confirming that
 leader's direction or is the leader diverging from an otherwise indifferent
 or opposing market?
 
-This package is entirely self-contained — there is no `nomagique` engine
-behind it (only `nomagique/statistic.MedianOf` for robust central tendency).
-Every accounting rule here is implemented directly in this package. No
-category, no trading gate — `logic/category` decides what a reading means.
+This package is a pure `nomagique` composition built on `nomagique.Number[string](temporal.Path)`
+and `nomagique/algo.CohortSentiment`. No category, no trading gate — `logic/category` decides what
+a reading means.
 
 ## The cohort is time-aligned by median cadence, not by a fixed clock
 
@@ -118,26 +117,24 @@ tick (they are cohort-level statistics, not per-symbol) — only `change` (this
 symbol's own return) and the leader fields (nonzero only for the symbol that
 actually is the leader) vary per symbol.
 
-| Metric            | Meaning                                                                                                                                                          |
-|-------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `change`          | This symbol's own log return since its previous observation. `Normalized`: this return expressed as a multiple of the cohort's median absolute return this tick. |
-| `breadth`         | Cohort-level advance/decline balance, `-1..1`. Same value for every symbol in the cohort this tick.                                                              |
-| `leader_strength` | The leader's own magnitude (`0` for every non-leader symbol). `Normalized`: same scale as `change` — multiples of cohort median magnitude.                       |
-| `leader_evidence` | See above — how much the leader stands out relative to peer dispersion. `0` for non-leader symbols.                                                              |
-| `relative_lead`   | The leader's share of the cohort's total absolute movement. `0` for non-leader symbols.                                                                          |
-| `surge_score`     | Cohort-level "typical move is up and the cohort agrees," `0..1`+. Same for every symbol.                                                                         |
-| `divergent_score` | See above — leader evidenced but cohort not confirming. Only nonzero for the leader symbol.                                                                      |
-| `slump_score`     | Cohort-level "typical move is down and the cohort agrees," `0..1`+. Same for every symbol.                                                                       |
-| `strength`        | `max(surge_score, divergent_score, slump_score)` — whichever cohort-level story is currently strongest.                                                          |
+| Metric            | Meaning                                                                                                                            |
+|-------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `change`          | This symbol's own log return since its previous observation.                                                                       |
+| `breadth`         | Cohort-level advance/decline balance, `-1..1`. Same value for every symbol in the cohort this tick.                                |
+| `leader_strength` | The leader's own magnitude (`0` for every non-leader symbol).                                                                      |
+| `leader_evidence` | See above — how much the leader stands out relative to peer dispersion. `0` for non-leader symbols.                                |
+| `relative_lead`   | The leader's share of the cohort's total absolute movement. `0` for non-leader symbols.                                            |
+| `surge_score`     | Cohort-level "typical move is up and the cohort agrees," `0..1`. Same for every symbol. Normalized in `[0,1]`.                    |
+| `divergent_score` | See above — leader evidenced but cohort not confirming. Only nonzero for the leader symbol. Normalized in `[0,1]`.                 |
+| `slump_score`     | Cohort-level "typical move is down and the cohort agrees," `0..1`. Same for every symbol. Normalized in `[0,1]`.                   |
+| `strength`        | `max(surge_score, divergent_score, slump_score)` — whichever cohort-level story is currently strongest. Normalized in `[0,1]`.      |
 
 ### Readiness
 
 A symbol only enters the cohort once it has at least two observations (so a
 return can be computed — `observation.ready`) and its latest observation
-falls within the cohort's freshness window. `Normalized` for `change` and
-`leader_strength` requires a positive `magnitudeBaseline` (the cohort's
-median absolute return this tick) — without cohort-wide movement to compare
-against, there is no scale to normalize against.
+falls within the cohort's freshness window. Without cohort-wide movement to
+compare against, there is no scale to evaluate cohort baseline dynamics.
 
 ## Files
 

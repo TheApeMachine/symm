@@ -2,73 +2,29 @@ package exhaust
 
 import (
 	"context"
-	"math"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 var (
-	SymbolMechanical = nomagique.MustIntern("exhaust/mechanical")
-	SymbolFragile    = nomagique.MustIntern("exhaust/fragile")
-	SymbolThermal    = nomagique.MustIntern("exhaust/thermal")
-	SymbolReversal   = nomagique.MustIntern("exhaust/reversal")
-	SymbolUrgency    = nomagique.MustIntern("exhaust/urgency")
+	SymbolMechanical = algo.SymbolMechanical
+	SymbolFragile    = algo.SymbolFragile
+	SymbolThermal    = algo.SymbolThermal
+	SymbolReversal   = algo.SymbolReversal
+	SymbolUrgency    = algo.SymbolUrgency
 )
 
 /*
-exhaustPipeline composes the four microstructure decay families
-simultaneously:
-
-  - Mechanical: depth collapse below its own adaptive baseline (deviation).
-  - Fragile: spread widening (positive standardized deviation).
-  - Thermal: fading pressure multiplied against adverse price rejection.
-  - Reversal: imbalance flip gated against the held direction.
-
-The families are fused through Maximum into one urgency margin, so exhaust is
-never a single generic z-score over quantity.
+exhaustPipeline is the pure nomagique Exhaust primitive.
 */
 func exhaustPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Fork(
-			nomagique.Fork(
-				nomagique.Fork(
-					nomagique.Pipe(
-						nomagique.Configure(statistic.Baseline, nmtypes.Span, temporal.Window),
-						statistic.Deviation,
-						nomagique.Relay(statistic.SymbolDeviation, SymbolMechanical),
-					),
-					nomagique.Pipe(
-						statistic.ZScore,
-						nomagique.Relay(nomagique.SampleValue, calculus.SymbolValue),
-						calculus.Positive,
-						nomagique.Relay(calculus.SymbolResult, SymbolFragile),
-					),
-				),
-				nomagique.Pipe(
-					calculus.Product,
-					nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
-					calculus.Squash,
-					nomagique.Relay(calculus.SymbolResult, SymbolThermal),
-				),
-			),
-			nomagique.Pipe(
-				calculus.Difference,
-				nomagique.Relay(calculus.SymbolResult, SymbolReversal),
-			),
-		),
-		nomagique.Fork(
-			statistic.Maximum,
-			nomagique.Relay(statistic.SymbolResult, SymbolUrgency),
-		),
-	)
+	return algo.Exhaust()
 }
 
 type Signal struct {
@@ -120,25 +76,18 @@ func (signal *Signal) consume() {
 			for trade := range symbol.MarketTrades(
 				symbol.TradeConsumers[types.TradeConsumerExhaustion],
 			) {
-				// Real operands for the Thermal product: fade is the trade's
-				// own pressure share, rejection is the side-signed move the
-				// position must overcome.
-				pressureFade := trade.Qty / (trade.Qty + 1)
-				priceRejection := 0.5
+				side := 1.0
 
 				if trade.Side == "sell" {
-					priceRejection = -0.5
+					side = -1.0
 				}
 
 				input := nomagique.Frame{}
-				input.Put(nmtypes.Quantity, float64(trade.Qty))
-				input.Put(calculus.SymbolLeft, pressureFade)
-				input.Put(calculus.SymbolRight, math.Abs(priceRejection))
-				input.Put(calculus.SymbolValue, pressureFade)
-				input.Put(calculus.SymbolScale, 1.0)
+				input.Put(algo.SymbolVolume, trade.Qty)
+				input.Put(algo.SymbolAggressorSide, side)
+				input.Put(algo.SymbolPriceDelta, trade.Price.Float64())
 				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-				input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
 				output, err := signal.number.Step(symbol.Symbol, input)
 
@@ -179,11 +128,6 @@ func (signal *Signal) consume() {
 					}),
 				)
 
-				/*
-					Exhaustion fuses four decay families into one urgency margin but
-					has no single competing pair to separate, so its separation stays
-					honestly zero while maturity marks accumulating evidence.
-				*/
 				measurement.StampQuality(0, output.MustGet(nomagique.SampleCount))
 
 				symbol.AppendMeasurement(measurement)

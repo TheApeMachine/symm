@@ -15,10 +15,12 @@ var SymbolDeviation = nomagique.MustIntern("deviation")
 
 /*
 Deviation is a primitive: it reads the current value and the adaptive baseline
-and emits their relative absolute deviation. A non-positive baseline has no
-scale to deviate against and reports zero rather than inventing one. The
-primitive leaves the rest of the input frame untouched so downstream stages
-keep whatever context the composition carried.
+and emits their relative absolute deviation. The scale is the baseline's own
+magnitude, so a signed residual (fills versus cancellations, depth versus a
+negative mean) still has a denominator. A zero baseline has no scale and
+reports zero rather than inventing one. The primitive leaves the rest of the
+input frame untouched so downstream stages keep whatever context the
+composition carried.
 */
 func Deviation(
 	state nomagique.Frame,
@@ -40,11 +42,13 @@ func Deviation(
 }
 
 func relativeDeviation(value float64, baseline float64) float64 {
-	if baseline <= 0 {
+	scale := math.Abs(baseline)
+
+	if scale == 0 {
 		return 0
 	}
 
-	return math.Abs(value-baseline) / baseline
+	return math.Abs(value-baseline) / scale
 }
 
 /*

@@ -63,8 +63,24 @@ func TestZScore(t *testing.T) {
 			_, _, err := ZScore(nomagique.Frame{}, nomagique.Frame{})
 			So(err, ShouldNotBeNil)
 
-			_, _, err = ZScore(nomagique.Frame{}, zscoreObservationForTest(100, 1000, 0))
+			_, _, err = ZScore(nomagique.Frame{}, zscoreObservationForTest(100, 1000, -5))
 			So(err, ShouldNotBeNil)
+		})
+
+		Convey("Omitting halflife should self-adapt gracefully", func() {
+			state := nomagique.Frame{}
+			state.Put(SymbolBaselineValue, 100)
+			state.Put(SymbolBaselineSpan, 10)
+			stream := nomagique.NewStream(ZScore, state)
+
+			input := nomagique.Frame{}
+			input.Put(nomagique.SampleValue, 110)
+			input.Put(SymbolUnixSec, 1000)
+			input.Put(SymbolUnixNsec, 0)
+
+			output, err := stream.Step(input)
+			So(err, ShouldBeNil)
+			So(output.MustGet(SymbolZScore), ShouldEqual, 1)
 		})
 	})
 }

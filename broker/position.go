@@ -290,7 +290,23 @@ func (position *Position) MarkFeedback(at time.Time) types.MarkFeedback {
 }
 
 func (position *Position) onExecution(message kraken.Execution) bool {
+	if position.status() == types.CLOSED {
+		return true
+	}
+
 	for _, execution := range message.Data {
+		if execution.ExecID != "" {
+			if position.seenExecutions == nil {
+				position.seenExecutions = make(map[string]struct{})
+			}
+
+			if _, seen := position.seenExecutions[execution.ExecID]; seen {
+				continue
+			}
+
+			position.seenExecutions[execution.ExecID] = struct{}{}
+		}
+
 		if position.ExitOrder != nil &&
 			execution.ClientOrderID == position.ExitOrder.ClOrdId {
 			status, err := types.StatusFromMarket(execution.OrderStatus)
@@ -419,6 +435,10 @@ the desk and publishes the terminal state so retained UI positions can remove
 it by identity.
 */
 func (position *Position) closeFill(execution kraken.ExecutionData) error {
+	if position.status() == types.CLOSED {
+		return nil
+	}
+
 	if position.Holding == nil || position.Holding.Qty == nil ||
 		position.Holding.Qty.Sign() <= 0 || position.Holding.EntryPrice == nil ||
 		position.Holding.EntryPrice.Sign() <= 0 || position.Holding.EntryFee == nil ||
@@ -435,7 +455,7 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 
 	sellable := position.Holding.SellableQty
 
-	if sellable == nil {
+	if sellable == nil || sellable.Sign() <= 0 {
 		sellable = position.Holding.Qty
 	}
 
@@ -524,11 +544,17 @@ func (position *Position) Exit() (*Position, error) {
 		)
 	}
 
+	volume := position.Holding.Qty
+
+	if position.Holding.SellableQty != nil && position.Holding.SellableQty.Sign() > 0 {
+		volume = position.Holding.SellableQty
+	}
+
 	exitOrder := &spot.AddOrderRequest{
 		ClOrdId:   position.EntryOrder.ClOrdId + "-exit",
 		Type:      "sell",
 		OrderType: "market",
-		Volume:    position.Holding.Qty.String(),
+		Volume:    volume.String(),
 		Pair:      position.pair.Symbol,
 	}
 

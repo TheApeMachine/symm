@@ -2,7 +2,6 @@ package liquidity
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
@@ -24,7 +23,6 @@ type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
-	clock  map[string]time.Time
 	thesis *types.Thesis
 	number *nomagique.Number[string]
 	work   *transport.Consumer[*types.Symbol]
@@ -42,7 +40,6 @@ func NewSignal(
 	signal := &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		clock:  make(map[string]time.Time),
 		thesis: thesis,
 		number: nomagique.NewNumber[string](
 			nomagique.Pipe(
@@ -103,15 +100,13 @@ func (signal *Signal) consume() {
 					continue
 				}
 
-				eventTime := signal.eventTime(symbol.Symbol, ticker.Timestamp)
 				input := nomagique.Frame{}
 				input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
 				input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
 				input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
 				input.Put(nmtypes.BetaQuantity, ticker.AskQty)
-				input.Put(nmtypes.EventTimeSec, float64(eventTime.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(eventTime.Nanosecond()))
-				input.Put(statistic.SymbolDispersionHalflife, 30.0)
+				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
 
 				output, err := signal.number.Step(symbol.Symbol, input)
 
@@ -150,7 +145,7 @@ func (signal *Signal) consume() {
 						Unit:      nmtypes.UnitPercent,
 						Timescale: nmtypes.TimescaleInstantaneous,
 					}),
-					nmtypes.NewMetric("effective_window", output.MustGet(nmtypes.Span), nmtypes.Descriptor{
+					nmtypes.NewMetric("effective_window", output.MustGet(statistic.SymbolBaselineWindow), nmtypes.Descriptor{
 						Unit:      nmtypes.UnitCount,
 						Timescale: nmtypes.TimescaleInstantaneous,
 					}),
@@ -164,18 +159,6 @@ func (signal *Signal) consume() {
 			}
 		}
 	}()
-}
-
-func (signal *Signal) eventTime(symbol string, observedAt time.Time) time.Time {
-	previousAt := signal.clock[symbol]
-
-	if observedAt.Before(previousAt) {
-		return previousAt
-	}
-
-	signal.clock[symbol] = observedAt
-
-	return observedAt
 }
 
 func (signal *Signal) Close() error {

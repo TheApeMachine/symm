@@ -14,6 +14,18 @@ import (
 )
 
 /*
+hawkesPipeline composes the Hawkes point process and hypothesis separation.
+*/
+func hawkesPipeline() nomagique.Primitive {
+	return nomagique.Pipe(
+		algo.Hawkes(),
+		nomagique.Relay(algo.SymbolLambdaAlpha, nmtypes.AlphaQuantity),
+		nomagique.Relay(algo.SymbolLambdaBeta, nmtypes.BetaQuantity),
+		statistic.Separation,
+	)
+}
+
+/*
 Signal measures the buy/sell trade-arrival process as a bivariate Hawkes
 process. It is ONLY a nomagique Number: one self-adapting numeric unit per
 symbol that maps each signed trade mark into fitted self- and cross-exciting
@@ -41,9 +53,7 @@ func NewSignal(
 		ctx:    ctx,
 		cancel: cancel,
 		thesis: thesis,
-		number: nomagique.NewNumber[string](
-			nomagique.Pipe(algo.Hawkes()),
-		),
+		number: nomagique.NewNumber[string](hawkesPipeline()),
 	}
 	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
 	thesis.Work(types.SourceHawkes).Register(signal.work)
@@ -125,22 +135,6 @@ func (signal *Signal) consume() {
 					spectralMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), spectralRadius, spectralRadius, spectralMetric.Descriptor)
 				}
 
-				separationInput := nomagique.Frame{}
-				separationInput.Put(nmtypes.AlphaQuantity, output.MustGet(algo.SymbolLambdaAlpha))
-				separationInput.Put(nmtypes.BetaQuantity, output.MustGet(algo.SymbolLambdaBeta))
-				_, separationFrame, err := nomagique.Step(
-					statistic.Separation, nomagique.Frame{}, separationInput,
-				)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"hawkes: separation failed for "+symbol.Symbol,
-						err,
-					))
-					break
-				}
-
 				measurement := nmtypes.NewMeasurement(
 					uuid.NewString(),
 					signal.Name(),
@@ -188,7 +182,7 @@ func (signal *Signal) consume() {
 					}),
 				)
 				measurement.StampQuality(
-					separationFrame.MustGet(statistic.SymbolSeparation),
+					output.MustGet(statistic.SymbolSeparation),
 					output.MustGet(algo.SymbolEventCount),
 				)
 

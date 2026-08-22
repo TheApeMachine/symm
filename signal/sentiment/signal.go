@@ -6,53 +6,31 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
-var SymbolBreadth = nomagique.MustIntern("sentiment/breadth")
+/*
+Signal is the cross-sectional breadth and leadership perspective. It is ONLY a
+living nomagique Number: one self-adapting numeric unit per symbol that maps
+incoming ticker streams into cross-sectional cohort dynamics.
+*/
+type Signal struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	thesis *types.Thesis
+	number *nomagique.Number[string]
+	work   *transport.Consumer[*types.Symbol]
+}
 
 /*
-sentimentPipeline composes market-wide breadth from the shared atomic math
-units: every symbol's signed return is accumulated into the cohort's running
-net (advances minus declines), and the rate of that net over the cohort's own
-observed duration is the breadth reading.
+NewSignal constructs the sentiment signal as one living nomagique.Number.
 */
-func sentimentPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		calculus.Accumulate,
-		nomagique.Relay(calculus.SymbolTotal, nomagique.SampleValue),
-		nomagique.Configure(
-			statistic.Baseline,
-			nmtypes.Span,
-			temporal.Window,
-		),
-		nomagique.Fork(
-			nomagique.Pipe(
-				calculus.Rate,
-				nomagique.Relay(calculus.SymbolRate, SymbolBreadth),
-			),
-			statistic.Deviation,
-		),
-	)
-}
-
-type Signal struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	cohortAt time.Time
-	thesis   *types.Thesis
-	number   *nomagique.Number[string]
-	work     *transport.Consumer[*types.Symbol]
-}
-
 func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -60,7 +38,7 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		ctx:    ctx,
 		cancel: cancel,
 		thesis: thesis,
-		number: nomagique.NewNumber[string](sentimentPipeline()),
+		number: nomagique.NewNumber[string](temporal.Path),
 	}
 	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
 	thesis.Work(types.SourceSentiment).Register(signal.work)
@@ -68,14 +46,16 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	return signal
 }
 
-func (signal *Signal) Name() string { return string(types.SourceSentiment) }
-func (signal *Signal) Error() error { return signal.err }
-func (signal *Signal) Type() types.SourceType {
-	return types.SourceSentiment
-}
+func (signal *Signal) Name() string           { return string(types.SourceSentiment) }
+func (signal *Signal) Error() error           { return signal.err }
+func (signal *Signal) Type() types.SourceType { return types.SourceSentiment }
 
 func (signal *Signal) consume() {
 	go func() {
+		defer func() {
+			signal.thesis.Fail(signal.err)
+		}()
+
 		for symbol := range signal.thesis.Work(types.SourceSentiment).Drain(
 			signal.work, nil,
 		) {
@@ -93,76 +73,121 @@ func (signal *Signal) consume() {
 			for ticker := range symbol.MarketTickers(
 				symbol.TickerConsumers[types.TickerConsumerSentiment],
 			) {
-				err := signal.measure(symbol, ticker)
+				if ticker.Last == nil || ticker.Last.Sign() <= 0 {
+					continue
+				}
+
+				input := nomagique.Frame{}
+				input.Put(nomagique.SampleValue, ticker.Last.Float64())
+				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+
+				_, err := signal.number.Step(symbol.Symbol, input)
 
 				if err != nil {
-					signal.err = err
-					signal.thesis.Fail(signal.err)
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"sentiment: path step failed for "+symbol.Symbol,
+						err,
+					))
 					return
 				}
+
+				output, measured, err := algo.CohortSentiment(
+					symbol.Symbol, signal.number,
+				)
+
+				if err != nil {
+					signal.err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"sentiment: cohort evaluation failed for "+symbol.Symbol,
+						err,
+					))
+					return
+				}
+
+				symbol.AppendMeasurement(signal.measurement(
+					symbol.Symbol,
+					ticker.Timestamp,
+					output,
+					measured,
+				))
 			}
 		}
 	}()
 }
 
-func (signal *Signal) measure(symbol *types.Symbol, ticker kraken.TickerData) error {
-	cohortAt := ticker.Timestamp
-
-	if cohortAt.Before(signal.cohortAt) {
-		cohortAt = signal.cohortAt
+func (signal *Signal) measurement(
+	symbol string,
+	at time.Time,
+	output nomagique.Frame,
+	measured bool,
+) *nmtypes.Measurement {
+	dimensionless := nmtypes.Descriptor{
+		Unit:      nmtypes.UnitDimensionless,
+		Timescale: nmtypes.TimescaleInstantaneous,
 	}
-
-	if cohortAt.After(signal.cohortAt) {
-		signal.cohortAt = cohortAt
-	}
-
-	input := nomagique.Frame{}
-	input.Put(calculus.SymbolDelta, signedReturn(ticker))
-	input.Put(calculus.SymbolCount, 1)
-	input.Put(calculus.SymbolDuration, 1)
-	input.Put(nmtypes.EventTimeSec, float64(cohortAt.Unix()))
-	input.Put(nmtypes.EventTimeNsec, float64(cohortAt.Nanosecond()))
-
-	output, err := signal.number.Step("cohort", input)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"sentiment: failed for "+symbol.Symbol,
-			err,
-		))
-	}
-
 	measurement := nmtypes.NewMeasurement(
 		uuid.NewString(),
 		signal.Name(),
-		ticker.Timestamp.UnixNano(),
-		ticker.Timestamp.UnixNano(),
-	).AddMetrics(
-		nmtypes.NewMetric("breadth", output.MustGet(SymbolBreadth), nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescaleInstantaneous,
-		}),
+		at.UnixNano(),
+		at.UnixNano(),
 	)
 
-	/*
-		Sentiment has one cohort-wide breadth reading with no competing
-		hypothesis pair, so its separation stays honestly zero while maturity
-		marks the accumulating evidence.
-	*/
-	measurement.StampQuality(0, output.MustGet(nomagique.SampleCount))
+	path, found := signal.number.Project(symbol)
 
-	symbol.AppendMeasurement(measurement)
+	if found {
+		from, _, hasFrom := temporal.PathSample(&path, 0)
 
-	return nil
+		if hasFrom {
+			measurement.ObservedFrom = time.Unix(0, from)
+			measurement.Horizon = at.Sub(measurement.ObservedFrom)
+		}
+	}
+
+	change := metricValue(output, algo.SymbolChange, measured)
+	breadth := metricValue(output, algo.SymbolBreadth, measured)
+	leaderStrength := metricValue(output, algo.SymbolLeaderStrength, measured)
+	leaderEvidence := metricValue(output, algo.SymbolLeaderEvidence, measured)
+	relativeLead := metricValue(output, algo.SymbolRelativeLead, measured)
+	surge := metricValue(output, algo.SymbolSurgeScore, measured)
+	slump := metricValue(output, algo.SymbolSlumpScore, measured)
+	divergence := metricValue(output, algo.SymbolDivergentScore, measured)
+	strength := metricValue(output, algo.SymbolSentimentStrength, measured)
+	peerCount := metricValue(output, algo.SymbolCohortPeerCount, measured)
+
+	measurement.AddMetrics(
+		nmtypes.NewMetric(string(types.MetricChange), change, dimensionless),
+		nmtypes.NewMetric(string(types.MetricBreadth), breadth, dimensionless),
+		nmtypes.NewMetric(string(types.MetricLeaderStrength), leaderStrength, dimensionless),
+		nmtypes.NewMetric(string(types.MetricLeaderEvidence), leaderEvidence, dimensionless),
+		nmtypes.NewMetric(string(types.MetricRelativeLead), relativeLead, dimensionless),
+		nmtypes.NewNormalizedMetric(string(types.MetricSurgeScore), surge, surge, dimensionless),
+		nmtypes.NewNormalizedMetric(string(types.MetricSlumpScore), slump, slump, dimensionless),
+		nmtypes.NewNormalizedMetric(string(types.MetricDivergentScore), divergence, divergence, dimensionless),
+		nmtypes.NewNormalizedMetric(string(types.MetricStrength), strength, strength, dimensionless),
+	)
+	measurement.StampQuality(strength, peerCount)
+
+	return measurement
 }
 
-func signedReturn(ticker kraken.TickerData) float64 {
-	if ticker.Change == nil {
+func metricValue(
+	frame nomagique.Frame,
+	symbol nomagique.Symbol,
+	measured bool,
+) float64 {
+	if !measured {
 		return 0
 	}
 
-	return ticker.Change.Float64()
+	value, found := frame.Get(symbol)
+
+	if found {
+		return value
+	}
+
+	return 0
 }
 
 func (signal *Signal) Close() error {

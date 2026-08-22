@@ -242,11 +242,7 @@ func windowModifier(
 	// judge dispersion against. It must always grow to reach the minimum
 	// evidence count before any shrink verdict is possible.
 	if count < 2 {
-		next := capacity * 2
-
-		if next < 2 {
-			next = 2
-		}
+		next := math.Max(2, capacity+1)
 
 		if next > nomagique.MaxSamples {
 			return nomagique.MaxSamples
@@ -256,7 +252,13 @@ func windowModifier(
 	}
 
 	if stability < previousStability {
-		next := capacity * 2
+		// Continuous expansion scaled by the stability degradation
+		expansionFactor := 1.0 + (previousStability - stability)
+		next := math.Ceil(capacity * expansionFactor)
+
+		if next <= capacity {
+			next = capacity + 1
+		}
 
 		if next > nomagique.MaxSamples {
 			return nomagique.MaxSamples

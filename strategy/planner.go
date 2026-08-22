@@ -374,10 +374,20 @@ func (planner *Planner) updateGraph(
 				if action := choices[leg.Symbol]; action == portfolioExitReference(index) {
 					decision := types.NewDecision(types.ActionExit, leg.Symbol)
 					decision.At = thesis.At
-					decision.Cause = "continuation value negative"
-					decision.Reason = "planner: MCTS retired the held lot to free its slot"
 					decision.GraphScore = -leg.Summary.Score
 					decision.Trace = decisionTracePortfolio(searchRoot, leg.Symbol)
+
+					if leg.Invalidated {
+						decision.Cause = "thesis_invalidated"
+						decision.Reason = "planner: market graph structural thesis invalidated (contradiction > support / directional breakdown)"
+					} else if !leg.Maturing {
+						decision.Cause = "horizon_expired"
+						decision.Reason = "planner: forecast horizon elapsed without profit maturation"
+					} else {
+						decision.Cause = "opportunity_cost_exceeded"
+						decision.Reason = "planner: alternative opportunity expected value exceeds continuation value and switching hurdle"
+					}
+
 					createdDecisions = append(createdDecisions, decision)
 				}
 
@@ -661,10 +671,61 @@ func (planner *Planner) heldLegs(
 		summary := logicgraph.OpportunitySummary{}
 		summary = graph.OpportunitySummary()
 
+		observed := 0
+		horizon := position.Decision.ForecastHorizon
+		maturing := false
+		switchingCost := 0.0
+
+		if position.Holding != nil && position.Holding.Stoploss != nil {
+			stoploss := position.Holding.Stoploss
+			observed = stoploss.Observed
+
+			if stoploss.Horizon > 0 {
+				horizon = stoploss.Horizon
+			}
+
+			maturing = stoploss.Maturing()
+
+			if stoploss.EntryFeeRate != nil {
+				switchingCost += stoploss.EntryFeeRate.Float64()
+			}
+
+			if stoploss.ExitFeeRate != nil {
+				switchingCost += stoploss.ExitFeeRate.Float64()
+			}
+		}
+
+		if planner.desk.Price() != nil {
+			tick := planner.desk.Price().Tick(position.Decision.Symbol)
+
+			if tick != nil && tick.Bid != nil && tick.Ask != nil &&
+				tick.Bid.Sign() > 0 && tick.Ask.Sign() > 0 &&
+				position.Holding != nil && position.Holding.Mark != nil &&
+				position.Holding.Mark.Sign() > 0 {
+				spread := (tick.Ask.Float64() - tick.Bid.Float64()) / position.Holding.Mark.Float64()
+				switchingCost += spread
+			}
+		}
+
+		invalidated := summary.Direction <= 0 || summary.Contradiction > summary.Support || summary.Score <= 0
+		continuationValue := 0.0
+
+		if !invalidated && maturing && horizon > 0 {
+			remainingFraction := 1.0 - float64(observed)/float64(max(1, horizon))
+			continuationValue = summary.Score * remainingFraction
+		}
+
 		held = append(held, portfolioLeg{
-			Symbol:  position.Decision.Symbol,
-			Summary: summary,
-			Held:    true,
+			Symbol:            position.Decision.Symbol,
+			Summary:           summary,
+			ReserveEligible:   position.Decision.ReserveEligible,
+			Held:              true,
+			Observed:          observed,
+			Horizon:           horizon,
+			Maturing:          maturing,
+			Invalidated:       invalidated,
+			SwitchingCost:     switchingCost,
+			ContinuationValue: continuationValue,
 		})
 	}
 

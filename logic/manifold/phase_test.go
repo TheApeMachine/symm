@@ -87,6 +87,28 @@ func TestOscillatorWave(t *testing.T) {
 	})
 }
 
+func TestLatticeWave(t *testing.T) {
+	Convey("Given two oscillators on a four-bin lattice", t, func() {
+		wave := latticeWave(
+			[]Oscillator{
+				{Omega: -1, Phase: 0, Amplitude: 2},
+				{Omega: 1, Phase: math.Pi / 2, Amplitude: 3},
+			},
+			-1,
+			1,
+			4,
+		)
+
+		Convey("Each oscillator should land on its ω bin as a phasor", func() {
+			So(wave, ShouldHaveLength, 4)
+			So(float64(wave[0].Omega), ShouldAlmostEqual, -1, 1e-5)
+			So(float64(wave[0].Real), ShouldAlmostEqual, 2, 1e-5)
+			So(float64(wave[3].Omega), ShouldAlmostEqual, 1, 1e-5)
+			So(float64(wave[3].Imaginary), ShouldAlmostEqual, 3, 1e-5)
+		})
+	})
+}
+
 func TestProjectSourceDial(t *testing.T) {
 	Convey("Given a population of oscillators", t, func() {
 		omegaMin := -1.0

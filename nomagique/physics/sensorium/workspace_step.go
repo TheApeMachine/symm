@@ -15,35 +15,99 @@ func (fluid *workspace) step() Reading {
 		return fluid.observe()
 	}
 
+	fluid.projectSpatialWave()
 	fluid.gatherParticles()
 	fluid.planckExchange()
 	fluid.waveStep()
-	fluid.projectSpatialWave()
 	return fluid.observe()
 }
 
 /*
-projectSpatialWave reconstructs Ψ(x) by CIC-splatting the mean GPE lattice
-onto the current particle supports. GPE itself keeps empty anchors.
+projectSpatialWave rebuilds Ψ(x) as a CIC of each oscillator's phasor
+m e^{iθ}. GPE stays on the 1D ω-lattice; its heads are not a spatial field.
 */
 func (fluid *workspace) projectSpatialWave() {
-	fluid.meanHeads()
-	fluid.seedModeAnchors()
 	fluid.psiRe.Zero()
 	fluid.psiIm.Zero()
-	fluid.engine.ProjectModesToSpatial(
-		fluid.psiModeReal,
-		fluid.psiModeImag,
-		fluid.anchorIdx,
-		fluid.anchorWeight,
-		fluid.pos,
-		fluid.psiRe,
-		fluid.psiIm,
-		modeAnchors,
-	)
-	fluid.engine.Synchronize()
-	fillInt32(fluid.anchorIdx.Int32Slice(), -1)
-	fluid.anchorWeight.Zero()
+	fluid.splatParticleWave()
+}
+
+func (fluid *workspace) splatParticleWave() {
+	if fluid.particles == 0 {
+		return
+	}
+
+	gx := fluid.domain.GridX
+	gy := fluid.domain.GridY
+	gz := fluid.domain.GridZ
+	inv := 1 / fluid.domain.GridSpacing()
+	pos := fluid.pos.Float32Slice()
+	mass := fluid.mass.Float32Slice()
+	phase := fluid.phase.Float32Slice()
+	psiRe := fluid.psiRe.Float32Slice()
+	psiIm := fluid.psiIm.Float32Slice()
+
+	for particle := 0; particle < fluid.particles; particle++ {
+		deposit := float64(mass[particle])
+		angle := float64(phase[particle])
+		real := float32(deposit * math.Cos(angle))
+		imag := float32(deposit * math.Sin(angle))
+		gridX := float64(pos[particle*3+0]) * inv
+		gridY := float64(pos[particle*3+1]) * inv
+		gridZ := float64(pos[particle*3+2]) * inv
+		ix0 := int(math.Floor(gridX))
+		iy0 := int(math.Floor(gridY))
+		iz0 := int(math.Floor(gridZ))
+		fx := float32(gridX - math.Floor(gridX))
+		fy := float32(gridY - math.Floor(gridY))
+		fz := float32(gridZ - math.Floor(gridZ))
+		wx0 := 1 - fx
+		wy0 := 1 - fy
+		wz0 := 1 - fz
+		ix1 := wrapIndex(ix0+1, gx)
+		iy1 := wrapIndex(iy0+1, gy)
+		iz1 := wrapIndex(iz0+1, gz)
+		ix0 = wrapIndex(ix0, gx)
+		iy0 = wrapIndex(iy0, gy)
+		iz0 = wrapIndex(iz0, gz)
+		corners := [8]struct {
+			x, y, z int
+			weight  float32
+		}{
+			{ix0, iy0, iz0, wx0 * wy0 * wz0},
+			{ix1, iy0, iz0, fx * wy0 * wz0},
+			{ix0, iy1, iz0, wx0 * fy * wz0},
+			{ix1, iy1, iz0, fx * fy * wz0},
+			{ix0, iy0, iz1, wx0 * wy0 * fz},
+			{ix1, iy0, iz1, fx * wy0 * fz},
+			{ix0, iy1, iz1, wx0 * fy * fz},
+			{ix1, iy1, iz1, fx * fy * fz},
+		}
+
+		for _, corner := range corners {
+			if !(corner.weight > 0) {
+				continue
+			}
+
+			cell := corner.x + gx*(corner.y+gy*corner.z)
+			psiRe[cell] += real * corner.weight
+			psiIm[cell] += imag * corner.weight
+		}
+	}
+}
+
+func wrapIndex(index, extent int) int {
+	if extent <= 0 {
+		return 0
+	}
+
+	wrapped := index % extent
+
+	if wrapped < 0 {
+		wrapped += extent
+	}
+
+	return wrapped
 }
 
 func (fluid *workspace) meanHeads() {
@@ -175,6 +239,26 @@ func (fluid *workspace) scatterParticles() {
 		fluid.energy,
 		fluid.particles,
 	)
+	engine.Synchronize()
+	fluid.admitConserved()
+}
+
+func (fluid *workspace) admitConserved() {
+	rho := fluid.rho.Float32Slice()
+	mom := fluid.mom.Float32Slice()
+	energy := fluid.energy.Float32Slice()
+	rhoMin := float32(fluid.domain.RhoMin)
+
+	for cell, density := range rho {
+		if density > rhoMin || density < -rhoMin {
+			continue
+		}
+
+		mom[cell*3+0] = 0
+		mom[cell*3+1] = 0
+		mom[cell*3+2] = 0
+		energy[cell] = 0
+	}
 }
 
 func (fluid *workspace) gasRK2() {
@@ -305,17 +389,7 @@ func (fluid *workspace) waveStep() {
 	phase := fluid.phase.Float32Slice()
 	headHeat := fluid.headHeat.Float32Slice()
 	headPhase := fluid.headPhase.Float32Slice()
-	incoming := make([]float32, fluid.particles)
-	delta := make([]float32, fluid.particles)
 	budget := 1 / float32(spectralHeads)
-	domainMin := min(fluid.domain.DomainX, fluid.domain.DomainY, fluid.domain.DomainZ)
-	kappaPhysical := 1.0
-
-	if sigma > 0 && domainMin > 0 {
-		kappaPhysical = (domainMin / sigma) * (domainMin / sigma)
-	}
-
-	couplingScale := float32(kappaPhysical / math.Sqrt(float64(modes*spectralHeads)))
 
 	for head := 0; head < spectralHeads; head++ {
 		offset := float64(head) * (2 * math.Pi) / float64(spectralHeads)
@@ -323,9 +397,7 @@ func (fluid *workspace) waveStep() {
 
 		for particle := 0; particle < fluid.particles; particle++ {
 			headHeat[particle] = heat[particle] * budget
-			wrapped := wrapPhase(float64(phase[particle]) + offset)
-			headPhase[particle] = float32(wrapped)
-			incoming[particle] = float32(wrapped)
+			headPhase[particle] = float32(wrapPhase(float64(phase[particle]) + offset))
 		}
 
 		fluid.engine.CoherenceAccumulateForces(
@@ -364,34 +436,8 @@ func (fluid *workspace) waveStep() {
 			gateMin, gateMax, weightFloor, float32(sigma),
 		)
 
-		fluid.engine.CoherenceUpdateOscillatorPhases(
-			fluid.headPhase, fluid.omega, fluid.couplingAmp,
-			fluid.psiRealHeads[head], fluid.psiImagHeads[head],
-			fluid.omegaLattice, fluid.gateWidth,
-			fluid.anchorIdx, fluid.anchorWeight, fluid.numCarriers,
-			fluid.particles, modes,
-			dt, couplingScale, gateMin, gateMax,
-			fluid.binStarts, fluid.binnedIdx, fluid.binParams,
-			modes,
-			fluid.pos,
-			float32(sigma),
-			float32(fluid.rates.metabolicRate),
-			weightFloor,
-		)
-
 		fluid.engine.Synchronize()
-
-		for particle := 0; particle < fluid.particles; particle++ {
-			delta[particle] += float32(wrapDelta(float64(headPhase[particle]), float64(incoming[particle])))
-		}
-
 		fluid.rngSeed++
-	}
-
-	heads := float64(spectralHeads)
-
-	for particle := 0; particle < fluid.particles; particle++ {
-		phase[particle] = float32(wrapPhase(float64(phase[particle]) + float64(delta[particle])/heads))
 	}
 }
 
@@ -637,10 +683,6 @@ func wrapPhase(phase float64) float64 {
 	}
 
 	return wrapped
-}
-
-func wrapDelta(now, previous float64) float64 {
-	return wrapPhase(now-previous+math.Pi) - math.Pi
 }
 
 func exclusiveScanU32(counts, starts []uint32) {

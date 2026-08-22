@@ -105,10 +105,11 @@ func (solver *Solver) stampPhase(
 	thesis *types.Thesis,
 	at time.Time,
 	cuts []manifoldCut,
+	fingerprint []Oscillator,
 ) types.PhaseReading {
 	solver.mature()
 
-	if len(solver.oscillators) == 0 {
+	if len(fingerprint) == 0 {
 		reading := types.PhaseReading{At: at, Reason: "wave unavailable"}
 		solver.recordPhase(thesis, reading)
 
@@ -116,7 +117,7 @@ func (solver *Solver) stampPhase(
 	}
 
 	dial, dialErr := projectSourceDial(
-		solver.oscillators,
+		fingerprint,
 		solver.config.GateWidthMin(),
 		solver.config.GateWidthMax(),
 	)
@@ -378,6 +379,40 @@ func oscillatorWave(oscillators []Oscillator) []WaveMode {
 			Real:      float32(oscillator.Amplitude * math.Cos(oscillator.Phase)),
 			Imaginary: float32(oscillator.Amplitude * math.Sin(oscillator.Phase)),
 		}
+	}
+
+	return wave
+}
+
+func latticeWave(
+	oscillators []Oscillator,
+	omegaMin, omegaMax float64,
+	bins int,
+) []WaveMode {
+	if bins < 1 {
+		return nil
+	}
+
+	wave := make([]WaveMode, bins)
+	span := omegaMax - omegaMin
+	den := float64(bins - 1)
+
+	if den < 1 {
+		den = 1
+	}
+
+	for index := range wave {
+		wave[index].Omega = float32(omegaMin + float64(index)*span/den)
+	}
+
+	if len(oscillators) == 0 || !(span > 0) {
+		return wave
+	}
+
+	for _, oscillator := range oscillators {
+		bin := omegaBin(oscillator.Omega, omegaMin, span, bins)
+		wave[bin].Real += float32(oscillator.Amplitude * math.Cos(oscillator.Phase))
+		wave[bin].Imaginary += float32(oscillator.Amplitude * math.Sin(oscillator.Phase))
 	}
 
 	return wave

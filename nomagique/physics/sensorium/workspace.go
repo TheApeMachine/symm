@@ -261,12 +261,13 @@ func (fluid *workspace) allocateGrid() {
 	fluid.psiModeReal = fluid.gpu(modes * 4)
 	fluid.psiModeImag = fluid.gpu(modes * 4)
 
-	fluid.gravity.Zero()
-	fluid.dbgHead.Zero()
-	fluid.dbgWords.Zero()
-	fluid.anchorIdx.Zero()
+	for _, buffer := range fluid.allBuffers() {
+		if buffer != nil {
+			buffer.Zero()
+		}
+	}
+
 	fillInt32(fluid.anchorIdx.Int32Slice(), -1)
-	fluid.anchorWeight.Zero()
 }
 
 func (fluid *workspace) seedLattice() {

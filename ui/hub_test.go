@@ -10,6 +10,7 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/gofiber/fiber/v3"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -46,6 +47,54 @@ func TestHubRun(t *testing.T) {
 			case <-time.After(hubLifecycleTestTimeout):
 				t.Fatal("hub did not stop after context cancellation")
 			}
+		})
+	})
+}
+
+func TestHubDrainBounded(t *testing.T) {
+	Convey("Given a UI transport holding more frames than one batch cap", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		ui := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
+		hub := NewHub(ctx, nil, nil, nil, nil, nil)
+		hub.maxBatchFrames = 4
+
+		wakes := make(chan struct{}, 1)
+		consumer := transport.NewConsumer[*types.UIFrame]("drain-bounded", func() {
+			select {
+			case wakes <- struct{}{}:
+			default:
+			}
+		})
+		ui.Register(consumer)
+		defer ui.Unregister(consumer)
+
+		for index := range 10 {
+			ui.Push(&wire.FrameT{
+				Type: wire.FrameStrategyFrame,
+				Value: &wire.StrategyFrameT{
+					Outcome: fmt.Sprintf("state-%d", index),
+				},
+			})
+		}
+
+		<-wakes
+
+		Convey("It should return only the batch cap from one drain", func() {
+			frames := hub.drainBounded(ui, consumer, nil)
+			So(len(frames), ShouldEqual, 4)
+
+			Convey("And still cap every subsequent drain", func() {
+				rest := hub.drainBounded(ui, consumer, nil)
+				So(len(rest), ShouldEqual, 4)
+
+				Convey("And leave the queue empty once exhausted", func() {
+					remaining := hub.drainBounded(ui, consumer, nil)
+					So(len(remaining), ShouldEqual, 2)
+					So(hub.drainBounded(ui, consumer, nil), ShouldHaveLength, 0)
+				})
+			})
 		})
 	})
 }

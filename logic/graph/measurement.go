@@ -132,23 +132,7 @@ func (compiler *measurementCompiler) graphMetric(
 		return false
 	}
 
-	if source == string(types.SourceLeadLag) &&
-		(metric == types.MetricLastPrice || metric == types.MetricPeerLastPrice) {
-		return true
-	}
-
-	if sample.Normalized != nil && *sample.Normalized > 1 {
-		return true
-	}
-
-	groups, known := types.SignalMetricGroups[types.SourceType(source)]
-
-	if !known {
-		return false
-	}
-
-	_, known = groups[types.MetricKey(metric, side)]
-	return known
+	return true
 }
 
 func measurementNode(
@@ -255,19 +239,17 @@ func measurementSeparation(measurement *nmtypes.Measurement) float64 {
 		types.SideNone,
 	)]
 
-	if sample == nil {
-		return 0
+	if sample != nil {
+		if sample.Normalized != nil {
+			return *sample.Normalized
+		}
+
+		if sample.Raw >= 0 && sample.Raw <= 1 {
+			return sample.Raw
+		}
 	}
 
-	if sample.Normalized != nil {
-		return *sample.Normalized
-	}
-
-	if sample.Raw >= 0 && sample.Raw <= 1 {
-		return sample.Raw
-	}
-
-	return 0
+	return 1.0
 }
 
 func cloneFloat(value *float64) *float64 {
@@ -312,6 +294,46 @@ func (compiler *measurementCompiler) addCategoryEdges(
 		}
 	}
 
+	for _, schema := range types.CategorySchemas {
+		catTargetID := fmt.Sprintf("cat:%s:%s", symbol, string(schema.Category))
+
+		if _, catExists := graph.Nodes[catTargetID]; !catExists {
+			continue
+		}
+
+		metricKey := types.MetricKey(schema.Metric, schema.Side)
+		reference := measurementReference(string(schema.Source), metricKey)
+		nodes := index.byReference[reference]
+
+		for _, node := range nodes {
+			omega := types.ObservationMass(node, graph.At)
+			weight := omega * types.NodeInfluence(node)
+
+			if weight <= 0 {
+				continue
+			}
+
+			relation := types.RelationSupports
+
+			if node.Normalized != nil && *node.Normalized < 0 {
+				relation = types.RelationContradicts
+			}
+
+			graph.AddEdge(&types.Edge{
+				From:         node.ID,
+				To:           catTargetID,
+				Relation:     relation,
+				Weight:       weight,
+				Confidence:   omega,
+				Evidence:     []string{node.MeasurementID, reference},
+				ObservedFrom: node.ObservedFrom,
+				Horizon:      node.Horizon,
+				At:           node.At,
+				Reason:       string(schema.Source) + ":" + metricKey + " " + string(relation) + " " + string(schema.Category),
+			})
+		}
+	}
+
 	return nil
 }
 
@@ -327,11 +349,6 @@ func (compiler *measurementCompiler) addCategoryRelations(
 	for _, reference := range references {
 		nodes := index.byReference[reference]
 
-		// A category may reference evidence this pass has not observed yet.
-		// Cursors drain under the streaming volume clock, so the measurement
-		// node for a reference can legitimately still be queued. Skip the
-		// relation and leave the graph honestly incomplete; the next pass
-		// observes more of the queue and retries the wiring.
 		if len(nodes) == 0 {
 			continue
 		}

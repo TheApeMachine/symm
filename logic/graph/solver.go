@@ -124,6 +124,8 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error 
 	}
 
 	graph.At = solver.thesis.At
+	graph.Prune(solver.thesis.At)
+
 	categories := solver.popCategories(symbol)
 	cognition, _ := solver.popCognition(symbol)
 	measurementIndex, err := solver.measurements.addNodes(
@@ -209,8 +211,7 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error 
 		return nil
 	}
 
-	symbol.Graphs.PushLatest(graph)
-	solver.building.Delete(symbolName)
+	symbol.Graphs.PushLatest(graph.Clone())
 
 	return nil
 }

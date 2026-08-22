@@ -210,6 +210,62 @@ func TestPortfolioSearch(t *testing.T) {
 			So(choices["BTC/USD"], ShouldEqual, portfolioExitReference(0))
 		})
 	})
+
+	Convey("Given a held maturing leg with a valid thesis and a marginally higher flat candidate", t, func() {
+		state := NewPortfolioState([]portfolioLeg{
+			{
+				Symbol:            "BTC/USD",
+				Summary:           portfolioSummary(0.05),
+				Held:              true,
+				Maturing:          true,
+				Observed:          2,
+				Horizon:           20,
+				SwitchingCost:     0.016,
+				ContinuationValue: 0.05,
+			},
+			{
+				Symbol:  "SOL/USD",
+				Summary: portfolioSummary(0.06),
+			},
+		}, 0, 0)
+		root, err := portfolioSearch(state, 64)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should hold the maturing lot rather than churning into the marginal candidate", func() {
+			planner := &Planner{}
+			choices := planner.portfolioChoices(root, 2)
+			So(choices["BTC/USD"], ShouldEqual, portfolioHoldReference(0))
+		})
+	})
+
+	Convey("Given a held maturing leg when a dominant breakout candidate appears", t, func() {
+		state := NewPortfolioState([]portfolioLeg{
+			{
+				Symbol:            "BTC/USD",
+				Summary:           portfolioSummary(0.02),
+				Held:              true,
+				Maturing:          true,
+				Observed:          2,
+				Horizon:           20,
+				SwitchingCost:     0.016,
+				ContinuationValue: 0.02,
+			},
+			{
+				Symbol:  "SOL/USD",
+				Summary: portfolioSummary(0.8),
+			},
+		}, 0, 0)
+		root, err := portfolioSearch(state, 64)
+
+		So(err, ShouldBeNil)
+
+		Convey("It should rotate because the alternative expected value overwhelms the switching hurdle", func() {
+			planner := &Planner{}
+			choices := planner.portfolioChoices(root, 2)
+			So(choices["BTC/USD"], ShouldEqual, portfolioExitReference(0))
+		})
+	})
 }
 
 func BenchmarkPortfolioSearch(b *testing.B) {

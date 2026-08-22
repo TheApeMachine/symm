@@ -638,7 +638,7 @@ func reasoningTier(
 		return ReasoningTierSCM
 	}
 
-	if measurementID != "" || strings.HasPrefix(normalized, "measurement:") {
+	if measurementID != "" || strings.HasPrefix(normalized, "measurement:") || strings.HasPrefix(normalized, "meas:") {
 		return ReasoningTierMeasurement
 	}
 

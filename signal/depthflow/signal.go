@@ -7,71 +7,27 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 var (
-	SymbolTouchImbalance = nomagique.MustIntern("depthflow/touch_imbalance")
-	SymbolDeepImbalance  = nomagique.MustIntern("depthflow/deep_imbalance")
-	SymbolSpoofScore     = nomagique.MustIntern("depthflow/spoof_score")
-	SymbolLoadedScore    = nomagique.MustIntern("depthflow/loaded_score")
-	SymbolThinScore      = nomagique.MustIntern("depthflow/thin_score")
+	SymbolTouchImbalance = algo.SymbolTouchImbalance
+	SymbolDeepImbalance  = algo.SymbolDeepImbalance
+	SymbolSpoofScore     = algo.SymbolSpoofScore
+	SymbolLoadedScore    = algo.SymbolLoadedScore
+	SymbolThinScore      = algo.SymbolThinScore
+	SymbolNeutralScore   = algo.SymbolNeutralScore
+	SymbolSeparation     = algo.SymbolSeparation
 )
 
 /*
-depthflowPipeline is slot-aligned with the calculus atoms:
-
-  - TouchImbalance is the Difference of best bid/ask quantity.
-  - DeepImbalance is the Difference of the distance-decayed resting book, whose
-    decay remainder is the book's own depth share (not a zero clock).
-  - Spoof is the positive product of the two imbalances' disagreement, loaded
-    is a squashed z-score of that alignment, and thinning is the inverse lift
-    of the total notional below its own baseline.
+depthflowPipeline is the pure nomagique Depthflow primitive.
 */
 func depthflowPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Fork(
-			nomagique.Pipe(
-				calculus.Difference,
-				nomagique.Relay(calculus.SymbolResult, SymbolTouchImbalance),
-			),
-			nomagique.Pipe(
-				calculus.Decay,
-				calculus.Difference,
-				nomagique.Relay(calculus.SymbolResult, SymbolDeepImbalance),
-			),
-		),
-		nomagique.Configure(
-			statistic.Baseline,
-			nmtypes.Span,
-			temporal.Window,
-		),
-		nomagique.Fork(
-			nomagique.Fork(
-				nomagique.Pipe(
-					calculus.Product,
-					calculus.Positive,
-					calculus.Squash,
-					nomagique.Relay(calculus.SymbolResult, SymbolSpoofScore),
-				),
-				nomagique.Pipe(
-					statistic.ZScore,
-					calculus.Squash,
-					nomagique.Relay(calculus.SymbolResult, SymbolLoadedScore),
-				),
-			),
-			nomagique.Pipe(
-				statistic.Lift,
-				calculus.Inverse,
-				nomagique.Relay(calculus.SymbolResult, SymbolThinScore),
-			),
-		),
-	)
+	return algo.Depthflow()
 }
 
 type Signal struct {
@@ -145,26 +101,16 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 	for frame := range symbol.MarketLevel3(
 		symbol.Level3Consumers[types.Level3ConsumerDepthFlow],
 	) {
-		touch := frameTouch(frame)
-		deep := frameDeep(frame)
-		total := touch + deep
+		touchBid, touchAsk := frameTouch(frame)
+		deepBid, deepAsk := frameDeep(frame)
 
 		input := nomagique.Frame{}
-		input.Put(calculus.SymbolLeft, touch)
-		input.Put(calculus.SymbolRight, deep)
-		input.Put(calculus.SymbolLevel, deep)
-
-		if total > 0 {
-			input.Put(calculus.SymbolClock, touch/total)
-		}
-
-		input.Put(nomagique.SampleValue, total)
-		input.Put(statistic.SymbolBaseline, total)
-		input.Put(calculus.SymbolValue, touch)
-		input.Put(calculus.SymbolScale, total)
+		input.Put(algo.SymbolTouchBidQty, touchBid)
+		input.Put(algo.SymbolTouchAskQty, touchAsk)
+		input.Put(algo.SymbolDeepBidQty, deepBid)
+		input.Put(algo.SymbolDeepAskQty, deepAsk)
 		input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
 		input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
-		input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
 		output, err := signal.number.Step(symbol.Symbol, input)
 
@@ -200,12 +146,10 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 			}),
 		)
 
-		/*
-			Depthflow emits three hypothesis scores, not a competing pair,
-			so its honest separation is zero until the pipeline exposes a
-			winning-vs-competitor margin. Maturity still marks evidence.
-		*/
-		measurement.StampQuality(0, output.MustGet(nomagique.SampleCount))
+		measurement.StampQuality(
+			output.MustGet(SymbolSeparation),
+			output.MustGet(nomagique.SampleCount),
+		)
 
 		symbol.AppendMeasurement(measurement)
 	}
@@ -213,13 +157,7 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 	return nil
 }
 
-/*
-frameTouch returns the best level's resting quantity on the heavier side, and
-frameDeep returns the total resting quantity across all other levels — the L3
-depth the touch sits on top of. Both are real book quantities, so the decay
-clock (touch share) genuinely discounts the deep book by its distance share.
-*/
-func frameTouch(frame kraken.Level3Data) float64 {
+func frameTouch(frame kraken.Level3Data) (float64, float64) {
 	bestBid, bestAsk := 0.0, 0.0
 
 	for _, order := range frame.Bids {
@@ -242,25 +180,25 @@ func frameTouch(frame kraken.Level3Data) float64 {
 		}
 	}
 
-	if bestBid > bestAsk {
-		return bestBid
-	}
-
-	return bestAsk
+	return bestBid, bestAsk
 }
 
-func frameDeep(frame kraken.Level3Data) float64 {
-	total := 0.0
+func frameDeep(frame kraken.Level3Data) (float64, float64) {
+	bidTotal, askTotal := 0.0, 0.0
 
-	for _, orders := range [][]kraken.Level3Order{frame.Bids, frame.Asks} {
-		for _, order := range orders {
-			if order.OrderQty != nil {
-				total += order.OrderQty.Float64()
-			}
+	for _, order := range frame.Bids {
+		if order.OrderQty != nil {
+			bidTotal += order.OrderQty.Float64()
 		}
 	}
 
-	return total
+	for _, order := range frame.Asks {
+		if order.OrderQty != nil {
+			askTotal += order.OrderQty.Float64()
+		}
+	}
+
+	return bidTotal, askTotal
 }
 
 func (signal *Signal) Close() error {

@@ -1,5 +1,5 @@
-import { createRef, useEffect } from "react";
 import { createStore } from "@tanstack/store";
+import { createRef, useEffect } from "react";
 import {
 	clearCanvas,
 	resizeCanvas,
@@ -444,8 +444,12 @@ export const TerminalPhaseDialChart = () => {
 		repaint();
 		const observer = new ResizeObserver(repaint);
 		observer.observe(canvas);
+		const subscription = phaseDialStore.subscribe(repaint);
 
-		return () => observer.disconnect();
+		return () => {
+			observer.disconnect();
+			subscription.unsubscribe();
+		};
 	}, []);
 
 	return <canvas ref={phaseDialCanvasRef} className="block size-full" />;

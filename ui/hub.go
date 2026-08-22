@@ -55,6 +55,7 @@ type Hub struct {
 	diagnostics     DiagnosticsControl
 	maxMessageBytes int
 	writeWindow     uint64
+	maxBatchFrames  int
 }
 
 type diagnosticsToggleRequest struct {
@@ -104,6 +105,11 @@ func NewHub(
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
 	viper.SetDefault("ui.websocket.write_window", 4)
+	// Cap frames assembled into a single FlatBuffers batch so a slow client
+	// that lets the queue grow can never drive one builder past the library's
+	// 2 GB ceiling before the message-size split runs. The split loop below
+	// still trims each actual write to max_message_bytes.
+	viper.SetDefault("ui.websocket.max_batch_frames", 256)
 
 	hub := &Hub{
 		ctx:        ctx,
@@ -123,10 +129,15 @@ func NewHub(
 		fluid:           NewFluidRTC(ctx, manifold, "fluid"),
 		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
 		writeWindow:     uint64(viper.GetInt("ui.websocket.write_window")),
+		maxBatchFrames:  viper.GetInt("ui.websocket.max_batch_frames"),
 	}
 
 	if hub.writeWindow == 0 {
 		hub.err = fmt.Errorf("dashboard: write_window must be positive")
+	}
+
+	if hub.maxBatchFrames < 1 {
+		hub.maxBatchFrames = 1
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -349,9 +360,7 @@ func NewHub(
 				case <-ready:
 				}
 
-				for frame := range ui.Drain(consumer, nil) {
-					frames = append(frames, frame)
-				}
+				frames = hub.drainBounded(ui, consumer, frames)
 			}
 
 			batchCount := len(frames)
@@ -413,6 +422,30 @@ func NewHub(
 	hub.registerFluidWebRTC()
 
 	return hub
+}
+
+/*
+drainBounded pulls at most hub.maxBatchFrames frames from the UI consumer so a
+single EncodeBatch in the writer loop never assembles an unbounded backlog into
+one FlatBuffers builder. Leftover frames stay queued and are drained on a later
+wake, which keeps the per-message size split effective without ever sizing a
+batch past the encoder's growth ceiling.
+*/
+func (hub *Hub) drainBounded(
+	ui *transport.MapReduce[*types.UIFrame],
+	consumer *transport.Consumer[*types.UIFrame],
+	frames []*types.UIFrame,
+) []*types.UIFrame {
+	drained := 0
+
+	for frame := range ui.Drain(consumer, func(_ *types.UIFrame) bool {
+		return drained < hub.maxBatchFrames
+	}) {
+		frames = append(frames, frame)
+		drained++
+	}
+
+	return frames
 }
 
 /*

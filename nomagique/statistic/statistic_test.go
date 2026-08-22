@@ -42,6 +42,44 @@ func TestMedianEmptyIsProvisional(t *testing.T) {
 	}
 }
 
+func TestMaxOf(t *testing.T) {
+	symA := nomagique.MustIntern("metric/a")
+	symB := nomagique.MustIntern("metric/b")
+	symC := nomagique.MustIntern("metric/c")
+
+	maxPrimitive := MaxOf(symA, symB, symC)
+
+	input := nomagique.Frame{}
+	input.Put(symA, 1.5)
+	input.Put(symB, 4.2)
+	input.Put(symC, -0.8)
+
+	_, output, err := maxPrimitive(nomagique.Frame{}, input)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := output.MustGet(SymbolResult); got != 4.2 {
+		t.Fatalf("MaxOf result=%v; want 4.2", got)
+	}
+
+	if got := output.MustGet(SymbolReady); got != 1 {
+		t.Fatalf("MaxOf ready=%v; want 1", got)
+	}
+
+	// Empty input
+	_, emptyOutput, err := maxPrimitive(nomagique.Frame{}, nomagique.Frame{})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := emptyOutput.MustGet(SymbolReady); got != 0 {
+		t.Fatalf("empty MaxOf ready=%v; want 0", got)
+	}
+}
+
 func TestBranchingAndLikelihood(t *testing.T) {
 	branchingInput := nomagique.Frame{}
 	branchingInput.Put(SymbolAlphaAA, 1)

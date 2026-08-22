@@ -169,6 +169,18 @@ func hawkesIntensity(
 	next.Put(SymbolObservedFromSec, firstSec)
 	next.Put(SymbolObservedFromNsec, firstNsec)
 
+	lambdaSelfAlpha := decay(value(next, nomagique.MustIntern("state/lambda_self_alpha"), rateAlpha), rateAlpha, beta, delta)
+	lambdaSelfBeta := decay(value(next, nomagique.MustIntern("state/lambda_self_beta"), rateBeta), rateBeta, beta, delta)
+
+	if mark > 0 {
+		lambdaSelfAlpha += value(next, statistic.SymbolAlphaAA, 0.2)
+	} else {
+		lambdaSelfBeta += value(next, statistic.SymbolAlphaBB, 0.2)
+	}
+
+	next.Put(nomagique.MustIntern("state/lambda_self_alpha"), lambdaSelfAlpha)
+	next.Put(nomagique.MustIntern("state/lambda_self_beta"), lambdaSelfBeta)
+
 	output := input
 	output.Put(statistic.SymbolBeta, beta)
 	output.Put(statistic.SymbolAlphaAA, value(next, statistic.SymbolAlphaAA, 0.2))
@@ -177,7 +189,7 @@ func hawkesIntensity(
 	output.Put(statistic.SymbolAlphaBB, value(next, statistic.SymbolAlphaBB, 0.2))
 	output.Put(statistic.SymbolLLHawkes, logSum(lambdaAlpha, lambdaBeta))
 	output.Put(statistic.SymbolLLPoisson, logSum(rateAlpha, rateBeta))
-	output.Put(statistic.SymbolLLSelf, logSum(rateAlpha, rateBeta)*1.1)
+	output.Put(statistic.SymbolLLSelf, logSum(lambdaSelfAlpha, lambdaSelfBeta))
 	output.Put(SymbolLambdaAlpha, lambdaAlpha)
 	output.Put(SymbolLambdaBeta, lambdaBeta)
 	output.Put(SymbolMuAlpha, rateAlpha)

@@ -156,7 +156,17 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"exhaustion:buy",
 		"exhaustion:sell",
 	],
-	sentiment: ["breadth"],
+	sentiment: [
+		"breadth",
+		"change",
+		"surge_score",
+		"slump_score",
+		"divergent_score",
+		"leader_strength",
+		"leader_evidence",
+		"relative_lead",
+		"strength",
+	],
 	toxicity: ["honesty_zscore", "honesty_deviation", "toxicity_intensity"],
 };
 

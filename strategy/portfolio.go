@@ -14,14 +14,20 @@ import (
 /*
 portfolioLeg is one selectable candidate: a snapshot of the symbol's
 directional evidence summary, its identifiable opportunity archetype, its
-reserve qualification, and its position in the current desk.
+reserve qualification, its holding status, and its calibrated maturation dynamics.
 */
 type portfolioLeg struct {
-	Symbol          string
-	Summary         logicgraph.OpportunitySummary
-	Opportunity     logicgraph.OpportunityScore
-	ReserveEligible bool
-	Held            bool
+	Symbol            string
+	Summary           logicgraph.OpportunitySummary
+	Opportunity       logicgraph.OpportunityScore
+	ReserveEligible   bool
+	Held              bool
+	Observed          int
+	Horizon           int
+	Maturing          bool
+	Invalidated       bool
+	SwitchingCost     float64
+	ContinuationValue float64
 }
 
 /*
@@ -84,6 +90,7 @@ type PortfolioState struct {
 	maxSteps     int
 	done         bool
 	err          error
+	penalty      float64
 }
 
 /*
@@ -174,7 +181,7 @@ func (state *PortfolioState) GetReward() float64 {
 		return 0
 	}
 
-	reward := 0.0
+	reward := -state.penalty
 
 	for index, leg := range state.legs {
 		if !state.held[index] {
@@ -185,6 +192,10 @@ func (state *PortfolioState) GetReward() float64 {
 
 		if leg.Opportunity.Type == types.OpportunityNone {
 			score = leg.Summary.Score
+		}
+
+		if leg.Held && leg.Maturing && !leg.Invalidated && leg.ContinuationValue > 0 {
+			score = math.Max(score, leg.ContinuationValue)
 		}
 
 		reward += score
@@ -207,6 +218,7 @@ func (state *PortfolioState) ApplyAction(action float64) mcts.State {
 		maxSteps:     state.maxSteps,
 		done:         state.done,
 		err:          state.err,
+		penalty:      state.penalty,
 	}
 
 	if child.err != nil {
@@ -257,6 +269,18 @@ func (state *PortfolioState) ApplyAction(action float64) mcts.State {
 		}
 
 		child.held[index] = false
+
+		if leg.ReserveEligible {
+			child.reserveSlots++
+		}
+
+		if !leg.ReserveEligible {
+			child.slots++
+		}
+
+		if leg.Held && leg.Maturing && !leg.Invalidated && leg.SwitchingCost > 0 {
+			child.penalty += leg.SwitchingCost
+		}
 	case portfolioHoldOffset:
 	default:
 		child.err = errStateUnknownAction
@@ -361,6 +385,22 @@ func portfolioSeed(state *PortfolioState) int64 {
 		}
 
 		mix(held)
+		maturing := byte(0)
+
+		if leg.Maturing {
+			maturing = 1
+		}
+
+		mix(maturing)
+		invalidated := byte(0)
+
+		if leg.Invalidated {
+			invalidated = 1
+		}
+
+		mix(invalidated)
+		mixNumber(math.Float64bits(leg.SwitchingCost))
+		mixNumber(math.Float64bits(leg.ContinuationValue))
 	}
 
 	return int64(fingerprint)

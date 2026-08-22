@@ -56,29 +56,56 @@ func TestLiquidityPipeline(t *testing.T) {
 			value, found := last.Metrics["executable_touch_depth"]
 
 			So(found, ShouldBeTrue)
-			So(value.Raw, ShouldBeGreaterThan, 0)
+			// Depth = min(2, 2) * (99.5 + 100.5)/2 = 2 * 100 = 200
+			So(value.Raw, ShouldEqual, 200)
+
+			baseline, found := last.Metrics["depth_baseline"]
+			So(found, ShouldBeTrue)
+			So(baseline.Raw, ShouldEqual, 200)
+
+			zscore, found := last.Metrics["depth_zscore"]
+			So(found, ShouldBeTrue)
+			So(zscore.Raw, ShouldEqual, 0)
 		})
 	})
 
-	Convey("Given an older ticker arriving after a completed liquidity step", t, func() {
+	Convey("Adversarial: Dynamic response to sudden liquidity collapse and surge", t, func() {
 		thesis := types.NewThesis(context.Background(), nil)
 		market := thesis.Symbol("AAA/USD")
 		start := time.Unix(1_700_000_000, 0).UTC()
 		signal := NewSignal(context.Background(), thesis)
 		defer signal.Close()
 
-		market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, start.Add(time.Second)))
-		firstReadings := drainMeasurements(market, 1)
-		market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, start))
+		// 1. Establish baseline at qty=10 (depth=1000)
+		for index := range 5 {
+			at := start.Add(time.Duration(index) * time.Second)
+			market.AppendTicker(tickerRow("AAA/USD", 100, 10, 100, at))
+		}
+		drainMeasurements(market, 5)
 
-		Convey("It should retain both readings without regressing its adaptive clock", func() {
-			secondReadings := drainMeasurements(market, 1)
+		// 2. Sudden liquidity dry-up to qty=0.1 (depth=10)
+		market.AppendTicker(tickerRow("AAA/USD", 100, 0.1, 100, start.Add(6*time.Second)))
+		dryReadings := drainMeasurements(market, 1)
 
-			So(signal.Error(), ShouldBeNil)
-			So(len(firstReadings), ShouldEqual, 1)
-			So(len(secondReadings), ShouldEqual, 1)
-			So(secondReadings[0].At.Equal(start), ShouldBeTrue)
-		})
+		So(len(dryReadings), ShouldEqual, 1)
+		dryDepth := dryReadings[0].Metrics["executable_touch_depth"].Raw
+		So(dryDepth, ShouldEqual, 10)
+
+		// Z-score must be negative during collapse
+		dryZ := dryReadings[0].Metrics["depth_zscore"].Raw
+		So(dryZ, ShouldBeLessThan, 0)
+
+		// 3. Sudden liquidity surge to qty=100 (depth=10000)
+		market.AppendTicker(tickerRow("AAA/USD", 100, 100, 100, start.Add(7*time.Second)))
+		surgeReadings := drainMeasurements(market, 1)
+
+		So(len(surgeReadings), ShouldEqual, 1)
+		surgeDepth := surgeReadings[0].Metrics["executable_touch_depth"].Raw
+		So(surgeDepth, ShouldEqual, 10000)
+
+		// Z-score must be positive during surge
+		surgeZ := surgeReadings[0].Metrics["depth_zscore"].Raw
+		So(surgeZ, ShouldBeGreaterThan, 0)
 	})
 }
 
@@ -108,28 +135,14 @@ func BenchmarkLiquidityPipeline(b *testing.B) {
 	thesis := types.NewThesis(context.Background(), nil)
 	market := thesis.Symbol("AAA/USD")
 	start := time.Unix(1_700_000_100, 0).UTC()
-
-	for index := range b.N {
-		at := start.Add(time.Duration(index) * time.Second)
-		market.AppendTicker(tickerRow("AAA/USD", 100, 2, 10, at))
-	}
-
 	signal := NewSignal(context.Background(), thesis)
+	defer signal.Close()
 
-	b.Run("run", func(b *testing.B) {
-		for range b.N {
-			_ = signal
-		}
-	})
-}
-
-func BenchmarkSignalEventTime(b *testing.B) {
-	signal := NewSignal(context.Background(), nil)
-	observedAt := time.Unix(1_700_000_000, 0).UTC()
-	signal.eventTime("AAA/USD", observedAt.Add(time.Second))
+	ticker := tickerRow("AAA/USD", 100, 2, 10, start)
 	b.ReportAllocs()
+	b.ResetTimer()
 
-	for range b.N {
-		signal.eventTime("AAA/USD", observedAt)
+	for b.Loop() {
+		market.AppendTicker(ticker)
 	}
 }

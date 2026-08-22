@@ -286,6 +286,63 @@ func TestPositionOnExecution(t *testing.T) {
 			So(position.Holding.Status, ShouldEqual, types.ERROR)
 		})
 	})
+
+	Convey("Given a closed position receiving subsequent duplicate exit executions", t, func() {
+		position := &Position{
+			ui:        newPositionUI(),
+			ExitOrder: &spot.AddOrderRequest{ClOrdId: "exit"},
+			Holding: &types.Holding{
+				Qty:         decimal.NewFromInt64(1),
+				SellableQty: decimal.NewFromInt64(0),
+				Status:      types.CLOSED,
+			},
+		}
+		position.setStatus(types.CLOSED)
+
+		removed := position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{{
+			ClientOrderID: "exit",
+			OrderStatus:   "filled",
+			Timestamp:     time.Now().UTC(),
+			CumQty:        decimal.NewFromInt64(1),
+			CumCost:       decimal.NewFromFloat64(100),
+			FeeUsdEquiv:   decimal.NewFromFloat64(0.25),
+		}}})
+
+		Convey("It should return true idempotently without erroring", func() {
+			So(removed, ShouldBeTrue)
+			So(position.status(), ShouldEqual, types.CLOSED)
+			So(position.Holding.Status, ShouldEqual, types.CLOSED)
+		})
+	})
+
+	Convey("Given duplicate execution identities for the same order", t, func() {
+		position := &Position{
+			ui:             newPositionUI(),
+			ExitOrder:      &spot.AddOrderRequest{ClOrdId: "exit"},
+			seenExecutions: map[string]struct{}{"EXEC-1": {}},
+			Holding: &types.Holding{
+				Qty:         decimal.NewFromInt64(1),
+				SellableQty: decimal.NewFromInt64(1),
+				Status:      types.PENDING,
+			},
+		}
+		position.setStatus(types.PENDING)
+
+		removed := position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{{
+			ExecID:        "EXEC-1",
+			ClientOrderID: "exit",
+			OrderStatus:   "filled",
+			Timestamp:     time.Now().UTC(),
+			CumQty:        decimal.NewFromInt64(1),
+			CumCost:       decimal.NewFromFloat64(100),
+			FeeUsdEquiv:   decimal.NewFromFloat64(0.25),
+		}}})
+
+		Convey("It should skip the duplicate execution identity", func() {
+			So(removed, ShouldBeFalse)
+			So(position.status(), ShouldEqual, types.PENDING)
+		})
+	})
 }
 
 func TestPositionExit(t *testing.T) {
@@ -401,6 +458,15 @@ func TestPositionCloseFill(t *testing.T) {
 			So(position.status(), ShouldEqual, types.CLOSED)
 		})
 
+		Convey("It should fall back to Qty when SellableQty is zero or nil", func() {
+			position.Holding.SellableQty = decimal.NewFromInt64(0)
+
+			err := position.closeFill(execution)
+
+			So(err, ShouldBeNil)
+			So(position.status(), ShouldEqual, types.CLOSED)
+		})
+
 		Convey("It should refuse a filled quantity that does not match inventory", func() {
 			execution.CumQty = quantity.Add(quantity.GetSmallestIncrement())
 
@@ -447,4 +513,69 @@ func nextFrame(ui *transport.MapReduce[*types.UIFrame]) *types.UIFrame {
 	}
 
 	return frame
+}
+
+func BenchmarkPositionOnExecution(b *testing.B) {
+	price, _ := newPriceSurface(b, "SIM/USD")
+	price.Update(&kraken.TickerData{
+		Symbol: "SIM/USD",
+		Bid:    decimal.NewFromFloat64(100),
+		Ask:    decimal.NewFromFloat64(100.02),
+	})
+	execution := kraken.Execution{Data: []kraken.ExecutionData{{
+		ExecID:        "BENCH-1",
+		ClientOrderID: "entry",
+		OrderStatus:   "filled",
+		Timestamp:     time.Now().UTC(),
+		CumQty:        decimal.NewFromFloat64(2),
+		CumCost:       decimal.NewFromFloat64(200.04),
+		FeeUsdEquiv:   decimal.NewFromFloat64(0.20),
+	}}}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		position := &Position{
+			price:          price,
+			ui:             newPositionUI(),
+			EntryOrder:     &spot.AddOrderRequest{ClOrdId: "entry"},
+			seenExecutions: map[string]struct{}{},
+			Holding: &types.Holding{
+				Mark:     decimal.NewFromFloat64(100),
+				Stoploss: newBrokerStoploss(b),
+			},
+		}
+		position.onExecution(execution)
+	}
+}
+
+func BenchmarkPositionCloseFill(b *testing.B) {
+	quantity := decimal.NewFromFloat64(1)
+	entryPrice := decimal.NewFromFloat64(100)
+	entryFee := decimal.NewFromFloat64(0.25)
+	execution := kraken.ExecutionData{
+		Timestamp:   time.Now().UTC(),
+		CumQty:      quantity,
+		CumCost:     decimal.NewFromFloat64(110),
+		FeeUsdEquiv: decimal.NewFromFloat64(0.25),
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		position := &Position{
+			ui: newPositionUI(),
+			Holding: &types.Holding{
+				Status:      types.OPEN,
+				Qty:         quantity,
+				SellableQty: quantity,
+				EntryPrice:  entryPrice,
+				EntryFee:    entryFee,
+			},
+		}
+		position.setStatus(types.OPEN)
+		_ = position.closeFill(execution)
+	}
 }

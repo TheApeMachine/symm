@@ -46,6 +46,7 @@ func cvdPipeline() nomagique.Primitive {
 				nomagique.Pipe(
 					calculus.Positive,
 					nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
+					nomagique.Relay(statistic.SymbolBaselineValue, calculus.SymbolScale),
 					calculus.Squash,
 					nomagique.Relay(calculus.SymbolResult, SymbolAbsorption),
 				),
@@ -115,10 +116,8 @@ func (signal *Signal) consume() {
 				}
 
 				input.Put(calculus.SymbolValue, notional)
-				input.Put(calculus.SymbolScale, 1.0)
 				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-				input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
 				output, err := signal.number.Step(symbol.Symbol, input)
 

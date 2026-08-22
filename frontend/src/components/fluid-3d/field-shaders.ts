@@ -44,22 +44,30 @@ const fieldSampling = /* wgsl */ `
 	};
 
 	fn sampleFluid(coordinate: vec3<f32>) -> FluidSample {
-		let momRho = textureSampleLevel(momRhoTexture, fieldSampler, coordinate, 0.0);
-		let density = abs(momRho.a) * uniforms.densityScale;
-		let momentumMagnitude = length(momRho.rgb) * uniforms.momentumScale;
-		let energy = abs(textureSampleLevel(energyTexture, fieldSampler, coordinate, 0.0).r) * uniforms.energyScale;
-		let waveReal = textureSampleLevel(waveRealTexture, fieldSampler, coordinate, 0.0).r;
-		let waveImag = textureSampleLevel(waveImagTexture, fieldSampler, coordinate, 0.0).r;
-		let waveMagnitude = (waveReal * waveReal + waveImag * waveImag) * uniforms.waveScale;
-		let gasSignal = compress(max(density, momentumMagnitude));
-		let waveSignal = compress(waveMagnitude);
-		let warmAmber = vec3<f32>(0.55, 0.22, 0.05);
-		let brightAmber = vec3<f32>(1.0, 0.68, 0.20);
 		var field: FluidSample;
-		field.gasColor = mix(warmAmber, brightAmber, clamp(compress(energy), 0.0, 1.0));
-		field.gasExtinction = select(0.0, gasSignal, uniforms.showGas > 0.5);
-		let wavePhase = select(0.0, atan2(waveImag, waveReal), abs(waveReal) > 1e-6 || abs(waveImag) > 1e-6);
-		field.waveGlow = select(vec3<f32>(0.0), phaseColor(wavePhase) * waveSignal, uniforms.showWave > 0.5);
+		field.gasColor = vec3<f32>(0.55, 0.22, 0.05);
+		field.gasExtinction = 0.0;
+		field.waveGlow = vec3<f32>(0.0);
+
+		if (uniforms.showGas > 0.5) {
+			let momRho = textureSampleLevel(momRhoTexture, fieldSampler, coordinate, 0.0);
+			let density = abs(momRho.a) * uniforms.densityScale;
+			let momentumMagnitude = length(momRho.rgb) * uniforms.momentumScale;
+			let energy = abs(textureSampleLevel(energyTexture, fieldSampler, coordinate, 0.0).r) * uniforms.energyScale;
+			let warmAmber = vec3<f32>(0.55, 0.22, 0.05);
+			let brightAmber = vec3<f32>(1.0, 0.68, 0.20);
+			field.gasColor = mix(warmAmber, brightAmber, clamp(compress(energy), 0.0, 1.0));
+			field.gasExtinction = compress(max(density, momentumMagnitude));
+		}
+
+		if (uniforms.showWave > 0.5) {
+			let waveReal = textureSampleLevel(waveRealTexture, fieldSampler, coordinate, 0.0).r;
+			let waveImag = textureSampleLevel(waveImagTexture, fieldSampler, coordinate, 0.0).r;
+			let waveSignal = compress(length(vec2<f32>(waveReal, waveImag)) * uniforms.waveScale);
+			let wavePhase = select(0.0, atan2(waveImag, waveReal), abs(waveReal) > 1e-6 || abs(waveImag) > 1e-6);
+			field.waveGlow = phaseColor(wavePhase) * waveSignal;
+		}
+
 		return field;
 	}
 `;
@@ -85,7 +93,7 @@ export const volumeShader = /* wgsl */ `
 	${vertexWorld}
 
 	const GAS_OPACITY: f32 = 1.4;
-	const WAVE_BRIGHTNESS: f32 = 0.35;
+	const WAVE_BRIGHTNESS: f32 = 0.85;
 	const MAX_STEPS: u32 = ${MAXIMUM_VOLUME_STEPS}u;
 
 	fn intersectUnitBox(origin: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
@@ -113,27 +121,19 @@ export const volumeShader = /* wgsl */ `
 		let start = uniforms.cameraPos + rayDirection * entrance;
 		let finish = uniforms.cameraPos + rayDirection * intersection.y;
 		let sampleCount = max(ceil(length((finish - start) * uniforms.grid)), 1.0);
-		let stepVector = (finish - start) / sampleCount;
+		let stepCount = min(u32(sampleCount), MAX_STEPS);
+		let stepVector = (finish - start) / f32(stepCount);
 		var accumulated = vec3<f32>(0.0);
 		var accumulatedAlpha = 0.0;
 		var waveAccumulated = vec3<f32>(0.0);
 
-		for (var step = 0u; step < MAX_STEPS; step++) {
-			let alongRay = f32(step) < sampleCount;
+		for (var step = 0u; step < stepCount; step++) {
 			let coordinate = start + (f32(step) + 0.5) * stepVector;
 			let field = sampleFluid(coordinate);
-			let alpha = select(
-				0.0,
-				1.0 - exp(-field.gasExtinction * uniforms.exposure * GAS_OPACITY),
-				alongRay,
-			);
+			let alpha = 1.0 - exp(-field.gasExtinction * uniforms.exposure * GAS_OPACITY);
 			accumulated += (1.0 - accumulatedAlpha) * alpha * field.gasColor;
 			accumulatedAlpha += (1.0 - accumulatedAlpha) * alpha;
-			waveAccumulated += select(
-				vec3<f32>(0.0),
-				field.waveGlow * uniforms.exposure * WAVE_BRIGHTNESS,
-				alongRay,
-			);
+			waveAccumulated += field.waveGlow * uniforms.exposure * WAVE_BRIGHTNESS;
 		}
 
 		let outputAlpha = clamp(max(accumulatedAlpha, length(waveAccumulated)), 0.0, 1.0);

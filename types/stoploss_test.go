@@ -225,7 +225,7 @@ func TestStoplossRebindFill(t *testing.T) {
 	Convey("Given an admitted stop with remembered forecast reach", t, func() {
 		stoploss := stoplossFixture(t)
 		floor := stoploss.Floor
-		trailDistance := stoploss.trailDistance
+		trailDistance := stoploss.TrailDistance
 
 		Convey("It should update fill economics without narrowing forecast reach", func() {
 			err := stoploss.RebindFill(
@@ -235,7 +235,7 @@ func TestStoplossRebindFill(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(stoploss.Floor.Cmp(floor), ShouldEqual, 0)
-			So(stoploss.trailDistance.Cmp(trailDistance), ShouldEqual, 0)
+			So(stoploss.TrailDistance.Cmp(trailDistance), ShouldEqual, 0)
 			So(stoploss.ProfitLine.Cmp(decimal.NewFromFloat64(100.05)), ShouldEqual, 0)
 		})
 	})
@@ -302,8 +302,8 @@ func TestStoplossUpdate(t *testing.T) {
 		})
 
 		Convey("It should hold a surge through breathing and exit when the burst unwinds a central band", func() {
-			stoploss.trailDistance = decimal.NewFromFloat64(0.10)
-			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
+			stoploss.TrailDistance = decimal.NewFromFloat64(0.10)
+			stoploss.NoiseBand = decimal.NewFromFloat64(0.01)
 
 			stoploss.Update(decimal.NewFromFloat64(100.5))
 			So(stoploss.SurgeArmed, ShouldBeTrue)
@@ -324,8 +324,8 @@ func TestStoplossUpdate(t *testing.T) {
 			// Under an entry-frozen trail this sequence exits on the second
 			// leg: the burst peak places the floor one entry-scale trail below
 			// itself and the 101.5 breathing mark falls through it.
-			stoploss.trailDistance = decimal.NewFromFloat64(0.10)
-			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
+			stoploss.TrailDistance = decimal.NewFromFloat64(0.10)
+			stoploss.NoiseBand = decimal.NewFromFloat64(0.01)
 
 			stoploss.Update(decimal.NewFromFloat64(102))
 			stoploss.Update(decimal.NewFromFloat64(101.5))
@@ -347,11 +347,11 @@ func TestStoplossUpdate(t *testing.T) {
 			expected := floorToTick(
 				scaled(decimal.NewFromFloat64(104)).Sub(
 					largest(
-						stoploss.trailDistance,
+						stoploss.TrailDistance,
 						decimal.NewFromFloat64(stoploss.learnedMoveBoundary()),
 					),
 				),
-				stoploss.tickSize,
+				stoploss.TickSize,
 			)
 
 			So(stoploss.Floor.Cmp(expected), ShouldEqual, 0)
@@ -403,8 +403,8 @@ func TestStoplossUpdate(t *testing.T) {
 			// The trail is set wider than the learned step scale, so the
 			// confirmed stagnation path is the tighter boundary here, the way
 			// a real RiskPlan separates the two regimes.
-			stoploss.trailDistance = decimal.NewFromFloat64(0.50)
-			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
+			stoploss.TrailDistance = decimal.NewFromFloat64(0.50)
+			stoploss.NoiseBand = decimal.NewFromFloat64(0.01)
 
 			for _, price := range []float64{100.1, 100.2, 100.3, 100.4, 100.5, 100.6} {
 				stoploss.Update(decimal.NewFromFloat64(price))
@@ -420,8 +420,8 @@ func TestStoplossUpdate(t *testing.T) {
 		})
 
 		Convey("It should hold oscillation whose giveback is inside the run's central band", func() {
-			stoploss.trailDistance = decimal.NewFromFloat64(0.50)
-			stoploss.noiseBand = decimal.NewFromFloat64(0.01)
+			stoploss.TrailDistance = decimal.NewFromFloat64(0.50)
+			stoploss.NoiseBand = decimal.NewFromFloat64(0.01)
 
 			stoploss.Update(decimal.NewFromFloat64(100.5))
 			stoploss.Update(decimal.NewFromFloat64(100.45))
@@ -449,8 +449,8 @@ func TestStoplossArmClock(t *testing.T) {
 
 		Convey("It should ignore a second arm so pre-fill marks cannot be erased", func() {
 			stoploss.ArmClock()
-			So(stoploss.observed, ShouldEqual, 1)
-			So(stoploss.clockArmed, ShouldBeTrue)
+			So(stoploss.Observed, ShouldEqual, 1)
+			So(stoploss.ClockArmed, ShouldBeTrue)
 		})
 	})
 }
@@ -465,7 +465,7 @@ func TestStoplossReconsider(t *testing.T) {
 		Convey("It should keep the lot without consulting future-return economics", func() {
 			stoploss.Reconsider(-1, 1)
 			So(stoploss.Status, ShouldEqual, ARMED)
-			So(stoploss.observed, ShouldEqual, 2)
+			So(stoploss.Observed, ShouldEqual, 2)
 		})
 	})
 
@@ -488,7 +488,7 @@ func TestStoplossReconsider(t *testing.T) {
 		stoploss.Update(stoploss.ProfitLine)
 
 		Convey("It should leave profitable regulation on Update", func() {
-			So(stoploss.observed, ShouldEqual, 2)
+			So(stoploss.Observed, ShouldEqual, 2)
 			stoploss.Reconsider(0, 0)
 			So(stoploss.Status, ShouldEqual, ARMED)
 		})
@@ -514,7 +514,7 @@ func TestStoplossReconsider(t *testing.T) {
 		Convey("It should not count pre-fill marks as path consumption", func() {
 			stoploss.Reconsider(0, 0)
 			So(stoploss.Status, ShouldEqual, ARMED)
-			So(stoploss.observed, ShouldEqual, 0)
+			So(stoploss.Observed, ShouldEqual, 0)
 		})
 	})
 
@@ -541,7 +541,7 @@ func TestStoplossReconsider(t *testing.T) {
 		Convey("It should refuse to invent a transition horizon", func() {
 			stoploss.Reconsider(0, 0)
 			So(stoploss.Status, ShouldEqual, ARMED)
-			So(stoploss.horizon, ShouldEqual, 0)
+			So(stoploss.Horizon, ShouldEqual, 0)
 		})
 	})
 
@@ -562,7 +562,7 @@ func TestStoplossReconsider(t *testing.T) {
 		Convey("It should fire only once the admitted path has actually elapsed", func() {
 			stoploss.Reconsider(0, 0)
 			So(stoploss.Status, ShouldEqual, TRIGGERED)
-			So(stoploss.observed, ShouldEqual, 3)
+			So(stoploss.Observed, ShouldEqual, 3)
 		})
 	})
 }
@@ -624,8 +624,8 @@ func TestRestoreStoploss(t *testing.T) {
 
 	Convey("Given a stored stop armed by an unusual peak acceleration", t, func() {
 		original := stoplossFixture(t)
-		original.trailDistance = decimal.NewFromFloat64(0.10)
-		original.noiseBand = decimal.NewFromFloat64(0.01)
+		original.TrailDistance = decimal.NewFromFloat64(0.10)
+		original.NoiseBand = decimal.NewFromFloat64(0.01)
 		original.Update(decimal.NewFromFloat64(102))
 		So(original.SurgeArmed, ShouldBeTrue)
 		state, err := original.MarshalState()
@@ -650,7 +650,7 @@ func TestRestoreStoploss(t *testing.T) {
 		original := stoplossFixture(t)
 		encoded, err := original.MarshalState()
 		So(err, ShouldBeNil)
-		state := stoplossState{}
+		state := Stoploss{}
 		So(json.Unmarshal(encoded, &state), ShouldBeNil)
 		state.SurgeArmed = true
 		state.SurgeMove = nil
@@ -669,7 +669,7 @@ func TestRestoreStoploss(t *testing.T) {
 		original := stoplossFixture(t)
 		encoded, err := original.MarshalState()
 		So(err, ShouldBeNil)
-		state := stoplossState{}
+		state := Stoploss{}
 		So(json.Unmarshal(encoded, &state), ShouldBeNil)
 		state.Floor = state.Peak
 		encoded, err = json.Marshal(state)
@@ -693,11 +693,44 @@ func TestRestoreStoploss(t *testing.T) {
 		Convey("It should resume the same remaining path length", func() {
 			restored, err := RestoreStoploss(context.Background(), state)
 			So(err, ShouldBeNil)
-			So(restored.horizon, ShouldEqual, 3)
-			So(restored.observed, ShouldEqual, 3)
-			So(restored.clockArmed, ShouldBeTrue)
+			So(restored.Horizon, ShouldEqual, 3)
+			So(restored.Observed, ShouldEqual, 3)
+			So(restored.ClockArmed, ShouldBeTrue)
 			restored.Reconsider(0, 0)
 			So(restored.Status, ShouldEqual, TRIGGERED)
+		})
+	})
+}
+
+func TestStoplossAccessors(t *testing.T) {
+	Convey("Given an initialized stoploss with horizon and fee rates", t, func() {
+		stoploss := underwaterStoploss(t, 5)
+		fee := decimal.NewFromFloat64(0.0026)
+		stoploss.EntryFeeRate = fee
+		stoploss.ExitFeeRate = fee
+
+		Convey("It should report zero observed before arming", func() {
+			So(stoploss.Observed, ShouldEqual, 0)
+			So(stoploss.Horizon, ShouldEqual, 5)
+			So(stoploss.Maturing(), ShouldBeFalse)
+			So(stoploss.EntryFeeRate.Cmp(fee), ShouldEqual, 0)
+			So(stoploss.ExitFeeRate.Cmp(fee), ShouldEqual, 0)
+		})
+
+		Convey("After arming the clock and advancing marks within horizon", func() {
+			stoploss.ArmClock()
+			stoploss.Update(decimal.NewFromFloat64(100))
+			stoploss.Update(decimal.NewFromFloat64(100))
+
+			So(stoploss.Observed, ShouldEqual, 2)
+			So(stoploss.Maturing(), ShouldBeTrue)
+		})
+
+		Convey("Once the horizon is reached", func() {
+			observeHorizon(stoploss)
+
+			So(stoploss.Observed, ShouldEqual, 5)
+			So(stoploss.Maturing(), ShouldBeFalse)
 		})
 	})
 }
@@ -738,7 +771,7 @@ func underwaterStoploss(testingTB testReporter, horizon int) *Stoploss {
 func observeHorizon(stoploss *Stoploss) {
 	stoploss.ArmClock()
 
-	for range stoploss.horizon {
+	for range stoploss.Horizon {
 		stoploss.Update(decimal.NewFromFloat64(100))
 	}
 }

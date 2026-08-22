@@ -766,7 +766,8 @@ func (solver *Solver) Step(
 		))
 	}
 
-	_, err := solver.physics.Step(oscillatorsToState(solver.oscillators))
+	fingerprint := solver.oscillators
+	_, err := solver.physics.Step(oscillatorsToState(fingerprint))
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -780,7 +781,7 @@ func (solver *Solver) Step(
 	solver.reading = solver.physics.Reading()
 	thesis.StoreManifold(solver.reading)
 	solver.oscillators = stateToOscillators(solver.physics.State())
-	solver.publishPhase(thesis, at, cuts)
+	solver.publishPhase(thesis, at, cuts, fingerprint)
 
 	return solver.publishDomain()
 }
@@ -816,15 +817,16 @@ func (solver *Solver) publishPhase(
 	thesis *types.Thesis,
 	at time.Time,
 	cuts []manifoldCut,
+	fingerprint []Oscillator,
 ) {
-	reading := solver.stampPhase(thesis, at, cuts)
+	reading := solver.stampPhase(thesis, at, cuts, fingerprint)
 
 	if solver.binui != nil {
 		solver.binui.Push(types.FluidFrame{
 			Channel: types.FluidPhaseChannel,
 			Payload: telemetry.Encode(&wire.FrameT{
 				Type:  wire.FrameFluidPhaseFrame,
-				Value: solver.phaseRow(at, reading),
+				Value: solver.phaseRow(at, reading, fingerprint),
 			}),
 		})
 	}
@@ -837,9 +839,15 @@ readiness, angular scan, and real-time hydrodynamic / Kuramoto diagnostics.
 func (solver *Solver) phaseRow(
 	at time.Time,
 	reading types.PhaseReading,
+	fingerprint []Oscillator,
 ) *wire.FluidPhaseFrameT {
-	kuramoto := kuramotoOrderParameter(solver.oscillators)
-	wave := oscillatorWave(solver.oscillators)
+	kuramoto := kuramotoOrderParameter(fingerprint)
+	wave := latticeWave(
+		fingerprint,
+		solver.config.GateWidthMin(),
+		solver.config.GateWidthMax(),
+		int(phaseLatticeWidth),
+	)
 	waveWire := make([]*wire.WaveModeT, len(wave))
 
 	for index, mode := range wave {

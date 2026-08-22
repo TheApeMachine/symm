@@ -294,7 +294,7 @@ export const FluidInspector = () => {
 						gas
 					</Toggle>
 					<Toggle active={options.wave} onClick={() => toggle("wave")}>
-						Ψ
+						wave
 					</Toggle>
 					<Toggle active={options.volume} onClick={() => toggle("volume")}>
 						volume

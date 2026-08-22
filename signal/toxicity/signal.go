@@ -80,7 +80,10 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 				nomagique.Fork(
 					statistic.Deviation,
 					nomagique.Pipe(
+						nomagique.Relay(nomagique.SampleValue, calculus.SymbolValue),
 						calculus.Positive,
+						nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
+						nomagique.Relay(statistic.SymbolBaselineValue, calculus.SymbolScale),
 						calculus.Squash,
 					),
 				),
@@ -159,14 +162,12 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 		input := nomagique.Frame{}
 		input.Put(nmtypes.AlphaQuantity, filled)
 		input.Put(nmtypes.BetaQuantity, retreated)
-		input.Put(calculus.SymbolLeft, filled)
-		input.Put(calculus.SymbolRight, retreated)
+		input.Put(calculus.SymbolLeft, retreated)
+		input.Put(calculus.SymbolRight, filled)
 		input.Put(nomagique.SampleValue, retreated-filled)
 		input.Put(calculus.SymbolValue, retreated-filled)
-		input.Put(calculus.SymbolScale, 1.0)
 		input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
 		input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
-		input.Put(statistic.SymbolDispersionHalflife, 30.0)
 
 		output, err := signal.number.Step(symbol.Symbol, input)
 

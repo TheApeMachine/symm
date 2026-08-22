@@ -329,6 +329,68 @@ func (graph *Graph) CanonicalizeDecisionEdges() {
 }
 
 /*
+Prune removes expired transient measurement nodes and stale edges while
+preserving active structural anchors (categories, fields, SCM, hypotheses).
+*/
+func (graph *Graph) Prune(now time.Time) {
+	if graph == nil || now.IsZero() {
+		return
+	}
+
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
+
+	const maxMeasurementRetention = 5 * time.Minute
+	prunedNodeIDs := make(map[string]bool)
+
+	for nodeID, node := range graph.Nodes {
+		if node == nil || node.Kind != KindMeasurement || node.At.IsZero() {
+			continue
+		}
+
+		horizon := node.Horizon
+
+		if horizon <= 0 {
+			horizon = 30 * time.Second
+		}
+
+		retention := 5 * horizon
+
+		if retention > maxMeasurementRetention {
+			retention = maxMeasurementRetention
+		}
+
+		if now.Sub(node.At) > retention {
+			delete(graph.Nodes, nodeID)
+			prunedNodeIDs[nodeID] = true
+		}
+	}
+
+	if len(prunedNodeIDs) == 0 {
+		return
+	}
+
+	activeEdges := make([]*Edge, 0, len(graph.Edges))
+
+	for _, edge := range graph.Edges {
+		if prunedNodeIDs[edge.From] || prunedNodeIDs[edge.To] {
+			continue
+		}
+
+		activeEdges = append(activeEdges, edge)
+	}
+
+	graph.Edges = activeEdges
+	graph.Adjacency = make(map[string][]string, len(graph.Nodes))
+
+	for _, edge := range graph.Edges {
+		if !slices.Contains(graph.Adjacency[edge.From], edge.To) {
+			graph.Adjacency[edge.From] = append(graph.Adjacency[edge.From], edge.To)
+		}
+	}
+}
+
+/*
 OpportunitySummary is the dimensionless evidence balance for the graph's
 explicit decision proposition. Conditions are reported separately and never
 smuggled into directional support.

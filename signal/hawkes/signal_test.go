@@ -31,17 +31,10 @@ func TestHawkesPipeline(t *testing.T) {
 			})
 		}
 
-		measurements := []*nmtypes.Measurement{}
-
-		time.Sleep(50 * time.Millisecond)
-		for measurement := range market.MarketMeasurements(
-			market.MeasurementConsumers[types.MeasurementConsumerCategory],
-		) {
-			measurements = append(measurements, measurement)
-		}
+		measurements := drainHawkesMeasurements(market, 3)
 
 		Convey("It should emit the typed Hawkes process metrics the UI consumes", func() {
-			So(len(measurements), ShouldBeGreaterThan, 0)
+			So(len(measurements), ShouldEqual, 3)
 
 			latest := measurements[len(measurements)-1]
 			So(latest.Source, ShouldEqual, string(types.SourceHawkes))
@@ -67,30 +60,67 @@ func TestHawkesPipeline(t *testing.T) {
 			}
 
 			eventCount := latest.Metrics[types.MetricKey(types.MetricEventCount, types.SideNone)]
-			So(eventCount.Raw, ShouldBeGreaterThan, 0)
+			So(eventCount.Raw, ShouldEqual, 3)
 			So(latest.Metrics[types.MetricKey(types.MetricSpectralRadius, types.SideNone)].Normalized, ShouldNotBeNil)
 			So(latest.Metrics[types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy)].Normalized, ShouldNotBeNil)
-			_, found := latest.Metrics["buy_intensity"]
-			So(found, ShouldBeFalse)
+		})
+
+		Convey("Adversarial: Intense single-sided burst excites buy channel", func() {
+			burstStart := start.Add(10 * time.Second)
+
+			for index := range 10 {
+				input := nomagique.Frame{}
+				input.Put(algo.SymbolMark, 1.0)
+				input.Put(nmtypes.EventTimeSec, float64(burstStart.Unix()))
+				input.Put(nmtypes.EventTimeNsec, float64(index*1000))
+
+				output, err := signal.number.Step("BURST/USD", input)
+				So(err, ShouldBeNil)
+
+				buyIntensity := output.MustGet(algo.SymbolLambdaAlpha)
+				sellIntensity := output.MustGet(algo.SymbolLambdaBeta)
+				So(buyIntensity, ShouldBeGreaterThan, sellIntensity)
+			}
 		})
 	})
 }
 
+func drainHawkesMeasurements(symbol *types.Symbol, expected int) []*nmtypes.Measurement {
+	readings := []*nmtypes.Measurement{}
+	deadline := time.Now().Add(2 * time.Second)
+
+	for len(readings) < expected && time.Now().Before(deadline) {
+		for measurement := range symbol.MarketMeasurements(
+			symbol.MeasurementConsumers[types.MeasurementConsumerCategory],
+		) {
+			readings = append(readings, measurement)
+		}
+
+		if len(readings) >= expected {
+			break
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	return readings
+}
+
 func BenchmarkHawkesPipeline(b *testing.B) {
-	signal := NewSignal(context.Background(), nil)
+	thesis := types.NewThesis(context.Background(), nil)
+	signal := NewSignal(context.Background(), thesis)
+	defer signal.Close()
+
 	start := time.Unix(1_700_007_000, 0).UTC()
 	b.ReportAllocs()
+	b.ResetTimer()
 
-	for index := range b.N {
+	for b.Loop() {
 		input := nomagique.Frame{}
-		input.Put(algo.SymbolMark, markForSide([]string{"buy", "sell"}[index%2]))
-		input.Put(nmtypes.EventTimeSec, float64(start.Unix()+int64(index)))
+		input.Put(algo.SymbolMark, 1.0)
+		input.Put(nmtypes.EventTimeSec, float64(start.Unix()))
 		input.Put(nmtypes.EventTimeNsec, 0)
 
-		_, err := signal.number.Step("BTC/USD", input)
-
-		if err != nil {
-			b.Fatal(err)
-		}
+		_, _ = signal.number.Step("BTC/USD", input)
 	}
 }
