@@ -6,6 +6,7 @@ import {
 	terminalPhaseStatusFromFrame,
 	terminalWaveModesFromFrame,
 } from "#/components/terminal/charts";
+import { finiteNumber } from "#/components/terminal/charts-frame";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Canvas } from "#/components/ui/canvas";
@@ -14,7 +15,11 @@ import { Input } from "#/components/ui/input";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
 import { KuramotoRing, type KuramotoRingProps } from "./kuramoto-ring";
-import { PhasePortrait, type PhasePortraitPoint } from "./phase-portrait";
+import {
+	finitePortraitPoint,
+	PhasePortrait,
+	type PhasePortraitPoint,
+} from "./phase-portrait";
 import { FluidScene, type FluidSceneOptions } from "./scene";
 import { FluidWebRTCFeed } from "./transport";
 import type { FluidGrid, FluidParticle } from "./wire";
@@ -200,23 +205,25 @@ export const FluidInspector = () => {
 					setHydro(hydrodynamics);
 					setKuramotoProps({
 						oscillators: kuramotoFromWave(frame),
-						kuramotoR: hydrodynamics.kuramotoR ?? 0,
-						kuramotoPsi: hydrodynamics.kuramotoPsi ?? 0,
+						kuramotoR: finiteNumber(hydrodynamics.kuramotoR) ?? 0,
+						kuramotoPsi: finiteNumber(hydrodynamics.kuramotoPsi) ?? 0,
 					});
 
-					const point: PhasePortraitPoint = {
-						divergence: hydrodynamics.divergence ?? 0,
-						pressureGradNorm: hydrodynamics.pressureGradNorm ?? 0,
-					};
+					const point = finitePortraitPoint(
+						hydrodynamics.divergence,
+						hydrodynamics.pressureGradNorm,
+					);
 
-					const history = phaseHistoryRef.current;
-					history.push(point);
+					if (point !== null) {
+						const history = phaseHistoryRef.current;
+						history.push(point);
 
-					if (history.length > 200) {
-						history.splice(0, history.length - 200);
+						if (history.length > 200) {
+							history.splice(0, history.length - 200);
+						}
+
+						setPhasePortrait({ history: [...history], current: point });
 					}
-
-					setPhasePortrait({ history: [...history], current: point });
 				}
 			},
 			onState: setState,

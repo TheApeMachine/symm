@@ -42,7 +42,10 @@ export class FluidParticles {
 	constructor(private readonly gpu: FluidGPU) {
 		const layout = particleBindLayout(gpu.device);
 		this.quadBuffer = createVertexBuffer(gpu.device, quadCorners);
-		this.uniformBuffer = createUniformBuffer(gpu.device, PARTICLE_UNIFORM_FLOATS);
+		this.uniformBuffer = createUniformBuffer(
+			gpu.device,
+			PARTICLE_UNIFORM_FLOATS,
+		);
 		this.bindGroup = gpu.device.createBindGroup({
 			layout,
 			entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
@@ -185,7 +188,9 @@ export class FluidParticles {
 			const toY = particle.Position.Y - ray.origin[1];
 			const toZ = particle.Position.Z - ray.origin[2];
 			const along =
-				toX * ray.direction[0] + toY * ray.direction[1] + toZ * ray.direction[2];
+				toX * ray.direction[0] +
+				toY * ray.direction[1] +
+				toZ * ray.direction[2];
 
 			if (along < 0) {
 				continue;

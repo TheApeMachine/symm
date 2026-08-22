@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type {
 	ClockSnapshot,
 	DiagnosticsFrame,
@@ -154,9 +154,9 @@ const edgeHealth = (latencyNs: number | undefined): HealthTone => {
 };
 
 /*
-EDGE_HEALTH_STROKE maps latency health to muted, low-saturation light tones.
-Grey is deliberately excluded: even the inactive/idle lanes keep a healthy
-muted green so the wiring never falls to an undifferentiated grey field.
+EDGE_HEALTH_STROKE maps latency health to consistent telemetry tones.
+Edges render translucent and muted so the solid node borders clearly show health
+without competing with the background wiring.
 */
 const EDGE_HEALTH_STROKE: Record<HealthTone, string> = {
 	healthy: "hsl(140 32% 62%)",
@@ -231,6 +231,16 @@ type Point = {
 
 type NodeSide = "top" | "right" | "bottom" | "left";
 
+export type DiagPort = {
+	id: string;
+	edgeId: string;
+	nodeId: string;
+	kind: "out" | "in";
+	point: Point;
+	side: NodeSide;
+	latencyNs?: number;
+};
+
 type DiagEdge = {
 	id: string;
 	from: string;
@@ -282,10 +292,8 @@ const stageState = (
 };
 
 /*
-STAGE_TONE maps a stage's health state to its border/dot/text tone. Border
-colors use the same muted health palette as the edges (healthy green, slightly
-amber latency, high red latency) so a node border reads as the health of the
-component it represents. Only the unseen neutral is allowed off-palette.
+STAGE_TONE maps a stage's health state to its border/dot/text tone.
+Border colors clearly reflect the health of the component.
 */
 const STAGE_TONE: Record<
 	StageState,
@@ -303,7 +311,7 @@ const STAGE_TONE: Record<
 	},
 	running: {
 		dot: "bg-(--info)",
-		borderColor: NODE_HEALTH_STROKE.healthy,
+		borderColor: "hsl(195 45% 52%)",
 		text: "text-(--info)",
 	},
 	stale: {
@@ -313,7 +321,7 @@ const STAGE_TONE: Record<
 	},
 	unseen: {
 		dot: "bg-(--line2)",
-		borderColor: "hsl(220 10% 52%)",
+		borderColor: "hsl(220 10% 45%)",
 		text: "text-(--f4)",
 	},
 };
@@ -327,10 +335,7 @@ const STATE_LABEL: Record<StageState, string> = {
 };
 
 /*
-QUEUE_IDS lists every pipeline buffer that renders as a tank. Most are
-dotted wire names; a few (measurements, decisions, positions) are simple names
-that still describe queues, so the kind must be declared rather than inferred
-from the name.
+QUEUE_IDS lists every pipeline buffer that renders as a tank.
 */
 const QUEUE_IDS = new Set([
 	"ingress.tickers",
@@ -375,24 +380,45 @@ type Bounds = {
 	bottom: number;
 };
 
-const ROUTE_CLEARANCE = 0.55;
+const ROUTE_CLEARANCE = 0.8;
 const ROUTE_STUB = 0.8;
 const PORT_INSET = 0.8;
 
 /*
-Routing costs make crossings more expensive than any plausible canvas detour.
-Bend cost only breaks ties between otherwise equivalent clear routes.
-LANE_SPACING keeps parallel same-direction segments a visible distance apart
-so two edges leaving one node never run length-wise on top of each other, and
-ROUTE_OVERLAP_COST_MASSIVE is a strong finite cost (not Infinity) that
-dominates detours so parallel lanes separate cleanly while a trivial corner
-graze stays cheaper than an absurd full-canvas detour.
+Routing costs prioritize clear parallel lanes and collision avoidance.
+Perpendicular crossings are cleanly allowed; longitudinal overlap is strictly penalized.
 */
-const ROUTE_CROSSING_COST = 120;
-const ROUTE_OVERLAP_COST_MASSIVE = 900;
+const ROUTE_CROSSING_COST = 80;
+const ROUTE_OVERLAP_COST_MASSIVE = 1200;
 const ROUTE_BEND_COST = 0.35;
-const LANE_SPACING = 0.6;
-const ROUTE_NEAR_COST = 90;
+const LANE_SPACING = 0.55;
+const ROUTE_NEAR_COST = 70;
+
+/*
+CORRIDOR_BANDS defines the inter-tier horizontal highway zones between node rows.
+Each corridor holds multiple dedicated parallel tracks so fan-outs never collapse.
+*/
+const CORRIDOR_BANDS = [
+	{ min: 10.6, max: 12.2 }, // Sources -> Ingress
+	{ min: 17.5, max: 18.7 }, // Ingress -> Signal row 1
+	{ min: 27.3, max: 28.7 }, // Signal row 1 -> Signal row 2
+	{ min: 37.4, max: 39.4 }, // Signal row 2 -> Measurements
+	{ min: 44.5, max: 46.7 }, // Measurements -> Logic
+	{ min: 55.2, max: 56.6 }, // Logic -> Derived
+	{ min: 61.4, max: 62.8 }, // Derived -> Strategy
+	{ min: 71.2, max: 72.6 }, // Strategy -> Decisions
+	{ min: 77.4, max: 78.8 }, // Decisions -> Desk/UI
+	{ min: 87.3, max: 88.7 }, // Desk/UI -> Terminals
+];
+
+const VERTICAL_ALLEYS = [
+	2.5, 3.5, // Left outer gutter
+	19.0, 20.0, 21.0, // Signal/Logic Alley 1
+	39.0, 40.0, 41.0, // Signal/Logic Alley 2
+	59.0, 60.0, 61.0, // Signal/Logic Alley 3
+	79.0, 80.0, 81.0, // Signal/Logic Alley 4
+	96.8, 97.8, // Right outer gutter
+];
 
 export const placementBounds = (
 	placement: Placement,
@@ -463,7 +489,7 @@ const stubPoint = (point: Point, side: NodeSide): Point => {
 };
 
 const samePoint = (first: Point, second: Point): boolean =>
-	first.x === second.x && first.y === second.y;
+	Math.abs(first.x - second.x) < 0.001 && Math.abs(first.y - second.y) < 0.001;
 
 const simplifyPoints = (points: Point[]): Point[] => {
 	const unique = points.filter(
@@ -480,8 +506,12 @@ const simplifyPoints = (points: Point[]): Point[] => {
 			continue;
 		}
 
-		const sameX = beforePrevious.x === previous.x && previous.x === point.x;
-		const sameY = beforePrevious.y === previous.y && previous.y === point.y;
+		const sameX =
+			Math.abs(beforePrevious.x - previous.x) < 0.001 &&
+			Math.abs(previous.x - point.x) < 0.001;
+		const sameY =
+			Math.abs(beforePrevious.y - previous.y) < 0.001 &&
+			Math.abs(previous.y - point.y) < 0.001;
 
 		if (sameX || sameY) {
 			simplified[simplified.length - 1] = point;
@@ -495,7 +525,7 @@ const simplifyPoints = (points: Point[]): Point[] => {
 };
 
 const segmentBlocked = (from: Point, to: Point, bounds: Bounds): boolean => {
-	if (from.y === to.y) {
+	if (Math.abs(from.y - to.y) < 0.001) {
 		const left = Math.min(from.x, to.x);
 		const right = Math.max(from.x, to.x);
 
@@ -507,7 +537,7 @@ const segmentBlocked = (from: Point, to: Point, bounds: Bounds): boolean => {
 		);
 	}
 
-	if (from.x === to.x) {
+	if (Math.abs(from.x - to.x) < 0.001) {
 		const top = Math.min(from.y, to.y);
 		const bottom = Math.max(from.y, to.y);
 
@@ -540,20 +570,14 @@ export const routeIntersectsPlacement = (
 const segmentLength = (from: Point, to: Point): number =>
 	Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
 
-/*
-parallelNearMiss reports whether two axis-aligned segments run in the same
-direction within LANE_SPACING of each other while their spans overlap. This is
-what separates two edges sharing an exit direction without forbidding clean
-perpendicular crossings, which the user wants to keep allowing.
-*/
 const parallelNearMiss = (
 	from: Point,
 	to: Point,
 	otherFrom: Point,
 	otherTo: Point,
 ): boolean => {
-	const horizontal = from.y === to.y;
-	const otherHorizontal = otherFrom.y === otherTo.y;
+	const horizontal = Math.abs(from.y - to.y) < 0.001;
+	const otherHorizontal = Math.abs(otherFrom.y - otherTo.y) < 0.001;
 
 	if (horizontal !== otherHorizontal) {
 		return false;
@@ -594,8 +618,8 @@ const segmentOverlap = (
 	otherFrom: Point,
 	otherTo: Point,
 ): { crossing: boolean; overlap: number } => {
-	const horizontal = from.y === to.y;
-	const otherHorizontal = otherFrom.y === otherTo.y;
+	const horizontal = Math.abs(from.y - to.y) < 0.001;
+	const otherHorizontal = Math.abs(otherFrom.y - otherTo.y) < 0.001;
 
 	if (horizontal !== otherHorizontal) {
 		const horizontalFrom = horizontal ? from : otherFrom;
@@ -613,11 +637,11 @@ const segmentOverlap = (
 		return { crossing: crosses, overlap: 0 };
 	}
 
-	if (horizontal && from.y !== otherFrom.y) {
+	if (horizontal && Math.abs(from.y - otherFrom.y) > 0.001) {
 		return { crossing: false, overlap: 0 };
 	}
 
-	if (!horizontal && from.x !== otherFrom.x) {
+	if (!horizontal && Math.abs(from.x - otherFrom.x) > 0.001) {
 		return { crossing: false, overlap: 0 };
 	}
 
@@ -681,13 +705,6 @@ const routeScore = (
 			}
 
 			if (relation.overlap > 0) {
-				/*
-				Length-wise overlap carries a dominating but finite cost:
-				crossings stay allowed, but running on top of another lane is
-				avoided whenever the router has any reasonable detour. Finite
-				keeps a genuinely constrained edge from degrading into a
-				through-node route.
-				*/
 				score += relation.overlap * ROUTE_OVERLAP_COST_MASSIVE;
 				lanePenalties++;
 			}
@@ -748,6 +765,21 @@ const routeEdge = (
 	const horizontalChannels = new Set<number>([1, 99, start.y, end.y]);
 	const verticalChannels = new Set<number>([1, 99, start.x, end.x]);
 
+	// Seed multi-track corridor lanes between bands.
+	for (const band of CORRIDOR_BANDS) {
+		const span = band.max - band.min;
+		const steps = 6;
+
+		for (let step = 0; step <= steps; step++) {
+			horizontalChannels.add(band.min + (span * step) / steps);
+		}
+	}
+
+	// Seed vertical highway alleys.
+	for (const alley of VERTICAL_ALLEYS) {
+		verticalChannels.add(alley);
+	}
+
 	for (const obstacle of obstacles) {
 		const bounds = placementBounds(obstacle, ROUTE_CLEARANCE);
 		horizontalChannels.add(bounds.top);
@@ -756,27 +788,22 @@ const routeEdge = (
 		verticalChannels.add(bounds.right);
 	}
 
-	/*
-	Existing lanes seed the channel set from both directions so a parallel edge
-	has an explicit offset lane to choose instead of sharing a lane and paying
-	the overlap cost on the only candidate that exists. The offset lanes sit one
-	LANE_SPACING off the occupied lane, which the near-miss penalty then keeps
-	clear for opposite-direction or crossing traffic.
-	*/
+	// Seed offset channels around existing occupied segments.
 	for (const existing of existingSegments) {
 		const segmentFrom = existing.from;
 		const segmentTo = existing.to;
 
-		if (segmentFrom.y === segmentTo.y) {
+		if (Math.abs(segmentFrom.y - segmentTo.y) < 0.001) {
 			horizontalChannels.add(segmentFrom.y - LANE_SPACING);
 			horizontalChannels.add(segmentFrom.y + LANE_SPACING);
+			horizontalChannels.add(segmentFrom.y - 2 * LANE_SPACING);
+			horizontalChannels.add(segmentFrom.y + 2 * LANE_SPACING);
 			verticalChannels.add(segmentFrom.x);
 			verticalChannels.add(segmentTo.x);
-
 			continue;
 		}
 
-		if (segmentFrom.x === segmentTo.x) {
+		if (Math.abs(segmentFrom.x - segmentTo.x) < 0.001) {
 			verticalChannels.add(segmentFrom.x - LANE_SPACING);
 			verticalChannels.add(segmentFrom.x + LANE_SPACING);
 			horizontalChannels.add(segmentFrom.y);
@@ -789,6 +816,7 @@ const routeEdge = (
 		[fromPort, start, { x: end.x, y: start.y }, end, toPort],
 	];
 
+	// Direct 2-bend candidate routes through intermediate channels.
 	for (const y of horizontalChannels) {
 		candidates.push([
 			fromPort,
@@ -809,6 +837,40 @@ const routeEdge = (
 			end,
 			toPort,
 		]);
+	}
+
+	// Multi-bend corridor-alley routes for inter-tier or long-span traversal.
+	const minY = Math.min(start.y, end.y);
+	const maxY = Math.max(start.y, end.y);
+
+	if (maxY - minY > 8) {
+		const nearbyBands = CORRIDOR_BANDS.filter(
+			(band) => band.max >= minY - 2 && band.min <= maxY + 2,
+		);
+
+		for (const startBand of nearbyBands) {
+			for (const endBand of nearbyBands) {
+				if (startBand === endBand) {
+					continue;
+				}
+
+				const y1 = (startBand.min + startBand.max) / 2;
+				const y2 = (endBand.min + endBand.max) / 2;
+
+				for (const alley of VERTICAL_ALLEYS) {
+					candidates.push([
+						fromPort,
+						start,
+						{ x: start.x, y: y1 },
+						{ x: alley, y: y1 },
+						{ x: alley, y: y2 },
+						{ x: end.x, y: y2 },
+						end,
+						toPort,
+					]);
+				}
+			}
+		}
 	}
 
 	let best = simplifyPoints(candidates[0]);
@@ -866,14 +928,14 @@ const edgeActivity = (
 type RoutingCache = {
 	signature: string[];
 	edges: DiagEdge[];
+	ports: DiagPort[];
 };
 
-// Queue depths and timing counters change every frame, while topology almost
-// never does. Keep exactly one routed topology so telemetry updates do not pay
-// the obstacle router's cost or grow an unbounded cache.
 let routingCache: RoutingCache | undefined;
 
-const cachedRouting = (raw: RawEdge[]): DiagEdge[] | undefined => {
+const cachedRouting = (
+	raw: RawEdge[],
+): { edges: DiagEdge[]; ports: DiagPort[] } | undefined => {
 	if (
 		routingCache === undefined ||
 		routingCache.signature.length !== raw.length ||
@@ -884,11 +946,17 @@ const cachedRouting = (raw: RawEdge[]): DiagEdge[] | undefined => {
 
 	const telemetry = new Map(raw.map((edge) => [edge.id, edge]));
 
-	return routingCache.edges.map((edge) => ({
-		...edge,
-		latencyNs: telemetry.get(edge.id)?.latencyNs,
-		queueName: telemetry.get(edge.id)?.queueName,
-	}));
+	return {
+		edges: routingCache.edges.map((edge) => ({
+			...edge,
+			latencyNs: telemetry.get(edge.id)?.latencyNs,
+			queueName: telemetry.get(edge.id)?.queueName,
+		})),
+		ports: routingCache.ports.map((port) => ({
+			...port,
+			latencyNs: telemetry.get(port.edgeId)?.latencyNs,
+		})),
+	};
 };
 
 export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
@@ -949,10 +1017,15 @@ export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
 		});
 	}
 
-	const cachedEdges = cachedRouting(raw);
+	const cached = cachedRouting(raw);
 
-	if (cachedEdges !== undefined) {
-		return { placements, queuesByName, edges: cachedEdges };
+	if (cached !== undefined) {
+		return {
+			placements,
+			queuesByName,
+			edges: cached.edges,
+			ports: cached.ports,
+		};
 	}
 
 	type Attachment = {
@@ -999,7 +1072,8 @@ export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
 		attachments.set(toKey, toAttachments);
 	}
 
-	const ports = new Map<string, Point>();
+	const portsMap = new Map<string, Point>();
+	const portsList: DiagPort[] = [];
 
 	for (const group of attachments.values()) {
 		group.sort(
@@ -1017,10 +1091,19 @@ export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
 				return;
 			}
 
-			ports.set(
-				`${attachment.edge.id}:${attachment.end}`,
-				portPoint(placement, attachment.side, index, group.length),
-			);
+			const pt = portPoint(placement, attachment.side, index, group.length);
+			const portKey = `${attachment.edge.id}:${attachment.end}`;
+			portsMap.set(portKey, pt);
+
+			portsList.push({
+				id: portKey,
+				edgeId: attachment.edge.id,
+				nodeId: placement.id,
+				kind: attachment.end === "from" ? "out" : "in",
+				point: pt,
+				side: attachment.side,
+				latencyNs: attachment.edge.latencyNs,
+			});
 		});
 	}
 
@@ -1054,6 +1137,7 @@ export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
 
 		return firstSpan - secondSpan || first.id.localeCompare(second.id);
 	});
+
 	const edges: DiagEdge[] = [];
 	const routedSegments: TaggedSegment[] = [];
 
@@ -1061,8 +1145,8 @@ export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
 		const from = placements.get(edge.from);
 		const to = placements.get(edge.to);
 		const edgeSides = sides.get(edge.id);
-		const fromPort = ports.get(`${edge.id}:from`);
-		const toPort = ports.get(`${edge.id}:to`);
+		const fromPort = portsMap.get(`${edge.id}:from`);
+		const toPort = portsMap.get(`${edge.id}:to`);
 
 		if (
 			from === undefined ||
@@ -1109,9 +1193,10 @@ export const buildDiagnosticsGraph = (frame: DiagnosticsFrame) => {
 	routingCache = {
 		signature: raw.map((edge) => edge.id),
 		edges,
+		ports: portsList,
 	};
 
-	return { placements, queuesByName, edges };
+	return { placements, queuesByName, edges, ports: portsList };
 };
 
 const pathsFrom = (
@@ -1135,8 +1220,6 @@ const pathsFrom = (
 		incoming.set(edge.to, inn);
 	}
 
-	// "up" walks edges backwards (who feeds me); "down" walks them forwards
-	// (who I feed). Both return the reachable node names minus the start node.
 	const walk = (start: string, direction: "up" | "down"): Set<string> => {
 		const visited = new Set<string>([start]);
 		const frontier = [start];
@@ -1200,11 +1283,11 @@ const StageNode = ({
 			onClick={() => onSelect({ kind: "stage", name: placement.id })}
 			aria-label={`Inspect ${placement.label}`}
 			className={cn(
-				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-md border-2 bg-(--surface) px-2 py-1.5 text-left transition-opacity hover:bg-(--raised)",
+				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-md border-2 bg-(--surface) px-2 py-1.5 text-left transition-all hover:bg-(--raised) shadow-sm",
 				"flex flex-col justify-between",
-				selected && "outline outline-(--acc) outline-offset-1",
-				highlight === "up" && !selected && "outline outline-(--warn)/60",
-				highlight === "down" && !selected && "outline outline-(--info)/60",
+				selected && "outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/50",
+				highlight === "up" && !selected && "outline outline-(--warn)/70 outline-offset-1",
+				highlight === "down" && !selected && "outline outline-(--info)/70 outline-offset-1",
 				dimmed && "opacity-20",
 			)}
 			style={{
@@ -1289,6 +1372,8 @@ const QueueNode = ({
 	placement,
 	queue,
 	delta,
+	stagesByName,
+	atNs,
 	selected,
 	dimmed,
 	highlight,
@@ -1297,13 +1382,13 @@ const QueueNode = ({
 	placement: Placement;
 	queue: QueueSnapshot;
 	delta: number;
+	stagesByName: Map<string, ClockSnapshot>;
+	atNs: number;
 	selected: boolean;
 	dimmed: boolean;
 	highlight: "up" | "down" | null;
 	onSelect: (selection: DiagnosticsSelection) => void;
 }) => {
-	const peak = Math.max(queue.high_water, queue.cap ?? 0, 1);
-	const fill = Math.min(100, Math.round((queue.depth / peak) * 100));
 	const tone = QUEUE_TONE[queue.kind] ?? QUEUE_TONE.rail;
 	const deltaText =
 		delta > 0
@@ -1311,6 +1396,79 @@ const QueueNode = ({
 			: delta !== 0
 				? formatCount(delta)
 				: "";
+
+	const readers =
+		queue.readers && queue.readers.length > 0 ? queue.readers : ["default"];
+
+	const consumerStats = useMemo(() => {
+		if (readers.length === 1 && readers[0] === "default") {
+			const peak = Math.max(queue.high_water, queue.cap ?? 0, 1);
+			const fill = Math.min(100, Math.round((queue.depth / peak) * 100));
+			return [
+				{
+					reader: "default",
+					label: placement.label,
+					backlog: queue.depth,
+					fill,
+					avgNs: 0,
+					count: 0,
+				},
+			];
+		}
+
+		// Calculate processing duration, active state, and operation count for each reader
+		const stats = readers.map((reader) => {
+			const stage = stagesByName.get(reader);
+			const count = stage?.count ?? 0;
+			const active = stage?.active ?? 0;
+			const startedNs = stage?.started_ns ?? 0;
+			const runningNs =
+				active > 0 && startedNs > 0 ? Math.max(0, atNs - startedNs) : 0;
+			const avgNs = averageNanos(stage);
+			const effectiveNs = runningNs > 0 ? runningNs : avgNs;
+
+			return {
+				reader,
+				label: NODE_LABEL[reader] ?? reader,
+				active,
+				runningNs,
+				avgNs,
+				effectiveNs,
+				count,
+			};
+		});
+
+		const maxDuration = Math.max(...stats.map((s) => s.effectiveNs), 1);
+		const peak = Math.max(queue.high_water, queue.cap ?? 0, queue.depth, 1);
+		const baseDepthFill = (queue.depth / peak) * 100;
+
+		return stats.map((stat) => {
+			let fill = 0;
+
+			if (queue.depth > 0) {
+				const durationRatio = stat.effectiveNs / maxDuration;
+				fill = Math.min(
+					100,
+					Math.max(4, Math.round(baseDepthFill * (0.35 + 0.65 * durationRatio))),
+				);
+			} else if (stat.active > 0) {
+				// Actively processing in-flight work from the queue
+				fill = Math.min(
+					100,
+					Math.max(
+						25,
+						Math.round((stat.runningNs / (HEARTBEAT_NS / 4)) * 100),
+					),
+				);
+			}
+
+			return {
+				...stat,
+				fill,
+				backlog: queue.depth,
+			};
+		});
+	}, [readers, queue, stagesByName, atNs, placement.label]);
 
 	return (
 		<button
@@ -1320,13 +1478,13 @@ const QueueNode = ({
 			title={queue.name}
 			className={cn(
 				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer text-left transition-opacity",
-				selected && "rounded-md outline outline-(--acc) outline-offset-1",
+				selected && "rounded-md outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/50",
 				highlight === "up" &&
 					!selected &&
-					"rounded-md outline outline-(--warn)/60",
+					"rounded-md outline outline-(--warn)/70 outline-offset-1",
 				highlight === "down" &&
 					!selected &&
-					"rounded-md outline outline-(--info)/60",
+					"rounded-md outline outline-(--info)/70 outline-offset-1",
 				dimmed && "opacity-20",
 			)}
 			style={{
@@ -1342,26 +1500,53 @@ const QueueNode = ({
 					tone.border,
 				)}
 			>
-				{/* Queue depth rises from the floor of the buffer. */}
-				<span
-					className={cn(
-						"absolute inset-x-0 bottom-0 block transition-all duration-300",
-						tone.fill,
-					)}
-					style={{
-						height: `${fill}%`,
-						minHeight: queue.depth > 0 ? "2px" : 0,
-						opacity: queue.depth > 0 ? 0.42 : 0,
-					}}
-				/>
-				<span
-					className={cn(
-						"absolute inset-x-0 block h-px transition-all duration-300",
-						tone.fill,
-					)}
-					style={{ bottom: `${fill}%`, opacity: queue.depth > 0 ? 0.9 : 0 }}
-				/>
-				<span className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_7ch_6ch] items-center gap-1 px-1 font-mono">
+				{/* Segmented water levels per consumer */}
+				<span className="absolute inset-0 flex">
+					{consumerStats.map((stat, index) => {
+						const isLast = index === consumerStats.length - 1;
+						return (
+							<span
+								key={`${queue.name}:${stat.reader}`}
+								className={cn(
+									"relative h-full flex-1 overflow-hidden",
+									!isLast && "border-r border-(--line)/40",
+								)}
+								title={
+									stat.reader !== "default"
+										? `Consumer: ${stat.label} | ${formatCount(stat.count)} ops | backlog: ${formatCount(stat.backlog)}${stat.avgNs > 0 ? ` (${formatNanos(stat.avgNs)} avg)` : ""}`
+										: undefined
+								}
+							>
+								{/* Queue depth liquid fill in segment */}
+								<span
+									className={cn(
+										"absolute inset-x-0 bottom-0 block transition-all duration-300",
+										tone.fill,
+									)}
+									style={{
+										height: `${stat.fill}%`,
+										minHeight: stat.backlog > 0 ? "2px" : 0,
+										opacity: stat.backlog > 0 ? 0.38 : 0,
+									}}
+								/>
+								{/* Liquid meniscus surface line in segment */}
+								<span
+									className={cn(
+										"absolute inset-x-0 block h-px transition-all duration-300",
+										tone.fill,
+									)}
+									style={{
+										bottom: `${stat.fill}%`,
+										opacity: stat.backlog > 0 ? 0.9 : 0,
+									}}
+								/>
+							</span>
+						);
+					})}
+				</span>
+
+				{/* Foreground text & depth counts */}
+				<span className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_7ch_6ch] items-center gap-1 px-1 font-mono pointer-events-none">
 					<span className="truncate text-[8px] uppercase tracking-wide text-(--f1)">
 						{placement.label}
 					</span>
@@ -1397,12 +1582,16 @@ const EdgePath = ({
 	queue,
 	dimmed,
 	highlight,
+	hovered,
+	onHover,
 }: {
 	edge: DiagEdge;
 	activity: EdgeActivity;
 	queue: QueueSnapshot | undefined;
 	dimmed: boolean;
 	highlight: "up" | "down" | null;
+	hovered: boolean;
+	onHover: (hovered: boolean) => void;
 }) => {
 	const health = edgeHealth(edge.latencyNs);
 	const active = activity === "flowing";
@@ -1411,35 +1600,107 @@ const EdgePath = ({
 			? "var(--warn)"
 			: highlight === "down"
 				? "var(--info)"
-				: EDGE_HEALTH_STROKE[health];
+				: hovered
+					? "var(--acc)"
+					: EDGE_HEALTH_STROKE[health];
 
 	return (
-		<path
-			d={edge.d}
-			data-from={edge.from}
-			data-to={edge.to}
-			data-kind={edge.kind}
-			data-health={health}
-			fill="none"
-			stroke={stroke}
-			strokeWidth={edge.kind === "hop" ? 1 : 1.4}
-			vectorEffect="non-scaling-stroke"
-			pathLength={100}
-			strokeLinecap="round"
-			strokeLinejoin="round"
-			strokeDasharray={active ? "4 5" : undefined}
-			className={cn(
-				"diag-edge",
-				active && "diag-flow",
-				!active && "diag-solid",
-				dimmed && "opacity-10",
-			)}
-			data-queue={queue?.name}
-		/>
+		<g
+			onMouseEnter={() => onHover(true)}
+			onMouseLeave={() => onHover(false)}
+			className="cursor-pointer"
+		>
+			{/* Expanded transparent hit-area for effortless wire inspection */}
+			<path
+				d={edge.d}
+				fill="none"
+				stroke="transparent"
+				strokeWidth={6}
+				vectorEffect="non-scaling-stroke"
+			/>
+			{/* Rendered data conduit wire - uniform stable color & opacity to prevent flicker */}
+			<path
+				d={edge.d}
+				data-from={edge.from}
+				data-to={edge.to}
+				data-kind={edge.kind}
+				data-health={health}
+				fill="none"
+				stroke={stroke}
+				strokeWidth={hovered ? 2.0 : edge.kind === "hop" ? 1.0 : 1.3}
+				strokeOpacity={0.6}
+				vectorEffect="non-scaling-stroke"
+				pathLength={100}
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				strokeDasharray={active ? "4 5" : undefined}
+				className={cn(
+					"diag-edge transition-all",
+					active && "diag-flow",
+					!active && "diag-solid",
+					dimmed && !hovered && "opacity-15",
+					hovered && "stroke-opacity-100 opacity-100 drop-shadow-[0_0_4px_var(--acc)]",
+				)}
+				data-queue={queue?.name}
+			/>
+		</g>
 	);
 };
 
-const EdgeLatency = ({ edge, dimmed }: { edge: DiagEdge; dimmed: boolean }) => {
+const PortConnector = ({
+	port,
+	dimmed,
+	highlight,
+}: {
+	port: DiagPort;
+	dimmed: boolean;
+	highlight: "up" | "down" | null;
+}) => {
+	const health = edgeHealth(port.latencyNs);
+	const color =
+		highlight === "up"
+			? "var(--warn)"
+			: highlight === "down"
+				? "var(--info)"
+				: EDGE_HEALTH_STROKE[health];
+
+	return (
+		<g
+			className={cn(
+				"diag-port pointer-events-none transition-opacity",
+				dimmed && "opacity-15",
+			)}
+		>
+			{/* Micro terminal socket collar */}
+			<circle
+				cx={port.point.x}
+				cy={port.point.y}
+				r={0.28}
+				fill="var(--surface)"
+				stroke="var(--line2)"
+				strokeWidth={0.1}
+			/>
+			{/* Micro terminal contact core */}
+			<circle
+				cx={port.point.x}
+				cy={port.point.y}
+				r={0.14}
+				fill={color}
+				opacity={highlight ? 1 : 0.75}
+			/>
+		</g>
+	);
+};
+
+const EdgeLatency = ({
+	edge,
+	dimmed,
+	hovered,
+}: {
+	edge: DiagEdge;
+	dimmed: boolean;
+	hovered: boolean;
+}) => {
 	if ((edge.latencyNs ?? 0) <= 0) {
 		return null;
 	}
@@ -1447,8 +1708,9 @@ const EdgeLatency = ({ edge, dimmed }: { edge: DiagEdge; dimmed: boolean }) => {
 	return (
 		<div
 			className={cn(
-				"pointer-events-none absolute z-5 min-w-[7ch] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-(--line) bg-(--bg)/90 px-1 py-px text-center font-mono text-[7px] tabular-nums text-(--f3)",
-				dimmed && "opacity-15",
+				"pointer-events-none absolute z-5 min-w-[7ch] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-(--line) bg-(--bg)/95 px-1 py-px text-center font-mono text-[7px] tabular-nums text-(--f3) shadow-sm transition-all",
+				dimmed && !hovered && "opacity-15",
+				hovered && "border-(--acc) text-(--acc) opacity-100 z-20 scale-110",
 			)}
 			style={{ left: `${edge.labelPoint.x}%`, top: `${edge.labelPoint.y}%` }}
 			title={`${NODE_LABEL[edge.from] ?? edge.from} to ${NODE_LABEL[edge.to] ?? edge.to} average handoff latency`}
@@ -1470,8 +1732,8 @@ export type DiagnosticsGraphProps = {
 DiagnosticsGraph renders the live analytical data plane top to bottom as a
 wiring diagram. Stages are metric cards, queue depth rises inside rectangular
 tanks, and edges use distributed ports and obstacle-aware orthogonal routes.
-Live edges animate in the direction of flow; held edges pulse; idle edges fade
-to grey. Selecting a node highlights its upstream feeders and downstream
+Live edges animate in the direction of flow; held edges pulse; idle edges stay
+clean and solid. Selecting a node highlights its upstream feeders and downstream
 consumers while dimming the rest of the plane.
 */
 export const DiagnosticsGraph = ({
@@ -1482,6 +1744,8 @@ export const DiagnosticsGraph = ({
 	onSelect,
 }: DiagnosticsGraphProps) => {
 	const graph = useMemo(() => buildDiagnosticsGraph(frame), [frame]);
+	const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+
 	const { upstream, downstream } = useMemo(
 		() => pathsFrom(selection, graph.edges),
 		[selection, graph.edges],
@@ -1501,7 +1765,7 @@ export const DiagnosticsGraph = ({
 	}
 
 	return (
-		<div className="relative h-full w-full overflow-hidden">
+		<div className="relative h-full w-full overflow-hidden select-none">
 			<style>{`
 				@keyframes diag-dash-flow {
 					from { stroke-dashoffset: 0; }
@@ -1523,36 +1787,73 @@ export const DiagnosticsGraph = ({
 				className="absolute inset-0 h-full w-full"
 				aria-hidden="true"
 			>
-				{graph.edges.map((edge) => {
-					const queue = edge.queueName
-						? graph.queuesByName.get(edge.queueName)
-						: undefined;
-					const activity = edgeActivity(edge, queue, queueDeltas, hopDeltas);
-					const highlightUp =
-						selection !== null &&
-						(upstream.has(edge.from) || upstream.has(edge.to));
-					const highlightDown =
-						selection !== null &&
-						(downstream.has(edge.from) || downstream.has(edge.to));
-					const highlight = highlightUp
-						? ("up" as const)
-						: highlightDown
-							? ("down" as const)
-							: null;
-					const dimmed = selection !== null && highlight === null;
+				{/* Wires */}
+				<g className="diag-edges">
+					{graph.edges.map((edge) => {
+						const queue = edge.queueName
+							? graph.queuesByName.get(edge.queueName)
+							: undefined;
+						const activity = edgeActivity(edge, queue, queueDeltas, hopDeltas);
+						const highlightUp =
+							selection !== null &&
+							(upstream.has(edge.from) || upstream.has(edge.to));
+						const highlightDown =
+							selection !== null &&
+							(downstream.has(edge.from) || downstream.has(edge.to));
+						const highlight = highlightUp
+							? ("up" as const)
+							: highlightDown
+								? ("down" as const)
+								: null;
+						const dimmed = selection !== null && highlight === null;
+						const hovered = hoveredEdgeId === edge.id;
 
-					return (
-						<EdgePath
-							key={edge.id}
-							edge={edge}
-							activity={activity}
-							queue={queue}
-							dimmed={dimmed}
-							highlight={highlight}
-						/>
-					);
-				})}
+						return (
+							<EdgePath
+								key={edge.id}
+								edge={edge}
+								activity={activity}
+								queue={queue}
+								dimmed={dimmed}
+								highlight={highlight}
+								hovered={hovered}
+								onHover={(isHovered) =>
+									setHoveredEdgeId(isHovered ? edge.id : null)
+								}
+							/>
+						);
+					})}
+				</g>
+
+				{/* Port Connectors */}
+				<g className="diag-ports">
+					{graph.ports.map((port) => {
+						const highlightUp =
+							selection !== null &&
+							(upstream.has(port.nodeId) || selection.name === port.nodeId);
+						const highlightDown =
+							selection !== null &&
+							(downstream.has(port.nodeId) || selection.name === port.nodeId);
+						const highlight = highlightUp
+							? ("up" as const)
+							: highlightDown
+								? ("down" as const)
+								: null;
+						const dimmed = selection !== null && highlight === null;
+
+						return (
+							<PortConnector
+								key={port.id}
+								port={port}
+								dimmed={dimmed}
+								highlight={highlight}
+							/>
+						);
+					})}
+				</g>
 			</svg>
+
+			{/* Latency chips */}
 			{graph.edges.map((edge) => {
 				const connected =
 					selection?.name === edge.from ||
@@ -1561,15 +1862,19 @@ export const DiagnosticsGraph = ({
 					upstream.has(edge.to) ||
 					downstream.has(edge.from) ||
 					downstream.has(edge.to);
+				const hovered = hoveredEdgeId === edge.id;
 
 				return (
 					<EdgeLatency
 						key={`latency:${edge.id}`}
 						edge={edge}
 						dimmed={selection !== null && !connected}
+						hovered={hovered}
 					/>
 				);
 			})}
+
+			{/* Node Cards */}
 			{Array.from(graph.placements.values()).map((placement) => {
 				const selectedHere = selection?.name === placement.id;
 				const isUp = upstream.has(placement.id);
@@ -1602,6 +1907,8 @@ export const DiagnosticsGraph = ({
 							placement={placement}
 							queue={queue}
 							delta={delta}
+							stagesByName={stagesByName}
+							atNs={atNs}
 							selected={selectedHere}
 							dimmed={dimmed}
 							highlight={highlight}

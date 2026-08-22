@@ -13,6 +13,7 @@ import {
 } from "#/components/dashboard/diagnostics-graph";
 import { DiagnosticsWebRTCFeed } from "#/components/dashboard/diagnostics-transport";
 import { Button } from "#/components/ui";
+import { cn } from "@/lib/utils";
 
 const DEFAULT_FRAME: DiagnosticsFrame = {
 	status: "flowing",
@@ -256,18 +257,57 @@ const QueueDetail = ({
 					</div>
 				</div>
 				<div className="border-(--line) border-b py-2">
-					<div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						readers · own processing average
+					<div className="mb-1.5 flex items-center justify-between font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+						<span>readers · consumer breakdown</span>
+						<span>{queue.readers.length} consumers</span>
 					</div>
-					<div className="flex flex-wrap gap-1">
-						{queue.readers.map((name) => (
-							<StageMini
-								key={name}
-								name={name}
-								stage={stages.get(name)}
-								onSelect={onSelect}
-							/>
-						))}
+					<div className="space-y-1.5">
+						{queue.readers.map((name) => {
+							const stage = stages.get(name);
+							const avgNs = averageNanos(stage);
+							const active = stage?.active ?? 0;
+							const count = stage?.count ?? 0;
+
+							return (
+								<div
+									key={name}
+									className="group flex flex-col gap-1 rounded border border-(--line)/50 bg-(--surface)/50 p-1.5 hover:border-(--line2) transition-colors"
+								>
+									<div className="flex items-center justify-between font-mono text-[9px]">
+										<button
+											type="button"
+											onClick={() => onSelect({ kind: "stage", name })}
+											className="flex items-center gap-1 font-semibold uppercase text-(--f1) hover:text-(--acc)"
+										>
+											<span
+												className={cn(
+													"size-1.5 rounded-full",
+													active > 0
+														? "bg-(--info)"
+														: count > 0
+															? "bg-(--up)"
+															: "bg-(--line2)",
+												)}
+											/>
+											<span>{STAGE_LABEL[name] ?? name}</span>
+										</button>
+										<div className="flex items-center gap-2 tabular-nums">
+											{active > 0 ? (
+												<span className="text-[8px] text-(--info) font-bold">
+													{active} active
+												</span>
+											) : null}
+											<span className="font-bold text-(--acc)">
+												{formatNanos(avgNs)}
+											</span>
+											<span className="text-[7px] text-(--f4)">
+												{formatCount(count)} ops
+											</span>
+										</div>
+									</div>
+								</div>
+							);
+						})}
 					</div>
 				</div>
 			</div>

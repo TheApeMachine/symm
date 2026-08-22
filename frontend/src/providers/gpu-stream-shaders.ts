@@ -49,7 +49,7 @@ vec4 scaleValue(){ int at=uScaleRing?uScaleOldest&(uScaleWidth-1):0; return texe
 vec4 scaleMeta(){ int at=uScaleRing?uScaleOldest&(uScaleWidth-1):0; return texelFetch(uScaleMetadata,ivec2(at,0),0); }
 vec2 point(float time,float value){
  vec4 scale=scaleValue(); vec4 span=scaleMeta();
- float low=min(0.,scale.x); float high=max(0.,scale.y);
+ float low=0.; float high=max(0.001, scale.y * 1.15);
  float x=span.y>span.x?(time-span.x)/(span.y-span.x):.5;
  float y=high>low?(value-low)/(high-low):.5;
  return vec2(x*2.-1.,clamp(y,0.,1.)*2.-1.);
@@ -61,20 +61,46 @@ void main(){
  if(uMode==1){ int next=min(bucket+1,uCount-1); vec4 nm=metaAt(next); vec4 nv=valueAt(next); gl_Position=vec4(endpoint==0?point(metadata.y,values.w):point(nm.x,nv.z),0.,1.); return; }
  if(uMode==2){
    int width=uCurveSegments+2; int interval=gl_VertexID/width; int local=gl_VertexID%width;
-   vec4 currentValue=valueAt(interval); vec4 currentMeta=metaAt(interval);
-   vec4 nextValue=valueAt(interval+1); vec4 nextMeta=metaAt(interval+1);
-   if(local==width-1){ gl_Position=vec4(point(nextMeta.x,nextValue.z),0.,1.); return; }
+   vec4 curVal=valueAt(interval); vec4 curMeta=metaAt(interval);
+   vec4 nextVal=valueAt(interval+1); vec4 nextMeta=metaAt(interval+1);
+   if(local==width-1){ gl_Position=vec4(point(nextMeta.x,nextVal.z),0.,1.); return; }
    float fraction=float(local)/float(uCurveSegments);
-   float time=mix(currentMeta.y,nextMeta.x,fraction);
-   float value=mix(currentValue.w,nextValue.z,fraction);
-   if(!isnan(currentMeta.z)&&!isnan(currentMeta.w)&&currentMeta.w>0.){
-     value=currentMeta.z+(currentValue.w-currentMeta.z)*exp(-currentMeta.w*(time-currentMeta.y));
+   float time=mix(curMeta.y,nextMeta.x,fraction);
+   float value=mix(curVal.w,nextVal.z,fraction);
+   if(!isnan(curMeta.z)&&!isnan(curMeta.w)&&curMeta.w>0.){
+     value=curMeta.z+(curVal.w-curMeta.z)*exp(-curMeta.w*(time-curMeta.y));
    }
    gl_Position=vec4(point(time,value),0.,1.); return;
  }
- if(uMode==3){ vec4 rugMetadata=metaAt(gl_VertexID); gl_PointSize=uPixelRatio; gl_Position=vec4(point(rugMetadata.y,0.),0.,1.); return; }
- vec4 latestMeta=metaAt(uCount-1); float x=endpoint==0?-1.:1.; gl_Position=vec4(x,point(latestMeta.y,latestMeta.z).y,0.,1.);
-}`;
+ if(uMode==3){
+   int eventIdx=gl_VertexID/2; int isTop=gl_VertexID&1;
+   vec4 rugMeta=metaAt(eventIdx);
+   float xPos=point(rugMeta.y,0.).x;
+   float yPos=isTop==1?-0.88:-1.0;
+   gl_Position=vec4(xPos,yPos,0.,1.); return;
+ }
+ if(uMode==4){
+   vec4 latestMeta=metaAt(uCount-1); float x=endpoint==0?-1.:1.;
+   float muVal=isnan(latestMeta.z)?0.:latestMeta.z;
+   gl_Position=vec4(x,point(latestMeta.y,muVal).y,0.,1.); return;
+ }
+ if(uMode==5){
+   int stepCount=uCurveSegments+2; int quadVerts=stepCount*2;
+   int interval=gl_VertexID/quadVerts; int localPair=gl_VertexID%quadVerts;
+   int stepIdx=localPair/2; int isBottom=localPair&1;
+   vec4 curVal=valueAt(interval); vec4 curMeta=metaAt(interval);
+   vec4 nextVal=valueAt(interval+1); vec4 nextMeta=metaAt(interval+1);
+   float time=mix(curMeta.y,nextMeta.x,min(1.,float(stepIdx)/float(uCurveSegments)));
+   float value=mix(curVal.w,nextVal.z,min(1.,float(stepIdx)/float(uCurveSegments)));
+   if(!isnan(curMeta.z)&&!isnan(curMeta.w)&&curMeta.w>0.){
+     value=curMeta.z+(curVal.w-curMeta.z)*exp(-curMeta.w*(time-curMeta.y));
+   }
+   if(stepIdx==stepCount-1){ time=nextMeta.x; value=nextVal.z; }
+   float yVal=isBottom==1?0.:value;
+   gl_Position=vec4(point(time,yVal),0.,1.); return;
+ }
+}
+`;
 
 export const chartFragmentShader = `#version 300 es
 precision highp float;

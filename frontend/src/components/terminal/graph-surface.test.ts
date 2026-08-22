@@ -84,6 +84,12 @@ describe("graphFramePlan", () => {
 		const initial = frame();
 		const nodeAdded = frame();
 		nodeAdded.nodes.gamma = { id: "gamma" };
+		nodeAdded.edges.push({
+			from: "gamma",
+			to: "alpha",
+			relation: "supports",
+			weight: 0.5,
+		});
 		const relationChanged = frame();
 
 		if (relationChanged.edges[0]) {

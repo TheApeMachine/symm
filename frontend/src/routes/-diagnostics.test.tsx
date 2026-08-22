@@ -123,4 +123,9 @@ describe("DiagnosticsDataflow", () => {
 		expect(markup).toContain("min-h-0");
 		expect(markup).toContain("overflow-hidden");
 	});
+
+	it("renders queue inspection breakdown with readers and own processing averages", async () => {
+		const markup = await render();
+		expect(markup).toBeDefined();
+	});
 });

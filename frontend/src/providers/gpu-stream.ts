@@ -415,27 +415,60 @@ export class GPUStreamRenderer {
       "uPixelRatio",
       this.registration.pixelRatio,
     );
-    this.uniformColor(this.registration.palette.accent);
-    this.drawMode(0, gl.LINES, drawCount * 2);
-
-    if (drawCount > 1) {
-      this.drawMode(1, gl.LINES, (drawCount - 1) * 2);
-    }
+    // Enable alpha blending for area fills and anti-aliasing
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     if (drawLevelIndex === 0 && drawCount > 1) {
       const segments = Math.max(
-        1,
-        Math.floor(this.registration.canvas.width / (drawCount - 1)),
+        4,
+        Math.min(32, Math.floor(this.registration.canvas.width / (drawCount - 1))),
       );
       this.uniformInt(this.chartProgram, "uCurveSegments", segments);
-      this.drawMode(2, gl.LINE_STRIP, (drawCount - 1) * (segments + 2));
+
+      // 1. Soft translucent area fill under the Hawkes intensity curve
+      this.uniformColor([
+        this.registration.palette.accent[0]!,
+        this.registration.palette.accent[1]!,
+        this.registration.palette.accent[2]!,
+        0.18,
+      ]);
+      const areaCount = (drawCount - 1) * (segments + 2) * 2;
+      this.drawMode(5, gl.TRIANGLE_STRIP, areaCount);
+
+      // 2. Crisp Hawkes intensity curve with vertical jumps and exponential decay
+      this.uniformColor(this.registration.palette.accent);
+      const curveCount = (drawCount - 1) * (segments + 2);
+      this.drawMode(2, gl.LINE_STRIP, curveCount);
+    } else {
+      // Downsampled view: min/max vertical candle lines & connecting line
+      this.uniformColor(this.registration.palette.accent);
+      this.drawMode(0, gl.LINES, drawCount * 2);
+
+      if (drawCount > 1) {
+        this.drawMode(1, gl.LINES, (drawCount - 1) * 2);
+      }
     }
 
-    if (this.registration.rug) {
-      this.drawMode(3, gl.POINTS, drawCount);
-    }
-
+    // 3. Baseline mu horizontal line
+    this.uniformColor([
+      this.registration.palette.grid[0]!,
+      this.registration.palette.grid[1]!,
+      this.registration.palette.grid[2]!,
+      0.65,
+    ]);
     this.drawMode(4, gl.LINES, 2);
+
+    // 4. Event rug ticks along bottom
+    if (this.registration.rug) {
+      this.uniformColor([
+        this.registration.palette.accent[0]!,
+        this.registration.palette.accent[1]!,
+        this.registration.palette.accent[2]!,
+        0.75,
+      ]);
+      this.drawMode(3, gl.LINES, drawCount * 2);
+    }
   }
 
   private drawMode(mode: number, primitive: number, count: number) {

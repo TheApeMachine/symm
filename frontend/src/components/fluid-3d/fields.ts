@@ -4,8 +4,8 @@ import {
 	createUniformBuffer,
 	createVertexBuffer,
 	createVolumeTexture,
-	FRAME_UNIFORM_FLOATS,
 	type FluidGPU,
+	FRAME_UNIFORM_FLOATS,
 	writeTexture3D,
 } from "./gpu";
 import type { FluidFields, FluidGrid } from "./wire";
@@ -18,8 +18,22 @@ export type FluidFieldOptions = {
 	exposure: number;
 };
 
+type Vec3 = [number, number, number];
+type Quad = [Vec3, Vec3, Vec3, Vec3];
+
+const writeQuad = (target: Float32Array, offset: number, quad: Quad) => {
+	const [first, second, third, fourth] = quad;
+	target.set(first, offset);
+	target.set(second, offset + 3);
+	target.set(third, offset + 6);
+	target.set(first, offset + 9);
+	target.set(third, offset + 12);
+	target.set(fourth, offset + 15);
+	return offset + 18;
+};
+
 const cubeTriangles = () => {
-	const quads: Array<Array<[number, number, number]>> = [
+	const quads: Quad[] = [
 		[
 			[0, 0, 0],
 			[0, 1, 0],
@@ -61,10 +75,7 @@ const cubeTriangles = () => {
 	let offset = 0;
 
 	for (const quad of quads) {
-		for (const corner of [0, 1, 2, 0, 2, 3]) {
-			triangles.set(quad[corner]!, offset);
-			offset += 3;
-		}
+		offset = writeQuad(triangles, offset, quad);
 	}
 
 	return triangles;
@@ -72,7 +83,7 @@ const cubeTriangles = () => {
 
 const sliceTriangles = (x: number, y: number, z: number) => {
 	const triangles = new Float32Array(18 * 3);
-	const planes: Array<Array<[number, number, number]>> = [
+	const planes: Quad[] = [
 		[
 			[x, 0, 0],
 			[x, 1, 0],
@@ -95,36 +106,67 @@ const sliceTriangles = (x: number, y: number, z: number) => {
 	let offset = 0;
 
 	for (const quad of planes) {
-		for (const corner of [0, 1, 2, 0, 2, 3]) {
-			triangles.set(quad[corner]!, offset);
-			offset += 3;
-		}
+		offset = writeQuad(triangles, offset, quad);
 	}
 
 	return triangles;
 };
 
-const fieldBindGroupLayout = (device: GPUDevice) =>
-	device.createBindGroupLayout({
+const fieldBindGroupLayout = (gpu: FluidGPU) =>
+	gpu.device.createBindGroupLayout({
 		entries: [
 			{
 				binding: 0,
 				visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
 				buffer: { type: "uniform" },
 			},
-			{ binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-			{ binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "3d" } },
-			{ binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "3d" } },
-			{ binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "3d" } },
-			{ binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "3d" } },
+			{
+				binding: 1,
+				visibility: GPUShaderStage.FRAGMENT,
+				sampler: {
+					type: gpu.sampleFilter === "linear" ? "filtering" : "non-filtering",
+				},
+			},
+			{
+				binding: 2,
+				visibility: GPUShaderStage.FRAGMENT,
+				texture: {
+					viewDimension: "3d",
+					sampleType:
+						gpu.sampleFilter === "linear" ? "float" : "unfilterable-float",
+				},
+			},
+			{
+				binding: 3,
+				visibility: GPUShaderStage.FRAGMENT,
+				texture: {
+					viewDimension: "3d",
+					sampleType:
+						gpu.sampleFilter === "linear" ? "float" : "unfilterable-float",
+				},
+			},
+			{
+				binding: 4,
+				visibility: GPUShaderStage.FRAGMENT,
+				texture: {
+					viewDimension: "3d",
+					sampleType:
+						gpu.sampleFilter === "linear" ? "float" : "unfilterable-float",
+				},
+			},
+			{
+				binding: 5,
+				visibility: GPUShaderStage.FRAGMENT,
+				texture: {
+					viewDimension: "3d",
+					sampleType:
+						gpu.sampleFilter === "linear" ? "float" : "unfilterable-float",
+				},
+			},
 		],
 	});
 
-const pipeline = (
-	gpu: FluidGPU,
-	layout: GPUBindGroupLayout,
-	code: string,
-) =>
+const pipeline = (gpu: FluidGPU, layout: GPUBindGroupLayout, code: string) =>
 	gpu.device.createRenderPipeline({
 		layout: gpu.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
 		vertex: {
@@ -200,7 +242,7 @@ export class FluidFieldView {
 	readonly uniformBuffer: GPUBuffer;
 
 	constructor(private readonly gpu: FluidGPU) {
-		this.bindLayout = fieldBindGroupLayout(gpu.device);
+		this.bindLayout = fieldBindGroupLayout(gpu);
 		this.volumePipeline = pipeline(gpu, this.bindLayout, volumeShader);
 		this.slicePipeline = pipeline(gpu, this.bindLayout, sliceShader);
 		this.sampler = gpu.device.createSampler({
@@ -211,7 +253,10 @@ export class FluidFieldView {
 			addressModeW: "clamp-to-edge",
 		});
 		this.cubeBuffer = createVertexBuffer(gpu.device, cubeTriangles());
-		this.sliceBuffer = createVertexBuffer(gpu.device, sliceTriangles(0.5, 0.5, 0.5));
+		this.sliceBuffer = createVertexBuffer(
+			gpu.device,
+			sliceTriangles(0.5, 0.5, 0.5),
+		);
 		this.uniformBuffer = createUniformBuffer(gpu.device, FRAME_UNIFORM_FLOATS);
 	}
 
@@ -220,13 +265,21 @@ export class FluidFieldView {
 
 		if (this.textures === null) {
 			this.textures = {
-				momRho: createVolumeTexture(this.gpu.device, "rgba32float", packed.momRho.extent),
+				momRho: createVolumeTexture(
+					this.gpu.device,
+					"rgba32float",
+					packed.momRho.extent,
+				),
 				internalEnergy: createVolumeTexture(
 					this.gpu.device,
 					"r32float",
 					packed.internalEnergy.extent,
 				),
-				waveReal: createVolumeTexture(this.gpu.device, "r32float", packed.waveReal.extent),
+				waveReal: createVolumeTexture(
+					this.gpu.device,
+					"r32float",
+					packed.waveReal.extent,
+				),
 				waveImaginary: createVolumeTexture(
 					this.gpu.device,
 					"r32float",
@@ -252,13 +305,23 @@ export class FluidFieldView {
 				this.grid.y !== fields.grid.y ||
 				this.grid.z !== fields.grid.z)
 		) {
-			throw new Error("fluid grid dimensions changed during a resident session");
+			throw new Error(
+				"fluid grid dimensions changed during a resident session",
+			);
 		}
 
 		writeTexture3D(this.gpu.device, this.textures.momRho, packed.momRho);
-		writeTexture3D(this.gpu.device, this.textures.internalEnergy, packed.internalEnergy);
+		writeTexture3D(
+			this.gpu.device,
+			this.textures.internalEnergy,
+			packed.internalEnergy,
+		);
 		writeTexture3D(this.gpu.device, this.textures.waveReal, packed.waveReal);
-		writeTexture3D(this.gpu.device, this.textures.waveImaginary, packed.waveImaginary);
+		writeTexture3D(
+			this.gpu.device,
+			this.textures.waveImaginary,
+			packed.waveImaginary,
+		);
 		this.grid = fields.grid;
 		this.densityScale = fields.densityScale;
 		this.momentumScale = fields.momentumScale;

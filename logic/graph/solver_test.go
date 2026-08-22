@@ -63,6 +63,13 @@ func TestBuildGraph(t *testing.T) {
 			nmtypes.UnitDimensionless,
 		)
 		symbol.AppendMeasurement(measurement)
+		symbol.Categories.Push([]types.Category{{
+			Symbol:     symbol.Symbol,
+			Type:       types.CategoryAggressiveDrive,
+			Supporting: []string{"cvd:drive"},
+			Confidence: relationConfidence,
+			Maturity:   1,
+		}})
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
 		solver.buildGraph(symbol.Symbol, symbol)
@@ -115,6 +122,13 @@ func TestUpdate(t *testing.T) {
 			nmtypes.UnitDimensionless,
 		)
 		symbol.AppendMeasurement(measurement)
+		symbol.Categories.Push([]types.Category{{
+			Symbol:     symbol.Symbol,
+			Type:       types.CategoryAggressiveDrive,
+			Supporting: []string{"cvd:drive"},
+			Confidence: relationConfidence,
+			Maturity:   1,
+		}})
 		solver := NewSolver(thesis, nil, nil)
 		defer solver.Close()
 
@@ -293,10 +307,9 @@ func TestUpdate(t *testing.T) {
 				}
 			}
 
-			// Every measurement earns its own voice on the thesis and the
-			// category classifier adds its supporting/contradicting/shared
-			// enrichment on top of it; neither path replaces the other.
-			So(thesisEdges, ShouldEqual, len(graph.Nodes)-1)
+			// In the hierarchical graph, category nodes feed the thesis decision target,
+			// while raw measurements feed into category nodes.
+			So(thesisEdges, ShouldEqual, len(categories))
 			So(graph.Nodes, ShouldHaveLength, len(references)+len(categories)+1)
 		})
 	})
@@ -332,7 +345,7 @@ func TestUpdate(t *testing.T) {
 
 			So(graph, ShouldNotBeNil)
 			So(graph.Nodes, ShouldHaveLength, 3)
-			So(graph.Edges, ShouldHaveLength, 3)
+			So(graph.Edges, ShouldHaveLength, 2)
 			So(graph.Edges[0].Relation, ShouldEqual, RelationSupports)
 			So(graph.Edges[0].Evidence,
 				ShouldResemble, []string{"cvd-measurement", "cvd:drive"})
@@ -633,45 +646,32 @@ func TestConnectLongOpportunity(t *testing.T) {
 		})
 	})
 
-	Convey("Given a normalized directional measurement at the admission boundary", t, func() {
+	Convey("Given a category node at the admission boundary", t, func() {
 		at := time.Unix(1, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD")
 		drive := 0.8
 		separation := 0.9
-		measurement := newTestMeasurement(
-			"cvd-drive", types.SourceCVD, symbol.Symbol, at,
-		)
-		measurement.Maturity = 0.9
-		putTestMetric(
-			measurement,
-			types.MetricDrive,
-			drive,
-			&drive,
-			nmtypes.UnitDimensionless,
-		)
-		putTestMetric(
-			measurement,
-			types.MetricHypothesisSeparation,
-			separation,
-			&separation,
-			nmtypes.UnitDimensionless,
-		)
-		symbol.AppendMeasurement(measurement)
 		graph := NewGraph(at)
-		_, err := newMeasurementCompiler().addNodes(
-			symbol.Symbol,
-			symbol.MarketMeasurements(
-				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
-			),
-			graph,
-		)
-		So(err, ShouldBeNil)
+		categoryNode := &types.Node{
+			ID:         "cat:BTC/USD:aggressive_drive",
+			Symbol:     symbol.Symbol,
+			Kind:       KindCategory,
+			Value:      drive,
+			Confidence: 0.9 * 0.9,
+			Maturity:   0.9,
+			At:         at,
+			Metadata: map[string]any{
+				"type":                  string(types.CategoryAggressiveDrive),
+				"hypothesis_separation": separation,
+			},
+		}
+		graph.AddNode(categoryNode)
 
-		err = (&Solver{}).connectLongOpportunity(symbol, graph)
+		err := (&Solver{}).connectLongOpportunity(symbol, graph)
 
-		Convey("It should weight the vote by maturity, separation, and magnitude", func() {
+		Convey("It should weight the category vote by maturity, separation, and magnitude", func() {
 			So(err, ShouldBeNil)
-			driveNode := graph.Nodes[measurementNodeID(measurement, "drive")]
+			driveNode := graph.Nodes[categoryNode.ID]
 			So(driveNode, ShouldNotBeNil)
 			So(driveNode.Confidence, ShouldAlmostEqual, 0.9*0.9, 1e-12)
 			So(driveNode.Maturity, ShouldEqual, 0.9)
@@ -688,14 +688,14 @@ func TestConnectLongOpportunity(t *testing.T) {
 
 			So(directional, ShouldNotBeNil)
 			So(directional.Relation, ShouldEqual, RelationSupports)
-			So(directional.Weight, ShouldAlmostEqual, 0.9*0.9*drive, 1e-12)
+			So(directional.Weight, ShouldAlmostEqual, 0.9*0.9, 1e-12)
 			So(directional.Confidence, ShouldAlmostEqual, 0.9*0.9, 1e-12)
 			So(graph.OpportunitySummary().Confidence, ShouldAlmostEqual, 0.9*0.9, 1e-12)
 			So(graph.SearchableEnough(0.5), ShouldBeTrue)
 		})
 	})
 
-	Convey("Given a directional measurement without a normalized value", t, func() {
+	Convey("Given a raw measurement without a category or causal synthesis node", t, func() {
 		at := time.Unix(2, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD")
 		measurement := newTestMeasurement(
@@ -721,7 +721,7 @@ func TestConnectLongOpportunity(t *testing.T) {
 
 		err = (&Solver{}).connectLongOpportunity(symbol, graph)
 
-		Convey("It should keep the raw metric but not invent a directional vote without quality stamps", func() {
+		Convey("It should keep the raw metric in the graph but not bypass the category layer to decision target", func() {
 			So(err, ShouldBeNil)
 			So(graph.Nodes[measurementNodeID(measurement, "drive")], ShouldNotBeNil)
 			So(graph.Edges, ShouldBeEmpty)
@@ -729,51 +729,38 @@ func TestConnectLongOpportunity(t *testing.T) {
 		})
 	})
 
-	Convey("Given a raw-only directional measurement with quality stamps", t, func() {
+	Convey("Given a Pearl causal do-expectation node", t, func() {
 		at := time.Unix(3, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD")
-		measurement := newTestMeasurement(
-			"cvd-raw-quality", types.SourceCVD, symbol.Symbol, at,
-		)
-		measurement.Maturity = 0.8
-		putTestMetric(
-			measurement,
-			types.MetricDrive,
-			0.7,
-			nil,
-			nmtypes.UnitDimensionless,
-		)
-		putTestMetric(
-			measurement,
-			types.MetricHypothesisSeparation,
-			0.9,
-			nil,
-			nmtypes.UnitDimensionless,
-		)
-		symbol.AppendMeasurement(measurement)
 		graph := NewGraph(at)
-		_, err := newMeasurementCompiler().addNodes(
-			symbol.Symbol,
-			symbol.MarketMeasurements(
-				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
-			),
-			graph,
-		)
-		So(err, ShouldBeNil)
-		err = (&Solver{}).connectLongOpportunity(symbol, graph)
+		causalNode := &types.Node{
+			ID:         "causal:BTC/USD:doExpectation",
+			Symbol:     symbol.Symbol,
+			Kind:       KindCausal,
+			Value:      0.7,
+			Strength:   0.8,
+			Confidence: 0.8 * 0.9,
+			Maturity:   0.8,
+			At:         at,
+			Metadata: map[string]any{
+				"hypothesis_separation": 0.9,
+			},
+		}
+		graph.AddNode(causalNode)
 
-		Convey("It should vote with maturity times separation, keeping the raw value", func() {
+		err := (&Solver{}).connectLongOpportunity(symbol, graph)
+
+		Convey("It should vote directly on the decision target", func() {
 			So(err, ShouldBeNil)
-			driveNode := graph.Nodes[measurementNodeID(measurement, "drive")]
-			So(driveNode, ShouldNotBeNil)
-			So(driveNode.Normalized, ShouldBeNil)
-			So(driveNode.Value, ShouldEqual, 0.7)
-			So(driveNode.Confidence, ShouldAlmostEqual, 0.8*0.9, 1e-12)
+			targetNode := graph.Nodes[causalNode.ID]
+			So(targetNode, ShouldNotBeNil)
+			So(targetNode.Value, ShouldEqual, 0.7)
+			So(targetNode.Confidence, ShouldAlmostEqual, 0.8*0.9, 1e-12)
 
 			var directional *Edge
 
 			for _, edge := range graph.Edges {
-				if edge.From == driveNode.ID && edge.To == graph.DecisionTarget {
+				if edge.From == targetNode.ID && edge.To == graph.DecisionTarget {
 					directional = edge
 					break
 				}

@@ -91,8 +91,7 @@ export const packTexture3D = (
 	for (let slice = 0; slice < extent.depth; slice += 1) {
 		for (let row = 0; row < extent.height; row += 1) {
 			const sourceOffset = (slice * extent.height + row) * rowFloats;
-			const destinationOffset =
-				(slice * extent.height + row) * paddedRowFloats;
+			const destinationOffset = (slice * extent.height + row) * paddedRowFloats;
 			packed.set(
 				source.subarray(sourceOffset, sourceOffset + rowFloats),
 				destinationOffset,

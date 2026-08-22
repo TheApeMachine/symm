@@ -23,10 +23,7 @@ const heatColor = (heat: number): string => {
 	return `rgb(${red},${green},${blue})`;
 };
 
-const paint = (
-	canvas: HTMLCanvasElement,
-	props: KuramotoRingProps,
-) => {
+const paint = (canvas: HTMLCanvasElement, props: KuramotoRingProps) => {
 	const context = canvas.getContext("2d");
 
 	if (context === null) {

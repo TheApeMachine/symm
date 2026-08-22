@@ -222,4 +222,46 @@ describe("buildDiagnosticsGraph", () => {
 		expect(nextHop?.labelPoint.x).toBeTypeOf("number");
 		expect(nextHop?.labelPoint.y).toBeTypeOf("number");
 	});
+
+	it("generates input and output connection ports for every edge", () => {
+		const graph = buildDiagnosticsGraph(FULL_FRAME);
+
+		expect(graph.ports.length).toBe(graph.edges.length * 2);
+
+		for (const edge of graph.edges) {
+			const outPort = graph.ports.find(
+				(port) => port.edgeId === edge.id && port.kind === "out",
+			);
+			const inPort = graph.ports.find(
+				(port) => port.edgeId === edge.id && port.kind === "in",
+			);
+
+			expect(outPort).toBeDefined();
+			expect(inPort).toBeDefined();
+			expect(outPort?.point).toEqual(edge.points[0]);
+			expect(inPort?.point).toEqual(edge.points[edge.points.length - 1]);
+		}
+	});
+
+	it("assigns distinct non-overlapping horizontal corridor lanes for parallel fan-out edges", () => {
+		const graph = buildDiagnosticsGraph(FULL_FRAME);
+		const categoryEdge = graph.edges.find(
+			(edge) => edge.from === "measurements" && edge.to === "category",
+		);
+		const manifoldEdge = graph.edges.find(
+			(edge) => edge.from === "measurements" && edge.to === "manifold",
+		);
+
+		expect(categoryEdge).toBeDefined();
+		expect(manifoldEdge).toBeDefined();
+
+		const categoryTrunkY = categoryEdge?.points[2]?.y;
+		const manifoldTrunkY = manifoldEdge?.points[2]?.y;
+
+		expect(categoryTrunkY).toBeDefined();
+		expect(manifoldTrunkY).toBeDefined();
+		expect(categoryTrunkY).not.toEqual(manifoldTrunkY);
+	});
 });
+
+

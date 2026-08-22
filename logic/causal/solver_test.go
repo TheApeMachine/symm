@@ -249,8 +249,8 @@ func BenchmarkCausalRun(b *testing.B) {
 	for index := range symbols {
 		symbol := fmt.Sprintf("SYMBOL-%03d/USD", index)
 		symbols[index] = symbol
-		storedSymbol, _ := thesis.Symbols.Load(symbol)
-		storedSymbol.(*types.Symbol).Resonance.Push(testResonanceManifold(
+		storedSymbol := causalSymbol(thesis, symbol)
+		storedSymbol.Resonance.Push(testResonanceManifold(
 			float64(index),
 			float64(index)/float64(index+1),
 			[]float64{float64(index) / float64(index+1)},
@@ -264,8 +264,8 @@ func BenchmarkCausalRun(b *testing.B) {
 		b.StopTimer()
 
 		for index, symbol := range symbols {
-			storedSymbol, _ := thesis.Symbols.Load(symbol)
-			storedSymbol.(*types.Symbol).Resonance.Push(testResonanceManifold(
+			storedSymbol := causalSymbol(thesis, symbol)
+			storedSymbol.Resonance.Push(testResonanceManifold(
 				float64(index),
 				float64(index)/float64(index+1),
 				[]float64{float64(index) / float64(index+1)},
@@ -275,10 +275,9 @@ func BenchmarkCausalRun(b *testing.B) {
 		b.StartTimer()
 
 		for _, symbol := range symbols {
-			storedSymbol, _ := thesis.Symbols.Load(symbol)
-			symbolState := storedSymbol.(*types.Symbol)
-			symbolState.MarketResonance(
-				symbolState.ResonanceConsumers[types.ResonanceConsumerCausal],
+			storedSymbol := causalSymbol(thesis, symbol)
+			storedSymbol.MarketResonance(
+				storedSymbol.ResonanceConsumers[types.ResonanceConsumerCausal],
 			)
 		}
 

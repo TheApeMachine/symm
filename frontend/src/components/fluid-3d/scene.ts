@@ -1,7 +1,12 @@
 import { OrbitCamera } from "./camera";
-import { type FluidFieldOptions, FluidFieldView } from "./fields";
 import { lineShader } from "./field-shaders";
-import { CLEAR_COLOR, connectFluidGPU, createVertexBuffer, type FluidGPU } from "./gpu";
+import { type FluidFieldOptions, FluidFieldView } from "./fields";
+import {
+	CLEAR_COLOR,
+	connectFluidGPU,
+	createVertexBuffer,
+	type FluidGPU,
+} from "./gpu";
 import { FluidParticles } from "./particles";
 import type { FluidFields, FluidParticle, FluidParticleFrame } from "./wire";
 
@@ -9,39 +14,66 @@ export type FluidSceneOptions = FluidFieldOptions & {
 	particles: boolean;
 };
 
+type Vec3 = [number, number, number];
+
 const boundaryLines = () => {
-	const corners: Array<[number, number, number]> = [
-		[0, 0, 0],
-		[1, 0, 0],
-		[1, 1, 0],
-		[0, 1, 0],
-		[0, 0, 1],
-		[1, 0, 1],
-		[1, 1, 1],
-		[0, 1, 1],
+	const edges: Array<[Vec3, Vec3]> = [
+		[
+			[0, 0, 0],
+			[1, 0, 0],
+		],
+		[
+			[1, 0, 0],
+			[1, 1, 0],
+		],
+		[
+			[1, 1, 0],
+			[0, 1, 0],
+		],
+		[
+			[0, 1, 0],
+			[0, 0, 0],
+		],
+		[
+			[0, 0, 1],
+			[1, 0, 1],
+		],
+		[
+			[1, 0, 1],
+			[1, 1, 1],
+		],
+		[
+			[1, 1, 1],
+			[0, 1, 1],
+		],
+		[
+			[0, 1, 1],
+			[0, 0, 1],
+		],
+		[
+			[0, 0, 0],
+			[0, 0, 1],
+		],
+		[
+			[1, 0, 0],
+			[1, 0, 1],
+		],
+		[
+			[1, 1, 0],
+			[1, 1, 1],
+		],
+		[
+			[0, 1, 0],
+			[0, 1, 1],
+		],
 	];
-	const edges = [
-		[0, 1],
-		[1, 2],
-		[2, 3],
-		[3, 0],
-		[4, 5],
-		[5, 6],
-		[6, 7],
-		[7, 4],
-		[0, 4],
-		[1, 5],
-		[2, 6],
-		[3, 7],
-	];
-	const lines = new Float32Array(edges.length * 2 * 3);
+	const lines = new Float32Array(edges.length * 6);
 	let offset = 0;
 
 	for (const [start, end] of edges) {
-		lines.set(corners[start!]!, offset);
-		offset += 3;
-		lines.set(corners[end!]!, offset);
-		offset += 3;
+		lines.set(start, offset);
+		lines.set(end, offset + 3);
+		offset += 6;
 	}
 
 	return lines;
@@ -63,7 +95,10 @@ export class FluidScene {
 	private boundaryBindGroup: GPUBindGroup | null = null;
 	private depthTexture: GPUTexture | null = null;
 	private animationFrame = 0;
+	private canvasWidth = 0;
+	private canvasHeight = 0;
 	private disposed = false;
+	private reportedGpuError = false;
 	private options: FluidSceneOptions = {
 		particles: true,
 		gas: true,
@@ -129,9 +164,11 @@ export class FluidScene {
 	dispose() {
 		this.disposed = true;
 		cancelAnimationFrame(this.animationFrame);
+		this.animationFrame = 0;
 		this.resizeObserver.disconnect();
 		this.canvas.removeEventListener("pointerdown", this.onPointerDown);
 		this.canvas.removeEventListener("pointerup", this.pick);
+		this.gpu?.device.removeEventListener("uncapturederror", this.onGpuError);
 		this.camera.detach();
 		this.fields?.dispose();
 		this.particles?.dispose();
@@ -151,6 +188,9 @@ export class FluidScene {
 			}
 
 			this.gpu = gpu;
+			gpu.device.addEventListener("uncapturederror", this.onGpuError);
+			this.canvasWidth = 0;
+			this.canvasHeight = 0;
 			this.fields = new FluidFieldView(gpu);
 			this.particles = new FluidParticles(gpu);
 			this.fields.setOptions(this.options);
@@ -167,7 +207,7 @@ export class FluidScene {
 			}
 
 			this.resize();
-			this.invalidate();
+			this.startLoop();
 		} catch (cause) {
 			const error = cause instanceof Error ? cause : new Error(String(cause));
 			this.onError?.(error);
@@ -191,7 +231,9 @@ export class FluidScene {
 		});
 		this.boundaryBindGroup = gpu.device.createBindGroup({
 			layout,
-			entries: [{ binding: 0, resource: { buffer: this.fields.uniformBuffer } }],
+			entries: [
+				{ binding: 0, resource: { buffer: this.fields.uniformBuffer } },
+			],
 		});
 		this.boundaryPipeline = gpu.device.createRenderPipeline({
 			layout: gpu.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
@@ -244,11 +286,27 @@ export class FluidScene {
 		}
 
 		const pixelRatio = window.devicePixelRatio;
-		this.canvas.width = Math.max(1, Math.floor(width * pixelRatio));
-		this.canvas.height = Math.max(1, Math.floor(height * pixelRatio));
+		const canvasWidth = Math.max(1, Math.floor(width * pixelRatio));
+		const canvasHeight = Math.max(1, Math.floor(height * pixelRatio));
 		this.camera.setAspect(width / height);
+
+		if (
+			this.canvasWidth === canvasWidth &&
+			this.canvasHeight === canvasHeight
+		) {
+			return;
+		}
+
+		this.canvasWidth = canvasWidth;
+		this.canvasHeight = canvasHeight;
+		this.canvas.width = canvasWidth;
+		this.canvas.height = canvasHeight;
+		this.gpu?.context.configure({
+			device: this.gpu.device,
+			format: this.gpu.format,
+			alphaMode: "opaque",
+		});
 		this.rebuildDepth();
-		this.invalidate();
 	};
 
 	private rebuildDepth() {
@@ -278,17 +336,31 @@ export class FluidScene {
 	}
 
 	private readonly render = () => {
-		this.animationFrame = 0;
+		if (this.disposed) {
+			this.animationFrame = 0;
+			return;
+		}
+
+		this.animationFrame = requestAnimationFrame(this.render);
 		const gpu = this.gpu;
 		const fields = this.fields;
 		const particles = this.particles;
 		const depth = this.depthTexture;
 
-		if (gpu === null || fields === null || particles === null || depth === null) {
+		if (
+			gpu === null ||
+			fields === null ||
+			particles === null ||
+			depth === null
+		) {
 			return;
 		}
 
-		fields.writeFrame(this.camera.viewProj, this.camera.invViewProj, this.camera.position);
+		fields.writeFrame(
+			this.camera.viewProj,
+			this.camera.invViewProj,
+			this.camera.position,
+		);
 		particles.writeFrame(this.camera);
 		const encoder = gpu.device.createCommandEncoder();
 		const pass = encoder.beginRenderPass({
@@ -310,7 +382,11 @@ export class FluidScene {
 		fields.encode(pass);
 		particles.encode(pass);
 
-		if (this.boundaryPipeline !== null && this.boundaryBindGroup !== null && this.boundaryBuffer !== null) {
+		if (
+			this.boundaryPipeline !== null &&
+			this.boundaryBindGroup !== null &&
+			this.boundaryBuffer !== null
+		) {
 			pass.setPipeline(this.boundaryPipeline);
 			pass.setBindGroup(0, this.boundaryBindGroup);
 			pass.setVertexBuffer(0, this.boundaryBuffer);
@@ -321,12 +397,27 @@ export class FluidScene {
 		gpu.device.queue.submit([encoder.finish()]);
 	};
 
-	private readonly invalidate = () => {
+	private readonly startLoop = () => {
 		if (this.animationFrame !== 0 || this.disposed) {
 			return;
 		}
 
 		this.animationFrame = requestAnimationFrame(this.render);
+	};
+
+	private readonly invalidate = () => {
+		this.startLoop();
+	};
+
+	private readonly onGpuError = (event: GPUUncapturedErrorEvent) => {
+		event.preventDefault();
+
+		if (this.reportedGpuError || this.disposed) {
+			return;
+		}
+
+		this.reportedGpuError = true;
+		this.onError?.(new Error(event.error.message));
 	};
 
 	private readonly onPointerDown = (event: PointerEvent) => {
@@ -339,7 +430,12 @@ export class FluidScene {
 			return;
 		}
 
-		if (Math.hypot(event.clientX - this.pointerDownX, event.clientY - this.pointerDownY) > 4) {
+		if (
+			Math.hypot(
+				event.clientX - this.pointerDownX,
+				event.clientY - this.pointerDownY,
+			) > 4
+		) {
 			return;
 		}
 

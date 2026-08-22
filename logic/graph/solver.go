@@ -488,10 +488,10 @@ func (solver *Solver) extractPredictiveDynamicsNodes(
 ) {
 	ready, _ := dynamics.Get(learning.SymbolDynamicsReady)
 	sampleCount, _ := dynamics.Get(learning.SymbolDynamicsSampleCount)
-	confidence := sampleCount / (sampleCount + 1)
+	maturity := sampleCount / (sampleCount + 1)
 
-	if ready > confidence {
-		confidence = ready
+	if ready > maturity {
+		maturity = ready
 	}
 
 	fields := []struct {
@@ -517,20 +517,22 @@ func (solver *Solver) extractPredictiveDynamicsNodes(
 			continue
 		}
 
-		graph.AddNode(&types.Node{
-			ID:         fmt.Sprintf("res:%s:%s", symbol, field.name),
-			Symbol:     symbol,
-			Source:     "resonance_dynamics",
-			Kind:       types.KindResonance,
-			Value:      value,
-			Strength:   math.Abs(value),
-			Confidence: confidence,
-			At:         graph.At,
+		node := &types.Node{
+			ID:       fmt.Sprintf("res:%s:%s", symbol, field.name),
+			Symbol:   symbol,
+			Source:   "resonance_dynamics",
+			Kind:     types.KindResonance,
+			Value:    value,
+			Strength: math.Abs(value),
+			Maturity: maturity,
+			At:       graph.At,
 			Metadata: map[string]any{
 				"continuous_time": true,
 				"frame_symbol":    field.name,
 			},
-		})
+		}
+		node.Confidence = types.ObservationMass(node, graph.At)
+		graph.AddNode(node)
 	}
 }
 
@@ -607,7 +609,7 @@ func (field causalField) node(
 		)
 	}
 
-	return &types.Node{
+	node := &types.Node{
 		ID:         fmt.Sprintf("causal:%s:%s", symbol, field.value),
 		Symbol:     symbol,
 		Source:     "causal",
@@ -615,10 +617,14 @@ func (field causalField) node(
 		Value:      fieldValue,
 		Strength:   strength,
 		Confidence: probabilities[field.probabilityIndex] * precision,
+		Maturity:   precision,
 		Metadata: map[string]any{
-			"horizon": 1,
+			"horizon":               1,
+			"hypothesis_separation": precision,
 		},
-	}, true, nil
+	}
+
+	return node, true, nil
 }
 
 func causalPrecision(symbol string, causalMap map[string]any) (float64, error) {
@@ -656,6 +662,10 @@ func causalProbabilities(symbol string, causalMap map[string]any) ([]float64, er
 }
 
 func causalValuesPresent(causalMap map[string]any) bool {
+	if causalMap == nil {
+		return false
+	}
+
 	for _, field := range causalFields {
 		if _, found := causalMap[field.value]; found {
 			return true
@@ -851,9 +861,9 @@ func (solver *Solver) inferStructuralEdges(
 		}
 	}
 
-	for symbol, resonanceNodes := range resonanceBySymbol {
+	for sym, resonanceNodes := range resonanceBySymbol {
 		for _, resonanceNode := range resonanceNodes {
-			for _, causalNode := range causalBySymbol[symbol] {
+			for _, causalNode := range causalBySymbol[sym] {
 				/*
 					This edge reads the two heads for directional agreement
 					only. They score on unrelated scales, so the weight is the
@@ -1026,6 +1036,37 @@ func (solver *Solver) inferStructuralEdges(
 		}
 	}
 
+	// 4. Manifold, Resonance dynamics, and Cognition condition the causal SCM layer (backdoor covariate set Z)
+	for _, node := range nodes {
+		if node.Kind != KindManifold && node.Kind != KindResonance && node.Kind != KindCognition {
+			continue
+		}
+
+		if node.ID == "res:"+symbol.Symbol+":forecast" {
+			continue
+		}
+
+		for _, causalNode := range causalBySymbol[symbol.Symbol] {
+			omega := types.ObservationMass(node, graph.At)
+			weight := types.NodeInfluence(node)
+
+			if omega <= 0 || weight <= 0 {
+				continue
+			}
+
+			graph.AddEdge(&types.Edge{
+				From:       node.ID,
+				To:         causalNode.ID,
+				Relation:   RelationConditions,
+				Weight:     omega * weight,
+				Confidence: omega,
+				Evidence:   []string{node.ID, causalNode.ID},
+				At:         graph.At,
+				Reason:     "field dynamics condition causal intervention context (backdoor covariate)",
+			})
+		}
+	}
+
 	return nil
 }
 
@@ -1096,19 +1137,10 @@ func (solver *Solver) connectLongOpportunity(
 
 func opportunityRelation(node *types.Node) (types.RelationType, string) {
 	switch node.Kind {
-	case KindMeasurement:
-		return measurementOpportunityRelation(node), "measurement addresses the long-opportunity thesis on its own evidence"
 	case KindCategory:
 		category, _ := node.Metadata["type"].(string)
 		relation := categoryOpportunityRelation(types.CategoryType(category))
 		return relation, "category " + category + " addresses the long-opportunity thesis"
-	case types.KindResonance:
-		if strings.HasSuffix(node.ID, ":forecast") {
-			return signedOpportunityRelation(node.Value),
-				"predictive coding contributes a direction opinion"
-		}
-
-		return RelationConditions, "predictive-coding surprise conditions confidence"
 	case types.KindCausal:
 		if strings.HasSuffix(node.ID, ":doExpectation") ||
 			strings.HasSuffix(node.ID, ":uplift") {
@@ -1116,22 +1148,7 @@ func opportunityRelation(node *types.Node) (types.RelationType, string) {
 				"Pearl intervention evidence addresses the direction of the thesis"
 		}
 
-		return RelationConditions, "causal ladder context conditions the thesis"
-	case types.KindManifold:
-		if node.ID == "man:universe:phase_direction" {
-			return signedOpportunityRelation(node.Value),
-				"phase-geodesic consensus addresses universe direction"
-		}
-
-		return RelationConditions, "relaxed physical field conditions the thesis"
-	case types.KindCognition:
-		regime, _ := node.Metadata["regime"].(string)
-		return categoryOpportunityRelation(categoryFromText(regime)),
-			"cognition regime addresses thesis persistence"
-	case types.KindPrediction:
-		path, _ := node.Metadata["path"].(string)
-		return categoryOpportunityRelation(categoryFromText(path)),
-			"cognition lookahead addresses the next structural regime"
+		return "", ""
 	default:
 		return "", ""
 	}
@@ -1148,60 +1165,6 @@ func signedOpportunityRelation(value float64) RelationType {
 	}
 }
 
-func categoryFromText(value string) types.CategoryType {
-	if value == "" {
-		return types.CategoryTypeNone
-	}
-
-	for _, category := range types.CategoryOrder {
-		if value == string(category) || strings.Contains(value, string(category)) {
-			return category
-		}
-	}
-
-	return types.CategoryTypeNone
-}
-
-/*
-measurementOpportunityRelation states how one raw measurement addresses the
-long-opportunity thesis on its own signed semantics. Aggressor-side alignment is
-the voice: buy-side pressure supports, sell-side pressure contradicts. Metrics
-whose semantic group is explicitly contextual or uninformative stay conditions.
-The verdict is independent of what a category classifier later claims about the
-same measurement; the category path is additional enrichment.
-*/
-func measurementOpportunityRelation(node *types.Node) types.RelationType {
-	groups, known := types.SignalMetricGroups[types.SourceType(node.Source)]
-
-	if !known {
-		return types.RelationConditions
-	}
-
-	membership, known := groups[types.MetricKey(node.Metric, node.Side)]
-
-	if !known || !membership.Competes {
-		return types.RelationConditions
-	}
-
-	switch node.Side {
-	case types.SideBuy, types.SideBuyToBuy, types.SideBuyToSell:
-		return signedOpportunityRelation(node.Value)
-	case types.SideSell, types.SideSellToSell, types.SideSellToBuy:
-		relation := signedOpportunityRelation(node.Value)
-
-		if relation == types.RelationSupports {
-			return types.RelationContradicts
-		}
-
-		if relation == types.RelationContradicts {
-			return types.RelationSupports
-		}
-
-		return types.RelationConditions
-	default:
-		return signedOpportunityRelation(node.Value)
-	}
-}
 
 /*
 categoryOpportunityRelation states category semantics for a long-only account.

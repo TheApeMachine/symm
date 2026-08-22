@@ -142,17 +142,17 @@ type workspace struct {
 	psiRe, psiIm                        *Buffer
 	dbgHead, dbgWords                   *Buffer
 
-	omegaLattice, gateWidth *Buffer
-	accums                  *Buffer
-	numCarriers             *Buffer
-	anchorIdx, anchorWeight *Buffer
-	binStarts, binnedIdx    *Buffer
-	binParams               *Buffer
-	psiRealHeads            []*Buffer
-	psiImagHeads            []*Buffer
+	omegaLattice, gateWidth  *Buffer
+	accums                   *Buffer
+	numCarriers              *Buffer
+	anchorIdx, anchorWeight  *Buffer
+	binStarts, binnedIdx     *Buffer
+	binParams                *Buffer
+	psiRealHeads             []*Buffer
+	psiImagHeads             []*Buffer
 	psiModeReal, psiModeImag *Buffer
-	headPhase, headHeat     *Buffer
-	couplingAmp             *Buffer
+	headPhase, headHeat      *Buffer
+	couplingAmp              *Buffer
 
 	pos, vel, mass, heat, oscEnergy      *Buffer
 	phase, omega, amp                    *Buffer

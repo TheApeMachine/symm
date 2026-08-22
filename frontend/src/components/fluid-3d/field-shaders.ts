@@ -44,23 +44,23 @@ const fieldSampling = /* wgsl */ `
 	};
 
 	fn sampleFluid(coordinate: vec3<f32>) -> FluidSample {
-		let momRho = textureSample(momRhoTexture, fieldSampler, coordinate);
+		let momRho = textureSampleLevel(momRhoTexture, fieldSampler, coordinate, 0.0);
 		let density = abs(momRho.a) * uniforms.densityScale;
 		let momentumMagnitude = length(momRho.rgb) * uniforms.momentumScale;
-		let energy = abs(textureSample(energyTexture, fieldSampler, coordinate).r) * uniforms.energyScale;
-		let waveReal = textureSample(waveRealTexture, fieldSampler, coordinate).r;
-		let waveImag = textureSample(waveImagTexture, fieldSampler, coordinate).r;
+		let energy = abs(textureSampleLevel(energyTexture, fieldSampler, coordinate, 0.0).r) * uniforms.energyScale;
+		let waveReal = textureSampleLevel(waveRealTexture, fieldSampler, coordinate, 0.0).r;
+		let waveImag = textureSampleLevel(waveImagTexture, fieldSampler, coordinate, 0.0).r;
 		let waveMagnitude = (waveReal * waveReal + waveImag * waveImag) * uniforms.waveScale;
 		let gasSignal = compress(max(density, momentumMagnitude));
 		let waveSignal = compress(waveMagnitude);
 		let warmAmber = vec3<f32>(0.55, 0.22, 0.05);
 		let brightAmber = vec3<f32>(1.0, 0.68, 0.20);
-		var sample: FluidSample;
-		sample.gasColor = mix(warmAmber, brightAmber, clamp(compress(energy), 0.0, 1.0));
-		sample.gasExtinction = select(0.0, gasSignal, uniforms.showGas > 0.5);
+		var field: FluidSample;
+		field.gasColor = mix(warmAmber, brightAmber, clamp(compress(energy), 0.0, 1.0));
+		field.gasExtinction = select(0.0, gasSignal, uniforms.showGas > 0.5);
 		let wavePhase = select(0.0, atan2(waveImag, waveReal), abs(waveReal) > 1e-6 || abs(waveImag) > 1e-6);
-		sample.waveGlow = select(vec3<f32>(0.0), phaseColor(wavePhase) * waveSignal, uniforms.showWave > 0.5);
-		return sample;
+		field.waveGlow = select(vec3<f32>(0.0), phaseColor(wavePhase) * waveSignal, uniforms.showWave > 0.5);
+		return field;
 	}
 `;
 
@@ -119,16 +119,21 @@ export const volumeShader = /* wgsl */ `
 		var waveAccumulated = vec3<f32>(0.0);
 
 		for (var step = 0u; step < MAX_STEPS; step++) {
-			if (f32(step) >= sampleCount) {
-				break;
-			}
-
+			let alongRay = f32(step) < sampleCount;
 			let coordinate = start + (f32(step) + 0.5) * stepVector;
-			let sample = sampleFluid(coordinate);
-			let alpha = 1.0 - exp(-sample.gasExtinction * uniforms.exposure * GAS_OPACITY);
-			accumulated += (1.0 - accumulatedAlpha) * alpha * sample.gasColor;
+			let field = sampleFluid(coordinate);
+			let alpha = select(
+				0.0,
+				1.0 - exp(-field.gasExtinction * uniforms.exposure * GAS_OPACITY),
+				alongRay,
+			);
+			accumulated += (1.0 - accumulatedAlpha) * alpha * field.gasColor;
 			accumulatedAlpha += (1.0 - accumulatedAlpha) * alpha;
-			waveAccumulated += sample.waveGlow * uniforms.exposure * WAVE_BRIGHTNESS;
+			waveAccumulated += select(
+				vec3<f32>(0.0),
+				field.waveGlow * uniforms.exposure * WAVE_BRIGHTNESS,
+				alongRay,
+			);
 		}
 
 		let outputAlpha = clamp(max(accumulatedAlpha, length(waveAccumulated)), 0.0, 1.0);
@@ -146,11 +151,11 @@ export const sliceShader = /* wgsl */ `
 
 	@fragment
 	fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-		let sample = sampleFluid(clamp(input.world, vec3<f32>(0.0), vec3<f32>(1.0)));
-		let gasAlpha = clamp(sample.gasExtinction * uniforms.exposure * GAS_OPACITY, 0.0, 1.0);
-		let waveColor = sample.waveGlow * uniforms.exposure * WAVE_BRIGHTNESS;
+		let field = sampleFluid(clamp(input.world, vec3<f32>(0.0), vec3<f32>(1.0)));
+		let gasAlpha = clamp(field.gasExtinction * uniforms.exposure * GAS_OPACITY, 0.0, 1.0);
+		let waveColor = field.waveGlow * uniforms.exposure * WAVE_BRIGHTNESS;
 		return vec4<f32>(
-			sample.gasColor * gasAlpha + waveColor,
+			field.gasColor * gasAlpha + waveColor,
 			clamp(max(gasAlpha, length(waveColor)), 0.0, 1.0)
 		);
 	}

@@ -28,10 +28,8 @@ const cross = (
 	left[0] * right[1] - left[1] * right[0],
 ];
 
-const dot = (
-	left: [number, number, number],
-	right: [number, number, number],
-) => left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+const dot = (left: [number, number, number], right: [number, number, number]) =>
+	left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
 
 const normalize = (
 	vector: [number, number, number],
@@ -56,24 +54,34 @@ export const multiply4 = (left: Float32Array, right: Float32Array) => {
 	return product;
 };
 
+const matrixEntry = (matrix: Float32Array, index: number) => {
+	const value = matrix[index];
+
+	if (value === undefined) {
+		throw new Error("matrix is incomplete");
+	}
+
+	return value;
+};
+
 export const invert4 = (matrix: Float32Array) => {
 	const inverse = new Float32Array(16);
-	const m00 = matrix[0]!;
-	const m01 = matrix[1]!;
-	const m02 = matrix[2]!;
-	const m03 = matrix[3]!;
-	const m10 = matrix[4]!;
-	const m11 = matrix[5]!;
-	const m12 = matrix[6]!;
-	const m13 = matrix[7]!;
-	const m20 = matrix[8]!;
-	const m21 = matrix[9]!;
-	const m22 = matrix[10]!;
-	const m23 = matrix[11]!;
-	const m30 = matrix[12]!;
-	const m31 = matrix[13]!;
-	const m32 = matrix[14]!;
-	const m33 = matrix[15]!;
+	const m00 = matrixEntry(matrix, 0);
+	const m01 = matrixEntry(matrix, 1);
+	const m02 = matrixEntry(matrix, 2);
+	const m03 = matrixEntry(matrix, 3);
+	const m10 = matrixEntry(matrix, 4);
+	const m11 = matrixEntry(matrix, 5);
+	const m12 = matrixEntry(matrix, 6);
+	const m13 = matrixEntry(matrix, 7);
+	const m20 = matrixEntry(matrix, 8);
+	const m21 = matrixEntry(matrix, 9);
+	const m22 = matrixEntry(matrix, 10);
+	const m23 = matrixEntry(matrix, 11);
+	const m30 = matrixEntry(matrix, 12);
+	const m31 = matrixEntry(matrix, 13);
+	const m32 = matrixEntry(matrix, 14);
+	const m33 = matrixEntry(matrix, 15);
 	inverse[0] =
 		m11 * m22 * m33 -
 		m11 * m23 * m32 -
@@ -186,17 +194,26 @@ export const invert4 = (matrix: Float32Array) => {
 		m10 * m02 * m21 +
 		m20 * m01 * m12 -
 		m20 * m02 * m11;
-	const determinant = m00 * inverse[0] + m01 * inverse[4] + m02 * inverse[8] + m03 * inverse[12];
+	const determinant =
+		m00 * matrixEntry(inverse, 0) +
+		m01 * matrixEntry(inverse, 4) +
+		m02 * matrixEntry(inverse, 8) +
+		m03 * matrixEntry(inverse, 12);
 	const scale = 1 / determinant;
 
 	for (let index = 0; index < 16; index += 1) {
-		inverse[index]! *= scale;
+		inverse[index] = matrixEntry(inverse, index) * scale;
 	}
 
 	return inverse;
 };
 
-const perspective = (fovY: number, aspect: number, near: number, far: number) => {
+const perspective = (
+	fovY: number,
+	aspect: number,
+	near: number,
+	far: number,
+) => {
 	const f = 1 / Math.tan(fovY / 2);
 	const matrix = new Float32Array(16);
 	matrix[0] = f / aspect;
@@ -232,23 +249,26 @@ const lookAt = (
 	return matrix;
 };
 
-const transform4 = (matrix: Float32Array, vector: [number, number, number, number]) => [
-	matrix[0]! * vector[0] +
-		matrix[4]! * vector[1] +
-		matrix[8]! * vector[2] +
-		matrix[12]! * vector[3],
-	matrix[1]! * vector[0] +
-		matrix[5]! * vector[1] +
-		matrix[9]! * vector[2] +
-		matrix[13]! * vector[3],
-	matrix[2]! * vector[0] +
-		matrix[6]! * vector[1] +
-		matrix[10]! * vector[2] +
-		matrix[14]! * vector[3],
-	matrix[3]! * vector[0] +
-		matrix[7]! * vector[1] +
-		matrix[11]! * vector[2] +
-		matrix[15]! * vector[3],
+const transform4 = (
+	matrix: Float32Array,
+	vector: [number, number, number, number],
+) => [
+	matrixEntry(matrix, 0) * vector[0] +
+		matrixEntry(matrix, 4) * vector[1] +
+		matrixEntry(matrix, 8) * vector[2] +
+		matrixEntry(matrix, 12) * vector[3],
+	matrixEntry(matrix, 1) * vector[0] +
+		matrixEntry(matrix, 5) * vector[1] +
+		matrixEntry(matrix, 9) * vector[2] +
+		matrixEntry(matrix, 13) * vector[3],
+	matrixEntry(matrix, 2) * vector[0] +
+		matrixEntry(matrix, 6) * vector[1] +
+		matrixEntry(matrix, 10) * vector[2] +
+		matrixEntry(matrix, 14) * vector[3],
+	matrixEntry(matrix, 3) * vector[0] +
+		matrixEntry(matrix, 7) * vector[1] +
+		matrixEntry(matrix, 11) * vector[2] +
+		matrixEntry(matrix, 15) * vector[3],
 ];
 
 /*
@@ -335,14 +355,26 @@ export class OrbitCamera {
 			this.target[2] + this.radius * sinPolar * Math.cos(this.azimuth),
 		];
 		const view = lookAt(this.position, this.target, [0, 1, 0]);
-		this.right = [view[0]!, view[4]!, view[8]!];
-		this.up = [view[1]!, view[5]!, view[9]!];
+		this.right = [
+			matrixEntry(view, 0),
+			matrixEntry(view, 4),
+			matrixEntry(view, 8),
+		];
+		this.up = [
+			matrixEntry(view, 1),
+			matrixEntry(view, 5),
+			matrixEntry(view, 9),
+		];
 		const projection = perspective(this.fovY, this.aspect, this.near, this.far);
 		this.viewProj = multiply4(projection, view);
 		this.invViewProj = invert4(this.viewProj);
 	}
 
-	private unproject(ndcX: number, ndcY: number, ndcZ: number): [number, number, number] {
+	private unproject(
+		ndcX: number,
+		ndcY: number,
+		ndcZ: number,
+	): [number, number, number] {
 		const clip: [number, number, number, number] = [ndcX, ndcY, ndcZ, 1];
 		const world = transform4(this.invViewProj, clip);
 		return [world[0] / world[3], world[1] / world[3], world[2] / world[3]];
@@ -384,7 +416,10 @@ export class OrbitCamera {
 		event.preventDefault();
 		this.radius = Math.min(
 			MAXIMUM_RADIUS,
-			Math.max(MINIMUM_RADIUS, this.radius * Math.exp(event.deltaY * ZOOM_SPEED)),
+			Math.max(
+				MINIMUM_RADIUS,
+				this.radius * Math.exp(event.deltaY * ZOOM_SPEED),
+			),
 		);
 		this.recompute();
 		this.onChange?.();

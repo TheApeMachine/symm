@@ -132,17 +132,33 @@ export const renderedNodeIds = (frame: MarketGraphFrame): Set<string> => {
 };
 
 export const graphStructureKey = (frame: MarketGraphFrame): string => {
+	const connected = new Set<string>();
+	const edgeKeys: string[] = [];
+
+	for (const edge of frame.edges ?? []) {
+		if (
+			typeof edge.from !== "string" ||
+			typeof edge.to !== "string" ||
+			edge.from === "" ||
+			edge.to === ""
+		) {
+			continue;
+		}
+
+		connected.add(edge.from);
+		connected.add(edge.to);
+		edgeKeys.push(`${edge.from}->${edge.to}:${edge.relation ?? ""}`);
+	}
+
 	const nodeIds = Object.values(frame.nodes ?? {})
 		.map((node) => node.id)
-		.filter((id) => typeof id === "string" && id !== "")
-		.sort()
-		.join(",");
-	const edgeKeys = (frame.edges ?? [])
-		.map((edge) => `${edge.from}->${edge.to}:${edge.relation ?? ""}`)
+		.filter((id) => typeof id === "string" && id !== "" && connected.has(id))
 		.sort()
 		.join(",");
 
-	return `${nodeIds}|${edgeKeys}`;
+	edgeKeys.sort();
+
+	return `${nodeIds}|${edgeKeys.join(",")}`;
 };
 
 export type GraphFramePlan = "initialize" | "refresh" | "stage";
@@ -186,7 +202,7 @@ export const subscribeGraphSurface = (listener: () => void): (() => void) => {
 export const applyPendingGraphSurface = (): void => {
 	const state = graphSurfaceStore.state;
 
-	if (state.frame === null || state.pendingStructureKey === "") {
+	if (state.frame === null) {
 		return;
 	}
 
@@ -217,10 +233,13 @@ export const paintGraphSurface = (value: unknown): void => {
 			};
 		}
 
+		const isDiverged = structureKey !== state.displayedStructureKey;
+		const nextPending = isDiverged ? structureKey : state.pendingStructureKey;
+
 		return {
 			...state,
 			frame,
-			pendingStructureKey: plan === "stage" ? structureKey : "",
+			pendingStructureKey: nextPending,
 		};
 	});
 };

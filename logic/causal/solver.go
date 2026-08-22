@@ -281,6 +281,7 @@ func (solver *Solver) measure(
 	}
 
 	causalOutput := output.Outputs()
+	causalOutput["symbol"] = symbol
 	causalOutput["historyRows"] = rows
 	causalOutput["at"] = tickerAt
 	causalOutput["identification"] = "adjustedAssociation"
@@ -336,6 +337,7 @@ func (solver *Solver) storeUnresolved(
 	}
 
 	symbolState.Causal.PushLatest(map[string]any{
+		"symbol":         symbolState.Symbol,
 		"at":             at,
 		"historyRows":    rows,
 		"identification": "unresolved",
@@ -399,10 +401,6 @@ func (solver *Solver) publish(thesis *types.Thesis) {
 		for causalMap := range symbolState.MarketCausal(
 			symbolState.CausalConsumers[types.CausalConsumerCausal],
 		) {
-			if _, present := causalMap["symbol"]; !present {
-				causalMap["symbol"] = symbol
-			}
-
 			rows = append(rows, causalMap)
 		}
 

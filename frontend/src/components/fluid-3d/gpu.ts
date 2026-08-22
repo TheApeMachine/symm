@@ -1,3 +1,5 @@
+/// <reference path="./webgpu.d.ts" />
+
 export const FRAME_UNIFORM_FLOATS = 48;
 export const PARTICLE_UNIFORM_FLOATS = 32;
 export const CLEAR_COLOR = { r: 14 / 255, g: 12 / 255, b: 10 / 255, a: 1 };
@@ -28,7 +30,7 @@ export const connectFluidGPU = async (
 	const device = await adapter.requestDevice({
 		requiredFeatures: filterable ? ["float32-filterable"] : [],
 	});
-	const context = canvas.getContext("webgpu");
+	const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
 
 	if (context === null) {
 		throw new Error("canvas rejected WebGPU");
