@@ -116,6 +116,26 @@ func (context hindsightContext) captureRatio() float64 {
 	return (context.meanCapturedReturn * float64(context.capturedSamples)) / total
 }
 
+func (context hindsightContext) blockerFractions() (
+	thesis float64,
+	confidence float64,
+	support float64,
+	contradiction float64,
+	graph float64,
+) {
+	if context.missedSamples == 0 {
+		return 0, 0, 0, 0, 0
+	}
+
+	denominator := float64(context.missedSamples)
+
+	return float64(context.thesisBlockCount) / denominator,
+		float64(context.confidenceBlockCount) / denominator,
+		float64(context.supportBlockCount) / denominator,
+		float64(context.contradictBlockCount) / denominator,
+		float64(context.graphBlockCount) / denominator
+}
+
 type hindsightAccumulator struct {
 	samples              int
 	capturedCount        int
@@ -212,6 +232,8 @@ func regulatorContext(
 		activeVal = 1.0
 	}
 
+	thesisBlock, confBlock, suppBlock, contBlock, graphBlock := hindsight.blockerFractions()
+
 	return []float64{
 		periodReturn,
 		drawdown,
@@ -223,5 +245,12 @@ func regulatorContext(
 		hindsight.opportunityPrevalence(),
 		hindsight.meanCapturedReturn,
 		hindsight.meanMissedReturn,
+		hindsight.captureRatio(),
+		hindsight.falsePositiveReturn,
+		thesisBlock,
+		confBlock,
+		suppBlock,
+		contBlock,
+		graphBlock,
 	}
 }

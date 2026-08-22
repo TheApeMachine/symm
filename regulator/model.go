@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
-const regulatorContextCount = 10
+const regulatorContextCount = 17
 
 type optimizationResult struct {
 	controls      controlVector

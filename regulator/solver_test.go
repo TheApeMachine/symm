@@ -227,12 +227,13 @@ func TestObserveMarkPositionBoundary(t *testing.T) {
 		}), ShouldBeNil)
 
 		Convey("It should reset return continuity while keeping memory bounded by symbol", func() {
-			context := solver.pendingMarkContext()
+			context := solver.markAcc.snapshot()
 			So(context.samples, ShouldEqual, 2)
 			So(context.returnSamples, ShouldEqual, 0)
 			So(solver.marks, ShouldHaveLength, 1)
 			So(solver.marks["BTC/USD"].positionID, ShouldEqual, "new-position")
 		})
+
 	})
 }
 
