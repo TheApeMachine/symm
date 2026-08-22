@@ -150,6 +150,7 @@ type workspace struct {
 	binParams               *Buffer
 	psiRealHeads            []*Buffer
 	psiImagHeads            []*Buffer
+	psiModeReal, psiModeImag *Buffer
 	headPhase, headHeat     *Buffer
 	couplingAmp             *Buffer
 
@@ -256,6 +257,9 @@ func (fluid *workspace) allocateGrid() {
 		fluid.psiRealHeads[head] = fluid.gpu(modes * 4)
 		fluid.psiImagHeads[head] = fluid.gpu(modes * 4)
 	}
+
+	fluid.psiModeReal = fluid.gpu(modes * 4)
+	fluid.psiModeImag = fluid.gpu(modes * 4)
 
 	fluid.gravity.Zero()
 	fluid.dbgHead.Zero()
@@ -463,6 +467,7 @@ func (fluid *workspace) allBuffers() []*Buffer {
 		fluid.omegaLattice, fluid.gateWidth,
 		fluid.accums, fluid.numCarriers,
 		fluid.anchorIdx, fluid.anchorWeight,
+		fluid.psiModeReal, fluid.psiModeImag,
 		fluid.binStarts, fluid.binnedIdx, fluid.binParams,
 		fluid.headPhase, fluid.headHeat, fluid.couplingAmp,
 		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy,

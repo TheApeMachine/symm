@@ -33,6 +33,24 @@ const initialOptions: FluidSceneOptions = {
 // avoid blowing out dense regions.
 const maximumVisualExposure = 4;
 
+const kuramotoFromWave = (frame: Record<string, unknown>) => {
+	const wave = terminalWaveModesFromFrame(frame);
+	let peak = 0;
+	const phasors = wave.map((mode) => {
+		const magnitude = Math.hypot(mode.real, mode.imaginary);
+		peak = Math.max(peak, magnitude);
+		return {
+			phase: Math.atan2(mode.imaginary, mode.real),
+			heat: magnitude,
+		};
+	});
+
+	return phasors.map((phasor) => ({
+		phase: phasor.phase,
+		heat: peak > 0 ? phasor.heat / peak : 0,
+	}));
+};
+
 const Toggle = ({
 	active,
 	children,
@@ -147,7 +165,17 @@ export const FluidInspector = () => {
 			return;
 		}
 
-		const scene = new FluidScene(viewportRef.current, setSelected);
+		let scene: FluidScene;
+
+		try {
+			scene = new FluidScene(viewportRef.current, setSelected, (cause) =>
+				setError(cause.message),
+			);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : String(cause));
+			return;
+		}
+
 		const feed = new FluidWebRTCFeed({
 			onFields: (fields) => {
 				scene.updateFields(fields);
@@ -164,26 +192,17 @@ export const FluidInspector = () => {
 					status: terminalPhaseStatusFromFrame(frame),
 				});
 
-				// Extract hydrodynamic diagnostics
 				const hydrodynamics = frame.hydrodynamics as
 					| Record<string, number>
 					| undefined;
 
 				if (hydrodynamics !== undefined) {
 					setHydro(hydrodynamics);
-					const kuramotoR = hydrodynamics.kuramotoR ?? 0;
-					const kuramotoPsi = hydrodynamics.kuramotoPsi ?? 0;
-
-					// Build oscillator phasors from the wave modes
-					const waveArray = frame.wave as
-						| { phase: number; heat: number }[]
-						| undefined;
-					const oscillators = (waveArray ?? []).map((mode) => ({
-						phase: mode.phase ?? 0,
-						heat: mode.heat ?? 0,
-					}));
-
-					setKuramotoProps({ oscillators, kuramotoR, kuramotoPsi });
+					setKuramotoProps({
+						oscillators: kuramotoFromWave(frame),
+						kuramotoR: hydrodynamics.kuramotoR ?? 0,
+						kuramotoPsi: hydrodynamics.kuramotoPsi ?? 0,
+					});
 
 					const point: PhasePortraitPoint = {
 						divergence: hydrodynamics.divergence ?? 0,

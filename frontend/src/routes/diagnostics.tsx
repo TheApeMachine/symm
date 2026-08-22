@@ -545,16 +545,22 @@ const DetailPanel = ({
 const Legend = () => (
 	<div className="flex h-full flex-wrap items-center gap-x-3 gap-y-1 px-3 font-mono text-[8px] uppercase tracking-wide text-(--f4)">
 		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 animate-pulse bg-(--acc)" /> stage → queue
+			<span className="h-0.5 w-4 animate-pulse rounded bg-(--acc)" /> flowing
+			(dashed)
 		</span>
 		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 animate-pulse bg-(--info)" /> queue → stage
+			<span className="h-0.5 w-4 rounded bg-(--f3)" /> idle (solid)
 		</span>
 		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 bg-(--line2)" /> handoff hop
+			<span className="h-0.5 w-4 rounded bg-[hsl(140_32%_62%)]" /> healthy
+			latency
 		</span>
 		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 bg-(--line)" /> idle lane
+			<span className="h-0.5 w-4 rounded bg-[hsl(48_42%_61%)]" /> slight
+			latency
+		</span>
+		<span className="flex items-center gap-1">
+			<span className="h-0.5 w-4 rounded bg-[hsl(0_44%_64%)]" /> high latency
 		</span>
 		<span className="flex items-center gap-1">
 			<span className="size-1.5 rounded-full bg-(--up)" /> live

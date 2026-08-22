@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-	createFluidFieldTextures,
-	updateFluidFieldTextures,
+	alignedBytesPerRow,
+	fluidTextureExtent,
+	packTexture3D,
+	TEXTURE_BYTES_PER_ROW_ALIGNMENT,
 } from "./field-textures";
 import type { FluidFields } from "./wire";
 
@@ -18,39 +20,40 @@ const fields = (): FluidFields => ({
 	waveScale: 0.25,
 });
 
-describe("createFluidFieldTextures", () => {
-	it("binds the received slab views without copying their values", () => {
-		const frame = fields();
-		const result = createFluidFieldTextures(frame);
-
-		expect(result.momRho.image).toMatchObject({
-			width: 2,
-			height: 2,
-			depth: 2,
+describe("fluidTextureExtent", () => {
+	it("keeps Metal/Go X-fastest axes as WebGPU width, height, depth", () => {
+		expect(fluidTextureExtent({ x: 4, y: 8, z: 16, spacing: 1 })).toEqual({
+			width: 4,
+			height: 8,
+			depth: 16,
 		});
-		expect(result.momRho.image.data).toBe(frame.momRho);
-		expect(result.internalEnergy.image.data).toBe(frame.internalEnergy);
-		expect(result.waveReal.image.data).toBe(frame.waveReal);
-		expect(result.waveImaginary.image.data).toBe(frame.waveImaginary);
-		expect(result.densityScale).toBe(1);
-		expect(result.momentumScale).toBe(0.2);
-		expect(result.energyScale).toBe(0.5);
-		expect(result.waveScale).toBe(0.25);
-		result.dispose();
+	});
+});
+
+describe("packTexture3D", () => {
+	it("binds an already-aligned slab without copying its values", () => {
+		const grid = { x: 16, y: 2, z: 2, spacing: 1 / 16 };
+		const source = new Float32Array(16 * 2 * 2 * 4);
+		source[3] = 9;
+		const packed = packTexture3D(source, grid, 4);
+
+		expect(packed.extent).toEqual({ width: 16, height: 2, depth: 2 });
+		expect(packed.bytesPerRow).toBe(TEXTURE_BYTES_PER_ROW_ALIGNMENT);
+		expect(packed.data).toBe(source);
+		expect(packed.data[3]).toBe(9);
 	});
 
-	it("reuses resident texture objects for the next same-grid slab", () => {
-		const first = fields();
-		const second = fields();
-		second.sequence = 2n;
-		const result = createFluidFieldTextures(first);
+	it("pads short rows to the WebGPU 256-byte alignment without transposing axes", () => {
+		const frame = fields();
+		frame.internalEnergy[2] = 7;
+		const packed = packTexture3D(frame.internalEnergy, frame.grid, 1);
+		const paddedRowFloats =
+			alignedBytesPerRow(2, Float32Array.BYTES_PER_ELEMENT) /
+			Float32Array.BYTES_PER_ELEMENT;
 
-		updateFluidFieldTextures(result, second);
-
-		expect(result.momRho.image.data).toBe(second.momRho);
-		expect(result.internalEnergy.image.data).toBe(second.internalEnergy);
-		expect(result.waveReal.image.data).toBe(second.waveReal);
-		expect(result.waveImaginary.image.data).toBe(second.waveImaginary);
-		result.dispose();
+		expect(packed.extent).toEqual({ width: 2, height: 2, depth: 2 });
+		expect(packed.bytesPerRow).toBe(TEXTURE_BYTES_PER_ROW_ALIGNMENT);
+		expect(packed.data).not.toBe(frame.internalEnergy);
+		expect(packed.data[paddedRowFloats]).toBe(7);
 	});
 });

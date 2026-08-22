@@ -1,43 +1,39 @@
-import * as THREE from "three";
 import type { FluidFields, FluidGrid } from "./wire";
 
 export const MAXIMUM_FLUID_GRID_AXIS = 128;
 export const MAXIMUM_VOLUME_STEPS = Math.ceil(
 	Math.sqrt(3) * MAXIMUM_FLUID_GRID_AXIS,
 );
+export const TEXTURE_BYTES_PER_ROW_ALIGNMENT = 256;
 
-export type FluidFieldTextures = {
-	grid: FluidGrid;
-	momRho: THREE.Data3DTexture;
-	internalEnergy: THREE.Data3DTexture;
-	waveReal: THREE.Data3DTexture;
-	waveImaginary: THREE.Data3DTexture;
-	densityScale: number;
-	momentumScale: number;
-	energyScale: number;
-	waveScale: number;
-	dispose: () => void;
+export type FluidTextureExtent = {
+	width: number;
+	height: number;
+	depth: number;
 };
 
-const texture = (
-	values: Float32Array,
-	grid: FluidGrid,
-	format: THREE.PixelFormat,
-) => {
-	// Metal and the wire both keep Z varying fastest. Three receives Z,Y,X so
-	// shaders can sample coordinate.zyx without transposing the volume.
-	const result = new THREE.Data3DTexture(values, grid.z, grid.y, grid.x);
-	result.format = format;
-	result.type = THREE.FloatType;
-	result.minFilter = THREE.LinearFilter;
-	result.magFilter = THREE.LinearFilter;
-	result.generateMipmaps = false;
-	result.unpackAlignment = 1;
-	result.needsUpdate = true;
-	return result;
+export type PackedTexture3D = {
+	data: Float32Array;
+	bytesPerRow: number;
+	rowsPerImage: number;
+	extent: FluidTextureExtent;
 };
 
-const validateGrid = (grid: FluidGrid) => {
+export const fluidTextureExtent = (grid: FluidGrid): FluidTextureExtent => ({
+	width: grid.x,
+	height: grid.y,
+	depth: grid.z,
+});
+
+export const alignedBytesPerRow = (width: number, bytesPerTexel: number) => {
+	const unpadded = width * bytesPerTexel;
+	return (
+		Math.ceil(unpadded / TEXTURE_BYTES_PER_ROW_ALIGNMENT) *
+		TEXTURE_BYTES_PER_ROW_ALIGNMENT
+	);
+};
+
+export const validateGrid = (grid: FluidGrid) => {
 	if (
 		grid.x > MAXIMUM_FLUID_GRID_AXIS ||
 		grid.y > MAXIMUM_FLUID_GRID_AXIS ||
@@ -48,66 +44,78 @@ const validateGrid = (grid: FluidGrid) => {
 		);
 	}
 
+	if (grid.x <= 0 || grid.y <= 0 || grid.z <= 0) {
+		throw new Error("fluid grid axes must be positive");
+	}
+
 	if (grid.spacing <= 0) {
 		throw new Error("fluid grid spacing must be positive");
 	}
 };
 
-export const createFluidFieldTextures = (
-	fields: FluidFields,
-): FluidFieldTextures => {
-	validateGrid(fields.grid);
-	const textures = {
-		momRho: texture(fields.momRho, fields.grid, THREE.RGBAFormat),
-		internalEnergy: texture(
-			fields.internalEnergy,
-			fields.grid,
-			THREE.RedFormat,
-		),
-		waveReal: texture(fields.waveReal, fields.grid, THREE.RedFormat),
-		waveImaginary: texture(fields.waveImaginary, fields.grid, THREE.RedFormat),
-	};
+/*
+packTexture3D keeps Metal/Go X-fastest cell order (x + gx*(y + gy*z)) and only
+inserts WebGPU row padding. Cubic 64³ uploads stay a view over the slab.
+*/
+export const packTexture3D = (
+	source: Float32Array,
+	grid: FluidGrid,
+	channels: number,
+): PackedTexture3D => {
+	validateGrid(grid);
+	const extent = fluidTextureExtent(grid);
+	const expected = extent.width * extent.height * extent.depth * channels;
 
-	return {
-		grid: fields.grid,
-		...textures,
-		densityScale: fields.densityScale,
-		momentumScale: fields.momentumScale,
-		energyScale: fields.energyScale,
-		waveScale: fields.waveScale,
-		dispose: () => {
-			for (const value of Object.values(textures)) {
-				value.dispose();
-			}
-		},
-	};
-};
-
-export const updateFluidFieldTextures = (
-	textures: FluidFieldTextures,
-	fields: FluidFields,
-) => {
-	validateGrid(fields.grid);
-
-	if (
-		textures.grid.x !== fields.grid.x ||
-		textures.grid.y !== fields.grid.y ||
-		textures.grid.z !== fields.grid.z
-	) {
-		throw new Error("fluid grid dimensions changed during a resident session");
+	if (source.length !== expected) {
+		throw new Error("fluid texture source does not match the grid");
 	}
 
-	textures.momRho.image.data = fields.momRho;
-	textures.internalEnergy.image.data = fields.internalEnergy;
-	textures.waveReal.image.data = fields.waveReal;
-	textures.waveImaginary.image.data = fields.waveImaginary;
-	textures.momRho.needsUpdate = true;
-	textures.internalEnergy.needsUpdate = true;
-	textures.waveReal.needsUpdate = true;
-	textures.waveImaginary.needsUpdate = true;
-	textures.grid = fields.grid;
-	textures.densityScale = fields.densityScale;
-	textures.momentumScale = fields.momentumScale;
-	textures.energyScale = fields.energyScale;
-	textures.waveScale = fields.waveScale;
+	const bytesPerTexel = channels * Float32Array.BYTES_PER_ELEMENT;
+	const bytesPerRow = alignedBytesPerRow(extent.width, bytesPerTexel);
+	const rowFloats = extent.width * channels;
+	const paddedRowFloats = bytesPerRow / Float32Array.BYTES_PER_ELEMENT;
+
+	if (paddedRowFloats === rowFloats) {
+		return {
+			data: source,
+			bytesPerRow,
+			rowsPerImage: extent.height,
+			extent,
+		};
+	}
+
+	const packed = new Float32Array(
+		paddedRowFloats * extent.height * extent.depth,
+	);
+
+	for (let slice = 0; slice < extent.depth; slice += 1) {
+		for (let row = 0; row < extent.height; row += 1) {
+			const sourceOffset = (slice * extent.height + row) * rowFloats;
+			const destinationOffset =
+				(slice * extent.height + row) * paddedRowFloats;
+			packed.set(
+				source.subarray(sourceOffset, sourceOffset + rowFloats),
+				destinationOffset,
+			);
+		}
+	}
+
+	return {
+		data: packed,
+		bytesPerRow,
+		rowsPerImage: extent.height,
+		extent,
+	};
 };
+
+export const packFluidFieldTextures = (fields: FluidFields) => ({
+	momRho: packTexture3D(fields.momRho, fields.grid, 4),
+	internalEnergy: packTexture3D(fields.internalEnergy, fields.grid, 1),
+	waveReal: packTexture3D(fields.waveReal, fields.grid, 1),
+	waveImaginary: packTexture3D(fields.waveImaginary, fields.grid, 1),
+	densityScale: fields.densityScale,
+	momentumScale: fields.momentumScale,
+	energyScale: fields.energyScale,
+	waveScale: fields.waveScale,
+	grid: fields.grid,
+});

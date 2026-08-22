@@ -403,39 +403,23 @@ func projectSourceDial(
 	}
 
 	bins := int(phaseLatticeWidth)
-	occupancy := make([]complex128, bins)
-	wave := make([]complex128, bins)
+	dial := make(geometry.PhaseDial, bins)
+	energy := 0.0
 
 	for _, oscillator := range oscillators {
-		mass := oscillator.Amplitude * oscillator.Amplitude
-
-		if !(mass > 0) {
+		if !(oscillator.Amplitude > 0) {
 			continue
 		}
 
 		bin := omegaBin(oscillator.Omega, omegaMin, span, bins)
-		occupancy[bin] += cmplx.Rect(mass, oscillator.Phase)
-		wave[bin] += complex(
+		dial[bin] += complex(
 			oscillator.Amplitude*math.Cos(oscillator.Phase),
 			oscillator.Amplitude*math.Sin(oscillator.Phase),
 		)
 	}
 
-	dial := make(geometry.PhaseDial, bins)
-	energy := 0.0
-
 	for index := range dial {
-		dial[index] = occupancy[index] * wave[index]
 		magnitude := cmplx.Abs(dial[index])
-
-		if math.IsNaN(magnitude) || math.IsInf(magnitude, 0) {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"manifold: projected dial is not finite",
-				nil,
-			))
-		}
-
 		energy += magnitude * magnitude
 	}
 

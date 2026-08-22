@@ -834,7 +834,7 @@ void manifold_coherence_accumulate_forces(
     uint32_t nb = (uint32_t)num_bins;
     k.set_bytes(nb, 14);
     k.set_buffer(particle_heat, 15);
-    k.set_threadgroup_memory(128 * 32, 0);
+    k.set_threadgroup_memory(256 * 32, 0);
     k.dispatch_1d(num_osc);
 }
 

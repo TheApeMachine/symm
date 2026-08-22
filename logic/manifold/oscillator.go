@@ -63,7 +63,7 @@ func stateToOscillators(state *pmanifold.State) []Oscillator {
 		oscillators[index] = Oscillator{
 			Phase:     float64(state.Phase[index]),
 			Omega:     float64(state.Omega[index]),
-			Amplitude: math.Sqrt(float64(state.Energy[index])),
+			Amplitude: math.Sqrt(max(0, float64(state.Energy[index]))),
 			PosX:      float64(state.Pos[index*3+0]),
 			PosY:      float64(state.Pos[index*3+1]),
 			PosZ:      float64(state.Pos[index*3+2]),

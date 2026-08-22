@@ -30,10 +30,10 @@ func NewTokenizer(
 	segmentLen int64,
 	datasets ...Dataset,
 ) (*Tokenizer, error) {
-	if gridX <= 0 || gridY <= 0 || gridZ <= 0 {
+	if gridX <= 0 || gridY <= 0 || gridZ <= 0 || segmentLen <= 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"tokenizer: grid dims must be positive",
+			"tokenizer: grid dims and segment length must be positive",
 			nil,
 		))
 	}
@@ -44,6 +44,7 @@ func NewTokenizer(
 		gridX:      gridX,
 		gridY:      gridY,
 		gridZ:      gridZ,
+		segmentLen: segmentLen,
 		spacing:    1 / float32(maximumAxis),
 		Compressor: NewCompressor(int(segmentLen)),
 		Datasets:   datasets,

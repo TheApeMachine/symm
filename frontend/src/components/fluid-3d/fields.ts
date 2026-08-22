@@ -1,15 +1,14 @@
-import * as THREE from "three";
+import { sliceShader, volumeShader } from "./field-shaders";
+import { packFluidFieldTextures } from "./field-textures";
 import {
-	fluidFieldVertexShader,
-	fluidSliceFragmentShader,
-	fluidVolumeFragmentShader,
-} from "./field-shaders";
-import {
-	createFluidFieldTextures,
-	type FluidFieldTextures,
-	updateFluidFieldTextures,
-} from "./field-textures";
-import type { FluidFields } from "./wire";
+	createUniformBuffer,
+	createVertexBuffer,
+	createVolumeTexture,
+	FRAME_UNIFORM_FLOATS,
+	type FluidGPU,
+	writeTexture3D,
+} from "./gpu";
+import type { FluidFields, FluidGrid } from "./wire";
 
 export type FluidFieldOptions = {
 	gas: boolean;
@@ -19,47 +18,152 @@ export type FluidFieldOptions = {
 	exposure: number;
 };
 
-type FieldUniforms = ReturnType<typeof fieldUniforms>;
+const cubeTriangles = () => {
+	const quads: Array<Array<[number, number, number]>> = [
+		[
+			[0, 0, 0],
+			[0, 1, 0],
+			[1, 1, 0],
+			[1, 0, 0],
+		],
+		[
+			[0, 0, 1],
+			[1, 0, 1],
+			[1, 1, 1],
+			[0, 1, 1],
+		],
+		[
+			[0, 0, 0],
+			[1, 0, 0],
+			[1, 0, 1],
+			[0, 0, 1],
+		],
+		[
+			[0, 1, 0],
+			[0, 1, 1],
+			[1, 1, 1],
+			[1, 1, 0],
+		],
+		[
+			[0, 0, 0],
+			[0, 0, 1],
+			[0, 1, 1],
+			[0, 1, 0],
+		],
+		[
+			[1, 0, 0],
+			[1, 1, 0],
+			[1, 1, 1],
+			[1, 0, 1],
+		],
+	];
+	const triangles = new Float32Array(36 * 3);
+	let offset = 0;
 
-const fieldUniforms = (textures: FluidFieldTextures) => ({
-	uMomRho: { value: textures.momRho },
-	uInternalEnergy: { value: textures.internalEnergy },
-	uWaveReal: { value: textures.waveReal },
-	uWaveImaginary: { value: textures.waveImaginary },
-	uDensityScale: { value: textures.densityScale },
-	uMomentumScale: { value: textures.momentumScale },
-	uEnergyScale: { value: textures.energyScale },
-	uWaveScale: { value: textures.waveScale },
-	uGrid: {
-		value: new THREE.Vector3(textures.grid.x, textures.grid.y, textures.grid.z),
-	},
-	uShowGas: { value: true },
-	uShowWave: { value: true },
-	uExposure: { value: 1.5 },
-});
+	for (const quad of quads) {
+		for (const corner of [0, 1, 2, 0, 2, 3]) {
+			triangles.set(quad[corner]!, offset);
+			offset += 3;
+		}
+	}
 
-const volumeMaterial = (uniforms: FieldUniforms) =>
-	new THREE.ShaderMaterial({
-		glslVersion: THREE.GLSL3,
-		uniforms,
-		vertexShader: fluidFieldVertexShader,
-		fragmentShader: fluidVolumeFragmentShader,
-		transparent: true,
-		depthWrite: false,
-		side: THREE.BackSide,
-		blending: THREE.AdditiveBlending,
+	return triangles;
+};
+
+const sliceTriangles = (x: number, y: number, z: number) => {
+	const triangles = new Float32Array(18 * 3);
+	const planes: Array<Array<[number, number, number]>> = [
+		[
+			[x, 0, 0],
+			[x, 1, 0],
+			[x, 1, 1],
+			[x, 0, 1],
+		],
+		[
+			[0, y, 0],
+			[0, y, 1],
+			[1, y, 1],
+			[1, y, 0],
+		],
+		[
+			[0, 0, z],
+			[1, 0, z],
+			[1, 1, z],
+			[0, 1, z],
+		],
+	];
+	let offset = 0;
+
+	for (const quad of planes) {
+		for (const corner of [0, 1, 2, 0, 2, 3]) {
+			triangles.set(quad[corner]!, offset);
+			offset += 3;
+		}
+	}
+
+	return triangles;
+};
+
+const fieldBindGroupLayout = (device: GPUDevice) =>
+	device.createBindGroupLayout({
+		entries: [
+			{
+				binding: 0,
+				visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+				buffer: { type: "uniform" },
+			},
+			{ binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+			{ binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "3d" } },
+			{ binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "3d" } },
+			{ binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "3d" } },
+			{ binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: "3d" } },
+		],
 	});
 
-const sliceMaterial = (uniforms: FieldUniforms) =>
-	new THREE.ShaderMaterial({
-		glslVersion: THREE.GLSL3,
-		uniforms,
-		vertexShader: fluidFieldVertexShader,
-		fragmentShader: fluidSliceFragmentShader,
-		transparent: true,
-		depthWrite: false,
-		side: THREE.DoubleSide,
-		blending: THREE.AdditiveBlending,
+const pipeline = (
+	gpu: FluidGPU,
+	layout: GPUBindGroupLayout,
+	code: string,
+) =>
+	gpu.device.createRenderPipeline({
+		layout: gpu.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+		vertex: {
+			module: gpu.device.createShaderModule({ code }),
+			entryPoint: "vs_main",
+			buffers: [
+				{
+					arrayStride: 12,
+					attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }],
+				},
+			],
+		},
+		fragment: {
+			module: gpu.device.createShaderModule({ code }),
+			entryPoint: "fs_main",
+			targets: [
+				{
+					format: gpu.format,
+					blend: {
+						color: {
+							srcFactor: "src-alpha",
+							dstFactor: "one-minus-src-alpha",
+							operation: "add",
+						},
+						alpha: {
+							srcFactor: "one",
+							dstFactor: "one-minus-src-alpha",
+							operation: "add",
+						},
+					},
+				},
+			],
+		},
+		primitive: { topology: "triangle-list", cullMode: "none" },
+		depthStencil: {
+			format: "depth24plus",
+			depthWriteEnabled: false,
+			depthCompare: "less",
+		},
 	});
 
 /*
@@ -67,15 +171,14 @@ FluidFieldView renders the resident Eulerian gas and complex wave arrays as a
 raymarched unit volume and three independently movable diagnostic slices.
 */
 export class FluidFieldView {
-	readonly group = new THREE.Group();
-	private textures: FluidFieldTextures | null = null;
-	private uniforms: FieldUniforms | null = null;
-	private volume: THREE.Mesh | null = null;
-	private sliceGroup: THREE.Group | null = null;
-	private volumeGeometry: THREE.BoxGeometry | null = null;
-	private sliceGeometry: THREE.PlaneGeometry | null = null;
-	private volumeShader: THREE.ShaderMaterial | null = null;
-	private sliceShader: THREE.ShaderMaterial | null = null;
+	private textures: {
+		momRho: GPUTexture;
+		internalEnergy: GPUTexture;
+		waveReal: GPUTexture;
+		waveImaginary: GPUTexture;
+	} | null = null;
+	private bindGroup: GPUBindGroup | null = null;
+	private grid: FluidGrid | null = null;
 	private options: FluidFieldOptions = {
 		gas: true,
 		wave: true,
@@ -83,103 +186,153 @@ export class FluidFieldView {
 		slices: false,
 		exposure: 1.5,
 	};
+	private slices = { x: 0.5, y: 0.5, z: 0.5 };
+	private densityScale = 1;
+	private momentumScale = 1;
+	private energyScale = 1;
+	private waveScale = 1;
+	private readonly bindLayout: GPUBindGroupLayout;
+	private readonly volumePipeline: GPURenderPipeline;
+	private readonly slicePipeline: GPURenderPipeline;
+	private readonly sampler: GPUSampler;
+	private readonly cubeBuffer: GPUBuffer;
+	private readonly sliceBuffer: GPUBuffer;
+	readonly uniformBuffer: GPUBuffer;
+
+	constructor(private readonly gpu: FluidGPU) {
+		this.bindLayout = fieldBindGroupLayout(gpu.device);
+		this.volumePipeline = pipeline(gpu, this.bindLayout, volumeShader);
+		this.slicePipeline = pipeline(gpu, this.bindLayout, sliceShader);
+		this.sampler = gpu.device.createSampler({
+			magFilter: gpu.sampleFilter,
+			minFilter: gpu.sampleFilter,
+			addressModeU: "clamp-to-edge",
+			addressModeV: "clamp-to-edge",
+			addressModeW: "clamp-to-edge",
+		});
+		this.cubeBuffer = createVertexBuffer(gpu.device, cubeTriangles());
+		this.sliceBuffer = createVertexBuffer(gpu.device, sliceTriangles(0.5, 0.5, 0.5));
+		this.uniformBuffer = createUniformBuffer(gpu.device, FRAME_UNIFORM_FLOATS);
+	}
 
 	update(fields: FluidFields) {
-		if (this.textures !== null) {
-			updateFluidFieldTextures(this.textures, fields);
-			this.refreshUniforms(this.textures);
-			this.applyOptions();
-			return;
+		const packed = packFluidFieldTextures(fields);
+
+		if (this.textures === null) {
+			this.textures = {
+				momRho: createVolumeTexture(this.gpu.device, "rgba32float", packed.momRho.extent),
+				internalEnergy: createVolumeTexture(
+					this.gpu.device,
+					"r32float",
+					packed.internalEnergy.extent,
+				),
+				waveReal: createVolumeTexture(this.gpu.device, "r32float", packed.waveReal.extent),
+				waveImaginary: createVolumeTexture(
+					this.gpu.device,
+					"r32float",
+					packed.waveImaginary.extent,
+				),
+			};
+			this.bindGroup = this.gpu.device.createBindGroup({
+				layout: this.bindLayout,
+				entries: [
+					{ binding: 0, resource: { buffer: this.uniformBuffer } },
+					{ binding: 1, resource: this.sampler },
+					{ binding: 2, resource: this.textures.momRho.createView() },
+					{ binding: 3, resource: this.textures.internalEnergy.createView() },
+					{ binding: 4, resource: this.textures.waveReal.createView() },
+					{ binding: 5, resource: this.textures.waveImaginary.createView() },
+				],
+			});
 		}
 
-		const textures = createFluidFieldTextures(fields);
-		this.build(textures);
-		this.textures = textures;
-		this.applyOptions();
+		if (
+			this.grid !== null &&
+			(this.grid.x !== fields.grid.x ||
+				this.grid.y !== fields.grid.y ||
+				this.grid.z !== fields.grid.z)
+		) {
+			throw new Error("fluid grid dimensions changed during a resident session");
+		}
+
+		writeTexture3D(this.gpu.device, this.textures.momRho, packed.momRho);
+		writeTexture3D(this.gpu.device, this.textures.internalEnergy, packed.internalEnergy);
+		writeTexture3D(this.gpu.device, this.textures.waveReal, packed.waveReal);
+		writeTexture3D(this.gpu.device, this.textures.waveImaginary, packed.waveImaginary);
+		this.grid = fields.grid;
+		this.densityScale = fields.densityScale;
+		this.momentumScale = fields.momentumScale;
+		this.energyScale = fields.energyScale;
+		this.waveScale = fields.waveScale;
 	}
 
 	setOptions(options: FluidFieldOptions) {
 		this.options = options;
-		this.applyOptions();
 	}
 
 	setSlices(x: number, y: number, z: number) {
-		if (this.sliceGroup === null) {
+		this.slices = { x, y, z };
+		this.gpu.device.queue.writeBuffer(
+			this.sliceBuffer,
+			0,
+			sliceTriangles(x, y, z),
+		);
+	}
+
+	writeFrame(
+		viewProj: Float32Array,
+		invViewProj: Float32Array,
+		cameraPos: [number, number, number],
+	) {
+		const data = new Float32Array(FRAME_UNIFORM_FLOATS);
+		data.set(viewProj, 0);
+		data.set(invViewProj, 16);
+		data[32] = cameraPos[0];
+		data[33] = cameraPos[1];
+		data[34] = cameraPos[2];
+		data[35] = this.options.exposure;
+		data[36] = this.grid?.x ?? 1;
+		data[37] = this.grid?.y ?? 1;
+		data[38] = this.grid?.z ?? 1;
+		data[39] = this.densityScale;
+		data[40] = this.momentumScale;
+		data[41] = this.energyScale;
+		data[42] = this.waveScale;
+		data[43] = this.options.gas ? 1 : 0;
+		data[44] = this.options.wave ? 1 : 0;
+		data[45] = this.slices.x;
+		data[46] = this.slices.y;
+		data[47] = this.slices.z;
+		this.gpu.device.queue.writeBuffer(this.uniformBuffer, 0, data);
+	}
+
+	encode(pass: GPURenderPassEncoder) {
+		if (this.bindGroup === null) {
 			return;
 		}
 
-		this.sliceGroup.children[0]?.position.set(x, 0.5, 0.5);
-		this.sliceGroup.children[1]?.position.set(0.5, y, 0.5);
-		this.sliceGroup.children[2]?.position.set(0.5, 0.5, z);
+		pass.setBindGroup(0, this.bindGroup);
+
+		if (this.options.volume) {
+			pass.setPipeline(this.volumePipeline);
+			pass.setVertexBuffer(0, this.cubeBuffer);
+			pass.draw(36);
+		}
+
+		if (this.options.slices) {
+			pass.setPipeline(this.slicePipeline);
+			pass.setVertexBuffer(0, this.sliceBuffer);
+			pass.draw(18);
+		}
 	}
 
 	dispose() {
-		this.textures?.dispose();
-		this.volumeGeometry?.dispose();
-		this.sliceGeometry?.dispose();
-		this.volumeShader?.dispose();
-		this.sliceShader?.dispose();
-		this.group.clear();
-	}
-
-	private build(textures: FluidFieldTextures) {
-		this.uniforms = fieldUniforms(textures);
-		this.volumeGeometry = new THREE.BoxGeometry(1, 1, 1);
-		this.volumeShader = volumeMaterial(this.uniforms);
-		this.volume = new THREE.Mesh(this.volumeGeometry, this.volumeShader);
-		this.volume.position.setScalar(0.5);
-		this.volume.renderOrder = 0;
-		this.group.add(this.volume);
-
-		this.sliceGeometry = new THREE.PlaneGeometry(1, 1);
-		this.sliceShader = sliceMaterial(this.uniforms);
-		this.sliceGroup = new THREE.Group();
-		const xSlice = new THREE.Mesh(this.sliceGeometry, this.sliceShader);
-		xSlice.rotation.y = Math.PI / 2;
-		const ySlice = new THREE.Mesh(this.sliceGeometry, this.sliceShader);
-		ySlice.rotation.x = -Math.PI / 2;
-		const zSlice = new THREE.Mesh(this.sliceGeometry, this.sliceShader);
-		this.sliceGroup.add(xSlice, ySlice, zSlice);
-
-		for (const slice of this.sliceGroup.children) {
-			slice.renderOrder = 1;
-		}
-
-		this.group.add(this.sliceGroup);
-		this.setSlices(0.5, 0.5, 0.5);
-	}
-
-	private refreshUniforms(textures: FluidFieldTextures) {
-		const uniforms = this.uniforms;
-
-		if (uniforms === null) {
-			return;
-		}
-
-		uniforms.uMomRho.value = textures.momRho;
-		uniforms.uInternalEnergy.value = textures.internalEnergy;
-		uniforms.uWaveReal.value = textures.waveReal;
-		uniforms.uWaveImaginary.value = textures.waveImaginary;
-		uniforms.uDensityScale.value = textures.densityScale;
-		uniforms.uMomentumScale.value = textures.momentumScale;
-		uniforms.uEnergyScale.value = textures.energyScale;
-		uniforms.uWaveScale.value = textures.waveScale;
-		uniforms.uGrid.value.set(textures.grid.x, textures.grid.y, textures.grid.z);
-	}
-
-	private applyOptions() {
-		if (this.uniforms !== null) {
-			this.uniforms.uShowGas.value = this.options.gas;
-			this.uniforms.uShowWave.value = this.options.wave;
-			this.uniforms.uExposure.value = this.options.exposure;
-		}
-
-		if (this.volume !== null) {
-			this.volume.visible = this.options.volume;
-		}
-
-		if (this.sliceGroup !== null) {
-			this.sliceGroup.visible = this.options.slices;
-		}
+		this.textures?.momRho.destroy();
+		this.textures?.internalEnergy.destroy();
+		this.textures?.waveReal.destroy();
+		this.textures?.waveImaginary.destroy();
+		this.cubeBuffer.destroy();
+		this.sliceBuffer.destroy();
+		this.uniformBuffer.destroy();
 	}
 }

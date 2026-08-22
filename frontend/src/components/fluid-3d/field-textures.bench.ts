@@ -1,8 +1,5 @@
 import { bench, describe } from "vitest";
-import {
-	createFluidFieldTextures,
-	updateFluidFieldTextures,
-} from "./field-textures";
+import { packTexture3D } from "./field-textures";
 import type { FluidFields } from "./wire";
 
 const axis = 64;
@@ -20,10 +17,11 @@ const fields: FluidFields = {
 	waveScale: 1,
 };
 
-describe("updateFluidFieldTextures", () => {
-	const textures = createFluidFieldTextures(fields);
-
-	bench("binds one 64³ resident field slab", () => {
-		updateFluidFieldTextures(textures, fields);
+describe("packTexture3D", () => {
+	bench("keeps one 64³ resident field slab without a transpose copy", () => {
+		packTexture3D(fields.momRho, fields.grid, 4);
+		packTexture3D(fields.internalEnergy, fields.grid, 1);
+		packTexture3D(fields.waveReal, fields.grid, 1);
+		packTexture3D(fields.waveImaginary, fields.grid, 1);
 	});
 });

@@ -2813,7 +2813,7 @@ inline float spatial_overlap_from_anchors_simple(
 // Memory layout: max_carriers * 6 floats + 2 uints per threadgroup
 // For 64 carriers: 64 * 8 * 4 = 2KB threadgroup memory (well within limits)
 
-constant uint kMaxCarriersForTG = 128u;  // Max carriers for threadgroup reduction
+constant uint kMaxCarriersForTG = 256u;  // Max carriers for threadgroup reduction
 
 struct CarrierAccumulators {
     atomic_float force_r;

@@ -74,10 +74,10 @@ describe("DiagnosticsDataflow", () => {
 		expect(markup).toContain("grid-cols-[2.5ch_7ch_6ch]");
 		expect(markup).toContain("grid-cols-[minmax(0,1fr)_7ch_6ch]");
 		expect(markup).toContain("tabular-nums");
-		// Direction and liveness are part of the legend.
-		expect(markup).toContain("stage → queue");
-		expect(markup).toContain("queue → stage");
-		expect(markup).toContain("idle lane");
+		// Flow state and latency health are part of the legend.
+		expect(markup).toContain("flowing");
+		expect(markup).toContain("idle (solid)");
+		expect(markup).toContain("healthy");
 	});
 
 	it("reports live pressure, growth, and processing averages without claiming payload quality", async () => {

@@ -27,7 +27,7 @@ func TestTokenizerMakeBatch(t *testing.T) {
 	})
 
 	Convey("Given byte 255 at sequence 256", t, func() {
-		tokenizer, err := NewTokenizer(64, 64, 64, 64)
+		tokenizer, err := NewTokenizer(64, 64, 64, 256)
 		So(err, ShouldBeNil)
 		state, err := tokenizer.MakeBatch([]int64{255}, []int64{256})
 		So(err, ShouldBeNil)

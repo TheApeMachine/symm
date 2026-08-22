@@ -380,16 +380,15 @@ const ROUTE_STUB = 0.8;
 const PORT_INSET = 0.8;
 
 /*
-Routing costs make crossings more expensive than any plausible canvas detour,
-then overlapping an existing lane more expensive still. Bend cost only breaks
-ties between otherwise equivalent clear routes. LANE_SPACING keeps parallel
-same-direction segments a visible distance apart so two edges leaving one node
-never run length-wise on top of each other.
+Routing costs make crossings more expensive than any plausible canvas detour.
+Bend cost only breaks ties between otherwise equivalent clear routes.
+LANE_SPACING keeps parallel same-direction segments a visible distance apart
+so two edges leaving one node never run length-wise on top of each other, and
+ROUTE_OVERLAP_COST_MASSIVE is a strong finite cost (not Infinity) that
+dominates detours so parallel lanes separate cleanly while a trivial corner
+graze stays cheaper than an absurd full-canvas detour.
 */
 const ROUTE_CROSSING_COST = 120;
-// A strong finite cost instead of Infinity: it dominates detours so parallel
-// lanes separate cleanly, but a trivial corner graze stays cheaper than an
-// absurd full-canvas detour.
 const ROUTE_OVERLAP_COST_MASSIVE = 900;
 const ROUTE_BEND_COST = 0.35;
 const LANE_SPACING = 0.6;
@@ -818,9 +817,6 @@ const routeEdge = (
 	for (const candidate of candidates) {
 		const points = simplifyPoints(candidate);
 		const cost = routeScore(points, obstacles, existingSegments);
-		if (from.id === "graph" && to.id === "ui.dashboard") {
-
-		}
 
 		if (
 			cost.score < bestCost.score ||

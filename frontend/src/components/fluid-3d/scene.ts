@@ -1,6 +1,7 @@
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { OrbitCamera } from "./camera";
 import { type FluidFieldOptions, FluidFieldView } from "./fields";
+import { lineShader } from "./field-shaders";
+import { CLEAR_COLOR, connectFluidGPU, createVertexBuffer, type FluidGPU } from "./gpu";
 import { FluidParticles } from "./particles";
 import type { FluidFields, FluidParticle, FluidParticleFrame } from "./wire";
 
@@ -8,86 +9,230 @@ export type FluidSceneOptions = FluidFieldOptions & {
 	particles: boolean;
 };
 
+const boundaryLines = () => {
+	const corners: Array<[number, number, number]> = [
+		[0, 0, 0],
+		[1, 0, 0],
+		[1, 1, 0],
+		[0, 1, 0],
+		[0, 0, 1],
+		[1, 0, 1],
+		[1, 1, 1],
+		[0, 1, 1],
+	];
+	const edges = [
+		[0, 1],
+		[1, 2],
+		[2, 3],
+		[3, 0],
+		[4, 5],
+		[5, 6],
+		[6, 7],
+		[7, 4],
+		[0, 4],
+		[1, 5],
+		[2, 6],
+		[3, 7],
+	];
+	const lines = new Float32Array(edges.length * 2 * 3);
+	let offset = 0;
+
+	for (const [start, end] of edges) {
+		lines.set(corners[start!]!, offset);
+		offset += 3;
+		lines.set(corners[end!]!, offset);
+		offset += 3;
+	}
+
+	return lines;
+};
+
 /*
-FluidScene owns the Three.js resources for the interactive inspector. Incoming
+FluidScene owns the WebGPU resources for the interactive inspector. Incoming
 domain values update GPU buffers and textures directly through the two views.
 */
 export class FluidScene {
-	private readonly scene = new THREE.Scene();
-	private readonly camera = new THREE.PerspectiveCamera(48, 1, 0.001, 20);
-	private readonly renderer: THREE.WebGLRenderer;
-	private readonly controls: OrbitControls;
-	private readonly fields = new FluidFieldView();
-	private readonly particles = new FluidParticles();
-	private readonly raycaster = new THREE.Raycaster();
-	private readonly boundaryGeometry: THREE.EdgesGeometry;
-	private readonly boundaryMaterial: THREE.LineBasicMaterial;
+	private readonly canvas: HTMLCanvasElement;
+	private readonly camera = new OrbitCamera();
 	private readonly resizeObserver: ResizeObserver;
+	private gpu: FluidGPU | null = null;
+	private fields: FluidFieldView | null = null;
+	private particles: FluidParticles | null = null;
+	private boundaryBuffer: GPUBuffer | null = null;
+	private boundaryPipeline: GPURenderPipeline | null = null;
+	private boundaryBindGroup: GPUBindGroup | null = null;
+	private depthTexture: GPUTexture | null = null;
 	private animationFrame = 0;
-	private invalidated = false;
-	private gridSpacing = 1 / 64;
+	private disposed = false;
+	private options: FluidSceneOptions = {
+		particles: true,
+		gas: true,
+		wave: true,
+		volume: true,
+		slices: false,
+		exposure: 1.5,
+	};
+	private queuedFields: FluidFields | null = null;
+	private queuedParticles: FluidParticleFrame | null = null;
+	private pointerDownX = 0;
+	private pointerDownY = 0;
 
 	constructor(
 		private readonly container: HTMLElement,
 		private readonly onSelect: (particle: FluidParticle | null) => void,
+		private readonly onError?: (error: Error) => void,
 	) {
-		this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-		this.renderer.setClearColor(0x0e0c0a, 1);
-		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-		this.renderer.domElement.className = "block size-full touch-none";
-		this.container.append(this.renderer.domElement);
-		this.camera.position.set(1.65, 1.35, 1.65);
-		this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-		this.controls.target.setScalar(0.5);
-		this.controls.enableDamping = true;
-		this.controls.addEventListener("change", this.invalidate);
-		this.scene.add(this.fields.group, this.particles.points);
-		const boundary = this.createBoundary();
-		this.boundaryGeometry = boundary.geometry;
-		this.boundaryMaterial = boundary.material;
-		this.scene.add(boundary);
-		this.renderer.domElement.addEventListener("pointerup", this.pick);
+		if (navigator.gpu === undefined) {
+			throw new Error("WebGPU is required for the fluid manifold inspector");
+		}
+
+		this.canvas = document.createElement("canvas");
+		this.canvas.className = "block size-full touch-none";
+		this.container.append(this.canvas);
+		this.camera.attach(this.canvas, this.invalidate);
+		this.canvas.addEventListener("pointerdown", this.onPointerDown);
+		this.canvas.addEventListener("pointerup", this.pick);
 		this.resizeObserver = new ResizeObserver(this.resize);
 		this.resizeObserver.observe(this.container);
-		this.resize();
-		this.invalidate();
+		void this.initialize();
 	}
 
 	updateFields(fields: FluidFields) {
-		this.fields.update(fields);
-		this.gridSpacing = fields.grid.spacing;
-		this.particles.setGridSpacing(fields.grid.spacing);
+		this.queuedFields = fields;
+		this.fields?.update(fields);
+		this.particles?.setGridSpacing(fields.grid.spacing);
 		this.invalidate();
 	}
 
 	updateParticles(particles: FluidParticleFrame) {
-		this.particles.update(particles);
+		this.queuedParticles = particles;
+		this.particles?.update(particles);
 		this.invalidate();
 	}
 
 	setOptions(options: FluidSceneOptions) {
-		this.fields.setOptions(options);
-		this.particles.points.visible = options.particles;
+		this.options = options;
+		this.fields?.setOptions(options);
+
+		if (this.particles !== null) {
+			this.particles.visible = options.particles;
+		}
+
 		this.invalidate();
 	}
 
 	setSlices(x: number, y: number, z: number) {
-		this.fields.setSlices(x, y, z);
+		this.fields?.setSlices(x, y, z);
 		this.invalidate();
 	}
 
 	dispose() {
+		this.disposed = true;
 		cancelAnimationFrame(this.animationFrame);
 		this.resizeObserver.disconnect();
-		this.renderer.domElement.removeEventListener("pointerup", this.pick);
-		this.controls.removeEventListener("change", this.invalidate);
-		this.controls.dispose();
-		this.fields.dispose();
-		this.particles.dispose();
-		this.boundaryGeometry.dispose();
-		this.boundaryMaterial.dispose();
-		this.renderer.dispose();
-		this.renderer.domElement.remove();
+		this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+		this.canvas.removeEventListener("pointerup", this.pick);
+		this.camera.detach();
+		this.fields?.dispose();
+		this.particles?.dispose();
+		this.boundaryBuffer?.destroy();
+		this.depthTexture?.destroy();
+		this.gpu?.device.destroy();
+		this.canvas.remove();
+	}
+
+	private async initialize() {
+		try {
+			const gpu = await connectFluidGPU(this.canvas);
+
+			if (this.disposed) {
+				gpu.device.destroy();
+				return;
+			}
+
+			this.gpu = gpu;
+			this.fields = new FluidFieldView(gpu);
+			this.particles = new FluidParticles(gpu);
+			this.fields.setOptions(this.options);
+			this.particles.visible = this.options.particles;
+			this.createBoundary(gpu);
+
+			if (this.queuedFields !== null) {
+				this.fields.update(this.queuedFields);
+				this.particles.setGridSpacing(this.queuedFields.grid.spacing);
+			}
+
+			if (this.queuedParticles !== null) {
+				this.particles.update(this.queuedParticles);
+			}
+
+			this.resize();
+			this.invalidate();
+		} catch (cause) {
+			const error = cause instanceof Error ? cause : new Error(String(cause));
+			this.onError?.(error);
+		}
+	}
+
+	private createBoundary(gpu: FluidGPU) {
+		if (this.fields === null) {
+			return;
+		}
+
+		this.boundaryBuffer = createVertexBuffer(gpu.device, boundaryLines());
+		const layout = gpu.device.createBindGroupLayout({
+			entries: [
+				{
+					binding: 0,
+					visibility: GPUShaderStage.VERTEX,
+					buffer: { type: "uniform" },
+				},
+			],
+		});
+		this.boundaryBindGroup = gpu.device.createBindGroup({
+			layout,
+			entries: [{ binding: 0, resource: { buffer: this.fields.uniformBuffer } }],
+		});
+		this.boundaryPipeline = gpu.device.createRenderPipeline({
+			layout: gpu.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+			vertex: {
+				module: gpu.device.createShaderModule({ code: lineShader }),
+				entryPoint: "vs_main",
+				buffers: [
+					{
+						arrayStride: 12,
+						attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }],
+					},
+				],
+			},
+			fragment: {
+				module: gpu.device.createShaderModule({ code: lineShader }),
+				entryPoint: "fs_main",
+				targets: [
+					{
+						format: gpu.format,
+						blend: {
+							color: {
+								srcFactor: "src-alpha",
+								dstFactor: "one-minus-src-alpha",
+								operation: "add",
+							},
+							alpha: {
+								srcFactor: "one",
+								dstFactor: "one-minus-src-alpha",
+								operation: "add",
+							},
+						},
+					},
+				],
+			},
+			primitive: { topology: "line-list" },
+			depthStencil: {
+				format: "depth24plus",
+				depthWriteEnabled: false,
+				depthCompare: "less",
+			},
+		});
 	}
 
 	private readonly resize = () => {
@@ -98,72 +243,109 @@ export class FluidScene {
 			return;
 		}
 
-		this.renderer.setPixelRatio(window.devicePixelRatio);
-		this.renderer.setSize(width, height, false);
-		this.camera.aspect = width / height;
-		this.camera.updateProjectionMatrix();
-		const projectionScale =
-			height *
-			window.devicePixelRatio *
-			0.5 *
-			this.camera.projectionMatrix.elements[5];
-		this.particles.setProjectionScale(projectionScale);
+		const pixelRatio = window.devicePixelRatio;
+		this.canvas.width = Math.max(1, Math.floor(width * pixelRatio));
+		this.canvas.height = Math.max(1, Math.floor(height * pixelRatio));
+		this.camera.setAspect(width / height);
+		this.rebuildDepth();
 		this.invalidate();
 	};
 
-	private readonly render = () => {
-		this.animationFrame = 0;
-		this.invalidated = false;
-		const controlsChanged = this.controls.update();
-		this.renderer.render(this.scene, this.camera);
+	private rebuildDepth() {
+		const gpu = this.gpu;
 
-		if (controlsChanged || this.invalidated) {
-			this.animationFrame = requestAnimationFrame(this.render);
-		}
-	};
-
-	private readonly invalidate = () => {
-		this.invalidated = true;
-
-		if (this.animationFrame === 0) {
-			this.animationFrame = requestAnimationFrame(this.render);
-		}
-	};
-
-	private readonly pick = (event: PointerEvent) => {
-		if (!this.particles.points.visible) {
+		if (gpu === null) {
 			return;
 		}
 
-		const bounds = this.renderer.domElement.getBoundingClientRect();
-		const pointer = new THREE.Vector2(
-			((event.clientX - bounds.left) / bounds.width) * 2 - 1,
-			-((event.clientY - bounds.top) / bounds.height) * 2 + 1,
-		);
-		this.raycaster.params.Points = { threshold: this.gridSpacing };
-		this.raycaster.setFromCamera(pointer, this.camera);
-		const intersection = this.raycaster.intersectObject(
-			this.particles.points,
-			false,
-		)[0];
-		this.onSelect(
-			intersection?.index === undefined
-				? null
-				: this.particles.particle(intersection.index),
-		);
+		const width = this.canvas.width;
+		const height = this.canvas.height;
+
+		if (
+			this.depthTexture !== null &&
+			this.depthTexture.width === width &&
+			this.depthTexture.height === height
+		) {
+			return;
+		}
+
+		this.depthTexture?.destroy();
+		this.depthTexture = gpu.device.createTexture({
+			size: { width, height },
+			format: "depth24plus",
+			usage: GPUTextureUsage.RENDER_ATTACHMENT,
+		});
+	}
+
+	private readonly render = () => {
+		this.animationFrame = 0;
+		const gpu = this.gpu;
+		const fields = this.fields;
+		const particles = this.particles;
+		const depth = this.depthTexture;
+
+		if (gpu === null || fields === null || particles === null || depth === null) {
+			return;
+		}
+
+		fields.writeFrame(this.camera.viewProj, this.camera.invViewProj, this.camera.position);
+		particles.writeFrame(this.camera);
+		const encoder = gpu.device.createCommandEncoder();
+		const pass = encoder.beginRenderPass({
+			colorAttachments: [
+				{
+					view: gpu.context.getCurrentTexture().createView(),
+					clearValue: CLEAR_COLOR,
+					loadOp: "clear",
+					storeOp: "store",
+				},
+			],
+			depthStencilAttachment: {
+				view: depth.createView(),
+				depthClearValue: 1,
+				depthLoadOp: "clear",
+				depthStoreOp: "store",
+			},
+		});
+		fields.encode(pass);
+		particles.encode(pass);
+
+		if (this.boundaryPipeline !== null && this.boundaryBindGroup !== null && this.boundaryBuffer !== null) {
+			pass.setPipeline(this.boundaryPipeline);
+			pass.setBindGroup(0, this.boundaryBindGroup);
+			pass.setVertexBuffer(0, this.boundaryBuffer);
+			pass.draw(24);
+		}
+
+		pass.end();
+		gpu.device.queue.submit([encoder.finish()]);
 	};
 
-	private createBoundary() {
-		const box = new THREE.BoxGeometry(1, 1, 1);
-		const geometry = new THREE.EdgesGeometry(box);
-		box.dispose();
-		const material = new THREE.LineBasicMaterial({
-			color: 0x544d43,
-			transparent: true,
-			opacity: 0.7,
-		});
-		const boundary = new THREE.LineSegments(geometry, material);
-		boundary.position.setScalar(0.5);
-		return boundary;
-	}
+	private readonly invalidate = () => {
+		if (this.animationFrame !== 0 || this.disposed) {
+			return;
+		}
+
+		this.animationFrame = requestAnimationFrame(this.render);
+	};
+
+	private readonly onPointerDown = (event: PointerEvent) => {
+		this.pointerDownX = event.clientX;
+		this.pointerDownY = event.clientY;
+	};
+
+	private readonly pick = (event: PointerEvent) => {
+		if (this.particles === null) {
+			return;
+		}
+
+		if (Math.hypot(event.clientX - this.pointerDownX, event.clientY - this.pointerDownY) > 4) {
+			return;
+		}
+
+		const bounds = this.canvas.getBoundingClientRect();
+		const ndcX = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+		const ndcY = -(((event.clientY - bounds.top) / bounds.height) * 2 - 1);
+		this.onSelect(this.particles.pick(this.camera.ray(ndcX, ndcY)));
+	};
 }

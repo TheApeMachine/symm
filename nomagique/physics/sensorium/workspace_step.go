@@ -2,21 +2,133 @@ package sensorium
 
 import (
 	"math"
+	"sort"
 )
 
 func (fluid *workspace) step() Reading {
 	fluid.scatterParticles()
 	fluid.gasRK2()
 
-	if fluid.particles > 0 {
-		fluid.gatherParticles()
-		fluid.planckExchange()
-		fluid.waveStep()
+	if fluid.particles == 0 {
+		fluid.psiRe.Zero()
+		fluid.psiIm.Zero()
+		return fluid.observe()
 	}
 
+	fluid.gatherParticles()
+	fluid.planckExchange()
+	fluid.waveStep()
+	fluid.projectSpatialWave()
+	return fluid.observe()
+}
+
+/*
+projectSpatialWave reconstructs Ψ(x) by CIC-splatting the mean GPE lattice
+onto the current particle supports. GPE itself keeps empty anchors.
+*/
+func (fluid *workspace) projectSpatialWave() {
+	fluid.meanHeads()
+	fluid.seedModeAnchors()
 	fluid.psiRe.Zero()
 	fluid.psiIm.Zero()
-	return fluid.observe()
+	fluid.engine.ProjectModesToSpatial(
+		fluid.psiModeReal,
+		fluid.psiModeImag,
+		fluid.anchorIdx,
+		fluid.anchorWeight,
+		fluid.pos,
+		fluid.psiRe,
+		fluid.psiIm,
+		modeAnchors,
+	)
+	fluid.engine.Synchronize()
+	fillInt32(fluid.anchorIdx.Int32Slice(), -1)
+	fluid.anchorWeight.Zero()
+}
+
+func (fluid *workspace) meanHeads() {
+	fluid.engine.Synchronize()
+	modes := int(fluid.domain.MaxModes)
+	real := fluid.psiModeReal.Float32Slice()
+	imag := fluid.psiModeImag.Float32Slice()
+	heads := make([][]float32, spectralHeads)
+	headImag := make([][]float32, spectralHeads)
+
+	for head := 0; head < spectralHeads; head++ {
+		heads[head] = fluid.psiRealHeads[head].Float32Slice()
+		headImag[head] = fluid.psiImagHeads[head].Float32Slice()
+	}
+
+	scale := float32(spectralHeads)
+
+	for mode := 0; mode < modes; mode++ {
+		var sumRe, sumIm float32
+
+		for head := 0; head < spectralHeads; head++ {
+			sumRe += heads[head][mode]
+			sumIm += headImag[head][mode]
+		}
+
+		real[mode] = sumRe / scale
+		imag[mode] = sumIm / scale
+	}
+}
+
+func (fluid *workspace) seedModeAnchors() {
+	modes := int(fluid.domain.MaxModes)
+	domega := fluid.domain.binWidth()
+	idx := fluid.anchorIdx.Int32Slice()
+	weight := fluid.anchorWeight.Float32Slice()
+	fillInt32(idx, -1)
+
+	for index := range weight {
+		weight[index] = 0
+	}
+
+	if fluid.particles == 0 || !(domega > 0) {
+		return
+	}
+
+	omega := fluid.omega.Float32Slice()
+	amp := fluid.amp.Float32Slice()
+	omegaMin := fluid.domain.OmegaMin
+	buckets := make([][]int, modes)
+
+	for particle := 0; particle < fluid.particles; particle++ {
+		bin := int(math.Round((float64(omega[particle]) - omegaMin) / domega))
+
+		if bin < 0 {
+			bin = 0
+		}
+
+		if bin >= modes {
+			bin = modes - 1
+		}
+
+		buckets[bin] = append(buckets[bin], particle)
+	}
+
+	for mode, members := range buckets {
+		if len(members) == 0 {
+			continue
+		}
+
+		sort.Slice(members, func(left, right int) bool {
+			return amp[members[left]] > amp[members[right]]
+		})
+		chosen := members
+
+		if len(chosen) > modeAnchors {
+			chosen = chosen[:modeAnchors]
+		}
+
+		base := mode * modeAnchors
+
+		for slot, particle := range chosen {
+			idx[base+slot] = int32(particle)
+			weight[base+slot] = amp[particle]
+		}
+	}
 }
 
 func (fluid *workspace) scatterParticles() {
