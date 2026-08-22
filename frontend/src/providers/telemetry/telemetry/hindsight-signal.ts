@@ -31,64 +31,180 @@ at():bigint {
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
-graphScore():number {
+action():string|null
+action(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+action(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+reason():string|null
+reason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+reason(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+cause():string|null
+cause(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+cause(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+graphScore():number {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 thesisScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+thesisConfidence():number {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+thesisSupport():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+thesisContradiction():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+thesisConditions():number {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+direction():number {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+confidence():number {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+admissionThreshold():number {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 opportunity():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 opportunityType():string|null
 opportunityType(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 opportunityType(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+predictiveReady():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+predictiveStatus():string|null
+predictiveStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+predictiveStatus(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 alternatives(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 alternativesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startHindsightSignal(builder:flatbuffers.Builder) {
-  builder.startObject(6);
+  builder.startObject(18);
 }
 
 static addAt(builder:flatbuffers.Builder, at:bigint) {
   builder.addFieldInt64(0, at, BigInt('0'));
 }
 
+static addAction(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(1, actionOffset, 0);
+}
+
+static addReason(builder:flatbuffers.Builder, reasonOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(2, reasonOffset, 0);
+}
+
+static addCause(builder:flatbuffers.Builder, causeOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(3, causeOffset, 0);
+}
+
 static addGraphScore(builder:flatbuffers.Builder, graphScore:number) {
-  builder.addFieldFloat64(1, graphScore, 0.0);
+  builder.addFieldFloat64(4, graphScore, 0.0);
 }
 
 static addThesisScore(builder:flatbuffers.Builder, thesisScore:number) {
-  builder.addFieldFloat64(2, thesisScore, 0.0);
+  builder.addFieldFloat64(5, thesisScore, 0.0);
+}
+
+static addThesisConfidence(builder:flatbuffers.Builder, thesisConfidence:number) {
+  builder.addFieldFloat64(6, thesisConfidence, 0.0);
+}
+
+static addThesisSupport(builder:flatbuffers.Builder, thesisSupport:number) {
+  builder.addFieldFloat64(7, thesisSupport, 0.0);
+}
+
+static addThesisContradiction(builder:flatbuffers.Builder, thesisContradiction:number) {
+  builder.addFieldFloat64(8, thesisContradiction, 0.0);
+}
+
+static addThesisConditions(builder:flatbuffers.Builder, thesisConditions:number) {
+  builder.addFieldFloat64(9, thesisConditions, 0.0);
+}
+
+static addDirection(builder:flatbuffers.Builder, direction:number) {
+  builder.addFieldFloat64(10, direction, 0.0);
+}
+
+static addConfidence(builder:flatbuffers.Builder, confidence:number) {
+  builder.addFieldFloat64(11, confidence, 0.0);
+}
+
+static addAdmissionThreshold(builder:flatbuffers.Builder, admissionThreshold:number) {
+  builder.addFieldFloat64(12, admissionThreshold, 0.0);
 }
 
 static addOpportunity(builder:flatbuffers.Builder, opportunity:boolean) {
-  builder.addFieldInt8(3, +opportunity, +false);
+  builder.addFieldInt8(13, +opportunity, +false);
 }
 
 static addOpportunityType(builder:flatbuffers.Builder, opportunityTypeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, opportunityTypeOffset, 0);
+  builder.addFieldOffset(14, opportunityTypeOffset, 0);
+}
+
+static addPredictiveReady(builder:flatbuffers.Builder, predictiveReady:boolean) {
+  builder.addFieldInt8(15, +predictiveReady, +false);
+}
+
+static addPredictiveStatus(builder:flatbuffers.Builder, predictiveStatusOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(16, predictiveStatusOffset, 0);
 }
 
 static addAlternatives(builder:flatbuffers.Builder, alternativesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, alternativesOffset, 0);
+  builder.addFieldOffset(17, alternativesOffset, 0);
 }
 
 static createAlternativesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -108,13 +224,25 @@ static endHindsightSignal(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createHindsightSignal(builder:flatbuffers.Builder, at:bigint, graphScore:number, thesisScore:number, opportunity:boolean, opportunityTypeOffset:flatbuffers.Offset, alternativesOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createHindsightSignal(builder:flatbuffers.Builder, at:bigint, actionOffset:flatbuffers.Offset, reasonOffset:flatbuffers.Offset, causeOffset:flatbuffers.Offset, graphScore:number, thesisScore:number, thesisConfidence:number, thesisSupport:number, thesisContradiction:number, thesisConditions:number, direction:number, confidence:number, admissionThreshold:number, opportunity:boolean, opportunityTypeOffset:flatbuffers.Offset, predictiveReady:boolean, predictiveStatusOffset:flatbuffers.Offset, alternativesOffset:flatbuffers.Offset):flatbuffers.Offset {
   HindsightSignal.startHindsightSignal(builder);
   HindsightSignal.addAt(builder, at);
+  HindsightSignal.addAction(builder, actionOffset);
+  HindsightSignal.addReason(builder, reasonOffset);
+  HindsightSignal.addCause(builder, causeOffset);
   HindsightSignal.addGraphScore(builder, graphScore);
   HindsightSignal.addThesisScore(builder, thesisScore);
+  HindsightSignal.addThesisConfidence(builder, thesisConfidence);
+  HindsightSignal.addThesisSupport(builder, thesisSupport);
+  HindsightSignal.addThesisContradiction(builder, thesisContradiction);
+  HindsightSignal.addThesisConditions(builder, thesisConditions);
+  HindsightSignal.addDirection(builder, direction);
+  HindsightSignal.addConfidence(builder, confidence);
+  HindsightSignal.addAdmissionThreshold(builder, admissionThreshold);
   HindsightSignal.addOpportunity(builder, opportunity);
   HindsightSignal.addOpportunityType(builder, opportunityTypeOffset);
+  HindsightSignal.addPredictiveReady(builder, predictiveReady);
+  HindsightSignal.addPredictiveStatus(builder, predictiveStatusOffset);
   HindsightSignal.addAlternatives(builder, alternativesOffset);
   return HindsightSignal.endHindsightSignal(builder);
 }
@@ -122,10 +250,22 @@ static createHindsightSignal(builder:flatbuffers.Builder, at:bigint, graphScore:
 unpack(): HindsightSignalT {
   return new HindsightSignalT(
     this.at(),
+    this.action(),
+    this.reason(),
+    this.cause(),
     this.graphScore(),
     this.thesisScore(),
+    this.thesisConfidence(),
+    this.thesisSupport(),
+    this.thesisContradiction(),
+    this.thesisConditions(),
+    this.direction(),
+    this.confidence(),
+    this.admissionThreshold(),
     this.opportunity(),
     this.opportunityType(),
+    this.predictiveReady(),
+    this.predictiveStatus(),
     this.bb!.createObjList<NamedNumber, NamedNumberT>(this.alternatives.bind(this), this.alternativesLength())
   );
 }
@@ -133,10 +273,22 @@ unpack(): HindsightSignalT {
 
 unpackTo(_o: HindsightSignalT): void {
   _o.at = this.at();
+  _o.action = this.action();
+  _o.reason = this.reason();
+  _o.cause = this.cause();
   _o.graphScore = this.graphScore();
   _o.thesisScore = this.thesisScore();
+  _o.thesisConfidence = this.thesisConfidence();
+  _o.thesisSupport = this.thesisSupport();
+  _o.thesisContradiction = this.thesisContradiction();
+  _o.thesisConditions = this.thesisConditions();
+  _o.direction = this.direction();
+  _o.confidence = this.confidence();
+  _o.admissionThreshold = this.admissionThreshold();
   _o.opportunity = this.opportunity();
   _o.opportunityType = this.opportunityType();
+  _o.predictiveReady = this.predictiveReady();
+  _o.predictiveStatus = this.predictiveStatus();
   _o.alternatives = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.alternatives.bind(this), this.alternativesLength());
 }
 }
@@ -144,24 +296,52 @@ unpackTo(_o: HindsightSignalT): void {
 export class HindsightSignalT implements flatbuffers.IGeneratedObject {
 constructor(
   public at: bigint = BigInt('0'),
+  public action: string|Uint8Array|null = null,
+  public reason: string|Uint8Array|null = null,
+  public cause: string|Uint8Array|null = null,
   public graphScore: number = 0.0,
   public thesisScore: number = 0.0,
+  public thesisConfidence: number = 0.0,
+  public thesisSupport: number = 0.0,
+  public thesisContradiction: number = 0.0,
+  public thesisConditions: number = 0.0,
+  public direction: number = 0.0,
+  public confidence: number = 0.0,
+  public admissionThreshold: number = 0.0,
   public opportunity: boolean = false,
   public opportunityType: string|Uint8Array|null = null,
+  public predictiveReady: boolean = false,
+  public predictiveStatus: string|Uint8Array|null = null,
   public alternatives: (NamedNumberT)[] = []
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const action = (this.action !== null ? builder.createString(this.action!) : 0);
+  const reason = (this.reason !== null ? builder.createString(this.reason!) : 0);
+  const cause = (this.cause !== null ? builder.createString(this.cause!) : 0);
   const opportunityType = (this.opportunityType !== null ? builder.createString(this.opportunityType!) : 0);
+  const predictiveStatus = (this.predictiveStatus !== null ? builder.createString(this.predictiveStatus!) : 0);
   const alternatives = HindsightSignal.createAlternativesVector(builder, builder.createObjectOffsetList(this.alternatives));
 
   return HindsightSignal.createHindsightSignal(builder,
     this.at,
+    action,
+    reason,
+    cause,
     this.graphScore,
     this.thesisScore,
+    this.thesisConfidence,
+    this.thesisSupport,
+    this.thesisContradiction,
+    this.thesisConditions,
+    this.direction,
+    this.confidence,
+    this.admissionThreshold,
     this.opportunity,
     opportunityType,
+    this.predictiveReady,
+    predictiveStatus,
     alternatives
   );
 }

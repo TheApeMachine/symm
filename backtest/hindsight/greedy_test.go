@@ -37,29 +37,23 @@ func TestRoundTrips(t *testing.T) {
 	})
 
 	Convey("Given a sawtooth series", t, func() {
-		// 100 -> 120 (up), back to 100, up to 125, back to 100.
+		// 100 -> 120 (up), back to 100, up to 125, back to 100. The later
+		// peak exceeds the first, so a hold from the first trough rides
+		// through the retracement to the higher peak.
 		result := RoundTrips(seriesFromPrices(100, 110, 120, 100, 110, 125, 100))
 
-		Convey("It should carve two separate round trips", func() {
-			So(len(result.Legs), ShouldEqual, 2)
+		Convey("It should hold one position from trough to the highest peak", func() {
+			So(len(result.Legs), ShouldEqual, 1)
 
-			Convey("The first leg spans the first rise", func() {
+			Convey("The single hold spans the full rise", func() {
 				So(result.Legs[0].BuyPrice, ShouldEqual, 100)
-				So(result.Legs[0].SellPrice, ShouldEqual, 120)
-			})
-
-			Convey("The second leg spans the second rise", func() {
-				So(result.Legs[1].BuyPrice, ShouldEqual, 100)
-				So(result.Legs[1].SellPrice, ShouldEqual, 125)
+				So(result.Legs[0].SellPrice, ShouldEqual, 125)
 			})
 		})
 
-		Convey("Sum of leg profits should equal greedy", func() {
-			expected := (120 - 100) + (125 - 100)
-			So(result.Greedy, ShouldAlmostEqual, expected, 1e-9)
-
-			legSum := result.Legs[0].ProfitPct + result.Legs[1].ProfitPct
-			So(legSum, ShouldAlmostEqual, 0.45, 1e-9)
+		Convey("Leg profit should be trough-to-peak while greedy stays per-step", func() {
+			So(result.Legs[0].ProfitPct, ShouldAlmostEqual, 0.25, 1e-9)
+			So(result.Greedy, ShouldAlmostEqual, 45.0, 1e-9)
 		})
 	})
 
@@ -121,17 +115,29 @@ func TestRoundTrips(t *testing.T) {
 	})
 
 	Convey("Given an adversarial spike-and-crash series", t, func() {
-		// 100 -> 900 -> 100 -> 800. The leg model buys the trough and sells
-		// the true peak, so the first leg books the 100->900 spike; a full
-		// retracement to 100 then seeds a second leg into the 800 rebound.
+		// 100 -> 900 -> 100 -> 800. The long-hold view books one position
+		// from the best entry to the best exit; the rebound to 800 never
+		// beats the 900 peak, so it stays inside the same hold.
 		result := RoundTrips(seriesFromPrices(100, 900, 100, 800))
 
-		Convey("It should capture every maximal round trip", func() {
-			So(len(result.Legs), ShouldEqual, 2)
+		Convey("It should capture the one dominant hold", func() {
+			So(len(result.Legs), ShouldEqual, 1)
 			So(result.Legs[0].BuyPrice, ShouldEqual, 100)
 			So(result.Legs[0].SellPrice, ShouldEqual, 900)
-			So(result.Legs[1].BuyPrice, ShouldEqual, 100)
-			So(result.Legs[1].SellPrice, ShouldEqual, 800)
+		})
+	})
+
+	Convey("Given a retracement that makes a new low", t, func() {
+		// 100 -> 120 -> 90 -> 130. The 90 print is a strictly better entry
+		// than 100, so the hold books 100->120 and a fresh hold starts at 90.
+		result := RoundTrips(seriesFromPrices(100, 110, 120, 90, 110, 130))
+
+		Convey("It should split once a better entry appears", func() {
+			So(len(result.Legs), ShouldEqual, 2)
+			So(result.Legs[0].BuyPrice, ShouldEqual, 100)
+			So(result.Legs[0].SellPrice, ShouldEqual, 120)
+			So(result.Legs[1].BuyPrice, ShouldEqual, 90)
+			So(result.Legs[1].SellPrice, ShouldEqual, 130)
 		})
 	})
 }

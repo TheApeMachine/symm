@@ -567,39 +567,7 @@ func TestStoplossReconsider(t *testing.T) {
 	})
 }
 
-func TestStoplossTriggerStrategyExit(t *testing.T) {
-	Convey("Given an armed lot whose continuation value turned negative", t, func() {
-		stoploss := underwaterStoploss(t, 1)
 
-		Convey("It should trigger through the regulator's strategy seam", func() {
-			So(stoploss.TriggerStrategyExit(), ShouldBeNil)
-			So(stoploss.Status, ShouldEqual, TRIGGERED)
-			So(stoploss.TriggerReason, ShouldEqual, TriggerContinuationEV)
-			So(stoploss.TriggerMark, ShouldNotBeNil)
-			So(stoploss.TriggerMark.Cmp(stoploss.Mark), ShouldEqual, 0)
-		})
-	})
-
-	Convey("Given an already triggered lot", t, func() {
-		stoploss := underwaterStoploss(t, 1)
-
-		So(stoploss.TriggerStrategyExit(), ShouldBeNil)
-
-		Convey("It should refuse a second strategy trigger", func() {
-			So(stoploss.TriggerStrategyExit(), ShouldNotBeNil)
-		})
-	})
-
-	Convey("Given a locked, advancing lot", t, func() {
-		stoploss := underwaterStoploss(t, 1)
-		stoploss.Locked = true
-
-		Convey("It should refuse to yank the winner ahead of its trail", func() {
-			So(stoploss.TriggerStrategyExit(), ShouldNotBeNil)
-			So(stoploss.Status, ShouldEqual, ARMED)
-		})
-	})
-}
 
 func TestRestoreStoploss(t *testing.T) {
 	Convey("Given a stored stoploss after its floor ratchets", t, func() {

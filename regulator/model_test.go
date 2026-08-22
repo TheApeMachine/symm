@@ -14,7 +14,8 @@ func TestNewOptimizer(t *testing.T) {
 		Convey("It should construct a supervised temporal manifold", func() {
 			So(err, ShouldBeNil)
 			So(model, ShouldNotBeNil)
-			So(model.coder, ShouldNotBeNil)
+			So(model.returnCoder, ShouldNotBeNil)
+			So(model.activityCoder, ShouldNotBeNil)
 			So(model.pending, ShouldBeNil)
 			So(model.resolved, ShouldEqual, 0)
 		})

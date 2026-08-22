@@ -88,6 +88,8 @@ type PredictiveCoder struct {
 	manifold *ResonanceManifold
 	ledger   *TemporalLedger
 	dynamics *nomagique.Stream
+	
+	currentHorizon int
 }
 
 /*
@@ -128,10 +130,11 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 	dynamics := nomagique.NewStream(PredictiveDynamics, nomagique.Frame{})
 
 	return &PredictiveCoder{
-		config:   config,
-		manifold: manifold,
-		ledger:   ledger,
-		dynamics: dynamics,
+		config:         config,
+		manifold:       manifold,
+		ledger:         ledger,
+		dynamics:       dynamics,
+		currentHorizon: 1,
 	}
 }
 
@@ -198,11 +201,27 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 	skill, skillReady := pc.manifold.TaskSkill()
 	precision, precisionReady := pc.manifold.TaskPrecision()
 
-	supportedHorizon := 1
-	if skillReady && skill > 1.0 {
-		expansion := int(math.Floor(skill))
-		supportedHorizon = min(pc.config.MaxHorizon, 1+expansion)
+	if skillReady {
+		if skill >= 1.0 {
+			// Boost horizon based on how far above baseline we are
+			boost := int(math.Ceil((skill - 1.0) * 10))
+			if boost < 1 {
+				boost = 1 // At least 1 if above baseline
+			}
+			pc.currentHorizon = min(pc.config.MaxHorizon, pc.currentHorizon+boost)
+		} else if skill < 0.95 {
+			// Only collapse if significantly below baseline
+			drop := int(math.Ceil((1.0 - skill) * 10))
+			if drop < 1 {
+				drop = 1
+			}
+			pc.currentHorizon = max(1, pc.currentHorizon-drop)
+		}
+	} else {
+		pc.currentHorizon = 1
 	}
+	
+	supportedHorizon := pc.currentHorizon
 
 	// 5. Generate forward rollouts & contraction envelope
 	forwardCurve := pc.manifold.RolloutTaskPrediction(supportedHorizon)

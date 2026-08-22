@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/nomagique/mcts"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/types"
+	graphtypes "github.com/theapemachine/symm/types/graph"
 )
 
 /*
@@ -17,17 +18,10 @@ directional evidence summary, its identifiable opportunity archetype, its
 reserve qualification, its holding status, and its calibrated maturation dynamics.
 */
 type portfolioLeg struct {
-	Symbol            string
-	Summary           logicgraph.OpportunitySummary
-	Opportunity       logicgraph.OpportunityScore
-	ReserveEligible   bool
-	Held              bool
-	Observed          int
-	Horizon           int
-	Maturing          bool
-	Invalidated       bool
-	SwitchingCost     float64
-	ContinuationValue float64
+	Symbol          string
+	Summary         graphtypes.OpportunitySummary
+	Opportunity     logicgraph.OpportunityScore
+	ReserveEligible bool
 }
 
 /*
@@ -39,12 +33,7 @@ func portfolioEnterReference(index int) float64 {
 	return float64(index)*3 + portfolioEnterOffset
 }
 
-/*
-portfolioExitReference returns the exact action value that exits one held leg.
-*/
-func portfolioExitReference(index int) float64 {
-	return float64(index)*3 + portfolioExitOffset
-}
+
 
 /*
 portfolioHoldReference returns the exact action value that keeps one leg flat.
@@ -104,11 +93,7 @@ func NewPortfolioState(
 ) *PortfolioState {
 	held := make([]bool, len(legs))
 
-	for index := range legs {
-		if legs[index].Held {
-			held[index] = true
-		}
-	}
+
 
 	// slots and reserveSlots are the desk's open lanes, which already account
 	// for any held positions; the state must not subtract them twice.
@@ -194,10 +179,6 @@ func (state *PortfolioState) GetReward() float64 {
 			score = leg.Summary.Score
 		}
 
-		if leg.Held && leg.Maturing && !leg.Invalidated && leg.ContinuationValue > 0 {
-			score = math.Max(score, leg.ContinuationValue)
-		}
-
 		reward += score
 	}
 
@@ -246,11 +227,6 @@ func (state *PortfolioState) ApplyAction(action float64) mcts.State {
 
 	switch kind {
 	case portfolioEnterOffset:
-		if child.held[index] {
-			child.err = errStateAlreadyHeld
-			return child
-		}
-
 		if leg.ReserveEligible && child.reserveSlots > 0 {
 			child.reserveSlots--
 			child.held[index] = true
@@ -261,25 +237,6 @@ func (state *PortfolioState) ApplyAction(action float64) mcts.State {
 			child.slots--
 			child.held[index] = true
 			return child
-		}
-	case portfolioExitOffset:
-		if !child.held[index] {
-			child.err = errStateNotHeld
-			return child
-		}
-
-		child.held[index] = false
-
-		if leg.ReserveEligible {
-			child.reserveSlots++
-		}
-
-		if !leg.ReserveEligible {
-			child.slots++
-		}
-
-		if leg.Held && leg.Maturing && !leg.Invalidated && leg.SwitchingCost > 0 {
-			child.penalty += leg.SwitchingCost
 		}
 	case portfolioHoldOffset:
 	default:
@@ -378,29 +335,7 @@ func portfolioSeed(state *PortfolioState) int64 {
 		}
 
 		mix(reserveEligible)
-		held := byte(0)
 
-		if leg.Held {
-			held = 1
-		}
-
-		mix(held)
-		maturing := byte(0)
-
-		if leg.Maturing {
-			maturing = 1
-		}
-
-		mix(maturing)
-		invalidated := byte(0)
-
-		if leg.Invalidated {
-			invalidated = 1
-		}
-
-		mix(invalidated)
-		mixNumber(math.Float64bits(leg.SwitchingCost))
-		mixNumber(math.Float64bits(leg.ContinuationValue))
 	}
 
 	return int64(fingerprint)

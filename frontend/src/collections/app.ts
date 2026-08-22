@@ -24,10 +24,22 @@ export type BacktestCapture = {
 
 export type HindsightSignal = {
 	at: string | null;
+	action?: string;
+	reason?: string;
+	cause?: string;
 	graphScore: number;
 	thesisScore: number;
+	thesisConfidence?: number;
+	thesisSupport?: number;
+	thesisContradiction?: number;
+	thesisConditions?: number;
+	direction?: number;
+	confidence?: number;
+	admissionThreshold?: number;
 	opportunity: boolean;
 	opportunityType?: string;
+	predictiveReady?: boolean;
+	predictiveStatus?: string;
 	alternatives: Record<string, number> | null;
 };
 
@@ -43,6 +55,8 @@ export type HindsightLeg = {
 export type HindsightOpportunity = {
 	leg: HindsightLeg;
 	signal: HindsightSignal;
+	journal?: HindsightSignal[];
+	why?: string;
 	captured: boolean;
 	missed: boolean;
 };

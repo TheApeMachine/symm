@@ -71,6 +71,7 @@ func NewSolver(
 		ui:         ui,
 		pool:       types.NewSymbolPool(types.ShardWorkers()),
 	}
+	
 	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
 	thesis.Work(types.SourceCategory).Register(solver.work)
 

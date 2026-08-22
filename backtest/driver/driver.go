@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -54,7 +55,6 @@ type Driver struct {
 	state   State
 
 	commands         chan command
-	captures         []backtest.CaptureInfo
 	hindsightRunning atomic.Int64
 }
 
@@ -74,12 +74,6 @@ func NewDriver(
 	ui *transport.MapReduce[*types.UIFrame],
 	onState func(State),
 ) *Driver {
-	captures, err := store.ListCaptures()
-
-	if err != nil {
-		errnie.Error(errnie.Err(errnie.Internal, "backtest: list captures", err))
-	}
-
 	driver := &Driver{
 		ctx:      ctx,
 		store:    store,
@@ -88,7 +82,6 @@ func NewDriver(
 		onState:  onState,
 		commands: make(chan command, 8),
 		state:    State{},
-		captures: captures,
 	}
 
 	go driver.supervise()
@@ -159,20 +152,18 @@ func (driver *Driver) silentUpdate(apply func(*State)) {
 }
 
 /*
-supervise owns the one live session. Every select or seek tears the session
-down and boots a fresh stack; play and pause only toggle the pump.
+supervise owns the one live session. Select loads a capture and holds at its
+first frame — playback begins only when the dashboard sends play. Seek rebuilds
+the stack and parks at the target frame; play and pause toggle the pump.
 */
 func (driver *Driver) supervise() {
 	holdAt := time.Time{}
+	playing := false
 	captureID := int64(0)
-
-	if len(driver.captures) > 0 {
-		captureID = driver.captures[0].ID
-	}
 
 	for {
 		if captureID != 0 {
-			driver.runSession(captureID, holdAt)
+			driver.runSession(captureID, holdAt, playing)
 		}
 
 		select {
@@ -183,6 +174,33 @@ func (driver *Driver) supervise() {
 			case "select":
 				captureID = next.captureID
 				holdAt = time.Time{}
+				playing = false
+
+				// Flashing the loading state before the boot finishes keeps
+				// the click visible even while a large capture profiles.
+				driver.update(func(state *State) {
+					state.CaptureID = captureID
+					state.Rebooting = true
+					state.Playing = false
+				})
+
+				startedAt, _, err := driver.store.Bounds(captureID)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.Internal,
+						"backtest: capture bounds",
+						err,
+					))
+
+					driver.update(func(state *State) {
+						state.Rebooting = false
+					})
+
+					break
+				}
+
+				holdAt = startedAt
 
 				// Hindsight is cheap to start and runs on its own store
 				// connection, so every capture selection refreshes the
@@ -190,14 +208,11 @@ func (driver *Driver) supervise() {
 				driver.Hindsight(captureID)
 			case "seek":
 				holdAt = next.at
+				playing = false
 			case "play":
-				driver.update(func(state *State) { state.Playing = true })
-
-				continue
+				playing = true
 			case "pause":
-				driver.update(func(state *State) { state.Playing = false })
-
-				continue
+				playing = false
 			}
 		}
 	}
@@ -206,9 +221,11 @@ func (driver *Driver) supervise() {
 /*
 runSession boots one full stack over the capture and pumps frames until the
 capture ends, the session is replaced, or playback is parked at the hold
-position.
+position. The frame cursor streams straight from the store — nothing is
+preloaded into memory — and holds its connection only for the length of the
+cursor.
 */
-func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
+func (driver *Driver) runSession(captureID int64, holdAt time.Time, playing bool) {
 	startedAt, endedAt, err := driver.store.Bounds(captureID)
 
 	if err != nil {
@@ -284,9 +301,15 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 
 	publicFeed, privateFeed := market.Feeds()
 	thesis := types.NewThesis(sessionCtx, driver.ui)
+
+	// The replay must record its decision stream into the same store the
+	// tape lives in, otherwise hindsight has prices but no thesis context —
+	// which shows up as all-zero thesis scores and an empty audit window.
+	recorder := &audit.Recorder{EventSink: driver.store.WriteEvent}
 	system := cmd.BootWithHub(
 		sessionCtx, thesis,
 		publicFeed, privateFeed, driver.ui, driver.hub,
+		recorder,
 	)
 
 	if system == nil {
@@ -298,7 +321,12 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 
 	market.WithStagedReplay(thesis, system.Error)
 
-	go errnie.Error(system.Run())
+	// system.Run blocks until the whole stack shuts down, so it must run in
+	// its own goroutine; evaluating it as an argument would hold the pump
+	// hostage inside the boot and never reach the frame loop below.
+	go func() {
+		errnie.Error(system.Run())
+	}()
 
 	market.Drive(system)
 
@@ -311,7 +339,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 
 	driver.update(func(state *State) {
 		state.Rebooting = false
-		state.Playing = holdAt.IsZero()
+		state.Playing = playing
 	})
 
 	from := holdAt
@@ -329,14 +357,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 
 	defer release()
 
-	fastForward := !holdAt.IsZero()
 	previousAt := from
-
-	paused := make(chan struct{})
-
-	if !driver.Snapshot().Playing {
-		close(paused)
-	}
 
 	for {
 		select {
@@ -344,24 +365,12 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 			return
 		case next := <-driver.commands:
 			switch next.kind {
-			case "pause":
-				select {
-				case <-paused:
-				default:
-					close(paused)
-				}
-
-				driver.update(func(state *State) { state.Playing = false })
+			case "play":
+				driver.update(func(state *State) { state.Playing = true })
 
 				continue
-			case "play":
-				select {
-				case <-paused:
-					paused = make(chan struct{})
-				default:
-				}
-
-				driver.update(func(state *State) { state.Playing = true })
+			case "pause":
+				driver.update(func(state *State) { state.Playing = false })
 
 				continue
 			default:
@@ -394,17 +403,17 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 			return
 		}
 
-		select {
-		case <-paused:
-			driver.silentUpdate(func(state *State) { state.Position = frame.ReceivedAt })
+		driver.silentUpdate(func(state *State) {
+			state.Position = frame.ReceivedAt
+		})
 
-			<-paused
-
-			paused = make(chan struct{})
-		default:
+		if !driver.Snapshot().Playing {
+			if driver.parkUntilResume() {
+				return
+			}
 		}
 
-		if !fastForward && frame.ReceivedAt.After(previousAt) {
+		if frame.ReceivedAt.After(previousAt) {
 			select {
 			case <-time.After(frame.ReceivedAt.Sub(previousAt)):
 			case <-sessionCtx.Done():
@@ -423,8 +432,32 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time) {
 		}
 
 		previousAt = frame.ReceivedAt
+	}
+}
 
-		driver.silentUpdate(func(state *State) { state.Position = frame.ReceivedAt })
+/*
+parkUntilResume blocks the pump on the frame it has read but not yet applied.
+Play unparks in place; select and seek release the frame cursor and return a
+teardown signal so supervise can boot the newly requested session.
+*/
+func (driver *Driver) parkUntilResume() bool {
+	for {
+		select {
+		case <-driver.ctx.Done():
+			return true
+		case next := <-driver.commands:
+			switch next.kind {
+			case "play":
+				driver.update(func(state *State) { state.Playing = true })
+
+				return false
+			case "pause":
+				driver.update(func(state *State) { state.Playing = false })
+			default:
+				driver.send(next)
+				return true
+			}
+		}
 	}
 }
 

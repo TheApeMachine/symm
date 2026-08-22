@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -73,25 +74,45 @@ func NewPositionStore(path string) (*PositionStore, error) {
 
 	database.SetMaxOpenConns(1)
 
-	if _, err := database.Exec(positionStoplossSchema); err != nil {
+	store := &PositionStore{database: database}
+
+	if err := store.EnsureSchema(); err != nil {
 		_ = database.Close()
-		return nil, errnie.Error(errnie.Err(
+		return nil, err
+	}
+
+	return store, nil
+}
+
+/*
+EnsureSchema creates the required tables if they do not already exist.
+*/
+func (store *PositionStore) EnsureSchema() error {
+	if store == nil || store.database == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position store: database required",
+			nil,
+		))
+	}
+
+	if _, err := store.database.Exec(positionStoplossSchema); err != nil {
+		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"position store: schema failed",
 			err,
 		))
 	}
 
-	if _, err := database.Exec(thesisCheckpointSchema); err != nil {
-		_ = database.Close()
-		return nil, errnie.Error(errnie.Err(
+	if _, err := store.database.Exec(thesisCheckpointSchema); err != nil {
+		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"position store: thesis schema failed",
 			err,
 		))
 	}
 
-	return &PositionStore{database: database}, nil
+	return nil
 }
 
 /*
@@ -112,10 +133,23 @@ func (store *PositionStore) SaveThesis(thesis *types.Thesis) error {
 		))
 	}
 
-	if _, err = store.database.Exec(`
-INSERT INTO thesis_checkpoints (observed_at, state) VALUES (?, ?)`,
-		thesis.At.UTC().Format(time.RFC3339Nano), state,
-	); err != nil {
+	if err := store.saveThesisCheckpoint(thesis.At, state); err != nil {
+		if isNoSuchTable(err) {
+			if schemaErr := store.EnsureSchema(); schemaErr != nil {
+				return schemaErr
+			}
+
+			if retryErr := store.saveThesisCheckpoint(thesis.At, state); retryErr != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("position store: save thesis failed [%s]", retryErr.Error()),
+					retryErr,
+				))
+			}
+
+			return nil
+		}
+
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			fmt.Sprintf("position store: save thesis failed [%s]", err.Error()),
@@ -123,18 +157,25 @@ INSERT INTO thesis_checkpoints (observed_at, state) VALUES (?, ?)`,
 		))
 	}
 
+	return nil
+}
+
+func (store *PositionStore) saveThesisCheckpoint(at time.Time, state []byte) error {
+	if _, err := store.database.Exec(`
+INSERT INTO thesis_checkpoints (observed_at, state) VALUES (?, ?)`,
+		at.UTC().Format(time.RFC3339Nano), state,
+	); err != nil {
+		return err
+	}
+
 	// Checkpoints exist for recovery of recently admitted entries; keeping
 	// every one ever written grows the database without bound.
-	if _, err = store.database.Exec(`
+	if _, err := store.database.Exec(`
 DELETE FROM thesis_checkpoints
 WHERE id <= (SELECT id FROM thesis_checkpoints ORDER BY id DESC LIMIT 1 OFFSET ?)`,
 		checkpointRetention,
 	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("position store: checkpoint retention failed [%s]", err.Error()),
-			err,
-		))
+		return err
 	}
 
 	return nil
@@ -162,14 +203,23 @@ func (store *PositionStore) Save(stoploss *types.Stoploss) error {
 		))
 	}
 
-	_, err = store.database.Exec(`
-INSERT INTO position_stoplosses (symbol, state) VALUES (?, ?)
-ON CONFLICT(symbol) DO UPDATE SET state = excluded.state`,
-		stoploss.Symbol,
-		state,
-	)
+	if err := store.saveStoploss(stoploss.Symbol, state); err != nil {
+		if isNoSuchTable(err) {
+			if schemaErr := store.EnsureSchema(); schemaErr != nil {
+				return schemaErr
+			}
 
-	if err != nil {
+			if retryErr := store.saveStoploss(stoploss.Symbol, state); retryErr != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("position store: save stoploss failed [%s]", retryErr.Error()),
+					retryErr,
+				))
+			}
+
+			return nil
+		}
+
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			fmt.Sprintf("position store: save stoploss failed [%s]", err.Error()),
@@ -178,6 +228,17 @@ ON CONFLICT(symbol) DO UPDATE SET state = excluded.state`,
 	}
 
 	return nil
+}
+
+func (store *PositionStore) saveStoploss(symbol string, state []byte) error {
+	_, err := store.database.Exec(`
+INSERT INTO position_stoplosses (symbol, state) VALUES (?, ?)
+ON CONFLICT(symbol) DO UPDATE SET state = excluded.state`,
+		symbol,
+		state,
+	)
+
+	return err
 }
 
 /*
@@ -190,7 +251,7 @@ func (store *PositionStore) Load(
 	if store == nil || store.database == nil || symbol == "" {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"position store: database and symbol required",
+			"position store: database required",
 			nil,
 		))
 	}
@@ -200,6 +261,14 @@ func (store *PositionStore) Load(
 		"SELECT state FROM position_stoplosses WHERE symbol = ?",
 		symbol,
 	).Scan(&state)
+
+	if isNoSuchTable(err) {
+		if schemaErr := store.EnsureSchema(); schemaErr != nil {
+			return nil, schemaErr
+		}
+
+		return nil, nil
+	}
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -223,7 +292,7 @@ func (store *PositionStore) Delete(symbol string) error {
 	if store == nil || store.database == nil || symbol == "" {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"position store: database and symbol required",
+			"position store: database required",
 			nil,
 		))
 	}
@@ -231,6 +300,14 @@ func (store *PositionStore) Delete(symbol string) error {
 	if _, err := store.database.Exec(
 		"DELETE FROM position_stoplosses WHERE symbol = ?", symbol,
 	); err != nil {
+		if isNoSuchTable(err) {
+			if schemaErr := store.EnsureSchema(); schemaErr != nil {
+				return schemaErr
+			}
+
+			return nil
+		}
+
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			fmt.Sprintf("position store: delete stoploss failed for %s [%s]", symbol, err.Error()),
@@ -250,4 +327,12 @@ func (store *PositionStore) Close() error {
 	}
 
 	return store.database.Close()
+}
+
+func isNoSuchTable(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return strings.Contains(err.Error(), "no such table")
 }

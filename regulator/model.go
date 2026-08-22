@@ -82,7 +82,8 @@ optimizer learns the temporal response from one applied control vector to the
 next account log return and selects the next bounded intervention.
 */
 type optimizer struct {
-	coder             *learning.ResonanceManifold
+	returnCoder       *learning.PredictiveCoder
+	activityCoder     *learning.PredictiveCoder
 	space             *controlSpace
 	returnScale       *adaptive.Standardizer
 	drawdownScale     *adaptive.Standardizer
@@ -114,21 +115,37 @@ func newOptimizer(config *system.Config) (*optimizer, error) {
 	}
 
 	inputCount := regulatorContextCount + controlCount
-	architecture := []int{inputCount, inputCount + controlCount, inputCount}
-	coder := learning.NewResonanceManifold(
-		architecture,
-		targetCount,
-		config.Resonance.LearningRate,
-	)
+	arch := []int{inputCount, inputCount + controlCount, inputCount}
 
-	if coder == nil {
-		return nil, fmt.Errorf("regulator: predictive-coding manifold construction failed")
+	returnCoder := learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
+		CustomArch: arch,
+		Target:     learning.IdentityTarget(),
+		MaxHorizon: 1,
+		Pace:       config.Resonance.LearningRate,
+		Learn:      true,
+	})
+
+	if returnCoder == nil {
+		return nil, fmt.Errorf("regulator: return predictive coder construction failed")
+	}
+
+	activityCoder := learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
+		CustomArch: arch,
+		Target:     learning.IdentityTarget(),
+		MaxHorizon: 1,
+		Pace:       config.Resonance.LearningRate,
+		Learn:      true,
+	})
+
+	if activityCoder == nil {
+		return nil, fmt.Errorf("regulator: activity predictive coder construction failed")
 	}
 
 	initial := space.current(config)
 
 	return &optimizer{
-		coder:             coder,
+		returnCoder:       returnCoder,
+		activityCoder:     activityCoder,
 		space:             space,
 		returnScale:       adaptive.NewStandardizer(),
 		drawdownScale:     adaptive.NewStandardizer(),
@@ -168,16 +185,26 @@ func (optimizer *optimizer) update(
 
 	input := optimizer.input(context, selected)
 
-	if _, err := optimizer.coder.SettleFromBatchOptions(
+	if _, err := optimizer.returnCoder.Manifold().SettleFromBatchOptions(
 		input,
 		nil,
 		false,
-		// Supervised resolution advances the retained temporal state. Advancing
-		// here would replace the real prior with the candidate before it occurs.
 		false,
 	); err != nil {
 		return optimizationResult{}, fmt.Errorf(
-			"regulator: settle selected control state: %w",
+			"regulator: settle selected return control state: %w",
+			err,
+		)
+	}
+
+	if _, err := optimizer.activityCoder.Manifold().SettleFromBatchOptions(
+		input,
+		nil,
+		false,
+		false,
+	); err != nil {
+		return optimizationResult{}, fmt.Errorf(
+			"regulator: settle selected activity control state: %w",
 			err,
 		)
 	}
@@ -196,8 +223,8 @@ func (optimizer *optimizer) update(
 		activityReady: forecastReady,
 		skill:         skill,
 		skillReady:    skillReady,
-		surprise:      optimizer.coder.ReconstructionError(),
-		energy:        optimizer.coder.Energy(),
+		surprise:      optimizer.returnCoder.Manifold().ReconstructionError(),
+		energy:        optimizer.returnCoder.Manifold().Energy(),
 		exploring:     exploring,
 	}
 
@@ -212,13 +239,22 @@ func (optimizer *optimizer) resolve(periodReturn float64, active bool) error {
 		return nil
 	}
 
-	if _, err := optimizer.coder.SettleFromBatchOptions(
+	if _, err := optimizer.returnCoder.Manifold().SettleFromBatchOptions(
 		optimizer.pending,
-		[]float64{periodReturn, readiness(active)},
+		[]float64{periodReturn},
 		true,
 		false,
 	); err != nil {
-		return fmt.Errorf("regulator: resolve prior control outcome: %w", err)
+		return fmt.Errorf("regulator: resolve prior return outcome: %w", err)
+	}
+
+	if _, err := optimizer.activityCoder.Manifold().SettleFromBatchOptions(
+		optimizer.pending,
+		[]float64{readiness(active)},
+		true,
+		false,
+	); err != nil {
+		return fmt.Errorf("regulator: resolve prior activity outcome: %w", err)
 	}
 
 	optimizer.resolved++
@@ -229,7 +265,7 @@ func (optimizer *optimizer) selectControls(
 	context []float64,
 	active bool,
 ) (controlVector, bool, float64, bool, error) {
-	skill, skillReady := optimizer.coder.TaskSkill()
+	skill, skillReady := optimizer.returnCoder.Manifold().TaskSkill()
 
 	if !active {
 		selected := optimizer.current
@@ -280,14 +316,28 @@ func (optimizer *optimizer) best(
 	}
 
 	for _, candidate := range candidates {
-		if _, err := optimizer.coder.SettleFromBatchOptions(
-			optimizer.input(context, candidate),
+		candidateInput := optimizer.input(context, candidate)
+
+		if _, err := optimizer.returnCoder.Manifold().SettleFromBatchOptions(
+			candidateInput,
 			nil,
 			false,
 			false,
 		); err != nil {
 			return controlVector{}, false, fmt.Errorf(
-				"regulator: settle candidate control state: %w",
+				"regulator: settle candidate return control state: %w",
+				err,
+			)
+		}
+
+		if _, err := optimizer.activityCoder.Manifold().SettleFromBatchOptions(
+			candidateInput,
+			nil,
+			false,
+			false,
+		); err != nil {
+			return controlVector{}, false, fmt.Errorf(
+				"regulator: settle candidate activity control state: %w",
 				err,
 			)
 		}
@@ -430,7 +480,7 @@ func (optimizer *optimizer) forecast() (
 	bool,
 	error,
 ) {
-	forecasts, err := optimizer.coder.RolloutTaskForecast(1)
+	returnForecasts, err := optimizer.returnCoder.Manifold().RolloutTaskForecast(1)
 
 	if err != nil {
 		return learning.RLSOutput{}, learning.RLSOutput{}, false, fmt.Errorf(
@@ -439,12 +489,21 @@ func (optimizer *optimizer) forecast() (
 		)
 	}
 
-	if len(forecasts) != targetCount || !forecasts[targetReturn].Ready ||
-		!forecasts[targetActivity].Ready {
+	activityForecasts, err := optimizer.activityCoder.Manifold().RolloutTaskForecast(1)
+
+	if err != nil {
+		return learning.RLSOutput{}, learning.RLSOutput{}, false, fmt.Errorf(
+			"regulator: forecast candidate account activity: %w",
+			err,
+		)
+	}
+
+	if len(returnForecasts) == 0 || !returnForecasts[0].Ready ||
+		len(activityForecasts) == 0 || !activityForecasts[0].Ready {
 		return learning.RLSOutput{}, learning.RLSOutput{}, false, nil
 	}
 
-	return forecasts[targetReturn], forecasts[targetActivity], true, nil
+	return returnForecasts[0], activityForecasts[0], true, nil
 }
 
 func readiness(ready bool) float64 {

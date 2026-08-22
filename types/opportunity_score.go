@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 	"time"
+
 )
 
 /*
@@ -143,12 +144,6 @@ func (graph *Graph) legTrust(
 	return bestTrust
 }
 
-/*
-nodeInfluence is the relational magnitude of a claim: the unit-interval
-normalized metric when the producer emitted one, otherwise presence (1) so a
-raw-only physics reading still participates without treating a price as a
-weight.
-*/
 func NodeInfluence(node *Node) float64 {
 	if node == nil {
 		return 0

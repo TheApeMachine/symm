@@ -37,18 +37,35 @@ signal(obj?:HindsightSignal):HindsightSignal|null {
   return offset ? (obj || new HindsightSignal()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-captured():boolean {
+journal(index: number, obj?:HindsightSignal):HindsightSignal|null {
   const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? (obj || new HindsightSignal()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+journalLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+why():string|null
+why(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+why(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+captured():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 missed():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
+  const offset = this.bb!.__offset(this.bb_pos, 14);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 static startHindsightOpportunity(builder:flatbuffers.Builder) {
-  builder.startObject(4);
+  builder.startObject(6);
 }
 
 static addLeg(builder:flatbuffers.Builder, legOffset:flatbuffers.Offset) {
@@ -59,12 +76,32 @@ static addSignal(builder:flatbuffers.Builder, signalOffset:flatbuffers.Offset) {
   builder.addFieldOffset(1, signalOffset, 0);
 }
 
+static addJournal(builder:flatbuffers.Builder, journalOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(2, journalOffset, 0);
+}
+
+static createJournalVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startJournalVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addWhy(builder:flatbuffers.Builder, whyOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(3, whyOffset, 0);
+}
+
 static addCaptured(builder:flatbuffers.Builder, captured:boolean) {
-  builder.addFieldInt8(2, +captured, +false);
+  builder.addFieldInt8(4, +captured, +false);
 }
 
 static addMissed(builder:flatbuffers.Builder, missed:boolean) {
-  builder.addFieldInt8(3, +missed, +false);
+  builder.addFieldInt8(5, +missed, +false);
 }
 
 static endHindsightOpportunity(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -77,6 +114,8 @@ unpack(): HindsightOpportunityT {
   return new HindsightOpportunityT(
     (this.leg() !== null ? this.leg()!.unpack() : null),
     (this.signal() !== null ? this.signal()!.unpack() : null),
+    this.bb!.createObjList<HindsightSignal, HindsightSignalT>(this.journal.bind(this), this.journalLength()),
+    this.why(),
     this.captured(),
     this.missed()
   );
@@ -86,6 +125,8 @@ unpack(): HindsightOpportunityT {
 unpackTo(_o: HindsightOpportunityT): void {
   _o.leg = (this.leg() !== null ? this.leg()!.unpack() : null);
   _o.signal = (this.signal() !== null ? this.signal()!.unpack() : null);
+  _o.journal = this.bb!.createObjList<HindsightSignal, HindsightSignalT>(this.journal.bind(this), this.journalLength());
+  _o.why = this.why();
   _o.captured = this.captured();
   _o.missed = this.missed();
 }
@@ -95,6 +136,8 @@ export class HindsightOpportunityT implements flatbuffers.IGeneratedObject {
 constructor(
   public leg: HindsightLegT|null = null,
   public signal: HindsightSignalT|null = null,
+  public journal: (HindsightSignalT)[] = [],
+  public why: string|Uint8Array|null = null,
   public captured: boolean = false,
   public missed: boolean = false
 ){}
@@ -103,10 +146,14 @@ constructor(
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const leg = (this.leg !== null ? this.leg!.pack(builder) : 0);
   const signal = (this.signal !== null ? this.signal!.pack(builder) : 0);
+  const journal = HindsightOpportunity.createJournalVector(builder, builder.createObjectOffsetList(this.journal));
+  const why = (this.why !== null ? builder.createString(this.why!) : 0);
 
   HindsightOpportunity.startHindsightOpportunity(builder);
   HindsightOpportunity.addLeg(builder, leg);
   HindsightOpportunity.addSignal(builder, signal);
+  HindsightOpportunity.addJournal(builder, journal);
+  HindsightOpportunity.addWhy(builder, why);
   HindsightOpportunity.addCaptured(builder, this.captured);
   HindsightOpportunity.addMissed(builder, this.missed);
 

@@ -292,8 +292,11 @@ func TestBookUpdate(t *testing.T) {
 			}},
 		}
 
-		Convey("It should return the fatal mismatch", func() {
+		Convey("It should not tear down the system and should schedule a resync", func() {
 			So(managed.Update(event, knownGood), ShouldBeNil)
+
+			resyncs := 0
+			managed.resubscribe = func() { resyncs++ }
 
 			diverged := &kraken.Level3{Data: []kraken.Level3Data{{
 				Symbol:   "CELR/USD",
@@ -305,7 +308,19 @@ func TestBookUpdate(t *testing.T) {
 				}},
 			}}}
 
-			So(managed.Update(event, diverged), ShouldNotBeNil)
+			So(managed.Update(event, diverged), ShouldBeNil)
+			So(resyncs, ShouldEqual, 1)
+
+			Convey("And coalesce a flood of mismatches into one resync", func() {
+				So(managed.Update(event, diverged), ShouldBeNil)
+				So(managed.Update(event, diverged), ShouldBeNil)
+				So(resyncs, ShouldEqual, 1)
+
+				managed.resyncDone()
+
+				So(managed.Update(event, diverged), ShouldBeNil)
+				So(resyncs, ShouldEqual, 2)
+			})
 		})
 	})
 

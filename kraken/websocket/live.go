@@ -294,6 +294,14 @@ func NewWithClient(
 				thesis.Symbol(data.Symbol).AppendLevel3(data)
 			}
 		}
+		// A checksum divergence recovers by re-running the same whole-universe
+		// level3 subscribe the startup path uses, on this child's already
+		// connected socket. book.symbols is filled once the parent assigns the
+		// group, so the closure reads it lazily at recovery time.
+		live.book.resubscribe = func() {
+			live.subscribeLevel3Group(live)
+			live.book.resyncDone()
+		}
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
@@ -719,17 +727,31 @@ func (live *Live) SubL3(symbols []string) {
 		}
 
 		conn.symbols = append([]string{}, groups...)
+		live.subscribeLevel3Group(conn)
+	}
+}
 
-		for group := range slices.Chunk(groups, 40) {
-			if conn.book != nil {
-				for _, symbol := range group {
-					conn.book.Create(symbol, viper.GetInt("market.l3_depth"))
-				}
+/*
+subscribeLevel3Group re-runs the exact paced level3 subscription batch the
+startup path uses for one child connection. It is shared by boot and by a
+checksum-divergence recovery so the two never diverge: both re-create the local
+books and re-request the venue's level3 stream for the child's symbol group on
+its already-connected socket.
+*/
+func (live *Live) subscribeLevel3Group(conn *Live) {
+	if conn == nil || len(conn.symbols) == 0 {
+		return
+	}
+
+	for group := range slices.Chunk(conn.symbols, 40) {
+		if conn.book != nil {
+			for _, symbol := range group {
+				conn.book.Create(symbol, viper.GetInt("market.l3_depth"))
 			}
-
-			conn.Client().SubL3(group, viper.GetInt("market.l3_depth"))
-			time.Sleep(viper.GetDuration("market.subscribe.pace"))
 		}
+
+		conn.Client().SubL3(group, viper.GetInt("market.l3_depth"))
+		time.Sleep(viper.GetDuration("market.subscribe.pace"))
 	}
 }
 

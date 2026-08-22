@@ -584,35 +584,37 @@ const DetailPanel = ({
 
 const Legend = () => (
 	<div className="flex h-full flex-wrap items-center gap-x-3 gap-y-1 px-3 font-mono text-[8px] uppercase tracking-wide text-(--f4)">
-		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 animate-pulse rounded bg-(--acc)" /> flowing
-			(dashed)
+		{/* Node health states */}
+		<span className="flex items-center gap-1.5">
+			<span className="size-1.5 rounded-full bg-(--warn)" /> running
 		</span>
-		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 rounded bg-(--f3)" /> idle (solid)
-		</span>
-		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 rounded bg-[hsl(140_32%_62%)]" /> healthy
-			latency
-		</span>
-		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 rounded bg-[hsl(48_42%_61%)]" /> slight
-			latency
-		</span>
-		<span className="flex items-center gap-1">
-			<span className="h-0.5 w-4 rounded bg-[hsl(0_44%_64%)]" /> high latency
-		</span>
-		<span className="flex items-center gap-1">
+		<span className="flex items-center gap-1.5">
 			<span className="size-1.5 rounded-full bg-(--up)" /> live
 		</span>
-		<span className="flex items-center gap-1">
-			<span className="size-1.5 rounded-full bg-(--info)" /> running
+		<span className="flex items-center gap-1.5">
+			<span className="size-1.5 rounded-full bg-(--f4)" /> stale
 		</span>
-		<span className="flex items-center gap-1">
-			<span className="size-1.5 rounded-full bg-(--warn)" /> stale
-		</span>
-		<span className="flex items-center gap-1">
+		<span className="flex items-center gap-1.5">
 			<span className="size-1.5 rounded-full bg-(--down)" /> error
+		</span>
+		<span className="border-l border-(--line) mx-0.5 h-3" aria-hidden="true" />
+		{/* Edge latency */}
+		<span className="flex items-center gap-1.5">
+			<span className="h-0.5 w-4 rounded bg-(--up)" /> healthy
+		</span>
+		<span className="flex items-center gap-1.5">
+			<span className="h-0.5 w-4 rounded bg-(--warn)" /> slight
+		</span>
+		<span className="flex items-center gap-1.5">
+			<span className="h-0.5 w-4 rounded bg-(--down)" /> high latency
+		</span>
+		<span className="border-l border-(--line) mx-0.5 h-3" aria-hidden="true" />
+		{/* Edge activity */}
+		<span className="flex items-center gap-1.5">
+			<span className="h-0.5 w-4 animate-pulse rounded bg-(--acc)" /> flowing
+		</span>
+		<span className="flex items-center gap-1.5">
+			<span className="h-0.5 w-4 rounded bg-(--f3)" /> idle
 		</span>
 	</div>
 );
@@ -709,21 +711,25 @@ const StatusStrip = ({
 				pass{" "}
 				<strong className="text-(--f1)">{frame.pass?.state ?? "idle"}</strong>
 			</span>
-			<button
-				type="button"
+			<Button
+				variant="outline"
+				size="xs"
+				tone={enabled ? "success" : "warning"}
 				onClick={() => onToggle(!enabled)}
-				className={`ml-auto flex cursor-pointer items-center gap-1.5 rounded-sm border px-1.5 py-0.5 uppercase ${enabled ? "border-(--up)/60 text-(--up)" : "border-(--warn)/60 text-(--warn)"}`}
 				title={
 					enabled
 						? "Switch diagnostics collection off"
 						: "Switch diagnostics collection on"
 				}
+				className={`ml-auto flex cursor-pointer items-center gap-1.5 ${
+					enabled ? "text-(--up)" : "text-(--warn)"
+				}`}
 			>
 				<span
 					className={`size-1.5 rounded-full ${enabled ? "bg-(--up)" : "bg-(--warn)"}`}
 				/>
 				{enabled ? "on" : "off"}
-			</button>
+			</Button>
 			<span>
 				uptime{" "}
 				<span className="inline-block w-[9ch] text-right tabular-nums">

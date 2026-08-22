@@ -22,6 +22,9 @@ type Book struct {
 	status     types.Status
 	statusMu   sync.RWMutex
 	mu         sync.RWMutex
+	resyncMu   sync.Mutex
+	resyncing  bool
+	resubscribe func()
 	manager    *spot.BookManager
 	normalizer *spot.Normalizer
 	notify     func(string)
@@ -67,19 +70,25 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 			bookEvent *callback.Event[*spotbook.ChecksumResult],
 		) {
 			if !bookEvent.Data.Match {
-				book.statusMu.Lock()
-				book.status = types.ERROR
-				book.statusMu.Unlock()
+				book.resyncMu.Lock()
+				silenced := book.resyncing
+				book.resyncMu.Unlock()
 
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf(
-						"checksum mismatch for local: %s, and server: %s",
-						bookEvent.Data.LocalChecksum,
-						bookEvent.Data.ServerChecksum,
-					),
-					nil,
-				))
+				if !silenced {
+					book.statusMu.Lock()
+					book.status = types.ERROR
+					book.statusMu.Unlock()
+
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf(
+							"checksum mismatch for local: %s, and server: %s",
+							bookEvent.Data.LocalChecksum,
+							bookEvent.Data.ServerChecksum,
+						),
+						nil,
+					))
+				}
 			}
 		})
 	})
@@ -110,6 +119,42 @@ func (book *Book) Create(symbol string, depth int) {
 	defer book.mu.Unlock()
 
 	book.manager.CreateBook(symbol, depth)
+}
+
+/*
+resync coalesces recovery across a flood of checksum mismatches: only the first
+diverged frame requests the whole-universe level3 resubscribe; every later frame
+in the same divergence window is dropped until the resubscribe completes and a
+fresh snapshot resynchronizes the book.
+*/
+func (book *Book) resync() {
+	if book == nil || book.resubscribe == nil {
+		return
+	}
+
+	book.resyncMu.Lock()
+
+	if book.resyncing {
+		book.resyncMu.Unlock()
+		return
+	}
+
+	book.resyncing = true
+	resubscribe := book.resubscribe
+	book.resyncMu.Unlock()
+
+	resubscribe()
+}
+
+/*
+resyncDone releases the coalescing guard once the whole-universe resubscribe and
+fresh snapshot have completed, so a subsequent independent divergence can be
+recovered rather than dropped forever.
+*/
+func (book *Book) resyncDone() {
+	book.resyncMu.Lock()
+	book.resyncing = false
+	book.resyncMu.Unlock()
 }
 
 func (book *Book) Update(
@@ -297,16 +342,23 @@ func (book *Book) apply(
 			))
 
 			if !checksum.Match {
-				return nil, errnie.Err(
+				// Kraken's checksum is the authority for Level 3 state, so a
+				// mismatch means this venue book has silently diverged from the
+				// exchange. Recovery is to re-run the existing whole-universe
+				// level3 subscribe, not to tear down every trading system that
+				// happens to read this one symbol. Leave the frame applied but
+				// mark the book needing a resync and request one.
+				errnie.Error(errnie.Err(
 					errnie.Validation,
 					fmt.Sprintf(
-						"level3 checksum mismatch for %s: local %s, server %s",
+						"level3 checksum mismatch for %s: local %s, server %s; scheduling recovery",
 						data.Symbol,
 						checksum.LocalChecksum,
 						checksum.ServerChecksum,
 					),
 					nil,
-				)
+				))
+				book.resync()
 			}
 		}
 

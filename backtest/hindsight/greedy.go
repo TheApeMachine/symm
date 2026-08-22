@@ -61,6 +61,22 @@ prices with a strictly positive upward excursion. This keeps the ceiling an
 upper bound that is still attainable by holding, not a count of per-tick
 reversals.
 */
+/*
+RoundTrips extracts the maximal non-overlapping hold legs from a price series.
+The scan is a single forward walk: it remembers the running trough (the best
+entry so far) and the highest price after it (the best exit so far). A leg is
+only booked when the price makes a strictly lower trough — a better entry that
+no long-hold can ignore — and the retained leg is that running trough to its
+running peak. Because a dip below the old trough no longer closes a position
+by itself, a tape that keeps making higher peaks stays one long hold, exactly
+as an executor who holds through noise would experience it.
+
+The state machine scans once. A leg is emitted only when its peak exceeds its
+trough and a new lower trough has been found (or the series ends), so the
+result never counts per-tick reversals as opportunities. This turns a
+multi-peak rally into one position from best entry to best exit, while a new
+low below the running entry still splits into a fresh, more profitable hold.
+*/
 func RoundTrips(series *Series) Legs {
 	if series == nil || len(series.Points) < 2 {
 		return Legs{Legs: []Leg{}}
@@ -68,8 +84,8 @@ func RoundTrips(series *Series) Legs {
 
 	result := Legs{Symbol: series.Symbol, Legs: []Leg{}}
 
-	var open *Leg
 	troughIndex := 0
+	peakIndex := 0
 	totalGreedy := 0.0
 
 	for i := 1; i < len(series.Points); i++ {
@@ -81,41 +97,22 @@ func RoundTrips(series *Series) Legs {
 			totalGreedy += current.Price - previous.Price
 		}
 
-		if open == nil {
-			// Not holding: buy as soon as price rises above the running trough.
-			if current.Price > series.Points[troughIndex].Price {
-				open = &Leg{
-					Symbol:    series.Symbol,
-					BuyAt:     series.Points[troughIndex].At,
-					BuyPrice:  series.Points[troughIndex].Price,
-					SellAt:    current.At,
-					SellPrice: current.Price,
-				}
-			} else if current.Price < series.Points[troughIndex].Price {
-				troughIndex = i
-			}
-		} else {
-			// Holding: extend the peak whenever price makes a new high above
-			// the best seen so far in this leg.
-			if current.Price > open.SellPrice {
-				open.SellPrice = current.Price
-				open.SellAt = current.At
-			}
+		// Extend the exit whenever a new high prints after the running
+		// trough; dips that stay above the trough are held through.
+		if current.Price > series.Points[peakIndex].Price {
+			peakIndex = i
+		}
 
-			// Close when price fully retraces from the leg's peak to at or
-			// below the buy price — the rise is fully given back, so holding
-			// no longer adds value; restart the search from this trough.
-			if current.Price <= open.BuyPrice {
-				closeOpeningLeg(&result, open)
-				open = nil
-				troughIndex = i
-			}
+		// A strictly lower print is a better entry. Book the hold from the
+		// running trough to its peak, then restart from this new trough.
+		if current.Price < series.Points[troughIndex].Price {
+			closeHeldLeg(&result, series, troughIndex, peakIndex)
+			troughIndex = i
+			peakIndex = i
 		}
 	}
 
-	if open != nil {
-		closeOpeningLeg(&result, open)
-	}
+	closeHeldLeg(&result, series, troughIndex, peakIndex)
 
 	result.Greedy = totalGreedy
 
@@ -123,12 +120,24 @@ func RoundTrips(series *Series) Legs {
 }
 
 /*
-closeOpeningLeg commits a leg that rose and then gave back its rise (or ended
-the series), only when it produced positive profit.
+closeHeldLeg commits a trough-to-peak hold, only when it yields positive
+profit.
 */
-func closeOpeningLeg(result *Legs, open *Leg) {
-	if open.SellPrice > open.BuyPrice {
-		open.computeProfit()
-		result.Legs = append(result.Legs, *open)
+func closeHeldLeg(result *Legs, series *Series, troughIndex, peakIndex int) {
+	trough := series.Points[troughIndex]
+	peak := series.Points[peakIndex]
+
+	if peak.Price <= trough.Price {
+		return
 	}
+
+	leg := Leg{
+		Symbol:    series.Symbol,
+		BuyAt:     trough.At,
+		BuyPrice:  trough.Price,
+		SellAt:    peak.At,
+		SellPrice: peak.Price,
+	}
+	leg.computeProfit()
+	result.Legs = append(result.Legs, leg)
 }

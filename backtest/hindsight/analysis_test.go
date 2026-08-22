@@ -168,3 +168,72 @@ func TestAnalyze(t *testing.T) {
 		})
 	})
 }
+
+func TestDiagnose(t *testing.T) {
+	leg := Leg{BuyPrice: 100, SellPrice: 150}
+
+	Convey("Given a flagged opportunity that declined to act", t, func() {
+		context := SignalContext{
+			Opportunity: true, Type: "pump", Reason: "structural thesis below admission",
+		}
+
+		Convey("It should surface the flagged type and the recorded reason", func() {
+			So(diagnose(context, leg), ShouldContainSubstring, "flagged as pump")
+			So(diagnose(context, leg), ShouldContainSubstring, "structural thesis below admission")
+		})
+	})
+
+	Convey("Given a graph score under the admission threshold", t, func() {
+		context := SignalContext{GraphScore: 0.2, AdmissionThreshold: 0.5}
+
+		Convey("It should name the admission gate", func() {
+			So(diagnose(context, leg), ShouldContainSubstring, "below admission")
+		})
+	})
+
+	Convey("Given a thesis pointing the wrong way", t, func() {
+		context := SignalContext{Direction: -0.8, ThesisConfidence: 0.7}
+
+		Convey("It should name the directional disagreement", func() {
+			So(diagnose(context, leg), ShouldContainSubstring, "pointed the wrong way")
+		})
+	})
+
+	Convey("Given opposing alternative measurements", t, func() {
+		context := SignalContext{
+			Alternatives: map[string]float64{
+				"meas:X:depthflow:neutral_score": 0.1,
+				"meas:X:exhaustion:score":        -0.9,
+			},
+		}
+
+		Convey("It should name the dominant opposing measurement", func() {
+			So(diagnose(context, leg), ShouldContainSubstring, "exhaustion")
+		})
+	})
+}
+
+func TestDecisionsAround(t *testing.T) {
+	leg := Leg{
+		BuyAt:  epoch.Add(2 * time.Second),
+		SellAt: epoch.Add(4 * time.Second),
+	}
+
+	decisions := []Decision{
+		decisionAt(0, "nothing", nil),
+		decisionAt(1, "nothing", nil),
+		decisionAt(3, "nothing", nil),
+		decisionAt(5, "nothing", nil),
+		decisionAt(9, "nothing", nil),
+	}
+
+	Convey("Given decisions spanning a leg's window", t, func() {
+		journal := decisionsAround(decisions, leg)
+
+		Convey("It should span just before entry through just after exit", func() {
+			So(len(journal), ShouldEqual, 3)
+			So(journal[0].At, ShouldEqual, decisions[1].At)
+			So(journal[len(journal)-1].At, ShouldEqual, decisions[3].At)
+		})
+	})
+}

@@ -102,6 +102,7 @@ func (transport *mockTransport) tradeBalance() []byte {
 	cash := 0.0
 	marketValue := 0.0
 	costBasis := 0.0
+	seenQuotes := make(map[string]bool)
 
 	for _, symbol := range transport.symbols {
 		base, quote, known := splitPair(symbol.Pair)
@@ -110,7 +111,11 @@ func (transport *mockTransport) tradeBalance() []byte {
 			continue
 		}
 
-		cash += account[quote]
+		if !seenQuotes[quote] {
+			cash += account[quote]
+			seenQuotes[quote] = true
+		}
+
 		price := transport.prices[symbol.Pair]
 
 		if price == 0 {

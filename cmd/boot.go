@@ -232,12 +232,16 @@ func BootWithHub(
 	regulatorSolver, err := regulator.NewSolver(systemCtx, uiChannel)
 
 	if err != nil {
-		errnie.Error(errnie.Err(errnie.Internal, "boot: create regulator", err))
+		errnie.Error(errnie.Err(
+			errnie.Internal, "boot: create regulator", err,
+		))
+
 		cancel()
 		return nil
 	}
 
 	api := websocket.NewAPI(systemCtx, public, private)
+
 	signals := []types.Signal{
 		signalcorrelation.NewSignal(systemCtx, thesis),
 		signalcvd.NewSignal(systemCtx, thesis),
@@ -254,12 +258,16 @@ func BootWithHub(
 	price := broker.NewPrice(api)
 	instrument := broker.NewInstrument(api, price, uiChannel)
 	balance := broker.NewBalance(api, uiChannel)
+
 	positionStore, err := broker.NewPositionStore(
 		filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
 	)
 
 	if err != nil {
-		errnie.Error(errnie.Err(errnie.Internal, "boot: open position store", err))
+		errnie.Error(errnie.Err(
+			errnie.Internal, "boot: open position store", err,
+		))
+
 		cancel()
 		return nil
 	}
@@ -276,6 +284,7 @@ func BootWithHub(
 		positionStore,
 		uiChannel,
 	)
+
 	analyzer := logic.NewAnalyzer(
 		systemCtx,
 		price,
@@ -286,6 +295,7 @@ func BootWithHub(
 		nil,
 		thesis,
 	)
+
 	resonanceSolver := resonance.NewSolver(
 		systemCtx,
 		viper.GetFloat64("resonance.learning_rate"),
@@ -293,6 +303,7 @@ func BootWithHub(
 		uiChannel,
 		thesis,
 	)
+
 	crypto, err := trader.NewCrypto(
 		systemCtx,
 		api,
@@ -304,7 +315,10 @@ func BootWithHub(
 	)
 
 	if err != nil {
-		errnie.Error(errnie.Err(errnie.Internal, "boot: create crypto", err))
+		errnie.Error(errnie.Err(
+			errnie.Internal, "boot: create crypto", err,
+		))
+
 		cancel()
 		return nil
 	}
@@ -317,6 +331,14 @@ func BootWithHub(
 	if hub == nil {
 		hub = ui.NewHub(systemCtx, thesis, desk, price, balance, manifoldChannel)
 	}
+
+	observer := audit.NewConcurrentObserver(
+		planner.Stager(),
+		&bootPriceAdapter{price: price},
+		regulatorSolver,
+	)
+
+	go observer.Run(systemCtx)
 
 	attachDiagnosticsErrorBridge(hub, crypto)
 	if hub != nil {
@@ -381,6 +403,23 @@ func BootWithHub(
 	}
 
 	return stack
+}
+
+type bootPriceAdapter struct {
+	price *broker.Price
+}
+
+func (a *bootPriceAdapter) Mark(symbol string, direction string) float64 {
+	dir := broker.BUY
+	if direction == "sell" {
+		dir = broker.SELL
+	}
+	m := a.price.Mark(symbol, dir)
+	if m == nil {
+		return 0
+	}
+	f := m.Float64()
+	return f
 }
 
 /*

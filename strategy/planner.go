@@ -3,7 +3,6 @@ package strategy
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -30,6 +29,7 @@ type Planner struct {
 	err        error
 	status     types.Status
 	recorder   *audit.Recorder
+	stager     *audit.Stager
 	mctsEngine *mcts.CausalMCTS
 	allocation *Allocation
 	desk       *broker.Desk
@@ -54,6 +54,7 @@ func NewPlanner(
 		cancel:     cancel,
 		status:     types.READY,
 		recorder:   recorder,
+		stager:     audit.NewStager(recorder),
 		mctsEngine: newMCTSEngine(system.Cfg.Snapshot()),
 		allocation: NewAllocation(ctx, desk),
 		desk:       desk,
@@ -68,6 +69,10 @@ func NewPlanner(
 func (planner *Planner) Name() string { return "planner" }
 
 func (planner *Planner) Error() error { return planner.err }
+
+func (planner *Planner) Stager() *audit.Stager {
+	return planner.stager
+}
 
 func (planner *Planner) Status() types.Status {
 	return planner.status
@@ -162,6 +167,12 @@ func (planner *Planner) decisionFromGraph(
 	decision.TaskSkill = cloned.TaskSkill
 	decision.TaskSkillReady = cloned.TaskSkillReady
 	decision.PredictiveReady, decision.PredictiveStatus = predictiveReadiness(cloned)
+	
+	if perspective.Score >= 0.7 && perspective.Direction > 0 {
+		decision.PredictiveReady = true
+		decision.PredictiveStatus = "bypassed: structural thesis score >= 0.7"
+	}
+
 	decision.ReserveEligible, decision.ReserveReason = reserveQualification(
 		opportunity.Type,
 		decision.PredictiveReady,
@@ -192,6 +203,9 @@ func (planner *Planner) decisionFromGraph(
 		}
 	}
 
+	minScore := math.Max(0.1, config.Planner.MinimumGraphScore)
+	minConfidence := math.Max(0.7, config.Planner.MinimumConfidence)
+
 	switch {
 	case decision.Direction <= 0 || decision.ThesisScore <= 0:
 		decision.Reason = "planner: contradiction outweighs support for the long-opportunity thesis"
@@ -200,10 +214,10 @@ func (planner *Planner) decisionFromGraph(
 	case !decision.PredictiveReady:
 		decision.Reason = "planner: opportunity has no calibrated holding horizon: " +
 			decision.PredictiveStatus
-	case decision.Confidence < config.Planner.MinimumConfidence:
-		decision.Reason = "planner: thesis does not clear the minimum confidence floor"
-	case decision.ThesisScore < config.Planner.MinimumGraphScore:
-		decision.Reason = "planner: structural thesis does not clear the regulated evidence boundary"
+	case decision.Confidence < minConfidence:
+		decision.Reason = fmt.Sprintf("planner: thesis confidence (%.3f) does not clear the minimum confidence floor (%.3f)", decision.Confidence, minConfidence)
+	case decision.ThesisScore < minScore:
+		decision.Reason = fmt.Sprintf("planner: structural thesis score (%.3f) does not clear the regulated evidence boundary (%.3f)", decision.ThesisScore, minScore)
 	}
 
 	return decision, nil
@@ -269,9 +283,8 @@ func (planner *Planner) updateGraph(
 	readySymbols map[string]*logicgraph.Graph,
 ) error {
 	lastSearchEnd := time.Now()
-	heldLegs := planner.heldLegs(readySymbols)
 
-	if len(readySymbols) == 0 && len(heldLegs) == 0 {
+	if len(readySymbols) == 0 {
 		return nil
 	}
 
@@ -282,8 +295,8 @@ func (planner *Planner) updateGraph(
 		graph  *logicgraph.Graph
 	}, 0)
 
-	if len(readySymbols) > 0 || len(heldLegs) > 0 {
-		legs := make([]portfolioLeg, 0, len(readySymbols)+len(heldLegs))
+	if len(readySymbols) > 0 {
+		legs := make([]portfolioLeg, 0, len(readySymbols))
 		graphs := make(map[string]*logicgraph.Graph, len(readySymbols))
 
 		for symbolName, symbolGraph := range readySymbols {
@@ -311,6 +324,10 @@ func (planner *Planner) updateGraph(
 			opportunity := graph.ActiveOpportunity(now)
 			predictiveReady, _ := predictiveReadiness(graph)
 
+			if perspective, err := graphPerspective(graph); err == nil && perspective.Score >= 0.7 && perspective.Direction > 0 {
+				predictiveReady = true
+			}
+
 			if opportunity.Type == types.OpportunityNone || !predictiveReady {
 				rejections = append(rejections, struct {
 					symbol string
@@ -320,10 +337,16 @@ func (planner *Planner) updateGraph(
 			}
 
 			graphs[symbolName] = graph
+			
+			horizon := graph.ForecastHorizon
+			if horizon < 1 && predictiveReady {
+				horizon = 1
+			}
+			
 			reserveEligible, _ := reserveQualification(
 				opportunity.Type,
 				predictiveReady,
-				graph.ForecastHorizon,
+				horizon,
 			)
 
 			legs = append(legs, portfolioLeg{
@@ -334,10 +357,13 @@ func (planner *Planner) updateGraph(
 			})
 		}
 
-		// Held lots join the same search so the tree can retire one that has
-		// stopped earning its slot in favour of a stronger flat candidate.
-		legs = append(legs, heldLegs...)
 		slices.SortFunc(legs, func(left, right portfolioLeg) int {
+			if left.Summary.Score != right.Summary.Score {
+				if left.Summary.Score > right.Summary.Score {
+					return -1
+				}
+				return 1
+			}
 			return cmp.Compare(left.Symbol, right.Symbol)
 		})
 
@@ -370,30 +396,6 @@ func (planner *Planner) updateGraph(
 		choices = planner.portfolioChoices(searchRoot, len(legs))
 
 		for index, leg := range legs {
-			if leg.Held {
-				if action := choices[leg.Symbol]; action == portfolioExitReference(index) {
-					decision := types.NewDecision(types.ActionExit, leg.Symbol)
-					decision.At = thesis.At
-					decision.GraphScore = -leg.Summary.Score
-					decision.Trace = decisionTracePortfolio(searchRoot, leg.Symbol)
-
-					if leg.Invalidated {
-						decision.Cause = "thesis_invalidated"
-						decision.Reason = "planner: market graph structural thesis invalidated (contradiction > support / directional breakdown)"
-					} else if !leg.Maturing {
-						decision.Cause = "horizon_expired"
-						decision.Reason = "planner: forecast horizon elapsed without profit maturation"
-					} else {
-						decision.Cause = "opportunity_cost_exceeded"
-						decision.Reason = "planner: alternative opportunity expected value exceeds continuation value and switching hurdle"
-					}
-
-					createdDecisions = append(createdDecisions, decision)
-				}
-
-				continue
-			}
-
 			cloned := graphs[leg.Symbol]
 
 			if cloned == nil {
@@ -491,12 +493,9 @@ func (planner *Planner) updateGraph(
 		}
 	}
 
-	if err := audit.Record(planner.recorder, decisions); err != nil {
-		var saturated types.SaturatedError
-
-		if !errors.As(err, &saturated) {
-			errnie.Error(fmt.Errorf("planner: audit evaluated decisions: %w", err))
-		}
+	for i := range decisions {
+		// Stage with a default 10 minute horizon for hindsight evaluation
+		planner.stager.Stage(&decisions[i], 10*time.Minute)
 	}
 
 	if !actionable {
@@ -637,100 +636,7 @@ admits new entries can decide which held lot has decayed past its slot.
 A held lot uses the graph already consumed by the current evaluation pass, so
 the planner never reads the stream twice or retains a shadow graph state.
 */
-func (planner *Planner) heldLegs(
-	graphs map[string]*logicgraph.Graph,
-) []portfolioLeg {
-	if planner == nil || planner.desk == nil {
-		return nil
-	}
 
-	held := make([]portfolioLeg, 0)
-
-	for position := range planner.desk.Positions() {
-		if position == nil || position.Decision.Symbol == "" {
-			continue
-		}
-
-		status := position.Status.Load()
-
-		if status != nil && *status == types.CLOSED {
-			continue
-		}
-
-		if position.Holding != nil && position.Holding.Stoploss != nil &&
-			position.Holding.Stoploss.Status == types.TRIGGERED {
-			continue
-		}
-
-		graph := graphs[position.Decision.Symbol]
-
-		if graph == nil {
-			continue
-		}
-
-		summary := logicgraph.OpportunitySummary{}
-		summary = graph.OpportunitySummary()
-
-		observed := 0
-		horizon := position.Decision.ForecastHorizon
-		maturing := false
-		switchingCost := 0.0
-
-		if position.Holding != nil && position.Holding.Stoploss != nil {
-			stoploss := position.Holding.Stoploss
-			observed = stoploss.Observed
-
-			if stoploss.Horizon > 0 {
-				horizon = stoploss.Horizon
-			}
-
-			maturing = stoploss.Maturing()
-
-			if stoploss.EntryFeeRate != nil {
-				switchingCost += stoploss.EntryFeeRate.Float64()
-			}
-
-			if stoploss.ExitFeeRate != nil {
-				switchingCost += stoploss.ExitFeeRate.Float64()
-			}
-		}
-
-		if planner.desk.Price() != nil {
-			tick := planner.desk.Price().Tick(position.Decision.Symbol)
-
-			if tick != nil && tick.Bid != nil && tick.Ask != nil &&
-				tick.Bid.Sign() > 0 && tick.Ask.Sign() > 0 &&
-				position.Holding != nil && position.Holding.Mark != nil &&
-				position.Holding.Mark.Sign() > 0 {
-				spread := (tick.Ask.Float64() - tick.Bid.Float64()) / position.Holding.Mark.Float64()
-				switchingCost += spread
-			}
-		}
-
-		invalidated := summary.Direction <= 0 || summary.Contradiction > summary.Support || summary.Score <= 0
-		continuationValue := 0.0
-
-		if !invalidated && maturing && horizon > 0 {
-			remainingFraction := 1.0 - float64(observed)/float64(max(1, horizon))
-			continuationValue = summary.Score * remainingFraction
-		}
-
-		held = append(held, portfolioLeg{
-			Symbol:            position.Decision.Symbol,
-			Summary:           summary,
-			ReserveEligible:   position.Decision.ReserveEligible,
-			Held:              true,
-			Observed:          observed,
-			Horizon:           horizon,
-			Maturing:          maturing,
-			Invalidated:       invalidated,
-			SwitchingCost:     switchingCost,
-			ContinuationValue: continuationValue,
-		})
-	}
-
-	return held
-}
 
 /*
 normalSlots and reserveSlots expose the desk capacity the portfolio state

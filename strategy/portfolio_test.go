@@ -6,10 +6,11 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/types"
+	graphtypes "github.com/theapemachine/symm/types/graph"
 )
 
-func portfolioSummary(score float64) logicgraph.OpportunitySummary {
-	return logicgraph.OpportunitySummary{
+func portfolioSummary(score float64) graphtypes.OpportunitySummary {
+	return graphtypes.OpportunitySummary{
 		Hypothesis:    "hyp:BTC/USD:long_opportunity",
 		Support:       score,
 		Contradiction: 0,
@@ -52,19 +53,7 @@ func TestPortfolioStateGetPossibleActions(t *testing.T) {
 		})
 	})
 
-	Convey("Given a held leg", t, func() {
-		state := NewPortfolioState([]portfolioLeg{{
-			Symbol: "BTC/USD", Summary: portfolioSummary(-0.4), Held: true,
-		}}, 0, 0)
 
-		Convey("It should offer exit and hold rather than an entry", func() {
-			So(state.GetPossibleActions(), ShouldResemble, []float64{
-				portfolioExitReference(0),
-				portfolioHoldReference(0),
-				portfolioDoneAction,
-			})
-		})
-	})
 }
 
 func TestPortfolioStateGetReward(t *testing.T) {
@@ -113,11 +102,14 @@ func TestPortfolioStateGetReward(t *testing.T) {
 
 func TestPortfolioStateIsTerminal(t *testing.T) {
 	Convey("Given a free slot and a rollout that reaches its declared horizon", t, func() {
-		state := NewPortfolioState([]portfolioLeg{{
-			Symbol: "BTC/USD", Summary: portfolioSummary(0.8),
-		}}, 1, 0)
-		current := state.ApplyAction(portfolioHoldReference(0)).(*PortfolioState)
-		current = current.ApplyAction(portfolioHoldReference(0)).(*PortfolioState)
+		leg := portfolioLeg{Symbol: "TAO/USD"}
+
+		state := NewPortfolioState([]portfolioLeg{leg}, 1, 0)
+		So(state, ShouldNotBeNil)
+
+		actionHold := portfolioHoldReference(0)
+		current := state.ApplyAction(actionHold).(*PortfolioState)
+		current = current.ApplyAction(actionHold).(*PortfolioState)
 
 		Convey("It should stop even though capacity remains unused", func() {
 			So(current.IsTerminal(), ShouldBeTrue)
@@ -195,82 +187,11 @@ func TestPortfolioSearch(t *testing.T) {
 			So(observed, ShouldResemble, expected)
 		}
 	})
-
-	Convey("Given one held leg whose thesis decayed", t, func() {
-		state := NewPortfolioState([]portfolioLeg{{
-			Symbol: "BTC/USD", Summary: portfolioSummary(-0.4), Held: true,
-		}}, 0, 0)
-		root, err := portfolioSearch(state, 32)
-
-		So(err, ShouldBeNil)
-
-		Convey("It should retire the held lot", func() {
-			planner := &Planner{}
-			choices := planner.portfolioChoices(root, 1)
-			So(choices["BTC/USD"], ShouldEqual, portfolioExitReference(0))
-		})
-	})
-
-	Convey("Given a held maturing leg with a valid thesis and a marginally higher flat candidate", t, func() {
-		state := NewPortfolioState([]portfolioLeg{
-			{
-				Symbol:            "BTC/USD",
-				Summary:           portfolioSummary(0.05),
-				Held:              true,
-				Maturing:          true,
-				Observed:          2,
-				Horizon:           20,
-				SwitchingCost:     0.016,
-				ContinuationValue: 0.05,
-			},
-			{
-				Symbol:  "SOL/USD",
-				Summary: portfolioSummary(0.06),
-			},
-		}, 0, 0)
-		root, err := portfolioSearch(state, 64)
-
-		So(err, ShouldBeNil)
-
-		Convey("It should hold the maturing lot rather than churning into the marginal candidate", func() {
-			planner := &Planner{}
-			choices := planner.portfolioChoices(root, 2)
-			So(choices["BTC/USD"], ShouldEqual, portfolioHoldReference(0))
-		})
-	})
-
-	Convey("Given a held maturing leg when a dominant breakout candidate appears", t, func() {
-		state := NewPortfolioState([]portfolioLeg{
-			{
-				Symbol:            "BTC/USD",
-				Summary:           portfolioSummary(0.02),
-				Held:              true,
-				Maturing:          true,
-				Observed:          2,
-				Horizon:           20,
-				SwitchingCost:     0.016,
-				ContinuationValue: 0.02,
-			},
-			{
-				Symbol:  "SOL/USD",
-				Summary: portfolioSummary(0.8),
-			},
-		}, 0, 0)
-		root, err := portfolioSearch(state, 64)
-
-		So(err, ShouldBeNil)
-
-		Convey("It should rotate because the alternative expected value overwhelms the switching hurdle", func() {
-			planner := &Planner{}
-			choices := planner.portfolioChoices(root, 2)
-			So(choices["BTC/USD"], ShouldEqual, portfolioExitReference(0))
-		})
-	})
 }
 
 func BenchmarkPortfolioSearch(b *testing.B) {
 	state := NewPortfolioState([]portfolioLeg{
-		{Symbol: "ENA/USD", Summary: portfolioSummary(0.4)},
+		{Symbol: "TAO/USD", Summary: portfolioSummary(0.4)},
 		{Symbol: "DOGE/USD", Summary: portfolioSummary(0.3)},
 	}, 1, 0)
 	b.ReportAllocs()

@@ -6,83 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/algorithm"
 	"github.com/theapemachine/symm/nomagique/learning"
+	graphtypes "github.com/theapemachine/symm/types/graph"
 )
-
-/*
-RelationType describes directional edge relationships between market nodes.
-*/
-type RelationType string
-
-const (
-	RelationSupports         RelationType = "supports"
-	RelationContradicts      RelationType = "contradicts"
-	RelationConditions       RelationType = "conditions"
-	RelationLeads            RelationType = "leads"
-	RelationLags             RelationType = "lags"
-	RelationRedundantWith    RelationType = "redundant_with"
-	RelationIndependentOf    RelationType = "independent_of"
-	RelationStaleRelativeTo  RelationType = "stale_relative_to"
-	RelationIncomparableWith RelationType = "incomparable_with"
-)
-
-/*
-Kind describes the type of node in the knowledge graph.
-*/
-type Kind string
-
-const (
-	KindMeasurement Kind = "measurement"
-	KindCategory    Kind = "category"
-	KindManifold    Kind = "manifold"
-	KindResonance   Kind = "resonance"
-	KindCausal      Kind = "causal"
-	KindCognition   Kind = "cognition"
-	KindPrediction  Kind = "prediction"
-	KindHypothesis  Kind = "hypothesis"
-)
-
-/*
-Node represents a discrete market entity, metric, category, or latent state.
-*/
-type Node struct {
-	ID            string          `json:"id"`
-	Symbol        string          `json:"symbol,omitempty"`
-	Peer          string          `json:"peer,omitempty"`
-	Source        string          `json:"source,omitempty"`
-	MeasurementID string          `json:"measurementId,omitempty"`
-	Metric        MetricType      `json:"metric,omitempty"`
-	Side          MeasurementSide `json:"side,omitempty"`
-	Kind          Kind            `json:"kind"`
-	Value         float64         `json:"value"`
-	Normalized    *float64        `json:"normalized,omitempty"`
-	Quality       *float64        `json:"quality,omitempty"`
-	Strength      float64         `json:"strength,omitempty"`
-	Confidence    float64         `json:"confidence"`
-	Maturity      float64         `json:"maturity,omitempty"`
-	Unit          MeasurementUnit `json:"unit,omitempty"`
-	ObservedFrom  time.Time       `json:"observedFrom,omitempty"`
-	Horizon       time.Duration   `json:"horizon,omitempty"`
-	At            time.Time       `json:"at"`
-	Metadata      map[string]any  `json:"metadata,omitempty"`
-}
-
-/*
-Edge represents a directed, weighted relationship from Node A to Node B.
-*/
-type Edge struct {
-	From         string        `json:"from"`
-	To           string        `json:"to"`
-	Relation     RelationType  `json:"relation"`
-	Weight       float64       `json:"weight"`
-	Confidence   float64       `json:"confidence"`
-	Quality      *float64      `json:"quality,omitempty"`
-	Evidence     []string      `json:"evidence,omitempty"`
-	ObservedFrom time.Time     `json:"observedFrom,omitempty"`
-	Horizon      time.Duration `json:"horizon,omitempty"`
-	At           time.Time     `json:"at"`
-	Reason       string        `json:"reason,omitempty"`
-}
 
 /*
 Graph is the relational knowledge graph accumulated during one Thesis lifecycle.
@@ -391,23 +319,6 @@ func (graph *Graph) Prune(now time.Time) {
 }
 
 /*
-OpportunitySummary is the dimensionless evidence balance for the graph's
-explicit decision proposition. Conditions are reported separately and never
-smuggled into directional support.
-*/
-type OpportunitySummary struct {
-	Hypothesis    string
-	Support       float64
-	Contradiction float64
-	Conditions    float64
-	Balance       float64
-	Confidence    float64
-	Score         float64
-	Direction     float64
-	Ready         bool
-}
-
-/*
 Roots returns only evidence roots that can reach the configured decision
 proposition. The graph remains fully visible on the wire, but MCTS no longer
 spends simulations on disconnected explanatory islands.
@@ -610,8 +521,8 @@ OpportunitySummary reduces only edges that directly address the proposition.
 Intermediate graph structure remains available to MCTS but is not counted a
 second time in the thesis balance.
 */
-func (graph *Graph) OpportunitySummary() OpportunitySummary {
-	summary := OpportunitySummary{}
+func (graph *Graph) OpportunitySummary() graphtypes.OpportunitySummary {
+	summary := graphtypes.OpportunitySummary{}
 
 	if graph == nil {
 		return summary
@@ -627,56 +538,33 @@ func (graph *Graph) OpportunitySummary() OpportunitySummary {
 	}
 
 	summary.Hypothesis = graph.DecisionTarget
-	confidenceMass := 0.0
-	confidenceWeight := 0.0
+	var state nomagique.Frame
 
 	for _, edge := range graph.Edges {
 		if edge.To != graph.DecisionTarget || edge.Weight <= 0 || edge.Confidence <= 0 {
 			continue
 		}
 
-		mass := edge.Weight
+		input := nomagique.Frame{}
+		input.Put(algorithm.SymbolEdgeWeight, edge.Weight)
+		input.Put(algorithm.SymbolEdgeConfidence, edge.Confidence)
+		input.Put(algorithm.SymbolEdgeRelation, relationSign(edge.Relation))
 
-		switch relationSign(edge.Relation) {
-		case 1:
-			summary.Support += mass
-			confidenceMass += edge.Weight * edge.Confidence
-			confidenceWeight += edge.Weight
-		case -1:
-			summary.Contradiction += mass
-			confidenceMass += edge.Weight * edge.Confidence
-			confidenceWeight += edge.Weight
-		default:
-			summary.Conditions += mass
-		}
+		state, _, _ = algorithm.OpportunityReducer(state, input)
 	}
 
-	directional := summary.Support + summary.Contradiction
+	state, _, _ = algorithm.OpportunityScorer(state, nomagique.Frame{})
 
-	if !(directional > 0) || !(confidenceWeight > 0) {
-		return summary
-	}
+	summary.Support, _ = state.Get(algorithm.SymbolOpportunitySupport)
+	summary.Contradiction, _ = state.Get(algorithm.SymbolOpportunityContradiction)
+	summary.Conditions, _ = state.Get(algorithm.SymbolOpportunityConditions)
+	summary.Balance, _ = state.Get(algorithm.SymbolOpportunityBalance)
+	summary.Confidence, _ = state.Get(algorithm.SymbolOpportunityConfidence)
+	summary.Score, _ = state.Get(algorithm.SymbolOpportunityScore)
+	summary.Direction, _ = state.Get(algorithm.SymbolOpportunityDirection)
 
-	summary.Balance = (summary.Support - summary.Contradiction) / directional
-	summary.Confidence = confidenceMass / confidenceWeight
-
-	// A single vote already lives in [0, 1] (Ω × |normalized|). Until total
-	// directional mass reaches one full-strength vote, the thesis is that mass
-	// times the fight ratio — a unanimous 0.2-mass reading is 0.2, not 1.0.
-	evidence := directional
-
-	if evidence > 1 {
-		evidence = 1
-	}
-
-	summary.Score = summary.Balance * evidence
-	summary.Ready = true
-
-	if summary.Score > 0 {
-		summary.Direction = 1
-	} else if summary.Score < 0 {
-		summary.Direction = -1
-	}
+	ready, _ := state.Get(algorithm.SymbolOpportunityReady)
+	summary.Ready = ready > 0
 
 	return summary
 }

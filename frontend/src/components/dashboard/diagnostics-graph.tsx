@@ -154,21 +154,16 @@ const edgeHealth = (latencyNs: number | undefined): HealthTone => {
 };
 
 /*
-EDGE_HEALTH_STROKE maps latency health to consistent telemetry tones.
-Edges render translucent and muted so the solid node borders clearly show health
-without competing with the background wiring.
+EDGE_HEALTH_STROKE maps latency health to the theme token palette so edge
+colors are consistent with node health indicators throughout the surface.
 */
 const EDGE_HEALTH_STROKE: Record<HealthTone, string> = {
-	healthy: "hsl(140 32% 62%)",
-	slight: "hsl(48 42% 61%)",
-	high: "hsl(0 44% 64%)",
+	healthy: "var(--up)",
+	slight: "var(--warn)",
+	high: "var(--down)",
 };
 
-const NODE_HEALTH_STROKE: Record<HealthTone, string> = {
-	healthy: "hsl(140 30% 55%)",
-	slight: "hsl(48 40% 57%)",
-	high: "hsl(0 42% 60%)",
-};
+
 
 /*
 HALF is each node's half-extent in the same percent units as NODE_POS, so edge
@@ -292,8 +287,13 @@ const stageState = (
 };
 
 /*
-STAGE_TONE maps a stage's health state to its border/dot/text tone.
-Border colors clearly reflect the health of the component.
+STAGE_TONE maps a stage's health state to its border/dot/text tone using only
+theme tokens so the meaning is consistent with every other health indicator:
+  error   → red    (--down)
+  running → amber  (--warn)  actively consuming right now
+  live    → green  (--up)    recently processed, healthy
+  stale   → muted  (--f4)    not seen recently
+  unseen  → dim    (--line2) never reported
 */
 const STAGE_TONE: Record<
 	StageState,
@@ -301,27 +301,27 @@ const STAGE_TONE: Record<
 > = {
 	error: {
 		dot: "bg-(--down)",
-		borderColor: NODE_HEALTH_STROKE.high,
+		borderColor: "var(--down)",
 		text: "text-(--down)",
+	},
+	running: {
+		dot: "bg-(--warn)",
+		borderColor: "var(--warn)",
+		text: "text-(--warn)",
 	},
 	live: {
 		dot: "bg-(--up)",
-		borderColor: NODE_HEALTH_STROKE.healthy,
+		borderColor: "var(--up)",
 		text: "text-(--up)",
 	},
-	running: {
-		dot: "bg-(--info)",
-		borderColor: "hsl(195 45% 52%)",
-		text: "text-(--info)",
-	},
 	stale: {
-		dot: "bg-(--warn)",
-		borderColor: NODE_HEALTH_STROKE.slight,
-		text: "text-(--warn)",
+		dot: "bg-(--f4)",
+		borderColor: "var(--f4)",
+		text: "text-(--f4)",
 	},
 	unseen: {
 		dot: "bg-(--line2)",
-		borderColor: "hsl(220 10% 45%)",
+		borderColor: "var(--line)",
 		text: "text-(--f4)",
 	},
 };
@@ -380,35 +380,35 @@ type Bounds = {
 	bottom: number;
 };
 
-const ROUTE_CLEARANCE = 0.8;
-const ROUTE_STUB = 0.8;
-const PORT_INSET = 0.8;
+const ROUTE_CLEARANCE = 1.0;
+const ROUTE_STUB = 1.4;
+const PORT_INSET = 0.9;
 
 /*
 Routing costs prioritize clear parallel lanes and collision avoidance.
 Perpendicular crossings are cleanly allowed; longitudinal overlap is strictly penalized.
 */
 const ROUTE_CROSSING_COST = 80;
-const ROUTE_OVERLAP_COST_MASSIVE = 1200;
+const ROUTE_OVERLAP_COST_MASSIVE = 1600;
 const ROUTE_BEND_COST = 0.35;
-const LANE_SPACING = 0.55;
-const ROUTE_NEAR_COST = 70;
+const LANE_SPACING = 0.9;
+const ROUTE_NEAR_COST = 180;
 
 /*
 CORRIDOR_BANDS defines the inter-tier horizontal highway zones between node rows.
 Each corridor holds multiple dedicated parallel tracks so fan-outs never collapse.
 */
 const CORRIDOR_BANDS = [
-	{ min: 10.6, max: 12.2 }, // Sources -> Ingress
-	{ min: 17.5, max: 18.7 }, // Ingress -> Signal row 1
-	{ min: 27.3, max: 28.7 }, // Signal row 1 -> Signal row 2
-	{ min: 37.4, max: 39.4 }, // Signal row 2 -> Measurements
-	{ min: 44.5, max: 46.7 }, // Measurements -> Logic
-	{ min: 55.2, max: 56.6 }, // Logic -> Derived
-	{ min: 61.4, max: 62.8 }, // Derived -> Strategy
-	{ min: 71.2, max: 72.6 }, // Strategy -> Decisions
-	{ min: 77.4, max: 78.8 }, // Decisions -> Desk/UI
-	{ min: 87.3, max: 88.7 }, // Desk/UI -> Terminals
+	{ min: 10.2, max: 12.8 }, // Sources -> Ingress
+	{ min: 17.0, max: 19.4 }, // Ingress -> Signal row 1
+	{ min: 26.8, max: 29.4 }, // Signal row 1 -> Signal row 2
+	{ min: 36.8, max: 39.8 }, // Signal row 2 -> Measurements
+	{ min: 43.8, max: 47.2 }, // Measurements -> Logic
+	{ min: 54.6, max: 57.4 }, // Logic -> Derived
+	{ min: 60.8, max: 63.4 }, // Derived -> Strategy
+	{ min: 70.6, max: 73.2 }, // Strategy -> Decisions
+	{ min: 76.8, max: 79.4 }, // Decisions -> Desk/UI
+	{ min: 86.8, max: 89.4 }, // Desk/UI -> Terminals
 ];
 
 const VERTICAL_ALLEYS = [

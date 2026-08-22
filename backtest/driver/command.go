@@ -101,24 +101,17 @@ func Command() *cobra.Command {
 				return captures
 			})
 
-			captureID, _ := run.Flags().GetInt64("capture")
+			// An explicit --capture pre-loads and parks that session ready to
+			// play. Without the flag nothing is selected up front: the
+			// dashboard loads a session when the operator clicks it, so a
+			// multi-million-frame capture never boots just because the
+			// process started.
+			if run.Flags().Changed("capture") {
+				captureID, _ := run.Flags().GetInt64("capture")
 
-			if captureID == 0 {
-				captures, err := store.ListCaptures()
-
-				if err != nil {
-					errnie.Error(errnie.Err(errnie.Internal,
-						"backtest: list captures: "+err.Error(), err,
-					))
+				if captureID != 0 {
+					replay.Select(captureID)
 				}
-
-				if len(captures) > 0 {
-					captureID = captures[0].ID
-				}
-			}
-
-			if captureID != 0 {
-				replay.Select(captureID)
 			}
 
 			errnie.Info("symm backtest ready — dashboard: cd frontend && pnpm dev")
@@ -127,7 +120,7 @@ func Command() *cobra.Command {
 		},
 	}
 
-	command.Flags().Int64("capture", 0, "capture id to load (default: newest)")
+	command.Flags().Int64("capture", 0, "capture id to pre-load on start (default: none — select in the dashboard)")
 	command.Flags().String("import", "", "import a legacy market-frames capture file and exit")
 	command.Flags().Bool("hindsight", false, "run perfect-execution hindsight analysis over the given capture and exit")
 	command.Flags().String("out", "", "write the hindsight report to a file instead of stdout")

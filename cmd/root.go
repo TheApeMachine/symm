@@ -51,12 +51,16 @@ var (
 				Level: viper.GetString("system.log.level"),
 			})
 
-			errnie.Info(fmt.Sprintf("symm started with %d CPUs", runtime.NumCPU()))
-			startPprof()
+			errnie.Info(fmt.Sprintf(
+				"symm started with %d CPUs", runtime.NumCPU(),
+			))
+			
+			// startPprof()
 
 			uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
 
 			thesis := types.NewThesis(cmd.Context(), uiChannel)
+
 			captureStore, err := backtest.NewStore(
 				filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
 			)

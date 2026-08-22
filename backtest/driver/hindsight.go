@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
@@ -67,7 +68,7 @@ func analyzeHindsight(command *cobra.Command) error {
 		captureID = captures[0].ID
 	}
 
-	startedAt, _, boundsErr := store.Bounds(captureID)
+	startedAt, endedAt, boundsErr := store.Bounds(captureID)
 
 	if boundsErr != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "hindsight: capture bounds", boundsErr))
@@ -92,7 +93,7 @@ func analyzeHindsight(command *cobra.Command) error {
 		return errnie.Error(errnie.Err(errnie.Validation, "hindsight: capture has no trade tape", nil))
 	}
 
-	decisions, eventsErr := streamDecisions(store, startedAt)
+	decisions, eventsErr := streamDecisions(store, startedAt, endedAt)
 
 	if eventsErr != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "hindsight: read decisions", eventsErr))
@@ -169,12 +170,16 @@ func isTradePayload(payload []byte) bool {
 
 /*
 streamDecisions reads the analytical event stream and decodes the decision
-moments hindsight needs, restricted to decisions observed at or after the
-capture's start. The analytical stream accumulates across every run in one
-store, so without this gate a leg in one capture could be attributed to a
-decision from a different session entirely.
+moments hindsight needs, restricted to decisions whose own venue time falls
+inside the capture window. The analytical stream accumulates across every run
+in one store, so this gate — not the wall-clock write time — is what stops a
+leg in one capture being attributed to a decision from a different session.
 */
-func streamDecisions(store *backtest.Store, from time.Time) ([]hindsight.Decision, error) {
+func streamDecisions(
+	store *backtest.Store,
+	from time.Time,
+	to time.Time,
+) ([]hindsight.Decision, error) {
 	next, err := store.Events()
 
 	if err != nil {
@@ -184,24 +189,34 @@ func streamDecisions(store *backtest.Store, from time.Time) ([]hindsight.Decisio
 	decisions := []hindsight.Decision{}
 
 	for {
-		kind, payload, at, ok := next()
+		kind, payload, _, ok := next()
 
 		if !ok {
 			break
 		}
 
-		if kind != "[]types.Decision" || at.Before(from) {
+		if kind != "[]types.Decision" {
 			continue
 		}
 
 		var batch []hindsight.Decision
 
-		if decodeErr := json.Unmarshal(payload, &batch); decodeErr != nil {
+		if decodeErr := sonic.Unmarshal(payload, &batch); decodeErr != nil {
 			errnie.Error(errnie.Err(errnie.Internal, "hindsight: decode decision batch", decodeErr))
 			continue
 		}
 
-		decisions = append(decisions, batch...)
+		for _, decision := range batch {
+			if decision.At.Before(from) {
+				continue
+			}
+
+			if !to.IsZero() && decision.At.After(to) {
+				continue
+			}
+
+			decisions = append(decisions, decision)
+		}
 	}
 
 	errnie.Info(fmt.Sprintf("hindsight: read %d decision moments", len(decisions)))
@@ -285,7 +300,7 @@ func (driver *Driver) buildHindsight(captureID int64) (RealizedReport, error) {
 
 	defer store.Close()
 
-	startedAt, _, err := store.Bounds(captureID)
+	startedAt, endedAt, err := store.Bounds(captureID)
 
 	if err != nil {
 		return RealizedReport{}, err
@@ -310,7 +325,7 @@ func (driver *Driver) buildHindsight(captureID int64) (RealizedReport, error) {
 		return RealizedReport{}, fmt.Errorf("hindsight: capture %d has no trade tape", captureID)
 	}
 
-	decisions, eventsErr := streamDecisions(store, startedAt)
+	decisions, eventsErr := streamDecisions(store, startedAt, endedAt)
 
 	if eventsErr != nil {
 		return RealizedReport{}, eventsErr
@@ -342,18 +357,59 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 		opportunities := make([]*wire.HindsightOpportunityT, 0, len(symbol.Opportunities))
 
 		for _, opportunity := range symbol.Opportunities {
+			journal := make([]*wire.HindsightSignalT, 0, len(opportunity.Journal))
+
+			for _, decision := range opportunity.Journal {
+				journal = append(journal, hindsightSignalWire(signalWireFields{
+					At:                  decision.At,
+					Action:              decision.Action,
+					Reason:              decision.Reason,
+					Cause:               decision.Cause,
+					GraphScore:          decision.GraphScore,
+					ThesisScore:         decision.ThesisScore,
+					ThesisConfidence:    decision.ThesisConfidence,
+					ThesisSupport:       decision.ThesisSupport,
+					ThesisContradiction: decision.ThesisContradiction,
+					ThesisConditions:    decision.ThesisConditions,
+					Direction:           decision.Direction,
+					Confidence:          decision.Confidence,
+					AdmissionThreshold:  decision.AdmissionThreshold,
+					Opportunity:         decision.Opportunity,
+					OpportunityType:     decision.OpportunityType,
+					PredictiveReady:     decision.PredictiveReady,
+					PredictiveStatus:    decision.PredictiveStatus,
+					Alternatives:        decision.Alternatives,
+				}))
+			}
+
 			opportunities = append(opportunities, &wire.HindsightOpportunityT{
 				Leg: &wire.HindsightLegT{
 					Symbol: opportunity.Leg.Symbol, BuyAt: opportunity.Leg.BuyAt.UnixNano(),
 					SellAt: opportunity.Leg.SellAt.UnixNano(), BuyPrice: opportunity.Leg.BuyPrice,
 					SellPrice: opportunity.Leg.SellPrice, ProfitPct: opportunity.Leg.ProfitPct,
 				},
-				Signal: &wire.HindsightSignalT{
-					At: opportunity.Signal.At.UnixNano(), GraphScore: opportunity.Signal.GraphScore,
-					ThesisScore: opportunity.Signal.ThesisScore, Opportunity: opportunity.Signal.Opportunity,
-					OpportunityType: opportunity.Signal.Type,
-					Alternatives:    hindsightNumbers(opportunity.Signal.Alternatives),
-				},
+				Signal: hindsightSignalWire(signalWireFields{
+					At:                  opportunity.Signal.At,
+					Action:              opportunity.Signal.Action,
+					Reason:              opportunity.Signal.Reason,
+					Cause:               opportunity.Signal.Cause,
+					GraphScore:          opportunity.Signal.GraphScore,
+					ThesisScore:         opportunity.Signal.ThesisScore,
+					ThesisConfidence:    opportunity.Signal.ThesisConfidence,
+					ThesisSupport:       opportunity.Signal.ThesisSupport,
+					ThesisContradiction: opportunity.Signal.ThesisContradiction,
+					ThesisConditions:    opportunity.Signal.ThesisConditions,
+					Direction:           opportunity.Signal.Direction,
+					Confidence:          opportunity.Signal.Confidence,
+					AdmissionThreshold:  opportunity.Signal.AdmissionThreshold,
+					Opportunity:         opportunity.Signal.Opportunity,
+					OpportunityType:     opportunity.Signal.Type,
+					PredictiveReady:     opportunity.Signal.PredictiveReady,
+					PredictiveStatus:    opportunity.Signal.PredictiveStatus,
+					Alternatives:        opportunity.Signal.Alternatives,
+				}),
+				Journal:  journal,
+				Why:      opportunity.Why,
 				Captured: opportunity.Captured, Missed: opportunity.Missed,
 			})
 		}
@@ -370,6 +426,57 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 		CaptureId: report.CaptureID, Status: report.Status, Symbols: symbols,
 		MissedPct: report.MissedPct, UpboundPct: report.UpboundPct,
 		MissedLegs: int64(report.MissedLegs), TotalLegs: int64(report.TotalLegs),
+	}
+}
+
+/*
+signalWireFields is the shared flat shape for one decision moment on the wire,
+whether it is the signal pinned to a missed leg or one entry in its journal.
+*/
+type signalWireFields struct {
+	At                  time.Time
+	Action              string
+	Reason              string
+	Cause               string
+	GraphScore          float64
+	ThesisScore         float64
+	ThesisConfidence    float64
+	ThesisSupport       float64
+	ThesisContradiction float64
+	ThesisConditions    float64
+	Direction           float64
+	Confidence          float64
+	AdmissionThreshold  float64
+	Opportunity         bool
+	OpportunityType     string
+	PredictiveReady     bool
+	PredictiveStatus    string
+	Alternatives        map[string]float64
+}
+
+/*
+hindsightSignalWire encodes one decision moment with its full thesis context.
+*/
+func hindsightSignalWire(fields signalWireFields) *wire.HindsightSignalT {
+	return &wire.HindsightSignalT{
+		At:                  fields.At.UnixNano(),
+		Action:              fields.Action,
+		Reason:              fields.Reason,
+		Cause:               fields.Cause,
+		GraphScore:          fields.GraphScore,
+		ThesisScore:         fields.ThesisScore,
+		ThesisConfidence:    fields.ThesisConfidence,
+		ThesisSupport:       fields.ThesisSupport,
+		ThesisContradiction: fields.ThesisContradiction,
+		ThesisConditions:    fields.ThesisConditions,
+		Direction:           fields.Direction,
+		Confidence:          fields.Confidence,
+		AdmissionThreshold:  fields.AdmissionThreshold,
+		Opportunity:         fields.Opportunity,
+		OpportunityType:     fields.OpportunityType,
+		PredictiveReady:     fields.PredictiveReady,
+		PredictiveStatus:    fields.PredictiveStatus,
+		Alternatives:        hindsightNumbers(fields.Alternatives),
 	}
 }
 

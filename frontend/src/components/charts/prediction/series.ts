@@ -140,7 +140,7 @@ const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 		finiteNumber(frame.forecast?.forwardCurve?.[0]),
 	);
 	const uncertainty = frames.map((frame) =>
-		finiteNumber(frame.forecast?.posterior?.[0]?.Scale),
+		finiteNumber(frame.forecast?.posterior?.[0]?.scale),
 	);
 
 	return {
@@ -158,7 +158,7 @@ const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 				: value - spread;
 		}),
 		latestExpected: finiteNumber(latest?.forecast?.forwardCurve?.[0]),
-		latestUncertainty: finiteNumber(latest?.forecast?.posterior?.[0]?.Scale),
+		latestUncertainty: finiteNumber(latest?.forecast?.posterior?.[0]?.scale),
 		taskRelativePrecision: finiteNumber(latest?.taskRelativePrecision),
 		horizon: finiteNumber(latest?.forecast?.supportedHorizon),
 		reach: finiteNumber(latest?.forecast?.probeHorizon),

@@ -69,15 +69,12 @@ func CaptureSymbolsFromStoredFrames(
 				feeBatchSize = len(batch)
 			}
 
-			if len(batch) > feeBatchSize || target != 0 {
+			if len(batch) > feeBatchSize {
 				return nil, fmt.Errorf("market: inconsistent fee batch at record %d", record)
 			}
 
 			fees = append(fees, batch...)
-
-			if len(batch) < feeBatchSize {
-				target = len(fees)
-			}
+			target = len(fees)
 
 			continue
 		}
@@ -190,6 +187,10 @@ func CaptureSymbolsFromStoredFrames(
 			symbols = append(symbols, header.Result.Symbol)
 		}
 
+		// The profile is complete as soon as every fee schedule has a
+		// matching trade subscription and a first ticker — Kraken delivers
+		// TradeVolume before the trade subscriptions, so this always fires at
+		// the handshake preamble instead of scanning the whole capture.
 		if target != 0 && len(symbols) == target && storedCaptureStartsReady(symbols, starts) {
 			break
 		}

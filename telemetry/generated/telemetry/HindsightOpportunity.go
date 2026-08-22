@@ -9,6 +9,8 @@ import (
 type HindsightOpportunityT struct {
 	Leg *HindsightLegT `json:"leg"`
 	Signal *HindsightSignalT `json:"signal"`
+	Journal []*HindsightSignalT `json:"journal"`
+	Why string `json:"why"`
 	Captured bool `json:"captured"`
 	Missed bool `json:"missed"`
 }
@@ -19,9 +21,28 @@ func (t *HindsightOpportunityT) Pack(builder *flatbuffers.Builder) flatbuffers.U
 	}
 	legOffset := t.Leg.Pack(builder)
 	signalOffset := t.Signal.Pack(builder)
+	journalOffset := flatbuffers.UOffsetT(0)
+	if t.Journal != nil {
+		journalLength := len(t.Journal)
+		journalOffsets := make([]flatbuffers.UOffsetT, journalLength)
+		for j := 0; j < journalLength; j++ {
+			journalOffsets[j] = t.Journal[j].Pack(builder)
+		}
+		HindsightOpportunityStartJournalVector(builder, journalLength)
+		for j := journalLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(journalOffsets[j])
+		}
+		journalOffset = builder.EndVector(journalLength)
+	}
+	whyOffset := flatbuffers.UOffsetT(0)
+	if t.Why != "" {
+		whyOffset = builder.CreateString(t.Why)
+	}
 	HindsightOpportunityStart(builder)
 	HindsightOpportunityAddLeg(builder, legOffset)
 	HindsightOpportunityAddSignal(builder, signalOffset)
+	HindsightOpportunityAddJournal(builder, journalOffset)
+	HindsightOpportunityAddWhy(builder, whyOffset)
 	HindsightOpportunityAddCaptured(builder, t.Captured)
 	HindsightOpportunityAddMissed(builder, t.Missed)
 	return HindsightOpportunityEnd(builder)
@@ -30,6 +51,14 @@ func (t *HindsightOpportunityT) Pack(builder *flatbuffers.Builder) flatbuffers.U
 func (rcv *HindsightOpportunity) UnPackTo(t *HindsightOpportunityT) {
 	t.Leg = rcv.Leg(nil).UnPack()
 	t.Signal = rcv.Signal(nil).UnPack()
+	journalLength := rcv.JournalLength()
+	t.Journal = make([]*HindsightSignalT, journalLength)
+	for j := 0; j < journalLength; j++ {
+		x := HindsightSignal{}
+		rcv.Journal(&x, j)
+		t.Journal[j] = x.UnPack()
+	}
+	t.Why = string(rcv.Why())
 	t.Captured = rcv.Captured()
 	t.Missed = rcv.Missed()
 }
@@ -104,8 +133,36 @@ func (rcv *HindsightOpportunity) Signal(obj *HindsightSignal) *HindsightSignal {
 	return nil
 }
 
-func (rcv *HindsightOpportunity) Captured() bool {
+func (rcv *HindsightOpportunity) Journal(obj *HindsightSignal, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *HindsightOpportunity) JournalLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *HindsightOpportunity) Why() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *HindsightOpportunity) Captured() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -113,11 +170,11 @@ func (rcv *HindsightOpportunity) Captured() bool {
 }
 
 func (rcv *HindsightOpportunity) MutateCaptured(n bool) bool {
-	return rcv._tab.MutateBoolSlot(8, n)
+	return rcv._tab.MutateBoolSlot(12, n)
 }
 
 func (rcv *HindsightOpportunity) Missed() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -125,11 +182,11 @@ func (rcv *HindsightOpportunity) Missed() bool {
 }
 
 func (rcv *HindsightOpportunity) MutateMissed(n bool) bool {
-	return rcv._tab.MutateBoolSlot(10, n)
+	return rcv._tab.MutateBoolSlot(14, n)
 }
 
 func HindsightOpportunityStart(builder *flatbuffers.Builder) {
-	builder.StartObject(4)
+	builder.StartObject(6)
 }
 func HindsightOpportunityAddLeg(builder *flatbuffers.Builder, leg flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(leg), 0)
@@ -137,11 +194,20 @@ func HindsightOpportunityAddLeg(builder *flatbuffers.Builder, leg flatbuffers.UO
 func HindsightOpportunityAddSignal(builder *flatbuffers.Builder, signal flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(signal), 0)
 }
+func HindsightOpportunityAddJournal(builder *flatbuffers.Builder, journal flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(journal), 0)
+}
+func HindsightOpportunityStartJournalVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func HindsightOpportunityAddWhy(builder *flatbuffers.Builder, why flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(why), 0)
+}
 func HindsightOpportunityAddCaptured(builder *flatbuffers.Builder, captured bool) {
-	builder.PrependBoolSlot(2, captured, false)
+	builder.PrependBoolSlot(4, captured, false)
 }
 func HindsightOpportunityAddMissed(builder *flatbuffers.Builder, missed bool) {
-	builder.PrependBoolSlot(3, missed, false)
+	builder.PrependBoolSlot(5, missed, false)
 }
 func HindsightOpportunityEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

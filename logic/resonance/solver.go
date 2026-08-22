@@ -219,16 +219,17 @@ func (solver *Solver) Update(
 	features []float64,
 ) error {
 	symbol := solver.thesis.Symbol(symbolName)
-	detector, _ := solver.detectors.LoadOrStore(
-		symbolName,
-		learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
+	detector, found := solver.detectors.Load(symbolName)
+	if !found {
+		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
 			MaxHorizon: 8,                                                                         // Multi-step forward rollouts up to t+8
 			Target:     learning.DirectionalTarget(0.01),                                          // With deadband threshold
 			Pace:       solver.pace,                                                               // Adaptive learning pace
 			Learn:      true,
-		}),
-	)
+		})
+		solver.detectors.Store(symbolName, detector)
+	}
 
 	coder, ok := detector.(*learning.PredictiveCoder)
 

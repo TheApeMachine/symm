@@ -3,6 +3,7 @@ package types
 import (
 	"iter"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -24,6 +25,9 @@ type Symbol struct {
 	Symbol               string                                      `json:"symbol,omitempty"`
 	Status               Status                                      `json:"status,omitempty"`
 	Tick                 int64                                       `json:"tick,omitempty"`
+	lastTickerNano       atomic.Int64                                `json:"-"`
+	lastTradeNano        atomic.Int64                                `json:"-"`
+	lastLevel3Nano       atomic.Int64                                `json:"-"`
 	Measurements         *transport.MapReduce[*types.Measurement]    `json:"-"`
 	TickerConsumers      []*transport.Consumer[kraken.TickerData]    `json:"-"`
 	TradeConsumers       []*transport.Consumer[kraken.TradeData]     `json:"-"`
@@ -167,6 +171,27 @@ AppendTicker routes a ticker only to the signal owners
 selected by the streaming topology.
 */
 func (symbol *Symbol) AppendTicker(ticker kraken.TickerData) {
+	if !ticker.Timestamp.IsZero() {
+		nano := ticker.Timestamp.UnixNano()
+		last := symbol.lastTickerNano.Load()
+
+		if nano < last {
+			return
+		}
+
+		for nano > last {
+			if symbol.lastTickerNano.CompareAndSwap(last, nano) {
+				break
+			}
+
+			last = symbol.lastTickerNano.Load()
+
+			if nano < last {
+				return
+			}
+		}
+	}
+
 	symbol.tickers.Push(ticker)
 }
 
@@ -199,6 +224,27 @@ AppendTrade routes a trade only to the signal owners
 selected by the streaming topology.
 */
 func (symbol *Symbol) AppendTrade(trade kraken.TradeData) {
+	if !trade.Timestamp.IsZero() {
+		nano := trade.Timestamp.UnixNano()
+		last := symbol.lastTradeNano.Load()
+
+		if nano < last {
+			return
+		}
+
+		for nano > last {
+			if symbol.lastTradeNano.CompareAndSwap(last, nano) {
+				break
+			}
+
+			last = symbol.lastTradeNano.Load()
+
+			if nano < last {
+				return
+			}
+		}
+	}
+
 	symbol.trades.Push(trade)
 }
 
@@ -207,6 +253,27 @@ AppendLevel3 retains one accepted order-identity frame for book-geometry
 readers. Toxicity still observes every fill and delete on its own FIFO.
 */
 func (symbol *Symbol) AppendLevel3(level3 kraken.Level3Data) {
+	if !level3.Timestamp.IsZero() {
+		nano := level3.Timestamp.UnixNano()
+		last := symbol.lastLevel3Nano.Load()
+
+		if nano < last {
+			return
+		}
+
+		for nano > last {
+			if symbol.lastLevel3Nano.CompareAndSwap(last, nano) {
+				break
+			}
+
+			last = symbol.lastLevel3Nano.Load()
+
+			if nano < last {
+				return
+			}
+		}
+	}
+
 	symbol.level3.Push(level3)
 }
 

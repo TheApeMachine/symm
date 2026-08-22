@@ -610,21 +610,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		}
 
 		desk.thesis.Symbol(decision.Symbol).Positions.Push(position)
-	case types.ActionExit:
-		for position := range desk.Positions() {
-			if position == nil || position.Decision.Symbol != decision.Symbol ||
-				position.status() == types.CLOSED {
-				continue
-			}
-
-			return errnie.Error(position.RequestStrategyExit())
-		}
-
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"desk: no open position matches the requested exit",
-			nil,
-		))
 	}
 
 	return errnie.Error(err)

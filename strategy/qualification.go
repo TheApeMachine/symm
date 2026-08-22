@@ -207,8 +207,6 @@ func portfolioActionLabel(
 	switch {
 	case action == portfolioEnterReference(index):
 		return symbol + ":enter"
-	case action == portfolioExitReference(index):
-		return symbol + ":exit"
 	case action == portfolioHoldReference(index):
 		return symbol + ":hold"
 	case !intervened:

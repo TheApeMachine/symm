@@ -26,7 +26,9 @@ rebuilding the stack, so the slider disables while a rebuild is in flight.
 export const BacktestControls = () => {
 	const backtest = useSelector(appStore, (state) => state.backtest);
 
-	if (backtest.captureId === null) {
+	// The wire frame carries a zero capture id before anything is loaded;
+	// treat it like the null the store starts with.
+	if (backtest.captureId === null || backtest.captureId === 0) {
 		return null;
 	}
 

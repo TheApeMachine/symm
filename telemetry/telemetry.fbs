@@ -536,15 +536,29 @@ table HindsightLeg {
 }
 table HindsightSignal {
   at:long;
+  action:string;
+  reason:string;
+  cause:string;
   graphScore:double;
   thesisScore:double;
+  thesisConfidence:double;
+  thesisSupport:double;
+  thesisContradiction:double;
+  thesisConditions:double;
+  direction:double;
+  confidence:double;
+  admissionThreshold:double;
   opportunity:bool;
   opportunityType:string;
+  predictiveReady:bool;
+  predictiveStatus:string;
   alternatives:[NamedNumber];
 }
 table HindsightOpportunity {
   leg:HindsightLeg;
   signal:HindsightSignal;
+  journal:[HindsightSignal];
+  why:string;
   captured:bool;
   missed:bool;
 }

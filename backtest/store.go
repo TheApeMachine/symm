@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -39,7 +40,8 @@ const captureSchema = `
 CREATE TABLE IF NOT EXISTS captures (
 	id INTEGER PRIMARY KEY,
 	started_at TEXT NOT NULL,
-	ended_at TEXT
+	ended_at TEXT,
+	frames INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS capture_frames (
@@ -84,25 +86,108 @@ func NewStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("backtest: create store directory: %w", err)
 	}
 
-	database, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	database, err := sql.Open(
+		"sqlite3",
+		path+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&_cache_size=-65536",
+	)
 
 	if err != nil {
 		return nil, fmt.Errorf("backtest: open store: %w", err)
 	}
 
-	database.SetMaxOpenConns(1)
+	// WAL readers never block each other, so the pool can serve the streaming
+	// playback cursor and the dashboard's capture listing at the same time.
+	// A single connection used to starve the listing while a replay pumped.
+	database.SetMaxOpenConns(maxStoreConnections)
+	database.SetMaxIdleConns(maxStoreConnections)
 
-	if _, err := database.Exec(captureSchema); err != nil {
+	store := &Store{database: database, path: path}
+
+	if err := store.EnsureSchema(); err != nil {
 		database.Close()
 		return nil, fmt.Errorf("backtest: migrate store: %w", err)
 	}
 
-	return &Store{database: database, path: path}, nil
+	return store, nil
+}
+
+/*
+EnsureSchema creates the required tables and indexes if they do not already exist.
+*/
+func (store *Store) EnsureSchema() error {
+	if store == nil || store.database == nil {
+		return fmt.Errorf("backtest: store database required")
+	}
+
+	if _, err := store.database.Exec(captureSchema); err != nil {
+		return fmt.Errorf("backtest: migrate store: %w", err)
+	}
+
+	if err := migrateCaptureCounts(store.database); err != nil {
+		return fmt.Errorf("backtest: migrate capture counts: %w", err)
+	}
+
+	return nil
+}
+
+const maxStoreConnections = 4
+
+/*
+migrateCaptureCounts brings pre-counter capture stores forward: it adds the
+frames column when it is missing and backfills any zero-count rows that
+already hold recorded frames. The backfill is self-healing — a genuinely
+empty capture costs one indexed probe on the next boot and is skipped ever
+after — so it never rehearses a fixed migration version.
+*/
+func migrateCaptureCounts(database *sql.DB) error {
+	columns, err := database.Query("PRAGMA table_info(captures)")
+
+	if err != nil {
+		return err
+	}
+
+	hasFrames := false
+
+	for columns.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType, defaultValue sql.NullString
+
+		if err := columns.Scan(
+			&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey,
+		); err != nil {
+			columns.Close()
+			return err
+		}
+
+		if name.String == "frames" {
+			hasFrames = true
+		}
+	}
+
+	if err := columns.Close(); err != nil {
+		return err
+	}
+
+	if !hasFrames {
+		if _, err := database.Exec(
+			"ALTER TABLE captures ADD COLUMN frames INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return err
+		}
+	}
+
+	_, err = database.Exec(`
+		UPDATE captures SET frames = (
+			SELECT COUNT(*) FROM capture_frames f WHERE f.capture_id = captures.id
+		) WHERE frames = 0
+	`)
+
+	return err
 }
 
 /*
 Reopen returns an independent connection pool to the same store file. The
-playback session holds its one pooled connection for the whole stream, so an
+playback session holds one pooled connection for the whole stream, so an
 analysis pass that also streams must not share that pool: SQLite WAL lets the
 second reader scan concurrently instead of parking behind the playback query.
 */
@@ -130,10 +215,22 @@ OpenCapture starts one run's recording and returns its frame sink. Frames are
 buffered and committed in batches so the live write path stays cheap.
 */
 func (store *Store) OpenCapture() (*CaptureWriter, error) {
+	startedAt := time.Now().UTC()
 	result, err := store.database.Exec(
-		"INSERT INTO captures (started_at) VALUES (?)",
-		time.Now().UTC().Format(time.RFC3339Nano),
+		"INSERT INTO captures (started_at, frames) VALUES (?, 0)",
+		startedAt.Format(time.RFC3339Nano),
 	)
+
+	if err != nil && isNoSuchTable(err) {
+		if schemaErr := store.EnsureSchema(); schemaErr != nil {
+			return nil, fmt.Errorf("backtest: ensure schema: %w", schemaErr)
+		}
+
+		result, err = store.database.Exec(
+			"INSERT INTO captures (started_at, frames) VALUES (?, 0)",
+			startedAt.Format(time.RFC3339Nano),
+		)
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("backtest: open capture: %w", err)
@@ -148,6 +245,7 @@ func (store *Store) OpenCapture() (*CaptureWriter, error) {
 	return &CaptureWriter{
 		store:     store,
 		id:        id,
+		startedAt: startedAt,
 		committed: make([]Frame, 0, captureBatchSize),
 		pending:   lf.NewQueue[Frame](),
 	}, nil
@@ -161,6 +259,7 @@ CaptureWriter batches frames into one transaction per batch.
 type CaptureWriter struct {
 	store     *Store
 	id        int64
+	startedAt time.Time
 	seq       int64
 	committed []Frame
 	pending   *lf.Queue[Frame]
@@ -171,6 +270,31 @@ type CaptureWriter struct {
 
 type captureFailure struct {
 	err error
+}
+
+func (writer *CaptureWriter) ensureCapture() error {
+	started := writer.startedAt
+
+	if started.IsZero() {
+		started = time.Now().UTC()
+	}
+
+	_, err := writer.store.database.Exec(
+		"INSERT INTO captures (id, started_at, frames) VALUES (?, ?, 0) "+
+			"ON CONFLICT(id) DO NOTHING",
+		writer.id,
+		started.Format(time.RFC3339Nano),
+	)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"backtest: ensure capture record",
+			err,
+		))
+	}
+
+	return nil
 }
 
 /*
@@ -244,11 +368,7 @@ func (writer *CaptureWriter) drain() error {
 	return nil
 }
 
-func (writer *CaptureWriter) flush() error {
-	if len(writer.committed) == 0 {
-		return nil
-	}
-
+func (writer *CaptureWriter) executeBatch() error {
 	transaction, err := writer.store.database.Begin()
 
 	if err != nil {
@@ -265,7 +385,7 @@ func (writer *CaptureWriter) flush() error {
 	)
 
 	if err != nil {
-		transaction.Rollback()
+		_ = transaction.Rollback()
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"backtest: prepare capture batch",
@@ -281,7 +401,8 @@ func (writer *CaptureWriter) flush() error {
 			frame.Endpoint,
 			frame.Payload,
 		); err != nil {
-			transaction.Rollback()
+			_ = statement.Close()
+			_ = transaction.Rollback()
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				"backtest: write capture frame",
@@ -292,8 +413,22 @@ func (writer *CaptureWriter) flush() error {
 		writer.seq++
 	}
 
+	if _, err := transaction.Exec(
+		"UPDATE captures SET frames = frames + ? WHERE id = ?",
+		len(writer.committed),
+		writer.id,
+	); err != nil {
+		_ = statement.Close()
+		_ = transaction.Rollback()
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"backtest: count capture frames",
+			err,
+		))
+	}
+
 	if err := statement.Close(); err != nil {
-		transaction.Rollback()
+		_ = transaction.Rollback()
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"backtest: close capture batch",
@@ -309,8 +444,33 @@ func (writer *CaptureWriter) flush() error {
 		))
 	}
 
-	writer.committed = writer.committed[:0]
+	return nil
+}
 
+func (writer *CaptureWriter) flush() error {
+	if len(writer.committed) == 0 {
+		return nil
+	}
+
+	err := writer.executeBatch()
+
+	if err != nil && isNoSuchTable(err) {
+		if schemaErr := writer.store.EnsureSchema(); schemaErr != nil {
+			return schemaErr
+		}
+
+		if captureErr := writer.ensureCapture(); captureErr != nil {
+			return captureErr
+		}
+
+		err = writer.executeBatch()
+	}
+
+	if err != nil {
+		return err
+	}
+
+	writer.committed = writer.committed[:0]
 	return nil
 }
 
@@ -346,6 +506,22 @@ func (writer *CaptureWriter) Close() error {
 		writer.id,
 	)
 
+	if err != nil && isNoSuchTable(err) {
+		if schemaErr := writer.store.EnsureSchema(); schemaErr != nil {
+			return schemaErr
+		}
+
+		if captureErr := writer.ensureCapture(); captureErr != nil {
+			return captureErr
+		}
+
+		_, err = writer.store.database.Exec(
+			"UPDATE captures SET ended_at = ? WHERE id = ?",
+			time.Now().UTC().Format(time.RFC3339Nano),
+			writer.id,
+		)
+	}
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -369,6 +545,19 @@ func (store *Store) WriteEvent(kind string, payload []byte) error {
 		payload,
 	)
 
+	if err != nil && isNoSuchTable(err) {
+		if schemaErr := store.EnsureSchema(); schemaErr != nil {
+			return schemaErr
+		}
+
+		_, err = store.database.Exec(
+			"INSERT INTO audit_events (at, kind, payload) VALUES (?, ?, ?)",
+			time.Now().UTC().Format(time.RFC3339Nano),
+			kind,
+			payload,
+		)
+	}
+
 	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -389,6 +578,16 @@ func (store *Store) Events() (
 	rows, err := store.database.Query(
 		"SELECT kind, payload, at FROM audit_events ORDER BY id",
 	)
+
+	if err != nil && isNoSuchTable(err) {
+		if schemaErr := store.EnsureSchema(); schemaErr != nil {
+			return nil, schemaErr
+		}
+
+		rows, err = store.database.Query(
+			"SELECT kind, payload, at FROM audit_events ORDER BY id",
+		)
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("backtest: open audit events: %w", err)
@@ -422,11 +621,22 @@ ListCaptures returns every recorded run, newest first.
 */
 func (store *Store) ListCaptures() ([]CaptureInfo, error) {
 	rows, err := store.database.Query(`
-		SELECT c.id, c.started_at, c.ended_at,
-			(SELECT COUNT(*) FROM capture_frames f WHERE f.capture_id = c.id)
-		FROM captures c
-		ORDER BY c.id DESC
+		SELECT id, started_at, ended_at, frames
+		FROM captures
+		ORDER BY id DESC
 	`)
+
+	if err != nil && isNoSuchTable(err) {
+		if schemaErr := store.EnsureSchema(); schemaErr != nil {
+			return nil, schemaErr
+		}
+
+		rows, err = store.database.Query(`
+			SELECT id, started_at, ended_at, frames
+			FROM captures
+			ORDER BY id DESC
+		`)
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("backtest: list captures: %w", err)
@@ -468,9 +678,9 @@ func (store *Store) ListCaptures() ([]CaptureInfo, error) {
 /*
 Frames streams one capture's frames in arrival order from the given time
 onward. An empty `from` replays from the beginning. The second return value
-releases the streaming rows; the pool holds one connection, so a consumer
-that stops early must call it or every later query on this store parks
-forever.
+releases the streaming rows; the playback cursor occupies one pooled
+connection for the whole stream, so a consumer that stops early must call it
+to return that connection to the pool.
 */
 func (store *Store) Frames(captureID int64, from time.Time) (
 	func() (Frame, bool), func(), error,
@@ -482,6 +692,20 @@ func (store *Store) Frames(captureID int64, from time.Time) (
 		captureID,
 		from.UTC().Format(time.RFC3339Nano),
 	)
+
+	if err != nil && isNoSuchTable(err) {
+		if schemaErr := store.EnsureSchema(); schemaErr != nil {
+			return nil, nil, schemaErr
+		}
+
+		rows, err = store.database.Query(
+			"SELECT endpoint, payload, received_at FROM capture_frames "+
+				"WHERE capture_id = ? AND received_at >= ? "+
+				"ORDER BY capture_id, seq",
+			captureID,
+			from.UTC().Format(time.RFC3339Nano),
+		)
+	}
 
 	if err != nil {
 		return nil, nil, fmt.Errorf("backtest: open capture frames: %w", err)
@@ -526,6 +750,18 @@ func (store *Store) Bounds(captureID int64) (time.Time, time.Time, error) {
 			(SELECT MAX(received_at) FROM capture_frames WHERE capture_id = ?)
 	`, captureID, captureID).Scan(&first, &last)
 
+	if err != nil && isNoSuchTable(err) {
+		if schemaErr := store.EnsureSchema(); schemaErr != nil {
+			return time.Time{}, time.Time{}, schemaErr
+		}
+
+		err = store.database.QueryRow(`
+			SELECT
+				(SELECT MIN(received_at) FROM capture_frames WHERE capture_id = ?),
+				(SELECT MAX(received_at) FROM capture_frames WHERE capture_id = ?)
+		`, captureID, captureID).Scan(&first, &last)
+	}
+
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("backtest: capture bounds: %w", err)
 	}
@@ -547,4 +783,12 @@ func (store *Store) Bounds(captureID int64) (time.Time, time.Time, error) {
 	}
 
 	return startedAt, endedAt, nil
+}
+
+func isNoSuchTable(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return strings.Contains(err.Error(), "no such table")
 }

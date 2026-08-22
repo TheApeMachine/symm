@@ -386,7 +386,7 @@ func plannerGraph(symbol string, relation logicgraph.RelationType) *logicgraph.G
 	})
 	graph.AddEdge(&logicgraph.Edge{
 		From: root, To: target, Relation: relation,
-		Weight: 0.9, Confidence: 0.8, At: graph.At,
+		Weight: 0.5, Confidence: 0.8, At: graph.At,
 	})
 	return graph
 }

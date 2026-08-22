@@ -63,6 +63,38 @@ SELECT state FROM thesis_checkpoints ORDER BY id`)
 	})
 }
 
+func TestPositionStoreEnsureSchema(t *testing.T) {
+	Convey("Given a position store whose tables are dropped", t, func() {
+		store := newPositionStoreFixture(t)
+		stoploss := newBrokerStoploss(t)
+		stoploss.Update(stoploss.ArmAt)
+
+		_, err := store.database.Exec(`
+			DROP TABLE position_stoplosses;
+			DROP TABLE thesis_checkpoints;
+		`)
+		So(err, ShouldBeNil)
+
+		Convey("Saving stoploss and thesis should regenerate tables and succeed", func() {
+			So(store.Save(stoploss), ShouldBeNil)
+
+			restored, err := store.Load(t.Context(), stoploss.Symbol)
+			So(err, ShouldBeNil)
+			So(restored, ShouldNotBeNil)
+			So(restored.Floor.Cmp(stoploss.Floor), ShouldEqual, 0)
+
+			thesis := types.NewThesis(t.Context(), nil)
+			thesis.Tick = 42
+			So(store.SaveThesis(thesis), ShouldBeNil)
+
+			So(store.Delete(stoploss.Symbol), ShouldBeNil)
+			restored, err = store.Load(t.Context(), stoploss.Symbol)
+			So(err, ShouldBeNil)
+			So(restored, ShouldBeNil)
+		})
+	})
+}
+
 func newPositionStoreFixture(testingTB testing.TB) *PositionStore {
 	testingTB.Helper()
 	store, err := NewPositionStore(

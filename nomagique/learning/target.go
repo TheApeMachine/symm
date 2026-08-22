@@ -56,6 +56,18 @@ func DeltaTarget() TargetTransform {
 }
 
 /*
+IdentityTarget returns the current value itself, unchanged.
+*/
+func IdentityTarget() TargetTransform {
+	return func(current, past float64) (float64, bool) {
+		if !finite(current) {
+			return 0, false
+		}
+		return current, true
+	}
+}
+
+/*
 RatioTarget returns relative change (current / past - 1.0).
 */
 func RatioTarget() TargetTransform {
