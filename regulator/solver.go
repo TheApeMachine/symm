@@ -25,45 +25,30 @@ type observedPositionMark struct {
 }
 
 type Solver struct {
-	mu                           sync.Mutex
-	configSource                 *system.Config
-	optimizer                    *optimizer
-	ui                           *transport.MapReduce[*types.UIFrame]
-	history                      []float64
-	historyCapacity              int
-	lastEquity                   float64
-	peakEquity                   float64
-	lastRevision                 uint64
-	hadExposure                  bool
-	lastResult                   optimizationResult
-	marks                        map[string]observedPositionMark
-	intervalMarkCount            int
-	intervalReturnCount          int
-	intervalReturnSum            float64
-	intervalDrawdown             float64
-	intervalFloor                float64
-	intervalSurgeCount           int
-	markSamples                  uint64
-	lastMarkSymbol               string
-	lastMarkReturn               float64
-	lastMarkDrawdown             float64
-	lastMarkFloor                float64
-	lastMarkSurge                bool
-	lastMarkAt                   time.Time
-	lastMarkContext              markContext
-	intervalHindsightSamples     int
-	intervalCapturedCount        int
-	intervalMissedCount          int
-	intervalCapturedSum          float64
-	intervalMissedSum            float64
-	intervalFalsePositiveSum     float64
-	intervalThesisBlockCount     int
-	intervalConfidenceBlockCount int
-	intervalSupportBlockCount    int
-	intervalContradictBlockCount int
-	intervalGraphBlockCount      int
-	hindsightSamples             uint64
-	lastHindsightContext         hindsightContext
+	mu                   sync.Mutex
+	configSource         *system.Config
+	optimizer            *optimizer
+	ui                   *transport.MapReduce[*types.UIFrame]
+	history              []float64
+	historyCapacity      int
+	lastEquity           float64
+	peakEquity           float64
+	lastRevision         uint64
+	hadExposure          bool
+	lastResult           optimizationResult
+	marks                map[string]observedPositionMark
+	markSamples          uint64
+	lastMarkSymbol       string
+	lastMarkReturn       float64
+	lastMarkDrawdown     float64
+	lastMarkFloor        float64
+	lastMarkSurge        bool
+	lastMarkAt           time.Time
+	lastMarkContext      markContext
+	hindsightSamples     uint64
+	lastHindsightContext hindsightContext
+	markAcc              markAccumulator
+	hindsightAcc         hindsightAccumulator
 }
 
 /*
@@ -155,8 +140,8 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	currentEquity := equity.Equity.Float64()
 
 	periodReturn, drawdown := solver.financialFeedback(currentEquity)
-	marks := solver.pendingMarkContext()
-	hindsight := solver.pendingHindsightContext()
+	marks := solver.markAcc.snapshot()
+	hindsight := solver.hindsightAcc.snapshot()
 	active := exposed || solver.hadExposure || marks.samples > 0
 	result, err := solver.optimizer.update(periodReturn, drawdown, active, marks, hindsight)
 
@@ -172,8 +157,10 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 		return err
 	}
 
-	solver.commitMarkContext(marks)
-	solver.commitHindsightContext(hindsight)
+	solver.markAcc.reset()
+	solver.hindsightAcc.reset()
+	solver.lastMarkContext = marks
+	solver.lastHindsightContext = hindsight
 	solver.lastEquity = currentEquity
 	solver.lastRevision = revision
 	solver.hadExposure = exposed
@@ -232,31 +219,18 @@ func (solver *Solver) ObserveMark(feedback types.MarkFeedback) error {
 	markReturn := 0.0
 	previous := solver.marks[feedback.Symbol]
 	samePosition := feedback.PositionID == "" || previous.positionID == feedback.PositionID
+	hasPrevious := previous.value > 0 && samePosition
 
-	if previous.value > 0 && samePosition {
+	if hasPrevious {
 		markReturn = math.Log(feedback.Mark / previous.value)
-		solver.intervalReturnSum += markReturn
-		solver.intervalReturnCount++
 	}
 
 	solver.marks[feedback.Symbol] = observedPositionMark{
 		positionID: feedback.PositionID,
 		value:      feedback.Mark,
 	}
-	solver.intervalMarkCount++
 
-	if solver.intervalMarkCount == 1 || feedback.PeakDrawdown < solver.intervalDrawdown {
-		solver.intervalDrawdown = feedback.PeakDrawdown
-	}
-
-	if solver.intervalMarkCount == 1 || feedback.FloorDistance < solver.intervalFloor {
-		solver.intervalFloor = feedback.FloorDistance
-	}
-
-	if feedback.SurgeArmed {
-		solver.intervalSurgeCount++
-	}
-
+	solver.markAcc.observe(feedback, markReturn, hasPrevious)
 	solver.markSamples++
 	solver.lastMarkSymbol = feedback.Symbol
 	solver.lastMarkReturn = markReturn
@@ -292,106 +266,10 @@ func (solver *Solver) ObserveHindsight(feedback types.HindsightFeedback) error {
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
 
-	solver.intervalHindsightSamples++
+	solver.hindsightAcc.observe(feedback)
 	solver.hindsightSamples++
 
-	if feedback.Captured {
-		solver.intervalCapturedCount++
-		solver.intervalCapturedSum += feedback.RealizedReturn
-
-		if feedback.RealizedReturn < 0 {
-			solver.intervalFalsePositiveSum += -feedback.RealizedReturn
-		}
-	}
-
-	if feedback.Missed {
-		solver.intervalMissedCount++
-		solver.intervalMissedSum += feedback.MissedReturn
-
-		switch feedback.DominantBlocker {
-		case "thesis_score":
-			solver.intervalThesisBlockCount++
-		case "confidence":
-			solver.intervalConfidenceBlockCount++
-		case "support":
-			solver.intervalSupportBlockCount++
-		case "contradiction":
-			solver.intervalContradictBlockCount++
-		case "graph":
-			solver.intervalGraphBlockCount++
-		}
-	}
-
 	return nil
-}
-
-func (solver *Solver) pendingMarkContext() markContext {
-	context := markContext{
-		samples:       solver.intervalMarkCount,
-		returnSamples: solver.intervalReturnCount,
-		worstDrawdown: solver.intervalDrawdown,
-		minimumFloor:  solver.intervalFloor,
-	}
-
-	if solver.intervalReturnCount > 0 {
-		context.meanReturn = solver.intervalReturnSum / float64(solver.intervalReturnCount)
-	}
-
-	if solver.intervalMarkCount > 0 {
-		context.surgeFraction = float64(solver.intervalSurgeCount) /
-			float64(solver.intervalMarkCount)
-	}
-
-	return context
-}
-
-func (solver *Solver) commitMarkContext(context markContext) {
-	solver.intervalMarkCount = 0
-	solver.intervalReturnCount = 0
-	solver.intervalReturnSum = 0
-	solver.intervalDrawdown = 0
-	solver.intervalFloor = 0
-	solver.intervalSurgeCount = 0
-	solver.lastMarkContext = context
-}
-
-func (solver *Solver) pendingHindsightContext() hindsightContext {
-	context := hindsightContext{
-		samples:              solver.intervalHindsightSamples,
-		capturedSamples:      solver.intervalCapturedCount,
-		missedSamples:        solver.intervalMissedCount,
-		falsePositiveReturn:  solver.intervalFalsePositiveSum,
-		thesisBlockCount:     solver.intervalThesisBlockCount,
-		confidenceBlockCount: solver.intervalConfidenceBlockCount,
-		supportBlockCount:    solver.intervalSupportBlockCount,
-		contradictBlockCount: solver.intervalContradictBlockCount,
-		graphBlockCount:      solver.intervalGraphBlockCount,
-	}
-
-	if solver.intervalCapturedCount > 0 {
-		context.meanCapturedReturn = solver.intervalCapturedSum / float64(solver.intervalCapturedCount)
-	}
-
-	if solver.intervalMissedCount > 0 {
-		context.meanMissedReturn = solver.intervalMissedSum / float64(solver.intervalMissedCount)
-	}
-
-	return context
-}
-
-func (solver *Solver) commitHindsightContext(context hindsightContext) {
-	solver.intervalHindsightSamples = 0
-	solver.intervalCapturedCount = 0
-	solver.intervalMissedCount = 0
-	solver.intervalCapturedSum = 0
-	solver.intervalMissedSum = 0
-	solver.intervalFalsePositiveSum = 0
-	solver.intervalThesisBlockCount = 0
-	solver.intervalConfidenceBlockCount = 0
-	solver.intervalSupportBlockCount = 0
-	solver.intervalContradictBlockCount = 0
-	solver.intervalGraphBlockCount = 0
-	solver.lastHindsightContext = context
 }
 
 func (solver *Solver) applyControls(controls controlVector) error {

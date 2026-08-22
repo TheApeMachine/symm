@@ -13,8 +13,11 @@ PredictiveCoderConfig configures universal hierarchical predictive coding.
 type PredictiveCoderConfig struct {
 	// InputDim is the dimension of the sensory input vector.
 	InputDim int
+	// TargetDim is the number of supervised RLS readout heads (defaults to 1).
+	TargetDim int
 	// DictionaryDim is the size of the overcomplete sparse layer (e.g. 4x InputDim).
 	DictionaryDim int
+
 	// LatentDim is the size of the temporal state layer.
 	LatentDim int
 	// CustomArch optionally specifies explicit layer sizes (e.g. []int{4, 32, 8}).
@@ -125,7 +128,12 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		arch = []int{inDim, dictDim, latDim}
 	}
 
-	manifold := NewResonanceManifold(arch, 1, pace)
+	targetDim := config.TargetDim
+	if targetDim <= 0 {
+		targetDim = 1
+	}
+
+	manifold := NewResonanceManifold(arch, targetDim, pace)
 	ledger := NewTemporalLedger(maxHorizon, target)
 	dynamics := nomagique.NewStream(PredictiveDynamics, nomagique.Frame{})
 
@@ -137,6 +145,7 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		currentHorizon: 1,
 	}
 }
+
 
 /*
 Step advances the entire predictive coding loop in a single call.
@@ -285,3 +294,27 @@ Manifold returns the underlying ResonanceManifold.
 func (pc *PredictiveCoder) Manifold() *ResonanceManifold {
 	return pc.manifold
 }
+
+/*
+Evaluate settles candidate sensory features counterfactually without learning
+or advancing temporal state, and returns the multi-target RLS predictions.
+*/
+func (pc *PredictiveCoder) Evaluate(features []float64) ([]RLSOutput, error) {
+	if _, err := pc.manifold.SettleFromBatchOptions(features, nil, false, false); err != nil {
+		return nil, fmt.Errorf("predictive coder: counterfactual evaluation failed: %w", err)
+	}
+
+	return pc.manifold.RolloutTaskForecast(1)
+}
+
+/*
+ResolveTargets updates all RLS readout heads on a previously settled input.
+*/
+func (pc *PredictiveCoder) ResolveTargets(features []float64, targets []float64) error {
+	if _, err := pc.manifold.SettleFromBatchOptions(features, targets, true, false); err != nil {
+		return fmt.Errorf("predictive coder: resolve targets failed: %w", err)
+	}
+
+	return nil
+}
+

@@ -54,8 +54,7 @@ optimizer learns the temporal response from one applied control vector to the
 next account log return and selects the next bounded intervention.
 */
 type optimizer struct {
-	returnCoder   *learning.PredictiveCoder
-	activityCoder *learning.PredictiveCoder
+	coder         *learning.PredictiveCoder
 	space         *controlSpace
 	confidence    float64
 	baseline      controlVector
@@ -84,39 +83,26 @@ func newOptimizer(config *system.Config) (*optimizer, error) {
 	inputCount := regulatorContextCount + controlCount
 	arch := []int{inputCount, inputCount + controlCount, inputCount}
 
-	returnCoder := learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
+	coder := learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 		CustomArch: arch,
-		Target:     learning.IdentityTarget(),
+		TargetDim:  2,
 		MaxHorizon: 1,
 		Pace:       config.Resonance.LearningRate,
 		Learn:      true,
 	})
 
-	if returnCoder == nil {
-		return nil, fmt.Errorf("regulator: return predictive coder construction failed")
-	}
-
-	activityCoder := learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
-		CustomArch: arch,
-		Target:     learning.IdentityTarget(),
-		MaxHorizon: 1,
-		Pace:       config.Resonance.LearningRate,
-		Learn:      true,
-	})
-
-	if activityCoder == nil {
-		return nil, fmt.Errorf("regulator: activity predictive coder construction failed")
+	if coder == nil {
+		return nil, fmt.Errorf("regulator: predictive coder construction failed")
 	}
 
 	initial := space.current(config)
 
 	return &optimizer{
-		returnCoder:   returnCoder,
-		activityCoder: activityCoder,
-		space:         space,
-		confidence:    config.Regulator.OptimizationConfidence,
-		baseline:      initial,
-		current:       initial,
+		coder:      coder,
+		space:      space,
+		confidence: config.Regulator.OptimizationConfidence,
+		baseline:   initial,
+		current:    initial,
 	}, nil
 }
 
@@ -143,36 +129,13 @@ func (optimizer *optimizer) update(
 	}
 
 	input := optimizer.input(context, selected)
-
-	if _, err := optimizer.returnCoder.Manifold().SettleFromBatchOptions(
-		input,
-		nil,
-		false,
-		false,
-	); err != nil {
-		return optimizationResult{}, fmt.Errorf(
-			"regulator: settle selected return control state: %w",
-			err,
-		)
-	}
-
-	if _, err := optimizer.activityCoder.Manifold().SettleFromBatchOptions(
-		input,
-		nil,
-		false,
-		false,
-	); err != nil {
-		return optimizationResult{}, fmt.Errorf(
-			"regulator: settle selected activity control state: %w",
-			err,
-		)
-	}
-
-	forecast, activity, forecastReady, err := optimizer.forecast()
+	forecasts, err := optimizer.coder.Evaluate(input)
 
 	if err != nil {
-		return optimizationResult{}, err
+		return optimizationResult{}, fmt.Errorf("regulator: evaluate selected controls: %w", err)
 	}
+
+	forecast, activity, forecastReady := optimizer.extractForecast(forecasts)
 
 	result := optimizationResult{
 		controls:      selected,
@@ -182,8 +145,8 @@ func (optimizer *optimizer) update(
 		activityReady: forecastReady,
 		skill:         skill,
 		skillReady:    skillReady,
-		surprise:      optimizer.returnCoder.Manifold().ReconstructionError(),
-		energy:        optimizer.returnCoder.Manifold().Energy(),
+		surprise:      optimizer.coder.Manifold().ReconstructionError(),
+		energy:        optimizer.coder.Manifold().Energy(),
 		exploring:     exploring,
 	}
 
@@ -204,22 +167,11 @@ func (optimizer *optimizer) resolve(periodReturn float64, active bool) error {
 		activeOutcome = 1.0
 	}
 
-	if _, err := optimizer.returnCoder.Manifold().SettleFromBatchOptions(
+	if err := optimizer.coder.ResolveTargets(
 		optimizer.pending,
-		[]float64{periodReturn},
-		true,
-		false,
+		[]float64{periodReturn, activeOutcome},
 	); err != nil {
-		return fmt.Errorf("regulator: resolve prior return outcome: %w", err)
-	}
-
-	if _, err := optimizer.activityCoder.Manifold().SettleFromBatchOptions(
-		optimizer.pending,
-		[]float64{activeOutcome},
-		true,
-		false,
-	); err != nil {
-		return fmt.Errorf("regulator: resolve prior activity outcome: %w", err)
+		return fmt.Errorf("regulator: resolve prior outcomes: %w", err)
 	}
 
 	optimizer.resolved++
@@ -227,34 +179,12 @@ func (optimizer *optimizer) resolve(periodReturn float64, active bool) error {
 	return nil
 }
 
-func (optimizer *optimizer) forecast() (
-	learning.RLSOutput,
-	learning.RLSOutput,
-	bool,
-	error,
-) {
-	returnForecasts, err := optimizer.returnCoder.Manifold().RolloutTaskForecast(1)
-
-	if err != nil {
-		return learning.RLSOutput{}, learning.RLSOutput{}, false, fmt.Errorf(
-			"regulator: forecast candidate account return: %w",
-			err,
-		)
+func (optimizer *optimizer) extractForecast(
+	forecasts []learning.RLSOutput,
+) (learning.RLSOutput, learning.RLSOutput, bool) {
+	if len(forecasts) < 2 || !forecasts[0].Ready || !forecasts[1].Ready {
+		return learning.RLSOutput{}, learning.RLSOutput{}, false
 	}
 
-	activityForecasts, err := optimizer.activityCoder.Manifold().RolloutTaskForecast(1)
-
-	if err != nil {
-		return learning.RLSOutput{}, learning.RLSOutput{}, false, fmt.Errorf(
-			"regulator: forecast candidate account activity: %w",
-			err,
-		)
-	}
-
-	if len(returnForecasts) == 0 || !returnForecasts[0].Ready ||
-		len(activityForecasts) == 0 || !activityForecasts[0].Ready {
-		return learning.RLSOutput{}, learning.RLSOutput{}, false, nil
-	}
-
-	return returnForecasts[0], activityForecasts[0], true, nil
+	return forecasts[0], forecasts[1], true
 }

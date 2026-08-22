@@ -1,7 +1,6 @@
 package regulator
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/theapemachine/symm/system"
@@ -12,7 +11,7 @@ func (optimizer *optimizer) selectControls(
 	context []float64,
 	active bool,
 ) (controlVector, bool, float64, bool, error) {
-	skill, skillReady := optimizer.returnCoder.Manifold().TaskSkill()
+	skill, skillReady := optimizer.coder.Manifold().TaskSkill()
 
 	if !active {
 		selected := optimizer.current
@@ -68,36 +67,13 @@ func (optimizer *optimizer) best(
 
 	for _, candidate := range candidates {
 		candidateInput := optimizer.input(context, candidate)
-
-		if _, err := optimizer.returnCoder.Manifold().SettleFromBatchOptions(
-			candidateInput,
-			nil,
-			false,
-			false,
-		); err != nil {
-			return controlVector{}, false, fmt.Errorf(
-				"regulator: settle candidate return control state: %w",
-				err,
-			)
-		}
-
-		if _, err := optimizer.activityCoder.Manifold().SettleFromBatchOptions(
-			candidateInput,
-			nil,
-			false,
-			false,
-		); err != nil {
-			return controlVector{}, false, fmt.Errorf(
-				"regulator: settle candidate activity control state: %w",
-				err,
-			)
-		}
-
-		forecast, activity, ready, err := optimizer.forecast()
+		forecasts, err := optimizer.coder.Evaluate(candidateInput)
 
 		if err != nil {
 			return controlVector{}, false, err
 		}
+
+		forecast, activity, ready := optimizer.extractForecast(forecasts)
 
 		if !ready {
 			return optimizer.space.exploratory(
