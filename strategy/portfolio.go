@@ -22,6 +22,8 @@ type portfolioLeg struct {
 	Summary         graphtypes.OpportunitySummary
 	Opportunity     logicgraph.OpportunityScore
 	ReserveEligible bool
+	Liquidity       float64
+	LiquidityMass   float64
 }
 
 /*
@@ -32,8 +34,6 @@ belonged to without re-deriving the encoding.
 func portfolioEnterReference(index int) float64 {
 	return float64(index)*3 + portfolioEnterOffset
 }
-
-
 
 /*
 portfolioHoldReference returns the exact action value that keeps one leg flat.
@@ -92,8 +92,6 @@ func NewPortfolioState(
 	reserveSlots int,
 ) *PortfolioState {
 	held := make([]bool, len(legs))
-
-
 
 	// slots and reserveSlots are the desk's open lanes, which already account
 	// for any held positions; the state must not subtract them twice.
@@ -177,6 +175,13 @@ func (state *PortfolioState) GetReward() float64 {
 
 		if leg.Opportunity.Type == types.OpportunityNone {
 			score = leg.Summary.Score
+		}
+
+		// Structural opportunity and executable-liquidity evidence are both
+		// dimensionless [-1,1] observations. When liquidity is present, their
+		// arithmetic mean gives each domain one vote without an arbitrary weight.
+		if leg.LiquidityMass > 0 {
+			score = (score + leg.Liquidity) / 2
 		}
 
 		reward += score
@@ -322,6 +327,8 @@ func portfolioSeed(state *PortfolioState) int64 {
 
 		mixNumber(math.Float64bits(leg.Summary.Score))
 		mixNumber(math.Float64bits(leg.Opportunity.Score))
+		mixNumber(math.Float64bits(leg.Liquidity))
+		mixNumber(math.Float64bits(leg.LiquidityMass))
 		mixNumber(uint64(len(leg.Opportunity.Type)))
 
 		for typeIndex := 0; typeIndex < len(leg.Opportunity.Type); typeIndex++ {

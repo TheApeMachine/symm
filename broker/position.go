@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +41,7 @@ type Position struct {
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
 	passage        *passageTracker
+	exitMu         sync.Mutex
 	Status         atomic.Pointer[types.Status] `json:"-"`
 	/*
 		Decision is the arbitration that opened this lot, kept verbatim.
@@ -375,6 +377,11 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			status == types.EXPIRED {
 			position.setStatus(status)
 			position.Holding.Status = status
+
+			if position.store != nil {
+				_ = position.store.SaveTrade(position)
+			}
+
 			position.Publish()
 
 			if position.cancel != nil {
@@ -423,6 +430,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 
 		if position.store != nil {
 			errnie.Error(position.store.Save(position.Holding.Stoploss))
+			errnie.Error(position.store.SaveTrade(position))
 		}
 	}
 
@@ -495,6 +503,10 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 		return err
 	}
 
+	if position.store != nil {
+		errnie.Error(position.store.SaveTrade(position))
+	}
+
 	position.Publish()
 
 	return nil
@@ -531,10 +543,74 @@ func (position *Position) Enter() (*Position, error) {
 }
 
 /*
+ManualExit is the operator override for one filled lot. It records the override
+on the regulator, persists and checkpoints that transition, and submits the
+market sell before returning. An already-submitted exit is idempotent.
+*/
+func (position *Position) ManualExit() error {
+	if position == nil || position.Holding == nil ||
+		position.Holding.Qty == nil || position.Holding.Qty.Sign() <= 0 {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"position: filled inventory is required for a manual exit",
+			nil,
+		)
+	}
+
+	if position.status() == types.CLOSED {
+		return errnie.Err(
+			errnie.NotFound,
+			"position: lot is already closed",
+			nil,
+		)
+	}
+
+	if position.ExitOrder != nil {
+		return nil
+	}
+
+	if position.Holding.Stoploss == nil {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"position: regulator is required for a manual exit",
+			nil,
+		)
+	}
+
+	if err := position.Holding.Stoploss.TriggerManualOverride(); err != nil {
+		return err
+	}
+
+	if position.store != nil {
+		if err := position.store.Save(position.Holding.Stoploss); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"position: persist manual exit transition",
+				err,
+			))
+		}
+	}
+
+	if position.checkpoint != nil {
+		position.checkpoint()
+	}
+
+	_, err := position.Exit()
+	return err
+}
+
+/*
 Exit is the single sell-order boundary for an open lot. Exit causes may evolve,
 but none may bypass the position's regulator and liquidate an armed holding.
 */
 func (position *Position) Exit() (*Position, error) {
+	position.exitMu.Lock()
+	defer position.exitMu.Unlock()
+
+	if position.ExitOrder != nil {
+		return position, nil
+	}
+
 	if position.Holding == nil || position.Holding.Stoploss == nil ||
 		position.Holding.Stoploss.Status != types.TRIGGERED {
 		return position, errnie.Err(

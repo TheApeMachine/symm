@@ -81,6 +81,7 @@ type API struct {
 	normalizer  *spot.Normalizer
 	public      Conn
 	private     Conn
+	futures     *FuturesLive
 }
 
 func NewAPI(
@@ -113,6 +114,18 @@ func NewAPI(
 	}
 
 	return api
+}
+
+func (api *API) SetFutures(futures *FuturesLive) {
+	api.futures = futures
+
+	if futures != nil {
+		futures.SetFailureHandler(api.reportFailure)
+	}
+}
+
+func (api *API) Futures() *FuturesLive {
+	return api.futures
 }
 
 func (api *API) Name() string { return "kraken" }
@@ -214,6 +227,30 @@ func (api *API) CancelOrder(request *spot.CancelOrderRequest) (spot.CancelResult
 	return api.private.CancelOrder(request)
 }
 
+func (api *API) SubFuturesTicker(productIDs []string) error {
+	if api.futures == nil {
+		return nil
+	}
+
+	return api.futures.SubFuturesTicker(productIDs)
+}
+
+func (api *API) SubFuturesTrades(productIDs []string) error {
+	if api.futures == nil {
+		return nil
+	}
+
+	return api.futures.SubFuturesTrades(productIDs)
+}
+
+func (api *API) SubFuturesBook(productIDs []string) error {
+	if api.futures == nil {
+		return nil
+	}
+
+	return api.futures.SubFuturesBook(productIDs)
+}
+
 func (api *API) Close() {
 	if api.public != nil {
 		api.public.Close()
@@ -221,6 +258,10 @@ func (api *API) Close() {
 
 	if api.private != nil {
 		api.private.Close()
+	}
+
+	if api.futures != nil {
+		_ = api.futures.Close()
 	}
 
 	api.cancel()

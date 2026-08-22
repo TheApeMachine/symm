@@ -18,13 +18,20 @@ func (m *mockPriceProvider) Mark(symbol string, direction string) float64 {
 }
 
 type mockObserverFeedback struct {
-	received []types.MarkFeedback
+	received  []types.MarkFeedback
+	hindsight []types.HindsightFeedback
 }
 
 func (m *mockObserverFeedback) ObserveMark(feedback types.MarkFeedback) error {
 	m.received = append(m.received, feedback)
 	return nil
 }
+
+func (m *mockObserverFeedback) ObserveHindsight(feedback types.HindsightFeedback) error {
+	m.hindsight = append(m.hindsight, feedback)
+	return nil
+}
+
 
 func TestConcurrentObserver(t *testing.T) {
 	Convey("Given a ConcurrentObserver monitoring staged decisions", t, func() {
@@ -51,6 +58,11 @@ func TestConcurrentObserver(t *testing.T) {
 			So(feedback.received, ShouldHaveLength, 1)
 			So(feedback.received[0].Symbol, ShouldEqual, "BTC/USD")
 			So(feedback.received[0].Mark, ShouldEqual, 105.0)
+			So(feedback.hindsight, ShouldHaveLength, 1)
+			So(feedback.hindsight[0].Symbol, ShouldEqual, "BTC/USD")
+			So(feedback.hindsight[0].Missed, ShouldBeTrue)
+			So(feedback.hindsight[0].MissedReturn, ShouldAlmostEqual, 0.05, 1e-6)
 		})
 	})
 }
+

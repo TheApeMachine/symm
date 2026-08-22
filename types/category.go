@@ -80,6 +80,11 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceSentiment, Metric: MetricSurgeScore, Category: RiskOnSurge},
 	{Source: SourceSentiment, Metric: MetricDivergentScore, Category: DivergentMove},
 	{Source: SourceSentiment, Metric: MetricSlumpScore, Category: SystemicSlump},
+	{Source: SourceDerivatives, Metric: MetricLeveragedIgnition, Category: LeveragedIgnition},
+	{Source: SourceDerivatives, Metric: MetricShortSqueeze, Category: ShortSqueeze},
+	{Source: SourceDerivatives, Metric: MetricAdverseLeverageBuildup, Category: AdverseLeverageBuildup},
+	{Source: SourceDerivatives, Metric: MetricLongDeleveraging, Category: LongDeleveraging},
+	{Source: SourceDerivatives, Metric: MetricDerivativesDecoupling, Category: DerivativesDecoupling},
 	{Source: SourcePumpDump, Metric: MetricRVOL, Category: VerticalIgnition},
 	{Source: SourceCVD, Metric: MetricDrive, Category: VerticalIgnition},
 	{Source: SourceHawkes, Metric: MetricSpectralRadius, Category: VerticalIgnition},
@@ -89,57 +94,62 @@ var CategorySchemas = []CategorySchema{
 type CategoryType string
 
 const (
-	CategoryTypeNone   CategoryType = ""
-	ForecastEdge       CategoryType = "forecast_edge"
-	PhysicalField      CategoryType = "physical_field"
-	Laminar            CategoryType = "laminar"
-	Turbulent          CategoryType = "turbulent"
-	Inertial           CategoryType = "inertial"
-	Viscous            CategoryType = "viscous"
-	Frenzy             CategoryType = "frenzy"
-	Saturation         CategoryType = "saturation"
-	Organic            CategoryType = "organic"
-	Exhaustion         CategoryType = "exhaustion"
-	HiddenAbsorption   CategoryType = "hidden_absorption"
-	AggressiveDrive    CategoryType = "aggressive_drive"
-	StochasticBalance  CategoryType = "stochastic_balance"
-	VolumeStarvation   CategoryType = "volume_starvation"
-	LoadedImbalance    CategoryType = "loaded_imbalance"
-	SpoofTrap          CategoryType = "spoof_trap"
-	BookThinning       CategoryType = "book_thinning"
-	DenseNeutrality    CategoryType = "dense_neutrality"
-	InefficientLag     CategoryType = "inefficient_lag"
-	SynchronizedDrift  CategoryType = "synchronized_drift"
-	DecoupledMove      CategoryType = "decoupled_move"
-	AnchorStall        CategoryType = "anchor_stall"
-	VerticalIgnition   CategoryType = "vertical_ignition"
-	CoiledCompression  CategoryType = "coiled_compression"
-	OrganicTrend       CategoryType = "organic_trend"
-	FadedExhaustion    CategoryType = "faded_exhaustion"
-	ExtremeScarcity    CategoryType = "extreme_scarcity"
-	MedianDepth        CategoryType = "median_depth"
-	RobustLiquidity    CategoryType = "robust_liquidity"
-	RiskOnSurge        CategoryType = "risk_on_surge"
-	DivergentMove      CategoryType = "divergent_move"
-	SystemicSlump      CategoryType = "systemic_slump"
-	LiquidityVacuum    CategoryType = "liquidity_vacuum"
-	ToxicBluff         CategoryType = "toxic_bluff"
-	HardSupport        CategoryType = "hard_support"
-	SystemicHerd       CategoryType = "systemic_herd"
-	DecoupledAlpha     CategoryType = "decoupled_alpha"
-	StochasticNoise    CategoryType = "stochastic_noise"
-	DivergentStress    CategoryType = "divergent_stress"
-	EndogenousAlpha    CategoryType = "endogenous_alpha"
-	SystemicBeta       CategoryType = "systemic_beta"
-	LiquidityShock     CategoryType = "liquidity_shock"
-	CausalNoise        CategoryType = "causal_noise"
-	MechanicalCollapse CategoryType = "mechanical_collapse"
-	ThermalExhaustion  CategoryType = "thermal_exhaustion"
-	FragileExpansion   CategoryType = "fragile_expansion"
-	ActiveReversal     CategoryType = "active_reversal"
-	LaminarResonance   CategoryType = "laminar_resonance"
-	TurbulentResonance CategoryType = "turbulent_resonance"
-	Equilibrium        CategoryType = "equilibrium"
+	CategoryTypeNone       CategoryType = ""
+	ForecastEdge           CategoryType = "forecast_edge"
+	PhysicalField          CategoryType = "physical_field"
+	Laminar                CategoryType = "laminar"
+	Turbulent              CategoryType = "turbulent"
+	Inertial               CategoryType = "inertial"
+	Viscous                CategoryType = "viscous"
+	Frenzy                 CategoryType = "frenzy"
+	Saturation             CategoryType = "saturation"
+	Organic                CategoryType = "organic"
+	Exhaustion             CategoryType = "exhaustion"
+	HiddenAbsorption       CategoryType = "hidden_absorption"
+	AggressiveDrive        CategoryType = "aggressive_drive"
+	StochasticBalance      CategoryType = "stochastic_balance"
+	VolumeStarvation       CategoryType = "volume_starvation"
+	LoadedImbalance        CategoryType = "loaded_imbalance"
+	SpoofTrap              CategoryType = "spoof_trap"
+	BookThinning           CategoryType = "book_thinning"
+	DenseNeutrality        CategoryType = "dense_neutrality"
+	InefficientLag         CategoryType = "inefficient_lag"
+	SynchronizedDrift      CategoryType = "synchronized_drift"
+	DecoupledMove          CategoryType = "decoupled_move"
+	AnchorStall            CategoryType = "anchor_stall"
+	VerticalIgnition       CategoryType = "vertical_ignition"
+	CoiledCompression      CategoryType = "coiled_compression"
+	OrganicTrend           CategoryType = "organic_trend"
+	FadedExhaustion        CategoryType = "faded_exhaustion"
+	ExtremeScarcity        CategoryType = "extreme_scarcity"
+	MedianDepth            CategoryType = "median_depth"
+	RobustLiquidity        CategoryType = "robust_liquidity"
+	RiskOnSurge            CategoryType = "risk_on_surge"
+	DivergentMove          CategoryType = "divergent_move"
+	SystemicSlump          CategoryType = "systemic_slump"
+	LeveragedIgnition      CategoryType = "leveraged_ignition"
+	ShortSqueeze           CategoryType = "short_squeeze"
+	AdverseLeverageBuildup CategoryType = "adverse_leverage_buildup"
+	LongDeleveraging       CategoryType = "long_deleveraging"
+	DerivativesDecoupling  CategoryType = "derivatives_decoupling"
+	LiquidityVacuum        CategoryType = "liquidity_vacuum"
+	ToxicBluff             CategoryType = "toxic_bluff"
+	HardSupport            CategoryType = "hard_support"
+	SystemicHerd           CategoryType = "systemic_herd"
+	DecoupledAlpha         CategoryType = "decoupled_alpha"
+	StochasticNoise        CategoryType = "stochastic_noise"
+	DivergentStress        CategoryType = "divergent_stress"
+	EndogenousAlpha        CategoryType = "endogenous_alpha"
+	SystemicBeta           CategoryType = "systemic_beta"
+	LiquidityShock         CategoryType = "liquidity_shock"
+	CausalNoise            CategoryType = "causal_noise"
+	MechanicalCollapse     CategoryType = "mechanical_collapse"
+	ThermalExhaustion      CategoryType = "thermal_exhaustion"
+	FragileExpansion       CategoryType = "fragile_expansion"
+	ActiveReversal         CategoryType = "active_reversal"
+	LaminarResonance       CategoryType = "laminar_resonance"
+	TurbulentResonance     CategoryType = "turbulent_resonance"
+	Equilibrium            CategoryType = "equilibrium"
 )
 
 const (
@@ -172,27 +182,32 @@ const (
 	CategoryExtremeScarcity    CategoryType = ExtremeScarcity
 	CategoryMedianDepth        CategoryType = MedianDepth
 	CategoryRobustLiquidity    CategoryType = RobustLiquidity
-	CategoryRiskOnSurge        CategoryType = RiskOnSurge
-	CategoryDivergentMove      CategoryType = DivergentMove
-	CategorySystemicSlump      CategoryType = SystemicSlump
-	CategoryLiquidityVacuum    CategoryType = LiquidityVacuum
-	CategoryToxicBluff         CategoryType = ToxicBluff
-	CategoryHardSupport        CategoryType = HardSupport
-	CategorySystemicHerd       CategoryType = SystemicHerd
-	CategoryDecoupledAlpha     CategoryType = DecoupledAlpha
-	CategoryStochasticNoise    CategoryType = StochasticNoise
-	CategoryDivergentStress    CategoryType = DivergentStress
-	CategoryEndogenousAlpha    CategoryType = EndogenousAlpha
-	CategorySystemicBeta       CategoryType = SystemicBeta
-	CategoryLiquidityShock     CategoryType = LiquidityShock
-	CategoryCausalNoise        CategoryType = CausalNoise
-	CategoryMechanicalCollapse CategoryType = MechanicalCollapse
-	CategoryThermalExhaustion  CategoryType = ThermalExhaustion
-	CategoryFragileExpansion   CategoryType = FragileExpansion
-	CategoryActiveReversal     CategoryType = ActiveReversal
-	CategoryLaminarResonance   CategoryType = LaminarResonance
-	CategoryTurbulentResonance CategoryType = TurbulentResonance
-	CategoryEquilibrium        CategoryType = Equilibrium
+	CategoryRiskOnSurge            CategoryType = RiskOnSurge
+	CategoryDivergentMove          CategoryType = DivergentMove
+	CategorySystemicSlump          CategoryType = SystemicSlump
+	CategoryLeveragedIgnition      CategoryType = LeveragedIgnition
+	CategoryShortSqueeze           CategoryType = ShortSqueeze
+	CategoryAdverseLeverageBuildup CategoryType = AdverseLeverageBuildup
+	CategoryLongDeleveraging       CategoryType = LongDeleveraging
+	CategoryDerivativesDecoupling  CategoryType = DerivativesDecoupling
+	CategoryLiquidityVacuum        CategoryType = LiquidityVacuum
+	CategoryToxicBluff             CategoryType = ToxicBluff
+	CategoryHardSupport            CategoryType = HardSupport
+	CategorySystemicHerd           CategoryType = SystemicHerd
+	CategoryDecoupledAlpha         CategoryType = DecoupledAlpha
+	CategoryStochasticNoise        CategoryType = StochasticNoise
+	CategoryDivergentStress        CategoryType = DivergentStress
+	CategoryEndogenousAlpha        CategoryType = EndogenousAlpha
+	CategorySystemicBeta           CategoryType = SystemicBeta
+	CategoryLiquidityShock         CategoryType = LiquidityShock
+	CategoryCausalNoise            CategoryType = CausalNoise
+	CategoryMechanicalCollapse     CategoryType = MechanicalCollapse
+	CategoryThermalExhaustion      CategoryType = ThermalExhaustion
+	CategoryFragileExpansion       CategoryType = FragileExpansion
+	CategoryActiveReversal         CategoryType = ActiveReversal
+	CategoryLaminarResonance       CategoryType = LaminarResonance
+	CategoryTurbulentResonance     CategoryType = TurbulentResonance
+	CategoryEquilibrium            CategoryType = Equilibrium
 )
 
 var CategoryOrder = []CategoryType{
@@ -228,6 +243,11 @@ var CategoryOrder = []CategoryType{
 	RiskOnSurge,
 	DivergentMove,
 	SystemicSlump,
+	LeveragedIgnition,
+	ShortSqueeze,
+	AdverseLeverageBuildup,
+	LongDeleveraging,
+	DerivativesDecoupling,
 	LiquidityVacuum,
 	ToxicBluff,
 	HardSupport,

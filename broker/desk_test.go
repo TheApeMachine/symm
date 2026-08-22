@@ -457,9 +457,10 @@ func deskDecisionFixture(
 	decision.TaskSkillReady = true
 	decision.ForecastHorizon = 1
 	decision.Direction = 1
-	decision.ThesisScore = 0.6
+	decision.Confidence = 0.8
+	decision.ThesisScore = 0.8
 	decision.ThesisConfidence = 0.8
-	decision.ThesisSupport = 0.8
+	decision.ThesisSupport = 1.2
 	decision.ThesisContradiction = 0.2
 	decision.Forecast = forecast
 	decision.PerspectiveReturn = forecast.Value

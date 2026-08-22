@@ -270,6 +270,7 @@ func TestThesisHoldWork(t *testing.T) {
 		symbol.AppendTicker(kraken.TickerData{})
 		symbol.AppendTrade(kraken.TradeData{})
 		symbol.AppendLevel3(kraken.Level3Data{})
+		symbol.AppendFuturesTicker(kraken.FuturesTickerData{})
 
 		Convey("It should retain every source cursor and release one wake per source", func() {
 			for _, source := range sources {

@@ -93,7 +93,7 @@ export const volumeShader = /* wgsl */ `
 	${vertexWorld}
 
 	const GAS_OPACITY: f32 = 1.4;
-	const WAVE_BRIGHTNESS: f32 = 0.85;
+	const WAVE_BRIGHTNESS: f32 = 0.25;
 	const MAX_STEPS: u32 = ${MAXIMUM_VOLUME_STEPS}u;
 
 	fn intersectUnitBox(origin: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
@@ -147,7 +147,7 @@ export const sliceShader = /* wgsl */ `
 	${vertexWorld}
 
 	const GAS_OPACITY: f32 = 1.2;
-	const WAVE_BRIGHTNESS: f32 = 1.0;
+	const WAVE_BRIGHTNESS: f32 = 0.25;
 
 	@fragment
 	fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
@@ -232,7 +232,7 @@ export const particleShader = /* wgsl */ `
 		let energyRing = smoothstep(0.48, 0.38, radius)
 			* smoothstep(0.28, 0.38, radius)
 			* clamp(input.energy, 0.0, 1.0);
-		let brightness = mix(0.75, 1.4, heat) * glow;
+		let brightness = mix(0.75, 1.4, heat) * glow * 0.25;
 		return vec4<f32>(
 			color * brightness + waveColor * energyRing * 1.5,
 			glow * 0.9 + core * 0.1

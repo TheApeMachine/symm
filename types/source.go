@@ -14,6 +14,7 @@ const (
 	SourceCategory    SourceType = "category"
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
+	SourceDerivatives SourceType = "derivatives"
 	SourceManifold    SourceType = "manifold"
 	SourceResonance   SourceType = "resonance"
 	SourceCausal      SourceType = "causal"
@@ -41,6 +42,10 @@ const (
 )
 
 const (
+	FuturesTickerConsumerDerivatives = iota
+)
+
+const (
 	TradeConsumerCVD = iota
 	TradeConsumerExhaustion
 	TradeConsumerHawkes
@@ -48,9 +53,17 @@ const (
 )
 
 const (
+	FuturesTradeConsumerDerivatives = iota
+)
+
+const (
 	Level3ConsumerDepthFlow = iota
 	Level3ConsumerToxicity
 	Level3ConsumerPumpDump
+)
+
+const (
+	FuturesBookConsumerDerivatives = iota
 )
 
 const (
@@ -107,6 +120,7 @@ var SignalSources = []SourceType{
 	SourcePumpDump,
 	SourceSentiment,
 	SourceToxicity,
+	SourceDerivatives,
 }
 
 /*
@@ -135,6 +149,7 @@ var SignalSourceStrings = []string{
 	"pumpdump",
 	"sentiment",
 	"toxicity",
+	"derivatives",
 }
 
 var LogicSourceStrings = []string{

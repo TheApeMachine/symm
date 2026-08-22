@@ -25,26 +25,68 @@ export const drawXrayWaiting = (
 /*
 categoryColor picks a latent scatter color from regime text and focus state.
 */
-export const categoryColor = (category: string, focus: boolean): string => {
-	const normalized = category.toLowerCase();
-
+export const categoryColor = (
+	category: string,
+	focus: boolean,
+	index = 0,
+): string => {
 	if (focus) {
 		return TERMINAL_COLORS.amber;
 	}
 
-	if (normalized.includes("stress") || normalized.includes("turbulent")) {
+	const normalized = (category ?? "").toLowerCase();
+
+	if (
+		normalized.includes("stress") ||
+		normalized.includes("turbulent") ||
+		normalized.includes("flush") ||
+		normalized.includes("dump")
+	) {
 		return TERMINAL_COLORS.red;
 	}
 
-	if (normalized.includes("flow") || normalized.includes("laminar")) {
+	if (
+		normalized.includes("flow") ||
+		normalized.includes("laminar") ||
+		normalized.includes("trend") ||
+		normalized.includes("lift")
+	) {
 		return TERMINAL_COLORS.green;
 	}
 
-	if (normalized.includes("coupling") || normalized.includes("equilibrium")) {
+	if (
+		normalized.includes("coupling") ||
+		normalized.includes("equilibrium") ||
+		normalized.includes("coil") ||
+		normalized.includes("drive")
+	) {
 		return TERMINAL_COLORS.cyan;
 	}
 
-	return TERMINAL_COLORS.muted;
+	if (
+		normalized.includes("pump") ||
+		normalized.includes("vol") ||
+		normalized.includes("scarcity")
+	) {
+		return TERMINAL_COLORS.amber;
+	}
+
+	const palette = [
+		TERMINAL_COLORS.cyan,
+		TERMINAL_COLORS.green,
+		TERMINAL_COLORS.red,
+		TERMINAL_COLORS.amber,
+		"#9d7cd8",
+		"#7aa2f7",
+	];
+
+	let hash = index;
+
+	for (let i = 0; i < normalized.length; i += 1) {
+		hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
+	}
+
+	return palette[hash % palette.length] ?? TERMINAL_COLORS.cyan;
 };
 
 /*

@@ -137,6 +137,20 @@ func (instrument *Instrument) Subscribe() error {
 			subscribe(batch)
 		}
 
+		futuresBatch := make([]string, 0, len(batch))
+
+		for _, spotSymbol := range batch {
+			if pid := kraken.SpotToFuturesProductID(spotSymbol); pid != "" {
+				futuresBatch = append(futuresBatch, pid)
+			}
+		}
+
+		if len(futuresBatch) > 0 && instrument.api.Futures() != nil {
+			_ = instrument.api.SubFuturesTicker(futuresBatch)
+			_ = instrument.api.SubFuturesTrades(futuresBatch)
+			_ = instrument.api.SubFuturesBook(futuresBatch)
+		}
+
 		time.Sleep(viper.GetViper().GetDuration("market.subscribe.pace"))
 	}
 

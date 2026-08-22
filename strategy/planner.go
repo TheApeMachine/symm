@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -167,11 +166,6 @@ func (planner *Planner) decisionFromGraph(
 	decision.TaskSkill = cloned.TaskSkill
 	decision.TaskSkillReady = cloned.TaskSkillReady
 	decision.PredictiveReady, decision.PredictiveStatus = predictiveReadiness(cloned)
-	
-	if perspective.Score >= 0.7 && perspective.Direction > 0 {
-		decision.PredictiveReady = true
-		decision.PredictiveStatus = "bypassed: structural thesis score >= 0.7"
-	}
 
 	decision.ReserveEligible, decision.ReserveReason = reserveQualification(
 		opportunity.Type,
@@ -195,7 +189,7 @@ func (planner *Planner) decisionFromGraph(
 			}
 
 			reward := branch.TotalReward / float64(branch.Visits)
-			decision.Alternatives[graphActionLabel(cloned.Roots(), branch.Action)] = reward
+			decision.Alternatives[portfolioActionLabel(searchRoot, cloned.Roots(), branch.Action)] = reward
 
 			if branch.Action == recommended {
 				decision.GraphScore = reward
@@ -203,22 +197,7 @@ func (planner *Planner) decisionFromGraph(
 		}
 	}
 
-	minScore := math.Max(0.1, config.Planner.MinimumGraphScore)
-	minConfidence := math.Max(0.7, config.Planner.MinimumConfidence)
-
-	switch {
-	case decision.Direction <= 0 || decision.ThesisScore <= 0:
-		decision.Reason = "planner: contradiction outweighs support for the long-opportunity thesis"
-	case !decision.Opportunity:
-		decision.Reason = "planner: graph does not identify an actable opportunity"
-	case !decision.PredictiveReady:
-		decision.Reason = "planner: opportunity has no calibrated holding horizon: " +
-			decision.PredictiveStatus
-	case decision.Confidence < minConfidence:
-		decision.Reason = fmt.Sprintf("planner: thesis confidence (%.3f) does not clear the minimum confidence floor (%.3f)", decision.Confidence, minConfidence)
-	case decision.ThesisScore < minScore:
-		decision.Reason = fmt.Sprintf("planner: structural thesis score (%.3f) does not clear the regulated evidence boundary (%.3f)", decision.ThesisScore, minScore)
-	}
+	applyAdmission(decision, config.Planner.Admission, cloned)
 
 	return decision, nil
 }
@@ -289,86 +268,76 @@ func (planner *Planner) updateGraph(
 	}
 
 	createdDecisions := make([]*types.Decision, 0, len(readySymbols))
-	choices := make(map[string]float64, len(readySymbols))
-	rejections := make([]struct {
-		symbol string
-		graph  *logicgraph.Graph
-	}, 0)
+	legs := make([]portfolioLeg, 0, len(readySymbols))
+	graphs := make(map[string]*logicgraph.Graph, len(readySymbols))
+	admitted := make(map[string]*types.Decision, len(readySymbols))
 
-	if len(readySymbols) > 0 {
-		legs := make([]portfolioLeg, 0, len(readySymbols))
-		graphs := make(map[string]*logicgraph.Graph, len(readySymbols))
-
-		for symbolName, symbolGraph := range readySymbols {
-			if planner.Holding(symbolName) {
-				continue
-			}
-
-			graph := symbolGraph
-
-			if graph == nil || !graph.ReadyForSearch() {
-				continue
-			}
-
-			summary := graph.OpportunitySummary()
-
-			if !summary.Ready || summary.Score <= 0 {
-				rejections = append(rejections, struct {
-					symbol string
-					graph  *logicgraph.Graph
-				}{symbolName, graph})
-				continue
-			}
-
-			now := graph.At
-			opportunity := graph.ActiveOpportunity(now)
-			predictiveReady, _ := predictiveReadiness(graph)
-
-			if perspective, err := graphPerspective(graph); err == nil && perspective.Score >= 0.7 && perspective.Direction > 0 {
-				predictiveReady = true
-			}
-
-			if opportunity.Type == types.OpportunityNone || !predictiveReady {
-				rejections = append(rejections, struct {
-					symbol string
-					graph  *logicgraph.Graph
-				}{symbolName, graph})
-				continue
-			}
-
-			graphs[symbolName] = graph
-			
-			horizon := graph.ForecastHorizon
-			if horizon < 1 && predictiveReady {
-				horizon = 1
-			}
-			
-			reserveEligible, _ := reserveQualification(
-				opportunity.Type,
-				predictiveReady,
-				horizon,
-			)
-
-			legs = append(legs, portfolioLeg{
-				Symbol:          symbolName,
-				Summary:         summary,
-				Opportunity:     opportunity,
-				ReserveEligible: reserveEligible,
-			})
+	for symbolName, symbolGraph := range readySymbols {
+		if planner.Holding(symbolName) {
+			continue
 		}
 
+		graph := symbolGraph
+
+		if graph == nil || !graph.ReadyForSearch() {
+			continue
+		}
+
+		seed, err := planner.decisionFromGraph(
+			symbolName,
+			graph,
+			config,
+			nil,
+			0,
+			0,
+		)
+
+		if err != nil {
+			return err
+		}
+
+		if seed == nil {
+			continue
+		}
+
+		if seed.Reason != "" {
+			createdDecisions = append(createdDecisions, seed)
+			continue
+		}
+
+		seed.Action = types.ActionEnter
+		admitted[symbolName] = seed
+		graphs[symbolName] = graph
+		opportunity := graph.ActiveOpportunity(graph.At)
+		reserveEligible, _ := reserveQualification(
+			opportunity.Type,
+			seed.PredictiveReady,
+			seed.ForecastHorizon,
+		)
+		liquidity := alternativesOf(seed)[liquidityScoreKey]
+		liquidityMass := alternativesOf(seed)[liquidityMassKey]
+		legs = append(legs, portfolioLeg{
+			Symbol:          symbolName,
+			Summary:         graph.OpportunitySummary(),
+			Opportunity:     opportunity,
+			ReserveEligible: reserveEligible,
+			Liquidity:       liquidity,
+			LiquidityMass:   liquidityMass,
+		})
+	}
+
+	if len(legs) > 0 {
+		seeds := make([]*types.Decision, 0, len(admitted))
+
+		for _, decision := range admitted {
+			seeds = append(seeds, decision)
+		}
+
+		rankAdmissionCandidates(seeds)
 		slices.SortFunc(legs, func(left, right portfolioLeg) int {
-			if left.Summary.Score != right.Summary.Score {
-				if left.Summary.Score > right.Summary.Score {
-					return -1
-				}
-				return 1
-			}
-			return cmp.Compare(left.Symbol, right.Symbol)
+			return admissionOrder(admitted[left.Symbol], admitted[right.Symbol])
 		})
 
-		// Without a desk the planner still evaluates the round; capacity must
-		// not collapse the search, so the leg count itself is the bound.
 		normalSlots := planner.normalSlots()
 
 		if planner.desk == nil {
@@ -376,7 +345,6 @@ func (planner *Planner) updateGraph(
 		}
 
 		reserveSlots := planner.reserveSlots()
-
 		searchStarted := time.Now()
 		searchRoot, searchErr := portfolioSearch(
 			NewPortfolioState(legs, normalSlots, reserveSlots),
@@ -393,8 +361,6 @@ func (planner *Planner) updateGraph(
 			return searchErr
 		}
 
-		choices = planner.portfolioChoices(searchRoot, len(legs))
-
 		for index, leg := range legs {
 			cloned := graphs[leg.Symbol]
 
@@ -407,7 +373,7 @@ func (planner *Planner) updateGraph(
 				cloned,
 				config,
 				searchRoot,
-				choices[leg.Symbol],
+				portfolioEnterReference(index),
 				config.Planner.MCTSIterations,
 			)
 
@@ -419,39 +385,25 @@ func (planner *Planner) updateGraph(
 				continue
 			}
 
-			if action := choices[leg.Symbol]; action == portfolioEnterReference(index) && decision.Reason == "" {
-				decision.Action = types.ActionEnter
-				decision.Cause = decision.OpportunityType
-			} else if decision.Reason == "" {
-				decision.Reason = "planner: MCTS did not select this candidate for the available slots"
+			if decision.Reason == "" {
+				if !decision.Opportunity && !decision.PredictiveReady && !decision.ReserveEligible {
+					decision.Action = types.ActionNothing
+					decision.GraphScore = 0
+					decision.Trace = nil
+					decision.Reason = "planner: no actable opportunity"
+
+					if !decision.PredictiveReady && decision.PredictiveStatus != "" {
+						decision.Reason += "; predictive state is informational: " +
+							decision.PredictiveStatus
+					}
+				} else {
+					decision.Action = types.ActionEnter
+					decision.Cause = decision.OpportunityType
+					decision.Reason = ""
+				}
 			}
 
 			createdDecisions = append(createdDecisions, decision)
-		}
-
-		// Contradicted or not-yet-ready graphs still owe the round an
-		// observable rejection instead of vanishing from the decision set.
-		for _, rejection := range rejections {
-			if rejection.graph == nil {
-				continue
-			}
-
-			decision, decisionErr := planner.decisionFromGraph(
-				rejection.symbol,
-				rejection.graph,
-				config,
-				nil,
-				0,
-				0,
-			)
-
-			if decisionErr != nil {
-				return decisionErr
-			}
-
-			if decision != nil {
-				createdDecisions = append(createdDecisions, decision)
-			}
 		}
 	}
 
@@ -493,14 +445,13 @@ func (planner *Planner) updateGraph(
 		}
 	}
 
-	for i := range decisions {
-		// Stage with a default 10 minute horizon for hindsight evaluation
-		planner.stager.Stage(&decisions[i], 10*time.Minute)
+	for index := range decisions {
+		// Stage with a default 10 minute horizon for hindsight evaluation.
+		planner.stager.Stage(&decisions[index], 10*time.Minute)
 	}
 
 	if !actionable {
 		planner.publishStrategy(thesis, false, "accumulating", decisions)
-
 		return nil
 	}
 
@@ -515,7 +466,6 @@ func (planner *Planner) updateGraph(
 	}
 
 	planner.publishStrategy(thesis, true, "decisions", decisions)
-
 	return nil
 }
 
@@ -636,7 +586,6 @@ admits new entries can decide which held lot has decayed past its slot.
 A held lot uses the graph already consumed by the current evaluation pass, so
 the planner never reads the stream twice or retains a shadow graph state.
 */
-
 
 /*
 normalSlots and reserveSlots expose the desk capacity the portfolio state

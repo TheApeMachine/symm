@@ -11,10 +11,9 @@ import (
 )
 
 /*
-predictiveReadiness states whether predictive coding has earned the right to
-participate in admission. MCTS still runs while this is false so the UI can
-show the structural alternatives, but no capital is committed until the task
-head is at least baseline-skilled and owns a supported transition horizon.
+predictiveReadiness reports the predictive coder's current calibration state.
+It is diagnostic evidence and may qualify the emergency reserve lane, but it is
+not a general entry veto: ordinary admission is owned by the explicit policy.
 */
 func predictiveReadiness(graph *logicgraph.Graph) (bool, string) {
 	if graph == nil {

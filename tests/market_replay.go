@@ -31,6 +31,7 @@ func (market *Market) WithStagedReplay(
 		panic("market: staged replay requires a thesis")
 	}
 
+	market.thesis = thesis
 	market.replayStart = func() {
 		thesis.HoldWork(types.SignalSources...)
 		thesis.HoldWork(
@@ -275,6 +276,52 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 
 	if strings.HasPrefix(frame.Endpoint, "/") ||
 		frame.Endpoint == "symm_metadata" {
+		return nil
+	}
+
+	if frame.Endpoint == "futures" {
+		if market.thesis != nil {
+			var futuresHeader struct {
+				Feed      string `json:"feed"`
+				ProductID string `json:"product_id"`
+			}
+
+			if json.Unmarshal(frame.Payload, &futuresHeader) == nil {
+				switch futuresHeader.Feed {
+				case "ticker":
+					ticker := kraken.NewFuturesTicker(frame.Payload)
+					if ticker != nil && ticker.Data.ProductID != "" {
+						if spotSymbol := kraken.FuturesProductIDToSpot(ticker.Data.ProductID); spotSymbol != "" {
+							sym := market.thesis.Symbol(spotSymbol)
+							sym.AppendFuturesTicker(ticker.Data)
+						}
+					}
+				case "trade", "trade_snapshot":
+					trades := kraken.NewFuturesTrade(frame.Payload)
+					if trades != nil && len(trades.Data) > 0 {
+						for _, singleTrade := range trades.Data {
+							if spotSymbol := kraken.FuturesProductIDToSpot(singleTrade.ProductID); spotSymbol != "" {
+								sym := market.thesis.Symbol(spotSymbol)
+								sym.AppendFuturesTrade(singleTrade)
+							}
+						}
+					}
+				case "book", "book_snapshot":
+					bookDelta := kraken.NewFuturesBook(frame.Payload)
+					if bookDelta != nil && bookDelta.Data.ProductID != "" {
+						if spotSymbol := kraken.FuturesProductIDToSpot(bookDelta.Data.ProductID); spotSymbol != "" {
+							sym := market.thesis.Symbol(spotSymbol)
+							sym.AppendFuturesBook(bookDelta.Data)
+						}
+					}
+				}
+			}
+		}
+
+		if market.Futures != nil {
+			_ = market.Futures.Publish("futures", frame.Payload)
+		}
+
 		return nil
 	}
 

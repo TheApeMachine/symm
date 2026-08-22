@@ -7,5 +7,6 @@ import (
 
 func main() {
 	cmd.Register(driver.Command())
+	cmd.Register(cmd.ExperimentalCommand())
 	cmd.Execute()
 }

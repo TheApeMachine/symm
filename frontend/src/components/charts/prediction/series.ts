@@ -139,9 +139,10 @@ const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 	const expected = frames.map((frame) =>
 		finiteNumber(frame.forecast?.forwardCurve?.[0]),
 	);
-	const uncertainty = frames.map((frame) =>
-		finiteNumber(frame.forecast?.posterior?.[0]?.scale),
-	);
+	const uncertainty = frames.map((frame) => {
+		const entry = frame.forecast?.posterior?.[0];
+		return finiteNumber(entry?.Scale ?? (entry as { scale?: number })?.scale);
+	});
 
 	return {
 		expected,
@@ -158,7 +159,10 @@ const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 				: value - spread;
 		}),
 		latestExpected: finiteNumber(latest?.forecast?.forwardCurve?.[0]),
-		latestUncertainty: finiteNumber(latest?.forecast?.posterior?.[0]?.scale),
+		latestUncertainty: finiteNumber(
+			latest?.forecast?.posterior?.[0]?.Scale ??
+				(latest?.forecast?.posterior?.[0] as { scale?: number })?.scale,
+		),
 		taskRelativePrecision: finiteNumber(latest?.taskRelativePrecision),
 		horizon: finiteNumber(latest?.forecast?.supportedHorizon),
 		reach: finiteNumber(latest?.forecast?.probeHorizon),

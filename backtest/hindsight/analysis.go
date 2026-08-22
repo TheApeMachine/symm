@@ -302,11 +302,6 @@ func diagnose(context SignalContext, leg Leg) string {
 			context.GraphScore,
 			context.AdmissionThreshold,
 		)
-	case context.PredictiveStatus != "":
-		return clause + fmt.Sprintf(
-			"not predictive-ready (%s)",
-			context.PredictiveStatus,
-		)
 	}
 
 	if dominant := dominantAlternative(context.Alternatives, upward); dominant != "" {

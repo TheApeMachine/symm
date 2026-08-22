@@ -94,6 +94,17 @@ type Live struct {
 }
 
 /*
+Capture returns the underlying capture sink attached to the live connection.
+*/
+func (live *Live) Capture() CaptureSink {
+	if live == nil {
+		return nil
+	}
+
+	return live.capture
+}
+
+/*
 SetObserver attaches the ingress processing clock. Existing and future Level 3
 children share the same observer so all venue messages contribute to the one
 ingress stage shown by diagnostics.

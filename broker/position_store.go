@@ -112,6 +112,14 @@ func (store *PositionStore) EnsureSchema() error {
 		))
 	}
 
+	if _, err := store.database.Exec(positionTradesSchema); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: trades schema failed",
+			err,
+		))
+	}
+
 	return nil
 }
 

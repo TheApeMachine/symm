@@ -1,3 +1,4 @@
+
 /// <reference lib="webworker" />
 
 import { Frame } from "#/providers/telemetry/telemetry/frame";
@@ -28,6 +29,7 @@ type WorkerInbound =
       at?: string;
       captureId?: number;
     }
+  | { type: "POSITION_EXIT"; symbol: string }
   | StreamWorkerMessage;
 
 type WorkerOutbound =
@@ -172,6 +174,12 @@ const sendFocus = (symbol: string) => {
   }
 };
 
+const sendPositionExit = (symbol: string) => {
+  if (socket !== null && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "position.exit", symbol }));
+  }
+};
+
 const teardownSocket = () => {
   socketListeners?.abort();
   socketListeners = null;
@@ -301,6 +309,9 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
       case "BACKTEST":
         sendBacktest(message.action, message.at, message.captureId);
         return;
+      case "POSITION_EXIT":
+        sendPositionExit(message.symbol);
+        return;
       case "REGISTER_STREAM":
         renderers.set(
           message.registration.id,
@@ -332,3 +343,4 @@ self.addEventListener("message", (event: MessageEvent<WorkerInbound>) => {
 self.postMessage({ type: "READY" } satisfies WorkerOutbound);
 
 export {};
+

@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -275,6 +276,46 @@ func (desk *Desk) Recovery() *Recovery {
 	return desk.recovery
 }
 
+/*
+ManualExit executes an operator override for one open symbol. The desk's
+execution lock serializes it against entry admission and repeated override
+clicks, while Position owns the regulator transition and market order.
+*/
+func (desk *Desk) ManualExit(symbol string) error {
+	if desk == nil || desk.positions == nil || symbol == "" {
+		return errnie.Err(
+			errnie.Validation,
+			"desk: symbol is required for a manual exit",
+			nil,
+		)
+	}
+
+	desk.executeMu.Lock()
+	defer desk.executeMu.Unlock()
+
+	value, found := desk.positions.Load(symbol)
+
+	if !found || value == nil {
+		return errnie.Err(
+			errnie.NotFound,
+			"desk: no open position exists for "+symbol,
+			nil,
+		)
+	}
+
+	position, valid := value.(*Position)
+
+	if !valid || position == nil || position.status() == types.CLOSED {
+		return errnie.Err(
+			errnie.NotFound,
+			"desk: no open position exists for "+symbol,
+			nil,
+		)
+	}
+
+	return position.ManualExit()
+}
+
 func (desk *Desk) OpenPositions() int {
 	count := 0
 
@@ -419,10 +460,20 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		if decision.Direction <= 0 || decision.ThesisScore <= 0 {
+		config := system.Cfg.Snapshot()
+
+		if config == nil || config.Planner == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"desk: admission configuration required",
+				nil,
+			))
+		}
+
+		if result := config.Planner.Admission.Evaluate(decision); !result.Accepted {
 			return errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
-				"desk: structural thesis no longer authorizes a long entry",
+				"desk: entry no longer satisfies admission: "+result.Explanation(),
 				nil,
 			))
 		}

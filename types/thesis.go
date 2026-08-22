@@ -259,20 +259,22 @@ func deferredWorkBitOK(source SourceType) (uint64, bool) {
 		return 1 << 8, true
 	case SourceToxicity:
 		return 1 << 9, true
-	case SourceResonance:
+	case SourceDerivatives:
 		return 1 << 10, true
-	case SourceCategory:
+	case SourceResonance:
 		return 1 << 11, true
-	case SourceManifold:
+	case SourceCategory:
 		return 1 << 12, true
-	case SourceCausal:
+	case SourceManifold:
 		return 1 << 13, true
-	case SourceCognition:
+	case SourceCausal:
 		return 1 << 14, true
-	case SourceGraph:
+	case SourceCognition:
 		return 1 << 15, true
-	case SourcePlanner:
+	case SourceGraph:
 		return 1 << 16, true
+	case SourcePlanner:
+		return 1 << 17, true
 	default:
 		return 0, false
 	}

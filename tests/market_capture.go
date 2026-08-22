@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/backtest"
+	"github.com/theapemachine/symm/kraken"
 )
 
 type captureFrame struct {
@@ -130,25 +131,44 @@ func frameCarriesSymbols(
 	payload []byte,
 	symbols map[string]struct{},
 ) (bool, error) {
-	header := struct {
-		Channel string `json:"channel"`
-		Data    []struct {
-			Symbol string `json:"symbol"`
-		} `json:"data"`
-	}{}
+	var generic map[string]any
 
-	if err := json.Unmarshal(payload, &header); err != nil {
+	if err := json.Unmarshal(payload, &generic); err != nil {
 		return false, fmt.Errorf("decode payload header: %w", err)
 	}
 
-	if header.Channel != "ticker" && header.Channel != "trade" &&
-		header.Channel != "level3" {
+	if feed, ok := generic["feed"].(string); ok && feed != "" {
+		if feed != "ticker" && feed != "trade" && feed != "trade_snapshot" &&
+			feed != "book" && feed != "book_snapshot" {
+			return false, nil
+		}
+
+		if productID, ok := generic["product_id"].(string); ok && productID != "" {
+			if spotSymbol := kraken.FuturesProductIDToSpot(productID); spotSymbol != "" {
+				if _, requested := symbols[spotSymbol]; requested {
+					return true, nil
+				}
+			}
+		}
+
 		return false, nil
 	}
 
-	for _, data := range header.Data {
-		if _, requested := symbols[data.Symbol]; requested {
-			return true, nil
+	channel, _ := generic["channel"].(string)
+
+	if channel != "ticker" && channel != "trade" && channel != "level3" {
+		return false, nil
+	}
+
+	dataList, _ := generic["data"].([]any)
+
+	for _, item := range dataList {
+		if itemMap, ok := item.(map[string]any); ok {
+			if symbol, ok := itemMap["symbol"].(string); ok {
+				if _, requested := symbols[symbol]; requested {
+					return true, nil
+				}
+			}
 		}
 	}
 

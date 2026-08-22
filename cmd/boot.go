@@ -19,6 +19,7 @@ import (
 	"github.com/theapemachine/symm/regulator"
 	signalcorrelation "github.com/theapemachine/symm/signal/correlation"
 	signalcvd "github.com/theapemachine/symm/signal/cvd"
+	signalderivatives "github.com/theapemachine/symm/signal/derivatives"
 	signaldepthflow "github.com/theapemachine/symm/signal/depthflow"
 	signalexhaust "github.com/theapemachine/symm/signal/exhaust"
 	signalhawkes "github.com/theapemachine/symm/signal/hawkes"
@@ -240,11 +241,22 @@ func BootWithHub(
 		return nil
 	}
 
+	var futuresRecorders []websocket.CaptureSink
+
+	if live, ok := public.(*websocket.Live); ok && live.Capture() != nil {
+		futuresRecorders = append(futuresRecorders, live.Capture())
+	} else if live, ok := private.(*websocket.Live); ok && live.Capture() != nil {
+		futuresRecorders = append(futuresRecorders, live.Capture())
+	}
+
+	futures := websocket.NewFutures(systemCtx, thesis, "", futuresRecorders...)
 	api := websocket.NewAPI(systemCtx, public, private)
+	api.SetFutures(futures)
 
 	signals := []types.Signal{
 		signalcorrelation.NewSignal(systemCtx, thesis),
 		signalcvd.NewSignal(systemCtx, thesis),
+		signalderivatives.NewSignal(systemCtx, thesis),
 		signaldepthflow.NewSignal(systemCtx, thesis),
 		signalexhaust.NewSignal(systemCtx, thesis),
 		signalhawkes.NewSignal(systemCtx, thesis),
@@ -346,6 +358,7 @@ func BootWithHub(
 	}
 	systems := []Runnable{
 		api,
+		futures,
 	}
 
 	if existingHub == false {

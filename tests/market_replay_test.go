@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/backtest"
 	testtypes "github.com/theapemachine/symm/tests/types"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestMarketReplayFrame(t *testing.T) {
@@ -207,5 +208,87 @@ func BenchmarkMarketReplayFrame(b *testing.B) {
 		market.Public.faults.mu.Lock()
 		market.Public.faults.report.Frames = market.Public.faults.report.Frames[:0]
 		market.Public.faults.mu.Unlock()
+	}
+}
+
+func TestMarketReplayFuturesFrame(t *testing.T) {
+	Convey("Given a market staged replay with a thesis", t, func() {
+		symbol := testtypes.NewSymbol("BTC/USD", 65000, 13)
+		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+		market, err := NewMarketWithScenario(t.Context(), config)
+		So(err, ShouldBeNil)
+		defer market.Close()
+
+		thesis := types.NewThesis(t.Context(), nil)
+		defer thesis.Close()
+
+		market.WithStagedReplay(thesis, nil)
+
+		tickerPayload := []byte(`{"feed":"ticker","product_id":"PF_XBTUSD","bid":65000.0,"ask":65001.0,"last":65000.5,"volume":1200.5,"openInterest":5000000.0,"time":1700000000000}`)
+		tradePayload := []byte(`{"feed":"trade","product_id":"PF_XBTUSD","side":"buy","type":"fill","price":65000.5,"qty":2.5,"time":1700000000000,"uid":"trade-1"}`)
+		bookPayload := []byte(`{"feed":"book","product_id":"PF_XBTUSD","side":"buy","price":65000.0,"qty":10.5,"timestamp":1700000000000}`)
+
+		arrival := time.Date(2026, time.August, 21, 8, 0, 0, 0, time.UTC)
+
+		Convey("Replaying futures ticker should populate futures ticker queue on symbol", func() {
+			err = market.ReplayFrame(backtest.Frame{
+				Endpoint: "futures", Payload: tickerPayload, ReceivedAt: arrival,
+			})
+			So(err, ShouldBeNil)
+
+			sym := thesis.Symbol("BTC/USD")
+			So(sym.HasFuturesTickersFor(sym.FuturesTickerConsumers[types.FuturesTickerConsumerDerivatives]), ShouldBeTrue)
+		})
+
+		Convey("Replaying futures trade should populate futures trade queue on symbol", func() {
+			err = market.ReplayFrame(backtest.Frame{
+				Endpoint: "futures", Payload: tradePayload, ReceivedAt: arrival,
+			})
+			So(err, ShouldBeNil)
+
+			sym := thesis.Symbol("BTC/USD")
+			So(sym.HasFuturesTradesFor(sym.FuturesTradeConsumers[types.FuturesTradeConsumerDerivatives]), ShouldBeTrue)
+		})
+
+		Convey("Replaying futures book should populate futures book queue on symbol", func() {
+			err = market.ReplayFrame(backtest.Frame{
+				Endpoint: "futures", Payload: bookPayload, ReceivedAt: arrival,
+			})
+			So(err, ShouldBeNil)
+
+			sym := thesis.Symbol("BTC/USD")
+			So(sym.HasFuturesBooksFor(sym.FuturesBookConsumers[types.FuturesBookConsumerDerivatives]), ShouldBeTrue)
+		})
+	})
+}
+
+func BenchmarkMarketReplayFuturesFrame(b *testing.B) {
+	symbol := testtypes.NewSymbol("BTC/USD", 65000, 13)
+	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+	market, err := NewMarketWithScenario(b.Context(), config)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer market.Close()
+
+	thesis := types.NewThesis(b.Context(), nil)
+	defer thesis.Close()
+
+	market.WithStagedReplay(thesis, nil)
+
+	payload := []byte(`{"feed":"ticker","product_id":"PF_XBTUSD","bid":65000.0,"ask":65001.0,"last":65000.5,"volume":1200.5,"openInterest":5000000.0,"time":1700000000000}`)
+	frame := backtest.Frame{
+		Endpoint: "futures", Payload: payload,
+		ReceivedAt: time.Date(2026, time.August, 21, 8, 0, 0, 0, time.UTC),
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if err := market.ReplayFrame(frame); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

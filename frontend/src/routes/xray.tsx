@@ -3,6 +3,7 @@ import { useSelector } from "@tanstack/react-store";
 import { useLayoutEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
+import { paintXrayHawkes } from "#/components/terminal/xray-hawkes";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
@@ -27,7 +28,10 @@ const XrayPaintBridge = () => {
 			paintXrayLatent(updates, focusSymbol);
 		};
 
-		const unregister = registerPainter("resonance", paint);
+		const unregisterResonance = registerPainter("resonance", paint);
+		const unregisterMeasurements = registerPainter("measurements", (updates) => {
+			paintXrayHawkes(updates, focusSymbol);
+		});
 
 		/*
 			A fresh mount has no `latestResonance` even when the feed already has
@@ -35,13 +39,22 @@ const XrayPaintBridge = () => {
 			Replaying the retained last frame is what makes revisiting this page
 			show data immediately instead of sitting blank until the next tick.
 		*/
-		const seed = latestResonance.current ?? getLastFrame("resonance");
+		const seedResonance = latestResonance.current ?? getLastFrame("resonance");
 
-		if (seed !== null && seed !== undefined) {
-			paint(seed);
+		if (seedResonance !== null && seedResonance !== undefined) {
+			paint(seedResonance);
 		}
 
-		return unregister;
+		const seedMeasurements = getLastFrame("measurements");
+
+		if (seedMeasurements !== null && seedMeasurements !== undefined) {
+			paintXrayHawkes(seedMeasurements, focusSymbol);
+		}
+
+		return () => {
+			unregisterResonance();
+			unregisterMeasurements();
+		};
 	}, [focusSymbol]);
 
 	return null;

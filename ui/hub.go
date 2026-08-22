@@ -211,6 +211,30 @@ func NewHub(
 				rows = append(rows, position.Wire())
 			}
 
+			if hub.desk.PositionStore != nil {
+				recentTrades, err := hub.desk.PositionStore.RecentTrades(100)
+
+				if err == nil && len(recentTrades) > 0 {
+					openIdentities := make(map[string]struct{}, len(rows))
+
+					for _, row := range rows {
+						if row.Decision != nil && row.Decision.Id != "" {
+							openIdentities[row.Decision.Id] = struct{}{}
+						}
+					}
+
+					for _, trade := range recentTrades {
+						if trade == nil || trade.Decision == nil {
+							continue
+						}
+
+						if _, isOpen := openIdentities[trade.Decision.Id]; !isOpen {
+							rows = append(rows, trade)
+						}
+					}
+				}
+			}
+
 			frame := &wire.FrameT{
 				Type: wire.FramePositionsFrame,
 				Value: &wire.PositionsFrameT{
@@ -281,6 +305,23 @@ func NewHub(
 					switch request.Type {
 					case "focus":
 						types.SetFocus(request.Symbol)
+					case "position.exit":
+						if hub.desk == nil {
+							errnie.Error(errnie.Err(
+								errnie.NotAcceptable,
+								"dashboard: broker desk is unavailable for manual exit",
+								nil,
+							))
+							continue
+						}
+
+						if err := hub.desk.ManualExit(request.Symbol); err != nil {
+							errnie.Error(errnie.Err(
+								errnie.UnprocessableContent,
+								"dashboard: manual exit failed for "+request.Symbol,
+								err,
+							))
+						}
 					case "backtest.play":
 						if hub.playback != nil {
 							hub.playback.Play()

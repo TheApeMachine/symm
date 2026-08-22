@@ -1,9 +1,11 @@
-import type { MouseEvent } from "react";
+
+import type { KeyboardEvent, MouseEvent } from "react";
 import { terminalStore } from "#/collections/terminal";
 import { Component } from "#/components/ui/component";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
+import { publishPositionExit } from "#/providers/websocket";
 import { Flex } from "@/components/ui/flex";
 import { PositionStopGeometry } from "./position-stop-geometry";
 
@@ -20,7 +22,7 @@ opened the lot is inspectable. The symbol comes out of the painted node rather
 than out of React state: these rows are written by the websocket, so the DOM is
 the only place that knows which lot a given card currently holds.
 */
-const inspectPosition = (event: MouseEvent<HTMLButtonElement>): void => {
+const inspectPosition = (event: MouseEvent<HTMLElement>): void => {
 	const symbol = event.currentTarget
 		.querySelector<HTMLElement>("[data-paint='holding.symbol']")
 		?.textContent?.trim();
@@ -31,16 +33,59 @@ const inspectPosition = (event: MouseEvent<HTMLButtonElement>): void => {
 
 	terminalStore.actions.openThesis(symbol);
 };
+
+const inspectPositionKey = (event: KeyboardEvent<HTMLElement>): void => {
+	if (event.key !== "Enter" && event.key !== " ") {
+		return;
+	}
+
+	event.preventDefault();
+	event.currentTarget.click();
+};
+
+const exitPosition = (event: MouseEvent<HTMLButtonElement>): void => {
+	event.preventDefault();
+	event.stopPropagation();
+
+	const symbol = event.currentTarget
+		.closest<HTMLElement>("[data-position-card]")
+		?.querySelector<HTMLElement>("[data-paint='holding.symbol']")
+		?.textContent?.trim();
+
+	if (!symbol) {
+		return;
+	}
+
+	const button = event.currentTarget;
+	button.disabled = true;
+	button.textContent = "EXITING";
+	publishPositionExit(symbol);
+
+	// A successful request removes or updates the lot through telemetry. Restore
+	// the control only if the card is still present, allowing a retry after a
+	// transport or venue rejection without keeping React state per painted row.
+	window.setTimeout(() => {
+		if (!button.isConnected) {
+			return;
+		}
+
+		button.disabled = false;
+		button.textContent = "EXIT";
+	}, 3000);
+};
 export const Positions = () => (
 	<Component registerKey="positions" repeat>
 		{({ ref, className, slots }) => (
 			<List ref={ref} className={cn("min-h-0 flex-1 p-1.5", className)}>
 				{slots.map((slot) => (
-					<button
+					<div
+						data-position-card
 						data-index={slot}
 						key={`${slot}-position`}
-						type="button"
+						role="button"
+						tabIndex={0}
 						onClick={inspectPosition}
+						onKeyDown={inspectPositionKey}
 						title="Inspect this lot"
 						className="mb-1.25 block w-full cursor-pointer rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
 					>
@@ -78,12 +123,22 @@ export const Positions = () => (
 										className="text-[8px] uppercase text-(--f4)"
 									/>
 								</Flex.Row>
-								<Typography.Span
-									data-paint="holding.pnl"
-									data-paint-format=".4f"
-									data-paint-suffix=" USD"
-									className="text-right font-semibold text-[11.5px] text-(--pnl)"
-								/>
+								<Flex.Row className="items-center gap-1.5">
+									<Typography.Span
+										data-paint="holding.pnl"
+										data-paint-format=".4f"
+										data-paint-suffix=" USD"
+										className="text-right font-semibold text-[11.5px] text-(--pnl)"
+									/>
+									<button
+										type="button"
+										onClick={exitPosition}
+										title="Exit this position immediately"
+										className="rounded-xs border border-(--down) px-1.5 py-px text-[8px] font-semibold text-(--down) uppercase tracking-wide hover:bg-[color-mix(in_srgb,var(--down)_12%,transparent)] disabled:cursor-wait disabled:opacity-60"
+									>
+										EXIT
+									</button>
+								</Flex.Row>
 							</Flex.Row>
 
 							<Flex.Row className="mt-0.75 items-center justify-between gap-3 text-[9.5px] text-(--f4)">
@@ -106,9 +161,10 @@ export const Positions = () => (
 
 							<PositionStopGeometry />
 						</Flex.Column>
-					</button>
+					</div>
 				))}
 			</List>
 		)}
 	</Component>
 );
+

@@ -2,35 +2,12 @@ package regulator
 
 import (
 	"fmt"
-	"math"
 
-	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/system"
-	"gonum.org/v1/gonum/stat/distuv"
 )
 
-const regulatorContextCount = 13
-
-const (
-	targetReturn = iota
-	targetActivity
-	targetCount
-)
-
-/*
-markContext summarizes all executable position marks observed since the prior
-account valuation. Dense marks condition the next control decision, but the
-complete broker equity revision remains the supervised wallet outcome.
-*/
-type markContext struct {
-	samples       int
-	returnSamples int
-	meanReturn    float64
-	worstDrawdown float64
-	minimumFloor  float64
-	surgeFraction float64
-}
+const regulatorContextCount = 10
 
 type optimizationResult struct {
 	controls      controlVector
@@ -56,11 +33,6 @@ type candidateScore struct {
 	activityFloor float64
 }
 
-/*
-Better reports whether this outcome is preferable under the regulator policy:
-avoid a confidently losing wallet first, avoid confident inactivity second,
-then maximize conservative wallet return and activity evidence.
-*/
 func (score candidateScore) Better(incumbent candidateScore) bool {
 	if score.losing != incumbent.losing {
 		return !score.losing
@@ -82,20 +54,15 @@ optimizer learns the temporal response from one applied control vector to the
 next account log return and selects the next bounded intervention.
 */
 type optimizer struct {
-	returnCoder       *learning.PredictiveCoder
-	activityCoder     *learning.PredictiveCoder
-	space             *controlSpace
-	returnScale       *adaptive.Standardizer
-	drawdownScale     *adaptive.Standardizer
-	markReturnScale   *adaptive.Standardizer
-	markDrawdownScale *adaptive.Standardizer
-	markFloorScale    *adaptive.Standardizer
-	confidence        float64
-	baseline          controlVector
-	current           controlVector
-	pending           []float64
-	resolved          int
-	interventions     int
+	returnCoder   *learning.PredictiveCoder
+	activityCoder *learning.PredictiveCoder
+	space         *controlSpace
+	confidence    float64
+	baseline      controlVector
+	current       controlVector
+	pending       []float64
+	resolved      int
+	interventions int
 }
 
 func newOptimizer(config *system.Config) (*optimizer, error) {
@@ -144,17 +111,12 @@ func newOptimizer(config *system.Config) (*optimizer, error) {
 	initial := space.current(config)
 
 	return &optimizer{
-		returnCoder:       returnCoder,
-		activityCoder:     activityCoder,
-		space:             space,
-		returnScale:       adaptive.NewStandardizer(),
-		drawdownScale:     adaptive.NewStandardizer(),
-		markReturnScale:   adaptive.NewStandardizer(),
-		markDrawdownScale: adaptive.NewStandardizer(),
-		markFloorScale:    adaptive.NewStandardizer(),
-		confidence:        config.Regulator.OptimizationConfidence,
-		baseline:          initial,
-		current:           initial,
+		returnCoder:   returnCoder,
+		activityCoder: activityCoder,
+		space:         space,
+		confidence:    config.Regulator.OptimizationConfidence,
+		baseline:      initial,
+		current:       initial,
 	}, nil
 }
 
@@ -163,16 +125,13 @@ func (optimizer *optimizer) update(
 	drawdown float64,
 	active bool,
 	marks markContext,
+	hindsight hindsightContext,
 ) (optimizationResult, error) {
 	if err := optimizer.resolve(periodReturn, active); err != nil {
 		return optimizationResult{}, err
 	}
 
-	context, err := optimizer.context(periodReturn, drawdown, active, marks)
-
-	if err != nil {
-		return optimizationResult{}, err
-	}
+	context := regulatorContext(periodReturn, drawdown, active, marks, hindsight)
 
 	selected, exploring, skill, skillReady, err := optimizer.selectControls(
 		context,
@@ -239,6 +198,12 @@ func (optimizer *optimizer) resolve(periodReturn float64, active bool) error {
 		return nil
 	}
 
+	activeOutcome := 0.0
+
+	if active {
+		activeOutcome = 1.0
+	}
+
 	if _, err := optimizer.returnCoder.Manifold().SettleFromBatchOptions(
 		optimizer.pending,
 		[]float64{periodReturn},
@@ -250,7 +215,7 @@ func (optimizer *optimizer) resolve(periodReturn float64, active bool) error {
 
 	if _, err := optimizer.activityCoder.Manifold().SettleFromBatchOptions(
 		optimizer.pending,
-		[]float64{readiness(active)},
+		[]float64{activeOutcome},
 		true,
 		false,
 	); err != nil {
@@ -258,220 +223,8 @@ func (optimizer *optimizer) resolve(periodReturn float64, active bool) error {
 	}
 
 	optimizer.resolved++
+
 	return nil
-}
-
-func (optimizer *optimizer) selectControls(
-	context []float64,
-	active bool,
-) (controlVector, bool, float64, bool, error) {
-	skill, skillReady := optimizer.returnCoder.Manifold().TaskSkill()
-
-	if !active {
-		selected := optimizer.current
-		selected[controlAllocation] = 1
-		selected[controlConfidence] = 0
-		selected[controlGraphThreshold] = 0
-
-		return selected, selected != optimizer.current, skill, skillReady, nil
-	}
-
-	if optimizer.resolved == 0 {
-		return optimizer.current, false, skill, skillReady, nil
-	}
-
-	movable := optimizer.space.movable()
-	persistent := len(movable) > 0 && optimizer.resolved%len(movable) == 0
-
-	if skillReady && skill > 1 && !persistent {
-		selected, fallback, err := optimizer.best(context)
-
-		if !fallback || err != nil {
-			return selected, fallback, skill, skillReady, err
-		}
-	}
-
-	selected := optimizer.space.exploratory(
-		optimizer.current,
-		optimizer.resolved,
-		optimizer.interventions,
-	)
-	optimizer.interventions++
-	return selected, true, skill, skillReady, nil
-}
-
-func (optimizer *optimizer) best(
-	context []float64,
-) (controlVector, bool, error) {
-	candidates := optimizer.space.candidates(
-		optimizer.current,
-		optimizer.resolved,
-	)
-	best := optimizer.current
-	bestScore := candidateScore{
-		losing:        true,
-		inactive:      true,
-		returnFloor:   math.Inf(-1),
-		activityFloor: math.Inf(-1),
-	}
-
-	for _, candidate := range candidates {
-		candidateInput := optimizer.input(context, candidate)
-
-		if _, err := optimizer.returnCoder.Manifold().SettleFromBatchOptions(
-			candidateInput,
-			nil,
-			false,
-			false,
-		); err != nil {
-			return controlVector{}, false, fmt.Errorf(
-				"regulator: settle candidate return control state: %w",
-				err,
-			)
-		}
-
-		if _, err := optimizer.activityCoder.Manifold().SettleFromBatchOptions(
-			candidateInput,
-			nil,
-			false,
-			false,
-		); err != nil {
-			return controlVector{}, false, fmt.Errorf(
-				"regulator: settle candidate activity control state: %w",
-				err,
-			)
-		}
-
-		forecast, activity, ready, err := optimizer.forecast()
-
-		if err != nil {
-			return controlVector{}, false, err
-		}
-
-		if !ready {
-			return optimizer.space.exploratory(
-				optimizer.current,
-				optimizer.resolved,
-				optimizer.interventions,
-			), true, nil
-		}
-
-		returnDistribution := distuv.StudentsT{
-			Mu:    forecast.Value,
-			Sigma: forecast.Scale,
-			Nu:    forecast.DegreesOfFreedom,
-		}
-		activityDistribution := distuv.StudentsT{
-			Mu:    activity.Value,
-			Sigma: activity.Scale,
-			Nu:    activity.DegreesOfFreedom,
-		}
-		score := candidateScore{
-			losing: returnDistribution.Quantile(optimizer.confidence) < 0,
-			inactive: activityDistribution.Quantile(
-				optimizer.confidence,
-			) < system.UninformativeDirectionConfidence,
-			returnFloor: returnDistribution.Quantile(1 - optimizer.confidence),
-			activityFloor: activityDistribution.Quantile(
-				1 - optimizer.confidence,
-			),
-		}
-
-		if score.Better(bestScore) {
-			best = candidate
-			bestScore = score
-		}
-	}
-
-	return best, false, nil
-}
-
-func (optimizer *optimizer) context(
-	periodReturn float64,
-	drawdown float64,
-	active bool,
-	marks markContext,
-) ([]float64, error) {
-	returnOutput, err := optimizer.returnScale.Measure(periodReturn)
-
-	if err != nil {
-		return nil, fmt.Errorf("regulator: standardize account return: %w", err)
-	}
-
-	drawdownOutput, err := optimizer.drawdownScale.Measure(drawdown)
-
-	if err != nil {
-		return nil, fmt.Errorf("regulator: standardize account drawdown: %w", err)
-	}
-
-	markReturnValue := 0.0
-	markReturnReady := false
-
-	if marks.returnSamples > 0 {
-		markReturnOutput, markErr := optimizer.markReturnScale.Measure(marks.meanReturn)
-
-		if markErr != nil {
-			return nil, fmt.Errorf("regulator: standardize mark return: %w", markErr)
-		}
-
-		markReturnValue = markReturnOutput.Value
-		markReturnReady = markReturnOutput.Ready
-	}
-
-	markDrawdownValue := 0.0
-	markDrawdownReady := false
-	markFloorValue := 0.0
-	markFloorReady := false
-
-	if marks.samples > 0 {
-		markDrawdownOutput, markErr := optimizer.markDrawdownScale.Measure(
-			marks.worstDrawdown,
-		)
-
-		if markErr != nil {
-			return nil, fmt.Errorf("regulator: standardize mark drawdown: %w", markErr)
-		}
-
-		markDrawdownValue = markDrawdownOutput.Value
-		markDrawdownReady = markDrawdownOutput.Ready
-
-		markFloorOutput, floorErr := optimizer.markFloorScale.Measure(
-			marks.minimumFloor,
-		)
-
-		if floorErr != nil {
-			return nil, fmt.Errorf("regulator: standardize stop-floor distance: %w", floorErr)
-		}
-
-		markFloorValue = markFloorOutput.Value
-		markFloorReady = markFloorOutput.Ready
-	}
-
-	return []float64{
-		returnOutput.Value,
-		readiness(returnOutput.Ready),
-		drawdownOutput.Value,
-		readiness(drawdownOutput.Ready),
-		readiness(active),
-		readiness(marks.samples > 0),
-		markReturnValue,
-		readiness(markReturnReady),
-		markDrawdownValue,
-		readiness(markDrawdownReady),
-		markFloorValue,
-		readiness(markFloorReady),
-		marks.surgeFraction,
-	}, nil
-}
-
-func (optimizer *optimizer) input(
-	context []float64,
-	controls controlVector,
-) []float64 {
-	input := make([]float64, 0, regulatorContextCount+controlCount)
-	input = append(input, context...)
-	input = append(input, controls[:]...)
-	return input
 }
 
 func (optimizer *optimizer) forecast() (
@@ -504,12 +257,4 @@ func (optimizer *optimizer) forecast() (
 	}
 
 	return returnForecasts[0], activityForecasts[0], true, nil
-}
-
-func readiness(ready bool) float64 {
-	if ready {
-		return 1
-	}
-
-	return 0
 }

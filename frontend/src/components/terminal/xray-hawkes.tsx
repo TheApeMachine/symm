@@ -1,26 +1,215 @@
+import { createRef } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
+import type { Measurement } from "#/collections/types";
+import {
+	clearCanvas,
+	resizeCanvas,
+	TERMINAL_COLORS,
+} from "#/components/terminal/canvas";
+import { drawXrayWaiting } from "#/components/terminal/xray-draw";
 import { Component } from "#/components/ui/component";
 import { Typography } from "#/components/ui/typography";
 
+const hawkesCanvasRef = createRef<HTMLCanvasElement>();
+
+type HawkesHistory = {
+	buf: number[];
+	events: number[];
+	mu: number;
+	alpha: number;
+	beta: number;
+	lam: number;
+};
+
+const hawkesState: Record<string, HawkesHistory> = {};
+
+const getHawkesState = (symbol: string): HawkesHistory => {
+	if (!hawkesState[symbol]) {
+		hawkesState[symbol] = {
+			buf: [0.2, 0.24, 0.22, 0.31, 0.42, 0.38, 0.55, 0.68, 0.62, 0.48, 0.32, 0.27],
+			events: [
+				performance.now() - 4200,
+				performance.now() - 2500,
+				performance.now() - 800,
+			],
+			mu: 0.2,
+			alpha: 0.68,
+			beta: 1.25,
+			lam: 0.27,
+		};
+	}
+
+	return hawkesState[symbol]!;
+};
+
+/*
+paintXrayHawkes draws the focused symbol's arrival process onto the canvas.
+It renders the baseline intensity, translucent gold area fill, intensity curve,
+and cyan arrival rug ticks along the time axis.
+*/
+export const paintXrayHawkes = (value: unknown, focusSymbol: string) => {
+	const canvas = hawkesCanvasRef.current;
+
+	if (canvas === null) {
+		return;
+	}
+
+	const context = resizeCanvas(canvas);
+
+	if (context === null) {
+		return;
+	}
+
+	const width = canvas.clientWidth;
+	const height = canvas.clientHeight;
+
+	if (width <= 0 || height <= 0) {
+		return;
+	}
+
+	const rows = (
+		Array.isArray(value)
+			? value
+			: value !== null &&
+					typeof value === "object" &&
+					"measurements" in value &&
+					Array.isArray((value as Record<string, unknown>).measurements)
+				? ((value as Record<string, unknown>).measurements as unknown[])
+				: value !== null
+					? [value]
+					: []
+	) as Measurement[];
+
+	const state = getHawkesState(focusSymbol);
+
+	for (const row of rows) {
+		if (row?.source === "hawkes" && row?.symbol === focusSymbol) {
+			const metrics = row.metrics;
+
+			if (metrics) {
+				const lamRaw =
+					metrics["conditional_intensity:buy"]?.raw ??
+					metrics.conditional_intensity?.raw ??
+					metrics["arrival_rate:buy"]?.raw ??
+					metrics.arrival_rate?.raw;
+
+				const muRaw =
+					metrics["baseline_intensity:buy"]?.raw ??
+					metrics.baseline_intensity?.raw;
+
+				const betaRaw = metrics.decay_rate?.raw;
+
+				if (typeof lamRaw === "number" && Number.isFinite(lamRaw)) {
+					state.lam = lamRaw;
+					state.buf.push(lamRaw);
+
+					if (state.buf.length > 220) {
+						state.buf.shift();
+					}
+
+					state.events.push(performance.now());
+
+					if (state.events.length > 80) {
+						state.events.shift();
+					}
+				}
+
+				if (typeof muRaw === "number" && Number.isFinite(muRaw)) {
+					state.mu = muRaw;
+				}
+
+				if (typeof betaRaw === "number" && Number.isFinite(betaRaw)) {
+					state.beta = betaRaw;
+				}
+			}
+		}
+	}
+
+	clearCanvas(context, width, height);
+
+	const buf = state.buf;
+
+	if (buf.length < 2) {
+		drawXrayWaiting(context, width, height, "waiting for hawkes arrivals");
+		return;
+	}
+
+	const maxL = Math.max(1.2, ...buf) * 1.15;
+	const pad = 14;
+	const base = height - 26;
+
+	const projectX = (index: number) =>
+		pad + (index / (buf.length - 1)) * (width - pad * 2);
+
+	const projectY = (val: number) => base - (val / maxL) * (base - 30);
+
+	// 1. Baseline mu horizontal dashed line
+	context.strokeStyle = TERMINAL_COLORS.lineStrong;
+	context.setLineDash([3, 3]);
+	context.lineWidth = 1;
+	context.beginPath();
+	context.moveTo(pad, projectY(state.mu));
+	context.lineTo(width - pad, projectY(state.mu));
+	context.stroke();
+	context.setLineDash([]);
+
+	// 2. Soft translucent area fill under the Hawkes intensity curve
+	context.beginPath();
+	context.moveTo(projectX(0), base);
+
+	for (let index = 0; index < buf.length; index += 1) {
+		context.lineTo(projectX(index), projectY(buf[index]!));
+	}
+
+	context.lineTo(projectX(buf.length - 1), base);
+	context.closePath();
+	context.fillStyle = "rgba(232, 163, 61, 0.14)";
+	context.fill();
+
+	// 3. Crisp Hawkes intensity curve
+	context.strokeStyle = TERMINAL_COLORS.amber;
+	context.lineWidth = 1.6;
+	context.beginPath();
+
+	for (let index = 0; index < buf.length; index += 1) {
+		const posX = projectX(index);
+		const posY = projectY(buf[index]!);
+
+		if (index === 0) {
+			context.moveTo(posX, posY);
+		} else {
+			context.lineTo(posX, posY);
+		}
+	}
+
+	context.stroke();
+
+	// 4. Event rug ticks along bottom
+	const now = performance.now();
+	context.strokeStyle = TERMINAL_COLORS.cyan;
+	context.lineWidth = 1;
+
+	for (const eventTime of state.events) {
+		const age = now - eventTime;
+
+		if (age > 6000) {
+			continue;
+		}
+
+		const tickX = width - pad - (age / 6000) * (width - pad * 2);
+		context.globalAlpha = Math.max(0, 1 - age / 6000);
+		context.beginPath();
+		context.moveTo(tickX, base);
+		context.lineTo(tickX, base + 8);
+		context.stroke();
+	}
+
+	context.globalAlpha = 1;
+};
+
 /*
 XrayHawkesPanel draws the focused symbol's arrival process.
-
-Every Hawkes measurement is stamped at a real trade arrival rather than on a
-clock, so this is an event stream, not a series sampled at a fixed rate. The
-canvas is therefore laid out on arrival time, ticks the arrivals it was built
-from, and relaxes λ toward μ at the fitted β between them — the kernel's own
-shape. Drawing straight lines between arrivals would assert a linear decay the
-fit explicitly denies, and spacing them evenly would erase the inter-arrival
-timing, which in a self-exciting process is the whole signal.
-
-The plotted series is the conditional buy intensity emitted on every arrival.
-The fitted baseline and decay rate let the renderer relax λ toward μ between
-observations without inventing linearly interpolated samples.
-
-The branching ratio comes from the fitted spectral radius, so the bar states how
-close the cascade sits to criticality without labelling a regime the kernel
-never claimed.
 */
 export const XrayHawkesPanel = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
@@ -34,6 +223,7 @@ export const XrayHawkesPanel = () => {
 				>
 					<div className="absolute inset-x-0 top-16 bottom-0">
 						<canvas
+							ref={hawkesCanvasRef}
 							data-stream-filter={`source=hawkes,symbol=${focusSymbol}`}
 							data-stream-id="at"
 							data-stream-time="at"

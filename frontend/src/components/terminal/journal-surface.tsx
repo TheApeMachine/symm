@@ -1,3 +1,4 @@
+
 import { Component } from "#/components/ui/component";
 import { JOURNAL } from "#/providers/ws-stores";
 import { Panel } from "@/components/ui/panel";
@@ -21,7 +22,7 @@ const LIFECYCLE_TONE =
 	"initializing:text-(--info) pending:text-(--warning) new:text-(--info) open:text-(--up) partial:text-(--warning) partial_filled:text-(--warning) filled:text-(--up) error:text-(--down)";
 
 const EXIT_TONE =
-	"hard_floor:text-(--down) protected_floor:text-(--up) trailing_floor:text-(--up) profit_stagnation:text-(--acc) pump_momentum_exhausted:text-(--acc) horizon_expired:text-(--warning) continuation_ev_negative:text-(--warning) execution_regime_invalidated:text-(--warning)";
+	"hard_floor:text-(--down) protected_floor:text-(--up) trailing_floor:text-(--up) profit_stagnation:text-(--acc) pump_momentum_exhausted:text-(--acc) horizon_expired:text-(--warning) execution_regime_invalidated:text-(--warning)";
 
 /*
 The visit domain spans every rendered branch, so each bar states its share of
@@ -332,3 +333,4 @@ export const JournalSurface = () => (
 		</div>
 	</div>
 );
+

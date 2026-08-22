@@ -111,10 +111,28 @@ var controlPresentations = [...]controlPresentation{
 		explanation: "Maximum quote capital one admitted entry may allocate.",
 	},
 	{
+		index: controlThesisScore, name: "thesis_score",
+		label: "Admission Thesis Score Floor", suffix: " score", displayScale: 1,
+		changed:     "tightened",
+		explanation: "Minimum multi-modal thesis alignment score required for entry admission.",
+	},
+	{
 		index: controlConfidence, name: "confidence",
 		label: "Forecast Support Confidence", suffix: "% min", displayScale: 100,
 		changed:     "tightened",
 		explanation: "Posterior direction probability required for each retained forecast horizon.",
+	},
+	{
+		index: controlSupport, name: "support",
+		label: "Thesis Support Threshold", suffix: " support", displayScale: 1,
+		changed:     "tightened",
+		explanation: "Minimum supporting evidence magnitude required across active domains.",
+	},
+	{
+		index: controlContradiction, name: "contradiction",
+		label: "Contradiction Ceiling", suffix: " max", displayScale: 1,
+		changed:     "tightened",
+		explanation: "Maximum contradictory domain evidence tolerated for entry admission.",
 	},
 	{
 		index: controlGraphThreshold, name: "graph",
@@ -141,6 +159,7 @@ var controlPresentations = [...]controlPresentation{
 		explanation: "Exploration weight used when balancing visited and uncertain graph branches.",
 	},
 }
+
 
 func (solver *Solver) buildPayload(
 	periodReturn float64,

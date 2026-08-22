@@ -103,39 +103,38 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 		Every carrier is named. The embedding routinely holds a handful of symbols
 		at most, and an unlabelled dot says nothing about which one settled where.
 	*/
-	for (const point of pointsToDraw) {
+	for (let index = 0; index < pointsToDraw.length; index += 1) {
+		const point = pointsToDraw[index]!;
 		const focus = point.symbol === focusSymbol;
 		const x = pad + projectX(point.x) * (width - pad * 2);
 		const y = height - pad - projectY(point.y) * (height - pad * 2);
-		const color = categoryColor(point.category, focus);
+		const color = categoryColor(point.category, focus, index);
 
 		context.fillStyle = color;
-		context.globalAlpha = focus ? 1 : 0.72;
-		context.shadowBlur = focus ? 12 : 4;
+		context.globalAlpha = focus ? 1 : 0.65;
+		context.shadowBlur = focus ? 14 : 0;
 		context.shadowColor = color;
 		context.beginPath();
-		context.arc(x, y, focus ? 5 : 3.5, 0, Math.PI * 2);
+		context.arc(x, y, focus ? 6 : 3.5, 0, Math.PI * 2);
 		context.fill();
 		context.shadowBlur = 0;
 		context.globalAlpha = 1;
 
 		if (focus) {
 			context.strokeStyle = TERMINAL_COLORS.amber;
-			context.lineWidth = 1.5;
+			context.lineWidth = 1.4;
 			context.beginPath();
-			context.arc(x, y, 9, 0, Math.PI * 2);
+			context.arc(x, y, 11, 0, Math.PI * 2);
 			context.stroke();
-		}
 
-		context.fillStyle = focus
-			? TERMINAL_COLORS.foreground
-			: TERMINAL_COLORS.muted;
-		context.font = "9px JetBrains Mono, monospace";
-		context.fillText(
-			point.symbol.split("/")[0] ?? point.symbol,
-			x + (focus ? 11 : 7),
-			y + 4,
-		);
+			context.fillStyle = TERMINAL_COLORS.foreground;
+			context.font = "10px JetBrains Mono, monospace";
+			context.fillText(
+				point.symbol.split("/")[0] ?? point.symbol,
+				x + 15,
+				y + 3.5,
+			);
+		}
 	}
 };
 

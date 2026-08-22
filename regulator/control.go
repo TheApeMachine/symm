@@ -10,7 +10,10 @@ import (
 
 const (
 	controlAllocation = iota
+	controlThesisScore
 	controlConfidence
+	controlSupport
+	controlContradiction
 	controlGraphThreshold
 	controlCausalAlpha
 	controlIterations
@@ -54,6 +57,26 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 		)
 	}
 
+	if planner.Admission.MinimumConfidence < system.UninformativeDirectionConfidence ||
+		planner.Admission.MinimumConfidence > 1 {
+		return nil, fmt.Errorf(
+			"regulator: admission confidence gate must be in [%g,1]",
+			system.UninformativeDirectionConfidence,
+		)
+	}
+
+	if planner.Admission.MinimumThesisScore < 0 || planner.Admission.MinimumThesisScore > 1 {
+		return nil, fmt.Errorf("regulator: admission thesis score must be in [0,1]")
+	}
+
+	if planner.Admission.MinimumSupport < 0 || planner.Admission.MinimumSupport > 5 {
+		return nil, fmt.Errorf("regulator: admission support must be in [0,5]")
+	}
+
+	if planner.Admission.MaximumContradiction < 0 || planner.Admission.MaximumContradiction > 1 {
+		return nil, fmt.Errorf("regulator: admission contradiction must be in [0,1]")
+	}
+
 	if planner.MinimumGraphScore < -1 || planner.MinimumGraphScore > 1 {
 		return nil, fmt.Errorf("regulator: graph gate must be in [-1,1]")
 	}
@@ -68,9 +91,18 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 			name: "allocation", minimum: 0,
 			maximum: planner.MaxAllocationFraction,
 		},
+		controlThesisScore: {
+			name: "thesis_score", minimum: 0, maximum: 1,
+		},
 		controlConfidence: {
 			name:    "confidence",
 			minimum: system.UninformativeDirectionConfidence, maximum: 1,
+		},
+		controlSupport: {
+			name: "support", minimum: 0, maximum: 5,
+		},
+		controlContradiction: {
+			name: "contradiction", minimum: 0, maximum: 1,
 		},
 		controlGraphThreshold: {
 			name: "graph_threshold", minimum: -1, maximum: 1,
@@ -92,7 +124,10 @@ func newControlSpace(config *system.Config) (*controlSpace, error) {
 func (space *controlSpace) current(config *system.Config) controlVector {
 	return controlVector{
 		space.normalize(controlAllocation, config.Planner.MaxAllocationFraction),
-		space.normalize(controlConfidence, config.Planner.MinimumConfidence),
+		space.normalize(controlThesisScore, config.Planner.Admission.MinimumThesisScore),
+		space.normalize(controlConfidence, config.Planner.Admission.MinimumConfidence),
+		space.normalize(controlSupport, config.Planner.Admission.MinimumSupport),
+		space.normalize(controlContradiction, config.Planner.Admission.MaximumContradiction),
 		space.normalize(controlGraphThreshold, config.Planner.MinimumGraphScore),
 		space.normalize(controlCausalAlpha, config.Planner.CausalAlpha),
 		space.normalize(controlIterations, float64(config.Planner.MCTSIterations)),
@@ -163,6 +198,10 @@ func (space *controlSpace) apply(
 	}
 
 	config.Planner.MaxAllocationFraction = space.value(controlAllocation, controls)
+	config.Planner.Admission.MinimumThesisScore = space.value(controlThesisScore, controls)
+	config.Planner.Admission.MinimumConfidence = space.value(controlConfidence, controls)
+	config.Planner.Admission.MinimumSupport = space.value(controlSupport, controls)
+	config.Planner.Admission.MaximumContradiction = space.value(controlContradiction, controls)
 	config.Planner.MinimumConfidence = space.value(controlConfidence, controls)
 	config.Planner.MinimumGraphScore = space.value(controlGraphThreshold, controls)
 	config.Planner.CausalAlpha = space.value(controlCausalAlpha, controls)
@@ -173,6 +212,7 @@ func (space *controlSpace) apply(
 
 	return nil
 }
+
 
 func (space *controlSpace) value(index int, controls controlVector) float64 {
 	bound := space.bounds[index]

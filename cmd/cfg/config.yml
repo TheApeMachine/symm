@@ -1,3 +1,8 @@
+experimental:
+  # Presentation and diagnostic experiments are opt-in and paper-only.
+  enabled: false
+
+
 system:
   data_path: ~/.symm/data
   audit:
@@ -106,6 +111,14 @@ ui:
 
 trading:
   model: paper
+  admission:
+    # Temporary explicit operator policy. Every failed dimension is reported;
+    # predictive readiness and opportunity labels remain evidence, not vetoes.
+    required_direction: 1.0
+    minimum_thesis_score: 0.7
+    minimum_confidence: 0.7
+    minimum_support: 1.0
+    maximum_contradiction: 0.3
   resonance:
     # A one-sided probability of 0.5 carries no directional evidence. This is
     # only the cold-start position; the global regulator moves the live gate
@@ -136,3 +149,4 @@ signals:
     sampleSize: 128
   pumpdump:
     baselineCapacity: 128
+

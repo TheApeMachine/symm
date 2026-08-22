@@ -129,9 +129,10 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.SlotCapacity = allocation.desk.MaxPositions() + allocation.desk.MaxReserved()
 		decision.AllocationClass = "unallocated"
 
-		if decision.Direction <= 0 || decision.ThesisScore <= 0 {
+		if result := config.Planner.Admission.Evaluate(*decision); !result.Accepted {
 			decision.Action = types.ActionNothing
-			decision.Reason = "planner: current structural thesis does not authorize a long entry"
+			decision.Reason = "planner: admission changed before allocation: " +
+				result.Explanation()
 			continue
 		}
 
@@ -164,6 +165,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
+		requestedQuantity := decimal.NewFromInt64(0).Add(quantity)
 		executable, err := price.ExecutableQuantity(decision.Symbol, quantity)
 
 		if err != nil || executable == nil || executable.Sign() <= 0 {
@@ -177,6 +179,8 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
+		coverage := decimal.NewFromInt64(0).Add(executable).Div(requestedQuantity).Float64()
+		alternativesOf(decision)[executionCoverageKey] = min(1, max(0, coverage))
 		quantity = executable
 		pair := allocation.desk.Instrument().Pair(decision.Symbol)
 
@@ -206,6 +210,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
+		recordExecutionFriction(decision, cost)
 		riskPlan := types.NewRiskPlan(types.RiskInputs{
 			ReferencePrice: cost.EntryPrice,
 			Spread:         cost.Spread,
@@ -234,6 +239,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 				continue
 			}
 
+			recordExecutionFriction(decision, cost)
 			riskPlan = types.NewRiskPlan(types.RiskInputs{
 				ReferencePrice: cost.EntryPrice,
 				Spread:         cost.Spread,
@@ -307,6 +313,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		eligible = append(eligible, decision)
 	}
 
+	rankAdmissionCandidates(eligible)
 	admitBest(eligible, normalSlots, reserveSlots, occupiedSymbols(allocation.desk))
 	return nil
 }
@@ -317,8 +324,30 @@ causal MCTS evidence path second. Equal evidence compares symbol identity so a
 replay of the same state makes the same slot decision.
 */
 func admissionOrder(left, right *types.Decision) int {
+	leftRank, leftRanked := alternativesOf(left)[candidateRankSumKey]
+	rightRank, rightRanked := alternativesOf(right)[candidateRankSumKey]
+
+	if leftRanked && rightRanked && leftRank != rightRank {
+		if leftRank < rightRank {
+			return -1
+		}
+
+		return 1
+	}
+
 	if left.ThesisScore != right.ThesisScore {
 		if left.ThesisScore > right.ThesisScore {
+			return -1
+		}
+
+		return 1
+	}
+
+	leftLiquidity := alternativesOf(left)[liquidityScoreKey]
+	rightLiquidity := alternativesOf(right)[liquidityScoreKey]
+
+	if leftLiquidity != rightLiquidity {
+		if leftLiquidity > rightLiquidity {
 			return -1
 		}
 
@@ -406,6 +435,26 @@ func admitBest(
 		decision.Stoploss = nil
 		decision.Reason = "planner: no position slot available for allocation"
 	}
+}
+
+/*
+recordExecutionFriction expresses current spread and depth impact as fractions
+of the executable entry price. These are unitless and directly comparable
+across symbols; no future price or arbitrary liquidity multiplier is invented.
+*/
+func recordExecutionFriction(decision *types.Decision, cost *types.EntryCost) {
+	if decision == nil || cost == nil || cost.EntryPrice == nil ||
+		cost.EntryPrice.Sign() <= 0 || cost.Spread == nil || cost.Impact == nil {
+		return
+	}
+
+	entry := cost.EntryPrice.Float64()
+	spread := max(0, cost.Spread.Float64()/entry)
+	impact := max(0, cost.Impact.Float64()/entry)
+	alternatives := alternativesOf(decision)
+	alternatives[executionSpreadKey] = spread
+	alternatives[executionImpactKey] = impact
+	alternatives[executionFrictionKey] = spread + impact
 }
 
 /*

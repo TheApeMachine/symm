@@ -28,10 +28,16 @@ type Symbol struct {
 	lastTickerNano       atomic.Int64                                `json:"-"`
 	lastTradeNano        atomic.Int64                                `json:"-"`
 	lastLevel3Nano       atomic.Int64                                `json:"-"`
+	lastFuturesTickerNano atomic.Int64                                `json:"-"`
+	lastFuturesTradeNano  atomic.Int64                                `json:"-"`
+	lastFuturesBookNano   atomic.Int64                                `json:"-"`
 	Measurements         *transport.MapReduce[*types.Measurement]    `json:"-"`
 	TickerConsumers      []*transport.Consumer[kraken.TickerData]    `json:"-"`
+	FuturesTickerConsumers []*transport.Consumer[kraken.FuturesTickerData] `json:"-"`
 	TradeConsumers       []*transport.Consumer[kraken.TradeData]     `json:"-"`
+	FuturesTradeConsumers  []*transport.Consumer[kraken.FuturesTradeData]  `json:"-"`
 	Level3Consumers      []*transport.Consumer[kraken.Level3Data]    `json:"-"`
+	FuturesBookConsumers   []*transport.Consumer[kraken.FuturesBookData]   `json:"-"`
 	ExecutionConsumers   []*transport.Consumer[kraken.ExecutionData] `json:"-"`
 	MeasurementConsumers []*transport.Consumer[*types.Measurement]   `json:"-"`
 	DecisionConsumers    []*transport.Consumer[Decision]             `json:"-"`
@@ -43,8 +49,11 @@ type Symbol struct {
 	ResonanceConsumers   []*transport.Consumer[any]                  `json:"-"`
 	CausalConsumers      []*transport.Consumer[map[string]any]       `json:"-"`
 	tickers              *transport.MapReduce[kraken.TickerData]     `json:"-"`
+	futuresTickers        *transport.MapReduce[kraken.FuturesTickerData] `json:"-"`
 	trades               *transport.MapReduce[kraken.TradeData]      `json:"-"`
+	futuresTrades         *transport.MapReduce[kraken.FuturesTradeData]  `json:"-"`
 	level3               *transport.MapReduce[kraken.Level3Data]     `json:"-"`
+	futuresBooks          *transport.MapReduce[kraken.FuturesBookData]   `json:"-"`
 	executions           *transport.MapReduce[kraken.ExecutionData]  `json:"-"`
 	Decisions            *transport.MapReduce[Decision]              `json:"decisions,omitempty"`
 	Positions            *transport.MapReduce[any]                   `json:"positions,omitempty"`
@@ -76,16 +85,25 @@ func NewSymbol(name string, uiChannels ...*transport.MapReduce[*UIFrame]) *Symbo
 		newSymbolConsumer[kraken.TickerData](symbol, SourceResonance),
 		newSymbolConsumer[kraken.TickerData](symbol, SourceDesk),
 	}
+	symbol.FuturesTickerConsumers = []*transport.Consumer[kraken.FuturesTickerData]{
+		newSymbolConsumer[kraken.FuturesTickerData](symbol, SourceDerivatives),
+	}
 	symbol.TradeConsumers = []*transport.Consumer[kraken.TradeData]{
 		newSymbolConsumer[kraken.TradeData](symbol, SourceCVD),
 		newSymbolConsumer[kraken.TradeData](symbol, SourceExhaustion),
 		newSymbolConsumer[kraken.TradeData](symbol, SourceHawkes),
 		newSymbolConsumer[kraken.TradeData](symbol, SourcePumpDump),
 	}
+	symbol.FuturesTradeConsumers = []*transport.Consumer[kraken.FuturesTradeData]{
+		newSymbolConsumer[kraken.FuturesTradeData](symbol, SourceDerivatives),
+	}
 	symbol.Level3Consumers = []*transport.Consumer[kraken.Level3Data]{
 		newSymbolConsumer[kraken.Level3Data](symbol, SourceDepthFlow).Coalesce(),
 		newSymbolConsumer[kraken.Level3Data](symbol, SourceToxicity),
 		newSymbolConsumer[kraken.Level3Data](symbol, SourcePumpDump).Coalesce(),
+	}
+	symbol.FuturesBookConsumers = []*transport.Consumer[kraken.FuturesBookData]{
+		newSymbolConsumer[kraken.FuturesBookData](symbol, SourceDerivatives),
 	}
 	symbol.ExecutionConsumers = []*transport.Consumer[kraken.ExecutionData]{
 		newSymbolConsumer[kraken.ExecutionData](symbol, SourceDesk),
@@ -130,8 +148,11 @@ func NewSymbol(name string, uiChannels ...*transport.MapReduce[*UIFrame]) *Symbo
 		newSymbolConsumer[map[string]any](symbol, SourceAudit),
 	}
 	symbol.tickers = transport.NewMapReduce(symbol.TickerConsumers, nil, nil)
+	symbol.futuresTickers = transport.NewMapReduce(symbol.FuturesTickerConsumers, nil, nil)
 	symbol.trades = transport.NewMapReduce(symbol.TradeConsumers, nil, nil)
+	symbol.futuresTrades = transport.NewMapReduce(symbol.FuturesTradeConsumers, nil, nil)
 	symbol.level3 = transport.NewMapReduce(symbol.Level3Consumers, nil, nil)
+	symbol.futuresBooks = transport.NewMapReduce(symbol.FuturesBookConsumers, nil, nil)
 	symbol.executions = transport.NewMapReduce(symbol.ExecutionConsumers, nil, nil)
 	symbol.Measurements = transport.NewMapReduce(symbol.MeasurementConsumers, nil, nil)
 	symbol.Decisions = transport.NewMapReduce(symbol.DecisionConsumers, nil, nil)
@@ -517,6 +538,14 @@ func (symbol *Symbol) HasPendingWork(source SourceType) bool {
 	case SourceToxicity:
 		return symbol.HasLevel3For(
 			symbol.Level3Consumers[Level3ConsumerToxicity],
+		)
+	case SourceDerivatives:
+		return symbol.HasFuturesTickersFor(
+			symbol.FuturesTickerConsumers[FuturesTickerConsumerDerivatives],
+		) || symbol.HasFuturesTradesFor(
+			symbol.FuturesTradeConsumers[FuturesTradeConsumerDerivatives],
+		) || symbol.HasFuturesBooksFor(
+			symbol.FuturesBookConsumers[FuturesBookConsumerDerivatives],
 		)
 	case SourceResonance:
 		return symbol.HasTickersFor(

@@ -140,6 +140,29 @@ const (
 	MetricBluffScore         MetricType = "bluff_score"
 	MetricVacuumScore        MetricType = "vacuum_score"
 	MetricSupportScore       MetricType = "support_score"
+
+	// derivatives (futures positioning, basis geometry, OI dynamics, liquidations, lead-lag)
+	MetricFuturesOI                   MetricType = "futures_oi"
+	MetricFuturesOIVelocity           MetricType = "futures_oi_velocity"
+	MetricFuturesOIAcceleration       MetricType = "futures_oi_acceleration"
+	MetricFuturesBasis                MetricType = "futures_basis"
+	MetricFuturesBasisVelocity        MetricType = "futures_basis_velocity"
+	MetricFuturesBasisRelative        MetricType = "futures_basis_relative"
+	MetricFuturesIndexBasis           MetricType = "futures_index_basis"
+	MetricFuturesTripartiteDivergence MetricType = "futures_tripartite_divergence"
+	MetricFuturesCVD                  MetricType = "futures_cvd"
+	MetricFuturesAggressorImbalance   MetricType = "futures_aggressor_imbalance"
+	MetricFuturesLiquidationBuy       MetricType = "futures_liquidation_buy"
+	MetricFuturesLiquidationSell      MetricType = "futures_liquidation_sell"
+	MetricFuturesLiquidationIntensity MetricType = "futures_liquidation_intensity"
+	MetricFuturesLeadLagTau           MetricType = "futures_lead_lag_tau"
+	MetricFuturesLeadCorrelation      MetricType = "futures_lead_correlation"
+	MetricFuturesHawkesIntensity      MetricType = "futures_hawkes_intensity"
+	MetricLeveragedIgnition           MetricType = "leveraged_ignition"
+	MetricShortSqueeze                MetricType = "short_squeeze"
+	MetricAdverseLeverageBuildup      MetricType = "adverse_leverage_buildup"
+	MetricLongDeleveraging            MetricType = "long_deleveraging"
+	MetricDerivativesDecoupling       MetricType = "derivatives_decoupling"
 )
 
 /*
@@ -336,6 +359,33 @@ var SignalMetricGroups = map[SourceType]map[string]struct {
 		MetricKey(MetricStrength, SideNone):             {"summary", false},
 		MetricKey(MetricValue, SideNone):                {"summary", false},
 		MetricKey(MetricCategory, SideNone):             {"summary", false},
+	},
+	SourceDerivatives: {
+		MetricKey(MetricHypothesisSeparation, SideNone):            {"hypothesis_separation", false},
+		MetricKey(MetricLeveragedIgnition, SideNone):               {"leveraged_ignition", true},
+		MetricKey(MetricShortSqueeze, SideNone):                    {"short_squeeze", true},
+		MetricKey(MetricAdverseLeverageBuildup, SideNone):          {"adverse_leverage", true},
+		MetricKey(MetricLongDeleveraging, SideNone):                {"long_deleveraging", true},
+		MetricKey(MetricDerivativesDecoupling, SideNone):           {"decoupling", true},
+		MetricKey(MetricFuturesOI, SideNone):                       {"open_interest", false},
+		MetricKey(MetricFuturesOIVelocity, SideNone):               {"open_interest", false},
+		MetricKey(MetricFuturesOIAcceleration, SideNone):           {"open_interest", false},
+		MetricKey(MetricFuturesBasis, SideNone):                    {"basis", false},
+		MetricKey(MetricFuturesBasisVelocity, SideNone):            {"basis", false},
+		MetricKey(MetricFuturesBasisRelative, SideNone):            {"basis", false},
+		MetricKey(MetricFuturesIndexBasis, SideNone):               {"basis", false},
+		MetricKey(MetricFuturesTripartiteDivergence, SideNone):     {"basis", false},
+		MetricKey(MetricFuturesCVD, SideNone):                      {"flow", false},
+		MetricKey(MetricFuturesAggressorImbalance, SideNone):       {"flow", false},
+		MetricKey(MetricFuturesLiquidationBuy, SideNone):           {"liquidation", false},
+		MetricKey(MetricFuturesLiquidationSell, SideNone):          {"liquidation", false},
+		MetricKey(MetricFuturesLiquidationIntensity, SideNone):     {"liquidation", false},
+		MetricKey(MetricFuturesLeadLagTau, SideNone):               {"leadlag", false},
+		MetricKey(MetricFuturesLeadCorrelation, SideNone):          {"leadlag", false},
+		MetricKey(MetricFuturesHawkesIntensity, SideNone):          {"intensity", false},
+		MetricKey(MetricStrength, SideNone):                        {"summary", false},
+		MetricKey(MetricValue, SideNone):                           {"summary", false},
+		MetricKey(MetricCategory, SideNone):                        {"summary", false},
 	},
 }
 

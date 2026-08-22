@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -149,7 +150,11 @@ func subscriptionConnection(
 	t.Helper()
 	requests := make(chan map[string]any, requestCount)
 	upgrader := gorillawebsocket.Upgrader{}
-	server := httptest.NewServer(http.HandlerFunc(func(
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen on IPv4: %v", err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(
 		responseWriter http.ResponseWriter,
 		request *http.Request,
 	) {
@@ -183,6 +188,8 @@ func subscriptionConnection(
 			),
 		)
 	}))
+	server.Listener = listener
+	server.Start()
 	return requests, "ws" + strings.TrimPrefix(server.URL, "http"), server.Close
 }
 
@@ -276,7 +283,9 @@ func TestNewWithClient(t *testing.T) {
 		}
 
 		upgrader := gorillawebsocket.Upgrader{}
-		server := httptest.NewServer(http.HandlerFunc(func(
+		listener, listenErr := net.Listen("tcp4", "127.0.0.1:0")
+		So(listenErr, ShouldBeNil)
+		server := httptest.NewUnstartedServer(http.HandlerFunc(func(
 			responseWriter http.ResponseWriter,
 			request *http.Request,
 		) {
@@ -294,6 +303,8 @@ func TestNewWithClient(t *testing.T) {
 				}
 			}
 		}))
+		server.Listener = listener
+		server.Start()
 		defer server.Close()
 		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
 
@@ -353,7 +364,9 @@ func TestSubscribeAccount(t *testing.T) {
 		requests := make(chan map[string]any, 2)
 		serverErrors := make(chan error, 1)
 		upgrader := gorillawebsocket.Upgrader{}
-		server := httptest.NewServer(http.HandlerFunc(func(
+		listener, listenErr := net.Listen("tcp4", "127.0.0.1:0")
+		So(listenErr, ShouldBeNil)
+		server := httptest.NewUnstartedServer(http.HandlerFunc(func(
 			responseWriter http.ResponseWriter,
 			request *http.Request,
 		) {
@@ -368,20 +381,18 @@ func TestSubscribeAccount(t *testing.T) {
 
 			for range 2 {
 				_, raw, err := connection.ReadMessage()
-
 				if err != nil {
 					serverErrors <- err
 					return
 				}
 
-				wire := map[string]any{}
-
-				if err := json.Unmarshal(raw, &wire); err != nil {
+				var payload map[string]any
+				if err := json.Unmarshal(raw, &payload); err != nil {
 					serverErrors <- err
 					return
 				}
 
-				requests <- wire
+				requests <- payload
 			}
 
 			_ = connection.WriteMessage(
@@ -392,6 +403,8 @@ func TestSubscribeAccount(t *testing.T) {
 				),
 			)
 		}))
+		server.Listener = listener
+		server.Start()
 		defer server.Close()
 
 		client := spot.NewWebSocket()

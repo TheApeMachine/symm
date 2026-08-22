@@ -19,6 +19,7 @@ const (
 	TriggerTrailingFloor     = "trailing_floor"
 	TriggerHorizonExpired    = "horizon_expired"
 	TriggerRegimeInvalidated = "execution_regime_invalidated"
+	TriggerManualOverride    = "manual_override"
 )
 
 /*
@@ -663,8 +664,6 @@ func (stoploss *Stoploss) ArmClock() {
 	stoploss.Observed = 0
 }
 
-
-
 /*
 Reconsider releases a still-red lot once the transition horizon that justified
 its entry has elapsed. The retained parameters are ignored for source compatibility:
@@ -693,6 +692,39 @@ func (stoploss *Stoploss) Reconsider(_ float64, _ float64) {
 }
 
 /*
+TriggerManualOverride records an operator-requested exit through the same
+regulator state boundary used by automatic exits. It never fabricates a price:
+the latest executable mark already owned by the stop is retained as the
+trigger mark.
+*/
+func (stoploss *Stoploss) TriggerManualOverride() error {
+	if stoploss == nil {
+		return errnie.Err(
+			errnie.Validation,
+			"stoploss: manual override requires an active regulator",
+			nil,
+		)
+	}
+
+	if stoploss.Status == TRIGGERED {
+		return nil
+	}
+
+	if stoploss.Status != ARMED {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"stoploss: only an armed position can be manually exited",
+			nil,
+		)
+	}
+
+	stoploss.Status = TRIGGERED
+	stoploss.TriggerReason = TriggerManualOverride
+	stoploss.TriggerMark = scaled(stoploss.Mark)
+	return nil
+}
+
+/*
 MarshalState encodes the live values needed to continue regulating the lot.
 */
 func (stoploss *Stoploss) MarshalState() ([]byte, error) {
@@ -712,7 +744,7 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 	if err := json.Unmarshal(encoded, stoploss); err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"stoploss: decode state: %w", 
+			"stoploss: decode state: %w",
 			err,
 		))
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests/signal"
 	testtypes "github.com/theapemachine/symm/tests/types"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -25,6 +26,7 @@ type Market struct {
 	Public            *Conn
 	Private           *Conn
 	Level3            *Conn
+	Futures           *Conn
 	Symbols           []*testtypes.Symbol
 	State             testtypes.MarketState
 	Config            testtypes.ScenarioConfig
@@ -54,6 +56,7 @@ type Market struct {
 	replayObservation func() error
 	replaySettlement  func() error
 	replayStarted     bool
+	thesis            *types.Thesis
 }
 
 /*
@@ -141,8 +144,9 @@ func newMarket(
 	publicConn := NewConn(ctx)
 	privateConn := NewConn(ctx)
 	level3Conn := NewConn(ctx)
+	futuresConn := NewConn(ctx)
 
-	for _, conn := range []*Conn{publicConn, privateConn, level3Conn} {
+	for _, conn := range []*Conn{publicConn, privateConn, level3Conn, futuresConn} {
 		if err := conn.ConfigureTime(config.StartTime); err != nil {
 			panic(err)
 		}
@@ -151,6 +155,7 @@ func newMarket(
 	publicConn.ConfigureFaults(config.Faults)
 	privateConn.ConfigureFaults(config.Faults)
 	level3Conn.ConfigureFaults(config.Faults)
+	futuresConn.ConfigureFaults(config.Faults)
 
 	market := &Market{
 		ctx:        ctx,
@@ -158,6 +163,7 @@ func newMarket(
 		Public:     publicConn,
 		Private:    privateConn,
 		Level3:     level3Conn,
+		Futures:    futuresConn,
 		Symbols:    config.Symbols,
 		State:      testtypes.Baseline,
 		Config:     config,
@@ -191,6 +197,7 @@ func newMarket(
 	market.Public.Configure(config.Symbols)
 	market.Private.Configure(config.Symbols)
 	market.Level3.Configure(config.Symbols)
+	market.Futures.Configure(config.Symbols)
 
 	if configureAccount != nil {
 		configureAccount(market.Private)

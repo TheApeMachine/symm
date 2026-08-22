@@ -16,7 +16,10 @@ func TestNewControlSpace(t *testing.T) {
 			So(err, ShouldBeNil)
 			current := space.current(config)
 			So(current[controlAllocation], ShouldEqual, 1.0)
+			So(current[controlThesisScore], ShouldEqual, 0.5)
 			So(current[controlConfidence], ShouldEqual, 0.0)
+			So(current[controlSupport], ShouldAlmostEqual, 0.1)
+			So(current[controlContradiction], ShouldAlmostEqual, 0.3)
 			So(current[controlGraphThreshold], ShouldEqual, 0.0)
 			So(current[controlCausalAlpha], ShouldEqual, 1.0)
 			So(current[controlIterations], ShouldEqual, 1.0)
@@ -27,6 +30,7 @@ func TestNewControlSpace(t *testing.T) {
 	Convey("Given a confidence incumbent above the no-information boundary", t, func() {
 		config := system.NewConfig()
 		config.Planner.MinimumConfidence = 0.8
+		config.Planner.Admission.MinimumConfidence = 0.8
 		space, err := newControlSpace(config)
 
 		Convey("It should leave room for the regulator to move in both directions", func() {
@@ -91,6 +95,11 @@ func TestControlSpaceApply(t *testing.T) {
 		Convey("It should publish the exact domain lower bounds", func() {
 			So(err, ShouldBeNil)
 			So(config.Planner.MaxAllocationFraction, ShouldEqual, 0.0)
+			So(config.Planner.Admission.MinimumThesisScore, ShouldEqual, 0.0)
+			So(config.Planner.Admission.MinimumConfidence,
+				ShouldEqual, system.UninformativeDirectionConfidence)
+			So(config.Planner.Admission.MinimumSupport, ShouldEqual, 0.0)
+			So(config.Planner.Admission.MaximumContradiction, ShouldEqual, 0.0)
 			So(config.Planner.MinimumConfidence,
 				ShouldEqual, system.UninformativeDirectionConfidence)
 			So(config.Planner.MinimumGraphScore, ShouldEqual, -1.0)
@@ -101,3 +110,4 @@ func TestControlSpaceApply(t *testing.T) {
 		})
 	})
 }
+

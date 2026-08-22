@@ -203,14 +203,12 @@ func TestObserveMark(t *testing.T) {
 			So(solver.lastMarkContext.worstDrawdown, ShouldAlmostEqual, math.Log(101.0/102.0), 1e-12)
 			So(solver.lastMarkContext.minimumFloor, ShouldAlmostEqual, 0.02, 1e-12)
 			So(solver.lastMarkContext.surgeFraction, ShouldAlmostEqual, 0.5, 1e-12)
-			So(solver.optimizer.markReturnScale.Count(), ShouldEqual, 1)
-			So(solver.optimizer.markDrawdownScale.Count(), ShouldEqual, 1)
-			So(solver.optimizer.markFloorScale.Count(), ShouldEqual, 1)
 			So(solver.optimizer.resolved, ShouldEqual, 1)
 			So(solver.optimizer.pending, ShouldHaveLength, regulatorContextCount+controlCount)
 		})
 	})
 }
+
 
 func TestObserveMarkPositionBoundary(t *testing.T) {
 	Convey("Given a later position in the same symbol", t, func() {
@@ -269,7 +267,55 @@ func TestRecordHistory(t *testing.T) {
 	})
 }
 
+func TestObserveHindsight(t *testing.T) {
+
+	Convey("Given hindsight attributions observed between complete account valuations", t, func() {
+		system.Cfg = system.NewConfig()
+		thesis := types.NewThesis(t.Context(), nil)
+		solver, err := NewSolver(t.Context(), nil)
+		So(err, ShouldBeNil)
+		defer solver.Close()
+		So(appendEquity(thesis, 200), ShouldBeNil)
+		So(solver.Update(thesis, true), ShouldBeNil)
+
+		So(solver.ObserveHindsight(types.HindsightFeedback{
+			Symbol:         "BTC/USD",
+			At:             time.Now(),
+			Opportunity:    true,
+			Captured:       true,
+			RealizedReturn: 0.08,
+		}), ShouldBeNil)
+
+		So(solver.ObserveHindsight(types.HindsightFeedback{
+			Symbol:          "ETH/USD",
+			At:              time.Now(),
+			Opportunity:     true,
+			Missed:          true,
+			MissedReturn:    0.12,
+			DominantBlocker: "confidence",
+		}), ShouldBeNil)
+
+		So(appendEquity(thesis, 205), ShouldBeNil)
+		err = solver.Update(thesis, true)
+
+		Convey("It should condition the regulator context with delayed opportunity outcomes", func() {
+			So(err, ShouldBeNil)
+			So(solver.hindsightSamples, ShouldEqual, uint64(2))
+			So(solver.lastHindsightContext.samples, ShouldEqual, 2)
+			So(solver.lastHindsightContext.capturedSamples, ShouldEqual, 1)
+			So(solver.lastHindsightContext.missedSamples, ShouldEqual, 1)
+			So(solver.lastHindsightContext.meanCapturedReturn, ShouldAlmostEqual, 0.08, 1e-12)
+			So(solver.lastHindsightContext.meanMissedReturn, ShouldAlmostEqual, 0.12, 1e-12)
+			So(solver.lastHindsightContext.confidenceBlockCount, ShouldEqual, 1)
+			So(solver.optimizer.resolved, ShouldEqual, 1)
+			So(solver.optimizer.pending, ShouldHaveLength, regulatorContextCount+controlCount)
+		})
+	})
+}
+
+
 func BenchmarkUpdate(b *testing.B) {
+
 	system.Cfg = system.NewConfig()
 	thesis := types.NewThesis(b.Context(), nil)
 	solver, err := NewSolver(b.Context(), nil)

@@ -1,3 +1,4 @@
+
 import { useEffect } from "react";
 import { appStore } from "#/collections/app";
 import { attach } from "#/providers/ws-stores";
@@ -49,6 +50,16 @@ export const publishBacktestCommand = (
 	captureId?: number,
 ) => {
 	worker?.postMessage({ type: "BACKTEST", action, at, captureId });
+};
+
+export const publishPositionExit = (symbol: string) => {
+	const normalized = symbol.trim();
+
+	if (normalized === "") {
+		return;
+	}
+
+	worker?.postMessage({ type: "POSITION_EXIT", symbol: normalized });
 };
 
 const handleWorkerMessage = (event: MessageEvent<WorkerOutbound>) => {
@@ -132,3 +143,4 @@ export const WsFeed = () => {
 
 	return null;
 };
+
