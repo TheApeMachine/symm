@@ -11,7 +11,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/backtest"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -29,12 +29,12 @@ func TestMarketReplayFrame(t *testing.T) {
 	}()
 
 	Convey("Given one ticker, trade, and resident Level 3 capture frame", t, func() {
-		symbol := testtypes.NewSymbol("MATIC/USD", 0.5637, 13)
+		symbol := tes.NewSymbol("MATIC/USD", 0.5637, 13)
 		symbol.PriceIncrement = 0.0001
 		symbol.PricePrecision = 4
 		symbol.QuantityPrecision = 8
 		symbol.BookDepthLevels = 10
-		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+		config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 		config.InitialBalances = map[string]float64{"USD": 10}
 		config.Execution.DepthLevels = 10
 		market, err := NewMarketWithScenario(t.Context(), config)
@@ -178,8 +178,8 @@ func capturedPayloadCount(report TransportReport, payload []byte) int {
 }
 
 func BenchmarkMarketReplayFrame(b *testing.B) {
-	symbol := testtypes.NewSymbol("MATIC/USD", 0.5637, 13)
-	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+	symbol := tes.NewSymbol("MATIC/USD", 0.5637, 13)
+	config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 	market, err := NewMarketWithScenario(b.Context(), config)
 
 	if err != nil {
@@ -213,8 +213,8 @@ func BenchmarkMarketReplayFrame(b *testing.B) {
 
 func TestMarketReplayFuturesFrame(t *testing.T) {
 	Convey("Given a market staged replay with a thesis", t, func() {
-		symbol := testtypes.NewSymbol("BTC/USD", 65000, 13)
-		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("BTC/USD", 65000, 13)
+		config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 		market, err := NewMarketWithScenario(t.Context(), config)
 		So(err, ShouldBeNil)
 		defer market.Close()
@@ -263,8 +263,8 @@ func TestMarketReplayFuturesFrame(t *testing.T) {
 }
 
 func BenchmarkMarketReplayFuturesFrame(b *testing.B) {
-	symbol := testtypes.NewSymbol("BTC/USD", 65000, 13)
-	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+	symbol := tes.NewSymbol("BTC/USD", 65000, 13)
+	config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 	market, err := NewMarketWithScenario(b.Context(), config)
 
 	if err != nil {

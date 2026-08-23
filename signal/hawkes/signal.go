@@ -16,11 +16,11 @@ import (
 /*
 hawkesPipeline composes the Hawkes point process and hypothesis separation.
 */
-func hawkesPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
+func hawkesPipeline() nmtypes.Primitive {
+	return nmtypes.Pipe(
 		algo.Hawkes(),
-		nomagique.Relay(algo.SymbolLambdaAlpha, nmtypes.AlphaQuantity),
-		nomagique.Relay(algo.SymbolLambdaBeta, nmtypes.BetaQuantity),
+		nmtypes.Relay(algo.SymbolLambdaAlpha, nmtypes.AlphaQuantity),
+		nmtypes.Relay(algo.SymbolLambdaBeta, nmtypes.BetaQuantity),
 		statistic.Separation,
 	)
 }
@@ -95,7 +95,7 @@ func (signal *Signal) consume() {
 			for trade := range symbol.MarketTrades(
 				symbol.TradeConsumers[types.TradeConsumerHawkes],
 			) {
-				input := types.Frame{}
+				input := nmtypes.Frame{}
 				input.Put(algo.SymbolMark, markForSide(trade.Side))
 				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))

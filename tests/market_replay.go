@@ -12,7 +12,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/kraken"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -437,7 +437,7 @@ func (market *Market) replayTicker(ticker *kraken.Ticker) {
 			market.previous[data.Symbol] = known
 		}
 
-		market.latest[data.Symbol] = testtypes.Sample{
+		market.latest[data.Symbol] = tes.Sample{
 			Symbol: data.Symbol, Bid: data.Bid.Float64(), BidQty: data.BidQty,
 			Ask: data.Ask.Float64(), AskQty: data.AskQty, Last: data.Last.Float64(),
 			Volume: data.Volume, VWAP: data.Vwap, Low: data.Low.Float64(),
@@ -488,14 +488,14 @@ func (market *Market) processReplayOrders(
 
 			for level := managed.BestBid(); level != nil &&
 				len(sample.Bids) < market.Config.Execution.DepthLevels; level = level.Lower {
-				sample.Bids = append(sample.Bids, testtypes.DepthLevel{
+				sample.Bids = append(sample.Bids, tes.DepthLevel{
 					Price: level.Price.Float64(), Quantity: level.Quantity.Float64(),
 				})
 			}
 
 			for level := managed.BestAsk(); level != nil &&
 				len(sample.Asks) < market.Config.Execution.DepthLevels; level = level.Higher {
-				sample.Asks = append(sample.Asks, testtypes.DepthLevel{
+				sample.Asks = append(sample.Asks, tes.DepthLevel{
 					Price: level.Price.Float64(), Quantity: level.Quantity.Float64(),
 				})
 			}

@@ -4,16 +4,15 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestMean(t *testing.T) {
 	Convey("Given a populated generic sample collection", t, func() {
 		input := types.Frame{}
-		input.Put(nomagique.MustSampleSymbol(0), 2)
-		input.Put(nomagique.MustSampleSymbol(1), 4)
-		input.Put(nomagique.MustSampleSymbol(2), 9)
+		input.Put(types.MustSampleSymbol(0), 2)
+		input.Put(types.MustSampleSymbol(1), 4)
+		input.Put(types.MustSampleSymbol(2), 9)
 
 		_, output, err := Mean(types.Frame{}, input)
 
@@ -33,8 +32,8 @@ func TestMean(t *testing.T) {
 func BenchmarkMean(benchmark *testing.B) {
 	input := types.Frame{}
 
-	for index := range nomagique.MaxSamples {
-		input.Put(nomagique.MustSampleSymbol(index), float64(index))
+	for index := range types.MaxSamples {
+		input.Put(types.MustSampleSymbol(index), float64(index))
 	}
 
 	benchmark.ReportAllocs()

@@ -5,7 +5,6 @@ import (
 
 	book "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/equation"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
@@ -58,9 +57,9 @@ func (signal *Signal) consumeLevel3(
 func (signal *Signal) level3Frame(
 	symbol string,
 	level3 kraken.Level3Data,
-) (types.Frame, error) {
+) (nmtypes.Frame, error) {
 	if signal.books == nil {
-		return types.Frame{}, fmt.Errorf(
+		return nmtypes.Frame{}, fmt.Errorf(
 			"pumpdump: authoritative Level 3 book source is required",
 		)
 	}
@@ -78,11 +77,11 @@ func (signal *Signal) level3Frame(
 	})
 
 	if err != nil {
-		return types.Frame{}, err
+		return nmtypes.Frame{}, err
 	}
 
 	if !found {
-		return types.Frame{}, fmt.Errorf(
+		return nmtypes.Frame{}, fmt.Errorf(
 			"pumpdump: committed Level 3 book missing for %s",
 			symbol,
 		)
@@ -91,7 +90,7 @@ func (signal *Signal) level3Frame(
 	return input, nil
 }
 
-func readBook(resident *book.Book, input *types.Frame) error {
+func readBook(resident *book.Book, input *nmtypes.Frame) error {
 	alpha := resident.BestBid()
 	beta := resident.BestAsk()
 
@@ -127,18 +126,18 @@ func sideQuantity(touch *book.Level, higher bool) float64 {
 }
 
 func relativeComponents(
-	primitive nomagique.Primitive,
-	change types.Frame,
-) (types.Frame, error) {
+	primitive nmtypes.Primitive,
+	change nmtypes.Frame,
+) (nmtypes.Frame, error) {
 	relative, found := change.Get(equation.SymbolRelativeChange)
 
 	if !found {
-		return types.Frame{}, nil
+		return nmtypes.Frame{}, nil
 	}
 
-	input := types.Frame{}
+	input := nmtypes.Frame{}
 	input.Put(equation.SymbolChange, relative)
-	_, output, err := nomagique.Step(primitive, types.Frame{}, input)
+	_, output, err := nmtypes.Step(primitive, nmtypes.Frame{}, input)
 
 	return output, err
 }

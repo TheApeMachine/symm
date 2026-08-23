@@ -3,20 +3,19 @@ package algo
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolCohortCorrelation    = nomagique.MustIntern("correlation/cohort")
-	SymbolSignedCorrelation    = nomagique.MustIntern("correlation/signed")
-	SymbolRelativeEnergy       = nomagique.MustIntern("correlation/relative_energy")
-	SymbolHerd                 = nomagique.MustIntern("correlation/herd")
-	SymbolAlpha                = nomagique.MustIntern("correlation/alpha")
-	SymbolNoise                = nomagique.MustIntern("correlation/noise")
-	SymbolStress               = nomagique.MustIntern("correlation/stress")
-	SymbolHypothesisSeparation = nomagique.MustIntern("correlation/hypothesis_separation")
+	SymbolCohortCorrelation    = types.MustIntern("correlation/cohort")
+	SymbolSignedCorrelation    = types.MustIntern("correlation/signed")
+	SymbolRelativeEnergy       = types.MustIntern("correlation/relative_energy")
+	SymbolHerd                 = types.MustIntern("correlation/herd")
+	SymbolAlpha                = types.MustIntern("correlation/alpha")
+	SymbolNoise                = types.MustIntern("correlation/noise")
+	SymbolStress               = types.MustIntern("correlation/stress")
+	SymbolHypothesisSeparation = types.MustIntern("correlation/hypothesis_separation")
 )
 
 /*
@@ -24,7 +23,7 @@ Correlation projects support-weighted pair statistics into four competing
 hypotheses: coherent herd motion, focal excess energy, incoherent noise, and
 opposing stress. Every score is normalized by observed correlation or energy.
 */
-func Correlation() nomagique.Primitive {
+func Correlation() types.Primitive {
 	return correlationScores
 }
 

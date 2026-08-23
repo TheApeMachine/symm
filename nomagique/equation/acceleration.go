@@ -1,7 +1,6 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -10,8 +9,8 @@ import (
 )
 
 var (
-	SymbolClosed = nomagique.MustIntern("equation/closed")
-	SymbolTarget = nomagique.MustIntern("equation/target")
+	SymbolClosed = nmtypes.MustIntern("equation/closed")
+	SymbolTarget = nmtypes.MustIntern("equation/target")
 )
 
 /*
@@ -19,8 +18,8 @@ Acceleration is a quantity-clocked rate equation. A data-derived median sizes
 each accumulation span; event time supplies its duration; and the configured
 alpha price is observed only at completed spans to expose a causal log change.
 */
-func Acceleration() nomagique.Primitive {
-	return nomagique.Pipe(
+func Acceleration() nmtypes.Primitive {
+	return nmtypes.Pipe(
 		logic.Observe(
 			nmtypes.Quantity,
 			nmtypes.AlphaPrice,
@@ -29,53 +28,53 @@ func Acceleration() nomagique.Primitive {
 		),
 		temporal.Window,
 		statistic.Median,
-		nomagique.Relay(statistic.SymbolResult, SymbolTarget),
-		nomagique.Relay(SymbolTarget, calculus.SymbolBaseline),
+		nmtypes.Relay(statistic.SymbolResult, SymbolTarget),
+		nmtypes.Relay(SymbolTarget, calculus.SymbolBaseline),
 		temporal.Since,
-		nomagique.Relay(nmtypes.Quantity, calculus.SymbolDelta),
+		nmtypes.Relay(nmtypes.Quantity, calculus.SymbolDelta),
 		calculus.Accumulate,
 		logic.If(accelerationClosed(), closeAcceleration(), openAcceleration()),
 	)
 }
 
-func accelerationClosed() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Fork(
-			nomagique.Pipe(
-				nomagique.Relay(calculus.SymbolTotal, calculus.SymbolLeft),
-				nomagique.Relay(calculus.SymbolBaseline, calculus.SymbolRight),
+func accelerationClosed() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Fork(
+			nmtypes.Pipe(
+				nmtypes.Relay(calculus.SymbolTotal, calculus.SymbolLeft),
+				nmtypes.Relay(calculus.SymbolBaseline, calculus.SymbolRight),
 				logic.GreaterOrEqual,
-				nomagique.Relay(logic.SymbolCondition, calculus.SymbolLeft),
+				nmtypes.Relay(logic.SymbolCondition, calculus.SymbolLeft),
 			),
-			nomagique.Relay(temporal.SymbolAdvanced, calculus.SymbolRight),
+			nmtypes.Relay(temporal.SymbolAdvanced, calculus.SymbolRight),
 		),
 		logic.And,
 	)
 }
 
-func closeAcceleration() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(calculus.SymbolTotal, calculus.SymbolCount),
+func closeAcceleration() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(calculus.SymbolTotal, calculus.SymbolCount),
 		calculus.Rate,
 		temporal.Observer(nmtypes.AlphaPrice),
 		logic.If(
-			nomagique.Relay(calculus.SymbolReady, logic.SymbolCondition),
-			nomagique.Pipe(
+			nmtypes.Relay(calculus.SymbolReady, logic.SymbolCondition),
+			nmtypes.Pipe(
 				calculus.LogRatio,
-				nomagique.Relay(calculus.SymbolResult, SymbolChange),
+				nmtypes.Relay(calculus.SymbolResult, SymbolChange),
 			),
-			nomagique.Identity,
+			nmtypes.Identity,
 		),
 		temporal.Restart,
 		calculus.Clear(calculus.SymbolTotal),
-		nomagique.Assign(SymbolClosed, 1),
+		nmtypes.Assign(SymbolClosed, 1),
 		statistic.Maturity(temporal.SymbolCompletedSpans),
 	)
 }
 
-func openAcceleration() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Assign(SymbolClosed, 0),
+func openAcceleration() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Assign(SymbolClosed, 0),
 		statistic.Maturity(temporal.SymbolCompletedSpans),
 	)
 }

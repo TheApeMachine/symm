@@ -5,7 +5,7 @@ package tests
 import (
 	"testing"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -14,7 +14,7 @@ signal and analyzer goroutines run. Those files are outside the simulator
 upgrade scope. The normal suite retains the full-stack execution assertion;
 the race build still covers the simulator venue without booting those goroutines.
 */
-func runAutoFillStackTest(t *testing.T, _ []*testtypes.Symbol) {
+func runAutoFillStackTest(t *testing.T, _ []*tes.Symbol) {
 	t.Helper()
 	t.Log("production-stack auto-fill assertion omitted from race build")
 }

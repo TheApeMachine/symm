@@ -11,9 +11,9 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"gonum.org/v1/gonum/stat/distuv"
@@ -390,7 +390,7 @@ func (solver *Solver) extractResonanceNodes(
 	var (
 		returnForecast *types.ResonanceReturnForecast
 		coder          *learning.ResonanceManifold
-		dynamics       types.Frame
+		dynamics       nmtypes.Frame
 	)
 
 	for stored := range symbol.MarketResonance(
@@ -401,7 +401,7 @@ func (solver *Solver) extractResonanceNodes(
 			returnForecast = value
 		case *learning.ResonanceManifold:
 			coder = value
-		case types.Frame:
+		case nmtypes.Frame:
 			dynamics = value
 		}
 	}
@@ -484,7 +484,7 @@ func (solver *Solver) popCognition(symbol *types.Symbol) (types.Cognition, bool)
 
 func (solver *Solver) extractPredictiveDynamicsNodes(
 	symbol string,
-	dynamics types.Frame,
+	dynamics nmtypes.Frame,
 	graph *types.Graph,
 ) {
 	ready, _ := dynamics.Get(learning.SymbolDynamicsReady)
@@ -497,7 +497,7 @@ func (solver *Solver) extractPredictiveDynamicsNodes(
 
 	fields := []struct {
 		name   string
-		symbol nomagique.Symbol
+		symbol nmtypes.Symbol
 	}{
 		{name: "generalized_velocity", symbol: learning.SymbolDynamicsVelocity},
 		{name: "generalized_acceleration", symbol: learning.SymbolDynamicsAcceleration},

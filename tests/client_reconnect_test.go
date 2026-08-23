@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -19,8 +19,8 @@ func TestConnReconnect(t *testing.T) {
 	Convey("Given a Conn with an exact reconnect fault", t, func() {
 		conn := NewConn(t.Context())
 		defer conn.Close()
-		conn.ConfigureFaults(testtypes.FaultConfig{Rules: []testtypes.FaultRule{{
-			Channel: "ticker", Occurrence: 1, Action: testtypes.FaultReconnect,
+		conn.ConfigureFaults(tes.FaultConfig{Rules: []tes.FaultRule{{
+			Channel: "ticker", Occurrence: 1, Action: tes.FaultReconnect,
 		}}})
 		So(conn.Connect(), ShouldBeNil)
 		before := conn.connectionGeneration

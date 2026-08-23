@@ -10,16 +10,16 @@ import (
 )
 
 var (
-	SymbolLagBars             = nomagique.MustIntern("leadlag/lag_bars")
-	SymbolLagCorrelation      = nomagique.MustIntern("leadlag/lag_correlation")
-	SymbolContempCorrelation  = nomagique.MustIntern("leadlag/contemporaneous_correlation")
-	SymbolLagFraction         = nomagique.MustIntern("leadlag/lag_fraction")
-	SymbolSignificance        = nomagique.MustIntern("leadlag/significance")
-	SymbolContempSignificance = nomagique.MustIntern("leadlag/contemporaneous_significance")
-	SymbolLagReady            = nomagique.MustIntern("leadlag/lag_ready")
-	SymbolLeadLagReady        = nomagique.MustIntern("leadlag/ready")
-	SymbolLeadLagSampleCount  = nomagique.MustIntern("leadlag/sample_count")
-	SymbolLeadLagSearchCount  = nomagique.MustIntern("leadlag/search_count")
+	SymbolLagBars             = types.MustIntern("leadlag/lag_bars")
+	SymbolLagCorrelation      = types.MustIntern("leadlag/lag_correlation")
+	SymbolContempCorrelation  = types.MustIntern("leadlag/contemporaneous_correlation")
+	SymbolLagFraction         = types.MustIntern("leadlag/lag_fraction")
+	SymbolSignificance        = types.MustIntern("leadlag/significance")
+	SymbolContempSignificance = types.MustIntern("leadlag/contemporaneous_significance")
+	SymbolLagReady            = types.MustIntern("leadlag/lag_ready")
+	SymbolLeadLagReady        = types.MustIntern("leadlag/ready")
+	SymbolLeadLagSampleCount  = types.MustIntern("leadlag/sample_count")
+	SymbolLeadLagSearchCount  = types.MustIntern("leadlag/search_count")
 )
 
 const minimumLagPathSamples = 3
@@ -30,7 +30,7 @@ CrossLag searches every shift that leaves enough retained returns to estimate
 correlation. Hayashi evaluates each asynchronous pair and the actual search
 count determines the Bonferroni threshold.
 */
-func CrossLag() nomagique.Primitive {
+func CrossLag() types.Primitive {
 	return crossLag
 }
 

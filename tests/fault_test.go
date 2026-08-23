@@ -6,17 +6,17 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestFaultInjectorApply(t *testing.T) {
 	Convey("Given an exact deterministic fault sequence", t, func() {
-		injector := newFaultInjector(testtypes.FaultConfig{
+		injector := newFaultInjector(tes.FaultConfig{
 			Seed: 9,
-			Rules: []testtypes.FaultRule{
-				{Channel: "ticker", Occurrence: 1, Action: testtypes.FaultReorder},
-				{Channel: "ticker", Occurrence: 3, Action: testtypes.FaultDuplicate},
-				{Channel: "ticker", Occurrence: 4, Action: testtypes.FaultDrop},
+			Rules: []tes.FaultRule{
+				{Channel: "ticker", Occurrence: 1, Action: tes.FaultReorder},
+				{Channel: "ticker", Occurrence: 3, Action: tes.FaultDuplicate},
+				{Channel: "ticker", Occurrence: 4, Action: tes.FaultDrop},
 			},
 		})
 
@@ -66,9 +66,9 @@ func TestFaultSequenceGap(t *testing.T) {
 
 func TestFaultInjectorLatency(t *testing.T) {
 	Convey("Given two injectors with the same latency seed", t, func() {
-		config := testtypes.FaultConfig{
+		config := tes.FaultConfig{
 			Seed: 17,
-			ChannelLatency: map[string]testtypes.LatencyConfig{
+			ChannelLatency: map[string]tes.LatencyConfig{
 				"ticker": {Base: 10 * time.Millisecond, Jitter: 5 * time.Millisecond},
 			},
 		}
@@ -85,9 +85,9 @@ func TestFaultInjectorLatency(t *testing.T) {
 
 func TestFaultInjectorStaleAndMalformed(t *testing.T) {
 	Convey("Given stale and malformed frame rules", t, func() {
-		injector := newFaultInjector(testtypes.FaultConfig{Rules: []testtypes.FaultRule{
-			{Channel: "book", Occurrence: 2, Action: testtypes.FaultStale},
-			{Channel: "book", Occurrence: 3, Action: testtypes.FaultMalformed},
+		injector := newFaultInjector(tes.FaultConfig{Rules: []tes.FaultRule{
+			{Channel: "book", Occurrence: 2, Action: tes.FaultStale},
+			{Channel: "book", Occurrence: 3, Action: tes.FaultMalformed},
 		}})
 		first := injector.Apply("book", []byte(`{"sequence":1}`))
 		second := injector.Apply("book", []byte(`{"sequence":2}`))
@@ -103,7 +103,7 @@ func TestFaultInjectorStaleAndMalformed(t *testing.T) {
 }
 
 func BenchmarkFaultInjectorApply(b *testing.B) {
-	injector := newFaultInjector(testtypes.FaultConfig{Seed: 19})
+	injector := newFaultInjector(tes.FaultConfig{Seed: 19})
 	payload := []byte(`{"channel":"ticker","data":[{"symbol":"BENCH/USD"}]}`)
 
 	for b.Loop() {

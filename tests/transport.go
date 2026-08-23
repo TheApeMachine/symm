@@ -15,12 +15,12 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/tests/fixtures/tradevolume"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 const (
 	// simulatedTakerFeePercent is the fixture venue's declared taker tier.
-	simulatedTakerFeePercent = testtypes.DefaultTakerFeePercent
+	simulatedTakerFeePercent = tes.DefaultTakerFeePercent
 	percentDenominator       = 100.0
 )
 
@@ -34,7 +34,7 @@ constructed before the symbol list is known (matching NewConn's signature).
 */
 type mockTransport struct {
 	mu           sync.RWMutex
-	symbols      []*testtypes.Symbol
+	symbols      []*tes.Symbol
 	tradeVolume  *tradevolume.Fixture
 	pending      []simulatedOrder
 	balances     map[string]string
@@ -62,7 +62,7 @@ type simulatedOrder struct {
 
 func newMockTransport() *mockTransport {
 	return &mockTransport{
-		clock:  testtypes.DefaultScenarioStart,
+		clock:  tes.DefaultScenarioStart,
 		prices: map[string]float64{},
 		basis:  map[string]float64{},
 	}
@@ -74,7 +74,7 @@ func (transport *mockTransport) configureTime(start time.Time) {
 	transport.mu.Unlock()
 }
 
-func (transport *mockTransport) configure(symbols []*testtypes.Symbol) {
+func (transport *mockTransport) configure(symbols []*tes.Symbol) {
 	transport.mu.Lock()
 	defer transport.mu.Unlock()
 
@@ -195,7 +195,7 @@ func (transport *mockTransport) RoundTrip(
 	return response, nil
 }
 
-func (transport *mockTransport) getSymbols() []*testtypes.Symbol {
+func (transport *mockTransport) getSymbols() []*tes.Symbol {
 	transport.mu.RLock()
 	defer transport.mu.RUnlock()
 

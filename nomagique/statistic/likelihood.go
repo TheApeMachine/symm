@@ -4,16 +4,15 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolLLHawkes     = nomagique.MustIntern("ll_hawkes")
-	SymbolLLPoisson    = nomagique.MustIntern("ll_poisson")
-	SymbolLLSelf       = nomagique.MustIntern("ll_self")
-	SymbolDeltaPoisson = nomagique.MustIntern("ll_delta_poisson")
-	SymbolDeltaSelf    = nomagique.MustIntern("ll_delta_self")
+	SymbolLLHawkes     = types.MustIntern("ll_hawkes")
+	SymbolLLPoisson    = types.MustIntern("ll_poisson")
+	SymbolLLSelf       = types.MustIntern("ll_self")
+	SymbolDeltaPoisson = types.MustIntern("ll_delta_poisson")
+	SymbolDeltaSelf    = types.MustIntern("ll_delta_self")
 )
 
 /*

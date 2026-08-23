@@ -15,13 +15,13 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMarketPace(t *testing.T) {
 	Convey("Given an undriven fixture", t, func() {
-		market := NewMarket(t.Context(), []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM1/USD", 100, 42),
+		market := NewMarket(t.Context(), []*tes.Symbol{
+			tes.NewSymbol("SIM1/USD", 100, 42),
 		})
 		defer market.Close()
 		market.pace(time.Now().Add(time.Hour))
@@ -34,8 +34,8 @@ func TestMarketPace(t *testing.T) {
 
 func TestMarketPublishSample(t *testing.T) {
 	Convey("Given two replay observations in one candle interval", t, func() {
-		symbol := testtypes.NewSymbol("SIM1/USD", 100, 93)
-		market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("SIM1/USD", 100, 93)
+		market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 		defer market.Close()
 		candles := make(chan *kraken.OHLC, 2)
 		candleHandler := market.Public.Client().OnReceived.Recurring(
@@ -49,13 +49,13 @@ func TestMarketPublishSample(t *testing.T) {
 		)
 		defer market.Public.Client().OnReceived.Deregister(candleHandler)
 		begin := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
-		first := testtypes.Sample{
+		first := tes.Sample{
 			Symbol: symbol.Pair, AggressorSide: "buy",
 			Bid: 99, BidQty: 10, Ask: 101, AskQty: 12, Last: 100,
 			Volume: 2, StepVolume: 2, VWAP: 100, Low: 100, High: 100,
 			Timestamp: begin.Add(10 * time.Second),
 		}
-		second := testtypes.Sample{
+		second := tes.Sample{
 			Symbol: symbol.Pair, AggressorSide: "buy",
 			Bid: 100, BidQty: 11, Ask: 102, AskQty: 13, Last: 101,
 			Volume: 5, StepVolume: 3, VWAP: 100.6, Low: 100, High: 101,
@@ -82,7 +82,7 @@ func TestMarketPublishSample(t *testing.T) {
 			So(market.PublishSample(second), ShouldNotBeNil)
 			invalid := second
 			invalid.Timestamp = invalid.Timestamp.Add(time.Second)
-			invalid.Bids = []testtypes.DepthLevel{{
+			invalid.Bids = []tes.DepthLevel{{
 				Price: invalid.Bid + 1, Quantity: invalid.BidQty,
 			}}
 			So(market.PublishSample(invalid), ShouldNotBeNil)
@@ -92,11 +92,11 @@ func TestMarketPublishSample(t *testing.T) {
 
 func TestMarketPublish(t *testing.T) {
 	Convey("Given two markets with the same complete replay identity", t, func() {
-		first := NewMarket(t.Context(), []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM/USD", 100, 17),
+		first := NewMarket(t.Context(), []*tes.Symbol{
+			tes.NewSymbol("SIM/USD", 100, 17),
 		})
-		second := NewMarket(t.Context(), []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM/USD", 100, 17),
+		second := NewMarket(t.Context(), []*tes.Symbol{
+			tes.NewSymbol("SIM/USD", 100, 17),
 		})
 		defer first.Close()
 		defer second.Close()
@@ -110,20 +110,20 @@ func TestMarketPublish(t *testing.T) {
 			So(first.Report().PublicTransport.Frames,
 				ShouldResemble, second.Report().PublicTransport.Frames)
 			So(firstSample.Timestamp,
-				ShouldEqual, testtypes.DefaultScenarioStart.Add(100*time.Millisecond))
+				ShouldEqual, tes.DefaultScenarioStart.Add(100*time.Millisecond))
 		})
 	})
 }
 
 func TestMarketReplay(t *testing.T) {
 	Convey("Given the opening frames of an exact Kraken capture", t, func() {
-		symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
+		symbol := tes.NewSymbol("IDOS/USD", 0.00455, 13)
 		symbol.PriceIncrement = 0.00001
 		symbol.PricePrecision = 5
 		symbol.QuantityPrecision = 5
 		symbol.TakerFeePercent = 0.4
 		symbol.MakerFeePercent = 0.23
-		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+		config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 		config.Execution.DepthLevels = 10
 		market, err := NewMarketWithScenario(t.Context(), config)
 		So(err, ShouldBeNil)
@@ -176,8 +176,8 @@ func TestMarketReplay(t *testing.T) {
 	})
 
 	Convey("Given malformed or unordered captured data", t, func() {
-		market := NewMarket(t.Context(), []*testtypes.Symbol{
-			testtypes.NewSymbol("IDOS/USD", 0.00455, 13),
+		market := NewMarket(t.Context(), []*tes.Symbol{
+			tes.NewSymbol("IDOS/USD", 0.00455, 13),
 		})
 		defer market.Close()
 
@@ -202,11 +202,11 @@ func BenchmarkMarketReplay(b *testing.B) {
 
 	newline := bytes.IndexByte(payload, '\n')
 	frame := append([]byte(nil), payload[:newline+1]...)
-	symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
+	symbol := tes.NewSymbol("IDOS/USD", 0.00455, 13)
 	symbol.PriceIncrement = 0.00001
 	symbol.PricePrecision = 5
 	symbol.QuantityPrecision = 5
-	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+	config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 	config.Execution.DepthLevels = 10
 	previousDepth, depthWasSet := viper.GetInt("market.l3_depth"),
 		viper.IsSet("market.l3_depth")

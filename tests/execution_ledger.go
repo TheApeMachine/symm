@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/tests/fixtures/balances"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 type balanceProjection struct {
@@ -28,7 +28,7 @@ executionLedger owns exchange balances, delayed account projections, fees,
 cost basis, realized PnL, and drawdown.
 */
 type executionLedger struct {
-	config       testtypes.ExecutionConfig
+	config       tes.ExecutionConfig
 	private      *Conn
 	balances     map[string]float64
 	projections  []balanceProjection
@@ -39,7 +39,7 @@ type executionLedger struct {
 }
 
 func newExecutionLedger(
-	config testtypes.ExecutionConfig,
+	config tes.ExecutionConfig,
 	private *Conn,
 ) *executionLedger {
 	return &executionLedger{
@@ -88,7 +88,7 @@ ApplyFill reconciles one execution against balances and cost basis.
 */
 func (ledger *executionLedger) ApplyFill(
 	order *executionOrder,
-	sample testtypes.Sample,
+	sample tes.Sample,
 	quantity float64,
 	cost float64,
 	fee float64,

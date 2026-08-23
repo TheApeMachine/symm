@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/equation"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -44,9 +44,9 @@ func (signal *Signal) consumeTicker(
 		symbol.AppendMeasurement(signal.tickerMeasurement(
 			ticker,
 			displacement,
-			types.Frame{},
-			types.Frame{},
-			types.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
 		))
 
 		return nil
@@ -68,9 +68,9 @@ func (signal *Signal) consumeTicker(
 	}
 
 	change := displacement.MustGet(equation.SymbolChange)
-	_, polarized, err := nomagique.Step(
+	_, polarized, err := nmtypes.Step(
 		signal.polarize,
-		types.Frame{},
+		nmtypes.Frame{},
 		polarizationFrame(change, normalized),
 	)
 

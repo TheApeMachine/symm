@@ -5,15 +5,15 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestNewProfiles(t *testing.T) {
 	Convey("Given a symbol-specific maker and taker schedule", t, func() {
-		symbol := testtypes.NewSymbol("PROFILE/USD", 100, 61)
+		symbol := tes.NewSymbol("PROFILE/USD", 100, 61)
 		symbol.TakerFeePercent = 0.31
 		symbol.MakerFeePercent = 0.19
-		fixture := NewProfiles([]*testtypes.Symbol{symbol})
+		fixture := NewProfiles([]*tes.Symbol{symbol})
 		var payload []byte
 
 		for frame := range fixture.Generate() {
@@ -36,9 +36,9 @@ func TestNewProfiles(t *testing.T) {
 }
 
 func BenchmarkNewProfiles(b *testing.B) {
-	symbols := []*testtypes.Symbol{
-		testtypes.NewSymbol("PROFILE1/USD", 100, 61),
-		testtypes.NewSymbol("PROFILE2/USD", 200, 62),
+	symbols := []*tes.Symbol{
+		tes.NewSymbol("PROFILE1/USD", 100, 61),
+		tes.NewSymbol("PROFILE2/USD", 200, 62),
 	}
 
 	for b.Loop() {

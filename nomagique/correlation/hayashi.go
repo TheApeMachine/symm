@@ -3,19 +3,18 @@ package correlation
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolCorrelation   = nomagique.MustIntern("correlation")
-	SymbolCovariance    = nomagique.MustIntern("covariance")
-	SymbolLeftVariance  = nomagique.MustIntern("correlation/left_variance")
-	SymbolRightVariance = nomagique.MustIntern("correlation/right_variance")
-	SymbolSupport       = nomagique.MustIntern("support")
-	SymbolReady         = nomagique.MustIntern("ready")
-	SymbolLeftShift     = nomagique.MustIntern("correlation/left_shift_nanos")
+	SymbolCorrelation   = types.MustIntern("correlation")
+	SymbolCovariance    = types.MustIntern("covariance")
+	SymbolLeftVariance  = types.MustIntern("correlation/left_variance")
+	SymbolRightVariance = types.MustIntern("correlation/right_variance")
+	SymbolSupport       = types.MustIntern("support")
+	SymbolReady         = types.MustIntern("ready")
+	SymbolLeftShift     = types.MustIntern("correlation/left_shift_nanos")
 )
 
 /*
@@ -58,7 +57,7 @@ type point struct {
 
 func pathPoints(path *types.Frame) ([temporal.MaxPathSamples]point, int) {
 	points := [temporal.MaxPathSamples]point{}
-	countValue, _ := path.Get(nomagique.SampleCount)
+	countValue, _ := path.Get(types.SampleCount)
 	count := int(countValue)
 
 	for index := 0; index < count; index++ {

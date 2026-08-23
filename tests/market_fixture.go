@@ -7,7 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -27,7 +27,7 @@ func (market *Market) WithAutoFill(options ...AutoFillOptions) *Market {
 	if err := config.Validate(); err != nil {
 		panic(err)
 	}
-	config.Outcomes = append([]testtypes.OrderOutcome(nil), config.Outcomes...)
+	config.Outcomes = append([]tes.OrderOutcome(nil), config.Outcomes...)
 
 	market.Config.Execution = config
 
@@ -61,12 +61,12 @@ WithFixtureOrders temporarily configures authenticated fixture order routing.
 */
 func WithFixtureOrders(
 	t *testing.T,
-	symbols []*testtypes.Symbol,
+	symbols []*tes.Symbol,
 	f func(*Market),
 ) func() {
 	return WithFixtureOrderScenario(
 		t,
-		testtypes.NewScenarioConfig(symbols),
+		tes.NewScenarioConfig(symbols),
 		f,
 	)
 }
@@ -77,7 +77,7 @@ scenario, including the exact wallet and execution policy under test.
 */
 func WithFixtureOrderScenario(
 	t *testing.T,
-	config testtypes.ScenarioConfig,
+	config tes.ScenarioConfig,
 	f func(*Market),
 ) func() {
 	return func() {
@@ -112,8 +112,8 @@ func WithFixtureOrderScenario(
 /*
 WithMarket runs a default configured venue for one test.
 */
-func WithMarket(t *testing.T, symbols []*testtypes.Symbol, f func(*Market)) func() {
-	return WithScenario(t, testtypes.NewScenarioConfig(symbols), func(market *Market) {
+func WithMarket(t *testing.T, symbols []*tes.Symbol, f func(*Market)) func() {
+	return WithScenario(t, tes.NewScenarioConfig(symbols), func(market *Market) {
 		Reset(func() {
 			market.Close()
 		})

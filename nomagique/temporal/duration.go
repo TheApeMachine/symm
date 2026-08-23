@@ -3,17 +3,16 @@ package temporal
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 var (
-	SymbolCurrentSec   = nomagique.MustIntern("current_sec")
-	SymbolCurrentNsec  = nomagique.MustIntern("current_nsec")
-	SymbolPreviousSec  = nomagique.MustIntern("previous_sec")
-	SymbolPreviousNsec = nomagique.MustIntern("previous_nsec")
-	SymbolDelta        = nomagique.MustIntern("delta")
+	SymbolCurrentSec   = types.MustIntern("current_sec")
+	SymbolCurrentNsec  = types.MustIntern("current_nsec")
+	SymbolPreviousSec  = types.MustIntern("previous_sec")
+	SymbolPreviousNsec = types.MustIntern("previous_nsec")
+	SymbolDelta        = types.MustIntern("delta")
 )
 
 /*

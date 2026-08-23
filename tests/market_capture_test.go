@@ -9,7 +9,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMarketReplayCapture(t *testing.T) {
@@ -30,11 +30,11 @@ func TestMarketReplayCapture(t *testing.T) {
 			readers[index%len(readers)].WriteByte('\n')
 		}
 
-		symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
+		symbol := tes.NewSymbol("IDOS/USD", 0.00455, 13)
 		symbol.PriceIncrement = 0.00001
 		symbol.PricePrecision = 5
 		symbol.QuantityPrecision = 5
-		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+		config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 		config.Execution.DepthLevels = 10
 		market, err := NewMarketWithScenario(t.Context(), config)
 		So(err, ShouldBeNil)
@@ -67,8 +67,8 @@ func TestMarketReplayCapture(t *testing.T) {
 	})
 
 	Convey("Given capture readers without the requested symbol", t, func() {
-		market := NewMarket(t.Context(), []*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 100, 1),
+		market := NewMarket(t.Context(), []*tes.Symbol{
+			tes.NewSymbol("BTC/USD", 100, 1),
 		})
 		defer market.Close()
 		capture := bytes.NewBufferString(
@@ -93,11 +93,11 @@ func BenchmarkMarketReplayCapture(b *testing.B) {
 
 	firstNewline := bytes.IndexByte(payload, '\n')
 	frame := append([]byte(nil), payload[:firstNewline+1]...)
-	symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
+	symbol := tes.NewSymbol("IDOS/USD", 0.00455, 13)
 	symbol.PriceIncrement = 0.00001
 	symbol.PricePrecision = 5
 	symbol.QuantityPrecision = 5
-	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+	config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 	config.Execution.DepthLevels = 10
 	b.ReportAllocs()
 

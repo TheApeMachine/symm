@@ -3,20 +3,19 @@ package algo
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolLeadLagCorrelation = nomagique.MustIntern("leadlag/correlation")
-	SymbolInefficiency       = nomagique.MustIntern("leadlag/inefficiency")
-	SymbolSync               = nomagique.MustIntern("leadlag/sync")
-	SymbolDecoupled          = nomagique.MustIntern("leadlag/decoupled")
-	SymbolStall              = nomagique.MustIntern("leadlag/stall")
-	SymbolLeadLagStrength    = nomagique.MustIntern("leadlag/strength")
-	SymbolLeadLagSeparation  = nomagique.MustIntern("leadlag/hypothesis_separation")
-	SymbolLagDirection       = nomagique.MustIntern("leadlag/direction")
+	SymbolLeadLagCorrelation = types.MustIntern("leadlag/correlation")
+	SymbolInefficiency       = types.MustIntern("leadlag/inefficiency")
+	SymbolSync               = types.MustIntern("leadlag/sync")
+	SymbolDecoupled          = types.MustIntern("leadlag/decoupled")
+	SymbolStall              = types.MustIntern("leadlag/stall")
+	SymbolLeadLagStrength    = types.MustIntern("leadlag/strength")
+	SymbolLeadLagSeparation  = types.MustIntern("leadlag/hypothesis_separation")
+	SymbolLagDirection       = types.MustIntern("leadlag/direction")
 )
 
 /*
@@ -24,8 +23,8 @@ LeadLag composes the asynchronous cross-lag equation with normalized evidence
 projection. It owns no path or cohort state; the caller supplies committed
 anchor and follower Path Frames.
 */
-func LeadLag() nomagique.Primitive {
-	return nomagique.Pipe(
+func LeadLag() types.Primitive {
+	return types.Pipe(
 		equation.CrossLag(),
 		leadLagScores,
 	)

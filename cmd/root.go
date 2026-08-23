@@ -4,6 +4,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"github.com/theapemachine/symm/audit"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -54,7 +55,7 @@ var (
 			errnie.Info(fmt.Sprintf(
 				"symm started with %d CPUs", runtime.NumCPU(),
 			))
-			
+
 			// startPprof()
 
 			uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
@@ -84,7 +85,7 @@ var (
 				))
 			}
 
-			system := Boot(
+			system := BootWithHub(
 				cmd.Context(),
 				thesis,
 				websocket.New(
@@ -104,6 +105,8 @@ var (
 					capture,
 				),
 				uiChannel,
+				nil,
+				&audit.Recorder{EventSink: captureStore.WriteEvent},
 			)
 
 			if system == nil {

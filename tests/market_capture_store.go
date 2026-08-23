@@ -8,7 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/kraken"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 type capturedActiveFee struct {
@@ -27,7 +27,7 @@ their names from WebSocket symbols.
 func CaptureSymbolsFromStoredFrames(
 	frames func() (backtest.Frame, bool),
 	depth int,
-) ([]*testtypes.Symbol, error) {
+) ([]*tes.Symbol, error) {
 	if frames == nil || depth <= 0 {
 		return nil, fmt.Errorf("market: stored frames and positive depth required")
 	}
@@ -204,7 +204,7 @@ func CaptureSymbolsFromStoredFrames(
 		)
 	}
 
-	configured := make([]*testtypes.Symbol, 0, len(symbols))
+	configured := make([]*tes.Symbol, 0, len(symbols))
 
 	for index, name := range symbols {
 		pair := instruments[name]
@@ -228,7 +228,7 @@ func CaptureSymbolsFromStoredFrames(
 		}
 
 		fee := fees[index]
-		symbol := testtypes.NewSymbol(name, startPrice, int64(index+1))
+		symbol := tes.NewSymbol(name, startPrice, int64(index+1))
 		symbol.PriceIncrement = pair.PriceIncrement.Float64()
 		symbol.PricePrecision = pair.PricePrecision
 		symbol.QuantityPrecision = pair.QtyPrecision

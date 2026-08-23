@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -45,8 +44,8 @@ func TestSignalBookMeasurement(t *testing.T) {
 		measurement := (&Signal{separate: statistic.Separation}).bookMeasurement(
 			at,
 			geometry,
-			types.Frame{},
-			types.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
 		)
 
 		Convey("It preserves raw relative spread and publishes bounded evidence", func() {
@@ -60,15 +59,15 @@ func TestSignalBookMeasurement(t *testing.T) {
 
 	Convey("Given a causal sequence of executable intervals", t, func() {
 		at := time.Unix(1_786_099_210, 250).UTC()
-		geometry := nomagique.NewStream(equation.Geometry(), types.Frame{})
+		geometry := nmtypes.NewStream(equation.Geometry(), nmtypes.Frame{})
 		signal := &Signal{separate: statistic.Separation}
 		first, err := geometry.Step(bookGeometryInput(at, 99, 101))
 		So(err, ShouldBeNil)
 		firstMeasurement := signal.bookMeasurement(
 			at,
 			first,
-			types.Frame{},
-			types.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
 		)
 
 		Convey("It withholds compression separation before a baseline exists", func() {
@@ -90,8 +89,8 @@ func TestSignalBookMeasurement(t *testing.T) {
 		secondMeasurement := signal.bookMeasurement(
 			secondAt,
 			second,
-			types.Frame{},
-			types.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
 		)
 
 		Convey("It reports no distinction from an equal retained baseline", func() {
@@ -111,8 +110,8 @@ func TestSignalBookMeasurement(t *testing.T) {
 		thirdMeasurement := signal.bookMeasurement(
 			thirdAt,
 			third,
-			types.Frame{},
-			types.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
 		)
 
 		Convey("It publishes the contraction and its earned margin together", func() {
@@ -133,7 +132,7 @@ func bookGeometryInput(
 	at time.Time,
 	alphaPrice float64,
 	betaPrice float64,
-) types.Frame {
+) nmtypes.Frame {
 	input := eventFrame(at)
 	input.Put(nmtypes.AlphaPrice, alphaPrice)
 	input.Put(nmtypes.BetaPrice, betaPrice)
@@ -143,8 +142,8 @@ func bookGeometryInput(
 	return input
 }
 
-func bookGeometry() types.Frame {
-	geometry := types.Frame{}
+func bookGeometry() nmtypes.Frame {
+	geometry := nmtypes.Frame{}
 	geometry.Put(nmtypes.AlphaPrice, 1)
 	geometry.Put(nmtypes.BetaPrice, 4)
 	geometry.Put(nmtypes.AlphaQuantity, 10)
@@ -175,7 +174,7 @@ func BenchmarkSignalNewMeasurement(b *testing.B) {
 func BenchmarkSignalBookMeasurement(b *testing.B) {
 	at := time.Unix(1_786_099_210, 250).UTC()
 	signal := &Signal{separate: statistic.Separation}
-	geometryStream := nomagique.NewStream(equation.Geometry(), types.Frame{})
+	geometryStream := nmtypes.NewStream(equation.Geometry(), nmtypes.Frame{})
 	_, err := geometryStream.Step(bookGeometryInput(at, 99, 101))
 
 	if err != nil {
@@ -205,8 +204,8 @@ func BenchmarkSignalBookMeasurement(b *testing.B) {
 		benchmarkMeasurement = signal.bookMeasurement(
 			at,
 			geometry,
-			types.Frame{},
-			types.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
 		)
 	}
 }

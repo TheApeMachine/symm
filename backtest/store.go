@@ -714,7 +714,7 @@ func (store *Store) Frames(captureID int64, from time.Time) (
 	next := func() (Frame, bool) {
 		if !rows.Next() {
 			rows.Close()
-			return Frame{}, false
+			returntypes.Frame{}, false
 		}
 
 		var frame Frame
@@ -722,7 +722,7 @@ func (store *Store) Frames(captureID int64, from time.Time) (
 
 		if err := rows.Scan(&frame.Endpoint, &frame.Payload, &receivedAt); err != nil {
 			rows.Close()
-			return Frame{}, false
+			returntypes.Frame{}, false
 		}
 
 		frame.ReceivedAt, _ = time.Parse(time.RFC3339Nano, receivedAt)

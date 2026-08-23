@@ -1,17 +1,16 @@
 package correlation
 
 import (
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/types"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolTotalSupport       = nomagique.MustIntern("correlation/cohort/support")
-	SymbolWeightedSigned     = nomagique.MustIntern("correlation/cohort/weighted_signed")
-	SymbolWeightedAbsolute   = nomagique.MustIntern("correlation/cohort/weighted_absolute")
-	SymbolWeightedPeerEnergy = nomagique.MustIntern("correlation/cohort/weighted_peer_energy")
-	SymbolFocalEnergy        = nomagique.MustIntern("correlation/cohort/focal_energy")
-	SymbolPeerCount          = nomagique.MustIntern("correlation/cohort/peer_count")
+	SymbolTotalSupport       = nmtypes.MustIntern("correlation/cohort/support")
+	SymbolWeightedSigned     = nmtypes.MustIntern("correlation/cohort/weighted_signed")
+	SymbolWeightedAbsolute   = nmtypes.MustIntern("correlation/cohort/weighted_absolute")
+	SymbolWeightedPeerEnergy = nmtypes.MustIntern("correlation/cohort/weighted_peer_energy")
+	SymbolFocalEnergy        = nmtypes.MustIntern("correlation/cohort/focal_energy")
+	SymbolPeerCount          = nmtypes.MustIntern("correlation/cohort/peer_count")
 )
 
 const minimumCorrelationSupport = 2
@@ -22,9 +21,9 @@ Support weights each peer so asynchronous paths contribute in proportion to
 the return intervals that actually overlapped.
 */
 func Cohort(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+	state nmtypes.Frame,
+	input nmtypes.Frame,
+) (nmtypes.Frame, nmtypes.Frame, error) {
 	ready, hasReady := input.Get(SymbolReady)
 	support, hasSupport := input.Get(SymbolSupport)
 

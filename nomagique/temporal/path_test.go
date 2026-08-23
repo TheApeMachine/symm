@@ -11,7 +11,7 @@ import (
 
 func TestPath(t *testing.T) {
 	Convey("Given timestamped values beyond a path's capacity", t, func() {
-		path := nomagique.NewStream(Path, types.Frame{})
+		path := nmtypes.NewStream(Path, types.Frame{})
 
 		for index := range 4 {
 			_, err := path.Step(pathObservation(100+float64(index), int64(index), 3))
@@ -34,7 +34,7 @@ func TestPath(t *testing.T) {
 	})
 
 	Convey("Given a regressing timestamp", t, func() {
-		path := nomagique.NewStream(Path, types.Frame{})
+		path := nmtypes.NewStream(Path, types.Frame{})
 		_, err := path.Step(pathObservation(100, 2, 2))
 		So(err, ShouldBeNil)
 		_, err = path.Step(pathObservation(101, 1, 2))
@@ -45,7 +45,7 @@ func TestPath(t *testing.T) {
 
 func pathObservation(value float64, timestamp int64, capacity int) types.Frame {
 	input := types.Frame{}
-	input.Put(nomagique.SampleValue, value)
+	input.Put(nmtypes.SampleValue, value)
 	input.Put(SymbolUnixSec, 0)
 	input.Put(SymbolUnixNsec, float64(timestamp))
 	input.Put(nmtypes.Span, float64(capacity))

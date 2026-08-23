@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -14,7 +13,7 @@ import (
 
 func TestGeometry(t *testing.T) {
 	Convey("Given two ordered positive channels", t, func() {
-		stream := nomagique.NewStream(Geometry(), types.Frame{})
+		stream := nmtypes.NewStream(Geometry(), types.Frame{})
 		first, err := stream.Step(geometryInput(99, 101, 4, 1, 0))
 		So(err, ShouldBeNil)
 		So(first.MustGet(SymbolCenter), ShouldEqual, 100.0)
@@ -38,7 +37,7 @@ func TestGeometry(t *testing.T) {
 	})
 
 	Convey("Given an interval wider than its center", t, func() {
-		_, output, err := nomagique.Step(
+		_, output, err := nmtypes.Step(
 			Geometry(),
 			types.Frame{},
 			geometryInput(1, 4, 1, 1, 0),
@@ -52,7 +51,7 @@ func TestGeometry(t *testing.T) {
 	})
 
 	Convey("Given a crossed or collapsed interval", t, func() {
-		_, _, err := nomagique.Step(
+		_, _, err := nmtypes.Step(
 			Geometry(),
 			types.Frame{},
 			geometryInput(101, 101, 1, 1, 0),
@@ -63,7 +62,7 @@ func TestGeometry(t *testing.T) {
 }
 
 func BenchmarkGeometry(benchmark *testing.B) {
-	stream := nomagique.NewStream(Geometry(), types.Frame{})
+	stream := nmtypes.NewStream(Geometry(), types.Frame{})
 	input := geometryInput(99, 101, 4, 1, 1)
 	benchmark.ReportAllocs()
 

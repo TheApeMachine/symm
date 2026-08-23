@@ -1,7 +1,6 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -9,21 +8,21 @@ import (
 )
 
 var (
-	SymbolCenter        = nomagique.MustIntern("equation/center")
-	SymbolWidth         = nomagique.MustIntern("equation/width")
-	SymbolRelativeWidth = nomagique.MustIntern("equation/relative_width")
-	SymbolDissimilarity = nomagique.MustIntern("equation/dissimilarity")
-	SymbolBalance       = nomagique.MustIntern("equation/balance")
-	SymbolCompression   = nomagique.MustIntern("equation/compression")
-	SymbolDeviation     = nomagique.MustIntern("equation/deviation")
+	SymbolCenter        = nmtypes.MustIntern("equation/center")
+	SymbolWidth         = nmtypes.MustIntern("equation/width")
+	SymbolRelativeWidth = nmtypes.MustIntern("equation/relative_width")
+	SymbolDissimilarity = nmtypes.MustIntern("equation/dissimilarity")
+	SymbolBalance       = nmtypes.MustIntern("equation/balance")
+	SymbolCompression   = nmtypes.MustIntern("equation/compression")
+	SymbolDeviation     = nmtypes.MustIntern("equation/deviation")
 )
 
 /*
 Geometry conditions two positive price and quantity channels. It emits their
 center, width, log quantity balance, relative width, and causal compression.
 */
-func Geometry() nomagique.Primitive {
-	return nomagique.Pipe(
+func Geometry() nmtypes.Primitive {
+	return nmtypes.Pipe(
 		logic.Observe(
 			nmtypes.AlphaPrice,
 			nmtypes.BetaPrice,
@@ -33,97 +32,97 @@ func Geometry() nomagique.Primitive {
 			nmtypes.EventTimeNsec,
 		),
 		logic.PositiveOrder(nmtypes.AlphaPrice, nmtypes.BetaPrice),
-		nomagique.Fork(channelCenter(), channelBalance()),
+		nmtypes.Fork(channelCenter(), channelBalance()),
 		channelWidth(),
-		nomagique.Relay(SymbolWidth, nomagique.SampleValue),
+		nmtypes.Relay(SymbolWidth, nmtypes.SampleValue),
 		CausalBaseline(),
-		statistic.Maturity(nomagique.SampleCount),
-		nomagique.Fork(
+		statistic.Maturity(nmtypes.SampleCount),
+		nmtypes.Fork(
 			relativeWidth(),
-			nomagique.Fork(
+			nmtypes.Fork(
 				dissimilarity(),
-				nomagique.Fork(deviation(), compression()),
+				nmtypes.Fork(deviation(), compression()),
 			),
 		),
 	)
 }
 
-func deviation() nomagique.Primitive {
+func deviation() nmtypes.Primitive {
 	return logic.If(
-		nomagique.Relay(statistic.SymbolReady, logic.SymbolCondition),
-		nomagique.Pipe(
-			nomagique.Relay(SymbolWidth, calculus.SymbolLeft),
-			nomagique.Relay(statistic.SymbolMean, calculus.SymbolRight),
+		nmtypes.Relay(statistic.SymbolReady, logic.SymbolCondition),
+		nmtypes.Pipe(
+			nmtypes.Relay(SymbolWidth, calculus.SymbolLeft),
+			nmtypes.Relay(statistic.SymbolMean, calculus.SymbolRight),
 			calculus.Difference,
-			nomagique.Relay(calculus.SymbolResult, SymbolDeviation),
+			nmtypes.Relay(calculus.SymbolResult, SymbolDeviation),
 		),
-		nomagique.Identity,
+		nmtypes.Identity,
 	)
 }
 
-func channelCenter() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
-		nomagique.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
+func channelCenter() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
+		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
 		calculus.Average,
-		nomagique.Relay(calculus.SymbolResult, SymbolCenter),
+		nmtypes.Relay(calculus.SymbolResult, SymbolCenter),
 	)
 }
 
-func channelBalance() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(nmtypes.AlphaQuantity, calculus.SymbolCurrent),
-		nomagique.Relay(nmtypes.BetaQuantity, calculus.SymbolPrevious),
+func channelBalance() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(nmtypes.AlphaQuantity, calculus.SymbolCurrent),
+		nmtypes.Relay(nmtypes.BetaQuantity, calculus.SymbolPrevious),
 		calculus.LogRatio,
-		nomagique.Relay(calculus.SymbolResult, SymbolBalance),
+		nmtypes.Relay(calculus.SymbolResult, SymbolBalance),
 	)
 }
 
-func channelWidth() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(nmtypes.BetaPrice, calculus.SymbolLeft),
-		nomagique.Relay(nmtypes.AlphaPrice, calculus.SymbolRight),
+func channelWidth() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolLeft),
+		nmtypes.Relay(nmtypes.AlphaPrice, calculus.SymbolRight),
 		calculus.Difference,
-		nomagique.Relay(calculus.SymbolResult, SymbolWidth),
+		nmtypes.Relay(calculus.SymbolResult, SymbolWidth),
 	)
 }
 
-func relativeWidth() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(SymbolWidth, calculus.SymbolValue),
-		nomagique.Relay(SymbolCenter, calculus.SymbolBaseline),
-		nomagique.Assign(calculus.SymbolReady, 1),
+func relativeWidth() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(SymbolWidth, calculus.SymbolValue),
+		nmtypes.Relay(SymbolCenter, calculus.SymbolBaseline),
+		nmtypes.Assign(calculus.SymbolReady, 1),
 		calculus.Ratio,
-		nomagique.Relay(calculus.SymbolResult, SymbolRelativeWidth),
+		nmtypes.Relay(calculus.SymbolResult, SymbolRelativeWidth),
 	)
 }
 
-func dissimilarity() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
-		nomagique.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
+func dissimilarity() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
+		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
 		calculus.Sum,
-		nomagique.Relay(calculus.SymbolResult, calculus.SymbolRight),
-		nomagique.Relay(SymbolWidth, calculus.SymbolLeft),
+		nmtypes.Relay(calculus.SymbolResult, calculus.SymbolRight),
+		nmtypes.Relay(SymbolWidth, calculus.SymbolLeft),
 		calculus.Quotient,
-		nomagique.Relay(calculus.SymbolResult, SymbolDissimilarity),
+		nmtypes.Relay(calculus.SymbolResult, SymbolDissimilarity),
 	)
 }
 
-func compression() nomagique.Primitive {
+func compression() nmtypes.Primitive {
 	return logic.If(
-		nomagique.Relay(statistic.SymbolReady, logic.SymbolCondition),
-		nomagique.Pipe(
-			nomagique.Relay(statistic.SymbolMean, calculus.SymbolLeft),
-			nomagique.Relay(SymbolWidth, calculus.SymbolRight),
+		nmtypes.Relay(statistic.SymbolReady, logic.SymbolCondition),
+		nmtypes.Pipe(
+			nmtypes.Relay(statistic.SymbolMean, calculus.SymbolLeft),
+			nmtypes.Relay(SymbolWidth, calculus.SymbolRight),
 			calculus.Difference,
-			nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
+			nmtypes.Relay(calculus.SymbolResult, calculus.SymbolValue),
 			calculus.Positive,
-			nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
-			nomagique.Relay(statistic.SymbolMean, calculus.SymbolBaseline),
+			nmtypes.Relay(calculus.SymbolResult, calculus.SymbolValue),
+			nmtypes.Relay(statistic.SymbolMean, calculus.SymbolBaseline),
 			calculus.Ratio,
-			nomagique.Relay(calculus.SymbolResult, SymbolCompression),
+			nmtypes.Relay(calculus.SymbolResult, SymbolCompression),
 		),
-		nomagique.Identity,
+		nmtypes.Identity,
 	)
 }

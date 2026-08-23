@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
+
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -240,7 +242,7 @@ func TestUpdate(t *testing.T) {
 				switch value := stored.(type) {
 				case *learning.ResonanceManifold:
 					manifold = value
-				case types.Frame:
+				case nmtypes.Frame:
 					hasDynamics = true
 				}
 			}

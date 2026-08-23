@@ -6,26 +6,27 @@ import (
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 // LogChange reports log(current/previous) for a positive observed series.
-func LogChange(source nomagique.Symbol) nomagique.Primitive {
-	return nomagique.Pipe(
+func LogChange(source nomagique.Symbol) types.Primitive {
+	return types.Pipe(
 		temporal.Observer(source),
 		statistic.Maturity(temporal.SymbolObservations),
 		logic.If(
-			nomagique.Wire(
-				nomagique.Identity,
-				nomagique.In(calculus.SymbolReady, logic.SymbolCondition),
-				nomagique.Out(logic.SymbolCondition, logic.SymbolCondition),
+			types.Wire(
+				types.Identity,
+				types.In(calculus.SymbolReady, logic.SymbolCondition),
+				types.Out(logic.SymbolCondition, logic.SymbolCondition),
 			),
-			nomagique.Wire(
+			types.Wire(
 				calculus.LogRatio,
-				nomagique.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
-				nomagique.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
-				nomagique.Out(calculus.PortResult, SymbolChange),
+				types.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
+				types.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
+				types.Out(calculus.PortResult, SymbolChange),
 			),
-			nomagique.Identity,
+			types.Identity,
 		),
 	)
 }

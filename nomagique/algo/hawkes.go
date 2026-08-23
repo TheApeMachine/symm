@@ -4,36 +4,35 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolMark             = nomagique.MustIntern("mark")
-	SymbolUnixSec          = nomagique.MustIntern("unix_sec")
-	SymbolUnixNsec         = nomagique.MustIntern("unix_nsec")
-	SymbolEventCount       = nomagique.MustIntern("event_count")
-	SymbolAlphaEventCount  = nomagique.MustIntern("alpha_event_count")
-	SymbolBetaEventCount   = nomagique.MustIntern("beta_event_count")
-	SymbolLambdaAlpha      = nomagique.MustIntern("lambda_alpha")
-	SymbolLambdaBeta       = nomagique.MustIntern("lambda_beta")
-	SymbolMuAlpha          = nomagique.MustIntern("mu_alpha")
-	SymbolMuBeta           = nomagique.MustIntern("mu_beta")
-	SymbolReady            = nomagique.MustIntern("ready")
-	SymbolObservation      = nomagique.MustIntern("observation")
-	SymbolAlphaArrivalRate = nomagique.MustIntern("alpha_arrival_rate")
-	SymbolBetaArrivalRate  = nomagique.MustIntern("beta_arrival_rate")
-	SymbolFold             = nomagique.MustIntern("fold")
-	SymbolObservedAtSec    = nomagique.MustIntern("observed_at_sec")
-	SymbolObservedAtNsec   = nomagique.MustIntern("observed_at_nsec")
-	SymbolObservedFromSec  = nomagique.MustIntern("observed_from_sec")
-	SymbolObservedFromNsec = nomagique.MustIntern("observed_from_nsec")
+	SymbolMark             = types.MustIntern("mark")
+	SymbolUnixSec          = types.MustIntern("unix_sec")
+	SymbolUnixNsec         = types.MustIntern("unix_nsec")
+	SymbolEventCount       = types.MustIntern("event_count")
+	SymbolAlphaEventCount  = types.MustIntern("alpha_event_count")
+	SymbolBetaEventCount   = types.MustIntern("beta_event_count")
+	SymbolLambdaAlpha      = types.MustIntern("lambda_alpha")
+	SymbolLambdaBeta       = types.MustIntern("lambda_beta")
+	SymbolMuAlpha          = types.MustIntern("mu_alpha")
+	SymbolMuBeta           = types.MustIntern("mu_beta")
+	SymbolReady            = types.MustIntern("ready")
+	SymbolObservation      = types.MustIntern("observation")
+	SymbolAlphaArrivalRate = types.MustIntern("alpha_arrival_rate")
+	SymbolBetaArrivalRate  = types.MustIntern("beta_arrival_rate")
+	SymbolFold             = types.MustIntern("fold")
+	SymbolObservedAtSec    = types.MustIntern("observed_at_sec")
+	SymbolObservedAtNsec   = types.MustIntern("observed_at_nsec")
+	SymbolObservedFromSec  = types.MustIntern("observed_from_sec")
+	SymbolObservedFromNsec = types.MustIntern("observed_from_nsec")
 
-	symbolFirstSec  = nomagique.MustIntern("state/first_sec")
-	symbolFirstNsec = nomagique.MustIntern("state/first_nsec")
-	symbolLastSec   = nomagique.MustIntern("state/last_sec")
-	symbolLastNsec  = nomagique.MustIntern("state/last_nsec")
+	symbolFirstSec  = types.MustIntern("state/first_sec")
+	symbolFirstNsec = types.MustIntern("state/first_nsec")
+	symbolLastSec   = types.MustIntern("state/last_sec")
+	symbolLastNsec  = types.MustIntern("state/last_nsec")
 )
 
 /*
@@ -59,8 +58,8 @@ Hawkes is a composite Primitive assembled from the shared atomic units:
 	                 -> statistic.Branching (branching matrix, spectral radius)
 	                 -> statistic.Likelihood (log-likelihood differentials)
 */
-func Hawkes() nomagique.Primitive {
-	return nomagique.Pipe(
+func Hawkes() types.Primitive {
+	return types.Pipe(
 		hawkesIntensity,
 		statistic.Branching,
 		statistic.Likelihood,
@@ -170,8 +169,8 @@ func hawkesIntensity(
 	next.Put(SymbolObservedFromSec, firstSec)
 	next.Put(SymbolObservedFromNsec, firstNsec)
 
-	lambdaSelfAlpha := decay(value(next, nomagique.MustIntern("state/lambda_self_alpha"), rateAlpha), rateAlpha, beta, delta)
-	lambdaSelfBeta := decay(value(next, nomagique.MustIntern("state/lambda_self_beta"), rateBeta), rateBeta, beta, delta)
+	lambdaSelfAlpha := decay(value(next, types.MustIntern("state/lambda_self_alpha"), rateAlpha), rateAlpha, beta, delta)
+	lambdaSelfBeta := decay(value(next, types.MustIntern("state/lambda_self_beta"), rateBeta), rateBeta, beta, delta)
 
 	if mark > 0 {
 		lambdaSelfAlpha += value(next, statistic.SymbolAlphaAA, 0.2)
@@ -179,8 +178,8 @@ func hawkesIntensity(
 		lambdaSelfBeta += value(next, statistic.SymbolAlphaBB, 0.2)
 	}
 
-	next.Put(nomagique.MustIntern("state/lambda_self_alpha"), lambdaSelfAlpha)
-	next.Put(nomagique.MustIntern("state/lambda_self_beta"), lambdaSelfBeta)
+	next.Put(types.MustIntern("state/lambda_self_alpha"), lambdaSelfAlpha)
+	next.Put(types.MustIntern("state/lambda_self_beta"), lambdaSelfBeta)
 
 	output := input
 	output.Put(statistic.SymbolBeta, beta)
@@ -223,7 +222,7 @@ func logSum(left float64, right float64) float64 {
 	return math.Log(safeLeft) + math.Log(safeRight)
 }
 
-func value(frame types.Frame, symbol nomagique.Symbol, fallback float64) float64 {
+func value(frame types.Frame, symbol types.Symbol, fallback float64) float64 {
 	if frame.Has(symbol) {
 		result, _ := frame.Get(symbol)
 
@@ -243,7 +242,7 @@ func finite(values ...float64) bool {
 	return true
 }
 
-func number(frame types.Frame, symbol nomagique.Symbol) float64 {
+func number(frame types.Frame, symbol types.Symbol) float64 {
 	value, _ := frame.Get(symbol)
 
 	return value

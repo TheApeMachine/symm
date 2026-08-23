@@ -3,14 +3,13 @@ package logic
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 // Observe requires each configured fact to be present and otherwise preserves input.
-func Observe(required ...nomagique.Symbol) nomagique.Primitive {
-	facts := append([]nomagique.Symbol(nil), required...)
+func Observe(required ...types.Symbol) types.Primitive {
+	facts := append([]types.Symbol(nil), required...)
 
 	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		for _, symbol := range facts {
@@ -18,7 +17,7 @@ func Observe(required ...nomagique.Symbol) nomagique.Primitive {
 				continue
 			}
 
-			if name, found := nomagique.SymbolName(symbol); found {
+			if name, found := types.SymbolName(symbol); found {
 				return state, types.Frame{}, fmt.Errorf("logic: observation is missing coordinate %s", name)
 			}
 
@@ -30,15 +29,15 @@ func Observe(required ...nomagique.Symbol) nomagique.Primitive {
 }
 
 // EnsureFinite requires each configured fact to be present and finite.
-func EnsureFinite(required ...nomagique.Symbol) nomagique.Primitive {
-	facts := append([]nomagique.Symbol(nil), required...)
+func EnsureFinite(required ...types.Symbol) types.Primitive {
+	facts := append([]types.Symbol(nil), required...)
 
 	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		for _, symbol := range facts {
 			value, found := input.Get(symbol)
 
 			if !found || !utils.IsFinite(value) {
-				if name, named := nomagique.SymbolName(symbol); named {
+				if name, named := types.SymbolName(symbol); named {
 					return state, types.Frame{}, fmt.Errorf("logic: coordinate %s must be present and finite", name)
 				}
 

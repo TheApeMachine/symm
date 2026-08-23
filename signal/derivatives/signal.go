@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/transport"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -43,15 +44,15 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		ctx:            ctx,
 		cancel:         cancel,
 		thesis:         thesis,
-		oi:             nomagique.NewNumber[string](equation.RelativeChange(nomagique.SampleValue)),
+		oi:             nomagique.NewNumber[string](equation.RelativeChange(nmtypes.SampleValue)),
 		oiAcceleration: nomagique.NewNumber[string](oiAccelerationPipeline()),
 		basis:          nomagique.NewNumber[string](basisPipeline()),
 		basisVelocity:  nomagique.NewNumber[string](basisVelocityPipeline()),
 		indexBasis:     nomagique.NewNumber[string](indexBasisPipeline()),
 		flow:           nomagique.NewNumber[string](flowPipeline()),
 		liquidations:   nomagique.NewNumber[string](liqPipeline()),
-		tickerPrice:    nomagique.NewNumber[string](equation.RelativeChange(nomagique.SampleValue)),
-		tradePrice:     nomagique.NewNumber[string](equation.RelativeChange(nomagique.SampleValue)),
+		tickerPrice:    nomagique.NewNumber[string](equation.RelativeChange(nmtypes.SampleValue)),
+		tradePrice:     nomagique.NewNumber[string](equation.RelativeChange(nmtypes.SampleValue)),
 		pool:           types.NewSymbolPool(types.ShardWorkers()),
 	}
 

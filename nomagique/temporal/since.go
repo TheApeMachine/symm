@@ -3,18 +3,17 @@ package temporal
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolOriginSec      = nomagique.MustIntern("temporal/origin_sec")
-	SymbolOriginNsec     = nomagique.MustIntern("temporal/origin_nsec")
-	SymbolObservedSec    = nomagique.MustIntern("temporal/observed_sec")
-	SymbolObservedNsec   = nomagique.MustIntern("temporal/observed_nsec")
-	SymbolAdvanced       = nomagique.MustIntern("temporal/advanced")
-	SymbolCompletedSpans = nomagique.MustIntern("temporal/completed_spans")
+	SymbolOriginSec      = types.MustIntern("temporal/origin_sec")
+	SymbolOriginNsec     = types.MustIntern("temporal/origin_nsec")
+	SymbolObservedSec    = types.MustIntern("temporal/observed_sec")
+	SymbolObservedNsec   = types.MustIntern("temporal/observed_nsec")
+	SymbolAdvanced       = types.MustIntern("temporal/advanced")
+	SymbolCompletedSpans = types.MustIntern("temporal/completed_spans")
 )
 
 /*

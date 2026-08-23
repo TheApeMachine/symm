@@ -201,7 +201,7 @@ func ExampleNewPredictiveCoder_customArch() {
 }
 
 func ExampleFeatureDetector_stream() {
-	// Overcomplete feature detector behind a nomagique.Primitive
+	// Overcomplete feature detector behind a types.Primitive
 	detector := learning.NewFeatureDetector(learning.FeatureDetectorConfig{
 		InputDim:      3,
 		DictionaryDim: 12,

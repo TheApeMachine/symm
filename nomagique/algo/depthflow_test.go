@@ -5,14 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestDepthflowPrimitive(t *testing.T) {
 	Convey("Given the Depthflow primitive", t, func() {
-		stream := nomagique.NewStream(Depthflow(), types.Frame{})
+		stream := nmtypes.NewStream(Depthflow(), types.Frame{})
 
 		Convey("It accurately computes touch and deep imbalance", func() {
 			input := types.Frame{}
@@ -56,7 +55,7 @@ func TestDepthflowPrimitive(t *testing.T) {
 }
 
 func BenchmarkDepthflowPrimitive(b *testing.B) {
-	stream := nomagique.NewStream(Depthflow(), types.Frame{})
+	stream := nmtypes.NewStream(Depthflow(), types.Frame{})
 	input := types.Frame{}
 	input.Put(SymbolTouchBidQty, 20.0)
 	input.Put(SymbolTouchAskQty, 10.0)

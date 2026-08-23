@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/tests/fixtures/execution"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 type executionOrder struct {
 	order                                                           simulatedOrder
 	submittedAt, acknowledgeAt, executeAt, expireAt, nextFragmentAt time.Time
-	outcome                                                         testtypes.OrderOutcome
+	outcome                                                         tes.OrderOutcome
 	acknowledged, triggered, terminal                               bool
 	terminalState                                                   string
 	cumulativeQuantity, cumulativeCost, cumulativeFee               float64
@@ -24,8 +24,8 @@ type executionOrder struct {
 
 /* executionModel owns simulated liquidity, lifecycles, and reconciliation. */
 type executionModel struct {
-	config       testtypes.ExecutionConfig
-	profiles     map[testtypes.MarketState]testtypes.RegimeProfile
+	config       tes.ExecutionConfig
+	profiles     map[tes.MarketState]tes.RegimeProfile
 	private      *Conn
 	book         *executionBook
 	ledger       *executionLedger
@@ -38,15 +38,15 @@ type executionModel struct {
 }
 
 func newExecutionModel(
-	config testtypes.ExecutionConfig,
-	profiles map[testtypes.MarketState]testtypes.RegimeProfile,
-	symbols []*testtypes.Symbol,
+	config tes.ExecutionConfig,
+	profiles map[tes.MarketState]tes.RegimeProfile,
+	symbols []*tes.Symbol,
 	private *Conn,
 	seed int64,
 ) *executionModel {
 	return &executionModel{
 		config:   config,
-		profiles: testtypes.CloneProfiles(profiles),
+		profiles: tes.CloneProfiles(profiles),
 		private:  private,
 		book:     newExecutionBook(config, symbols),
 		ledger:   newExecutionLedger(config, private),
@@ -57,8 +57,8 @@ func newExecutionModel(
 
 /* Process advances one symbol's orders and delayed balance projections. */
 func (model *executionModel) Process(
-	sample testtypes.Sample,
-	state testtypes.MarketState,
+	sample tes.Sample,
+	state tes.MarketState,
 ) {
 	model.ledger.ApplyBalances(sample.Timestamp)
 	model.accept(sample, state)
@@ -81,8 +81,8 @@ func (model *executionModel) Process(
 }
 
 func (model *executionModel) accept(
-	sample testtypes.Sample,
-	state testtypes.MarketState,
+	sample tes.Sample,
+	state tes.MarketState,
 ) {
 	for _, accepted := range model.private.transport.takeOrders(sample.Symbol) {
 		order := &executionOrder{
@@ -97,10 +97,10 @@ func (model *executionModel) accept(
 
 		if model.config.MaximumOrderQuantity > 0 &&
 			accepted.Quantity > model.config.MaximumOrderQuantity {
-			order.outcome = testtypes.OrderReject
+			order.outcome = tes.OrderReject
 		}
 
-		if order.outcome == testtypes.OrderFill &&
+		if order.outcome == tes.OrderFill &&
 			model.rng.Float64() < model.config.PartialFillProb {
 			order.fragmentsRemaining = model.fragmentCount()
 		}
@@ -125,7 +125,7 @@ func (model *executionModel) accept(
 	}
 }
 
-func (model *executionModel) outcome() testtypes.OrderOutcome {
+func (model *executionModel) outcome() tes.OrderOutcome {
 	if model.outcomeIndex < len(model.config.Outcomes) {
 		outcome := model.config.Outcomes[model.outcomeIndex]
 		model.outcomeIndex++
@@ -136,19 +136,19 @@ func (model *executionModel) outcome() testtypes.OrderOutcome {
 	draw := model.rng.Float64()
 
 	if draw < model.config.RejectionProb {
-		return testtypes.OrderReject
+		return tes.OrderReject
 	}
 
 	if draw < model.config.RejectionProb+model.config.CancellationProb {
-		return testtypes.OrderCancel
+		return tes.OrderCancel
 	}
 
 	if draw < model.config.RejectionProb+model.config.CancellationProb+
 		model.config.NoFillProb {
-		return testtypes.OrderNoFill
+		return tes.OrderNoFill
 	}
 
-	return testtypes.OrderFill
+	return tes.OrderFill
 }
 
 func (model *executionModel) fragmentCount() int {
@@ -166,7 +166,7 @@ func (model *executionModel) fragmentCount() int {
 
 func (model *executionModel) process(
 	order *executionOrder,
-	sample testtypes.Sample,
+	sample tes.Sample,
 ) {
 	if order.terminal {
 		if model.config.EmitAcknowledgements && !order.acknowledged &&
@@ -177,7 +177,7 @@ func (model *executionModel) process(
 		return
 	}
 
-	if order.outcome == testtypes.OrderReject &&
+	if order.outcome == tes.OrderReject &&
 		!sample.Timestamp.Before(order.executeAt) {
 		model.terminal(order, sample, "rejected", "rejected")
 		return
@@ -188,13 +188,13 @@ func (model *executionModel) process(
 		model.acknowledge(order, sample)
 	}
 
-	if order.outcome == testtypes.OrderCancel &&
+	if order.outcome == tes.OrderCancel &&
 		!sample.Timestamp.Before(order.executeAt) {
 		model.terminal(order, sample, "canceled", "canceled")
 		return
 	}
 
-	if order.outcome == testtypes.OrderExpire &&
+	if order.outcome == tes.OrderExpire &&
 		!sample.Timestamp.Before(order.executeAt) {
 		model.terminal(order, sample, "expired", "expired")
 		return
@@ -205,7 +205,7 @@ func (model *executionModel) process(
 		return
 	}
 
-	if order.outcome == testtypes.OrderNoFill ||
+	if order.outcome == tes.OrderNoFill ||
 		sample.Timestamp.Before(order.executeAt) ||
 		sample.Timestamp.Before(order.nextFragmentAt) {
 		return
@@ -225,7 +225,7 @@ func (model *executionModel) process(
 
 func (model *executionModel) acknowledge(
 	order *executionOrder,
-	sample testtypes.Sample,
+	sample tes.Sample,
 ) {
 	order.acknowledged = true
 	model.mechanics.Acknowledged++
@@ -234,7 +234,7 @@ func (model *executionModel) acknowledge(
 
 func (model *executionModel) executable(
 	order *executionOrder,
-	sample testtypes.Sample,
+	sample tes.Sample,
 ) bool {
 	switch order.order.Request.OrderType {
 	case "market":
@@ -274,7 +274,7 @@ func (model *executionModel) executable(
 
 func (model *executionModel) fill(
 	order *executionOrder,
-	sample testtypes.Sample,
+	sample tes.Sample,
 ) {
 	remaining := order.order.Quantity - order.cumulativeQuantity
 	fragmentLimit := remaining
@@ -332,7 +332,7 @@ func (model *executionModel) fill(
 
 func (model *executionModel) terminal(
 	order *executionOrder,
-	sample testtypes.Sample,
+	sample tes.Sample,
 	status string,
 	execType string,
 ) {
@@ -353,7 +353,7 @@ func (model *executionModel) terminal(
 
 func (model *executionModel) publish(
 	order *executionOrder,
-	sample testtypes.Sample,
+	sample tes.Sample,
 	lastQuantity float64,
 	lastCost float64,
 	status string,

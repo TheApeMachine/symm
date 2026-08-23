@@ -9,15 +9,15 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMockTransportAddOrder(t *testing.T) {
 	Convey("Given a valid order for a declared symbol", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
-		conn.Configure([]*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 50_000, 1),
+		conn.Configure([]*tes.Symbol{
+			tes.NewSymbol("BTC/USD", 50_000, 1),
 		})
 		request, err := http.NewRequest(
 			"POST", "https://api.kraken.com/0/private/AddOrder",

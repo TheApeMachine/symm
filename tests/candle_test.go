@@ -7,17 +7,17 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMarketRenderCandle(t *testing.T) {
 	Convey("Given executed samples spanning two intervals", t, func() {
-		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{
-			testtypes.NewSymbol("CANDLE/USD", 100, 71),
+		config := tes.NewScenarioConfig([]*tes.Symbol{
+			tes.NewSymbol("CANDLE/USD", 100, 71),
 		})
 		market := &Market{Config: config, candles: map[string]*candleState{}}
 		start := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
-		first := testtypes.Sample{
+		first := tes.Sample{
 			Symbol: "CANDLE/USD", Last: 100, StepVolume: 2,
 			Timestamp: start.Add(10 * time.Second),
 		}
@@ -51,13 +51,13 @@ func TestMarketRenderCandle(t *testing.T) {
 }
 
 func BenchmarkMarketRenderCandle(b *testing.B) {
-	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{
-		testtypes.NewSymbol("CANDLE/USD", 100, 71),
+	config := tes.NewScenarioConfig([]*tes.Symbol{
+		tes.NewSymbol("CANDLE/USD", 100, 71),
 	})
 	market := &Market{Config: config, candles: map[string]*candleState{}}
-	sample := testtypes.Sample{
+	sample := tes.Sample{
 		Symbol: "CANDLE/USD", Last: 100, StepVolume: 1,
-		Timestamp: testtypes.DefaultScenarioStart,
+		Timestamp: tes.DefaultScenarioStart,
 	}
 
 	for b.Loop() {

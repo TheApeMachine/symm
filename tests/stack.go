@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -69,7 +69,7 @@ the system that fills it is one a test can read before anything has written it.
 */
 func WithStack[S Driven](
 	t *testing.T,
-	symbols []*testtypes.Symbol,
+	symbols []*tes.Symbol,
 	boot Boot[S],
 	f func(*Market, S),
 ) func() {
@@ -82,7 +82,7 @@ that submit orders rather than only observing.
 */
 func WithOrders[S Driven](
 	t *testing.T,
-	symbols []*testtypes.Symbol,
+	symbols []*tes.Symbol,
 	boot Boot[S],
 	f func(*Market, S),
 ) func() {

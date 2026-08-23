@@ -4,40 +4,39 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 const PredictiveDynamicsKey = "predictive_dynamics"
 
 var (
-	SymbolDynamicsTime               = nomagique.MustIntern("predictive/time")
-	SymbolDynamicsPosition           = nomagique.MustIntern("predictive/position")
-	SymbolDynamicsActivity           = nomagique.MustIntern("predictive/activity")
-	SymbolDynamicsExternalPower      = nomagique.MustIntern("predictive/external_power")
-	SymbolDynamicsPhase              = nomagique.MustIntern("predictive/phase")
-	SymbolDynamicsReady              = nomagique.MustIntern("predictive/ready")
-	SymbolDynamicsDeltaTime          = nomagique.MustIntern("predictive/delta_time")
-	SymbolDynamicsVelocity           = nomagique.MustIntern("predictive/velocity")
-	SymbolDynamicsAcceleration       = nomagique.MustIntern("predictive/acceleration")
-	SymbolDynamicsMemory             = nomagique.MustIntern("predictive/memory")
-	SymbolDynamicsMemoryScale        = nomagique.MustIntern("predictive/memory_scale")
-	SymbolDynamicsStoredEnergy       = nomagique.MustIntern("predictive/stored_energy")
-	SymbolDynamicsSuppliedPower      = nomagique.MustIntern("predictive/supplied_power")
-	SymbolDynamicsDissipation        = nomagique.MustIntern("predictive/dissipation")
-	SymbolDynamicsPassivityResidue   = nomagique.MustIntern("predictive/passivity_residue")
-	SymbolDynamicsContinuousMean     = nomagique.MustIntern("predictive/continuous_mean")
-	SymbolDynamicsContinuousM2       = nomagique.MustIntern("predictive/continuous_m2")
-	SymbolDynamicsContinuousVariance = nomagique.MustIntern("predictive/continuous_variance")
-	SymbolDynamicsJumpAmplitude      = nomagique.MustIntern("predictive/jump_amplitude")
-	SymbolDynamicsJumpMean           = nomagique.MustIntern("predictive/jump_mean")
-	SymbolDynamicsJumpM2             = nomagique.MustIntern("predictive/jump_m2")
-	SymbolDynamicsJumpVariance       = nomagique.MustIntern("predictive/jump_variance")
-	SymbolDynamicsSampleCount        = nomagique.MustIntern("predictive/sample_count")
-	SymbolDynamicsPreviousActivity   = nomagique.MustIntern("predictive/previous_activity")
-	SymbolDynamicsRotorScalar        = nomagique.MustIntern("predictive/rotor_scalar")
-	SymbolDynamicsRotorBivector      = nomagique.MustIntern("predictive/rotor_bivector")
-	SymbolDynamicsEquivarianceNorm   = nomagique.MustIntern("predictive/equivariance_norm")
+	SymbolDynamicsTime               = types.MustIntern("predictive/time")
+	SymbolDynamicsPosition           = types.MustIntern("predictive/position")
+	SymbolDynamicsActivity           = types.MustIntern("predictive/activity")
+	SymbolDynamicsExternalPower      = types.MustIntern("predictive/external_power")
+	SymbolDynamicsPhase              = types.MustIntern("predictive/phase")
+	SymbolDynamicsReady              = types.MustIntern("predictive/ready")
+	SymbolDynamicsDeltaTime          = types.MustIntern("predictive/delta_time")
+	SymbolDynamicsVelocity           = types.MustIntern("predictive/velocity")
+	SymbolDynamicsAcceleration       = types.MustIntern("predictive/acceleration")
+	SymbolDynamicsMemory             = types.MustIntern("predictive/memory")
+	SymbolDynamicsMemoryScale        = types.MustIntern("predictive/memory_scale")
+	SymbolDynamicsStoredEnergy       = types.MustIntern("predictive/stored_energy")
+	SymbolDynamicsSuppliedPower      = types.MustIntern("predictive/supplied_power")
+	SymbolDynamicsDissipation        = types.MustIntern("predictive/dissipation")
+	SymbolDynamicsPassivityResidue   = types.MustIntern("predictive/passivity_residue")
+	SymbolDynamicsContinuousMean     = types.MustIntern("predictive/continuous_mean")
+	SymbolDynamicsContinuousM2       = types.MustIntern("predictive/continuous_m2")
+	SymbolDynamicsContinuousVariance = types.MustIntern("predictive/continuous_variance")
+	SymbolDynamicsJumpAmplitude      = types.MustIntern("predictive/jump_amplitude")
+	SymbolDynamicsJumpMean           = types.MustIntern("predictive/jump_mean")
+	SymbolDynamicsJumpM2             = types.MustIntern("predictive/jump_m2")
+	SymbolDynamicsJumpVariance       = types.MustIntern("predictive/jump_variance")
+	SymbolDynamicsSampleCount        = types.MustIntern("predictive/sample_count")
+	SymbolDynamicsPreviousActivity   = types.MustIntern("predictive/previous_activity")
+	SymbolDynamicsRotorScalar        = types.MustIntern("predictive/rotor_scalar")
+	SymbolDynamicsRotorBivector      = types.MustIntern("predictive/rotor_bivector")
+	SymbolDynamicsEquivarianceNorm   = types.MustIntern("predictive/equivariance_norm")
 )
 
 /*
@@ -198,8 +197,8 @@ func initializePredictiveDynamics(
 
 func updateMoments(
 	state types.Frame,
-	meanSymbol nomagique.Symbol,
-	m2Symbol nomagique.Symbol,
+	meanSymbol types.Symbol,
+	m2Symbol types.Symbol,
 	sample float64,
 	count float64,
 ) (float64, float64) {
@@ -223,7 +222,7 @@ func sampleVariance(m2 float64, count float64) float64 {
 func predictiveDynamicsOutput(state types.Frame) types.Frame {
 	output := types.Frame{}
 
-	for _, symbol := range []nomagique.Symbol{
+	for _, symbol := range []types.Symbol{
 		SymbolDynamicsReady,
 		SymbolDynamicsDeltaTime,
 		SymbolDynamicsPosition,

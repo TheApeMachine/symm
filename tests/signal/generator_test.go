@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestGeneratorNewGenerator(t *testing.T) {
@@ -15,7 +15,7 @@ func TestGeneratorNewGenerator(t *testing.T) {
 		Convey("It should initialize in the stationary baseline", func() {
 			So(generator.symbol, ShouldEqual, "SIM1/USD")
 			So(generator.midPrice, ShouldEqual, 100.0)
-			So(generator.currentState, ShouldEqual, testtypes.Baseline)
+			So(generator.currentState, ShouldEqual, tes.Baseline)
 		})
 	})
 }
@@ -23,23 +23,23 @@ func TestGeneratorNewGenerator(t *testing.T) {
 func TestGeneratorSetState(t *testing.T) {
 	Convey("Given a baseline generator", t, func() {
 		generator := NewGenerator("SIM1/USD", 100, 0.01, 2, 42)
-		generator.SetState(testtypes.FastPump)
+		generator.SetState(tes.FastPump)
 
 		Convey("The observable precursor should begin before ignition", func() {
-			So(generator.targetState, ShouldEqual, testtypes.FastPump)
+			So(generator.targetState, ShouldEqual, tes.FastPump)
 			So(generator.PrecursorPending(), ShouldBeTrue)
 			So(generator.IgnitionArmed(), ShouldBeFalse)
 		})
 
 		Convey("An undeclared latent state should fail loudly", func() {
 			So(func() {
-				generator.SetState(testtypes.MarketState(10_000))
+				generator.SetState(tes.MarketState(10_000))
 			}, ShouldPanic)
 		})
 
 		Convey("Ambiguous transition momentum should fail loudly", func() {
 			So(func() {
-				generator.SetState(testtypes.FastPump, 1, 2)
+				generator.SetState(tes.FastPump, 1, 2)
 			}, ShouldPanic)
 		})
 	})
@@ -76,8 +76,8 @@ func TestGeneratorStep(t *testing.T) {
 
 	Convey("Given a FastPump transition", t, func() {
 		generator := NewGenerator("SIM1/USD", 100, 0.01, 2, 42)
-		profile := testtypes.DefaultProfiles[testtypes.FastPump]
-		generator.SetState(testtypes.FastPump, testtypes.MomentumMap[testtypes.FastPump])
+		profile := tes.DefaultProfiles[tes.FastPump]
+		generator.SetState(tes.FastPump, tes.MomentumMap[tes.FastPump])
 
 		for generator.PrecursorPending() {
 			sample := generator.Step()
@@ -95,14 +95,14 @@ func TestGeneratorStep(t *testing.T) {
 	})
 
 	Convey("Given opposite loadings on one shared factor", t, func() {
-		positiveSymbol := testtypes.NewSymbol("POS/USD", 100, 91)
-		negativeSymbol := testtypes.NewSymbol("NEG/USD", 100, 92)
+		positiveSymbol := tes.NewSymbol("POS/USD", 100, 91)
+		negativeSymbol := tes.NewSymbol("NEG/USD", 100, 92)
 		positiveSymbol.FactorLoading = 1
 		negativeSymbol.FactorLoading = -1
 		positive := NewGeneratorFromSymbol(positiveSymbol)
 		negative := NewGeneratorFromSymbol(negativeSymbol)
-		positive.SetState(testtypes.SidewaysChop)
-		negative.SetState(testtypes.SidewaysChop)
+		positive.SetState(tes.SidewaysChop)
+		negative.SetState(tes.SidewaysChop)
 
 		for positive.PrecursorPending() || negative.PrecursorPending() {
 			positive.Step(0)
@@ -119,7 +119,7 @@ func TestGeneratorStep(t *testing.T) {
 	})
 
 	Convey("Given an explicitly tiered symbol", t, func() {
-		symbol := testtypes.NewSymbol("DEPTH/USD", 100, 93)
+		symbol := tes.NewSymbol("DEPTH/USD", 100, 93)
 		symbol.BookDepthLevels = 3
 		symbol.DepthQuantityScale = 1.5
 		sample := NewGeneratorFromSymbol(symbol).Step()
@@ -135,7 +135,7 @@ func TestGeneratorStep(t *testing.T) {
 	})
 
 	Convey("Given a fractional tick whose binary representation is inexact", t, func() {
-		symbol := testtypes.NewSymbol("FRACTION/USD", 3.1415, 94)
+		symbol := tes.NewSymbol("FRACTION/USD", 3.1415, 94)
 		sample := NewGeneratorFromSymbol(symbol).Step()
 
 		Convey("The canonical quote should equal the first rendered depth tier", func() {
@@ -146,7 +146,7 @@ func TestGeneratorStep(t *testing.T) {
 
 	Convey("Given random-walk and false-breakout controls", t, func() {
 		randomWalk := NewGenerator("RANDOM/USD", 100, 0.01, 2, 95)
-		randomWalk.SetState(testtypes.RandomWalk)
+		randomWalk.SetState(tes.RandomWalk)
 
 		for randomWalk.PrecursorPending() {
 			randomWalk.Step()
@@ -159,7 +159,7 @@ func TestGeneratorStep(t *testing.T) {
 		}
 
 		falseBreak := NewGenerator("FALSE/USD", 100, 0.01, 2, 96)
-		falseBreak.SetState(testtypes.FalseBreakout)
+		falseBreak.SetState(tes.FalseBreakout)
 
 		for falseBreak.PrecursorPending() {
 			falseBreak.Step()

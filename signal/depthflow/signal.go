@@ -26,7 +26,7 @@ var (
 /*
 depthflowPipeline is the pure nomagique Depthflow primitive.
 */
-func depthflowPipeline() nomagique.Primitive {
+func depthflowPipeline() nmtypes.Primitive {
 	return algo.Depthflow()
 }
 
@@ -104,7 +104,7 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 		touchBid, touchAsk := frameTouch(frame)
 		deepBid, deepAsk := frameDeep(frame)
 
-		input := types.Frame{}
+		input := nmtypes.Frame{}
 		input.Put(algo.SymbolTouchBidQty, touchBid)
 		input.Put(algo.SymbolTouchAskQty, touchAsk)
 		input.Put(algo.SymbolDeepBidQty, deepBid)
@@ -148,7 +148,7 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 
 		measurement.StampQuality(
 			output.MustGet(SymbolSeparation),
-			output.MustGet(nomagique.SampleCount),
+			output.MustGet(nmtypes.SampleCount),
 		)
 
 		symbol.AppendMeasurement(measurement)

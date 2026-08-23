@@ -3,13 +3,13 @@ package tests
 import (
 	"fmt"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
 AutoFillOptions is the public execution configuration accepted by WithAutoFill.
 */
-type AutoFillOptions = testtypes.ExecutionConfig
+type AutoFillOptions = tes.ExecutionConfig
 
 /*
 OrderLifecycle records one venue order without conflating acknowledgement,

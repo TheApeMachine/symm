@@ -23,7 +23,7 @@ var (
 /*
 exhaustPipeline is the pure nomagique Exhaust primitive.
 */
-func exhaustPipeline() nomagique.Primitive {
+func exhaustPipeline() nmtypes.Primitive {
 	return algo.Exhaust()
 }
 
@@ -82,7 +82,7 @@ func (signal *Signal) consume() {
 					side = -1.0
 				}
 
-				input := types.Frame{}
+				input := nmtypes.Frame{}
 				input.Put(algo.SymbolVolume, trade.Qty)
 				input.Put(algo.SymbolAggressorSide, side)
 				input.Put(algo.SymbolPriceDelta, trade.Price.Float64())
@@ -128,7 +128,7 @@ func (signal *Signal) consume() {
 					}),
 				)
 
-				measurement.StampQuality(0, output.MustGet(nomagique.SampleCount))
+				measurement.StampQuality(0, output.MustGet(nmtypes.SampleCount))
 
 				symbol.AppendMeasurement(measurement)
 			}

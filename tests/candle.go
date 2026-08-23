@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -26,7 +26,7 @@ type candleState struct {
 /*
 renderCandle updates and renders one coherent Kraken OHLC observation.
 */
-func (market *Market) renderCandle(sample testtypes.Sample) []byte {
+func (market *Market) renderCandle(sample tes.Sample) []byte {
 	candle := market.candles[sample.Symbol]
 	interval := market.Config.CandleInterval
 	begin := sample.Timestamp.Truncate(interval)

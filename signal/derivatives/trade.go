@@ -2,7 +2,6 @@ package derivatives
 
 import (
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -83,7 +82,7 @@ func (signal *Signal) consumeTrade(
 	}
 
 	priceVelocity, _ := priceOutput.Get(equation.SymbolRelativeChange)
-	data.SampleCount, _ = priceOutput.Get(nomagique.SampleCount)
+	data.SampleCount, _ = priceOutput.Get(nmtypes.SampleCount)
 
 	ign, sqz, build, delev, decoup := evaluateRegimes(
 		priceVelocity,

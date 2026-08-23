@@ -22,7 +22,7 @@ type Signal struct {
 	err    error
 	thesis *types.Thesis
 	number *nomagique.Number[string]
-	pair   nomagique.Primitive
+	pair   nmtypes.Primitive
 	work   *transport.Consumer[*types.Symbol]
 }
 
@@ -99,8 +99,8 @@ func (signal *Signal) consume() {
 					return
 				}
 
-				input := types.Frame{}
-				input.Put(nomagique.SampleValue, price)
+				input := nmtypes.Frame{}
+				input.Put(nmtypes.SampleValue, price)
 				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
 				_, err = signal.number.Step(symbol.Symbol, input)

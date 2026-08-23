@@ -11,6 +11,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
+		nmtypes "github.com/theapemachine/symm/nomagique/types"
+
 )
 
 const (
@@ -45,10 +47,10 @@ type Signal struct {
 	acceleration *nomagique.Number[string]
 	normalize    *nomagique.Number[seriesKey]
 	rateChange   *nomagique.Number[seriesKey]
-	absolute     nomagique.Primitive
-	decompose    nomagique.Primitive
-	polarize     nomagique.Primitive
-	separate     nomagique.Primitive
+	absolute     nmtypes.Primitive
+	decompose    nmtypes.Primitive
+	polarize     nmtypes.Primitive
+	separate     nmtypes.Primitive
 	work         *transport.Consumer[*types.Symbol]
 	pool         *types.SymbolPool
 }
@@ -65,15 +67,15 @@ func NewSignal(
 		thesis:       thesis,
 		books:        books,
 		geometry:     nomagique.NewNumber[string](equation.Geometry()),
-		depthChange:  nomagique.NewNumber[seriesKey](equation.RelativeChange(nomagique.SampleValue)),
-		tickerChange: nomagique.NewNumber[string](equation.LogChange(nomagique.SampleValue)),
+		depthChange:  nomagique.NewNumber[seriesKey](equation.RelativeChange(nmtypes.SampleValue)),
+		tickerChange: nomagique.NewNumber[string](equation.LogChange(nmtypes.SampleValue)),
 		acceleration: nomagique.NewNumber[string](equation.Acceleration()),
 		normalize:    nomagique.NewNumber[seriesKey](equation.Normalize()),
-		rateChange:   nomagique.NewNumber[seriesKey](equation.RelativeChange(nomagique.SampleValue)),
-		absolute: nomagique.Pipe(
-			nomagique.Relay(equation.SymbolChange, calculus.SymbolValue),
+		rateChange:   nomagique.NewNumber[seriesKey](equation.RelativeChange(nmtypes.SampleValue)),
+		absolute: nmtypes.Pipe(
+			nmtypes.Relay(equation.SymbolChange, calculus.SymbolValue),
 			calculus.Absolute,
-			nomagique.Relay(calculus.SymbolResult, nomagique.SampleValue),
+			nmtypes.Relay(calculus.SymbolResult, nmtypes.SampleValue),
 		),
 		decompose: equation.Decompose(),
 		polarize:  equation.Polarize(),

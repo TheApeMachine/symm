@@ -456,12 +456,12 @@ func (planner *Planner) updateGraph(
 		}
 	}
 
-	for index := range decisions {
-		// Stage with a default 10 minute horizon for hindsight evaluation.
-		planner.stager.Stage(&decisions[index], 10*time.Minute)
-	}
-
 	if !actionable {
+		for index := range decisions {
+			// Retain the final decision state that was actually published.
+			planner.stager.Stage(&decisions[index], 10*time.Minute)
+		}
+
 		planner.publishStrategy(thesis, false, "accumulating", decisions)
 		return nil
 	}
@@ -474,6 +474,11 @@ func (planner *Planner) updateGraph(
 
 	for _, decision := range createdDecisions {
 		decisions = append(decisions, *decision)
+	}
+
+	for index := range decisions {
+		// Execution can downgrade an entry to nothing; stage that final truth.
+		planner.stager.Stage(&decisions[index], 10*time.Minute)
 	}
 
 	planner.publishStrategy(thesis, true, "decisions", decisions)

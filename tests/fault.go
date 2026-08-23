@@ -8,16 +8,16 @@ import (
 	"sync"
 	"time"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
 FaultObservation records the exact deterministic trigger used during a run.
 */
 type FaultObservation struct {
-	Channel    string                `json:"channel"`
-	Occurrence int                   `json:"occurrence"`
-	Action     testtypes.FaultAction `json:"action"`
+	Channel    string          `json:"channel"`
+	Occurrence int             `json:"occurrence"`
+	Action     tes.FaultAction `json:"action"`
 }
 
 /*
@@ -60,7 +60,7 @@ faultInjector applies one seeded fault configuration to a connection.
 */
 type faultInjector struct {
 	mu          sync.Mutex
-	config      testtypes.FaultConfig
+	config      tes.FaultConfig
 	rng         *rand.Rand
 	occurrences map[string]int
 	previous    map[string][]byte
@@ -68,7 +68,7 @@ type faultInjector struct {
 	report      TransportReport
 }
 
-func newFaultInjector(config testtypes.FaultConfig) *faultInjector {
+func newFaultInjector(config tes.FaultConfig) *faultInjector {
 	return &faultInjector{
 		config:      config,
 		rng:         rand.New(rand.NewSource(config.Seed)),
@@ -103,7 +103,7 @@ func (injector *faultInjector) Apply(
 	}
 
 	if held, exists := injector.held[channel]; exists &&
-		(!found || rule.Action != testtypes.FaultReorder) {
+		(!found || rule.Action != tes.FaultReorder) {
 		delivery.frames = append(delivery.frames, held)
 		delete(injector.held, channel)
 	}
@@ -134,19 +134,19 @@ func (injector *faultInjector) Apply(
 func (injector *faultInjector) rule(
 	channel string,
 	occurrence int,
-) (testtypes.FaultRule, bool) {
+) (tes.FaultRule, bool) {
 	for _, rule := range injector.config.Rules {
 		if rule.Channel == channel && rule.Occurrence == occurrence {
 			return rule, true
 		}
 	}
 
-	return testtypes.FaultRule{}, false
+	return tes.FaultRule{}, false
 }
 
 func (injector *faultInjector) applyRule(
 	delivery faultDelivery,
-	rule testtypes.FaultRule,
+	rule tes.FaultRule,
 	channel string,
 	occurrence int,
 ) faultDelivery {
@@ -155,23 +155,23 @@ func (injector *faultInjector) applyRule(
 	})
 
 	switch rule.Action {
-	case testtypes.FaultDrop:
+	case tes.FaultDrop:
 		delivery.frames = nil
 		injector.report.Dropped++
-	case testtypes.FaultDuplicate:
+	case tes.FaultDuplicate:
 		delivery.frames = append(delivery.frames, append([]byte{}, delivery.frames[0]...))
 		injector.report.Duplicated++
-	case testtypes.FaultDelay:
+	case tes.FaultDelay:
 		delivery.delay += rule.Delay
 		injector.report.Delayed++
-	case testtypes.FaultReorder:
+	case tes.FaultReorder:
 		injector.held[channel] = delivery.frames[0]
 		delivery.frames = nil
 		injector.report.Reordered++
-	case testtypes.FaultSequenceGap:
+	case tes.FaultSequenceGap:
 		delivery.frames[0] = sequenceGap(delivery.frames[0], rule.SequenceGap)
 		injector.report.SequenceGaps++
-	case testtypes.FaultStale:
+	case tes.FaultStale:
 		previous, exists := injector.previous[channel]
 
 		if exists {
@@ -182,7 +182,7 @@ func (injector *faultInjector) applyRule(
 		}
 
 		injector.report.Stale++
-	case testtypes.FaultMalformed:
+	case tes.FaultMalformed:
 		delivery.frames[0] = []byte("{")
 
 		if len(rule.Payload) > 0 {
@@ -190,7 +190,7 @@ func (injector *faultInjector) applyRule(
 		}
 
 		injector.report.Malformed++
-	case testtypes.FaultReconnect:
+	case tes.FaultReconnect:
 		delivery.frames = nil
 		delivery.reconnect = true
 		injector.report.Reconnects++
@@ -199,7 +199,7 @@ func (injector *faultInjector) applyRule(
 	return delivery
 }
 
-func (injector *faultInjector) latency(config testtypes.LatencyConfig) time.Duration {
+func (injector *faultInjector) latency(config tes.LatencyConfig) time.Duration {
 	if config.Jitter == 0 {
 		return config.Base
 	}
@@ -240,12 +240,12 @@ func sequenceGap(payload []byte, gap uint64) []byte {
 	observed, known := wire["sequence"].(float64)
 
 	if !known || observed < 0 || observed != math.Trunc(observed) ||
-		observed > float64(testtypes.MaximumExactJSONInteger) {
+		observed > float64(tes.MaximumExactJSONInteger) {
 		panic("simulator: sequence gap requires an exact non-negative sequence")
 	}
 	sequence := uint64(observed)
 
-	if gap > testtypes.MaximumExactJSONInteger-sequence {
+	if gap > tes.MaximumExactJSONInteger-sequence {
 		panic("simulator: sequence gap exceeds exact JSON integer range")
 	}
 

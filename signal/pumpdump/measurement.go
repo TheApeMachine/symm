@@ -5,7 +5,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -30,21 +29,21 @@ var (
 
 func (signal *Signal) bookMeasurement(
 	at time.Time,
-	geometry types.Frame,
-	alphaChange types.Frame,
-	betaChange types.Frame,
+	geometry nmtypes.Frame,
+	alphaChange nmtypes.Frame,
+	betaChange nmtypes.Frame,
 ) *nmtypes.Measurement {
 	separation := 0.0
 	baseline, hasBaseline := geometry.Get(statistic.SymbolMean)
 	_, hasCompression := geometry.Get(equation.SymbolCompression)
 
 	if hasBaseline && hasCompression {
-		comparison := types.Frame{}
+		comparison := nmtypes.Frame{}
 		comparison.Put(nmtypes.AlphaQuantity, geometry.MustGet(equation.SymbolWidth))
 		comparison.Put(nmtypes.BetaQuantity, baseline)
-		_, comparison, err := nomagique.Step(
+		_, comparison, err := nmtypes.Step(
 			signal.separate,
-			types.Frame{},
+			nmtypes.Frame{},
 			comparison,
 		)
 
@@ -125,8 +124,8 @@ func (signal *Signal) bookMeasurement(
 
 func (signal *Signal) putDepthDynamics(
 	measurement *nmtypes.Measurement,
-	alphaChange types.Frame,
-	betaChange types.Frame,
+	alphaChange nmtypes.Frame,
+	betaChange nmtypes.Frame,
 ) {
 	alpha, err := relativeComponents(signal.decompose, alphaChange)
 
@@ -152,10 +151,10 @@ func (signal *Signal) putDepthDynamics(
 
 func (signal *Signal) tickerMeasurement(
 	ticker kraken.TickerData,
-	displacement types.Frame,
-	magnitude types.Frame,
-	normalized types.Frame,
-	polarized types.Frame,
+	displacement nmtypes.Frame,
+	magnitude nmtypes.Frame,
+	normalized nmtypes.Frame,
+	polarized nmtypes.Frame,
 ) *nmtypes.Measurement {
 	measurement := signal.newMeasurement(
 		ticker.Timestamp,
@@ -177,7 +176,7 @@ func (signal *Signal) tickerMeasurement(
 	putEvidence(
 		measurement,
 		string(types.MetricAnchorDetach),
-		magnitude.MustGet(nomagique.SampleValue),
+		magnitude.MustGet(nmtypes.SampleValue),
 		normalized,
 	)
 	putOptionalRaw(measurement, normalized, equation.SymbolLift,
@@ -189,11 +188,11 @@ func (signal *Signal) tickerMeasurement(
 
 func (signal *Signal) tradeMeasurement(
 	trade kraken.TradeData,
-	acceleration types.Frame,
-	rate types.Frame,
-	change types.Frame,
-	polarized types.Frame,
-	exhaustion types.Frame,
+	acceleration nmtypes.Frame,
+	rate nmtypes.Frame,
+	change nmtypes.Frame,
+	polarized nmtypes.Frame,
+	exhaustion nmtypes.Frame,
 ) *nmtypes.Measurement {
 	from := observedFrom(acceleration, trade.Timestamp)
 	separation := frameNumber(exhaustion, statistic.SymbolSeparation)
@@ -256,7 +255,7 @@ func (signal *Signal) newMeasurement(
 
 func putPolarized(
 	measurement *nmtypes.Measurement,
-	polarized types.Frame,
+	polarized nmtypes.Frame,
 ) {
 	putDirectionalEvidence(measurement, polarized,
 		equation.SymbolAlpha, equation.SymbolAlphaNormalized, types.SideBuy)
@@ -266,9 +265,9 @@ func putPolarized(
 
 func putDirectionalEvidence(
 	measurement *nmtypes.Measurement,
-	frame types.Frame,
-	rawSymbol nomagique.Symbol,
-	normalizedSymbol nomagique.Symbol,
+	frame nmtypes.Frame,
+	rawSymbol nmtypes.Symbol,
+	normalizedSymbol nmtypes.Symbol,
 	side types.MeasurementSide,
 ) {
 	raw, found := frame.Get(rawSymbol)
@@ -290,7 +289,7 @@ func putDirectionalEvidence(
 
 func putExhaustion(
 	measurement *nmtypes.Measurement,
-	exhaustion types.Frame,
+	exhaustion nmtypes.Frame,
 ) {
 	putOptionalNormalized(measurement, exhaustion, nmtypes.AlphaQuantity,
 		types.MetricKey(types.MetricExhaustion, types.SideBuy), dimensionless)
@@ -302,7 +301,7 @@ func putEvidence(
 	measurement *nmtypes.Measurement,
 	name string,
 	raw float64,
-	normalized types.Frame,
+	normalized nmtypes.Frame,
 ) {
 	if _, found := normalized.Get(equation.SymbolRatio); !found {
 		return
@@ -320,8 +319,8 @@ func putEvidence(
 
 func putOptionalRaw(
 	measurement *nmtypes.Measurement,
-	frame types.Frame,
-	symbol nomagique.Symbol,
+	frame nmtypes.Frame,
+	symbol nmtypes.Symbol,
 	name string,
 	descriptor nmtypes.Descriptor,
 ) {
@@ -334,8 +333,8 @@ func putOptionalRaw(
 
 func putOptionalNormalized(
 	measurement *nmtypes.Measurement,
-	frame types.Frame,
-	symbol nomagique.Symbol,
+	frame nmtypes.Frame,
+	symbol nmtypes.Symbol,
 	name string,
 	descriptor nmtypes.Descriptor,
 ) {
@@ -348,9 +347,9 @@ func putOptionalNormalized(
 
 func putMetadata(
 	measurement *nmtypes.Measurement,
-	frame types.Frame,
+	frame nmtypes.Frame,
 	name string,
-	symbol nomagique.Symbol,
+	symbol nmtypes.Symbol,
 ) {
 	value, found := frame.Get(symbol)
 
@@ -376,11 +375,11 @@ func normalizedMetric(
 	return nmtypes.NewNormalizedMetric(name, raw, normalized, descriptor)
 }
 
-func maturity(frame types.Frame) float64 {
+func maturity(frame nmtypes.Frame) float64 {
 	return frameNumber(frame, statistic.SymbolMaturity)
 }
 
-func frameNumber(frame types.Frame, symbol nomagique.Symbol) float64 {
+func frameNumber(frame nmtypes.Frame, symbol nmtypes.Symbol) float64 {
 	value, _ := frame.Get(symbol)
 
 	return value

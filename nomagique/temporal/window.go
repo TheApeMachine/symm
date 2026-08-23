@@ -4,15 +4,14 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolCapacity = nomagique.MustIntern("capacity")
-	SymbolUnixSec  = nomagique.MustIntern("unix_sec")
-	SymbolUnixNsec = nomagique.MustIntern("unix_nsec")
+	SymbolCapacity = nmtypes.MustIntern("capacity")
+	SymbolUnixSec  = nmtypes.MustIntern("unix_sec")
+	SymbolUnixNsec = nmtypes.MustIntern("unix_nsec")
 )
 
 /*
@@ -32,7 +31,7 @@ func Window(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nomagique.SampleValue)
+	value, hasValue := input.Get(nmtypes.SampleValue)
 	_, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
@@ -54,10 +53,10 @@ func Window(
 		return state, types.Frame{}, err
 	}
 
-	if capacity <= 0 || capacity > nomagique.MaxSamples {
+	if capacity <= 0 || capacity > nmtypes.MaxSamples {
 		return state, types.Frame{}, fmt.Errorf(
 			"temporal: window capacity must be an integer from 1 through %d",
-			nomagique.MaxSamples,
+			nmtypes.MaxSamples,
 		)
 	}
 
@@ -81,17 +80,17 @@ func Window(
 		count++
 	}
 
-	nextState.Put(nomagique.MustSampleSymbol(slot), value)
-	nextState.Put(nomagique.SampleCount, float64(count))
-	nextState.Put(nomagique.SampleHead, float64(head))
-	nextState.Put(nomagique.SampleReady, 1)
+	nextState.Put(nmtypes.MustSampleSymbol(slot), value)
+	nextState.Put(nmtypes.SampleCount, float64(count))
+	nextState.Put(nmtypes.SampleHead, float64(head))
+	nextState.Put(nmtypes.SampleReady, 1)
 	nextState.Put(SymbolCapacity, float64(capacity))
 
 	output := nextState
 	output.Merge(input)
-	output.Put(nomagique.SampleCount, float64(count))
-	output.Put(nomagique.SampleHead, float64(head))
-	output.Put(nomagique.SampleReady, 1)
+	output.Put(nmtypes.SampleCount, float64(count))
+	output.Put(nmtypes.SampleHead, float64(head))
+	output.Put(nmtypes.SampleReady, 1)
 	output.Put(SymbolCapacity, float64(capacity))
 
 	return nextState, output, nil
@@ -117,10 +116,10 @@ func windowCapacity(state types.Frame, input types.Frame) (int, error) {
 
 	if found {
 		if capacityValue <= 0 || capacityValue != math.Trunc(capacityValue) ||
-			capacityValue > nomagique.MaxSamples {
+			capacityValue > nmtypes.MaxSamples {
 			return 0, fmt.Errorf(
 				"temporal: span control channel must be an integer from 1 through %d",
-				nomagique.MaxSamples,
+				nmtypes.MaxSamples,
 			)
 		}
 
@@ -141,15 +140,15 @@ func windowCapacity(state types.Frame, input types.Frame) (int, error) {
 
 	next := int(capacityValue + capacityValue)
 
-	if next > nomagique.MaxSamples {
-		return nomagique.MaxSamples, nil
+	if next > nmtypes.MaxSamples {
+		return nmtypes.MaxSamples, nil
 	}
 
 	return next, nil
 }
 
 func windowCount(state types.Frame) int {
-	value, found := state.Get(nomagique.SampleCount)
+	value, found := state.Get(nmtypes.SampleCount)
 
 	if !found {
 		return 0
@@ -159,7 +158,7 @@ func windowCount(state types.Frame) int {
 }
 
 func windowHead(state types.Frame) int {
-	value, found := state.Get(nomagique.SampleHead)
+	value, found := state.Get(nmtypes.SampleHead)
 
 	if !found {
 		return 0

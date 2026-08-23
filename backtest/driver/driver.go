@@ -14,7 +14,7 @@ import (
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/tests"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -282,7 +282,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time, playing bool
 	viper.Set("market.subscribe.pace", time.Millisecond)
 	restoreAuth := fixtureAuth()
 
-	config := testtypes.NewScenarioConfig(symbols)
+	config := tes.NewScenarioConfig(symbols)
 	config.StartTime = startedAt
 	config.InitialBalances = map[string]float64{"USD": 200}
 	config.Execution.DepthLevels = depth

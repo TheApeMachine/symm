@@ -3,7 +3,6 @@ package derivatives
 import (
 	"time"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -13,78 +12,78 @@ import (
 )
 
 var (
-	SymbolBasis          = nomagique.MustIntern("derivatives/basis")
-	SymbolBasisVelocity  = nomagique.MustIntern("derivatives/basis_velocity")
-	SymbolOIAcceleration = nomagique.MustIntern("derivatives/oi_acceleration")
-	SymbolIndexBasis     = nomagique.MustIntern("derivatives/index_basis")
-	SymbolCVD            = nomagique.MustIntern("derivatives/cvd")
-	SymbolLiqIntensity   = nomagique.MustIntern("derivatives/liq_intensity")
+	SymbolBasis          = nmtypes.MustIntern("derivatives/basis")
+	SymbolBasisVelocity  = nmtypes.MustIntern("derivatives/basis_velocity")
+	SymbolOIAcceleration = nmtypes.MustIntern("derivatives/oi_acceleration")
+	SymbolIndexBasis     = nmtypes.MustIntern("derivatives/index_basis")
+	SymbolCVD            = nmtypes.MustIntern("derivatives/cvd")
+	SymbolLiqIntensity   = nmtypes.MustIntern("derivatives/liq_intensity")
 )
 
-func basisPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
-		nomagique.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
+func basisPipeline() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
+		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
 		calculus.Difference,
-		nomagique.Relay(calculus.SymbolResult, calculus.SymbolLeft),
-		nomagique.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
+		nmtypes.Relay(calculus.SymbolResult, calculus.SymbolLeft),
+		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
 		calculus.Quotient,
-		nomagique.Relay(calculus.SymbolResult, SymbolBasis),
+		nmtypes.Relay(calculus.SymbolResult, SymbolBasis),
 	)
 }
 
-func basisVelocityPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		temporal.Observer(nomagique.SampleValue),
+func basisVelocityPipeline() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		temporal.Observer(nmtypes.SampleValue),
 		logic.If(
-			nomagique.Relay(calculus.SymbolReady, logic.SymbolCondition),
-			nomagique.Pipe(
-				nomagique.Relay(calculus.SymbolCurrent, calculus.SymbolLeft),
-				nomagique.Relay(calculus.SymbolPrevious, calculus.SymbolRight),
+			nmtypes.Relay(calculus.SymbolReady, logic.SymbolCondition),
+			nmtypes.Pipe(
+				nmtypes.Relay(calculus.SymbolCurrent, calculus.SymbolLeft),
+				nmtypes.Relay(calculus.SymbolPrevious, calculus.SymbolRight),
 				calculus.Difference,
-				nomagique.Relay(calculus.SymbolResult, SymbolBasisVelocity),
+				nmtypes.Relay(calculus.SymbolResult, SymbolBasisVelocity),
 			),
-			nomagique.Identity,
+			nmtypes.Identity,
 		),
 	)
 }
 
-func oiAccelerationPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		temporal.Observer(nomagique.SampleValue),
+func oiAccelerationPipeline() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		temporal.Observer(nmtypes.SampleValue),
 		logic.If(
-			nomagique.Relay(calculus.SymbolReady, logic.SymbolCondition),
-			nomagique.Pipe(
-				nomagique.Relay(calculus.SymbolCurrent, calculus.SymbolLeft),
-				nomagique.Relay(calculus.SymbolPrevious, calculus.SymbolRight),
+			nmtypes.Relay(calculus.SymbolReady, logic.SymbolCondition),
+			nmtypes.Pipe(
+				nmtypes.Relay(calculus.SymbolCurrent, calculus.SymbolLeft),
+				nmtypes.Relay(calculus.SymbolPrevious, calculus.SymbolRight),
 				calculus.Difference,
-				nomagique.Relay(calculus.SymbolResult, SymbolOIAcceleration),
+				nmtypes.Relay(calculus.SymbolResult, SymbolOIAcceleration),
 			),
-			nomagique.Identity,
+			nmtypes.Identity,
 		),
 	)
 }
 
-func indexBasisPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
-		nomagique.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
+func indexBasisPipeline() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
+		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
 		calculus.Difference,
-		nomagique.Relay(calculus.SymbolResult, calculus.SymbolLeft),
-		nomagique.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
+		nmtypes.Relay(calculus.SymbolResult, calculus.SymbolLeft),
+		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
 		calculus.Quotient,
-		nomagique.Relay(calculus.SymbolResult, SymbolIndexBasis),
+		nmtypes.Relay(calculus.SymbolResult, SymbolIndexBasis),
 	)
 }
 
-func flowPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
+func flowPipeline() nmtypes.Primitive {
+	return nmtypes.Pipe(
 		calculus.Difference,
-		nomagique.Relay(calculus.SymbolResult, calculus.SymbolDelta),
+		nmtypes.Relay(calculus.SymbolResult, calculus.SymbolDelta),
 		calculus.Accumulate,
-		nomagique.Relay(calculus.SymbolTotal, SymbolCVD),
-		nomagique.Relay(calculus.SymbolDelta, nomagique.SampleValue),
-		nomagique.Configure(
+		nmtypes.Relay(calculus.SymbolTotal, SymbolCVD),
+		nmtypes.Relay(calculus.SymbolDelta, nmtypes.SampleValue),
+		nmtypes.Configure(
 			statistic.Baseline,
 			nmtypes.Span,
 			temporal.Window,
@@ -93,12 +92,12 @@ func flowPipeline() nomagique.Primitive {
 	)
 }
 
-func liqPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
+func liqPipeline() nmtypes.Primitive {
+	return nmtypes.Pipe(
 		calculus.Quotient,
-		nomagique.Relay(calculus.SymbolResult, SymbolLiqIntensity),
-		nomagique.Relay(SymbolLiqIntensity, nomagique.SampleValue),
-		nomagique.Configure(
+		nmtypes.Relay(calculus.SymbolResult, SymbolLiqIntensity),
+		nmtypes.Relay(SymbolLiqIntensity, nmtypes.SampleValue),
+		nmtypes.Configure(
 			statistic.Baseline,
 			nmtypes.Span,
 			temporal.Window,
@@ -119,7 +118,7 @@ func eventFrame(at time.Time) types.Frame {
 
 func sampleFrame(at time.Time, value float64) types.Frame {
 	input := eventFrame(at)
-	input.Put(nomagique.SampleValue, value)
+	input.Put(nmtypes.SampleValue, value)
 
 	return input
 }

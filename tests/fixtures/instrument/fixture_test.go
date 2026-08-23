@@ -7,7 +7,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestNewFixture(t *testing.T) {
@@ -56,11 +56,11 @@ func TestNewFixture(t *testing.T) {
 		})
 
 		Convey("When a simulated market snapshot is created", func() {
-			symbol := testtypes.NewSymbol("SIM1/USD", 100.0, 42)
+			symbol := tes.NewSymbol("SIM1/USD", 100.0, 42)
 			symbol.QuantityPrecision = 5
 			symbol.OrderMinimum = 0.01234
 			symbol.CostMinimum = 2.75
-			fixture := NewMarket([]*testtypes.Symbol{symbol})
+			fixture := NewMarket([]*tes.Symbol{symbol})
 
 			Convey("Then Kraken execution rules retain their exact JSON values", func() {
 				var frame map[string]any
@@ -83,9 +83,9 @@ func TestNewFixture(t *testing.T) {
 		})
 
 		Convey("When simulated pairs span different price scales", func() {
-			fixture := NewMarket([]*testtypes.Symbol{
-				testtypes.NewSymbol("LOW/USD", 0.00012345, 1),
-				testtypes.NewSymbol("HIGH/USD", 987654321.0, 2),
+			fixture := NewMarket([]*tes.Symbol{
+				tes.NewSymbol("LOW/USD", 0.00012345, 1),
+				tes.NewSymbol("HIGH/USD", 987654321.0, 2),
 			})
 
 			Convey("Then each pair should advertise its own quoting increment", func() {

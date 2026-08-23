@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 const (
@@ -21,9 +21,9 @@ const (
 RegimeObservation records the oracle-only latent state on the shared timeline.
 */
 type RegimeObservation struct {
-	Tick   uint64                `json:"tick"`
-	Symbol string                `json:"symbol"`
-	State  testtypes.MarketState `json:"state"`
+	Tick   uint64          `json:"tick"`
+	Symbol string          `json:"symbol"`
+	State  tes.MarketState `json:"state"`
 }
 
 /*
@@ -31,15 +31,15 @@ SimulatorReport is the replayable separation of transport mechanics, order
 mechanics, and execution economics for one scenario.
 */
 type SimulatorReport struct {
-	Scenario         testtypes.ScenarioConfig                    `json:"scenario"`
-	Tick             uint64                                      `json:"tick"`
-	Timeline         []RegimeObservation                         `json:"timeline"`
-	RegimeExposure   map[string]map[testtypes.MarketState]uint64 `json:"regime_exposure"`
-	PublicTransport  TransportReport                             `json:"public_transport"`
-	PrivateTransport TransportReport                             `json:"private_transport"`
-	Level3Transport  TransportReport                             `json:"level3_transport"`
-	Mechanics        MechanicsReport                             `json:"mechanics"`
-	Economics        EconomicsReport                             `json:"economics"`
+	Scenario         tes.ScenarioConfig                    `json:"scenario"`
+	Tick             uint64                                `json:"tick"`
+	Timeline         []RegimeObservation                   `json:"timeline"`
+	RegimeExposure   map[string]map[tes.MarketState]uint64 `json:"regime_exposure"`
+	PublicTransport  TransportReport                       `json:"public_transport"`
+	PrivateTransport TransportReport                       `json:"private_transport"`
+	Level3Transport  TransportReport                       `json:"level3_transport"`
+	Mechanics        MechanicsReport                       `json:"mechanics"`
+	Economics        EconomicsReport                       `json:"economics"`
 }
 
 /*
@@ -105,7 +105,7 @@ WithScenario runs a validated configured market and persists any failing run.
 */
 func WithScenario(
 	t *testing.T,
-	config testtypes.ScenarioConfig,
+	config tes.ScenarioConfig,
 	f func(*Market),
 ) func() {
 	return func() {
@@ -139,12 +139,12 @@ func WithScenario(
 }
 
 func copyExposure(
-	source map[string]map[testtypes.MarketState]uint64,
-) map[string]map[testtypes.MarketState]uint64 {
-	copy := make(map[string]map[testtypes.MarketState]uint64, len(source))
+	source map[string]map[tes.MarketState]uint64,
+) map[string]map[tes.MarketState]uint64 {
+	copy := make(map[string]map[tes.MarketState]uint64, len(source))
 
 	for symbol, states := range source {
-		copy[symbol] = make(map[testtypes.MarketState]uint64, len(states))
+		copy[symbol] = make(map[tes.MarketState]uint64, len(states))
 
 		for state, ticks := range states {
 			copy[symbol][state] = ticks

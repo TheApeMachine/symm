@@ -1,25 +1,24 @@
 package algorithm
 
 import (
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolOpportunitySupport          = nomagique.MustIntern("opportunity_support")
-	SymbolOpportunityContradiction    = nomagique.MustIntern("opportunity_contradiction")
-	SymbolOpportunityConditions       = nomagique.MustIntern("opportunity_conditions")
-	SymbolOpportunityConfidenceMass   = nomagique.MustIntern("opportunity_confidence_mass")
-	SymbolOpportunityConfidenceWeight = nomagique.MustIntern("opportunity_confidence_weight")
-	SymbolOpportunityBalance          = nomagique.MustIntern("opportunity_balance")
-	SymbolOpportunityScore            = nomagique.MustIntern("opportunity_score")
-	SymbolOpportunityDirection        = nomagique.MustIntern("opportunity_direction")
-	SymbolOpportunityConfidence       = nomagique.MustIntern("opportunity_confidence")
-	SymbolOpportunityReady            = nomagique.MustIntern("opportunity_ready")
+	SymbolOpportunitySupport          = types.MustIntern("opportunity_support")
+	SymbolOpportunityContradiction    = types.MustIntern("opportunity_contradiction")
+	SymbolOpportunityConditions       = types.MustIntern("opportunity_conditions")
+	SymbolOpportunityConfidenceMass   = types.MustIntern("opportunity_confidence_mass")
+	SymbolOpportunityConfidenceWeight = types.MustIntern("opportunity_confidence_weight")
+	SymbolOpportunityBalance          = types.MustIntern("opportunity_balance")
+	SymbolOpportunityScore            = types.MustIntern("opportunity_score")
+	SymbolOpportunityDirection        = types.MustIntern("opportunity_direction")
+	SymbolOpportunityConfidence       = types.MustIntern("opportunity_confidence")
+	SymbolOpportunityReady            = types.MustIntern("opportunity_ready")
 
-	SymbolEdgeWeight     = nomagique.MustIntern("edge_weight")
-	SymbolEdgeConfidence = nomagique.MustIntern("edge_confidence")
-	SymbolEdgeRelation   = nomagique.MustIntern("edge_relation")
+	SymbolEdgeWeight     = types.MustIntern("edge_weight")
+	SymbolEdgeConfidence = types.MustIntern("edge_confidence")
+	SymbolEdgeRelation   = types.MustIntern("edge_relation")
 )
 
 /*
@@ -102,7 +101,7 @@ func OpportunityScorer(state types.Frame, input types.Frame) (types.Frame, types
 /*
 OpportunityPrimitive is the composite algebra that evaluates an opportunity graph.
 */
-var OpportunityPrimitive = nomagique.Pipe(
+var OpportunityPrimitive = types.Pipe(
 	OpportunityReducer,
 	OpportunityScorer,
 )

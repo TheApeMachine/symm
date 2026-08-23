@@ -6,7 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestGeneratorGenerate(t *testing.T) {
@@ -28,7 +28,7 @@ func TestGeneratorGenerate(t *testing.T) {
 
 func TestGeneratorRender(t *testing.T) {
 	Convey("Given one three-level coherent market sample", t, func() {
-		symbol := testtypes.NewSymbol("SIM1/USD", 100, 42)
+		symbol := tes.NewSymbol("SIM1/USD", 100, 42)
 		symbol.BookDepthLevels = 3
 		generator := NewGeneratorFromSymbol(symbol)
 		So(generator.SetTime(time.Unix(10, 0)), ShouldBeNil)

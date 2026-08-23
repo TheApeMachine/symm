@@ -51,7 +51,7 @@ vocabulary only puts the right slots; a consumer only `Get`s the same slots.
 Each stage transforms the input for the next stage:
 
 ```go
-nomagique.Pipe(algo.Ignition, algo.Hawkes)
+types.Pipe(algo.Ignition, algo.Hawkes)
 ```
 
 ### Pattern B — fan-out (`Pipe` + `Fork`)
@@ -62,7 +62,7 @@ reducers against the same input, lets the second observe the state changes made
 by the first, and merges both outputs into one `Frame`:
 
 ```go
-nomagique.Pipe(
+types.Pipe(
     temporal.Window,
     nomagique.Fork(
         statistic.Baseline,
@@ -173,7 +173,7 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
     signal := &Signal{
         ctx: ctx, cancel: cancel, thesis: thesis,
         number: nomagique.NewNumber[string](
-            nomagique.Pipe(
+            types.Pipe(
                 statistic.ExtractDepth,
                 nomagique.Configure(statistic.Baseline, nmtypes.Span, temporal.Window),
                 nomagique.Fork(statistic.ZScore, statistic.Deviation),

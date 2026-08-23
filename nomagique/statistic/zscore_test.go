@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func zscoreObservationForTest(value float64, sec float64, halflife float64) types.Frame {
 	input := types.Frame{}
-	input.Put(nomagique.SampleValue, value)
+	input.Put(types.SampleValue, value)
 	input.Put(SymbolUnixSec, sec)
 	input.Put(SymbolUnixNsec, 0)
 	input.Put(SymbolDispersionHalflife, halflife)
@@ -20,7 +19,7 @@ func zscoreObservationForTest(value float64, sec float64, halflife float64) type
 
 func TestZScore(t *testing.T) {
 	Convey("Given a state without a composed baseline", t, func() {
-		stream := nomagique.NewStream(ZScore, types.Frame{})
+		stream := types.NewStream(ZScore, types.Frame{})
 
 		Convey("It should report not ready without failing", func() {
 			output, err := stream.Step(zscoreObservationForTest(100, 1000, 5))
@@ -34,7 +33,7 @@ func TestZScore(t *testing.T) {
 	Convey("Given a baseline of one hundred in state", t, func() {
 		state := types.Frame{}
 		state.Put(SymbolBaselineValue, 100)
-		stream := nomagique.NewStream(ZScore, state)
+		stream := types.NewStream(ZScore, state)
 
 		Convey("The first residual should seed the dispersion at unit score", func() {
 			output, err := stream.Step(zscoreObservationForTest(110, 1000, 5))
@@ -72,10 +71,10 @@ func TestZScore(t *testing.T) {
 			state := types.Frame{}
 			state.Put(SymbolBaselineValue, 100)
 			state.Put(SymbolBaselineSpan, 10)
-			stream := nomagique.NewStream(ZScore, state)
+			stream := types.NewStream(ZScore, state)
 
 			input := types.Frame{}
-			input.Put(nomagique.SampleValue, 110)
+			input.Put(types.SampleValue, 110)
 			input.Put(SymbolUnixSec, 1000)
 			input.Put(SymbolUnixNsec, 0)
 
@@ -89,7 +88,7 @@ func TestZScore(t *testing.T) {
 func BenchmarkZScore(b *testing.B) {
 	state := types.Frame{}
 	state.Put(SymbolBaselineValue, 100)
-	stream := nomagique.NewStream(ZScore, state)
+	stream := types.NewStream(ZScore, state)
 	input := zscoreObservationForTest(100, 1000, 5)
 	b.ReportAllocs()
 

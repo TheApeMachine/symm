@@ -4,14 +4,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func windowObservationForTest(value float64, capacity int) types.Frame {
 	input := types.Frame{}
-	input.Put(nomagique.SampleValue, value)
+	input.Put(nmtypes.SampleValue, value)
 	input.Put(SymbolUnixSec, float64(capacity*1000))
 	input.Put(SymbolUnixNsec, 0)
 	input.Put(nmtypes.Span, float64(capacity))
@@ -21,7 +20,7 @@ func windowObservationForTest(value float64, capacity int) types.Frame {
 
 func TestWindow(t *testing.T) {
 	Convey("Given successive values inside a window's capacity", t, func() {
-		stream := nomagique.NewStream(Window, types.Frame{})
+		stream := nmtypes.NewStream(Window, types.Frame{})
 
 		Convey("It should retain every value and echo the observation", func() {
 			_, err := stream.Step(windowObservationForTest(100, 4))
@@ -30,18 +29,18 @@ func TestWindow(t *testing.T) {
 			output, err := stream.Step(windowObservationForTest(101, 4))
 			So(err, ShouldBeNil)
 
-			count, found := output.Get(nomagique.SampleCount)
+			count, found := output.Get(nmtypes.SampleCount)
 			So(found, ShouldBeTrue)
 			So(count, ShouldEqual, 2)
 
-			value, found := output.Get(nomagique.SampleValue)
+			value, found := output.Get(nmtypes.SampleValue)
 			So(found, ShouldBeTrue)
 			So(value, ShouldEqual, 101)
 		})
 	})
 
 	Convey("Given more values than the window's capacity", t, func() {
-		stream := nomagique.NewStream(Window, types.Frame{})
+		stream := nmtypes.NewStream(Window, types.Frame{})
 
 		for value := 100.0; value < 104; value++ {
 			_, err := stream.Step(windowObservationForTest(value, 3))
@@ -51,13 +50,13 @@ func TestWindow(t *testing.T) {
 		Convey("It should evict the oldest and retain the newest", func() {
 			state := stream.Project()
 
-			count, _ := state.Get(nomagique.SampleCount)
+			count, _ := state.Get(nmtypes.SampleCount)
 			So(count, ShouldEqual, 3)
 
-			newest, _ := state.Get(nomagique.MustSampleSymbol(0))
+			newest, _ := state.Get(nmtypes.MustSampleSymbol(0))
 			So(newest, ShouldEqual, 103)
 
-			oldest, _ := state.Get(nomagique.MustSampleSymbol(1))
+			oldest, _ := state.Get(nmtypes.MustSampleSymbol(1))
 			So(oldest, ShouldEqual, 101)
 		})
 	})
@@ -70,14 +69,14 @@ func TestWindow(t *testing.T) {
 			_, _, err = Window(types.Frame{}, windowObservationForTest(100, 0))
 			So(err, ShouldNotBeNil)
 
-			_, _, err = Window(types.Frame{}, windowObservationForTest(100, nomagique.MaxSamples+1))
+			_, _, err = Window(types.Frame{}, windowObservationForTest(100, nmtypes.MaxSamples+1))
 			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
 func BenchmarkWindow(b *testing.B) {
-	stream := nomagique.NewStream(Window, types.Frame{})
+	stream := nmtypes.NewStream(Window, types.Frame{})
 	input := windowObservationForTest(100, 128)
 	b.ReportAllocs()
 

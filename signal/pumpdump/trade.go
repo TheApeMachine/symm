@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/equation"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -30,10 +29,10 @@ func (signal *Signal) consumeTrade(
 		symbol.AppendMeasurement(signal.tradeMeasurement(
 			trade,
 			acceleration,
-			types.Frame{},
-			types.Frame{},
-			types.Frame{},
-			types.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
 		))
 
 		return nil
@@ -56,9 +55,9 @@ func (signal *Signal) consumeTrade(
 			trade,
 			acceleration,
 			rateNormalized,
-			types.Frame{},
-			types.Frame{},
-			types.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
+			nmtypes.Frame{},
 		))
 
 		return nil
@@ -81,9 +80,9 @@ func (signal *Signal) consumeTrade(
 		return err
 	}
 
-	_, polarized, err := nomagique.Step(
+	_, polarized, err := nmtypes.Step(
 		signal.polarize,
-		types.Frame{},
+		nmtypes.Frame{},
 		polarizationFrame(change, returnNormalized),
 	)
 
@@ -117,13 +116,13 @@ func (signal *Signal) consumeTrade(
 func (signal *Signal) exhaustion(
 	symbol string,
 	at time.Time,
-	rate types.Frame,
-	polarized types.Frame,
-) (types.Frame, error) {
+	rate nmtypes.Frame,
+	polarized nmtypes.Frame,
+) (nmtypes.Frame, error) {
 	ratio, found := rate.Get(equation.SymbolRatio)
 
 	if !found {
-		return types.Frame{}, nil
+		return nmtypes.Frame{}, nil
 	}
 
 	rateChange, err := signal.rateChange.Step(
@@ -132,25 +131,25 @@ func (signal *Signal) exhaustion(
 	)
 
 	if err != nil {
-		return types.Frame{}, err
+		return nmtypes.Frame{}, err
 	}
 
 	relative, hasRelative := rateChange.Get(equation.SymbolRelativeChange)
 
 	if !hasRelative {
-		return types.Frame{}, nil
+		return nmtypes.Frame{}, nil
 	}
 
-	declineInput := types.Frame{}
+	declineInput := nmtypes.Frame{}
 	declineInput.Put(equation.SymbolChange, relative)
-	_, decline, err := nomagique.Step(
+	_, decline, err := nmtypes.Step(
 		signal.decompose,
-		types.Frame{},
+		nmtypes.Frame{},
 		declineInput,
 	)
 
 	if err != nil {
-		return types.Frame{}, err
+		return nmtypes.Frame{}, err
 	}
 
 	declineValue := decline.MustGet(equation.SymbolBeta)
@@ -158,34 +157,34 @@ func (signal *Signal) exhaustion(
 	beta, hasBeta := polarized.Get(equation.SymbolBetaNormalized)
 
 	if !hasAlpha || !hasBeta {
-		return types.Frame{}, nil
+		return nmtypes.Frame{}, nil
 	}
 
-	output := types.Frame{}
+	output := nmtypes.Frame{}
 	alphaExhaustion, err := product(declineValue, beta)
 
 	if err != nil {
-		return types.Frame{}, err
+		return nmtypes.Frame{}, err
 	}
 
 	betaExhaustion, err := product(declineValue, alpha)
 
 	if err != nil {
-		return types.Frame{}, err
+		return nmtypes.Frame{}, err
 	}
 
 	output.Put(nmtypes.AlphaQuantity, alphaExhaustion)
 	output.Put(nmtypes.BetaQuantity, betaExhaustion)
-	_, output, err = nomagique.Step(signal.separate, types.Frame{}, output)
+	_, output, err = nmtypes.Step(signal.separate, nmtypes.Frame{}, output)
 
 	return output, err
 }
 
 func product(left float64, right float64) (float64, error) {
-	input := types.Frame{}
+	input := nmtypes.Frame{}
 	input.Put(calculus.SymbolLeft, left)
 	input.Put(calculus.SymbolRight, right)
-	_, output, err := nomagique.Step(calculus.Product, types.Frame{}, input)
+	_, output, err := nmtypes.Step(calculus.Product, nmtypes.Frame{}, input)
 
 	if err != nil {
 		return 0, err

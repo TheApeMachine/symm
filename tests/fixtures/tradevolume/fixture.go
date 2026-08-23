@@ -8,7 +8,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 //go:embed fixtures/*.json
@@ -60,7 +60,7 @@ func NewMarket(symbols []string) *Fixture {
 NewProfiles builds per-symbol taker and maker fee maps from the same profiles
 used by AssetPairs and simulated execution accounting.
 */
-func NewProfiles(symbols []*testtypes.Symbol) *Fixture {
+func NewProfiles(symbols []*tes.Symbol) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/response.json")
 
 	if err != nil {

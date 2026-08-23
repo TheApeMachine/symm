@@ -8,16 +8,16 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMockTransportAssets(t *testing.T) {
 	Convey("Given a transport configured with two simulated symbols", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
-		conn.Configure([]*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 50_000, 1),
-			testtypes.NewSymbol("ETH/USD", 3_000, 2),
+		conn.Configure([]*tes.Symbol{
+			tes.NewSymbol("BTC/USD", 50_000, 1),
+			tes.NewSymbol("ETH/USD", 3_000, 2),
 		})
 		request, err := http.NewRequest(
 			"GET", "https://api.kraken.com/0/public/Assets", nil,
@@ -45,10 +45,10 @@ func TestMockTransportAssetPairs(t *testing.T) {
 	Convey("Given a transport configured with one symbol", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
-		symbol := testtypes.NewSymbol("BTC/USD", 50_000, 1)
+		symbol := tes.NewSymbol("BTC/USD", 50_000, 1)
 		symbol.OrderMinimum = 0.001
 		symbol.CostMinimum = 1.5
-		conn.Configure([]*testtypes.Symbol{symbol})
+		conn.Configure([]*tes.Symbol{symbol})
 		request, err := http.NewRequest(
 			"GET", "https://api.kraken.com/0/public/AssetPairs", nil,
 		)
@@ -76,9 +76,9 @@ func TestMockTransportAssetPairs(t *testing.T) {
 
 func BenchmarkMockTransportRoundTrip(b *testing.B) {
 	conn := NewConn(context.Background())
-	conn.Configure([]*testtypes.Symbol{
-		testtypes.NewSymbol("BTC/USD", 50_000, 1),
-		testtypes.NewSymbol("ETH/USD", 3_000, 2),
+	conn.Configure([]*tes.Symbol{
+		tes.NewSymbol("BTC/USD", 50_000, 1),
+		tes.NewSymbol("ETH/USD", 3_000, 2),
 	})
 	defer conn.Close()
 	request, err := http.NewRequest(

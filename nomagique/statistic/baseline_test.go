@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -16,7 +15,7 @@ func baselineObservationForTest(
 	slowHalflife float64,
 ) types.Frame {
 	input := types.Frame{}
-	input.Put(nomagique.SampleValue, value)
+	input.Put(types.SampleValue, value)
 	input.Put(temporal.SymbolCapacity, 8)
 	input.Put(SymbolUnixSec, sec)
 	input.Put(SymbolUnixNsec, 0)
@@ -27,16 +26,16 @@ func baselineObservationForTest(
 	return input
 }
 
-func baselineMachine() nomagique.Primitive {
-	return nomagique.Pipe(
+func baselineMachine() types.Primitive {
+	return types.Pipe(
 		temporal.Window,
-		nomagique.Fork(Baseline, ZScore),
+		types.Fork(Baseline, ZScore),
 	)
 }
 
 func TestBaseline(t *testing.T) {
 	Convey("Given a composed window and baseline receiving its first value", t, func() {
-		stream := nomagique.NewStream(baselineMachine(), types.Frame{})
+		stream := types.NewStream(baselineMachine(), types.Frame{})
 
 		Convey("It should seed the baseline with the value itself", func() {
 			output, err := stream.Step(baselineObservationForTest(100, 1000, 2, 60))
@@ -53,7 +52,7 @@ func TestBaseline(t *testing.T) {
 	})
 
 	Convey("Given a direct, low-noise ramp", t, func() {
-		stream := nomagique.NewStream(baselineMachine(), types.Frame{})
+		stream := types.NewStream(baselineMachine(), types.Frame{})
 
 		for index := range 8 {
 			_, err := stream.Step(baselineObservationForTest(
@@ -75,7 +74,7 @@ func TestBaseline(t *testing.T) {
 	})
 
 	Convey("Given a choppy, directionless series", t, func() {
-		stream := nomagique.NewStream(baselineMachine(), types.Frame{})
+		stream := types.NewStream(baselineMachine(), types.Frame{})
 
 		for index := range 8 {
 			chop := 100.0
@@ -104,7 +103,7 @@ func TestBaseline(t *testing.T) {
 	})
 
 	Convey("Given a calm series followed by a sudden departure", t, func() {
-		stream := nomagique.NewStream(baselineMachine(), types.Frame{})
+		stream := types.NewStream(baselineMachine(), types.Frame{})
 
 		for index := range 8 {
 			_, err := stream.Step(baselineObservationForTest(100, 1000+float64(index), 2, 60))
@@ -130,7 +129,7 @@ func TestBaseline(t *testing.T) {
 	})
 
 	Convey("Given an observation with regressed event time", t, func() {
-		stream := nomagique.NewStream(baselineMachine(), types.Frame{})
+		stream := types.NewStream(baselineMachine(), types.Frame{})
 
 		_, err := stream.Step(baselineObservationForTest(100, 1000, 2, 60))
 		So(err, ShouldBeNil)
@@ -143,7 +142,7 @@ func TestBaseline(t *testing.T) {
 }
 
 func BenchmarkBaseline(b *testing.B) {
-	stream := nomagique.NewStream(baselineMachine(), types.Frame{})
+	stream := types.NewStream(baselineMachine(), types.Frame{})
 	input := baselineObservationForTest(100, 1000, 2, 60)
 	b.ReportAllocs()
 

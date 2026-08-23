@@ -4,17 +4,16 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolResidual           = nomagique.MustIntern("z/residual")
-	SymbolDispersion         = nomagique.MustIntern("z/dispersion")
-	SymbolZScore             = nomagique.MustIntern("z/value")
-	SymbolDispersionLastSec  = nomagique.MustIntern("z/last_sec")
-	SymbolDispersionLastNsec = nomagique.MustIntern("z/last_nsec")
-	SymbolDispersionHalflife = nomagique.MustIntern("z/dispersion_halflife_sec")
+	SymbolResidual           = types.MustIntern("z/residual")
+	SymbolDispersion         = types.MustIntern("z/dispersion")
+	SymbolZScore             = types.MustIntern("z/value")
+	SymbolDispersionLastSec  = types.MustIntern("z/last_sec")
+	SymbolDispersionLastNsec = types.MustIntern("z/last_nsec")
+	SymbolDispersionHalflife = types.MustIntern("z/dispersion_halflife_sec")
 )
 
 /*
@@ -30,7 +29,7 @@ func ZScore(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nomagique.SampleValue)
+	value, hasValue := input.Get(types.SampleValue)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
@@ -68,7 +67,7 @@ func ZScore(
 
 	if !hasBaseline {
 		output := input
-		output.Put(nomagique.SampleValue, value)
+		output.Put(types.SampleValue, value)
 		output.Put(SymbolReady, 0)
 
 		return state, output, nil
@@ -110,7 +109,7 @@ func ZScore(
 	}
 
 	output := input
-	output.Put(nomagique.SampleValue, value)
+	output.Put(types.SampleValue, value)
 	output.Put(SymbolResidual, residual)
 	output.Put(SymbolDispersion, currentDispersion)
 	output.Put(SymbolZScore, score)

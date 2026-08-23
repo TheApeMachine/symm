@@ -5,15 +5,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestRelativeChange(t *testing.T) {
 	Convey("Given a positive series that contracts", t, func() {
-		stream := nomagique.NewStream(
-			RelativeChange(nomagique.SampleValue),
+		stream := types.NewStream(
+			RelativeChange(types.SampleValue),
 			types.Frame{},
 		)
 		first, err := stream.Step(equationSample(100, 1))
@@ -28,8 +27,8 @@ func TestRelativeChange(t *testing.T) {
 	})
 
 	Convey("Given a zero prior denominator", t, func() {
-		stream := nomagique.NewStream(
-			RelativeChange(nomagique.SampleValue),
+		stream := types.NewStream(
+			RelativeChange(types.SampleValue),
 			types.Frame{},
 		)
 		_, err := stream.Step(equationSample(0, 1))
@@ -41,8 +40,8 @@ func TestRelativeChange(t *testing.T) {
 }
 
 func BenchmarkRelativeChange(benchmark *testing.B) {
-	stream := nomagique.NewStream(
-		RelativeChange(nomagique.SampleValue),
+	stream := types.NewStream(
+		RelativeChange(types.SampleValue),
 		types.Frame{},
 	)
 	_, _ = stream.Step(equationSample(100, 0))

@@ -3,6 +3,8 @@ package types
 import (
 	"sync"
 	"testing"
+
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestStreamRejectsFailedCandidate(t *testing.T) {
@@ -12,7 +14,7 @@ func TestStreamRejectsFailedCandidate(t *testing.T) {
 		value := input.MustGet(inputSymbol)
 
 		if value < 0 {
-			return state, Frame{}, primitiveError("negative input")
+			return state, types.Frame{}, primitiveError("negative input")
 		}
 
 		nextState := state
@@ -21,17 +23,17 @@ func TestStreamRejectsFailedCandidate(t *testing.T) {
 		return nextState, nextState, nil
 	}
 
-	initial := Frame{}
+	initial := types.Frame{}
 	initial.Put(stateSymbol, 1)
 	stream := NewStream(primitive, initial)
-	valid := Frame{}
+	valid := types.Frame{}
 	valid.Put(inputSymbol, 2)
 
 	if _, err := stream.Step(valid); err != nil {
 		t.Fatal(err)
 	}
 
-	invalid := Frame{}
+	invalid := types.Frame{}
 	invalid.Put(inputSymbol, -4)
 
 	if _, err := stream.Step(invalid); err == nil {
@@ -55,8 +57,8 @@ func TestAtomicStreamCommitsConcurrentTransitions(t *testing.T) {
 		return nextState, nextState, nil
 	}
 
-	stream := NewAtomicStream(primitive, Frame{})
-	input := Frame{}
+	stream := NewAtomicStream(primitive, types.Frame{})
+	input := types.Frame{}
 	input.Put(deltaSymbol, 1)
 	waitGroup := sync.WaitGroup{}
 
@@ -91,8 +93,8 @@ func BenchmarkStreamStep(b *testing.B) {
 
 		return nextState, nextState, nil
 	}
-	stream := NewStream(primitive, Frame{})
-	input := Frame{}
+	stream := NewStream(primitive, types.Frame{})
+	input := types.Frame{}
 	input.Put(inputSymbol, 1)
 
 	b.ReportAllocs()
@@ -112,8 +114,8 @@ func BenchmarkAtomicStreamStep(b *testing.B) {
 
 		return nextState, nextState, nil
 	}
-	stream := NewAtomicStream(primitive, Frame{})
-	input := Frame{}
+	stream := NewAtomicStream(primitive, types.Frame{})
+	input := types.Frame{}
 	input.Put(inputSymbol, 1)
 
 	b.ReportAllocs()

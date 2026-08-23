@@ -12,7 +12,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 //go:embed fixtures/*.json
@@ -51,7 +51,7 @@ func NewFixture(typ FixtureType, horizon int) *Fixture {
 NewMarket injects the requested simulated symbols into the Kraken instrument
 snapshot template and returns a ready-to-consume fixture.
 */
-func NewMarket(symbols []*testtypes.Symbol) *Fixture {
+func NewMarket(symbols []*tes.Symbol) *Fixture {
 	raw, err := fixtureFiles.ReadFile("fixtures/" + string(SNAPSHOT) + ".json")
 
 	if err != nil {

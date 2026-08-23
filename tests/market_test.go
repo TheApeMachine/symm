@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMarketNewMarket(t *testing.T) {
 	Convey("Given one valid symbol", t, func() {
-		market := NewMarket(t.Context(), []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM1/USD", 100, 42),
+		market := NewMarket(t.Context(), []*tes.Symbol{
+			tes.NewSymbol("SIM1/USD", 100, 42),
 		})
 		defer market.Close()
 
@@ -19,15 +19,15 @@ func TestMarketNewMarket(t *testing.T) {
 			So(market.Public != nil, ShouldBeTrue)
 			So(market.Private != nil, ShouldBeTrue)
 			So(market.Level3 != nil, ShouldBeTrue)
-			So(market.State, ShouldEqual, testtypes.Baseline)
+			So(market.State, ShouldEqual, tes.Baseline)
 		})
 	})
 }
 
 func BenchmarkMarketTick(b *testing.B) {
-	market := NewMarket(context.Background(), []*testtypes.Symbol{
-		testtypes.NewSymbol("SIM1/USD", 100, 42),
-		testtypes.NewSymbol("SIM2/USD", 200, 43),
+	market := NewMarket(context.Background(), []*tes.Symbol{
+		tes.NewSymbol("SIM1/USD", 100, 42),
+		tes.NewSymbol("SIM2/USD", 200, 43),
 	})
 	defer market.Close()
 

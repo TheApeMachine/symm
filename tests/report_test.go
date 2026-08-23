@@ -8,18 +8,18 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMarketReport(t *testing.T) {
 	Convey("Given a scheduled market with a dropped frame", t, func() {
-		symbol := testtypes.NewSymbol("SIM1/USD", 100, 81)
-		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
-		config.Schedule = []testtypes.RegimeTransition{{
-			Tick: 0, Symbol: symbol.Pair, State: testtypes.SidewaysChop,
+		symbol := tes.NewSymbol("SIM1/USD", 100, 81)
+		config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
+		config.Schedule = []tes.RegimeTransition{{
+			Tick: 0, Symbol: symbol.Pair, State: tes.SidewaysChop,
 		}}
-		config.Faults.Rules = []testtypes.FaultRule{{
-			Channel: "ticker", Occurrence: 1, Action: testtypes.FaultDrop,
+		config.Faults.Rules = []tes.FaultRule{{
+			Channel: "ticker", Occurrence: 1, Action: tes.FaultDrop,
 		}}
 		market, err := NewMarketWithScenario(context.Background(), config)
 		So(err, ShouldBeNil)
@@ -31,8 +31,8 @@ func TestMarketReport(t *testing.T) {
 		Convey("The report should separate oracle state from transport mechanics", func() {
 			So(report.Tick, ShouldEqual, uint64(1))
 			So(report.Timeline, ShouldHaveLength, 1)
-			So(report.Timeline[0].State, ShouldEqual, testtypes.SidewaysChop)
-			So(report.RegimeExposure[symbol.Pair][testtypes.SidewaysChop],
+			So(report.Timeline[0].State, ShouldEqual, tes.SidewaysChop)
+			So(report.RegimeExposure[symbol.Pair][tes.SidewaysChop],
 				ShouldEqual, uint64(1))
 			So(report.PublicTransport.Dropped, ShouldEqual, 1)
 			So(report.PublicTransport.Frames, ShouldNotBeEmpty)
@@ -42,8 +42,8 @@ func TestMarketReport(t *testing.T) {
 
 func TestMarketValidate(t *testing.T) {
 	Convey("Given a market without execution state", t, func() {
-		market := NewMarket(context.Background(), []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM1/USD", 100, 82),
+		market := NewMarket(context.Background(), []*tes.Symbol{
+			tes.NewSymbol("SIM1/USD", 100, 82),
 		})
 		defer market.Close()
 
@@ -55,8 +55,8 @@ func TestMarketValidate(t *testing.T) {
 
 func TestMarketWriteArtifact(t *testing.T) {
 	Convey("Given a completed deterministic market tick", t, func() {
-		market := NewMarket(context.Background(), []*testtypes.Symbol{
-			testtypes.NewSymbol("SIM1/USD", 100, 83),
+		market := NewMarket(context.Background(), []*tes.Symbol{
+			tes.NewSymbol("SIM1/USD", 100, 83),
 		})
 		defer market.Close()
 		market.Tick()
@@ -79,8 +79,8 @@ func TestMarketWriteArtifact(t *testing.T) {
 }
 
 func BenchmarkMarketReport(b *testing.B) {
-	market := NewMarket(context.Background(), []*testtypes.Symbol{
-		testtypes.NewSymbol("REPORT/USD", 100, 84),
+	market := NewMarket(context.Background(), []*tes.Symbol{
+		tes.NewSymbol("REPORT/USD", 100, 84),
 	})
 	defer market.Close()
 	market.Tick()

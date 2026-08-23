@@ -18,11 +18,11 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
-func runAutoFillStackTest(t *testing.T, symbols []*testtypes.Symbol) {
+func runAutoFillStackTest(t *testing.T, symbols []*tes.Symbol) {
 	Convey("Given an executable production-stack position lifecycle", t,
 		WithOrders(t, symbols, cmd.Boot, func(market *Market, system *cmd.System) {
 			names := make([]string, len(system.Signals))
@@ -80,8 +80,8 @@ func runAutoFillStackTest(t *testing.T, symbols []*testtypes.Symbol) {
 }
 
 func TestMarketStackEntryAndExit(t *testing.T) {
-	symbols := []*testtypes.Symbol{
-		testtypes.NewSymbol("SIM1/USD", 64_000, 42),
+	symbols := []*tes.Symbol{
+		tes.NewSymbol("SIM1/USD", 64_000, 42),
 	}
 
 	Convey("Given the full system driven only by simulated venue data", t,
@@ -89,13 +89,13 @@ func TestMarketStackEntryAndExit(t *testing.T) {
 			market.WithAutoFill()
 
 			Convey("When a pump continues before reversing", func() {
-				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
+				So(market.Transition("SIM1/USD", tes.FastPump), ShouldBeNil)
 				So(market.Express("SIM1/USD"), ShouldBeNil)
 				So(system.Desk.Holding("SIM1/USD"), ShouldBeGreaterThan, 0)
 
-				So(market.Transition("SIM1/USD", testtypes.FastPump), ShouldBeNil)
+				So(market.Transition("SIM1/USD", tes.FastPump), ShouldBeNil)
 				So(market.Express("SIM1/USD"), ShouldBeNil)
-				So(market.Transition("SIM1/USD", testtypes.FastDump), ShouldBeNil)
+				So(market.Transition("SIM1/USD", tes.FastDump), ShouldBeNil)
 				So(market.Flatten("SIM1/USD"), ShouldBeNil)
 
 				Convey("Then the system should have entered and exited an actual lot", func() {
@@ -148,14 +148,14 @@ func TestMarketReplayEntryAndExit(t *testing.T) {
 
 		viper.Set("market.l3_depth", nil)
 	}()
-	symbol := testtypes.NewSymbol("IDOS/USD", 0.00455, 13)
+	symbol := tes.NewSymbol("IDOS/USD", 0.00455, 13)
 	symbol.PriceIncrement = 0.00001
 	symbol.PricePrecision = 5
 	symbol.QuantityPrecision = 5
 	symbol.TakerFeePercent = 0.4
 	symbol.MakerFeePercent = 0.23
 	symbol.BookDepthLevels = 10
-	config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+	config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 	config.InitialBalances = map[string]float64{"USD": 200}
 
 	Convey("Given an IDOS/USD slice with a resolved adaptive forecast horizon", t,
@@ -333,7 +333,7 @@ func TestMarketCaptureEntryAndExit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	config := testtypes.NewScenarioConfig(symbols)
+	config := tes.NewScenarioConfig(symbols)
 	config.InitialBalances = map[string]float64{"USD": 200}
 	symbolNames := make([]string, len(symbols))
 
@@ -438,7 +438,7 @@ func TestMarketCaptureHoldouts(t *testing.T) {
 			len(symbols), len(holdouts))
 	}
 
-	config := testtypes.NewScenarioConfig(symbols)
+	config := tes.NewScenarioConfig(symbols)
 	config.InitialBalances = map[string]float64{"USD": 200}
 
 	Convey("Given AKE, IDOS, and CRV from the same captured session", t,
@@ -597,16 +597,16 @@ func captureCrossSection(system *cmd.System, names []string) []captureSymbolRow 
 }
 
 func selectCaptureSymbols(
-	symbols []*testtypes.Symbol,
+	symbols []*tes.Symbol,
 	names ...string,
-) []*testtypes.Symbol {
+) []*tes.Symbol {
 	wanted := make(map[string]struct{}, len(names))
 
 	for _, name := range names {
 		wanted[name] = struct{}{}
 	}
 
-	selected := make([]*testtypes.Symbol, 0, len(names))
+	selected := make([]*tes.Symbol, 0, len(names))
 
 	for _, symbol := range symbols {
 		if _, found := wanted[symbol.Pair]; !found {

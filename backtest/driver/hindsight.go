@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/theapemachine/symm/audit"
 	"os"
 	"path/filepath"
 	"sort"
@@ -175,6 +176,28 @@ inside the capture window. The analytical stream accumulates across every run
 in one store, so this gate — not the wall-clock write time — is what stops a
 leg in one capture being attributed to a decision from a different session.
 */
+func decodeDecisionEvent(
+	kind string,
+	payload []byte,
+) ([]hindsight.Decision, bool, error) {
+	switch kind {
+	case audit.DecisionBatchEvent, "[]types.Decision", "[]*types.Decision":
+		var batch []hindsight.Decision
+		if err := sonic.Unmarshal(payload, &batch); err != nil {
+			return nil, true, err
+		}
+		return batch, true, nil
+	case "types.Decision", "*types.Decision":
+		var decision hindsight.Decision
+		if err := sonic.Unmarshal(payload, &decision); err != nil {
+			return nil, true, err
+		}
+		return []hindsight.Decision{decision}, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
 func streamDecisions(
 	store *backtest.Store,
 	from time.Time,
@@ -195,14 +218,14 @@ func streamDecisions(
 			break
 		}
 
-		if kind != "[]types.Decision" {
+		batch, decisionEvent, decodeErr := decodeDecisionEvent(kind, payload)
+
+		if !decisionEvent {
 			continue
 		}
 
-		var batch []hindsight.Decision
-
-		if decodeErr := sonic.Unmarshal(payload, &batch); decodeErr != nil {
-			errnie.Error(errnie.Err(errnie.Internal, "hindsight: decode decision batch", decodeErr))
+		if decodeErr != nil {
+			errnie.Error(errnie.Err(errnie.Internal, "hindsight: decode decision event", decodeErr))
 			continue
 		}
 

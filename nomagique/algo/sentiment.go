@@ -10,17 +10,17 @@ import (
 )
 
 var (
-	SymbolChange            = nomagique.MustIntern("sentiment/change")
-	SymbolBreadth           = nomagique.MustIntern("sentiment/breadth")
-	SymbolSurgeScore        = nomagique.MustIntern("sentiment/surge_score")
-	SymbolSlumpScore        = nomagique.MustIntern("sentiment/slump_score")
-	SymbolDivergentScore    = nomagique.MustIntern("sentiment/divergent_score")
-	SymbolLeaderStrength    = nomagique.MustIntern("sentiment/leader_strength")
-	SymbolLeaderEvidence    = nomagique.MustIntern("sentiment/leader_evidence")
-	SymbolRelativeLead      = nomagique.MustIntern("sentiment/relative_lead")
-	SymbolSentimentStrength = nomagique.MustIntern("sentiment/strength")
-	SymbolCohortPeerCount   = nomagique.MustIntern("sentiment/peer_count")
-	SymbolSentimentReady    = nomagique.MustIntern("sentiment/ready")
+	SymbolChange            = types.MustIntern("sentiment/change")
+	SymbolBreadth           = types.MustIntern("sentiment/breadth")
+	SymbolSurgeScore        = types.MustIntern("sentiment/surge_score")
+	SymbolSlumpScore        = types.MustIntern("sentiment/slump_score")
+	SymbolDivergentScore    = types.MustIntern("sentiment/divergent_score")
+	SymbolLeaderStrength    = types.MustIntern("sentiment/leader_strength")
+	SymbolLeaderEvidence    = types.MustIntern("sentiment/leader_evidence")
+	SymbolRelativeLead      = types.MustIntern("sentiment/relative_lead")
+	SymbolSentimentStrength = types.MustIntern("sentiment/strength")
+	SymbolCohortPeerCount   = types.MustIntern("sentiment/peer_count")
+	SymbolSentimentReady    = types.MustIntern("sentiment/ready")
 )
 
 type peerReturn struct {
@@ -35,7 +35,7 @@ leadership emergence, and leader-cohort divergence across all ready paths in the
 */
 func CohortSentiment(
 	focalKey string,
-	number *nomagique.Number[string],
+	number *types.Number[string],
 ) (types.Frame, bool, error) {
 	output := types.Frame{}
 
@@ -49,7 +49,7 @@ func CohortSentiment(
 		return output, false, nil
 	}
 
-	_, focalReturnFrame, err := nomagique.Step(
+	_, focalReturnFrame, err := types.Step(
 		correlation.Return, types.Frame{}, focalPath,
 	)
 
@@ -88,7 +88,7 @@ func collectPeerReturns(
 	var scanErr error
 
 	number.Range(func(key string, state types.Frame) bool {
-		_, returnFrame, returnErr := nomagique.Step(
+		_, returnFrame, returnErr := types.Step(
 			correlation.Return, types.Frame{}, state,
 		)
 

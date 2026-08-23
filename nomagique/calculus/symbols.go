@@ -1,33 +1,35 @@
 package calculus
 
-import "github.com/theapemachine/symm/nomagique"
+import (
+	types "github.com/theapemachine/symm/nomagique/types"
+)
 
 var (
 	// Structural ports. The legacy names remain aliases for source compatibility.
-	PortA      = nomagique.MustIntern("left")
-	PortB      = nomagique.MustIntern("right")
-	PortX      = nomagique.MustIntern("value")
-	PortResult = nomagique.MustIntern("result")
+	PortA      = types.MustIntern("left")
+	PortB      = types.MustIntern("right")
+	PortX      = types.MustIntern("value")
+	PortResult = types.MustIntern("result")
 
 	SymbolLeft   = PortA
 	SymbolRight  = PortB
 	SymbolValue  = PortX
 	SymbolResult = PortResult
 
-	SymbolScale    = nomagique.MustIntern("scale")
-	SymbolBaseline = nomagique.MustIntern("baseline")
-	SymbolReady    = nomagique.MustIntern("ready")
-	SymbolCurrent  = nomagique.MustIntern("current")
-	SymbolPrevious = nomagique.MustIntern("previous")
-	SymbolCount    = nomagique.MustIntern("count")
-	SymbolDuration = nomagique.MustIntern("duration")
-	SymbolRate     = nomagique.MustIntern("rate")
-	SymbolBase     = nomagique.MustIntern("base")
-	SymbolJump     = nomagique.MustIntern("jump")
-	SymbolLevel    = nomagique.MustIntern("level")
-	SymbolClock    = nomagique.MustIntern("clock")
-	SymbolShape    = nomagique.MustIntern("shape")
-	SymbolProgress = nomagique.MustIntern("progress")
-	SymbolTotal    = nomagique.MustIntern("total")
-	SymbolDelta    = nomagique.MustIntern("delta")
+	SymbolScale    = types.MustIntern("scale")
+	SymbolBaseline = types.MustIntern("baseline")
+	SymbolReady    = types.MustIntern("ready")
+	SymbolCurrent  = types.MustIntern("current")
+	SymbolPrevious = types.MustIntern("previous")
+	SymbolCount    = types.MustIntern("count")
+	SymbolDuration = types.MustIntern("duration")
+	SymbolRate     = types.MustIntern("rate")
+	SymbolBase     = types.MustIntern("base")
+	SymbolJump     = types.MustIntern("jump")
+	SymbolLevel    = types.MustIntern("level")
+	SymbolClock    = types.MustIntern("clock")
+	SymbolShape    = types.MustIntern("shape")
+	SymbolProgress = types.MustIntern("progress")
+	SymbolTotal    = types.MustIntern("total")
+	SymbolDelta    = types.MustIntern("delta")
 )

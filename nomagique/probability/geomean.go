@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolResult = nomagique.MustIntern("result")
-	SymbolCount  = nomagique.MustIntern("count")
+	SymbolResult = types.MustIntern("result")
+	SymbolCount  = types.MustIntern("count")
 )
 
 /*
@@ -23,8 +22,8 @@ func Geomean(
 	count := 0
 	logSum := 0.0
 
-	for index := range nomagique.MaxSamples {
-		symbol := nomagique.MustSampleSymbol(index)
+	for index := range types.MaxSamples {
+		symbol := types.MustSampleSymbol(index)
 		value, found := input.Get(symbol)
 
 		if !found {

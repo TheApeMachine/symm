@@ -42,14 +42,14 @@ func NewSignal(
 		cancel: cancel,
 		thesis: thesis,
 		number: nomagique.NewNumber[string](
-			nomagique.Pipe(
+			nmtypes.Pipe(
 				statistic.ExtractDepth,
-				nomagique.Configure(
+				nmtypes.Configure(
 					statistic.Baseline,
 					nmtypes.Span,
 					temporal.Window,
 				),
-				nomagique.Fork(
+				nmtypes.Fork(
 					statistic.ZScore,
 					statistic.Deviation,
 				),
@@ -100,7 +100,7 @@ func (signal *Signal) consume() {
 					continue
 				}
 
-				input := types.Frame{}
+				input := nmtypes.Frame{}
 				input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
 				input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
 				input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
@@ -152,7 +152,7 @@ func (signal *Signal) consume() {
 				)
 				measurement.StampQuality(
 					statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
-					output.MustGet(nomagique.SampleCount),
+					output.MustGet(nmtypes.SampleCount),
 				)
 
 				symbol.AppendMeasurement(measurement)

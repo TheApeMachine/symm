@@ -9,13 +9,13 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestExecutionModelProcess(t *testing.T) {
 	Convey("Given a finite one-level simulated book", t, func() {
-		symbol := testtypes.NewSymbol("SIM1/USD", 100, 71)
-		market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("SIM1/USD", 100, 71)
+		market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 		defer market.Close()
 		market.WithAutoFill()
 		_, err := market.Private.transport.addOrder(spot.AddOrderRequest{
@@ -30,8 +30,8 @@ func TestExecutionModelProcess(t *testing.T) {
 		So(economics.ExecutedQuantity, ShouldBeGreaterThan, 0)
 		So(economics.ExecutedQuantity, ShouldBeLessThan, 250.0)
 
-		minimumLevelQuantity := testtypes.DefaultProfiles[testtypes.Baseline].BaseQty *
-			testtypes.QuantityJitterMinimum
+		minimumLevelQuantity := tes.DefaultProfiles[tes.Baseline].BaseQty *
+			tes.QuantityJitterMinimum
 		completionTickLimit := int(math.Ceil(250 / minimumLevelQuantity))
 
 		for range completionTickLimit {
@@ -54,10 +54,10 @@ func TestExecutionModelProcess(t *testing.T) {
 	})
 
 	Convey("Given three depth levels and explicit slippage", t, func() {
-		symbol := testtypes.NewSymbol("SIM2/USD", 100, 72)
-		market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("SIM2/USD", 100, 72)
+		market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 		defer market.Close()
-		config := testtypes.DefaultExecutionConfig()
+		config := tes.DefaultExecutionConfig()
 		config.DepthLevels = 3
 		config.SlippageBasisPoints = 5
 		market.WithAutoFill(config)
@@ -77,10 +77,10 @@ func TestExecutionModelProcess(t *testing.T) {
 	})
 
 	Convey("Given independent execution and REST balance delays", t, func() {
-		symbol := testtypes.NewSymbol("SIM7/USD", 100, 77)
-		market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("SIM7/USD", 100, 77)
+		market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 		defer market.Close()
-		config := testtypes.DefaultExecutionConfig()
+		config := tes.DefaultExecutionConfig()
 		config.ExecutionDelay = 200 * time.Millisecond
 		config.RESTBalanceDelay = 200 * time.Millisecond
 		market.WithAutoFill(config)
@@ -111,10 +111,10 @@ func TestExecutionModelProcess(t *testing.T) {
 
 func TestExecutionModelExecutionBeforeAcknowledgment(t *testing.T) {
 	Convey("Given execution latency shorter than acknowledgement latency", t, func() {
-		symbol := testtypes.NewSymbol("SIM6/USD", 100, 76)
-		market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("SIM6/USD", 100, 76)
+		market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 		defer market.Close()
-		config := testtypes.DefaultExecutionConfig()
+		config := tes.DefaultExecutionConfig()
 		config.EmitAcknowledgements = true
 		config.ExecutionBeforeAcknowledgment = true
 		config.AcknowledgementDelay = 300 * time.Millisecond
@@ -143,22 +143,22 @@ func TestExecutionModelExecutionBeforeAcknowledgment(t *testing.T) {
 }
 
 func BenchmarkExecutionModelProcess(b *testing.B) {
-	symbol := testtypes.NewSymbol("BENCH/USD", 100, 101)
+	symbol := tes.NewSymbol("BENCH/USD", 100, 101)
 	private := NewConn(context.Background())
-	private.Configure([]*testtypes.Symbol{symbol})
+	private.Configure([]*tes.Symbol{symbol})
 	defer private.Close()
-	config := testtypes.DefaultExecutionConfig()
+	config := tes.DefaultExecutionConfig()
 	config.EnforceBalances = false
 	model := newExecutionModel(
-		config, testtypes.DefaultProfiles,
-		[]*testtypes.Symbol{symbol}, private, 101,
+		config, tes.DefaultProfiles,
+		[]*tes.Symbol{symbol}, private, 101,
 	)
-	sample := testtypes.Sample{
+	sample := tes.Sample{
 		Symbol: symbol.Pair, Bid: 99.99, BidQty: 100,
 		Ask: 100.01, AskQty: 100, Last: 100.01,
 		Volume: 100, StepVolume: 100, Timestamp: time.Unix(1, 0),
-		Bids: []testtypes.DepthLevel{{Price: 99.99, Quantity: 100}},
-		Asks: []testtypes.DepthLevel{{Price: 100.01, Quantity: 100}},
+		Bids: []tes.DepthLevel{{Price: 99.99, Quantity: 100}},
+		Asks: []tes.DepthLevel{{Price: 100.01, Quantity: 100}},
 	}
 	iteration := int64(0)
 
@@ -174,7 +174,7 @@ func BenchmarkExecutionModelProcess(b *testing.B) {
 		}
 
 		sample.Timestamp = sample.Timestamp.Add(time.Millisecond)
-		model.Process(sample, testtypes.Baseline)
+		model.Process(sample, tes.Baseline)
 		model.orders = model.orders[:0]
 	}
 }

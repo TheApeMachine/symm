@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/bits"
 
+	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
@@ -29,13 +30,13 @@ func Step(
 	input Frame,
 ) (Frame, Frame, error) {
 	if primitive == nil {
-		return state, Frame{}, primitiveError("primitive is nil")
+		return state, types.Frame{}, primitiveError("primitive is nil")
 	}
 
 	nextState, output, err := primitive(state, input)
 
 	if err != nil {
-		return state, Frame{}, err
+		return state, types.Frame{}, err
 	}
 
 	return nextState, output, nil
@@ -54,7 +55,7 @@ func Pipe(primitives ...Primitive) Primitive {
 			nextState, output, err = Step(primitive, nextState, output)
 
 			if err != nil {
-				return state, Frame{}, err
+				return state, types.Frame{}, err
 			}
 		}
 
@@ -78,13 +79,13 @@ func Fork(primitives ...Primitive) Primitive {
 			candidateState, branchOutput, err := Step(primitive, state, input)
 
 			if err != nil {
-				return state, Frame{}, err
+				return state, types.Frame{}, err
 			}
 
 			nextState, err = mergeFrameChanges(state, nextState, candidateState, "fork state")
 
 			if err != nil {
-				return state, Frame{}, err
+				return state, types.Frame{}, err
 			}
 
 			output.Merge(branchOutput)
@@ -109,19 +110,19 @@ func ForkStrict(primitives ...Primitive) Primitive {
 			candidateState, branchOutput, err := Step(primitive, state, input)
 
 			if err != nil {
-				return state, Frame{}, err
+				return state, types.Frame{}, err
 			}
 
 			nextState, err = mergeFrameChanges(state, nextState, candidateState, "fork state")
 
 			if err != nil {
-				return state, Frame{}, err
+				return state, types.Frame{}, err
 			}
 
 			output, err = mergeFrameChanges(input, output, branchOutput, "fork output")
 
 			if err != nil {
-				return state, Frame{}, err
+				return state, types.Frame{}, err
 			}
 		}
 
@@ -139,17 +140,17 @@ func Configure(producer Primitive, channel Symbol, consumer Primitive) Primitive
 		nextState, controlOutput, err := Step(producer, state, input)
 
 		if err != nil {
-			return state, Frame{}, err
+			return state, types.Frame{}, err
 		}
 
 		controlValue, found := controlOutput.Get(channel)
 
 		if !found {
-			return state, Frame{}, primitiveError("configure: control channel missing")
+			return state, types.Frame{}, primitiveError("configure: control channel missing")
 		}
 
 		if !utils.IsFinite(controlValue) {
-			return state, Frame{}, primitiveError("configure: control channel must be finite")
+			return state, types.Frame{}, primitiveError("configure: control channel must be finite")
 		}
 
 		consumerInput := input
@@ -157,7 +158,7 @@ func Configure(producer Primitive, channel Symbol, consumer Primitive) Primitive
 		candidateState, consumerOutput, err := Step(consumer, nextState, consumerInput)
 
 		if err != nil {
-			return state, Frame{}, err
+			return state, types.Frame{}, err
 		}
 
 		output := controlOutput
@@ -178,7 +179,7 @@ func Relay(from Symbol, to Symbol) Primitive {
 		value, found := input.Get(from)
 
 		if !found {
-			return state, Frame{}, primitiveError("relay: source slot missing")
+			return state, types.Frame{}, primitiveError("relay: source slot missing")
 		}
 
 		output := input
@@ -197,7 +198,7 @@ func Retained(primitive Primitive) Primitive {
 		nextState, retained, err := Step(primitive, state, state)
 
 		if err != nil {
-			return state, Frame{}, err
+			return state, types.Frame{}, err
 		}
 
 		output := input
@@ -211,7 +212,7 @@ func Retained(primitive Primitive) Primitive {
 func Assign(symbol Symbol, value float64) Primitive {
 	return func(state Frame, input Frame) (Frame, Frame, error) {
 		if !utils.IsFinite(value) {
-			return state, Frame{}, primitiveError("assign value must be finite")
+			return state, types.Frame{}, primitiveError("assign value must be finite")
 		}
 
 		output := input

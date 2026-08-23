@@ -1059,7 +1059,7 @@ func TestExtractPredictiveDynamicsNodes(t *testing.T) {
 		at := time.Unix(2, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD")
 		symbol.Resonance.Push(graphResonanceManifold())
-		dynamics := types.Frame{}
+		dynamics := nmtypes.Frame{}
 		dynamics.Put(learning.SymbolDynamicsReady, 1)
 		dynamics.Put(learning.SymbolDynamicsSampleCount, 8)
 		dynamics.Put(learning.SymbolDynamicsVelocity, 0.4)

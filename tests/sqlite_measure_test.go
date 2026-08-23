@@ -17,7 +17,7 @@ import (
 	"github.com/theapemachine/symm/backtest/hindsight"
 	"github.com/theapemachine/symm/cmd"
 	"github.com/theapemachine/symm/nomagique/transport"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -94,7 +94,7 @@ func TestMeasuredSqliteReplayProfitability(t *testing.T) {
 		t.Fatalf("capture has no symbols: %v", err)
 	}
 
-	config := testtypes.NewScenarioConfig(symbols)
+	config := tes.NewScenarioConfig(symbols)
 	config.StartTime = startedAt
 	config.InitialBalances = map[string]float64{"USD": 200}
 	config.Execution.DepthLevels = depth

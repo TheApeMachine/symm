@@ -5,24 +5,24 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/types"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	numberDelta = MustIntern("test/number/delta")
-	numberTotal = MustIntern("test/number/total")
-	numberReady = MustIntern("test/number/ready")
+	numberDelta = types.MustIntern("test/number/delta")
+	numberTotal = types.MustIntern("test/number/total")
+	numberReady = types.MustIntern("test/number/ready")
 )
 
-func numberAccumulator(state Frame, input Frame) (Frame, Frame, error) {
+func numberAccumulator(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 	delta, found := input.Get(numberDelta)
 	if !found {
-		return state, Frame{}, errors.New("missing delta")
+		return state, types.Frame{}, errors.New("missing delta")
 	}
 	if delta < 0 {
 		state.Put(numberTotal, 999)
-		return state, Frame{}, errors.New("negative delta")
+		return state, types.Frame{}, errors.New("negative delta")
 	}
 	total, _ := state.Get(numberTotal)
 	total += delta
@@ -35,11 +35,11 @@ func numberAccumulator(state Frame, input Frame) (Frame, Frame, error) {
 func TestNumberIsolationAndTransactions(t *testing.T) {
 	Convey("Number owns isolated committed state for every key", t, func() {
 		number := NewNumber[string](numberAccumulator)
-		_, err := number.Step("left", Frame{}.Set(numberDelta, 2))
+		_, err := number.Step("left", types.Frame{}.Set(numberDelta, 2))
 		So(err, ShouldBeNil)
-		_, err = number.Step("left", Frame{}.Set(numberDelta, 3))
+		_, err = number.Step("left", types.Frame{}.Set(numberDelta, 3))
 		So(err, ShouldBeNil)
-		_, err = number.Step("right", Frame{}.Set(numberDelta, 7))
+		_, err = number.Step("right", types.Frame{}.Set(numberDelta, 7))
 		So(err, ShouldBeNil)
 
 		left, found := number.Project("left")
@@ -52,9 +52,9 @@ func TestNumberIsolationAndTransactions(t *testing.T) {
 
 	Convey("A rejected keyed transition cannot poison committed state or output", t, func() {
 		number := NewNumber[string](numberAccumulator)
-		good, err := number.Step("key", Frame{}.Set(numberDelta, 4))
+		good, err := number.Step("key", types.Frame{}.Set(numberDelta, 4))
 		So(err, ShouldBeNil)
-		failed, err := number.Step("key", Frame{}.Set(numberDelta, -1))
+		failed, err := number.Step("key", types.Frame{}.Set(numberDelta, -1))
 		So(err, ShouldNotBeNil)
 		So(failed.Equal(good), ShouldBeTrue)
 		state, found := number.Project("key")
@@ -72,11 +72,11 @@ func TestNumberIsolationAndTransactions(t *testing.T) {
 		calls := 0
 		number := NewNumberWithInitial[string](func(key string) Frame {
 			calls++
-			return Frame{}.Set(numberTotal, float64(len(key)))
+			returntypes.Frame{}.Set(numberTotal, float64(len(key)))
 		}, numberAccumulator)
-		_, err := number.Step("abcd", Frame{}.Set(numberDelta, 1))
+		_, err := number.Step("abcd", types.Frame{}.Set(numberDelta, 1))
 		So(err, ShouldBeNil)
-		_, err = number.Step("abcd", Frame{}.Set(numberDelta, 1))
+		_, err = number.Step("abcd", types.Frame{}.Set(numberDelta, 1))
 		So(err, ShouldBeNil)
 		state, _ := number.Project("abcd")
 		So(state.MustGet(numberTotal), ShouldEqual, 6.0)
@@ -85,8 +85,8 @@ func TestNumberIsolationAndTransactions(t *testing.T) {
 
 	Convey("Range yields copies that cannot mutate owned state", t, func() {
 		number := NewNumber[string](numberAccumulator)
-		_, _ = number.Step("a", Frame{}.Set(numberDelta, 1))
-		_, _ = number.Step("b", Frame{}.Set(numberDelta, 2))
+		_, _ = number.Step("a", types.Frame{}.Set(numberDelta, 1))
+		_, _ = number.Step("b", types.Frame{}.Set(numberDelta, 2))
 		count := 0
 		total := 0.0
 		number.Range(func(_ string, state Frame) bool {
@@ -103,8 +103,8 @@ func TestNumberIsolationAndTransactions(t *testing.T) {
 
 	Convey("Reset and Delete have explicit lifecycle semantics", t, func() {
 		number := NewNumber[string](numberAccumulator)
-		_, _ = number.Step("key", Frame{}.Set(numberDelta, 3))
-		So(number.Reset("key", Frame{}.Set(numberTotal, 10)), ShouldBeNil)
+		_, _ = number.Step("key", types.Frame{}.Set(numberDelta, 3))
+		So(number.Reset("key", types.Frame{}.Set(numberTotal, 10)), ShouldBeNil)
 		state, found := number.Project("key")
 		So(found, ShouldBeTrue)
 		So(state.MustGet(numberTotal), ShouldEqual, 10.0)
@@ -128,7 +128,7 @@ func TestNumberConcurrency(t *testing.T) {
 			go func() {
 				defer wait.Done()
 				for range iterations {
-					if _, err := number.Step("shared", Frame{}.Set(numberDelta, 1)); err != nil {
+					if _, err := number.Step("shared", types.Frame{}.Set(numberDelta, 1)); err != nil {
 						failures <- err
 						return
 					}
@@ -153,7 +153,7 @@ func TestNumberConcurrency(t *testing.T) {
 			go func(key int) {
 				defer wait.Done()
 				for range iterations {
-					_, _ = number.Step(key, Frame{}.Set(numberDelta, 1))
+					_, _ = number.Step(key, types.Frame{}.Set(numberDelta, 1))
 				}
 			}(key)
 		}
@@ -167,7 +167,7 @@ func TestNumberConcurrency(t *testing.T) {
 
 	Convey("Established-key Number steps do not allocate Frame snapshots", t, func() {
 		number := NewNumber[string](numberAccumulator)
-		input := Frame{}.Set(numberDelta, 1)
+		input := types.Frame{}.Set(numberDelta, 1)
 		_, err := number.Step("steady", input)
 		So(err, ShouldBeNil)
 		allocations := testing.AllocsPerRun(1000, func() {
@@ -181,7 +181,7 @@ func TestNumberConcurrency(t *testing.T) {
 
 func TestNumberCrossSectionAndSelection(t *testing.T) {
 	pair := func(state Frame, input Frame) (Frame, Frame, error) {
-		output := Frame{}.Set(numberTotal, state.MustGet(numberTotal)+input.MustGet(numberTotal))
+		output := types.Frame{}.Set(numberTotal, state.MustGet(numberTotal)+input.MustGet(numberTotal))
 		return state, output, nil
 	}
 	reduce := func(state Frame, input Frame) (Frame, Frame, error) {
@@ -199,7 +199,7 @@ func TestNumberCrossSectionAndSelection(t *testing.T) {
 	Convey("CrossSection folds peers without mutating keyed state", t, func() {
 		number := NewNumber[string](numberAccumulator)
 		for key, value := range map[string]float64{"focal": 2, "first": 3, "second": 5} {
-			_, _ = number.Step(key, Frame{}.Set(numberDelta, value))
+			_, _ = number.Step(key, types.Frame{}.Set(numberDelta, value))
 		}
 		output, ready, err := number.CrossSection("focal", pair, reduce, Identity)
 		So(err, ShouldBeNil)
@@ -212,7 +212,7 @@ func TestNumberCrossSectionAndSelection(t *testing.T) {
 	Convey("ArgMax requires a unique maximum above the exact median", t, func() {
 		number := NewNumber[string](numberAccumulator)
 		for key, value := range map[string]float64{"low": 1, "middle": 2, "leader": 5} {
-			_, _ = number.Step(key, Frame{}.Set(numberDelta, value))
+			_, _ = number.Step(key, types.Frame{}.Set(numberDelta, value))
 		}
 		selected, maximum, median, ready, err := number.ArgMax(score, numberTotal, numberReady)
 		So(err, ShouldBeNil)
@@ -225,7 +225,7 @@ func TestNumberCrossSectionAndSelection(t *testing.T) {
 	Convey("A tied maximum is deliberately not selected", t, func() {
 		number := NewNumber[string](numberAccumulator)
 		for key, value := range map[string]float64{"a": 5, "b": 5, "c": 1} {
-			_, _ = number.Step(key, Frame{}.Set(numberDelta, value))
+			_, _ = number.Step(key, types.Frame{}.Set(numberDelta, value))
 		}
 		_, _, _, ready, err := number.ArgMax(score, numberTotal, numberReady)
 		So(err, ShouldBeNil)
@@ -235,7 +235,7 @@ func TestNumberCrossSectionAndSelection(t *testing.T) {
 
 func BenchmarkNumberEstablishedKey(b *testing.B) {
 	number := NewNumber[string](numberAccumulator)
-	input := Frame{}.Set(numberDelta, 1)
+	input := types.Frame{}.Set(numberDelta, 1)
 	_, _ = number.Step("symbol", input)
 	b.ReportAllocs()
 	b.ResetTimer()

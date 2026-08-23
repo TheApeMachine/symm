@@ -1,6 +1,10 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/theapemachine/symm/nomagique/types"
+)
 
 type bindingKind uint8
 
@@ -50,15 +54,15 @@ func Wire(primitive Primitive, bindings ...Binding) Primitive {
 
 	return func(state Frame, input Frame) (Frame, Frame, error) {
 		if configurationError != nil {
-			return state, Frame{}, configurationError
+			return state, types.Frame{}, configurationError
 		}
 
 		if primitive == nil {
-			return state, Frame{}, primitiveError("wire primitive is nil")
+			return state, types.Frame{}, primitiveError("wire primitive is nil")
 		}
 
-		localInput := Frame{}
-		localState := Frame{}
+		localInput := types.Frame{}
+		localState := types.Frame{}
 
 		for _, binding := range program {
 			switch binding.kind {
@@ -66,7 +70,7 @@ func Wire(primitive Primitive, bindings ...Binding) Primitive {
 				value, found := input.Get(binding.fact)
 
 				if !found {
-					return state, Frame{}, fmt.Errorf(
+					return state, types.Frame{}, fmt.Errorf(
 						"nomagique: wire input fact %s for port %s is missing",
 						symbolLabel(binding.fact),
 						symbolLabel(binding.port),
@@ -84,7 +88,7 @@ func Wire(primitive Primitive, bindings ...Binding) Primitive {
 		candidateState, localOutput, err := Step(primitive, localState, localInput)
 
 		if err != nil {
-			return state, Frame{}, err
+			return state, types.Frame{}, err
 		}
 
 		for port := range candidateState.All() {
@@ -98,7 +102,7 @@ func Wire(primitive Primitive, bindings ...Binding) Primitive {
 			}
 
 			if !bound {
-				return state, Frame{}, fmt.Errorf(
+				return state, types.Frame{}, fmt.Errorf(
 					"nomagique: wire primitive mutated unbound state port %s",
 					symbolLabel(port),
 				)
@@ -129,7 +133,7 @@ func Wire(primitive Primitive, bindings ...Binding) Primitive {
 			value, found := localOutput.Get(binding.port)
 
 			if !found {
-				return state, Frame{}, fmt.Errorf(
+				return state, types.Frame{}, fmt.Errorf(
 					"nomagique: wire output port %s for fact %s is missing",
 					symbolLabel(binding.port),
 					symbolLabel(binding.fact),

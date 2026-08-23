@@ -6,16 +6,15 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestIfRouting(t *testing.T) {
-	predicateState := nomagique.MustIntern("test/logic/if/predicate_state")
-	branchState := nomagique.MustIntern("test/logic/if/branch_state")
-	branchOutput := nomagique.MustIntern("test/logic/if/branch_output")
+	predicateState := types.MustIntern("test/logic/if/predicate_state")
+	branchState := types.MustIntern("test/logic/if/branch_state")
+	branchOutput := types.MustIntern("test/logic/if/branch_output")
 
-	predicate := func(condition float64) nomagique.Primitive {
+	predicate := func(condition float64) types.Primitive {
 		return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 			state.Put(predicateState, 1)
 			output := input
@@ -52,13 +51,13 @@ func TestIfRouting(t *testing.T) {
 
 	Convey("False is exactly zero; every finite non-zero value is true", t, func() {
 		for _, condition := range []float64{-7, -0.1, 0.1, 7} {
-			_, output, err := If(predicate(condition), nomagique.Assign(branchOutput, 1), nomagique.Assign(branchOutput, 0))(
+			_, output, err := If(predicate(condition), types.Assign(branchOutput, 1), types.Assign(branchOutput, 0))(
 				types.Frame{}, types.Frame{},
 			)
 			So(err, ShouldBeNil)
 			So(output.MustGet(branchOutput), ShouldEqual, 1.0)
 		}
-		_, output, err := If(predicate(0), nomagique.Assign(branchOutput, 1), nomagique.Assign(branchOutput, 0))(
+		_, output, err := If(predicate(0), types.Assign(branchOutput, 1), types.Assign(branchOutput, 0))(
 			types.Frame{}, types.Frame{},
 		)
 		So(err, ShouldBeNil)
@@ -66,12 +65,12 @@ func TestIfRouting(t *testing.T) {
 	})
 
 	Convey("Non-finite and missing predicate output is refused", t, func() {
-		for _, bad := range []nomagique.Primitive{
+		for _, bad := range []types.Primitive{
 			predicate(math.NaN()),
 			predicate(math.Inf(1)),
-			nomagique.Identity,
+			types.Identity,
 		} {
-			_, _, err := If(bad, nomagique.Identity, nomagique.Identity)(types.Frame{}, types.Frame{})
+			_, _, err := If(bad, types.Identity, types.Identity)(types.Frame{}, types.Frame{})
 			So(err, ShouldNotBeNil)
 		}
 	})
@@ -90,9 +89,9 @@ func TestIfRouting(t *testing.T) {
 }
 
 func TestCircuitRouting(t *testing.T) {
-	firstState := nomagique.MustIntern("test/logic/circuit/first_state")
-	selected := nomagique.MustIntern("test/logic/circuit/selected")
-	predicate := func(condition float64, mutate nomagique.Symbol) nomagique.Primitive {
+	firstState := types.MustIntern("test/logic/circuit/first_state")
+	selected := types.MustIntern("test/logic/circuit/selected")
+	predicate := func(condition float64, mutate types.Symbol) types.Primitive {
 		return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 			if mutate != 0 {
 				state.Put(mutate, 1)
@@ -105,7 +104,7 @@ func TestCircuitRouting(t *testing.T) {
 
 	Convey("Circuit executes only the first matching rule", t, func() {
 		calls := 0
-		branch := func(value float64) nomagique.Primitive {
+		branch := func(value float64) types.Primitive {
 			return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 				calls++
 				output := input
@@ -126,7 +125,7 @@ func TestCircuitRouting(t *testing.T) {
 	})
 
 	Convey("Circuit runs fallback only when no rule matches", t, func() {
-		program := Circuit([]Rule{{When: predicate(0, 0), Then: nomagique.Assign(selected, 1)}}, nomagique.Assign(selected, 9))
+		program := Circuit([]Rule{{When: predicate(0, 0), Then: types.Assign(selected, 1)}}, types.Assign(selected, 9))
 		_, output, err := program(types.Frame{}, types.Frame{})
 		So(err, ShouldBeNil)
 		So(output.MustGet(selected), ShouldEqual, 9.0)

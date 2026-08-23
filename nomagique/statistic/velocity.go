@@ -3,18 +3,17 @@ package statistic
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolVelocityDelta        = nomagique.MustIntern("velocity/delta")
-	SymbolVelocityAcceleration = nomagique.MustIntern("velocity/acceleration")
-	SymbolVelocityElapsed      = nomagique.MustIntern("velocity/elapsed_sec")
-	SymbolVelocityLastValue    = nomagique.MustIntern("velocity/last_value")
-	SymbolVelocityLastDelta    = nomagique.MustIntern("velocity/last_delta")
-	SymbolVelocityLastSec      = nomagique.MustIntern("velocity/last_sec")
-	SymbolVelocityLastNsec     = nomagique.MustIntern("velocity/last_nsec")
+	SymbolVelocityDelta        = types.MustIntern("velocity/delta")
+	SymbolVelocityAcceleration = types.MustIntern("velocity/acceleration")
+	SymbolVelocityElapsed      = types.MustIntern("velocity/elapsed_sec")
+	SymbolVelocityLastValue    = types.MustIntern("velocity/last_value")
+	SymbolVelocityLastDelta    = types.MustIntern("velocity/last_delta")
+	SymbolVelocityLastSec      = types.MustIntern("velocity/last_sec")
+	SymbolVelocityLastNsec     = types.MustIntern("velocity/last_nsec")
 )
 
 /*
@@ -29,7 +28,7 @@ func Velocity(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nomagique.SampleValue)
+	value, hasValue := input.Get(types.SampleValue)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
@@ -65,7 +64,7 @@ func Velocity(
 	nextState.Put(SymbolVelocityLastNsec, nsec)
 
 	output := types.Frame{}
-	output.Put(nomagique.SampleValue, value)
+	output.Put(types.SampleValue, value)
 	output.Put(SymbolReady, 0)
 
 	if hasLastValue && hasLastSec && hasLastNsec {

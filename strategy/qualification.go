@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
+
 	"github.com/theapemachine/nomagique/mcts"
 	logicgraph "github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/types"
@@ -81,7 +83,7 @@ func graphOpportunityType(graph *logicgraph.Graph) string {
 		types.CoiledCompression: true,
 		types.VerticalIgnition:  true,
 		types.RiskOnSurge:       true,
-		types.InefficientLag:    true,
+		nmtypes.InefficientLag:  true,
 		types.HiddenAbsorption:  true,
 		types.DecoupledAlpha:    true,
 		types.EndogenousAlpha:   true,

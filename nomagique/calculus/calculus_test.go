@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -17,7 +16,7 @@ func TestArithmeticPrimitives(t *testing.T) {
 	Convey("Arithmetic atoms implement one explicit finite relation", t, func() {
 		cases := []struct {
 			name      string
-			primitive nomagique.Primitive
+			primitive types.Primitive
 			input     types.Frame
 			expected  float64
 		}{
@@ -33,7 +32,7 @@ func TestArithmeticPrimitives(t *testing.T) {
 		}
 
 		for _, test := range cases {
-			_, output, err := nomagique.Step(test.primitive, types.Frame{}, test.input)
+			_, output, err := types.Step(test.primitive, types.Frame{}, test.input)
 			So(err, ShouldBeNil)
 			So(output.MustGet(PortResult), ShouldEqual, test.expected)
 			So(output.Count(), ShouldEqual, test.input.Count()+1)
@@ -48,7 +47,7 @@ func TestArithmeticPrimitives(t *testing.T) {
 
 	Convey("Undefined and overflowing arithmetic is rejected, never converted to a sentinel", t, func() {
 		adversarial := []struct {
-			primitive nomagique.Primitive
+			primitive types.Primitive
 			input     types.Frame
 		}{
 			{Sum, types.Frame{}.Set(PortA, 1)},
@@ -64,7 +63,7 @@ func TestArithmeticPrimitives(t *testing.T) {
 
 		for _, test := range adversarial {
 			initial := types.Frame{}.Set(SymbolTotal, 4)
-			next, output, err := nomagique.Step(test.primitive, initial, test.input)
+			next, output, err := types.Step(test.primitive, initial, test.input)
 			So(err, ShouldNotBeNil)
 			So(next.Equal(initial), ShouldBeTrue)
 			So(output.Count(), ShouldEqual, 0)
@@ -207,21 +206,21 @@ func TestStatefulCalculusPrimitives(t *testing.T) {
 	Convey("Accumulate rejects poisoned state and overflow without committing", t, func() {
 		for _, stateValue := range []float64{math.NaN(), math.Inf(1)} {
 			initial := types.Frame{}.Set(SymbolTotal, stateValue)
-			next, output, err := nomagique.Step(Accumulate, initial, types.Frame{}.Set(SymbolDelta, 1))
+			next, output, err := types.Step(Accumulate, initial, types.Frame{}.Set(SymbolDelta, 1))
 			So(err, ShouldNotBeNil)
 			So(next.Equal(initial), ShouldBeTrue)
 			So(output.Count(), ShouldEqual, 0)
 		}
 		initial := types.Frame{}.Set(SymbolTotal, math.MaxFloat64)
-		next, _, err := nomagique.Step(Accumulate, initial, types.Frame{}.Set(SymbolDelta, math.MaxFloat64))
+		next, _, err := types.Step(Accumulate, initial, types.Frame{}.Set(SymbolDelta, math.MaxFloat64))
 		So(err, ShouldNotBeNil)
 		So(next.Equal(initial), ShouldBeTrue)
 	})
 
 	Convey("Clear snapshots its configuration and changes only state", t, func() {
-		first := nomagique.MustIntern("test/calculus/clear/first")
-		second := nomagique.MustIntern("test/calculus/clear/second")
-		symbols := []nomagique.Symbol{first}
+		first := types.MustIntern("test/calculus/clear/first")
+		second := types.MustIntern("test/calculus/clear/second")
+		symbols := []types.Symbol{first}
 		clear := Clear(symbols...)
 		symbols[0] = second
 		state := types.Frame{}.Set(first, 1).Set(second, 2)

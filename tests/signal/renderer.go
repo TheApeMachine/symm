@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -31,12 +31,12 @@ Keeping sampling separate from rendering lets one venue tick publish the same
 price, quantity, and timestamp through ticker, book, trade, and level3 rather
 than advancing the simulated market once per channel.
 */
-func (generator *Generator) Render(template []byte, sample testtypes.Sample) []byte {
+func (generator *Generator) Render(template []byte, sample tes.Sample) []byte {
 	if len(template) == 0 {
 		payload, err := json.Marshal(map[string]any{
 			"channel": "ticker",
 			"type":    "update",
-			"data":    []testtypes.Sample{sample},
+			"data":    []tes.Sample{sample},
 		})
 
 		if err != nil {
@@ -139,7 +139,7 @@ func (generator *Generator) Render(template []byte, sample testtypes.Sample) []b
 }
 
 func renderDepth(
-	levels []testtypes.DepthLevel,
+	levels []tes.DepthLevel,
 	topPrice float64,
 	topQuantity float64,
 ) []any {
@@ -161,19 +161,19 @@ func renderDepth(
 }
 
 func resolvedDepth(
-	levels []testtypes.DepthLevel,
+	levels []tes.DepthLevel,
 	topPrice float64,
 	topQuantity float64,
-) []testtypes.DepthLevel {
+) []tes.DepthLevel {
 	if len(levels) > 0 {
 		return levels
 	}
 
-	return []testtypes.DepthLevel{{Price: topPrice, Quantity: topQuantity}}
+	return []tes.DepthLevel{{Price: topPrice, Quantity: topQuantity}}
 }
 
 func renderLevel3Depth(
-	levels []testtypes.DepthLevel,
+	levels []tes.DepthLevel,
 	orderPrefix string,
 	stamp string,
 ) []any {
@@ -193,8 +193,8 @@ func renderLevel3Depth(
 }
 
 func renderLevel3Update(
-	previous []testtypes.DepthLevel,
-	current []testtypes.DepthLevel,
+	previous []tes.DepthLevel,
+	current []tes.DepthLevel,
 	orderPrefix string,
 	stamp string,
 ) []any {
@@ -223,6 +223,6 @@ func renderLevel3Update(
 	return rows
 }
 
-func copyDepth(source []testtypes.DepthLevel) []testtypes.DepthLevel {
-	return append([]testtypes.DepthLevel{}, source...)
+func copyDepth(source []tes.DepthLevel) []tes.DepthLevel {
+	return append([]tes.DepthLevel{}, source...)
 }

@@ -10,13 +10,13 @@ import (
 	"github.com/theapemachine/symm/tests/fixtures/ticker"
 	"github.com/theapemachine/symm/tests/fixtures/trade"
 	"github.com/theapemachine/symm/tests/signal"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func (market *Market) publish(
 	generator *signal.Generator,
 	marketShock float64,
-) testtypes.Sample {
+) tes.Sample {
 	sample := generator.Step(marketShock)
 	market.publishSample(generator, sample)
 
@@ -27,7 +27,7 @@ func (market *Market) publish(
 PublishSample replays an externally supplied coherent market observation
 through the same production websocket channels as generated data.
 */
-func (market *Market) PublishSample(sample testtypes.Sample) error {
+func (market *Market) PublishSample(sample tes.Sample) error {
 	generator, known := market.generators[sample.Symbol]
 
 	if !known {
@@ -44,7 +44,7 @@ func (market *Market) PublishSample(sample testtypes.Sample) error {
 	return nil
 }
 
-func (market *Market) validateSample(sample testtypes.Sample) error {
+func (market *Market) validateSample(sample tes.Sample) error {
 	if sample.Timestamp.IsZero() || sample.Bid <= 0 || sample.Ask <= sample.Bid ||
 		sample.Last < sample.Bid || sample.Last > sample.Ask ||
 		sample.BidQty <= 0 || sample.AskQty <= 0 || sample.StepVolume <= 0 ||
@@ -70,7 +70,7 @@ func (market *Market) validateSample(sample testtypes.Sample) error {
 }
 
 func validateDepth(
-	levels []testtypes.DepthLevel,
+	levels []tes.DepthLevel,
 	topPrice float64,
 	topQuantity float64,
 	descending bool,
@@ -106,7 +106,7 @@ func validateDepth(
 
 func (market *Market) publishSample(
 	generator *signal.Generator,
-	sample testtypes.Sample,
+	sample tes.Sample,
 ) {
 	market.pace(sample.Timestamp)
 	market.Private.transport.setPrice(sample.Symbol, sample.Bid)
@@ -182,7 +182,7 @@ func (market *Market) pace(sampleAt time.Time) {
 	}
 }
 
-func (market *Market) waitForBook(sample testtypes.Sample) {
+func (market *Market) waitForBook(sample tes.Sample) {
 	if market.stack == nil {
 		return
 	}

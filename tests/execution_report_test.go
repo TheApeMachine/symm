@@ -8,20 +8,20 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestExecutionModelReport(t *testing.T) {
 	Convey("Given explicit rejected, canceled, no-fill, and expired outcomes", t, func() {
-		symbol := testtypes.NewSymbol("SIM3/USD", 100, 73)
-		market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("SIM3/USD", 100, 73)
+		market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 		defer market.Close()
-		config := testtypes.DefaultExecutionConfig()
+		config := tes.DefaultExecutionConfig()
 		config.EmitAcknowledgements = true
 		config.ExpireAfter = 100 * time.Millisecond
-		config.Outcomes = []testtypes.OrderOutcome{
-			testtypes.OrderReject, testtypes.OrderCancel,
-			testtypes.OrderNoFill, testtypes.OrderExpire,
+		config.Outcomes = []tes.OrderOutcome{
+			tes.OrderReject, tes.OrderCancel,
+			tes.OrderNoFill, tes.OrderExpire,
 		}
 		market.WithAutoFill(config)
 
@@ -52,10 +52,10 @@ func TestExecutionModelReport(t *testing.T) {
 	})
 
 	Convey("Given a buy limit below the current ask", t, func() {
-		symbol := testtypes.NewSymbol("LIMIT/USD", 100, 74)
-		market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("LIMIT/USD", 100, 74)
+		market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 		defer market.Close()
-		config := testtypes.DefaultExecutionConfig()
+		config := tes.DefaultExecutionConfig()
 		config.EmitAcknowledgements = true
 		market.WithAutoFill(config)
 		market.Tick()
@@ -76,10 +76,10 @@ func TestExecutionModelReport(t *testing.T) {
 	})
 
 	Convey("Given a duplicated private execution frame", t, func() {
-		symbol := testtypes.NewSymbol("DUP/USD", 100, 75)
-		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
-		config.Faults.Rules = []testtypes.FaultRule{{
-			Channel: "executions", Occurrence: 1, Action: testtypes.FaultDuplicate,
+		symbol := tes.NewSymbol("DUP/USD", 100, 75)
+		config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
+		config.Faults.Rules = []tes.FaultRule{{
+			Channel: "executions", Occurrence: 1, Action: tes.FaultDuplicate,
 		}}
 		market, err := NewMarketWithScenario(context.Background(), config)
 		So(err, ShouldBeNil)
@@ -102,8 +102,8 @@ func TestExecutionModelReport(t *testing.T) {
 	})
 
 	Convey("Given insufficient exchange quote inventory", t, func() {
-		symbol := testtypes.NewSymbol("POOR/USD", 100, 76)
-		config := testtypes.NewScenarioConfig([]*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("POOR/USD", 100, 76)
+		config := tes.NewScenarioConfig([]*tes.Symbol{symbol})
 		config.InitialBalances = map[string]float64{"USD": 10}
 		market, err := NewMarketWithScenario(context.Background(), config)
 		So(err, ShouldBeNil)
@@ -126,10 +126,10 @@ func TestExecutionModelReport(t *testing.T) {
 
 	Convey("Given otherwise identical low- and high-friction scenarios", t, func() {
 		run := func(slippage float64) EconomicsReport {
-			symbol := testtypes.NewSymbol("META/USD", 100, 81)
-			market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+			symbol := tes.NewSymbol("META/USD", 100, 81)
+			market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 			defer market.Close()
-			config := testtypes.DefaultExecutionConfig()
+			config := tes.DefaultExecutionConfig()
 			config.DepthLevels = 3
 			config.SlippageBasisPoints = slippage
 			market.WithAutoFill(config)
@@ -158,8 +158,8 @@ func TestExecutionModelReport(t *testing.T) {
 
 func TestExecutionModelValidate(t *testing.T) {
 	Convey("Given a filled buy and a gap-through sell stop", t, func() {
-		symbol := testtypes.NewSymbol("SIM5/USD", 100, 75)
-		market := NewMarket(context.Background(), []*testtypes.Symbol{symbol})
+		symbol := tes.NewSymbol("SIM5/USD", 100, 75)
+		market := NewMarket(context.Background(), []*tes.Symbol{symbol})
 		defer market.Close()
 		market.WithAutoFill()
 		_, err := market.Private.transport.addOrder(spot.AddOrderRequest{

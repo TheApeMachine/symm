@@ -18,7 +18,7 @@ func TestDepthFlowNumber(t *testing.T) {
 		defer signal.Close()
 
 		Convey("Loaded Book: when touch and deep imbalance align heavily on bid side", func() {
-			input := types.Frame{}
+			input := nmtypes.Frame{}
 			input.Put(algo.SymbolTouchBidQty, 10.0)
 			input.Put(algo.SymbolTouchAskQty, 2.0)
 			input.Put(algo.SymbolDeepBidQty, 50.0)
@@ -46,7 +46,7 @@ func TestDepthFlowNumber(t *testing.T) {
 		})
 
 		Convey("Spoofed Book: when touch is heavily bid but deep book is heavily ask", func() {
-			input := types.Frame{}
+			input := nmtypes.Frame{}
 			input.Put(algo.SymbolTouchBidQty, 10.0)
 			input.Put(algo.SymbolTouchAskQty, 1.0)
 			input.Put(algo.SymbolDeepBidQty, 2.0)
@@ -74,7 +74,7 @@ func TestDepthFlowNumber(t *testing.T) {
 		})
 
 		Convey("Adversarial: Empty book / zero quantities produces stable zeros without panic", func() {
-			input := types.Frame{}
+			input := nmtypes.Frame{}
 			input.Put(algo.SymbolTouchBidQty, 0.0)
 			input.Put(algo.SymbolTouchAskQty, 0.0)
 			input.Put(algo.SymbolDeepBidQty, 0.0)
@@ -98,7 +98,7 @@ func BenchmarkDepthFlowPipeline(b *testing.B) {
 	signal := NewSignal(context.Background(), thesis)
 	defer signal.Close()
 
-	input := types.Frame{}
+	input := nmtypes.Frame{}
 	input.Put(algo.SymbolTouchBidQty, 10.0)
 	input.Put(algo.SymbolTouchAskQty, 2.0)
 	input.Put(algo.SymbolDeepBidQty, 50.0)

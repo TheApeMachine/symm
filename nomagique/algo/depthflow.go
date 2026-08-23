@@ -3,7 +3,6 @@ package algo
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -11,27 +10,27 @@ import (
 )
 
 var (
-	SymbolTouchBidQty    = nomagique.MustIntern("depthflow/touch_bid_qty")
-	SymbolTouchAskQty    = nomagique.MustIntern("depthflow/touch_ask_qty")
-	SymbolDeepBidQty     = nomagique.MustIntern("depthflow/deep_bid_qty")
-	SymbolDeepAskQty     = nomagique.MustIntern("depthflow/deep_ask_qty")
-	SymbolTouchImbalance = nomagique.MustIntern("depthflow/touch_imbalance")
-	SymbolDeepImbalance  = nomagique.MustIntern("depthflow/deep_imbalance")
-	SymbolSpoofScore     = nomagique.MustIntern("depthflow/spoof_score")
-	SymbolLoadedScore    = nomagique.MustIntern("depthflow/loaded_score")
-	SymbolThinScore      = nomagique.MustIntern("depthflow/thin_score")
-	SymbolNeutralScore   = nomagique.MustIntern("depthflow/neutral_score")
-	SymbolSeparation     = nomagique.MustIntern("depthflow/separation")
+	SymbolTouchBidQty    = nmtypes.MustIntern("depthflow/touch_bid_qty")
+	SymbolTouchAskQty    = nmtypes.MustIntern("depthflow/touch_ask_qty")
+	SymbolDeepBidQty     = nmtypes.MustIntern("depthflow/deep_bid_qty")
+	SymbolDeepAskQty     = nmtypes.MustIntern("depthflow/deep_ask_qty")
+	SymbolTouchImbalance = nmtypes.MustIntern("depthflow/touch_imbalance")
+	SymbolDeepImbalance  = nmtypes.MustIntern("depthflow/deep_imbalance")
+	SymbolSpoofScore     = nmtypes.MustIntern("depthflow/spoof_score")
+	SymbolLoadedScore    = nmtypes.MustIntern("depthflow/loaded_score")
+	SymbolThinScore      = nmtypes.MustIntern("depthflow/thin_score")
+	SymbolNeutralScore   = nmtypes.MustIntern("depthflow/neutral_score")
+	SymbolSeparation     = nmtypes.MustIntern("depthflow/separation")
 )
 
 /*
 Depthflow evaluates multi-resolution order book imbalance (touch vs decayed deep),
 adaptive total depth baseline, and hypothesis scores (loaded, spoofed, thinning, neutral).
 */
-func Depthflow() nomagique.Primitive {
-	return nomagique.Pipe(
+func Depthflow() nmtypes.Primitive {
+	return nmtypes.Pipe(
 		imbalanceCalculator,
-		nomagique.Configure(
+		nmtypes.Configure(
 			statistic.Baseline,
 			nmtypes.Span,
 			temporal.Window,
@@ -68,7 +67,7 @@ func imbalanceCalculator(
 	output := input
 	output.Put(SymbolTouchImbalance, touchImbalance)
 	output.Put(SymbolDeepImbalance, deepImbalance)
-	output.Put(nomagique.SampleValue, totalDepth)
+	output.Put(nmtypes.SampleValue, totalDepth)
 
 	return state, output, nil
 }
@@ -79,7 +78,7 @@ func hypothesisClassifier(
 ) (types.Frame, types.Frame, error) {
 	touchImbalance, _ := input.Get(SymbolTouchImbalance)
 	deepImbalance, _ := input.Get(SymbolDeepImbalance)
-	totalDepth, _ := input.Get(nomagique.SampleValue)
+	totalDepth, _ := input.Get(nmtypes.SampleValue)
 	baselineDepth, hasBaseline := input.Get(statistic.SymbolBaselineValue)
 
 	if !hasBaseline {

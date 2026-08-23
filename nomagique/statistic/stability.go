@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolStability = nomagique.MustIntern("stability")
-	SymbolRange     = nomagique.MustIntern("range")
+	SymbolStability = types.MustIntern("stability")
+	SymbolRange     = types.MustIntern("range")
 )
 
 /*
@@ -44,8 +43,8 @@ func Stability(
 	maximum := -math.MaxFloat64
 	maximumDeparture := 0.0
 
-	for index := range nomagique.MaxSamples {
-		value, populated := input.Get(nomagique.MustSampleSymbol(index))
+	for index := range types.MaxSamples {
+		value, populated := input.Get(types.MustSampleSymbol(index))
 
 		if !populated {
 			continue
@@ -76,8 +75,8 @@ const minimumStabilitySamples = 2
 func populatedSamples(input types.Frame) int {
 	count := 0
 
-	for index := range nomagique.MaxSamples {
-		if input.Has(nomagique.MustSampleSymbol(index)) {
+	for index := range types.MaxSamples {
+		if input.Has(types.MustSampleSymbol(index)) {
 			count++
 		}
 	}

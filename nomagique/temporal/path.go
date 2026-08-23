@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-const MaxPathSamples = nomagique.MaxSamples / pathSampleWidth
+const MaxPathSamples = nmtypes.MaxSamples / pathSampleWidth
 
 const pathSampleWidth = 2
 
@@ -22,7 +21,7 @@ func Path(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nomagique.SampleValue)
+	value, hasValue := input.Get(nmtypes.SampleValue)
 	seconds, hasSeconds := input.Get(SymbolUnixSec)
 	nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
 
@@ -75,9 +74,9 @@ func Path(
 	}
 
 	putPathSample(&nextState, physicalIndex, timestamp, value)
-	nextState.Put(nomagique.SampleCount, float64(count))
-	nextState.Put(nomagique.SampleHead, float64(head))
-	nextState.Put(nomagique.SampleReady, 1)
+	nextState.Put(nmtypes.SampleCount, float64(count))
+	nextState.Put(nmtypes.SampleHead, float64(head))
+	nextState.Put(nmtypes.SampleReady, 1)
 	nextState.Put(SymbolCapacity, float64(capacity))
 
 	output := nextState
@@ -103,10 +102,10 @@ func PathSample(frame *types.Frame, index int) (int64, float64, bool) {
 
 	physicalIndex := (pathHead(*frame) + index) % int(capacity)
 	timestampBits, hasTimestamp := frame.Get(
-		nomagique.MustSampleSymbol(physicalIndex * pathSampleWidth),
+		nmtypes.MustSampleSymbol(physicalIndex * pathSampleWidth),
 	)
 	value, hasValue := frame.Get(
-		nomagique.MustSampleSymbol(physicalIndex*pathSampleWidth + 1),
+		nmtypes.MustSampleSymbol(physicalIndex*pathSampleWidth + 1),
 	)
 
 	if !hasTimestamp || !hasValue {
@@ -125,10 +124,10 @@ func putPathSample(
 	value float64,
 ) {
 	frame.Put(
-		nomagique.MustSampleSymbol(index*pathSampleWidth),
+		nmtypes.MustSampleSymbol(index*pathSampleWidth),
 		math.Float64frombits(uint64(timestamp)),
 	)
-	frame.Put(nomagique.MustSampleSymbol(index*pathSampleWidth+1), value)
+	frame.Put(nmtypes.MustSampleSymbol(index*pathSampleWidth+1), value)
 }
 
 func pathCapacity(
@@ -173,7 +172,7 @@ func pathCapacity(
 }
 
 func pathCount(frame types.Frame) int {
-	count, found := frame.Get(nomagique.SampleCount)
+	count, found := frame.Get(nmtypes.SampleCount)
 
 	if !found {
 		return 0
@@ -183,7 +182,7 @@ func pathCount(frame types.Frame) int {
 }
 
 func pathHead(frame types.Frame) int {
-	head, found := frame.Get(nomagique.SampleHead)
+	head, found := frame.Get(nmtypes.SampleHead)
 
 	if !found {
 		return 0

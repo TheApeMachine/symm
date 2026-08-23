@@ -4,25 +4,24 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolResult = nomagique.MustIntern("result")
-	SymbolReady  = nomagique.MustIntern("ready")
-	SymbolCount  = nomagique.MustIntern("count")
+	SymbolResult = types.MustIntern("result")
+	SymbolReady  = types.MustIntern("ready")
+	SymbolCount  = types.MustIntern("count")
 )
 
 func collectSamples(
 	input *types.Frame,
 	primitive string,
-) ([nomagique.MaxSamples]float64, int, error) {
-	values := [nomagique.MaxSamples]float64{}
+) ([types.MaxSamples]float64, int, error) {
+	values := [types.MaxSamples]float64{}
 	count := 0
 
-	for index := range nomagique.MaxSamples {
-		symbol := nomagique.MustSampleSymbol(index)
+	for index := range types.MaxSamples {
+		symbol := types.MustSampleSymbol(index)
 		value, found := input.Get(symbol)
 
 		if !found {
@@ -44,7 +43,7 @@ func collectSamples(
 	return values, count, nil
 }
 
-func sortSamples(values *[nomagique.MaxSamples]float64, count int) {
+func sortSamples(values *[types.MaxSamples]float64, count int) {
 	for index := 1; index < count; index++ {
 		value := values[index]
 		position := index

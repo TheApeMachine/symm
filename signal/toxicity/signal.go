@@ -64,26 +64,26 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		ctx:    ctx,
 		cancel: cancel,
 		thesis: thesis,
-		number: nomagique.NewNumber[string](nomagique.Pipe(
+		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			calculus.Difference,
-			nomagique.Relay(
+			nmtypes.Relay(
 				calculus.SymbolResult,
-				nomagique.SampleValue,
+				nmtypes.SampleValue,
 			),
-			nomagique.Configure(
+			nmtypes.Configure(
 				statistic.Baseline,
 				nmtypes.Span,
 				temporal.Window,
 			),
-			nomagique.Fork(
+			nmtypes.Fork(
 				statistic.ZScore,
-				nomagique.Fork(
+				nmtypes.Fork(
 					statistic.Deviation,
-					nomagique.Pipe(
-						nomagique.Relay(nomagique.SampleValue, calculus.SymbolValue),
+					nmtypes.Pipe(
+						nmtypes.Relay(nmtypes.SampleValue, calculus.SymbolValue),
 						calculus.Positive,
-						nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
-						nomagique.Relay(statistic.SymbolBaselineValue, calculus.SymbolScale),
+						nmtypes.Relay(calculus.SymbolResult, calculus.SymbolValue),
+						nmtypes.Relay(statistic.SymbolBaselineValue, calculus.SymbolScale),
 						calculus.Squash,
 					),
 				),
@@ -159,12 +159,12 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 			}
 		}
 
-		input := types.Frame{}
+		input := nmtypes.Frame{}
 		input.Put(nmtypes.AlphaQuantity, filled)
 		input.Put(nmtypes.BetaQuantity, retreated)
 		input.Put(calculus.SymbolLeft, retreated)
 		input.Put(calculus.SymbolRight, filled)
-		input.Put(nomagique.SampleValue, retreated-filled)
+		input.Put(nmtypes.SampleValue, retreated-filled)
 		input.Put(calculus.SymbolValue, retreated-filled)
 		input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
 		input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
@@ -196,7 +196,7 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 		)
 		measurement.StampQuality(
 			statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
-			output.MustGet(nomagique.SampleCount),
+			output.MustGet(nmtypes.SampleCount),
 		)
 
 		symbol.AppendMeasurement(measurement)

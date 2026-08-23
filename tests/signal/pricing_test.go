@@ -5,12 +5,12 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestGeneratorNewGeneratorFromSymbol(t *testing.T) {
 	Convey("Given explicit per-symbol venue characteristics", t, func() {
-		symbol := testtypes.NewSymbol("PROFILE/USD", 100, 31)
+		symbol := tes.NewSymbol("PROFILE/USD", 100, 31)
 		symbol.QuantityPrecision = 4
 		symbol.BaseSpreadFraction = 0.001
 		symbol.BookDepthLevels = 4
@@ -57,14 +57,14 @@ func TestGeneratorConfigureDepth(t *testing.T) {
 func TestGeneratorConfigureProfiles(t *testing.T) {
 	Convey("Given a detached scenario regime contract", t, func() {
 		generator := NewGenerator("PROFILE/USD", 100, 0.01, 2, 34)
-		profiles := testtypes.CloneProfiles(testtypes.DefaultProfiles)
+		profiles := tes.CloneProfiles(tes.DefaultProfiles)
 		So(generator.ConfigureProfiles(profiles), ShouldBeNil)
-		profile := profiles[testtypes.FastPump]
+		profile := profiles[tes.FastPump]
 		profile.Drift = 99
-		profiles[testtypes.FastPump] = profile
+		profiles[tes.FastPump] = profile
 
 		Convey("Caller mutation should not alter the installed profile", func() {
-			So(generator.profiles[testtypes.FastPump].Drift, ShouldNotEqual, 99.0)
+			So(generator.profiles[tes.FastPump].Drift, ShouldNotEqual, 99.0)
 			So(generator.ConfigureProfiles(nil), ShouldNotBeNil)
 		})
 	})

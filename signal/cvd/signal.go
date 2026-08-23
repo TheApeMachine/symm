@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	SymbolNetFlow    = nomagique.MustIntern("cvd/net_flow")
-	SymbolAbsorption = nomagique.MustIntern("cvd/absorption")
+	SymbolNetFlow    = nmtypes.MustIntern("cvd/net_flow")
+	SymbolAbsorption = nmtypes.MustIntern("cvd/absorption")
 )
 
 /*
@@ -29,26 +29,26 @@ cvdPipeline is slot-aligned with the calculus atoms:
   - Absorption is the non-negative squash of the same flow magnitude, so high
     aggressor flow with little price response reads as absorption.
 */
-func cvdPipeline() nomagique.Primitive {
-	return nomagique.Pipe(
+func cvdPipeline() nmtypes.Primitive {
+	return nmtypes.Pipe(
 		calculus.Difference,
-		nomagique.Relay(calculus.SymbolResult, SymbolNetFlow),
-		nomagique.Relay(SymbolNetFlow, nomagique.SampleValue),
-		nomagique.Configure(
+		nmtypes.Relay(calculus.SymbolResult, SymbolNetFlow),
+		nmtypes.Relay(SymbolNetFlow, nmtypes.SampleValue),
+		nmtypes.Configure(
 			statistic.Baseline,
 			nmtypes.Span,
 			temporal.Window,
 		),
-		nomagique.Fork(
+		nmtypes.Fork(
 			statistic.ZScore,
-			nomagique.Fork(
+			nmtypes.Fork(
 				statistic.Deviation,
-				nomagique.Pipe(
+				nmtypes.Pipe(
 					calculus.Positive,
-					nomagique.Relay(calculus.SymbolResult, calculus.SymbolValue),
-					nomagique.Relay(statistic.SymbolBaselineValue, calculus.SymbolScale),
+					nmtypes.Relay(calculus.SymbolResult, calculus.SymbolValue),
+					nmtypes.Relay(statistic.SymbolBaselineValue, calculus.SymbolScale),
 					calculus.Squash,
-					nomagique.Relay(calculus.SymbolResult, SymbolAbsorption),
+					nmtypes.Relay(calculus.SymbolResult, SymbolAbsorption),
 				),
 			),
 		),
@@ -106,7 +106,7 @@ func (signal *Signal) consume() {
 			) {
 				notional := trade.Price.Float64() * trade.Qty
 
-				input := types.Frame{}
+				input := nmtypes.Frame{}
 				input.Put(calculus.SymbolRight, notional)
 				input.Put(calculus.SymbolLeft, 0)
 
@@ -155,7 +155,7 @@ func (signal *Signal) consume() {
 				)
 				measurement.StampQuality(
 					statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
-					output.MustGet(nomagique.SampleCount),
+					output.MustGet(nmtypes.SampleCount),
 				)
 
 				symbol.AppendMeasurement(measurement)

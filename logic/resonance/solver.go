@@ -1,6 +1,7 @@
 package resonance
 
 import (
+nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"fmt"
 	"sync"
@@ -540,7 +541,7 @@ func (solver *Solver) resonanceWire(
 dynamicsWire extracts the physical predictive dynamics frame into named scalars
 matching the frontend ResonanceDynamics schema.
 */
-func dynamicsWire(dynamics types.Frame) *wire.ResonanceDynamicsT {
+func dynamicsWire(dynamics nmtypes.Frame) *wire.ResonanceDynamicsT {
 	value := func(symbol nomagique.Symbol) float64 {
 		reading, _ := dynamics.Get(symbol)
 		return reading

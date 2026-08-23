@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -20,15 +20,15 @@ type Generator struct {
 	mu           sync.RWMutex
 	rng          *rand.Rand
 	symbol       string
-	currentState testtypes.MarketState
-	targetState  testtypes.MarketState
+	currentState tes.MarketState
+	targetState  tes.MarketState
 	momentum     float64
 
 	/*
 		sourceProfile is the regime the market is transitioning away from and
 		progress runs from 0 to 1 as it settles into the target regime.
 	*/
-	sourceProfile testtypes.RegimeProfile
+	sourceProfile tes.RegimeProfile
 	progress      float64
 
 	/*
@@ -38,7 +38,7 @@ type Generator struct {
 	*/
 	burst float64
 
-	profiles       map[testtypes.MarketState]testtypes.RegimeProfile
+	profiles       map[tes.MarketState]tes.RegimeProfile
 	midPrice       float64
 	trendPrice     float64
 	openPrice      float64
@@ -56,8 +56,8 @@ type Generator struct {
 	currTime       time.Time
 	steps          int64
 	sequence       int64
-	l3Bids         []testtypes.DepthLevel
-	l3Asks         []testtypes.DepthLevel
+	l3Bids         []tes.DepthLevel
+	l3Asks         []tes.DepthLevel
 }
 
 func NewGenerator(
@@ -67,19 +67,19 @@ func NewGenerator(
 	pricePrecision int,
 	seed int64,
 ) *Generator {
-	profiles := testtypes.CloneProfiles(testtypes.DefaultProfiles)
+	profiles := tes.CloneProfiles(tes.DefaultProfiles)
 	return &Generator{
 		rng:          rand.New(rand.NewSource(seed)),
 		symbol:       symbol,
-		currentState: testtypes.Baseline,
-		targetState:  testtypes.Baseline,
+		currentState: tes.Baseline,
+		targetState:  tes.Baseline,
 		profiles:     profiles,
 
 		/*
 			A new generator is already settled in the baseline regime, so the
 			transition starts complete.
 		*/
-		sourceProfile: profiles[testtypes.Baseline],
+		sourceProfile: profiles[tes.Baseline],
 		progress:      1.0,
 		momentum:      1.0,
 
@@ -88,10 +88,10 @@ func NewGenerator(
 		openPrice:      startPrice,
 		priceIncrement: priceIncrement,
 		pricePrecision: pricePrecision,
-		quantityScale:  math.Pow10(testtypes.DefaultQuantityPrecision),
-		spreadFraction: testtypes.DefaultBaseSpreadFraction,
-		depthLevels:    testtypes.DefaultBookDepthLevels,
-		depthScale:     testtypes.DefaultBookDepthQuantityScale,
+		quantityScale:  math.Pow10(tes.DefaultQuantityPrecision),
+		spreadFraction: tes.DefaultBaseSpreadFraction,
+		depthLevels:    tes.DefaultBookDepthLevels,
+		depthScale:     tes.DefaultBookDepthQuantityScale,
 		highPrice:      startPrice,
 		lowPrice:       startPrice,
 		currTime:       time.Now().UTC(),
@@ -113,7 +113,7 @@ A transition that is still in flight is re-based from the profile currently
 in effect, so redirecting mid-move continues from where the market actually
 is instead of snapping back to the previous regime.
 */
-func (generator *Generator) SetState(state testtypes.MarketState, momentum ...float64) {
+func (generator *Generator) SetState(state tes.MarketState, momentum ...float64) {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
 	speed := generator.transitionMomentum(state, momentum)
@@ -177,10 +177,10 @@ func (generator *Generator) IgnitionSpent() bool {
 activeProfile returns the profile currently in effect, which mid-transition
 is the blend between the source and target regimes.
 */
-func (generator *Generator) activeProfile() testtypes.RegimeProfile {
+func (generator *Generator) activeProfile() tes.RegimeProfile {
 	target := generator.profiles[generator.targetState]
 
-	return testtypes.Blend(generator.sourceProfile, target, generator.progress)
+	return tes.Blend(generator.sourceProfile, target, generator.progress)
 }
 
 /*
@@ -188,7 +188,7 @@ Step generates the next relative sample frame based on current state. An
 optional shared standard-normal shock creates configured positive, negative,
 or independent cross-symbol returns without exposing a regime label.
 */
-func (generator *Generator) Step(sharedShock ...float64) testtypes.Sample {
+func (generator *Generator) Step(sharedShock ...float64) tes.Sample {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
 
@@ -200,7 +200,7 @@ func (generator *Generator) Step(sharedShock ...float64) testtypes.Sample {
 	precursor := generator.progress < 1.0
 
 	if precursor {
-		transitionObservations := generator.profiles[testtypes.Baseline].
+		transitionObservations := generator.profiles[tes.Baseline].
 			Precursor.MinimumObservations
 		targetObservations := generator.profiles[generator.targetState].
 			Precursor.MinimumObservations
@@ -319,18 +319,18 @@ func (generator *Generator) Step(sharedShock ...float64) testtypes.Sample {
 	}
 
 	// 4. Calculate Asymmetric Quantities
-	bidJitter := testtypes.QuantityJitterMinimum +
-		(testtypes.QuantityJitterMaximum-testtypes.QuantityJitterMinimum)*
+	bidJitter := tes.QuantityJitterMinimum +
+		(tes.QuantityJitterMaximum-tes.QuantityJitterMinimum)*
 			generator.rng.Float64()
-	askJitter := testtypes.QuantityJitterMinimum +
-		(testtypes.QuantityJitterMaximum-testtypes.QuantityJitterMinimum)*
+	askJitter := tes.QuantityJitterMinimum +
+		(tes.QuantityJitterMaximum-tes.QuantityJitterMinimum)*
 			generator.rng.Float64()
 	bidQty := profile.BaseQty * profile.BidAskAsymmetry * bidJitter
 	askQty := profile.BaseQty * (1.0 / profile.BidAskAsymmetry) * askJitter
 
 	// 5. Volume & Cumulative VWAP
-	volumeJitter := testtypes.VolumeJitterMinimum +
-		(testtypes.VolumeJitterMaximum-testtypes.VolumeJitterMinimum)*
+	volumeJitter := tes.VolumeJitterMinimum +
+		(tes.VolumeJitterMaximum-tes.VolumeJitterMinimum)*
 			generator.rng.Float64()
 	stepVolume := profile.BaseQty * profile.VolumeScale * volumeJitter
 
@@ -365,7 +365,7 @@ func (generator *Generator) Step(sharedShock ...float64) testtypes.Sample {
 	roundedAskQuantity := generator.roundQuantity(askQty)
 	bids, asks := generator.depth(bid, bidQty, ask, askQty)
 
-	return testtypes.Sample{
+	return tes.Sample{
 		Symbol:        generator.symbol,
 		AggressorSide: aggressorSide,
 		Bid:           bid,

@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/tests/signal"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,16 +27,16 @@ type Market struct {
 	Private           *Conn
 	Level3            *Conn
 	Futures           *Conn
-	Symbols           []*testtypes.Symbol
-	State             testtypes.MarketState
-	Config            testtypes.ScenarioConfig
+	Symbols           []*tes.Symbol
+	State             tes.MarketState
+	Config            tes.ScenarioConfig
 	public            *websocket.Live
 	private           *websocket.Live
 	generators        map[string]*signal.Generator
-	latest            map[string]testtypes.Sample
-	history           map[string][]testtypes.Sample
-	previous          map[string]testtypes.Sample
-	states            map[string]testtypes.MarketState
+	latest            map[string]tes.Sample
+	history           map[string][]tes.Sample
+	previous          map[string]tes.Sample
+	states            map[string]tes.MarketState
 	candles           map[string]*candleState
 	execution         *executionModel
 	stack             Stack
@@ -49,7 +49,7 @@ type Market struct {
 	factorRNG         *rand.Rand
 	factors           []float64
 	timeline          []RegimeObservation
-	exposure          map[string]map[testtypes.MarketState]uint64
+	exposure          map[string]map[tes.MarketState]uint64
 	published         map[string]bool
 	sampleMu          sync.RWMutex
 	replayStart       func()
@@ -73,9 +73,9 @@ NewMarket creates a deterministic default mechanics scenario.
 */
 func NewMarket(
 	ctx context.Context,
-	symbols []*testtypes.Symbol,
+	symbols []*tes.Symbol,
 ) *Market {
-	config := testtypes.NewScenarioConfig(symbols)
+	config := tes.NewScenarioConfig(symbols)
 
 	if err := config.Validate(); err != nil {
 		panic(err)
@@ -89,7 +89,7 @@ NewMarketWithScenario builds a market from a complete validated replay identity.
 */
 func NewMarketWithScenario(
 	ctx context.Context,
-	config testtypes.ScenarioConfig,
+	config tes.ScenarioConfig,
 ) (*Market, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -116,11 +116,11 @@ NewMarketWithAccount starts from explicit exchange inventory and fill history.
 */
 func NewMarketWithAccount(
 	ctx context.Context,
-	symbols []*testtypes.Symbol,
+	symbols []*tes.Symbol,
 	balances map[string]string,
 	trades map[string]spot.Trade,
 ) *Market {
-	config := testtypes.NewScenarioConfig(symbols)
+	config := tes.NewScenarioConfig(symbols)
 
 	if err := config.Validate(); err != nil {
 		panic(err)
@@ -133,7 +133,7 @@ func NewMarketWithAccount(
 
 func newMarket(
 	ctx context.Context,
-	config testtypes.ScenarioConfig,
+	config tes.ScenarioConfig,
 	configureAccount func(*Conn),
 ) *Market {
 	config = config.Clone()
@@ -165,16 +165,16 @@ func newMarket(
 		Level3:     level3Conn,
 		Futures:    futuresConn,
 		Symbols:    config.Symbols,
-		State:      testtypes.Baseline,
+		State:      tes.Baseline,
 		Config:     config,
 		generators: make(map[string]*signal.Generator, len(config.Symbols)),
-		latest:     make(map[string]testtypes.Sample, len(config.Symbols)),
-		history:    make(map[string][]testtypes.Sample, len(config.Symbols)),
-		previous:   make(map[string]testtypes.Sample, len(config.Symbols)),
-		states:     make(map[string]testtypes.MarketState, len(config.Symbols)),
+		latest:     make(map[string]tes.Sample, len(config.Symbols)),
+		history:    make(map[string][]tes.Sample, len(config.Symbols)),
+		previous:   make(map[string]tes.Sample, len(config.Symbols)),
+		states:     make(map[string]tes.MarketState, len(config.Symbols)),
 		candles:    make(map[string]*candleState, len(config.Symbols)),
 		factorRNG:  rand.New(rand.NewSource(config.Seed)),
-		exposure:   make(map[string]map[testtypes.MarketState]uint64, len(config.Symbols)),
+		exposure:   make(map[string]map[tes.MarketState]uint64, len(config.Symbols)),
 		published:  make(map[string]bool, len(config.Symbols)),
 	}
 
@@ -190,8 +190,8 @@ func newMarket(
 		}
 
 		market.generators[symbol.Pair] = generator
-		market.states[symbol.Pair] = testtypes.Baseline
-		market.exposure[symbol.Pair] = map[testtypes.MarketState]uint64{}
+		market.states[symbol.Pair] = tes.Baseline
+		market.exposure[symbol.Pair] = map[tes.MarketState]uint64{}
 	}
 
 	market.Public.Configure(config.Symbols)
@@ -229,7 +229,7 @@ Transition moves one symbol through its observable precursor to a latent state.
 */
 func (market *Market) Transition(
 	symbol string,
-	state testtypes.MarketState,
+	state tes.MarketState,
 ) error {
 	generator, ok := market.generators[symbol]
 
@@ -242,7 +242,7 @@ func (market *Market) Transition(
 	}
 
 	if !market.primed && market.stack != nil {
-		baseline := market.Config.Profiles[testtypes.Baseline]
+		baseline := market.Config.Profiles[tes.Baseline]
 
 		for range baseline.Precursor.MinimumObservations {
 			market.Tick()
@@ -269,7 +269,7 @@ func (market *Market) Transition(
 TransitionAll arms every declared symbol before advancing their shared timeline.
 */
 func (market *Market) TransitionAll(
-	states map[string]testtypes.MarketState,
+	states map[string]tes.MarketState,
 ) error {
 	for symbol, state := range states {
 		if _, known := market.generators[symbol]; !known {
@@ -282,7 +282,7 @@ func (market *Market) TransitionAll(
 	}
 
 	if !market.primed && market.stack != nil {
-		baseline := market.Config.Profiles[testtypes.Baseline]
+		baseline := market.Config.Profiles[tes.Baseline]
 
 		for range baseline.Precursor.MinimumObservations {
 			market.Tick()
@@ -320,7 +320,7 @@ func (market *Market) TransitionAll(
 /*
 LastSample returns the latest coherent observation for one symbol.
 */
-func (market *Market) LastSample(symbol string) (testtypes.Sample, bool) {
+func (market *Market) LastSample(symbol string) (tes.Sample, bool) {
 	market.sampleMu.RLock()
 	defer market.sampleMu.RUnlock()
 	sample, known := market.latest[symbol]
@@ -333,11 +333,11 @@ Samples returns an immutable copy of the venue observations published for one
 symbol. It lets integration audits inspect the fixture without competing with
 production analytical queues.
 */
-func (market *Market) Samples(symbol string) []testtypes.Sample {
+func (market *Market) Samples(symbol string) []tes.Sample {
 	market.sampleMu.RLock()
 	defer market.sampleMu.RUnlock()
 
-	return append([]testtypes.Sample(nil), market.history[symbol]...)
+	return append([]tes.Sample(nil), market.history[symbol]...)
 }
 
 /*
@@ -374,7 +374,7 @@ func (market *Market) applySchedule() {
 	}
 }
 
-func (market *Market) factor(symbol *testtypes.Symbol) float64 {
+func (market *Market) factor(symbol *tes.Symbol) float64 {
 	index := len(market.factors) - 1 - symbol.FactorLagTicks
 
 	if index < 0 {

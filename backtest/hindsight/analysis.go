@@ -79,7 +79,24 @@ func collectDecisionsIndex(decisions []Decision) map[string][]Decision {
 		sort.SliceStable(sorted, func(i, j int) bool {
 			return sorted[i].At.Before(sorted[j].At)
 		})
-		index[symbol] = sorted
+
+		deduplicated := sorted[:0]
+
+		for _, decision := range sorted {
+			last := len(deduplicated) - 1
+
+			if last >= 0 && deduplicated[last].At.Equal(decision.At) {
+				// Audit events are read in insertion order. A later replay of the
+				// same capture therefore replaces the earlier decision at this
+				// exact venue moment instead of contaminating the timeline.
+				deduplicated[last] = decision
+				continue
+			}
+
+			deduplicated = append(deduplicated, decision)
+		}
+
+		index[symbol] = deduplicated
 	}
 
 	return index

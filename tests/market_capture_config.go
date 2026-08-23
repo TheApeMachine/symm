@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/symm/kraken"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 type capturedPair struct {
@@ -37,7 +37,7 @@ capture containing market profiles and ticker frames.
 func CaptureSymbolsFromFrames(
 	reader io.Reader,
 	depth int,
-) ([]*testtypes.Symbol, error) {
+) ([]*tes.Symbol, error) {
 	if reader == nil || depth <= 0 {
 		return nil, fmt.Errorf("market: capture and positive depth required")
 	}
@@ -120,7 +120,7 @@ func CaptureSymbolsFromFrames(
 	}
 
 	sort.Strings(names)
-	symbols := make([]*testtypes.Symbol, 0, len(names))
+	symbols := make([]*tes.Symbol, 0, len(names))
 
 	for index, name := range names {
 		profile := profiles[name]
@@ -134,7 +134,7 @@ func CaptureSymbolsFromFrames(
 		}
 
 		midpoint := (start.ask + start.bid) / 2
-		symbol := testtypes.NewSymbol(name, start.last, int64(index+1))
+		symbol := tes.NewSymbol(name, start.last, int64(index+1))
 		symbol.PriceIncrement = pair.TickSize.Float64()
 		symbol.PricePrecision = pair.PairDecimals
 		symbol.QuantityPrecision = pair.LotDecimals
@@ -162,7 +162,7 @@ func CaptureSymbols(
 	pairs io.Reader,
 	tickers io.Reader,
 	depth int,
-) ([]*testtypes.Symbol, error) {
+) ([]*tes.Symbol, error) {
 	if pairs == nil || tickers == nil || depth <= 0 {
 		return nil, fmt.Errorf("market: capture metadata and positive depth required")
 	}
@@ -196,7 +196,7 @@ func CaptureSymbols(
 	}
 
 	sort.Strings(names)
-	symbols := make([]*testtypes.Symbol, 0, len(names))
+	symbols := make([]*tes.Symbol, 0, len(names))
 
 	for index, name := range names {
 		pair := pairsByName[name]
@@ -230,7 +230,7 @@ func CaptureSymbols(
 			return nil, fmt.Errorf("market: %s maker fee: %w", name, err)
 		}
 
-		symbol := testtypes.NewSymbol(name, prices[name], int64(index+1))
+		symbol := tes.NewSymbol(name, prices[name], int64(index+1))
 		symbol.PriceIncrement = tickSize
 		symbol.PricePrecision = pair.PairDecimals
 		symbol.QuantityPrecision = pair.LotDecimals

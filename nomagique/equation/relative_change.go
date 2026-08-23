@@ -6,36 +6,37 @@ import (
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var SymbolRelativeChange = nomagique.MustIntern("equation/relative_change")
+var SymbolRelativeChange = types.MustIntern("equation/relative_change")
 
 // RelativeChange reports (current-previous)/previous for an observed series.
-func RelativeChange(source nomagique.Symbol) nomagique.Primitive {
-	return nomagique.Pipe(
+func RelativeChange(source nomagique.Symbol) types.Primitive {
+	return types.Pipe(
 		temporal.Observer(source),
 		statistic.Maturity(temporal.SymbolObservations),
 		logic.If(
-			nomagique.Wire(
-				nomagique.Identity,
-				nomagique.In(calculus.SymbolReady, logic.SymbolCondition),
-				nomagique.Out(logic.SymbolCondition, logic.SymbolCondition),
+			types.Wire(
+				types.Identity,
+				types.In(calculus.SymbolReady, logic.SymbolCondition),
+				types.Out(logic.SymbolCondition, logic.SymbolCondition),
 			),
-			nomagique.Pipe(
-				nomagique.Wire(
+			types.Pipe(
+				types.Wire(
 					calculus.Difference,
-					nomagique.In(calculus.SymbolCurrent, calculus.PortA),
-					nomagique.In(calculus.SymbolPrevious, calculus.PortB),
-					nomagique.Out(calculus.PortResult, SymbolChange),
+					types.In(calculus.SymbolCurrent, calculus.PortA),
+					types.In(calculus.SymbolPrevious, calculus.PortB),
+					types.Out(calculus.PortResult, SymbolChange),
 				),
-				nomagique.Wire(
+				types.Wire(
 					calculus.Quotient,
-					nomagique.In(SymbolChange, calculus.PortA),
-					nomagique.In(calculus.SymbolPrevious, calculus.PortB),
-					nomagique.Out(calculus.PortResult, SymbolRelativeChange),
+					types.In(SymbolChange, calculus.PortA),
+					types.In(calculus.SymbolPrevious, calculus.PortB),
+					types.Out(calculus.PortResult, SymbolRelativeChange),
 				),
 			),
-			nomagique.Identity,
+			types.Identity,
 		),
 	)
 }

@@ -3,7 +3,6 @@ package algo
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -11,15 +10,15 @@ import (
 )
 
 var (
-	SymbolMechanical    = nomagique.MustIntern("exhaust/mechanical")
-	SymbolFragile       = nomagique.MustIntern("exhaust/fragile")
-	SymbolThermal       = nomagique.MustIntern("exhaust/thermal")
-	SymbolReversal      = nomagique.MustIntern("exhaust/reversal")
-	SymbolUrgency       = nomagique.MustIntern("exhaust/urgency")
-	SymbolVolume        = nomagique.MustIntern("exhaust/volume")
-	SymbolSpread        = nomagique.MustIntern("exhaust/spread")
-	SymbolPriceDelta    = nomagique.MustIntern("exhaust/price_delta")
-	SymbolAggressorSide = nomagique.MustIntern("exhaust/aggressor_side")
+	SymbolMechanical    = nmtypes.MustIntern("exhaust/mechanical")
+	SymbolFragile       = nmtypes.MustIntern("exhaust/fragile")
+	SymbolThermal       = nmtypes.MustIntern("exhaust/thermal")
+	SymbolReversal      = nmtypes.MustIntern("exhaust/reversal")
+	SymbolUrgency       = nmtypes.MustIntern("exhaust/urgency")
+	SymbolVolume        = nmtypes.MustIntern("exhaust/volume")
+	SymbolSpread        = nmtypes.MustIntern("exhaust/spread")
+	SymbolPriceDelta    = nmtypes.MustIntern("exhaust/price_delta")
+	SymbolAggressorSide = nmtypes.MustIntern("exhaust/aggressor_side")
 )
 
 /*
@@ -27,10 +26,10 @@ Exhaust calculates the four physical decay channels (mechanical depth collapse,
 fragile spread expansion, thermal price rejection, and directional reversal)
 and fuses them into an urgency margin.
 */
-func Exhaust() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(SymbolVolume, nomagique.SampleValue),
-		nomagique.Configure(
+func Exhaust() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Relay(SymbolVolume, nmtypes.SampleValue),
+		nmtypes.Configure(
 			statistic.Baseline,
 			nmtypes.Span,
 			temporal.Window,
@@ -78,7 +77,7 @@ func exhaustEvaluator(
 	}
 
 	// 4. Reversal: sign flip opposing recent directional pressure
-	prevFlow, hasFlow := state.Get(nomagique.MustIntern("state/prev_flow"))
+	prevFlow, hasFlow := state.Get(nmtypes.MustIntern("state/prev_flow"))
 	reversal := 0.0
 
 	if hasFlow && prevFlow*aggressorSide < 0 {
@@ -86,7 +85,7 @@ func exhaustEvaluator(
 	}
 
 	nextState := state
-	nextState.Put(nomagique.MustIntern("state/prev_flow"), aggressorSide*volume)
+	nextState.Put(nmtypes.MustIntern("state/prev_flow"), aggressorSide*volume)
 
 	// 5. Urgency: fused maximum over the four decay channels
 	urgency := math.Max(mechanical, math.Max(fragile, math.Max(thermal, reversal)))

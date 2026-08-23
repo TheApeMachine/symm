@@ -6,32 +6,33 @@ import (
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var SymbolChange = nomagique.MustIntern("equation/change")
+var SymbolChange = types.MustIntern("equation/change")
 
 /*
 Change observes one named fact, then explicitly binds the causal pair to the
 local A/B ports of Difference. The first observation emits no invented change.
 */
-func Change(source nomagique.Symbol) nomagique.Primitive {
-	return nomagique.Pipe(
+func Change(source nomagique.Symbol) types.Primitive {
+	return types.Pipe(
 		temporal.Observer(source),
-		nomagique.ForkStrict(
+		types.ForkStrict(
 			statistic.Maturity(temporal.SymbolObservations),
 			logic.If(
-				nomagique.Wire(
-					nomagique.Identity,
-					nomagique.In(calculus.SymbolReady, logic.SymbolCondition),
-					nomagique.Out(logic.SymbolCondition, logic.SymbolCondition),
+				types.Wire(
+					types.Identity,
+					types.In(calculus.SymbolReady, logic.SymbolCondition),
+					types.Out(logic.SymbolCondition, logic.SymbolCondition),
 				),
-				nomagique.Wire(
+				types.Wire(
 					calculus.Difference,
-					nomagique.In(calculus.SymbolCurrent, calculus.PortA),
-					nomagique.In(calculus.SymbolPrevious, calculus.PortB),
-					nomagique.Out(calculus.PortResult, SymbolChange),
+					types.In(calculus.SymbolCurrent, calculus.PortA),
+					types.In(calculus.SymbolPrevious, calculus.PortB),
+					types.Out(calculus.PortResult, SymbolChange),
 				),
-				nomagique.Identity,
+				types.Identity,
 			),
 		),
 	)

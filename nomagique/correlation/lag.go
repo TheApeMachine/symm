@@ -4,17 +4,16 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolLagSpacing         = nomagique.MustIntern("correlation/lag_spacing_nanos")
-	SymbolMaximumLag         = nomagique.MustIntern("correlation/maximum_lag")
-	SymbolBestLag            = nomagique.MustIntern("correlation/best_lag")
-	SymbolBestLagCorrelation = nomagique.MustIntern("correlation/best_lag_correlation")
-	SymbolContemporaneous    = nomagique.MustIntern("correlation/contemporaneous")
-	SymbolSearchCount        = nomagique.MustIntern("correlation/search_count")
+	SymbolLagSpacing         = types.MustIntern("correlation/lag_spacing_nanos")
+	SymbolMaximumLag         = types.MustIntern("correlation/maximum_lag")
+	SymbolBestLag            = types.MustIntern("correlation/best_lag")
+	SymbolBestLagCorrelation = types.MustIntern("correlation/best_lag_correlation")
+	SymbolContemporaneous    = types.MustIntern("correlation/contemporaneous")
+	SymbolSearchCount        = types.MustIntern("correlation/search_count")
 )
 
 /*

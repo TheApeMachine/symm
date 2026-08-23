@@ -4,28 +4,27 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolUnixSec  = nomagique.MustIntern("unix_sec")
-	SymbolUnixNsec = nomagique.MustIntern("unix_nsec")
+	SymbolUnixSec  = nmtypes.MustIntern("unix_sec")
+	SymbolUnixNsec = nmtypes.MustIntern("unix_nsec")
 
-	SymbolBaselineValue        = nomagique.MustIntern("baseline/value")
-	SymbolBaselineEfficiency   = nomagique.MustIntern("baseline/efficiency")
-	SymbolBaselineWindow       = nomagique.MustIntern("baseline/effective_window")
-	SymbolBaselineLastSec      = nomagique.MustIntern("baseline/last_sec")
-	SymbolBaselineLastNsec     = nomagique.MustIntern("baseline/last_nsec")
-	SymbolBaselineSpan         = nomagique.MustIntern("baseline/observed_span_sec")
-	SymbolBaselineFastHalflife = nomagique.MustIntern("baseline/fast_halflife_sec")
-	SymbolBaselineSlowHalflife = nomagique.MustIntern("baseline/slow_halflife_sec")
+	SymbolBaselineValue        = nmtypes.MustIntern("baseline/value")
+	SymbolBaselineEfficiency   = nmtypes.MustIntern("baseline/efficiency")
+	SymbolBaselineWindow       = nmtypes.MustIntern("baseline/effective_window")
+	SymbolBaselineLastSec      = nmtypes.MustIntern("baseline/last_sec")
+	SymbolBaselineLastNsec     = nmtypes.MustIntern("baseline/last_nsec")
+	SymbolBaselineSpan         = nmtypes.MustIntern("baseline/observed_span_sec")
+	SymbolBaselineFastHalflife = nmtypes.MustIntern("baseline/fast_halflife_sec")
+	SymbolBaselineSlowHalflife = nmtypes.MustIntern("baseline/slow_halflife_sec")
 
 	// SymbolBaselineStability is the ring's relative dispersion stability, kept
 	// in state so the window can read the previous step's verdict while it
 	// decides whether to slide, grow, or shrink.
-	SymbolBaselineStability = nomagique.MustIntern("baseline/stability")
+	SymbolBaselineStability = nmtypes.MustIntern("baseline/stability")
 )
 
 /*
@@ -51,7 +50,7 @@ func Baseline(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nomagique.SampleValue)
+	value, hasValue := input.Get(nmtypes.SampleValue)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
@@ -134,7 +133,7 @@ func baselineOutput(
 	target float64,
 ) types.Frame {
 	output := input
-	output.Put(nomagique.SampleValue, value)
+	output.Put(nmtypes.SampleValue, value)
 
 	baseline, _ := state.Get(SymbolBaselineValue)
 	efficiency, _ := state.Get(SymbolBaselineEfficiency)
@@ -162,12 +161,12 @@ func windowEfficiency(state types.Frame, count int) float64 {
 		return 0
 	}
 
-	capacity, _ := state.Get(nomagique.MustIntern("capacity"))
+	capacity, _ := state.Get(nmtypes.MustIntern("capacity"))
 	head := windowSampleHead(state)
 	slots := make([]float64, 0, count)
 
 	for index := range count {
-		sample, _ := state.Get(nomagique.MustSampleSymbol((head + index) % int(capacity)))
+		sample, _ := state.Get(nmtypes.MustSampleSymbol((head + index) % int(capacity)))
 		slots = append(slots, sample)
 	}
 
@@ -197,14 +196,14 @@ func ringStability(state types.Frame, count int, estimate float64) float64 {
 		return 0
 	}
 
-	capacity, _ := state.Get(nomagique.MustIntern("capacity"))
+	capacity, _ := state.Get(nmtypes.MustIntern("capacity"))
 	head := windowSampleHead(state)
 	minimum := math.MaxFloat64
 	maximum := -math.MaxFloat64
 	largestResidual := 0.0
 
 	for index := 0; index < count; index++ {
-		sample, _ := state.Get(nomagique.MustSampleSymbol((head + index) % int(capacity)))
+		sample, _ := state.Get(nmtypes.MustSampleSymbol((head + index) % int(capacity)))
 
 		minimum = math.Min(minimum, sample)
 		maximum = math.Max(maximum, sample)
@@ -233,7 +232,7 @@ func windowModifier(
 	stability float64,
 	previousStability float64,
 ) float64 {
-	capacity, _ := state.Get(nomagique.MustIntern("capacity"))
+	capacity, _ := state.Get(nmtypes.MustIntern("capacity"))
 
 	if capacity <= 0 {
 		capacity = float64(count)
@@ -245,8 +244,8 @@ func windowModifier(
 	if count < 2 {
 		next := math.Max(2, capacity+1)
 
-		if next > nomagique.MaxSamples {
-			return nomagique.MaxSamples
+		if next > nmtypes.MaxSamples {
+			return nmtypes.MaxSamples
 		}
 
 		return next
@@ -261,8 +260,8 @@ func windowModifier(
 			next = capacity + 1
 		}
 
-		if next > nomagique.MaxSamples {
-			return nomagique.MaxSamples
+		if next > nmtypes.MaxSamples {
+			return nmtypes.MaxSamples
 		}
 
 		return next
@@ -307,7 +306,7 @@ func baselineHalflife(
 }
 
 func windowSampleCount(state types.Frame) int {
-	value, found := state.Get(nomagique.SampleCount)
+	value, found := state.Get(nmtypes.SampleCount)
 
 	if !found {
 		return 0
@@ -317,7 +316,7 @@ func windowSampleCount(state types.Frame) int {
 }
 
 func windowSampleHead(state types.Frame) int {
-	value, found := state.Get(nomagique.SampleHead)
+	value, found := state.Get(nmtypes.SampleHead)
 
 	if !found {
 		return 0

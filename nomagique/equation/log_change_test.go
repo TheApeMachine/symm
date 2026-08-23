@@ -6,14 +6,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestLogChange(t *testing.T) {
 	Convey("Given consecutive positive observations", t, func() {
-		stream := nomagique.NewStream(
-			LogChange(nomagique.SampleValue),
+		stream := types.NewStream(
+			LogChange(types.SampleValue),
 			types.Frame{},
 		)
 		first, err := stream.Step(equationSample(100, 1))
@@ -25,8 +24,8 @@ func TestLogChange(t *testing.T) {
 	})
 
 	Convey("Given regressing event time", t, func() {
-		stream := nomagique.NewStream(
-			LogChange(nomagique.SampleValue),
+		stream := types.NewStream(
+			LogChange(types.SampleValue),
 			types.Frame{},
 		)
 		_, err := stream.Step(equationSample(100, 2))
@@ -38,8 +37,8 @@ func TestLogChange(t *testing.T) {
 }
 
 func BenchmarkLogChange(benchmark *testing.B) {
-	stream := nomagique.NewStream(
-		LogChange(nomagique.SampleValue),
+	stream := types.NewStream(
+		LogChange(types.SampleValue),
 		types.Frame{},
 	)
 	_, _ = stream.Step(equationSample(100, 0))

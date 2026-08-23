@@ -3,7 +3,6 @@ package mcts
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -36,26 +35,26 @@ const (
 )
 
 var (
-	SymbolContextConfidence = nomagique.MustIntern("context_confidence")
-	SymbolTreatment         = nomagique.MustIntern("treatment")
-	SymbolTarget            = nomagique.MustIntern("target")
-	SymbolFlow              = nomagique.MustIntern("flow")
-	SymbolLiquidityImpact   = nomagique.MustIntern("liquidity_impact")
-	SymbolHawkes            = nomagique.MustIntern("hawkes")
-	SymbolCoherence         = nomagique.MustIntern("coherence")
-	SymbolRegime            = nomagique.MustIntern("regime")
-	SymbolSurprise          = nomagique.MustIntern("surprise")
-	SymbolPosition          = nomagique.MustIntern("position")
-	SymbolHorizon           = nomagique.MustIntern("horizon")
-	SymbolMaximumHorizon    = nomagique.MustIntern("max_horizon")
-	SymbolArchetype         = nomagique.MustIntern("archetype")
-	SymbolVelocity          = nomagique.MustIntern("velocity")
-	SymbolStoredEnergy      = nomagique.MustIntern("stored_energy")
-	SymbolCausalExpectation = nomagique.MustIntern("causal_expectation")
-	SymbolSpread            = nomagique.MustIntern("spread")
+	SymbolContextConfidence = types.MustIntern("context_confidence")
+	SymbolTreatment         = types.MustIntern("treatment")
+	SymbolTarget            = types.MustIntern("target")
+	SymbolFlow              = types.MustIntern("flow")
+	SymbolLiquidityImpact   = types.MustIntern("liquidity_impact")
+	SymbolHawkes            = types.MustIntern("hawkes")
+	SymbolCoherence         = types.MustIntern("coherence")
+	SymbolRegime            = types.MustIntern("regime")
+	SymbolSurprise          = types.MustIntern("surprise")
+	SymbolPosition          = types.MustIntern("position")
+	SymbolHorizon           = types.MustIntern("horizon")
+	SymbolMaximumHorizon    = types.MustIntern("max_horizon")
+	SymbolArchetype         = types.MustIntern("archetype")
+	SymbolVelocity          = types.MustIntern("velocity")
+	SymbolStoredEnergy      = types.MustIntern("stored_energy")
+	SymbolCausalExpectation = types.MustIntern("causal_expectation")
+	SymbolSpread            = types.MustIntern("spread")
 )
 
-var reasoningSymbols = [...]nomagique.Symbol{
+var reasoningSymbols = [...]types.Symbol{
 	SymbolContextConfidence,
 	SymbolTreatment,
 	SymbolTarget,

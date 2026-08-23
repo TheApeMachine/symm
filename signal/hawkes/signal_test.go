@@ -68,7 +68,7 @@ func TestHawkesPipeline(t *testing.T) {
 			burstStart := start.Add(10 * time.Second)
 
 			for index := range 10 {
-				input := types.Frame{}
+				input := nmtypes.Frame{}
 				input.Put(algo.SymbolMark, 1.0)
 				input.Put(nmtypes.EventTimeSec, float64(burstStart.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(index*1000))
@@ -115,7 +115,7 @@ func BenchmarkHawkesPipeline(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		input := types.Frame{}
+		input := nmtypes.Frame{}
 		input.Put(algo.SymbolMark, 1.0)
 		input.Put(nmtypes.EventTimeSec, float64(start.Unix()))
 		input.Put(nmtypes.EventTimeNsec, 0)

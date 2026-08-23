@@ -28,7 +28,7 @@ Step evaluates and commits one input. Failed candidates leave state untouched.
 */
 func (stream *Stream) Step(input Frame) (Frame, error) {
 	if stream == nil || stream.primitive == nil {
-		return Frame{}, primitiveError("stream primitive is nil")
+		returntypes.Frame{}, primitiveError("stream primitive is nil")
 	}
 
 	nextState, output, err := Step(stream.primitive, stream.state, input)
@@ -51,7 +51,7 @@ Project returns the last committed state snapshot.
 */
 func (stream *Stream) Project() Frame {
 	if stream == nil {
-		return Frame{}
+		returntypes.Frame{}
 	}
 
 	return stream.state
@@ -62,7 +62,7 @@ Output returns the last successful output snapshot.
 */
 func (stream *Stream) Output() Frame {
 	if stream == nil {
-		return Frame{}
+		returntypes.Frame{}
 	}
 
 	return stream.output
@@ -88,7 +88,7 @@ func (stream *Stream) Reset(initial Frame) {
 	}
 
 	stream.state = initial
-	stream.output = Frame{}
+	stream.output =types.Frame{}
 	stream.err = nil
 }
 
@@ -120,7 +120,7 @@ Step applies one lock-free compare-and-swap transition.
 */
 func (stream *AtomicStream) Step(input Frame) (Frame, error) {
 	if stream == nil || stream.primitive == nil {
-		return Frame{}, primitiveError("atomic stream primitive is nil")
+		returntypes.Frame{}, primitiveError("atomic stream primitive is nil")
 	}
 
 	for {
@@ -128,7 +128,7 @@ func (stream *AtomicStream) Step(input Frame) (Frame, error) {
 		nextState, output, err := Step(stream.primitive, *current, input)
 
 		if err != nil {
-			return Frame{}, err
+			returntypes.Frame{}, err
 		}
 
 		candidate := new(Frame)
@@ -145,13 +145,13 @@ Project returns an immutable copy of the currently published state.
 */
 func (stream *AtomicStream) Project() Frame {
 	if stream == nil {
-		return Frame{}
+		returntypes.Frame{}
 	}
 
 	current := stream.state.Load()
 
 	if current == nil {
-		return Frame{}
+		returntypes.Frame{}
 	}
 
 	return *current

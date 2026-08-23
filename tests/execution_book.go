@@ -3,7 +3,7 @@ package tests
 import (
 	"math"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
@@ -11,15 +11,15 @@ executionBook owns finite depth, spread crossing, limit eligibility, and
 size-dependent execution price.
 */
 type executionBook struct {
-	config  testtypes.ExecutionConfig
-	symbols map[string]*testtypes.Symbol
+	config  tes.ExecutionConfig
+	symbols map[string]*tes.Symbol
 }
 
 func newExecutionBook(
-	config testtypes.ExecutionConfig,
-	symbols []*testtypes.Symbol,
+	config tes.ExecutionConfig,
+	symbols []*tes.Symbol,
 ) *executionBook {
-	profiles := make(map[string]*testtypes.Symbol, len(symbols))
+	profiles := make(map[string]*tes.Symbol, len(symbols))
 
 	for _, symbol := range symbols {
 		profiles[symbol.Pair] = symbol
@@ -34,7 +34,7 @@ executable limit is exhausted.
 */
 func (book *executionBook) Consume(
 	order *executionOrder,
-	sample testtypes.Sample,
+	sample tes.Sample,
 	maximum float64,
 ) (float64, float64) {
 	profile := book.symbols[order.order.Request.Pair]
@@ -50,19 +50,19 @@ func (book *executionBook) Consume(
 	}
 
 	if len(levels) == 0 {
-		levels = []testtypes.DepthLevel{{
+		levels = []tes.DepthLevel{{
 			Price: sample.Ask, Quantity: sample.AskQty,
 		}}
 
 		if order.order.Request.Type == "sell" {
-			levels[0] = testtypes.DepthLevel{
+			levels[0] = tes.DepthLevel{
 				Price: sample.Bid, Quantity: sample.BidQty,
 			}
 		}
 	}
 
 	slippageFraction := book.config.SlippageBasisPoints /
-		testtypes.BasisPointDenominator
+		tes.BasisPointDenominator
 
 	for level := range min(book.config.DepthLevels, len(levels)) {
 		price := levels[level].Price

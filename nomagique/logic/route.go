@@ -3,7 +3,6 @@ package logic
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
@@ -37,12 +36,12 @@ If evaluates one predicate and exactly one selected branch. Any predicate or
 branch error rolls the whole transition back to the caller's original state.
 */
 func If(
-	predicate nomagique.Primitive,
-	whenTrue nomagique.Primitive,
-	whenFalse nomagique.Primitive,
-) nomagique.Primitive {
+	predicate types.Primitive,
+	whenTrue types.Primitive,
+	whenFalse types.Primitive,
+) types.Primitive {
 	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
-		predicateState, predicateOutput, err := nomagique.Step(predicate, state, input)
+		predicateState, predicateOutput, err := types.Step(predicate, state, input)
 
 		if err != nil {
 			return state, types.Frame{}, err
@@ -64,7 +63,7 @@ func If(
 			return predicateState, predicateOutput, nil
 		}
 
-		nextState, output, err := nomagique.Step(branch, predicateState, predicateOutput)
+		nextState, output, err := types.Step(branch, predicateState, predicateOutput)
 
 		if err != nil {
 			return state, types.Frame{}, err
@@ -76,15 +75,15 @@ func If(
 
 // Rule binds one predicate to the branch executed when it emits true.
 type Rule struct {
-	When nomagique.Primitive
-	Then nomagique.Primitive
+	When types.Primitive
+	Then types.Primitive
 }
 
 /*
 Circuit evaluates ordered rules and executes the first matching branch. Every
 failure rejects all candidate predicate state accumulated during this call.
 */
-func Circuit(rules []Rule, fallback nomagique.Primitive) nomagique.Primitive {
+func Circuit(rules []Rule, fallback types.Primitive) types.Primitive {
 	program := append([]Rule(nil), rules...)
 
 	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
@@ -96,7 +95,7 @@ func Circuit(rules []Rule, fallback nomagique.Primitive) nomagique.Primitive {
 				continue
 			}
 
-			candidateState, candidateOutput, err := nomagique.Step(rule.When, nextState, output)
+			candidateState, candidateOutput, err := types.Step(rule.When, nextState, output)
 
 			if err != nil {
 				return state, types.Frame{}, err
@@ -119,7 +118,7 @@ func Circuit(rules []Rule, fallback nomagique.Primitive) nomagique.Primitive {
 				return nextState, output, nil
 			}
 
-			branchState, branchOutput, err := nomagique.Step(rule.Then, nextState, output)
+			branchState, branchOutput, err := types.Step(rule.Then, nextState, output)
 
 			if err != nil {
 				return state, types.Frame{}, err
@@ -132,7 +131,7 @@ func Circuit(rules []Rule, fallback nomagique.Primitive) nomagique.Primitive {
 			return nextState, output, nil
 		}
 
-		fallbackState, fallbackOutput, err := nomagique.Step(fallback, nextState, output)
+		fallbackState, fallbackOutput, err := types.Step(fallback, nextState, output)
 
 		if err != nil {
 			return state, types.Frame{}, err

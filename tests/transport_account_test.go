@@ -9,15 +9,15 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 func TestMockTransportBalance(t *testing.T) {
 	Convey("Given a transport configured with a USD-quoted symbol", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
-		conn.Configure([]*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 50_000, 1),
+		conn.Configure([]*tes.Symbol{
+			tes.NewSymbol("BTC/USD", 50_000, 1),
 		})
 		request, err := http.NewRequest(
 			"POST", "https://api.kraken.com/0/private/Balance", nil,
@@ -41,12 +41,12 @@ func TestMockTransportBalance(t *testing.T) {
 
 func TestMockTransportTradeVolume(t *testing.T) {
 	Convey("Given explicit maker and taker fees", t, func() {
-		symbol := testtypes.NewSymbol("BTC/USD", 50_000, 1)
+		symbol := tes.NewSymbol("BTC/USD", 50_000, 1)
 		symbol.TakerFeePercent = 0.31
 		symbol.MakerFeePercent = 0.19
 		conn := NewConn(context.Background())
 		defer conn.Close()
-		conn.Configure([]*testtypes.Symbol{symbol})
+		conn.Configure([]*tes.Symbol{symbol})
 		request, err := http.NewRequest(
 			"POST", "https://api.kraken.com/0/private/TradeVolume", nil,
 		)
@@ -76,8 +76,8 @@ func TestMockTransportTradeBalance(t *testing.T) {
 	Convey("Given a fixture account with USD inventory", t, func() {
 		conn := NewConn(context.Background())
 		defer conn.Close()
-		conn.Configure([]*testtypes.Symbol{
-			testtypes.NewSymbol("BTC/USD", 50_000, 1),
+		conn.Configure([]*tes.Symbol{
+			tes.NewSymbol("BTC/USD", 50_000, 1),
 		})
 		request, err := http.NewRequest(
 			"POST", "https://api.kraken.com/0/private/TradeBalance", nil,

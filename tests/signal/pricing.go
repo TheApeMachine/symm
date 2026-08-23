@@ -5,14 +5,14 @@ import (
 	"math"
 	"time"
 
-	testtypes "github.com/theapemachine/symm/tests/types"
+	tes "github.com/theapemachine/symm/tests/types"
 )
 
 /*
 NewGeneratorFromSymbol preserves all per-instrument precision, spread, depth,
 and cross-market characteristics declared by a scenario symbol profile.
 */
-func NewGeneratorFromSymbol(symbol *testtypes.Symbol) *Generator {
+func NewGeneratorFromSymbol(symbol *tes.Symbol) *Generator {
 	generator := NewGenerator(
 		symbol.Pair,
 		symbol.StartPrice,
@@ -34,16 +34,16 @@ func NewGeneratorFromSymbol(symbol *testtypes.Symbol) *Generator {
 ConfigureProfiles installs a scenario-owned regime contract.
 */
 func (generator *Generator) ConfigureProfiles(
-	profiles map[testtypes.MarketState]testtypes.RegimeProfile,
+	profiles map[tes.MarketState]tes.RegimeProfile,
 ) error {
-	baseline, known := profiles[testtypes.Baseline]
+	baseline, known := profiles[tes.Baseline]
 
 	if !known {
 		return fmt.Errorf("generator: baseline regime profile is required")
 	}
 
 	generator.mu.Lock()
-	generator.profiles = testtypes.CloneProfiles(profiles)
+	generator.profiles = tes.CloneProfiles(profiles)
 	generator.sourceProfile = baseline
 	generator.mu.Unlock()
 
@@ -51,7 +51,7 @@ func (generator *Generator) ConfigureProfiles(
 }
 
 func (generator *Generator) transitionMomentum(
-	state testtypes.MarketState,
+	state tes.MarketState,
 	momentum []float64,
 ) float64 {
 	if _, known := generator.profiles[state]; !known {
@@ -108,9 +108,9 @@ func (generator *Generator) depth(
 	bidQuantity float64,
 	ask float64,
 	askQuantity float64,
-) ([]testtypes.DepthLevel, []testtypes.DepthLevel) {
-	bids := make([]testtypes.DepthLevel, 0, generator.depthLevels)
-	asks := make([]testtypes.DepthLevel, 0, generator.depthLevels)
+) ([]tes.DepthLevel, []tes.DepthLevel) {
+	bids := make([]tes.DepthLevel, 0, generator.depthLevels)
+	asks := make([]tes.DepthLevel, 0, generator.depthLevels)
 
 	for level := range generator.depthLevels {
 		bidPrice := generator.roundPrice(
@@ -122,11 +122,11 @@ func (generator *Generator) depth(
 		}
 
 		quantityScale := math.Pow(generator.depthScale, float64(level))
-		bids = append(bids, testtypes.DepthLevel{
+		bids = append(bids, tes.DepthLevel{
 			Price:    bidPrice,
 			Quantity: generator.roundQuantity(bidQuantity * quantityScale),
 		})
-		asks = append(asks, testtypes.DepthLevel{
+		asks = append(asks, tes.DepthLevel{
 			Price: generator.roundPrice(
 				ask + float64(level)*generator.priceIncrement,
 			),
