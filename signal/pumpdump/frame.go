@@ -3,7 +3,6 @@ package pumpdump
 import (
 	"time"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -22,16 +21,16 @@ func eventFrame(at time.Time) types.Frame {
 
 func sampleFrame(at time.Time, value float64) types.Frame {
 	input := eventFrame(at)
-	input.Put(nomagique.SampleValue, value)
+	input.Put(nmtypes.SampleValue, value)
 
 	return input
 }
 
 func absoluteSample(
-	primitive nomagique.Primitive,
+	primitive nmtypes.Primitive,
 	input types.Frame,
 ) (types.Frame, error) {
-	_, output, err := nomagique.Step(primitive, types.Frame{}, input)
+	_, output, err := nmtypes.Step(primitive, types.Frame{}, input)
 
 	return output, err
 }

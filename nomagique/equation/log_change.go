@@ -1,7 +1,6 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -10,7 +9,7 @@ import (
 )
 
 // LogChange reports log(current/previous) for a positive observed series.
-func LogChange(source nomagique.Symbol) types.Primitive {
+func LogChange(source types.Symbol) types.Primitive {
 	return types.Pipe(
 		temporal.Observer(source),
 		statistic.Maturity(temporal.SymbolObservations),

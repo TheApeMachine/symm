@@ -1,7 +1,6 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -15,7 +14,7 @@ var SymbolChange = types.MustIntern("equation/change")
 Change observes one named fact, then explicitly binds the causal pair to the
 local A/B ports of Difference. The first observation emits no invented change.
 */
-func Change(source nomagique.Symbol) types.Primitive {
+func Change(source types.Symbol) types.Primitive {
 	return types.Pipe(
 		temporal.Observer(source),
 		types.ForkStrict(

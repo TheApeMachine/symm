@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
@@ -16,7 +15,7 @@ import (
 
 func TestAcceleration(t *testing.T) {
 	Convey("Given a quantity-clocked positive series", t, func() {
-		stream := nomagique.NewStream(Acceleration(), types.Frame{})
+		stream := types.NewStream(Acceleration(), types.Frame{})
 		first, err := stream.Step(accelerationInput(2, 100, 0))
 		So(err, ShouldBeNil)
 		So(first.MustGet(SymbolClosed), ShouldEqual, 0.0)
@@ -44,12 +43,12 @@ func TestAcceleration(t *testing.T) {
 }
 
 func BenchmarkAcceleration(benchmark *testing.B) {
-	stream := nomagique.NewStream(Acceleration(), types.Frame{})
+	stream := types.NewStream(Acceleration(), types.Frame{})
 	input := accelerationInput(2, 100, 1)
 	_, _ = stream.Step(accelerationInput(2, 100, 0))
 	benchmark.ReportAllocs()
 
-	for range benchmark.N {
+	for benchmark.Loop() {
 		_, _ = stream.Step(input)
 	}
 }

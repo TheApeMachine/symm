@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -91,7 +90,7 @@ type PredictiveCoder struct {
 	config   PredictiveCoderConfig
 	manifold *ResonanceManifold
 	ledger   *TemporalLedger
-	dynamics *nomagique.Stream
+	dynamics *types.Stream
 
 	currentHorizon int
 }
@@ -136,7 +135,7 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 
 	manifold := NewResonanceManifold(arch, targetDim, pace)
 	ledger := NewTemporalLedger(maxHorizon, target)
-	dynamics := nomagique.NewStream(PredictiveDynamics, types.Frame{})
+	dynamics := types.NewStream(PredictiveDynamics, types.Frame{})
 
 	return &PredictiveCoder{
 		config:         config,

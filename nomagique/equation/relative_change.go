@@ -1,7 +1,6 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -12,7 +11,7 @@ import (
 var SymbolRelativeChange = types.MustIntern("equation/relative_change")
 
 // RelativeChange reports (current-previous)/previous for an observed series.
-func RelativeChange(source nomagique.Symbol) types.Primitive {
+func RelativeChange(source types.Symbol) types.Primitive {
 	return types.Pipe(
 		temporal.Observer(source),
 		statistic.Maturity(temporal.SymbolObservations),

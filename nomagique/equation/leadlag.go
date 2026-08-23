@@ -3,7 +3,6 @@ package equation
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -38,8 +37,8 @@ func crossLag(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	leftCount, _ := state.Get(nomagique.SampleCount)
-	rightCount, _ := input.Get(nomagique.SampleCount)
+	leftCount, _ := state.Get(types.SampleCount)
+	rightCount, _ := input.Get(types.SampleCount)
 	sampleCount := int(math.Min(leftCount, rightCount))
 	output := input
 

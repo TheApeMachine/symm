@@ -35,7 +35,7 @@ leadership emergence, and leader-cohort divergence across all ready paths in the
 */
 func CohortSentiment(
 	focalKey string,
-	number *types.Number[string],
+	number *nomagique.Number[string],
 ) (types.Frame, bool, error) {
 	output := types.Frame{}
 

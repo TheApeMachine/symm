@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -68,7 +67,7 @@ func (signal *Signal) support(symbol string) float64 {
 
 func metricValue(
 	frame nmtypes.Frame,
-	symbol nomagique.Symbol,
+	symbol nmtypes.Symbol,
 	measured bool,
 ) float64 {
 	if !measured {

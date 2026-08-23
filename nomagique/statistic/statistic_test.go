@@ -4,7 +4,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -44,9 +43,9 @@ func TestMedianEmptyIsProvisional(t *testing.T) {
 }
 
 func TestMaxOf(t *testing.T) {
-	symA := nomagique.MustIntern("metric/a")
-	symB := nomagique.MustIntern("metric/b")
-	symC := nomagique.MustIntern("metric/c")
+	symA := types.MustIntern("metric/a")
+	symB := types.MustIntern("metric/b")
+	symC := types.MustIntern("metric/c")
 
 	maxPrimitive := MaxOf(symA, symB, symC)
 
@@ -121,7 +120,7 @@ func sampleFrame(values ...float64) types.Frame {
 	input := types.Frame{}
 
 	for index, value := range values {
-		input.Put(nomagique.MustSampleSymbol(index), value)
+		input.Put(types.MustSampleSymbol(index), value)
 	}
 
 	return input

@@ -3,11 +3,10 @@ package statistic
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var SymbolBaseline = nomagique.MustIntern("baseline")
+var SymbolBaseline = types.MustIntern("baseline")
 
 /*
 Lift reports how far a value has risen above its baseline as a fraction of
@@ -21,7 +20,7 @@ func Lift(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nomagique.SampleValue)
+	value, hasValue := input.Get(types.SampleValue)
 	baseline, hasBaseline := input.Get(SymbolBaseline)
 
 	if !hasValue || !hasBaseline {

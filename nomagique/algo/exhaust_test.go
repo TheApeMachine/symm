@@ -5,14 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestExhaustPrimitive(t *testing.T) {
 	Convey("Given the Exhaust primitive", t, func() {
-		stream := nomagique.NewStream(Exhaust(), types.Frame{})
+		stream := nmtypes.NewStream(Exhaust(), types.Frame{})
 
 		Convey("Thermal Rejection: buy aggressor meeting adverse price drop", func() {
 			input := types.Frame{}
@@ -75,7 +74,7 @@ func TestExhaustPrimitive(t *testing.T) {
 }
 
 func BenchmarkExhaustPrimitive(b *testing.B) {
-	stream := nomagique.NewStream(Exhaust(), types.Frame{})
+	stream := nmtypes.NewStream(Exhaust(), types.Frame{})
 	input := types.Frame{}
 	input.Put(SymbolVolume, 50.0)
 	input.Put(SymbolSpread, 0.5)

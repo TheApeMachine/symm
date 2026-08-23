@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func liftObservationForTest(value float64, baseline float64) types.Frame {
 	input := types.Frame{}
-	input.Put(nomagique.SampleValue, value)
+	input.Put(types.SampleValue, value)
 	input.Put(SymbolBaseline, baseline)
 
 	return input

@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	symbolStability         = nomagique.MustIntern("stability")
-	SymbolPreviousStability = nomagique.MustIntern("governor/previous_stability")
+	symbolStability         = nmtypes.MustIntern("stability")
+	SymbolPreviousStability = nmtypes.MustIntern("governor/previous_stability")
 )
 
 /*
@@ -24,7 +23,7 @@ func Governor(
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
 	stability, hasStability := input.Get(symbolStability)
-	count, hasCount := input.Get(nomagique.SampleCount)
+	count, hasCount := input.Get(nmtypes.SampleCount)
 
 	if !hasStability || !hasCount || count < 0 || count != math.Trunc(count) {
 		return state, types.Frame{}, fmt.Errorf(
@@ -46,7 +45,7 @@ func Governor(
 	}
 
 	if count >= minimumGovernorSamples && hasPrevious && stability < previous {
-		target = math.Min(nomagique.MaxSamples, capacity+capacity)
+		target = math.Min(nmtypes.MaxSamples, capacity+capacity)
 	}
 
 	if count >= minimumGovernorSamples && stability >= 1 {

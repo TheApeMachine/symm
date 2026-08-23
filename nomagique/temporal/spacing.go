@@ -1,13 +1,12 @@
 package temporal
 
 import (
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolSpacingNanos = nomagique.MustIntern("spacing_nanos")
-	SymbolSpacingReady = nomagique.MustIntern("spacing_ready")
+	SymbolSpacingNanos = types.MustIntern("spacing_nanos")
+	SymbolSpacingReady = types.MustIntern("spacing_ready")
 )
 
 /*
@@ -20,7 +19,7 @@ func Spacing(
 ) (types.Frame, types.Frame, error) {
 	gaps := [MaxPathSamples]int64{}
 	gapCount := 0
-	count, _ := input.Get(nomagique.SampleCount)
+	count, _ := input.Get(types.SampleCount)
 
 	for index := 1; index < int(count); index++ {
 		previous, _, hasPrevious := PathSample(&input, index-1)

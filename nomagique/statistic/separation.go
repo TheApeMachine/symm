@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-var SymbolSeparation = nomagique.MustIntern("separation")
+var SymbolSeparation = nmtypes.MustIntern("separation")
 
 /*
 Separation reports the normalized margin between two non-negative competing

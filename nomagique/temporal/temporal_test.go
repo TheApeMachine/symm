@@ -4,7 +4,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -39,7 +38,7 @@ func TestClockAndDuration(t *testing.T) {
 }
 
 func TestIntervalRetainsPreviousTimestamp(t *testing.T) {
-	stream := nomagique.NewStream(Interval, types.Frame{})
+	stream := types.NewStream(Interval, types.Frame{})
 	input := types.Frame{}
 	input.Put(SymbolTimestamp, 100)
 	first, err := stream.Step(input)

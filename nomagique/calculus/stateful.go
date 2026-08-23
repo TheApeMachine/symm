@@ -3,7 +3,6 @@ package calculus
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
@@ -38,8 +37,8 @@ func Accumulate(state types.Frame, input types.Frame) (types.Frame, types.Frame,
 }
 
 // Clear removes configured coordinates from committed state.
-func Clear(symbols ...nomagique.Symbol) nomagique.Primitive {
-	configured := append([]nomagique.Symbol(nil), symbols...)
+func Clear(symbols ...types.Symbol) types.Primitive {
+	configured := append([]types.Symbol(nil), symbols...)
 
 	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		nextState := state

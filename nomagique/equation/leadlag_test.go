@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -53,11 +52,11 @@ func crossLagPath(values []float64, offset int64) types.Frame {
 }
 
 func hayashiEquationPath(timestamps []int64, values []float64) types.Frame {
-	path := nomagique.NewStream(temporal.Path, types.Frame{})
+	path := types.NewStream(temporal.Path, types.Frame{})
 
 	for index, timestamp := range timestamps {
 		input := types.Frame{}
-		input.Put(nomagique.SampleValue, values[index])
+		input.Put(types.SampleValue, values[index])
 		input.Put(temporal.SymbolUnixSec, float64(timestamp/1_000_000_000))
 		input.Put(temporal.SymbolUnixNsec, float64(timestamp%1_000_000_000))
 		input.Put(nmtypes.Span, float64(len(timestamps)))

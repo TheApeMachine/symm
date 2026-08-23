@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestSymbolRegistryContracts(t *testing.T) {
@@ -81,9 +80,9 @@ func TestFrameContracts(t *testing.T) {
 	third := MustIntern("test/frame/third")
 
 	Convey("A Frame is a copyable fixed-slot fact set", t, func() {
-		frame := types.Frame{}
+		frame := Frame{}
 		frame.Put(first, 3)
-		frame.Put(second, -0.0)
+		frame.Put(second, math.Copysign(0, -1))
 
 		value, found := frame.Get(first)
 		So(found, ShouldBeTrue)
@@ -97,8 +96,8 @@ func TestFrameContracts(t *testing.T) {
 	})
 
 	Convey("Merge overlays only populated facts and Delete removes presence", t, func() {
-		frame := types.Frame{}.Set(first, 1).Set(second, 2)
-		overlay := types.Frame{}.Set(second, 20).Set(third, 30)
+		frame := Frame{}.Set(first, 1).Set(second, 2)
+		overlay := Frame{}.Set(second, 20).Set(third, 30)
 		frame.Merge(overlay)
 		So(frame.MustGet(first), ShouldEqual, 1.0)
 		So(frame.MustGet(second), ShouldEqual, 20.0)
@@ -109,7 +108,7 @@ func TestFrameContracts(t *testing.T) {
 	})
 
 	Convey("All visits every populated slot in ascending symbol order", t, func() {
-		frame := types.Frame{}.Set(third, 3).Set(first, 1).Set(second, 2)
+		frame := Frame{}.Set(third, 3).Set(first, 1).Set(second, 2)
 		previous := -1
 		visited := 0
 		for symbol, value := range frame.All() {
@@ -129,8 +128,8 @@ func TestFrameContracts(t *testing.T) {
 	})
 
 	Convey("Equal compares presence and exact IEEE-754 representations", t, func() {
-		positiveZero := types.Frame{}.Set(first, 0)
-		negativeZero := types.Frame{}.Set(first, math.Copysign(0, -1))
+		positiveZero := Frame{}.Set(first, 0)
+		negativeZero := Frame{}.Set(first, math.Copysign(0, -1))
 		So(positiveZero.Equal(negativeZero), ShouldBeFalse)
 		So(positiveZero.Equal(Frame{}.Set(first, 0)), ShouldBeTrue)
 		So(positiveZero.Equal(Frame{}), ShouldBeFalse)
@@ -140,7 +139,7 @@ func TestFrameContracts(t *testing.T) {
 
 	Convey("Out-of-capacity access cannot alias a valid slot", t, func() {
 		invalid := Symbol(MaxSlots)
-		frame := types.Frame{}.Set(first, 1)
+		frame := Frame{}.Set(first, 1)
 		_, found := frame.Get(invalid)
 		So(found, ShouldBeFalse)
 		So(func() { frame.Delete(invalid) }, ShouldNotPanic)
@@ -150,7 +149,7 @@ func TestFrameContracts(t *testing.T) {
 	})
 
 	Convey("Hot-path Put and Get do not allocate", t, func() {
-		frame := types.Frame{}
+		frame := Frame{}
 		allocations := testing.AllocsPerRun(1000, func() {
 			frame.Put(first, 7)
 			_, _ = frame.Get(first)
@@ -161,10 +160,10 @@ func TestFrameContracts(t *testing.T) {
 
 func BenchmarkFrameGet(b *testing.B) {
 	symbol := MustIntern("benchmark/frame/value")
-	frame := types.Frame{}.Set(symbol, 7)
+	frame := Frame{}.Set(symbol, 7)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for iteration := 0; iteration < b.N; iteration++ {
+	
+	for b.Loop() {
 		_, _ = frame.Get(symbol)
 	}
 }

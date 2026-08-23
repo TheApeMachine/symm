@@ -2,8 +2,6 @@ package types
 
 import (
 	"testing"
-
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestMeasurementRetainsBoundaryMetadata(t *testing.T) {
@@ -25,7 +23,7 @@ func TestMeasurementRetainsBoundaryMetadata(t *testing.T) {
 
 func TestFrameMigrationAliases(t *testing.T) {
 	symbol := MustIntern("types_test/value")
-	frame := types.Frame{}
+	frame := Frame{}
 	frame.Put(symbol, 3)
 
 	if frame.MustGet(symbol) != 3 {

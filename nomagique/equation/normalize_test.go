@@ -5,7 +5,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -13,7 +12,7 @@ import (
 
 func TestNormalize(t *testing.T) {
 	Convey("Given a causal positive series", t, func() {
-		stream := nomagique.NewStream(Normalize(), types.Frame{})
+		stream := types.NewStream(Normalize(), types.Frame{})
 		first, err := stream.Step(equationSample(10, 0))
 		So(err, ShouldBeNil)
 		So(first.Has(SymbolRatio), ShouldBeFalse)
@@ -33,20 +32,20 @@ func TestNormalize(t *testing.T) {
 }
 
 func BenchmarkNormalize(benchmark *testing.B) {
-	stream := nomagique.NewStream(Normalize(), types.Frame{})
+	stream := types.NewStream(Normalize(), types.Frame{})
 	input := equationSample(20, 1)
 	_, _ = stream.Step(equationSample(10, 0))
 	benchmark.ReportAllocs()
-	benchmark.ResetTimer()
+	
 
-	for range benchmark.N {
+	for benchmark.Loop() {
 		_, _ = stream.Step(input)
 	}
 }
 
 func equationSample(value float64, seconds float64) types.Frame {
 	input := types.Frame{}
-	input.Put(nomagique.SampleValue, value)
+	input.Put(types.SampleValue, value)
 	input.Put(temporal.SymbolUnixSec, seconds)
 	input.Put(temporal.SymbolUnixNsec, 0)
 

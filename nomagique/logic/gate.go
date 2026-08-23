@@ -3,15 +3,14 @@ package logic
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 var (
-	SymbolCondition = nomagique.MustIntern("condition")
-	SymbolValue     = nomagique.MustIntern("value")
-	SymbolResult    = nomagique.MustIntern("result")
+	SymbolCondition = types.MustIntern("condition")
+	SymbolValue     = types.MustIntern("value")
+	SymbolResult    = types.MustIntern("result")
 )
 
 // Gate emits value when condition is non-zero and zero otherwise.

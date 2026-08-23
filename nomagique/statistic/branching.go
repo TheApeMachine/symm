@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -80,7 +79,7 @@ func Branching(
 	return state, output, nil
 }
 
-func inputValue(input types.Frame, symbol nomagique.Symbol) float64 {
+func inputValue(input types.Frame, symbol types.Symbol) float64 {
 	value, _ := input.Get(symbol)
 
 	return value

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
@@ -54,7 +53,7 @@ func pathObservation(value float64, timestamp int64, capacity int) types.Frame {
 }
 
 func BenchmarkPath(benchmark *testing.B) {
-	path := nomagique.NewStream(Path, types.Frame{})
+	path := types.NewStream(Path, types.Frame{})
 	input := pathObservation(100, 1, MaxPathSamples)
 	benchmark.ReportAllocs()
 

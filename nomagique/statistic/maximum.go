@@ -3,7 +3,6 @@ package statistic
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -45,7 +44,7 @@ func Maximum(
 /*
 MaxOf returns a primitive that evaluates the maximum over specific named symbols in input.
 */
-func MaxOf(symbols ...nomagique.Symbol) nomagique.Primitive {
+func MaxOf(symbols ...types.Symbol) types.Primitive {
 	return func(
 		state types.Frame,
 		input types.Frame,

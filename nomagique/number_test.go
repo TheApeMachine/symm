@@ -70,9 +70,9 @@ func TestNumberIsolationAndTransactions(t *testing.T) {
 
 	Convey("Initial state is evaluated exactly once for a newly stored key", t, func() {
 		calls := 0
-		number := NewNumberWithInitial[string](func(key string) Frame {
+		number := NewNumberWithInitial[string](func(key string) types.Frame {
 			calls++
-			returntypes.Frame{}.Set(numberTotal, float64(len(key)))
+			return types.Frame{}.Set(numberTotal, float64(len(key)))
 		}, numberAccumulator)
 		_, err := number.Step("abcd", types.Frame{}.Set(numberDelta, 1))
 		So(err, ShouldBeNil)
@@ -89,7 +89,7 @@ func TestNumberIsolationAndTransactions(t *testing.T) {
 		_, _ = number.Step("b", types.Frame{}.Set(numberDelta, 2))
 		count := 0
 		total := 0.0
-		number.Range(func(_ string, state Frame) bool {
+		number.Range(func(_ string, state types.Frame) bool {
 			count++
 			total += state.MustGet(numberTotal)
 			state.Put(numberTotal, 1000)
@@ -180,17 +180,17 @@ func TestNumberConcurrency(t *testing.T) {
 }
 
 func TestNumberCrossSectionAndSelection(t *testing.T) {
-	pair := func(state Frame, input Frame) (Frame, Frame, error) {
+	pair := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		output := types.Frame{}.Set(numberTotal, state.MustGet(numberTotal)+input.MustGet(numberTotal))
 		return state, output, nil
 	}
-	reduce := func(state Frame, input Frame) (Frame, Frame, error) {
+	reduce := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		total, _ := state.Get(numberTotal)
 		total += input.MustGet(numberTotal)
 		state.Put(numberTotal, total)
 		return state, state, nil
 	}
-	score := func(state Frame, input Frame) (Frame, Frame, error) {
+	score := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		output := input
 		output.Put(numberReady, 1)
 		return state, output, nil
@@ -201,7 +201,7 @@ func TestNumberCrossSectionAndSelection(t *testing.T) {
 		for key, value := range map[string]float64{"focal": 2, "first": 3, "second": 5} {
 			_, _ = number.Step(key, types.Frame{}.Set(numberDelta, value))
 		}
-		output, ready, err := number.CrossSection("focal", pair, reduce, Identity)
+		output, ready, err := number.CrossSection("focal", pair, reduce, types.Identity)
 		So(err, ShouldBeNil)
 		So(ready, ShouldBeTrue)
 		So(output.MustGet(numberTotal), ShouldEqual, 12.0)

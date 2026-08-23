@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -28,7 +27,7 @@ func TestFeatureDetectorOneLineAPI(t *testing.T) {
 		})
 
 		Convey("Feeding data via nomagique.Stream operates seamlessly with universal Frames", func() {
-			stream := nomagique.NewStream(detector.Primitive(), types.Frame{})
+			stream := types.NewStream(detector.Primitive(), types.Frame{})
 
 			input := types.Frame{}
 			input.Put(SymbolFeatureCount, 3)

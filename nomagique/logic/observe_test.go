@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestObserve(t *testing.T) {
-	alpha := nomagique.MustIntern("observe/test/alpha")
-	beta := nomagique.MustIntern("observe/test/beta")
+	alpha := types.MustIntern("observe/test/alpha")
+	beta := types.MustIntern("observe/test/beta")
 	primitive := Observe(alpha, beta)
 
 	Convey("Given every configured observation coordinate", t, func() {

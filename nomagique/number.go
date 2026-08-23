@@ -45,7 +45,7 @@ func (number *Number[Key]) Step(key Key, input Frame) (Frame, error) {
 	stream, err := number.stream(key)
 
 	if err != nil {
-		returntypes.Frame{}, err
+		return types.Frame{}, err
 	}
 
 	stream.mutex.Lock()
@@ -59,7 +59,7 @@ func (number *Number[Key]) Project(key Key) (Frame, bool) {
 	stream, found := number.load(key)
 
 	if !found {
-		returntypes.Frame{}, false
+		return types.Frame{}, false
 	}
 
 	stream.mutex.RLock()
@@ -74,7 +74,7 @@ func (number *Number[Key]) Output(key Key) (Frame, bool) {
 	stream, found := number.load(key)
 
 	if !found {
-		returntypes.Frame{}, false
+		return types.Frame{}, false
 	}
 
 	stream.mutex.RLock()
@@ -159,11 +159,11 @@ func (number *Number[Key]) CrossSection(
 	focal, found := number.Project(key)
 
 	if !found {
-		returntypes.Frame{}, false, nil
+		return types.Frame{}, false, nil
 	}
 
-	accumulator :=types.Frame{}
-	output :=types.Frame{}
+	accumulator := types.Frame{}
+	output := types.Frame{}
 	reduced := false
 	var crossSectionErr error
 
@@ -227,7 +227,7 @@ func (number *Number[Key]) ArgMax(
 	var selectionErr error
 
 	number.Range(func(key Key, state Frame) bool {
-		_, output, err := Step(score,types.Frame{}, state)
+		_, output, err := Step(score, types.Frame{}, state)
 
 		if err != nil {
 			selectionErr = err
@@ -355,23 +355,21 @@ func (number *Number[Key]) stream(key Key) (*numberStream, error) {
 		return stream, nil
 	}
 
-	initial :=types.Frame{}
+	initial := types.Frame{}
 
 	if number.initial != nil {
 		initial = number.initial(key)
 	}
 
+	candidateStream := types.NewStream(number.primitive, initial)
 	candidate := &numberStream{
-		stream: Stream{
-			primitive: number.primitive,
-			state:     initial,
-		},
+		stream: *candidateStream,
 	}
 	stored, _ := number.streams.LoadOrStore(key, candidate)
 	stream, valid := stored.(*numberStream)
 
 	if !valid {
-		return nil, primitiveError("number registry contains an invalid stream")
+		return nil, types.PrimitiveError("number registry contains an invalid stream")
 	}
 
 	return stream, nil
@@ -399,13 +397,13 @@ type Single func(input Frame) (Frame, error)
 // NewSingle composes primitives into one state-carrying callable.
 func NewSingle(primitives ...Primitive) Single {
 	pipeline := Pipe(primitives...)
-	state :=types.Frame{}
+	state := types.Frame{}
 
 	return func(input Frame) (Frame, error) {
 		nextState, output, err := Step(pipeline, state, input)
 
 		if err != nil {
-			returntypes.Frame{}, err
+			return types.Frame{}, err
 		}
 
 		state = nextState

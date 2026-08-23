@@ -5,13 +5,13 @@ FrameFromNamed converts a string-keyed boundary map into a Frame. It interns
 names and may allocate; use package-level symbols and Put in reducer hot paths.
 */
 func FrameFromNamed(values map[string]float64) (Frame, error) {
-	frame :=types.Frame{}
+	frame := Frame{}
 
 	for name, value := range values {
 		symbol, err := Intern(name)
 
 		if err != nil {
-			returntypes.Frame{}, err
+			return Frame{}, err
 		}
 
 		frame.Put(symbol, value)

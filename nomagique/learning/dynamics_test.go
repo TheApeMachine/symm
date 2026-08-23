@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestPredictiveDynamics(t *testing.T) {
 	Convey("Given an event-time predictive dynamics stream", t, func() {
-		stream := nomagique.NewStream(PredictiveDynamics, types.Frame{})
+		stream := types.NewStream(PredictiveDynamics, types.Frame{})
 		first := types.Frame{}
 		first.Put(SymbolDynamicsTime, 1)
 		first.Put(SymbolDynamicsPosition, 2)
@@ -51,7 +50,7 @@ func TestPredictiveDynamics(t *testing.T) {
 }
 
 func BenchmarkPredictiveDynamics(b *testing.B) {
-	stream := nomagique.NewStream(PredictiveDynamics, types.Frame{})
+	stream := types.NewStream(PredictiveDynamics, types.Frame{})
 	initial := types.Frame{}
 	initial.Put(SymbolDynamicsTime, 1)
 	initial.Put(SymbolDynamicsPosition, 0)

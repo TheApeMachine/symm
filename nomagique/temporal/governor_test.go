@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -16,7 +15,7 @@ func TestGovernor(t *testing.T) {
 		state.Put(SymbolCapacity, 4)
 		state.Put(SymbolPreviousStability, 0.75)
 		input := types.Frame{}
-		input.Put(nomagique.SampleCount, 4)
+		input.Put(types.SampleCount, 4)
 		input.Put(statistic.SymbolStability, 0.5)
 
 		_, output, err := Governor(state, input)
@@ -30,7 +29,7 @@ func TestGovernor(t *testing.T) {
 		state.Put(SymbolCapacity, 8)
 		state.Put(SymbolPreviousStability, 0.75)
 		input := types.Frame{}
-		input.Put(nomagique.SampleCount, 4)
+		input.Put(types.SampleCount, 4)
 		input.Put(statistic.SymbolStability, 1)
 
 		_, output, err := Governor(state, input)
@@ -45,7 +44,7 @@ func BenchmarkGovernor(benchmark *testing.B) {
 	state.Put(SymbolCapacity, 8)
 	state.Put(SymbolPreviousStability, 0.75)
 	input := types.Frame{}
-	input.Put(nomagique.SampleCount, 4)
+	input.Put(types.SampleCount, 4)
 	input.Put(statistic.SymbolStability, 0.5)
 	benchmark.ReportAllocs()
 

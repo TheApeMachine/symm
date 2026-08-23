@@ -66,7 +66,7 @@ func BenchmarkGeometry(benchmark *testing.B) {
 	input := geometryInput(99, 101, 4, 1, 1)
 	benchmark.ReportAllocs()
 
-	for range benchmark.N {
+	for benchmark.Loop() {
 		_, _ = stream.Step(input)
 	}
 }

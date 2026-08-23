@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -13,7 +12,7 @@ import (
 
 func TestAdaptiveBaseline(t *testing.T) {
 	Convey("Given successive observations", t, func() {
-		baseline := nomagique.NewStream(AdaptiveBaseline(), types.Frame{})
+		baseline := nmtypes.NewStream(AdaptiveBaseline(), types.Frame{})
 
 		first, err := baseline.Step(baselineObservation(100, 1))
 		So(err, ShouldBeNil)
@@ -32,7 +31,7 @@ func TestAdaptiveBaseline(t *testing.T) {
 
 func baselineObservation(value float64, seconds float64) types.Frame {
 	input := types.Frame{}
-	input.Put(nomagique.SampleValue, value)
+	input.Put(nmtypes.SampleValue, value)
 	input.Put(temporal.SymbolUnixSec, seconds)
 	input.Put(temporal.SymbolUnixNsec, 0)
 
@@ -40,7 +39,7 @@ func baselineObservation(value float64, seconds float64) types.Frame {
 }
 
 func BenchmarkAdaptiveBaseline(benchmark *testing.B) {
-	baseline := nomagique.NewStream(AdaptiveBaseline(), types.Frame{})
+	baseline := nmtypes.NewStream(AdaptiveBaseline(), types.Frame{})
 	input := baselineObservation(100, 1)
 	benchmark.ReportAllocs()
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-func primitiveError(message string) error {
+func PrimitiveError(message string) error {
 	return errors.New("nomagique: " + message)
 }
 

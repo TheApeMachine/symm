@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func velocityObservationForTest(value float64, sec float64) types.Frame {
 	input := types.Frame{}
-	input.Put(nomagique.SampleValue, value)
+	input.Put(types.SampleValue, value)
 	input.Put(SymbolUnixSec, sec)
 	input.Put(SymbolUnixNsec, 0)
 
@@ -19,7 +18,7 @@ func velocityObservationForTest(value float64, sec float64) types.Frame {
 
 func TestVelocity(t *testing.T) {
 	Convey("Given a single observation", t, func() {
-		stream := nomagique.NewStream(Velocity, types.Frame{})
+		stream := types.NewStream(Velocity, types.Frame{})
 
 		Convey("It should seed the differencer without a delta", func() {
 			output, err := stream.Step(velocityObservationForTest(100, 1000))
@@ -34,7 +33,7 @@ func TestVelocity(t *testing.T) {
 	})
 
 	Convey("Given a rising then accelerating series", t, func() {
-		stream := nomagique.NewStream(Velocity, types.Frame{})
+		stream := types.NewStream(Velocity, types.Frame{})
 
 		_, err := stream.Step(velocityObservationForTest(100, 1000))
 		So(err, ShouldBeNil)
@@ -60,7 +59,7 @@ func TestVelocity(t *testing.T) {
 	})
 
 	Convey("Given an observation with regressed event time", t, func() {
-		stream := nomagique.NewStream(Velocity, types.Frame{})
+		stream := types.NewStream(Velocity, types.Frame{})
 
 		_, err := stream.Step(velocityObservationForTest(100, 1000))
 		So(err, ShouldBeNil)
@@ -73,7 +72,7 @@ func TestVelocity(t *testing.T) {
 }
 
 func BenchmarkVelocity(b *testing.B) {
-	stream := nomagique.NewStream(Velocity, types.Frame{})
+	stream := types.NewStream(Velocity, types.Frame{})
 	input := velocityObservationForTest(100, 1000)
 	b.ReportAllocs()
 

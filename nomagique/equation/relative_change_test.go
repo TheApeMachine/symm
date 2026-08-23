@@ -48,7 +48,7 @@ func BenchmarkRelativeChange(benchmark *testing.B) {
 	input := equationSample(80, 1)
 	benchmark.ReportAllocs()
 
-	for range benchmark.N {
+	for benchmark.Loop() {
 		_, _ = stream.Step(input)
 	}
 }

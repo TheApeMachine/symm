@@ -3,17 +3,16 @@ package statistic
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var SymbolMaturity = nomagique.MustIntern("maturity")
+var SymbolMaturity = types.MustIntern("maturity")
 
 /*
 Maturity maps an empirical support count to count/(count+1). The measure starts
 at zero, rises monotonically, and approaches one without a chosen threshold.
 */
-func Maturity(countSymbol nomagique.Symbol) nomagique.Primitive {
+func Maturity(countSymbol types.Symbol) types.Primitive {
 	return func(
 		state types.Frame,
 		input types.Frame,

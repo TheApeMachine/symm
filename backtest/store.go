@@ -164,6 +164,10 @@ func migrateCaptureCounts(database *sql.DB) error {
 		}
 	}
 
+	if err = columns.Err(); err != nil {
+		return err
+	}
+
 	if err := columns.Close(); err != nil {
 		return err
 	}
@@ -714,7 +718,7 @@ func (store *Store) Frames(captureID int64, from time.Time) (
 	next := func() (Frame, bool) {
 		if !rows.Next() {
 			rows.Close()
-			returntypes.Frame{}, false
+			return Frame{}, false
 		}
 
 		var frame Frame
@@ -722,7 +726,7 @@ func (store *Store) Frames(captureID int64, from time.Time) (
 
 		if err := rows.Scan(&frame.Endpoint, &frame.Payload, &receivedAt); err != nil {
 			rows.Close()
-			returntypes.Frame{}, false
+			return Frame{}, false
 		}
 
 		frame.ReceivedAt, _ = time.Parse(time.RFC3339Nano, receivedAt)

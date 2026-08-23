@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/types"
-
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	. "github.com/smartystreets/goconvey/convey"

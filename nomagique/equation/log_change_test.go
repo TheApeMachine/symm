@@ -45,7 +45,7 @@ func BenchmarkLogChange(benchmark *testing.B) {
 	input := equationSample(110, 1)
 	benchmark.ReportAllocs()
 
-	for range benchmark.N {
+	for benchmark.Loop() {
 		_, _ = stream.Step(input)
 	}
 }

@@ -3,8 +3,6 @@ package types
 import (
 	"sync"
 	"testing"
-
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestStreamRejectsFailedCandidate(t *testing.T) {
@@ -14,7 +12,7 @@ func TestStreamRejectsFailedCandidate(t *testing.T) {
 		value := input.MustGet(inputSymbol)
 
 		if value < 0 {
-			return state, types.Frame{}, primitiveError("negative input")
+			return state, Frame{}, PrimitiveError("negative input")
 		}
 
 		nextState := state
@@ -23,17 +21,17 @@ func TestStreamRejectsFailedCandidate(t *testing.T) {
 		return nextState, nextState, nil
 	}
 
-	initial := types.Frame{}
+	initial := Frame{}
 	initial.Put(stateSymbol, 1)
 	stream := NewStream(primitive, initial)
-	valid := types.Frame{}
+	valid := Frame{}
 	valid.Put(inputSymbol, 2)
 
 	if _, err := stream.Step(valid); err != nil {
 		t.Fatal(err)
 	}
 
-	invalid := types.Frame{}
+	invalid := Frame{}
 	invalid.Put(inputSymbol, -4)
 
 	if _, err := stream.Step(invalid); err == nil {
@@ -57,8 +55,8 @@ func TestAtomicStreamCommitsConcurrentTransitions(t *testing.T) {
 		return nextState, nextState, nil
 	}
 
-	stream := NewAtomicStream(primitive, types.Frame{})
-	input := types.Frame{}
+	stream := NewAtomicStream(primitive, Frame{})
+	input := Frame{}
 	input.Put(deltaSymbol, 1)
 	waitGroup := sync.WaitGroup{}
 
@@ -93,14 +91,14 @@ func BenchmarkStreamStep(b *testing.B) {
 
 		return nextState, nextState, nil
 	}
-	stream := NewStream(primitive, types.Frame{})
-	input := types.Frame{}
+	stream := NewStream(primitive, Frame{})
+	input := Frame{}
 	input.Put(inputSymbol, 1)
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		_, _ = stream.Step(input)
 	}
 }
@@ -114,14 +112,14 @@ func BenchmarkAtomicStreamStep(b *testing.B) {
 
 		return nextState, nextState, nil
 	}
-	stream := NewAtomicStream(primitive, types.Frame{})
-	input := types.Frame{}
+	stream := NewAtomicStream(primitive, Frame{})
+	input := Frame{}
 	input.Put(inputSymbol, 1)
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		if _, err := stream.Step(input); err != nil {
 			b.Fatal(err)
 		}

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -46,8 +45,8 @@ func TestGateAndObservationPrimitives(t *testing.T) {
 	})
 
 	Convey("Observe checks presence while EnsureFinite additionally rejects poison", t, func() {
-		first := nomagique.MustIntern("test/logic/observe/first")
-		second := nomagique.MustIntern("test/logic/observe/second")
+		first := types.MustIntern("test/logic/observe/first")
+		second := types.MustIntern("test/logic/observe/second")
 		input := types.Frame{}.Set(first, math.NaN()).Set(second, 2)
 		_, output, err := Observe(first, second)(types.Frame{}, input)
 		So(err, ShouldBeNil)

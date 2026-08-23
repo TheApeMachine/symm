@@ -174,7 +174,7 @@ func (signal *Signal) measurement(
 
 func metricValue(
 	frame nmtypes.Frame,
-	symbol nomagique.Symbol,
+	symbol nmtypes.Symbol,
 	measured bool,
 ) float64 {
 	if !measured {

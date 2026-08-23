@@ -1,11 +1,12 @@
 package resonance
 
 import (
-nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"context"
 	"fmt"
 	"sync"
 	"time"
+
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 
 	"github.com/theapemachine/errnie"
 	"golang.design/x/lockfree/lf"
@@ -13,7 +14,6 @@ nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -542,7 +542,7 @@ dynamicsWire extracts the physical predictive dynamics frame into named scalars
 matching the frontend ResonanceDynamics schema.
 */
 func dynamicsWire(dynamics nmtypes.Frame) *wire.ResonanceDynamicsT {
-	value := func(symbol nomagique.Symbol) float64 {
+	value := func(symbol nmtypes.Symbol) float64 {
 		reading, _ := dynamics.Get(symbol)
 		return reading
 	}

@@ -3,7 +3,6 @@ package learning
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -45,7 +44,7 @@ integrating dictionary learning, multi-timescale temporal matrices, and innovati
 */
 type FeatureDetector struct {
 	manifold  *ResonanceManifold
-	primitive nomagique.Primitive
+	primitive types.Primitive
 	learn     bool
 	inputBuf  types.Frame
 }
@@ -95,10 +94,10 @@ func NewFeatureDetector(config FeatureDetectorConfig) *FeatureDetector {
 }
 
 /*
-Primitive returns the nomagique.Primitive reducer for use with nomagique.Stream,
+Primitive returns the types.Primitive reducer for use with types.Stream,
 KeyedStreams, or pipeline composition.
 */
-func (fd *FeatureDetector) Primitive() nomagique.Primitive {
+func (fd *FeatureDetector) Primitive() types.Primitive {
 	return fd.primitive
 }
 

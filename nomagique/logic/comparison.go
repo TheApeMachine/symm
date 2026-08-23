@@ -3,7 +3,6 @@ package logic
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
@@ -98,7 +97,7 @@ func Equal(state types.Frame, input types.Frame) (types.Frame, types.Frame, erro
 }
 
 // PositiveOrder validates two configured facts as 0 < lower < upper.
-func PositiveOrder(lower nomagique.Symbol, upper nomagique.Symbol) nomagique.Primitive {
+func PositiveOrder(lower types.Symbol, upper types.Symbol) types.Primitive {
 	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		lowerValue, hasLower := input.Get(lower)
 		upperValue, hasUpper := input.Get(upper)

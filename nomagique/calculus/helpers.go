@@ -4,19 +4,18 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func number(
 	frame *types.Frame,
-	symbol nomagique.Symbol,
+	symbol types.Symbol,
 	primitive string,
 ) (float64, error) {
 	value, found := frame.Get(symbol)
 
 	if !found {
-		name, named := nomagique.SymbolName(symbol)
+		name, named := types.SymbolName(symbol)
 
 		if !named {
 			name = fmt.Sprintf("symbol/%d", symbol)

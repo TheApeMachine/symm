@@ -1,5 +1,4 @@
 /*
-import (n "github.com/theapemachine/symm/nomagique/types"n)
 Package types retains descriptive boundary metadata and migration aliases for
 the universal nomagique engine types.
 

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -17,7 +16,7 @@ func TestComparisonPrimitives(t *testing.T) {
 
 	Convey("Comparison atoms emit exact binary conditions", t, func() {
 		cases := []struct {
-			primitive nomagique.Primitive
+			primitive types.Primitive
 			a, b      float64
 			expected  float64
 		}{
@@ -34,7 +33,7 @@ func TestComparisonPrimitives(t *testing.T) {
 	})
 
 	Convey("Comparisons reject ambiguous non-finite ordering", t, func() {
-		for _, primitive := range []nomagique.Primitive{GreaterThan, GreaterOrEqual, LessThan, Equal} {
+		for _, primitive := range []types.Primitive{GreaterThan, GreaterOrEqual, LessThan, Equal} {
 			for _, bad := range []types.Frame{
 				types.Frame{}, input(math.NaN(), 1), input(1, math.Inf(1)),
 			} {
@@ -45,8 +44,8 @@ func TestComparisonPrimitives(t *testing.T) {
 	})
 
 	Convey("PositiveOrder enforces the full strict invariant", t, func() {
-		lower := nomagique.MustIntern("test/logic/lower")
-		upper := nomagique.MustIntern("test/logic/upper")
+		lower := types.MustIntern("test/logic/lower")
+		upper := types.MustIntern("test/logic/upper")
 		validate := PositiveOrder(lower, upper)
 		_, output, err := validate(types.Frame{}, types.Frame{}.Set(lower, 1).Set(upper, 2))
 		So(err, ShouldBeNil)

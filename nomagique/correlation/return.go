@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolReturn    = nomagique.MustIntern("return")
-	SymbolMagnitude = nomagique.MustIntern("magnitude")
+	SymbolReturn    = types.MustIntern("return")
+	SymbolMagnitude = types.MustIntern("magnitude")
 )
 
 /*
@@ -21,7 +20,7 @@ func Return(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	count, _ := input.Get(nomagique.SampleCount)
+	count, _ := input.Get(types.SampleCount)
 	output := input
 
 	if count < 2 {

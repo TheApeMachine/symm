@@ -3,15 +3,14 @@ package temporal
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 var (
-	SymbolTimestamp = nomagique.MustIntern("timestamp")
-	SymbolPrevious  = nomagique.MustIntern("previous")
-	SymbolHasSeen   = nomagique.MustIntern("has_seen")
+	SymbolTimestamp = types.MustIntern("timestamp")
+	SymbolPrevious  = types.MustIntern("previous")
+	SymbolHasSeen   = types.MustIntern("has_seen")
 )
 
 /*

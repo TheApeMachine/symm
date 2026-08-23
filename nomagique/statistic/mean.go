@@ -1,11 +1,10 @@
 package statistic
 
 import (
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var SymbolMean = nomagique.MustIntern("mean")
+var SymbolMean = types.MustIntern("mean")
 
 /*
 Mean computes the arithmetic center of the populated generic sample slots.
@@ -18,8 +17,8 @@ func Mean(
 	mean := 0.0
 	count := 0
 
-	for index := range nomagique.MaxSamples {
-		value, found := input.Get(nomagique.MustSampleSymbol(index))
+	for index := range types.MaxSamples {
+		value, found := input.Get(types.MustSampleSymbol(index))
 
 		if !found {
 			continue

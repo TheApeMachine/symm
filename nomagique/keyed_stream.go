@@ -1,6 +1,9 @@
 package nomagique
 
-import "github.com/theapemachine/symm/nomagique/types"
+import (
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/types"
+)
 
 /*
 KeyedStreams is the source-compatible name for a keyed Number. New code should
@@ -25,7 +28,11 @@ func NewKeyedStreams[Key comparable](
 // Step routes one input to the unit selected by key.
 func (collection *KeyedStreams[Key]) Step(key Key, input types.Frame) (types.Frame, error) {
 	if collection == nil || collection.number == nil {
-		return types.Frame{}, primitiveError("keyed stream primitive is nil")
+		return types.Frame{}, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"keyed stream primitive is nil",
+			nil,
+		))
 	}
 
 	return collection.number.Step(key, input)

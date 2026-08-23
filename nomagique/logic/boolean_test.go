@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -17,7 +16,7 @@ func TestBooleanPrimitives(t *testing.T) {
 
 	Convey("And, Or, and Xor obey their complete numeric truth tables", t, func() {
 		cases := []struct {
-			primitive nomagique.Primitive
+			primitive types.Primitive
 			a, b      float64
 			expected  float64
 		}{
@@ -42,7 +41,7 @@ func TestBooleanPrimitives(t *testing.T) {
 	})
 
 	Convey("Boolean atoms reject absence, NaN, and infinities", t, func() {
-		for _, primitive := range []nomagique.Primitive{And, Or, Xor} {
+		for _, primitive := range []types.Primitive{And, Or, Xor} {
 			for _, bad := range []types.Frame{
 				types.Frame{}.Set(calculus.PortA, 1),
 				input(math.NaN(), 1),

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -12,7 +11,7 @@ import (
 SymbolDeviation is the relative absolute deviation of the observed value from
 the composed baseline.
 */
-var SymbolDeviation = nomagique.MustIntern("deviation")
+var SymbolDeviation = types.MustIntern("deviation")
 
 /*
 Deviation is a primitive: it reads the current value and the adaptive baseline
@@ -27,7 +26,7 @@ func Deviation(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nomagique.SampleValue)
+	value, hasValue := input.Get(types.SampleValue)
 	baseline, hasBaseline := input.Get(SymbolBaselineValue)
 
 	if !hasValue || !hasBaseline {

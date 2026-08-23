@@ -3,15 +3,14 @@ package temporal
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 var (
-	SymbolAge      = nomagique.MustIntern("age")
-	SymbolSpan     = nomagique.MustIntern("span")
-	SymbolProgress = nomagique.MustIntern("progress")
+	SymbolAge      = types.MustIntern("age")
+	SymbolSpan     = types.MustIntern("span")
+	SymbolProgress = types.MustIntern("progress")
 )
 
 /*
