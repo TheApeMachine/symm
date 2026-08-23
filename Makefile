@@ -29,7 +29,7 @@ OPTIMIZE_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -62,6 +62,11 @@ run:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
 	go run $(LDFLAGS) main.go
+
+experimental:
+	@echo "symm running (Ctrl+C to stop)"
+	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
+	go run $(LDFLAGS) main.go experimental
 
 backtest:
 	@echo "symm running (Ctrl+C to stop)"

@@ -63,15 +63,9 @@ AdvanceTick commits one real market observation to the engine clock and
 publishes that exact clock transition to the focused dashboard stream.
 */
 func (thesis *Thesis) AdvanceTick(at time.Time) int64 {
-	if thesis == nil {
-		panic("thesis: market clock required")
-	}
-
-	thesis.clockMu.Lock()
 	thesis.Tick++
 	thesis.At = at
 	tick := thesis.Tick
-	thesis.clockMu.Unlock()
 	thesis.ScheduleWork(SourcePlanner, nil)
 
 	thesis.Publish(&UIFrame{
