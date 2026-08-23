@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
@@ -69,7 +68,7 @@ func TestHawkesPipeline(t *testing.T) {
 			burstStart := start.Add(10 * time.Second)
 
 			for index := range 10 {
-				input := nomagique.Frame{}
+				input := types.Frame{}
 				input.Put(algo.SymbolMark, 1.0)
 				input.Put(nmtypes.EventTimeSec, float64(burstStart.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(index*1000))
@@ -116,7 +115,7 @@ func BenchmarkHawkesPipeline(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		input := nomagique.Frame{}
+		input := types.Frame{}
 		input.Put(algo.SymbolMark, 1.0)
 		input.Put(nmtypes.EventTimeSec, float64(start.Unix()))
 		input.Put(nmtypes.EventTimeNsec, 0)

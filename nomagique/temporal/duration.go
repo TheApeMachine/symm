@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
@@ -19,23 +20,23 @@ var (
 Duration computes elapsed seconds from separate second and nanosecond coordinates.
 */
 func Duration(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	currentSec, hasCurrentSec := input.Get(SymbolCurrentSec)
 	currentNsec, hasCurrentNsec := input.Get(SymbolCurrentNsec)
 	previousSec, hasPreviousSec := input.Get(SymbolPreviousSec)
 	previousNsec, hasPreviousNsec := input.Get(SymbolPreviousNsec)
 
 	if !hasCurrentSec || !hasCurrentNsec || !hasPreviousSec || !hasPreviousNsec {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: duration requires current and previous timestamp coordinates",
 		)
 	}
 
 	if !utils.IsFinite(currentSec, currentNsec, previousSec, previousNsec) ||
 		currentNsec < 0 || currentNsec >= 1e9 || previousNsec < 0 || previousNsec >= 1e9 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: duration coordinates must be finite and normalized",
 		)
 	}

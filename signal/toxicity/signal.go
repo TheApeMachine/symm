@@ -159,7 +159,7 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 			}
 		}
 
-		input := nomagique.Frame{}
+		input := types.Frame{}
 		input.Put(nmtypes.AlphaQuantity, filled)
 		input.Put(nmtypes.BetaQuantity, retreated)
 		input.Put(calculus.SymbolLeft, retreated)

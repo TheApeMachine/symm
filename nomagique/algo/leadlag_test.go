@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -22,9 +23,9 @@ func TestLeadLag(t *testing.T) {
 	})
 }
 
-func leadLagTestPaths(sampleCount int) (nomagique.Frame, nomagique.Frame) {
-	anchor := nomagique.NewStream(temporal.Path, nomagique.Frame{})
-	follower := nomagique.NewStream(temporal.Path, nomagique.Frame{})
+func leadLagTestPaths(sampleCount int) (types.Frame, types.Frame) {
+	anchor := nomagique.NewStream(temporal.Path, types.Frame{})
+	follower := nomagique.NewStream(temporal.Path, types.Frame{})
 	anchorValue := 100.0
 	followerValue := 100.0
 	previousReturn := 0.0
@@ -53,8 +54,8 @@ func leadLagTestPaths(sampleCount int) (nomagique.Frame, nomagique.Frame) {
 	return anchor.Project(), follower.Project()
 }
 
-func leadLagObservation(value float64, index int, capacity int) nomagique.Frame {
-	input := nomagique.Frame{}
+func leadLagObservation(value float64, index int, capacity int) types.Frame {
+	input := types.Frame{}
 	input.Put(nomagique.SampleValue, value)
 	input.Put(temporal.SymbolUnixSec, float64(index))
 	input.Put(temporal.SymbolUnixNsec, 0)

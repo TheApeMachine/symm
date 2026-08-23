@@ -2,19 +2,20 @@ package algorithm
 
 import (
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolOpportunitySupport        = nomagique.MustIntern("opportunity_support")
-	SymbolOpportunityContradiction  = nomagique.MustIntern("opportunity_contradiction")
-	SymbolOpportunityConditions     = nomagique.MustIntern("opportunity_conditions")
-	SymbolOpportunityConfidenceMass = nomagique.MustIntern("opportunity_confidence_mass")
+	SymbolOpportunitySupport          = nomagique.MustIntern("opportunity_support")
+	SymbolOpportunityContradiction    = nomagique.MustIntern("opportunity_contradiction")
+	SymbolOpportunityConditions       = nomagique.MustIntern("opportunity_conditions")
+	SymbolOpportunityConfidenceMass   = nomagique.MustIntern("opportunity_confidence_mass")
 	SymbolOpportunityConfidenceWeight = nomagique.MustIntern("opportunity_confidence_weight")
-	SymbolOpportunityBalance        = nomagique.MustIntern("opportunity_balance")
-	SymbolOpportunityScore          = nomagique.MustIntern("opportunity_score")
-	SymbolOpportunityDirection      = nomagique.MustIntern("opportunity_direction")
-	SymbolOpportunityConfidence     = nomagique.MustIntern("opportunity_confidence")
-	SymbolOpportunityReady          = nomagique.MustIntern("opportunity_ready")
+	SymbolOpportunityBalance          = nomagique.MustIntern("opportunity_balance")
+	SymbolOpportunityScore            = nomagique.MustIntern("opportunity_score")
+	SymbolOpportunityDirection        = nomagique.MustIntern("opportunity_direction")
+	SymbolOpportunityConfidence       = nomagique.MustIntern("opportunity_confidence")
+	SymbolOpportunityReady            = nomagique.MustIntern("opportunity_ready")
 
 	SymbolEdgeWeight     = nomagique.MustIntern("edge_weight")
 	SymbolEdgeConfidence = nomagique.MustIntern("edge_confidence")
@@ -22,10 +23,10 @@ var (
 )
 
 /*
-OpportunityReducer processes a single graph edge represented by a nomagique.Frame
+OpportunityReducer processes a single graph edge represented by a types.Frame
 and accumulates it into the support, contradiction, or conditions of the opportunity.
 */
-func OpportunityReducer(state nomagique.Frame, input nomagique.Frame) (nomagique.Frame, nomagique.Frame, error) {
+func OpportunityReducer(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 	weight, foundWeight := input.Get(SymbolEdgeWeight)
 	confidence, foundConf := input.Get(SymbolEdgeConfidence)
 	relation, foundRel := input.Get(SymbolEdgeRelation)
@@ -61,7 +62,7 @@ func OpportunityReducer(state nomagique.Frame, input nomagique.Frame) (nomagique
 OpportunityScorer extracts the calculated totals from the OpportunityReducer
 and computes the final dimensionless Score, Balance, and Confidence for the graph proposition.
 */
-func OpportunityScorer(state nomagique.Frame, input nomagique.Frame) (nomagique.Frame, nomagique.Frame, error) {
+func OpportunityScorer(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 	nextState := state
 	support, _ := state.Get(SymbolOpportunitySupport)
 	contradiction, _ := state.Get(SymbolOpportunityContradiction)

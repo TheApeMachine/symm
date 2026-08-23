@@ -1,19 +1,19 @@
 package statistic
 
-import "github.com/theapemachine/symm/nomagique"
+import "github.com/theapemachine/symm/nomagique/types"
 
 /*
 Median computes the exact median of populated generic sample slots. An empty
 sample set is a valid provisional result with ready zero.
 */
 func Median(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	values, count, err := collectSamples(&input, "median")
 
 	if err != nil {
-		return state, nomagique.Frame{}, err
+		return state, types.Frame{}, err
 	}
 
 	result := 0.0

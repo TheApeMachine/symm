@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -19,14 +20,14 @@ It expands after a stability decline, contracts to used evidence after perfect
 stability, and otherwise holds the current capacity.
 */
 func Governor(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	stability, hasStability := input.Get(symbolStability)
 	count, hasCount := input.Get(nomagique.SampleCount)
 
 	if !hasStability || !hasCount || count < 0 || count != math.Trunc(count) {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: governor requires stability and an integer sample count",
 		)
 	}

@@ -540,7 +540,7 @@ func (solver *Solver) resonanceWire(
 dynamicsWire extracts the physical predictive dynamics frame into named scalars
 matching the frontend ResonanceDynamics schema.
 */
-func dynamicsWire(dynamics nomagique.Frame) *wire.ResonanceDynamicsT {
+func dynamicsWire(dynamics types.Frame) *wire.ResonanceDynamicsT {
 	value := func(symbol nomagique.Symbol) float64 {
 		reading, _ := dynamics.Get(symbol)
 		return reading

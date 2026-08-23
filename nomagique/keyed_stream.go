@@ -1,162 +1,77 @@
 package nomagique
 
-import "sync"
+import "github.com/theapemachine/symm/nomagique/types"
 
 /*
-KeyedStreams owns one single-writer Stream per comparable key. The collection is
-safe for concurrent routing across different keys; each individual key must
-still have one ordered writer, normally a worker fed by a transport ring.
+KeyedStreams is the source-compatible name for a keyed Number. New code should
+use Number directly so the top-level composition boundary has one name.
 
-The key registry may allocate when a key is first observed. Established-key
-transitions use the same reducer path as Stream.
+Deprecated: use Number.
 */
 type KeyedStreams[Key comparable] struct {
-	primitive Primitive
-	initial   func(Key) Frame
-	streams   sync.Map
+	number *Number[Key]
 }
 
-/*
-NewKeyedStreams creates a generic keyed reducer collection. initial may be nil,
-in which case new keys start with an empty Frame.
-*/
+// NewKeyedStreams creates one isolated stream per key.
 func NewKeyedStreams[Key comparable](
-	primitive Primitive,
-	initial func(Key) Frame,
+	primitive types.Primitive,
+	initial func(Key) types.Frame,
 ) *KeyedStreams[Key] {
 	return &KeyedStreams[Key]{
-		primitive: primitive,
-		initial:   initial,
+		number: NewNumberWithInitial(initial, primitive),
 	}
 }
 
-/*
-Step routes one input to the stream selected by key.
-*/
-func (collection *KeyedStreams[Key]) Step(
-	key Key,
-	input Frame,
-) (Frame, error) {
-	stream, err := collection.stream(key)
-
-	if err != nil {
-		return Frame{}, err
+// Step routes one input to the unit selected by key.
+func (collection *KeyedStreams[Key]) Step(key Key, input types.Frame) (types.Frame, error) {
+	if collection == nil || collection.number == nil {
+		return types.Frame{}, primitiveError("keyed stream primitive is nil")
 	}
 
-	return stream.Step(input)
+	return collection.number.Step(key, input)
 }
 
-/*
-Project returns the last committed state for key.
-*/
-func (collection *KeyedStreams[Key]) Project(key Key) (Frame, bool) {
-	stream, found := collection.load(key)
-
-	if !found {
-		return Frame{}, false
+// Project returns the last committed state for key.
+func (collection *KeyedStreams[Key]) Project(key Key) (types.Frame, bool) {
+	if collection == nil || collection.number == nil {
+		return types.Frame{}, false
 	}
 
-	return stream.Project(), true
+	return collection.number.Project(key)
 }
 
-/*
-Output returns the last successful output for key.
-*/
-func (collection *KeyedStreams[Key]) Output(key Key) (Frame, bool) {
-	stream, found := collection.load(key)
-
-	if !found {
-		return Frame{}, false
+// Output returns the last successful output for key.
+func (collection *KeyedStreams[Key]) Output(key Key) (types.Frame, bool) {
+	if collection == nil || collection.number == nil {
+		return types.Frame{}, false
 	}
 
-	return stream.Output(), true
+	return collection.number.Output(key)
 }
 
-/*
-Error returns the last transition failure for key.
-*/
+// Error returns the last transition failure for key.
 func (collection *KeyedStreams[Key]) Error(key Key) (error, bool) {
-	stream, found := collection.load(key)
-
-	if !found {
+	if collection == nil || collection.number == nil {
 		return nil, false
 	}
 
-	return stream.Error(), true
+	return collection.number.Error(key)
 }
 
-/*
-Delete removes one keyed stream. The caller must ensure no worker is currently
-processing that key.
-*/
+// Delete removes one keyed stream.
 func (collection *KeyedStreams[Key]) Delete(key Key) {
-	if collection == nil {
+	if collection == nil || collection.number == nil {
 		return
 	}
 
-	collection.streams.Delete(key)
+	collection.number.Delete(key)
 }
 
-/*
-Range visits committed keyed state snapshots. Returning false stops iteration.
-*/
-func (collection *KeyedStreams[Key]) Range(
-	yield func(Key, Frame) bool,
-) {
-	if collection == nil || yield == nil {
+// Range visits committed keyed state snapshots.
+func (collection *KeyedStreams[Key]) Range(yield func(Key, types.Frame) bool) {
+	if collection == nil || collection.number == nil {
 		return
 	}
 
-	collection.streams.Range(func(storedKey any, storedValue any) bool {
-		key, validKey := storedKey.(Key)
-		stream, validStream := storedValue.(*Stream)
-
-		if !validKey || !validStream {
-			return true
-		}
-
-		return yield(key, stream.Project())
-	})
-}
-
-func (collection *KeyedStreams[Key]) stream(key Key) (*Stream, error) {
-	if collection == nil || collection.primitive == nil {
-		return nil, primitiveError("keyed stream primitive is nil")
-	}
-
-	if stream, found := collection.load(key); found {
-		return stream, nil
-	}
-
-	initial := Frame{}
-
-	if collection.initial != nil {
-		initial = collection.initial(key)
-	}
-
-	candidate := NewStream(collection.primitive, initial)
-	stored, _ := collection.streams.LoadOrStore(key, candidate)
-	stream, valid := stored.(*Stream)
-
-	if !valid {
-		return nil, primitiveError("keyed stream registry contains an invalid entry")
-	}
-
-	return stream, nil
-}
-
-func (collection *KeyedStreams[Key]) load(key Key) (*Stream, bool) {
-	if collection == nil {
-		return nil, false
-	}
-
-	stored, found := collection.streams.Load(key)
-
-	if !found {
-		return nil, false
-	}
-
-	stream, valid := stored.(*Stream)
-
-	return stream, valid
+	collection.number.Range(yield)
 }

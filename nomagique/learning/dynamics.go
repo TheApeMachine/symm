@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 const PredictiveDynamicsKey = "predictive_dynamics"
@@ -46,14 +47,14 @@ separation, and a unit phase rotor. Every retained value is carried in Frame
 state, so keyed streams can own the primitive without hidden mutable fields.
 */
 func PredictiveDynamics(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	observedAt, hasObservedAt := input.Get(SymbolDynamicsTime)
 	position, hasPosition := input.Get(SymbolDynamicsPosition)
 
 	if !hasObservedAt || !hasPosition {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"predictive dynamics: time and position required",
 		)
 	}
@@ -75,7 +76,7 @@ func PredictiveDynamics(
 	}
 
 	if observedAt < previousAt {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"predictive dynamics: event time must not regress",
 		)
 	}
@@ -163,13 +164,13 @@ func PredictiveDynamics(
 }
 
 func initializePredictiveDynamics(
-	state nomagique.Frame,
+	state types.Frame,
 	observedAt float64,
 	position float64,
 	activity float64,
 	phase float64,
 	hasPhase bool,
-) (nomagique.Frame, nomagique.Frame, error) {
+) (types.Frame, types.Frame, error) {
 	if !hasPhase {
 		phase = 0
 	}
@@ -196,7 +197,7 @@ func initializePredictiveDynamics(
 }
 
 func updateMoments(
-	state nomagique.Frame,
+	state types.Frame,
 	meanSymbol nomagique.Symbol,
 	m2Symbol nomagique.Symbol,
 	sample float64,
@@ -219,8 +220,8 @@ func sampleVariance(m2 float64, count float64) float64 {
 	return m2 / (count - 1)
 }
 
-func predictiveDynamicsOutput(state nomagique.Frame) nomagique.Frame {
-	output := nomagique.Frame{}
+func predictiveDynamicsOutput(state types.Frame) types.Frame {
+	output := types.Frame{}
 
 	for _, symbol := range []nomagique.Symbol{
 		SymbolDynamicsReady,

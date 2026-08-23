@@ -4,16 +4,16 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 type interventionGraphFixture struct{}
 
-func (interventionGraphFixture) ReasoningFrame() nomagique.Frame {
+func (interventionGraphFixture) ReasoningFrame() types.Frame {
 	return completeReasoningFrame()
 }
 
-func (interventionGraphFixture) ReasoningHistory() []nomagique.Frame {
+func (interventionGraphFixture) ReasoningHistory() []types.Frame {
 	return nil
 }
 
@@ -22,9 +22,9 @@ func (interventionGraphFixture) ReasoningKey() string {
 }
 
 func (interventionGraphFixture) ApplyReasoningIntervention(
-	state nomagique.Frame,
+	state types.Frame,
 	action float64,
-) (nomagique.Frame, error) {
+) (types.Frame, error) {
 	horizon, _ := state.Get(SymbolHorizon)
 	position, _ := state.Get(SymbolPosition)
 	state.Put(SymbolHorizon, horizon+1)

@@ -106,7 +106,7 @@ func (signal *Signal) consume() {
 			) {
 				notional := trade.Price.Float64() * trade.Qty
 
-				input := nomagique.Frame{}
+				input := types.Frame{}
 				input.Put(calculus.SymbolRight, notional)
 				input.Put(calculus.SymbolLeft, 0)
 

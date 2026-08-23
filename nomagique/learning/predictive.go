@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -76,7 +77,7 @@ type PredictiveOutput struct {
 	Readout             []float64 // Multi-layer latents + innovation residuals [z_1..z_L, e_0..e_{L-1}]
 
 	// Physical Latent Dynamics
-	Dynamics nomagique.Frame // Kinematics (Velocity, Acceleration, StoredEnergy, Jumps, Rotor)
+	Dynamics types.Frame // Kinematics (Velocity, Acceleration, StoredEnergy, Jumps, Rotor)
 
 	// Resolution Telemetry
 	LastResolution *ResolutionOutcome
@@ -91,7 +92,7 @@ type PredictiveCoder struct {
 	manifold *ResonanceManifold
 	ledger   *TemporalLedger
 	dynamics *nomagique.Stream
-	
+
 	currentHorizon int
 }
 
@@ -135,7 +136,7 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 
 	manifold := NewResonanceManifold(arch, targetDim, pace)
 	ledger := NewTemporalLedger(maxHorizon, target)
-	dynamics := nomagique.NewStream(PredictiveDynamics, nomagique.Frame{})
+	dynamics := nomagique.NewStream(PredictiveDynamics, types.Frame{})
 
 	return &PredictiveCoder{
 		config:         config,
@@ -145,7 +146,6 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		currentHorizon: 1,
 	}
 }
-
 
 /*
 Step advances the entire predictive coding loop in a single call.
@@ -229,7 +229,7 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 	} else {
 		pc.currentHorizon = 1
 	}
-	
+
 	supportedHorizon := pc.currentHorizon
 
 	// 5. Generate forward rollouts & contraction envelope
@@ -250,7 +250,7 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 		dynTime = float64(input.Step)
 	}
 
-	dynInput := nomagique.Frame{}
+	dynInput := types.Frame{}
 	dynInput.Put(SymbolDynamicsTime, dynTime)
 	dynInput.Put(SymbolDynamicsPosition, pos)
 	dynInput.Put(SymbolDynamicsActivity, input.Drive)
@@ -317,4 +317,3 @@ func (pc *PredictiveCoder) ResolveTargets(features []float64, targets []float64)
 
 	return nil
 }
-

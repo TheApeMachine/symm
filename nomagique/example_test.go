@@ -1,17 +1,17 @@
-package nomagique_test
+package nomagique
 
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func ExampleStep() {
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(calculus.SymbolLeft, 3)
 	input.Put(calculus.SymbolRight, 4)
-	_, output, err := nomagique.Step(calculus.Sum, nomagique.Frame{}, input)
+	_, output, err := Step(calculus.Sum, types.Frame{}, input)
 
 	if err != nil {
 		panic(err)
@@ -22,20 +22,20 @@ func ExampleStep() {
 }
 
 func ExampleKeyedStreams() {
-	totalSymbol := nomagique.MustIntern("example/total")
-	deltaSymbol := nomagique.MustIntern("example/delta")
+	totalSymbol := types.MustIntern("example/total")
+	deltaSymbol := types.MustIntern("example/delta")
 	accumulate := func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
+		state types.Frame,
+		input types.Frame,
+	) (types.Frame, types.Frame, error) {
 		total, _ := state.Get(totalSymbol)
 		nextState := state
 		nextState.Put(totalSymbol, total+input.MustGet(deltaSymbol))
 
 		return nextState, nextState, nil
 	}
-	streams := nomagique.NewKeyedStreams[string](accumulate, nil)
-	input := nomagique.Frame{}
+	streams := NewKeyedStreams[string](accumulate, nil)
+	input := types.Frame{}
 	input.Put(deltaSymbol, 2)
 	_, _ = streams.Step("A", input)
 	output, _ := streams.Step("A", input)

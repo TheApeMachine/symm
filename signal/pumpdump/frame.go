@@ -8,18 +8,19 @@ import (
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-func eventFrame(at time.Time) nomagique.Frame {
-	input := nomagique.Frame{}
+func eventFrame(at time.Time) types.Frame {
+	input := types.Frame{}
 	input.Put(nmtypes.EventTimeSec, float64(at.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(at.Nanosecond()))
 
 	return input
 }
 
-func sampleFrame(at time.Time, value float64) nomagique.Frame {
+func sampleFrame(at time.Time, value float64) types.Frame {
 	input := eventFrame(at)
 	input.Put(nomagique.SampleValue, value)
 
@@ -28,18 +29,18 @@ func sampleFrame(at time.Time, value float64) nomagique.Frame {
 
 func absoluteSample(
 	primitive nomagique.Primitive,
-	input nomagique.Frame,
-) (nomagique.Frame, error) {
-	_, output, err := nomagique.Step(primitive, nomagique.Frame{}, input)
+	input types.Frame,
+) (types.Frame, error) {
+	_, output, err := nomagique.Step(primitive, types.Frame{}, input)
 
 	return output, err
 }
 
 func polarizationFrame(
 	change float64,
-	normalized nomagique.Frame,
-) nomagique.Frame {
-	input := nomagique.Frame{}
+	normalized types.Frame,
+) types.Frame {
+	input := types.Frame{}
 	input.Put(equation.SymbolChange, change)
 	mean, hasMean := normalized.Get(statistic.SymbolMean)
 	ready, hasReady := normalized.Get(statistic.SymbolReady)
@@ -55,7 +56,7 @@ func polarizationFrame(
 	return input
 }
 
-func observedFrom(output nomagique.Frame, fallback time.Time) time.Time {
+func observedFrom(output types.Frame, fallback time.Time) time.Time {
 	seconds, hasSeconds := output.Get(temporal.SymbolObservedSec)
 	nanoseconds, hasNanoseconds := output.Get(temporal.SymbolObservedNsec)
 

@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -16,9 +17,9 @@ var (
 Geomean combines positive finite values stored in generic sample slots.
 */
 func Geomean(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	count := 0
 	logSum := 0.0
 
@@ -31,7 +32,7 @@ func Geomean(
 		}
 
 		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			return state, nomagique.Frame{}, fmt.Errorf(
+			return state, types.Frame{}, fmt.Errorf(
 				"probability: geomean sample/%d must be positive and finite",
 				index,
 			)
@@ -42,7 +43,7 @@ func Geomean(
 	}
 
 	if count == 0 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"probability: geomean requires at least one sample",
 		)
 	}

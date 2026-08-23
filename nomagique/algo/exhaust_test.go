@@ -6,15 +6,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestExhaustPrimitive(t *testing.T) {
 	Convey("Given the Exhaust primitive", t, func() {
-		stream := nomagique.NewStream(Exhaust(), nomagique.Frame{})
+		stream := nomagique.NewStream(Exhaust(), types.Frame{})
 
 		Convey("Thermal Rejection: buy aggressor meeting adverse price drop", func() {
-			input := nomagique.Frame{}
+			input := types.Frame{}
 			input.Put(SymbolVolume, 50.0)
 			input.Put(SymbolSpread, 0.5)
 			input.Put(SymbolPriceDelta, -2.0)
@@ -31,7 +32,7 @@ func TestExhaustPrimitive(t *testing.T) {
 
 		Convey("Reversal: Directional flip opposing previous flow", func() {
 			// First tick: buy flow
-			input1 := nomagique.Frame{}
+			input1 := types.Frame{}
 			input1.Put(SymbolVolume, 50.0)
 			input1.Put(SymbolSpread, 0.5)
 			input1.Put(SymbolPriceDelta, 1.0)
@@ -42,7 +43,7 @@ func TestExhaustPrimitive(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			// Second tick: aggressive sell flow (reversal)
-			input2 := nomagique.Frame{}
+			input2 := types.Frame{}
 			input2.Put(SymbolVolume, 80.0)
 			input2.Put(SymbolSpread, 0.5)
 			input2.Put(SymbolPriceDelta, -1.0)
@@ -57,7 +58,7 @@ func TestExhaustPrimitive(t *testing.T) {
 		})
 
 		Convey("Adversarial: Zero volume and neutral ticks produce zero urgency", func() {
-			input := nomagique.Frame{}
+			input := types.Frame{}
 			input.Put(SymbolVolume, 0.0)
 			input.Put(SymbolSpread, 0.0)
 			input.Put(SymbolPriceDelta, 0.0)
@@ -74,8 +75,8 @@ func TestExhaustPrimitive(t *testing.T) {
 }
 
 func BenchmarkExhaustPrimitive(b *testing.B) {
-	stream := nomagique.NewStream(Exhaust(), nomagique.Frame{})
-	input := nomagique.Frame{}
+	stream := nomagique.NewStream(Exhaust(), types.Frame{})
+	input := types.Frame{}
 	input.Put(SymbolVolume, 50.0)
 	input.Put(SymbolSpread, 0.5)
 	input.Put(SymbolPriceDelta, -2.0)

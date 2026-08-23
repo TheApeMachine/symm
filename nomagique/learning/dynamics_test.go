@@ -5,12 +5,13 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestPredictiveDynamics(t *testing.T) {
 	Convey("Given an event-time predictive dynamics stream", t, func() {
-		stream := nomagique.NewStream(PredictiveDynamics, nomagique.Frame{})
-		first := nomagique.Frame{}
+		stream := nomagique.NewStream(PredictiveDynamics, types.Frame{})
+		first := types.Frame{}
 		first.Put(SymbolDynamicsTime, 1)
 		first.Put(SymbolDynamicsPosition, 2)
 		first.Put(SymbolDynamicsActivity, 0.25)
@@ -19,7 +20,7 @@ func TestPredictiveDynamics(t *testing.T) {
 		So(firstOutput.MustGet(SymbolDynamicsReady), ShouldEqual, 0)
 
 		Convey("A later observation should expose motion, memory, energy, and jump diagnostics", func() {
-			second := nomagique.Frame{}
+			second := types.Frame{}
 			second.Put(SymbolDynamicsTime, 2)
 			second.Put(SymbolDynamicsPosition, 3)
 			second.Put(SymbolDynamicsActivity, 0.75)
@@ -38,7 +39,7 @@ func TestPredictiveDynamics(t *testing.T) {
 
 		Convey("A regressed timestamp should leave committed state untouched", func() {
 			before := stream.Project()
-			regressed := nomagique.Frame{}
+			regressed := types.Frame{}
 			regressed.Put(SymbolDynamicsTime, 0.5)
 			regressed.Put(SymbolDynamicsPosition, 4)
 			_, measureErr := stream.Step(regressed)
@@ -50,8 +51,8 @@ func TestPredictiveDynamics(t *testing.T) {
 }
 
 func BenchmarkPredictiveDynamics(b *testing.B) {
-	stream := nomagique.NewStream(PredictiveDynamics, nomagique.Frame{})
-	initial := nomagique.Frame{}
+	stream := nomagique.NewStream(PredictiveDynamics, types.Frame{})
+	initial := types.Frame{}
 	initial.Put(SymbolDynamicsTime, 1)
 	initial.Put(SymbolDynamicsPosition, 0)
 	initial.Put(SymbolDynamicsActivity, 0)
@@ -60,7 +61,7 @@ func BenchmarkPredictiveDynamics(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(SymbolDynamicsActivity, 0.5)
 	input.Put(SymbolDynamicsExternalPower, 0.25)
 	b.ReportAllocs()

@@ -1,6 +1,9 @@
 package temporal
 
-import "github.com/theapemachine/symm/nomagique"
+import (
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
+)
 
 var (
 	SymbolSpacingNanos = nomagique.MustIntern("spacing_nanos")
@@ -12,9 +15,9 @@ Spacing emits the exact discrete median of the positive event-time gaps in a
 Path. It uses retained timestamps only and imposes no external time window.
 */
 func Spacing(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	gaps := [MaxPathSamples]int64{}
 	gapCount := 0
 	count, _ := input.Get(nomagique.SampleCount)

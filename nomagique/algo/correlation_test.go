@@ -4,13 +4,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestCorrelation(t *testing.T) {
 	Convey("Given a coherent cohort with focal excess energy", t, func() {
-		state := nomagique.Frame{}
+		state := types.Frame{}
 		state.Put(nmcorrelation.SymbolReady, 1)
 		state.Put(nmcorrelation.SymbolTotalSupport, 4)
 		state.Put(nmcorrelation.SymbolWeightedSigned, 3)
@@ -32,7 +32,7 @@ func TestCorrelation(t *testing.T) {
 }
 
 func BenchmarkCorrelation(benchmark *testing.B) {
-	state := nomagique.Frame{}
+	state := types.Frame{}
 	state.Put(nmcorrelation.SymbolReady, 1)
 	state.Put(nmcorrelation.SymbolTotalSupport, 4)
 	state.Put(nmcorrelation.SymbolWeightedSigned, 3)

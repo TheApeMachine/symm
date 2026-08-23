@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 const (
@@ -119,7 +120,7 @@ var DefaultFeatureColumns = []int{
 /*
 ValidateReasoningFrame ensures the semantic state is complete before search.
 */
-func ValidateReasoningFrame(frame nomagique.Frame) error {
+func ValidateReasoningFrame(frame types.Frame) error {
 	for symbolIndex, symbol := range reasoningSymbols {
 		if _, found := frame.Get(symbol); found {
 			continue
@@ -152,7 +153,7 @@ func ValidateReasoningFrame(frame nomagique.Frame) error {
 /*
 FrameToRow converts named state into the fixed SCM column contract.
 */
-func FrameToRow(frame nomagique.Frame) ([]float64, error) {
+func FrameToRow(frame types.Frame) ([]float64, error) {
 	if err := ValidateReasoningFrame(frame); err != nil {
 		return nil, err
 	}
@@ -169,15 +170,15 @@ func FrameToRow(frame nomagique.Frame) ([]float64, error) {
 /*
 RowToFrame converts the stable SCM row contract back into named state.
 */
-func RowToFrame(row []float64) (nomagique.Frame, error) {
+func RowToFrame(row []float64) (types.Frame, error) {
 	if len(row) != ReasoningColumnCount {
-		return nomagique.Frame{}, fmt.Errorf(
+		return types.Frame{}, fmt.Errorf(
 			"mcts: reasoning row has width %d; expected %d",
 			len(row), ReasoningColumnCount,
 		)
 	}
 
-	frame := nomagique.Frame{}
+	frame := types.Frame{}
 
 	for column, symbol := range reasoningSymbols {
 		frame.Put(symbol, row[column])
@@ -189,7 +190,7 @@ func RowToFrame(row []float64) (nomagique.Frame, error) {
 /*
 FrameValues returns a stable named projection for UI inspection.
 */
-func FrameValues(frame nomagique.Frame) map[string]float64 {
+func FrameValues(frame types.Frame) map[string]float64 {
 	values := make(map[string]float64, ReasoningColumnCount)
 
 	for symbolIndex, symbol := range reasoningSymbols {

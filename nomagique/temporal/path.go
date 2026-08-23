@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -18,22 +19,22 @@ observation occupies two generic sample slots; the timestamp is bit-encoded so
 Unix nanoseconds survive Frame storage without float precision loss.
 */
 func Path(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	value, hasValue := input.Get(nomagique.SampleValue)
 	seconds, hasSeconds := input.Get(SymbolUnixSec)
 	nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
 
 	if !hasValue || !hasSeconds || !hasNanoseconds {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: path requires a value and event time",
 		)
 	}
 
 	if seconds != math.Trunc(seconds) || nanoseconds != math.Trunc(nanoseconds) ||
 		nanoseconds < 0 || nanoseconds >= float64(nanosecondsPerSecond) {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: path requires integral seconds and normalized nanoseconds",
 		)
 	}
@@ -44,11 +45,11 @@ func Path(
 	capacity, err := pathCapacity(state, input, count)
 
 	if err != nil {
-		return state, nomagique.Frame{}, err
+		return state, types.Frame{}, err
 	}
 
 	if capacity < count {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: path capacity cannot be smaller than its retained count",
 		)
 	}
@@ -57,7 +58,7 @@ func Path(
 		latestTimestamp, _, found := PathSample(&state, count-1)
 
 		if !found || timestamp < latestTimestamp {
-			return state, nomagique.Frame{}, fmt.Errorf(
+			return state, types.Frame{}, fmt.Errorf(
 				"temporal: path event time must not regress",
 			)
 		}
@@ -88,7 +89,7 @@ func Path(
 /*
 PathSample returns one retained observation in chronological order.
 */
-func PathSample(frame *nomagique.Frame, index int) (int64, float64, bool) {
+func PathSample(frame *types.Frame, index int) (int64, float64, bool) {
 	if frame == nil {
 		return 0, 0, false
 	}
@@ -118,7 +119,7 @@ func PathSample(frame *nomagique.Frame, index int) (int64, float64, bool) {
 }
 
 func putPathSample(
-	frame *nomagique.Frame,
+	frame *types.Frame,
 	index int,
 	timestamp int64,
 	value float64,
@@ -131,8 +132,8 @@ func putPathSample(
 }
 
 func pathCapacity(
-	state nomagique.Frame,
-	input nomagique.Frame,
+	state types.Frame,
+	input types.Frame,
 	count int,
 ) (int, error) {
 	capacity, found := input.Get(nmtypes.Span)
@@ -171,7 +172,7 @@ func pathCapacity(
 	return int(capacity), nil
 }
 
-func pathCount(frame nomagique.Frame) int {
+func pathCount(frame types.Frame) int {
 	count, found := frame.Get(nomagique.SampleCount)
 
 	if !found {
@@ -181,7 +182,7 @@ func pathCount(frame nomagique.Frame) int {
 	return int(count)
 }
 
-func pathHead(frame nomagique.Frame) int {
+func pathHead(frame types.Frame) int {
 	head, found := frame.Get(nomagique.SampleHead)
 
 	if !found {

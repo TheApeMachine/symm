@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -27,13 +28,13 @@ Branching calculates a bivariate branching matrix, spectral radius, immediate
 offspring, and total descendants.
 */
 func Branching(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	beta, found := input.Get(SymbolBeta)
 
 	if !found || beta <= 0 || math.IsNaN(beta) || math.IsInf(beta, 0) {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: branching requires positive finite beta",
 		)
 	}
@@ -44,7 +45,7 @@ func Branching(
 	alphaBB := inputValue(input, SymbolAlphaBB) / beta
 
 	if !finite(alphaAA, alphaAB, alphaBA, alphaBB) {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: branching coefficients must be finite",
 		)
 	}
@@ -79,7 +80,7 @@ func Branching(
 	return state, output, nil
 }
 
-func inputValue(input nomagique.Frame, symbol nomagique.Symbol) float64 {
+func inputValue(input types.Frame, symbol nomagique.Symbol) float64 {
 	value, _ := input.Get(symbol)
 
 	return value

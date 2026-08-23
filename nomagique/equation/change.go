@@ -11,22 +11,25 @@ import (
 var SymbolChange = nomagique.MustIntern("equation/change")
 
 /*
-Change composes a causal Observer with Difference. The first observation has no
-invented change; every later output is current minus the immediately preceding
-observation and carries empirical maturity.
+Change observes one named fact, then explicitly binds the causal pair to the
+local A/B ports of Difference. The first observation emits no invented change.
 */
 func Change(source nomagique.Symbol) nomagique.Primitive {
 	return nomagique.Pipe(
 		temporal.Observer(source),
-		nomagique.Fork(
+		nomagique.ForkStrict(
 			statistic.Maturity(temporal.SymbolObservations),
 			logic.If(
-				nomagique.Relay(calculus.SymbolReady, logic.SymbolCondition),
-				nomagique.Pipe(
-					nomagique.Relay(calculus.SymbolCurrent, calculus.SymbolLeft),
-					nomagique.Relay(calculus.SymbolPrevious, calculus.SymbolRight),
+				nomagique.Wire(
+					nomagique.Identity,
+					nomagique.In(calculus.SymbolReady, logic.SymbolCondition),
+					nomagique.Out(logic.SymbolCondition, logic.SymbolCondition),
+				),
+				nomagique.Wire(
 					calculus.Difference,
-					nomagique.Relay(calculus.SymbolResult, SymbolChange),
+					nomagique.In(calculus.SymbolCurrent, calculus.PortA),
+					nomagique.In(calculus.SymbolPrevious, calculus.PortB),
+					nomagique.Out(calculus.PortResult, SymbolChange),
 				),
 				nomagique.Identity,
 			),

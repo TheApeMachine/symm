@@ -1,79 +1,147 @@
 package logic
 
 import (
+	"errors"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var routeOutput = nomagique.MustIntern("test/route/output")
+func TestIfRouting(t *testing.T) {
+	predicateState := nomagique.MustIntern("test/logic/if/predicate_state")
+	branchState := nomagique.MustIntern("test/logic/if/branch_state")
+	branchOutput := nomagique.MustIntern("test/logic/if/branch_output")
 
-func TestMux(t *testing.T) {
-	Convey("Given a true condition and two living operands", t, func() {
-		input := comparisonInput(3, 2)
-		input.Put(SymbolCondition, 1)
-		_, output, err := Mux(nomagique.Frame{}, input)
+	predicate := func(condition float64) nomagique.Primitive {
+		return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+			state.Put(predicateState, 1)
+			output := input
+			output.Put(SymbolCondition, condition)
+			return state, output, nil
+		}
+	}
 
+	Convey("If evaluates its predicate and exactly one selected branch", t, func() {
+		trueCalls := 0
+		falseCalls := 0
+		whenTrue := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+			trueCalls++
+			state.Put(branchState, 1)
+			output := input
+			output.Put(branchOutput, 10)
+			return state, output, nil
+		}
+		whenFalse := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+			falseCalls++
+			state.Put(branchState, -1)
+			output := input
+			output.Put(branchOutput, 20)
+			return state, output, nil
+		}
+		next, output, err := If(predicate(1), whenTrue, whenFalse)(types.Frame{}, types.Frame{})
 		So(err, ShouldBeNil)
-		So(output.MustGet(SymbolResult), ShouldEqual, 3.0)
+		So(trueCalls, ShouldEqual, 1)
+		So(falseCalls, ShouldEqual, 0)
+		So(next.MustGet(predicateState), ShouldEqual, 1.0)
+		So(next.MustGet(branchState), ShouldEqual, 1.0)
+		So(output.MustGet(branchOutput), ShouldEqual, 10.0)
 	})
-}
 
-func TestIf(t *testing.T) {
-	Convey("Given a relational predicate and two branches", t, func() {
-		branch := If(GreaterThan, routeValue(1), routeValue(-1))
-		_, output, err := branch(nomagique.Frame{}, comparisonInput(3, 2))
-
-		Convey("It should execute only the matching branch", func() {
+	Convey("False is exactly zero; every finite non-zero value is true", t, func() {
+		for _, condition := range []float64{-7, -0.1, 0.1, 7} {
+			_, output, err := If(predicate(condition), nomagique.Assign(branchOutput, 1), nomagique.Assign(branchOutput, 0))(
+				types.Frame{}, types.Frame{},
+			)
 			So(err, ShouldBeNil)
-			So(output.MustGet(routeOutput), ShouldEqual, 1.0)
-		})
+			So(output.MustGet(branchOutput), ShouldEqual, 1.0)
+		}
+		_, output, err := If(predicate(0), nomagique.Assign(branchOutput, 1), nomagique.Assign(branchOutput, 0))(
+			types.Frame{}, types.Frame{},
+		)
+		So(err, ShouldBeNil)
+		So(output.MustGet(branchOutput), ShouldEqual, 0.0)
+	})
+
+	Convey("Non-finite and missing predicate output is refused", t, func() {
+		for _, bad := range []nomagique.Primitive{
+			predicate(math.NaN()),
+			predicate(math.Inf(1)),
+			nomagique.Identity,
+		} {
+			_, _, err := If(bad, nomagique.Identity, nomagique.Identity)(types.Frame{}, types.Frame{})
+			So(err, ShouldNotBeNil)
+		}
+	})
+
+	Convey("A selected branch error rolls predicate and branch state back", t, func() {
+		initial := types.Frame{}.Set(branchState, 4)
+		badBranch := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+			state.Put(branchState, 999)
+			return state, input, errors.New("branch rejected")
+		}
+		next, output, err := If(predicate(1), badBranch, nil)(initial, types.Frame{})
+		So(err, ShouldNotBeNil)
+		So(next.Equal(initial), ShouldBeTrue)
+		So(output.Count(), ShouldEqual, 0)
 	})
 }
 
-func TestCircuit(t *testing.T) {
-	Convey("Given ordered relational rules", t, func() {
-		circuit := Circuit([]Rule{
-			{When: GreaterThan, Then: routeValue(1)},
-		}, routeValue(-1))
-		_, output, err := circuit(nomagique.Frame{}, comparisonInput(2, 3))
+func TestCircuitRouting(t *testing.T) {
+	firstState := nomagique.MustIntern("test/logic/circuit/first_state")
+	selected := nomagique.MustIntern("test/logic/circuit/selected")
+	predicate := func(condition float64, mutate nomagique.Symbol) nomagique.Primitive {
+		return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+			if mutate != 0 {
+				state.Put(mutate, 1)
+			}
+			output := input
+			output.Put(SymbolCondition, condition)
+			return state, output, nil
+		}
+	}
 
-		Convey("It should execute the fallback when no rule matches", func() {
-			So(err, ShouldBeNil)
-			So(output.MustGet(routeOutput), ShouldEqual, -1.0)
-		})
+	Convey("Circuit executes only the first matching rule", t, func() {
+		calls := 0
+		branch := func(value float64) nomagique.Primitive {
+			return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+				calls++
+				output := input
+				output.Put(selected, value)
+				return state, output, nil
+			}
+		}
+		program := Circuit([]Rule{
+			{When: predicate(0, firstState), Then: branch(1)},
+			{When: predicate(1, 0), Then: branch(2)},
+			{When: predicate(1, 0), Then: branch(3)},
+		}, branch(4))
+		next, output, err := program(types.Frame{}, types.Frame{})
+		So(err, ShouldBeNil)
+		So(calls, ShouldEqual, 1)
+		So(next.MustGet(firstState), ShouldEqual, 1.0)
+		So(output.MustGet(selected), ShouldEqual, 2.0)
 	})
-}
 
-func routeValue(value float64) nomagique.Primitive {
-	return func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
-		output := input
-		output.Put(routeOutput, value)
+	Convey("Circuit runs fallback only when no rule matches", t, func() {
+		program := Circuit([]Rule{{When: predicate(0, 0), Then: nomagique.Assign(selected, 1)}}, nomagique.Assign(selected, 9))
+		_, output, err := program(types.Frame{}, types.Frame{})
+		So(err, ShouldBeNil)
+		So(output.MustGet(selected), ShouldEqual, 9.0)
+	})
 
-		return state, output, nil
-	}
-}
-
-func BenchmarkIf(benchmark *testing.B) {
-	branch := If(GreaterThan, routeValue(1), routeValue(-1))
-	input := comparisonInput(3, 2)
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		_, _, _ = branch(nomagique.Frame{}, input)
-	}
-}
-
-func BenchmarkMux(benchmark *testing.B) {
-	input := comparisonInput(3, 2)
-	input.Put(SymbolCondition, 1)
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		_, _, _ = Mux(nomagique.Frame{}, input)
-	}
+	Convey("A late predicate or fallback failure rolls all earlier candidates back", t, func() {
+		initial := types.Frame{}.Set(firstState, 4)
+		failure := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+			state.Put(firstState, 999)
+			return state, input, errors.New("reject")
+		}
+		program := Circuit([]Rule{{When: predicate(0, firstState), Then: nil}}, failure)
+		next, output, err := program(initial, types.Frame{})
+		So(err, ShouldNotBeNil)
+		So(next.Equal(initial), ShouldBeTrue)
+		So(output.Count(), ShouldEqual, 0)
+	})
 }

@@ -10,7 +10,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/logic/category"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -1060,7 +1059,7 @@ func TestExtractPredictiveDynamicsNodes(t *testing.T) {
 		at := time.Unix(2, 0).UTC()
 		symbol := types.NewSymbol("BTC/USD")
 		symbol.Resonance.Push(graphResonanceManifold())
-		dynamics := nomagique.Frame{}
+		dynamics := types.Frame{}
 		dynamics.Put(learning.SymbolDynamicsReady, 1)
 		dynamics.Put(learning.SymbolDynamicsSampleCount, 8)
 		dynamics.Put(learning.SymbolDynamicsVelocity, 0.4)

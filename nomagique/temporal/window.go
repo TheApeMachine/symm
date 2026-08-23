@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -28,21 +29,21 @@ one, but the default path stays data-driven and bounded by the engine's
 fixed-sample ceiling.
 */
 func Window(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	value, hasValue := input.Get(nomagique.SampleValue)
 	_, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
 	if !hasValue || !hasSec || !hasNsec {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: window requires a value and event time",
 		)
 	}
 
 	if nsec < 0 || nsec >= 1e9 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: window requires normalized nanoseconds",
 		)
 	}
@@ -50,11 +51,11 @@ func Window(
 	capacity, err := windowCapacity(state, input)
 
 	if err != nil {
-		return state, nomagique.Frame{}, err
+		return state, types.Frame{}, err
 	}
 
 	if capacity <= 0 || capacity > nomagique.MaxSamples {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: window capacity must be an integer from 1 through %d",
 			nomagique.MaxSamples,
 		)
@@ -64,7 +65,7 @@ func Window(
 	head := windowHead(state)
 
 	if count < 0 || count > capacity || head < 0 || head >= capacity {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: window retained state is invalid for capacity %d",
 			capacity,
 		)
@@ -104,7 +105,7 @@ that Configure merged into state). Until a Span has been composed in, the
 window bootstraps one slot and doubles only when the count reaches the current
 capacity, bounded by the engine's sample ceiling.
 */
-func windowCapacity(state nomagique.Frame, input nomagique.Frame) (int, error) {
+func windowCapacity(state types.Frame, input types.Frame) (int, error) {
 	var (
 		capacityValue float64
 		found         bool
@@ -147,7 +148,7 @@ func windowCapacity(state nomagique.Frame, input nomagique.Frame) (int, error) {
 	return next, nil
 }
 
-func windowCount(state nomagique.Frame) int {
+func windowCount(state types.Frame) int {
 	value, found := state.Get(nomagique.SampleCount)
 
 	if !found {
@@ -157,7 +158,7 @@ func windowCount(state nomagique.Frame) int {
 	return int(value)
 }
 
-func windowHead(state nomagique.Frame) int {
+func windowHead(state types.Frame) int {
 	value, found := state.Get(nomagique.SampleHead)
 
 	if !found {

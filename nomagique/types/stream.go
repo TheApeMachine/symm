@@ -1,4 +1,4 @@
-package nomagique
+package types
 
 import "sync/atomic"
 
@@ -31,7 +31,7 @@ func (stream *Stream) Step(input Frame) (Frame, error) {
 		return Frame{}, primitiveError("stream primitive is nil")
 	}
 
-	nextState, output, err := stream.primitive(stream.state, input)
+	nextState, output, err := Step(stream.primitive, stream.state, input)
 
 	if err != nil {
 		stream.err = err
@@ -125,7 +125,7 @@ func (stream *AtomicStream) Step(input Frame) (Frame, error) {
 
 	for {
 		current := stream.state.Load()
-		nextState, output, err := stream.primitive(*current, input)
+		nextState, output, err := Step(stream.primitive, *current, input)
 
 		if err != nil {
 			return Frame{}, err

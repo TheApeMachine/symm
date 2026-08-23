@@ -196,7 +196,7 @@ func (signal *Signal) run() {
                 for ticker := range symbol.MarketTickers(types.SourceLiquidity) {
                     // 1. Input conversion: lift a raw exchange tick into the
                     //    generic nomagique vocabulary.
-                    input := nomagique.Frame{}
+                    input := types.Frame{}
                     input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
                     input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
                     input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
@@ -238,10 +238,10 @@ import (
     "github.com/theapemachine/symm/nomagique/calculus"
 )
 
-input := nomagique.Frame{}
+input := types.Frame{}
 input.Put(calculus.SymbolLeft, 3)
 input.Put(calculus.SymbolRight, 4)
-_, output, err := nomagique.Step(calculus.Sum, nomagique.Frame{}, input)
+_, output, err := nomagique.Step(calculus.Sum, types.Frame{}, input)
 // output.MustGet(calculus.SymbolResult) == 7
 ```
 

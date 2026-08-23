@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -46,7 +47,7 @@ type FeatureDetector struct {
 	manifold  *ResonanceManifold
 	primitive nomagique.Primitive
 	learn     bool
-	inputBuf  nomagique.Frame
+	inputBuf  types.Frame
 }
 
 /*
@@ -140,9 +141,9 @@ func (fd *FeatureDetector) Step(values ...float64) (FeatureOutput, error) {
 }
 
 /*
-StepFrame accepts and updates a nomagique.Frame in one line.
+StepFrame accepts and updates a types.Frame in one line.
 */
-func (fd *FeatureDetector) StepFrame(input nomagique.Frame) (nomagique.Frame, error) {
-	_, output, err := fd.primitive(nomagique.Frame{}, input)
+func (fd *FeatureDetector) StepFrame(input types.Frame) (types.Frame, error) {
+	_, output, err := fd.primitive(types.Frame{}, input)
 	return output, err
 }

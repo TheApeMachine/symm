@@ -1,241 +1,233 @@
 package calculus
 
 import (
+	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/utils"
 )
 
-/*
-Sum adds finite left and right operands.
-*/
-func Sum(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	left, err := number(&input, SymbolLeft, "sum")
+// Sum adds finite A and B operands.
+func Sum(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	a, hasA := input.Get(PortA)
+	b, hasB := input.Get(PortB)
 
-	if err != nil {
-		return state, nomagique.Frame{}, err
+	if !hasA || !hasB {
+		return state, types.Frame{}, fmt.Errorf("calculus: sum requires a and b")
 	}
 
-	right, err := number(&input, SymbolRight, "sum")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
+	if !utils.IsFinite(a) || !utils.IsFinite(b) {
+		return state, types.Frame{}, fmt.Errorf("calculus: sum requires finite operands")
 	}
 
-	return state, resultFrame(input, left+right), nil
-}
+	result := a + b
 
-/*
-Difference subtracts right from left.
-*/
-func Difference(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	left, err := number(&input, SymbolLeft, "difference")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	right, err := number(&input, SymbolRight, "difference")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	return state, resultFrame(input, left-right), nil
-}
-
-/*
-Product multiplies finite left and right operands.
-*/
-func Product(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	left, err := number(&input, SymbolLeft, "product")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	right, err := number(&input, SymbolRight, "product")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	return state, resultFrame(input, left*right), nil
-}
-
-/*
-Quotient divides a finite numerator by a strictly positive denominator. The
-numerator remains signed, which distinguishes it from evidence-only Ratio.
-*/
-func Quotient(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	numerator, err := number(&input, SymbolLeft, "quotient")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	denominator, err := number(&input, SymbolRight, "quotient")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	if denominator <= 0 {
-		return state, nomagique.Frame{}, &calculusError{
-			primitive: "quotient",
-			message:   "denominator must be positive",
-		}
-	}
-
-	return state, resultFrame(input, numerator/denominator), nil
-}
-
-/*
-Average returns the arithmetic center of two finite operands.
-*/
-func Average(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	left, err := number(&input, SymbolLeft, "average")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	right, err := number(&input, SymbolRight, "average")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	return state, resultFrame(input, left+(right-left)/2), nil
-}
-
-/*
-Absolute projects a finite scalar onto its magnitude.
-*/
-func Absolute(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	value, err := number(&input, SymbolValue, "absolute")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	return state, resultFrame(input, math.Abs(value)), nil
-}
-
-/*
-Negative reflects a finite scalar through zero.
-*/
-func Negative(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	value, err := number(&input, SymbolValue, "negative")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	return state, resultFrame(input, -value), nil
-}
-
-/*
-Positive projects a finite scalar onto the non-negative half-line.
-*/
-func Positive(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	value, err := number(&input, SymbolValue, "positive")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	return state, resultFrame(input, math.Max(0, value)), nil
-}
-
-/*
-Attack applies a finite jump to a finite base level.
-*/
-func Attack(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	base, err := number(&input, SymbolBase, "attack")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	jump, err := number(&input, SymbolJump, "attack")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	result := base + jump
-	output := resultFrame(input, result)
-	output.Put(SymbolBase, result)
-
-	return state, output, nil
-}
-
-/*
-Rate calculates count divided by positive duration.
-*/
-func Rate(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
-	count, err := number(&input, SymbolCount, "rate")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	duration, err := number(&input, SymbolDuration, "rate")
-
-	if err != nil {
-		return state, nomagique.Frame{}, err
-	}
-
-	if duration <= 0 {
-		return state, nomagique.Frame{}, rateError("duration must be positive")
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: sum overflowed")
 	}
 
 	output := input
-	output.Put(SymbolRate, count/duration)
+	output.Put(PortResult, result)
 
 	return state, output, nil
 }
 
-func rateError(message string) error {
-	return &calculusError{primitive: "rate", message: message}
+// Difference subtracts B from A.
+func Difference(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	a, hasA := input.Get(PortA)
+	b, hasB := input.Get(PortB)
+
+	if !hasA || !hasB {
+		return state, types.Frame{}, fmt.Errorf("calculus: difference requires a and b")
+	}
+
+	if !utils.IsFinite(a) || !utils.IsFinite(b) {
+		return state, types.Frame{}, fmt.Errorf("calculus: difference requires finite operands")
+	}
+
+	result := a - b
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: difference overflowed")
+	}
+
+	output := input
+	output.Put(PortResult, result)
+
+	return state, output, nil
 }
 
-type calculusError struct {
-	primitive string
-	message   string
+// Product multiplies finite A and B operands.
+func Product(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	a, hasA := input.Get(PortA)
+	b, hasB := input.Get(PortB)
+
+	if !hasA || !hasB {
+		return state, types.Frame{}, fmt.Errorf("calculus: product requires a and b")
+	}
+
+	if !utils.IsFinite(a) || !utils.IsFinite(b) {
+		return state, types.Frame{}, fmt.Errorf("calculus: product requires finite operands")
+	}
+
+	result := a * b
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: product overflowed")
+	}
+
+	output := input
+	output.Put(PortResult, result)
+
+	return state, output, nil
 }
 
-func (calculusErr *calculusError) Error() string {
-	return "calculus: " + calculusErr.primitive + " " + calculusErr.message
+// Quotient divides finite A by finite, non-zero B.
+func Quotient(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	a, hasA := input.Get(PortA)
+	b, hasB := input.Get(PortB)
+
+	if !hasA || !hasB {
+		return state, types.Frame{}, fmt.Errorf("calculus: quotient requires a and b")
+	}
+
+	if !utils.IsFinite(a) || !utils.IsFinite(b) {
+		return state, types.Frame{}, fmt.Errorf("calculus: quotient requires finite operands")
+	}
+
+	if b == 0 {
+		return state, types.Frame{}, fmt.Errorf("calculus: quotient denominator must be non-zero")
+	}
+
+	result := a / b
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: quotient overflowed")
+	}
+
+	output := input
+	output.Put(PortResult, result)
+
+	return state, output, nil
+}
+
+// Average returns the overflow-resistant arithmetic center of A and B.
+func Average(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	a, hasA := input.Get(PortA)
+	b, hasB := input.Get(PortB)
+
+	if !hasA || !hasB {
+		return state, types.Frame{}, fmt.Errorf("calculus: average requires a and b")
+	}
+
+	if !utils.IsFinite(a) || !utils.IsFinite(b) {
+		return state, types.Frame{}, fmt.Errorf("calculus: average requires finite operands")
+	}
+
+	result := a/2 + b/2
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: average overflowed")
+	}
+
+	output := input
+	output.Put(PortResult, result)
+
+	return state, output, nil
+}
+
+// Absolute projects finite X onto its magnitude.
+func Absolute(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	x, found := input.Get(PortX)
+
+	if !found || !utils.IsFinite(x) {
+		return state, types.Frame{}, fmt.Errorf("calculus: absolute requires finite x")
+	}
+
+	output := input
+	output.Put(PortResult, math.Abs(x))
+
+	return state, output, nil
+}
+
+// Negative reflects finite X through zero.
+func Negative(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	x, found := input.Get(PortX)
+
+	if !found || !utils.IsFinite(x) {
+		return state, types.Frame{}, fmt.Errorf("calculus: negative requires finite x")
+	}
+
+	result := -x
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: negative overflowed")
+	}
+
+	output := input
+	output.Put(PortResult, result)
+
+	return state, output, nil
+}
+
+// Positive projects finite X onto the non-negative half-line.
+func Positive(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	x, found := input.Get(PortX)
+
+	if !found || !utils.IsFinite(x) {
+		return state, types.Frame{}, fmt.Errorf("calculus: positive requires finite x")
+	}
+
+	output := input
+	output.Put(PortResult, math.Max(0, x))
+
+	return state, output, nil
+}
+
+// Attack applies a finite jump to a finite base level.
+func Attack(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	base, hasBase := input.Get(SymbolBase)
+	jump, hasJump := input.Get(SymbolJump)
+
+	if !hasBase || !hasJump || !utils.IsFinite(base) || !utils.IsFinite(jump) {
+		return state, types.Frame{}, fmt.Errorf("calculus: attack requires finite base and jump")
+	}
+
+	result := base + jump
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: attack overflowed")
+	}
+
+	output := input
+	output.Put(SymbolBase, result)
+	output.Put(PortResult, result)
+
+	return state, output, nil
+}
+
+// Rate calculates finite count divided by positive finite duration.
+func Rate(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	count, hasCount := input.Get(SymbolCount)
+	duration, hasDuration := input.Get(SymbolDuration)
+
+	if !hasCount || !hasDuration || !utils.IsFinite(count) || !utils.IsFinite(duration) {
+		return state, types.Frame{}, fmt.Errorf("calculus: rate requires finite count and duration")
+	}
+
+	if duration <= 0 {
+		return state, types.Frame{}, fmt.Errorf("calculus: rate duration must be positive")
+	}
+
+	result := count / duration
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: rate overflowed")
+	}
+
+	output := input
+	output.Put(SymbolRate, result)
+
+	return state, output, nil
 }

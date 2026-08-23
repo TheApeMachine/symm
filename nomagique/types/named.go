@@ -1,4 +1,4 @@
-package nomagique
+package types
 
 /*
 FrameFromNamed converts a string-keyed boundary map into a Frame. It interns

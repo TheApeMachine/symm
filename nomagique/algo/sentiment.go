@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -35,8 +36,8 @@ leadership emergence, and leader-cohort divergence across all ready paths in the
 func CohortSentiment(
 	focalKey string,
 	number *nomagique.Number[string],
-) (nomagique.Frame, bool, error) {
-	output := nomagique.Frame{}
+) (types.Frame, bool, error) {
+	output := types.Frame{}
 
 	if number == nil {
 		return output, false, nil
@@ -49,7 +50,7 @@ func CohortSentiment(
 	}
 
 	_, focalReturnFrame, err := nomagique.Step(
-		correlation.Return, nomagique.Frame{}, focalPath,
+		correlation.Return, types.Frame{}, focalPath,
 	)
 
 	if err != nil {
@@ -86,9 +87,9 @@ func collectPeerReturns(
 	peers := make([]peerReturn, 0)
 	var scanErr error
 
-	number.Range(func(key string, state nomagique.Frame) bool {
+	number.Range(func(key string, state types.Frame) bool {
 		_, returnFrame, returnErr := nomagique.Step(
-			correlation.Return, nomagique.Frame{}, state,
+			correlation.Return, types.Frame{}, state,
 		)
 
 		if returnErr != nil {
@@ -121,7 +122,7 @@ func collectPeerReturns(
 func computeSentimentScores(
 	focalKey string,
 	peers []peerReturn,
-	output *nomagique.Frame,
+	output *types.Frame,
 ) {
 	count := float64(len(peers))
 	changes, magnitudes, totalMag, leaderIndex, leaderMag, advances, declines := scanPeers(peers)

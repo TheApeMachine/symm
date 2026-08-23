@@ -15,7 +15,6 @@ import (
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -241,7 +240,7 @@ func TestUpdate(t *testing.T) {
 				switch value := stored.(type) {
 				case *learning.ResonanceManifold:
 					manifold = value
-				case nomagique.Frame:
+				case types.Frame:
 					hasDynamics = true
 				}
 			}

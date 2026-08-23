@@ -104,7 +104,7 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 		touchBid, touchAsk := frameTouch(frame)
 		deepBid, deepAsk := frameDeep(frame)
 
-		input := nomagique.Frame{}
+		input := types.Frame{}
 		input.Put(algo.SymbolTouchBidQty, touchBid)
 		input.Put(algo.SymbolTouchAskQty, touchAsk)
 		input.Put(algo.SymbolDeepBidQty, deepBid)

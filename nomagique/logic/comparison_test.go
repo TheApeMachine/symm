@@ -1,62 +1,59 @@
 package logic
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-func TestGreaterThan(t *testing.T) {
-	Convey("Given two living operands", t, func() {
-		input := comparisonInput(3, 2)
-		_, output, err := GreaterThan(nomagique.Frame{}, input)
-
-		Convey("It should emit their strict ordering", func() {
-			So(err, ShouldBeNil)
-			So(output.MustGet(SymbolCondition), ShouldEqual, 1.0)
-		})
-	})
-}
-
-func TestLessThan(t *testing.T) {
-	Convey("Given two living operands", t, func() {
-		input := comparisonInput(2, 3)
-		_, output, err := LessThan(nomagique.Frame{}, input)
-
-		Convey("It should emit their strict ordering", func() {
-			So(err, ShouldBeNil)
-			So(output.MustGet(SymbolCondition), ShouldEqual, 1.0)
-		})
-	})
-}
-
-func TestEqual(t *testing.T) {
-	Convey("Given two identical living operands", t, func() {
-		input := comparisonInput(3, 3)
-		_, output, err := Equal(nomagique.Frame{}, input)
-
-		Convey("It should emit exact equality", func() {
-			So(err, ShouldBeNil)
-			So(output.MustGet(SymbolCondition), ShouldEqual, 1.0)
-		})
-	})
-}
-
-func comparisonInput(left float64, right float64) nomagique.Frame {
-	input := nomagique.Frame{}
-	input.Put(calculus.SymbolLeft, left)
-	input.Put(calculus.SymbolRight, right)
-
-	return input
-}
-
-func BenchmarkGreaterThan(benchmark *testing.B) {
-	input := comparisonInput(3, 2)
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		_, _, _ = GreaterThan(nomagique.Frame{}, input)
+func TestComparisonPrimitives(t *testing.T) {
+	input := func(a, b float64) types.Frame {
+		return types.Frame{}.Set(calculus.PortA, a).Set(calculus.PortB, b)
 	}
+
+	Convey("Comparison atoms emit exact binary conditions", t, func() {
+		cases := []struct {
+			primitive nomagique.Primitive
+			a, b      float64
+			expected  float64
+		}{
+			{GreaterThan, 2, 1, 1}, {GreaterThan, 1, 1, 0}, {GreaterThan, -2, -1, 0},
+			{GreaterOrEqual, 2, 1, 1}, {GreaterOrEqual, 1, 1, 1}, {GreaterOrEqual, -2, -1, 0},
+			{LessThan, 2, 1, 0}, {LessThan, 1, 1, 0}, {LessThan, -2, -1, 1},
+			{Equal, 2, 1, 0}, {Equal, 1, 1, 1}, {Equal, 0, math.Copysign(0, -1), 1},
+		}
+		for _, test := range cases {
+			_, output, err := test.primitive(types.Frame{}, input(test.a, test.b))
+			So(err, ShouldBeNil)
+			So(output.MustGet(SymbolCondition), ShouldEqual, test.expected)
+		}
+	})
+
+	Convey("Comparisons reject ambiguous non-finite ordering", t, func() {
+		for _, primitive := range []nomagique.Primitive{GreaterThan, GreaterOrEqual, LessThan, Equal} {
+			for _, bad := range []types.Frame{
+				types.Frame{}, input(math.NaN(), 1), input(1, math.Inf(1)),
+			} {
+				_, _, err := primitive(types.Frame{}, bad)
+				So(err, ShouldNotBeNil)
+			}
+		}
+	})
+
+	Convey("PositiveOrder enforces the full strict invariant", t, func() {
+		lower := nomagique.MustIntern("test/logic/lower")
+		upper := nomagique.MustIntern("test/logic/upper")
+		validate := PositiveOrder(lower, upper)
+		_, output, err := validate(types.Frame{}, types.Frame{}.Set(lower, 1).Set(upper, 2))
+		So(err, ShouldBeNil)
+		So(output.MustGet(lower), ShouldEqual, 1.0)
+		for _, pair := range [][2]float64{{0, 1}, {-1, 1}, {2, 2}, {3, 2}, {math.NaN(), 2}, {1, math.Inf(1)}} {
+			_, _, err = validate(types.Frame{}, types.Frame{}.Set(lower, pair[0]).Set(upper, pair[1]))
+			So(err, ShouldNotBeNil)
+		}
+	})
 }

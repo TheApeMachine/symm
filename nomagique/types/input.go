@@ -1,7 +1,5 @@
 package types
 
-import "github.com/theapemachine/symm/nomagique"
-
 /*
 Input contracts are the shared numeric vocabulary that lets nomagique presets
 compose. Under the hood every primitive reads and writes plain float64 slots in
@@ -18,7 +16,7 @@ var (
 	// depth, Hawkes intensity, midpoint deviation, and similar single-valued
 	// measures all occupy this slot. It is the same slot the engine already
 	// treats as SampleValue, so presets and legacy primitives share one number.
-	Quantity = nomagique.SampleValue
+	Quantity = SampleValue
 
 	// AlphaQuantity is a first secondary observable that joins Quantity in a
 	// two-channel operation, typically the primary adaptation coefficient or the

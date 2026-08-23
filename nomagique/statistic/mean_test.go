@@ -5,16 +5,17 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestMean(t *testing.T) {
 	Convey("Given a populated generic sample collection", t, func() {
-		input := nomagique.Frame{}
+		input := types.Frame{}
 		input.Put(nomagique.MustSampleSymbol(0), 2)
 		input.Put(nomagique.MustSampleSymbol(1), 4)
 		input.Put(nomagique.MustSampleSymbol(2), 9)
 
-		_, output, err := Mean(nomagique.Frame{}, input)
+		_, output, err := Mean(types.Frame{}, input)
 
 		So(err, ShouldBeNil)
 		So(output.MustGet(SymbolMean), ShouldEqual, 5.0)
@@ -22,7 +23,7 @@ func TestMean(t *testing.T) {
 	})
 
 	Convey("Given an empty sample collection", t, func() {
-		_, output, err := Mean(nomagique.Frame{}, nomagique.Frame{})
+		_, output, err := Mean(types.Frame{}, types.Frame{})
 
 		So(err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 0.0)
@@ -30,7 +31,7 @@ func TestMean(t *testing.T) {
 }
 
 func BenchmarkMean(benchmark *testing.B) {
-	input := nomagique.Frame{}
+	input := types.Frame{}
 
 	for index := range nomagique.MaxSamples {
 		input.Put(nomagique.MustSampleSymbol(index), float64(index))
@@ -39,6 +40,6 @@ func BenchmarkMean(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _, _ = Mean(nomagique.Frame{}, input)
+		_, _, _ = Mean(types.Frame{}, input)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -16,14 +17,14 @@ hypotheses. No evidence separates nothing; one supported hypothesis separates
 completely; equal support has zero separation.
 */
 func Separation(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	alpha, hasAlpha := input.Get(nmtypes.AlphaQuantity)
 	beta, hasBeta := input.Get(nmtypes.BetaQuantity)
 
 	if !hasAlpha || !hasBeta || alpha < 0 || beta < 0 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: separation requires non-negative alpha and beta quantities",
 		)
 	}

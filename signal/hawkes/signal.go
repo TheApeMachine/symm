@@ -95,7 +95,7 @@ func (signal *Signal) consume() {
 			for trade := range symbol.MarketTrades(
 				symbol.TradeConsumers[types.TradeConsumerHawkes],
 			) {
-				input := nomagique.Frame{}
+				input := types.Frame{}
 				input.Put(algo.SymbolMark, markForSide(trade.Side))
 				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))

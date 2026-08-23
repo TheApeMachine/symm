@@ -10,12 +10,13 @@ import (
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestAcceleration(t *testing.T) {
 	Convey("Given a quantity-clocked positive series", t, func() {
-		stream := nomagique.NewStream(Acceleration(), nomagique.Frame{})
+		stream := nomagique.NewStream(Acceleration(), types.Frame{})
 		first, err := stream.Step(accelerationInput(2, 100, 0))
 		So(err, ShouldBeNil)
 		So(first.MustGet(SymbolClosed), ShouldEqual, 0.0)
@@ -43,7 +44,7 @@ func TestAcceleration(t *testing.T) {
 }
 
 func BenchmarkAcceleration(benchmark *testing.B) {
-	stream := nomagique.NewStream(Acceleration(), nomagique.Frame{})
+	stream := nomagique.NewStream(Acceleration(), types.Frame{})
 	input := accelerationInput(2, 100, 1)
 	_, _ = stream.Step(accelerationInput(2, 100, 0))
 	benchmark.ReportAllocs()
@@ -53,8 +54,8 @@ func BenchmarkAcceleration(benchmark *testing.B) {
 	}
 }
 
-func accelerationInput(quantity float64, priceValue float64, seconds float64) nomagique.Frame {
-	input := nomagique.Frame{}
+func accelerationInput(quantity float64, priceValue float64, seconds float64) types.Frame {
+	input := types.Frame{}
 	input.Put(nmtypes.Quantity, quantity)
 	input.Put(nmtypes.AlphaPrice, priceValue)
 	input.Put(temporal.SymbolUnixSec, seconds)

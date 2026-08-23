@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -22,14 +23,14 @@ establishes the origin; subsequent events expose the same origin until Restart
 explicitly begins a new span.
 */
 func Since(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	seconds, hasSeconds := input.Get(SymbolUnixSec)
 	nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
 
 	if !hasSeconds || !hasNanoseconds || nanoseconds < 0 || nanoseconds >= 1e9 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: since requires normalized event-time coordinates",
 		)
 	}
@@ -49,7 +50,7 @@ func Since(
 		(nanoseconds-originNanoseconds)*1e-9
 
 	if duration < 0 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: since event time must not precede its origin",
 		)
 	}
@@ -76,14 +77,14 @@ Restart moves the retained origin to the current event and counts one completed
 span. It preserves the output produced for the span that just ended.
 */
 func Restart(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	seconds, hasSeconds := input.Get(SymbolUnixSec)
 	nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
 
 	if !hasSeconds || !hasNanoseconds || nanoseconds < 0 || nanoseconds >= 1e9 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: restart requires normalized event-time coordinates",
 		)
 	}

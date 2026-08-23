@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -40,8 +41,8 @@ NewHawkesState returns a Frame seed carrying the bivariate process defaults.
 The intensity reducer applies the same defaults lazily, so the seed is only
 needed by callers that construct a Stream explicitly.
 */
-func NewHawkesState() nomagique.Frame {
-	state := nomagique.Frame{}
+func NewHawkesState() types.Frame {
+	state := types.Frame{}
 	state.Put(statistic.SymbolBeta, 1)
 	state.Put(statistic.SymbolAlphaAA, 0.2)
 	state.Put(statistic.SymbolAlphaAB, 0.1)
@@ -73,19 +74,19 @@ arriving mark's jump, and emits the rates and likelihood inputs that Branching
 and Likelihood consume.
 */
 func hawkesIntensity(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	mark, hasMark := input.Get(SymbolMark)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
 	if !hasMark || mark == 0 || !finite(mark) {
-		return state, nomagique.Frame{}, fmt.Errorf("hawkes: a finite non-zero mark is required")
+		return state, types.Frame{}, fmt.Errorf("hawkes: a finite non-zero mark is required")
 	}
 
 	if !hasSec || !hasNsec || !finite(sec, nsec) || nsec < 0 || nsec >= 1e9 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"hawkes: timestamp coordinates must be finite and normalized",
 		)
 	}
@@ -107,7 +108,7 @@ func hawkesIntensity(
 		next.Put(symbolFirstSec, sec)
 		next.Put(symbolFirstNsec, nsec)
 	} else if elapsed(sec, nsec, lastSec, lastNsec) < 0 {
-		return state, nomagique.Frame{}, fmt.Errorf("hawkes: observation time cannot move backwards")
+		return state, types.Frame{}, fmt.Errorf("hawkes: observation time cannot move backwards")
 	}
 
 	beta := value(next, statistic.SymbolBeta, 1)
@@ -222,7 +223,7 @@ func logSum(left float64, right float64) float64 {
 	return math.Log(safeLeft) + math.Log(safeRight)
 }
 
-func value(frame nomagique.Frame, symbol nomagique.Symbol, fallback float64) float64 {
+func value(frame types.Frame, symbol nomagique.Symbol, fallback float64) float64 {
 	if frame.Has(symbol) {
 		result, _ := frame.Get(symbol)
 
@@ -242,7 +243,7 @@ func finite(values ...float64) bool {
 	return true
 }
 
-func number(frame nomagique.Frame, symbol nomagique.Symbol) float64 {
+func number(frame types.Frame, symbol nomagique.Symbol) float64 {
 	value, _ := frame.Get(symbol)
 
 	return value

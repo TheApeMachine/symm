@@ -77,7 +77,7 @@ func (signal *Signal) consume() {
 					continue
 				}
 
-				input := nomagique.Frame{}
+				input := types.Frame{}
 				input.Put(nomagique.SampleValue, ticker.Last.Float64())
 				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
@@ -120,7 +120,7 @@ func (signal *Signal) consume() {
 func (signal *Signal) measurement(
 	symbol string,
 	at time.Time,
-	output nomagique.Frame,
+	output types.Frame,
 	measured bool,
 ) *nmtypes.Measurement {
 	dimensionless := nmtypes.Descriptor{
@@ -173,7 +173,7 @@ func (signal *Signal) measurement(
 }
 
 func metricValue(
-	frame nomagique.Frame,
+	frame types.Frame,
 	symbol nomagique.Symbol,
 	measured bool,
 ) float64 {

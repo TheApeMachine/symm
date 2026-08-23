@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -47,21 +48,21 @@ the actually used sample count when stability is perfect. Everything compared
 against the data's own previous verdict — no magic numbers.
 */
 func Baseline(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	value, hasValue := input.Get(nomagique.SampleValue)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
 	if !hasValue || !hasSec || !hasNsec {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: baseline requires a value and event time",
 		)
 	}
 
 	if nsec < 0 || nsec >= 1e9 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: baseline requires normalized nanoseconds",
 		)
 	}
@@ -75,7 +76,7 @@ func Baseline(
 
 	if hasLastSec && hasLastNsec {
 		if elapsedSince(sec, nsec, previousSec, previousNsec) < 0 {
-			return state, nomagique.Frame{}, fmt.Errorf(
+			return state, types.Frame{}, fmt.Errorf(
 				"statistic: baseline event time must not regress",
 			)
 		}
@@ -127,11 +128,11 @@ func Baseline(
 }
 
 func baselineOutput(
-	state nomagique.Frame,
+	state types.Frame,
 	value float64,
-	input nomagique.Frame,
+	input types.Frame,
 	target float64,
-) nomagique.Frame {
+) types.Frame {
 	output := input
 	output.Put(nomagique.SampleValue, value)
 
@@ -156,7 +157,7 @@ net displacement between its oldest and newest samples over the path length
 of every consecutive step, walked in arrival order. It measures how much of the
 ring's motion was directional.
 */
-func windowEfficiency(state nomagique.Frame, count int) float64 {
+func windowEfficiency(state types.Frame, count int) float64 {
 	if count < 2 {
 		return 0
 	}
@@ -191,7 +192,7 @@ range; when the range collapses to zero the ring is perfectly stable. A choppy
 ring is spread across its range and reports near zero, which is exactly the
 signal the window needs to keep taking more inputs.
 */
-func ringStability(state nomagique.Frame, count int, estimate float64) float64 {
+func ringStability(state types.Frame, count int, estimate float64) float64 {
 	if count < 1 {
 		return 0
 	}
@@ -227,7 +228,7 @@ or improved verdict asks it to slide (keep its size), and perfect stability
 asks it to shrink toward the samples it actually retains.
 */
 func windowModifier(
-	state nomagique.Frame,
+	state types.Frame,
 	count int,
 	stability float64,
 	previousStability float64,
@@ -287,7 +288,7 @@ the old efficiency interpolation for callers that genuinely own those bounds.
 func baselineHalflife(
 	elapsed float64,
 	efficiency float64,
-	input nomagique.Frame,
+	input types.Frame,
 ) float64 {
 	if fastHalflife, hasFast := input.Get(SymbolBaselineFastHalflife); hasFast {
 		if slowHalflife, hasSlow := input.Get(SymbolBaselineSlowHalflife); hasSlow &&
@@ -305,7 +306,7 @@ func baselineHalflife(
 	return span
 }
 
-func windowSampleCount(state nomagique.Frame) int {
+func windowSampleCount(state types.Frame) int {
 	value, found := state.Get(nomagique.SampleCount)
 
 	if !found {
@@ -315,7 +316,7 @@ func windowSampleCount(state nomagique.Frame) int {
 	return int(value)
 }
 
-func windowSampleHead(state nomagique.Frame) int {
+func windowSampleHead(state types.Frame) int {
 	value, found := state.Get(nomagique.SampleHead)
 
 	if !found {

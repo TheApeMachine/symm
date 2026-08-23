@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -106,8 +107,8 @@ func liqPipeline() nomagique.Primitive {
 	)
 }
 
-func eventFrame(at time.Time) nomagique.Frame {
-	input := nomagique.Frame{}
+func eventFrame(at time.Time) types.Frame {
+	input := types.Frame{}
 	input.Put(nmtypes.EventTimeSec, float64(at.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(at.Nanosecond()))
 	input.Put(statistic.SymbolUnixSec, float64(at.Unix()))
@@ -116,7 +117,7 @@ func eventFrame(at time.Time) nomagique.Frame {
 	return input
 }
 
-func sampleFrame(at time.Time, value float64) nomagique.Frame {
+func sampleFrame(at time.Time, value float64) types.Frame {
 	input := eventFrame(at)
 	input.Put(nomagique.SampleValue, value)
 

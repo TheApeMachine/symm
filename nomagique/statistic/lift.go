@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var SymbolBaseline = nomagique.MustIntern("baseline")
@@ -17,14 +18,14 @@ baseline cannot ground a fraction, so the lift is not ready rather than
 invented.
 */
 func Lift(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	value, hasValue := input.Get(nomagique.SampleValue)
 	baseline, hasBaseline := input.Get(SymbolBaseline)
 
 	if !hasValue || !hasBaseline {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: lift requires a value and a baseline",
 		)
 	}

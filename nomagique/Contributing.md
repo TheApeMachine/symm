@@ -1,8 +1,28 @@
-# Nomagique Contribution Guide
+# nomagique Contribution Guide
 
-`nomagique` is not a library of algorithms; it is a system of atomic computational primitives designed to eliminate "performative math" and "magic numbers" from market analysis.
+> no-magique (no magic)
+> Number
+
+## nomagique architecture
+
+`nomagique` separates identity, role, and meaning.
+
+- A `Frame` stores named facts and committed state.
+- A `Primitive` performs one operation over local structural ports.
+- `Wire` explicitly maps named facts to those ports and projects results back.
+- No primitive infers operands from alternative names or silently coerces one statistic into another.
+- `Pipe` is sequential composition. 
+- `Fork` is genuine fan-out: every branch sees the same input and state. 
+- `ForkStrict` rejects both state and output collisions.
+- A failed transition never commits candidate state.
+- `Number` is the keyed top-level owner of composed state.
+
+Domain adapters may name prices, quantities, times, or instruments. Primitive packages should use only mathematical or structural language.
+
+> Domain adapters are generally considered to be bad practice, and it is recommended to translate your domain into generic/abstract terms as soon as possible, ideally as the first step.
 
 ## 🚨 The Golden Rule
+
 **No magic numbers. No performative math. No theatre.**
 
 If a value is not a universal mathematical constant, it must be derived from the market data itself via a primitive. Hardcoded multipliers (`*2`), static time windows (e.g., `60s`), and arbitrary thresholds are strictly prohibited.

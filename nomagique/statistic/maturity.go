@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var SymbolMaturity = nomagique.MustIntern("maturity")
@@ -14,13 +15,13 @@ at zero, rises monotonically, and approaches one without a chosen threshold.
 */
 func Maturity(countSymbol nomagique.Symbol) nomagique.Primitive {
 	return func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
+		state types.Frame,
+		input types.Frame,
+	) (types.Frame, types.Frame, error) {
 		count, found := input.Get(countSymbol)
 
 		if !found || count < 0 {
-			return state, nomagique.Frame{}, fmt.Errorf(
+			return state, types.Frame{}, fmt.Errorf(
 				"statistic: maturity requires a non-negative support count",
 			)
 		}

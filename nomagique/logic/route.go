@@ -1,30 +1,29 @@
 package logic
 
 import (
+	"fmt"
+
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/utils"
 )
 
-/*
-Mux selects one of the two living operand slots from an explicit condition.
-It writes the selected value to SymbolResult and preserves every input slot.
-*/
-func Mux(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+// Mux selects A when condition is non-zero, otherwise B.
+func Mux(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 	condition, hasCondition := input.Get(SymbolCondition)
-	left, hasLeft := input.Get(calculus.SymbolLeft)
-	right, hasRight := input.Get(calculus.SymbolRight)
+	a, hasA := input.Get(calculus.PortA)
+	b, hasB := input.Get(calculus.PortB)
 
-	if !hasCondition || !hasLeft || !hasRight {
-		return state, nomagique.Frame{}, conditionError("mux operands")
+	if !hasCondition || !hasA || !hasB || !utils.IsFinite(condition) ||
+		!utils.IsFinite(a) || !utils.IsFinite(b) {
+		return state, types.Frame{}, fmt.Errorf("logic: mux requires finite condition, a, and b")
 	}
 
-	result := right
+	result := b
 
 	if condition != 0 {
-		result = left
+		result = a
 	}
 
 	output := input
@@ -34,29 +33,25 @@ func Mux(
 }
 
 /*
-If evaluates an explicit predicate and routes the resulting Frame through one
-of two branches. The predicate must emit SymbolCondition; readiness is never
-guessed from unrelated slots.
+If evaluates one predicate and exactly one selected branch. Any predicate or
+branch error rolls the whole transition back to the caller's original state.
 */
 func If(
 	predicate nomagique.Primitive,
 	whenTrue nomagique.Primitive,
 	whenFalse nomagique.Primitive,
 ) nomagique.Primitive {
-	return func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
-		nextState, output, err := nomagique.Step(predicate, state, input)
+	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+		predicateState, predicateOutput, err := nomagique.Step(predicate, state, input)
 
 		if err != nil {
-			return state, nomagique.Frame{}, err
+			return state, types.Frame{}, err
 		}
 
-		condition, found := output.Get(SymbolCondition)
+		condition, found := predicateOutput.Get(SymbolCondition)
 
-		if !found {
-			return state, nomagique.Frame{}, conditionError("if predicate")
+		if !found || !utils.IsFinite(condition) {
+			return state, types.Frame{}, fmt.Errorf("logic: if predicate must emit a finite condition")
 		}
 
 		branch := whenFalse
@@ -66,33 +61,33 @@ func If(
 		}
 
 		if branch == nil {
-			return nextState, output, nil
+			return predicateState, predicateOutput, nil
 		}
 
-		return nomagique.Step(branch, nextState, output)
+		nextState, output, err := nomagique.Step(branch, predicateState, predicateOutput)
+
+		if err != nil {
+			return state, types.Frame{}, err
+		}
+
+		return nextState, output, nil
 	}
 }
 
-/*
-Rule binds one predicate to the branch executed when it emits true.
-*/
+// Rule binds one predicate to the branch executed when it emits true.
 type Rule struct {
 	When nomagique.Primitive
 	Then nomagique.Primitive
 }
 
 /*
-Circuit evaluates ordered rules and executes the first matching branch.
-Predicates commit their state in order so stateful empirical gates continue
-learning even when their branch does not fire.
+Circuit evaluates ordered rules and executes the first matching branch. Every
+failure rejects all candidate predicate state accumulated during this call.
 */
 func Circuit(rules []Rule, fallback nomagique.Primitive) nomagique.Primitive {
 	program := append([]Rule(nil), rules...)
 
-	return func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
+	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		nextState := state
 		output := input
 
@@ -101,23 +96,20 @@ func Circuit(rules []Rule, fallback nomagique.Primitive) nomagique.Primitive {
 				continue
 			}
 
-			candidateState, candidateOutput, err := nomagique.Step(
-				rule.When,
-				nextState,
-				output,
-			)
+			candidateState, candidateOutput, err := nomagique.Step(rule.When, nextState, output)
 
 			if err != nil {
-				return state, nomagique.Frame{}, err
+				return state, types.Frame{}, err
+			}
+
+			condition, found := candidateOutput.Get(SymbolCondition)
+
+			if !found || !utils.IsFinite(condition) {
+				return state, types.Frame{}, fmt.Errorf("logic: circuit predicate must emit a finite condition")
 			}
 
 			nextState = candidateState
 			output = candidateOutput
-			condition, found := output.Get(SymbolCondition)
-
-			if !found {
-				return state, nomagique.Frame{}, conditionError("circuit predicate")
-			}
 
 			if condition == 0 {
 				continue
@@ -127,13 +119,25 @@ func Circuit(rules []Rule, fallback nomagique.Primitive) nomagique.Primitive {
 				return nextState, output, nil
 			}
 
-			return nomagique.Step(rule.Then, nextState, output)
+			branchState, branchOutput, err := nomagique.Step(rule.Then, nextState, output)
+
+			if err != nil {
+				return state, types.Frame{}, err
+			}
+
+			return branchState, branchOutput, nil
 		}
 
 		if fallback == nil {
 			return nextState, output, nil
 		}
 
-		return nomagique.Step(fallback, nextState, output)
+		fallbackState, fallbackOutput, err := nomagique.Step(fallback, nextState, output)
+
+		if err != nil {
+			return state, types.Frame{}, err
+		}
+
+		return fallbackState, fallbackOutput, nil
 	}
 }

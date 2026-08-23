@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestFrameToRow(t *testing.T) {
@@ -27,8 +27,8 @@ func TestFrameToRow(t *testing.T) {
 	})
 }
 
-func completeReasoningFrame() nomagique.Frame {
-	frame := nomagique.Frame{}
+func completeReasoningFrame() types.Frame {
+	frame := types.Frame{}
 	frame.Put(SymbolContextConfidence, 1)
 	frame.Put(SymbolTreatment, ActionWait)
 	frame.Put(SymbolTarget, 0)

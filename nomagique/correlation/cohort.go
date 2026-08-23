@@ -1,6 +1,9 @@
 package correlation
 
-import "github.com/theapemachine/symm/nomagique"
+import (
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
+)
 
 var (
 	SymbolTotalSupport       = nomagique.MustIntern("correlation/cohort/support")
@@ -19,9 +22,9 @@ Support weights each peer so asynchronous paths contribute in proportion to
 the return intervals that actually overlapped.
 */
 func Cohort(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	ready, hasReady := input.Get(SymbolReady)
 	support, hasSupport := input.Get(SymbolSupport)
 

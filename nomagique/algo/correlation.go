@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -28,9 +29,9 @@ func Correlation() nomagique.Primitive {
 }
 
 func correlationScores(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	ready, found := state.Get(nmcorrelation.SymbolReady)
 	totalSupport, hasSupport := state.Get(nmcorrelation.SymbolTotalSupport)
 	peerEnergyTotal, hasPeerEnergy := state.Get(nmcorrelation.SymbolWeightedPeerEnergy)

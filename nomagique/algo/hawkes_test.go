@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 const hawkesTestEpoch = 1_786_099_200.0
@@ -31,7 +32,7 @@ func TestHawkesPublishesCountsAndMetrics(t *testing.T) {
 
 func TestHawkesProcessesTypedBurst(t *testing.T) {
 	stream := nomagique.NewStream(Hawkes(), NewHawkesState())
-	var output nomagique.Frame
+	var output types.Frame
 
 	for index := 0; index < 32; index++ {
 		mark := -1.0
@@ -75,7 +76,7 @@ func TestHawkesRetainsExactTimestampCoordinates(t *testing.T) {
 		{mark: -1, sec: origin + 3},
 		{mark: 1, sec: origin + 4},
 	}
-	var output nomagique.Frame
+	var output types.Frame
 
 	for _, observation := range observations {
 		var err error
@@ -127,8 +128,8 @@ func BenchmarkHawkes(b *testing.B) {
 	}
 }
 
-func hawkesArrival(mark float64, sec float64, nsec float64) nomagique.Frame {
-	input := nomagique.Frame{}
+func hawkesArrival(mark float64, sec float64, nsec float64) types.Frame {
+	input := types.Frame{}
 	input.Put(SymbolMark, mark)
 	input.Put(SymbolUnixSec, sec)
 	input.Put(SymbolUnixNsec, nsec)
@@ -138,7 +139,7 @@ func hawkesArrival(mark float64, sec float64, nsec float64) nomagique.Frame {
 
 func assertNumber(
 	t *testing.T,
-	frame nomagique.Frame,
+	frame types.Frame,
 	symbol nomagique.Symbol,
 	want float64,
 ) {

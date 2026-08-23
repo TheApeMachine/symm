@@ -1,32 +1,46 @@
 package nomagique
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/utils"
+)
 
 /*
-Number is a state-carrying, self-adapting numeric pipeline keyed by a
-comparable stream identity. Each key publishes its committed state through an
-immutable atomic snapshot so concurrent per-symbol workers can project peer
-state without tearing, while every key still keeps an isolated window,
-baseline, and event clock.
+Number is the keyed top-level composer. Every key owns one isolated Stream.
+The registry is safe for concurrent keys, and a small per-key lock serializes
+same-key writers without allocating a new Frame snapshot on every transition.
 */
 type Number[Key comparable] struct {
 	primitive Primitive
+	initial   func(Key) Frame
 	streams   sync.Map
 }
 
-/*
-NewNumber composes primitives into one self-adapting numeric unit per key. The
-per-key registry is a sync.Map (CAS-based, no mutex); each key gets its own
-composed pipeline with its own state, so unrelated streams never smear each
-other's windows.
-*/
-func NewNumber[Key comparable](primitives ...Primitive) *Number[Key] {
-	return &Number[Key]{primitive: Pipe(primitives...)}
+type numberStream struct {
+	mutex  sync.RWMutex
+	stream Stream
 }
 
-/*
-Step applies one input to its keyed pipeline and commits the transition.
-*/
+// NewNumber composes primitives into one isolated numeric unit per key.
+func NewNumber[Key comparable](primitives ...Primitive) *Number[Key] {
+	return NewNumberWithInitial[Key](nil, primitives...)
+}
+
+// NewNumberWithInitial provides the initial committed state for newly seen keys.
+func NewNumberWithInitial[Key comparable](
+	initial func(Key) Frame,
+	primitives ...Primitive,
+) *Number[Key] {
+	return &Number[Key]{
+		primitive: Pipe(primitives...),
+		initial:   initial,
+	}
+}
+
+// Step applies one input to its keyed pipeline and commits the transition.
 func (number *Number[Key]) Step(key Key, input Frame) (Frame, error) {
 	stream, err := number.stream(key)
 
@@ -34,12 +48,13 @@ func (number *Number[Key]) Step(key Key, input Frame) (Frame, error) {
 		return Frame{}, err
 	}
 
-	return stream.Step(input)
+	stream.mutex.Lock()
+	defer stream.mutex.Unlock()
+
+	return stream.stream.Step(input)
 }
 
-/*
-Project returns the committed state for one key.
-*/
+// Project returns the committed state for one key.
 func (number *Number[Key]) Project(key Key) (Frame, bool) {
 	stream, found := number.load(key)
 
@@ -47,13 +62,68 @@ func (number *Number[Key]) Project(key Key) (Frame, bool) {
 		return Frame{}, false
 	}
 
-	return stream.Project(), true
+	stream.mutex.RLock()
+	state := stream.stream.Project()
+	stream.mutex.RUnlock()
+
+	return state, true
 }
 
-/*
-Range visits each committed keyed state. The state is copied by value and
-cannot mutate the owning stream.
-*/
+// Output returns the last successful output for one key.
+func (number *Number[Key]) Output(key Key) (Frame, bool) {
+	stream, found := number.load(key)
+
+	if !found {
+		return Frame{}, false
+	}
+
+	stream.mutex.RLock()
+	output := stream.stream.Output()
+	stream.mutex.RUnlock()
+
+	return output, true
+}
+
+// Error returns the last transition error for one key.
+func (number *Number[Key]) Error(key Key) (error, bool) {
+	stream, found := number.load(key)
+
+	if !found {
+		return nil, false
+	}
+
+	stream.mutex.RLock()
+	err := stream.stream.Error()
+	stream.mutex.RUnlock()
+
+	return err, true
+}
+
+// Delete removes one keyed numeric unit.
+func (number *Number[Key]) Delete(key Key) {
+	if number == nil {
+		return
+	}
+
+	number.streams.Delete(key)
+}
+
+// Reset replaces one key's committed state and clears its output and error.
+func (number *Number[Key]) Reset(key Key, initial Frame) error {
+	stream, err := number.stream(key)
+
+	if err != nil {
+		return err
+	}
+
+	stream.mutex.Lock()
+	stream.stream.Reset(initial)
+	stream.mutex.Unlock()
+
+	return nil
+}
+
+// Range visits immutable copies of each committed keyed state.
 func (number *Number[Key]) Range(yield func(Key, Frame) bool) {
 	if number == nil || yield == nil {
 		return
@@ -61,21 +131,24 @@ func (number *Number[Key]) Range(yield func(Key, Frame) bool) {
 
 	number.streams.Range(func(storedKey any, storedValue any) bool {
 		key, validKey := storedKey.(Key)
-		stream, validStream := storedValue.(*AtomicStream)
+		stream, validStream := storedValue.(*numberStream)
 
 		if !validKey || !validStream {
 			return true
 		}
 
-		return yield(key, stream.Project())
+		stream.mutex.RLock()
+		state := stream.stream.Project()
+		stream.mutex.RUnlock()
+
+		return yield(key, state)
 	})
 }
 
 /*
 CrossSection evaluates one committed focal state against every committed peer,
-folds the pair outputs through a reducer, then applies a final projection. The
-pair evaluator is observational: its candidate state is deliberately ignored
-so only the Number's keyed streams own persistent path state.
+folds pair outputs through reduce, then optionally finalizes the aggregate.
+Candidate state from pair is observational and deliberately ignored.
 */
 func (number *Number[Key]) CrossSection(
 	key Key,
@@ -103,7 +176,15 @@ func (number *Number[Key]) CrossSection(
 
 		if err != nil {
 			crossSectionErr = err
+			return false
+		}
 
+		if !pairOutput.Finite() {
+			crossSectionErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"number pair output must be finite",
+				nil,
+			))
 			return false
 		}
 
@@ -111,7 +192,6 @@ func (number *Number[Key]) CrossSection(
 
 		if err != nil {
 			crossSectionErr = err
-
 			return false
 		}
 
@@ -130,9 +210,8 @@ func (number *Number[Key]) CrossSection(
 }
 
 /*
-ArgMax evaluates one score over every committed keyed state and returns the
-unique maximum only when it exceeds the exact cross-sectional median. A tied
-maximum has no unique owner and therefore produces no selection.
+ArgMax evaluates one score over every committed state and returns a unique
+finite maximum only when it exceeds the exact cross-sectional median.
 */
 func (number *Number[Key]) ArgMax(
 	score Primitive,
@@ -152,7 +231,6 @@ func (number *Number[Key]) ArgMax(
 
 		if err != nil {
 			selectionErr = err
-
 			return false
 		}
 
@@ -163,8 +241,22 @@ func (number *Number[Key]) ArgMax(
 			return true
 		}
 
+		if !utils.IsFinite(ready) || !utils.IsFinite(value) {
+			selectionErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"number score must emit finite values",
+				nil,
+			))
+
+			return false
+		}
+
 		if count >= len(values) {
-			selectionErr = primitiveError("number cross-section exceeds Frame capacity")
+			selectionErr = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"number cross-section exceed Frame capacity",
+				nil,
+			))
 
 			return false
 		}
@@ -177,7 +269,6 @@ func (number *Number[Key]) ArgMax(
 			maximum = value
 			hasMaximum = true
 			tied = false
-
 			return true
 		}
 
@@ -207,7 +298,7 @@ func exactMedian(values *[MaxSlots]float64, count int) float64 {
 
 	lower := selectValue(values[:count], middle-1)
 
-	return (lower + upper) / 2
+	return lower + (upper-lower)/2
 }
 
 func selectValue(values []float64, target int) float64 {
@@ -220,11 +311,11 @@ func selectValue(values []float64, target int) float64 {
 		high := right
 
 		for low <= high {
-			for values[low] < pivot {
+			for low <= right && values[low] < pivot {
 				low++
 			}
 
-			for values[high] > pivot {
+			for high >= left && values[high] > pivot {
 				high--
 			}
 
@@ -251,18 +342,33 @@ func selectValue(values []float64, target int) float64 {
 	return values[target]
 }
 
-func (number *Number[Key]) stream(key Key) (*AtomicStream, error) {
+func (number *Number[Key]) stream(key Key) (*numberStream, error) {
 	if number == nil || number.primitive == nil {
-		return nil, primitiveError("number primitive is nil")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"number primitive is nil",
+			nil,
+		))
 	}
 
 	if stream, found := number.load(key); found {
 		return stream, nil
 	}
 
-	candidate := NewAtomicStream(number.primitive, Frame{})
+	initial := Frame{}
+
+	if number.initial != nil {
+		initial = number.initial(key)
+	}
+
+	candidate := &numberStream{
+		stream: Stream{
+			primitive: number.primitive,
+			state:     initial,
+		},
+	}
 	stored, _ := number.streams.LoadOrStore(key, candidate)
-	stream, valid := stored.(*AtomicStream)
+	stream, valid := stored.(*numberStream)
 
 	if !valid {
 		return nil, primitiveError("number registry contains an invalid stream")
@@ -271,7 +377,7 @@ func (number *Number[Key]) stream(key Key) (*AtomicStream, error) {
 	return stream, nil
 }
 
-func (number *Number[Key]) load(key Key) (*AtomicStream, bool) {
+func (number *Number[Key]) load(key Key) (*numberStream, bool) {
 	if number == nil {
 		return nil, false
 	}
@@ -282,30 +388,18 @@ func (number *Number[Key]) load(key Key) (*AtomicStream, bool) {
 		return nil, false
 	}
 
-	stream, valid := stored.(*AtomicStream)
+	stream, valid := stored.(*numberStream)
 
 	return stream, valid
 }
 
-/*
-Single is the unkeyed numeric unit behind each per-key Number state.
-*/
+// Single is an explicitly single-writer unkeyed numeric unit.
 type Single func(input Frame) (Frame, error)
 
-/*
-NewSingle composes primitives into a single state-carrying callable. Its output
-feeds the next primitive's input, and the composed state persists across calls
-so windows and baselines accumulate history.
-
-	unit := nomagique.NewSingle(temporal.A, statistic.B, probability.C)
-	output := unit(input)
-*/
+// NewSingle composes primitives into one state-carrying callable.
 func NewSingle(primitives ...Primitive) Single {
 	pipeline := Pipe(primitives...)
-
-	var (
-		state Frame
-	)
+	state := Frame{}
 
 	return func(input Frame) (Frame, error) {
 		nextState, output, err := Step(pipeline, state, input)

@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -23,13 +24,13 @@ return interval, without resampling either path onto an invented clock. State
 is the left path and input is the right path; neither projection is mutated.
 */
 func Hayashi(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	shiftValue, hasShift := input.Get(SymbolLeftShift)
 
 	if hasShift && shiftValue != math.Trunc(shiftValue) {
-		return state, nomagique.Frame{}, correlationError(
+		return state, types.Frame{}, correlationError(
 			"left shift must contain integral nanoseconds",
 		)
 	}
@@ -55,7 +56,7 @@ type point struct {
 	value     float64
 }
 
-func pathPoints(path *nomagique.Frame) ([temporal.MaxPathSamples]point, int) {
+func pathPoints(path *types.Frame) ([temporal.MaxPathSamples]point, int) {
 	points := [temporal.MaxPathSamples]point{}
 	countValue, _ := path.Get(nomagique.SampleCount)
 	count := int(countValue)

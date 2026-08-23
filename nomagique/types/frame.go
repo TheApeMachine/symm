@@ -1,54 +1,190 @@
 package types
 
-import "github.com/theapemachine/symm/nomagique"
-
-// Frame is the universal reducer state and payload.
-type Frame = nomagique.Frame
-
-// Symbol is an interned Frame offset.
-type Symbol = nomagique.Symbol
-
-// Primitive is the pure reducer contract.
-type Primitive = nomagique.Primitive
-
-// Stream owns one ordered single-writer reducer state.
-type Stream = nomagique.Stream
-
-// AtomicStream publishes reducer snapshots with compare-and-swap commits.
-type AtomicStream = nomagique.AtomicStream
-
-const (
-	MaxSlots   = nomagique.MaxSlots
-	MaxSamples = nomagique.MaxSamples
+import (
+	"fmt"
+	"iter"
+	"math"
+	"math/bits"
 )
 
-func Intern(name string) (Symbol, error) {
-	return nomagique.Intern(name)
+const frameMaskWords = (MaxSlots + frameMaskWordBits - 1) / frameMaskWordBits
+
+/*
+Frame is the universal named fact and state representation. Values occupy
+interned symbol offsets in contiguous memory, while the bit mask records which
+slots are present.
+
+Frame is intentionally a value type. Reducers receive snapshots by value, mutate
+local copies, and return committed snapshots without sharing mutable maps.
+*/
+type Frame struct {
+	Mask [frameMaskWords]uint64
+	Data [MaxSlots]float64
 }
 
-func MustIntern(name string) Symbol {
-	return nomagique.MustIntern(name)
+// Get returns the value stored at symbol.
+func (frame *Frame) Get(symbol Symbol) (float64, bool) {
+	if frame == nil {
+		return 0, false
+	}
+
+	index := int(symbol)
+
+	if index < 0 || index >= MaxSlots {
+		return 0, false
+	}
+
+	maskIndex := index >> 6
+	mask := uint64(1) << uint(index&63)
+
+	if frame.Mask[maskIndex]&mask == 0 {
+		return 0, false
+	}
+
+	return frame.Data[index], true
 }
 
-func SymbolName(symbol Symbol) (string, bool) {
-	return nomagique.SymbolName(symbol)
+// MustGet returns the value stored at symbol or panics.
+func (frame Frame) MustGet(symbol Symbol) float64 {
+	value, found := frame.Get(symbol)
+
+	if !found {
+		panic(fmt.Sprintf("nomagique: frame symbol %s is missing", symbolLabel(symbol)))
+	}
+
+	return value
 }
 
-func FrameFromNamed(values map[string]float64) (Frame, error) {
-	return nomagique.FrameFromNamed(values)
+// Has reports whether symbol is populated.
+func (frame Frame) Has(symbol Symbol) bool {
+	_, found := frame.Get(symbol)
+
+	return found
 }
 
-func NewStream(primitive Primitive, initial Frame) *Stream {
-	return nomagique.NewStream(primitive, initial)
+// Put writes one slot into the current Frame value.
+func (frame *Frame) Put(symbol Symbol, value float64) {
+	if frame == nil {
+		panic("nomagique: cannot put into a nil Frame")
+	}
+
+	index := int(symbol)
+
+	if index < 0 || index >= MaxSlots {
+		panic(fmt.Sprintf("nomagique: symbol %d is outside Frame capacity", symbol))
+	}
+
+	maskIndex := index >> 6
+	frame.Mask[maskIndex] |= uint64(1) << uint(index&63)
+	frame.Data[index] = value
 }
 
-func NewAtomicStream(primitive Primitive, initial Frame) *AtomicStream {
-	return nomagique.NewAtomicStream(primitive, initial)
+// Set returns a copied Frame with one slot written.
+func (frame Frame) Set(symbol Symbol, value float64) Frame {
+	frame.Put(symbol, value)
+
+	return frame
 }
 
-func NewKeyedStreams[Key comparable](
-	primitive Primitive,
-	initial func(Key) Frame,
-) *nomagique.KeyedStreams[Key] {
-	return nomagique.NewKeyedStreams(primitive, initial)
+// Delete clears one slot.
+func (frame *Frame) Delete(symbol Symbol) {
+	if frame == nil {
+		return
+	}
+
+	index := int(symbol)
+
+	if index < 0 || index >= MaxSlots {
+		return
+	}
+
+	maskIndex := index >> 6
+	frame.Mask[maskIndex] &^= uint64(1) << uint(index&63)
+	frame.Data[index] = 0
+}
+
+// Merge overlays every populated slot from other onto frame.
+func (frame *Frame) Merge(other Frame) {
+	if frame == nil {
+		panic("nomagique: cannot merge into a nil Frame")
+	}
+
+	for maskIndex, mask := range other.Mask {
+		for remaining := mask; remaining != 0; remaining &= remaining - 1 {
+			bit := bits.TrailingZeros64(remaining)
+			index := (maskIndex << 6) + bit
+			frame.Mask[maskIndex] |= uint64(1) << uint(bit)
+			frame.Data[index] = other.Data[index]
+		}
+	}
+}
+
+// Merged returns a copied Frame with other overlaid.
+func (frame Frame) Merged(other Frame) Frame {
+	frame.Merge(other)
+
+	return frame
+}
+
+// Count returns the number of populated slots.
+func (frame Frame) Count() int {
+	count := 0
+
+	for _, mask := range frame.Mask {
+		count += bits.OnesCount64(mask)
+	}
+
+	return count
+}
+
+// All iterates populated slots in ascending symbol order.
+func (frame Frame) All() iter.Seq2[Symbol, float64] {
+	return func(yield func(Symbol, float64) bool) {
+		for maskIndex, mask := range frame.Mask {
+			for remaining := mask; remaining != 0; remaining &= remaining - 1 {
+				bit := bits.TrailingZeros64(remaining)
+				index := (maskIndex << 6) + bit
+
+				if index >= MaxSlots || !yield(Symbol(index), frame.Data[index]) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// Finite reports whether every populated value is finite.
+func (frame Frame) Finite() bool {
+	for maskIndex, mask := range frame.Mask {
+		for remaining := mask; remaining != 0; remaining &= remaining - 1 {
+			bit := bits.TrailingZeros64(remaining)
+			value := frame.Data[(maskIndex<<6)+bit]
+
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// Equal compares exact populated slots and IEEE-754 bit patterns.
+func (frame Frame) Equal(other Frame) bool {
+	if frame.Mask != other.Mask {
+		return false
+	}
+
+	for maskIndex, mask := range frame.Mask {
+		for remaining := mask; remaining != 0; remaining &= remaining - 1 {
+			bit := bits.TrailingZeros64(remaining)
+			index := (maskIndex << 6) + bit
+
+			if math.Float64bits(frame.Data[index]) != math.Float64bits(other.Data[index]) {
+				return false
+			}
+		}
+	}
+
+	return true
 }

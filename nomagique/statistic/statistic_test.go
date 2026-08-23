@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestMedianAndMaximum(t *testing.T) {
 	input := sampleFrame(7, 1, 5, 3)
-	_, median, err := Median(nomagique.Frame{}, input)
+	_, median, err := Median(types.Frame{}, input)
 
 	if err != nil {
 		t.Fatal(err)
@@ -19,7 +20,7 @@ func TestMedianAndMaximum(t *testing.T) {
 		t.Fatalf("median=%v; want 4", got)
 	}
 
-	_, maximum, err := Maximum(nomagique.Frame{}, input)
+	_, maximum, err := Maximum(types.Frame{}, input)
 
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +32,7 @@ func TestMedianAndMaximum(t *testing.T) {
 }
 
 func TestMedianEmptyIsProvisional(t *testing.T) {
-	_, output, err := Median(nomagique.Frame{}, nomagique.Frame{})
+	_, output, err := Median(types.Frame{}, types.Frame{})
 
 	if err != nil {
 		t.Fatal(err)
@@ -49,12 +50,12 @@ func TestMaxOf(t *testing.T) {
 
 	maxPrimitive := MaxOf(symA, symB, symC)
 
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(symA, 1.5)
 	input.Put(symB, 4.2)
 	input.Put(symC, -0.8)
 
-	_, output, err := maxPrimitive(nomagique.Frame{}, input)
+	_, output, err := maxPrimitive(types.Frame{}, input)
 
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +70,7 @@ func TestMaxOf(t *testing.T) {
 	}
 
 	// Empty input
-	_, emptyOutput, err := maxPrimitive(nomagique.Frame{}, nomagique.Frame{})
+	_, emptyOutput, err := maxPrimitive(types.Frame{}, types.Frame{})
 
 	if err != nil {
 		t.Fatal(err)
@@ -81,13 +82,13 @@ func TestMaxOf(t *testing.T) {
 }
 
 func TestBranchingAndLikelihood(t *testing.T) {
-	branchingInput := nomagique.Frame{}
+	branchingInput := types.Frame{}
 	branchingInput.Put(SymbolAlphaAA, 1)
 	branchingInput.Put(SymbolAlphaAB, 0.5)
 	branchingInput.Put(SymbolAlphaBA, 0.5)
 	branchingInput.Put(SymbolAlphaBB, 1)
 	branchingInput.Put(SymbolBeta, 2)
-	_, branching, err := Branching(nomagique.Frame{}, branchingInput)
+	_, branching, err := Branching(types.Frame{}, branchingInput)
 
 	if err != nil {
 		t.Fatal(err)
@@ -97,11 +98,11 @@ func TestBranchingAndLikelihood(t *testing.T) {
 		t.Fatalf("spectral radius=%v; want 0.75", got)
 	}
 
-	likelihoodInput := nomagique.Frame{}
+	likelihoodInput := types.Frame{}
 	likelihoodInput.Put(SymbolLLHawkes, -120.5)
 	likelihoodInput.Put(SymbolLLPoisson, -150)
 	likelihoodInput.Put(SymbolLLSelf, -135)
-	_, likelihood, err := Likelihood(nomagique.Frame{}, likelihoodInput)
+	_, likelihood, err := Likelihood(types.Frame{}, likelihoodInput)
 
 	if err != nil {
 		t.Fatal(err)
@@ -116,8 +117,8 @@ func TestBranchingAndLikelihood(t *testing.T) {
 	}
 }
 
-func sampleFrame(values ...float64) nomagique.Frame {
-	input := nomagique.Frame{}
+func sampleFrame(values ...float64) types.Frame {
+	input := types.Frame{}
 
 	for index, value := range values {
 		input.Put(nomagique.MustSampleSymbol(index), value)

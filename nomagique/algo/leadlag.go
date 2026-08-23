@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -31,9 +32,9 @@ func LeadLag() nomagique.Primitive {
 }
 
 func leadLagScores(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	ready, _ := input.Get(equation.SymbolLeadLagReady)
 
 	if ready == 0 {

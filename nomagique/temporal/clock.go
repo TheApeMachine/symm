@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
@@ -17,20 +18,20 @@ var (
 Clock calculates temporal progress as age divided by positive span.
 */
 func Clock(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	age, hasAge := input.Get(SymbolAge)
 	span, hasSpan := input.Get(SymbolSpan)
 
 	if !hasAge || !hasSpan || !utils.IsFinite(age, span) {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: clock requires finite age and span",
 		)
 	}
 
 	if span <= 0 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: clock requires positive span",
 		)
 	}

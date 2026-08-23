@@ -7,7 +7,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -198,7 +198,7 @@ contract as Search.
 func (search *CausalMCTS) SearchFrames(
 	rootState State,
 	iterations int,
-	history []nomagique.Frame,
+	history []types.Frame,
 ) (*Node, float64, error) {
 	rows := make([][]float64, 0, len(history))
 

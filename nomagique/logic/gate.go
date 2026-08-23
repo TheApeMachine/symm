@@ -2,9 +2,10 @@ package logic
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 var (
@@ -13,28 +14,13 @@ var (
 	SymbolResult    = nomagique.MustIntern("result")
 )
 
-/*
-Gate passes value to result when numeric condition is non-zero and otherwise
-writes zero.
-*/
-func Gate(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+// Gate emits value when condition is non-zero and zero otherwise.
+func Gate(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 	condition, hasCondition := input.Get(SymbolCondition)
 	value, hasValue := input.Get(SymbolValue)
 
-	if !hasCondition || !hasValue {
-		return state, nomagique.Frame{}, fmt.Errorf(
-			"logic: gate requires condition and value",
-		)
-	}
-
-	if math.IsNaN(condition) || math.IsInf(condition, 0) ||
-		math.IsNaN(value) || math.IsInf(value, 0) {
-		return state, nomagique.Frame{}, fmt.Errorf(
-			"logic: gate condition and value must be finite",
-		)
+	if !hasCondition || !hasValue || !utils.IsFinite(condition) || !utils.IsFinite(value) {
+		return state, types.Frame{}, fmt.Errorf("logic: gate requires finite condition and value")
 	}
 
 	result := 0.0

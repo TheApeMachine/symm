@@ -106,9 +106,9 @@ detector := learning.NewFeatureDetector(learning.FeatureDetectorConfig{
 })
 
 // Wrap as a nomagique.Stream
-stream := nomagique.NewStream(detector.Primitive(), nomagique.Frame{})
+stream := nomagique.NewStream(detector.Primitive(), types.Frame{})
 
-input := nomagique.Frame{}
+input := types.Frame{}
 input.Put(learning.SymbolFeatureCount, 4)
 input.Put(learning.FeatureSymbol(0), 0.1)
 input.Put(learning.FeatureSymbol(1), 0.4)
@@ -208,9 +208,9 @@ func ExampleFeatureDetector_stream() {
 		LatentDim:     4,
 	})
 
-	stream := nomagique.NewStream(detector.Primitive(), nomagique.Frame{})
+	stream := nomagique.NewStream(detector.Primitive(), types.Frame{})
 
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(learning.SymbolFeatureCount, 3)
 	input.Put(learning.FeatureSymbol(0), 0.2)
 	input.Put(learning.FeatureSymbol(1), -0.1)

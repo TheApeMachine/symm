@@ -5,10 +5,11 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func number(
-	frame *nomagique.Frame,
+	frame *types.Frame,
 	symbol nomagique.Symbol,
 	primitive string,
 ) (float64, error) {
@@ -41,7 +42,7 @@ func finite(values ...float64) bool {
 	return true
 }
 
-func resultFrame(input nomagique.Frame, value float64) nomagique.Frame {
+func resultFrame(input types.Frame, value float64) types.Frame {
 	output := input
 	output.Put(SymbolResult, value)
 

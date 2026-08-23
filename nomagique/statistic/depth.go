@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -21,16 +21,16 @@ prices can feed this stage; nothing about the quote's provenance leaks into
 the numeric contract.
 */
 func ExtractDepth(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	bidPrice, hasBidPrice := input.Get(nmtypes.AlphaPrice)
 	askPrice, hasAskPrice := input.Get(nmtypes.BetaPrice)
 	bidQty, hasBidQty := input.Get(nmtypes.AlphaQuantity)
 	askQty, hasAskQty := input.Get(nmtypes.BetaQuantity)
 
 	if !hasBidPrice || !hasAskPrice || !hasBidQty || !hasAskQty {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: extract depth requires both touch prices and both touch quantities",
 		)
 	}

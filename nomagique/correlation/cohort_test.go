@@ -4,12 +4,12 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestCohort(t *testing.T) {
 	Convey("Given ready pair estimates with unequal support", t, func() {
-		state, _, err := Cohort(nomagique.Frame{}, cohortPair(0.5, 2, 4, 1))
+		state, _, err := Cohort(types.Frame{}, cohortPair(0.5, 2, 4, 1))
 		So(err, ShouldBeNil)
 		state, output, err := Cohort(state, cohortPair(-0.25, 4, 4, 2))
 
@@ -22,7 +22,7 @@ func TestCohort(t *testing.T) {
 	})
 
 	Convey("Given an unsupported pair", t, func() {
-		_, output, err := Cohort(nomagique.Frame{}, cohortPair(1, 1, 1, 1))
+		_, output, err := Cohort(types.Frame{}, cohortPair(1, 1, 1, 1))
 
 		So(err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 0.0)
@@ -34,8 +34,8 @@ func cohortPair(
 	support float64,
 	leftVariance float64,
 	rightVariance float64,
-) nomagique.Frame {
-	input := nomagique.Frame{}
+) types.Frame {
+	input := types.Frame{}
 	input.Put(SymbolReady, 1)
 	input.Put(SymbolCorrelation, correlation)
 	input.Put(SymbolSupport, support)
@@ -47,7 +47,7 @@ func cohortPair(
 
 func BenchmarkCohort(benchmark *testing.B) {
 	input := cohortPair(0.5, 4, 2, 1)
-	state := nomagique.Frame{}
+	state := types.Frame{}
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {

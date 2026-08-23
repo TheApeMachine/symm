@@ -8,19 +8,22 @@ import (
 	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
-/*
-LogChange reports log(current/previous) for a positive observed series. It is
-the scale-invariant counterpart to Change.
-*/
+// LogChange reports log(current/previous) for a positive observed series.
 func LogChange(source nomagique.Symbol) nomagique.Primitive {
 	return nomagique.Pipe(
 		temporal.Observer(source),
 		statistic.Maturity(temporal.SymbolObservations),
 		logic.If(
-			nomagique.Relay(calculus.SymbolReady, logic.SymbolCondition),
-			nomagique.Pipe(
+			nomagique.Wire(
+				nomagique.Identity,
+				nomagique.In(calculus.SymbolReady, logic.SymbolCondition),
+				nomagique.Out(logic.SymbolCondition, logic.SymbolCondition),
+			),
+			nomagique.Wire(
 				calculus.LogRatio,
-				nomagique.Relay(calculus.SymbolResult, SymbolChange),
+				nomagique.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
+				nomagique.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
+				nomagique.Out(calculus.PortResult, SymbolChange),
 			),
 			nomagique.Identity,
 		),

@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -21,15 +22,15 @@ Lag scans Hayashi correlation across an integral range of timestamp shifts.
 Both paths are decoded once and reused for every candidate.
 */
 func Lag(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	spacing, hasSpacing := input.Get(SymbolLagSpacing)
 	maximumLagValue, hasMaximumLag := input.Get(SymbolMaximumLag)
 
 	if !hasSpacing || spacing <= 0 || spacing != math.Trunc(spacing) ||
 		!hasMaximumLag || maximumLagValue < 1 || maximumLagValue != math.Trunc(maximumLagValue) {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"correlation: lag requires integral spacing and maximum lag",
 		)
 	}

@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
@@ -19,7 +18,7 @@ func TestDepthFlowNumber(t *testing.T) {
 		defer signal.Close()
 
 		Convey("Loaded Book: when touch and deep imbalance align heavily on bid side", func() {
-			input := nomagique.Frame{}
+			input := types.Frame{}
 			input.Put(algo.SymbolTouchBidQty, 10.0)
 			input.Put(algo.SymbolTouchAskQty, 2.0)
 			input.Put(algo.SymbolDeepBidQty, 50.0)
@@ -47,7 +46,7 @@ func TestDepthFlowNumber(t *testing.T) {
 		})
 
 		Convey("Spoofed Book: when touch is heavily bid but deep book is heavily ask", func() {
-			input := nomagique.Frame{}
+			input := types.Frame{}
 			input.Put(algo.SymbolTouchBidQty, 10.0)
 			input.Put(algo.SymbolTouchAskQty, 1.0)
 			input.Put(algo.SymbolDeepBidQty, 2.0)
@@ -75,7 +74,7 @@ func TestDepthFlowNumber(t *testing.T) {
 		})
 
 		Convey("Adversarial: Empty book / zero quantities produces stable zeros without panic", func() {
-			input := nomagique.Frame{}
+			input := types.Frame{}
 			input.Put(algo.SymbolTouchBidQty, 0.0)
 			input.Put(algo.SymbolTouchAskQty, 0.0)
 			input.Put(algo.SymbolDeepBidQty, 0.0)
@@ -99,7 +98,7 @@ func BenchmarkDepthFlowPipeline(b *testing.B) {
 	signal := NewSignal(context.Background(), thesis)
 	defer signal.Close()
 
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(algo.SymbolTouchBidQty, 10.0)
 	input.Put(algo.SymbolTouchAskQty, 2.0)
 	input.Put(algo.SymbolDeepBidQty, 50.0)

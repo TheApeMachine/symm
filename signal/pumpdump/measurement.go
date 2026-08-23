@@ -30,21 +30,21 @@ var (
 
 func (signal *Signal) bookMeasurement(
 	at time.Time,
-	geometry nomagique.Frame,
-	alphaChange nomagique.Frame,
-	betaChange nomagique.Frame,
+	geometry types.Frame,
+	alphaChange types.Frame,
+	betaChange types.Frame,
 ) *nmtypes.Measurement {
 	separation := 0.0
 	baseline, hasBaseline := geometry.Get(statistic.SymbolMean)
 	_, hasCompression := geometry.Get(equation.SymbolCompression)
 
 	if hasBaseline && hasCompression {
-		comparison := nomagique.Frame{}
+		comparison := types.Frame{}
 		comparison.Put(nmtypes.AlphaQuantity, geometry.MustGet(equation.SymbolWidth))
 		comparison.Put(nmtypes.BetaQuantity, baseline)
 		_, comparison, err := nomagique.Step(
 			signal.separate,
-			nomagique.Frame{},
+			types.Frame{},
 			comparison,
 		)
 
@@ -125,8 +125,8 @@ func (signal *Signal) bookMeasurement(
 
 func (signal *Signal) putDepthDynamics(
 	measurement *nmtypes.Measurement,
-	alphaChange nomagique.Frame,
-	betaChange nomagique.Frame,
+	alphaChange types.Frame,
+	betaChange types.Frame,
 ) {
 	alpha, err := relativeComponents(signal.decompose, alphaChange)
 
@@ -152,10 +152,10 @@ func (signal *Signal) putDepthDynamics(
 
 func (signal *Signal) tickerMeasurement(
 	ticker kraken.TickerData,
-	displacement nomagique.Frame,
-	magnitude nomagique.Frame,
-	normalized nomagique.Frame,
-	polarized nomagique.Frame,
+	displacement types.Frame,
+	magnitude types.Frame,
+	normalized types.Frame,
+	polarized types.Frame,
 ) *nmtypes.Measurement {
 	measurement := signal.newMeasurement(
 		ticker.Timestamp,
@@ -189,11 +189,11 @@ func (signal *Signal) tickerMeasurement(
 
 func (signal *Signal) tradeMeasurement(
 	trade kraken.TradeData,
-	acceleration nomagique.Frame,
-	rate nomagique.Frame,
-	change nomagique.Frame,
-	polarized nomagique.Frame,
-	exhaustion nomagique.Frame,
+	acceleration types.Frame,
+	rate types.Frame,
+	change types.Frame,
+	polarized types.Frame,
+	exhaustion types.Frame,
 ) *nmtypes.Measurement {
 	from := observedFrom(acceleration, trade.Timestamp)
 	separation := frameNumber(exhaustion, statistic.SymbolSeparation)
@@ -256,7 +256,7 @@ func (signal *Signal) newMeasurement(
 
 func putPolarized(
 	measurement *nmtypes.Measurement,
-	polarized nomagique.Frame,
+	polarized types.Frame,
 ) {
 	putDirectionalEvidence(measurement, polarized,
 		equation.SymbolAlpha, equation.SymbolAlphaNormalized, types.SideBuy)
@@ -266,7 +266,7 @@ func putPolarized(
 
 func putDirectionalEvidence(
 	measurement *nmtypes.Measurement,
-	frame nomagique.Frame,
+	frame types.Frame,
 	rawSymbol nomagique.Symbol,
 	normalizedSymbol nomagique.Symbol,
 	side types.MeasurementSide,
@@ -290,7 +290,7 @@ func putDirectionalEvidence(
 
 func putExhaustion(
 	measurement *nmtypes.Measurement,
-	exhaustion nomagique.Frame,
+	exhaustion types.Frame,
 ) {
 	putOptionalNormalized(measurement, exhaustion, nmtypes.AlphaQuantity,
 		types.MetricKey(types.MetricExhaustion, types.SideBuy), dimensionless)
@@ -302,7 +302,7 @@ func putEvidence(
 	measurement *nmtypes.Measurement,
 	name string,
 	raw float64,
-	normalized nomagique.Frame,
+	normalized types.Frame,
 ) {
 	if _, found := normalized.Get(equation.SymbolRatio); !found {
 		return
@@ -320,7 +320,7 @@ func putEvidence(
 
 func putOptionalRaw(
 	measurement *nmtypes.Measurement,
-	frame nomagique.Frame,
+	frame types.Frame,
 	symbol nomagique.Symbol,
 	name string,
 	descriptor nmtypes.Descriptor,
@@ -334,7 +334,7 @@ func putOptionalRaw(
 
 func putOptionalNormalized(
 	measurement *nmtypes.Measurement,
-	frame nomagique.Frame,
+	frame types.Frame,
 	symbol nomagique.Symbol,
 	name string,
 	descriptor nmtypes.Descriptor,
@@ -348,7 +348,7 @@ func putOptionalNormalized(
 
 func putMetadata(
 	measurement *nmtypes.Measurement,
-	frame nomagique.Frame,
+	frame types.Frame,
 	name string,
 	symbol nomagique.Symbol,
 ) {
@@ -376,11 +376,11 @@ func normalizedMetric(
 	return nmtypes.NewNormalizedMetric(name, raw, normalized, descriptor)
 }
 
-func maturity(frame nomagique.Frame) float64 {
+func maturity(frame types.Frame) float64 {
 	return frameNumber(frame, statistic.SymbolMaturity)
 }
 
-func frameNumber(frame nomagique.Frame, symbol nomagique.Symbol) float64 {
+func frameNumber(frame types.Frame, symbol nomagique.Symbol) float64 {
 	value, _ := frame.Get(symbol)
 
 	return value

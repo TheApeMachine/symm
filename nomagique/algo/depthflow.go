@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -40,9 +41,9 @@ func Depthflow() nomagique.Primitive {
 }
 
 func imbalanceCalculator(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	touchBid, _ := input.Get(SymbolTouchBidQty)
 	touchAsk, _ := input.Get(SymbolTouchAskQty)
 	deepBid, _ := input.Get(SymbolDeepBidQty)
@@ -73,9 +74,9 @@ func imbalanceCalculator(
 }
 
 func hypothesisClassifier(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	touchImbalance, _ := input.Get(SymbolTouchImbalance)
 	deepImbalance, _ := input.Get(SymbolDeepImbalance)
 	totalDepth, _ := input.Get(nomagique.SampleValue)

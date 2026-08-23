@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
@@ -18,13 +19,13 @@ Interval computes elapsed time between sequential scalar timestamps and retains
 the last timestamp in state.
 */
 func Interval(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	timestamp, found := input.Get(SymbolTimestamp)
 
 	if !found || !utils.IsFinite(timestamp) {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"temporal: interval requires a finite timestamp",
 		)
 	}
@@ -37,7 +38,7 @@ func Interval(
 		delta = timestamp - previous
 
 		if delta < 0 {
-			return state, nomagique.Frame{}, fmt.Errorf(
+			return state, types.Frame{}, fmt.Errorf(
 				"temporal: interval timestamp cannot move backwards",
 			)
 		}

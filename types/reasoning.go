@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/mcts"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -108,8 +108,8 @@ The archetype is the identifiable opportunity the graph currently expresses;
 the physical fields (velocity/energy/causal expectation/spread) are the
 trust-attenuated readings the archetype's rollout dynamics consume.
 */
-func (graph *Graph) ReasoningFrame() nomagique.Frame {
-	frame := nomagique.Frame{}
+func (graph *Graph) ReasoningFrame() types.Frame {
+	frame := types.Frame{}
 
 	now := time.Now().UTC()
 	active := graph.ActiveOpportunity(now)
@@ -156,8 +156,8 @@ func opportunityArchetypeIndex(archetype OpportunityType) int {
 ReasoningHistory returns only explicit observational SCM rows carried in node
 metadata. Graph edges and simulated states are never relabeled as observations.
 */
-func (graph *Graph) ReasoningHistory() []nomagique.Frame {
-	observations := make([]nomagique.Frame, 0)
+func (graph *Graph) ReasoningHistory() []types.Frame {
+	observations := make([]types.Frame, 0)
 
 	for _, node := range graph.reasoningNodeViews() {
 		row, found := reasoningRow(node.Metadata["reasoning_row"])
@@ -197,9 +197,9 @@ crossing cost (spread + impact) and a time penalty, so the search discovers
 real opportunity geometry instead of adding monolith scalars.
 */
 func (graph *Graph) ApplyReasoningIntervention(
-	state nomagique.Frame,
+	state types.Frame,
 	action float64,
-) (nomagique.Frame, error) {
+) (types.Frame, error) {
 	if err := mcts.ValidateReasoningFrame(state); err != nil {
 		return state, err
 	}

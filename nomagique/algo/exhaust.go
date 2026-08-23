@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -39,9 +40,9 @@ func Exhaust() nomagique.Primitive {
 }
 
 func exhaustEvaluator(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	volume, _ := input.Get(SymbolVolume)
 	spread, _ := input.Get(SymbolSpread)
 	priceDelta, _ := input.Get(SymbolPriceDelta)

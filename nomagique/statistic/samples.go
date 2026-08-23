@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -14,7 +15,7 @@ var (
 )
 
 func collectSamples(
-	input *nomagique.Frame,
+	input *types.Frame,
 	primitive string,
 ) ([nomagique.MaxSamples]float64, int, error) {
 	values := [nomagique.MaxSamples]float64{}

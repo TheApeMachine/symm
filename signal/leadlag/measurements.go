@@ -16,9 +16,9 @@ func (signal *Signal) measurement(
 	symbol string,
 	anchor string,
 	at time.Time,
-	anchorPath nomagique.Frame,
-	followerPath nomagique.Frame,
-	output nomagique.Frame,
+	anchorPath types.Frame,
+	followerPath types.Frame,
+	output types.Frame,
 	measured bool,
 ) *nmtypes.Measurement {
 	measurement := signal.baseMeasurement(symbol, anchor, at, followerPath)
@@ -87,7 +87,7 @@ func (signal *Signal) baseMeasurement(
 	symbol string,
 	peer string,
 	at time.Time,
-	followerPath nomagique.Frame,
+	followerPath types.Frame,
 ) *nmtypes.Measurement {
 	measurement := nmtypes.NewMeasurement(
 		uuid.NewString(),
@@ -106,7 +106,7 @@ func (signal *Signal) baseMeasurement(
 }
 
 func metricValue(
-	frame nomagique.Frame,
+	frame types.Frame,
 	symbol nomagique.Symbol,
 	measured bool,
 ) float64 {
@@ -123,7 +123,7 @@ func metricValue(
 	return 0
 }
 
-func pathSupport(path nomagique.Frame) float64 {
+func pathSupport(path types.Frame) float64 {
 	value, found := path.Get(nomagique.SampleCount)
 
 	if found {
@@ -133,7 +133,7 @@ func pathSupport(path nomagique.Frame) float64 {
 	return 0
 }
 
-func leadLagObservedFrom(anchorPath nomagique.Frame, followerPath nomagique.Frame) time.Time {
+func leadLagObservedFrom(anchorPath types.Frame, followerPath types.Frame) time.Time {
 	anchorFrom, _, _ := pathBoundary(anchorPath)
 	followerFrom, _, _ := pathBoundary(followerPath)
 
@@ -144,7 +144,7 @@ func leadLagObservedFrom(anchorPath nomagique.Frame, followerPath nomagique.Fram
 	return anchorFrom
 }
 
-func pathBoundary(path nomagique.Frame) (time.Time, time.Time, float64) {
+func pathBoundary(path types.Frame) (time.Time, time.Time, float64) {
 	count, _ := path.Get(nomagique.SampleCount)
 	firstTimestamp, _, hasFirst := temporal.PathSample(&path, 0)
 	lastTimestamp, lastValue, hasLast := temporal.PathSample(&path, int(count)-1)

@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -24,7 +25,7 @@ func TestCrossLag(t *testing.T) {
 	})
 }
 
-func delayedCrossLagPaths(sampleCount int) (nomagique.Frame, nomagique.Frame) {
+func delayedCrossLagPaths(sampleCount int) (types.Frame, types.Frame) {
 	anchorValues := make([]float64, sampleCount)
 	followerValues := make([]float64, sampleCount)
 	anchorValues[0] = 100
@@ -41,7 +42,7 @@ func delayedCrossLagPaths(sampleCount int) (nomagique.Frame, nomagique.Frame) {
 	return crossLagPath(anchorValues, 0), crossLagPath(followerValues, 0)
 }
 
-func crossLagPath(values []float64, offset int64) nomagique.Frame {
+func crossLagPath(values []float64, offset int64) types.Frame {
 	timestamps := make([]int64, len(values))
 
 	for index := range values {
@@ -51,11 +52,11 @@ func crossLagPath(values []float64, offset int64) nomagique.Frame {
 	return hayashiEquationPath(timestamps, values)
 }
 
-func hayashiEquationPath(timestamps []int64, values []float64) nomagique.Frame {
-	path := nomagique.NewStream(temporal.Path, nomagique.Frame{})
+func hayashiEquationPath(timestamps []int64, values []float64) types.Frame {
+	path := nomagique.NewStream(temporal.Path, types.Frame{})
 
 	for index, timestamp := range timestamps {
-		input := nomagique.Frame{}
+		input := types.Frame{}
 		input.Put(nomagique.SampleValue, values[index])
 		input.Put(temporal.SymbolUnixSec, float64(timestamp/1_000_000_000))
 		input.Put(temporal.SymbolUnixNsec, float64(timestamp%1_000_000_000))

@@ -100,7 +100,7 @@ func (signal *Signal) consume() {
 					continue
 				}
 
-				input := nomagique.Frame{}
+				input := types.Frame{}
 				input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
 				input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
 				input.Put(nmtypes.AlphaQuantity, ticker.BidQty)

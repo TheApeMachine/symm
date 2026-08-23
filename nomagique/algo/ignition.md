@@ -1,7 +1,7 @@
 # Ignition Frame contract
 
 Ignition has no domain-specific input, output, side, keyed-collection, or window
-struct. One ordered stream is represented by a `nomagique.Frame`, and key
+struct. One ordered stream is represented by a `types.Frame`, and key
 ownership is handled by `nomagique.KeyedStreams` or by the caller's transport
 layer.
 

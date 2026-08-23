@@ -14,46 +14,40 @@ var (
 )
 
 /*
-Normalize scores a positive observation against its causal adaptive center. It
-emits the direct ratio, bounded ratio, lift, and empirical maturity only after
-at least one prior observation exists.
+Normalize scores an observation against its causal adaptive center. Every atom
+receives only the facts explicitly bound to its structural ports.
 */
 func Normalize() nomagique.Primitive {
 	return nomagique.Pipe(
 		CausalBaseline(),
 		statistic.Maturity(nomagique.SampleCount),
 		logic.If(
-			nomagique.Relay(statistic.SymbolReady, logic.SymbolCondition),
-			nomagique.Fork(normalizedLift(), nomagique.Fork(
-				normalizedRatio(),
-				normalizedScore(),
-			)),
+			nomagique.Wire(
+				nomagique.Identity,
+				nomagique.In(statistic.SymbolReady, logic.SymbolCondition),
+				nomagique.Out(logic.SymbolCondition, logic.SymbolCondition),
+			),
+			nomagique.ForkStrict(
+				nomagique.Wire(
+					statistic.Lift,
+					nomagique.In(nomagique.SampleValue, nomagique.SampleValue),
+					nomagique.In(statistic.SymbolMean, statistic.SymbolBaseline),
+					nomagique.Out(statistic.SymbolResult, SymbolLift),
+				),
+				nomagique.Wire(
+					calculus.Quotient,
+					nomagique.In(nomagique.SampleValue, calculus.PortA),
+					nomagique.In(statistic.SymbolMean, calculus.PortB),
+					nomagique.Out(calculus.PortResult, SymbolRatio),
+				),
+				nomagique.Wire(
+					calculus.Squash,
+					nomagique.In(nomagique.SampleValue, calculus.PortX),
+					nomagique.In(statistic.SymbolMean, calculus.SymbolScale),
+					nomagique.Out(calculus.PortResult, SymbolNormalized),
+				),
+			),
 			nomagique.Identity,
 		),
-	)
-}
-
-func normalizedLift() nomagique.Primitive {
-	return nomagique.Pipe(
-		statistic.Lift,
-		nomagique.Relay(statistic.SymbolResult, SymbolLift),
-	)
-}
-
-func normalizedRatio() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(nomagique.SampleValue, calculus.SymbolValue),
-		nomagique.Relay(statistic.SymbolMean, calculus.SymbolBaseline),
-		calculus.Ratio,
-		nomagique.Relay(calculus.SymbolResult, SymbolRatio),
-	)
-}
-
-func normalizedScore() nomagique.Primitive {
-	return nomagique.Pipe(
-		nomagique.Relay(nomagique.SampleValue, calculus.SymbolValue),
-		nomagique.Relay(statistic.SymbolMean, calculus.SymbolScale),
-		calculus.Squash,
-		nomagique.Relay(calculus.SymbolResult, SymbolNormalized),
 	)
 }

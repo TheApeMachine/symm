@@ -66,7 +66,7 @@ func (signal *Signal) consume() {
 			for ticker := range symbol.MarketTickers(
 				symbol.TickerConsumers[types.TickerConsumerCorrelation],
 			) {
-				input := nomagique.Frame{}
+				input := types.Frame{}
 				input.Put(nomagique.SampleValue, ticker.Last.Float64())
 				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -19,13 +19,13 @@ InterventionGraph bridges a knowledge graph into semantic market state.
 ReasoningHistory must return observational rows only; simulations are separate.
 */
 type InterventionGraph interface {
-	ReasoningFrame() nomagique.Frame
-	ReasoningHistory() []nomagique.Frame
+	ReasoningFrame() types.Frame
+	ReasoningHistory() []types.Frame
 	ReasoningKey() string
 	ApplyReasoningIntervention(
-		state nomagique.Frame,
+		state types.Frame,
 		action float64,
-	) (nomagique.Frame, error)
+	) (types.Frame, error)
 }
 
 /*
@@ -34,8 +34,8 @@ The graph contributes context and dynamics but actions never select node IDs.
 */
 type GraphState struct {
 	graph        InterventionGraph
-	frame        nomagique.Frame
-	observations []nomagique.Frame
+	frame        types.Frame
+	observations []types.Frame
 	key          string
 	err          error
 }
@@ -171,9 +171,9 @@ func (graphState *GraphState) ToVector() []float64 {
 /*
 ToFrame returns the named market state for UI inspection.
 */
-func (graphState *GraphState) ToFrame() nomagique.Frame {
+func (graphState *GraphState) ToFrame() types.Frame {
 	if graphState == nil {
-		return nomagique.Frame{}
+		return types.Frame{}
 	}
 
 	return graphState.frame

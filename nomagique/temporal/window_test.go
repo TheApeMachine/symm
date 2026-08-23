@@ -5,11 +5,12 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-func windowObservationForTest(value float64, capacity int) nomagique.Frame {
-	input := nomagique.Frame{}
+func windowObservationForTest(value float64, capacity int) types.Frame {
+	input := types.Frame{}
 	input.Put(nomagique.SampleValue, value)
 	input.Put(SymbolUnixSec, float64(capacity*1000))
 	input.Put(SymbolUnixNsec, 0)
@@ -20,7 +21,7 @@ func windowObservationForTest(value float64, capacity int) nomagique.Frame {
 
 func TestWindow(t *testing.T) {
 	Convey("Given successive values inside a window's capacity", t, func() {
-		stream := nomagique.NewStream(Window, nomagique.Frame{})
+		stream := nomagique.NewStream(Window, types.Frame{})
 
 		Convey("It should retain every value and echo the observation", func() {
 			_, err := stream.Step(windowObservationForTest(100, 4))
@@ -40,7 +41,7 @@ func TestWindow(t *testing.T) {
 	})
 
 	Convey("Given more values than the window's capacity", t, func() {
-		stream := nomagique.NewStream(Window, nomagique.Frame{})
+		stream := nomagique.NewStream(Window, types.Frame{})
 
 		for value := 100.0; value < 104; value++ {
 			_, err := stream.Step(windowObservationForTest(value, 3))
@@ -63,20 +64,20 @@ func TestWindow(t *testing.T) {
 
 	Convey("Given an observation without a value or event time", t, func() {
 		Convey("It should fail the transition", func() {
-			_, _, err := Window(nomagique.Frame{}, nomagique.Frame{})
+			_, _, err := Window(types.Frame{}, types.Frame{})
 			So(err, ShouldNotBeNil)
 
-			_, _, err = Window(nomagique.Frame{}, windowObservationForTest(100, 0))
+			_, _, err = Window(types.Frame{}, windowObservationForTest(100, 0))
 			So(err, ShouldNotBeNil)
 
-			_, _, err = Window(nomagique.Frame{}, windowObservationForTest(100, nomagique.MaxSamples+1))
+			_, _, err = Window(types.Frame{}, windowObservationForTest(100, nomagique.MaxSamples+1))
 			So(err, ShouldNotBeNil)
 		})
 	})
 }
 
 func BenchmarkWindow(b *testing.B) {
-	stream := nomagique.NewStream(Window, nomagique.Frame{})
+	stream := nomagique.NewStream(Window, types.Frame{})
 	input := windowObservationForTest(100, 128)
 	b.ReportAllocs()
 

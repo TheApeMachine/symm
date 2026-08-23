@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -34,9 +35,9 @@ func CrossLag() nomagique.Primitive {
 }
 
 func crossLag(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	leftCount, _ := state.Get(nomagique.SampleCount)
 	rightCount, _ := input.Get(nomagique.SampleCount)
 	sampleCount := int(math.Min(leftCount, rightCount))
@@ -48,16 +49,16 @@ func crossLag(
 		return state, output, nil
 	}
 
-	_, leftSpacing, err := temporal.Spacing(nomagique.Frame{}, state)
+	_, leftSpacing, err := temporal.Spacing(types.Frame{}, state)
 
 	if err != nil {
-		return state, nomagique.Frame{}, err
+		return state, types.Frame{}, err
 	}
 
-	_, rightSpacing, err := temporal.Spacing(nomagique.Frame{}, input)
+	_, rightSpacing, err := temporal.Spacing(types.Frame{}, input)
 
 	if err != nil {
-		return state, nomagique.Frame{}, err
+		return state, types.Frame{}, err
 	}
 
 	spacing := math.Min(
@@ -71,7 +72,7 @@ func crossLag(
 	_, scan, err := correlation.Lag(state, lagInput)
 
 	if err != nil {
-		return state, nomagique.Frame{}, err
+		return state, types.Frame{}, err
 	}
 
 	bestLag := int(scan.MustGet(correlation.SymbolBestLag))

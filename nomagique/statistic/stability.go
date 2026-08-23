@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -18,9 +19,9 @@ one for a collapsed range and otherwise one minus the largest departure from
 the mean divided by the collection's own range.
 */
 func Stability(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	count := populatedSamples(input)
 	output := input
 
@@ -34,7 +35,7 @@ func Stability(
 	center, found := input.Get(SymbolMean)
 
 	if !found {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: stability requires a mean",
 		)
 	}
@@ -72,7 +73,7 @@ func Stability(
 
 const minimumStabilitySamples = 2
 
-func populatedSamples(input nomagique.Frame) int {
+func populatedSamples(input types.Frame) int {
 	count := 0
 
 	for index := range nomagique.MaxSamples {

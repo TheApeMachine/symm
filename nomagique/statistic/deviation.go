@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -23,14 +24,14 @@ input frame untouched so downstream stages keep whatever context the
 composition carried.
 */
 func Deviation(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	value, hasValue := input.Get(nomagique.SampleValue)
 	baseline, hasBaseline := input.Get(SymbolBaselineValue)
 
 	if !hasValue || !hasBaseline {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: deviation requires a value and a baseline",
 		)
 	}

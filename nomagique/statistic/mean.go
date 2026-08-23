@@ -1,6 +1,9 @@
 package statistic
 
-import "github.com/theapemachine/symm/nomagique"
+import (
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
+)
 
 var SymbolMean = nomagique.MustIntern("mean")
 
@@ -9,9 +12,9 @@ Mean computes the arithmetic center of the populated generic sample slots.
 An empty collection is a valid provisional result with ready zero.
 */
 func Mean(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	mean := 0.0
 	count := 0
 

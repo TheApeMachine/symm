@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algorithm"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/types"
 	graphtypes "github.com/theapemachine/symm/types/graph"
 )
 
@@ -538,14 +538,14 @@ func (graph *Graph) OpportunitySummary() graphtypes.OpportunitySummary {
 	}
 
 	summary.Hypothesis = graph.DecisionTarget
-	var state nomagique.Frame
+	var state types.Frame
 
 	for _, edge := range graph.Edges {
 		if edge.To != graph.DecisionTarget || edge.Weight <= 0 || edge.Confidence <= 0 {
 			continue
 		}
 
-		input := nomagique.Frame{}
+		input := types.Frame{}
 		input.Put(algorithm.SymbolEdgeWeight, edge.Weight)
 		input.Put(algorithm.SymbolEdgeConfidence, edge.Confidence)
 		input.Put(algorithm.SymbolEdgeRelation, relationSign(edge.Relation))
@@ -553,7 +553,7 @@ func (graph *Graph) OpportunitySummary() graphtypes.OpportunitySummary {
 		state, _, _ = algorithm.OpportunityReducer(state, input)
 	}
 
-	state, _, _ = algorithm.OpportunityScorer(state, nomagique.Frame{})
+	state, _, _ = algorithm.OpportunityScorer(state, types.Frame{})
 
 	summary.Support, _ = state.Get(algorithm.SymbolOpportunitySupport)
 	summary.Contradiction, _ = state.Get(algorithm.SymbolOpportunityContradiction)

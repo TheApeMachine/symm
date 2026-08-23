@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -20,15 +21,15 @@ Likelihood computes log-likelihood differentials against Poisson and self-only
 baselines.
 */
 func Likelihood(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	llHawkes, hasHawkes := input.Get(SymbolLLHawkes)
 	llPoisson, hasPoisson := input.Get(SymbolLLPoisson)
 	llSelf, hasSelf := input.Get(SymbolLLSelf)
 
 	if !hasHawkes || !hasPoisson || !hasSelf || !finite(llHawkes, llPoisson, llSelf) {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: likelihood requires finite model values",
 		)
 	}

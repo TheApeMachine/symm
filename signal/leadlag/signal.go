@@ -99,7 +99,7 @@ func (signal *Signal) consume() {
 					return
 				}
 
-				input := nomagique.Frame{}
+				input := types.Frame{}
 				input.Put(nomagique.SampleValue, price)
 				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
 				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))

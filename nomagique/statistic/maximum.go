@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -11,13 +12,13 @@ Maximum returns the greatest populated generic sample. An empty sample set is a
 valid provisional result with ready zero.
 */
 func Maximum(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	values, count, err := collectSamples(&input, "maximum")
 
 	if err != nil {
-		return state, nomagique.Frame{}, err
+		return state, types.Frame{}, err
 	}
 
 	result := 0.0
@@ -46,9 +47,9 @@ MaxOf returns a primitive that evaluates the maximum over specific named symbols
 */
 func MaxOf(symbols ...nomagique.Symbol) nomagique.Primitive {
 	return func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
+		state types.Frame,
+		input types.Frame,
+	) (types.Frame, types.Frame, error) {
 		result := -math.MaxFloat64
 		count := 0
 

@@ -1,4 +1,4 @@
-package nomagique
+package types
 
 import "testing"
 

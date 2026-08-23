@@ -5,18 +5,19 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestSpacing(t *testing.T) {
 	Convey("Given an irregular retained path", t, func() {
-		path := nomagique.NewStream(Path, nomagique.Frame{})
+		path := nomagique.NewStream(Path, types.Frame{})
 
 		for _, timestamp := range []int64{0, 2, 5, 9} {
 			_, err := path.Step(pathObservation(100, timestamp, 4))
 			So(err, ShouldBeNil)
 		}
 
-		_, output, err := Spacing(nomagique.Frame{}, path.Project())
+		_, output, err := Spacing(types.Frame{}, path.Project())
 
 		So(err, ShouldBeNil)
 		So(output.MustGet(SymbolSpacingReady), ShouldEqual, 1.0)
@@ -25,7 +26,7 @@ func TestSpacing(t *testing.T) {
 }
 
 func BenchmarkSpacing(benchmark *testing.B) {
-	path := nomagique.NewStream(Path, nomagique.Frame{})
+	path := nomagique.NewStream(Path, types.Frame{})
 
 	for timestamp := range MaxPathSamples {
 		_, _ = path.Step(pathObservation(100, int64(timestamp), MaxPathSamples))
@@ -35,6 +36,6 @@ func BenchmarkSpacing(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _, _ = Spacing(nomagique.Frame{}, state)
+		_, _, _ = Spacing(types.Frame{}, state)
 	}
 }

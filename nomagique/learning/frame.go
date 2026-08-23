@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 const (
@@ -13,18 +14,18 @@ const (
 )
 
 var (
-	SymbolFeatureCount         = nomagique.MustIntern("resonance/feature_count")
-	SymbolInferenceSteps       = nomagique.MustIntern("resonance/inference_steps")
-	SymbolInvocation           = nomagique.MustIntern("resonance/invocation")
-	SymbolEnergy               = nomagique.MustIntern("resonance/energy")
-	SymbolSurprise             = nomagique.MustIntern("resonance/surprise")
-	SymbolReconstructionError  = nomagique.MustIntern("resonance/reconstruction_error")
-	SymbolLatentCount          = nomagique.MustIntern("resonance/latent_count")
-	SymbolInnovationCount      = nomagique.MustIntern("resonance/innovation_count")
+	SymbolFeatureCount        = nomagique.MustIntern("resonance/feature_count")
+	SymbolInferenceSteps      = nomagique.MustIntern("resonance/inference_steps")
+	SymbolInvocation          = nomagique.MustIntern("resonance/invocation")
+	SymbolEnergy              = nomagique.MustIntern("resonance/energy")
+	SymbolSurprise            = nomagique.MustIntern("resonance/surprise")
+	SymbolReconstructionError = nomagique.MustIntern("resonance/reconstruction_error")
+	SymbolLatentCount         = nomagique.MustIntern("resonance/latent_count")
+	SymbolInnovationCount     = nomagique.MustIntern("resonance/innovation_count")
 
-	featureSymbols    [MaxFrameFeatures]nomagique.Symbol
-	layerLatentSyms   [MaxFrameLayers][MaxLayerDim]nomagique.Symbol
-	layerInnoSyms     [MaxFrameLayers][MaxLayerDim]nomagique.Symbol
+	featureSymbols  [MaxFrameFeatures]nomagique.Symbol
+	layerLatentSyms [MaxFrameLayers][MaxLayerDim]nomagique.Symbol
+	layerInnoSyms   [MaxFrameLayers][MaxLayerDim]nomagique.Symbol
 )
 
 func init() {
@@ -72,9 +73,9 @@ FramePrimitive adapts the multi-timescale, overcomplete predictive coding manifo
 into nomagique's universal Frame reducer interface.
 */
 func FramePrimitive(manifold *ResonanceManifold, learn bool) nomagique.Primitive {
-	return func(state nomagique.Frame, input nomagique.Frame) (nomagique.Frame, nomagique.Frame, error) {
+	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		if manifold == nil {
-			return state, nomagique.Frame{}, fmt.Errorf("resonance: manifold required")
+			return state, types.Frame{}, fmt.Errorf("resonance: manifold required")
 		}
 
 		featureCountValue, hasFeatureCount := input.Get(SymbolFeatureCount)
@@ -84,7 +85,7 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) nomagique.Primitive
 		}
 
 		if featureCount <= 0 || featureCount > MaxFrameFeatures || featureCount != manifold.arch[0] {
-			return state, nomagique.Frame{}, fmt.Errorf(
+			return state, types.Frame{}, fmt.Errorf(
 				"resonance: feature count %d does not match input width %d",
 				featureCount, manifold.arch[0],
 			)
@@ -94,18 +95,18 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) nomagique.Primitive
 		for featureIndex := range featureCount {
 			feature, found := input.Get(featureSymbols[featureIndex])
 			if !found {
-				return state, nomagique.Frame{}, fmt.Errorf("resonance: feature %d required", featureIndex)
+				return state, types.Frame{}, fmt.Errorf("resonance: feature %d required", featureIndex)
 			}
 			featureStorage[featureIndex] = feature
 		}
 
 		if err := manifold.Settle(featureStorage[:featureCount], !learn); err != nil {
-			return state, nomagique.Frame{}, err
+			return state, types.Frame{}, err
 		}
 
 		if learn {
 			if err := manifold.Learn(nil); err != nil {
-				return state, nomagique.Frame{}, err
+				return state, types.Frame{}, err
 			}
 		}
 
@@ -113,7 +114,7 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) nomagique.Primitive
 		nextState := state
 		nextState.Put(SymbolInvocation, invocation+1)
 
-		output := nomagique.Frame{}
+		output := types.Frame{}
 		output.Put(SymbolEnergy, manifold.Energy())
 		output.Put(SymbolSurprise, manifold.ReconstructionError())
 		output.Put(SymbolReconstructionError, manifold.ReconstructionError())

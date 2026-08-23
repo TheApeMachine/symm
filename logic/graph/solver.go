@@ -390,7 +390,7 @@ func (solver *Solver) extractResonanceNodes(
 	var (
 		returnForecast *types.ResonanceReturnForecast
 		coder          *learning.ResonanceManifold
-		dynamics       nomagique.Frame
+		dynamics       types.Frame
 	)
 
 	for stored := range symbol.MarketResonance(
@@ -401,7 +401,7 @@ func (solver *Solver) extractResonanceNodes(
 			returnForecast = value
 		case *learning.ResonanceManifold:
 			coder = value
-		case nomagique.Frame:
+		case types.Frame:
 			dynamics = value
 		}
 	}
@@ -484,7 +484,7 @@ func (solver *Solver) popCognition(symbol *types.Symbol) (types.Cognition, bool)
 
 func (solver *Solver) extractPredictiveDynamicsNodes(
 	symbol string,
-	dynamics nomagique.Frame,
+	dynamics types.Frame,
 	graph *types.Graph,
 ) {
 	ready, _ := dynamics.Get(learning.SymbolDynamicsReady)
@@ -1165,7 +1165,6 @@ func signedOpportunityRelation(value float64) RelationType {
 		return RelationConditions
 	}
 }
-
 
 /*
 categoryOpportunityRelation states category semantics for a long-only account.

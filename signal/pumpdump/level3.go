@@ -58,9 +58,9 @@ func (signal *Signal) consumeLevel3(
 func (signal *Signal) level3Frame(
 	symbol string,
 	level3 kraken.Level3Data,
-) (nomagique.Frame, error) {
+) (types.Frame, error) {
 	if signal.books == nil {
-		return nomagique.Frame{}, fmt.Errorf(
+		return types.Frame{}, fmt.Errorf(
 			"pumpdump: authoritative Level 3 book source is required",
 		)
 	}
@@ -78,11 +78,11 @@ func (signal *Signal) level3Frame(
 	})
 
 	if err != nil {
-		return nomagique.Frame{}, err
+		return types.Frame{}, err
 	}
 
 	if !found {
-		return nomagique.Frame{}, fmt.Errorf(
+		return types.Frame{}, fmt.Errorf(
 			"pumpdump: committed Level 3 book missing for %s",
 			symbol,
 		)
@@ -91,7 +91,7 @@ func (signal *Signal) level3Frame(
 	return input, nil
 }
 
-func readBook(resident *book.Book, input *nomagique.Frame) error {
+func readBook(resident *book.Book, input *types.Frame) error {
 	alpha := resident.BestBid()
 	beta := resident.BestAsk()
 
@@ -128,17 +128,17 @@ func sideQuantity(touch *book.Level, higher bool) float64 {
 
 func relativeComponents(
 	primitive nomagique.Primitive,
-	change nomagique.Frame,
-) (nomagique.Frame, error) {
+	change types.Frame,
+) (types.Frame, error) {
 	relative, found := change.Get(equation.SymbolRelativeChange)
 
 	if !found {
-		return nomagique.Frame{}, nil
+		return types.Frame{}, nil
 	}
 
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(equation.SymbolChange, relative)
-	_, output, err := nomagique.Step(primitive, nomagique.Frame{}, input)
+	_, output, err := nomagique.Step(primitive, types.Frame{}, input)
 
 	return output, err
 }

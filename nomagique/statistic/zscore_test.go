@@ -3,12 +3,13 @@ package statistic
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-func zscoreObservationForTest(value float64, sec float64, halflife float64) nomagique.Frame {
-	input := nomagique.Frame{}
+func zscoreObservationForTest(value float64, sec float64, halflife float64) types.Frame {
+	input := types.Frame{}
 	input.Put(nomagique.SampleValue, value)
 	input.Put(SymbolUnixSec, sec)
 	input.Put(SymbolUnixNsec, 0)
@@ -19,7 +20,7 @@ func zscoreObservationForTest(value float64, sec float64, halflife float64) noma
 
 func TestZScore(t *testing.T) {
 	Convey("Given a state without a composed baseline", t, func() {
-		stream := nomagique.NewStream(ZScore, nomagique.Frame{})
+		stream := nomagique.NewStream(ZScore, types.Frame{})
 
 		Convey("It should report not ready without failing", func() {
 			output, err := stream.Step(zscoreObservationForTest(100, 1000, 5))
@@ -31,7 +32,7 @@ func TestZScore(t *testing.T) {
 	})
 
 	Convey("Given a baseline of one hundred in state", t, func() {
-		state := nomagique.Frame{}
+		state := types.Frame{}
 		state.Put(SymbolBaselineValue, 100)
 		stream := nomagique.NewStream(ZScore, state)
 
@@ -60,20 +61,20 @@ func TestZScore(t *testing.T) {
 
 	Convey("Given an observation with missing inputs or regressed time", t, func() {
 		Convey("It should fail the transition", func() {
-			_, _, err := ZScore(nomagique.Frame{}, nomagique.Frame{})
+			_, _, err := ZScore(types.Frame{}, types.Frame{})
 			So(err, ShouldNotBeNil)
 
-			_, _, err = ZScore(nomagique.Frame{}, zscoreObservationForTest(100, 1000, -5))
+			_, _, err = ZScore(types.Frame{}, zscoreObservationForTest(100, 1000, -5))
 			So(err, ShouldNotBeNil)
 		})
 
 		Convey("Omitting halflife should self-adapt gracefully", func() {
-			state := nomagique.Frame{}
+			state := types.Frame{}
 			state.Put(SymbolBaselineValue, 100)
 			state.Put(SymbolBaselineSpan, 10)
 			stream := nomagique.NewStream(ZScore, state)
 
-			input := nomagique.Frame{}
+			input := types.Frame{}
 			input.Put(nomagique.SampleValue, 110)
 			input.Put(SymbolUnixSec, 1000)
 			input.Put(SymbolUnixNsec, 0)
@@ -86,7 +87,7 @@ func TestZScore(t *testing.T) {
 }
 
 func BenchmarkZScore(b *testing.B) {
-	state := nomagique.Frame{}
+	state := types.Frame{}
 	state.Put(SymbolBaselineValue, 100)
 	stream := nomagique.NewStream(ZScore, state)
 	input := zscoreObservationForTest(100, 1000, 5)

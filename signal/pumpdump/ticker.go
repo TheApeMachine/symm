@@ -44,9 +44,9 @@ func (signal *Signal) consumeTicker(
 		symbol.AppendMeasurement(signal.tickerMeasurement(
 			ticker,
 			displacement,
-			nomagique.Frame{},
-			nomagique.Frame{},
-			nomagique.Frame{},
+			types.Frame{},
+			types.Frame{},
+			types.Frame{},
 		))
 
 		return nil
@@ -70,7 +70,7 @@ func (signal *Signal) consumeTicker(
 	change := displacement.MustGet(equation.SymbolChange)
 	_, polarized, err := nomagique.Step(
 		signal.polarize,
-		nomagique.Frame{},
+		types.Frame{},
 		polarizationFrame(change, normalized),
 	)
 

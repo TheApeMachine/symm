@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestGeomean(t *testing.T) {
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(nomagique.MustSampleSymbol(0), 4)
 	input.Put(nomagique.MustSampleSymbol(1), 9)
-	_, output, err := Geomean(nomagique.Frame{}, input)
+	_, output, err := Geomean(types.Frame{}, input)
 
 	if err != nil {
 		t.Fatal(err)
@@ -23,10 +24,10 @@ func TestGeomean(t *testing.T) {
 }
 
 func TestGeomeanRejectsInvalidEvidence(t *testing.T) {
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(nomagique.MustSampleSymbol(0), math.Inf(1))
 
-	if _, _, err := Geomean(nomagique.Frame{}, input); err == nil {
+	if _, _, err := Geomean(types.Frame{}, input); err == nil {
 		t.Fatal("non-finite evidence should fail")
 	}
 }

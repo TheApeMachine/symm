@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -28,11 +29,11 @@ func TestHayashi(t *testing.T) {
 	})
 }
 
-func hayashiPath(timestamps []int64, values []float64) nomagique.Frame {
-	stream := nomagique.NewStream(temporal.Path, nomagique.Frame{})
+func hayashiPath(timestamps []int64, values []float64) types.Frame {
+	stream := nomagique.NewStream(temporal.Path, types.Frame{})
 
 	for index, timestamp := range timestamps {
-		input := nomagique.Frame{}
+		input := types.Frame{}
 		input.Put(nomagique.SampleValue, values[index])
 		input.Put(temporal.SymbolUnixSec, float64(timestamp/1_000_000_000))
 		input.Put(temporal.SymbolUnixNsec, float64(timestamp%1_000_000_000))

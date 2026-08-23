@@ -5,6 +5,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
@@ -21,16 +22,16 @@ series use independent keyed streams.
 */
 func Observer(source nomagique.Symbol) nomagique.Primitive {
 	return func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
+		state types.Frame,
+		input types.Frame,
+	) (types.Frame, types.Frame, error) {
 		current, hasCurrent := input.Get(source)
 		seconds, hasSeconds := input.Get(SymbolUnixSec)
 		nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
 
 		if !hasCurrent || !hasSeconds || !hasNanoseconds ||
 			nanoseconds < 0 || nanoseconds >= 1e9 {
-			return state, nomagique.Frame{}, fmt.Errorf(
+			return state, types.Frame{}, fmt.Errorf(
 				"temporal: observer requires a value and normalized event time",
 			)
 		}
@@ -44,7 +45,7 @@ func Observer(source nomagique.Symbol) nomagique.Primitive {
 				(nanoseconds-previousNanoseconds)*1e-9
 
 			if duration < 0 {
-				return state, nomagique.Frame{}, fmt.Errorf(
+				return state, types.Frame{}, fmt.Errorf(
 					"temporal: observer event time must not regress",
 				)
 			}

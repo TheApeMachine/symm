@@ -14,7 +14,7 @@ import (
 func (signal *Signal) measurement(
 	symbol string,
 	at time.Time,
-	output nomagique.Frame,
+	output types.Frame,
 	measured bool,
 	separation float64,
 	support float64,
@@ -67,7 +67,7 @@ func (signal *Signal) support(symbol string) float64 {
 }
 
 func metricValue(
-	frame nomagique.Frame,
+	frame types.Frame,
 	symbol nomagique.Symbol,
 	measured bool,
 ) float64 {

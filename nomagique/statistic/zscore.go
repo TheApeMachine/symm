@@ -5,15 +5,16 @@ import (
 	"math"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 var (
-	SymbolResidual              = nomagique.MustIntern("z/residual")
-	SymbolDispersion            = nomagique.MustIntern("z/dispersion")
-	SymbolZScore                = nomagique.MustIntern("z/value")
-	SymbolDispersionLastSec     = nomagique.MustIntern("z/last_sec")
-	SymbolDispersionLastNsec    = nomagique.MustIntern("z/last_nsec")
-	SymbolDispersionHalflife    = nomagique.MustIntern("z/dispersion_halflife_sec")
+	SymbolResidual           = nomagique.MustIntern("z/residual")
+	SymbolDispersion         = nomagique.MustIntern("z/dispersion")
+	SymbolZScore             = nomagique.MustIntern("z/value")
+	SymbolDispersionLastSec  = nomagique.MustIntern("z/last_sec")
+	SymbolDispersionLastNsec = nomagique.MustIntern("z/last_nsec")
+	SymbolDispersionHalflife = nomagique.MustIntern("z/dispersion_halflife_sec")
 )
 
 /*
@@ -26,21 +27,21 @@ normalizes by itself. Until the composition has produced a baseline there is
 no residual to measure, and the primitive reports not ready.
 */
 func ZScore(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+	state types.Frame,
+	input types.Frame,
+) (types.Frame, types.Frame, error) {
 	value, hasValue := input.Get(nomagique.SampleValue)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
 	if !hasValue || !hasSec || !hasNsec {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: z-score requires a value and event time",
 		)
 	}
 
 	if nsec < 0 || nsec >= 1e9 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: z-score requires normalized nanoseconds",
 		)
 	}
@@ -48,7 +49,7 @@ func ZScore(
 	halflife, hasHalflife := input.Get(SymbolDispersionHalflife)
 
 	if hasHalflife && halflife < 0 {
-		return state, nomagique.Frame{}, fmt.Errorf(
+		return state, types.Frame{}, fmt.Errorf(
 			"statistic: z-score requires a non-negative dispersion halflife",
 		)
 	}
@@ -78,7 +79,7 @@ func ZScore(
 
 	if hasLastSec && hasLastNsec {
 		if elapsedSince(sec, nsec, previousSec, previousNsec) < 0 {
-			return state, nomagique.Frame{}, fmt.Errorf(
+			return state, types.Frame{}, fmt.Errorf(
 				"statistic: z-score event time must not regress",
 			)
 		}

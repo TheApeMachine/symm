@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestClockAndDuration(t *testing.T) {
-	clockInput := nomagique.Frame{}
+	clockInput := types.Frame{}
 	clockInput.Put(SymbolAge, 1)
 	clockInput.Put(SymbolSpan, 2)
-	_, clock, err := Clock(nomagique.Frame{}, clockInput)
+	_, clock, err := Clock(types.Frame{}, clockInput)
 
 	if err != nil {
 		t.Fatal(err)
@@ -21,12 +22,12 @@ func TestClockAndDuration(t *testing.T) {
 		t.Fatalf("progress=%v; want 0.5", got)
 	}
 
-	durationInput := nomagique.Frame{}
+	durationInput := types.Frame{}
 	durationInput.Put(SymbolCurrentSec, 101)
 	durationInput.Put(SymbolCurrentNsec, 100_000_000)
 	durationInput.Put(SymbolPreviousSec, 100)
 	durationInput.Put(SymbolPreviousNsec, 900_000_000)
-	_, duration, err := Duration(nomagique.Frame{}, durationInput)
+	_, duration, err := Duration(types.Frame{}, durationInput)
 
 	if err != nil {
 		t.Fatal(err)
@@ -38,8 +39,8 @@ func TestClockAndDuration(t *testing.T) {
 }
 
 func TestIntervalRetainsPreviousTimestamp(t *testing.T) {
-	stream := nomagique.NewStream(Interval, nomagique.Frame{})
-	input := nomagique.Frame{}
+	stream := nomagique.NewStream(Interval, types.Frame{})
+	input := types.Frame{}
 	input.Put(SymbolTimestamp, 100)
 	first, err := stream.Step(input)
 

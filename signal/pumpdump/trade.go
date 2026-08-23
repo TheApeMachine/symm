@@ -30,10 +30,10 @@ func (signal *Signal) consumeTrade(
 		symbol.AppendMeasurement(signal.tradeMeasurement(
 			trade,
 			acceleration,
-			nomagique.Frame{},
-			nomagique.Frame{},
-			nomagique.Frame{},
-			nomagique.Frame{},
+			types.Frame{},
+			types.Frame{},
+			types.Frame{},
+			types.Frame{},
 		))
 
 		return nil
@@ -56,9 +56,9 @@ func (signal *Signal) consumeTrade(
 			trade,
 			acceleration,
 			rateNormalized,
-			nomagique.Frame{},
-			nomagique.Frame{},
-			nomagique.Frame{},
+			types.Frame{},
+			types.Frame{},
+			types.Frame{},
 		))
 
 		return nil
@@ -83,7 +83,7 @@ func (signal *Signal) consumeTrade(
 
 	_, polarized, err := nomagique.Step(
 		signal.polarize,
-		nomagique.Frame{},
+		types.Frame{},
 		polarizationFrame(change, returnNormalized),
 	)
 
@@ -117,13 +117,13 @@ func (signal *Signal) consumeTrade(
 func (signal *Signal) exhaustion(
 	symbol string,
 	at time.Time,
-	rate nomagique.Frame,
-	polarized nomagique.Frame,
-) (nomagique.Frame, error) {
+	rate types.Frame,
+	polarized types.Frame,
+) (types.Frame, error) {
 	ratio, found := rate.Get(equation.SymbolRatio)
 
 	if !found {
-		return nomagique.Frame{}, nil
+		return types.Frame{}, nil
 	}
 
 	rateChange, err := signal.rateChange.Step(
@@ -132,25 +132,25 @@ func (signal *Signal) exhaustion(
 	)
 
 	if err != nil {
-		return nomagique.Frame{}, err
+		return types.Frame{}, err
 	}
 
 	relative, hasRelative := rateChange.Get(equation.SymbolRelativeChange)
 
 	if !hasRelative {
-		return nomagique.Frame{}, nil
+		return types.Frame{}, nil
 	}
 
-	declineInput := nomagique.Frame{}
+	declineInput := types.Frame{}
 	declineInput.Put(equation.SymbolChange, relative)
 	_, decline, err := nomagique.Step(
 		signal.decompose,
-		nomagique.Frame{},
+		types.Frame{},
 		declineInput,
 	)
 
 	if err != nil {
-		return nomagique.Frame{}, err
+		return types.Frame{}, err
 	}
 
 	declineValue := decline.MustGet(equation.SymbolBeta)
@@ -158,34 +158,34 @@ func (signal *Signal) exhaustion(
 	beta, hasBeta := polarized.Get(equation.SymbolBetaNormalized)
 
 	if !hasAlpha || !hasBeta {
-		return nomagique.Frame{}, nil
+		return types.Frame{}, nil
 	}
 
-	output := nomagique.Frame{}
+	output := types.Frame{}
 	alphaExhaustion, err := product(declineValue, beta)
 
 	if err != nil {
-		return nomagique.Frame{}, err
+		return types.Frame{}, err
 	}
 
 	betaExhaustion, err := product(declineValue, alpha)
 
 	if err != nil {
-		return nomagique.Frame{}, err
+		return types.Frame{}, err
 	}
 
 	output.Put(nmtypes.AlphaQuantity, alphaExhaustion)
 	output.Put(nmtypes.BetaQuantity, betaExhaustion)
-	_, output, err = nomagique.Step(signal.separate, nomagique.Frame{}, output)
+	_, output, err = nomagique.Step(signal.separate, types.Frame{}, output)
 
 	return output, err
 }
 
 func product(left float64, right float64) (float64, error) {
-	input := nomagique.Frame{}
+	input := types.Frame{}
 	input.Put(calculus.SymbolLeft, left)
 	input.Put(calculus.SymbolRight, right)
-	_, output, err := nomagique.Step(calculus.Product, nomagique.Frame{}, input)
+	_, output, err := nomagique.Step(calculus.Product, types.Frame{}, input)
 
 	if err != nil {
 		return 0, err

@@ -82,7 +82,7 @@ func (signal *Signal) consume() {
 					side = -1.0
 				}
 
-				input := nomagique.Frame{}
+				input := types.Frame{}
 				input.Put(algo.SymbolVolume, trade.Qty)
 				input.Put(algo.SymbolAggressorSide, side)
 				input.Put(algo.SymbolPriceDelta, trade.Price.Float64())

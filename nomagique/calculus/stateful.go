@@ -4,57 +4,47 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/utils"
 )
 
-/*
-Accumulate adds an input delta to the total retained in state.
-*/
-func Accumulate(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+// Accumulate adds the explicit input delta to the total retained in state.
+func Accumulate(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 	delta, found := input.Get(SymbolDelta)
 
-	if !found {
-		delta, found = input.Get(SymbolValue)
-	}
-
-	if !found || !finite(delta) {
-		return state, nomagique.Frame{}, fmt.Errorf(
-			"calculus: accumulate requires a finite delta",
-		)
+	if !found || !utils.IsFinite(delta) {
+		return state, types.Frame{}, fmt.Errorf("calculus: accumulate requires a finite delta")
 	}
 
 	total, hasTotal := state.Get(SymbolTotal)
 
-	if hasTotal && !finite(total) {
-		return state, nomagique.Frame{}, fmt.Errorf(
-			"calculus: accumulate state must be finite",
-		)
+	if hasTotal && !utils.IsFinite(total) {
+		return state, types.Frame{}, fmt.Errorf("calculus: accumulate state must be finite")
 	}
 
-	total += delta
+	result := total + delta
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: accumulate overflowed")
+	}
+
 	nextState := state
-	nextState.Put(SymbolTotal, total)
+	nextState.Put(SymbolTotal, result)
 	output := input
-	output.Put(SymbolTotal, total)
-	output.Put(SymbolResult, total)
+	output.Put(SymbolTotal, result)
+	output.Put(PortResult, result)
 
 	return nextState, output, nil
 }
 
-/*
-Clear removes configured coordinates from committed state while preserving the
-current output. It is the reset atom used by bounded accumulation equations.
-*/
+// Clear removes configured coordinates from committed state.
 func Clear(symbols ...nomagique.Symbol) nomagique.Primitive {
-	return func(
-		state nomagique.Frame,
-		input nomagique.Frame,
-	) (nomagique.Frame, nomagique.Frame, error) {
+	configured := append([]nomagique.Symbol(nil), symbols...)
+
+	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 		nextState := state
 
-		for _, symbol := range symbols {
+		for _, symbol := range configured {
 			nextState.Delete(symbol)
 		}
 
@@ -63,34 +53,26 @@ func Clear(symbols ...nomagique.Symbol) nomagique.Primitive {
 }
 
 /*
-Decay walks a retained level toward zero. Input level initializes or replaces
-state; input clock controls linear progress, while optional shape overrides the
-remaining fraction.
+Decay walks a retained level toward zero. Input level replaces state when
+present. Clock supplies linear elapsed progress; shape, when present, is the
+explicit remaining multiplier.
 */
-func Decay(
-	state nomagique.Frame,
-	input nomagique.Frame,
-) (nomagique.Frame, nomagique.Frame, error) {
+func Decay(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 	level, hasLevel := input.Get(SymbolLevel)
 
 	if !hasLevel {
 		level, hasLevel = state.Get(SymbolLevel)
 	}
 
-	if !hasLevel || !finite(level) {
-		return state, nomagique.Frame{}, fmt.Errorf(
-			"calculus: decay requires a finite level",
-		)
+	if !hasLevel || !utils.IsFinite(level) {
+		return state, types.Frame{}, fmt.Errorf("calculus: decay requires a finite level")
 	}
 
-	clock, hasClock := input.Get(SymbolClock)
 	remaining := 0.0
 
-	if hasClock {
-		if !finite(clock) {
-			return state, nomagique.Frame{}, fmt.Errorf(
-				"calculus: decay clock must be finite",
-			)
+	if clock, hasClock := input.Get(SymbolClock); hasClock {
+		if !utils.IsFinite(clock) {
+			return state, types.Frame{}, fmt.Errorf("calculus: decay clock must be finite")
 		}
 
 		remaining = 1 - clock
@@ -101,21 +83,24 @@ func Decay(
 	}
 
 	if shape, hasShape := input.Get(SymbolShape); hasShape {
-		if !finite(shape) {
-			return state, nomagique.Frame{}, fmt.Errorf(
-				"calculus: decay shape must be finite",
-			)
+		if !utils.IsFinite(shape) {
+			return state, types.Frame{}, fmt.Errorf("calculus: decay shape must be finite")
 		}
 
 		remaining = shape
 	}
 
 	result := level * remaining
+
+	if !utils.IsFinite(result) {
+		return state, types.Frame{}, fmt.Errorf("calculus: decay overflowed")
+	}
+
 	nextState := state
 	nextState.Put(SymbolLevel, result)
 	output := input
 	output.Put(SymbolLevel, result)
-	output.Put(SymbolResult, result)
+	output.Put(PortResult, result)
 
 	return nextState, output, nil
 }
