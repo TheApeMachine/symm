@@ -335,7 +335,7 @@ func BootWithHub(
 		return nil
 	}
 
-	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk)
+	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, regulatorSolver)
 	planner.ObserveModule = crypto.ObserveModule()
 	planner.ObserveHop = crypto.ObserveHop()
 	existingHub := hub != nil

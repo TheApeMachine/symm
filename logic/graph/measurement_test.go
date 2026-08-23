@@ -166,6 +166,50 @@ func TestAddNodes(t *testing.T) {
 					"source=cvd symbol=BTC/USD metric=drive value=1.01")
 		})
 	})
+
+	Convey("Given unnormalized negative metrics like signed imbalance or correlation", t, func() {
+		symbol := types.NewSymbol("BTC/USD")
+		measurement := newTestMeasurement(
+			"derivatives-neg",
+			types.SourceDerivatives,
+			"BTC/USD",
+			time.Unix(14, 0).UTC(),
+		)
+		putTestMetric(
+			measurement,
+			types.MetricFuturesAggressorImbalance,
+			-1.0,
+			nil,
+			nmtypes.UnitDimensionless,
+		)
+		putTestMetric(
+			measurement,
+			types.MetricFuturesLeadCorrelation,
+			-0.85,
+			nil,
+			nmtypes.UnitDimensionless,
+		)
+		symbol.AppendMeasurement(measurement)
+		graph := NewGraph(time.Unix(14, 0).UTC())
+
+		index, err := newMeasurementCompiler().addNodes(
+			"BTC/USD",
+			symbol.MarketMeasurements(
+				symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
+			),
+			graph,
+		)
+
+		Convey("It should accept raw negative metrics without normalizing or panicking", func() {
+			So(err, ShouldBeNil)
+			So(graph.Nodes, ShouldHaveLength, 2)
+			imbalanceNode := graph.Nodes[measurementNodeID(measurement, string(types.MetricFuturesAggressorImbalance))]
+			So(imbalanceNode, ShouldNotBeNil)
+			So(imbalanceNode.Value, ShouldEqual, -1.0)
+			So(imbalanceNode.Normalized, ShouldBeNil)
+			So(index.byReference["derivatives:futures_aggressor_imbalance"], ShouldHaveLength, 1)
+		})
+	})
 }
 
 func TestAddCategoryEdges(t *testing.T) {

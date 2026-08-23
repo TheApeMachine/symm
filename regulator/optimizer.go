@@ -123,3 +123,7 @@ func (optimizer *optimizer) input(
 
 	return input
 }
+
+func (optimizer *optimizer) resolvedCount() int {
+	return optimizer.resolved
+}

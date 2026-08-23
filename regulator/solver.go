@@ -36,6 +36,7 @@ type Solver struct {
 	lastRevision         uint64
 	hadExposure          bool
 	lastResult           optimizationResult
+	resolved             int
 	marks                map[string]observedPositionMark
 	markSamples          uint64
 	lastMarkSymbol       string
@@ -96,6 +97,23 @@ func (solver *Solver) Status() types.Status {
 	}
 
 	return types.READY
+}
+
+/*
+Predicting reports whether the regulator has resolved enough control/equity
+pairs to be producing posterior forecasts and selecting bounded interventions.
+A nil or uninitialized solver is not predicting.
+*/
+func (solver *Solver) Predicting() bool {
+	if solver == nil {
+		return false
+	}
+
+	if solver.resolved < 3 {
+		return false
+	}
+
+	return solver.lastResult.healthy()
 }
 
 /*
@@ -165,6 +183,7 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	solver.lastRevision = revision
 	solver.hadExposure = exposed
 	solver.lastResult = result
+	solver.resolved = solver.optimizer.resolvedCount()
 	solver.recordHistory(result.surprise)
 	payload := solver.buildPayload(periodReturn, result)
 

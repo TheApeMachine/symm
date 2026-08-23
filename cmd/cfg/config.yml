@@ -2,7 +2,6 @@ experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.
   enabled: false
 
-
 system:
   data_path: ~/.symm/data
   audit:
@@ -150,3 +149,11 @@ signals:
   pumpdump:
     baselineCapacity: 128
 
+manifold:
+  grid:
+    x: 64
+    y: 64
+    z: 64
+  phase:
+    lattice:
+      width: 256

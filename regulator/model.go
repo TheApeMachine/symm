@@ -49,6 +49,18 @@ func (score candidateScore) Better(incumbent candidateScore) bool {
 	return score.activityFloor > incumbent.activityFloor
 }
 
+func (result optimizationResult) healthy() bool {
+	if !result.forecastReady || !result.skillReady || result.exploring {
+		return false
+	}
+
+	if result.skill <= 1 {
+		return false
+	}
+
+	return result.forecast.Value >= 0
+}
+
 /*
 optimizer learns the temporal response from one applied control vector to the
 next account log return and selects the next bounded intervention.

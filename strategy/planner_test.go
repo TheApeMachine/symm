@@ -18,11 +18,15 @@ import (
 	logicgraph "github.com/theapemachine/symm/types"
 )
 
+type predictingStub struct{}
+
+func (predictingStub) Predicting() bool { return true }
+
 func TestNewPlanner(t *testing.T) {
 	Convey("Given the running system configuration", t, func() {
 		system.NewConfig()
 		planner := NewPlanner(
-			t.Context(), types.NewThesis(t.Context(), nil), nil, nil,
+			t.Context(), types.NewThesis(t.Context(), nil), nil, nil, nil,
 		)
 		defer planner.Close()
 
@@ -184,6 +188,7 @@ func TestPlannerUpdate(t *testing.T) {
 		attempts := 0
 		planner := &Planner{
 			desk: &broker.Desk{},
+			regulator: predictingStub{},
 			executeEntry: func(types.Decision) error {
 				attempts++
 

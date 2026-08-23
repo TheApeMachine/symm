@@ -84,6 +84,10 @@ func parseFuturesTickerData(rawMap map[string]any) FuturesTickerData {
 	tickerData.OpenInterest = extractFloatAlt(rawMap, "openInterest", "open_interest")
 	tickerData.MarkPrice = extractDecimalAlt(rawMap, "markPrice", "mark_price")
 	tickerData.IndexPrice = extractDecimalAlt(rawMap, "indexPrice", "index_price")
+
+	if tickerData.IndexPrice == nil {
+		tickerData.IndexPrice = extractDecimal(rawMap, "index")
+	}
 	tickerData.FundingRate = extractDecimalAlt(rawMap, "funding_rate", "fundingRate")
 	tickerData.FundingRatePrediction = extractDecimalAlt(rawMap, "funding_rate_prediction", "fundingRatePrediction")
 	tickerData.Volume = extractFloatAlt(rawMap, "volume", "vol24h")

@@ -125,12 +125,19 @@ func NewSolver(
 	}
 
 	config := liveDomain(deltaT)
-	physics, physicsErr := pmanifold.NewManifold(
+	
+	physics, err := pmanifold.NewManifold(
 		int(config.GridX),
 		int(config.GridY),
 		int(config.GridZ),
 	)
-	errnie.Error(physicsErr)
+	
+	errnie.Error(errnie.Err(
+		errnie.NotAcceptable,
+		"manifold: error building manifold",
+		err,
+	))
+
 	corpus, corpusErr := geometry.NewCorpus[types.PhaseOutcome](phaseCorpusCapacity)
 	errnie.Error(corpusErr)
 	angles, angleErr := geometry.PhasePath(phaseScanAngles)

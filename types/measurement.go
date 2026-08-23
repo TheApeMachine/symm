@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -175,35 +177,41 @@ a directional score without a common nonnegative domain is not evidence, and
 silently emitting it raw-only hides the estimator defect.
 */
 func (measurement *Measurement) Finalize() error {
-	if measurement == nil {
-		return fmt.Errorf("measurement: cannot finalize nil measurement")
-	}
-
 	if measurement.Source == "" || measurement.Symbol == "" {
-		return fmt.Errorf("measurement: source and symbol required")
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"measurement: source and symbol required",
+			nil,
+		))
 	}
 
 	mapping, found := SignalMetricGroups[measurement.Source]
 
 	if !found {
-		return fmt.Errorf("measurement: unknown signal metric groups for %s", measurement.Source)
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("measurement: unknown signal metric groups for %s", measurement.Source),
+			nil,
+		))
 	}
 
 	for metricKey, sample := range measurement.Metrics {
 		membership, exists := mapping[metricKey]
 
 		if !exists {
-			return fmt.Errorf(
-				"measurement: %s metric %s has no signal group",
-				measurement.Source, metricKey,
-			)
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("measurement: %s metric %s has no signal group", measurement.Source, metricKey),
+				nil,
+			))
 		}
 
 		if membership.Competes && sample.Normalized == nil {
-			return fmt.Errorf(
-				"measurement: %s competing metric %s lacks a normalized value",
-				measurement.Source, metricKey,
-			)
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("measurement: %s competing metric %s lacks a normalized value", measurement.Source, metricKey),
+				nil,
+			))
 		}
 	}
 

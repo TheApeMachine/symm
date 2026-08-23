@@ -1,69 +1,58 @@
 package derivatives
 
 import (
-	"math"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-BuildMeasurement derives the dynamic multi-dimensional derivatives metrics
-and regime hypotheses from the current symbol state.
+DerivativesData carries the evaluated multi-dimensional state of the derivatives pipeline.
+*/
+type DerivativesData struct {
+	OI                     float64
+	OIVelocity             float64
+	OIAcceleration         float64
+	Basis                  float64
+	BasisVelocity          float64
+	IndexBasis             float64
+	TripartiteDivergence   float64
+	CVD                    float64
+	AggressorImbalance     float64
+	LiquidationBuy         float64
+	LiquidationSell        float64
+	LiquidationIntensity   float64
+	LeveragedIgnition      float64
+	ShortSqueeze           float64
+	AdverseLeverageBuildup float64
+	LongDeleveraging       float64
+	DerivativesDecoupling  float64
+	SampleCount            float64
+}
+
+/*
+BuildMeasurement projects the evaluated derivatives metrics into a typed
+multi-dimensional measurement artifact.
 */
 func BuildMeasurement(
 	sourceName string,
 	symbolName string,
-	state *SymbolState,
 	at time.Time,
-) *nmtypes.Measurement {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	totalVolume := state.FuturesBuyVolume + state.FuturesSellVolume
-	aggressorImbalance := 0.0
-
-	if totalVolume > 0 {
-		aggressorImbalance = (state.FuturesBuyVolume - state.FuturesSellVolume) / totalVolume
+	data DerivativesData,
+) (*nmtypes.Measurement, error) {
+	if at.IsZero() {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"derivatives: timestamp is zero for symbol "+symbolName,
+			nil,
+		))
 	}
-
-	liqTotal := state.LiqBuyVolume + state.LiqSellVolume
-	liqIntensity := 0.0
-
-	if totalVolume > 0 {
-		liqIntensity = liqTotal / totalVolume
-	}
-
-	priceVel := 0.0
-
-	if state.LastSpotPrice > 0 && len(state.PriceHistory) >= 2 {
-		prevSpot := state.PriceHistory[0].spot
-
-		if prevSpot > 0 {
-			priceVel = (state.LastSpotPrice - prevSpot) / prevSpot
-		}
-	}
-
-	oiVel := state.OIVelocity
-	cvd := state.FuturesCVD
-
-	scoreIgnition := math.Max(0, math.Min(1, 0.5+0.5*math.Tanh(priceVel*50.0+oiVel*10.0+cvd*0.01)))
-	scoreSqueeze := math.Max(0, math.Min(1, 0.5+0.5*math.Tanh(priceVel*50.0-oiVel*10.0+state.LiqBuyVolume*0.1)))
-	scoreBuildup := math.Max(0, math.Min(1, 0.5+0.5*math.Tanh(-priceVel*50.0+oiVel*10.0-cvd*0.01)))
-	scoreDeleveraging := math.Max(0, math.Min(1, 0.5+0.5*math.Tanh(-priceVel*50.0-oiVel*10.0+state.LiqSellVolume*0.1)))
-	scoreDecoupling := math.Max(0, math.Min(1, 0.5+0.5*math.Tanh(state.TripartiteDiv*100.0+math.Abs(state.Basis)*50.0)))
-
-	scores := []float64{scoreIgnition, scoreSqueeze, scoreBuildup, scoreDeleveraging, scoreDecoupling}
-	separation := computeSeparation(scores)
 
 	eventNano := at.UnixNano()
-
-	if eventNano == 0 {
-		eventNano = time.Now().UTC().UnixNano()
-	}
 
 	measurement := nmtypes.NewMeasurement(
 		uuid.NewString(),
@@ -71,107 +60,86 @@ func BuildMeasurement(
 		eventNano,
 		eventNano,
 	).AddMetrics(
-		nmtypes.NewMetric(string(types.MetricFuturesOI), state.LastOpenInterest, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesOI), data.OI, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesOIVelocity), state.OIVelocity, nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescalePerSecond,
-		}),
-		nmtypes.NewMetric(string(types.MetricFuturesOIAcceleration), state.OIAcceleration, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesOIVelocity), data.OIVelocity, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescalePerSecond,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesBasis), state.Basis, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesOIAcceleration), data.OIAcceleration, nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescalePerSecond,
+		}),
+		nmtypes.NewMetric(string(types.MetricFuturesBasis), data.Basis, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitPercent,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesBasisVelocity), state.BasisVelocity, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesBasisVelocity), data.BasisVelocity, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitPercent,
 			Timescale: nmtypes.TimescalePerSecond,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesIndexBasis), state.IndexBasis, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesIndexBasis), data.IndexBasis, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitPercent,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesTripartiteDivergence), state.TripartiteDiv, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesTripartiteDivergence), data.TripartiteDivergence, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitPercent,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesCVD), state.FuturesCVD, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesCVD), data.CVD, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitQuoteCurrency,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricFuturesAggressorImbalance), aggressorImbalance, aggressorImbalance, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesAggressorImbalance), data.AggressorImbalance, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesLiquidationBuy), state.LiqBuyVolume, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesLiquidationBuy), data.LiquidationBuy, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitQuoteCurrency,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesLiquidationSell), state.LiqSellVolume, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesLiquidationSell), data.LiquidationSell, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitQuoteCurrency,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricFuturesLiquidationIntensity), liqIntensity, liqIntensity, nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricFuturesLiquidationIntensity), data.LiquidationIntensity, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitPercent,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewMetric(string(types.MetricFuturesLeadLagTau), state.LeadLagTau, nmtypes.Descriptor{
+		nmtypes.NewNormalizedMetric(string(types.MetricLeveragedIgnition), data.LeveragedIgnition, data.LeveragedIgnition, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricFuturesLeadCorrelation), state.LeadLagCorr, state.LeadLagCorr, nmtypes.Descriptor{
+		nmtypes.NewNormalizedMetric(string(types.MetricShortSqueeze), data.ShortSqueeze, data.ShortSqueeze, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricLeveragedIgnition), scoreIgnition, scoreIgnition, nmtypes.Descriptor{
+		nmtypes.NewNormalizedMetric(string(types.MetricAdverseLeverageBuildup), data.AdverseLeverageBuildup, data.AdverseLeverageBuildup, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricShortSqueeze), scoreSqueeze, scoreSqueeze, nmtypes.Descriptor{
+		nmtypes.NewNormalizedMetric(string(types.MetricLongDeleveraging), data.LongDeleveraging, data.LongDeleveraging, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricAdverseLeverageBuildup), scoreBuildup, scoreBuildup, nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescaleInstantaneous,
-		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricLongDeleveraging), scoreDeleveraging, scoreDeleveraging, nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescaleInstantaneous,
-		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricDerivativesDecoupling), scoreDecoupling, scoreDecoupling, nmtypes.Descriptor{
+		nmtypes.NewNormalizedMetric(string(types.MetricDerivativesDecoupling), data.DerivativesDecoupling, data.DerivativesDecoupling, nmtypes.Descriptor{
 			Unit:      nmtypes.UnitDimensionless,
 			Timescale: nmtypes.TimescaleInstantaneous,
 		}),
 	)
 
-	measurement.StampQuality(separation, float64(len(state.PriceHistory)+1))
-	return measurement
-}
+	sampleCount := data.SampleCount
 
-func computeSeparation(scores []float64) float64 {
-	if len(scores) < 2 {
-		return 0
+	if sampleCount == 0 {
+		sampleCount = 1
 	}
 
-	max1 := 0.0
-	max2 := 0.0
+	measurement.StampQuality(
+		statistic.StandardSeparation(data.OIVelocity*50),
+		sampleCount,
+	)
 
-	for _, s := range scores {
-		if s > max1 {
-			max2 = max1
-			max1 = s
-			continue
-		}
-
-		if s > max2 {
-			max2 = s
-		}
-	}
-
-	return statistic.StandardSeparation(max1 - max2)
+	return measurement, nil
 }

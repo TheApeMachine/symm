@@ -19,6 +19,7 @@ type Config struct {
 	Planner   *PlannerConfig
 	*PumpDump
 	*CVD
+	Manifold *ManifoldConfig
 }
 
 func NewConfig() *Config {
@@ -29,6 +30,7 @@ func NewConfig() *Config {
 		Planner:   NewPlannerConfig(),
 		PumpDump:  NewPumpDump(),
 		CVD:       NewCVD(),
+		Manifold:  NewManifoldConfig(),
 	}
 }
 

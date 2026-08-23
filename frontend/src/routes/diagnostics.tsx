@@ -32,6 +32,7 @@ const STAGE_LABEL: Record<string, string> = {
 	correlation: "Correlation",
 	cvd: "CVD",
 	depthflow: "Depthflow",
+	derivatives: "Derivatives",
 	exhaustion: "Exhaustion",
 	hawkes: "Hawkes",
 	leadlag: "Lead/Lag",
@@ -614,7 +615,7 @@ const Legend = () => (
 			<span className="h-0.5 w-4 animate-pulse rounded bg-(--acc)" /> flowing
 		</span>
 		<span className="flex items-center gap-1.5">
-			<span className="h-0.5 w-4 rounded bg-(--f3)" /> idle
+			<span className="h-0.5 w-4 rounded bg-(--f3)" /> idle (solid)
 		</span>
 	</div>
 );

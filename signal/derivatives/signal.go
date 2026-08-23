@@ -2,41 +2,57 @@ package derivatives
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Signal converts real-time Kraken Futures streams (tickers, executions, and
-order books) into multi-dimensional derivatives measurements. It tracks
-open interest dynamics, spot-index-perp basis geometry, CVD aggressor flows,
-liquidation bursts, and dynamic lead/lag correlation.
+Signal converts real-time Kraken Futures streams (tickers, trades, and
+order books) into multi-dimensional derivatives measurements via nomagique.
 */
 type Signal struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	thesis   *types.Thesis
-	states   map[string]*SymbolState
-	statesMu sync.RWMutex
-	work     *transport.Consumer[*types.Symbol]
-	pool     *types.SymbolPool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	thesis         *types.Thesis
+	oi             *nomagique.Number[string]
+	oiAcceleration *nomagique.Number[string]
+	basis          *nomagique.Number[string]
+	basisVelocity  *nomagique.Number[string]
+	indexBasis     *nomagique.Number[string]
+	flow           *nomagique.Number[string]
+	liquidations   *nomagique.Number[string]
+	tickerPrice    *nomagique.Number[string]
+	tradePrice     *nomagique.Number[string]
+	work           *transport.Consumer[*types.Symbol]
+	pool           *types.SymbolPool
 }
 
+/*
+NewSignal constructs a new Derivatives Signal.
+*/
 func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		thesis: thesis,
-		states: make(map[string]*SymbolState),
-		pool:   types.NewSymbolPool(types.ShardWorkers()),
+		ctx:            ctx,
+		cancel:         cancel,
+		thesis:         thesis,
+		oi:             nomagique.NewNumber[string](equation.RelativeChange(nomagique.SampleValue)),
+		oiAcceleration: nomagique.NewNumber[string](oiAccelerationPipeline()),
+		basis:          nomagique.NewNumber[string](basisPipeline()),
+		basisVelocity:  nomagique.NewNumber[string](basisVelocityPipeline()),
+		indexBasis:     nomagique.NewNumber[string](indexBasisPipeline()),
+		flow:           nomagique.NewNumber[string](flowPipeline()),
+		liquidations:   nomagique.NewNumber[string](liqPipeline()),
+		tickerPrice:    nomagique.NewNumber[string](equation.RelativeChange(nomagique.SampleValue)),
+		tradePrice:     nomagique.NewNumber[string](equation.RelativeChange(nomagique.SampleValue)),
+		pool:           types.NewSymbolPool(types.ShardWorkers()),
 	}
 
 	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
@@ -48,27 +64,6 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 func (signal *Signal) Name() string           { return string(types.SourceDerivatives) }
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceDerivatives }
-
-func (signal *Signal) getState(symbolName string) *SymbolState {
-	signal.statesMu.RLock()
-	state, exists := signal.states[symbolName]
-	signal.statesMu.RUnlock()
-
-	if exists {
-		return state
-	}
-
-	signal.statesMu.Lock()
-	state, exists = signal.states[symbolName]
-
-	if !exists {
-		state = NewSymbolState()
-		signal.states[symbolName] = state
-	}
-
-	signal.statesMu.Unlock()
-	return state
-}
 
 func (signal *Signal) consume() {
 	go func() {
@@ -108,33 +103,38 @@ func (signal *Signal) consume() {
 }
 
 func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
-	state := signal.getState(symbol.Symbol)
 	updated := false
 	latestTime := time.Time{}
+	data := DerivativesData{}
 
 	for ticker := range symbol.MarketFuturesTickers(
 		symbol.FuturesTickerConsumers[types.FuturesTickerConsumerDerivatives],
 	) {
-		signal.processTicker(state, ticker)
 		updated = true
 		latestTime = ticker.Timestamp
+
+		if err := signal.consumeTicker(symbol, ticker, &data); err != nil {
+			return err
+		}
 	}
 
 	for trade := range symbol.MarketFuturesTrades(
 		symbol.FuturesTradeConsumers[types.FuturesTradeConsumerDerivatives],
 	) {
-		signal.processTrade(state, trade)
 		updated = true
 
 		if trade.Timestamp.After(latestTime) {
 			latestTime = trade.Timestamp
+		}
+
+		if err := signal.consumeTrade(symbol, trade, &data); err != nil {
+			return err
 		}
 	}
 
 	for book := range symbol.MarketFuturesBooks(
 		symbol.FuturesBookConsumers[types.FuturesBookConsumerDerivatives],
 	) {
-		signal.processBook(state, book)
 		updated = true
 
 		if book.Timestamp.After(latestTime) {
@@ -146,107 +146,23 @@ func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
 		return nil
 	}
 
-	measurement := BuildMeasurement(signal.Name(), symbol.Symbol, state, latestTime)
+	measurement, err := BuildMeasurement(signal.Name(), symbol.Symbol, latestTime, data)
+
+	if err != nil {
+		return err
+	}
+
 	symbol.AppendMeasurement(measurement)
 	return nil
-}
-
-func (signal *Signal) processTicker(state *SymbolState, ticker kraken.FuturesTickerData) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	if ticker.OpenInterest > 0 {
-		state.PrevOpenInterest = state.LastOpenInterest
-		state.LastOpenInterest = ticker.OpenInterest
-
-		if state.PrevOpenInterest > 0 {
-			prevOIDelta := state.OIDelta
-			state.OIDelta = state.LastOpenInterest - state.PrevOpenInterest
-			state.OIVelocity = state.OIDelta / state.PrevOpenInterest
-			state.OIAcceleration = state.OIDelta - prevOIDelta
-		}
-	}
-
-	if ticker.Last != nil && ticker.Last.Float64() > 0 {
-		state.LastPerpPrice = ticker.Last.Float64()
-	}
-
-	if ticker.IndexPrice != nil && ticker.IndexPrice.Float64() > 0 {
-		state.LastIndexPrice = ticker.IndexPrice.Float64()
-	}
-
-	if ticker.FundingRate != nil {
-		state.LastFundingRate = ticker.FundingRate.Float64()
-	}
-
-	if state.LastSpotPrice > 0 && state.LastPerpPrice > 0 {
-		state.PrevBasis = state.Basis
-		state.Basis = (state.LastPerpPrice - state.LastSpotPrice) / state.LastSpotPrice
-		state.BasisVelocity = state.Basis - state.PrevBasis
-
-		if state.LastIndexPrice > 0 {
-			state.IndexBasis = (state.LastIndexPrice - state.LastSpotPrice) / state.LastSpotPrice
-			state.TripartiteDiv = (state.Basis - state.IndexBasis)
-		}
-	}
-
-	state.LastUpdate = ticker.Timestamp
-}
-
-func (signal *Signal) processTrade(state *SymbolState, trade kraken.FuturesTradeData) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	price := trade.Price.Float64()
-	notional := price * trade.Qty
-
-	if trade.Side == "buy" {
-		state.FuturesBuyVolume += notional
-		state.FuturesCVD += notional
-	}
-
-	if trade.Side == "sell" {
-		state.FuturesSellVolume += notional
-		state.FuturesCVD -= notional
-	}
-
-	if trade.Type == "liquidation" {
-		if trade.Side == "buy" {
-			state.LiqBuyVolume += notional
-		}
-
-		if trade.Side == "sell" {
-			state.LiqSellVolume += notional
-		}
-	}
-
-	if price > 0 {
-		state.LastPerpPrice = price
-	}
-
-	state.LastUpdate = trade.Timestamp
-}
-
-func (signal *Signal) processBook(state *SymbolState, book kraken.FuturesBookData) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	if len(book.Bids) > 0 && len(book.Asks) > 0 {
-		bidPrice := book.Bids[0].Price.Float64()
-		askPrice := book.Asks[0].Price.Float64()
-		mid := (bidPrice + askPrice) / 2.0
-
-		if mid > 0 {
-			state.LastPerpPrice = mid
-		}
-	}
-
-	state.LastUpdate = book.Timestamp
 }
 
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
+	}
+
+	if signal.pool != nil {
+		signal.pool.Close()
 	}
 
 	return nil

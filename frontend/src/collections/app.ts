@@ -4,6 +4,7 @@ export const DEFAULT_KERNELS = [
 	"correlation",
 	"cvd",
 	"depthflow",
+	"derivatives",
 	"exhaustion",
 	"hawkes",
 	"leadlag",

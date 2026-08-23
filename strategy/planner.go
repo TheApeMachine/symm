@@ -22,6 +22,14 @@ import (
 // each live candidate decision.
 const strategyWireBranchCount = 2
 
+/*
+entryRegulator is the minimal regulator contract the planner needs to gate
+position entries on predictive readiness.
+*/
+type entryRegulator interface {
+	Predicting() bool
+}
+
 type Planner struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -32,6 +40,7 @@ type Planner struct {
 	mctsEngine *mcts.CausalMCTS
 	allocation *Allocation
 	desk       *broker.Desk
+	regulator  entryRegulator
 	thesis     *types.Thesis
 	work       *transport.Consumer[*types.Symbol]
 
@@ -45,6 +54,7 @@ func NewPlanner(
 	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	desk *broker.Desk,
+	reg entryRegulator,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -57,6 +67,7 @@ func NewPlanner(
 		mctsEngine: newMCTSEngine(system.Cfg.Snapshot()),
 		allocation: NewAllocation(ctx, desk),
 		desk:       desk,
+		regulator:  reg,
 		thesis:     thesis,
 	}
 	planner.work = transport.NewConsumer[*types.Symbol](planner.Name(), planner.consume)
@@ -527,7 +538,18 @@ func (planner *Planner) executeDecisions(
 
 	slices.SortFunc(winners, admissionOrder)
 
+	regulatorPredicting := planner.regulator != nil && planner.regulator.Predicting()
+
 	for _, decision := range winners {
+		if !regulatorPredicting {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: entry delayed while global regulator is observing or adapting"
+			decision.GraphScore = 0
+			decision.Trace = nil
+
+			continue
+		}
+
 		executeStarted := time.Now()
 
 		if planner.ObserveHop != nil {
