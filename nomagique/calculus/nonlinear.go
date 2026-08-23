@@ -37,6 +37,8 @@ func LogRatio(state types.Frame, input types.Frame) (types.Frame, types.Frame, e
 /*
 Squash maps X through a non-negative scale as X/(scale+|X|). It preserves sign,
 is bounded by [-1,1], and emits zero only for the degenerate zero scale/value.
+A negative scale is treated as its absolute value so signed baselines do not
+poison the bound.
 */
 func Squash(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
 	x, hasX := input.Get(PortX)
@@ -46,12 +48,8 @@ func Squash(state types.Frame, input types.Frame) (types.Frame, types.Frame, err
 		return state, types.Frame{}, fmt.Errorf("calculus: squash requires finite x and scale")
 	}
 
-	if scale < 0 {
-		return state, types.Frame{}, fmt.Errorf("calculus: squash scale must not be negative")
-	}
-
 	result := 0.0
-	denominator := scale + math.Abs(x)
+	denominator := math.Abs(scale) + math.Abs(x)
 
 	if denominator > 0 {
 		result = x / denominator

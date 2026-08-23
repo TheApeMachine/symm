@@ -28,11 +28,19 @@ func RelativeChange(source types.Symbol) types.Primitive {
 					types.In(calculus.SymbolPrevious, calculus.PortB),
 					types.Out(calculus.PortResult, SymbolChange),
 				),
-				types.Wire(
-					calculus.Quotient,
-					types.In(SymbolChange, calculus.PortA),
-					types.In(calculus.SymbolPrevious, calculus.PortB),
-					types.Out(calculus.PortResult, SymbolRelativeChange),
+				logic.If(
+					types.Wire(
+						types.Identity,
+						types.In(calculus.SymbolPrevious, logic.SymbolCondition),
+						types.Out(logic.SymbolCondition, logic.SymbolCondition),
+					),
+					types.Wire(
+						calculus.Quotient,
+						types.In(SymbolChange, calculus.PortA),
+						types.In(calculus.SymbolPrevious, calculus.PortB),
+						types.Out(calculus.PortResult, SymbolRelativeChange),
+					),
+					types.Identity,
 				),
 			),
 			types.Identity,

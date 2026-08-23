@@ -31,11 +31,14 @@ func TestRelativeChange(t *testing.T) {
 			RelativeChange(types.SampleValue),
 			types.Frame{},
 		)
-		_, err := stream.Step(equationSample(0, 1))
+		first, err := stream.Step(equationSample(0, 1))
 		So(err, ShouldBeNil)
-		_, err = stream.Step(equationSample(1, 2))
-		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldEqual, "calculus: quotient denominator must be positive")
+		So(first.Has(SymbolRelativeChange), ShouldBeFalse)
+
+		second, err := stream.Step(equationSample(1, 2))
+		So(err, ShouldBeNil)
+		So(second.Has(SymbolRelativeChange), ShouldBeFalse)
+		So(second.MustGet(SymbolChange), ShouldEqual, 1.0)
 	})
 }
 

@@ -169,9 +169,10 @@ func TestNonlinearPrimitives(t *testing.T) {
 			Set(PortX, 0).Set(SymbolScale, 0))
 		So(err, ShouldBeNil)
 		So(zero.MustGet(PortResult), ShouldEqual, 0.0)
-		_, _, err = Squash(types.Frame{}, types.Frame{}.
+		_, negScale, err := Squash(types.Frame{}, types.Frame{}.
 			Set(PortX, 1).Set(SymbolScale, -1))
-		So(err, ShouldNotBeNil)
+		So(err, ShouldBeNil)
+		So(negScale.MustGet(PortResult), ShouldAlmostEqual, 0.5, 1e-12)
 	})
 
 	Convey("Inverse and Ratio reject non-finite structural inputs", t, func() {

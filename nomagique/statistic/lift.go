@@ -14,7 +14,8 @@ the baseline itself: value over baseline minus one. The identity is the
 honest zero — a value resting exactly on its baseline, or a first
 observation whose baseline is itself, lifts nothing. A non-positive
 baseline cannot ground a fraction, so the lift is not ready rather than
-invented.
+invented. The result slot is always emitted so Wire bindings remain
+satisfied; consumers must gate on SymbolReady.
 */
 func Lift(
 	state types.Frame,
@@ -31,6 +32,7 @@ func Lift(
 
 	output := input
 	output.Put(SymbolReady, 0)
+	output.Put(SymbolResult, 0)
 
 	if baseline > 0 {
 		output.Put(SymbolResult, value/baseline-1)
