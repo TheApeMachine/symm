@@ -1,10 +1,14 @@
 package broker
 
 import (
+	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -19,33 +23,59 @@ func (price *Price) captureFeeProfiles(
 		return nil
 	}
 
+	group, _ := errgroup.WithContext(context.Background())
+	group.SetLimit(types.ShardWorkers())
+
+	type profileResult struct {
+		profile kraken.MarketProfile
+	}
+	results := make([]profileResult, len(symbols))
+	var mu sync.Mutex
+
+	for i, symbol := range symbols {
+		i, symbol := i, symbol
+		group.Go(func() error {
+			pair, err := price.normalizer.PairInfo(symbol)
+
+			if err != nil {
+				return fmt.Errorf("broker: capture pair metadata for %s: %w", symbol, err)
+			}
+
+			taker, err := price.resolveFee(symbol, result.Fees)
+
+			if err != nil {
+				return fmt.Errorf("broker: capture taker fee for %s: %w", symbol, err)
+			}
+
+			maker, err := price.resolveFee(symbol, result.FeesMaker)
+
+			if err != nil {
+				return fmt.Errorf("broker: capture maker fee for %s: %w", symbol, err)
+			}
+
+			mu.Lock()
+			results[i] = profileResult{
+				profile: kraken.MarketProfile{
+					Symbol: symbol,
+					Pair:   *pair,
+					Taker:  taker,
+					Maker:  maker,
+				},
+			}
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return err
+	}
+
 	profiles := make([]kraken.MarketProfile, 0, len(symbols))
 
-	for _, symbol := range symbols {
-		pair, err := price.normalizer.PairInfo(symbol)
-
-		if err != nil {
-			return fmt.Errorf("broker: capture pair metadata for %s: %w", symbol, err)
-		}
-
-		taker, err := price.resolveFee(symbol, result.Fees)
-
-		if err != nil {
-			return fmt.Errorf("broker: capture taker fee for %s: %w", symbol, err)
-		}
-
-		maker, err := price.resolveFee(symbol, result.FeesMaker)
-
-		if err != nil {
-			return fmt.Errorf("broker: capture maker fee for %s: %w", symbol, err)
-		}
-
-		profiles = append(profiles, kraken.MarketProfile{
-			Symbol: symbol,
-			Pair:   *pair,
-			Taker:  taker,
-			Maker:  maker,
-		})
+	for _, r := range results {
+		profiles = append(profiles, r.profile)
 	}
 
 	return price.capture.Write(struct {

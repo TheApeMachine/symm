@@ -23,6 +23,53 @@ export type BacktestCapture = {
 	frames: number;
 };
 
+export type HindsightBlocker = {
+	key: string;
+	category: string;
+	label: string;
+	source?: string;
+	observed: number;
+	target: number;
+	hasTarget: boolean;
+	gap: number;
+	severity: number;
+	explanation: string;
+};
+
+export type HindsightRecommendation = {
+	key: string;
+	kind: string;
+	target: string;
+	title: string;
+	action: string;
+	rationale: string;
+	current: number;
+	suggested: number;
+	hasCurrent: boolean;
+	hasSuggested: boolean;
+	adjustment?: string;
+	confidence: number;
+	impactPct: number;
+	occurrences: number;
+	symbols: string[];
+};
+
+export type HindsightDiagnosis = {
+	category: string;
+	summary: string;
+	evidenceQuality: number;
+	evidenceStatus: string;
+	blockers: HindsightBlocker[];
+	recommendation: HindsightRecommendation | null;
+};
+
+export type HindsightRootCause = {
+	category: string;
+	impactPct: number;
+	occurrences: number;
+	symbols: string[];
+};
+
 export type HindsightSignal = {
 	at: string | null;
 	action?: string;
@@ -58,6 +105,7 @@ export type HindsightOpportunity = {
 	signal: HindsightSignal;
 	journal?: HindsightSignal[];
 	why?: string;
+	diagnosis?: HindsightDiagnosis | null;
 	captured: boolean;
 	missed: boolean;
 };
@@ -80,6 +128,12 @@ export type HindsightReport = {
 	upboundPct: number;
 	missedLegs: number;
 	totalLegs: number;
+	realizedPct?: number;
+	valueCaptureRate?: number;
+	legCaptureRate?: number;
+	diagnosticCoverage?: number;
+	rootCauses?: HindsightRootCause[];
+	recommendations?: HindsightRecommendation[];
 };
 
 export type BacktestState = {

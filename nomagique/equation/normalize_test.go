@@ -29,6 +29,23 @@ func TestNormalize(t *testing.T) {
 			So(second.MustGet(statistic.SymbolMaturity), ShouldEqual, 2.0/3.0)
 		})
 	})
+
+	Convey("Given a series whose baseline mean is zero", t, func() {
+		stream := types.NewStream(Normalize(), types.Frame{})
+		first, err := stream.Step(equationSample(0, 0))
+		So(err, ShouldBeNil)
+		So(first.Has(SymbolRatio), ShouldBeFalse)
+
+		second, err := stream.Step(equationSample(0, 1))
+		So(err, ShouldBeNil)
+
+		Convey("It does not divide by zero and emits a zero ratio", func() {
+			So(second.MustGet(statistic.SymbolMean), ShouldEqual, 0.0)
+			So(second.MustGet(SymbolRatio), ShouldEqual, 0.0)
+			So(second.MustGet(SymbolNormalized), ShouldEqual, 0.0)
+			So(second.MustGet(statistic.SymbolMaturity), ShouldEqual, 2.0/3.0)
+		})
+	})
 }
 
 func BenchmarkNormalize(benchmark *testing.B) {

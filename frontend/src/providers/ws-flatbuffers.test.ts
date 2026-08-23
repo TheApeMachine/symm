@@ -55,4 +55,54 @@ describe("decodeTelemetryTable", () => {
 			rows: [{ state: { trend: 0.75, risk: 0.25 } }],
 		});
 	});
+	it("retains hindsight counterfactual presence flags", () => {
+		const frame = {
+			unpack: () => ({
+				recommendations: [
+					{
+						hasCurrent: true,
+						hasSuggested: false,
+						current: 0.5,
+						suggested: 0,
+					},
+				],
+				symbols: [
+					{
+						opportunities: [
+							{
+								diagnosis: {
+									blockers: [
+										{ hasTarget: true, target: 0.5 },
+									],
+								},
+							},
+						],
+					},
+				],
+			}),
+		};
+
+		const hindsight = decodeTelemetryTable(
+			Frame.HindsightFrame,
+			frame,
+		).hindsight;
+
+		expect(hindsight).toMatchObject({
+			recommendations: [
+				{ hasCurrent: true, hasSuggested: false },
+			],
+			symbols: [
+				{
+					opportunities: [
+						{
+							diagnosis: {
+								blockers: [{ hasTarget: true }],
+							},
+						},
+					],
+				},
+			],
+		});
+	});
+
 });

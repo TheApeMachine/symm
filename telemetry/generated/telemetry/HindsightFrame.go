@@ -7,13 +7,19 @@ import (
 )
 
 type HindsightFrameT struct {
-	CaptureId int64 `json:"captureId"`
-	Status string `json:"status"`
-	Symbols []*HindsightSymbolT `json:"symbols"`
-	MissedPct float64 `json:"missedPct"`
-	UpboundPct float64 `json:"upboundPct"`
-	MissedLegs int64 `json:"missedLegs"`
-	TotalLegs int64 `json:"totalLegs"`
+	CaptureId          int64                       `json:"captureId"`
+	Status             string                      `json:"status"`
+	Symbols            []*HindsightSymbolT         `json:"symbols"`
+	MissedPct          float64                     `json:"missedPct"`
+	UpboundPct         float64                     `json:"upboundPct"`
+	MissedLegs         int64                       `json:"missedLegs"`
+	TotalLegs          int64                       `json:"totalLegs"`
+	RealizedPct        float64                     `json:"realizedPct"`
+	ValueCaptureRate   float64                     `json:"valueCaptureRate"`
+	LegCaptureRate     float64                     `json:"legCaptureRate"`
+	DiagnosticCoverage float64                     `json:"diagnosticCoverage"`
+	RootCauses         []*HindsightRootCauseT      `json:"rootCauses"`
+	Recommendations    []*HindsightRecommendationT `json:"recommendations"`
 }
 
 func (t *HindsightFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -37,6 +43,32 @@ func (t *HindsightFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffset
 		}
 		symbolsOffset = builder.EndVector(symbolsLength)
 	}
+	rootCausesOffset := flatbuffers.UOffsetT(0)
+	if t.RootCauses != nil {
+		rootCausesLength := len(t.RootCauses)
+		rootCausesOffsets := make([]flatbuffers.UOffsetT, rootCausesLength)
+		for j := 0; j < rootCausesLength; j++ {
+			rootCausesOffsets[j] = t.RootCauses[j].Pack(builder)
+		}
+		HindsightFrameStartRootCausesVector(builder, rootCausesLength)
+		for j := rootCausesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(rootCausesOffsets[j])
+		}
+		rootCausesOffset = builder.EndVector(rootCausesLength)
+	}
+	recommendationsOffset := flatbuffers.UOffsetT(0)
+	if t.Recommendations != nil {
+		recommendationsLength := len(t.Recommendations)
+		recommendationsOffsets := make([]flatbuffers.UOffsetT, recommendationsLength)
+		for j := 0; j < recommendationsLength; j++ {
+			recommendationsOffsets[j] = t.Recommendations[j].Pack(builder)
+		}
+		HindsightFrameStartRecommendationsVector(builder, recommendationsLength)
+		for j := recommendationsLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(recommendationsOffsets[j])
+		}
+		recommendationsOffset = builder.EndVector(recommendationsLength)
+	}
 	HindsightFrameStart(builder)
 	HindsightFrameAddCaptureId(builder, t.CaptureId)
 	HindsightFrameAddStatus(builder, statusOffset)
@@ -45,6 +77,12 @@ func (t *HindsightFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffset
 	HindsightFrameAddUpboundPct(builder, t.UpboundPct)
 	HindsightFrameAddMissedLegs(builder, t.MissedLegs)
 	HindsightFrameAddTotalLegs(builder, t.TotalLegs)
+	HindsightFrameAddRealizedPct(builder, t.RealizedPct)
+	HindsightFrameAddValueCaptureRate(builder, t.ValueCaptureRate)
+	HindsightFrameAddLegCaptureRate(builder, t.LegCaptureRate)
+	HindsightFrameAddDiagnosticCoverage(builder, t.DiagnosticCoverage)
+	HindsightFrameAddRootCauses(builder, rootCausesOffset)
+	HindsightFrameAddRecommendations(builder, recommendationsOffset)
 	return HindsightFrameEnd(builder)
 }
 
@@ -62,6 +100,24 @@ func (rcv *HindsightFrame) UnPackTo(t *HindsightFrameT) {
 	t.UpboundPct = rcv.UpboundPct()
 	t.MissedLegs = rcv.MissedLegs()
 	t.TotalLegs = rcv.TotalLegs()
+	t.RealizedPct = rcv.RealizedPct()
+	t.ValueCaptureRate = rcv.ValueCaptureRate()
+	t.LegCaptureRate = rcv.LegCaptureRate()
+	t.DiagnosticCoverage = rcv.DiagnosticCoverage()
+	rootCausesLength := rcv.RootCausesLength()
+	t.RootCauses = make([]*HindsightRootCauseT, rootCausesLength)
+	for j := 0; j < rootCausesLength; j++ {
+		x := HindsightRootCause{}
+		rcv.RootCauses(&x, j)
+		t.RootCauses[j] = x.UnPack()
+	}
+	recommendationsLength := rcv.RecommendationsLength()
+	t.Recommendations = make([]*HindsightRecommendationT, recommendationsLength)
+	for j := 0; j < recommendationsLength; j++ {
+		x := HindsightRecommendation{}
+		rcv.Recommendations(&x, j)
+		t.Recommendations[j] = x.UnPack()
+	}
 }
 
 func (rcv *HindsightFrame) UnPack() *HindsightFrameT {
@@ -196,8 +252,90 @@ func (rcv *HindsightFrame) MutateTotalLegs(n int64) bool {
 	return rcv._tab.MutateInt64Slot(16, n)
 }
 
+func (rcv *HindsightFrame) RealizedPct() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+func (rcv *HindsightFrame) MutateRealizedPct(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(18, n)
+}
+
+func (rcv *HindsightFrame) ValueCaptureRate() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+func (rcv *HindsightFrame) MutateValueCaptureRate(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(20, n)
+}
+
+func (rcv *HindsightFrame) LegCaptureRate() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+func (rcv *HindsightFrame) MutateLegCaptureRate(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(22, n)
+}
+
+func (rcv *HindsightFrame) DiagnosticCoverage() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+func (rcv *HindsightFrame) MutateDiagnosticCoverage(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(24, n)
+}
+
+func (rcv *HindsightFrame) RootCauses(obj *HindsightRootCause, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+func (rcv *HindsightFrame) RootCausesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *HindsightFrame) Recommendations(obj *HindsightRecommendation, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+func (rcv *HindsightFrame) RecommendationsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func HindsightFrameStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(13)
 }
 func HindsightFrameAddCaptureId(builder *flatbuffers.Builder, captureId int64) {
 	builder.PrependInt64Slot(0, captureId, 0)
@@ -222,6 +360,30 @@ func HindsightFrameAddMissedLegs(builder *flatbuffers.Builder, missedLegs int64)
 }
 func HindsightFrameAddTotalLegs(builder *flatbuffers.Builder, totalLegs int64) {
 	builder.PrependInt64Slot(6, totalLegs, 0)
+}
+func HindsightFrameAddRealizedPct(builder *flatbuffers.Builder, value float64) {
+	builder.PrependFloat64Slot(7, value, 0.0)
+}
+func HindsightFrameAddValueCaptureRate(builder *flatbuffers.Builder, value float64) {
+	builder.PrependFloat64Slot(8, value, 0.0)
+}
+func HindsightFrameAddLegCaptureRate(builder *flatbuffers.Builder, value float64) {
+	builder.PrependFloat64Slot(9, value, 0.0)
+}
+func HindsightFrameAddDiagnosticCoverage(builder *flatbuffers.Builder, value float64) {
+	builder.PrependFloat64Slot(10, value, 0.0)
+}
+func HindsightFrameAddRootCauses(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(value), 0)
+}
+func HindsightFrameStartRootCausesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func HindsightFrameAddRecommendations(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(value), 0)
+}
+func HindsightFrameStartRecommendationsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func HindsightFrameEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

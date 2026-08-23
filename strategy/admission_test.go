@@ -33,6 +33,11 @@ func TestApplyAdmissionDoesNotUsePredictiveReadinessAsVeto(t *testing.T) {
 	if decision.Alternatives[predictiveReadyEvidenceKey] != 0 {
 		t.Fatal("predictive state should remain visible as zero evidence")
 	}
+
+	if decision.Alternatives[admissionDirectionTargetKey] !=
+		strategyAdmissionPolicy().RequiredDirection {
+		t.Fatal("admission should retain the exact configured direction target")
+	}
 }
 
 func TestLiquidityParticipatesInOrdinalCandidateRanking(t *testing.T) {

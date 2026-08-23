@@ -15,8 +15,9 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/transport"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -107,12 +108,15 @@ func (solver *Solver) consume() {
 			solver.thesis.Fail(solver.err)
 		}()
 
+		group, ctx := errgroup.WithContext(solver.ctx)
+		group.SetLimit(types.ShardWorkers())
+
 		for symbolState := range solver.thesis.Work(types.SourceCausal).Drain(
 			solver.work, nil,
 		) {
 			select {
-			case <-solver.ctx.Done():
-				solver.err = solver.ctx.Err()
+			case <-ctx.Done():
+				solver.err = ctx.Err()
 				return
 			default:
 			}
@@ -127,17 +131,22 @@ func (solver *Solver) consume() {
 				continue
 			}
 
-			if err := solver.measure(solver.thesis, symbolState.Symbol); err != nil {
-				solver.err = errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"causal: evaluation failed: "+err.Error(),
-					err,
-				))
-				return
-			}
-
-			solver.publish(solver.thesis)
+			symbolState := symbolState
+			group.Go(func() error {
+				return solver.measure(solver.thesis, symbolState.Symbol)
+			})
 		}
+
+		if err := group.Wait(); err != nil {
+			solver.err = errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"causal: evaluation failed: "+err.Error(),
+				err,
+			))
+			return
+		}
+
+		solver.publish(solver.thesis)
 	}()
 }
 

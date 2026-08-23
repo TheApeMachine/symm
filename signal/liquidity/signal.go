@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -81,10 +82,13 @@ func (signal *Signal) consume() {
 			signal.thesis.Fail(signal.err)
 		}()
 
+		group, ctx := errgroup.WithContext(signal.ctx)
+		group.SetLimit(types.ShardWorkers())
+
 		for symbol := range signal.thesis.Work(types.SourceLiquidity).Drain(signal.work, nil) {
 			select {
-			case <-signal.ctx.Done():
-				signal.err = signal.ctx.Err()
+			case <-ctx.Done():
+				signal.err = ctx.Err()
 				return
 			default:
 			}
@@ -93,72 +97,88 @@ func (signal *Signal) consume() {
 				continue
 			}
 
-			for ticker := range symbol.MarketTickers(
-				symbol.TickerConsumers[types.TickerConsumerLiquidity],
-			) {
-				if ticker.Bid == nil || ticker.Ask == nil {
-					continue
-				}
+			symbol := symbol
+			group.Go(func() error {
+				return signal.consumeSymbol(symbol)
+			})
+		}
 
-				input := nmtypes.Frame{}
-				input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
-				input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
-				input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
-				input.Put(nmtypes.BetaQuantity, ticker.AskQty)
-				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-
-				output, err := signal.number.Step(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"liquidity: number step failed for "+symbol.Symbol,
-						err,
-					))
-					break
-				}
-
-				measurement := nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					ticker.Timestamp.UnixNano(),
-					ticker.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("executable_touch_depth", output.MustGet(nmtypes.Quantity), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitPrice,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("depth_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitPrice,
-						Timescale: nmtypes.TimescalePerSecond,
-					}),
-					nmtypes.NewMetric("depth_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("depth_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitPercent,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("depth_stability", output.MustGet(statistic.SymbolBaselineStability), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitPercent,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("effective_window", output.MustGet(statistic.SymbolBaselineWindow), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitCount,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-				)
-				measurement.StampQuality(
-					statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
-					output.MustGet(nmtypes.SampleCount),
-				)
-
-				symbol.AppendMeasurement(measurement)
-			}
+		if err := group.Wait(); err != nil {
+			signal.err = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"liquidity: processing failed",
+				err,
+			))
 		}
 	}()
+}
+
+func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
+	for ticker := range symbol.MarketTickers(
+		symbol.TickerConsumers[types.TickerConsumerLiquidity],
+	) {
+		if ticker.Bid == nil || ticker.Ask == nil {
+			continue
+		}
+
+		input := nmtypes.Frame{}
+		input.Put(nmtypes.AlphaPrice, ticker.Bid.Float64())
+		input.Put(nmtypes.BetaPrice, ticker.Ask.Float64())
+		input.Put(nmtypes.AlphaQuantity, ticker.BidQty)
+		input.Put(nmtypes.BetaQuantity, ticker.AskQty)
+		input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+		input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+
+		output, err := signal.number.Step(symbol.Symbol, input)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"liquidity: number step failed for "+symbol.Symbol,
+				err,
+			))
+		}
+
+		measurement := nmtypes.NewMeasurement(
+			uuid.NewString(),
+			signal.Name(),
+			ticker.Timestamp.UnixNano(),
+			ticker.Timestamp.UnixNano(),
+		).AddMetrics(
+			nmtypes.NewMetric("executable_touch_depth", output.MustGet(nmtypes.Quantity), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitPrice,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+			nmtypes.NewMetric("depth_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitPrice,
+				Timescale: nmtypes.TimescalePerSecond,
+			}),
+			nmtypes.NewMetric("depth_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitDimensionless,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+			nmtypes.NewMetric("depth_deviation", output.MustGet(statistic.SymbolDeviation), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitPercent,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+			nmtypes.NewMetric("depth_stability", output.MustGet(statistic.SymbolBaselineStability), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitPercent,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+			nmtypes.NewMetric("effective_window", output.MustGet(statistic.SymbolBaselineWindow), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitCount,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+		)
+		measurement.StampQuality(
+			statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
+			output.MustGet(nmtypes.SampleCount),
+		)
+
+		symbol.AppendMeasurement(measurement)
+	}
+
+	return nil
 }
 
 func (signal *Signal) Close() error {

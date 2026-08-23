@@ -554,6 +554,49 @@ table HindsightSignal {
   predictiveStatus:string;
   alternatives:[NamedNumber];
 }
+table HindsightBlocker {
+  key:string;
+  category:string;
+  label:string;
+  source:string;
+  observed:double;
+  target:double;
+  hasTarget:bool;
+  gap:double;
+  severity:double;
+  explanation:string;
+}
+table HindsightRecommendation {
+  key:string;
+  kind:string;
+  target:string;
+  title:string;
+  action:string;
+  rationale:string;
+  current:double;
+  suggested:double;
+  hasCurrent:bool;
+  hasSuggested:bool;
+  adjustment:string;
+  confidence:double;
+  impactPct:double;
+  occurrences:long;
+  symbols:[string];
+}
+table HindsightDiagnosis {
+  category:string;
+  summary:string;
+  evidenceQuality:double;
+  evidenceStatus:string;
+  blockers:[HindsightBlocker];
+  recommendation:HindsightRecommendation;
+}
+table HindsightRootCause {
+  category:string;
+  impactPct:double;
+  occurrences:long;
+  symbols:[string];
+}
 table HindsightOpportunity {
   leg:HindsightLeg;
   signal:HindsightSignal;
@@ -561,6 +604,7 @@ table HindsightOpportunity {
   why:string;
   captured:bool;
   missed:bool;
+  diagnosis:HindsightDiagnosis;
 }
 table HindsightSymbol {
   symbol:string;
@@ -579,6 +623,12 @@ table HindsightFrame {
   upboundPct:double;
   missedLegs:long;
   totalLegs:long;
+  realizedPct:double;
+  valueCaptureRate:double;
+  legCaptureRate:double;
+  diagnosticCoverage:double;
+  rootCauses:[HindsightRootCause];
+  recommendations:[HindsightRecommendation];
 }
 table ErrorFrame {
   level:string;

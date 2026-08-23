@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -61,10 +62,13 @@ func (signal *Signal) consume() {
 			signal.thesis.Fail(signal.err)
 		}()
 
+		group, ctx := errgroup.WithContext(signal.ctx)
+		group.SetLimit(types.ShardWorkers())
+
 		for symbol := range signal.thesis.Work(types.SourceExhaustion).Drain(signal.work, nil) {
 			select {
-			case <-signal.ctx.Done():
-				signal.err = signal.ctx.Err()
+			case <-ctx.Done():
+				signal.err = ctx.Err()
 				return
 			default:
 			}
@@ -73,67 +77,83 @@ func (signal *Signal) consume() {
 				continue
 			}
 
-			for trade := range symbol.MarketTrades(
-				symbol.TradeConsumers[types.TradeConsumerExhaustion],
-			) {
-				side := 1.0
+			symbol := symbol
+			group.Go(func() error {
+				return signal.consumeSymbol(symbol)
+			})
+		}
 
-				if trade.Side == "sell" {
-					side = -1.0
-				}
-
-				input := nmtypes.Frame{}
-				input.Put(algo.SymbolVolume, trade.Qty)
-				input.Put(algo.SymbolAggressorSide, side)
-				input.Put(algo.SymbolPriceDelta, trade.Price.Float64())
-				input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-
-				output, err := signal.number.Step(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"exhaust: failed for "+symbol.Symbol,
-						err,
-					))
-					break
-				}
-
-				measurement := nmtypes.NewMeasurement(
-					uuid.NewString(),
-					signal.Name(),
-					trade.Timestamp.UnixNano(),
-					trade.Timestamp.UnixNano(),
-				).AddMetrics(
-					nmtypes.NewMetric("mechanical", output.MustGet(SymbolMechanical), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("fragile", output.MustGet(SymbolFragile), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("thermal", output.MustGet(SymbolThermal), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("reversal", output.MustGet(SymbolReversal), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-					nmtypes.NewMetric("urgency", output.MustGet(SymbolUrgency), nmtypes.Descriptor{
-						Unit:      nmtypes.UnitDimensionless,
-						Timescale: nmtypes.TimescaleInstantaneous,
-					}),
-				)
-
-				measurement.StampQuality(0, output.MustGet(nmtypes.SampleCount))
-
-				symbol.AppendMeasurement(measurement)
-			}
+		if err := group.Wait(); err != nil {
+			signal.err = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"exhaust: processing failed",
+				err,
+			))
 		}
 	}()
+}
+
+func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
+	for trade := range symbol.MarketTrades(
+		symbol.TradeConsumers[types.TradeConsumerExhaustion],
+	) {
+		side := 1.0
+
+		if trade.Side == "sell" {
+			side = -1.0
+		}
+
+		input := nmtypes.Frame{}
+		input.Put(algo.SymbolVolume, trade.Qty)
+		input.Put(algo.SymbolAggressorSide, side)
+		input.Put(algo.SymbolPriceDelta, trade.Price.Float64())
+		input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+		input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+
+		output, err := signal.number.Step(symbol.Symbol, input)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"exhaust: failed for "+symbol.Symbol,
+				err,
+			))
+		}
+
+		measurement := nmtypes.NewMeasurement(
+			uuid.NewString(),
+			signal.Name(),
+			trade.Timestamp.UnixNano(),
+			trade.Timestamp.UnixNano(),
+		).AddMetrics(
+			nmtypes.NewMetric("mechanical", output.MustGet(SymbolMechanical), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitDimensionless,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+			nmtypes.NewMetric("fragile", output.MustGet(SymbolFragile), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitDimensionless,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+			nmtypes.NewMetric("thermal", output.MustGet(SymbolThermal), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitDimensionless,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+			nmtypes.NewMetric("reversal", output.MustGet(SymbolReversal), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitDimensionless,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+			nmtypes.NewMetric("urgency", output.MustGet(SymbolUrgency), nmtypes.Descriptor{
+				Unit:      nmtypes.UnitDimensionless,
+				Timescale: nmtypes.TimescaleInstantaneous,
+			}),
+		)
+
+		measurement.StampQuality(0, output.MustGet(nmtypes.SampleCount))
+
+		symbol.AppendMeasurement(measurement)
+	}
+
+	return nil
 }
 
 func (signal *Signal) Close() error {

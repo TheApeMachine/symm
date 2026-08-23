@@ -3,10 +3,12 @@ package ui
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
 
+	"github.com/pion/sctp"
 	"github.com/pion/webrtc/v4"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
@@ -195,6 +197,11 @@ func (channel *fluidChannel) failSend(err error) {
 		return
 	}
 
+	if errors.Is(err, sctp.ErrPayloadDataStateNotExist) {
+		channel.close()
+		return
+	}
+
 	channel.fail(fluidError("unable to send record", err))
 	channel.cancel()
 }
@@ -237,5 +244,7 @@ func (channel *fluidChannel) sendSegment(segment []byte) error {
 
 func (channel *fluidChannel) close() {
 	channel.cancel()
-	_ = channel.dataChannel.Close()
+	if channel.dataChannel != nil {
+		_ = channel.dataChannel.Close()
+	}
 }

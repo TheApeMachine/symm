@@ -13,6 +13,7 @@ import (
 const (
 	admissionAcceptedKey              = "admission:accepted"
 	admissionDirectionMarginKey       = "admission:direction_margin"
+	admissionDirectionTargetKey       = "admission:direction_target"
 	admissionThesisMarginKey          = "admission:thesis_score_margin"
 	admissionConfidenceMarginKey      = "admission:confidence_margin"
 	admissionSupportMarginKey         = "admission:support_margin"
@@ -61,6 +62,7 @@ func applyAdmission(
 		alternatives[predictiveReadyEvidenceKey] = 1
 	}
 
+	alternatives[admissionDirectionTargetKey] = policy.RequiredDirection
 	alternatives[admissionDirectionMarginKey] = -math.Abs(
 		decision.Direction - policy.RequiredDirection,
 	)

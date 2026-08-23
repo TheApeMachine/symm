@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 
 	"github.com/theapemachine/errnie"
@@ -106,12 +108,15 @@ func (solver *Solver) consume() {
 			solver.thesis.Fail(solver.err)
 		}()
 
+		group, ctx := errgroup.WithContext(solver.ctx)
+		group.SetLimit(types.ShardWorkers())
+
 		for symbol := range solver.thesis.Work(types.SourceResonance).Drain(
 			solver.work, nil,
 		) {
 			select {
-			case <-solver.ctx.Done():
-				solver.err = solver.ctx.Err()
+			case <-ctx.Done():
+				solver.err = ctx.Err()
 				return
 			default:
 			}
@@ -126,34 +131,50 @@ func (solver *Solver) consume() {
 				continue
 			}
 
-			for ticker := range symbol.MarketTickers(consumer) {
-				if err := solver.Update(
-					ticker.Symbol,
-					ticker.Timestamp,
-					[]float64{
-						ticker.Ask.Float64(),
-						ticker.Bid.Float64(),
-						ticker.AskQty,
-						ticker.BidQty,
-						ticker.Change.Float64(),
-						ticker.ChangePct,
-						ticker.High.Float64(),
-						ticker.Low.Float64(),
-						ticker.Last.Float64(),
-						ticker.Volume,
-						ticker.Vwap,
-					},
-				); err != nil {
-					solver.err = errnie.Error(errnie.Err(
-						errnie.Internal,
-						"resonance: detector update failed",
-						err,
-					))
-					return
-				}
-			}
+			symbol := symbol
+			group.Go(func() error {
+				return solver.consumeSymbol(symbol, consumer)
+			})
+		}
+
+		if err := group.Wait(); err != nil {
+			solver.err = errnie.Error(errnie.Err(
+				errnie.Internal,
+				"resonance: processing failed",
+				err,
+			))
 		}
 	}()
+}
+
+func (solver *Solver) consumeSymbol(symbol *types.Symbol, consumer *transport.Consumer[kraken.TickerData]) error {
+	for ticker := range symbol.MarketTickers(consumer) {
+		if err := solver.Update(
+			ticker.Symbol,
+			ticker.Timestamp,
+			[]float64{
+				ticker.Ask.Float64(),
+				ticker.Bid.Float64(),
+				ticker.AskQty,
+				ticker.BidQty,
+				ticker.Change.Float64(),
+				ticker.ChangePct,
+				ticker.High.Float64(),
+				ticker.Low.Float64(),
+				ticker.Last.Float64(),
+				ticker.Volume,
+				ticker.Vwap,
+			},
+		); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"resonance: detector update failed",
+				err,
+			))
+		}
+	}
+
+	return nil
 }
 
 func (solver *Solver) onTicker(ticker any) {

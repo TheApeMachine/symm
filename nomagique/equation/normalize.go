@@ -34,11 +34,19 @@ func Normalize() types.Primitive {
 					types.In(statistic.SymbolMean, statistic.SymbolBaseline),
 					types.Out(statistic.SymbolResult, SymbolLift),
 				),
-				types.Wire(
-					calculus.Quotient,
-					types.In(types.SampleValue, calculus.PortA),
-					types.In(statistic.SymbolMean, calculus.PortB),
-					types.Out(calculus.PortResult, SymbolRatio),
+				logic.If(
+					types.Wire(
+						types.Identity,
+						types.In(statistic.SymbolMean, logic.SymbolCondition),
+						types.Out(logic.SymbolCondition, logic.SymbolCondition),
+					),
+					types.Wire(
+						calculus.Quotient,
+						types.In(types.SampleValue, calculus.PortA),
+						types.In(statistic.SymbolMean, calculus.PortB),
+						types.Out(calculus.PortResult, SymbolRatio),
+					),
+					types.Assign(SymbolRatio, 0),
 				),
 				types.Wire(
 					calculus.Squash,

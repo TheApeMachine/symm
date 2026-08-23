@@ -63,7 +63,8 @@ const fieldSampling = /* wgsl */ `
 		if (uniforms.showWave > 0.5) {
 			let waveReal = textureSampleLevel(waveRealTexture, fieldSampler, coordinate, 0.0).r;
 			let waveImag = textureSampleLevel(waveImagTexture, fieldSampler, coordinate, 0.0).r;
-			let waveSignal = compress(length(vec2<f32>(waveReal, waveImag)) * uniforms.waveScale);
+			let waveMagnitude = length(vec2<f32>(waveReal, waveImag)) * uniforms.waveScale;
+			let waveSignal = pow(clamp(waveMagnitude, 0.0, 1.0), 2.0);
 			let wavePhase = select(0.0, atan2(waveImag, waveReal), abs(waveReal) > 1e-6 || abs(waveImag) > 1e-6);
 			field.waveGlow = phaseColor(wavePhase) * waveSignal;
 		}
@@ -232,7 +233,7 @@ export const particleShader = /* wgsl */ `
 		let energyRing = smoothstep(0.48, 0.38, radius)
 			* smoothstep(0.28, 0.38, radius)
 			* clamp(input.energy, 0.0, 1.0);
-		let brightness = mix(0.75, 1.4, heat) * glow * 0.25;
+		let brightness = mix(0.75, 1.4, pow(heat, 2.0)) * glow * 0.25;
 		return vec4<f32>(
 			color * brightness + waveColor * energyRing * 1.5,
 			glow * 0.9 + core * 0.1

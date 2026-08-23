@@ -13,24 +13,31 @@ decision stream recorded so a missed leg can be traced back to the exact
 measurement that (or the exact admission gate that) kept the system flat.
 */
 type SignalContext struct {
-	At                  time.Time          `json:"at"`
-	Action              string             `json:"action"`
-	Reason              string             `json:"reason"`
-	Cause               string             `json:"cause"`
-	GraphScore          float64            `json:"graphScore"`
-	ThesisScore         float64            `json:"thesisScore"`
-	ThesisConfidence    float64            `json:"thesisConfidence"`
-	ThesisSupport       float64            `json:"thesisSupport"`
-	ThesisContradiction float64            `json:"thesisContradiction"`
-	ThesisConditions    float64            `json:"thesisConditions"`
-	Direction           float64            `json:"direction"`
-	Confidence          float64            `json:"confidence"`
-	AdmissionThreshold  float64            `json:"admissionGraphThreshold"`
-	Opportunity         bool               `json:"opportunity"`
-	Type                string             `json:"opportunityType,omitempty"`
-	PredictiveReady     bool               `json:"predictiveReady"`
-	PredictiveStatus    string             `json:"predictiveStatus"`
-	Alternatives        map[string]float64 `json:"alternatives"`
+	At                      time.Time          `json:"at"`
+	Action                  string             `json:"action"`
+	Reason                  string             `json:"reason"`
+	Cause                   string             `json:"cause"`
+	GraphScore              float64            `json:"graphScore"`
+	ThesisScore             float64            `json:"thesisScore"`
+	ThesisConfidence        float64            `json:"thesisConfidence"`
+	ThesisSupport           float64            `json:"thesisSupport"`
+	ThesisContradiction     float64            `json:"thesisContradiction"`
+	ThesisConditions        float64            `json:"thesisConditions"`
+	Direction               float64            `json:"direction"`
+	Confidence              float64            `json:"confidence"`
+	AdmissionThreshold      float64            `json:"admissionGraphThreshold"`
+	Opportunity             bool               `json:"opportunity"`
+	Type                    string             `json:"opportunityType,omitempty"`
+	PredictiveReady         bool               `json:"predictiveReady"`
+	PredictiveStatus        string             `json:"predictiveStatus"`
+	AllocationClass         string             `json:"allocationClass"`
+	AllocationHaircut       float64            `json:"allocation_haircut"`
+	AllocationHaircutReason string             `json:"allocation_haircut_reason"`
+	ReserveEligible         bool               `json:"reserveEligible"`
+	ReserveReason           string             `json:"reserveReason"`
+	OpenPositions           int                `json:"openPositions"`
+	SlotCapacity            int                `json:"slotCapacity"`
+	Alternatives            map[string]float64 `json:"alternatives"`
 }
 
 /*
@@ -40,12 +47,13 @@ reading, plus the decision journal spanning just before entry to just after
 exit, and an inferred diagnosis derived from that recorded state.
 */
 type MissedLeg struct {
-	Leg      Leg           `json:"leg"`
-	Signal   SignalContext `json:"signal"`
-	Journal  []Decision    `json:"journal"`
-	Why      string        `json:"why"`
-	Captured bool          `json:"captured"`
-	Missed   bool          `json:"missed"`
+	Leg       Leg           `json:"leg"`
+	Signal    SignalContext `json:"signal"`
+	Journal   []Decision    `json:"journal"`
+	Why       string        `json:"why"`
+	Diagnosis Diagnosis     `json:"diagnosis"`
+	Captured  bool          `json:"captured"`
+	Missed    bool          `json:"missed"`
 }
 
 /*
@@ -192,39 +200,55 @@ func truthFor(decisions []Decision, leg Leg) MissedLeg {
 	captured := hasEntryInside(decisions, leg)
 	context := SignalContext{At: leg.BuyAt}
 	journal := decisionsAround(decisions, leg)
+	recorded := false
 
 	if !captured {
 		if decision := bestDecisionFor(decisions, leg); decision != nil {
+			recorded = true
 			context = SignalContext{
-				At:                  decision.At,
-				Action:              decision.Action,
-				Reason:              decision.Reason,
-				Cause:               decision.Cause,
-				GraphScore:          decision.GraphScore,
-				ThesisScore:         decision.ThesisScore,
-				ThesisConfidence:    decision.ThesisConfidence,
-				ThesisSupport:       decision.ThesisSupport,
-				ThesisContradiction: decision.ThesisContradiction,
-				ThesisConditions:    decision.ThesisConditions,
-				Direction:           decision.Direction,
-				Confidence:          decision.Confidence,
-				AdmissionThreshold:  decision.AdmissionThreshold,
-				Opportunity:         decision.Opportunity,
-				Type:                decision.OpportunityType,
-				PredictiveReady:     decision.PredictiveReady,
-				PredictiveStatus:    decision.PredictiveStatus,
-				Alternatives:        decision.Alternatives,
+				At:                      decision.At,
+				Action:                  decision.Action,
+				Reason:                  decision.Reason,
+				Cause:                   decision.Cause,
+				GraphScore:              decision.GraphScore,
+				ThesisScore:             decision.ThesisScore,
+				ThesisConfidence:        decision.ThesisConfidence,
+				ThesisSupport:           decision.ThesisSupport,
+				ThesisContradiction:     decision.ThesisContradiction,
+				ThesisConditions:        decision.ThesisConditions,
+				Direction:               decision.Direction,
+				Confidence:              decision.Confidence,
+				AdmissionThreshold:      decision.AdmissionThreshold,
+				Opportunity:             decision.Opportunity,
+				Type:                    decision.OpportunityType,
+				PredictiveReady:         decision.PredictiveReady,
+				PredictiveStatus:        decision.PredictiveStatus,
+				AllocationClass:         decision.AllocationClass,
+				AllocationHaircut:       decision.AllocationHaircut,
+				AllocationHaircutReason: decision.AllocationHaircutReason,
+				ReserveEligible:         decision.ReserveEligible,
+				ReserveReason:           decision.ReserveReason,
+				OpenPositions:           decision.OpenPositions,
+				SlotCapacity:            decision.SlotCapacity,
+				Alternatives:            decision.Alternatives,
 			}
 		}
 	}
 
+	diagnosis := Diagnosis{}
+
+	if !captured {
+		diagnosis = diagnoseOpportunity(context, leg, recorded)
+	}
+
 	return MissedLeg{
-		Leg:      leg,
-		Signal:   context,
-		Journal:  journal,
-		Why:      diagnose(context, leg),
-		Captured: captured,
-		Missed:   !captured,
+		Leg:       leg,
+		Signal:    context,
+		Journal:   journal,
+		Why:       diagnosis.Summary,
+		Diagnosis: diagnosis,
+		Captured:  captured,
+		Missed:    !captured,
 	}
 }
 
@@ -272,88 +296,6 @@ func decisionsAround(decisions []Decision, leg Leg) []Decision {
 	}
 
 	return out
-}
-
-/*
-diagnose infers, from the recorded decision state pinned to a missed leg, the
-single most likely reason the system stayed flat. It reads only the fields the
-tap recorded, so the explanation is traceable back to the arbitration scores
-rather than invented after the fact.
-*/
-func diagnose(context SignalContext, leg Leg) string {
-	if context.Action == "enter" {
-		return ""
-	}
-
-	upward := leg.SellPrice > leg.BuyPrice
-	clause := fmt.Sprintf("missed %s→%s: ", fmtPrice(leg.BuyPrice), fmtPrice(leg.SellPrice))
-
-	switch {
-	case context.Opportunity:
-		return clause + fmt.Sprintf(
-			"flagged as %s but no entry — %s",
-			context.Type,
-			firstNonEmpty(context.Reason, context.Cause, context.PredictiveStatus, "decided nothing"),
-		)
-	case upward && context.Direction < 0:
-		return clause + fmt.Sprintf(
-			"thesis pointed the wrong way (direction %.4f, confidence %.4f)",
-			context.Direction,
-			context.ThesisConfidence,
-		)
-	case !upward && context.Direction > 0:
-		return clause + fmt.Sprintf(
-			"thesis pointed the wrong way (direction %.4f, confidence %.4f)",
-			context.Direction,
-			context.ThesisConfidence,
-		)
-	case context.ThesisContradiction > context.ThesisSupport:
-		return clause + fmt.Sprintf(
-			"thesis contradiction %.4f exceeded support %.4f",
-			context.ThesisContradiction,
-			context.ThesisSupport,
-		)
-	case context.GraphScore < context.AdmissionThreshold:
-		return clause + fmt.Sprintf(
-			"graph score %.4f below admission %.4f",
-			context.GraphScore,
-			context.AdmissionThreshold,
-		)
-	}
-
-	if dominant := dominantAlternative(context.Alternatives, upward); dominant != "" {
-		return clause + fmt.Sprintf("blocked by %s", dominant)
-	}
-
-	return clause + firstNonEmpty(context.Reason, context.Cause, "no admission")
-}
-
-/*
-dominantAlternative names the largest-magnitude measurement that fought the
-leg's direction — the single number that most plausibly kept the system flat.
-*/
-func dominantAlternative(alternatives map[string]float64, upward bool) string {
-	dominant := ""
-
-	for name, value := range alternatives {
-		if upward && value >= 0 {
-			continue
-		}
-
-		if !upward && value <= 0 {
-			continue
-		}
-
-		if dominant == "" || abs(value) > abs(alternatives[dominant]) {
-			dominant = name
-		}
-	}
-
-	if dominant == "" {
-		return ""
-	}
-
-	return fmt.Sprintf("%s (%.4f)", dominant, alternatives[dominant])
 }
 
 func firstNonEmpty(values ...string) string {

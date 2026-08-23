@@ -1,12 +1,15 @@
 package broker
 
 import (
+	"context"
 	"fmt"
+	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 /* Fee returns the taker fee for a symbol. */
@@ -64,20 +67,42 @@ func (price *Price) GetFees(symbols []string) error {
 		)
 	}
 
-	resolved := make(map[string]kraken.TradeVolumeFee, len(symbols))
+	group, _ := errgroup.WithContext(context.Background())
+	group.SetLimit(types.ShardWorkers())
+
+	type feeResult struct {
+		symbolKey string
+		fee       kraken.TradeVolumeFee
+	}
+	results := make([]feeResult, 0, len(symbols))
+	var mu sync.Mutex
 
 	for _, symbol := range symbols {
-		fee, err := price.resolveFee(symbol, tradeVolumeResult.Fees)
+		symbol := symbol
+		group.Go(func() error {
+			fee, err := price.resolveFee(symbol, tradeVolumeResult.Fees)
 
-		if err != nil {
-			return err
-		}
+			if err != nil {
+				return err
+			}
 
-		resolved[price.normalizer.Name(symbol)] = fee
+			mu.Lock()
+			results = append(results, feeResult{
+				symbolKey: price.normalizer.Name(symbol),
+				fee:       fee,
+			})
+			mu.Unlock()
+
+			return nil
+		})
 	}
 
-	for symbol, fee := range resolved {
-		price.fees.Store(symbol, fee)
+	if err := group.Wait(); err != nil {
+		return err
+	}
+
+	for _, r := range results {
+		price.fees.Store(r.symbolKey, r.fee)
 	}
 
 	if err := price.captureFeeProfiles(symbols, tradeVolumeResult); err != nil {

@@ -28,6 +28,11 @@ const namedNumberFields = new Set([
 	"predictions",
 	"state",
 ]);
+const retainedPresenceFlags = new Set([
+	"hasCurrent",
+	"hasSuggested",
+	"hasTarget",
+]);
 const fieldNames: Record<string, string> = {
 	allocationHaircut: "allocation_haircut",
 	allocationHaircutReason: "allocation_haircut_reason",
@@ -193,7 +198,11 @@ const plain = (
 			: fieldNames;
 
 	for (const [name, entry] of Object.entries(value)) {
-		if (name.startsWith("has") && typeof entry === "boolean") {
+		if (
+			name.startsWith("has") &&
+			typeof entry === "boolean" &&
+			!retainedPresenceFlags.has(name)
+		) {
 			continue;
 		}
 

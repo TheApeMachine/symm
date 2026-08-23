@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 type Signal struct {
@@ -52,10 +53,13 @@ func (signal *Signal) consume() {
 			signal.thesis.Fail(signal.err)
 		}()
 
+		group, ctx := errgroup.WithContext(signal.ctx)
+		group.SetLimit(types.ShardWorkers())
+
 		for symbol := range signal.thesis.Work(types.SourceLeadLag).Drain(signal.work, nil) {
 			select {
-			case <-signal.ctx.Done():
-				signal.err = signal.ctx.Err()
+			case <-ctx.Done():
+				signal.err = ctx.Err()
 				return
 			default:
 			}
@@ -64,102 +68,111 @@ func (signal *Signal) consume() {
 				continue
 			}
 
-			for ticker := range symbol.MarketTickers(
-				symbol.TickerConsumers[types.TickerConsumerLeadLag],
-			) {
-				price, observed, err := tickerPrice(ticker)
+			symbol := symbol
+			group.Go(func() error {
+				return signal.consumeSymbol(symbol)
+			})
+		}
 
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"leadlag: invalid ticker for "+symbol.Symbol,
-						err,
-					))
-
-					return
-				}
-
-				if !observed {
-					continue
-				}
-
-				anchor, _, _, hasAnchor, err := signal.number.ArgMax(
-					correlation.Return,
-					correlation.SymbolMagnitude,
-					correlation.SymbolReady,
-				)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"leadlag: anchor selection failed",
-						err,
-					))
-
-					return
-				}
-
-				input := nmtypes.Frame{}
-				input.Put(nmtypes.SampleValue, price)
-				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-				_, err = signal.number.Step(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"leadlag: path failed for "+symbol.Symbol,
-						err,
-					))
-
-					return
-				}
-
-				if !hasAnchor || anchor == symbol.Symbol {
-					symbol.AppendMeasurement(signal.neutralMeasurement(
-						symbol.Symbol, ticker.Timestamp, price,
-					))
-
-					continue
-				}
-
-				anchorPath, hasAnchorPath := signal.number.Project(anchor)
-				followerPath, hasFollowerPath := signal.number.Project(symbol.Symbol)
-
-				if !hasAnchorPath || !hasFollowerPath {
-					symbol.AppendMeasurement(signal.neutralMeasurement(
-						symbol.Symbol, ticker.Timestamp, price,
-					))
-
-					continue
-				}
-
-				_, output, err := signal.pair(anchorPath, followerPath)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"leadlag: pair failed for "+symbol.Symbol,
-						err,
-					))
-
-					return
-				}
-
-				ready, _ := output.Get(equation.SymbolLeadLagReady)
-
-				symbol.AppendMeasurement(signal.measurement(
-					symbol.Symbol,
-					anchor,
-					ticker.Timestamp,
-					anchorPath,
-					followerPath,
-					output,
-					ready != 0,
-				))
-			}
+		if err := group.Wait(); err != nil {
+			signal.err = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"leadlag: processing failed",
+				err,
+			))
 		}
 	}()
+}
+
+func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
+	for ticker := range symbol.MarketTickers(
+		symbol.TickerConsumers[types.TickerConsumerLeadLag],
+	) {
+		price, observed, err := tickerPrice(ticker)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"leadlag: invalid ticker for "+symbol.Symbol,
+				err,
+			))
+		}
+
+		if !observed {
+			continue
+		}
+
+		anchor, _, _, hasAnchor, err := signal.number.ArgMax(
+			correlation.Return,
+			correlation.SymbolMagnitude,
+			correlation.SymbolReady,
+		)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"leadlag: anchor selection failed",
+				err,
+			))
+		}
+
+		input := nmtypes.Frame{}
+		input.Put(nmtypes.SampleValue, price)
+		input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+		input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+		_, err = signal.number.Step(symbol.Symbol, input)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"leadlag: path failed for "+symbol.Symbol,
+				err,
+			))
+		}
+
+		if !hasAnchor || anchor == symbol.Symbol {
+			symbol.AppendMeasurement(signal.neutralMeasurement(
+				symbol.Symbol, ticker.Timestamp, price,
+			))
+
+			continue
+		}
+
+		anchorPath, hasAnchorPath := signal.number.Project(anchor)
+		followerPath, hasFollowerPath := signal.number.Project(symbol.Symbol)
+
+		if !hasAnchorPath || !hasFollowerPath {
+			symbol.AppendMeasurement(signal.neutralMeasurement(
+				symbol.Symbol, ticker.Timestamp, price,
+			))
+
+			continue
+		}
+
+		_, output, err := signal.pair(anchorPath, followerPath)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"leadlag: pair failed for "+symbol.Symbol,
+				err,
+			))
+		}
+
+		ready, _ := output.Get(equation.SymbolLeadLagReady)
+
+		symbol.AppendMeasurement(signal.measurement(
+			symbol.Symbol,
+			anchor,
+			ticker.Timestamp,
+			anchorPath,
+			followerPath,
+			output,
+			ready != 0,
+		))
+	}
+
+	return nil
 }
 
 func tickerPrice(ticker kraken.TickerData) (float64, bool, error) {

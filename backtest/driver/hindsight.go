@@ -4,18 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/theapemachine/symm/audit"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/backtest/hindsight"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -25,13 +23,19 @@ the complete per-symbol breakdown plus a capture-wide summary of how much of
 the tape's theoretical value the system did not collect.
 */
 type RealizedReport struct {
-	CaptureID  int64                 `json:"captureId"`
-	Status     string                `json:"status,omitempty"`
-	Symbols    []hindsight.PerSymbol `json:"symbols"`
-	MissedPct  float64               `json:"missedPct"`
-	UpboundPct float64               `json:"upboundPct"`
-	MissedLegs int                   `json:"missedLegs"`
-	TotalLegs  int                   `json:"totalLegs"`
+	CaptureID          int64                        `json:"captureId"`
+	Status             string                       `json:"status,omitempty"`
+	Symbols            []hindsight.PerSymbol        `json:"symbols"`
+	MissedPct          float64                      `json:"missedPct"`
+	RealizedPct        float64                      `json:"realizedPct"`
+	UpboundPct         float64                      `json:"upboundPct"`
+	MissedLegs         int                          `json:"missedLegs"`
+	TotalLegs          int                          `json:"totalLegs"`
+	ValueCaptureRate   float64                      `json:"valueCaptureRate"`
+	LegCaptureRate     float64                      `json:"legCaptureRate"`
+	DiagnosticCoverage float64                      `json:"diagnosticCoverage"`
+	RootCauses         []hindsight.RootCauseSummary `json:"rootCauses"`
+	Recommendations    []hindsight.Recommendation   `json:"recommendations"`
 }
 
 /*
@@ -252,14 +256,33 @@ summarize aggregates the per-symbol analysis into a capture-wide hindsight
 report.
 */
 func summarize(captureID int64, reports []hindsight.PerSymbol) RealizedReport {
-	summary := RealizedReport{CaptureID: captureID, Symbols: reports}
+	summary := RealizedReport{
+		CaptureID:          captureID,
+		Symbols:            reports,
+		DiagnosticCoverage: hindsight.DiagnosticCoverage(reports),
+		RootCauses:         hindsight.RootCauseSummaries(reports),
+		Recommendations:    hindsight.AggregateRecommendations(reports),
+	}
 
 	for _, report := range reports {
 		summary.MissedPct += report.MissedPct
+		summary.RealizedPct += report.RealizedPct
 		summary.UpboundPct += report.UpboundPct
 		summary.MissedLegs += report.MissedLegs
 		summary.TotalLegs += report.Legs
 	}
+
+	if summary.UpboundPct > 0 {
+		summary.ValueCaptureRate = summary.RealizedPct / summary.UpboundPct
+	}
+
+	if summary.TotalLegs == 0 {
+		summary.LegCaptureRate = 1
+		return summary
+	}
+
+	summary.LegCaptureRate = float64(summary.TotalLegs-summary.MissedLegs) /
+		float64(summary.TotalLegs)
 
 	return summary
 }
@@ -361,161 +384,4 @@ func (driver *Driver) buildHindsight(captureID int64) (RealizedReport, error) {
 	}
 
 	return summarize(captureID, reports), nil
-}
-
-/*
-publishHindsight emits one hindsight wire frame for the dashboard.
-*/
-func (driver *Driver) publishHindsight(report RealizedReport) {
-	driver.ui.Push(&wire.FrameT{
-		Type:  wire.FrameHindsightFrame,
-		Value: hindsightWire(report),
-	})
-}
-
-func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
-	symbols := make([]*wire.HindsightSymbolT, 0, len(report.Symbols))
-
-	for _, symbol := range report.Symbols {
-		opportunities := make([]*wire.HindsightOpportunityT, 0, len(symbol.Opportunities))
-
-		for _, opportunity := range symbol.Opportunities {
-			journal := make([]*wire.HindsightSignalT, 0, len(opportunity.Journal))
-
-			for _, decision := range opportunity.Journal {
-				journal = append(journal, hindsightSignalWire(signalWireFields{
-					At:                  decision.At,
-					Action:              decision.Action,
-					Reason:              decision.Reason,
-					Cause:               decision.Cause,
-					GraphScore:          decision.GraphScore,
-					ThesisScore:         decision.ThesisScore,
-					ThesisConfidence:    decision.ThesisConfidence,
-					ThesisSupport:       decision.ThesisSupport,
-					ThesisContradiction: decision.ThesisContradiction,
-					ThesisConditions:    decision.ThesisConditions,
-					Direction:           decision.Direction,
-					Confidence:          decision.Confidence,
-					AdmissionThreshold:  decision.AdmissionThreshold,
-					Opportunity:         decision.Opportunity,
-					OpportunityType:     decision.OpportunityType,
-					PredictiveReady:     decision.PredictiveReady,
-					PredictiveStatus:    decision.PredictiveStatus,
-					Alternatives:        decision.Alternatives,
-				}))
-			}
-
-			opportunities = append(opportunities, &wire.HindsightOpportunityT{
-				Leg: &wire.HindsightLegT{
-					Symbol: opportunity.Leg.Symbol, BuyAt: opportunity.Leg.BuyAt.UnixNano(),
-					SellAt: opportunity.Leg.SellAt.UnixNano(), BuyPrice: opportunity.Leg.BuyPrice,
-					SellPrice: opportunity.Leg.SellPrice, ProfitPct: opportunity.Leg.ProfitPct,
-				},
-				Signal: hindsightSignalWire(signalWireFields{
-					At:                  opportunity.Signal.At,
-					Action:              opportunity.Signal.Action,
-					Reason:              opportunity.Signal.Reason,
-					Cause:               opportunity.Signal.Cause,
-					GraphScore:          opportunity.Signal.GraphScore,
-					ThesisScore:         opportunity.Signal.ThesisScore,
-					ThesisConfidence:    opportunity.Signal.ThesisConfidence,
-					ThesisSupport:       opportunity.Signal.ThesisSupport,
-					ThesisContradiction: opportunity.Signal.ThesisContradiction,
-					ThesisConditions:    opportunity.Signal.ThesisConditions,
-					Direction:           opportunity.Signal.Direction,
-					Confidence:          opportunity.Signal.Confidence,
-					AdmissionThreshold:  opportunity.Signal.AdmissionThreshold,
-					Opportunity:         opportunity.Signal.Opportunity,
-					OpportunityType:     opportunity.Signal.Type,
-					PredictiveReady:     opportunity.Signal.PredictiveReady,
-					PredictiveStatus:    opportunity.Signal.PredictiveStatus,
-					Alternatives:        opportunity.Signal.Alternatives,
-				}),
-				Journal:  journal,
-				Why:      opportunity.Why,
-				Captured: opportunity.Captured, Missed: opportunity.Missed,
-			})
-		}
-
-		symbols = append(symbols, &wire.HindsightSymbolT{
-			Symbol: symbol.Symbol, UpboundPct: symbol.UpboundPct,
-			RealizedPct: symbol.RealizedPct, MissedPct: symbol.MissedPct,
-			Legs: int64(symbol.Legs), MissedLegs: int64(symbol.MissedLegs),
-			Opportunities: opportunities,
-		})
-	}
-
-	return &wire.HindsightFrameT{
-		CaptureId: report.CaptureID, Status: report.Status, Symbols: symbols,
-		MissedPct: report.MissedPct, UpboundPct: report.UpboundPct,
-		MissedLegs: int64(report.MissedLegs), TotalLegs: int64(report.TotalLegs),
-	}
-}
-
-/*
-signalWireFields is the shared flat shape for one decision moment on the wire,
-whether it is the signal pinned to a missed leg or one entry in its journal.
-*/
-type signalWireFields struct {
-	At                  time.Time
-	Action              string
-	Reason              string
-	Cause               string
-	GraphScore          float64
-	ThesisScore         float64
-	ThesisConfidence    float64
-	ThesisSupport       float64
-	ThesisContradiction float64
-	ThesisConditions    float64
-	Direction           float64
-	Confidence          float64
-	AdmissionThreshold  float64
-	Opportunity         bool
-	OpportunityType     string
-	PredictiveReady     bool
-	PredictiveStatus    string
-	Alternatives        map[string]float64
-}
-
-/*
-hindsightSignalWire encodes one decision moment with its full thesis context.
-*/
-func hindsightSignalWire(fields signalWireFields) *wire.HindsightSignalT {
-	return &wire.HindsightSignalT{
-		At:                  fields.At.UnixNano(),
-		Action:              fields.Action,
-		Reason:              fields.Reason,
-		Cause:               fields.Cause,
-		GraphScore:          fields.GraphScore,
-		ThesisScore:         fields.ThesisScore,
-		ThesisConfidence:    fields.ThesisConfidence,
-		ThesisSupport:       fields.ThesisSupport,
-		ThesisContradiction: fields.ThesisContradiction,
-		ThesisConditions:    fields.ThesisConditions,
-		Direction:           fields.Direction,
-		Confidence:          fields.Confidence,
-		AdmissionThreshold:  fields.AdmissionThreshold,
-		Opportunity:         fields.Opportunity,
-		OpportunityType:     fields.OpportunityType,
-		PredictiveReady:     fields.PredictiveReady,
-		PredictiveStatus:    fields.PredictiveStatus,
-		Alternatives:        hindsightNumbers(fields.Alternatives),
-	}
-}
-
-func hindsightNumbers(values map[string]float64) []*wire.NamedNumberT {
-	names := make([]string, 0, len(values))
-
-	for name := range values {
-		names = append(names, name)
-	}
-
-	sort.Strings(names)
-	result := make([]*wire.NamedNumberT, 0, len(names))
-
-	for _, name := range names {
-		result = append(result, &wire.NamedNumberT{Name: name, Value: values[name]})
-	}
-
-	return result
 }

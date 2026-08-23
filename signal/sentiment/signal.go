@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -56,12 +57,15 @@ func (signal *Signal) consume() {
 			signal.thesis.Fail(signal.err)
 		}()
 
+		group, ctx := errgroup.WithContext(signal.ctx)
+		group.SetLimit(types.ShardWorkers())
+
 		for symbol := range signal.thesis.Work(types.SourceSentiment).Drain(
 			signal.work, nil,
 		) {
 			select {
-			case <-signal.ctx.Done():
-				signal.err = signal.ctx.Err()
+			case <-ctx.Done():
+				signal.err = ctx.Err()
 				return
 			default:
 			}
@@ -70,51 +74,66 @@ func (signal *Signal) consume() {
 				continue
 			}
 
-			for ticker := range symbol.MarketTickers(
-				symbol.TickerConsumers[types.TickerConsumerSentiment],
-			) {
-				if ticker.Last == nil || ticker.Last.Sign() <= 0 {
-					continue
-				}
+			symbol := symbol
+			group.Go(func() error {
+				return signal.consumeSymbol(symbol)
+			})
+		}
 
-				input := nmtypes.Frame{}
-				input.Put(nmtypes.SampleValue, ticker.Last.Float64())
-				input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-				input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-
-				_, err := signal.number.Step(symbol.Symbol, input)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"sentiment: path step failed for "+symbol.Symbol,
-						err,
-					))
-					return
-				}
-
-				output, measured, err := algo.CohortSentiment(
-					symbol.Symbol, signal.number,
-				)
-
-				if err != nil {
-					signal.err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"sentiment: cohort evaluation failed for "+symbol.Symbol,
-						err,
-					))
-					return
-				}
-
-				symbol.AppendMeasurement(signal.measurement(
-					symbol.Symbol,
-					ticker.Timestamp,
-					output,
-					measured,
-				))
-			}
+		if err := group.Wait(); err != nil {
+			signal.err = errnie.Error(errnie.Err(
+				errnie.Validation,
+				"sentiment: processing failed",
+				err,
+			))
 		}
 	}()
+}
+
+func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
+	for ticker := range symbol.MarketTickers(
+		symbol.TickerConsumers[types.TickerConsumerSentiment],
+	) {
+		if ticker.Last == nil || ticker.Last.Sign() <= 0 {
+			continue
+		}
+
+		input := nmtypes.Frame{}
+		input.Put(nmtypes.SampleValue, ticker.Last.Float64())
+		input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+		input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+
+		_, err := signal.number.Step(symbol.Symbol, input)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"sentiment: path step failed for "+symbol.Symbol,
+				err,
+			))
+		}
+
+		output, measured, err := algo.CohortSentiment(
+			symbol.Symbol, signal.number,
+		)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"sentiment: cohort evaluation failed for "+symbol.Symbol,
+				err,
+			))
+		}
+
+		symbol.AppendMeasurement(signal.measurement(
+			symbol.Symbol,
+			ticker.Timestamp,
+			output,
+			measured,
+		))
+	}
+
+	return nil
 }
 
 func (signal *Signal) measurement(

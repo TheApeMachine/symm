@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -145,10 +146,13 @@ func (desk *Desk) consume() {
 			desk.thesis.Fail(desk.err)
 		}()
 
+		group, ctx := errgroup.WithContext(desk.ctx)
+		group.SetLimit(types.ShardWorkers())
+
 		for symbol := range desk.thesis.Work(types.SourceDesk).Drain(desk.work, nil) {
 			select {
-			case <-desk.ctx.Done():
-				desk.err = desk.ctx.Err()
+			case <-ctx.Done():
+				desk.err = ctx.Err()
 				return
 			default:
 			}
@@ -157,84 +161,89 @@ func (desk *Desk) consume() {
 				continue
 			}
 
-			drained := false
+			symbol := symbol
+			group.Go(func() error {
+				return desk.consumeSymbol(symbol)
+			})
+		}
 
-			for ticker := range symbol.MarketTickers(
-				symbol.TickerConsumers[types.TickerConsumerDesk],
-			) {
-				drained = true
-				desk.price.Update(&ticker)
-				found, ok := desk.positions.Load(symbol.Symbol)
-
-				if ok && found != nil {
-					position, ok := found.(*Position)
-
-					if ok && position != nil {
-						position.onTicker(ticker)
-
-						if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
-							err := observer.ObserveMark(position.MarkFeedback(ticker.Timestamp))
-
-							if err != nil {
-								desk.err = errnie.Error(err)
-								return
-							}
-						}
-					}
-				}
-			}
-
-			for execution := range symbol.MarketExecutions(
-				symbol.ExecutionConsumers[types.ExecutionConsumerDesk],
-			) {
-				drained = true
-				found, ok := desk.positions.Load(symbol.Symbol)
-
-				if !ok || found == nil {
-					continue
-				}
-
-				position, ok := found.(*Position)
-
-				if !ok || position == nil {
-					continue
-				}
-
-				if position.onExecution(kraken.Execution{
-					Channel: "executions",
-					Type:    "update",
-					Data:    []kraken.ExecutionData{execution},
-				}) {
-					desk.foldPassage(position)
-					desk.positions.CompareAndDelete(symbol.Symbol, position)
-				}
-			}
-
-			/*
-				Cash and equity are refreshed together because they answer the
-				same question at the same instant: what the account holds, and
-				what it would settle at if every open lot were closed now. The
-				drained guard paces both against the ticker rate, so the account
-				readout stays live without adding venue traffic of its own.
-			*/
-			if !drained {
-				continue
-			}
-
-			if desk.balanceRefresh.CompareAndSwap(false, true) {
-				go func() {
-					defer desk.balanceRefresh.Store(false)
-					desk.balance.Update()
-					err := desk.PublishEquity()
-
-					if err != nil {
-						desk.err = errnie.Error(err)
-						desk.thesis.Fail(desk.err)
-					}
-				}()
-			}
+		if err := group.Wait(); err != nil {
+			desk.err = errnie.Error(err)
 		}
 	}()
+}
+
+func (desk *Desk) consumeSymbol(symbol *types.Symbol) error {
+	drained := false
+
+	for ticker := range symbol.MarketTickers(
+		symbol.TickerConsumers[types.TickerConsumerDesk],
+	) {
+		drained = true
+		desk.price.Update(&ticker)
+		found, ok := desk.positions.Load(symbol.Symbol)
+
+		if ok && found != nil {
+			position, ok := found.(*Position)
+
+			if ok && position != nil {
+				position.onTicker(ticker)
+
+				if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
+					err := observer.ObserveMark(position.MarkFeedback(ticker.Timestamp))
+
+					if err != nil {
+						return errnie.Error(err)
+					}
+				}
+			}
+		}
+	}
+
+	for execution := range symbol.MarketExecutions(
+		symbol.ExecutionConsumers[types.ExecutionConsumerDesk],
+	) {
+		drained = true
+		found, ok := desk.positions.Load(symbol.Symbol)
+
+		if !ok || found == nil {
+			continue
+		}
+
+		position, ok := found.(*Position)
+
+		if !ok || position == nil {
+			continue
+		}
+
+		if position.onExecution(kraken.Execution{
+			Channel: "executions",
+			Type:    "update",
+			Data:    []kraken.ExecutionData{execution},
+		}) {
+			desk.foldPassage(position)
+			desk.positions.CompareAndDelete(symbol.Symbol, position)
+		}
+	}
+
+	if !drained {
+		return nil
+	}
+
+	if desk.balanceRefresh.CompareAndSwap(false, true) {
+		go func() {
+			defer desk.balanceRefresh.Store(false)
+			desk.balance.Update()
+			err := desk.PublishEquity()
+
+			if err != nil {
+				desk.err = errnie.Error(err)
+				desk.thesis.Fail(desk.err)
+			}
+		}()
+	}
+
+	return nil
 }
 
 /*

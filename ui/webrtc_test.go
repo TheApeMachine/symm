@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/sctp"
 	"github.com/pion/webrtc/v4"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -165,6 +166,23 @@ func TestFluidChannelFailSend(t *testing.T) {
 
 		Convey("It should not escalate the canceled send to the system transport", func() {
 			So(failed, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given an active viewer channel with an SCTP non-established send failure", t, func() {
+		ctx, cancel := context.WithCancel(t.Context())
+		failed := false
+		channel := &fluidChannel{
+			ctx:    ctx,
+			cancel: cancel,
+			fail:   func(error) { failed = true },
+		}
+
+		channel.failSend(fmt.Errorf("%w: state=Closed", sctp.ErrPayloadDataStateNotExist))
+
+		Convey("It should not escalate the SCTP transport error to the system transport", func() {
+			So(failed, ShouldBeFalse)
+			So(channel.ctx.Err(), ShouldEqual, context.Canceled)
 		})
 	})
 
