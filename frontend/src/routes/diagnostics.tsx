@@ -59,10 +59,10 @@ const STAGE_LABEL: Record<string, string> = {
 
 const QUEUE_KIND_TONE: Record<string, string> = {
 	ingress: "bg-(--info)",
-	rail: "bg-(--up)",
+	rail: "bg-(--acc)",
 	derived: "bg-(--acc)",
 	strategy: "bg-(--warn)",
-	ui: "bg-(--brand)",
+	ui: "bg-(--acc)",
 	broker: "bg-(--down)",
 };
 
@@ -273,7 +273,7 @@ const QueueDetail = ({
 							return (
 								<div
 									key={name}
-									className="group flex flex-col gap-1 rounded border border-(--line)/50 bg-(--surface)/50 p-1.5 hover:border-(--line2) transition-colors"
+									className="group flex flex-col gap-1 rounded-lg border border-(--line)/50 bg-(--surface)/50 p-1.5 hover:border-(--line2) transition-colors"
 								>
 									<div className="flex items-center justify-between font-mono text-[9px]">
 										<button
@@ -477,7 +477,7 @@ const StageDetail = ({
 				{errors.map((error) => (
 					<div
 						key={`${error.at_ns}-${error.message}`}
-						className="mb-2 border border-(--down)/40 bg-(--down)/10 p-2 font-mono text-[9px] text-(--down)"
+						className="mb-2 rounded-lg border border-(--down)/40 bg-(--down)/10 p-2 font-mono text-[9px] text-(--down)"
 					>
 						{error.message}
 					</div>
@@ -501,7 +501,7 @@ const OverviewDetail = ({ frame }: { frame: DiagnosticsFrame }) => {
 				Select a stage to see who feeds it (amber) and who it feeds (blue).
 				Select a queue to see its writers, readers, and live pressure.
 				{latestError ? (
-					<div className="mt-3 border border-(--down)/40 bg-(--down)/10 p-2 text-(--down)">
+					<div className="mt-3 rounded-lg border border-(--down)/40 bg-(--down)/10 p-2 text-(--down)">
 						<span className="font-bold uppercase">{latestError.source}</span>
 						<br />
 						{latestError.message}

@@ -85,6 +85,9 @@ func TestLevel3Step(t *testing.T) {
 			So(measurement.Metrics["retreated_quantity:bid"].Raw, ShouldEqual, 10.0)
 			So(measurement.Metrics["net_withdrawn_quantity:bid"].Raw, ShouldEqual, 0.0)
 			So(measurement.Metrics["net_replenished_quantity:bid"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["retreat_fraction:bid"].Raw, ShouldAlmostEqual, 1.0, 1e-12)
+			So(measurement.Metrics["net_withdrawal_fraction:bid"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["retreat_rate:bid"].Raw, ShouldAlmostEqual, 10.0, 1e-12)
 		})
 
 		Convey("a later observation attributes an unchanged-touch withdrawal", func() {
@@ -98,6 +101,11 @@ func TestLevel3Step(t *testing.T) {
 			So(measurement.Metrics["net_withdrawn_quantity:bid"].Raw, ShouldEqual, 6.0)
 			So(measurement.Metrics["net_replenished_quantity:bid"].Raw, ShouldEqual, 0.0)
 			So(measurement.Metrics["retreated_quantity:bid"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["net_withdrawal_fraction:bid"].Raw, ShouldAlmostEqual, 0.6, 1e-12)
+			So(measurement.Metrics["net_replenishment_fraction:bid"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["net_withdrawal_rate:bid"].Raw, ShouldAlmostEqual, 6.0, 1e-12)
+			So(measurement.Metrics["withdrawal_fraction_baseline:bid"].Raw, ShouldNotEqual, 0.0)
+			So(measurement.Metrics["withdrawal_fraction_zscore:bid"].Raw, ShouldNotEqual, 0.0)
 		})
 	})
 

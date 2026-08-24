@@ -16,24 +16,23 @@ import (
 Input/output slot symbols for the derivatives liquidation-trade pipeline.
 */
 var (
-	symbolTradePrice       = nmtypes.MustIntern("derivatives/trade_price")
-	symbolTradeQty         = nmtypes.MustIntern("derivatives/trade_quantity")
-	symbolIsLiquidation    = nmtypes.MustIntern("derivatives/is_liquidation")
-	symbolSideBuy          = nmtypes.MustIntern("derivatives/side_buy")
-	symbolSideSell         = nmtypes.MustIntern("derivatives/side_sell")
-	symbolTradeNotional    = nmtypes.MustIntern("derivatives/trade_notional")
-	symbolLiqNotional      = nmtypes.MustIntern("derivatives/liq_notional")
-	symbolBuyLiqDelta      = nmtypes.MustIntern("derivatives/buy_liq_delta")
-	symbolSellLiqDelta     = nmtypes.MustIntern("derivatives/sell_liq_delta")
-	symbolLiqBuyTotal      = nmtypes.MustIntern("derivatives/liq_buy_total")
-	symbolLiqSellTotal     = nmtypes.MustIntern("derivatives/liq_sell_total")
-	symbolGrossTradeTotal  = nmtypes.MustIntern("derivatives/gross_trade_total")
-	symbolGrossLiq         = nmtypes.MustIntern("derivatives/gross_liquidation_notional")
-	symbolNetLiq           = nmtypes.MustIntern("derivatives/net_liquidation_notional")
-	symbolSignedFraction   = nmtypes.MustIntern("derivatives/liquidation_signed_fraction")
-	symbolLiqRate          = nmtypes.MustIntern("derivatives/liquidation_notional_rate")
-	symbolLiqShare         = nmtypes.MustIntern("derivatives/liquidation_share")
-	symbolLiqShareVelocity = nmtypes.MustIntern("derivatives/liquidation_share_velocity")
+	symbolTradePrice      = nmtypes.MustIntern("derivatives/trade_price")
+	symbolTradeQty        = nmtypes.MustIntern("derivatives/trade_quantity")
+	symbolIsLiquidation   = nmtypes.MustIntern("derivatives/is_liquidation")
+	symbolSideBuy         = nmtypes.MustIntern("derivatives/side_buy")
+	symbolSideSell        = nmtypes.MustIntern("derivatives/side_sell")
+	symbolTradeNotional   = nmtypes.MustIntern("derivatives/trade_notional")
+	symbolLiqNotional     = nmtypes.MustIntern("derivatives/liq_notional")
+	symbolBuyLiqDelta     = nmtypes.MustIntern("derivatives/buy_liq_delta")
+	symbolSellLiqDelta    = nmtypes.MustIntern("derivatives/sell_liq_delta")
+	symbolLiqBuyTotal     = nmtypes.MustIntern("derivatives/liq_buy_total")
+	symbolLiqSellTotal    = nmtypes.MustIntern("derivatives/liq_sell_total")
+	symbolGrossTradeTotal = nmtypes.MustIntern("derivatives/gross_trade_total")
+	symbolGrossLiq        = nmtypes.MustIntern("derivatives/gross_liquidation_notional")
+	symbolNetLiq          = nmtypes.MustIntern("derivatives/net_liquidation_notional")
+	symbolSignedFraction  = nmtypes.MustIntern("derivatives/liquidation_signed_fraction")
+	symbolLiqRate         = nmtypes.MustIntern("derivatives/liquidation_notional_rate")
+	symbolLiqShare        = nmtypes.MustIntern("derivatives/liquidation_share")
 )
 
 /*
@@ -152,11 +151,6 @@ func NewTrade() *Trade {
 					),
 					// liquidation_share_velocity: first difference of the share.
 					velocityOver("liquidation_share", symbolLiqShare),
-					nmtypes.Wire(
-						nmtypes.Identity,
-						nmtypes.In(prefixed("liquidation_share", "velocity/delta"), calculus.PortX),
-						nmtypes.Out(calculus.PortX, symbolLiqShareVelocity),
-					),
 				),
 				nmtypes.Identity,
 			),
@@ -170,7 +164,7 @@ func NewTrade() *Trade {
 			data.Binding{From: symbolLiqRate, Name: "liquidation_notional_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: symbolGrossTradeTotal, Name: "gross_derivative_trade_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolLiqShare, Name: "liquidation_share", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolLiqShareVelocity, Name: "liquidation_share_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: prefixed("liquidation_share", "velocity/delta"), Name: "liquidation_share_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 		),
 	}
 }

@@ -288,20 +288,26 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
 			types.MetricExcitationAmplitude, types.SideSellToSell,
 		)]
 
-		if buySample.Normalized != nil {
+		if buySample != nil && buySample.Normalized != nil {
 			entry.buy = *buySample.Normalized
 		}
 
-		if sellSample.Normalized != nil {
+		if sellSample != nil && sellSample.Normalized != nil {
 			entry.sell = *sellSample.Normalized
 		}
 
-		entry.eta = measurement.Metrics[types.MetricKey(
+		if etaMetric := measurement.Metrics[types.MetricKey(
 			types.MetricSpectralRadius, types.SideNone,
-		)].Raw
-		entry.beta = measurement.Metrics[types.MetricKey(
+		)]; etaMetric != nil {
+			entry.eta = etaMetric.Raw
+		}
+
+		if betaMetric := measurement.Metrics[types.MetricKey(
 			types.MetricDecayRate, types.SideNone,
-		)].Raw
+		)]; betaMetric != nil {
+			entry.beta = betaMetric.Raw
+		}
+
 		entry.hasHawkes = true
 	}
 

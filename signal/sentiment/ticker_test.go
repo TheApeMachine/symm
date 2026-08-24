@@ -71,6 +71,14 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Metrics["directional_consensus"].Raw, ShouldAlmostEqual, 0.0, 1e-12)
 			So(measurement.Metrics["opposite_direction_peer_count"].Raw, ShouldEqual, 1.0)
 			So(measurement.Metrics["opposite_direction_peer_fraction"].Raw, ShouldAlmostEqual, 1.0, 1e-12)
+			So(measurement.Metrics["excluded_member_count"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["largest_signed_return"].Raw, ShouldAlmostEqual, 0.10, 1e-12)
+			So(measurement.Metrics["largest_move_share"].Raw, ShouldAlmostEqual, 0.10/0.15, 1e-12)
+			So(measurement.Metrics["largest_move_ratio"].Raw, ShouldAlmostEqual, 0.10/0.075, 1e-12)
+			So(measurement.Metrics["magnitude_mad"].Raw, ShouldAlmostEqual, 0.025, 1e-12)
+			So(measurement.Metrics["asof_age_seconds"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["from_age_seconds"].Raw, ShouldAlmostEqual, 1.0, 1e-12)
+			So(measurement.Provenance["largest_move_symbol"], ShouldEqual, "AAA/USD")
 		})
 
 		Convey("a later cut exposes the causal estimator views", func() {

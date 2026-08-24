@@ -18,7 +18,7 @@ import (
 Estimator series prefixes for the arrival-dynamics velocity metrics.
 */
 const (
-	prefixLambda  = "hawkes/lambda"
+	prefixLambda   = "hawkes/lambda"
 	prefixSpectral = "hawkes/spectral"
 )
 
@@ -37,17 +37,17 @@ var (
 	symbolExcitationFractionBuy  = nmtypes.MustIntern("hawkes/excitation_fraction_buy")
 	symbolExcitationFractionSell = nmtypes.MustIntern("hawkes/excitation_fraction_sell")
 
-	symbolLLHawkesTotal        = nmtypes.MustIntern("hawkes/state/ll_hawkes_total")
-	symbolLLPoissonTotal       = nmtypes.MustIntern("hawkes/state/ll_poisson_total")
-	symbolLLSelfTotal          = nmtypes.MustIntern("hawkes/state/ll_self_total")
-	symbolDeltaPoissonTotal    = nmtypes.MustIntern("hawkes/state/ll_delta_poisson_total")
-	symbolDeltaSelfTotal       = nmtypes.MustIntern("hawkes/state/ll_delta_self_total")
-	symbolLLPerEventHawkes     = nmtypes.MustIntern("hawkes/log_likelihood_per_event_hawkes")
-	symbolLLPerEventPoisson    = nmtypes.MustIntern("hawkes/log_likelihood_gain_per_event_poisson")
-	symbolLLPerEventSelf       = nmtypes.MustIntern("hawkes/log_likelihood_gain_per_event_self")
-	symbolLogConditional       = nmtypes.MustIntern("hawkes/log_conditional_intensity")
-	symbolLambdaVelocity       = nmtypes.MustIntern("hawkes/conditional_intensity_velocity")
-	symbolSpectralVelocity     = nmtypes.MustIntern("hawkes/spectral_radius_velocity")
+	symbolLLHawkesTotal     = nmtypes.MustIntern("hawkes/state/ll_hawkes_total")
+	symbolLLPoissonTotal    = nmtypes.MustIntern("hawkes/state/ll_poisson_total")
+	symbolLLSelfTotal       = nmtypes.MustIntern("hawkes/state/ll_self_total")
+	symbolDeltaPoissonTotal = nmtypes.MustIntern("hawkes/state/ll_delta_poisson_total")
+	symbolDeltaSelfTotal    = nmtypes.MustIntern("hawkes/state/ll_delta_self_total")
+	symbolLLPerEventHawkes  = nmtypes.MustIntern("hawkes/log_likelihood_per_event_hawkes")
+	symbolLLPerEventPoisson = nmtypes.MustIntern("hawkes/log_likelihood_gain_per_event_poisson")
+	symbolLLPerEventSelf    = nmtypes.MustIntern("hawkes/log_likelihood_gain_per_event_self")
+	symbolLogConditional    = nmtypes.MustIntern("hawkes/log_conditional_intensity")
+	symbolLambdaVelocity    = nmtypes.MustIntern("hawkes/conditional_intensity_velocity")
+	symbolSpectralVelocity  = nmtypes.MustIntern("hawkes/spectral_radius_velocity")
 )
 
 /*
@@ -94,7 +94,7 @@ func velocityRate(prefix string, target nmtypes.Symbol) nmtypes.Primitive {
 		),
 		nmtypes.Identity,
 	)
-)
+}
 
 /*
 hawkesPipeline composes the Hawkes point process and its derived arrival
@@ -105,6 +105,26 @@ decompositions.
 func hawkesPipeline() nmtypes.Primitive {
 	return nmtypes.Pipe(
 		algo.Hawkes(),
+		statistic.Compensator,
+
+		// Gate compensator and innovation metrics on readiness: the first
+		// event closes no interval to integrate, so they are undefined.
+		logic.If(
+			nmtypes.Wire(
+				nmtypes.Identity,
+				nmtypes.In(statistic.SymbolReady, nmtypes.PortX),
+				nmtypes.Out(nmtypes.PortX, logic.SymbolCondition),
+			),
+			nmtypes.Identity,
+			calculus.Clear(
+				statistic.SymbolCompensatorAlpha,
+				statistic.SymbolCompensatorBeta,
+				statistic.SymbolInnovationAlpha,
+				statistic.SymbolInnovationBeta,
+				statistic.SymbolStandardInnovAlpha,
+				statistic.SymbolStandardInnovBeta,
+			),
+		),
 
 		// Effective model support is the retained event count.
 		nmtypes.Wire(
@@ -174,6 +194,64 @@ func hawkesPipeline() nmtypes.Primitive {
 			nmtypes.In(statistic.SymbolLambdaBeta, calculus.PortB),
 			nmtypes.Out(calculus.PortResult, symbolExcitationFractionSell),
 		),
+
+		// Accumulate the per-event likelihood proxies into totals, then publish
+		// the per-event (total / event count) forms.
+		nmtypes.Wire(
+			calculus.Accumulate,
+			nmtypes.In(statistic.SymbolLLHawkes, calculus.SymbolDelta),
+			nmtypes.State(symbolLLHawkesTotal, calculus.SymbolTotal),
+		),
+		nmtypes.Wire(
+			calculus.Accumulate,
+			nmtypes.In(statistic.SymbolLLPoisson, calculus.SymbolDelta),
+			nmtypes.State(symbolLLPoissonTotal, calculus.SymbolTotal),
+		),
+		nmtypes.Wire(
+			calculus.Accumulate,
+			nmtypes.In(statistic.SymbolLLSelf, calculus.SymbolDelta),
+			nmtypes.State(symbolLLSelfTotal, calculus.SymbolTotal),
+		),
+		nmtypes.Wire(
+			calculus.Accumulate,
+			nmtypes.In(statistic.SymbolDeltaPoisson, calculus.SymbolDelta),
+			nmtypes.State(symbolDeltaPoissonTotal, calculus.SymbolTotal),
+		),
+		nmtypes.Wire(
+			calculus.Accumulate,
+			nmtypes.In(statistic.SymbolDeltaSelf, calculus.SymbolDelta),
+			nmtypes.State(symbolDeltaSelfTotal, calculus.SymbolTotal),
+		),
+		nmtypes.Wire(
+			calculus.Quotient,
+			nmtypes.In(symbolLLHawkesTotal, calculus.PortA),
+			nmtypes.In(statistic.SymbolEventCount, calculus.PortB),
+			nmtypes.Out(calculus.PortResult, symbolLLPerEventHawkes),
+		),
+		nmtypes.Wire(
+			calculus.Quotient,
+			nmtypes.In(symbolDeltaPoissonTotal, calculus.PortA),
+			nmtypes.In(statistic.SymbolEventCount, calculus.PortB),
+			nmtypes.Out(calculus.PortResult, symbolLLPerEventPoisson),
+		),
+		nmtypes.Wire(
+			calculus.Quotient,
+			nmtypes.In(symbolDeltaSelfTotal, calculus.PortA),
+			nmtypes.In(statistic.SymbolEventCount, calculus.PortB),
+			nmtypes.Out(calculus.PortResult, symbolLLPerEventSelf),
+		),
+
+		// Temporal dynamics: first-difference velocity of total conditional
+		// intensity in log space and of the branching spectral radius.
+		nmtypes.Wire(
+			calculus.Log,
+			nmtypes.In(symbolConditionalIntensity, calculus.PortX),
+			nmtypes.Out(calculus.PortResult, symbolLogConditional),
+		),
+		velocityEstimator(prefixLambda, symbolLogConditional),
+		velocityRate(prefixLambda, symbolLambdaVelocity),
+		velocityEstimator(prefixSpectral, statistic.SymbolSpectralRadius),
+		velocityRate(prefixSpectral, symbolSpectralVelocity),
 	)
 }
 
@@ -231,11 +309,22 @@ func NewTrade() *Trade {
 			data.Binding{From: statistic.SymbolSpectralRadius, Name: "branching_spectral_radius", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: statistic.SymbolDescendantsAlpha, Name: "expected_descendants_from_buy", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: statistic.SymbolDescendantsBeta, Name: "expected_descendants_from_sell", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: statistic.SymbolLLHawkes, Name: "log_likelihood:hawkes", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: statistic.SymbolLLPoisson, Name: "log_likelihood:poisson", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: statistic.SymbolLLSelf, Name: "log_likelihood:self_only", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: statistic.SymbolDeltaPoisson, Name: "log_likelihood_gain_vs_poisson", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: statistic.SymbolDeltaSelf, Name: "log_likelihood_gain_vs_self_only", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolLLHawkesTotal, Name: "log_likelihood:hawkes", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolLLPoissonTotal, Name: "log_likelihood:poisson", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolLLSelfTotal, Name: "log_likelihood:self_only", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolDeltaPoissonTotal, Name: "log_likelihood_gain_vs_poisson", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolDeltaSelfTotal, Name: "log_likelihood_gain_vs_self_only", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolLLPerEventHawkes, Name: "log_likelihood_per_event:hawkes", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolLLPerEventPoisson, Name: "log_likelihood_gain_per_event_vs_poisson", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolLLPerEventSelf, Name: "log_likelihood_gain_per_event_vs_self_only", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolLambdaVelocity, Name: "conditional_intensity_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolSpectralVelocity, Name: "spectral_radius_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: statistic.SymbolCompensatorAlpha, Name: "compensator:buy", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: statistic.SymbolCompensatorBeta, Name: "compensator:sell", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: statistic.SymbolInnovationAlpha, Name: "count_innovation:buy", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: statistic.SymbolInnovationBeta, Name: "count_innovation:sell", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: statistic.SymbolStandardInnovAlpha, Name: "standardized_innovation:buy", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: statistic.SymbolStandardInnovBeta, Name: "standardized_innovation:sell", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 		),
 	}
 }

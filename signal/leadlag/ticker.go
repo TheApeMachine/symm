@@ -40,14 +40,14 @@ ticks so the namespaced Baseline/ZScore/Velocity estimators can derive its
 causal history without touching the per-symbol price path.
 */
 const (
-	prefixLagSeconds        = "pair/lag_seconds"
-	prefixGain              = "pair/gain"
+	prefixLagSeconds         = "pair/lag_seconds"
+	prefixGain               = "pair/gain"
 	prefixBestLagCorrelation = "pair/best_lag_correlation"
 )
 
 var (
-	lagSecondsSeries        = temporal.NewSeries(prefixLagSeconds)
-	gainSeries              = temporal.NewSeries(prefixGain)
+	lagSecondsSeries         = temporal.NewSeries(prefixLagSeconds)
+	gainSeries               = temporal.NewSeries(prefixGain)
 	bestLagCorrelationSeries = temporal.NewSeries(prefixBestLagCorrelation)
 
 	symbolLagBaselineSeconds   = nmtypes.MustIntern(temporal.JoinPrefix(prefixLagSeconds, "baseline/value"))

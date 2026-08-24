@@ -260,3 +260,84 @@ func TestWorkspaceDropsWhenSubscriptionSaturated(t *testing.T) {
 		t.Fatal("no drops counted while the subscription was saturated")
 	}
 }
+
+func TestWorkspaceObserve(t *testing.T) {
+	workspace := NewWorkspace(nil)
+	defer workspace.Close()
+
+	var observedKey atomic.Pointer[string]
+	var observedValue atomic.Int64
+	var observedCount atomic.Int64
+
+	workspace.Observe("metrics", func(channel string, key string, value any) {
+		if channel != "metrics" {
+			t.Errorf("channel=%q want=metrics", channel)
+		}
+
+		observedKey.Store(&key)
+
+		if intVal, ok := value.(int64); ok {
+			observedValue.Store(intVal)
+			observedCount.Add(1)
+		}
+	})
+
+	channel := ChannelOf(workspace, "metrics", func(value int64) string { return "BTC/USD" })
+	channel.Publish(int64(42))
+
+	if observedCount.Load() != 1 {
+		t.Fatalf("observedCount=%d want=1", observedCount.Load())
+	}
+
+	if observedValue.Load() != 42 {
+		t.Fatalf("observedValue=%d want=42", observedValue.Load())
+	}
+
+	if key := observedKey.Load(); key == nil || *key != "BTC/USD" {
+		t.Fatalf("observedKey=%v want=BTC/USD", key)
+	}
+}
+
+func TestChannelObserve(t *testing.T) {
+	workspace := NewWorkspace(nil)
+	defer workspace.Close()
+
+	var observedVal atomic.Int64
+	var observedKey atomic.Pointer[string]
+
+	channel := ChannelOf(workspace, "ticks", func(value int64) string { return "ETH/USD" })
+	channel.Observe(func(key string, value int64) {
+		observedKey.Store(&key)
+		observedVal.Store(value)
+	})
+
+	channel.Publish(int64(999))
+
+	if observedVal.Load() != 999 {
+		t.Fatalf("observedVal=%d want=999", observedVal.Load())
+	}
+
+	if key := observedKey.Load(); key == nil || *key != "ETH/USD" {
+		t.Fatalf("observedKey=%v want=ETH/USD", key)
+	}
+}
+
+func BenchmarkWorkspacePublishWithObserver(b *testing.B) {
+	workspace := NewWorkspace(nil)
+	defer workspace.Close()
+
+	var counter atomic.Int64
+	workspace.Observe("bench", func(channel string, key string, value any) {
+		counter.Add(1)
+	})
+
+	channel := ChannelOf(workspace, "bench", func(value int64) string { return "BTC" })
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		channel.Publish(int64(1))
+	}
+}
+

@@ -55,6 +55,8 @@ returns) belongs to the consumer, never to this container.
 type Snapshot struct {
 	At   time.Time
 	Count int
+	// TotalMembers counts every key that has ever contributed an observation.
+	TotalMembers int
 	// Signed distribution of the latest member changes.
 	PositiveCount int
 	NegativeCount int
@@ -64,6 +66,7 @@ type Snapshot struct {
 	MeanAbsolute   float64
 	MedianAbsolute float64
 	Mad            float64
+	MagnitudeMad   float64
 	Iqr            float64
 	Rms            float64
 	// Extremes by magnitude.
@@ -84,6 +87,8 @@ type Snapshot struct {
 	ZeroDirectionCount     int
 	PeerMedianAbsolute     float64
 	PeerMad                float64
+	FocalAge               float64
+	FocalFromAge           float64
 	// Causal estimator views over each aggregate's own history.
 	Aggregates map[string]AggregateView
 }
@@ -202,6 +207,7 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	}
 
 	snapshot.Count = len(values)
+	snapshot.TotalMembers = len(section.members)
 
 	if snapshot.Count == 0 {
 		return snapshot
@@ -224,6 +230,9 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	snapshot.MedianAbsolute = medianSorted(magnitudes)
 	snapshot.MeanAbsolute = meanValue(magnitudes)
 	snapshot.Mad = medianSorted(deviationSorted(values, snapshot.SignedMedian))
+	snapshot.MagnitudeMad = medianSorted(
+		deviationSorted(magnitudes, snapshot.MedianAbsolute),
+	)
 	snapshot.Iqr = quantileSorted(magnitudes, 0.75) - quantileSorted(magnitudes, 0.25)
 	snapshot.Rms = rmsValue(values)
 
@@ -264,6 +273,13 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	snapshot.MedianFromAge = medianUnsorted(fromAges)
 
 	if focal != "" {
+		focalMember := section.members[focal]
+
+		if focalMember != nil && !focalMember.at.IsZero() {
+			snapshot.FocalAge = at.Sub(focalMember.at).Seconds()
+			snapshot.FocalFromAge = at.Sub(focalMember.from).Seconds()
+		}
+
 		focalValues := section.recent[focal]
 
 		if len(focalValues) > 0 {

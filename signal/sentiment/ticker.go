@@ -22,9 +22,10 @@ var (
 	sUnchangedCount             = metricSlot("unchanged_count")
 	sValidMemberCount           = metricSlot("valid_member_count")
 	sCohortMemberCount          = metricSlot("cohort_member_count")
+	sExcludedMemberCount        = metricSlot("excluded_member_count")
 	sSameDirectionPeerCount     = metricSlot("same_direction_peer_count")
 	sOppositeDirectionPeerCount = metricSlot("opposite_direction_peer_count")
-	sZeroDirectionPeerCount     = metricSlot("zero_direction_peer_count")
+	sZeroDirectionPeerCount     = metricSlot("zero_return_peer_count")
 
 	sAdvanceFraction               = metricSlot("advance_fraction")
 	sDeclineFraction               = metricSlot("decline_fraction")
@@ -34,7 +35,7 @@ var (
 	sDirectionalConsensus          = metricSlot("directional_consensus")
 	sSameDirectionPeerFraction     = metricSlot("same_direction_peer_fraction")
 	sOppositeDirectionPeerFraction = metricSlot("opposite_direction_peer_fraction")
-	sZeroDirectionPeerFraction     = metricSlot("zero_direction_peer_fraction")
+	sZeroDirectionPeerFraction     = metricSlot("zero_return_peer_fraction")
 
 	sBreadth           = metricSlot("breadth")
 	sBreadthBaseline   = metricSlot("breadth_baseline")
@@ -63,21 +64,30 @@ var (
 	sReturnDispersionVelocity = metricSlot("return_dispersion_velocity")
 	sReturnDispersionZScore   = metricSlot("return_dispersion_zscore")
 
-	sReturnMad = metricSlot("return_mad")
+	sReturnMad    = metricSlot("return_mad")
+	sMagnitudeMad = metricSlot("magnitude_mad")
 
-	sLargestAbsReturn  = metricSlot("largest_absolute_return")
-	sLargestTieCount   = metricSlot("largest_move_tie_count")
-	sLargestMoveExcess = metricSlot("largest_move_excess")
-	sLargestMadExcess  = metricSlot("largest_move_mad_excess")
+	sLargestAbsReturn         = metricSlot("largest_absolute_return")
+	sLargestTieCount          = metricSlot("largest_move_tie_count")
+	sLargestMoveExcess        = metricSlot("largest_move_excess")
+	sLargestMadExcess         = metricSlot("largest_move_mad_excess")
+	sLargestSignedReturn      = metricSlot("largest_signed_return")
+	sLargestMoveRatio         = metricSlot("largest_move_ratio")
+	sLargestMoveRatioBaseline = metricSlot("largest_move_ratio_baseline")
+	sLargestMoveRatioZScore   = metricSlot("largest_move_ratio_zscore")
+	sLargestMoveShare         = metricSlot("largest_move_share")
+	sLargestMoveShareBaseline = metricSlot("largest_move_share_baseline")
+	sLargestMoveShareZScore   = metricSlot("largest_move_share_zscore")
 
 	sPeerMedianAbsReturn = metricSlot("peer_median_absolute_return")
 	sPeerMad             = metricSlot("peer_magnitude_mad")
 
 	sMedianAsofAge = metricSlot("median_asof_age_seconds")
 	sMaxAsofAge    = metricSlot("max_asof_age_seconds")
-	sMeanAsofAge   = metricSlot("mean_asof_age_seconds")
 	sMedianFromAge = metricSlot("median_from_age_seconds")
 	sCohortHorizon = metricSlot("cohort_horizon_seconds")
+	sAsofAge       = metricSlot("asof_age_seconds")
+	sFromAge       = metricSlot("from_age_seconds")
 )
 
 func metricSlot(name string) nmtypes.Symbol {
@@ -127,10 +137,11 @@ func NewTicker(workspace *runtime.Workspace) *Ticker {
 			data.Binding{From: sUnchangedCount, Name: "unchanged_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sValidMemberCount, Name: "valid_member_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sCohortMemberCount, Name: "cohort_member_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sExcludedMemberCount, Name: "excluded_member_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 
 			data.Binding{From: sSameDirectionPeerCount, Name: "same_direction_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sOppositeDirectionPeerCount, Name: "opposite_direction_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sZeroDirectionPeerCount, Name: "zero_direction_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sZeroDirectionPeerCount, Name: "zero_return_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 
 			data.Binding{From: sAdvanceFraction, Name: "advance_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sDeclineFraction, Name: "decline_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
@@ -140,7 +151,7 @@ func NewTicker(workspace *runtime.Workspace) *Ticker {
 			data.Binding{From: sDirectionalConsensus, Name: "directional_consensus", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sSameDirectionPeerFraction, Name: "same_direction_peer_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sOppositeDirectionPeerFraction, Name: "opposite_direction_peer_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sZeroDirectionPeerFraction, Name: "zero_direction_peer_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sZeroDirectionPeerFraction, Name: "zero_return_peer_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 
 			data.Binding{From: sBreadth, Name: "breadth", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sBreadthBaseline, Name: "breadth_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
@@ -170,20 +181,29 @@ func NewTicker(workspace *runtime.Workspace) *Ticker {
 			data.Binding{From: sReturnDispersionZScore, Name: "return_dispersion_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 
 			data.Binding{From: sReturnMad, Name: "return_mad", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sMagnitudeMad, Name: "magnitude_mad", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 
 			data.Binding{From: sLargestAbsReturn, Name: "largest_absolute_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sLargestTieCount, Name: "largest_move_tie_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sLargestMoveExcess, Name: "largest_move_excess", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sLargestMadExcess, Name: "largest_move_mad_excess", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sLargestSignedReturn, Name: "largest_signed_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sLargestMoveRatio, Name: "largest_move_ratio", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sLargestMoveRatioBaseline, Name: "largest_move_ratio_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sLargestMoveRatioZScore, Name: "largest_move_ratio_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sLargestMoveShare, Name: "largest_move_share", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sLargestMoveShareBaseline, Name: "largest_move_share_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sLargestMoveShareZScore, Name: "largest_move_share_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 
 			data.Binding{From: sPeerMedianAbsReturn, Name: "peer_median_absolute_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sPeerMad, Name: "peer_magnitude_mad", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 
 			data.Binding{From: sMedianAsofAge, Name: "median_asof_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sMaxAsofAge, Name: "max_asof_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMeanAsofAge, Name: "mean_asof_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sMedianFromAge, Name: "median_from_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: sCohortHorizon, Name: "cohort_horizon_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sAsofAge, Name: "asof_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: sFromAge, Name: "from_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
 		),
 	}
 }
@@ -202,22 +222,34 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 
 	frame := ticker.number.Step(tick.Symbol, input)
 
-	if snapshot, found := ticker.section.Process(
+	snapshot, hasSnapshot := ticker.section.Process(
 		tick.Symbol,
 		tick.Last.Float64(),
 		tick.Timestamp,
 		tick.Symbol,
-	); found {
+	)
+
+	if hasSnapshot {
 		foldSnapshot(&frame, snapshot)
 	}
 
-	return ticker.projector.Project(
+	measurement := ticker.projector.Project(
 		tick.Symbol,
 		"sentiment",
 		tick.Timestamp,
 		tick.Timestamp,
 		frame,
 	)
+
+	if hasSnapshot {
+		if measurement.Provenance == nil {
+			measurement.Provenance = map[string]string{}
+		}
+
+		measurement.Provenance["largest_move_symbol"] = snapshot.ExtremeKey
+	}
+
+	return measurement
 }
 
 func (ticker *Ticker) Close() error { return nil }
@@ -226,6 +258,10 @@ func (ticker *Ticker) Close() error { return nil }
 foldSnapshot is the data-container fold that maps one cross-sectional Snapshot
 onto the measurement's output slots. Ratios with a zero denominator are left
 undefined (their slot stays absent) rather than fabricated as zero.
+
+previous_level_disposition is intentionally not emitted: it is qualitative
+per-side provenance (touch-only vs full-book attribution, unchanged vs
+retreat vs improve) that does not map to a single numeric metric.
 */
 func foldSnapshot(frame *nmtypes.Frame, snapshot data.Snapshot) {
 	valid := float64(snapshot.Count)
@@ -237,7 +273,8 @@ func foldSnapshot(frame *nmtypes.Frame, snapshot data.Snapshot) {
 	frame.Put(sDeclineCount, negative)
 	frame.Put(sUnchangedCount, zero)
 	frame.Put(sValidMemberCount, valid)
-	frame.Put(sCohortMemberCount, valid)
+	frame.Put(sCohortMemberCount, float64(snapshot.TotalMembers))
+	frame.Put(sExcludedMemberCount, float64(snapshot.TotalMembers-snapshot.Count))
 
 	putRatio(frame, sAdvanceFraction, positive, valid)
 	putRatio(frame, sDeclineFraction, negative, valid)
@@ -280,20 +317,39 @@ func foldSnapshot(frame *nmtypes.Frame, snapshot data.Snapshot) {
 	emitRatio(frame, sReturnDispersionRatio, snapshot.Aggregates["iqr"])
 
 	frame.Put(sReturnMad, snapshot.Mad)
+	frame.Put(sMagnitudeMad, snapshot.MagnitudeMad)
 
 	frame.Put(sLargestAbsReturn, snapshot.ExtremeMagnitude)
 	frame.Put(sLargestTieCount, float64(snapshot.ExtremeTieCount))
+
+	// largest_signed_return is defined only for a unique largest mover.
+	if snapshot.ExtremeTieCount == 0 {
+		frame.Put(sLargestSignedReturn, snapshot.ExtremeSigned)
+	}
+
 	frame.Put(sLargestMoveExcess, snapshot.ExtremeMagnitude-snapshot.PeerMedianAbsolute)
 	putRatio(frame, sLargestMadExcess, snapshot.ExtremeMagnitude-snapshot.PeerMedianAbsolute, snapshot.PeerMad)
+
+	emitAggregate(
+		frame,
+		snapshot.Aggregates["extreme_ratio"],
+		sLargestMoveRatio, sLargestMoveRatioBaseline, 0, sLargestMoveRatioZScore, 0,
+	)
+	emitAggregate(
+		frame,
+		snapshot.Aggregates["extreme_share"],
+		sLargestMoveShare, sLargestMoveShareBaseline, 0, sLargestMoveShareZScore, 0,
+	)
 
 	frame.Put(sPeerMedianAbsReturn, snapshot.PeerMedianAbsolute)
 	frame.Put(sPeerMad, snapshot.PeerMad)
 
 	frame.Put(sMedianAsofAge, snapshot.MedianAge)
 	frame.Put(sMaxAsofAge, snapshot.MaxAge)
-	frame.Put(sMeanAsofAge, snapshot.MeanAge)
 	frame.Put(sMedianFromAge, snapshot.MedianFromAge)
 	frame.Put(sCohortHorizon, snapshot.MaxAge)
+	frame.Put(sAsofAge, snapshot.FocalAge)
+	frame.Put(sFromAge, snapshot.FocalFromAge)
 }
 
 /*

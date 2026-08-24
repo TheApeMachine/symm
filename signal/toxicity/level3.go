@@ -9,6 +9,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -28,6 +30,13 @@ var (
 	symbolPrevAskQty = nmtypes.MustIntern("toxicity/prev_ask_qty")
 	symbolBidLog     = nmtypes.MustIntern("toxicity/bid_log_change")
 	symbolAskLog     = nmtypes.MustIntern("toxicity/ask_log_change")
+
+	symbolAtSec      = nmtypes.MustIntern("toxicity/at_sec")
+	symbolAtNsec     = nmtypes.MustIntern("toxicity/at_nsec")
+	symbolPrevAtSec  = nmtypes.MustIntern("toxicity/prev_at_sec")
+	symbolPrevAtNsec = nmtypes.MustIntern("toxicity/prev_at_nsec")
+	symbolDeltaT     = nmtypes.MustIntern("toxicity/delta_t")
+	symbolZero       = nmtypes.MustIntern("toxicity/zero")
 
 	// The attributed previous touch is captured before the trailing relay
 	// advances the retained previous state, so the projected provenance
@@ -56,7 +65,63 @@ var (
 	symbolAskWithdrawn     = nmtypes.MustIntern("toxicity/ask_withdrawn")
 	symbolAskReplenished   = nmtypes.MustIntern("toxicity/ask_replenished")
 	symbolAskRetreated     = nmtypes.MustIntern("toxicity/ask_retreated")
+
+	symbolBidReplenishFraction = nmtypes.MustIntern("toxicity/bid_replenish_fraction")
+	symbolAskReplenishFraction = nmtypes.MustIntern("toxicity/ask_replenish_fraction")
+
+	symbolBidWithdrawalRate = nmtypes.MustIntern("toxicity/bid_withdrawal_rate")
+	symbolAskWithdrawalRate = nmtypes.MustIntern("toxicity/ask_withdrawal_rate")
+	symbolBidReplenishRate  = nmtypes.MustIntern("toxicity/bid_replenish_rate")
+	symbolAskReplenishRate  = nmtypes.MustIntern("toxicity/ask_replenish_rate")
+	symbolBidRetreatRate    = nmtypes.MustIntern("toxicity/bid_retreat_rate")
+	symbolAskRetreatRate    = nmtypes.MustIntern("toxicity/ask_retreat_rate")
 )
+
+/*
+Namespaced per-side series for the fraction estimators. The empty prefix is the
+legacy default; these prefixes let one frame carry independent withdrawal and
+retreat fraction estimators per side.
+*/
+const (
+	prefixWithdrawalBid = "withdrawal:bid"
+	prefixWithdrawalAsk = "withdrawal:ask"
+	prefixRetreatBid    = "retreat:bid"
+	prefixRetreatAsk    = "retreat:ask"
+)
+
+var (
+	withdrawalBidSample     = seriesFact(prefixWithdrawalBid, "sample")
+	withdrawalBidSec        = seriesFact(prefixWithdrawalBid, "unix_sec")
+	withdrawalBidNsec       = seriesFact(prefixWithdrawalBid, "unix_nsec")
+	withdrawalBidBaseline   = seriesFact(prefixWithdrawalBid, "baseline/value")
+	withdrawalBidDivergence = seriesFact(prefixWithdrawalBid, "z/residual")
+	withdrawalBidZScore     = seriesFact(prefixWithdrawalBid, "z/value")
+	withdrawalBidVelocity   = seriesFact(prefixWithdrawalBid, "velocity/delta")
+
+	withdrawalAskSample     = seriesFact(prefixWithdrawalAsk, "sample")
+	withdrawalAskSec        = seriesFact(prefixWithdrawalAsk, "unix_sec")
+	withdrawalAskNsec       = seriesFact(prefixWithdrawalAsk, "unix_nsec")
+	withdrawalAskBaseline   = seriesFact(prefixWithdrawalAsk, "baseline/value")
+	withdrawalAskDivergence = seriesFact(prefixWithdrawalAsk, "z/residual")
+	withdrawalAskZScore     = seriesFact(prefixWithdrawalAsk, "z/value")
+	withdrawalAskVelocity   = seriesFact(prefixWithdrawalAsk, "velocity/delta")
+
+	retreatBidSample   = seriesFact(prefixRetreatBid, "sample")
+	retreatBidSec      = seriesFact(prefixRetreatBid, "unix_sec")
+	retreatBidNsec     = seriesFact(prefixRetreatBid, "unix_nsec")
+	retreatBidBaseline = seriesFact(prefixRetreatBid, "baseline/value")
+	retreatBidZScore   = seriesFact(prefixRetreatBid, "z/value")
+
+	retreatAskSample   = seriesFact(prefixRetreatAsk, "sample")
+	retreatAskSec      = seriesFact(prefixRetreatAsk, "unix_sec")
+	retreatAskNsec     = seriesFact(prefixRetreatAsk, "unix_nsec")
+	retreatAskBaseline = seriesFact(prefixRetreatAsk, "baseline/value")
+	retreatAskZScore   = seriesFact(prefixRetreatAsk, "z/value")
+)
+
+func seriesFact(prefix string, name string) nmtypes.Symbol {
+	return nmtypes.MustIntern(temporal.JoinPrefix(prefix, name))
+}
 
 /*
 Level3 is the book-touch market entity. It reads the shared book from the
@@ -88,6 +153,16 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 			nmtypes.Relay(symbolPrevAsk, symbolAttrPrevAsk),
 			nmtypes.Relay(symbolPrevBidQty, symbolAttrPrevBidQty),
 			nmtypes.Relay(symbolPrevAskQty, symbolAttrPrevAskQty),
+
+			// Bracket duration between the previous and current observation.
+			nmtypes.Wire(
+				temporal.Duration,
+				nmtypes.In(symbolAtSec, temporal.SymbolCurrentSec),
+				nmtypes.In(symbolAtNsec, temporal.SymbolCurrentNsec),
+				nmtypes.In(symbolPrevAtSec, temporal.SymbolPreviousSec),
+				nmtypes.In(symbolPrevAtNsec, temporal.SymbolPreviousNsec),
+				nmtypes.Out(temporal.SymbolDelta, symbolDeltaT),
+			),
 
 			// Touch price log change: log(P1/P0) per side.
 			nmtypes.Wire(
@@ -212,11 +287,120 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 				nmtypes.Out(logic.SymbolResult, symbolAskRetreated),
 			),
 
-			// Advance the previous touch to the current observation.
+			// Fractions over the attributed previous touch quantity.
+			nmtypes.Wire(
+				calculus.Quotient,
+				nmtypes.In(symbolBidWithdrawn, calculus.PortA),
+				nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, withdrawalBidSample),
+			),
+			nmtypes.Wire(
+				calculus.Quotient,
+				nmtypes.In(symbolAskWithdrawn, calculus.PortA),
+				nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, withdrawalAskSample),
+			),
+			nmtypes.Wire(
+				calculus.Quotient,
+				nmtypes.In(symbolBidReplenished, calculus.PortA),
+				nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, symbolBidReplenishFraction),
+			),
+			nmtypes.Wire(
+				calculus.Quotient,
+				nmtypes.In(symbolAskReplenished, calculus.PortA),
+				nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, symbolAskReplenishFraction),
+			),
+			nmtypes.Wire(
+				calculus.Quotient,
+				nmtypes.In(symbolBidRetreated, calculus.PortA),
+				nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, retreatBidSample),
+			),
+			nmtypes.Wire(
+				calculus.Quotient,
+				nmtypes.In(symbolAskRetreated, calculus.PortA),
+				nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, retreatAskSample),
+			),
+
+			// Causal estimator chains for the withdrawal fraction, per side.
+			temporal.Window(prefixWithdrawalBid),
+			statistic.ZScore(prefixWithdrawalBid),
+			statistic.Baseline(prefixWithdrawalBid),
+			statistic.Velocity(prefixWithdrawalBid),
+			temporal.Window(prefixWithdrawalAsk),
+			statistic.ZScore(prefixWithdrawalAsk),
+			statistic.Baseline(prefixWithdrawalAsk),
+			statistic.Velocity(prefixWithdrawalAsk),
+
+			// Causal estimator chains for the retreat fraction, per side.
+			temporal.Window(prefixRetreatBid),
+			statistic.ZScore(prefixRetreatBid),
+			statistic.Baseline(prefixRetreatBid),
+			temporal.Window(prefixRetreatAsk),
+			statistic.ZScore(prefixRetreatAsk),
+			statistic.Baseline(prefixRetreatAsk),
+
+			// Rates over the bracket duration, emitted only when the bracket
+			// is non-empty (a positive elapsed duration exists).
+			nmtypes.Assign(symbolZero, 0),
+			logic.If(
+				nmtypes.Wire(
+					logic.GreaterThan,
+					nmtypes.In(symbolDeltaT, calculus.PortA),
+					nmtypes.In(symbolZero, calculus.PortB),
+					nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+				),
+				nmtypes.Pipe(
+					nmtypes.Wire(
+						calculus.Rate,
+						nmtypes.In(symbolBidWithdrawn, calculus.SymbolCount),
+						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+						nmtypes.Out(calculus.SymbolRate, symbolBidWithdrawalRate),
+					),
+					nmtypes.Wire(
+						calculus.Rate,
+						nmtypes.In(symbolAskWithdrawn, calculus.SymbolCount),
+						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+						nmtypes.Out(calculus.SymbolRate, symbolAskWithdrawalRate),
+					),
+					nmtypes.Wire(
+						calculus.Rate,
+						nmtypes.In(symbolBidReplenished, calculus.SymbolCount),
+						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+						nmtypes.Out(calculus.SymbolRate, symbolBidReplenishRate),
+					),
+					nmtypes.Wire(
+						calculus.Rate,
+						nmtypes.In(symbolAskReplenished, calculus.SymbolCount),
+						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+						nmtypes.Out(calculus.SymbolRate, symbolAskReplenishRate),
+					),
+					nmtypes.Wire(
+						calculus.Rate,
+						nmtypes.In(symbolBidRetreated, calculus.SymbolCount),
+						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+						nmtypes.Out(calculus.SymbolRate, symbolBidRetreatRate),
+					),
+					nmtypes.Wire(
+						calculus.Rate,
+						nmtypes.In(symbolAskRetreated, calculus.SymbolCount),
+						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+						nmtypes.Out(calculus.SymbolRate, symbolAskRetreatRate),
+					),
+				),
+				nil,
+			),
+
+			// Advance the previous touch and clock to the current observation.
 			nmtypes.Relay(symbolBidPrice, symbolPrevBid),
 			nmtypes.Relay(symbolAskPrice, symbolPrevAsk),
 			nmtypes.Relay(symbolBidQty, symbolPrevBidQty),
 			nmtypes.Relay(symbolAskQty, symbolPrevAskQty),
+			nmtypes.Relay(symbolAtSec, symbolPrevAtSec),
+			nmtypes.Relay(symbolAtNsec, symbolPrevAtNsec),
 		)),
 		projector: data.NewProjector(
 			data.Binding{From: symbolBidPrice, Name: "best_price:bid", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
@@ -237,6 +421,34 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 			data.Binding{From: symbolAskReplenished, Name: "net_replenished_quantity:ask", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolBidRetreated, Name: "retreated_quantity:bid", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolAskRetreated, Name: "retreated_quantity:ask", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+
+			data.Binding{From: withdrawalBidSample, Name: "net_withdrawal_fraction:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: withdrawalAskSample, Name: "net_withdrawal_fraction:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolBidReplenishFraction, Name: "net_replenishment_fraction:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolAskReplenishFraction, Name: "net_replenishment_fraction:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: retreatBidSample, Name: "retreat_fraction:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: retreatAskSample, Name: "retreat_fraction:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+
+			data.Binding{From: symbolBidWithdrawalRate, Name: "net_withdrawal_rate:bid", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolAskWithdrawalRate, Name: "net_withdrawal_rate:ask", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolBidReplenishRate, Name: "net_replenishment_rate:bid", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolAskReplenishRate, Name: "net_replenishment_rate:ask", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolBidRetreatRate, Name: "retreat_rate:bid", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolAskRetreatRate, Name: "retreat_rate:ask", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
+
+			data.Binding{From: withdrawalBidBaseline, Name: "withdrawal_fraction_baseline:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: withdrawalAskBaseline, Name: "withdrawal_fraction_baseline:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: withdrawalBidDivergence, Name: "withdrawal_fraction_divergence:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: withdrawalAskDivergence, Name: "withdrawal_fraction_divergence:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: withdrawalBidZScore, Name: "withdrawal_fraction_zscore:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: withdrawalAskZScore, Name: "withdrawal_fraction_zscore:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: withdrawalBidVelocity, Name: "withdrawal_fraction_velocity:bid", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: withdrawalAskVelocity, Name: "withdrawal_fraction_velocity:ask", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
+
+			data.Binding{From: retreatBidBaseline, Name: "retreat_fraction_baseline:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: retreatAskBaseline, Name: "retreat_fraction_baseline:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: retreatBidZScore, Name: "retreat_fraction_zscore:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: retreatAskZScore, Name: "retreat_fraction_zscore:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 		),
 	}
 }
@@ -255,12 +467,18 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 	askPrice := currentBook.BestAsk().Price.Float64()
 	bidQty := currentBook.BestBid().Quantity.Float64()
 	askQty := currentBook.BestAsk().Quantity.Float64()
+	sec := float64(at.Unix())
+	nsec := float64(at.Nanosecond())
 
 	input := nmtypes.Frame{}
 	input.Put(symbolBidPrice, bidPrice)
 	input.Put(symbolAskPrice, askPrice)
 	input.Put(symbolBidQty, bidQty)
 	input.Put(symbolAskQty, askQty)
+	input.Put(symbolAtSec, sec)
+	input.Put(symbolAtNsec, nsec)
+
+	loadSeriesClock(&input, sec, nsec)
 
 	committed, found := level3.number.Project(symbol)
 
@@ -271,6 +489,8 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 		input.Put(symbolPrevAsk, askPrice)
 		input.Put(symbolPrevBidQty, bidQty)
 		input.Put(symbolPrevAskQty, askQty)
+		input.Put(symbolPrevAtSec, sec)
+		input.Put(symbolPrevAtNsec, nsec)
 	}
 
 	return level3.projector.Project(
@@ -280,6 +500,21 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 		at,
 		level3.number.Step(symbol, input),
 	)
+}
+
+/*
+loadSeriesClock copies the observation clock into every per-side fraction
+series so the namespaced estimators share one event-time coordinate.
+*/
+func loadSeriesClock(input *nmtypes.Frame, sec float64, nsec float64) {
+	input.Put(withdrawalBidSec, sec)
+	input.Put(withdrawalBidNsec, nsec)
+	input.Put(withdrawalAskSec, sec)
+	input.Put(withdrawalAskNsec, nsec)
+	input.Put(retreatBidSec, sec)
+	input.Put(retreatBidNsec, nsec)
+	input.Put(retreatAskSec, sec)
+	input.Put(retreatAskNsec, nsec)
 }
 
 func (level3 *Level3) Close() error { return nil }

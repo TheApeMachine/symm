@@ -3,6 +3,7 @@ package temporal
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -28,16 +29,17 @@ type Series struct {
 	ReadySymbol    types.Symbol
 	CapacitySymbol types.Symbol
 	SpanSymbol     types.Symbol
-	samples        [types.MaxSamples]types.Symbol
 }
 
 /*
-NewSeries resolves the slot table for one series prefix. Interning is idempotent
-by name, so the empty prefix resolves to the legacy generic slots. Construct a
-Series during pipeline wiring, never per event.
+NewSeries resolves the slot table for one series prefix. Control symbols are
+interned once; sample symbols are interned lazily on first use so a series only
+reserves the sample slots its ring actually touches. The empty prefix resolves
+to the legacy generic slots. Construct a Series during pipeline wiring, never
+per event.
 */
 func NewSeries(prefix string) Series {
-	series := Series{
+	return Series{
 		prefix:         prefix,
 		ValueSymbol:    types.MustIntern(joinPrefix(prefix, "sample")),
 		SecSymbol:      types.MustIntern(joinPrefix(prefix, "unix_sec")),
@@ -48,15 +50,35 @@ func NewSeries(prefix string) Series {
 		CapacitySymbol: types.MustIntern(joinPrefix(prefix, "capacity")),
 		SpanSymbol:     types.MustIntern(joinPrefix(prefix, "input/span")),
 	}
+}
 
-	for index := range types.MaxSamples {
-		series.samples[index] = types.MustIntern(
-			joinPrefix(prefix, fmt.Sprintf("sample/%d", index)),
-		)
+/*
+SampleSymbol returns the interned slot for one sample position of the series.
+The default series reuses the engine's static generic sample table; prefixed
+series intern the position lazily and cache it globally by name.
+*/
+func (series Series) SampleSymbol(index int) types.Symbol {
+	if index < 0 || index >= types.MaxSamples {
+		return 0
 	}
 
-	return series
+	if series.prefix == "" {
+		return types.MustSampleSymbol(index)
+	}
+
+	name := joinPrefix(series.prefix, fmt.Sprintf("sample/%d", index))
+
+	if cached, found := sampleSlotCache.Load(name); found {
+		return cached.(types.Symbol)
+	}
+
+	symbol := types.MustIntern(name)
+	actual, _ := sampleSlotCache.LoadOrStore(name, symbol)
+
+	return actual.(types.Symbol)
 }
+
+var sampleSlotCache sync.Map
 
 func joinPrefix(prefix string, name string) string {
 	if prefix == "" {
@@ -151,8 +173,8 @@ func Path(prefix string) types.Primitive {
 			count++
 		}
 
-		input.Put(series.samples[physicalIndex*pathSampleWidth], math.Float64frombits(uint64(timestamp)))
-		input.Put(series.samples[physicalIndex*pathSampleWidth+1], value)
+		input.Put(series.SampleSymbol(physicalIndex*pathSampleWidth), math.Float64frombits(uint64(timestamp)))
+		input.Put(series.SampleSymbol(physicalIndex*pathSampleWidth+1), value)
 		input.Put(series.CountSymbol, float64(count))
 		input.Put(series.HeadSymbol, float64(head))
 		input.Put(series.ReadySymbol, 1)
@@ -189,15 +211,15 @@ func (series Series) CopyFrom(dst *types.Frame, src types.Frame) {
 
 	for index := 0; index < count; index++ {
 		physicalIndex := (DefaultSeries.Head(src) + index) % int(capacity)
-		timestampBits, hasTimestamp := src.Get(DefaultSeries.samples[physicalIndex*pathSampleWidth])
-		value, hasValue := src.Get(DefaultSeries.samples[physicalIndex*pathSampleWidth+1])
+		timestampBits, hasTimestamp := src.Get(DefaultSeries.SampleSymbol(physicalIndex*pathSampleWidth))
+		value, hasValue := src.Get(DefaultSeries.SampleSymbol(physicalIndex*pathSampleWidth+1))
 
 		if !hasTimestamp || !hasValue {
 			continue
 		}
 
-		dst.Put(series.samples[index*pathSampleWidth], timestampBits)
-		dst.Put(series.samples[index*pathSampleWidth+1], value)
+		dst.Put(series.SampleSymbol(index*pathSampleWidth), timestampBits)
+		dst.Put(series.SampleSymbol(index*pathSampleWidth+1), value)
 	}
 
 	dst.Put(series.CountSymbol, float64(count))
@@ -252,10 +274,10 @@ func (series Series) Sample(frame *types.Frame, index int) (int64, float64, bool
 
 	physicalIndex := (series.Head(*frame) + index) % int(capacity)
 	timestampBits, hasTimestamp := frame.Get(
-		series.samples[physicalIndex*pathSampleWidth],
+		series.SampleSymbol(physicalIndex*pathSampleWidth),
 	)
 	value, hasValue := frame.Get(
-		series.samples[physicalIndex*pathSampleWidth+1],
+		series.SampleSymbol(physicalIndex*pathSampleWidth+1),
 	)
 
 	if !hasTimestamp || !hasValue {
@@ -277,7 +299,7 @@ func (series Series) SampleAt(frame *types.Frame, physicalIndex int) (float64, b
 		return 0, false
 	}
 
-	return frame.Get(series.samples[physicalIndex])
+	return frame.Get(series.SampleSymbol(physicalIndex))
 }
 
 func pathCapacity(series Series, input types.Frame, count int) (int, error) {

@@ -104,7 +104,7 @@ func Window(prefix string) nmtypes.Primitive {
 			}
 
 			for index := 0; index < retained; index++ {
-				input.Put(series.samples[index], values[index])
+				input.Put(series.SampleSymbol(index), values[index])
 			}
 
 			count = retained
@@ -121,7 +121,7 @@ func Window(prefix string) nmtypes.Primitive {
 			count++
 		}
 
-		input.Put(series.samples[slot], value)
+		input.Put(series.SampleSymbol(slot), value)
 		input.Put(series.CountSymbol, float64(count))
 		input.Put(series.HeadSymbol, float64(head))
 		input.Put(series.ReadySymbol, 1)

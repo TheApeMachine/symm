@@ -171,9 +171,28 @@ func (channel *Channel[T]) Publish(value T) {
 		key = "_"
 	}
 
+	if channel.workspace != nil {
+		channel.workspace.notifyTaps(channel.name, key, value)
+	}
+
 	for _, subscription := range channel.subsSnapshot() {
 		subscription.deliver(key, value)
 	}
+}
+
+/*
+Observe attaches a typed observer callback directly to this channel.
+*/
+func (channel *Channel[T]) Observe(observer func(key string, value T)) {
+	if channel == nil || channel.workspace == nil || observer == nil {
+		return
+	}
+
+	channel.workspace.Observe(channel.name, func(_ string, key string, value any) {
+		if typedValue, ok := value.(T); ok {
+			observer(key, typedValue)
+		}
+	})
 }
 
 func (channel *Channel[T]) subsSnapshot() []*Subscription[T] {
@@ -194,15 +213,18 @@ func (subscription *Subscription[T]) deliver(key string, value T) {
 	entry := subscription.keyEntry(key)
 	channel := subscription.channel
 
-	before := entry.ring.Length()
+	beforeDropped := entry.ring.Dropped()
 	entry.ring.Push(value)
-	after := entry.ring.Length()
+	afterDropped := entry.ring.Dropped()
 
 	channel.submitted.Add(1)
-	channel.dropped.Add(after - before)
 
-	pending := channel.pending.Add(after - before)
-	updateMaximum(&channel.highWater, pending)
+	if dropped := afterDropped - beforeDropped; dropped > 0 {
+		channel.dropped.Add(dropped)
+	} else {
+		pending := channel.pending.Add(1)
+		updateMaximum(&channel.highWater, pending)
+	}
 
 	if entry.pending.CompareAndSwap(false, true) {
 		channel.schedule(key, entry)
@@ -253,15 +275,13 @@ func (entry *subscriptionKey[T]) drain() {
 				return
 			}
 
-			before := entry.ring.Length()
 			value, ok := entry.ring.Pop()
 
 			if !ok {
 				break
 			}
 
-			after := entry.ring.Length()
-			channel.pending.Add(^(after - before - 1))
+			channel.pending.Add(^uint64(0))
 
 			channel.active.Add(1)
 			observer := channel.observer.Load()
@@ -520,6 +540,54 @@ func (workspace *Workspace) Notify(topic string) {
 }
 
 /*
+Observer receives one published value from an observed channel on the bus,
+with the channel name, key, and typed value.
+*/
+type Observer func(channel string, key string, value any)
+
+/*
+Observe attaches an observer callback to a named channel on the bus.
+*/
+func (workspace *Workspace) Observe(channel string, observer Observer) {
+	if workspace == nil || channel == "" || observer == nil {
+		return
+	}
+
+	current, _ := workspace.taps.LoadOrStore(channel, []Observer{})
+	updated := append(current.([]Observer), observer)
+	workspace.taps.Store(channel, updated)
+}
+
+/*
+ObserveAll attaches an observer callback to all channels on the bus.
+*/
+func (workspace *Workspace) ObserveAll(observer Observer) {
+	if workspace == nil || observer == nil {
+		return
+	}
+
+	workspace.Observe("*", observer)
+}
+
+func (workspace *Workspace) notifyTaps(channel string, key string, value any) {
+	if workspace == nil {
+		return
+	}
+
+	if taps, found := workspace.taps.Load(channel); found {
+		for _, tap := range taps.([]Observer) {
+			tap(channel, key, value)
+		}
+	}
+
+	if allTaps, found := workspace.taps.Load("*"); found {
+		for _, tap := range allTaps.([]Observer) {
+			tap(channel, key, value)
+		}
+	}
+}
+
+/*
 BusPool is the shared worker pool every channel schedules its ring drains on.
 Workers are bounded and elastic: no stage owns a per-key goroutine.
 */
@@ -530,8 +598,8 @@ func BusPool() *Pool[func()] {
 var busPool = sync.OnceValue(func() *Pool[func()] {
 	pool := NewPool(func(task func()) { task() })
 	pool.SetNumShards(defaultNumShards())
-	pool.SetShardMinWorkers(1)
-	pool.SetQueueSize(4096)
+	pool.SetShardMinWorkers(4)
+	pool.SetQueueSize(8192)
 	pool.Start()
 
 	return pool

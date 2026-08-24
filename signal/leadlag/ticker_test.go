@@ -51,20 +51,41 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.SNR, ShouldEqual, 0.0)
 		})
 
-		Convey("best-lag facts appear once CrossLag is ready", func() {
-			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104})
-			measurements := drive(entity, "ETH/USD", []float64{200, 202, 204, 206, 208})
+		Convey("best-lag and pair-history facts appear once CrossLag is ready", func() {
+			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104, 105})
+			measurements := drive(entity, "ETH/USD", []float64{200, 202, 204, 206, 208, 210})
 
 			last := measurements[len(measurements)-1]
 
 			So(last.Metrics, ShouldContainKey, "contemporaneous_correlation")
 			So(last.Metrics, ShouldContainKey, "best_lag_correlation")
 			So(last.Metrics, ShouldContainKey, "best_lag_index")
-			So(last.Metrics, ShouldContainKey, "search_count")
+			So(last.Metrics, ShouldContainKey, "best_lag_seconds")
 			So(last.Metrics, ShouldContainKey, "absolute_correlation_gain")
+			So(last.Metrics["lag_search_resolution_seconds"].Raw, ShouldAlmostEqual, 1.0, 1e-9)
+			So(last.Metrics, ShouldContainKey, "lag_search_span")
 
-			So(last.Metrics["contemporaneous_correlation"].Raw, ShouldAlmostEqual, 1.0, 1e-12)
+			So(last.Metrics["reference_return_count"].Raw, ShouldEqual, 5.0)
+			So(last.Metrics["measured_return_count"].Raw, ShouldEqual, 5.0)
+			So(last.Metrics, ShouldContainKey, "overlap_pair_count")
+			So(last.Metrics, ShouldContainKey, "effective_sample_count")
 			So(last.Metrics["search_count"].Raw, ShouldBeGreaterThan, 0.0)
+
+			So(last.Metrics, ShouldContainKey, "lag_peak_prominence")
+			So(last.Metrics, ShouldContainKey, "lag_peak_curvature")
+			So(last.Metrics, ShouldContainKey, "correlation_p_value")
+			So(last.Metrics, ShouldContainKey, "search_adjusted_p_value")
+
+			So(last.Metrics, ShouldContainKey, "lag_baseline_seconds")
+			So(last.Metrics, ShouldContainKey, "lag_divergence_seconds")
+			So(last.Metrics, ShouldContainKey, "lag_noise_scale_seconds")
+			So(last.Metrics, ShouldContainKey, "lag_zscore")
+			So(last.Metrics, ShouldContainKey, "lag_velocity")
+			So(last.Metrics, ShouldContainKey, "correlation_gain_baseline")
+			So(last.Metrics, ShouldContainKey, "correlation_gain_zscore")
+			So(last.Metrics, ShouldContainKey, "correlation_gain_velocity")
+			So(last.Metrics, ShouldContainKey, "best_lag_correlation_baseline")
+			So(last.Metrics, ShouldContainKey, "best_lag_correlation_zscore")
 		})
 
 		Convey("time regression surfaces as measurement.Err", func() {

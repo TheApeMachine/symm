@@ -59,7 +59,7 @@ describe("DiagnosticsDataflow", () => {
 		expect(markup).toContain("Inspect Graph");
 		expect(markup).toContain("Inspect queue measurements");
 		// Queues render as compact tanks with a rising fill, not as oval pipes.
-		expect(markup).toContain("rounded-md");
+		expect(markup).toContain("rounded-xs");
 		expect(markup).not.toContain("rounded-[50%]");
 		// The graph draws writer→queue and queue→reader edges on the svg; the
 		// router emits explicit orthogonal line segments and edge identity.

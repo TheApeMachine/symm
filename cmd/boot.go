@@ -16,19 +16,11 @@ import (
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/regulator"
-	signalcorrelation "github.com/theapemachine/symm/signal/correlation"
-	signalcvd "github.com/theapemachine/symm/signal/cvd"
-	signaldepthflow "github.com/theapemachine/symm/signal/depthflow"
-	signalderivatives "github.com/theapemachine/symm/signal/derivatives"
-	signalexhaust "github.com/theapemachine/symm/signal/exhaust"
-	signalhawkes "github.com/theapemachine/symm/signal/hawkes"
-	signalleadlag "github.com/theapemachine/symm/signal/leadlag"
-	signalliquidity "github.com/theapemachine/symm/signal/liquidity"
-	signalpumpdump "github.com/theapemachine/symm/signal/pumpdump"
-	signalsentiment "github.com/theapemachine/symm/signal/sentiment"
-	signaltoxicity "github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -61,7 +53,7 @@ type System struct {
 	Analyzer  *logic.Analyzer
 	Crypto    *trader.Crypto
 	Regulator *regulator.Solver
-	Signals   []signalInstrument
+	Runner    *signal.Runner
 	Thesis    *types.Thesis
 	Bus       *runtime.Workspace
 	Systems   []Runnable
@@ -269,29 +261,39 @@ func BootWithHub(
 	api := websocket.NewAPI(systemCtx, public, private)
 	api.SetFutures(futures)
 
-	signals := []signalInstrument{
-		signalcorrelation.NewSignal(systemCtx, bus),
-		signalcvd.NewSignal(systemCtx),
-		signalderivatives.NewSignal(systemCtx, bus),
-		signaldepthflow.NewSignal(systemCtx, bus),
-		signalexhaust.NewSignal(systemCtx),
-		signalhawkes.NewSignal(systemCtx),
-		signalleadlag.NewSignal(systemCtx, bus),
-		signalliquidity.NewSignal(systemCtx),
-		signalpumpdump.NewSignal(systemCtx, bus),
-		signalsentiment.NewSignal(systemCtx, bus),
-		signaltoxicity.NewSignal(systemCtx, bus),
+	signalRunner := signal.NewRunner(systemCtx, bus)
+
+	uiChannel := runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
+
+	if bus != nil {
+		bus.Observe(types.ChannelMeasurements, func(_ string, _ string, value any) {
+			measurement, ok := value.(*nmtypes.Measurement)
+
+			if !ok || measurement == nil {
+				return
+			}
+
+			wireRow := measurementWire(measurement)
+
+			if wireRow == nil {
+				return
+			}
+
+			uiChannel.Publish(&types.UIFrame{
+				Type: wire.FrameMeasurementsFrame,
+				Value: &wire.MeasurementsFrameT{
+					Rows: []*wire.MeasurementT{wireRow},
+				},
+			})
+		})
 	}
 
 	price := broker.NewPrice(api)
-	instrument := broker.NewInstrument(api, price, runtime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	))
-	balance := broker.NewBalance(api, runtime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	))
+	instrument := broker.NewInstrument(api, price, uiChannel)
+	balance := broker.NewBalance(api, uiChannel)
 
 	positionStore, err := broker.NewPositionStore(
 		filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
@@ -354,6 +356,8 @@ func BootWithHub(
 		return nil
 	}
 
+	signalRunner.ObserveModule = crypto.ObserveModule()
+
 	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, regulatorSolver, bus)
 	planner.ObserveModule = crypto.ObserveModule()
 	planner.ObserveHop = crypto.ObserveHop()
@@ -390,21 +394,14 @@ func BootWithHub(
 			api.Close()
 			return nil
 		},
-	}
-
-	for _, signal := range signals {
-		closers = append(closers, signal.Close)
-	}
-
-	closers = append(
-		closers,
+		signalRunner.Close,
 		planner.Close,
 		resonanceSolver.Close,
 		analyzer.Close,
 		crypto.Close,
 		desk.Close,
 		hub.Close,
-	)
+	}
 
 	stack := &System{
 		ctx:       systemCtx,
@@ -415,7 +412,7 @@ func BootWithHub(
 		Analyzer:  analyzer,
 		Crypto:    crypto,
 		Regulator: regulatorSolver,
-		Signals:   signals,
+		Runner:    signalRunner,
 		Thesis:    thesis,
 		Bus:       bus,
 		Systems:   systems,
@@ -478,4 +475,60 @@ func attachDiagnosticsErrorBridge(hub *ui.Hub, crypto *trader.Crypto) {
 			crypto.ObserveDiagnosticError,
 		))
 	})
+}
+
+func measurementWire(measurement *nmtypes.Measurement) *wire.MeasurementT {
+	if measurement == nil {
+		return nil
+	}
+
+	metrics := make([]*wire.MetricT, 0, len(measurement.Metrics))
+
+	for name, metric := range measurement.Metrics {
+		if metric == nil {
+			continue
+		}
+
+		normalized := 0.0
+		hasNormalized := false
+
+		if metric.Normalized != nil {
+			normalized = *metric.Normalized
+			hasNormalized = true
+		}
+
+		metrics = append(metrics, &wire.MetricT{
+			Name:          name,
+			Raw:           metric.Raw,
+			Normalized:    normalized,
+			HasNormalized: hasNormalized,
+			Unit:          metric.Unit.String(),
+		})
+	}
+
+	metadata := make([]*wire.NamedNumberT, 0, len(measurement.Metadata))
+
+	for name, val := range measurement.Metadata {
+		metadata = append(metadata, &wire.NamedNumberT{
+			Name:  name,
+			Value: val,
+		})
+	}
+
+	var fromNs int64
+
+	if !measurement.ObservedFrom.IsZero() {
+		fromNs = measurement.ObservedFrom.UnixNano()
+	}
+
+	return &wire.MeasurementT{
+		Id:           measurement.ID,
+		Source:       measurement.Source,
+		Symbol:       measurement.Symbol,
+		At:           measurement.At.UnixNano(),
+		ObservedFrom: fromNs,
+		Maturity:     measurement.Maturity,
+		Metrics:      metrics,
+		Metadata:     metadata,
+	}
 }

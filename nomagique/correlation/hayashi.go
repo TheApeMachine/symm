@@ -15,6 +15,14 @@ var (
 	SymbolSupport       = types.MustIntern("support")
 	SymbolReady         = types.MustIntern("ready")
 	SymbolLeftShift     = types.MustIntern("correlation/left_shift_nanos")
+	SymbolLeftReturns   = types.MustIntern("correlation/left_return_count")
+	SymbolRightReturns  = types.MustIntern("correlation/right_return_count")
+	SymbolLeftFromNanos = types.MustIntern("correlation/left_from_nanos")
+	SymbolLeftToNanos   = types.MustIntern("correlation/left_to_nanos")
+	SymbolRightFromNanos = types.MustIntern("correlation/right_from_nanos")
+	SymbolRightToNanos  = types.MustIntern("correlation/right_to_nanos")
+	SymbolLeftEnergy    = types.MustIntern("correlation/left_energy_rate")
+	SymbolRightEnergy   = types.MustIntern("correlation/right_energy_rate")
 )
 
 /*
@@ -50,6 +58,20 @@ func Hayashi(leftPrefix string, rightPrefix string) types.Primitive {
 		input.Put(SymbolSupport, float64(support))
 		input.Put(SymbolReady, truth(ready))
 
+		if leftCount > 1 {
+			input.Put(SymbolLeftReturns, float64(leftCount-1))
+			input.Put(SymbolLeftFromNanos, float64(left[0].timestamp))
+			input.Put(SymbolLeftToNanos, float64(left[leftCount-1].timestamp))
+			input.Put(SymbolLeftEnergy, pathEnergyRate(&left, leftCount))
+		}
+
+		if rightCount > 1 {
+			input.Put(SymbolRightReturns, float64(rightCount-1))
+			input.Put(SymbolRightFromNanos, float64(right[0].timestamp))
+			input.Put(SymbolRightToNanos, float64(right[rightCount-1].timestamp))
+			input.Put(SymbolRightEnergy, pathEnergyRate(&right, rightCount))
+		}
+
 		return input
 	}
 }
@@ -79,8 +101,7 @@ func seriesPoints(
 	return points, count
 }
 
-func pathVariance(points *[temporal.MaxPathSamples]point, count int) float64 {
-	variance := 0.0
+func pathVariance(points *[temporal.MaxPathSamples]point, count int) float64 {	variance := 0.0
 
 	for index := 1; index < count; index++ {
 		previous := points[index-1]
@@ -96,6 +117,60 @@ func pathVariance(points *[temporal.MaxPathSamples]point, count int) float64 {
 	}
 
 	return variance
+}
+
+/*
+pathEnergyRate returns the median interval-normalized log-return energy of one
+path: the median of r²/Δt over its valid return intervals. It is the robust
+typical return-energy rate the path contributes to a pair.
+*/
+func pathEnergyRate(points *[temporal.MaxPathSamples]point, count int) float64 {
+	rates := [temporal.MaxPathSamples]float64{}
+	rateCount := 0
+
+	for index := 1; index < count; index++ {
+		previous := points[index-1]
+		current := points[index]
+
+		if previous.timestamp >= current.timestamp ||
+			previous.value <= 0 || current.value <= 0 {
+			continue
+		}
+
+		returnValue := math.Log(current.value / previous.value)
+		elapsed := float64(current.timestamp-previous.timestamp) / 1e9
+
+		if elapsed <= 0 {
+			continue
+		}
+
+		rates[rateCount] = returnValue * returnValue / elapsed
+		rateCount++
+	}
+
+	if rateCount == 0 {
+		return 0
+	}
+
+	for index := 1; index < rateCount; index++ {
+		value := rates[index]
+		position := index
+
+		for position > 0 && rates[position-1] > value {
+			rates[position] = rates[position-1]
+			position--
+		}
+
+		rates[position] = value
+	}
+
+	middle := rateCount / 2
+
+	if rateCount%2 == 0 {
+		return (rates[middle-1] + rates[middle]) / 2
+	}
+
+	return rates[middle]
 }
 
 func hayashiPoints(

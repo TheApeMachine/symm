@@ -35,7 +35,7 @@ func NewSignal(ctx context.Context, workspace *runtime.Workspace) *Signal {
 		ctx:    ctx,
 		cancel: cancel,
 		ticker: NewTicker(),
-		trade:  NewTrade(),
+		trade:  NewTrade(workspace),
 		level3: NewLevel3(workspace),
 	}
 }

@@ -776,13 +776,24 @@ func (crypto *Crypto) publishDiagnostics() {
 			timer.Stop()
 			return
 		case <-timer.C:
-			crypto.fluid.Publish(types.FluidFrame{
-				Channel: types.DiagnosticsChannel,
-				Payload: telemetry.Encode(&wire.FrameT{
+			diagWire := crypto.Diagnostics().Wire()
+
+			if crypto.fluid != nil {
+				crypto.fluid.Publish(types.FluidFrame{
+					Channel: types.DiagnosticsChannel,
+					Payload: telemetry.Encode(&wire.FrameT{
+						Type:  wire.FrameDiagnosticsFrame,
+						Value: diagWire,
+					}),
+				})
+			}
+
+			if crypto.ui != nil {
+				crypto.ui.Publish(&types.UIFrame{
 					Type:  wire.FrameDiagnosticsFrame,
-					Value: crypto.Diagnostics().Wire(),
-				}),
-			})
+					Value: diagWire,
+				})
+			}
 		}
 	}
 }
@@ -930,7 +941,7 @@ func ownerOf(function string) string {
 func stageNames() []string {
 	return []string{
 		"crypto",
-		"correlation", "cvd", "depthflow", "exhaustion",
+		"correlation", "cvd", "depthflow", "derivatives", "exhaustion",
 		"hawkes", "leadlag", "liquidity", "pumpdump",
 		"sentiment", "toxicity",
 		"category", "manifold", "causal", "cognition", "graph",

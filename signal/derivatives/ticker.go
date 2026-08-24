@@ -33,19 +33,10 @@ var (
 	symbolOILogChange          = nmtypes.MustIntern("derivatives/oi_log_change")
 	symbolOIElapsed            = nmtypes.MustIntern("derivatives/oi_elapsed")
 	symbolOIGrowthRate         = nmtypes.MustIntern("derivatives/oi_growth_rate")
-	symbolOIGrowthBaseline     = nmtypes.MustIntern("derivatives/oi_growth_baseline")
-	symbolOIGrowthZScore       = nmtypes.MustIntern("derivatives/oi_growth_zscore")
-	symbolOIGrowthVelocity     = nmtypes.MustIntern("derivatives/oi_growth_velocity")
-	symbolBasisChange          = nmtypes.MustIntern("derivatives/basis_change")
 	symbolBasisRate            = nmtypes.MustIntern("derivatives/basis_rate")
-	symbolBasisVelocity        = nmtypes.MustIntern("derivatives/basis_velocity")
-	symbolBasisBaseline        = nmtypes.MustIntern("derivatives/basis_baseline")
-	symbolBasisZScore          = nmtypes.MustIntern("derivatives/basis_zscore")
 	symbolDerivativeLogReturn  = nmtypes.MustIntern("derivatives/derivative_log_return")
 	symbolReferenceLogReturn   = nmtypes.MustIntern("derivatives/reference_log_return")
 	symbolReturnGap            = nmtypes.MustIntern("derivatives/return_gap")
-	symbolReturnGapVelocity    = nmtypes.MustIntern("derivatives/return_gap_velocity")
-	symbolReturnGapZScore      = nmtypes.MustIntern("derivatives/return_gap_zscore")
 	symbolDivergence           = nmtypes.MustIntern("divergence")
 	symbolNoiseVariance        = nmtypes.MustIntern("noise_variance")
 	symbolZero                 = nmtypes.MustIntern("derivatives/zero")
@@ -179,84 +170,55 @@ func NewTicker() *Ticker {
 							),
 							// open_interest_growth_velocity: first difference of the rate.
 							velocityOver("growth_velocity", symbolOIGrowthRate),
-							nmtypes.Wire(
-								nmtypes.Identity,
-								nmtypes.In(prefixed("growth_velocity", "velocity/delta"), calculus.PortX),
-								nmtypes.Out(calculus.PortX, symbolOIGrowthVelocity),
-							),
 							// Route the growth rate into the shared value slot and
 							// maintain its causal baseline, dispersion, and z-score.
 							route(symbolOIGrowthRate, nmtypes.SampleValue),
 							statistic.ZScore(""),
+							// Carry the departure and noise power when the z-score is
+							// estimable so Finalize derives the scalar SNR.
+							logic.If(
+								readyCondition(),
+								nmtypes.Pipe(
+									route(statistic.SymbolResidual, symbolDivergence),
+									nmtypes.Wire(
+										calculus.Product,
+										nmtypes.In(statistic.SymbolDispersion, calculus.PortA),
+										nmtypes.In(statistic.SymbolDispersion, calculus.PortB),
+										nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
+									),
+								),
+								nmtypes.Identity,
+							),
 							statistic.Baseline(""),
 							temporal.Window(""),
-							nmtypes.Wire(
-								nmtypes.Identity,
-								nmtypes.In(statistic.SymbolBaselineValue, calculus.PortX),
-								nmtypes.Out(calculus.PortX, symbolOIGrowthBaseline),
-							),
-							nmtypes.Wire(
-								nmtypes.Identity,
-								nmtypes.In(statistic.SymbolZScore, calculus.PortX),
-								nmtypes.Out(calculus.PortX, symbolOIGrowthZScore),
-							),
-							// Carry the departure and noise power so Finalize derives SNR.
-							nmtypes.Wire(
-								nmtypes.Identity,
-								nmtypes.In(statistic.SymbolResidual, calculus.PortX),
-								nmtypes.Out(calculus.PortX, symbolDivergence),
-							),
-							nmtypes.Wire(
-								calculus.Product,
-								nmtypes.In(statistic.SymbolDispersion, calculus.PortA),
-								nmtypes.In(statistic.SymbolDispersion, calculus.PortB),
-								nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
-							),
 						),
 						nmtypes.Identity,
 					),
 				),
 				nmtypes.Identity,
 			),
-			// Basis change and rate: first difference of basis and its event rate.
+			// Basis change: first difference of basis, then its event rate and
+			// the first difference of that rate.
 			velocityOver("basis", symbolBasis),
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(prefixed("basis", "velocity/delta"), calculus.PortX),
-				nmtypes.Out(calculus.PortX, symbolBasisChange),
-			),
-			// basis_rate and basis_velocity only exist with a positive interval.
 			logic.If(
-				greaterThanCondition(prefixed("basis", "velocity/elapsed_sec")),
-				nmtypes.Pipe(
-					nmtypes.Wire(
-						calculus.Quotient,
-						nmtypes.In(prefixed("basis", "velocity/delta"), calculus.PortA),
-						nmtypes.In(prefixed("basis", "velocity/elapsed_sec"), calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolBasisRate),
+				seriesReadyCondition("basis"),
+				logic.If(
+					greaterThanCondition(prefixed("basis", "velocity/elapsed_sec")),
+					nmtypes.Pipe(
+						nmtypes.Wire(
+							calculus.Quotient,
+							nmtypes.In(prefixed("basis", "velocity/delta"), calculus.PortA),
+							nmtypes.In(prefixed("basis", "velocity/elapsed_sec"), calculus.PortB),
+							nmtypes.Out(calculus.PortResult, symbolBasisRate),
+						),
+						velocityOver("basis_rate", symbolBasisRate),
 					),
-					// Basis velocity: first difference of the basis rate.
-					velocityOver("basis_rate", symbolBasisRate),
-					nmtypes.Wire(
-						nmtypes.Identity,
-						nmtypes.In(prefixed("basis_rate", "velocity/delta"), calculus.PortX),
-						nmtypes.Out(calculus.PortX, symbolBasisVelocity),
-					),
+					nmtypes.Identity,
 				),
 				nmtypes.Identity,
 			),
 			// Basis baseline and z-score over the basis series.
 			baselineZScore("basis_baseline", symbolBasis),
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(prefixed("basis_baseline", "baseline/value"), calculus.PortX),
-				nmtypes.Out(calculus.PortX, symbolBasisBaseline),
-			),
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(prefixed("basis_baseline", "z/value"), calculus.PortX),
-				nmtypes.Out(calculus.PortX, symbolBasisZScore),
-			),
 			// derivative_log_return: log(current / previous) over the derivative price.
 			temporal.Observer("derivative_return", symbolDerivativePrice),
 			logic.If(
@@ -293,17 +255,7 @@ func NewTicker() *Ticker {
 						nmtypes.Out(calculus.PortResult, symbolReturnGap),
 					),
 					velocityOver("return_gap", symbolReturnGap),
-					nmtypes.Wire(
-						nmtypes.Identity,
-						nmtypes.In(prefixed("return_gap", "velocity/delta"), calculus.PortX),
-						nmtypes.Out(calculus.PortX, symbolReturnGapVelocity),
-					),
 					baselineZScore("return_gap_zscore", symbolReturnGap),
-					nmtypes.Wire(
-						nmtypes.Identity,
-						nmtypes.In(prefixed("return_gap_zscore", "z/value"), calculus.PortX),
-						nmtypes.Out(calculus.PortX, symbolReturnGapZScore),
-					),
 				),
 				nmtypes.Identity,
 			),
@@ -321,19 +273,19 @@ func NewTicker() *Ticker {
 			data.Binding{From: symbolOIChange, Name: "open_interest_change", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolOILogChange, Name: "open_interest_log_change", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolOIGrowthRate, Name: "open_interest_growth_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolOIGrowthVelocity, Name: "open_interest_growth_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolOIGrowthBaseline, Name: "open_interest_growth_baseline", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolOIGrowthZScore, Name: "open_interest_growth_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBasisChange, Name: "basis_change", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: prefixed("growth_velocity", "velocity/delta"), Name: "open_interest_growth_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: statistic.SymbolBaselineValue, Name: "open_interest_growth_baseline", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: statistic.SymbolZScore, Name: "open_interest_growth_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: prefixed("basis", "velocity/delta"), Name: "basis_change", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolBasisRate, Name: "basis_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolBasisVelocity, Name: "basis_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolBasisBaseline, Name: "basis_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBasisZScore, Name: "basis_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: prefixed("basis_rate", "velocity/delta"), Name: "basis_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: prefixed("basis_baseline", "baseline/value"), Name: "basis_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: prefixed("basis_baseline", "z/value"), Name: "basis_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolDerivativeLogReturn, Name: "derivative_log_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolReferenceLogReturn, Name: "reference_log_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolReturnGap, Name: "return_gap", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolReturnGapVelocity, Name: "return_gap_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolReturnGapZScore, Name: "return_gap_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: prefixed("return_gap", "velocity/delta"), Name: "return_gap_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: prefixed("return_gap_zscore", "z/value"), Name: "return_gap_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 		),
 	}
 }
@@ -368,6 +320,14 @@ func readyCondition() nmtypes.Primitive {
 	return nmtypes.Wire(
 		nmtypes.Identity,
 		nmtypes.In(calculus.SymbolReady, logic.SymbolCondition),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+}
+
+func seriesReadyCondition(prefix string) nmtypes.Primitive {
+	return nmtypes.Wire(
+		nmtypes.Identity,
+		nmtypes.In(prefixed(prefix, "ready"), logic.SymbolCondition),
 		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
 	)
 }

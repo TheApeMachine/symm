@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -67,6 +68,17 @@ func TestTradeStep(t *testing.T) {
 
 			So(measurement.Metrics["log_likelihood:hawkes"].Raw, ShouldNotBeZeroValue)
 
+			// Per-event likelihood over a single event equals the total.
+			So(measurement.Metrics["log_likelihood_per_event:hawkes"].Raw, ShouldEqual, measurement.Metrics["log_likelihood:hawkes"].Raw)
+
+			// The first event closes no interval to integrate, so compensator
+			// and innovation metrics are undefined.
+			_, hasCompensator := measurement.Metrics["compensator:buy"]
+			_, hasInnovation := measurement.Metrics["count_innovation:buy"]
+
+			So(hasCompensator, ShouldBeFalse)
+			So(hasInnovation, ShouldBeFalse)
+
 			// One retained event is a single effective observation: Maturity 0.
 			So(measurement.Maturity, ShouldEqual, 0.0)
 		})
@@ -93,6 +105,18 @@ func TestTradeStep(t *testing.T) {
 			So(measurement.Metrics["excitation_intensity:sell"].Raw, ShouldEqual, 0.0)
 			So(measurement.Metrics["excitation_fraction:buy"].Raw, ShouldAlmostEqual, 0.1/1.1, 1e-12)
 			So(measurement.Metrics["excitation_fraction:sell"].Raw, ShouldEqual, 0.0)
+
+			So(measurement.Metrics["conditional_intensity_velocity"].Raw, ShouldAlmostEqual, math.Log(2.1/1.1), 1e-9)
+			So(measurement.Metrics["spectral_radius_velocity"].Raw, ShouldEqual, 0.0)
+
+			// Compensator integrates the pre-arrival intensity over the closed
+			// interval; innovations are the observed counts minus the integral.
+			So(measurement.Metrics["compensator:buy"].Raw, ShouldAlmostEqual, 1+0.1*math.E, 1e-9)
+			So(measurement.Metrics["compensator:sell"].Raw, ShouldEqual, 1.0)
+			So(measurement.Metrics["count_innovation:buy"].Raw, ShouldAlmostEqual, -0.1*math.E, 1e-9)
+			So(measurement.Metrics["count_innovation:sell"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["standardized_innovation:sell"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["standardized_innovation:buy"].Raw, ShouldBeLessThan, 0.0)
 
 			So(measurement.Maturity, ShouldEqual, 0.5)
 		})

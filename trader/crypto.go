@@ -64,6 +64,17 @@ func NewCrypto(
 		},
 	}
 
+	if bus != nil {
+		crypto.ui = runtime.ChannelOf[*types.UIFrame](
+			bus, types.ChannelUI,
+			func(frame *types.UIFrame) string { return "" },
+		)
+		crypto.fluid = runtime.ChannelOf[types.FluidFrame](
+			bus, types.ChannelFluid,
+			func(frame types.FluidFrame) string { return frame.Channel },
+		)
+	}
+
 	crypto.status.Store(types.READY)
 	crypto.bindDiagnostics()
 

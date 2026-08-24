@@ -57,3 +57,40 @@ func (unit Unit) String() string {
 		return "unknown"
 	}
 }
+
+func ParseUnit(name string) Unit {
+	switch name {
+	case "dimensionless":
+		return UnitDimensionless
+	case "count":
+		return UnitCount
+	case "rate":
+		return UnitRate
+	case "duration":
+		return UnitDuration
+	case "price":
+		return UnitPrice
+	case "percent":
+		return UnitPercent
+	case "quote_currency":
+		return UnitQuoteCurrency
+	case "base_currency":
+		return UnitBaseCurrency
+	case "events_per_second":
+		return UnitEventsPerSecond
+	case "inverse_second":
+		return UnitInverseSecond
+	case "nat":
+		return UnitNat
+	case "second":
+		return UnitSecond
+	case "quote_currency_per_second":
+		return UnitQuoteCurrencyPerSecond
+	case "base_currency_per_second":
+		return UnitBaseCurrencyPerSecond
+	case "inverse_quote_currency_second":
+		return UnitInverseQuoteCurrencySecond
+	default:
+		return UnitUnknown
+	}
+}

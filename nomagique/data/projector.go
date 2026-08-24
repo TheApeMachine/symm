@@ -1,6 +1,7 @@
 package data
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/types"
@@ -46,7 +47,8 @@ func (projector *Projector) Project(
 	from time.Time,
 	frame types.Frame,
 ) *Measurement[float64] {
-	measurement := NewMeasurement[float64]("", label, source, at, from)
+	id := fmt.Sprintf("%s:%s:%d", source, label, at.UnixNano())
+	measurement := NewMeasurement[float64](id, label, source, at, from)
 	measurement.Metadata = map[string]float64{}
 
 	if frame.Err != nil {
@@ -78,6 +80,10 @@ func (projector *Projector) Project(
 
 	if noise, found := frame.Get(types.MustIntern("noise_variance")); found {
 		measurement.Metadata[MetadataNoiseVariance] = noise
+	}
+
+	if mahalanobis, found := frame.Get(types.MustIntern("mahalanobis/snr")); found {
+		measurement.Metadata[MetadataMahalanobisSNR] = mahalanobis
 	}
 
 	measurement.Finalize()

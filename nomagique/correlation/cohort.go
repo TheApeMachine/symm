@@ -60,9 +60,10 @@ func Cohort(input nmtypes.Frame) nmtypes.Frame {
 	peerCount++
 
 	meanZ := weightedFisherZ / totalSupport
-	dispersion := math.Sqrt(
-		weightedFisherZ2/totalSupport - meanZ*meanZ,
-	)
+	dispersion := math.Sqrt(math.Max(
+		0,
+		weightedFisherZ2/totalSupport-meanZ*meanZ,
+	))
 	effectivePeers := 0.0
 
 	if weightSquares > 0 {

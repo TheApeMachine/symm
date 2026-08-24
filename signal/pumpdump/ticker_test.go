@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -35,11 +36,16 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Metrics["spread"].Raw, ShouldEqual, 2.0)
 			So(measurement.Metrics["relative_spread"].Raw, ShouldAlmostEqual, 0.02, 1e-12)
 
-			// The baseline of one value is the value itself: ratio one, zero divergence.
+			// The baseline of one value is the value itself: ratio one.
 			So(measurement.Metrics["relative_spread_baseline"].Raw, ShouldAlmostEqual, 0.02, 1e-9)
 			So(measurement.Metrics["spread_ratio"].Raw, ShouldAlmostEqual, 1.0, 1e-9)
-			So(measurement.Metrics["spread_divergence"].Raw, ShouldAlmostEqual, 0.0, 1e-9)
-			So(measurement.Metrics["spread_zscore"].Raw, ShouldAlmostEqual, 0.0, 1e-9)
+
+			// No prior baseline exists yet, so the divergence and z-score are
+			// not estimable on the first observation.
+			_, hasDivergence := measurement.Metrics["spread_divergence"]
+			So(hasDivergence, ShouldBeFalse)
+			_, hasZ := measurement.Metrics["spread_zscore"]
+			So(hasZ, ShouldBeFalse)
 
 			// One retained estimator sample is still immature.
 			So(measurement.Maturity, ShouldEqual, 0.0)
@@ -54,7 +60,8 @@ func TestTickerStep(t *testing.T) {
 
 			So(measurement.Metrics["relative_spread"].Raw, ShouldAlmostEqual, 0.01, 1e-12)
 			So(measurement.Metrics["spread_ratio"].Raw, ShouldBeLessThan, 1.0)
-			So(measurement.Metrics["spread_divergence"].Raw, ShouldBeLessThan, 0.0)
+			So(measurement.Metrics["spread_divergence"].Raw, ShouldAlmostEqual, math.Log(0.5), 1e-12)
+			So(measurement.Metrics["spread_zscore"].Raw, ShouldAlmostEqual, -1.0, 1e-9)
 		})
 	})
 

@@ -70,33 +70,34 @@ var (
 	symbolMeanNotional        = nmtypes.MustIntern("cvd/mean_trade_notional")
 
 	// Execution-rate facts.
-	symbolGrossRate   = nmtypes.MustIntern("cvd/gross_notional_rate")
-	symbolNetRate     = nmtypes.MustIntern("cvd/net_notional_rate")
-	symbolBuyRate     = nmtypes.MustIntern("cvd/buy_notional_rate")
-	symbolSellRate    = nmtypes.MustIntern("cvd/sell_notional_rate")
-	symbolLogGross    = nmtypes.MustIntern("cvd/log_gross_notional_rate")
-	symbolGrossBase   = nmtypes.MustIntern("cvd/gross_notional_rate_baseline")
-	symbolGrossRatio  = nmtypes.MustIntern("cvd/gross_notional_rate_ratio")
-	symbolNetVelocity = nmtypes.MustIntern("cvd/net_notional_rate_velocity")
+	symbolGrossRate     = nmtypes.MustIntern("cvd/gross_notional_rate")
+	symbolNetRate       = nmtypes.MustIntern("cvd/net_notional_rate")
+	symbolBuyRate       = nmtypes.MustIntern("cvd/buy_notional_rate")
+	symbolSellRate      = nmtypes.MustIntern("cvd/sell_notional_rate")
+	symbolLogGross      = nmtypes.MustIntern("cvd/log_gross_notional_rate")
+	symbolGrossBase     = nmtypes.MustIntern("cvd/gross_notional_rate_baseline")
+	symbolGrossRatio    = nmtypes.MustIntern("cvd/gross_notional_rate_ratio")
+	symbolNetVelocity   = nmtypes.MustIntern("cvd/net_notional_rate_velocity")
 	symbolGrossVelocity = nmtypes.MustIntern("cvd/gross_notional_rate_velocity")
 
 	// Response-price facts loaded from the shared book.
-	symbolBidPrice         = nmtypes.MustIntern("cvd/bid_price")
-	symbolAskPrice         = nmtypes.MustIntern("cvd/ask_price")
-	symbolBidFrom          = nmtypes.MustIntern("cvd/state/bid_from")
-	symbolAskFrom          = nmtypes.MustIntern("cvd/state/ask_from")
-	symbolHasQuote         = nmtypes.MustIntern("cvd/has_quote")
-	symbolMidpoint         = nmtypes.MustIntern("cvd/response_midpoint_at")
-	symbolMidpointFrom     = nmtypes.MustIntern("cvd/response_midpoint_from")
-	symbolMidpointLog      = nmtypes.MustIntern("cvd/midpoint_log_return")
-	symbolMidpointRate     = nmtypes.MustIntern("cvd/midpoint_return_rate")
-	symbolAbsNetNotional   = nmtypes.MustIntern("cvd/abs_net_notional")
-	symbolSignNetNotional  = nmtypes.MustIntern("cvd/sign_net_notional")
-	symbolFlowAligned      = nmtypes.MustIntern("cvd/flow_aligned_midpoint_return")
-	symbolResponsePerNet   = nmtypes.MustIntern("cvd/midpoint_response_per_net_notional")
+	symbolBidPrice        = nmtypes.MustIntern("cvd/bid_price")
+	symbolAskPrice        = nmtypes.MustIntern("cvd/ask_price")
+	symbolBidFrom         = nmtypes.MustIntern("cvd/state/bid_from")
+	symbolAskFrom         = nmtypes.MustIntern("cvd/state/ask_from")
+	symbolHasQuote        = nmtypes.MustIntern("cvd/has_quote")
+	symbolMidpoint        = nmtypes.MustIntern("cvd/response_midpoint_at")
+	symbolMidpointFrom    = nmtypes.MustIntern("cvd/response_midpoint_from")
+	symbolMidpointLog     = nmtypes.MustIntern("cvd/midpoint_log_return")
+	symbolMidpointRate    = nmtypes.MustIntern("cvd/midpoint_return_rate")
+	symbolAbsNetNotional  = nmtypes.MustIntern("cvd/abs_net_notional")
+	symbolSignNetNotional = nmtypes.MustIntern("cvd/sign_net_notional")
+	symbolFlowAligned     = nmtypes.MustIntern("cvd/flow_aligned_midpoint_return")
+	symbolResponsePerNet  = nmtypes.MustIntern("cvd/midpoint_response_per_net_notional")
 
 	// Validation coordinates.
 	symbolZero          = nmtypes.MustIntern("cvd/zero")
+	symbolOne           = nmtypes.MustIntern("cvd/one")
 	symbolInvalid       = nmtypes.MustIntern("cvd/invalid_input")
 	symbolPricePositive = nmtypes.MustIntern("cvd/price_positive")
 	symbolQtyPositive   = nmtypes.MustIntern("cvd/qty_positive")
@@ -110,19 +111,43 @@ func prefixed(prefix string, name string) nmtypes.Symbol {
 }
 
 /*
+preBaselineSlot names the pre-observation baseline fact for a series prefix.
+*/
+func preBaselineSlot(prefix string) nmtypes.Symbol {
+	return prefixed(prefix, "baseline/previous")
+}
+
+/*
 adaptiveEstimator composes one causal adaptive baseline with its z-score. The
 quantity and event clock are fed into the series, then ZScore reads the previous
-committed baseline (global spec §4 causality) before Baseline adapts and Window
-retains the observation.
+committed baseline (global spec §4 causality) before the pre-observation
+baseline is captured, Baseline adapts, and Window retains the observation.
 */
 func adaptiveEstimator(prefix string, quantity nmtypes.Symbol) nmtypes.Primitive {
 	series := temporal.NewSeries(prefix)
+	residual := prefixed(prefix, "z/residual")
 
 	return nmtypes.Pipe(
 		nmtypes.Relay(quantity, series.ValueSymbol),
 		nmtypes.Relay(nmtypes.EventTimeSec, series.SecSymbol),
 		nmtypes.Relay(nmtypes.EventTimeNsec, series.NsecSymbol),
 		statistic.ZScore(prefix),
+		// Pre-observation baseline: value - residual = previous committed
+		// baseline, captured before Baseline updates it with the observation.
+		logic.If(
+			nmtypes.Wire(
+				nmtypes.Identity,
+				nmtypes.In(series.ReadySymbol, nmtypes.PortX),
+				nmtypes.Out(nmtypes.PortX, logic.SymbolCondition),
+			),
+			nmtypes.Wire(
+				calculus.Difference,
+				nmtypes.In(quantity, calculus.PortA),
+				nmtypes.In(residual, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, preBaselineSlot(prefix)),
+			),
+			nmtypes.Identity,
+		),
 		statistic.Baseline(prefix),
 		temporal.Window(prefix),
 	)
@@ -185,6 +210,7 @@ func cvdPipeline() nmtypes.Primitive {
 
 		// Reject non-positive execution price or quantity.
 		nmtypes.Assign(symbolZero, 0),
+		nmtypes.Assign(symbolOne, 1),
 		logic.If(
 			nmtypes.Pipe(
 				nmtypes.Wire(
@@ -424,15 +450,29 @@ func cvdPipeline() nmtypes.Primitive {
 					nmtypes.Out(calculus.PortResult, symbolLogGross),
 				),
 				adaptiveEstimator(prefixGrossRate, symbolLogGross),
-				nmtypes.Wire(
-					calculus.Exp,
-					nmtypes.In(prefixed(prefixGrossRate, "baseline/value"), calculus.PortX),
-					nmtypes.Out(calculus.PortResult, symbolGrossBase),
-				),
-				nmtypes.Wire(
-					calculus.Exp,
-					nmtypes.In(prefixed(prefixGrossRate, "z/residual"), calculus.PortX),
-					nmtypes.Out(calculus.PortResult, symbolGrossRatio),
+
+				// Gross-flow baseline and ratio, defined once the baseline has
+				// retained more than one observation.
+				logic.If(
+					nmtypes.Wire(
+						logic.GreaterThan,
+						nmtypes.In(prefixed(prefixGrossRate, "count"), calculus.PortA),
+						nmtypes.In(symbolOne, calculus.PortB),
+						nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+					),
+					nmtypes.Pipe(
+						nmtypes.Wire(
+							calculus.Exp,
+							nmtypes.In(preBaselineSlot(prefixGrossRate), calculus.PortX),
+							nmtypes.Out(calculus.PortResult, symbolGrossBase),
+						),
+						nmtypes.Wire(
+							calculus.Exp,
+							nmtypes.In(prefixed(prefixGrossRate, "z/residual"), calculus.PortX),
+							nmtypes.Out(calculus.PortResult, symbolGrossRatio),
+						),
+					),
+					nmtypes.Identity,
 				),
 
 				// Signed-flow rate velocity and gross-rate velocity.
@@ -525,6 +565,12 @@ Trade is the executed-flow market entity. It owns exactly a Number pipeline
 and a projector, both declared in its constructor, plus Step and Close. The
 response-price metrics read the shared book from the workspace pool; without a
 valid quote they are simply undefined rather than fabricated.
+
+The optional causal flow-response regression (README §15: flow_response_intercept,
+flow_response_coefficient, expected_midpoint_return_rate, flow_response_residual,
+flow_response_residual_snr) is not emitted: it requires a linear-regression
+estimator, and nomagique exposes no such types.Primitive. The README marks those
+metrics MAY-optional ("emitted only when the regression is estimable").
 */
 type Trade struct {
 	workspace *runtime.Workspace
@@ -563,7 +609,7 @@ func NewTrade(workspace *runtime.Workspace) *Trade {
 			data.Binding{From: symbolNetQty, Name: "cumulative_volume_delta", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolNetNotional, Name: "cumulative_notional_delta", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: temporal.SymbolObservedSec, Name: "cvd_epoch_from", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: prefixed(prefixNetFrac, "baseline/value"), Name: "signed_net_fraction_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: preBaselineSlot(prefixNetFrac), Name: "signed_net_fraction_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: prefixed(prefixNetFrac, "z/residual"), Name: "signed_net_fraction_divergence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: prefixed(prefixNetFrac, "z/value"), Name: "signed_net_fraction_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolGrossBase, Name: "gross_notional_rate_baseline", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
@@ -576,7 +622,7 @@ func NewTrade(workspace *runtime.Workspace) *Trade {
 			data.Binding{From: symbolMidpointRate, Name: "midpoint_return_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: symbolFlowAligned, Name: "flow_aligned_midpoint_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolResponsePerNet, Name: "midpoint_response_per_net_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: prefixed(prefixMidRate, "baseline/value"), Name: "midpoint_return_rate_baseline", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: preBaselineSlot(prefixMidRate), Name: "midpoint_return_rate_baseline", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: prefixed(prefixMidRate, "z/residual"), Name: "midpoint_return_rate_divergence", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: prefixed(prefixMidRate, "z/value"), Name: "midpoint_return_rate_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 		),

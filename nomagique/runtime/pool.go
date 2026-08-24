@@ -56,10 +56,10 @@ const defaultShardMaxWorkers = 2048
 const defaultNumShardsMin = 2
 const defaultNumShardsMax = 48
 
-// defaultNumShards returns GOMAXPROCS/2, clamped to [defaultNumShardsMin, defaultNumShardsMax].
+// defaultNumShards returns GOMAXPROCS, clamped to [defaultNumShardsMin, defaultNumShardsMax].
 func defaultNumShards() int {
 	n := min(max(
-		runtime.GOMAXPROCS(0)/2,
+		runtime.GOMAXPROCS(0),
 		defaultNumShardsMin,
 	), defaultNumShardsMax)
 

@@ -27,57 +27,58 @@ across the full width so cards stay wide and text stays legible.
 */
 const NODE_POS: Record<string, { x: number; y: number }> = {
 	// Sources.
-	crypto: { x: 32, y: 6 },
-	"websocket-api": { x: 68, y: 6 },
-	// Ingress rails (queues).
-	"ingress.tickers": { x: 18, y: 15 },
-	"ingress.trades": { x: 50, y: 15 },
-	"ingress.level3": { x: 82, y: 15 },
-	// Signal band — two rows so each card keeps breathing room.
-	correlation: { x: 10, y: 23 },
-	cvd: { x: 26, y: 23 },
-	depthflow: { x: 42, y: 23 },
-	derivatives: { x: 58, y: 23 },
-	exhaustion: { x: 74, y: 23 },
-	hawkes: { x: 90, y: 23 },
-	leadlag: { x: 10, y: 33 },
-	liquidity: { x: 26, y: 33 },
-	pumpdump: { x: 50, y: 33 },
-	sentiment: { x: 74, y: 33 },
-	toxicity: { x: 90, y: 33 },
-	// Measurement rail (queue).
-	measurements: { x: 50, y: 42 },
+	crypto: { x: 30, y: 5.5 },
+	"websocket-api": { x: 70, y: 5.5 },
+	// Ingress rails.
+	"ingress.tickers": { x: 14, y: 13.5 },
+	"ingress.trades": { x: 50, y: 13.5 },
+	"ingress.level3": { x: 86, y: 13.5 },
+	// Signal row 1.
+	correlation: { x: 8, y: 23.5 },
+	cvd: { x: 24, y: 23.5 },
+	depthflow: { x: 40, y: 23.5 },
+	derivatives: { x: 56, y: 23.5 },
+	exhaustion: { x: 72, y: 23.5 },
+	hawkes: { x: 88, y: 23.5 },
+	// Signal row 2.
+	leadlag: { x: 8, y: 34.5 },
+	liquidity: { x: 24, y: 34.5 },
+	pumpdump: { x: 50, y: 34.5 },
+	sentiment: { x: 72, y: 34.5 },
+	toxicity: { x: 88, y: 34.5 },
+	// Measurement rail.
+	measurements: { x: 50, y: 43.5 },
 	// Logic band.
-	category: { x: 12, y: 51 },
-	manifold: { x: 29, y: 51 },
-	causal: { x: 46, y: 51 },
-	cognition: { x: 63, y: 51 },
-	graph: { x: 78, y: 51 },
-	resonance: { x: 91, y: 51 },
-	// Derived rails (queues).
-	"derived.category": { x: 17, y: 60 },
-	"derived.causal": { x: 35, y: 60 },
-	"derived.cognition": { x: 53, y: 60 },
-	"derived.graph": { x: 71, y: 60 },
-	"derived.resonance": { x: 89, y: 60 },
+	category: { x: 9, y: 53.0 },
+	manifold: { x: 26, y: 53.0 },
+	causal: { x: 43, y: 53.0 },
+	cognition: { x: 60, y: 53.0 },
+	graph: { x: 76, y: 53.0 },
+	resonance: { x: 91, y: 53.0 },
+	// Derived rails.
+	"derived.category": { x: 14, y: 62.0 },
+	"derived.causal": { x: 32, y: 62.0 },
+	"derived.cognition": { x: 51, y: 62.0 },
+	"derived.graph": { x: 70, y: 62.0 },
+	"derived.resonance": { x: 88, y: 62.0 },
 	// Strategy band.
-	planner: { x: 30, y: 69 },
-	mcts: { x: 50, y: 69 },
-	allocation: { x: 70, y: 69 },
-	// Decision + broker rails (queues).
-	decisions: { x: 25, y: 78 },
-	"desk.ticker": { x: 55, y: 78 },
-	"desk.executions": { x: 84, y: 78 },
+	planner: { x: 28, y: 71.0 },
+	mcts: { x: 50, y: 71.0 },
+	allocation: { x: 72, y: 71.0 },
+	// Decision + broker rails.
+	decisions: { x: 22, y: 79.5 },
+	"desk.ticker": { x: 54, y: 79.5 },
+	"desk.executions": { x: 84, y: 79.5 },
 	// Desk + output rails.
-	desk: { x: 40, y: 87 },
-	positions: { x: 62, y: 87 },
-	"ui.dashboard": { x: 78, y: 87 },
-	"ui.manifold": { x: 90, y: 87 },
+	desk: { x: 38, y: 88.5 },
+	positions: { x: 60, y: 88.5 },
+	"ui.dashboard": { x: 76, y: 88.5 },
+	"ui.manifold": { x: 90, y: 88.5 },
 	// Terminals.
-	audit: { x: 25, y: 97 },
-	hub: { x: 48, y: 97 },
-	"webrtc-hub": { x: 68, y: 97 },
-	diagnostics: { x: 88, y: 97 },
+	audit: { x: 22, y: 97.0 },
+	hub: { x: 46, y: 97.0 },
+	"webrtc-hub": { x: 68, y: 97.0 },
+	diagnostics: { x: 89, y: 97.0 },
 };
 
 const NODE_LABEL: Record<string, string> = {
@@ -171,12 +172,11 @@ const EDGE_HEALTH_STROKE: Record<HealthTone, string> = {
 
 /*
 HALF is each node's half-extent in the same percent units as NODE_POS, so edge
-routes can attach to the actual card borders. Stages are 12% wide, 8% tall;
-queue tanks are 9.5% wide and 4.4% tall.
+routes can attach to the actual card borders.
 */
 const HALF: Record<NodeKind, { w: number; h: number }> = {
-	stage: { w: 6, h: 4 },
-	queue: { w: 4.75, h: 2.2 },
+	stage: { w: 5.5, h: 3.5 },
+	queue: { w: 4.5, h: 2.0 },
 };
 
 const formatCount = (count: number): string =>
@@ -384,61 +384,45 @@ type Bounds = {
 	bottom: number;
 };
 
-const ROUTE_CLEARANCE = 2.0;
-const ROUTE_STUB = 1.4;
-const PORT_INSET = 1.0;
+const ROUTE_CLEARANCE = 0.8;
+const ROUTE_STUB = 1.0;
+const PORT_INSET = 0.6;
 
 /*
 Routing costs prioritize clear parallel lanes and collision avoidance.
 Perpendicular crossings are cleanly allowed; longitudinal overlap is strictly penalized.
 */
-const ROUTE_CROSSING_COST = 80;
-const ROUTE_OVERLAP_COST_MASSIVE = 1600;
-const ROUTE_BEND_COST = 0.35;
-const LANE_SPACING = 2.0;
-const ROUTE_NEAR_COST = 80;
+const ROUTE_CROSSING_COST = 20;
+const ROUTE_OVERLAP_COST_MASSIVE = 50000;
+const ROUTE_BEND_COST = 0.3;
+const LANE_SPACING = 0.4;
+const ROUTE_NEAR_COST = 120;
 
 /*
 CORRIDOR_BANDS defines the inter-tier horizontal highway zones between node rows.
 Each corridor holds multiple dedicated parallel tracks so fan-outs never collapse.
 */
 const CORRIDOR_BANDS = [
-	{ min: 10.2, max: 12.8 }, // Sources -> Ingress
-	{ min: 16.8, max: 18.2 }, // Ingress -> Signal row 1
-	{ min: 27.2, max: 28.8 }, // Signal row 1 -> Signal row 2
-	{ min: 37.4, max: 39.4 }, // Signal row 2 -> Measurements
-	{ min: 43.8, max: 47.2 }, // Measurements -> Logic
-	{ min: 56.1, max: 56.7 }, // Logic -> Derived
-	{ min: 63.3, max: 63.9 }, // Derived -> Strategy
-	{ min: 74.2, max: 74.8 }, // Strategy -> Decisions
-	{ min: 81.4, max: 82.0 }, // Decisions -> Desk/UI
-	{ min: 92.2, max: 92.8 }, // Desk/UI -> Terminals
+	{ min: 9.5, max: 11.2 }, // Sources -> Ingress
+	{ min: 16.2, max: 19.4 }, // Ingress -> Signal row 1
+	{ min: 27.6, max: 30.4 }, // Signal row 1 -> Signal row 2
+	{ min: 38.6, max: 41.0 }, // Signal row 2 -> Measurements
+	{ min: 46.0, max: 49.0 }, // Measurements -> Logic
+	{ min: 57.0, max: 59.5 }, // Logic -> Derived
+	{ min: 64.6, max: 67.0 }, // Derived -> Strategy
+	{ min: 75.0, max: 77.0 }, // Strategy -> Decisions
+	{ min: 82.0, max: 84.5 }, // Decisions -> Desk/UI
+	{ min: 92.5, max: 94.5 }, // Desk/UI -> Terminals
 ];
 
 const VERTICAL_ALLEYS = [
-	2.5,
-	3.5, // Left outer gutter
-	18.0,
-	19.0,
-	20.0,
-	21.0, // Signal/Logic Alley 1
-	34.0,
-	39.0,
-	40.0,
-	41.0, // Signal/Logic Alley 2
-	50.0,
-	59.0,
-	60.0,
-	61.0, // Signal/Logic Alley 3
-	66.0,
-	71.0,
-	72.0, // Strategy/Desk Alley
-	79.0,
-	80.0,
-	81.0,
-	82.0, // Signal/Logic Alley 4
-	96.8,
-	97.8, // Right outer gutter
+	2.0, 3.0, 4.0, // Left outer gutter
+	15.0, 16.0, 17.0, 18.0, 19.0, // Signal/Logic Alley 1
+	31.0, 32.0, 33.0, 34.0, 35.0, // Signal/Logic Alley 2
+	47.0, 48.0, 49.0, 50.0, 51.0, 52.0, 53.0, // Center Alley
+	63.0, 64.0, 65.0, 66.0, 67.0, // Strategy/Desk Alley
+	79.0, 80.0, 81.0, 82.0, 83.0, // Signal/Logic Alley 4
+	95.5, 96.5, 97.5, // Right outer gutter
 ];
 
 export const placementBounds = (
@@ -650,19 +634,19 @@ const segmentOverlap = (
 		const crossX = verticalFrom.x;
 		const crossY = horizontalFrom.y;
 		const crosses =
-			crossX > Math.min(horizontalFrom.x, horizontalTo.x) &&
-			crossX < Math.max(horizontalFrom.x, horizontalTo.x) &&
-			crossY > Math.min(verticalFrom.y, verticalTo.y) &&
-			crossY < Math.max(verticalFrom.y, verticalTo.y);
+			crossX > Math.min(horizontalFrom.x, horizontalTo.x) + 0.001 &&
+			crossX < Math.max(horizontalFrom.x, horizontalTo.x) - 0.001 &&
+			crossY > Math.min(verticalFrom.y, verticalTo.y) + 0.001 &&
+			crossY < Math.max(verticalFrom.y, verticalTo.y) - 0.001;
 
 		return { crossing: crosses, overlap: 0 };
 	}
 
-	if (horizontal && Math.abs(from.y - otherFrom.y) > 0.001) {
+	if (horizontal && Math.abs(from.y - otherFrom.y) > 0.05) {
 		return { crossing: false, overlap: 0 };
 	}
 
-	if (!horizontal && Math.abs(from.x - otherFrom.x) > 0.001) {
+	if (!horizontal && Math.abs(from.x - otherFrom.x) > 0.05) {
 		return { crossing: false, overlap: 0 };
 	}
 
@@ -726,7 +710,7 @@ const routeScore = (
 			}
 
 			if (relation.overlap > 0) {
-				score += relation.overlap * ROUTE_OVERLAP_COST_MASSIVE;
+				score += relation.overlap * ROUTE_OVERLAP_COST_MASSIVE + 10000;
 				lanePenalties++;
 			}
 
@@ -789,7 +773,7 @@ const routeEdge = (
 	// Seed multi-track corridor lanes between bands.
 	for (const band of CORRIDOR_BANDS) {
 		const span = band.max - band.min;
-		const steps = 6;
+		const steps = 8;
 
 		for (let step = 0; step <= steps; step++) {
 			horizontalChannels.add(band.min + (span * step) / steps);
@@ -815,18 +799,24 @@ const routeEdge = (
 		const segmentTo = existing.to;
 
 		if (Math.abs(segmentFrom.y - segmentTo.y) < 0.001) {
-			horizontalChannels.add(segmentFrom.y - LANE_SPACING);
-			horizontalChannels.add(segmentFrom.y + LANE_SPACING);
-			horizontalChannels.add(segmentFrom.y - 2 * LANE_SPACING);
-			horizontalChannels.add(segmentFrom.y + 2 * LANE_SPACING);
+			horizontalChannels.add(segmentFrom.y - 0.4);
+			horizontalChannels.add(segmentFrom.y + 0.4);
+			horizontalChannels.add(segmentFrom.y - 0.8);
+			horizontalChannels.add(segmentFrom.y + 0.8);
+			horizontalChannels.add(segmentFrom.y - 1.2);
+			horizontalChannels.add(segmentFrom.y + 1.2);
 			verticalChannels.add(segmentFrom.x);
 			verticalChannels.add(segmentTo.x);
 			continue;
 		}
 
 		if (Math.abs(segmentFrom.x - segmentTo.x) < 0.001) {
-			verticalChannels.add(segmentFrom.x - LANE_SPACING);
-			verticalChannels.add(segmentFrom.x + LANE_SPACING);
+			verticalChannels.add(segmentFrom.x - 0.4);
+			verticalChannels.add(segmentFrom.x + 0.4);
+			verticalChannels.add(segmentFrom.x - 0.8);
+			verticalChannels.add(segmentFrom.x + 0.8);
+			verticalChannels.add(segmentFrom.x - 1.2);
+			verticalChannels.add(segmentFrom.x + 1.2);
 			horizontalChannels.add(segmentFrom.y);
 			horizontalChannels.add(segmentTo.y);
 		}
@@ -1304,16 +1294,16 @@ const StageNode = ({
 			onClick={() => onSelect({ kind: "stage", name: placement.id })}
 			aria-label={`Inspect ${placement.label}`}
 			className={cn(
-				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-md border-2 bg-(--surface) px-2 py-1.5 text-left transition-all hover:bg-(--raised) shadow-sm",
+				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-xs border bg-(--surface) px-2 py-1.5 text-left transition-all hover:bg-(--raised)",
 				"flex flex-col justify-between",
 				selected &&
-					"outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/50",
+					"outline-1 outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/40",
 				highlight === "up" &&
 					!selected &&
-					"outline outline-(--warn)/70 outline-offset-1",
+					"outline-1 outline outline-(--warn)/70 outline-offset-1",
 				highlight === "down" &&
 					!selected &&
-					"outline outline-(--info)/70 outline-offset-1",
+					"outline-1 outline outline-(--info)/70 outline-offset-1",
 				dimmed && "opacity-20",
 			)}
 			style={{
@@ -1369,27 +1359,27 @@ const StageNode = ({
 
 const QUEUE_TONE: Record<string, { border: string; fill: string }> = {
 	ingress: {
-		border: "border-(--info)/70",
+		border: "border-(--info)/50",
 		fill: "bg-(--info)",
 	},
 	rail: {
-		border: "border-(--up)/70",
-		fill: "bg-(--up)",
+		border: "border-(--acc)/50",
+		fill: "bg-(--acc)",
 	},
 	derived: {
-		border: "border-(--acc)/70",
+		border: "border-(--acc)/50",
 		fill: "bg-(--acc)",
 	},
 	strategy: {
-		border: "border-(--warn)/70",
+		border: "border-(--warn)/50",
 		fill: "bg-(--warn)",
 	},
 	ui: {
-		border: "border-(--brand)/70",
-		fill: "bg-(--brand)",
+		border: "border-(--acc)/50",
+		fill: "bg-(--acc)",
 	},
 	broker: {
-		border: "border-(--down)/70",
+		border: "border-(--down)/50",
 		fill: "bg-(--down)",
 	},
 };
@@ -1505,13 +1495,13 @@ const QueueNode = ({
 			className={cn(
 				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer text-left transition-opacity",
 				selected &&
-					"rounded-md outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/50",
+					"rounded-xs outline-1 outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/40",
 				highlight === "up" &&
 					!selected &&
-					"rounded-md outline outline-(--warn)/70 outline-offset-1",
+					"rounded-xs outline-1 outline outline-(--warn)/70 outline-offset-1",
 				highlight === "down" &&
 					!selected &&
-					"rounded-md outline outline-(--info)/70 outline-offset-1",
+					"rounded-xs outline-1 outline outline-(--info)/70 outline-offset-1",
 				dimmed && "opacity-20",
 			)}
 			style={{
@@ -1523,7 +1513,7 @@ const QueueNode = ({
 		>
 			<span
 				className={cn(
-					"relative block h-full w-full overflow-hidden rounded-md border bg-(--sunken)",
+					"relative block h-full w-full overflow-hidden rounded-xs border bg-(--sunken)",
 					tone.border,
 				)}
 			>
@@ -1638,7 +1628,7 @@ const EdgePath = ({
 			onMouseLeave={() => onHover(false)}
 			className="cursor-pointer"
 		>
-			<title>edge</title>
+			<title>{`${edge.from} → ${edge.to}`}</title>
 			{/* Expanded transparent hit-area for effortless wire inspection */}
 			<path
 				d={edge.d}
@@ -1647,7 +1637,7 @@ const EdgePath = ({
 				strokeWidth={6}
 				vectorEffect="non-scaling-stroke"
 			/>
-			{/* Rendered data conduit wire - uniform stable color & opacity to prevent flicker */}
+			{/* Rendered data conduit wire */}
 			<path
 				d={edge.d}
 				data-from={edge.from}
@@ -1656,8 +1646,8 @@ const EdgePath = ({
 				data-health={health}
 				fill="none"
 				stroke={stroke}
-				strokeWidth={hovered ? 2.0 : edge.kind === "hop" ? 1.0 : 1.3}
-				strokeOpacity={0.6}
+				strokeWidth={hovered ? 1.8 : edge.kind === "hop" ? 0.9 : 1.2}
+				strokeOpacity={dimmed && !hovered ? 0.15 : 0.65}
 				vectorEffect="non-scaling-stroke"
 				pathLength={100}
 				strokeLinecap="round"
@@ -1667,56 +1657,8 @@ const EdgePath = ({
 					"diag-edge transition-all",
 					active && "diag-flow",
 					!active && "diag-solid",
-					dimmed && !hovered && "opacity-15",
-					hovered &&
-						"stroke-opacity-100 opacity-100 drop-shadow-[0_0_4px_var(--acc)]",
 				)}
 				data-queue={queue?.name}
-			/>
-		</g>
-	);
-};
-
-const PortConnector = ({
-	port,
-	dimmed,
-	highlight,
-}: {
-	port: DiagPort;
-	dimmed: boolean;
-	highlight: "up" | "down" | null;
-}) => {
-	const health = edgeHealth(port.latencyNs);
-	const color =
-		highlight === "up"
-			? "var(--warn)"
-			: highlight === "down"
-				? "var(--info)"
-				: EDGE_HEALTH_STROKE[health];
-
-	return (
-		<g
-			className={cn(
-				"diag-port pointer-events-none transition-opacity",
-				dimmed && "opacity-15",
-			)}
-		>
-			{/* Micro terminal socket collar */}
-			<circle
-				cx={port.point.x}
-				cy={port.point.y}
-				r={0.28}
-				fill="var(--surface)"
-				stroke="var(--line2)"
-				strokeWidth={0.1}
-			/>
-			{/* Micro terminal contact core */}
-			<circle
-				cx={port.point.x}
-				cy={port.point.y}
-				r={0.14}
-				fill={color}
-				opacity={highlight ? 1 : 0.75}
 			/>
 		</g>
 	);
@@ -1854,33 +1796,6 @@ export const DiagnosticsGraph = ({
 						);
 					})}
 				</g>
-
-				{/* Port Connectors */}
-				<g className="diag-ports">
-					{graph.ports.map((port) => {
-						const highlightUp =
-							selection !== null &&
-							(upstream.has(port.nodeId) || selection.name === port.nodeId);
-						const highlightDown =
-							selection !== null &&
-							(downstream.has(port.nodeId) || selection.name === port.nodeId);
-						const highlight = highlightUp
-							? ("up" as const)
-							: highlightDown
-								? ("down" as const)
-								: null;
-						const dimmed = selection !== null && highlight === null;
-
-						return (
-							<PortConnector
-								key={port.id}
-								port={port}
-								dimmed={dimmed}
-								highlight={highlight}
-							/>
-						);
-					})}
-				</g>
 			</svg>
 
 			{/* Latency chips */}
@@ -1966,3 +1881,4 @@ export const DiagnosticsGraph = ({
 		</div>
 	);
 };
+

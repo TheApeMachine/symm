@@ -29,7 +29,9 @@ func PValue(input types.Frame) types.Frame {
 	correlationValue, hasCorrelation := input.Get(SymbolCorrelation)
 	support, hasSupport := input.Get(SymbolSupport)
 
-	if !hasCorrelation || !hasSupport || support < 4 || !finiteCorrelation(correlationValue) {
+	if !hasCorrelation || !hasSupport || support < 4 ||
+		!finiteCorrelation(correlationValue) ||
+		math.Abs(correlationValue) >= 1 {
 		input.Put(SymbolPValueReady, 0)
 
 		return input

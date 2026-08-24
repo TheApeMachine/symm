@@ -21,12 +21,12 @@ var (
 	symbolSpread         = nmtypes.MustIntern("pumpdump/spread")
 	symbolRelativeSpread = nmtypes.MustIntern("pumpdump/relative_spread")
 	symbolLogRelative    = nmtypes.MustIntern("pumpdump/log_relative_spread")
-	symbolNegBaseline    = nmtypes.MustIntern("pumpdump/neg_baseline")
 	symbolExpBaseline    = nmtypes.MustIntern("pumpdump/relative_spread_baseline")
 	symbolSpreadRatio    = nmtypes.MustIntern("pumpdump/spread_ratio")
 	symbolDivergence     = nmtypes.MustIntern("divergence")
 	symbolNoiseVariance  = nmtypes.MustIntern("noise_variance")
 	symbolOne            = nmtypes.MustIntern("pumpdump/one")
+	symbolZero           = nmtypes.MustIntern("pumpdump/zero")
 )
 
 /*
@@ -45,6 +45,7 @@ spread historical context, and one projector that names the output slots.
 func NewTicker() *Ticker {
 	return &Ticker{
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
+			nmtypes.Assign(symbolZero, 0),
 			// 0 < bid < ask: a crossed, missing, or non-positive book is rejected here.
 			logic.PositiveOrder(symbolBidPrice, symbolAskPrice),
 			// Midpoint: (bid + ask) / 2
@@ -77,26 +78,30 @@ func NewTicker() *Ticker {
 				nmtypes.Out(calculus.PortResult, symbolLogRelative),
 			),
 			// Route the log relative spread through its causal baseline and z-score.
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(symbolLogRelative, calculus.PortX),
-				nmtypes.Out(calculus.PortX, nmtypes.SampleValue),
-			),
-			nmtypes.Configure(
-				statistic.Baseline(""),
-				nmtypes.Span,
-				temporal.Window(""),
-			),
+			route(symbolLogRelative, nmtypes.SampleValue),
 			statistic.ZScore(""),
+			// The spread divergence is the residual; carry it and the noise power
+			// so Finalize derives SNR, and measure its first difference.
+			logic.If(
+				readyCondition(),
+				nmtypes.Pipe(
+					route(statistic.SymbolResidual, symbolDivergence),
+					nmtypes.Wire(
+						calculus.Product,
+						nmtypes.In(statistic.SymbolDispersion, calculus.PortA),
+						nmtypes.In(statistic.SymbolDispersion, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
+					),
+					velocityOver("spread_divergence", statistic.SymbolResidual),
+				),
+				nmtypes.Identity,
+			),
+			statistic.Baseline(""),
+			temporal.Window(""),
 			// Relative spread baseline: exp of the log baseline (e^mu).
 			nmtypes.Wire(
-				calculus.Negative,
+				calculus.Exp,
 				nmtypes.In(statistic.SymbolBaselineValue, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolNegBaseline),
-			),
-			nmtypes.Wire(
-				calculus.Exponential,
-				nmtypes.In(symbolNegBaseline, calculus.SymbolProgress),
 				nmtypes.Out(calculus.PortResult, symbolExpBaseline),
 			),
 			// Spread ratio: relative_spread / relative_spread_baseline
@@ -105,18 +110,6 @@ func NewTicker() *Ticker {
 				nmtypes.In(symbolRelativeSpread, calculus.PortA),
 				nmtypes.In(symbolExpBaseline, calculus.PortB),
 				nmtypes.Out(calculus.PortResult, symbolSpreadRatio),
-			),
-			// Carry the spread divergence and noise power so Finalize derives SNR.
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(statistic.SymbolResidual, calculus.PortX),
-				nmtypes.Out(calculus.PortX, symbolDivergence),
-			),
-			nmtypes.Wire(
-				calculus.Product,
-				nmtypes.In(statistic.SymbolDispersion, calculus.PortA),
-				nmtypes.In(statistic.SymbolDispersion, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
 			),
 		)),
 		projector: data.NewProjector(
@@ -129,6 +122,7 @@ func NewTicker() *Ticker {
 			data.Binding{From: symbolSpreadRatio, Name: "spread_ratio", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: statistic.SymbolResidual, Name: "spread_divergence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: statistic.SymbolZScore, Name: "spread_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: prefixed("spread_divergence", "velocity/delta"), Name: "spread_divergence_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 		),
 	}
 }
@@ -154,3 +148,72 @@ func (ticker *Ticker) Step(point kraken.TickerData) *data.Measurement[float64] {
 }
 
 func (ticker *Ticker) Close() error { return nil }
+
+func readyCondition() nmtypes.Primitive {
+	return nmtypes.Wire(
+		nmtypes.Identity,
+		nmtypes.In(calculus.SymbolReady, logic.SymbolCondition),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+}
+
+func seriesReadyCondition(prefix string) nmtypes.Primitive {
+	return nmtypes.Wire(
+		nmtypes.Identity,
+		nmtypes.In(prefixed(prefix, "ready"), logic.SymbolCondition),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+}
+
+func greaterThanCondition(fact nmtypes.Symbol) nmtypes.Primitive {
+	return nmtypes.Wire(
+		logic.GreaterThan,
+		nmtypes.In(fact, calculus.PortA),
+		nmtypes.In(symbolZero, calculus.PortB),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+}
+
+func route(from nmtypes.Symbol, to nmtypes.Symbol) nmtypes.Primitive {
+	return nmtypes.Wire(
+		nmtypes.Identity,
+		nmtypes.In(from, calculus.PortX),
+		nmtypes.Out(calculus.PortX, to),
+	)
+}
+
+func prefixed(prefix string, name string) nmtypes.Symbol {
+	return nmtypes.MustIntern(temporal.JoinPrefix(prefix, name))
+}
+
+/*
+velocityOver routes one fact plus the event clock into a namespaced series and
+runs the first-difference estimator over it.
+*/
+func velocityOver(prefix string, value nmtypes.Symbol) nmtypes.Primitive {
+	series := temporal.NewSeries(prefix)
+
+	return nmtypes.Pipe(
+		route(value, series.ValueSymbol),
+		route(nmtypes.EventTimeSec, series.SecSymbol),
+		route(nmtypes.EventTimeNsec, series.NsecSymbol),
+		statistic.Velocity(prefix),
+	)
+}
+
+/*
+baselineZScore routes one fact plus the event clock into a namespaced series and
+runs the causal baseline/z-score chain.
+*/
+func baselineZScore(prefix string, value nmtypes.Symbol) nmtypes.Primitive {
+	series := temporal.NewSeries(prefix)
+
+	return nmtypes.Pipe(
+		route(value, series.ValueSymbol),
+		route(nmtypes.EventTimeSec, series.SecSymbol),
+		route(nmtypes.EventTimeNsec, series.NsecSymbol),
+		statistic.ZScore(prefix),
+		statistic.Baseline(prefix),
+		temporal.Window(prefix),
+	)
+}
