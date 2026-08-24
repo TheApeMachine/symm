@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -13,73 +14,68 @@ var (
 )
 
 /*
-Stability measures dimensionless clustering around a supplied mean. It emits
-one for a collapsed range and otherwise one minus the largest departure from
-the mean divided by the collection's own range.
+Stability returns the primitive that measures dimensionless clustering around
+a supplied mean for one series' retained ring. The prefix namespaces every
+slot; the empty prefix keeps the legacy generic slots. It emits one for a
+collapsed range and otherwise one minus the largest departure from the mean
+divided by the collection's own range.
 */
-func Stability(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
-	count := populatedSamples(input)
-	output := input
+func Stability(prefix string) types.Primitive {
+	series := temporal.NewSeries(prefix)
+	stabilitySymbol := types.MustIntern(temporal.JoinPrefix(prefix, "stability"))
+	rangeSymbol := types.MustIntern(temporal.JoinPrefix(prefix, "range"))
+	meanSymbol := types.MustIntern(temporal.JoinPrefix(prefix, "mean"))
 
-	if count < minimumStabilitySamples {
-		output.Put(SymbolStability, 0)
-		output.Put(SymbolReady, 0)
+	return func(input types.Frame) types.Frame {
+		count := series.Count(input)
 
-		return state, output, nil
-	}
+		if count < minimumStabilitySamples {
+			input.Put(stabilitySymbol, 0)
+			input.Put(series.ReadySymbol, 0)
 
-	center, found := input.Get(SymbolMean)
-
-	if !found {
-		return state, types.Frame{}, fmt.Errorf(
-			"statistic: stability requires a mean",
-		)
-	}
-
-	minimum := math.MaxFloat64
-	maximum := -math.MaxFloat64
-	maximumDeparture := 0.0
-
-	for index := range types.MaxSamples {
-		value, populated := input.Get(types.MustSampleSymbol(index))
-
-		if !populated {
-			continue
+			return input
 		}
 
-		minimum = math.Min(minimum, value)
-		maximum = math.Max(maximum, value)
-		maximumDeparture = math.Max(maximumDeparture, math.Abs(value-center))
+		center, found := input.Get(meanSymbol)
+
+		if !found {
+			input.Err = fmt.Errorf(
+				"statistic: stability requires a mean",
+			)
+
+			return input
+		}
+
+		minimum := math.MaxFloat64
+		maximum := -math.MaxFloat64
+		maximumDeparture := 0.0
+
+		for index := 0; index < count; index++ {
+			value, populated := series.SampleAt(&input, index)
+
+			if !populated {
+				continue
+			}
+
+			minimum = math.Min(minimum, value)
+			maximum = math.Max(maximum, value)
+			maximumDeparture = math.Max(maximumDeparture, math.Abs(value-center))
+		}
+
+		rangeValue := maximum - minimum
+		stability := 1.0
+
+		if rangeValue > 0 {
+			stability = 1 - maximumDeparture/rangeValue
+			stability = math.Max(0, math.Min(1, stability))
+		}
+
+		input.Put(rangeSymbol, rangeValue)
+		input.Put(stabilitySymbol, stability)
+		input.Put(series.ReadySymbol, 1)
+
+		return input
 	}
-
-	rangeValue := maximum - minimum
-	stability := 1.0
-
-	if rangeValue > 0 {
-		stability = 1 - maximumDeparture/rangeValue
-		stability = math.Max(0, math.Min(1, stability))
-	}
-
-	output.Put(SymbolRange, rangeValue)
-	output.Put(SymbolStability, stability)
-	output.Put(SymbolReady, 1)
-
-	return state, output, nil
 }
 
 const minimumStabilitySamples = 2
-
-func populatedSamples(input types.Frame) int {
-	count := 0
-
-	for index := range types.MaxSamples {
-		if input.Has(types.MustSampleSymbol(index)) {
-			count++
-		}
-	}
-
-	return count
-}

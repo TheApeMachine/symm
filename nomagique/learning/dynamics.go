@@ -33,39 +33,50 @@ var (
 	SymbolDynamicsJumpM2             = types.MustIntern("predictive/jump_m2")
 	SymbolDynamicsJumpVariance       = types.MustIntern("predictive/jump_variance")
 	SymbolDynamicsSampleCount        = types.MustIntern("predictive/sample_count")
-	SymbolDynamicsPreviousActivity   = types.MustIntern("predictive/previous_activity")
 	SymbolDynamicsRotorScalar        = types.MustIntern("predictive/rotor_scalar")
 	SymbolDynamicsRotorBivector      = types.MustIntern("predictive/rotor_bivector")
 	SymbolDynamicsEquivarianceNorm   = types.MustIntern("predictive/equivariance_norm")
+	// Previous slots carry the last committed observation. The loader writes
+	// the current observation into the unprefixed predictive slots; the
+	// primitive rolls them into the previous slots so both are visible in one
+	// frame without collision.
+	SymbolDynamicsPreviousTime     = types.MustIntern("predictive/previous_time")
+	SymbolDynamicsPreviousPosition = types.MustIntern("predictive/previous_position")
+	SymbolDynamicsPreviousActivity = types.MustIntern("predictive/previous_activity")
+	SymbolDynamicsPreviousVelocity = types.MustIntern("predictive/previous_velocity")
+	SymbolDynamicsPreviousMemory   = types.MustIntern("predictive/previous_memory")
+	SymbolDynamicsPreviousEnergy   = types.MustIntern("predictive/previous_energy")
 )
 
 /*
 PredictiveDynamics augments a scalar latent trajectory with continuous-time
 motion, liquid memory, port-Hamiltonian accounting, Hawkes-compatible jump
-separation, and a unit phase rotor. Every retained value is carried in Frame
-state, so keyed streams can own the primitive without hidden mutable fields.
+separation, and a unit phase rotor. The loader feeds the current observation
+(time, position, activity, external power, optional phase); the primitive reads
+the previous observation from the previous slots, computes, and rolls the
+current observation into the previous slots for the next step. Every retained
+value is carried in Frame slots, so keyed streams can own the primitive without
+hidden mutable fields.
 */
-func PredictiveDynamics(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func PredictiveDynamics(input types.Frame) types.Frame {
 	observedAt, hasObservedAt := input.Get(SymbolDynamicsTime)
 	position, hasPosition := input.Get(SymbolDynamicsPosition)
 
 	if !hasObservedAt || !hasPosition {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"predictive dynamics: time and position required",
 		)
+		return input
 	}
 
 	activity, _ := input.Get(SymbolDynamicsActivity)
 	externalPower, _ := input.Get(SymbolDynamicsExternalPower)
 	phase, hasPhase := input.Get(SymbolDynamicsPhase)
-	previousAt, initialized := state.Get(SymbolDynamicsTime)
+	previousAt, initialized := input.Get(SymbolDynamicsPreviousTime)
 
 	if !initialized {
 		return initializePredictiveDynamics(
-			state,
+			input,
 			observedAt,
 			position,
 			activity,
@@ -75,21 +86,22 @@ func PredictiveDynamics(
 	}
 
 	if observedAt < previousAt {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"predictive dynamics: event time must not regress",
 		)
+		return input
 	}
 
 	if observedAt == previousAt {
-		return state, predictiveDynamicsOutput(state), nil
+		return input
 	}
 
 	deltaTime := observedAt - previousAt
-	previousPosition := state.MustGet(SymbolDynamicsPosition)
-	previousVelocity, _ := state.Get(SymbolDynamicsVelocity)
-	previousMemory, _ := state.Get(SymbolDynamicsMemory)
-	previousEnergy, _ := state.Get(SymbolDynamicsStoredEnergy)
-	previousActivity, _ := state.Get(SymbolDynamicsPreviousActivity)
+	previousPosition := input.MustGet(SymbolDynamicsPreviousPosition)
+	previousVelocity, _ := input.Get(SymbolDynamicsPreviousVelocity)
+	previousMemory, _ := input.Get(SymbolDynamicsPreviousMemory)
+	previousEnergy, _ := input.Get(SymbolDynamicsPreviousEnergy)
+	previousActivity, _ := input.Get(SymbolDynamicsPreviousActivity)
 	positionDelta := position - previousPosition
 	velocity := positionDelta / deltaTime
 	acceleration := (velocity - previousVelocity) / deltaTime
@@ -107,17 +119,17 @@ func PredictiveDynamics(
 	jumpAmplitude := activityDelta * positionDelta / (1 + math.Abs(activityDelta))
 	continuousIncrement := positionDelta - jumpAmplitude
 	continuousRate := continuousIncrement / math.Sqrt(deltaTime)
-	sampleCountValue, _ := state.Get(SymbolDynamicsSampleCount)
+	sampleCountValue, _ := input.Get(SymbolDynamicsSampleCount)
 	sampleCount := sampleCountValue + 1
 	continuousMean, continuousM2 := updateMoments(
-		state,
+		input,
 		SymbolDynamicsContinuousMean,
 		SymbolDynamicsContinuousM2,
 		continuousRate,
 		sampleCount,
 	)
 	jumpMean, jumpM2 := updateMoments(
-		state,
+		input,
 		SymbolDynamicsJumpMean,
 		SymbolDynamicsJumpM2,
 		jumpAmplitude,
@@ -133,43 +145,45 @@ func PredictiveDynamics(
 	rotorScalar := math.Cos(phase / 2)
 	rotorBivector := math.Sin(phase / 2)
 	equivarianceNorm := rotorScalar*rotorScalar + rotorBivector*rotorBivector
-	nextState := state
-	nextState.Put(SymbolDynamicsTime, observedAt)
-	nextState.Put(SymbolDynamicsPosition, position)
-	nextState.Put(SymbolDynamicsPreviousActivity, activity)
-	nextState.Put(SymbolDynamicsReady, 1)
-	nextState.Put(SymbolDynamicsDeltaTime, deltaTime)
-	nextState.Put(SymbolDynamicsVelocity, velocity)
-	nextState.Put(SymbolDynamicsAcceleration, acceleration)
-	nextState.Put(SymbolDynamicsMemory, memory)
-	nextState.Put(SymbolDynamicsMemoryScale, memoryScale)
-	nextState.Put(SymbolDynamicsStoredEnergy, storedEnergy)
-	nextState.Put(SymbolDynamicsSuppliedPower, suppliedPower)
-	nextState.Put(SymbolDynamicsDissipation, dissipation)
-	nextState.Put(SymbolDynamicsPassivityResidue, passivityResidue)
-	nextState.Put(SymbolDynamicsContinuousMean, continuousMean)
-	nextState.Put(SymbolDynamicsContinuousM2, continuousM2)
-	nextState.Put(SymbolDynamicsContinuousVariance, continuousVariance)
-	nextState.Put(SymbolDynamicsJumpAmplitude, jumpAmplitude)
-	nextState.Put(SymbolDynamicsJumpMean, jumpMean)
-	nextState.Put(SymbolDynamicsJumpM2, jumpM2)
-	nextState.Put(SymbolDynamicsJumpVariance, jumpVariance)
-	nextState.Put(SymbolDynamicsSampleCount, sampleCount)
-	nextState.Put(SymbolDynamicsRotorScalar, rotorScalar)
-	nextState.Put(SymbolDynamicsRotorBivector, rotorBivector)
-	nextState.Put(SymbolDynamicsEquivarianceNorm, equivarianceNorm)
+	input.Put(SymbolDynamicsPreviousTime, observedAt)
+	input.Put(SymbolDynamicsPreviousPosition, position)
+	input.Put(SymbolDynamicsPreviousActivity, activity)
+	input.Put(SymbolDynamicsPreviousVelocity, velocity)
+	input.Put(SymbolDynamicsPreviousMemory, memory)
+	input.Put(SymbolDynamicsPreviousEnergy, storedEnergy)
+	input.Put(SymbolDynamicsReady, 1)
+	input.Put(SymbolDynamicsDeltaTime, deltaTime)
+	input.Put(SymbolDynamicsVelocity, velocity)
+	input.Put(SymbolDynamicsAcceleration, acceleration)
+	input.Put(SymbolDynamicsMemory, memory)
+	input.Put(SymbolDynamicsMemoryScale, memoryScale)
+	input.Put(SymbolDynamicsStoredEnergy, storedEnergy)
+	input.Put(SymbolDynamicsSuppliedPower, suppliedPower)
+	input.Put(SymbolDynamicsDissipation, dissipation)
+	input.Put(SymbolDynamicsPassivityResidue, passivityResidue)
+	input.Put(SymbolDynamicsContinuousMean, continuousMean)
+	input.Put(SymbolDynamicsContinuousM2, continuousM2)
+	input.Put(SymbolDynamicsContinuousVariance, continuousVariance)
+	input.Put(SymbolDynamicsJumpAmplitude, jumpAmplitude)
+	input.Put(SymbolDynamicsJumpMean, jumpMean)
+	input.Put(SymbolDynamicsJumpM2, jumpM2)
+	input.Put(SymbolDynamicsJumpVariance, jumpVariance)
+	input.Put(SymbolDynamicsSampleCount, sampleCount)
+	input.Put(SymbolDynamicsRotorScalar, rotorScalar)
+	input.Put(SymbolDynamicsRotorBivector, rotorBivector)
+	input.Put(SymbolDynamicsEquivarianceNorm, equivarianceNorm)
 
-	return nextState, predictiveDynamicsOutput(nextState), nil
+	return input
 }
 
 func initializePredictiveDynamics(
-	state types.Frame,
+	input types.Frame,
 	observedAt float64,
 	position float64,
 	activity float64,
 	phase float64,
 	hasPhase bool,
-) (types.Frame, types.Frame, error) {
+) types.Frame {
 	if !hasPhase {
 		phase = 0
 	}
@@ -177,33 +191,35 @@ func initializePredictiveDynamics(
 	rotorScalar := math.Cos(phase / 2)
 	rotorBivector := math.Sin(phase / 2)
 	storedEnergy := 0.5 * position * position
-	nextState := state
-	nextState.Put(SymbolDynamicsTime, observedAt)
-	nextState.Put(SymbolDynamicsPosition, position)
-	nextState.Put(SymbolDynamicsPreviousActivity, activity)
-	nextState.Put(SymbolDynamicsReady, 0)
-	nextState.Put(SymbolDynamicsMemory, position)
-	nextState.Put(SymbolDynamicsStoredEnergy, storedEnergy)
-	nextState.Put(SymbolDynamicsSampleCount, 0)
-	nextState.Put(SymbolDynamicsRotorScalar, rotorScalar)
-	nextState.Put(SymbolDynamicsRotorBivector, rotorBivector)
-	nextState.Put(
+	input.Put(SymbolDynamicsPreviousTime, observedAt)
+	input.Put(SymbolDynamicsPreviousPosition, position)
+	input.Put(SymbolDynamicsPreviousActivity, activity)
+	input.Put(SymbolDynamicsPreviousVelocity, 0)
+	input.Put(SymbolDynamicsPreviousMemory, position)
+	input.Put(SymbolDynamicsPreviousEnergy, storedEnergy)
+	input.Put(SymbolDynamicsReady, 0)
+	input.Put(SymbolDynamicsMemory, position)
+	input.Put(SymbolDynamicsStoredEnergy, storedEnergy)
+	input.Put(SymbolDynamicsSampleCount, 0)
+	input.Put(SymbolDynamicsRotorScalar, rotorScalar)
+	input.Put(SymbolDynamicsRotorBivector, rotorBivector)
+	input.Put(
 		SymbolDynamicsEquivarianceNorm,
 		rotorScalar*rotorScalar+rotorBivector*rotorBivector,
 	)
 
-	return nextState, predictiveDynamicsOutput(nextState), nil
+	return input
 }
 
 func updateMoments(
-	state types.Frame,
+	input types.Frame,
 	meanSymbol types.Symbol,
 	m2Symbol types.Symbol,
 	sample float64,
 	count float64,
 ) (float64, float64) {
-	previousMean, _ := state.Get(meanSymbol)
-	previousM2, _ := state.Get(m2Symbol)
+	previousMean, _ := input.Get(meanSymbol)
+	previousM2, _ := input.Get(m2Symbol)
 	delta := sample - previousMean
 	mean := previousMean + delta/count
 	m2 := previousM2 + delta*(sample-mean)
@@ -217,37 +233,4 @@ func sampleVariance(m2 float64, count float64) float64 {
 	}
 
 	return m2 / (count - 1)
-}
-
-func predictiveDynamicsOutput(state types.Frame) types.Frame {
-	output := types.Frame{}
-
-	for _, symbol := range []types.Symbol{
-		SymbolDynamicsReady,
-		SymbolDynamicsDeltaTime,
-		SymbolDynamicsPosition,
-		SymbolDynamicsVelocity,
-		SymbolDynamicsAcceleration,
-		SymbolDynamicsMemory,
-		SymbolDynamicsMemoryScale,
-		SymbolDynamicsStoredEnergy,
-		SymbolDynamicsSuppliedPower,
-		SymbolDynamicsDissipation,
-		SymbolDynamicsPassivityResidue,
-		SymbolDynamicsContinuousVariance,
-		SymbolDynamicsJumpAmplitude,
-		SymbolDynamicsJumpVariance,
-		SymbolDynamicsSampleCount,
-		SymbolDynamicsRotorScalar,
-		SymbolDynamicsRotorBivector,
-		SymbolDynamicsEquivarianceNorm,
-	} {
-		value, found := state.Get(symbol)
-
-		if found {
-			output.Put(symbol, value)
-		}
-	}
-
-	return output
 }

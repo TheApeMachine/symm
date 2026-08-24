@@ -9,229 +9,197 @@ import (
 )
 
 /*
-Primitive is the universal reducer contract. Every operation receives immutable
-state and input snapshots, then returns a candidate state, output, and error.
-An error rejects the entire candidate transition.
+Primitive is the universal reducer contract. A primitive takes one Frame (the
+current committed state and input, unified) and returns one Frame (the next
+state and output, unified). Validation failures are recorded on the returned
+Frame's Err field; a non-nil Err short-circuits the enclosing pipeline.
 */
-type Primitive func(
-	state Frame,
-	input Frame,
-) (
-	nextState Frame,
-	output Frame,
-	err error,
-)
+type Primitive func(input Frame) Frame
 
-// Step executes one reducer transition and enforces rollback on error.
-func Step(
-	primitive Primitive,
-	state Frame,
-	input Frame,
-) (Frame, Frame, error) {
+/*
+Step evaluates one primitive. A primitive that fails returns the input Frame
+with Err set, so Step simply propagates it.
+*/
+func Step(primitive Primitive, input Frame) Frame {
 	if primitive == nil {
-		return state, Frame{}, PrimitiveError("primitive is nil")
+		input.Err = PrimitiveError("primitive is nil")
+
+		return input
 	}
 
-	nextState, output, err := primitive(state, input)
-
-	if err != nil {
-		return state, Frame{}, err
-	}
-
-	return nextState, output, nil
+	return primitive(input)
 }
 
-// Pipe chains primitives so each output becomes the following input.
+/*
+Pipe chains primitives so each frame flows into the next. A non-nil Err stops
+the chain immediately and propagates the errored frame unchanged.
+*/
 func Pipe(primitives ...Primitive) Primitive {
 	pipeline := append([]Primitive(nil), primitives...)
 
-	return func(state Frame, input Frame) (Frame, Frame, error) {
-		nextState := state
+	return func(input Frame) Frame {
 		output := input
 
 		for _, primitive := range pipeline {
-			var err error
-			nextState, output, err = Step(primitive, nextState, output)
+			output = Step(primitive, output)
 
-			if err != nil {
-				return state, Frame{}, err
+			if output.Err != nil {
+				return output
 			}
 		}
 
-		return nextState, output, nil
+		return output
 	}
 }
 
 /*
-Fork is true fan-out. Every branch observes the same original state and input.
-Candidate state deltas are merged transactionally and conflicting writes fail;
-outputs are overlaid in branch order for compatibility.
+Fork fans one frame out to every branch and merges their frames. Each branch
+receives the same input independently; results overlay in branch order.
 */
 func Fork(primitives ...Primitive) Primitive {
 	branches := append([]Primitive(nil), primitives...)
 
-	return func(state Frame, input Frame) (Frame, Frame, error) {
-		nextState := state
+	return func(input Frame) Frame {
 		output := input
 
 		for _, primitive := range branches {
-			candidateState, branchOutput, err := Step(primitive, state, input)
+			branch := Step(primitive, input)
 
-			if err != nil {
-				return state, Frame{}, err
+			if branch.Err != nil {
+				return branch
 			}
 
-			nextState, err = mergeFrameChanges(state, nextState, candidateState, "fork state")
-
-			if err != nil {
-				return state, Frame{}, err
-			}
-
-			output.Merge(branchOutput)
+			output.Merge(branch)
 		}
 
-		return nextState, output, nil
+		return output
 	}
 }
 
 /*
-ForkStrict is Fork with collision detection for both persistent state and output
-facts. It is the preferred combinator for newly wired equations.
+ForkStrict is Fork with collision detection: conflicting writes to the same
+slot fail rather than silently overwriting.
 */
 func ForkStrict(primitives ...Primitive) Primitive {
 	branches := append([]Primitive(nil), primitives...)
 
-	return func(state Frame, input Frame) (Frame, Frame, error) {
-		nextState := state
+	return func(input Frame) Frame {
 		output := input
 
 		for _, primitive := range branches {
-			candidateState, branchOutput, err := Step(primitive, state, input)
+			branch := Step(primitive, input)
 
-			if err != nil {
-				return state, Frame{}, err
+			if branch.Err != nil {
+				return branch
 			}
 
-			nextState, err = mergeFrameChanges(state, nextState, candidateState, "fork state")
+			merged, err := mergeFrameChanges(input, output, branch, "fork")
 
 			if err != nil {
-				return state, Frame{}, err
+				output.Err = err
+
+				return output
 			}
 
-			output, err = mergeFrameChanges(input, output, branchOutput, "fork output")
-
-			if err != nil {
-				return state, Frame{}, err
-			}
+			output = merged
 		}
 
-		return nextState, output, nil
+		return output
 	}
 }
 
 /*
-Configure runs a producer, copies one explicit control fact onto the original
-input, and runs the consumer. Producer metrics survive; consumer output wins on
-an intentional overlap.
+Configure runs a producer, copies one explicit control fact onto the input, and
+runs the consumer. Producer metrics survive; consumer output wins on an
+intentional overlap.
 */
 func Configure(producer Primitive, channel Symbol, consumer Primitive) Primitive {
-	return func(state Frame, input Frame) (Frame, Frame, error) {
-		nextState, controlOutput, err := Step(producer, state, input)
+	return func(input Frame) Frame {
+		control := Step(producer, input)
 
-		if err != nil {
-			return state, Frame{}, err
+		if control.Err != nil {
+			return control
 		}
 
-		controlValue, found := controlOutput.Get(channel)
+		controlValue, found := control.Get(channel)
 
 		if !found {
-			return state, Frame{}, PrimitiveError("configure: control channel missing")
+			input.Err = PrimitiveError("configure: control channel missing")
+
+			return input
 		}
 
 		if !utils.IsFinite(controlValue) {
-			return state, Frame{}, PrimitiveError("configure: control channel must be finite")
+			input.Err = PrimitiveError("configure: control channel must be finite")
+
+			return input
 		}
 
-		consumerInput := input
+		consumerInput := control
 		consumerInput.Put(channel, controlValue)
-		candidateState, consumerOutput, err := Step(consumer, nextState, consumerInput)
 
-		if err != nil {
-			return state, Frame{}, err
-		}
-
-		output := controlOutput
-		output.Merge(consumerOutput)
-
-		return candidateState, output, nil
+		return Step(consumer, consumerInput)
 	}
 }
 
 /*
-Relay copies one named fact into another. It remains for source compatibility;
-new compositions should use Wire so a primitive receives only explicit ports.
-
-Deprecated: use Wire with explicit In and Out bindings.
+Relay copies one named fact into another. Deprecated in favor of Wire.
 */
 func Relay(from Symbol, to Symbol) Primitive {
-	return func(state Frame, input Frame) (Frame, Frame, error) {
+	return func(input Frame) Frame {
 		value, found := input.Get(from)
 
 		if !found {
-			return state, Frame{}, PrimitiveError("relay: source slot missing")
+			input.Err = PrimitiveError("relay: source slot missing")
+
+			return input
 		}
 
-		output := input
-		output.Put(to, value)
+		input.Put(to, value)
 
-		return state, output, nil
+		return input
 	}
 }
 
 /*
-Retained evaluates a projection over committed state and overlays that projection
-onto the current input.
+Retained projects over the committed state (the input frame) and overlays the
+projection onto it.
 */
 func Retained(primitive Primitive) Primitive {
-	return func(state Frame, input Frame) (Frame, Frame, error) {
-		nextState, retained, err := Step(primitive, state, state)
-
-		if err != nil {
-			return state, Frame{}, err
-		}
-
-		output := input
-		output.Merge(retained)
-
-		return nextState, output, nil
-	}
-}
-
-// Assign writes one explicit finite scalar without mutating state.
-func Assign(symbol Symbol, value float64) Primitive {
-	return func(state Frame, input Frame) (Frame, Frame, error) {
-		if !utils.IsFinite(value) {
-			return state, Frame{}, PrimitiveError("assign value must be finite")
-		}
-
-		output := input
-		output.Put(symbol, value)
-
-		return state, output, nil
+	return func(input Frame) Frame {
+		return Step(primitive, input)
 	}
 }
 
 /*
-Join evaluates source adapters against the same state and input, then merges
-their facts. Persistent state collisions are rejected.
+Assign writes one explicit finite scalar.
+*/
+func Assign(symbol Symbol, value float64) Primitive {
+	return func(input Frame) Frame {
+		if !utils.IsFinite(value) {
+			input.Err = PrimitiveError("assign value must be finite")
+
+			return input
+		}
+
+		input.Put(symbol, value)
+
+		return input
+	}
+}
+
+/*
+Join merges branches like Fork; persistent collisions are rejected.
 */
 func Join(primitives ...Primitive) Primitive {
 	return Fork(primitives...)
 }
 
-// Identity passes input through unchanged.
-func Identity(state Frame, input Frame) (Frame, Frame, error) {
-	return state, input, nil
+/*
+Identity passes the input frame through unchanged.
+*/
+func Identity(input Frame) Frame {
+	return input
 }
 
 func mergeFrameChanges(

@@ -26,16 +26,15 @@ var (
 Branching calculates a bivariate branching matrix, spectral radius, immediate
 offspring, and total descendants.
 */
-func Branching(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func Branching(input types.Frame) types.Frame {
 	beta, found := input.Get(SymbolBeta)
 
 	if !found || beta <= 0 || math.IsNaN(beta) || math.IsInf(beta, 0) {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"statistic: branching requires positive finite beta",
 		)
+
+		return input
 	}
 
 	alphaAA := inputValue(input, SymbolAlphaAA) / beta
@@ -44,9 +43,11 @@ func Branching(
 	alphaBB := inputValue(input, SymbolAlphaBB) / beta
 
 	if !finite(alphaAA, alphaAB, alphaBA, alphaBB) {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"statistic: branching coefficients must be finite",
 		)
+
+		return input
 	}
 
 	trace := alphaAA + alphaBB
@@ -67,16 +68,15 @@ func Branching(
 		descendantsBeta = (alphaBA + 1 - alphaAA) / determinantIdentity
 	}
 
-	output := input
-	output.Put(SymbolSpectralRadius, spectralRadius)
-	output.Put(SymbolOffspringAA, alphaAA)
-	output.Put(SymbolOffspringAB, alphaAB)
-	output.Put(SymbolOffspringBA, alphaBA)
-	output.Put(SymbolOffspringBB, alphaBB)
-	output.Put(SymbolDescendantsAlpha, descendantsAlpha)
-	output.Put(SymbolDescendantsBeta, descendantsBeta)
+	input.Put(SymbolSpectralRadius, spectralRadius)
+	input.Put(SymbolOffspringAA, alphaAA)
+	input.Put(SymbolOffspringAB, alphaAB)
+	input.Put(SymbolOffspringBA, alphaBA)
+	input.Put(SymbolOffspringBB, alphaBB)
+	input.Put(SymbolDescendantsAlpha, descendantsAlpha)
+	input.Put(SymbolDescendantsBeta, descendantsBeta)
 
-	return state, output, nil
+	return input
 }
 
 func inputValue(input types.Frame, symbol types.Symbol) float64 {

@@ -13,7 +13,7 @@ var SymbolRelativeChange = types.MustIntern("equation/relative_change")
 // RelativeChange reports (current-previous)/previous for an observed series.
 func RelativeChange(source types.Symbol) types.Primitive {
 	return types.Pipe(
-		temporal.Observer(source),
+		temporal.Observer("", source),
 		statistic.Maturity(temporal.SymbolObservations),
 		logic.If(
 			types.Wire(

@@ -72,9 +72,10 @@ FramePrimitive adapts the multi-timescale, overcomplete predictive coding manifo
 into types's universal Frame reducer interface.
 */
 func FramePrimitive(manifold *ResonanceManifold, learn bool) types.Primitive {
-	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	return func(input types.Frame) types.Frame {
 		if manifold == nil {
-			return state, types.Frame{}, fmt.Errorf("resonance: manifold required")
+			input.Err = fmt.Errorf("resonance: manifold required")
+			return input
 		}
 
 		featureCountValue, hasFeatureCount := input.Get(SymbolFeatureCount)
@@ -84,40 +85,42 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) types.Primitive {
 		}
 
 		if featureCount <= 0 || featureCount > MaxFrameFeatures || featureCount != manifold.arch[0] {
-			return state, types.Frame{}, fmt.Errorf(
+			input.Err = fmt.Errorf(
 				"resonance: feature count %d does not match input width %d",
 				featureCount, manifold.arch[0],
 			)
+			return input
 		}
 
 		var featureStorage [MaxFrameFeatures]float64
 		for featureIndex := range featureCount {
 			feature, found := input.Get(featureSymbols[featureIndex])
 			if !found {
-				return state, types.Frame{}, fmt.Errorf("resonance: feature %d required", featureIndex)
+				input.Err = fmt.Errorf("resonance: feature %d required", featureIndex)
+				return input
 			}
 			featureStorage[featureIndex] = feature
 		}
 
 		if err := manifold.Settle(featureStorage[:featureCount], !learn); err != nil {
-			return state, types.Frame{}, err
+			input.Err = err
+			return input
 		}
 
 		if learn {
 			if err := manifold.Learn(nil); err != nil {
-				return state, types.Frame{}, err
+				input.Err = err
+				return input
 			}
 		}
 
-		invocation, _ := state.Get(SymbolInvocation)
-		nextState := state
-		nextState.Put(SymbolInvocation, invocation+1)
+		invocation, _ := input.Get(SymbolInvocation)
+		input.Put(SymbolInvocation, invocation+1)
 
-		output := types.Frame{}
-		output.Put(SymbolEnergy, manifold.Energy())
-		output.Put(SymbolSurprise, manifold.ReconstructionError())
-		output.Put(SymbolReconstructionError, manifold.ReconstructionError())
-		output.Put(SymbolInferenceSteps, float64(manifold.lastInferenceSteps))
+		input.Put(SymbolEnergy, manifold.Energy())
+		input.Put(SymbolSurprise, manifold.ReconstructionError())
+		input.Put(SymbolReconstructionError, manifold.ReconstructionError())
+		input.Put(SymbolInferenceSteps, float64(manifold.lastInferenceSteps))
 
 		// Export multi-layer dictionary latents
 		totalLatents := 0
@@ -125,11 +128,11 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) types.Primitive {
 			data := manifold.latentStates[layer].RawVector().Data
 			count := min(len(data), MaxLayerDim)
 			for i := range count {
-				output.Put(layerLatentSyms[layer-1][i], data[i])
+				input.Put(layerLatentSyms[layer-1][i], data[i])
 			}
 			totalLatents += count
 		}
-		output.Put(SymbolLatentCount, float64(totalLatents))
+		input.Put(SymbolLatentCount, float64(totalLatents))
 
 		// Export multi-layer prediction error innovations
 		_, layerErrors := manifold.predictAdjacentLayers()
@@ -141,12 +144,12 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) types.Primitive {
 			data := layerErrors[layer].RawVector().Data
 			count := min(len(data), MaxLayerDim)
 			for i := range count {
-				output.Put(layerInnoSyms[layer][i], data[i])
+				input.Put(layerInnoSyms[layer][i], data[i])
 			}
 			totalInnovations += count
 		}
-		output.Put(SymbolInnovationCount, float64(totalInnovations))
+		input.Put(SymbolInnovationCount, float64(totalInnovations))
 
-		return nextState, output, nil
+		return input
 	}
 }

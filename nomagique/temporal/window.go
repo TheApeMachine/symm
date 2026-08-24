@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -15,104 +14,133 @@ var (
 )
 
 /*
-Window retains one bounded ring of values entirely inside its Frame state,
-using the engine's generic sample slots. Retention is temporal plumbing: the
-window keeps whatever the feeder observes, in arrival order, and every
-estimator downstream reads the same slots.
+Window returns the bounded retention ring primitive for one series prefix.
+Retention is temporal plumbing: the window keeps whatever the feeder observes,
+in arrival order, and every estimator downstream reads the same slots. One
+frame can carry one independent window per prefix.
 
-Capacity is not a market magic number. It starts at one slot and doubles only
-when the next observation would overflow the current ring, so a series earns
-more memory by continuing to arrive — the count of observations is the only
+Capacity is not a magic number. It starts at one slot and doubles only when
+the next observation would overflow the current ring, so a series earns more
+memory by continuing to arrive — the count of observations is the only
 governor. A caller may still seed an explicit capacity when it genuinely knows
 one, but the default path stays data-driven and bounded by the engine's
 fixed-sample ceiling.
 */
-func Window(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nmtypes.SampleValue)
-	_, hasSec := input.Get(SymbolUnixSec)
-	nsec, hasNsec := input.Get(SymbolUnixNsec)
+func Window(prefix string) nmtypes.Primitive {
+	series := NewSeries(prefix)
 
-	if !hasValue || !hasSec || !hasNsec {
-		return state, types.Frame{}, fmt.Errorf(
-			"temporal: window requires a value and event time",
-		)
+	return func(input nmtypes.Frame) nmtypes.Frame {
+		value, hasValue := input.Get(series.ValueSymbol)
+		_, hasSec := input.Get(series.SecSymbol)
+		nsec, hasNsec := input.Get(series.NsecSymbol)
+
+		if !hasValue || !hasSec || !hasNsec {
+			input.Err = fmt.Errorf(
+				"temporal: window requires a value and event time",
+			)
+
+			return input
+		}
+
+		if nsec < 0 || nsec >= 1e9 {
+			input.Err = fmt.Errorf(
+				"temporal: window requires normalized nanoseconds",
+			)
+
+			return input
+		}
+
+		capacity, err := windowCapacity(series, input)
+
+		if err != nil {
+			input.Err = err
+
+			return input
+		}
+
+		if capacity <= 0 || capacity > nmtypes.MaxSamples {
+			input.Err = fmt.Errorf(
+				"temporal: window capacity must be an integer from 1 through %d",
+				nmtypes.MaxSamples,
+			)
+
+			return input
+		}
+
+		count := series.Count(input)
+		head := series.Head(input)
+		oldCapacity := capacity
+
+		if current, found := input.Get(series.CapacitySymbol); found &&
+			int(current) >= count && int(current) >= 1 {
+			oldCapacity = int(current)
+		}
+
+		if count < 0 || count > oldCapacity || head < 0 || head >= oldCapacity {
+			input.Err = fmt.Errorf(
+				"temporal: window retained state is invalid for capacity %d",
+				oldCapacity,
+			)
+
+			return input
+		}
+
+		// When the ring resizes while wrapped, its physical layout no longer
+		// matches the new modulo base. Compact the retained samples back to
+		// physical slots 0..count-1 in chronological order first, keeping the
+		// newest samples when the ring shrinks.
+		if oldCapacity != capacity && count > 0 {
+			retained := count
+
+			if retained > capacity {
+				retained = capacity
+			}
+
+			values := make([]float64, retained)
+
+			for index := 0; index < retained; index++ {
+				source := (head + (count - retained) + index) % oldCapacity
+				values[index], _ = series.SampleAt(&input, source)
+			}
+
+			for index := 0; index < retained; index++ {
+				input.Put(series.samples[index], values[index])
+			}
+
+			count = retained
+			head = 0
+		}
+
+		slot := count
+
+		if count >= capacity {
+			slot = head
+			head = (head + 1) % capacity
+		} else {
+			slot = (head + count) % capacity
+			count++
+		}
+
+		input.Put(series.samples[slot], value)
+		input.Put(series.CountSymbol, float64(count))
+		input.Put(series.HeadSymbol, float64(head))
+		input.Put(series.ReadySymbol, 1)
+		input.Put(series.CapacitySymbol, float64(capacity))
+
+		return input
 	}
-
-	if nsec < 0 || nsec >= 1e9 {
-		return state, types.Frame{}, fmt.Errorf(
-			"temporal: window requires normalized nanoseconds",
-		)
-	}
-
-	capacity, err := windowCapacity(state, input)
-
-	if err != nil {
-		return state, types.Frame{}, err
-	}
-
-	if capacity <= 0 || capacity > nmtypes.MaxSamples {
-		return state, types.Frame{}, fmt.Errorf(
-			"temporal: window capacity must be an integer from 1 through %d",
-			nmtypes.MaxSamples,
-		)
-	}
-
-	count := windowCount(state)
-	head := windowHead(state)
-
-	if count < 0 || count > capacity || head < 0 || head >= capacity {
-		return state, types.Frame{}, fmt.Errorf(
-			"temporal: window retained state is invalid for capacity %d",
-			capacity,
-		)
-	}
-
-	nextState := state
-	slot := count
-
-	if count >= capacity {
-		slot = head
-		head = (head + 1) % capacity
-	} else {
-		count++
-	}
-
-	nextState.Put(nmtypes.MustSampleSymbol(slot), value)
-	nextState.Put(nmtypes.SampleCount, float64(count))
-	nextState.Put(nmtypes.SampleHead, float64(head))
-	nextState.Put(nmtypes.SampleReady, 1)
-	nextState.Put(SymbolCapacity, float64(capacity))
-
-	output := nextState
-	output.Merge(input)
-	output.Put(nmtypes.SampleCount, float64(count))
-	output.Put(nmtypes.SampleHead, float64(head))
-	output.Put(nmtypes.SampleReady, 1)
-	output.Put(SymbolCapacity, float64(capacity))
-
-	return nextState, output, nil
 }
 
 /*
 windowCapacity resolves how many slots the ring may retain. The Span control
 channel wins when present, from the input first (a Configure-wired producer
-emitted it this step) and then from state (a previous step's baseline verdict
-that Configure merged into state). Until a Span has been composed in, the
-window bootstraps one slot and doubles only when the count reaches the current
+emitted it this step) and then from state (a previous step's verdict that
+Configure merged into state). Until a Span has been composed in, the window
+bootstraps one slot and doubles only when the count reaches the current
 capacity, bounded by the engine's sample ceiling.
 */
-func windowCapacity(state types.Frame, input types.Frame) (int, error) {
-	var (
-		capacityValue float64
-		found         bool
-	)
-
-	if capacityValue, found = input.Get(nmtypes.Span); !found {
-		capacityValue, found = state.Get(nmtypes.Span)
-	}
+func windowCapacity(series Series, input nmtypes.Frame) (int, error) {
+	capacityValue, found := input.Get(series.SpanSymbol)
 
 	if found {
 		if capacityValue <= 0 || capacityValue != math.Trunc(capacityValue) ||
@@ -126,13 +154,13 @@ func windowCapacity(state types.Frame, input types.Frame) (int, error) {
 		return int(capacityValue), nil
 	}
 
-	current := windowCount(state)
+	current := series.Count(input)
 
 	if current < 1 {
 		return 1, nil
 	}
 
-	capacityValue, hasCapacity := state.Get(SymbolCapacity)
+	capacityValue, hasCapacity := input.Get(series.CapacitySymbol)
 
 	if hasCapacity && current < int(capacityValue) {
 		return int(capacityValue), nil
@@ -145,24 +173,4 @@ func windowCapacity(state types.Frame, input types.Frame) (int, error) {
 	}
 
 	return next, nil
-}
-
-func windowCount(state types.Frame) int {
-	value, found := state.Get(nmtypes.SampleCount)
-
-	if !found {
-		return 0
-	}
-
-	return int(value)
-}
-
-func windowHead(state types.Frame) int {
-	value, found := state.Get(nmtypes.SampleHead)
-
-	if !found {
-		return 0
-	}
-
-	return int(value)
 }

@@ -18,36 +18,40 @@ var (
 )
 
 /*
-Hayashi evaluates two asynchronous Path projections using every overlapping
-return interval, without resampling either path onto an invented clock. State
-is the left path and input is the right path; neither projection is mutated.
+Hayashi returns the primitive that evaluates two asynchronous path series —
+leftPrefix and rightPrefix in one Frame — over every overlapping return
+interval, without resampling either path onto an invented clock. Neither
+projection is mutated.
 */
-func Hayashi(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
-	shiftValue, hasShift := input.Get(SymbolLeftShift)
+func Hayashi(leftPrefix string, rightPrefix string) types.Primitive {
+	leftSeries := temporal.NewSeries(leftPrefix)
+	rightSeries := temporal.NewSeries(rightPrefix)
 
-	if hasShift && shiftValue != math.Trunc(shiftValue) {
-		return state, types.Frame{}, correlationError(
-			"left shift must contain integral nanoseconds",
-		)
+	return func(input types.Frame) types.Frame {
+		shiftValue, hasShift := input.Get(SymbolLeftShift)
+
+		if hasShift && shiftValue != math.Trunc(shiftValue) {
+			input.Err = correlationError(
+				"left shift must contain integral nanoseconds",
+			)
+
+			return input
+		}
+
+		left, leftCount := seriesPoints(leftSeries, &input)
+		right, rightCount := seriesPoints(rightSeries, &input)
+		correlation, covariance, leftVariance, rightVariance, support, ready :=
+			hayashiPoints(&left, leftCount, &right, rightCount, int64(shiftValue))
+
+		input.Put(SymbolCorrelation, correlation)
+		input.Put(SymbolCovariance, covariance)
+		input.Put(SymbolLeftVariance, leftVariance)
+		input.Put(SymbolRightVariance, rightVariance)
+		input.Put(SymbolSupport, float64(support))
+		input.Put(SymbolReady, truth(ready))
+
+		return input
 	}
-
-	left, leftCount := pathPoints(&state)
-	right, rightCount := pathPoints(&input)
-	correlation, covariance, leftVariance, rightVariance, support, ready :=
-		hayashiPoints(&left, leftCount, &right, rightCount, int64(shiftValue))
-
-	output := input
-	output.Put(SymbolCorrelation, correlation)
-	output.Put(SymbolCovariance, covariance)
-	output.Put(SymbolLeftVariance, leftVariance)
-	output.Put(SymbolRightVariance, rightVariance)
-	output.Put(SymbolSupport, float64(support))
-	output.Put(SymbolReady, truth(ready))
-
-	return state, output, nil
 }
 
 type point struct {
@@ -55,13 +59,15 @@ type point struct {
 	value     float64
 }
 
-func pathPoints(path *types.Frame) ([temporal.MaxPathSamples]point, int) {
+func seriesPoints(
+	series temporal.Series,
+	path *types.Frame,
+) ([temporal.MaxPathSamples]point, int) {
 	points := [temporal.MaxPathSamples]point{}
-	countValue, _ := path.Get(types.SampleCount)
-	count := int(countValue)
+	count := series.Count(*path)
 
 	for index := 0; index < count; index++ {
-		timestamp, value, found := temporal.PathSample(path, index)
+		timestamp, value, found := series.Sample(path, index)
 
 		if !found {
 			continue

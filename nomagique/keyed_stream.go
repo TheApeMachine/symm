@@ -26,13 +26,15 @@ func NewKeyedStreams[Key comparable](
 }
 
 // Step routes one input to the unit selected by key.
-func (collection *KeyedStreams[Key]) Step(key Key, input types.Frame) (types.Frame, error) {
+func (collection *KeyedStreams[Key]) Step(key Key, input types.Frame) types.Frame {
 	if collection == nil || collection.number == nil {
-		return types.Frame{}, errnie.Error(errnie.Err(
+		input.Err = errnie.Error(errnie.Err(
 			errnie.Internal,
 			"keyed stream primitive is nil",
 			nil,
 		))
+
+		return input
 	}
 
 	return collection.number.Step(key, input)

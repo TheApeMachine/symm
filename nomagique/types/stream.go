@@ -4,13 +4,12 @@ import "sync/atomic"
 
 /*
 Stream owns one reducer state and is the allocation-free path for ordered,
-single-writer event processing.
+single-writer event processing. The frame it holds is both committed state and
+the last output; a failed transition leaves it unchanged and records Err.
 */
 type Stream struct {
 	primitive Primitive
 	state     Frame
-	output    Frame
-	err       error
 }
 
 /*
@@ -24,25 +23,25 @@ func NewStream(primitive Primitive, initial Frame) *Stream {
 }
 
 /*
-Step evaluates and commits one input. Failed candidates leave state untouched.
+Step evaluates and commits one input. A failed transition sets the returned
+frame's Err and leaves committed state untouched.
 */
-func (stream *Stream) Step(input Frame) (Frame, error) {
+func (stream *Stream) Step(input Frame) Frame {
 	if stream == nil || stream.primitive == nil {
-		return Frame{}, PrimitiveError("stream primitive is nil")
+		input.Err = PrimitiveError("stream primitive is nil")
+
+		return input
 	}
 
-	nextState, output, err := Step(stream.primitive, stream.state, input)
+	merged := stream.state
+	merged.Merge(input)
+	output := Step(stream.primitive, merged)
 
-	if err != nil {
-		stream.err = err
-		return stream.output, err
+	if output.Err == nil {
+		stream.state = output
 	}
 
-	stream.state = nextState
-	stream.output = output
-	stream.err = nil
-
-	return output, nil
+	return output
 }
 
 /*
@@ -57,14 +56,14 @@ func (stream *Stream) Project() Frame {
 }
 
 /*
-Output returns the last successful output snapshot.
+Output returns the last successful output snapshot, which is the committed state.
 */
 func (stream *Stream) Output() Frame {
 	if stream == nil {
 		return Frame{}
 	}
 
-	return stream.output
+	return stream.state
 }
 
 /*
@@ -75,11 +74,11 @@ func (stream *Stream) Error() error {
 		return PrimitiveError("stream is nil")
 	}
 
-	return stream.err
+	return stream.state.Err
 }
 
 /*
-Reset replaces committed state and clears the last output and error.
+Reset replaces committed state.
 */
 func (stream *Stream) Reset(initial Frame) {
 	if stream == nil {
@@ -87,15 +86,11 @@ func (stream *Stream) Reset(initial Frame) {
 	}
 
 	stream.state = initial
-	stream.output = Frame{}
-	stream.err = nil
 }
 
 /*
 AtomicStream provides lock-free CAS commits and projections for read-heavy
-workloads with concurrent writers. Immutable pointer publication necessarily
-allocates a snapshot per attempted transition; use Stream behind an SPSC ring
-when zero-allocation ordered processing is required.
+workloads with concurrent writers.
 */
 type AtomicStream struct {
 	state     atomic.Pointer[Frame]
@@ -117,24 +112,28 @@ func NewAtomicStream(primitive Primitive, initial Frame) *AtomicStream {
 /*
 Step applies one lock-free compare-and-swap transition.
 */
-func (stream *AtomicStream) Step(input Frame) (Frame, error) {
+func (stream *AtomicStream) Step(input Frame) Frame {
 	if stream == nil || stream.primitive == nil {
-		return Frame{}, PrimitiveError("atomic stream primitive is nil")
+		input.Err = PrimitiveError("atomic stream primitive is nil")
+
+		return input
 	}
 
 	for {
 		current := stream.state.Load()
-		nextState, output, err := Step(stream.primitive, *current, input)
+		merged := *current
+		merged.Merge(input)
+		output := Step(stream.primitive, merged)
 
-		if err != nil {
-			return Frame{}, err
+		if output.Err != nil {
+			return output
 		}
 
 		candidate := new(Frame)
-		*candidate = nextState
+		*candidate = output
 
 		if stream.state.CompareAndSwap(current, candidate) {
-			return output, nil
+			return output
 		}
 	}
 }

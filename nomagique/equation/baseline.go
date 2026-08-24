@@ -10,9 +10,9 @@ import (
 // AdaptiveBaseline composes retention, center, clustering, and capacity control.
 func AdaptiveBaseline() types.Primitive {
 	return types.Pipe(
-		temporal.Window,
+		temporal.Window(""),
 		statistic.Mean,
-		statistic.Stability,
+		statistic.Stability(""),
 		temporal.Governor,
 	)
 }
@@ -24,8 +24,8 @@ current observation, then explicitly publishes that center as the baseline fact.
 func CausalBaseline() types.Primitive {
 	return types.Pipe(
 		types.Retained(statistic.Mean),
-		temporal.Window,
-		statistic.Stability,
+		temporal.Window(""),
+		statistic.Stability(""),
 		temporal.Governor,
 		types.Wire(
 			types.Identity,

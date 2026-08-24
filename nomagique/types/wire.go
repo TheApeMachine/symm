@@ -14,8 +14,7 @@ const (
 
 /*
 Binding connects an outer named fact to one local primitive port. Construct
-bindings with In, Out, and State; the fields stay private so invalid directions
-cannot be assembled accidentally.
+bindings with In, Out, and State.
 */
 type Binding struct {
 	kind bindingKind
@@ -33,34 +32,35 @@ func Out(port Symbol, fact Symbol) Binding {
 	return Binding{kind: outputBinding, fact: fact, port: port}
 }
 
-// State binds an outer state fact bidirectionally to a primitive-local state port.
+// State binds an outer state fact bidirectionally to a primitive-local port.
 func State(fact Symbol, port Symbol) Binding {
 	return Binding{kind: stateBinding, fact: fact, port: port}
 }
 
 /*
-Wire gives one primitive a deliberately small local coordinate system.
-
-The outer Frame remains a collection of named facts and committed state. The
-primitive receives only the input and state ports explicitly listed here. Its
-mapped outputs are projected back onto the original outer input. No fallback,
-name inference, or semantic coercion occurs.
+Wire gives one primitive a deliberately small local coordinate system. The
+primitive receives only the input and state ports explicitly listed, and its
+mapped outputs are projected back onto the incoming frame. No fallback, name
+inference, or semantic coercion occurs.
 */
 func Wire(primitive Primitive, bindings ...Binding) Primitive {
 	program := append([]Binding(nil), bindings...)
 	configurationError := validateBindings(program)
 
-	return func(state Frame, input Frame) (Frame, Frame, error) {
+	return func(input Frame) Frame {
 		if configurationError != nil {
-			return state, Frame{}, configurationError
+			input.Err = configurationError
+
+			return input
 		}
 
 		if primitive == nil {
-			return state, Frame{}, PrimitiveError("wire primitive is nil")
+			input.Err = PrimitiveError("wire primitive is nil")
+
+			return input
 		}
 
-		localInput := Frame{}
-		localState := Frame{}
+		local := Frame{}
 
 		for _, binding := range program {
 			switch binding.kind {
@@ -68,80 +68,57 @@ func Wire(primitive Primitive, bindings ...Binding) Primitive {
 				value, found := input.Get(binding.fact)
 
 				if !found {
-					return state, Frame{}, fmt.Errorf(
+					input.Err = fmt.Errorf(
 						"nomagique: wire input fact %s for port %s is missing",
 						symbolLabel(binding.fact),
 						symbolLabel(binding.port),
 					)
+
+					return input
 				}
 
-				localInput.Put(binding.port, value)
+				local.Put(binding.port, value)
 			case stateBinding:
-				if value, found := state.Get(binding.fact); found {
-					localState.Put(binding.port, value)
+				if value, found := input.Get(binding.fact); found {
+					local.Put(binding.port, value)
 				}
 			}
 		}
 
-		candidateState, localOutput, err := Step(primitive, localState, localInput)
+		result := Step(primitive, local)
 
-		if err != nil {
-			return state, Frame{}, err
+		if result.Err != nil {
+			input.Err = result.Err
+
+			return input
 		}
 
-		for port := range candidateState.All() {
-			bound := false
-
-			for _, binding := range program {
-				if binding.kind == stateBinding && binding.port == port {
-					bound = true
-					break
+		for _, binding := range program {
+			switch binding.kind {
+			case stateBinding:
+				if value, found := result.Get(binding.port); found {
+					input.Put(binding.fact, value)
+				} else {
+					input.Delete(binding.fact)
 				}
-			}
+			case outputBinding:
+				value, found := result.Get(binding.port)
 
-			if !bound {
-				return state, Frame{}, fmt.Errorf(
-					"nomagique: wire primitive mutated unbound state port %s",
-					symbolLabel(port),
-				)
-			}
-		}
+				if !found {
+					input.Err = fmt.Errorf(
+						"nomagique: wire output port %s for fact %s is missing",
+						symbolLabel(binding.port),
+						symbolLabel(binding.fact),
+					)
 
-		nextState := state
+					return input
+				}
 
-		for _, binding := range program {
-			if binding.kind != stateBinding {
-				continue
-			}
-
-			if value, found := candidateState.Get(binding.port); found {
-				nextState.Put(binding.fact, value)
-			} else {
-				nextState.Delete(binding.fact)
+				input.Put(binding.fact, value)
 			}
 		}
 
-		output := input
-
-		for _, binding := range program {
-			if binding.kind != outputBinding {
-				continue
-			}
-
-			value, found := localOutput.Get(binding.port)
-
-			if !found {
-				return state, Frame{}, fmt.Errorf(
-					"nomagique: wire output port %s for fact %s is missing",
-					symbolLabel(binding.port),
-					symbolLabel(binding.fact),
-				)
-			}
-
-			output.Put(binding.fact, value)
-		}
-
-		return nextState, output, nil
+		return input
 	}
 }
 
@@ -151,7 +128,7 @@ func validateBindings(bindings []Binding) error {
 			return PrimitiveError("wire contains an invalid binding")
 		}
 
-		for previous := 0; previous < index; previous++ {
+		for previous := range index {
 			other := bindings[previous]
 
 			switch binding.kind {

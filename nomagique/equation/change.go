@@ -16,7 +16,7 @@ local A/B ports of Difference. The first observation emits no invented change.
 */
 func Change(source types.Symbol) types.Primitive {
 	return types.Pipe(
-		temporal.Observer(source),
+		temporal.Observer("", source),
 		types.ForkStrict(
 			statistic.Maturity(temporal.SymbolObservations),
 			logic.If(

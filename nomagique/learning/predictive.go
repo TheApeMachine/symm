@@ -255,9 +255,10 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 	dynInput.Put(SymbolDynamicsActivity, input.Drive)
 	dynInput.Put(SymbolDynamicsExternalPower, input.Power)
 
-	dynOutput, dynErr := pc.dynamics.Step(dynInput)
-	if dynErr != nil {
-		return PredictiveOutput{}, fmt.Errorf("predictive coder: dynamics failed: %w", dynErr)
+	dynOutput := pc.dynamics.Step(dynInput)
+
+	if dynOutput.Err != nil {
+		return PredictiveOutput{}, fmt.Errorf("predictive coder: dynamics failed: %w", dynOutput.Err)
 	}
 
 	// 7. Issue current forecast into ledger for future verification

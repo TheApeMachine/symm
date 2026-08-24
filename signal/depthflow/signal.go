@@ -2,168 +2,45 @@ package depthflow
 
 import (
 	"context"
+	"time"
 
-	"github.com/google/uuid"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/types"
-)
-
-var (
-	SymbolTouchImbalance = algo.SymbolTouchImbalance
-	SymbolDeepImbalance  = algo.SymbolDeepImbalance
-	SymbolSpoofScore     = algo.SymbolSpoofScore
-	SymbolLoadedScore    = algo.SymbolLoadedScore
-	SymbolThinScore      = algo.SymbolThinScore
-	SymbolNeutralScore   = algo.SymbolNeutralScore
-	SymbolSeparation     = algo.SymbolSeparation
 )
 
 /*
-depthflowPipeline is the pure nomagique Depthflow primitive.
+Signal is the depth-flow measuring instrument. It composes its market entity
+in its constructor and exposes the canonical signal structure: Constructor,
+Name, Error, Step, Close.
 */
-func depthflowPipeline() nmtypes.Primitive {
-	return algo.Depthflow()
-}
-
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	thesis       *types.Thesis
-	number       *nomagique.Number[string]
-	measurements *runtime.Channel[*nmtypes.Measurement]
-	pool         *types.SymbolPool
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+
+	level3 *Level3
 }
 
-func NewSignal(ctx context.Context, thesis *types.Thesis, bus *runtime.Workspace) *Signal {
+/*
+NewSignal composes the Level3 (full-book) entity. The book is read through the
+shared-object pool at each step; it is requested here at registration.
+*/
+func NewSignal(ctx context.Context, workspace *runtime.Workspace) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	signal := &Signal{
+	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		thesis: thesis,
-		number: nomagique.NewNumber[string](depthflowPipeline()),
-		pool:   types.NewSymbolPool(types.ShardWorkers()),
+		level3: NewLevel3(workspace),
 	}
-	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
-		bus, types.ChannelMeasurements,
-		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
-	)
-	runtime.ChannelOf[kraken.Level3Data](
-		bus, types.ChannelLevel3,
-		func(frame kraken.Level3Data) string { return frame.Symbol },
-	).Subscribe(signal.Name(), signal.Step)
-
-	return signal
 }
 
-func (signal *Signal) Name() string           { return string(types.SourceDepthFlow) }
-func (signal *Signal) Error() error           { return signal.err }
-func (signal *Signal) Type() types.SourceType { return types.SourceDepthFlow }
+func (signal *Signal) Name() string { return "depthflow" }
 
-// Step processes one ready symbol cut. The transport workspace preserves
-// order for this symbol while allowing every other symbol to advance.
-func (signal *Signal) Step(frame kraken.Level3Data) error {
-	touchBid, touchAsk := frameTouch(frame)
-	deepBid, deepAsk := frameDeep(frame)
+func (signal *Signal) Error() error { return signal.err }
 
-	input := nmtypes.Frame{}
-	input.Put(algo.SymbolTouchBidQty, touchBid)
-	input.Put(algo.SymbolTouchAskQty, touchAsk)
-	input.Put(algo.SymbolDeepBidQty, deepBid)
-	input.Put(algo.SymbolDeepAskQty, deepAsk)
-	input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
-	input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
-
-	output, err := signal.number.Step(frame.Symbol, input)
-
-	if err != nil {
-		return err
-	}
-
-	measurement := nmtypes.NewMeasurement(
-		uuid.NewString(),
-		signal.Name(),
-		frame.Timestamp.UnixNano(),
-		frame.Timestamp.UnixNano(),
-	).AddMetrics(
-		nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescaleInstantaneous,
-		}),
-		nmtypes.NewMetric("deep_imbalance", output.MustGet(SymbolDeepImbalance), nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescaleInstantaneous,
-		}),
-		nmtypes.NewNormalizedMetric("spoof_score", output.MustGet(SymbolSpoofScore), output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescaleInstantaneous,
-		}),
-		nmtypes.NewNormalizedMetric("loaded_score", output.MustGet(SymbolLoadedScore), output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescaleInstantaneous,
-		}),
-		nmtypes.NewNormalizedMetric("thin_score", output.MustGet(SymbolThinScore), output.MustGet(SymbolThinScore), nmtypes.Descriptor{
-			Unit:      nmtypes.UnitDimensionless,
-			Timescale: nmtypes.TimescaleInstantaneous,
-		}),
-	)
-
-	measurement.StampQuality(
-		output.MustGet(SymbolSeparation),
-		output.MustGet(nmtypes.SampleCount),
-	)
-
-	types.PublishMeasurement(signal.thesis, signal.measurements, frame.Symbol, measurement)
-	return nil
-}
-
-func frameTouch(frame kraken.Level3Data) (float64, float64) {
-	bestBid, bestAsk := 0.0, 0.0
-
-	for _, order := range frame.Bids {
-		if order.OrderQty == nil {
-			continue
-		}
-
-		if order.OrderQty.Float64() > bestBid {
-			bestBid = order.OrderQty.Float64()
-		}
-	}
-
-	for _, order := range frame.Asks {
-		if order.OrderQty == nil {
-			continue
-		}
-
-		if order.OrderQty.Float64() > bestAsk {
-			bestAsk = order.OrderQty.Float64()
-		}
-	}
-
-	return bestBid, bestAsk
-}
-
-func frameDeep(frame kraken.Level3Data) (float64, float64) {
-	bidTotal, askTotal := 0.0, 0.0
-
-	for _, order := range frame.Bids {
-		if order.OrderQty != nil {
-			bidTotal += order.OrderQty.Float64()
-		}
-	}
-
-	for _, order := range frame.Asks {
-		if order.OrderQty != nil {
-			askTotal += order.OrderQty.Float64()
-		}
-	}
-
-	return bidTotal, askTotal
+func (signal *Signal) Step(symbol string, at time.Time) *data.Measurement[float64] {
+	return signal.level3.Step(symbol, at)
 }
 
 func (signal *Signal) Close() error {
@@ -171,9 +48,5 @@ func (signal *Signal) Close() error {
 		signal.cancel()
 	}
 
-	if signal.pool != nil {
-		signal.pool.Close()
-	}
-
-	return nil
+	return signal.level3.Close()
 }

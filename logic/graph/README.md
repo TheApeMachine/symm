@@ -1,140 +1,306 @@
-# `logic/graph` — where the stages argue
+# Influence Graph Specification
 
-> Four independent models. They will not agree. The graph is where that
-> disagreement becomes information instead of noise.
+## Status
 
-## What this package is
+Normative specification for the time-indexed observational relation graph.
 
-Graph is the **last** stage in the logic chain, and it is the only one that sees
-everything. Category has hypothesized a regime, resonance has forecast a return,
-causal has estimated an uplift, cognition has picked a basin — each from its own
-substrate, each with no knowledge of the others.
+## 1. Purpose
 
-This stage compiles all of it into a **directed knowledge graph**: typed nodes
-for what each stage concluded, and typed edges for how those conclusions relate.
-The result is handed to strategy, which uses it to gate entries.
+The Influence Graph stores measured directed temporal relationships between Measurement coordinates.
 
-The critical property: an edge is not a summary. It is a *relationship with a
-stated reason*. When a trade is vetoed, the graph can say which two stages
-disagreed and by how much.
+It is a map of observed predictive structure.
 
-## Nodes
+It is not itself a Structural Causal Model.
 
-| Kind        | Emitted from                                      | Example ID                     |
-|-------------|---------------------------------------------------|--------------------------------|
-| `category`  | Category verdicts                                 | `cat:BTC/USD:aggressive_drive` |
-| `resonance` | Predictive coding forecast, latent state          | `res:BTC/USD:forecast`         |
-| `causal`    | Pearl ladder uplift, do-expectation, intervention | `causal:BTC/USD:uplift`        |
-| `cognition` | DMT winner regime, class confidence               | `cog:BTC/USD:winner_regime`    |
+## 2. Nodes
 
-Each node carries `Value`, `Strength`, `Confidence`, and `At` — the last of which
-is what makes staleness detectable.
+A node represents one Measurement coordinate identity.
 
-## Edges — the vocabulary
+A node MUST preserve:
 
-```
-supports            contradicts         conditions
-leads               lags                redundant_with
-independent_of      stale_relative_to   incomparable_with
+- metric identity;
+- signal source;
+- market symbol;
+- peer identity when bivariate;
+- unit;
+- timescale;
+- model epoch.
+
+Example:
+
+```text
+BTC-PERP / liquidity / ask_depth_divergence
 ```
 
-This vocabulary is the package's real contribution. Most systems collapse
-inter-model relationships into a single weighted average, which destroys exactly
-the distinctions that matter:
+The graph MUST NOT collapse a whole signal package into one node unless that package truly emits one scalar phenomenon.
 
-- **`contradicts`** — two stages disagree in direction. Actionable: this is a
-  reason *not* to trade, and it is why the `evidence_opposition` cause can veto
-  an entry outright.
-- **`redundant_with`** — two stages agree because they are looking at the same
-  thing. Their agreement is *not* independent confirmation, and treating it as
-  such double-counts one observation.
-- **`independent_of`** — no relationship. Distinct from "we did not check."
-- **`stale_relative_to`** — one node is older than the other by more than the
-  stale threshold (default 5s). Agreement between a fresh node and a stale one is
-  agreement with the past.
-- **`incomparable_with`** — the relation is undefined, said out loud rather than
-  quietly scored as zero.
-- **`leads` / `lags`** — temporal precedence, emitted as a symmetric pair from
-  cognition's beam-search lookahead: the current winner regime `leads` each
-  predicted category, and that category `lags` it, both weighted by the path
-  probability.
-- **`conditions`** — one node sets the regime the other must be read in.
+## 3. Edges
 
-## The rule that shapes everything: compare direction, not magnitude
+An Influence edge is one valid Relation measurement.
 
-When relating a resonance forecast to a causal uplift:
+An edge MUST preserve:
 
-```go
-agreement, _ := agreementWeight(resonanceNode.Value, causalNode.Value)
+- Source node;
+- Target node;
+- lag;
+- coefficient;
+- PredictiveGain;
+- coefficient uncertainty;
+- Maturity;
+- observation interval;
+- estimator provenance.
 
-if resonanceNode.Value > 0 && causalNode.Value > 0        →  supports
-if signs differ                                            →  contradicts
+An edge is a measurement, not a category.
+
+## 4. Time Index
+
+Edges are time-varying.
+
+The graph MUST support:
+
+- current relation state;
+- historical edge state;
+- model epoch.
+
+A relationship may strengthen, weaken, reverse coefficient sign, or change lag.
+
+Current values MUST NOT erase historical edge state when relation dynamics are required.
+
+## 5. Candidate Relation Plan
+
+The graph builder evaluates an explicit candidate relation plan.
+
+The plan defines structurally eligible Source/Target pairs.
+
+Eligibility MAY depend on:
+
+- symbol scope;
+- venue scope;
+- explicit cohort/pair configuration;
+- standardized-coordinate availability;
+- timescale compatibility;
+- model epoch.
+
+Eligibility MUST NOT depend on a current evidence score.
+
+Forbidden:
+
+```text
+only estimate CVD influence when hawkes > 0.7
 ```
 
-`agreementWeight` is `min(|left|, |right|)` after magnitude weighting — **the
-weaker of the two**, never a difference or a product of the raw values.
+Allowed:
 
-This is deliberate and load-bearing:
-
-> The two heads score on unrelated scales. A raw magnitude comparison would let
-> whichever head has larger units decide the relation by itself.
-
-A forecast in log-return units and an uplift in ladder-score units are not
-commensurable. Their *directions* are. And taking the minimum means a strong
-claim paired with a weak one produces a weak edge — agreement is only as good as
-its weakest participant.
-
-Zero-confidence pair relations are not materialized at all, because their
-decision weight is necessarily zero. An edge that cannot affect a decision is
-noise in the graph.
-
-## Edge confidence compounds
-
-```go
-Confidence: resonanceNode.Confidence * causalNode.Confidence
+```text
+estimate all configured same-symbol compatible coordinate pairs
 ```
 
-Multiplication, not averaging. Two 50%-confident nodes produce a 25%-confident
-edge. This is the honest composition: a relationship inherits the uncertainty of
-*both* endpoints, and averaging would let a confident node launder an uncertain
-one.
+## 6. No Implicit Peer Discovery
 
-## Category-centered structure
+Cross-symbol relations require explicit scope.
 
-The graph is built around **category hypothesis nodes**. The other stages'
-conclusions relate to them via `supports` / `contradicts`, and categories carry
-their supporting, opposing, and *missing* evidence through from the category
-stage.
+The graph MUST NOT choose peers merely because symbols have similar names, moved similarly, are currently correlated, or one is the largest mover.
 
-That last one matters downstream: a hypothesis whose key evidence never arrived
-is weaker than one whose evidence arrived and agreed, and the graph preserves the
-difference rather than flattening both into "supported."
+Peer/cohort construction belongs to an explicit outer contract.
 
-## Ordering
+## 7. Candidate, Estimated, Unavailable
 
-Graph runs **last** and depends on every stage before it:
+The graph SHOULD distinguish:
 
+- `Candidate`: structurally scheduled for estimation;
+- `Estimated`: currently has a valid Relation;
+- `Unavailable`: candidate exists but its estimator is currently undefined.
+
+Unavailable MUST NOT be treated as "no relationship."
+
+## 8. No Threshold Pruning
+
+The graph MUST NOT delete an edge because:
+
+- PredictiveGain is small;
+- coefficient is small;
+- coefficient SNR is low;
+- Maturity is low.
+
+Low and zero are valid measurements.
+
+If bounded storage requires eviction, eviction MUST follow explicit retention policy rather than a market-value threshold. The candidate plan remains intact so the Relation remains re-estimable.
+
+## 9. Association Edges
+
+Contemporaneous correlation MAY be visualized in the same graph, but it MUST use a distinct type:
+
+```text
+Association
 ```
-category → manifold → resonance → causal → cognition → graph
+
+rather than:
+
+```text
+Influence
 ```
 
-The chain is sequential by design. Running it concurrently would mix
-prior-epoch readiness with current-epoch values — a stage would read a neighbour's
-output from the *previous* tick while believing it was current.
+A zero-lag correlation MUST NOT masquerade as directed temporal Influence.
 
-## Files
+## 10. Lagged Cycles
 
-| File        | Responsibility                                                                  |
-|-------------|---------------------------------------------------------------------------------|
-| `solver.go` | Graph types, node extraction per stage, structural edge inference, publication. |
+Lagged cycles are allowed.
 
-## Notes for extending
+Example:
 
-- **Adding a node kind** means deciding what it can *relate to*. A node with no
-  edges is decoration.
-- **Adding an edge type** means deciding what a consumer should *do* differently
-  when it sees one. If the answer is "weight it slightly differently," it is
-  probably a weight on an existing relation, not a new relation.
-- **Every edge carries a `Reason` string.** Populate it. It is what turns a veto
-  from "the system said no" into "the forecast and the causal uplift conflicted
-  in direction."
+```text
+A(t-2) → B(t)
+B(t-1) → A(t)
+```
+
+This does not imply an instantaneous causal cycle because the edges connect different time slices.
+
+Contemporaneous causal cycles require an explicit causal model and MUST NOT be inferred from the Influence Graph.
+
+## 11. Graph Queries
+
+The graph MUST support explicit queries such as:
+
+- incoming Influences for a Target;
+- outgoing Influences from a Source;
+- edge history;
+- all candidate relations in one symbol;
+- cross-symbol relations within an explicit cohort;
+- paths between coordinates.
+
+Query results MUST retain the underlying edge measurements.
+
+## 12. Ranking Is Not Deletion
+
+A consumer MAY rank edges by:
+
+- PredictiveGain;
+- coefficient SNR;
+- Maturity;
+- absolute coefficient;
+- lag.
+
+Ranking changes presentation/order only.
+
+Lower-ranked edges remain available.
+
+## 13. Signal-Family Rollups
+
+A UI MAY show a rollup such as:
+
+```text
+Liquidity → CVD
+```
+
+only as a view over coordinate-level edges.
+
+The rollup MUST:
+
+- expose the underlying edges;
+- state the aggregation rule;
+- remain reversible.
+
+It MUST NOT replace those edges as the input to causal reasoning or MCTS.
+
+## 14. No Graph Confidence
+
+Each edge carries its own quality.
+
+A graph-level summary MAY expose distributions such as median Maturity or number of currently estimable edges.
+
+It MUST NOT create one universal `graph_confidence` that replaces edge-specific quality.
+
+Likewise, edge SNR values MUST NOT simply be summed into market confidence.
+
+## 15. Observational Boundary
+
+An Influence edge:
+
+```text
+X → Y
+```
+
+means:
+
+> past X improved prediction of later Y under the stated Relation model.
+
+It does not by itself justify an intervention:
+
+```text
+do(X=x)
+```
+
+The Causal layer owns causal identification.
+
+## 16. Graph-to-Causal Handoff
+
+The graph MAY provide:
+
+- candidate lagged parents;
+- temporal ordering;
+- predictive coefficients;
+- PredictiveGain;
+- coefficient uncertainty;
+- relation history.
+
+The Causal Model MUST independently preserve:
+
+- structural assumptions;
+- forbidden directions;
+- treatment semantics;
+- adjustment sets;
+- identification status.
+
+The graph is evidence for structure, not automatic causal truth.
+
+## 17. Schema Versioning
+
+Every graph snapshot MUST identify:
+
+- node schema version;
+- relation-plan version;
+- model epoch.
+
+Edges from incompatible schemas MUST NOT be silently merged.
+
+## 18. Persistence and Reconstruction
+
+Persistent graph data SHOULD be sufficient to reconstruct:
+
+- why an edge was attempted;
+- exact Source and Target identities;
+- searched lag domain;
+- current relation statistics;
+- relevant relation history;
+- estimator version.
+
+A serialized graph MUST NOT consist only of an anonymous numeric matrix.
+
+## 19. Missing and Zero States
+
+The graph MUST distinguish:
+
+- candidate but unavailable;
+- valid zero coefficient;
+- valid zero PredictiveGain;
+- stale Relation;
+- incompatible epoch;
+- missing node;
+- estimator failure.
+
+No missing edge value is replaced by zero.
+
+## 20. Conformance Checklist
+
+The Influence Graph is non-conformant if it:
+
+1. collapses signal packages to one semantic node each;
+2. deletes edges below a threshold;
+3. treats correlation as directed Influence;
+4. treats Influence as causal truth;
+5. loses lag provenance;
+6. loses schema/model epoch;
+7. uses graph confidence as a replacement for edge quality;
+8. silently invents peers;
+9. discards underlying edges after a family rollup;
+10. cannot distinguish unavailable from measured zero.

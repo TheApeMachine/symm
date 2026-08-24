@@ -16,27 +16,27 @@ var (
 /*
 Clock calculates temporal progress as age divided by positive span.
 */
-func Clock(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func Clock(input types.Frame) types.Frame {
 	age, hasAge := input.Get(SymbolAge)
 	span, hasSpan := input.Get(SymbolSpan)
 
 	if !hasAge || !hasSpan || !utils.IsFinite(age, span) {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"temporal: clock requires finite age and span",
 		)
+
+		return input
 	}
 
 	if span <= 0 {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"temporal: clock requires positive span",
 		)
+
+		return input
 	}
 
-	output := input
-	output.Put(SymbolProgress, age/span)
+	input.Put(SymbolProgress, age/span)
 
-	return state, output, nil
+	return input
 }

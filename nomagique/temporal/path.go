@@ -13,99 +13,249 @@ const MaxPathSamples = nmtypes.MaxSamples / pathSampleWidth
 const pathSampleWidth = 2
 
 /*
-Path retains an ordered ring of exact event timestamps and numeric values. Each
-observation occupies two generic sample slots; the timestamp is bit-encoded so
-Unix nanoseconds survive Frame storage without float precision loss.
+Series names one independent path coordinate system inside a Frame. Every slot
+the path owns — its ring samples and its control facts — is namespaced by the
+series prefix, so one Frame can carry two (or more) independent paths without
+collision. The empty prefix reuses the legacy generic sample slots.
 */
-func Path(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nmtypes.SampleValue)
-	seconds, hasSeconds := input.Get(SymbolUnixSec)
-	nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
-
-	if !hasValue || !hasSeconds || !hasNanoseconds {
-		return state, types.Frame{}, fmt.Errorf(
-			"temporal: path requires a value and event time",
-		)
-	}
-
-	if seconds != math.Trunc(seconds) || nanoseconds != math.Trunc(nanoseconds) ||
-		nanoseconds < 0 || nanoseconds >= float64(nanosecondsPerSecond) {
-		return state, types.Frame{}, fmt.Errorf(
-			"temporal: path requires integral seconds and normalized nanoseconds",
-		)
-	}
-
-	timestamp := int64(seconds)*nanosecondsPerSecond + int64(nanoseconds)
-	count := pathCount(state)
-	head := pathHead(state)
-	capacity, err := pathCapacity(state, input, count)
-
-	if err != nil {
-		return state, types.Frame{}, err
-	}
-
-	if capacity < count {
-		return state, types.Frame{}, fmt.Errorf(
-			"temporal: path capacity cannot be smaller than its retained count",
-		)
-	}
-
-	if count > 0 {
-		latestTimestamp, _, found := PathSample(&state, count-1)
-
-		if !found || timestamp < latestTimestamp {
-			return state, types.Frame{}, fmt.Errorf(
-				"temporal: path event time must not regress",
-			)
-		}
-	}
-
-	nextState := state
-	physicalIndex := count
-
-	if count >= capacity {
-		physicalIndex = head
-		head = (head + 1) % capacity
-	} else {
-		count++
-	}
-
-	putPathSample(&nextState, physicalIndex, timestamp, value)
-	nextState.Put(nmtypes.SampleCount, float64(count))
-	nextState.Put(nmtypes.SampleHead, float64(head))
-	nextState.Put(nmtypes.SampleReady, 1)
-	nextState.Put(SymbolCapacity, float64(capacity))
-
-	output := nextState
-	output.Merge(input)
-
-	return nextState, output, nil
+type Series struct {
+	prefix         string
+	ValueSymbol    types.Symbol
+	SecSymbol      types.Symbol
+	NsecSymbol     types.Symbol
+	CountSymbol    types.Symbol
+	HeadSymbol     types.Symbol
+	ReadySymbol    types.Symbol
+	CapacitySymbol types.Symbol
+	SpanSymbol     types.Symbol
+	samples        [types.MaxSamples]types.Symbol
 }
 
 /*
-PathSample returns one retained observation in chronological order.
+NewSeries resolves the slot table for one series prefix. Interning is idempotent
+by name, so the empty prefix resolves to the legacy generic slots. Construct a
+Series during pipeline wiring, never per event.
+*/
+func NewSeries(prefix string) Series {
+	series := Series{
+		prefix:         prefix,
+		ValueSymbol:    types.MustIntern(joinPrefix(prefix, "sample")),
+		SecSymbol:      types.MustIntern(joinPrefix(prefix, "unix_sec")),
+		NsecSymbol:     types.MustIntern(joinPrefix(prefix, "unix_nsec")),
+		CountSymbol:    types.MustIntern(joinPrefix(prefix, "count")),
+		HeadSymbol:     types.MustIntern(joinPrefix(prefix, "head")),
+		ReadySymbol:    types.MustIntern(joinPrefix(prefix, "ready")),
+		CapacitySymbol: types.MustIntern(joinPrefix(prefix, "capacity")),
+		SpanSymbol:     types.MustIntern(joinPrefix(prefix, "input/span")),
+	}
+
+	for index := range types.MaxSamples {
+		series.samples[index] = types.MustIntern(
+			joinPrefix(prefix, fmt.Sprintf("sample/%d", index)),
+		)
+	}
+
+	return series
+}
+
+func joinPrefix(prefix string, name string) string {
+	if prefix == "" {
+		return name
+	}
+
+	return prefix + "/" + name
+}
+
+/*
+JoinPrefix namespaces one slot name under a series prefix. The empty prefix
+returns the name unchanged so the legacy generic slots keep working.
+*/
+func JoinPrefix(prefix string, name string) string {
+	return joinPrefix(prefix, name)
+}
+
+/*
+DefaultSeries is the unprefixed path coordinate system. It aliases the legacy
+generic sample slots, so single-series pipelines remain unchanged.
+*/
+var DefaultSeries = NewSeries("")
+
+/*
+Path returns the retaining ring primitive for one series prefix. Each
+observation occupies two sample slots of that series; the timestamp is
+bit-encoded so Unix nanoseconds survive Frame storage without float precision
+loss.
+*/
+func Path(prefix string) types.Primitive {
+	series := NewSeries(prefix)
+
+	return func(input types.Frame) types.Frame {
+		value, hasValue := input.Get(series.ValueSymbol)
+		seconds, hasSeconds := input.Get(series.SecSymbol)
+		nanoseconds, hasNanoseconds := input.Get(series.NsecSymbol)
+
+		if !hasValue || !hasSeconds || !hasNanoseconds {
+			input.Err = fmt.Errorf(
+				"temporal: path requires a value and event time",
+			)
+
+			return input
+		}
+
+		if seconds != math.Trunc(seconds) || nanoseconds != math.Trunc(nanoseconds) ||
+			nanoseconds < 0 || nanoseconds >= float64(nanosecondsPerSecond) {
+			input.Err = fmt.Errorf(
+				"temporal: path requires integral seconds and normalized nanoseconds",
+			)
+
+			return input
+		}
+
+		timestamp := int64(seconds)*nanosecondsPerSecond + int64(nanoseconds)
+		count := series.Count(input)
+		head := series.Head(input)
+		capacity, err := pathCapacity(series, input, count)
+
+		if err != nil {
+			input.Err = err
+
+			return input
+		}
+
+		if capacity < count {
+			input.Err = fmt.Errorf(
+				"temporal: path capacity cannot be smaller than its retained count",
+			)
+
+			return input
+		}
+
+		if count > 0 {
+			latestTimestamp, _, found := series.Sample(&input, count-1)
+
+			if !found || timestamp < latestTimestamp {
+				input.Err = fmt.Errorf(
+					"temporal: path event time must not regress",
+				)
+
+				return input
+			}
+		}
+
+		physicalIndex := count
+
+		if count >= capacity {
+			physicalIndex = head
+			head = (head + 1) % capacity
+		} else {
+			count++
+		}
+
+		input.Put(series.samples[physicalIndex*pathSampleWidth], math.Float64frombits(uint64(timestamp)))
+		input.Put(series.samples[physicalIndex*pathSampleWidth+1], value)
+		input.Put(series.CountSymbol, float64(count))
+		input.Put(series.HeadSymbol, float64(head))
+		input.Put(series.ReadySymbol, 1)
+		input.Put(series.CapacitySymbol, float64(capacity))
+
+		return input
+	}
+}
+
+/*
+PathSample returns one retained observation of the default series in
+chronological order.
 */
 func PathSample(frame *types.Frame, index int) (int64, float64, bool) {
+	return DefaultSeries.Sample(frame, index)
+}
+
+/*
+CopyFrom relocates the default-series path retained in src onto dst under this
+series' prefix. It is the declarative plumbing for placing two committed paths
+into one frame under distinct series prefixes before a bivariate primitive runs.
+*/
+func (series Series) CopyFrom(dst *types.Frame, src types.Frame) {
+	if dst == nil {
+		return
+	}
+
+	count := DefaultSeries.Count(src)
+	capacity, found := src.Get(DefaultSeries.CapacitySymbol)
+
+	if !found {
+		return
+	}
+
+	for index := 0; index < count; index++ {
+		physicalIndex := (DefaultSeries.Head(src) + index) % int(capacity)
+		timestampBits, hasTimestamp := src.Get(DefaultSeries.samples[physicalIndex*pathSampleWidth])
+		value, hasValue := src.Get(DefaultSeries.samples[physicalIndex*pathSampleWidth+1])
+
+		if !hasTimestamp || !hasValue {
+			continue
+		}
+
+		dst.Put(series.samples[index*pathSampleWidth], timestampBits)
+		dst.Put(series.samples[index*pathSampleWidth+1], value)
+	}
+
+	dst.Put(series.CountSymbol, float64(count))
+	dst.Put(series.HeadSymbol, 0)
+	dst.Put(series.CapacitySymbol, capacity)
+
+	if ready, ok := src.Get(DefaultSeries.ReadySymbol); ok {
+		dst.Put(series.ReadySymbol, ready)
+	}
+}
+
+/*
+Count reports how many observations the series retains in frame.
+*/
+func (series Series) Count(frame types.Frame) int {
+	count, found := frame.Get(series.CountSymbol)
+
+	if !found {
+		return 0
+	}
+
+	return int(count)
+}
+
+/*
+Head reports the physical ring head of the series in frame.
+*/
+func (series Series) Head(frame types.Frame) int {
+	head, found := frame.Get(series.HeadSymbol)
+
+	if !found {
+		return 0
+	}
+
+	return int(head)
+}
+
+/*
+Sample returns one retained observation of the series in chronological order.
+*/
+func (series Series) Sample(frame *types.Frame, index int) (int64, float64, bool) {
 	if frame == nil {
 		return 0, 0, false
 	}
 
-	count := pathCount(*frame)
-	capacity, found := frame.Get(SymbolCapacity)
+	count := series.Count(*frame)
+	capacity, found := frame.Get(series.CapacitySymbol)
 
 	if !found || index < 0 || index >= count {
 		return 0, 0, false
 	}
 
-	physicalIndex := (pathHead(*frame) + index) % int(capacity)
+	physicalIndex := (series.Head(*frame) + index) % int(capacity)
 	timestampBits, hasTimestamp := frame.Get(
-		nmtypes.MustSampleSymbol(physicalIndex * pathSampleWidth),
+		series.samples[physicalIndex*pathSampleWidth],
 	)
 	value, hasValue := frame.Get(
-		nmtypes.MustSampleSymbol(physicalIndex*pathSampleWidth + 1),
+		series.samples[physicalIndex*pathSampleWidth+1],
 	)
 
 	if !hasTimestamp || !hasValue {
@@ -117,29 +267,21 @@ func PathSample(frame *types.Frame, index int) (int64, float64, bool) {
 	return timestamp, value, true
 }
 
-func putPathSample(
-	frame *types.Frame,
-	index int,
-	timestamp int64,
-	value float64,
-) {
-	frame.Put(
-		nmtypes.MustSampleSymbol(index*pathSampleWidth),
-		math.Float64frombits(uint64(timestamp)),
-	)
-	frame.Put(nmtypes.MustSampleSymbol(index*pathSampleWidth+1), value)
+/*
+SampleAt returns the value stored at one physical slot of the series. Window
+style rings use the series sample slots one per observation; path style rings
+use them two per observation. One series must pick one style.
+*/
+func (series Series) SampleAt(frame *types.Frame, physicalIndex int) (float64, bool) {
+	if frame == nil || physicalIndex < 0 || physicalIndex >= types.MaxSamples {
+		return 0, false
+	}
+
+	return frame.Get(series.samples[physicalIndex])
 }
 
-func pathCapacity(
-	state types.Frame,
-	input types.Frame,
-	count int,
-) (int, error) {
-	capacity, found := input.Get(nmtypes.Span)
-
-	if !found {
-		capacity, found = state.Get(nmtypes.Span)
-	}
+func pathCapacity(series Series, input types.Frame, count int) (int, error) {
+	capacity, found := input.Get(series.SpanSymbol)
 
 	if found {
 		if capacity < 1 || capacity > MaxPathSamples || capacity != math.Trunc(capacity) {
@@ -156,7 +298,7 @@ func pathCapacity(
 		return 1, nil
 	}
 
-	capacityValue, _ := state.Get(SymbolCapacity)
+	capacityValue, _ := input.Get(series.CapacitySymbol)
 
 	if count < int(capacityValue) {
 		return int(capacityValue), nil
@@ -169,26 +311,6 @@ func pathCapacity(
 	}
 
 	return int(capacity), nil
-}
-
-func pathCount(frame types.Frame) int {
-	count, found := frame.Get(nmtypes.SampleCount)
-
-	if !found {
-		return 0
-	}
-
-	return int(count)
-}
-
-func pathHead(frame types.Frame) int {
-	head, found := frame.Get(nmtypes.SampleHead)
-
-	if !found {
-		return 0
-	}
-
-	return int(head)
 }
 
 const nanosecondsPerSecond = int64(1_000_000_000)

@@ -10,20 +10,18 @@ var (
 )
 
 /*
-Spacing emits the exact discrete median of the positive event-time gaps in a
-Path. It uses retained timestamps only and imposes no external time window.
+Spacing emits the exact discrete median of the positive event-time gaps in one
+series. It uses that series' retained timestamps only and imposes no external
+time window.
 */
-func Spacing(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func (series Series) Spacing(frame types.Frame) types.Frame {
 	gaps := [MaxPathSamples]int64{}
 	gapCount := 0
-	count, _ := input.Get(types.SampleCount)
+	count := series.Count(frame)
 
-	for index := 1; index < int(count); index++ {
-		previous, _, hasPrevious := PathSample(&input, index-1)
-		current, _, hasCurrent := PathSample(&input, index)
+	for index := 1; index < count; index++ {
+		previous, _, hasPrevious := series.Sample(&frame, index-1)
+		current, _, hasCurrent := series.Sample(&frame, index)
 
 		if !hasPrevious || !hasCurrent || current <= previous {
 			continue
@@ -33,12 +31,10 @@ func Spacing(
 		gapCount++
 	}
 
-	output := input
-
 	if gapCount == 0 {
-		output.Put(SymbolSpacingReady, 0)
+		frame.Put(SymbolSpacingReady, 0)
 
-		return state, output, nil
+		return frame
 	}
 
 	for index := 1; index < gapCount; index++ {
@@ -60,8 +56,8 @@ func Spacing(
 		spacing = (gaps[middle-1] + gaps[middle]) / 2
 	}
 
-	output.Put(SymbolSpacingNanos, float64(spacing))
-	output.Put(SymbolSpacingReady, 1)
+	frame.Put(SymbolSpacingNanos, float64(spacing))
+	frame.Put(SymbolSpacingReady, 1)
 
-	return state, output, nil
+	return frame
 }

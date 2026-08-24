@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -26,9 +27,10 @@ type MetricBinding struct {
 Projector declaratively maps an evaluated Frame into an immutable *Measurement.
 */
 type Projector struct {
-	source        SourceType
-	bindings      []MetricBinding
-	qualitySymbol nmtypes.Symbol
+	source          SourceType
+	bindings        []MetricBinding
+	qualitySymbol   nmtypes.Symbol
+	qualitySeparate bool
 }
 
 type ProjectorOption func(*Projector)
@@ -105,6 +107,18 @@ rating.
 func Quality(symbol nmtypes.Symbol) ProjectorOption {
 	return func(projector *Projector) {
 		projector.qualitySymbol = symbol
+		projector.qualitySeparate = true
+	}
+}
+
+/*
+QualityRaw binds a Frame slot that is already a normalized [0,1] separation to
+the quality rating without applying StandardSeparation.
+*/
+func QualityRaw(symbol nmtypes.Symbol) ProjectorOption {
+	return func(projector *Projector) {
+		projector.qualitySymbol = symbol
+		projector.qualitySeparate = false
 	}
 }
 
@@ -157,6 +171,10 @@ func (projector *Projector) Project(
 	if projector.qualitySymbol != 0 {
 		if value, found := output.Get(projector.qualitySymbol); found {
 			quality = value
+
+			if projector.qualitySeparate {
+				quality = statistic.StandardSeparation(value)
+			}
 		}
 	}
 

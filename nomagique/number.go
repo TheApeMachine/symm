@@ -9,9 +9,10 @@ import (
 )
 
 /*
-Number is the keyed top-level composer. Every key owns one isolated Stream.
-The registry is safe for concurrent keys, and a small per-key lock serializes
-same-key writers without allocating a new Frame snapshot on every transition.
+Number is the keyed top-level composer. Every key owns one committed Frame, and
+Step merges that frame with the incoming frame before running the pipeline, then
+stores the result as the new committed state. The registry is safe for
+concurrent keys; a small per-key lock serializes same-key writers.
 */
 type Number[Key comparable] struct {
 	primitive Primitive
@@ -20,8 +21,8 @@ type Number[Key comparable] struct {
 }
 
 type numberStream struct {
-	mutex  sync.RWMutex
-	stream Stream
+	mutex sync.RWMutex
+	frame Frame
 }
 
 // NewNumber composes primitives into one isolated numeric unit per key.
@@ -40,18 +41,33 @@ func NewNumberWithInitial[Key comparable](
 	}
 }
 
-// Step applies one input to its keyed pipeline and commits the transition.
-func (number *Number[Key]) Step(key Key, input Frame) (Frame, error) {
+/*
+Step merges the incoming frame over the key's committed frame, runs the
+pipeline, and stores the result as the new committed state. The returned frame
+is both the committed state and the step output; Err carries any validation
+failure.
+*/
+func (number *Number[Key]) Step(key Key, input Frame) Frame {
 	stream, err := number.stream(key)
 
 	if err != nil {
-		return types.Frame{}, err
+		input.Err = err
+
+		return input
 	}
 
 	stream.mutex.Lock()
 	defer stream.mutex.Unlock()
 
-	return stream.stream.Step(input)
+	merged := stream.frame
+	merged.Merge(input)
+	output := Step(number.primitive, merged)
+
+	if output.Err == nil {
+		stream.frame = output
+	}
+
+	return output
 }
 
 // Project returns the committed state for one key.
@@ -63,25 +79,15 @@ func (number *Number[Key]) Project(key Key) (Frame, bool) {
 	}
 
 	stream.mutex.RLock()
-	state := stream.stream.Project()
+	state := stream.frame
 	stream.mutex.RUnlock()
 
 	return state, true
 }
 
-// Output returns the last successful output for one key.
+// Output returns the last successful output for one key (the committed state).
 func (number *Number[Key]) Output(key Key) (Frame, bool) {
-	stream, found := number.load(key)
-
-	if !found {
-		return types.Frame{}, false
-	}
-
-	stream.mutex.RLock()
-	output := stream.stream.Output()
-	stream.mutex.RUnlock()
-
-	return output, true
+	return number.Project(key)
 }
 
 // Error returns the last transition error for one key.
@@ -93,7 +99,7 @@ func (number *Number[Key]) Error(key Key) (error, bool) {
 	}
 
 	stream.mutex.RLock()
-	err := stream.stream.Error()
+	err := stream.frame.Err
 	stream.mutex.RUnlock()
 
 	return err, true
@@ -108,7 +114,7 @@ func (number *Number[Key]) Delete(key Key) {
 	number.streams.Delete(key)
 }
 
-// Reset replaces one key's committed state and clears its output and error.
+// Reset replaces one key's committed state.
 func (number *Number[Key]) Reset(key Key, initial Frame) error {
 	stream, err := number.stream(key)
 
@@ -117,7 +123,7 @@ func (number *Number[Key]) Reset(key Key, initial Frame) error {
 	}
 
 	stream.mutex.Lock()
-	stream.stream.Reset(initial)
+	stream.frame = initial
 	stream.mutex.Unlock()
 
 	return nil
@@ -138,7 +144,7 @@ func (number *Number[Key]) Range(yield func(Key, Frame) bool) {
 		}
 
 		stream.mutex.RLock()
-		state := stream.stream.Project()
+		state := stream.frame
 		stream.mutex.RUnlock()
 
 		return yield(key, state)
@@ -146,13 +152,15 @@ func (number *Number[Key]) Range(yield func(Key, Frame) bool) {
 }
 
 /*
-CrossSection evaluates one committed focal state against every committed peer,
-folds pair outputs through reduce, then optionally finalizes the aggregate.
-Candidate state from pair is observational and deliberately ignored.
+CrossSection evaluates one committed focal state against every committed peer.
+The pair callback receives the two committed frames separately so the caller
+owns how the bivariate series are placed into one frame (e.g. relocating each
+side into its own series prefix); its output is folded through reduce, then
+optionally finalized.
 */
 func (number *Number[Key]) CrossSection(
 	key Key,
-	pair Primitive,
+	pair func(focal Frame, peer Frame) Frame,
 	reduce Primitive,
 	finalize Primitive,
 ) (Frame, bool, error) {
@@ -163,7 +171,6 @@ func (number *Number[Key]) CrossSection(
 	}
 
 	accumulator := types.Frame{}
-	output := types.Frame{}
 	reduced := false
 	var crossSectionErr error
 
@@ -172,10 +179,10 @@ func (number *Number[Key]) CrossSection(
 			return true
 		}
 
-		_, pairOutput, err := Step(pair, focal, peer)
+		pairOutput := pair(focal, peer)
 
-		if err != nil {
-			crossSectionErr = err
+		if pairOutput.Err != nil {
+			crossSectionErr = pairOutput.Err
 			return false
 		}
 
@@ -188,10 +195,12 @@ func (number *Number[Key]) CrossSection(
 			return false
 		}
 
-		accumulator, output, err = Step(reduce, accumulator, pairOutput)
+		accInput := accumulator
+		accInput.Merge(pairOutput)
+		accumulator = Step(reduce, accInput)
 
-		if err != nil {
-			crossSectionErr = err
+		if accumulator.Err != nil {
+			crossSectionErr = accumulator.Err
 			return false
 		}
 
@@ -201,12 +210,10 @@ func (number *Number[Key]) CrossSection(
 	})
 
 	if crossSectionErr != nil || !reduced || finalize == nil {
-		return output, reduced, crossSectionErr
+		return accumulator, reduced, crossSectionErr
 	}
 
-	_, output, crossSectionErr = Step(finalize, accumulator, output)
-
-	return output, true, crossSectionErr
+	return Step(finalize, accumulator), true, nil
 }
 
 /*
@@ -227,10 +234,10 @@ func (number *Number[Key]) ArgMax(
 	var selectionErr error
 
 	number.Range(func(key Key, state Frame) bool {
-		_, output, err := Step(score, types.Frame{}, state)
+		output := Step(score, state)
 
-		if err != nil {
-			selectionErr = err
+		if output.Err != nil {
+			selectionErr = output.Err
 			return false
 		}
 
@@ -361,10 +368,7 @@ func (number *Number[Key]) stream(key Key) (*numberStream, error) {
 		initial = number.initial(key)
 	}
 
-	candidateStream := types.NewStream(number.primitive, initial)
-	candidate := &numberStream{
-		stream: *candidateStream,
-	}
+	candidate := &numberStream{frame: initial}
 	stored, _ := number.streams.LoadOrStore(key, candidate)
 	stream, valid := stored.(*numberStream)
 
@@ -392,22 +396,22 @@ func (number *Number[Key]) load(key Key) (*numberStream, bool) {
 }
 
 // Single is an explicitly single-writer unkeyed numeric unit.
-type Single func(input Frame) (Frame, error)
+type Single func(input Frame) Frame
 
 // NewSingle composes primitives into one state-carrying callable.
 func NewSingle(primitives ...Primitive) Single {
 	pipeline := Pipe(primitives...)
 	state := types.Frame{}
 
-	return func(input Frame) (Frame, error) {
-		nextState, output, err := Step(pipeline, state, input)
+	return func(input Frame) Frame {
+		merged := state
+		merged.Merge(input)
+		output := Step(pipeline, merged)
 
-		if err != nil {
-			return types.Frame{}, err
+		if output.Err == nil {
+			state = output
 		}
 
-		state = nextState
-
-		return output, nil
+		return output
 	}
 }

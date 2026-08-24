@@ -6,14 +6,13 @@ import "github.com/theapemachine/symm/nomagique/types"
 Median computes the exact median of populated generic sample slots. An empty
 sample set is a valid provisional result with ready zero.
 */
-func Median(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func Median(input types.Frame) types.Frame {
 	values, count, err := collectSamples(&input, "median")
 
 	if err != nil {
-		return state, types.Frame{}, err
+		input.Err = err
+
+		return input
 	}
 
 	result := 0.0
@@ -31,10 +30,9 @@ func Median(
 		ready = 1
 	}
 
-	output := input
-	output.Put(SymbolResult, result)
-	output.Put(SymbolReady, ready)
-	output.Put(SymbolCount, float64(count))
+	input.Put(SymbolResult, result)
+	input.Put(SymbolReady, ready)
+	input.Put(SymbolCount, float64(count))
 
-	return state, output, nil
+	return input
 }

@@ -14,12 +14,14 @@ var (
 )
 
 // Gate emits value when condition is non-zero and zero otherwise.
-func Gate(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+func Gate(input types.Frame) types.Frame {
 	condition, hasCondition := input.Get(SymbolCondition)
 	value, hasValue := input.Get(SymbolValue)
 
 	if !hasCondition || !hasValue || !utils.IsFinite(condition) || !utils.IsFinite(value) {
-		return state, types.Frame{}, fmt.Errorf("logic: gate requires finite condition and value")
+		input.Err = fmt.Errorf("logic: gate requires finite condition and value")
+
+		return input
 	}
 
 	result := 0.0
@@ -28,8 +30,7 @@ func Gate(state types.Frame, input types.Frame) (types.Frame, types.Frame, error
 		result = value
 	}
 
-	output := input
-	output.Put(SymbolResult, result)
+	input.Put(SymbolResult, result)
 
-	return state, output, nil
+	return input
 }

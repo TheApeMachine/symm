@@ -550,11 +550,12 @@ func (graph *Graph) OpportunitySummary() graphtypes.OpportunitySummary {
 		input.Put(algorithm.SymbolEdgeWeight, edge.Weight)
 		input.Put(algorithm.SymbolEdgeConfidence, edge.Confidence)
 		input.Put(algorithm.SymbolEdgeRelation, relationSign(edge.Relation))
-
-		state, _, _ = algorithm.OpportunityReducer(state, input)
+		merged := state
+		merged.Merge(input)
+		state = algorithm.OpportunityReducer(merged)
 	}
 
-	state, _, _ = algorithm.OpportunityScorer(state, types.Frame{})
+	state = algorithm.OpportunityScorer(state)
 
 	summary.Support, _ = state.Get(algorithm.SymbolOpportunitySupport)
 	summary.Contradiction, _ = state.Get(algorithm.SymbolOpportunityContradiction)

@@ -15,10 +15,7 @@ var (
 /*
 Geomean combines positive finite values stored in generic sample slots.
 */
-func Geomean(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func Geomean(input types.Frame) types.Frame {
 	count := 0
 	logSum := 0.0
 
@@ -31,10 +28,12 @@ func Geomean(
 		}
 
 		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			return state, types.Frame{}, fmt.Errorf(
+			input.Err = fmt.Errorf(
 				"probability: geomean sample/%d must be positive and finite",
 				index,
 			)
+
+			return input
 		}
 
 		logSum += math.Log(value)
@@ -42,14 +41,15 @@ func Geomean(
 	}
 
 	if count == 0 {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"probability: geomean requires at least one sample",
 		)
+
+		return input
 	}
 
-	output := input
-	output.Put(SymbolResult, math.Exp(logSum/float64(count)))
-	output.Put(SymbolCount, float64(count))
+	input.Put(SymbolResult, math.Exp(logSum/float64(count)))
+	input.Put(SymbolCount, float64(count))
 
-	return state, output, nil
+	return input
 }

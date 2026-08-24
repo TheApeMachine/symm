@@ -32,6 +32,8 @@ type Workspace struct {
 	pool     *Pool[func()]
 	channels sync.Map // string → *Channel[T]
 	taps     sync.Map // StreamKey → []func(string, any)
+	shared   sync.Map // string → any (shared-object pool)
+	listeners sync.Map // string → []func() (trigger fan-out)
 	firstErr atomic.Pointer[error]
 	failure  func(error)
 }
@@ -441,6 +443,80 @@ func (workspace *Workspace) Error() error {
 	}
 
 	return nil
+}
+
+/*
+Share places one shared object into the workspace pool under the key built from
+name and ids. It is how a producer (e.g. the book manager or cross-section
+owner) hands a resource to every signal without any signal importing another.
+Signals read the object via Shared and never see the producing component.
+*/
+func (workspace *Workspace) Share(name string, value any, ids ...string) {
+	if workspace == nil || name == "" || value == nil {
+		return
+	}
+
+	workspace.shared.Store(sharedKey(name, ids), value)
+}
+
+func sharedKey(name string, ids []string) string {
+	key := name
+
+	for _, id := range ids {
+		if id != "" {
+			key += ":" + id
+		}
+	}
+
+	return key
+}
+
+/*
+Shared returns the shared object registered under the key built from name and
+the given ids. An empty id list reads the object stored directly under name;
+otherwise the ids are joined to form the storage key (e.g. Shared("book",
+"BTC/USD") reads the book registered for that symbol). Signals only ever talk
+to the workspace through this call, never to the producing component.
+*/
+func (workspace *Workspace) Shared(name string, ids ...string) (any, bool) {
+	if workspace == nil || name == "" {
+		return nil, false
+	}
+
+	key := sharedKey(name, ids)
+
+	return workspace.shared.Load(key)
+}
+
+/*
+On subscribes one listener to a trigger topic. Triggers fan out a notification
+(e.g. a book update) to every registered listener without the listener knowing
+the producer. It is the observer hook signals use to learn that a shared object
+they read has changed.
+*/
+func (workspace *Workspace) On(topic string, fn func()) {
+	if workspace == nil || fn == nil {
+		return
+	}
+
+	current, _ := workspace.listeners.LoadOrStore(topic, []func(){})
+	updated := append(current.([]func()), fn)
+	workspace.listeners.Store(topic, updated)
+}
+
+/*
+Notify fires every listener registered on topic.
+*/
+func (workspace *Workspace) Notify(topic string) {
+	if workspace == nil {
+		return
+	}
+
+	if listeners, found := workspace.listeners.Load(topic); found {
+		for _, fn := range listeners.([]func()) {
+			fn()
+		}
+	}
 }
 
 /*

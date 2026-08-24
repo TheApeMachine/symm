@@ -21,37 +21,37 @@ Since measures elapsed event time from a retained origin. The first event
 establishes the origin; subsequent events expose the same origin until Restart
 explicitly begins a new span.
 */
-func Since(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func Since(input types.Frame) types.Frame {
 	seconds, hasSeconds := input.Get(SymbolUnixSec)
 	nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
 
 	if !hasSeconds || !hasNanoseconds || nanoseconds < 0 || nanoseconds >= 1e9 {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"temporal: since requires normalized event-time coordinates",
 		)
+
+		return input
 	}
 
-	originSeconds, hasOriginSeconds := state.Get(SymbolOriginSec)
-	originNanoseconds, hasOriginNanoseconds := state.Get(SymbolOriginNsec)
-	nextState := state
+	originSeconds, hasOriginSeconds := input.Get(SymbolOriginSec)
+	originNanoseconds, hasOriginNanoseconds := input.Get(SymbolOriginNsec)
 
 	if !hasOriginSeconds || !hasOriginNanoseconds {
 		originSeconds = seconds
 		originNanoseconds = nanoseconds
-		nextState.Put(SymbolOriginSec, originSeconds)
-		nextState.Put(SymbolOriginNsec, originNanoseconds)
+		input.Put(SymbolOriginSec, originSeconds)
+		input.Put(SymbolOriginNsec, originNanoseconds)
 	}
 
 	duration := seconds - originSeconds +
 		(nanoseconds-originNanoseconds)*1e-9
 
 	if duration < 0 {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"temporal: since event time must not precede its origin",
 		)
+
+		return input
 	}
 
 	advanced := 0.0
@@ -60,41 +60,36 @@ func Since(
 		advanced = 1
 	}
 
-	output := input
-	output.Put(calculus.SymbolDuration, duration)
-	output.Put(SymbolObservedSec, originSeconds)
-	output.Put(SymbolObservedNsec, originNanoseconds)
-	output.Put(SymbolAdvanced, advanced)
-	completed, _ := state.Get(SymbolCompletedSpans)
-	output.Put(SymbolCompletedSpans, completed)
+	input.Put(calculus.SymbolDuration, duration)
+	input.Put(SymbolObservedSec, originSeconds)
+	input.Put(SymbolObservedNsec, originNanoseconds)
+	input.Put(SymbolAdvanced, advanced)
+	completed, _ := input.Get(SymbolCompletedSpans)
+	input.Put(SymbolCompletedSpans, completed)
 
-	return nextState, output, nil
+	return input
 }
 
 /*
 Restart moves the retained origin to the current event and counts one completed
 span. It preserves the output produced for the span that just ended.
 */
-func Restart(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func Restart(input types.Frame) types.Frame {
 	seconds, hasSeconds := input.Get(SymbolUnixSec)
 	nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
 
 	if !hasSeconds || !hasNanoseconds || nanoseconds < 0 || nanoseconds >= 1e9 {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"temporal: restart requires normalized event-time coordinates",
 		)
+
+		return input
 	}
 
-	completed, _ := state.Get(SymbolCompletedSpans)
-	nextState := state
-	nextState.Put(SymbolOriginSec, seconds)
-	nextState.Put(SymbolOriginNsec, nanoseconds)
-	nextState.Put(SymbolCompletedSpans, completed+1)
-	output := input
-	output.Put(SymbolCompletedSpans, completed+1)
+	completed, _ := input.Get(SymbolCompletedSpans)
+	input.Put(SymbolOriginSec, seconds)
+	input.Put(SymbolOriginNsec, nanoseconds)
+	input.Put(SymbolCompletedSpans, completed+1)
 
-	return nextState, output, nil
+	return input
 }

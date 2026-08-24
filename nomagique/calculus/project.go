@@ -11,33 +11,38 @@ import (
 /*
 Project emits the affine coordinate (X-A)/(B-A).
 */
-func Project(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+func Project(input types.Frame) types.Frame {
 	x, hasX := input.Get(PortX)
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
 
 	if !hasX || !hasA || !hasB || !utils.IsFinite(x) || !utils.IsFinite(a) || !utils.IsFinite(b) {
-		return state, types.Frame{}, errnie.Error(errnie.Err(
+		input.Err = errnie.Error(errnie.Err(
 			errnie.Validation,
 			"calculus: project requires finite x, a, and b",
 			nil,
 		))
+
+		return input
 	}
 
 	denominator := b - a
 
 	if denominator == 0 || !utils.IsFinite(denominator) {
-		return state, types.Frame{}, fmt.Errorf("calculus: project requires distinct finite endpoints")
+		input.Err = fmt.Errorf("calculus: project requires distinct finite endpoints")
+
+		return input
 	}
 
 	result := (x - a) / denominator
 
 	if !utils.IsFinite(result) {
-		return state, types.Frame{}, fmt.Errorf("calculus: project overflowed")
+		input.Err = fmt.Errorf("calculus: project overflowed")
+
+		return input
 	}
 
-	output := input
-	output.Put(PortResult, result)
+	input.Put(PortResult, result)
 
-	return state, output, nil
+	return input
 }

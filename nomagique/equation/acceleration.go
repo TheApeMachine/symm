@@ -26,7 +26,7 @@ func Acceleration() nmtypes.Primitive {
 			nmtypes.EventTimeSec,
 			nmtypes.EventTimeNsec,
 		),
-		temporal.Window,
+		temporal.Window(""),
 		statistic.Median,
 		nmtypes.Wire(
 			nmtypes.Identity,
@@ -76,7 +76,7 @@ func closeAcceleration() nmtypes.Primitive {
 			nmtypes.In(calculus.SymbolDuration, calculus.SymbolDuration),
 			nmtypes.Out(calculus.SymbolRate, calculus.SymbolRate),
 		),
-		temporal.Observer(nmtypes.AlphaPrice),
+		temporal.Observer("", nmtypes.AlphaPrice),
 		logic.If(
 			nmtypes.Wire(
 				nmtypes.Identity,

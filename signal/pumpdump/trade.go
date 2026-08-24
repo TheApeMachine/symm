@@ -4,191 +4,170 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/types"
 )
 
-func (signal *Signal) consumeTrade(
-	symbol *types.Symbol,
-	trade kraken.TradeData,
-) error {
-	input := eventFrame(trade.Timestamp)
-	input.Put(nmtypes.Quantity, trade.Qty)
-	input.Put(nmtypes.AlphaPrice, trade.Price.Float64())
-	acceleration, err := signal.acceleration.Step(symbol.Symbol, input)
+/*
+Input/output slot symbols for the volume-clock activity pipeline.
+*/
+var (
+	symbolTradeNotional     = nmtypes.MustIntern("pumpdump/trade_notional")
+	symbolBarQuantityTotal  = nmtypes.MustIntern("pumpdump/bar_quantity_total")
+	symbolBarNotionalTotal  = nmtypes.MustIntern("pumpdump/bar_notional_total")
+	symbolBarTradeCount     = nmtypes.MustIntern("pumpdump/bar_trade_count_total")
+	symbolBarQuantity       = nmtypes.MustIntern("pumpdump/volume_bar_quantity")
+	symbolBarNotional       = nmtypes.MustIntern("pumpdump/volume_bar_notional")
+	symbolBarTradeCountSnap = nmtypes.MustIntern("pumpdump/volume_bar_trade_count")
+	symbolVolumeRate        = nmtypes.MustIntern("pumpdump/volume_rate")
+	symbolNotionalRate      = nmtypes.MustIntern("pumpdump/notional_rate")
+	symbolTradeRate         = nmtypes.MustIntern("pumpdump/trade_rate")
+)
 
-	if err != nil {
-		return err
-	}
-
-	closed := acceleration.MustGet(equation.SymbolClosed) != 0
-
-	if !closed {
-		types.PublishMeasurement(signal.thesis, signal.measurements, symbol.Symbol, signal.tradeMeasurement(
-			trade,
-			acceleration,
-			nmtypes.Frame{},
-			nmtypes.Frame{},
-			nmtypes.Frame{},
-			nmtypes.Frame{},
-		))
-
-		return nil
-	}
-
-	rate := acceleration.MustGet(calculus.SymbolRate)
-	rateNormalized, err := signal.normalize.Step(
-		seriesKey{symbol: symbol.Symbol, series: seriesRate},
-		sampleFrame(trade.Timestamp, rate),
-	)
-
-	if err != nil {
-		return err
-	}
-
-	change, hasChange := acceleration.Get(equation.SymbolChange)
-
-	if !hasChange {
-		types.PublishMeasurement(signal.thesis, signal.measurements, symbol.Symbol, signal.tradeMeasurement(
-			trade,
-			acceleration,
-			rateNormalized,
-			nmtypes.Frame{},
-			nmtypes.Frame{},
-			nmtypes.Frame{},
-		))
-
-		return nil
-	}
-
-	changeInput := eventFrame(trade.Timestamp)
-	changeInput.Put(equation.SymbolChange, change)
-	magnitude, err := absoluteSample(signal.absolute, changeInput)
-
-	if err != nil {
-		return err
-	}
-
-	returnNormalized, err := signal.normalize.Step(
-		seriesKey{symbol: symbol.Symbol, series: seriesReturn},
-		magnitude,
-	)
-
-	if err != nil {
-		return err
-	}
-
-	_, polarized, err := nmtypes.Step(
-		signal.polarize,
-		nmtypes.Frame{},
-		polarizationFrame(change, returnNormalized),
-	)
-
-	if err != nil {
-		return err
-	}
-
-	exhaustion, err := signal.exhaustion(
-		symbol.Symbol,
-		trade.Timestamp,
-		rateNormalized,
-		polarized,
-	)
-
-	if err != nil {
-		return err
-	}
-
-	types.PublishMeasurement(signal.thesis, signal.measurements, symbol.Symbol, signal.tradeMeasurement(
-		trade,
-		acceleration,
-		rateNormalized,
-		returnNormalized,
-		polarized,
-		exhaustion,
-	))
-
-	return nil
+/*
+Trade is the volume-clock activity market entity. It owns exactly a Number
+pipeline and a projector, both declared in its constructor, plus Step and Close.
+*/
+type Trade struct {
+	number    *nomagique.Number[string]
+	projector *data.Projector
 }
 
-func (signal *Signal) exhaustion(
-	symbol string,
-	at time.Time,
-	rate nmtypes.Frame,
-	polarized nmtypes.Frame,
-) (nmtypes.Frame, error) {
-	ratio, found := rate.Get(equation.SymbolRatio)
-
-	if !found {
-		return nmtypes.Frame{}, nil
+/*
+NewTrade constructs the Trade entity: one Number pipeline for the quantity
+clock, completed-bar notional/count, and activity rates, and one projector
+that names the output slots.
+*/
+func NewTrade() *Trade {
+	return &Trade{
+		number: nomagique.NewNumber[string](nmtypes.Pipe(
+			// The volume clock sizes each bar from the symbol's own prior
+			// quantity median and exposes the target, close flag, duration,
+			// and the completed span's log price change.
+			equation.Acceleration(),
+			// Trade notional: n = price * qty
+			nmtypes.Wire(
+				calculus.Product,
+				nmtypes.In(nmtypes.AlphaPrice, calculus.PortA),
+				nmtypes.In(nmtypes.Quantity, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, symbolTradeNotional),
+			),
+			// Accumulate quantity, notional, and trade count over the bar.
+			nmtypes.Wire(
+				calculus.Accumulate,
+				nmtypes.In(nmtypes.Quantity, calculus.SymbolDelta),
+				nmtypes.State(symbolBarQuantityTotal, calculus.SymbolTotal),
+			),
+			nmtypes.Wire(
+				calculus.Accumulate,
+				nmtypes.In(symbolTradeNotional, calculus.SymbolDelta),
+				nmtypes.State(symbolBarNotionalTotal, calculus.SymbolTotal),
+			),
+			nmtypes.Assign(symbolOne, 1),
+			nmtypes.Wire(
+				calculus.Accumulate,
+				nmtypes.In(symbolOne, calculus.SymbolDelta),
+				nmtypes.State(symbolBarTradeCount, calculus.SymbolTotal),
+			),
+			// Snapshot the running totals so they survive the bar reset.
+			nmtypes.Wire(
+				nmtypes.Identity,
+				nmtypes.In(symbolBarQuantityTotal, calculus.PortX),
+				nmtypes.Out(calculus.PortX, symbolBarQuantity),
+			),
+			nmtypes.Wire(
+				nmtypes.Identity,
+				nmtypes.In(symbolBarNotionalTotal, calculus.PortX),
+				nmtypes.Out(calculus.PortX, symbolBarNotional),
+			),
+			nmtypes.Wire(
+				nmtypes.Identity,
+				nmtypes.In(symbolBarTradeCount, calculus.PortX),
+				nmtypes.Out(calculus.PortX, symbolBarTradeCountSnap),
+			),
+			// Only a completed bar exposes throughput rates; the close trade is
+			// included before the accumulators reset for the next bar.
+			logic.If(
+				closedCondition(),
+				nmtypes.Pipe(
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolBarQuantityTotal, calculus.PortA),
+						nmtypes.In(calculus.SymbolDuration, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolVolumeRate),
+					),
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolBarNotionalTotal, calculus.PortA),
+						nmtypes.In(calculus.SymbolDuration, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolNotionalRate),
+					),
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolBarTradeCount, calculus.PortA),
+						nmtypes.In(calculus.SymbolDuration, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolTradeRate),
+					),
+					calculus.Clear(
+						symbolBarQuantityTotal,
+						symbolBarNotionalTotal,
+						symbolBarTradeCount,
+					),
+				),
+				nmtypes.Identity,
+			),
+		)),
+		projector: data.NewProjector(
+			data.Binding{From: nmtypes.AlphaPrice, Name: "trade_price", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: nmtypes.Quantity, Name: "trade_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolTradeNotional, Name: "trade_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: equation.SymbolTarget, Name: "volume_bar_target_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolBarQuantity, Name: "volume_bar_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolBarNotional, Name: "volume_bar_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolBarTradeCountSnap, Name: "volume_bar_trade_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: calculus.SymbolDuration, Name: "volume_bar_duration", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolVolumeRate, Name: "volume_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolNotionalRate, Name: "notional_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolTradeRate, Name: "trade_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+		),
 	}
-
-	rateChange, err := signal.rateChange.Step(
-		seriesKey{symbol: symbol, series: seriesRateRatio},
-		sampleFrame(at, ratio),
-	)
-
-	if err != nil {
-		return nmtypes.Frame{}, err
-	}
-
-	relative, hasRelative := rateChange.Get(equation.SymbolRelativeChange)
-
-	if !hasRelative {
-		return nmtypes.Frame{}, nil
-	}
-
-	declineInput := nmtypes.Frame{}
-	declineInput.Put(equation.SymbolChange, relative)
-	_, decline, err := nmtypes.Step(
-		signal.decompose,
-		nmtypes.Frame{},
-		declineInput,
-	)
-
-	if err != nil {
-		return nmtypes.Frame{}, err
-	}
-
-	declineValue := decline.MustGet(equation.SymbolBeta)
-	alpha, hasAlpha := polarized.Get(equation.SymbolAlphaNormalized)
-	beta, hasBeta := polarized.Get(equation.SymbolBetaNormalized)
-
-	if !hasAlpha || !hasBeta {
-		return nmtypes.Frame{}, nil
-	}
-
-	output := nmtypes.Frame{}
-	alphaExhaustion, err := product(declineValue, beta)
-
-	if err != nil {
-		return nmtypes.Frame{}, err
-	}
-
-	betaExhaustion, err := product(declineValue, alpha)
-
-	if err != nil {
-		return nmtypes.Frame{}, err
-	}
-
-	output.Put(nmtypes.AlphaQuantity, alphaExhaustion)
-	output.Put(nmtypes.BetaQuantity, betaExhaustion)
-	_, output, err = nmtypes.Step(signal.separate, nmtypes.Frame{}, output)
-
-	return output, err
 }
 
-func product(left float64, right float64) (float64, error) {
+/*
+Step receives one trade data point, loads the tape facts, runs the Number
+pipeline, and projects exactly one Measurement. The interval origin is read
+from the pipeline output to preserve the completed bar's From time.
+*/
+func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
 	input := nmtypes.Frame{}
-	input.Put(calculus.SymbolLeft, left)
-	input.Put(calculus.SymbolRight, right)
-	_, output, err := nmtypes.Step(calculus.Product, nmtypes.Frame{}, input)
+	input.Put(nmtypes.Quantity, point.Qty)
+	input.Put(nmtypes.AlphaPrice, point.Price.Float64())
+	input.Put(nmtypes.EventTimeSec, float64(point.Timestamp.Unix()))
+	input.Put(nmtypes.EventTimeNsec, float64(point.Timestamp.Nanosecond()))
 
-	if err != nil {
-		return 0, err
+	output := trade.number.Step(point.Symbol, input)
+	from := point.Timestamp
+
+	if seconds, found := output.Get(temporal.SymbolObservedSec); found {
+		if nanoseconds, found := output.Get(temporal.SymbolObservedNsec); found {
+			from = time.Unix(int64(seconds), int64(nanoseconds)).UTC()
+		}
 	}
 
-	return output.MustGet(calculus.SymbolResult), nil
+	return trade.projector.Project(point.Symbol, "pumpdump", point.Timestamp, from, output)
+}
+
+func (trade *Trade) Close() error { return nil }
+
+func closedCondition() nmtypes.Primitive {
+	return nmtypes.Wire(
+		nmtypes.Identity,
+		nmtypes.In(equation.SymbolClosed, logic.SymbolCondition),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
 }

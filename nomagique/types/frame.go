@@ -12,14 +12,15 @@ const frameMaskWords = (MaxSlots + frameMaskWordBits - 1) / frameMaskWordBits
 /*
 Frame is the universal named fact and state representation. Values occupy
 interned symbol offsets in contiguous memory, while the bit mask records which
-slots are present.
-
-Frame is intentionally a value type. Reducers receive snapshots by value, mutate
-local copies, and return committed snapshots without sharing mutable maps.
+slots are present. A Frame is both the committed state and the step output;
+retained estimator values and transient results share the same slots. Err
+carries the first validation failure a primitive recorded; a non-nil Err stops
+the pipeline.
 */
 type Frame struct {
 	Mask [frameMaskWords]uint64
 	Data [MaxSlots]float64
+	Err  error
 }
 
 // Get returns the value stored at symbol.

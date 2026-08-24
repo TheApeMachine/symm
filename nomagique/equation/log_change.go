@@ -11,7 +11,7 @@ import (
 // LogChange reports log(current/previous) for a positive observed series.
 func LogChange(source types.Symbol) types.Primitive {
 	return types.Pipe(
-		temporal.Observer(source),
+		temporal.Observer("", source),
 		statistic.Maturity(temporal.SymbolObservations),
 		logic.If(
 			types.Wire(

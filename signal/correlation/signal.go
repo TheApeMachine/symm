@@ -3,100 +3,46 @@ package correlation
 import (
 	"context"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/types"
 )
 
+/*
+Signal is the asynchronous price-path correlation instrument. It composes its
+per-symbol Ticker entity in its constructor and exposes the canonical signal
+structure: Constructor, Name, Error, Step, Close.
+*/
 type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	thesis       *types.Thesis
-	number       *nomagique.Number[string]
-	measurements *runtime.Channel[*nmtypes.Measurement]
+	ctx       context.Context
+	cancel    context.CancelFunc
+	err       error
+	workspace *runtime.Workspace
+	ticker    *Ticker
 }
 
-func NewSignal(ctx context.Context, thesis *types.Thesis, bus *runtime.Workspace) *Signal {
+/*
+NewSignal composes the Ticker entity and retains the shared-object workspace
+pool for any future cross-signal shared state. The correlation README defines
+no downstream cross-symbol snapshot, so no shared object is registered here.
+*/
+func NewSignal(ctx context.Context, workspace *runtime.Workspace) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
-	signal := &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		thesis: thesis,
-		number: nomagique.NewNumber[string](temporal.Path),
+	return &Signal{
+		ctx:       ctx,
+		cancel:    cancel,
+		workspace: workspace,
+		ticker:    NewTicker(),
 	}
-
-	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
-		bus, types.ChannelMeasurements,
-		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
-	)
-	runtime.ChannelOf[kraken.TickerData](
-		bus, types.ChannelTickers,
-		func(ticker kraken.TickerData) string { return ticker.Symbol },
-	).Subscribe(signal.Name(), signal.Step)
-
-	return signal
 }
 
-func (signal *Signal) Name() string           { return string(types.SourceCorrelation) }
-func (signal *Signal) Error() error           { return signal.err }
-func (signal *Signal) Type() types.SourceType { return types.SourceCorrelation }
+func (signal *Signal) Name() string { return "correlation" }
 
-// Step processes one ready symbol cut. The transport workspace preserves
-// order for this symbol while allowing every other symbol to advance.
-func (signal *Signal) Step(ticker kraken.TickerData) error {
-	input := nmtypes.Frame{}
-	input.Put(nmtypes.SampleValue, ticker.Last.Float64())
-	input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-	input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-	_, err := signal.number.Step(ticker.Symbol, input)
+func (signal *Signal) Error() error { return signal.err }
 
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"correlation: path failed for "+ticker.Symbol,
-			err,
-		))
-	}
-
-	output, reduced, err := signal.number.CrossSection(
-		ticker.Symbol,
-		nmcorrelation.Hayashi,
-		nmcorrelation.Cohort,
-		nmcorrelation.Scores,
-	)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"correlation: cohort failed for "+ticker.Symbol,
-			err,
-		))
-	}
-
-	ready, _ := output.Get(nmcorrelation.SymbolReady)
-	separation := 0.0
-	measured := reduced && ready != 0
-
-	if measured {
-		separation, _ = output.Get(nmcorrelation.SymbolHypothesisSeparation)
-	}
-
-	types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, signal.measurement(
-		ticker.Symbol,
-		ticker.Timestamp,
-		output,
-		measured,
-		separation,
-		signal.support(ticker.Symbol),
-	))
-	return nil
+func (signal *Signal) Step(ticker kraken.TickerData) *data.Measurement[float64] {
+	return signal.ticker.Step(ticker)
 }
 
 func (signal *Signal) Close() error {
@@ -104,5 +50,5 @@ func (signal *Signal) Close() error {
 		signal.cancel()
 	}
 
-	return nil
+	return signal.ticker.Close()
 }

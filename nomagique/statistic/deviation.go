@@ -22,23 +22,21 @@ reports zero rather than inventing one. The primitive leaves the rest of the
 input frame untouched so downstream stages keep whatever context the
 composition carried.
 */
-func Deviation(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func Deviation(input types.Frame) types.Frame {
 	value, hasValue := input.Get(types.SampleValue)
 	baseline, hasBaseline := input.Get(SymbolBaselineValue)
 
 	if !hasValue || !hasBaseline {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"statistic: deviation requires a value and a baseline",
 		)
+
+		return input
 	}
 
-	output := input
-	output.Put(SymbolDeviation, relativeDeviation(value, baseline))
+	input.Put(SymbolDeviation, relativeDeviation(value, baseline))
 
-	return state, output, nil
+	return input
 }
 
 func relativeDeviation(value float64, baseline float64) float64 {

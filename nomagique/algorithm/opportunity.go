@@ -25,48 +25,46 @@ var (
 OpportunityReducer processes a single graph edge represented by a types.Frame
 and accumulates it into the support, contradiction, or conditions of the opportunity.
 */
-func OpportunityReducer(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+func OpportunityReducer(input types.Frame) types.Frame {
 	weight, foundWeight := input.Get(SymbolEdgeWeight)
 	confidence, foundConf := input.Get(SymbolEdgeConfidence)
 	relation, foundRel := input.Get(SymbolEdgeRelation)
 
 	if !foundWeight || !foundConf || !foundRel || weight <= 0 || confidence <= 0 {
-		return state, state, nil
+		return input
 	}
 
-	nextState := state
-	support, _ := state.Get(SymbolOpportunitySupport)
-	contradiction, _ := state.Get(SymbolOpportunityContradiction)
-	conditions, _ := state.Get(SymbolOpportunityConditions)
-	confMass, _ := state.Get(SymbolOpportunityConfidenceMass)
-	confWeight, _ := state.Get(SymbolOpportunityConfidenceWeight)
+	support, _ := input.Get(SymbolOpportunitySupport)
+	contradiction, _ := input.Get(SymbolOpportunityContradiction)
+	conditions, _ := input.Get(SymbolOpportunityConditions)
+	confMass, _ := input.Get(SymbolOpportunityConfidenceMass)
+	confWeight, _ := input.Get(SymbolOpportunityConfidenceWeight)
 
 	switch relation {
 	case 1:
-		nextState.Put(SymbolOpportunitySupport, support+weight)
-		nextState.Put(SymbolOpportunityConfidenceMass, confMass+(weight*confidence))
-		nextState.Put(SymbolOpportunityConfidenceWeight, confWeight+weight)
+		input.Put(SymbolOpportunitySupport, support+weight)
+		input.Put(SymbolOpportunityConfidenceMass, confMass+(weight*confidence))
+		input.Put(SymbolOpportunityConfidenceWeight, confWeight+weight)
 	case -1:
-		nextState.Put(SymbolOpportunityContradiction, contradiction+weight)
-		nextState.Put(SymbolOpportunityConfidenceMass, confMass+(weight*confidence))
-		nextState.Put(SymbolOpportunityConfidenceWeight, confWeight+weight)
+		input.Put(SymbolOpportunityContradiction, contradiction+weight)
+		input.Put(SymbolOpportunityConfidenceMass, confMass+(weight*confidence))
+		input.Put(SymbolOpportunityConfidenceWeight, confWeight+weight)
 	default:
-		nextState.Put(SymbolOpportunityConditions, conditions+weight)
+		input.Put(SymbolOpportunityConditions, conditions+weight)
 	}
 
-	return nextState, nextState, nil
+	return input
 }
 
 /*
 OpportunityScorer extracts the calculated totals from the OpportunityReducer
 and computes the final dimensionless Score, Balance, and Confidence for the graph proposition.
 */
-func OpportunityScorer(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
-	nextState := state
-	support, _ := state.Get(SymbolOpportunitySupport)
-	contradiction, _ := state.Get(SymbolOpportunityContradiction)
-	confMass, _ := state.Get(SymbolOpportunityConfidenceMass)
-	confWeight, _ := state.Get(SymbolOpportunityConfidenceWeight)
+func OpportunityScorer(input types.Frame) types.Frame {
+	support, _ := input.Get(SymbolOpportunitySupport)
+	contradiction, _ := input.Get(SymbolOpportunityContradiction)
+	confMass, _ := input.Get(SymbolOpportunityConfidenceMass)
+	confWeight, _ := input.Get(SymbolOpportunityConfidenceWeight)
 
 	directional := support + contradiction
 
@@ -81,21 +79,21 @@ func OpportunityScorer(state types.Frame, input types.Frame) (types.Frame, types
 
 		score := balance * evidence
 
-		nextState.Put(SymbolOpportunityBalance, balance)
-		nextState.Put(SymbolOpportunityConfidence, conf)
-		nextState.Put(SymbolOpportunityScore, score)
-		nextState.Put(SymbolOpportunityReady, 1)
+		input.Put(SymbolOpportunityBalance, balance)
+		input.Put(SymbolOpportunityConfidence, conf)
+		input.Put(SymbolOpportunityScore, score)
+		input.Put(SymbolOpportunityReady, 1)
 
 		if score > 0 {
-			nextState.Put(SymbolOpportunityDirection, 1)
+			input.Put(SymbolOpportunityDirection, 1)
 		} else if score < 0 {
-			nextState.Put(SymbolOpportunityDirection, -1)
+			input.Put(SymbolOpportunityDirection, -1)
 		}
 	} else {
-		nextState.Put(SymbolOpportunityReady, 0)
+		input.Put(SymbolOpportunityReady, 0)
 	}
 
-	return nextState, nextState, nil
+	return input
 }
 
 /*

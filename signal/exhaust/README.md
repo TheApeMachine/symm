@@ -1,127 +1,822 @@
-# `signal/exhaust` — is the microstructure that supported this move decaying?
+# Exhaust / Microstructure Support-State Signal Specification
 
-> A position doesn't need the market to reverse to stop being safe. It just
-> needs the depth, spread, and pressure that made the move look real to
-> quietly stop agreeing with it.
+## 1. Architectural Status
 
-## What this package is
+`exhaust` is a legacy package name.
 
-Exhaust measures **microstructure decay against a held position** — not
-"is the market reversing" but "are the specific conditions (depth, spread,
-trade pressure, book imbalance) that would corroborate this position still
-present, or are they thinning out." It scores **both hypothetical sides**
-(long-exit and short-exit) on every observation and leaves the caller to pick
-the side matching its actual position — the doc comment on `Signal` states
-this directly: "Position inventory is deliberately absent."
+Under the measurement-only signal contract, "exhaustion" is not itself an observable market fact.
 
-This package is the market adapter around
-[`nomagique/algorithm.DecaySample`](../../../nomagique/algorithm/decay_sample.go)
-(book/trade ingestion into the four raw decay ingredients) and
-[`nomagique/equation.Decay`](../../../nomagique/equation/decay.go)
-(classification and fusion). No position sizing, no trading gate —
-`logic/category` and the strategy layer decide what a reading means for an
-actual open position.
+The existing package's concepts:
 
-## Four independent decay families, one per side
+- mechanical;
+- fragile;
+- thermal;
+- reversal;
+- urgency;
+- strength;
+- category;
 
-For each side (long/short), `Decay.exitSide` scores four distinct
-microstructure failure modes, each derived from the current observation
-against **that same series' own accumulated history** (a ratio or standardized
-deviation, never an absolute threshold):
+are interpretations of lower-level measurements and therefore belong downstream.
 
-| Family                                  | What it measures                                                                                         | Formula (informal)                                                                                                                                                   |
-|-----------------------------------------|----------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Mechanical** (thinning/collapse)      | Is the depth that would support this side, or the overall book density, below its own observed baseline? | `max(ratioDecline(sideDepthRatio), ratioDecline(densityRatio))` — `ratioDecline(r) = max(0, 1-r)`, zero once the ratio is at or above its own mean.                  |
-| **Fragile** (spread widening)           | Is the current spread wider than its own historical norm?                                                | `max(0, spreadDeviation)` — a standardized deviation, shared identically by both sides (spread widening is not directional).                                         |
-| **Thermal** (pressure fade + rejection) | Has trade pressure faded from its own running extreme *and* has price actually moved against this side?  | `pressureFade(pressure, extremum, side) × priceRejection(priceReturn, side)` — a product, so fading pressure with no adverse price move (or vice versa) scores zero. |
-| **Reversal** (imbalance flip)           | Has book imbalance flipped from favoring this side to favoring the other?                                | `imbalanceFlip` — zero unless the *prior mean* imbalance actually favored this side and the *current* reading has crossed to favor the other.                        |
+The preferred architecture is:
 
-The asymmetry in Thermal is deliberate and load-bearing: `pressureFade` alone
-cannot establish exhaustion, because pressure naturally rises and falls.
-Requiring the held side's price to have *also* rejected — moved against
-it — is what turns "pressure went down" into "pressure went down and the
-market confirmed it by moving against this position." A long can only be
-thermally exhausted by a negative price return; a short only by a positive
-one (`priceRejection`).
+\[
+\boxed{
+\text{Liquidity}
++
+\text{Depthflow}
++
+\text{CVD}
++
+\text{Price}
+\rightarrow
+\text{Reasoning / Category}
+}
+\]
 
-Pressure fade compares against the running **peak** (long) or **trough**
-(short) *including the current tick* — a tick that sets a new extreme is, by
-construction, not fading from anything yet (it *is* the new extreme), so it
-reports zero fade rather than a spurious negative reading.
+with no separate `exhaust` signal at all.
 
-## Fusion: softmax-weighted, not max
+If the `exhaust` source must remain for compatibility, it may exist only as a **Microstructure Support-State** measurement bundle exposing sufficient statistics.
 
-Unlike most other signals in this codebase (which take a flat `max` across
-families), Exhaust fuses its four margins with a **softmax** over their own
-values (`probability.SoftmaxScoresNormalized`), then takes the
-probability-weighted average as `Urgency`:
+It MUST NOT emit exit evidence or hypothetical position-side scores.
 
-```
-weights  = softmax(mechanical, fragile, thermal, reversal)
-urgency  = Σ weight × margin
-```
+---
 
-This means `Urgency` is not simply "whichever family is strongest" — it's a
-soft blend that gives more credit to a reading where multiple families agree
-(several elevated margins) than one where a single family dominates and the
-rest are near zero, even if the single dominant margin in the second case is
-numerically larger. `Category` (the classification label: 1=mechanical,
-2=fragile, 3=thermal, 4=reversal, 0=none) is still assigned by simple `max` —
-fusion changes the *urgency score*, not which family gets named as the
-winning story.
+## 2. Purpose
 
-## Every metric this package produces
+The compatibility signal measures the joint state of microstructure facts that downstream reasoning may use when evaluating whether previously favorable conditions have changed.
 
-All published under `source=exhaust`, sided `buy` (evidence for exiting a
-**long**) and `sell` (evidence for exiting a **short**) — this is a
-deliberate reuse of the buy/sell side vocabulary to mean "which position this
-evidence argues for closing," not "which direction just traded."
+It measures:
 
-| Metric       | Meaning                                                                                                                                                                                                                                                                                                                                                             |
-|--------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `mechanical` | `max(depth-ratio decline, density-ratio decline)` margin for this side — is the book itself (not spread/pressure/imbalance) below its own baseline. `0..1`.                                                                                                                                                                                                         |
-| `fragile`    | Spread-widening margin — identical value on both sides (not side-specific). `0..1`.                                                                                                                                                                                                                                                                                 |
-| `thermal`    | Pressure-fade × price-rejection margin — requires both fading pressure and adverse price movement for this side. `0..1`.                                                                                                                                                                                                                                            |
-| `reversal`   | Imbalance-flip margin — requires the book to have actually crossed from favoring this side to favoring the other. `0..1`.                                                                                                                                                                                                                                           |
-| `urgency`    | Softmax-weighted fusion of all four margins — see above. `0..1`.                                                                                                                                                                                                                                                                                                    |
-| `strength`   | Same value as `urgency` (`DecaySideOutput.Value == Strength == Urgency`).                                                                                                                                                                                                                                                                                           |
-| `category`   | Nominal winning-family identifier: `0` none, `1` mechanical, `2` fragile, `3` thermal, `4` reversal. **Deliberately not normalized** — the doc comment on `normalizedDecayMetrics` explains why: treating this integer code as a magnitude would invent a false ordering between mechanical, fragile, thermal, and reversal exhaustion. It is a label, not a score. |
+1. side-specific displayed depth relative to its own causal history;
+2. total displayed-book depth relative to history;
+3. spread relative to history;
+4. aggressive executed-flow state;
+5. recent executed-flow extrema and distance from them;
+6. price return;
+7. current and prior book imbalance;
+8. temporal change, recurrence, Maturity, and SNR.
 
-### Readiness
+It does not know whether a position exists.
 
-All six scalar metrics (`mechanical` through `strength`) require a finite
-value in `0..1` (`normalizedDecayScore`) — the equation itself enforces this
-bound internally (each family is a `probability.MagnitudeMargin`), so a
-`nil` normalized reading here would indicate a computation error, not an
-expected runtime state. `category` is validated separately as a finite
-integer in `0..4` (`validDecayCategory`) and deliberately carries no
-`Normalized` field at all.
+It does not know whether a long or short should be exited.
 
-## Two observation paths, same measurement shape
+---
 
-Like `signal/depthflow`, this signal ingests both book updates and
-individual trades through the same `algorithm.DecaySample`/`equation.Decay`
-pipeline and emits the same `Metrics` shape from either
-(`frame`) — trades are held until a book observation exists at or before
-their timestamp, and unchanged book snapshots are deduplicated
-(`sameSnapshot`) before triggering a new measurement, exactly as in
-`depthflow`.
+## 3. No Position Vocabulary
 
-## Files
+The signal MUST NOT use `buy` to mean "exit a long" or `sell` to mean "exit a short."
 
-| File        | Responsibility                                                                                          |
-|-------------|---------------------------------------------------------------------------------------------------------|
-| `signal.go` | `Signal` lifecycle, book/trade dispatch and deduplication, measurement projection, category validation. |
+Sides refer only to measured market sides:
 
-The decay ingredient extraction (depth ratios, spread deviation, pressure
-extrema, imbalance mean) lives in `nomagique/algorithm/decay_sample.go`; the
-four-family scoring and softmax fusion live in `nomagique/equation/decay.go`
-— not here.
+- `bid`;
+- `ask`;
+- `aggressive_buy`;
+- `aggressive_sell`.
 
-## What this package deliberately does not decide
+Position-side interpretation belongs to the consumer.
 
-A high `thermal` reading on the `buy` side is not "close the long now" — it
-is "the pressure and price action that would corroborate a long position are
-fading and rejecting, right now." Whether that's enough to actually exit —
-weighed against fees, the position's own P&L state, and everything else
-measured this tick — is the strategy layer's question, not this signal's.
+---
+
+## 4. Preferred Data Source
+
+The preferred implementation does not re-ingest market feeds and recompute parallel versions of existing measurements.
+
+It consumes or composes the canonical facts already measured by:
+
+- Liquidity;
+- Depthflow;
+- CVD / Executed Flow.
+
+If a single compatibility measurement is required, it republishes aligned sufficient statistics with their original provenance.
+
+The source MUST NOT silently alter their definitions.
+
+---
+
+## 5. Measurement Envelope
+
+Every measurement contains:
+
+- `From`;
+- `At`;
+- `Maturity`;
+- `SNR`.
+
+`At` is the common as-of time.
+
+All included upstream facts MUST be causal as-of observations:
+
+\[
+t_{source}\le At
+\]
+
+Their ages SHOULD be preserved.
+
+If one required source is too stale for the current alignment contract, dependent joint metrics are undefined.
+
+---
+
+## 6. Displayed Depth Metrics
+
+Let:
+
+\[
+D_b=\text{displayed bid-side notional}
+\]
+
+\[
+D_a=\text{displayed ask-side notional}
+\]
+
+The exact observation domain MUST be preserved:
+
+- touch;
+- full observed book;
+- fixed venue depth;
+- other explicit domain.
+
+### 6.1 `displayed_depth_notional:bid`
+
+\[
+\boxed{D_b}
+\]
+
+### 6.2 `displayed_depth_notional:ask`
+
+\[
+\boxed{D_a}
+\]
+
+### 6.3 `displayed_depth_notional`
+
+\[
+\boxed{
+D=D_b+D_a
+}
+\]
+
+Absolute book depth is observation-domain dependent.
+
+---
+
+## 7. Causal Depth Baselines
+
+Because depth is positive and multiplicative, use log-space baselines.
+
+For side \(s\):
+
+\[
+x^D_s=\log D_s
+\]
+
+with causal baseline:
+
+\[
+\mu^D_{s,t-}
+\]
+
+### 7.1 `depth_baseline:bid`
+
+\[
+\boxed{
+B_b=e^{\mu^D_{b,t-}}
+}
+\]
+
+### 7.2 `depth_baseline:ask`
+
+\[
+\boxed{
+B_a=e^{\mu^D_{a,t-}}
+}
+\]
+
+### 7.3 `depth_ratio:bid`
+
+\[
+\boxed{
+R_b=\frac{D_b}{B_b}
+}
+\]
+
+### 7.4 `depth_ratio:ask`
+
+\[
+\boxed{
+R_a=\frac{D_a}{B_a}
+}
+\]
+
+### 7.5 `depth_divergence:bid`
+
+\[
+\boxed{
+d_b=\log(D_b/B_b)
+}
+\]
+
+### 7.6 `depth_divergence:ask`
+
+\[
+\boxed{
+d_a=\log(D_a/B_a)
+}
+\]
+
+### 7.7 `depth_zscore:{bid,ask}`
+
+\[
+\boxed{
+z_s=
+\frac{d_s}{\sigma^D_{s,t-}}
+}
+\]
+
+No directional "support" or "collapse" label is attached.
+
+---
+
+## 8. Total Book Depth Context
+
+For:
+
+\[
+D=D_b+D_a>0
+\]
+
+maintain causal log baseline:
+
+\[
+B_D=e^{\mu^D_{t-}}
+\]
+
+### 8.1 `total_depth_baseline`
+
+\[
+\boxed{B_D}
+\]
+
+### 8.2 `total_depth_ratio`
+
+\[
+\boxed{
+R_D=\frac{D}{B_D}
+}
+\]
+
+### 8.3 `total_depth_zscore`
+
+\[
+\boxed{
+z_D=
+\frac{
+\log(D/B_D)
+}{
+\sigma^D_{t-}
+}
+}
+\]
+
+This replaces semantic "mechanical thinning" scores.
+
+---
+
+## 9. Spread State
+
+Let:
+
+\[
+b=\text{best bid}
+\]
+
+\[
+a=\text{best ask}
+\]
+
+\[
+m=\frac{a+b}{2}
+\]
+
+\[
+s=a-b
+\]
+
+\[
+r_s=\frac{s}{m}
+\]
+
+for a valid uncrossed positive book.
+
+Recommended metrics:
+
+- `spread`;
+- `relative_spread`;
+- `relative_spread_baseline`;
+- `spread_ratio`;
+- `spread_divergence`;
+- `spread_zscore`.
+
+For positive relative spread:
+
+\[
+\boxed{
+R_s=
+\frac{r_s}{B_s}
+}
+\]
+
+\[
+\boxed{
+d_s=\log(r_s/B_s)
+}
+\]
+
+\[
+\boxed{
+z_s=
+\frac{d_s}{\sigma^s_{t-}}
+}
+\]
+
+This replaces "fragile."
+
+---
+
+## 10. Executed-Flow State
+
+The canonical executed-flow signal supplies:
+
+\[
+B=\text{aggressive buy notional}
+\]
+
+\[
+S=\text{aggressive sell notional}
+\]
+
+\[
+G=B+S
+\]
+
+\[
+\phi=
+\frac{B-S}{B+S}
+\]
+
+for \(G>0\).
+
+Recommended compatibility metrics:
+
+- `aggressive_notional:buy`;
+- `aggressive_notional:sell`;
+- `gross_notional`;
+- `signed_net_fraction`;
+- `gross_notional_rate`;
+- `net_notional_rate`.
+
+These are measured facts.
+
+The signal MUST NOT rename them "pressure supporting a long" or "pressure supporting a short."
+
+---
+
+## 11. Flow Historical Context
+
+Maintain a causal baseline for:
+
+\[
+\phi_t
+\]
+
+### 11.1 `signed_net_fraction_baseline`
+
+\[
+\boxed{
+\mu^\phi_{t-}
+}
+\]
+
+### 11.2 `signed_net_fraction_zscore`
+
+\[
+\boxed{
+z_\phi=
+\frac{
+\phi-\mu^\phi_{t-}
+}{
+\sigma^\phi_{t-}
+}
+}
+\]
+
+This is historical directional-flow departure.
+
+---
+
+## 12. Causal Flow Extrema
+
+When extrema are useful, they MUST be prior retained extrema.
+
+Let retained causal history before current observation be \(\mathcal{H}_{t-}\).
+
+### 12.1 `signed_net_fraction_prior_max`
+
+\[
+\boxed{
+\phi_{\max,t-}
+=
+\max_{\tau\in\mathcal{H}_{t-}}
+\phi_\tau
+}
+\]
+
+### 12.2 `signed_net_fraction_prior_min`
+
+\[
+\boxed{
+\phi_{\min,t-}
+=
+\min_{\tau\in\mathcal{H}_{t-}}
+\phi_\tau
+}
+\]
+
+### 12.3 `distance_from_prior_max`
+
+\[
+\boxed{
+d_{\max}
+=
+\phi_t-\phi_{\max,t-}
+}
+\]
+
+### 12.4 `distance_from_prior_min`
+
+\[
+\boxed{
+d_{\min}
+=
+\phi_t-\phi_{\min,t-}
+}
+\]
+
+The current observation is compared with the prior extremum before the extremum updates.
+
+A current new maximum therefore produces:
+
+\[
+d_{\max}>0
+\]
+
+rather than erasing its own departure by redefining the denominator first.
+
+No "pressure fade" interpretation is emitted.
+
+---
+
+## 13. Price Response
+
+Use quote midpoint rather than trade execution price when measuring market response.
+
+For aligned interval:
+
+\[
+\boxed{
+r=
+\log
+\left(
+\frac{m_{At}}{m_{From}}
+\right)
+}
+\]
+
+Recommended metrics:
+
+- `midpoint:from`;
+- `midpoint:at`;
+- `midpoint_log_return`;
+- `midpoint_return_rate`.
+
+Directional decomposition MAY be published:
+
+\[
+\boxed{
+r^+=\max(r,0)
+}
+\]
+
+\[
+\boxed{
+r^-=\max(-r,0)
+}
+\]
+
+These are components, not rejection scores.
+
+---
+
+## 14. Book Imbalance
+
+Let bid and ask observed book notionals be:
+
+\[
+D_b,\quad D_a
+\]
+
+### 14.1 `book_imbalance`
+
+\[
+\boxed{
+I_t=
+\frac{D_b-D_a}{D_b+D_a}
+}
+\]
+
+### 14.2 `previous_book_imbalance`
+
+\[
+\boxed{
+I_{t-1}
+}
+\]
+
+### 14.3 `book_imbalance_change`
+
+\[
+\boxed{
+\Delta I=I_t-I_{t-1}
+}
+\]
+
+### 14.4 `book_imbalance_baseline`
+
+\[
+\boxed{
+\mu^I_{t-}
+}
+\]
+
+### 14.5 `book_imbalance_zscore`
+
+\[
+\boxed{
+z_I=
+\frac{
+I_t-\mu^I_{t-}
+}{
+\sigma^I_{t-}
+}
+}
+\]
+
+Publishing current and previous imbalance preserves any sign crossing as a fact.
+
+The signal MUST NOT label it "reversal."
+
+---
+
+## 15. Signal-to-Noise Ratio
+
+If this compatibility composite is retained, define its core joint state as:
+
+\[
+\boxed{
+X_t=
+\begin{bmatrix}
+\log R_b\\
+\log R_a\\
+\log R_s\\
+\phi_t\\
+I_t
+\end{bmatrix}
+}
+\]
+
+where defined.
+
+Let causal historical state be:
+
+\[
+\mu_{t-},\quad\Sigma_{t-}
+\]
+
+For \(k\) defined dimensions:
+
+\[
+\delta_t=X_t-\mu_{t-}
+\]
+
+\[
+\boxed{
+SNR=
+\frac{1}{k}
+\delta_t^\top
+\Sigma_{t-}^{-1}
+\delta_t
+}
+\]
+
+SNR measures unusualness of the joint microstructure state.
+
+It is not exit urgency.
+
+---
+
+## 16. Maturity
+
+For causal estimator weights \(w_i\):
+
+\[
+\boxed{
+N_{\mathrm{eff}}
+=
+\frac{(\sum_iw_i)^2}
+{\sum_iw_i^2}
+}
+\]
+
+\[
+\boxed{
+Maturity=
+\begin{cases}
+0,&N_{\mathrm{eff}}\le1\\
+1-\frac{1}{N_{\mathrm{eff}}},&N_{\mathrm{eff}}>1
+\end{cases}
+}
+\]
+
+When the composite depends on several upstream mature estimators, measurement maturity is the minimum maturity required by the joint SNR.
+
+---
+
+## 17. Temporal Dynamics
+
+Recommended causal local-regression measurements:
+
+- `depth_divergence_velocity:bid`;
+- `depth_divergence_velocity:ask`;
+- `spread_divergence_velocity`;
+- `signed_net_fraction_velocity`;
+- `book_imbalance_velocity`.
+
+For:
+
+\[
+x_i=a+\beta(t_i-t)+\epsilon_i
+\]
+
+publish:
+
+\[
+\boxed{v_x=\beta}
+\]
+
+and optional slope SNR when uncertainty is estimable.
+
+---
+
+## 18. Historical Recurrence
+
+The signal MAY compare standardized joint-state trajectories:
+
+\[
+\boxed{
+Z_t=
+\begin{bmatrix}
+z_{D_b}\\
+z_{D_a}\\
+z_s\\
+z_\phi\\
+z_I
+\end{bmatrix}
+}
+\]
+
+Recommended metrics:
+
+- `historical_path_distance`;
+- `historical_path_percentile`;
+- `historical_match_from`.
+
+No recurrence outcome is inferred.
+
+---
+
+## 19. Relationship to Liquidity
+
+Liquidity is the canonical source for:
+
+- touch capacity;
+- spread;
+- depth ratios;
+- liquidity SNR.
+
+The compatibility exhaust source SHOULD reuse those facts rather than recomputing alternative versions.
+
+---
+
+## 20. Relationship to Depthflow
+
+Depthflow is the canonical source for:
+
+- full-book imbalance;
+- book turnover;
+- additions/removals;
+- resolution gap;
+- imbalance dynamics.
+
+These are direct inputs to any downstream reasoning about changing microstructure support.
+
+---
+
+## 21. Relationship to CVD
+
+CVD is the canonical source for:
+
+- aggressive buy/sell notional;
+- signed net fraction;
+- gross and net rates;
+- midpoint response.
+
+The exhaust compatibility source MUST NOT create a second contradictory definition of "pressure."
+
+---
+
+## 22. Relationship to Toxicity
+
+Toxicity adds disposition accounting:
+
+- fill;
+- withdrawal;
+- replenishment;
+- retreat.
+
+These may be combined downstream with depth and flow changes.
+
+No intent or position conclusion is emitted.
+
+---
+
+## 23. Explicit Non-Claims
+
+The exhaust / support-state signal does not determine:
+
+- whether a move is exhausted;
+- whether a long should exit;
+- whether a short should exit;
+- mechanical exhaustion;
+- fragility;
+- thermal exhaustion;
+- reversal;
+- urgency;
+- strength;
+- position safety;
+- stop placement;
+- whether market structure still "supports" a thesis.
+
+Those are downstream reasoning tasks.
+
+---
+
+## 24. Minimal Compatibility Metric Set
+
+If the package remains, it SHOULD minimally expose:
+
+- `displayed_depth_notional:bid`;
+- `displayed_depth_notional:ask`;
+- `displayed_depth_notional`;
+- `depth_baseline:bid`;
+- `depth_baseline:ask`;
+- `depth_ratio:bid`;
+- `depth_ratio:ask`;
+- `depth_zscore:bid`;
+- `depth_zscore:ask`;
+- `total_depth_ratio`;
+- `total_depth_zscore`;
+- `spread`;
+- `relative_spread`;
+- `relative_spread_baseline`;
+- `spread_ratio`;
+- `spread_zscore`;
+- `signed_net_fraction`;
+- `signed_net_fraction_baseline`;
+- `signed_net_fraction_zscore`;
+- `signed_net_fraction_prior_max`;
+- `signed_net_fraction_prior_min`;
+- `distance_from_prior_max`;
+- `distance_from_prior_min`;
+- `midpoint_log_return`;
+- `book_imbalance`;
+- `previous_book_imbalance`;
+- `book_imbalance_change`;
+- `book_imbalance_zscore`;
+- `historical_path_distance`;
+- `historical_path_percentile`;
+- `From`;
+- `At`;
+- `Maturity`;
+- `SNR`.
+
+The preferred implementation is still to remove this redundant signal and let downstream reasoning consume the canonical source measurements directly.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
@@ -27,9 +28,37 @@ var (
 	SymbolBaselineStability = nmtypes.MustIntern("baseline/stability")
 )
 
+type baselineSlots struct {
+	value        types.Symbol
+	efficiency   types.Symbol
+	window       types.Symbol
+	lastSec      types.Symbol
+	lastNsec     types.Symbol
+	span         types.Symbol
+	fastHalflife types.Symbol
+	slowHalflife types.Symbol
+	stability    types.Symbol
+}
+
+func newBaselineSlots(prefix string) baselineSlots {
+	return baselineSlots{
+		value:        types.MustIntern(temporal.JoinPrefix(prefix, "baseline/value")),
+		efficiency:   types.MustIntern(temporal.JoinPrefix(prefix, "baseline/efficiency")),
+		window:       types.MustIntern(temporal.JoinPrefix(prefix, "baseline/effective_window")),
+		lastSec:      types.MustIntern(temporal.JoinPrefix(prefix, "baseline/last_sec")),
+		lastNsec:     types.MustIntern(temporal.JoinPrefix(prefix, "baseline/last_nsec")),
+		span:         types.MustIntern(temporal.JoinPrefix(prefix, "baseline/observed_span_sec")),
+		fastHalflife: types.MustIntern(temporal.JoinPrefix(prefix, "baseline/fast_halflife_sec")),
+		slowHalflife: types.MustIntern(temporal.JoinPrefix(prefix, "baseline/slow_halflife_sec")),
+		stability:    types.MustIntern(temporal.JoinPrefix(prefix, "baseline/stability")),
+	}
+}
+
 /*
-Baseline is the adaptive central estimate over a window's retained samples,
-and the stability feedback the window needs to size itself.
+Baseline returns the adaptive central estimate over one series' retained
+samples, and the stability feedback that series' window needs to size itself.
+The prefix namespaces every slot, so one frame can carry several independent
+baselines. The empty prefix keeps the legacy generic slots.
 
 The estimate is an event-time EMA: the first observation seeds the baseline
 with itself (timescale "now", mean equal to the value), and every later
@@ -46,108 +75,114 @@ step: grow on a stability dip, slide while stability holds, and shrink toward
 the actually used sample count when stability is perfect. Everything compared
 against the data's own previous verdict — no magic numbers.
 */
-func Baseline(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(nmtypes.SampleValue)
-	sec, hasSec := input.Get(SymbolUnixSec)
-	nsec, hasNsec := input.Get(SymbolUnixNsec)
+func Baseline(prefix string) types.Primitive {
+	series := temporal.NewSeries(prefix)
+	slots := newBaselineSlots(prefix)
 
-	if !hasValue || !hasSec || !hasNsec {
-		return state, types.Frame{}, fmt.Errorf(
-			"statistic: baseline requires a value and event time",
-		)
-	}
+	return func(input types.Frame) types.Frame {
+		value, hasValue := input.Get(series.ValueSymbol)
+		sec, hasSec := input.Get(series.SecSymbol)
+		nsec, hasNsec := input.Get(series.NsecSymbol)
 
-	if nsec < 0 || nsec >= 1e9 {
-		return state, types.Frame{}, fmt.Errorf(
-			"statistic: baseline requires normalized nanoseconds",
-		)
-	}
-
-	count := windowSampleCount(state)
-
-	nextState := state
-
-	previousSec, hasLastSec := state.Get(SymbolBaselineLastSec)
-	previousNsec, hasLastNsec := state.Get(SymbolBaselineLastNsec)
-
-	if hasLastSec && hasLastNsec {
-		if elapsedSince(sec, nsec, previousSec, previousNsec) < 0 {
-			return state, types.Frame{}, fmt.Errorf(
-				"statistic: baseline event time must not regress",
+		if !hasValue || !hasSec || !hasNsec {
+			input.Err = fmt.Errorf(
+				"statistic: baseline requires a value and event time",
 			)
+
+			return input
 		}
+
+		if nsec < 0 || nsec >= 1e9 {
+			input.Err = fmt.Errorf(
+				"statistic: baseline requires normalized nanoseconds",
+			)
+
+			return input
+		}
+
+		count := series.Count(input)
+
+		previousSec, hasLastSec := input.Get(slots.lastSec)
+		previousNsec, hasLastNsec := input.Get(slots.lastNsec)
+
+		if hasLastSec && hasLastNsec {
+			if elapsedSince(sec, nsec, previousSec, previousNsec) < 0 {
+				input.Err = fmt.Errorf(
+					"statistic: baseline event time must not regress",
+				)
+
+				return input
+			}
+		}
+
+		_, hasBaseline := input.Get(slots.value)
+
+		if count < 1 || !hasBaseline || !hasLastSec || !hasLastNsec {
+			// The first observation is the baseline itself: timescale "now", one
+			// unit of target window until more evidence exists.
+			input.Put(slots.value, value)
+			input.Put(slots.efficiency, 0)
+			input.Put(slots.window, 1)
+			input.Put(slots.span, 1)
+			input.Put(slots.stability, 1)
+			input.Put(slots.lastSec, sec)
+			input.Put(slots.lastNsec, nsec)
+
+			return baselineOutput(input, slots, series, value, 1)
+		}
+
+		efficiency := windowEfficiency(series, input, count)
+		elapsed := elapsedSince(sec, nsec, previousSec, previousNsec)
+		halflife := baselineHalflife(elapsed, efficiency, input, slots)
+
+		alpha := 1 - math.Exp(-elapsed*math.Ln2/halflife)
+
+		baseline, _ := input.Get(slots.value)
+		baseline += alpha * (value - baseline)
+
+		stability := ringStability(series, input, count, baseline)
+		previousStability, hasPreviousStability := input.Get(slots.stability)
+
+		input.Put(slots.value, baseline)
+		input.Put(slots.efficiency, efficiency)
+		input.Put(slots.window, 2/alpha-1)
+		input.Put(slots.span, halflife)
+		input.Put(slots.stability, stability)
+		input.Put(slots.lastSec, sec)
+		input.Put(slots.lastNsec, nsec)
+
+		target := float64(count)
+
+		if hasPreviousStability {
+			target = windowModifier(series, input, count, stability, previousStability)
+		}
+
+		return baselineOutput(input, slots, series, value, target)
 	}
-
-	_, hasBaseline := state.Get(SymbolBaselineValue)
-
-	if count < 1 || !hasBaseline || !hasLastSec || !hasLastNsec {
-		// The first observation is the baseline itself: timescale "now", one unit
-		// of target window until more evidence exists.
-		nextState.Put(SymbolBaselineValue, value)
-		nextState.Put(SymbolBaselineEfficiency, 0)
-		nextState.Put(SymbolBaselineWindow, 1)
-		nextState.Put(SymbolBaselineSpan, 1)
-		nextState.Put(SymbolBaselineStability, 1)
-		nextState.Put(SymbolBaselineLastSec, sec)
-		nextState.Put(SymbolBaselineLastNsec, nsec)
-
-		return nextState, baselineOutput(nextState, value, input, 1), nil
-	}
-
-	efficiency := windowEfficiency(state, count)
-	elapsed := elapsedSince(sec, nsec, previousSec, previousNsec)
-	halflife := baselineHalflife(elapsed, efficiency, input)
-
-	alpha := 1 - math.Exp(-elapsed*math.Ln2/halflife)
-
-	baseline, _ := state.Get(SymbolBaselineValue)
-	baseline += alpha * (value - baseline)
-
-	stability := ringStability(state, count, baseline)
-	previousStability, hasPreviousStability := state.Get(SymbolBaselineStability)
-
-	nextState.Put(SymbolBaselineValue, baseline)
-	nextState.Put(SymbolBaselineEfficiency, efficiency)
-	nextState.Put(SymbolBaselineWindow, 2/alpha-1)
-	nextState.Put(SymbolBaselineSpan, halflife)
-	nextState.Put(SymbolBaselineStability, stability)
-	nextState.Put(SymbolBaselineLastSec, sec)
-	nextState.Put(SymbolBaselineLastNsec, nsec)
-
-	target := float64(count)
-
-	if hasPreviousStability {
-		target = windowModifier(state, count, stability, previousStability)
-	}
-
-	return nextState, baselineOutput(nextState, value, input, target), nil
 }
 
 func baselineOutput(
-	state types.Frame,
-	value float64,
 	input types.Frame,
+	slots baselineSlots,
+	series temporal.Series,
+	value float64,
 	target float64,
 ) types.Frame {
-	output := input
-	output.Put(nmtypes.SampleValue, value)
+	input.Put(series.ValueSymbol, value)
 
-	baseline, _ := state.Get(SymbolBaselineValue)
-	efficiency, _ := state.Get(SymbolBaselineEfficiency)
-	window, _ := state.Get(SymbolBaselineWindow)
-	stability, _ := state.Get(SymbolBaselineStability)
+	baseline, _ := input.Get(slots.value)
+	efficiency, _ := input.Get(slots.efficiency)
+	window, _ := input.Get(slots.window)
+	stability, _ := input.Get(slots.stability)
 
-	output.Put(SymbolBaselineValue, baseline)
-	output.Put(SymbolBaselineEfficiency, efficiency)
-	output.Put(SymbolBaselineWindow, window)
-	output.Put(SymbolBaselineStability, stability)
-	output.Put(SymbolReady, 1)
-	output.Put(nmtypes.Span, target)
+	input.Put(slots.value, baseline)
+	input.Put(slots.efficiency, efficiency)
+	input.Put(slots.window, window)
+	input.Put(slots.stability, stability)
+	input.Put(series.ReadySymbol, 1)
+	input.Put(series.SpanSymbol, target)
 
-	return output
+	return input
 }
 
 /*
@@ -156,17 +191,17 @@ net displacement between its oldest and newest samples over the path length
 of every consecutive step, walked in arrival order. It measures how much of the
 ring's motion was directional.
 */
-func windowEfficiency(state types.Frame, count int) float64 {
+func windowEfficiency(series temporal.Series, state types.Frame, count int) float64 {
 	if count < 2 {
 		return 0
 	}
 
-	capacity, _ := state.Get(nmtypes.MustIntern("capacity"))
-	head := windowSampleHead(state)
+	capacity, _ := state.Get(series.CapacitySymbol)
+	head := series.Head(state)
 	slots := make([]float64, 0, count)
 
 	for index := range count {
-		sample, _ := state.Get(nmtypes.MustSampleSymbol((head + index) % int(capacity)))
+		sample, _ := series.SampleAt(&state, (head+index)%int(capacity))
 		slots = append(slots, sample)
 	}
 
@@ -191,19 +226,24 @@ range; when the range collapses to zero the ring is perfectly stable. A choppy
 ring is spread across its range and reports near zero, which is exactly the
 signal the window needs to keep taking more inputs.
 */
-func ringStability(state types.Frame, count int, estimate float64) float64 {
+func ringStability(
+	series temporal.Series,
+	state types.Frame,
+	count int,
+	estimate float64,
+) float64 {
 	if count < 1 {
 		return 0
 	}
 
-	capacity, _ := state.Get(nmtypes.MustIntern("capacity"))
-	head := windowSampleHead(state)
+	capacity, _ := state.Get(series.CapacitySymbol)
+	head := series.Head(state)
 	minimum := math.MaxFloat64
 	maximum := -math.MaxFloat64
 	largestResidual := 0.0
 
 	for index := 0; index < count; index++ {
-		sample, _ := state.Get(nmtypes.MustSampleSymbol((head + index) % int(capacity)))
+		sample, _ := series.SampleAt(&state, (head+index)%int(capacity))
 
 		minimum = math.Min(minimum, sample)
 		maximum = math.Max(maximum, sample)
@@ -227,12 +267,13 @@ or improved verdict asks it to slide (keep its size), and perfect stability
 asks it to shrink toward the samples it actually retains.
 */
 func windowModifier(
+	series temporal.Series,
 	state types.Frame,
 	count int,
 	stability float64,
 	previousStability float64,
 ) float64 {
-	capacity, _ := state.Get(nmtypes.MustIntern("capacity"))
+	capacity, _ := state.Get(series.CapacitySymbol)
 
 	if capacity <= 0 {
 		capacity = float64(count)
@@ -288,9 +329,10 @@ func baselineHalflife(
 	elapsed float64,
 	efficiency float64,
 	input types.Frame,
+	slots baselineSlots,
 ) float64 {
-	if fastHalflife, hasFast := input.Get(SymbolBaselineFastHalflife); hasFast {
-		if slowHalflife, hasSlow := input.Get(SymbolBaselineSlowHalflife); hasSlow &&
+	if fastHalflife, hasFast := input.Get(slots.fastHalflife); hasFast {
+		if slowHalflife, hasSlow := input.Get(slots.slowHalflife); hasSlow &&
 			fastHalflife > 0 && slowHalflife >= fastHalflife {
 			return slowHalflife + efficiency*(fastHalflife-slowHalflife)
 		}
@@ -303,26 +345,6 @@ func baselineHalflife(
 	}
 
 	return span
-}
-
-func windowSampleCount(state types.Frame) int {
-	value, found := state.Get(nmtypes.SampleCount)
-
-	if !found {
-		return 0
-	}
-
-	return int(value)
-}
-
-func windowSampleHead(state types.Frame) int {
-	value, found := state.Get(nmtypes.SampleHead)
-
-	if !found {
-		return 0
-	}
-
-	return int(value)
 }
 
 func clamp(value float64, low float64, high float64) float64 {

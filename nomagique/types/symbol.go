@@ -14,8 +14,10 @@ type Symbol uint16
 
 const (
 	frameMaskWordBits  = 64
-	fullStackMaskWords = 17
+	fullStackMaskWords = 34
 	// MaxSlots bounds both the registry and the universal Frame representation.
+	// It must cover every distinct interned symbol across the whole program:
+	// each namespaced estimator series reserves its own sample-slot block.
 	MaxSlots = frameMaskWordBits * fullStackMaskWords
 )
 

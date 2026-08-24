@@ -45,27 +45,41 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["last_price"].Raw, ShouldEqual, 100.0)
 			So(measurement.Metrics["observation_count"].Raw, ShouldEqual, 1.0)
-			So(measurement.Metrics, ShouldNotContainKey, "cohort_signed_correlation")
+			So(measurement.Metrics, ShouldNotContainKey, "signed_correlation")
 
 			So(measurement.Maturity, ShouldEqual, 0.0)
 			So(measurement.SNR, ShouldEqual, 0.0)
 		})
 
-		Convey("cohort correlation facts appear once two symbols share paths", func() {
+		Convey("cohort and pair-history facts appear once two symbols share paths", func() {
 			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104})
-			measurements := drive(entity, "ETH/USD", []float64{200, 202, 204, 206, 208})
+			measurements := drive(entity, "ETH/USD", []float64{200, 202, 203, 205, 206})
 
 			last := measurements[len(measurements)-1]
 
-			So(last.Metrics, ShouldContainKey, "cohort_signed_correlation")
-			So(last.Metrics, ShouldContainKey, "cohort_absolute_correlation")
-			So(last.Metrics, ShouldContainKey, "cohort_peer_count")
-			So(last.Metrics, ShouldContainKey, "relative_cohort_return_energy")
+			So(last.Metrics, ShouldContainKey, "signed_correlation")
+			So(last.Metrics, ShouldContainKey, "absolute_correlation")
 
-			So(last.Metrics["cohort_signed_correlation"].Raw, ShouldAlmostEqual, 1.0, 1e-12)
-			So(last.Metrics["cohort_absolute_correlation"].Raw, ShouldAlmostEqual, 1.0, 1e-12)
+			signed := last.Metrics["signed_correlation"].Raw
+			So(signed, ShouldBeGreaterThan, 0.0)
+			So(signed, ShouldBeLessThan, 1.0)
+
 			So(last.Metrics["cohort_peer_count"].Raw, ShouldEqual, 1.0)
-			So(last.Metrics["relative_cohort_return_energy"].Raw, ShouldAlmostEqual, 1.0, 1e-12)
+			So(last.Metrics["overlap_pair_count"].Raw, ShouldEqual, 4.0)
+			So(last.Metrics, ShouldContainKey, "covariance")
+			So(last.Metrics, ShouldContainKey, "return_energy:reference")
+			So(last.Metrics, ShouldContainKey, "return_energy:measured")
+			So(last.Metrics, ShouldContainKey, "correlation_p_value")
+			So(last.Metrics, ShouldContainKey, "correlation_standard_error_fisher")
+			So(last.Metrics["cohort_correlation_dispersion"].Raw, ShouldAlmostEqual, 0.0, 1e-12)
+			So(last.Metrics, ShouldContainKey, "cohort_effective_peer_count")
+			So(last.Metrics, ShouldContainKey, "relative_return_energy")
+
+			So(last.Metrics, ShouldContainKey, "correlation_baseline")
+			So(last.Metrics, ShouldContainKey, "correlation_divergence")
+			So(last.Metrics, ShouldContainKey, "correlation_zscore")
+			So(last.Metrics, ShouldContainKey, "correlation_velocity")
+			So(last.Metrics, ShouldContainKey, "relative_return_energy_baseline")
 		})
 
 		Convey("time regression surfaces as measurement.Err", func() {

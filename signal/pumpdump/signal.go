@@ -2,126 +2,72 @@ package pumpdump
 
 import (
 	"context"
+	"time"
+
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/types"
 )
 
-const (
-	seriesAlphaDepth uint8 = iota + 1
-	seriesBetaDepth
-	seriesTickerDisplacement
-	seriesRate
-	seriesReturn
-	seriesRateRatio
-)
+/*
+Signal is the volume-clock activity measuring instrument. It composes its
+market entities in its constructor and exposes the canonical signal structure:
+Constructor, Name, Error, Step, Close.
+*/
+type Signal struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
 
-type seriesKey struct {
-	symbol string
-	series uint8
+	ticker *Ticker
+	trade  *Trade
+	level3 *Level3
 }
 
 /*
-Signal converts the three PumpDump market streams into measurements. Level 3
-drives book geometry, ticker updates measure reference displacement, and trades
-drive quantity-clocked acceleration. Persistent numeric state belongs only to
-the composed Nomagique Numbers.
+NewSignal composes the Ticker (executable spread), Trade (volume clock), and
+Level3 (authoritative book touch) entities.
 */
-type Signal struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	thesis       *types.Thesis
-	books        websocket.BookSource
-	geometry     *nomagique.Number[string]
-	depthChange  *nomagique.Number[seriesKey]
-	tickerChange *nomagique.Number[string]
-	acceleration *nomagique.Number[string]
-	normalize    *nomagique.Number[seriesKey]
-	rateChange   *nomagique.Number[seriesKey]
-	absolute     nmtypes.Primitive
-	decompose    nmtypes.Primitive
-	polarize     nmtypes.Primitive
-	separate     nmtypes.Primitive
-	measurements *runtime.Channel[*nmtypes.Measurement]
-	pool         *types.SymbolPool
-}
-
-func NewSignal(
-	ctx context.Context,
-	thesis *types.Thesis,
-	books websocket.BookSource,
-	bus *runtime.Workspace,
-) *Signal {
+func NewSignal(ctx context.Context, workspace *runtime.Workspace) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	signal := &Signal{
-		ctx:          ctx,
-		cancel:       cancel,
-		thesis:       thesis,
-		books:        books,
-		geometry:     nomagique.NewNumber[string](equation.Geometry()),
-		depthChange:  nomagique.NewNumber[seriesKey](equation.RelativeChange(nmtypes.SampleValue)),
-		tickerChange: nomagique.NewNumber[string](equation.LogChange(nmtypes.SampleValue)),
-		acceleration: nomagique.NewNumber[string](equation.Acceleration()),
-		normalize:    nomagique.NewNumber[seriesKey](equation.Normalize()),
-		rateChange:   nomagique.NewNumber[seriesKey](equation.RelativeChange(nmtypes.SampleValue)),
-		absolute: nmtypes.Pipe(
-			nmtypes.Relay(equation.SymbolChange, calculus.SymbolValue),
-			calculus.Absolute,
-			nmtypes.Relay(calculus.SymbolResult, nmtypes.SampleValue),
-		),
-		decompose: equation.Decompose(),
-		polarize:  equation.Polarize(),
-		separate:  statistic.Separation,
-		pool:      types.NewSymbolPool(types.ShardWorkers()),
-	}
-	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
-		bus, types.ChannelMeasurements,
-		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
-	)
-	runtime.ChannelOf[kraken.Level3Data](
-		bus, types.ChannelLevel3,
-		func(frame kraken.Level3Data) string { return frame.Symbol },
-	).Subscribe(signal.Name(), func(frame kraken.Level3Data) error {
-		return signal.consumeLevel3(signal.thesis.Symbol(frame.Symbol), frame)
-	})
-	runtime.ChannelOf[kraken.TickerData](
-		bus, types.ChannelTickers,
-		func(ticker kraken.TickerData) string { return ticker.Symbol },
-	).Subscribe(signal.Name(), func(ticker kraken.TickerData) error {
-		return signal.consumeTicker(signal.thesis.Symbol(ticker.Symbol), ticker)
-	})
-	runtime.ChannelOf[kraken.TradeData](
-		bus, types.ChannelTrades,
-		func(trade kraken.TradeData) string { return trade.Symbol },
-	).Subscribe(signal.Name(), func(trade kraken.TradeData) error {
-		return signal.consumeTrade(signal.thesis.Symbol(trade.Symbol), trade)
-	})
 
-	return signal
+	return &Signal{
+		ctx:    ctx,
+		cancel: cancel,
+		ticker: NewTicker(),
+		trade:  NewTrade(),
+		level3: NewLevel3(workspace),
+	}
 }
 
-func (signal *Signal) Name() string { return string(types.SourcePumpDump) }
+func (signal *Signal) Name() string { return "pumpdump" }
 
 func (signal *Signal) Error() error { return signal.err }
 
-func (signal *Signal) Type() types.SourceType { return types.SourcePumpDump }
+func (signal *Signal) StepTicker(ticker kraken.TickerData) *data.Measurement[float64] {
+	return signal.ticker.Step(ticker)
+}
+
+func (signal *Signal) StepTrade(trade kraken.TradeData) *data.Measurement[float64] {
+	return signal.trade.Step(trade)
+}
+
+func (signal *Signal) StepLevel3(symbol string, at time.Time) *data.Measurement[float64] {
+	return signal.level3.Step(symbol, at)
+}
 
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {
 		signal.cancel()
 	}
 
-	if signal.pool != nil {
-		signal.pool.Close()
+	if err := signal.ticker.Close(); err != nil {
+		return err
 	}
 
-	return nil
+	if err := signal.trade.Close(); err != nil {
+		return err
+	}
+
+	return signal.level3.Close()
 }

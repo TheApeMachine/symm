@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -16,104 +17,138 @@ var (
 	SymbolDispersionHalflife = types.MustIntern("z/dispersion_halflife_sec")
 )
 
+type zScoreSlots struct {
+	residual      types.Symbol
+	dispersion    types.Symbol
+	value         types.Symbol
+	lastSec       types.Symbol
+	lastNsec      types.Symbol
+	halflife      types.Symbol
+	baselineValue types.Symbol
+	baselineSpan  types.Symbol
+}
+
+func newZScoreSlots(prefix string) zScoreSlots {
+	baseline := newBaselineSlots(prefix)
+
+	return zScoreSlots{
+		residual:      types.MustIntern(temporal.JoinPrefix(prefix, "z/residual")),
+		dispersion:    types.MustIntern(temporal.JoinPrefix(prefix, "z/dispersion")),
+		value:         types.MustIntern(temporal.JoinPrefix(prefix, "z/value")),
+		lastSec:       types.MustIntern(temporal.JoinPrefix(prefix, "z/last_sec")),
+		lastNsec:      types.MustIntern(temporal.JoinPrefix(prefix, "z/last_nsec")),
+		halflife:      types.MustIntern(temporal.JoinPrefix(prefix, "z/dispersion_halflife_sec")),
+		baselineValue: baseline.value,
+		baselineSpan:  baseline.span,
+	}
+}
+
 /*
-ZScore measures how far the observed value stands from the composed
-baseline, in units of the residuals' own event-time decayed dispersion. The
-dispersion is a decayed root mean square of residuals, so it tracks the
+ZScore returns the primitive that measures how far the observed value stands
+from the composed baseline of the same series, in units of the residuals' own
+event-time decayed dispersion. The prefix namespaces every slot; the empty
+prefix keeps the legacy generic slots.
+
+The dispersion is a decayed root mean square of residuals, so it tracks the
 variance around the baseline as it is right now instead of assuming a static
 spread, and the score is comparable across every series because each series
 normalizes by itself. Until the composition has produced a baseline there is
 no residual to measure, and the primitive reports not ready.
 */
-func ZScore(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
-	value, hasValue := input.Get(types.SampleValue)
-	sec, hasSec := input.Get(SymbolUnixSec)
-	nsec, hasNsec := input.Get(SymbolUnixNsec)
+func ZScore(prefix string) types.Primitive {
+	series := temporal.NewSeries(prefix)
+	slots := newZScoreSlots(prefix)
 
-	if !hasValue || !hasSec || !hasNsec {
-		return state, types.Frame{}, fmt.Errorf(
-			"statistic: z-score requires a value and event time",
-		)
-	}
+	return func(input types.Frame) types.Frame {
+		value, hasValue := input.Get(series.ValueSymbol)
+		sec, hasSec := input.Get(series.SecSymbol)
+		nsec, hasNsec := input.Get(series.NsecSymbol)
 
-	if nsec < 0 || nsec >= 1e9 {
-		return state, types.Frame{}, fmt.Errorf(
-			"statistic: z-score requires normalized nanoseconds",
-		)
-	}
-
-	halflife, hasHalflife := input.Get(SymbolDispersionHalflife)
-
-	if hasHalflife && halflife < 0 {
-		return state, types.Frame{}, fmt.Errorf(
-			"statistic: z-score requires a non-negative dispersion halflife",
-		)
-	}
-
-	if !hasHalflife || halflife == 0 {
-		if span, hasSpan := input.Get(SymbolBaselineSpan); hasSpan && span > 0 {
-			halflife = span
-		} else if span, hasSpan := state.Get(SymbolBaselineSpan); hasSpan && span > 0 {
-			halflife = span
-		} else {
-			halflife = 1.0
-		}
-	}
-
-	baseline, hasBaseline := state.Get(SymbolBaselineValue)
-
-	if !hasBaseline {
-		output := input
-		output.Put(types.SampleValue, value)
-		output.Put(SymbolReady, 0)
-
-		return state, output, nil
-	}
-
-	previousSec, hasLastSec := state.Get(SymbolDispersionLastSec)
-	previousNsec, hasLastNsec := state.Get(SymbolDispersionLastNsec)
-
-	if hasLastSec && hasLastNsec {
-		if elapsedSince(sec, nsec, previousSec, previousNsec) < 0 {
-			return state, types.Frame{}, fmt.Errorf(
-				"statistic: z-score event time must not regress",
+		if !hasValue || !hasSec || !hasNsec {
+			input.Err = fmt.Errorf(
+				"statistic: z-score requires a value and event time",
 			)
+
+			return input
 		}
+
+		if nsec < 0 || nsec >= 1e9 {
+			input.Err = fmt.Errorf(
+				"statistic: z-score requires normalized nanoseconds",
+			)
+
+			return input
+		}
+
+		halflife, hasHalflife := input.Get(slots.halflife)
+
+		if hasHalflife && halflife < 0 {
+			input.Err = fmt.Errorf(
+				"statistic: z-score requires a non-negative dispersion halflife",
+			)
+
+			return input
+		}
+
+		if !hasHalflife || halflife == 0 {
+			if span, hasSpan := input.Get(slots.baselineSpan); hasSpan && span > 0 {
+				halflife = span
+			} else {
+				halflife = 1.0
+			}
+		}
+
+		baseline, hasBaseline := input.Get(slots.baselineValue)
+
+		if !hasBaseline {
+			input.Put(series.ValueSymbol, value)
+			input.Put(series.ReadySymbol, 0)
+
+			return input
+		}
+
+		previousSec, hasLastSec := input.Get(slots.lastSec)
+		previousNsec, hasLastNsec := input.Get(slots.lastNsec)
+
+		if hasLastSec && hasLastNsec {
+			if elapsedSince(sec, nsec, previousSec, previousNsec) < 0 {
+				input.Err = fmt.Errorf(
+					"statistic: z-score event time must not regress",
+				)
+
+				return input
+			}
+		}
+
+		residual := value - baseline
+		dispersion, hasDispersion := input.Get(slots.dispersion)
+
+		if !hasDispersion || !hasLastSec || !hasLastNsec {
+			input.Put(slots.dispersion, math.Abs(residual))
+		} else {
+			elapsed := elapsedSince(sec, nsec, previousSec, previousNsec)
+			alpha := 1 - math.Exp(-elapsed*math.Ln2/halflife)
+			energy := dispersion * dispersion
+			energy += alpha * (residual*residual - energy)
+			input.Put(slots.dispersion, math.Sqrt(energy))
+		}
+
+		input.Put(slots.lastSec, sec)
+		input.Put(slots.lastNsec, nsec)
+
+		currentDispersion, _ := input.Get(slots.dispersion)
+		score := 0.0
+
+		if currentDispersion > 0 {
+			score = residual / currentDispersion
+		}
+
+		input.Put(series.ValueSymbol, value)
+		input.Put(slots.residual, residual)
+		input.Put(slots.dispersion, currentDispersion)
+		input.Put(slots.value, score)
+		input.Put(series.ReadySymbol, 1)
+
+		return input
 	}
-
-	residual := value - baseline
-	nextState := state
-	dispersion, hasDispersion := state.Get(SymbolDispersion)
-
-	if !hasDispersion || !hasLastSec || !hasLastNsec {
-		nextState.Put(SymbolDispersion, math.Abs(residual))
-	} else {
-		elapsed := elapsedSince(sec, nsec, previousSec, previousNsec)
-		alpha := 1 - math.Exp(-elapsed*math.Ln2/halflife)
-		energy := dispersion * dispersion
-		energy += alpha * (residual*residual - energy)
-		nextState.Put(SymbolDispersion, math.Sqrt(energy))
-	}
-
-	nextState.Put(SymbolDispersionLastSec, sec)
-	nextState.Put(SymbolDispersionLastNsec, nsec)
-
-	currentDispersion, _ := nextState.Get(SymbolDispersion)
-	score := 0.0
-
-	if currentDispersion > 0 {
-		score = residual / currentDispersion
-	}
-
-	output := input
-	output.Put(types.SampleValue, value)
-	output.Put(SymbolResidual, residual)
-	output.Put(SymbolDispersion, currentDispersion)
-	output.Put(SymbolZScore, score)
-	output.Put(SymbolReady, 1)
-
-	return nextState, output, nil
 }

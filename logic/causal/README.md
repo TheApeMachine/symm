@@ -1,123 +1,413 @@
-# `logic/causal` — climbing Pearl's ladder
+# Causal Reasoning Model Specification
 
-> Correlation is rung one. A trading system that stops there is betting on
-> coincidence.
+## Status
 
-## What this package is
+Normative specification for converting Measurements and Relation structure into causal and counterfactual estimates.
 
-This stage evaluates **Judea Pearl's Causal Ladder** over live market
-observations. The ladder is Pearl's hierarchy of what a model can answer, and the
-rungs are genuinely different kinds of question:
+## 1. Purpose
 
-| Rung                  | Question                    | Notation           | In this system                                                         |
-|-----------------------|-----------------------------|--------------------|------------------------------------------------------------------------|
-| **1. Association**    | What is observed together?  | `P(y \| x)`        | Does forecast co-move with realized return?                            |
-| **2. Intervention**   | What if I *act*?            | `P(y \| do(x))`    | If the forecast were forced to this level, what return follows?        |
-| **3. Counterfactual** | What *would have* happened? | `P(y_x \| x', y')` | Given what actually happened, what if the forecast had been different? |
+The Causal layer answers explicit questions such as:
 
-The distinction is not academic. Association will happily tell you that ice cream
-sales predict drownings. Rung two asks what happens when you *intervene* on ice
-cream sales, and the answer is nothing — summer was the confounder. A trading
-signal that only clears rung one has exactly this failure mode: it tracks
-something that tracks the market, and it dies the moment the shared cause moves.
+> What outcome should be expected under intervention X, given the observed market and portfolio state?
 
-The ladder math lives in [`nomagique/causal`](../../../nomagique/causal), wrapped
-by `algorithm.Pearl`. This package decides what the variables *are*.
+It consumes:
 
-## The causal model
+- Measurement history;
+- an explicit `CausalSchema`;
+- Influence Graph evidence;
+- strategy treatment/action definitions.
 
-Everything hinges on the four-column row. This is the system's actual causal
-hypothesis about itself, written down:
+It does not consume a handful of opaque semantic scores as a substitute for market state.
 
-```
-row = [ Energy , Surprise , Prediction , RealizedReturn ]
-        └─ control ─┘        └treatment┘   └── target ──┘
-```
+## 2. Predictive Influence Is Not Causality
 
-| Column                  | Role          | Source                               |
-|-------------------------|---------------|--------------------------------------|
-| 0 — **Energy**          | Control       | Resonance system energy              |
-| 1 — **Surprise**        | Control       | Resonance prediction error / anomaly |
-| 2 — **Prediction**      | **Treatment** | Resonance forecast, step 0           |
-| 3 — **Realized return** | **Target**    | Sentiment `change` metric, latest    |
+An Influence Graph edge is evidence of temporal predictive structure.
 
-Read as a claim: *does the predictive-coding forecast actually cause realized
-return, once we adjust for how energetic and how surprised the field was?*
+It is not automatically a causal edge.
 
-Energy and Surprise are controls because they are the obvious confounders. A
-high-energy, high-surprise regime moves price *and* moves the forecast. Without
-adjusting for them, the forecast would look causal when it is merely
-co-symptomatic — the ice cream problem, in market clothing.
+The Causal layer MUST distinguish:
 
-`NonlinearCounterfactual` is enabled: the counterfactual is not assumed linear in
-the treatment.
+1. association;
+2. predictive temporal Influence;
+3. assumed structural parent;
+4. identified causal effect.
 
-## Rung 1 is where most signals die
+A causal estimate MUST NOT be produced merely because a Granger-style Influence exists.
 
-The output carries both raw and scored quantities at every rung — `Association`,
-`Intervention`, `DoExpectation`, `Uplift`, `Counterfactual`, plus `Noise`,
-`Contagion`, and `Condition`. `Uplift` is the one that matters most for trading:
-the expected difference in target under intervention versus not.
+## 3. CausalSchema
 
-Contagion is fed by Surprise and Condition by Energy, so the ladder knows which
-regime each row was observed in rather than pooling all regimes into one average.
+Every causal model operates under an explicit versioned `CausalSchema`.
 
-## Readiness has two gates, and they are separate
+The schema defines:
 
-```go
-searchReady := ready && len(rows) >= MinimumSearchRows   // 12
-```
+- variable identities;
+- variable roles;
+- time semantics;
+- allowed temporal directions;
+- forbidden directions;
+- treatment/action variables;
+- outcome variables;
+- portfolio variables;
+- exogenous/context variables;
+- candidate market-parent relationships;
+- model epoch.
 
-- **`ready`** — the Pearl model's own judgement that it has enough to estimate.
-- **`MinimumSearchRows`** — the live MCTS contract downstream. Twelve aligned
-  observations before a *decision* may rest on this.
+The schema is the wiring contract.
 
-A warm predictive-coding reading is still a causal *result*: the symbol simply is
-not ready for search. The solver publishes `{"ready": false}` explicitly rather
-than staying silent, so the planner can complete an honest `ActionNothing`
-decision while resonance keeps learning. Silence downstream is indistinguishable
-from a stalled stage; an explicit not-ready is not.
+Metric names are not the wiring mechanism.
 
-## History depth is derived from the model, not chosen
+## 4. Market Variables
 
-```go
-capacity := 1 + rowWidth + rowWidth*(rowWidth+1)/2
+Market variables are actual Measurement coordinates.
+
+Examples:
+
+```text
+liquidity.ask_depth_divergence
+cvd.signed_net_fraction
+hawkes.conditional_intensity:buy
+derivatives.open_interest_growth_rate
+sentiment.breadth
 ```
 
-This is exactly the number of first- and second-moment parameters implied by the
-row width — the intercept, the means, and the covariance upper triangle. For the
-four-column row that is 15 rows retained.
+A universal semantic frame such as:
 
-The point is that the window is *the model's own data requirement*, not an
-independent tuning knob someone picked. Widen the row and the window widens with
-it, automatically and for a reason.
+```text
+flow
+coherence
+regime
+surprise
+```
 
-## Ordering
+MUST NOT replace these coordinates.
 
-Causal runs **after** resonance in the analyzer chain and consumes
-`thesis.Resonance`. This is a hard dependency, not a convenience: three of the
-four columns are resonance outputs. The forecast must validate (`Forecast.Validate()`)
-and step 0 must resolve before a row is assembled at all — a symbol with an
-invalid forecast produces no causal row rather than a row of zeros.
+## 5. Temporal Structural Form
 
-Symbols are measured concurrently via `errgroup`, each with its own `Pearl`
-instance and its own retained history.
+The primary representation is a time-sliced structural model.
 
-## Files
+A variable at time `t` may depend on explicitly allowed variables from earlier causal times.
 
-| File        | Responsibility                                                   |
-|-------------|------------------------------------------------------------------|
-| `solver.go` | Row assembly, ladder evaluation, history retention, publication. |
+Future-to-past edges are forbidden.
 
-## Where this connects
+Lagged Influence edges MAY nominate candidate parents.
 
-Downstream, `logic/graph` reads causal uplift and do-expectation as graph nodes
-and infers `supports` / `contradicts` edges by checking whether the causal head
-and the resonance forecast **agree directionally**. That comparison is
-deliberately direction-only — the two heads score on unrelated scales, and a raw
-magnitude comparison would let whichever head has larger units decide the
-relation by itself.
+Contemporaneous causal edges require separate explicit assumptions.
 
-Elsewhere in the system, `CausalOutcome.InformedFlow × spread` is what derives
-the adverse-selection component of the friction model — the causal head paying
-rent beyond observability.
+## 6. Strategy Actions
+
+Strategy actions are explicit intervention variables.
+
+Examples:
+
+- Wait;
+- Enter;
+- Exit;
+- Scale.
+
+An action directly changes only variables the strategy actually controls, such as:
+
+- position;
+- inventory;
+- cash;
+- order state.
+
+An action MUST NOT directly mutate market Measurements unless an explicit market-impact model exists.
+
+Structurally justified:
+
+```text
+Enter → Position
+```
+
+Forbidden without an impact model:
+
+```text
+Enter → MarketPrice
+```
+
+## 7. Outcomes
+
+The causal query target MUST be an explicit outcome.
+
+Preferred economic outcomes include:
+
+- future portfolio wealth change;
+- realized P&L;
+- future log return over an explicit horizon;
+- slippage;
+- drawdown;
+- execution cost.
+
+The target MUST NOT be regime score, opportunity score, confidence, or category ID.
+
+## 8. Observational History
+
+Only real observed rows may fit the causal model.
+
+MCTS simulations MUST NOT enter the observational fit dataset.
+
+Every row MUST preserve:
+
+- schema version;
+- model epoch;
+- event time;
+- coordinate identity;
+- variable values;
+- missing/undefined status.
+
+Rows from incompatible epochs MUST NOT be silently pooled.
+
+## 9. Matrix Materialization
+
+A numeric matrix MAY be used internally.
+
+Its columns MUST be generated from the explicit CausalSchema.
+
+A universal hard-coded column array is prohibited as the permanent reasoning boundary.
+
+Within one schema version, column identity MUST be stable, explicit, and reversible.
+
+## 10. Query-Local Parent Set
+
+For Target `Y`, the model uses an explicit query-local parent set.
+
+Candidate parents may come from:
+
+- CausalSchema;
+- lagged Influence Graph evidence;
+- Target's own history;
+- explicitly required confounders.
+
+The full Measurement history remains retained when a coordinate is not selected for the current Target.
+
+## 11. No Universal Feature List
+
+The system MUST NOT rely on one forever-fixed list such as:
+
+```text
+Flow
+LiquidityImpact
+Hawkes
+Coherence
+Regime
+Surprise
+```
+
+for every causal query.
+
+Different Targets may require different explanatory variables.
+
+Feature selection is part of the explicit query/model contract.
+
+## 12. Identification
+
+A `do(Treatment)` estimate is valid only when the CausalSchema provides a defensible identification strategy.
+
+For backdoor adjustment, the engine MUST preserve:
+
+- Treatment;
+- Target;
+- adjustment variables;
+- identification reasoning.
+
+If a valid adjustment set cannot be established:
+
+```text
+IdentificationStatus = NotIdentifiable
+```
+
+The engine MUST NOT silently return observational association as a causal effect.
+
+## 13. Treatment Positivity
+
+A Treatment effect cannot be identified where observational history contains no relevant support for that Treatment state under comparable controls.
+
+Unsupported interventions MUST be reported as unsupported.
+
+The engine MUST NOT arbitrarily extrapolate and label the result identified.
+
+## 14. Predictor Family
+
+The first required predictor family is linear regression because coefficients, residuals, and rank are auditable.
+
+A nonlinear predictor MAY be added under its own specification.
+
+Changing predictor family MUST NOT weaken this causal contract.
+
+## 15. Rank and Effective Support
+
+A valid linear fit requires sufficient rank and effective support.
+
+The mathematical requirement depends on:
+
+- fitted parameter count;
+- matrix rank;
+- effective observations.
+
+A universal arbitrary rule such as `minimumRows = 100` MUST NOT be the sole definition of readiness.
+
+An infrastructure minimum count MAY exist, but causal validity still depends on rank, support, and identification.
+
+## 16. Regularization
+
+No arbitrary ridge constant is allowed.
+
+If regularization is needed, its penalty MUST be chosen by an explicit data-dependent method, such as causal rolling validation or another separately specified criterion.
+
+The selected method and value MUST be recorded in model provenance.
+
+## 17. Causal Estimate Contract
+
+A causal estimate SHOULD preserve:
+
+```text
+Target
+Treatment
+TreatmentLevel
+AdjustmentSet
+ObservedStateAt
+ExpectedOutcome
+EffectRelativeToReference
+ResidualNoise
+StandardError
+EffectiveSupport
+Maturity
+IdentificationStatus
+ModelVersion
+SchemaVersion
+From
+At
+```
+
+Unavailable uncertainty remains unavailable.
+
+## 18. Counterfactual Contract
+
+A counterfactual answers:
+
+> Given what actually happened, what does this fitted structural model imply under a different intervention?
+
+It MUST preserve:
+
+- factual action;
+- counterfactual action;
+- factual outcome;
+- counterfactual estimate;
+- factual residual/noise where required by method;
+- uncertainty;
+- model/schema version.
+
+## 19. Quality Is Not One Confidence
+
+Causal quality MUST preserve separate concepts:
+
+- IdentificationStatus;
+- effective support;
+- residual noise;
+- parameter uncertainty;
+- out-of-sample/prequential diagnostics where available.
+
+A bounded transform such as:
+
+```text
+1 / (1 + abs(noise))
+```
+
+MUST NOT become a universal trust score unless separately calibrated and specified.
+
+## 20. Maturity
+
+For weighted observational evidence:
+
+```text
+N_eff = (sum w)² / sum(w²)
+Maturity = 0           when N_eff <= 1
+Maturity = 1 - 1/N_eff otherwise
+```
+
+Maturity does not override identification.
+
+A mature confounded model remains non-identifiable.
+
+## 21. Influence Graph Use
+
+Influence edges MAY:
+
+- nominate lagged candidate parents;
+- provide lag initialization;
+- expose predictive structure;
+- expose coefficient uncertainty.
+
+They MUST NOT automatically:
+
+- become causal edges;
+- determine adjustment sets;
+- justify intervention.
+
+Causal assumptions remain explicit.
+
+## 22. Mediation and Double Counting
+
+The Causal model SHOULD represent structural paths rather than independent evidence votes.
+
+If the measured structure is:
+
+```text
+Hawkes
+   ↓
+CVD
+   ↓
+Price
+```
+
+the model SHOULD NOT add separate Hawkes and CVD semantic scores as independent votes for Price.
+
+Mediation is represented by the path.
+
+## 23. Non-Identifiable Is a Valid Result
+
+A non-identifiable query MUST be representable as:
+
+```text
+Estimate unavailable:
+causal effect not identifiable under current schema/history.
+```
+
+The engine MUST NOT:
+
+- substitute correlation;
+- substitute predictive Influence;
+- return zero;
+- reuse an old estimate as current.
+
+## 24. Causal Update Ordering
+
+At event time `t`:
+
+1. materialize current state from observations available at or before `t`;
+2. evaluate the existing model;
+3. emit current causal estimates;
+4. only then update model state with observation `t`.
+
+The current Target MUST NOT train the model used to evaluate itself.
+
+## 25. Model Epoch Changes
+
+A new causal epoch MUST begin when schema, variable meaning, treatment semantics, Target definition, or material market/cohort reference changes.
+
+Historical rows remain accessible but MUST NOT be silently mixed across incompatible epochs.
+
+## 26. Conformance Checklist
+
+The Causal model is non-conformant if it:
+
+1. treats Influence as automatic causality;
+2. uses semantic score columns instead of underlying Measurements;
+3. has one universal feature set for every Target;
+4. cannot return NotIdentifiable;
+5. silently substitutes correlation for causal effect;
+6. trains on MCTS simulations;
+7. lets strategy actions mutate market variables without an explicit impact model;
+8. uses arbitrary regularization;
+9. hides the adjustment set;
+10. loses schema/model provenance.

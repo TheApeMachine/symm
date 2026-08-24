@@ -13,21 +13,19 @@ Maturity maps an empirical support count to count/(count+1). The measure starts
 at zero, rises monotonically, and approaches one without a chosen threshold.
 */
 func Maturity(countSymbol types.Symbol) types.Primitive {
-	return func(
-		state types.Frame,
-		input types.Frame,
-	) (types.Frame, types.Frame, error) {
+	return func(input types.Frame) types.Frame {
 		count, found := input.Get(countSymbol)
 
 		if !found || count < 0 {
-			return state, types.Frame{}, fmt.Errorf(
+			input.Err = fmt.Errorf(
 				"statistic: maturity requires a non-negative support count",
 			)
+
+			return input
 		}
 
-		output := input
-		output.Put(SymbolMaturity, count/(count+1))
+		input.Put(SymbolMaturity, count/(count+1))
 
-		return state, output, nil
+		return input
 	}
 }

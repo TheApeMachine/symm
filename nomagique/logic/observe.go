@@ -11,20 +11,24 @@ import (
 func Observe(required ...types.Symbol) types.Primitive {
 	facts := append([]types.Symbol(nil), required...)
 
-	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	return func(input types.Frame) types.Frame {
 		for _, symbol := range facts {
 			if input.Has(symbol) {
 				continue
 			}
 
 			if name, found := types.SymbolName(symbol); found {
-				return state, types.Frame{}, fmt.Errorf("logic: observation is missing coordinate %s", name)
+				input.Err = fmt.Errorf("logic: observation is missing coordinate %s", name)
+
+				return input
 			}
 
-			return state, types.Frame{}, fmt.Errorf("logic: observation is missing coordinate %d", symbol)
+			input.Err = fmt.Errorf("logic: observation is missing coordinate %d", symbol)
+
+			return input
 		}
 
-		return state, input, nil
+		return input
 	}
 }
 
@@ -32,19 +36,23 @@ func Observe(required ...types.Symbol) types.Primitive {
 func EnsureFinite(required ...types.Symbol) types.Primitive {
 	facts := append([]types.Symbol(nil), required...)
 
-	return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+	return func(input types.Frame) types.Frame {
 		for _, symbol := range facts {
 			value, found := input.Get(symbol)
 
 			if !found || !utils.IsFinite(value) {
 				if name, named := types.SymbolName(symbol); named {
-					return state, types.Frame{}, fmt.Errorf("logic: coordinate %s must be present and finite", name)
+					input.Err = fmt.Errorf("logic: coordinate %s must be present and finite", name)
+
+					return input
 				}
 
-				return state, types.Frame{}, fmt.Errorf("logic: coordinate %d must be present and finite", symbol)
+				input.Err = fmt.Errorf("logic: coordinate %d must be present and finite", symbol)
+
+				return input
 			}
 		}
 
-		return state, input, nil
+		return input
 	}
 }

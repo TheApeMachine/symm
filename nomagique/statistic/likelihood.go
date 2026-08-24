@@ -19,18 +19,17 @@ var (
 Likelihood computes log-likelihood differentials against Poisson and self-only
 baselines.
 */
-func Likelihood(
-	state types.Frame,
-	input types.Frame,
-) (types.Frame, types.Frame, error) {
+func Likelihood(input types.Frame) types.Frame {
 	llHawkes, hasHawkes := input.Get(SymbolLLHawkes)
 	llPoisson, hasPoisson := input.Get(SymbolLLPoisson)
 	llSelf, hasSelf := input.Get(SymbolLLSelf)
 
 	if !hasHawkes || !hasPoisson || !hasSelf || !finite(llHawkes, llPoisson, llSelf) {
-		return state, types.Frame{}, fmt.Errorf(
+		input.Err = fmt.Errorf(
 			"statistic: likelihood requires finite model values",
 		)
+
+		return input
 	}
 
 	deltaPoisson := llHawkes - llPoisson
@@ -44,9 +43,8 @@ func Likelihood(
 		deltaSelf = 0
 	}
 
-	output := input
-	output.Put(SymbolDeltaPoisson, deltaPoisson)
-	output.Put(SymbolDeltaSelf, deltaSelf)
+	input.Put(SymbolDeltaPoisson, deltaPoisson)
+	input.Put(SymbolDeltaSelf, deltaSelf)
 
-	return state, output, nil
+	return input
 }

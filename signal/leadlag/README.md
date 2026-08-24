@@ -1,159 +1,1270 @@
-# `signal/leadlag` — who is moving first, and is everyone else keeping up?
+# Lead-Lag Signal Specification
 
-> A follower correlated with the leader is not interesting. A follower that
-> *used to be* correlated and has gone quiet is the tell.
+## 1. Purpose
 
-## What this package is
+The lead-lag signal measures the temporal alignment of two price-return paths.
 
-Lead-lag is the **Anchor perspective** — it picks the cross-section's current
-price leader and measures every other symbol's temporal relationship to it:
-does this follower move in lockstep with the leader (synchronized), does it
-move a measurable number of bars *after* the leader (inefficient — a lag a
-model could exploit), or has it stopped responding to the leader's moves at
-all (decoupled, or stalled if the leader itself hasn't moved yet)?
+It measures:
 
-This package is the market adapter around
-[`nomagique/algorithm`](https://github.com/TheApeMachine/nomagique/tree/b07bb443d986395a2ab11f7e9969b3d2fe55299a/algorithm)'s cross-lag and
-Hayashi-Yoshida correlation primitives. It owns which symbol is "the anchor"
-right now, retains each symbol's aligned price path, and turns lag/sync
-evidence into a bounded, category-agnostic score — `logic/category` decides
-what a reading means for a given follower.
+1. contemporaneous dependence between the paths;
+2. dependence after explicit time shifts;
+3. the time shift at which absolute dependence is greatest;
+4. how much the best shifted relationship improves on zero-lag alignment;
+5. the amount of data and search breadth supporting that result;
+6. how the current lag/dependence structure differs from its own causal history;
+7. whether the current lead-lag trajectory resembles prior trajectories.
 
-## The anchor is derived, not configured
+The signal measures temporal precedence and dependence.
 
-There is no config-file "major" symbol. `Section.CausalAnchor()` picks the
-anchor **fresh, every cycle**, from whichever symbol just produced the largest
-absolute log-return move in the current cross-section — but only if that move
-exceeds the **median** move magnitude across all symbols this tick. If nothing
-stands out from the pack, there is no anchor and the cohort emits provisional
-(all-zero) evidence rather than measuring lag against a leader that isn't
-actually leading anything.
+It does not infer causality, information transmission, inefficiency, exploitability, leadership, following, decoupling, or trading opportunity.
 
-This is deliberately causal: `CausalAnchor` only ever looks at the return
-already recorded on the *previous* price observation versus the one before
-it — never the frame currently being ingested. A symbol cannot become its own
-anchor by virtue of the very move being scored this tick; leadership has to
-have already happened.
+---
 
-When leadership rotates to a new symbol, the anchor's buffered move-baseline
-history is reset (`SetAnchor`) — an old leader's move statistics don't carry
-over and bias what counts as a "significant move" for the new one.
+## 2. Pair Orientation
 
-## Two kinds of correlation, and why both are needed
+Every measurement is explicitly oriented.
 
-For each follower, `Section.Features` computes two distinct temporal
-relationships against the anchor's price path:
+Let:
 
-1. **Contemporaneous correlation** (`algorithm.HayashiPairCorrelation`, zero
-   lag) — the Hayashi-Yoshida estimator, which correlates asynchronously
-   time-stamped price paths without requiring them to share a common clock.
-   This is "how correlated are these two series *right now*."
-2. **Lag correlation** (`algorithm.CrossLagScore`) — searches shifted copies
-   of the anchor's path against the follower's, up to
-   `resolvedMaxLagBars(sampleCount)` bars, and keeps the shift that produces
-   the strongest Hayashi correlation. This is "if the follower is just
-   delayed, how many bars behind, and how strong is the fit once that delay is
-   accounted for."
+\[
+X=\text{reference path}
+\]
 
-A lag correlation is only trusted if it clears a **significance threshold**
-derived from how many independent shifts were searched
-(`lagSearchThreshold` — a Bonferroni-style `√(2·ln(searches)/effectiveSupport)`
-bound): searching more lag candidates makes it easier to find *some* shift
-that correlates well by chance, so the bar for "this lag is real" rises with
-the number of shifts tried, not just the correlation itself.
+\[
+Y=\text{measured path}
+\]
 
-`selectCorrelations` then picks whichever of contemporaneous or (significant)
-lag correlation is stronger as the reading's `signedCorrelation` — a follower
-is scored by its best-supported relationship to the anchor, not forced into
-one or the other.
+The measurement belongs to \(Y\) and carries \(X\) as its peer/reference identity.
 
-## Four evidence weights, not one score
+Lag sign convention:
 
-`weightEvidence` combines the correlation selection with two gates — whether
-the anchor is actually moving right now (`MoveReady`/`MoveMoved`, from
-`Section.recordAnchorMove` and `algorithm.MoveBaseline`, which tracks the
-anchor's own historical move sizes to decide what counts as a "significant"
-move for it) and how much of the observed correlation is lag vs.
-contemporaneous — into four independent evidence weights, each in `0..1`:
+\[
+\boxed{
+\tau>0
+\iff
+X \text{ is compared with later observations of }Y
+}
+\]
 
-| Weight                 | Fires when                                                                                                                             | Reading                                                                                         |
-|------------------------|----------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
-| `inefficient`          | Anchor moving, meaningful lag correlation, low stall margin                                                                            | The follower is trailing the anchor by a measurable number of bars — a real, exploitable delay. |
-| `sync` (`Sync` metric) | Anchor moving, strong contemporaneous correlation, little lag fraction                                                                 | The follower is moving with the anchor essentially immediately — no delay to trade against.     |
-| `decoupled`            | Low correlation of either kind, low stall margin                                                                                       | The follower is not tracking the anchor's moves at all right now.                               |
-| `stall`                | Uncorrelated, no lag, but the anchor itself hasn't produced a significant move yet (`stallDamp` zeroes this once the anchor does move) | Nothing has happened yet to test the relationship — this is "waiting," not "decoupled."         |
+Therefore a positive lag means:
 
-All four are additionally scaled by `sampleSupport` (how much of the resolved
-short window's depth is actually filled — `sampleSupportFraction`) and by
-whether the anchor's move baseline has enough history to be trusted
-(`anchorActive`). `strength` is the max across all four, so a consumer asking
-"how strong was this follower's reading, regardless of which relationship won"
-doesn't need to inspect all four separately.
+> the strongest measured alignment occurs when changes in \(X\) precede corresponding changes in \(Y\) by \(\tau\).
 
-## The adaptive window
+A negative lag means the reverse temporal ordering.
 
-`windowsFromCount` (`windows.go`) derives short/long window sizes and a
-return-lag purely from how many price samples exist so far — `shortWindow =
-⌈√n⌉`, `longWindow ≈ 2×shortWindow`, `returnLag = ⌈√longWindow⌉` — the same
-resolution `nomagique/statistic.ResolveWindows` would produce on a
-zero-filled series of that length, computed directly to avoid allocating that
-series every call. Retention (`priceRetentionCount`), max lag search depth
-(`resolvedMaxLagBars`), and the minimum-observations floor for detecting an
-anchor move (`resolvedShortWindow`) are all derived from this, so every
-symbol's window scales to how much history it personally has rather than a
-fixed bar count shared across illiquid and liquid markets alike.
+This convention describes temporal alignment only.
 
-Price observations are also rate-limited to the series' own median sample
-spacing (`ObservePrice`, `seriesSampleSpacing`) — a burst of ticks faster than
-the symbol's typical update cadence does not get treated as new independent
-observations.
+It does not mean that either path causes the other.
 
-## Every metric this package produces
+---
 
-All published under `source=leadlag`, keyed `type:none`. `Peer` on the
-measurement carries the anchor's symbol when this row is a follower (empty
-when this symbol *is* the anchor, or there is no anchor), so a directed
-Leads/Lags edge can be drawn between the two in the evidence graph.
+## 3. First Principles
 
-| Metric                       | Meaning                                                                                                                                                                                                                                                |
-|------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `correlation`                | `\|signedCorrelation\|` — how strongly related this follower is to the anchor right now, unsigned, `0..1`.                                                                                                                                             |
-| `signed_correlation`         | The selected (contemporaneous-or-lag, whichever is stronger) correlation with sign — direction of co-movement, `-1..1`.                                                                                                                                |
-| `signed_contemp_correlation` | The zero-lag Hayashi-Yoshida correlation alone, signed, `-1..1`.                                                                                                                                                                                       |
-| `signed_lag_correlation`     | The best-shift lag correlation alone, signed, `-1..1`. Zero unless a significant lag was found.                                                                                                                                                        |
-| `lag_fraction`               | `\|lagBars\| / maxLagBars` — how much of the searchable lag depth the best-fit shift used, `0..1`. Near-zero means "essentially no lag"; near-one means "lagging by close to the maximum bars this window can even test."                              |
-| `sample_count`               | Number of aligned anchor/follower observations supporting the reading. It is a raw count, not a normalized maturity or quality score.                                                                                                                   |
-| `inefficient`                | Evidence weight for "this follower lags the anchor by a real, significant delay."                                                                                                                                                                      |
-| `sync`                       | Evidence weight for "this follower moves with the anchor essentially immediately."                                                                                                                                                                     |
-| `decoupled`                  | Evidence weight for "this follower is not tracking the anchor at all right now."                                                                                                                                                                       |
-| `stall`                      | Evidence weight for "nothing has been tested yet — the anchor hasn't moved enough to judge this relationship."                                                                                                                                         |
-| `strength`                   | `max` of the four evidence weights — the winning relationship's own score.                                                                                                                                                                             |
-| `signed_lag_direction`       | `+1` if the anchor leads this follower (a significant lag was found), `0` otherwise. Always emitted (even on idle/self-anchor ticks) so the metric's identity — and downstream code that reads it — stays stable whether or not a lag fired this tick. |
+Let positive price observations for \(X\) be:
 
-### Provisional readings
+\[
+(t^X_i,P^X_i)
+\]
 
-While no symbol currently qualifies as anchor, every symbol gets a
-`provisional` measurement: every metric present, every `Raw` zero. This keeps
-a quote tick from going silent on this signal entirely during leaderless
-periods, while making the all-zero state unambiguous — it is not "no
-relationship found," it is "there is currently no anchor to relate to."
+and for \(Y\):
 
-## Files
+\[
+(t^Y_j,P^Y_j)
+\]
 
-| File              | Responsibility                                                                               |
-|-------------------|----------------------------------------------------------------------------------------------|
-| `signal.go`       | `Signal` lifecycle, dispatch into `measureFrame`.                                            |
-| `measurements.go` | Frame ingestion, correlation selection, evidence weighting, measurement construction.        |
-| `section.go`      | Anchor selection, per-symbol price/return retention, lag/contemporaneous feature extraction. |
-| `windows.go`      | Sample-count-derived window sizing shared by `section.go` and `measurements.go`.             |
+Define log-price increments:
 
-The correlation and lag-search primitives (`HayashiPairCorrelation`,
-`CrossLagScore`, `MoveBaseline`) live in `nomagique/algorithm`, not here.
+\[
+\boxed{
+\Delta X_i=
+\log\left(
+\frac{P^X_i}{P^X_{i-1}}
+\right)
+}
+\]
 
-## What this package deliberately does not decide
+\[
+\boxed{
+\Delta Y_j=
+\log\left(
+\frac{P^Y_j}{P^Y_{j-1}}
+\right)
+}
+\]
 
-A high `inefficient` score is not "trade this lag" — it is "this follower has
-historically lagged the anchor by a measurable, significant amount, right
-now." Whether that lag is stable enough, large enough, and survives
-transaction costs is `logic/category`'s and the strategy layer's question, not
-this signal's.
+with observation intervals:
+
+\[
+I^X_i=(t^X_{i-1},t^X_i]
+\]
+
+\[
+I^Y_j=(t^Y_{j-1},t^Y_j]
+\]
+
+For candidate lag \(\tau\), shift the \(Y\) intervals backward by \(\tau\):
+
+\[
+\boxed{
+I^{Y,\tau}_j=
+(t^Y_{j-1}-\tau,\ t^Y_j-\tau]
+}
+\]
+
+Positive \(\tau\) therefore compares an earlier \(X\) change with a later \(Y\) change.
+
+For asynchronous observations, dependence is measured using the Hayashi-Yoshida overlap construction:
+
+\[
+\boxed{
+C_{XY}(\tau)=
+\sum_{i,j}
+\Delta X_i\Delta Y_j
+\mathbf{1}
+\left(
+I^X_i\cap I^{Y,\tau}_j\neq\varnothing
+\right)
+}
+\]
+
+The corresponding self-quadratic variations are:
+
+\[
+V_X=
+\sum_i(\Delta X_i)^2
+\]
+
+\[
+V_Y=
+\sum_j(\Delta Y_j)^2
+\]
+
+and the normalized lagged correlation is:
+
+\[
+\boxed{
+\rho(\tau)=
+\frac{C_{XY}(\tau)}
+{\sqrt{V_XV_Y}}
+}
+\]
+
+when both quadratic variations are positive.
+
+The zero-lag value is:
+
+\[
+\boxed{
+\rho_0=\rho(0)
+}
+\]
+
+The best measured lag is:
+
+\[
+\boxed{
+\tau^\ast=
+\operatorname*{arg\,max}_{\tau\in\mathcal{T}}
+|\rho(\tau)|
+}
+\]
+
+with:
+
+\[
+\boxed{
+\rho^\ast=\rho(\tau^\ast)
+}
+\]
+
+The argmax is a measured property of the searched correlation surface.
+
+It is not a causal estimator.
+
+---
+
+## 4. Inputs
+
+### 4.1 Required observations
+
+For both paths:
+
+| Input | Unit | Validity |
+|---|---|---|
+| price | quote/base | finite, positive |
+| event timestamp | time | finite, causally ordered |
+| stream identity | symbol / venue / instrument | explicit |
+
+### 4.2 Path integrity
+
+Each path MUST:
+
+- preserve event-time ordering;
+- distinguish duplicate observations from new observations;
+- preserve its own timestamps;
+- reject time regression;
+- avoid treating transport heartbeats as new price evidence.
+
+### 4.3 Price source
+
+The price source MUST be explicit and consistent within a pair.
+
+Examples include:
+
+- midpoint;
+- last trade;
+- mark price;
+- index price.
+
+Different price definitions MUST NOT be silently mixed in one path.
+
+---
+
+## 5. Measurement Envelope
+
+Every measurement contains:
+
+- `From`;
+- `At`;
+- `Maturity`;
+- `SNR`.
+
+Because the measurement is bivariate, it SHOULD also preserve:
+
+- `PeerFrom`;
+- `PeerAt`;
+- reference symbol;
+- measured symbol.
+
+### 5.1 `From`
+
+`From` is the earliest observation in the measured path contributing non-zero support to the current lag search.
+
+### 5.2 `At`
+
+`At` is the latest measured-path observation represented by the measurement.
+
+### 5.3 Peer interval
+
+`PeerFrom` and `PeerAt` preserve the actual reference-path interval.
+
+They MUST NOT be inferred from the measured path when the two paths are asynchronous.
+
+---
+
+## 6. Search Resolution
+
+Lag MUST be expressed primarily in time, not bars.
+
+Let the median positive observation spacing of each retained path be:
+
+\[
+\delta_X=
+\operatorname{median}
+(t^X_i-t^X_{i-1})
+\]
+
+\[
+\delta_Y=
+\operatorname{median}
+(t^Y_j-t^Y_{j-1})
+\]
+
+Define lag-search resolution:
+
+\[
+\boxed{
+\delta_\tau=
+\max(\delta_X,\delta_Y)
+}
+\]
+
+**Why:** a pair cannot reliably resolve lag finer than the slower path's typical observation cadence.
+
+Candidate lags are:
+
+\[
+\boxed{
+\mathcal{T}
+=
+\{k\delta_\tau:k\in\mathbb{Z}\}
+}
+\]
+
+restricted to shifts for which the two paths retain sufficient overlapping return support to estimate correlation.
+
+No fixed arbitrary maximum lag is required.
+
+The observed path spans and minimum mathematical support determine the admissible search domain.
+
+---
+
+## 7. Search Support
+
+For each candidate lag \(\tau\), define:
+
+### 7.1 `overlap_pair_count`
+
+\[
+\boxed{
+N_{\cap}(\tau)=
+\sum_{i,j}
+\mathbf{1}
+\left(
+I^X_i\cap I^{Y,\tau}_j\neq\varnothing
+\right)
+}
+\]
+
+**Unit:** count.
+
+**Meaning:** number of overlapping increment pairs contributing to the Hayashi-Yoshida covariance.
+
+### 7.2 `reference_return_count`
+
+Number of reference-path returns represented by the retained interval.
+
+### 7.3 `measured_return_count`
+
+Number of measured-path returns represented by the retained interval.
+
+### 7.4 `search_count`
+
+\[
+\boxed{
+M=|\mathcal{T}|
+}
+\]
+
+**Unit:** count.
+
+**Meaning:** number of candidate temporal shifts actually evaluated.
+
+Search breadth MUST always accompany a selected best lag.
+
+---
+
+## 8. Core Dependence Metrics
+
+### 8.1 `contemporaneous_correlation`
+
+\[
+\boxed{
+\rho_0=\rho(0)
+}
+\]
+
+**Range:** `[-1,1]`.
+
+**Meaning:** signed zero-lag dependence of the asynchronous return paths.
+
+**Downstream use:** distinguish immediate co-movement from delayed alignment.
+
+---
+
+### 8.2 `best_lag_correlation`
+
+\[
+\boxed{
+\rho^\ast=\rho(\tau^\ast)
+}
+\]
+
+**Range:** `[-1,1]`.
+
+**Meaning:** signed correlation at the candidate time shift with greatest absolute dependence.
+
+The sign describes co-movement:
+
+- positive: aligned return signs;
+- negative: opposite return signs.
+
+The sign does not describe which path comes first; lag sign does that.
+
+---
+
+### 8.3 `best_lag_seconds`
+
+\[
+\boxed{
+L=\tau^\ast
+}
+\]
+
+**Unit:** seconds.
+
+**Meaning:** signed temporal offset of maximum measured absolute dependence.
+
+Convention:
+
+- `L > 0`: reference path temporally precedes measured path at the best alignment;
+- `L = 0`: strongest alignment is contemporaneous;
+- `L < 0`: measured path temporally precedes reference path at the best alignment.
+
+---
+
+### 8.4 `best_lag_index`
+
+\[
+\boxed{
+K^\ast=
+\frac{\tau^\ast}{\delta_\tau}
+}
+\]
+
+**Unit:** candidate steps.
+
+**Purpose:** implementation and provenance.
+
+It MUST NOT replace `best_lag_seconds`.
+
+---
+
+### 8.5 `absolute_correlation_gain`
+
+\[
+\boxed{
+G_\rho=
+|\rho^\ast|-|\rho_0|
+}
+\]
+
+By construction:
+
+\[
+G_\rho\ge0
+\]
+
+when zero lag participates in the same candidate search.
+
+**Meaning:** amount by which the best temporal shift improves absolute measured dependence relative to contemporaneous alignment.
+
+**Why:** a non-zero best lag is much less informative when its correlation is nearly identical to the zero-lag correlation.
+
+---
+
+### 8.6 `lag_search_span`
+
+Let:
+
+\[
+\tau_{\max}=
+\max_{\tau\in\mathcal{T}}|\tau|
+\]
+
+Then:
+
+\[
+\boxed{
+S_\tau=\tau_{\max}
+}
+\]
+
+**Unit:** seconds.
+
+**Meaning:** maximum absolute lag the retained data could test.
+
+---
+
+### 8.7 `lag_fraction`
+
+When \(\tau_{\max}>0\):
+
+\[
+\boxed{
+F_\tau=
+\frac{|\tau^\ast|}{\tau_{\max}}
+}
+\]
+
+**Range:** `[0,1]`.
+
+**Meaning:** location of the selected lag within the available search domain.
+
+This is search provenance.
+
+It is not evidence strength.
+
+---
+
+## 9. Correlation-Surface Metrics
+
+A single argmax discards information about the shape of the lagged-correlation surface.
+
+The signal SHOULD preserve measurements describing that surface.
+
+### 9.1 `lag_peak_prominence`
+
+Let the immediate valid neighboring candidates of \(\tau^\ast\) be:
+
+\[
+\tau^-=\tau^\ast-\delta_\tau
+\]
+
+\[
+\tau^+=\tau^\ast+\delta_\tau
+\]
+
+When both exist:
+
+\[
+\boxed{
+P_\rho=
+|\rho^\ast|
+-
+\frac{
+|\rho(\tau^-)|+|\rho(\tau^+)|
+}{2}
+}
+\]
+
+**Range:** approximately `[-1,1]`.
+
+**Meaning:** local height of the selected correlation peak above adjacent lag candidates.
+
+Large positive prominence means the selected lag is locally distinct.
+
+A value near zero means the correlation surface is locally flat.
+
+---
+
+### 9.2 `lag_peak_curvature`
+
+When both neighboring candidates exist:
+
+\[
+\boxed{
+\kappa_\rho=
+\frac{
+2|\rho^\ast|
+-
+|\rho(\tau^-)|
+-
+|\rho(\tau^+)|
+}{
+\delta_\tau^2
+}
+}
+\]
+
+**Unit:** inverse seconds squared.
+
+**Meaning:** local sharpness of the selected absolute-correlation maximum.
+
+**Downstream use:** distinguish a well-localized temporal alignment from a broad plateau where many nearby lags fit similarly.
+
+No arbitrary width threshold is required.
+
+---
+
+## 10. Multiple-Search Accounting
+
+Selecting:
+
+\[
+\max_{\tau\in\mathcal{T}}|\rho(\tau)|
+\]
+
+creates a multiple-search problem.
+
+The signal MUST expose the number of searched candidates and MUST NOT treat the largest raw correlation as though it had been specified in advance.
+
+### 10.1 Fisher statistic
+
+When a defensible effective support estimate satisfies:
+
+\[
+N_{\mathrm{eff}}(\tau)>3
+\]
+
+define:
+
+\[
+\boxed{
+Z_F(\tau)
+=
+\operatorname{atanh}(\rho(\tau))
+\sqrt{N_{\mathrm{eff}}(\tau)-3}
+}
+\]
+
+Under the standard independent-return approximation and zero population correlation:
+
+\[
+Z_F\approx\mathcal{N}(0,1)
+\]
+
+### 10.2 `correlation_p_value`
+
+For a pre-specified candidate lag:
+
+\[
+\boxed{
+p(\tau)
+=
+2\left[
+1-\Phi(|Z_F(\tau)|)
+\right]
+}
+\]
+
+### 10.3 `search_adjusted_p_value`
+
+For \(M\) tested candidates:
+
+\[
+\boxed{
+p_{\mathrm{adj}}
+=
+\min(1,Mp(\tau^\ast))
+}
+\]
+
+This is the Bonferroni family-wise adjustment.
+
+The factor \(M\) follows directly from the number of tests performed.
+
+No significance cutoff is embedded in the signal.
+
+### 10.4 Validity condition
+
+Fisher/Bonferroni p-values are emitted only when the estimator can justify its effective-support approximation.
+
+If asynchronous overlap or serial dependence invalidates that approximation and no defensible variance estimator is available, these p-values are undefined.
+
+The raw correlation surface remains valid as a descriptive measurement.
+
+---
+
+## 11. Effective Support
+
+When path observations carry weights \(w_i\), effective sample size is:
+
+\[
+\boxed{
+N_{\mathrm{eff}}
+=
+\frac{(\sum_iw_i)^2}
+{\sum_iw_i^2}
+}
+\]
+
+For equally weighted independent returns:
+
+\[
+N_{\mathrm{eff}}=N
+\]
+
+The signal SHOULD publish:
+
+- `effective_sample_count`;
+- `reference_return_count`;
+- `measured_return_count`;
+- `overlap_pair_count`;
+- `search_count`.
+
+Effective sample count MUST NOT be invented from raw overlap count when repeated asynchronous overlaps create dependent contributions.
+
+When a defensible effective-support estimator is unavailable, inferential metrics depending on it are undefined.
+
+---
+
+## 12. Maturity
+
+Lead-lag maturity reflects effective retained evidence supporting the pair estimator.
+
+Using:
+
+\[
+N_{\mathrm{eff}}
+\]
+
+define:
+
+\[
+\boxed{
+Maturity=
+\begin{cases}
+0,&N_{\mathrm{eff}}\le1\\[4pt]
+1-\frac{1}{N_{\mathrm{eff}}},&N_{\mathrm{eff}}>1
+\end{cases}
+}
+\]
+
+If historical SNR or recurrence requires a less mature pair-state estimator, measurement-level maturity is the minimum maturity required by those published metrics.
+
+Maturity does not indicate whether the lag is real, useful, or stable.
+
+---
+
+## 13. Signal-to-Noise Ratio
+
+The universal SNR for lead-lag measures how far the current temporal-dependence state has departed from its own causal historical state.
+
+Define the pair-state vector:
+
+\[
+\boxed{
+X_t=
+\begin{bmatrix}
+\operatorname{atanh}(\rho_{0,t})\\
+\operatorname{atanh}(\rho^\ast_t)\\
+\tau^\ast_t
+\end{bmatrix}
+}
+\]
+
+Let the causal baseline be:
+
+\[
+\mu_{t-}
+\]
+
+and the causal residual covariance be:
+
+\[
+\Sigma_{t-}
+\]
+
+Then:
+
+\[
+\delta_t=X_t-\mu_{t-}
+\]
+
+and:
+
+\[
+\boxed{
+SNR_t=
+\frac{1}{3}
+\delta_t^\top
+\Sigma_{t-}^{-1}
+\delta_t
+}
+\]
+
+### 13.1 Why Fisher-transform correlation
+
+Raw correlation is bounded.
+
+The Fisher transform:
+
+\[
+\operatorname{atanh}(\rho)
+\]
+
+maps:
+
+\[
+(-1,1)\rightarrow(-\infty,\infty)
+\]
+
+and gives a more suitable approximately additive coordinate for historical residual modeling.
+
+### 13.2 Meaning
+
+SNR answers:
+
+> How unusual is the current combination of contemporaneous dependence, best lagged dependence, and selected lag relative to this pair's own established noise structure?
+
+It does not answer whether either series causes the other.
+
+SNR is undefined until the causal covariance is estimable and non-degenerate.
+
+---
+
+## 14. Historical Baselines
+
+The signal SHOULD maintain causal baselines for:
+
+- Fisher-transformed contemporaneous correlation;
+- Fisher-transformed best-lag correlation;
+- signed lag seconds;
+- absolute correlation gain;
+- lag peak prominence.
+
+The current observation is evaluated before it updates those estimators.
+
+### 14.1 `lag_baseline_seconds`
+
+\[
+\boxed{
+B_L=E[\tau^\ast]_{t-}
+}
+\]
+
+**Unit:** seconds.
+
+---
+
+### 14.2 `lag_divergence_seconds`
+
+\[
+\boxed{
+d_L=
+\tau^\ast-B_L
+}
+\]
+
+**Unit:** seconds.
+
+---
+
+### 14.3 `lag_noise_scale_seconds`
+
+\[
+\boxed{
+\sigma_L=
+\sqrt{
+E[d_L^2]_{t-}
+}
+}
+\]
+
+**Unit:** seconds.
+
+---
+
+### 14.4 `lag_zscore`
+
+\[
+\boxed{
+z_L=
+\frac{\tau^\ast-B_L}{\sigma_L}
+}
+\]
+
+**Unit:** dimensionless.
+
+**Meaning:** current temporal offset relative to the pair's own historical lag variability.
+
+---
+
+### 14.5 `best_lag_correlation_baseline`
+
+In Fisher space:
+
+\[
+\boxed{
+B_{\rho^\ast}
+=
+E[
+\operatorname{atanh}(\rho^\ast)
+]_{t-}
+}
+\]
+
+---
+
+### 14.6 `best_lag_correlation_zscore`
+
+\[
+\boxed{
+z_{\rho^\ast}
+=
+\frac{
+\operatorname{atanh}(\rho^\ast)-B_{\rho^\ast}
+}{
+\sigma_{\rho^\ast}
+}
+}
+\]
+
+**Meaning:** how unusual the current signed lagged dependence is for this pair.
+
+---
+
+### 14.7 `correlation_gain_baseline`
+
+\[
+\boxed{
+B_G=E[G_\rho]_{t-}
+}
+\]
+
+### 14.8 `correlation_gain_zscore`
+
+\[
+\boxed{
+z_G=
+\frac{G_\rho-B_G}{\sigma_G}
+}
+\]
+
+**Meaning:** whether the improvement obtained by temporal shifting is itself unusual for the pair.
+
+---
+
+## 15. Temporal Dynamics
+
+### 15.1 `lag_velocity`
+
+Fit a causal local regression over historical lag estimates:
+
+\[
+\tau^\ast_i
+=
+a+\beta_L(t_i-t)+\epsilon_i
+\]
+
+Then:
+
+\[
+\boxed{
+v_L=\beta_L
+}
+\]
+
+**Unit:** seconds of lag / second of event time.
+
+**Meaning:** rate at which the measured temporal offset is moving.
+
+---
+
+### 15.2 `correlation_gain_velocity`
+
+\[
+G_{\rho,i}
+=
+a+\beta_G(t_i-t)+\epsilon_i
+\]
+
+\[
+\boxed{
+v_G=\beta_G
+}
+\]
+
+**Unit:** correlation / second.
+
+**Meaning:** whether temporal shifting is becoming more or less important relative to contemporaneous alignment.
+
+---
+
+### 15.3 Slope SNR
+
+For a fitted slope:
+
+\[
+\boxed{
+SNR_\beta=
+\frac{\beta^2}
+{\operatorname{Var}(\beta)}
+}
+\]
+
+MAY be emitted when regression uncertainty is estimable.
+
+Acceleration is not required.
+
+---
+
+## 16. Historical Recurrence
+
+The signal MAY retain a standardized pair trajectory:
+
+\[
+\boxed{
+Z_t=
+\begin{bmatrix}
+z_{\rho_0,t}\\
+z_{\rho^\ast,t}\\
+z_{L,t}\\
+z_{G,t}
+\end{bmatrix}
+}
+\]
+
+where each component is standardized against its causal historical estimator.
+
+The current trajectory is compared with non-overlapping historical trajectories of equivalent support.
+
+Recommended metrics:
+
+### 16.1 `historical_path_distance`
+
+Distance to the closest prior lead-lag trajectory.
+
+### 16.2 `historical_path_percentile`
+
+Empirical percentile of the nearest-match distance within retained pair history.
+
+### 16.3 `historical_match_from`
+
+Start time of the nearest historical trajectory.
+
+These measurements describe recurrence or novelty.
+
+No relationship regime is assigned.
+
+---
+
+## 17. Pair Selection
+
+The lead-lag signal measures an explicitly supplied pair.
+
+It MUST NOT silently choose a reference symbol because it:
+
+- moved the most;
+- has the largest market capitalization;
+- appears to be a market leader;
+- has the strongest recent return;
+- belongs to a presumed peer group.
+
+Pair construction is an outer analytical decision.
+
+Valid examples include explicit comparison of:
+
+- the same asset across venues;
+- spot and perpetual markets for the same asset;
+- an explicitly configured pair;
+- two assets selected by a separate cross-sectional analysis.
+
+The signal knows the pair it was given.
+
+It does not decide which market should be a reference.
+
+---
+
+## 18. Relationship to Correlation
+
+Correlation and lead-lag are related but distinct.
+
+Correlation measures dependence under a defined alignment.
+
+Lead-lag measures how that dependence varies with temporal alignment.
+
+Useful downstream comparisons include:
+
+- contemporaneous correlation from the correlation signal;
+- `best_lag_correlation`;
+- `best_lag_seconds`;
+- `absolute_correlation_gain`;
+- `lag_peak_curvature`.
+
+A highly correlated pair may have:
+
+- a zero best lag;
+- a stable non-zero best lag;
+- a broad correlation plateau;
+- a rapidly changing lag.
+
+These are different measured structures.
+
+---
+
+## 19. Relationship to CVD / Executed Flow
+
+CVD measures signed executed flow.
+
+Lead-lag measures price-path temporal alignment.
+
+Downstream analysis MAY test whether:
+
+- aggressive flow in \(X\) precedes price response in \(Y\);
+- signed flow changes in \(X\) align with the measured price lag;
+- the price lag persists when local executed flow in \(Y\) changes.
+
+The lead-lag signal itself does not ingest CVD to strengthen or weaken a lag.
+
+Doing so would convert measurement into interpretation.
+
+---
+
+## 20. Relationship to Hawkes
+
+Hawkes measures event-arrival excitation.
+
+Lead-lag measures price-return alignment.
+
+Useful downstream comparisons include:
+
+- cross-market arrival excitation versus price lag;
+- changes in Hawkes intensity before changes in `best_lag_seconds`;
+- event-process coupling versus price-path coupling.
+
+A temporal relationship in event arrivals does not establish the same relationship in prices.
+
+A price lag does not establish event-level excitation.
+
+---
+
+## 21. Relationship to Liquidity
+
+Liquidity measures displayed executable capacity and spread.
+
+Useful downstream combinations include:
+
+- lag seconds under ordinary versus unusual liquidity;
+- lag-correlation gain versus depth divergence;
+- changes in lag when spreads widen or touch capacity falls;
+- lag stability versus liquidity SNR.
+
+A measured lag may change when one market becomes slower to reprice under changing liquidity conditions, but the lead-lag signal does not assign that explanation.
+
+---
+
+## 22. Relationship to Depthflow and Toxicity
+
+Useful downstream combinations include:
+
+- lag changes versus book-turnover rate;
+- lag changes versus touch/full-book imbalance disagreement;
+- lag changes versus touch withdrawal or replenishment;
+- temporal precedence during unusual book mutation.
+
+These signals provide local microstructure context.
+
+They do not convert temporal precedence into causality.
+
+---
+
+## 23. Relationship to Sentiment / Cross-Sectional Price State
+
+A cross-sectional price-state signal may identify broad movement, breadth, or dispersion.
+
+Lead-lag may then be applied to explicitly selected pairs.
+
+Useful comparisons include:
+
+- broad market return path versus one symbol;
+- cross-sectional dispersion versus lag stability;
+- breadth changes versus correlation gain.
+
+The cross-sectional population definition remains external to lead-lag.
+
+---
+
+## 24. Relationship to Derivatives
+
+Lead-lag is particularly suitable for explicitly related markets such as:
+
+- spot versus perpetual;
+- mark versus index;
+- the same derivative across venues.
+
+Useful downstream measurements include:
+
+- spot/perpetual lag seconds;
+- lag correlation versus basis;
+- lag movement versus open-interest change;
+- lag changes during liquidation flow.
+
+The signal does not infer price discovery or informational leadership.
+
+---
+
+## 25. Cross-Pair Comparison
+
+The following MAY be compared across pairs when estimator construction is equivalent:
+
+- contemporaneous correlation;
+- best-lag correlation;
+- absolute correlation gain;
+- lag peak prominence;
+- lag peak curvature after accounting for lag resolution;
+- standardized lag divergence;
+- standardized correlation divergence;
+- SNR;
+- historical-path percentile;
+- search-adjusted p-value when its statistical assumptions are satisfied.
+
+Raw lag seconds are comparable only when the economic and observation timescales of the pairs make that comparison meaningful.
+
+`lag_fraction` is search-domain provenance and SHOULD NOT be used as a universal relationship-strength score.
+
+---
+
+## 26. Invalid and Missing States
+
+The signal MUST distinguish:
+
+1. no reference path;
+2. no measured path;
+3. insufficient return observations;
+4. zero quadratic variation in one path;
+5. no admissible lag candidates;
+6. zero contemporaneous correlation;
+7. zero best-lag correlation;
+8. best lag equal to zero;
+9. unavailable effective sample count;
+10. unavailable inferential p-value;
+11. unavailable historical covariance;
+12. invalid event ordering;
+13. mismatched price-source semantics.
+
+Rules:
+
+- no valid pair means relationship metrics are undefined;
+- insufficient support is not represented as zero correlation;
+- a measured zero correlation is a valid zero;
+- a best lag of zero is a valid measured result;
+- SNR is undefined until historical covariance exists;
+- p-values are undefined when their variance/support assumptions are not defensible;
+- missing metrics are never filled with provisional zeros merely to preserve shape.
+
+---
+
+## 27. Explicit Non-Claims
+
+The lead-lag signal does not determine:
+
+- which market is the leader;
+- which market is the follower;
+- whether one market causes another;
+- whether information is transmitted from one market to another;
+- whether a lag is exploitable;
+- whether a lag is an inefficiency;
+- whether two markets are decoupled;
+- whether a market has stalled;
+- whether a relationship will persist;
+- whether transaction costs permit a trade;
+- whether the best searched lag is economically meaningful.
+
+Those are downstream reasoning and validation tasks.
+
+---
+
+## 28. Minimal Required Metric Set
+
+A valid lead-lag implementation SHOULD minimally publish:
+
+- `reference_symbol` as provenance;
+- `contemporaneous_correlation`;
+- `best_lag_correlation`;
+- `best_lag_seconds`;
+- `best_lag_index`;
+- `absolute_correlation_gain`;
+- `lag_search_resolution_seconds`;
+- `lag_search_span`;
+- `lag_fraction`;
+- `reference_return_count`;
+- `measured_return_count`;
+- `overlap_pair_count`;
+- `search_count`;
+- `effective_sample_count` when estimable;
+- `lag_peak_prominence` when neighbors exist;
+- `lag_peak_curvature` when neighbors exist;
+- `correlation_p_value` when statistically estimable;
+- `search_adjusted_p_value` when statistically estimable;
+- `lag_baseline_seconds`;
+- `lag_divergence_seconds`;
+- `lag_noise_scale_seconds`;
+- `lag_zscore`;
+- `best_lag_correlation_baseline`;
+- `best_lag_correlation_zscore`;
+- `correlation_gain_baseline`;
+- `correlation_gain_zscore`;
+- `lag_velocity`;
+- `correlation_gain_velocity`;
+- `historical_path_distance`;
+- `historical_path_percentile`;
+- `From`;
+- `At`;
+- `PeerFrom`;
+- `PeerAt`;
+- `Maturity`;
+- `SNR`.
+
+Metrics whose mathematical prerequisites are not satisfied are explicitly undefined rather than replaced with zeros, classifications, or fallback scores.
