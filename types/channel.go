@@ -28,6 +28,7 @@ const (
 	ChannelExecutions     = "executions"
 	ChannelUI             = "ui"
 	ChannelFluid          = "fluid"
+	ChannelCrossSection   = "cross_section"
 )
 
 /*

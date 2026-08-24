@@ -31,6 +31,8 @@ type Workspace struct {
 	cancel   context.CancelFunc
 	pool     *Pool[func()]
 	channels sync.Map // string → *Channel[T]
+	taps     sync.Map // StreamKey → []func(string, any)
+	firstErr atomic.Pointer[error]
 	failure  func(error)
 }
 
@@ -417,11 +419,28 @@ func (workspace *Workspace) fail(channel string, err error) {
 		err,
 	))
 
+	workspace.firstErr.CompareAndSwap(nil, &err)
+
 	if workspace.failure != nil {
 		workspace.failure(err)
 	}
 
 	workspace.cancel()
+}
+
+/*
+Error returns the first stage failure the bus retained, if any.
+*/
+func (workspace *Workspace) Error() error {
+	if workspace == nil {
+		return nil
+	}
+
+	if first := workspace.firstErr.Load(); first != nil {
+		return *first
+	}
+
+	return nil
 }
 
 /*
