@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"maps"
 	"os"
 	"slices"
@@ -14,8 +16,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
@@ -29,6 +29,13 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
+)
+
+const (
+	PublicWebSocketURL  = "wss://ws.kraken.com/v2"
+	PrivateWebSocketURL = "wss://ws-auth.kraken.com/v2"
+	Level3WebSocketURL  = "wss://ws-l3.kraken.com/v2"
+	publicBookDepth     = 10
 )
 
 var entityMap = map[string]func([]byte) any{
@@ -55,34 +62,171 @@ Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
 and Sub* resubscribe after the SDK reconnects.
 */
 type Live struct {
-	status      atomic.Pointer[types.Status]
-	ctx         context.Context
-	cancel      context.CancelFunc
-	client      *spot.WebSocket
-	quote       string
-	simulator   *Simulator
-	normalizer  *spot.Normalizer
-	level3      *sync.Map
-	book        *Book
-	symbols     []string
-	publicMu    sync.RWMutex
-	public      map[string][][]string
-	auth        bool
-	nonce       *AuthNonce
-	nonceErr    error
-	subscribers *sync.Map
-	callbacks   *sync.Map
-	priceIncr   sync.Map
-	paper       *Paper
-	model       string
-	capture     CaptureSink
-	captureName string
-	observer    atomic.Pointer[func(string, time.Duration)]
+	status       atomic.Pointer[types.Status]
+	ctx          context.Context
+	cancel       context.CancelFunc
+	client       *spot.WebSocket
+	quote        string
+	thesis       atomic.Pointer[types.Thesis]
+	bus          atomic.Pointer[runtime.Workspace]
+	tickersCh    *runtime.Channel[kraken.TickerData]
+	tradesCh     *runtime.Channel[kraken.TradeData]
+	level3Ch     *runtime.Channel[kraken.Level3Data]
+	executionsCh *runtime.Channel[kraken.ExecutionData]
+	uiCh         *runtime.Channel[*types.UIFrame]
+	simulator    *Simulator
+	normalizer   *spot.Normalizer
+	level3       *sync.Map
+	book         *Book
+	symbols      []string
+	publicMu     sync.RWMutex
+	public       map[string][][]string
+	auth         bool
+	nonce        *AuthNonce
+	nonceErr     error
+	subscribers  *sync.Map
+	callbacks    *sync.Map
+	priceIncr    sync.Map
+	paper        *Paper
+	model        string
+	capture      CaptureSink
+	captureName  string
+	failureMu    sync.RWMutex
+	failure      func(error)
+	observer     atomic.Pointer[func(string, time.Duration)]
 
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
 	// feed the session's book manager instead of dialing the real venue.
 	level3Client func() *spot.WebSocket
+}
+
+/*
+Capture returns the underlying capture sink attached to the live connection.
+*/
+func (live *Live) Capture() CaptureSink {
+	if live == nil {
+		return nil
+	}
+
+	return live.capture
+}
+
+/*
+SetObserver attaches the ingress processing clock. Existing and future Level 3
+children share the same observer so all venue messages contribute to the one
+ingress stage shown by diagnostics.
+*/
+func (live *Live) SetObserver(observer func(string, time.Duration)) {
+	if live == nil {
+		return
+	}
+
+	if observer == nil {
+		live.observer.Store(nil)
+	} else {
+		live.observer.Store(&observer)
+	}
+
+	if live.level3 == nil {
+		return
+	}
+
+	live.level3.Range(func(_, value any) bool {
+		if child, valid := value.(*Live); valid && child != nil {
+			child.SetObserver(observer)
+		}
+
+		return true
+	})
+}
+
+/*
+SetFailureHandler connects fatal ingestion failures to the transport owner.
+Level 3 child sessions inherit the same handler when they are attached.
+*/
+func (live *Live) SetFailureHandler(handler func(error)) {
+	if live == nil {
+		return
+	}
+
+	live.failureMu.Lock()
+	live.failure = handler
+	live.failureMu.Unlock()
+
+	if live.level3 == nil {
+		return
+	}
+
+	live.level3.Range(func(_, value any) bool {
+		if child, valid := value.(*Live); valid && child != nil {
+			child.SetFailureHandler(handler)
+		}
+
+		return true
+	})
+}
+
+func (live *Live) reportFailure(err error) {
+	if live == nil || err == nil {
+		return
+	}
+
+	live.setStatus(types.ERROR)
+	live.failureMu.RLock()
+	handler := live.failure
+	live.failureMu.RUnlock()
+
+	if handler != nil {
+		handler(err)
+	}
+}
+
+/*
+SetThesis attaches the canonical event destination before subscriptions begin
+producing market frames.
+*/
+func (live *Live) SetThesis(thesis *types.Thesis) {
+	if live == nil || thesis == nil {
+		panic("websocket: thesis required")
+	}
+
+	live.thesis.Store(thesis)
+
+	if live.paper != nil {
+		live.paper.SetThesis(thesis)
+	}
+}
+
+/*
+SetBus attaches the system workspace bus and resolves the ingest channels.
+*/
+func (live *Live) SetBus(bus *runtime.Workspace) {
+	if live == nil || bus == nil {
+		return
+	}
+
+	live.bus.Store(bus)
+	live.tickersCh = runtime.ChannelOf[kraken.TickerData](
+		bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
+	)
+	live.tradesCh = runtime.ChannelOf[kraken.TradeData](
+		bus, types.ChannelTrades,
+		func(trade kraken.TradeData) string { return trade.Symbol },
+	)
+	live.level3Ch = runtime.ChannelOf[kraken.Level3Data](
+		bus, types.ChannelLevel3,
+		func(frame kraken.Level3Data) string { return frame.Symbol },
+	)
+	live.executionsCh = runtime.ChannelOf[kraken.ExecutionData](
+		bus, types.ChannelExecutions,
+		func(execution kraken.ExecutionData) string { return execution.Symbol },
+	)
+	live.uiCh = runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
 }
 
 /*
@@ -306,13 +450,11 @@ func NewWithClient(
 					symbol := thesis.Symbol(ticker.Symbol)
 					symbol.Tick = tick
 
-					accepted := symbol.AcceptTicker(ticker.Timestamp)
-
-					if accepted && live.tickersCh != nil {
+					if symbol.AcceptTicker(ticker.Timestamp) && live.tickersCh != nil {
 						live.tickersCh.Publish(ticker)
 					}
 
-					if accepted && live.uiCh != nil {
+					if live.uiCh != nil {
 						live.uiCh.Publish(&types.UIFrame{
 							Type: wire.FrameTickFrame,
 							Value: &wire.TickFrameT{
