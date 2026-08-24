@@ -98,7 +98,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 	}
 
 	if !hasAnchor || anchor == ticker.Symbol {
-		signal.measurements.Publish(signal.neutralMeasurement(
+		types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, signal.neutralMeasurement(
 			ticker.Symbol, ticker.Timestamp, price,
 		))
 
@@ -109,7 +109,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 	followerPath, hasFollowerPath := signal.number.Project(ticker.Symbol)
 
 	if !hasAnchorPath || !hasFollowerPath {
-		signal.measurements.Publish(signal.neutralMeasurement(
+		types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, signal.neutralMeasurement(
 			ticker.Symbol, ticker.Timestamp, price,
 		))
 
@@ -128,7 +128,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 
 	ready, _ := output.Get(equation.SymbolLeadLagReady)
 
-	signal.measurements.Publish(signal.measurement(
+	types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, signal.measurement(
 		ticker.Symbol,
 		anchor,
 		ticker.Timestamp,

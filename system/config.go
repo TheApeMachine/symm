@@ -12,14 +12,15 @@ func init() {
 }
 
 type Config struct {
-	mu sync.RWMutex
-	*Resonance
-	*Risk
+	mu        sync.RWMutex
+	Resonance *Resonance
+	Risk      *Risk
 	Regulator *RegulatorConfig
 	Planner   *PlannerConfig
-	*PumpDump
-	*CVD
-	Manifold *ManifoldConfig
+	PumpDump  *PumpDump
+	CVD       *CVD
+	Manifold  *ManifoldConfig
+	WebSocket *WebSocket
 }
 
 func NewConfig() *Config {
@@ -31,6 +32,7 @@ func NewConfig() *Config {
 		PumpDump:  NewPumpDump(),
 		CVD:       NewCVD(),
 		Manifold:  NewManifoldConfig(),
+		WebSocket: NewWebSocket(),
 	}
 }
 

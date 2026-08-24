@@ -202,11 +202,6 @@ func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
 }
 
 /*
-	func (desk *Desk) Status() types.Status {
-		return desk.status
-	}
-
-/*
 Price exposes the desk's price surface so the market data path can keep it
 current. Every executable calculation the broker makes reads from it, so it
 has to see the same ticks the thesis does.

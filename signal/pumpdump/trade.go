@@ -26,7 +26,7 @@ func (signal *Signal) consumeTrade(
 	closed := acceleration.MustGet(equation.SymbolClosed) != 0
 
 	if !closed {
-		signal.measurements.Publish(signal.tradeMeasurement(
+		types.PublishMeasurement(signal.thesis, signal.measurements, symbol.Symbol, signal.tradeMeasurement(
 			trade,
 			acceleration,
 			nmtypes.Frame{},
@@ -51,7 +51,7 @@ func (signal *Signal) consumeTrade(
 	change, hasChange := acceleration.Get(equation.SymbolChange)
 
 	if !hasChange {
-		signal.measurements.Publish(signal.tradeMeasurement(
+		types.PublishMeasurement(signal.thesis, signal.measurements, symbol.Symbol, signal.tradeMeasurement(
 			trade,
 			acceleration,
 			rateNormalized,
@@ -101,7 +101,7 @@ func (signal *Signal) consumeTrade(
 		return err
 	}
 
-	signal.measurements.Publish(signal.tradeMeasurement(
+	types.PublishMeasurement(signal.thesis, signal.measurements, symbol.Symbol, signal.tradeMeasurement(
 		trade,
 		acceleration,
 		rateNormalized,

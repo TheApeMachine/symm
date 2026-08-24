@@ -30,6 +30,10 @@ system:
     # Lower costs idle broadcasts; higher lengthens the worst-case recovery.
     heartbeat: 250ms
   websocket:
+    endpoints:
+      public: "wss://ws.kraken.com/v2"
+      private: "wss://ws-auth.kraken.com/v2"
+      level3: "wss://ws-l3.kraken.com/v2"
     channel:
       # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
       # stalls the Kraken reader behind book decode and starves trades.

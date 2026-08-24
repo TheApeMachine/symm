@@ -144,7 +144,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 		output.MustGet(nmtypes.SampleCount),
 	)
 
-	signal.measurements.Publish(measurement)
+	types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, measurement)
 	return nil
 }
 

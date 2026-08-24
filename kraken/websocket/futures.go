@@ -359,6 +359,16 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 		return
 	}
 
+	if futures.tickersCh == nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"futures: ticker channel is not configured; dropping ticker",
+			nil,
+		))
+
+		return
+	}
+
 	spotSymbol := kraken.FuturesProductIDToSpot(ticker.Data.ProductID)
 
 	if spotSymbol == "" {
@@ -367,7 +377,7 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 
 	ticker.Data.Symbol = spotSymbol
 
-	if thesis.Symbol(spotSymbol).AcceptFuturesTicker(ticker.Data.Timestamp) && futures.tickersCh != nil {
+	if thesis.Symbol(spotSymbol).AcceptFuturesTicker(ticker.Data.Timestamp) {
 		futures.tickersCh.Publish(ticker.Data)
 	}
 }
@@ -385,6 +395,16 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 		return
 	}
 
+	if futures.tradesCh == nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"futures: trade channel is not configured; dropping trades",
+			nil,
+		))
+
+		return
+	}
+
 	for index := range trades.Data {
 		trade := trades.Data[index]
 		spotSymbol := kraken.FuturesProductIDToSpot(trade.ProductID)
@@ -395,7 +415,7 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 
 		trade.Symbol = spotSymbol
 
-		if thesis.Symbol(spotSymbol).AcceptFuturesTrade(trade.Timestamp) && futures.tradesCh != nil {
+		if thesis.Symbol(spotSymbol).AcceptFuturesTrade(trade.Timestamp) {
 			futures.tradesCh.Publish(trade)
 		}
 	}
@@ -414,6 +434,16 @@ func (futures *FuturesLive) dispatchBook(raw []byte) {
 		return
 	}
 
+	if futures.booksCh == nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"futures: book channel is not configured; dropping book",
+			nil,
+		))
+
+		return
+	}
+
 	spotSymbol := kraken.FuturesProductIDToSpot(book.Data.ProductID)
 
 	if spotSymbol == "" {
@@ -422,7 +452,7 @@ func (futures *FuturesLive) dispatchBook(raw []byte) {
 
 	book.Data.Symbol = spotSymbol
 
-	if thesis.Symbol(spotSymbol).AcceptFuturesBook(book.Data.Timestamp) && futures.booksCh != nil {
+	if thesis.Symbol(spotSymbol).AcceptFuturesBook(book.Data.Timestamp) {
 		futures.booksCh.Publish(book.Data)
 	}
 }

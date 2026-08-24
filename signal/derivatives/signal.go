@@ -123,7 +123,7 @@ func (signal *Signal) emit(symbol *types.Symbol, at time.Time, data *Derivatives
 		return err
 	}
 
-	signal.measurements.Publish(measurement)
+	types.PublishMeasurement(signal.thesis, signal.measurements, symbol.Symbol, measurement)
 
 	return nil
 }

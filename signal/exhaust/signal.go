@@ -118,7 +118,7 @@ func (signal *Signal) Step(trade kraken.TradeData) error {
 
 	measurement.StampQuality(0, output.MustGet(nmtypes.SampleCount))
 
-	signal.measurements.Publish(measurement)
+	types.PublishMeasurement(signal.thesis, signal.measurements, trade.Symbol, measurement)
 	return nil
 }
 

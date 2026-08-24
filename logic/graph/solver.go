@@ -135,6 +135,7 @@ symbolEvidence is one symbol's freshest graph inputs: a bounded measurement
 window and the latest derived readings from every upstream stage.
 */
 type symbolEvidence struct {
+	mu           sync.Mutex
 	measurements []*nmtypes.Measurement
 	categories   []types.Category
 	artifact     types.ResonanceArtifact
@@ -161,6 +162,8 @@ func (solver *Solver) observe(symbolName string, kind string, value any) error {
 	}
 
 	state := solver.symbolEvidence(symbolName)
+	state.mu.Lock()
+	defer state.mu.Unlock()
 
 	switch kind {
 	case "measurement":

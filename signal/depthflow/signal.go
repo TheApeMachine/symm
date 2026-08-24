@@ -118,7 +118,7 @@ func (signal *Signal) Step(frame kraken.Level3Data) error {
 		output.MustGet(nmtypes.SampleCount),
 	)
 
-	signal.measurements.Publish(measurement)
+	types.PublishMeasurement(signal.thesis, signal.measurements, frame.Symbol, measurement)
 	return nil
 }
 

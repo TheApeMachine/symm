@@ -91,7 +91,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 		))
 	}
 
-	signal.measurements.Publish(signal.measurement(
+	types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, signal.measurement(
 		ticker.Symbol,
 		ticker.Timestamp,
 		output,

@@ -1,6 +1,9 @@
 package tests
 
 import (
+	"os"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,14 +30,19 @@ func TestPipelineFrameInventory(t *testing.T) {
 
 	Convey("Given the assembled system driven by the fixture venue", t,
 		WithStack(t, symbols, cmd.Boot, func(market *Market, system *cmd.System) {
+			types.SetFocus("PLANK/USD")
+
 			ui := runtime.ChannelOf[*types.UIFrame](
 				system.Bus, types.ChannelUI,
 				func(frame *types.UIFrame) string { return "" },
 			)
 
+			var mu sync.Mutex
 			counts := make(map[wire.Frame]int)
 			ui.Subscribe("frame-inventory", func(frame *types.UIFrame) error {
+				mu.Lock()
 				counts[frame.Type]++
+				mu.Unlock()
 
 				return nil
 			})
@@ -44,7 +52,9 @@ func TestPipelineFrameInventory(t *testing.T) {
 				system.Bus, types.ChannelMeasurements,
 				func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
 			).Subscribe("measurement-inventory", func(measurement *nmtypes.Measurement) error {
+				mu.Lock()
 				measurements[measurement.Source]++
+				mu.Unlock()
 
 				return nil
 			})
@@ -59,22 +69,58 @@ func TestPipelineFrameInventory(t *testing.T) {
 					return batch[0].Symbol
 				},
 			).Subscribe("category-inventory", func(batch []types.Category) error {
+				mu.Lock()
 				categoryCount++
+				mu.Unlock()
 
 				return nil
 			})
 
-			for index := 0; index < 200; index++ {
+			causalCount := 0
+			runtime.ChannelOf[types.CausalOutput](
+				system.Bus, types.ChannelCausal,
+				func(output types.CausalOutput) string { return output.Symbol },
+			).Subscribe("causal-inventory", func(output types.CausalOutput) error {
+				mu.Lock()
+				causalCount++
+				mu.Unlock()
+
+				return nil
+			})
+
+			graphCount := 0
+			runtime.ChannelOf[*types.Graph](
+				system.Bus, types.ChannelGraphs,
+				func(graph *types.Graph) string { return graph.Symbol },
+			).Subscribe("graph-inventory", func(graph *types.Graph) error {
+				mu.Lock()
+				graphCount++
+				mu.Unlock()
+
+				return nil
+			})
+
+			tickCount := 200
+
+			if override := os.Getenv("PROBE_TICKS"); override != "" {
+				if parsed, err := strconv.Atoi(override); err == nil && parsed > 0 {
+					tickCount = parsed
+				}
+			}
+
+			for index := 0; index < tickCount; index++ {
 				market.Tick()
 			}
 
 			deadline := time.Now().Add(6 * time.Second)
 			for time.Now().Before(deadline) {
+				mu.Lock()
 				total := 0
 
 				for _, count := range counts {
 					total += count
 				}
+				mu.Unlock()
 
 				if total > 200 {
 					break
@@ -83,9 +129,13 @@ func TestPipelineFrameInventory(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 			}
 
+			mu.Lock()
 			t.Logf("UI frame type counts: %v", counts)
 			t.Logf("measurements by source: %v", measurements)
 			t.Logf("category batches: %d", categoryCount)
+			t.Logf("causal outputs: %d", causalCount)
+			t.Logf("graphs published: %d", graphCount)
+			mu.Unlock()
 		}),
 	)
 }

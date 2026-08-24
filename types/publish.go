@@ -1,9 +1,8 @@
-package signal
+package types
 
 import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -13,7 +12,7 @@ funnels through here, so no measurement can enter the bus without its symbol
 identity — the identity every downstream stage keys on.
 */
 func PublishMeasurement(
-	thesis *types.Thesis,
+	thesis *Thesis,
 	measurements *runtime.Channel[*nmtypes.Measurement],
 	symbol string,
 	measurement *nmtypes.Measurement,

@@ -89,7 +89,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 		separation, _ = output.Get(algo.SymbolHypothesisSeparation)
 	}
 
-	signal.measurements.Publish(signal.measurement(
+	types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, signal.measurement(
 		ticker.Symbol,
 		ticker.Timestamp,
 		output,
