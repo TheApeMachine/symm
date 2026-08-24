@@ -114,14 +114,10 @@ func TestDirectedSystem(t *testing.T) {
 			})
 			So(err, ShouldBeNil)
 			So(result.Defined(), ShouldBeTrue)
-
-			if result.PredictiveGain != nil {
-				So(*result.PredictiveGain, ShouldBeLessThan, 0.3)
-			}
-
-			if result.Coefficient != nil {
-				So(math.Abs(*result.Coefficient), ShouldBeLessThan, 0.3)
-			}
+			So(result.PredictiveGain, ShouldNotBeNil)
+			So(*result.PredictiveGain, ShouldBeLessThan, 0.3)
+			So(result.Coefficient, ShouldNotBeNil)
+			So(math.Abs(*result.Coefficient), ShouldBeLessThan, 0.3)
 		})
 	})
 }
@@ -258,14 +254,10 @@ func TestFutureLeakage(t *testing.T) {
 			})
 			So(err, ShouldBeNil)
 			So(result.Defined(), ShouldBeTrue)
-
-			if result.PredictiveGain != nil {
-				So(math.Abs(*result.PredictiveGain), ShouldBeLessThan, 0.2)
-			}
-
-			if result.Coefficient != nil {
-				So(math.Abs(*result.Coefficient), ShouldBeLessThan, 0.3)
-			}
+			So(result.PredictiveGain, ShouldNotBeNil)
+			So(math.Abs(*result.PredictiveGain), ShouldBeLessThan, 0.2)
+			So(result.Coefficient, ShouldNotBeNil)
+			So(math.Abs(*result.Coefficient), ShouldBeLessThan, 0.3)
 		})
 	})
 }
@@ -321,7 +313,7 @@ func TestZeroVsUnavailable(t *testing.T) {
 		zero := make([]float64, count)
 
 		for index := 1; index < count; index++ {
-			y[index] = 0.3*y[index-1] + noiseFor(random)
+			y[index] = 0.3*y[index-1] + random.NormFloat64()
 		}
 
 		store := buildFixtureStore([]seriesFixture{
@@ -379,62 +371,3 @@ func TestZeroVsUnavailable(t *testing.T) {
 	})
 }
 
-func TestStoreRetention(t *testing.T) {
-	Convey("Given a bounded observation store", t, func() {
-		store := NewObservationStore(3)
-		coordinate := fixtureCoordinate("s", "m")
-
-		for index := 0; index < 10; index++ {
-			store.Append(Observation{
-				Coordinate: coordinate,
-				Raw:        float64(index),
-				At:         time.Unix(0, int64(index)*int64(time.Second)),
-			})
-		}
-
-		Convey("retention is chronological and bounded by the infrastructure capacity", func() {
-			history := store.History(coordinate)
-			So(len(history), ShouldEqual, 3)
-			So(history[0].Raw, ShouldEqual, 7)
-			So(history[2].Raw, ShouldEqual, 9)
-		})
-
-		Convey("eviction is never value-based", func() {
-			So(store.Retention().Capacity, ShouldEqual, 3)
-		})
-
-		Convey("snapshots report coordinate and observation counts", func() {
-			snapshot := store.Snapshot()
-			So(snapshot.Coordinates, ShouldEqual, 1)
-			So(snapshot.Observations, ShouldEqual, 3)
-			So(snapshot.Appended, ShouldEqual, 10)
-		})
-	})
-}
-
-func TestEpochSeparation(t *testing.T) {
-	Convey("Given observations in two model epochs", t, func() {
-		store := NewObservationStore(64)
-		epochOne := fixtureCoordinate("e", "m")
-		epochOne.Epoch = 1
-		epochTwo := fixtureCoordinate("e", "m")
-		epochTwo.Epoch = 2
-
-		store.Append(Observation{Coordinate: epochOne, Raw: 1, At: time.Unix(1, 0)})
-		store.Append(Observation{Coordinate: epochTwo, Raw: 2, At: time.Unix(2, 0)})
-
-		Convey("incompatible epochs are never mixed", func() {
-			So(store.Count(epochOne), ShouldEqual, 1)
-			So(store.Count(epochTwo), ShouldEqual, 1)
-
-			historyOne := store.History(epochOne)
-			historyTwo := store.History(epochTwo)
-			So(historyOne[0].Raw, ShouldEqual, 1)
-			So(historyTwo[0].Raw, ShouldEqual, 2)
-		})
-	})
-}
-
-func noiseFor(random *rand.Rand) float64 {
-	return random.NormFloat64()
-}

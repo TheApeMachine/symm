@@ -154,14 +154,6 @@ func NewInfluenceGraph(epoch uint64, schemaVersion uint64, planVersion uint64, h
 	}
 }
 
-func (influenceGraph *InfluenceGraph) lock() {
-	influenceGraph.mu.Lock()
-}
-
-func (influenceGraph *InfluenceGraph) unlock() {
-	influenceGraph.mu.Unlock()
-}
-
 /*
 Epoch returns the graph's model epoch.
 */
@@ -170,8 +162,8 @@ func (influenceGraph *InfluenceGraph) Epoch() uint64 {
 		return 0
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.RLock()
+	defer influenceGraph.mu.RUnlock()
 
 	return influenceGraph.epoch
 }
@@ -184,8 +176,8 @@ func (influenceGraph *InfluenceGraph) SchemaVersion() uint64 {
 		return 0
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.RLock()
+	defer influenceGraph.mu.RUnlock()
 
 	return influenceGraph.schemaVersion
 }
@@ -198,8 +190,8 @@ func (influenceGraph *InfluenceGraph) PlanVersion() uint64 {
 		return 0
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.RLock()
+	defer influenceGraph.mu.RUnlock()
 
 	return influenceGraph.planVersion
 }
@@ -215,8 +207,8 @@ func (influenceGraph *InfluenceGraph) UpsertEdge(edge *InfluenceEdge) error {
 		return fmt.Errorf("graph: influence graph and edge are required")
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.Lock()
+	defer influenceGraph.mu.Unlock()
 
 	if edge.Epoch != influenceGraph.epoch {
 		return fmt.Errorf(
@@ -256,8 +248,8 @@ func (influenceGraph *InfluenceGraph) RegisterCandidate(edgeType EdgeType, sourc
 		return fmt.Errorf("graph: influence graph required")
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.Lock()
+	defer influenceGraph.mu.Unlock()
 
 	if epoch != influenceGraph.epoch {
 		return fmt.Errorf(
@@ -285,8 +277,8 @@ func (influenceGraph *InfluenceGraph) SetUnavailable(edgeType EdgeType, source r
 		return fmt.Errorf("graph: influence graph required")
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.Lock()
+	defer influenceGraph.mu.Unlock()
 
 	if epoch != influenceGraph.epoch {
 		return fmt.Errorf(
@@ -296,6 +288,14 @@ func (influenceGraph *InfluenceGraph) SetUnavailable(edgeType EdgeType, source r
 	}
 
 	key := edgeKey{edgeType: edgeType, source: source, target: target}
+
+	if _, exists := influenceGraph.candidates[key]; !exists {
+		return fmt.Errorf(
+			"graph: cannot mark unavailable a candidate that was never registered (%s -> %s)",
+			source.ID(), target.ID(),
+		)
+	}
+
 	influenceGraph.candidates[key] = CandidateUnavailable
 
 	return nil
@@ -321,8 +321,8 @@ func (influenceGraph *InfluenceGraph) currentEdge(edgeType EdgeType, source rela
 		return nil
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.RLock()
+	defer influenceGraph.mu.RUnlock()
 
 	history := influenceGraph.edges[edgeKey{edgeType: edgeType, source: source, target: target}]
 
@@ -341,8 +341,8 @@ func (influenceGraph *InfluenceGraph) NodeCount() int {
 		return 0
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.RLock()
+	defer influenceGraph.mu.RUnlock()
 
 	return len(influenceGraph.nodes)
 }
@@ -355,8 +355,8 @@ func (influenceGraph *InfluenceGraph) EdgeCount() int {
 		return 0
 	}
 
-	influenceGraph.lock()
-	defer influenceGraph.unlock()
+	influenceGraph.mu.RLock()
+	defer influenceGraph.mu.RUnlock()
 
 	return len(influenceGraph.edges)
 }

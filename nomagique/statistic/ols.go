@@ -168,6 +168,19 @@ func coefficientVariance(xMatrix *mat.Dense, p int, residualVariance float64) []
 }
 
 /*
+VarianceAt returns the coefficient variance at a column index, reporting
+false for negative, out-of-range, or unavailable entries so callers never
+index an absent variance slice.
+*/
+func (fit OLSFit) VarianceAt(column int) (float64, bool) {
+	if column < 0 || column >= fit.Parameters || len(fit.CoefficientVariance) != fit.Parameters {
+		return 0, false
+	}
+
+	return fit.CoefficientVariance[column], true
+}
+
+/*
 CoefficientSNR returns the primary coefficient SNR, Coefficient² / Variance.
 It is non-negative and unbounded. It is not probability or confidence, and it
 is undefined (NaN) when the coefficient variance is unavailable or zero.

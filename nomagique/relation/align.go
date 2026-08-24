@@ -4,9 +4,13 @@ import "time"
 
 /*
 LaggedSeries is one predictor series with its own explicit alignment lag.
+
+Precondition: Observations must be in non-decreasing chronological order;
+the cursor-based alignment relies on this and on non-decreasing target
+cutoffs to scan each series exactly once.
 */
 type LaggedSeries struct {
-	// Observations is the chronological series.
+	// Observations is the chronological series (non-decreasing At).
 	Observations []Observation
 	// Lag is the as-of lag: the newest observation used is the newest one
 	// available no later than target time minus Lag.
@@ -27,6 +31,11 @@ target observation at time t and a predictor series with lag τ, the aligned
 predictor is the newest observation available no later than t - τ. Future
 observations never enter a row. Only target observations with every
 predictor aligned are retained, in chronological target order.
+
+Precondition: targets and every LaggedSeries.Observations slice must be in
+non-decreasing chronological order; the per-series cursor alignment relies
+on this, scanning each series once across the whole call. A later call on
+the same series (or a continued scan) requires non-decreasing cutoffs.
 
 Alignment is generic: it is used by the Relation estimator (TargetPast +
 ControlsPast + SourcePast) and by the causal market transition model (self

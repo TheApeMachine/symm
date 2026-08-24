@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,9 @@ type Planner struct {
 	ObserveModule func(string, time.Duration)
 	ObserveHop    func(string, string, time.Duration)
 	executeEntry  func(types.Decision) error
+	// marketProvider supplies the execution-market inputs for economic
+	// evaluation; nil means the broker desk is the provider.
+	marketProvider func(string) marketInputs
 }
 
 /*
@@ -77,16 +81,39 @@ func NewPlanner(
 	epoch := uint64(1)
 	historyCapacity := 512
 	relationInterval := time.Second
-	schemaTemplate := DefaultCausalSchema(epoch)
-	plans := DefaultRelationPlans(epoch)
+	measurementStep := time.Second
+	relationMaxLag := 30 * time.Second
+	schemaTemplate := DefaultCausalSchema(epoch, measurementStep)
+	plans := DefaultRelationPlans(epoch, relationMaxLag)
 
 	if config != nil && config.Planner != nil {
-		historyCapacity = 512
 		relationInterval = config.Planner.RelationInterval
 
 		if relationInterval <= 0 {
 			relationInterval = time.Second
 		}
+
+		if config.Planner.MeasurementStep > 0 {
+			measurementStep = config.Planner.MeasurementStep
+			schemaTemplate = DefaultCausalSchema(epoch, measurementStep)
+		}
+
+		if config.Planner.RelationMaxLag > 0 {
+			relationMaxLag = config.Planner.RelationMaxLag
+			plans = DefaultRelationPlans(epoch, relationMaxLag)
+		}
+	}
+
+	reasoner, reasonerErr := NewReasoner(epoch, historyCapacity, plans, schemaTemplate, relationInterval)
+
+	if reasonerErr != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: reasoner construction failed",
+			reasonerErr,
+		))
+		cancel()
+		return nil
 	}
 
 	planner := &Planner{
@@ -98,7 +125,7 @@ func NewPlanner(
 		allocation: NewAllocation(ctx, desk),
 		desk:       desk,
 		thesis:     thesis,
-		reasoner:   NewReasoner(epoch, historyCapacity, plans, schemaTemplate, relationInterval),
+		reasoner:   reasoner,
 	}
 	planner.ui = runtime.ChannelOf[*types.UIFrame](
 		bus, types.ChannelUI,
@@ -122,7 +149,7 @@ func NewPlanner(
 		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
 	).Subscribe(planner.Name()+"-reasoner", planner.StepMeasurement)
 
-	planner.reasoner.onState = planner.publishCausalState
+	planner.reasoner.SetOnState(planner.publishCausalState)
 	_ = measurementWork
 
 	return planner
@@ -323,15 +350,16 @@ func (planner *Planner) decisionFromCausalState(
 	state *CausalState,
 	config *system.Config,
 ) *types.Decision {
+	if state == nil {
+		decision := types.NewDecision(types.ActionNothing, "")
+		decision.Reason = "planner: no causal state for symbol"
+		return decision
+	}
+
 	decision := types.NewDecision(types.ActionNothing, state.Symbol)
 	decision.At = state.At
 	alternatives := make(map[string]float64)
 	decision.Alternatives = alternatives
-
-	if state == nil {
-		decision.Reason = "planner: no causal state for symbol"
-		return decision
-	}
 
 	alternatives["causal:epoch"] = float64(state.Epoch)
 	alternatives["causal:schema_version"] = float64(state.SchemaVersion)
@@ -344,36 +372,17 @@ func (planner *Planner) decisionFromCausalState(
 	}
 
 	position, _ := planner.heldPosition(state.Symbol)
-	cash := 100000.0
-	mark := 1.0
-	feeRate := 0.001
-	spreadFraction := 0.0
+	inputs := planner.marketInputsFor(state.Symbol)
 
-	if planner.desk != nil {
-		if balance := planner.desk.Balance().Cash(); balance != nil {
-			cash = balance.Float64()
-		}
-
-		if marked := planner.desk.Price().Mark(state.Symbol, broker.BUY); marked != nil {
-			mark = marked.Float64()
-		}
-
-		if fee := planner.desk.Price().Fee(state.Symbol); fee != nil && fee.Fee != nil {
-			feeRate = fee.Fee.Float64() / 100
-		}
-
-		if tick := planner.desk.Price().Tick(state.Symbol); tick != nil &&
-			tick.Bid != nil && tick.Ask != nil && tick.Bid.Float64() > 0 && tick.Ask.Float64() > tick.Bid.Float64() {
-			bid := tick.Bid.Float64()
-			ask := tick.Ask.Float64()
-			spreadFraction = (ask - bid) / ((ask + bid) / 2)
-		}
-	}
-
-	if !(mark > 0) {
-		decision.Reason = "planner: positive mark price required"
+	if !inputs.available || !(inputs.mark > 0) {
+		decision.Reason = "planner: broker market inputs unavailable (cash, mark, or fee)"
 		return decision
 	}
+
+	cash := inputs.cash
+	mark := inputs.mark
+	feeRate := inputs.feeRate
+	spreadFraction := inputs.spreadFraction
 
 	// UnitQuantity is the sized base quantity one new position unit
 	// represents (allocation policy). The held position (if any) is the
@@ -486,6 +495,68 @@ func (planner *Planner) heldPosition(symbol string) (float64, float64) {
 }
 
 /*
+marketInputs are the current execution-market values the economic evaluation
+requires. available reports whether every required value was actually
+obtained; fabricated fallbacks are never substituted.
+*/
+type marketInputs struct {
+	cash           float64
+	mark           float64
+	feeRate        float64
+	spreadFraction float64
+	available      bool
+}
+
+/*
+marketInputsFor returns the current execution-market inputs for one symbol.
+The default provider reads the broker desk and reports unavailable when any
+required value (cash, mark, or fee) is missing; tests may inject a
+deterministic provider.
+*/
+func (planner *Planner) marketInputsFor(symbol string) marketInputs {
+	if planner == nil {
+		return marketInputs{}
+	}
+
+	if planner.marketProvider != nil {
+		return planner.marketProvider(symbol)
+	}
+
+	return planner.deskMarketInputs(symbol)
+}
+
+func (planner *Planner) deskMarketInputs(symbol string) marketInputs {
+	if planner == nil || planner.desk == nil {
+		return marketInputs{}
+	}
+
+	balance := planner.desk.Balance().Cash()
+	marked := planner.desk.Price().Mark(symbol, broker.BUY)
+	fee := planner.desk.Price().Fee(symbol)
+
+	if balance == nil || marked == nil || fee == nil || fee.Fee == nil {
+		return marketInputs{}
+	}
+
+	inputs := marketInputs{
+		cash:    balance.Float64(),
+		mark:    marked.Float64(),
+		feeRate: fee.Fee.Float64() / 100,
+	}
+
+	if tick := planner.desk.Price().Tick(symbol); tick != nil &&
+		tick.Bid != nil && tick.Ask != nil && tick.Bid.Float64() > 0 && tick.Ask.Float64() > tick.Bid.Float64() {
+		bid := tick.Bid.Float64()
+		ask := tick.Ask.Float64()
+		inputs.spreadFraction = (ask - bid) / ((ask + bid) / 2)
+	}
+
+	inputs.available = true
+
+	return inputs
+}
+
+/*
 recordEconomic records the economic outcome provenance on the decision.
 */
 func recordEconomic(decision *types.Decision, result *mcts.SearchResult, state *CausalState) {
@@ -533,10 +604,20 @@ causalSeed fingerprints the causal state so the same replay state explores the
 same rollout paths.
 */
 func causalSeed(state *CausalState) int64 {
+	if state == nil {
+		return 0
+	}
+
 	hasher := fnv.New64a()
 	_, _ = hasher.Write([]byte(state.Symbol))
-	_, _ = hasher.Write([]byte(fmt.Sprintf("%d", state.At.UnixNano())))
-	_, _ = hasher.Write([]byte(fmt.Sprintf("%d", state.Epoch)))
+
+	buffer := make([]byte, 0, 32)
+	buffer = strconv.AppendInt(buffer, state.At.UnixNano(), 10)
+	_, _ = hasher.Write(buffer)
+	buffer = buffer[:0]
+	buffer = strconv.AppendUint(buffer, state.Epoch, 10)
+	_, _ = hasher.Write(buffer)
+
 	return int64(hasher.Sum64())
 }
 

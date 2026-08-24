@@ -148,20 +148,24 @@ func (store *ObservationStore) History(coordinate Coordinate) []Observation {
 }
 
 /*
-Latest returns the most recent retained observation for one coordinate.
+Latest returns the most recent retained observation for one coordinate,
+reading the newest ring entry directly under the store's read lock.
 */
 func (store *ObservationStore) Latest(coordinate Coordinate) (Observation, bool) {
 	if store == nil {
 		return Observation{}, false
 	}
 
-	history := store.History(coordinate)
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 
-	if len(history) == 0 {
+	ring := store.rings[coordinate]
+
+	if ring == nil || ring.size == 0 {
 		return Observation{}, false
 	}
 
-	return history[len(history)-1], true
+	return ring.at(ring.size - 1), true
 }
 
 /*

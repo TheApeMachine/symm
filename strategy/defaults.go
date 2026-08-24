@@ -15,7 +15,20 @@ every signal source, targeting the outcome and the main flow variable. No
 evidence threshold ever decides eligibility; the plan is the candidate
 space, and the Relation layer measures whatever the data supports.
 */
-func DefaultRelationPlans(epoch uint64) []*relation.RelationPlan {
+/*
+DefaultRelationPlans returns the initial explicit candidate Relation space.
+Eligibility is structural only: within-symbol coordinate pairs selected from
+every signal source, targeting the outcome and the main flow variable. No
+evidence threshold ever decides eligibility; the plan is the candidate
+space, and the Relation layer measures whatever the data supports. maxLag is
+the explicit candidate lag search window supplied by configuration or
+observed sampling cadence.
+*/
+func DefaultRelationPlans(epoch uint64, maxLag time.Duration) []*relation.RelationPlan {
+	if maxLag <= 0 {
+		maxLag = 30 * time.Second
+	}
+
 	return []*relation.RelationPlan{{
 		Version: 1,
 		Epoch:   epoch,
@@ -29,7 +42,7 @@ func DefaultRelationPlans(epoch uint64) []*relation.RelationPlan {
 			{Source: "cvd", Metric: "midpoint_log_return"},
 			{Source: "cvd", Metric: "signed_net_fraction_zscore"},
 		},
-		Lag: relation.LagDomain{MaxLag: 30 * time.Second},
+		Lag: relation.LagDomain{MaxLag: maxLag},
 	}}
 }
 
@@ -70,7 +83,21 @@ are allowed; the Relation layer supplies the measured temporal relationship
 (which relationships exist and their lags). The fixed semantic frame (flow,
 hawkes, coherence, regime, confidence) plays no role.
 */
-func DefaultCausalSchema(epoch uint64) *causal.CausalSchema {
+/*
+DefaultCausalSchema returns the initial symbol-agnostic CausalSchema. Every
+variable is an actual Measurement coordinate with its full typed identity
+(unit and timescale included), so schema variables resolve exactly against
+the observational store. The schema authorizes which structural directions
+are allowed; the Relation layer supplies the measured temporal relationship
+(which relationships exist and their lags). The fixed semantic frame (flow,
+hawkes, coherence, regime, confidence) plays no role. step is the configured
+measurement step duration used for the schema's structural lag declarations.
+*/
+func DefaultCausalSchema(epoch uint64, step time.Duration) *causal.CausalSchema {
+	if step <= 0 {
+		step = time.Second
+	}
+
 	schema := causal.NewCausalSchema("market-v1", "", epoch)
 
 	priceReturn := causal.VariableID{
@@ -100,8 +127,8 @@ func DefaultCausalSchema(epoch uint64) *causal.CausalSchema {
 		}
 
 		parents = append(parents, causal.AllowedParent{
-			Parent:   marketVariable(coordinate),
-			Lag:      time.Second,
+			Parent:    marketVariable(coordinate),
+			Lag:       step,
 			LagSource: "schema",
 		})
 	}
@@ -110,7 +137,7 @@ func DefaultCausalSchema(epoch uint64) *causal.CausalSchema {
 	// schema-authorized market variables from every signal.
 	schema.AddMarketVariable(causal.MarketVariable{
 		Variable: priceReturn,
-		SelfLag:  time.Second,
+		SelfLag:  step,
 		Parents:  parents,
 	})
 
@@ -118,10 +145,10 @@ func DefaultCausalSchema(epoch uint64) *causal.CausalSchema {
 	// flow — the structural chain Hawkes → Flow → Price.
 	schema.AddMarketVariable(causal.MarketVariable{
 		Variable: flow,
-		SelfLag:  time.Second,
+		SelfLag:  step,
 		Parents: []causal.AllowedParent{
-			{Parent: hawkesBuy, Lag: time.Second, LagSource: "schema"},
-			{Parent: grossRate, Lag: time.Second, LagSource: "schema"},
+			{Parent: hawkesBuy, Lag: step, LagSource: "schema"},
+			{Parent: grossRate, Lag: step, LagSource: "schema"},
 		},
 	})
 
@@ -137,7 +164,7 @@ func DefaultCausalSchema(epoch uint64) *causal.CausalSchema {
 
 		schema.AddMarketVariable(causal.MarketVariable{
 			Variable: marketVariable(coordinate),
-			SelfLag:  time.Second,
+			SelfLag:  step,
 		})
 	}
 

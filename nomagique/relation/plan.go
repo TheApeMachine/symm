@@ -163,7 +163,12 @@ func (plan *RelationPlan) ResolveControls(symbol string, coordinates []Coordinat
 			matched = true
 		}
 
-		if !matched && selector.Metric != "" {
+		// An exact selector (any identity component populated) with no
+		// matching coordinate is a missing control: the Relation is
+		// unavailable rather than silently changing the model.
+		exact := selector.Source != "" || selector.Metric != "" || selector.Side != ""
+
+		if !matched && exact {
 			return nil, false
 		}
 	}

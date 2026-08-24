@@ -163,13 +163,23 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 		return result
 	}
 
-	best := bestChild(root)
+	best, found := bestChild(root)
+
+	if !found {
+		// Every expanded child has zero visits (all rollouts failed); the
+		// economic objective could not be evaluated. This is an explicit
+		// unavailable result, not a Wait win.
+		result.DecisionUnavailable = true
+		result.IdentificationStatus = causal.IdentificationInsufficientSupport
+		return result
+	}
+
 	result.SelectedAction = best.Action
 	result.ExpectedEconomicOutcome = best.MeanReward()
 	result.OutcomeUncertainty = best.StandardError()
 	result.Visits = best.Visits
-	result.IdentificationStatus = estimator.EstimateAction(rootState, best.Action).IdentificationStatus
-	result.Trace = search.trace(root, rootState)
+	result.IdentificationStatus = alternativeEstimate(result.Alternatives, best.Action).IdentificationStatus
+	result.Trace = search.trace(root, rootState, result.Alternatives)
 
 	return result
 }
@@ -321,24 +331,30 @@ func (search *Search) rolloutAction(state State, actions []Action, estimator Act
 }
 
 /*
-backpropagate aggregates the economic rollout outcome up the tree.
+backpropagate aggregates the economic rollout outcome up the tree with
+Welford's online algorithm, maintaining the running mean and the sum of
+squared deviations for the sample variance.
 */
 func backpropagate(leaf *SearchNode, reward float64) {
 	current := leaf
 
 	for current != nil {
 		current.Visits++
-		current.TotalReward += reward
-		current.SumSquares += reward * reward
+		delta := reward - current.Mean
+		current.Mean += delta / float64(current.Visits)
+		delta2 := reward - current.Mean
+		current.SumSquaredDeviations += delta * delta2
 		current = current.Parent
 	}
 }
 
 /*
 bestChild is the feasible action with the best search value under the
-economic objective: highest mean economic reward, ties broken by visits.
+economic objective: highest mean economic reward, ties broken by visits. It
+reports whether any child was actually visited, so the caller can represent
+an unevaluated search explicitly instead of panicking.
 */
-func bestChild(root *SearchNode) *SearchNode {
+func bestChild(root *SearchNode) (*SearchNode, bool) {
 	var best *SearchNode
 
 	for _, child := range root.Children {
@@ -352,14 +368,24 @@ func bestChild(root *SearchNode) *SearchNode {
 		}
 	}
 
-	if best == nil {
-		panic("mcts: no visited child")
-	}
-
-	return best
+	return best, best != nil
 }
 
-func (search *Search) trace(root *SearchNode, rootState State) *Trace {
+/*
+alternativeEstimate returns the stored causal estimate for an action, or a
+zero-valued estimate when the action was never estimated.
+*/
+func alternativeEstimate(alternatives []ActionEstimate, action Action) ActionEstimate {
+	for _, estimate := range alternatives {
+		if estimate.Action == action {
+			return estimate
+		}
+	}
+
+	return ActionEstimate{Action: action}
+}
+
+func (search *Search) trace(root *SearchNode, rootState State, alternatives []ActionEstimate) *Trace {
 	trace := &Trace{
 		Iterations:          search.Iterations,
 		Horizon:             search.horizon(rootState),
@@ -374,12 +400,23 @@ func (search *Search) trace(root *SearchNode, rootState State) *Trace {
 			Visits:     child.Visits,
 			MeanReward: child.MeanReward(),
 			RewardStd:  child.RewardStandardDeviation(),
+			Estimated:  alternativeEstimate(alternatives, child.Action),
 		})
 	}
 
+	// Descending visits; equal visits are ordered deterministically by
+	// Action so the branch order is stable and reproducible.
 	slices.SortFunc(trace.Branches, func(left BranchTrace, right BranchTrace) int {
 		if left.Visits != right.Visits {
 			if left.Visits > right.Visits {
+				return -1
+			}
+
+			return 1
+		}
+
+		if left.Action != right.Action {
+			if left.Action < right.Action {
 				return -1
 			}
 

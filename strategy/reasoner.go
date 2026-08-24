@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -74,7 +75,8 @@ type Reasoner struct {
 NewReasoner builds the reasoning stage. historyCapacity bounds each
 coordinate's retained observations (infrastructure provenance). plans are the
 explicit Relation plans; schemaTemplate is the symbol-agnostic CausalSchema
-instantiated per symbol. interval bounds per-symbol Relation refresh rate.
+instantiated per symbol. interval bounds per-symbol Relation refresh rate. A
+nil schemaTemplate is a validation error.
 */
 func NewReasoner(
 	epoch uint64,
@@ -82,7 +84,11 @@ func NewReasoner(
 	plans []*relation.RelationPlan,
 	schemaTemplate *causal.CausalSchema,
 	interval time.Duration,
-) *Reasoner {
+) (*Reasoner, error) {
+	if schemaTemplate == nil {
+		return nil, errStrategy("causal schema template is required")
+	}
+
 	if interval <= 0 {
 		interval = time.Second
 	}
@@ -97,7 +103,25 @@ func NewReasoner(
 		interval:       interval,
 		models:         make(map[string]*causal.CausalModel),
 		lastRun:        make(map[string]time.Time),
+	}, nil
+}
+
+/*
+SetOnState installs the per-symbol state callback under the reasoner lock so
+it can be assigned safely while measurements are being ingested.
+*/
+func (reasoner *Reasoner) SetOnState(callback func(*CausalState)) {
+	if reasoner == nil {
+		return
 	}
+
+	reasoner.mu.Lock()
+	reasoner.onState = callback
+	reasoner.mu.Unlock()
+}
+
+func errStrategy(format string, arguments ...any) error {
+	return fmt.Errorf("strategy: "+format, arguments...)
 }
 
 func planVersion(plans []*relation.RelationPlan) uint64 {
@@ -230,6 +254,8 @@ func (reasoner *Reasoner) updateRelations(symbol string) {
 
 /*
 estimatePair estimates one Source→Target pair and records the Influence edge.
+The pair is a structurally scheduled candidate first; an undefined estimate
+marks that candidate unavailable (never deleted, never a measured zero).
 */
 func (reasoner *Reasoner) estimatePair(
 	plan *relation.RelationPlan,
@@ -238,6 +264,8 @@ func (reasoner *Reasoner) estimatePair(
 	target relation.Coordinate,
 	coordinates []relation.Coordinate,
 ) {
+	_ = reasoner.influenceGraph.RegisterCandidate(graph.EdgeInfluence, source, target, reasoner.epoch)
+
 	controls, controlsComplete := plan.ResolveControls(symbol, coordinates)
 
 	if !controlsComplete {

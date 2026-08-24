@@ -141,11 +141,20 @@ func (estimator *causalActionEstimator) EstimateAction(state mcts.State, action 
 	}
 
 	for !next.IsTerminal() {
-		next, err = next.ApplyAction(mcts.Wait, nil)
+		nextState, applyErr := next.ApplyAction(mcts.Wait, nil)
 
-		if err != nil {
-			break
+		if applyErr != nil {
+			// Preserve the last valid state and report the failure as an
+			// explicit Undefined estimate instead of fabricating a value
+			// from a nil state.
+			return mcts.ActionEstimate{
+				Action:               action,
+				IdentificationStatus: causal.IdentificationInsufficientSupport,
+				Defined:              false,
+			}
 		}
+
+		next = nextState
 	}
 
 	outcomeTransition := estimator.state.Transitions[estimator.state.OutcomeVariable.Coordinate]

@@ -458,9 +458,13 @@ func occupiedSymbols(desk *broker.Desk) map[string]bool {
 
 /*
 alternativesOf returns the decision's alternatives map, creating it when
-absent.
+absent. A nil decision has no alternatives map and returns nil.
 */
 func alternativesOf(decision *types.Decision) map[string]float64 {
+	if decision == nil {
+		return nil
+	}
+
 	if decision.Alternatives == nil {
 		decision.Alternatives = make(map[string]float64)
 	}

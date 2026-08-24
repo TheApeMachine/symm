@@ -254,8 +254,8 @@ func (state *EconomicState) ApplyAction(action Action, random *rand.Rand) (State
 
 	newPrice := price * math.Exp(logReturn)
 
-	if !(newPrice > 0) {
-		return nil, fmt.Errorf("mcts: market transition produced a non-positive price")
+	if !(newPrice > 0) || math.IsNaN(newPrice) || math.IsInf(newPrice, 0) {
+		return nil, fmt.Errorf("mcts: market transition produced a non-positive or non-finite price")
 	}
 
 	marketDelta := position * (newPrice - price)

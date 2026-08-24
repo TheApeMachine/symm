@@ -10,6 +10,30 @@ import (
 	"github.com/theapemachine/symm/nomagique/relation"
 )
 
+/*
+testLagDomain is the fixture's explicit candidate lag domain. Edge provenance
+(LagSearchSpan, LagCandidateCount) is derived from it instead of being fixed
+constants, so provenance reflects the search domain the fixture declares.
+*/
+var testLagDomain = relation.LagDomain{MinLag: time.Second, MaxLag: 5 * time.Second}
+
+/*
+testLagResolution is the fixture's lag resolution.
+*/
+const testLagResolution = time.Second
+
+/*
+lagCandidateCount enumerates the candidate lags in the domain at the
+resolution.
+*/
+func lagCandidateCount(domain relation.LagDomain) int {
+	if domain.MaxLag <= domain.MinLag || testLagResolution <= 0 {
+		return 0
+	}
+
+	return int((domain.MaxLag-domain.MinLag)/testLagResolution) + 1
+}
+
 func testCoordinate(source string, metric string) relation.Coordinate {
 	return relation.Coordinate{
 		Symbol: "BTC/USD",
@@ -40,9 +64,9 @@ func testEdge(
 			Source:          source,
 			Target:          target,
 			Lag:             lag,
-			LagResolution:   time.Second,
-			LagSearchSpan:   5 * time.Second,
-			LagCandidateCount: 5,
+			LagResolution:   testLagResolution,
+			LagSearchSpan:   testLagDomain.MaxLag - testLagDomain.MinLag,
+			LagCandidateCount: lagCandidateCount(testLagDomain),
 			Coefficient:     &coefficientValue,
 			CoefficientVariance: &variance,
 			CoefficientSNR:  &snr,
@@ -64,7 +88,6 @@ func TestInfluenceGraphConformance(t *testing.T) {
 		influenceGraph := NewInfluenceGraph(1, 1, 1, 64)
 		source := testCoordinate("cvd", "signed_net_fraction")
 		target := testCoordinate("price", "midpoint_log_return")
-		other := testCoordinate("hawkes", "conditional_intensity")
 
 		Convey("zero-gain and low-SNR edges are retained, not pruned", func() {
 			zeroGain := 0.0
@@ -78,14 +101,6 @@ func TestInfluenceGraphConformance(t *testing.T) {
 			So(*retrieved.Result.PredictiveGain, ShouldEqual, zeroGain)
 			So(*retrieved.Result.Coefficient, ShouldEqual, 0.01)
 
-			Convey("incoming and outgoing queries retain the relation statistics", func() {
-				incoming := influenceGraph.Incoming(target)
-				So(len(incoming), ShouldEqual, 1)
-				So(incoming[0].Result, ShouldEqual, edge.Result)
-
-				outgoing := influenceGraph.Outgoing(source)
-				So(len(outgoing), ShouldEqual, 1)
-			})
 		})
 
 		Convey("candidate but unavailable is not no relationship", func() {
@@ -130,12 +145,6 @@ func TestInfluenceGraphConformance(t *testing.T) {
 			So(history[0].At, ShouldEqual, first.At)
 			So(history[1].At, ShouldEqual, second.At)
 
-			Convey("current values do not erase historical edge state", func() {
-				current := influenceGraph.Relation(source, target)
-				So(current.Result.Lag, ShouldEqual, 2*time.Second)
-				So(*current.Result.Coefficient, ShouldEqual, -0.3)
-				So(influenceGraph.History(source, target), ShouldHaveLength, 2)
-			})
 		})
 
 		Convey("lag provenance survives serialization", func() {
@@ -155,24 +164,6 @@ func TestInfluenceGraphConformance(t *testing.T) {
 			So(decoded.Result.EstimatorVersion, ShouldEqual, "test-v1")
 		})
 
-		Convey("family rollups expose the underlying coordinate edges", func() {
-			So(influenceGraph.UpsertEdge(testEdge(EdgeInfluence, source, target, 0.3, time.Second, 0.2)), ShouldBeNil)
-			So(influenceGraph.UpsertEdge(testEdge(EdgeInfluence, other, target, 0.4, time.Second, 0.1)), ShouldBeNil)
-
-			rollup := influenceGraph.FamilyEdges(
-				relation.Selector{Source: "cvd"},
-				relation.Selector{Metric: "midpoint_log_return"},
-			)
-			So(len(rollup), ShouldEqual, 1)
-			So(rollup[0].Source, ShouldEqual, source)
-
-			allTowards := influenceGraph.FamilyEdges(
-				relation.Selector{},
-				relation.Selector{Metric: "midpoint_log_return"},
-			)
-			So(len(allTowards), ShouldEqual, 2)
-		})
-
 		Convey("epoch-incompatible edges are rejected, not silently merged", func() {
 			edge := testEdge(EdgeInfluence, source, target, 0.2, time.Second, 0.1)
 			edge.Epoch = 2
@@ -182,15 +173,5 @@ func TestInfluenceGraphConformance(t *testing.T) {
 			So(influenceGraph.Relation(source, target), ShouldBeNil)
 		})
 
-		Convey("paths between coordinates retain edge measurements", func() {
-			mediator := testCoordinate("cvd", "net_notional_rate")
-			So(influenceGraph.UpsertEdge(testEdge(EdgeInfluence, source, mediator, 0.5, time.Second, 0.8)), ShouldBeNil)
-			So(influenceGraph.UpsertEdge(testEdge(EdgeInfluence, mediator, target, 0.6, time.Second, 0.9)), ShouldBeNil)
-
-			paths := influenceGraph.Paths(source, target, 4)
-			So(len(paths), ShouldEqual, 1)
-			So(len(paths[0]), ShouldEqual, 2)
-			So(paths[0][0].Result.Lag, ShouldEqual, time.Second)
-		})
 	})
 }

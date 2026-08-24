@@ -58,10 +58,22 @@ type PlannerConfig struct {
 	MaxPositionUnits float64
 	// SlippageFraction is modeled slippage per side as a fraction of notional
 	// (strategy policy; stated explicitly, not disguised as market math).
+	// It defaults to zero: the allocation already prices visible-depth impact
+	// through the broker EntryCost at execution time, so zero means no
+	// additional modeled slippage beyond the venue's observed impact. The
+	// same value feeds both the economic search and the execution cost
+	// assumption, so the two never drift apart.
 	SlippageFraction float64
 	// RelationInterval bounds how often per-symbol Relation estimates refresh
 	// (infrastructure capacity, not a statistical horizon).
 	RelationInterval time.Duration
+	// MeasurementStep is the assumed measurement cadence used to declare the
+	// causal schema's structural lags (explicit configuration).
+	MeasurementStep time.Duration
+	// RelationMaxLag is the explicit candidate lag search window for the
+	// Relation plan (explicit configuration; bounded further by retained
+	// history at estimation time).
+	RelationMaxLag time.Duration
 }
 
 func NewPlannerConfig() *PlannerConfig {
@@ -85,6 +97,8 @@ func NewPlannerConfig() *PlannerConfig {
 	viper.SetDefault("trading.mcts.max_position_units", 1.0)
 	viper.SetDefault("trading.mcts.slippage_fraction", 0.0)
 	viper.SetDefault("trading.relation.interval_seconds", 1)
+	viper.SetDefault("trading.relation.max_lag_seconds", 30)
+	viper.SetDefault("trading.relation.measurement_step_seconds", 1)
 
 	return &PlannerConfig{
 		Admission: types.AdmissionPolicy{
@@ -106,5 +120,7 @@ func NewPlannerConfig() *PlannerConfig {
 		MaxPositionUnits:      viper.GetFloat64("trading.mcts.max_position_units"),
 		SlippageFraction:      viper.GetFloat64("trading.mcts.slippage_fraction"),
 		RelationInterval:      time.Duration(viper.GetInt("trading.relation.interval_seconds")) * time.Second,
+		MeasurementStep:       time.Duration(viper.GetInt("trading.relation.measurement_step_seconds")) * time.Second,
+		RelationMaxLag:        time.Duration(viper.GetInt("trading.relation.max_lag_seconds")) * time.Second,
 	}
 }

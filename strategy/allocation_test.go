@@ -36,6 +36,7 @@ func TestAllocationCalculate(t *testing.T) {
 
 		Convey("It should report that a broker desk is required", func() {
 			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "broker desk required")
 		})
 	})
 }
@@ -126,8 +127,8 @@ func cloneDecisions(decisions []*types.Decision) []*types.Decision {
 	cloned := make([]*types.Decision, len(decisions))
 
 	for index, decision := range decisions {
-		copy := *decision
-		cloned[index] = &copy
+		clonedDecision := *decision
+		cloned[index] = &clonedDecision
 	}
 
 	return cloned

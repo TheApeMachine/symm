@@ -312,44 +312,25 @@ func (model *CausalModel) TransitionModels(at time.Time) map[relation.Coordinate
 /*
 prequentialTransitionVariance evaluates the transition model's residual
 variance prequentially: each row is predicted by a model fitted strictly on
-earlier rows, and only then incorporated. Steps whose fit is not identifiable
-contribute no residual.
+earlier rows, and only then incorporated. The normal-equation moments are
+maintained incrementally across steps, so the evaluation costs O(n·p²) rather
+than refitting the full design at every row. Steps whose fit is not
+identifiable contribute no residual.
 */
 func prequentialTransitionVariance(aligned []relation.AlignedRow, parameterCount int) float64 {
+	accumulator := statistic.NewRegressionAccumulator(parameterCount)
 	residuals := make([]float64, 0, len(aligned))
 
-	for index := range aligned {
-		if index <= parameterCount {
-			continue
+	for _, row := range aligned {
+		fit := accumulator.Fit()
+
+		if fit.Defined {
+			prediction, _ := fit.Predict(transitionPredictors(row, parameterCount))
+			residual := row.Target.Raw - prediction
+			residuals = append(residuals, residual*residual)
 		}
 
-		design := make([]float64, 0, index*parameterCount)
-		targets := make([]float64, 0, index)
-
-		for rowIndex := 0; rowIndex < index; rowIndex++ {
-			design = append(design, 1, aligned[rowIndex].Predictors[0].Raw)
-
-			for predictorIndex := 1; predictorIndex < len(aligned[rowIndex].Predictors); predictorIndex++ {
-				design = append(design, aligned[rowIndex].Predictors[predictorIndex].Raw)
-			}
-
-			targets = append(targets, aligned[rowIndex].Target.Raw)
-		}
-
-		fit := statistic.FitOLS(design, targets, parameterCount)
-
-		if !fit.Defined {
-			continue
-		}
-
-		predicted := fit.Coefficients[0] + fit.Coefficients[1]*aligned[index].Predictors[0].Raw
-
-		for predictorIndex := 1; predictorIndex < len(aligned[index].Predictors); predictorIndex++ {
-			predicted += fit.Coefficients[1+predictorIndex] * aligned[index].Predictors[predictorIndex].Raw
-		}
-
-		residual := aligned[index].Target.Raw - predicted
-		residuals = append(residuals, residual*residual)
+		accumulator.Add(transitionPredictors(row, parameterCount), row.Target.Raw)
 	}
 
 	if len(residuals) == 0 {
@@ -363,6 +344,21 @@ func prequentialTransitionVariance(aligned []relation.AlignedRow, parameterCount
 	}
 
 	return sum / float64(len(residuals))
+}
+
+/*
+transitionPredictors builds one transition design row: intercept, the target's
+own lagged value, then each parent's lagged value.
+*/
+func transitionPredictors(row relation.AlignedRow, parameterCount int) []float64 {
+	predictors := make([]float64, 0, parameterCount)
+	predictors = append(predictors, 1, row.Predictors[0].Raw)
+
+	for predictorIndex := 1; predictorIndex < len(row.Predictors); predictorIndex++ {
+		predictors = append(predictors, row.Predictors[predictorIndex].Raw)
+	}
+
+	return predictors
 }
 
 /*
@@ -409,11 +405,11 @@ func (model *CausalModel) Outcome(request OutcomeRequest) *TreatmentEffect {
 		}
 	}
 
+	// A market or outcome coordinate is never directly mutated by a strategy
+	// action without an explicit market-impact model, so the treatment
+	// effect on it is NotIdentifiable regardless of how the schema labels
+	// the variable. There is no action-target escape hatch here.
 	if request.Target.Role == RoleMarket || request.Target.Role == RoleOutcome {
-		if model.schema.IsAction(request.Target) {
-			return model.schema.PortfolioOutcome(request, request.Current[request.Target], "action directly controls its declared portfolio variable")
-		}
-
 		return model.schema.NotIdentifiableOutcome(
 			request,
 			"strategy actions do not directly mutate market coordinates without an explicit market-impact model; no defensible adjustment set is declared for this market target",

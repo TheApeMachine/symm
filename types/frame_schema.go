@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"math"
 
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
@@ -120,11 +121,19 @@ func ValidateReasoningFrame(frame nmtypes.Frame) error {
 
 	maximumHorizon, _ := frame.Get(SymbolMaximumHorizon)
 
+	if math.IsNaN(maximumHorizon) || math.IsInf(maximumHorizon, 0) {
+		return fmt.Errorf("reasoning: max_horizon must be finite")
+	}
+
 	if maximumHorizon < 1 {
 		return fmt.Errorf("reasoning: max_horizon must be positive")
 	}
 
 	horizon, _ := frame.Get(SymbolHorizon)
+
+	if math.IsNaN(horizon) || math.IsInf(horizon, 0) {
+		return fmt.Errorf("reasoning: horizon must be finite")
+	}
 
 	if horizon < 0 || horizon > maximumHorizon {
 		return fmt.Errorf(

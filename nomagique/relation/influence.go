@@ -101,6 +101,11 @@ type InfluenceResult struct {
 	Lag                 time.Duration
 	LagResolution       time.Duration
 	LagSearchSpan       time.Duration
+	// LagSupportBound is the largest candidate lag the retained history can
+	// support, derived from the target observation count, the parameter
+	// count, and the observed cadence. It is provenance, not a fixed
+	// constant.
+	LagSupportBound     time.Duration
 	LagCandidateCount   int
 	LagSurface          []LagPoint
 
@@ -232,10 +237,21 @@ func (estimator *InfluenceEstimator) Estimate(
 		return estimator.unavailable(request, FitNoPositiveLag), nil
 	}
 
+	// The retained history bounds the searchable lag domain: each
+	// resolution step of lag consumes at least one target observation from
+	// the alignment, and a fit needs more rows than parameters. The derived
+	// bound is provenance, not a fixed constant.
+	minRows := 4 + len(request.Controls)
+	supportLagBound := time.Duration(max(0, len(targetHistory)-minRows)) * resolution
+
 	maxLag := request.Lag.MaxLag
 
 	if maxLag <= 0 || maxLag > searchSpan {
 		maxLag = searchSpan
+	}
+
+	if maxLag > supportLagBound {
+		maxLag = supportLagBound
 	}
 
 	startLag := request.Lag.MinLag
@@ -275,6 +291,7 @@ func (estimator *InfluenceEstimator) Estimate(
 
 	best.LagSurface = surface
 	best.LagCandidateCount = len(candidates)
+	best.LagSupportBound = supportLagBound
 	best.EstimatorVersion = estimator.version
 	return best, nil
 }
@@ -338,9 +355,10 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 	result.TargetObservedAt = rows[len(rows)-1].target.At
 	result.SourceAge = result.TargetObservedAt.Sub(result.SourceObservedAt)
 
-	effective := statistic.EffectiveSampleSize(equalWeights(len(rows)))
+	weights := equalWeights(len(rows))
+	effective := statistic.EffectiveSampleSize(weights)
 	result.EffectiveSampleCount = effective
-	result.Maturity = statistic.KishMaturity(equalWeights(len(rows)))
+	result.Maturity = statistic.KishMaturity(weights)
 
 	finalFit := fullFit(rows, len(request.Controls))
 
@@ -356,11 +374,10 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 
 	sourceColumn := parameterCount
 	coefficient := finalFit.Coefficients[sourceColumn]
-	coefficientVariance := finalFit.CoefficientVariance[sourceColumn]
 	result.Coefficient = &coefficient
 
-	if !math.IsNaN(coefficientVariance) && coefficientVariance > 0 {
-		variance := coefficientVariance
+	if variance, found := finalFit.VarianceAt(sourceColumn); found &&
+		!math.IsNaN(variance) && variance > 0 {
 		result.CoefficientVariance = &variance
 		snr := statistic.CoefficientSNR(coefficient, variance)
 		result.CoefficientSNR = &snr
@@ -374,19 +391,13 @@ func (estimator *InfluenceEstimator) unavailable(
 	status FitStatus,
 ) *InfluenceResult {
 	return &InfluenceResult{
-		Source:   request.Source,
-		Target:   request.Target,
-		Controls: append([]Control(nil), request.Controls...),
-		Status:   status,
+		Source:           request.Source,
+		Target:           request.Target,
+		Controls:         append([]Control(nil), request.Controls...),
+		Epoch:            request.Source.Epoch,
+		EstimatorVersion: estimator.version,
+		Status:           status,
 	}
-}
-
-func (result *InfluenceResult) definedStepsCount() int {
-	if result == nil {
-		return 0
-	}
-
-	return result.definedSteps
 }
 
 /*
@@ -412,8 +423,8 @@ func betterRelation(candidate *InfluenceResult, best *InfluenceResult) bool {
 		}
 	}
 
-	if candidate.definedStepsCount() != best.definedStepsCount() {
-		return candidate.definedStepsCount() > best.definedStepsCount()
+	if candidate.definedSteps != best.definedSteps {
+		return candidate.definedSteps > best.definedSteps
 	}
 
 	return candidate.Lag < best.Lag
@@ -475,8 +486,13 @@ func alignAtLag(
 
 /*
 newestAtOrBefore returns the newest observation in history at or before
-cutoff. The index cursor is advanced monotonically because history is
-chronological and cutoffs are non-decreasing across target observations.
+cutoff. The cursor remains positioned on the last matched observation (its
+zero value means no match has ever been recorded): repeated calls with
+non-decreasing cutoffs re-scan only entries after the previous match, and a
+call whose cutoff reaches no newer entry returns the previously matched
+observation. When no observation has ever matched, the result is not-found.
+The precondition is that history is chronological and cutoffs are
+non-decreasing across calls, which the alignment paths guarantee.
 */
 func newestAtOrBefore(
 	history []Observation,
@@ -485,16 +501,23 @@ func newestAtOrBefore(
 ) (Observation, bool) {
 	best := -1
 
-	for *cursor < len(history) && !history[*cursor].At.After(cutoff) {
-		best = *cursor
-		*cursor++
+	for index := *cursor; index < len(history) && !history[index].At.After(cutoff); index++ {
+		best = index
 	}
 
-	if best < 0 {
+	if best >= 0 {
+		*cursor = best
+		return history[best], true
+	}
+
+	// No entry at or after the previous match meets the cutoff. If the
+	// cursor is still at its zero value, nothing has ever matched; otherwise
+	// the previous match still satisfies the non-decreasing cutoff.
+	if *cursor == 0 {
 		return Observation{}, false
 	}
 
-	return history[best], true
+	return history[*cursor], true
 }
 
 /*
@@ -506,157 +529,77 @@ residual. A step whose design matrix lacks full rank marks the whole estimate
 rank-deficient rather than silently regularized.
 */
 func prequentialResiduals(rows []alignedRow, controlCount int) ([]float64, []float64, bool) {
+	restrictedParameters := 2 + controlCount
+	fullParameters := 3 + controlCount
+	restrictedAccumulator := statistic.NewRegressionAccumulator(restrictedParameters)
+	fullAccumulator := statistic.NewRegressionAccumulator(fullParameters)
 	restricted := make([]float64, 0, len(rows))
 	full := make([]float64, 0, len(rows))
 	rankDeficient := false
 
-	for index := range rows {
-		restrictedResidual, restrictedDefined, restrictedDeficient := predictRestricted(rows, index, controlCount)
+	for _, row := range rows {
+		restrictedFit := restrictedAccumulator.Fit()
+		fullFit := fullAccumulator.Fit()
 
-		if restrictedDeficient {
+		// Warm-up steps (rows not exceeding parameters) are not defined and
+		// not rank-deficient; a singular fit with more rows than parameters
+		// is rank deficiency.
+		if restrictedAccumulator.Rows() > restrictedParameters && !restrictedFit.Defined {
 			rankDeficient = true
 		}
 
-		if !restrictedDefined {
-			continue
-		}
-
-		fullResidual, fullDefined, fullDeficient := predictFull(rows, index, controlCount)
-
-		if fullDeficient {
+		if fullAccumulator.Rows() > fullParameters && !fullFit.Defined {
 			rankDeficient = true
 		}
 
-		if !fullDefined {
-			continue
+		if restrictedFit.Defined && fullFit.Defined {
+			restrictedPrediction, _ := restrictedFit.Predict(predictorsFor(row, controlCount, false))
+			fullPrediction, _ := fullFit.Predict(predictorsFor(row, controlCount, true))
+			restricted = append(restricted, row.target.Raw-restrictedPrediction)
+			full = append(full, row.target.Raw-fullPrediction)
 		}
 
-		restricted = append(restricted, restrictedResidual)
-		full = append(full, fullResidual)
+		// Incorporate the current row only after it was predicted, so it
+		// never trains the model that scored it.
+		restrictedAccumulator.Add(predictorsFor(row, controlCount, false), row.target.Raw)
+		fullAccumulator.Add(predictorsFor(row, controlCount, true), row.target.Raw)
 	}
 
 	return restricted, full, rankDeficient
 }
 
 /*
-predictRestricted fits TargetLater ← TargetPast + ControlsPast on rows
-strictly before the index and predicts the row at the index. The boolean
-reports whether the fit was identifiable; a separate flag reports rank
-deficiency (identifiable rows but singular design).
+predictorsFor builds one design row: intercept, TargetPast, ControlsPast,
+and optionally SourcePast.
 */
-func predictRestricted(rows []alignedRow, index int, controlCount int) (float64, bool, bool) {
-	parameterCount := 2 + controlCount
-
-	if index <= parameterCount {
-		return 0, false, false
-	}
-
-	design := make([]float64, 0, index*parameterCount)
-	targets := make([]float64, 0, index)
-
-	for rowIndex := 0; rowIndex < index; rowIndex++ {
-		appendPredictorRow(&design, rows[rowIndex], controlCount, false)
-		targets = append(targets, rows[rowIndex].target.Raw)
-	}
-
-	fit := statistic.FitOLS(design, targets, parameterCount)
-
-	if !fit.Defined {
-		return 0, false, true
-	}
-
-	return predictRow(fit, rows[index], controlCount, false), true, false
-}
-
-/*
-predictFull additionally fits the lagged Source and predicts the same row.
-*/
-func predictFull(rows []alignedRow, index int, controlCount int) (float64, bool, bool) {
-	parameterCount := 3 + controlCount
-
-	if index <= parameterCount {
-		return 0, false, false
-	}
-
-	design := make([]float64, 0, index*parameterCount)
-	targets := make([]float64, 0, index)
-
-	for rowIndex := 0; rowIndex < index; rowIndex++ {
-		appendPredictorRow(&design, rows[rowIndex], controlCount, true)
-		targets = append(targets, rows[rowIndex].target.Raw)
-	}
-
-	fit := statistic.FitOLS(design, targets, parameterCount)
-
-	if !fit.Defined {
-		return 0, false, true
-	}
-
-	return predictRow(fit, rows[index], controlCount, true), true, false
-}
-
-/*
-appendPredictorRow appends one row's predictors: intercept, TargetPast,
-ControlsPast, and optionally SourcePast.
-*/
-func appendPredictorRow(
-	design *[]float64,
-	row alignedRow,
-	controlCount int,
-	withSource bool,
-) {
-	*design = append(*design, 1, row.targetPast.Raw)
+func predictorsFor(row alignedRow, controlCount int, withSource bool) []float64 {
+	predictors := make([]float64, 0, 3+controlCount)
+	predictors = append(predictors, 1, row.targetPast.Raw)
 
 	for _, control := range row.controls {
-		*design = append(*design, control.Raw)
+		predictors = append(predictors, control.Raw)
 	}
 
 	if withSource {
-		*design = append(*design, row.source.Raw)
+		predictors = append(predictors, row.source.Raw)
 	}
+
+	return predictors
 }
 
 /*
-predictRow evaluates the fitted model on one aligned row.
+fullFit fits the final full model over all aligned rows from the
+incrementally accumulated moments.
 */
-func predictRow(
-	fit statistic.OLSFit,
-	row alignedRow,
-	controlCount int,
-	withSource bool,
-) float64 {
-	predicted := fit.Coefficients[0] + fit.Coefficients[1]*row.targetPast.Raw
-
-	for index, control := range row.controls {
-		predicted += fit.Coefficients[2+index] * control.Raw
-	}
-
-	if withSource {
-		predicted += fit.Coefficients[2+controlCount] * row.source.Raw
-	}
-
-	return row.target.Raw - predicted
-}
-
-/*
-fullFit fits the final full model over all aligned rows and returns it.
-*/
-func fullFit(rows []alignedRow, controlCount int) *statistic.OLSFit {
+func fullFit(rows []alignedRow, controlCount int) *statistic.RegressionFit {
 	parameterCount := 3 + controlCount
-
-	if len(rows) <= parameterCount {
-		return nil
-	}
-
-	design := make([]float64, 0, len(rows)*parameterCount)
-	targets := make([]float64, 0, len(rows))
+	accumulator := statistic.NewRegressionAccumulator(parameterCount)
 
 	for _, row := range rows {
-		appendPredictorRow(&design, row, controlCount, true)
-		targets = append(targets, row.target.Raw)
+		accumulator.Add(predictorsFor(row, controlCount, true), row.target.Raw)
 	}
 
-	fit := statistic.FitOLS(design, targets, parameterCount)
+	fit := accumulator.Fit()
 	return &fit
 }
 

@@ -8,15 +8,18 @@ economic rollout outcomes; no unrelated signal scores are injected into node
 reward after causal simulation.
 */
 type SearchNode struct {
-	State         State
-	Action        Action
-	Parent        *SearchNode
-	Children      []*SearchNode
+	State          State
+	Action         Action
+	Parent         *SearchNode
+	Children       []*SearchNode
 	UntakenActions []Action
-	Visits        int
-	TotalReward   float64
-	SumSquares    float64
-	Depth         int
+	Visits         int
+	// Mean is the running mean reward maintained with Welford's method.
+	Mean float64
+	// SumSquaredDeviations is Welford's M2 accumulator for the sample
+	// variance (sum of squared deviations from the running mean).
+	SumSquaredDeviations float64
+	Depth                int
 }
 
 /*
@@ -27,20 +30,22 @@ func (node *SearchNode) MeanReward() float64 {
 		return 0
 	}
 
-	return node.TotalReward / float64(node.Visits)
+	return node.Mean
 }
 
 /*
 RewardStandardDeviation is the sample standard deviation of the economic
 reward, used for outcome uncertainty. It is the real reward dispersion, never
-a pseudo-precision transform.
+a pseudo-precision transform. The sample variance uses the Welford
+accumulator with a Visits-1 (Bessel) denominator; it is undefined (reported
+as zero) below two visits and clamped to zero when numerically negative.
 */
 func (node *SearchNode) RewardStandardDeviation() float64 {
 	if node == nil || node.Visits < 2 {
 		return 0
 	}
 
-	variance := node.SumSquares/float64(node.Visits) - node.MeanReward()*node.MeanReward()
+	variance := node.SumSquaredDeviations / float64(node.Visits-1)
 
 	if variance < 0 {
 		variance = 0
