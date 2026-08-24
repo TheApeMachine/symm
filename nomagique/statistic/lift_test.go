@@ -18,11 +18,8 @@ func liftObservationForTest(value float64, baseline float64) types.Frame {
 func TestLift(t *testing.T) {
 	Convey("Given a value resting exactly on its baseline", t, func() {
 		Convey("It should report the honest zero", func() {
-			_, output, err := Lift(
-				types.Frame{},
-				liftObservationForTest(100, 100),
-			)
-			So(err, ShouldBeNil)
+			output := Lift(liftObservationForTest(100, 100))
+			So(output.Err, ShouldBeNil)
 
 			result, _ := output.Get(SymbolResult)
 			So(result, ShouldEqual, 0)
@@ -31,11 +28,8 @@ func TestLift(t *testing.T) {
 
 	Convey("Given a value lifted above its baseline", t, func() {
 		Convey("It should report the lift as a fraction of the baseline", func() {
-			_, output, err := Lift(
-				types.Frame{},
-				liftObservationForTest(150, 100),
-			)
-			So(err, ShouldBeNil)
+			output := Lift(liftObservationForTest(150, 100))
+			So(output.Err, ShouldBeNil)
 
 			result, _ := output.Get(SymbolResult)
 			So(result, ShouldEqual, 0.5)
@@ -44,14 +38,14 @@ func TestLift(t *testing.T) {
 
 	Convey("Given a non-positive baseline or missing inputs", t, func() {
 		Convey("It should report not ready with a zero result", func() {
-			_, output, err := Lift(types.Frame{}, liftObservationForTest(100, 0))
-			So(err, ShouldBeNil)
+			output := Lift(liftObservationForTest(100, 0))
+			So(output.Err, ShouldBeNil)
 			ready, _ := output.Get(SymbolReady)
 			So(ready, ShouldEqual, 0)
 			result, _ := output.Get(SymbolResult)
 			So(result, ShouldEqual, 0)
-			_, _, err = Lift(types.Frame{}, types.Frame{})
-			So(err, ShouldNotBeNil)
+			failed := Lift(types.Frame{})
+			So(failed.Err, ShouldNotBeNil)
 		})
 	})
 }
@@ -61,6 +55,6 @@ func BenchmarkLift(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _, _ = Lift(types.Frame{}, input)
+		_ = Lift(input)
 	}
 }

@@ -14,6 +14,7 @@ func futuresTicker(
 	symbol string,
 	last float64,
 	index float64,
+	mark float64,
 	openInterest float64,
 	at time.Time,
 ) kraken.FuturesTickerData {
@@ -21,6 +22,7 @@ func futuresTicker(
 		Symbol:       symbol,
 		Last:         decimal.NewFromFloat64(last),
 		IndexPrice:   decimal.NewFromFloat64(index),
+		MarkPrice:    decimal.NewFromFloat64(mark),
 		OpenInterest: openInterest,
 		Timestamp:    at,
 	}
@@ -31,8 +33,8 @@ func TestTickerStep(t *testing.T) {
 		entity := NewTicker()
 		at := time.Unix(1_700_000_000, 0)
 
-		Convey("the first data point yields point metrics with no warmup", func() {
-			measurement := entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 1000, at))
+		Convey("the first data point yields point and geometry metrics with no warmup", func() {
+			measurement := entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 100.5, 1000, at))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -44,22 +46,39 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Metrics["basis"].Raw, ShouldAlmostEqual, 0.01, 1e-12)
 			So(measurement.Metrics["log_basis"].Raw, ShouldAlmostEqual, math.Log(101.0/100.0), 1e-12)
 
+			// Three-price log basis geometry is a closed identity.
+			So(measurement.Metrics["derivative_index_log_basis"].Raw, ShouldAlmostEqual, math.Log(101.0/100.0), 1e-12)
+			So(measurement.Metrics["index_spot_log_basis"].Raw, ShouldAlmostEqual, math.Log(100.0/100.5), 1e-12)
+			So(measurement.Metrics["derivative_spot_log_basis"].Raw, ShouldAlmostEqual, math.Log(101.0/100.5), 1e-12)
+			So(measurement.Metrics["basis_closure_error"].Raw, ShouldAlmostEqual, 0.0, 1e-12)
+
+			// The first baseline is the observation itself; the z-score is not
+			// yet estimable without a prior baseline.
+			So(measurement.Metrics["basis_baseline"].Raw, ShouldAlmostEqual, 0.01, 1e-12)
+			_, hasBasisZ := measurement.Metrics["basis_zscore"]
+			So(hasBasisZ, ShouldBeFalse)
+
 			// No previous observation exists yet, so first-difference and
 			// baseline metrics are omitted.
 			_, hasChange := measurement.Metrics["open_interest_change"]
 			So(hasChange, ShouldBeFalse)
 			_, hasGrowth := measurement.Metrics["open_interest_growth_rate"]
 			So(hasGrowth, ShouldBeFalse)
+			_, hasBasisChange := measurement.Metrics["basis_change"]
+			So(hasBasisChange, ShouldBeFalse)
+			_, hasDerivativeReturn := measurement.Metrics["derivative_log_return"]
+			So(hasDerivativeReturn, ShouldBeFalse)
+			_, hasReturnGap := measurement.Metrics["return_gap"]
+			So(hasReturnGap, ShouldBeFalse)
 
-			// A stateless direct measurement is whole; no noise model means
-			// SNR is undefined (0), derived rather than caller-set.
+			// No primary estimator has run yet, so the point measurement is whole.
 			So(measurement.Maturity, ShouldEqual, 1.0)
 			So(measurement.SNR, ShouldEqual, 0.0)
 		})
 
-		Convey("a multi-leg sequence derives the open-interest dynamics", func() {
-			entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 1000, at))
-			measurement := entity.Step(futuresTicker("PF_XBTUSD", 102, 101, 1100, at.Add(10*time.Second)))
+		Convey("a multi-leg sequence derives the differences, returns, and baselines", func() {
+			entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 100.5, 1000, at))
+			measurement := entity.Step(futuresTicker("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(10*time.Second)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -67,12 +86,17 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Metrics["open_interest_change"].Raw, ShouldAlmostEqual, 100.0, 1e-12)
 			So(measurement.Metrics["open_interest_log_change"].Raw, ShouldAlmostEqual, math.Log(1100.0/1000.0), 1e-12)
 			So(measurement.Metrics["open_interest_growth_rate"].Raw, ShouldAlmostEqual, math.Log(1100.0/1000.0)/10.0, 1e-12)
-			So(measurement.Metrics["basis"].Raw, ShouldAlmostEqual, (102.0-101.0)/101.0, 1e-12)
-
-			// The first baseline is seeded by the first growth observation, so
-			// the departure is zero and the z-score is zero.
 			So(measurement.Metrics["open_interest_growth_baseline"].Raw, ShouldAlmostEqual, math.Log(1100.0/1000.0)/10.0, 1e-12)
-			So(measurement.Metrics["open_interest_growth_zscore"].Raw, ShouldEqual, 0.0)
+
+			So(measurement.Metrics["basis_change"].Raw, ShouldAlmostEqual, (102.0-101.0)/101.0-0.01, 1e-12)
+			So(measurement.Metrics["basis_rate"].Raw, ShouldAlmostEqual, ((102.0-101.0)/101.0-0.01)/10.0, 1e-12)
+			So(measurement.Metrics["derivative_log_return"].Raw, ShouldAlmostEqual, math.Log(102.0/101.0), 1e-12)
+			So(measurement.Metrics["reference_log_return"].Raw, ShouldAlmostEqual, math.Log(101.0/100.0), 1e-12)
+			So(measurement.Metrics["return_gap"].Raw, ShouldAlmostEqual, math.Log(102.0/101.0)-math.Log(101.0/100.0), 1e-12)
+
+			// The basis z-score's first dispersion is the residual itself, so a
+			// decline below its seeded baseline scores -1.
+			So(measurement.Metrics["basis_zscore"].Raw, ShouldAlmostEqual, -1.0, 1e-9)
 
 			// One retained estimator sample is still immature.
 			So(measurement.Maturity, ShouldEqual, 0.0)
@@ -83,7 +107,7 @@ func TestTickerStep(t *testing.T) {
 		entity := NewTicker()
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step(futuresTicker("PF_XBTUSD", 101, 0, 1000, time.Unix(1_700_000_000, 0)))
+			measurement := entity.Step(futuresTicker("PF_XBTUSD", 101, 0, 100.5, 1000, time.Unix(1_700_000_000, 0)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
