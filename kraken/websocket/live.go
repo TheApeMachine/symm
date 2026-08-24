@@ -207,6 +207,11 @@ func (live *Live) SetBus(bus *runtime.Workspace) {
 	}
 
 	live.bus.Store(bus)
+
+	if live.book != nil {
+		live.book.SetBus(bus)
+	}
+
 	live.tickersCh = runtime.ChannelOf[kraken.TickerData](
 		bus, types.ChannelTickers,
 		func(ticker kraken.TickerData) string { return ticker.Symbol },
@@ -337,6 +342,7 @@ func NewWithClient(
 	if endpoint == Level3WebSocketURL {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx, live.normalizer)
+		live.book.SetBus(live.bus.Load())
 		live.book.emit = func(data kraken.Level3Data) {
 			thesis := live.thesis.Load()
 

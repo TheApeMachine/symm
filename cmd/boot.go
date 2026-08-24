@@ -37,6 +37,17 @@ import (
 )
 
 /*
+signalInstrument is the boot-time view of a measuring instrument: it names
+itself, reports its own error, and closes. Numeric stepping is driven by the
+runner per data point; boot only registers and tears the instruments down.
+*/
+type signalInstrument interface {
+	Name() string
+	Error() error
+	Close() error
+}
+
+/*
 System is the assembled symm system. Run starts each registered long-lived
 component after all queue connections have been wired.
 */
@@ -50,7 +61,7 @@ type System struct {
 	Analyzer  *logic.Analyzer
 	Crypto    *trader.Crypto
 	Regulator *regulator.Solver
-	Signals   []types.Signal
+	Signals   []signalInstrument
 	Thesis    *types.Thesis
 	Bus       *runtime.Workspace
 	Systems   []Runnable
@@ -258,18 +269,18 @@ func BootWithHub(
 	api := websocket.NewAPI(systemCtx, public, private)
 	api.SetFutures(futures)
 
-	signals := []types.Signal{
-		signalcorrelation.NewSignal(systemCtx, thesis, bus),
-		signalcvd.NewSignal(systemCtx, thesis, bus),
-		signalderivatives.NewSignal(systemCtx, thesis, bus),
-		signaldepthflow.NewSignal(systemCtx, thesis, bus),
-		signalexhaust.NewSignal(systemCtx, thesis, bus),
-		signalhawkes.NewSignal(systemCtx, thesis, bus),
-		signalleadlag.NewSignal(systemCtx, thesis, bus),
-		signalliquidity.NewSignal(systemCtx, thesis, bus),
-		signalpumpdump.NewSignal(systemCtx, thesis, api, bus),
-		signalsentiment.NewSignal(systemCtx, thesis, bus),
-		signaltoxicity.NewSignal(systemCtx, thesis, bus),
+	signals := []signalInstrument{
+		signalcorrelation.NewSignal(systemCtx, bus),
+		signalcvd.NewSignal(systemCtx),
+		signalderivatives.NewSignal(systemCtx, bus),
+		signaldepthflow.NewSignal(systemCtx, bus),
+		signalexhaust.NewSignal(systemCtx),
+		signalhawkes.NewSignal(systemCtx),
+		signalleadlag.NewSignal(systemCtx, bus),
+		signalliquidity.NewSignal(systemCtx),
+		signalpumpdump.NewSignal(systemCtx, bus),
+		signalsentiment.NewSignal(systemCtx, bus),
+		signaltoxicity.NewSignal(systemCtx, bus),
 	}
 
 	price := broker.NewPrice(api)

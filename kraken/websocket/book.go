@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -13,6 +14,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,8 +29,22 @@ type Book struct {
 	resubscribe func()
 	manager    *spot.BookManager
 	normalizer *spot.Normalizer
+	bus        atomic.Pointer[runtime.Workspace]
 	notify     func(string)
 	emit       func(kraken.Level3Data)
+}
+
+/*
+SetBus attaches the workspace shared-object pool. Every managed book the
+manager creates is shared there under "book:<symbol>" so signals can read the
+authoritative Level3 state without reconstructing books themselves.
+*/
+func (book *Book) SetBus(bus *runtime.Workspace) {
+	if book == nil || bus == nil {
+		return
+	}
+
+	book.bus.Store(bus)
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -57,6 +73,11 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 		}
 
 		managed.EnableMaxDepth = true
+
+		if bus := book.bus.Load(); bus != nil {
+			bus.Share("book", managed, managed.Name)
+		}
+
 		// Kraken's checksum is the authority for Level 3 state. Applying the
 		// SDK's per-order crossing heuristic inside one multi-order venue frame
 		// can delete a newly added order before the later orders in that same

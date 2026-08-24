@@ -3,8 +3,8 @@ package nomagique
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/types"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestKeyedStreamsCompatibility(t *testing.T) {
@@ -12,8 +12,8 @@ func TestKeyedStreamsCompatibility(t *testing.T) {
 		collection := NewKeyedStreams[string](numberAccumulator, func(key string) types.Frame {
 			return types.Frame{}.Set(numberTotal, float64(len(key)))
 		})
-		output, err := collection.Step("AA", types.Frame{}.Set(numberDelta, 3))
-		So(err, ShouldBeNil)
+		output := collection.Step("AA", types.Frame{}.Set(numberDelta, 3))
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(numberTotal), ShouldEqual, 5.0)
 		state, found := collection.Project("AA")
 		So(found, ShouldBeTrue)
