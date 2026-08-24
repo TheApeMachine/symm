@@ -12,8 +12,8 @@ func TestDeviation(t *testing.T) {
 		input := types.Frame{}
 		input.Put(types.SampleValue, -4.0)
 		input.Put(SymbolBaselineValue, -8.0)
-		_, output, err := Deviation(types.Frame{}, input)
-		So(err, ShouldBeNil)
+		output := Deviation(input)
+		So(output.Err, ShouldBeNil)
 
 		Convey("It should scale by the baseline's magnitude instead of reporting zero", func() {
 			So(output.MustGet(SymbolDeviation), ShouldEqual, 0.5)
@@ -24,8 +24,8 @@ func TestDeviation(t *testing.T) {
 		input := types.Frame{}
 		input.Put(types.SampleValue, 3.0)
 		input.Put(SymbolBaselineValue, 0.0)
-		_, output, err := Deviation(types.Frame{}, input)
-		So(err, ShouldBeNil)
+		output := Deviation(input)
+		So(output.Err, ShouldBeNil)
 
 		Convey("It should report zero because there is no scale", func() {
 			So(output.MustGet(SymbolDeviation), ShouldEqual, 0)

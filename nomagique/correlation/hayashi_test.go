@@ -16,11 +16,10 @@ func TestHayashi(t *testing.T) {
 			[]float64{100, 110, 121, 133.1})
 		right := hayashiPath([]int64{1, 1_000_000_001, 2_000_000_001, 3_000_000_001},
 			[]float64{50, 55, 60.5, 66.55})
-
-		_, output, err := Hayashi(left, right)
+		output := Hayashi("previous", "current")(pairPaths(left, right))
 
 		Convey("It should correlate every overlapping return interval", func() {
-			So(err, ShouldBeNil)
+			So(output.Err, ShouldBeNil)
 			So(output.MustGet(SymbolReady), ShouldEqual, 1.0)
 			So(math.Abs(output.MustGet(SymbolCorrelation)-1), ShouldBeLessThan, 1e-9)
 			So(output.MustGet(SymbolSupport), ShouldEqual, 5.0)
@@ -28,8 +27,20 @@ func TestHayashi(t *testing.T) {
 	})
 }
 
+/*
+pairPaths relocates two retained default-series paths into one frame under the
+previous and current series prefixes, the bivariate convention.
+*/
+func pairPaths(left types.Frame, right types.Frame) types.Frame {
+	paired := types.Frame{}
+	temporal.NewSeries("previous").CopyFrom(&paired, left)
+	temporal.NewSeries("current").CopyFrom(&paired, right)
+
+	return paired
+}
+
 func hayashiPath(timestamps []int64, values []float64) types.Frame {
-	stream := types.NewStream(temporal.Path, types.Frame{})
+	stream := types.NewStream(temporal.Path(""), types.Frame{})
 
 	for index, timestamp := range timestamps {
 		input := types.Frame{}
@@ -37,10 +48,10 @@ func hayashiPath(timestamps []int64, values []float64) types.Frame {
 		input.Put(temporal.SymbolUnixSec, float64(timestamp/1_000_000_000))
 		input.Put(temporal.SymbolUnixNsec, float64(timestamp%1_000_000_000))
 		input.Put(nmtypes.Span, float64(len(timestamps)))
-		_, err := stream.Step(input)
+		output := stream.Step(input)
 
-		if err != nil {
-			panic(err)
+		if output.Err != nil {
+			panic(output.Err)
 		}
 	}
 
@@ -60,9 +71,10 @@ func BenchmarkHayashi(benchmark *testing.B) {
 
 	left := hayashiPath(timestamps, leftValues)
 	right := hayashiPath(timestamps, rightValues)
+	paired := pairPaths(left, right)
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _, _ = Hayashi(left, right)
+		_ = Hayashi("previous", "current")(paired)
 	}
 }

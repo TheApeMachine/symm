@@ -32,16 +32,16 @@ func TestArithmeticPrimitives(t *testing.T) {
 		}
 
 		for _, test := range cases {
-			_, output, err := types.Step(test.primitive, types.Frame{}, test.input)
-			So(err, ShouldBeNil)
+			output := types.Step(test.primitive, test.input)
+			So(output.Err, ShouldBeNil)
 			So(output.MustGet(PortResult), ShouldEqual, test.expected)
 			So(output.Count(), ShouldEqual, test.input.Count()+1)
 		}
 	})
 
 	Convey("Average resists addition overflow at equal extremes", t, func() {
-		_, output, err := Average(types.Frame{}, binary(math.MaxFloat64, math.MaxFloat64))
-		So(err, ShouldBeNil)
+		output := Average(binary(math.MaxFloat64, math.MaxFloat64))
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(PortResult), ShouldEqual, math.MaxFloat64)
 	})
 
@@ -63,30 +63,31 @@ func TestArithmeticPrimitives(t *testing.T) {
 
 		for _, test := range adversarial {
 			initial := types.Frame{}.Set(SymbolTotal, 4)
-			next, output, err := types.Step(test.primitive, initial, test.input)
-			So(err, ShouldNotBeNil)
-			So(next.Equal(initial), ShouldBeTrue)
-			So(output.Count(), ShouldEqual, 0)
+			merged := initial.Merged(test.input)
+			output := types.Step(test.primitive, merged)
+			So(output.Err, ShouldNotBeNil)
+			So(output.MustGet(SymbolTotal), ShouldEqual, 4)
+			So(output.Has(PortResult), ShouldBeFalse)
 		}
 	})
 
 	Convey("Rate accepts signed counts but requires positive elapsed duration", t, func() {
 		input := types.Frame{}.Set(SymbolCount, -6).Set(SymbolDuration, 3)
-		_, output, err := Rate(types.Frame{}, input)
-		So(err, ShouldBeNil)
+		output := Rate(input)
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolRate), ShouldEqual, -2.0)
 		for _, duration := range []float64{0, -1, math.NaN(), math.Inf(1)} {
-			_, _, err = Rate(types.Frame{}, types.Frame{}.
+			output = Rate(types.Frame{}.
 				Set(SymbolCount, 1).
 				Set(SymbolDuration, duration))
-			So(err, ShouldNotBeNil)
+			So(output.Err, ShouldNotBeNil)
 		}
 	})
 
 	Convey("Attack publishes the same finite result through base and result", t, func() {
 		input := types.Frame{}.Set(SymbolBase, 4).Set(SymbolJump, -1.5)
-		_, output, err := Attack(types.Frame{}, input)
-		So(err, ShouldBeNil)
+		output := Attack(input)
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolBase), ShouldEqual, 2.5)
 		So(output.MustGet(PortResult), ShouldEqual, 2.5)
 	})
@@ -98,26 +99,26 @@ func TestAffinePrimitives(t *testing.T) {
 	}
 
 	Convey("Extent, Center, Project, and Reflect form explicit affine atoms", t, func() {
-		_, output, err := Extent(types.Frame{}, frame(4, 2, 10))
-		So(err, ShouldBeNil)
+		output := Extent(frame(4, 2, 10))
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(PortResult), ShouldEqual, 8.0)
 
-		_, output, err = Center(types.Frame{}, frame(4, 2, 10))
-		So(err, ShouldBeNil)
+		output = Center(frame(4, 2, 10))
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(PortResult), ShouldEqual, 6.0)
 
-		_, output, err = Project(types.Frame{}, frame(4, 2, 10))
-		So(err, ShouldBeNil)
+		output = Project(frame(4, 2, 10))
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(PortResult), ShouldEqual, 0.25)
 
-		_, output, err = Reflect(types.Frame{}, frame(4, 2, 10))
-		So(err, ShouldBeNil)
+		output = Reflect(frame(4, 2, 10))
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(PortResult), ShouldEqual, 8.0)
 	})
 
 	Convey("Project rejects a collapsed coordinate system", t, func() {
-		_, _, err := Project(types.Frame{}, frame(4, 2, 2))
-		So(err, ShouldNotBeNil)
+		output := Project(frame(4, 2, 2))
+		So(output.Err, ShouldNotBeNil)
 	})
 
 	Convey("Coherence is central, bounded, symmetric, and defined for a point interval", t, func() {
@@ -130,12 +131,12 @@ func TestAffinePrimitives(t *testing.T) {
 			10: 0,
 			12: 0,
 		} {
-			_, output, err := Coherence(types.Frame{}, frame(x, 2, 10))
-			So(err, ShouldBeNil)
+			output := Coherence(frame(x, 2, 10))
+			So(output.Err, ShouldBeNil)
 			So(output.MustGet(PortResult), ShouldEqual, expected)
 		}
-		_, output, err := Coherence(types.Frame{}, frame(999, 3, 3))
-		So(err, ShouldBeNil)
+		output := Coherence(frame(999, 3, 3))
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(PortResult), ShouldEqual, 1.0)
 	})
 }
@@ -143,35 +144,35 @@ func TestAffinePrimitives(t *testing.T) {
 func TestNonlinearPrimitives(t *testing.T) {
 	Convey("LogRatio is defined only for positive finite observations", t, func() {
 		input := types.Frame{}.Set(SymbolCurrent, 4).Set(SymbolPrevious, 2)
-		_, output, err := LogRatio(types.Frame{}, input)
-		So(err, ShouldBeNil)
+		output := LogRatio(input)
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(PortResult), ShouldAlmostEqual, math.Log(2.0), 1e-12)
 		for _, pair := range [][2]float64{{0, 1}, {-1, 1}, {1, 0}, {math.NaN(), 1}, {1, math.Inf(1)}} {
-			_, _, err = LogRatio(types.Frame{}, types.Frame{}.
+			output = LogRatio(types.Frame{}.
 				Set(SymbolCurrent, pair[0]).Set(SymbolPrevious, pair[1]))
-			So(err, ShouldNotBeNil)
+			So(output.Err, ShouldNotBeNil)
 		}
 	})
 
 	Convey("Squash is bounded, sign symmetric, and explicit at zero scale", t, func() {
 		for _, value := range []float64{-100, -1, 0, 1, 100} {
 			input := types.Frame{}.Set(PortX, value).Set(SymbolScale, 2)
-			_, output, err := Squash(types.Frame{}, input)
-			So(err, ShouldBeNil)
+			output := Squash(input)
+			So(output.Err, ShouldBeNil)
 			result := output.MustGet(PortResult)
 			So(result, ShouldBeBetweenOrEqual, -1.0, 1.0)
 			mirrorInput := types.Frame{}.Set(PortX, -value).Set(SymbolScale, 2)
-			_, mirror, mirrorErr := Squash(types.Frame{}, mirrorInput)
-			So(mirrorErr, ShouldBeNil)
+			mirror := Squash(mirrorInput)
+			So(mirror.Err, ShouldBeNil)
 			So(mirror.MustGet(PortResult), ShouldAlmostEqual, -result, 1e-12)
 		}
-		_, zero, err := Squash(types.Frame{}, types.Frame{}.
+		zero := Squash(types.Frame{}.
 			Set(PortX, 0).Set(SymbolScale, 0))
-		So(err, ShouldBeNil)
+		So(zero.Err, ShouldBeNil)
 		So(zero.MustGet(PortResult), ShouldEqual, 0.0)
-		_, negScale, err := Squash(types.Frame{}, types.Frame{}.
+		negScale := Squash(types.Frame{}.
 			Set(PortX, 1).Set(SymbolScale, -1))
-		So(err, ShouldBeNil)
+		So(negScale.Err, ShouldBeNil)
 		So(negScale.MustGet(PortResult), ShouldAlmostEqual, 0.5, 1e-12)
 	})
 }
@@ -179,27 +180,30 @@ func TestNonlinearPrimitives(t *testing.T) {
 func TestStatefulCalculusPrimitives(t *testing.T) {
 	Convey("Accumulate consumes only the explicit delta port", t, func() {
 		state := types.Frame{}.Set(SymbolTotal, 5)
-		next, output, err := Accumulate(state, types.Frame{}.Set(SymbolDelta, 2))
-		So(err, ShouldBeNil)
-		So(next.MustGet(SymbolTotal), ShouldEqual, 7.0)
+		output := Accumulate(state.Merged(types.Frame{}.Set(SymbolDelta, 2)))
+		So(output.Err, ShouldBeNil)
+		So(output.MustGet(SymbolTotal), ShouldEqual, 7.0)
 		So(output.MustGet(PortResult), ShouldEqual, 7.0)
 
-		_, _, err = Accumulate(state, types.Frame{}.Set(PortX, 2))
-		So(err, ShouldNotBeNil)
+		output = Accumulate(state.Merged(types.Frame{}.Set(PortX, 2)))
+		So(output.Err, ShouldNotBeNil)
 	})
 
 	Convey("Accumulate rejects poisoned state and overflow without committing", t, func() {
 		for _, stateValue := range []float64{math.NaN(), math.Inf(1)} {
 			initial := types.Frame{}.Set(SymbolTotal, stateValue)
-			next, output, err := types.Step(Accumulate, initial, types.Frame{}.Set(SymbolDelta, 1))
-			So(err, ShouldNotBeNil)
-			So(next.Equal(initial), ShouldBeTrue)
-			So(output.Count(), ShouldEqual, 0)
+			merged := initial.Merged(types.Frame{}.Set(SymbolDelta, 1))
+			output := types.Step(Accumulate, merged)
+			So(output.Err, ShouldNotBeNil)
+			So(math.Float64bits(output.MustGet(SymbolTotal)), ShouldEqual, math.Float64bits(stateValue))
+			So(output.Has(PortResult), ShouldBeFalse)
 		}
 		initial := types.Frame{}.Set(SymbolTotal, math.MaxFloat64)
-		next, _, err := types.Step(Accumulate, initial, types.Frame{}.Set(SymbolDelta, math.MaxFloat64))
-		So(err, ShouldNotBeNil)
-		So(next.Equal(initial), ShouldBeTrue)
+		merged := initial.Merged(types.Frame{}.Set(SymbolDelta, math.MaxFloat64))
+		output := types.Step(Accumulate, merged)
+		So(output.Err, ShouldNotBeNil)
+		So(math.Float64bits(output.MustGet(SymbolTotal)), ShouldEqual, math.Float64bits(math.MaxFloat64))
+		So(output.Has(PortResult), ShouldBeFalse)
 	})
 
 	Convey("Clear snapshots its configuration and changes only state", t, func() {
@@ -209,23 +213,24 @@ func TestStatefulCalculusPrimitives(t *testing.T) {
 		clear := Clear(symbols...)
 		symbols[0] = second
 		state := types.Frame{}.Set(first, 1).Set(second, 2)
-		next, output, err := clear(state, types.Frame{}.Set(PortX, 3))
-		So(err, ShouldBeNil)
-		So(next.Has(first), ShouldBeFalse)
-		So(next.MustGet(second), ShouldEqual, 2.0)
+		merged := state.Merged(types.Frame{}.Set(PortX, 3))
+		output := clear(merged)
+		So(output.Err, ShouldBeNil)
+		So(output.Has(first), ShouldBeFalse)
+		So(output.MustGet(second), ShouldEqual, 2.0)
 		So(output.MustGet(PortX), ShouldEqual, 3.0)
 	})
 
 	Convey("Decay applies an explicit clock or shape and rejects poison", t, func() {
 		state := types.Frame{}.Set(SymbolLevel, 10)
-		next, output, err := Decay(state, types.Frame{}.Set(SymbolClock, 0.25))
-		So(err, ShouldBeNil)
-		So(next.MustGet(SymbolLevel), ShouldEqual, 7.5)
+		output := Decay(state.Merged(types.Frame{}.Set(SymbolClock, 0.25)))
+		So(output.Err, ShouldBeNil)
+		So(output.MustGet(SymbolLevel), ShouldEqual, 7.5)
 		So(output.MustGet(PortResult), ShouldEqual, 7.5)
-		_, output, err = Decay(state, types.Frame{}.Set(SymbolShape, 0.2))
-		So(err, ShouldBeNil)
+		output = Decay(state.Merged(types.Frame{}.Set(SymbolShape, 0.2)))
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(PortResult), ShouldEqual, 2.0)
-		_, _, err = Decay(state, types.Frame{}.Set(SymbolShape, math.NaN()))
-		So(err, ShouldNotBeNil)
+		output = Decay(state.Merged(types.Frame{}.Set(SymbolShape, math.NaN())))
+		So(output.Err, ShouldNotBeNil)
 	})
 }

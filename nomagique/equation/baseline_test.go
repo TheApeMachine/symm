@@ -14,10 +14,10 @@ func TestAdaptiveBaseline(t *testing.T) {
 	Convey("Given successive observations", t, func() {
 		baseline := nmtypes.NewStream(AdaptiveBaseline(), types.Frame{})
 
-		first, err := baseline.Step(baselineObservation(100, 1))
-		So(err, ShouldBeNil)
-		second, err := baseline.Step(baselineObservation(100, 2))
-		So(err, ShouldBeNil)
+		first := baseline.Step(baselineObservation(100, 1))
+		So(first.Err, ShouldBeNil)
+		second := baseline.Step(baselineObservation(100, 2))
+		So(second.Err, ShouldBeNil)
 
 		Convey("It should compose a mean, stability, and next span", func() {
 			So(first.MustGet(statistic.SymbolMean), ShouldEqual, 100.0)
@@ -44,6 +44,6 @@ func BenchmarkAdaptiveBaseline(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = baseline.Step(input)
+		_ = baseline.Step(input)
 	}
 }

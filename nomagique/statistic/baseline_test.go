@@ -16,7 +16,6 @@ func baselineObservationForTest(
 ) types.Frame {
 	input := types.Frame{}
 	input.Put(types.SampleValue, value)
-	input.Put(temporal.SymbolCapacity, 8)
 	input.Put(SymbolUnixSec, sec)
 	input.Put(SymbolUnixNsec, 0)
 	input.Put(SymbolBaselineFastHalflife, fastHalflife)
@@ -28,8 +27,9 @@ func baselineObservationForTest(
 
 func baselineMachine() types.Primitive {
 	return types.Pipe(
-		temporal.Window,
-		types.Fork(Baseline, ZScore),
+		temporal.Window(""),
+		ZScore(""),
+		Baseline(""),
 	)
 }
 
@@ -38,8 +38,8 @@ func TestBaseline(t *testing.T) {
 		stream := types.NewStream(baselineMachine(), types.Frame{})
 
 		Convey("It should seed the baseline with the value itself", func() {
-			output, err := stream.Step(baselineObservationForTest(100, 1000, 2, 60))
-			So(err, ShouldBeNil)
+			output := stream.Step(baselineObservationForTest(100, 1000, 2, 60))
+			So(output.Err, ShouldBeNil)
 
 			baseline, found := output.Get(SymbolBaselineValue)
 			So(found, ShouldBeTrue)
@@ -55,14 +55,14 @@ func TestBaseline(t *testing.T) {
 		stream := types.NewStream(baselineMachine(), types.Frame{})
 
 		for index := range 8 {
-			_, err := stream.Step(baselineObservationForTest(
+			step := stream.Step(baselineObservationForTest(
 				100+float64(index), 1000+float64(index), 2, 60,
 			))
-			So(err, ShouldBeNil)
+			So(step.Err, ShouldBeNil)
 		}
 
-		ramp, err := stream.Step(baselineObservationForTest(108, 1008, 2, 60))
-		So(err, ShouldBeNil)
+		ramp := stream.Step(baselineObservationForTest(108, 1008, 2, 60))
+		So(ramp.Err, ShouldBeNil)
 
 		Convey("It should demand a sharp baseline and track the ramp", func() {
 			efficiency, _ := ramp.Get(SymbolBaselineEfficiency)
@@ -83,12 +83,12 @@ func TestBaseline(t *testing.T) {
 				chop = 103
 			}
 
-			_, err := stream.Step(baselineObservationForTest(chop, 1000+float64(index), 2, 60))
-			So(err, ShouldBeNil)
+			step := stream.Step(baselineObservationForTest(chop, 1000+float64(index), 2, 60))
+			So(step.Err, ShouldBeNil)
 		}
 
-		choppy, err := stream.Step(baselineObservationForTest(103, 1008, 2, 60))
-		So(err, ShouldBeNil)
+		choppy := stream.Step(baselineObservationForTest(103, 1008, 2, 60))
+		So(choppy.Err, ShouldBeNil)
 
 		Convey("It should force the effective window wide and hold the baseline", func() {
 			efficiency, _ := choppy.Get(SymbolBaselineEfficiency)
@@ -106,15 +106,15 @@ func TestBaseline(t *testing.T) {
 		stream := types.NewStream(baselineMachine(), types.Frame{})
 
 		for index := range 8 {
-			_, err := stream.Step(baselineObservationForTest(100, 1000+float64(index), 2, 60))
-			So(err, ShouldBeNil)
+			step := stream.Step(baselineObservationForTest(100, 1000+float64(index), 2, 60))
+			So(step.Err, ShouldBeNil)
 		}
 
-		calm, err := stream.Step(baselineObservationForTest(100, 1008, 2, 60))
-		So(err, ShouldBeNil)
+		calm := stream.Step(baselineObservationForTest(100, 1008, 2, 60))
+		So(calm.Err, ShouldBeNil)
 
-		spiked, err := stream.Step(baselineObservationForTest(115, 1009, 2, 60))
-		So(err, ShouldBeNil)
+		spiked := stream.Step(baselineObservationForTest(115, 1009, 2, 60))
+		So(spiked.Err, ShouldBeNil)
 
 		Convey("The composed z-score should spike before the baseline moves", func() {
 			calmScore, _ := calm.Get(SymbolZScore)
@@ -131,12 +131,12 @@ func TestBaseline(t *testing.T) {
 	Convey("Given an observation with regressed event time", t, func() {
 		stream := types.NewStream(baselineMachine(), types.Frame{})
 
-		_, err := stream.Step(baselineObservationForTest(100, 1000, 2, 60))
-		So(err, ShouldBeNil)
+		first := stream.Step(baselineObservationForTest(100, 1000, 2, 60))
+		So(first.Err, ShouldBeNil)
 
 		Convey("It should fail the transition", func() {
-			_, err := stream.Step(baselineObservationForTest(101, 999, 2, 60))
-			So(err, ShouldNotBeNil)
+			failed := stream.Step(baselineObservationForTest(101, 999, 2, 60))
+			So(failed.Err, ShouldNotBeNil)
 		})
 	})
 }
@@ -147,6 +147,6 @@ func BenchmarkBaseline(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = stream.Step(input)
+		_ = stream.Step(input)
 	}
 }

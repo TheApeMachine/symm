@@ -16,21 +16,21 @@ import (
 func TestAcceleration(t *testing.T) {
 	Convey("Given a quantity-clocked positive series", t, func() {
 		stream := types.NewStream(Acceleration(), types.Frame{})
-		first, err := stream.Step(accelerationInput(2, 100, 0))
-		So(err, ShouldBeNil)
+		first := stream.Step(accelerationInput(2, 100, 0))
+		So(first.Err, ShouldBeNil)
 		So(first.MustGet(SymbolClosed), ShouldEqual, 0.0)
 		So(first.MustGet(SymbolTarget), ShouldEqual, 2.0)
 
-		second, err := stream.Step(accelerationInput(2, 100, 1))
-		So(err, ShouldBeNil)
+		second := stream.Step(accelerationInput(2, 100, 1))
+		So(second.Err, ShouldBeNil)
 		So(second.MustGet(SymbolClosed), ShouldEqual, 1.0)
 		So(second.MustGet(calculus.SymbolRate), ShouldEqual, 4.0)
 		So(second.Has(SymbolChange), ShouldBeFalse)
 		So(second.MustGet(temporal.SymbolObservedSec), ShouldEqual, 0.0)
 		So(second.MustGet(statistic.SymbolMaturity), ShouldEqual, 0.5)
 
-		third, err := stream.Step(accelerationInput(2, 110, 2))
-		So(err, ShouldBeNil)
+		third := stream.Step(accelerationInput(2, 110, 2))
+		So(third.Err, ShouldBeNil)
 
 		Convey("It closes the next empirical span with an exact log change", func() {
 			So(third.MustGet(SymbolClosed), ShouldEqual, 1.0)
@@ -45,11 +45,11 @@ func TestAcceleration(t *testing.T) {
 func BenchmarkAcceleration(benchmark *testing.B) {
 	stream := types.NewStream(Acceleration(), types.Frame{})
 	input := accelerationInput(2, 100, 1)
-	_, _ = stream.Step(accelerationInput(2, 100, 0))
+	_ = stream.Step(accelerationInput(2, 100, 0))
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = stream.Step(input)
+		_ = stream.Step(input)
 	}
 }
 

@@ -14,8 +14,8 @@ func TestPredictiveDynamics(t *testing.T) {
 		first.Put(SymbolDynamicsTime, 1)
 		first.Put(SymbolDynamicsPosition, 2)
 		first.Put(SymbolDynamicsActivity, 0.25)
-		firstOutput, err := stream.Step(first)
-		So(err, ShouldBeNil)
+		firstOutput := stream.Step(first)
+		So(firstOutput.Err, ShouldBeNil)
 		So(firstOutput.MustGet(SymbolDynamicsReady), ShouldEqual, 0)
 
 		Convey("A later observation should expose motion, memory, energy, and jump diagnostics", func() {
@@ -24,9 +24,9 @@ func TestPredictiveDynamics(t *testing.T) {
 			second.Put(SymbolDynamicsPosition, 3)
 			second.Put(SymbolDynamicsActivity, 0.75)
 			second.Put(SymbolDynamicsExternalPower, 1)
-			secondOutput, measureErr := stream.Step(second)
+			secondOutput := stream.Step(second)
 
-			So(measureErr, ShouldBeNil)
+			So(secondOutput.Err, ShouldBeNil)
 			So(secondOutput.MustGet(SymbolDynamicsReady), ShouldEqual, 1)
 			So(secondOutput.MustGet(SymbolDynamicsVelocity), ShouldEqual, 1)
 			So(secondOutput.MustGet(SymbolDynamicsMemoryScale), ShouldBeGreaterThan, 0)
@@ -41,9 +41,9 @@ func TestPredictiveDynamics(t *testing.T) {
 			regressed := types.Frame{}
 			regressed.Put(SymbolDynamicsTime, 0.5)
 			regressed.Put(SymbolDynamicsPosition, 4)
-			_, measureErr := stream.Step(regressed)
+			output := stream.Step(regressed)
 
-			So(measureErr, ShouldNotBeNil)
+			So(output.Err, ShouldNotBeNil)
 			So(stream.Project().Equal(before), ShouldBeTrue)
 		})
 	})
@@ -56,8 +56,8 @@ func BenchmarkPredictiveDynamics(b *testing.B) {
 	initial.Put(SymbolDynamicsPosition, 0)
 	initial.Put(SymbolDynamicsActivity, 0)
 
-	if _, err := stream.Step(initial); err != nil {
-		b.Fatal(err)
+	if output := stream.Step(initial); output.Err != nil {
+		b.Fatal(output.Err)
 	}
 
 	input := types.Frame{}
@@ -69,8 +69,8 @@ func BenchmarkPredictiveDynamics(b *testing.B) {
 		input.Put(SymbolDynamicsTime, float64(iteration+2))
 		input.Put(SymbolDynamicsPosition, float64(iteration%100)/100)
 
-		if _, err := stream.Step(input); err != nil {
-			b.Fatal(err)
+		if output := stream.Step(input); output.Err != nil {
+			b.Fatal(output.Err)
 		}
 	}
 }

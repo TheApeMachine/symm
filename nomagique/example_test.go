@@ -11,10 +11,10 @@ func ExampleStep() {
 	input := types.Frame{}
 	input.Put(calculus.SymbolLeft, 3)
 	input.Put(calculus.SymbolRight, 4)
-	_, output, err := Step(calculus.Sum, types.Frame{}, input)
+	output := Step(calculus.Sum, input)
 
-	if err != nil {
-		panic(err)
+	if output.Err != nil {
+		panic(output.Err)
 	}
 
 	fmt.Println(output.MustGet(calculus.SymbolResult))
@@ -24,21 +24,17 @@ func ExampleStep() {
 func ExampleKeyedStreams() {
 	totalSymbol := types.MustIntern("example/total")
 	deltaSymbol := types.MustIntern("example/delta")
-	accumulate := func(
-		state types.Frame,
-		input types.Frame,
-	) (types.Frame, types.Frame, error) {
-		total, _ := state.Get(totalSymbol)
-		nextState := state
-		nextState.Put(totalSymbol, total+input.MustGet(deltaSymbol))
+	accumulate := func(input types.Frame) types.Frame {
+		total, _ := input.Get(totalSymbol)
+		input.Put(totalSymbol, total+input.MustGet(deltaSymbol))
 
-		return nextState, nextState, nil
+		return input
 	}
 	streams := NewKeyedStreams[string](accumulate, nil)
 	input := types.Frame{}
 	input.Put(deltaSymbol, 2)
-	_, _ = streams.Step("A", input)
-	output, _ := streams.Step("A", input)
+	_ = streams.Step("A", input)
+	output := streams.Step("A", input)
 
 	fmt.Println(output.MustGet(totalSymbol))
 	// Output: 4

@@ -15,11 +15,11 @@ func TestLogChange(t *testing.T) {
 			LogChange(types.SampleValue),
 			types.Frame{},
 		)
-		first, err := stream.Step(equationSample(100, 1))
-		So(err, ShouldBeNil)
+		first := stream.Step(equationSample(100, 1))
+		So(first.Err, ShouldBeNil)
 		So(first.Has(SymbolChange), ShouldBeFalse)
-		second, err := stream.Step(equationSample(110, 2))
-		So(err, ShouldBeNil)
+		second := stream.Step(equationSample(110, 2))
+		So(second.Err, ShouldBeNil)
 		So(second.MustGet(SymbolChange), ShouldEqual, math.Log(1.1))
 	})
 
@@ -28,11 +28,11 @@ func TestLogChange(t *testing.T) {
 			LogChange(types.SampleValue),
 			types.Frame{},
 		)
-		_, err := stream.Step(equationSample(100, 2))
-		So(err, ShouldBeNil)
-		_, err = stream.Step(equationSample(110, 1))
-		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldEqual, "temporal: observer event time must not regress")
+		output := stream.Step(equationSample(100, 2))
+		So(output.Err, ShouldBeNil)
+		output = stream.Step(equationSample(110, 1))
+		So(output.Err, ShouldNotBeNil)
+		So(output.Err.Error(), ShouldEqual, "temporal: observer event time must not regress")
 	})
 }
 
@@ -41,11 +41,11 @@ func BenchmarkLogChange(benchmark *testing.B) {
 		LogChange(types.SampleValue),
 		types.Frame{},
 	)
-	_, _ = stream.Step(equationSample(100, 0))
+	_ = stream.Step(equationSample(100, 0))
 	input := equationSample(110, 1)
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = stream.Step(input)
+		_ = stream.Step(input)
 	}
 }

@@ -15,52 +15,52 @@ func TestIfRouting(t *testing.T) {
 	branchOutput := types.MustIntern("test/logic/if/branch_output")
 
 	predicate := func(condition float64) types.Primitive {
-		return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
-			state.Put(predicateState, 1)
-			output := input
-			output.Put(SymbolCondition, condition)
-			return state, output, nil
+		return func(input types.Frame) types.Frame {
+			input.Put(predicateState, 1)
+			input.Put(SymbolCondition, condition)
+
+			return input
 		}
 	}
 
 	Convey("If evaluates its predicate and exactly one selected branch", t, func() {
 		trueCalls := 0
 		falseCalls := 0
-		whenTrue := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+		whenTrue := func(input types.Frame) types.Frame {
 			trueCalls++
-			state.Put(branchState, 1)
-			output := input
-			output.Put(branchOutput, 10)
-			return state, output, nil
+			input.Put(branchState, 1)
+			input.Put(branchOutput, 10)
+
+			return input
 		}
-		whenFalse := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+		whenFalse := func(input types.Frame) types.Frame {
 			falseCalls++
-			state.Put(branchState, -1)
-			output := input
-			output.Put(branchOutput, 20)
-			return state, output, nil
+			input.Put(branchState, -1)
+			input.Put(branchOutput, 20)
+
+			return input
 		}
-		next, output, err := If(predicate(1), whenTrue, whenFalse)(types.Frame{}, types.Frame{})
-		So(err, ShouldBeNil)
+		output := If(predicate(1), whenTrue, whenFalse)(types.Frame{})
+		So(output.Err, ShouldBeNil)
 		So(trueCalls, ShouldEqual, 1)
 		So(falseCalls, ShouldEqual, 0)
-		So(next.MustGet(predicateState), ShouldEqual, 1.0)
-		So(next.MustGet(branchState), ShouldEqual, 1.0)
+		So(output.MustGet(predicateState), ShouldEqual, 1.0)
+		So(output.MustGet(branchState), ShouldEqual, 1.0)
 		So(output.MustGet(branchOutput), ShouldEqual, 10.0)
 	})
 
 	Convey("False is exactly zero; every finite non-zero value is true", t, func() {
 		for _, condition := range []float64{-7, -0.1, 0.1, 7} {
-			_, output, err := If(predicate(condition), types.Assign(branchOutput, 1), types.Assign(branchOutput, 0))(
-				types.Frame{}, types.Frame{},
+			output := If(predicate(condition), types.Assign(branchOutput, 1), types.Assign(branchOutput, 0))(
+				types.Frame{},
 			)
-			So(err, ShouldBeNil)
+			So(output.Err, ShouldBeNil)
 			So(output.MustGet(branchOutput), ShouldEqual, 1.0)
 		}
-		_, output, err := If(predicate(0), types.Assign(branchOutput, 1), types.Assign(branchOutput, 0))(
-			types.Frame{}, types.Frame{},
+		output := If(predicate(0), types.Assign(branchOutput, 1), types.Assign(branchOutput, 0))(
+			types.Frame{},
 		)
-		So(err, ShouldBeNil)
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(branchOutput), ShouldEqual, 0.0)
 	})
 
@@ -70,21 +70,23 @@ func TestIfRouting(t *testing.T) {
 			predicate(math.Inf(1)),
 			types.Identity,
 		} {
-			_, _, err := If(bad, types.Identity, types.Identity)(types.Frame{}, types.Frame{})
-			So(err, ShouldNotBeNil)
+			output := If(bad, types.Identity, types.Identity)(types.Frame{})
+			So(output.Err, ShouldNotBeNil)
 		}
 	})
 
-	Convey("A selected branch error rolls predicate and branch state back", t, func() {
+	Convey("A selected branch error rolls the committed state back", t, func() {
 		initial := types.Frame{}.Set(branchState, 4)
-		badBranch := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
-			state.Put(branchState, 999)
-			return state, input, errors.New("branch rejected")
+		badBranch := func(input types.Frame) types.Frame {
+			input.Put(branchState, 999)
+			input.Err = errors.New("branch rejected")
+
+			return input
 		}
-		next, output, err := If(predicate(1), badBranch, nil)(initial, types.Frame{})
-		So(err, ShouldNotBeNil)
-		So(next.Equal(initial), ShouldBeTrue)
-		So(output.Count(), ShouldEqual, 0)
+		stream := types.NewStream(If(predicate(1), badBranch, nil), initial)
+		output := stream.Step(types.Frame{})
+		So(output.Err, ShouldNotBeNil)
+		So(stream.Project().Equal(initial), ShouldBeTrue)
 	})
 }
 
@@ -92,24 +94,24 @@ func TestCircuitRouting(t *testing.T) {
 	firstState := types.MustIntern("test/logic/circuit/first_state")
 	selected := types.MustIntern("test/logic/circuit/selected")
 	predicate := func(condition float64, mutate types.Symbol) types.Primitive {
-		return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+		return func(input types.Frame) types.Frame {
 			if mutate != 0 {
-				state.Put(mutate, 1)
+				input.Put(mutate, 1)
 			}
-			output := input
-			output.Put(SymbolCondition, condition)
-			return state, output, nil
+			input.Put(SymbolCondition, condition)
+
+			return input
 		}
 	}
 
 	Convey("Circuit executes only the first matching rule", t, func() {
 		calls := 0
 		branch := func(value float64) types.Primitive {
-			return func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
+			return func(input types.Frame) types.Frame {
 				calls++
-				output := input
-				output.Put(selected, value)
-				return state, output, nil
+				input.Put(selected, value)
+
+				return input
 			}
 		}
 		program := Circuit([]Rule{
@@ -117,30 +119,32 @@ func TestCircuitRouting(t *testing.T) {
 			{When: predicate(1, 0), Then: branch(2)},
 			{When: predicate(1, 0), Then: branch(3)},
 		}, branch(4))
-		next, output, err := program(types.Frame{}, types.Frame{})
-		So(err, ShouldBeNil)
+		output := program(types.Frame{})
+		So(output.Err, ShouldBeNil)
 		So(calls, ShouldEqual, 1)
-		So(next.MustGet(firstState), ShouldEqual, 1.0)
+		So(output.MustGet(firstState), ShouldEqual, 1.0)
 		So(output.MustGet(selected), ShouldEqual, 2.0)
 	})
 
 	Convey("Circuit runs fallback only when no rule matches", t, func() {
 		program := Circuit([]Rule{{When: predicate(0, 0), Then: types.Assign(selected, 1)}}, types.Assign(selected, 9))
-		_, output, err := program(types.Frame{}, types.Frame{})
-		So(err, ShouldBeNil)
+		output := program(types.Frame{})
+		So(output.Err, ShouldBeNil)
 		So(output.MustGet(selected), ShouldEqual, 9.0)
 	})
 
-	Convey("A late predicate or fallback failure rolls all earlier candidates back", t, func() {
+	Convey("A late predicate or fallback failure rolls the committed state back", t, func() {
 		initial := types.Frame{}.Set(firstState, 4)
-		failure := func(state types.Frame, input types.Frame) (types.Frame, types.Frame, error) {
-			state.Put(firstState, 999)
-			return state, input, errors.New("reject")
+		failure := func(input types.Frame) types.Frame {
+			input.Put(firstState, 999)
+			input.Err = errors.New("reject")
+
+			return input
 		}
 		program := Circuit([]Rule{{When: predicate(0, firstState), Then: nil}}, failure)
-		next, output, err := program(initial, types.Frame{})
-		So(err, ShouldNotBeNil)
-		So(next.Equal(initial), ShouldBeTrue)
-		So(output.Count(), ShouldEqual, 0)
+		stream := types.NewStream(program, initial)
+		output := stream.Step(types.Frame{})
+		So(output.Err, ShouldNotBeNil)
+		So(stream.Project().Equal(initial), ShouldBeTrue)
 	})
 }

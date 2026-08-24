@@ -13,13 +13,13 @@ import (
 func TestNormalize(t *testing.T) {
 	Convey("Given a causal positive series", t, func() {
 		stream := types.NewStream(Normalize(), types.Frame{})
-		first, err := stream.Step(equationSample(10, 0))
-		So(err, ShouldBeNil)
+		first := stream.Step(equationSample(10, 0))
+		So(first.Err, ShouldBeNil)
 		So(first.Has(SymbolRatio), ShouldBeFalse)
 		So(first.MustGet(statistic.SymbolMaturity), ShouldEqual, 0.5)
 
-		second, err := stream.Step(equationSample(20, 1))
-		So(err, ShouldBeNil)
+		second := stream.Step(equationSample(20, 1))
+		So(second.Err, ShouldBeNil)
 
 		Convey("It scores the current value against the prior mean exactly", func() {
 			So(second.MustGet(statistic.SymbolMean), ShouldEqual, 10.0)
@@ -32,12 +32,12 @@ func TestNormalize(t *testing.T) {
 
 	Convey("Given a series whose baseline mean is zero", t, func() {
 		stream := types.NewStream(Normalize(), types.Frame{})
-		first, err := stream.Step(equationSample(0, 0))
-		So(err, ShouldBeNil)
+		first := stream.Step(equationSample(0, 0))
+		So(first.Err, ShouldBeNil)
 		So(first.Has(SymbolRatio), ShouldBeFalse)
 
-		second, err := stream.Step(equationSample(0, 1))
-		So(err, ShouldBeNil)
+		second := stream.Step(equationSample(0, 1))
+		So(second.Err, ShouldBeNil)
 
 		Convey("It does not divide by zero and emits a zero ratio", func() {
 			So(second.MustGet(statistic.SymbolMean), ShouldEqual, 0.0)
@@ -51,12 +51,11 @@ func TestNormalize(t *testing.T) {
 func BenchmarkNormalize(benchmark *testing.B) {
 	stream := types.NewStream(Normalize(), types.Frame{})
 	input := equationSample(20, 1)
-	_, _ = stream.Step(equationSample(10, 0))
+	_ = stream.Step(equationSample(10, 0))
 	benchmark.ReportAllocs()
-	
 
 	for benchmark.Loop() {
-		_, _ = stream.Step(input)
+		_ = stream.Step(input)
 	}
 }
 

@@ -14,8 +14,8 @@ import (
 func TestGeometry(t *testing.T) {
 	Convey("Given two ordered positive channels", t, func() {
 		stream := nmtypes.NewStream(Geometry(), types.Frame{})
-		first, err := stream.Step(geometryInput(99, 101, 4, 1, 0))
-		So(err, ShouldBeNil)
+		first := stream.Step(geometryInput(99, 101, 4, 1, 0))
+		So(first.Err, ShouldBeNil)
 		So(first.MustGet(SymbolCenter), ShouldEqual, 100.0)
 		So(first.MustGet(SymbolWidth), ShouldEqual, 2.0)
 		So(first.MustGet(SymbolRelativeWidth), ShouldEqual, 0.02)
@@ -23,8 +23,8 @@ func TestGeometry(t *testing.T) {
 		So(first.MustGet(SymbolBalance), ShouldEqual, math.Log(4))
 		So(first.Has(SymbolCompression), ShouldBeFalse)
 
-		second, err := stream.Step(geometryInput(99.5, 100.5, 2, 2, 1))
-		So(err, ShouldBeNil)
+		second := stream.Step(geometryInput(99.5, 100.5, 2, 2, 1))
+		So(second.Err, ShouldBeNil)
 
 		Convey("It measures compression against only the prior width", func() {
 			So(second.MustGet(statistic.SymbolMean), ShouldEqual, 2.0)
@@ -37,12 +37,11 @@ func TestGeometry(t *testing.T) {
 	})
 
 	Convey("Given an interval wider than its center", t, func() {
-		_, output, err := nmtypes.Step(
+		output := nmtypes.Step(
 			Geometry(),
-			types.Frame{},
 			geometryInput(1, 4, 1, 1, 0),
 		)
-		So(err, ShouldBeNil)
+		So(output.Err, ShouldBeNil)
 
 		Convey("It keeps relative width raw and bounds symmetric dissimilarity", func() {
 			So(output.MustGet(SymbolRelativeWidth), ShouldEqual, 1.2)
@@ -51,13 +50,12 @@ func TestGeometry(t *testing.T) {
 	})
 
 	Convey("Given a crossed or collapsed interval", t, func() {
-		_, _, err := nmtypes.Step(
+		output := nmtypes.Step(
 			Geometry(),
-			types.Frame{},
 			geometryInput(101, 101, 1, 1, 0),
 		)
-		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldEqual, "logic: positive order requires 0 < lower < upper")
+		So(output.Err, ShouldNotBeNil)
+		So(output.Err.Error(), ShouldEqual, "logic: positive order requires 0 < lower < upper")
 	})
 }
 
@@ -67,7 +65,7 @@ func BenchmarkGeometry(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = stream.Step(input)
+		_ = stream.Step(input)
 	}
 }
 
