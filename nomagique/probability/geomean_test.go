@@ -11,10 +11,10 @@ func TestGeomean(t *testing.T) {
 	input := types.Frame{}
 	input.Put(types.MustSampleSymbol(0), 4)
 	input.Put(types.MustSampleSymbol(1), 9)
-	_, output, err := Geomean(types.Frame{}, input)
+	output := Geomean(input)
 
-	if err != nil {
-		t.Fatal(err)
+	if output.Err != nil {
+		t.Fatal(output.Err)
 	}
 
 	if got := output.MustGet(SymbolResult); math.Abs(got-6) > 1e-12 {
@@ -26,7 +26,7 @@ func TestGeomeanRejectsInvalidEvidence(t *testing.T) {
 	input := types.Frame{}
 	input.Put(types.MustSampleSymbol(0), math.Inf(1))
 
-	if _, _, err := Geomean(types.Frame{}, input); err == nil {
+	if output := Geomean(input); output.Err == nil {
 		t.Fatal("non-finite evidence should fail")
 	}
 }

@@ -11,10 +11,10 @@ func TestClockAndDuration(t *testing.T) {
 	clockInput := types.Frame{}
 	clockInput.Put(SymbolAge, 1)
 	clockInput.Put(SymbolSpan, 2)
-	_, clock, err := Clock(types.Frame{}, clockInput)
+	clock := Clock(clockInput)
 
-	if err != nil {
-		t.Fatal(err)
+	if clock.Err != nil {
+		t.Fatal(clock.Err)
 	}
 
 	if got := clock.MustGet(SymbolProgress); got != 0.5 {
@@ -26,10 +26,10 @@ func TestClockAndDuration(t *testing.T) {
 	durationInput.Put(SymbolCurrentNsec, 100_000_000)
 	durationInput.Put(SymbolPreviousSec, 100)
 	durationInput.Put(SymbolPreviousNsec, 900_000_000)
-	_, duration, err := Duration(types.Frame{}, durationInput)
+	duration := Duration(durationInput)
 
-	if err != nil {
-		t.Fatal(err)
+	if duration.Err != nil {
+		t.Fatal(duration.Err)
 	}
 
 	if got := duration.MustGet(SymbolDelta); math.Abs(got-0.2) > 1e-12 {
@@ -41,10 +41,10 @@ func TestIntervalRetainsPreviousTimestamp(t *testing.T) {
 	stream := types.NewStream(Interval, types.Frame{})
 	input := types.Frame{}
 	input.Put(SymbolTimestamp, 100)
-	first, err := stream.Step(input)
+	first := stream.Step(input)
 
-	if err != nil {
-		t.Fatal(err)
+	if first.Err != nil {
+		t.Fatal(first.Err)
 	}
 
 	if first.MustGet(SymbolDelta) != 0 {
@@ -52,10 +52,10 @@ func TestIntervalRetainsPreviousTimestamp(t *testing.T) {
 	}
 
 	input.Put(SymbolTimestamp, 100.5)
-	second, err := stream.Step(input)
+	second := stream.Step(input)
 
-	if err != nil {
-		t.Fatal(err)
+	if second.Err != nil {
+		t.Fatal(second.Err)
 	}
 
 	if second.MustGet(SymbolDelta) != 0.5 {

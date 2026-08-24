@@ -9,20 +9,20 @@ import (
 
 func TestMedianAndMaximum(t *testing.T) {
 	input := sampleFrame(7, 1, 5, 3)
-	_, median, err := Median(types.Frame{}, input)
+	median := Median(input)
 
-	if err != nil {
-		t.Fatal(err)
+	if median.Err != nil {
+		t.Fatal(median.Err)
 	}
 
 	if got := median.MustGet(SymbolResult); got != 4 {
 		t.Fatalf("median=%v; want 4", got)
 	}
 
-	_, maximum, err := Maximum(types.Frame{}, input)
+	maximum := Maximum(input)
 
-	if err != nil {
-		t.Fatal(err)
+	if maximum.Err != nil {
+		t.Fatal(maximum.Err)
 	}
 
 	if got := maximum.MustGet(SymbolResult); got != 7 {
@@ -31,10 +31,10 @@ func TestMedianAndMaximum(t *testing.T) {
 }
 
 func TestMedianEmptyIsProvisional(t *testing.T) {
-	_, output, err := Median(types.Frame{}, types.Frame{})
+	output := Median(types.Frame{})
 
-	if err != nil {
-		t.Fatal(err)
+	if output.Err != nil {
+		t.Fatal(output.Err)
 	}
 
 	if output.MustGet(SymbolReady) != 0 || output.MustGet(SymbolResult) != 0 {
@@ -54,10 +54,10 @@ func TestMaxOf(t *testing.T) {
 	input.Put(symB, 4.2)
 	input.Put(symC, -0.8)
 
-	_, output, err := maxPrimitive(types.Frame{}, input)
+	output := maxPrimitive(input)
 
-	if err != nil {
-		t.Fatal(err)
+	if output.Err != nil {
+		t.Fatal(output.Err)
 	}
 
 	if got := output.MustGet(SymbolResult); got != 4.2 {
@@ -69,10 +69,10 @@ func TestMaxOf(t *testing.T) {
 	}
 
 	// Empty input
-	_, emptyOutput, err := maxPrimitive(types.Frame{}, types.Frame{})
+	emptyOutput := maxPrimitive(types.Frame{})
 
-	if err != nil {
-		t.Fatal(err)
+	if emptyOutput.Err != nil {
+		t.Fatal(emptyOutput.Err)
 	}
 
 	if got := emptyOutput.MustGet(SymbolReady); got != 0 {
@@ -87,10 +87,10 @@ func TestBranchingAndLikelihood(t *testing.T) {
 	branchingInput.Put(SymbolAlphaBA, 0.5)
 	branchingInput.Put(SymbolAlphaBB, 1)
 	branchingInput.Put(SymbolBeta, 2)
-	_, branching, err := Branching(types.Frame{}, branchingInput)
+	branching := Branching(branchingInput)
 
-	if err != nil {
-		t.Fatal(err)
+	if branching.Err != nil {
+		t.Fatal(branching.Err)
 	}
 
 	if got := branching.MustGet(SymbolSpectralRadius); math.Abs(got-0.75) > 1e-12 {
@@ -101,10 +101,10 @@ func TestBranchingAndLikelihood(t *testing.T) {
 	likelihoodInput.Put(SymbolLLHawkes, -120.5)
 	likelihoodInput.Put(SymbolLLPoisson, -150)
 	likelihoodInput.Put(SymbolLLSelf, -135)
-	_, likelihood, err := Likelihood(types.Frame{}, likelihoodInput)
+	likelihood := Likelihood(likelihoodInput)
 
-	if err != nil {
-		t.Fatal(err)
+	if likelihood.Err != nil {
+		t.Fatal(likelihood.Err)
 	}
 
 	if got := likelihood.MustGet(SymbolDeltaPoisson); got != 29.5 {

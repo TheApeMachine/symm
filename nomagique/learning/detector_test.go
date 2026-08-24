@@ -35,8 +35,8 @@ func TestFeatureDetectorOneLineAPI(t *testing.T) {
 			input.Put(FeatureSymbol(1), 0.4)
 			input.Put(FeatureSymbol(2), -0.3)
 
-			output, err := stream.Step(input)
-			So(err, ShouldBeNil)
+			output := stream.Step(input)
+			So(output.Err, ShouldBeNil)
 			So(output.Has(SymbolEnergy), ShouldBeTrue)
 			So(output.Has(SymbolSurprise), ShouldBeTrue)
 			So(output.MustGet(SymbolLatentCount), ShouldEqual, 16)     // 12 + 4

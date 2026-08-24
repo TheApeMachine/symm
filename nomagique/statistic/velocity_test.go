@@ -18,11 +18,11 @@ func velocityObservationForTest(value float64, sec float64) types.Frame {
 
 func TestVelocity(t *testing.T) {
 	Convey("Given a single observation", t, func() {
-		stream := types.NewStream(Velocity, types.Frame{})
+		stream := types.NewStream(Velocity(""), types.Frame{})
 
 		Convey("It should seed the differencer without a delta", func() {
-			output, err := stream.Step(velocityObservationForTest(100, 1000))
-			So(err, ShouldBeNil)
+			output := stream.Step(velocityObservationForTest(100, 1000))
+			So(output.Err, ShouldBeNil)
 
 			ready, _ := output.Get(SymbolReady)
 			So(ready, ShouldEqual, 0)
@@ -33,16 +33,16 @@ func TestVelocity(t *testing.T) {
 	})
 
 	Convey("Given a rising then accelerating series", t, func() {
-		stream := types.NewStream(Velocity, types.Frame{})
+		stream := types.NewStream(Velocity(""), types.Frame{})
 
-		_, err := stream.Step(velocityObservationForTest(100, 1000))
-		So(err, ShouldBeNil)
+		first := stream.Step(velocityObservationForTest(100, 1000))
+		So(first.Err, ShouldBeNil)
 
-		steady, err := stream.Step(velocityObservationForTest(102, 1001))
-		So(err, ShouldBeNil)
+		steady := stream.Step(velocityObservationForTest(102, 1001))
+		So(steady.Err, ShouldBeNil)
 
-		accelerating, err := stream.Step(velocityObservationForTest(106, 1002))
-		So(err, ShouldBeNil)
+		accelerating := stream.Step(velocityObservationForTest(106, 1002))
+		So(accelerating.Err, ShouldBeNil)
 
 		Convey("It should report the raw delta, elapsed, then acceleration", func() {
 			delta, _ := steady.Get(SymbolVelocityDelta)
@@ -59,24 +59,24 @@ func TestVelocity(t *testing.T) {
 	})
 
 	Convey("Given an observation with regressed event time", t, func() {
-		stream := types.NewStream(Velocity, types.Frame{})
+		stream := types.NewStream(Velocity(""), types.Frame{})
 
-		_, err := stream.Step(velocityObservationForTest(100, 1000))
-		So(err, ShouldBeNil)
+		first := stream.Step(velocityObservationForTest(100, 1000))
+		So(first.Err, ShouldBeNil)
 
 		Convey("It should fail the transition", func() {
-			_, err := stream.Step(velocityObservationForTest(101, 999))
-			So(err, ShouldNotBeNil)
+			failed := stream.Step(velocityObservationForTest(101, 999))
+			So(failed.Err, ShouldNotBeNil)
 		})
 	})
 }
 
 func BenchmarkVelocity(b *testing.B) {
-	stream := types.NewStream(Velocity, types.Frame{})
+	stream := types.NewStream(Velocity(""), types.Frame{})
 	input := velocityObservationForTest(100, 1000)
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = stream.Step(input)
+		_ = stream.Step(input)
 	}
 }

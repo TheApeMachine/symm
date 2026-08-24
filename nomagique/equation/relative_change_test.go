@@ -15,12 +15,12 @@ func TestRelativeChange(t *testing.T) {
 			RelativeChange(types.SampleValue),
 			types.Frame{},
 		)
-		first, err := stream.Step(equationSample(100, 1))
-		So(err, ShouldBeNil)
+		first := stream.Step(equationSample(100, 1))
+		So(first.Err, ShouldBeNil)
 		So(first.Has(SymbolRelativeChange), ShouldBeFalse)
 
-		second, err := stream.Step(equationSample(80, 2))
-		So(err, ShouldBeNil)
+		second := stream.Step(equationSample(80, 2))
+		So(second.Err, ShouldBeNil)
 		So(second.MustGet(SymbolChange), ShouldEqual, -20.0)
 		So(second.MustGet(SymbolRelativeChange), ShouldEqual, -0.2)
 		So(second.MustGet(statistic.SymbolMaturity), ShouldEqual, 2.0/3.0)
@@ -31,12 +31,12 @@ func TestRelativeChange(t *testing.T) {
 			RelativeChange(types.SampleValue),
 			types.Frame{},
 		)
-		first, err := stream.Step(equationSample(0, 1))
-		So(err, ShouldBeNil)
+		first := stream.Step(equationSample(0, 1))
+		So(first.Err, ShouldBeNil)
 		So(first.Has(SymbolRelativeChange), ShouldBeFalse)
 
-		second, err := stream.Step(equationSample(1, 2))
-		So(err, ShouldBeNil)
+		second := stream.Step(equationSample(1, 2))
+		So(second.Err, ShouldBeNil)
 		So(second.Has(SymbolRelativeChange), ShouldBeFalse)
 		So(second.MustGet(SymbolChange), ShouldEqual, 1.0)
 	})
@@ -47,11 +47,11 @@ func BenchmarkRelativeChange(benchmark *testing.B) {
 		RelativeChange(types.SampleValue),
 		types.Frame{},
 	)
-	_, _ = stream.Step(equationSample(100, 0))
+	_ = stream.Step(equationSample(100, 0))
 	input := equationSample(80, 1)
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_, _ = stream.Step(input)
+		_ = stream.Step(input)
 	}
 }

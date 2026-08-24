@@ -15,10 +15,10 @@ func TestFramePrimitive(t *testing.T) {
 		input.Put(SymbolFeatureCount, 2)
 		input.Put(FeatureSymbol(0), 0.25)
 		input.Put(FeatureSymbol(1), -0.5)
-		output, err := stream.Step(input)
+		output := stream.Step(input)
 
 		Convey("It should publish settled diagnostics without string-keyed transport", func() {
-			So(err, ShouldBeNil)
+			So(output.Err, ShouldBeNil)
 			So(output.Has(SymbolEnergy), ShouldBeTrue)
 			So(output.Has(SymbolSurprise), ShouldBeTrue)
 			So(output.MustGet(SymbolLatentCount), ShouldEqual, 2)

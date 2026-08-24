@@ -20,14 +20,14 @@ func windowObservationForTest(value float64, capacity int) types.Frame {
 
 func TestWindow(t *testing.T) {
 	Convey("Given successive values inside a window's capacity", t, func() {
-		stream := nmtypes.NewStream(Window, types.Frame{})
+		stream := nmtypes.NewStream(Window(""), types.Frame{})
 
 		Convey("It should retain every value and echo the observation", func() {
-			_, err := stream.Step(windowObservationForTest(100, 4))
-			So(err, ShouldBeNil)
+			first := stream.Step(windowObservationForTest(100, 4))
+			So(first.Err, ShouldBeNil)
 
-			output, err := stream.Step(windowObservationForTest(101, 4))
-			So(err, ShouldBeNil)
+			output := stream.Step(windowObservationForTest(101, 4))
+			So(output.Err, ShouldBeNil)
 
 			count, found := output.Get(nmtypes.SampleCount)
 			So(found, ShouldBeTrue)
@@ -40,11 +40,11 @@ func TestWindow(t *testing.T) {
 	})
 
 	Convey("Given more values than the window's capacity", t, func() {
-		stream := nmtypes.NewStream(Window, types.Frame{})
+		stream := nmtypes.NewStream(Window(""), types.Frame{})
 
 		for value := 100.0; value < 104; value++ {
-			_, err := stream.Step(windowObservationForTest(value, 3))
-			So(err, ShouldBeNil)
+			output := stream.Step(windowObservationForTest(value, 3))
+			So(output.Err, ShouldBeNil)
 		}
 
 		Convey("It should evict the oldest and retain the newest", func() {
@@ -63,24 +63,24 @@ func TestWindow(t *testing.T) {
 
 	Convey("Given an observation without a value or event time", t, func() {
 		Convey("It should fail the transition", func() {
-			_, _, err := Window(types.Frame{}, types.Frame{})
-			So(err, ShouldNotBeNil)
+			output := Window("")(types.Frame{})
+			So(output.Err, ShouldNotBeNil)
 
-			_, _, err = Window(types.Frame{}, windowObservationForTest(100, 0))
-			So(err, ShouldNotBeNil)
+			output = Window("")(windowObservationForTest(100, 0))
+			So(output.Err, ShouldNotBeNil)
 
-			_, _, err = Window(types.Frame{}, windowObservationForTest(100, nmtypes.MaxSamples+1))
-			So(err, ShouldNotBeNil)
+			output = Window("")(windowObservationForTest(100, nmtypes.MaxSamples+1))
+			So(output.Err, ShouldNotBeNil)
 		})
 	})
 }
 
 func BenchmarkWindow(b *testing.B) {
-	stream := nmtypes.NewStream(Window, types.Frame{})
+	stream := nmtypes.NewStream(Window(""), types.Frame{})
 	input := windowObservationForTest(100, 128)
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = stream.Step(input)
+		_ = stream.Step(input)
 	}
 }
