@@ -83,6 +83,12 @@ type RelationPlan struct {
 	Peer string
 	// Pairs enumerates the explicit Source→Target pairs to estimate.
 	Pairs []PlannedPair
+	// Sources and Targets define the cross-product candidate space: every
+	// Source coordinate × every Target coordinate (self-pairs excluded).
+	// This is how a plan declares "all configured same-symbol compatible
+	// coordinate pairs" without enumerating every combination.
+	Sources []Selector
+	Targets []Selector
 	// Controls are the explicit structural controls applied to every pair.
 	Controls []ControlSelector
 	// Lag is the candidate lag domain.
@@ -91,7 +97,10 @@ type RelationPlan struct {
 
 /*
 PairsForSymbol returns the planned pairs applicable to one symbol, or nil
-when the plan's scope excludes it.
+when the plan's scope excludes it. Cross-product pairs are expanded
+structurally; self-pairs (identical Source and Target coordinates) are
+excluded because Influence requires a positive lag between distinct
+coordinates.
 */
 func (plan *RelationPlan) PairsForSymbol(symbol string) []PlannedPair {
 	if plan == nil {
@@ -102,7 +111,20 @@ func (plan *RelationPlan) PairsForSymbol(symbol string) []PlannedPair {
 		return nil
 	}
 
-	return plan.Pairs
+	pairs := make([]PlannedPair, 0, len(plan.Pairs)+len(plan.Sources)*len(plan.Targets))
+	pairs = append(pairs, plan.Pairs...)
+
+	for _, source := range plan.Sources {
+		for _, target := range plan.Targets {
+			if source == target {
+				continue
+			}
+
+			pairs = append(pairs, PlannedPair{Source: source, Target: target})
+		}
+	}
+
+	return pairs
 }
 
 /*

@@ -343,15 +343,13 @@ func (planner *Planner) decisionFromCausalState(
 		return decision
 	}
 
-	position := 0.0
+	position, _ := planner.heldPosition(state.Symbol)
 	cash := 100000.0
 	mark := 1.0
 	feeRate := 0.001
 	spreadFraction := 0.0
 
 	if planner.desk != nil {
-		position = float64(planner.desk.Holding(state.Symbol))
-
 		if balance := planner.desk.Balance().Cash(); balance != nil {
 			cash = balance.Float64()
 		}
@@ -377,9 +375,13 @@ func (planner *Planner) decisionFromCausalState(
 		return decision
 	}
 
-	quantity := (cash * config.Planner.MaxAllocationFraction) / mark
+	// UnitQuantity is the sized base quantity one new position unit
+	// represents (allocation policy). The held position (if any) is the
+	// actual base quantity, so Exit and Scale economics use real holdings,
+	// not a lot count.
+	unitQuantity := (cash * config.Planner.MaxAllocationFraction) / mark
 
-	if quantity <= 0 {
+	if unitQuantity <= 0 {
 		decision.Reason = "planner: no allocatable capital for economic evaluation"
 		return decision
 	}
@@ -390,11 +392,10 @@ func (planner *Planner) decisionFromCausalState(
 		horizon = 5
 	}
 
-	maxPosition := config.Planner.MaxPositionUnits
-
-	if maxPosition <= 0 {
-		maxPosition = 2
-	}
+	// Scale is not executable by the broker yet, so the live exposure policy
+	// allows exactly one sized unit: Scale is never offered by the search
+	// until broker execution exists. The library retains Scale as an action.
+	maxPosition := unitQuantity
 
 	economicState := mcts.NewEconomicState(
 		mcts.PortfolioState{Cash: cash, Position: position, MarkPrice: mark},
@@ -405,7 +406,7 @@ func (planner *Planner) decisionFromCausalState(
 			SpreadFraction:    spreadFraction,
 			SlippageFraction:  config.Planner.SlippageFraction,
 		},
-		quantity,
+		unitQuantity,
 		maxPosition,
 		horizon,
 	)
@@ -413,6 +414,7 @@ func (planner *Planner) decisionFromCausalState(
 	search := mcts.NewSearch(
 		config.Planner.MCTSIterations,
 		config.Planner.ExplorationConstant,
+		config.Planner.UncertaintyWeight,
 		causalSeed(state),
 	)
 	result := search.Run(economicState, &causalActionEstimator{state: state})
@@ -435,7 +437,10 @@ func (planner *Planner) decisionFromCausalState(
 	case mcts.Exit:
 		decision.Action = types.ActionExit
 	case mcts.Scale:
-		decision.Action = types.ActionScale
+		// Defensive: Scale cannot fire while the exposure cap is one unit,
+		// but if it ever does it must not be reported as an executable
+		// action the broker would silently ignore.
+		decision.Reason = "planner: scale is not executable by the broker"
 	case mcts.Wait:
 		// A genuine Wait choice: expected net wealth change was lower than
 		// alternatives. It carries no reason and is not published as a gate.
@@ -446,6 +451,38 @@ func (planner *Planner) decisionFromCausalState(
 
 	decision.Trace = economicTrace(state, result)
 	return decision
+}
+
+/*
+heldPosition returns the actual held base quantity and entry price of one
+symbol from the desk, or zero when flat. Position economics in the causal
+search use real holdings, never a lot count.
+*/
+func (planner *Planner) heldPosition(symbol string) (float64, float64) {
+	if planner == nil || planner.desk == nil {
+		return 0, 0
+	}
+
+	for position := range planner.desk.Positions() {
+		if position == nil || position.Decision.Symbol != symbol {
+			continue
+		}
+
+		if position.Holding == nil || position.Holding.Qty == nil || position.Holding.Qty.Sign() <= 0 {
+			continue
+		}
+
+		quantity := position.Holding.Qty.Float64()
+		entryPrice := 0.0
+
+		if position.Holding.EntryPrice != nil {
+			entryPrice = position.Holding.EntryPrice.Float64()
+		}
+
+		return quantity, entryPrice
+	}
+
+	return 0, 0
 }
 
 /*
@@ -553,7 +590,7 @@ func (planner *Planner) executeDecisions(
 		switch decision.Action {
 		case types.ActionExit:
 			exits = append(exits, decision)
-		case types.ActionEnter, types.ActionScale:
+		case types.ActionEnter:
 			winners = append(winners, decision)
 		}
 	}

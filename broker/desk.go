@@ -658,7 +658,6 @@ func (desk *Desk) OpenSlots(opportunity bool) int {
 
 func (desk *Desk) entryAllocationClass(decision types.Decision) (string, error) {
 	normalOpen, reserveOpen := desk.slotAvailability()
-	reserveQualified := decision.Opportunity && decision.ReserveEligible
 
 	switch decision.AllocationClass {
 	case "none":
@@ -668,7 +667,10 @@ func (desk *Desk) entryAllocationClass(decision types.Decision) (string, error) 
 			nil,
 		))
 	case "reserve":
-		if reserveQualified && reserveOpen > 0 {
+		// Reserve capacity is a plain second capacity lane: it is allocated
+		// upstream by expected economic outcome, never by legacy semantic
+		// opportunity qualification.
+		if reserveOpen > 0 {
 			return "reserve", nil
 		}
 
@@ -680,7 +682,7 @@ func (desk *Desk) entryAllocationClass(decision types.Decision) (string, error) 
 			return "normal", nil
 		}
 
-		if reserveQualified && reserveOpen > 0 {
+		if reserveOpen > 0 {
 			return "reserve", nil
 		}
 	default:

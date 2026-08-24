@@ -13,9 +13,10 @@ import (
 
 /*
 CausalState is the typed handoff from the reasoner to strategic search: the
-current observational market state, the fitted causal transition model for
-the outcome variable, identification status, and the relevant Influence Graph
-edges. It is published on ChannelCausalState.
+current observational market state, the fitted causal transition models for
+every schema market variable (the time-sliced system the rollout evolves),
+identification status, and the relevant Influence Graph edges. It is
+published on ChannelCausalState.
 */
 type CausalState struct {
 	Symbol          string
@@ -26,7 +27,13 @@ type CausalState struct {
 	Identification  causal.IdentificationStatus
 	MarketState     map[relation.Coordinate]float64
 	OutcomeVariable causal.VariableID
-	Transition      *causal.TransitionModel
+	// Transition is the outcome variable's fitted transition (convenience).
+	Transition *causal.TransitionModel
+	// Transitions is the fitted transition of every schema market variable;
+	// the causal rollout evolves this whole system.
+	Transitions map[relation.Coordinate]*causal.TransitionModel
+	// StepLag is the causal time step of one rollout transition.
+	StepLag         time.Duration
 	InfluenceEdges  []*graph.InfluenceEdge
 }
 
@@ -189,7 +196,11 @@ func (reasoner *Reasoner) Refresh(symbol string, at time.Time) {
 
 /*
 updateRelations estimates every planned pair for one symbol and records the
-Influence edges. Unavailable estimates are recorded as unavailable; they are
+Influence edges. Selectors expand to every matching stored coordinate, so a
+plan can declare "all configured same-symbol compatible coordinate pairs"
+without enumerating combinations. Self-pairs (identical source and target
+coordinate) are excluded: Influence requires a positive lag between distinct
+coordinates. Unavailable estimates are recorded as unavailable; they are
 never deleted and never treated as measured zero.
 */
 func (reasoner *Reasoner) updateRelations(symbol string) {
@@ -201,65 +212,80 @@ func (reasoner *Reasoner) updateRelations(symbol string) {
 		}
 
 		for _, pair := range plan.PairsForSymbol(symbol) {
-			source, sourceFound := resolveSelector(pair.Source, symbol, plan.Peer, reasoner.epoch, coordinates)
+			sources := resolveAllSelectors(pair.Source, symbol, plan.Peer, reasoner.epoch, coordinates)
+			targets := resolveAllSelectors(pair.Target, symbol, plan.Peer, reasoner.epoch, coordinates)
 
-			if !sourceFound {
-				continue
+			for _, source := range sources {
+				for _, target := range targets {
+					if source == target {
+						continue
+					}
+
+					reasoner.estimatePair(plan, symbol, source, target, coordinates)
+				}
 			}
-
-			target, targetFound := resolveSelector(pair.Target, symbol, plan.Peer, reasoner.epoch, coordinates)
-
-			if !targetFound {
-				continue
-			}
-
-			controls, controlsComplete := plan.ResolveControls(symbol, coordinates)
-
-			if !controlsComplete {
-				_ = reasoner.influenceGraph.SetUnavailable(graph.EdgeInfluence, source, target, reasoner.epoch)
-				continue
-			}
-
-			result, err := reasoner.estimator.Estimate(reasoner.store, relation.InfluenceRequest{
-				Source:   source,
-				Target:   target,
-				Controls: controls,
-				Lag:      plan.Lag,
-			})
-
-			if err != nil {
-				continue
-			}
-
-			if result.Defined() {
-				_ = reasoner.influenceGraph.UpsertEdge(&graph.InfluenceEdge{
-					Type:   graph.EdgeInfluence,
-					Source: source,
-					Target: target,
-					Result: result,
-					From:   result.From,
-					At:     result.At,
-					Epoch:  reasoner.epoch,
-				})
-
-				continue
-			}
-
-			_ = reasoner.influenceGraph.SetUnavailable(graph.EdgeInfluence, source, target, reasoner.epoch)
 		}
 	}
 }
 
 /*
-resolveSelector finds the stored coordinate matching one structural selector.
+estimatePair estimates one Source→Target pair and records the Influence edge.
 */
-func resolveSelector(
+func (reasoner *Reasoner) estimatePair(
+	plan *relation.RelationPlan,
+	symbol string,
+	source relation.Coordinate,
+	target relation.Coordinate,
+	coordinates []relation.Coordinate,
+) {
+	controls, controlsComplete := plan.ResolveControls(symbol, coordinates)
+
+	if !controlsComplete {
+		_ = reasoner.influenceGraph.SetUnavailable(graph.EdgeInfluence, source, target, reasoner.epoch)
+		return
+	}
+
+	result, err := reasoner.estimator.Estimate(reasoner.store, relation.InfluenceRequest{
+		Source:   source,
+		Target:   target,
+		Controls: controls,
+		Lag:      plan.Lag,
+	})
+
+	if err != nil {
+		return
+	}
+
+	if result.Defined() {
+		_ = reasoner.influenceGraph.UpsertEdge(&graph.InfluenceEdge{
+			Type:   graph.EdgeInfluence,
+			Source: source,
+			Target: target,
+			Result: result,
+			From:   result.From,
+			At:     result.At,
+			Epoch:  reasoner.epoch,
+		})
+
+		return
+	}
+
+	_ = reasoner.influenceGraph.SetUnavailable(graph.EdgeInfluence, source, target, reasoner.epoch)
+}
+
+/*
+resolveAllSelectors returns every stored coordinate matching one structural
+selector for the symbol and epoch.
+*/
+func resolveAllSelectors(
 	selector relation.Selector,
 	symbol string,
 	peer string,
 	epoch uint64,
 	coordinates []relation.Coordinate,
-) (relation.Coordinate, bool) {
+) []relation.Coordinate {
+	matches := make([]relation.Coordinate, 0)
+
 	for _, coordinate := range coordinates {
 		if coordinate.Symbol != symbol || coordinate.Epoch != epoch {
 			continue
@@ -273,10 +299,10 @@ func resolveSelector(
 			continue
 		}
 
-		return coordinate, true
+		matches = append(matches, coordinate)
 	}
 
-	return relation.Coordinate{}, false
+	return matches
 }
 
 /*
@@ -338,9 +364,16 @@ func (reasoner *Reasoner) snapshotLocked(symbol string, at time.Time) *CausalSta
 	}
 
 	outcome := schema.Outcomes[0]
-	transition := model.TransitionModel(outcome, at)
+	transitions := model.TransitionModels(at)
+	outcomeTransition := transitions[outcome.Coordinate]
 	market := model.MarketState(at)
 	edges := reasoner.influenceGraph.Incoming(outcome.Coordinate)
+
+	stepLag := time.Second
+
+	if outcomeTransition != nil && outcomeTransition.SelfLag > 0 {
+		stepLag = outcomeTransition.SelfLag
+	}
 
 	return &CausalState{
 		Symbol:          symbol,
@@ -348,10 +381,12 @@ func (reasoner *Reasoner) snapshotLocked(symbol string, at time.Time) *CausalSta
 		Epoch:           reasoner.epoch,
 		SchemaVersion:   schema.Version,
 		ModelVersion:    model.ModelVersion(),
-		Identification:  transition.Status,
+		Identification:  outcomeTransition.Status,
 		MarketState:     market,
 		OutcomeVariable: outcome,
-		Transition:      transition,
+		Transition:      outcomeTransition,
+		Transitions:     transitions,
+		StepLag:         stepLag,
 		InfluenceEdges:  append([]*graph.InfluenceEdge(nil), edges...),
 	}
 }

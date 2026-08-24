@@ -30,9 +30,13 @@ type Measurement struct {
 	PeerObservedFrom time.Time                   `json:"peerObservedFrom,omitempty"`
 	Maturity         float64                     `json:"maturity"`
 	SNR              float64                     `json:"snr"`
-	Metrics          map[string]*Metric[float64] `json:"metrics,omitempty"`
-	Metadata         map[string]float64          `json:"metadata,omitempty"`
-	Err              error                       `json:"-"`
+	// SNRDefined distinguishes a measured SNR (including a genuine zero
+	// departure) from an undefined SNR where no noise model was estimable.
+	// Undefined is not zero.
+	SNRDefined bool                         `json:"snrDefined"`
+	Metrics    map[string]*Metric[float64]  `json:"metrics,omitempty"`
+	Metadata   map[string]float64           `json:"metadata,omitempty"`
+	Err        error                        `json:"-"`
 }
 
 func NewMeasurement(id string, source string, at int64, from int64) *Measurement {

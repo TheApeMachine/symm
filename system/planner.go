@@ -45,10 +45,16 @@ type PlannerConfig struct {
 	// ExplorationConstant is the UCB exploration constant in reward units
 	// (strategy policy; never disguised as market mathematics).
 	ExplorationConstant float64
+	// UncertaintyWeight scales the reward standard error in the UCB selection
+	// rule (strategy policy; the standard error carries the causal transition
+	// uncertainty sampled by the rollouts).
+	UncertaintyWeight float64
 	// SearchHorizon is the MCTS rollout horizon: the number of market
 	// transitions evaluated per trajectory (strategy holding-horizon policy).
 	SearchHorizon int
 	// MaxPositionUnits caps the position size in units (exposure policy).
+	// Scale is not executable by the broker yet, so the live path caps the
+	// position at one sized unit and Scale is never offered by the search.
 	MaxPositionUnits float64
 	// SlippageFraction is modeled slippage per side as a fraction of notional
 	// (strategy policy; stated explicitly, not disguised as market math).
@@ -74,8 +80,9 @@ func NewPlannerConfig() *PlannerConfig {
 	viper.SetDefault("trading.mcts.causal_alpha", 1.0)
 	viper.SetDefault("trading.mcts.iterations", 16)
 	viper.SetDefault("trading.mcts.exploration_constant", math.Sqrt2)
+	viper.SetDefault("trading.mcts.uncertainty_weight", 0.5)
 	viper.SetDefault("trading.mcts.search_horizon", 5)
-	viper.SetDefault("trading.mcts.max_position_units", 2.0)
+	viper.SetDefault("trading.mcts.max_position_units", 1.0)
 	viper.SetDefault("trading.mcts.slippage_fraction", 0.0)
 	viper.SetDefault("trading.relation.interval_seconds", 1)
 
@@ -94,6 +101,7 @@ func NewPlannerConfig() *PlannerConfig {
 		CausalAlpha:           viper.GetFloat64("trading.mcts.causal_alpha"),
 		MCTSIterations:        viper.GetInt("trading.mcts.iterations"),
 		ExplorationConstant:   viper.GetFloat64("trading.mcts.exploration_constant"),
+		UncertaintyWeight:     viper.GetFloat64("trading.mcts.uncertainty_weight"),
 		SearchHorizon:         viper.GetInt("trading.mcts.search_horizon"),
 		MaxPositionUnits:      viper.GetFloat64("trading.mcts.max_position_units"),
 		SlippageFraction:      viper.GetFloat64("trading.mcts.slippage_fraction"),

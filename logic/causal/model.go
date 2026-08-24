@@ -24,6 +24,9 @@ type TransitionModel struct {
 	Target   VariableID
 	SelfLag  time.Duration
 	Parents  []AllowedParent
+	// ExcludedParents are schema-authorized parents with no retained
+	// observations; they are recorded for provenance, not silently dropped.
+	ExcludedParents []AllowedParent
 
 	Intercept         float64
 	SelfCoefficient   float64
@@ -133,8 +136,14 @@ func (model *CausalModel) ModelVersion() string {
 TransitionModel fits the transition model for one market variable using only
 observations at or before at. The fit is causal/prequential: the residual
 variance is evaluated by predicting each row with a model fitted strictly on
-earlier rows. Feature/parent selection is query-local and schema-authorized;
-the full Measurement history remains available.
+earlier rows.
+
+Feature/parent selection is query-local and schema-authorized: the schema
+authorizes which directions are structurally allowed, and the Influence Graph
+supplies the measured temporal relationship — the selected lag — for each
+authorized parent when a defined Relation exists. A parent whose Relation is
+not yet defined falls back to the schema's declared lag; the provenance of
+every lag is preserved. The full Measurement history remains available.
 */
 func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *TransitionModel {
 	if model == nil || model.schema == nil || model.store == nil {
@@ -153,7 +162,6 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 	transition := &TransitionModel{
 		Target:  target,
 		SelfLag: specification.SelfLag,
-		Parents: append([]AllowedParent(nil), specification.Parents...),
 		Status:  IdentificationInsufficientSupport,
 	}
 
@@ -168,13 +176,52 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 		return transition
 	}
 
-	series := make([]relation.LaggedSeries, 0, 1+len(specification.Parents))
+	// Resolve each schema-authorized parent to its measured lag from the
+	// Influence Graph when a defined Relation exists; otherwise keep the
+	// schema's declared lag. The schema authorizes the direction; the graph
+	// provides the observed temporal relationship.
+	//
+	// A parent with no retained observations is excluded from this query's
+	// parent set (query-local projection): the coordinate remains in history
+	// for other queries, but the model cannot use a variable it has never
+	// observed. Excluded parents are recorded for provenance.
+	parents := make([]AllowedParent, 0, len(specification.Parents))
+	excluded := make([]AllowedParent, 0)
+
+	for _, parent := range specification.Parents {
+		if len(model.store.History(parent.Parent.Coordinate)) == 0 {
+			excluded = append(excluded, parent)
+			continue
+		}
+
+		lag := parent.Lag
+		lagSource := "schema"
+
+		if model.influenceGraph != nil {
+			if edge := model.influenceGraph.Relation(parent.Parent.Coordinate, target.Coordinate); edge != nil &&
+				edge.Result != nil && edge.Result.Defined() && edge.Result.Lag > 0 {
+				lag = edge.Result.Lag
+				lagSource = "influence:" + edge.Result.EstimatorVersion
+			}
+		}
+
+		parents = append(parents, AllowedParent{
+			Parent:    parent.Parent,
+			Lag:       lag,
+			LagSource: lagSource,
+		})
+	}
+
+	transition.Parents = parents
+	transition.ExcludedParents = excluded
+
+	series := make([]relation.LaggedSeries, 0, 1+len(parents))
 	series = append(series, relation.LaggedSeries{
 		Observations: targetHistory,
 		Lag:          specification.SelfLag,
 	})
 
-	for _, parent := range specification.Parents {
+	for _, parent := range parents {
 		parentHistory := model.store.History(parent.Parent.Coordinate)
 
 		if len(parentHistory) == 0 {
@@ -195,7 +242,7 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 		return transition
 	}
 
-	parameterCount := 2 + len(specification.Parents)
+	parameterCount := 2 + len(parents)
 
 	if len(aligned) <= parameterCount {
 		transition.Status = IdentificationInsufficientSupport
@@ -240,6 +287,26 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 	transition.Status = IdentificationIdentified
 
 	return transition
+}
+
+/*
+TransitionModels fits the transition model for every schema market variable
+at or before at. It is the full time-sliced system the causal rollout
+evolves: each market variable's next value depends on its own history and its
+schema-authorized, graph-informed parents.
+*/
+func (model *CausalModel) TransitionModels(at time.Time) map[relation.Coordinate]*TransitionModel {
+	if model == nil || model.schema == nil {
+		return nil
+	}
+
+	transitions := make(map[relation.Coordinate]*TransitionModel, len(model.schema.MarketVariables))
+
+	for _, marketVariable := range model.schema.MarketVariables {
+		transitions[marketVariable.Variable.Coordinate] = model.TransitionModel(marketVariable.Variable, at)
+	}
+
+	return transitions
 }
 
 /*

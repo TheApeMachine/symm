@@ -3,6 +3,7 @@ package mcts
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/relation"
@@ -21,12 +22,16 @@ type MarketState struct {
 /*
 MarketModel evolves market state one step forward under the causal
 transition model. The log-return is the priced outcome movement of the step;
-the noise scale is the transition residual standard deviation. Strategy
-actions never directly mutate market state: without an explicit market-impact
-model, an action changes portfolio variables only.
+the noise is the transition residual scale of the priced outcome.
+
+The random source, when non-nil, samples the transition noise so rollouts
+walk a distribution of plausible causal trajectories: expected movement plus
+residual noise, not one deterministic expected path. Strategy actions never
+directly mutate market state: without an explicit market-impact model, an
+action changes portfolio variables only.
 */
 type MarketModel interface {
-	Step(current MarketState) (next MarketState, logReturn float64, noise float64, err error)
+	Step(current MarketState, random *rand.Rand) (next MarketState, logReturn float64, noise float64, err error)
 }
 
 /*
@@ -52,7 +57,9 @@ func (costs CostModel) TotalFraction() float64 {
 }
 
 /*
-PortfolioState is the account state the strategy actually controls.
+PortfolioState is the account state the strategy actually controls. Position
+is the actual held base quantity (for a held lot) or zero; it is never a lot
+count.
 */
 type PortfolioState struct {
 	Cash      float64
@@ -63,15 +70,20 @@ type PortfolioState struct {
 /*
 Wealth is the net portfolio wealth: cash plus marked position value.
 */
-func (portfolio PortfolioState) Wealth(quantityPerUnit float64) float64 {
-	return portfolio.Cash + portfolio.Position*quantityPerUnit*portfolio.MarkPrice
+func (portfolio PortfolioState) Wealth() float64 {
+	return portfolio.Cash + portfolio.Position*portfolio.MarkPrice
 }
 
 /*
-EconomicState is one MCTS search state: portfolio state, market state, the
-market transition model, costs, and the accumulated economic reward
-(change in net wealth). The reward is an actual economic quantity; it is
-never a signal or opportunity score.
+EconomicState is one MCTS search state: portfolio state (position in base
+units), market state, the market transition model, costs, and the accumulated
+economic reward (change in net wealth). The reward is an actual economic
+quantity; it is never a signal or opportunity score.
+
+Action timing is: at time t, the action is executed at the current price,
+then the market evolves to t+1 and the post-action exposure earns or loses
+the move. An Enter therefore participates in the first forecasted move; an
+Exit stops exposure before it.
 */
 type EconomicState struct {
 	Portfolio   PortfolioState
@@ -79,8 +91,11 @@ type EconomicState struct {
 	MarketModel MarketModel
 	Costs       CostModel
 
-	QuantityPerUnit float64
-	MaxPosition     float64
+	// UnitQuantity is the base quantity one position unit represents
+	// (entry sizing policy). Position is expressed in base units.
+	UnitQuantity float64
+	// MaxPosition is the maximum base quantity the exposure policy allows.
+	MaxPosition float64
 
 	Step        int
 	MaxSteps    int
@@ -88,14 +103,16 @@ type EconomicState struct {
 }
 
 /*
-NewEconomicState builds the initial search state.
+NewEconomicState builds the initial search state. Position is the actual
+held base quantity (0 when flat). UnitQuantity is the sized base quantity one
+new position unit represents.
 */
 func NewEconomicState(
 	portfolio PortfolioState,
 	market MarketState,
 	marketModel MarketModel,
 	costs CostModel,
-	quantityPerUnit float64,
+	unitQuantity float64,
 	maxPosition float64,
 	horizon int,
 ) *EconomicState {
@@ -104,13 +121,13 @@ func NewEconomicState(
 	}
 
 	return &EconomicState{
-		Portfolio:       portfolio,
-		Market:          market,
-		MarketModel:     marketModel,
-		Costs:           costs,
-		QuantityPerUnit: quantityPerUnit,
-		MaxPosition:     maxPosition,
-		MaxSteps:        horizon,
+		Portfolio:    portfolio,
+		Market:       market,
+		MarketModel:  marketModel,
+		Costs:        costs,
+		UnitQuantity: unitQuantity,
+		MaxPosition:  maxPosition,
+		MaxSteps:     horizon,
 	}
 }
 
@@ -132,7 +149,7 @@ func (state *EconomicState) GetPossibleActions() []Action {
 	}
 
 	if state.Portfolio.Position == 0 {
-		if state.affordable(state.QuantityPerUnit) {
+		if state.affordable(state.UnitQuantity) {
 			return []Action{Wait, Enter}
 		}
 
@@ -141,8 +158,8 @@ func (state *EconomicState) GetPossibleActions() []Action {
 
 	actions := []Action{Wait, Exit}
 
-	if state.MaxPosition <= 0 || state.Portfolio.Position < state.MaxPosition {
-		if state.affordable(state.QuantityPerUnit) {
+	if state.MaxPosition <= 0 || state.Portfolio.Position+state.UnitQuantity <= state.MaxPosition {
+		if state.affordable(state.UnitQuantity) {
 			actions = append(actions, Scale)
 		}
 	}
@@ -151,9 +168,10 @@ func (state *EconomicState) GetPossibleActions() []Action {
 }
 
 /*
-affordable reports whether cash covers the notional plus costs of one unit at
-the current mark. It is an explicit feasibility constraint (insufficient
-funds), not an evidence gate.
+affordable reports whether cash covers the notional plus costs of a quantity
+at the current mark. It is an explicit feasibility constraint (insufficient
+funds), not an evidence gate. Because the action executes at the current
+price, this check is exact.
 */
 func (state *EconomicState) affordable(quantity float64) bool {
 	notional := quantity * state.Portfolio.MarkPrice
@@ -161,30 +179,19 @@ func (state *EconomicState) affordable(quantity float64) bool {
 }
 
 /*
-ApplyAction evolves the state: the market transitions independently of the
-action, then the action mutates only portfolio variables with explicit costs.
-The accumulated reward is the exact change in net wealth.
+ApplyAction evolves the state: the action is executed at the current price
+(mutating only portfolio variables with explicit costs), then the market
+transitions to the next time slice. The accumulated reward is the exact
+change in net wealth: the action's cost plus the post-action exposure's
+realized market move. The random source, when non-nil, samples the market
+transition noise.
 */
-func (state *EconomicState) ApplyAction(action Action) (State, error) {
+func (state *EconomicState) ApplyAction(action Action, random *rand.Rand) (State, error) {
 	if state == nil || state.MarketModel == nil {
 		return nil, fmt.Errorf("mcts: economic state and market model are required")
 	}
 
-	nextMarket, logReturn, _, err := state.MarketModel.Step(state.Market)
-
-	if err != nil {
-		return nil, fmt.Errorf("mcts: market transition failed: %w", err)
-	}
-
-	newPrice := state.Portfolio.MarkPrice * math.Exp(logReturn)
-
-	if !(newPrice > 0) {
-		return nil, fmt.Errorf("mcts: market transition produced a non-positive price")
-	}
-
-	marketDelta := state.Portfolio.Position * state.QuantityPerUnit *
-		state.Portfolio.MarkPrice * (math.Exp(logReturn) - 1)
-
+	price := state.Portfolio.MarkPrice
 	cash := state.Portfolio.Cash
 	position := state.Portfolio.Position
 	actionDelta := 0.0
@@ -196,7 +203,7 @@ func (state *EconomicState) ApplyAction(action Action) (State, error) {
 			return nil, fmt.Errorf("mcts: enter requires a flat position")
 		}
 
-		notional := state.QuantityPerUnit * newPrice
+		notional := state.UnitQuantity * price
 		cost := notional * state.Costs.TotalFraction()
 
 		if cash < notional+cost {
@@ -204,14 +211,14 @@ func (state *EconomicState) ApplyAction(action Action) (State, error) {
 		}
 
 		cash -= notional + cost
-		position = 1
+		position = state.UnitQuantity
 		actionDelta = -cost
 	case Exit:
 		if position == 0 {
 			return nil, fmt.Errorf("mcts: exit requires an open position")
 		}
 
-		notional := position * state.QuantityPerUnit * newPrice
+		notional := position * price
 		cost := notional * state.Costs.TotalFraction()
 		cash += notional - cost
 		position = 0
@@ -221,11 +228,11 @@ func (state *EconomicState) ApplyAction(action Action) (State, error) {
 			return nil, fmt.Errorf("mcts: scale requires an open position")
 		}
 
-		if state.MaxPosition > 0 && position+1 > state.MaxPosition {
+		if state.MaxPosition > 0 && position+state.UnitQuantity > state.MaxPosition {
 			return nil, fmt.Errorf("mcts: scale exceeds the exposure cap")
 		}
 
-		notional := state.QuantityPerUnit * newPrice
+		notional := state.UnitQuantity * price
 		cost := notional * state.Costs.TotalFraction()
 
 		if cash < notional+cost {
@@ -233,11 +240,25 @@ func (state *EconomicState) ApplyAction(action Action) (State, error) {
 		}
 
 		cash -= notional + cost
-		position++
+		position += state.UnitQuantity
 		actionDelta = -cost
 	default:
 		return nil, fmt.Errorf("mcts: unknown action %d", int(action))
 	}
+
+	nextMarket, logReturn, _, err := state.MarketModel.Step(state.Market, random)
+
+	if err != nil {
+		return nil, fmt.Errorf("mcts: market transition failed: %w", err)
+	}
+
+	newPrice := price * math.Exp(logReturn)
+
+	if !(newPrice > 0) {
+		return nil, fmt.Errorf("mcts: market transition produced a non-positive price")
+	}
+
+	marketDelta := position * (newPrice - price)
 
 	return &EconomicState{
 		Portfolio: PortfolioState{
@@ -245,14 +266,14 @@ func (state *EconomicState) ApplyAction(action Action) (State, error) {
 			Position:  position,
 			MarkPrice: newPrice,
 		},
-		Market:          nextMarket,
-		MarketModel:     state.MarketModel,
-		Costs:           state.Costs,
-		QuantityPerUnit: state.QuantityPerUnit,
-		MaxPosition:     state.MaxPosition,
-		Step:            state.Step + 1,
-		MaxSteps:        state.MaxSteps,
-		Accumulated:     state.Accumulated + marketDelta + actionDelta,
+		Market:       nextMarket,
+		MarketModel:  state.MarketModel,
+		Costs:        state.Costs,
+		UnitQuantity: state.UnitQuantity,
+		MaxPosition:  state.MaxPosition,
+		Step:         state.Step + 1,
+		MaxSteps:     state.MaxSteps,
+		Accumulated:  state.Accumulated + actionDelta + marketDelta,
 	}, nil
 }
 
@@ -275,7 +296,7 @@ terminal test, and the economic reward.
 type State interface {
 	IsTerminal() bool
 	GetPossibleActions() []Action
-	ApplyAction(action Action) (State, error)
+	ApplyAction(action Action, random *rand.Rand) (State, error)
 	GetReward() float64
 }
 

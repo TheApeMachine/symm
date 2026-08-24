@@ -26,6 +26,9 @@ type Measurement[Value any] struct {
 	From       time.Time                `json:"from,omitempty"`
 	Maturity   float64                  `json:"maturity"`
 	SNR        float64                  `json:"snr"`
+	// SNRDefined distinguishes a measured SNR (including a genuine zero
+	// departure) from an undefined SNR where no noise model was estimable.
+	SNRDefined bool                     `json:"snrDefined"`
 	Err        error                    `json:"-"`
 	Metrics    map[string]Metric[Value] `json:"metrics,omitempty"`
 	Metadata   map[string]float64       `json:"metadata,omitempty"`
@@ -78,6 +81,7 @@ func (measurement *Measurement[Value]) ToTypesMeasurement() *types.Measurement {
 		ObservedFrom: measurement.From,
 		Maturity:     measurement.Maturity,
 		SNR:          measurement.SNR,
+		SNRDefined:   measurement.SNRDefined,
 		Metrics:      metrics,
 		Metadata:     measurement.Metadata,
 		Err:          measurement.Err,
@@ -155,6 +159,7 @@ func (measurement *Measurement[Value]) Finalize() {
 
 	if hasDivergence && hasNoise && noiseVariance > 0 {
 		measurement.SNR = divergence * divergence / noiseVariance
+		measurement.SNRDefined = true
 	}
 
 	support, hasSupport := measurement.Metadata[MetadataSupport]
@@ -174,5 +179,6 @@ func (measurement *Measurement[Value]) Finalize() {
 
 	if mahalanobisSNR, hasMahalanobis := measurement.Metadata[MetadataMahalanobisSNR]; hasMahalanobis && mahalanobisSNR >= 0 {
 		measurement.SNR = mahalanobisSNR
+		measurement.SNRDefined = true
 	}
 }

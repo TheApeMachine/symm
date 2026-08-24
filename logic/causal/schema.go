@@ -73,11 +73,16 @@ func (id VariableID) String() string {
 
 /*
 AllowedParent is one schema-authorized structural parent of a market
-variable, with its explicit lag.
+variable, with its lag. The schema authorizes the direction; the measured
+lag, when an Influence relation exists, comes from the Influence Graph.
 */
 type AllowedParent struct {
 	Parent VariableID
 	Lag    time.Duration
+	// LagSource records where the lag came from: "schema" (the fallback
+	// declared here) or "influence:<estimator-version>" (measured by the
+	// Relation layer).
+	LagSource string
 }
 
 /*

@@ -26,10 +26,13 @@ type Observation struct {
 	At time.Time
 	// Maturity is the measurement-level maturity provenance.
 	Maturity float64
-	// SNR is the measurement-level SNR provenance when defined. It is
-	// reported as zero when undefined; provenance presence is what
-	// distinguishes undefined from a genuine zero.
+	// SNR is the measurement-level SNR provenance when defined. Undefined is
+	// carried by SNRDefined=false; a genuine measured zero departure is
+	// SNR=0 with SNRDefined=true. The two are different facts.
 	SNR float64
+	// SNRDefined reports whether the SNR is a measured value rather than the
+	// absence of an estimable noise model.
+	SNRDefined bool
 	// MeasurementID is the originating measurement identifier.
 	MeasurementID string
 }
@@ -72,6 +75,7 @@ func AppendMeasurement(
 			At:            measurement.At,
 			Maturity:      measurement.Maturity,
 			SNR:           measurement.SNR,
+			SNRDefined:    measurement.SNRDefined,
 			MeasurementID: measurement.ID,
 		})
 	}

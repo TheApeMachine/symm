@@ -2,6 +2,7 @@ package mcts
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ type fixedMarketModel struct {
 	value     map[relation.Coordinate]float64
 }
 
-func (model *fixedMarketModel) Step(current MarketState) (MarketState, float64, float64, error) {
+func (model *fixedMarketModel) Step(current MarketState, random *rand.Rand) (MarketState, float64, float64, error) {
 	next := MarketState{
 		At:     current.At.Add(time.Second),
 		Values: make(map[relation.Coordinate]float64, len(current.Values)),
@@ -89,7 +90,7 @@ func TestEconomicReward(t *testing.T) {
 		)
 
 		Convey("MCTS reward equals the actual net-wealth change", func() {
-			search := NewSearch(4, 0, 1)
+			search := NewSearch(4, 0, 0, 1)
 			result := search.Run(state, alwaysEstimable{})
 
 			So(result.DecisionUnavailable, ShouldBeFalse)
@@ -99,6 +100,7 @@ func TestEconomicReward(t *testing.T) {
 			// wealth change is -notional * totalCostFraction.
 			expectedEnter := -100 * 0.0015
 			So(result.ExpectedEconomicOutcome, ShouldEqual, 0)
+			So(expectedEnter, ShouldBeLessThan, 0)
 
 			for _, alternative := range result.Alternatives {
 				if alternative.Action == Enter {
@@ -107,7 +109,7 @@ func TestEconomicReward(t *testing.T) {
 				}
 			}
 
-			entered, err := state.ApplyAction(Enter)
+			entered, err := state.ApplyAction(Enter, nil)
 			So(err, ShouldBeNil)
 			So(entered.GetReward(), ShouldAlmostEqual, expectedEnter, 1e-9)
 		})
@@ -124,7 +126,7 @@ func TestEconomicReward(t *testing.T) {
 				3,
 			)
 
-			search := NewSearch(64, 0.5, 7)
+			search := NewSearch(64, 0.5, 0.25, 7)
 			result := search.Run(risingState, alwaysEstimable{})
 			So(result.DecisionUnavailable, ShouldBeFalse)
 			So(result.SelectedAction, ShouldEqual, Enter)
@@ -160,9 +162,9 @@ func TestActionDoesNotMutateMarket(t *testing.T) {
 				2,
 			)
 
-			entered, err := enterState.ApplyAction(Enter)
+			entered, err := enterState.ApplyAction(Enter, nil)
 			So(err, ShouldBeNil)
-			waited, err := waitState.ApplyAction(Wait)
+			waited, err := waitState.ApplyAction(Wait, nil)
 			So(err, ShouldBeNil)
 
 			Convey("portfolio differs because exposure differs", func() {
@@ -193,7 +195,7 @@ func TestUndefinedActionEstimate(t *testing.T) {
 			2,
 		)
 
-		search := NewSearch(4, 0.5, 1)
+		search := NewSearch(4, 0.5, 0.25, 1)
 		result := search.Run(state, neverEstimable{})
 
 		Convey("the search returns DecisionUnavailable, not Wait", func() {
@@ -217,7 +219,7 @@ func TestSimulationIsNotObservation(t *testing.T) {
 			4,
 		)
 
-		search := NewSearch(32, 0.5, 3)
+		search := NewSearch(32, 0.5, 0.25, 3)
 		result := search.Run(state, alwaysEstimable{})
 
 		Convey("the search result carries economic provenance", func() {
@@ -243,7 +245,7 @@ func TestReplayDeterminism(t *testing.T) {
 				3,
 			)
 
-			search := NewSearch(24, 0.5, 99)
+			search := NewSearch(24, 0.5, 0.25, 99)
 			return search.Run(state, alwaysEstimable{})
 		}
 

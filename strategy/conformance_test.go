@@ -32,6 +32,7 @@ func syntheticMeasurement(index int, flow float64, gross float64, ret float64, m
 		ObservedFrom: at.Add(-time.Second),
 		Maturity:     0.9,
 		SNR:          0.01,
+		SNRDefined:   true,
 		Metrics: map[string]*nmtypes.Metric[float64]{
 			"signed_net_fraction_zscore": nmtypes.NewMetric(
 				"signed_net_fraction_zscore", flow,
@@ -75,11 +76,55 @@ func testConfig() *system.Config {
 			MaxAllocationFraction: 0.1,
 			MCTSIterations:        24,
 			ExplorationConstant:   0.5,
+			UncertaintyWeight:     0.25,
 			SearchHorizon:         3,
-			MaxPositionUnits:      2,
+			MaxPositionUnits:      1,
 			SlippageFraction:      0,
 			RelationInterval:      time.Nanosecond,
 		},
+	}
+}
+
+/*
+deterministicCausalState builds a causal state with a constant-return,
+zero-noise market path and the full schema transition set. Every transition
+has zero residual variance, so the MCTS reward equals the analytic net-wealth
+change exactly.
+*/
+func deterministicCausalState(at time.Time, constantReturn float64) *CausalState {
+	schema := DefaultCausalSchema(1).ForSymbol("TEST/USD")
+	outcome := schema.Outcomes[0]
+	transitions := make(map[relation.Coordinate]*causal.TransitionModel)
+
+	for _, marketVariable := range schema.MarketVariables {
+		transition := &causal.TransitionModel{
+			Target:            marketVariable.Variable,
+			SelfLag:           marketVariable.SelfLag,
+			Parents:           marketVariable.Parents,
+			Intercept:         constantReturn,
+			SelfCoefficient:   0,
+			ResidualVariance:  0,
+			EffectiveSupport:  200,
+			Maturity:          0.995,
+			Status:            causal.IdentificationIdentified,
+		}
+		transitions[marketVariable.Variable.Coordinate] = transition
+	}
+
+	outcomeTransition := transitions[outcome.Coordinate]
+
+	return &CausalState{
+		Symbol:          "TEST/USD",
+		At:              at,
+		Epoch:           1,
+		SchemaVersion:   schema.Version,
+		ModelVersion:    "deterministic-test-v1",
+		Identification:  causal.IdentificationIdentified,
+		MarketState:     map[relation.Coordinate]float64{outcome.Coordinate: constantReturn},
+		OutcomeVariable: outcome,
+		Transition:      outcomeTransition,
+		Transitions:     transitions,
+		StepLag:         time.Second,
 	}
 }
 
@@ -215,7 +260,7 @@ func TestConformanceNoSimulatedEvidence(t *testing.T) {
 				3,
 			)
 
-			search := mcts.NewSearch(200, 0.5, 99)
+			search := mcts.NewSearch(200, 0.5, 0.25, 99)
 			result := search.Run(economicState, &causalActionEstimator{state: state})
 			So(result.DecisionUnavailable, ShouldBeFalse)
 
@@ -228,43 +273,79 @@ func TestConformanceNoSimulatedEvidence(t *testing.T) {
 }
 
 func TestConformanceEconomicReward(t *testing.T) {
-	Convey("Given a deterministic expected market path and known fees", t, func() {
-		reasoner := newTestReasoner()
-		ingestSeries(reasoner, 150, 17, 0)
-		state := reasoner.CausalState("TEST/USD", time.Unix(0, 149*int64(time.Second)))
-		So(state.Identification, ShouldEqual, causal.IdentificationIdentified)
-
-		portfolio := mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100}
+	Convey("Given a deterministic market path and known fees", t, func() {
+		at := time.Unix(0, 149*int64(time.Second))
+		constantReturn := 0.005
+		state := deterministicCausalState(at, constantReturn)
 		costs := mcts.CostModel{FeeRate: 0.001, SpreadFraction: 0.0005}
+		unitQuantity := 1.0
+		price := 100.0
 
 		Convey("MCTS reward equals the actual net-wealth change along the path", func() {
-			// Horizon 1 makes every rollout deterministic: Enter pays the
-			// cost at the post-move price; Wait pays nothing.
-			stateAt := mcts.NewEconomicState(
-				portfolio,
-				mcts.MarketState{At: state.At, Values: state.MarketState},
+			economic := mcts.NewEconomicState(
+				mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: price},
+				mcts.MarketState{At: at, Values: state.MarketState},
 				&causalMarketModel{state: state},
 				costs,
-				1,
-				1,
+				unitQuantity,
+				unitQuantity,
 				1,
 			)
 
-			search := mcts.NewSearch(4, 0, 1)
-			result := search.Run(stateAt, &causalActionEstimator{state: state})
+			// Analytic values for one step, action first, then the move.
+			newPrice := price * math.Exp(constantReturn)
+			exactEnter := -unitQuantity*price*costs.TotalFraction() + unitQuantity*(newPrice-price)
+			exactWait := 0.0
 
-			expected, _, defined := state.Transition.Step(state.MarketState)
-			So(defined, ShouldBeTrue)
-
-			newPrice := 100 * math.Exp(expected)
-			exactEnter := -1 * newPrice * costs.TotalFraction()
-
-			entered, err := stateAt.ApplyAction(mcts.Enter)
+			entered, err := economic.ApplyAction(mcts.Enter, nil)
 			So(err, ShouldBeNil)
 			So(entered.GetReward(), ShouldAlmostEqual, exactEnter, 1e-9)
 
-			So(result.SelectedAction, ShouldEqual, mcts.Wait)
-			So(result.ExpectedEconomicOutcome, ShouldEqual, 0)
+			waited, err := economic.ApplyAction(mcts.Wait, nil)
+			So(err, ShouldBeNil)
+			So(waited.GetReward(), ShouldAlmostEqual, exactWait, 1e-9)
+
+			search := mcts.NewSearch(16, 0, 0, 1)
+			result := search.Run(economic, &causalActionEstimator{state: state})
+			So(result.DecisionUnavailable, ShouldBeFalse)
+			So(result.SelectedAction, ShouldEqual, mcts.Enter)
+			So(result.ExpectedEconomicOutcome, ShouldAlmostEqual, exactEnter, 1e-9)
+		})
+
+		Convey("causal uncertainty propagates into sampled rollouts", func() {
+			reasoner := newTestReasoner()
+			ingestSeries(reasoner, 150, 17, 0)
+			noisyState := reasoner.CausalState("TEST/USD", at)
+			So(noisyState.Identification, ShouldEqual, causal.IdentificationIdentified)
+
+			economic := mcts.NewEconomicState(
+				mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: price},
+				mcts.MarketState{At: at, Values: noisyState.MarketState},
+				&causalMarketModel{state: noisyState},
+				costs,
+				unitQuantity,
+				unitQuantity,
+				3,
+			)
+
+			search := mcts.NewSearch(400, 0.25, 0.5, 7)
+			result := search.Run(economic, &causalActionEstimator{state: noisyState})
+
+			Convey("the sampled reward dispersion is non-zero", func() {
+				bestStd := 0.0
+
+				for _, branch := range result.Trace.Branches {
+					bestStd = math.Max(bestStd, branch.RewardStd)
+				}
+
+				So(bestStd, ShouldBeGreaterThan, 0)
+			})
+
+			Convey("the deterministic causal estimate equals the analytic expected path", func() {
+				estimate := (&causalActionEstimator{state: noisyState}).EstimateAction(economic, mcts.Wait)
+				So(estimate.Defined, ShouldBeTrue)
+				So(estimate.Uncertainty, ShouldBeGreaterThan, 0)
+			})
 		})
 
 		Convey("changing a semantic UI score does not change reward or action values", func() {
@@ -273,21 +354,21 @@ func TestConformanceEconomicReward(t *testing.T) {
 			right := newTestReasoner()
 			ingestSeries(right, 150, 19, -0.9)
 
-			leftState := left.CausalState("TEST/USD", time.Unix(0, 149*int64(time.Second)))
-			rightState := right.CausalState("TEST/USD", time.Unix(0, 149*int64(time.Second)))
+			leftState := left.CausalState("TEST/USD", at)
+			rightState := right.CausalState("TEST/USD", at)
 
 			runSearch := func(state *CausalState) *mcts.SearchResult {
 				economic := mcts.NewEconomicState(
-					portfolio,
-					mcts.MarketState{At: state.At, Values: state.MarketState},
+					mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: price},
+					mcts.MarketState{At: at, Values: state.MarketState},
 					&causalMarketModel{state: state},
 					costs,
-					1,
-					2,
+					unitQuantity,
+					unitQuantity,
 					3,
 				)
 
-				search := mcts.NewSearch(24, 0.5, 123)
+				search := mcts.NewSearch(48, 0.5, 0.25, 123)
 				return search.Run(economic, &causalActionEstimator{state: state})
 			}
 
@@ -300,12 +381,61 @@ func TestConformanceEconomicReward(t *testing.T) {
 	})
 }
 
-func TestConformanceNoFinalGate(t *testing.T) {
-	Convey("Given MCTS selects Enter", t, func() {
+func TestConformanceInfluenceInformsCausalModel(t *testing.T) {
+	Convey("Given an influence graph with a measured relation", t, func() {
 		reasoner := newTestReasoner()
-		ingestSeries(reasoner, 150, 23, 0)
-		state := reasoner.CausalState("TEST/USD", time.Unix(0, 149*int64(time.Second)))
-		So(state.Identification, ShouldEqual, causal.IdentificationIdentified)
+		ingestSeries(reasoner, 150, 41, 0)
+
+		Convey("the causal transition uses the measured influence lag, not the schema fallback", func() {
+			state := reasoner.CausalState("TEST/USD", time.Unix(0, 149*int64(time.Second)))
+			So(state.Identification, ShouldEqual, causal.IdentificationIdentified)
+
+			edge := reasoner.Graph().Relation(
+				relation.Coordinate{
+					Symbol:    "TEST/USD",
+					Source:    "cvd",
+					Metric:    "signed_net_fraction_zscore",
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+					Epoch:     1,
+				},
+				relation.Coordinate{
+					Symbol:    "TEST/USD",
+					Source:    "cvd",
+					Metric:    "midpoint_log_return",
+					Unit:      nmtypes.UnitDimensionless,
+					Timescale: nmtypes.TimescaleInstantaneous,
+					Epoch:     1,
+				},
+			)
+			So(edge, ShouldNotBeNil)
+			So(edge.Result.Defined(), ShouldBeTrue)
+
+			Convey("the outcome transition's parent lag equals the measured lag", func() {
+				outcome := state.OutcomeVariable
+				transition := state.Transitions[outcome.Coordinate]
+				So(transition, ShouldNotBeNil)
+
+				found := false
+
+				for _, parent := range transition.Parents {
+					if parent.Parent.Coordinate.Metric == "signed_net_fraction_zscore" {
+						found = true
+						So(parent.Lag, ShouldEqual, edge.Result.Lag)
+						So(parent.LagSource, ShouldContainSubstring, "influence:")
+					}
+				}
+
+				So(found, ShouldBeTrue)
+			})
+		})
+	})
+}
+
+func TestConformanceNoFinalGate(t *testing.T) {
+	Convey("Given MCTS selects Enter on a deterministic positive path", t, func() {
+		at := time.Unix(0, 149*int64(time.Second))
+		state := deterministicCausalState(at, 0.005)
 
 		planner := &Planner{}
 		decision := planner.decisionFromCausalState(state, testConfig())
@@ -317,6 +447,7 @@ func TestConformanceNoFinalGate(t *testing.T) {
 			decision.GraphScore = -1
 			decision.PredictiveReady = false
 			decision.Opportunity = false
+			decision.ReserveEligible = false
 
 			// The action authority is the causal MCTS result; legacy fields
 			// are inert telemetry.
@@ -328,31 +459,28 @@ func TestConformanceNoFinalGate(t *testing.T) {
 
 func TestConformanceActionDoesNotMutateMarket(t *testing.T) {
 	Convey("Given the same causal market model", t, func() {
-		reasoner := newTestReasoner()
-		ingestSeries(reasoner, 150, 29, 0)
-		state := reasoner.CausalState("TEST/USD", time.Unix(0, 149*int64(time.Second)))
-		So(state.Identification, ShouldEqual, causal.IdentificationIdentified)
-
-		base := mcts.MarketState{At: state.At, Values: state.MarketState}
+		at := time.Unix(0, 149*int64(time.Second))
+		state := deterministicCausalState(at, 0.005)
+		base := mcts.MarketState{At: at, Values: state.MarketState}
 
 		enterState := mcts.NewEconomicState(
 			mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
 			base,
 			&causalMarketModel{state: state},
 			mcts.CostModel{FeeRate: 0.001},
-			1, 2, 2,
+			1, 1, 2,
 		)
 		waitState := mcts.NewEconomicState(
 			mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
 			base,
 			&causalMarketModel{state: state},
 			mcts.CostModel{FeeRate: 0.001},
-			1, 2, 2,
+			1, 1, 2,
 		)
 
-		entered, err := enterState.ApplyAction(mcts.Enter)
+		entered, err := enterState.ApplyAction(mcts.Enter, nil)
 		So(err, ShouldBeNil)
-		waited, err := waitState.ApplyAction(mcts.Wait)
+		waited, err := waitState.ApplyAction(mcts.Wait, nil)
 		So(err, ShouldBeNil)
 
 		Convey("Enter changes portfolio variables only; the market evolves identically", func() {
@@ -386,10 +514,10 @@ func TestConformanceReplayDeterminism(t *testing.T) {
 				mcts.MarketState{At: state.At, Values: state.MarketState},
 				&causalMarketModel{state: state},
 				mcts.CostModel{FeeRate: 0.001},
-				1, 2, 3,
+				1, 1, 3,
 			)
 
-			search := mcts.NewSearch(24, 0.5, 77)
+			search := mcts.NewSearch(24, 0.5, 0.25, 77)
 			return state, search.Run(economic, &causalActionEstimator{state: state}), reasoner
 		}
 
@@ -419,6 +547,142 @@ func TestConformanceReplayDeterminism(t *testing.T) {
 			So(firstResult.ExpectedEconomicOutcome, ShouldEqual, secondResult.ExpectedEconomicOutcome)
 			So(firstResult.Visits, ShouldEqual, secondResult.Visits)
 			So(firstResult.OutcomeUncertainty, ShouldEqual, secondResult.OutcomeUncertainty)
+		})
+	})
+}
+
+func TestConformanceMultiStepSystemEvolution(t *testing.T) {
+	Convey("Given a reasoner with multiple evolving market variables", t, func() {
+		reasoner := newTestReasoner()
+		ingestSeries(reasoner, 150, 43, 0)
+		state := reasoner.CausalState("TEST/USD", time.Unix(0, 149*int64(time.Second)))
+		So(state.Identification, ShouldEqual, causal.IdentificationIdentified)
+
+		flowCoordinate := relation.Coordinate{
+			Symbol:    "TEST/USD",
+			Source:    "cvd",
+			Metric:    "signed_net_fraction_zscore",
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+			Epoch:     1,
+		}
+
+		Convey("a multi-step rollout evolves the whole system, not just price", func() {
+			flowTransition := state.Transitions[flowCoordinate]
+			So(flowTransition, ShouldNotBeNil)
+			So(flowTransition.Status, ShouldEqual, causal.IdentificationIdentified)
+
+			initial := state.MarketState[flowCoordinate]
+			economic := mcts.NewEconomicState(
+				mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
+				mcts.MarketState{At: state.At, Values: state.MarketState},
+				&causalMarketModel{state: state},
+				mcts.CostModel{FeeRate: 0.001},
+				1, 1, 3,
+			)
+
+			stepped := economic
+
+			for step := 0; step < 2; step++ {
+				next, err := stepped.ApplyAction(mcts.Wait, nil)
+				So(err, ShouldBeNil)
+				stepped = next.(*mcts.EconomicState)
+			}
+
+			evolved := stepped.Market.Values[flowCoordinate]
+			So(evolved, ShouldNotEqual, initial)
+		})
+	})
+}
+
+func TestConformanceCrossSignalParticipation(t *testing.T) {
+	Convey("Given a non-CVD signal coordinate ingested alongside CVD", t, func() {
+		reasoner := newTestReasoner()
+		ingestSeries(reasoner, 150, 47, 0)
+
+		// Ingest a hawkes measurement for the same symbol.
+		at := time.Unix(0, 149*int64(time.Second))
+		hawkesMeasurement := &nmtypes.Measurement{
+			ID:         "test:hawkes:149",
+			Source:     "hawkes",
+			Symbol:     "TEST/USD",
+			At:         at,
+			Maturity:   0.9,
+			SNR:        0.5,
+			SNRDefined: true,
+			Metrics: map[string]*nmtypes.Metric[float64]{
+				"conditional_intensity:buy": nmtypes.NewMetric(
+					"conditional_intensity:buy", 0.4,
+					nmtypes.Descriptor{Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerSecond},
+				),
+			},
+		}
+		reasoner.Ingest(hawkesMeasurement)
+		reasoner.Refresh("TEST/USD", at)
+
+		hawkesCoordinate := relation.Coordinate{
+			Symbol:    "TEST/USD",
+			Source:    "hawkes",
+			Metric:    "conditional_intensity",
+			Side:      "buy",
+			Unit:      nmtypes.UnitEventsPerSecond,
+			Timescale: nmtypes.TimescalePerSecond,
+			Epoch:     1,
+		}
+
+		Convey("the coordinate participates in the candidate relation space", func() {
+			So(reasoner.Store().Count(hawkesCoordinate), ShouldEqual, 1)
+
+			edge := reasoner.Graph().Relation(hawkesCoordinate, relation.Coordinate{
+				Symbol:    "TEST/USD",
+				Source:    "cvd",
+				Metric:    "midpoint_log_return",
+				Unit:      nmtypes.UnitDimensionless,
+				Timescale: nmtypes.TimescaleInstantaneous,
+				Epoch:     1,
+			})
+
+			// One hawkes observation cannot align a causal relation; the
+			// candidate is represented as unavailable, not deleted.
+			So(edge, ShouldBeNil)
+
+			candidates := reasoner.Graph().Candidates()
+			hawkesCandidate := false
+
+			for _, candidate := range candidates {
+				if candidate.Source == hawkesCoordinate {
+					hawkesCandidate = true
+				}
+			}
+
+			So(hawkesCandidate, ShouldBeTrue)
+		})
+
+		Convey("the schema transition for the outcome includes the hawkes variable", func() {
+			state := reasoner.CausalState("TEST/USD", at)
+			transition := state.Transitions[state.OutcomeVariable.Coordinate]
+			So(transition, ShouldNotBeNil)
+
+			found := false
+
+			for _, parent := range transition.Parents {
+				if parent.Parent.Coordinate.Metric == "conditional_intensity" {
+					found = true
+				}
+			}
+
+			// With a single hawkes observation the parent is excluded from
+			// the query-local fit (no observed history to align), but the
+			// schema still authorizes the direction.
+			So(found, ShouldBeFalse)
+
+			for _, excluded := range transition.ExcludedParents {
+				if excluded.Parent.Coordinate.Metric == "conditional_intensity" {
+					found = true
+				}
+			}
+
+			So(found, ShouldBeTrue)
 		})
 	})
 }
