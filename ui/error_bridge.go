@@ -1,13 +1,13 @@
 package ui
 
 import (
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/phuslu/log"
-	"github.com/theapemachine/symm/nomagique/transport"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -24,7 +24,7 @@ until ready() reports the boot gate has passed (Warmup), so preflight ticker
 gaps never open the overlay.
 */
 type ErrorBridge struct {
-	ui    *transport.MapReduce[*types.UIFrame]
+	ui    *runtime.Channel[*types.UIFrame]
 	ready func() bool
 	// onError receives each distinct error as (source, message, caller) so the
 	// diagnostics WebRTC frame can surface subsystem-attributed errors. Nil
@@ -47,17 +47,16 @@ func NewErrorBridge(
 	ready func() bool,
 	onError func(source string, message string, caller string),
 ) log.Writer {
-	var ui *transport.MapReduce[*types.UIFrame]
-
-	if hub != nil && hub.thesis != nil {
-		ui = hub.thesis.UI()
-	}
-
-	if ui == nil {
+	if hub == nil || hub.bus == nil {
 		return log.WriterFunc(func(*log.Entry) (int, error) {
 			return 0, nil
 		})
 	}
+
+	ui := runtime.ChannelOf[*types.UIFrame](
+		hub.bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
 
 	return log.IOWriter{Writer: &ErrorBridge{
 		ui:      ui,
@@ -106,7 +105,7 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 	}
 
 	safe := safeErrorFields(fields)
-	bridge.ui.Push(&wire.FrameT{
+	bridge.ui.Publish(&wire.FrameT{
 		Type: wire.FrameErrorFrame,
 		Value: &wire.ErrorFrameT{
 			Level: stringMapField(safe, "level"), Source: attributedErrorSource(fields),

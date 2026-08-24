@@ -2,17 +2,16 @@ package pumpdump
 
 import (
 	"context"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/runtime"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
-		nmtypes "github.com/theapemachine/symm/nomagique/types"
-
 )
 
 const (
@@ -51,7 +50,7 @@ type Signal struct {
 	decompose    nmtypes.Primitive
 	polarize     nmtypes.Primitive
 	separate     nmtypes.Primitive
-	work         *transport.Consumer[*types.Symbol]
+	measurements *runtime.Channel[*nmtypes.Measurement]
 	pool         *types.SymbolPool
 }
 
@@ -59,6 +58,7 @@ func NewSignal(
 	ctx context.Context,
 	thesis *types.Thesis,
 	books websocket.BookSource,
+	bus *runtime.Workspace,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	signal := &Signal{
@@ -82,8 +82,28 @@ func NewSignal(
 		separate:  statistic.Separation,
 		pool:      types.NewSymbolPool(types.ShardWorkers()),
 	}
-	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
-	thesis.Work(types.SourcePumpDump).Register(signal.work)
+	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	)
+	runtime.ChannelOf[kraken.Level3Data](
+		bus, types.ChannelLevel3,
+		func(frame kraken.Level3Data) string { return frame.Symbol },
+	).Subscribe(signal.Name(), func(frame kraken.Level3Data) error {
+		return signal.consumeLevel3(signal.thesis.Symbol(frame.Symbol), frame)
+	})
+	runtime.ChannelOf[kraken.TickerData](
+		bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
+	).Subscribe(signal.Name(), func(ticker kraken.TickerData) error {
+		return signal.consumeTicker(signal.thesis.Symbol(ticker.Symbol), ticker)
+	})
+	runtime.ChannelOf[kraken.TradeData](
+		bus, types.ChannelTrades,
+		func(trade kraken.TradeData) string { return trade.Symbol },
+	).Subscribe(signal.Name(), func(trade kraken.TradeData) error {
+		return signal.consumeTrade(signal.thesis.Symbol(trade.Symbol), trade)
+	})
 
 	return signal
 }
@@ -93,71 +113,6 @@ func (signal *Signal) Name() string { return string(types.SourcePumpDump) }
 func (signal *Signal) Error() error { return signal.err }
 
 func (signal *Signal) Type() types.SourceType { return types.SourcePumpDump }
-
-func (signal *Signal) consume() {
-	go func() {
-		defer func() {
-			if err := signal.pool.Error(); err != nil {
-				signal.err = err
-			}
-
-			signal.thesis.Fail(signal.err)
-		}()
-
-		for symbol := range signal.thesis.Work(types.SourcePumpDump).Drain(signal.work, nil) {
-			select {
-			case <-signal.ctx.Done():
-				signal.pool.CaptureError(signal.ctx.Err())
-				return
-			default:
-			}
-
-			if symbol == nil {
-				continue
-			}
-
-			symbolName := symbol.Symbol
-
-			signal.pool.Submit(symbolName, func() {
-				if err := signal.consumeSymbol(symbol); err != nil {
-					signal.pool.CaptureError(errnie.Error(errnie.Err(
-						errnie.Validation,
-						"pumpdump: condition "+symbolName,
-						err,
-					)))
-				}
-			})
-		}
-	}()
-}
-
-func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
-	for level3 := range symbol.MarketLevel3(
-		symbol.Level3Consumers[types.Level3ConsumerPumpDump],
-	) {
-		if err := signal.consumeLevel3(symbol, level3); err != nil {
-			return err
-		}
-	}
-
-	for ticker := range symbol.MarketTickers(
-		symbol.TickerConsumers[types.TickerConsumerPumpDump],
-	) {
-		if err := signal.consumeTicker(symbol, ticker); err != nil {
-			return err
-		}
-	}
-
-	for trade := range symbol.MarketTrades(
-		symbol.TradeConsumers[types.TradeConsumerPumpDump],
-	) {
-		if err := signal.consumeTrade(symbol, trade); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
 
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {

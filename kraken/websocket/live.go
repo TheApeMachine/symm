@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"maps"
 	"os"
 	"slices"
@@ -60,32 +62,38 @@ Live is one spot websocket session: SDK client, channel fan-out, auth/nonce,
 and Sub* resubscribe after the SDK reconnects.
 */
 type Live struct {
-	status      atomic.Pointer[types.Status]
-	ctx         context.Context
-	cancel      context.CancelFunc
-	client      *spot.WebSocket
-	quote       string
-	thesis      atomic.Pointer[types.Thesis]
-	simulator   *Simulator
-	normalizer  *spot.Normalizer
-	level3      *sync.Map
-	book        *Book
-	symbols     []string
-	publicMu    sync.RWMutex
-	public      map[string][][]string
-	auth        bool
-	nonce       *AuthNonce
-	nonceErr    error
-	subscribers *sync.Map
-	callbacks   *sync.Map
-	priceIncr   sync.Map
-	paper       *Paper
-	model       string
-	capture     CaptureSink
-	captureName string
-	failureMu   sync.RWMutex
-	failure     func(error)
-	observer    atomic.Pointer[func(string, time.Duration)]
+	status       atomic.Pointer[types.Status]
+	ctx          context.Context
+	cancel       context.CancelFunc
+	client       *spot.WebSocket
+	quote        string
+	thesis       atomic.Pointer[types.Thesis]
+	bus          atomic.Pointer[runtime.Workspace]
+	tickersCh    *runtime.Channel[kraken.TickerData]
+	tradesCh     *runtime.Channel[kraken.TradeData]
+	level3Ch     *runtime.Channel[kraken.Level3Data]
+	executionsCh *runtime.Channel[kraken.ExecutionData]
+	uiCh         *runtime.Channel[*types.UIFrame]
+	simulator    *Simulator
+	normalizer   *spot.Normalizer
+	level3       *sync.Map
+	book         *Book
+	symbols      []string
+	publicMu     sync.RWMutex
+	public       map[string][][]string
+	auth         bool
+	nonce        *AuthNonce
+	nonceErr     error
+	subscribers  *sync.Map
+	callbacks    *sync.Map
+	priceIncr    sync.Map
+	paper        *Paper
+	model        string
+	capture      CaptureSink
+	captureName  string
+	failureMu    sync.RWMutex
+	failure      func(error)
+	observer     atomic.Pointer[func(string, time.Duration)]
 
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
@@ -188,6 +196,37 @@ func (live *Live) SetThesis(thesis *types.Thesis) {
 	if live.paper != nil {
 		live.paper.SetThesis(thesis)
 	}
+}
+
+/*
+SetBus attaches the system workspace bus and resolves the ingest channels.
+*/
+func (live *Live) SetBus(bus *runtime.Workspace) {
+	if live == nil || bus == nil {
+		return
+	}
+
+	live.bus.Store(bus)
+	live.tickersCh = runtime.ChannelOf[kraken.TickerData](
+		bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
+	)
+	live.tradesCh = runtime.ChannelOf[kraken.TradeData](
+		bus, types.ChannelTrades,
+		func(trade kraken.TradeData) string { return trade.Symbol },
+	)
+	live.level3Ch = runtime.ChannelOf[kraken.Level3Data](
+		bus, types.ChannelLevel3,
+		func(frame kraken.Level3Data) string { return frame.Symbol },
+	)
+	live.executionsCh = runtime.ChannelOf[kraken.ExecutionData](
+		bus, types.ChannelExecutions,
+		func(execution kraken.ExecutionData) string { return execution.Symbol },
+	)
+	live.uiCh = runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
 }
 
 /*
@@ -301,8 +340,8 @@ func NewWithClient(
 		live.book.emit = func(data kraken.Level3Data) {
 			thesis := live.thesis.Load()
 
-			if thesis != nil {
-				thesis.Symbol(data.Symbol).AppendLevel3(data)
+			if thesis != nil && thesis.Symbol(data.Symbol).AcceptLevel3(data.Timestamp) && live.level3Ch != nil {
+				live.level3Ch.Publish(data)
 			}
 		}
 		// A checksum divergence recovers by re-running the same whole-universe
@@ -410,7 +449,19 @@ func NewWithClient(
 					tick := thesis.AdvanceTick(ticker.Timestamp)
 					symbol := thesis.Symbol(ticker.Symbol)
 					symbol.Tick = tick
-					symbol.AppendTicker(ticker)
+
+					if symbol.AcceptTicker(ticker.Timestamp) && live.tickersCh != nil {
+						live.tickersCh.Publish(ticker)
+					}
+
+					if live.uiCh != nil {
+						live.uiCh.Publish(&types.UIFrame{
+							Type: wire.FrameTickFrame,
+							Value: &wire.TickFrameT{
+								Count: tick,
+							},
+						})
+					}
 				}
 			}
 		case *kraken.Trade:
@@ -418,7 +469,11 @@ func NewWithClient(
 
 			if thesis != nil {
 				for index := range entity.Data {
-					thesis.Symbol(entity.Data[index].Symbol).AppendTrade(entity.Data[index])
+					trade := entity.Data[index]
+
+					if thesis.Symbol(trade.Symbol).AcceptTrade(trade.Timestamp) && live.tradesCh != nil {
+						live.tradesCh.Publish(trade)
+					}
 				}
 			}
 		case *kraken.Execution:
@@ -426,7 +481,11 @@ func NewWithClient(
 
 			if thesis != nil {
 				for index := range entity.Data {
-					thesis.Symbol(entity.Data[index].Symbol).AppendExecution(entity.Data[index])
+					execution := entity.Data[index]
+
+					if live.executionsCh != nil {
+						live.executionsCh.Publish(execution)
+					}
 				}
 			}
 		}

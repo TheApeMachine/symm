@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"os/exec"
 	"strings"
 	"sync"
@@ -28,12 +29,13 @@ Private frames publish onto explicit typed subscriptions so Desk and tests use
 the same direct wiring as the live transport.
 */
 type Paper struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	simulator *Simulator
-	commandMu sync.Mutex
-	books     *spot.BookManager
-	thesis    atomic.Pointer[types.Thesis]
+	ctx          context.Context
+	cancel       context.CancelFunc
+	simulator    *Simulator
+	commandMu    sync.Mutex
+	books        *spot.BookManager
+	thesis       atomic.Pointer[types.Thesis]
+	executionsCh *runtime.Channel[kraken.ExecutionData]
 }
 
 /*
@@ -68,6 +70,20 @@ func (paper *Paper) SetThesis(thesis *types.Thesis) {
 	}
 
 	paper.thesis.Store(thesis)
+}
+
+/*
+SetBus attaches the system workspace bus and resolves the execution channel.
+*/
+func (paper *Paper) SetBus(bus *runtime.Workspace) {
+	if paper == nil || bus == nil {
+		return
+	}
+
+	paper.executionsCh = runtime.ChannelOf[kraken.ExecutionData](
+		bus, types.ChannelExecutions,
+		func(execution kraken.ExecutionData) string { return execution.Symbol },
+	)
 }
 
 /*
@@ -649,9 +665,9 @@ func (paper *Paper) publish(channel string, message any) {
 		}
 
 		for index := range execution.Data {
-			paper.thesis.Load().Symbol(execution.Data[index].Symbol).AppendExecution(
-				execution.Data[index],
-			)
+			if paper.executionsCh != nil {
+				paper.executionsCh.Publish(execution.Data[index])
+			}
 		}
 	case "balances", "add_order":
 		// Balances and order acks are consumed through the explicit REST

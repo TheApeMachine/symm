@@ -14,10 +14,9 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
-	"golang.org/x/sync/errgroup"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -48,8 +47,9 @@ type Solver struct {
 	pearls   *sync.Map
 	rows     *sync.Map
 	config   algorithm.PearlConfig
-	ui       *transport.MapReduce[*types.UIFrame]
-	work     *transport.Consumer[*types.Symbol]
+	ui       *runtime.Channel[*types.UIFrame]
+	causal   *runtime.Channel[types.CausalOutput]
+	work     *runtime.Subscription[types.ResonanceArtifact]
 }
 
 /*
@@ -60,7 +60,7 @@ Default layout (4-column row):
   - Col 2: Treatment (Resonance Task Prediction / Expected Return)
   - Col 3: Target (Realized Price Return)
 */
-func NewSolver(thesis *types.Thesis, price *broker.Price, ui *transport.MapReduce[*types.UIFrame], recorder *audit.Recorder, opts ...Option) *Solver {
+func NewSolver(thesis *types.Thesis, price *broker.Price, recorder *audit.Recorder, bus *runtime.Workspace, opts ...Option) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
 	defaultConfig := algorithm.PearlConfig{
 		Target:                  3,
@@ -78,15 +78,24 @@ func NewSolver(thesis *types.Thesis, price *broker.Price, ui *transport.MapReduc
 		pearls:   &sync.Map{},
 		rows:     &sync.Map{},
 		config:   defaultConfig,
-		ui:       ui,
 	}
 
 	for _, opt := range opts {
 		opt(solver)
 	}
 
-	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
-	thesis.Work(types.SourceCausal).Register(solver.work)
+	solver.ui = runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
+	solver.causal = runtime.ChannelOf[types.CausalOutput](
+		bus, types.ChannelCausal,
+		func(output types.CausalOutput) string { return output.Symbol },
+	)
+	solver.work = runtime.ChannelOf[types.ResonanceArtifact](
+		bus, types.ChannelResonance,
+		func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
+	).Subscribe(solver.Name(), solver.Step)
 
 	return solver
 }
@@ -98,102 +107,48 @@ func (solver *Solver) Name() string {
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-consume reads each symbol's resonance stream from the Resonance input MapReduce
-and pushes derived causal outputs to the Causal output MapReduce. A failed pass
-halts the system through the thesis failure handler.
+Step evaluates one symbol's resonance stream through Pearl's causal ladder. The
+transport workspace preserves order for this symbol while every other symbol's
+lane advances concurrently, so one slow causal read never fences the universe.
 */
-func (solver *Solver) consume() {
-	go func() {
-		defer func() {
-			solver.thesis.Fail(solver.err)
-		}()
-
-		group, ctx := errgroup.WithContext(solver.ctx)
-		group.SetLimit(types.ShardWorkers())
-
-		for symbolState := range solver.thesis.Work(types.SourceCausal).Drain(
-			solver.work, nil,
-		) {
-			select {
-			case <-ctx.Done():
-				solver.err = ctx.Err()
-				return
-			default:
-			}
-
-			if symbolState == nil {
-				continue
-			}
-
-			consumer := symbolState.ResonanceConsumers[types.ResonanceConsumerCausal]
-
-			if symbolState.Resonance.Length(consumer) == 0 {
-				continue
-			}
-
-			symbolState := symbolState
-			group.Go(func() error {
-				return solver.measure(solver.thesis, symbolState.Symbol)
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			solver.err = errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"causal: evaluation failed: "+err.Error(),
-				err,
-			))
-			return
-		}
-
-		solver.publish(solver.thesis)
-	}()
-}
-
-/*
-popResonanceManifold drains this symbol's resonance artifacts to the causal
-stage and hands back the most recent predictive manifold it finds.
-*/
-func (solver *Solver) popResonanceManifold(symbolState *types.Symbol) (*learning.ResonanceManifold, bool) {
-	var manifold *learning.ResonanceManifold
-
-	for stored := range symbolState.MarketResonance(
-		symbolState.ResonanceConsumers[types.ResonanceConsumerCausal],
-	) {
-		if coder, valid := stored.(*learning.ResonanceManifold); valid && coder != nil {
-			manifold = coder
-		}
+func (solver *Solver) Step(artifact types.ResonanceArtifact) error {
+	if solver == nil || solver.thesis == nil || artifact.Manifold == nil {
+		return nil
 	}
 
-	if manifold == nil {
-		return nil, false
+	output, measured, err := solver.measure(solver.thesis, artifact.Symbol, artifact.Manifold)
+	solver.err = err
+
+	if err != nil && solver.thesis != nil {
+		solver.thesis.Fail(err)
+
+		return err
 	}
 
-	return manifold, true
+	if measured {
+		solver.publish(solver.thesis, output)
+	}
+
+	return nil
 }
 
 func (solver *Solver) measure(
 	thesis *types.Thesis,
 	symbol string,
-) error {
+	coder *learning.ResonanceManifold,
+) (types.CausalOutput, bool, error) {
 	symbolValue, found := thesis.Symbols.Load(symbol)
 
 	if !found {
-		return nil
+		return types.CausalOutput{}, false, nil
 	}
 
 	symbolState := symbolValue.(*types.Symbol)
 
-	coder, ok := solver.popResonanceManifold(symbolState)
-
-	if !ok {
-		return nil
-	}
-
 	forecast, err := coder.RolloutTaskForecast(1)
 
 	if err != nil {
-		return errnie.Err(
+		return types.CausalOutput{}, false, errnie.Err(
 			errnie.UnprocessableContent,
 			"causal: resonance forecast failed: "+err.Error(),
 			err,
@@ -234,7 +189,7 @@ func (solver *Solver) measure(
 	}
 
 	if midpoint == 0 {
-		return nil
+		return types.CausalOutput{}, false, nil
 	}
 
 	row, rows, resolved, err := solver.observe(
@@ -246,11 +201,11 @@ func (solver *Solver) measure(
 	)
 
 	if err != nil {
-		return err
+		return types.CausalOutput{}, false, err
 	}
 
 	if !resolved {
-		return nil
+		return types.CausalOutput{}, false, nil
 	}
 
 	output, resolved, err := solver.getPearl(symbol).Measure(algorithm.PearlInput{
@@ -264,10 +219,10 @@ func (solver *Solver) measure(
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			solver.storeUnresolved(symbolState, tickerAt, rows, prediction)
-			return nil
+			return types.CausalOutput{}, false, nil
 		}
 
-		return errnie.Err(
+		return types.CausalOutput{}, false, errnie.Err(
 			errnie.UnprocessableContent,
 			"causal: pearl evaluation failed: "+err.Error(),
 			err,
@@ -276,13 +231,13 @@ func (solver *Solver) measure(
 
 	if !resolved {
 		solver.storeUnresolved(symbolState, tickerAt, rows, prediction)
-		return nil
+		return types.CausalOutput{}, false, nil
 	}
 
 	precision, err := solver.estimatePrecision(rows)
 
 	if err != nil {
-		return errnie.Err(
+		return types.CausalOutput{}, false, errnie.Err(
 			errnie.UnprocessableContent,
 			"causal: precision estimation failed: "+err.Error(),
 			err,
@@ -299,8 +254,11 @@ func (solver *Solver) measure(
 	causalOutput["treatmentLevel"] = prediction
 	solver.conditionOnManifold(thesis, causalOutput)
 
-	symbolState.Causal.PushLatest(causalOutput)
-	return nil
+	if solver.causal != nil {
+		solver.causal.Publish(types.CausalOutput{Symbol: symbolState.Symbol, Rows: causalOutput})
+	}
+
+	return types.CausalOutput{Symbol: symbolState.Symbol, Rows: causalOutput}, true, nil
 }
 
 func (solver *Solver) conditionOnManifold(thesis *types.Thesis, causalOutput map[string]any) {
@@ -345,15 +303,17 @@ func (solver *Solver) storeUnresolved(
 		return
 	}
 
-	symbolState.Causal.PushLatest(map[string]any{
-		"symbol":         symbolState.Symbol,
-		"at":             at,
-		"historyRows":    rows,
-		"identification": "unresolved",
-		"precision":      precision,
-		"samples":        len(rows),
-		"treatmentLevel": prediction,
-	})
+	if solver.causal != nil {
+		solver.causal.Publish(types.CausalOutput{Symbol: symbolState.Symbol, Rows: map[string]any{
+			"symbol":         symbolState.Symbol,
+			"at":             at,
+			"historyRows":    rows,
+			"identification": "unresolved",
+			"precision":      precision,
+			"samples":        len(rows),
+			"treatmentLevel": prediction,
+		}})
+	}
 }
 
 /*
@@ -392,44 +352,17 @@ func (solver *Solver) estimatePrecision(rows [][]float64) (float64, error) {
 /*
 publish emits one causal wire frame per symbol observed on this tick.
 */
-func (solver *Solver) publish(thesis *types.Thesis) {
+func (solver *Solver) publish(thesis *types.Thesis, output types.CausalOutput) {
 	if solver.ui == nil || thesis == nil {
 		return
 	}
 
-	rows := make([]map[string]any, 0)
-
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbol, symbolOK := key.(string)
-		symbolState, stateOK := value.(*types.Symbol)
-
-		if !symbolOK || symbol == "" || !stateOK || symbolState == nil {
-			return true
-		}
-
-		for causalMap := range symbolState.MarketCausal(
-			symbolState.CausalConsumers[types.CausalConsumerCausal],
-		) {
-			rows = append(rows, causalMap)
-		}
-
-		return true
+	solver.ui.Publish(&types.UIFrame{
+		Type: wire.FrameCausalFrame,
+		Value: &wire.CausalFrameT{
+			Rows: []*wire.CausalT{causalWire(output.Rows)},
+		},
 	})
-
-	if len(rows) > 0 {
-		encoded := make([]*wire.CausalT, 0, len(rows))
-
-		for _, row := range rows {
-			encoded = append(encoded, causalWire(row))
-		}
-
-		solver.thesis.Publish(&wire.FrameT{
-			Type: wire.FrameCausalFrame,
-			Value: &wire.CausalFrameT{
-				Rows: encoded,
-			},
-		})
-	}
 }
 
 /*

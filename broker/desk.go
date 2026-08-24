@@ -7,17 +7,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/system"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -33,7 +33,7 @@ type Desk struct {
 	err            error
 	status         types.Status
 	api            *websocket.API
-	ui             *transport.MapReduce[*types.UIFrame]
+	ui             *runtime.Channel[*types.UIFrame]
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -43,7 +43,8 @@ type Desk struct {
 	recovery       *Recovery
 	positions      *sync.Map
 	passage        *types.PassageModel
-	work           *transport.Consumer[*types.Symbol]
+	tickerWork     *runtime.Subscription[kraken.TickerData]
+	executionWork  *runtime.Subscription[kraken.ExecutionData]
 	balanceRefresh atomic.Bool
 	executeMu      sync.Mutex
 	maxPositions   int
@@ -81,7 +82,7 @@ func NewDesk(
 	equityObserver EquityObserver,
 	recorder *audit.Recorder,
 	store *PositionStore,
-	ui *transport.MapReduce[*types.UIFrame],
+	bus *runtime.Workspace,
 ) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -93,7 +94,6 @@ func NewDesk(
 		cancel:         cancel,
 		status:         types.READY,
 		api:            api,
-		ui:             ui,
 		instrument:     instrument,
 		price:          price,
 		balance:        balance,
@@ -107,11 +107,21 @@ func NewDesk(
 		maxReserved:    viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
-	desk.recovery = NewRecovery(
-		ctx, api, ui, instrument, price, balance, recorder, store, desk.positions,
+	desk.ui = runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
 	)
-	desk.work = transport.NewConsumer[*types.Symbol](desk.Name(), desk.consume)
-	thesis.Work(types.SourceDesk).Register(desk.work)
+	desk.recovery = NewRecovery(
+		ctx, api, desk.ui, instrument, price, balance, recorder, store, desk.positions,
+	)
+	desk.tickerWork = runtime.ChannelOf[kraken.TickerData](
+		bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
+	).Subscribe(desk.Name(), desk.StepTicker)
+	desk.executionWork = runtime.ChannelOf[kraken.ExecutionData](
+		bus, types.ChannelExecutions,
+		func(execution kraken.ExecutionData) string { return execution.Symbol },
+	).Subscribe(desk.Name(), desk.StepExecution)
 
 	if err := desk.recovery.Recover(); err != nil {
 		desk.status = types.ERROR
@@ -140,118 +150,61 @@ func (desk *Desk) Cash() *decimal.Decimal {
 	return desk.balance.Cash()
 }
 
-func (desk *Desk) consume() {
-	go func() {
-		defer func() {
-			desk.thesis.Fail(desk.err)
-		}()
+// StepTicker advances one ticker observation: the price cache and any open
+// position's live mark.
+func (desk *Desk) StepTicker(ticker kraken.TickerData) error {
+	desk.price.Update(&ticker)
+	found, ok := desk.positions.Load(ticker.Symbol)
 
-		group, ctx := errgroup.WithContext(desk.ctx)
-		group.SetLimit(types.ShardWorkers())
-
-		for symbol := range desk.thesis.Work(types.SourceDesk).Drain(desk.work, nil) {
-			select {
-			case <-ctx.Done():
-				desk.err = ctx.Err()
-				return
-			default:
-			}
-
-			if symbol == nil {
-				continue
-			}
-
-			symbol := symbol
-			group.Go(func() error {
-				return desk.consumeSymbol(symbol)
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			desk.err = errnie.Error(err)
-		}
-	}()
-}
-
-func (desk *Desk) consumeSymbol(symbol *types.Symbol) error {
-	drained := false
-
-	for ticker := range symbol.MarketTickers(
-		symbol.TickerConsumers[types.TickerConsumerDesk],
-	) {
-		drained = true
-		desk.price.Update(&ticker)
-		found, ok := desk.positions.Load(symbol.Symbol)
-
-		if ok && found != nil {
-			position, ok := found.(*Position)
-
-			if ok && position != nil {
-				position.onTicker(ticker)
-
-				if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
-					err := observer.ObserveMark(position.MarkFeedback(ticker.Timestamp))
-
-					if err != nil {
-						return errnie.Error(err)
-					}
-				}
-			}
-		}
-	}
-
-	for execution := range symbol.MarketExecutions(
-		symbol.ExecutionConsumers[types.ExecutionConsumerDesk],
-	) {
-		drained = true
-		found, ok := desk.positions.Load(symbol.Symbol)
-
-		if !ok || found == nil {
-			continue
-		}
-
-		position, ok := found.(*Position)
-
-		if !ok || position == nil {
-			continue
-		}
-
-		if position.onExecution(kraken.Execution{
-			Channel: "executions",
-			Type:    "update",
-			Data:    []kraken.ExecutionData{execution},
-		}) {
-			desk.foldPassage(position)
-			desk.positions.CompareAndDelete(symbol.Symbol, position)
-		}
-	}
-
-	if !drained {
+	if !ok || found == nil {
 		return nil
 	}
 
-	if desk.balanceRefresh.CompareAndSwap(false, true) {
-		go func() {
-			defer desk.balanceRefresh.Store(false)
-			desk.balance.Update()
-			err := desk.PublishEquity()
+	position, ok := found.(*Position)
 
-			if err != nil {
-				desk.err = errnie.Error(err)
-				desk.thesis.Fail(desk.err)
-			}
-		}()
+	if !ok || position == nil {
+		return nil
+	}
+
+	position.onTicker(ticker)
+
+	if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
+		return errnie.Error(observer.ObserveMark(position.MarkFeedback(ticker.Timestamp)))
+	}
+
+	return nil
+}
+
+// StepExecution advances one execution against the symbol's open position.
+func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
+	found, ok := desk.positions.Load(execution.Symbol)
+
+	if !ok || found == nil {
+		return nil
+	}
+
+	position, ok := found.(*Position)
+
+	if !ok || position == nil {
+		return nil
+	}
+
+	if position.onExecution(kraken.Execution{
+		Channel: "executions",
+		Type:    "update",
+		Data:    []kraken.ExecutionData{execution},
+	}) {
+		desk.foldPassage(position)
+		desk.positions.CompareAndDelete(execution.Symbol, position)
 	}
 
 	return nil
 }
 
 /*
-Status reports desk readiness.
-*/
-func (desk *Desk) Status() types.Status {
-	return desk.status
-}
+	func (desk *Desk) Status() types.Status {
+		return desk.status
+	}
 
 /*
 Price exposes the desk's price surface so the market data path can keep it
@@ -405,14 +358,16 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
-	desk.thesis.Publish(&wire.FrameT{
-		Type: wire.FrameEquityFrame,
-		Value: &wire.EquityFrameT{
-			Cash:       desk.balance.Cash().String(),
-			Unrealized: tradeBalance.UnrealizedPnL.String(),
-			Equity:     tradeBalance.Equity.String(),
-		},
-	})
+	if desk.ui != nil {
+		desk.ui.Publish(&types.UIFrame{
+			Type: wire.FrameEquityFrame,
+			Value: &wire.EquityFrameT{
+				Cash:       desk.balance.Cash().String(),
+				Unrealized: tradeBalance.UnrealizedPnL.String(),
+				Equity:     tradeBalance.Equity.String(),
+			},
+		})
+	}
 
 	return nil
 }
@@ -669,7 +624,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			return err
 		}
 
-		desk.thesis.Symbol(decision.Symbol).Positions.Push(position)
 	}
 
 	return errnie.Error(err)

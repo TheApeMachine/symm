@@ -4,11 +4,10 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -31,16 +30,16 @@ func depthflowPipeline() nmtypes.Primitive {
 }
 
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	thesis *types.Thesis
-	number *nomagique.Number[string]
-	work   *transport.Consumer[*types.Symbol]
-	pool   *types.SymbolPool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	thesis       *types.Thesis
+	number       *nomagique.Number[string]
+	measurements *runtime.Channel[*nmtypes.Measurement]
+	pool         *types.SymbolPool
 }
 
-func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis, bus *runtime.Workspace) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -50,8 +49,14 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[string](depthflowPipeline()),
 		pool:   types.NewSymbolPool(types.ShardWorkers()),
 	}
-	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
-	thesis.Work(types.SourceDepthFlow).Register(signal.work)
+	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	)
+	runtime.ChannelOf[kraken.Level3Data](
+		bus, types.ChannelLevel3,
+		func(frame kraken.Level3Data) string { return frame.Symbol },
+	).Subscribe(signal.Name(), signal.Step)
 
 	return signal
 }
@@ -60,100 +65,60 @@ func (signal *Signal) Name() string           { return string(types.SourceDepthF
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceDepthFlow }
 
-func (signal *Signal) consume() {
-	go func() {
-		defer func() {
-			if err := signal.pool.Error(); err != nil {
-				signal.err = err
-			}
+// Step processes one ready symbol cut. The transport workspace preserves
+// order for this symbol while allowing every other symbol to advance.
+func (signal *Signal) Step(frame kraken.Level3Data) error {
+	touchBid, touchAsk := frameTouch(frame)
+	deepBid, deepAsk := frameDeep(frame)
 
-			signal.thesis.Fail(signal.err)
-		}()
+	input := nmtypes.Frame{}
+	input.Put(algo.SymbolTouchBidQty, touchBid)
+	input.Put(algo.SymbolTouchAskQty, touchAsk)
+	input.Put(algo.SymbolDeepBidQty, deepBid)
+	input.Put(algo.SymbolDeepAskQty, deepAsk)
+	input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
+	input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
 
-		for symbol := range signal.thesis.Work(types.SourceDepthFlow).Drain(signal.work, nil) {
-			select {
-			case <-signal.ctx.Done():
-				signal.pool.CaptureError(signal.ctx.Err())
-				return
-			default:
-			}
+	output, err := signal.number.Step(frame.Symbol, input)
 
-			if symbol == nil {
-				continue
-			}
-
-			symbolName := symbol.Symbol
-
-			signal.pool.Submit(symbolName, func() {
-				if err := signal.consumeSymbol(symbol); err != nil {
-					signal.pool.CaptureError(errnie.Error(errnie.Err(
-						errnie.Validation,
-						"depthflow: failed for "+symbolName,
-						err,
-					)))
-				}
-			})
-		}
-	}()
-}
-
-func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
-	for frame := range symbol.MarketLevel3(
-		symbol.Level3Consumers[types.Level3ConsumerDepthFlow],
-	) {
-		touchBid, touchAsk := frameTouch(frame)
-		deepBid, deepAsk := frameDeep(frame)
-
-		input := nmtypes.Frame{}
-		input.Put(algo.SymbolTouchBidQty, touchBid)
-		input.Put(algo.SymbolTouchAskQty, touchAsk)
-		input.Put(algo.SymbolDeepBidQty, deepBid)
-		input.Put(algo.SymbolDeepAskQty, deepAsk)
-		input.Put(nmtypes.EventTimeSec, float64(frame.Timestamp.Unix()))
-		input.Put(nmtypes.EventTimeNsec, float64(frame.Timestamp.Nanosecond()))
-
-		output, err := signal.number.Step(symbol.Symbol, input)
-
-		if err != nil {
-			return err
-		}
-
-		measurement := nmtypes.NewMeasurement(
-			uuid.NewString(),
-			signal.Name(),
-			frame.Timestamp.UnixNano(),
-			frame.Timestamp.UnixNano(),
-		).AddMetrics(
-			nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitDimensionless,
-				Timescale: nmtypes.TimescaleInstantaneous,
-			}),
-			nmtypes.NewMetric("deep_imbalance", output.MustGet(SymbolDeepImbalance), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitDimensionless,
-				Timescale: nmtypes.TimescaleInstantaneous,
-			}),
-			nmtypes.NewNormalizedMetric("spoof_score", output.MustGet(SymbolSpoofScore), output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitDimensionless,
-				Timescale: nmtypes.TimescaleInstantaneous,
-			}),
-			nmtypes.NewNormalizedMetric("loaded_score", output.MustGet(SymbolLoadedScore), output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitDimensionless,
-				Timescale: nmtypes.TimescaleInstantaneous,
-			}),
-			nmtypes.NewNormalizedMetric("thin_score", output.MustGet(SymbolThinScore), output.MustGet(SymbolThinScore), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitDimensionless,
-				Timescale: nmtypes.TimescaleInstantaneous,
-			}),
-		)
-
-		measurement.StampQuality(
-			output.MustGet(SymbolSeparation),
-			output.MustGet(nmtypes.SampleCount),
-		)
-
-		symbol.AppendMeasurement(measurement)
+	if err != nil {
+		return err
 	}
 
+	measurement := nmtypes.NewMeasurement(
+		uuid.NewString(),
+		signal.Name(),
+		frame.Timestamp.UnixNano(),
+		frame.Timestamp.UnixNano(),
+	).AddMetrics(
+		nmtypes.NewMetric("touch_imbalance", output.MustGet(SymbolTouchImbalance), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+		nmtypes.NewMetric("deep_imbalance", output.MustGet(SymbolDeepImbalance), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+		nmtypes.NewNormalizedMetric("spoof_score", output.MustGet(SymbolSpoofScore), output.MustGet(SymbolSpoofScore), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+		nmtypes.NewNormalizedMetric("loaded_score", output.MustGet(SymbolLoadedScore), output.MustGet(SymbolLoadedScore), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+		nmtypes.NewNormalizedMetric("thin_score", output.MustGet(SymbolThinScore), output.MustGet(SymbolThinScore), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+	)
+
+	measurement.StampQuality(
+		output.MustGet(SymbolSeparation),
+		output.MustGet(nmtypes.SampleCount),
+	)
+
+	signal.measurements.Publish(measurement)
 	return nil
 }
 

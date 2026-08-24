@@ -2,15 +2,13 @@ package category
 
 import (
 	"context"
-	"iter"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
 	"slices"
+	"sync"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -21,17 +19,27 @@ tick. A category is a hypothesis about what the market is doing, and each
 metric that carries affinity is typed evidence for or against it.
 */
 type Solver struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	err        error
-	thesis     *types.Thesis
-	classifier *probability.Classifier
-	categories []types.CategoryType
-	api        *websocket.API
-	recorder   *audit.Recorder
-	ui         *transport.MapReduce[*types.UIFrame]
-	work       *transport.Consumer[*types.Symbol]
-	pool       *types.SymbolPool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	thesis       *types.Thesis
+	classifier   *probability.Classifier
+	categories   []types.CategoryType
+	recorder     *audit.Recorder
+	categoriesCh *runtime.Channel[[]types.Category]
+	states       sync.Map
+}
+
+/*
+categoryState accumulates one symbol's category evidence between measurement
+arrivals. Evidence is bounded per category so a hot symbol cannot grow
+unbounded state; the freshest window drives the latest category reading.
+*/
+type categoryState struct {
+	evidence    map[types.CategoryType][]float64
+	supporting  map[types.CategoryType][]string
+	maturity    map[types.CategoryType]float64
+	maturitySet map[types.CategoryType]bool
 }
 
 /*
@@ -40,9 +48,8 @@ NewSolver creates a new Solver for the category logic.
 func NewSolver(
 	ctx context.Context,
 	thesis *types.Thesis,
-	api *websocket.API,
-	ui *transport.MapReduce[*types.UIFrame],
 	recorder *audit.Recorder,
+	bus *runtime.Workspace,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -66,14 +73,22 @@ func NewSolver(
 			probability.ClassifierSchema{Categories: categoryNames},
 		),
 		categories: categories,
-		api:        api,
 		recorder:   recorder,
-		ui:         ui,
-		pool:       types.NewSymbolPool(types.ShardWorkers()),
 	}
-	
-	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
-	thesis.Work(types.SourceCategory).Register(solver.work)
+
+	solver.categoriesCh = runtime.ChannelOf[[]types.Category](
+		bus, types.ChannelCategories,
+		func(batch []types.Category) string {
+			if len(batch) == 0 {
+				return ""
+			}
+			return batch[0].Symbol
+		},
+	)
+	runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	).Subscribe(solver.Name(), solver.Step)
 
 	return solver
 }
@@ -91,62 +106,24 @@ output MapReduce the downstream cognition and graph solvers consume. The
 category stage never re-materializes the iterator; each measurement batch is
 classified and forwarded inline.
 */
-func (solver *Solver) consume() {
-	go func() {
-		defer func() {
-			if err := solver.pool.Error(); err != nil {
-				solver.err = err
-			}
-
-			solver.thesis.Fail(solver.err)
-		}()
-
-		for symbol := range solver.thesis.Work(types.SourceCategory).Drain(
-			solver.work, nil,
-		) {
-			select {
-			case <-solver.ctx.Done():
-				solver.pool.CaptureError(solver.ctx.Err())
-				return
-			default:
-			}
-
-			if symbol == nil {
-				continue
-			}
-
-			symbolName := symbol.Symbol
-
-			solver.pool.Submit(symbolName, func() {
-				if err := solver.consumeSymbol(symbol); err != nil {
-					solver.pool.CaptureError(errnie.Error(errnie.Err(
-						errnie.Internal,
-						"category: failed to classify symbol",
-						err,
-					).With("symbol", symbolName)))
-				}
-			})
-		}
-	}()
-}
-
-func (solver *Solver) consumeSymbol(symbol *types.Symbol) error {
-	consumer := symbol.MeasurementConsumers[types.MeasurementConsumerCategory]
-
-	if symbol.Measurements.Length(consumer) == 0 {
+// Step folds one measurement into the symbol's category evidence and
+// publishes the freshest category reading downstream.
+func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
+	if measurement == nil || measurement.Symbol == "" {
 		return nil
 	}
 
-	categories, measured, err := solver.classify(
-		symbol.Symbol,
-		symbol.MarketMeasurements(consumer),
-	)
+	state := solver.symbolState(measurement.Symbol)
+	solver.accumulate(state, measurement)
+
+	categories, measured, err := solver.classify(measurement.Symbol, state)
 
 	if err != nil {
+		solver.err = err
 		return err
 	}
 
-	if !measured {
+	if !measured || solver.categoriesCh == nil {
 		return nil
 	}
 
@@ -154,55 +131,63 @@ func (solver *Solver) consumeSymbol(symbol *types.Symbol) error {
 		categories[index].At = solver.thesis.At
 	}
 
-	symbol.Categories.PushLatest(categories)
+	solver.categoriesCh.Publish(categories)
 
 	return nil
 }
 
+func (solver *Solver) symbolState(symbol string) *categoryState {
+	loaded, _ := solver.states.LoadOrStore(symbol, &categoryState{
+		evidence:    make(map[types.CategoryType][]float64, len(solver.categories)),
+		supporting:  make(map[types.CategoryType][]string, len(solver.categories)),
+		maturity:    make(map[types.CategoryType]float64, len(solver.categories)),
+		maturitySet: make(map[types.CategoryType]bool, len(solver.categories)),
+	})
+
+	return loaded.(*categoryState)
+}
+
+func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Measurement) {
+	for _, schema := range types.CategorySchemas {
+		if string(schema.Source) != measurement.Source {
+			continue
+		}
+
+		metricKey := types.MetricKey(schema.Metric, schema.Side)
+		sample, exists := measurement.Metrics[metricKey]
+
+		if !exists || sample.Normalized == nil || *sample.Normalized <= 0 {
+			continue
+		}
+
+		state.evidence[schema.Category] = append(
+			state.evidence[schema.Category], *sample.Normalized,
+		)
+
+		state.supporting[schema.Category] = append(
+			state.supporting[schema.Category], string(schema.Source)+":"+metricKey,
+		)
+
+		if !state.maturitySet[schema.Category] {
+			state.maturity[schema.Category] = measurement.Maturity
+			state.maturitySet[schema.Category] = true
+			continue
+		}
+
+		state.maturity[schema.Category] = min(
+			state.maturity[schema.Category], measurement.Maturity,
+		)
+	}
+}
+
 func (solver *Solver) classify(
 	symbol string,
-	measurements iter.Seq[*nmtypes.Measurement],
+	state *categoryState,
 ) ([]types.Category, bool, error) {
-	evidence := make(map[types.CategoryType][]float64, len(solver.categories))
-	supporting := make(map[types.CategoryType][]string, len(solver.categories))
-	maturity := make(map[types.CategoryType]float64, len(solver.categories))
-	maturitySet := make(map[types.CategoryType]bool, len(solver.categories))
-	measured := false
-
-	for measurement := range measurements {
-		measured = true
-
-		for _, schema := range types.CategorySchemas {
-			if string(schema.Source) != measurement.Source {
-				continue
-			}
-
-			metricKey := types.MetricKey(schema.Metric, schema.Side)
-			sample, exists := measurement.Metrics[metricKey]
-
-			if !exists || sample.Normalized == nil || *sample.Normalized <= 0 {
-				continue
-			}
-
-			evidence[schema.Category] = append(
-				evidence[schema.Category], *sample.Normalized,
-			)
-
-			supporting[schema.Category] = append(
-				supporting[schema.Category], string(schema.Source)+":"+metricKey,
-			)
-
-			if !maturitySet[schema.Category] {
-				maturity[schema.Category] = measurement.Maturity
-				maturitySet[schema.Category] = true
-				continue
-			}
-
-			maturity[schema.Category] = min(
-				maturity[schema.Category], measurement.Maturity,
-			)
-		}
-	}
+	evidence := state.evidence
+	supporting := state.supporting
+	maturity := state.maturity
+	measured := len(evidence) > 0
 
 	if !measured {
 		return nil, false, nil
@@ -303,10 +288,6 @@ resources of their own.
 */
 func (solver *Solver) Close() error {
 	solver.cancel()
-
-	if solver.pool != nil {
-		solver.pool.Close()
-	}
 
 	return nil
 }

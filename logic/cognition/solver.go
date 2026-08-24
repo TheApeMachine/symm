@@ -13,7 +13,7 @@ import (
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -81,8 +81,8 @@ type Solver struct {
 	maxSeqLen      int
 	surprisalLimit float64
 	tickCounter    uint64
-	ui             *transport.MapReduce[*types.UIFrame]
-	work           *transport.Consumer[*types.Symbol]
+	ui             *runtime.Channel[*types.UIFrame]
+	cognition      *runtime.Channel[types.Cognition]
 
 	// Beam search shape. Held as fields rather than call-site constants so the
 	// lookahead can be tuned without also reshaping what Cortex draws — the two
@@ -141,8 +141,8 @@ func NewSolver(
 	ctx context.Context,
 	thesis *types.Thesis,
 	tree *dmt.Tree,
-	ui *transport.MapReduce[*types.UIFrame],
 	recorder *audit.Recorder,
+	bus *runtime.Workspace,
 	opts ...Option,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
@@ -160,7 +160,6 @@ func NewSolver(
 		branchesStamp:  make(map[string]uint64),
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
 		surprisalLimit: 3.5, // > 3.5 bits surprisal (P < 8.8%) indicates a regime break
-		ui:             ui,
 		beamWidth:      3,
 		maxHops:        2,
 		branchWidth:    4,
@@ -177,8 +176,23 @@ func NewSolver(
 		opt(solver)
 	}
 
-	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
-	thesis.Work(types.SourceCognition).Register(solver.work)
+	solver.ui = runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
+	solver.cognition = runtime.ChannelOf[types.Cognition](
+		bus, types.ChannelCognition,
+		func(reading types.Cognition) string { return reading.Symbol },
+	)
+	runtime.ChannelOf[[]types.Category](
+		bus, types.ChannelCategories,
+		func(batch []types.Category) string {
+			if len(batch) == 0 {
+				return ""
+			}
+			return batch[0].Symbol
+		},
+	).Subscribe(solver.Name(), solver.Step)
 
 	return solver
 }
@@ -189,61 +203,32 @@ func (solver *Solver) Name() string {
 
 func (solver *Solver) Error() error { return solver.err }
 
-/*
-consume reads each symbol's category stream from the Categories input MapReduce
-and pushes the derived cognition readings to the Cognition output MapReduce.
-Each category batch is classified and forwarded inline as a stream; the batch
-is never materialized into a longer-lived slice.
-*/
-func (solver *Solver) consume() {
-	go func() {
-		defer func() {
-			solver.thesis.Fail(solver.err)
-		}()
+// Step folds one category batch into the symbol's cognition state machine and
+// publishes the freshest reading downstream.
+func (solver *Solver) Step(categories []types.Category) error {
+	if len(categories) == 0 {
+		return nil
+	}
 
-		for symbolState := range solver.thesis.Work(types.SourceCognition).Drain(
-			solver.work, nil,
-		) {
-			select {
-			case <-solver.ctx.Done():
-				solver.err = solver.ctx.Err()
-				return
-			default:
-			}
+	config := system.Cfg.Snapshot()
+	switchThreshold := config.Planner.MinimumConfidence
+	rows := make(map[string]types.Cognition, 1)
 
-			if symbolState == nil {
-				continue
-			}
+	if err := solver.processBatch(
+		categories[0].Symbol,
+		categories,
+		switchThreshold,
+		rows,
+	); err != nil {
+		solver.err = errnie.Error(err)
+		return err
+	}
 
-			consumer := symbolState.CategoryConsumers[types.CategoryConsumerCognition]
+	if len(rows) > 0 {
+		solver.publish(rows)
+	}
 
-			if symbolState.Categories.Length(consumer) == 0 {
-				continue
-			}
-
-			config := system.Cfg.Snapshot()
-			switchThreshold := config.Planner.MinimumConfidence
-			rows := make(map[string]types.Cognition)
-
-			for batch := range symbolState.MarketCategories(consumer) {
-				if len(batch) == 0 {
-					continue
-				}
-
-				if err := solver.processBatch(
-					symbolState.Symbol,
-					batch,
-					switchThreshold,
-					rows,
-				); err != nil {
-					solver.err = errnie.Error(err)
-					return
-				}
-			}
-
-			solver.publish(rows)
-		}
-	}()
+	return nil
 }
 
 /*
@@ -501,7 +486,10 @@ func (solver *Solver) processBatch(
 	}
 
 	solver.readings[symbol] = cognition
-	symbolState.(*types.Symbol).Cognition.PushLatest(cognition)
+	if solver.cognition != nil {
+		solver.cognition.Publish(cognition)
+	}
+
 	rows[symbol] = cognition
 	return nil
 }
@@ -1046,12 +1034,14 @@ func (solver *Solver) publish(rows map[string]types.Cognition) {
 		encoded = append(encoded, cognitionWire(row))
 	}
 
-	solver.thesis.Publish(&wire.FrameT{
-		Type: wire.FrameCognitionFrame,
-		Value: &wire.CognitionFrameT{
-			Rows: encoded,
-		},
-	})
+	if solver.ui != nil {
+		solver.ui.Publish(&types.UIFrame{
+			Type: wire.FrameCognitionFrame,
+			Value: &wire.CognitionFrameT{
+				Rows: encoded,
+			},
+		})
+	}
 }
 
 /*

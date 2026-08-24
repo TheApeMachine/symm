@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
+	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -231,6 +234,7 @@ type QueueSnapshot struct {
 	Cap       uint64   `json:"cap"`
 	HighWater uint64   `json:"high_water"`
 	Symbols   uint64   `json:"symbols"`
+	Dropped   uint64   `json:"dropped"`
 }
 
 /*
@@ -473,17 +477,39 @@ func (crypto *Crypto) bindDiagnostics() {
 		crypto.api.SetObserver(crypto.diagnostics.applyModule)
 	}
 
-	if crypto.thesis != nil {
-		for _, source := range types.WorkerSources {
-			if source == types.SourcePlanner {
-				continue
-			}
-
-			crypto.thesis.Work(source).SetObserver(
-				crypto.diagnostics.beginModule,
-				crypto.diagnostics.completeModule,
-			)
-		}
+	if crypto.bus != nil {
+		observeChannel(crypto.bus, types.ChannelTickers,
+			func(ticker kraken.TickerData) string { return ticker.Symbol },
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+		observeChannel(crypto.bus, types.ChannelTrades,
+			func(trade kraken.TradeData) string { return trade.Symbol },
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+		observeChannel(crypto.bus, types.ChannelLevel3,
+			func(frame kraken.Level3Data) string { return frame.Symbol },
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+		observeChannel(crypto.bus, types.ChannelMeasurements,
+			func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+		observeChannel(crypto.bus, types.ChannelCategories,
+			func(batch []types.Category) string {
+				if len(batch) == 0 {
+					return ""
+				}
+				return batch[0].Symbol
+			},
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+		observeChannel(crypto.bus, types.ChannelResonance,
+			func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+		observeChannel(crypto.bus, types.ChannelCausal,
+			func(output types.CausalOutput) string { return output.Symbol },
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+		observeChannel(crypto.bus, types.ChannelCognition,
+			func(reading types.Cognition) string { return reading.Symbol },
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+		observeChannel(crypto.bus, types.ChannelGraphs,
+			func(graph *types.Graph) string { return graph.Symbol },
+			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
 	}
 
 	if crypto.diagnostics.interval <= 0 {
@@ -541,150 +567,118 @@ per-ticker count. The writer/reader lists are static pipeline knowledge; the
 depth values are read live on every heartbeat.
 */
 func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
-	if crypto == nil || crypto.thesis == nil {
+	if crypto == nil || crypto.bus == nil {
 		return []QueueSnapshot{}
 	}
 
-	// Aggregate every per-symbol stage buffer depth once per heartbeat.
-	perSymbol := make(map[string]uint64)
-	symbolCount := make(map[string]uint64)
+	tickers := channelSnapshot(crypto.bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return ticker.Symbol })
+	trades := channelSnapshot(crypto.bus, types.ChannelTrades,
+		func(trade kraken.TradeData) string { return trade.Symbol })
+	level3 := channelSnapshot(crypto.bus, types.ChannelLevel3,
+		func(frame kraken.Level3Data) string { return frame.Symbol })
+	measurements := channelSnapshot(crypto.bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol })
+	categories := channelSnapshot(crypto.bus, types.ChannelCategories,
+		func(batch []types.Category) string {
+			if len(batch) == 0 {
+				return ""
+			}
+			return batch[0].Symbol
+		})
+	resonance := channelSnapshot(crypto.bus, types.ChannelResonance,
+		func(artifact types.ResonanceArtifact) string { return artifact.Symbol })
+	causal := channelSnapshot(crypto.bus, types.ChannelCausal,
+		func(output types.CausalOutput) string { return output.Symbol })
+	cognition := channelSnapshot(crypto.bus, types.ChannelCognition,
+		func(reading types.Cognition) string { return reading.Symbol })
+	graphs := channelSnapshot(crypto.bus, types.ChannelGraphs,
+		func(graph *types.Graph) string { return graph.Symbol })
+	ui := channelSnapshot(crypto.bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" })
+	fluid := channelSnapshot(crypto.bus, types.ChannelFluid,
+		func(frame types.FluidFrame) string { return "" })
 
-	crypto.thesis.Symbols.Range(func(_ any, value any) bool {
-		symbol, ok := value.(*types.Symbol)
-
-		if !ok || symbol == nil {
-			return true
-		}
-
-		for key, depth := range symbol.QueueDepths() {
-			symbolCount[key]++
-			perSymbol[key] += depth
-		}
-
-		return true
-	})
-
-	collect := func(name string, kind string, writers []string, readers []string, key string) QueueSnapshot {
-		depth := perSymbol[key]
+	collect := func(name string, kind string, writers []string, readers []string, snapshot nomagiqueruntime.WorkspaceSnapshot) QueueSnapshot {
 		return QueueSnapshot{
 			Name:      name,
 			Kind:      kind,
 			Writers:   writers,
 			Readers:   readers,
-			Depth:     depth,
-			Cap:       0, // per-symbol stage buffers are unbounded
-			HighWater: crypto.diagnostics.highWater(name, depth),
-			Symbols:   symbolCount[key],
+			Depth:     snapshot.Pending,
+			Cap:       snapshot.Capacity,
+			HighWater: crypto.diagnostics.highWater(name, snapshot.Pending),
+			Symbols:   snapshot.Lanes,
+			Dropped:   snapshot.Dropped,
 		}
 	}
-
-	// Shared transport depths are not per-symbol, so they are read directly.
-	var uiDashDepth uint64
-	var uiManifoldDepth uint64
-
-	if crypto.ui != nil {
-		uiDashDepth = crypto.ui.Length()
-	}
-
-	if crypto.manifold != nil {
-		uiManifoldDepth = crypto.manifold.Length()
-	}
-
-	// Broker queue buffers are unbounded per-symbol stage buffers, so their cap
-	// is reported as zero; the depth values are the aggregated symbol queues.
-	var tickerDepth uint64 = perSymbol["tickers"]
-	var executionsDepth uint64 = perSymbol["executions"]
 
 	return []QueueSnapshot{
 		collect(
 			"ingress.tickers", "ingress", []string{"ingress"},
-			[]string{"correlation", "cvd", "leadlag", "liquidity", "pumpdump", "sentiment"},
-			"tickers",
+			[]string{"correlation", "leadlag", "liquidity", "pumpdump", "sentiment", "resonance", "desk"},
+			tickers,
 		),
 		collect(
 			"ingress.trades", "ingress", []string{"ingress"},
-			[]string{"cvd", "depthflow", "exhaustion", "hawkes", "pumpdump", "toxicity"},
-			"trades",
+			[]string{"cvd", "exhaustion", "hawkes", "pumpdump"},
+			trades,
 		),
 		collect(
 			"ingress.level3", "ingress", []string{"ingress"},
-			[]string{"toxicity", "pumpdump"},
-			"level3",
+			[]string{"depthflow", "toxicity", "pumpdump"},
+			level3,
 		),
 		collect(
 			"measurements", "rail",
 			[]string{"correlation", "cvd", "depthflow", "exhaustion", "hawkes", "leadlag", "liquidity", "pumpdump", "sentiment", "toxicity"},
 			[]string{"category", "manifold", "graph"},
-			"measurements",
+			measurements,
 		),
 		collect(
 			"derived.category", "derived", []string{"category"},
 			[]string{"graph", "cognition"},
-			"categories",
+			categories,
 		),
 		collect(
 			"derived.causal", "derived", []string{"causal"},
-			[]string{"graph", "causal"},
-			"causal",
+			[]string{"graph"},
+			causal,
 		),
 		collect(
 			"derived.cognition", "derived", []string{"cognition"},
 			[]string{"graph"},
-			"cognition",
+			cognition,
 		),
 		collect(
 			"derived.graph", "derived", []string{"graph"},
-			[]string{"planner", "graph"},
-			"graphs",
+			[]string{"planner"},
+			graphs,
 		),
 		collect(
 			"derived.resonance", "derived", []string{"resonance"},
 			[]string{"causal", "graph"},
-			"resonance",
-		),
-		collect(
-			"decisions", "strategy", []string{"planner"},
-			[]string{"audit"},
-			"decisions",
-		),
-		collect(
-			"positions", "strategy", []string{"desk"},
-			[]string{"audit"},
-			"positions",
+			resonance,
 		),
 		{
 			Name:      "ui.dashboard",
 			Kind:      "ui",
-			Writers:   []string{"category", "manifold", "causal", "cognition", "graph", "resonance", "planner", "desk"},
+			Writers:   []string{"ingress", "category", "manifold", "causal", "cognition", "graph", "resonance", "planner", "desk"},
 			Readers:   []string{"hub"},
-			Depth:     uiDashDepth,
-			Cap:       0,
-			HighWater: crypto.diagnostics.highWater("ui.dashboard", uiDashDepth),
+			Depth:     ui.Pending,
+			Cap:       ui.Capacity,
+			HighWater: crypto.diagnostics.highWater("ui.dashboard", ui.Pending),
+			Dropped:   ui.Dropped,
 		},
 		{
 			Name:      "ui.manifold",
 			Kind:      "ui",
-			Writers:   []string{"manifold", "resonance", "diagnostics"},
+			Writers:   []string{"manifold", "diagnostics"},
 			Readers:   []string{"webrtc-hub"},
-			Depth:     uiManifoldDepth,
-			Cap:       0,
-			HighWater: crypto.diagnostics.highWater("ui.manifold", uiManifoldDepth),
-		},
-		{
-			Name:      "desk.ticker",
-			Kind:      "broker",
-			Writers:   []string{"websocket-api"},
-			Readers:   []string{"desk"},
-			Depth:     tickerDepth,
-			HighWater: crypto.diagnostics.highWater("desk.ticker", tickerDepth),
-		},
-		{
-			Name:      "desk.executions",
-			Kind:      "broker",
-			Writers:   []string{"websocket-api"},
-			Readers:   []string{"desk"},
-			Depth:     executionsDepth,
-			HighWater: crypto.diagnostics.highWater("desk.executions", executionsDepth),
+			Depth:     fluid.Pending,
+			Cap:       fluid.Capacity,
+			HighWater: crypto.diagnostics.highWater("ui.manifold", fluid.Pending),
+			Dropped:   fluid.Dropped,
 		},
 	}
 }
@@ -782,7 +776,7 @@ func (crypto *Crypto) publishDiagnostics() {
 			timer.Stop()
 			return
 		case <-timer.C:
-			crypto.manifold.Push(types.FluidFrame{
+			crypto.fluid.Publish(types.FluidFrame{
 				Channel: types.DiagnosticsChannel,
 				Payload: telemetry.Encode(&wire.FrameT{
 					Type:  wire.FrameDiagnosticsFrame,
@@ -997,4 +991,28 @@ func (diagnostics *Diagnostics) hopSnapshots() []HopSnapshot {
 	}
 
 	return out
+}
+
+/*
+observeChannel attaches the diagnostics clock to one typed bus channel.
+*/
+func observeChannel[T any](
+	bus *nomagiqueruntime.Workspace,
+	name string,
+	key func(T) string,
+	begin func(string),
+	end func(string, time.Duration),
+) {
+	nomagiqueruntime.ChannelOf[T](bus, name, key).SetObserver(begin, end)
+}
+
+/*
+channelSnapshot reads one typed bus channel's live pressure snapshot.
+*/
+func channelSnapshot[T any](
+	bus *nomagiqueruntime.Workspace,
+	name string,
+	key func(T) string,
+) nomagiqueruntime.WorkspaceSnapshot {
+	return nomagiqueruntime.ChannelOf[T](bus, name, key).Snapshot()
 }

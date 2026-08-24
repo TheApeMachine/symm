@@ -58,13 +58,11 @@ const defaultNumShardsMax = 48
 
 // defaultNumShards returns GOMAXPROCS/2, clamped to [defaultNumShardsMin, defaultNumShardsMax].
 func defaultNumShards() int {
-	n := runtime.GOMAXPROCS(0) / 2
-	if n < defaultNumShardsMin {
-		n = defaultNumShardsMin
-	}
-	if n > defaultNumShardsMax {
-		n = defaultNumShardsMax
-	}
+	n := min(max(
+		runtime.GOMAXPROCS(0)/2,
+		defaultNumShardsMin,
+	), defaultNumShardsMax)
+
 	if (n % 2) != 0 {
 		n++
 	}
@@ -243,6 +241,43 @@ func (pool *Pool[T]) AddTask(task T) error {
 
 	shard := pool.shards[randInt()%pool.numShards]
 	return shard.dispatch(task)
+}
+
+/*
+AddKeyedTask adds a task to the stable shard of its key. Every task for one
+key lands on the same shard, so per-key ordering holds across a burst of
+keyed drains while unrelated keys run concurrently on other shards.
+*/
+func (pool *Pool[T]) AddKeyedTask(key string, task T) error {
+	if !pool.started {
+		return errors.New("worker pool must be started first")
+	}
+
+	if atomic.LoadInt32(&pool.stopped) != 0 {
+		return errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"pool: stopped",
+			nil,
+		))
+	}
+
+	shard := pool.shards[stableKeyHash(key)%uint32(pool.numShards)]
+	return shard.dispatch(task)
+}
+
+/*
+stableKeyHash is a FNV-1a hash of the key string, allocation-free, used to
+route keyed work to a fixed shard.
+*/
+func stableKeyHash(key string) uint32 {
+	hash := uint32(2166136261)
+
+	for index := 0; index < len(key); index++ {
+		hash ^= uint32(key[index])
+		hash *= 16777619
+	}
+
+	return hash
 }
 
 // Adds a new task and blocks until submitted

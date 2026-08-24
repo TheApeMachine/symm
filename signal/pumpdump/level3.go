@@ -44,7 +44,7 @@ func (signal *Signal) consumeLevel3(
 		return err
 	}
 
-	symbol.AppendMeasurement(signal.bookMeasurement(
+	signal.measurements.Publish(signal.bookMeasurement(
 		level3.Timestamp,
 		geometry,
 		alphaChange,

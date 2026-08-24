@@ -17,6 +17,7 @@ Graph is the relational knowledge graph accumulated during one Thesis lifecycle.
 */
 type Graph struct {
 	mu              sync.RWMutex
+	Symbol          string              `json:"symbol,omitempty"`
 	At              time.Time           `json:"at"`
 	Forecast        *learning.RLSOutput `json:"-"`
 	ForecastHorizon int                 `json:"forecastHorizon"`

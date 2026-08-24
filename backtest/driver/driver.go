@@ -12,7 +12,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/cmd"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/tests"
 	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -47,7 +47,7 @@ so only a fresh boot replays history honestly.
 type Driver struct {
 	ctx     context.Context
 	store   *backtest.Store
-	ui      *transport.MapReduce[*types.UIFrame]
+	ui      *runtime.Workspace
 	hub     *ui.Hub
 	onState func(State)
 
@@ -71,7 +71,7 @@ func NewDriver(
 	ctx context.Context,
 	store *backtest.Store,
 	hub *ui.Hub,
-	ui *transport.MapReduce[*types.UIFrame],
+	ui *runtime.Workspace,
 	onState func(State),
 ) *Driver {
 	driver := &Driver{
@@ -300,7 +300,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time, playing bool
 	market.WithAutoFill(config.Execution)
 
 	publicFeed, privateFeed := market.Feeds()
-	thesis := types.NewThesis(sessionCtx, driver.ui)
+	thesis := types.NewThesis(sessionCtx)
 
 	// The replay must record its decision stream into the same store the
 	// tape lives in, otherwise hindsight has prices but no thesis context —
@@ -308,7 +308,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time, playing bool
 	recorder := &audit.Recorder{EventSink: driver.store.WriteEvent}
 	system := cmd.BootWithHub(
 		sessionCtx, thesis,
-		publicFeed, privateFeed, driver.ui, driver.hub,
+		publicFeed, privateFeed, driver.ui, driver.hub, nil,
 		recorder,
 	)
 
@@ -319,7 +319,7 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time, playing bool
 		return
 	}
 
-	market.WithStagedReplay(thesis, system.Error)
+	market.WithStagedReplay(driver.ui, system.Error)
 
 	// system.Run blocks until the whole stack shuts down, so it must run in
 	// its own goroutine; evaluating it as an argument would hold the pump

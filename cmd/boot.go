@@ -15,12 +15,12 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic"
 	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/regulator"
 	signalcorrelation "github.com/theapemachine/symm/signal/correlation"
 	signalcvd "github.com/theapemachine/symm/signal/cvd"
-	signalderivatives "github.com/theapemachine/symm/signal/derivatives"
 	signaldepthflow "github.com/theapemachine/symm/signal/depthflow"
+	signalderivatives "github.com/theapemachine/symm/signal/derivatives"
 	signalexhaust "github.com/theapemachine/symm/signal/exhaust"
 	signalhawkes "github.com/theapemachine/symm/signal/hawkes"
 	signalleadlag "github.com/theapemachine/symm/signal/leadlag"
@@ -52,6 +52,7 @@ type System struct {
 	Regulator *regulator.Solver
 	Signals   []types.Signal
 	Thesis    *types.Thesis
+	Bus       *runtime.Workspace
 	Systems   []Runnable
 	closers   []func() error
 	resources []func() error
@@ -189,9 +190,9 @@ func Boot(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel *transport.MapReduce[*types.UIFrame],
+	bus *runtime.Workspace,
 ) *System {
-	return BootWithHub(ctx, thesis, public, private, uiChannel, nil)
+	return BootWithHub(ctx, thesis, public, private, bus, nil)
 }
 
 func BootWithHub(
@@ -199,7 +200,7 @@ func BootWithHub(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel *transport.MapReduce[*types.UIFrame],
+	bus *runtime.Workspace,
 	hub *ui.Hub,
 	recorders ...*audit.Recorder,
 ) *System {
@@ -214,13 +215,13 @@ func BootWithHub(
 
 	if live, ok := public.(*websocket.Live); ok {
 		live.SetThesis(thesis)
+		live.SetBus(bus)
 	}
 
 	if live, ok := private.(*websocket.Live); ok {
 		live.SetThesis(thesis)
+		live.SetBus(bus)
 	}
-
-	manifoldChannel := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
 
 	tree, err := dmt.NewTree("")
 
@@ -230,7 +231,10 @@ func BootWithHub(
 		return nil
 	}
 
-	regulatorSolver, err := regulator.NewSolver(systemCtx, uiChannel)
+	regulatorSolver, err := regulator.NewSolver(systemCtx, runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	))
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -250,26 +254,33 @@ func BootWithHub(
 	}
 
 	futures := websocket.NewFutures(systemCtx, thesis, "", futuresRecorders...)
+	futures.SetBus(bus)
 	api := websocket.NewAPI(systemCtx, public, private)
 	api.SetFutures(futures)
 
 	signals := []types.Signal{
-		signalcorrelation.NewSignal(systemCtx, thesis),
-		signalcvd.NewSignal(systemCtx, thesis),
-		signalderivatives.NewSignal(systemCtx, thesis),
-		signaldepthflow.NewSignal(systemCtx, thesis),
-		signalexhaust.NewSignal(systemCtx, thesis),
-		signalhawkes.NewSignal(systemCtx, thesis),
-		signalleadlag.NewSignal(systemCtx, thesis),
-		signalliquidity.NewSignal(systemCtx, thesis),
-		signalpumpdump.NewSignal(systemCtx, thesis, api),
-		signalsentiment.NewSignal(systemCtx, thesis),
-		signaltoxicity.NewSignal(systemCtx, thesis),
+		signalcorrelation.NewSignal(systemCtx, thesis, bus),
+		signalcvd.NewSignal(systemCtx, thesis, bus),
+		signalderivatives.NewSignal(systemCtx, thesis, bus),
+		signaldepthflow.NewSignal(systemCtx, thesis, bus),
+		signalexhaust.NewSignal(systemCtx, thesis, bus),
+		signalhawkes.NewSignal(systemCtx, thesis, bus),
+		signalleadlag.NewSignal(systemCtx, thesis, bus),
+		signalliquidity.NewSignal(systemCtx, thesis, bus),
+		signalpumpdump.NewSignal(systemCtx, thesis, api, bus),
+		signalsentiment.NewSignal(systemCtx, thesis, bus),
+		signaltoxicity.NewSignal(systemCtx, thesis, bus),
 	}
 
 	price := broker.NewPrice(api)
-	instrument := broker.NewInstrument(api, price, uiChannel)
-	balance := broker.NewBalance(api, uiChannel)
+	instrument := broker.NewInstrument(api, price, runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	))
+	balance := broker.NewBalance(api, runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	))
 
 	positionStore, err := broker.NewPositionStore(
 		filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
@@ -294,7 +305,7 @@ func BootWithHub(
 		regulatorSolver,
 		nil,
 		positionStore,
-		uiChannel,
+		bus,
 	)
 
 	analyzer := logic.NewAnalyzer(
@@ -302,28 +313,25 @@ func BootWithHub(
 		price,
 		api,
 		tree,
-		uiChannel,
-		manifoldChannel,
 		nil,
 		thesis,
+		bus,
 	)
 
 	resonanceSolver := resonance.NewSolver(
 		systemCtx,
 		viper.GetFloat64("resonance.learning_rate"),
-		api,
-		uiChannel,
 		thesis,
+		bus,
 	)
 
 	crypto, err := trader.NewCrypto(
 		systemCtx,
 		api,
-		uiChannel,
-		manifoldChannel,
 		nil,
 		desk,
 		thesis,
+		bus,
 	)
 
 	if err != nil {
@@ -335,13 +343,13 @@ func BootWithHub(
 		return nil
 	}
 
-	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, regulatorSolver)
+	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, regulatorSolver, bus)
 	planner.ObserveModule = crypto.ObserveModule()
 	planner.ObserveHop = crypto.ObserveHop()
 	existingHub := hub != nil
 
 	if hub == nil {
-		hub = ui.NewHub(systemCtx, thesis, desk, price, balance, manifoldChannel)
+		hub = ui.NewHub(systemCtx, thesis, desk, price, balance, bus)
 	}
 
 	observer := audit.NewConcurrentObserver(
@@ -398,12 +406,17 @@ func BootWithHub(
 		Regulator: regulatorSolver,
 		Signals:   signals,
 		Thesis:    thesis,
+		Bus:       bus,
 		Systems:   systems,
 		closers:   closers,
 		resources: []func() error{positionStore.Close},
 		runDone:   make(chan struct{}),
 	}
 	thesis.SetFailureHandler(stack.fail)
+
+	if bus != nil {
+		bus.SetFailureHandler(thesis.Fail)
+	}
 
 	if err := instrument.Subscribe(); err != nil {
 		errnie.Error(errnie.Err(

@@ -12,6 +12,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -24,26 +25,15 @@ the ticker boundary releases every other retained source and the analyzer
 groups in dependency order before graph, planner, and desk settle.
 */
 func (market *Market) WithStagedReplay(
-	thesis *types.Thesis,
+	bus *runtime.Workspace,
 	failure func() error,
 ) *Market {
-	if thesis == nil {
-		panic("market: staged replay requires a thesis")
+	if bus == nil {
+		panic("market: staged replay requires the system bus")
 	}
 
-	market.thesis = thesis
-	market.replayStart = func() {
-		thesis.HoldWork(types.SignalSources...)
-		thesis.HoldWork(
-			types.SourceResonance,
-			types.SourceCategory,
-			types.SourceManifold,
-			types.SourceCausal,
-			types.SourceCognition,
-			types.SourceGraph,
-			types.SourcePlanner,
-		)
-	}
+	market.bus = bus
+	market.replayStart = func() {}
 	market.replayObservation = func() error {
 		if failure != nil {
 			if err := failure(); err != nil {
@@ -51,25 +41,7 @@ func (market *Market) WithStagedReplay(
 			}
 		}
 
-		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-			return err
-		}
-
-		thesis.ReleaseWork(types.SourcePumpDump)
-
-		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-			return err
-		}
-
-		if failure != nil {
-			if err := failure(); err != nil {
-				return err
-			}
-		}
-
-		thesis.HoldWork(types.SourcePumpDump)
-
-		return nil
+		return bus.WaitForQuiescence(market.ctx)
 	}
 	market.replaySettlement = func() error {
 		if failure != nil {
@@ -78,65 +50,7 @@ func (market *Market) WithStagedReplay(
 			}
 		}
 
-		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-			return err
-		}
-
-		for _, source := range types.SignalSources {
-			thesis.ReleaseWork(source)
-
-			if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-				return err
-			}
-
-			if failure != nil {
-				if err := failure(); err != nil {
-					return err
-				}
-			}
-		}
-
-		thesis.ReleaseWork(types.SourceResonance)
-
-		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-			return err
-		}
-
-		thesis.ReleaseWork(types.SourceCategory)
-		thesis.ReleaseWork(types.SourceManifold)
-
-		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-			return err
-		}
-
-		thesis.ReleaseWork(types.SourceCausal)
-		thesis.ReleaseWork(types.SourceCognition)
-
-		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-			return err
-		}
-
-		thesis.ReleaseWork(types.SourceGraph)
-
-		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-			return err
-		}
-
-		thesis.ReleaseWork(types.SourcePlanner)
-
-		if err := thesis.WaitForQuiescence(market.ctx); err != nil {
-			return err
-		}
-
-		if failure != nil {
-			if err := failure(); err != nil {
-				return err
-			}
-		}
-
-		market.replayStart()
-
-		return nil
+		return bus.WaitForQuiescence(market.ctx)
 	}
 
 	return market
@@ -292,8 +206,11 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 					ticker := kraken.NewFuturesTicker(frame.Payload)
 					if ticker != nil && ticker.Data.ProductID != "" {
 						if spotSymbol := kraken.FuturesProductIDToSpot(ticker.Data.ProductID); spotSymbol != "" {
-							sym := market.thesis.Symbol(spotSymbol)
-							sym.AppendFuturesTicker(ticker.Data)
+							ticker.Data.Symbol = spotSymbol
+							runtime.ChannelOf[kraken.FuturesTickerData](
+								market.bus, types.ChannelFuturesTickers,
+								func(t kraken.FuturesTickerData) string { return t.Symbol },
+							).Publish(ticker.Data)
 						}
 					}
 				case "trade", "trade_snapshot":
@@ -301,8 +218,11 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 					if trades != nil && len(trades.Data) > 0 {
 						for _, singleTrade := range trades.Data {
 							if spotSymbol := kraken.FuturesProductIDToSpot(singleTrade.ProductID); spotSymbol != "" {
-								sym := market.thesis.Symbol(spotSymbol)
-								sym.AppendFuturesTrade(singleTrade)
+								singleTrade.Symbol = spotSymbol
+								runtime.ChannelOf[kraken.FuturesTradeData](
+									market.bus, types.ChannelFuturesTrades,
+									func(t kraken.FuturesTradeData) string { return t.Symbol },
+								).Publish(singleTrade)
 							}
 						}
 					}
@@ -310,8 +230,11 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 					bookDelta := kraken.NewFuturesBook(frame.Payload)
 					if bookDelta != nil && bookDelta.Data.ProductID != "" {
 						if spotSymbol := kraken.FuturesProductIDToSpot(bookDelta.Data.ProductID); spotSymbol != "" {
-							sym := market.thesis.Symbol(spotSymbol)
-							sym.AppendFuturesBook(bookDelta.Data)
+							bookDelta.Data.Symbol = spotSymbol
+							runtime.ChannelOf[kraken.FuturesBookData](
+								market.bus, types.ChannelFuturesBooks,
+								func(b kraken.FuturesBookData) string { return b.Symbol },
+							).Publish(bookDelta.Data)
 						}
 					}
 				}

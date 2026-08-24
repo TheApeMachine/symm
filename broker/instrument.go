@@ -2,6 +2,7 @@ package broker
 
 import (
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -11,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -35,7 +35,7 @@ used by subscriptions and order validation.
 func NewInstrument(
 	api *websocket.API,
 	price *Price,
-	channel *transport.MapReduce[*types.UIFrame],
+	channel *runtime.Channel[*types.UIFrame],
 ) *Instrument {
 	instrument := &Instrument{
 		status:  types.INITIALIZING,

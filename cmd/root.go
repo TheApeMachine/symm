@@ -17,7 +17,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/transport"
+	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
@@ -58,9 +58,9 @@ var (
 
 			// startPprof()
 
-			uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
+			bus := nomagiqueruntime.NewWorkspace(nil)
 
-			thesis := types.NewThesis(cmd.Context(), uiChannel)
+			thesis := types.NewThesis(cmd.Context())
 
 			captureStore, err := backtest.NewStore(
 				filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
@@ -104,7 +104,7 @@ var (
 					websocket.PrivateWebSocketURL,
 					capture,
 				),
-				uiChannel,
+				bus,
 				nil,
 				&audit.Recorder{EventSink: captureStore.WriteEvent},
 			)

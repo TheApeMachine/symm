@@ -41,7 +41,7 @@ func (signal *Signal) consumeTicker(
 	}
 
 	if _, found := displacement.Get(equation.SymbolChange); !found {
-		symbol.AppendMeasurement(signal.tickerMeasurement(
+		signal.measurements.Publish(signal.tickerMeasurement(
 			ticker,
 			displacement,
 			nmtypes.Frame{},
@@ -78,7 +78,7 @@ func (signal *Signal) consumeTicker(
 		return err
 	}
 
-	symbol.AppendMeasurement(signal.tickerMeasurement(
+	signal.measurements.Publish(signal.tickerMeasurement(
 		ticker,
 		displacement,
 		magnitude,

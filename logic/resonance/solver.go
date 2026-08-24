@@ -6,8 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 
 	"github.com/theapemachine/errnie"
@@ -15,9 +13,8 @@ import (
 
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -39,9 +36,10 @@ type Solver struct {
 	states        *sync.Map
 	references    *sync.Map
 	pace          float64
-	ui            *transport.MapReduce[*types.UIFrame]
+	ui            *runtime.Channel[*types.UIFrame]
+	resonance     *runtime.Channel[types.ResonanceArtifact]
 	thesis        *types.Thesis
-	work          *transport.Consumer[*types.Symbol]
+	work          *runtime.Subscription[kraken.TickerData]
 
 	// ObserveModule is an optional diagnostics hook reporting per-step coder
 	// duration so the wiring diagram can profile the resonance stage like
@@ -67,9 +65,8 @@ NewSolver returns a feature detection solver using the configured pace.
 func NewSolver(
 	ctx context.Context,
 	pace float64,
-	api *websocket.API,
-	ui *transport.MapReduce[*types.UIFrame],
 	thesis *types.Thesis,
+	bus *runtime.Workspace,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -82,12 +79,21 @@ func NewSolver(
 		states:        &sync.Map{},
 		references:    &sync.Map{},
 		pace:          pace,
-		ui:            ui,
 		thesis:        thesis,
 	}
 
-	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
-	thesis.Work(types.SourceResonance).Register(solver.work)
+	solver.ui = runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
+	solver.resonance = runtime.ChannelOf[types.ResonanceArtifact](
+		bus, types.ChannelResonance,
+		func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
+	)
+	solver.work = runtime.ChannelOf[kraken.TickerData](
+		bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
+	).Subscribe(solver.Name(), solver.Step)
 
 	return solver
 }
@@ -102,79 +108,25 @@ func (solver *Solver) Status() types.Status {
 	return types.READY
 }
 
-func (solver *Solver) consume() {
-	go func() {
-		defer func() {
-			solver.thesis.Fail(solver.err)
-		}()
-
-		group, ctx := errgroup.WithContext(solver.ctx)
-		group.SetLimit(types.ShardWorkers())
-
-		for symbol := range solver.thesis.Work(types.SourceResonance).Drain(
-			solver.work, nil,
-		) {
-			select {
-			case <-ctx.Done():
-				solver.err = ctx.Err()
-				return
-			default:
-			}
-
-			if symbol == nil {
-				continue
-			}
-
-			consumer := symbol.TickerConsumers[types.TickerConsumerResonance]
-
-			if !symbol.HasTickersFor(consumer) {
-				continue
-			}
-
-			symbol := symbol
-			group.Go(func() error {
-				return solver.consumeSymbol(symbol, consumer)
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			solver.err = errnie.Error(errnie.Err(
-				errnie.Internal,
-				"resonance: processing failed",
-				err,
-			))
-		}
-	}()
-}
-
-func (solver *Solver) consumeSymbol(symbol *types.Symbol, consumer *transport.Consumer[kraken.TickerData]) error {
-	for ticker := range symbol.MarketTickers(consumer) {
-		if err := solver.Update(
-			ticker.Symbol,
-			ticker.Timestamp,
-			[]float64{
-				ticker.Ask.Float64(),
-				ticker.Bid.Float64(),
-				ticker.AskQty,
-				ticker.BidQty,
-				ticker.Change.Float64(),
-				ticker.ChangePct,
-				ticker.High.Float64(),
-				ticker.Low.Float64(),
-				ticker.Last.Float64(),
-				ticker.Volume,
-				ticker.Vwap,
-			},
-		); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"resonance: detector update failed",
-				err,
-			))
-		}
-	}
-
-	return nil
+// Step advances one symbol's predictive coder over one ticker observation.
+func (solver *Solver) Step(ticker kraken.TickerData) error {
+	return solver.Update(
+		ticker.Symbol,
+		ticker.Timestamp,
+		[]float64{
+			ticker.Ask.Float64(),
+			ticker.Bid.Float64(),
+			ticker.AskQty,
+			ticker.BidQty,
+			ticker.Change.Float64(),
+			ticker.ChangePct,
+			ticker.High.Float64(),
+			ticker.Low.Float64(),
+			ticker.Last.Float64(),
+			ticker.Volume,
+			ticker.Vwap,
+		},
+	)
 }
 
 func (solver *Solver) onTicker(ticker any) {
@@ -302,14 +254,16 @@ func (solver *Solver) Update(
 
 	solver.publishReturns(symbol, coder, out)
 
-	solver.thesis.Publish(&wire.FrameT{
-		Type: wire.FrameResonanceFrame,
-		Value: &wire.ResonanceFrameT{
-			Rows: []*wire.ResonanceT{
-				solver.resonanceWire(symbolName, at, coder, out),
+	if solver.ui != nil {
+		solver.ui.Publish(&types.UIFrame{
+			Type: wire.FrameResonanceFrame,
+			Value: &wire.ResonanceFrameT{
+				Rows: []*wire.ResonanceT{
+					solver.resonanceWire(symbolName, at, coder, out),
+				},
 			},
-		},
-	})
+		})
+	}
 
 	return nil
 }
@@ -401,48 +355,48 @@ func (solver *Solver) publishReturns(
 		return
 	}
 
-	if coder != nil && coder.Manifold() != nil {
-		symbol.Resonance.Push(coder.Manifold())
-	}
-
-	symbol.Resonance.Push(out.Dynamics)
-
-	if !out.Calibrated {
+	if solver.resonance == nil || coder == nil || coder.Manifold() == nil {
 		return
 	}
 
-	forecasts, err := coder.Manifold().RolloutTaskForecast(1)
-
-	if err != nil || len(forecasts) == 0 {
-		return
+	artifact := types.ResonanceArtifact{
+		Symbol:   symbol.Symbol,
+		Manifold: coder.Manifold(),
+		Dynamics: out.Dynamics,
 	}
 
-	horizon := out.SupportedHorizon
+	if out.Calibrated {
+		forecasts, err := coder.Manifold().RolloutTaskForecast(1)
 
-	if horizon < 1 {
-		horizon = 1
-	}
+		if err == nil && len(forecasts) > 0 {
+			horizon := out.SupportedHorizon
 
-	forecast := forecasts[0]
-	call := 0.0
+			if horizon < 1 {
+				horizon = 1
+			}
 
-	if forecast.Ready {
-		if forecast.Value > 0 {
-			call = 1
-		} else if forecast.Value < 0 {
-			call = -1
+			forecast := forecasts[0]
+			call := 0.0
+
+			if forecast.Ready {
+				if forecast.Value > 0 {
+					call = 1
+				} else if forecast.Value < 0 {
+					call = -1
+				}
+			}
+
+			artifact.Forecast = &types.ResonanceReturnForecast{
+				Distribution:  forecast,
+				Horizon:       horizon,
+				CandidateCall: call,
+				Call:          call,
+				StableCall:    call,
+			}
 		}
 	}
 
-	symbol.Resonance.Push(
-		&types.ResonanceReturnForecast{
-			Distribution:  forecast,
-			Horizon:       horizon,
-			CandidateCall: call,
-			Call:          call,
-			StableCall:    call,
-		},
-	)
+	solver.resonance.Publish(artifact)
 }
 
 /*

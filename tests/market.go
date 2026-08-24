@@ -11,6 +11,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/tests/signal"
 	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -40,6 +41,7 @@ type Market struct {
 	candles           map[string]*candleState
 	execution         *executionModel
 	stack             Stack
+	bus               *runtime.Workspace
 	autoFill          bool
 	primed            bool
 	clockSet          bool

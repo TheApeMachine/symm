@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,10 @@ type FuturesLive struct {
 	cancel        context.CancelFunc
 	endpoint      string
 	thesis        atomic.Pointer[types.Thesis]
+	bus           atomic.Pointer[runtime.Workspace]
+	tickersCh     *runtime.Channel[kraken.FuturesTickerData]
+	tradesCh      *runtime.Channel[kraken.FuturesTradeData]
+	booksCh       *runtime.Channel[kraken.FuturesBookData]
 	capture       CaptureSink
 	conn          *gorillawebsocket.Conn
 	connMu        sync.Mutex
@@ -94,6 +99,26 @@ func (futures *FuturesLive) Status() types.Status {
 	}
 
 	return *st
+}
+
+func (futures *FuturesLive) SetBus(bus *runtime.Workspace) {
+	if futures == nil || bus == nil {
+		return
+	}
+
+	futures.bus.Store(bus)
+	futures.tickersCh = runtime.ChannelOf[kraken.FuturesTickerData](
+		bus, types.ChannelFuturesTickers,
+		func(ticker kraken.FuturesTickerData) string { return ticker.Symbol },
+	)
+	futures.tradesCh = runtime.ChannelOf[kraken.FuturesTradeData](
+		bus, types.ChannelFuturesTrades,
+		func(trade kraken.FuturesTradeData) string { return trade.Symbol },
+	)
+	futures.booksCh = runtime.ChannelOf[kraken.FuturesBookData](
+		bus, types.ChannelFuturesBooks,
+		func(book kraken.FuturesBookData) string { return book.Symbol },
+	)
 }
 
 func (futures *FuturesLive) SetThesis(thesis *types.Thesis) {
@@ -341,8 +366,10 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 	}
 
 	ticker.Data.Symbol = spotSymbol
-	symbol := thesis.Symbol(spotSymbol)
-	symbol.AppendFuturesTicker(ticker.Data)
+
+	if thesis.Symbol(spotSymbol).AcceptFuturesTicker(ticker.Data.Timestamp) && futures.tickersCh != nil {
+		futures.tickersCh.Publish(ticker.Data)
+	}
 }
 
 func (futures *FuturesLive) dispatchTrades(raw []byte) {
@@ -367,8 +394,10 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 		}
 
 		trade.Symbol = spotSymbol
-		symbol := thesis.Symbol(spotSymbol)
-		symbol.AppendFuturesTrade(trade)
+
+		if thesis.Symbol(spotSymbol).AcceptFuturesTrade(trade.Timestamp) && futures.tradesCh != nil {
+			futures.tradesCh.Publish(trade)
+		}
 	}
 }
 
@@ -392,8 +421,10 @@ func (futures *FuturesLive) dispatchBook(raw []byte) {
 	}
 
 	book.Data.Symbol = spotSymbol
-	symbol := thesis.Symbol(spotSymbol)
-	symbol.AppendFuturesBook(book.Data)
+
+	if thesis.Symbol(spotSymbol).AcceptFuturesBook(book.Data.Timestamp) && futures.booksCh != nil {
+		futures.booksCh.Publish(book.Data)
+	}
 }
 
 func (futures *FuturesLive) Close() error {

@@ -2,6 +2,7 @@ package causal
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -13,6 +14,7 @@ for a later market price. Keeping both together avoids a second per-symbol
 cache and makes the timestamp boundary explicit.
 */
 type causalState struct {
+	mu               sync.Mutex
 	rows             [][]float64
 	pendingAt        time.Time
 	pendingMidpoint  float64
@@ -74,6 +76,9 @@ func (solver *Solver) observe(
 			nil,
 		)
 	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
 
 	if !state.pendingAt.IsZero() && !at.After(state.pendingAt) {
 		return nil, nil, false, nil

@@ -15,7 +15,7 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -41,8 +41,7 @@ type Analyzer struct {
 	status       types.Status
 	tree         *dmt.Tree
 	solverGroups [][]Solver
-	ui           *transport.MapReduce[*types.UIFrame]
-	binui        *transport.MapReduce[types.FluidFrame]
+	bus          *runtime.Workspace
 	recorder     *audit.Recorder
 
 	// ObserveModule / ObserveHop are optional diagnostics hooks. When set, the
@@ -60,10 +59,9 @@ func NewAnalyzer(
 	price *broker.Price,
 	api *websocket.API,
 	tree *dmt.Tree,
-	ui *transport.MapReduce[*types.UIFrame],
-	binui *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
 	thesis *types.Thesis,
+	bus *runtime.Workspace,
 ) *Analyzer {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -74,16 +72,15 @@ func NewAnalyzer(
 		tree:   tree,
 		solverGroups: [][]Solver{
 			{
-				category.NewSolver(ctx, thesis, api, ui, recorder),
-				manifold.NewSolver(ctx, thesis, api, ui, binui, recorder),
+				category.NewSolver(ctx, thesis, recorder, bus),
+				manifold.NewSolver(ctx, thesis, api, recorder, bus),
 			}, {
-				causal.NewSolver(thesis, price, ui, recorder),
-				cognition.NewSolver(ctx, thesis, tree, ui, recorder),
+				causal.NewSolver(thesis, price, recorder, bus),
+				cognition.NewSolver(ctx, thesis, tree, recorder, bus),
 			}, {
-				graph.NewSolver(thesis, ui, recorder),
+				graph.NewSolver(thesis, recorder, bus),
 			}},
-		ui:       ui,
-		binui:    binui,
+		bus:      bus,
 		recorder: recorder,
 	}
 

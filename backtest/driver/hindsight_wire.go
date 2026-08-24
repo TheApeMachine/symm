@@ -2,17 +2,20 @@ package driver
 
 import (
 	"sort"
-	"time"
 
 	"github.com/theapemachine/symm/backtest/hindsight"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 publishHindsight emits one hindsight wire frame for the dashboard.
 */
 func (driver *Driver) publishHindsight(report RealizedReport) {
-	driver.ui.Push(&wire.FrameT{
+	ui := runtime.ChannelOf[*types.UIFrame](driver.ui, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" })
+	ui.Publish(&types.UIFrame{
 		Type:  wire.FrameHindsightFrame,
 		Value: hindsightWire(report),
 	})
@@ -28,8 +31,8 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 			journal := make([]*wire.HindsightSignalT, 0, len(opportunity.Journal))
 
 			for _, decision := range opportunity.Journal {
-				journal = append(journal, hindsightSignalWire(signalWireFields{
-					At:                  decision.At,
+				journal = append(journal, &wire.HindsightSignalT{
+					At:                  decision.At.UnixNano(),
 					Action:              decision.Action,
 					Reason:              decision.Reason,
 					Cause:               decision.Cause,
@@ -46,8 +49,8 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 					OpportunityType:     decision.OpportunityType,
 					PredictiveReady:     decision.PredictiveReady,
 					PredictiveStatus:    decision.PredictiveStatus,
-					Alternatives:        decision.Alternatives,
-				}))
+					Alternatives:        hindsightNumbers(decision.Alternatives),
+				})
 			}
 
 			opportunities = append(opportunities, &wire.HindsightOpportunityT{
@@ -56,8 +59,8 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 					SellAt: opportunity.Leg.SellAt.UnixNano(), BuyPrice: opportunity.Leg.BuyPrice,
 					SellPrice: opportunity.Leg.SellPrice, ProfitPct: opportunity.Leg.ProfitPct,
 				},
-				Signal: hindsightSignalWire(signalWireFields{
-					At:                  opportunity.Signal.At,
+				Signal: &wire.HindsightSignalT{
+					At:                  opportunity.Signal.At.UnixNano(),
 					Action:              opportunity.Signal.Action,
 					Reason:              opportunity.Signal.Reason,
 					Cause:               opportunity.Signal.Cause,
@@ -74,8 +77,8 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 					OpportunityType:     opportunity.Signal.Type,
 					PredictiveReady:     opportunity.Signal.PredictiveReady,
 					PredictiveStatus:    opportunity.Signal.PredictiveStatus,
-					Alternatives:        opportunity.Signal.Alternatives,
-				}),
+					Alternatives:        hindsightNumbers(opportunity.Signal.Alternatives),
+				},
 				Journal:   journal,
 				Diagnosis: hindsightDiagnosisWire(opportunity.Diagnosis),
 				Why:       opportunity.Why,
@@ -178,57 +181,6 @@ func hindsightRecommendationWire(
 		ImpactPct:    recommendation.ImpactPct,
 		Occurrences:  int64(recommendation.Occurrences),
 		Symbols:      recommendation.Symbols,
-	}
-}
-
-/*
-signalWireFields is the shared flat shape for one decision moment on the wire,
-whether it is the signal pinned to a missed leg or one entry in its journal.
-*/
-type signalWireFields struct {
-	At                  time.Time
-	Action              string
-	Reason              string
-	Cause               string
-	GraphScore          float64
-	ThesisScore         float64
-	ThesisConfidence    float64
-	ThesisSupport       float64
-	ThesisContradiction float64
-	ThesisConditions    float64
-	Direction           float64
-	Confidence          float64
-	AdmissionThreshold  float64
-	Opportunity         bool
-	OpportunityType     string
-	PredictiveReady     bool
-	PredictiveStatus    string
-	Alternatives        map[string]float64
-}
-
-/*
-hindsightSignalWire encodes one decision moment with its full thesis context.
-*/
-func hindsightSignalWire(fields signalWireFields) *wire.HindsightSignalT {
-	return &wire.HindsightSignalT{
-		At:                  fields.At.UnixNano(),
-		Action:              fields.Action,
-		Reason:              fields.Reason,
-		Cause:               fields.Cause,
-		GraphScore:          fields.GraphScore,
-		ThesisScore:         fields.ThesisScore,
-		ThesisConfidence:    fields.ThesisConfidence,
-		ThesisSupport:       fields.ThesisSupport,
-		ThesisContradiction: fields.ThesisContradiction,
-		ThesisConditions:    fields.ThesisConditions,
-		Direction:           fields.Direction,
-		Confidence:          fields.Confidence,
-		AdmissionThreshold:  fields.AdmissionThreshold,
-		Opportunity:         fields.Opportunity,
-		OpportunityType:     fields.OpportunityType,
-		PredictiveReady:     fields.PredictiveReady,
-		PredictiveStatus:    fields.PredictiveStatus,
-		Alternatives:        hindsightNumbers(fields.Alternatives),
 	}
 }
 

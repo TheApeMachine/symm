@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"io"
 	"net"
 	"sync/atomic"
@@ -18,7 +19,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -45,6 +45,7 @@ type Hub struct {
 	err             error
 	app             *fiber.App
 	listenAddr      string
+	bus             *runtime.Workspace
 	thesis          *types.Thesis
 	desk            *broker.Desk
 	price           *broker.Price
@@ -99,7 +100,7 @@ func NewHub(
 	desk *broker.Desk,
 	price *broker.Price,
 	balance *broker.Balance,
-	manifold *transport.MapReduce[types.FluidFrame],
+	bus *runtime.Workspace,
 ) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
@@ -116,6 +117,7 @@ func NewHub(
 		cancel:     cancel,
 		listenAddr: viper.GetString("ui.addr"),
 		thesis:     thesis,
+		bus:        bus,
 		desk:       desk,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
@@ -124,9 +126,12 @@ func NewHub(
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		price:           price,
-		balance:         balance,
-		fluid:           NewFluidRTC(ctx, manifold, "fluid"),
+		price:   price,
+		balance: balance,
+		fluid: NewFluidRTC(ctx, runtime.ChannelOf[types.FluidFrame](
+			bus, types.ChannelFluid,
+			func(frame types.FluidFrame) string { return "" },
+		), "fluid"),
 		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
 		writeWindow:     uint64(viper.GetInt("ui.websocket.write_window")),
 		maxBatchFrames:  viper.GetInt("ui.websocket.max_batch_frames"),
@@ -162,36 +167,35 @@ func NewHub(
 			return
 		}
 
-		var ui *transport.MapReduce[*types.UIFrame]
-
-		if hub.thesis != nil {
-			ui = hub.thesis.UI()
-		}
-
-		if ui == nil {
+		if hub.bus == nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
-				"dashboard: UI telemetry transport is unavailable",
+				"dashboard: workspace bus is unavailable",
 				nil,
 			))
 			return
 		}
 
+		ui := runtime.ChannelOf[*types.UIFrame](
+			hub.bus, types.ChannelUI,
+			func(frame *types.UIFrame) string { return "" },
+		)
+
 		consumerID := consumerIDFor()
-		ready := make(chan struct{}, 1)
-		consumer := transport.NewConsumer[*types.UIFrame](consumerID, func() {
+		frameCh := make(chan *types.UIFrame, hub.maxBatchFrames*4)
+
+		// Each client subscribes its own bounded ring on the UI channel. The
+		// workspace fans every pushed frame out to every client, so each
+		// client receives each frame without any shared broadcast or
+		// client-fan-out machinery on the hub.
+		ui.Subscribe(consumerID, func(frame *types.UIFrame) error {
 			select {
-			case ready <- struct{}{}:
+			case frameCh <- frame:
 			default:
 			}
-		})
 
-		// Each client drains the lock-free UI transport under its own consumer
-		// cursor. MapReduce fans every pushed frame out to every registered
-		// consumer, so each client receives each frame without any shared
-		// broadcast or client-fan-out machinery on the hub.
-		ui.Register(consumer)
-		defer ui.Unregister(consumer)
+			return nil
+		})
 		initialFrames := make([]*types.UIFrame, 0, 3)
 
 		if hub.balance != nil {
@@ -398,10 +402,10 @@ func NewHub(
 				select {
 				case <-clientCtx.Done():
 					return
-				case <-ready:
+				case frame := <-frameCh:
+					frames = append(frames, frame)
+					frames = hub.drainChannel(frameCh, frames)
 				}
-
-				frames = hub.drainBounded(ui, consumer, frames)
 			}
 
 			batchCount := len(frames)
@@ -472,18 +476,17 @@ one FlatBuffers builder. Leftover frames stay queued and are drained on a later
 wake, which keeps the per-message size split effective without ever sizing a
 batch past the encoder's growth ceiling.
 */
-func (hub *Hub) drainBounded(
-	ui *transport.MapReduce[*types.UIFrame],
-	consumer *transport.Consumer[*types.UIFrame],
+func (hub *Hub) drainChannel(
+	frameCh chan *types.UIFrame,
 	frames []*types.UIFrame,
 ) []*types.UIFrame {
-	drained := 0
-
-	for frame := range ui.Drain(consumer, func(_ *types.UIFrame) bool {
-		return drained < hub.maxBatchFrames
-	}) {
-		frames = append(frames, frame)
-		drained++
+	for len(frames) < hub.maxBatchFrames {
+		select {
+		case frame := <-frameCh:
+			frames = append(frames, frame)
+		default:
+			return frames
+		}
 	}
 
 	return frames

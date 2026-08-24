@@ -31,80 +31,6 @@ const (
 	SourceAudit       SourceType = "audit"
 )
 
-const (
-	TickerConsumerCorrelation = iota
-	TickerConsumerLeadLag
-	TickerConsumerLiquidity
-	TickerConsumerPumpDump
-	TickerConsumerSentiment
-	TickerConsumerResonance
-	TickerConsumerDesk
-)
-
-const (
-	FuturesTickerConsumerDerivatives = iota
-)
-
-const (
-	TradeConsumerCVD = iota
-	TradeConsumerExhaustion
-	TradeConsumerHawkes
-	TradeConsumerPumpDump
-)
-
-const (
-	FuturesTradeConsumerDerivatives = iota
-)
-
-const (
-	Level3ConsumerDepthFlow = iota
-	Level3ConsumerToxicity
-	Level3ConsumerPumpDump
-)
-
-const (
-	FuturesBookConsumerDerivatives = iota
-)
-
-const (
-	ExecutionConsumerDesk = iota
-)
-
-const (
-	MeasurementConsumerCategory = iota
-	MeasurementConsumerManifold
-	MeasurementConsumerGraph
-	MeasurementConsumerAudit
-)
-
-const (
-	CategoryConsumerGraph = iota
-	CategoryConsumerCognition
-	CategoryConsumerAudit
-)
-
-const (
-	ResonanceConsumerCausal = iota
-	ResonanceConsumerGraph
-	ResonanceConsumerAudit
-)
-
-const (
-	CausalConsumerGraph = iota
-	CausalConsumerCausal
-	CausalConsumerAudit
-)
-
-const (
-	GraphConsumerPlanner = iota
-	GraphConsumerAudit
-)
-
-const (
-	StateConsumerStage = iota
-	StateConsumerAudit
-)
-
 /*
 SignalSources is the complete configured measurement source set used by signal
 scheduling and cross-source inspection.
@@ -122,21 +48,6 @@ var SignalSources = []SourceType{
 	SourceToxicity,
 	SourceDerivatives,
 }
-
-/*
-WorkerSources names the independently scheduled readers that own Run loops.
-Their ready queues carry symbols whose MapReduce input changed.
-*/
-var WorkerSources = append(append([]SourceType(nil), SignalSources...),
-	SourceCategory,
-	SourceManifold,
-	SourceCausal,
-	SourceCognition,
-	SourceGraph,
-	SourceResonance,
-	SourcePlanner,
-	SourceDesk,
-)
 
 var SignalSourceStrings = []string{
 	"correlation",

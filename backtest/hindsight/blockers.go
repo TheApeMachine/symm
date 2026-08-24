@@ -263,7 +263,7 @@ func measurementBlockers(context SignalContext, leg Leg) []blockerCandidate {
 		})
 	}
 
-	currentAudit := context.Alternatives != nil || strings.Contains(
+	currentAudit := strings.Contains(
 		strings.ToLower(context.Reason),
 		"no actable opportunity",
 	)

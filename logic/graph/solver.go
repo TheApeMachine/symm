@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"iter"
 	"math"
 	"slices"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -30,16 +31,17 @@ type Solver struct {
 	thesis       *types.Thesis
 	recorder     *audit.Recorder
 	measurements *measurementCompiler
-	ui           *transport.MapReduce[*types.UIFrame]
+	ui           *runtime.Channel[*types.UIFrame]
+	graphs       *runtime.Channel[*types.Graph]
+	evidence     sync.Map
+	phase        types.PhaseReading
 	building     sync.Map
-	work         *transport.Consumer[*types.Symbol]
-	pool         *types.SymbolPool
 }
 
 /*
 NewSolver creates a graph solver.
 */
-func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[*types.UIFrame], recorder *audit.Recorder) *Solver {
+func NewSolver(thesis *types.Thesis, recorder *audit.Recorder, bus *runtime.Workspace) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	solver := &Solver{
@@ -48,12 +50,63 @@ func NewSolver(thesis *types.Thesis, ui *transport.MapReduce[*types.UIFrame], re
 		thesis:       thesis,
 		recorder:     recorder,
 		measurements: newMeasurementCompiler(),
-		ui:           ui,
 		building:     sync.Map{},
-		pool:         types.NewSymbolPool(types.ShardWorkers()),
 	}
-	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
-	thesis.Work(types.SourceGraph).Register(solver.work)
+
+	solver.ui = runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
+	solver.graphs = runtime.ChannelOf[*types.Graph](
+		bus, types.ChannelGraphs,
+		func(graph *types.Graph) string { return graph.Symbol },
+	)
+	measurementsCh := runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	)
+	measurementsCh.Subscribe(solver.Name(), func(measurement *nmtypes.Measurement) error {
+		return solver.observe(measurement.Symbol, "measurement", measurement)
+	})
+	runtime.ChannelOf[[]types.Category](
+		bus, types.ChannelCategories,
+		func(batch []types.Category) string {
+			if len(batch) == 0 {
+				return ""
+			}
+			return batch[0].Symbol
+		},
+	).Subscribe(solver.Name(), func(batch []types.Category) error {
+		if len(batch) == 0 {
+			return nil
+		}
+		return solver.observe(batch[0].Symbol, "categories", batch)
+	})
+	runtime.ChannelOf[types.ResonanceArtifact](
+		bus, types.ChannelResonance,
+		func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
+	).Subscribe(solver.Name(), func(artifact types.ResonanceArtifact) error {
+		return solver.observe(artifact.Symbol, "resonance", artifact)
+	})
+	runtime.ChannelOf[types.CausalOutput](
+		bus, types.ChannelCausal,
+		func(output types.CausalOutput) string { return output.Symbol },
+	).Subscribe(solver.Name(), func(output types.CausalOutput) error {
+		return solver.observe(output.Symbol, "causal", output)
+	})
+	runtime.ChannelOf[types.Cognition](
+		bus, types.ChannelCognition,
+		func(reading types.Cognition) string { return reading.Symbol },
+	).Subscribe(solver.Name(), func(reading types.Cognition) error {
+		return solver.observe(reading.Symbol, "cognition", reading)
+	})
+	runtime.ChannelOf[types.PhaseReading](
+		bus, types.ChannelPhase,
+		func(reading types.PhaseReading) string { return "" },
+	).Subscribe(solver.Name(), func(reading types.PhaseReading) error {
+		solver.phase = reading
+		return nil
+	})
 
 	return solver
 }
@@ -68,44 +121,6 @@ func (solver *Solver) Error() error { return solver.err }
 consume rebuilds the graph whenever one of its upstream evidence cursors becomes
 ready. Graph output flows one way to the planner.
 */
-func (solver *Solver) consume() {
-	if solver.thesis == nil {
-		return
-	}
-
-	go func() {
-		defer func() {
-			if err := solver.pool.Error(); err != nil {
-				solver.err = err
-			}
-
-			solver.thesis.Fail(solver.err)
-		}()
-		for queued := range solver.thesis.Work(types.SourceGraph).Drain(
-			solver.work, nil,
-		) {
-			select {
-			case <-solver.ctx.Done():
-				solver.pool.CaptureError(solver.ctx.Err())
-				return
-			default:
-			}
-
-			if queued == nil {
-				continue
-			}
-
-			symbol := queued
-
-			solver.pool.Submit(symbol.Symbol, func() {
-				if err := solver.buildGraph(symbol.Symbol, symbol); err != nil {
-					solver.pool.CaptureError(err)
-				}
-			})
-		}
-	}()
-}
-
 /*
 buildGraph adds current upstream evidence to one in-progress graph. It
 publishes that graph once it is informed enough for planner search, then starts
@@ -115,24 +130,94 @@ busy. The in-progress registry is a sync.Map, so parallel symbol workers can
 load-or-store their own building graph while evidence compilation and
 publication run outside any lock.
 */
-func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error {
-	graph := types.NewGraph(solver.thesis.At)
-	stored, _ := solver.building.LoadOrStore(symbolName, graph)
+/*
+symbolEvidence is one symbol's freshest graph inputs: a bounded measurement
+window and the latest derived readings from every upstream stage.
+*/
+type symbolEvidence struct {
+	measurements []*nmtypes.Measurement
+	categories   []types.Category
+	artifact     types.ResonanceArtifact
+	causal       types.CausalOutput
+	cognition    types.Cognition
+}
 
-	if existing, ok := stored.(*types.Graph); ok {
-		graph = existing
+func iterSeq[T any](values []T) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for _, value := range values {
+			if !yield(value) {
+				return
+			}
+		}
+	}
+}
+
+// observe folds one evidence item into the symbol's evidence snapshot and
+// rebuilds the symbol graph from the freshest state, publishing it when it
+// is informed enough for planner search.
+func (solver *Solver) observe(symbolName string, kind string, value any) error {
+	if symbolName == "" {
+		return nil
 	}
 
-	graph.At = solver.thesis.At
+	state := solver.symbolEvidence(symbolName)
+
+	switch kind {
+	case "measurement":
+		if measurement, ok := value.(*nmtypes.Measurement); ok {
+			state.measurements = append(state.measurements, measurement)
+			state.measurements = trimTail(state.measurements, graphMeasurementWindow)
+		}
+	case "categories":
+		if batch, ok := value.([]types.Category); ok {
+			state.categories = batch
+		}
+	case "resonance":
+		if artifact, ok := value.(types.ResonanceArtifact); ok {
+			state.artifact = artifact
+		}
+	case "causal":
+		if output, ok := value.(types.CausalOutput); ok {
+			state.causal = output
+		}
+	case "cognition":
+		if reading, ok := value.(types.Cognition); ok {
+			state.cognition = reading
+		}
+	}
+
+	return solver.rebuild(symbolName, state)
+}
+
+func (solver *Solver) symbolEvidence(symbolName string) *symbolEvidence {
+	loaded, _ := solver.evidence.LoadOrStore(symbolName, &symbolEvidence{})
+
+	return loaded.(*symbolEvidence)
+}
+
+/*
+graphMeasurementWindow bounds the per-symbol measurement history retained for
+graph compilation, so a hot symbol cannot grow unbounded evidence state.
+*/
+const graphMeasurementWindow = 64
+
+func trimTail[T any](values []T, limit int) []T {
+	if len(values) <= limit {
+		return values
+	}
+
+	return append([]T(nil), values[len(values)-limit:]...)
+}
+
+func (solver *Solver) rebuild(symbolName string, state *symbolEvidence) error {
+	symbol := solver.thesis.Symbol(symbolName)
+	graph := types.NewGraph(solver.thesis.At)
+	graph.Symbol = symbolName
 	graph.Prune(solver.thesis.At)
 
-	categories := solver.popCategories(symbol)
-	cognition, _ := solver.popCognition(symbol)
 	measurementIndex, err := solver.measurements.addNodes(
 		symbolName,
-		symbol.MarketMeasurements(
-			symbol.MeasurementConsumers[types.MeasurementConsumerGraph],
-		),
+		iterSeq(state.measurements),
 		graph,
 	)
 
@@ -144,26 +229,31 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error 
 		))
 	}
 
-	solver.extractCategoryNodes(symbol, categories, graph)
+	solver.extractCategoryNodes(symbol, state.categories, graph)
 	solver.extractManifoldNodes(solver.thesis, graph)
-	solver.extractResonanceNodes(symbol, graph)
 
-	if err := solver.extractCausalNodes(symbol, graph); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"graph: failed to extract causal nodes - "+err.Error(),
-			err,
-		))
+	if state.artifact.Manifold != nil {
+		solver.extractResonanceNodes(symbol, state.artifact, graph)
 	}
 
-	solver.extractCognitionNodes(symbol, cognition, graph)
+	if state.causal.Rows != nil {
+		if err := solver.extractCausalNodes(symbol, state.causal.Rows, graph); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"graph: failed to extract causal nodes - "+err.Error(),
+				err,
+			))
+		}
+	}
+
+	solver.extractCognitionNodes(symbol, state.cognition, graph)
 
 	if len(graph.Nodes) == 0 {
 		return nil
 	}
 
 	if err := solver.measurements.addCategoryEdges(
-		categories, symbol.Symbol, graph, measurementIndex,
+		state.categories, symbolName, graph, measurementIndex,
 	); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -183,7 +273,7 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error 
 	}
 
 	if err := solver.inferStructuralEdges(
-		symbol, categories, cognition, graph,
+		symbol, state.categories, state.cognition, graph,
 	); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -200,8 +290,8 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error 
 		))
 	}
 
-	if symbolName == types.Focus() {
-		solver.thesis.Publish(&wire.FrameT{
+	if symbolName == types.Focus() && solver.ui != nil {
+		solver.ui.Publish(&types.UIFrame{
 			Type:  wire.FrameGraphFrame,
 			Value: graph.Wire(),
 		})
@@ -211,7 +301,9 @@ func (solver *Solver) buildGraph(symbolName string, symbol *types.Symbol) error 
 		return nil
 	}
 
-	symbol.Graphs.PushLatest(graph.Clone())
+	if solver.graphs != nil {
+		solver.graphs.Publish(graph.Clone())
+	}
 
 	return nil
 }
@@ -264,18 +356,6 @@ func (solver *Solver) extractCategoryNodes(
 		node.Confidence = types.ObservationMass(node, graph.At)
 		graph.AddNode(node)
 	}
-}
-
-func (solver *Solver) popCategories(symbol *types.Symbol) []types.Category {
-	var categories []types.Category
-
-	for batch := range symbol.MarketCategories(
-		symbol.CategoryConsumers[types.CategoryConsumerGraph],
-	) {
-		categories = batch
-	}
-
-	return categories
 }
 
 /*
@@ -381,30 +461,15 @@ extractResonanceNodes registers predictive coding outcomes (surprise and the
 direction call). The call is not a priced return.
 */
 func (solver *Solver) extractResonanceNodes(
-	symbol *types.Symbol, graph *types.Graph,
+	symbol *types.Symbol, artifact types.ResonanceArtifact, graph *types.Graph,
 ) {
 	if symbol == nil || graph == nil {
 		return
 	}
 
-	var (
-		returnForecast *types.ResonanceReturnForecast
-		coder          *learning.ResonanceManifold
-		dynamics       nmtypes.Frame
-	)
-
-	for stored := range symbol.MarketResonance(
-		symbol.ResonanceConsumers[types.ResonanceConsumerGraph],
-	) {
-		switch value := stored.(type) {
-		case *types.ResonanceReturnForecast:
-			returnForecast = value
-		case *learning.ResonanceManifold:
-			coder = value
-		case nmtypes.Frame:
-			dynamics = value
-		}
-	}
+	returnForecast := artifact.Forecast
+	coder := artifact.Manifold
+	dynamics := artifact.Dynamics
 
 	if returnForecast != nil && returnForecast.Distribution.Ready {
 		graphForecast := returnForecast.Distribution
@@ -464,22 +529,6 @@ func (solver *Solver) extractResonanceNodes(
 		dynamics,
 		graph,
 	)
-}
-
-func (solver *Solver) popCognition(symbol *types.Symbol) (types.Cognition, bool) {
-	var cognition types.Cognition
-
-	for stored := range symbol.MarketCognition(
-		symbol.CognitionConsumers[types.StateConsumerStage],
-	) {
-		cognition = stored
-	}
-
-	if cognition.Winner == "" {
-		return types.Cognition{}, false
-	}
-
-	return cognition, true
 }
 
 func (solver *Solver) extractPredictiveDynamicsNodes(
@@ -680,16 +729,8 @@ func causalValuesPresent(causalMap map[string]any) bool {
 extractCausalNodes registers Pearl do-calculus and counterfactual uplift outputs.
 */
 func (solver *Solver) extractCausalNodes(
-	symbol *types.Symbol, graph *types.Graph,
+	symbol *types.Symbol, causalMap map[string]any, graph *types.Graph,
 ) error {
-	var causalMap map[string]any
-
-	for stored := range symbol.MarketCausal(
-		symbol.CausalConsumers[types.CausalConsumerGraph],
-	) {
-		causalMap = stored
-	}
-
 	if !causalValuesPresent(causalMap) {
 		return nil
 	}
@@ -1256,10 +1297,5 @@ Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
 	solver.cancel()
-
-	if solver.pool != nil {
-		solver.pool.Close()
-	}
-
 	return nil
 }

@@ -3,6 +3,9 @@ package manifold
 import (
 	"context"
 	"fmt"
+	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	types "github.com/theapemachine/symm/types"
 	"math"
 	"runtime"
 	"sort"
@@ -18,10 +21,8 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken/websocket"
 	pmanifold "github.com/theapemachine/symm/nomagique/physics/sensorium"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -47,41 +48,52 @@ Symbols contribute observations to the same gas and wave fields; they are not
 split into independent simulations that cannot interfere.
 */
 type Solver struct {
-	ctx         context.Context
-	err         error
-	thesis      *types.Thesis
-	api         websocket.BookSource
-	config      Domain
-	physics     *pmanifold.Manifold
-	slabs       slabEncoder
-	oscillators []Oscillator
-	reading     pmanifold.Reading
-	recorder    *audit.Recorder
-	universe    []string
-	scales      map[string]*adaptive.Accumulator
-	converged   map[string]float64
-	priorPos    map[string]map[string][3]float64
-	priorAt     time.Time
-	corpus      *geometry.Corpus[types.PhaseOutcome]
-	angles      []float64
-	pending     []pendingDial
-	waiting     atomic.Bool
-	ui          *transport.MapReduce[*types.UIFrame]
-	binui       *transport.MapReduce[types.FluidFrame]
-	semaphore   chan struct{}
-	stopping    chan struct{}
-	stopped     chan struct{}
-	closing     atomic.Bool
-	running     atomic.Bool
-	settling    atomic.Bool
-	requestMu   sync.Mutex
-	requested   uint64
-	completed   uint64
-	latest      manifoldRequest
-	work        *transport.Consumer[*types.Symbol]
-	stepped     bool
-	driveEta    float64
-	driveBeta   float64
+	ctx          context.Context
+	err          error
+	thesis       *types.Thesis
+	api          websocket.BookSource
+	config       Domain
+	physics      *pmanifold.Manifold
+	slabs        slabEncoder
+	oscillators  []Oscillator
+	reading      pmanifold.Reading
+	recorder     *audit.Recorder
+	universe     []string
+	scales       map[string]*adaptive.Accumulator
+	converged    map[string]float64
+	drives       sync.Map
+	priorPos     map[string]map[string][3]float64
+	priorAt      time.Time
+	corpus       *geometry.Corpus[types.PhaseOutcome]
+	angles       []float64
+	pending      []pendingDial
+	waiting      atomic.Bool
+	ui           *nomagiqueruntime.Channel[*types.UIFrame]
+	fluid        *nomagiqueruntime.Channel[types.FluidFrame]
+	semaphore    chan struct{}
+	stopping     chan struct{}
+	stopped      chan struct{}
+	closing      atomic.Bool
+	running      atomic.Bool
+	settling     atomic.Bool
+	requestMu    sync.Mutex
+	requested    uint64
+	completed    uint64
+	latest       manifoldRequest
+	work         *nomagiqueruntime.Subscription[*nmtypes.Measurement]
+	stepped      bool
+	driveEta     float64
+	driveBeta    float64
+	stepInterval time.Duration
+}
+
+/*
+manifoldDrive is one symbol's latest Hawkes excitation read, folded in by Step
+as measurements arrive and consumed by the next physics load.
+*/
+type manifoldDrive struct {
+	buy, sell, eta, beta float64
+	hasHawkes            bool
 }
 
 /*
@@ -113,9 +125,8 @@ func NewSolver(
 	ctx context.Context,
 	thesis *types.Thesis,
 	api *websocket.API,
-	ui *transport.MapReduce[*types.UIFrame],
-	binui *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
+	bus *nomagiqueruntime.Workspace,
 ) *Solver {
 	deltaT := 0.01
 	configuredDelta := viper.GetDuration("market.manifold.integration_interval")
@@ -125,13 +136,13 @@ func NewSolver(
 	}
 
 	config := liveDomain(deltaT)
-	
+
 	physics, err := pmanifold.NewManifold(
 		int(config.GridX),
 		int(config.GridY),
 		int(config.GridZ),
 	)
-	
+
 	errnie.Error(errnie.Err(
 		errnie.NotAcceptable,
 		"manifold: error building manifold",
@@ -149,26 +160,37 @@ func NewSolver(
 	}
 
 	solver := &Solver{
-		ctx:       ctx,
-		thesis:    thesis,
-		api:       bookSource,
-		config:    config,
-		physics:   physics,
-		slabs:     slabEncoder{config: config},
-		recorder:  recorder,
-		scales:    make(map[string]*adaptive.Accumulator),
-		converged: make(map[string]float64),
-		priorPos:  make(map[string]map[string][3]float64),
-		corpus:    corpus,
-		angles:    angles,
-		ui:        ui,
-		binui:     binui,
-		semaphore: make(chan struct{}, 1),
-		stopping:  make(chan struct{}),
-		stopped:   make(chan struct{}),
+		ctx:          ctx,
+		thesis:       thesis,
+		api:          bookSource,
+		config:       config,
+		physics:      physics,
+		slabs:        slabEncoder{config: config},
+		recorder:     recorder,
+		scales:       make(map[string]*adaptive.Accumulator),
+		converged:    make(map[string]float64),
+		priorPos:     make(map[string]map[string][3]float64),
+		corpus:       corpus,
+		angles:       angles,
+		semaphore:    make(chan struct{}, 1),
+		stopping:     make(chan struct{}),
+		stopped:      make(chan struct{}),
+		stepInterval: viper.GetDuration("market.manifold.step_interval"),
 	}
-	solver.work = transport.NewConsumer[*types.Symbol](solver.Name(), solver.consume)
-	thesis.Work(types.SourceManifold).Register(solver.work)
+	solver.ui = nomagiqueruntime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
+	solver.fluid = nomagiqueruntime.ChannelOf[types.FluidFrame](
+		bus, types.ChannelFluid,
+		func(frame types.FluidFrame) string { return "" },
+	)
+	nomagiqueruntime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	).Subscribe(solver.Name(), solver.Step)
+
+	go solver.drive()
 
 	return solver
 }
@@ -228,14 +250,10 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 
 	solver.requestMu.Lock()
 
-	if solver.closing.Load() {
+	if solver.closing.Load() || solver.ctx.Err() != nil {
 		solver.requestMu.Unlock()
 
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"manifold: solver is closing",
-			nil,
-		))
+		return nil
 	}
 
 	solver.requested++
@@ -250,42 +268,93 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 	return nil
 }
 
-func (solver *Solver) consume() {
-	go func() {
-		work := solver.thesis.Work(types.SourceManifold)
-		remaining := work.Length(solver.work)
+/*
+Step coalesces one measurement notification into the resident request slot. The
+resident domain advances on its own clock (see drive), so a burst of
+notifications can never trigger more physics steps than the integration cadence
+allows, and the pipeline never blocks a measurement producer.
+*/
+func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
+	if solver == nil || solver.thesis == nil || measurement == nil {
+		return nil
+	}
 
-		for range work.Drain(solver.work, func(*types.Symbol) bool {
-			return remaining > 0
-		}) {
-			select {
-			case <-solver.ctx.Done():
-				solver.err = solver.ctx.Err()
-				return
-			default:
-			}
+	if string(measurement.Source) == string(types.SourceHawkes) {
+		entry := solver.driveFor(measurement.Symbol)
+		buySample := measurement.Metrics[types.MetricKey(
+			types.MetricExcitationAmplitude, types.SideBuyToBuy,
+		)]
+		sellSample := measurement.Metrics[types.MetricKey(
+			types.MetricExcitationAmplitude, types.SideSellToSell,
+		)]
 
-			if err := solver.Update(solver.thesis); err != nil {
-				solver.err = errnie.Error(err)
-				solver.thesis.Fail(solver.err)
+		if buySample.Normalized != nil {
+			entry.buy = *buySample.Normalized
+		}
 
-				return
-			}
+		if sellSample.Normalized != nil {
+			entry.sell = *sellSample.Normalized
+		}
 
-			remaining--
+		entry.eta = measurement.Metrics[types.MetricKey(
+			types.MetricSpectralRadius, types.SideNone,
+		)].Raw
+		entry.beta = measurement.Metrics[types.MetricKey(
+			types.MetricDecayRate, types.SideNone,
+		)].Raw
+		entry.hasHawkes = true
+	}
 
-			if remaining > 0 {
-				continue
-			}
+	return solver.Update(solver.thesis)
+}
 
+func (solver *Solver) driveFor(symbol string) manifoldDrive {
+	loaded, _ := solver.drives.LoadOrStore(symbol, manifoldDrive{})
+
+	return loaded.(manifoldDrive)
+}
+
+/*
+drive advances the resident domain on the manifold's own clock. Every interval
+it consumes the latest coalesced request generation, so step cost is bounded
+and independent of how fast measurements arrive.
+*/
+func (solver *Solver) drive() {
+	interval := solver.stepInterval
+
+	if interval <= 0 {
+		interval = manifoldStepInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	defer solver.settling.Store(false)
+
+	for {
+		select {
+		case <-solver.ctx.Done():
+			return
+		case <-ticker.C:
 			if err := solver.drainRequests(); err != nil {
 				solver.err = errnie.Error(err)
-				solver.thesis.Fail(solver.err)
+
+				if solver.thesis != nil {
+					solver.thesis.Fail(solver.err)
+				}
+
 				return
 			}
 		}
-	}()
+	}
 }
+
+/*
+manifoldStepInterval is the resident domain's integration cadence. The manifold
+is a physics integrator, not a per-message reducer: it settles the latest
+request generation on its own clock so the step rate is bounded no matter how
+fast the measurement stream runs.
+*/
+const manifoldStepInterval = 50 * time.Millisecond
 
 /*
 drainRequests keeps the resident manifold owner active until it has consumed
@@ -303,7 +372,7 @@ func (solver *Solver) drainRequests() error {
 		cuts, err := solver.load(request.thesis, request.at)
 
 		if err == nil && len(cuts) > 0 {
-			err = solver.Step(request.thesis, request.at, cuts)
+			err = solver.advance(request.thesis, request.at, cuts)
 		}
 
 		if err != nil {
@@ -354,67 +423,16 @@ func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, e
 	}
 
 	solver.waiting.Store(false)
-	type drive struct {
-		buy, sell, eta, beta float64
-		hasHawkes            bool
-	}
-	drives := make(map[string]drive)
+	drives := make(map[string]manifoldDrive)
 
 	for _, symbolName := range solver.universe {
-		drives[symbolName] = drive{}
+		if drive, found := solver.drives.Load(symbolName); found {
+			drives[symbolName] = drive.(manifoldDrive)
+		} else {
+			drives[symbolName] = manifoldDrive{}
+		}
 	}
 
-	thesis.Symbols.Range(func(key, value any) bool {
-		symbolName, nameOK := key.(string)
-		symbol, ok := value.(*types.Symbol)
-
-		if !nameOK || symbolName == "" || !ok || symbol == nil {
-			return true
-		}
-
-		for measurement := range symbol.MarketMeasurements(
-			symbol.MeasurementConsumers[types.MeasurementConsumerManifold],
-		) {
-			if string(measurement.Source) != string(types.SourceHawkes) {
-				continue
-			}
-
-			if _, admitted := drives[symbolName]; !admitted {
-				if !solver.admit(symbolName) {
-					continue
-				}
-
-				drives[symbolName] = drive{}
-			}
-
-			entry := drives[symbolName]
-			entry.hasHawkes = true
-			buySample := measurement.Metrics[types.MetricKey(
-				types.MetricExcitationAmplitude, types.SideBuyToBuy,
-			)]
-			sellSample := measurement.Metrics[types.MetricKey(
-				types.MetricExcitationAmplitude, types.SideSellToSell,
-			)]
-
-			if buySample.Normalized != nil {
-				entry.buy = *buySample.Normalized
-			}
-
-			if sellSample.Normalized != nil {
-				entry.sell = *sellSample.Normalized
-			}
-
-			entry.eta = measurement.Metrics[types.MetricKey(
-				types.MetricSpectralRadius, types.SideNone,
-			)].Raw
-			entry.beta = measurement.Metrics[types.MetricKey(
-				types.MetricDecayRate, types.SideNone,
-			)].Raw
-			drives[symbolName] = entry
-		}
-
-		return true
-	})
 	symbolNames := make([]string, 0, len(drives))
 
 	for symbolName := range drives {
@@ -760,7 +778,7 @@ func (solver *Solver) WaitingForBook() bool {
 	return solver.waiting.Load()
 }
 
-func (solver *Solver) Step(
+func (solver *Solver) advance(
 	thesis *types.Thesis,
 	at time.Time,
 	cuts []manifoldCut,
@@ -794,7 +812,7 @@ func (solver *Solver) Step(
 }
 
 func (solver *Solver) publishDomain() error {
-	if solver.binui == nil {
+	if solver.fluid == nil {
 		return nil
 	}
 
@@ -808,11 +826,11 @@ func (solver *Solver) publishDomain() error {
 		))
 	}
 
-	solver.binui.Push(types.FluidFrame{
+	solver.fluid.Publish(types.FluidFrame{
 		Channel: types.FluidFieldsChannel,
 		Payload: fields,
 	})
-	solver.binui.Push(types.FluidFrame{
+	solver.fluid.Publish(types.FluidFrame{
 		Channel: types.FluidParticlesChannel,
 		Payload: solver.slabs.Particles(solver.oscillators),
 	})
@@ -828,8 +846,8 @@ func (solver *Solver) publishPhase(
 ) {
 	reading := solver.stampPhase(thesis, at, cuts, fingerprint)
 
-	if solver.binui != nil {
-		solver.binui.Push(types.FluidFrame{
+	if solver.fluid != nil {
+		solver.fluid.Publish(types.FluidFrame{
 			Channel: types.FluidPhaseChannel,
 			Payload: telemetry.Encode(&wire.FrameT{
 				Type:  wire.FrameFluidPhaseFrame,

@@ -10,24 +10,23 @@ import (
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	thesis *types.Thesis
-	number *nomagique.Number[string]
-	pair   nmtypes.Primitive
-	work   *transport.Consumer[*types.Symbol]
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	thesis       *types.Thesis
+	number       *nomagique.Number[string]
+	pair         nmtypes.Primitive
+	measurements *runtime.Channel[*nmtypes.Measurement]
 }
 
-func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis, bus *runtime.Workspace) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -37,8 +36,14 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		number: nomagique.NewNumber[string](temporal.Path),
 		pair:   algo.LeadLag(),
 	}
-	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
-	thesis.Work(types.SourceLeadLag).Register(signal.work)
+	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	)
+	runtime.ChannelOf[kraken.TickerData](
+		bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
+	).Subscribe(signal.Name(), signal.Step)
 
 	return signal
 }
@@ -47,131 +52,91 @@ func (signal *Signal) Name() string           { return string(types.SourceLeadLa
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceLeadLag }
 
-func (signal *Signal) consume() {
-	go func() {
-		defer func() {
-			signal.thesis.Fail(signal.err)
-		}()
+// Step processes one ready symbol cut. The transport workspace preserves
+// order for this symbol while allowing every other symbol to advance.
+func (signal *Signal) Step(ticker kraken.TickerData) error {
+	price, observed, err := tickerPrice(ticker)
 
-		group, ctx := errgroup.WithContext(signal.ctx)
-		group.SetLimit(types.ShardWorkers())
-
-		for symbol := range signal.thesis.Work(types.SourceLeadLag).Drain(signal.work, nil) {
-			select {
-			case <-ctx.Done():
-				signal.err = ctx.Err()
-				return
-			default:
-			}
-
-			if symbol == nil {
-				continue
-			}
-
-			symbol := symbol
-			group.Go(func() error {
-				return signal.consumeSymbol(symbol)
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			signal.err = errnie.Error(errnie.Err(
-				errnie.Validation,
-				"leadlag: processing failed",
-				err,
-			))
-		}
-	}()
-}
-
-func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
-	for ticker := range symbol.MarketTickers(
-		symbol.TickerConsumers[types.TickerConsumerLeadLag],
-	) {
-		price, observed, err := tickerPrice(ticker)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"leadlag: invalid ticker for "+symbol.Symbol,
-				err,
-			))
-		}
-
-		if !observed {
-			continue
-		}
-
-		anchor, _, _, hasAnchor, err := signal.number.ArgMax(
-			correlation.Return,
-			correlation.SymbolMagnitude,
-			correlation.SymbolReady,
-		)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"leadlag: anchor selection failed",
-				err,
-			))
-		}
-
-		input := nmtypes.Frame{}
-		input.Put(nmtypes.SampleValue, price)
-		input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-		input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-		_, err = signal.number.Step(symbol.Symbol, input)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"leadlag: path failed for "+symbol.Symbol,
-				err,
-			))
-		}
-
-		if !hasAnchor || anchor == symbol.Symbol {
-			symbol.AppendMeasurement(signal.neutralMeasurement(
-				symbol.Symbol, ticker.Timestamp, price,
-			))
-
-			continue
-		}
-
-		anchorPath, hasAnchorPath := signal.number.Project(anchor)
-		followerPath, hasFollowerPath := signal.number.Project(symbol.Symbol)
-
-		if !hasAnchorPath || !hasFollowerPath {
-			symbol.AppendMeasurement(signal.neutralMeasurement(
-				symbol.Symbol, ticker.Timestamp, price,
-			))
-
-			continue
-		}
-
-		_, output, err := signal.pair(anchorPath, followerPath)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"leadlag: pair failed for "+symbol.Symbol,
-				err,
-			))
-		}
-
-		ready, _ := output.Get(equation.SymbolLeadLagReady)
-
-		symbol.AppendMeasurement(signal.measurement(
-			symbol.Symbol,
-			anchor,
-			ticker.Timestamp,
-			anchorPath,
-			followerPath,
-			output,
-			ready != 0,
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"leadlag: invalid ticker for "+ticker.Symbol,
+			err,
 		))
 	}
 
+	if !observed {
+		return nil
+	}
+
+	anchor, _, _, hasAnchor, err := signal.number.ArgMax(
+		correlation.Return,
+		correlation.SymbolMagnitude,
+		correlation.SymbolReady,
+	)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"leadlag: anchor selection failed",
+			err,
+		))
+	}
+
+	input := nmtypes.Frame{}
+	input.Put(nmtypes.SampleValue, price)
+	input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+	input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
+	_, err = signal.number.Step(ticker.Symbol, input)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"leadlag: path failed for "+ticker.Symbol,
+			err,
+		))
+	}
+
+	if !hasAnchor || anchor == ticker.Symbol {
+		signal.measurements.Publish(signal.neutralMeasurement(
+			ticker.Symbol, ticker.Timestamp, price,
+		))
+
+		return nil
+	}
+
+	anchorPath, hasAnchorPath := signal.number.Project(anchor)
+	followerPath, hasFollowerPath := signal.number.Project(ticker.Symbol)
+
+	if !hasAnchorPath || !hasFollowerPath {
+		signal.measurements.Publish(signal.neutralMeasurement(
+			ticker.Symbol, ticker.Timestamp, price,
+		))
+
+		return nil
+	}
+
+	_, output, err := signal.pair(anchorPath, followerPath)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"leadlag: pair failed for "+ticker.Symbol,
+			err,
+		))
+	}
+
+	ready, _ := output.Get(equation.SymbolLeadLagReady)
+
+	signal.measurements.Publish(signal.measurement(
+		ticker.Symbol,
+		anchor,
+		ticker.Timestamp,
+		anchorPath,
+		followerPath,
+		output,
+		ready != 0,
+	))
 	return nil
 }
 

@@ -2,12 +2,13 @@ package derivatives
 
 import (
 	"context"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -30,14 +31,15 @@ type Signal struct {
 	liquidations   *nomagique.Number[string]
 	tickerPrice    *nomagique.Number[string]
 	tradePrice     *nomagique.Number[string]
-	work           *transport.Consumer[*types.Symbol]
+	measurements   *runtime.Channel[*nmtypes.Measurement]
+	data           sync.Map
 	pool           *types.SymbolPool
 }
 
 /*
 NewSignal constructs a new Derivatives Signal.
 */
-func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis, bus *runtime.Workspace) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -56,8 +58,22 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		pool:           types.NewSymbolPool(types.ShardWorkers()),
 	}
 
-	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
-	thesis.Work(types.SourceDerivatives).Register(signal.work)
+	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	)
+	runtime.ChannelOf[kraken.FuturesTickerData](
+		bus, types.ChannelFuturesTickers,
+		func(ticker kraken.FuturesTickerData) string { return ticker.Symbol },
+	).Subscribe(signal.Name(), signal.onTicker)
+	runtime.ChannelOf[kraken.FuturesTradeData](
+		bus, types.ChannelFuturesTrades,
+		func(trade kraken.FuturesTradeData) string { return trade.Symbol },
+	).Subscribe(signal.Name(), signal.onTrade)
+	runtime.ChannelOf[kraken.FuturesBookData](
+		bus, types.ChannelFuturesBooks,
+		func(book kraken.FuturesBookData) string { return book.Symbol },
+	).Subscribe(signal.Name(), signal.onBook)
 
 	return signal
 }
@@ -66,94 +82,49 @@ func (signal *Signal) Name() string           { return string(types.SourceDeriva
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceDerivatives }
 
-func (signal *Signal) consume() {
-	go func() {
-		defer func() {
-			if err := signal.pool.Error(); err != nil {
-				signal.err = err
-			}
+// onTicker advances one symbol's derivatives accumulator from a futures
+// ticker and publishes the latest measurement downstream.
+func (signal *Signal) onTicker(ticker kraken.FuturesTickerData) error {
+	symbol := signal.thesis.Symbol(ticker.Symbol)
+	data := signal.symbolData(symbol.Symbol)
 
-			signal.thesis.Fail(signal.err)
-		}()
+	if err := signal.consumeTicker(symbol, ticker, data); err != nil {
+		return err
+	}
 
-		for symbol := range signal.thesis.Work(types.SourceDerivatives).Drain(signal.work, nil) {
-			select {
-			case <-signal.ctx.Done():
-				signal.pool.CaptureError(signal.ctx.Err())
-				return
-			default:
-			}
-
-			if symbol == nil {
-				continue
-			}
-
-			symbolName := symbol.Symbol
-
-			signal.pool.Submit(symbolName, func() {
-				if err := signal.consumeSymbol(symbol); err != nil {
-					signal.pool.CaptureError(errnie.Error(errnie.Err(
-						errnie.Validation,
-						"derivatives: condition "+symbolName,
-						err,
-					)))
-				}
-			})
-		}
-	}()
+	return signal.emit(symbol, ticker.Timestamp, data)
 }
 
-func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
-	updated := false
-	latestTime := time.Time{}
-	data := DerivativesData{}
+func (signal *Signal) onTrade(trade kraken.FuturesTradeData) error {
+	symbol := signal.thesis.Symbol(trade.Symbol)
+	data := signal.symbolData(symbol.Symbol)
 
-	for ticker := range symbol.MarketFuturesTickers(
-		symbol.FuturesTickerConsumers[types.FuturesTickerConsumerDerivatives],
-	) {
-		updated = true
-		latestTime = ticker.Timestamp
-
-		if err := signal.consumeTicker(symbol, ticker, &data); err != nil {
-			return err
-		}
+	if err := signal.consumeTrade(symbol, trade, data); err != nil {
+		return err
 	}
 
-	for trade := range symbol.MarketFuturesTrades(
-		symbol.FuturesTradeConsumers[types.FuturesTradeConsumerDerivatives],
-	) {
-		updated = true
+	return signal.emit(symbol, trade.Timestamp, data)
+}
 
-		if trade.Timestamp.After(latestTime) {
-			latestTime = trade.Timestamp
-		}
+func (signal *Signal) onBook(book kraken.FuturesBookData) error {
+	symbol := signal.thesis.Symbol(book.Symbol)
+	return signal.emit(symbol, book.Timestamp, signal.symbolData(symbol.Symbol))
+}
 
-		if err := signal.consumeTrade(symbol, trade, &data); err != nil {
-			return err
-		}
-	}
+func (signal *Signal) symbolData(symbol string) *DerivativesData {
+	loaded, _ := signal.data.LoadOrStore(symbol, &DerivativesData{})
+	return loaded.(*DerivativesData)
+}
 
-	for book := range symbol.MarketFuturesBooks(
-		symbol.FuturesBookConsumers[types.FuturesBookConsumerDerivatives],
-	) {
-		updated = true
-
-		if book.Timestamp.After(latestTime) {
-			latestTime = book.Timestamp
-		}
-	}
-
-	if !updated {
-		return nil
-	}
-
-	measurement, err := BuildMeasurement(signal.Name(), symbol.Symbol, latestTime, data)
+func (signal *Signal) emit(symbol *types.Symbol, at time.Time, data *DerivativesData) error {
+	measurement, err := BuildMeasurement(signal.Name(), symbol.Symbol, at, *data)
 
 	if err != nil {
 		return err
 	}
 
-	symbol.AppendMeasurement(measurement)
+	signal.measurements.Publish(measurement)
+
 	return nil
 }
 

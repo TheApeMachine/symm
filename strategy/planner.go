@@ -1,17 +1,19 @@
 package strategy
 
 import (
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/kraken"
 	"context"
 	"fmt"
 	"math"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -42,7 +44,11 @@ type Planner struct {
 	desk       *broker.Desk
 	regulator  entryRegulator
 	thesis     *types.Thesis
-	work       *transport.Consumer[*types.Symbol]
+	ui         *runtime.Channel[*types.UIFrame]
+	graphWork  *runtime.Subscription[*types.Graph]
+	tickWork   *runtime.Subscription[kraken.TickerData]
+	pending    sync.Map
+	lastPass   int64
 
 	ObserveModule func(string, time.Duration)
 	ObserveHop    func(string, string, time.Duration)
@@ -55,6 +61,7 @@ func NewPlanner(
 	recorder *audit.Recorder,
 	desk *broker.Desk,
 	reg entryRegulator,
+	bus *runtime.Workspace,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -70,8 +77,18 @@ func NewPlanner(
 		regulator:  reg,
 		thesis:     thesis,
 	}
-	planner.work = transport.NewConsumer[*types.Symbol](planner.Name(), planner.consume)
-	thesis.Work(types.SourcePlanner).Register(planner.work)
+	planner.ui = runtime.ChannelOf[*types.UIFrame](
+		bus, types.ChannelUI,
+		func(frame *types.UIFrame) string { return "" },
+	)
+	planner.graphWork = runtime.ChannelOf[*types.Graph](
+		bus, types.ChannelGraphs,
+		func(graph *types.Graph) string { return graph.Symbol },
+	).Subscribe(planner.Name(), planner.Step)
+	planner.tickWork = runtime.ChannelOf[kraken.TickerData](
+		bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return "" },
+	).Subscribe(planner.Name(), planner.StepTick)
 
 	return planner
 }
@@ -109,38 +126,27 @@ func (planner *Planner) Close() error {
 	return nil
 }
 
-func (planner *Planner) consume() {
-	go func() {
-		work := planner.thesis.Work(types.SourcePlanner)
-		remaining := work.Length(planner.work)
+// Step retains the freshest ready graph for one symbol. The portfolio pass
+// runs on the tick clock so the planner stays a per-tick strategy stage.
+func (planner *Planner) Step(graph *types.Graph) error {
+	if graph == nil || graph.Symbol == "" {
+		return nil
+	}
 
-		for range work.Drain(planner.work, func(_ *types.Symbol) bool {
-			return remaining > 0
-		}) {
-			select {
-			case <-planner.ctx.Done():
-				planner.err = planner.ctx.Err()
-				return
-			default:
-			}
+	planner.pending.Store(graph.Symbol, graph)
 
-			remaining--
+	return nil
+}
 
-			if remaining > 0 {
-				continue
-			}
+// StepTick runs one portfolio pass at most once per engine tick.
+func (planner *Planner) StepTick(ticker kraken.TickerData) error {
+	if planner.lastPass == planner.thesis.Tick {
+		return nil
+	}
 
-			if err := planner.Update(planner.thesis); err != nil {
-				planner.err = errnie.Error(errnie.Err(
-					errnie.Internal,
-					"planner: background update failed",
-					err,
-				))
-				planner.thesis.Fail(planner.err)
-				return
-			}
-		}
-	}()
+	planner.lastPass = planner.thesis.Tick
+
+	return planner.Update(planner.thesis)
 }
 
 func (planner *Planner) decisionFromGraph(
@@ -220,42 +226,18 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		return fmt.Errorf("planner: planner configuration required")
 	}
 
-	plannerStarted := time.Now()
-
-	defer func() {
-		if planner.ObserveModule != nil {
-			planner.ObserveModule("planner", time.Since(plannerStarted))
-		}
-	}()
-
 	readySymbols := make(map[string]*logicgraph.Graph)
 
-	thesis.Symbols.Range(func(key, value any) bool {
+	planner.pending.Range(func(key, value any) bool {
 		symbolName, symbolOK := key.(string)
-		symbolState, stateOK := value.(*types.Symbol)
+		graph, graphOK := value.(*types.Graph)
 
-		if !symbolOK || symbolName == "" || !stateOK || symbolState == nil ||
-			isExcludedSymbol(symbolName) {
-			return true
-		}
-
-		consumedGraph := false
-
-		for graph := range symbolState.MarketGraphs(
-			symbolState.GraphConsumers[types.GraphConsumerPlanner],
-		) {
-			consumedGraph = true
-
-			if graph == nil || !graph.ReadyForSearch() {
-				continue
-			}
-
+		if symbolOK && graphOK && graph != nil &&
+			graph.ReadyForSearch() && !isExcludedSymbol(symbolName) {
 			readySymbols[symbolName] = graph
 		}
 
-		if consumedGraph && symbolState.HasGraphInputs() {
-			thesis.ScheduleWork(types.SourceGraph, symbolState)
-		}
+		planner.pending.Delete(key)
 
 		return true
 	})
@@ -263,6 +245,13 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	if len(readySymbols) == 0 {
 		return nil
 	}
+
+	plannerStarted := time.Now()
+	defer func() {
+		if planner.ObserveModule != nil {
+			planner.ObserveModule("planner", time.Since(plannerStarted))
+		}
+	}()
 
 	return planner.updateGraph(thesis, config, readySymbols)
 }
@@ -283,58 +272,78 @@ func (planner *Planner) updateGraph(
 	graphs := make(map[string]*logicgraph.Graph, len(readySymbols))
 	admitted := make(map[string]*types.Decision, len(readySymbols))
 
-	for symbolName, symbolGraph := range readySymbols {
-		if planner.Holding(symbolName) {
+	type seedResult struct {
+		symbol   string
+		graph    *logicgraph.Graph
+		seed     *types.Decision
+		leg      portfolioLeg
+		admitted bool
+		err      error
+	}
+
+	symbolNames := make([]string, 0, len(readySymbols))
+	for symbolName := range readySymbols {
+		symbolNames = append(symbolNames, symbolName)
+	}
+	slices.Sort(symbolNames)
+	seedResults := make([]seedResult, len(symbolNames))
+	var seedWorkers sync.WaitGroup
+	seedWorkers.Add(len(symbolNames))
+
+	for index, symbolName := range symbolNames {
+		index, symbolName := index, symbolName
+		go func() {
+			defer seedWorkers.Done()
+			result := &seedResults[index]
+			result.symbol = symbolName
+			if planner.Holding(symbolName) {
+				return
+			}
+			graph := readySymbols[symbolName]
+			if graph == nil || !graph.ReadyForSearch() {
+				return
+			}
+			seed, err := planner.decisionFromGraph(symbolName, graph, config, nil, 0, 0)
+			if err != nil {
+				result.err = err
+				return
+			}
+			if seed == nil {
+				return
+			}
+			result.graph = graph
+			result.seed = seed
+			if seed.Reason != "" {
+				return
+			}
+			seed.Action = types.ActionEnter
+			opportunity := graph.ActiveOpportunity(graph.At)
+			reserveEligible, _ := reserveQualification(opportunity.Type, seed.PredictiveReady, seed.ForecastHorizon)
+			result.admitted = true
+			result.leg = portfolioLeg{
+				Symbol: symbolName, Summary: graph.OpportunitySummary(), Opportunity: opportunity,
+				ReserveEligible: reserveEligible,
+				Liquidity:       alternativesOf(seed)[liquidityScoreKey],
+				LiquidityMass:   alternativesOf(seed)[liquidityMassKey],
+			}
+		}()
+	}
+	seedWorkers.Wait()
+
+	for _, result := range seedResults {
+		if result.err != nil {
+			return result.err
+		}
+		if result.seed == nil {
 			continue
 		}
-
-		graph := symbolGraph
-
-		if graph == nil || !graph.ReadyForSearch() {
+		if !result.admitted {
+			createdDecisions = append(createdDecisions, result.seed)
 			continue
 		}
-
-		seed, err := planner.decisionFromGraph(
-			symbolName,
-			graph,
-			config,
-			nil,
-			0,
-			0,
-		)
-
-		if err != nil {
-			return err
-		}
-
-		if seed == nil {
-			continue
-		}
-
-		if seed.Reason != "" {
-			createdDecisions = append(createdDecisions, seed)
-			continue
-		}
-
-		seed.Action = types.ActionEnter
-		admitted[symbolName] = seed
-		graphs[symbolName] = graph
-		opportunity := graph.ActiveOpportunity(graph.At)
-		reserveEligible, _ := reserveQualification(
-			opportunity.Type,
-			seed.PredictiveReady,
-			seed.ForecastHorizon,
-		)
-		liquidity := alternativesOf(seed)[liquidityScoreKey]
-		liquidityMass := alternativesOf(seed)[liquidityMassKey]
-		legs = append(legs, portfolioLeg{
-			Symbol:          symbolName,
-			Summary:         graph.OpportunitySummary(),
-			Opportunity:     opportunity,
-			ReserveEligible: reserveEligible,
-			Liquidity:       liquidity,
-			LiquidityMass:   liquidityMass,
-		})
+		admitted[result.symbol] = result.seed
+		graphs[result.symbol] = result.graph
+		legs = append(legs, result.leg)
 	}
 
 	if len(legs) > 0 {
@@ -372,40 +381,46 @@ func (planner *Planner) updateGraph(
 			return searchErr
 		}
 
+		decisionResults := make([]struct {
+			decision *types.Decision
+			err      error
+		}, len(legs))
+		var decisionWorkers sync.WaitGroup
+		decisionWorkers.Add(len(legs))
 		for index, leg := range legs {
-			cloned := graphs[leg.Symbol]
+			index, leg := index, leg
+			go func() {
+				defer decisionWorkers.Done()
+				cloned := graphs[leg.Symbol]
+				if cloned == nil {
+					return
+				}
+				decision, err := planner.decisionFromGraph(
+					leg.Symbol, cloned, config, searchRoot, portfolioEnterReference(index),
+					config.Planner.MCTSIterations,
+				)
+				decisionResults[index].decision = decision
+				decisionResults[index].err = err
+			}()
+		}
+		decisionWorkers.Wait()
 
-			if cloned == nil {
-				continue
+		for _, result := range decisionResults {
+			if result.err != nil {
+				return result.err
 			}
-
-			decision, decisionErr := planner.decisionFromGraph(
-				leg.Symbol,
-				cloned,
-				config,
-				searchRoot,
-				portfolioEnterReference(index),
-				config.Planner.MCTSIterations,
-			)
-
-			if decisionErr != nil {
-				return decisionErr
-			}
-
+			decision := result.decision
 			if decision == nil {
 				continue
 			}
-
 			if decision.Reason == "" {
 				if !decision.Opportunity && !decision.PredictiveReady && !decision.ReserveEligible {
 					decision.Action = types.ActionNothing
 					decision.GraphScore = 0
 					decision.Trace = nil
 					decision.Reason = "planner: no actable opportunity"
-
 					if !decision.PredictiveReady && decision.PredictiveStatus != "" {
-						decision.Reason += "; predictive state is informational: " +
-							decision.PredictiveStatus
+						decision.Reason += "; predictive state is informational: " + decision.PredictiveStatus
 					}
 				} else {
 					decision.Action = types.ActionEnter
@@ -413,7 +428,6 @@ func (planner *Planner) updateGraph(
 					decision.Reason = ""
 				}
 			}
-
 			createdDecisions = append(createdDecisions, decision)
 		}
 	}
@@ -438,11 +452,6 @@ func (planner *Planner) updateGraph(
 		}
 
 		lastSearchEnd = time.Now()
-	}
-
-	for _, decision := range createdDecisions {
-		symbol := thesis.Symbol(decision.Symbol)
-		symbol.Decisions.PushLatest(*decision)
 	}
 
 	decisions := make([]types.Decision, 0, len(createdDecisions))
@@ -501,14 +510,16 @@ func (planner *Planner) publishStrategy(
 		))
 	}
 
-	thesis.Publish(&wire.FrameT{
-		Type: wire.FrameStrategyFrame,
-		Value: &wire.StrategyFrameT{
-			Evaluated: evaluated,
-			Outcome:   outcome,
-			Decisions: rows,
-		},
-	})
+	if planner.ui != nil {
+		planner.ui.Publish(&types.UIFrame{
+			Type: wire.FrameStrategyFrame,
+			Value: &wire.StrategyFrameT{
+				Evaluated: evaluated,
+				Outcome:   outcome,
+				Decisions: rows,
+			},
+		})
+	}
 }
 
 func (planner *Planner) executeDecisions(

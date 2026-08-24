@@ -5,13 +5,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -33,12 +33,12 @@ symbol that maps each signed trade mark into fitted self- and cross-exciting
 intensities.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	thesis *types.Thesis
-	number *nomagique.Number[string]
-	work   *transport.Consumer[*types.Symbol]
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	thesis       *types.Thesis
+	number       *nomagique.Number[string]
+	measurements *runtime.Channel[*nmtypes.Measurement]
 }
 
 /*
@@ -47,6 +47,7 @@ NewSignal constructs the Hawkes pipeline.
 func NewSignal(
 	ctx context.Context,
 	thesis *types.Thesis,
+	bus *runtime.Workspace,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -56,8 +57,14 @@ func NewSignal(
 		thesis: thesis,
 		number: nomagique.NewNumber[string](hawkesPipeline()),
 	}
-	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
-	thesis.Work(types.SourceHawkes).Register(signal.work)
+	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	)
+	runtime.ChannelOf[kraken.TradeData](
+		bus, types.ChannelTrades,
+		func(trade kraken.TradeData) string { return trade.Symbol },
+	).Subscribe(signal.Name(), signal.Step)
 
 	return signal
 }
@@ -75,140 +82,100 @@ func (signal *Signal) Type() types.SourceType {
 	return types.SourceHawkes
 }
 
-func (signal *Signal) consume() {
-	go func() {
-		defer func() {
-			signal.thesis.Fail(signal.err)
-		}()
+// Step processes one ready symbol cut. The transport workspace preserves
+// order for this symbol while allowing every other symbol to advance.
+func (signal *Signal) Step(trade kraken.TradeData) error {
+	input := nmtypes.Frame{}
+	input.Put(algo.SymbolMark, markForSide(trade.Side))
+	input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+	input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
 
-		group, ctx := errgroup.WithContext(signal.ctx)
-		group.SetLimit(types.ShardWorkers())
+	output, err := signal.number.Step(trade.Symbol, input)
 
-		for symbol := range signal.thesis.Work(types.SourceHawkes).Drain(signal.work, nil) {
-			select {
-			case <-ctx.Done():
-				signal.err = ctx.Err()
-				return
-			default:
-			}
-
-			if symbol == nil {
-				continue
-			}
-
-			symbol := symbol
-			group.Go(func() error {
-				return signal.consumeSymbol(symbol)
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			signal.err = errnie.Error(errnie.Err(
-				errnie.Validation,
-				"hawkes: processing failed",
-				err,
-			))
-		}
-	}()
-}
-
-func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
-	for trade := range symbol.MarketTrades(
-		symbol.TradeConsumers[types.TradeConsumerHawkes],
-	) {
-		input := nmtypes.Frame{}
-		input.Put(algo.SymbolMark, markForSide(trade.Side))
-		input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
-		input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-
-		output, err := signal.number.Step(symbol.Symbol, input)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"hawkes: number step failed for "+symbol.Symbol,
-				err,
-			))
-		}
-
-		beta := output.MustGet(statistic.SymbolBeta)
-		buyExcitation := output.MustGet(statistic.SymbolAlphaAA)
-		sellExcitation := output.MustGet(statistic.SymbolAlphaBB)
-		spectralRadius := output.MustGet(statistic.SymbolSpectralRadius)
-		buyMetric := nmtypes.NewMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy), buyExcitation, nmtypes.Descriptor{
-			Unit: nmtypes.UnitInverseSecond, Timescale: nmtypes.TimescalePerSecond,
-		})
-		sellMetric := nmtypes.NewMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell), sellExcitation, nmtypes.Descriptor{
-			Unit: nmtypes.UnitInverseSecond, Timescale: nmtypes.TimescalePerSecond,
-		})
-
-		if beta > 0 {
-			buyMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy), buyExcitation, buyExcitation/beta, buyMetric.Descriptor)
-			sellMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell), sellExcitation, sellExcitation/beta, sellMetric.Descriptor)
-		}
-
-		spectralMetric := nmtypes.NewMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), spectralRadius, nmtypes.Descriptor{
-			Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous,
-		})
-
-		if spectralRadius >= 0 && spectralRadius < 1 {
-			spectralMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), spectralRadius, spectralRadius, spectralMetric.Descriptor)
-		}
-
-		measurement := nmtypes.NewMeasurement(
-			uuid.NewString(),
-			signal.Name(),
-			trade.Timestamp.UnixNano(),
-			trade.Timestamp.UnixNano(),
-		).AddMetrics(
-			nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideNone), output.MustGet(algo.SymbolEventCount), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitCount,
-				Timescale: nmtypes.TimescalePerTick,
-			}),
-			nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideBuy), output.MustGet(algo.SymbolAlphaEventCount), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitCount,
-				Timescale: nmtypes.TimescalePerTick,
-			}),
-			nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideSell), output.MustGet(algo.SymbolBetaEventCount), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitCount,
-				Timescale: nmtypes.TimescalePerTick,
-			}),
-			nmtypes.NewMetric(types.MetricKey(types.MetricConditionalIntensity, types.SideBuy), output.MustGet(algo.SymbolLambdaAlpha), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitEventsPerSecond,
-				Timescale: nmtypes.TimescalePerSecond,
-			}),
-			nmtypes.NewMetric(types.MetricKey(types.MetricConditionalIntensity, types.SideSell), output.MustGet(algo.SymbolLambdaBeta), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitEventsPerSecond,
-				Timescale: nmtypes.TimescalePerSecond,
-			}),
-			nmtypes.NewMetric(types.MetricKey(types.MetricBaselineIntensity, types.SideBuy), output.MustGet(algo.SymbolMuAlpha), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitEventsPerSecond,
-				Timescale: nmtypes.TimescalePerSecond,
-			}),
-			nmtypes.NewMetric(types.MetricKey(types.MetricBaselineIntensity, types.SideSell), output.MustGet(algo.SymbolMuBeta), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitEventsPerSecond,
-				Timescale: nmtypes.TimescalePerSecond,
-			}),
-			buyMetric,
-			sellMetric,
-			nmtypes.NewMetric(types.MetricKey(types.MetricDecayRate, types.SideNone), beta, nmtypes.Descriptor{
-				Unit:      nmtypes.UnitInverseSecond,
-				Timescale: nmtypes.TimescalePerSecond,
-			}),
-			spectralMetric,
-			nmtypes.NewMetric(types.MetricKey(types.MetricTotalDescendants, types.SideBuy), output.MustGet(statistic.SymbolDescendantsAlpha), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitCount,
-				Timescale: nmtypes.TimescaleInstantaneous,
-			}),
-		)
-		measurement.StampQuality(
-			output.MustGet(statistic.SymbolSeparation),
-			output.MustGet(algo.SymbolEventCount),
-		)
-
-		symbol.AppendMeasurement(measurement)
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes: number step failed for "+trade.Symbol,
+			err,
+		))
 	}
 
+	beta := output.MustGet(statistic.SymbolBeta)
+	buyExcitation := output.MustGet(statistic.SymbolAlphaAA)
+	sellExcitation := output.MustGet(statistic.SymbolAlphaBB)
+	spectralRadius := output.MustGet(statistic.SymbolSpectralRadius)
+	buyMetric := nmtypes.NewMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy), buyExcitation, nmtypes.Descriptor{
+		Unit: nmtypes.UnitInverseSecond, Timescale: nmtypes.TimescalePerSecond,
+	})
+	sellMetric := nmtypes.NewMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell), sellExcitation, nmtypes.Descriptor{
+		Unit: nmtypes.UnitInverseSecond, Timescale: nmtypes.TimescalePerSecond,
+	})
+
+	if beta > 0 {
+		buyMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideBuyToBuy), buyExcitation, buyExcitation/beta, buyMetric.Descriptor)
+		sellMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricExcitationAmplitude, types.SideSellToSell), sellExcitation, sellExcitation/beta, sellMetric.Descriptor)
+	}
+
+	spectralMetric := nmtypes.NewMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), spectralRadius, nmtypes.Descriptor{
+		Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous,
+	})
+
+	if spectralRadius >= 0 && spectralRadius < 1 {
+		spectralMetric = nmtypes.NewNormalizedMetric(types.MetricKey(types.MetricSpectralRadius, types.SideNone), spectralRadius, spectralRadius, spectralMetric.Descriptor)
+	}
+
+	measurement := nmtypes.NewMeasurement(
+		uuid.NewString(),
+		signal.Name(),
+		trade.Timestamp.UnixNano(),
+		trade.Timestamp.UnixNano(),
+	).AddMetrics(
+		nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideNone), output.MustGet(algo.SymbolEventCount), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitCount,
+			Timescale: nmtypes.TimescalePerTick,
+		}),
+		nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideBuy), output.MustGet(algo.SymbolAlphaEventCount), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitCount,
+			Timescale: nmtypes.TimescalePerTick,
+		}),
+		nmtypes.NewMetric(types.MetricKey(types.MetricEventCount, types.SideSell), output.MustGet(algo.SymbolBetaEventCount), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitCount,
+			Timescale: nmtypes.TimescalePerTick,
+		}),
+		nmtypes.NewMetric(types.MetricKey(types.MetricConditionalIntensity, types.SideBuy), output.MustGet(algo.SymbolLambdaAlpha), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitEventsPerSecond,
+			Timescale: nmtypes.TimescalePerSecond,
+		}),
+		nmtypes.NewMetric(types.MetricKey(types.MetricConditionalIntensity, types.SideSell), output.MustGet(algo.SymbolLambdaBeta), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitEventsPerSecond,
+			Timescale: nmtypes.TimescalePerSecond,
+		}),
+		nmtypes.NewMetric(types.MetricKey(types.MetricBaselineIntensity, types.SideBuy), output.MustGet(algo.SymbolMuAlpha), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitEventsPerSecond,
+			Timescale: nmtypes.TimescalePerSecond,
+		}),
+		nmtypes.NewMetric(types.MetricKey(types.MetricBaselineIntensity, types.SideSell), output.MustGet(algo.SymbolMuBeta), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitEventsPerSecond,
+			Timescale: nmtypes.TimescalePerSecond,
+		}),
+		buyMetric,
+		sellMetric,
+		nmtypes.NewMetric(types.MetricKey(types.MetricDecayRate, types.SideNone), beta, nmtypes.Descriptor{
+			Unit:      nmtypes.UnitInverseSecond,
+			Timescale: nmtypes.TimescalePerSecond,
+		}),
+		spectralMetric,
+		nmtypes.NewMetric(types.MetricKey(types.MetricTotalDescendants, types.SideBuy), output.MustGet(statistic.SymbolDescendantsAlpha), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitCount,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+	)
+	measurement.StampQuality(
+		output.MustGet(statistic.SymbolSeparation),
+		output.MustGet(algo.SymbolEventCount),
+	)
+
+	signal.measurements.Publish(measurement)
 	return nil
 }
 

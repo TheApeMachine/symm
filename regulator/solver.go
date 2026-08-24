@@ -3,12 +3,12 @@ package regulator
 import (
 	"context"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -28,7 +28,7 @@ type Solver struct {
 	mu                   sync.Mutex
 	configSource         *system.Config
 	optimizer            *optimizer
-	ui                   *transport.MapReduce[*types.UIFrame]
+	ui                   *runtime.Channel[*types.UIFrame]
 	history              []float64
 	historyCapacity      int
 	lastEquity           float64
@@ -58,7 +58,7 @@ configuration.
 */
 func NewSolver(
 	_ context.Context,
-	ui *transport.MapReduce[*types.UIFrame],
+	ui *runtime.Channel[*types.UIFrame],
 ) (*Solver, error) {
 	configSource := system.Cfg
 
@@ -188,7 +188,7 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	payload := solver.buildPayload(periodReturn, result)
 
 	if solver.ui != nil {
-		solver.ui.Push(&wire.FrameT{
+		solver.ui.Publish(&wire.FrameT{
 			Type:  wire.FrameRegulatorFrame,
 			Value: regulatorWire(payload),
 		})

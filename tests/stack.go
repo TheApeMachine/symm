@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -56,7 +56,7 @@ type Boot[S Driven] func(
 	thesis *types.Thesis,
 	public websocket.Conn,
 	private websocket.Conn,
-	uiChannel *transport.MapReduce[*types.UIFrame],
+	bus *runtime.Workspace,
 ) S
 
 /*
@@ -128,16 +128,16 @@ func drive[S Driven](
 		defer viper.Set("market.l3_depth", previousDepth)
 
 		public, private := market.Feeds()
-		ui := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
-		thesis := types.NewThesis(t.Context(), ui)
-		system := boot(t.Context(), thesis, public, private, ui)
+		bus := runtime.NewWorkspace(nil)
+		thesis := types.NewThesis(t.Context())
+		system := boot(t.Context(), thesis, public, private, bus)
 
 		if system == absent {
 			t.Fatal("tests: boot produced no system")
 			return
 		}
 
-		market.WithStagedReplay(thesis, system.Error)
+		market.WithStagedReplay(bus, system.Error)
 
 		runErr := make(chan error, 1)
 

@@ -2,13 +2,13 @@ package trader
 
 import (
 	"context"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -29,8 +29,9 @@ type Crypto struct {
 	cancel      context.CancelFunc
 	err         error
 	api         *websocket.API
-	ui          *transport.MapReduce[*types.UIFrame]
-	manifold    *transport.MapReduce[types.FluidFrame]
+	ui          *runtime.Channel[*types.UIFrame]
+	fluid       *runtime.Channel[types.FluidFrame]
+	bus         *runtime.Workspace
 	thesis      *types.Thesis
 	recorder    *audit.Recorder
 	desk        *broker.Desk
@@ -43,11 +44,10 @@ NewCrypto constructs Crypto; Boot Initialize attaches planner and desk.
 func NewCrypto(
 	ctx context.Context,
 	api *websocket.API,
-	ui *transport.MapReduce[*types.UIFrame],
-	manifold *transport.MapReduce[types.FluidFrame],
 	recorder *audit.Recorder,
 	desk *broker.Desk,
 	thesis *types.Thesis,
+	bus *runtime.Workspace,
 ) (*Crypto, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -55,8 +55,7 @@ func NewCrypto(
 		ctx:      ctx,
 		cancel:   cancel,
 		api:      api,
-		ui:       ui,
-		manifold: manifold,
+		bus:      bus,
 		thesis:   thesis,
 		recorder: recorder,
 		desk:     desk,

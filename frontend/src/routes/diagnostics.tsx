@@ -1,3 +1,4 @@
+
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -237,7 +238,7 @@ const QueueDetail = ({
 						tone={delta > 0 ? "text-(--warn)" : "text-(--f2)"}
 					/>
 					<Metric
-						label="symbol queues"
+						label="ordered lanes"
 						value={queue.symbols?.toLocaleString() ?? "—"}
 					/>
 					<Metric label="kind" value={queue.kind} />

@@ -6,13 +6,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -21,18 +21,18 @@ living nomagique Number: one self-adapting numeric unit per symbol that maps
 incoming ticker streams into cross-sectional cohort dynamics.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	thesis *types.Thesis
-	number *nomagique.Number[string]
-	work   *transport.Consumer[*types.Symbol]
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	thesis       *types.Thesis
+	number       *nomagique.Number[string]
+	measurements *runtime.Channel[*nmtypes.Measurement]
 }
 
 /*
 NewSignal constructs the sentiment signal as one living nomagique.Number.
 */
-func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis, bus *runtime.Workspace) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -41,8 +41,14 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		thesis: thesis,
 		number: nomagique.NewNumber[string](temporal.Path),
 	}
-	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
-	thesis.Work(types.SourceSentiment).Register(signal.work)
+	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	)
+	runtime.ChannelOf[kraken.TickerData](
+		bus, types.ChannelTickers,
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
+	).Subscribe(signal.Name(), signal.Step)
 
 	return signal
 }
@@ -51,88 +57,46 @@ func (signal *Signal) Name() string           { return string(types.SourceSentim
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceSentiment }
 
-func (signal *Signal) consume() {
-	go func() {
-		defer func() {
-			signal.thesis.Fail(signal.err)
-		}()
+// Step processes one ready symbol cut. The transport workspace preserves
+// order for this symbol while allowing every other symbol to advance.
+func (signal *Signal) Step(ticker kraken.TickerData) error {
+	if ticker.Last == nil || ticker.Last.Sign() <= 0 {
+		return nil
+	}
 
-		group, ctx := errgroup.WithContext(signal.ctx)
-		group.SetLimit(types.ShardWorkers())
+	input := nmtypes.Frame{}
+	input.Put(nmtypes.SampleValue, ticker.Last.Float64())
+	input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
+	input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
 
-		for symbol := range signal.thesis.Work(types.SourceSentiment).Drain(
-			signal.work, nil,
-		) {
-			select {
-			case <-ctx.Done():
-				signal.err = ctx.Err()
-				return
-			default:
-			}
+	_, err := signal.number.Step(ticker.Symbol, input)
 
-			if symbol == nil {
-				continue
-			}
-
-			symbol := symbol
-			group.Go(func() error {
-				return signal.consumeSymbol(symbol)
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			signal.err = errnie.Error(errnie.Err(
-				errnie.Validation,
-				"sentiment: processing failed",
-				err,
-			))
-		}
-	}()
-}
-
-func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
-	for ticker := range symbol.MarketTickers(
-		symbol.TickerConsumers[types.TickerConsumerSentiment],
-	) {
-		if ticker.Last == nil || ticker.Last.Sign() <= 0 {
-			continue
-		}
-
-		input := nmtypes.Frame{}
-		input.Put(nmtypes.SampleValue, ticker.Last.Float64())
-		input.Put(nmtypes.EventTimeSec, float64(ticker.Timestamp.Unix()))
-		input.Put(nmtypes.EventTimeNsec, float64(ticker.Timestamp.Nanosecond()))
-
-		_, err := signal.number.Step(symbol.Symbol, input)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"sentiment: path step failed for "+symbol.Symbol,
-				err,
-			))
-		}
-
-		output, measured, err := algo.CohortSentiment(
-			symbol.Symbol, signal.number,
-		)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"sentiment: cohort evaluation failed for "+symbol.Symbol,
-				err,
-			))
-		}
-
-		symbol.AppendMeasurement(signal.measurement(
-			symbol.Symbol,
-			ticker.Timestamp,
-			output,
-			measured,
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"sentiment: path step failed for "+ticker.Symbol,
+			err,
 		))
 	}
 
+	output, measured, err := algo.CohortSentiment(
+		ticker.Symbol, signal.number,
+	)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"sentiment: cohort evaluation failed for "+ticker.Symbol,
+			err,
+		))
+	}
+
+	signal.measurements.Publish(signal.measurement(
+		ticker.Symbol,
+		ticker.Timestamp,
+		output,
+		measured,
+	))
 	return nil
 }
 

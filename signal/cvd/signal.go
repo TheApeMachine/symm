@@ -5,14 +5,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
-	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -57,15 +57,15 @@ func cvdPipeline() nmtypes.Primitive {
 }
 
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	thesis *types.Thesis
-	number *nomagique.Number[string]
-	work   *transport.Consumer[*types.Symbol]
+	ctx          context.Context
+	cancel       context.CancelFunc
+	err          error
+	thesis       *types.Thesis
+	number       *nomagique.Number[string]
+	measurements *runtime.Channel[*nmtypes.Measurement]
 }
 
-func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
+func NewSignal(ctx context.Context, thesis *types.Thesis, bus *runtime.Workspace) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	signal := &Signal{
@@ -74,8 +74,14 @@ func NewSignal(ctx context.Context, thesis *types.Thesis) *Signal {
 		thesis: thesis,
 		number: nomagique.NewNumber[string](cvdPipeline()),
 	}
-	signal.work = transport.NewConsumer[*types.Symbol](signal.Name(), signal.consume)
-	thesis.Work(types.SourceCVD).Register(signal.work)
+	signal.measurements = runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	)
+	runtime.ChannelOf[kraken.TradeData](
+		bus, types.ChannelTrades,
+		func(trade kraken.TradeData) string { return trade.Symbol },
+	).Subscribe(signal.Name(), signal.Step)
 
 	return signal
 }
@@ -84,103 +90,63 @@ func (signal *Signal) Name() string           { return string(types.SourceCVD) }
 func (signal *Signal) Error() error           { return signal.err }
 func (signal *Signal) Type() types.SourceType { return types.SourceCVD }
 
-func (signal *Signal) consume() {
-	go func() {
-		defer func() {
-			signal.thesis.Fail(signal.err)
-		}()
+// Step processes one ready symbol cut. The transport workspace preserves
+// order for this symbol while allowing every other symbol to advance.
+func (signal *Signal) Step(trade kraken.TradeData) error {
+	notional := trade.Price.Float64() * trade.Qty
 
-		group, ctx := errgroup.WithContext(signal.ctx)
-		group.SetLimit(types.ShardWorkers())
+	input := nmtypes.Frame{}
+	input.Put(calculus.SymbolRight, notional)
+	input.Put(calculus.SymbolLeft, 0)
 
-		for symbol := range signal.thesis.Work(types.SourceCVD).Drain(signal.work, nil) {
-			select {
-			case <-ctx.Done():
-				signal.err = ctx.Err()
-				return
-			default:
-			}
-
-			if symbol == nil {
-				continue
-			}
-
-			symbol := symbol
-			group.Go(func() error {
-				return signal.consumeSymbol(symbol)
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			signal.err = errnie.Error(errnie.Err(
-				errnie.Validation,
-				"cvd: processing failed",
-				err,
-			))
-		}
-	}()
-}
-
-func (signal *Signal) consumeSymbol(symbol *types.Symbol) error {
-	for trade := range symbol.MarketTrades(
-		symbol.TradeConsumers[types.TradeConsumerCVD],
-	) {
-		notional := trade.Price.Float64() * trade.Qty
-
-		input := nmtypes.Frame{}
-		input.Put(calculus.SymbolRight, notional)
-		input.Put(calculus.SymbolLeft, 0)
-
-		if trade.Side != "sell" {
-			input.Put(calculus.SymbolLeft, notional)
-			input.Put(calculus.SymbolRight, 0)
-		}
-
-		input.Put(calculus.SymbolValue, notional)
-		input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
-		input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
-
-		output, err := signal.number.Step(symbol.Symbol, input)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"cvd: failed for "+symbol.Symbol,
-				err,
-			))
-		}
-
-		measurement := nmtypes.NewMeasurement(
-			uuid.NewString(),
-			signal.Name(),
-			trade.Timestamp.UnixNano(),
-			trade.Timestamp.UnixNano(),
-		).AddMetrics(
-			nmtypes.NewMetric("net", output.MustGet(SymbolNetFlow), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitQuoteCurrency,
-				Timescale: nmtypes.TimescalePerTick,
-			}),
-			nmtypes.NewMetric("flow_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitQuoteCurrency,
-				Timescale: nmtypes.TimescalePerSecond,
-			}),
-			nmtypes.NewMetric("flow_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitDimensionless,
-				Timescale: nmtypes.TimescaleInstantaneous,
-			}),
-			nmtypes.NewNormalizedMetric("absorption", output.MustGet(SymbolAbsorption), output.MustGet(SymbolAbsorption), nmtypes.Descriptor{
-				Unit:      nmtypes.UnitDimensionless,
-				Timescale: nmtypes.TimescaleInstantaneous,
-			}),
-		)
-		measurement.StampQuality(
-			statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
-			output.MustGet(nmtypes.SampleCount),
-		)
-
-		symbol.AppendMeasurement(measurement)
+	if trade.Side != "sell" {
+		input.Put(calculus.SymbolLeft, notional)
+		input.Put(calculus.SymbolRight, 0)
 	}
 
+	input.Put(calculus.SymbolValue, notional)
+	input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
+	input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+
+	output, err := signal.number.Step(trade.Symbol, input)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cvd: failed for "+trade.Symbol,
+			err,
+		))
+	}
+
+	measurement := nmtypes.NewMeasurement(
+		uuid.NewString(),
+		signal.Name(),
+		trade.Timestamp.UnixNano(),
+		trade.Timestamp.UnixNano(),
+	).AddMetrics(
+		nmtypes.NewMetric("net", output.MustGet(SymbolNetFlow), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitQuoteCurrency,
+			Timescale: nmtypes.TimescalePerTick,
+		}),
+		nmtypes.NewMetric("flow_baseline", output.MustGet(statistic.SymbolBaselineValue), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitQuoteCurrency,
+			Timescale: nmtypes.TimescalePerSecond,
+		}),
+		nmtypes.NewMetric("flow_zscore", output.MustGet(statistic.SymbolZScore), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+		nmtypes.NewNormalizedMetric("absorption", output.MustGet(SymbolAbsorption), output.MustGet(SymbolAbsorption), nmtypes.Descriptor{
+			Unit:      nmtypes.UnitDimensionless,
+			Timescale: nmtypes.TimescaleInstantaneous,
+		}),
+	)
+	measurement.StampQuality(
+		statistic.StandardSeparation(output.MustGet(statistic.SymbolZScore)),
+		output.MustGet(nmtypes.SampleCount),
+	)
+
+	signal.measurements.Publish(measurement)
 	return nil
 }
 

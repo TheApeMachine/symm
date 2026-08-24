@@ -202,36 +202,34 @@ func truthFor(decisions []Decision, leg Leg) MissedLeg {
 	journal := decisionsAround(decisions, leg)
 	recorded := false
 
-	if !captured {
-		if decision := bestDecisionFor(decisions, leg); decision != nil {
-			recorded = true
-			context = SignalContext{
-				At:                      decision.At,
-				Action:                  decision.Action,
-				Reason:                  decision.Reason,
-				Cause:                   decision.Cause,
-				GraphScore:              decision.GraphScore,
-				ThesisScore:             decision.ThesisScore,
-				ThesisConfidence:        decision.ThesisConfidence,
-				ThesisSupport:           decision.ThesisSupport,
-				ThesisContradiction:     decision.ThesisContradiction,
-				ThesisConditions:        decision.ThesisConditions,
-				Direction:               decision.Direction,
-				Confidence:              decision.Confidence,
-				AdmissionThreshold:      decision.AdmissionThreshold,
-				Opportunity:             decision.Opportunity,
-				Type:                    decision.OpportunityType,
-				PredictiveReady:         decision.PredictiveReady,
-				PredictiveStatus:        decision.PredictiveStatus,
-				AllocationClass:         decision.AllocationClass,
-				AllocationHaircut:       decision.AllocationHaircut,
-				AllocationHaircutReason: decision.AllocationHaircutReason,
-				ReserveEligible:         decision.ReserveEligible,
-				ReserveReason:           decision.ReserveReason,
-				OpenPositions:           decision.OpenPositions,
-				SlotCapacity:            decision.SlotCapacity,
-				Alternatives:            decision.Alternatives,
-			}
+	if decision := bestDecisionFor(decisions, leg); decision != nil {
+		recorded = true
+		context = SignalContext{
+			At:                      decision.At,
+			Action:                  decision.Action,
+			Reason:                  decision.Reason,
+			Cause:                   decision.Cause,
+			GraphScore:              decision.GraphScore,
+			ThesisScore:             decision.ThesisScore,
+			ThesisConfidence:        decision.ThesisConfidence,
+			ThesisSupport:           decision.ThesisSupport,
+			ThesisContradiction:     decision.ThesisContradiction,
+			ThesisConditions:        decision.ThesisConditions,
+			Direction:               decision.Direction,
+			Confidence:              decision.Confidence,
+			AdmissionThreshold:      decision.AdmissionThreshold,
+			Opportunity:             decision.Opportunity,
+			Type:                    decision.OpportunityType,
+			PredictiveReady:         decision.PredictiveReady,
+			PredictiveStatus:        decision.PredictiveStatus,
+			AllocationClass:         decision.AllocationClass,
+			AllocationHaircut:       decision.AllocationHaircut,
+			AllocationHaircutReason: decision.AllocationHaircutReason,
+			ReserveEligible:         decision.ReserveEligible,
+			ReserveReason:           decision.ReserveReason,
+			OpenPositions:           decision.OpenPositions,
+			SlotCapacity:            decision.SlotCapacity,
+			Alternatives:            decision.Alternatives,
 		}
 	}
 

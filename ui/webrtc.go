@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -32,7 +32,7 @@ type FluidRTC struct {
 	err           error
 	peersMutex    sync.RWMutex
 	peers         map[*webrtc.PeerConnection]*fluidPeer
-	publications  *transport.MapReduce[types.FluidFrame]
+	publications  *runtime.Channel[types.FluidFrame]
 	consumerID    string
 	queueLimit    int
 	bufferedLimit uint64
@@ -43,7 +43,7 @@ NewFluidRTC configures the manifold transport without starting its Run loop.
 */
 func NewFluidRTC(
 	ctx context.Context,
-	publications *transport.MapReduce[types.FluidFrame],
+	publications *runtime.Channel[types.FluidFrame],
 	consumerID string,
 ) *FluidRTC {
 	ctx, cancel := context.WithCancel(ctx)
@@ -97,37 +97,26 @@ func (fluidTransport *FluidRTC) Run() error {
 		return nil
 	}
 
-	ready := make(chan struct{}, 1)
-	consumer := transport.NewConsumer[types.FluidFrame](
+	fluidTransport.publications.Subscribe(
 		fluidTransport.consumerID,
-		func() {
-			select {
-			case ready <- struct{}{}:
-			default:
-			}
-		},
-	)
-	fluidTransport.publications.Register(consumer)
-	defer fluidTransport.publications.Unregister(consumer)
-
-	for fluidTransport.Error() == nil {
-		select {
-		case <-fluidTransport.ctx.Done():
-			return fluidTransport.Error()
-		case <-ready:
-		}
-
-		for frame := range fluidTransport.publications.Drain(consumer, nil) {
+		func(frame types.FluidFrame) error {
 			if !fluidTransport.HasChannel(frame.Channel) {
-				continue
+				return nil
 			}
 
 			if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
 				fluidTransport.fail(err)
-				return fluidTransport.Error()
+
+				return err
 			}
-		}
-	}
+
+			return nil
+		},
+	)
+
+	<-fluidTransport.ctx.Done()
+
+	return fluidTransport.Error()
 
 	return fluidTransport.Error()
 }

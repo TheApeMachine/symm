@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -15,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/transport"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -31,7 +31,7 @@ type Position struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	api            *websocket.API
-	ui             *transport.MapReduce[*types.UIFrame]
+	ui             *runtime.Channel[*types.UIFrame]
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -66,7 +66,7 @@ NewPosition constructs one desk-owned lot shell.
 func NewPosition(
 	ctx context.Context,
 	api *websocket.API,
-	ui *transport.MapReduce[*types.UIFrame],
+	ui *runtime.Channel[*types.UIFrame],
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -148,7 +148,7 @@ func (position *Position) Publish() {
 		return
 	}
 
-	position.ui.Push(&wire.FrameT{
+	position.ui.Publish(&wire.FrameT{
 		Type: wire.FramePositionsFrame,
 		Value: &wire.PositionsFrameT{
 			Rows: []*wire.PositionT{position.Wire()},

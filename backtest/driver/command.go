@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/backtest"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -55,8 +55,7 @@ func Command() *cobra.Command {
 			}
 
 			ctx := run.Context()
-			uiChannel := transport.NewMapReduce[*types.UIFrame](nil, nil, nil)
-			manifoldChannel := transport.NewMapReduce[types.FluidFrame](nil, nil, nil)
+			bus := runtime.NewWorkspace(nil)
 
 			dataPath := utils.ResolveDataPath()
 			store, err := backtest.NewStore(filepath.Join(dataPath, "symm.sqlite"))
@@ -67,11 +66,12 @@ func Command() *cobra.Command {
 
 			defer store.Close()
 
-			thesis := types.NewThesis(ctx, uiChannel)
-			hub := ui.NewHub(ctx, thesis, nil, nil, nil, manifoldChannel)
-			replay := NewDriver(ctx, store, hub, uiChannel,
+			thesis := types.NewThesis(ctx)
+			hub := ui.NewHub(ctx, thesis, nil, nil, nil, bus)
+			replay := NewDriver(ctx, store, hub, bus,
 				func(state State) {
-					uiChannel.Push(&wire.FrameT{
+					uiCh := runtime.ChannelOf[*types.UIFrame](bus, types.ChannelUI, func(frame *types.UIFrame) string { return "" })
+					uiCh.Publish(&types.UIFrame{
 						Type: wire.FrameBacktestFrame,
 						Value: &wire.BacktestFrameT{
 							CaptureId: state.CaptureID,
