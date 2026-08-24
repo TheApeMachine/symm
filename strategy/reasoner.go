@@ -1,0 +1,410 @@
+package strategy
+
+import (
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/theapemachine/symm/logic/causal"
+	"github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/nomagique/relation"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
+)
+
+/*
+CausalState is the typed handoff from the reasoner to strategic search: the
+current observational market state, the fitted causal transition model for
+the outcome variable, identification status, and the relevant Influence Graph
+edges. It is published on ChannelCausalState.
+*/
+type CausalState struct {
+	Symbol          string
+	At              time.Time
+	Epoch           uint64
+	SchemaVersion   uint64
+	ModelVersion    string
+	Identification  causal.IdentificationStatus
+	MarketState     map[relation.Coordinate]float64
+	OutcomeVariable causal.VariableID
+	Transition      *causal.TransitionModel
+	InfluenceEdges  []*graph.InfluenceEdge
+}
+
+/*
+Reasoner is the live observational reasoning stage. It owns the coordinate
+store, the Relation engine, the Influence Graph, and the per-symbol Causal
+models, and it publishes CausalState per symbol. It is the explicit dataflow:
+
+	ChannelMeasurements
+	    → Observational Coordinate Store
+	    → Relation Engine
+	    → Influence updates
+	    → Influence Graph
+	    → Causal Model / CausalState
+
+Feature selection is query-local; every valid Measurement coordinate stays in
+the store. Simulated states never enter the store.
+*/
+type Reasoner struct {
+	mu sync.Mutex
+
+	epoch          uint64
+	store          *relation.ObservationStore
+	estimator      *relation.InfluenceEstimator
+	influenceGraph *graph.InfluenceGraph
+	schemaTemplate *causal.CausalSchema
+	plans          []*relation.RelationPlan
+	interval       time.Duration
+	models         map[string]*causal.CausalModel
+	lastRun        map[string]time.Time
+
+	// onState, when set, receives the refreshed CausalState of a symbol
+	// after its Relation estimates update.
+	onState func(*CausalState)
+}
+
+/*
+NewReasoner builds the reasoning stage. historyCapacity bounds each
+coordinate's retained observations (infrastructure provenance). plans are the
+explicit Relation plans; schemaTemplate is the symbol-agnostic CausalSchema
+instantiated per symbol. interval bounds per-symbol Relation refresh rate.
+*/
+func NewReasoner(
+	epoch uint64,
+	historyCapacity int,
+	plans []*relation.RelationPlan,
+	schemaTemplate *causal.CausalSchema,
+	interval time.Duration,
+) *Reasoner {
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	return &Reasoner{
+		epoch:          epoch,
+		store:          relation.NewObservationStore(historyCapacity),
+		estimator:      relation.NewInfluenceEstimator("prequential-linear-v1"),
+		influenceGraph: graph.NewInfluenceGraph(epoch, schemaTemplate.Version, planVersion(plans), 64),
+		schemaTemplate: schemaTemplate,
+		plans:          plans,
+		interval:       interval,
+		models:         make(map[string]*causal.CausalModel),
+		lastRun:        make(map[string]time.Time),
+	}
+}
+
+func planVersion(plans []*relation.RelationPlan) uint64 {
+	version := uint64(0)
+
+	for _, plan := range plans {
+		if plan != nil && plan.Version > version {
+			version = plan.Version
+		}
+	}
+
+	return version
+}
+
+/*
+Ingest appends one Measurement to the coordinate store and refreshes the
+Relation estimates for its symbol. It is safe for concurrent use by the bus
+worker pool.
+*/
+func (reasoner *Reasoner) Ingest(measurement *nmtypes.Measurement) {
+	if reasoner == nil || measurement == nil || measurement.Err != nil {
+		return
+	}
+
+	observations := relation.AppendMeasurement(measurement, reasoner.epoch)
+
+	if len(observations) == 0 {
+		return
+	}
+
+	reasoner.mu.Lock()
+
+	reasoner.store.AppendObservations(observations)
+
+	if reasoner.due(measurement.Symbol, measurement.At) {
+		reasoner.updateRelations(measurement.Symbol)
+	}
+
+	onState := reasoner.onState
+
+	var state *CausalState
+
+	if onState != nil {
+		state = reasoner.snapshotLocked(measurement.Symbol, measurement.At)
+	}
+
+	reasoner.mu.Unlock()
+
+	if onState != nil && state != nil {
+		onState(state)
+	}
+}
+
+/*
+due reports whether the Relation refresh interval has elapsed for a symbol.
+*/
+func (reasoner *Reasoner) due(symbol string, at time.Time) bool {
+	last, ran := reasoner.lastRun[symbol]
+
+	if !ran || at.Sub(last) >= reasoner.interval {
+		reasoner.lastRun[symbol] = at
+		return true
+	}
+
+	return false
+}
+
+/*
+Refresh forces one Relation update round for a symbol and republishes its
+causal state. It is the explicit online refresh point; Ingest stays cheap by
+throttling automatic refreshes to the configured interval.
+*/
+func (reasoner *Reasoner) Refresh(symbol string, at time.Time) {
+	if reasoner == nil || symbol == "" {
+		return
+	}
+
+	reasoner.mu.Lock()
+
+	reasoner.updateRelations(symbol)
+
+	onState := reasoner.onState
+
+	var state *CausalState
+
+	if onState != nil {
+		state = reasoner.snapshotLocked(symbol, at)
+	}
+
+	reasoner.mu.Unlock()
+
+	if onState != nil && state != nil {
+		onState(state)
+	}
+}
+
+/*
+updateRelations estimates every planned pair for one symbol and records the
+Influence edges. Unavailable estimates are recorded as unavailable; they are
+never deleted and never treated as measured zero.
+*/
+func (reasoner *Reasoner) updateRelations(symbol string) {
+	coordinates := reasoner.store.Coordinates()
+
+	for _, plan := range reasoner.plans {
+		if plan == nil || plan.Epoch != reasoner.epoch {
+			continue
+		}
+
+		for _, pair := range plan.PairsForSymbol(symbol) {
+			source, sourceFound := resolveSelector(pair.Source, symbol, plan.Peer, reasoner.epoch, coordinates)
+
+			if !sourceFound {
+				continue
+			}
+
+			target, targetFound := resolveSelector(pair.Target, symbol, plan.Peer, reasoner.epoch, coordinates)
+
+			if !targetFound {
+				continue
+			}
+
+			controls, controlsComplete := plan.ResolveControls(symbol, coordinates)
+
+			if !controlsComplete {
+				_ = reasoner.influenceGraph.SetUnavailable(graph.EdgeInfluence, source, target, reasoner.epoch)
+				continue
+			}
+
+			result, err := reasoner.estimator.Estimate(reasoner.store, relation.InfluenceRequest{
+				Source:   source,
+				Target:   target,
+				Controls: controls,
+				Lag:      plan.Lag,
+			})
+
+			if err != nil {
+				continue
+			}
+
+			if result.Defined() {
+				_ = reasoner.influenceGraph.UpsertEdge(&graph.InfluenceEdge{
+					Type:   graph.EdgeInfluence,
+					Source: source,
+					Target: target,
+					Result: result,
+					From:   result.From,
+					At:     result.At,
+					Epoch:  reasoner.epoch,
+				})
+
+				continue
+			}
+
+			_ = reasoner.influenceGraph.SetUnavailable(graph.EdgeInfluence, source, target, reasoner.epoch)
+		}
+	}
+}
+
+/*
+resolveSelector finds the stored coordinate matching one structural selector.
+*/
+func resolveSelector(
+	selector relation.Selector,
+	symbol string,
+	peer string,
+	epoch uint64,
+	coordinates []relation.Coordinate,
+) (relation.Coordinate, bool) {
+	for _, coordinate := range coordinates {
+		if coordinate.Symbol != symbol || coordinate.Epoch != epoch {
+			continue
+		}
+
+		if peer != "" && coordinate.Peer != peer {
+			continue
+		}
+
+		if !selector.Matches(coordinate) {
+			continue
+		}
+
+		return coordinate, true
+	}
+
+	return relation.Coordinate{}, false
+}
+
+/*
+Symbols returns every symbol with retained observational data, sorted.
+*/
+func (reasoner *Reasoner) Symbols() []string {
+	if reasoner == nil {
+		return nil
+	}
+
+	reasoner.mu.Lock()
+	defer reasoner.mu.Unlock()
+
+	seen := make(map[string]bool)
+
+	for _, coordinate := range reasoner.store.Coordinates() {
+		seen[coordinate.Symbol] = true
+	}
+
+	symbols := make([]string, 0, len(seen))
+
+	for symbol := range seen {
+		symbols = append(symbols, symbol)
+	}
+
+	sort.Strings(symbols)
+	return symbols
+}
+
+/*
+CausalState computes the current causal state for one symbol at or before at.
+It is the snapshot the strategy search consumes.
+*/
+func (reasoner *Reasoner) CausalState(symbol string, at time.Time) *CausalState {
+	if reasoner == nil {
+		return nil
+	}
+
+	reasoner.mu.Lock()
+	defer reasoner.mu.Unlock()
+
+	return reasoner.snapshotLocked(symbol, at)
+}
+
+/*
+snapshotLocked computes the causal state assuming the reasoner lock is held.
+*/
+func (reasoner *Reasoner) snapshotLocked(symbol string, at time.Time) *CausalState {
+	model := reasoner.modelFor(symbol)
+
+	if model == nil {
+		return nil
+	}
+
+	schema := model.Schema()
+
+	if len(schema.Outcomes) == 0 {
+		return nil
+	}
+
+	outcome := schema.Outcomes[0]
+	transition := model.TransitionModel(outcome, at)
+	market := model.MarketState(at)
+	edges := reasoner.influenceGraph.Incoming(outcome.Coordinate)
+
+	return &CausalState{
+		Symbol:          symbol,
+		At:              at,
+		Epoch:           reasoner.epoch,
+		SchemaVersion:   schema.Version,
+		ModelVersion:    model.ModelVersion(),
+		Identification:  transition.Status,
+		MarketState:     market,
+		OutcomeVariable: outcome,
+		Transition:      transition,
+		InfluenceEdges:  append([]*graph.InfluenceEdge(nil), edges...),
+	}
+}
+
+/*
+modelFor returns the per-symbol causal model, instantiating it lazily from
+the schema template.
+*/
+func (reasoner *Reasoner) modelFor(symbol string) *causal.CausalModel {
+	model, found := reasoner.models[symbol]
+
+	if found {
+		return model
+	}
+
+	schema := reasoner.schemaTemplate.ForSymbol(symbol)
+	model = causal.NewCausalModel(schema, reasoner.store, reasoner.influenceGraph, "causal-linear-v1")
+	reasoner.models[symbol] = model
+
+	return model
+}
+
+/*
+Store exposes the observational coordinate store (used by the conformance
+suite to verify information preservation and that simulation never becomes
+observation).
+*/
+func (reasoner *Reasoner) Store() *relation.ObservationStore {
+	if reasoner == nil {
+		return nil
+	}
+
+	return reasoner.store
+}
+
+/*
+Graph exposes the Influence Graph (used by the conformance suite).
+*/
+func (reasoner *Reasoner) Graph() *graph.InfluenceGraph {
+	if reasoner == nil {
+		return nil
+	}
+
+	return reasoner.influenceGraph
+}
+
+/*
+Epoch returns the reasoning model epoch.
+*/
+func (reasoner *Reasoner) Epoch() uint64 {
+	if reasoner == nil {
+		return 0
+	}
+
+	return reasoner.epoch
+}

@@ -424,15 +424,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		if config == nil || config.Planner == nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				"desk: admission configuration required",
-				nil,
-			))
-		}
-
-		if result := config.Planner.Admission.Evaluate(decision); !result.Accepted {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"desk: entry no longer satisfies admission: "+result.Explanation(),
+				"desk: planner configuration required",
 				nil,
 			))
 		}

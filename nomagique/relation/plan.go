@@ -1,0 +1,150 @@
+package relation
+
+import "time"
+
+/*
+Selector is a structural coordinate selector. An empty field is a wildcard
+for that identity component. Selectors are wiring, not name magic: they bind
+exact coordinates into explicit Source/Target/Control roles.
+*/
+type Selector struct {
+	// Source is the signal source, e.g. "cvd".
+	Source string
+	// Metric is the metric name; empty selects all metrics of Source.
+	Metric string
+	// Side is the side suffix; empty selects both sides.
+	Side string
+}
+
+/*
+Matches reports whether a coordinate satisfies the selector.
+*/
+func (selector Selector) Matches(coordinate Coordinate) bool {
+	if selector.Source != "" && selector.Source != coordinate.Source {
+		return false
+	}
+
+	if selector.Metric != "" && selector.Metric != coordinate.Metric {
+		return false
+	}
+
+	if selector.Side != "" && selector.Side != coordinate.Side {
+		return false
+	}
+
+	return true
+}
+
+/*
+ControlSelector is one explicit control in a RelationPlan: a coordinate
+selector plus the alignment lag for that control. A zero lag aligns the
+control at the same cutoff as the Source (t - sourceLag); a positive lag
+aligns it at t - controlLag, which is required to condition on a mediator at
+the time slice that actually blocks a path.
+*/
+type ControlSelector struct {
+	Selector
+	Lag time.Duration
+}
+
+/*
+PlannedPair is one structurally eligible Source→Target pair in a RelationPlan.
+*/
+type PlannedPair struct {
+	Source Selector
+	Target Selector
+}
+
+/*
+LagDomain is the candidate lag search domain expressed in time. A zero
+MinLag falls back to the derived lag resolution; a zero MaxLag is bounded by
+the retained history (infrastructure provenance, published as LagSearchSpan).
+*/
+type LagDomain struct {
+	MinLag time.Duration
+	MaxLag time.Duration
+}
+
+/*
+RelationPlan is the explicit typed plan that defines which Relations are
+eligible. Eligibility is structural only: symbol scope, peer scope, explicit
+pairs, and exact controls. It never depends on current evidence values — a
+valid low-gain or zero-gain Relation remains eligible and representable.
+*/
+type RelationPlan struct {
+	// Version is the relation-plan version; it participates in the model
+	// epoch contract.
+	Version uint64
+	// Epoch is the model epoch this plan belongs to.
+	Epoch uint64
+	// Symbol is the symbol scope; empty means any symbol.
+	Symbol string
+	// Peer is the peer scope; empty means no peer restriction.
+	Peer string
+	// Pairs enumerates the explicit Source→Target pairs to estimate.
+	Pairs []PlannedPair
+	// Controls are the explicit structural controls applied to every pair.
+	Controls []ControlSelector
+	// Lag is the candidate lag domain.
+	Lag LagDomain
+}
+
+/*
+PairsForSymbol returns the planned pairs applicable to one symbol, or nil
+when the plan's scope excludes it.
+*/
+func (plan *RelationPlan) PairsForSymbol(symbol string) []PlannedPair {
+	if plan == nil {
+		return nil
+	}
+
+	if plan.Symbol != "" && plan.Symbol != symbol {
+		return nil
+	}
+
+	return plan.Pairs
+}
+
+/*
+ResolveControls resolves the plan's control selectors against the stored
+coordinates available for the symbol, returning explicit controls in selector
+order. The boolean reports whether every exact control selector resolved to a
+stored coordinate. A wildcard selector resolves to every matching stored
+coordinate; this is structural availability, not evidence. A missing exact
+control makes the Relation unavailable rather than silently changing the
+model.
+*/
+func (plan *RelationPlan) ResolveControls(symbol string, coordinates []Coordinate) ([]Control, bool) {
+	if plan == nil {
+		return nil, true
+	}
+
+	controls := make([]Control, 0, len(plan.Controls))
+
+	for _, selector := range plan.Controls {
+		matched := false
+
+		for _, coordinate := range coordinates {
+			if coordinate.Symbol != symbol {
+				continue
+			}
+
+			if plan.Peer != "" && coordinate.Peer != plan.Peer {
+				continue
+			}
+
+			if !selector.Matches(coordinate) {
+				continue
+			}
+
+			controls = append(controls, Control{Coordinate: coordinate, Lag: selector.Lag})
+			matched = true
+		}
+
+		if !matched && selector.Metric != "" {
+			return nil, false
+		}
+	}
+
+	return controls, true
+}

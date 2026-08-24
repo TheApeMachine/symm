@@ -1,23 +1,24 @@
 package strategy
 
 import (
-	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
 	"context"
 	"fmt"
-	"math"
-	"slices"
+	"hash/fnv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/causal"
+	"github.com/theapemachine/symm/nomagique/mcts"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	logicgraph "github.com/theapemachine/symm/types"
 )
 
 // strategyWireBranchCount matches the two ranked branch slots rendered for
@@ -25,13 +26,15 @@ import (
 const strategyWireBranchCount = 2
 
 /*
-entryRegulator is the minimal regulator contract the planner needs to gate
-position entries on predictive readiness.
-*/
-type entryRegulator interface {
-	Predicting() bool
-}
+Planner is the live strategy decision stage. It consumes observational
+Measurements through the Reasoner (coordinate store → Relation → Influence
+Graph → Causal model), runs economic MCTS per symbol, and executes the
+selected actions through allocation and the broker desk.
 
+The legacy semantic graph (ChannelGraphs), admission policy, opportunity
+scores, and predictive-readiness veto play no role in this path. There is
+exactly one authoritative live decision path.
+*/
 type Planner struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -39,31 +42,52 @@ type Planner struct {
 	status     types.Status
 	recorder   *audit.Recorder
 	stager     *audit.Stager
-	mctsEngine *mcts.CausalMCTS
 	allocation *Allocation
 	desk       *broker.Desk
-	regulator  entryRegulator
-	thesis     *types.Thesis
+	reasoner   *Reasoner
 	ui         *runtime.Channel[*types.UIFrame]
-	graphWork  *runtime.Subscription[*types.Graph]
+	uiStates   *runtime.Channel[*CausalState]
 	tickWork   *runtime.Subscription[kraken.TickerData]
+	stateWork  *runtime.Subscription[*CausalState]
 	pending    sync.Map
 	lastPass   int64
+	thesis     *types.Thesis
 
 	ObserveModule func(string, time.Duration)
 	ObserveHop    func(string, string, time.Duration)
 	executeEntry  func(types.Decision) error
 }
 
+/*
+NewPlanner builds the causal decision stage. It subscribes to
+ChannelMeasurements (feeding the reasoner) and ChannelCausalState (the typed
+handoff into search), and runs the portfolio pass on the tick clock.
+*/
 func NewPlanner(
 	ctx context.Context,
 	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	desk *broker.Desk,
-	reg entryRegulator,
 	bus *runtime.Workspace,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
+
+	config := system.Cfg.Snapshot()
+
+	epoch := uint64(1)
+	historyCapacity := 512
+	relationInterval := time.Second
+	schemaTemplate := DefaultCausalSchema(epoch)
+	plans := DefaultRelationPlans(epoch)
+
+	if config != nil && config.Planner != nil {
+		historyCapacity = 512
+		relationInterval = config.Planner.RelationInterval
+
+		if relationInterval <= 0 {
+			relationInterval = time.Second
+		}
+	}
 
 	planner := &Planner{
 		ctx:        ctx,
@@ -71,24 +95,35 @@ func NewPlanner(
 		status:     types.READY,
 		recorder:   recorder,
 		stager:     audit.NewStager(recorder),
-		mctsEngine: newMCTSEngine(system.Cfg.Snapshot()),
 		allocation: NewAllocation(ctx, desk),
 		desk:       desk,
-		regulator:  reg,
 		thesis:     thesis,
+		reasoner:   NewReasoner(epoch, historyCapacity, plans, schemaTemplate, relationInterval),
 	}
 	planner.ui = runtime.ChannelOf[*types.UIFrame](
 		bus, types.ChannelUI,
 		func(frame *types.UIFrame) string { return "" },
 	)
-	planner.graphWork = runtime.ChannelOf[*types.Graph](
-		bus, types.ChannelGraphs,
-		func(graph *types.Graph) string { return graph.Symbol },
+	planner.uiStates = runtime.ChannelOf[*CausalState](
+		bus, types.ChannelCausalState,
+		func(state *CausalState) string { return state.Symbol },
+	)
+	planner.stateWork = runtime.ChannelOf[*CausalState](
+		bus, types.ChannelCausalState,
+		func(state *CausalState) string { return state.Symbol },
 	).Subscribe(planner.Name(), planner.Step)
 	planner.tickWork = runtime.ChannelOf[kraken.TickerData](
 		bus, types.ChannelTickers,
 		func(ticker kraken.TickerData) string { return "" },
 	).Subscribe(planner.Name(), planner.StepTick)
+
+	measurementWork := runtime.ChannelOf[*nmtypes.Measurement](
+		bus, types.ChannelMeasurements,
+		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+	).Subscribe(planner.Name()+"-reasoner", planner.StepMeasurement)
+
+	planner.reasoner.onState = planner.publishCausalState
+	_ = measurementWork
 
 	return planner
 }
@@ -126,14 +161,46 @@ func (planner *Planner) Close() error {
 	return nil
 }
 
-// Step retains the freshest ready graph for one symbol. The portfolio pass
-// runs on the tick clock so the planner stays a per-tick strategy stage.
-func (planner *Planner) Step(graph *types.Graph) error {
-	if graph == nil || graph.Symbol == "" {
+/*
+StepMeasurement feeds one Measurement into the reasoner. The reasoner appends
+observations, refreshes planned Relations, and publishes the resulting
+CausalState on ChannelCausalState.
+*/
+func (planner *Planner) StepMeasurement(measurement *nmtypes.Measurement) error {
+	if planner == nil || planner.reasoner == nil || measurement == nil {
 		return nil
 	}
 
-	planner.pending.Store(graph.Symbol, graph)
+	planner.reasoner.Ingest(measurement)
+	return nil
+}
+
+/*
+publishCausalState is the reasoner's state callback: it publishes the typed
+CausalState handoff and retains the freshest state per symbol for the next
+search round.
+*/
+func (planner *Planner) publishCausalState(state *CausalState) {
+	if planner == nil || state == nil || state.Symbol == "" {
+		return
+	}
+
+	planner.pending.Store(state.Symbol, state)
+
+	if planner.uiStates != nil {
+		planner.uiStates.Publish(state)
+	}
+}
+
+/*
+Step retains the freshest causal state for one symbol.
+*/
+func (planner *Planner) Step(state *CausalState) error {
+	if state == nil || state.Symbol == "" {
+		return nil
+	}
+
+	planner.pending.Store(state.Symbol, state)
 
 	return nil
 }
@@ -149,76 +216,13 @@ func (planner *Planner) StepTick(ticker kraken.TickerData) error {
 	return planner.Update(planner.thesis)
 }
 
-func (planner *Planner) decisionFromGraph(
-	symbol string,
-	cloned *logicgraph.Graph,
-	config *system.Config,
-	searchRoot *mcts.Node,
-	recommended float64,
-	iterations int,
-) (*types.Decision, error) {
-	decision := types.NewDecision(types.ActionNothing, symbol)
-	decision.At = cloned.At
-	decision.Forecast = cloned.Forecast
-	decision.ForecastHorizon = cloned.ForecastHorizon
-	decision.ForwardCurve = slices.Clone(cloned.ForwardCurve)
-
-	perspective, perspectiveErr := graphPerspective(cloned)
-
-	if perspectiveErr != nil {
-		return nil, fmt.Errorf("planner: decision perspective for %s: %w", symbol, perspectiveErr)
-	}
-
-	decision.ThesisScore = perspective.Score
-	decision.ThesisConfidence = perspective.Confidence
-	decision.ThesisSupport = perspective.Support
-	decision.ThesisContradiction = perspective.Contradiction
-	decision.ThesisConditions = perspective.Conditions
-	decision.Direction = perspective.Direction
-	decision.Confidence = perspective.TradeConfidence
-	decision.PerspectiveConfidence = perspective.TradeConfidence
-	decision.AdmissionGraphThreshold = config.Planner.MinimumGraphScore
-	opportunity := cloned.ActiveOpportunity(cloned.At)
-	decision.OpportunityType = string(opportunity.Type)
-	decision.TaskSkill = cloned.TaskSkill
-	decision.TaskSkillReady = cloned.TaskSkillReady
-	decision.PredictiveReady, decision.PredictiveStatus = predictiveReadiness(cloned)
-
-	decision.ReserveEligible, decision.ReserveReason = reserveQualification(
-		opportunity.Type,
-		decision.PredictiveReady,
-		decision.ForecastHorizon,
-	)
-	decision.Opportunity = opportunity.Type != types.OpportunityNone
-	decision.Alternatives = make(map[string]float64)
-
-	if searchRoot != nil {
-		decision.Trace = decisionTrace(
-			cloned,
-			searchRoot,
-			recommended,
-			iterations,
-		)
-
-		for _, branch := range searchRoot.Children {
-			if branch.Visits <= 0 {
-				continue
-			}
-
-			reward := branch.TotalReward / float64(branch.Visits)
-			decision.Alternatives[portfolioActionLabel(searchRoot, cloned.Roots(), branch.Action)] = reward
-
-			if branch.Action == recommended {
-				decision.GraphScore = reward
-			}
-		}
-	}
-
-	applyAdmission(decision, config.Planner.Admission, cloned)
-
-	return decision, nil
-}
-
+/*
+Update runs one economic MCTS round over every symbol with a fresh causal
+state, then allocates and executes the selected actions. Semantic readiness,
+admission policy, and predictive readiness do not gate participation: every
+symbol with observational state, an explicit schema, and a feasible action
+may be considered.
+*/
 func (planner *Planner) Update(thesis *types.Thesis) error {
 	config := system.Cfg.Snapshot()
 
@@ -226,25 +230,8 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		return fmt.Errorf("planner: planner configuration required")
 	}
 
-	readySymbols := make(map[string]*logicgraph.Graph)
-
-	planner.pending.Range(func(key, value any) bool {
-		symbolName, symbolOK := key.(string)
-		graph, graphOK := value.(*types.Graph)
-
-		if symbolOK && graphOK && graph != nil &&
-			graph.ReadyForSearch() && !isExcludedSymbol(symbolName) {
-			readySymbols[symbolName] = graph
-		}
-
-		planner.pending.Delete(key)
-
-		return true
-	})
-
-	if len(readySymbols) == 0 {
-		return nil
-	}
+	states := planner.drainPending()
+	decisions := make([]*types.Decision, 0, len(states))
 
 	plannerStarted := time.Now()
 	defer func() {
@@ -253,258 +240,287 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 	}()
 
-	return planner.updateGraph(thesis, config, readySymbols)
-}
+	for _, state := range states {
+		if state == nil || isExcludedSymbol(state.Symbol) {
+			continue
+		}
 
-func (planner *Planner) updateGraph(
-	thesis *types.Thesis,
-	config *system.Config,
-	readySymbols map[string]*logicgraph.Graph,
-) error {
-	lastSearchEnd := time.Now()
+		decision := planner.decisionFromCausalState(state, config)
+		decisions = append(decisions, decision)
+	}
 
-	if len(readySymbols) == 0 {
+	if len(decisions) == 0 {
 		return nil
 	}
 
-	createdDecisions := make([]*types.Decision, 0, len(readySymbols))
-	legs := make([]portfolioLeg, 0, len(readySymbols))
-	graphs := make(map[string]*logicgraph.Graph, len(readySymbols))
-	admitted := make(map[string]*types.Decision, len(readySymbols))
-
-	type seedResult struct {
-		symbol   string
-		graph    *logicgraph.Graph
-		seed     *types.Decision
-		leg      portfolioLeg
-		admitted bool
-		err      error
-	}
-
-	symbolNames := make([]string, 0, len(readySymbols))
-	for symbolName := range readySymbols {
-		symbolNames = append(symbolNames, symbolName)
-	}
-	slices.Sort(symbolNames)
-	seedResults := make([]seedResult, len(symbolNames))
-	var seedWorkers sync.WaitGroup
-	seedWorkers.Add(len(symbolNames))
-
-	for index, symbolName := range symbolNames {
-		index, symbolName := index, symbolName
-		go func() {
-			defer seedWorkers.Done()
-			result := &seedResults[index]
-			result.symbol = symbolName
-			if planner.Holding(symbolName) {
-				return
-			}
-			graph := readySymbols[symbolName]
-			if graph == nil || !graph.ReadyForSearch() {
-				return
-			}
-			seed, err := planner.decisionFromGraph(symbolName, graph, config, nil, 0, 0)
-			if err != nil {
-				result.err = err
-				return
-			}
-			if seed == nil {
-				return
-			}
-			result.graph = graph
-			result.seed = seed
-			if seed.Reason != "" {
-				return
-			}
-			seed.Action = types.ActionEnter
-			opportunity := graph.ActiveOpportunity(graph.At)
-			reserveEligible, _ := reserveQualification(opportunity.Type, seed.PredictiveReady, seed.ForecastHorizon)
-			result.admitted = true
-			result.leg = portfolioLeg{
-				Symbol: symbolName, Summary: graph.OpportunitySummary(), Opportunity: opportunity,
-				ReserveEligible: reserveEligible,
-				Liquidity:       alternativesOf(seed)[liquidityScoreKey],
-				LiquidityMass:   alternativesOf(seed)[liquidityMassKey],
-			}
-		}()
-	}
-	seedWorkers.Wait()
-
-	for _, result := range seedResults {
-		if result.err != nil {
-			return result.err
-		}
-		if result.seed == nil {
-			continue
-		}
-		if !result.admitted {
-			createdDecisions = append(createdDecisions, result.seed)
-			continue
-		}
-		admitted[result.symbol] = result.seed
-		graphs[result.symbol] = result.graph
-		legs = append(legs, result.leg)
-	}
-
-	if len(legs) > 0 {
-		seeds := make([]*types.Decision, 0, len(admitted))
-
-		for _, decision := range admitted {
-			seeds = append(seeds, decision)
-		}
-
-		rankAdmissionCandidates(seeds)
-		slices.SortFunc(legs, func(left, right portfolioLeg) int {
-			return admissionOrder(admitted[left.Symbol], admitted[right.Symbol])
-		})
-
-		normalSlots := planner.normalSlots()
-
-		if planner.desk == nil {
-			normalSlots = len(legs)
-		}
-
-		reserveSlots := planner.reserveSlots()
-		searchStarted := time.Now()
-		searchRoot, searchErr := portfolioSearch(
-			NewPortfolioState(legs, normalSlots, reserveSlots),
-			config.Planner.MCTSIterations*max(1, len(legs)),
-		)
-
-		if planner.ObserveModule != nil {
-			planner.ObserveModule("mcts", time.Since(searchStarted))
-		}
-
-		lastSearchEnd = time.Now()
-
-		if searchErr != nil {
-			return searchErr
-		}
-
-		decisionResults := make([]struct {
-			decision *types.Decision
-			err      error
-		}, len(legs))
-		var decisionWorkers sync.WaitGroup
-		decisionWorkers.Add(len(legs))
-		for index, leg := range legs {
-			index, leg := index, leg
-			go func() {
-				defer decisionWorkers.Done()
-				cloned := graphs[leg.Symbol]
-				if cloned == nil {
-					return
-				}
-				decision, err := planner.decisionFromGraph(
-					leg.Symbol, cloned, config, searchRoot, portfolioEnterReference(index),
-					config.Planner.MCTSIterations,
-				)
-				decisionResults[index].decision = decision
-				decisionResults[index].err = err
-			}()
-		}
-		decisionWorkers.Wait()
-
-		for _, result := range decisionResults {
-			if result.err != nil {
-				return result.err
-			}
-			decision := result.decision
-			if decision == nil {
-				continue
-			}
-			if decision.Reason == "" {
-				if !decision.Opportunity && !decision.PredictiveReady && !decision.ReserveEligible {
-					decision.Action = types.ActionNothing
-					decision.GraphScore = 0
-					decision.Trace = nil
-					decision.Reason = "planner: no actable opportunity"
-					if !decision.PredictiveReady && decision.PredictiveStatus != "" {
-						decision.Reason += "; predictive state is informational: " + decision.PredictiveStatus
-					}
-				} else {
-					decision.Action = types.ActionEnter
-					decision.Cause = decision.OpportunityType
-					decision.Reason = ""
-				}
-			}
-			createdDecisions = append(createdDecisions, decision)
-		}
-	}
-
-	if len(createdDecisions) == 0 {
-		return nil
-	}
-
-	if planner.allocation != nil {
-		allocationStarted := time.Now()
-
-		if planner.ObserveHop != nil {
-			planner.ObserveHop("mcts", "allocation", allocationStarted.Sub(lastSearchEnd))
-		}
-
-		if err := planner.allocation.Calculate(createdDecisions); err != nil {
-			return err
-		}
-
-		if planner.ObserveModule != nil {
-			planner.ObserveModule("allocation", time.Since(allocationStarted))
-		}
-
-		lastSearchEnd = time.Now()
-	}
-
-	decisions := make([]types.Decision, 0, len(createdDecisions))
 	actionable := false
 
-	for _, decision := range createdDecisions {
-		decisions = append(decisions, *decision)
-
-		if decision.Action != types.ActionNothing {
+	for _, decision := range decisions {
+		if decision.Action != types.ActionNothing || decision.Reason != "" {
 			actionable = true
+			break
 		}
 	}
 
 	if !actionable {
-		for index := range decisions {
-			// Retain the final decision state that was actually published.
-			planner.stager.Stage(&decisions[index], 10*time.Minute)
+		for _, decision := range decisions {
+			planner.stager.Stage(decision, 10*time.Minute)
 		}
 
 		planner.publishStrategy(thesis, false, "accumulating", decisions)
 		return nil
 	}
 
-	if err := planner.executeDecisions(createdDecisions, lastSearchEnd); err != nil {
+	if planner.allocation != nil {
+		allocationStarted := time.Now()
+
+		if err := planner.allocation.Calculate(decisions); err != nil {
+			return err
+		}
+
+		if planner.ObserveModule != nil {
+			planner.ObserveModule("allocation", time.Since(allocationStarted))
+		}
+	}
+
+	if err := planner.executeDecisions(decisions); err != nil {
 		return err
 	}
 
-	decisions = decisions[:0]
-
-	for _, decision := range createdDecisions {
-		decisions = append(decisions, *decision)
-	}
-
-	for index := range decisions {
-		// Execution can downgrade an entry to nothing; stage that final truth.
-		planner.stager.Stage(&decisions[index], 10*time.Minute)
+	for _, decision := range decisions {
+		planner.stager.Stage(decision, 10*time.Minute)
 	}
 
 	planner.publishStrategy(thesis, true, "decisions", decisions)
 	return nil
 }
 
+/*
+drainPending collects and clears the retained causal states.
+*/
+func (planner *Planner) drainPending() []*CausalState {
+	states := make([]*CausalState, 0)
+
+	planner.pending.Range(func(key, value any) bool {
+		if state, ok := value.(*CausalState); ok && state != nil {
+			states = append(states, state)
+		}
+
+		planner.pending.Delete(key)
+		return true
+	})
+
+	return states
+}
+
+/*
+decisionFromCausalState runs the economic MCTS for one symbol and maps the
+result to a Decision. If the causal evaluation is unavailable the decision
+represents that explicitly: it is ActionNothing with a reason, never a
+fabricated Wait win and never a hidden semantic gate.
+*/
+func (planner *Planner) decisionFromCausalState(
+	state *CausalState,
+	config *system.Config,
+) *types.Decision {
+	decision := types.NewDecision(types.ActionNothing, state.Symbol)
+	decision.At = state.At
+	alternatives := make(map[string]float64)
+	decision.Alternatives = alternatives
+
+	if state == nil {
+		decision.Reason = "planner: no causal state for symbol"
+		return decision
+	}
+
+	alternatives["causal:epoch"] = float64(state.Epoch)
+	alternatives["causal:schema_version"] = float64(state.SchemaVersion)
+	alternatives["causal:identification"] = float64(state.Identification)
+
+	if state.Identification != causal.IdentificationIdentified ||
+		state.Transition == nil {
+		decision.Reason = "planner: causal evaluation unavailable: " + state.Identification.String()
+		return decision
+	}
+
+	position := 0.0
+	cash := 100000.0
+	mark := 1.0
+	feeRate := 0.001
+	spreadFraction := 0.0
+
+	if planner.desk != nil {
+		position = float64(planner.desk.Holding(state.Symbol))
+
+		if balance := planner.desk.Balance().Cash(); balance != nil {
+			cash = balance.Float64()
+		}
+
+		if marked := planner.desk.Price().Mark(state.Symbol, broker.BUY); marked != nil {
+			mark = marked.Float64()
+		}
+
+		if fee := planner.desk.Price().Fee(state.Symbol); fee != nil && fee.Fee != nil {
+			feeRate = fee.Fee.Float64() / 100
+		}
+
+		if tick := planner.desk.Price().Tick(state.Symbol); tick != nil &&
+			tick.Bid != nil && tick.Ask != nil && tick.Bid.Float64() > 0 && tick.Ask.Float64() > tick.Bid.Float64() {
+			bid := tick.Bid.Float64()
+			ask := tick.Ask.Float64()
+			spreadFraction = (ask - bid) / ((ask + bid) / 2)
+		}
+	}
+
+	if !(mark > 0) {
+		decision.Reason = "planner: positive mark price required"
+		return decision
+	}
+
+	quantity := (cash * config.Planner.MaxAllocationFraction) / mark
+
+	if quantity <= 0 {
+		decision.Reason = "planner: no allocatable capital for economic evaluation"
+		return decision
+	}
+
+	horizon := config.Planner.SearchHorizon
+
+	if horizon < 1 {
+		horizon = 5
+	}
+
+	maxPosition := config.Planner.MaxPositionUnits
+
+	if maxPosition <= 0 {
+		maxPosition = 2
+	}
+
+	economicState := mcts.NewEconomicState(
+		mcts.PortfolioState{Cash: cash, Position: position, MarkPrice: mark},
+		mcts.MarketState{At: state.At, Values: state.MarketState},
+		&causalMarketModel{state: state},
+		mcts.CostModel{
+			FeeRate:           feeRate,
+			SpreadFraction:    spreadFraction,
+			SlippageFraction:  config.Planner.SlippageFraction,
+		},
+		quantity,
+		maxPosition,
+		horizon,
+	)
+
+	search := mcts.NewSearch(
+		config.Planner.MCTSIterations,
+		config.Planner.ExplorationConstant,
+		causalSeed(state),
+	)
+	result := search.Run(economicState, &causalActionEstimator{state: state})
+
+	decision.Cause = "causal-mcts"
+
+	if result.DecisionUnavailable {
+		decision.Reason = "planner: no feasible action has an estimable economic objective (" +
+			result.IdentificationStatus.String() + ")"
+		recordEconomic(decision, result, state)
+		decision.Trace = economicTrace(state, result)
+		return decision
+	}
+
+	recordEconomic(decision, result, state)
+
+	switch result.SelectedAction {
+	case mcts.Enter:
+		decision.Action = types.ActionEnter
+	case mcts.Exit:
+		decision.Action = types.ActionExit
+	case mcts.Scale:
+		decision.Action = types.ActionScale
+	case mcts.Wait:
+		// A genuine Wait choice: expected net wealth change was lower than
+		// alternatives. It carries no reason and is not published as a gate.
+		decision.Reason = ""
+	default:
+		decision.Reason = "planner: unknown selected action"
+	}
+
+	decision.Trace = economicTrace(state, result)
+	return decision
+}
+
+/*
+recordEconomic records the economic outcome provenance on the decision.
+*/
+func recordEconomic(decision *types.Decision, result *mcts.SearchResult, state *CausalState) {
+	alternatives := decision.Alternatives
+	alternatives["economic:expected_outcome"] = result.ExpectedEconomicOutcome
+	alternatives["economic:outcome_uncertainty"] = result.OutcomeUncertainty
+	alternatives["economic:visits"] = float64(result.Visits)
+
+	if state != nil && state.Transition != nil {
+		alternatives["causal:effective_support"] = state.Transition.EffectiveSupport
+	}
+}
+
+/*
+economicTrace builds the observable decision trace: the MCTS branches with
+their economic rewards plus the causal model provenance.
+*/
+func economicTrace(state *CausalState, result *mcts.SearchResult) *types.DecisionTrace {
+	trace := &types.DecisionTrace{
+		Hypothesis: "causal:" + state.Symbol + ":economic",
+		MCTS: types.DecisionMCTSTrace{
+			Iterations:        0,
+			Branches:          make([]types.DecisionMCTSBranch, 0),
+			RecommendedAction: result.SelectedAction.String(),
+		},
+	}
+
+	if result.Trace != nil {
+		trace.MCTS.Iterations = result.Trace.Iterations
+
+		for _, branch := range result.Trace.Branches {
+			trace.MCTS.Branches = append(trace.MCTS.Branches, types.DecisionMCTSBranch{
+				Action:     branch.Action.String(),
+				Visits:     branch.Visits,
+				MeanReward: branch.MeanReward,
+			})
+		}
+	}
+
+	return trace
+}
+
+/*
+causalSeed fingerprints the causal state so the same replay state explores the
+same rollout paths.
+*/
+func causalSeed(state *CausalState) int64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(state.Symbol))
+	_, _ = hasher.Write([]byte(fmt.Sprintf("%d", state.At.UnixNano())))
+	_, _ = hasher.Write([]byte(fmt.Sprintf("%d", state.Epoch)))
+	return int64(hasher.Sum64())
+}
+
+/*
+publishStrategy renders the decision round for the UI.
+*/
 func (planner *Planner) publishStrategy(
 	thesis *types.Thesis,
 	evaluated bool,
 	outcome string,
-	decisions []types.Decision,
+	decisions []*types.Decision,
 ) {
 	rows := make([]*wire.DecisionT, 0, len(decisions))
 
 	for _, decision := range decisions {
+		if decision == nil {
+			continue
+		}
+
 		rows = append(rows, types.DecisionWire(
-			decision,
+			*decision,
 			strategyWireBranchCount,
 			false,
 		))
@@ -522,19 +538,23 @@ func (planner *Planner) publishStrategy(
 	}
 }
 
+/*
+executeDecisions executes the selected actions through the desk. Exits run
+first; entries follow. No semantic gate, admission policy, or predictive
+readiness check runs here: the desk rejects only real execution constraints.
+*/
 func (planner *Planner) executeDecisions(
-	createdDecisions []*types.Decision,
-	lastSearchEnd time.Time,
+	decisions []*types.Decision,
 ) error {
-	winners := make([]*types.Decision, 0, len(createdDecisions))
-	exits := make([]*types.Decision, 0, len(createdDecisions))
+	exits := make([]*types.Decision, 0, len(decisions))
+	winners := make([]*types.Decision, 0, len(decisions))
 
-	for _, decision := range createdDecisions {
+	for _, decision := range decisions {
 		switch decision.Action {
-		case types.ActionEnter:
-			winners = append(winners, decision)
 		case types.ActionExit:
 			exits = append(exits, decision)
+		case types.ActionEnter, types.ActionScale:
+			winners = append(winners, decision)
 		}
 	}
 
@@ -552,24 +572,9 @@ func (planner *Planner) executeDecisions(
 		}
 	}
 
-	slices.SortFunc(winners, admissionOrder)
-
-	regulatorPredicting := planner.regulator != nil && planner.regulator.Predicting()
-
 	for _, decision := range winners {
-		if !regulatorPredicting {
-			decision.Action = types.ActionNothing
-			decision.Reason = "planner: entry delayed while global regulator is observing or adapting"
-			decision.GraphScore = 0
-			decision.Trace = nil
-
+		if decision.Action != types.ActionEnter {
 			continue
-		}
-
-		executeStarted := time.Now()
-
-		if planner.ObserveHop != nil {
-			planner.ObserveHop("allocation", "desk", executeStarted.Sub(lastSearchEnd))
 		}
 
 		var err error
@@ -590,134 +595,29 @@ func (planner *Planner) executeDecisions(
 
 			continue
 		}
-
-		lastSearchEnd = time.Now()
 	}
 
 	return nil
 }
 
-func newMCTSEngine(config *system.Config) *mcts.CausalMCTS {
-	engine := mcts.NewCausalMCTS(
-		mcts.DefaultCausalEngine{},
-		math.Sqrt2,
-		1,
-		len(mcts.GraphFeatureColumns)+1,
-		mcts.GraphTreatmentColumn,
-		mcts.GraphTargetColumn,
-		mcts.GraphControlColumns,
-		mcts.GraphFeatureColumns,
-		false,
-	)
-
-	if config != nil && config.Planner != nil {
-		engine.C = config.Planner.ExplorationConstant
-		engine.CausalAlpha = config.Planner.CausalAlpha
-	}
-
-	return engine
-}
-
 /*
-heldLegs builds one portfolio leg per open desk position so the same search that
-admits new entries can decide which held lot has decayed past its slot.
-A held lot uses the graph already consumed by the current evaluation pass, so
-the planner never reads the stream twice or retains a shadow graph state.
+isExcludedSymbol keeps fiat and stablecoin pairs out of the tradable universe.
+It is an operational instrument filter, not an evidence gate.
 */
+func isExcludedSymbol(symbol string) bool {
+	base := symbol
 
-/*
-normalSlots and reserveSlots expose the desk capacity the portfolio state
-consumes. A nil desk is treated as capacity-free so the planner's decision
-logic still evaluates under test without a broker.
-*/
-func (planner *Planner) normalSlots() int {
-	if planner == nil || planner.desk == nil {
-		return 0
+	if index := strings.Index(symbol, "/"); index != -1 {
+		base = symbol[:index]
 	}
 
-	return planner.desk.OpenSlots(false)
-}
-
-func (planner *Planner) reserveSlots() int {
-	if planner == nil || planner.desk == nil {
-		return 0
+	switch strings.ToUpper(strings.TrimSpace(base)) {
+	case "USD", "EUR", "GBP", "AUD", "CAD", "CHF", "JPY", "NZD",
+		"USDT", "USDC", "DAI", "PYUSD", "FDUSD", "TUSD", "USDG",
+		"USDE", "EURT", "EURC", "GUSD", "BUSD", "FRAX", "LUSD",
+		"CUSD", "USD0", "USDS", "RLUSD", "UST":
+		return true
+	default:
+		return false
 	}
-
-	return planner.desk.OpenSlots(true) - planner.desk.OpenSlots(false)
-}
-
-/*
-portfolioChoices walks the principal variation and records the first genuine
-intervention selected for each leg. Later hold branches on the same variation
-are follow-on positions, not reversals of the entry choice, so the first enter
-or exit is the decision that owns the round.
-*/
-func (planner *Planner) portfolioChoices(
-	root *mcts.Node,
-	legCount int,
-) map[string]float64 {
-	choices := make(map[string]float64, legCount)
-	settled := make(map[string]bool, legCount)
-
-	for index := 0; index < legCount; index++ {
-		choices[portfolioSymbol(root, index)] = portfolioHoldReference(index)
-	}
-
-	current := root
-
-	for current != nil {
-		if index, intervened := decodePortfolioAction(current.Action); intervened {
-			symbol := portfolioSymbol(root, index)
-
-			if !settled[symbol] {
-				choices[symbol] = current.Action
-				settled[symbol] = true
-			}
-		}
-
-		if len(current.Children) == 0 {
-			break
-		}
-
-		current = mostVisitedPortfolioChild(current)
-	}
-
-	return choices
-}
-
-/*
-portfolioSymbol resolves one index back to its leg symbol by walking the root
-state's legs. The index is positional within this search round only.
-*/
-func portfolioSymbol(root *mcts.Node, index int) string {
-	if root == nil || root.State == nil {
-		return ""
-	}
-
-	state, supported := root.State.(*PortfolioState)
-
-	if !supported || index < 0 || index >= len(state.legs) {
-		return ""
-	}
-
-	return state.legs[index].Symbol
-}
-
-/*
-decodePortfolioAction splits a composite action into its leg index and whether
-it was a real enter/exit intervention (hold and done are structural, not held).
-*/
-func decodePortfolioAction(action float64) (int, bool) {
-	if action == portfolioDoneAction {
-		return 0, false
-	}
-
-	index := int(math.Floor((action - 1) / 3))
-	kind := math.Mod(action, 3)
-
-	if kind == 0 {
-		kind = 3
-	}
-
-	return index, kind == portfolioEnterOffset || kind == portfolioExitOffset
 }

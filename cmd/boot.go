@@ -386,7 +386,7 @@ func BootWithHub(
 
 	signalRunner.ObserveModule = crypto.ObserveModule()
 
-	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, regulatorSolver, bus)
+	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, bus)
 	planner.ObserveModule = crypto.ObserveModule()
 	planner.ObserveHop = crypto.ObserveHop()
 	existingHub := hub != nil

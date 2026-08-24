@@ -35,7 +35,7 @@ It is owned by one Thesis so intended behavior remains separate from execution.
 */
 type Decision struct {
 	ID                        string                      `json:"id" validate:"required"`
-	Action                    Action                      `json:"action" validate:"required,oneof=enter|exit|reduce|hold|nothing"`
+	Action                    Action                      `json:"action" validate:"required,oneof=enter|exit|scale|reduce|hold|nothing"`
 	Symbol                    string                      `json:"symbol" validate:"required"`
 	At                        time.Time                   `json:"at" validate:"required"`
 	Utility                   float64                     `json:"utility,omitempty" validate:"finite"`

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -114,23 +113,23 @@ func (graph *Graph) ReasoningFrame() types.Frame {
 	now := time.Now().UTC()
 	active := graph.ActiveOpportunity(now)
 
-	frame.Put(mcts.SymbolContextConfidence, graph.reasoningConfidence())
-	frame.Put(mcts.SymbolTreatment, mcts.ActionWait)
-	frame.Put(mcts.SymbolTarget, graph.reasoningTarget())
-	frame.Put(mcts.SymbolFlow, graph.reasoningSignal("flow"))
-	frame.Put(mcts.SymbolLiquidityImpact, math.Abs(graph.reasoningSignal("liquidity")))
-	frame.Put(mcts.SymbolHawkes, graph.reasoningSignal("hawkes"))
-	frame.Put(mcts.SymbolCoherence, graph.reasoningSignal("coherence"))
-	frame.Put(mcts.SymbolRegime, graph.reasoningSignal("regime"))
-	frame.Put(mcts.SymbolSurprise, math.Abs(graph.reasoningSignal("surprise")))
-	frame.Put(mcts.SymbolPosition, 0)
-	frame.Put(mcts.SymbolHorizon, 0)
-	frame.Put(mcts.SymbolMaximumHorizon, float64(graph.reasoningHorizon()))
-	frame.Put(mcts.SymbolArchetype, float64(opportunityArchetypeIndex(active.Type)))
-	frame.Put(mcts.SymbolVelocity, graph.reasoningSignal("velocity"))
-	frame.Put(mcts.SymbolStoredEnergy, graph.reasoningSignal("energy"))
-	frame.Put(mcts.SymbolCausalExpectation, graph.reasoningSignal("causal"))
-	frame.Put(mcts.SymbolSpread, math.Abs(graph.reasoningSignal("spread")))
+	frame.Put(SymbolContextConfidence, graph.reasoningConfidence())
+	frame.Put(SymbolTreatment, ReasoningActionWait)
+	frame.Put(SymbolTarget, graph.reasoningTarget())
+	frame.Put(SymbolFlow, graph.reasoningSignal("flow"))
+	frame.Put(SymbolLiquidityImpact, math.Abs(graph.reasoningSignal("liquidity")))
+	frame.Put(SymbolHawkes, graph.reasoningSignal("hawkes"))
+	frame.Put(SymbolCoherence, graph.reasoningSignal("coherence"))
+	frame.Put(SymbolRegime, graph.reasoningSignal("regime"))
+	frame.Put(SymbolSurprise, math.Abs(graph.reasoningSignal("surprise")))
+	frame.Put(SymbolPosition, 0)
+	frame.Put(SymbolHorizon, 0)
+	frame.Put(SymbolMaximumHorizon, float64(graph.reasoningHorizon()))
+	frame.Put(SymbolArchetype, float64(opportunityArchetypeIndex(active.Type)))
+	frame.Put(SymbolVelocity, graph.reasoningSignal("velocity"))
+	frame.Put(SymbolStoredEnergy, graph.reasoningSignal("energy"))
+	frame.Put(SymbolCausalExpectation, graph.reasoningSignal("causal"))
+	frame.Put(SymbolSpread, math.Abs(graph.reasoningSignal("spread")))
 
 	return frame
 }
@@ -166,7 +165,7 @@ func (graph *Graph) ReasoningHistory() []types.Frame {
 			continue
 		}
 
-		frame, err := mcts.RowToFrame(row)
+		frame, err := RowToFrame(row)
 
 		if err != nil {
 			continue
@@ -200,28 +199,28 @@ func (graph *Graph) ApplyReasoningIntervention(
 	state types.Frame,
 	action float64,
 ) (types.Frame, error) {
-	if err := mcts.ValidateReasoningFrame(state); err != nil {
+	if err := ValidateReasoningFrame(state); err != nil {
 		return state, err
 	}
 
-	position, _ := state.Get(mcts.SymbolPosition)
+	position, _ := state.Get(SymbolPosition)
 	nextPosition := position
 
 	switch action {
-	case mcts.ActionWait:
-	case mcts.ActionEnter:
+	case ReasoningActionWait:
+	case ReasoningActionEnter:
 		if position != 0 {
 			return state, fmt.Errorf("graph: enter requires a flat position")
 		}
 
 		nextPosition = 1
-	case mcts.ActionScale:
+	case ReasoningActionScale:
 		if position == 0 {
 			return state, fmt.Errorf("graph: scale requires an open position")
 		}
 
 		nextPosition = position + 1
-	case mcts.ActionExit:
+	case ReasoningActionExit:
 		if position == 0 {
 			return state, fmt.Errorf("graph: exit requires an open position")
 		}
@@ -231,15 +230,15 @@ func (graph *Graph) ApplyReasoningIntervention(
 		return state, fmt.Errorf("graph: unknown intervention %g", action)
 	}
 
-	archetype, _ := state.Get(mcts.SymbolArchetype)
-	velocity, _ := state.Get(mcts.SymbolVelocity)
-	storedEnergy, _ := state.Get(mcts.SymbolStoredEnergy)
-	causalExpectation, _ := state.Get(mcts.SymbolCausalExpectation)
-	spread, _ := state.Get(mcts.SymbolSpread)
-	liquidityImpact, _ := state.Get(mcts.SymbolLiquidityImpact)
-	contextConfidence, _ := state.Get(mcts.SymbolContextConfidence)
-	currentReward, _ := state.Get(mcts.SymbolTarget)
-	currentHorizon, _ := state.Get(mcts.SymbolHorizon)
+	archetype, _ := state.Get(SymbolArchetype)
+	velocity, _ := state.Get(SymbolVelocity)
+	storedEnergy, _ := state.Get(SymbolStoredEnergy)
+	causalExpectation, _ := state.Get(SymbolCausalExpectation)
+	spread, _ := state.Get(SymbolSpread)
+	liquidityImpact, _ := state.Get(SymbolLiquidityImpact)
+	contextConfidence, _ := state.Get(SymbolContextConfidence)
+	currentReward, _ := state.Get(SymbolTarget)
+	currentHorizon, _ := state.Get(SymbolHorizon)
 	nextHorizon := currentHorizon + 1
 
 	crossingCost := math.Abs(spread) + math.Abs(liquidityImpact)
@@ -283,14 +282,14 @@ func (graph *Graph) ApplyReasoningIntervention(
 	timePenalty := 0.0001 * float64(currentHorizon)
 	rewardDelta := nextPosition*stepReturn - timePenalty
 
-	state.Put(mcts.SymbolTreatment, action)
-	state.Put(mcts.SymbolPosition, nextPosition)
-	state.Put(mcts.SymbolHorizon, nextHorizon)
-	state.Put(mcts.SymbolVelocity, nextVelocity)
-	state.Put(mcts.SymbolStoredEnergy, nextEnergy)
-	state.Put(mcts.SymbolTarget, currentReward+rewardDelta)
+	state.Put(SymbolTreatment, action)
+	state.Put(SymbolPosition, nextPosition)
+	state.Put(SymbolHorizon, nextHorizon)
+	state.Put(SymbolVelocity, nextVelocity)
+	state.Put(SymbolStoredEnergy, nextEnergy)
+	state.Put(SymbolTarget, currentReward+rewardDelta)
 
-	return state, mcts.ValidateReasoningFrame(state)
+	return state, ValidateReasoningFrame(state)
 }
 
 /*
@@ -332,7 +331,7 @@ func (graph *Graph) ReasoningTopology() ReasoningTopology {
 			"regime",
 			"surprise",
 		},
-		CurrentState: mcts.FrameValues(frame),
+		CurrentState: FrameValues(frame),
 	}
 
 	if ready {
@@ -342,10 +341,10 @@ func (graph *Graph) ReasoningTopology() ReasoningTopology {
 	}
 
 	topology.Nodes = graph.reasoningNodes()
-	confidence, _ := frame.Get(mcts.SymbolContextConfidence)
-	flow, _ := frame.Get(mcts.SymbolFlow)
-	liquidity, _ := frame.Get(mcts.SymbolLiquidityImpact)
-	target, _ := frame.Get(mcts.SymbolTarget)
+	confidence, _ := frame.Get(SymbolContextConfidence)
+	flow, _ := frame.Get(SymbolFlow)
+	liquidity, _ := frame.Get(SymbolLiquidityImpact)
+	target, _ := frame.Get(SymbolTarget)
 	topology.Nodes = append(
 		topology.Nodes,
 		ReasoningNode{

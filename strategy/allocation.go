@@ -13,6 +13,13 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+const (
+	executionCoverageKey = "execution:visible_coverage"
+	executionFrictionKey = "execution:friction_fraction"
+	executionSpreadKey   = "execution:spread_fraction"
+	executionImpactKey   = "execution:impact_fraction"
+)
+
 type Allocation struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -34,10 +41,8 @@ func NewAllocation(
 
 /*
 applyAdverseExcursion tightens the assumed risk multiple toward the excursion
-the evidence has actually observed winners survive. Excursions are stated in
-the risk distances the finishing lots carried, so the derived multiple is the
-excursion times the multiple those lots were entered under. An absent or
-degenerate estimate leaves the default geometry untouched.
+the evidence has actually observed winners survive. An absent or degenerate
+estimate leaves the default geometry untouched.
 */
 func applyAdverseExcursion(
 	multiples types.RiskMultiples,
@@ -54,10 +59,7 @@ func applyAdverseExcursion(
 }
 
 /*
-riskMultiples returns the stop geometry multiples for this entry: the
-configured defaults, tightened to the calibrated winners' adverse-excursion
-quantile once the desk's first-passage model has enough finished winners to
-speak.
+riskMultiples returns the stop geometry multiples for this entry.
 */
 func (allocation *Allocation) riskMultiples() types.RiskMultiples {
 	multiples := types.DefaultRiskMultiples()
@@ -77,10 +79,11 @@ func (allocation *Allocation) riskMultiples() types.RiskMultiples {
 }
 
 /*
-Calculate turns structurally admitted candidates into current executable orders.
-It observes only present book depth, fees, capital, and risk geometry. Whether a
-candidate deserves capital was decided by the evidence graph; allocation does
-not invent a future midpoint to veto that conclusion.
+Calculate turns economically selected candidates into current executable
+orders. It observes only present book depth, fees, capital, and risk geometry.
+Whether a candidate deserves capital was decided by the causal MCTS economic
+outcome; allocation enforces real constraints only and never re-ranks or
+vetoes using semantic evidence.
 */
 func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 	config := system.Cfg.Snapshot()
@@ -128,13 +131,6 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.OpenPositions = allocation.desk.OpenPositions()
 		decision.SlotCapacity = allocation.desk.MaxPositions() + allocation.desk.MaxReserved()
 		decision.AllocationClass = "unallocated"
-
-		if result := config.Planner.Admission.Evaluate(*decision); !result.Accepted {
-			decision.Action = types.ActionNothing
-			decision.Reason = "planner: admission changed before allocation: " +
-				result.Explanation()
-			continue
-		}
 
 		cash := allocation.desk.Balance().Cash()
 
@@ -258,10 +254,6 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			}
 		}
 
-		// The venue refuses orders below its own stated minimum quantity and
-		// cost. Refusing them here, after risk capping has settled the final
-		// size, replaces an exchange rejection at execution time with an
-		// observable decision reason.
 		if reason := venueMinimumReason(pair, quantity, cost.GrossNotional); reason != "" {
 			decision.Action = types.ActionNothing
 			decision.Reason = reason
@@ -300,70 +292,35 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.Risk = riskPlan
 		decision.Stoploss = stoploss
 
-		// Legacy forecast fields are deliberately cleared. The current execution
-		// observation is carried by EntryCost and the structural case by Thesis*.
-		decision.ExpectedReturn = nil
-		decision.ExpectedFees = nil
-		decision.ExpectedSpread = nil
-		decision.ExpectedImpact = nil
-		decision.PerspectiveReturn = 0
-		decision.PerspectiveSources = nil
-		decision.Utility = 0
-		decision.OpportunityMargin = 0
 		eligible = append(eligible, decision)
 	}
 
-	rankAdmissionCandidates(eligible)
 	admitBest(eligible, normalSlots, reserveSlots, occupiedSymbols(allocation.desk))
 	return nil
 }
 
 /*
-admissionOrder ranks current candidates by structural thesis first and the
-causal MCTS evidence path second. Equal evidence compares symbol identity so a
-replay of the same state makes the same slot decision.
+economicOrder ranks candidates by their expected economic outcome under the
+causal model (MCTS mean economic reward), then by search visits, then by
+symbol identity for replay determinism. No semantic score participates.
 */
-func admissionOrder(left, right *types.Decision) int {
-	leftRank, leftRanked := alternativesOf(left)[candidateRankSumKey]
-	rightRank, rightRanked := alternativesOf(right)[candidateRankSumKey]
+func economicOrder(left, right *types.Decision) int {
+	leftOutcome := alternativesOf(left)["economic:expected_outcome"]
+	rightOutcome := alternativesOf(right)["economic:expected_outcome"]
 
-	if leftRanked && rightRanked && leftRank != rightRank {
-		if leftRank < rightRank {
+	if leftOutcome != rightOutcome {
+		if leftOutcome > rightOutcome {
 			return -1
 		}
 
 		return 1
 	}
 
-	if left.ThesisScore != right.ThesisScore {
-		if left.ThesisScore > right.ThesisScore {
-			return -1
-		}
+	leftVisits := alternativesOf(left)["economic:visits"]
+	rightVisits := alternativesOf(right)["economic:visits"]
 
-		return 1
-	}
-
-	leftLiquidity := alternativesOf(left)[liquidityScoreKey]
-	rightLiquidity := alternativesOf(right)[liquidityScoreKey]
-
-	if leftLiquidity != rightLiquidity {
-		if leftLiquidity > rightLiquidity {
-			return -1
-		}
-
-		return 1
-	}
-
-	if left.GraphScore != right.GraphScore {
-		if left.GraphScore > right.GraphScore {
-			return -1
-		}
-
-		return 1
-	}
-
-	if left.ForecastHorizon != right.ForecastHorizon && left.ForecastHorizon > 0 && right.ForecastHorizon > 0 {
-		if left.ForecastHorizon < right.ForecastHorizon {
+	if leftVisits != rightVisits {
+		if leftVisits > rightVisits {
 			return -1
 		}
 
@@ -374,8 +331,10 @@ func admissionOrder(left, right *types.Decision) int {
 }
 
 /*
-admitBest keeps the highest-ranked candidates that still fit in open slots.
-Already-held symbols do not consume a slot another pair could fill.
+admitBest keeps the highest-expected-economic-outcome candidates that still
+fit in open slots. Already-held symbols do not consume a slot another pair
+could fill. Scarce capacity is allocated by expected economic outcome, never
+by semantic score rank.
 */
 func admitBest(
 	decisions []*types.Decision,
@@ -405,7 +364,7 @@ func admitBest(
 		eligible = append(eligible, decision)
 	}
 
-	slices.SortFunc(eligible, admissionOrder)
+	slices.SortFunc(eligible, economicOrder)
 
 	for _, decision := range eligible {
 		if occupied[decision.Symbol] {
@@ -423,7 +382,7 @@ func admitBest(
 			continue
 		}
 
-		if decision.ReserveEligible && decision.Opportunity && reserveSlots > 0 {
+		if reserveSlots > 0 {
 			reserveSlots--
 			decision.AllocationClass = "reserve"
 			occupied[decision.Symbol] = true
@@ -459,10 +418,7 @@ func recordExecutionFriction(decision *types.Decision, cost *types.EntryCost) {
 
 /*
 venueMinimumReason states why the venue would refuse the order as sized, or
-returns an empty string when the venue's stated minimums admit it. Kraken
-quotes a minimum quantity and a minimum total cost per pair; an order below
-either is rejected by the exchange at execution time, so it is refused at
-allocation with an observable reason instead.
+returns an empty string when the venue's stated minimums admit it.
 */
 func venueMinimumReason(
 	pair kraken.InstrumentPair,
@@ -498,4 +454,16 @@ func occupiedSymbols(desk *broker.Desk) map[string]bool {
 	}
 
 	return occupied
+}
+
+/*
+alternativesOf returns the decision's alternatives map, creating it when
+absent.
+*/
+func alternativesOf(decision *types.Decision) map[string]float64 {
+	if decision.Alternatives == nil {
+		decision.Alternatives = make(map[string]float64)
+	}
+
+	return decision.Alternatives
 }
