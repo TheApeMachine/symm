@@ -6,10 +6,10 @@ import (
 
 var (
 	// Structural ports. The legacy names remain aliases for source compatibility.
-	PortA      = types.MustIntern("left")
-	PortB      = types.MustIntern("right")
-	PortX      = types.MustIntern("value")
-	PortResult = types.MustIntern("result")
+	PortA      = types.PortA
+	PortB      = types.PortB
+	PortX      = types.PortX
+	PortResult = types.PortResult
 
 	SymbolLeft   = PortA
 	SymbolRight  = PortB

@@ -9,16 +9,17 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 var (
-	SymbolMechanical = algo.SymbolMechanical
-	SymbolFragile    = algo.SymbolFragile
-	SymbolThermal    = algo.SymbolThermal
-	SymbolReversal   = algo.SymbolReversal
-	SymbolUrgency    = algo.SymbolUrgency
+	SymbolMechanical = statistic.SymbolMechanical
+	SymbolFragile    = statistic.SymbolFragile
+	SymbolThermal    = statistic.SymbolThermal
+	SymbolReversal   = statistic.SymbolReversal
+	SymbolUrgency    = statistic.SymbolUrgency
 )
 
 /*
@@ -72,9 +73,9 @@ func (signal *Signal) Step(trade kraken.TradeData) error {
 	}
 
 	input := nmtypes.Frame{}
-	input.Put(algo.SymbolVolume, trade.Qty)
-	input.Put(algo.SymbolAggressorSide, side)
-	input.Put(algo.SymbolPriceDelta, trade.Price.Float64())
+	input.Put(statistic.SymbolVolume, trade.Qty)
+	input.Put(statistic.SymbolAggressorSide, side)
+	input.Put(statistic.SymbolPriceDelta, trade.Price.Float64())
 	input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
 

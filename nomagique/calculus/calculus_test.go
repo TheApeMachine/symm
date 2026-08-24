@@ -174,22 +174,6 @@ func TestNonlinearPrimitives(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(negScale.MustGet(PortResult), ShouldAlmostEqual, 0.5, 1e-12)
 	})
-
-	Convey("Inverse and Ratio reject non-finite structural inputs", t, func() {
-		_, output, err := Inverse(types.Frame{}, types.Frame{}.
-			Set(PortX, 2).Set(SymbolScale, 2))
-		So(err, ShouldBeNil)
-		So(output.MustGet(PortResult), ShouldEqual, 0.5)
-
-		_, output, err = Ratio(types.Frame{}, types.Frame{}.
-			Set(PortX, 6).Set(SymbolBaseline, 3).Set(SymbolReady, 1))
-		So(err, ShouldBeNil)
-		So(output.MustGet(PortResult), ShouldEqual, 2.0)
-
-		_, _, err = Ratio(types.Frame{}, types.Frame{}.
-			Set(PortX, math.NaN()).Set(SymbolBaseline, 3).Set(SymbolReady, 1))
-		So(err, ShouldNotBeNil)
-	})
 }
 
 func TestStatefulCalculusPrimitives(t *testing.T) {

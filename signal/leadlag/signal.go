@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/correlation"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -126,7 +125,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 		))
 	}
 
-	ready, _ := output.Get(equation.SymbolLeadLagReady)
+	ready, _ := output.Get(correlation.SymbolLeadLagReady)
 
 	types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, signal.measurement(
 		ticker.Symbol,

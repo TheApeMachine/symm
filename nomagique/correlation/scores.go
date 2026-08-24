@@ -1,9 +1,8 @@
-package algo
+package correlation
 
 import (
 	"math"
 
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -19,33 +18,33 @@ var (
 )
 
 /*
-Correlation projects support-weighted pair statistics into four competing
+Scores projects support-weighted pair statistics into four competing
 hypotheses: coherent herd motion, focal excess energy, incoherent noise, and
 opposing stress. Every score is normalized by observed correlation or energy.
-*/
-func Correlation() types.Primitive {
-	return correlationScores
-}
 
-func correlationScores(
+It is a primitive: the accumulated cohort statistics arrive in state (produced
+by the Cohort reducer), and the four hypothesis scores plus their separation
+leave in the output.
+*/
+func Scores(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
-	ready, found := state.Get(nmcorrelation.SymbolReady)
-	totalSupport, hasSupport := state.Get(nmcorrelation.SymbolTotalSupport)
-	peerEnergyTotal, hasPeerEnergy := state.Get(nmcorrelation.SymbolWeightedPeerEnergy)
-	focalEnergy, hasFocalEnergy := state.Get(nmcorrelation.SymbolFocalEnergy)
+	ready, found := state.Get(SymbolReady)
+	totalSupport, hasSupport := state.Get(SymbolTotalSupport)
+	peerEnergyTotal, hasPeerEnergy := state.Get(SymbolWeightedPeerEnergy)
+	focalEnergy, hasFocalEnergy := state.Get(SymbolFocalEnergy)
 
 	if !found || ready == 0 || !hasSupport || totalSupport <= 0 ||
 		!hasPeerEnergy || !hasFocalEnergy {
 		output := input
-		output.Put(nmcorrelation.SymbolReady, 0)
+		output.Put(SymbolReady, 0)
 
 		return state, output, nil
 	}
 
-	weightedSigned := state.MustGet(nmcorrelation.SymbolWeightedSigned)
-	weightedAbsolute := state.MustGet(nmcorrelation.SymbolWeightedAbsolute)
+	weightedSigned := state.MustGet(SymbolWeightedSigned)
+	weightedAbsolute := state.MustGet(SymbolWeightedAbsolute)
 	peerEnergy := peerEnergyTotal / totalSupport
 	signed := weightedSigned / totalSupport
 	cohort := weightedAbsolute / totalSupport
@@ -66,7 +65,7 @@ func correlationScores(
 	output.Put(SymbolNoise, noise)
 	output.Put(SymbolStress, stress)
 	output.Put(SymbolHypothesisSeparation, separation)
-	output.Put(nmcorrelation.SymbolReady, 1)
+	output.Put(SymbolReady, 1)
 
 	return state, output, nil
 }

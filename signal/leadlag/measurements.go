@@ -4,8 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
@@ -32,23 +31,23 @@ func (signal *Signal) measurement(
 	measurement.AddMetrics(
 		nmtypes.NewMetric(string(types.MetricLastPrice), price, dimensionless),
 		nmtypes.NewMetric(string(types.MetricPeerLastPrice), peerPrice, dimensionless),
-		nmtypes.NewMetric(string(types.MetricCorrelation), metricValue(output, algo.SymbolLeadLagCorrelation, measured), dimensionless),
-		nmtypes.NewMetric(string(types.MetricSignedCorrelation), metricValue(output, algo.SymbolSignedCorrelation, measured), dimensionless),
-		nmtypes.NewMetric(string(types.MetricSignedContempCorrelation), metricValue(output, equation.SymbolContempCorrelation, measured), dimensionless),
-		nmtypes.NewMetric(string(types.MetricSignedLagCorrelation), metricValue(output, equation.SymbolLagCorrelation, measured), dimensionless),
-		nmtypes.NewMetric(string(types.MetricLagFraction), metricValue(output, equation.SymbolLagFraction, measured), dimensionless),
-		nmtypes.NewMetric(string(types.MetricSampleCount), metricValue(output, equation.SymbolLeadLagSampleCount, measured), nmtypes.Descriptor{
+		nmtypes.NewMetric(string(types.MetricCorrelation), metricValue(output, correlation.SymbolLeadLagCorrelation, measured), dimensionless),
+		nmtypes.NewMetric(string(types.MetricSignedCorrelation), metricValue(output, correlation.SymbolSignedCorrelation, measured), dimensionless),
+		nmtypes.NewMetric(string(types.MetricSignedContempCorrelation), metricValue(output, correlation.SymbolContempCorrelation, measured), dimensionless),
+		nmtypes.NewMetric(string(types.MetricSignedLagCorrelation), metricValue(output, correlation.SymbolLagCorrelation, measured), dimensionless),
+		nmtypes.NewMetric(string(types.MetricLagFraction), metricValue(output, correlation.SymbolLagFraction, measured), dimensionless),
+		nmtypes.NewMetric(string(types.MetricSampleCount), metricValue(output, correlation.SymbolLeadLagSampleCount, measured), nmtypes.Descriptor{
 			Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescaleInstantaneous,
 		}),
-		nmtypes.NewNormalizedMetric(string(types.MetricInefficient), metricValue(output, algo.SymbolInefficiency, measured), metricValue(output, algo.SymbolInefficiency, measured), dimensionless),
-		nmtypes.NewNormalizedMetric(string(types.MetricSync), metricValue(output, algo.SymbolSync, measured), metricValue(output, algo.SymbolSync, measured), dimensionless),
-		nmtypes.NewNormalizedMetric(string(types.MetricDecoupled), metricValue(output, algo.SymbolDecoupled, measured), metricValue(output, algo.SymbolDecoupled, measured), dimensionless),
-		nmtypes.NewNormalizedMetric(string(types.MetricStall), metricValue(output, algo.SymbolStall, measured), metricValue(output, algo.SymbolStall, measured), dimensionless),
-		nmtypes.NewMetric(string(types.MetricStrength), metricValue(output, algo.SymbolLeadLagStrength, measured), dimensionless),
-		nmtypes.NewMetric(string(types.MetricSignedLagDirection), metricValue(output, algo.SymbolLagDirection, measured), dimensionless),
+		nmtypes.NewNormalizedMetric(string(types.MetricInefficient), metricValue(output, correlation.SymbolInefficiency, measured), metricValue(output, correlation.SymbolInefficiency, measured), dimensionless),
+		nmtypes.NewNormalizedMetric(string(types.MetricSync), metricValue(output, correlation.SymbolSync, measured), metricValue(output, correlation.SymbolSync, measured), dimensionless),
+		nmtypes.NewNormalizedMetric(string(types.MetricDecoupled), metricValue(output, correlation.SymbolDecoupled, measured), metricValue(output, correlation.SymbolDecoupled, measured), dimensionless),
+		nmtypes.NewNormalizedMetric(string(types.MetricStall), metricValue(output, correlation.SymbolStall, measured), metricValue(output, correlation.SymbolStall, measured), dimensionless),
+		nmtypes.NewMetric(string(types.MetricStrength), metricValue(output, correlation.SymbolLeadLagStrength, measured), dimensionless),
+		nmtypes.NewMetric(string(types.MetricSignedLagDirection), metricValue(output, correlation.SymbolLagDirection, measured), dimensionless),
 	)
 
-	separation := metricValue(output, algo.SymbolLeadLagSeparation, measured)
+	separation := metricValue(output, correlation.SymbolLeadLagSeparation, measured)
 
 	measurement.StampQuality(separation, pathSupport(followerPath))
 

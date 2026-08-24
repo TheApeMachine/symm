@@ -15,6 +15,7 @@ var (
 	SymbolBalance       = nmtypes.MustIntern("equation/balance")
 	SymbolCompression   = nmtypes.MustIntern("equation/compression")
 	SymbolDeviation     = nmtypes.MustIntern("equation/deviation")
+	SymbolZero          = nmtypes.MustIntern("equation/zero")
 )
 
 /*
@@ -34,7 +35,11 @@ func Geometry() nmtypes.Primitive {
 		logic.PositiveOrder(nmtypes.AlphaPrice, nmtypes.BetaPrice),
 		nmtypes.Fork(channelCenter(), channelBalance()),
 		channelWidth(),
-		nmtypes.Relay(SymbolWidth, nmtypes.SampleValue),
+		nmtypes.Wire(
+			nmtypes.Identity,
+			nmtypes.In(SymbolWidth, nmtypes.SampleValue),
+			nmtypes.Out(nmtypes.SampleValue, nmtypes.SampleValue),
+		),
 		CausalBaseline(),
 		statistic.Maturity(nmtypes.SampleCount),
 		nmtypes.Fork(
@@ -49,80 +54,116 @@ func Geometry() nmtypes.Primitive {
 
 func deviation() nmtypes.Primitive {
 	return logic.If(
-		nmtypes.Relay(statistic.SymbolReady, logic.SymbolCondition),
-		nmtypes.Pipe(
-			nmtypes.Relay(SymbolWidth, calculus.SymbolLeft),
-			nmtypes.Relay(statistic.SymbolMean, calculus.SymbolRight),
+		readyCondition(),
+		nmtypes.Wire(
 			calculus.Difference,
-			nmtypes.Relay(calculus.SymbolResult, SymbolDeviation),
+			nmtypes.In(SymbolWidth, calculus.PortA),
+			nmtypes.In(statistic.SymbolMean, calculus.PortB),
+			nmtypes.Out(calculus.PortResult, SymbolDeviation),
 		),
 		nmtypes.Identity,
 	)
 }
 
+func readyCondition() nmtypes.Primitive {
+	return nmtypes.Wire(
+		nmtypes.Identity,
+		nmtypes.In(statistic.SymbolReady, logic.SymbolCondition),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+}
+
 func channelCenter() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
-		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
+	return nmtypes.Wire(
 		calculus.Average,
-		nmtypes.Relay(calculus.SymbolResult, SymbolCenter),
+		nmtypes.In(nmtypes.AlphaPrice, calculus.PortA),
+		nmtypes.In(nmtypes.BetaPrice, calculus.PortB),
+		nmtypes.Out(calculus.PortResult, SymbolCenter),
 	)
 }
 
 func channelBalance() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Relay(nmtypes.AlphaQuantity, calculus.SymbolCurrent),
-		nmtypes.Relay(nmtypes.BetaQuantity, calculus.SymbolPrevious),
+	return nmtypes.Wire(
 		calculus.LogRatio,
-		nmtypes.Relay(calculus.SymbolResult, SymbolBalance),
+		nmtypes.In(nmtypes.AlphaQuantity, calculus.SymbolCurrent),
+		nmtypes.In(nmtypes.BetaQuantity, calculus.SymbolPrevious),
+		nmtypes.Out(calculus.PortResult, SymbolBalance),
 	)
 }
 
 func channelWidth() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolLeft),
-		nmtypes.Relay(nmtypes.AlphaPrice, calculus.SymbolRight),
+	return nmtypes.Wire(
 		calculus.Difference,
-		nmtypes.Relay(calculus.SymbolResult, SymbolWidth),
+		nmtypes.In(nmtypes.BetaPrice, calculus.PortA),
+		nmtypes.In(nmtypes.AlphaPrice, calculus.PortB),
+		nmtypes.Out(calculus.PortResult, SymbolWidth),
 	)
 }
 
 func relativeWidth() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Relay(SymbolWidth, calculus.SymbolValue),
-		nmtypes.Relay(SymbolCenter, calculus.SymbolBaseline),
-		nmtypes.Assign(calculus.SymbolReady, 1),
-		calculus.Ratio,
-		nmtypes.Relay(calculus.SymbolResult, SymbolRelativeWidth),
+	return nmtypes.Wire(
+		calculus.Quotient,
+		nmtypes.In(SymbolWidth, calculus.PortA),
+		nmtypes.In(SymbolCenter, calculus.PortB),
+		nmtypes.Out(calculus.PortResult, SymbolRelativeWidth),
 	)
 }
 
 func dissimilarity() nmtypes.Primitive {
 	return nmtypes.Pipe(
-		nmtypes.Relay(nmtypes.AlphaPrice, calculus.SymbolLeft),
-		nmtypes.Relay(nmtypes.BetaPrice, calculus.SymbolRight),
-		calculus.Sum,
-		nmtypes.Relay(calculus.SymbolResult, calculus.SymbolRight),
-		nmtypes.Relay(SymbolWidth, calculus.SymbolLeft),
-		calculus.Quotient,
-		nmtypes.Relay(calculus.SymbolResult, SymbolDissimilarity),
+		nmtypes.Wire(
+			calculus.Sum,
+			nmtypes.In(nmtypes.AlphaPrice, calculus.PortA),
+			nmtypes.In(nmtypes.BetaPrice, calculus.PortB),
+			nmtypes.Out(calculus.PortResult, calculus.PortB),
+		),
+		nmtypes.Wire(
+			calculus.Quotient,
+			nmtypes.In(SymbolWidth, calculus.PortA),
+			nmtypes.In(calculus.PortB, calculus.PortB),
+			nmtypes.Out(calculus.PortResult, SymbolDissimilarity),
+		),
 	)
 }
 
 func compression() nmtypes.Primitive {
 	return logic.If(
-		nmtypes.Relay(statistic.SymbolReady, logic.SymbolCondition),
+		readyCondition(),
 		nmtypes.Pipe(
-			nmtypes.Relay(statistic.SymbolMean, calculus.SymbolLeft),
-			nmtypes.Relay(SymbolWidth, calculus.SymbolRight),
-			calculus.Difference,
-			nmtypes.Relay(calculus.SymbolResult, calculus.SymbolValue),
-			calculus.Positive,
-			nmtypes.Relay(calculus.SymbolResult, calculus.SymbolValue),
-			nmtypes.Relay(statistic.SymbolMean, calculus.SymbolBaseline),
-			calculus.Ratio,
-			nmtypes.Relay(calculus.SymbolResult, SymbolCompression),
+			nmtypes.Wire(
+				calculus.Difference,
+				nmtypes.In(statistic.SymbolMean, calculus.PortA),
+				nmtypes.In(SymbolWidth, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, calculus.PortX),
+			),
+			nmtypes.Wire(
+				calculus.Positive,
+				nmtypes.In(calculus.PortX, calculus.PortX),
+				nmtypes.Out(calculus.PortResult, calculus.PortX),
+			),
+			logic.If(
+				meanPositive(),
+				nmtypes.Wire(
+					calculus.Quotient,
+					nmtypes.In(calculus.PortX, calculus.PortA),
+					nmtypes.In(statistic.SymbolMean, calculus.PortB),
+					nmtypes.Out(calculus.PortResult, SymbolCompression),
+				),
+				nmtypes.Assign(SymbolCompression, 0),
+			),
 		),
 		nmtypes.Identity,
+	)
+}
+
+func meanPositive() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Assign(SymbolZero, 0),
+		nmtypes.Wire(
+			logic.GreaterThan,
+			nmtypes.In(statistic.SymbolMean, calculus.PortA),
+			nmtypes.In(SymbolZero, calculus.PortB),
+			nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+		),
 	)
 }

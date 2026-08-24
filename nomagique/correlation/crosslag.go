@@ -1,9 +1,8 @@
-package equation
+package correlation
 
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 )
@@ -28,12 +27,13 @@ const bonferroniTailFactor = 2
 CrossLag searches every shift that leaves enough retained returns to estimate
 correlation. Hayashi evaluates each asynchronous pair and the actual search
 count determines the Bonferroni threshold.
-*/
-func CrossLag() types.Primitive {
-	return crossLag
-}
 
-func crossLag(
+It is a bivariate primitive: the anchor path arrives in state and the follower
+path in input, so the two operand series stay separate without any domain
+naming. The result exposes the best lag, its correlation, the contemporaneous
+correlation, the Bonferroni significance thresholds, and the readiness gate.
+*/
+func CrossLag(
 	state types.Frame,
 	input types.Frame,
 ) (types.Frame, types.Frame, error) {
@@ -66,19 +66,19 @@ func crossLag(
 	)
 	maximumLag := sampleCount - minimumLagPathSamples + 1
 	lagInput := input
-	lagInput.Put(correlation.SymbolLagSpacing, spacing)
-	lagInput.Put(correlation.SymbolMaximumLag, float64(maximumLag))
-	_, scan, err := correlation.Lag(state, lagInput)
+	lagInput.Put(SymbolLagSpacing, spacing)
+	lagInput.Put(SymbolMaximumLag, float64(maximumLag))
+	_, scan, err := Lag(state, lagInput)
 
 	if err != nil {
 		return state, types.Frame{}, err
 	}
 
-	bestLag := int(scan.MustGet(correlation.SymbolBestLag))
-	bestCorrelation := scan.MustGet(correlation.SymbolBestLagCorrelation)
+	bestLag := int(scan.MustGet(SymbolBestLag))
+	bestCorrelation := scan.MustGet(SymbolBestLagCorrelation)
 	bestMagnitude := math.Abs(bestCorrelation)
-	contemporaneousCorrelation := scan.MustGet(correlation.SymbolContemporaneous)
-	searchCount := int(scan.MustGet(correlation.SymbolSearchCount))
+	contemporaneousCorrelation := scan.MustGet(SymbolContemporaneous)
+	searchCount := int(scan.MustGet(SymbolSearchCount))
 
 	if searchCount == 0 {
 		output.Put(SymbolLeadLagReady, 0)
@@ -113,12 +113,4 @@ func crossLag(
 	output.Put(SymbolLeadLagSearchCount, float64(searchCount))
 
 	return state, output, nil
-}
-
-func truth(value bool) float64 {
-	if value {
-		return 1
-	}
-
-	return 0
 }

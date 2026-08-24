@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/symm/nomagique/algo"
+	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
@@ -40,13 +40,13 @@ func (signal *Signal) measurement(
 		the observation and stall downstream consumers waiting for first data.
 	*/
 	measurement.AddMetrics(
-		nmtypes.NewMetric(string(types.MetricCorrelation), metricValue(output, algo.SymbolCohortCorrelation, measured), descriptor),
-		nmtypes.NewMetric(string(types.MetricSigned), metricValue(output, algo.SymbolSignedCorrelation, measured), descriptor),
-		nmtypes.NewMetric(string(types.MetricRelativeEnergy), metricValue(output, algo.SymbolRelativeEnergy, measured), descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricHerdScore), metricValue(output, algo.SymbolHerd, measured), metricValue(output, algo.SymbolHerd, measured), descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricAlphaScore), metricValue(output, algo.SymbolAlpha, measured), metricValue(output, algo.SymbolAlpha, measured), descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricNoiseScore), metricValue(output, algo.SymbolNoise, measured), metricValue(output, algo.SymbolNoise, measured), descriptor),
-		nmtypes.NewNormalizedMetric(string(types.MetricStressScore), metricValue(output, algo.SymbolStress, measured), metricValue(output, algo.SymbolStress, measured), descriptor),
+		nmtypes.NewMetric(string(types.MetricCorrelation), metricValue(output, nmcorrelation.SymbolCohortCorrelation, measured), descriptor),
+		nmtypes.NewMetric(string(types.MetricSigned), metricValue(output, nmcorrelation.SymbolSignedCorrelation, measured), descriptor),
+		nmtypes.NewMetric(string(types.MetricRelativeEnergy), metricValue(output, nmcorrelation.SymbolRelativeEnergy, measured), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricHerdScore), metricValue(output, nmcorrelation.SymbolHerd, measured), metricValue(output, nmcorrelation.SymbolHerd, measured), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricAlphaScore), metricValue(output, nmcorrelation.SymbolAlpha, measured), metricValue(output, nmcorrelation.SymbolAlpha, measured), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricNoiseScore), metricValue(output, nmcorrelation.SymbolNoise, measured), metricValue(output, nmcorrelation.SymbolNoise, measured), descriptor),
+		nmtypes.NewNormalizedMetric(string(types.MetricStressScore), metricValue(output, nmcorrelation.SymbolStress, measured), metricValue(output, nmcorrelation.SymbolStress, measured), descriptor),
 	)
 	measurement.StampQuality(separation, support)
 

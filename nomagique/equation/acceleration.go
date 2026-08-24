@@ -28,11 +28,23 @@ func Acceleration() nmtypes.Primitive {
 		),
 		temporal.Window,
 		statistic.Median,
-		nmtypes.Relay(statistic.SymbolResult, SymbolTarget),
-		nmtypes.Relay(SymbolTarget, calculus.SymbolBaseline),
+		nmtypes.Wire(
+			nmtypes.Identity,
+			nmtypes.In(statistic.SymbolResult, SymbolTarget),
+			nmtypes.Out(SymbolTarget, SymbolTarget),
+		),
+		nmtypes.Wire(
+			nmtypes.Identity,
+			nmtypes.In(SymbolTarget, calculus.SymbolBaseline),
+			nmtypes.Out(calculus.SymbolBaseline, calculus.SymbolBaseline),
+		),
 		temporal.Since,
-		nmtypes.Relay(nmtypes.Quantity, calculus.SymbolDelta),
-		calculus.Accumulate,
+		nmtypes.Wire(
+			calculus.Accumulate,
+			nmtypes.In(nmtypes.Quantity, calculus.SymbolDelta),
+			nmtypes.State(calculus.SymbolTotal, calculus.SymbolTotal),
+			nmtypes.Out(calculus.SymbolTotal, calculus.SymbolTotal),
+		),
 		logic.If(accelerationClosed(), closeAcceleration(), openAcceleration()),
 	)
 }
@@ -40,13 +52,17 @@ func Acceleration() nmtypes.Primitive {
 func accelerationClosed() nmtypes.Primitive {
 	return nmtypes.Pipe(
 		nmtypes.Fork(
-			nmtypes.Pipe(
-				nmtypes.Relay(calculus.SymbolTotal, calculus.SymbolLeft),
-				nmtypes.Relay(calculus.SymbolBaseline, calculus.SymbolRight),
+			nmtypes.Wire(
 				logic.GreaterOrEqual,
-				nmtypes.Relay(logic.SymbolCondition, calculus.SymbolLeft),
+				nmtypes.In(calculus.SymbolTotal, calculus.PortA),
+				nmtypes.In(calculus.SymbolBaseline, calculus.PortB),
+				nmtypes.Out(logic.SymbolCondition, calculus.PortA),
 			),
-			nmtypes.Relay(temporal.SymbolAdvanced, calculus.SymbolRight),
+			nmtypes.Wire(
+				nmtypes.Identity,
+				nmtypes.In(temporal.SymbolAdvanced, calculus.PortB),
+				nmtypes.Out(calculus.PortB, calculus.PortB),
+			),
 		),
 		logic.And,
 	)
@@ -54,14 +70,24 @@ func accelerationClosed() nmtypes.Primitive {
 
 func closeAcceleration() nmtypes.Primitive {
 	return nmtypes.Pipe(
-		nmtypes.Relay(calculus.SymbolTotal, calculus.SymbolCount),
-		calculus.Rate,
+		nmtypes.Wire(
+			calculus.Rate,
+			nmtypes.In(calculus.SymbolTotal, calculus.SymbolCount),
+			nmtypes.In(calculus.SymbolDuration, calculus.SymbolDuration),
+			nmtypes.Out(calculus.SymbolRate, calculus.SymbolRate),
+		),
 		temporal.Observer(nmtypes.AlphaPrice),
 		logic.If(
-			nmtypes.Relay(calculus.SymbolReady, logic.SymbolCondition),
-			nmtypes.Pipe(
+			nmtypes.Wire(
+				nmtypes.Identity,
+				nmtypes.In(calculus.SymbolReady, logic.SymbolCondition),
+				nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+			),
+			nmtypes.Wire(
 				calculus.LogRatio,
-				nmtypes.Relay(calculus.SymbolResult, SymbolChange),
+				nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
+				nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
+				nmtypes.Out(calculus.PortResult, SymbolChange),
 			),
 			nmtypes.Identity,
 		),

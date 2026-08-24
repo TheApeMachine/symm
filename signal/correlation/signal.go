@@ -6,7 +6,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/algo"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
@@ -70,7 +69,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 		ticker.Symbol,
 		nmcorrelation.Hayashi,
 		nmcorrelation.Cohort,
-		algo.Correlation(),
+		nmcorrelation.Scores,
 	)
 
 	if err != nil {
@@ -86,7 +85,7 @@ func (signal *Signal) Step(ticker kraken.TickerData) error {
 	measured := reduced && ready != 0
 
 	if measured {
-		separation, _ = output.Get(algo.SymbolHypothesisSeparation)
+		separation, _ = output.Get(nmcorrelation.SymbolHypothesisSeparation)
 	}
 
 	types.PublishMeasurement(signal.thesis, signal.measurements, ticker.Symbol, signal.measurement(

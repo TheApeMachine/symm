@@ -1,4 +1,4 @@
-package equation
+package correlation
 
 import (
 	"math"
@@ -7,14 +7,13 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestCrossLag(t *testing.T) {
 	Convey("Given a follower carrying the anchor's prior return sequence", t, func() {
 		anchor, follower := delayedCrossLagPaths(32)
 
-		_, output, err := CrossLag()(anchor, follower)
+		_, output, err := CrossLag(anchor, follower)
 
 		So(err, ShouldBeNil)
 		So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 1.0)
@@ -59,7 +58,7 @@ func hayashiEquationPath(timestamps []int64, values []float64) types.Frame {
 		input.Put(types.SampleValue, values[index])
 		input.Put(temporal.SymbolUnixSec, float64(timestamp/1_000_000_000))
 		input.Put(temporal.SymbolUnixNsec, float64(timestamp%1_000_000_000))
-		input.Put(nmtypes.Span, float64(len(timestamps)))
+		input.Put(types.Span, float64(len(timestamps)))
 		_, err := path.Step(input)
 
 		if err != nil {

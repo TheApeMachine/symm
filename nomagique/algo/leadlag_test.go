@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -16,9 +17,9 @@ func TestLeadLag(t *testing.T) {
 		_, output, err := LeadLag()(anchor, follower)
 
 		So(err, ShouldBeNil)
-		So(output.MustGet(SymbolInefficiency), ShouldBeGreaterThan, 0.0)
-		So(output.MustGet(SymbolLeadLagStrength), ShouldBeGreaterThan, 0.0)
-		So(output.MustGet(SymbolLagDirection), ShouldEqual, 1.0)
+		So(output.MustGet(correlation.SymbolInefficiency), ShouldBeGreaterThan, 0.0)
+		So(output.MustGet(correlation.SymbolLeadLagStrength), ShouldBeGreaterThan, 0.0)
+		So(output.MustGet(correlation.SymbolLagDirection), ShouldEqual, 1.0)
 	})
 }
 
