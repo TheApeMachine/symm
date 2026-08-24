@@ -107,18 +107,18 @@ func NewDesk(
 		maxReserved:    viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
-	desk.ui = runtime.ChannelOf[*types.UIFrame](
+	desk.ui = runtime.ChannelOf(
 		bus, types.ChannelUI,
 		func(frame *types.UIFrame) string { return "" },
 	)
 	desk.recovery = NewRecovery(
 		ctx, api, desk.ui, instrument, price, balance, recorder, store, desk.positions,
 	)
-	desk.tickerWork = runtime.ChannelOf[kraken.TickerData](
+	desk.tickerWork = runtime.ChannelOf(
 		bus, types.ChannelTickers,
 		func(ticker kraken.TickerData) string { return ticker.Symbol },
 	).Subscribe(desk.Name(), desk.StepTicker)
-	desk.executionWork = runtime.ChannelOf[kraken.ExecutionData](
+	desk.executionWork = runtime.ChannelOf(
 		bus, types.ChannelExecutions,
 		func(execution kraken.ExecutionData) string { return execution.Symbol },
 	).Subscribe(desk.Name(), desk.StepExecution)

@@ -46,8 +46,9 @@ type PlannerConfig struct {
 	// (strategy policy; never disguised as market mathematics).
 	ExplorationConstant float64
 	// UncertaintyWeight scales the reward standard error in the UCB selection
-	// rule (strategy policy; the standard error carries the causal transition
-	// uncertainty sampled by the rollouts).
+	// rule. It is dimensionless strategy policy: the standard error it scales
+	// already carries reward units, so the weighted term stays in reward
+	// units like the mean and the C exploration term.
 	UncertaintyWeight float64
 	// SearchHorizon is the MCTS rollout horizon: the number of market
 	// transitions evaluated per trajectory (strategy holding-horizon policy).

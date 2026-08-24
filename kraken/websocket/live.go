@@ -212,23 +212,23 @@ func (live *Live) SetBus(bus *runtime.Workspace) {
 		live.book.SetBus(bus)
 	}
 
-	live.tickersCh = runtime.ChannelOf[kraken.TickerData](
+	live.tickersCh = runtime.ChannelOf(
 		bus, types.ChannelTickers,
 		func(ticker kraken.TickerData) string { return ticker.Symbol },
 	)
-	live.tradesCh = runtime.ChannelOf[kraken.TradeData](
+	live.tradesCh = runtime.ChannelOf(
 		bus, types.ChannelTrades,
 		func(trade kraken.TradeData) string { return trade.Symbol },
 	)
-	live.level3Ch = runtime.ChannelOf[kraken.Level3Data](
+	live.level3Ch = runtime.ChannelOf(
 		bus, types.ChannelLevel3,
 		func(frame kraken.Level3Data) string { return frame.Symbol },
 	)
-	live.executionsCh = runtime.ChannelOf[kraken.ExecutionData](
+	live.executionsCh = runtime.ChannelOf(
 		bus, types.ChannelExecutions,
 		func(execution kraken.ExecutionData) string { return execution.Symbol },
 	)
-	live.uiCh = runtime.ChannelOf[*types.UIFrame](
+	live.uiCh = runtime.ChannelOf(
 		bus, types.ChannelUI,
 		func(frame *types.UIFrame) string { return "" },
 	)

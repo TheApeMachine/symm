@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/relation"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
@@ -26,7 +27,9 @@ type CausalState struct {
 	SchemaVersion   uint64
 	ModelVersion    string
 	Identification  causal.IdentificationStatus
-	MarketState     map[relation.Coordinate]float64
+	// MarketState is the temporal market state: current values plus the
+	// timestamped trajectory the as-of transition evaluation reads.
+	MarketState     mcts.MarketState
 	OutcomeVariable causal.VariableID
 	// Transition is the outcome variable's fitted transition (convenience).
 	Transition *causal.TransitionModel
@@ -377,6 +380,10 @@ func (reasoner *Reasoner) CausalState(symbol string, at time.Time) *CausalState 
 
 /*
 snapshotLocked computes the causal state assuming the reasoner lock is held.
+The state's Identification reflects the whole time-sliced system: a market
+variable present in the observed state whose transition cannot be estimated
+makes the causal evaluation unavailable, because the rollout cannot evolve
+it without silently substituting persistence.
 */
 func (reasoner *Reasoner) snapshotLocked(symbol string, at time.Time) *CausalState {
 	model := reasoner.modelFor(symbol)
@@ -394,8 +401,30 @@ func (reasoner *Reasoner) snapshotLocked(symbol string, at time.Time) *CausalSta
 	outcome := schema.Outcomes[0]
 	transitions := model.TransitionModels(at)
 	outcomeTransition := transitions[outcome.Coordinate]
-	market := model.MarketState(at)
+	market := reasoner.buildMarketState(symbol, at, model)
 	edges := reasoner.influenceGraph.Incoming(outcome.Coordinate)
+
+	identification := outcomeTransition.Status
+
+	if outcomeTransition.Status == causal.IdentificationIdentified {
+		// A present coordinate whose transition is not identified means the
+		// future of the system is genuinely unknown; the evaluation is
+		// unavailable rather than a silent persistence carry-forward.
+		for _, coordinate := range reasoner.sortedPresentCoordinates(market) {
+			transition := transitions[coordinate]
+
+			if transition == nil || transition.Status != causal.IdentificationIdentified {
+				status := causal.IdentificationUndefined
+
+				if transition != nil {
+					status = transition.Status
+				}
+
+				identification = status
+				break
+			}
+		}
+	}
 
 	stepLag := time.Second
 
@@ -409,7 +438,7 @@ func (reasoner *Reasoner) snapshotLocked(symbol string, at time.Time) *CausalSta
 		Epoch:           reasoner.epoch,
 		SchemaVersion:   schema.Version,
 		ModelVersion:    model.ModelVersion(),
-		Identification:  outcomeTransition.Status,
+		Identification:  identification,
 		MarketState:     market,
 		OutcomeVariable: outcome,
 		Transition:      outcomeTransition,
@@ -417,6 +446,70 @@ func (reasoner *Reasoner) snapshotLocked(symbol string, at time.Time) *CausalSta
 		StepLag:         stepLag,
 		InfluenceEdges:  append([]*graph.InfluenceEdge(nil), edges...),
 	}
+}
+
+/*
+buildMarketState materializes the temporal market state for one symbol: the
+latest value of each schema market coordinate at or before at, plus the
+retained timestamped trajectory the as-of transition evaluation reads.
+*/
+func (reasoner *Reasoner) buildMarketState(
+	symbol string,
+	at time.Time,
+	model *causal.CausalModel,
+) mcts.MarketState {
+	state := mcts.MarketState{
+		At:      at,
+		Current: make(map[relation.Coordinate]float64),
+		History: make(map[relation.Coordinate][]mcts.MarketSample),
+	}
+
+	schema := model.Schema()
+
+	for _, marketVariable := range schema.MarketVariables {
+		coordinate := marketVariable.Variable.Coordinate
+
+		if coordinate.Symbol != symbol {
+			continue
+		}
+
+		history := reasoner.store.History(coordinate)
+
+		for _, observation := range history {
+			if observation.At.After(at) {
+				continue
+			}
+
+			state.History[coordinate] = append(state.History[coordinate], mcts.MarketSample{
+				At:    observation.At,
+				Value: observation.Raw,
+			})
+		}
+
+		if entries := state.History[coordinate]; len(entries) > 0 {
+			state.Current[coordinate] = entries[len(entries)-1].Value
+		}
+	}
+
+	return state
+}
+
+/*
+sortedPresentCoordinates returns the coordinates present in the market state
+in deterministic order for stable identification gating.
+*/
+func (reasoner *Reasoner) sortedPresentCoordinates(state mcts.MarketState) []relation.Coordinate {
+	coordinates := make([]relation.Coordinate, 0, len(state.Current))
+
+	for coordinate := range state.Current {
+		coordinates = append(coordinates, coordinate)
+	}
+
+	sort.Slice(coordinates, func(left int, right int) bool {
+		return coordinates[left].ID() < coordinates[right].ID()
+	})
+
+	return coordinates
 }
 
 /*

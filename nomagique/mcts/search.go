@@ -1,6 +1,7 @@
 package mcts
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"slices"
@@ -58,8 +59,9 @@ type Search struct {
 	Iterations          int
 	ExplorationConstant float64
 	// UncertaintyWeight scales the reward standard error in selection. It is
-	// strategy policy (like ExplorationConstant); the standard error carries
-	// the causal transition uncertainty sampled by the rollouts.
+	// dimensionless strategy policy: the standard error it scales already
+	// carries reward units, so the weighted term stays in reward units like
+	// the mean and the C exploration term.
 	UncertaintyWeight float64
 	Seed              int64
 	rng               *rand.Rand
@@ -148,7 +150,7 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 			continue
 		}
 
-		reward, err := search.rollout(expanded, estimator)
+		reward, err := search.simulate(expanded, estimator)
 
 		if err != nil {
 			continue
@@ -205,10 +207,11 @@ ucbChild applies the explicit uncertainty-aware UCB selection rule:
 	             + C * sqrt(ln(N_parent + 1) / (n_child + 1))
 	             + U * std(child) / sqrt(n_child + 1)
 
-C is the policy exploration constant and U the policy uncertainty weight,
-both in reward units. The standard error term ties exploration to the
-observed reward dispersion, which includes the causal transition noise the
-sampled rollouts propagate.
+C is the policy exploration constant in reward units; U is the policy
+uncertainty weight and is dimensionless (the standard error it scales
+already carries reward units). The standard error term ties exploration to
+the observed reward dispersion, which includes the causal transition noise
+the sampled rollouts propagate.
 */
 func ucbChild(node *SearchNode, explorationConstant float64, uncertaintyWeight float64) *SearchNode {
 	bestScore := math.Inf(-1)
@@ -264,34 +267,65 @@ func (search *Search) expandNode(node *SearchNode) (*SearchNode, error) {
 }
 
 /*
-rollout completes one economic trajectory and returns the accumulated change
-in net wealth. The default policy is greedy over the causal action estimates
-(argmax expected economic outcome), so rollouts follow economically sensible
-continuations rather than uniformly random ones; when no estimate is defined
-the action is chosen uniformly at random. The random source samples the
-market transition noise, so each rollout walks a plausible causal trajectory.
+simulate evaluates one node by re-deriving its state from the root along the
+tree path, applying each action with a fresh causal innovation sample, then
+completing a greedy rollout. Re-deriving per visit is what makes the search
+integrate over the stochastic transition distribution: a root action is not
+frozen to the single first-step realization sampled at expansion time, and
+each visit to the same action draws a new market realization. The random
+source samples the market transition noise, so each trajectory walks a
+plausible causal path.
 */
-func (search *Search) rollout(node *SearchNode, estimator ActionEstimator) (float64, error) {
-	current := node.State
+func (search *Search) simulate(node *SearchNode, estimator ActionEstimator) (float64, error) {
+	state, err := search.derivePath(node)
 
-	for !current.IsTerminal() {
-		actions := current.GetPossibleActions()
+	if err != nil {
+		return 0, err
+	}
+
+	for !state.IsTerminal() {
+		actions := state.GetPossibleActions()
 
 		if len(actions) == 0 {
 			break
 		}
 
-		action := search.rolloutAction(current, actions, estimator)
-		next, err := current.ApplyAction(action, search.rng)
+		action := search.rolloutAction(state, actions, estimator)
+		next, err := state.ApplyAction(action, search.rng)
 
 		if err != nil {
 			return 0, err
 		}
 
-		current = next
+		state = next
 	}
 
-	return current.GetReward(), nil
+	return state.GetReward(), nil
+}
+
+/*
+derivePath reconstructs the state at a tree node from the root, applying each
+action along the path with a fresh sample of the market transition. The
+stored intermediate states are expansion templates only; the stochastic
+first transitions are resampled on every visit so branch statistics
+aggregate the true transition distribution.
+*/
+func (search *Search) derivePath(node *SearchNode) (State, error) {
+	if node == nil {
+		return nil, fmt.Errorf("mcts: cannot derive a nil node")
+	}
+
+	if node.Parent == nil {
+		return node.State, nil
+	}
+
+	parentState, err := search.derivePath(node.Parent)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return parentState.ApplyAction(node.Action, search.rng)
 }
 
 /*

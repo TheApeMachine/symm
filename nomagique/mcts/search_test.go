@@ -99,3 +99,49 @@ func containsAction(actions []Action, action Action) bool {
 
 	return false
 }
+
+func TestStochasticChanceSemantics(t *testing.T) {
+	Convey("Given a noisy market model at horizon one", t, func() {
+		state := NewEconomicState(
+			PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
+			testMarketState(100),
+			priceModel(0.01, 0.5),
+			CostModel{FeeRate: 0.001},
+			1,
+			1,
+			1,
+		)
+
+		search := NewSearch(2, 0.5, 0.25, 5)
+
+		Convey("each simulation of an action re-samples the first transition", func() {
+			root := &SearchNode{State: state, UntakenActions: []Action{Enter}}
+			child, err := search.expandNode(root)
+			So(err, ShouldBeNil)
+
+			first, firstErr := search.simulate(child, alwaysEstimable{})
+			So(firstErr, ShouldBeNil)
+			second, secondErr := search.simulate(child, alwaysEstimable{})
+			So(secondErr, ShouldBeNil)
+
+			// The post-Enter state is re-derived with a fresh innovation
+			// sample on every simulation, so two simulations of the same
+			// node draw different first-step market realizations. The
+			// stored child state is an expansion template, not a frozen
+			// outcome.
+			So(first, ShouldNotEqual, second)
+		})
+
+		Convey("branch statistics aggregate the resampled distribution", func() {
+			search := NewSearch(300, 0.5, 0.25, 7)
+			result := search.Run(state, alwaysEstimable{})
+			So(result.DecisionUnavailable, ShouldBeFalse)
+
+			for _, branch := range result.Trace.Branches {
+				if branch.Action == Enter && branch.Visits > 1 {
+					So(branch.RewardStd, ShouldBeGreaterThan, 0)
+				}
+			}
+		})
+	})
+}

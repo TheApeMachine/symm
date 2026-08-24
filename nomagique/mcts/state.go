@@ -10,13 +10,56 @@ import (
 )
 
 /*
-MarketState is the current observational market state: the coordinate values
-available at one event time. Only real observations appear here; simulated
-states never enter observational history.
+MarketSample is one timestamped value of a market coordinate.
+*/
+type MarketSample struct {
+	At    time.Time
+	Value float64
+}
+
+/*
+MarketState is the temporal market state: the coordinate values available at
+one event time plus the timestamped trajectory each coordinate carries. The
+history is what lets transition evaluation honor a parent's measured lag: the
+value valid at t - lag is read as-of, exactly as the Relation and causal
+fits were aligned. Only real observations seed the initial state; simulated
+values are appended during rollouts and never enter observational history.
 */
 type MarketState struct {
-	At     time.Time
-	Values map[relation.Coordinate]float64
+	At time.Time
+	// Current holds the newest value of each coordinate at At.
+	Current map[relation.Coordinate]float64
+	// History holds the timestamped trajectory of each coordinate at or
+	// before At, newest last. The newest entry per coordinate matches
+	// Current when present.
+	History map[relation.Coordinate][]MarketSample
+}
+
+/*
+ValueAt returns the newest value of a coordinate available at or before
+At - lag (the as-of value the causal transitions were fitted with). A lag of
+zero reads the current value; a positive lag consults the timestamped
+history. It reports not-found when no entry satisfies the cutoff — which is
+missing, never a fabricated zero.
+*/
+func (state MarketState) ValueAt(coordinate relation.Coordinate, lag time.Duration) (float64, bool) {
+	cutoff := state.At.Add(-lag)
+
+	if entries := state.History[coordinate]; len(entries) > 0 {
+		for index := len(entries) - 1; index >= 0; index-- {
+			if !entries[index].At.After(cutoff) {
+				return entries[index].Value, true
+			}
+		}
+	}
+
+	if lag <= 0 {
+		if value, found := state.Current[coordinate]; found {
+			return value, true
+		}
+	}
+
+	return 0, false
 }
 
 /*

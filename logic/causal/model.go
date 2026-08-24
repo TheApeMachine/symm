@@ -11,21 +11,35 @@ import (
 )
 
 /*
+LaggedState is the temporal state a transition is evaluated against: it must
+be able to answer "what was coordinate X at or before At - lag", the same
+as-of semantics the Relation and causal fits were aligned with.
+*/
+type LaggedState interface {
+	ValueAt(coordinate relation.Coordinate, lag time.Duration) (float64, bool)
+}
+
+/*
 TransitionModel is the fitted causal/predictive transition for one market
 variable:
 
-	Y(t + SelfLag) = Intercept + SelfCoefficient * Y(t)
-	                 + sum(ParentCoefficients[i] * Parent_i(t)) + noise
+	Y(t) = Intercept + SelfCoefficient * Y(t - SelfLag)
+	       + sum(ParentCoefficients[i] * Parent_i(t - ParentLag_i)) + noise
 
-It is fitted only on real observational history. The transition never sees
-future observations, and simulated MCTS states never enter its fit.
+It is fitted only on real observational history, and its runtime evaluation
+honors the same lags: the target's own value is read as-of at SelfLag and
+each parent's value as-of at its measured lag, so simulation reproduces the
+fitted temporal structure instead of substituting contemporaneous values.
+The transition never sees future observations, and simulated MCTS states
+never enter its fit.
 */
 type TransitionModel struct {
 	Target   VariableID
 	SelfLag  time.Duration
 	Parents  []AllowedParent
-	// ExcludedParents are schema-authorized parents with no retained
-	// observations; they are recorded for provenance, not silently dropped.
+	// ExcludedParents are schema-authorized parent directions with no
+	// currently defined Relation (and therefore no measured lag); they are
+	// recorded for provenance, not silently activated with a fallback lag.
 	ExcludedParents []AllowedParent
 
 	Intercept         float64
@@ -40,15 +54,19 @@ type TransitionModel struct {
 
 /*
 Step returns the expected next value of the target and the residual noise
-scale, given current coordinate values. When the transition is not
-identified, or a required current value is missing, it returns defined=false.
+scale, evaluated as-of on the supplied temporal state. The target's own
+value is read at At (lag zero relative to the state) and each parent at
+At - (ParentLag - SelfLag), which is the exact lag structure the model was
+fitted with; a parent whose required cutoff lies in the future makes the
+step undefined. When the transition is not identified, or a required value
+is missing, it returns defined=false.
 */
-func (model *TransitionModel) Step(current map[relation.Coordinate]float64) (float64, float64, bool) {
+func (model *TransitionModel) Step(state LaggedState) (float64, float64, bool) {
 	if model == nil || model.Status != IdentificationIdentified {
 		return 0, 0, false
 	}
 
-	selfValue, found := current[model.Target.Coordinate]
+	selfValue, found := state.ValueAt(model.Target.Coordinate, 0)
 
 	if !found {
 		return 0, 0, false
@@ -57,7 +75,17 @@ func (model *TransitionModel) Step(current map[relation.Coordinate]float64) (flo
 	expected := model.Intercept + model.SelfCoefficient*selfValue
 
 	for index, parent := range model.Parents {
-		parentValue, parentFound := current[parent.Parent.Coordinate]
+		// The fitted model predicts Y(t) from Parent(t - ParentLag). The
+		// next value is Y(At + SelfLag), so the parent's required cutoff is
+		// At + SelfLag - ParentLag = At - (ParentLag - SelfLag).
+		asOfLag := parent.Lag - model.SelfLag
+
+		if asOfLag < 0 {
+			// The parent's required value lies in the future of the state.
+			return 0, 0, false
+		}
+
+		parentValue, parentFound := state.ValueAt(parent.Parent.Coordinate, asOfLag)
 
 		if !parentFound {
 			return 0, 0, false
@@ -176,39 +204,35 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 		return transition
 	}
 
-	// Resolve each schema-authorized parent to its measured lag from the
-	// Influence Graph when a defined Relation exists; otherwise keep the
-	// schema's declared lag. The schema authorizes the direction; the graph
-	// provides the observed temporal relationship.
-	//
-	// A parent with no retained observations is excluded from this query's
-	// parent set (query-local projection): the coordinate remains in history
-	// for other queries, but the model cannot use a variable it has never
-	// observed. Excluded parents are recorded for provenance.
+	// The schema authorizes the possibility of each parent direction; a
+	// parent becomes active only when the Influence Graph holds a defined
+	// Relation for it, and the Relation's measured lag is then used. An
+	// authorized direction without a defined Relation is a candidate-but-
+	// unavailable relationship, not an active fitted parent: undefined
+	// evidence must not silently become a structural lag assumption. The
+	// target's own history (self-lag) is part of the declared transition
+	// model and needs no Relation. Excluded parents are recorded for
+	// provenance.
 	parents := make([]AllowedParent, 0, len(specification.Parents))
 	excluded := make([]AllowedParent, 0)
 
 	for _, parent := range specification.Parents {
-		if len(model.store.History(parent.Parent.Coordinate)) == 0 {
+		if model.influenceGraph == nil {
 			excluded = append(excluded, parent)
 			continue
 		}
 
-		lag := parent.Lag
-		lagSource := "schema"
+		edge := model.influenceGraph.Relation(parent.Parent.Coordinate, target.Coordinate)
 
-		if model.influenceGraph != nil {
-			if edge := model.influenceGraph.Relation(parent.Parent.Coordinate, target.Coordinate); edge != nil &&
-				edge.Result != nil && edge.Result.Defined() && edge.Result.Lag > 0 {
-				lag = edge.Result.Lag
-				lagSource = "influence:" + edge.Result.EstimatorVersion
-			}
+		if edge == nil || edge.Result == nil || !edge.Result.Defined() || edge.Result.Lag <= 0 {
+			excluded = append(excluded, parent)
+			continue
 		}
 
 		parents = append(parents, AllowedParent{
 			Parent:    parent.Parent,
-			Lag:       lag,
-			LagSource: lagSource,
+			Lag:       edge.Result.Lag,
+			LagSource: "influence:" + edge.Result.EstimatorVersion,
 		})
 	}
 

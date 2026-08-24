@@ -17,12 +17,17 @@ forward: every schema market variable advances through its own fitted
 transition (self history plus schema-authorized, graph-informed lagged
 parents), so the causal chain — e.g. Liquidity(t) → Flow(t+1) → Price(t+2),
 Hawkes(t) → Flow(t+1) — unfolds over multi-step rollouts instead of freezing
-the parents after the first prediction.
+the parents after the first prediction. Each transition is evaluated with the
+same as-of lag semantics it was fitted with (the state's timestamped
+trajectory supplies the parent value valid at the required cutoff), and the
+sampled next values are appended to the trajectory.
 
-The random source samples each transition's residual noise, so rollouts walk
-a distribution of plausible causal trajectories. The priced outcome movement
-of the step is the outcome variable's next value. Actions never mutate market
-state: they change portfolio variables only.
+A market variable present in the state whose transition is not identified
+makes the step unavailable: its future is genuinely unknown, and it must not
+be silently carried forward as a persistence model. The random source
+samples each transition's residual noise, so rollouts walk a distribution of
+plausible causal trajectories. Actions never mutate market state: they
+change portfolio variables only.
 */
 type causalMarketModel struct {
 	state *CausalState
@@ -33,13 +38,19 @@ func (model *causalMarketModel) Step(current mcts.MarketState, random *rand.Rand
 		return current, 0, 0, fmt.Errorf("causal market model: transition set unavailable")
 	}
 
+	nextAt := current.At.Add(model.state.StepLag)
 	next := mcts.MarketState{
-		At:     current.At.Add(model.state.StepLag),
-		Values: make(map[relation.Coordinate]float64, len(current.Values)+len(model.state.Transitions)),
+		At:      nextAt,
+		Current: make(map[relation.Coordinate]float64, len(current.Current)),
+		History: make(map[relation.Coordinate][]mcts.MarketSample, len(current.History)),
 	}
 
-	for coordinate, value := range current.Values {
-		next.Values[coordinate] = value
+	for coordinate, value := range current.Current {
+		next.Current[coordinate] = value
+	}
+
+	for coordinate, samples := range current.History {
+		next.History[coordinate] = append([]mcts.MarketSample(nil), samples...)
 	}
 
 	// Iterate the transition set in deterministic coordinate order so the
@@ -57,18 +68,35 @@ func (model *causalMarketModel) Step(current mcts.MarketState, random *rand.Rand
 
 	for _, coordinate := range coordinates {
 		transition := model.state.Transitions[coordinate]
+		present := false
 
-		// A market variable whose transition is not yet identified is
-		// carried at its last observed level: it is neither extrapolated
-		// nor fabricated. Once its transition is fitted it joins the
-		// evolving system.
+		if _, found := current.Current[coordinate]; found {
+			present = true
+		}
+
+		// An unidentified transition for a coordinate present in the state
+		// is an unavailable future, not a silent persistence carry-forward.
 		if transition == nil || transition.Status != causal.IdentificationIdentified {
+			if present {
+				return current, 0, 0, fmt.Errorf(
+					"causal market model: transition for %s is not identified",
+					coordinate.ID(),
+				)
+			}
+
 			continue
 		}
 
-		expected, noise, defined := transition.Step(current.Values)
+		expected, noise, defined := transition.Step(current)
 
 		if !defined {
+			if present {
+				return current, 0, 0, fmt.Errorf(
+					"causal market model: transition for %s is not defined at the state",
+					coordinate.ID(),
+				)
+			}
+
 			continue
 		}
 
@@ -78,11 +106,15 @@ func (model *causalMarketModel) Step(current mcts.MarketState, random *rand.Rand
 			value += noise * random.NormFloat64()
 		}
 
-		next.Values[coordinate] = value
+		next.Current[coordinate] = value
+		next.History[coordinate] = append(next.History[coordinate], mcts.MarketSample{
+			At:    nextAt,
+			Value: value,
+		})
 	}
 
 	outcome := model.state.OutcomeVariable.Coordinate
-	logReturn, found := next.Values[outcome]
+	logReturn, found := next.Current[outcome]
 
 	if !found {
 		return current, 0, 0, fmt.Errorf("causal market model: outcome coordinate missing")

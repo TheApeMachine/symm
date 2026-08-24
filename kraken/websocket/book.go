@@ -19,19 +19,19 @@ import (
 )
 
 type Book struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	status     types.Status
-	statusMu   sync.RWMutex
-	mu         sync.RWMutex
-	resyncMu   sync.Mutex
-	resyncing  bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	status      types.Status
+	statusMu    sync.RWMutex
+	mu          sync.RWMutex
+	resyncMu    sync.Mutex
+	resyncing   bool
 	resubscribe func()
-	manager    *spot.BookManager
-	normalizer *spot.Normalizer
-	bus        atomic.Pointer[runtime.Workspace]
-	notify     func(string)
-	emit       func(kraken.Level3Data)
+	manager     *spot.BookManager
+	normalizer  *spot.Normalizer
+	bus         atomic.Pointer[runtime.Workspace]
+	notify      func(string)
+	emit        func(kraken.Level3Data)
 }
 
 /*

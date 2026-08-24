@@ -62,11 +62,6 @@ func (measurement *Measurement[Value]) ToTypesMeasurement() *types.Measurement {
 		}
 	}
 
-	snr := measurement.SNR
-	metrics["snr"] = types.NewMetric("snr", snr, types.Descriptor{
-		Unit: types.UnitDimensionless,
-	})
-
 	id := measurement.ID
 
 	if id == "" {

@@ -68,11 +68,23 @@ func ParseTimescale(name string) Timescale {
 		return TimescalePerMillisecond
 	case "per second", "second":
 		return TimescalePerSecond
+	case "per_second":
+		// The data-layer underscore spelling of the per-second timescale.
+		return TimescalePerSecond
 	case "per minute", "minute":
+		return TimescalePerMinute
+	case "per_minute":
+		// The data-layer underscore spelling of the per-minute timescale.
 		return TimescalePerMinute
 	case "per hour", "hour":
 		return TimescalePerHour
+	case "per_hour":
+		// The data-layer underscore spelling of the per-hour timescale.
+		return TimescalePerHour
 	case "per day", "day":
+		return TimescalePerDay
+	case "per_day":
+		// The data-layer underscore spelling of the per-day timescale.
 		return TimescalePerDay
 	case "per week", "week":
 		return TimescalePerWeek

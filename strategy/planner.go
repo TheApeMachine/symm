@@ -84,7 +84,7 @@ func NewPlanner(
 	measurementStep := time.Second
 	relationMaxLag := 30 * time.Second
 	schemaTemplate := DefaultCausalSchema(epoch, measurementStep)
-	plans := DefaultRelationPlans(epoch, relationMaxLag)
+	plans := RelationPlansFromSchema(schemaTemplate, epoch, relationMaxLag)
 
 	if config != nil && config.Planner != nil {
 		relationInterval = config.Planner.RelationInterval
@@ -100,8 +100,11 @@ func NewPlanner(
 
 		if config.Planner.RelationMaxLag > 0 {
 			relationMaxLag = config.Planner.RelationMaxLag
-			plans = DefaultRelationPlans(epoch, relationMaxLag)
 		}
+
+		// The candidate Relation space is always generated from the schema's
+		// authorized edges, so the two cannot drift apart.
+		plans = RelationPlansFromSchema(schemaTemplate, epoch, relationMaxLag)
 	}
 
 	reasoner, reasonerErr := NewReasoner(epoch, historyCapacity, plans, schemaTemplate, relationInterval)
@@ -408,7 +411,7 @@ func (planner *Planner) decisionFromCausalState(
 
 	economicState := mcts.NewEconomicState(
 		mcts.PortfolioState{Cash: cash, Position: position, MarkPrice: mark},
-		mcts.MarketState{At: state.At, Values: state.MarketState},
+		state.MarketState,
 		&causalMarketModel{state: state},
 		mcts.CostModel{
 			FeeRate:           feeRate,

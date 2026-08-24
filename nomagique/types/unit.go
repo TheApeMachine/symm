@@ -78,6 +78,10 @@ func ParseUnit(name string) Unit {
 		return UnitBaseCurrency
 	case "events_per_second":
 		return UnitEventsPerSecond
+	case "per_second":
+		// The data-layer spelling of an arrival/rate unit; events per second
+		// is the natural reading for arrival rates.
+		return UnitEventsPerSecond
 	case "inverse_second":
 		return UnitInverseSecond
 	case "nat":

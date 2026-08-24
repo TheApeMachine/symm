@@ -80,7 +80,7 @@ func (paper *Paper) SetBus(bus *runtime.Workspace) {
 		return
 	}
 
-	paper.executionsCh = runtime.ChannelOf[kraken.ExecutionData](
+	paper.executionsCh = runtime.ChannelOf(
 		bus, types.ChannelExecutions,
 		func(execution kraken.ExecutionData) string { return execution.Symbol },
 	)

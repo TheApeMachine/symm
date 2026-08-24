@@ -107,15 +107,15 @@ func (futures *FuturesLive) SetBus(bus *runtime.Workspace) {
 	}
 
 	futures.bus.Store(bus)
-	futures.tickersCh = runtime.ChannelOf[kraken.FuturesTickerData](
+	futures.tickersCh = runtime.ChannelOf(
 		bus, types.ChannelFuturesTickers,
 		func(ticker kraken.FuturesTickerData) string { return ticker.Symbol },
 	)
-	futures.tradesCh = runtime.ChannelOf[kraken.FuturesTradeData](
+	futures.tradesCh = runtime.ChannelOf(
 		bus, types.ChannelFuturesTrades,
 		func(trade kraken.FuturesTradeData) string { return trade.Symbol },
 	)
-	futures.booksCh = runtime.ChannelOf[kraken.FuturesBookData](
+	futures.booksCh = runtime.ChannelOf(
 		bus, types.ChannelFuturesBooks,
 		func(book kraken.FuturesBookData) string { return book.Symbol },
 	)
@@ -137,23 +137,6 @@ func (futures *FuturesLive) SetFailureHandler(handler func(error)) {
 	futures.failureMu.Lock()
 	futures.failure = handler
 	futures.failureMu.Unlock()
-}
-
-func (futures *FuturesLive) reportFailure(err error) {
-	if futures == nil || err == nil {
-		return
-	}
-
-	errStatus := types.ERROR
-	futures.status.Store(&errStatus)
-
-	futures.failureMu.RLock()
-	handler := futures.failure
-	futures.failureMu.RUnlock()
-
-	if handler != nil {
-		handler(err)
-	}
 }
 
 /*

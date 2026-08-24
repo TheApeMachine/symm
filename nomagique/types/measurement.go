@@ -77,44 +77,6 @@ func (measurement *Measurement) AddMetrics(metrics ...*Metric[float64]) *Measure
 	return measurement
 }
 
-/*
-StampQuality writes the two universal quality markers every measurement must
-carry, however young its estimator is:
-
-  - hypothesis_separation: the normalized margin between the signal's competing
-    hypotheses. A fresh estimator that has not yet observed a competitor
-    honestly reports zero — no evidence separates nothing — and rises as real
-    separation appears. It is the number downstream systems read to decide how
-    much (or how little) to trust the current reading.
-  - Maturity: support/(support+1), the same self-scaling measure used across
-    the nomagique pipeline. It starts at zero for the first observation and
-    approaches one as evidence accumulates, so a young, low-quality estimate is
-    still emitted and still clearly marked as young.
-
-There is no readiness threshold and no warm-up: signals emit on the first
-sample through this boundary, with baseline-and-maturity carrying the honesty
-signal instead of a silent skip.
-*/
-func (measurement *Measurement) StampQuality(separation float64, support float64) {
-	if measurement == nil {
-		return
-	}
-
-	if support < 0 {
-		support = 0
-	}
-
-	normalized := separation
-	descriptor := Descriptor{
-		Unit:      UnitDimensionless,
-		Timescale: TimescaleInstantaneous,
-	}
-
-	measurement.Put("hypothesis_separation", NewNormalizedMetric(
-		"hypothesis_separation", separation, normalized, descriptor,
-	))
-	measurement.Maturity = support / (support + 1)
-}
 
 func (measurement *Measurement) Metric(name string) *Metric[float64] {
 	metric, found := measurement.Metrics[name]

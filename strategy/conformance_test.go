@@ -98,15 +98,14 @@ func deterministicCausalState(at time.Time, constantReturn float64) *CausalState
 
 	for _, marketVariable := range schema.MarketVariables {
 		transition := &causal.TransitionModel{
-			Target:            marketVariable.Variable,
-			SelfLag:           marketVariable.SelfLag,
-			Parents:           marketVariable.Parents,
-			Intercept:         constantReturn,
-			SelfCoefficient:   0,
-			ResidualVariance:  0,
-			EffectiveSupport:  200,
-			Maturity:          0.995,
-			Status:            causal.IdentificationIdentified,
+			Target:           marketVariable.Variable,
+			SelfLag:          marketVariable.SelfLag,
+			Intercept:        constantReturn,
+			SelfCoefficient:  0,
+			ResidualVariance: 0,
+			EffectiveSupport: 200,
+			Maturity:         0.995,
+			Status:           causal.IdentificationIdentified,
 		}
 		transitions[marketVariable.Variable.Coordinate] = transition
 	}
@@ -120,7 +119,10 @@ func deterministicCausalState(at time.Time, constantReturn float64) *CausalState
 		SchemaVersion:   schema.Version,
 		ModelVersion:    "deterministic-test-v1",
 		Identification:  causal.IdentificationIdentified,
-		MarketState:     map[relation.Coordinate]float64{outcome.Coordinate: constantReturn},
+		MarketState: mcts.MarketState{
+			At:      at,
+			Current: map[relation.Coordinate]float64{outcome.Coordinate: constantReturn},
+		},
 		OutcomeVariable: outcome,
 		Transition:      outcomeTransition,
 		Transitions:     transitions,
@@ -129,7 +131,8 @@ func deterministicCausalState(at time.Time, constantReturn float64) *CausalState
 }
 
 func newTestReasoner() *Reasoner {
-	reasoner, err := NewReasoner(1, 2048, DefaultRelationPlans(1, 30*time.Second), DefaultCausalSchema(1, time.Second), time.Hour)
+	schemaTemplate := DefaultCausalSchema(1, time.Second)
+	reasoner, err := NewReasoner(1, 2048, RelationPlansFromSchema(schemaTemplate, 1, 30*time.Second), schemaTemplate, time.Hour)
 
 	if err != nil {
 		panic(err)
@@ -258,7 +261,7 @@ func TestConformanceNoSimulatedEvidence(t *testing.T) {
 		Convey("running many MCTS rollouts changes no observation counts", func() {
 			economicState := mcts.NewEconomicState(
 				mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
-				mcts.MarketState{At: state.At, Values: state.MarketState},
+				state.MarketState,
 				&causalMarketModel{state: state},
 				mcts.CostModel{FeeRate: 0.001},
 				1,
@@ -291,7 +294,7 @@ func TestConformanceEconomicReward(t *testing.T) {
 			flatState := deterministicCausalState(at, 0)
 			economic := mcts.NewEconomicState(
 				mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: price},
-				mcts.MarketState{At: at, Values: flatState.MarketState},
+				flatState.MarketState,
 				&causalMarketModel{state: flatState},
 				costs,
 				unitQuantity,
@@ -334,7 +337,7 @@ func TestConformanceEconomicReward(t *testing.T) {
 
 			economic := mcts.NewEconomicState(
 				mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: price},
-				mcts.MarketState{At: at, Values: noisyState.MarketState},
+				noisyState.MarketState,
 				&causalMarketModel{state: noisyState},
 				costs,
 				unitQuantity,
@@ -374,7 +377,7 @@ func TestConformanceEconomicReward(t *testing.T) {
 			runSearch := func(state *CausalState) *mcts.SearchResult {
 				economic := mcts.NewEconomicState(
 					mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: price},
-					mcts.MarketState{At: at, Values: state.MarketState},
+					state.MarketState,
 					&causalMarketModel{state: state},
 					costs,
 					unitQuantity,
@@ -478,7 +481,7 @@ func TestConformanceActionDoesNotMutateMarket(t *testing.T) {
 	Convey("Given the same causal market model", t, func() {
 		at := time.Unix(0, 149*int64(time.Second))
 		state := deterministicCausalState(at, 0.005)
-		base := mcts.MarketState{At: at, Values: state.MarketState}
+		base := state.MarketState
 
 		enterState := mcts.NewEconomicState(
 			mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
@@ -508,8 +511,8 @@ func TestConformanceActionDoesNotMutateMarket(t *testing.T) {
 			So(waitedEconomic.Portfolio.Position, ShouldEqual, 0)
 			So(enteredEconomic.Market.At, ShouldEqual, waitedEconomic.Market.At)
 
-			for coordinate, value := range enteredEconomic.Market.Values {
-				So(waitedEconomic.Market.Values[coordinate], ShouldEqual, value)
+			for coordinate, value := range enteredEconomic.Market.Current {
+				So(waitedEconomic.Market.Current[coordinate], ShouldEqual, value)
 			}
 
 			Convey("wealth differs because exposure differs", func() {
@@ -529,7 +532,7 @@ func TestConformanceReplayDeterminism(t *testing.T) {
 
 			economic := mcts.NewEconomicState(
 				mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
-				mcts.MarketState{At: state.At, Values: state.MarketState},
+				state.MarketState,
 				&causalMarketModel{state: state},
 				mcts.CostModel{FeeRate: 0.001},
 				1, 1, 3,
@@ -590,10 +593,10 @@ func TestConformanceMultiStepSystemEvolution(t *testing.T) {
 			So(flowTransition, ShouldNotBeNil)
 			So(flowTransition.Status, ShouldEqual, causal.IdentificationIdentified)
 
-			initial := state.MarketState[flowCoordinate]
+			initial := state.MarketState.Current[flowCoordinate]
 			economic := mcts.NewEconomicState(
 				mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
-				mcts.MarketState{At: state.At, Values: state.MarketState},
+				state.MarketState,
 				&causalMarketModel{state: state},
 				mcts.CostModel{FeeRate: 0.001},
 				1, 1, 3,
@@ -607,7 +610,7 @@ func TestConformanceMultiStepSystemEvolution(t *testing.T) {
 				stepped = next.(*mcts.EconomicState)
 			}
 
-			evolved := stepped.Market.Values[flowCoordinate]
+			evolved := stepped.Market.Current[flowCoordinate]
 			So(evolved, ShouldNotEqual, initial)
 		})
 	})
@@ -676,7 +679,7 @@ func TestConformanceCrossSignalParticipation(t *testing.T) {
 			So(hawkesCandidate, ShouldBeTrue)
 		})
 
-		Convey("the schema transition for the outcome includes the hawkes variable", func() {
+		Convey("an unavailable Relation never becomes an active causal parent", func() {
 			state := reasoner.CausalState("TEST/USD", at)
 			So(state, ShouldNotBeNil)
 			transition := state.Transitions[state.OutcomeVariable.Coordinate]
@@ -702,6 +705,16 @@ func TestConformanceCrossSignalParticipation(t *testing.T) {
 			}
 
 			So(found, ShouldBeTrue)
+		})
+
+		Convey("a present variable with an unidentified transition makes the causal evaluation unavailable", func() {
+			// The single hawkes observation is present in the market state,
+			// but its own transition cannot be estimated; the system's
+			// future is genuinely unknown and the evaluation must be
+			// unavailable, not a silent persistence carry-forward.
+			state := reasoner.CausalState("TEST/USD", at)
+			So(state, ShouldNotBeNil)
+			So(state.Identification, ShouldNotEqual, causal.IdentificationIdentified)
 		})
 	})
 }

@@ -36,22 +36,37 @@ type fixedMarketModel struct {
 }
 
 func (model *fixedMarketModel) Step(current MarketState, random *rand.Rand) (MarketState, float64, float64, error) {
+	nextAt := current.At.Add(time.Second)
 	next := MarketState{
-		At:     current.At.Add(time.Second),
-		Values: make(map[relation.Coordinate]float64, len(current.Values)),
+		At:      nextAt,
+		Current: make(map[relation.Coordinate]float64, len(current.Current)),
+		History: make(map[relation.Coordinate][]MarketSample, len(current.History)),
 	}
 
-	for coordinate, value := range current.Values {
-		next.Values[coordinate] = value
+	for coordinate, value := range current.Current {
+		next.Current[coordinate] = value
+	}
+
+	for coordinate, samples := range current.History {
+		next.History[coordinate] = append([]MarketSample(nil), samples...)
+	}
+
+	logReturn := model.logReturn
+
+	if model.noise > 0 && random != nil {
+		// Sample the transition noise into the step's return so the model
+		// walks a distribution of plausible paths.
+		logReturn += model.noise * random.NormFloat64()
 	}
 
 	if model.value != nil {
 		for coordinate, value := range model.value {
-			next.Values[coordinate] = value * math.Exp(model.logReturn)
+			next.Current[coordinate] = value * math.Exp(logReturn)
+			next.History[coordinate] = append(next.History[coordinate], MarketSample{At: nextAt, Value: next.Current[coordinate]})
 		}
 	}
 
-	return next, model.logReturn, model.noise, nil
+	return next, logReturn, model.noise, nil
 }
 
 /*
@@ -95,8 +110,8 @@ func (neverEstimable) EstimateAction(state State, action Action) ActionEstimate 
 
 func testMarketState(price float64) MarketState {
 	return MarketState{
-		At:     time.Unix(0, 0),
-		Values: map[relation.Coordinate]float64{testPriceCoordinate: price},
+		At:      time.Unix(0, 0),
+		Current: map[relation.Coordinate]float64{testPriceCoordinate: price},
 	}
 }
 
@@ -203,12 +218,12 @@ func TestActionDoesNotMutateMarket(t *testing.T) {
 
 				So(enteredMarket.At, ShouldEqual, waitedMarket.At)
 
-				for coordinate, value := range enteredMarket.Values {
-					So(waitedMarket.Values[coordinate], ShouldEqual, value)
+				for coordinate, value := range enteredMarket.Current {
+					So(waitedMarket.Current[coordinate], ShouldEqual, value)
 				}
 
 				Convey("the price coordinate actually evolved", func() {
-					So(enteredMarket.Values[testPriceCoordinate], ShouldNotEqual, 100)
+					So(enteredMarket.Current[testPriceCoordinate], ShouldNotEqual, 100)
 				})
 			})
 
