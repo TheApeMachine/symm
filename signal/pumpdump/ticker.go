@@ -1,6 +1,8 @@
 package pumpdump
 
 import (
+	"fmt"
+
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
@@ -132,6 +134,10 @@ Step receives one ticker data point, loads the touch facts, runs the Number
 pipeline, and projects exactly one Measurement.
 */
 func (ticker *Ticker) Step(point kraken.TickerData) *data.Measurement[float64] {
+	if point.Bid == nil || point.Ask == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: ticker requires bid and ask")}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(symbolBidPrice, point.Bid.Float64())
 	input.Put(symbolAskPrice, point.Ask.Float64())

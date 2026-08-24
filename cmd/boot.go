@@ -20,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/regulator"
 	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
@@ -268,6 +269,11 @@ func BootWithHub(
 		func(frame *types.UIFrame) string { return "" },
 	)
 
+	fluidChannel := runtime.ChannelOf[types.FluidFrame](
+		bus, types.ChannelFluid,
+		func(frame types.FluidFrame) string { return frame.Channel },
+	)
+
 	if bus != nil {
 		bus.Observe(types.ChannelMeasurements, func(_ string, _ string, value any) {
 			measurement, ok := value.(*nmtypes.Measurement)
@@ -287,6 +293,28 @@ func BootWithHub(
 				Value: &wire.MeasurementsFrameT{
 					Rows: []*wire.MeasurementT{wireRow},
 				},
+			})
+		})
+
+		bus.Observe(types.ChannelDiagnostics, func(_ string, _ string, value any) {
+			diag, ok := value.(trader.StreamDiagnostics)
+			if !ok {
+				return
+			}
+
+			diagWire := diag.Wire()
+
+			fluidChannel.Publish(types.FluidFrame{
+				Channel: types.DiagnosticsChannel,
+				Payload: telemetry.Encode(&wire.FrameT{
+					Type:  wire.FrameDiagnosticsFrame,
+					Value: diagWire,
+				}),
+			})
+
+			uiChannel.Publish(&types.UIFrame{
+				Type:  wire.FrameDiagnosticsFrame,
+				Value: diagWire,
 			})
 		})
 	}

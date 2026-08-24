@@ -426,6 +426,7 @@ func (solver *Solver) resonanceWire(
 
 	skill, skillReady := manifold.TaskSkill()
 	precision, precisionReady := manifold.TaskPrecision()
+	scale, scaleReady := manifold.TaskScale()
 
 	forecast := &wire.ResonanceForecastT{
 		ForwardCurve: out.ForwardCurve, ForwardRetention: out.ForwardRetention,
@@ -497,7 +498,7 @@ func (solver *Solver) resonanceWire(
 	return &wire.ResonanceT{
 		Source: string(types.SourceResonance), Symbol: symbolName, At: at.UnixNano(),
 		Samples: int64(out.ResolvedSteps), TaskRelativePrecision: precision,
-		TaskRelativePrecisionReady: precisionReady, TaskCalibration: calibration,
+		TaskRelativePrecisionReady: precisionReady, TaskScale: scale, TaskScaleReady: scaleReady, TaskCalibration: calibration,
 		TaskSkill: skill, TaskSkillReady: skillReady, TaskSkillStatus: skillStatus,
 		LastResolvedForecast: resolved, LastRealizedReturn: resolved,
 		LastForecastError: lastError, Observables: out.Readout,

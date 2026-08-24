@@ -84,7 +84,15 @@ func Cohort(input nmtypes.Frame) nmtypes.Frame {
 }
 
 func clampCorrelation(value float64) float64 {
-	return math.Max(-1, math.Min(1, value))
+	if value >= 1 {
+		return math.Nextafter(1, 0)
+	}
+
+	if value <= -1 {
+		return math.Nextafter(-1, 0)
+	}
+
+	return value
 }
 
 func absolute(value float64) float64 {

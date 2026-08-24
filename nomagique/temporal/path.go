@@ -41,14 +41,14 @@ per event.
 func NewSeries(prefix string) Series {
 	return Series{
 		prefix:         prefix,
-		ValueSymbol:    types.MustIntern(joinPrefix(prefix, "sample")),
-		SecSymbol:      types.MustIntern(joinPrefix(prefix, "unix_sec")),
-		NsecSymbol:     types.MustIntern(joinPrefix(prefix, "unix_nsec")),
-		CountSymbol:    types.MustIntern(joinPrefix(prefix, "count")),
-		HeadSymbol:     types.MustIntern(joinPrefix(prefix, "head")),
-		ReadySymbol:    types.MustIntern(joinPrefix(prefix, "ready")),
-		CapacitySymbol: types.MustIntern(joinPrefix(prefix, "capacity")),
-		SpanSymbol:     types.MustIntern(joinPrefix(prefix, "input/span")),
+		ValueSymbol:    types.MustIntern(JoinPrefix(prefix, "sample")),
+		SecSymbol:      types.MustIntern(JoinPrefix(prefix, "unix_sec")),
+		NsecSymbol:     types.MustIntern(JoinPrefix(prefix, "unix_nsec")),
+		CountSymbol:    types.MustIntern(JoinPrefix(prefix, "count")),
+		HeadSymbol:     types.MustIntern(JoinPrefix(prefix, "head")),
+		ReadySymbol:    types.MustIntern(JoinPrefix(prefix, "ready")),
+		CapacitySymbol: types.MustIntern(JoinPrefix(prefix, "capacity")),
+		SpanSymbol:     types.MustIntern(JoinPrefix(prefix, "input/span")),
 	}
 }
 
@@ -66,7 +66,7 @@ func (series Series) SampleSymbol(index int) types.Symbol {
 		return types.MustSampleSymbol(index)
 	}
 
-	name := joinPrefix(series.prefix, fmt.Sprintf("sample/%d", index))
+	name := JoinPrefix(series.prefix, fmt.Sprintf("sample/%d", index))
 
 	if cached, found := sampleSlotCache.Load(name); found {
 		return cached.(types.Symbol)
@@ -80,20 +80,16 @@ func (series Series) SampleSymbol(index int) types.Symbol {
 
 var sampleSlotCache sync.Map
 
-func joinPrefix(prefix string, name string) string {
-	if prefix == "" {
-		return name
-	}
-
-	return prefix + "/" + name
-}
-
 /*
 JoinPrefix namespaces one slot name under a series prefix. The empty prefix
 returns the name unchanged so the legacy generic slots keep working.
 */
 func JoinPrefix(prefix string, name string) string {
-	return joinPrefix(prefix, name)
+	if prefix == "" {
+		return name
+	}
+
+	return prefix + "/" + name
 }
 
 /*
@@ -164,13 +160,13 @@ func Path(prefix string) types.Primitive {
 			}
 		}
 
-		physicalIndex := count
+		count++
+		physicalIndex := count - 1
 
-		if count >= capacity {
+		if count > capacity {
 			physicalIndex = head
 			head = (head + 1) % capacity
-		} else {
-			count++
+			count = capacity
 		}
 
 		input.Put(series.SampleSymbol(physicalIndex*pathSampleWidth), math.Float64frombits(uint64(timestamp)))

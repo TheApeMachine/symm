@@ -1,6 +1,8 @@
 package liquidity
 
 import (
+	"fmt"
+
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
@@ -133,6 +135,10 @@ pipeline; any invalid input surfaces as a pipeline failure carried on the
 Measurement's own Err field rather than a Go error return.
 */
 func (ticker *Ticker) Step(trade kraken.TickerData) *data.Measurement[float64] {
+	if trade.Bid == nil || trade.Ask == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: ticker requires bid and ask")}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(symbolBidPrice, trade.Bid.Float64())
 	input.Put(symbolAskPrice, trade.Ask.Float64())

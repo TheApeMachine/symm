@@ -5,88 +5,309 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+
+
 export class HindsightRecommendation implements flatbuffers.IUnpackableObject<HindsightRecommendationT> {
-  bb:flatbuffers.ByteBuffer|null = null;
+  bb: flatbuffers.ByteBuffer|null = null;
   bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):HindsightRecommendation { this.bb_pos = i; this.bb = bb; return this; }
-  static getRootAsHindsightRecommendation(bb:flatbuffers.ByteBuffer, obj?:HindsightRecommendation):HindsightRecommendation { return (obj || new HindsightRecommendation()).__init(bb.readInt32(bb.position()) + bb.position(), bb); }
-  static getSizePrefixedRootAsHindsightRecommendation(bb:flatbuffers.ByteBuffer, obj?:HindsightRecommendation):HindsightRecommendation { bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH); return (obj || new HindsightRecommendation()).__init(bb.readInt32(bb.position()) + bb.position(), bb); }
+  __init(i:number, bb:flatbuffers.ByteBuffer):HindsightRecommendation {
+  this.bb_pos = i;
+  this.bb = bb;
+  return this;
+}
 
-  private stringField(slot:number, optionalEncoding?:any):string|Uint8Array|null { const offset = this.bb!.__offset(this.bb_pos, slot); return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null; }
-  private floatField(slot:number):number { const offset = this.bb!.__offset(this.bb_pos, slot); return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0; }
-  private boolField(slot:number):boolean { const offset = this.bb!.__offset(this.bb_pos, slot); return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false; }
+static getRootAsHindsightRecommendation(bb:flatbuffers.ByteBuffer, obj?:HindsightRecommendation):HindsightRecommendation {
+  return (obj || new HindsightRecommendation()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-  key():string|null; key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null; key(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(4, optionalEncoding); }
-  kind():string|null; kind(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null; kind(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(6, optionalEncoding); }
-  target():string|null; target(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null; target(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(8, optionalEncoding); }
-  title():string|null; title(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null; title(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(10, optionalEncoding); }
-  action():string|null; action(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null; action(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(12, optionalEncoding); }
-  rationale():string|null; rationale(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null; rationale(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(14, optionalEncoding); }
-  current():number { return this.floatField(16); }
-  suggested():number { return this.floatField(18); }
-  hasCurrent():boolean { return this.boolField(20); }
-  hasSuggested():boolean { return this.boolField(22); }
-  adjustment():string|null; adjustment(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null; adjustment(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(24, optionalEncoding); }
-  confidence():number { return this.floatField(26); }
-  impactPct():number { return this.floatField(28); }
-  occurrences():bigint { const offset = this.bb!.__offset(this.bb_pos, 30); return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0'); }
-  symbols(index:number):string; symbols(index:number, optionalEncoding:flatbuffers.Encoding):string|Uint8Array; symbols(index:number, optionalEncoding?:any):string|Uint8Array|null { const offset = this.bb!.__offset(this.bb_pos, 32); return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null; }
-  symbolsLength():number { const offset = this.bb!.__offset(this.bb_pos, 32); return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0; }
+static getSizePrefixedRootAsHindsightRecommendation(bb:flatbuffers.ByteBuffer, obj?:HindsightRecommendation):HindsightRecommendation {
+  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+  return (obj || new HindsightRecommendation()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-  static startHindsightRecommendation(builder:flatbuffers.Builder) { builder.startObject(15); }
-  static addKey(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(0, value, 0); }
-  static addKind(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(1, value, 0); }
-  static addTarget(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(2, value, 0); }
-  static addTitle(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(3, value, 0); }
-  static addAction(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(4, value, 0); }
-  static addRationale(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(5, value, 0); }
-  static addCurrent(builder:flatbuffers.Builder, value:number) { builder.addFieldFloat64(6, value, 0.0); }
-  static addSuggested(builder:flatbuffers.Builder, value:number) { builder.addFieldFloat64(7, value, 0.0); }
-  static addHasCurrent(builder:flatbuffers.Builder, value:boolean) { builder.addFieldInt8(8, +value, +false); }
-  static addHasSuggested(builder:flatbuffers.Builder, value:boolean) { builder.addFieldInt8(9, +value, +false); }
-  static addAdjustment(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(10, value, 0); }
-  static addConfidence(builder:flatbuffers.Builder, value:number) { builder.addFieldFloat64(11, value, 0.0); }
-  static addImpactPct(builder:flatbuffers.Builder, value:number) { builder.addFieldFloat64(12, value, 0.0); }
-  static addOccurrences(builder:flatbuffers.Builder, value:bigint) { builder.addFieldInt64(13, value, BigInt('0')); }
-  static addSymbols(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(14, value, 0); }
-  static createSymbolsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset { builder.startVector(4, data.length, 4); for (let index = data.length - 1; index >= 0; index--) builder.addOffset(data[index]!); return builder.endVector(); }
-  static startSymbolsVector(builder:flatbuffers.Builder, numElems:number) { builder.startVector(4, numElems, 4); }
-  static endHindsightRecommendation(builder:flatbuffers.Builder):flatbuffers.Offset { return builder.endObject(); }
+key():string|null
+key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+key(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-  unpack():HindsightRecommendationT { return new HindsightRecommendationT(this.key(), this.kind(), this.target(), this.title(), this.action(), this.rationale(), this.current(), this.suggested(), this.hasCurrent(), this.hasSuggested(), this.adjustment(), this.confidence(), this.impactPct(), this.occurrences(), this.bb!.createScalarList<string>(this.symbols.bind(this), this.symbolsLength())); }
-  unpackTo(value:HindsightRecommendationT):void { value.key=this.key(); value.kind=this.kind(); value.target=this.target(); value.title=this.title(); value.action=this.action(); value.rationale=this.rationale(); value.current=this.current(); value.suggested=this.suggested(); value.hasCurrent=this.hasCurrent(); value.hasSuggested=this.hasSuggested(); value.adjustment=this.adjustment(); value.confidence=this.confidence(); value.impactPct=this.impactPct(); value.occurrences=this.occurrences(); value.symbols=this.bb!.createScalarList<string>(this.symbols.bind(this), this.symbolsLength()); }
+kind():string|null
+kind(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+kind(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+target():string|null
+target(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+target(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+title():string|null
+title(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+title(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+action():string|null
+action(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+action(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+rationale():string|null
+rationale(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+rationale(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+current():number {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+suggested():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+hasCurrent():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+hasSuggested():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+adjustment():string|null
+adjustment(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+adjustment(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+confidence():number {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+impactPct():number {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+occurrences():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+symbols(index: number):string
+symbols(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
+symbols(index: number,optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
+}
+
+symbolsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+static startHindsightRecommendation(builder:flatbuffers.Builder) {
+  builder.startObject(15);
+}
+
+static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, keyOffset, 0);
+}
+
+static addKind(builder:flatbuffers.Builder, kindOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(1, kindOffset, 0);
+}
+
+static addTarget(builder:flatbuffers.Builder, targetOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(2, targetOffset, 0);
+}
+
+static addTitle(builder:flatbuffers.Builder, titleOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(3, titleOffset, 0);
+}
+
+static addAction(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(4, actionOffset, 0);
+}
+
+static addRationale(builder:flatbuffers.Builder, rationaleOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(5, rationaleOffset, 0);
+}
+
+static addCurrent(builder:flatbuffers.Builder, current:number) {
+  builder.addFieldFloat64(6, current, 0.0);
+}
+
+static addSuggested(builder:flatbuffers.Builder, suggested:number) {
+  builder.addFieldFloat64(7, suggested, 0.0);
+}
+
+static addHasCurrent(builder:flatbuffers.Builder, hasCurrent:boolean) {
+  builder.addFieldInt8(8, +hasCurrent, +false);
+}
+
+static addHasSuggested(builder:flatbuffers.Builder, hasSuggested:boolean) {
+  builder.addFieldInt8(9, +hasSuggested, +false);
+}
+
+static addAdjustment(builder:flatbuffers.Builder, adjustmentOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(10, adjustmentOffset, 0);
+}
+
+static addConfidence(builder:flatbuffers.Builder, confidence:number) {
+  builder.addFieldFloat64(11, confidence, 0.0);
+}
+
+static addImpactPct(builder:flatbuffers.Builder, impactPct:number) {
+  builder.addFieldFloat64(12, impactPct, 0.0);
+}
+
+static addOccurrences(builder:flatbuffers.Builder, occurrences:bigint) {
+  builder.addFieldInt64(13, occurrences, BigInt('0'));
+}
+
+static addSymbols(builder:flatbuffers.Builder, symbolsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(14, symbolsOffset, 0);
+}
+
+static createSymbolsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startSymbolsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static endHindsightRecommendation(builder:flatbuffers.Builder):flatbuffers.Offset {
+  const offset = builder.endObject();
+  return offset;
+}
+
+static createHindsightRecommendation(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset, kindOffset:flatbuffers.Offset, targetOffset:flatbuffers.Offset, titleOffset:flatbuffers.Offset, actionOffset:flatbuffers.Offset, rationaleOffset:flatbuffers.Offset, current:number, suggested:number, hasCurrent:boolean, hasSuggested:boolean, adjustmentOffset:flatbuffers.Offset, confidence:number, impactPct:number, occurrences:bigint, symbolsOffset:flatbuffers.Offset):flatbuffers.Offset {
+  HindsightRecommendation.startHindsightRecommendation(builder);
+  HindsightRecommendation.addKey(builder, keyOffset);
+  HindsightRecommendation.addKind(builder, kindOffset);
+  HindsightRecommendation.addTarget(builder, targetOffset);
+  HindsightRecommendation.addTitle(builder, titleOffset);
+  HindsightRecommendation.addAction(builder, actionOffset);
+  HindsightRecommendation.addRationale(builder, rationaleOffset);
+  HindsightRecommendation.addCurrent(builder, current);
+  HindsightRecommendation.addSuggested(builder, suggested);
+  HindsightRecommendation.addHasCurrent(builder, hasCurrent);
+  HindsightRecommendation.addHasSuggested(builder, hasSuggested);
+  HindsightRecommendation.addAdjustment(builder, adjustmentOffset);
+  HindsightRecommendation.addConfidence(builder, confidence);
+  HindsightRecommendation.addImpactPct(builder, impactPct);
+  HindsightRecommendation.addOccurrences(builder, occurrences);
+  HindsightRecommendation.addSymbols(builder, symbolsOffset);
+  return HindsightRecommendation.endHindsightRecommendation(builder);
+}
+
+unpack(): HindsightRecommendationT {
+  return new HindsightRecommendationT(
+    this.key(),
+    this.kind(),
+    this.target(),
+    this.title(),
+    this.action(),
+    this.rationale(),
+    this.current(),
+    this.suggested(),
+    this.hasCurrent(),
+    this.hasSuggested(),
+    this.adjustment(),
+    this.confidence(),
+    this.impactPct(),
+    this.occurrences(),
+    this.bb!.createScalarList<string>(this.symbols.bind(this), this.symbolsLength())
+  );
+}
+
+
+unpackTo(_o: HindsightRecommendationT): void {
+  _o.key = this.key();
+  _o.kind = this.kind();
+  _o.target = this.target();
+  _o.title = this.title();
+  _o.action = this.action();
+  _o.rationale = this.rationale();
+  _o.current = this.current();
+  _o.suggested = this.suggested();
+  _o.hasCurrent = this.hasCurrent();
+  _o.hasSuggested = this.hasSuggested();
+  _o.adjustment = this.adjustment();
+  _o.confidence = this.confidence();
+  _o.impactPct = this.impactPct();
+  _o.occurrences = this.occurrences();
+  _o.symbols = this.bb!.createScalarList<string>(this.symbols.bind(this), this.symbolsLength());
+}
 }
 
 export class HindsightRecommendationT implements flatbuffers.IGeneratedObject {
-  constructor(
-    public key:string|Uint8Array|null=null,
-    public kind:string|Uint8Array|null=null,
-    public target:string|Uint8Array|null=null,
-    public title:string|Uint8Array|null=null,
-    public action:string|Uint8Array|null=null,
-    public rationale:string|Uint8Array|null=null,
-    public current:number=0.0,
-    public suggested:number=0.0,
-    public hasCurrent:boolean=false,
-    public hasSuggested:boolean=false,
-    public adjustment:string|Uint8Array|null=null,
-    public confidence:number=0.0,
-    public impactPct:number=0.0,
-    public occurrences:bigint=BigInt('0'),
-    public symbols:(string)[]=[],
-  ) {}
+constructor(
+  public key: string|Uint8Array|null = null,
+  public kind: string|Uint8Array|null = null,
+  public target: string|Uint8Array|null = null,
+  public title: string|Uint8Array|null = null,
+  public action: string|Uint8Array|null = null,
+  public rationale: string|Uint8Array|null = null,
+  public current: number = 0.0,
+  public suggested: number = 0.0,
+  public hasCurrent: boolean = false,
+  public hasSuggested: boolean = false,
+  public adjustment: string|Uint8Array|null = null,
+  public confidence: number = 0.0,
+  public impactPct: number = 0.0,
+  public occurrences: bigint = BigInt('0'),
+  public symbols: (string)[] = []
+){}
 
-  pack(builder:flatbuffers.Builder):flatbuffers.Offset {
-    const key=this.key!==null?builder.createString(this.key):0;
-    const kind=this.kind!==null?builder.createString(this.kind):0;
-    const target=this.target!==null?builder.createString(this.target):0;
-    const title=this.title!==null?builder.createString(this.title):0;
-    const action=this.action!==null?builder.createString(this.action):0;
-    const rationale=this.rationale!==null?builder.createString(this.rationale):0;
-    const adjustment=this.adjustment!==null?builder.createString(this.adjustment):0;
-    const symbols=HindsightRecommendation.createSymbolsVector(builder, builder.createObjectOffsetList(this.symbols));
-    HindsightRecommendation.startHindsightRecommendation(builder);
-    HindsightRecommendation.addKey(builder,key); HindsightRecommendation.addKind(builder,kind); HindsightRecommendation.addTarget(builder,target); HindsightRecommendation.addTitle(builder,title); HindsightRecommendation.addAction(builder,action); HindsightRecommendation.addRationale(builder,rationale); HindsightRecommendation.addCurrent(builder,this.current); HindsightRecommendation.addSuggested(builder,this.suggested); HindsightRecommendation.addHasCurrent(builder,this.hasCurrent); HindsightRecommendation.addHasSuggested(builder,this.hasSuggested); HindsightRecommendation.addAdjustment(builder,adjustment); HindsightRecommendation.addConfidence(builder,this.confidence); HindsightRecommendation.addImpactPct(builder,this.impactPct); HindsightRecommendation.addOccurrences(builder,this.occurrences); HindsightRecommendation.addSymbols(builder,symbols);
-    return HindsightRecommendation.endHindsightRecommendation(builder);
-  }
+
+pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const key = (this.key !== null ? builder.createString(this.key!) : 0);
+  const kind = (this.kind !== null ? builder.createString(this.kind!) : 0);
+  const target = (this.target !== null ? builder.createString(this.target!) : 0);
+  const title = (this.title !== null ? builder.createString(this.title!) : 0);
+  const action = (this.action !== null ? builder.createString(this.action!) : 0);
+  const rationale = (this.rationale !== null ? builder.createString(this.rationale!) : 0);
+  const adjustment = (this.adjustment !== null ? builder.createString(this.adjustment!) : 0);
+  const symbols = HindsightRecommendation.createSymbolsVector(builder, builder.createObjectOffsetList(this.symbols));
+
+  return HindsightRecommendation.createHindsightRecommendation(builder,
+    key,
+    kind,
+    target,
+    title,
+    action,
+    rationale,
+    this.current,
+    this.suggested,
+    this.hasCurrent,
+    this.hasSuggested,
+    adjustment,
+    this.confidence,
+    this.impactPct,
+    this.occurrences,
+    symbols
+  );
+}
 }

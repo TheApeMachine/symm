@@ -3,6 +3,8 @@ package calculus
 import (
 	"fmt"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
@@ -15,13 +17,21 @@ func Difference(input types.Frame) types.Frame {
 	b, hasB := input.Get(PortB)
 
 	if !hasA || !hasB {
-		input.Err = fmt.Errorf("calculus: difference requires a and b")
+		input.Err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: difference requires a and b",
+			nil,
+		))
 
 		return input
 	}
 
 	if !utils.IsFinite(a) || !utils.IsFinite(b) {
-		input.Err = fmt.Errorf("calculus: difference requires finite operands")
+		input.Err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: difference requires finite operands",
+			nil,
+		))
 
 		return input
 	}

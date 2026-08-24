@@ -635,11 +635,21 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 /*
 Step reads the shared book for one symbol, aggregates the displayed depth
 facts, runs the Number pipeline, and projects exactly one Measurement. A missing
-book or a missing best-bid/ask panics rather than being silently tolerated.
+or type-mismatched book yields no measurement; the caller skips it rather than
+panicking.
 */
 func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	shared, _ := level3.workspace.Shared("book", symbol)
-	orderBook := shared.(*book.Book)
+	shared, found := level3.workspace.Shared("book", symbol)
+
+	if !found {
+		return nil
+	}
+
+	orderBook, ok := shared.(*book.Book)
+
+	if !ok {
+		return nil
+	}
 
 	bidNotional := 0.0
 
@@ -655,6 +665,11 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 
 	touchBid := orderBook.BestBid()
 	touchAsk := orderBook.BestAsk()
+
+	if touchBid == nil || touchAsk == nil {
+		return nil
+	}
+
 	touchBidPrice := touchBid.Price.Float64()
 	touchAskPrice := touchAsk.Price.Float64()
 	touchBidNotional := touchBidPrice * touchBid.Quantity.Float64()

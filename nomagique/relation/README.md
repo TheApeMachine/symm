@@ -154,6 +154,13 @@ The Relation publishes:
 PredictiveGain = log(Vr / Vf)
 ```
 
+Degenerate variances are handled explicitly. `Vr` and `Vf` MUST both be
+positive and finite for the metric to be defined. When either variance is zero,
+non-finite (NaN or infinite), or otherwise invalid — including the both-zero
+case — the metric is serialized as `undefined` rather than as an infinite or NaN
+`PredictiveGain`. Graph consumers MUST NOT rank an undefined or non-finite
+`PredictiveGain`; only valid `log(Vr / Vf)` values participate in comparison.
+
 Interpretation:
 
 - `0`: Source did not change predictive error;

@@ -136,7 +136,6 @@ func Configure(producer Primitive, channel Symbol, consumer Primitive) Primitive
 		}
 
 		consumerInput := control
-		consumerInput.Put(channel, controlValue)
 
 		return Step(consumer, consumerInput)
 	}
@@ -158,16 +157,6 @@ func Relay(from Symbol, to Symbol) Primitive {
 		input.Put(to, value)
 
 		return input
-	}
-}
-
-/*
-Retained projects over the committed state (the input frame) and overlays the
-projection onto it.
-*/
-func Retained(primitive Primitive) Primitive {
-	return func(input Frame) Frame {
-		return Step(primitive, input)
 	}
 }
 

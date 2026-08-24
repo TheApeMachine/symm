@@ -54,10 +54,11 @@ func TestLevel3Step(t *testing.T) {
 	Convey("Given a symbol with no shared book", t, func() {
 		entity := NewLevel3(runtime.NewWorkspace(nil))
 
-		Convey("Step panics rather than silently swallowing the missing book", func() {
-			So(func() {
-				entity.Step("MISSING", time.Unix(1_700_000_000, 0))
-			}, ShouldPanic)
+		Convey("Step returns a descriptive measurement error for the missing book", func() {
+			measurement := entity.Step("MISSING", time.Unix(1_700_000_000, 0))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldNotBeNil)
 		})
 	})
 }

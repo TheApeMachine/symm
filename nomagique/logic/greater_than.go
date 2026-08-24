@@ -12,18 +12,18 @@ import (
 GreaterThan emits one when A is strictly greater than B.
 */
 func GreaterThan(input types.Frame) types.Frame {
-	a, hasA := input.Get(calculus.PortA)
-	b, hasB := input.Get(calculus.PortB)
+	left, hasLeft := input.Get(calculus.PortA)
+	right, hasRight := input.Get(calculus.PortB)
 
-	if !hasA || !hasB || !utils.IsFinite(a) || !utils.IsFinite(b) {
-		input.Err = fmt.Errorf("logic: greater than requires finite a and b")
+	if !hasLeft || !hasRight || !utils.IsFinite(left) || !utils.IsFinite(right) {
+		input.Err = fmt.Errorf("logic: greater than requires finite left and right")
 
 		return input
 	}
 
 	condition := 0.0
 
-	if a > b {
+	if left > right {
 		condition = 1
 	}
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,8 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/telemetry"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"strings"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -776,23 +774,10 @@ func (crypto *Crypto) publishDiagnostics() {
 			timer.Stop()
 			return
 		case <-timer.C:
-			diagWire := crypto.Diagnostics().Wire()
+			diag := crypto.Diagnostics()
 
-			if crypto.fluid != nil {
-				crypto.fluid.Publish(types.FluidFrame{
-					Channel: types.DiagnosticsChannel,
-					Payload: telemetry.Encode(&wire.FrameT{
-						Type:  wire.FrameDiagnosticsFrame,
-						Value: diagWire,
-					}),
-				})
-			}
-
-			if crypto.ui != nil {
-				crypto.ui.Publish(&types.UIFrame{
-					Type:  wire.FrameDiagnosticsFrame,
-					Value: diagWire,
-				})
+			if crypto.diagnosticsCh != nil {
+				crypto.diagnosticsCh.Publish(diag)
 			}
 		}
 	}

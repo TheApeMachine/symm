@@ -95,6 +95,8 @@ table Resonance {
   samples:long;
   taskRelativePrecision:double;
   taskRelativePrecisionReady:bool;
+  taskScale:double;
+  taskScaleReady:bool;
   taskCalibration:string;
   taskSkill:double;
   taskSkillReady:bool;

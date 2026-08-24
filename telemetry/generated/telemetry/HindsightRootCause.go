@@ -7,10 +7,10 @@ import (
 )
 
 type HindsightRootCauseT struct {
-	Category    string   `json:"category"`
-	ImpactPct   float64  `json:"impactPct"`
-	Occurrences int64    `json:"occurrences"`
-	Symbols     []string `json:"symbols"`
+	Category string `json:"category"`
+	ImpactPct float64 `json:"impactPct"`
+	Occurrences int64 `json:"occurrences"`
+	Symbols []string `json:"symbols"`
 }
 
 func (t *HindsightRootCauseT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -149,17 +149,17 @@ func (rcv *HindsightRootCause) SymbolsLength() int {
 func HindsightRootCauseStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }
-func HindsightRootCauseAddCategory(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(value), 0)
+func HindsightRootCauseAddCategory(builder *flatbuffers.Builder, category flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(category), 0)
 }
-func HindsightRootCauseAddImpactPct(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(1, value, 0.0)
+func HindsightRootCauseAddImpactPct(builder *flatbuffers.Builder, impactPct float64) {
+	builder.PrependFloat64Slot(1, impactPct, 0.0)
 }
-func HindsightRootCauseAddOccurrences(builder *flatbuffers.Builder, value int64) {
-	builder.PrependInt64Slot(2, value, 0)
+func HindsightRootCauseAddOccurrences(builder *flatbuffers.Builder, occurrences int64) {
+	builder.PrependInt64Slot(2, occurrences, 0)
 }
-func HindsightRootCauseAddSymbols(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(value), 0)
+func HindsightRootCauseAddSymbols(builder *flatbuffers.Builder, symbols flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(symbols), 0)
 }
 func HindsightRootCauseStartSymbolsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

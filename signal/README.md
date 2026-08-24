@@ -57,7 +57,12 @@ From = At
 
 For a stateful estimator, `From` is the earliest retained observation with non-zero contribution to the estimator or trajectory represented by the measurement.
 
-For bivariate or cross-sectional measurements, each side MUST preserve its own observation interval if the intervals differ.
+For bivariate or cross-sectional measurements, each contributor (coordinate)
+MUST carry its own observation interval, preserving both its `From` and its `At`
+independently, and the measurement MUST support differing intervals across
+contributors. The contributor-level provenance is serialized as one `From`/`At`
+pair per contributor coordinate, kept separate from the top-level `From`/`At`,
+which retain their meaning for the measurement as a whole.
 
 ---
 
@@ -249,6 +254,13 @@ then:
 \boxed{SNR_t=z_t^2}
 \]
 
+When the causal noise variance is zero, the scalar SNR is degenerate. A zero
+departure (\(\delta_t=0\)) with zero variance yields \(SNR_t=0\). A non-zero
+departure with zero causal variance is undefined: it is reported with an
+explicitly serializable undefined/infinity marker rather than a fabricated
+finite number, and must never be treated as a finite SNR. In all defined cases
+SNR remains an unbounded non-negative ratio.
+
 Interpretation:
 
 - `SNR = 0`: no measured departure from baseline;
@@ -288,7 +300,8 @@ If \(\Sigma\) cannot be estimated or inverted reliably, `SNR` is undefined.
 
 Maturity measures how much effective evidence supports an estimator. It does not measure how strong the current signal is.
 
-For observations with weights \(w_i\), define effective sample size:
+For observations with weights \(w_i\), each weight is a non-negative support
+weight. Define effective sample size:
 
 \[
 \boxed{N_{\mathrm{eff}}=\frac{(\sum_i w_i)^2}{\sum_i w_i^2}}
@@ -299,6 +312,13 @@ For normalized weights:
 \[
 N_{\mathrm{eff}}=\frac{1}{\sum_iw_i^2}
 \]
+
+The formula is evaluated only when the squared-weight denominator is positive,
+i.e. when there is at least one observation with a non-zero weight. When there
+are no observations or every weight is zero, the denominator is zero and
+\(N_{\mathrm{eff}}\) is undefined; in that zero-support case maturity is the
+documented value \(0\) (which is within \([0,1]\)). Otherwise the piecewise
+formula below is applied.
 
 Define maturity:
 

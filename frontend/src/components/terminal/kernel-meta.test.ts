@@ -29,7 +29,7 @@ describe("sourceHeadlineMetric", () => {
 
 	it("shows PumpDump's complete side-aware measurement contract", () => {
 		expect(sourceMetrics("pumpdump")).toEqual([
-			"hypothesis_separation",
+			"snr",
 			"best_price:buy",
 			"best_price:sell",
 			"midpoint",

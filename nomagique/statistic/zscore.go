@@ -91,10 +91,10 @@ func ZScore(prefix string) types.Primitive {
 		}
 
 		if !hasHalflife || halflife == 0 {
+			halflife = 1.0
+
 			if span, hasSpan := input.Get(slots.baselineSpan); hasSpan && span > 0 {
 				halflife = span
-			} else {
-				halflife = 1.0
 			}
 		}
 
@@ -122,30 +122,28 @@ func ZScore(prefix string) types.Primitive {
 
 		residual := value - baseline
 		dispersion, hasDispersion := input.Get(slots.dispersion)
+		updatedDispersion := math.Abs(residual)
 
-		if !hasDispersion || !hasLastSec || !hasLastNsec {
-			input.Put(slots.dispersion, math.Abs(residual))
-		} else {
+		if hasDispersion && hasLastSec && hasLastNsec {
 			elapsed := elapsedSince(sec, nsec, previousSec, previousNsec)
 			alpha := 1 - math.Exp(-elapsed*math.Ln2/halflife)
 			energy := dispersion * dispersion
 			energy += alpha * (residual*residual - energy)
-			input.Put(slots.dispersion, math.Sqrt(energy))
+			updatedDispersion = math.Sqrt(energy)
 		}
 
 		input.Put(slots.lastSec, sec)
 		input.Put(slots.lastNsec, nsec)
+		input.Put(slots.dispersion, updatedDispersion)
 
-		currentDispersion, _ := input.Get(slots.dispersion)
 		score := 0.0
 
-		if currentDispersion > 0 {
-			score = residual / currentDispersion
+		if updatedDispersion > 0 {
+			score = residual / updatedDispersion
 		}
 
 		input.Put(series.ValueSymbol, value)
 		input.Put(slots.residual, residual)
-		input.Put(slots.dispersion, currentDispersion)
 		input.Put(slots.value, score)
 		input.Put(series.ReadySymbol, 1)
 

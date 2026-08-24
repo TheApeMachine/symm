@@ -959,14 +959,21 @@ func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
 		return 0, false
 	}
 
+	var sum float64
+	var readyCount int
+
 	for rowIndex := range rm.targetDim {
-		if !rm.taskScaleReady[rowIndex] {
-			return 0, false
+		if rm.taskScaleReady[rowIndex] {
+			sum += rm.taskPrecision.RawVector().Data[rowIndex]
+			readyCount++
 		}
 	}
 
-	return floats.Sum(rm.taskPrecision.RawVector().Data) /
-		float64(rm.targetDim), true
+	if readyCount == 0 {
+		return 0, false
+	}
+
+	return sum / float64(readyCount), true
 }
 
 func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
@@ -974,14 +981,43 @@ func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
 		return 0, false
 	}
 
+	var sum float64
+	var readyCount int
+
 	for rowIndex := range rm.targetDim {
-		if !rm.taskSkillReady[rowIndex] {
-			return 0, false
+		if rm.taskSkillReady[rowIndex] {
+			sum += rm.taskSkill.RawVector().Data[rowIndex]
+			readyCount++
 		}
 	}
 
-	return floats.Sum(rm.taskSkill.RawVector().Data) /
-		float64(rm.targetDim), true
+	if readyCount == 0 {
+		return 0, false
+	}
+
+	return sum / float64(readyCount), true
+}
+
+func (rm *ResonanceManifold) TaskScale() (float64, bool) {
+	if rm.taskWeights == nil || rm.targetDim <= 0 {
+		return 0, false
+	}
+
+	var sum float64
+	var readyCount int
+
+	for rowIndex := range rm.targetDim {
+		if rm.taskScaleReady[rowIndex] {
+			sum += rm.taskScale.RawVector().Data[rowIndex]
+			readyCount++
+		}
+	}
+
+	if readyCount == 0 {
+		return 0, false
+	}
+
+	return sum / float64(readyCount), true
 }
 
 func (rm *ResonanceManifold) stateGradients(

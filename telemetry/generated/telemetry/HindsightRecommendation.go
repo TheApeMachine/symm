@@ -7,21 +7,21 @@ import (
 )
 
 type HindsightRecommendationT struct {
-	Key          string   `json:"key"`
-	Kind         string   `json:"kind"`
-	Target       string   `json:"target"`
-	Title        string   `json:"title"`
-	Action       string   `json:"action"`
-	Rationale    string   `json:"rationale"`
-	Current      float64  `json:"current"`
-	Suggested    float64  `json:"suggested"`
-	HasCurrent   bool     `json:"hasCurrent"`
-	HasSuggested bool     `json:"hasSuggested"`
-	Adjustment   string   `json:"adjustment"`
-	Confidence   float64  `json:"confidence"`
-	ImpactPct    float64  `json:"impactPct"`
-	Occurrences  int64    `json:"occurrences"`
-	Symbols      []string `json:"symbols"`
+	Key string `json:"key"`
+	Kind string `json:"kind"`
+	Target string `json:"target"`
+	Title string `json:"title"`
+	Action string `json:"action"`
+	Rationale string `json:"rationale"`
+	Current float64 `json:"current"`
+	Suggested float64 `json:"suggested"`
+	HasCurrent bool `json:"hasCurrent"`
+	HasSuggested bool `json:"hasSuggested"`
+	Adjustment string `json:"adjustment"`
+	Confidence float64 `json:"confidence"`
+	ImpactPct float64 `json:"impactPct"`
+	Occurrences int64 `json:"occurrences"`
+	Symbols []string `json:"symbols"`
 }
 
 func (t *HindsightRecommendationT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -209,6 +209,7 @@ func (rcv *HindsightRecommendation) Current() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightRecommendation) MutateCurrent(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -220,6 +221,7 @@ func (rcv *HindsightRecommendation) Suggested() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightRecommendation) MutateSuggested(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -231,6 +233,7 @@ func (rcv *HindsightRecommendation) HasCurrent() bool {
 	}
 	return false
 }
+
 func (rcv *HindsightRecommendation) MutateHasCurrent(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
@@ -242,6 +245,7 @@ func (rcv *HindsightRecommendation) HasSuggested() bool {
 	}
 	return false
 }
+
 func (rcv *HindsightRecommendation) MutateHasSuggested(n bool) bool {
 	return rcv._tab.MutateBoolSlot(22, n)
 }
@@ -261,6 +265,7 @@ func (rcv *HindsightRecommendation) Confidence() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightRecommendation) MutateConfidence(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -272,6 +277,7 @@ func (rcv *HindsightRecommendation) ImpactPct() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightRecommendation) MutateImpactPct(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -283,6 +289,7 @@ func (rcv *HindsightRecommendation) Occurrences() int64 {
 	}
 	return 0
 }
+
 func (rcv *HindsightRecommendation) MutateOccurrences(n int64) bool {
 	return rcv._tab.MutateInt64Slot(30, n)
 }
@@ -307,50 +314,50 @@ func (rcv *HindsightRecommendation) SymbolsLength() int {
 func HindsightRecommendationStart(builder *flatbuffers.Builder) {
 	builder.StartObject(15)
 }
-func HindsightRecommendationAddKey(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(value), 0)
+func HindsightRecommendationAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
 }
-func HindsightRecommendationAddKind(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(value), 0)
+func HindsightRecommendationAddKind(builder *flatbuffers.Builder, kind flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(kind), 0)
 }
-func HindsightRecommendationAddTarget(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(value), 0)
+func HindsightRecommendationAddTarget(builder *flatbuffers.Builder, target flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(target), 0)
 }
-func HindsightRecommendationAddTitle(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(value), 0)
+func HindsightRecommendationAddTitle(builder *flatbuffers.Builder, title flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(title), 0)
 }
-func HindsightRecommendationAddAction(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(value), 0)
+func HindsightRecommendationAddAction(builder *flatbuffers.Builder, action flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(action), 0)
 }
-func HindsightRecommendationAddRationale(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(value), 0)
+func HindsightRecommendationAddRationale(builder *flatbuffers.Builder, rationale flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(rationale), 0)
 }
-func HindsightRecommendationAddCurrent(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(6, value, 0.0)
+func HindsightRecommendationAddCurrent(builder *flatbuffers.Builder, current float64) {
+	builder.PrependFloat64Slot(6, current, 0.0)
 }
-func HindsightRecommendationAddSuggested(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(7, value, 0.0)
+func HindsightRecommendationAddSuggested(builder *flatbuffers.Builder, suggested float64) {
+	builder.PrependFloat64Slot(7, suggested, 0.0)
 }
-func HindsightRecommendationAddHasCurrent(builder *flatbuffers.Builder, value bool) {
-	builder.PrependBoolSlot(8, value, false)
+func HindsightRecommendationAddHasCurrent(builder *flatbuffers.Builder, hasCurrent bool) {
+	builder.PrependBoolSlot(8, hasCurrent, false)
 }
-func HindsightRecommendationAddHasSuggested(builder *flatbuffers.Builder, value bool) {
-	builder.PrependBoolSlot(9, value, false)
+func HindsightRecommendationAddHasSuggested(builder *flatbuffers.Builder, hasSuggested bool) {
+	builder.PrependBoolSlot(9, hasSuggested, false)
 }
-func HindsightRecommendationAddAdjustment(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(value), 0)
+func HindsightRecommendationAddAdjustment(builder *flatbuffers.Builder, adjustment flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(adjustment), 0)
 }
-func HindsightRecommendationAddConfidence(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(11, value, 0.0)
+func HindsightRecommendationAddConfidence(builder *flatbuffers.Builder, confidence float64) {
+	builder.PrependFloat64Slot(11, confidence, 0.0)
 }
-func HindsightRecommendationAddImpactPct(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(12, value, 0.0)
+func HindsightRecommendationAddImpactPct(builder *flatbuffers.Builder, impactPct float64) {
+	builder.PrependFloat64Slot(12, impactPct, 0.0)
 }
-func HindsightRecommendationAddOccurrences(builder *flatbuffers.Builder, value int64) {
-	builder.PrependInt64Slot(13, value, 0)
+func HindsightRecommendationAddOccurrences(builder *flatbuffers.Builder, occurrences int64) {
+	builder.PrependInt64Slot(13, occurrences, 0)
 }
-func HindsightRecommendationAddSymbols(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(value), 0)
+func HindsightRecommendationAddSymbols(builder *flatbuffers.Builder, symbols flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(symbols), 0)
 }
 func HindsightRecommendationStartSymbolsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

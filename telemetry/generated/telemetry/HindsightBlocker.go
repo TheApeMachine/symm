@@ -7,16 +7,16 @@ import (
 )
 
 type HindsightBlockerT struct {
-	Key         string  `json:"key"`
-	Category    string  `json:"category"`
-	Label       string  `json:"label"`
-	Source      string  `json:"source"`
-	Observed    float64 `json:"observed"`
-	Target      float64 `json:"target"`
-	HasTarget   bool    `json:"hasTarget"`
-	Gap         float64 `json:"gap"`
-	Severity    float64 `json:"severity"`
-	Explanation string  `json:"explanation"`
+	Key string `json:"key"`
+	Category string `json:"category"`
+	Label string `json:"label"`
+	Source string `json:"source"`
+	Observed float64 `json:"observed"`
+	Target float64 `json:"target"`
+	HasTarget bool `json:"hasTarget"`
+	Gap float64 `json:"gap"`
+	Severity float64 `json:"severity"`
+	Explanation string `json:"explanation"`
 }
 
 func (t *HindsightBlockerT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -153,6 +153,7 @@ func (rcv *HindsightBlocker) Observed() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightBlocker) MutateObserved(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -164,6 +165,7 @@ func (rcv *HindsightBlocker) Target() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightBlocker) MutateTarget(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -175,6 +177,7 @@ func (rcv *HindsightBlocker) HasTarget() bool {
 	}
 	return false
 }
+
 func (rcv *HindsightBlocker) MutateHasTarget(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -186,6 +189,7 @@ func (rcv *HindsightBlocker) Gap() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightBlocker) MutateGap(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -197,6 +201,7 @@ func (rcv *HindsightBlocker) Severity() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightBlocker) MutateSeverity(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -212,35 +217,35 @@ func (rcv *HindsightBlocker) Explanation() []byte {
 func HindsightBlockerStart(builder *flatbuffers.Builder) {
 	builder.StartObject(10)
 }
-func HindsightBlockerAddKey(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(value), 0)
+func HindsightBlockerAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
 }
-func HindsightBlockerAddCategory(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(value), 0)
+func HindsightBlockerAddCategory(builder *flatbuffers.Builder, category flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(category), 0)
 }
-func HindsightBlockerAddLabel(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(value), 0)
+func HindsightBlockerAddLabel(builder *flatbuffers.Builder, label flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(label), 0)
 }
-func HindsightBlockerAddSource(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(value), 0)
+func HindsightBlockerAddSource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(source), 0)
 }
-func HindsightBlockerAddObserved(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(4, value, 0.0)
+func HindsightBlockerAddObserved(builder *flatbuffers.Builder, observed float64) {
+	builder.PrependFloat64Slot(4, observed, 0.0)
 }
-func HindsightBlockerAddTarget(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(5, value, 0.0)
+func HindsightBlockerAddTarget(builder *flatbuffers.Builder, target float64) {
+	builder.PrependFloat64Slot(5, target, 0.0)
 }
-func HindsightBlockerAddHasTarget(builder *flatbuffers.Builder, value bool) {
-	builder.PrependBoolSlot(6, value, false)
+func HindsightBlockerAddHasTarget(builder *flatbuffers.Builder, hasTarget bool) {
+	builder.PrependBoolSlot(6, hasTarget, false)
 }
-func HindsightBlockerAddGap(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(7, value, 0.0)
+func HindsightBlockerAddGap(builder *flatbuffers.Builder, gap float64) {
+	builder.PrependFloat64Slot(7, gap, 0.0)
 }
-func HindsightBlockerAddSeverity(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(8, value, 0.0)
+func HindsightBlockerAddSeverity(builder *flatbuffers.Builder, severity float64) {
+	builder.PrependFloat64Slot(8, severity, 0.0)
 }
-func HindsightBlockerAddExplanation(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(value), 0)
+func HindsightBlockerAddExplanation(builder *flatbuffers.Builder, explanation flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(explanation), 0)
 }
 func HindsightBlockerEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -13,6 +13,8 @@ type ResonanceT struct {
 	Samples int64 `json:"samples"`
 	TaskRelativePrecision float64 `json:"taskRelativePrecision"`
 	TaskRelativePrecisionReady bool `json:"taskRelativePrecisionReady"`
+	TaskScale float64 `json:"taskScale"`
+	TaskScaleReady bool `json:"taskScaleReady"`
 	TaskCalibration string `json:"taskCalibration"`
 	TaskSkill float64 `json:"taskSkill"`
 	TaskSkillReady bool `json:"taskSkillReady"`
@@ -95,6 +97,8 @@ func (t *ResonanceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	ResonanceAddSamples(builder, t.Samples)
 	ResonanceAddTaskRelativePrecision(builder, t.TaskRelativePrecision)
 	ResonanceAddTaskRelativePrecisionReady(builder, t.TaskRelativePrecisionReady)
+	ResonanceAddTaskScale(builder, t.TaskScale)
+	ResonanceAddTaskScaleReady(builder, t.TaskScaleReady)
 	ResonanceAddTaskCalibration(builder, taskCalibrationOffset)
 	ResonanceAddTaskSkill(builder, t.TaskSkill)
 	ResonanceAddTaskSkillReady(builder, t.TaskSkillReady)
@@ -121,6 +125,8 @@ func (rcv *Resonance) UnPackTo(t *ResonanceT) {
 	t.Samples = rcv.Samples()
 	t.TaskRelativePrecision = rcv.TaskRelativePrecision()
 	t.TaskRelativePrecisionReady = rcv.TaskRelativePrecisionReady()
+	t.TaskScale = rcv.TaskScale()
+	t.TaskScaleReady = rcv.TaskScaleReady()
 	t.TaskCalibration = string(rcv.TaskCalibration())
 	t.TaskSkill = rcv.TaskSkill()
 	t.TaskSkillReady = rcv.TaskSkillReady()
@@ -265,8 +271,32 @@ func (rcv *Resonance) MutateTaskRelativePrecisionReady(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
 
-func (rcv *Resonance) TaskCalibration() []byte {
+func (rcv *Resonance) TaskScale() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Resonance) MutateTaskScale(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(16, n)
+}
+
+func (rcv *Resonance) TaskScaleReady() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *Resonance) MutateTaskScaleReady(n bool) bool {
+	return rcv._tab.MutateBoolSlot(18, n)
+}
+
+func (rcv *Resonance) TaskCalibration() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -274,7 +304,7 @@ func (rcv *Resonance) TaskCalibration() []byte {
 }
 
 func (rcv *Resonance) TaskSkill() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -282,11 +312,11 @@ func (rcv *Resonance) TaskSkill() float64 {
 }
 
 func (rcv *Resonance) MutateTaskSkill(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(18, n)
+	return rcv._tab.MutateFloat64Slot(22, n)
 }
 
 func (rcv *Resonance) TaskSkillReady() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -294,11 +324,11 @@ func (rcv *Resonance) TaskSkillReady() bool {
 }
 
 func (rcv *Resonance) MutateTaskSkillReady(n bool) bool {
-	return rcv._tab.MutateBoolSlot(20, n)
+	return rcv._tab.MutateBoolSlot(24, n)
 }
 
 func (rcv *Resonance) TaskSkillStatus() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -306,30 +336,6 @@ func (rcv *Resonance) TaskSkillStatus() []byte {
 }
 
 func (rcv *Resonance) LastResolvedForecast() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Resonance) MutateLastResolvedForecast(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(24, n)
-}
-
-func (rcv *Resonance) LastRealizedReturn() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Resonance) MutateLastRealizedReturn(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(26, n)
-}
-
-func (rcv *Resonance) LastForecastError() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -337,12 +343,36 @@ func (rcv *Resonance) LastForecastError() float64 {
 	return 0.0
 }
 
-func (rcv *Resonance) MutateLastForecastError(n float64) bool {
+func (rcv *Resonance) MutateLastResolvedForecast(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
 
-func (rcv *Resonance) Observables(j int) float64 {
+func (rcv *Resonance) LastRealizedReturn() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Resonance) MutateLastRealizedReturn(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(30, n)
+}
+
+func (rcv *Resonance) LastForecastError() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Resonance) MutateLastForecastError(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(32, n)
+}
+
+func (rcv *Resonance) Observables(j int) float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat64(a + flatbuffers.UOffsetT(j*8))
@@ -351,7 +381,7 @@ func (rcv *Resonance) Observables(j int) float64 {
 }
 
 func (rcv *Resonance) ObservablesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -359,7 +389,7 @@ func (rcv *Resonance) ObservablesLength() int {
 }
 
 func (rcv *Resonance) MutateObservables(j int, n float64) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat64(a+flatbuffers.UOffsetT(j*8), n)
@@ -368,7 +398,7 @@ func (rcv *Resonance) MutateObservables(j int, n float64) bool {
 }
 
 func (rcv *Resonance) Latent(j int) float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat64(a + flatbuffers.UOffsetT(j*8))
@@ -377,7 +407,7 @@ func (rcv *Resonance) Latent(j int) float64 {
 }
 
 func (rcv *Resonance) LatentLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -385,7 +415,7 @@ func (rcv *Resonance) LatentLength() int {
 }
 
 func (rcv *Resonance) MutateLatent(j int, n float64) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat64(a+flatbuffers.UOffsetT(j*8), n)
@@ -394,7 +424,7 @@ func (rcv *Resonance) MutateLatent(j int, n float64) bool {
 }
 
 func (rcv *Resonance) Embedding(j int) float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetFloat64(a + flatbuffers.UOffsetT(j*8))
@@ -403,7 +433,7 @@ func (rcv *Resonance) Embedding(j int) float64 {
 }
 
 func (rcv *Resonance) EmbeddingLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -411,7 +441,7 @@ func (rcv *Resonance) EmbeddingLength() int {
 }
 
 func (rcv *Resonance) MutateEmbedding(j int, n float64) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateFloat64(a+flatbuffers.UOffsetT(j*8), n)
@@ -420,7 +450,7 @@ func (rcv *Resonance) MutateEmbedding(j int, n float64) bool {
 }
 
 func (rcv *Resonance) Layers(obj *ResonanceLayer, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -432,7 +462,7 @@ func (rcv *Resonance) Layers(obj *ResonanceLayer, j int) bool {
 }
 
 func (rcv *Resonance) LayersLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -440,7 +470,7 @@ func (rcv *Resonance) LayersLength() int {
 }
 
 func (rcv *Resonance) Energy() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -448,11 +478,11 @@ func (rcv *Resonance) Energy() float64 {
 }
 
 func (rcv *Resonance) MutateEnergy(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(38, n)
+	return rcv._tab.MutateFloat64Slot(42, n)
 }
 
 func (rcv *Resonance) Surprise() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -460,11 +490,11 @@ func (rcv *Resonance) Surprise() float64 {
 }
 
 func (rcv *Resonance) MutateSurprise(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(40, n)
+	return rcv._tab.MutateFloat64Slot(44, n)
 }
 
 func (rcv *Resonance) Forecast(obj *ResonanceForecast) *ResonanceForecast {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -477,7 +507,7 @@ func (rcv *Resonance) Forecast(obj *ResonanceForecast) *ResonanceForecast {
 }
 
 func (rcv *Resonance) Dynamics(obj *ResonanceDynamics) *ResonanceDynamics {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -490,7 +520,7 @@ func (rcv *Resonance) Dynamics(obj *ResonanceDynamics) *ResonanceDynamics {
 }
 
 func (rcv *Resonance) Verdict(obj *ResonanceVerdict) *ResonanceVerdict {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -503,7 +533,7 @@ func (rcv *Resonance) Verdict(obj *ResonanceVerdict) *ResonanceVerdict {
 }
 
 func ResonanceStart(builder *flatbuffers.Builder) {
-	builder.StartObject(22)
+	builder.StartObject(24)
 }
 func ResonanceAddSource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(source), 0)
@@ -523,65 +553,71 @@ func ResonanceAddTaskRelativePrecision(builder *flatbuffers.Builder, taskRelativ
 func ResonanceAddTaskRelativePrecisionReady(builder *flatbuffers.Builder, taskRelativePrecisionReady bool) {
 	builder.PrependBoolSlot(5, taskRelativePrecisionReady, false)
 }
+func ResonanceAddTaskScale(builder *flatbuffers.Builder, taskScale float64) {
+	builder.PrependFloat64Slot(6, taskScale, 0.0)
+}
+func ResonanceAddTaskScaleReady(builder *flatbuffers.Builder, taskScaleReady bool) {
+	builder.PrependBoolSlot(7, taskScaleReady, false)
+}
 func ResonanceAddTaskCalibration(builder *flatbuffers.Builder, taskCalibration flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(taskCalibration), 0)
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(taskCalibration), 0)
 }
 func ResonanceAddTaskSkill(builder *flatbuffers.Builder, taskSkill float64) {
-	builder.PrependFloat64Slot(7, taskSkill, 0.0)
+	builder.PrependFloat64Slot(9, taskSkill, 0.0)
 }
 func ResonanceAddTaskSkillReady(builder *flatbuffers.Builder, taskSkillReady bool) {
-	builder.PrependBoolSlot(8, taskSkillReady, false)
+	builder.PrependBoolSlot(10, taskSkillReady, false)
 }
 func ResonanceAddTaskSkillStatus(builder *flatbuffers.Builder, taskSkillStatus flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(taskSkillStatus), 0)
+	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(taskSkillStatus), 0)
 }
 func ResonanceAddLastResolvedForecast(builder *flatbuffers.Builder, lastResolvedForecast float64) {
-	builder.PrependFloat64Slot(10, lastResolvedForecast, 0.0)
+	builder.PrependFloat64Slot(12, lastResolvedForecast, 0.0)
 }
 func ResonanceAddLastRealizedReturn(builder *flatbuffers.Builder, lastRealizedReturn float64) {
-	builder.PrependFloat64Slot(11, lastRealizedReturn, 0.0)
+	builder.PrependFloat64Slot(13, lastRealizedReturn, 0.0)
 }
 func ResonanceAddLastForecastError(builder *flatbuffers.Builder, lastForecastError float64) {
-	builder.PrependFloat64Slot(12, lastForecastError, 0.0)
+	builder.PrependFloat64Slot(14, lastForecastError, 0.0)
 }
 func ResonanceAddObservables(builder *flatbuffers.Builder, observables flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(observables), 0)
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(observables), 0)
 }
 func ResonanceStartObservablesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(8, numElems, 8)
 }
 func ResonanceAddLatent(builder *flatbuffers.Builder, latent flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(latent), 0)
+	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(latent), 0)
 }
 func ResonanceStartLatentVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(8, numElems, 8)
 }
 func ResonanceAddEmbedding(builder *flatbuffers.Builder, embedding flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(embedding), 0)
+	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(embedding), 0)
 }
 func ResonanceStartEmbeddingVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(8, numElems, 8)
 }
 func ResonanceAddLayers(builder *flatbuffers.Builder, layers flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(layers), 0)
+	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(layers), 0)
 }
 func ResonanceStartLayersVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func ResonanceAddEnergy(builder *flatbuffers.Builder, energy float64) {
-	builder.PrependFloat64Slot(17, energy, 0.0)
+	builder.PrependFloat64Slot(19, energy, 0.0)
 }
 func ResonanceAddSurprise(builder *flatbuffers.Builder, surprise float64) {
-	builder.PrependFloat64Slot(18, surprise, 0.0)
+	builder.PrependFloat64Slot(20, surprise, 0.0)
 }
 func ResonanceAddForecast(builder *flatbuffers.Builder, forecast flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(19, flatbuffers.UOffsetT(forecast), 0)
+	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(forecast), 0)
 }
 func ResonanceAddDynamics(builder *flatbuffers.Builder, dynamics flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(dynamics), 0)
+	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(dynamics), 0)
 }
 func ResonanceAddVerdict(builder *flatbuffers.Builder, verdict flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(verdict), 0)
+	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(verdict), 0)
 }
 func ResonanceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

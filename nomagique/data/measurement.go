@@ -59,6 +59,11 @@ func (measurement *Measurement[Value]) ToTypesMeasurement() *types.Measurement {
 		}
 	}
 
+	snr := measurement.SNR
+	metrics["snr"] = types.NewMetric("snr", snr, types.Descriptor{
+		Unit: types.UnitDimensionless,
+	})
+
 	id := measurement.ID
 
 	if id == "" {
@@ -72,6 +77,7 @@ func (measurement *Measurement[Value]) ToTypesMeasurement() *types.Measurement {
 		At:           measurement.At,
 		ObservedFrom: measurement.From,
 		Maturity:     measurement.Maturity,
+		SNR:          measurement.SNR,
 		Metrics:      metrics,
 		Metadata:     measurement.Metadata,
 		Err:          measurement.Err,
@@ -142,6 +148,15 @@ func (measurement *Measurement[Value]) Finalize() {
 		measurement.Metadata = map[string]float64{}
 	}
 
+	// Derive the scalar SNR first so even a stateless measurement with the
+	// estimator facts still reports it, then fall back to Maturity handling.
+	divergence, hasDivergence := measurement.Metadata[MetadataDivergence]
+	noiseVariance, hasNoise := measurement.Metadata[MetadataNoiseVariance]
+
+	if hasDivergence && hasNoise && noiseVariance > 0 {
+		measurement.SNR = divergence * divergence / noiseVariance
+	}
+
 	support, hasSupport := measurement.Metadata[MetadataSupport]
 
 	if !hasSupport {
@@ -152,19 +167,12 @@ func (measurement *Measurement[Value]) Finalize() {
 
 	if support <= 1 {
 		measurement.Maturity = 0
-	} else {
-		measurement.Maturity = 1 - 1/support
-	}
-
-	if mahalanobisSNR, hasMahalanobis := measurement.Metadata[MetadataMahalanobisSNR]; hasMahalanobis && mahalanobisSNR >= 0 {
-		measurement.SNR = mahalanobisSNR
 		return
 	}
 
-	divergence, hasDivergence := measurement.Metadata[MetadataDivergence]
-	noiseVariance, hasNoise := measurement.Metadata[MetadataNoiseVariance]
+	measurement.Maturity = 1 - 1/support
 
-	if hasDivergence && hasNoise && noiseVariance > 0 {
-		measurement.SNR = divergence * divergence / noiseVariance
+	if mahalanobisSNR, hasMahalanobis := measurement.Metadata[MetadataMahalanobisSNR]; hasMahalanobis && mahalanobisSNR >= 0 {
+		measurement.SNR = mahalanobisSNR
 	}
 }

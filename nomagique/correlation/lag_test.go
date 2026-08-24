@@ -17,6 +17,9 @@ func TestLag(t *testing.T) {
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 1.0)
+		So(output.MustGet(SymbolBestLagSupport), ShouldEqual, 2.0)
+		So(output.MustGet(SymbolNeighborLow), ShouldAlmostEqual, -0.02925142293097253, 1e-12)
+		So(output.MustGet(SymbolNeighborHigh), ShouldAlmostEqual, -0.010041929691623815, 1e-12)
 	})
 }
 
@@ -26,9 +29,10 @@ func BenchmarkLag(benchmark *testing.B) {
 	paired := pairPaths(left, right)
 	paired.Put(SymbolLagSpacing, 2)
 	paired.Put(SymbolMaximumLag, 2)
+	lagPrimitive := Lag("previous", "current")
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = Lag("previous", "current")(paired)
+		_ = lagPrimitive(paired)
 	}
 }

@@ -100,7 +100,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"alpha_score",
 		"noise_score",
 		"stress_score",
-		"hypothesis_separation",
+		"snr",
 	],
 	cvd: ["net", "flow_baseline", "flow_zscore", "absorption"],
 	depthflow: [
@@ -163,7 +163,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"effective_window",
 	],
 	pumpdump: [
-		"hypothesis_separation",
+		"snr",
 		"best_price:buy",
 		"best_price:sell",
 		"midpoint",

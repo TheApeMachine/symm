@@ -12,18 +12,18 @@ import (
 GreaterOrEqual emits one when A is greater than or equal to B.
 */
 func GreaterOrEqual(input types.Frame) types.Frame {
-	a, hasA := input.Get(calculus.PortA)
-	b, hasB := input.Get(calculus.PortB)
+	left, hasA := input.Get(calculus.PortA)
+	right, hasB := input.Get(calculus.PortB)
 
-	if !hasA || !hasB || !utils.IsFinite(a) || !utils.IsFinite(b) {
-		input.Err = fmt.Errorf("logic: greater or equal requires finite a and b")
+	if !hasA || !hasB || !utils.IsFinite(left) || !utils.IsFinite(right) {
+		input.Err = fmt.Errorf("logic: greater or equal requires finite left and right")
 
 		return input
 	}
 
 	condition := 0.0
 
-	if a >= b {
+	if left >= right {
 		condition = 1
 	}
 

@@ -7,12 +7,12 @@ import (
 )
 
 type HindsightDiagnosisT struct {
-	Category        string                    `json:"category"`
-	Summary         string                    `json:"summary"`
-	EvidenceQuality float64                   `json:"evidenceQuality"`
-	EvidenceStatus  string                    `json:"evidenceStatus"`
-	Blockers        []*HindsightBlockerT      `json:"blockers"`
-	Recommendation  *HindsightRecommendationT `json:"recommendation"`
+	Category string `json:"category"`
+	Summary string `json:"summary"`
+	EvidenceQuality float64 `json:"evidenceQuality"`
+	EvidenceStatus string `json:"evidenceStatus"`
+	Blockers []*HindsightBlockerT `json:"blockers"`
+	Recommendation *HindsightRecommendationT `json:"recommendation"`
 }
 
 func (t *HindsightDiagnosisT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -67,9 +67,7 @@ func (rcv *HindsightDiagnosis) UnPackTo(t *HindsightDiagnosisT) {
 		rcv.Blockers(&x, j)
 		t.Blockers[j] = x.UnPack()
 	}
-	if recommendation := rcv.Recommendation(nil); recommendation != nil {
-		t.Recommendation = recommendation.UnPack()
-	}
+	t.Recommendation = rcv.Recommendation(nil).UnPack()
 }
 
 func (rcv *HindsightDiagnosis) UnPack() *HindsightDiagnosisT {
@@ -188,26 +186,26 @@ func (rcv *HindsightDiagnosis) Recommendation(obj *HindsightRecommendation) *Hin
 func HindsightDiagnosisStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }
-func HindsightDiagnosisAddCategory(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(value), 0)
+func HindsightDiagnosisAddCategory(builder *flatbuffers.Builder, category flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(category), 0)
 }
-func HindsightDiagnosisAddSummary(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(value), 0)
+func HindsightDiagnosisAddSummary(builder *flatbuffers.Builder, summary flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(summary), 0)
 }
-func HindsightDiagnosisAddEvidenceQuality(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(2, value, 0.0)
+func HindsightDiagnosisAddEvidenceQuality(builder *flatbuffers.Builder, evidenceQuality float64) {
+	builder.PrependFloat64Slot(2, evidenceQuality, 0.0)
 }
-func HindsightDiagnosisAddEvidenceStatus(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(value), 0)
+func HindsightDiagnosisAddEvidenceStatus(builder *flatbuffers.Builder, evidenceStatus flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(evidenceStatus), 0)
 }
-func HindsightDiagnosisAddBlockers(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(value), 0)
+func HindsightDiagnosisAddBlockers(builder *flatbuffers.Builder, blockers flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(blockers), 0)
 }
 func HindsightDiagnosisStartBlockersVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func HindsightDiagnosisAddRecommendation(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(value), 0)
+func HindsightDiagnosisAddRecommendation(builder *flatbuffers.Builder, recommendation flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(recommendation), 0)
 }
 func HindsightDiagnosisEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

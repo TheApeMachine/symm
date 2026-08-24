@@ -322,6 +322,66 @@ func TestChannelObserve(t *testing.T) {
 	}
 }
 
+func TestSharedKeyUnambiguousWithColons(t *testing.T) {
+	// These inputs previously collided under the colon-joined scheme.
+	if a := sharedKey("a:b", []string{"c"}); a == sharedKey("a", []string{"b:c"}) {
+		t.Fatalf("sharedKey collision: %q", a)
+	}
+
+	// Distinct id splits must remain distinct.
+	if bookSymbol := sharedKey("book", []string{"BTC/USD"}); bookSymbol == sharedKey("book", []string{"BTC:USD"}) {
+		t.Fatalf("distinct id splits collided")
+	}
+
+	// Empty ids are still omitted.
+	if got := sharedKey("book", []string{""}); got != sharedKey("book", nil) {
+		t.Fatalf("empty id not omitted: %q", got)
+	}
+}
+
+func TestWorkspaceShareNoColonCollision(t *testing.T) {
+	workspace := NewWorkspace(nil)
+	defer workspace.Close()
+
+	workspace.Share("a:b", 1, "c")
+	workspace.Share("a", 2, "b:c")
+
+	if valueA, foundA := workspace.Shared("a:b", "c"); !foundA || valueA != 1 {
+		t.Fatalf("first share not retrievable: %v %v", valueA, foundA)
+	}
+
+	if valueB, foundB := workspace.Shared("a", "b:c"); !foundB || valueB != 2 {
+		t.Fatalf("second share not retrievable: %v %v", valueB, foundB)
+	}
+}
+
+func TestWorkspaceOnConcurrentRegistrations(t *testing.T) {
+	workspace := NewWorkspace(nil)
+	defer workspace.Close()
+
+	const listenerCount = 64
+	var group sync.WaitGroup
+	group.Add(listenerCount)
+
+	for index := 0; index < listenerCount; index++ {
+		go func() {
+			defer group.Done()
+			workspace.On("topic", func() {})
+		}()
+	}
+
+	group.Wait()
+
+	got, found := workspace.listeners.Load("topic")
+	if !found {
+		t.Fatal("topic listeners not registered")
+	}
+
+	if count := len(got.([]func())); count != listenerCount {
+		t.Fatalf("registered %d listeners, want %d", count, listenerCount)
+	}
+}
+
 func BenchmarkWorkspacePublishWithObserver(b *testing.B) {
 	workspace := NewWorkspace(nil)
 	defer workspace.Close()

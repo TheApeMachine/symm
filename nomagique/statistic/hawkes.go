@@ -97,6 +97,13 @@ func HawkesIntensity(input types.Frame) types.Frame {
 	}
 
 	beta := value(input, SymbolBeta, 1)
+
+	if beta <= 0 || !finite(beta) {
+		input.Err = fmt.Errorf("hawkes: beta must be positive and finite")
+
+		return input
+	}
+
 	muAlpha := value(input, SymbolMuAlpha, 0)
 	muBeta := value(input, SymbolMuBeta, 0)
 	lambdaAlpha := value(input, SymbolLambdaAlpha, 0)
@@ -118,7 +125,9 @@ func HawkesIntensity(input types.Frame) types.Frame {
 		alphaCount++
 		lambdaAlpha += value(input, SymbolAlphaAA, 0.2)
 		lambdaBeta += value(input, SymbolAlphaBA, 0.1)
-	} else {
+	}
+
+	if mark < 0 {
 		betaCount++
 		lambdaBeta += value(input, SymbolAlphaBB, 0.2)
 		lambdaAlpha += value(input, SymbolAlphaAB, 0.1)
@@ -160,36 +169,17 @@ func HawkesIntensity(input types.Frame) types.Frame {
 
 	if mark > 0 {
 		lambdaSelfAlpha += value(input, SymbolAlphaAA, 0.2)
-	} else {
+	}
+
+	if mark < 0 {
 		lambdaSelfBeta += value(input, SymbolAlphaBB, 0.2)
 	}
 
 	input.Put(symbolLambdaSelfAlpha, lambdaSelfAlpha)
 	input.Put(symbolLambdaSelfBeta, lambdaSelfBeta)
-
-	input.Put(SymbolBeta, beta)
-	input.Put(SymbolAlphaAA, value(input, SymbolAlphaAA, 0.2))
-	input.Put(SymbolAlphaAB, value(input, SymbolAlphaAB, 0.1))
-	input.Put(SymbolAlphaBA, value(input, SymbolAlphaBA, 0.1))
-	input.Put(SymbolAlphaBB, value(input, SymbolAlphaBB, 0.2))
 	input.Put(SymbolLLHawkes, logSum(lambdaAlpha, lambdaBeta))
 	input.Put(SymbolLLPoisson, logSum(rateAlpha, rateBeta))
 	input.Put(SymbolLLSelf, logSum(lambdaSelfAlpha, lambdaSelfBeta))
-	input.Put(SymbolLambdaAlpha, lambdaAlpha)
-	input.Put(SymbolLambdaBeta, lambdaBeta)
-	input.Put(SymbolMuAlpha, rateAlpha)
-	input.Put(SymbolMuBeta, rateBeta)
-	input.Put(SymbolReady, 1)
-	input.Put(SymbolEventCount, eventCount)
-	input.Put(SymbolAlphaEventCount, alphaCount)
-	input.Put(SymbolBetaEventCount, betaCount)
-	input.Put(SymbolAlphaArrivalRate, rateAlpha)
-	input.Put(SymbolBetaArrivalRate, rateBeta)
-	input.Put(SymbolObservation, 1)
-	input.Put(SymbolObservedAtSec, sec)
-	input.Put(SymbolObservedAtNsec, nsec)
-	input.Put(SymbolObservedFromSec, firstSec)
-	input.Put(SymbolObservedFromNsec, firstNsec)
 
 	return input
 }

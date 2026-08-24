@@ -5,124 +5,213 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+
+
 export class HindsightBlocker implements flatbuffers.IUnpackableObject<HindsightBlockerT> {
   bb: flatbuffers.ByteBuffer|null = null;
   bb_pos = 0;
-
   __init(i:number, bb:flatbuffers.ByteBuffer):HindsightBlocker {
-    this.bb_pos = i;
-    this.bb = bb;
-    return this;
-  }
+  this.bb_pos = i;
+  this.bb = bb;
+  return this;
+}
 
-  static getRootAsHindsightBlocker(bb:flatbuffers.ByteBuffer, obj?:HindsightBlocker):HindsightBlocker {
-    return (obj || new HindsightBlocker()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-  }
+static getRootAsHindsightBlocker(bb:flatbuffers.ByteBuffer, obj?:HindsightBlocker):HindsightBlocker {
+  return (obj || new HindsightBlocker()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-  static getSizePrefixedRootAsHindsightBlocker(bb:flatbuffers.ByteBuffer, obj?:HindsightBlocker):HindsightBlocker {
-    bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-    return (obj || new HindsightBlocker()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-  }
+static getSizePrefixedRootAsHindsightBlocker(bb:flatbuffers.ByteBuffer, obj?:HindsightBlocker):HindsightBlocker {
+  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+  return (obj || new HindsightBlocker()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-  key():string|null
-  key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-  key(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(4, optionalEncoding); }
-  category():string|null
-  category(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-  category(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(6, optionalEncoding); }
-  label():string|null
-  label(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-  label(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(8, optionalEncoding); }
-  source():string|null
-  source(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-  source(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(10, optionalEncoding); }
-  observed():number { return this.floatField(12); }
-  target():number { return this.floatField(14); }
-  hasTarget():boolean {
-    const offset = this.bb!.__offset(this.bb_pos, 16);
-    return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-  }
-  gap():number { return this.floatField(18); }
-  severity():number { return this.floatField(20); }
-  explanation():string|null
-  explanation(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-  explanation(optionalEncoding?:any):string|Uint8Array|null { return this.stringField(22, optionalEncoding); }
+key():string|null
+key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+key(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-  private stringField(slot:number, optionalEncoding?:any):string|Uint8Array|null {
-    const offset = this.bb!.__offset(this.bb_pos, slot);
-    return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-  }
+category():string|null
+category(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+category(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-  private floatField(slot:number):number {
-    const offset = this.bb!.__offset(this.bb_pos, slot);
-    return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-  }
+label():string|null
+label(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+label(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-  static startHindsightBlocker(builder:flatbuffers.Builder) { builder.startObject(10); }
-  static addKey(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(0, value, 0); }
-  static addCategory(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(1, value, 0); }
-  static addLabel(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(2, value, 0); }
-  static addSource(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(3, value, 0); }
-  static addObserved(builder:flatbuffers.Builder, value:number) { builder.addFieldFloat64(4, value, 0.0); }
-  static addTarget(builder:flatbuffers.Builder, value:number) { builder.addFieldFloat64(5, value, 0.0); }
-  static addHasTarget(builder:flatbuffers.Builder, value:boolean) { builder.addFieldInt8(6, +value, +false); }
-  static addGap(builder:flatbuffers.Builder, value:number) { builder.addFieldFloat64(7, value, 0.0); }
-  static addSeverity(builder:flatbuffers.Builder, value:number) { builder.addFieldFloat64(8, value, 0.0); }
-  static addExplanation(builder:flatbuffers.Builder, value:flatbuffers.Offset) { builder.addFieldOffset(9, value, 0); }
-  static endHindsightBlocker(builder:flatbuffers.Builder):flatbuffers.Offset { return builder.endObject(); }
+source():string|null
+source(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+source(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-  unpack():HindsightBlockerT {
-    return new HindsightBlockerT(
-      this.key(), this.category(), this.label(), this.source(), this.observed(),
-      this.target(), this.hasTarget(), this.gap(), this.severity(), this.explanation(),
-    );
-  }
+observed():number {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
 
-  unpackTo(value:HindsightBlockerT):void {
-    value.key = this.key();
-    value.category = this.category();
-    value.label = this.label();
-    value.source = this.source();
-    value.observed = this.observed();
-    value.target = this.target();
-    value.hasTarget = this.hasTarget();
-    value.gap = this.gap();
-    value.severity = this.severity();
-    value.explanation = this.explanation();
-  }
+target():number {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+hasTarget():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+gap():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+severity():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+explanation():string|null
+explanation(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+explanation(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+static startHindsightBlocker(builder:flatbuffers.Builder) {
+  builder.startObject(10);
+}
+
+static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, keyOffset, 0);
+}
+
+static addCategory(builder:flatbuffers.Builder, categoryOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(1, categoryOffset, 0);
+}
+
+static addLabel(builder:flatbuffers.Builder, labelOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(2, labelOffset, 0);
+}
+
+static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(3, sourceOffset, 0);
+}
+
+static addObserved(builder:flatbuffers.Builder, observed:number) {
+  builder.addFieldFloat64(4, observed, 0.0);
+}
+
+static addTarget(builder:flatbuffers.Builder, target:number) {
+  builder.addFieldFloat64(5, target, 0.0);
+}
+
+static addHasTarget(builder:flatbuffers.Builder, hasTarget:boolean) {
+  builder.addFieldInt8(6, +hasTarget, +false);
+}
+
+static addGap(builder:flatbuffers.Builder, gap:number) {
+  builder.addFieldFloat64(7, gap, 0.0);
+}
+
+static addSeverity(builder:flatbuffers.Builder, severity:number) {
+  builder.addFieldFloat64(8, severity, 0.0);
+}
+
+static addExplanation(builder:flatbuffers.Builder, explanationOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(9, explanationOffset, 0);
+}
+
+static endHindsightBlocker(builder:flatbuffers.Builder):flatbuffers.Offset {
+  const offset = builder.endObject();
+  return offset;
+}
+
+static createHindsightBlocker(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset, categoryOffset:flatbuffers.Offset, labelOffset:flatbuffers.Offset, sourceOffset:flatbuffers.Offset, observed:number, target:number, hasTarget:boolean, gap:number, severity:number, explanationOffset:flatbuffers.Offset):flatbuffers.Offset {
+  HindsightBlocker.startHindsightBlocker(builder);
+  HindsightBlocker.addKey(builder, keyOffset);
+  HindsightBlocker.addCategory(builder, categoryOffset);
+  HindsightBlocker.addLabel(builder, labelOffset);
+  HindsightBlocker.addSource(builder, sourceOffset);
+  HindsightBlocker.addObserved(builder, observed);
+  HindsightBlocker.addTarget(builder, target);
+  HindsightBlocker.addHasTarget(builder, hasTarget);
+  HindsightBlocker.addGap(builder, gap);
+  HindsightBlocker.addSeverity(builder, severity);
+  HindsightBlocker.addExplanation(builder, explanationOffset);
+  return HindsightBlocker.endHindsightBlocker(builder);
+}
+
+unpack(): HindsightBlockerT {
+  return new HindsightBlockerT(
+    this.key(),
+    this.category(),
+    this.label(),
+    this.source(),
+    this.observed(),
+    this.target(),
+    this.hasTarget(),
+    this.gap(),
+    this.severity(),
+    this.explanation()
+  );
+}
+
+
+unpackTo(_o: HindsightBlockerT): void {
+  _o.key = this.key();
+  _o.category = this.category();
+  _o.label = this.label();
+  _o.source = this.source();
+  _o.observed = this.observed();
+  _o.target = this.target();
+  _o.hasTarget = this.hasTarget();
+  _o.gap = this.gap();
+  _o.severity = this.severity();
+  _o.explanation = this.explanation();
+}
 }
 
 export class HindsightBlockerT implements flatbuffers.IGeneratedObject {
-  constructor(
-    public key:string|Uint8Array|null = null,
-    public category:string|Uint8Array|null = null,
-    public label:string|Uint8Array|null = null,
-    public source:string|Uint8Array|null = null,
-    public observed:number = 0.0,
-    public target:number = 0.0,
-    public hasTarget:boolean = false,
-    public gap:number = 0.0,
-    public severity:number = 0.0,
-    public explanation:string|Uint8Array|null = null,
-  ) {}
+constructor(
+  public key: string|Uint8Array|null = null,
+  public category: string|Uint8Array|null = null,
+  public label: string|Uint8Array|null = null,
+  public source: string|Uint8Array|null = null,
+  public observed: number = 0.0,
+  public target: number = 0.0,
+  public hasTarget: boolean = false,
+  public gap: number = 0.0,
+  public severity: number = 0.0,
+  public explanation: string|Uint8Array|null = null
+){}
 
-  pack(builder:flatbuffers.Builder):flatbuffers.Offset {
-    const key = this.key !== null ? builder.createString(this.key) : 0;
-    const category = this.category !== null ? builder.createString(this.category) : 0;
-    const label = this.label !== null ? builder.createString(this.label) : 0;
-    const source = this.source !== null ? builder.createString(this.source) : 0;
-    const explanation = this.explanation !== null ? builder.createString(this.explanation) : 0;
-    HindsightBlocker.startHindsightBlocker(builder);
-    HindsightBlocker.addKey(builder, key);
-    HindsightBlocker.addCategory(builder, category);
-    HindsightBlocker.addLabel(builder, label);
-    HindsightBlocker.addSource(builder, source);
-    HindsightBlocker.addObserved(builder, this.observed);
-    HindsightBlocker.addTarget(builder, this.target);
-    HindsightBlocker.addHasTarget(builder, this.hasTarget);
-    HindsightBlocker.addGap(builder, this.gap);
-    HindsightBlocker.addSeverity(builder, this.severity);
-    HindsightBlocker.addExplanation(builder, explanation);
-    return HindsightBlocker.endHindsightBlocker(builder);
-  }
+
+pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const key = (this.key !== null ? builder.createString(this.key!) : 0);
+  const category = (this.category !== null ? builder.createString(this.category!) : 0);
+  const label = (this.label !== null ? builder.createString(this.label!) : 0);
+  const source = (this.source !== null ? builder.createString(this.source!) : 0);
+  const explanation = (this.explanation !== null ? builder.createString(this.explanation!) : 0);
+
+  return HindsightBlocker.createHindsightBlocker(builder,
+    key,
+    category,
+    label,
+    source,
+    this.observed,
+    this.target,
+    this.hasTarget,
+    this.gap,
+    this.severity,
+    explanation
+  );
+}
 }

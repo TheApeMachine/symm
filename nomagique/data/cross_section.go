@@ -15,7 +15,6 @@ relative changes, its observation timestamps, and its observation count.
 */
 type memberState struct {
 	latest       float64
-	previous     float64
 	at           time.Time
 	from         time.Time
 	observations int
@@ -100,12 +99,10 @@ The container knows nothing about what the keys or values mean; it only keeps
 per-key windows and reports structural statistics.
 */
 type CrossSection struct {
-	mu         sync.RWMutex
-	latest     map[string]float64
+	mu         sync.Mutex
 	recent     map[string][]float64
 	members    map[string]*memberState
 	estimators map[string]*aggregateEstimator
-	lastAt     time.Time
 }
 
 /*
@@ -113,7 +110,6 @@ NewCrossSection constructs an empty generic cross-section.
 */
 func NewCrossSection() *CrossSection {
 	return &CrossSection{
-		latest:     make(map[string]float64),
 		recent:     make(map[string][]float64),
 		members:    make(map[string]*memberState),
 		estimators: make(map[string]*aggregateEstimator),
@@ -147,7 +143,6 @@ func (section *CrossSection) Process(
 	}
 
 	previous := member.latest
-	member.previous = previous
 	member.latest = value
 
 	if member.at.IsZero() {
@@ -156,9 +151,11 @@ func (section *CrossSection) Process(
 
 	member.at = at
 	member.observations++
-	section.latest[key] = value
 
-	if !previousHasValue(previous) || previous == 0 {
+	// The first observation has no previous value to take a relative change
+	// against; a legitimate zero-valued previous transition is also skipped so
+	// the division never computes a zero denominator.
+	if member.observations <= 1 || previous == 0 {
 		return Snapshot{}, false
 	}
 
@@ -171,13 +168,8 @@ func (section *CrossSection) Process(
 
 	snapshot := section.snapshot(at, focal)
 	section.updateEstimators(snapshot, at)
-	section.lastAt = at
 
 	return snapshot, true
-}
-
-func previousHasValue(value float64) bool {
-	return !math.IsNaN(value)
 }
 
 /*
@@ -243,21 +235,42 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 	tieCount := 0
 	sumMagnitude := 0.0
 
-	for key, recentValues := range section.recent {
-		relative := recentValues[len(recentValues)-1]
-		sumMagnitude += math.Abs(relative)
+	keys := make([]string, 0, len(section.recent))
 
-		if math.Abs(relative) > extremeMagnitude {
-			second = extremeMagnitude
-			extremeMagnitude = math.Abs(relative)
-			extremeSigned = relative
-			extremeKey = key
-			tieCount = 0
-		} else if math.Abs(relative) == extremeMagnitude {
-			tieCount++
-		} else if math.Abs(relative) > second {
-			second = math.Abs(relative)
+	for key := range section.recent {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		relative := section.recent[key][len(section.recent[key])-1]
+		magnitude := math.Abs(relative)
+		sumMagnitude += magnitude
+
+		if magnitude > extremeMagnitude {
+			extremeMagnitude = magnitude
 		}
+	}
+
+	for _, key := range keys {
+		relative := section.recent[key][len(section.recent[key])-1]
+		magnitude := math.Abs(relative)
+
+		if magnitude != extremeMagnitude {
+			second = math.Max(second, magnitude)
+
+			continue
+		}
+
+		if extremeKey != "" {
+			tieCount++
+
+			continue
+		}
+
+		extremeKey = key
+		extremeSigned = relative
 	}
 
 	snapshot.ExtremeKey = extremeKey
@@ -284,7 +297,6 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 
 		if len(focalValues) > 0 {
 			focalRelative := focalValues[len(focalValues)-1]
-			peerValues := make([]float64, 0, len(values)-1)
 			peerMagnitudes := make([]float64, 0, len(values)-1)
 
 			for key, recentValues := range section.recent {
@@ -293,7 +305,6 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 				}
 
 				relative := recentValues[len(recentValues)-1]
-				peerValues = append(peerValues, relative)
 				peerMagnitudes = append(peerMagnitudes, math.Abs(relative))
 
 				switch {
@@ -391,13 +402,19 @@ func (section *CrossSection) updateEstimators(snapshot Snapshot, at time.Time) {
 			estimator.baseline = view.Value
 			estimator.energy = 0
 			estimator.hasValue = true
-		} else {
-			alpha := 0.5
-			estimator.baseline += alpha * (view.Value - estimator.baseline)
-			residual := view.Value - estimator.baseline
-			estimator.energy += alpha * (residual*residual - estimator.energy)
+			estimator.lastValue = view.Value
+			estimator.lastAt = float64(at.UnixNano()) / 1e9
+			estimator.observations++
+
+			continue
 		}
 
+		// Running-mean EWMA weight derived from the observation count instead
+		// of a fixed alpha, applied to both the baseline and the energy.
+		weight := 1.0 / (float64(estimator.observations) + 1.0)
+		estimator.baseline += weight * (view.Value - estimator.baseline)
+		residual := view.Value - estimator.baseline
+		estimator.energy += weight * (residual*residual - estimator.energy)
 		estimator.lastValue = view.Value
 		estimator.lastAt = float64(at.UnixNano()) / 1e9
 		estimator.observations++

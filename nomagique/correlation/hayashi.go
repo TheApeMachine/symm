@@ -48,8 +48,11 @@ func Hayashi(leftPrefix string, rightPrefix string) types.Primitive {
 
 		left, leftCount := seriesPoints(leftSeries, &input)
 		right, rightCount := seriesPoints(rightSeries, &input)
+		leftReturns, leftReturnCount, leftVariance := seriesReturns(&left, leftCount)
+		rightReturns, rightReturnCount, rightVariance := seriesReturns(&right, rightCount)
+
 		correlation, covariance, leftVariance, rightVariance, support, ready :=
-			hayashiPoints(&left, leftCount, &right, rightCount, int64(shiftValue))
+			hayashiPoints(&leftReturns, leftReturnCount, leftVariance, &rightReturns, rightReturnCount, rightVariance, int64(shiftValue))
 
 		input.Put(SymbolCorrelation, correlation)
 		input.Put(SymbolCovariance, covariance)
@@ -101,7 +104,16 @@ func seriesPoints(
 	return points, count
 }
 
-func pathVariance(points *[temporal.MaxPathSamples]point, count int) float64 {	variance := 0.0
+type returnInterval struct {
+	from int64
+	to   int64
+	val  float64
+}
+
+func seriesReturns(points *[temporal.MaxPathSamples]point, count int) ([temporal.MaxPathSamples]returnInterval, int, float64) {
+	returns := [temporal.MaxPathSamples]returnInterval{}
+	returnCount := 0
+	variance := 0.0
 
 	for index := 1; index < count; index++ {
 		previous := points[index-1]
@@ -112,12 +124,20 @@ func pathVariance(points *[temporal.MaxPathSamples]point, count int) float64 {	v
 			continue
 		}
 
-		value := math.Log(current.value / previous.value)
-		variance += value * value
+		val := math.Log(current.value / previous.value)
+		returns[returnCount] = returnInterval{
+			from: previous.timestamp,
+			to:   current.timestamp,
+			val:  val,
+		}
+		returnCount++
+		variance += val * val
 	}
 
-	return variance
+	return returns, returnCount, variance
 }
+
+
 
 /*
 pathEnergyRate returns the median interval-normalized log-return energy of one
@@ -174,54 +194,39 @@ func pathEnergyRate(points *[temporal.MaxPathSamples]point, count int) float64 {
 }
 
 func hayashiPoints(
-	left *[temporal.MaxPathSamples]point,
+	left *[temporal.MaxPathSamples]returnInterval,
 	leftCount int,
-	right *[temporal.MaxPathSamples]point,
+	leftVariance float64,
+	right *[temporal.MaxPathSamples]returnInterval,
 	rightCount int,
+	rightVariance float64,
 	leftShift int64,
 ) (float64, float64, float64, float64, int, bool) {
-	leftVariance := pathVariance(left, leftCount)
-	rightVariance := pathVariance(right, rightCount)
 	covariance := 0.0
 	support := 0
 	rightStart := 0
 
-	for leftIndex := 0; leftIndex < leftCount-1; leftIndex++ {
-		leftFrom := left[leftIndex]
-		leftTo := left[leftIndex+1]
-		leftFrom.timestamp += leftShift
-		leftTo.timestamp += leftShift
+	for leftIndex := 0; leftIndex < leftCount; leftIndex++ {
+		leftInterval := left[leftIndex]
+		leftFrom := leftInterval.from + leftShift
+		leftTo := leftInterval.to + leftShift
 
-		if leftFrom.timestamp >= leftTo.timestamp ||
-			leftFrom.value <= 0 || leftTo.value <= 0 {
-			continue
-		}
-
-		for rightStart < rightCount-1 {
-			if leftFrom.timestamp >= right[rightStart+1].timestamp {
+		for rightStart < rightCount {
+			if leftFrom >= right[rightStart].to {
 				rightStart++
 				continue
 			}
-
 			break
 		}
 
-		leftReturn := math.Log(leftTo.value / leftFrom.value)
+		for rightIndex := rightStart; rightIndex < rightCount; rightIndex++ {
+			rightInterval := right[rightIndex]
 
-		for rightIndex := rightStart; rightIndex < rightCount-1; rightIndex++ {
-			rightFrom := right[rightIndex]
-			rightTo := right[rightIndex+1]
-
-			if rightFrom.timestamp >= leftTo.timestamp {
+			if rightInterval.from >= leftTo {
 				break
 			}
 
-			if rightFrom.timestamp >= rightTo.timestamp ||
-				rightFrom.value <= 0 || rightTo.value <= 0 {
-				continue
-			}
-
-			covariance += leftReturn * math.Log(rightTo.value/rightFrom.value)
+			covariance += leftInterval.val * rightInterval.val
 			support++
 		}
 	}

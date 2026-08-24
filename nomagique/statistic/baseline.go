@@ -128,7 +128,7 @@ func Baseline(prefix string) types.Primitive {
 			input.Put(slots.lastSec, sec)
 			input.Put(slots.lastNsec, nsec)
 
-			return baselineOutput(input, slots, series, value, 1)
+			return baselineOutput(input, series, value, 1)
 		}
 
 		efficiency := windowEfficiency(series, input, count)
@@ -143,9 +143,17 @@ func Baseline(prefix string) types.Primitive {
 		stability := ringStability(series, input, count, baseline)
 		previousStability, hasPreviousStability := input.Get(slots.stability)
 
+		// A zero alpha (elapsed == 0) has no finite effective window; fall back
+		// to the seeded single-unit window instead of storing infinity.
+		window := 1.0
+
+		if alpha > 0 {
+			window = 2/alpha - 1
+		}
+
 		input.Put(slots.value, baseline)
 		input.Put(slots.efficiency, efficiency)
-		input.Put(slots.window, 2/alpha-1)
+		input.Put(slots.window, window)
 		input.Put(slots.span, halflife)
 		input.Put(slots.stability, stability)
 		input.Put(slots.lastSec, sec)
@@ -157,28 +165,17 @@ func Baseline(prefix string) types.Primitive {
 			target = windowModifier(series, input, count, stability, previousStability)
 		}
 
-		return baselineOutput(input, slots, series, value, target)
+		return baselineOutput(input, series, value, target)
 	}
 }
 
 func baselineOutput(
 	input types.Frame,
-	slots baselineSlots,
 	series temporal.Series,
 	value float64,
 	target float64,
 ) types.Frame {
 	input.Put(series.ValueSymbol, value)
-
-	baseline, _ := input.Get(slots.value)
-	efficiency, _ := input.Get(slots.efficiency)
-	window, _ := input.Get(slots.window)
-	stability, _ := input.Get(slots.stability)
-
-	input.Put(slots.value, baseline)
-	input.Put(slots.efficiency, efficiency)
-	input.Put(slots.window, window)
-	input.Put(slots.stability, stability)
 	input.Put(series.ReadySymbol, 1)
 	input.Put(series.SpanSymbol, target)
 
@@ -197,6 +194,11 @@ func windowEfficiency(series temporal.Series, state types.Frame, count int) floa
 	}
 
 	capacity, _ := state.Get(series.CapacitySymbol)
+
+	if capacity <= 0 {
+		return 0
+	}
+
 	head := series.Head(state)
 	slots := make([]float64, 0, count)
 
@@ -237,6 +239,11 @@ func ringStability(
 	}
 
 	capacity, _ := state.Get(series.CapacitySymbol)
+
+	if capacity <= 0 {
+		return 1
+	}
+
 	head := series.Head(state)
 	minimum := math.MaxFloat64
 	maximum := -math.MaxFloat64

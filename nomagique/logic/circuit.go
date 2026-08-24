@@ -25,7 +25,9 @@ func Circuit(rules []Rule, fallback types.Primitive) types.Primitive {
 	return func(input types.Frame) types.Frame {
 		for _, rule := range program {
 			if rule.When == nil {
-				continue
+				input.Err = fmt.Errorf("logic: circuit rule requires a predicate")
+
+				return input
 			}
 
 			candidate := types.Step(rule.When, input)

@@ -1,6 +1,8 @@
 package leadlag
 
 import (
+	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -136,8 +138,18 @@ exactly one Measurement. The per-symbol path facts are always projected;
 lead-lag and pair-history facts appear only once their estimators are ready.
 */
 func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float64] {
+	if tickerData.Last == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: ticker requires a last price")}
+	}
+
+	last := tickerData.Last.Float64()
+
+	if math.IsNaN(last) || math.IsInf(last, 0) || last <= 0 {
+		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: ticker last price must be finite and positive")}
+	}
+
 	input := nmtypes.Frame{}
-	input.Put(temporal.DefaultSeries.ValueSymbol, tickerData.Last.Float64())
+	input.Put(temporal.DefaultSeries.ValueSymbol, last)
 	input.Put(temporal.DefaultSeries.SecSymbol, float64(tickerData.Timestamp.Unix()))
 	input.Put(temporal.DefaultSeries.NsecSymbol, float64(tickerData.Timestamp.Nanosecond()))
 
@@ -151,6 +163,10 @@ func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float
 	)
 
 	projection := pathFrame
+
+	if err != nil {
+		projection.Err = err
+	}
 
 	if err == nil && reduced {
 		if ready, found := crossSectionFrame.Get(nmcorrelation.SymbolLeadLagReady); found && ready != 0 {

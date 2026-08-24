@@ -44,6 +44,9 @@ func Lag(leftPrefix string, rightPrefix string) types.Primitive {
 
 		left, leftCount := seriesPoints(leftSeries, &input)
 		right, rightCount := seriesPoints(rightSeries, &input)
+		leftReturns, leftReturnCount, leftVariance := seriesReturns(&left, leftCount)
+		rightReturns, rightReturnCount, rightVariance := seriesReturns(&right, rightCount)
+
 		maximumLag := int(maximumLagValue)
 		bestLag := 0
 		bestCorrelation := 0.0
@@ -51,14 +54,29 @@ func Lag(leftPrefix string, rightPrefix string) types.Primitive {
 		contemporaneous := 0.0
 		searchCount := 0
 
+		// Retain each scanned lag's correlation and support indexed relative to
+		// maximumLag so the best-lag support and both neighbors are read back
+		// from this scan instead of recomputing hayashiPoints afterward.
+		lagCount := 2*maximumLag + 1
+		lagCovariances := make([]float64, lagCount)
+		lagSupports := make([]float64, lagCount)
+		lagReady := make([]bool, lagCount)
+
 		for lag := -maximumLag; lag <= maximumLag; lag++ {
-			correlation, _, _, _, _, ready := hayashiPoints(
-				&left,
-				leftCount,
-				&right,
-				rightCount,
+			correlation, covariance, _, _, support, ready := hayashiPoints(
+				&leftReturns,
+				leftReturnCount,
+				leftVariance,
+				&rightReturns,
+				rightReturnCount,
+				rightVariance,
 				int64(float64(lag)*spacing),
 			)
+
+			index := lag + maximumLag
+			lagCovariances[index] = covariance
+			lagSupports[index] = float64(support)
+			lagReady[index] = ready
 
 			if !ready {
 				continue
@@ -88,30 +106,18 @@ func Lag(leftPrefix string, rightPrefix string) types.Primitive {
 		input.Put(SymbolReady, truth(searchCount > 0))
 
 		if searchCount > 0 {
-			neighborShift := int64(spacing)
-			shift := int64(float64(bestLag) * spacing)
-			_, _, _, _, support, _ := hayashiPoints(
-				&left, leftCount, &right, rightCount, shift,
-			)
-			input.Put(SymbolBestLagSupport, float64(support))
+			bestIndex := bestLag + maximumLag
+			input.Put(SymbolBestLagSupport, lagSupports[bestIndex])
 
 			if bestLag-1 >= -maximumLag {
-				_, neighborLow, _, _, _, hasLow := hayashiPoints(
-					&left, leftCount, &right, rightCount, shift-neighborShift,
-				)
-
-				if hasLow {
-					input.Put(SymbolNeighborLow, neighborLow)
+				if neighbor := lagReady[bestIndex-1]; neighbor {
+					input.Put(SymbolNeighborLow, lagCovariances[bestIndex-1])
 				}
 			}
 
 			if bestLag+1 <= maximumLag {
-				_, neighborHigh, _, _, _, hasHigh := hayashiPoints(
-					&left, leftCount, &right, rightCount, shift+neighborShift,
-				)
-
-				if hasHigh {
-					input.Put(SymbolNeighborHigh, neighborHigh)
+				if neighbor := lagReady[bestIndex+1]; neighbor {
+					input.Put(SymbolNeighborHigh, lagCovariances[bestIndex+1])
 				}
 			}
 		}

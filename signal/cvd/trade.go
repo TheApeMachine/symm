@@ -618,6 +618,8 @@ func NewTrade(workspace *runtime.Workspace) *Trade {
 			data.Binding{From: prefixed(prefixGrossRate, "z/value"), Name: "gross_notional_rate_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolNetVelocity, Name: "net_notional_rate_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: symbolGrossVelocity, Name: "gross_notional_rate_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolMidpointFrom, Name: "response_midpoint:from", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolMidpoint, Name: "response_midpoint:at", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolMidpointLog, Name: "midpoint_log_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolMidpointRate, Name: "midpoint_return_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: symbolFlowAligned, Name: "flow_aligned_midpoint_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},

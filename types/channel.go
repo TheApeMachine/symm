@@ -21,6 +21,7 @@ const (
 	ChannelCategories     = "categories"
 	ChannelResonance      = "resonance"
 	ChannelCausal         = "causal"
+	ChannelDiagnostics    = "diagnostics"
 	ChannelCognition      = "cognition"
 	ChannelPhase          = "phase"
 	ChannelGraphs         = "graphs"

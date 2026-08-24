@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
@@ -18,7 +20,11 @@ func Coherence(input types.Frame) types.Frame {
 
 	if !hasX || !hasA || !hasB || !utils.IsFinite(x) ||
 		!utils.IsFinite(a) || !utils.IsFinite(b) {
-		input.Err = fmt.Errorf("calculus: coherence requires finite x, a, and b")
+		input.Err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: coherence requires finite x, a, and b",
+			nil,
+		))
 
 		return input
 	}

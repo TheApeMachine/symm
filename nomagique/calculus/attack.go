@@ -3,6 +3,8 @@ package calculus
 import (
 	"fmt"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
@@ -15,7 +17,11 @@ func Attack(input types.Frame) types.Frame {
 	jump, hasJump := input.Get(SymbolJump)
 
 	if !hasBase || !hasJump || !utils.IsFinite(base) || !utils.IsFinite(jump) {
-		input.Err = fmt.Errorf("calculus: attack requires finite base and jump")
+		input.Err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: attack requires finite base and jump",
+			nil,
+		))
 
 		return input
 	}

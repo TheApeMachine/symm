@@ -43,6 +43,7 @@ thresholds, and the readiness gate.
 func CrossLag(leftPrefix string, rightPrefix string) types.Primitive {
 	leftSeries := temporal.NewSeries(leftPrefix)
 	rightSeries := temporal.NewSeries(rightPrefix)
+	lagPrimitive := Lag(leftPrefix, rightPrefix)
 
 	return func(input types.Frame) types.Frame {
 		leftCount := leftSeries.Count(input)
@@ -79,7 +80,7 @@ func CrossLag(leftPrefix string, rightPrefix string) types.Primitive {
 		lagInput := input
 		lagInput.Put(SymbolLagSpacing, spacing)
 		lagInput.Put(SymbolMaximumLag, float64(maximumLag))
-		scan := Lag(leftPrefix, rightPrefix)(lagInput)
+		scan := lagPrimitive(lagInput)
 
 		if scan.Err != nil {
 			input.Err = scan.Err

@@ -3,6 +3,8 @@ package calculus
 import (
 	"fmt"
 
+	"github.com/theapemachine/errnie"
+
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
@@ -15,7 +17,11 @@ func Center(input types.Frame) types.Frame {
 	b, hasB := input.Get(PortB)
 
 	if !hasA || !hasB || !utils.IsFinite(a) || !utils.IsFinite(b) {
-		input.Err = fmt.Errorf("calculus: center requires finite a and b")
+		input.Err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: center requires finite a and b",
+			nil,
+		))
 
 		return input
 	}

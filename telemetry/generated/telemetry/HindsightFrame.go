@@ -7,19 +7,19 @@ import (
 )
 
 type HindsightFrameT struct {
-	CaptureId          int64                       `json:"captureId"`
-	Status             string                      `json:"status"`
-	Symbols            []*HindsightSymbolT         `json:"symbols"`
-	MissedPct          float64                     `json:"missedPct"`
-	UpboundPct         float64                     `json:"upboundPct"`
-	MissedLegs         int64                       `json:"missedLegs"`
-	TotalLegs          int64                       `json:"totalLegs"`
-	RealizedPct        float64                     `json:"realizedPct"`
-	ValueCaptureRate   float64                     `json:"valueCaptureRate"`
-	LegCaptureRate     float64                     `json:"legCaptureRate"`
-	DiagnosticCoverage float64                     `json:"diagnosticCoverage"`
-	RootCauses         []*HindsightRootCauseT      `json:"rootCauses"`
-	Recommendations    []*HindsightRecommendationT `json:"recommendations"`
+	CaptureId int64 `json:"captureId"`
+	Status string `json:"status"`
+	Symbols []*HindsightSymbolT `json:"symbols"`
+	MissedPct float64 `json:"missedPct"`
+	UpboundPct float64 `json:"upboundPct"`
+	MissedLegs int64 `json:"missedLegs"`
+	TotalLegs int64 `json:"totalLegs"`
+	RealizedPct float64 `json:"realizedPct"`
+	ValueCaptureRate float64 `json:"valueCaptureRate"`
+	LegCaptureRate float64 `json:"legCaptureRate"`
+	DiagnosticCoverage float64 `json:"diagnosticCoverage"`
+	RootCauses []*HindsightRootCauseT `json:"rootCauses"`
+	Recommendations []*HindsightRecommendationT `json:"recommendations"`
 }
 
 func (t *HindsightFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -259,6 +259,7 @@ func (rcv *HindsightFrame) RealizedPct() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightFrame) MutateRealizedPct(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -270,6 +271,7 @@ func (rcv *HindsightFrame) ValueCaptureRate() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightFrame) MutateValueCaptureRate(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -281,6 +283,7 @@ func (rcv *HindsightFrame) LegCaptureRate() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightFrame) MutateLegCaptureRate(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -292,6 +295,7 @@ func (rcv *HindsightFrame) DiagnosticCoverage() float64 {
 	}
 	return 0.0
 }
+
 func (rcv *HindsightFrame) MutateDiagnosticCoverage(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -307,6 +311,7 @@ func (rcv *HindsightFrame) RootCauses(obj *HindsightRootCause, j int) bool {
 	}
 	return false
 }
+
 func (rcv *HindsightFrame) RootCausesLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -326,6 +331,7 @@ func (rcv *HindsightFrame) Recommendations(obj *HindsightRecommendation, j int) 
 	}
 	return false
 }
+
 func (rcv *HindsightFrame) RecommendationsLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -361,26 +367,26 @@ func HindsightFrameAddMissedLegs(builder *flatbuffers.Builder, missedLegs int64)
 func HindsightFrameAddTotalLegs(builder *flatbuffers.Builder, totalLegs int64) {
 	builder.PrependInt64Slot(6, totalLegs, 0)
 }
-func HindsightFrameAddRealizedPct(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(7, value, 0.0)
+func HindsightFrameAddRealizedPct(builder *flatbuffers.Builder, realizedPct float64) {
+	builder.PrependFloat64Slot(7, realizedPct, 0.0)
 }
-func HindsightFrameAddValueCaptureRate(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(8, value, 0.0)
+func HindsightFrameAddValueCaptureRate(builder *flatbuffers.Builder, valueCaptureRate float64) {
+	builder.PrependFloat64Slot(8, valueCaptureRate, 0.0)
 }
-func HindsightFrameAddLegCaptureRate(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(9, value, 0.0)
+func HindsightFrameAddLegCaptureRate(builder *flatbuffers.Builder, legCaptureRate float64) {
+	builder.PrependFloat64Slot(9, legCaptureRate, 0.0)
 }
-func HindsightFrameAddDiagnosticCoverage(builder *flatbuffers.Builder, value float64) {
-	builder.PrependFloat64Slot(10, value, 0.0)
+func HindsightFrameAddDiagnosticCoverage(builder *flatbuffers.Builder, diagnosticCoverage float64) {
+	builder.PrependFloat64Slot(10, diagnosticCoverage, 0.0)
 }
-func HindsightFrameAddRootCauses(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(value), 0)
+func HindsightFrameAddRootCauses(builder *flatbuffers.Builder, rootCauses flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(rootCauses), 0)
 }
 func HindsightFrameStartRootCausesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func HindsightFrameAddRecommendations(builder *flatbuffers.Builder, value flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(value), 0)
+func HindsightFrameAddRecommendations(builder *flatbuffers.Builder, recommendations flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(recommendations), 0)
 }
 func HindsightFrameStartRecommendationsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

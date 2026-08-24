@@ -40,7 +40,13 @@ func (signal *Signal) Name() string { return "sentiment" }
 func (signal *Signal) Error() error { return signal.err }
 
 func (signal *Signal) Step(ticker kraken.TickerData) *data.Measurement[float64] {
-	return signal.ticker.Step(ticker)
+	measurement := signal.ticker.Step(ticker)
+
+	if measurement != nil {
+		signal.err = measurement.Err
+	}
+
+	return measurement
 }
 
 func (signal *Signal) Close() error {

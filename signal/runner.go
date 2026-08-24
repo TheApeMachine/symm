@@ -297,28 +297,6 @@ func (runner *Runner) publish(dataMeasurement *data.Measurement[float64]) {
 		return
 	}
 
-	if _, hasSep := measurement.Metrics[string(types.MetricHypothesisSeparation)]; !hasSep {
-		if mapping, ok := types.SignalMetricGroups[types.SourceType(measurement.Source)]; ok {
-			sampleMetrics := make(map[string]types.MetricSample, len(measurement.Metrics))
-			for k, v := range measurement.Metrics {
-				if _, exists := mapping[k]; exists {
-					sampleMetrics[k] = types.MetricSample{
-						Raw:        v.Raw,
-						Normalized: v.Normalized,
-					}
-				}
-			}
-			sep := types.MeasurementHypothesisSeparation(types.SourceType(measurement.Source), sampleMetrics)
-			metric := nmtypes.NewMetric(
-				string(types.MetricHypothesisSeparation),
-				sep,
-				nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless},
-			)
-			metric.Normalized = &sep
-			measurement.Metrics[string(types.MetricHypothesisSeparation)] = metric
-		}
-	}
-
 	runner.measurements.Publish(measurement)
 }
 

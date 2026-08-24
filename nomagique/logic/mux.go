@@ -13,20 +13,20 @@ Mux selects A when condition is non-zero, otherwise B.
 */
 func Mux(input types.Frame) types.Frame {
 	condition, hasCondition := input.Get(SymbolCondition)
-	a, hasA := input.Get(calculus.PortA)
-	b, hasB := input.Get(calculus.PortB)
+	trueValue, hasA := input.Get(calculus.PortA)
+	falseValue, hasB := input.Get(calculus.PortB)
 
 	if !hasCondition || !hasA || !hasB || !utils.IsFinite(condition) ||
-		!utils.IsFinite(a) || !utils.IsFinite(b) {
-		input.Err = fmt.Errorf("logic: mux requires finite condition, a, and b")
+		!utils.IsFinite(trueValue) || !utils.IsFinite(falseValue) {
+		input.Err = fmt.Errorf("logic: mux requires finite condition, true value, and false value")
 
 		return input
 	}
 
-	result := b
+	result := falseValue
 
 	if condition != 0 {
-		result = a
+		result = trueValue
 	}
 
 	input.Put(SymbolResult, result)

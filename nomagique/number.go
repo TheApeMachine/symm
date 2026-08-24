@@ -170,50 +170,67 @@ func (number *Number[Key]) CrossSection(
 		return types.Frame{}, false, nil
 	}
 
-	accumulator := types.Frame{}
-	reduced := false
-	var crossSectionErr error
+	results := make(chan *Frame, 1024)
+	var wg sync.WaitGroup
 
 	number.Range(func(peerKey Key, peer Frame) bool {
 		if peerKey == key {
 			return true
 		}
 
-		pairOutput := pair(focal, peer)
+		wg.Add(1)
+		go func(p Frame) {
+			defer wg.Done()
+			out := pair(focal, p)
+			results <- &out
+		}(peer)
 
-		if pairOutput.Err != nil {
-			crossSectionErr = pairOutput.Err
-			return false
+		return true
+	})
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	accumulator := types.Frame{}
+	reduced := false
+	var crossSectionErr error
+
+	for res := range results {
+		if res.Err != nil {
+			crossSectionErr = res.Err
+			continue
 		}
 
-		if !pairOutput.Finite() {
+		if !res.Finite() {
 			crossSectionErr = errnie.Error(errnie.Err(
 				errnie.Validation,
 				"number pair output must be finite",
 				nil,
 			))
-			return false
+			continue
 		}
 
 		accInput := accumulator
-		accInput.Merge(pairOutput)
+		accInput.Merge(*res)
 		accumulator = Step(reduce, accInput)
 
 		if accumulator.Err != nil {
 			crossSectionErr = accumulator.Err
-			return false
+			continue
 		}
 
 		reduced = true
-
-		return true
-	})
+	}
 
 	if crossSectionErr != nil || !reduced || finalize == nil {
 		return accumulator, reduced, crossSectionErr
 	}
 
-	return Step(finalize, accumulator), true, nil
+	final := Step(finalize, accumulator)
+
+	return final, true, final.Err
 }
 
 /*

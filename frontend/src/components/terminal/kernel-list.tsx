@@ -8,17 +8,12 @@ import { Gate } from "../ui/gate";
 import { Sparkline } from "../ui/sparkline";
 
 /*
-Thesis separation is the margin the winning hypothesis holds over its
-competitors, computed by the backend on every finalized measurement. It is the
-one number every source×symbol row carries in a shared [0, 1] domain, so it is
-the only reading safe to paint as a percentage and stretch into a sparkline —
-the per-source headline metrics (touch depth, RVOL, …) have their own unbounded
-scales, so a percent format would invent a fake percentage out of what is not a
-fraction. Every row is answered by the same separation; source and symbol scope
-select which measurement, not which metric.
+SNR is the signal power relative to estimated noise power, computed by the
+pipeline on every finalized measurement. It is the shared quality metric
+every source×symbol row carries to measure departure relative to historical noise.
 */
-const SEPARATION = "metrics.hypothesis_separation";
-const SEPARATION_RAW = `${SEPARATION}.raw`;
+const SNR = "metrics.snr";
+const SNR_RAW = `${SNR}.raw`;
 
 const interactive = (compact: boolean, source: string) => {
 	if (compact) {
@@ -35,27 +30,27 @@ const interactive = (compact: boolean, source: string) => {
 const KernelTrace = () => (
 	<div>
 		<Sparkline
-			bind={SEPARATION_RAW}
-			title="hypothesis separation trace"
+			bind={SNR_RAW}
+			title="signal-to-noise ratio trace"
 			className="h-6.5"
 		/>
 		<div className="mt-1 flex items-center gap-2">
 			<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
 				<div
-					data-set={SEPARATION_RAW}
+					data-set={SNR_RAW}
 					data-target="style.--strength"
 					className="h-full bg-(--acc)"
 					style={{ width: "calc(var(--strength, 0) * 100%)" }}
 				/>
 			</div>
 			<span
-				data-paint={SEPARATION_RAW}
-				data-paint-format=".0%"
+				data-paint={SNR_RAW}
+				data-paint-format=".1f"
 				className="w-8 shrink-0 text-right font-mono text-[10px] text-(--f2)"
 			/>
 			<span
-				data-paint={SEPARATION_RAW}
-				data-paint-format=".3f"
+				data-paint={SNR_RAW}
+				data-paint-format=".2f"
 				className="w-16 shrink-0 truncate text-right font-mono text-[9.5px] text-(--acc)"
 			/>
 		</div>
@@ -122,15 +117,15 @@ export const KernelList = ({
 							</div>
 
 							{/*
-								A row is a kernel's standing at a glance: the winning
-								hypothesis margin and the symbol it was measured on. Both
-								come from the same measurement row, so the two never describe
-								different observations.
+								A row is a kernel's standing at a glance: the signal-to-noise
+								ratio and the symbol it was measured on. Both come from the
+								same measurement row, so the two never describe different
+								observations.
 							*/}
 							<div className="mt-0.5 flex items-baseline gap-1.5 truncate font-mono text-[9.5px] text-(--f4)">
 								<span
-									data-paint={SEPARATION_RAW}
-									data-paint-format=".0%"
+									data-paint={SNR_RAW}
+									data-paint-format=".1f"
 									className="text-(--acc)"
 								/>
 								<span data-paint="symbol" />

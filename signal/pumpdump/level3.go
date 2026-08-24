@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"fmt"
 	"time"
 
 	book "github.com/krakenfx/api-go/v2/pkg/book"
@@ -68,12 +69,28 @@ The shared book is type-asserted to *book.Book; a missing book or a missing
 touch field panics rather than being silently swallowed.
 */
 func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	shared, _ := level3.workspace.Shared("book", symbol)
-	resident := shared.(*book.Book)
+	shared, found := level3.workspace.Shared("book", symbol)
+
+	if !found {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: shared book missing for %s", symbol)}
+	}
+
+	resident, ok := shared.(*book.Book)
+
+	if !ok {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: shared book has unexpected type for %s", symbol)}
+	}
+
+	bestBid := resident.BestBid()
+	bestAsk := resident.BestAsk()
+
+	if bestBid == nil || bestAsk == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: book touch missing for %s", symbol)}
+	}
 
 	input := nmtypes.Frame{}
-	input.Put(symbolBidPrice, resident.BestBid().Price.Float64())
-	input.Put(symbolAskPrice, resident.BestAsk().Price.Float64())
+	input.Put(symbolBidPrice, bestBid.Price.Float64())
+	input.Put(symbolAskPrice, bestAsk.Price.Float64())
 
 	return level3.projector.Project(
 		symbol,

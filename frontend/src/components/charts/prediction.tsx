@@ -248,7 +248,6 @@ const VectorLane = ({
 	color,
 	scale,
 	ghost,
-	showValues,
 }: {
 	/* Path inside the focused resonance row. */
 	select: string;
@@ -256,7 +255,6 @@ const VectorLane = ({
 	meta: string;
 	color: string;
 	scale?: "max-abs";
-	showValues?: boolean;
 	/*
 		Sibling path holding what this lane's vector was predicted to be. Drawn
 		full-slot behind the narrower settled bar so the residual reads as the
@@ -294,26 +292,7 @@ const VectorLane = ({
 							/>
 						</div>
 					))}
-					{showValues === true &&
-						slots.map((slot) => (
-							<div
-								key={`${select}-${slot}-value`}
-								data-index={slot}
-								className="pointer-events-none absolute top-1/2 z-10 -translate-y-1/2 px-1"
-								style={{
-									left: `${(slot / slots.length) * 100}%`,
-									width: `${100 / slots.length}%`,
-								}}
-							>
-								<span
-									data-paint="$"
-									data-paint-format=".3f"
-									className="block overflow-hidden rounded-sm bg-black/65 px-1 text-center font-mono text-[10px] leading-4 text-(--f1) shadow-[0_0_8px_rgba(0,0,0,0.8)]"
-								>
-									—
-								</span>
-							</div>
-						))}
+
 				</div>
 			</div>
 		)}
@@ -399,7 +378,6 @@ export const TerminalPredictionChart = () => (
 			meta="signed direction lean · t+1 → t+k"
 			color="bg-(--acc)"
 			scale="max-abs"
-			showValues
 		/>
 	</div>
 );

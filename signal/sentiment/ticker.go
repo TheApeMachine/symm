@@ -1,6 +1,7 @@
 package sentiment
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/theapemachine/symm/kraken"
@@ -114,10 +115,13 @@ cross-section in the workspace pool.
 */
 func NewTicker(workspace *runtime.Workspace) *Ticker {
 	section := data.NewCrossSection()
+	shared, found := workspace.Shared("cross_section")
 
-	if shared, found := workspace.Shared("cross_section"); found {
+	if found {
 		section = shared.(*data.CrossSection)
-	} else {
+	}
+
+	if !found {
 		workspace.Share("cross_section", section)
 	}
 
@@ -215,6 +219,10 @@ folds the resulting Snapshot into the same single measurement before
 projecting.
 */
 func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
+	if tick.Last == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("sentiment: ticker requires a last price")}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(nmtypes.SampleValue, tick.Last.Float64())
 	input.Put(nmtypes.EventTimeSec, float64(tick.Timestamp.Unix()))

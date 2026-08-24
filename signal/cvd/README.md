@@ -632,7 +632,7 @@ Let the stream epoch begin at \(t_e\).
 \[
 \boxed{
 C_Q(t)=
-\sum_{t_e<t_i\le t}s_iq_i
+\sum_{t_e\le t_i\le t}s_iq_i
 }
 \]
 
@@ -643,7 +643,7 @@ C_Q(t)=
 \[
 \boxed{
 C_N(t)=
-\sum_{t_e<t_i\le t}s_ip_iq_i
+\sum_{t_e\le t_i\le t}s_ip_iq_i
 }
 \]
 

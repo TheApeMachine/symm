@@ -23,7 +23,7 @@ current observation, then explicitly publishes that center as the baseline fact.
 */
 func CausalBaseline() types.Primitive {
 	return types.Pipe(
-		types.Retained(statistic.Mean),
+		statistic.Mean,
 		temporal.Window(""),
 		statistic.Stability(""),
 		temporal.Governor,

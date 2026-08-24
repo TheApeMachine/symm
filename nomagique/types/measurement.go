@@ -29,6 +29,7 @@ type Measurement struct {
 	PeerAt           time.Time                   `json:"peerAt,omitempty"`
 	PeerObservedFrom time.Time                   `json:"peerObservedFrom,omitempty"`
 	Maturity         float64                     `json:"maturity"`
+	SNR              float64                     `json:"snr"`
 	Metrics          map[string]*Metric[float64] `json:"metrics,omitempty"`
 	Metadata         map[string]float64          `json:"metadata,omitempty"`
 	Err              error                       `json:"-"`

@@ -97,7 +97,15 @@ func PredictiveDynamics(input types.Frame) types.Frame {
 	}
 
 	deltaTime := observedAt - previousAt
-	previousPosition := input.MustGet(SymbolDynamicsPreviousPosition)
+	previousPosition, hasPreviousPosition := input.Get(SymbolDynamicsPreviousPosition)
+
+	if !hasPreviousPosition {
+		input.Err = fmt.Errorf(
+			"predictive dynamics: previous position required",
+		)
+		return input
+	}
+
 	previousVelocity, _ := input.Get(SymbolDynamicsPreviousVelocity)
 	previousMemory, _ := input.Get(SymbolDynamicsPreviousMemory)
 	previousEnergy, _ := input.Get(SymbolDynamicsPreviousEnergy)

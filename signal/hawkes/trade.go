@@ -1,6 +1,7 @@
 package hawkes
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -334,6 +335,12 @@ Step receives one trade, loads its mark and event time, runs the Number
 pipeline, and projects exactly one Measurement.
 */
 func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64] {
+	if observation.Side != "buy" && observation.Side != "sell" {
+		return &data.Measurement[float64]{Err: fmt.Errorf(
+			"hawkes: unsupported trade side %q", observation.Side,
+		)}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(statistic.SymbolMark, markForSide(observation.Side))
 	input.Put(statistic.SymbolUnixSec, float64(observation.Timestamp.Unix()))

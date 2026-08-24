@@ -34,8 +34,9 @@ type Crypto struct {
 	bus         *runtime.Workspace
 	thesis      *types.Thesis
 	recorder    *audit.Recorder
-	desk        *broker.Desk
-	diagnostics *Diagnostics
+	desk          *broker.Desk
+	diagnostics   *Diagnostics
+	diagnosticsCh *runtime.Channel[StreamDiagnostics]
 }
 
 /*
@@ -72,6 +73,10 @@ func NewCrypto(
 		crypto.fluid = runtime.ChannelOf[types.FluidFrame](
 			bus, types.ChannelFluid,
 			func(frame types.FluidFrame) string { return frame.Channel },
+		)
+		crypto.diagnosticsCh = runtime.ChannelOf[StreamDiagnostics](
+			bus, types.ChannelDiagnostics,
+			func(diag StreamDiagnostics) string { return "" },
 		)
 	}
 

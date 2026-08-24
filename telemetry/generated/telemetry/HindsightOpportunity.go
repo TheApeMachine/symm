@@ -7,12 +7,12 @@ import (
 )
 
 type HindsightOpportunityT struct {
-	Leg       *HindsightLegT       `json:"leg"`
-	Signal    *HindsightSignalT    `json:"signal"`
-	Journal   []*HindsightSignalT  `json:"journal"`
-	Why       string               `json:"why"`
-	Captured  bool                 `json:"captured"`
-	Missed    bool                 `json:"missed"`
+	Leg *HindsightLegT `json:"leg"`
+	Signal *HindsightSignalT `json:"signal"`
+	Journal []*HindsightSignalT `json:"journal"`
+	Why string `json:"why"`
+	Captured bool `json:"captured"`
+	Missed bool `json:"missed"`
 	Diagnosis *HindsightDiagnosisT `json:"diagnosis"`
 }
 
@@ -35,11 +35,11 @@ func (t *HindsightOpportunityT) Pack(builder *flatbuffers.Builder) flatbuffers.U
 		}
 		journalOffset = builder.EndVector(journalLength)
 	}
-	diagnosisOffset := t.Diagnosis.Pack(builder)
 	whyOffset := flatbuffers.UOffsetT(0)
 	if t.Why != "" {
 		whyOffset = builder.CreateString(t.Why)
 	}
+	diagnosisOffset := t.Diagnosis.Pack(builder)
 	HindsightOpportunityStart(builder)
 	HindsightOpportunityAddLeg(builder, legOffset)
 	HindsightOpportunityAddSignal(builder, signalOffset)
@@ -64,9 +64,7 @@ func (rcv *HindsightOpportunity) UnPackTo(t *HindsightOpportunityT) {
 	t.Why = string(rcv.Why())
 	t.Captured = rcv.Captured()
 	t.Missed = rcv.Missed()
-	if diagnosis := rcv.Diagnosis(nil); diagnosis != nil {
-		t.Diagnosis = diagnosis.UnPack()
-	}
+	t.Diagnosis = rcv.Diagnosis(nil).UnPack()
 }
 
 func (rcv *HindsightOpportunity) UnPack() *HindsightOpportunityT {

@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,15 +29,16 @@ the oldest retained value under overload, so the pipeline never queues behind
 the market and producers never block.
 */
 type Workspace struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	pool     *Pool[func()]
-	channels sync.Map // string → *Channel[T]
-	taps     sync.Map // StreamKey → []func(string, any)
-	shared   sync.Map // string → any (shared-object pool)
-	listeners sync.Map // string → []func() (trigger fan-out)
-	firstErr atomic.Pointer[error]
-	failure  func(error)
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pool        *Pool[func()]
+	channels    sync.Map // string → *Channel[T]
+	taps        sync.Map // StreamKey → []func(string, any)
+	shared      sync.Map // string → any (shared-object pool)
+	listeners   sync.Map // string → []func() (trigger fan-out)
+	listenersMu sync.Mutex
+	firstErr    atomic.Pointer[error]
+	failure     func(error)
 }
 
 /*
@@ -480,15 +483,24 @@ func (workspace *Workspace) Share(name string, value any, ids ...string) {
 }
 
 func sharedKey(name string, ids []string) string {
-	key := name
+	var key strings.Builder
+	writeKeyComponent(&key, name)
 
 	for _, id := range ids {
 		if id != "" {
-			key += ":" + id
+			writeKeyComponent(&key, id)
 		}
 	}
 
-	return key
+	return key.String()
+}
+
+// writeKeyComponent length-prefixes one shared-key component so embedded
+// separators (such as colons) cannot collide with the component boundary.
+func writeKeyComponent(key *strings.Builder, value string) {
+	key.WriteString(strconv.Itoa(len(value)))
+	key.WriteByte(':')
+	key.WriteString(value)
 }
 
 /*
@@ -519,8 +531,11 @@ func (workspace *Workspace) On(topic string, fn func()) {
 		return
 	}
 
+	workspace.listenersMu.Lock()
+	defer workspace.listenersMu.Unlock()
+
 	current, _ := workspace.listeners.LoadOrStore(topic, []func(){})
-	updated := append(current.([]func()), fn)
+	updated := append(append([]func(){}, current.([]func())...), fn)
 	workspace.listeners.Store(topic, updated)
 }
 

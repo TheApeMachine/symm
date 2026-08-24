@@ -1,8 +1,9 @@
 package calculus
 
 import (
-	"fmt"
 	"math"
+
+	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
@@ -15,7 +16,11 @@ func Absolute(input types.Frame) types.Frame {
 	x, found := input.Get(PortX)
 
 	if !found || !utils.IsFinite(x) {
-		input.Err = fmt.Errorf("calculus: absolute requires finite x")
+		input.Err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"calculus: absolute requires finite x",
+			nil,
+		))
 
 		return input
 	}

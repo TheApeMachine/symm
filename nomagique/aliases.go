@@ -35,7 +35,6 @@ var (
 	PrimitiveError   = types.PrimitiveError
 	Relay            = types.Relay
 	RegisteredSymbols = types.RegisteredSymbols
-	Retained         = types.Retained
 	State           = types.State
 	Step             = types.Step
 	SymbolName       = types.SymbolName
