@@ -67,7 +67,7 @@ func newTradeVolumePrice(
 		},
 	})
 
-	return NewPrice(api)
+	return newTestPrice(testCase, api)
 }
 
 func TestPriceFee(t *testing.T) {

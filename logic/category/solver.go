@@ -159,8 +159,7 @@ func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Meas
 			continue
 		}
 
-		metricKey := types.MetricKey(schema.Metric, schema.Side)
-		sample, exists := measurement.Metrics[metricKey]
+		sample, exists := measurement.Metrics[schema.Metric]
 
 		if !exists || sample.Normalized == nil || *sample.Normalized <= 0 {
 			continue
@@ -171,7 +170,7 @@ func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Meas
 		)
 
 		state.supporting[schema.Category] = append(
-			state.supporting[schema.Category], string(schema.Source)+":"+metricKey,
+			state.supporting[schema.Category], string(schema.Source)+":"+schema.Metric,
 		)
 
 		if !state.maturitySet[schema.Category] {

@@ -43,7 +43,7 @@ func BenchmarkDecisionWire(b *testing.B) {
 	}
 	b.ReportAllocs()
 
-	for range b.N {
+	for b.Loop() {
 		DecisionWire(decision, 2, false)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -14,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/logic/cognition"
+	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -331,21 +333,28 @@ func BootWithHub(
 			})
 		})
 
-		bus.Observe(types.ChannelGraphs, func(_ string, _ string, value any) {
-			graph, ok := value.(*types.Graph)
+		bus.Observe(types.ChannelRelations, func(_ string, _ string, value any) {
+			update, ok := value.(graph.GraphUpdate)
 
-			if !ok || graph == nil {
+			if !ok || update.Symbol != types.Focus() {
 				return
 			}
 
-			// The dashboard renders the focused symbol's graph.
-			if graph.Symbol != types.Focus() {
+			shared, found := bus.Shared(graph.SharedInfluenceGraph, "")
+
+			if !found {
+				return
+			}
+
+			influence, ok := shared.(*graph.InfluenceGraph)
+
+			if !ok {
 				return
 			}
 
 			uiChannel.Publish(&types.UIFrame{
 				Type:  wire.FrameGraphFrame,
-				Value: graph.Wire(),
+				Value: graph.InfluenceGraphWire(influence, update.Symbol, update.At),
 			})
 		})
 
@@ -461,6 +470,19 @@ func BootWithHub(
 
 	signalRunner.ObserveModule = crypto.ObserveModule()
 
+	// The Influence Graph stage subscribes to ChannelMeasurements, maintains the
+	// shared Influence Graph in place, and publishes a GraphUpdate per symbol on
+	// ChannelRelations — which the boot observer above projects into the
+	// dashboard graph frame for the focused symbol.
+	graphSolver := graph.NewSolver(
+		systemCtx,
+		bus,
+		1,
+		512,
+		strategy.RelationPlansFromSchema(strategy.DefaultCausalSchema(1, time.Second), 1, 30*time.Second),
+		strategy.DefaultCausalSchema(1, time.Second).Version,
+	)
+
 	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, bus)
 	planner.ObserveModule = crypto.ObserveModule()
 	planner.ObserveHop = crypto.ObserveHop()
@@ -498,6 +520,7 @@ func BootWithHub(
 			return nil
 		},
 		signalRunner.Close,
+		graphSolver.Close,
 		planner.Close,
 		resonanceSolver.Close,
 		crypto.Close,

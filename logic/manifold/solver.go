@@ -273,14 +273,10 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
 		return nil
 	}
 
-	if string(measurement.Source) == string(types.SourceHawkes) {
+	if measurement.Source == string(types.SourceHawkes) {
 		entry := solver.driveFor(measurement.Symbol)
-		buySample := measurement.Metrics[types.MetricKey(
-			types.MetricExcitationAmplitude, types.SideBuyToBuy,
-		)]
-		sellSample := measurement.Metrics[types.MetricKey(
-			types.MetricExcitationAmplitude, types.SideSellToSell,
-		)]
+		buySample := measurement.Metrics["excitation_intensity:buy"]
+		sellSample := measurement.Metrics["excitation_intensity:sell"]
 
 		if buySample != nil && buySample.Normalized != nil {
 			entry.buy = *buySample.Normalized
@@ -290,15 +286,11 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
 			entry.sell = *sellSample.Normalized
 		}
 
-		if etaMetric := measurement.Metrics[types.MetricKey(
-			types.MetricSpectralRadius, types.SideNone,
-		)]; etaMetric != nil {
+		if etaMetric := measurement.Metrics["branching_spectral_radius"]; etaMetric != nil {
 			entry.eta = etaMetric.Raw
 		}
 
-		if betaMetric := measurement.Metrics[types.MetricKey(
-			types.MetricDecayRate, types.SideNone,
-		)]; betaMetric != nil {
+		if betaMetric := measurement.Metrics["background_rate"]; betaMetric != nil {
 			entry.beta = betaMetric.Raw
 		}
 

@@ -9,6 +9,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/cmd"
+	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -89,10 +90,10 @@ func TestPipelineFrameInventory(t *testing.T) {
 			})
 
 			graphCount := 0
-			runtime.ChannelOf[*types.Graph](
-				system.Bus, types.ChannelGraphs,
-				func(graph *types.Graph) string { return graph.Symbol },
-			).Subscribe("graph-inventory", func(graph *types.Graph) error {
+			runtime.ChannelOf[graph.GraphUpdate](
+				system.Bus, types.ChannelRelations,
+				func(update graph.GraphUpdate) string { return update.Symbol },
+			).Subscribe("graph-inventory", func(update graph.GraphUpdate) error {
 				mu.Lock()
 				graphCount++
 				mu.Unlock()

@@ -26,20 +26,17 @@ func TestRegimeProfilePrecursorExpectation(t *testing.T) {
 				ShouldBeGreaterThan, 1)
 			So(expectation.Contract.Metrics, ShouldContain,
 				PrecursorMetricExpectation{
-					Metric:            coretypes.MetricPrecursor,
-					Side:              coretypes.SideBuy,
+					Metric:            "volume_bar_notional",
 					MinimumNormalized: PositiveEvidenceFloor,
 				})
 			So(expectation.Contract.Metrics, ShouldContain,
 				PrecursorMetricExpectation{
-					Metric:            coretypes.MetricRVOL,
-					Side:              coretypes.SideNone,
+					Metric:            "volume_bar_quantity",
 					MinimumNormalized: NormalizedEmpiricalRatioBaseline,
 				})
 			So(expectation.Contract.Metrics, ShouldContain,
 				PrecursorMetricExpectation{
-					Metric:            coretypes.MetricCompression,
-					Side:              coretypes.SideNone,
+					Metric:            "relative_spread",
 					MinimumNormalized: PositiveEvidenceFloor,
 				})
 			So(expectation.Contract.Categories,

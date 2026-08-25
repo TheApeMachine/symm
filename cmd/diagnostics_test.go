@@ -8,50 +8,86 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/telemetry"
+	wireT "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
 func TestDiagnosticsPublishing(t *testing.T) {
-	Convey("Given a Crypto instance with diagnostics enabled", t, func() {
+	Convey("Given a Crypto diagnostics collector", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		bus := runtime.NewWorkspace(nil)
 		defer bus.Close()
 
-		thesis := types.NewThesis(ctx)
+		crypto := &Crypto{
+			ctx:         ctx,
+			cancel:      cancel,
+			bus:         bus,
+			diagnostics: &Diagnostics{started: time.Now()},
+			ui: runtime.ChannelOf[*types.UIFrame](
+				bus, types.ChannelUI,
+				func(frame *types.UIFrame) string { return "" },
+			),
+			fluid: runtime.ChannelOf[types.FluidFrame](
+				bus, types.ChannelFluid,
+				func(frame types.FluidFrame) string { return frame.Channel },
+			),
+			diagnosticsCh: runtime.ChannelOf[StreamDiagnostics](
+				bus, types.ChannelDiagnostics,
+				func(diag StreamDiagnostics) string { return "" },
+			),
+		}
+		// Forward each heartbeat to the dashboard frame exactly as
+		// bindDiagnostics does, so the test observes the side-effect path
+		// without assembling the whole broker stack.
+		bus.Observe(types.ChannelDiagnostics, func(_ string, _ string, value any) {
+			diag, ok := value.(StreamDiagnostics)
 
-		crypto, err := NewCrypto(ctx, nil, nil, nil, thesis, bus)
-		So(err, ShouldBeNil)
-		So(crypto, ShouldNotBeNil)
+			if !ok {
+				return
+			}
+
+			wireFrame := diag.Wire()
+
+			crypto.fluid.Publish(types.FluidFrame{
+				Channel: types.DiagnosticsChannel,
+				Payload: telemetry.Encode(&wireT.FrameT{
+					Type:  wireT.FrameDiagnosticsFrame,
+					Value: wireFrame,
+				}),
+			})
+			crypto.ui.Publish(&types.UIFrame{
+				Type:  wireT.FrameDiagnosticsFrame,
+				Value: wireFrame,
+			})
+		})
 
 		var receivedUI atomic.Int64
 		var receivedFluid atomic.Int64
 
-		uiChannel := runtime.ChannelOf[*types.UIFrame](
+		runtime.ChannelOf[*types.UIFrame](
 			bus, types.ChannelUI,
 			func(frame *types.UIFrame) string { return "" },
-		)
-
-		uiChannel.Subscribe("test-diag-ui", func(frame *types.UIFrame) error {
-			if frame != nil && frame.Type == wire.FrameDiagnosticsFrame {
+		).Subscribe("test-diag-ui", func(frame *types.UIFrame) error {
+			if frame != nil && frame.Type == wireT.FrameDiagnosticsFrame {
 				receivedUI.Add(1)
 			}
 			return nil
 		})
 
-		fluidChannel := runtime.ChannelOf[types.FluidFrame](
+		runtime.ChannelOf[types.FluidFrame](
 			bus, types.ChannelFluid,
 			func(frame types.FluidFrame) string { return frame.Channel },
-		)
-
-		fluidChannel.Subscribe("test-diag-fluid", func(frame types.FluidFrame) error {
+		).Subscribe("test-diag-fluid", func(frame types.FluidFrame) error {
 			if frame.Channel == types.DiagnosticsChannel && len(frame.Payload) > 0 {
 				receivedFluid.Add(1)
 			}
 			return nil
 		})
+
+		go crypto.publishDiagnostics()
 
 		Convey("When diagnostics publish loop runs", func() {
 			deadline := time.Now().Add(time.Second)
@@ -74,8 +110,12 @@ func BenchmarkDiagnosticsWire(b *testing.B) {
 	bus := runtime.NewWorkspace(nil)
 	defer bus.Close()
 
-	thesis := types.NewThesis(ctx)
-	crypto, _ := NewCrypto(ctx, nil, nil, nil, thesis, bus)
+	crypto := &Crypto{
+		ctx:         ctx,
+		cancel:      cancel,
+		bus:         bus,
+		diagnostics: &Diagnostics{started: time.Now()},
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()

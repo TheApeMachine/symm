@@ -17,80 +17,6 @@ type Category struct {
 	Missing     []string     `json:"missing,omitempty"`
 }
 
-/*
-CategorySchema declares which measured value is fed to a category input.
-It carries identity only; nomagique owns extraction and classification.
-*/
-type CategorySchema struct {
-	Source   SourceType
-	Metric   MetricType
-	Side     MeasurementSide
-	Category CategoryType
-}
-
-/*
-CategorySchemas maps signal scores to the category evidence they already
-represent. Repeated categories are combined by the nomagique classifier path.
-
-VerticalIgnition is the corroborated ignition complex: PumpDump's volume
-breakout anchors it, with Hawkes' near-critical cascade clustering, DepthFlow's
-hollow ask book, and CVD's aggressive drive as corroborating legs. The
-classifier combines a category's legs by geometric mean, which is a
-conjunction — any weak leg drags the composite down, so the category only
-carries mass when the whole complex agrees, with no fixed thresholds anywhere.
-Absent legs simply do not contribute.
-
-The classifier breaks exact score ties by first appearance in this list, so
-the corroborating rows must stay after every single-axis row they extend: one
-source's evidence alone keeps its own single-axis label, and only the
-corroborated complex carries the ignition name.
-*/
-var CategorySchemas = []CategorySchema{
-	{Source: SourceCorrelation, Metric: MetricHerdScore, Category: SystemicHerd},
-	{Source: SourceCorrelation, Metric: MetricAlphaScore, Category: DecoupledAlpha},
-	{Source: SourceCorrelation, Metric: MetricNoiseScore, Category: StochasticNoise},
-	{Source: SourceCorrelation, Metric: MetricStressScore, Category: DivergentStress},
-	{Source: SourceCVD, Metric: MetricAbsorption, Category: HiddenAbsorption},
-	{Source: SourceCVD, Metric: MetricDrive, Category: AggressiveDrive},
-	{Source: SourceCVD, Metric: MetricBalance, Category: StochasticBalance},
-	{Source: SourceCVD, Metric: MetricStarvation, Category: VolumeStarvation},
-	{Source: SourceHawkes, Metric: MetricSpectralRadius, Category: Turbulent},
-	{Source: SourceDepthFlow, Metric: MetricLoadedScore, Category: LoadedImbalance},
-	{Source: SourceDepthFlow, Metric: MetricSpoofScore, Category: SpoofTrap},
-	{Source: SourceDepthFlow, Metric: MetricThinScore, Category: BookThinning},
-	{Source: SourceDepthFlow, Metric: MetricNeutralScore, Category: DenseNeutrality},
-	{Source: SourceExhaustion, Metric: MetricMechanical, Side: SideBuy, Category: MechanicalCollapse},
-	{Source: SourceExhaustion, Metric: MetricMechanical, Side: SideSell, Category: MechanicalCollapse},
-	{Source: SourceExhaustion, Metric: MetricThermal, Side: SideBuy, Category: ThermalExhaustion},
-	{Source: SourceExhaustion, Metric: MetricThermal, Side: SideSell, Category: ThermalExhaustion},
-	{Source: SourceExhaustion, Metric: MetricFragile, Side: SideBuy, Category: FragileExpansion},
-	{Source: SourceExhaustion, Metric: MetricFragile, Side: SideSell, Category: FragileExpansion},
-	{Source: SourceExhaustion, Metric: MetricReversal, Side: SideBuy, Category: ActiveReversal},
-	{Source: SourceExhaustion, Metric: MetricReversal, Side: SideSell, Category: ActiveReversal},
-	{Source: SourceLeadLag, Metric: MetricInefficient, Category: InefficientLag},
-	{Source: SourceLeadLag, Metric: MetricSync, Category: SynchronizedDrift},
-	{Source: SourceLeadLag, Metric: MetricDecoupled, Category: DecoupledMove},
-	{Source: SourceLeadLag, Metric: MetricStall, Category: AnchorStall},
-	{Source: SourcePumpDump, Metric: MetricCompression, Category: CoiledCompression},
-	{Source: SourcePumpDump, Metric: MetricPrecursor, Side: SideBuy, Category: OrganicTrend},
-	{Source: SourcePumpDump, Metric: MetricPrecursor, Side: SideSell, Category: OrganicTrend},
-	{Source: SourcePumpDump, Metric: MetricExhaustion, Side: SideBuy, Category: FadedExhaustion},
-	{Source: SourcePumpDump, Metric: MetricExhaustion, Side: SideSell, Category: FadedExhaustion},
-	{Source: SourceLiquidity, Metric: MetricScarcityScore, Category: ExtremeScarcity},
-	{Source: SourceSentiment, Metric: MetricSurgeScore, Category: RiskOnSurge},
-	{Source: SourceSentiment, Metric: MetricDivergentScore, Category: DivergentMove},
-	{Source: SourceSentiment, Metric: MetricSlumpScore, Category: SystemicSlump},
-	{Source: SourceDerivatives, Metric: MetricLeveragedIgnition, Category: LeveragedIgnition},
-	{Source: SourceDerivatives, Metric: MetricShortSqueeze, Category: ShortSqueeze},
-	{Source: SourceDerivatives, Metric: MetricAdverseLeverageBuildup, Category: AdverseLeverageBuildup},
-	{Source: SourceDerivatives, Metric: MetricLongDeleveraging, Category: LongDeleveraging},
-	{Source: SourceDerivatives, Metric: MetricDerivativesDecoupling, Category: DerivativesDecoupling},
-	{Source: SourcePumpDump, Metric: MetricRVOL, Category: VerticalIgnition},
-	{Source: SourceCVD, Metric: MetricDrive, Category: VerticalIgnition},
-	{Source: SourceHawkes, Metric: MetricSpectralRadius, Category: VerticalIgnition},
-	{Source: SourceDepthFlow, Metric: MetricThinScore, Category: VerticalIgnition},
-}
-
 type CategoryType string
 
 const (
@@ -153,35 +79,35 @@ const (
 )
 
 const (
-	CategoryForecastEdge       CategoryType = ForecastEdge
-	CategoryPhysicalField      CategoryType = PhysicalField
-	CategoryLaminar            CategoryType = Laminar
-	CategoryTurbulent          CategoryType = Turbulent
-	CategoryInertial           CategoryType = Inertial
-	CategoryViscous            CategoryType = Viscous
-	CategoryFrenzy             CategoryType = Frenzy
-	CategorySaturation         CategoryType = Saturation
-	CategoryOrganic            CategoryType = Organic
-	CategoryExhaustion         CategoryType = Exhaustion
-	CategoryHiddenAbsorption   CategoryType = HiddenAbsorption
-	CategoryAggressiveDrive    CategoryType = AggressiveDrive
-	CategoryStochasticBalance  CategoryType = StochasticBalance
-	CategoryVolumeStarvation   CategoryType = VolumeStarvation
-	CategoryLoadedImbalance    CategoryType = LoadedImbalance
-	CategorySpoofTrap          CategoryType = SpoofTrap
-	CategoryBookThinning       CategoryType = BookThinning
-	CategoryDenseNeutrality    CategoryType = DenseNeutrality
-	CategoryInefficientLag     CategoryType = InefficientLag
-	CategorySynchronizedDrift  CategoryType = SynchronizedDrift
-	CategoryDecoupledMove      CategoryType = DecoupledMove
-	CategoryAnchorStall        CategoryType = AnchorStall
-	CategoryVerticalIgnition   CategoryType = VerticalIgnition
-	CategoryCoiledCompression  CategoryType = CoiledCompression
-	CategoryOrganicTrend       CategoryType = OrganicTrend
-	CategoryFadedExhaustion    CategoryType = FadedExhaustion
-	CategoryExtremeScarcity    CategoryType = ExtremeScarcity
-	CategoryMedianDepth        CategoryType = MedianDepth
-	CategoryRobustLiquidity    CategoryType = RobustLiquidity
+	CategoryForecastEdge           CategoryType = ForecastEdge
+	CategoryPhysicalField          CategoryType = PhysicalField
+	CategoryLaminar                CategoryType = Laminar
+	CategoryTurbulent              CategoryType = Turbulent
+	CategoryInertial               CategoryType = Inertial
+	CategoryViscous                CategoryType = Viscous
+	CategoryFrenzy                 CategoryType = Frenzy
+	CategorySaturation             CategoryType = Saturation
+	CategoryOrganic                CategoryType = Organic
+	CategoryExhaustion             CategoryType = Exhaustion
+	CategoryHiddenAbsorption       CategoryType = HiddenAbsorption
+	CategoryAggressiveDrive        CategoryType = AggressiveDrive
+	CategoryStochasticBalance      CategoryType = StochasticBalance
+	CategoryVolumeStarvation       CategoryType = VolumeStarvation
+	CategoryLoadedImbalance        CategoryType = LoadedImbalance
+	CategorySpoofTrap              CategoryType = SpoofTrap
+	CategoryBookThinning           CategoryType = BookThinning
+	CategoryDenseNeutrality        CategoryType = DenseNeutrality
+	CategoryInefficientLag         CategoryType = InefficientLag
+	CategorySynchronizedDrift      CategoryType = SynchronizedDrift
+	CategoryDecoupledMove          CategoryType = DecoupledMove
+	CategoryAnchorStall            CategoryType = AnchorStall
+	CategoryVerticalIgnition       CategoryType = VerticalIgnition
+	CategoryCoiledCompression      CategoryType = CoiledCompression
+	CategoryOrganicTrend           CategoryType = OrganicTrend
+	CategoryFadedExhaustion        CategoryType = FadedExhaustion
+	CategoryExtremeScarcity        CategoryType = ExtremeScarcity
+	CategoryMedianDepth            CategoryType = MedianDepth
+	CategoryRobustLiquidity        CategoryType = RobustLiquidity
 	CategoryRiskOnSurge            CategoryType = RiskOnSurge
 	CategoryDivergentMove          CategoryType = DivergentMove
 	CategorySystemicSlump          CategoryType = SystemicSlump
@@ -284,4 +210,128 @@ func CategoryByIndex(index int) CategoryType {
 	}
 
 	return CategoryOrder[index-1]
+}
+
+/*
+CategorySchema declares which measured value is fed to a category input. It
+carries identity only: the signal source and the metric name string exactly as
+the Measurement.Metrics map keys it (including any ":side" suffix). The
+nomagique classifier owns extraction and classification.
+*/
+type CategorySchema struct {
+	Source   SourceType
+	Metric   string
+	Category CategoryType
+}
+
+/*
+CategorySchemas maps signal metric names to the category evidence they
+represent. Keys are the exact metric name strings the signals emit — never a
+reconstructed enum — so the category solver reads Measurement.Metrics directly
+without inventing identity. Repeated categories are combined by the geometric
+mean: a conjunction where any weak leg drags the composite down, so a category
+carries mass only when the whole complex agrees. Absent legs contribute
+nothing. Ties break by first appearance, so corroborated rows follow the
+single-axis rows they extend.
+
+VerticalIgnition is the corroborated ignition complex: PumpDump's volume
+breakout anchors it, with Hawkes' near-critical cascade clustering, DepthFlow's
+hollow ask book, and CVD's aggressive drive as corroborating legs.
+*/
+var CategorySchemas = []CategorySchema{
+	// Correlation: dependence structure across the pair/cohort.
+	{Source: SourceCorrelation, Metric: "signed_correlation", Category: SystemicHerd},
+	{Source: SourceCorrelation, Metric: "cohort_signed_correlation", Category: SystemicHerd},
+	{Source: SourceCorrelation, Metric: "relative_return_energy_zscore", Category: DecoupledAlpha},
+	{Source: SourceCorrelation, Metric: "relative_return_energy_divergence", Category: DecoupledAlpha},
+	{Source: SourceCorrelation, Metric: "correlation_zscore", Category: StochasticNoise},
+	{Source: SourceCorrelation, Metric: "correlation_divergence", Category: DivergentStress},
+	{Source: SourceCorrelation, Metric: "cohort_correlation_dispersion", Category: DivergentStress},
+
+	// Lead-lag: temporal leadership / alignment between pairs.
+	{Source: SourceLeadLag, Metric: "correlation_gain_zscore", Category: InefficientLag},
+	{Source: SourceLeadLag, Metric: "contemporaneous_correlation", Category: SynchronizedDrift},
+	{Source: SourceLeadLag, Metric: "lag_zscore", Category: DecoupledMove},
+	{Source: SourceLeadLag, Metric: "best_lag_correlation_zscore", Category: AnchorStall},
+	{Source: SourceLeadLag, Metric: "lag_fraction", Category: DecoupledMove},
+
+	// CVD / executed flow: aggressive execution economics and midpoint response.
+	{Source: SourceCVD, Metric: "signed_net_fraction_zscore", Category: AggressiveDrive},
+	{Source: SourceCVD, Metric: "signed_net_fraction_divergence", Category: AggressiveDrive},
+	{Source: SourceCVD, Metric: "gross_notional_rate_zscore", Category: HiddenAbsorption},
+	{Source: SourceCVD, Metric: "gross_notional_rate_divergence", Category: VolumeStarvation},
+	{Source: SourceCVD, Metric: "midpoint_return_rate_zscore", Category: StochasticBalance},
+	{Source: SourceCVD, Metric: "flow_aligned_midpoint_return", Category: StochasticBalance},
+	{Source: SourceCVD, Metric: "midpoint_response_per_net_notional", Category: HiddenAbsorption},
+
+	// Hawkes: arrival/excitation dynamics.
+	{Source: SourceHawkes, Metric: "branching_spectral_radius", Category: Turbulent},
+	{Source: SourceHawkes, Metric: "excitation_intensity:buy", Category: Frenzy},
+	{Source: SourceHawkes, Metric: "excitation_intensity:sell", Category: Frenzy},
+	{Source: SourceHawkes, Metric: "arrival_rate", Category: Inertial},
+
+	// Depthflow: displayed-book mutation and shape.
+	{Source: SourceDepthFlow, Metric: "book_imbalance_zscore", Category: LoadedImbalance},
+	{Source: SourceDepthFlow, Metric: "touch_imbalance", Category: SpoofTrap},
+	{Source: SourceDepthFlow, Metric: "resolution_gap_zscore", Category: BookThinning},
+	{Source: SourceDepthFlow, Metric: "turnover_zscore", Category: DenseNeutrality},
+	{Source: SourceDepthFlow, Metric: "book_imbalance_divergence", Category: LoadedImbalance},
+	{Source: SourceDepthFlow, Metric: "net_book_change_rate", Category: BookThinning},
+
+	// PumpDump: volume-clock ignition, spread compression, and midpoint return.
+	{Source: SourcePumpDump, Metric: "volume_bar_quantity", Category: VerticalIgnition},
+	{Source: SourcePumpDump, Metric: "volume_rate", Category: VerticalIgnition},
+	{Source: SourcePumpDump, Metric: "volume_bar_quantity", Category: CoiledCompression},
+	{Source: SourcePumpDump, Metric: "relative_spread", Category: CoiledCompression},
+	{Source: SourcePumpDump, Metric: "spread_zscore", Category: CoiledCompression},
+	{Source: SourcePumpDump, Metric: "trade_interval_seconds", Category: OrganicTrend},
+	{Source: SourcePumpDump, Metric: "midpoint_return_zscore", Category: OrganicTrend},
+	{Source: SourcePumpDump, Metric: "midpoint_return_zscore", Category: FadedExhaustion},
+	{Source: SourcePumpDump, Metric: "notional_rate_zscore", Category: VerticalIgnition},
+
+	// Liquidity: displayed executable capacity and spread.
+	{Source: SourceLiquidity, Metric: "touch_notional_imbalance", Category: ExtremeScarcity},
+	{Source: SourceLiquidity, Metric: "relative_spread", Category: ExtremeScarcity},
+	{Source: SourceLiquidity, Metric: "touch_notional_imbalance", Category: RobustLiquidity},
+	{Source: SourceLiquidity, Metric: "two_sided_touch_notional", Category: RobustLiquidity},
+
+	// Exhaustion: joint microstructure support state.
+	{Source: SourceExhaustion, Metric: "book_imbalance_zscore", Category: MechanicalCollapse},
+	{Source: SourceExhaustion, Metric: "spread_zscore", Category: ThermalExhaustion},
+	{Source: SourceExhaustion, Metric: "relative_spread", Category: FragileExpansion},
+	{Source: SourceExhaustion, Metric: "depth_ask_divergence_velocity", Category: ActiveReversal},
+	{Source: SourceExhaustion, Metric: "total_depth_zscore", Category: MechanicalCollapse},
+
+	// Sentiment: cross-sectional return state.
+	{Source: SourceSentiment, Metric: "directional_consensus", Category: RiskOnSurge},
+	{Source: SourceSentiment, Metric: "directional_agreement", Category: RiskOnSurge},
+	{Source: SourceSentiment, Metric: "median_absolute_return_zscore", Category: DivergentMove},
+	{Source: SourceSentiment, Metric: "return_dispersion_zscore", Category: DivergentMove},
+	{Source: SourceSentiment, Metric: "breadth_zscore", Category: SystemicSlump},
+	{Source: SourceSentiment, Metric: "advance_fraction", Category: SystemicSlump},
+
+	// Derivatives: leverage, liquidation, and basis.
+	{Source: SourceDerivatives, Metric: "open_interest_growth_zscore", Category: LeveragedIgnition},
+	{Source: SourceDerivatives, Metric: "open_interest_growth_rate", Category: LeveragedIgnition},
+	{Source: SourceDerivatives, Metric: "liquidation_signed_fraction", Category: ShortSqueeze},
+	{Source: SourceDerivatives, Metric: "liquidation_notional_rate", Category: AdverseLeverageBuildup},
+	{Source: SourceDerivatives, Metric: "net_liquidation_notional", Category: LongDeleveraging},
+	{Source: SourceDerivatives, Metric: "liquidation_share", Category: LongDeleveraging},
+	{Source: SourceDerivatives, Metric: "basis_zscore", Category: DerivativesDecoupling},
+	{Source: SourceDerivatives, Metric: "basis_rate", Category: DerivativesDecoupling},
+
+	// Toxicity: liquidity disposition.
+	{Source: SourceToxicity, Metric: "withdrawal_fraction_zscore:bid", Category: ToxicBluff},
+	{Source: SourceToxicity, Metric: "withdrawal_fraction_zscore:ask", Category: ToxicBluff},
+	{Source: SourceToxicity, Metric: "fill_fraction_zscore:bid", Category: LiquidityVacuum},
+	{Source: SourceToxicity, Metric: "fill_fraction_zscore:ask", Category: LiquidityVacuum},
+
+	// VerticalIgnition corroborated complex: PumpDump volume breakout anchors
+	// it; Hawkes near-critical cascade clustering, DepthFlow hollow ask book,
+	// and CVD aggressive drive corroborate.
+	{Source: SourcePumpDump, Metric: "volume_bar_quantity", Category: VerticalIgnition},
+	{Source: SourceCVD, Metric: "signed_net_fraction_zscore", Category: VerticalIgnition},
+	{Source: SourceHawkes, Metric: "branching_spectral_radius", Category: VerticalIgnition},
+	{Source: SourceDepthFlow, Metric: "resolution_gap_zscore", Category: VerticalIgnition},
+	{Source: SourceDepthFlow, Metric: "book_imbalance_zscore", Category: VerticalIgnition},
 }

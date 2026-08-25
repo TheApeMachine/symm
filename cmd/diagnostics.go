@@ -12,6 +12,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/graph"
 	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/telemetry"
@@ -507,8 +508,8 @@ func (crypto *Crypto) bindDiagnostics() {
 		observeChannel(crypto.bus, types.ChannelCognition,
 			func(reading types.Cognition) string { return reading.Symbol },
 			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
-		observeChannel(crypto.bus, types.ChannelGraphs,
-			func(graph *types.Graph) string { return graph.Symbol },
+		observeChannel(crypto.bus, types.ChannelRelations,
+			func(update graph.GraphUpdate) string { return update.Symbol },
 			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
 
 		// Forward every diagnostics heartbeat to the dashboard UI frame and the
@@ -622,8 +623,8 @@ func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
 		func(output types.CausalOutput) string { return output.Symbol })
 	cognition := channelSnapshot(crypto.bus, types.ChannelCognition,
 		func(reading types.Cognition) string { return reading.Symbol })
-	graphs := channelSnapshot(crypto.bus, types.ChannelGraphs,
-		func(graph *types.Graph) string { return graph.Symbol })
+	graphs := channelSnapshot(crypto.bus, types.ChannelRelations,
+		func(update graph.GraphUpdate) string { return update.Symbol })
 	ui := channelSnapshot(crypto.bus, types.ChannelUI,
 		func(frame *types.UIFrame) string { return "" })
 	fluid := channelSnapshot(crypto.bus, types.ChannelFluid,
@@ -989,7 +990,7 @@ func (diagnostics *Diagnostics) hopSnapshots() []HopSnapshot {
 		if len(parts) != 2 {
 			return true
 		}
-		
+
 		clock := value.(*durationClock)
 		out = append(out, HopSnapshot{
 			From:    parts[0],
@@ -999,7 +1000,7 @@ func (diagnostics *Diagnostics) hopSnapshots() []HopSnapshot {
 			LastNs:  clock.lastNs.Load(),
 			MaxNs:   clock.maxNs.Load(),
 		})
-		
+
 		return true
 	})
 

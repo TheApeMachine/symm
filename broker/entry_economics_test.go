@@ -173,7 +173,7 @@ func entryEconomicsManagedFixture(
 
 	private := &entryEconomicsBookConn{Conn: mock.NewConn(), managed: managed}
 	api := websocket.NewAPI(testingTB.Context(), mock.NewConn(), private)
-	price := NewPrice(api)
+	price := newTestPrice(testingTB, api)
 	price.fees.Store("EDGE/USD", kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.25),
 	})

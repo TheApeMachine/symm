@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
@@ -19,12 +20,24 @@ newPriceSurface creates a price surface with the symbol's executable fee row.
 func newPriceSurface(testCase testing.TB, symbol string) (*Price, *websocket.API) {
 	testCase.Helper()
 	api := websocket.NewAPI(testCase.Context(), mock.NewConn(), mock.NewConn())
-	price := NewPrice(api)
+	price := newTestPrice(testCase, api)
 	price.fees.Store(symbol, kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.25),
 	})
 
 	return price, api
+}
+
+/*
+newTestPrice builds a Price from an api, wiring the shared workspace the
+constructor reads the api from.
+*/
+func newTestPrice(testCase testing.TB, api *websocket.API) *Price {
+	testCase.Helper()
+	bus := runtime.NewWorkspace(nil)
+	bus.Share("api", api, "")
+
+	return NewPrice(testCase.Context(), bus)
 }
 
 /*

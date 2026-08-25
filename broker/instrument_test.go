@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
@@ -51,15 +52,12 @@ func TestInstrumentNewInstrument(t *testing.T) {
 
 		conn := &instrumentConn{Conn: mock.NewConn()}
 		api := websocket.NewAPI(t.Context(), conn, conn)
+		instrument := newTestInstrument(t, api)
 
-		Convey("When the instrument registry is constructed", func() {
-			instrument := NewInstrument(api, NewPrice(api), nil, nil)
-
-			Convey("It should remain pending without starting market flow", func() {
-				So(instrument.Status(), ShouldEqual, types.PENDING)
-				So(instrument.Symbols(), ShouldResemble, []string{"BTC/USD"})
-				So(conn.marketSubscriptions, ShouldEqual, 0)
-			})
+		Convey("It should remain pending without starting market flow", func() {
+			So(instrument.Status(), ShouldEqual, types.PENDING)
+			So(instrument.Symbols(), ShouldResemble, []string{"BTC/USD"})
+			So(conn.marketSubscriptions, ShouldEqual, 0)
 		})
 	})
 }
@@ -73,7 +71,7 @@ func TestInstrumentSubscribe(t *testing.T) {
 
 		conn := &instrumentConn{Conn: mock.NewConn()}
 		api := websocket.NewAPI(t.Context(), conn, conn)
-		instrument := NewInstrument(api, NewPrice(api), nil, nil)
+		instrument := newTestInstrument(t, api)
 
 		Convey("When subscriptions are explicitly started", func() {
 			err := instrument.Subscribe()
@@ -85,4 +83,17 @@ func TestInstrumentSubscribe(t *testing.T) {
 			})
 		})
 	})
+}
+
+/*
+newTestInstrument builds an Instrument on a workspace that shares the api and a
+Price, matching how boot wires the two shared objects.
+*/
+func newTestInstrument(testCase testing.TB, api *websocket.API) *Instrument {
+	testCase.Helper()
+	bus := runtime.NewWorkspace(nil)
+	bus.Share("api", api, "")
+	bus.Share("price", newTestPrice(testCase, api), "")
+
+	return NewInstrument(testCase.Context(), bus)
 }

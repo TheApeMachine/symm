@@ -40,18 +40,15 @@ var DefaultProfiles = map[MarketState]RegimeProfile{
 			MinimumObservations: 2,
 			Metrics: []PrecursorMetricExpectation{
 				{
-					Metric:            coretypes.MetricPrecursor,
-					Side:              coretypes.SideBuy,
+					Metric:            "volume_bar_notional",
 					MinimumNormalized: PositiveEvidenceFloor,
 				},
 				{
-					Metric:            coretypes.MetricRVOL,
-					Side:              coretypes.SideNone,
+					Metric:            "volume_bar_quantity",
 					MinimumNormalized: NormalizedEmpiricalRatioBaseline,
 				},
 				{
-					Metric:            coretypes.MetricCompression,
-					Side:              coretypes.SideNone,
+					Metric:            "relative_spread",
 					MinimumNormalized: PositiveEvidenceFloor,
 				},
 			},

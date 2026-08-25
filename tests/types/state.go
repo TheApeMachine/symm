@@ -18,14 +18,14 @@ const (
 )
 
 /*
-PrecursorMetricExpectation declares evidence the regime is designed to
-produce before its discontinuous event is sampled. The normalized floor is a
-domain boundary owned by the fixture profile, not an assertion invented by an
-integration test.
+PrecursorMetricExpectation declares evidence the regime is designed to create
+before its discontinuous event is sampled. Metric is the metric name string
+exactly as the signal emits it (including any ":side" suffix), so the fixture
+names the identity the measurement actually carries rather than a reconstructed
+enum. The normalized floor is a domain boundary owned by the fixture profile.
 */
 type PrecursorMetricExpectation struct {
-	Metric            coretypes.MetricType
-	Side              coretypes.MeasurementSide
+	Metric            string
 	MinimumNormalized float64
 }
 

@@ -3,1298 +3,997 @@ package graph
 import (
 	"context"
 	"fmt"
-	"iter"
-	"math"
-	"slices"
-	"strings"
-	"sync"
+	"sort"
+	"strconv"
+	"time"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/network"
+	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"gonum.org/v1/gonum/stat/distuv"
 )
 
 /*
-Solver compiles all upstream evidence (Measurements, Manifold, Resonance, Causal, Cognition)
-into a Directed Knowledge Graph for the Strategy package.
+EdgeType distinguishes directed temporal Influence from contemporaneous
+Association. A zero-lag correlation is Association and is never published as
+directed Influence.
 */
-type Solver struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	thesis       *types.Thesis
-	recorder     *audit.Recorder
-	measurements *measurementCompiler
-	graphs       *runtime.Channel[*types.Graph]
-	evidence     sync.Map
-	phase        types.PhaseReading
-	building     sync.Map
+type EdgeType uint8
+
+const (
+	// EdgeInfluence means past Source improved prediction of later Target
+	// under the stated Relation model.
+	EdgeInfluence EdgeType = iota
+	// EdgeAssociation means contemporaneous dependence; it is not directed
+	// temporal Influence.
+	EdgeAssociation
+)
+
+func (edgeType EdgeType) String() string {
+	switch edgeType {
+	case EdgeInfluence:
+		return "influence"
+	case EdgeAssociation:
+		return "association"
+	default:
+		return "unknown"
+	}
 }
 
 /*
-NewSolver creates a graph solver.
+CandidateState represents the estimation lifecycle of one planned edge.
+Candidate-but-unavailable is not "no relationship".
 */
-func NewSolver(bus *runtime.Workspace) *Solver {
-	ctx, cancel := context.WithCancel(context.Background())
+type CandidateState uint8
 
-	var thesis *types.Thesis
-	if bus != nil {
-		if shared, found := bus.Shared("thesis", ""); found {
-			if t, ok := shared.(*types.Thesis); ok {
-				thesis = t
-			}
-		}
+const (
+	// CandidateScheduled means the edge is structurally scheduled for estimation.
+	CandidateScheduled CandidateState = iota
+	// CandidateEstimated means the edge currently has a valid Relation.
+	CandidateEstimated
+	// CandidateUnavailable means the candidate exists but its estimator is
+	// currently undefined.
+	CandidateUnavailable
+)
+
+func (state CandidateState) String() string {
+	switch state {
+	case CandidateScheduled:
+		return "candidate"
+	case CandidateEstimated:
+		return "estimated"
+	case CandidateUnavailable:
+		return "unavailable"
+	default:
+		return "unknown"
 	}
-
-	solver := &Solver{
-		ctx:          ctx,
-		cancel:       cancel,
-		thesis:       thesis,
-		measurements: newMeasurementCompiler(),
-		building:     sync.Map{},
-	}
-
-	solver.graphs = runtime.ChannelOf(
-		bus, types.ChannelGraphs,
-		func(graph *types.Graph) string { return graph.Symbol },
-	)
-	measurementsCh := runtime.ChannelOf(
-		bus, types.ChannelMeasurements,
-		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
-	)
-	measurementsCh.Subscribe(solver.Name(), func(measurement *nmtypes.Measurement) error {
-		return solver.observe(measurement.Symbol, "measurement", measurement)
-	})
-	runtime.ChannelOf(
-		bus, types.ChannelCategories,
-		func(batch []types.Category) string {
-			if len(batch) == 0 {
-				return ""
-			}
-			return batch[0].Symbol
-		},
-	).Subscribe(solver.Name(), func(batch []types.Category) error {
-		if len(batch) == 0 {
-			return nil
-		}
-		return solver.observe(batch[0].Symbol, "categories", batch)
-	})
-	
-	runtime.ChannelOf(
-		bus, types.ChannelResonance,
-		func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
-	).Subscribe(solver.Name(), func(artifact types.ResonanceArtifact) error {
-		return solver.observe(artifact.Symbol, "resonance", artifact)
-	})
-	
-	runtime.ChannelOf(
-		bus, types.ChannelCausal,
-		func(output types.CausalOutput) string { return output.Symbol },
-	).Subscribe(solver.Name(), func(output types.CausalOutput) error {
-		return solver.observe(output.Symbol, "causal", output)
-	})
-	
-	runtime.ChannelOf(
-		bus, types.ChannelCognition,
-		func(reading types.Cognition) string { return reading.Symbol },
-	).Subscribe(solver.Name(), func(reading types.Cognition) error {
-		return solver.observe(reading.Symbol, "cognition", reading)
-	})
-
-	runtime.ChannelOf(
-		bus, types.ChannelPhase,
-		func(reading types.PhaseReading) string { return "" },
-	).Subscribe(solver.Name(), func(reading types.PhaseReading) error {
-		solver.phase = reading
-		return nil
-	})
-
-	return solver
-}
-
-func (solver *Solver) Name() string {
-	return "graph"
-}
-
-func (solver *Solver) Error() error { return solver.err }
-
-/*
-consume rebuilds the graph whenever one of its upstream evidence cursors becomes
-ready. Graph output flows one way to the planner.
-*/
-/*
-buildGraph adds current upstream evidence to one in-progress graph. It
-publishes that graph once it is informed enough for planner search, then starts
-a fresh accumulation for the symbol. A later ready graph replaces any
-unpublished planner artifact so measurements keep draining while search is
-busy. The in-progress registry is a sync.Map, so parallel symbol workers can
-load-or-store their own building graph while evidence compilation and
-publication run outside any lock.
-*/
-/*
-symbolEvidence is one symbol's freshest graph inputs: a bounded measurement
-window and the latest derived readings from every upstream stage.
-*/
-type symbolEvidence struct {
-	measurements []*nmtypes.Measurement
-	categories   []types.Category
-	artifact     types.ResonanceArtifact
-	causal       types.CausalOutput
-	cognition    types.Cognition
-}
-
-func iterSeq[T any](values []T) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for _, value := range values {
-			if !yield(value) {
-				return
-			}
-		}
-	}
-}
-
-// observe folds one evidence item into the symbol's evidence snapshot and
-// rebuilds the symbol graph from the freshest state, publishing it when it
-// is informed enough for planner search.
-func (solver *Solver) observe(symbolName string, kind string, value any) error {
-	if symbolName == "" {
-		return nil
-	}
-
-	state := solver.symbolEvidence(symbolName)
-
-	switch kind {
-	case "measurement":
-		if measurement, ok := value.(*nmtypes.Measurement); ok {
-			state.measurements = append(state.measurements, measurement)
-			state.measurements = trimTail(state.measurements, graphMeasurementWindow)
-		}
-	case "categories":
-		if batch, ok := value.([]types.Category); ok {
-			state.categories = batch
-		}
-	case "resonance":
-		if artifact, ok := value.(types.ResonanceArtifact); ok {
-			state.artifact = artifact
-		}
-	case "causal":
-		if output, ok := value.(types.CausalOutput); ok {
-			state.causal = output
-		}
-	case "cognition":
-		if reading, ok := value.(types.Cognition); ok {
-			state.cognition = reading
-		}
-	}
-
-	return solver.rebuild(symbolName, state)
-}
-
-func (solver *Solver) symbolEvidence(symbolName string) *symbolEvidence {
-	loaded, _ := solver.evidence.LoadOrStore(symbolName, &symbolEvidence{})
-
-	return loaded.(*symbolEvidence)
 }
 
 /*
-graphMeasurementWindow bounds the per-symbol measurement history retained for
-graph compilation, so a hot symbol cannot grow unbounded evidence state.
+InfluenceNode is one Measurement coordinate identity in the Influence Graph.
+It preserves metric identity, signal source, symbol, peer, unit, timescale, and
+model epoch. Whole signal packages are never collapsed into one node.
 */
-const graphMeasurementWindow = 64
-
-func trimTail[T any](values []T, limit int) []T {
-	if len(values) <= limit {
-		return values
-	}
-
-	return append([]T(nil), values[len(values)-limit:]...)
+type InfluenceNode struct {
+	Coordinate relation.Coordinate
 }
 
-func (solver *Solver) rebuild(symbolName string, state *symbolEvidence) error {
-	symbol := solver.thesis.Symbol(symbolName)
-	graph := types.NewGraph(solver.thesis.At)
-	graph.Symbol = symbolName
-	graph.Prune(solver.thesis.At)
+/*
+InfluenceEdge is one valid Relation measurement. It carries the full Relation
+result — lag, coefficient, PredictiveGain, coefficient uncertainty, Maturity,
+time interval, and epoch/provenance — never a reduced Weight + Confidence.
+*/
+type InfluenceEdge struct {
+	Type   EdgeType
+	Source relation.Coordinate
+	Target relation.Coordinate
+	// Result is the underlying Relation measurement; nil only for
+	// Association edges without a Relation estimate.
+	Result *relation.InfluenceResult
+	From   time.Time
+	At     time.Time
+	Epoch  uint64
+}
 
-	measurementIndex, err := solver.measurements.addNodes(
-		symbolName,
-		iterSeq(state.measurements),
-		graph,
-	)
+/*
+CandidateEdge reports one structurally scheduled edge and its lifecycle state.
+*/
+type CandidateEdge struct {
+	Type   EdgeType
+	Source relation.Coordinate
+	Target relation.Coordinate
+	State  CandidateState
+}
 
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"graph: failed to extract measurement nodes - "+err.Error(),
-			err,
-		))
+/*
+edgeKey identifies one directed (Source, Target) edge of one type. It is the
+composite identity under which an edge and its history are stored.
+*/
+type edgeKey struct {
+	edgeType EdgeType
+	source   relation.Coordinate
+	target   relation.Coordinate
+}
+
+/*
+edgeData is the storage payload for one directed edge: its lifecycle state plus
+the chronological history of Relation measurements. Retention is chronological
+only, bounded by the graph's history capacity.
+*/
+type edgeData struct {
+	state   CandidateState
+	history []*InfluenceEdge
+}
+
+/*
+coordinateOrder is the strict weak order the network graph uses for
+relation.Coordinate identity. It compares the identity fields directly —
+never materializing a rendered ID string, because the lock-free map calls the
+comparator many times per operation on the hot path. The lexicographic field
+order matches Coordinate.ID's render order (Symbol, Source, Metric, Side, Peer,
+Unit, Timescale, Epoch), so ordering and rendered identity agree.
+*/
+func coordinateOrder(left relation.Coordinate, right relation.Coordinate) bool {
+	if left.Symbol != right.Symbol {
+		return left.Symbol < right.Symbol
 	}
 
-	solver.extractCategoryNodes(symbol, state.categories, graph)
-	solver.extractManifoldNodes(solver.thesis, graph)
-
-	if state.artifact.Manifold != nil {
-		solver.extractResonanceNodes(symbol, state.artifact, graph)
+	if left.Source != right.Source {
+		return left.Source < right.Source
 	}
 
-	if state.causal.Rows != nil {
-		if err := solver.extractCausalNodes(symbol, state.causal.Rows, graph); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"graph: failed to extract causal nodes - "+err.Error(),
-				err,
-			))
-		}
+	if left.Metric != right.Metric {
+		return left.Metric < right.Metric
 	}
 
-	solver.extractCognitionNodes(symbol, state.cognition, graph)
-
-	if len(graph.Nodes) == 0 {
-		return nil
+	if left.Side != right.Side {
+		return left.Side < right.Side
 	}
 
-	if err := solver.measurements.addCategoryEdges(
-		state.categories, symbolName, graph, measurementIndex,
-	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"graph: failed to relate measurements and categories - "+err.Error(),
-			err,
-		))
+	if left.Peer != right.Peer {
+		return left.Peer < right.Peer
 	}
 
-	if err := solver.measurements.addLeadLagEdges(
-		symbol, graph, measurementIndex,
-	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"graph: failed to relate lead-lag measurements - "+err.Error(),
-			err,
-		))
+	if left.Unit != right.Unit {
+		return left.Unit < right.Unit
 	}
 
-	if err := solver.inferStructuralEdges(
-		symbol, state.categories, state.cognition, graph,
-	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"graph: failed to infer structural edges - "+err.Error(),
-			err,
-		))
+	if left.Timescale != right.Timescale {
+		return left.Timescale < right.Timescale
 	}
 
-	if err := solver.connectLongOpportunity(symbol, graph); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"graph: failed to connect long-opportunity hypothesis - "+err.Error(),
-			err,
-		))
+	return left.Epoch < right.Epoch
+}
+
+/*
+InfluenceGraph is a time-indexed observational relation graph over Measurement
+coordinates. It stores measured predictive structure; it is not a Structural
+Causal Model and never promotes Influence to causal truth automatically.
+
+It is backed by the lock-free generic network.Graph, so node and edge updates
+are lock-free and the graph is updated in place as measurements stream in, never
+rebuilt from scratch.
+*/
+type InfluenceGraph struct {
+	epoch           uint64
+	schemaVersion   uint64
+	planVersion     uint64
+	historyCapacity int
+
+	nodes *network.Graph[relation.Coordinate, InfluenceNode, struct{}]
+	edges *network.Graph[edgeKey, edgeData, struct{}]
+}
+
+/*
+NewInfluenceGraph builds an empty graph for one model epoch. historyCapacity
+bounds the per-edge retained history; it is infrastructure provenance.
+*/
+func NewInfluenceGraph(epoch uint64, schemaVersion uint64, planVersion uint64, historyCapacity int) *InfluenceGraph {
+	if historyCapacity < 1 {
+		historyCapacity = 1
 	}
 
-	if !graph.ReadyForSearch() {
-		return nil
+	return &InfluenceGraph{
+		epoch:           epoch,
+		schemaVersion:   schemaVersion,
+		planVersion:     planVersion,
+		historyCapacity: historyCapacity,
+		nodes: network.NewGraph[relation.Coordinate, InfluenceNode, struct{}](
+			coordinateOrder,
+		),
+		edges: network.NewGraph[edgeKey, edgeData, struct{}](
+			edgeKeyOrder,
+		),
+	}
+}
+
+/*
+edgeKeyOrder is the strict weak order over edge keys: the two coordinates are
+compared field-wise (source first, then target), and ties break on the edge
+type. No string is materialized.
+*/
+func edgeKeyOrder(left edgeKey, right edgeKey) bool {
+	if coordinateOrder(left.source, right.source) {
+		return true
 	}
 
-	if solver.graphs != nil {
-		solver.graphs.Publish(graph.Clone())
+	if coordinateOrder(right.source, left.source) {
+		return false
+	}
+
+	if coordinateOrder(left.target, right.target) {
+		return true
+	}
+
+	if coordinateOrder(right.target, left.target) {
+		return false
+	}
+
+	return left.edgeType < right.edgeType
+}
+
+/*
+getEdge returns the stored edgeData for a key and whether it exists.
+*/
+func (influenceGraph *InfluenceGraph) getEdge(key edgeKey) (edgeData, bool) {
+	node, found := influenceGraph.edges.Node(key)
+
+	if !found {
+		return edgeData{}, false
+	}
+
+	return node.Data, true
+}
+
+/*
+setEdge stores the edgeData under its key.
+*/
+func (influenceGraph *InfluenceGraph) setEdge(key edgeKey, data edgeData) {
+	influenceGraph.edges.SetNode(network.Node[edgeKey, edgeData]{ID: key, Data: data})
+}
+
+/*
+maxCoordinate is a sentinel coordinate that sorts after every real coordinate
+under coordinateOrder. It is the full-walk upper bound for Range.
+*/
+func maxCoordinate() relation.Coordinate {
+	return relation.Coordinate{
+		Symbol:    "\xff",
+		Source:    "\xff",
+		Metric:    "\xff",
+		Side:      "\xff",
+		Peer:      "\xff",
+		Unit:      nmtypes.Unit(0xff),
+		Timescale: nmtypes.Timescale(0xff),
+		Epoch:     ^uint64(0),
+	}
+}
+
+/*
+maxEdgeKey is a sentinel edge key that sorts after every real key.
+*/
+func maxEdgeKey() edgeKey {
+	return edgeKey{
+		edgeType: EdgeType(0xff),
+		source:   maxCoordinate(),
+		target:   maxCoordinate(),
+	}
+}
+
+/*
+edgeKeys returns every stored edge key in ascending order.
+*/
+func (influenceGraph *InfluenceGraph) edgeKeys() []edgeKey {
+	keys := make([]edgeKey, 0)
+
+	influenceGraph.edges.Range(edgeKey{}, maxEdgeKey(), func(node network.Node[edgeKey, edgeData]) {
+		keys = append(keys, node.ID)
+	})
+
+	return keys
+}
+
+/*
+Epoch returns the graph's model epoch.
+*/
+func (influenceGraph *InfluenceGraph) Epoch() uint64 {
+	if influenceGraph == nil {
+		return 0
+	}
+
+	return influenceGraph.epoch
+}
+
+/*
+UpsertEdge records one Relation measurement: it updates the node set and
+appends to the edge's chronological history. It never deletes an edge because
+gain, coefficient, SNR, or Maturity is low, and it never merges edges from an
+incompatible epoch.
+*/
+func (influenceGraph *InfluenceGraph) UpsertEdge(edge *InfluenceEdge) error {
+	if influenceGraph == nil || edge == nil {
+		return fmt.Errorf("graph: influence graph and edge are required")
+	}
+
+	if edge.Epoch != influenceGraph.epoch {
+		return fmt.Errorf(
+			"graph: edge epoch %d is incompatible with graph epoch %d",
+			edge.Epoch, influenceGraph.epoch,
+		)
+	}
+
+	influenceGraph.nodes.SetNode(network.Node[relation.Coordinate, InfluenceNode]{
+		ID:   edge.Source,
+		Data: InfluenceNode{Coordinate: edge.Source},
+	})
+	influenceGraph.nodes.SetNode(network.Node[relation.Coordinate, InfluenceNode]{
+		ID:   edge.Target,
+		Data: InfluenceNode{Coordinate: edge.Target},
+	})
+
+	key := edgeKey{edgeType: edge.Type, source: edge.Source, target: edge.Target}
+	current, _ := influenceGraph.getEdge(key)
+
+	history := current.history
+	history = append(history, edge)
+
+	if len(history) > influenceGraph.historyCapacity {
+		history = history[len(history)-influenceGraph.historyCapacity:]
+	}
+
+	influenceGraph.setEdge(key, edgeData{state: CandidateEstimated, history: history})
+
+	return nil
+}
+
+/*
+RegisterCandidate marks a structurally scheduled edge as a Candidate. It is how
+the graph represents planned Relations before estimation.
+*/
+func (influenceGraph *InfluenceGraph) RegisterCandidate(edgeType EdgeType, source relation.Coordinate, target relation.Coordinate, epoch uint64) error {
+	if influenceGraph == nil {
+		return fmt.Errorf("graph: influence graph required")
+	}
+
+	if epoch != influenceGraph.epoch {
+		return fmt.Errorf(
+			"graph: candidate epoch %d is incompatible with graph epoch %d",
+			epoch, influenceGraph.epoch,
+		)
+	}
+
+	key := edgeKey{edgeType: edgeType, source: source, target: target}
+
+	if _, found := influenceGraph.getEdge(key); !found {
+		influenceGraph.setEdge(key, edgeData{state: CandidateScheduled})
 	}
 
 	return nil
 }
 
 /*
-extractCategoryNodes registers active categories as nodes.
+SetUnavailable marks an existing candidate as unavailable because its estimator
+is currently undefined. Unavailable is not "no relationship" and is not a
+measured zero.
 */
-func (solver *Solver) extractCategoryNodes(
-	symbol *types.Symbol,
-	categories []types.Category,
-	graph *types.Graph,
-) {
-	for _, cat := range categories {
-		if cat.Type == types.CategoryTypeNone {
-			continue
-		}
-
-		nodeID := fmt.Sprintf("cat:%s:%s", symbol.Symbol, string(cat.Type))
-
-		metadata := map[string]any{
-			"type":       string(cat.Type),
-			"supporting": cat.Supporting,
-			"opposing":   cat.Opposing,
-		}
-
-		if cat.Surprisal > 0 {
-			metadata["surprisal"] = cat.Surprisal
-		}
-
-		if cat.Maturity > 0 {
-			metadata["maturity"] = cat.Maturity
-		}
-
-		confidence := cat.Confidence
-		node := &Node{
-			ID:       nodeID,
-			Symbol:   symbol.Symbol,
-			Source:   "category",
-			Kind:     KindCategory,
-			Value:    cat.Strength,
-			Maturity: cat.Maturity,
-			At:       graph.At,
-			Metadata: metadata,
-		}
-
-		if confidence >= 0 && confidence <= 1 {
-			node.Normalized = &confidence
-		}
-
-		node.Confidence = types.ObservationMass(node, graph.At)
-		graph.AddNode(node)
+func (influenceGraph *InfluenceGraph) SetUnavailable(edgeType EdgeType, source relation.Coordinate, target relation.Coordinate, epoch uint64) error {
+	if influenceGraph == nil {
+		return fmt.Errorf("graph: influence graph required")
 	}
+
+	if epoch != influenceGraph.epoch {
+		return fmt.Errorf(
+			"graph: candidate epoch %d is incompatible with graph epoch %d",
+			epoch, influenceGraph.epoch,
+		)
+	}
+
+	key := edgeKey{edgeType: edgeType, source: source, target: target}
+	current, found := influenceGraph.getEdge(key)
+
+	if !found {
+		return fmt.Errorf(
+			"graph: cannot mark unavailable a candidate that was never registered (%s -> %s)",
+			source.ID(), target.ID(),
+		)
+	}
+
+	current.state = CandidateUnavailable
+	influenceGraph.setEdge(key, current)
+
+	return nil
 }
 
 /*
-extractManifoldNodes registers the universe phase alignment retained by the
-manifold stage. The shared fluid field is not duplicated into a per-symbol
-fingerprint; each graph reads the same sweep.
+Relation returns the current Influence edge between source and target, or nil.
 */
-func (solver *Solver) extractManifoldNodes(
-	thesis *types.Thesis,
-	graph *types.Graph,
-) {
-	if thesis == nil || graph == nil {
-		return
-	}
-
-	if reading, found := thesis.PhaseSnapshot(); found {
-		if inference, ready := reading.Inference(); ready {
-			confidence := inference.Confidence
-			node := &Node{
-				ID:     "man:universe:phase_direction",
-				Source: "manifold",
-				Kind:   KindManifold,
-				Value:  inference.Direction,
-				At:     reading.At,
-				Metadata: map[string]any{
-					"support":       inference.Support,
-					"contradiction": inference.Contradiction,
-					"balance":       inference.Balance,
-					"responses":     inference.Responses,
-				},
-			}
-
-			if confidence >= 0 && confidence <= 1 {
-				node.Normalized = &confidence
-			}
-
-			node.Confidence = types.ObservationMass(node, graph.At)
-			graph.AddNode(node)
-		}
-	}
-
-	reading, found := thesis.ManifoldSnapshot()
-
-	if !found || !reading.IsFinite() {
-		return
-	}
-
-	fields := []struct {
-		name  string
-		value float64
-	}{
-		{name: "divergence", value: reading.Divergence},
-		{name: "guidance_speed", value: reading.GuidanceSpeed},
-		{name: "coherence", value: reading.CoherenceMag2},
-		{name: "pressure_gradient", value: reading.PressureGradNorm},
-		{name: "viscosity", value: reading.ViscosityProxy},
-		{name: "kuramoto_r", value: reading.KuramotoR},
-	}
-
-	for _, field := range fields {
-		node := &Node{
-			ID:     "man:universe:" + field.name,
-			Source: "manifold",
-			Kind:   KindManifold,
-			Value:  field.value,
-			At:     graph.At,
-			Metadata: map[string]any{
-				"observer": "relaxed physical field",
-			},
-		}
-		node.Confidence = types.ObservationMass(node, graph.At)
-		graph.AddNode(node)
-	}
-
-	scores, scored := thesis.InterventionSnapshot()
-
-	if !scored {
-		return
-	}
-
-	for _, score := range scores {
-		node := &Node{
-			ID:     "man:universe:do_" + score.Action,
-			Source: "manifold",
-			Kind:   KindManifold,
-			Value:  score.Score,
-			At:     graph.At,
-			Metadata: map[string]any{
-				"observer":           "bvp crystallization",
-				"mass_gain":          score.MassGain,
-				"energy_gain":        score.EnergyGain,
-				"heat_shock":         score.HeatShock,
-				"spectral_resonance": score.SpectralResonance,
-			},
-		}
-		node.Confidence = types.ObservationMass(node, graph.At)
-		graph.AddNode(node)
-	}
+func (influenceGraph *InfluenceGraph) Relation(source relation.Coordinate, target relation.Coordinate) *InfluenceEdge {
+	return influenceGraph.currentEdge(EdgeInfluence, source, target)
 }
 
 /*
-extractResonanceNodes registers predictive coding outcomes (surprise and the
-direction call). The call is not a priced return.
+Edge returns the current Influence edge between source and target, or nil.
 */
-func (solver *Solver) extractResonanceNodes(
-	symbol *types.Symbol, artifact types.ResonanceArtifact, graph *types.Graph,
-) {
-	if symbol == nil || graph == nil {
-		return
+func (influenceGraph *InfluenceGraph) Edge(source relation.Coordinate, target relation.Coordinate) *InfluenceEdge {
+	return influenceGraph.currentEdge(EdgeInfluence, source, target)
+}
+
+/*
+CurrentEdge returns the current edge of the given type between source and
+target, or nil.
+*/
+func (influenceGraph *InfluenceGraph) CurrentEdge(edgeType EdgeType, source relation.Coordinate, target relation.Coordinate) *InfluenceEdge {
+	return influenceGraph.currentEdge(edgeType, source, target)
+}
+
+func (influenceGraph *InfluenceGraph) currentEdge(edgeType EdgeType, source relation.Coordinate, target relation.Coordinate) *InfluenceEdge {
+	if influenceGraph == nil {
+		return nil
 	}
 
-	returnForecast := artifact.Forecast
-	coder := artifact.Manifold
-	dynamics := artifact.Dynamics
+	data, found := influenceGraph.getEdge(edgeKey{edgeType: edgeType, source: source, target: target})
 
-	if returnForecast != nil && returnForecast.Distribution.Ready {
-		graphForecast := returnForecast.Distribution
-		graph.SetResonanceOutput(&graphForecast, max(0, returnForecast.Horizon))
-
-		if returnForecast.Call != 0 {
-			confidence := directionPosteriorConfidence(
-				returnForecast.Distribution,
-				returnForecast.Call,
-			)
-
-			if confidence > 0 {
-				graph.AddNode(&types.Node{
-					ID:         fmt.Sprintf("res:%s:forecast", symbol.Symbol),
-					Symbol:     symbol.Symbol,
-					Source:     "resonance",
-					Kind:       KindResonance,
-					Value:      returnForecast.Call,
-					Strength:   confidence,
-					Confidence: confidence,
-					At:         graph.At,
-					Metadata: map[string]any{
-						"horizon":   returnForecast.Horizon,
-						"held":      returnForecast.Held,
-						"candidate": returnForecast.CandidateCall,
-					},
-				})
-			}
-		}
+	if !found || len(data.history) == 0 {
+		return nil
 	}
 
-	if coder == nil {
-		return
-	}
+	return data.history[len(data.history)-1]
+}
 
-	skill, skillReady := coder.TaskSkill()
-	graph.SetTaskSkill(skill, skillReady)
-	layers, surprise, _ := coder.WireSnapshot()
-
-	if len(layers) == 0 || math.IsNaN(surprise) || math.IsInf(surprise, 0) {
-		return
-	}
-
-	graph.AddNode(&types.Node{
-		ID:         fmt.Sprintf("res:%s:surprise", symbol.Symbol),
-		Symbol:     symbol.Symbol,
-		Source:     "resonance",
-		Kind:       KindResonance,
-		Value:      surprise,
-		Strength:   math.Abs(surprise),
-		Confidence: 1,
-		At:         graph.At,
+/*
+Incoming returns the current Influence edges whose target is the coordinate.
+*/
+func (influenceGraph *InfluenceGraph) Incoming(target relation.Coordinate) []*InfluenceEdge {
+	return influenceGraph.currentEdges(func(edge *InfluenceEdge) bool {
+		return edge.Target == target && edge.Type == EdgeInfluence
 	})
-
-	solver.extractPredictiveDynamicsNodes(
-		symbol.Symbol,
-		dynamics,
-		graph,
-	)
 }
 
-func (solver *Solver) extractPredictiveDynamicsNodes(
-	symbol string,
-	dynamics nmtypes.Frame,
-	graph *types.Graph,
-) {
-	ready, _ := dynamics.Get(learning.SymbolDynamicsReady)
-	sampleCount, _ := dynamics.Get(learning.SymbolDynamicsSampleCount)
-	maturity := sampleCount / (sampleCount + 1)
+/*
+Outgoing returns the current Influence edges whose source is the coordinate.
+*/
+func (influenceGraph *InfluenceGraph) Outgoing(source relation.Coordinate) []*InfluenceEdge {
+	return influenceGraph.currentEdges(func(edge *InfluenceEdge) bool {
+		return edge.Source == source && edge.Type == EdgeInfluence
+	})
+}
 
-	if ready > maturity {
-		maturity = ready
+/*
+History returns the chronological Relation history of one edge, oldest first.
+*/
+func (influenceGraph *InfluenceGraph) History(source relation.Coordinate, target relation.Coordinate) []*InfluenceEdge {
+	return influenceGraph.history(EdgeInfluence, source, target)
+}
+
+/*
+HistoryOf returns the chronological history of one typed edge, oldest first.
+*/
+func (influenceGraph *InfluenceGraph) HistoryOf(edgeType EdgeType, source relation.Coordinate, target relation.Coordinate) []*InfluenceEdge {
+	return influenceGraph.history(edgeType, source, target)
+}
+
+func (influenceGraph *InfluenceGraph) history(edgeType EdgeType, source relation.Coordinate, target relation.Coordinate) []*InfluenceEdge {
+	if influenceGraph == nil {
+		return nil
 	}
 
-	fields := []struct {
-		name   string
-		symbol nmtypes.Symbol
-	}{
-		{name: "generalized_velocity", symbol: learning.SymbolDynamicsVelocity},
-		{name: "generalized_acceleration", symbol: learning.SymbolDynamicsAcceleration},
-		{name: "liquid_memory", symbol: learning.SymbolDynamicsMemory},
-		{name: "memory_scale", symbol: learning.SymbolDynamicsMemoryScale},
-		{name: "stored_energy", symbol: learning.SymbolDynamicsStoredEnergy},
-		{name: "passivity_residue", symbol: learning.SymbolDynamicsPassivityResidue},
-		{name: "continuous_variance", symbol: learning.SymbolDynamicsContinuousVariance},
-		{name: "jump_amplitude", symbol: learning.SymbolDynamicsJumpAmplitude},
-		{name: "jump_variance", symbol: learning.SymbolDynamicsJumpVariance},
-		{name: "equivariance_norm", symbol: learning.SymbolDynamicsEquivarianceNorm},
+	data, found := influenceGraph.getEdge(edgeKey{edgeType: edgeType, source: source, target: target})
+
+	if !found {
+		return nil
 	}
 
-	for _, field := range fields {
-		value, found := dynamics.Get(field.symbol)
+	return append([]*InfluenceEdge(nil), data.history...)
+}
+
+/*
+Candidates returns every structurally scheduled edge with its lifecycle state.
+*/
+func (influenceGraph *InfluenceGraph) Candidates() []CandidateEdge {
+	if influenceGraph == nil {
+		return nil
+	}
+
+	var candidates []CandidateEdge
+
+	for _, key := range influenceGraph.edgeKeys() {
+		data, found := influenceGraph.getEdge(key)
 
 		if !found {
 			continue
 		}
 
-		node := &types.Node{
-			ID:       fmt.Sprintf("res:%s:%s", symbol, field.name),
-			Symbol:   symbol,
-			Source:   "resonance_dynamics",
-			Kind:     types.KindResonance,
-			Value:    value,
-			Strength: math.Abs(value),
-			Maturity: maturity,
-			At:       graph.At,
-			Metadata: map[string]any{
-				"continuous_time": true,
-				"frame_symbol":    field.name,
-			},
-		}
-		node.Confidence = types.ObservationMass(node, graph.At)
-		graph.AddNode(node)
+		candidates = append(candidates, CandidateEdge{
+			Type:   key.edgeType,
+			Source: key.source,
+			Target: key.target,
+			State:  data.state,
+		})
 	}
+
+	sort.Slice(candidates, func(left int, right int) bool {
+		leftKey := candidates[left].Source.ID() + candidates[left].Target.ID()
+		rightKey := candidates[right].Source.ID() + candidates[right].Target.ID()
+
+		return leftKey < rightKey
+	})
+
+	return candidates
 }
 
-func directionPosteriorConfidence(
-	forecast learning.RLSOutput,
-	call float64,
-) float64 {
-	if !forecast.Ready || forecast.Scale <= 0 || forecast.DegreesOfFreedom <= 0 ||
-		math.IsNaN(forecast.Value) || math.IsInf(forecast.Value, 0) {
+/*
+Nodes returns every coordinate node with retained data, in coordinate order.
+*/
+func (influenceGraph *InfluenceGraph) Nodes() []InfluenceNode {
+	if influenceGraph == nil {
+		return nil
+	}
+
+	result := make([]InfluenceNode, 0)
+
+	influenceGraph.nodes.Range(relation.Coordinate{}, maxCoordinate(), func(node network.Node[relation.Coordinate, InfluenceNode]) {
+		result = append(result, node.Data)
+	})
+
+	return result
+}
+
+/*
+Edges returns every current edge across all types, retaining full Relation
+statistics.
+*/
+func (influenceGraph *InfluenceGraph) Edges() []*InfluenceEdge {
+	return influenceGraph.currentEdges(func(edge *InfluenceEdge) bool {
+		return true
+	})
+}
+
+func (influenceGraph *InfluenceGraph) currentEdges(predicate func(*InfluenceEdge) bool) []*InfluenceEdge {
+	if influenceGraph == nil {
+		return nil
+	}
+
+	var edges []*InfluenceEdge
+
+	for _, key := range influenceGraph.edgeKeys() {
+		data, found := influenceGraph.getEdge(key)
+
+		if !found || len(data.history) == 0 {
+			continue
+		}
+
+		edge := data.history[len(data.history)-1]
+
+		if edge.Type != key.edgeType {
+			continue
+		}
+
+		if predicate(edge) {
+			edges = append(edges, edge)
+		}
+	}
+
+	sort.Slice(edges, func(left int, right int) bool {
+		leftKey := edges[left].Source.ID() + edges[left].Target.ID()
+		rightKey := edges[right].Source.ID() + edges[right].Target.ID()
+
+		return leftKey < rightKey
+	})
+
+	return edges
+}
+
+/*
+NodeCount returns the number of coordinate nodes.
+*/
+func (influenceGraph *InfluenceGraph) NodeCount() int {
+	if influenceGraph == nil {
 		return 0
 	}
 
-	distribution := distuv.StudentsT{
-		Mu:    forecast.Value,
-		Sigma: forecast.Scale,
-		Nu:    forecast.DegreesOfFreedom,
-	}
-	positive := 1 - distribution.CDF(0)
-
-	if call > 0 {
-		return min(max(positive, 0), 1)
-	}
-
-	if call < 0 {
-		return min(max(1-positive, 0), 1)
-	}
-
-	return 0
+	return influenceGraph.nodes.Len()
 }
 
 /*
-causalField maps one Pearl output value to its standardized score and channel
-probability. Do-expectation belongs to the intervention channel because it is
-the target estimate produced by that intervention.
+EdgeCount returns the number of current (latest-state) edges across all types.
 */
-type causalField struct {
-	value            string
-	score            string
-	probabilityIndex int
-}
-
-const causalProbabilityCount = 4
-
-var causalFields = [...]causalField{
-	{value: "association", score: "associationScore", probabilityIndex: 0},
-	{value: "intervention", score: "interventionScore", probabilityIndex: 1},
-	{value: "doExpectation", score: "interventionScore", probabilityIndex: 1},
-	{value: "uplift", score: "upliftScore", probabilityIndex: 2},
-}
-
-func (field causalField) node(
-	symbol string,
-	causalMap map[string]any,
-	probabilities []float64,
-	precision float64,
-) (*types.Node, bool, error) {
-	fieldValue, found := causalMap[field.value].(float64)
-
-	if !found {
-		return nil, false, nil
+func (influenceGraph *InfluenceGraph) EdgeCount() int {
+	if influenceGraph == nil {
+		return 0
 	}
 
-	if math.IsNaN(fieldValue) || math.IsInf(fieldValue, 0) {
-		return nil, false, fmt.Errorf(
-			"finite causal value %s required for %s", field.value, symbol,
-		)
-	}
-
-	strength, found := causalMap[field.score].(float64)
-
-	if !found || math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 {
-		return nil, false, fmt.Errorf(
-			"finite causal score %s required for %s", field.score, symbol,
-		)
-	}
-
-	node := &types.Node{
-		ID:         fmt.Sprintf("causal:%s:%s", symbol, field.value),
-		Symbol:     symbol,
-		Source:     "causal",
-		Kind:       types.KindCausal,
-		Value:      fieldValue,
-		Strength:   strength,
-		Confidence: probabilities[field.probabilityIndex] * precision,
-		Maturity:   precision,
-		Metadata: map[string]any{
-			"horizon":               1,
-			"hypothesis_separation": precision,
-		},
-	}
-
-	return node, true, nil
-}
-
-func causalPrecision(symbol string, causalMap map[string]any) (float64, error) {
-	precision, ok := causalMap["precision"].(float64)
-
-	if !ok || math.IsNaN(precision) || math.IsInf(precision, 0) ||
-		precision < 0 || precision > 1 {
-		return 0, fmt.Errorf(
-			"causal precision for %s must be within [0,1]", symbol,
-		)
-	}
-
-	return precision, nil
-}
-
-func causalProbabilities(symbol string, causalMap map[string]any) ([]float64, error) {
-	probabilities, ok := causalMap["probabilities"].([]float64)
-
-	if !ok || len(probabilities) != causalProbabilityCount {
-		return nil, fmt.Errorf(
-			"%d causal probabilities required for %s", causalProbabilityCount, symbol,
-		)
-	}
-
-	for index, confidence := range probabilities {
-		if math.IsNaN(confidence) || math.IsInf(confidence, 0) ||
-			confidence < 0 || confidence > 1 {
-			return nil, fmt.Errorf(
-				"causal probability %d for %s must be within [0,1]", index, symbol,
-			)
-		}
-	}
-
-	return probabilities, nil
-}
-
-func causalValuesPresent(causalMap map[string]any) bool {
-	if causalMap == nil {
-		return false
-	}
-
-	for _, field := range causalFields {
-		if _, found := causalMap[field.value]; found {
-			return true
-		}
-	}
-
-	return false
+	return influenceGraph.edges.Len()
 }
 
 /*
-extractCausalNodes registers Pearl do-calculus and counterfactual uplift outputs.
+Solver is the Influence Graph stage of the observational pipeline. It owns the
+coordinate store, the Relation estimator, the candidate relation plan, and the
+Influence Graph, and it processes one Measurement at a time via Step. Step is an
+incrementing iterator: it appends observations, evaluates the candidate plan,
+and updates the Influence Graph in place — never rebuilding it from scratch. It
+is a pure domain processor: no UI frames, wire projections, or diagnostic timing
+live here, exactly as signals carry none.
 */
-func (solver *Solver) extractCausalNodes(
-	symbol *types.Symbol, causalMap map[string]any, graph *types.Graph,
-) error {
-	if !causalValuesPresent(causalMap) {
+type Solver struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	err       error
+	epoch     uint64
+	store     *relation.ObservationStore
+	estimator *relation.InfluenceEstimator
+	influence *InfluenceGraph
+	plans     []*relation.RelationPlan
+	updates   *runtime.Channel[GraphUpdate]
+}
+
+/*
+GraphUpdate is the domain event the solver publishes on ChannelRelations after
+each Measurement advances the Influence Graph. It carries only the symbol and
+as-of time; consumers read the shared Influence Graph for the data itself. The
+boot side-effect observer reacts to it, exactly as observers react to
+Measurements.
+*/
+type GraphUpdate struct {
+	Symbol string
+	At     time.Time
+}
+
+/*
+NewSolver builds the graph stage. historyCapacity bounds each coordinate's
+retained observations (infrastructure provenance). schemaVersion and the plans'
+versions identify the graph snapshot.
+*/
+func NewSolver(
+	ctx context.Context,
+	bus *runtime.Workspace,
+	epoch uint64,
+	historyCapacity int,
+	plans []*relation.RelationPlan,
+	schemaVersion uint64,
+) *Solver {
+	ctx, cancel := context.WithCancel(ctx)
+
+	solver := &Solver{
+		ctx:       ctx,
+		cancel:    cancel,
+		epoch:     epoch,
+		store:     relation.NewObservationStore(historyCapacity),
+		estimator: relation.NewInfluenceEstimator("prequential-linear-v1"),
+		influence: NewInfluenceGraph(epoch, schemaVersion, planVersion(plans), 64),
+		plans:     plans,
+	}
+
+	if bus != nil {
+		bus.Share(SharedObservationStore, solver.store, "")
+		bus.Share(SharedInfluenceGraph, solver.influence, "")
+
+		solver.updates = runtime.ChannelOf[GraphUpdate](
+			bus, types.ChannelRelations,
+			func(update GraphUpdate) string { return update.Symbol },
+		)
+
+		runtime.ChannelOf[*nmtypes.Measurement](
+			bus, types.ChannelMeasurements,
+			func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
+		).Subscribe(solver.Name(), solver.Step)
+	}
+
+	return solver
+}
+
+/*
+Name returns the stage's subscription identity.
+*/
+func (solver *Solver) Name() string { return "graph" }
+
+/*
+Error returns the subscription step failure, if any.
+*/
+func (solver *Solver) Error() error { return solver.err }
+
+/*
+Step appends one Measurement to the coordinate store, re-estimates the planned
+Relations for its symbol, and updates the Influence Graph in place. The workspace
+delivers values for one symbol in order, so the store and graph advance as data
+becomes available.
+*/
+func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
+	if solver == nil {
 		return nil
 	}
 
-	probabilities, err := causalProbabilities(symbol.Symbol, causalMap)
+	observations := relation.AppendMeasurement(measurement, solver.epoch)
 
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"causal: failed to extract probabilities for symbol "+symbol.Symbol+" - "+err.Error(),
-			err,
-		))
-	}
-
-	precision, err := causalPrecision(symbol.Symbol, causalMap)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"causal: failed to extract precision for symbol "+symbol.Symbol+" - "+err.Error(),
-			err,
-		))
-	}
-
-	for _, field := range causalFields {
-		node, found, err := field.node(
-			symbol.Symbol,
-			causalMap,
-			probabilities,
-			precision,
-		)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"causal: failed to extract node for symbol "+symbol.Symbol+" - "+err.Error(),
-				err,
-			))
-		}
-
-		if found {
-			node.At = graph.At
-			graph.AddNode(node)
-		}
-	}
-
-	return nil
-}
-
-/*
-extractCognitionNodes registers active category sequences and lookahead predictions.
-*/
-func (solver *Solver) extractCognitionNodes(
-	symbol *types.Symbol,
-	cognition types.Cognition,
-	graph *types.Graph,
-) {
-	if cognition.Winner == "" {
-		return
-	}
-
-	nodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
-	graph.AddNode(&types.Node{
-		ID:         nodeID,
-		Symbol:     symbol.Symbol,
-		Source:     cognition.Source,
-		Kind:       types.KindCognition,
-		Value:      cognition.Confidence,
-		Confidence: cognition.Confidence,
-		At:         cognition.At,
-		Metadata: map[string]any{
-			"regime":           cognition.Winner,
-			"candidate":        cognition.CandidateWinner,
-			"sequence":         cognition.Sequence,
-			"held":             cognition.StateHeld,
-			"switchConfidence": cognition.SwitchConfidence,
-			"switchThreshold":  cognition.SwitchThreshold,
-		},
-	})
-
-	if cognition.PredictionsHeld {
-		return
-	}
-
-	for path, probability := range cognition.Predictions {
-		if path == "" || probability <= 0 {
-			continue
-		}
-
-		graph.AddNode(&types.Node{
-			ID:         fmt.Sprintf("cog:%s:prediction:%s", symbol.Symbol, path),
-			Symbol:     symbol.Symbol,
-			Source:     cognition.Source,
-			Kind:       types.KindPrediction,
-			Value:      probability,
-			Confidence: probability,
-			At:         cognition.At,
-			Metadata: map[string]any{
-				"path": path,
-			},
-		})
-	}
-}
-
-/*
-agreementWeight scores how strongly two readings agree in direction, on a
-scale of zero to one, without regard to the units either of them uses.
-
-Nodes come from heads that measure different things: a resonance forecast is a
-fractional return, while a causal uplift is an unbounded score. Comparing their
-magnitudes directly would make the relation a statement about scale rather than
-about agreement, so each side is squashed to a bounded strength first and the
-weaker of the two decides how much the pair can claim.
-*/
-func agreementWeight(left, right float64) (float64, error) {
-	leftWeight, err := magnitudeWeight(math.Abs(left))
-
-	if err != nil {
-		return 0, fmt.Errorf("left agreement strength: %w", err)
-	}
-
-	rightWeight, err := magnitudeWeight(math.Abs(right))
-
-	if err != nil {
-		return 0, fmt.Errorf("right agreement strength: %w", err)
-	}
-
-	return math.Min(leftWeight, rightWeight), nil
-}
-
-/*
-inferStructuralEdges indexes nodes by the domains that can produce an
-evidence-bearing relationship. Zero-confidence pair relations are not
-materialized because their decision weight is necessarily zero.
-*/
-func (solver *Solver) inferStructuralEdges(
-	symbol *types.Symbol,
-	categories []types.Category,
-	cognition types.Cognition,
-	graph *types.Graph,
-) error {
-	nodes := graph.Nodes
-	resonanceBySymbol := make(map[string][]*types.Node)
-	causalBySymbol := make(map[string][]*types.Node)
-	interventions := make([]*types.Node, 0)
-	expectationsBySymbol := make(map[string][]*types.Node)
-
-	for _, node := range nodes {
-		switch node.Kind {
-		case KindResonance:
-			if node.ID == "res:"+node.Symbol+":forecast" {
-				resonanceBySymbol[node.Symbol] = append(resonanceBySymbol[node.Symbol], node)
-			}
-		case KindCausal:
-			if node.ID == "causal:"+node.Symbol+":uplift" ||
-				node.ID == "causal:"+node.Symbol+":doExpectation" {
-				causalBySymbol[node.Symbol] = append(causalBySymbol[node.Symbol], node)
-			}
-
-			if node.ID == "causal:"+node.Symbol+":intervention" {
-				interventions = append(interventions, node)
-			}
-
-			if node.ID == "causal:"+node.Symbol+":doExpectation" {
-				expectationsBySymbol[node.Symbol] = append(
-					expectationsBySymbol[node.Symbol],
-					node,
-				)
-			}
-		}
-	}
-
-	for sym, resonanceNodes := range resonanceBySymbol {
-		for _, resonanceNode := range resonanceNodes {
-			for _, causalNode := range causalBySymbol[sym] {
-				/*
-					This edge reads the two heads for directional agreement
-					only. They score on unrelated scales, so the weight is the
-					strength of the agreement rather than any difference
-					between the values; a raw magnitude here would let the
-					head with the larger units decide the relation by itself.
-				*/
-				agreement, err := agreementWeight(resonanceNode.Value, causalNode.Value)
-
-				if err != nil {
-					return fmt.Errorf(
-						"agreement weight from %s to %s: %w",
-						resonanceNode.ID,
-						causalNode.ID,
-						err,
-					)
-				}
-
-				if resonanceNode.Value > 0 && causalNode.Value > 0 {
-					graph.AddEdge(&types.Edge{
-						From:       resonanceNode.ID,
-						To:         causalNode.ID,
-						Relation:   RelationSupports,
-						Weight:     agreement,
-						Confidence: resonanceNode.Confidence * causalNode.Confidence,
-						Evidence:   []string{resonanceNode.ID, causalNode.ID},
-						At:         graph.At,
-						Reason:     "predictive forecast and causal uplift agree directionally (+)",
-					})
-
-					continue
-				}
-
-				if (resonanceNode.Value > 0 && causalNode.Value < 0) ||
-					(resonanceNode.Value < 0 && causalNode.Value > 0) {
-					graph.AddEdge(&types.Edge{
-						From:       resonanceNode.ID,
-						To:         causalNode.ID,
-						Relation:   RelationContradicts,
-						Weight:     agreement,
-						Confidence: resonanceNode.Confidence * causalNode.Confidence,
-						Evidence:   []string{resonanceNode.ID, causalNode.ID},
-						At:         graph.At,
-						Reason:     "predictive forecast and causal uplift conflict in direction",
-					})
-
-					continue
-				}
-			}
-		}
-	}
-
-	for _, intervention := range interventions {
-		for _, expectation := range expectationsBySymbol[intervention.Symbol] {
-			weight, err := magnitudeWeight(intervention.Strength)
-
-			if err != nil {
-				return fmt.Errorf(
-					"condition weight for %s: %w", intervention.ID, err,
-				)
-			}
-
-			if weight == 0 || intervention.Confidence == 0 {
-				continue
-			}
-
-			graph.AddEdge(&types.Edge{
-				From:     intervention.ID,
-				To:       expectation.ID,
-				Relation: RelationConditions,
-
-				/*
-					The causal solver standardizes this score against the
-					target's robust scale. MagnitudeMargin keeps finite
-					evidence below certainty without introducing a fixed cap.
-				*/
-				Weight:     weight,
-				Confidence: intervention.Confidence,
-				Evidence:   []string{intervention.ID, expectation.ID},
-				At:         graph.At,
-				Reason:     "interventional level conditions do-expectation",
-			})
-		}
-	}
-
-	// 2. Evaluate Leads & Lags from Cognition Beam Search
-	if cognition.Winner != "" && !cognition.PredictionsHeld {
-		currentNodeID := fmt.Sprintf("cog:%s:winner_regime", symbol.Symbol)
-
-		for path, probability := range cognition.Predictions {
-			if path == "" || probability <= 0 {
-				continue
-			}
-
-			targetNodeID := fmt.Sprintf("cog:%s:prediction:%s", symbol.Symbol, path)
-			graph.AddEdge(&types.Edge{
-				From:       currentNodeID,
-				To:         targetNodeID,
-				Relation:   RelationLeads,
-				Weight:     probability,
-				Confidence: probability,
-				Evidence:   []string{currentNodeID, targetNodeID},
-				At:         graph.At,
-				Reason:     "cognition beam search lookahead prediction",
-			})
-			graph.AddEdge(&types.Edge{
-				From:       targetNodeID,
-				To:         currentNodeID,
-				Relation:   RelationLags,
-				Weight:     probability,
-				Confidence: probability,
-				Evidence:   []string{currentNodeID, targetNodeID},
-				At:         graph.At,
-				Reason:     "inverse temporal lag of beam search lookahead",
-			})
-		}
-	}
-
-	// 3. Relate categories through the evidence they actually share.
-	for _, category := range categories {
-		for _, peer := range categories {
-			if category.Type == types.CategoryTypeNone ||
-				peer.Type == types.CategoryTypeNone || category.Type == peer.Type {
-				continue
-			}
-
-			relation := RelationType("")
-			reason := ""
-			evidenceReference := ""
-
-			for _, evidence := range category.Supporting {
-				if slices.Contains(peer.Opposing, evidence) {
-					relation = RelationContradicts
-					reason = "category evidence conflicts on " + evidence
-					evidenceReference = evidence
-					break
-				}
-
-				if relation == "" && slices.Contains(peer.Supporting, evidence) {
-					relation = RelationRedundantWith
-					reason = "categories share supporting evidence " + evidence
-					evidenceReference = evidence
-				}
-			}
-
-			if relation == "" {
-				continue
-			}
-
-			weight, err := agreementWeight(category.Strength, peer.Strength)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"graph: failed to compute agreement weight between categories - "+err.Error(),
-					err,
-				))
-			}
-
-			graph.AddEdge(&types.Edge{
-				From:       fmt.Sprintf("cat:%s:%s", symbol.Symbol, category.Type),
-				To:         fmt.Sprintf("cat:%s:%s", symbol.Symbol, peer.Type),
-				Relation:   relation,
-				Weight:     weight,
-				Confidence: category.Confidence * peer.Confidence,
-				Evidence:   []string{evidenceReference},
-				At:         graph.At,
-				Reason:     reason,
-			})
-		}
-	}
-
-	// 4. Manifold, Resonance dynamics, and Cognition condition the causal SCM layer (backdoor covariate set Z)
-	for _, node := range nodes {
-		if node.Kind != KindManifold && node.Kind != KindResonance && node.Kind != KindCognition {
-			continue
-		}
-
-		if node.ID == "res:"+symbol.Symbol+":forecast" {
-			continue
-		}
-
-		for _, causalNode := range causalBySymbol[symbol.Symbol] {
-			omega := types.ObservationMass(node, graph.At)
-			weight := types.NodeInfluence(node)
-
-			if omega <= 0 || weight <= 0 {
-				continue
-			}
-
-			graph.AddEdge(&types.Edge{
-				From:       node.ID,
-				To:         causalNode.ID,
-				Relation:   RelationConditions,
-				Weight:     omega * weight,
-				Confidence: omega,
-				Evidence:   []string{node.ID, causalNode.ID},
-				At:         graph.At,
-				Reason:     "field dynamics condition causal intervention context (backdoor covariate)",
-			})
-		}
-	}
-
-	return nil
-}
-
-/*
-connectLongOpportunity gives every analytical module one explicit proposition
-to address: whether current conditioned evidence supports risking capital on a
-long position in this symbol. The graph remains an interpretation mechanism;
-no relation here is converted into a price forecast.
-*/
-func (solver *Solver) connectLongOpportunity(
-	symbol *types.Symbol,
-	graph *Graph,
-) error {
-	if symbol == nil || graph == nil {
+	if len(observations) == 0 {
 		return nil
 	}
 
-	target := fmt.Sprintf("hyp:%s:long_opportunity", symbol.Symbol)
-	graph.SetDecisionTarget(target)
-	graph.AddNode(&types.Node{
-		ID:         target,
-		Symbol:     symbol.Symbol,
-		Source:     "strategy",
-		Kind:       KindHypothesis,
-		Confidence: 1,
-		At:         graph.At,
-		Metadata: map[string]any{
-			"question": "does the conditioned evidence support risking capital on a long position now?",
-		},
-	})
+	solver.store.AppendObservations(observations)
+	solver.estimate(measurement.Symbol)
 
-	for _, node := range graph.Nodes {
-		if node == nil || node.ID == target {
-			continue
-		}
-
-		relation, reason := opportunityRelation(node)
-
-		if relation == "" {
-			continue
-		}
-
-		omega := types.ObservationMass(node, graph.At)
-		weight := types.NodeInfluence(node)
-
-		if omega <= 0 || weight <= 0 {
-			continue
-		}
-
-		graph.AddEdge(&types.Edge{
-			From:         node.ID,
-			To:           target,
-			Relation:     relation,
-			Weight:       omega * weight,
-			Confidence:   omega,
-			Evidence:     []string{node.ID, target},
-			ObservedFrom: node.ObservedFrom,
-			Horizon:      node.Horizon,
-			At:           graph.At,
-			Reason:       reason,
+	if solver.updates != nil {
+		solver.updates.Publish(GraphUpdate{
+			Symbol: measurement.Symbol,
+			At:     measurement.At,
 		})
 	}
-
-	graph.CanonicalizeDecisionEdges()
 
 	return nil
 }
 
-func opportunityRelation(node *types.Node) (types.RelationType, string) {
-	switch node.Kind {
-	case KindCategory:
-		category, _ := node.Metadata["type"].(string)
-		relation := categoryOpportunityRelation(types.CategoryType(category))
-		return relation, "category " + category + " addresses the long-opportunity thesis"
-	case types.KindCausal:
-		if strings.HasSuffix(node.ID, ":doExpectation") ||
-			strings.HasSuffix(node.ID, ":uplift") {
-			return signedOpportunityRelation(node.Value),
-				"Pearl intervention evidence addresses the direction of the thesis"
-		}
-
-		return "", ""
-	default:
-		return "", ""
+/*
+Store exposes the observational coordinate store.
+*/
+func (solver *Solver) Store() *relation.ObservationStore {
+	if solver == nil {
+		return nil
 	}
-}
 
-func signedOpportunityRelation(value float64) RelationType {
-	switch {
-	case value > 0:
-		return RelationSupports
-	case value < 0:
-		return RelationContradicts
-	default:
-		return RelationConditions
-	}
+	return solver.store
 }
 
 /*
-categoryOpportunityRelation states category semantics for a long-only account.
-Directional precursor and authenticity states support; manipulation, decay, and
-adverse systemic states contradict; states whose direction depends on another
-module remain conditions rather than being guessed bullish or bearish.
+Graph exposes the Influence Graph.
 */
-func categoryOpportunityRelation(category types.CategoryType) RelationType {
-	switch category {
-	case types.VerticalIgnition,
-		types.CoiledCompression,
-		types.OrganicTrend,
-		types.AggressiveDrive,
-		types.LoadedImbalance,
-		types.InefficientLag,
-		types.DecoupledMove,
-		types.RiskOnSurge,
-		types.DivergentMove,
-		types.DecoupledAlpha,
-		types.EndogenousAlpha,
-		types.HardSupport,
-		types.Laminar,
-		types.Inertial,
-		types.Frenzy,
-		types.Organic:
-		return RelationSupports
-	case types.SpoofTrap,
-		types.BookThinning,
-		types.AnchorStall,
-		types.FadedExhaustion,
-		types.SystemicSlump,
-		types.ToxicBluff,
-		types.SystemicBeta,
-		types.CausalNoise,
-		types.MechanicalCollapse,
-		types.ThermalExhaustion,
-		types.FragileExpansion,
-		types.ActiveReversal,
-		types.VolumeStarvation,
-		types.StochasticNoise,
-		types.DivergentStress,
-		types.Turbulent,
-		types.Saturation,
-		types.Exhaustion:
-		return RelationContradicts
-	case types.CategoryTypeNone:
-		return ""
-	default:
-		return RelationConditions
-	}
-}
-
-/*
-magnitudeWeight maps a finite dimensionless strength to an open unit interval.
-Zero strength carries no edge mass; finite evidence never asserts certainty.
-*/
-func magnitudeWeight(strength float64) (float64, error) {
-	if math.IsNaN(strength) || math.IsInf(strength, 0) || strength < 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"graph: finite, non-negative strength required",
-			nil,
-		))
+func (solver *Solver) Graph() *InfluenceGraph {
+	if solver == nil {
+		return nil
 	}
 
-	if strength == 0 {
-		return 0, nil
-	}
-
-	weight, err := probability.MagnitudeMargin(strength)
-
-	if err != nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"graph: invalid weight - "+err.Error(),
-			err,
-		))
-	}
-
-	if weight >= 1 {
-		return math.Nextafter(1, 0), nil
-	}
-
-	return weight, nil
+	return solver.influence
 }
 
 /*
 Close cleans up the solver.
 */
 func (solver *Solver) Close() error {
+	if solver == nil {
+		return nil
+	}
+
 	solver.cancel()
 	return nil
+}
+
+/*
+SharedObservationStore and SharedInfluenceGraph are the shared-object names the
+graph stage registers its authoritative coordinate store and Influence Graph
+under. Downstream stages read them through the workspace.
+*/
+const (
+	SharedObservationStore = "relation_store"
+	SharedInfluenceGraph   = "influence_graph"
+)
+
+/*
+planVersion returns the highest relation-plan version, which participates in the
+graph snapshot identity.
+*/
+func planVersion(plans []*relation.RelationPlan) uint64 {
+	version := uint64(0)
+
+	for _, plan := range plans {
+		if plan != nil && plan.Version > version {
+			version = plan.Version
+		}
+	}
+
+	return version
+}
+
+/*
+estimate evaluates every planned pair for one symbol and records the Influence
+edges. Selectors expand to every matching stored coordinate, so a plan can
+declare "all configured same-symbol compatible coordinate pairs" without
+enumerating combinations. Self-pairs are excluded.
+*/
+func (solver *Solver) estimate(symbol string) {
+	coordinates := solver.store.Coordinates()
+
+	for _, plan := range solver.plans {
+		if plan == nil || plan.Epoch != solver.epoch {
+			continue
+		}
+
+		for _, pair := range plan.PairsForSymbol(symbol) {
+			sources := resolveSelectors(pair.Source, symbol, plan.Peer, solver.epoch, coordinates)
+			targets := resolveSelectors(pair.Target, symbol, plan.Peer, solver.epoch, coordinates)
+
+			for _, source := range sources {
+				for _, target := range targets {
+					if source == target {
+						continue
+					}
+
+					solver.estimatePair(plan, symbol, source, target, coordinates)
+				}
+			}
+		}
+	}
+}
+
+/*
+estimatePair estimates one Source→Target pair and records the Influence edge.
+The pair is a structurally scheduled candidate first; an undefined estimate
+marks that candidate unavailable (never deleted, never a measured zero).
+*/
+func (solver *Solver) estimatePair(
+	plan *relation.RelationPlan,
+	symbol string,
+	source relation.Coordinate,
+	target relation.Coordinate,
+	coordinates []relation.Coordinate,
+) {
+	_ = solver.influence.RegisterCandidate(EdgeInfluence, source, target, solver.epoch)
+
+	controls, controlsComplete := plan.ResolveControls(symbol, coordinates)
+
+	if !controlsComplete {
+		_ = solver.influence.SetUnavailable(EdgeInfluence, source, target, solver.epoch)
+		return
+	}
+
+	result, err := solver.estimator.Estimate(solver.store, relation.InfluenceRequest{
+		Source:   source,
+		Target:   target,
+		Controls: controls,
+		Lag:      plan.Lag,
+	})
+
+	if err != nil {
+		return
+	}
+
+	if result.Defined() {
+		_ = solver.influence.UpsertEdge(&InfluenceEdge{
+			Type:   EdgeInfluence,
+			Source: source,
+			Target: target,
+			Result: result,
+			From:   result.From,
+			At:     result.At,
+			Epoch:  solver.epoch,
+		})
+
+		return
+	}
+
+	_ = solver.influence.SetUnavailable(EdgeInfluence, source, target, solver.epoch)
+}
+
+/*
+resolveSelectors returns every stored coordinate matching one structural
+selector for the symbol and epoch.
+*/
+func resolveSelectors(
+	selector relation.Selector,
+	symbol string,
+	peer string,
+	epoch uint64,
+	coordinates []relation.Coordinate,
+) []relation.Coordinate {
+	matches := make([]relation.Coordinate, 0)
+
+	for _, coordinate := range coordinates {
+		if coordinate.Symbol != symbol || coordinate.Epoch != epoch {
+			continue
+		}
+
+		if peer != "" && coordinate.Peer != peer {
+			continue
+		}
+
+		if !selector.Matches(coordinate) {
+			continue
+		}
+
+		matches = append(matches, coordinate)
+	}
+
+	return matches
+}
+
+/*
+InfluenceGraphWire projects the Influence Graph's subgraph for one symbol into
+the dashboard GraphFrameT. It is a free projection function, not a method on the
+domain type, exactly as ResonanceWire projects a ResonanceArtifact: the domain
+graph carries no wire knowledge, and the projection runs only when the boot
+side-effect observer needs to render the focused symbol.
+
+The view is read-only and reversible: every node is a Measurement coordinate
+identity (never a collapsed signal rollup), and every edge carries the measured
+Relation — the signed coefficient as Weight, Maturity as Confidence, and the
+lag/PredictiveGain/estimator as the reason.
+*/
+func InfluenceGraphWire(
+	influenceGraph *InfluenceGraph,
+	symbol string,
+	at time.Time,
+) *wire.GraphFrameT {
+	if influenceGraph == nil {
+		return nil
+	}
+
+	nodes := make([]*wire.GraphNodeT, 0)
+
+	for _, node := range influenceGraph.Nodes() {
+		if node.Coordinate.Symbol != symbol {
+			continue
+		}
+
+		nodes = append(nodes, influenceNodeWire(node.Coordinate))
+	}
+
+	edges := make([]*wire.GraphEdgeT, 0)
+
+	for _, edge := range influenceGraph.Edges() {
+		if edge.Source.Symbol != symbol || edge.Target.Symbol != symbol {
+			continue
+		}
+
+		edges = append(edges, influenceEdgeWire(edge))
+	}
+
+	return &wire.GraphFrameT{
+		At:    at.UnixNano(),
+		Nodes: nodes,
+		Edges: edges,
+	}
+}
+
+func influenceNodeWire(coordinate relation.Coordinate) *wire.GraphNodeT {
+	return &wire.GraphNodeT{
+		Id:     coordinate.ID(),
+		Symbol: coordinate.Symbol,
+		Peer:   coordinate.Peer,
+		Source: coordinate.Source,
+		Metric: coordinate.Metric,
+		Side:   coordinate.Side,
+		Kind:   "measurement",
+		Unit:   coordinate.Unit.String(),
+		Metadata: &wire.GraphMetadataT{
+			Strings: []*wire.NamedStringT{
+				{Name: "timescale", Value: coordinate.Timescale.String()},
+			},
+			Numbers: []*wire.NamedNumberT{
+				{Name: "epoch", Value: float64(coordinate.Epoch)},
+			},
+		},
+	}
+}
+
+func influenceEdgeWire(edge *InfluenceEdge) *wire.GraphEdgeT {
+	weight := 0.0
+	confidence := 0.0
+	reason := "influence"
+
+	if edge.Result != nil {
+		confidence = edge.Result.Maturity
+
+		if edge.Result.Coefficient != nil {
+			weight = *edge.Result.Coefficient
+		}
+
+		gain := "undefined"
+
+		if edge.Result.PredictiveGain != nil {
+			gain = strconv.FormatFloat(*edge.Result.PredictiveGain, 'f', 4, 64)
+		}
+
+		reason = "lag=" + edge.Result.Lag.String() +
+			" gain=" + gain +
+			" estimator=" + edge.Result.EstimatorVersion
+	}
+
+	return &wire.GraphEdgeT{
+		From:       edge.Source.ID(),
+		To:         edge.Target.ID(),
+		Relation:   edge.Type.String(),
+		Weight:     weight,
+		Confidence: confidence,
+		At:         edge.At.UnixNano(),
+		Reason:     reason,
+	}
 }
