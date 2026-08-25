@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/nomagique/statistic"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*

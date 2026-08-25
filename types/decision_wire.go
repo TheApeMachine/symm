@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	nomcts "github.com/theapemachine/nomagique/mcts"
+	"github.com/theapemachine/symm/nomagique/mcts"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -152,12 +152,11 @@ func decisionTraceWire(
 	return encoded
 }
 
-func mctsNodeWire(node *nomcts.Node) *wire.MCTSNodeT {
+func mctsNodeWire(node *mcts.SearchNode) *wire.MCTSNodeT {
 	if node == nil {
 		return nil
 	}
 
-	trace := node.Trace()
 	children := make([]*wire.MCTSNodeT, 0, len(node.Children))
 
 	for _, child := range node.Children {
@@ -165,27 +164,12 @@ func mctsNodeWire(node *nomcts.Node) *wire.MCTSNodeT {
 	}
 
 	return &wire.MCTSNodeT{
-		Action:                  int64(trace.Action),
-		ActionName:              trace.ActionName,
-		Depth:                   int64(trace.Depth),
-		Visits:                  int64(trace.Visits),
-		EffectiveVisits:         trace.EffectiveVisits,
-		ObservedReward:          trace.ObservedReward,
-		CounterfactualReward:    trace.CounterfactualReward,
-		CounterfactualMass:      trace.CounterfactualMass,
-		CounterfactualPrecision: trace.CounterfactualPrecision,
-		TotalReward:             trace.TotalReward,
-		MeanReward:              trace.MeanReward,
-		Exploitation:            trace.Exploitation,
-		Exploration:             trace.Exploration,
-		CausalExpectation:       trace.CausalExpectation,
-		SelectionScore:          trace.SelectionScore,
-		ScmReady:                trace.SCMReady,
-		ScmReason:               trace.SCMReason,
-		Selected:                trace.Selected,
-		Principal:               trace.Principal,
-		State:                   namedNumbers(trace.State),
-		Children:                children,
+		Action:     int64(node.Action),
+		ActionName: node.Action.String(),
+		Depth:      int64(node.Depth),
+		Visits:     int64(node.Visits),
+		MeanReward: node.MeanReward(),
+		Children:   children,
 	}
 }
 

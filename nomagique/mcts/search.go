@@ -5,8 +5,6 @@ import (
 	"math"
 	"math/rand"
 	"slices"
-
-	"github.com/theapemachine/symm/logic/causal"
 )
 
 /*
@@ -43,10 +41,14 @@ type SearchResult struct {
 	Alternatives            []ActionEstimate
 	CausalModelVersion      string
 	SchemaVersion           uint64
-	IdentificationStatus    causal.IdentificationStatus
+	IdentificationStatus    IdentificationStatus
 	Trace                   *Trace
 	UndefinedActions        []Action
 	DecisionUnavailable     bool
+	// Tree is the explored search tree rooted at the search origin. It is
+	// retained so the decision trace can project the actual per-node economic
+	// statistics the search aggregated, rather than a flat branch list.
+	Tree *SearchNode
 }
 
 /*
@@ -98,12 +100,12 @@ DecisionUnavailable; it is never reported as a win for Wait.
 */
 func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchResult {
 	result := &SearchResult{
-		IdentificationStatus: causal.IdentificationIdentified,
+		IdentificationStatus: IdentificationIdentified,
 	}
 
 	if rootState == nil {
 		result.DecisionUnavailable = true
-		result.IdentificationStatus = causal.IdentificationUndefined
+		result.IdentificationStatus = IdentificationUndefined
 		return result
 	}
 
@@ -112,7 +114,7 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 	if estimator == nil {
 		result.UndefinedActions = append([]Action(nil), possible...)
 		result.DecisionUnavailable = true
-		result.IdentificationStatus = causal.IdentificationNotIdentifiable
+		result.IdentificationStatus = IdentificationNotIdentifiable
 		return result
 	}
 
@@ -132,7 +134,7 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 
 	if len(estimable) == 0 {
 		result.DecisionUnavailable = true
-		result.IdentificationStatus = causal.IdentificationNotIdentifiable
+		result.IdentificationStatus = IdentificationNotIdentifiable
 		return result
 	}
 
@@ -161,7 +163,7 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 
 	if len(root.Children) == 0 {
 		result.DecisionUnavailable = true
-		result.IdentificationStatus = causal.IdentificationNotIdentifiable
+		result.IdentificationStatus = IdentificationNotIdentifiable
 		return result
 	}
 
@@ -172,7 +174,7 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 		// economic objective could not be evaluated. This is an explicit
 		// unavailable result, not a Wait win.
 		result.DecisionUnavailable = true
-		result.IdentificationStatus = causal.IdentificationInsufficientSupport
+		result.IdentificationStatus = IdentificationInsufficientSupport
 		return result
 	}
 
@@ -182,6 +184,7 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 	result.Visits = best.Visits
 	result.IdentificationStatus = alternativeEstimate(result.Alternatives, best.Action).IdentificationStatus
 	result.Trace = search.trace(root, rootState, result.Alternatives)
+	result.Tree = root
 
 	return result
 }

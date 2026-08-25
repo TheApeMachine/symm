@@ -213,6 +213,16 @@ func CategoryByIndex(index int) CategoryType {
 }
 
 /*
+CategoryOrderLess reports whether left precedes right in the stable category
+vocabulary order. It is the deterministic tie-break the category solver uses to
+resolve equal-evidence regimes. A category absent from CategoryOrder sorts after
+every listed category, preserving a stable extension for future categories.
+*/
+func CategoryOrderLess(left CategoryType, right CategoryType) bool {
+	return CategoryIndex(left) < CategoryIndex(right)
+}
+
+/*
 CategorySchema declares which measured value is fed to a category input. It
 carries identity only: the signal source and the metric name string exactly as
 the Measurement.Metrics map keys it (including any ":side" suffix). The

@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/mcts"
 )
 
 /*
@@ -172,7 +172,7 @@ type DecisionMCTSTrace struct {
 	Iterations        int                  `json:"iterations"`
 	Branches          []DecisionMCTSBranch `json:"branches"`
 	RecommendedAction string               `json:"recommendedAction,omitempty"`
-	Tree              *mcts.Node           `json:"tree,omitempty"`
+	Tree              *mcts.SearchNode     `json:"tree,omitempty"`
 }
 
 /*

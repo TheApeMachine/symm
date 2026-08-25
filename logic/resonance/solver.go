@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,8 +13,9 @@ import (
 	"github.com/theapemachine/errnie"
 	"golang.design/x/lockfree/lf"
 
-	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -362,10 +364,16 @@ func (solver *Solver) directionalTarget(symbolName string) learning.TargetTransf
 
 /*
 standardize z-scores one symbol's feature row per feature, using Welford
-moments retained on the standardizers map. Raw ticker fields span wildly
-different magnitudes (price vs quantity vs percentage), so the manifold is fed
-adaptive z-scores rather than heterogeneous magnitudes; the target reference
-stays in raw price so delayed resolution remains wall-clock honest.
+moments retained in one nomagique.Number per feature width. Raw ticker fields
+span wildly different magnitudes (price vs quantity vs percentage), so the
+manifold is fed adaptive z-scores rather than heterogeneous magnitudes; the
+target reference stays in raw price so delayed resolution remains wall-clock
+honest.
+
+Each feature occupies its own namespaced adaptive.Standardizer primitive inside
+the Number, so the running moments persist in the Number's committed frame and
+advance only when an observation is real. A failed standardizer measurement now
+propagates as the frame's Err rather than a silent zero.
 */
 func (solver *Solver) standardize(
 	symbolName string,
@@ -375,38 +383,70 @@ func (solver *Solver) standardize(
 		return features
 	}
 
-	loaded, _ := solver.standardizers.LoadOrStore(
-		symbolName,
-		make([]*adaptive.Standardizer, len(features)),
-	)
-	standardizers, valid := loaded.([]*adaptive.Standardizer)
+	width := len(features)
+	key := symbolName + "\x00" + strconv.Itoa(width)
 
-	if !valid || len(standardizers) != len(features) {
-		// A symbol whose feature width shifts cannot reuse the scored schema;
-		// build a fresh one so the coder's own width validation reports the
-		// mismatch instead of an index panic.
-		standardizers = make([]*adaptive.Standardizer, len(features))
-		solver.standardizers.Store(symbolName, standardizers)
+	loaded, _ := solver.standardizers.LoadOrStore(
+		key,
+		nomagique.NewNumber[string](standardizerPipeline(width)),
+	)
+	number, valid := loaded.(*nomagique.Number[string])
+
+	if !valid || number == nil {
+		number = nomagique.NewNumber[string](standardizerPipeline(width))
+		solver.standardizers.Store(key, number)
 	}
 
-	standardized := make([]float64, len(features))
+	input := nmtypes.Frame{}
 
 	for index, value := range features {
-		if standardizers[index] == nil {
-			standardizers[index] = adaptive.NewStandardizer()
+		input.Put(standardizerValueSymbol(index), value)
+	}
+
+	output := number.Step(key, input)
+
+	standardized := make([]float64, width)
+
+	for index := range features {
+		if score, found := output.Get(standardizerScoreSymbol(index)); found {
+			standardized[index] = score
 		}
-
-		score, err := standardizers[index].Measure(value)
-
-		if err != nil {
-			standardized[index] = 0
-			continue
-		}
-
-		standardized[index] = score.Value
 	}
 
 	return standardized
+}
+
+/*
+standardizerPipeline builds one standardizer primitive per feature slot, each
+over its own namespaced prefix so the running moments cannot collide within the
+shared frame.
+*/
+func standardizerPipeline(width int) nomagique.Primitive {
+	primitives := make([]nomagique.Primitive, 0, width)
+
+	for index := 0; index < width; index++ {
+		primitives = append(primitives, adaptive.Standardizer(
+			standardizerPrefix(index),
+		))
+	}
+
+	return nmtypes.Fork(primitives...)
+}
+
+func standardizerPrefix(index int) string {
+	return "resonance/feature/" + strconv.Itoa(index)
+}
+
+func standardizerValueSymbol(index int) nmtypes.Symbol {
+	return nmtypes.MustIntern(
+		"resonance/feature/" + strconv.Itoa(index) + "/value",
+	)
+}
+
+func standardizerScoreSymbol(index int) nmtypes.Symbol {
+	return nmtypes.MustIntern(
+		"resonance/feature/" + strconv.Itoa(index) + "/z/value",
+	)
 }
 
 /*

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	nomcts "github.com/theapemachine/nomagique/mcts"
+	"github.com/theapemachine/symm/nomagique/mcts"
 )
 
 func TestDecisionWire(t *testing.T) {
@@ -16,7 +16,7 @@ func TestDecisionWire(t *testing.T) {
 					{Action: "first"},
 					{Action: "second"},
 				},
-				Tree: &nomcts.Node{},
+				Tree: &mcts.SearchNode{},
 			},
 		}
 
@@ -38,7 +38,7 @@ func BenchmarkDecisionWire(b *testing.B) {
 	decision := *NewDecision(ActionNothing, "BTC/USD")
 	decision.Trace = &DecisionTrace{
 		MCTS: DecisionMCTSTrace{
-			Tree: &nomcts.Node{},
+			Tree: &mcts.SearchNode{},
 		},
 	}
 	b.ReportAllocs()

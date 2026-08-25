@@ -6,7 +6,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/logic/causal"
 )
 
 func TestUndefinedActionEstimate(t *testing.T) {
@@ -26,7 +25,7 @@ func TestUndefinedActionEstimate(t *testing.T) {
 
 		Convey("the search returns DecisionUnavailable, not Wait", func() {
 			So(result.DecisionUnavailable, ShouldBeTrue)
-			So(result.IdentificationStatus, ShouldEqual, causal.IdentificationNotIdentifiable)
+			So(result.IdentificationStatus, ShouldEqual, IdentificationNotIdentifiable)
 
 			Convey("every feasible action is recorded as undefined", func() {
 				So(len(result.UndefinedActions), ShouldEqual, 2)

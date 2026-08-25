@@ -699,6 +699,8 @@ func economicTrace(state *CausalState, result *mcts.SearchResult) *types.Decisio
 		}
 	}
 
+	trace.MCTS.Tree = result.Tree
+
 	return trace
 }
 

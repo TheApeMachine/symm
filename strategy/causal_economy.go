@@ -146,7 +146,7 @@ func (estimator *causalActionEstimator) EstimateAction(state mcts.State, action 
 		estimator.state.Identification != causal.IdentificationIdentified {
 		return mcts.ActionEstimate{
 			Action:               action,
-			IdentificationStatus: causal.IdentificationNotIdentifiable,
+			IdentificationStatus: toMctsStatus(causal.IdentificationNotIdentifiable),
 			Defined:              false,
 		}
 	}
@@ -156,7 +156,7 @@ func (estimator *causalActionEstimator) EstimateAction(state mcts.State, action 
 	if !supported {
 		return mcts.ActionEstimate{
 			Action:               action,
-			IdentificationStatus: causal.IdentificationUndefined,
+			IdentificationStatus: toMctsStatus(causal.IdentificationUndefined),
 			Defined:              false,
 		}
 	}
@@ -167,7 +167,7 @@ func (estimator *causalActionEstimator) EstimateAction(state mcts.State, action 
 	if err != nil {
 		return mcts.ActionEstimate{
 			Action:               action,
-			IdentificationStatus: causal.IdentificationInsufficientSupport,
+			IdentificationStatus: toMctsStatus(causal.IdentificationInsufficientSupport),
 			Defined:              false,
 		}
 	}
@@ -181,7 +181,7 @@ func (estimator *causalActionEstimator) EstimateAction(state mcts.State, action 
 			// from a nil state.
 			return mcts.ActionEstimate{
 				Action:               action,
-				IdentificationStatus: causal.IdentificationInsufficientSupport,
+				IdentificationStatus: toMctsStatus(causal.IdentificationInsufficientSupport),
 				Defined:              false,
 			}
 		}
@@ -205,8 +205,30 @@ func (estimator *causalActionEstimator) EstimateAction(state mcts.State, action 
 		Action:               action,
 		ExpectedOutcome:      next.GetReward(),
 		Uncertainty:          noise,
-		IdentificationStatus: causal.IdentificationIdentified,
+		IdentificationStatus: toMctsStatus(causal.IdentificationIdentified),
 		Support:              support,
 		Defined:              true,
+	}
+}
+
+/*
+toMctsStatus converts the strategy's own causal identification status into the
+search primitive's status type. The two enums share value ordering; the mapping
+is explicit so the boundary stays auditable.
+*/
+func toMctsStatus(status causal.IdentificationStatus) mcts.IdentificationStatus {
+	switch status {
+	case causal.IdentificationIdentified:
+		return mcts.IdentificationIdentified
+	case causal.IdentificationNotIdentifiable:
+		return mcts.IdentificationNotIdentifiable
+	case causal.IdentificationUnsupportedTreatment:
+		return mcts.IdentificationUnsupportedTreatment
+	case causal.IdentificationInsufficientRank:
+		return mcts.IdentificationInsufficientRank
+	case causal.IdentificationInsufficientSupport:
+		return mcts.IdentificationInsufficientSupport
+	default:
+		return mcts.IdentificationUndefined
 	}
 }

@@ -8,7 +8,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/nomagique/relation"
 )
 
@@ -90,7 +89,7 @@ type alwaysEstimable struct{}
 func (alwaysEstimable) EstimateAction(state State, action Action) ActionEstimate {
 	return ActionEstimate{
 		Action:               action,
-		IdentificationStatus: causal.IdentificationIdentified,
+		IdentificationStatus: IdentificationIdentified,
 		Defined:              true,
 	}
 }
@@ -103,7 +102,7 @@ type neverEstimable struct{}
 func (neverEstimable) EstimateAction(state State, action Action) ActionEstimate {
 	return ActionEstimate{
 		Action:               action,
-		IdentificationStatus: causal.IdentificationNotIdentifiable,
+		IdentificationStatus: IdentificationNotIdentifiable,
 		Defined:              false,
 	}
 }

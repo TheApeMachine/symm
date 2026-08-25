@@ -2,83 +2,78 @@ package category
 
 import (
 	"context"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
-	"slices"
+	"sort"
 	"sync"
 
-	"github.com/theapemachine/nomagique/probability"
-	"github.com/theapemachine/symm/audit"
+	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-Solver derives categories from the measurements every signal contributed this
-tick. A category is a hypothesis about what the market is doing, and each
-metric that carries affinity is typed evidence for or against it.
+Solver converts heterogeneous signal measurements into a discrete market-regime
+distribution for one symbol. It consumes Measurement objects from every signal,
+maintains a per-symbol causal evidence state, evaluates the declared category
+vocabulary, and publishes a ranked category batch whose first element is the
+dominant regime token consumed by logic/cognition.
+
+It is a pure interpretation stage: signals measure, Category resolves what the
+measurements jointly support. It never predicts, never consults Cognition, and
+never lets signal publication cadence count as extra evidence.
 */
 type Solver struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	err          error
-	thesis       *types.Thesis
-	classifier   *probability.Classifier
 	categories   []types.CategoryType
-	recorder     *audit.Recorder
 	categoriesCh *runtime.Channel[[]types.Category]
 	states       sync.Map
 }
 
 /*
-categoryState accumulates one symbol's category evidence between measurement
-arrivals. Evidence is bounded per category so a hot symbol cannot grow
-unbounded state; the freshest window drives the latest category reading.
+coordinate identifies one category-evidence input: the signal source plus the
+metric name string, optionally side-qualified in the metric name. It is the unit
+of latest-state replacement — one coordinate is one current vote.
 */
-type categoryState struct {
-	evidence    map[types.CategoryType][]float64
-	supporting  map[types.CategoryType][]string
-	maturity    map[types.CategoryType]float64
-	maturitySet map[types.CategoryType]bool
+type coordinate struct {
+	Source string
+	Metric string
 }
 
 /*
-NewSolver creates a new Solver for the category logic.
+evidenceItem is the current eligible state of one coordinate: its category
+affinity, maturity, and the provenance identity.
 */
-func NewSolver(
-	ctx context.Context,
-	bus *runtime.Workspace,
-) *Solver {
+type evidenceItem struct {
+	Affinity   float64
+	Maturity   float64
+	Supporting string
+}
+
+/*
+categoryState is one symbol's current evidence snapshot. It holds exactly one
+current affinity per evidence coordinate, so memory is bounded by
+O(symbols × schema coordinates) and publication frequency never inflates votes.
+*/
+type categoryState struct {
+	coordinates map[coordinate]evidenceItem
+}
+
+/*
+NewSolver creates the category solver. The declared vocabulary is the distinct
+set of categories appearing in types.CategorySchemas, in deterministic
+types.CategoryOrder order.
+*/
+func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
-	categories := make([]types.CategoryType, 0, len(types.CategorySchemas))
-	categoryNames := make([]string, 0, len(types.CategorySchemas))
-
-	for _, schema := range types.CategorySchemas {
-		if slices.Contains(categories, schema.Category) {
-			continue
-		}
-
-		categories = append(categories, schema.Category)
-		categoryNames = append(categoryNames, string(schema.Category))
-	}
-
-	var thesis *types.Thesis
-	if bus != nil {
-		if shared, found := bus.Shared("thesis", ""); found {
-			if t, ok := shared.(*types.Thesis); ok {
-				thesis = t
-			}
-		}
-	}
+	categories := distinctCategories(types.CategorySchemas)
 
 	solver := &Solver{
-		ctx:    ctx,
-		cancel: cancel,
-		thesis: thesis,
-		classifier: probability.NewClassifier(
-			probability.ClassifierSchema{Categories: categoryNames},
-		),
+		ctx:        ctx,
+		cancel:     cancel,
 		categories: categories,
 	}
 
@@ -88,6 +83,7 @@ func NewSolver(
 			if len(batch) == 0 {
 				return ""
 			}
+
 			return batch[0].Symbol
 		},
 	)
@@ -99,21 +95,15 @@ func NewSolver(
 	return solver
 }
 
-func (solver *Solver) Name() string {
-	return "category"
-}
+func (solver *Solver) Name() string { return "category" }
 
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Run consumes each symbol's measurement stream from its own input MapReduce (the
-symbol Measurements column) and pushes the derived category batches to the
-output MapReduce the downstream cognition and graph solvers consume. The
-category stage never re-materializes the iterator; each measurement batch is
-classified and forwarded inline.
+Step folds one measurement into the symbol's current evidence snapshot and
+republishes the ranked category batch. A measurement supersedes the current
+value of any coordinate it carries; it never appends another independent vote.
 */
-// Step folds one measurement into the symbol's category evidence and
-// publishes the freshest category reading downstream.
 func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
 	if measurement == nil || measurement.Symbol == "" {
 		return nil
@@ -133,10 +123,6 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
 		return nil
 	}
 
-	for index := range categories {
-		categories[index].At = solver.thesis.At
-	}
-
 	solver.categoriesCh.Publish(categories)
 
 	return nil
@@ -144,15 +130,18 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
 
 func (solver *Solver) symbolState(symbol string) *categoryState {
 	loaded, _ := solver.states.LoadOrStore(symbol, &categoryState{
-		evidence:    make(map[types.CategoryType][]float64, len(solver.categories)),
-		supporting:  make(map[types.CategoryType][]string, len(solver.categories)),
-		maturity:    make(map[types.CategoryType]float64, len(solver.categories)),
-		maturitySet: make(map[types.CategoryType]bool, len(solver.categories)),
+		coordinates: make(map[coordinate]evidenceItem),
 	})
 
 	return loaded.(*categoryState)
 }
 
+/*
+accumulate replaces the current affinity of every coordinate the measurement
+carries. Latest-state replacement means a repeated publication of the same
+coordinate overwrites rather than accumulates, so arrival cadence is not
+evidence.
+*/
 func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Measurement) {
 	for _, schema := range types.CategorySchemas {
 		if string(schema.Source) != measurement.Source {
@@ -161,138 +150,320 @@ func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Meas
 
 		sample, exists := measurement.Metrics[schema.Metric]
 
-		if !exists || sample.Normalized == nil || *sample.Normalized <= 0 {
+		if !exists {
 			continue
 		}
 
-		state.evidence[schema.Category] = append(
-			state.evidence[schema.Category], *sample.Normalized,
-		)
+		affinity := sample.Raw
 
-		state.supporting[schema.Category] = append(
-			state.supporting[schema.Category], string(schema.Source)+":"+schema.Metric,
-		)
+		if sample.Normalized != nil {
+			affinity = *sample.Normalized
+		}
 
-		if !state.maturitySet[schema.Category] {
-			state.maturity[schema.Category] = measurement.Maturity
-			state.maturitySet[schema.Category] = true
+		if affinity <= 0 {
+			// A non-positive affinity provides no positive support. It is
+			// still a current reading of the coordinate, so it must not be
+			// left as a stale positive vote; drop the coordinate.
+			delete(state.coordinates, coordinate{
+				Source: measurement.Source,
+				Metric: schema.Metric,
+			})
+
 			continue
 		}
 
-		state.maturity[schema.Category] = min(
-			state.maturity[schema.Category], measurement.Maturity,
-		)
+		state.coordinates[coordinate{
+			Source: measurement.Source,
+			Metric: schema.Metric,
+		}] = evidenceItem{
+			Affinity:   affinity,
+			Maturity:   measurement.Maturity,
+			Supporting: string(schema.Source) + ":" + schema.Metric,
+		}
 	}
 }
 
+/*
+classify builds the ranked category batch from the current evidence snapshot.
+Strength per category is the geometric mean of its currently supporting
+affinities; confidence is its symmetric-one-pseudocount evidence share across the
+whole vocabulary; surprisal is -log2(confidence).
+*/
 func (solver *Solver) classify(
 	symbol string,
 	state *categoryState,
 ) ([]types.Category, bool, error) {
-	evidence := state.evidence
-	supporting := state.supporting
-	maturity := state.maturity
-	measured := len(evidence) > 0
+	byCategory, measured := solver.aggregate(state)
 
 	if !measured {
 		return nil, false, nil
 	}
 
-	scores := make([]probability.CategoryScore, 0, len(solver.categories))
-	scoreValues := make([]float64, 0, len(solver.categories))
-	strengths := make(map[types.CategoryType]float64, len(solver.categories))
-	maxStrength := 0.0
-
-	for _, category := range solver.categories {
-		strength := 0.0
-
-		if len(evidence[category]) > 0 {
-			var err error
-			strength, err = probability.EvidenceGeomean(evidence[category]...)
-
-			if err != nil {
-				return nil, false, err
-			}
-		}
-
-		strengths[category] = strength
-		maxStrength = max(maxStrength, strength)
-		scores = append(scores, probability.CategoryScore{
-			Category: string(category),
-			Score:    strength,
-		})
-		scoreValues = append(scoreValues, strength)
-	}
-
-	result, err := solver.classifier.Classify(probability.ClassifierInput{
-		Scores:   scores,
-		Strength: maxStrength,
-	})
-
-	if err != nil {
-		return nil, false, err
-	}
-
-	categoryType := types.CategoryTypeNone
-
-	if maxStrength > 0 {
-		categoryType = solver.categories[int(result.Category)-1]
-	}
-
-	if categoryType == types.CategoryTypeNone {
-		return []types.Category{{
-			Symbol:     symbol,
-			Type:       categoryType,
-			Confidence: result.Confidence,
-			Surprisal:  -math.Log2(result.Confidence),
-		}}, true, nil
-	}
-
-	categories := make([]types.Category, 0, len(solver.categories))
-	categories = append(categories, types.Category{
-		Symbol:     symbol,
-		Type:       categoryType,
-		Confidence: result.Confidence,
-		Surprisal:  -math.Log2(result.Confidence),
-		Strength:   strengths[categoryType],
-		Maturity:   maturity[categoryType],
-		Supporting: supporting[categoryType],
-	})
+	strengths := make([]float64, len(solver.categories))
 
 	for index, category := range solver.categories {
-		if category == categoryType || strengths[category] <= 0 {
+		items := byCategory[category]
+
+		if len(items) == 0 {
+			strengths[index] = 0
 			continue
 		}
 
-		confidence, confidenceErr := probability.CategoryShareConfidence(
-			scoreValues,
-			index+1,
-		)
-
-		if confidenceErr != nil {
-			return nil, false, confidenceErr
-		}
-
-		categories = append(categories, types.Category{
-			Symbol:     symbol,
-			Type:       category,
-			Confidence: confidence,
-			Surprisal:  -math.Log2(confidence),
-			Strength:   strengths[category],
-			Maturity:   maturity[category],
-			Supporting: supporting[category],
-		})
+		strengths[index] = categoryStrength(items)
 	}
+
+	categories := solver.buildBatch(symbol, strengths, byCategory)
 
 	return categories, true, nil
 }
 
 /*
-Close releases the solver. Categories are derived per tick and hold no
-resources of their own.
+categoryStrength is the geometric mean of a category's current positive
+affinities, expressed through the shared probability.Geomean primitive. The
+solver lifts the affinities into a Frame of sample slots, steps the atomic
+primitive, and projects the result back out.
 */
+func categoryStrength(items []evidenceItem) float64 {
+	frame := nmtypes.Frame{}
+
+	for index, item := range items {
+		frame.Put(nmtypes.MustSampleSymbol(index), item.Affinity)
+	}
+
+	result := nmtypes.Step(nomagique_probability.Geomean, frame)
+
+	if result.Err != nil {
+		return 0
+	}
+
+	return result.MustGet(nomagique_probability.SymbolResult)
+}
+
+/*
+lift projects a strength vector into a Frame of generic sample slots, so the
+probability primitives can reduce it without knowing category identity.
+*/
+func lift(strengths []float64) nmtypes.Frame {
+	frame := nmtypes.Frame{}
+
+	for index, strength := range strengths {
+		frame.Put(nmtypes.MustSampleSymbol(index), strength)
+	}
+
+	return frame
+}
+
+/*
+aggregate groups current evidence items by category, in a deterministic order
+that mirrors the declared vocabulary.
+*/
+func (solver *Solver) aggregate(
+	state *categoryState,
+) (map[types.CategoryType][]evidenceItem, bool) {
+	byCategory := make(map[types.CategoryType][]evidenceItem)
+
+	measured := false
+
+	for _, schema := range types.CategorySchemas {
+		item, found := state.coordinates[coordinate{
+			Source: string(schema.Source),
+			Metric: schema.Metric,
+		}]
+
+		if !found {
+			continue
+		}
+
+		byCategory[schema.Category] = append(byCategory[schema.Category], item)
+		measured = true
+	}
+
+	return byCategory, measured
+}
+
+/*
+buildBatch assembles the ranked category batch: entry zero is the dominant
+regime (highest confidence, CategoryOrder tie-break), alternatives follow in
+descending confidence order, and every entry carries its strength, confidence,
+maturity, surprising, supporting provenance, and the single distribution-level
+uncertainty shared by the whole batch.
+*/
+func (solver *Solver) buildBatch(
+	symbol string,
+	strengths []float64,
+	byCategory map[types.CategoryType][]evidenceItem,
+) []types.Category {
+	count := len(solver.categories)
+
+	evidence := lift(strengths)
+	confidences := make([]float64, count)
+
+	ambiguityFrame := nmtypes.Step(nomagique_probability.ShannonAmbiguity(), evidence)
+	uncertainty := 0.0
+
+	if ambiguityFrame.Err == nil {
+		uncertainty = ambiguityFrame.MustGet(nomagique_probability.SymbolAmbiguity)
+	}
+
+	for index := range solver.categories {
+		// Preselect the winner so EvidenceShare resolves this category's share.
+		selected := evidence
+		selected.Put(nomagique_probability.SymbolWinner, float64(index))
+
+		result := nmtypes.Step(nomagique_probability.EvidenceShare(), selected)
+
+		confidence := 1.0 / float64(count)
+
+		if result.Err == nil {
+			confidence = result.MustGet(nomagique_probability.SymbolConfidence)
+		}
+
+		confidences[index] = confidence
+	}
+
+	categories := make([]types.Category, 0, count)
+
+	for index, category := range solver.categories {
+		confidence := confidences[index]
+		maturity := maturityOf(byCategory[category])
+
+		categories = append(categories, types.Category{
+			Symbol:      symbol,
+			Type:        category,
+			Confidence:  confidence,
+			Surprisal:   -math.Log2(confidence),
+			Strength:    strengths[index],
+			Maturity:    maturity,
+			Uncertainty: uncertainty,
+			Supporting:  supportingIdentities(byCategory[category]),
+		})
+	}
+
+	sort.SliceStable(categories, func(left int, right int) bool {
+		if categories[left].Confidence != categories[right].Confidence {
+			return categories[left].Confidence > categories[right].Confidence
+		}
+
+		return types.CategoryOrderLess(categories[left].Type, categories[right].Type)
+	})
+
+	return categories
+}
+
+/*
+shannonAmbiguity returns the normalized Shannon entropy U = H / log2(K) over the
+category evidence-share distribution, bounded to [0,1]. Low U means evidence
+concentrates on few regimes; high U means the measurements do not distinguish
+competing regimes. It is a distribution-level quantity, identical for every
+category in one batch, and is not 1 - Confidence.
+*/
+func shannonAmbiguity(confidences []float64) float64 {
+	if len(confidences) <= 1 {
+		return 0
+	}
+
+	entropy := 0.0
+
+	for _, probability := range confidences {
+		if probability <= 0 {
+			continue
+		}
+
+		entropy -= probability * math.Log2(probability)
+	}
+
+	maximum := math.Log2(float64(len(confidences)))
+
+	if maximum <= 0 {
+		return 0
+	}
+
+	ambiguity := entropy / maximum
+
+	if ambiguity < 0 {
+		return 0
+	}
+
+	if ambiguity > 1 {
+		return 1
+	}
+
+	return ambiguity
+}
+
 func (solver *Solver) Close() error {
 	solver.cancel()
-
 	return nil
+}
+
+/*
+distinctCategories returns the declared vocabulary in types.CategoryOrder
+order, deduplicated, so the classifier indices are stable and deterministic.
+*/
+func distinctCategories(schemas []types.CategorySchema) []types.CategoryType {
+	seen := make(map[types.CategoryType]bool)
+	result := make([]types.CategoryType, 0)
+
+	appendCategory := func(category types.CategoryType) {
+		if seen[category] {
+			return
+		}
+
+		seen[category] = true
+		result = append(result, category)
+	}
+
+	for _, schema := range schemas {
+		appendCategory(schema.Category)
+	}
+
+	for _, category := range types.CategoryOrder {
+		appendCategory(category)
+	}
+
+	return result
+}
+
+/*
+maturityOf returns the weakest estimator support among the supporting items, or
+zero when nothing reports maturity. Zero maturity when items exists means none
+reported it, kept distinct from a measured zero (which cannot happen for
+positive affinity).
+*/
+func maturityOf(items []evidenceItem) float64 {
+	if len(items) == 0 {
+		return 0
+	}
+
+	maturity := 1.0
+
+	for _, item := range items {
+		if item.Maturity < maturity {
+			maturity = item.Maturity
+		}
+	}
+
+	return maturity
+}
+
+/*
+supportingIdentities returns the sorted, de-duplicated evidence coordinates that
+supported the category.
+*/
+func supportingIdentities(items []evidenceItem) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(items))
+
+	for _, item := range items {
+		if seen[item.Supporting] {
+			continue
+		}
+
+		seen[item.Supporting] = true
+		result = append(result, item.Supporting)
+	}
+
+	sort.Strings(result)
+
+	return result
 }
