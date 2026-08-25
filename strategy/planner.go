@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -18,13 +19,13 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
-// strategyWireBranchCount matches the two ranked branch slots rendered for
-// each live candidate decision.
-const strategyWireBranchCount = 2
+// StrategyWireBranchCount matches the two ranked branch slots rendered for
+// each live candidate decision. Exported so the workspace observer (boot) can
+// project the decision round into the dashboard frame.
+const StrategyWireBranchCount = 2
 
 /*
 Planner is the live strategy decision stage. It consumes observational
@@ -46,8 +47,8 @@ type Planner struct {
 	allocation *Allocation
 	desk       *broker.Desk
 	reasoner   *Reasoner
-	ui         *runtime.Channel[*types.UIFrame]
 	uiStates   *runtime.Channel[*CausalState]
+	strategy   *runtime.Channel[types.StrategyRound]
 	tickWork   *runtime.Subscription[kraken.TickerData]
 	stateWork  *runtime.Subscription[*CausalState]
 	pending    sync.Map
@@ -60,6 +61,14 @@ type Planner struct {
 	// marketProvider supplies the execution-market inputs for economic
 	// evaluation; nil means the broker desk is the provider.
 	marketProvider func(string) marketInputs
+	// tradingGate reports whether the trading stage may engage. The live
+	// default checks the desk's execution prerequisites (instrument/fee
+	// surface loaded and live quotes present); tests override it.
+	tradingGate func() bool
+	// engaged latches the trading decision stage on once the prerequisites
+	// are observed filled. Until then the stage stays dormant while the
+	// observational layers keep filling underneath.
+	engaged atomic.Bool
 }
 
 /*
@@ -130,9 +139,9 @@ func NewPlanner(
 		thesis:     thesis,
 		reasoner:   reasoner,
 	}
-	planner.ui = runtime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
+	planner.strategy = runtime.ChannelOf[types.StrategyRound](
+		bus, types.ChannelDecisions,
+		func(round types.StrategyRound) string { return "" },
 	)
 	planner.uiStates = runtime.ChannelOf[*CausalState](
 		bus, types.ChannelCausalState,
@@ -153,6 +162,7 @@ func NewPlanner(
 	).Subscribe(planner.Name()+"-reasoner", planner.StepMeasurement)
 
 	planner.reasoner.SetOnState(planner.publishCausalState)
+	planner.tradingGate = planner.prerequisitesReady
 	_ = measurementWork
 
 	return planner
@@ -254,6 +264,22 @@ symbol with observational state, an explicit schema, and a feasible action
 may be considered.
 */
 func (planner *Planner) Update(thesis *types.Thesis) error {
+	// The trading stage stays dormant until boot has filled its execution
+	// prerequisites (instrument/fee surface loaded and live market data
+	// present). Measurements keep flowing into the reasoner meanwhile, so by
+	// the time trading engages the observational history and causal models
+	// have warmed up underneath; no decision round runs before that.
+	if !planner.engaged.Load() {
+		gate := planner.tradingGate
+
+		if gate == nil || !gate() {
+			return nil
+		}
+
+		planner.engaged.Store(true)
+		errnie.Info("planner: trading engaged after execution prerequisites filled")
+	}
+
 	config := system.Cfg.Snapshot()
 
 	if config == nil || config.Planner == nil {
@@ -275,7 +301,17 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			continue
 		}
 
-		decision := planner.decisionFromCausalState(state, config)
+		// A symbol with no executable quote (or no cash/fee surface yet) is
+		// not priced: no economic decision is possible, so none is
+		// attempted. During startup this keeps the planner from churning on
+		// symbols the market data has not reached.
+		inputs := planner.marketInputsFor(state.Symbol)
+
+		if !inputs.available {
+			continue
+		}
+
+		decision := planner.decisionFromCausalState(state, config, inputs)
 		decisions = append(decisions, decision)
 	}
 
@@ -352,6 +388,7 @@ fabricated Wait win and never a hidden semantic gate.
 func (planner *Planner) decisionFromCausalState(
 	state *CausalState,
 	config *system.Config,
+	inputs marketInputs,
 ) *types.Decision {
 	if state == nil {
 		decision := types.NewDecision(types.ActionNothing, "")
@@ -375,7 +412,6 @@ func (planner *Planner) decisionFromCausalState(
 	}
 
 	position, _ := planner.heldPosition(state.Symbol)
-	inputs := planner.marketInputsFor(state.Symbol)
 
 	if !inputs.available || !(inputs.mark > 0) {
 		decision.Reason = "planner: broker market inputs unavailable (cash, mark, or fee)"
@@ -414,9 +450,9 @@ func (planner *Planner) decisionFromCausalState(
 		state.MarketState,
 		&causalMarketModel{state: state},
 		mcts.CostModel{
-			FeeRate:           feeRate,
-			SpreadFraction:    spreadFraction,
-			SlippageFraction:  config.Planner.SlippageFraction,
+			FeeRate:          feeRate,
+			SpreadFraction:   spreadFraction,
+			SlippageFraction: config.Planner.SlippageFraction,
 		},
 		unitQuantity,
 		maxPosition,
@@ -463,6 +499,31 @@ func (planner *Planner) decisionFromCausalState(
 
 	decision.Trace = economicTrace(state, result)
 	return decision
+}
+
+/*
+prerequisitesReady reports whether the trading stage's execution
+prerequisites are filled: the instrument and fee surface is loaded and at
+least one tradable symbol has a live quote. This is an operational
+readiness check (the system cannot price or execute without them), not an
+evidence gate.
+*/
+func (planner *Planner) prerequisitesReady() bool {
+	if planner == nil || planner.desk == nil {
+		return false
+	}
+
+	if planner.desk.Instrument().Status() != types.READY {
+		return false
+	}
+
+	for _, symbol := range planner.desk.Instrument().Symbols() {
+		if planner.desk.Price().Tick(symbol) != nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 /*
@@ -533,22 +594,26 @@ func (planner *Planner) deskMarketInputs(symbol string) marketInputs {
 		return marketInputs{}
 	}
 
+	// Probe availability with the non-logging accessors: a missing tick or
+	// fee is an unavailable state, not an error to be logged every pass.
 	balance := planner.desk.Balance().Cash()
-	marked := planner.desk.Price().Mark(symbol, broker.BUY)
-	fee := planner.desk.Price().Fee(symbol)
+	tick := planner.desk.Price().Tick(symbol)
+	fee := planner.desk.Price().FeeIfAvailable(symbol)
 
-	if balance == nil || marked == nil || fee == nil || fee.Fee == nil {
+	if balance == nil || tick == nil || tick.Ask == nil || fee == nil || fee.Fee == nil {
 		return marketInputs{}
 	}
 
 	inputs := marketInputs{
 		cash:    balance.Float64(),
-		mark:    marked.Float64(),
 		feeRate: fee.Fee.Float64() / 100,
 	}
 
-	if tick := planner.desk.Price().Tick(symbol); tick != nil &&
-		tick.Bid != nil && tick.Ask != nil && tick.Bid.Float64() > 0 && tick.Ask.Float64() > tick.Bid.Float64() {
+	// The fee-inclusive buy mark, matching broker.Price.Mark(BUY):
+	// ask * (1 + feeRate).
+	inputs.mark = tick.Ask.Float64() * (1 + inputs.feeRate)
+
+	if tick.Bid != nil && tick.Bid.Float64() > 0 && tick.Ask.Float64() > tick.Bid.Float64() {
 		bid := tick.Bid.Float64()
 		ask := tick.Ask.Float64()
 		inputs.spreadFraction = (ask - bid) / ((ask + bid) / 2)
@@ -625,7 +690,9 @@ func causalSeed(state *CausalState) int64 {
 }
 
 /*
-publishStrategy renders the decision round for the UI.
+publishStrategy emits the planning decision round as domain data on
+ChannelDecisions. The workspace observer (boot) projects it into the dashboard
+StrategyFrame; the planner never publishes UI directly.
 */
 func (planner *Planner) publishStrategy(
 	thesis *types.Thesis,
@@ -633,28 +700,11 @@ func (planner *Planner) publishStrategy(
 	outcome string,
 	decisions []*types.Decision,
 ) {
-	rows := make([]*wire.DecisionT, 0, len(decisions))
-
-	for _, decision := range decisions {
-		if decision == nil {
-			continue
-		}
-
-		rows = append(rows, types.DecisionWire(
-			*decision,
-			strategyWireBranchCount,
-			false,
-		))
-	}
-
-	if planner.ui != nil {
-		planner.ui.Publish(&types.UIFrame{
-			Type: wire.FrameStrategyFrame,
-			Value: &wire.StrategyFrameT{
-				Evaluated: evaluated,
-				Outcome:   outcome,
-				Decisions: rows,
-			},
+	if planner.strategy != nil {
+		planner.strategy.Publish(types.StrategyRound{
+			Evaluated: evaluated,
+			Outcome:   outcome,
+			Decisions: decisions,
 		})
 	}
 }

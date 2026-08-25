@@ -139,6 +139,8 @@ type ResonanceManifold struct {
 	cfg                    ResonanceConfig
 	arch                   []int
 	targetDim              int
+	taskRows               int
+	perHorizon             bool
 	readoutDim             int
 	generativeWeights      []*mat.Dense
 	recognitionWeights     []*mat.Dense
@@ -173,7 +175,46 @@ type ResonanceManifold struct {
 /*
 NewResonanceManifold constructs a multi-layer predictive coding manifold.
 */
+/*
+NewResonanceManifold constructs a multi-layer predictive coding manifold with a
+single-row supervised task head. It is the compatibility entry point: the task
+head has one row per target dimension, exactly as the original design.
+*/
 func NewResonanceManifold(arch []int, targetDim int, alpha float64) *ResonanceManifold {
+	return newResonanceManifold(arch, targetDim, targetDim, alpha)
+}
+
+/*
+NewResonanceManifoldWithHorizon constructs a multi-layer predictive coding
+manifold whose supervised task head holds one row per forward horizon, so the
+head can be trained on nested cumulative targets (row h predicts the direction
+of the move over the next h ticks). The compatibility constructor keeps a
+single row per target dimension.
+*/
+func NewResonanceManifoldWithHorizon(
+	arch []int,
+	targetDim int,
+	maxHorizon int,
+	alpha float64,
+) *ResonanceManifold {
+	rows := maxHorizon
+
+	if rows < 1 {
+		rows = 1
+	}
+
+	manifold := newResonanceManifold(arch, targetDim, rows, alpha)
+	manifold.perHorizon = true
+
+	return manifold
+}
+
+func newResonanceManifold(
+	arch []int,
+	targetDim int,
+	taskRows int,
+	alpha float64,
+) *ResonanceManifold {
 	if len(arch) < 2 {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -279,23 +320,23 @@ func NewResonanceManifold(arch []int, targetDim int, alpha float64) *ResonanceMa
 	var taskSkillReady []bool
 	var taskSkill *mat.VecDense
 
-	if targetDim > 0 {
-		taskWeights = mat.NewDense(targetDim, readoutDim, nil)
-		taskBias = mat.NewVecDense(targetDim, nil)
-		taskLearners = make([]*RLS, targetDim)
-		taskVar = mat.NewVecDense(targetDim, nil)
-		taskScale = mat.NewVecDense(targetDim, nil)
-		taskScaleReady = make([]bool, targetDim)
-		taskPrecision = mat.NewVecDense(targetDim, nil)
-		taskModelLoss = mat.NewVecDense(targetDim, nil)
-		taskBaselineLoss = mat.NewVecDense(targetDim, nil)
-		taskSkillReady = make([]bool, targetDim)
-		taskSkill = mat.NewVecDense(targetDim, nil)
+	if targetDim > 0 && taskRows > 0 {
+		taskWeights = mat.NewDense(taskRows, readoutDim, nil)
+		taskBias = mat.NewVecDense(taskRows, nil)
+		taskLearners = make([]*RLS, taskRows)
+		taskVar = mat.NewVecDense(taskRows, nil)
+		taskScale = mat.NewVecDense(taskRows, nil)
+		taskScaleReady = make([]bool, taskRows)
+		taskPrecision = mat.NewVecDense(taskRows, nil)
+		taskModelLoss = mat.NewVecDense(taskRows, nil)
+		taskBaselineLoss = mat.NewVecDense(taskRows, nil)
+		taskSkillReady = make([]bool, taskRows)
+		taskSkill = mat.NewVecDense(taskRows, nil)
 		denseFill(taskVar, 1.0)
 		denseFill(taskPrecision, 1.0)
 		denseFill(taskSkill, 1.0)
 
-		for rowIndex := range targetDim {
+		for rowIndex := range taskRows {
 			learner, err := NewRLS(RLSConfig{
 				Dimension:       readoutDim,
 				InitialVariance: 1,
@@ -315,6 +356,7 @@ func NewResonanceManifold(arch []int, targetDim int, alpha float64) *ResonanceMa
 		cfg:                   cfg,
 		arch:                  arch,
 		targetDim:             targetDim,
+		taskRows:              taskRows,
 		readoutDim:            readoutDim,
 		generativeWeights:     weights,
 		recognitionWeights:    recognition,
@@ -335,7 +377,7 @@ func NewResonanceManifold(arch []int, targetDim int, alpha float64) *ResonanceMa
 		taskBaselineLoss:      taskBaselineLoss,
 		taskSkillReady:        taskSkillReady,
 		taskSkill:             taskSkill,
-		workspace:             newResonanceWorkspace(arch, targetDim),
+		workspace:             newResonanceWorkspace(arch, taskRows),
 		streamLearn:           true,
 		streamAdvanceTemporal: true,
 	}
@@ -373,7 +415,7 @@ func (rm *ResonanceManifold) ResetState(resetPrecision bool) {
 			denseFill(rm.temporalPrecision[latentIndex], 1.0)
 		}
 
-		if rm.targetDim > 0 {
+		if rm.taskRows > 0 {
 			denseFill(rm.taskVar, 1.0)
 			rm.taskScale.Zero()
 			denseFill(rm.taskPrecision, 1.0)
@@ -670,7 +712,15 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 	// 4. Multi-layer & innovation task head update (RLS)
 	var targetCol *mat.VecDense
 	var taskError *mat.VecDense
+	trainedRows := 0
+
 	if target != nil && rm.taskWeights != nil {
+		trainedRows = len(target)
+
+		if trainedRows > rm.taskRows {
+			trainedRows = rm.taskRows
+		}
+
 		targetCol = rm.workspace.yCol
 		copy(targetCol.RawVector().Data, target)
 
@@ -685,7 +735,9 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		targetData := targetCol.RawVector().Data
 		biasData := rm.taskBias.RawVector().Data
 
-		for rowIndex, learner := range rm.taskLearners {
+		for rowIndex := range trainedRows {
+			learner := rm.taskLearners[rowIndex]
+
 			if _, err := learner.Observe(RLSSample{
 				Features: readoutData,
 				Target:   targetData[rowIndex],
@@ -701,7 +753,7 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		}
 	}
 
-	if err := rm.updatePrecision(layerErrors, temporalErrors, targetCol, taskError); err != nil {
+	if err := rm.updatePrecision(layerErrors, temporalErrors, targetCol, taskError, trainedRows); err != nil {
 		return err
 	}
 
@@ -789,7 +841,7 @@ func (rm *ResonanceManifold) taskPredictionInto(dst *mat.VecDense) {
 }
 
 func (rm *ResonanceManifold) TaskPrediction() []float64 {
-	if rm.taskWeights == nil || rm.targetDim <= 0 {
+	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return nil
 	}
 
@@ -798,13 +850,28 @@ func (rm *ResonanceManifold) TaskPrediction() []float64 {
 	return append([]float64(nil), taskPred.RawVector().Data...)
 }
 
+/*
+ObserveTask updates one task-head row from one labeled sample. The row is
+addressed by its forward horizon, one-based: horizon h supervises the
+cumulative move over the next h ticks. The compatibility head keeps one row
+per target dimension, addressed the same way.
+*/
 func (rm *ResonanceManifold) ObserveTask(
+	horizon int,
 	features []float64,
-	prediction []float64,
-	target []float64,
+	prediction float64,
+	target float64,
 ) error {
-	if rm.taskWeights == nil || rm.targetDim <= 0 {
+	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return errors.New("resonance: supervised task head required")
+	}
+
+	if horizon < 1 || horizon > rm.taskRows {
+		return fmt.Errorf(
+			"resonance: task horizon %d out of range [1, %d]",
+			horizon,
+			rm.taskRows,
+		)
 	}
 
 	if len(features) != rm.readoutDim {
@@ -815,59 +882,37 @@ func (rm *ResonanceManifold) ObserveTask(
 		)
 	}
 
-	if len(prediction) != rm.targetDim || len(target) != rm.targetDim {
-		return fmt.Errorf(
-			"resonance: expected %d task predictions and targets, got %d and %d",
-			rm.targetDim,
-			len(prediction),
-			len(target),
-		)
-	}
-
 	for index, feature := range features {
 		if !finite(feature) {
 			return fmt.Errorf("resonance: task feature %d must be finite", index)
 		}
 	}
 
-	for index := range target {
-		if !finite(prediction[index]) || !finite(target[index]) {
-			return fmt.Errorf(
-				"resonance: task prediction and target %d must be finite",
-				index,
-			)
-		}
+	if !finite(prediction) || !finite(target) {
+		return fmt.Errorf("resonance: task prediction and target must be finite")
 	}
 
-	targetCol := rm.workspace.yCol
-	predictionCol := rm.workspace.taskPred
-	copy(targetCol.RawVector().Data, target)
-	copy(predictionCol.RawVector().Data, prediction)
+	rowIndex := horizon - 1
+	learner := rm.taskLearners[rowIndex]
 
-	taskError := rm.workspace.taskError
-	taskError.SubVec(targetCol, predictionCol)
-	biasData := rm.taskBias.RawVector().Data
-
-	for rowIndex, learner := range rm.taskLearners {
-		_, err := learner.Observe(RLSSample{
-			Features: features,
-			Target:   target[rowIndex],
-		})
-
-		if err != nil {
-			return fmt.Errorf("resonance: task learner update: %w", err)
-		}
-
-		intercept, err := learner.copyCoefficients(rm.taskWeights.RawRowView(rowIndex))
-
-		if err != nil {
-			return fmt.Errorf("resonance: task learner coefficients: %w", err)
-		}
-
-		biasData[rowIndex] = intercept
+	if _, err := learner.Observe(RLSSample{
+		Features: features,
+		Target:   target,
+	}); err != nil {
+		return fmt.Errorf("resonance: task learner update: %w", err)
 	}
 
-	return rm.updateTaskReliability(targetCol, taskError)
+	intercept, err := learner.copyCoefficients(rm.taskWeights.RawRowView(rowIndex))
+
+	if err != nil {
+		return fmt.Errorf("resonance: task learner coefficients: %w", err)
+	}
+
+	rm.taskBias.RawVector().Data[rowIndex] = intercept
+
+	rm.updateTaskReliability(rowIndex, target, target-prediction)
+
+	return nil
 }
 
 func (rm *ResonanceManifold) LatentState() []float64 {
@@ -954,15 +999,54 @@ func (rm *ResonanceManifold) WireSnapshot() (
 		rm.PredictionEnergy() / float64(predictionDimensions)
 }
 
+/*
+TaskPrecisionAt reports one task row's precision once its scale is supported by
+resolved samples. The row is addressed by its forward horizon, one-based.
+*/
+func (rm *ResonanceManifold) TaskPrecisionAt(horizon int) (float64, bool) {
+	if rm.taskWeights == nil || rm.taskRows <= 0 ||
+		horizon < 1 || horizon > rm.taskRows {
+		return 0, false
+	}
+
+	rowIndex := horizon - 1
+
+	if !rm.taskScaleReady[rowIndex] {
+		return 0, false
+	}
+
+	return rm.taskPrecision.RawVector().Data[rowIndex], true
+}
+
+/*
+TaskSkillAt reports one task row's prequential skill once it has retained loss
+evidence. The row is addressed by its forward horizon, one-based. Skill above
+one means the row beats the zero-prediction baseline.
+*/
+func (rm *ResonanceManifold) TaskSkillAt(horizon int) (float64, bool) {
+	if rm.taskWeights == nil || rm.taskRows <= 0 ||
+		horizon < 1 || horizon > rm.taskRows {
+		return 0, false
+	}
+
+	rowIndex := horizon - 1
+
+	if !rm.taskSkillReady[rowIndex] {
+		return 0, false
+	}
+
+	return rm.taskSkill.RawVector().Data[rowIndex], true
+}
+
 func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
-	if rm.taskWeights == nil || rm.targetDim <= 0 {
+	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return 0, false
 	}
 
 	var sum float64
 	var readyCount int
 
-	for rowIndex := range rm.targetDim {
+	for rowIndex := range rm.taskRows {
 		if rm.taskScaleReady[rowIndex] {
 			sum += rm.taskPrecision.RawVector().Data[rowIndex]
 			readyCount++
@@ -977,14 +1061,14 @@ func (rm *ResonanceManifold) TaskPrecision() (float64, bool) {
 }
 
 func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
-	if rm.taskWeights == nil || rm.targetDim <= 0 {
+	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return 0, false
 	}
 
 	var sum float64
 	var readyCount int
 
-	for rowIndex := range rm.targetDim {
+	for rowIndex := range rm.taskRows {
 		if rm.taskSkillReady[rowIndex] {
 			sum += rm.taskSkill.RawVector().Data[rowIndex]
 			readyCount++
@@ -999,14 +1083,14 @@ func (rm *ResonanceManifold) TaskSkill() (float64, bool) {
 }
 
 func (rm *ResonanceManifold) TaskScale() (float64, bool) {
-	if rm.taskWeights == nil || rm.targetDim <= 0 {
+	if rm.taskWeights == nil || rm.taskRows <= 0 {
 		return 0, false
 	}
 
 	var sum float64
 	var readyCount int
 
-	for rowIndex := range rm.targetDim {
+	for rowIndex := range rm.taskRows {
 		if rm.taskScaleReady[rowIndex] {
 			sum += rm.taskScale.RawVector().Data[rowIndex]
 			readyCount++
@@ -1202,6 +1286,7 @@ func (rm *ResonanceManifold) updatePrecision(
 	temporalErrors []*mat.VecDense,
 	targetCol *mat.VecDense,
 	taskError *mat.VecDense,
+	trainedRows int,
 ) error {
 	if !rm.cfg.UsePrecision {
 		return nil
@@ -1225,152 +1310,113 @@ func (rm *ResonanceManifold) updatePrecision(
 	}
 
 	if targetCol != nil && taskError != nil && rm.taskWeights != nil {
-		return rm.updateTaskReliability(targetCol, taskError)
+		targetData := targetCol.RawVector().Data
+		errorData := taskError.RawVector().Data
+
+		for rowIndex := range trainedRows {
+			rm.updateTaskReliability(rowIndex, targetData[rowIndex], errorData[rowIndex])
+		}
 	}
 
 	return nil
 }
 
-func (rm *ResonanceManifold) updateTaskReliability(targetCol *mat.VecDense, taskError *mat.VecDense) error {
+/*
+updateTaskReliability folds one resolved sample into one task row's variance,
+scale, precision, and skill readouts. Each row owns its moments, so the nested
+multi-horizon head scores each horizon against its own prediction error.
+*/
+func (rm *ResonanceManifold) updateTaskReliability(
+	rowIndex int,
+	target float64,
+	taskError float64,
+) {
 	beta := rm.cfg.PrecisionBeta
-	squaredError := rm.workspace.taskSignal
-	squaredError.MulElemVec(taskError, taskError)
-
-	candidateVariance := taskError
-	candidateVariance.ScaleVec(1.0-beta, rm.taskVar)
-
-	varianceFloor := rm.workspace.taskPred
-	varianceFloor.ScaleVec(beta, squaredError)
-	candidateVariance.AddVec(candidateVariance, varianceFloor)
-
-	squaredErrorData := squaredError.RawVector().Data
-	candidateVarianceData := candidateVariance.RawVector().Data
-	varianceFloorData := varianceFloor.RawVector().Data
+	squaredError := taskError * taskError
 	taskVarianceData := rm.taskVar.RawVector().Data
 	taskScaleData := rm.taskScale.RawVector().Data
-
-	for rowIndex, logScale := range taskScaleData {
-		varianceFloorData[rowIndex] = rm.cfg.PrecisionEps * math.Exp(logScale)
-	}
-
-	for rowIndex := range taskVarianceData {
-		if !rm.taskScaleReady[rowIndex] {
-			if squaredErrorData[rowIndex] > 0 {
-				taskVarianceData[rowIndex] = squaredErrorData[rowIndex]
-			}
-			continue
-		}
-
-		taskVarianceData[rowIndex] = math.Max(candidateVarianceData[rowIndex], varianceFloorData[rowIndex])
-	}
-
-	for rowIndex, logScale := range taskScaleData {
-		if !rm.taskScaleReady[rowIndex] {
-			if squaredErrorData[rowIndex] > 0 {
-				taskScaleData[rowIndex] = math.Log(squaredErrorData[rowIndex])
-			}
-			continue
-		}
-
-		if taskVarianceData[rowIndex] <= varianceFloorData[rowIndex] {
-			continue
-		}
-
-		taskScaleData[rowIndex] = (1.0-beta)*logScale + beta*math.Log(taskVarianceData[rowIndex])
-	}
-
-	for rowIndex, ready := range rm.taskScaleReady {
-		if !ready && squaredErrorData[rowIndex] > 0 {
-			rm.taskScaleReady[rowIndex] = true
-		}
-	}
-
-	for rowIndex, logScale := range taskScaleData {
-		varianceFloorData[rowIndex] = math.Exp(logScale)
-	}
-
-	rm.taskPrecision.DivElemVec(varianceFloor, rm.taskVar)
 	taskPrecisionData := rm.taskPrecision.RawVector().Data
 
-	for rowIndex, value := range taskPrecisionData {
-		if !rm.taskScaleReady[rowIndex] {
-			taskPrecisionData[rowIndex] = 1.0
-			continue
+	if !rm.taskScaleReady[rowIndex] {
+		if squaredError > 0 {
+			taskVarianceData[rowIndex] = squaredError
+			taskScaleData[rowIndex] = math.Log(squaredError)
 		}
+	} else {
+		candidateVariance := (1.0-beta)*taskVarianceData[rowIndex] + beta*squaredError
+		varianceFloor := rm.cfg.PrecisionEps * math.Exp(taskScaleData[rowIndex])
+		taskVarianceData[rowIndex] = math.Max(candidateVariance, varianceFloor)
 
-		taskPrecisionData[rowIndex] = math.Min(rm.cfg.PrecisionMax, math.Max(rm.cfg.PrecisionMin, value))
-	}
-
-	rm.updateTaskSkill(targetCol, squaredError)
-
-	return nil
-}
-
-func (rm *ResonanceManifold) updateTaskSkill(
-	targetCol *mat.VecDense,
-	modelSquaredError *mat.VecDense,
-) {
-	baselineSquaredError := rm.workspace.taskPred
-	baselineSquaredError.MulElemVec(targetCol, targetCol)
-	hasRetainedSkill := rm.taskSkillReady[0]
-
-	if !hasRetainedSkill {
-		rm.taskModelLoss.CopyVec(modelSquaredError)
-		rm.taskBaselineLoss.CopyVec(baselineSquaredError)
-
-		for rowIndex := range rm.taskSkillReady {
-			rm.taskSkillReady[rowIndex] = true
+		if taskVarianceData[rowIndex] > varianceFloor {
+			taskScaleData[rowIndex] = (1.0-beta)*taskScaleData[rowIndex] +
+				beta*math.Log(taskVarianceData[rowIndex])
 		}
 	}
 
-	if hasRetainedSkill {
-		beta := rm.cfg.PrecisionBeta
-		rm.taskModelLoss.ScaleVec(1.0-beta, rm.taskModelLoss)
-		modelSquaredError.ScaleVec(beta, modelSquaredError)
-		rm.taskModelLoss.AddVec(rm.taskModelLoss, modelSquaredError)
-
-		rm.taskBaselineLoss.ScaleVec(1.0-beta, rm.taskBaselineLoss)
-		baselineSquaredError.ScaleVec(beta, baselineSquaredError)
-		rm.taskBaselineLoss.AddVec(
-			rm.taskBaselineLoss,
-			baselineSquaredError,
-		)
+	if !rm.taskScaleReady[rowIndex] && squaredError > 0 {
+		rm.taskScaleReady[rowIndex] = true
 	}
 
-	lossScale := rm.workspace.taskError
-	lossScale.SubVec(rm.taskModelLoss, rm.taskBaselineLoss)
-	lossScaleData := lossScale.RawVector().Data
+	varianceFloor := math.Exp(taskScaleData[rowIndex])
 
-	for rowIndex, value := range lossScaleData {
-		lossScaleData[rowIndex] = math.Abs(value)
-	}
-
-	lossScale.AddVec(lossScale, rm.taskModelLoss)
-	lossScale.AddVec(lossScale, rm.taskBaselineLoss)
-	lossScale.ScaleVec(0.5, lossScale)
-
-	numerator := modelSquaredError
-	numerator.ScaleVec(rm.cfg.PrecisionEps, lossScale)
-	numerator.AddVec(numerator, rm.taskBaselineLoss)
-
-	denominator := baselineSquaredError
-	denominator.ScaleVec(rm.cfg.PrecisionEps, lossScale)
-	denominator.AddVec(denominator, rm.taskModelLoss)
-
-	rm.taskSkill.DivElemVec(numerator, denominator)
-	taskSkillData := rm.taskSkill.RawVector().Data
-
-	for rowIndex, value := range taskSkillData {
-		if lossScaleData[rowIndex] == 0 {
-			taskSkillData[rowIndex] = 1.0
-			continue
-		}
-
-		taskSkillData[rowIndex] = math.Min(
+	if !rm.taskScaleReady[rowIndex] {
+		taskPrecisionData[rowIndex] = 1.0
+	} else {
+		value := varianceFloor / taskVarianceData[rowIndex]
+		taskPrecisionData[rowIndex] = math.Min(
 			rm.cfg.PrecisionMax,
 			math.Max(rm.cfg.PrecisionMin, value),
 		)
 	}
+
+	rm.updateTaskSkill(rowIndex, target, squaredError)
+}
+
+/*
+updateTaskSkill maintains one row's exponential moving average of model loss
+versus the zero-prediction baseline. Skill above one means the row's forecasts
+beat predicting no move, which is the evidence the horizon selector contracts on.
+*/
+func (rm *ResonanceManifold) updateTaskSkill(
+	rowIndex int,
+	target float64,
+	modelSquaredError float64,
+) {
+	baselineSquaredError := target * target
+	taskModelLossData := rm.taskModelLoss.RawVector().Data
+	taskBaselineLossData := rm.taskBaselineLoss.RawVector().Data
+
+	if !rm.taskSkillReady[rowIndex] {
+		taskModelLossData[rowIndex] = modelSquaredError
+		taskBaselineLossData[rowIndex] = baselineSquaredError
+		rm.taskSkillReady[rowIndex] = true
+
+		return
+	}
+
+	beta := rm.cfg.PrecisionBeta
+	taskModelLossData[rowIndex] = (1.0-beta)*taskModelLossData[rowIndex] +
+		beta*modelSquaredError
+	taskBaselineLossData[rowIndex] = (1.0-beta)*taskBaselineLossData[rowIndex] +
+		beta*baselineSquaredError
+
+	modelLoss := taskModelLossData[rowIndex]
+	baselineLoss := taskBaselineLossData[rowIndex]
+	lossScale := math.Abs(modelLoss-baselineLoss) + modelLoss + baselineLoss
+	lossScale *= 0.5
+
+	skill := 1.0
+
+	if lossScale > 0 {
+		numerator := rm.cfg.PrecisionEps*lossScale + baselineLoss
+		denominator := rm.cfg.PrecisionEps*lossScale + modelLoss
+		skill = math.Min(
+			rm.cfg.PrecisionMax,
+			math.Max(rm.cfg.PrecisionMin, numerator/denominator),
+		)
+	}
+
+	rm.taskSkill.RawVector().Data[rowIndex] = skill
 }
 
 func (rm *ResonanceManifold) predictAdjacentLayers() ([]*mat.VecDense, []*mat.VecDense) {
@@ -1451,155 +1497,54 @@ func (rm *ResonanceManifold) RolloutRetention(steps int) []float64 {
 	return retention
 }
 
+/*
+RolloutTaskForecast returns one forecast per task row, evaluated at the current
+settled readout. With a per-horizon head, element k is the row for horizon k+1:
+the cumulative directional prediction over the next k+1 ticks from now. Every
+element is the supervised head for its own horizon, so the curve is a genuine
+multi-horizon forecast rather than a trajectory through imagined states. With
+the compatibility head, one row per target dimension is returned per step.
+*/
 func (rm *ResonanceManifold) RolloutTaskForecast(steps int) ([]RLSOutput, error) {
-	if rm.taskWeights == nil || rm.targetDim <= 0 || steps < 1 {
+	if rm.taskWeights == nil || rm.taskRows <= 0 || steps < 1 {
 		return nil, nil
 	}
 
-	numLatents := len(rm.temporalOperators)
-	currentLatents := make([]*mat.VecDense, numLatents)
-	nextLatents := make([]*mat.VecDense, numLatents)
-	for i := range numLatents {
-		currentLatents[i] = mat.VecDenseCopyOf(rm.latentStates[i+1])
-		nextLatents[i] = mat.NewVecDense(rm.arch[i+1], nil)
-	}
+	readoutData := rm.workspace.readoutBuf.RawVector().Data
+	rm.ReadoutVectorInto(readoutData)
 
-	forecast := make([]RLSOutput, steps*rm.targetDim)
-	readoutBuf := make([]float64, rm.readoutDim)
-
-	for step := range steps {
-		offset := 0
-		if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutLatents {
-			for i := range numLatents {
-				data := currentLatents[i].RawVector().Data
-				copy(readoutBuf[offset:offset+len(data)], data)
-				offset += len(data)
-			}
-		}
-		if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutInnovations {
-			if step == 0 {
-				_, layerErrors := rm.predictAdjacentLayers()
-				for link := range layerErrors {
-					data := layerErrors[link].RawVector().Data
-					copy(readoutBuf[offset:offset+len(data)], data)
-					offset += len(data)
-				}
-			} else {
-				for link := 0; link < len(rm.generativeWeights); link++ {
-					pred := rm.workspace.predictions[link]
-					pred.MulVec(rm.generativeWeights[link], currentLatents[link])
-					denseApplyTanhInPlace(pred)
-					if link == 0 {
-						dim := rm.arch[0]
-						for d := 0; d < dim; d++ {
-							readoutBuf[offset+d] = 0
-						}
-						offset += dim
-					} else {
-						belowData := currentLatents[link-1].RawVector().Data
-						predData := pred.RawVector().Data
-						for d := 0; d < len(predData); d++ {
-							readoutBuf[offset+d] = belowData[d] - predData[d]
-						}
-						offset += len(predData)
-					}
-				}
-			}
+	if rm.perHorizon {
+		if steps > rm.taskRows {
+			steps = rm.taskRows
 		}
 
-		for rowIndex, learner := range rm.taskLearners {
-			output, err := learner.Predict(readoutBuf)
+		forecast := make([]RLSOutput, steps)
+
+		for horizonIndex := range steps {
+			output, err := rm.taskLearners[horizonIndex].Predict(readoutData)
+
 			if err != nil {
 				return nil, fmt.Errorf("resonance: task forecast: %w", err)
 			}
-			forecast[step*rm.targetDim+rowIndex] = output
+
+			forecast[horizonIndex] = output
 		}
 
-		if step+1 < steps {
-			for i := range numLatents {
-				nextLatents[i].MulVec(rm.temporalOperators[i], currentLatents[i])
-				denseApplyTanhInPlace(nextLatents[i])
-				currentLatents[i], nextLatents[i] = nextLatents[i], currentLatents[i]
-			}
-		}
+		return forecast, nil
 	}
 
-	return forecast, nil
-}
-
-func (rm *ResonanceManifold) RolloutTaskAggregateForecast(
-	steps int,
-) ([]RLSOutput, error) {
-	if rm.taskWeights == nil || rm.targetDim <= 0 || steps < 1 {
-		return nil, nil
-	}
-
-	numLatents := len(rm.temporalOperators)
-	currentLatents := make([]*mat.VecDense, numLatents)
-	nextLatents := make([]*mat.VecDense, numLatents)
-	for i := range numLatents {
-		currentLatents[i] = mat.VecDenseCopyOf(rm.latentStates[i+1])
-		nextLatents[i] = mat.NewVecDense(rm.arch[i+1], nil)
-	}
-
-	featureRows := make([][]float64, steps)
+	forecast := make([]RLSOutput, steps*rm.taskRows)
 
 	for step := range steps {
-		readoutBuf := make([]float64, rm.readoutDim)
-		offset := 0
-		if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutLatents {
-			for i := range numLatents {
-				data := currentLatents[i].RawVector().Data
-				copy(readoutBuf[offset:offset+len(data)], data)
-				offset += len(data)
-			}
-		}
-		if rm.cfg.ReadoutMode == ReadoutAll || rm.cfg.ReadoutMode == ReadoutInnovations {
-			if step == 0 {
-				_, layerErrors := rm.predictAdjacentLayers()
-				for link := range layerErrors {
-					data := layerErrors[link].RawVector().Data
-					copy(readoutBuf[offset:offset+len(data)], data)
-					offset += len(data)
-				}
-			} else {
-				for link := 0; link < len(rm.generativeWeights); link++ {
-					pred := rm.workspace.predictions[link]
-					pred.MulVec(rm.generativeWeights[link], currentLatents[link])
-					denseApplyTanhInPlace(pred)
-					if link == 0 {
-						dim := rm.arch[0]
-						offset += dim
-					} else {
-						belowData := currentLatents[link-1].RawVector().Data
-						predData := pred.RawVector().Data
-						for d := 0; d < len(predData); d++ {
-							readoutBuf[offset+d] = belowData[d] - predData[d]
-						}
-						offset += len(predData)
-					}
-				}
-			}
-		}
+		for rowIndex, learner := range rm.taskLearners {
+			output, err := learner.Predict(readoutData)
 
-		featureRows[step] = readoutBuf
-
-		if step+1 < steps {
-			for i := range numLatents {
-				nextLatents[i].MulVec(rm.temporalOperators[i], currentLatents[i])
-				denseApplyTanhInPlace(nextLatents[i])
-				currentLatents[i], nextLatents[i] = nextLatents[i], currentLatents[i]
+			if err != nil {
+				return nil, fmt.Errorf("resonance: task forecast: %w", err)
 			}
-		}
-	}
 
-	forecast := make([]RLSOutput, rm.targetDim)
-	for rowIndex, learner := range rm.taskLearners {
-		output, err := learner.PredictSum(featureRows)
-		if err != nil {
-			return nil, fmt.Errorf("resonance: aggregate task forecast: %w", err)
+			forecast[step*rm.taskRows+rowIndex] = output
 		}
-		forecast[rowIndex] = output
 	}
 
 	return forecast, nil

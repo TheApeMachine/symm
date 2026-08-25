@@ -192,8 +192,13 @@ verdict(obj?:ResonanceVerdict):ResonanceVerdict|null {
   return offset ? (obj || new ResonanceVerdict()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
+taskForecast():number {
+  const offset = this.bb!.__offset(this.bb_pos, 52);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
 static startResonance(builder:flatbuffers.Builder) {
-  builder.startObject(24);
+  builder.startObject(25);
 }
 
 static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
@@ -355,6 +360,10 @@ static addVerdict(builder:flatbuffers.Builder, verdictOffset:flatbuffers.Offset)
   builder.addFieldOffset(23, verdictOffset, 0);
 }
 
+static addTaskForecast(builder:flatbuffers.Builder, taskForecast:number) {
+  builder.addFieldFloat64(24, taskForecast, 0.0);
+}
+
 static endResonance(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 4) // source
@@ -388,7 +397,8 @@ unpack(): ResonanceT {
     this.surprise(),
     (this.forecast() !== null ? this.forecast()!.unpack() : null),
     (this.dynamics() !== null ? this.dynamics()!.unpack() : null),
-    (this.verdict() !== null ? this.verdict()!.unpack() : null)
+    (this.verdict() !== null ? this.verdict()!.unpack() : null),
+    this.taskForecast()
   );
 }
 
@@ -418,6 +428,7 @@ unpackTo(_o: ResonanceT): void {
   _o.forecast = (this.forecast() !== null ? this.forecast()!.unpack() : null);
   _o.dynamics = (this.dynamics() !== null ? this.dynamics()!.unpack() : null);
   _o.verdict = (this.verdict() !== null ? this.verdict()!.unpack() : null);
+  _o.taskForecast = this.taskForecast();
 }
 }
 
@@ -446,7 +457,8 @@ constructor(
   public surprise: number = 0.0,
   public forecast: ResonanceForecastT|null = null,
   public dynamics: ResonanceDynamicsT|null = null,
-  public verdict: ResonanceVerdictT|null = null
+  public verdict: ResonanceVerdictT|null = null,
+  public taskForecast: number = 0.0
 ){}
 
 
@@ -488,6 +500,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   Resonance.addForecast(builder, forecast);
   Resonance.addDynamics(builder, dynamics);
   Resonance.addVerdict(builder, verdict);
+  Resonance.addTaskForecast(builder, this.taskForecast);
 
   return Resonance.endResonance(builder);
 }

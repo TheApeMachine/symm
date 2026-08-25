@@ -1,4 +1,4 @@
-package trader
+package cmd
 
 import (
 	"context"
@@ -24,16 +24,16 @@ const syncRest = time.Millisecond
 Crypto submits desk work from thesis messages delivered by the Actor cascade.
 */
 type Crypto struct {
-	status      atomic.Value
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	api         *websocket.API
-	ui          *runtime.Channel[*types.UIFrame]
-	fluid       *runtime.Channel[types.FluidFrame]
-	bus         *runtime.Workspace
-	thesis      *types.Thesis
-	recorder    *audit.Recorder
+	status        atomic.Value
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	api           *websocket.API
+	ui            *runtime.Channel[*types.UIFrame]
+	fluid         *runtime.Channel[types.FluidFrame]
+	bus           *runtime.Workspace
+	thesis        *types.Thesis
+	recorder      *audit.Recorder
 	desk          *broker.Desk
 	diagnostics   *Diagnostics
 	diagnosticsCh *runtime.Channel[StreamDiagnostics]

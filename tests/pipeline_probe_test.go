@@ -135,7 +135,30 @@ func TestPipelineFrameInventory(t *testing.T) {
 			t.Logf("category batches: %d", categoryCount)
 			t.Logf("causal outputs: %d", causalCount)
 			t.Logf("graphs published: %d", graphCount)
+
+			measurementTotal := 0
+			for _, count := range measurements {
+				measurementTotal += count
+			}
+
+			uiTotal := 0
+			for _, count := range counts {
+				uiTotal += count
+			}
 			mu.Unlock()
+
+			// These assertions are the point of this probe: a stalled pipeline that
+			// produces no measurements and no UI frames must FAIL here, not merely
+			// log a zero and pass. The downstream category/causal/graph counts may
+			// legitimately be zero on mock fixture data (ReadyForSearch needs a real
+			// opportunity), so they are not asserted.
+			Convey("The assembled system must flow measurements into the bus", func() {
+				So(measurementTotal, ShouldBeGreaterThan, 0)
+			})
+
+			Convey("The assembled system must publish UI frames to the bus", func() {
+				So(uiTotal, ShouldBeGreaterThan, 0)
+			})
 		}),
 	)
 }

@@ -34,9 +34,12 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         ".mypy_cache",
         ".venv",
         ".pnpm-store",
+        ".github",
         "bin",
         "runs",
         "scripts",
+        "telemetry",
+        "specs",
     }
 )
 
@@ -46,7 +49,9 @@ SKIP_FILE_NAMES: frozenset[str] = frozenset(
         "vite.config.ts",
         "_test.go",
         ".test.ts",
-        ".test.tsx"
+        ".test.tsx",
+        ".pnpm-lock.yaml",
+        "AGENTS.md",
     }
 )
 
@@ -59,7 +64,8 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".metal",
     ".mm",
     ".m",
-    ".h"
+    ".h",
+    ".md",
 )
 
 

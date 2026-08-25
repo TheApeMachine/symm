@@ -8,37 +8,24 @@ import (
 	"sync"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic"
+	"github.com/theapemachine/symm/logic/causal"
+	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/regulator"
 	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/strategy"
-	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
-	"github.com/theapemachine/symm/trader"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/utils"
 	"golang.org/x/sync/errgroup"
 )
-
-/*
-signalInstrument is the boot-time view of a measuring instrument: it names
-itself, reports its own error, and closes. Numeric stepping is driven by the
-runner per data point; boot only registers and tears the instruments down.
-*/
-type signalInstrument interface {
-	Name() string
-	Error() error
-	Close() error
-}
 
 /*
 System is the assembled symm system. Run starts each registered long-lived
@@ -51,8 +38,7 @@ type System struct {
 	Hub       *ui.Hub
 	Desk      *broker.Desk
 	Planner   *strategy.Planner
-	Analyzer  *logic.Analyzer
-	Crypto    *trader.Crypto
+	Crypto    *Crypto
 	Regulator *regulator.Solver
 	Runner    *signal.Runner
 	Thesis    *types.Thesis
@@ -227,18 +213,7 @@ func BootWithHub(
 		live.SetBus(bus)
 	}
 
-	tree, err := dmt.NewTree("")
-
-	if err != nil {
-		errnie.Error(errnie.Err(errnie.Internal, "boot: create logic tree", err))
-		cancel()
-		return nil
-	}
-
-	regulatorSolver, err := regulator.NewSolver(systemCtx, runtime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	))
+	regulatorSolver, err := regulator.NewSolver(systemCtx, bus)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -264,14 +239,9 @@ func BootWithHub(
 
 	signalRunner := signal.NewRunner(systemCtx, bus)
 
-	uiChannel := runtime.ChannelOf[*types.UIFrame](
+	uiChannel := runtime.ChannelOf(
 		bus, types.ChannelUI,
 		func(frame *types.UIFrame) string { return "" },
-	)
-
-	fluidChannel := runtime.ChannelOf[types.FluidFrame](
-		bus, types.ChannelFluid,
-		func(frame types.FluidFrame) string { return frame.Channel },
 	)
 
 	if bus != nil {
@@ -296,31 +266,122 @@ func BootWithHub(
 			})
 		})
 
-		bus.Observe(types.ChannelDiagnostics, func(_ string, _ string, value any) {
-			diag, ok := value.(trader.StreamDiagnostics)
+		// Workspace observer side-effects own the dashboard UI frames for the
+		// derived stages. Logic solvers emit domain data only; these taps convert
+		// it to wire frames so UI publishing lives in one place, not in each
+		// module's data path.
+		bus.Observe(types.ChannelCausal, func(_ string, _ string, value any) {
+			output, ok := value.(types.CausalOutput)
+
 			if !ok {
 				return
 			}
 
-			diagWire := diag.Wire()
-
-			fluidChannel.Publish(types.FluidFrame{
-				Channel: types.DiagnosticsChannel,
-				Payload: telemetry.Encode(&wire.FrameT{
-					Type:  wire.FrameDiagnosticsFrame,
-					Value: diagWire,
-				}),
+			uiChannel.Publish(&types.UIFrame{
+				Type: wire.FrameCausalFrame,
+				Value: &wire.CausalFrameT{
+					Rows: []*wire.CausalT{causal.CausalWire(output.Rows)},
+				},
 			})
+		})
+
+		bus.Observe(types.ChannelCognition, func(_ string, _ string, value any) {
+			reading, ok := value.(types.Cognition)
+
+			if !ok {
+				return
+			}
 
 			uiChannel.Publish(&types.UIFrame{
-				Type:  wire.FrameDiagnosticsFrame,
-				Value: diagWire,
+				Type: wire.FrameCognitionFrame,
+				Value: &wire.CognitionFrameT{
+					Rows: []*wire.CognitionT{cognition.CognitionWire(reading)},
+				},
+			})
+		})
+
+		bus.Observe(types.ChannelResonance, func(_ string, _ string, value any) {
+			artifact, ok := value.(types.ResonanceArtifact)
+
+			if !ok {
+				return
+			}
+
+			uiChannel.Publish(&types.UIFrame{
+				Type: wire.FrameResonanceFrame,
+				Value: &wire.ResonanceFrameT{
+					Rows: []*wire.ResonanceT{
+						resonance.ResonanceWire(artifact.Symbol, artifact.At, artifact),
+					},
+				},
+			})
+		})
+
+		bus.Observe(types.ChannelGraphs, func(_ string, _ string, value any) {
+			graph, ok := value.(*types.Graph)
+
+			if !ok || graph == nil {
+				return
+			}
+
+			// The dashboard renders the focused symbol's graph.
+			if graph.Symbol != types.Focus() {
+				return
+			}
+
+			uiChannel.Publish(&types.UIFrame{
+				Type:  wire.FrameGraphFrame,
+				Value: graph.Wire(),
+			})
+		})
+
+		bus.Observe(types.ChannelDecisions, func(_ string, _ string, value any) {
+			round, ok := value.(types.StrategyRound)
+
+			if !ok {
+				return
+			}
+
+			rows := make([]*wire.DecisionT, 0, len(round.Decisions))
+
+			for _, decision := range round.Decisions {
+				if decision == nil {
+					continue
+				}
+
+				rows = append(rows, types.DecisionWire(
+					*decision,
+					strategy.StrategyWireBranchCount,
+					false,
+				))
+			}
+
+			uiChannel.Publish(&types.UIFrame{
+				Type: wire.FrameStrategyFrame,
+				Value: &wire.StrategyFrameT{
+					Evaluated: round.Evaluated,
+					Outcome:   round.Outcome,
+					Decisions: rows,
+				},
+			})
+		})
+
+		bus.Observe(types.ChannelRegulator, func(_ string, _ string, value any) {
+			payload, ok := value.(regulator.RegulatorPayload)
+
+			if !ok {
+				return
+			}
+
+			uiChannel.Publish(&types.UIFrame{
+				Type:  wire.FrameRegulatorFrame,
+				Value: regulator.RegulatorWire(payload),
 			})
 		})
 	}
 
 	price := broker.NewPrice(api)
-	instrument := broker.NewInstrument(api, price, uiChannel)
+	instrument := broker.NewInstrument(api, price, uiChannel, bus)
 	balance := broker.NewBalance(api, uiChannel)
 
 	positionStore, err := broker.NewPositionStore(
@@ -349,16 +410,6 @@ func BootWithHub(
 		bus,
 	)
 
-	analyzer := logic.NewAnalyzer(
-		systemCtx,
-		price,
-		api,
-		tree,
-		nil,
-		thesis,
-		bus,
-	)
-
 	resonanceSolver := resonance.NewSolver(
 		systemCtx,
 		viper.GetFloat64("resonance.learning_rate"),
@@ -366,7 +417,7 @@ func BootWithHub(
 		bus,
 	)
 
-	crypto, err := trader.NewCrypto(
+	crypto, err := NewCrypto(
 		systemCtx,
 		api,
 		nil,
@@ -425,7 +476,6 @@ func BootWithHub(
 		signalRunner.Close,
 		planner.Close,
 		resonanceSolver.Close,
-		analyzer.Close,
 		crypto.Close,
 		desk.Close,
 		hub.Close,
@@ -437,7 +487,6 @@ func BootWithHub(
 		Hub:       hub,
 		Desk:      desk,
 		Planner:   planner,
-		Analyzer:  analyzer,
 		Crypto:    crypto,
 		Regulator: regulatorSolver,
 		Runner:    signalRunner,
@@ -448,6 +497,7 @@ func BootWithHub(
 		resources: []func() error{positionStore.Close},
 		runDone:   make(chan struct{}),
 	}
+
 	thesis.SetFailureHandler(stack.fail)
 
 	if bus != nil {
@@ -473,14 +523,19 @@ type bootPriceAdapter struct {
 
 func (a *bootPriceAdapter) Mark(symbol string, direction string) float64 {
 	dir := broker.BUY
+
 	if direction == "sell" {
 		dir = broker.SELL
 	}
+
 	m := a.price.Mark(symbol, dir)
+
 	if m == nil {
 		return 0
 	}
+
 	f := m.Float64()
+
 	return f
 }
 
@@ -491,7 +546,7 @@ The bridge feeds subsystem-attributed errors into the diagnostics WebRTC frame.
 */
 var diagnosticsBridgeOnce sync.Once
 
-func attachDiagnosticsErrorBridge(hub *ui.Hub, crypto *trader.Crypto) {
+func attachDiagnosticsErrorBridge(hub *ui.Hub, crypto *Crypto) {
 	if hub == nil || crypto == nil {
 		return
 	}

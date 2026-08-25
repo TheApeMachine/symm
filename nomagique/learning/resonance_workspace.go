@@ -51,7 +51,7 @@ type resonanceWorkspace struct {
 	taskSignal *mat.VecDense
 }
 
-func newResonanceWorkspace(arch []int, targetDim int) *resonanceWorkspace {
+func newResonanceWorkspace(arch []int, taskRows int) *resonanceWorkspace {
 	numLinks := len(arch) - 1
 	numLatents := len(arch) - 1
 	topDim := arch[len(arch)-1]
@@ -136,11 +136,11 @@ func newResonanceWorkspace(arch []int, targetDim int) *resonanceWorkspace {
 		workspace.recUpdate[linkIndex] = mat.NewDense(colDim, rowDim, nil)
 	}
 
-	if targetDim > 0 {
-		workspace.yCol = mat.NewVecDense(targetDim, nil)
-		workspace.taskPred = mat.NewVecDense(targetDim, nil)
-		workspace.taskError = mat.NewVecDense(targetDim, nil)
-		workspace.taskSignal = mat.NewVecDense(targetDim, nil)
+	if taskRows > 0 {
+		workspace.yCol = mat.NewVecDense(taskRows, nil)
+		workspace.taskPred = mat.NewVecDense(taskRows, nil)
+		workspace.taskError = mat.NewVecDense(taskRows, nil)
+		workspace.taskSignal = mat.NewVecDense(taskRows, nil)
 	}
 
 	return workspace

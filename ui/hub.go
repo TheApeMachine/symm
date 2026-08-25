@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"io"
 	"net"
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 
 	"github.com/bytedance/sonic"
 	fastwebsocket "github.com/fasthttp/websocket"
@@ -55,7 +56,6 @@ type Hub struct {
 	fluid           *FluidRTC
 	diagnostics     DiagnosticsControl
 	maxMessageBytes int
-	writeWindow     uint64
 	maxBatchFrames  int
 }
 
@@ -105,7 +105,6 @@ func NewHub(
 	ctx, cancel := context.WithCancel(ctx)
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
-	viper.SetDefault("ui.websocket.write_window", 4)
 	// Cap frames assembled into a single FlatBuffers batch so a slow client
 	// that lets the queue grow can never drive one builder past the library's
 	// 2 GB ceiling before the message-size split runs. The split loop below
@@ -133,12 +132,7 @@ func NewHub(
 			func(frame types.FluidFrame) string { return "" },
 		), "fluid"),
 		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
-		writeWindow:     uint64(viper.GetInt("ui.websocket.write_window")),
 		maxBatchFrames:  viper.GetInt("ui.websocket.max_batch_frames"),
-	}
-
-	if hub.writeWindow == 0 {
-		hub.err = fmt.Errorf("dashboard: write_window must be positive")
 	}
 
 	if hub.maxBatchFrames < 1 {
@@ -176,25 +170,24 @@ func NewHub(
 			return
 		}
 
-		ui := runtime.ChannelOf[*types.UIFrame](
+		ui := runtime.ChannelOf(
 			hub.bus, types.ChannelUI,
 			func(frame *types.UIFrame) string { return "" },
 		)
 
 		consumerID := consumerIDFor()
-		frameCh := make(chan *types.UIFrame, hub.maxBatchFrames*4)
 
-		// Each client subscribes its own bounded ring on the UI channel. The
-		// workspace fans every pushed frame out to every client, so each
-		// client receives each frame without any shared broadcast or
-		// client-fan-out machinery on the hub.
+		// Each client subscribes its own bounded ring on the UI channel and
+		// consumes it directly (like a signal consumes its inputs); no extra
+		// frame channel hops between the ring and the socket. The workspace's
+		// ring is bounded and drops oldest under overload, so a slow client
+		// sheds frames instead of stalling the producer.
 		ui.Subscribe(consumerID, func(frame *types.UIFrame) error {
-			select {
-			case frameCh <- frame:
-			default:
-			}
-
-			return nil
+			return writeUI(
+				conn.Conn,
+				hub.maxMessageBytes,
+				[]*types.UIFrame{frame},
+			)
 		})
 		initialFrames := make([]*types.UIFrame, 0, 3)
 
@@ -264,8 +257,7 @@ func NewHub(
 		}
 
 		clientDone := make(chan struct{})
-		received := make(chan struct{}, hub.writeWindow)
-		clientCtx, cancelClient := context.WithCancel(hub.ctx)
+		_, cancelClient := context.WithCancel(hub.ctx)
 		defer cancelClient()
 
 		go func() {
@@ -281,14 +273,6 @@ func NewHub(
 
 					if err != nil {
 						return
-					}
-
-					if messageType == websocket.BinaryMessage && len(payload) == 1 && payload[0] == 1 {
-						select {
-						case received <- struct{}{}:
-						default:
-						}
-						continue
 					}
 
 					if messageType != websocket.TextMessage {
@@ -357,9 +341,6 @@ func NewHub(
 			_ = conn.Close()
 			<-clientDone
 		}()
-		var deferredFrames []*types.UIFrame
-		var inFlight uint64
-
 		if len(initialFrames) > 0 {
 			batch := telemetry.EncodeBatch(initialFrames)
 
@@ -379,117 +360,21 @@ func NewHub(
 			if err != nil {
 				return
 			}
-
-			inFlight = 1
 		}
 
-		for {
-			for inFlight >= hub.writeWindow {
-				select {
-				case <-hub.ctx.Done():
-					return
-				case <-clientDone:
-					return
-				case <-received:
-					inFlight--
-				}
-			}
-
-			frames := deferredFrames
-			deferredFrames = nil
-
-			for len(frames) == 0 {
-				select {
-				case <-clientCtx.Done():
-					return
-				case frame := <-frameCh:
-					frames = append(frames, frame)
-					frames = hub.drainChannel(frameCh, frames)
-				}
-			}
-
-			batchCount := len(frames)
-			var batch *telemetry.BatchBuffer
-
-			for {
-				batch = telemetry.EncodeBatch(frames[:batchCount])
-				batchBytes := len(batch.Bytes)
-
-				if batchBytes <= hub.maxMessageBytes {
-					break
-				}
-
-				batch.Release()
-
-				if batchCount == 1 {
-					splitFrames, err := splitDashboardFrame(
-						frames[0],
-						hub.maxMessageBytes,
-					)
-
-					if err == nil {
-						frames = append(splitFrames, frames[1:]...)
-						batchCount = len(frames)
-						continue
-					}
-
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						err.Error(),
-						err,
-					))
-					return
-				}
-
-				batchCount = (batchCount + 1) / 2
-			}
-
-			err := conn.Conn.WriteMessage(websocket.BinaryMessage, batch.Bytes)
-			batch.Release()
-
-			if err != nil {
-				if !expectedDashboardWriteClosure(err) {
-					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"dashboard: write failed: "+err.Error(),
-						err,
-					))
-				}
-
-				return
-			}
-
-			inFlight++
-			deferredFrames = frames[batchCount:]
+		// Frames flow to the socket directly through the ChannelUI ring
+		// subscription above; this handler only keeps the connection alive
+		// until the client disconnects (the reader closes clientDone) or the
+		// bus is torn down.
+		select {
+		case <-clientDone:
+		case <-hub.ctx.Done():
 		}
 	}))
 
 	hub.registerFluidWebRTC()
 
 	return hub
-}
-
-/*
-drainBounded pulls at most hub.maxBatchFrames frames from the UI consumer so a
-single EncodeBatch in the writer loop never assembles an unbounded backlog into
-one FlatBuffers builder. Leftover frames stay queued and are drained on a later
-wake, which keeps the per-message size split effective without ever sizing a
-batch past the encoder's growth ceiling.
-*/
-func (hub *Hub) drainChannel(
-	frameCh chan *types.UIFrame,
-	frames []*types.UIFrame,
-) []*types.UIFrame {
-	for len(frames) < hub.maxBatchFrames {
-		select {
-		case frame := <-frameCh:
-			frames = append(frames, frame)
-		default:
-			return frames
-		}
-	}
-
-	return frames
 }
 
 /*
@@ -556,6 +441,46 @@ func expectedDashboardWriteClosure(err error) bool {
 	}
 
 	return false
+}
+
+/*
+writeUI encodes one batch of UI frames and writes it to the dashboard socket,
+splitting a batch that exceeds the per-message ceiling. It is the socket-side
+half of the hub's direct ChannelUI consumption in the subscription step.
+*/
+func writeUI(conn *fastwebsocket.Conn, maxMessageBytes int, frames []*types.UIFrame) error {
+	if len(frames) == 0 {
+		return nil
+	}
+
+	batch := telemetry.EncodeBatch(frames)
+
+	if len(batch.Bytes) <= maxMessageBytes {
+		err := conn.WriteMessage(websocket.BinaryMessage, batch.Bytes)
+		batch.Release()
+
+		return err
+	}
+
+	batch.Release()
+
+	if len(frames) == 1 {
+		splitFrames, err := splitDashboardFrame(frames[0], maxMessageBytes)
+
+		if err != nil {
+			return err
+		}
+
+		return writeUI(conn, maxMessageBytes, splitFrames)
+	}
+
+	half := (len(frames) + 1) / 2
+
+	if err := writeUI(conn, maxMessageBytes, frames[:half]); err != nil {
+		return err
+	}
+
+	return writeUI(conn, maxMessageBytes, frames[half:])
 }
 
 /*

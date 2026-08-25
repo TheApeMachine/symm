@@ -42,7 +42,7 @@ func Register[In, Out any](
 		panic("runtime: key extractor required: " + string(inTopic))
 	}
 
-	input := ChannelOf[In](workspace, string(inTopic), keyExtractor)
+	input := ChannelOf(workspace, string(inTopic), keyExtractor)
 
 	var output *Channel[Out]
 	outKey := outKeyExtractor
@@ -52,7 +52,7 @@ func Register[In, Out any](
 	}
 
 	if outTopic != "" {
-		output = ChannelOf[Out](workspace, string(outTopic), outKey)
+		output = ChannelOf(workspace, string(outTopic), outKey)
 	}
 
 	id := fmt.Sprintf("register:%s>%s:%T", inTopic, outTopic, processor)

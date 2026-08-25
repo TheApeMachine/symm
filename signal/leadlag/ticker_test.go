@@ -1,6 +1,7 @@
 package leadlag
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -98,3 +99,42 @@ func TestTickerStep(t *testing.T) {
 		})
 	})
 }
+
+/*
+BenchmarkTickerCrossLagStep isolates the intrinsic cost of one leadlag Step on a
+focal symbol whose peers all hold full (64-sample) committed paths. It exercises
+the CrossSection peer fan-out (one CrossLag lag-surface scan per peer) plus the
+per-tick cohort reduce/finalize. Sustained single-digit-millisecond cost here
+means a ~1s avg on the live diagnostics is contention, not intrinsic compute.
+*/
+func BenchmarkTickerCrossLagStep(b *testing.B) {
+	entity := NewTicker()
+
+	// Prime every symbol's path to steady-state capacity (64 samples) so the
+	// cross-section cost reflects a fully-warmed universe, not cold-start.
+	for s := 0; s < benchmarkSymbols; s++ {
+		symbol := benchmarkSymbol(s)
+		for i := 0; i < benchmarkWarmup; i++ {
+			entity.Step(ticker(symbol, 100.0+float64(i), timestamp(int64(i)+1)))
+		}
+	}
+
+	focal := benchmarkSymbol(0)
+	i := 0
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		entity.Step(ticker(focal, 100.0+float64(i), timestamp(int64(benchmarkWarmup+i)+1)))
+		i++
+	}
+}
+
+func benchmarkSymbol(s int) string {
+	return fmt.Sprintf("S%02d/USD", s)
+}
+
+const (
+	benchmarkSymbols = 32
+	benchmarkWarmup  = 64
+)

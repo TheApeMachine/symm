@@ -183,7 +183,7 @@ func TestNumberConcurrency(t *testing.T) {
 }
 
 func TestNumberCrossSectionAndSelection(t *testing.T) {
-	pair := func(focal types.Frame, peer types.Frame) types.Frame {
+	pair := func(focal *types.Frame, peer *types.Frame) types.Frame {
 		return types.Frame{}.Set(
 			numberPairSum,
 			focal.MustGet(numberTotal)+peer.MustGet(numberTotal),

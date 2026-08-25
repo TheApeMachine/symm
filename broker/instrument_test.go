@@ -53,7 +53,7 @@ func TestInstrumentNewInstrument(t *testing.T) {
 		api := websocket.NewAPI(t.Context(), conn, conn)
 
 		Convey("When the instrument registry is constructed", func() {
-			instrument := NewInstrument(api, NewPrice(api), nil)
+			instrument := NewInstrument(api, NewPrice(api), nil, nil)
 
 			Convey("It should remain pending without starting market flow", func() {
 				So(instrument.Status(), ShouldEqual, types.PENDING)
@@ -73,7 +73,7 @@ func TestInstrumentSubscribe(t *testing.T) {
 
 		conn := &instrumentConn{Conn: mock.NewConn()}
 		api := websocket.NewAPI(t.Context(), conn, conn)
-		instrument := NewInstrument(api, NewPrice(api), nil)
+		instrument := NewInstrument(api, NewPrice(api), nil, nil)
 
 		Convey("When subscriptions are explicitly started", func() {
 			err := instrument.Subscribe()

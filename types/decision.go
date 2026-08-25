@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/nomagique/mcts"
+	"github.com/theapemachine/symm/nomagique/learning"
 )
 
 /*
@@ -210,4 +210,16 @@ func (decision Decision) ValidID() bool {
 
 	_, err := uuid.Parse(decision.ID)
 	return err == nil
+}
+
+/*
+StrategyRound carries one plan decision round intended for the dashboard. The
+planner emits it as domain data on ChannelDecisions; the workspace observer
+projects it into the StrategyFrame so the planner never publishes UI directly.
+*/
+type StrategyRound struct {
+	Symbol    string
+	Evaluated bool
+	Outcome   string
+	Decisions []*Decision
 }

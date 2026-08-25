@@ -68,7 +68,6 @@ type Solver struct {
 	angles       []float64
 	pending      []pendingDial
 	waiting      atomic.Bool
-	ui           *nomagiqueruntime.Channel[*types.UIFrame]
 	fluid        *nomagiqueruntime.Channel[types.FluidFrame]
 	semaphore    chan struct{}
 	stopping     chan struct{}
@@ -177,10 +176,6 @@ func NewSolver(
 		stopped:      make(chan struct{}),
 		stepInterval: viper.GetDuration("market.manifold.step_interval"),
 	}
-	solver.ui = nomagiqueruntime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
 	solver.fluid = nomagiqueruntime.ChannelOf[types.FluidFrame](
 		bus, types.ChannelFluid,
 		func(frame types.FluidFrame) string { return "" },

@@ -615,6 +615,7 @@ var busPool = sync.OnceValue(func() *Pool[func()] {
 	pool.SetNumShards(defaultNumShards())
 	pool.SetShardMinWorkers(4)
 	pool.SetQueueSize(8192)
+	pool.SetMaxWorkers(busMaxWorkers())
 	pool.Start()
 
 	return pool
@@ -658,6 +659,24 @@ var streamLaneCapacity = sync.OnceValue(func() uint64 {
 
 	return nextPowerOfTwo(capacity)
 })
+
+/*
+busMaxWorkers optionally bounds the whole workspace worker pool to a deployment
+choice. It is intentionally opt-in: the pool already sizes elastically to the
+drain backlog and retires idle workers, so a hard cap risks starving a live
+universe (a stalled measurement crown) for a CPU-oversubscription that the
+hot-path allocation and dedupe fixes already removed. Set
+system.streaming.max_workers to a positive value to enforce a ceiling.
+*/
+func busMaxWorkers() int {
+	configured := viper.GetInt("system.streaming.max_workers")
+
+	if configured <= 0 {
+		return 0
+	}
+
+	return configured
+}
 
 func updateMaximum(target *atomic.Uint64, value uint64) {
 	for {

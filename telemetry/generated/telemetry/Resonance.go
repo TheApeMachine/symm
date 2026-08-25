@@ -31,6 +31,7 @@ type ResonanceT struct {
 	Forecast *ResonanceForecastT `json:"forecast"`
 	Dynamics *ResonanceDynamicsT `json:"dynamics"`
 	Verdict *ResonanceVerdictT `json:"verdict"`
+	TaskForecast float64 `json:"taskForecast"`
 }
 
 func (t *ResonanceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -115,6 +116,7 @@ func (t *ResonanceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	ResonanceAddForecast(builder, forecastOffset)
 	ResonanceAddDynamics(builder, dynamicsOffset)
 	ResonanceAddVerdict(builder, verdictOffset)
+	ResonanceAddTaskForecast(builder, t.TaskForecast)
 	return ResonanceEnd(builder)
 }
 
@@ -161,6 +163,7 @@ func (rcv *Resonance) UnPackTo(t *ResonanceT) {
 	t.Forecast = rcv.Forecast(nil).UnPack()
 	t.Dynamics = rcv.Dynamics(nil).UnPack()
 	t.Verdict = rcv.Verdict(nil).UnPack()
+	t.TaskForecast = rcv.TaskForecast()
 }
 
 func (rcv *Resonance) UnPack() *ResonanceT {
@@ -532,8 +535,20 @@ func (rcv *Resonance) Verdict(obj *ResonanceVerdict) *ResonanceVerdict {
 	return nil
 }
 
+func (rcv *Resonance) TaskForecast() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Resonance) MutateTaskForecast(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(52, n)
+}
+
 func ResonanceStart(builder *flatbuffers.Builder) {
-	builder.StartObject(24)
+	builder.StartObject(25)
 }
 func ResonanceAddSource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(source), 0)
@@ -618,6 +633,9 @@ func ResonanceAddDynamics(builder *flatbuffers.Builder, dynamics flatbuffers.UOf
 }
 func ResonanceAddVerdict(builder *flatbuffers.Builder, verdict flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(verdict), 0)
+}
+func ResonanceAddTaskForecast(builder *flatbuffers.Builder, taskForecast float64) {
+	builder.PrependFloat64Slot(24, taskForecast, 0.0)
 }
 func ResonanceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

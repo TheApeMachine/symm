@@ -49,7 +49,9 @@ type RegulatorPayload struct {
 	Sparkline        []float64         `json:"sparkline"`
 }
 
-func regulatorWire(payload RegulatorPayload) *wire.RegulatorFrameT {
+// RegulatorWire projects the regulator payload into the dashboard frame. It is
+// exported so the workspace observer (boot) can own the UI side-effect.
+func RegulatorWire(payload RegulatorPayload) *wire.RegulatorFrameT {
 	subsystems := make([]*wire.SubsystemT, 0, len(payload.Subsystems))
 
 	for _, subsystem := range payload.Subsystems {
@@ -159,7 +161,6 @@ var controlPresentations = [...]controlPresentation{
 		explanation: "Exploration weight used when balancing visited and uncertain graph branches.",
 	},
 }
-
 
 func (solver *Solver) buildPayload(
 	periodReturn float64,

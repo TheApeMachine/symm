@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/nomagique/mcts"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/relation"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
@@ -243,7 +246,7 @@ func TestConformanceUndefinedNotZero(t *testing.T) {
 				Identification: causal.IdentificationNotIdentifiable,
 			}
 			planner := &Planner{}
-			decision := planner.decisionFromCausalState(unavailable, testConfig())
+			decision := planner.decisionFromCausalState(unavailable, testConfig(), marketInputs{})
 			So(decision.Action, ShouldEqual, types.ActionNothing)
 			So(decision.Reason, ShouldContainSubstring, "causal evaluation unavailable")
 		})
@@ -455,10 +458,11 @@ func TestConformanceNoFinalGate(t *testing.T) {
 		at := time.Unix(0, 149*int64(time.Second))
 		state := deterministicCausalState(at, 0.005)
 
+		inputs := marketInputs{cash: 100000, mark: 1, feeRate: 0.001, spreadFraction: 0, available: true}
 		planner := &Planner{marketProvider: func(symbol string) marketInputs {
-			return marketInputs{cash: 100000, mark: 1, feeRate: 0.001, spreadFraction: 0, available: true}
+			return inputs
 		}}
-		decision := planner.decisionFromCausalState(state, testConfig())
+		decision := planner.decisionFromCausalState(state, testConfig(), inputs)
 		So(decision.Action, ShouldEqual, types.ActionEnter)
 
 		Convey("adverse legacy semantic values do not change the selected action", func() {
@@ -768,6 +772,123 @@ func TestConformanceMediatedPathNoDoubleCounting(t *testing.T) {
 				At:        time.Unix(0, 1),
 			})
 			So(effect.Status, ShouldEqual, causal.IdentificationNotIdentifiable)
+		})
+	})
+}
+
+func TestConformanceStartupSkipsUnpricedSymbols(t *testing.T) {
+	Convey("Given a planner with a mixed priced/unpriced candidate universe", t, func() {
+		bus := runtime.NewWorkspace(nil)
+		var publishedMu sync.Mutex
+		published := make([]types.StrategyRound, 0)
+		runtime.ChannelOf[types.StrategyRound](
+			bus, types.ChannelDecisions,
+			func(round types.StrategyRound) string { return "" },
+		).Subscribe("test-startup", func(round types.StrategyRound) error {
+			publishedMu.Lock()
+			published = append(published, round)
+			publishedMu.Unlock()
+
+			return nil
+		})
+
+		at := time.Unix(0, 149*int64(time.Second))
+		priced := deterministicCausalState(at, 0.005)
+		priced.Symbol = "PRICED/USD"
+		unpriced := deterministicCausalState(at, 0.005)
+		unpriced.Symbol = "UNPRICED/USD"
+
+		inputs := marketInputs{cash: 100000, mark: 1, feeRate: 0.001, spreadFraction: 0, available: true}
+		planner := &Planner{
+			strategy: runtime.ChannelOf[types.StrategyRound](
+				bus, types.ChannelDecisions,
+				func(round types.StrategyRound) string { return "" },
+			),
+			tradingGate: func() bool { return true },
+			marketProvider: func(symbol string) marketInputs {
+				if symbol == "PRICED/USD" {
+					return inputs
+				}
+
+				return marketInputs{}
+			},
+		}
+		planner.stager = audit.NewStager(nil)
+		planner.pending.Store(priced.Symbol, priced)
+		planner.pending.Store(unpriced.Symbol, unpriced)
+
+		Convey("Update decides only the priced symbol", func() {
+			err := planner.Update(types.NewThesis(t.Context()))
+			So(err, ShouldBeNil)
+
+			// The bus drains the UI subscription asynchronously; wait for
+			// quiescence before inspecting the published frames.
+			ctx := t.Context()
+			_ = bus.WaitForQuiescence(ctx)
+
+			publishedMu.Lock()
+			defer publishedMu.Unlock()
+
+			// A decision round was published for the priced symbol only; the
+			// unpriced symbol produced no decision artifact.
+			So(len(published), ShouldBeGreaterThan, 0)
+			last := published[len(published)-1]
+			So(len(last.Decisions), ShouldEqual, 1)
+			So(last.Decisions[0].Symbol, ShouldEqual, "PRICED/USD")
+		})
+	})
+}
+
+func TestConformanceTradingDormantBeforeEngagement(t *testing.T) {
+	Convey("Given a planner whose execution prerequisites are not yet filled", t, func() {
+		bus := runtime.NewWorkspace(nil)
+		var publishedMu sync.Mutex
+		published := make([]types.StrategyRound, 0)
+		runtime.ChannelOf[types.StrategyRound](
+			bus, types.ChannelDecisions,
+			func(round types.StrategyRound) string { return "" },
+		).Subscribe("test-dormant", func(round types.StrategyRound) error {
+			publishedMu.Lock()
+			published = append(published, round)
+			publishedMu.Unlock()
+
+			return nil
+		})
+
+		at := time.Unix(0, 149*int64(time.Second))
+		priced := deterministicCausalState(at, 0.005)
+		priced.Symbol = "PRICED/USD"
+
+		inputs := marketInputs{cash: 100000, mark: 1, feeRate: 0.001, spreadFraction: 0, available: true}
+		planner := &Planner{
+			strategy: runtime.ChannelOf[types.StrategyRound](
+				bus, types.ChannelDecisions,
+				func(round types.StrategyRound) string { return "" },
+			),
+			// The gate reports not-ready: the instrument/fee surface or live
+			// quotes are still filling during boot.
+			tradingGate: func() bool { return false },
+			marketProvider: func(symbol string) marketInputs {
+				return inputs
+			},
+		}
+		planner.stager = audit.NewStager(nil)
+		planner.pending.Store(priced.Symbol, priced)
+
+		Convey("Update stays dormant: no decisions, no publish, no pending drain", func() {
+			err := planner.Update(types.NewThesis(t.Context()))
+			So(err, ShouldBeNil)
+
+			ctx := t.Context()
+			_ = bus.WaitForQuiescence(ctx)
+
+			publishedMu.Lock()
+			defer publishedMu.Unlock()
+			So(len(published), ShouldEqual, 0)
+
+			// The pending state is retained for the first engaged round.
+			_, retained := planner.pending.Load(priced.Symbol)
+			So(retained, ShouldBeTrue)
 		})
 	})
 }

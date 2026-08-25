@@ -14,27 +14,39 @@ import (
 
 /* Fee returns the taker fee for a symbol. */
 func (price *Price) Fee(symbol string) *kraken.TradeVolumeFee {
-	found, ok := price.fees.Load(price.api.Normalizer().Name(symbol))
+	fee := price.FeeIfAvailable(symbol)
 
-	if !ok {
+	if fee == nil {
 		errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"fee not found for "+symbol,
 			nil,
 		))
+	}
 
+	return fee
+}
+
+/*
+FeeIfAvailable returns the taker fee for a symbol, or nil when the fee
+surface has not loaded it yet. It is the non-logging probe: consumers that
+treat a missing fee as an unavailable state (rather than an error) use it so
+availability checks do not flood the log.
+*/
+func (price *Price) FeeIfAvailable(symbol string) *kraken.TradeVolumeFee {
+	if price == nil {
+		return nil
+	}
+
+	found, ok := price.fees.Load(price.api.Normalizer().Name(symbol))
+
+	if !ok {
 		return nil
 	}
 
 	fee, ok := found.(kraken.TradeVolumeFee)
 
 	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"invalid fee type for "+symbol,
-			nil,
-		))
-
 		return nil
 	}
 

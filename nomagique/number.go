@@ -153,76 +153,82 @@ func (number *Number[Key]) Range(yield func(Key, Frame) bool) {
 
 /*
 CrossSection evaluates one committed focal state against every committed peer.
-The pair callback receives the two committed frames separately so the caller
-owns how the bivariate series are placed into one frame (e.g. relocating each
-side into its own series prefix); its output is folded through reduce, then
-optionally finalized.
+The pair callback receives the two committed frames as pointers so the caller
+reads the retained bivariate series without copying a whole Frame per peer;
+its output is folded serially through reduce (no goroutine-per-peer, no blocking
+drain), then optionally finalized. The focal is snapshotted once under a brief
+read lock and each peer read in place under its own brief read lock, so at most
+one peer lock and a single focal lock are held at any instant, never a lock held
+across the whole fold — concurrent CrossSections cannot deadlock.
 */
 func (number *Number[Key]) CrossSection(
 	key Key,
-	pair func(focal Frame, peer Frame) Frame,
+	pair func(focal *Frame, peer *Frame) Frame,
 	reduce Primitive,
 	finalize Primitive,
 ) (Frame, bool, error) {
-	focal, found := number.Project(key)
+	focalStream, found := number.load(key)
 
 	if !found {
 		return types.Frame{}, false, nil
 	}
 
-	results := make(chan *Frame, 1024)
-	var wg sync.WaitGroup
-
-	number.Range(func(peerKey Key, peer Frame) bool {
-		if peerKey == key {
-			return true
-		}
-
-		wg.Add(1)
-		go func(p Frame) {
-			defer wg.Done()
-			out := pair(focal, p)
-			results <- &out
-		}(peer)
-
-		return true
-	})
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+	// Snapshot the focal under a brief read lock. Per-symbol serialization (at
+	// most one drain task per subscription key) means no other goroutine Steps
+	// the focal while the peers are folded, so the copy is a stable view; taking
+	// only a brief lock (never one held across the fold) keeps a hot focal from
+	// stalling a peer's own Step behind another symbol's cross-section.
+	focalStream.mutex.RLock()
+	focal := focalStream.frame
+	focalStream.mutex.RUnlock()
 
 	accumulator := types.Frame{}
 	reduced := false
 	var crossSectionErr error
 
-	for res := range results {
-		if res.Err != nil {
-			crossSectionErr = res.Err
-			continue
+	number.streams.Range(func(storedKey any, storedValue any) bool {
+		peerKey, validKey := storedKey.(Key)
+		peerStream, validStream := storedValue.(*numberStream)
+
+		if !validKey || !validStream || peerKey == key {
+			return true
 		}
 
-		if !res.Finite() {
+		// Read the peer in place under its brief read lock and fold the pair
+		// before releasing it, so the peer frame is never copied (a Frame is a
+		// 66 KB value; a captured or value-copied peer escapes to the heap, which
+		// was the dominant allocation source on this hot path). At most one peer
+		// lock is held at a time, so concurrent CrossSections cannot deadlock.
+		peerStream.mutex.RLock()
+		out := pair(&focal, &peerStream.frame)
+		peerStream.mutex.RUnlock()
+
+		if out.Err != nil {
+			crossSectionErr = out.Err
+			return true
+		}
+
+		if !out.Finite() {
 			crossSectionErr = errnie.Error(errnie.Err(
 				errnie.Validation,
 				"number pair output must be finite",
 				nil,
 			))
-			continue
+			return true
 		}
 
-		accInput := accumulator
-		accInput.Merge(*res)
-		accumulator = Step(reduce, accInput)
+		accumulator.Merge(out)
+		accumulator = Step(reduce, accumulator)
 
 		if accumulator.Err != nil {
 			crossSectionErr = accumulator.Err
-			continue
+			return true
 		}
 
 		reduced = true
-	}
+
+		return true
+	})
 
 	if crossSectionErr != nil || !reduced || finalize == nil {
 		return accumulator, reduced, crossSectionErr

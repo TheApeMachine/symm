@@ -21,6 +21,7 @@ type Config struct {
 	CVD       *CVD
 	Manifold  *ManifoldConfig
 	WebSocket *WebSocket
+	Market    *Market
 }
 
 func NewConfig() *Config {
@@ -33,6 +34,7 @@ func NewConfig() *Config {
 		CVD:       NewCVD(),
 		Manifold:  NewManifoldConfig(),
 		WebSocket: NewWebSocket(),
+		Market:    NewMarket(),
 	}
 }
 

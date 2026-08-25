@@ -36,6 +36,7 @@ func NewInstrument(
 	api *websocket.API,
 	price *Price,
 	channel *runtime.Channel[*types.UIFrame],
+	bus *runtime.Workspace,
 ) *Instrument {
 	instrument := &Instrument{
 		status:  types.INITIALIZING,
@@ -61,6 +62,13 @@ func NewInstrument(
 	}
 
 	instrument.status = types.PENDING
+
+	if bus != nil {
+		bus.On(types.ChannelDisconnect, func() {
+			errnie.Info("instrument: soft rebooting due to disconnect")
+			_ = instrument.Subscribe()
+		})
+	}
 
 	return instrument
 }

@@ -7,7 +7,9 @@ import (
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
-func causalWire(row map[string]any) *wire.CausalT {
+// CausalWire assembles the dashboard causal frame row from a causal output map.
+// It is exported so the workspace observer (boot) can own the UI side-effect.
+func CausalWire(row map[string]any) *wire.CausalT {
 	return &wire.CausalT{
 		Source: stringField(row, "source"), Symbol: stringField(row, "symbol"),
 		At: timeField(row, "at"), Samples: int64(numberField(row, "samples")),

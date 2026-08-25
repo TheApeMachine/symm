@@ -13,6 +13,11 @@ import (
 )
 
 func TestMarketReplayCapture(t *testing.T) {
+	skipWithoutReplayCapture(t,
+		"/Users/theapemachine/.symm/data/backtests/kraken/"+
+			"2026-08-13-live-exact-v2/slices/IDOSUSD.jsonl",
+	)
+
 	Convey("Given exact frames split across independent capture readers", t, func() {
 		capture, err := os.Open(
 			"/Users/theapemachine/.symm/data/backtests/kraken/" +

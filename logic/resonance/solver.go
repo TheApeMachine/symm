@@ -3,6 +3,7 @@ package resonance
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -35,8 +36,8 @@ type Solver struct {
 	standardizers *sync.Map
 	states        *sync.Map
 	references    *sync.Map
+	returnNoise   *sync.Map
 	pace          float64
-	ui            *runtime.Channel[*types.UIFrame]
 	resonance     *runtime.Channel[types.ResonanceArtifact]
 	thesis        *types.Thesis
 	work          *runtime.Subscription[kraken.TickerData]
@@ -45,6 +46,35 @@ type Solver struct {
 	// duration so the wiring diagram can profile the resonance stage like
 	// every other pipeline node.
 	ObserveModule func(string, time.Duration)
+}
+
+/*
+returnNoiseTracker maintains Welford moments over a symbol's per-step log
+returns so the ledger's directional target can require a move larger than the
+symbol's own typical step noise before calling a direction. The scale is
+estimated per symbol, which keeps the target honest across symbols whose price
+levels differ by orders of magnitude.
+*/
+type returnNoiseTracker struct {
+	mean  float64
+	m2    float64
+	count float64
+}
+
+func (tracker *returnNoiseTracker) observe(sample float64) {
+	tracker.count++
+	delta := sample - tracker.mean
+	tracker.mean += delta / tracker.count
+	delta2 := sample - tracker.mean
+	tracker.m2 += delta * delta2
+}
+
+func (tracker *returnNoiseTracker) scale() (float64, bool) {
+	if tracker.count < 2 {
+		return 0, false
+	}
+
+	return math.Sqrt(tracker.m2 / (tracker.count - 1)), true
 }
 
 /*
@@ -78,14 +108,11 @@ func NewSolver(
 		standardizers: &sync.Map{},
 		states:        &sync.Map{},
 		references:    &sync.Map{},
+		returnNoise:   &sync.Map{},
 		pace:          pace,
 		thesis:        thesis,
 	}
 
-	solver.ui = runtime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
 	solver.resonance = runtime.ChannelOf[types.ResonanceArtifact](
 		bus, types.ChannelResonance,
 		func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
@@ -193,12 +220,27 @@ func (solver *Solver) Update(
 	features []float64,
 ) error {
 	symbol := solver.thesis.Symbol(symbolName)
+	midpoint := midpointOrLast(features)
+
+	priorMidpoint := 0.0
+
+	if prior, found := solver.references.Load(symbolName); found {
+		priorMidpoint, _ = prior.(float64)
+	}
+
+	// Observe this step's log return so the directional target can require a
+	// move beyond the symbol's own recent step noise before calling a direction.
+	if midpoint > 0 && priorMidpoint > 0 {
+		trackerLoader, _ := solver.returnNoise.LoadOrStore(symbolName, &returnNoiseTracker{})
+		trackerLoader.(*returnNoiseTracker).observe(math.Log(midpoint / priorMidpoint))
+	}
+
 	detector, found := solver.detectors.Load(symbolName)
 	if !found {
 		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
 			MaxHorizon: 8,                                                                         // Multi-step forward rollouts up to t+8
-			Target:     learning.DirectionalTarget(0.01),                                          // With deadband threshold
+			Target:     solver.directionalTarget(symbolName),                                      // Noise-scaled directional call
 			Pace:       solver.pace,                                                               // Adaptive learning pace
 			Learn:      true,
 		})
@@ -215,16 +257,9 @@ func (solver *Solver) Update(
 		))
 	}
 
-	midpoint := midpointOrLast(features)
-
 	standardized := solver.standardize(symbolName, features)
 
-	hasReference := false
-
-	if prior, found := solver.references.Load(symbolName); found {
-		priorMidpoint, valid := prior.(float64)
-		hasReference = valid && priorMidpoint > 0
-	}
+	hasReference := priorMidpoint > 0
 
 	stepStarted := time.Now()
 
@@ -252,18 +287,7 @@ func (solver *Solver) Update(
 		solver.references.Store(symbolName, midpoint)
 	}
 
-	solver.publishReturns(symbol, coder, out)
-
-	if solver.ui != nil {
-		solver.ui.Publish(&types.UIFrame{
-			Type: wire.FrameResonanceFrame,
-			Value: &wire.ResonanceFrameT{
-				Rows: []*wire.ResonanceT{
-					solver.resonanceWire(symbolName, at, coder, out),
-				},
-			},
-		})
-	}
+	solver.publishReturns(symbol, at, coder, out)
 
 	return nil
 }
@@ -286,6 +310,46 @@ func midpointOrLast(features []float64) float64 {
 	}
 
 	return 0
+}
+
+/*
+directionalTarget returns the ledger target transform for one symbol: a
+directional call on the log return over the resolved horizon, deadbanded by one
+typical per-step log-return move. A call therefore requires the cumulative move
+to exceed the symbol's own recent noise, which keeps the same target honest for
+symbols priced orders of magnitude apart. Before the noise estimate firms up the
+deadband is zero and the head learns raw direction, which recursive least
+squares averages out.
+*/
+func (solver *Solver) directionalTarget(symbolName string) learning.TargetTransform {
+	return func(current float64, past float64) (float64, bool) {
+		if math.IsNaN(current) || math.IsInf(current, 0) ||
+			math.IsNaN(past) || math.IsInf(past, 0) ||
+			current <= 0 || past <= 0 {
+			return 0, false
+		}
+
+		logReturn := math.Log(current / past)
+		deadband := 0.0
+
+		if loader, found := solver.returnNoise.Load(symbolName); found {
+			if tracker, valid := loader.(*returnNoiseTracker); valid {
+				if scale, ready := tracker.scale(); ready {
+					deadband = scale
+				}
+			}
+		}
+
+		if math.Abs(logReturn) <= deadband {
+			return 0, true
+		}
+
+		if logReturn > 0 {
+			return 1, true
+		}
+
+		return -1, true
+	}
 }
 
 /*
@@ -348,6 +412,7 @@ posterior before outcomes exist.
 */
 func (solver *Solver) publishReturns(
 	symbol *types.Symbol,
+	at time.Time,
 	coder *learning.PredictiveCoder,
 	out learning.PredictiveOutput,
 ) {
@@ -360,22 +425,37 @@ func (solver *Solver) publishReturns(
 	}
 
 	artifact := types.ResonanceArtifact{
-		Symbol:   symbol.Symbol,
-		Manifold: coder.Manifold(),
-		Dynamics: out.Dynamics,
+		Symbol:           symbol.Symbol,
+		At:               at,
+		Manifold:         coder.Manifold(),
+		Dynamics:         out.Dynamics,
+		ForwardCurve:     out.ForwardCurve,
+		ForwardRetention: out.ForwardRetention,
+		SupportedHorizon: out.SupportedHorizon,
+		Calibrated:       out.Calibrated,
+		ResolvedSteps:    out.ResolvedSteps,
+		Readout:          out.Readout,
+		Confidence:       out.Confidence,
+	}
+
+	if out.LastResolution != nil {
+		artifact.LastResolutionTarget = out.LastResolution.Target
+		artifact.LastResolutionError = out.LastResolution.Error
 	}
 
 	if out.Calibrated {
-		forecasts, err := coder.Manifold().RolloutTaskForecast(1)
+		horizon := out.SupportedHorizon
+
+		if horizon < 1 {
+			horizon = 1
+		}
+
+		forecasts, err := coder.Manifold().RolloutTaskForecast(horizon)
 
 		if err == nil && len(forecasts) > 0 {
-			horizon := out.SupportedHorizon
-
-			if horizon < 1 {
-				horizon = 1
-			}
-
-			forecast := forecasts[0]
+			// The last curve element is the supported horizon's cumulative
+			// directional prediction, which is the call the artifact carries.
+			forecast := forecasts[len(forecasts)-1]
 			call := 0.0
 
 			if forecast.Ready {
@@ -400,19 +480,24 @@ func (solver *Solver) publishReturns(
 }
 
 /*
-resonanceWire assembles the full per-symbol resonance frame the dashboard
+ResonanceWire assembles the full per-symbol resonance frame the dashboard
 predictive-coding panel renders. It mirrors the frontend ResonanceFrame schema:
 the per-layer state/prediction vectors from the manifold's wire snapshot, the
 supervised return head's forward curve and posterior, and the physical dynamics
-frame as named scalars.
+frame as named scalars. It is a free function so the workspace observer (boot)
+owns the UI side-effect; the solver emits only the ResonanceArtifact.
 */
-func (solver *Solver) resonanceWire(
+func ResonanceWire(
 	symbolName string,
 	at time.Time,
-	coder *learning.PredictiveCoder,
-	out learning.PredictiveOutput,
+	artifact types.ResonanceArtifact,
 ) *wire.ResonanceT {
-	manifold := coder.Manifold()
+	manifold := artifact.Manifold
+
+	if manifold == nil {
+		return &wire.ResonanceT{Symbol: symbolName, At: at.UnixNano()}
+	}
+
 	layers, surprise, energy := manifold.WireSnapshot()
 
 	wireLayers := make([]*wire.ResonanceLayerT, 0, len(layers))
@@ -429,11 +514,11 @@ func (solver *Solver) resonanceWire(
 	scale, scaleReady := manifold.TaskScale()
 
 	forecast := &wire.ResonanceForecastT{
-		ForwardCurve: out.ForwardCurve, ForwardRetention: out.ForwardRetention,
-		SupportedHorizon: int64(out.SupportedHorizon), ProbeHorizon: int64(out.SupportedHorizon),
+		ForwardCurve: artifact.ForwardCurve, ForwardRetention: artifact.ForwardRetention,
+		SupportedHorizon: int64(artifact.SupportedHorizon), ProbeHorizon: int64(artifact.SupportedHorizon),
 	}
 
-	if horizon := max(1, out.SupportedHorizon); horizon > 0 {
+	if horizon := max(1, artifact.SupportedHorizon); horizon > 0 {
 		rollouts, err := manifold.RolloutTaskForecast(horizon)
 
 		if err == nil && len(rollouts) > 0 {
@@ -450,33 +535,29 @@ func (solver *Solver) resonanceWire(
 		}
 	}
 
+	// The forward curve is cumulative per horizon: element k predicts the
+	// direction of the move over the next k+1 ticks, so the call for the
+	// supported horizon is the curve's last element.
+	horizonCall := 0.0
+
+	if len(artifact.ForwardCurve) > 0 {
+		horizonCall = artifact.ForwardCurve[len(artifact.ForwardCurve)-1]
+	}
+
 	call := 0.0
 
-	if len(out.ForwardCurve) > 0 {
-		first := out.ForwardCurve[0]
-
-		if first > 0 {
-			call = 1
-		} else if first < 0 {
-			call = -1
-		}
+	if horizonCall > 0 {
+		call = 1
+	} else if horizonCall < 0 {
+		call = -1
 	}
 
-	resolved := 0.0
-
-	if out.LastResolution != nil {
-		resolved = out.LastResolution.Target
-	}
-
-	lastError := 0.0
-
-	if out.LastResolution != nil {
-		lastError = out.LastResolution.Error
-	}
+	resolved := artifact.LastResolutionTarget
+	lastError := artifact.LastResolutionError
 
 	calibration := "calibrating"
 
-	if out.Calibrated {
+	if artifact.Calibrated {
 		calibration = "calibrated"
 	}
 
@@ -497,18 +578,19 @@ func (solver *Solver) resonanceWire(
 
 	return &wire.ResonanceT{
 		Source: string(types.SourceResonance), Symbol: symbolName, At: at.UnixNano(),
-		Samples: int64(out.ResolvedSteps), TaskRelativePrecision: precision,
+		Samples: int64(artifact.ResolvedSteps), TaskRelativePrecision: precision,
 		TaskRelativePrecisionReady: precisionReady, TaskScale: scale, TaskScaleReady: scaleReady, TaskCalibration: calibration,
 		TaskSkill: skill, TaskSkillReady: skillReady, TaskSkillStatus: skillStatus,
+		TaskForecast:         horizonCall,
 		LastResolvedForecast: resolved, LastRealizedReturn: resolved,
-		LastForecastError: lastError, Observables: out.Readout,
+		LastForecastError: lastError, Observables: artifact.Readout,
 		Latent: manifold.LatentState(), Embedding: manifold.LatentState(),
 		Layers: wireLayers, Energy: energy, Surprise: surprise, Forecast: forecast,
-		Dynamics: dynamicsWire(out.Dynamics),
+		Dynamics: dynamicsWire(artifact.Dynamics),
 		Verdict: &wire.ResonanceVerdictT{
 			Learning: "observing", Tuning: "recursive least squares",
 			LearningHealth: precision, TuningHealth: precision,
-			Direction: call, Conviction: out.Confidence,
+			Direction: call, Conviction: artifact.Confidence,
 		},
 	}
 }

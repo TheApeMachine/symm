@@ -33,8 +33,8 @@ previous and current series prefixes, the bivariate convention.
 */
 func pairPaths(left types.Frame, right types.Frame) types.Frame {
 	paired := types.Frame{}
-	temporal.NewSeries("previous").CopyFrom(&paired, left)
-	temporal.NewSeries("current").CopyFrom(&paired, right)
+	temporal.NewSeries("previous").CopyFrom(&paired, &left)
+	temporal.NewSeries("current").CopyFrom(&paired, &right)
 
 	return paired
 }

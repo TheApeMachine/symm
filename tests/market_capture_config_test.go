@@ -9,7 +9,29 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+/*
+skipWithoutReplayCapture skips a test when the dated live replay capture data it
+depends on is not present on this machine. The capture is written by a live run
+(replay capture target) against a specific session date and is not baked into the
+repository, so a machine that never recorded that session must skip rather than
+fail on the missing large dataset.
+*/
+func skipWithoutReplayCapture(t *testing.T, paths ...string) {
+	t.Helper()
+
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			t.Skipf("replay capture data missing: %s", path)
+		}
+	}
+}
+
 func TestCaptureSymbols(t *testing.T) {
+	skipWithoutReplayCapture(t,
+		"/Users/theapemachine/.symm/data/backtests/"+"kraken/2026-08-13-live-exact-v2/pairs.json",
+		"/Users/theapemachine/.symm/data/backtests/"+"kraken/2026-08-13-live-exact-v2/ticker.jsonl",
+	)
+
 	Convey("Given untouched pair metadata and ticker captures", t, func() {
 		captureDirectory := "/Users/theapemachine/.symm/data/backtests/" +
 			"kraken/2026-08-13-live-exact-v2/"

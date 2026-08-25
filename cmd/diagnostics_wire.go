@@ -1,4 +1,4 @@
-package trader
+package cmd
 
 import wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 

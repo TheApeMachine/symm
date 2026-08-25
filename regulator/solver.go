@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/system"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -28,7 +27,7 @@ type Solver struct {
 	mu                   sync.Mutex
 	configSource         *system.Config
 	optimizer            *optimizer
-	ui                   *runtime.Channel[*types.UIFrame]
+	output               *runtime.Channel[RegulatorPayload]
 	history              []float64
 	historyCapacity      int
 	lastEquity           float64
@@ -58,7 +57,7 @@ configuration.
 */
 func NewSolver(
 	_ context.Context,
-	ui *runtime.Channel[*types.UIFrame],
+	bus *runtime.Workspace,
 ) (*Solver, error) {
 	configSource := system.Cfg
 
@@ -78,10 +77,19 @@ func NewSolver(
 		return nil, err
 	}
 
+	var output *runtime.Channel[RegulatorPayload]
+
+	if bus != nil {
+		output = runtime.ChannelOf[RegulatorPayload](
+			bus, types.ChannelRegulator,
+			func(payload RegulatorPayload) string { return "" },
+		)
+	}
+
 	return &Solver{
 		configSource:    configSource,
 		optimizer:       model,
-		ui:              ui,
+		output:          output,
 		history:         make([]float64, 0, config.Regulator.HistoryCapacity),
 		historyCapacity: config.Regulator.HistoryCapacity,
 		marks:           make(map[string]observedPositionMark),
@@ -187,11 +195,10 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	solver.recordHistory(result.surprise)
 	payload := solver.buildPayload(periodReturn, result)
 
-	if solver.ui != nil {
-		solver.ui.Publish(&wire.FrameT{
-			Type:  wire.FrameRegulatorFrame,
-			Value: regulatorWire(payload),
-		})
+	// The dashboard frame is projected by the workspace observer on
+	// ChannelRegulator (boot.go); the solver emits the domain payload only.
+	if solver.output != nil {
+		solver.output.Publish(payload)
 	}
 
 	return nil

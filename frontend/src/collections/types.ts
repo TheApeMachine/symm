@@ -449,6 +449,7 @@ export type ResonanceFrame = Record<string, unknown> & {
 		| "below baseline"
 		| "baseline"
 		| "above baseline";
+	taskForecast?: number;
 	lastResolvedForecast?: number;
 	lastRealizedReturn?: number;
 	lastForecastError?: number;

@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -47,7 +46,6 @@ type Solver struct {
 	pearls   *sync.Map
 	rows     *sync.Map
 	config   algorithm.PearlConfig
-	ui       *runtime.Channel[*types.UIFrame]
 	causal   *runtime.Channel[types.CausalOutput]
 	work     *runtime.Subscription[types.ResonanceArtifact]
 }
@@ -84,10 +82,6 @@ func NewSolver(thesis *types.Thesis, price *broker.Price, recorder *audit.Record
 		opt(solver)
 	}
 
-	solver.ui = runtime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
 	solver.causal = runtime.ChannelOf[types.CausalOutput](
 		bus, types.ChannelCausal,
 		func(output types.CausalOutput) string { return output.Symbol },
@@ -116,7 +110,7 @@ func (solver *Solver) Step(artifact types.ResonanceArtifact) error {
 		return nil
 	}
 
-	output, measured, err := solver.measure(solver.thesis, artifact.Symbol, artifact.Manifold)
+	_, _, err := solver.measure(solver.thesis, artifact.Symbol, artifact.Manifold)
 	solver.err = err
 
 	if err != nil && solver.thesis != nil {
@@ -125,10 +119,8 @@ func (solver *Solver) Step(artifact types.ResonanceArtifact) error {
 		return err
 	}
 
-	if measured {
-		solver.publish(solver.thesis, output)
-	}
-
+	// The UI frame for a causal output is published by the workspace observer on
+	// ChannelCausal (boot.go); the solver only emits the domain output.
 	return nil
 }
 
@@ -347,22 +339,6 @@ func (solver *Solver) estimatePrecision(rows [][]float64) (float64, error) {
 	}
 
 	return math.Min(treatment.Precision(), target.Precision()), nil
-}
-
-/*
-publish emits one causal wire frame per symbol observed on this tick.
-*/
-func (solver *Solver) publish(thesis *types.Thesis, output types.CausalOutput) {
-	if solver.ui == nil || thesis == nil {
-		return
-	}
-
-	solver.ui.Publish(&types.UIFrame{
-		Type: wire.FrameCausalFrame,
-		Value: &wire.CausalFrameT{
-			Rows: []*wire.CausalT{causalWire(output.Rows)},
-		},
-	})
 }
 
 /*

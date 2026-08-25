@@ -116,6 +116,11 @@ func TestMarketPublish(t *testing.T) {
 }
 
 func TestMarketReplay(t *testing.T) {
+	skipWithoutReplayCapture(t,
+		"/Users/theapemachine/.symm/data/backtests/kraken/"+
+			"2026-08-13-live-exact-v2/slices/IDOSUSD.jsonl",
+	)
+
 	Convey("Given the opening frames of an exact Kraken capture", t, func() {
 		symbol := tes.NewSymbol("IDOS/USD", 0.00455, 13)
 		symbol.PriceIncrement = 0.00001

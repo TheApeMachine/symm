@@ -39,3 +39,4 @@ qodana.yaml
 .reasonix/desktop-topic-titles.json
 .reasonix/
 extracted_opportunities/
+.gocache/

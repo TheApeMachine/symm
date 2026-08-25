@@ -8,7 +8,9 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func cognitionWire(reading types.Cognition) *wire.CognitionT {
+// CognitionWire assembles the dashboard cognition row for a reading. It is
+// exported so the workspace observer (boot) can own the UI side-effect.
+func CognitionWire(reading types.Cognition) *wire.CognitionT {
 	branches := make([]*wire.CognitionBranchT, 0, len(reading.Branches))
 
 	for _, branch := range reading.Branches {

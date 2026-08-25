@@ -110,11 +110,9 @@ describe("ws-worker", () => {
 			{ type: "READY" },
 			{ type: "DRAW_BATCH", frames: [{ tick: { count: 1 } }] },
 		]);
-		expect(socket.sent).toEqual([
-			Uint8Array.of(1),
-			Uint8Array.of(1),
-			Uint8Array.of(1),
-		]);
+		// No per-batch ACK is sent back to the backend; the writer relies on the
+		// WebSocket's own TCP backpressure instead of an ACK-gated window.
+		expect(socket.sent).toEqual([]);
 
 		await scope.emit("message", { type: "PAINTED", acknowledgeBackend: false });
 		expect(scope.messages.at(-1)).toEqual({
@@ -124,11 +122,7 @@ describe("ws-worker", () => {
 
 		await scope.emit("message", { type: "PAINTED", acknowledgeBackend: false });
 		expect(scope.messages).toHaveLength(3);
-		expect(socket.sent).toEqual([
-			Uint8Array.of(1),
-			Uint8Array.of(1),
-			Uint8Array.of(1),
-		]);
+		expect(socket.sent).toEqual([]);
 	});
 
 	it("coalesces repeated state tables from one backend batch", async () => {
@@ -142,6 +136,6 @@ describe("ws-worker", () => {
 				frames: [{ tick: { count: 3 } }],
 			},
 		]);
-		expect(socket.sent).toEqual([Uint8Array.of(1)]);
+		expect(socket.sent).toEqual([]);
 	});
 });

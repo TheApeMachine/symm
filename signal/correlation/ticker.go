@@ -1,8 +1,6 @@
 package correlation
 
 import (
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -86,7 +84,7 @@ type Ticker struct {
 	number      *nomagique.Number[string]
 	pairHistory *nomagique.Number[string]
 	projector   *data.Projector
-	pair        func(nmtypes.Frame, nmtypes.Frame) nmtypes.Frame
+	pair        func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame
 	reduce      nmtypes.Primitive
 	finalize    nmtypes.Primitive
 }
@@ -225,28 +223,15 @@ func loadPairHistory(
 }
 
 /*
-label names the measurement with its measured symbol and, when a peer exists,
-the explicit reference symbol(s) separated by a colon. The reference identity is
-string provenance that float metrics cannot carry, so it rides the Label.
+label names the measurement with its measured symbol. The focal symbol is the
+stable channel key and graph evidence identity; peer provenance is carried by the
+cohort metrics (cohort_peer_count, effective_sample_count, overlap_pair_count)
+so a cohort-based measurement never mints a bogus thesis symbol per peer-set
+permutation (which would also explode the measurement lane space and orphan
+evidence on every universe change).
 */
 func (ticker *Ticker) label(symbol string) string {
-	peers := make([]string, 0)
-
-	ticker.number.Range(func(key string, _ nmtypes.Frame) bool {
-		if key != symbol {
-			peers = append(peers, key)
-		}
-
-		return true
-	})
-
-	if len(peers) == 0 {
-		return symbol
-	}
-
-	sort.Strings(peers)
-
-	return symbol + ":" + strings.Join(peers, ",")
+	return symbol
 }
 
 /*
@@ -254,12 +239,12 @@ newCorrelationPair relocates the focal committed path into the "previous"
 series and the peer path into the "current" series, evaluates the Hayashi-Yoshida
 asynchronous correlation, then derives the Fisher p-value for the estimate.
 */
-func newCorrelationPair() func(nmtypes.Frame, nmtypes.Frame) nmtypes.Frame {
+func newCorrelationPair() func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame {
 	previous := temporal.NewSeries("previous")
 	current := temporal.NewSeries("current")
 	hayashi := nmcorrelation.Hayashi("previous", "current")
 
-	return func(focal nmtypes.Frame, peer nmtypes.Frame) nmtypes.Frame {
+	return func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame {
 		paired := nmtypes.Frame{}
 		previous.CopyFrom(&paired, focal)
 		current.CopyFrom(&paired, peer)

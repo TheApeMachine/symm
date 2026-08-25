@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -81,7 +80,6 @@ type Solver struct {
 	maxSeqLen      int
 	surprisalLimit float64
 	tickCounter    uint64
-	ui             *runtime.Channel[*types.UIFrame]
 	cognition      *runtime.Channel[types.Cognition]
 
 	// Beam search shape. Held as fields rather than call-site constants so the
@@ -176,10 +174,6 @@ func NewSolver(
 		opt(solver)
 	}
 
-	solver.ui = runtime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
 	solver.cognition = runtime.ChannelOf[types.Cognition](
 		bus, types.ChannelCognition,
 		func(reading types.Cognition) string { return reading.Symbol },
@@ -224,10 +218,8 @@ func (solver *Solver) Step(categories []types.Category) error {
 		return err
 	}
 
-	if len(rows) > 0 {
-		solver.publish(rows)
-	}
-
+	// The UI frame is published by the workspace observer on ChannelCognition
+	// (boot.go); the solver only emits the domain outputs below.
 	return nil
 }
 
@@ -1018,30 +1010,6 @@ func (solver *Solver) formatLookaheadPredictions(
 	}
 
 	return predictions
-}
-
-/*
-publish emits one cognition wire frame per symbol observed on this tick.
-*/
-func (solver *Solver) publish(rows map[string]types.Cognition) {
-	if len(rows) == 0 {
-		return
-	}
-
-	encoded := make([]*wire.CognitionT, 0, len(rows))
-
-	for _, row := range rows {
-		encoded = append(encoded, cognitionWire(row))
-	}
-
-	if solver.ui != nil {
-		solver.ui.Publish(&types.UIFrame{
-			Type: wire.FrameCognitionFrame,
-			Value: &wire.CognitionFrameT{
-				Rows: encoded,
-			},
-		})
-	}
 }
 
 /*

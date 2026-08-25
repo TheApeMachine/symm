@@ -1,4 +1,4 @@
-package trader
+package cmd
 
 import (
 	"context"

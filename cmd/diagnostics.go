@@ -1,4 +1,4 @@
-package trader
+package cmd
 
 import (
 	"bufio"
@@ -14,8 +14,10 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"strings"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
+	"strings"
 )
 
 /*
@@ -508,6 +510,36 @@ func (crypto *Crypto) bindDiagnostics() {
 		observeChannel(crypto.bus, types.ChannelGraphs,
 			func(graph *types.Graph) string { return graph.Symbol },
 			crypto.diagnostics.beginModule, crypto.diagnostics.completeModule)
+
+		// Forward every diagnostics heartbeat to the dashboard UI frame and the
+		// manifold fluid stream. This is a side effect, so it rides the observer
+		// hook: the Crypto owns its diagnostics end-to-end and does not depend on
+		// the boot wiring to surface the frame to a viewer.
+		crypto.bus.Observe(types.ChannelDiagnostics, func(_ string, _ string, value any) {
+			diag, ok := value.(StreamDiagnostics)
+			if !ok {
+				return
+			}
+
+			diagWire := diag.Wire()
+
+			if crypto.fluid != nil {
+				crypto.fluid.Publish(types.FluidFrame{
+					Channel: types.DiagnosticsChannel,
+					Payload: telemetry.Encode(&wire.FrameT{
+						Type:  wire.FrameDiagnosticsFrame,
+						Value: diagWire,
+					}),
+				})
+			}
+
+			if crypto.ui != nil {
+				crypto.ui.Publish(&types.UIFrame{
+					Type:  wire.FrameDiagnosticsFrame,
+					Value: diagWire,
+				})
+			}
+		})
 	}
 
 	if crypto.diagnostics.interval <= 0 {

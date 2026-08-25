@@ -1,6 +1,8 @@
 package types
 
 import (
+	"time"
+
 	"github.com/theapemachine/symm/nomagique/learning"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
@@ -28,9 +30,11 @@ const (
 	ChannelCausalState    = "causal_state"
 	ChannelDecisions      = "decisions"
 	ChannelExecutions     = "executions"
+	ChannelRegulator      = "regulator"
 	ChannelUI             = "ui"
 	ChannelFluid          = "fluid"
 	ChannelCrossSection   = "cross_section"
+	ChannelDisconnect     = "disconnect"
 )
 
 /*
@@ -40,9 +44,23 @@ stamps it.
 */
 type ResonanceArtifact struct {
 	Symbol   string
+	At       time.Time
 	Manifold *learning.ResonanceManifold
 	Forecast *ResonanceReturnForecast
 	Dynamics nmtypes.Frame
+
+	// Predictive-head projection data. The workspace observer projects these
+	// into the dashboard ResonanceFrame, so the domain payload carries the wire
+	// coordinates instead of the solver holding a ChannelUI handle.
+	ForwardCurve         []float64
+	ForwardRetention     []float64
+	SupportedHorizon     int
+	Calibrated           bool
+	ResolvedSteps        int
+	Readout              []float64
+	Confidence           float64
+	LastResolutionTarget float64
+	LastResolutionError  float64
 }
 
 /*

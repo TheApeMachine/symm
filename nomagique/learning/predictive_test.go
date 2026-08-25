@@ -50,6 +50,15 @@ func TestPredictiveCoderDirectionalPrediction(t *testing.T) {
 			So(out.ResolvedSteps, ShouldBeGreaterThan, 0)
 			So(out.LastResolution, ShouldNotBeNil)
 			So(out.LastResolution.Target, ShouldBeIn, []float64{-1.0, 1.0})
+
+			// The forward curve is cumulative per horizon: element k predicts
+			// the direction of the move over the next k+1 ticks, the score is
+			// the supported horizon's element, and the curve never exceeds the
+			// configured horizon.
+			So(out.SupportedHorizon, ShouldBeGreaterThanOrEqualTo, 1)
+			So(out.SupportedHorizon, ShouldBeLessThanOrEqualTo, 3)
+			So(len(out.ForwardCurve), ShouldEqual, out.SupportedHorizon)
+			So(out.ForwardCurve[out.SupportedHorizon-1], ShouldAlmostEqual, out.Score, 1e-9)
 		})
 	})
 }

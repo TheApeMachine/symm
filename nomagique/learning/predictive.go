@@ -133,7 +133,17 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		targetDim = 1
 	}
 
-	manifold := NewResonanceManifold(arch, targetDim, pace)
+	var manifold *ResonanceManifold
+
+	if targetDim <= 1 {
+		// Single-target direction head: one supervised RLS row per forward
+		// horizon, so the forward curve is a genuine multi-horizon forecast.
+		manifold = NewResonanceManifoldWithHorizon(arch, targetDim, maxHorizon, pace)
+	} else {
+		// Multi-target heads supervise one row per target dimension directly.
+		manifold = NewResonanceManifold(arch, targetDim, pace)
+	}
+
 	ledger := NewTemporalLedger(maxHorizon, target)
 	dynamics := types.NewStream(PredictiveDynamics, types.Frame{})
 
@@ -178,24 +188,37 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 		}
 	}
 
-	// 3. Harvest multi-layer readout and calculate instantaneous discriminant score
+	// 3. Harvest the multi-layer readout, then select the supported horizon
+	// from per-horizon prequential skill: the longest contiguous prefix of
+	// horizons whose heads are ready and beat the zero-prediction baseline.
+	// The head predicts from its prior before any row has resolved evidence,
+	// so the default reach is a single tick.
 	readout := pc.manifold.ReadoutVector()
-	forecasts, err := pc.manifold.RolloutTaskForecast(1)
+	pc.currentHorizon = pc.supportedHorizon()
+
+	supportedHorizon := pc.currentHorizon
+
+	// 4. Generate the per-horizon forward curve and the contraction envelope.
+	// Element k of the curve is the cumulative directional prediction over the
+	// next k+1 ticks, so the call for the supported horizon is its last element.
+	rollouts, err := pc.manifold.RolloutTaskForecast(pc.config.MaxHorizon)
 	if err != nil {
 		return PredictiveOutput{}, fmt.Errorf("predictive coder: task forecast failed: %w", err)
 	}
 
-	score := 0.0
-	df := 0.0
+	if len(rollouts) == 0 {
+		return PredictiveOutput{}, fmt.Errorf("predictive coder: task head produced no forecast")
+	}
+
+	head := rollouts[supportedHorizon-1]
+	score := head.Value
+	df := head.DegreesOfFreedom
 	confidence := 0.0
-	if len(forecasts) > 0 {
-		score = forecasts[0].Value
-		df = forecasts[0].DegreesOfFreedom
-		if forecasts[0].Scale > 0 {
-			// Signal-to-noise ratio mapped to [0, 1] confidence
-			snr := math.Abs(score) / forecasts[0].Scale
-			confidence = snr / (1.0 + snr)
-		}
+
+	if head.Scale > 0 {
+		// Signal-to-noise ratio mapped to [0, 1] confidence
+		snr := math.Abs(score) / head.Scale
+		confidence = snr / (1.0 + snr)
 	}
 
 	direction := 0.0
@@ -205,37 +228,19 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 		direction = -1.0
 	}
 
-	// 4. Adapt forward horizon based on prequential model skill
-	skill, skillReady := pc.manifold.TaskSkill()
-	precision, precisionReady := pc.manifold.TaskPrecision()
-
-	if skillReady {
-		if skill >= 1.0 {
-			// Boost horizon based on how far above baseline we are
-			boost := int(math.Ceil((skill - 1.0) * 10))
-			if boost < 1 {
-				boost = 1 // At least 1 if above baseline
-			}
-			pc.currentHorizon = min(pc.config.MaxHorizon, pc.currentHorizon+boost)
-		} else if skill < 0.95 {
-			// Only collapse if significantly below baseline
-			drop := int(math.Ceil((1.0 - skill) * 10))
-			if drop < 1 {
-				drop = 1
-			}
-			pc.currentHorizon = max(1, pc.currentHorizon-drop)
-		}
-	} else {
-		pc.currentHorizon = 1
+	predictions := make([]float64, len(rollouts))
+	for horizonIndex, rollout := range rollouts {
+		predictions[horizonIndex] = rollout.Value
 	}
 
-	supportedHorizon := pc.currentHorizon
-
-	// 5. Generate forward rollouts & contraction envelope
-	forwardCurve := pc.manifold.RolloutTaskPrediction(supportedHorizon)
+	forwardCurve := append([]float64(nil), predictions[:supportedHorizon]...)
 	retention := pc.manifold.RolloutRetention(supportedHorizon)
 
-	// 6. Update Hamiltonian physical dynamics
+	skill, _ := pc.manifold.TaskSkill()
+	precision, _ := pc.manifold.TaskPrecision()
+	_, calibrated := pc.manifold.TaskSkillAt(supportedHorizon)
+
+	// 5. Update Hamiltonian physical dynamics
 	pos := 0.0
 	if len(readout) > 0 {
 		for _, v := range readout {
@@ -261,9 +266,10 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 		return PredictiveOutput{}, fmt.Errorf("predictive coder: dynamics failed: %w", dynOutput.Err)
 	}
 
-	// 7. Issue current forecast into ledger for future verification
+	// 6. Issue the per-horizon forecasts into the ledger for future verification.
+	// Every horizon is issued so each row's own cumulative target can resolve.
 	if input.HasReference {
-		pc.ledger.Issue(input.Step, input.Reference, readout, score, supportedHorizon)
+		pc.ledger.Issue(input.Step, input.Reference, readout, predictions, supportedHorizon)
 	}
 
 	return PredictiveOutput{
@@ -276,7 +282,7 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 		SupportedHorizon:    supportedHorizon,
 		Skill:               skill,
 		Precision:           precision,
-		Calibrated:          precisionReady && skillReady,
+		Calibrated:          calibrated,
 		Energy:              pc.manifold.Energy(),
 		Surprise:            pc.manifold.ReconstructionError(),
 		ReconstructionError: pc.manifold.ReconstructionError(),
@@ -286,6 +292,29 @@ func (pc *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error)
 		LastResolution:      lastResolution,
 		ResolvedSteps:       pc.ledger.ResolvedCount(),
 	}, nil
+}
+
+/*
+supportedHorizon picks the longest contiguous prefix of horizons whose task rows
+are ready and beat the zero-prediction baseline, per the resonance README:
+the horizon contracts to the longest contiguous path whose calls beat a coin
+flip. Before any row has evidence the head still predicts its prior, so the
+supported reach is a single tick.
+*/
+func (pc *PredictiveCoder) supportedHorizon() int {
+	horizon := 1
+
+	for candidate := 1; candidate <= pc.config.MaxHorizon; candidate++ {
+		skill, ready := pc.manifold.TaskSkillAt(candidate)
+
+		if !ready || skill <= 1.0 {
+			break
+		}
+
+		horizon = candidate
+	}
+
+	return horizon
 }
 
 /*

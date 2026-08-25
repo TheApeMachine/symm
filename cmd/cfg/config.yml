@@ -19,8 +19,14 @@ system:
     # Symbol affinity and SPSC lane bounds for the analytical data plane.
     # Every value is explicit so overload behavior and CPU ownership are
     # observable deployment decisions rather than hidden runtime fallbacks.
+    # max_workers enforces an optional hard ceiling on the shared workspace
+    # worker pool (0 = unbounded, sized elastically to the drain backlog; the
+    # hot-path allocation/dedupe fixes removed the CPU-oversubscription that a
+    # cap originally contained). Set a positive value only if a specific
+    # deployment needs to cap worker growth.
     symbol_shards: 4
     lane_capacity: 4096
+    max_workers: 0
     spin_limit: 64
     drain_limit: 256
   bus:

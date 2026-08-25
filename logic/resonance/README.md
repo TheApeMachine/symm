@@ -57,12 +57,15 @@ The manifold settles a latent state that serves three purposes at once:
 2. **Latent state (z).** The settled compressed representation. Published as a
    cross-section: every symbol's embedding plotted together is a cloud showing
    where symbols sit *relative to one another*, which one point cannot show.
-3. **Supervised direction head (V).** Predicts whether the next marks go up or
-   down, not how far. Square-root recursive least squares fits this linear head
-   on realized sign. The published claim is a call (−1, 0, +1) over a
-   model-chosen horizon: reach grows without a configured cap and contracts to
-   the longest contiguous path whose direction calls beat a coin flip at the
-   regulated confidence. Causal and manifold remain the only priced return
+3. **Supervised direction head (V).** One square-root recursive least squares
+   row per forward horizon, each trained on the realized direction of the
+   cumulative move over its own horizon — row `h` on the sign of the move from
+   the issue mark to the mark `h` ticks later, deadbanded by the symbol's own
+   recent step noise. The published claim is a call (−1, 0, +1) over the
+   supported horizon: the supported reach is the longest contiguous prefix of
+   horizon rows whose direction calls beat the zero-prediction baseline at the
+   regulated confidence, and defaults to a single tick before any row has
+   resolved evidence. Causal and manifold remain the only priced return
    sources downstream.
 
 ## Learning is deferred, and that's the point
@@ -80,10 +83,14 @@ baseline. Only then does recursive least squares observe the target. A sample is
 only spent once the future has actually arrived, and a target can never certify
 the prediction that was fitted with it.
 
-The same state is used at publication and resolution: settled `z_t` predicts the
-next return `r_t→t+1`. The first rollout element evaluates that state directly;
-only later elements advance through the temporal prior `A`. This indexing is a
-model invariant, not a display convention.
+The same state is used at publication and resolution: settled `z_t` is the
+readout every horizon row is evaluated against. Element `k` of the forward
+curve is row `k+1`'s prediction of the cumulative move over the next `k+1`
+ticks from the current state — a genuine multi-horizon forecast in which every
+element is its own supervised head, not a trajectory through imagined states.
+The temporal prior `A` still drives the contraction envelope and the layer
+predictions, but the task curve needs no roll-forward: each element is
+supervised against its own delayed cumulative target.
 
 Non-positive prices and non-finite returns drop the sample explicitly rather than
 poisoning the head with a synthetic zero.
@@ -125,7 +132,7 @@ to their own objective:
 | **Return-head gain**     | square-root recursive least squares | Latent design covariance determines how much each resolved target can teach. |
 | **Forecast confidence**  | RLS Student-t posterior predictive | Probability that the current resolved return has the point forecast's direction. |
 | **Skill evidence**       | Beta posterior over prequential wins | Probability that prior forecasts beat zero return more than half the time. |
-| **Horizon**              | `manifold.DynamicHorizon`         | Forecast only as far as resolved samples, retention, and current confidence support. |
+| **Horizon**              | longest contiguous skill prefix | Forecast only as far as the per-horizon rows whose prequential calls beat the zero-prediction baseline; a single tick before any row has resolved evidence. |
 
 There is no separate warming state. The head predicts from its prior immediately;
 before residual noise is identifiable its direction probability is the symmetric

@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"gonum.org/v1/gonum/stat/distuv"
 )
@@ -31,7 +30,6 @@ type Solver struct {
 	thesis       *types.Thesis
 	recorder     *audit.Recorder
 	measurements *measurementCompiler
-	ui           *runtime.Channel[*types.UIFrame]
 	graphs       *runtime.Channel[*types.Graph]
 	evidence     sync.Map
 	phase        types.PhaseReading
@@ -53,10 +51,6 @@ func NewSolver(thesis *types.Thesis, recorder *audit.Recorder, bus *runtime.Work
 		building:     sync.Map{},
 	}
 
-	solver.ui = runtime.ChannelOf[*types.UIFrame](
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
 	solver.graphs = runtime.ChannelOf[*types.Graph](
 		bus, types.ChannelGraphs,
 		func(graph *types.Graph) string { return graph.Symbol },
@@ -291,13 +285,6 @@ func (solver *Solver) rebuild(symbolName string, state *symbolEvidence) error {
 			"graph: failed to connect long-opportunity hypothesis - "+err.Error(),
 			err,
 		))
-	}
-
-	if symbolName == types.Focus() && solver.ui != nil {
-		solver.ui.Publish(&types.UIFrame{
-			Type:  wire.FrameGraphFrame,
-			Value: graph.Wire(),
-		})
 	}
 
 	if !graph.ReadyForSearch() {

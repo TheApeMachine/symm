@@ -55,7 +55,8 @@ func NewSeries(prefix string) Series {
 /*
 SampleSymbol returns the interned slot for one sample position of the series.
 The default series reuses the engine's static generic sample table; prefixed
-series intern the position lazily and cache it globally by name.
+series intern the position once, keyed by (prefix, index) so the hot path never
+rebuilds the interning name string when the slot is already cached.
 */
 func (series Series) SampleSymbol(index int) types.Symbol {
 	if index < 0 || index >= types.MaxSamples {
@@ -66,16 +67,22 @@ func (series Series) SampleSymbol(index int) types.Symbol {
 		return types.MustSampleSymbol(index)
 	}
 
-	name := JoinPrefix(series.prefix, fmt.Sprintf("sample/%d", index))
+	key := sampleSlotKey{prefix: series.prefix, index: index}
 
-	if cached, found := sampleSlotCache.Load(name); found {
+	if cached, found := sampleSlotCache.Load(key); found {
 		return cached.(types.Symbol)
 	}
 
+	name := JoinPrefix(series.prefix, fmt.Sprintf("sample/%d", index))
 	symbol := types.MustIntern(name)
-	actual, _ := sampleSlotCache.LoadOrStore(name, symbol)
+	actual, _ := sampleSlotCache.LoadOrStore(key, symbol)
 
 	return actual.(types.Symbol)
+}
+
+type sampleSlotKey struct {
+	prefix string
+	index  int
 }
 
 var sampleSlotCache sync.Map
@@ -193,20 +200,24 @@ CopyFrom relocates the default-series path retained in src onto dst under this
 series' prefix. It is the declarative plumbing for placing two committed paths
 into one frame under distinct series prefixes before a bivariate primitive runs.
 */
-func (series Series) CopyFrom(dst *types.Frame, src types.Frame) {
-	if dst == nil {
+func (series Series) CopyFrom(dst *types.Frame, src *types.Frame) {
+	if dst == nil || src == nil {
 		return
 	}
 
-	count := DefaultSeries.Count(src)
+	countValue, _ := src.Get(DefaultSeries.CountSymbol)
+	count := int(countValue)
 	capacity, found := src.Get(DefaultSeries.CapacitySymbol)
 
 	if !found {
 		return
 	}
 
+	headValue, _ := src.Get(DefaultSeries.HeadSymbol)
+	head := int(headValue)
+
 	for index := 0; index < count; index++ {
-		physicalIndex := (DefaultSeries.Head(src) + index) % int(capacity)
+		physicalIndex := (head + index) % int(capacity)
 		timestampBits, hasTimestamp := src.Get(DefaultSeries.SampleSymbol(physicalIndex*pathSampleWidth))
 		value, hasValue := src.Get(DefaultSeries.SampleSymbol(physicalIndex*pathSampleWidth+1))
 

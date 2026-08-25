@@ -561,6 +561,11 @@ func NewWithClient(
 		))
 
 		live.setStatus(types.PENDING)
+
+		bus := live.bus.Load()
+		if bus != nil {
+			bus.Notify(types.ChannelDisconnect)
+		}
 	})
 
 	if auth {

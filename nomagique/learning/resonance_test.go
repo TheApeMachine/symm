@@ -36,3 +36,52 @@ func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
 		})
 	})
 }
+
+func TestPerHorizonTaskHead(t *testing.T) {
+	Convey("Given a per-horizon task head over architecture [2, 8, 3]", t, func() {
+		manifold := NewResonanceManifoldWithHorizon([]int{2, 8, 3}, 1, 4, 0.03)
+
+		Convey("The task head holds one row per horizon", func() {
+			So(manifold.taskRows, ShouldEqual, 4)
+
+			pred := manifold.TaskPrediction()
+			So(len(pred), ShouldEqual, 4)
+		})
+
+		Convey("ObserveTask trains only the addressed horizon row", func() {
+			err := manifold.Settle([]float64{0.5, -0.5}, false)
+			So(err, ShouldBeNil)
+
+			readout := manifold.ReadoutVector()
+
+			err = manifold.ObserveTask(4, readout, 0.1, 1.0)
+			So(err, ShouldBeNil)
+
+			skill, ready := manifold.TaskSkillAt(4)
+			So(ready, ShouldBeTrue)
+			So(skill, ShouldBeGreaterThan, 0)
+
+			_, unready := manifold.TaskSkillAt(1)
+			So(unready, ShouldBeFalse)
+		})
+
+		Convey("RolloutTaskForecast returns one cumulative forecast per horizon from the current readout", func() {
+			err := manifold.Settle([]float64{0.5, -0.5}, false)
+			So(err, ShouldBeNil)
+
+			forecasts, err := manifold.RolloutTaskForecast(4)
+			So(err, ShouldBeNil)
+			So(len(forecasts), ShouldEqual, 4)
+
+			// Clamping: a request beyond the head's rows yields the head's rows.
+			clamped, err := manifold.RolloutTaskForecast(9)
+			So(err, ShouldBeNil)
+			So(len(clamped), ShouldEqual, 4)
+		})
+
+		Convey("An out-of-range task horizon is rejected", func() {
+			err := manifold.ObserveTask(5, make([]float64, 21), 0, 1)
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
