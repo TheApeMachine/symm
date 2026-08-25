@@ -14,24 +14,36 @@ type Manifold struct {
 	stepCount int
 }
 
-func NewManifold(gridX, gridY, gridZ int, datasets ...Dataset) (*Manifold, error) {
+func NewManifold(gridX, gridY, gridZ int, datasets ...Dataset) *Manifold {
 	tokenizer, err := NewTokenizer(gridX, gridY, gridZ, 64, datasets...)
 
 	if err != nil {
-		return nil, err
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"sensorium: failed to get tokenizer",
+			err,
+		))
+
+		return nil
 	}
 
 	work, err := newWorkspace(gridX, gridY, gridZ)
 
 	if err != nil {
-		return nil, err
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"sensorium: failed to get workspace",
+			err,
+		))
+
+		return nil
 	}
 
 	return &Manifold{
 		work:      work,
 		Tokenizer: tokenizer,
 		state:     &State{},
-	}, nil
+	}
 }
 
 func (manifold *Manifold) Close() {

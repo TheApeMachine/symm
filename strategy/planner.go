@@ -10,18 +10,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/errnie"
-	"golang.org/x/sync/errgroup"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/causal"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	"golang.org/x/sync/errgroup"
 )
 
 // StrategyWireBranchCount matches the two ranked branch slots rendered for
@@ -49,10 +50,6 @@ type Planner struct {
 	allocation *Allocation
 	desk       *broker.Desk
 	reasoner   *Reasoner
-	uiStates   *runtime.Channel[*CausalState]
-	strategy   *runtime.Channel[types.StrategyRound]
-	tickWork   *runtime.Subscription[kraken.TickerData]
-	stateWork  *runtime.Subscription[*CausalState]
 	pending    sync.Map
 	lastPass   atomic.Int64
 	updating   atomic.Bool
@@ -142,31 +139,25 @@ func NewPlanner(
 		thesis:     thesis,
 		reasoner:   reasoner,
 	}
-	planner.strategy = runtime.ChannelOf[types.StrategyRound](
-		bus, types.ChannelDecisions,
-		func(round types.StrategyRound) string { return "" },
-	)
-	planner.uiStates = runtime.ChannelOf[*CausalState](
-		bus, types.ChannelCausalState,
-		func(state *CausalState) string { return state.Symbol },
-	)
-	planner.stateWork = runtime.ChannelOf[*CausalState](
-		bus, types.ChannelCausalState,
-		func(state *CausalState) string { return state.Symbol },
-	).Subscribe(planner.Name(), planner.Step)
-	planner.tickWork = runtime.ChannelOf[kraken.TickerData](
-		bus, types.ChannelTickers,
-		func(ticker kraken.TickerData) string { return ticker.Symbol },
-	).Subscribe(planner.Name(), planner.StepTick)
 
-	measurementWork := runtime.ChannelOf[*nmtypes.Measurement](
-		bus, types.ChannelMeasurements,
-		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
-	).Subscribe(planner.Name()+"-reasoner", planner.StepMeasurement)
+	if bus != nil {
+		runtime.WireFunc(
+			bus,
+			types.ChannelTickers,
+			types.ChannelDecisions,
+			planner.StepTick,
+		)
+		bus.Observe(types.ChannelMeasurements, func(_ string, value any) {
+			if m, ok := value.(*nmtypes.Measurement); ok {
+				_ = planner.StepMeasurement(m)
+			} else if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+				_ = planner.StepMeasurement(m.ToTypesMeasurement())
+			}
+		})
+	}
 
 	planner.reasoner.SetOnState(planner.publishCausalState)
 	planner.tradingGate = planner.prerequisitesReady
-	_ = measurementWork
 
 	return planner
 }
@@ -177,6 +168,22 @@ func (planner *Planner) Error() error { return planner.err }
 
 func (planner *Planner) Stager() *audit.Stager {
 	return planner.stager
+}
+
+func (planner *Planner) SetMarketProvider(provider func(string) marketInputs) {
+	planner.marketProvider = provider
+}
+
+func (planner *Planner) SetTradingGate(gate func() bool) {
+	planner.tradingGate = gate
+}
+
+func (planner *Planner) SetEntryExecutor(executor func(types.Decision) error) {
+	planner.executeEntry = executor
+}
+
+func (planner *Planner) IngestMeasurement(measurement *nmtypes.Measurement) {
+	_ = planner.StepMeasurement(measurement)
 }
 
 func (planner *Planner) Status() types.Status {
@@ -229,10 +236,6 @@ func (planner *Planner) publishCausalState(state *CausalState) {
 	}
 
 	planner.pending.Store(state.Symbol, state)
-
-	if planner.uiStates != nil {
-		planner.uiStates.Publish(state)
-	}
 }
 
 /*
@@ -248,8 +251,8 @@ func (planner *Planner) Step(state *CausalState) error {
 	return nil
 }
 
-// StepTick runs one portfolio pass at most once per engine tick.
-func (planner *Planner) StepTick(ticker kraken.TickerData) error {
+// StepTick runs one portfolio pass at most once per engine tick and returns the decision round.
+func (planner *Planner) StepTick(ticker kraken.TickerData) *types.StrategyRound {
 	tick := atomic.LoadInt64(&planner.thesis.Tick)
 	last := planner.lastPass.Load()
 
@@ -276,7 +279,7 @@ admission policy, and predictive readiness do not gate participation: every
 symbol with observational state, an explicit schema, and a feasible action
 may be considered.
 */
-func (planner *Planner) Update(thesis *types.Thesis) error {
+func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 	// The trading stage stays dormant until boot has filled its execution
 	// prerequisites (instrument/fee surface loaded and live market data
 	// present). Measurements keep flowing into the reasoner meanwhile, so by
@@ -296,7 +299,12 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	config := system.Cfg.Snapshot()
 
 	if config == nil || config.Planner == nil {
-		return fmt.Errorf("planner: planner configuration required")
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: planner configuration required",
+			nil,
+		))
+		return nil
 	}
 
 	states := planner.drainPending()
@@ -335,7 +343,12 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if err := g.Wait(); err != nil {
-		return err
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"planner: evaluation group failed",
+			err,
+		))
+		return nil
 	}
 
 	validDecisions := make([]*types.Decision, 0, len(decisions))
@@ -364,15 +377,23 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 			planner.stager.Stage(decision, 10*time.Minute)
 		}
 
-		planner.publishStrategy(thesis, false, "accumulating", decisions)
-		return nil
+		return &types.StrategyRound{
+			Evaluated: true,
+			Outcome:   "inaction",
+			Decisions: decisions,
+		}
 	}
 
 	if planner.allocation != nil {
 		allocationStarted := time.Now()
 
 		if err := planner.allocation.Calculate(decisions); err != nil {
-			return err
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"planner: allocation calculation failed",
+				err,
+			))
+			return nil
 		}
 
 		if planner.ObserveModule != nil {
@@ -381,15 +402,23 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	if err := planner.executeDecisions(decisions); err != nil {
-		return err
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"planner: decision execution failed",
+			err,
+		))
+		return nil
 	}
 
 	for _, decision := range decisions {
 		planner.stager.Stage(decision, 10*time.Minute)
 	}
 
-	planner.publishStrategy(thesis, true, "decisions", decisions)
-	return nil
+	return &types.StrategyRound{
+		Evaluated: true,
+		Outcome:   "decisions",
+		Decisions: decisions,
+	}
 }
 
 /*
@@ -451,10 +480,10 @@ func (planner *Planner) decisionFromCausalState(
 
 	cash := inputs.cash
 	mark := inputs.mark
-	
+
 	markDec := decimal.NewFromFloat64(mark)
 	decision.Mark = markDec
-	
+
 	feeRate := inputs.feeRate
 	spreadFraction := inputs.spreadFraction
 
@@ -724,26 +753,6 @@ func causalSeed(state *CausalState) int64 {
 	_, _ = hasher.Write(buffer)
 
 	return int64(hasher.Sum64())
-}
-
-/*
-publishStrategy emits the planning decision round as domain data on
-ChannelDecisions. The workspace observer (boot) projects it into the dashboard
-StrategyFrame; the planner never publishes UI directly.
-*/
-func (planner *Planner) publishStrategy(
-	thesis *types.Thesis,
-	evaluated bool,
-	outcome string,
-	decisions []*types.Decision,
-) {
-	if planner.strategy != nil {
-		planner.strategy.Publish(types.StrategyRound{
-			Evaluated: evaluated,
-			Outcome:   outcome,
-			Decisions: decisions,
-		})
-	}
 }
 
 /*

@@ -207,10 +207,9 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 					if ticker != nil && ticker.Data.ProductID != "" {
 						if spotSymbol := kraken.FuturesProductIDToSpot(ticker.Data.ProductID); spotSymbol != "" {
 							ticker.Data.Symbol = spotSymbol
-							runtime.ChannelOf[kraken.FuturesTickerData](
-								market.bus, types.ChannelFuturesTickers,
-								func(t kraken.FuturesTickerData) string { return t.Symbol },
-							).Publish(ticker.Data)
+							if market.bus != nil {
+								market.bus.Publish(types.ChannelFuturesTickers, ticker.Data)
+							}
 						}
 					}
 				case "trade", "trade_snapshot":
@@ -219,10 +218,9 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 						for _, singleTrade := range trades.Data {
 							if spotSymbol := kraken.FuturesProductIDToSpot(singleTrade.ProductID); spotSymbol != "" {
 								singleTrade.Symbol = spotSymbol
-								runtime.ChannelOf[kraken.FuturesTradeData](
-									market.bus, types.ChannelFuturesTrades,
-									func(t kraken.FuturesTradeData) string { return t.Symbol },
-								).Publish(singleTrade)
+								if market.bus != nil {
+									market.bus.Publish(types.ChannelFuturesTrades, singleTrade)
+								}
 							}
 						}
 					}
@@ -231,10 +229,9 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 					if bookDelta != nil && bookDelta.Data.ProductID != "" {
 						if spotSymbol := kraken.FuturesProductIDToSpot(bookDelta.Data.ProductID); spotSymbol != "" {
 							bookDelta.Data.Symbol = spotSymbol
-							runtime.ChannelOf[kraken.FuturesBookData](
-								market.bus, types.ChannelFuturesBooks,
-								func(b kraken.FuturesBookData) string { return b.Symbol },
-							).Publish(bookDelta.Data)
+							if market.bus != nil {
+								market.bus.Publish(types.ChannelFuturesBooks, bookDelta.Data)
+							}
 						}
 					}
 				}

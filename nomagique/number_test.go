@@ -73,7 +73,7 @@ func TestNumberIsolationAndTransactions(t *testing.T) {
 
 	Convey("Initial state is evaluated exactly once for a newly stored key", t, func() {
 		calls := 0
-		number := NewNumberWithInitial[string](func(key string) types.Frame {
+		number := NewNumberWithInitial(func(key string) types.Frame {
 			calls++
 			return types.Frame{}.Set(numberTotal, float64(len(key)))
 		}, numberAccumulator)
@@ -244,8 +244,8 @@ func BenchmarkNumberEstablishedKey(b *testing.B) {
 	input := types.Frame{}.Set(numberDelta, 1)
 	_ = number.Step("symbol", input)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for iteration := 0; iteration < b.N; iteration++ {
+
+	for b.Loop() {
 		_ = number.Step("symbol", input)
 	}
 }

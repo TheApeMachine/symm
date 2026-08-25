@@ -670,15 +670,7 @@ loadQuote loads the latest valid quote midpoint from the shared book when one
 is available and seeds the epoch midpoint on the first valid quote.
 */
 func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
-	shared, found := trade.workspace.Shared("api", "")
-
-	if !found {
-		input.Put(symbolHasQuote, 0)
-		return
-	}
-
-	api, ok := shared.(*websocket.API)
-	if !ok || api == nil {
+	if trade == nil || trade.workspace == nil {
 		input.Put(symbolHasQuote, 0)
 		return
 	}
@@ -686,14 +678,14 @@ func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
 	var hasQuote bool
 	var bidPrice, askPrice float64
 
-	api.Book(symbol, func(resident *book.Book) {
+	inspectBook := func(resident *book.Book) {
 		if resident == nil {
 			return
 		}
 		bestBid := resident.BestBid()
 		bestAsk := resident.BestAsk()
 
-		if bestBid != nil && bestAsk != nil {
+		if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
 			bidPrice = bestBid.Price.Float64()
 			askPrice = bestAsk.Price.Float64()
 
@@ -701,7 +693,17 @@ func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
 				hasQuote = true
 			}
 		}
-	})
+	}
+
+	if sharedBook, found := trade.workspace.Shared("book", symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			inspectBook(currentBook)
+		}
+	} else if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
+		if api, ok := shared.(*websocket.API); ok && api != nil {
+			api.Book(symbol, inspectBook)
+		}
+	}
 
 	if !hasQuote {
 		input.Put(symbolHasQuote, 0)

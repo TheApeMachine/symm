@@ -16,7 +16,9 @@ import (
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/regulator"
@@ -255,156 +257,214 @@ func BootWithHub(
 
 	signalRunner := signal.NewRunner(systemCtx, bus)
 
-	uiChannel := runtime.ChannelOf(
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
-
 	if bus != nil {
-		bus.Observe(types.ChannelMeasurements, func(_ string, _ string, value any) {
-			measurement, ok := value.(*nmtypes.Measurement)
+		runtime.WireFunc(
+			bus,
+			types.ChannelMeasurements,
+			types.ChannelUI,
+			func(value any) *types.UIFrame {
+				var measurement *nmtypes.Measurement
 
-			if !ok || measurement == nil {
-				return
-			}
+				if m, ok := value.(*nmtypes.Measurement); ok {
+					measurement = m
+				} else if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+					measurement = m.ToTypesMeasurement()
+				}
 
-			wireRow := measurementWire(measurement)
+				if measurement == nil {
+					return nil
+				}
 
-			if wireRow == nil {
-				return
-			}
+				wireRow := measurementWire(measurement)
 
-			uiChannel.Publish(&types.UIFrame{
-				Type: wire.FrameMeasurementsFrame,
-				Value: &wire.MeasurementsFrameT{
-					Rows: []*wire.MeasurementT{wireRow},
-				},
-			})
-		})
+				if wireRow == nil {
+					return nil
+				}
+
+				return &types.UIFrame{
+					Type: wire.FrameMeasurementsFrame,
+					Value: &wire.MeasurementsFrameT{
+						Rows: []*wire.MeasurementT{wireRow},
+					},
+				}
+			},
+		)
 
 		// Workspace observer side-effects own the dashboard UI frames for the
 		// derived stages. Logic solvers emit domain data only; these taps convert
 		// it to wire frames so UI publishing lives in one place, not in each
 		// module's data path.
-		bus.Observe(types.ChannelCausal, func(_ string, _ string, value any) {
-			output, ok := value.(types.CausalOutput)
-
-			if !ok {
-				return
-			}
-
-			uiChannel.Publish(&types.UIFrame{
-				Type: wire.FrameCausalFrame,
-				Value: &wire.CausalFrameT{
-					Rows: []*wire.CausalT{causal.CausalWire(output.Rows)},
-				},
-			})
-		})
-
-		bus.Observe(types.ChannelCognition, func(_ string, _ string, value any) {
-			reading, ok := value.(types.Cognition)
-
-			if !ok {
-				return
-			}
-
-			uiChannel.Publish(&types.UIFrame{
-				Type: wire.FrameCognitionFrame,
-				Value: &wire.CognitionFrameT{
-					Rows: []*wire.CognitionT{cognition.CognitionWire(reading)},
-				},
-			})
-		})
-
-		bus.Observe(types.ChannelResonance, func(_ string, _ string, value any) {
-			artifact, ok := value.(types.ResonanceArtifact)
-
-			if !ok {
-				return
-			}
-
-			uiChannel.Publish(&types.UIFrame{
-				Type: wire.FrameResonanceFrame,
-				Value: &wire.ResonanceFrameT{
-					Rows: []*wire.ResonanceT{
-						resonance.ResonanceWire(artifact.Symbol, artifact.At, artifact),
-					},
-				},
-			})
-		})
-
-		bus.Observe(types.ChannelRelations, func(_ string, _ string, value any) {
-			update, ok := value.(graph.GraphUpdate)
-
-			if !ok || update.Symbol != types.Focus() {
-				return
-			}
-
-			shared, found := bus.Shared(graph.SharedInfluenceGraph, "")
-
-			if !found {
-				return
-			}
-
-			influence, ok := shared.(*graph.InfluenceGraph)
-
-			if !ok {
-				return
-			}
-
-			uiChannel.Publish(&types.UIFrame{
-				Type:  wire.FrameGraphFrame,
-				Value: graph.InfluenceGraphWire(influence, update.Symbol, update.At),
-			})
-		})
-
-		bus.Observe(types.ChannelDecisions, func(_ string, _ string, value any) {
-			round, ok := value.(types.StrategyRound)
-
-			if !ok {
-				return
-			}
-
-			if recorder != nil {
-				_ = audit.RecordAs(recorder, audit.DecisionBatchEvent, round.Decisions)
-			}
-
-			rows := make([]*wire.DecisionT, 0, len(round.Decisions))
-
-			for _, decision := range round.Decisions {
-				if decision == nil {
-					continue
+		runtime.WireFunc(
+			bus,
+			types.ChannelCausal,
+			types.ChannelUI,
+			func(value any) *types.UIFrame {
+				var rows map[string]any
+				if output, ok := value.(types.CausalOutput); ok {
+					rows = output.Rows
+				} else if ptr, ok := value.(*types.CausalOutput); ok && ptr != nil {
+					rows = ptr.Rows
+				} else {
+					return nil
 				}
 
-				rows = append(rows, types.DecisionWire(
-					*decision,
-					strategy.StrategyWireBranchCount,
-					false,
-				))
-			}
+				return &types.UIFrame{
+					Type: wire.FrameCausalFrame,
+					Value: &wire.CausalFrameT{
+						Rows: []*wire.CausalT{causal.CausalWire(rows)},
+					},
+				}
+			},
+		)
 
-			uiChannel.Publish(&types.UIFrame{
-				Type: wire.FrameStrategyFrame,
-				Value: &wire.StrategyFrameT{
-					Evaluated: round.Evaluated,
-					Outcome:   round.Outcome,
-					Decisions: rows,
-				},
-			})
-		})
+		runtime.WireFunc(
+			bus,
+			types.ChannelCognition,
+			types.ChannelUI,
+			func(value any) *types.UIFrame {
+				var reading types.Cognition
+				if r, ok := value.(types.Cognition); ok {
+					reading = r
+				} else if ptr, ok := value.(*types.Cognition); ok && ptr != nil {
+					reading = *ptr
+				} else {
+					return nil
+				}
 
-		bus.Observe(types.ChannelRegulator, func(_ string, _ string, value any) {
-			payload, ok := value.(regulator.RegulatorPayload)
+				return &types.UIFrame{
+					Type: wire.FrameCognitionFrame,
+					Value: &wire.CognitionFrameT{
+						Rows: []*wire.CognitionT{cognition.CognitionWire(reading)},
+					},
+				}
+			},
+		)
 
-			if !ok {
-				return
-			}
+		runtime.WireFunc(
+			bus,
+			types.ChannelResonance,
+			types.ChannelUI,
+			func(value any) *types.UIFrame {
+				var artifact types.ResonanceArtifact
+				if a, ok := value.(types.ResonanceArtifact); ok {
+					artifact = a
+				} else if ptr, ok := value.(*types.ResonanceArtifact); ok && ptr != nil {
+					artifact = *ptr
+				} else {
+					return nil
+				}
 
-			uiChannel.Publish(&types.UIFrame{
-				Type:  wire.FrameRegulatorFrame,
-				Value: regulator.RegulatorWire(payload),
-			})
-		})
+				return &types.UIFrame{
+					Type: wire.FrameResonanceFrame,
+					Value: &wire.ResonanceFrameT{
+						Rows: []*wire.ResonanceT{
+							resonance.ResonanceWire(artifact.Symbol, artifact.At, artifact),
+						},
+					},
+				}
+			},
+		)
+
+		runtime.WireFunc(
+			bus,
+			types.ChannelRelations,
+			types.ChannelUI,
+			func(value any) *types.UIFrame {
+				var update graph.GraphUpdate
+				if u, ok := value.(graph.GraphUpdate); ok {
+					update = u
+				} else if ptr, ok := value.(*graph.GraphUpdate); ok && ptr != nil {
+					update = *ptr
+				} else {
+					return nil
+				}
+
+				if update.Symbol != types.Focus() {
+					return nil
+				}
+
+				shared, found := bus.Shared(graph.SharedInfluenceGraph, "")
+
+				if !found {
+					return nil
+				}
+
+				influence, ok := shared.(*graph.InfluenceGraph)
+
+				if !ok {
+					return nil
+				}
+
+				return &types.UIFrame{
+					Type:  wire.FrameGraphFrame,
+					Value: graph.InfluenceGraphWire(influence, update.Symbol, update.At),
+				}
+			},
+		)
+
+		runtime.WireFunc(
+			bus,
+			types.ChannelDecisions,
+			types.ChannelUI,
+			func(value any) *types.UIFrame {
+				var round types.StrategyRound
+				if r, ok := value.(types.StrategyRound); ok {
+					round = r
+				} else if ptr, ok := value.(*types.StrategyRound); ok && ptr != nil {
+					round = *ptr
+				} else {
+					return nil
+				}
+
+				if recorder != nil {
+					_ = audit.RecordAs(recorder, audit.DecisionBatchEvent, round.Decisions)
+				}
+
+				rows := make([]*wire.DecisionT, 0, len(round.Decisions))
+
+				for _, decision := range round.Decisions {
+					if decision == nil {
+						continue
+					}
+
+					rows = append(rows, types.DecisionWire(
+						*decision,
+						strategy.StrategyWireBranchCount,
+						false,
+					))
+				}
+
+				return &types.UIFrame{
+					Type: wire.FrameStrategyFrame,
+					Value: &wire.StrategyFrameT{
+						Evaluated: round.Evaluated,
+						Outcome:   round.Outcome,
+						Decisions: rows,
+					},
+				}
+			},
+		)
+
+		runtime.WireFunc(
+			bus,
+			types.ChannelRegulator,
+			types.ChannelUI,
+			func(value any) *types.UIFrame {
+				var payload regulator.RegulatorPayload
+				if p, ok := value.(regulator.RegulatorPayload); ok {
+					payload = p
+				} else if ptr, ok := value.(*regulator.RegulatorPayload); ok && ptr != nil {
+					payload = *ptr
+				} else {
+					return nil
+				}
+
+				return &types.UIFrame{
+					Type:  wire.FrameRegulatorFrame,
+					Value: regulator.RegulatorWire(payload),
+				}
+			},
+		)
 	}
 
 	price := broker.NewPrice(systemCtx, bus)
@@ -483,6 +543,8 @@ func BootWithHub(
 		strategy.DefaultCausalSchema(1, time.Second).Version,
 	)
 
+	manifoldSolver := manifold.NewSolver(systemCtx, bus)
+
 	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, bus)
 	planner.ObserveModule = crypto.ObserveModule()
 	planner.ObserveHop = crypto.ObserveHop()
@@ -521,6 +583,7 @@ func BootWithHub(
 		},
 		signalRunner.Close,
 		graphSolver.Close,
+		manifoldSolver.Close,
 		planner.Close,
 		resonanceSolver.Close,
 		crypto.Close,

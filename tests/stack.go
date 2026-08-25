@@ -128,7 +128,7 @@ func drive[S Driven](
 		defer viper.Set("market.l3_depth", previousDepth)
 
 		public, private := market.Feeds()
-		bus := runtime.NewWorkspace(nil)
+		bus := runtime.NewWorkspace(t.Context())
 		thesis := types.NewThesis(t.Context())
 		system := boot(t.Context(), thesis, public, private, bus)
 

@@ -34,9 +34,6 @@ type FuturesLive struct {
 	endpoint      string
 	thesis        atomic.Pointer[types.Thesis]
 	bus           atomic.Pointer[runtime.Workspace]
-	tickersCh     *runtime.Channel[kraken.FuturesTickerData]
-	tradesCh      *runtime.Channel[kraken.FuturesTradeData]
-	booksCh       *runtime.Channel[kraken.FuturesBookData]
 	capture       CaptureSink
 	conn          *gorillawebsocket.Conn
 	connMu        sync.Mutex
@@ -116,18 +113,6 @@ func (futures *FuturesLive) SetBus(bus *runtime.Workspace) {
 	}
 
 	futures.bus.Store(bus)
-	futures.tickersCh = runtime.ChannelOf(
-		bus, types.ChannelFuturesTickers,
-		func(ticker kraken.FuturesTickerData) string { return ticker.Symbol },
-	)
-	futures.tradesCh = runtime.ChannelOf(
-		bus, types.ChannelFuturesTrades,
-		func(trade kraken.FuturesTradeData) string { return trade.Symbol },
-	)
-	futures.booksCh = runtime.ChannelOf(
-		bus, types.ChannelFuturesBooks,
-		func(book kraken.FuturesBookData) string { return book.Symbol },
-	)
 }
 
 func (futures *FuturesLive) SetThesis(thesis *types.Thesis) {
@@ -359,8 +344,10 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 
 	ticker.Data.Symbol = spotSymbol
 
-	if thesis.Symbol(spotSymbol).AcceptFuturesTicker(ticker.Data.Timestamp) && futures.tickersCh != nil {
-		futures.tickersCh.Publish(ticker.Data)
+	if thesis.Symbol(spotSymbol).AcceptFuturesTicker(ticker.Data.Timestamp) {
+		if bus := futures.bus.Load(); bus != nil {
+			bus.Publish(types.ChannelFuturesTickers, ticker.Data)
+		}
 	}
 }
 
@@ -387,8 +374,10 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 
 		trade.Symbol = spotSymbol
 
-		if thesis.Symbol(spotSymbol).AcceptFuturesTrade(trade.Timestamp) && futures.tradesCh != nil {
-			futures.tradesCh.Publish(trade)
+		if thesis.Symbol(spotSymbol).AcceptFuturesTrade(trade.Timestamp) {
+			if bus := futures.bus.Load(); bus != nil {
+				bus.Publish(types.ChannelFuturesTrades, trade)
+			}
 		}
 	}
 }
@@ -414,8 +403,10 @@ func (futures *FuturesLive) dispatchBook(raw []byte) {
 
 	book.Data.Symbol = spotSymbol
 
-	if thesis.Symbol(spotSymbol).AcceptFuturesBook(book.Data.Timestamp) && futures.booksCh != nil {
-		futures.booksCh.Publish(book.Data)
+	if thesis.Symbol(spotSymbol).AcceptFuturesBook(book.Data.Timestamp) {
+		if bus := futures.bus.Load(); bus != nil {
+			bus.Publish(types.ChannelFuturesBooks, book.Data)
+		}
 	}
 }
 

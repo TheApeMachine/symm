@@ -35,7 +35,7 @@ type Paper struct {
 	commandMu    sync.Mutex
 	books        *spot.BookManager
 	thesis       atomic.Pointer[types.Thesis]
-	executionsCh *runtime.Channel[kraken.ExecutionData]
+	bus          *runtime.Workspace
 }
 
 /*
@@ -86,10 +86,7 @@ func (paper *Paper) SetBus(bus *runtime.Workspace) {
 		return
 	}
 
-	paper.executionsCh = runtime.ChannelOf(
-		bus, types.ChannelExecutions,
-		func(execution kraken.ExecutionData) string { return execution.Symbol },
-	)
+	paper.bus = bus
 }
 
 /*
@@ -671,8 +668,8 @@ func (paper *Paper) publish(channel string, message any) {
 		}
 
 		for index := range execution.Data {
-			if paper.executionsCh != nil {
-				paper.executionsCh.Publish(execution.Data[index])
+			if paper.bus != nil {
+				paper.bus.Publish(types.ChannelExecutions, execution.Data[index])
 			}
 		}
 	case "balances", "add_order":

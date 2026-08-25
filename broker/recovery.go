@@ -26,7 +26,7 @@ type Recovery struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	api        *websocket.API
-	ui         *runtime.Channel[*types.UIFrame]
+	bus        *runtime.Workspace
 	instrument *Instrument
 	price      *Price
 	balance    *Balance
@@ -41,7 +41,7 @@ NewRecovery instantiates a Recovery processor with all broker dependencies.
 func NewRecovery(
 	ctx context.Context,
 	api *websocket.API,
-	ui *runtime.Channel[*types.UIFrame],
+	bus *runtime.Workspace,
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -55,7 +55,7 @@ func NewRecovery(
 		ctx:        ctx,
 		cancel:     cancel,
 		api:        api,
-		ui:         ui,
+		bus:        bus,
 		instrument: instrument,
 		price:      price,
 		balance:    balance,
@@ -307,7 +307,7 @@ func (recovery *Recovery) recoveredPosition(
 	stoploss *types.Stoploss,
 ) *Position {
 	position := NewPosition(
-		recovery.ctx, recovery.api, recovery.ui, recovery.instrument, recovery.price,
+		recovery.ctx, recovery.api, recovery.bus, recovery.instrument, recovery.price,
 		recovery.balance, recovery.recorder, recovery.store, pair, types.Decision{
 			ID:               "recovered:" + pair.Symbol,
 			ProposedQuantity: quantity,

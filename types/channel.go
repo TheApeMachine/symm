@@ -32,6 +32,7 @@ const (
 	ChannelDecisions      = "decisions"
 	ChannelExecutions     = "executions"
 	ChannelRegulator      = "regulator"
+	ChannelHawkes         = "hawkes"
 	ChannelUI             = "ui"
 	ChannelFluid          = "fluid"
 	ChannelCrossSection   = "cross_section"

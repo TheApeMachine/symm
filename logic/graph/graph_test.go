@@ -315,8 +315,8 @@ func TestSolverStep(t *testing.T) {
 
 		Convey("stepping measurements appends observations and maintains the graph in place", func() {
 			for index := 0; index < 120; index++ {
-				err := solver.Step(testMeasurement(index))
-				So(err, ShouldBeNil)
+				update := solver.Step(testMeasurement(index))
+				So(update, ShouldNotBeNil)
 			}
 
 			Convey("the coordinate store retained observations", func() {

@@ -13,6 +13,7 @@ require (
 	github.com/phuslu/log v1.0.124
 	github.com/pion/sctp v1.11.1
 	github.com/pion/webrtc/v4 v4.2.18
+	github.com/smarty/go-disruptor v0.5.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sync v0.21.0
@@ -61,7 +62,6 @@ require (
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/savsgio/gotils v0.0.0-20250924091648-bce9a52d7761 // indirect
 	github.com/smarty/assertions v1.16.0 // indirect
-	github.com/smarty/go-disruptor v0.5.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
@@ -94,7 +94,6 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/theapemachine/datura v1.2.10
 	github.com/theapemachine/errnie v1.2.7
-	github.com/theapemachine/nomagique v0.0.9
 	golang.design/x/lockfree v0.1.0
 )
 

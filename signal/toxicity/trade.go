@@ -255,34 +255,41 @@ Step receives one trade data point, matches it against the current shared-book
 touch, runs the Number pipeline, and projects exactly one measurement.
 */
 func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
-	shared, found := trade.workspace.Shared("api", "")
-	if !found {
-		return nil
-	}
-
-	api, ok := shared.(*websocket.API)
-	if !ok || api == nil {
-		return nil
-	}
-
 	var hasQuote bool
 	var bidPrice, askPrice, bidQty, askQty float64
 
-	api.Book(tick.Symbol, func(currentBook *book.Book) {
-		if currentBook == nil {
-			return
-		}
-		bestBid := currentBook.BestBid()
-		bestAsk := currentBook.BestAsk()
+	if sharedBook, found := trade.workspace.Shared("book", tick.Symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			bestBid := currentBook.BestBid()
+			bestAsk := currentBook.BestAsk()
 
-		if bestBid != nil && bestAsk != nil {
-			bidPrice = bestBid.Price.Float64()
-			askPrice = bestAsk.Price.Float64()
-			bidQty = bestBid.Quantity.Float64()
-			askQty = bestAsk.Quantity.Float64()
-			hasQuote = true
+			if bestBid != nil && bestAsk != nil {
+				bidPrice = bestBid.Price.Float64()
+				askPrice = bestAsk.Price.Float64()
+				bidQty = bestBid.Quantity.Float64()
+				askQty = bestAsk.Quantity.Float64()
+				hasQuote = true
+			}
 		}
-	})
+	} else if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
+		if api, ok := shared.(*websocket.API); ok && api != nil {
+			api.Book(tick.Symbol, func(currentBook *book.Book) {
+				if currentBook == nil {
+					return
+				}
+				bestBid := currentBook.BestBid()
+				bestAsk := currentBook.BestAsk()
+
+				if bestBid != nil && bestAsk != nil {
+					bidPrice = bestBid.Price.Float64()
+					askPrice = bestAsk.Price.Float64()
+					bidQty = bestBid.Quantity.Float64()
+					askQty = bestAsk.Quantity.Float64()
+					hasQuote = true
+				}
+			})
+		}
+	}
 
 	if !hasQuote {
 		return nil

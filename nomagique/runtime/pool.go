@@ -10,14 +10,8 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
-/*
-TaskHandlerFunc ...
-*/
 type TaskHandlerFunc[T any] func(task T)
 
-/*
-Pool ...
-*/
 type Pool[T any] struct {
 	handlerFunc        TaskHandlerFunc[T]
 	idleWorkerLifetime time.Duration
@@ -42,7 +36,7 @@ type Pool[T any] struct {
 }
 
 type poolShard[T any] struct {
-	pool      *Pool[T]
+	wp        *Pool[T]
 	tqLock    sync.RWMutex
 	taskQueue chan T
 	workers   int64
@@ -56,13 +50,15 @@ const defaultShardMaxWorkers = 2048
 const defaultNumShardsMin = 2
 const defaultNumShardsMax = 48
 
-// defaultNumShards returns GOMAXPROCS, clamped to [defaultNumShardsMin, defaultNumShardsMax].
+// defaultNumShards returns GOMAXPROCS/2, clamped to [defaultNumShardsMin, defaultNumShardsMax].
 func defaultNumShards() int {
-	n := min(max(
-		runtime.GOMAXPROCS(0),
-		defaultNumShardsMin,
-	), defaultNumShardsMax)
-
+	n := runtime.GOMAXPROCS(0) / 2
+	if n < defaultNumShardsMin {
+		n = defaultNumShardsMin
+	}
+	if n > defaultNumShardsMax {
+		n = defaultNumShardsMax
+	}
 	if (n % 2) != 0 {
 		n++
 	}
@@ -70,9 +66,7 @@ func defaultNumShards() int {
 	return n
 }
 
-/*
-NewPool ...
-*/
+// Creates a new Pool with the given task handling function
 func NewPool[T any](handlerFunc TaskHandlerFunc[T]) *Pool[T] {
 	wp := &Pool[T]{
 		handlerFunc:        handlerFunc,
@@ -88,119 +82,119 @@ func NewPool[T any](handlerFunc TaskHandlerFunc[T]) *Pool[T] {
 }
 
 // Sets the maximum number of workers that may exist concurrently.
-func (pool *Pool[T]) SetMaxWorkers(n int) {
+func (wp *Pool[T]) SetMaxWorkers(n int) {
 	if n < 0 {
 		n = 0
 	}
-	pool.maxWorkers = n
+	wp.maxWorkers = n
 }
 
 // Sets the per-shard task queue capacity. Values below 16 are clamped to 16.
-func (pool *Pool[T]) SetQueueSize(size int) {
+func (wp *Pool[T]) SetQueueSize(size int) {
 	if size < 16 {
 		size = 16
 	}
-	pool.queueSize = size
+	wp.queueSize = size
 }
 
 // Sets the minimum number of workers per shard that are kept alive when idle.
 // Also used as the initial worker count per shard at Start().
-func (pool *Pool[T]) SetShardMinWorkers(n int) {
+func (wp *Pool[T]) SetShardMinWorkers(n int) {
 	if n < 1 {
 		n = 1
 	}
-	pool.shardMinWorkers = n
+	wp.shardMinWorkers = n
 }
 
 // Sets the maximum number of workers that may be spawned per shard.
 // Acts as a per-shard backpressure cap independent of (and additional to)
 // the global SetMaxWorkers cap. Values <= 0 reset to defaultShardMaxWorkers.
-func (pool *Pool[T]) SetShardMaxWorkers(n int) {
+func (wp *Pool[T]) SetShardMaxWorkers(n int) {
 	if n <= 0 {
 		n = defaultShardMaxWorkers
 	}
-	pool.shardMaxWorkers = n
+	wp.shardMaxWorkers = n
 }
 
 // Sets number of shards. Values <= 0 reset to the runtime-derived default
 // (GOMAXPROCS/4, clamped to [defaultNumShardsMin, defaultNumShardsMax]).
-func (pool *Pool[T]) SetNumShards(numShards int) {
+func (wp *Pool[T]) SetNumShards(numShards int) {
 	if numShards <= 0 {
 		numShards = defaultNumShards()
 	}
 	if numShards > maxShards {
 		numShards = maxShards
 	}
-	pool.numShards = numShards
+	wp.numShards = numShards
 }
 
 // Sets the idle worker lifetime
-func (pool *Pool[T]) SetIdleWorkerLifetime(d time.Duration) {
-	pool.idleWorkerLifetime = d
+func (wp *Pool[T]) SetIdleWorkerLifetime(d time.Duration) {
+	wp.idleWorkerLifetime = d
 }
 
 // Returns the number of currently spawned workers
-func (pool *Pool[T]) GetSpawnedWorkers() int {
-	return int(atomic.LoadUint64(&pool.spawnedWorkers))
+func (wp *Pool[T]) GetSpawnedWorkers() int {
+	return int(atomic.LoadUint64(&wp.spawnedWorkers))
 }
 
 // Returns the number of shards
-func (pool *Pool[T]) GetNumShards() int {
-	return pool.numShards
+func (wp *Pool[T]) GetNumShards() int {
+	return wp.numShards
 }
 
 // Starts the worker pool
-func (pool *Pool[T]) Start() {
-	pool.mutex.Lock()
-	defer pool.mutex.Unlock()
+func (wp *Pool[T]) Start() {
+	wp.mutex.Lock()
+	defer wp.mutex.Unlock()
 
-	if pool.started {
+	if wp.started {
 		return
 	}
 
-	if pool.numShards <= 0 {
-		pool.numShards = defaultNumShards()
+	if wp.numShards <= 0 {
+		wp.numShards = defaultNumShards()
 	}
 
-	pool.notify = make(chan struct{}, 1)
-	pool.stopChan = make(chan struct{})
-	pool.doneChan = make(chan struct{})
-	pool.doneOnce = sync.Once{}
+	wp.notify = make(chan struct{}, 1)
+	wp.stopChan = make(chan struct{})
+	wp.doneChan = make(chan struct{})
+	wp.doneOnce = sync.Once{}
 
-	for i := 0; i < pool.numShards; i++ {
+	for i := 0; i < wp.numShards; i++ {
 		shard := &poolShard[T]{
-			pool:      pool,
-			taskQueue: make(chan T, pool.queueSize),
+			wp:        wp,
+			taskQueue: make(chan T, wp.queueSize),
 		}
-		pool.shards = append(pool.shards, shard)
+		wp.shards = append(wp.shards, shard)
 
 		// Start initial workers per shard
-		for j := 0; j < pool.shardMinWorkers; j++ {
+		for j := 0; j < wp.shardMinWorkers; j++ {
 			shard.spawnWorker()
 		}
 	}
 
-	pool.started = true
+	wp.started = true
 }
 
 // Stops the worker pool
-func (pool *Pool[T]) Stop() {
-	pool.mutex.Lock()
-	defer pool.mutex.Unlock()
+func (wp *Pool[T]) Stop() {
+	wp.mutex.Lock()
+	defer wp.mutex.Unlock()
 
-	if !pool.started || atomic.LoadInt32(&pool.stopped) != 0 {
+	if !wp.started || atomic.LoadInt32(&wp.stopped) != 0 {
 		return
 	}
 
-	atomic.StoreInt32(&pool.stopped, 1)
-	close(pool.stopChan)
+	atomic.StoreInt32(&wp.stopped, 1)
+	close(wp.stopChan)
 
 	// Close each shard's taskQueue under tqLock. Lock waits for any in-flight
 	// dispatcher's RLock to release, so no send can race the close. Late
-	// dispatchers acquire RLock after this point and see pool.stopped == 1, so
+	// dispatchers acquire RLock after this point and see wp.stopped == 1, so
 	// they bail with ErrPoolStopped before touching the channel. Workers
 	// drain buffered tasks and then see !ok on their next receive and exit.
-	for _, shard := range pool.shards {
+	for _, shard := range wp.shards {
 		shard.tqLock.Lock()
 		close(shard.taskQueue)
 		shard.tqLock.Unlock()
@@ -208,17 +202,17 @@ func (pool *Pool[T]) Stop() {
 }
 
 // Stops the worker pool and blocks until all workers have exited.
-func (pool *Pool[T]) StopAndWait() {
-	pool.Stop()
-	<-pool.doneChan
+func (wp *Pool[T]) StopAndWait() {
+	wp.Stop()
+	<-wp.doneChan
 }
 
 // Stops the worker pool and waits up to timeout for all workers to exit.
 // Returns true if all workers exited, false on timeout.
-func (pool *Pool[T]) StopWithTimeout(timeout time.Duration) bool {
-	pool.Stop()
+func (wp *Pool[T]) StopWithTimeout(timeout time.Duration) bool {
+	wp.Stop()
 	select {
-	case <-pool.doneChan:
+	case <-wp.doneChan:
 		return true
 	case <-time.After(timeout):
 		return false
@@ -226,89 +220,62 @@ func (pool *Pool[T]) StopWithTimeout(timeout time.Duration) bool {
 }
 
 // Adds a new task
-func (pool *Pool[T]) AddTask(task T) error {
-	if !pool.started {
-		return errors.New("worker pool must be started first")
-	}
-
-	if atomic.LoadInt32(&pool.stopped) != 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"pool: stopped",
+func (wp *Pool[T]) AddTask(task T) *errnie.ErrnieError {
+	if !wp.started {
+		return errnie.Err(
+			errnie.NotFound,
+			"runtime: pool stopped",
 			nil,
-		))
+		)
 	}
 
-	shard := pool.shards[randInt()%pool.numShards]
-	return shard.dispatch(task)
-}
-
-/*
-AddKeyedTask adds a task to the stable shard of its key. Every task for one
-key lands on the same shard, so per-key ordering holds across a burst of
-keyed drains while unrelated keys run concurrently on other shards.
-*/
-func (pool *Pool[T]) AddKeyedTask(key string, task T) error {
-	if !pool.started {
-		return errors.New("worker pool must be started first")
-	}
-
-	if atomic.LoadInt32(&pool.stopped) != 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"pool: stopped",
+	if atomic.LoadInt32(&wp.stopped) != 0 {
+		return errnie.Err(
+			errnie.NotFound,
+			"runtime: pool stopped",
 			nil,
-		))
+		)
 	}
 
-	shard := pool.shards[stableKeyHash(key)%uint32(pool.numShards)]
+	shard := wp.shards[randInt()%wp.numShards]
 	return shard.dispatch(task)
-}
-
-/*
-stableKeyHash is a FNV-1a hash of the key string, allocation-free, used to
-route keyed work to a fixed shard.
-*/
-func stableKeyHash(key string) uint32 {
-	hash := uint32(2166136261)
-
-	for index := 0; index < len(key); index++ {
-		hash ^= uint32(key[index])
-		hash *= 16777619
-	}
-
-	return hash
 }
 
 // Adds a new task and blocks until submitted
-func (pool *Pool[T]) AddTaskWithBlocking(task T) (err error) {
-	if err = pool.AddTask(task); err == nil || !errnie.IsTooManyRequests(err) {
+func (wp *Pool[T]) AddTaskWithBlocking(task T) error {
+	err := wp.AddTask(task)
+
+	if err == nil || err.Kind != errnie.TooManyRequests {
 		return err
 	}
 
-	atomic.AddUint64(&pool.waiters, 1)
+	atomic.AddUint64(&wp.waiters, 1)
 
 	for {
-		if err = pool.AddTask(task); err == nil {
-			n := atomic.AddUint64(&pool.waiters, ^uint64(0))
+		err = wp.AddTask(task)
+
+		if err == nil {
+			n := atomic.AddUint64(&wp.waiters, ^uint64(0))
+
 			if n > 0 {
 				select {
-				case pool.notify <- struct{}{}:
+				case wp.notify <- struct{}{}:
 				default:
 				}
 			}
+
 			return nil
 		}
 
-		if !errnie.IsTooManyRequests(err) {
-			atomic.AddUint64(&pool.waiters, ^uint64(0))
+		if err.Kind != errnie.TooManyRequests {
+			atomic.AddUint64(&wp.waiters, ^uint64(0))
 			return err
 		}
 
 		select {
-		case <-pool.notify:
-		case <-pool.stopChan:
-			atomic.AddUint64(&pool.waiters, ^uint64(0))
+		case <-wp.notify:
+		case <-wp.stopChan:
+			atomic.AddUint64(&wp.waiters, ^uint64(0))
 			return errors.New("worker pool stopped")
 		}
 	}
@@ -317,25 +284,24 @@ func (pool *Pool[T]) AddTaskWithBlocking(task T) (err error) {
 // dispatch enqueues a task and spawns a worker on visible backlog.
 // The RLock fences the entire critical section (both send attempts and the
 // spawn calls) against Stop's close of taskQueue. Late dispatchers re-check
-// pool.stopped under the lock to close the TOCTOU window between AddTask's
+// wp.stopped under the lock to close the TOCTOU window between AddTask's
 // fast-path check and the actual send. A non-zero len() after a successful
 // send means no idle worker grabbed the task directly, so it would have to
 // wait — spawn one (capped).
-func (shard *poolShard[T]) dispatch(task T) error {
+func (shard *poolShard[T]) dispatch(task T) *errnie.ErrnieError {
 	if len(shard.taskQueue) > 0 {
 		//shard.trySpawnWorker()
 	}
 
 	shard.tqLock.RLock()
 
-	if atomic.LoadInt32(&shard.pool.stopped) != 0 {
+	if atomic.LoadInt32(&shard.wp.stopped) != 0 {
 		shard.tqLock.RUnlock()
-
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"pool: stopped",
+		return errnie.Err(
+			errnie.NotFound,
+			"runtime: pool stopped",
 			nil,
-		))
+		)
 	}
 
 	select {
@@ -359,64 +325,57 @@ func (shard *poolShard[T]) dispatch(task T) error {
 		return nil
 	default:
 		shard.tqLock.RUnlock()
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.TooManyRequests,
-			"pool: overloaded",
+			"runtime: pool overloaded",
 			nil,
-		))
+		)
 	}
 }
 
 // trySpawnWorker attempts to spawn a new worker for this shard, respecting both
-// the per-shard cap (shardMaxWorkers) and the global cap (pool.maxWorkers).
+// the per-shard cap (shardMaxWorkers) and the global cap (wp.maxWorkers).
 // Both bounds are enforced atomically via CAS to prevent TOCTOU over-spawn
 // when many dispatchers race the spawn decision.
 func (shard *poolShard[T]) trySpawnWorker() bool {
-	pool := shard.pool
-	shardMax := int64(pool.shardMaxWorkers)
-
+	wp := shard.wp
+	shardMax := int64(wp.shardMaxWorkers)
 	// Reserve a per-shard slot atomically.
 	for {
 		cur := atomic.LoadInt64(&shard.workers)
-
 		if cur >= shardMax {
 			return false
 		}
-
 		if atomic.CompareAndSwapInt64(&shard.workers, cur, cur+1) {
 			break
 		}
 	}
 
 	// Reserve a global slot atomically (or unconditional add when no cap).
-	if pool.maxWorkers > 0 {
+	if wp.maxWorkers > 0 {
 		for {
-			cur := atomic.LoadUint64(&pool.spawnedWorkers)
-
-			if cur >= uint64(pool.maxWorkers) {
+			cur := atomic.LoadUint64(&wp.spawnedWorkers)
+			if cur >= uint64(wp.maxWorkers) {
 				// Roll back the per-shard reservation.
 				atomic.AddInt64(&shard.workers, -1)
 				return false
 			}
-
-			if atomic.CompareAndSwapUint64(&pool.spawnedWorkers, cur, cur+1) {
+			if atomic.CompareAndSwapUint64(&wp.spawnedWorkers, cur, cur+1) {
 				break
 			}
 		}
 	} else {
-		atomic.AddUint64(&pool.spawnedWorkers, 1)
+		atomic.AddUint64(&wp.spawnedWorkers, 1)
 	}
 
 	go shard.workerLoop()
 	return true
 }
 
-/*
-spawnWorker is used by Start() for initial worker creation; it bypasses
-the per-shard cap check (Start owns the bookkeeping itself).
-*/
+// spawnWorker is used by Start() for initial worker creation; it bypasses
+// the per-shard cap check (Start owns the bookkeeping itself).
 func (shard *poolShard[T]) spawnWorker() {
-	atomic.AddUint64(&shard.pool.spawnedWorkers, 1)
+	atomic.AddUint64(&shard.wp.spawnedWorkers, 1)
 	atomic.AddInt64(&shard.workers, 1)
 	go shard.workerLoop()
 }
@@ -426,8 +385,8 @@ func (shard *poolShard[T]) spawnWorker() {
 // without receiving a task. On Stop, taskQueue is closed: buffered values
 // drain first, then receives return !ok and the worker exits.
 func (shard *poolShard[T]) workerLoop() {
-	pool := shard.pool
-	idleTimeout := pool.idleWorkerLifetime
+	wp := shard.wp
+	idleTimeout := wp.idleWorkerLifetime
 	var idleTimer *time.Timer
 
 	for {
@@ -440,27 +399,23 @@ func (shard *poolShard[T]) workerLoop() {
 				if !ok {
 					goto exit
 				}
-				pool.notifyWaiter() // Space is now available, wake up blocked producers
-				pool.handlerFunc(task)
+				wp.handlerFunc(task)
 			default:
 				goto idle
 			}
 		}
 
 	idle:
-		pool.notifyWaiter()
+		wp.notifyWaiter()
 
 		// Floor workers wait indefinitely to keep the shard warm. Plain
 		// chanrecv (the compiler skips selectgo for a single-case receive).
-		if atomic.LoadInt64(&shard.workers) <= int64(pool.shardMinWorkers) {
+		if atomic.LoadInt64(&shard.workers) <= int64(wp.shardMinWorkers) {
 			task, ok := <-shard.taskQueue
-
 			if !ok {
 				goto exit
 			}
-
-			pool.notifyWaiter() // Space is now available, wake up blocked producers
-			pool.handlerFunc(task)
+			wp.handlerFunc(task)
 			continue
 		}
 
@@ -480,21 +435,16 @@ func (shard *poolShard[T]) workerLoop() {
 				default:
 				}
 			}
-
 			if !ok {
 				goto exit
 			}
-
-			pool.notifyWaiter() // Space is now available, wake up blocked producers
-			pool.handlerFunc(task)
+			wp.handlerFunc(task)
 		case <-idleTimer.C:
 			for {
 				workers := atomic.LoadInt64(&shard.workers)
-
-				if workers <= int64(pool.shardMinWorkers) {
+				if workers <= int64(wp.shardMinWorkers) {
 					break
 				}
-
 				// Only exit if the decrement keeps the shard at or above its floor.
 				if atomic.CompareAndSwapInt64(&shard.workers, workers, workers-1) {
 					goto exit2
@@ -506,21 +456,55 @@ func (shard *poolShard[T]) workerLoop() {
 exit:
 	atomic.AddInt64(&shard.workers, -1)
 exit2:
-	atomic.AddUint64(&pool.spawnedWorkers, ^uint64(0))
-	pool.notifyWaiter()
-
-	if atomic.LoadInt32(&pool.stopped) != 0 && atomic.LoadUint64(&pool.spawnedWorkers) == 0 {
-		pool.doneOnce.Do(func() { close(pool.doneChan) })
+	atomic.AddUint64(&wp.spawnedWorkers, ^uint64(0))
+	wp.notifyWaiter()
+	if atomic.LoadInt32(&wp.stopped) != 0 && atomic.LoadUint64(&wp.spawnedWorkers) == 0 {
+		wp.doneOnce.Do(func() { close(wp.doneChan) })
 	}
 }
 
-func (pool *Pool[T]) notifyWaiter() {
-	if atomic.LoadUint64(&pool.waiters) == 0 {
+func (wp *Pool[T]) notifyWaiter() {
+	if atomic.LoadUint64(&wp.waiters) == 0 {
 		return
 	}
-
 	select {
-	case pool.notify <- struct{}{}:
+	case wp.notify <- struct{}{}:
 	default:
 	}
+}
+
+// SplitMix64 style random pseudo number generator
+type splitMix64 struct {
+	state uint64
+}
+
+func (sm64 *splitMix64) Init(seed int64) {
+	sm64.state = uint64(seed)
+}
+
+func (sm64 *splitMix64) Uint64() uint64 {
+	sm64.state = sm64.state + uint64(0x9E3779B97F4A7C15)
+	z := sm64.state
+	z = (z ^ (z >> 30)) * uint64(0xBF58476D1CE4E5B9)
+	z = (z ^ (z >> 27)) * uint64(0x94D049BB133111EB)
+	return z ^ (z >> 31)
+}
+
+func (sm64 *splitMix64) Int63() int64 {
+	return int64(sm64.Uint64() & (1<<63 - 1))
+}
+
+var splitMix64Pool = sync.Pool{
+	New: func() any {
+		sm64 := &splitMix64{}
+		sm64.Init(time.Now().UnixNano())
+		return sm64
+	},
+}
+
+func randInt() (r int) {
+	sm64 := splitMix64Pool.Get().(*splitMix64)
+	r = int(sm64.Int63())
+	splitMix64Pool.Put(sm64)
+	return
 }

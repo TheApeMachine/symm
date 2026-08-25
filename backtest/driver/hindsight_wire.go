@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/theapemachine/symm/backtest/hindsight"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -13,12 +12,12 @@ import (
 publishHindsight emits one hindsight wire frame for the dashboard.
 */
 func (driver *Driver) publishHindsight(report RealizedReport) {
-	ui := runtime.ChannelOf[*types.UIFrame](driver.ui, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" })
-	ui.Publish(&types.UIFrame{
-		Type:  wire.FrameHindsightFrame,
-		Value: hindsightWire(report),
-	})
+	if driver.ui != nil {
+		driver.ui.Publish(types.ChannelUI, &types.UIFrame{
+			Type:  wire.FrameHindsightFrame,
+			Value: hindsightWire(report),
+		})
+	}
 }
 
 func hindsightWire(report RealizedReport) *wire.HindsightFrameT {

@@ -462,37 +462,50 @@ is read through the workspace pool and type-asserted to *book.Book; a missing
 book or a missing touch panics by design rather than being silently skipped.
 */
 func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	shared, found := level3.workspace.Shared("api", "")
-	if !found {
-		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: api missing for %s", symbol)}
-	}
-
-	api, ok := shared.(*websocket.API)
-	if !ok || api == nil {
-		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: api has unexpected type for %s", symbol)}
+	if level3 == nil || level3.workspace == nil {
+		panic(fmt.Sprintf("toxicity: workspace missing for %s", symbol))
 	}
 
 	var hasQuote bool
 	var bidPrice, askPrice, bidQty, askQty float64
 
-	api.Book(symbol, func(currentBook *book.Book) {
-		if currentBook == nil {
-			return
-		}
-		bestBid := currentBook.BestBid()
-		bestAsk := currentBook.BestAsk()
+	if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			bestBid := currentBook.BestBid()
+			bestAsk := currentBook.BestAsk()
 
-		if bestBid != nil && bestAsk != nil {
-			bidPrice = bestBid.Price.Float64()
-			askPrice = bestAsk.Price.Float64()
-			bidQty = bestBid.Quantity.Float64()
-			askQty = bestAsk.Quantity.Float64()
-			hasQuote = true
+			if bestBid != nil && bestAsk != nil {
+				bidPrice = bestBid.Price.Float64()
+				askPrice = bestAsk.Price.Float64()
+				bidQty = bestBid.Quantity.Float64()
+				askQty = bestAsk.Quantity.Float64()
+				hasQuote = true
+			}
 		}
-	})
+	} else if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
+		if api, ok := shared.(*websocket.API); ok && api != nil {
+			api.Book(symbol, func(currentBook *book.Book) {
+				if currentBook == nil {
+					return
+				}
+				bestBid := currentBook.BestBid()
+				bestAsk := currentBook.BestAsk()
+
+				if bestBid != nil && bestAsk != nil {
+					bidPrice = bestBid.Price.Float64()
+					askPrice = bestAsk.Price.Float64()
+					bidQty = bestBid.Quantity.Float64()
+					askQty = bestAsk.Quantity.Float64()
+					hasQuote = true
+				}
+			})
+		}
+	} else {
+		panic(fmt.Sprintf("toxicity: shared book or api missing for %s", symbol))
+	}
 
 	if !hasQuote {
-		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: book touch missing for %s", symbol)}
+		panic(fmt.Sprintf("toxicity: book touch missing for %s", symbol))
 	}
 	sec := float64(at.Unix())
 	nsec := float64(at.Nanosecond())

@@ -17,6 +17,12 @@ func NewLoader(tokenizer *Tokenizer) *Loader {
 	}
 }
 
+/*
+Stream iterates every dataset's yielded State and groups them into batches of
+at most `batch` particles, as the resident buffer is resized per batch. Each
+dataset now yields fully-formed particles directly, so the loader no longer
+routes content through the byte tokenizer's MakeBatch compression.
+*/
 func (loader *Loader) Stream() []*State {
 	if loader == nil || loader.tokenizer == nil {
 		return nil
@@ -25,47 +31,56 @@ func (loader *Loader) Stream() []*State {
 	var batches []*State
 
 	for _, dataset := range loader.tokenizer.Datasets {
-		pairs := dataset.Generate()
-		bytes := make([]int64, 0, loader.batch)
-		seqs := make([]int64, 0, loader.batch)
+		accumulated := newState(0)
+		accumulated.N = 0
 
-		for _, pair := range pairs {
-			bytes = append(bytes, pair[0])
-			seqs = append(seqs, pair[1])
-
-			if len(bytes) < loader.batch {
+		for state := range dataset.Generate() {
+			if state == nil || state.N == 0 {
 				continue
 			}
 
-			if batch := loader.emit(bytes, seqs); batch != nil {
-				batches = append(batches, batch)
+			accumulated = appendState(accumulated, state)
+			loader.TotalRaw += state.N
+			loader.TotalCompressed += state.N
+
+			if accumulated.N < loader.batch {
+				continue
 			}
 
-			bytes = bytes[:0]
-			seqs = seqs[:0]
+			batches = append(batches, accumulated)
+			accumulated = newState(0)
+			accumulated.N = 0
 		}
 
-		if len(bytes) == 0 {
+		if accumulated.N == 0 {
 			continue
 		}
 
-		if batch := loader.emit(bytes, seqs); batch != nil {
-			batches = append(batches, batch)
-		}
+		batches = append(batches, accumulated)
 	}
 
 	return batches
 }
 
-func (loader *Loader) emit(bytes, seqs []int64) *State {
-	raw := len(bytes)
-	loader.TotalRaw += raw
-	batch, err := loader.tokenizer.MakeBatch(bytes, seqs)
-
-	if err != nil || batch == nil {
-		return nil
+/*
+appendState folds one single-particle State into an accumulated batch, growing
+the accumulator's columns in place.
+*/
+func appendState(accumulated, state *State) *State {
+	return &State{
+		N:          accumulated.N + state.N,
+		Bytes:      append(accumulated.Bytes, state.Bytes...),
+		Seqs:       append(accumulated.Seqs, state.Seqs...),
+		TokenIDs:   append(accumulated.TokenIDs, state.TokenIDs...),
+		ContentIDs: append(accumulated.ContentIDs, state.ContentIDs...),
+		Phase:      append(accumulated.Phase, state.Phase...),
+		Omega:      append(accumulated.Omega, state.Omega...),
+		Energy:     append(accumulated.Energy, state.Energy...),
+		Mass:       append(accumulated.Mass, state.Mass...),
+		Heat:       append(accumulated.Heat, state.Heat...),
+		Pos:        append(accumulated.Pos, state.Pos...),
+		Vel:        append(accumulated.Vel, state.Vel...),
+		Clamped:    append(accumulated.Clamped, state.Clamped...),
+		Dark:       append(accumulated.Dark, state.Dark...),
 	}
-
-	loader.TotalCompressed += batch.N
-	return batch
 }

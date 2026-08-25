@@ -45,6 +45,10 @@ func (book *Book) SetBus(bus *runtime.Workspace) {
 	}
 
 	book.bus.Store(bus)
+
+	// The manifold stage reads the whole universe through the manager, so the
+	// manager itself is shared once under a fixed key rather than per symbol.
+	bus.Share("books", book.manager)
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {

@@ -127,10 +127,7 @@ func NewHub(
 		}),
 		price:   price,
 		balance: balance,
-		fluid: NewFluidRTC(ctx, runtime.ChannelOf[types.FluidFrame](
-			bus, types.ChannelFluid,
-			func(frame types.FluidFrame) string { return "" },
-		), "fluid"),
+		fluid: NewFluidRTC(ctx, bus, "fluid"),
 		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
 		maxBatchFrames:  viper.GetInt("ui.websocket.max_batch_frames"),
 	}
@@ -169,13 +166,6 @@ func NewHub(
 			))
 			return
 		}
-
-		ui := runtime.ChannelOf(
-			hub.bus, types.ChannelUI,
-			func(frame *types.UIFrame) string { return "" },
-		)
-
-		consumerID := consumerIDFor()
 
 		initialFrames := make([]*types.UIFrame, 0, 3)
 
@@ -265,23 +255,45 @@ func NewHub(
 			}
 		}
 
-		// Each client subscribes its own bounded ring on the UI channel and
-		// consumes it directly (like a signal consumes its inputs); no extra
-		// frame channel hops between the ring and the socket. The workspace's
-		// ring is bounded and drops oldest under overload, so a slow client
-		// sheds frames instead of stalling the producer.
-		ui.Subscribe(consumerID, func(frame *types.UIFrame) error {
-			err := writeUI(
-				conn.Conn,
-				hub.maxMessageBytes,
-				[]*types.UIFrame{frame},
-			)
+		var clientActive atomic.Bool
+		clientActive.Store(true)
 
-			if expectedDashboardWriteClosure(err) {
-				return runtime.ErrUnsubscribe
+		writeQueue := make(chan *types.UIFrame, 2048)
+		defer close(writeQueue)
+
+		go func() {
+			for frame := range writeQueue {
+				if !clientActive.Load() {
+					return
+				}
+
+				err := writeUI(
+					conn.Conn,
+					hub.maxMessageBytes,
+					[]*types.UIFrame{frame},
+				)
+
+				if expectedDashboardWriteClosure(err) {
+					clientActive.Store(false)
+					return
+				}
+			}
+		}()
+
+		hub.bus.Observe(types.ChannelUI, func(topic string, value any) {
+			if !clientActive.Load() {
+				return
 			}
 
-			return err
+			frame, ok := value.(*types.UIFrame)
+			if !ok || frame == nil {
+				return
+			}
+
+			select {
+			case writeQueue <- frame:
+			default:
+			}
 		})
 
 

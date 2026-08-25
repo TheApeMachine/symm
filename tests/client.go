@@ -286,10 +286,11 @@ dropped, delayed, or reordered with the captured stream it closes.
 */
 func (conn *Conn) Fence() bool {
 	sequence := conn.fenceSequence.Add(1)
-	payload := []byte(fmt.Sprintf(
+	payload := fmt.Appendf(
+		nil,
 		`{"channel":"heartbeat","type":"update","sequence":%d}`,
 		sequence,
-	))
+	)
 
 	return conn.publish(payload)
 }

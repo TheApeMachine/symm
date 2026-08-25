@@ -1,403 +1,265 @@
 package runtime
 
 import (
-	"fmt"
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestRingFIFO(t *testing.T) {
-	ring := NewRing[int](4)
+type mockPassNode struct{}
 
-	for value := 1; value <= 4; value++ {
-		ring.Push(value)
-	}
-
-	for want := 1; want <= 4; want++ {
-		got, ok := ring.Pop()
-
-		if !ok || got != want {
-			t.Fatalf("pop %d: got %d ok=%v", want, got, ok)
-		}
-	}
-
-	if _, ok := ring.Pop(); ok {
-		t.Fatal("empty ring returned a value")
-	}
+func (node *mockPassNode) Step(input int) int {
+	return input * 2
 }
 
-func TestRingOverwriteOldest(t *testing.T) {
-	ring := NewRing[int](4)
+func WorkspaceWireTest(t *testing.T) {
+	Convey("Given a new Workspace instance", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		workspace := NewWorkspace(ctx)
 
-	for value := 1; value <= 6; value++ {
-		ring.Push(value)
-	}
+		Reset(func() {
+			workspace.Close()
+			cancel()
+		})
 
-	if dropped := ring.Dropped(); dropped != 2 {
-		t.Fatalf("dropped=%d want=2", dropped)
-	}
+		Convey("When wiring a single subscriber", func() {
+			var received atomic.Int64
+			var waitGroup sync.WaitGroup
+			waitGroup.Add(1)
 
-	for want := 3; want <= 6; want++ {
-		got, ok := ring.Pop()
-
-		if !ok || got != want {
-			t.Fatalf("pop %d: got %d ok=%v", want, got, ok)
-		}
-	}
-
-	if length := ring.Length(); length != 0 {
-		t.Fatalf("length=%d want=0 after full drain", length)
-	}
-}
-
-func TestRingConcurrentProducers(t *testing.T) {
-	const producers = 4
-	const perProducer = 1000
-
-	ring := NewRing[*int](4096)
-	var group sync.WaitGroup
-
-	for producerIndex := range producers {
-		group.Add(1)
-
-		go func() {
-			defer group.Done()
-
-			for valueIndex := range perProducer {
-				value := producerIndex*perProducer + valueIndex
-				ring.Push(&value)
-			}
-		}()
-	}
-
-	group.Wait()
-
-	seen := make(map[int]bool)
-	order := make([]int, 0, producers*perProducer)
-
-	for {
-		value, ok := ring.Pop()
-
-		if !ok {
-			break
-		}
-
-		if seen[*value] {
-			t.Fatalf("value %d consumed twice", *value)
-		}
-
-		seen[*value] = true
-		order = append(order, *value)
-	}
-
-	if len(order) != producers*perProducer {
-		t.Fatalf("consumed %d values, want %d", len(order), producers*perProducer)
-	}
-
-	// Each producer's values must appear in push order.
-	lastSeen := make([]int, producers)
-
-	for _, value := range order {
-		producerIndex := value / perProducer
-		valueIndex := value % perProducer
-
-		if valueIndex < lastSeen[producerIndex] {
-			t.Fatalf("producer %d out of order: %v", producerIndex, order)
-		}
-
-		lastSeen[producerIndex] = valueIndex
-	}
-}
-
-type busItem struct {
-	key   string
-	value int
-}
-
-func TestWorkspaceChannelFansOutToEverySubscription(t *testing.T) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
-	channel := ChannelOf(workspace, "items", func(item busItem) string {
-		return item.key
-	})
-
-	var mu sync.Mutex
-	seenA := map[string][]int{}
-	seenB := map[string][]int{}
-
-	channel.Subscribe("a", func(item busItem) error {
-		mu.Lock()
-		seenA[item.key] = append(seenA[item.key], item.value)
-		mu.Unlock()
-		return nil
-	})
-	channel.Subscribe("b", func(item busItem) error {
-		mu.Lock()
-		seenB[item.key] = append(seenB[item.key], item.value)
-		mu.Unlock()
-		return nil
-	})
-
-	for value := 0; value < 8; value++ {
-		channel.Publish(busItem{key: "BTC", value: value})
-		channel.Publish(busItem{key: "ETH", value: value})
-	}
-
-	deadline := time.Now().Add(3 * time.Second)
-
-	for channel.Snapshot().Completed < 32 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-
-	if got := channel.Snapshot().Completed; got != 32 {
-		t.Fatalf("completed=%d want=32", got)
-	}
-
-	for _, seen := range []map[string][]int{seenA, seenB} {
-		for _, key := range []string{"BTC", "ETH"} {
-			mu.Lock()
-			values := append([]int(nil), seen[key]...)
-			mu.Unlock()
-
-			for index, value := range values {
-				if value != index {
-					t.Fatalf("%s order=%v", key, values)
+			workspace.Wire("inbound", "", func(input any) any {
+				if value, ok := input.(int64); ok {
+					received.Store(value)
+					waitGroup.Done()
 				}
+
+				return nil
+			})
+
+			workspace.Publish("inbound", int64(42))
+
+			waitGroup.Wait()
+			So(received.Load(), ShouldEqual, 42)
+		})
+
+		Convey("When wiring chained cascading subscribers", func() {
+			var stage1Received atomic.Int64
+			var stage2Received atomic.Int64
+			var stage3Received atomic.Int64
+			var waitGroup sync.WaitGroup
+			waitGroup.Add(3)
+
+			// Stage 1: "raw" -> "doubled"
+			workspace.Wire("raw", "doubled", func(input any) any {
+				value := input.(int64)
+				stage1Received.Store(value)
+				waitGroup.Done()
+				return value * 2
+			})
+
+			// Stage 2: "doubled" -> "tripled"
+			workspace.Wire("doubled", "tripled", func(input any) any {
+				value := input.(int64)
+				stage2Received.Store(value)
+				waitGroup.Done()
+				return value * 3
+			})
+
+			// Stage 3: "tripled" -> "" (sink)
+			workspace.Wire("tripled", "", func(input any) any {
+				value := input.(int64)
+				stage3Received.Store(value)
+				waitGroup.Done()
+				return nil
+			})
+
+			workspace.Publish("raw", int64(5))
+
+			waitGroup.Wait()
+			So(stage1Received.Load(), ShouldEqual, 5)
+			So(stage2Received.Load(), ShouldEqual, 10)
+			So(stage3Received.Load(), ShouldEqual, 30)
+		})
+
+		Convey("When wiring with WireNode and WireFunc helpers", func() {
+			var finalOutput atomic.Int64
+			var waitGroup sync.WaitGroup
+			waitGroup.Add(2)
+
+			node := &mockPassNode{}
+			WireNode[int, int](workspace, "node_in", "func_in", node)
+
+			WireFunc[int, int](workspace, "func_in", "", func(input int) int {
+				finalOutput.Store(int64(input + 10))
+				waitGroup.Done()
+				return 0
+			})
+
+			// Observer to confirm stage 1 output
+			workspace.Observe("func_in", func(topic string, value any) {
+				waitGroup.Done()
+			})
+
+			workspace.Publish("node_in", 21)
+
+			waitGroup.Wait()
+			So(finalOutput.Load(), ShouldEqual, 52)
+		})
+	})
+}
+
+func WorkspaceObserveTest(t *testing.T) {
+	Convey("Given a Workspace with Observers registered", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		workspace := NewWorkspace(ctx)
+
+		Reset(func() {
+			workspace.Close()
+			cancel()
+		})
+
+		var topicObserved atomic.Pointer[string]
+		var valueObserved atomic.Int64
+		var globalCount atomic.Int64
+		var waitGroup sync.WaitGroup
+		waitGroup.Add(2)
+
+		workspace.Observe("market.ticker", func(topic string, value any) {
+			topicObserved.Store(&topic)
+			if intVal, ok := value.(int64); ok {
+				valueObserved.Store(intVal)
 			}
-		}
-	}
+			waitGroup.Done()
+		})
+
+		workspace.ObserveAll(func(topic string, value any) {
+			globalCount.Add(1)
+			waitGroup.Done()
+		})
+
+		Convey("When publishing to the observed topic", func() {
+			workspace.Publish("market.ticker", int64(100))
+			waitGroup.Wait()
+
+			So(*topicObserved.Load(), ShouldEqual, "market.ticker")
+			So(valueObserved.Load(), ShouldEqual, 100)
+			So(globalCount.Load(), ShouldEqual, 1)
+		})
+	})
 }
 
-func TestWorkspaceRunsKeysConcurrently(t *testing.T) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
-	channel := ChannelOf(workspace, "concurrent", func(item busItem) string {
-		return item.key
+func WorkspaceShareTest(t *testing.T) {
+	Convey("Given a Workspace shared object pool", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		workspace := NewWorkspace(ctx)
+
+		Reset(func() {
+			workspace.Close()
+			cancel()
+		})
+
+		Convey("When sharing and retrieving objects with composite IDs", func() {
+			workspace.Share("orderbook", "BTC_BOOK", "BTC/USD")
+			workspace.Share("orderbook", "ETH_BOOK", "ETH/USD")
+			workspace.Share("thesis", 12345)
+
+			btcVal, foundBTC := workspace.Shared("orderbook", "BTC/USD")
+			ethVal, foundETH := workspace.Shared("orderbook", "ETH/USD")
+			thesisVal, foundThesis := workspace.Shared("thesis")
+			missingVal, foundMissing := workspace.Shared("nonexistent")
+
+			So(foundBTC, ShouldBeTrue)
+			So(btcVal, ShouldEqual, "BTC_BOOK")
+
+			So(foundETH, ShouldBeTrue)
+			So(ethVal, ShouldEqual, "ETH_BOOK")
+
+			So(foundThesis, ShouldBeTrue)
+			So(thesisVal, ShouldEqual, 12345)
+
+			So(foundMissing, ShouldBeFalse)
+			So(missingVal, ShouldBeNil)
+		})
+
+		Convey("When sharing with tricky delimiters to ensure no collisions", func() {
+			workspace.Share("a:b", "first", "c")
+			workspace.Share("a", "second", "b:c")
+
+			valA, foundA := workspace.Shared("a:b", "c")
+			valB, foundB := workspace.Shared("a", "b:c")
+
+			So(foundA, ShouldBeTrue)
+			So(valA, ShouldEqual, "first")
+
+			So(foundB, ShouldBeTrue)
+			So(valB, ShouldEqual, "second")
+		})
 	})
+}
 
-	active := atomic.Int32{}
-	peak := atomic.Int32{}
+func WorkspaceOnTest(t *testing.T) {
+	Convey("Given a Workspace signalling layer", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		workspace := NewWorkspace(ctx)
 
-	channel.Subscribe("consumer", func(item busItem) error {
-		current := active.Add(1)
-		for {
-			old := peak.Load()
-			if current <= old || peak.CompareAndSwap(old, current) {
-				break
+		Reset(func() {
+			workspace.Close()
+			cancel()
+		})
+
+		Convey("When registering multiple listeners on a signal", func() {
+			var triggerCount atomic.Int64
+			const listenerCount = 10
+			var waitGroup sync.WaitGroup
+			waitGroup.Add(listenerCount)
+
+			for index := 0; index < listenerCount; index++ {
+				workspace.On("websocket.disconnected", func() {
+					triggerCount.Add(1)
+					waitGroup.Done()
+				})
 			}
-		}
-		time.Sleep(time.Millisecond)
-		active.Add(-1)
-		return nil
+
+			workspace.Notify("websocket.disconnected")
+
+			waitGroup.Wait()
+			So(triggerCount.Load(), ShouldEqual, listenerCount)
+		})
 	})
-
-	for value := 0; value < 8; value++ {
-		for _, key := range []string{"BTC", "ETH", "SOL"} {
-			channel.Publish(busItem{key: key, value: value})
-		}
-	}
-
-	deadline := time.Now().Add(3 * time.Second)
-	for channel.Snapshot().Completed < 24 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if got := channel.Snapshot().Completed; got != 24 {
-		t.Fatalf("completed=%d want=24", got)
-	}
-	if peak.Load() < 2 {
-		t.Fatalf("keys did not execute concurrently; peak=%d", peak.Load())
-	}
 }
 
-func TestWorkspaceRetainsFirstError(t *testing.T) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
-	channel := ChannelOf(workspace, "errors", func(value int) string { return "one" })
-
-	channel.Subscribe("consumer", func(value int) error {
-		return fmt.Errorf("failed %d", value)
-	})
-	channel.Publish(7)
-
-	deadline := time.Now().Add(time.Second)
-	for channel.Error() == nil && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if channel.Error() == nil {
-		t.Fatal("channel did not retain step failure")
-	}
+func TestWorkspace(t *testing.T) {
+	WorkspaceWireTest(t)
+	WorkspaceObserveTest(t)
+	WorkspaceShareTest(t)
+	WorkspaceOnTest(t)
 }
 
-func TestWorkspaceDropsWhenSubscriptionSaturated(t *testing.T) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
-	channel := ChannelOf(workspace, "saturated", func(value int) string { return "one" })
+func BenchmarkWorkspacePublish(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	workspace := NewWorkspace(ctx)
 
-	block := make(chan struct{})
-	released := make(chan struct{})
-	var started atomic.Bool
-
-	channel.Subscribe("consumer", func(value int) error {
-		if started.CompareAndSwap(false, true) {
-			close(block)
-			<-released
-		}
-		return nil
-	})
-
-	channel.Publish(1)
-	<-block
-
-	for index := 0; index < 20000; index++ {
-		channel.Publish(2)
-	}
-
-	close(released)
-
-	if channel.Snapshot().Dropped == 0 {
-		t.Fatal("no drops counted while the subscription was saturated")
-	}
-}
-
-func TestWorkspaceObserve(t *testing.T) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
-
-	var observedKey atomic.Pointer[string]
-	var observedValue atomic.Int64
-	var observedCount atomic.Int64
-
-	workspace.Observe("metrics", func(channel string, key string, value any) {
-		if channel != "metrics" {
-			t.Errorf("channel=%q want=metrics", channel)
-		}
-
-		observedKey.Store(&key)
-
-		if intVal, ok := value.(int64); ok {
-			observedValue.Store(intVal)
-			observedCount.Add(1)
-		}
-	})
-
-	channel := ChannelOf(workspace, "metrics", func(value int64) string { return "BTC/USD" })
-	channel.Publish(int64(42))
-
-	if observedCount.Load() != 1 {
-		t.Fatalf("observedCount=%d want=1", observedCount.Load())
-	}
-
-	if observedValue.Load() != 42 {
-		t.Fatalf("observedValue=%d want=42", observedValue.Load())
-	}
-
-	if key := observedKey.Load(); key == nil || *key != "BTC/USD" {
-		t.Fatalf("observedKey=%v want=BTC/USD", key)
-	}
-}
-
-func TestChannelObserve(t *testing.T) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
-
-	var observedVal atomic.Int64
-	var observedKey atomic.Pointer[string]
-
-	channel := ChannelOf(workspace, "ticks", func(value int64) string { return "ETH/USD" })
-	channel.Observe(func(key string, value int64) {
-		observedKey.Store(&key)
-		observedVal.Store(value)
-	})
-
-	channel.Publish(int64(999))
-
-	if observedVal.Load() != 999 {
-		t.Fatalf("observedVal=%d want=999", observedVal.Load())
-	}
-
-	if key := observedKey.Load(); key == nil || *key != "ETH/USD" {
-		t.Fatalf("observedKey=%v want=ETH/USD", key)
-	}
-}
-
-func TestSharedKeyUnambiguousWithColons(t *testing.T) {
-	// These inputs previously collided under the colon-joined scheme.
-	if a := sharedKey("a:b", []string{"c"}); a == sharedKey("a", []string{"b:c"}) {
-		t.Fatalf("sharedKey collision: %q", a)
-	}
-
-	// Distinct id splits must remain distinct.
-	if bookSymbol := sharedKey("book", []string{"BTC/USD"}); bookSymbol == sharedKey("book", []string{"BTC:USD"}) {
-		t.Fatalf("distinct id splits collided")
-	}
-
-	// Empty ids are still omitted.
-	if got := sharedKey("book", []string{""}); got != sharedKey("book", nil) {
-		t.Fatalf("empty id not omitted: %q", got)
-	}
-}
-
-func TestWorkspaceShareNoColonCollision(t *testing.T) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
-
-	workspace.Share("a:b", 1, "c")
-	workspace.Share("a", 2, "b:c")
-
-	if valueA, foundA := workspace.Shared("a:b", "c"); !foundA || valueA != 1 {
-		t.Fatalf("first share not retrievable: %v %v", valueA, foundA)
-	}
-
-	if valueB, foundB := workspace.Shared("a", "b:c"); !foundB || valueB != 2 {
-		t.Fatalf("second share not retrievable: %v %v", valueB, foundB)
-	}
-}
-
-func TestWorkspaceOnConcurrentRegistrations(t *testing.T) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
-
-	const listenerCount = 64
-	var group sync.WaitGroup
-	group.Add(listenerCount)
-
-	for index := 0; index < listenerCount; index++ {
-		go func() {
-			defer group.Done()
-			workspace.On("topic", func() {})
-		}()
-	}
-
-	group.Wait()
-
-	got, found := workspace.listeners.Load("topic")
-	if !found {
-		t.Fatal("topic listeners not registered")
-	}
-
-	if count := len(got.([]func())); count != listenerCount {
-		t.Fatalf("registered %d listeners, want %d", count, listenerCount)
-	}
-}
-
-func BenchmarkWorkspacePublishWithObserver(b *testing.B) {
-	workspace := NewWorkspace(nil)
-	defer workspace.Close()
+	defer func() {
+		workspace.Close()
+		cancel()
+	}()
 
 	var counter atomic.Int64
-	workspace.Observe("bench", func(channel string, key string, value any) {
+	workspace.Observe("bench", func(topic string, value any) {
 		counter.Add(1)
 	})
-
-	channel := ChannelOf(workspace, "bench", func(value int64) string { return "BTC" })
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
-		channel.Publish(int64(1))
+	for index := 0; index < b.N; index++ {
+		workspace.Publish("bench", int64(1))
 	}
-}
 
+	// Allow pending messages to drain
+	time.Sleep(10 * time.Millisecond)
+}

@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"strings"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/graph"
@@ -18,7 +20,6 @@ import (
 	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"strings"
 )
 
 /*
@@ -516,7 +517,7 @@ func (crypto *Crypto) bindDiagnostics() {
 		// manifold fluid stream. This is a side effect, so it rides the observer
 		// hook: the Crypto owns its diagnostics end-to-end and does not depend on
 		// the boot wiring to surface the frame to a viewer.
-		crypto.bus.Observe(types.ChannelDiagnostics, func(_ string, _ string, value any) {
+		crypto.bus.Observe(types.ChannelDiagnostics, func(_ string, value any) {
 			diag, ok := value.(StreamDiagnostics)
 			if !ok {
 				return
@@ -524,22 +525,18 @@ func (crypto *Crypto) bindDiagnostics() {
 
 			diagWire := diag.Wire()
 
-			if crypto.fluid != nil {
-				crypto.fluid.Publish(types.FluidFrame{
-					Channel: types.DiagnosticsChannel,
-					Payload: telemetry.Encode(&wire.FrameT{
-						Type:  wire.FrameDiagnosticsFrame,
-						Value: diagWire,
-					}),
-				})
-			}
-
-			if crypto.ui != nil {
-				crypto.ui.Publish(&types.UIFrame{
+			crypto.bus.Publish(types.ChannelFluid, types.FluidFrame{
+				Channel: types.DiagnosticsChannel,
+				Payload: telemetry.Encode(&wire.FrameT{
 					Type:  wire.FrameDiagnosticsFrame,
 					Value: diagWire,
-				})
-			}
+				}),
+			})
+
+			crypto.bus.Publish(types.ChannelUI, &types.UIFrame{
+				Type:  wire.FrameDiagnosticsFrame,
+				Value: diagWire,
+			})
 		})
 	}
 
@@ -809,8 +806,8 @@ func (crypto *Crypto) publishDiagnostics() {
 		case <-timer.C:
 			diag := crypto.Diagnostics()
 
-			if crypto.diagnosticsCh != nil {
-				crypto.diagnosticsCh.Publish(diag)
+			if crypto.bus != nil {
+				crypto.bus.Publish(types.ChannelDiagnostics, diag)
 			}
 		}
 	}
@@ -1020,11 +1017,23 @@ observeChannel attaches the diagnostics clock to one typed bus channel.
 func observeChannel[T any](
 	bus *nomagiqueruntime.Workspace,
 	name string,
-	key func(T) string,
+	_ func(T) string,
 	begin func(string),
 	end func(string, time.Duration),
 ) {
-	nomagiqueruntime.ChannelOf[T](bus, name, key).SetObserver(begin, end)
+	if bus == nil {
+		return
+	}
+
+	bus.Observe(name, func(_ string, _ any) {
+		started := time.Now()
+		if begin != nil {
+			begin(name)
+		}
+		if end != nil {
+			end(name, time.Since(started))
+		}
+	})
 }
 
 /*
@@ -1033,7 +1042,11 @@ channelSnapshot reads one typed bus channel's live pressure snapshot.
 func channelSnapshot[T any](
 	bus *nomagiqueruntime.Workspace,
 	name string,
-	key func(T) string,
+	_ func(T) string,
 ) nomagiqueruntime.WorkspaceSnapshot {
-	return nomagiqueruntime.ChannelOf[T](bus, name, key).Snapshot()
+	if bus == nil {
+		return nomagiqueruntime.WorkspaceSnapshot{}
+	}
+
+	return bus.TopicSnapshot(name)
 }

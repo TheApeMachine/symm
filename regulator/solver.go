@@ -27,7 +27,7 @@ type Solver struct {
 	mu                   sync.Mutex
 	configSource         *system.Config
 	optimizer            *optimizer
-	output               *runtime.Channel[RegulatorPayload]
+	bus                  *runtime.Workspace
 	history              []float64
 	historyCapacity      int
 	lastEquity           float64
@@ -77,23 +77,20 @@ func NewSolver(
 		return nil, err
 	}
 
-	var output *runtime.Channel[RegulatorPayload]
-
-	if bus != nil {
-		output = runtime.ChannelOf[RegulatorPayload](
-			bus, types.ChannelRegulator,
-			func(payload RegulatorPayload) string { return "" },
-		)
-	}
-
-	return &Solver{
+	solver := &Solver{
 		configSource:    configSource,
 		optimizer:       model,
-		output:          output,
+		bus:             bus,
 		history:         make([]float64, 0, config.Regulator.HistoryCapacity),
 		historyCapacity: config.Regulator.HistoryCapacity,
 		marks:           make(map[string]observedPositionMark),
-	}, nil
+	}
+
+	if bus != nil {
+		bus.Share("regulator", solver, "")
+	}
+
+	return solver, nil
 }
 
 /*
@@ -197,8 +194,8 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 
 	// The dashboard frame is projected by the workspace observer on
 	// ChannelRegulator (boot.go); the solver emits the domain payload only.
-	if solver.output != nil {
-		solver.output.Publish(payload)
+	if solver.bus != nil {
+		solver.bus.Publish(types.ChannelRegulator, payload)
 	}
 
 	return nil

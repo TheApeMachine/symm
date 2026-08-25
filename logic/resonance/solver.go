@@ -40,9 +40,7 @@ type Solver struct {
 	references    *sync.Map
 	returnNoise   *sync.Map
 	pace          float64
-	resonance     *runtime.Channel[types.ResonanceArtifact]
 	thesis        *types.Thesis
-	work          *runtime.Subscription[kraken.TickerData]
 
 	// ObserveModule is an optional diagnostics hook reporting per-step coder
 	// duration so the wiring diagram can profile the resonance stage like
@@ -123,14 +121,14 @@ func NewSolver(
 		thesis:        thesis,
 	}
 
-	solver.resonance = runtime.ChannelOf[types.ResonanceArtifact](
-		bus, types.ChannelResonance,
-		func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
-	)
-	solver.work = runtime.ChannelOf[kraken.TickerData](
-		bus, types.ChannelTickers,
-		func(ticker kraken.TickerData) string { return ticker.Symbol },
-	).Subscribe(solver.Name(), solver.Step)
+	if bus != nil {
+		runtime.WireFunc[kraken.TickerData, *types.ResonanceArtifact](
+			bus,
+			types.ChannelTickers,
+			types.ChannelResonance,
+			solver.Step,
+		)
+	}
 
 	return solver
 }
@@ -145,8 +143,8 @@ func (solver *Solver) Status() types.Status {
 	return types.READY
 }
 
-// Step advances one symbol's predictive coder over one ticker observation.
-func (solver *Solver) Step(ticker kraken.TickerData) error {
+// Step advances one symbol's predictive coder over one ticker observation and returns the resulting artifact.
+func (solver *Solver) Step(ticker kraken.TickerData) *types.ResonanceArtifact {
 	return solver.Update(
 		ticker.Symbol,
 		ticker.Timestamp,
@@ -228,7 +226,7 @@ func (solver *Solver) Update(
 	symbolName string,
 	at time.Time,
 	features []float64,
-) error {
+) *types.ResonanceArtifact {
 	symbol := solver.thesis.Symbol(symbolName)
 	midpoint := midpointOrLast(features)
 
@@ -260,11 +258,12 @@ func (solver *Solver) Update(
 	coder, ok := detector.(*learning.PredictiveCoder)
 
 	if !ok || coder == nil {
-		return errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf("resonance: detector step failed for %s", symbolName),
 			nil,
 		))
+		return nil
 	}
 
 	standardized := solver.standardize(symbolName, features)
@@ -286,20 +285,19 @@ func (solver *Solver) Update(
 	}
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Internal,
 			fmt.Sprintf("resonance: detector step failed for %s", symbolName),
 			err,
 		))
+		return nil
 	}
 
 	if midpoint > 0 {
 		solver.references.Store(symbolName, midpoint)
 	}
 
-	solver.publishReturns(symbol, at, coder, out)
-
-	return nil
+	return solver.publishReturns(symbol, at, coder, out)
 }
 
 /*
@@ -463,13 +461,9 @@ func (solver *Solver) publishReturns(
 	at time.Time,
 	coder *learning.PredictiveCoder,
 	out learning.PredictiveOutput,
-) {
-	if symbol == nil {
-		return
-	}
-
-	if solver.resonance == nil || coder == nil || coder.Manifold() == nil {
-		return
+) *types.ResonanceArtifact {
+	if symbol == nil || coder == nil || coder.Manifold() == nil {
+		return nil
 	}
 
 	artifact := types.ResonanceArtifact{
@@ -524,7 +518,7 @@ func (solver *Solver) publishReturns(
 		}
 	}
 
-	solver.resonance.Publish(artifact)
+	return &artifact
 }
 
 /*

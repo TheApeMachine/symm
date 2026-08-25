@@ -25,7 +25,6 @@ visible the same way everything else does — on the next refresh.
 type Balance struct {
 	status types.Status
 	api    *websocket.API
-	ui     *runtime.Channel[*types.UIFrame]
 	wallet *sync.Map
 	quote  string
 }
@@ -49,12 +48,9 @@ func NewBalance(
 		panic("broker: api not found in workspace")
 	}
 
-	ui := runtime.ChannelOf(bus, types.ChannelUI, func(frame *types.UIFrame) string { return "" })
-
 	balance := &Balance{
 		status: types.READY,
 		api:    api,
-		ui:     ui,
 		wallet: &sync.Map{},
 		quote:  viper.GetViper().GetString("market.quote_currency"),
 	}

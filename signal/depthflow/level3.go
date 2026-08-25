@@ -640,15 +640,7 @@ or type-mismatched book yields no measurement; the caller skips it rather than
 panicking.
 */
 func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	shared, found := level3.workspace.Shared("api", "")
-
-	if !found {
-		return nil
-	}
-
-	api, ok := shared.(*websocket.API)
-
-	if !ok || api == nil {
+	if level3 == nil || level3.workspace == nil {
 		return nil
 	}
 
@@ -657,29 +649,46 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 	var touchBidPrice, touchAskPrice, touchBidNotional, touchAskNotional float64
 	var foundBook bool
 
-	api.Book(symbol, func(orderBook *book.Book) {
+	inspectBook := func(orderBook *book.Book) {
 		if orderBook == nil {
 			return
 		}
-		for _, priceLevel := range orderBook.Bids.Levels {
-			bidNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
+		if orderBook.Bids != nil {
+			for _, priceLevel := range orderBook.Bids.Levels {
+				if priceLevel != nil && priceLevel.Price != nil {
+					bidNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
+				}
+			}
 		}
-
-		for _, priceLevel := range orderBook.Asks.Levels {
-			askNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
+		if orderBook.Asks != nil {
+			for _, priceLevel := range orderBook.Asks.Levels {
+				if priceLevel != nil && priceLevel.Price != nil {
+					askNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
+				}
+			}
 		}
 
 		touchBid := orderBook.BestBid()
 		touchAsk := orderBook.BestAsk()
 
-		if touchBid != nil && touchAsk != nil {
+		if touchBid != nil && touchAsk != nil && touchBid.Price != nil && touchAsk.Price != nil {
 			foundBook = true
 			touchBidPrice = touchBid.Price.Float64()
 			touchAskPrice = touchAsk.Price.Float64()
 			touchBidNotional = touchBidPrice * touchBid.Quantity.Float64()
 			touchAskNotional = touchAskPrice * touchAsk.Quantity.Float64()
 		}
-	})
+	}
+
+	if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			inspectBook(currentBook)
+		}
+	} else if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
+		if api, ok := shared.(*websocket.API); ok && api != nil {
+			api.Book(symbol, inspectBook)
+		}
+	}
 
 	if !foundBook {
 		return nil

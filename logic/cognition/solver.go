@@ -80,7 +80,6 @@ type Solver struct {
 	maxSeqLen      int
 	surprisalLimit float64
 	tickCounter    uint64
-	cognition      *runtime.Channel[types.Cognition]
 
 	// Beam search shape. Held as fields rather than call-site constants so the
 	// lookahead can be tuned without also reshaping what Cortex draws — the two
@@ -185,19 +184,14 @@ func NewSolver(
 		opt(solver)
 	}
 
-	solver.cognition = runtime.ChannelOf[types.Cognition](
-		bus, types.ChannelCognition,
-		func(reading types.Cognition) string { return reading.Symbol },
-	)
-	runtime.ChannelOf[[]types.Category](
-		bus, types.ChannelCategories,
-		func(batch []types.Category) string {
-			if len(batch) == 0 {
-				return ""
-			}
-			return batch[0].Symbol
-		},
-	).Subscribe(solver.Name(), solver.Step)
+	if bus != nil {
+		runtime.WireFunc[[]types.Category, *types.Cognition](
+			bus,
+			types.ChannelCategories,
+			types.ChannelCognition,
+			solver.Step,
+		)
+	}
 
 	return solver
 }
@@ -209,8 +203,8 @@ func (solver *Solver) Name() string {
 func (solver *Solver) Error() error { return solver.err }
 
 // Step folds one category batch into the symbol's cognition state machine and
-// publishes the freshest reading downstream.
-func (solver *Solver) Step(categories []types.Category) error {
+// returns the freshest reading for downstream subscribers.
+func (solver *Solver) Step(categories []types.Category) *types.Cognition {
 	if len(categories) == 0 {
 		return nil
 	}
@@ -226,11 +220,13 @@ func (solver *Solver) Step(categories []types.Category) error {
 		rows,
 	); err != nil {
 		solver.err = errnie.Error(err)
-		return err
+		return nil
 	}
 
-	// The UI frame is published by the workspace observer on ChannelCognition
-	// (boot.go); the solver only emits the domain outputs below.
+	if reading, ok := rows[categories[0].Symbol]; ok {
+		return &reading
+	}
+
 	return nil
 }
 
@@ -489,10 +485,6 @@ func (solver *Solver) processBatch(
 	}
 
 	solver.readings[symbol] = cognition
-	if solver.cognition != nil {
-		solver.cognition.Publish(cognition)
-	}
-
 	rows[symbol] = cognition
 	return nil
 }

@@ -33,7 +33,7 @@ type Desk struct {
 	err            error
 	status         types.Status
 	api            *websocket.API
-	ui             *runtime.Channel[*types.UIFrame]
+	bus            *runtime.Workspace
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -43,8 +43,6 @@ type Desk struct {
 	recovery       *Recovery
 	positions      *sync.Map
 	passage        *types.PassageModel
-	tickerWork     *runtime.Subscription[kraken.TickerData]
-	executionWork  *runtime.Subscription[kraken.ExecutionData]
 	balanceRefresh atomic.Bool
 	maxPositions   int
 	maxReserved    int
@@ -143,23 +141,33 @@ func NewDesk(
 		passage:        types.NewPassageModel(),
 		maxPositions:   viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:    viper.GetViper().GetInt("trading.slots.reserved"),
+		bus:            bus,
 	}
 
-	desk.ui = runtime.ChannelOf(
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
 	desk.recovery = NewRecovery(
-		ctx, api, desk.ui, instrument, price, balance, recorder, store, desk.positions,
+		ctx, api, bus, instrument, price, balance, recorder, store, desk.positions,
 	)
-	desk.tickerWork = runtime.ChannelOf(
-		bus, types.ChannelTickers,
-		func(ticker kraken.TickerData) string { return ticker.Symbol },
-	).Subscribe(desk.Name(), desk.StepTicker)
-	desk.executionWork = runtime.ChannelOf(
-		bus, types.ChannelExecutions,
-		func(execution kraken.ExecutionData) string { return execution.Symbol },
-	).Subscribe(desk.Name(), desk.StepExecution)
+
+	if bus != nil {
+		runtime.WireFunc[kraken.TickerData, any](
+			bus,
+			types.ChannelTickers,
+			"",
+			func(ticker kraken.TickerData) any {
+				_ = desk.StepTicker(ticker)
+				return nil
+			},
+		)
+		runtime.WireFunc[kraken.ExecutionData, any](
+			bus,
+			types.ChannelExecutions,
+			"",
+			func(execution kraken.ExecutionData) any {
+				_ = desk.StepExecution(execution)
+				return nil
+			},
+		)
+	}
 
 	if err := desk.recovery.Recover(); err != nil {
 		desk.status = types.ERROR
@@ -403,8 +411,8 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
-	if desk.ui != nil {
-		desk.ui.Publish(&types.UIFrame{
+	if desk.bus != nil {
+		desk.bus.Publish(types.ChannelUI, &types.UIFrame{
 			Type: wire.FrameEquityFrame,
 			Value: &wire.EquityFrameT{
 				Cash:       desk.balance.Cash().String(),
@@ -626,7 +634,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		position := NewPosition(
 			desk.ctx,
 			desk.api,
-			desk.ui,
+			desk.bus,
 			desk.instrument,
 			desk.price,
 			desk.balance,

@@ -29,12 +29,12 @@ func TestHubWebsocketBusSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer listener.Close()
 
 	addr := listener.Addr().String()
-	listener.Close()
 
 	go func() {
-		_ = hub.app.Listen(addr)
+		_ = hub.app.Listener(listener)
 	}()
 	defer hub.app.Shutdown()
 
@@ -47,9 +47,6 @@ func TestHubWebsocketBusSmoke(t *testing.T) {
 			continue
 		}
 
-		ui := runtime.ChannelOf[*types.UIFrame](bus, types.ChannelUI,
-			func(frame *types.UIFrame) string { return "" })
-
 		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 
 		go func() {
@@ -57,7 +54,7 @@ func TestHubWebsocketBusSmoke(t *testing.T) {
 			defer ticker.Stop()
 
 			for range ticker.C {
-				ui.Publish(&types.UIFrame{
+				bus.Publish(types.ChannelUI, &types.UIFrame{
 					Type: wire.FrameTickFrame,
 					Value: &wire.TickFrameT{
 						Count: 1,

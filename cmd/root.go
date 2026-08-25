@@ -56,9 +56,9 @@ var (
 				"symm started with %d CPUs", runtime.NumCPU(),
 			))
 
-			// startPprof()
+			startPprof()
 
-			bus := nomagiqueruntime.NewWorkspace(nil)
+			bus := nomagiqueruntime.NewWorkspace(cmd.Context())
 
 			thesis := types.NewThesis(cmd.Context())
 

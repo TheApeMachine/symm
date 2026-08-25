@@ -24,12 +24,11 @@ measurements jointly support. It never predicts, never consults Cognition, and
 never lets signal publication cadence count as extra evidence.
 */
 type Solver struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	err          error
-	categories   []types.CategoryType
-	categoriesCh *runtime.Channel[[]types.Category]
-	states       sync.Map
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	categories []types.CategoryType
+	states     sync.Map
 }
 
 /*
@@ -77,20 +76,14 @@ func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
 		categories: categories,
 	}
 
-	solver.categoriesCh = runtime.ChannelOf[[]types.Category](
-		bus, types.ChannelCategories,
-		func(batch []types.Category) string {
-			if len(batch) == 0 {
-				return ""
-			}
-
-			return batch[0].Symbol
-		},
-	)
-	runtime.ChannelOf[*nmtypes.Measurement](
-		bus, types.ChannelMeasurements,
-		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
-	).Subscribe(solver.Name(), solver.Step)
+	if bus != nil {
+		runtime.WireFunc[*nmtypes.Measurement, []types.Category](
+			bus,
+			types.ChannelMeasurements,
+			types.ChannelCategories,
+			solver.Step,
+		)
+	}
 
 	return solver
 }
@@ -100,11 +93,13 @@ func (solver *Solver) Name() string { return "category" }
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Step folds one measurement into the symbol's current evidence snapshot and
-republishes the ranked category batch. A measurement supersedes the current
+Step consumes one measurement observation, updates the symbol's evidence
+snapshot, and runs the schema classifier against the latest coordinates. It
+replaces the current coordinate rather than accumulating votes: each
+measurement is an observation of current state that sets or updates the
 value of any coordinate it carries; it never appends another independent vote.
 */
-func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
+func (solver *Solver) Step(measurement *nmtypes.Measurement) []types.Category {
 	if measurement == nil || measurement.Symbol == "" {
 		return nil
 	}
@@ -116,16 +111,14 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
 
 	if err != nil {
 		solver.err = err
-		return err
-	}
-
-	if !measured || solver.categoriesCh == nil {
 		return nil
 	}
 
-	solver.categoriesCh.Publish(categories)
+	if !measured {
+		return nil
+	}
 
-	return nil
+	return categories
 }
 
 func (solver *Solver) symbolState(symbol string) *categoryState {

@@ -306,21 +306,27 @@ func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
 	// The midpoint response family requires the executable touch from the shared
 	// book; when the book is absent those metrics are simply undefined.
 	var hasMidpoint bool
-	if shared, found := trade.workspace.Shared("api", ""); found {
-		if api, ok := shared.(*websocket.API); ok && api != nil {
-			api.Book(point.Symbol, func(resident *book.Book) {
+	inspectBook := func(resident *book.Book) {
 		if resident == nil {
 			return
 		}
-				bestBid := resident.BestBid()
-				bestAsk := resident.BestAsk()
+		bestBid := resident.BestBid()
+		bestAsk := resident.BestAsk()
 
-				if bestBid != nil && bestAsk != nil {
-					input.Put(symbolBidPrice, bestBid.Price.Float64())
-					input.Put(symbolAskPrice, bestAsk.Price.Float64())
-					hasMidpoint = true
-				}
-			})
+		if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
+			input.Put(symbolBidPrice, bestBid.Price.Float64())
+			input.Put(symbolAskPrice, bestAsk.Price.Float64())
+			hasMidpoint = true
+		}
+	}
+
+	if sharedBook, found := trade.workspace.Shared("book", point.Symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			inspectBook(currentBook)
+		}
+	} else if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
+		if api, ok := shared.(*websocket.API); ok && api != nil {
+			api.Book(point.Symbol, inspectBook)
 		}
 	}
 

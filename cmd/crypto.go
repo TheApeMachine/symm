@@ -12,31 +12,22 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-syncRest parks the replay sync poll between passes. Gosched spun the scheduler
-through every poll (measured as the dominant profile entry during replay); the
-queue depths change at tick pace, so a short rest is indistinguishable from
-spinning to the pump and far cheaper to every other goroutine.
-*/
-const syncRest = time.Millisecond
+
 
 /*
 Crypto submits desk work from thesis messages delivered by the Actor cascade.
 */
 type Crypto struct {
-	status        atomic.Value
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	api           *websocket.API
-	ui            *runtime.Channel[*types.UIFrame]
-	fluid         *runtime.Channel[types.FluidFrame]
-	bus           *runtime.Workspace
-	thesis        *types.Thesis
-	recorder      *audit.Recorder
-	desk          *broker.Desk
-	diagnostics   *Diagnostics
-	diagnosticsCh *runtime.Channel[StreamDiagnostics]
+	status      atomic.Value
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	api         *websocket.API
+	bus         *runtime.Workspace
+	thesis      *types.Thesis
+	recorder    *audit.Recorder
+	desk        *broker.Desk
+	diagnostics *Diagnostics
 }
 
 /*
@@ -87,21 +78,6 @@ func NewCrypto(
 		diagnostics: &Diagnostics{
 			started: time.Now(),
 		},
-	}
-
-	if bus != nil {
-		crypto.ui = runtime.ChannelOf[*types.UIFrame](
-			bus, types.ChannelUI,
-			func(frame *types.UIFrame) string { return "" },
-		)
-		crypto.fluid = runtime.ChannelOf[types.FluidFrame](
-			bus, types.ChannelFluid,
-			func(frame types.FluidFrame) string { return frame.Channel },
-		)
-		crypto.diagnosticsCh = runtime.ChannelOf[StreamDiagnostics](
-			bus, types.ChannelDiagnostics,
-			func(diag StreamDiagnostics) string { return "" },
-		)
 	}
 
 	crypto.status.Store(types.READY)

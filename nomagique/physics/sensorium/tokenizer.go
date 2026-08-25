@@ -1,6 +1,7 @@
 package sensorium
 
 import (
+	"iter"
 	"math"
 
 	"github.com/theapemachine/errnie"
@@ -22,7 +23,7 @@ Dataset yields (byte, sequence index) pairs the loader streams into MakeBatch.
 */
 type Dataset interface {
 	Name() string
-	Generate() [][2]int64
+	Generate() iter.Seq[*State]
 }
 
 func NewTokenizer(

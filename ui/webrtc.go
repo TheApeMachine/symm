@@ -32,7 +32,7 @@ type FluidRTC struct {
 	err           error
 	peersMutex    sync.RWMutex
 	peers         map[*webrtc.PeerConnection]*fluidPeer
-	publications  *runtime.Channel[types.FluidFrame]
+	bus           *runtime.Workspace
 	consumerID    string
 	queueLimit    int
 	bufferedLimit uint64
@@ -43,7 +43,7 @@ NewFluidRTC configures the manifold transport without starting its Run loop.
 */
 func NewFluidRTC(
 	ctx context.Context,
-	publications *runtime.Channel[types.FluidFrame],
+	bus *runtime.Workspace,
 	consumerID string,
 ) *FluidRTC {
 	ctx, cancel := context.WithCancel(ctx)
@@ -55,7 +55,7 @@ func NewFluidRTC(
 		ctx:           ctx,
 		cancel:        cancel,
 		peers:         make(map[*webrtc.PeerConnection]*fluidPeer),
-		publications:  publications,
+		bus:           bus,
 		consumerID:    consumerID,
 		queueLimit:    queueLimit,
 		bufferedLimit: bufferedSegments * fluidSegmentSize,
@@ -80,7 +80,7 @@ func (fluidTransport *FluidRTC) Error() error {
 }
 
 func (fluidTransport *FluidRTC) Active() bool {
-	return fluidTransport.publications != nil
+	return fluidTransport.bus != nil
 }
 
 /*
@@ -93,30 +93,24 @@ func (fluidTransport *FluidRTC) Run() error {
 		return err
 	}
 
-	if fluidTransport.publications == nil {
-		return nil
-	}
+	if fluidTransport.bus != nil {
+		fluidTransport.bus.Observe(types.ChannelFluid, func(topic string, value any) {
+			frame, ok := value.(types.FluidFrame)
+			if !ok {
+				return
+			}
 
-	fluidTransport.publications.Subscribe(
-		fluidTransport.consumerID,
-		func(frame types.FluidFrame) error {
 			if !fluidTransport.HasChannel(frame.Channel) {
-				return nil
+				return
 			}
 
 			if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
 				fluidTransport.fail(err)
-
-				return err
 			}
-
-			return nil
-		},
-	)
+		})
+	}
 
 	<-fluidTransport.ctx.Done()
-
-	return fluidTransport.Error()
 
 	return fluidTransport.Error()
 }

@@ -24,7 +24,7 @@ until ready() reports the boot gate has passed (Warmup), so preflight ticker
 gaps never open the overlay.
 */
 type ErrorBridge struct {
-	ui    *runtime.Channel[*types.UIFrame]
+	bus   *runtime.Workspace
 	ready func() bool
 	// onError receives each distinct error as (source, message, caller) so the
 	// diagnostics WebRTC frame can surface subsystem-attributed errors. Nil
@@ -53,13 +53,8 @@ func NewErrorBridge(
 		})
 	}
 
-	ui := runtime.ChannelOf[*types.UIFrame](
-		hub.bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
-
 	return log.IOWriter{Writer: &ErrorBridge{
-		ui:      ui,
+		bus:     hub.bus,
 		ready:   ready,
 		onError: onError,
 	}}
@@ -70,7 +65,7 @@ Write receives one JSON log line from phuslu IOWriter and, when the level is
 error or higher, non-blocking-publishes it as an error frame for the overlay.
 */
 func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
-	if bridge == nil || bridge.ui == nil || len(payload) == 0 {
+	if bridge == nil || bridge.bus == nil || len(payload) == 0 {
 		return len(payload), nil
 	}
 
@@ -105,15 +100,17 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 	}
 
 	safe := safeErrorFields(fields)
-	bridge.ui.Publish(&wire.FrameT{
-		Type: wire.FrameErrorFrame,
-		Value: &wire.ErrorFrameT{
-			Level: stringMapField(safe, "level"), Source: attributedErrorSource(fields),
-			Error: stringMapField(safe, "error"), Message: stringMapField(safe, "message"),
-			Msg: stringMapField(safe, "msg"), Caller: stringMapField(safe, "caller"),
-			Time: stringMapField(safe, "time"),
-		},
-	})
+	if bridge.bus != nil {
+		bridge.bus.Publish(types.ChannelUI, &wire.FrameT{
+			Type: wire.FrameErrorFrame,
+			Value: &wire.ErrorFrameT{
+				Level: stringMapField(safe, "level"), Source: attributedErrorSource(fields),
+				Error: stringMapField(safe, "error"), Message: stringMapField(safe, "message"),
+				Msg: stringMapField(safe, "msg"), Caller: stringMapField(safe, "caller"),
+				Time: stringMapField(safe, "time"),
+			},
+		})
+	}
 	bridge.commit(fingerprint)
 
 	return len(payload), nil

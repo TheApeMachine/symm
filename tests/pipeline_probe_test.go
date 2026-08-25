@@ -9,9 +9,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/cmd"
-	"github.com/theapemachine/symm/logic/graph"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/data"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -33,72 +31,48 @@ func TestPipelineFrameInventory(t *testing.T) {
 		WithStack(t, symbols, cmd.Boot, func(market *Market, system *cmd.System) {
 			types.SetFocus("PLANK/USD")
 
-			ui := runtime.ChannelOf[*types.UIFrame](
-				system.Bus, types.ChannelUI,
-				func(frame *types.UIFrame) string { return "" },
-			)
-
 			var mu sync.Mutex
 			counts := make(map[wire.Frame]int)
-			ui.Subscribe("frame-inventory", func(frame *types.UIFrame) error {
+			system.Bus.Observe(types.ChannelUI, func(_ string, value any) {
+				frame, ok := value.(*types.UIFrame)
+				if !ok || frame == nil {
+					return
+				}
 				mu.Lock()
 				counts[frame.Type]++
 				mu.Unlock()
-
-				return nil
 			})
 
 			measurements := make(map[string]int)
-			runtime.ChannelOf[*nmtypes.Measurement](
-				system.Bus, types.ChannelMeasurements,
-				func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
-			).Subscribe("measurement-inventory", func(measurement *nmtypes.Measurement) error {
+			system.Bus.Observe(types.ChannelMeasurements, func(_ string, value any) {
+				measurement, ok := value.(*data.Measurement[float64])
+				if !ok || measurement == nil {
+					return
+				}
 				mu.Lock()
 				measurements[measurement.Source]++
 				mu.Unlock()
-
-				return nil
 			})
 
 			categoryCount := 0
-			runtime.ChannelOf[[]types.Category](
-				system.Bus, types.ChannelCategories,
-				func(batch []types.Category) string {
-					if len(batch) == 0 {
-						return ""
-					}
-					return batch[0].Symbol
-				},
-			).Subscribe("category-inventory", func(batch []types.Category) error {
+			system.Bus.Observe(types.ChannelCategories, func(_ string, value any) {
 				mu.Lock()
 				categoryCount++
 				mu.Unlock()
-
-				return nil
 			})
 
 			causalCount := 0
-			runtime.ChannelOf[types.CausalOutput](
-				system.Bus, types.ChannelCausal,
-				func(output types.CausalOutput) string { return output.Symbol },
-			).Subscribe("causal-inventory", func(output types.CausalOutput) error {
+			system.Bus.Observe(types.ChannelCausal, func(_ string, value any) {
 				mu.Lock()
 				causalCount++
 				mu.Unlock()
-
-				return nil
 			})
 
 			graphCount := 0
-			runtime.ChannelOf[graph.GraphUpdate](
-				system.Bus, types.ChannelRelations,
-				func(update graph.GraphUpdate) string { return update.Symbol },
-			).Subscribe("graph-inventory", func(update graph.GraphUpdate) error {
+			system.Bus.Observe(types.ChannelRelations, func(_ string, value any) {
 				mu.Lock()
 				graphCount++
 				mu.Unlock()
-
-				return nil
 			})
 
 			tickCount := 200

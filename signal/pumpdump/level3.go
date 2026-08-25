@@ -70,34 +70,38 @@ The shared book is type-asserted to *book.Book; a missing book or a missing
 touch field panics rather than being silently swallowed.
 */
 func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	shared, found := level3.workspace.Shared("api", "")
-
-	if !found {
-		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: api missing for %s", symbol)}
-	}
-
-	api, ok := shared.(*websocket.API)
-
-	if !ok || api == nil {
-		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: api has unexpected type for %s", symbol)}
+	if level3 == nil || level3.workspace == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: workspace missing for %s", symbol)}
 	}
 
 	var hasQuote bool
 	var bidPrice, askPrice float64
 
-	api.Book(symbol, func(resident *book.Book) {
+	inspectBook := func(resident *book.Book) {
 		if resident == nil {
 			return
 		}
 		bestBid := resident.BestBid()
 		bestAsk := resident.BestAsk()
 
-		if bestBid != nil && bestAsk != nil {
+		if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
 			bidPrice = bestBid.Price.Float64()
 			askPrice = bestAsk.Price.Float64()
 			hasQuote = true
 		}
-	})
+	}
+
+	if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			inspectBook(currentBook)
+		}
+	} else if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
+		if api, ok := shared.(*websocket.API); ok && api != nil {
+			api.Book(symbol, inspectBook)
+		}
+	} else {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: api missing for %s", symbol)}
+	}
 
 	if !hasQuote {
 		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: book touch missing for %s", symbol)}

@@ -69,11 +69,6 @@ type Live struct {
 	quote        string
 	thesis       atomic.Pointer[types.Thesis]
 	bus          atomic.Pointer[runtime.Workspace]
-	tickersCh    *runtime.Channel[kraken.TickerData]
-	tradesCh     *runtime.Channel[kraken.TradeData]
-	level3Ch     *runtime.Channel[kraken.Level3Data]
-	executionsCh *runtime.Channel[kraken.ExecutionData]
-	uiCh         *runtime.Channel[*types.UIFrame]
 	simulator    *Simulator
 	normalizer   *spot.Normalizer
 	level3       *sync.Map
@@ -212,27 +207,6 @@ func (live *Live) SetBus(bus *runtime.Workspace) {
 	if live.book != nil {
 		live.book.SetBus(bus)
 	}
-
-	live.tickersCh = runtime.ChannelOf(
-		bus, types.ChannelTickers,
-		func(ticker kraken.TickerData) string { return ticker.Symbol },
-	)
-	live.tradesCh = runtime.ChannelOf(
-		bus, types.ChannelTrades,
-		func(trade kraken.TradeData) string { return trade.Symbol },
-	)
-	live.level3Ch = runtime.ChannelOf(
-		bus, types.ChannelLevel3,
-		func(frame kraken.Level3Data) string { return frame.Symbol },
-	)
-	live.executionsCh = runtime.ChannelOf(
-		bus, types.ChannelExecutions,
-		func(execution kraken.ExecutionData) string { return execution.Symbol },
-	)
-	live.uiCh = runtime.ChannelOf(
-		bus, types.ChannelUI,
-		func(frame *types.UIFrame) string { return "" },
-	)
 }
 
 /*
@@ -353,8 +327,10 @@ func NewWithClient(
 		live.book.emit = func(data kraken.Level3Data) {
 			thesis := live.thesis.Load()
 
-			if thesis != nil && thesis.Symbol(data.Symbol).AcceptLevel3(data.Timestamp) && live.level3Ch != nil {
-				live.level3Ch.Publish(data)
+			if thesis != nil && thesis.Symbol(data.Symbol).AcceptLevel3(data.Timestamp) {
+				if bus := live.bus.Load(); bus != nil {
+					bus.Publish(types.ChannelLevel3, data)
+				}
 			}
 		}
 		// A checksum divergence recovers by re-running the same whole-universe
@@ -463,12 +439,14 @@ func NewWithClient(
 					symbol := thesis.Symbol(ticker.Symbol)
 					symbol.Tick = tick
 
-					if symbol.AcceptTicker(ticker.Timestamp) && live.tickersCh != nil {
-						live.tickersCh.Publish(ticker)
+					if symbol.AcceptTicker(ticker.Timestamp) {
+						if bus := live.bus.Load(); bus != nil {
+							bus.Publish(types.ChannelTickers, ticker)
+						}
 					}
 
-					if live.uiCh != nil {
-						live.uiCh.Publish(&types.UIFrame{
+					if bus := live.bus.Load(); bus != nil {
+						bus.Publish(types.ChannelUI, &types.UIFrame{
 							Type: wire.FrameTickFrame,
 							Value: &wire.TickFrameT{
 								Count: tick,
@@ -484,8 +462,10 @@ func NewWithClient(
 				for index := range entity.Data {
 					trade := entity.Data[index]
 
-					if thesis.Symbol(trade.Symbol).AcceptTrade(trade.Timestamp) && live.tradesCh != nil {
-						live.tradesCh.Publish(trade)
+					if thesis.Symbol(trade.Symbol).AcceptTrade(trade.Timestamp) {
+						if bus := live.bus.Load(); bus != nil {
+							bus.Publish(types.ChannelTrades, trade)
+						}
 					}
 				}
 			}
@@ -496,8 +476,8 @@ func NewWithClient(
 				for index := range entity.Data {
 					execution := entity.Data[index]
 
-					if live.executionsCh != nil {
-						live.executionsCh.Publish(execution)
+					if bus := live.bus.Load(); bus != nil {
+						bus.Publish(types.ChannelExecutions, execution)
 					}
 				}
 			}

@@ -67,8 +67,6 @@ type Solver struct {
 	pearls   *sync.Map
 	rows     *sync.Map
 	config   PearlConfig
-	causal   *runtime.Channel[types.CausalOutput]
-	work     *runtime.Subscription[types.ResonanceArtifact]
 }
 
 /*
@@ -117,14 +115,14 @@ func NewSolver(bus *runtime.Workspace, opts ...Option) *Solver {
 		opt(solver)
 	}
 
-	solver.causal = runtime.ChannelOf[types.CausalOutput](
-		bus, types.ChannelCausal,
-		func(output types.CausalOutput) string { return output.Symbol },
-	)
-	solver.work = runtime.ChannelOf[types.ResonanceArtifact](
-		bus, types.ChannelResonance,
-		func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
-	).Subscribe(solver.Name(), solver.Step)
+	if bus != nil {
+		runtime.WireFunc[types.ResonanceArtifact, *types.CausalOutput](
+			bus,
+			types.ChannelResonance,
+			types.ChannelCausal,
+			solver.Step,
+		)
+	}
 
 	return solver
 }
@@ -140,23 +138,24 @@ Step evaluates one symbol's resonance stream through Pearl's causal ladder. The
 transport workspace preserves order for this symbol while every other symbol's
 lane advances concurrently, so one slow causal read never fences the universe.
 */
-func (solver *Solver) Step(artifact types.ResonanceArtifact) error {
+func (solver *Solver) Step(artifact types.ResonanceArtifact) *types.CausalOutput {
 	if solver == nil || solver.thesis == nil || artifact.Manifold == nil {
 		return nil
 	}
 
-	_, _, err := solver.measure(solver.thesis, artifact.Symbol, artifact.Manifold)
+	out, ok, err := solver.measure(solver.thesis, artifact.Symbol, artifact.Manifold)
 	solver.err = err
 
 	if err != nil && solver.thesis != nil {
 		solver.thesis.Fail(err)
-
-		return err
+		return nil
 	}
 
-	// The UI frame for a causal output is published by the workspace observer on
-	// ChannelCausal (boot.go); the solver only emits the domain output.
-	return nil
+	if !ok {
+		return nil
+	}
+
+	return &out
 }
 
 func (solver *Solver) measure(
@@ -239,8 +238,8 @@ func (solver *Solver) measure(
 
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			solver.storeUnresolved(symbolState, tickerAt, rows, prediction)
-			return types.CausalOutput{}, false, nil
+			unresolvedOut, hasUnresolved := solver.unresolvedOutput(symbolState, tickerAt, rows, prediction)
+			return unresolvedOut, hasUnresolved, nil
 		}
 
 		return types.CausalOutput{}, false, errnie.Err(
@@ -251,8 +250,8 @@ func (solver *Solver) measure(
 	}
 
 	if !resolved {
-		solver.storeUnresolved(symbolState, tickerAt, rows, prediction)
-		return types.CausalOutput{}, false, nil
+		unresolvedOut, hasUnresolved := solver.unresolvedOutput(symbolState, tickerAt, rows, prediction)
+		return unresolvedOut, hasUnresolved, nil
 	}
 
 	precision, err := solver.estimatePrecision(rows)
@@ -265,24 +264,28 @@ func (solver *Solver) measure(
 		)
 	}
 
-	causalOutput := output
-	causalOutput["symbol"] = symbol
-	causalOutput["historyRows"] = rows
-	causalOutput["at"] = tickerAt
-	causalOutput["identification"] = "adjustedAssociation"
-	causalOutput["precision"] = precision
-	causalOutput["samples"] = len(rows)
-	causalOutput["treatmentLevel"] = prediction
-	solver.conditionOnManifold(thesis, causalOutput)
+	output["symbol"] = symbolState.Symbol
+	output["at"] = tickerAt
+	output["historyRows"] = rows
+	output["samples"] = len(rows)
+	output["precision"] = precision
+	output["treatmentLevel"] = prediction
 
-	if solver.causal != nil {
-		solver.causal.Publish(types.CausalOutput{Symbol: symbolState.Symbol, Rows: causalOutput})
+	if solver != nil && solver.thesis != nil {
+		solver.conditionOnManifold(solver.thesis, output)
 	}
 
-	return types.CausalOutput{Symbol: symbolState.Symbol, Rows: causalOutput}, true, nil
+	return types.CausalOutput{Symbol: symbolState.Symbol, Rows: output}, true, nil
 }
 
-func (solver *Solver) conditionOnManifold(thesis *types.Thesis, causalOutput map[string]any) {
+func (solver *Solver) conditionOnManifold(
+	thesis *types.Thesis,
+	causalOutput map[string]any,
+) {
+	if thesis == nil {
+		return
+	}
+
 	reading, hasReading := thesis.ManifoldSnapshot()
 	scores, hasScores := thesis.InterventionSnapshot()
 
@@ -308,33 +311,31 @@ func (solver *Solver) conditionOnManifold(thesis *types.Thesis, causalOutput map
 	causalOutput["treatmentLevel"] = uplift
 }
 
-func (solver *Solver) storeUnresolved(
+func (solver *Solver) unresolvedOutput(
 	symbolState *types.Symbol,
 	at time.Time,
 	rows [][]float64,
 	prediction float64,
-) {
+) (types.CausalOutput, bool) {
 	if len(rows) == 0 {
-		return
+		return types.CausalOutput{}, false
 	}
 
 	precision, err := solver.estimatePrecision(rows)
 
 	if err != nil {
-		return
+		return types.CausalOutput{}, false
 	}
 
-	if solver.causal != nil {
-		solver.causal.Publish(types.CausalOutput{Symbol: symbolState.Symbol, Rows: map[string]any{
-			"symbol":         symbolState.Symbol,
-			"at":             at,
-			"historyRows":    rows,
-			"identification": "unresolved",
-			"precision":      precision,
-			"samples":        len(rows),
-			"treatmentLevel": prediction,
-		}})
-	}
+	return types.CausalOutput{Symbol: symbolState.Symbol, Rows: map[string]any{
+		"symbol":         symbolState.Symbol,
+		"at":             at,
+		"historyRows":    rows,
+		"identification": "unresolved",
+		"precision":      precision,
+		"samples":        len(rows),
+		"treatmentLevel": prediction,
+	}}, true
 }
 
 /*

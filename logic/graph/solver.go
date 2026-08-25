@@ -625,7 +625,6 @@ type Solver struct {
 	estimator *relation.InfluenceEstimator
 	influence *InfluenceGraph
 	plans     []*relation.RelationPlan
-	updates   *runtime.Channel[GraphUpdate]
 }
 
 /*
@@ -669,15 +668,12 @@ func NewSolver(
 		bus.Share(SharedObservationStore, solver.store, "")
 		bus.Share(SharedInfluenceGraph, solver.influence, "")
 
-		solver.updates = runtime.ChannelOf[GraphUpdate](
-			bus, types.ChannelRelations,
-			func(update GraphUpdate) string { return update.Symbol },
+		runtime.WireFunc[*nmtypes.Measurement, *GraphUpdate](
+			bus,
+			types.ChannelMeasurements,
+			types.ChannelRelations,
+			solver.Step,
 		)
-
-		runtime.ChannelOf[*nmtypes.Measurement](
-			bus, types.ChannelMeasurements,
-			func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
-		).Subscribe(solver.Name(), solver.Step)
 	}
 
 	return solver
@@ -699,7 +695,7 @@ Relations for its symbol, and updates the Influence Graph in place. The workspac
 delivers values for one symbol in order, so the store and graph advance as data
 becomes available.
 */
-func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
+func (solver *Solver) Step(measurement *nmtypes.Measurement) *GraphUpdate {
 	if solver == nil {
 		return nil
 	}
@@ -713,14 +709,10 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) error {
 	solver.store.AppendObservations(observations)
 	solver.estimate(measurement.Symbol)
 
-	if solver.updates != nil {
-		solver.updates.Publish(GraphUpdate{
-			Symbol: measurement.Symbol,
-			At:     measurement.At,
-		})
+	return &GraphUpdate{
+		Symbol: measurement.Symbol,
+		At:     measurement.At,
 	}
-
-	return nil
 }
 
 /*

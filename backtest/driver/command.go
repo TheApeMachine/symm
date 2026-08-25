@@ -55,7 +55,7 @@ func Command() *cobra.Command {
 			}
 
 			ctx := run.Context()
-			bus := runtime.NewWorkspace(nil)
+			bus := runtime.NewWorkspace(ctx)
 
 			dataPath := utils.ResolveDataPath()
 			store, err := backtest.NewStore(filepath.Join(dataPath, "symm.sqlite"))
@@ -70,18 +70,19 @@ func Command() *cobra.Command {
 			hub := ui.NewHub(ctx, thesis, nil, nil, nil, bus)
 			replay := NewDriver(ctx, store, hub, bus,
 				func(state State) {
-					uiCh := runtime.ChannelOf[*types.UIFrame](bus, types.ChannelUI, func(frame *types.UIFrame) string { return "" })
-					uiCh.Publish(&types.UIFrame{
-						Type: wire.FrameBacktestFrame,
-						Value: &wire.BacktestFrameT{
-							CaptureId: state.CaptureID,
-							Playing:   state.Playing,
-							Position:  state.Position.UnixNano(),
-							StartedAt: state.StartedAt.UnixNano(),
-							EndedAt:   state.EndedAt.UnixNano(),
-							Rebooting: state.Rebooting,
-						},
-					})
+					if bus != nil {
+						bus.Publish(types.ChannelUI, &types.UIFrame{
+							Type: wire.FrameBacktestFrame,
+							Value: &wire.BacktestFrameT{
+								CaptureId: state.CaptureID,
+								Playing:   state.Playing,
+								Position:  state.Position.UnixNano(),
+								StartedAt: state.StartedAt.UnixNano(),
+								EndedAt:   state.EndedAt.UnixNano(),
+								Rebooting: state.Rebooting,
+							},
+						})
+					}
 				},
 			)
 

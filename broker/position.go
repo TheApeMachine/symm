@@ -30,7 +30,7 @@ type Position struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	api            *websocket.API
-	ui             *runtime.Channel[*types.UIFrame]
+	bus            *runtime.Workspace
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -64,7 +64,7 @@ NewPosition constructs one desk-owned lot shell.
 func NewPosition(
 	ctx context.Context,
 	api *websocket.API,
-	ui *runtime.Channel[*types.UIFrame],
+	bus *runtime.Workspace,
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -80,14 +80,14 @@ func NewPosition(
 		ctx:            ctx,
 		cancel:         cancel,
 		api:            api,
-		ui:             ui,
+		bus:            bus,
 		instrument:     instrument,
 		price:          price,
 		balance:        balance,
 		recorder:       recorder,
 		store:          store,
 		pair:           pair,
-		seenExecutions: map[string]struct{}{},
+		seenExecutions: make(map[string]struct{}),
 		Decision:       decision,
 		EntryOrder: &spot.AddOrderRequest{
 			ClOrdId:   decision.ID,
@@ -142,11 +142,11 @@ Publish sends the position's typed FlatBuffers object to the UI queue. Wallet
 state remains a separate balance publication owned by the account readout.
 */
 func (position *Position) Publish() {
-	if position.ui == nil {
+	if position.bus == nil {
 		return
 	}
 
-	position.ui.Publish(&wire.FrameT{
+	position.bus.Publish(types.ChannelUI, &wire.FrameT{
 		Type: wire.FramePositionsFrame,
 		Value: &wire.PositionsFrameT{
 			Rows: []*wire.PositionT{position.Wire()},
