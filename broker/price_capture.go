@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -30,7 +29,6 @@ func (price *Price) captureFeeProfiles(
 		profile kraken.MarketProfile
 	}
 	results := make([]profileResult, len(symbols))
-	var mu sync.Mutex
 
 	for i, symbol := range symbols {
 		i, symbol := i, symbol
@@ -53,7 +51,6 @@ func (price *Price) captureFeeProfiles(
 				return fmt.Errorf("broker: capture maker fee for %s: %w", symbol, err)
 			}
 
-			mu.Lock()
 			results[i] = profileResult{
 				profile: kraken.MarketProfile{
 					Symbol: symbol,
@@ -62,7 +59,6 @@ func (price *Price) captureFeeProfiles(
 					Maker:  maker,
 				},
 			}
-			mu.Unlock()
 
 			return nil
 		})

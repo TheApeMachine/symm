@@ -33,13 +33,13 @@ empty, the solver emits the explicit none artifact.
 
 ## What a verdict carries
 
-| Field        | Meaning                                               |
-|--------------|-------------------------------------------------------|
-| `Confidence` | Category evidence share with one pseudocount per category |
-| `Strength`   | Geometric mean of the category's positive normalized readings |
+| Field        | Meaning                                                                                     |
+|--------------|---------------------------------------------------------------------------------------------|
+| `Confidence` | Category evidence share with one pseudocount per category                                   |
+| `Strength`   | Geometric mean of the category's positive normalized readings                               |
 | `Maturity`   | Minimum maturity of the contributing readings; absent when no supporting reading reports it |
-| `Surprisal`  | `−log₂ P(category)`                                    |
-| `Supporting` | Which observables argued for                          |
+| `Surprisal`  | `−log₂ P(category)`                                                                         |
+| `Supporting` | Which observables argued for                                                                |
 
 Three of these deserve attention:
 
@@ -64,7 +64,7 @@ Category types live in [`types/category.go`](../../types/category.go).
 
 ## Files
 
-| File        | Responsibility                                              |
-|-------------|-------------------------------------------------------------|
-| `solver.go` | Collection, geometric evidence combination, and classification. |
-| `types/category.go` | The metric → category schema. |
+| File                | Responsibility                                                  |
+|---------------------|-----------------------------------------------------------------|
+| `solver.go`         | Collection, geometric evidence combination, and classification. |
+| `types/category.go` | The metric → category schema.                                   |

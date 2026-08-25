@@ -94,6 +94,7 @@ type Live struct {
 	failureMu    sync.RWMutex
 	failure      func(error)
 	observer     atomic.Pointer[func(string, time.Duration)]
+	connectedCount atomic.Int32
 
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
@@ -239,13 +240,13 @@ New opens a spot websocket session and wires SDK callbacks in the constructor.
 */
 func New(
 	ctx context.Context,
-	thesis *types.Thesis,
+	bus *runtime.Workspace,
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
 	recorders ...CaptureSink,
 ) *Live {
-	return NewWithClient(ctx, thesis, simulator, auth, endpoint, nil, recorders...)
+	return NewWithClient(ctx, bus, simulator, auth, endpoint, nil, recorders...)
 }
 
 /*
@@ -255,7 +256,7 @@ the connection becomes part of a running system.
 */
 func NewWithClient(
 	ctx context.Context,
-	thesis *types.Thesis,
+	bus *runtime.Workspace,
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
@@ -295,14 +296,20 @@ func NewWithClient(
 		subscribers: &sync.Map{},
 		callbacks:   &sync.Map{},
 		public:      make(map[string][][]string),
-		paper:       NewPaper(ctx, NewSimulator(), thesis),
+		paper:       NewPaper(ctx, NewSimulator(), bus),
 		model:       viper.GetViper().GetString("trading.model"),
 		quote:       viper.GetViper().GetString("market.quote_currency"),
 		captureName: captureName,
 	}
 
-	if thesis != nil {
-		live.SetThesis(thesis)
+	live.SetBus(bus)
+
+	if bus != nil {
+		if shared, _ := bus.Shared("thesis", ""); shared != nil {
+			if thesis, ok := shared.(*types.Thesis); ok {
+				live.SetThesis(thesis)
+			}
+		}
 	}
 
 	live.setStatus(types.INITIALIZING)
@@ -528,19 +535,27 @@ func NewWithClient(
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
 		errnie.Info(fmt.Sprintf("websocket: connected to %s", live.client.URL))
 
+		count := live.connectedCount.Add(1)
+
 		if auth {
 			errnie.Error(live.authenticate())
 			return
 		}
 
-		if err := live.restorePublicSubscriptions(); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"websocket: failed to restore public subscriptions",
-				err,
-			))
-			live.setStatus(types.ERROR)
-			return
+		if live.captureName == "level3" {
+			if count > 1 && len(live.symbols) > 0 {
+				live.subscribeLevel3Group(live)
+			}
+		} else {
+			if err := live.restorePublicSubscriptions(); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"websocket: failed to restore public subscriptions",
+					err,
+				))
+				live.setStatus(types.ERROR)
+				return
+			}
 		}
 
 		live.setStatus(types.READY)
@@ -781,7 +796,7 @@ func (live *Live) SubL3(symbols []string) {
 	for groups := range slices.Chunk(symbols, 200) {
 		conn := NewWithClient(
 			live.ctx,
-			live.thesis.Load(),
+			live.bus.Load(),
 			live.simulator,
 			live.auth,
 			Level3WebSocketURL,

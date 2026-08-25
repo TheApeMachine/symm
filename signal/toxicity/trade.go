@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -254,13 +255,38 @@ Step receives one trade data point, matches it against the current shared-book
 touch, runs the Number pipeline, and projects exactly one measurement.
 */
 func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
-	shared, _ := trade.workspace.Shared("book", tick.Symbol)
-	currentBook := shared.(*book.Book)
+	shared, found := trade.workspace.Shared("api", "")
+	if !found {
+		return nil
+	}
 
-	bidPrice := currentBook.BestBid().Price.Float64()
-	askPrice := currentBook.BestAsk().Price.Float64()
-	bidQty := currentBook.BestBid().Quantity.Float64()
-	askQty := currentBook.BestAsk().Quantity.Float64()
+	api, ok := shared.(*websocket.API)
+	if !ok || api == nil {
+		return nil
+	}
+
+	var hasQuote bool
+	var bidPrice, askPrice, bidQty, askQty float64
+
+	api.Book(tick.Symbol, func(currentBook *book.Book) {
+		if currentBook == nil {
+			return
+		}
+		bestBid := currentBook.BestBid()
+		bestAsk := currentBook.BestAsk()
+
+		if bestBid != nil && bestAsk != nil {
+			bidPrice = bestBid.Price.Float64()
+			askPrice = bestAsk.Price.Float64()
+			bidQty = bestBid.Quantity.Float64()
+			askQty = bestAsk.Quantity.Float64()
+			hasQuote = true
+		}
+	})
+
+	if !hasQuote {
+		return nil
+	}
 	sec := float64(tick.Timestamp.Unix())
 	nsec := float64(tick.Timestamp.Nanosecond())
 

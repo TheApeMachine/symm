@@ -146,8 +146,8 @@ const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
 		buyIntensity,
 		sellIntensity,
 		exo: sumValues(
-			measurementRaw(epoch, "baseline_intensity", "buy"),
-			measurementRaw(epoch, "baseline_intensity", "sell"),
+			measurementRaw(epoch, "background_rate", "buy"),
+			measurementRaw(epoch, "background_rate", "sell"),
 		),
 	};
 };

@@ -1,6 +1,7 @@
 package toxicity
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
@@ -12,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -460,13 +462,38 @@ is read through the workspace pool and type-asserted to *book.Book; a missing
 book or a missing touch panics by design rather than being silently skipped.
 */
 func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	shared, _ := level3.workspace.Shared("book", symbol)
-	currentBook := shared.(*book.Book)
+	shared, found := level3.workspace.Shared("api", "")
+	if !found {
+		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: api missing for %s", symbol)}
+	}
 
-	bidPrice := currentBook.BestBid().Price.Float64()
-	askPrice := currentBook.BestAsk().Price.Float64()
-	bidQty := currentBook.BestBid().Quantity.Float64()
-	askQty := currentBook.BestAsk().Quantity.Float64()
+	api, ok := shared.(*websocket.API)
+	if !ok || api == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: api has unexpected type for %s", symbol)}
+	}
+
+	var hasQuote bool
+	var bidPrice, askPrice, bidQty, askQty float64
+
+	api.Book(symbol, func(currentBook *book.Book) {
+		if currentBook == nil {
+			return
+		}
+		bestBid := currentBook.BestBid()
+		bestAsk := currentBook.BestAsk()
+
+		if bestBid != nil && bestAsk != nil {
+			bidPrice = bestBid.Price.Float64()
+			askPrice = bestAsk.Price.Float64()
+			bidQty = bestBid.Quantity.Float64()
+			askQty = bestAsk.Quantity.Float64()
+			hasQuote = true
+		}
+	})
+
+	if !hasQuote {
+		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: book touch missing for %s", symbol)}
+	}
 	sec := float64(at.Unix())
 	nsec := float64(at.Nanosecond())
 

@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -86,11 +85,10 @@ func (price *Price) GetFees(symbols []string) error {
 		symbolKey string
 		fee       kraken.TradeVolumeFee
 	}
-	results := make([]feeResult, 0, len(symbols))
-	var mu sync.Mutex
+	results := make([]feeResult, len(symbols))
 
-	for _, symbol := range symbols {
-		symbol := symbol
+	for i, symbol := range symbols {
+		i, symbol := i, symbol
 		group.Go(func() error {
 			fee, err := price.resolveFee(symbol, tradeVolumeResult.Fees)
 
@@ -98,12 +96,10 @@ func (price *Price) GetFees(symbols []string) error {
 				return err
 			}
 
-			mu.Lock()
-			results = append(results, feeResult{
+			results[i] = feeResult{
 				symbolKey: price.normalizer.Name(symbol),
 				fee:       fee,
-			})
-			mu.Unlock()
+			}
 
 			return nil
 		})

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,7 +40,6 @@ type Position struct {
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
 	passage        *passageTracker
-	exitMu         sync.Mutex
 	Status         atomic.Pointer[types.Status] `json:"-"`
 	/*
 		Decision is the arbitration that opened this lot, kept verbatim.
@@ -604,9 +602,6 @@ Exit is the single sell-order boundary for an open lot. Exit causes may evolve,
 but none may bypass the position's regulator and liquidate an armed holding.
 */
 func (position *Position) Exit() (*Position, error) {
-	position.exitMu.Lock()
-	defer position.exitMu.Unlock()
-
 	if position.ExitOrder != nil {
 		return position, nil
 	}

@@ -39,30 +39,38 @@ type Solver struct {
 /*
 NewSolver creates a graph solver.
 */
-func NewSolver(thesis *types.Thesis, recorder *audit.Recorder, bus *runtime.Workspace) *Solver {
+func NewSolver(bus *runtime.Workspace) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	var thesis *types.Thesis
+	if bus != nil {
+		if shared, found := bus.Shared("thesis", ""); found {
+			if t, ok := shared.(*types.Thesis); ok {
+				thesis = t
+			}
+		}
+	}
 
 	solver := &Solver{
 		ctx:          ctx,
 		cancel:       cancel,
 		thesis:       thesis,
-		recorder:     recorder,
 		measurements: newMeasurementCompiler(),
 		building:     sync.Map{},
 	}
 
-	solver.graphs = runtime.ChannelOf[*types.Graph](
+	solver.graphs = runtime.ChannelOf(
 		bus, types.ChannelGraphs,
 		func(graph *types.Graph) string { return graph.Symbol },
 	)
-	measurementsCh := runtime.ChannelOf[*nmtypes.Measurement](
+	measurementsCh := runtime.ChannelOf(
 		bus, types.ChannelMeasurements,
 		func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
 	)
 	measurementsCh.Subscribe(solver.Name(), func(measurement *nmtypes.Measurement) error {
 		return solver.observe(measurement.Symbol, "measurement", measurement)
 	})
-	runtime.ChannelOf[[]types.Category](
+	runtime.ChannelOf(
 		bus, types.ChannelCategories,
 		func(batch []types.Category) string {
 			if len(batch) == 0 {
@@ -76,25 +84,29 @@ func NewSolver(thesis *types.Thesis, recorder *audit.Recorder, bus *runtime.Work
 		}
 		return solver.observe(batch[0].Symbol, "categories", batch)
 	})
-	runtime.ChannelOf[types.ResonanceArtifact](
+	
+	runtime.ChannelOf(
 		bus, types.ChannelResonance,
 		func(artifact types.ResonanceArtifact) string { return artifact.Symbol },
 	).Subscribe(solver.Name(), func(artifact types.ResonanceArtifact) error {
 		return solver.observe(artifact.Symbol, "resonance", artifact)
 	})
-	runtime.ChannelOf[types.CausalOutput](
+	
+	runtime.ChannelOf(
 		bus, types.ChannelCausal,
 		func(output types.CausalOutput) string { return output.Symbol },
 	).Subscribe(solver.Name(), func(output types.CausalOutput) error {
 		return solver.observe(output.Symbol, "causal", output)
 	})
-	runtime.ChannelOf[types.Cognition](
+	
+	runtime.ChannelOf(
 		bus, types.ChannelCognition,
 		func(reading types.Cognition) string { return reading.Symbol },
 	).Subscribe(solver.Name(), func(reading types.Cognition) error {
 		return solver.observe(reading.Symbol, "cognition", reading)
 	})
-	runtime.ChannelOf[types.PhaseReading](
+
+	runtime.ChannelOf(
 		bus, types.ChannelPhase,
 		func(reading types.PhaseReading) string { return "" },
 	).Subscribe(solver.Name(), func(reading types.PhaseReading) error {
@@ -129,7 +141,6 @@ symbolEvidence is one symbol's freshest graph inputs: a bounded measurement
 window and the latest derived readings from every upstream stage.
 */
 type symbolEvidence struct {
-	mu           sync.Mutex
 	measurements []*nmtypes.Measurement
 	categories   []types.Category
 	artifact     types.ResonanceArtifact
@@ -156,8 +167,6 @@ func (solver *Solver) observe(symbolName string, kind string, value any) error {
 	}
 
 	state := solver.symbolEvidence(symbolName)
-	state.mu.Lock()
-	defer state.mu.Unlock()
 
 	switch kind {
 	case "measurement":

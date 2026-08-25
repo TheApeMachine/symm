@@ -95,10 +95,18 @@ NewSolver returns a feature detection solver using the configured pace.
 func NewSolver(
 	ctx context.Context,
 	pace float64,
-	thesis *types.Thesis,
 	bus *runtime.Workspace,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
+
+	var thesis *types.Thesis
+	if bus != nil {
+		if shared, found := bus.Shared("thesis", ""); found {
+			if t, ok := shared.(*types.Thesis); ok {
+				thesis = t
+			}
+		}
+	}
 
 	solver := &Solver{
 		ctx:           ctx,

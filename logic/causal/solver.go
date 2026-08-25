@@ -58,7 +58,7 @@ Default layout (4-column row):
   - Col 2: Treatment (Resonance Task Prediction / Expected Return)
   - Col 3: Target (Realized Price Return)
 */
-func NewSolver(thesis *types.Thesis, price *broker.Price, recorder *audit.Recorder, bus *runtime.Workspace, opts ...Option) *Solver {
+func NewSolver(bus *runtime.Workspace, opts ...Option) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
 	defaultConfig := algorithm.PearlConfig{
 		Target:                  3,
@@ -67,12 +67,26 @@ func NewSolver(thesis *types.Thesis, price *broker.Price, recorder *audit.Record
 		NonlinearCounterfactual: true,
 	}
 
+	var thesis *types.Thesis
+	var price *broker.Price
+	if bus != nil {
+		if shared, found := bus.Shared("thesis", ""); found {
+			if t, ok := shared.(*types.Thesis); ok {
+				thesis = t
+			}
+		}
+		if shared, found := bus.Shared("price", ""); found {
+			if p, ok := shared.(*broker.Price); ok {
+				price = p
+			}
+		}
+	}
+
 	solver := &Solver{
 		ctx:      ctx,
 		cancel:   cancel,
 		thesis:   thesis,
 		price:    price,
-		recorder: recorder,
 		pearls:   &sync.Map{},
 		rows:     &sync.Map{},
 		config:   defaultConfig,

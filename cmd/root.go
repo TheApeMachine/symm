@@ -90,7 +90,7 @@ var (
 				thesis,
 				websocket.New(
 					cmd.Context(),
-					thesis,
+					bus,
 					websocket.NewSimulator(),
 					false,
 					websocket.PublicWebSocketURL,
@@ -98,7 +98,7 @@ var (
 				),
 				websocket.New(
 					cmd.Context(),
-					thesis,
+					bus,
 					websocket.NewSimulator(),
 					true,
 					websocket.PrivateWebSocketURL,

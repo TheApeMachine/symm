@@ -27,6 +27,7 @@ const (
 	ChannelCognition      = "cognition"
 	ChannelPhase          = "phase"
 	ChannelGraphs         = "graphs"
+	ChannelRelations      = "relations"
 	ChannelCausalState    = "causal_state"
 	ChannelDecisions      = "decisions"
 	ChannelExecutions     = "executions"

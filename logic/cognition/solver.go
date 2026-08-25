@@ -137,19 +137,30 @@ NewSolver returns a new cognition solver bound to a radix tree.
 */
 func NewSolver(
 	ctx context.Context,
-	thesis *types.Thesis,
-	tree *dmt.Tree,
-	recorder *audit.Recorder,
 	bus *runtime.Workspace,
 	opts ...Option,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
+	var thesis *types.Thesis
+	var tree *dmt.Tree
+	if bus != nil {
+		if shared, found := bus.Shared("thesis", ""); found {
+			if t, ok := shared.(*types.Thesis); ok {
+				thesis = t
+			}
+		}
+		if shared, found := bus.Shared("tree", ""); found {
+			if t, ok := shared.(*dmt.Tree); ok {
+				tree = t
+			}
+		}
+	}
+
 	solver := &Solver{
 		ctx:            ctx,
 		cancel:         cancel,
 		thesis:         thesis,
-		recorder:       recorder,
 		tree:           tree,
 		sequences:      make(map[string][]string),
 		regimes:        make(map[string]types.Category),

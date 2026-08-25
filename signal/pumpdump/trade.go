@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -304,10 +305,26 @@ func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
 
 	// The midpoint response family requires the executable touch from the shared
 	// book; when the book is absent those metrics are simply undefined.
-	if shared, found := trade.workspace.Shared("book", point.Symbol); found {
-		resident := shared.(*book.Book)
-		input.Put(symbolBidPrice, resident.BestBid().Price.Float64())
-		input.Put(symbolAskPrice, resident.BestAsk().Price.Float64())
+	var hasMidpoint bool
+	if shared, found := trade.workspace.Shared("api", ""); found {
+		if api, ok := shared.(*websocket.API); ok && api != nil {
+			api.Book(point.Symbol, func(resident *book.Book) {
+		if resident == nil {
+			return
+		}
+				bestBid := resident.BestBid()
+				bestAsk := resident.BestAsk()
+
+				if bestBid != nil && bestAsk != nil {
+					input.Put(symbolBidPrice, bestBid.Price.Float64())
+					input.Put(symbolAskPrice, bestAsk.Price.Float64())
+					hasMidpoint = true
+				}
+			})
+		}
+	}
+
+	if hasMidpoint {
 		input.Put(symbolHasMidpoint, 1)
 	} else {
 		input.Put(symbolHasMidpoint, 0)

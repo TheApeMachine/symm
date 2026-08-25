@@ -47,8 +47,6 @@ NewSolver creates a new Solver for the category logic.
 */
 func NewSolver(
 	ctx context.Context,
-	thesis *types.Thesis,
-	recorder *audit.Recorder,
 	bus *runtime.Workspace,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
@@ -65,6 +63,15 @@ func NewSolver(
 		categoryNames = append(categoryNames, string(schema.Category))
 	}
 
+	var thesis *types.Thesis
+	if bus != nil {
+		if shared, found := bus.Shared("thesis", ""); found {
+			if t, ok := shared.(*types.Thesis); ok {
+				thesis = t
+			}
+		}
+	}
+
 	solver := &Solver{
 		ctx:    ctx,
 		cancel: cancel,
@@ -73,7 +80,6 @@ func NewSolver(
 			probability.ClassifierSchema{Categories: categoryNames},
 		),
 		categories: categories,
-		recorder:   recorder,
 	}
 
 	solver.categoriesCh = runtime.ChannelOf[[]types.Category](

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -37,9 +39,17 @@ type Price struct {
 /*
 NewPrice wires the price surface to the shared Kraken API.
 */
-func NewPrice(api *websocket.API, recorders ...*audit.Recorder) *Price {
-	if len(recorders) > 1 {
-		panic("broker: at most one market capture recorder is supported")
+func NewPrice(ctx context.Context, bus *runtime.Workspace) *Price {
+	if bus == nil {
+		panic("broker: workspace bus required")
+	}
+
+	var api *websocket.API
+	if shared, _ := bus.Shared("api", ""); shared != nil {
+		api, _ = shared.(*websocket.API)
+	}
+	if api == nil {
+		panic("broker: api not found in workspace")
 	}
 
 	price := &Price{
@@ -50,8 +60,10 @@ func NewPrice(api *websocket.API, recorders ...*audit.Recorder) *Price {
 		normalizer: api.Normalizer(),
 	}
 
-	if len(recorders) == 1 {
-		price.capture = recorders[0]
+	if shared, _ := bus.Shared("recorder", ""); shared != nil {
+		if capture, ok := shared.(*audit.Recorder); ok {
+			price.capture = capture
+		}
 	}
 
 	return price

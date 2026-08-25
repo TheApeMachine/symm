@@ -48,165 +48,6 @@ paintXrayHawkes draws the focused symbol's arrival process onto the canvas.
 It renders the baseline intensity, translucent gold area fill, intensity curve,
 and cyan arrival rug ticks along the time axis.
 */
-export const paintXrayHawkes = (value: unknown, focusSymbol: string) => {
-	const canvas = hawkesCanvasRef.current;
-
-	if (canvas === null) {
-		return;
-	}
-
-	const context = resizeCanvas(canvas);
-
-	if (context === null) {
-		return;
-	}
-
-	const width = canvas.clientWidth;
-	const height = canvas.clientHeight;
-
-	if (width <= 0 || height <= 0) {
-		return;
-	}
-
-	const rows = (
-		Array.isArray(value)
-			? value
-			: value !== null &&
-					typeof value === "object" &&
-					"measurements" in value &&
-					Array.isArray((value as Record<string, unknown>).measurements)
-				? ((value as Record<string, unknown>).measurements as unknown[])
-				: value !== null
-					? [value]
-					: []
-	) as Measurement[];
-
-	const state = getHawkesState(focusSymbol);
-
-	for (const row of rows) {
-		if (row?.source === "hawkes" && row?.symbol === focusSymbol) {
-			const metrics = row.metrics;
-
-			if (metrics) {
-				const lamRaw =
-					metrics["conditional_intensity:buy"]?.raw ??
-					metrics.conditional_intensity?.raw ??
-					metrics["arrival_rate:buy"]?.raw ??
-					metrics.arrival_rate?.raw;
-
-				const muRaw =
-					metrics["baseline_intensity:buy"]?.raw ??
-					metrics.baseline_intensity?.raw;
-
-				const betaRaw = metrics.decay_rate?.raw;
-
-				if (typeof lamRaw === "number" && Number.isFinite(lamRaw)) {
-					state.lam = lamRaw;
-					state.buf.push(lamRaw);
-
-					if (state.buf.length > 220) {
-						state.buf.shift();
-					}
-
-					state.events.push(performance.now());
-
-					if (state.events.length > 80) {
-						state.events.shift();
-					}
-				}
-
-				if (typeof muRaw === "number" && Number.isFinite(muRaw)) {
-					state.mu = muRaw;
-				}
-
-				if (typeof betaRaw === "number" && Number.isFinite(betaRaw)) {
-					state.beta = betaRaw;
-				}
-			}
-		}
-	}
-
-	clearCanvas(context, width, height);
-
-	const buf = state.buf;
-
-	if (buf.length < 2) {
-		drawXrayWaiting(context, width, height, "waiting for hawkes arrivals");
-		return;
-	}
-
-	const maxL = Math.max(1.2, ...buf) * 1.15;
-	const pad = 14;
-	const base = height - 26;
-
-	const projectX = (index: number) =>
-		pad + (index / (buf.length - 1)) * (width - pad * 2);
-
-	const projectY = (val: number) => base - (val / maxL) * (base - 30);
-
-	// 1. Baseline mu horizontal dashed line
-	context.strokeStyle = TERMINAL_COLORS.lineStrong;
-	context.setLineDash([3, 3]);
-	context.lineWidth = 1;
-	context.beginPath();
-	context.moveTo(pad, projectY(state.mu));
-	context.lineTo(width - pad, projectY(state.mu));
-	context.stroke();
-	context.setLineDash([]);
-
-	// 2. Soft translucent area fill under the Hawkes intensity curve
-	context.beginPath();
-	context.moveTo(projectX(0), base);
-
-	for (let index = 0; index < buf.length; index += 1) {
-		context.lineTo(projectX(index), projectY(buf[index]!));
-	}
-
-	context.lineTo(projectX(buf.length - 1), base);
-	context.closePath();
-	context.fillStyle = "rgba(232, 163, 61, 0.14)";
-	context.fill();
-
-	// 3. Crisp Hawkes intensity curve
-	context.strokeStyle = TERMINAL_COLORS.amber;
-	context.lineWidth = 1.6;
-	context.beginPath();
-
-	for (let index = 0; index < buf.length; index += 1) {
-		const posX = projectX(index);
-		const posY = projectY(buf[index]!);
-
-		if (index === 0) {
-			context.moveTo(posX, posY);
-		} else {
-			context.lineTo(posX, posY);
-		}
-	}
-
-	context.stroke();
-
-	// 4. Event rug ticks along bottom
-	const now = performance.now();
-	context.strokeStyle = TERMINAL_COLORS.cyan;
-	context.lineWidth = 1;
-
-	for (const eventTime of state.events) {
-		const age = now - eventTime;
-
-		if (age > 6000) {
-			continue;
-		}
-
-		const tickX = width - pad - (age / 6000) * (width - pad * 2);
-		context.globalAlpha = Math.max(0, 1 - age / 6000);
-		context.beginPath();
-		context.moveTo(tickX, base);
-		context.lineTo(tickX, base + 8);
-		context.stroke();
-	}
-
-	context.globalAlpha = 1;
-};
 
 /*
 XrayHawkesPanel draws the focused symbol's arrival process.
@@ -228,8 +69,8 @@ export const XrayHawkesPanel = () => {
 							data-stream-id="at"
 							data-stream-time="at"
 							data-stream-value="metrics.conditional_intensity:buy.raw"
-							data-stream-baseline="metrics.baseline_intensity:buy.raw"
-							data-stream-decay="metrics.decay_rate.raw"
+							data-stream-baseline="metrics.background_rate:buy.raw"
+							data-stream-decay="metrics.excitation_decay:buy_from_buy.raw"
 							data-stream-window="120"
 							data-stream-rug=""
 							data-append-limit="512"
@@ -269,7 +110,7 @@ export const XrayHawkesPanel = () => {
 						<div>
 							μ rest{" "}
 							<Typography.Span
-								data-paint="metrics.baseline_intensity:buy.raw"
+								data-paint="metrics.background_rate:buy.raw"
 								data-paint-format=".4f"
 								data-paint-suffix=" /s"
 								className="text-(--f1)"

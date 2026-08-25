@@ -955,36 +955,24 @@ func ownerOf(function string) string {
 	}
 }
 
-func stageNames() []string {
-	return []string{
-		"crypto",
-		"correlation", "cvd", "depthflow", "derivatives", "exhaustion",
-		"hawkes", "leadlag", "liquidity", "pumpdump",
-		"sentiment", "toxicity",
-		"category", "manifold", "causal", "cognition", "graph",
-		"resonance",
-		"planner", "mcts", "allocation",
-		"desk",
-	}
-}
-
-/*
-stageNames reports the fixed ordering of observable pipeline nodes.
-*/
-
 /*
 stageSnapshots enumerates every observable pipeline node in wiring order. The
 names match the strings emitted by the individual ObserveModule calls in
 measurements.go, analyzer.go, planner.go, and desk.go.
 */
 func (diagnostics *Diagnostics) stageSnapshots() []ClockSnapshot {
-	names := stageNames()
+	out := make([]ClockSnapshot, 0)
 
-	out := make([]ClockSnapshot, 0, len(names))
+	diagnostics.clocks.modules.Range(func(key, value any) bool {
+		name := key.(string)
+		clock := value.(*durationClock)
+		out = append(out, clock.snapshot(name))
+		return true
+	})
 
-	for _, name := range names {
-		out = append(out, diagnostics.module(name).snapshot(name))
-	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
 
 	return out
 }
@@ -993,30 +981,34 @@ func (diagnostics *Diagnostics) stageSnapshots() []ClockSnapshot {
 hopSnapshots enumerates the wired edges between stages in pipeline order.
 */
 func (diagnostics *Diagnostics) hopSnapshots() []HopSnapshot {
-	edges := [][2]string{
-		{"crypto", "measurements"},
-		{"measurements", "category"},
-		{"category", "causal"},
-		{"causal", "graph"},
-		{"graph", "planner"},
-		{"planner", "mcts"},
-		{"mcts", "allocation"},
-		{"allocation", "desk"},
-	}
+	out := make([]HopSnapshot, 0)
 
-	out := make([]HopSnapshot, 0, len(edges))
-
-	for _, edge := range edges {
-		clock := diagnostics.clocks.hop(edge[0], edge[1])
+	diagnostics.clocks.hops.Range(func(key, value any) bool {
+		keyStr := key.(string)
+		parts := strings.Split(keyStr, "\x00")
+		if len(parts) != 2 {
+			return true
+		}
+		
+		clock := value.(*durationClock)
 		out = append(out, HopSnapshot{
-			From:    edge[0],
-			To:      edge[1],
+			From:    parts[0],
+			To:      parts[1],
 			Count:   clock.count.Load(),
 			TotalNs: clock.totalNs.Load(),
 			LastNs:  clock.lastNs.Load(),
 			MaxNs:   clock.maxNs.Load(),
 		})
-	}
+		
+		return true
+	})
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].From == out[j].From {
+			return out[i].To < out[j].To
+		}
+		return out[i].From < out[j].From
+	})
 
 	return out
 }

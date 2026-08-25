@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"sort"
 	"sync"
@@ -33,9 +34,23 @@ type Balance struct {
 NewBalance constructs an empty wallet owner for exchange balances only.
 */
 func NewBalance(
-	api *websocket.API,
-	ui *runtime.Channel[*types.UIFrame],
+	ctx context.Context,
+	bus *runtime.Workspace,
 ) *Balance {
+	if bus == nil {
+		panic("broker: workspace bus required")
+	}
+
+	var api *websocket.API
+	if shared, _ := bus.Shared("api", ""); shared != nil {
+		api, _ = shared.(*websocket.API)
+	}
+	if api == nil {
+		panic("broker: api not found in workspace")
+	}
+
+	ui := runtime.ChannelOf(bus, types.ChannelUI, func(frame *types.UIFrame) string { return "" })
+
 	balance := &Balance{
 		status: types.READY,
 		api:    api,

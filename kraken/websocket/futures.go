@@ -52,9 +52,8 @@ NewFutures constructs a new Kraken Futures WebSocket connection.
 */
 func NewFutures(
 	ctx context.Context,
-	thesis *types.Thesis,
+	bus *runtime.Workspace,
 	endpoint string,
-	recorders ...CaptureSink,
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = FuturesWebSocketURL
@@ -72,12 +71,22 @@ func NewFutures(
 	initialStatus := types.INITIALIZING
 	futures.status.Store(&initialStatus)
 
-	if thesis != nil {
-		futures.thesis.Store(thesis)
+	futures.SetBus(bus)
+
+	if bus == nil {
+		return futures
 	}
 
-	if len(recorders) > 0 && recorders[0] != nil {
-		futures.capture = recorders[0]
+	if shared, _ := bus.Shared("thesis", ""); shared != nil {
+		if thesis, ok := shared.(*types.Thesis); ok {
+			futures.thesis.Store(thesis)
+		}
+	}
+
+	if shared, _ := bus.Shared("recorder", ""); shared != nil {
+		if capture, ok := shared.(CaptureSink); ok {
+			futures.capture = capture
+		}
 	}
 
 	return futures

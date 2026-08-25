@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -669,30 +670,41 @@ loadQuote loads the latest valid quote midpoint from the shared book when one
 is available and seeds the epoch midpoint on the first valid quote.
 */
 func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
-	shared, found := trade.workspace.Shared("book", symbol)
+	shared, found := trade.workspace.Shared("api", "")
 
 	if !found {
 		input.Put(symbolHasQuote, 0)
-
 		return
 	}
 
-	resident := shared.(*book.Book)
-	bestBid := resident.BestBid()
-	bestAsk := resident.BestAsk()
-
-	if bestBid == nil || bestAsk == nil {
+	api, ok := shared.(*websocket.API)
+	if !ok || api == nil {
 		input.Put(symbolHasQuote, 0)
-
 		return
 	}
 
-	bidPrice := bestBid.Price.Float64()
-	askPrice := bestAsk.Price.Float64()
+	var hasQuote bool
+	var bidPrice, askPrice float64
 
-	if bidPrice <= 0 || askPrice <= bidPrice {
+	api.Book(symbol, func(resident *book.Book) {
+		if resident == nil {
+			return
+		}
+		bestBid := resident.BestBid()
+		bestAsk := resident.BestAsk()
+
+		if bestBid != nil && bestAsk != nil {
+			bidPrice = bestBid.Price.Float64()
+			askPrice = bestAsk.Price.Float64()
+
+			if bidPrice > 0 && askPrice > bidPrice {
+				hasQuote = true
+			}
+		}
+	})
+
+	if !hasQuote {
 		input.Put(symbolHasQuote, 0)
-
 		return
 	}
 

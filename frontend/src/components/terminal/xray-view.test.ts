@@ -69,8 +69,8 @@ describe("xray-view", () => {
 			hawkesMeasurement("1", "arrival_rate", "sell", 0.1),
 			hawkesMeasurement("2", "conditional_intensity", "buy", 0.3),
 			hawkesMeasurement("2", "conditional_intensity", "sell", 0.2),
-			hawkesMeasurement("2", "baseline_intensity", "buy", 0.05),
-			hawkesMeasurement("2", "baseline_intensity", "sell", 0.04),
+			hawkesMeasurement("2", "background_rate", "buy", 0.05),
+			hawkesMeasurement("2", "background_rate", "sell", 0.04),
 			hawkesMeasurement("2", "spectral_radius", "", 0.8),
 		];
 		const metrics = hawkesMetricsFromFrames(frames);
@@ -89,8 +89,8 @@ describe("xray-view", () => {
 		const frames = [
 			hawkesMeasurement("1", "conditional_intensity", "buy", 0.3),
 			hawkesMeasurement("1", "conditional_intensity", "sell", 0.2),
-			hawkesMeasurement("1", "baseline_intensity", "buy", 0.05),
-			hawkesMeasurement("1", "baseline_intensity", "sell", 0.04),
+			hawkesMeasurement("1", "background_rate", "buy", 0.05),
+			hawkesMeasurement("1", "background_rate", "sell", 0.04),
 			hawkesMeasurement("1", "spectral_radius", "", 0.8),
 		];
 

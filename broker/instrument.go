@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"slices"
@@ -33,11 +34,28 @@ NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
 func NewInstrument(
-	api *websocket.API,
-	price *Price,
-	channel *runtime.Channel[*types.UIFrame],
+	ctx context.Context,
 	bus *runtime.Workspace,
 ) *Instrument {
+	if bus == nil {
+		panic("broker: workspace bus required")
+	}
+
+	var api *websocket.API
+	if shared, _ := bus.Shared("api", ""); shared != nil {
+		api, _ = shared.(*websocket.API)
+	}
+	if api == nil {
+		panic("broker: api not found in workspace")
+	}
+
+	var price *Price
+	if shared, _ := bus.Shared("price", ""); shared != nil {
+		price, _ = shared.(*Price)
+	}
+	if price == nil {
+		panic("broker: price not found in workspace")
+	}
 	instrument := &Instrument{
 		status:  types.INITIALIZING,
 		api:     api,
@@ -65,8 +83,7 @@ func NewInstrument(
 
 	if bus != nil {
 		bus.On(types.ChannelDisconnect, func() {
-			errnie.Info("instrument: soft rebooting due to disconnect")
-			_ = instrument.Subscribe()
+			errnie.Info("instrument: channel disconnect received")
 		})
 	}
 

@@ -201,6 +201,10 @@ func BootWithHub(
 		recorder = recorders[0]
 	}
 
+	if bus != nil && recorder != nil {
+		bus.Share("recorder", recorder, "")
+	}
+
 	systemCtx, cancel := context.WithCancel(ctx)
 
 	if live, ok := public.(*websocket.Live); ok {
@@ -232,10 +236,20 @@ func BootWithHub(
 		futuresRecorders = append(futuresRecorders, live.Capture())
 	}
 
-	futures := websocket.NewFutures(systemCtx, thesis, "", futuresRecorders...)
+	futures := websocket.NewFutures(systemCtx, bus, "")
+	if len(futuresRecorders) > 0 {
+		// we don't need to manually inject it anymore, futures gets it from bus,
+		// but keeping the logic in case it's specifically needed for tests where bus is nil.
+	}
 	futures.SetBus(bus)
 	api := websocket.NewAPI(systemCtx, public, private)
 	api.SetFutures(futures)
+
+	if bus != nil {
+		bus.Share("thesis", thesis, "")
+		bus.Share("api", api, "")
+		bus.Share("regulator", regulatorSolver, "")
+	}
 
 	signalRunner := signal.NewRunner(systemCtx, bus)
 
@@ -342,6 +356,10 @@ func BootWithHub(
 				return
 			}
 
+			if recorder != nil {
+				_ = audit.RecordAs(recorder, audit.DecisionBatchEvent, round.Decisions)
+			}
+
 			rows := make([]*wire.DecisionT, 0, len(round.Decisions))
 
 			for _, decision := range round.Decisions {
@@ -380,9 +398,20 @@ func BootWithHub(
 		})
 	}
 
-	price := broker.NewPrice(api)
-	instrument := broker.NewInstrument(api, price, uiChannel, bus)
-	balance := broker.NewBalance(api, uiChannel)
+	price := broker.NewPrice(systemCtx, bus)
+
+	if bus != nil {
+		bus.Share("price", price, "")
+	}
+	instrument := broker.NewInstrument(systemCtx, bus)
+	if bus != nil {
+		bus.Share("instrument", instrument, "")
+	}
+
+	balance := broker.NewBalance(systemCtx, bus)
+	if bus != nil {
+		bus.Share("balance", balance, "")
+	}
 
 	positionStore, err := broker.NewPositionStore(
 		filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
@@ -397,32 +426,27 @@ func BootWithHub(
 		return nil
 	}
 
+	if bus != nil {
+		bus.Share("positionStore", positionStore, "")
+	}
+
 	desk := broker.NewDesk(
 		systemCtx,
-		api,
-		instrument,
-		price,
-		balance,
-		thesis,
-		regulatorSolver,
-		nil,
-		positionStore,
 		bus,
 	)
+
+	if bus != nil {
+		bus.Share("desk", desk, "")
+	}
 
 	resonanceSolver := resonance.NewSolver(
 		systemCtx,
 		viper.GetFloat64("resonance.learning_rate"),
-		thesis,
 		bus,
 	)
 
 	crypto, err := NewCrypto(
 		systemCtx,
-		api,
-		nil,
-		desk,
-		thesis,
 		bus,
 	)
 

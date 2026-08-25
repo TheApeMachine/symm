@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"golang.org/x/sync/errgroup"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -52,7 +54,8 @@ type Planner struct {
 	tickWork   *runtime.Subscription[kraken.TickerData]
 	stateWork  *runtime.Subscription[*CausalState]
 	pending    sync.Map
-	lastPass   int64
+	lastPass   atomic.Int64
+	updating   atomic.Bool
 	thesis     *types.Thesis
 
 	ObserveModule func(string, time.Duration)
@@ -153,7 +156,7 @@ func NewPlanner(
 	).Subscribe(planner.Name(), planner.Step)
 	planner.tickWork = runtime.ChannelOf[kraken.TickerData](
 		bus, types.ChannelTickers,
-		func(ticker kraken.TickerData) string { return "" },
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
 	).Subscribe(planner.Name(), planner.StepTick)
 
 	measurementWork := runtime.ChannelOf[*nmtypes.Measurement](
@@ -247,11 +250,21 @@ func (planner *Planner) Step(state *CausalState) error {
 
 // StepTick runs one portfolio pass at most once per engine tick.
 func (planner *Planner) StepTick(ticker kraken.TickerData) error {
-	if planner.lastPass == planner.thesis.Tick {
+	tick := atomic.LoadInt64(&planner.thesis.Tick)
+	last := planner.lastPass.Load()
+
+	if last >= tick {
 		return nil
 	}
 
-	planner.lastPass = planner.thesis.Tick
+	if !planner.lastPass.CompareAndSwap(last, tick) {
+		return nil
+	}
+
+	if !planner.updating.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer planner.updating.Store(false)
 
 	return planner.Update(planner.thesis)
 }
@@ -287,7 +300,7 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 	}
 
 	states := planner.drainPending()
-	decisions := make([]*types.Decision, 0, len(states))
+	decisions := make([]*types.Decision, len(states))
 
 	plannerStarted := time.Now()
 	defer func() {
@@ -296,24 +309,42 @@ func (planner *Planner) Update(thesis *types.Thesis) error {
 		}
 	}()
 
-	for _, state := range states {
-		if state == nil || isExcludedSymbol(state.Symbol) {
-			continue
-		}
+	var g errgroup.Group
 
-		// A symbol with no executable quote (or no cash/fee surface yet) is
-		// not priced: no economic decision is possible, so none is
-		// attempted. During startup this keeps the planner from churning on
-		// symbols the market data has not reached.
-		inputs := planner.marketInputsFor(state.Symbol)
+	for i, state := range states {
+		i, state := i, state
+		g.Go(func() error {
+			if state == nil || isExcludedSymbol(state.Symbol) {
+				return nil
+			}
 
-		if !inputs.available {
-			continue
-		}
+			// A symbol with no executable quote (or no cash/fee surface yet) is
+			// not priced: no economic decision is possible, so none is
+			// attempted. During startup this keeps the planner from churning on
+			// symbols the market data has not reached.
+			inputs := planner.marketInputsFor(state.Symbol)
 
-		decision := planner.decisionFromCausalState(state, config, inputs)
-		decisions = append(decisions, decision)
+			if !inputs.available {
+				return nil
+			}
+
+			decision := planner.decisionFromCausalState(state, config, inputs)
+			decisions[i] = decision
+			return nil
+		})
 	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	validDecisions := make([]*types.Decision, 0, len(decisions))
+	for _, decision := range decisions {
+		if decision != nil {
+			validDecisions = append(validDecisions, decision)
+		}
+	}
+	decisions = validDecisions
 
 	if len(decisions) == 0 {
 		return nil
@@ -420,6 +451,10 @@ func (planner *Planner) decisionFromCausalState(
 
 	cash := inputs.cash
 	mark := inputs.mark
+	
+	markDec := decimal.NewFromFloat64(mark)
+	decision.Mark = markDec
+	
 	feeRate := inputs.feeRate
 	spreadFraction := inputs.spreadFraction
 
@@ -729,46 +764,59 @@ func (planner *Planner) executeDecisions(
 		}
 	}
 
+	var g errgroup.Group
+
 	if planner.desk == nil {
 		return nil
 	}
 
 	for _, decision := range exits {
-		if err := planner.desk.Execute(*decision); err != nil {
-			decision.Reason = "planner: exit is no longer executable: " + err.Error()
+		decision := decision
+		g.Go(func() error {
+			if err := planner.desk.Execute(*decision); err != nil {
+				decision.Reason = "planner: exit is no longer executable: " + err.Error()
 
-			if !errnie.IsNotAcceptable(err) {
-				return fmt.Errorf("planner: execute exit %s: %w", decision.Symbol, err)
+				if !errnie.IsNotAcceptable(err) {
+					return fmt.Errorf("planner: execute exit %s: %w", decision.Symbol, err)
+				}
 			}
-		}
+			return nil
+		})
 	}
 
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	var g2 errgroup.Group
 	for _, decision := range winners {
 		if decision.Action != types.ActionEnter {
 			continue
 		}
 
-		var err error
+		decision := decision
+		g2.Go(func() error {
+			var err error
 
-		if planner.executeEntry != nil {
-			err = planner.executeEntry(*decision)
-		} else {
-			err = planner.desk.Execute(*decision)
-		}
-
-		if err != nil {
-			decision.Action = types.ActionNothing
-			decision.Reason = "planner: entry is no longer executable: " + err.Error()
-
-			if !errnie.IsNotAcceptable(err) {
-				return fmt.Errorf("planner: execute %s: %w", decision.Symbol, err)
+			if planner.executeEntry != nil {
+				err = planner.executeEntry(*decision)
+			} else {
+				err = planner.desk.Execute(*decision)
 			}
 
-			continue
-		}
+			if err != nil {
+				decision.Action = types.ActionNothing
+				decision.Reason = "planner: entry is no longer executable: " + err.Error()
+
+				if !errnie.IsNotAcceptable(err) {
+					return fmt.Errorf("planner: execute %s: %w", decision.Symbol, err)
+				}
+			}
+			return nil
+		})
 	}
 
-	return nil
+	return g2.Wait()
 }
 
 /*

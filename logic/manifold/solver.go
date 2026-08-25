@@ -75,10 +75,9 @@ type Solver struct {
 	closing      atomic.Bool
 	running      atomic.Bool
 	settling     atomic.Bool
-	requestMu    sync.Mutex
-	requested    uint64
-	completed    uint64
-	latest       manifoldRequest
+	requested    atomic.Uint64
+	completed    atomic.Uint64
+	latest       atomic.Pointer[manifoldRequest]
 	work         *nomagiqueruntime.Subscription[*nmtypes.Measurement]
 	stepped      bool
 	driveEta     float64
@@ -122,9 +121,6 @@ by the same explicit event-history capacity as the live market feed.
 */
 func NewSolver(
 	ctx context.Context,
-	thesis *types.Thesis,
-	api *websocket.API,
-	recorder *audit.Recorder,
 	bus *nomagiqueruntime.Workspace,
 ) *Solver {
 	deltaT := 0.01
@@ -153,9 +149,18 @@ func NewSolver(
 	angles, angleErr := geometry.PhasePath(phaseScanAngles)
 	errnie.Error(angleErr)
 	var bookSource websocket.BookSource
-
-	if api != nil {
-		bookSource = api
+	var thesis *types.Thesis
+	if bus != nil {
+		if shared, found := bus.Shared("thesis", ""); found {
+			if t, ok := shared.(*types.Thesis); ok {
+				thesis = t
+			}
+		}
+		if shared, found := bus.Shared("api", ""); found {
+			if api, ok := shared.(websocket.BookSource); ok {
+				bookSource = api
+			}
+		}
 	}
 
 	solver := &Solver{
@@ -165,7 +170,6 @@ func NewSolver(
 		config:       config,
 		physics:      physics,
 		slabs:        slabEncoder{config: config},
-		recorder:     recorder,
 		scales:       make(map[string]*adaptive.Accumulator),
 		converged:    make(map[string]float64),
 		priorPos:     make(map[string]map[string][3]float64),
@@ -243,22 +247,17 @@ func (solver *Solver) Update(thesis *types.Thesis) error {
 		))
 	}
 
-	solver.requestMu.Lock()
-
 	if solver.closing.Load() || solver.ctx.Err() != nil {
-		solver.requestMu.Unlock()
-
 		return nil
 	}
 
-	solver.requested++
-	solver.latest = manifoldRequest{
-		generation: solver.requested,
+	generation := solver.requested.Add(1)
+	solver.latest.Store(&manifoldRequest{
+		generation: generation,
 		thesis:     thesis,
 		at:         thesis.At,
-	}
+	})
 	solver.settling.Store(true)
-	solver.requestMu.Unlock()
 
 	return nil
 }
@@ -385,25 +384,29 @@ func (solver *Solver) drainRequests() error {
 }
 
 func (solver *Solver) nextRequest() (manifoldRequest, bool) {
-	solver.requestMu.Lock()
-	defer solver.requestMu.Unlock()
-
-	if solver.completed >= solver.requested {
+	if solver.completed.Load() >= solver.requested.Load() {
 		solver.settling.Store(false)
 		return manifoldRequest{}, false
 	}
 
-	return solver.latest, true
+	req := solver.latest.Load()
+	if req == nil {
+		return manifoldRequest{}, false
+	}
+
+	return *req, true
 }
 
 func (solver *Solver) completeRequest(generation uint64) {
-	solver.requestMu.Lock()
-
-	if generation > solver.completed {
-		solver.completed = generation
+	for {
+		current := solver.completed.Load()
+		if generation <= current {
+			break
+		}
+		if solver.completed.CompareAndSwap(current, generation) {
+			break
+		}
 	}
-
-	solver.requestMu.Unlock()
 }
 
 func (solver *Solver) load(thesis *types.Thesis, at time.Time) ([]manifoldCut, error) {

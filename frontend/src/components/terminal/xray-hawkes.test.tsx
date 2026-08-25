@@ -10,9 +10,9 @@ describe("XrayHawkesPanel", () => {
 			'data-stream-value="metrics.conditional_intensity:buy.raw"',
 		);
 		expect(markup).toContain(
-			'data-stream-baseline="metrics.baseline_intensity:buy.raw"',
+			'data-stream-baseline="metrics.background_rate:buy.raw"',
 		);
-		expect(markup).toContain('data-stream-decay="metrics.decay_rate.raw"');
+		expect(markup).toContain('data-stream-decay="metrics.excitation_decay:buy_from_buy.raw"');
 		expect(markup).toContain("data-stream-rug");
 	});
 });

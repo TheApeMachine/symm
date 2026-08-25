@@ -44,7 +44,7 @@ NewPaper opens the paper spot transport with explicit private subscriptions.
 func NewPaper(
 	ctx context.Context,
 	simulator *Simulator,
-	thesis *types.Thesis,
+	bus *runtime.Workspace,
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -54,8 +54,14 @@ func NewPaper(
 		simulator: simulator,
 	}
 
-	if thesis != nil {
-		paper.SetThesis(thesis)
+	paper.SetBus(bus)
+
+	if bus != nil {
+		if shared, _ := bus.Shared("thesis", ""); shared != nil {
+			if thesis, ok := shared.(*types.Thesis); ok {
+				paper.SetThesis(thesis)
+			}
+		}
 	}
 
 	return paper

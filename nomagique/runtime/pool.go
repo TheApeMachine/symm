@@ -440,6 +440,7 @@ func (shard *poolShard[T]) workerLoop() {
 				if !ok {
 					goto exit
 				}
+				pool.notifyWaiter() // Space is now available, wake up blocked producers
 				pool.handlerFunc(task)
 			default:
 				goto idle
@@ -458,6 +459,7 @@ func (shard *poolShard[T]) workerLoop() {
 				goto exit
 			}
 
+			pool.notifyWaiter() // Space is now available, wake up blocked producers
 			pool.handlerFunc(task)
 			continue
 		}
@@ -483,6 +485,7 @@ func (shard *poolShard[T]) workerLoop() {
 				goto exit
 			}
 
+			pool.notifyWaiter() // Space is now available, wake up blocked producers
 			pool.handlerFunc(task)
 		case <-idleTimer.C:
 			for {

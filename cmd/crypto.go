@@ -44,12 +44,36 @@ NewCrypto constructs Crypto; Boot Initialize attaches planner and desk.
 */
 func NewCrypto(
 	ctx context.Context,
-	api *websocket.API,
-	recorder *audit.Recorder,
-	desk *broker.Desk,
-	thesis *types.Thesis,
 	bus *runtime.Workspace,
 ) (*Crypto, error) {
+	if bus == nil {
+		panic("cmd: workspace bus required")
+	}
+
+	var api *websocket.API
+	if shared, _ := bus.Shared("api", ""); shared != nil {
+		api, _ = shared.(*websocket.API)
+	}
+
+	var desk *broker.Desk
+	if shared, _ := bus.Shared("desk", ""); shared != nil {
+		desk, _ = shared.(*broker.Desk)
+	}
+
+	var thesis *types.Thesis
+	if shared, _ := bus.Shared("thesis", ""); shared != nil {
+		thesis, _ = shared.(*types.Thesis)
+	}
+
+	var recorder *audit.Recorder
+	if shared, _ := bus.Shared("recorder", ""); shared != nil {
+		recorder, _ = shared.(*audit.Recorder)
+	}
+
+	if api == nil || desk == nil || thesis == nil {
+		panic("cmd: missing core dependencies in workspace for crypto")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	crypto := &Crypto{

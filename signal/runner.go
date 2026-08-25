@@ -67,7 +67,7 @@ func NewRunner(
 			func(measurement *nmtypes.Measurement) string { return measurement.Symbol },
 		),
 		correlation: signalcorrelation.NewSignal(ctx, bus),
-		cvd:         signalcvd.NewSignal(ctx),
+		cvd:         signalcvd.NewSignal(ctx, bus),
 		derivatives: signalderivatives.NewSignal(ctx, bus),
 		depthflow:   signaldepthflow.NewSignal(ctx, bus),
 		exhaust:     signalexhaust.NewSignal(ctx),

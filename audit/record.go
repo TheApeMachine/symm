@@ -9,6 +9,9 @@ import (
 // DecisionBatchEvent is the stable audit protocol name for retained decision moments.
 const DecisionBatchEvent = "decision_batch"
 
+// OutcomeBatchEvent is the stable audit protocol name for matured outcome tracking.
+const OutcomeBatchEvent = "outcome_batch"
+
 /*
 Record validates and writes one typed analytical event: the curated audit
 stream of decision moments. A recorder with an event sink writes there —

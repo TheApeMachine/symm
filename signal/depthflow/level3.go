@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -639,41 +640,50 @@ or type-mismatched book yields no measurement; the caller skips it rather than
 panicking.
 */
 func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	shared, found := level3.workspace.Shared("book", symbol)
+	shared, found := level3.workspace.Shared("api", "")
 
 	if !found {
 		return nil
 	}
 
-	orderBook, ok := shared.(*book.Book)
+	api, ok := shared.(*websocket.API)
 
-	if !ok {
+	if !ok || api == nil {
 		return nil
 	}
 
 	bidNotional := 0.0
-
-	for _, priceLevel := range orderBook.Bids.Levels {
-		bidNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
-	}
-
 	askNotional := 0.0
+	var touchBidPrice, touchAskPrice, touchBidNotional, touchAskNotional float64
+	var foundBook bool
 
-	for _, priceLevel := range orderBook.Asks.Levels {
-		askNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
-	}
+	api.Book(symbol, func(orderBook *book.Book) {
+		if orderBook == nil {
+			return
+		}
+		for _, priceLevel := range orderBook.Bids.Levels {
+			bidNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
+		}
 
-	touchBid := orderBook.BestBid()
-	touchAsk := orderBook.BestAsk()
+		for _, priceLevel := range orderBook.Asks.Levels {
+			askNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
+		}
 
-	if touchBid == nil || touchAsk == nil {
+		touchBid := orderBook.BestBid()
+		touchAsk := orderBook.BestAsk()
+
+		if touchBid != nil && touchAsk != nil {
+			foundBook = true
+			touchBidPrice = touchBid.Price.Float64()
+			touchAskPrice = touchAsk.Price.Float64()
+			touchBidNotional = touchBidPrice * touchBid.Quantity.Float64()
+			touchAskNotional = touchAskPrice * touchAsk.Quantity.Float64()
+		}
+	})
+
+	if !foundBook {
 		return nil
 	}
-
-	touchBidPrice := touchBid.Price.Float64()
-	touchAskPrice := touchAsk.Price.Float64()
-	touchBidNotional := touchBidPrice * touchBid.Quantity.Float64()
-	touchAskNotional := touchAskPrice * touchAsk.Quantity.Float64()
 
 	previousBidNotional := bidNotional
 	previousAskNotional := askNotional

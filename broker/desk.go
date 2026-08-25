@@ -46,7 +46,6 @@ type Desk struct {
 	tickerWork     *runtime.Subscription[kraken.TickerData]
 	executionWork  *runtime.Subscription[kraken.ExecutionData]
 	balanceRefresh atomic.Bool
-	executeMu      sync.Mutex
 	maxPositions   int
 	maxReserved    int
 	ObserveModule  func(string, time.Duration)
@@ -74,16 +73,55 @@ NewDesk constructs the serial broker owner.
 */
 func NewDesk(
 	ctx context.Context,
-	api *websocket.API,
-	instrument *Instrument,
-	price *Price,
-	balance *Balance,
-	thesis *types.Thesis,
-	equityObserver EquityObserver,
-	recorder *audit.Recorder,
-	store *PositionStore,
 	bus *runtime.Workspace,
 ) *Desk {
+	if bus == nil {
+		panic("broker: workspace bus required")
+	}
+
+	var api *websocket.API
+	if shared, _ := bus.Shared("api", ""); shared != nil {
+		api, _ = shared.(*websocket.API)
+	}
+
+	var instrument *Instrument
+	if shared, _ := bus.Shared("instrument", ""); shared != nil {
+		instrument, _ = shared.(*Instrument)
+	}
+
+	var price *Price
+	if shared, _ := bus.Shared("price", ""); shared != nil {
+		price, _ = shared.(*Price)
+	}
+
+	var balance *Balance
+	if shared, _ := bus.Shared("balance", ""); shared != nil {
+		balance, _ = shared.(*Balance)
+	}
+
+	var thesis *types.Thesis
+	if shared, _ := bus.Shared("thesis", ""); shared != nil {
+		thesis, _ = shared.(*types.Thesis)
+	}
+
+	var equityObserver EquityObserver
+	if shared, _ := bus.Shared("regulator", ""); shared != nil {
+		equityObserver, _ = shared.(EquityObserver)
+	}
+
+	var recorder *audit.Recorder
+	if shared, _ := bus.Shared("recorder", ""); shared != nil {
+		recorder, _ = shared.(*audit.Recorder)
+	}
+
+	var store *PositionStore
+	if shared, _ := bus.Shared("positionStore", ""); shared != nil {
+		store, _ = shared.(*PositionStore)
+	}
+
+	if api == nil || instrument == nil || price == nil || balance == nil || thesis == nil || equityObserver == nil || store == nil {
+		panic("broker: missing core dependencies in workspace for desk")
+	}
 	ctx, cancel := context.WithCancel(ctx)
 
 	viper.SetDefault("trading.slots.normal", 2)
@@ -134,6 +172,21 @@ func NewDesk(
 
 		return desk
 	}
+
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				desk.balance.Update()
+				_ = desk.PublishEquity()
+			}
+		}
+	}()
 
 	return desk
 }
@@ -242,13 +295,10 @@ func (desk *Desk) ManualExit(symbol string) error {
 	if desk == nil || desk.positions == nil || symbol == "" {
 		return errnie.Err(
 			errnie.Validation,
-			"desk: symbol is required for a manual exit",
+			"desk: symbol required to close position",
 			nil,
 		)
 	}
-
-	desk.executeMu.Lock()
-	defer desk.executeMu.Unlock()
 
 	value, found := desk.positions.Load(symbol)
 
@@ -407,9 +457,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 
 	switch decision.Action {
 	case types.ActionEnter:
-		desk.executeMu.Lock()
-		defer desk.executeMu.Unlock()
-
 		if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 ||
 			decision.Stoploss == nil || desk.price == nil {
 			return errnie.Error(errnie.Err(

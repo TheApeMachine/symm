@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/theapemachine/errnie"
 )
+
+var ErrUnsubscribe = errors.New("runtime: unsubscribe")
 
 /*
 Workspace is the system-wide streaming bus: one shared object for the whole
@@ -154,6 +157,42 @@ func (channel *Channel[T]) Subscribe(id string, step func(T) error) *Subscriptio
 
 		if channel.subs.CompareAndSwap(loaded, &next) {
 			return subscription
+		}
+	}
+}
+
+/*
+Unsubscribe removes a consumer by id.
+*/
+func (channel *Channel[T]) Unsubscribe(id string) bool {
+	if channel == nil {
+		return false
+	}
+
+	for {
+		loaded := channel.subs.Load()
+		if loaded == nil || len(*loaded) == 0 {
+			return false
+		}
+
+		current := *loaded
+		next := make([]*Subscription[T], 0, len(current))
+		found := false
+
+		for _, sub := range current {
+			if sub.id == id {
+				found = true
+				continue
+			}
+			next = append(next, sub)
+		}
+
+		if !found {
+			return false
+		}
+
+		if channel.subs.CompareAndSwap(loaded, &next) {
+			return true
 		}
 	}
 }
@@ -309,6 +348,11 @@ func (entry *subscriptionKey[T]) drain() {
 			channel.completed.Add(1)
 
 			if err != nil {
+				if errors.Is(err, ErrUnsubscribe) {
+					channel.Unsubscribe(subscription.id)
+					return
+				}
+
 				channel.failure.CompareAndSwap(nil, &workspaceError{err: err})
 				channel.workspace.fail(channel.name, err)
 

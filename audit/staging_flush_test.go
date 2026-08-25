@@ -36,8 +36,8 @@ func TestFlushWritesStableDecisionBatch(t *testing.T) {
 	if err := stager.Flush(decision.ID); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
-	if kind != DecisionBatchEvent {
-		t.Fatalf("event kind = %q, want %q", kind, DecisionBatchEvent)
+	if kind != OutcomeBatchEvent {
+		t.Fatalf("event kind = %q, want %q", kind, OutcomeBatchEvent)
 	}
 	var decisions []types.Decision
 	if err := json.Unmarshal(payload, &decisions); err != nil {

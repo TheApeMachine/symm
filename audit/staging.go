@@ -88,7 +88,7 @@ func (s *Stager) Flush(decisionID string) error {
 
 	return RecordAs(
 		s.recorder,
-		DecisionBatchEvent,
+		OutcomeBatchEvent,
 		[]types.Decision{*staged.Decision},
 	)
 }

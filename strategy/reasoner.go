@@ -156,21 +156,21 @@ func (reasoner *Reasoner) Ingest(measurement *nmtypes.Measurement) {
 	}
 
 	reasoner.mu.Lock()
-
 	reasoner.store.AppendObservations(observations)
+	due := reasoner.due(measurement.Symbol, measurement.At)
+	reasoner.mu.Unlock()
 
-	if reasoner.due(measurement.Symbol, measurement.At) {
+	if due {
 		reasoner.updateRelations(measurement.Symbol)
 	}
 
+	reasoner.mu.Lock()
 	onState := reasoner.onState
-
 	var state *CausalState
 
 	if onState != nil {
 		state = reasoner.snapshotLocked(measurement.Symbol, measurement.At)
 	}
-
 	reasoner.mu.Unlock()
 
 	if onState != nil && state != nil {
@@ -202,18 +202,15 @@ func (reasoner *Reasoner) Refresh(symbol string, at time.Time) {
 		return
 	}
 
-	reasoner.mu.Lock()
-
 	reasoner.updateRelations(symbol)
 
+	reasoner.mu.Lock()
 	onState := reasoner.onState
-
 	var state *CausalState
 
 	if onState != nil {
 		state = reasoner.snapshotLocked(symbol, at)
 	}
-
 	reasoner.mu.Unlock()
 
 	if onState != nil && state != nil {

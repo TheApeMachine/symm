@@ -177,18 +177,6 @@ func NewHub(
 
 		consumerID := consumerIDFor()
 
-		// Each client subscribes its own bounded ring on the UI channel and
-		// consumes it directly (like a signal consumes its inputs); no extra
-		// frame channel hops between the ring and the socket. The workspace's
-		// ring is bounded and drops oldest under overload, so a slow client
-		// sheds frames instead of stalling the producer.
-		ui.Subscribe(consumerID, func(frame *types.UIFrame) error {
-			return writeUI(
-				conn.Conn,
-				hub.maxMessageBytes,
-				[]*types.UIFrame{frame},
-			)
-		})
 		initialFrames := make([]*types.UIFrame, 0, 3)
 
 		if hub.balance != nil {
@@ -255,6 +243,49 @@ func NewHub(
 
 			initialFrames = append(initialFrames, frame)
 		}
+
+		if len(initialFrames) > 0 {
+			batch := telemetry.EncodeBatch(initialFrames)
+
+			if len(batch.Bytes) > hub.maxMessageBytes {
+				batch.Release()
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"dashboard: initial state exceeds websocket message limit",
+					nil,
+				))
+				return
+			}
+
+			err := conn.Conn.WriteMessage(websocket.BinaryMessage, batch.Bytes)
+			batch.Release()
+
+			if err != nil {
+				return
+			}
+		}
+
+		// Each client subscribes its own bounded ring on the UI channel and
+		// consumes it directly (like a signal consumes its inputs); no extra
+		// frame channel hops between the ring and the socket. The workspace's
+		// ring is bounded and drops oldest under overload, so a slow client
+		// sheds frames instead of stalling the producer.
+		ui.Subscribe(consumerID, func(frame *types.UIFrame) error {
+			err := writeUI(
+				conn.Conn,
+				hub.maxMessageBytes,
+				[]*types.UIFrame{frame},
+			)
+
+			if expectedDashboardWriteClosure(err) {
+				return runtime.ErrUnsubscribe
+			}
+
+			return err
+		})
+
+
+
 
 		clientDone := make(chan struct{})
 		_, cancelClient := context.WithCancel(hub.ctx)
@@ -341,26 +372,7 @@ func NewHub(
 			_ = conn.Close()
 			<-clientDone
 		}()
-		if len(initialFrames) > 0 {
-			batch := telemetry.EncodeBatch(initialFrames)
 
-			if len(batch.Bytes) > hub.maxMessageBytes {
-				batch.Release()
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"dashboard: initial state exceeds websocket message limit",
-					nil,
-				))
-				return
-			}
-
-			err := conn.Conn.WriteMessage(websocket.BinaryMessage, batch.Bytes)
-			batch.Release()
-
-			if err != nil {
-				return
-			}
-		}
 
 		// Frames flow to the socket directly through the ChannelUI ring
 		// subscription above; this handler only keeps the connection alive
@@ -434,6 +446,7 @@ func expectedDashboardWriteClosure(err error) bool {
 		io.EOF,
 		io.ErrClosedPipe,
 		fastwebsocket.ErrCloseSent,
+		fastwebsocket.ErrNilConn,
 	} {
 		if errors.Is(err, expected) {
 			return true
