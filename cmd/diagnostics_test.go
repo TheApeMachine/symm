@@ -30,11 +30,11 @@ func TestDiagnosticsPublishing(t *testing.T) {
 		// Forward each heartbeat to the dashboard frame exactly as
 		// bindDiagnostics does, so the test observes the side-effect path
 		// without assembling the whole broker stack.
-		bus.Observe(types.ChannelDiagnostics, func(_ string, value any) {
+		bus.Wire(types.ChannelDiagnostics, "", func(value any) any {
 			diag, ok := value.(StreamDiagnostics)
 
 			if !ok {
-				return
+				return nil
 			}
 
 			wireFrame := diag.Wire()
@@ -50,23 +50,29 @@ func TestDiagnosticsPublishing(t *testing.T) {
 				Type:  wireT.FrameDiagnosticsFrame,
 				Value: wireFrame,
 			})
+
+			return nil
 		})
 
 		var receivedUI atomic.Int64
 		var receivedFluid atomic.Int64
 
-		bus.Observe(types.ChannelUI, func(_ string, value any) {
+		bus.Wire(types.ChannelUI, "", func(value any) any {
 			frame, ok := value.(*types.UIFrame)
 			if ok && frame != nil && frame.Type == wireT.FrameDiagnosticsFrame {
 				receivedUI.Add(1)
 			}
+
+			return nil
 		})
 
-		bus.Observe(types.ChannelFluid, func(_ string, value any) {
+		bus.Wire(types.ChannelFluid, "", func(value any) any {
 			frame, ok := value.(types.FluidFrame)
 			if ok && frame.Channel == types.DiagnosticsChannel && len(frame.Payload) > 0 {
 				receivedFluid.Add(1)
 			}
+
+			return nil
 		})
 
 		go crypto.publishDiagnostics()

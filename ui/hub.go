@@ -57,6 +57,7 @@ type Hub struct {
 	diagnostics     DiagnosticsControl
 	maxMessageBytes int
 	maxBatchFrames  int
+	clients         *clients
 }
 
 type diagnosticsToggleRequest struct {
@@ -130,10 +131,15 @@ func NewHub(
 		fluid: NewFluidRTC(ctx, bus, "fluid"),
 		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
 		maxBatchFrames:  viper.GetInt("ui.websocket.max_batch_frames"),
+		clients:         newClients(),
 	}
 
 	if hub.maxBatchFrames < 1 {
 		hub.maxBatchFrames = 1
+	}
+
+	if hub.bus != nil {
+		hub.bus.Wire(types.ChannelUI, "", hub.Step)
 	}
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -255,46 +261,15 @@ func NewHub(
 			}
 		}
 
-		var clientActive atomic.Bool
-		clientActive.Store(true)
+		queue := newClientQueue()
+		hub.clients.add(queue)
 
-		writeQueue := make(chan *types.UIFrame, 2048)
-		defer close(writeQueue)
-
-		go func() {
-			for frame := range writeQueue {
-				if !clientActive.Load() {
-					return
-				}
-
-				err := writeUI(
-					conn.Conn,
-					hub.maxMessageBytes,
-					[]*types.UIFrame{frame},
-				)
-
-				if expectedDashboardWriteClosure(err) {
-					clientActive.Store(false)
-					return
-				}
-			}
+		defer func() {
+			hub.clients.remove(queue)
+			queue.stop()
 		}()
 
-		hub.bus.Observe(types.ChannelUI, func(topic string, value any) {
-			if !clientActive.Load() {
-				return
-			}
-
-			frame, ok := value.(*types.UIFrame)
-			if !ok || frame == nil {
-				return
-			}
-
-			select {
-			case writeQueue <- frame:
-			default:
-			}
-		})
+		go hub.writeFrames(queue, conn.Conn)
 
 
 

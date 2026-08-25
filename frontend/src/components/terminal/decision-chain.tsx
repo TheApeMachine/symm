@@ -1,4 +1,5 @@
-import { type MouseEvent, useEffect, useRef } from "react";
+import { type MouseEvent, useRef } from "react";
+import type { Decision } from "#/types/thesis";
 import {
 	EvidenceStage,
 	ExecutionStage,
@@ -6,76 +7,65 @@ import {
 } from "#/components/terminal/decision-chain-stages";
 import { DecisionMCTSStage } from "#/components/terminal/decision-mcts-stage";
 import {
-	consumeDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
 } from "#/components/terminal/decision-side";
 import { Typography } from "#/components/ui/typography";
+import { strategyStore, useSubscribe } from "#/providers/ws-stores";
 
 const selectRow = (row: HTMLElement, symbol: string): void => {
 	setDecisionsScopeSymbol(symbol);
 
-	for (const other of document.querySelectorAll<HTMLElement>(
-		"[data-decision-chain='row']",
-	)) {
+	for (const other of document.querySelectorAll<HTMLElement>("[data-decision-chain='row']")) {
 		const selected = other === row;
 		other.dataset.selected = String(selected);
 		other.setAttribute("aria-expanded", String(selected));
 	}
 };
 
-const selectDecision = (event: MouseEvent<HTMLButtonElement>): void => {
-	const symbol = event.currentTarget.querySelector<HTMLElement>(
-		"[data-decision-chain='symbol']",
-	)?.textContent;
-
-	if (!symbol) {
-		return;
-	}
-
-	selectRow(event.currentTarget, symbol);
-};
-
-/*
-DecisionChain presents the backend structural thesis, the evidence-path search,
-and the current execution facts without relabelling any of them as a future
-price forecast.
-*/
 export const DecisionChain = ({ index }: { index: number }) => {
 	const rowRef = useRef<HTMLButtonElement>(null);
 
-	/*
-		A dashboard row navigating in leaves a one-shot pending symbol behind.
-		The symbol span is DOM-painted straight off the wire, so the observer
-		watches its own text: the first time it settles on the pending symbol,
-		this row claims the focus, expands, and scrolls itself into view.
-	*/
-	useEffect(() => {
-		const row = rowRef.current;
-		const symbolElement = row?.querySelector<HTMLElement>(
-			"[data-decision-chain='symbol']",
-		);
+	const decision = strategyStore.state?.decisions[index] as Decision | undefined;
 
-		if (!row || !symbolElement) {
+	useSubscribe(strategyStore, (state) => {
+		const current = state?.decisions[index];
+
+		if (current === undefined) {
 			return;
 		}
 
-		const tryClaim = () => {
-			const symbol = symbolElement.textContent;
+		const row = rowRef.current;
 
-			if (!symbol || !consumeDecisionsPendingFocus(symbol)) {
-				return;
+		if (row === null) {
+			return;
+		}
+
+		const set = (q: string, value: string) => {
+			const el = row.querySelector<HTMLElement>(`[data-df="${q}"]`);
+
+			if (el instanceof HTMLElement) {
+				el.textContent = value;
 			}
-
-			selectRow(row, symbol);
-			row.scrollIntoView({ block: "center", behavior: "smooth" });
 		};
 
-		tryClaim();
-		const observer = new MutationObserver(tryClaim);
-		observer.observe(symbolElement, { childList: true, characterData: true });
+		set("symbol", current.symbol);
+		set("reason", current.reason ?? "");
+		set("thesisScore", current.thesisScore.toFixed(4));
+		set("thesisConfidence", `${(current.thesisConfidence * 100).toFixed(1)}%`);
+		set("graphScore", current.graphScore.toFixed(5));
+		set("action", current.action);
+		set("cause", current.cause ?? "pending");
+		set("recommended", current.trace?.mcts?.recommendedAction ?? "");
+		set("round", current.arbitrationRound === undefined ? "" : String(current.arbitrationRound));
+	}, [index]);
 
-		return () => observer.disconnect();
-	}, []);
+	if (decision === undefined) {
+		return null;
+	}
+
+	const selectDecision = (event: MouseEvent<HTMLButtonElement>): void => {
+		selectRow(event.currentTarget, decision.symbol);
+	};
 
 	return (
 		<button
@@ -90,83 +80,35 @@ export const DecisionChain = ({ index }: { index: number }) => {
 		>
 			<div className="flex items-start justify-between gap-3 border-(--line) border-b px-3 py-2">
 				<div className="min-w-0">
-					<Typography.Span
-						data-paint="symbol"
-						data-decision-chain="symbol"
-						className="font-mono font-semibold text-[13px] text-(--f1)"
-					/>
-					<Typography.Span
-						data-paint="reason"
-						className="mt-0.5 block truncate font-mono text-[9px] text-(--f4)"
-					/>
+					<Typography.Span data-df="symbol" data-decision-chain="symbol" className="font-mono font-semibold text-[13px] text-(--f1)" />
+					<Typography.Span data-df="reason" className="mt-0.5 block truncate font-mono text-[9px] text-(--f4)" />
 				</div>
 				<div className="flex shrink-0 items-center gap-2 font-mono">
-					<span className="text-[9px] text-(--f4)">
-						thesis=
-						<b
-							data-paint="thesisScore"
-							data-paint-format=".4f"
-							className="font-normal text-(--acc)"
-						/>
-					</span>
-					<span className="text-[9px] text-(--f4)">
-						conf=
-						<b
-							data-paint="thesisConfidence"
-							data-paint-format=".1%"
-							className="font-normal text-(--f2)"
-						/>
-					</span>
-					<span className="text-[9px] text-(--f4)">
-						graph=
-						<b
-							data-paint="graphScore"
-							data-paint-format=".5f"
-							className="font-normal text-(--f2)"
-						/>
-					</span>
-					<Typography.Span
-						data-paint="action"
-						data-paint-class="enter:text-(--up) exit:text-(--down) hold:text-(--warn) nothing:text-(--f4)"
-						className="rounded-[3px] border border-(--line) px-2 py-0.75 font-semibold text-[10px] uppercase"
-					/>
+					<span className="text-[9px] text-(--f4)">thesis=<b data-df="thesisScore" className="font-normal text-(--acc)" /></span>
+					<span className="text-[9px] text-(--f4)">conf=<b data-df="thesisConfidence" className="font-normal text-(--f2)" /></span>
+					<span className="text-[9px] text-(--f4)">graph=<b data-df="graphScore" className="font-normal text-(--f2)" /></span>
+					<Typography.Span data-df="action" className="rounded-[3px] border border-(--line) px-2 py-0.75 font-semibold text-[10px] uppercase" />
 				</div>
 			</div>
 
 			<div className="hidden border-(--line) border-b px-3 py-2 font-mono text-[9px] text-(--f4) group-data-[selected=true]:block">
 				<span className="text-(--f3)">verdict: </span>
-				<span
-					data-paint="cause"
-					data-paint-empty="pending"
-					className="text-(--f2)"
-				/>
+				<span data-df="cause" className="text-(--f2)" />
 				<span> · </span>
-				<span
-					data-paint="reason"
-					data-paint-empty="planner admitted this candidate"
-				/>
+				<span data-df="reason" />
 			</div>
 
 			<div className="hidden grid-cols-4 gap-1.5 p-2 font-mono text-[8.5px] group-data-[selected=true]:grid">
-				<StructuralStage />
-				<EvidenceStage />
-				<DecisionMCTSStage />
-				<ExecutionStage />
+				<StructuralStage decision={decision} />
+				<EvidenceStage decision={decision} />
+				<DecisionMCTSStage decision={decision} />
+				<ExecutionStage decision={decision} />
 			</div>
 
 			<div className="hidden items-center gap-4 border-(--line) border-t px-3 py-1.5 font-mono text-[8.5px] text-(--f4) group-data-[selected=true]:flex">
 				<span>selected root</span>
-				<span
-					data-paint="trace.mcts.recommendedAction"
-					className="max-w-80 truncate text-(--acc)"
-				/>
-				<span className="ml-auto">
-					round{" "}
-					<b
-						data-paint="arbitrationRound"
-						className="font-normal text-(--f2)"
-					/>
-				</span>
+				<span data-df="recommended" className="max-w-80 truncate text-(--acc)" />
+				<span className="ml-auto">round <b data-df="round" className="font-normal text-(--f2)" /></span>
 			</div>
 		</button>
 	);

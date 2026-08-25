@@ -46,9 +46,24 @@ const defaultIdleWorkerLifetime = time.Second
 const maxShards = 128
 const defaultQueueSize = 1024
 const defaultShardMinWorkers = 2
-const defaultShardMaxWorkers = 2048
 const defaultNumShardsMin = 2
 const defaultNumShardsMax = 48
+
+// defaultShardMaxWorkers scales the per-shard worker ceiling with the CPU so a
+// burst can grow the pool but can never spawn tens of thousands of goroutines.
+func defaultShardMaxWorkers() int {
+	n := runtime.GOMAXPROCS(0) * 8
+	if n < 16 {
+		n = 16
+	}
+	return n
+}
+
+// defaultMaxWorkers is the global ceiling across all shards. It bounds total
+// workers at a small multiple of the CPU instead of the old "0 = unbounded".
+func defaultMaxWorkers() int {
+	return defaultNumShards() * defaultShardMaxWorkers()
+}
 
 // defaultNumShards returns GOMAXPROCS/2, clamped to [defaultNumShardsMin, defaultNumShardsMax].
 func defaultNumShards() int {
@@ -72,10 +87,10 @@ func NewPool[T any](handlerFunc TaskHandlerFunc[T]) *Pool[T] {
 		handlerFunc:        handlerFunc,
 		idleWorkerLifetime: defaultIdleWorkerLifetime,
 		numShards:          defaultNumShards(),
-		maxWorkers:         0,
+		maxWorkers:         defaultMaxWorkers(),
 		queueSize:          defaultQueueSize,
 		shardMinWorkers:    defaultShardMinWorkers,
-		shardMaxWorkers:    defaultShardMaxWorkers,
+		shardMaxWorkers:    defaultShardMaxWorkers(),
 	}
 
 	return wp

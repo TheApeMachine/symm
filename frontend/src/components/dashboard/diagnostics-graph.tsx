@@ -1297,13 +1297,13 @@ const StageNode = ({
 				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-xs border bg-(--surface) px-2 py-1.5 text-left transition-all hover:bg-(--raised)",
 				"flex flex-col justify-between",
 				selected &&
-					"outline-1 outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/40",
+					"outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/40",
 				highlight === "up" &&
 					!selected &&
-					"outline-1 outline outline-(--warn)/70 outline-offset-1",
+					"outline outline-(--warn)/70 outline-offset-1",
 				highlight === "down" &&
 					!selected &&
-					"outline-1 outline outline-(--info)/70 outline-offset-1",
+					"outline outline-(--info)/70 outline-offset-1",
 				dimmed && "opacity-20",
 			)}
 			style={{
@@ -1495,13 +1495,13 @@ const QueueNode = ({
 			className={cn(
 				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer text-left transition-opacity",
 				selected &&
-					"rounded-xs outline-1 outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/40",
+					"rounded-xs outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/40",
 				highlight === "up" &&
 					!selected &&
-					"rounded-xs outline-1 outline outline-(--warn)/70 outline-offset-1",
+					"rounded-xs outline outline-(--warn)/70 outline-offset-1",
 				highlight === "down" &&
 					!selected &&
-					"rounded-xs outline-1 outline outline-(--info)/70 outline-offset-1",
+					"rounded-xs outline outline-(--info)/70 outline-offset-1",
 				dimmed && "opacity-20",
 			)}
 			style={{

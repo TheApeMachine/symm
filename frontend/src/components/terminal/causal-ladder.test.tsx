@@ -9,11 +9,9 @@ describe("CausalLadder", () => {
 		const markup = renderToStaticMarkup(<CausalLadder />);
 		setDecisionsScopeSymbol(undefined);
 
-		expect(markup).toContain('data-paint="counterfactual"');
-		expect(markup).toContain('data-paint="noiseScore"');
+		expect(markup).toContain('data-f="counterfactual"');
+		expect(markup).toContain('data-f="noiseScore"');
 		expect(markup).toContain("ρ(treatment, target)");
-		expect(markup).not.toContain('data-set="counterfactual"');
 		expect(markup).not.toContain("P(y");
-		expect(markup).not.toContain('data-paint="confidence"');
 	});
 });

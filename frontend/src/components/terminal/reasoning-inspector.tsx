@@ -143,9 +143,9 @@ const SearchBranch = ({
 
 			{expanded && children.length > 0 && (
 				<div className="ml-4 mt-2 space-y-2 border-l border-zinc-700/70 pl-3">
-					{children.map((child, childIndex) => (
+					{children.map((child) => (
 						<SearchBranch
-							key={`${child.actionName}:${child.depth}:${childIndex}`}
+							key={`${child.action}:${child.depth}:${child.visits}:${child.actionName}`}
 							node={child}
 						/>
 					))}

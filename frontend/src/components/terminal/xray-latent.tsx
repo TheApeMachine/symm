@@ -104,7 +104,12 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 		at most, and an unlabelled dot says nothing about which one settled where.
 	*/
 	for (let index = 0; index < pointsToDraw.length; index += 1) {
-		const point = pointsToDraw[index]!;
+		const point = pointsToDraw[index];
+
+		if (point === undefined) {
+			continue;
+		}
+
 		const focus = point.symbol === focusSymbol;
 		const x = pad + projectX(point.x) * (width - pad * 2);
 		const y = height - pad - projectY(point.y) * (height - pad * 2);

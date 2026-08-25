@@ -1,27 +1,30 @@
-import { Component } from "#/components/ui/component";
-import { RESONANCE_FOCUS } from "#/providers/ws-stores";
-/*
-The resonance batch carries every settled carrier, not just the focused one, so
-this reads the focused-carrier stream rather than a position in that batch.
-*/
+import { resonanceFocusStore, useSubscribe } from "#/providers/ws-stores";
 
-export const LiveResonanceTitle = () => (
-	<Component registerKey={RESONANCE_FOCUS}>
-		{({ ref, className }) => (
-			<span ref={ref} className={className}>
-				h
-				<span data-paint="forecast.supportedHorizon" data-paint-format=".0f">
-					—
-				</span>
-				{" · r "}
-				<span data-paint="forecast.probeHorizon" data-paint-format=".0f">
-					—
-				</span>
-				{" · relative precision "}
-				<span data-paint="taskRelativePrecision" data-paint-format=".3f">
-					—
-				</span>
-			</span>
-		)}
-	</Component>
-);
+const num = (value: number | undefined): string =>
+	value === undefined ? "—" : value.toString();
+
+export const LiveResonanceTitle = () => {
+	const root = useSubscribe(resonanceFocusStore, (state) => {
+		const set = (which: string, value: string) => {
+			const el = root.current?.querySelector<HTMLElement>(`[data-res=${which}]`);
+
+			if (el instanceof HTMLElement) {
+				el.textContent = value;
+			}
+		};
+
+		set("horizon", num(state?.forecast?.supportedHorizon));
+		set("reach", num(state?.forecast?.probeHorizon));
+		set("precision", state?.taskRelativePrecision === undefined ? "—" : state.taskRelativePrecision.toFixed(3));
+	});
+
+	return (
+		<span ref={root}>
+			h<span data-res="horizon">—</span>
+			{" · r "}
+			<span data-res="reach">—</span>
+			{" · relative precision "}
+			<span data-res="precision">—</span>
+		</span>
+	);
+};

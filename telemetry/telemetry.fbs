@@ -538,6 +538,7 @@ table HindsightLeg {
   profitPct:double;
 }
 table HindsightSignal {
+  id:string;
   at:long;
   action:string;
   reason:string;

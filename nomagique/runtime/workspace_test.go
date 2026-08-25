@@ -99,55 +99,16 @@ func WorkspaceWireTest(t *testing.T) {
 				return 0
 			})
 
-			// Observer to confirm stage 1 output
-			workspace.Observe("func_in", func(topic string, value any) {
+			// Sink to confirm stage 1 output reached the chained subscriber.
+			workspace.Wire("func_in", "", func(_ any) any {
 				waitGroup.Done()
+				return nil
 			})
 
 			workspace.Publish("node_in", 21)
 
 			waitGroup.Wait()
 			So(finalOutput.Load(), ShouldEqual, 52)
-		})
-	})
-}
-
-func WorkspaceObserveTest(t *testing.T) {
-	Convey("Given a Workspace with Observers registered", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		workspace := NewWorkspace(ctx)
-
-		Reset(func() {
-			workspace.Close()
-			cancel()
-		})
-
-		var topicObserved atomic.Pointer[string]
-		var valueObserved atomic.Int64
-		var globalCount atomic.Int64
-		var waitGroup sync.WaitGroup
-		waitGroup.Add(2)
-
-		workspace.Observe("market.ticker", func(topic string, value any) {
-			topicObserved.Store(&topic)
-			if intVal, ok := value.(int64); ok {
-				valueObserved.Store(intVal)
-			}
-			waitGroup.Done()
-		})
-
-		workspace.ObserveAll(func(topic string, value any) {
-			globalCount.Add(1)
-			waitGroup.Done()
-		})
-
-		Convey("When publishing to the observed topic", func() {
-			workspace.Publish("market.ticker", int64(100))
-			waitGroup.Wait()
-
-			So(*topicObserved.Load(), ShouldEqual, "market.ticker")
-			So(valueObserved.Load(), ShouldEqual, 100)
-			So(globalCount.Load(), ShouldEqual, 1)
 		})
 	})
 }
@@ -234,7 +195,6 @@ func WorkspaceOnTest(t *testing.T) {
 
 func TestWorkspace(t *testing.T) {
 	WorkspaceWireTest(t)
-	WorkspaceObserveTest(t)
 	WorkspaceShareTest(t)
 	WorkspaceOnTest(t)
 }
@@ -249,14 +209,14 @@ func BenchmarkWorkspacePublish(b *testing.B) {
 	}()
 
 	var counter atomic.Int64
-	workspace.Observe("bench", func(topic string, value any) {
+	workspace.Wire("bench", "", func(_ any) any {
 		counter.Add(1)
+		return nil
 	})
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for index := 0; index < b.N; index++ {
+	for b.Loop() {
 		workspace.Publish("bench", int64(1))
 	}
 

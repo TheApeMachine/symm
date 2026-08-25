@@ -13,6 +13,7 @@ decision stream recorded so a missed leg can be traced back to the exact
 measurement that (or the exact admission gate that) kept the system flat.
 */
 type SignalContext struct {
+	ID                      string             `json:"id"`
 	At                      time.Time          `json:"at"`
 	Action                  string             `json:"action"`
 	Reason                  string             `json:"reason"`
@@ -205,6 +206,7 @@ func truthFor(decisions []Decision, leg Leg) MissedLeg {
 	if decision := bestDecisionFor(decisions, leg); decision != nil {
 		recorded = true
 		context = SignalContext{
+			ID:                      decision.ID,
 			At:                      decision.At,
 			Action:                  decision.Action,
 			Reason:                  decision.Reason,

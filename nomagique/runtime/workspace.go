@@ -19,38 +19,6 @@ type eventSlot struct {
 	value any
 }
 
-/*
-ObserverFunc is the normalized callback for workspace observers.
-*/
-type ObserverFunc func(topic string, key string, value any)
-
-func normalizeObserver(observer any) ObserverFunc {
-	if observer == nil {
-		return nil
-	}
-
-	if obs3, ok := observer.(func(string, string, any)); ok {
-		return obs3
-	}
-
-	if obs2, ok := observer.(func(string, any)); ok {
-		return func(topic string, _ string, value any) {
-			obs2(topic, value)
-		}
-	}
-
-	if obs1, ok := observer.(func(any)); ok {
-		return func(_ string, _ string, value any) {
-			obs1(value)
-		}
-	}
-
-	if obs0, ok := observer.(ObserverFunc); ok {
-		return obs0
-	}
-
-	return nil
-}
 
 /*
 Subscriber represents a connected processing step wired to the Workspace.
@@ -82,8 +50,6 @@ type Workspace struct {
 	disruptor       disruptor.Disruptor
 	ring            []eventSlot
 	subscribers     *lf.SkipList[string, *atomic.Pointer[[]*Subscriber]]
-	observers       *lf.SkipList[string, *atomic.Pointer[[]ObserverFunc]]
-	globalObservers atomic.Pointer[[]ObserverFunc]
 	shared          *lf.SkipList[string, any]
 	signals         *lf.SkipList[string, *atomic.Pointer[[]func()]]
 	failureHandler  atomic.Pointer[func(error)]
@@ -111,7 +77,6 @@ func NewWorkspace(ctx context.Context) *Workspace {
 		pool:        workerPool,
 		ring:        make([]eventSlot, bufferCapacity),
 		subscribers: lf.NewSkipList[string, *atomic.Pointer[[]*Subscriber]](stringLess),
-		observers:   lf.NewSkipList[string, *atomic.Pointer[[]ObserverFunc]](stringLess),
 		shared:      lf.NewSkipList[string, any](stringLess),
 		signals:     lf.NewSkipList[string, *atomic.Pointer[[]func()]](stringLess),
 	}
@@ -174,24 +139,6 @@ func (workspace *Workspace) Publish(topic string, value any) {
 }
 
 func (workspace *Workspace) dispatch(topic string, value any) {
-	globalList := workspace.globalObservers.Load()
-
-	if globalList != nil {
-		for _, observer := range *globalList {
-			observer(topic, "", value)
-		}
-	}
-
-	if obsPtr, found := workspace.observers.Get(topic); found && obsPtr != nil {
-		topicList := obsPtr.Load()
-
-		if topicList != nil {
-			for _, observer := range *topicList {
-				observer(topic, "", value)
-			}
-		}
-	}
-
 	if subPtr, found := workspace.subscribers.Get(topic); found && subPtr != nil {
 		subList := subPtr.Load()
 
@@ -266,67 +213,7 @@ func WireFunc[T any, U any](workspace *Workspace, inTopic string, outTopic strin
 	})
 }
 
-func (workspace *Workspace) Observe(topic string, observer any) {
-	normalized := normalizeObserver(observer)
 
-	if normalized == nil {
-		return
-	}
-
-	ptr, found := workspace.observers.Get(topic)
-
-	if !found || ptr == nil {
-		newPtr := &atomic.Pointer[[]ObserverFunc]{}
-		workspace.observers.Set(topic, newPtr)
-		ptr, _ = workspace.observers.Get(topic)
-	}
-
-	for {
-		current := ptr.Load()
-		var updated []ObserverFunc
-
-		if current == nil {
-			updated = []ObserverFunc{normalized}
-		}
-
-		if current != nil {
-			updated = make([]ObserverFunc, len(*current)+1)
-			copy(updated, *current)
-			updated[len(*current)] = normalized
-		}
-
-		if ptr.CompareAndSwap(current, &updated) {
-			break
-		}
-	}
-}
-
-func (workspace *Workspace) ObserveAll(observer any) {
-	normalized := normalizeObserver(observer)
-
-	if normalized == nil {
-		return
-	}
-
-	for {
-		current := workspace.globalObservers.Load()
-		var updated []ObserverFunc
-
-		if current == nil {
-			updated = []ObserverFunc{normalized}
-		}
-
-		if current != nil {
-			updated = make([]ObserverFunc, len(*current)+1)
-			copy(updated, *current)
-			updated[len(*current)] = normalized
-		}
-
-		if workspace.globalObservers.CompareAndSwap(current, &updated) {
-			break
-		}
-	}
-}
 
 func sharedKey(name string, ids []string) string {
 	key := fmt.Sprintf("%d:%s/", len(name), name)

@@ -4,7 +4,7 @@ import {
 	drawCortexTree,
 } from "#/components/terminal/cortex-draw";
 import { cortexTreeFromReading } from "#/components/terminal/cortex-tree";
-import { getLastFrame, registerPainter } from "#/providers/ws-stores";
+import { cognitionStore } from "#/providers/ws-stores";
 
 /*
 CortexCanvas draws the sensory prefix tree.
@@ -87,7 +87,15 @@ export const CortexCanvas = ({
 			draw();
 		};
 
-		const unregister = registerPainter("cognition", paint);
+		const unregister = cognitionStore.subscribe((state) => {
+			const reading = state.cognition?.[symbol]?.latest();
+
+			if (reading === undefined) {
+				return;
+			}
+
+			paint({ [symbol]: reading });
+		});
 
 		const observer = new ResizeObserver(draw);
 		const canvas = canvasRef.current;
@@ -103,16 +111,16 @@ export const CortexCanvas = ({
 			page show its tree immediately instead of sitting blank until the
 			classifier's next tick.
 		*/
-		const seed = getLastFrame("cognition");
+		const seed = cognitionStore.state.cognition?.[symbol]?.latest();
 
 		if (seed !== undefined) {
-			paint(seed);
+			paint({ [symbol]: seed });
 		} else {
 			draw();
 		}
 
 		return () => {
-			unregister?.();
+			unregister.unsubscribe();
 			observer.disconnect();
 		};
 	}, [symbol]);

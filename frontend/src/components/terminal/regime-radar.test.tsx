@@ -3,19 +3,11 @@ import { describe, expect, it } from "vitest";
 import { RadarPanel } from "./regime-radar";
 
 describe("RadarPanel", () => {
-	it("paints each normalized reading on the group whose scale it controls", () => {
+	it("renders one arm per regime axis", () => {
 		const markup = renderToStaticMarkup(<RadarPanel />);
-		const arms = [...markup.matchAll(/<g[^>]*data-set="([^"]+)"[^>]*>/g)];
+		const arms = [...markup.matchAll(/data-axis="([^"]+)"/g)].map((m) => m[1]);
 
 		expect(arms).toHaveLength(5);
-		expect(arms.map((match) => match[1])).toEqual([
-			"metrics.spectral_radius.normalized",
-			"metrics.trend.normalized",
-			"metrics.drive.normalized",
-			"metrics.starvation.normalized",
-			"metrics.balance.normalized",
-		]);
-		expect(markup.match(/data-target="style.--axis"/g)).toHaveLength(5);
-		expect(markup).not.toMatch(/<line[^>]*data-set=/);
+		expect(arms).toEqual(["volatility", "trend", "drive", "starved", "chop"]);
 	});
 });

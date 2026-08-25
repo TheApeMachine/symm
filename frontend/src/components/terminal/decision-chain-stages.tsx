@@ -1,25 +1,24 @@
-
 import type { ReactNode } from "react";
+import type { Decision } from "#/types/thesis";
 
-export const TraceValue = ({
+const fmtn = (value: number | undefined, digits: number): string =>
+	value === undefined ? "" : value.toFixed(digits);
+
+const pct = (value: number | undefined, digits: number): string =>
+	value === undefined ? "" : `${(value * 100).toFixed(digits)}%`;
+
+const TraceValue = ({
 	label,
-	path,
-	format,
+	value,
 	className = "text-(--f2)",
 }: {
 	label: string;
-	path: string;
-	format?: string;
+	value: string;
 	className?: string;
 }) => (
 	<div className="flex items-center justify-between gap-2">
 		<span className="text-(--f4)">{label}</span>
-		<span
-			data-paint={path}
-			data-paint-format={format}
-			data-paint-empty="—"
-			className={className}
-		/>
+		<span className={className}>{value === "" ? "—" : value}</span>
 	</div>
 );
 
@@ -34,112 +33,58 @@ export const DecisionStage = ({
 }) => (
 	<div className="min-w-0 rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-2">
 		<div className="mb-1.5 flex items-center justify-between gap-2">
-			<span className="font-semibold text-[9px] text-(--f3) uppercase tracking-[0.12em]">
-				{title}
-			</span>
+			<span className="font-semibold text-[9px] text-(--f3) uppercase tracking-[0.12em]">{title}</span>
 			<span className="text-[8px] text-(--f4)">{meta}</span>
 		</div>
 		<div className="flex flex-col gap-0.75">{children}</div>
 	</div>
 );
 
-export const StructuralStage = () => (
+export const StructuralStage = ({ decision }: { decision: Decision }) => (
 	<DecisionStage title="1 · structural thesis" meta="conditioned market evidence">
-		<TraceValue label="direction" path="direction" format="+.0f" />
-		<TraceValue label="thesis score" path="thesisScore" format=".4f" />
-		<TraceValue label="confidence" path="thesisConfidence" format=".1%" />
-		<TraceValue
-			label="support"
-			path="thesisSupport"
-			format=".4f"
-			className="text-(--up)"
-		/>
-		<TraceValue
-			label="contradiction"
-			path="thesisContradiction"
-			format=".4f"
-			className="text-(--down)"
-		/>
-		<TraceValue label="conditions" path="thesisConditions" format=".4f" />
-		<TraceValue label="predictive" path="predictiveStatus" />
-		<TraceValue label="task skill" path="taskSkill" format=".3f" />
-		<TraceValue label="supported horizon" path="forecastHorizon" format=".0f" />
-		<TraceValue label="opportunity" path="opportunityType" />
-		<TraceValue label="reserve" path="reserveReason" />
+		<TraceValue label="direction" value={decision.direction === undefined ? "" : decision.direction.toFixed(0)} />
+		<TraceValue label="thesis score" value={fmtn(decision.thesisScore, 4)} />
+		<TraceValue label="confidence" value={pct(decision.thesisConfidence, 1)} />
+		<TraceValue label="support" value={fmtn(decision.thesisSupport, 4)} className="text-(--up)" />
+		<TraceValue label="contradiction" value={fmtn(decision.thesisContradiction, 4)} className="text-(--down)" />
+		<TraceValue label="conditions" value={fmtn(decision.thesisConditions, 4)} />
+		<TraceValue label="predictive" value={decision.predictiveStatus || ""} />
+		<TraceValue label="task skill" value={fmtn(decision.taskSkill, 3)} />
+		<TraceValue label="supported horizon" value={decision.forecastHorizon === undefined ? "" : decision.forecastHorizon.toFixed(0)} />
+		<TraceValue label="opportunity" value={decision.opportunityType || ""} />
+		<TraceValue label="reserve" value={decision.reserveReason || ""} />
 	</DecisionStage>
 );
 
-export const EvidenceStage = () => (
+export const EvidenceStage = ({ decision }: { decision: Decision }) => (
 	<DecisionStage title="2 · evidence graph" meta="relations addressing the thesis">
-		<div className="flex items-center justify-between gap-2">
-			<span className="text-(--f4)">supporting mass</span>
-			<span
-				data-paint="trace.graphSupports"
-				data-paint-format=".3f"
-				className="text-(--up)"
-			/>
-		</div>
-		<div className="h-1.25 overflow-hidden rounded-[3px] bg-(--line)">
-			<div
-				data-set="trace.graphSupports"
-				data-set-scale="domain-percent"
-				data-set-domain="trace.graphSupports,trace.graphContradicts"
-				data-target="style.width"
-				className="h-full bg-(--up)"
-			/>
-		</div>
-		<div className="flex items-center justify-between gap-2">
-			<span className="text-(--f4)">contradicting mass</span>
-			<span
-				data-paint="trace.graphContradicts"
-				data-paint-format=".3f"
-				className="text-(--down)"
-			/>
-		</div>
-		<div className="h-1.25 overflow-hidden rounded-[3px] bg-(--line)">
-			<div
-				data-set="trace.graphContradicts"
-				data-set-scale="domain-percent"
-				data-set-domain="trace.graphSupports,trace.graphContradicts"
-				data-target="style.width"
-				className="h-full bg-(--down)"
-			/>
-		</div>
-		<TraceValue label="conditioning mass" path="trace.graphConditions" format=".3f" />
-		<TraceValue label="balance" path="trace.thesisBalance" format=".4f" />
+		<TraceValue label="supporting mass" value={fmtn(decision.trace?.graphSupports, 3)} className="text-(--up)" />
+		<TraceValue label="contradicting mass" value={fmtn(decision.trace?.graphContradicts, 3)} className="text-(--down)" />
+		<TraceValue label="conditioning mass" value={fmtn(decision.trace?.graphConditions, 3)} />
+		<TraceValue label="balance" value={fmtn(decision.trace?.thesisBalance, 4)} />
 	</DecisionStage>
 );
 
-export const ExecutionStage = () => (
+export const ExecutionStage = ({ decision }: { decision: Decision }) => (
 	<DecisionStage title="4 · execution + risk" meta="facts observable now">
-		<TraceValue
-			label="entry VWAP"
-			path="entryCost.entryPrice"
-			format=".8f"
-			className="text-(--acc)"
-		/>
-		<TraceValue label="break-even" path="entryCost.breakEven" format=".8f" />
-		<TraceValue label="round-trip fees" path="entryCost.roundTripFees" format=".6f" />
-		<TraceValue label="spread" path="entryCost.spread" format=".8f" />
-		<TraceValue label="impact" path="entryCost.impact" format=".8f" />
-		<TraceValue label="quantity" path="proposedQuantity" format=".6f" />
-		<TraceValue
-			label="max loss"
-			path="risk.max_loss"
-			format=".4f"
-			className="text-(--down)"
-		/>
-		<TraceValue label="risk distance" path="risk.risk_distance" format=".8f" />
+		<TraceValue label="entry VWAP" value={decision.entryCost?.entryPrice ?? ""} className="text-(--acc)" />
+		<TraceValue label="break-even" value={decision.entryCost?.breakEven ?? ""} />
+		<TraceValue label="round-trip fees" value={decision.entryCost?.roundTripFees ?? ""} />
+		<TraceValue label="spread" value={decision.entryCost?.spread ?? ""} />
+		<TraceValue label="impact" value={decision.entryCost?.impact ?? ""} />
+		<TraceValue label="quantity" value={decision.proposedQuantity} />
+		<TraceValue label="max loss" value={decision.risk?.max_loss == null ? "" : String(decision.risk.max_loss)} className="text-(--down)" />
+		<TraceValue label="risk distance" value={decision.risk?.risk_distance == null ? "" : String(decision.risk.risk_distance)} />
 		<div className="flex justify-between gap-2 text-(--f4)">
 			<span>slots</span>
 			<span>
-				<b data-paint="openPositions" className="font-normal text-(--f2)" /> /{" "}
-				<b data-paint="slotCapacity" className="font-normal text-(--f2)" />
+				<b className="font-normal text-(--f2)">{String(decision.openPositions)}</b> /{" "}
+				<b className="font-normal text-(--f2)">{String(decision.slotCapacity)}</b>
 			</span>
 		</div>
 		<div className="flex justify-between gap-2">
-			<span data-paint="allocationClass" className="text-(--f3)" />
-			<span data-paint="cause" className="truncate text-(--f4)" />
+			<span className="text-(--f3)">{decision.allocationClass || ""}</span>
+			<span className="truncate text-(--f4)">{decision.cause || ""}</span>
 		</div>
 	</DecisionStage>
 );

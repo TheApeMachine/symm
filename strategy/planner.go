@@ -147,12 +147,14 @@ func NewPlanner(
 			types.ChannelDecisions,
 			planner.StepTick,
 		)
-		bus.Observe(types.ChannelMeasurements, func(_ string, value any) {
+		bus.Wire(types.ChannelMeasurements, "", func(value any) any {
 			if m, ok := value.(*nmtypes.Measurement); ok {
 				_ = planner.StepMeasurement(m)
 			} else if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
 				_ = planner.StepMeasurement(m.ToTypesMeasurement())
 			}
+
+			return nil
 		})
 	}
 

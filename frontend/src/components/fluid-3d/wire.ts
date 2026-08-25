@@ -63,21 +63,21 @@ export class FluidParticleFrame {
 
 		return {
 			Position: {
-				X: this.values[offset + 0]!,
-				Y: this.values[offset + 1]!,
-				Z: this.values[offset + 2]!,
+				X: this.values[offset + 0],
+				Y: this.values[offset + 1],
+				Z: this.values[offset + 2],
 			},
 			Velocity: {
-				X: this.values[offset + 3]!,
-				Y: this.values[offset + 4]!,
-				Z: this.values[offset + 5]!,
+				X: this.values[offset + 3],
+				Y: this.values[offset + 4],
+				Z: this.values[offset + 5],
 			},
-			Mass: this.values[offset + 6]!,
-			Heat: this.values[offset + 7]!,
-			Energy: this.values[offset + 8]!,
-			Phase: this.values[offset + 9]!,
-			Omega: this.values[offset + 10]!,
-			Amplitude: this.values[offset + 11]!,
+			Mass: this.values[offset + 6],
+			Heat: this.values[offset + 7],
+			Energy: this.values[offset + 8],
+			Phase: this.values[offset + 9],
+			Omega: this.values[offset + 10],
+			Amplitude: this.values[offset + 11],
 		};
 	}
 }

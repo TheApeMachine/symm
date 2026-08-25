@@ -6,14 +6,9 @@ import type { Size } from "./types";
 /*
 Dot is a state indicator sized to sit inline with text.
 
-It is deliberately a plain <span> that forwards everything: a readiness gate
-paints it through data-set + data-target="style.background", and a kernel row
-swaps its fill through data-paint-class. Neither can work if the primitive
-re-renders or swallows attributes, so Dot holds no state of its own.
-
-Children are allowed and hidden from sight but not from assistive tech — that is
-how a painted dot keeps a readable fallback ("STANDBY") in the DOM while the
-engine has said nothing yet.
+It is deliberately a plain <span> that forwards everything, so a store
+subscriber can write its tone via style or class without the primitive
+re-rendering. Dot holds no state of its own.
 */
 
 export const dotVariants = cva("shrink-0 rounded-full [--dot-tone:var(--f3)]", {

@@ -517,10 +517,10 @@ func (crypto *Crypto) bindDiagnostics() {
 		// manifold fluid stream. This is a side effect, so it rides the observer
 		// hook: the Crypto owns its diagnostics end-to-end and does not depend on
 		// the boot wiring to surface the frame to a viewer.
-		crypto.bus.Observe(types.ChannelDiagnostics, func(_ string, value any) {
+		crypto.bus.Wire(types.ChannelDiagnostics, "", func(value any) any {
 			diag, ok := value.(StreamDiagnostics)
 			if !ok {
-				return
+				return nil
 			}
 
 			diagWire := diag.Wire()
@@ -537,6 +537,8 @@ func (crypto *Crypto) bindDiagnostics() {
 				Type:  wire.FrameDiagnosticsFrame,
 				Value: diagWire,
 			})
+
+			return nil
 		})
 	}
 
@@ -1025,7 +1027,7 @@ func observeChannel[T any](
 		return
 	}
 
-	bus.Observe(name, func(_ string, _ any) {
+	bus.Wire(name, "", func(_ any) any {
 		started := time.Now()
 		if begin != nil {
 			begin(name)
@@ -1033,6 +1035,8 @@ func observeChannel[T any](
 		if end != nil {
 			end(name, time.Since(started))
 		}
+
+		return nil
 	})
 }
 

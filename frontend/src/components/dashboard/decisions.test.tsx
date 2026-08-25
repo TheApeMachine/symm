@@ -7,17 +7,11 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 describe("Decisions", () => {
-	it("renders each reserved decision slot as a compact reason card", () => {
+	it("renders one card per real decision, with no pre-allocated slots", () => {
 		const markup = renderToStaticMarkup(<Decisions />);
 
-		expect(markup.match(/data-decision-card="true"/g)).toHaveLength(6);
-		expect(markup.match(/data-paint="reason"/g)).toHaveLength(6);
-		expect(markup).toContain("line-clamp-2");
-		expect(markup).toContain(
-			'data-paint-empty="No rejection reason published"',
-		);
-		expect(markup).toContain('data-paint="symbol"');
-		expect(markup).toContain('data-paint="thesisScore"');
-		expect(markup).toContain('data-paint="action"');
+		expect(markup).not.toContain('data-decision-id');
+		expect(markup).toContain("waiting for backend decision frames");
+		expect(markup).not.toMatch(/data-decision-card="true"[^>]*data-decision-card="true"/);
 	});
 });

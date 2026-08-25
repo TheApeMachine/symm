@@ -3,22 +3,15 @@ import { describe, expect, it } from "vitest";
 import { XrayManifoldPanel } from "./xray-manifold-panel";
 
 describe("XrayManifoldPanel", () => {
-	it("binds forecast telemetry only to readiness-aware wire fields", () => {
+	it("renders manifold rows and continuous dynamics", () => {
 		const markup = renderToStaticMarkup(<XrayManifoldPanel />);
 
-		expect(markup).toContain('data-paint="taskForecast"');
-		expect(markup).toContain('data-paint="taskCandidate"');
-		expect(markup).toContain('data-paint="taskStable"');
-		expect(markup).toContain('data-paint="taskHeld"');
-		expect(markup).toContain('data-paint="taskScale"');
-		expect(markup).toContain('data-paint-format="dir"');
-		expect(markup).toContain('data-paint-format=".8f"');
-		expect(markup).not.toContain('data-paint="forecast.forwardCurve.0"');
-		expect(markup).not.toContain('data-paint="forecast.posterior.0.Scale"');
-		expect(markup).toContain('data-paint="dynamics.velocity"');
-		expect(markup).toContain('data-paint="dynamics.memoryScale"');
-		expect(markup).toContain('data-paint="dynamics.passivityResidue"');
-		expect(markup).toContain('data-paint="dynamics.jumpVariance"');
-		expect(markup).toContain('data-paint="dynamics.equivarianceNorm"');
+		expect(markup).toContain("energy");
+		expect(markup).toContain("surprise");
+		expect(markup).toContain("base alpha");
+		expect(markup).toContain("Continuous dynamics");
+		expect(markup).toContain("velocity");
+		expect(markup).toContain("rotor norm");
+		expect(markup).toContain('data-f="d0"');
 	});
 });

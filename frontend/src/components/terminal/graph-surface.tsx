@@ -10,7 +10,7 @@ import {
 	subscribeGraphSurface,
 } from "#/components/terminal/graph-surface-store";
 import { Panel } from "#/components/ui/panel";
-import { registerPainter } from "#/providers/ws-stores";
+import { graphStore } from "#/providers/ws-stores";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { Flex } from "@/components/ui/flex";
@@ -248,12 +248,15 @@ export const GraphSurface = () => {
 	useEffect(() => {
 		const notify = () => setVersion((value) => value + 1);
 		const unsubscribe = subscribeGraphSurface(notify);
-		const unregister = registerPainter("graph", paintGraphSurface);
+		const unregister = graphStore.subscribe((value) => {
+			paintGraphSurface(value);
+		});
+		paintGraphSurface(graphStore.state);
 		notify();
 
 		return () => {
 			unsubscribe();
-			unregister();
+			unregister.unsubscribe();
 		};
 	}, []);
 

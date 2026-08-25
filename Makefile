@@ -34,7 +34,7 @@ DUMP_OUTPUT ?= symm.txt
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
 	flatc --no-warnings --ts --gen-object-api -o frontend/src/providers/telemetry telemetry/telemetry.fbs
-	find frontend/src/providers/telemetry -type f -name '*.ts' -print0 | xargs -0 perl -pi -e 'if ($$.-eq 1 && $$_ ne "// \@ts-nocheck\n") { print "// \@ts-nocheck\n" } close ARGV if eof'
+	find frontend/src/providers/telemetry -type f -name '*.ts' -print0 | xargs -0 perl -pi -e 'if ($$. == 1 && $$_ ne "// \@ts-nocheck\n") { print "// \@ts-nocheck\n" } close ARGV if eof'
 
 test: test-go test-race test-frontend
 

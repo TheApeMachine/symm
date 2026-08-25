@@ -15,6 +15,7 @@ coupling between hindsight and the decision stream; the heavy types package is
 not imported.
 */
 type Decision struct {
+	ID                      string             `json:"id"`
 	Action                  string             `json:"action"`
 	Symbol                  string             `json:"symbol"`
 	At                      time.Time          `json:"at"`

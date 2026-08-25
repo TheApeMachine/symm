@@ -11,7 +11,7 @@ import {
 	nodeIdentity,
 } from "#/components/terminal/evidence-graph-viz";
 import { GraphInspector } from "#/components/terminal/thesis-graph-inspector";
-import { registerPainter } from "#/providers/ws-stores";
+import { graphStore } from "#/providers/ws-stores";
 import type { Graph, GraphEdge, GraphNode } from "#/types/thesis";
 
 type HoverState = {
@@ -251,13 +251,14 @@ export const ThesisEvidenceCanvas = ({ symbol }: { symbol: string }) => {
 			cadence. Registering here rather than routing through the modal keeps
 			the canvas fed for as long as it is mounted.
 		*/
-		const unregister = registerPainter("graph", (updates) => {
+		const unregister = graphStore.subscribe((updates) => {
 			paintThesisEvidence(updates, symbol);
 		});
+		paintThesisEvidence(graphStore.state, symbol);
 		retarget(true);
 
 		return () => {
-			unregister?.();
+			unregister.unsubscribe();
 			observer.disconnect();
 
 			if (animation !== null) {

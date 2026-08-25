@@ -2,7 +2,11 @@ import { renderToReadableStream } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Route } from "./regulator";
 
-const RegulatorSurface = Route.options.component!;
+const RegulatorSurface = Route.options.component;
+
+if (RegulatorSurface === undefined) {
+	throw new Error("regulator route has no component");
+}
 
 const render = async () => {
   const stream = await renderToReadableStream(<RegulatorSurface />);

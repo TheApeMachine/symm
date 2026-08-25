@@ -1,197 +1,97 @@
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
-import { Component } from "#/components/ui/component";
+import type { ResonanceFrame } from "#/collections/types";
 import { Typography } from "#/components/ui/typography";
-import { cn } from "#/lib/utils";
 import { Flex } from "../ui";
+import { resonanceStore, useSubscribe } from "#/providers/ws-stores";
+
+const num = (value: number | undefined, digits: number): string =>
+	value === undefined ? "—" : value.toFixed(digits);
+
+const alphaOf = (row: ResonanceFrame): number | undefined => {
+	const alpha = (row as Record<string, unknown>).alpha;
+
+	return typeof alpha === "number" ? alpha : undefined;
+};
 
 const ROWS = [
-	{
-		label: "energy",
-		paint: "energy",
-		format: ".3f",
-	},
-	{
-		label: "surprise",
-		paint: "surprise",
-		format: ".3f",
-	},
-	{
-		label: "base alpha",
-		paint: "alpha",
-		format: ".4f",
-	},
-	{
-		label: "horizon",
-		paint: "forecast.supportedHorizon",
-		suffix: " ticks",
-	},
-	{
-		label: "reach",
-		paint: "forecast.probeHorizon",
-		suffix: " ticks",
-	},
-	{
-		label: "samples",
-		paint: "samples",
-	},
-	{
-		label: "task skill",
-		paint: "taskSkill",
-	},
-	{
-		label: "direction t+1",
-		paint: "taskForecast",
-		format: "dir",
-	},
-	{
-		label: "candidate",
-		paint: "taskCandidate",
-		format: "dir",
-	},
-]
-
-const DYNAMICS_FIELDS = [
-	{ label: "velocity", path: "dynamics.velocity", format: ".4f" },
-	{ label: "acceleration", path: "dynamics.acceleration", format: ".4f" },
-	{ label: "liquid memory", path: "dynamics.memory", format: ".4f" },
-	{ label: "memory scale", path: "dynamics.memoryScale", format: ".4f" },
-	{ label: "stored energy", path: "dynamics.storedEnergy", format: ".4f" },
-	{ label: "supplied power", path: "dynamics.suppliedPower", format: ".4f" },
-	{ label: "dissipation", path: "dynamics.dissipation", format: ".4f" },
-	{
-		label: "passivity residue",
-		path: "dynamics.passivityResidue",
-		format: ".4f",
-	},
-	{
-		label: "diffusion variance",
-		path: "dynamics.continuousVariance",
-		format: ".6f",
-	},
-	{ label: "jump amplitude", path: "dynamics.jumpAmplitude", format: ".6f" },
-	{ label: "jump variance", path: "dynamics.jumpVariance", format: ".6f" },
-	{ label: "rotor norm", path: "dynamics.equivarianceNorm", format: ".4f" },
+	{ label: "energy", read: (row: ResonanceFrame) => num(row.energy, 3) },
+	{ label: "surprise", read: (row: ResonanceFrame) => num(row.surprise, 3) },
+	{ label: "base alpha", read: (row: ResonanceFrame) => num(alphaOf(row), 4) },
+	{ label: "horizon", read: (row: ResonanceFrame) => `${num(row.forecast?.supportedHorizon, 0)} ticks` },
+	{ label: "reach", read: (row: ResonanceFrame) => `${num(row.forecast?.probeHorizon, 0)} ticks` },
+	{ label: "samples", read: (row: ResonanceFrame) => num(row.samples, 0) },
+	{ label: "task skill", read: (row: ResonanceFrame) => num(row.taskSkill, 3) },
+	{ label: "task scale", read: (row: ResonanceFrame) => num(row.taskRelativePrecision, 8) },
 ] as const;
 
-/*
-XrayManifoldPanel is the manifold reading.
+const DYNAMICS_FIELDS = [
+	{ label: "velocity", read: (d: ResonanceFrame["dynamics"]) => num(d?.velocity, 4) },
+	{ label: "acceleration", read: (d: ResonanceFrame["dynamics"]) => num(d?.acceleration, 4) },
+	{ label: "liquid memory", read: (d: ResonanceFrame["dynamics"]) => num(d?.memory, 4) },
+	{ label: "memory scale", read: (d: ResonanceFrame["dynamics"]) => num(d?.memoryScale, 4) },
+	{ label: "stored energy", read: (d: ResonanceFrame["dynamics"]) => num(d?.storedEnergy, 4) },
+	{ label: "supplied power", read: (d: ResonanceFrame["dynamics"]) => num(d?.suppliedPower, 4) },
+	{ label: "dissipation", read: (d: ResonanceFrame["dynamics"]) => num(d?.dissipation, 4) },
+	{ label: "passivity residue", read: (d: ResonanceFrame["dynamics"]) => num(d?.passivityResidue, 4) },
+	{ label: "diffusion variance", read: (d: ResonanceFrame["dynamics"]) => num(d?.continuousVariance, 6) },
+	{ label: "jump amplitude", read: (d: ResonanceFrame["dynamics"]) => num(d?.jumpAmplitude, 6) },
+	{ label: "jump variance", read: (d: ResonanceFrame["dynamics"]) => num(d?.jumpVariance, 6) },
+	{ label: "rotor norm", read: (d: ResonanceFrame["dynamics"]) => num(d?.equivarianceNorm, 4) },
+] as const;
 
-The predictive network publishes its settled state one carrier at a time, so the
-panel scopes to the focused symbol's frame rather than whichever frame happens
-to sit first in the batch. Relative residual precision, task skill, horizon,
-and reach are shown with the same names the learning package exposes.
-*/
 export const XrayManifoldPanel = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 
+	const root = useSubscribe(resonanceStore, (state) => {
+		const row = state.resonance[focusSymbol]?.latest();
+
+		if (row === undefined) {
+			return;
+		}
+
+		const set = (q: string, value: string) => {
+			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
+
+			if (el instanceof HTMLElement) {
+				el.textContent = value;
+			}
+		};
+
+		for (const [index, entry] of ROWS.entries()) {
+			set(`r${index}`, entry.read(row));
+		}
+
+		for (const [index, entry] of DYNAMICS_FIELDS.entries()) {
+			set(`d${index}`, entry.read(row.dynamics));
+		}
+	}, [focusSymbol]);
+
 	return (
-		<Component registerKey="resonance">
-			{({ ref, className }) => (
-				<Flex.Column
-					gap={2}
-					ref={ref}
-					className={cn(
-						"flex flex-col gap-2 border-(--line) border-t px-3.5 py-3",
-						className,
-					)}
-				>
-					<div>
-						<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-							Manifold reading
+		<Flex.Column ref={root} gap={2} className="flex flex-col gap-2 border-(--line) border-t px-3.5 py-3">
+			<div>
+				<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">Manifold reading</div>
+				<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">settled predictive state · strict-prior direction resolution</div>
+			</div>
+			<div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">
+				{ROWS.map((row, index) => (
+					<Flex.Row key={row.label} justify="between" gap={3}>
+						<span className="text-(--f3)">{row.label}</span>
+						<Typography.Span data-f={`r${index}`} className="text-right text-(--f1)">—</Typography.Span>
+					</Flex.Row>
+				))}
+			</div>
+			<div className="mt-1 border-(--line) border-t pt-2">
+				<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">Continuous dynamics</div>
+				<div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">
+					{DYNAMICS_FIELDS.map((field, index) => (
+						<div key={field.label} className="flex justify-between gap-3">
+							<span className="text-(--f3)">{field.label}</span>
+							<Typography.Span data-f={`d${index}`} className="text-right text-(--f1)">—</Typography.Span>
 						</div>
-						<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-							settled predictive state · strict-prior direction resolution
-						</div>
-					</div>
-					<div
-						data-scope="symbol"
-						data-filter={focusSymbol}
-						className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]"
-					>
-						{ROWS.map((row) => (
-							<Flex.Row key={row.label} justify="between" gap={3}>
-								<span className="text-(--f3)">{row.label}</span>
-								<Typography.Span
-									data-paint={row.paint}
-									data-paint-absent="—"
-									data-paint-format={row.format}
-									className="text-right text-(--f1)"
-								>
-									—
-								</Typography.Span>
-							</Flex.Row>
-						))}
-						<Flex.Row justify="between" gap={3}>
-							<span className="text-(--f3)">stable / held</span>
-							<span className="text-right text-(--f1)">
-								<Typography.Span
-									data-paint="taskStable"
-									data-paint-absent="—"
-									data-paint-format="dir"
-								>
-									—
-								</Typography.Span>
-								{" / "}
-								<Typography.Span
-									data-paint="taskHeld"
-									data-paint-absent="false"
-								>
-									false
-								</Typography.Span>
-							</span>
-						</Flex.Row>
-						<Flex.Row justify="between" gap={3}>
-							<span className="text-(--f3)">task scale</span>
-							<Typography.Span
-								data-paint="taskScale"
-								data-paint-absent="—"
-								data-paint-format=".8f"
-								className="text-right text-(--f1)"
-							>
-								—
-							</Typography.Span>
-						</Flex.Row>
-					</div>
-					<div
-						data-scope="symbol"
-						data-filter={focusSymbol}
-						className="mt-1 border-(--line) border-t pt-2"
-					>
-						<div className="mb-2 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-							Continuous dynamics
-						</div>
-						<div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">
-							{DYNAMICS_FIELDS.map((field) => (
-								<div key={field.path} className="flex justify-between gap-3">
-									<span className="text-(--f3)">{field.label}</span>
-									<Typography.Span
-										data-paint={field.path}
-										data-paint-absent="—"
-										data-paint-format={field.format}
-										className="text-right text-(--f1)"
-									>
-										—
-									</Typography.Span>
-								</div>
-							))}
-						</div>
-					</div>
-					<div data-scope="symbol" data-filter={focusSymbol} className="mt-0.5">
-						<div className="mb-1 flex justify-between text-[10px]">
-							<span className="text-(--f3)">relative precision</span>
-							<Typography.Span
-								data-paint="taskRelativePrecision"
-								data-paint-absent="—"
-								data-paint-format=".3f"
-								className="font-mono text-(--f1)"
-							>
-								—
-							</Typography.Span>
-						</div>
-					</div>
-				</Flex.Column>
-			)}
-		</Component>
+					))}
+				</div>
+			</div>
+		</Flex.Column>
 	);
 };

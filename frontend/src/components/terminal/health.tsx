@@ -1,15 +1,10 @@
-import type { Measurement } from "#/collections/types";
-import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
-import { Component } from "#/components/ui/component";
-import { Typography } from "#/components/ui/typography";
 import { Badge } from "@/components/ui/badge";
 import { Flex } from "@/components/ui/flex";
 import { Panel } from "@/components/ui/panel";
-import { Stat } from "@/components/ui/stat";
+import type { Measurement } from "#/collections/types";
+import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
+import { tickStore, useSubscribe } from "#/providers/ws-stores";
 
-/*
-TerminalHealth is the state of the measurement pipeline for one tick.
-*/
 export type TerminalHealth = {
 	firing: number;
 	measured: number;
@@ -20,14 +15,22 @@ export type TerminalHealth = {
 	completed: boolean;
 };
 
-/*
-terminalHealthSummary reduces a measurement batch to the health of the pipeline
-that produced it.
+const healthLabel = (
+	completed: boolean,
+	firing: number,
+	measured: number,
+): string => {
+	if (!completed || firing === 0) {
+		return "Silent";
+	}
 
-Firing counts the sources reporting anywhere in the universe, while measured
-counts those reporting for the focused symbol. Separating them keeps a quiet
-focus symbol from reading as a dead pipeline when the rest of the book is live.
-*/
+	if (measured === 0) {
+		return "Live · thin focus";
+	}
+
+	return "Live";
+};
+
 export const terminalHealthSummary = (
 	measurements: Measurement[],
 	focusSymbol: string,
@@ -77,55 +80,29 @@ export const terminalHealthSummary = (
 	};
 };
 
-/*
-healthLabel names the pipeline state. A universe that is reporting while the
-focused symbol is not is thin rather than silent, because the engine is working
-and only this one view is quiet.
-*/
-const healthLabel = (
-	completed: boolean,
-	firing: number,
-	measured: number,
-): string => {
-	if (!completed || firing === 0) {
-		return "Silent";
-	}
+export const HealthPanel = () => {
+	const root = useSubscribe(tickStore, (state) => {
+		const el = root.current?.querySelector<HTMLElement>("[data-tick]");
 
-	if (measured === 0) {
-		return "Live · thin focus";
-	}
+		if (el instanceof HTMLElement) {
+			el.textContent = String(state?.count ?? "—");
+		}
+	});
 
-	return "Live";
+	return (
+		<Panel size="lg" ref={root}>
+			<Flex.Row align="center" justify="between">
+				<Flex className="font-semibold text-(--f1) text-xs">
+					System health
+				</Flex>
+				<Badge label="live" className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide" />
+			</Flex.Row>
+			<Flex.Row className="mt-3 gap-4.5">
+				<div className="font-mono text-(--f1)">
+					<span data-tick className="text-[19px] leading-none font-normal">—</span>
+					<span className="mt-1 text-[9px] text-(--f4) font-mono">tick</span>
+				</div>
+			</Flex.Row>
+		</Panel>
+	);
 };
-
-/*
-HealthPanel is the system-health shell.
-
-The tick counter is painted from the engine's own tick frame, so the panel
-shows the pipeline advancing even on ticks that produced no decision.
-*/
-export const HealthPanel = () => (
-	<Component registerKey="tick">
-		{({ ref, className }) => (
-			<Panel size="lg" ref={ref} className={className}>
-				<Flex.Row align="center" justify="between">
-					<Flex className="font-semibold text-(--f1) text-xs">
-						System health
-					</Flex>
-					<Badge
-						label="live"
-						className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-					/>
-				</Flex.Row>
-				<Flex.Row className="mt-3 gap-4.5">
-					<Stat
-						value={<Typography.Span data-paint="count" />}
-						label="tick"
-						emphasis="default"
-						valueClassName="font-normal"
-					/>
-				</Flex.Row>
-			</Panel>
-		)}
-	</Component>
-);

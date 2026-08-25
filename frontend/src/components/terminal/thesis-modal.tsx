@@ -9,8 +9,8 @@ import {
 import { MCTSTreeVisualizer } from "#/components/terminal/mcts-tree-visualizer";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
 import { ThesisEvidenceCanvas } from "#/components/terminal/thesis-evidence-canvas";
-import { Component } from "#/components/ui/component";
 import { Typography } from "@/components/ui/typography";
+import { strategyStore, tickStore, useSubscribe } from "#/providers/ws-stores";
 import { cn } from "#/lib/utils";
 
 export type ModalViewMode = "mcts" | "graph3d" | "graph2d";
@@ -24,6 +24,39 @@ It provides a comprehensive inspection window featuring:
 - 2D Gonum evidence graph canvas
 - Live arbitration & entry decision rail
 */
+const ThesisActionBadge = ({ symbol }: { symbol: string }) => {
+	const root = useSubscribe(strategyStore, (state) => {
+		const decision = (state?.decisions ?? []).find((entry) => entry.symbol === symbol);
+		const el = root.current?.querySelector<HTMLElement>("[data-action]");
+
+		if (el instanceof HTMLElement) {
+			el.textContent = decision?.action ?? "";
+		}
+	}, [symbol]);
+
+	return (
+		<span ref={root} className="contents">
+			<span data-action className="rounded-full border border-(--line2) px-2.5 py-0.5 font-mono text-[9.5px] uppercase font-semibold" />
+		</span>
+	);
+};
+
+const ThesisTickCounter = () => {
+	const root = useSubscribe(tickStore, (state) => {
+		const el = root.current?.querySelector<HTMLElement>("[data-tick]");
+
+		if (el instanceof HTMLElement) {
+			el.textContent = String(state?.count ?? "—");
+		}
+	});
+
+	return (
+		<div ref={root} className="font-mono text-[10px] text-(--f4)">
+			tick <span data-tick />
+		</div>
+	);
+};
+
 export const openThesisShell = (symbol: string) => {
 	terminalStore.actions.openThesis(symbol);
 };
@@ -66,22 +99,7 @@ export const ThesisModal = () => {
 				<div className="flex shrink-0 items-center justify-between gap-3 border-(--line) border-b px-5 py-3.5">
 					<div className="flex flex-wrap items-center gap-3">
 						<Typography.Display size="lg">{symbol}</Typography.Display>
-						<Component registerKey="strategy" select="decisions">
-							{({ ref }) => (
-								<span
-									ref={ref}
-									data-scope="symbol"
-									data-filter={symbol}
-									className="contents"
-								>
-									<span
-										data-paint="action"
-										data-paint-class="enter:text-(--up) exit:text-(--down) hold:text-(--warn) nothing:text-(--f4)"
-										className="rounded-full border border-(--line2) px-2.5 py-0.5 font-mono text-[9.5px] uppercase font-semibold"
-									/>
-								</span>
-							)}
-						</Component>
+<ThesisActionBadge symbol={symbol} />
 
 						{/* View Switcher Tabs */}
 						<div className="ml-4 flex items-center rounded border border-(--line) bg-(--sunken) p-0.5 font-mono text-[10px]">
@@ -122,16 +140,7 @@ export const ThesisModal = () => {
 					</div>
 
 					<div className="flex items-center gap-3">
-						<Component registerKey="tick">
-							{({ ref }) => (
-								<div
-									ref={ref}
-									className="font-mono text-[10px] text-(--f4)"
-								>
-									tick <span data-paint="count" data-paint-absent="—" />
-								</div>
-							)}
-						</Component>
+<ThesisTickCounter />
 						<button
 							type="button"
 							onClick={closeThesisShell}

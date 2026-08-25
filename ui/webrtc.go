@@ -94,19 +94,21 @@ func (fluidTransport *FluidRTC) Run() error {
 	}
 
 	if fluidTransport.bus != nil {
-		fluidTransport.bus.Observe(types.ChannelFluid, func(topic string, value any) {
+		fluidTransport.bus.Wire(types.ChannelFluid, "", func(value any) any {
 			frame, ok := value.(types.FluidFrame)
 			if !ok {
-				return
+				return nil
 			}
 
 			if !fluidTransport.HasChannel(frame.Channel) {
-				return
+				return nil
 			}
 
 			if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
 				fluidTransport.fail(err)
 			}
+
+			return nil
 		})
 	}
 

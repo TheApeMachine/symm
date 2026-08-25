@@ -33,46 +33,56 @@ func TestPipelineFrameInventory(t *testing.T) {
 
 			var mu sync.Mutex
 			counts := make(map[wire.Frame]int)
-			system.Bus.Observe(types.ChannelUI, func(_ string, value any) {
+			system.Bus.Wire(types.ChannelUI, "", func(value any) any {
 				frame, ok := value.(*types.UIFrame)
 				if !ok || frame == nil {
-					return
+					return nil
 				}
 				mu.Lock()
 				counts[frame.Type]++
 				mu.Unlock()
+
+				return nil
 			})
 
 			measurements := make(map[string]int)
-			system.Bus.Observe(types.ChannelMeasurements, func(_ string, value any) {
+			system.Bus.Wire(types.ChannelMeasurements, "", func(value any) any {
 				measurement, ok := value.(*data.Measurement[float64])
 				if !ok || measurement == nil {
-					return
+					return nil
 				}
 				mu.Lock()
 				measurements[measurement.Source]++
 				mu.Unlock()
+
+				return nil
 			})
 
 			categoryCount := 0
-			system.Bus.Observe(types.ChannelCategories, func(_ string, value any) {
+			system.Bus.Wire(types.ChannelCategories, "", func(_ any) any {
 				mu.Lock()
 				categoryCount++
 				mu.Unlock()
+
+				return nil
 			})
 
 			causalCount := 0
-			system.Bus.Observe(types.ChannelCausal, func(_ string, value any) {
+			system.Bus.Wire(types.ChannelCausal, "", func(_ any) any {
 				mu.Lock()
 				causalCount++
 				mu.Unlock()
+
+				return nil
 			})
 
 			graphCount := 0
-			system.Bus.Observe(types.ChannelRelations, func(_ string, value any) {
+			system.Bus.Wire(types.ChannelRelations, "", func(_ any) any {
 				mu.Lock()
 				graphCount++
 				mu.Unlock()
+
+				return nil
 			})
 
 			tickCount := 200

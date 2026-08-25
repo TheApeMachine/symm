@@ -7,13 +7,14 @@
         "useIgnoreFile": false
     },
     "files": {
-        "ignoreUnknown": false,
+        "ignoreUnknown": true,
         "includes": [
             "**/src/**/*",
             "**/.vscode/**/*",
             "**/index.html",
             "vite.config.ts",
-            "!src/routeTree.gen.ts"
+            "!**/src/routeTree.gen.ts",
+            "!**/src/providers/telemetry/telemetry/**"
         ]
     },
     "formatter": {

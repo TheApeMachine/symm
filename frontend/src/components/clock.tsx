@@ -1,34 +1,41 @@
-import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
-import { cn } from "#/lib/utils";
+import { strategyStore, useSubscribe } from "#/providers/ws-stores";
 
-/*
-Clock shows the engine's own wall clock, stamped on each strategy arbitration.
+const fmtTime = (instant: Date): string => instant.toISOString().slice(11, 19);
+const fmtDate = (instant: Date): string => instant.toISOString().slice(0, 10);
 
-It is deliberately not the browser's clock: this terminal drives replayed runs
-as readily as live ones, and the only time that explains what the surfaces are
-showing is the time the engine thinks it is.
-*/
-export const Clock = () => (
-	/*
-		The strategy envelope carries no stamp of its own; the decisions it
-		arbitrated do. Reading the first decision's instant is what makes this the
-		engine's clock rather than the browser's.
-	*/
-	<Component registerKey="strategy" select="decisions">
-		{({ ref, className }) => (
-			<Flex.Column ref={ref} data-index="0" className={cn(className)}>
-				<Flex>
-					<span data-paint="at" data-paint-format="time" data-paint-suffix=" UTC">
-						—
-					</span>
-				</Flex>
-				<Flex className="text-(--f4)">
-					<span data-paint="at" data-paint-format="date">
-						engine clock
-					</span>
-				</Flex>
-			</Flex.Column>
-		)}
-	</Component>
-);
+export const Clock = () => {
+	const root = useSubscribe(strategyStore, (state) => {
+		const time = root.current?.querySelector<HTMLElement>("[data-time]");
+		const date = root.current?.querySelector<HTMLElement>("[data-date]");
+
+		const envelope =
+			state !== null && typeof state === "object" && !Array.isArray(state)
+				? (state as { decisions?: unknown })
+				: null;
+		const first = (Array.isArray(envelope?.decisions) ? envelope.decisions[0] : undefined) as
+			| { at?: string }
+			| undefined;
+		const instant = first?.at === undefined ? null : new Date(first.at);
+		const valid = instant !== null && Number.isFinite(instant.getTime());
+
+		if (time instanceof HTMLElement) {
+			time.textContent = valid ? `${fmtTime(instant)} UTC` : "—";
+		}
+
+		if (date instanceof HTMLElement) {
+			date.textContent = valid ? `${fmtDate(instant)} engine clock` : "—";
+		}
+	});
+
+	return (
+		<Flex.Column ref={root}>
+			<Flex>
+				<span data-time>—</span>
+			</Flex>
+			<Flex className="text-(--f4)">
+				<span data-date>engine clock</span>
+			</Flex>
+		</Flex.Column>
+	);
+};

@@ -49,8 +49,8 @@ type BadgeVariantProps = VariantProps<typeof badgeVariants>;
 export type BadgeProps = Omit<ComponentProps<"span">, "children"> &
 	BadgeVariantProps & {
 		/*
-			A label may be a painted node rather than a literal, so a
-			<span data-paint> can sit in the slot and the badge never re-renders.
+			A label may be a subscribe-driven node rather than a literal, so a
+			value can sit in the slot without the badge re-rendering.
 		*/
 		label: ReactNode;
 		dot?: boolean;

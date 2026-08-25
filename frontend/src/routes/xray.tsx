@@ -12,98 +12,70 @@ import {
 	XrayLatentPanel,
 	XrayManifoldPanel,
 } from "#/components/terminal/xray-panels";
-import { Component } from "#/components/ui/component";
-import type { JSONSerializable } from "#/components/ui/paint";
-import { getLastFrame, registerPainter } from "#/providers/ws-stores";
+import { resonanceStore } from "#/providers/ws-stores";
+
+const resonanceRows = () =>
+	Object.values(resonanceStore.state.resonance).flatMap((buffer) => {
+		const latest = buffer.latest();
+
+		return latest === undefined ? [] : [latest];
+	});
 
 const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const latestResonance = useRef<JSONSerializable | null>(null);
+	const latestResonance = useRef<ReturnType<typeof resonanceRows> | null>(null);
 
 	useLayoutEffect(() => {
-		const paint = (updates: JSONSerializable) => {
+		const paint = (updates: ReturnType<typeof resonanceRows>) => {
 			latestResonance.current = updates;
 			paintXrayHierarchy(updates, focusSymbol);
 			paintXrayLatent(updates, focusSymbol);
 		};
 
-		const unregisterResonance = registerPainter("resonance", paint);
+		const unregister = resonanceStore.subscribe(() => {
+			paint(resonanceRows());
+		});
 
-		/*
-			A fresh mount has no `latestResonance` even when the feed already has
-			data — routing tears the previous instance down along with its ref.
-			Replaying the retained last frame is what makes revisiting this page
-			show data immediately instead of sitting blank until the next tick.
-		*/
-		const seedResonance = latestResonance.current ?? getLastFrame("resonance");
+		const seed = latestResonance.current ?? resonanceRows();
 
-		if (seedResonance !== null && seedResonance !== undefined) {
-			paint(seedResonance);
+		if (seed.length > 0) {
+			paint(seed);
 		}
 
-		const seedMeasurements = getLastFrame("measurements");
-
 		return () => {
-			unregisterResonance();
+			unregister.unsubscribe();
 		};
 	}, [focusSymbol]);
 
 	return null;
 };
 
-/*
-XrayCarrierBar lists the symbols the predictive stack actually holds a carrier
-for. The resonance batch is the list — one slot per retained carrier — so the
-bar can never offer a symbol this surface has nothing to show for.
-*/
 const XrayCarrierBar = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-
 	return (
-		<Component registerKey="resonance">
-			{({ ref, slots }) => (
-				<div
-					ref={ref}
-					className="flex h-11.5 shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5"
+		<div className="flex h-11.5 shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
+			<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+				Inspect symbol
+			</span>
+			{resonanceRows().length === 0 ? (
+				<span className="font-mono text-[10px] text-(--f4)">waiting for resonance carriers</span>
+			) : null}
+			{resonanceRows().map((row) => (
+				<button
+					key={row.symbol}
+					type="button"
+					onClick={() => {
+						appStore.actions.updateFocusSymbol(row.symbol);
+						terminalStore.actions.selectFocusSymbol(row.symbol);
+					}}
+					className="shrink-0 cursor-pointer rounded-[3px] border border-(--line2) bg-transparent px-2.75 py-1 font-medium font-mono text-[11px] text-(--f3) hover:border-(--acc)"
 				>
-					<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
-						Inspect symbol
-					</span>
-					{slots.length === 0 ? (
-						<span className="font-mono text-[10px] text-(--f4)">
-							waiting for resonance carriers
-						</span>
-					) : null}
-					{slots.map((index) => (
-						<button
-							key={index}
-							type="button"
-							data-index={index}
-							data-paint="symbol"
-							data-paint-class={`${focusSymbol}:border-(--acc),bg-(--raised),text-(--acc)`}
-							onClick={(event) => {
-								const symbol = event.currentTarget.textContent?.trim() ?? "";
-
-								if (symbol === "") {
-									return;
-								}
-
-								appStore.actions.updateFocusSymbol(symbol);
-								terminalStore.actions.selectFocusSymbol(symbol);
-							}}
-							className="shrink-0 cursor-pointer rounded-[3px] border border-(--line2) bg-transparent px-2.75 py-1 font-medium font-mono text-[11px] text-(--f3) hover:border-(--acc)"
-						/>
-					))}
-				</div>
-			)}
-		</Component>
+					{row.symbol}
+				</button>
+			))}
+		</div>
 	);
 };
 
-/*
-Xray composes store-painted panels. Predictive coding reads resonance.layers
-only; manifold / ρ stay on their own side panel and never feed the hierarchy.
-*/
 const RouteComponent = () => (
 	<div className="flex h-full min-w-275 flex-col">
 		<XrayPaintBridge />

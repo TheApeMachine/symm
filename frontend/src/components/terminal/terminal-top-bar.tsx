@@ -2,7 +2,6 @@ import { BacktestControls } from "./backtest-controls";
 import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { cn } from "#/lib/utils";
 import { Balance } from "@/components/balance";
 import { Count } from "@/components/count";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Key } from "@/components/ui/key";
 import { Toolbar } from "@/components/ui/toolbar";
-import { Component, Flex, Typography } from "../ui";
+import { Flex, Typography } from "../ui";
+import { tickStore, useSubscribe } from "#/providers/ws-stores";
 
 const SymmLogo = () => (
 	<svg
@@ -31,6 +31,29 @@ const SymmLogo = () => (
 		/>
 	</svg>
 );
+
+const TickCounter = () => {
+	const root = useSubscribe(tickStore, (state) => {
+		const el = root.current?.querySelector<HTMLElement>("[data-tick]");
+
+		if (el instanceof HTMLElement) {
+			el.textContent = String(state?.count ?? "—");
+		}
+	});
+
+	return (
+		<Flex.Row ref={root} align="center" gap={6}>
+			<Flex.Column className="items-end gap-px">
+				<Typography.Label size="s" tone="f4" weight="normal">
+					Tick
+				</Typography.Label>
+				<Typography.Mono size="lg" tone="f1" data-tick="true">
+					—
+				</Typography.Mono>
+			</Flex.Column>
+		</Flex.Row>
+	);
+};
 
 export const TerminalTopBar = () => {
 	const online = useSelector(appStore, (state) => state.online);
@@ -81,23 +104,7 @@ export const TerminalTopBar = () => {
 				<Balance />
 			</Toolbar.Group>
 			<Toolbar.Group>
-				<Component registerKey="tick">
-					{({ ref, className }) => (
-						<Flex.Row
-							ref={ref}
-							align="center"
-							gap={6}
-							className={cn(className)}
-						>
-							<Flex.Column className="items-end gap-px">
-								<Typography.Label size="s" tone="f4" weight="normal">
-									Tick
-								</Typography.Label>
-								<Typography.Mono size="lg" tone="f1" data-paint="count" />
-							</Flex.Column>
-						</Flex.Row>
-					)}
-				</Component>
+				<TickCounter />
 			</Toolbar.Group>
 		</Toolbar>
 	);

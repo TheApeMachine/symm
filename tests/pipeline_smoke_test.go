@@ -23,16 +23,18 @@ func TestPipelinePumpsFramesToUIBus(t *testing.T) {
 	Convey("Given the assembled system driven by the fixture venue", t,
 		WithStack(t, []*tes.Symbol{symbol}, cmd.Boot, func(market *Market, system *cmd.System) {
 			received := make(chan *types.UIFrame, 512)
-			system.Bus.Observe(types.ChannelUI, func(_ string, value any) {
+			system.Bus.Wire(types.ChannelUI, "", func(value any) any {
 				frame, ok := value.(*types.UIFrame)
 				if !ok || frame == nil {
-					return
+					return nil
 				}
 
 				select {
 				case received <- frame:
 				default:
 				}
+
+				return nil
 			})
 
 			for index := 0; index < 60; index++ {

@@ -71,6 +71,7 @@ export type HindsightRootCause = {
 };
 
 export type HindsightSignal = {
+	id: string;
 	at: string | null;
 	action?: string;
 	reason?: string;

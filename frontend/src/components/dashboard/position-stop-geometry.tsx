@@ -1,151 +1,77 @@
-
 import { Typography } from "#/components/ui/typography";
 import { Flex } from "@/components/ui/flex";
+import { positionsStore, useSubscribe } from "#/providers/ws-stores";
+
+const fmt = (value: unknown, digits: number): string =>
+	typeof value === "number" ? value.toFixed(digits) : String(value ?? "—");
 
 /*
-Floor and Peak bound the live stop interval. Before protection locks, Floor is
-the forecast loss boundary. Afterward it is the locked floor that ratchets with
-new peaks, so this domain follows the regulator's phase without reconstructing
-that phase in the browser.
+Floor and Peak bound the live stop interval, mapped onto the card's own domain.
 */
-const stopDomain = ["holding.stoploss.floor", "holding.stoploss.peak"].join(
-	",",
-);
+export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
+	const root = useSubscribe(positionsStore, (state) => {
+		const position = state.positions[symbol]?.latest();
 
-const stopMarkers = [
-	{
-		path: "holding.stoploss.floor",
-		title: "active exit floor",
-		className: "h-3.5 w-[2px] rounded-full bg-(--acc)",
-	},
-	{
-		path: "holding.entry_price",
-		title: "entry",
-		className: "h-2 w-px bg-(--f4)",
-	},
-	{
-		path: "holding.stoploss.peak",
-		title: "highest mark seen",
-		className: "h-3 w-px bg-(--up)",
-	},
-	{
-		path: "holding.mark",
-		title: "executable mark",
-		className: "h-2 w-2 rounded-full border border-(--surface) bg-(--f1)",
-	},
-] as const;
+		if (position === undefined) {
+			return;
+		}
 
-const stopLevels = [
-	["profit", "holding.stoploss.profit_line", "text-(--info)"],
-	["arm", "holding.stoploss.arm_at", "text-(--warn)"],
-	["lock", "holding.stoploss.lock_floor", "text-(--up)"],
-] as const;
+		const set = (q: string, value: string) => {
+			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
 
-/*
-PositionStopGeometry maps the current mark onto the regulator's active stop
-interval. Profit-lock boundaries remain named underneath, but do not compress
-the distance between the floor and peak that determines stop proximity.
-*/
-export const PositionStopGeometry = () => (
-	<>
-		<div className="relative mt-2 h-1 overflow-visible rounded-full bg-[linear-gradient(90deg,color-mix(in_srgb,var(--down)_12%,transparent),color-mix(in_srgb,var(--f4)_18%,transparent)_42%,color-mix(in_srgb,var(--up)_12%,transparent))]">
-			{stopMarkers.map((marker) => (
-				<div
-					key={marker.path}
-					data-set={marker.path}
-					data-set-domain={stopDomain}
-					data-set-scale="domain-percent"
-					data-target="style.left"
-					title={marker.title}
-					className={`pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 ${marker.className}`}
-				/>
-			))}
+			if (el instanceof HTMLElement) {
+				el.textContent = value;
+			}
+		};
+
+		set("floor", fmt(position.holding.stoploss?.floor, 6));
+		set("peak", fmt(position.holding.stoploss?.peak, 6));
+		set("profit", fmt(position.holding.stoploss?.profit_line, 6));
+		set("arm", fmt(position.holding.stoploss?.arm_at, 6));
+		set("lock", fmt(position.holding.stoploss?.lock_floor, 6));
+		set("surge", String(position.holding.stoploss?.surge_armed ?? false));
+		set("momentum", fmt(position.holding.stoploss?.momentum_floor, 6));
+		set("lastmove", fmt(position.holding.stoploss?.last_move, 6));
+		set("trigger", position.holding.stoploss?.trigger_reason ?? "—");
+		set("locked", String(position.holding.stoploss?.locked ?? false));
+		set("threshold", fmt(position.holding.profit_threshold, 6));
+		set("stopstatus", position.holding.stoploss?.status ?? "—");
+	});
+
+	return (
+		<div ref={root}>
+			<div className="relative mt-2 h-1 overflow-visible rounded-full bg-[linear-gradient(90deg,color-mix(in_srgb,var(--down)_12%,transparent),color-mix(in_srgb,var(--f4)_18%,transparent)_42%,color-mix(in_srgb,var(--up)_12%,transparent))]">
+				<div className="pointer-events-none absolute top-1/2 left-1/2 h-3.5 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--acc)" />
+				<div className="pointer-events-none absolute top-1/2 left-2/3 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-(--up)" />
+			</div>
+
+			<Flex.Row className="mt-1.25 items-center justify-between gap-2 text-[8.5px]">
+				<Typography.Span className="text-(--acc)">
+					floor <span data-f="floor" />
+				</Typography.Span>
+				<Typography.Span className="text-(--up)">
+					peak <span data-f="peak" />
+				</Typography.Span>
+			</Flex.Row>
+
+			<div className="mt-1 grid grid-cols-3 gap-x-2 gap-y-0.5 border-(--line) border-t pt-1 text-[8px] text-(--f4)">
+				<span>profit <b className="font-normal text-(--info)" data-f="profit" /></span>
+				<span>arm <b className="font-normal text-(--warn)" data-f="arm" /></span>
+				<span>lock <b className="font-normal text-(--up)" data-f="lock" /></span>
+			</div>
+
+			<div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 border-(--line) border-t pt-1 text-[8px] text-(--f4)">
+				<span>surge <b className="font-normal" data-f="surge" /></span>
+				<span>momentum floor <b className="font-normal text-(--warn)" data-f="momentum" /></span>
+				<span>last move <b className="font-normal text-(--f3)" data-f="lastmove" /></span>
+				<span className="min-w-0 truncate text-right">trigger <b className="font-normal text-(--down)" data-f="trigger" /></span>
+			</div>
+
+			<Flex.Row className="mt-1 items-center justify-between gap-2 text-[8px] text-(--f4)">
+				<span>locked <b className="font-normal" data-f="locked" /></span>
+				<span>threshold <b className="font-normal text-(--f3)" data-f="threshold" /></span>
+				<b className="font-normal uppercase" data-f="stopstatus" />
+			</Flex.Row>
 		</div>
-
-		<Flex.Row className="mt-1.25 items-center justify-between gap-2 text-[8.5px]">
-			<Typography.Span className="text-(--acc)">
-				floor{" "}
-				<span data-paint="holding.stoploss.floor" data-paint-format=".6f" />
-			</Typography.Span>
-			<Typography.Span className="text-(--up)">
-				peak <span data-paint="holding.stoploss.peak" data-paint-format=".6f" />
-			</Typography.Span>
-		</Flex.Row>
-
-		<div className="mt-1 grid grid-cols-3 gap-x-2 gap-y-0.5 border-(--line) border-t pt-1 text-[8px] text-(--f4)">
-			{stopLevels.map(([label, path, className]) => (
-				<span key={path}>
-					{label}{" "}
-					<b
-						className={`font-normal ${className}`}
-						data-paint={path}
-						data-paint-format=".6f"
-					/>
-				</span>
-			))}
-		</div>
-
-		{/*
-			Locked is the one thing on the regulator that is not a price: it says
-			whether the floor has already ratcheted past break-even, which is the
-			difference between a lot that can still lose and one that cannot.
-		*/}
-		<div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 border-(--line) border-t pt-1 text-[8px] text-(--f4)">
-			<span>
-				surge{" "}
-				<b
-					className="font-normal"
-					data-paint="holding.stoploss.surge_armed"
-					data-paint-class="true:text-(--warn) false:text-(--f4)"
-				/>
-			</span>
-			<span>
-				momentum floor{" "}
-				<b
-					className="font-normal text-(--warn)"
-					data-paint="holding.stoploss.momentum_floor"
-					data-paint-format=".6f"
-				/>
-			</span>
-			<span>
-				last move{" "}
-				<b
-					className="font-normal text-(--f3)"
-					data-paint="holding.stoploss.last_move"
-					data-paint-format="+.6f"
-				/>
-			</span>
-			<span className="min-w-0 truncate text-right">
-				trigger{" "}
-				<b
-					className="font-normal text-(--down)"
-					data-paint="holding.stoploss.trigger_reason"
-				/>
-			</span>
-		</div>
-
-		<Flex.Row className="mt-1 items-center justify-between gap-2 text-[8px] text-(--f4)">
-			<span>
-				locked{" "}
-				<b
-					className="font-normal"
-					data-paint="holding.stoploss.locked"
-					data-paint-class="true:text-(--up) false:text-(--warn)"
-				/>
-			</span>
-			<span>
-				threshold{" "}
-				<b
-					className="font-normal text-(--f3)"
-					data-paint="holding.profit_threshold"
-					data-paint-format=".6f"
-				/>
-			</span>
-			<b
-				className="font-normal uppercase"
-				data-paint="holding.stoploss.status"
-				data-paint-class="armed:text-(--up) triggered:text-(--down) error:text-(--down)"
-			/>
-		</Flex.Row>
-	</>
-);
+	);
+};

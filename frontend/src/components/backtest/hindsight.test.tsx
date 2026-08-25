@@ -62,6 +62,7 @@ const report: HindsightReport = {
 						profitPct: 0.2,
 					},
 					signal: {
+						id: "signal-1",
 						at: "2026-01-01T00:00:00.000Z",
 						action: "nothing",
 						graphScore: 0.7,

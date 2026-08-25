@@ -31,6 +31,7 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 
 			for _, decision := range opportunity.Journal {
 				journal = append(journal, &wire.HindsightSignalT{
+					Id:                  decision.ID,
 					At:                  decision.At.UnixNano(),
 					Action:              decision.Action,
 					Reason:              decision.Reason,
@@ -59,6 +60,7 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 					SellPrice: opportunity.Leg.SellPrice, ProfitPct: opportunity.Leg.ProfitPct,
 				},
 				Signal: &wire.HindsightSignalT{
+					Id:                  opportunity.Signal.ID,
 					At:                  opportunity.Signal.At.UnixNano(),
 					Action:              opportunity.Signal.Action,
 					Reason:              opportunity.Signal.Reason,

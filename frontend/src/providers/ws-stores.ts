@@ -1,4 +1,5 @@
 import { createStore } from "@tanstack/store";
+import { useLayoutEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { latestOf, latestValues } from "#/collections/circular";
 import {
@@ -7,272 +8,176 @@ import {
 	latestStrategyDecisions,
 } from "#/collections/decisions";
 import { createKeyedStore } from "#/collections/store";
+import type {
+	CausalFrame,
+	CognitiveReading,
+	Measurement,
+	Position,
+	ResonanceFrame,
+	TickFrame,
+} from "#/collections/types";
 import { paintTerminalResonanceChart } from "#/components/charts/resonance";
-import type { JSONSerializable, Paint } from "#/components/ui/paint";
+import type { JSONSerializable } from "#/components/ui/paint";
 import type { Decision } from "#/types/thesis";
-
-type FrameEvent = {
-	key: string;
-	sequence: number;
-	value: JSONSerializable;
-};
 
 const RETAINED_FRAME_LIMIT = 1;
 export const JOURNAL_ENTRY_LIMIT = DECISION_HISTORY_LIMIT;
 
-const frameEvents = createStore<FrameEvent>({
-	key: "",
-	sequence: 0,
-	value: null,
-});
-const retainedFrames = createKeyedStore<JSONSerializable>()(
-	"frames",
-	RETAINED_FRAME_LIMIT,
-	(value) => frameKey(value),
-);
-const measurements = createKeyedStore<JSONSerializable>()(
+/*
+Typed wire frames. A scalar frame is one decoded table; a keyed frame retains the
+latest row per identity so a scoped surface keeps its row across sparse batches.
+*/
+export type EquityFrame = {
+	cash: number | string;
+	unrealized: number | string;
+	equity: number | string;
+};
+
+export type StrategyFrame = {
+	outcome?: string;
+	evaluated?: string;
+	decisions: Decision[];
+};
+
+type ScalarState<T> = T | null;
+
+export const tickStore = createStore<ScalarState<TickFrame>>(null);
+export const equityStore = createStore<ScalarState<EquityFrame>>(null);
+export const strategyStore = createStore<ScalarState<StrategyFrame>>(null);
+export const activityStore = createStore<ScalarState<Record<string, string>>>(null);
+export const causalStore = createStore<ScalarState<CausalFrame[]>>(null);
+export const graphStore = createStore<ScalarState<Record<string, unknown>>>(null);
+export const regulatorStore = createStore<ScalarState<Record<string, unknown>>>(null);
+export const resonanceFocusStore = createStore<ScalarState<ResonanceFrame>>(null);
+
+export const measurementsStore = createKeyedStore<Measurement>()(
 	"measurements",
 	RETAINED_FRAME_LIMIT,
-	(value) => measurementIdentity(value),
+	(row) => measurementIdentity(row),
 );
-const cognition = createKeyedStore<JSONSerializable>()(
+export const cognitionStore = createKeyedStore<CognitiveReading>()(
 	"cognition",
 	RETAINED_FRAME_LIMIT,
-	(value) => symbolIdentity(value),
+	(row) => symbolIdentity(row),
 );
-const resonance = createKeyedStore<JSONSerializable>()(
+export const resonanceStore = createKeyedStore<ResonanceFrame>()(
 	"resonance",
 	RETAINED_FRAME_LIMIT,
-	(value) => symbolIdentity(value),
+	(row) => symbolIdentity(row),
 );
-const positions = createKeyedStore<JSONSerializable>()(
+export const positionsStore = createKeyedStore<Position>()(
 	"positions",
 	RETAINED_FRAME_LIMIT,
-	(value) => positionIdentity(value),
+	(row) => positionIdentity(row),
 );
-const journal = createKeyedStore<JSONSerializable>()(
-	"journal",
-	JOURNAL_ENTRY_LIMIT,
-);
-const observedSymbols = new Set<string>();
-const observedSources = new Set<string>();
+export const journalStore = createKeyedStore<Position>()("journal", JOURNAL_ENTRY_LIMIT);
 
-const frameRows = (value: JSONSerializable): JSONSerializable[] => {
-	if (Array.isArray(value)) {
-		return value.filter((row): row is JSONSerializable => row !== undefined);
-	}
+const symbolIdentity = (row: { symbol?: unknown }): string =>
+	typeof row.symbol === "string" ? row.symbol : "";
 
-	if (value !== null && typeof value === "object") {
-		if (symbolIdentity(value) !== "") {
-			return [value];
-		}
-
-		return Object.values(value).filter(
-			(row): row is JSONSerializable => row !== undefined,
-		);
-	}
-
-	return [];
-};
-
-const symbolIdentity = (value: JSONSerializable): string =>
-	value !== null &&
-	typeof value === "object" &&
-	!Array.isArray(value) &&
-	typeof value.symbol === "string"
-		? value.symbol
+const measurementIdentity = (row: Measurement): string =>
+	typeof row.source === "string" && typeof row.symbol === "string"
+		? `${row.source}\u0000${row.symbol}`
 		: "";
 
-const measurementIdentity = (value: JSONSerializable): string => {
-	if (value === null || typeof value !== "object" || Array.isArray(value)) {
-		return "";
-	}
-
-	return typeof value.source === "string" && typeof value.symbol === "string"
-		? `${value.source}\u0000${value.symbol}`
-		: "";
-};
-
-const positionIdentity = (value: JSONSerializable): string => {
-	if (value === null || typeof value !== "object" || Array.isArray(value)) {
-		return "";
-	}
-
-	const holding = value.holding;
-
-	return holding !== null &&
-		typeof holding === "object" &&
-		!Array.isArray(holding) &&
-		typeof holding.symbol === "string"
-		? holding.symbol
-		: "";
-};
-
-const decisionIdentity = (value: JSONSerializable): string => {
-	if (value === null || typeof value !== "object" || Array.isArray(value)) {
-		return "";
-	}
-
-	const decision = value.decision;
-
-	return decision !== null &&
-		typeof decision === "object" &&
-		!Array.isArray(decision) &&
-		typeof decision.id === "string"
-		? decision.id
-		: "";
-};
-
-const positionIsTerminal = (value: JSONSerializable): boolean =>
-	value !== null &&
-	typeof value === "object" &&
-	!Array.isArray(value) &&
-	(value.status === "canceled" ||
-		value.status === "closed" ||
-		value.status === "error" ||
-		value.status === "expired" ||
-		value.status === "fatal" ||
-		value.status === "partial_cancelled" ||
-		value.status === "partial_expired" ||
-		value.status === "partial_rejected" ||
-		value.status === "rejected");
-
-const currentCognition = (): Record<string, JSONSerializable | undefined> =>
-	Object.fromEntries(
-		Object.entries(cognition.state.cognition).flatMap(([symbol, buffer]) => {
-			const value = buffer.latest();
-
-			return value === undefined ? [] : [[symbol, value]];
-		}),
-	);
-
-const openPositions = (): JSONSerializable[] =>
-	Object.values(positions.state.positions).flatMap((buffer) => {
-		const value = buffer.latest();
-
-		return value === undefined || positionIsTerminal(value) ? [] : [value];
-	});
-
-const journalEntries = (): JSONSerializable[] => journal.state.journal.values();
-
-const currentStrategy = (value: JSONSerializable): JSONSerializable => {
-	if (value === null || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error("strategy frame requires an object envelope");
-	}
-
-	if (value.decisions === undefined) {
-		throw new Error("strategy frame requires decisions");
-	}
-
-	const rows = frameRows(value.decisions);
-
-	for (const row of rows) {
-		if (symbolIdentity(row) === "") {
-			throw new Error("strategy decision requires symbol");
-		}
-	}
-
-	decisionStore.actions.updateFrame(rows as unknown as Decision[]);
-
-	return {
-		...value,
-		decisions: latestStrategyDecisions(
-			decisionStore.state.decisions,
-		) as unknown as JSONSerializable,
-	};
-};
-
-const frameKey = (value: JSONSerializable): string => {
-	if (value === null || typeof value !== "object" || Array.isArray(value)) {
-		return "";
-	}
-
-	return typeof value.key === "string" ? value.key : "";
-};
-
-const retainFrame = (key: string, value: JSONSerializable): void => {
-	retainedFrames.actions.updateFrame([{ key, value }]);
-};
-
-const retainedFrame = (key: string): JSONSerializable | undefined => {
-	const row = retainedFrames.state.frames[key]?.latest();
-
-	if (row === null || typeof row !== "object" || Array.isArray(row)) {
-		return undefined;
-	}
-
-	return row.value;
-};
+const positionIdentity = (row: Position): string =>
+	typeof row.holding?.symbol === "string" ? row.holding.symbol : "";
 
 /*
-getLastFrame returns the last complete retained value for a register key.
-Sparse measurements are retained by source and symbol; all other wire keys
-retain exactly one frame.
+Narrow the heterogeneous decoder row into the concrete store type. These are the
+only casts in the whole pipeline — one per key, at the boundary.
 */
-export const getLastFrame = (key: string): JSONSerializable | undefined =>
-	retainedFrame(key);
+const toMeasurement = (value: JSONSerializable): Measurement[] => {
+	const rows = Array.isArray(value) ? value : [value];
 
-export const drawers = {};
-
-/*
-registerPainter subscribes a Component directly to the TanStack event store.
-No React binding participates in live data delivery.
-*/
-export const registerPainter = (key: string, paint: Paint): (() => void) => {
-	let sequence = frameEvents.state.sequence;
-	const subscription = frameEvents.subscribe((event) => {
-		if (event.sequence === sequence || event.key !== key) {
-			return;
-		}
-
-		sequence = event.sequence;
-		paint(event.value);
-	});
-
-	return () => subscription.unsubscribe();
-};
-
-const observeFrame = (key: string, updates: JSONSerializable): void => {
-	if (key === "cognition") {
-		const symbols = Object.keys(currentCognition()).filter((symbol) => {
-			if (observedSymbols.has(symbol)) {
-				return false;
-			}
-
-			observedSymbols.add(symbol);
-			return true;
-		});
-
-		if (symbols.length > 0) {
-			appStore.actions.observeSymbols(symbols);
-		}
-
-		return;
-	}
-
-	if (key !== "measurements" && key !== "causal" && key !== "positions") {
-		return;
-	}
-
-	const symbols: string[] = [];
-	const sources: string[] = [];
-
-	for (const row of frameRows(updates)) {
-		const symbol = symbolIdentity(row) || positionIdentity(row);
-
-		if (symbol !== "" && !observedSymbols.has(symbol)) {
-			observedSymbols.add(symbol);
-			symbols.push(symbol);
-		}
-
-		if (
-			key === "measurements" &&
+	return rows.filter(
+		(row): row is Measurement =>
 			row !== null &&
 			typeof row === "object" &&
 			!Array.isArray(row) &&
-			typeof row.source === "string" &&
-			!observedSources.has(row.source)
-		) {
+			typeof (row as { source?: unknown }).source === "string" &&
+			typeof (row as { symbol?: unknown }).symbol === "string",
+	) as Measurement[];
+};
+
+const toCognitive = (value: JSONSerializable): CognitiveReading[] => {
+	const rows = Array.isArray(value) ? value : Object.values(value ?? {});
+
+	return rows.filter(
+		(row): row is CognitiveReading =>
+			row !== null &&
+			typeof row === "object" &&
+			!Array.isArray(row) &&
+			typeof (row as { symbol?: unknown }).symbol === "string",
+	) as CognitiveReading[];
+};
+
+const toResonance = (value: JSONSerializable): ResonanceFrame[] => {
+	const rows = Array.isArray(value) ? value : Object.values(value ?? {});
+
+	return rows.filter(
+		(row): row is ResonanceFrame =>
+			row !== null &&
+			typeof row === "object" &&
+			!Array.isArray(row) &&
+			typeof (row as { symbol?: unknown }).symbol === "string",
+	) as ResonanceFrame[];
+};
+
+const toPositions = (value: JSONSerializable): Position[] => {
+	const rows = Array.isArray(value) ? value : [value];
+	const output: Position[] = [];
+
+	for (const row of rows) {
+		const isPosition =
+			row !== null &&
+			typeof row === "object" &&
+			!Array.isArray(row) &&
+			(row as { holding?: { symbol?: unknown } }).holding !== null &&
+			typeof (row as { holding?: { symbol?: unknown } }).holding?.symbol ===
+				"string";
+
+		if (isPosition) {
+			output.push(row as unknown as Position);
+		}
+	}
+
+	return output;
+};
+
+const positionIsTerminal = (position: Position): boolean => {
+	const status = position.status;
+
+	return (
+		status === "canceled" ||
+		status === "closed" ||
+		status === "error" ||
+		status === "expired" ||
+		status === "fatal" ||
+		status === "partial_cancelled" ||
+		status === "partial_expired" ||
+		status === "partial_rejected" ||
+		status === "rejected"
+	);
+};
+
+const decisionIdentity = (position: Position): string =>
+	typeof position.decision?.id === "string" ? position.decision.id : "";
+
+const observedSymbols = new Set<string>();
+const observedSources = new Set<string>();
+
+const observeSymbolsFrom = (rows: Measurement[]): void => {
+	const symbols: string[] = [];
+	const sources: string[] = [];
+
+	for (const row of rows) {
+		if (row.symbol !== "" && !observedSymbols.has(row.symbol)) {
+			observedSymbols.add(row.symbol);
+			symbols.push(row.symbol);
+		}
+
+		if (row.source !== "" && !observedSources.has(row.source)) {
 			observedSources.add(row.source);
 			sources.push(row.source);
 		}
@@ -287,126 +192,117 @@ const observeFrame = (key: string, updates: JSONSerializable): void => {
 	}
 };
 
-export const paintRegistered = (
-	key: string,
-	updates: JSONSerializable,
-): void => {
-	if (key === "measurements") {
-		measurements.actions.updateFrame(frameRows(updates));
-		retainFrame(key, latestValues(measurements.state.measurements));
-	} else {
-		retainFrame(key, updates);
+const currentStrategy = (value: JSONSerializable): StrategyFrame => {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("strategy frame requires an object envelope");
 	}
 
-	observeFrame(key, updates);
+	const envelope = value as { decisions?: JSONSerializable; outcome?: unknown; evaluated?: unknown };
+	const decisions = (Array.isArray(envelope.decisions)
+		? envelope.decisions
+		: []) as unknown as Decision[];
 
-	if (key === "resonance") {
-		paintTerminalResonanceChart(updates, appStore.state.focusSymbol);
+	for (const row of decisions) {
+		if (typeof row.symbol !== "string" || row.symbol === "") {
+			throw new Error("strategy decision requires symbol");
+		}
 	}
 
-	frameEvents.setState((previous) => ({
-		key,
-		sequence: previous.sequence + 1,
-		value: updates,
-	}));
+	decisionStore.actions.updateFrame(decisions);
+
+	return {
+		outcome: typeof envelope.outcome === "string" ? envelope.outcome : undefined,
+		evaluated: typeof envelope.evaluated === "string" ? envelope.evaluated : undefined,
+		decisions: latestStrategyDecisions(decisionStore.state.decisions),
+	};
 };
 
-export const RESONANCE_FOCUS = "resonance.focus";
-export const JOURNAL = "journal";
+type Sink = (update: JSONSerializable) => void;
+
+const ingestMeasurements: Sink = (update) => {
+	const rows = toMeasurement(update);
+	measurementsStore.actions.updateFrame(rows);
+	observeSymbolsFrom(rows);
+};
+
+const ingestCognition: Sink = (update) => {
+	cognitionStore.actions.updateFrame(toCognitive(update));
+};
+
+const ingestResonance: Sink = (update) => {
+	resonanceStore.actions.updateFrame(toResonance(update));
+	paintTerminalResonanceChart(
+		latestValues(resonanceStore.state.resonance),
+		appStore.state.focusSymbol,
+	);
+	const focused = latestOf(
+		resonanceStore.state.resonance[appStore.state.focusSymbol],
+	);
+
+	if (focused !== undefined) {
+		resonanceFocusStore.setState(() => focused);
+	}
+};
+
+const ingestStrategy: Sink = (update) => {
+	strategyStore.setState(() => currentStrategy(update));
+};
+
+const ingestPositions: Sink = (update) => {
+	for (const position of toPositions(update)) {
+		positionsStore.actions.updateFrame([position]);
+
+		if (!positionIsTerminal(position)) {
+			continue;
+		}
+
+		const identity = decisionIdentity(position);
+
+		if (identity === "") {
+			throw new Error("terminal position frame requires decision.id");
+		}
+
+		const duplicate = journalStore.state.journal
+			.values()
+			.some((entry) => decisionIdentity(entry) === identity);
+
+		if (!duplicate) {
+			journalStore.actions.updateFrame([position]);
+		}
+	}
+};
 
 /*
-attach routes ordered worker batches into bounded TanStack stores. Every wire
-frame is applied in arrival order during one browser paint callback; batching
-reduces scheduling overhead without coalescing intermediate samples.
+The registry maps each wire key to its sink. applyFrame is a single lookup.
 */
-export const attach = (worker: Worker) => {
+const sinks: Record<string, Sink> = {
+	tick: (update) => tickStore.setState(() => update as TickFrame),
+	equity: (update) => equityStore.setState(() => update as EquityFrame),
+	strategy: ingestStrategy,
+	activity: (update) => activityStore.setState(() => update as Record<string, string>),
+	causal: (update) =>
+		causalStore.setState(() => (Array.isArray(update) ? (update as CausalFrame[]) : [update as CausalFrame])),
+	graph: (update) => graphStore.setState(() => update as Record<string, unknown>),
+	regulator: (update) => regulatorStore.setState(() => update as Record<string, unknown>),
+	measurements: ingestMeasurements,
+	cognition: ingestCognition,
+	resonance: ingestResonance,
+	positions: ingestPositions,
+	backtest: (update) =>
+		appStore.actions.updateBacktest(update as Partial<typeof appStore.state.backtest>),
+	hindsight: (update) =>
+		appStore.actions.updateBacktest({ hindsight: update as typeof appStore.state.backtest.hindsight }),
+};
+
+const applyFrame = (frame: Record<string, unknown>): void => {
+	for (const [key, value] of Object.entries(frame)) {
+		sinks[key]?.(value as JSONSerializable);
+	}
+};
+
+export const attach = (worker: Worker): void => {
 	let pendingFrames: Record<string, unknown>[] = [];
 	let animationFrame: number | null = null;
-
-	const applyFrame = (frame: Record<string, unknown>) => {
-		for (const [key, value] of Object.entries(frame)) {
-			const update = value as JSONSerializable;
-
-			if (key === "activity" || key === "measurements") {
-				paintRegistered(key, update);
-				continue;
-			}
-
-			if (key === "backtest") {
-				appStore.actions.updateBacktest(
-					update as Partial<typeof appStore.state.backtest>,
-				);
-				continue;
-			}
-
-			if (key === "hindsight") {
-				appStore.actions.updateBacktest({
-					hindsight: update as typeof appStore.state.backtest.hindsight,
-				});
-				continue;
-			}
-
-			if (key === "cognition") {
-				cognition.actions.updateFrame(frameRows(update));
-				paintRegistered(key, currentCognition());
-				continue;
-			}
-
-			if (key === "resonance") {
-				resonance.actions.updateFrame(frameRows(update));
-				const rows = latestValues(resonance.state.resonance);
-				paintRegistered(key, rows);
-				const focused = latestOf(
-					resonance.state.resonance[appStore.state.focusSymbol],
-				);
-
-				if (focused !== undefined) {
-					paintRegistered(RESONANCE_FOCUS, focused);
-				}
-
-				continue;
-			}
-
-			if (key === "strategy") {
-				paintRegistered(key, currentStrategy(update));
-				continue;
-			}
-
-			if (key !== "positions") {
-				paintRegistered(key, update);
-				continue;
-			}
-
-			for (const position of frameRows(update)) {
-				if (positionIdentity(position) === "") {
-					throw new Error("position frame requires holding.symbol");
-				}
-
-				positions.actions.updateFrame([position]);
-
-				if (!positionIsTerminal(position)) {
-					continue;
-				}
-
-				const identity = decisionIdentity(position);
-
-				if (identity === "") {
-					throw new Error("terminal position frame requires decision.id");
-				}
-
-				const duplicate = journal.state.journal
-					.values()
-					.some((entry) => decisionIdentity(entry) === identity);
-
-				if (!duplicate) {
-					journal.actions.updateFrame([position]);
-				}
-			}
-
-			paintRegistered("positions", openPositions());
-			paintRegistered(JOURNAL, journalEntries());
-		}
-	};
 
 	const flush = () => {
 		animationFrame = null;
@@ -444,4 +340,30 @@ export const attach = (worker: Worker) => {
 		pendingFrames.push(...event.data.frames);
 		schedule();
 	});
+};
+
+/*
+useSubscribe mounts a surface, subscribes it to a store, and runs the writer
+imperatively on every advance and once for the current value. React never
+re-renders on these updates — the writer writes DOM directly. Returns a ref for
+the root element.
+*/
+export const useSubscribe = <T>(
+	store: { state: T; subscribe: (fn: (state: T) => void) => { unsubscribe(): void } },
+	writer: (state: T) => void,
+	deps: readonly unknown[] = [],
+): React.RefObject<HTMLDivElement | null> => {
+	const ref = useRef<HTMLDivElement | null>(null);
+	const writerRef = useRef(writer);
+	writerRef.current = writer;
+
+	useLayoutEffect(() => {
+		writerRef.current(store.state);
+		const subscription = store.subscribe((state) => writerRef.current(state));
+
+		return () => subscription.unsubscribe();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [store, ...deps]);
+
+	return ref;
 };

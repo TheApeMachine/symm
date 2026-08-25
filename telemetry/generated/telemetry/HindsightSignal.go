@@ -7,6 +7,7 @@ import (
 )
 
 type HindsightSignalT struct {
+	Id string `json:"id"`
 	At int64 `json:"at"`
 	Action string `json:"action"`
 	Reason string `json:"reason"`
@@ -30,6 +31,10 @@ type HindsightSignalT struct {
 func (t *HindsightSignalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
+	}
+	idOffset := flatbuffers.UOffsetT(0)
+	if t.Id != "" {
+		idOffset = builder.CreateString(t.Id)
 	}
 	actionOffset := flatbuffers.UOffsetT(0)
 	if t.Action != "" {
@@ -65,6 +70,7 @@ func (t *HindsightSignalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffse
 		alternativesOffset = builder.EndVector(alternativesLength)
 	}
 	HindsightSignalStart(builder)
+	HindsightSignalAddId(builder, idOffset)
 	HindsightSignalAddAt(builder, t.At)
 	HindsightSignalAddAction(builder, actionOffset)
 	HindsightSignalAddReason(builder, reasonOffset)
@@ -87,6 +93,7 @@ func (t *HindsightSignalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffse
 }
 
 func (rcv *HindsightSignal) UnPackTo(t *HindsightSignalT) {
+	t.Id = string(rcv.Id())
 	t.At = rcv.At()
 	t.Action = string(rcv.Action())
 	t.Reason = string(rcv.Reason())
@@ -157,8 +164,16 @@ func (rcv *HindsightSignal) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *HindsightSignal) At() int64 {
+func (rcv *HindsightSignal) Id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *HindsightSignal) At() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -166,18 +181,10 @@ func (rcv *HindsightSignal) At() int64 {
 }
 
 func (rcv *HindsightSignal) MutateAt(n int64) bool {
-	return rcv._tab.MutateInt64Slot(4, n)
+	return rcv._tab.MutateInt64Slot(6, n)
 }
 
 func (rcv *HindsightSignal) Action() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *HindsightSignal) Reason() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -185,7 +192,7 @@ func (rcv *HindsightSignal) Reason() []byte {
 	return nil
 }
 
-func (rcv *HindsightSignal) Cause() []byte {
+func (rcv *HindsightSignal) Reason() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -193,19 +200,15 @@ func (rcv *HindsightSignal) Cause() []byte {
 	return nil
 }
 
-func (rcv *HindsightSignal) GraphScore() float64 {
+func (rcv *HindsightSignal) Cause() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
-	return 0.0
+	return nil
 }
 
-func (rcv *HindsightSignal) MutateGraphScore(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(12, n)
-}
-
-func (rcv *HindsightSignal) ThesisScore() float64 {
+func (rcv *HindsightSignal) GraphScore() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -213,11 +216,11 @@ func (rcv *HindsightSignal) ThesisScore() float64 {
 	return 0.0
 }
 
-func (rcv *HindsightSignal) MutateThesisScore(n float64) bool {
+func (rcv *HindsightSignal) MutateGraphScore(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
 
-func (rcv *HindsightSignal) ThesisConfidence() float64 {
+func (rcv *HindsightSignal) ThesisScore() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -225,11 +228,11 @@ func (rcv *HindsightSignal) ThesisConfidence() float64 {
 	return 0.0
 }
 
-func (rcv *HindsightSignal) MutateThesisConfidence(n float64) bool {
+func (rcv *HindsightSignal) MutateThesisScore(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
 
-func (rcv *HindsightSignal) ThesisSupport() float64 {
+func (rcv *HindsightSignal) ThesisConfidence() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -237,11 +240,11 @@ func (rcv *HindsightSignal) ThesisSupport() float64 {
 	return 0.0
 }
 
-func (rcv *HindsightSignal) MutateThesisSupport(n float64) bool {
+func (rcv *HindsightSignal) MutateThesisConfidence(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
 
-func (rcv *HindsightSignal) ThesisContradiction() float64 {
+func (rcv *HindsightSignal) ThesisSupport() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -249,11 +252,11 @@ func (rcv *HindsightSignal) ThesisContradiction() float64 {
 	return 0.0
 }
 
-func (rcv *HindsightSignal) MutateThesisContradiction(n float64) bool {
+func (rcv *HindsightSignal) MutateThesisSupport(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
 
-func (rcv *HindsightSignal) ThesisConditions() float64 {
+func (rcv *HindsightSignal) ThesisContradiction() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -261,11 +264,11 @@ func (rcv *HindsightSignal) ThesisConditions() float64 {
 	return 0.0
 }
 
-func (rcv *HindsightSignal) MutateThesisConditions(n float64) bool {
+func (rcv *HindsightSignal) MutateThesisContradiction(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
 
-func (rcv *HindsightSignal) Direction() float64 {
+func (rcv *HindsightSignal) ThesisConditions() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -273,11 +276,11 @@ func (rcv *HindsightSignal) Direction() float64 {
 	return 0.0
 }
 
-func (rcv *HindsightSignal) MutateDirection(n float64) bool {
+func (rcv *HindsightSignal) MutateThesisConditions(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
 
-func (rcv *HindsightSignal) Confidence() float64 {
+func (rcv *HindsightSignal) Direction() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -285,11 +288,11 @@ func (rcv *HindsightSignal) Confidence() float64 {
 	return 0.0
 }
 
-func (rcv *HindsightSignal) MutateConfidence(n float64) bool {
+func (rcv *HindsightSignal) MutateDirection(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
 
-func (rcv *HindsightSignal) AdmissionThreshold() float64 {
+func (rcv *HindsightSignal) Confidence() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -297,12 +300,24 @@ func (rcv *HindsightSignal) AdmissionThreshold() float64 {
 	return 0.0
 }
 
-func (rcv *HindsightSignal) MutateAdmissionThreshold(n float64) bool {
+func (rcv *HindsightSignal) MutateConfidence(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
 
-func (rcv *HindsightSignal) Opportunity() bool {
+func (rcv *HindsightSignal) AdmissionThreshold() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *HindsightSignal) MutateAdmissionThreshold(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(30, n)
+}
+
+func (rcv *HindsightSignal) Opportunity() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -310,11 +325,11 @@ func (rcv *HindsightSignal) Opportunity() bool {
 }
 
 func (rcv *HindsightSignal) MutateOpportunity(n bool) bool {
-	return rcv._tab.MutateBoolSlot(30, n)
+	return rcv._tab.MutateBoolSlot(32, n)
 }
 
 func (rcv *HindsightSignal) OpportunityType() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -322,7 +337,7 @@ func (rcv *HindsightSignal) OpportunityType() []byte {
 }
 
 func (rcv *HindsightSignal) PredictiveReady() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -330,11 +345,11 @@ func (rcv *HindsightSignal) PredictiveReady() bool {
 }
 
 func (rcv *HindsightSignal) MutatePredictiveReady(n bool) bool {
-	return rcv._tab.MutateBoolSlot(34, n)
+	return rcv._tab.MutateBoolSlot(36, n)
 }
 
 func (rcv *HindsightSignal) PredictiveStatus() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -342,7 +357,7 @@ func (rcv *HindsightSignal) PredictiveStatus() []byte {
 }
 
 func (rcv *HindsightSignal) Alternatives(obj *NamedNumber, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -354,7 +369,7 @@ func (rcv *HindsightSignal) Alternatives(obj *NamedNumber, j int) bool {
 }
 
 func (rcv *HindsightSignal) AlternativesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -362,61 +377,64 @@ func (rcv *HindsightSignal) AlternativesLength() int {
 }
 
 func HindsightSignalStart(builder *flatbuffers.Builder) {
-	builder.StartObject(18)
+	builder.StartObject(19)
+}
+func HindsightSignalAddId(builder *flatbuffers.Builder, id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(id), 0)
 }
 func HindsightSignalAddAt(builder *flatbuffers.Builder, at int64) {
-	builder.PrependInt64Slot(0, at, 0)
+	builder.PrependInt64Slot(1, at, 0)
 }
 func HindsightSignalAddAction(builder *flatbuffers.Builder, action flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(action), 0)
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(action), 0)
 }
 func HindsightSignalAddReason(builder *flatbuffers.Builder, reason flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(reason), 0)
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(reason), 0)
 }
 func HindsightSignalAddCause(builder *flatbuffers.Builder, cause flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(cause), 0)
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(cause), 0)
 }
 func HindsightSignalAddGraphScore(builder *flatbuffers.Builder, graphScore float64) {
-	builder.PrependFloat64Slot(4, graphScore, 0.0)
+	builder.PrependFloat64Slot(5, graphScore, 0.0)
 }
 func HindsightSignalAddThesisScore(builder *flatbuffers.Builder, thesisScore float64) {
-	builder.PrependFloat64Slot(5, thesisScore, 0.0)
+	builder.PrependFloat64Slot(6, thesisScore, 0.0)
 }
 func HindsightSignalAddThesisConfidence(builder *flatbuffers.Builder, thesisConfidence float64) {
-	builder.PrependFloat64Slot(6, thesisConfidence, 0.0)
+	builder.PrependFloat64Slot(7, thesisConfidence, 0.0)
 }
 func HindsightSignalAddThesisSupport(builder *flatbuffers.Builder, thesisSupport float64) {
-	builder.PrependFloat64Slot(7, thesisSupport, 0.0)
+	builder.PrependFloat64Slot(8, thesisSupport, 0.0)
 }
 func HindsightSignalAddThesisContradiction(builder *flatbuffers.Builder, thesisContradiction float64) {
-	builder.PrependFloat64Slot(8, thesisContradiction, 0.0)
+	builder.PrependFloat64Slot(9, thesisContradiction, 0.0)
 }
 func HindsightSignalAddThesisConditions(builder *flatbuffers.Builder, thesisConditions float64) {
-	builder.PrependFloat64Slot(9, thesisConditions, 0.0)
+	builder.PrependFloat64Slot(10, thesisConditions, 0.0)
 }
 func HindsightSignalAddDirection(builder *flatbuffers.Builder, direction float64) {
-	builder.PrependFloat64Slot(10, direction, 0.0)
+	builder.PrependFloat64Slot(11, direction, 0.0)
 }
 func HindsightSignalAddConfidence(builder *flatbuffers.Builder, confidence float64) {
-	builder.PrependFloat64Slot(11, confidence, 0.0)
+	builder.PrependFloat64Slot(12, confidence, 0.0)
 }
 func HindsightSignalAddAdmissionThreshold(builder *flatbuffers.Builder, admissionThreshold float64) {
-	builder.PrependFloat64Slot(12, admissionThreshold, 0.0)
+	builder.PrependFloat64Slot(13, admissionThreshold, 0.0)
 }
 func HindsightSignalAddOpportunity(builder *flatbuffers.Builder, opportunity bool) {
-	builder.PrependBoolSlot(13, opportunity, false)
+	builder.PrependBoolSlot(14, opportunity, false)
 }
 func HindsightSignalAddOpportunityType(builder *flatbuffers.Builder, opportunityType flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(opportunityType), 0)
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(opportunityType), 0)
 }
 func HindsightSignalAddPredictiveReady(builder *flatbuffers.Builder, predictiveReady bool) {
-	builder.PrependBoolSlot(15, predictiveReady, false)
+	builder.PrependBoolSlot(16, predictiveReady, false)
 }
 func HindsightSignalAddPredictiveStatus(builder *flatbuffers.Builder, predictiveStatus flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(predictiveStatus), 0)
+	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(predictiveStatus), 0)
 }
 func HindsightSignalAddAlternatives(builder *flatbuffers.Builder, alternatives flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(alternatives), 0)
+	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(alternatives), 0)
 }
 func HindsightSignalStartAlternativesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

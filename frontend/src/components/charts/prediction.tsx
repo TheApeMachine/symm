@@ -1,355 +1,187 @@
-import type { ReactNode } from "react";
-import { Component } from "#/components/ui/component";
-import { RESONANCE_FOCUS } from "#/providers/ws-stores";
+import { resonanceFocusStore, useSubscribe } from "#/providers/ws-stores";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
 	`translateX(${(slot / slotCount) * 100}%) scaleX(${1 / slotCount})`;
 
 export const signedVectorTransform = "scaleY(calc(var(--value, 0) * -1))";
 
-/*
-Every lane reads the focused-carrier stream, so the whole chart describes one
-symbol without each binding having to name it.
-*/
-const ScalarDiagnostics = () => (
-	<Component registerKey={RESONANCE_FOCUS}>
-		{({ ref }) => (
-			<div
-				ref={ref}
-				className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)"
-			>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						relative precision
-					</div>
-					<div
-						data-paint="taskRelativePrecision"
-						data-paint-format=".3f"
-						className="mt-0.5 font-mono text-[11px] text-(--up)"
-					>
-						—
-					</div>
-				</div>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						task skill
-					</div>
-					<div
-						data-paint="taskSkill"
-						data-paint-format=".3f"
-						className="mt-0.5 font-mono text-[11px] text-(--f2)"
-					>
-						—
-					</div>
-				</div>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						issued t
-					</div>
-					<div
-						data-paint="lastResolvedForecast"
-						data-paint-format="dir"
-						className="mt-0.5 font-mono text-[11px] text-(--f2)"
-					>
-						—
-					</div>
-				</div>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						realized t+1
-					</div>
-					<div
-						data-paint="lastRealizedReturn"
-						data-paint-format="dir"
-						className="mt-0.5 font-mono text-[11px] text-(--f2)"
-					>
-						—
-					</div>
-				</div>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						forecast error
-					</div>
-					<div
-						data-paint="lastForecastError"
-						data-paint-format=".0f"
-						className="mt-0.5 font-mono text-[11px] text-(--f2)"
-					>
-						—
-					</div>
-				</div>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						task scale
-					</div>
-					<div
-						data-paint="taskScale"
-						data-paint-format=".3f"
-						className="mt-0.5 font-mono text-[11px] text-(--f2)"
-					>
-						—
-					</div>
-				</div>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						horizon / reach
-					</div>
-					<div className="mt-0.5 flex gap-1 font-mono text-[11px] text-(--f2)">
-						<span
-							data-paint="forecast.supportedHorizon"
-							data-paint-format=".0f"
-						>
-							—
-						</span>
-						<span>/</span>
-						<span data-paint="forecast.probeHorizon" data-paint-format=".0f">
-							—
-						</span>
-					</div>
-				</div>
-				<div className="bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						resolved samples
-					</div>
-					<div
-						data-paint="samples"
-						data-paint-format=".0f"
-						className="mt-0.5 font-mono text-[11px] text-(--acc)"
-					>
-						—
-					</div>
-				</div>
-				<div className="min-w-0 bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						surprise
-					</div>
-					<div
-						data-paint="surprise"
-						data-paint-format=".2f"
-						className="mt-0.5 truncate font-mono text-[11px] text-(--warning)"
-					>
-						—
-					</div>
-				</div>
-				<div className="min-w-0 bg-[#0a0907] px-2 py-1.5">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						energy
-					</div>
-					<div
-						data-paint="energy"
-						data-paint-format=".2f"
-						className="mt-0.5 truncate font-mono text-[11px] text-(--info)"
-					>
-						—
-					</div>
+const fmt = (value: number | undefined, digits: number): string =>
+	value === undefined ? "" : value.toFixed(digits);
+
+const dir = (value: number | undefined): string => {
+	if (value === undefined) return "";
+	if (value > 0) return "up";
+	if (value < 0) return "down";
+	return "flat";
+};
+
+const ScalarDiagnostics = () => {
+	const root = useSubscribe(resonanceFocusStore, (state) => {
+		const set = (q: string, value: string) => {
+			const el = root.current?.querySelector<HTMLElement>(`[data-p="${q}"]`);
+
+			if (el instanceof HTMLElement) {
+				el.textContent = value;
+			}
+		};
+
+		set("prec", fmt(state?.taskRelativePrecision, 3));
+		set("skill", fmt(state?.taskSkill, 3));
+		set("issued", dir(state?.lastResolvedForecast));
+		set("realized", dir(state?.lastRealizedReturn));
+		set("error", fmt(state?.lastForecastError, 0));
+		set("horizon", fmt(state?.forecast?.supportedHorizon, 0));
+		set("reach", fmt(state?.forecast?.probeHorizon, 0));
+		set("samples", fmt(state?.samples, 0));
+		set("surprise", fmt(state?.surprise, 2));
+		set("energy", fmt(state?.energy, 2));
+	});
+
+	return (
+		<div ref={root} className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)">
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">relative precision</div>
+				<div data-p="prec" className="mt-0.5 font-mono text-[11px] text-(--up)">—</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">task skill</div>
+				<div data-p="skill" className="mt-0.5 font-mono text-[11px] text-(--f2)">—</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">issued t</div>
+				<div data-p="issued" className="mt-0.5 font-mono text-[11px] text-(--f2)">—</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">realized t+1</div>
+				<div data-p="realized" className="mt-0.5 font-mono text-[11px] text-(--f2)">—</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">forecast error</div>
+				<div data-p="error" className="mt-0.5 font-mono text-[11px] text-(--f2)">—</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">horizon / reach</div>
+				<div className="mt-0.5 flex gap-1 font-mono text-[11px] text-(--f2)">
+					<span data-p="horizon">—</span>
+					<span>/</span>
+					<span data-p="reach">—</span>
 				</div>
 			</div>
-		)}
-	</Component>
-);
-
-/*
-VerdictRow answers the three questions the panel exists to answer, in words,
-above every number it is derived from.
-
-Health and direction are deliberately different languages. The two health tiles
-carry a word and a tone from --info/--warn/--error and never an arrow; the
-forecast tile carries an arrow and the --up/--down pair and never a health tone.
-Reusing one green for "the model is fine" and "price is rising" would make a
-glance ambiguous in exactly the moment a glance is all there is time for.
-
-Every label is decided by the solver. Nothing here re-reads a threshold.
-*/
-const VerdictTile = ({
-	title,
-	label,
-	children,
-}: {
-	title: string;
-	label: string;
-	children?: ReactNode;
-}) => (
-	<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
-		<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-			{title}
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">resolved samples</div>
+				<div data-p="samples" className="mt-0.5 font-mono text-[11px] text-(--acc)">—</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">surprise</div>
+				<div data-p="surprise" className="mt-0.5 truncate font-mono text-[11px] text-(--warning)">—</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">energy</div>
+				<div data-p="energy" className="mt-0.5 truncate font-mono text-[11px] text-(--info)">—</div>
+			</div>
 		</div>
-		{/*
-			The tone lands on the row and both marks inherit it. An element
-			carrying data-set and data-paint together resolves to one binding,
-			keyed on the painted path but running in set mode.
-		*/}
-		<div className="flex items-baseline gap-2">
-			<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
-			<span
-				data-paint={label}
-				className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)"
-			>
-				—
-			</span>
-		</div>
-		{children}
-	</div>
-);
+	);
+};
 
-/*
-ForecastArrow is one triangle that rotates: up, flat, or down.
+const VerdictRow = () => {
+	const root = useSubscribe(resonanceFocusStore, (state) => {
+		const setVerdict = (q: string, value: string) => {
+			const el = root.current?.querySelector<HTMLElement>(`[data-p="${q}"]`);
 
-Direction is a sign, so it is painted as rotation rather than as three swapped
-glyphs — a mark that turns is read without being re-identified. Conviction fades
-it, which keeps an unsupported call from looking as loud as a supported one.
-*/
-const ForecastArrow = () => (
-	<div className="flex items-center gap-2">
-		<span className="inline-block shrink-0 text-[15px] leading-none text-(--acc)">
-			▶
-		</span>
-		<span
-			data-paint="taskForecast"
-			data-paint-format="dir"
-			className="truncate font-mono text-[13px] text-(--acc)"
-		>
-			—
-		</span>
-	</div>
-);
+			if (el instanceof HTMLElement) {
+				el.textContent = value;
+			}
+		};
 
-const VerdictRow = () => (
-	<Component registerKey={RESONANCE_FOCUS}>
-		{({ ref }) => (
-			<div
-				ref={ref}
-				className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)"
-			>
-				<VerdictTile title="residual model" label="taskCalibration" />
-				<VerdictTile title="direction skill" label="taskSkillStatus" />
-				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
-					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						forecast
-					</div>
-					<ForecastArrow />
+		setVerdict("calibration", String(state?.taskCalibration ?? "—"));
+		setVerdict("skillStatus", String(state?.taskSkillStatus ?? "—"));
+		setVerdict("forecast", dir(state?.taskForecast));
+	});
+
+	return (
+		<div ref={root} className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)">
+			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">residual model</div>
+				<div className="flex items-baseline gap-2">
+					<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
+					<span data-p="calibration" className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">—</span>
 				</div>
 			</div>
-		)}
-	</Component>
-);
+			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">direction skill</div>
+				<div className="flex items-baseline gap-2">
+					<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
+					<span data-p="skillStatus" className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">—</span>
+				</div>
+			</div>
+			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">forecast</div>
+				<div className="flex items-center gap-2">
+					<span className="inline-block shrink-0 text-[15px] leading-none text-(--acc)">▶</span>
+					<span data-p="forecast" className="truncate font-mono text-[13px] text-(--acc)">—</span>
+				</div>
+			</div>
+		</div>
+	);
+};
 
-/*
-VectorLane unrolls one vector into a bar per component.
-
-Each bar is one element straddling a zero line, which is what makes the forward
-curve legible: bar k is the direction lean k steps out, so the profile across
-the lane is the horizon itself. Nothing is retained and nothing is recomputed —
-the websocket writes each bar's own scale factor and React never re-renders.
-*/
 const VectorLane = ({
-	select,
 	label,
 	meta,
 	color,
-	scale,
-	ghost,
+	read,
 }: {
-	/* Path inside the focused resonance row. */
-	select: string;
 	label: string;
 	meta: string;
 	color: string;
-	scale?: "max-abs";
-	/*
-		Sibling path holding what this lane's vector was predicted to be. Drawn
-		full-slot behind the narrower settled bar so the residual reads as the
-		exposed shoulder of the ghost rather than as a number to subtract by eye.
-	*/
-	ghost?: string;
-}) => (
-	<Component registerKey={RESONANCE_FOCUS} select={select} repeat>
-		{({ ref, slots }) => (
-			<div ref={ref} className="flex min-h-0 flex-1 items-stretch gap-3">
-				<div className="flex w-36 shrink-0 flex-col justify-center gap-0.5 font-mono text-[9px] leading-tight">
-					<span className="font-semibold uppercase tracking-widest text-(--f3)">
-						{label}
-					</span>
-					<span className="text-(--f4)">{meta}</span>
-				</div>
-				<div className="relative min-h-0 flex-1 overflow-hidden border border-(--line) bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--line2)_calc(50%-0.5px),var(--line2)_calc(50%+0.5px),transparent_calc(50%+0.5px))]">
-					{ghost === undefined ? null : <GhostLane select={ghost} />}
-					{slots.map((slot) => (
-						<div
-							key={`${select}-${slot}`}
-							data-index={slot}
-							data-paint="$"
-							data-paint-prop="title"
-							data-paint-format=".4f"
-							className="absolute inset-y-0 right-1 left-1 origin-left"
-							style={{ transform: vectorSlotTransform(slot, slots.length) }}
-						>
-							<div
-								data-set="$"
-								data-set-scale={scale}
-								data-target="style.--value"
-								className={`absolute top-1/2 right-1.5 left-1 h-[calc(50%-1px)] origin-top ${color}`}
-								style={{ transform: signedVectorTransform }}
-							/>
-						</div>
-					))}
+	read: (state: ReturnType<typeof resonanceFocusStore.get>) => number[] | undefined;
+}) => {
+	const root = useSubscribe(resonanceFocusStore, (state) => {
+		const values = read(state) ?? [];
 
-				</div>
+		const slots = root.current?.querySelectorAll<HTMLElement>("[data-slot]");
+
+		slots?.forEach((slot, index) => {
+			const value = values[index] ?? 0;
+			slot.style.setProperty("--value", String(value));
+			slot.title = value.toFixed(4);
+		});
+	});
+
+	const values = read(resonanceFocusStore.state) ?? [];
+
+	return (
+		<div ref={root} className="flex min-h-0 flex-1 items-stretch gap-3">
+			<div className="flex w-36 shrink-0 flex-col justify-center gap-0.5 font-mono text-[9px] leading-tight">
+				<span className="font-semibold uppercase tracking-widest text-(--f3)">{label}</span>
+				<span className="text-(--f4)">{meta}</span>
 			</div>
-		)}
-	</Component>
-);
-
-/*
-GhostLane draws the top-down prediction for the lane it sits inside.
-
-It is a nested Component rather than a second field on the parent because the
-prediction is its own vector on the wire, and the slot count of one vector must
-not be inferred from the other's.
-*/
-const GhostLane = ({ select }: { select: string }) => (
-	<Component registerKey={RESONANCE_FOCUS} select={select} repeat>
-		{({ ref, slots }) => (
-			<div ref={ref} className="absolute inset-0">
-				{slots.map((slot) => (
+			<div className="relative min-h-0 flex-1 overflow-hidden border border-(--line) bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--line2)_calc(50%-0.5px),var(--line2)_calc(50%+0.5px),transparent_calc(50%+0.5px))]">
+				{values.map((_, slot) => (
 					<div
-						key={`${select}-${slot}`}
-						data-index={slot}
+						// biome-ignore lint/suspicious/noArrayIndexKey: one fixed-geometry slot per vector component; the index is the slot's identity and the vector never reorders.
+						key={`slot-${slot}`}
+						data-slot
 						className="absolute inset-y-0 right-1 left-1 origin-left"
-						style={{ transform: vectorSlotTransform(slot, slots.length) }}
+						style={{ transform: vectorSlotTransform(slot, values.length) }}
 					>
 						<div
-							data-set="$"
-							data-set-scale="max-abs"
-							data-target="style.--value"
-							className="absolute top-1/2 right-px left-0 h-[calc(50%-1px)] origin-top bg-(--line2)"
+							className={`absolute top-1/2 right-1.5 left-1 h-[calc(50%-1px)] origin-top ${color}`}
 							style={{ transform: signedVectorTransform }}
 						/>
 					</div>
 				))}
 			</div>
-		)}
-	</Component>
-);
+		</div>
+	);
+};
 
-/*
-The settled hierarchy, sensory layer first.
-
-Each layer's state is a different width and a different magnitude, so each lane
-is scaled against its own largest component. Sharing one scale across them would
-flatten the quieter layers onto the zero line.
-*/
 const HIERARCHY = [
 	{ index: 0, label: "L0 · sensory", meta: "bottom-up reconstruction" },
 	{ index: 1, label: "L1 · micro", meta: "adjacent generative link" },
 	{ index: 2, label: "L2 · macro", meta: "context state" },
 ] as const;
 
-/*
-TerminalPredictionChart binds scalar diagnostics and every dynamic vector
-directly to the focused row inside the backend resonance batch. Array slots
-unroll each vector into granular DOM paint targets; no chart-local websocket
-painter or retained JS history is needed.
-*/
 export const TerminalPredictionChart = () => (
 	<div className="flex size-full flex-col gap-3 px-4 pt-14 pb-3">
 		<VerdictRow />
@@ -357,27 +189,23 @@ export const TerminalPredictionChart = () => (
 		{HIERARCHY.map((layer) => (
 			<VectorLane
 				key={layer.label}
-				select={`layers.${layer.index}.state`}
-				ghost={`layers.${layer.index}.prediction`}
 				label={layer.label}
 				meta={layer.meta}
 				color="bg-(--f3)"
-				scale="max-abs"
+				read={(state) => state?.layers?.[layer.index]?.state}
 			/>
 		))}
 		<VectorLane
-			select="latent"
 			label="Latent state z"
 			meta="settled predictive state · zero centered"
 			color="bg-(--info)"
-			scale="max-abs"
+			read={(state) => state?.latent}
 		/>
 		<VectorLane
-			select="forecast.forwardCurve"
 			label="Forward direction shape"
 			meta="signed direction lean · t+1 → t+k"
 			color="bg-(--acc)"
-			scale="max-abs"
+			read={(state) => state?.forecast?.forwardCurve}
 		/>
 	</div>
 );

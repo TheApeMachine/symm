@@ -87,8 +87,7 @@ export type StatProps = Omit<ComponentProps<"div">, "children"> &
 	StatLayoutProps &
 	Pick<StatValueProps, "variant" | "size" | "emphasis"> & {
 		/*
-			A stat's value may be a painted node rather than a literal, so the
-			element carrying data-paint can sit in the value slot.
+			A stat's value may be a subscribe-driven node rather than a literal.
 		*/
 		value: ReactNode;
 		label: string;

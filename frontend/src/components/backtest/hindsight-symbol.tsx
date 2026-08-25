@@ -83,9 +83,9 @@ const JournalRows = ({ journal }: { journal?: HindsightSignal[] }) =>
 			<span className="font-mono text-[9px] uppercase tracking-widest text-(--f4)">
 				decision path through the missed hold
 			</span>
-			{journal.map((decision, index) => (
+			{journal.map((decision) => (
 				<div
-					key={`${decision.at}-${index}`}
+					key={decision.id}
 					className="grid grid-cols-[5rem_4rem_6rem_6rem_minmax(0,1fr)] items-center gap-2 rounded-[3px] bg-(--sunken) px-2 py-1 font-mono text-[10px]"
 				>
 					<span className="tabular-nums text-(--f4)">{formatClock(decision.at)}</span>
@@ -119,7 +119,7 @@ const BlockerRows = ({ blockers }: { blockers: HindsightBlocker[] }) => (
 		</span>
 		{blockers.map((blocker, index) => (
 			<div
-				key={`${blocker.key}-${index}`}
+				key={blocker.key}
 				className="grid grid-cols-[1.25rem_minmax(10rem,0.7fr)_minmax(0,1fr)] gap-2 rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5"
 			>
 				<span className="font-mono text-[9px] text-(--f4)">{index + 1}</span>

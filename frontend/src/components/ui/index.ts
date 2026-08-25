@@ -14,18 +14,9 @@ export { Badge, type BadgeProps, badgeVariants } from "./badge";
 export { Button, type ButtonProps, buttonVariants } from "./button";
 export { Canvas, type CanvasProps } from "./canvas";
 export { Chip, type ChipProps, chipVariants } from "./chip";
-/*
-Component and its paint types are the direct-paint runtime. They are exported
-here because surfaces built from this library are painted, not re-rendered —
-see README.md — but Component is the one file that reaches into the host app
-(for registerPainter), so a project adopting the library without a websocket
-feed can drop component.tsx and paint.ts and take everything else.
-*/
-export { Component } from "./component";
 export { Divider, type DividerProps, dividerVariants } from "./divider";
 export { DOT_SIZE_FOR, Dot, type DotProps, dotVariants } from "./dot";
 export { AnimatePresence, Flex, flexVariants } from "./flex";
-export { Gate, type GateProps } from "./gate";
 export {
 	type GapType,
 	Grid,
@@ -87,7 +78,6 @@ export {
 	sectionHeaderVariants,
 	sectionVariants,
 } from "./section";
-export { Sparkline, type SparklineProps } from "./sparkline";
 export { Spinner, type SpinnerProps } from "./spinner";
 export { Stat, type StatProps, statVariants } from "./stat";
 export { Toolbar, type ToolbarProps, toolbarVariants } from "./toolbar";

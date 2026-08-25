@@ -26,185 +26,196 @@ static getSizePrefixedRootAsHindsightSignal(bb:flatbuffers.ByteBuffer, obj?:Hind
   return (obj || new HindsightSignal()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-at():bigint {
+id():string|null
+id(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+id(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+at():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 action():string|null
 action(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 action(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
+  const offset = this.bb!.__offset(this.bb_pos, 8);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 reason():string|null
 reason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 reason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
+  const offset = this.bb!.__offset(this.bb_pos, 10);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 cause():string|null
 cause(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 cause(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 graphScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-thesisScore():number {
   const offset = this.bb!.__offset(this.bb_pos, 14);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-thesisConfidence():number {
+thesisScore():number {
   const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-thesisSupport():number {
+thesisConfidence():number {
   const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-thesisContradiction():number {
+thesisSupport():number {
   const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-thesisConditions():number {
+thesisContradiction():number {
   const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-direction():number {
+thesisConditions():number {
   const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-confidence():number {
+direction():number {
   const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-admissionThreshold():number {
+confidence():number {
   const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-opportunity():boolean {
+admissionThreshold():number {
   const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+opportunity():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 opportunityType():string|null
 opportunityType(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 opportunityType(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
+  const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 predictiveReady():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 predictiveStatus():string|null
 predictiveStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 predictiveStatus(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 alternatives(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
+  const offset = this.bb!.__offset(this.bb_pos, 40);
   return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 alternativesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
+  const offset = this.bb!.__offset(this.bb_pos, 40);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startHindsightSignal(builder:flatbuffers.Builder) {
-  builder.startObject(18);
+  builder.startObject(19);
+}
+
+static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, idOffset, 0);
 }
 
 static addAt(builder:flatbuffers.Builder, at:bigint) {
-  builder.addFieldInt64(0, at, BigInt('0'));
+  builder.addFieldInt64(1, at, BigInt('0'));
 }
 
 static addAction(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, actionOffset, 0);
+  builder.addFieldOffset(2, actionOffset, 0);
 }
 
 static addReason(builder:flatbuffers.Builder, reasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, reasonOffset, 0);
+  builder.addFieldOffset(3, reasonOffset, 0);
 }
 
 static addCause(builder:flatbuffers.Builder, causeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, causeOffset, 0);
+  builder.addFieldOffset(4, causeOffset, 0);
 }
 
 static addGraphScore(builder:flatbuffers.Builder, graphScore:number) {
-  builder.addFieldFloat64(4, graphScore, 0.0);
+  builder.addFieldFloat64(5, graphScore, 0.0);
 }
 
 static addThesisScore(builder:flatbuffers.Builder, thesisScore:number) {
-  builder.addFieldFloat64(5, thesisScore, 0.0);
+  builder.addFieldFloat64(6, thesisScore, 0.0);
 }
 
 static addThesisConfidence(builder:flatbuffers.Builder, thesisConfidence:number) {
-  builder.addFieldFloat64(6, thesisConfidence, 0.0);
+  builder.addFieldFloat64(7, thesisConfidence, 0.0);
 }
 
 static addThesisSupport(builder:flatbuffers.Builder, thesisSupport:number) {
-  builder.addFieldFloat64(7, thesisSupport, 0.0);
+  builder.addFieldFloat64(8, thesisSupport, 0.0);
 }
 
 static addThesisContradiction(builder:flatbuffers.Builder, thesisContradiction:number) {
-  builder.addFieldFloat64(8, thesisContradiction, 0.0);
+  builder.addFieldFloat64(9, thesisContradiction, 0.0);
 }
 
 static addThesisConditions(builder:flatbuffers.Builder, thesisConditions:number) {
-  builder.addFieldFloat64(9, thesisConditions, 0.0);
+  builder.addFieldFloat64(10, thesisConditions, 0.0);
 }
 
 static addDirection(builder:flatbuffers.Builder, direction:number) {
-  builder.addFieldFloat64(10, direction, 0.0);
+  builder.addFieldFloat64(11, direction, 0.0);
 }
 
 static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(11, confidence, 0.0);
+  builder.addFieldFloat64(12, confidence, 0.0);
 }
 
 static addAdmissionThreshold(builder:flatbuffers.Builder, admissionThreshold:number) {
-  builder.addFieldFloat64(12, admissionThreshold, 0.0);
+  builder.addFieldFloat64(13, admissionThreshold, 0.0);
 }
 
 static addOpportunity(builder:flatbuffers.Builder, opportunity:boolean) {
-  builder.addFieldInt8(13, +opportunity, +false);
+  builder.addFieldInt8(14, +opportunity, +false);
 }
 
 static addOpportunityType(builder:flatbuffers.Builder, opportunityTypeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(14, opportunityTypeOffset, 0);
+  builder.addFieldOffset(15, opportunityTypeOffset, 0);
 }
 
 static addPredictiveReady(builder:flatbuffers.Builder, predictiveReady:boolean) {
-  builder.addFieldInt8(15, +predictiveReady, +false);
+  builder.addFieldInt8(16, +predictiveReady, +false);
 }
 
 static addPredictiveStatus(builder:flatbuffers.Builder, predictiveStatusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, predictiveStatusOffset, 0);
+  builder.addFieldOffset(17, predictiveStatusOffset, 0);
 }
 
 static addAlternatives(builder:flatbuffers.Builder, alternativesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, alternativesOffset, 0);
+  builder.addFieldOffset(18, alternativesOffset, 0);
 }
 
 static createAlternativesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -224,8 +235,9 @@ static endHindsightSignal(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createHindsightSignal(builder:flatbuffers.Builder, at:bigint, actionOffset:flatbuffers.Offset, reasonOffset:flatbuffers.Offset, causeOffset:flatbuffers.Offset, graphScore:number, thesisScore:number, thesisConfidence:number, thesisSupport:number, thesisContradiction:number, thesisConditions:number, direction:number, confidence:number, admissionThreshold:number, opportunity:boolean, opportunityTypeOffset:flatbuffers.Offset, predictiveReady:boolean, predictiveStatusOffset:flatbuffers.Offset, alternativesOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createHindsightSignal(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, at:bigint, actionOffset:flatbuffers.Offset, reasonOffset:flatbuffers.Offset, causeOffset:flatbuffers.Offset, graphScore:number, thesisScore:number, thesisConfidence:number, thesisSupport:number, thesisContradiction:number, thesisConditions:number, direction:number, confidence:number, admissionThreshold:number, opportunity:boolean, opportunityTypeOffset:flatbuffers.Offset, predictiveReady:boolean, predictiveStatusOffset:flatbuffers.Offset, alternativesOffset:flatbuffers.Offset):flatbuffers.Offset {
   HindsightSignal.startHindsightSignal(builder);
+  HindsightSignal.addId(builder, idOffset);
   HindsightSignal.addAt(builder, at);
   HindsightSignal.addAction(builder, actionOffset);
   HindsightSignal.addReason(builder, reasonOffset);
@@ -249,6 +261,7 @@ static createHindsightSignal(builder:flatbuffers.Builder, at:bigint, actionOffse
 
 unpack(): HindsightSignalT {
   return new HindsightSignalT(
+    this.id(),
     this.at(),
     this.action(),
     this.reason(),
@@ -272,6 +285,7 @@ unpack(): HindsightSignalT {
 
 
 unpackTo(_o: HindsightSignalT): void {
+  _o.id = this.id();
   _o.at = this.at();
   _o.action = this.action();
   _o.reason = this.reason();
@@ -295,6 +309,7 @@ unpackTo(_o: HindsightSignalT): void {
 
 export class HindsightSignalT implements flatbuffers.IGeneratedObject {
 constructor(
+  public id: string|Uint8Array|null = null,
   public at: bigint = BigInt('0'),
   public action: string|Uint8Array|null = null,
   public reason: string|Uint8Array|null = null,
@@ -317,6 +332,7 @@ constructor(
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const id = (this.id !== null ? builder.createString(this.id!) : 0);
   const action = (this.action !== null ? builder.createString(this.action!) : 0);
   const reason = (this.reason !== null ? builder.createString(this.reason!) : 0);
   const cause = (this.cause !== null ? builder.createString(this.cause!) : 0);
@@ -325,6 +341,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const alternatives = HindsightSignal.createAlternativesVector(builder, builder.createObjectOffsetList(this.alternatives));
 
   return HindsightSignal.createHindsightSignal(builder,
+    id,
     this.at,
     action,
     reason,

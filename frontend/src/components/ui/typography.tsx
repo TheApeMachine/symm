@@ -4,17 +4,8 @@ import type { ComponentProps, CSSProperties, ElementType, JSX } from "react";
 import { cn } from "@/lib/utils";
 
 /*
-Typography is the text layer, and every element in it forwards its props.
-
-That last part is the whole point. A painted surface drops a bare
-<span data-paint="metrics.strength.raw" data-paint-format=".2f" /> into the tree
-and lets the websocket write its textContent — no re-render, no state. A text
-primitive that swallowed data-* attributes would quietly make itself unusable
-for exactly the surfaces this library exists to build, so none of them do.
-
-The same rule covers ref: a painted region is found by querySelector inside the
-ref its Component handed down, so anything that might sit inside one must be
-able to receive a ref.
+Typography is the text layer, and every element forwards its props and its ref
+so a store subscriber can query it and write its textContent directly.
 */
 
 export const typographyVariants = cva("font-mono text-[11.5px] text-(--f3)", {

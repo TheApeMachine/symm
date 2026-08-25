@@ -3,16 +3,14 @@ import { describe, expect, it } from "vitest";
 import { XrayHawkesPanel } from "./xray-hawkes";
 
 describe("XrayHawkesPanel", () => {
-	it("plots conditional intensity with its fitted decay contract", () => {
+	it("renders the arrival-process readouts and canvas shell", () => {
 		const markup = renderToStaticMarkup(<XrayHawkesPanel />);
 
-		expect(markup).toContain(
-			'data-stream-value="metrics.conditional_intensity:buy.raw"',
-		);
-		expect(markup).toContain(
-			'data-stream-baseline="metrics.background_rate:buy.raw"',
-		);
-		expect(markup).toContain('data-stream-decay="metrics.excitation_decay:buy_from_buy.raw"');
-		expect(markup).toContain("data-stream-rug");
+		expect(markup).toContain('<canvas');
+		expect(markup).toContain('data-f="events"');
+		expect(markup).toContain('data-f="lambda"');
+		expect(markup).toContain('data-f="mu"');
+		expect(markup).toContain('data-f="sells"');
+		expect(markup).toContain('data-f="eta"');
 	});
 });

@@ -98,7 +98,7 @@ export type SectionHeaderProps = Omit<ComponentProps<"div">, "title"> &
 		title?: ReactNode;
 		/*
 			Meta is the right-hand readout — a count, a timestamp, a symbol. It takes
-			a node so a painted <span data-paint> can live there and the header never
+			a node so a subscribe-driven value can live there and the header never
 			has to re-render to stay current.
 		*/
 		meta?: ReactNode;
