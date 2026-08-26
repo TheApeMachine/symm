@@ -35,7 +35,9 @@ export const KernelList = () => {
 
 			let element = queryCache[kernel];
 			if (!element) {
-				const cell = root.current.querySelector<HTMLElement>(`[data-kernel="${kernel}"]`);
+				const cell = root.current.querySelector<HTMLElement>(
+					`[data-kernel="${kernel}"]`,
+				);
 				if (!cell) continue;
 
 				element = {
@@ -49,7 +51,6 @@ export const KernelList = () => {
 				element.status.textContent = "ONLINE";
 			}
 
-
 			if (element.readout) {
 				let snrVal: number | null = null;
 				for (let j = 0; j < last.metricsLength(); j++) {
@@ -59,7 +60,16 @@ export const KernelList = () => {
 						break;
 					}
 				}
-				element.readout.textContent = snrVal !== null ? `snr: ${snrVal.toFixed(2)}` : "active";
+
+				/*
+					Backend rows are sparse: an update may arrive without the snr
+					metric even though the kernel is live. Overwriting the readout
+					with a placeholder would blank the last good value, so the row
+					is left untouched until a reading actually carries snr.
+				*/
+				if (snrVal !== null) {
+					element.readout.textContent = `snr: ${snrVal.toFixed(2)}`;
+				}
 			}
 		}
 	});
@@ -100,5 +110,3 @@ export const KernelList = () => {
 		</List>
 	);
 };
-
-

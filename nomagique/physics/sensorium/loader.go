@@ -31,25 +31,27 @@ func (loader *Loader) Stream() []*State {
 	var batches []*State
 
 	for _, dataset := range loader.tokenizer.Datasets {
-		accumulated := newState(0)
-		accumulated.N = 0
+		accumulated := newStateWithCapacity(0, loader.batch)
 
 		for state := range dataset.Generate() {
 			if state == nil || state.N == 0 {
 				continue
 			}
 
-			accumulated = appendState(accumulated, state)
+			appendState(accumulated, state)
 			loader.TotalRaw += state.N
 			loader.TotalCompressed += state.N
+
+			// Note: if dataset yields pooled states, they can be freed here
+			// once we implement pooling in dataset.go.
+			StatePool.Put(state)
 
 			if accumulated.N < loader.batch {
 				continue
 			}
 
 			batches = append(batches, accumulated)
-			accumulated = newState(0)
-			accumulated.N = 0
+			accumulated = newStateWithCapacity(0, loader.batch)
 		}
 
 		if accumulated.N == 0 {
@@ -66,21 +68,19 @@ func (loader *Loader) Stream() []*State {
 appendState folds one single-particle State into an accumulated batch, growing
 the accumulator's columns in place.
 */
-func appendState(accumulated, state *State) *State {
-	return &State{
-		N:          accumulated.N + state.N,
-		Bytes:      append(accumulated.Bytes, state.Bytes...),
-		Seqs:       append(accumulated.Seqs, state.Seqs...),
-		TokenIDs:   append(accumulated.TokenIDs, state.TokenIDs...),
-		ContentIDs: append(accumulated.ContentIDs, state.ContentIDs...),
-		Phase:      append(accumulated.Phase, state.Phase...),
-		Omega:      append(accumulated.Omega, state.Omega...),
-		Energy:     append(accumulated.Energy, state.Energy...),
-		Mass:       append(accumulated.Mass, state.Mass...),
-		Heat:       append(accumulated.Heat, state.Heat...),
-		Pos:        append(accumulated.Pos, state.Pos...),
-		Vel:        append(accumulated.Vel, state.Vel...),
-		Clamped:    append(accumulated.Clamped, state.Clamped...),
-		Dark:       append(accumulated.Dark, state.Dark...),
-	}
+func appendState(accumulated, state *State) {
+	accumulated.N += state.N
+	accumulated.Bytes = append(accumulated.Bytes, state.Bytes...)
+	accumulated.Seqs = append(accumulated.Seqs, state.Seqs...)
+	accumulated.TokenIDs = append(accumulated.TokenIDs, state.TokenIDs...)
+	accumulated.ContentIDs = append(accumulated.ContentIDs, state.ContentIDs...)
+	accumulated.Phase = append(accumulated.Phase, state.Phase...)
+	accumulated.Omega = append(accumulated.Omega, state.Omega...)
+	accumulated.Energy = append(accumulated.Energy, state.Energy...)
+	accumulated.Mass = append(accumulated.Mass, state.Mass...)
+	accumulated.Heat = append(accumulated.Heat, state.Heat...)
+	accumulated.Pos = append(accumulated.Pos, state.Pos...)
+	accumulated.Vel = append(accumulated.Vel, state.Vel...)
+	accumulated.Clamped = append(accumulated.Clamped, state.Clamped...)
+	accumulated.Dark = append(accumulated.Dark, state.Dark...)
 }

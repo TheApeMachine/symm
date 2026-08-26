@@ -148,18 +148,34 @@ func NewPlanner(
 			types.ChannelDecisions,
 			planner.StepTick,
 		)
-		bus.Wire(types.ChannelMeasurements, "", func(value any) any {
-			if m, ok := value.(*nmtypes.Measurement); ok {
-				_ = planner.StepMeasurement(m)
+		runtime.WireKeyed(
+			bus,
+			types.ChannelMeasurements,
+			"",
+			func(value any) string {
+				if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
+					return m.Symbol
+				}
+
+				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+					return m.Symbol()
+				}
+
+				return ""
+			},
+			func(value any) any {
+				if m, ok := value.(*nmtypes.Measurement); ok {
+					_ = planner.StepMeasurement(m)
+					return nil
+				}
+
+				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+					_ = planner.StepMeasurement(m.ToTypesMeasurement())
+				}
+
 				return nil
-			}
-
-			if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-				_ = planner.StepMeasurement(m.ToTypesMeasurement())
-			}
-
-			return nil
-		})
+			},
+		)
 	}
 
 	planner.reasoner.SetOnState(planner.publishCausalState)

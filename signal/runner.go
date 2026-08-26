@@ -53,9 +53,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTrades, types.ChannelHawkes,
 			func(trade kraken.TradeData) string { return trade.Symbol },
 			func(trade kraken.TradeData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return hawkesSignal.Step(trade)
+				}
+
 				started := time.Now()
 				measurement := hawkesSignal.Step(trade)
-				runner.timeStep("hawkes", time.Since(started))
+				runner.ObserveModule("hawkes", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -70,9 +75,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTickers, types.ChannelMeasurements,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return correlationSignal.Step(ticker)
+				}
+
 				started := time.Now()
 				measurement := correlationSignal.Step(ticker)
-				runner.timeStep("correlation", time.Since(started))
+				runner.ObserveModule("correlation", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -82,9 +92,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTrades, types.ChannelMeasurements,
 			func(trade kraken.TradeData) string { return trade.Symbol },
 			func(trade kraken.TradeData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return cvdSignal.Step(trade)
+				}
+
 				started := time.Now()
 				measurement := cvdSignal.Step(trade)
-				runner.timeStep("cvd", time.Since(started))
+				runner.ObserveModule("cvd", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -94,9 +109,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelLevel3, types.ChannelMeasurements,
 			func(frame kraken.Level3Data) string { return frame.Symbol },
 			func(frame kraken.Level3Data) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return depthflowSignal.Step(frame.Symbol, frame.Timestamp)
+				}
+
 				started := time.Now()
 				measurement := depthflowSignal.Step(frame.Symbol, frame.Timestamp)
-				runner.timeStep("depthflow", time.Since(started))
+				runner.ObserveModule("depthflow", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -106,9 +126,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelFuturesTickers, types.ChannelMeasurements,
 			func(ticker kraken.FuturesTickerData) string { return ticker.Symbol },
 			func(ticker kraken.FuturesTickerData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return derivativesSignal.StepTicker(ticker)
+				}
+
 				started := time.Now()
 				measurement := derivativesSignal.StepTicker(ticker)
-				runner.timeStep("derivatives", time.Since(started))
+				runner.ObserveModule("derivatives", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -116,9 +141,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelFuturesTrades, types.ChannelMeasurements,
 			func(trade kraken.FuturesTradeData) string { return trade.Symbol },
 			func(trade kraken.FuturesTradeData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return derivativesSignal.StepTrade(trade)
+				}
+
 				started := time.Now()
 				measurement := derivativesSignal.StepTrade(trade)
-				runner.timeStep("derivatives", time.Since(started))
+				runner.ObserveModule("derivatives", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -128,9 +158,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTickers, types.ChannelMeasurements,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return exhaustSignal.Step(ticker)
+				}
+
 				started := time.Now()
 				measurement := exhaustSignal.Step(ticker)
-				runner.timeStep("exhaustion", time.Since(started))
+				runner.ObserveModule("exhaustion", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -140,9 +175,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTickers, types.ChannelMeasurements,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return leadlagSignal.Step(ticker)
+				}
+
 				started := time.Now()
 				measurement := leadlagSignal.Step(ticker)
-				runner.timeStep("leadlag", time.Since(started))
+				runner.ObserveModule("leadlag", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -152,9 +192,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTickers, types.ChannelMeasurements,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return liquiditySignal.Step(ticker)
+				}
+
 				started := time.Now()
 				measurement := liquiditySignal.Step(ticker)
-				runner.timeStep("liquidity", time.Since(started))
+				runner.ObserveModule("liquidity", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -164,9 +209,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTickers, types.ChannelMeasurements,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return pumpdumpSignal.StepTicker(ticker)
+				}
+
 				started := time.Now()
 				measurement := pumpdumpSignal.StepTicker(ticker)
-				runner.timeStep("pumpdump", time.Since(started))
+				runner.ObserveModule("pumpdump", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -174,9 +224,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTrades, types.ChannelMeasurements,
 			func(trade kraken.TradeData) string { return trade.Symbol },
 			func(trade kraken.TradeData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return pumpdumpSignal.StepTrade(trade)
+				}
+
 				started := time.Now()
 				measurement := pumpdumpSignal.StepTrade(trade)
-				runner.timeStep("pumpdump", time.Since(started))
+				runner.ObserveModule("pumpdump", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -186,9 +241,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTickers, types.ChannelMeasurements,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return sentimentSignal.Step(ticker)
+				}
+
 				started := time.Now()
 				measurement := sentimentSignal.Step(ticker)
-				runner.timeStep("sentiment", time.Since(started))
+				runner.ObserveModule("sentiment", time.Since(started))
+
 				return measurement
 			},
 		)
@@ -198,9 +258,14 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			workspace, types.ChannelTrades, types.ChannelMeasurements,
 			func(trade kraken.TradeData) string { return trade.Symbol },
 			func(trade kraken.TradeData) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return toxicitySignal.StepTrade(trade)
+				}
+
 				started := time.Now()
 				measurement := toxicitySignal.StepTrade(trade)
-				runner.timeStep("toxicity", time.Since(started))
+				runner.ObserveModule("toxicity", time.Since(started))
+
 				return measurement
 			},
 		)

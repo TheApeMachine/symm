@@ -161,6 +161,7 @@ func NewPosition(
 	disruptorInstance, err := disruptor.New(
 		disruptor.Options.BufferCapacity(guardianCapacity),
 		disruptor.Options.WriterCount(64),
+		disruptor.Options.WaitStrategy(runtime.AdaptiveWaitStrategy{}),
 		disruptor.Options.NewHandlerGroup(guardian),
 	)
 

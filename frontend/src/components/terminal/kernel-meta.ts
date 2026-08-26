@@ -70,12 +70,20 @@ const SOURCE_HEADLINE: Record<string, string> = {
 };
 
 /*
+sourceHeadline names the metric a kernel row leads with, or null when the
+source has no named headline. The list view prefers it so a kernel's trace
+plots its own vocabulary instead of the first metric in the row.
+*/
+export const sourceHeadline = (source: string): string | null =>
+	SOURCE_HEADLINE[source.toLowerCase()] ?? null;
+
+/*
 sourceHeadlineMetric names the metric map entry a kernel row leads with.
 */
 export const sourceHeadlineMetric = (source: string): string => {
-	const metric = SOURCE_HEADLINE[source.toLowerCase()];
+	const metric = sourceHeadline(source);
 
-	if (metric === undefined) {
+	if (metric === null) {
 		throw new Error(`unsupported measurement source: ${source}`);
 	}
 
@@ -449,20 +457,20 @@ export const kernelSparkPaths = (
 	active: boolean;
 } => {
 	const history = values.length > 0 ? values : [0];
-	const minimum = Math.min(...history);
-	const maximum = Math.max(...history);
-	const scaled =
-		minimum < 0 || maximum > 1
-			? history.map((value) =>
-					maximum > minimum
-						? (value - minimum) / (maximum - minimum)
-						: // ponytail: window-relative min/max scaling; upgrade path is per-kernel
-							// rolling quantile normalization from measurement history.
-							value > 0
-							? 0.5
-							: 0,
-				)
-			: history;
+
+	/*
+	The y-domain is fixed so the trace scrolls instead of renormalizing: a
+	window-relative min/max scale moves every existing point whenever a new
+	extreme lands, which reads as the whole line jumping as one segment.
+	Normalized [0,1] readings map directly, signed [-1,1] readings fold to the
+	lower half, and anything outside clamps to the rails, so old points keep
+	their position and only the newest point moves.
+	*/
+	const scaled = history.map((value) => {
+		if (!Number.isFinite(value)) return 0.5;
+		if (value < 0) return Math.max(0, (value + 1) / 2);
+		return Math.min(1, value);
+	});
 	const active = status === "measured" || status === "ambiguous";
 	const points = scaled.map((value, index) => {
 		const x =

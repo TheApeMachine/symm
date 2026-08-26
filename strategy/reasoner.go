@@ -179,15 +179,15 @@ func (reasoner *Reasoner) Ingest(measurement *nmtypes.Measurement) {
 		due = true
 	}
 
-	if due {
-		reasoner.updateRelations(measurement.Symbol)
-	}
-
 	var state *CausalState
 	onStatePtr := reasoner.onState.Load()
 
-	if onStatePtr != nil && *onStatePtr != nil {
-		state = reasoner.snapshotSymbol(symbolState, measurement.Symbol, measurement.At)
+	if due {
+		reasoner.updateRelations(measurement.Symbol)
+
+		if onStatePtr != nil && *onStatePtr != nil {
+			state = reasoner.snapshotSymbol(symbolState, measurement.Symbol, measurement.At)
+		}
 	}
 
 	symbolState.mu.Unlock()

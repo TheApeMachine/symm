@@ -2,6 +2,7 @@ package causal
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"slices"
 
@@ -324,7 +325,14 @@ func fitLinear(
 	err := coefficients.Solve(design, outcome)
 
 	if err != nil {
-		return nil, fmt.Errorf("causal: structural linear fit failed: %w", err)
+		// A singular or rank-deficient design (a constant treatment or
+		// control column, exact collinearity, or fewer distinct rows than
+		// parameters) is a genuinely non-identifiable structural model, not
+		// a fatal failure. Report io.EOF — the same non-identifiable signal
+		// the association, effect-scale, and residualization paths use — so
+		// the causal ladder resolves to an explicit unresolved state instead
+		// of crashing the pipeline.
+		return nil, io.EOF
 	}
 
 	model := &linearPredictor{

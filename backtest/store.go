@@ -255,7 +255,10 @@ func (store *Store) OpenCapture() (*CaptureWriter, error) {
 	}, nil
 }
 
-const captureBatchSize = 128
+const (
+	captureBatchSize    = 128
+	maxCaptureQueueSize = 8192
+)
 
 /*
 CaptureWriter batches frames into one transaction per batch.
@@ -307,6 +310,14 @@ Write buffers one captured frame; the batch commits when full.
 func (writer *CaptureWriter) Write(frame Frame) error {
 	if failure := writer.failure.Load(); failure != nil {
 		return failure.err
+	}
+
+	if writer.queued.Load() >= maxCaptureQueueSize {
+		_ = writer.drain()
+
+		if writer.queued.Load() >= maxCaptureQueueSize {
+			return nil
+		}
 	}
 
 	writer.queued.Add(1)

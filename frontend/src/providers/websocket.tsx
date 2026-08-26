@@ -39,7 +39,6 @@ import { Frame } from "#/providers/telemetry/telemetry/frame";
 import { FrameEntry } from "#/providers/telemetry/telemetry/frame-entry";
 import { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
 import { HindsightFrame } from "#/providers/telemetry/telemetry/hindsight-frame";
-import { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
@@ -122,14 +121,19 @@ function frameBuilder<T>(
 	};
 }
 
-const measurementEntity = new Measurement();
-
+/*
+Measurement rows are flatbuffer view objects. `table.rows(r)` must mint a
+fresh view per row: reusing one shared view and storing it by reference makes
+every ring slot alias the same mutable object, so the "history" a kernel
+sparkline reads is really just the latest row repeated (and one sparse row
+blanks the whole trace).
+*/
 const builders: Partial<Record<Frame, FrameHandler<any>>> = {
 	[Frame.MeasurementsFrame]: {
 		table: MeasurementsFrame,
 		update: (table: MeasurementsFrame) => {
 			for (let r = 0; r < table.rowsLength(); r++) {
-				const row = table.rows(r, measurementEntity);
+				const row = table.rows(r);
 				if (!row) continue;
 				const source = row.source() ?? "";
 				const symbol = row.symbol() ?? "";

@@ -43,7 +43,6 @@ type System struct {
 	Hub       *ui.Hub
 	Desk      *broker.Desk
 	Planner   *strategy.Planner
-	Crypto    *Crypto
 	Regulator *regulator.Solver
 	Runner    *signal.Runner
 	Thesis    *types.Thesis
@@ -273,6 +272,13 @@ func BootWithHub(
 				}
 
 				if measurement == nil {
+					return nil
+				}
+
+				// Focus-gate the signal metrics exactly like the graph wire: the
+				// dashboard renders one symbol at a time, so shipping every
+				// symbol's measurements is pure bandwidth waste.
+				if measurement.Symbol != types.Focus() {
 					return nil
 				}
 
@@ -519,27 +525,6 @@ func BootWithHub(
 	causalSolver := causal.NewSolver(bus)
 	cognitionSolver := cognition.NewSolver(systemCtx, bus)
 
-	crypto, err := NewCrypto(
-		systemCtx,
-		bus,
-	)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal, "boot: create crypto", err,
-		))
-
-		cancel()
-		return nil
-	}
-
-	signalRunner.ObserveModule = crypto.ObserveModule()
-	categorySolver.ObserveModule = crypto.ObserveModule()
-	causalSolver.ObserveModule = crypto.ObserveModule()
-	cognitionSolver.ObserveModule = crypto.ObserveModule()
-	resonanceSolver.ObserveModule = crypto.ObserveModule()
-	desk.ObserveModule = crypto.ObserveModule()
-
 	// The Influence Graph stage subscribes to ChannelMeasurements, maintains the
 	// shared Influence Graph in place, and publishes a GraphUpdate per symbol on
 	// ChannelRelations — which the boot observer above projects into the
@@ -549,38 +534,45 @@ func BootWithHub(
 		bus,
 		1,
 		512,
-		strategy.RelationPlansFromSchema(strategy.DefaultCausalSchema(1, time.Second), 1, 30*time.Second),
-		strategy.DefaultCausalSchema(1, time.Second).Version,
+		strategy.RelationPlansFromSchema(
+			strategy.DefaultCausalSchema(1, time.Second),
+			1,
+			30*time.Second,
+		),
+		strategy.DefaultCausalSchema(
+			1, time.Second,
+		).Version,
 	)
-	graphSolver.ObserveModule = crypto.ObserveModule()
 
 	manifoldSolver := manifold.NewSolver(systemCtx, bus)
-	manifoldSolver.ObserveModule = crypto.ObserveModule()
 
 	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, bus)
-	planner.ObserveModule = crypto.ObserveModule()
-	planner.ObserveHop = crypto.ObserveHop()
 	existingHub := hub != nil
 
 	if hub == nil {
 		hub = ui.NewHub(systemCtx, thesis, desk, price, balance, bus)
 	}
 
-	if hub != nil {
-		hub.SetObserver(crypto.ObserveModule())
-		hub.SetDiagnosticsControl(crypto)
-	}
+	// The diagnostics collector owns the per-stage step clocks and the heartbeat
+	// that publishes them to the dashboard page. Every stage below reports its
+	// Step duration into the same clock bank through ObserveModule.
+	diagnosticsCollector := ui.NewDiagnostics(systemCtx, bus)
 
-	observer := audit.NewConcurrentObserver(
-		planner.Stager(),
-		&bootPriceAdapter{price: price},
-		regulatorSolver,
-	)
-	observer.ObserveModule = crypto.ObserveModule()
+	api.SetObserver(diagnosticsCollector.ObserveModule())
+	signalRunner.ObserveModule = diagnosticsCollector.ObserveModule()
+	categorySolver.ObserveModule = diagnosticsCollector.ObserveModule()
+	causalSolver.ObserveModule = diagnosticsCollector.ObserveModule()
+	cognitionSolver.ObserveModule = diagnosticsCollector.ObserveModule()
+	graphSolver.ObserveModule = diagnosticsCollector.ObserveModule()
+	manifoldSolver.ObserveModule = diagnosticsCollector.ObserveModule()
+	resonanceSolver.ObserveModule = diagnosticsCollector.ObserveModule()
+	desk.ObserveModule = diagnosticsCollector.ObserveModule()
+	planner.ObserveModule = diagnosticsCollector.ObserveModule()
+	hub.SetObserver(diagnosticsCollector.ObserveModule())
+	hub.SetDiagnosticsControl(diagnosticsCollector)
 
-	go observer.Run(systemCtx)
+	go diagnosticsCollector.Run()
 
-	attachDiagnosticsErrorBridge(hub, crypto)
 	systems := []Runnable{
 		api,
 		futures,
@@ -604,7 +596,7 @@ func BootWithHub(
 		manifoldSolver.Close,
 		planner.Close,
 		resonanceSolver.Close,
-		crypto.Close,
+		diagnosticsCollector.Close,
 		desk.Close,
 		hub.Close,
 	}
@@ -615,7 +607,6 @@ func BootWithHub(
 		Hub:       hub,
 		Desk:      desk,
 		Planner:   planner,
-		Crypto:    crypto,
 		Regulator: regulatorSolver,
 		Runner:    signalRunner,
 		Thesis:    thesis,
@@ -665,27 +656,6 @@ func (a *bootPriceAdapter) Mark(symbol string, direction string) float64 {
 	f := m.Float64()
 
 	return f
-}
-
-/*
-diagnosticsBridgeOnce ensures the error bridge is attached to the global logger
-only once per process, even though Boot may run many times in the test suite.
-The bridge feeds subsystem-attributed errors into the diagnostics WebRTC frame.
-*/
-var diagnosticsBridgeOnce sync.Once
-
-func attachDiagnosticsErrorBridge(hub *ui.Hub, crypto *Crypto) {
-	if hub == nil || crypto == nil {
-		return
-	}
-
-	diagnosticsBridgeOnce.Do(func() {
-		errnie.AttachWriter(ui.NewErrorBridge(
-			hub,
-			nil,
-			crypto.ObserveDiagnosticError,
-		))
-	})
 }
 
 func measurementWire(measurement *nmtypes.Measurement) *wire.MeasurementT {

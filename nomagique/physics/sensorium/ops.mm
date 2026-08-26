@@ -56,14 +56,16 @@ struct ManifoldContext {
     }
 
     void commit_and_wait() {
-        if (current_encoder) {
-            [current_encoder endEncoding];
-            current_encoder = nil;
-        }
-        if (current_command_buffer) {
-            [current_command_buffer commit];
-            [current_command_buffer waitUntilCompleted];
-            current_command_buffer = nil;
+        @autoreleasepool {
+            if (current_encoder) {
+                [current_encoder endEncoding];
+                current_encoder = nil;
+            }
+            if (current_command_buffer) {
+                [current_command_buffer commit];
+                [current_command_buffer waitUntilCompleted];
+                current_command_buffer = nil;
+            }
         }
     }
 };
@@ -163,7 +165,10 @@ ManifoldBuffer* manifold_create_buffer(ManifoldContext* ctx, uint64_t bytes, con
 
 void manifold_destroy_buffer(ManifoldBuffer* buf) {
     if (!buf) return;
-    delete buf;
+    @autoreleasepool {
+        buf->mtl_buffer = nil;
+        delete buf;
+    }
 }
 
 void* manifold_get_buffer_pointer(ManifoldBuffer* buf) {

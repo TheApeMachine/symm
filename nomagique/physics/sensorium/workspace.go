@@ -127,11 +127,12 @@ func (grid workspaceGrid) invDomega2() float64 {
 workspace is the Metal buffer owner: scatter → gas RK2 → gather → GPE.
 */
 type workspace struct {
-	engine    *Engine
-	domain    workspaceGrid
-	particles int
-	rngSeed   uint32
-	rates     stepRates
+	engine           *Engine
+	domain           workspaceGrid
+	particles        int
+	particleCapacity int
+	rngSeed          uint32
+	rates            stepRates
 
 	rho, mom, energy                    *Buffer
 	rho1, mom1, energy1                 *Buffer
@@ -383,41 +384,55 @@ func (fluid *workspace) packFields(momRho, energy, waveReal, waveImag []float32)
 }
 
 func (fluid *workspace) allocateParticles(count int) {
-	if count == fluid.particles && fluid.pos != nil {
+	if count <= fluid.particleCapacity && fluid.pos != nil {
+		fluid.particles = count
 		return
 	}
 
 	fluid.closeParticles()
 
 	if count == 0 {
+		fluid.particles = 0
+		fluid.particleCapacity = 0
 		return
 	}
 
-	n := uint64(count)
-	fluid.pos = fluid.gpu(n * 3 * 4)
-	fluid.vel = fluid.gpu(n * 3 * 4)
-	fluid.mass = fluid.gpu(n * 4)
-	fluid.heat = fluid.gpu(n * 4)
-	fluid.oscEnergy = fluid.gpu(n * 4)
-	fluid.phase = fluid.gpu(n * 4)
-	fluid.omega = fluid.gpu(n * 4)
-	fluid.amp = fluid.gpu(n * 4)
-	fluid.posOut = fluid.gpu(n * 3 * 4)
-	fluid.velOut = fluid.gpu(n * 3 * 4)
-	fluid.heatOut = fluid.gpu(n * 4)
-	fluid.cellIdx = fluid.gpu(n * 4)
-	fluid.originalIdx = fluid.gpu(n * 4)
-	fluid.sortedPos = fluid.gpu(n * 3 * 4)
-	fluid.sortedVel = fluid.gpu(n * 3 * 4)
-	fluid.sortedMass = fluid.gpu(n * 4)
-	fluid.sortedHeat = fluid.gpu(n * 4)
-	fluid.sortedEnergy = fluid.gpu(n * 4)
-	fluid.headPhase = fluid.gpu(n * 4)
-	fluid.headHeat = fluid.gpu(n * 4)
-	fluid.couplingAmp = fluid.gpu(n * 4)
+	capacity := count
+
+	if capacity < 1024 {
+		capacity = 1024
+	}
+
+	fluid.particles = count
+	fluid.particleCapacity = capacity
+
+	particleCount := uint64(capacity)
+	fluid.pos = fluid.gpu(particleCount * 3 * 4)
+	fluid.vel = fluid.gpu(particleCount * 3 * 4)
+	fluid.mass = fluid.gpu(particleCount * 4)
+	fluid.heat = fluid.gpu(particleCount * 4)
+	fluid.oscEnergy = fluid.gpu(particleCount * 4)
+	fluid.phase = fluid.gpu(particleCount * 4)
+	fluid.omega = fluid.gpu(particleCount * 4)
+	fluid.amp = fluid.gpu(particleCount * 4)
+	fluid.posOut = fluid.gpu(particleCount * 3 * 4)
+	fluid.velOut = fluid.gpu(particleCount * 3 * 4)
+	fluid.heatOut = fluid.gpu(particleCount * 4)
+	fluid.cellIdx = fluid.gpu(particleCount * 4)
+	fluid.originalIdx = fluid.gpu(particleCount * 4)
+	fluid.sortedPos = fluid.gpu(particleCount * 3 * 4)
+	fluid.sortedVel = fluid.gpu(particleCount * 3 * 4)
+	fluid.sortedMass = fluid.gpu(particleCount * 4)
+	fluid.sortedHeat = fluid.gpu(particleCount * 4)
+	fluid.sortedEnergy = fluid.gpu(particleCount * 4)
+	fluid.headPhase = fluid.gpu(particleCount * 4)
+	fluid.headHeat = fluid.gpu(particleCount * 4)
+	fluid.couplingAmp = fluid.gpu(particleCount * 4)
 }
 
 func (fluid *workspace) closeParticles() {
+	fluid.particleCapacity = 0
+
 	for _, buffer := range []*Buffer{
 		fluid.headPhase, fluid.headHeat, fluid.couplingAmp,
 		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy,

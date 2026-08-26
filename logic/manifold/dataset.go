@@ -191,7 +191,7 @@ sideEntries flattens one book into ask-then-bid entries, each tagged with its
 side, decoupled from Go map iteration order.
 */
 func sideEntries(book *mgrbook.Book) []orderEntry {
-	entries := make([]orderEntry, 0)
+	entries := make([]orderEntry, 0, 1024)
 
 	for _, side := range []*mgrbook.Side{book.Asks, book.Bids} {
 		if side == nil {
@@ -258,22 +258,27 @@ func orderState(
 	token := packToken(symbolIndex, sidePositive)
 	x, y, z := marketPosition(price, mid, quantity, ageRank, total, grid)
 
-	return &sensorium.State{
-		N:          1,
-		Bytes:      []int64{int64(token)},
-		Seqs:       []int64{int64(seq)},
-		TokenIDs:   []int64{int64(token)},
-		ContentIDs: []int64{int64(orderHash(entry.order))},
-		Phase:      []float32{orderPhase(queueRank, sidePositive)},
-		Omega:      []float32{orderOmega(price, mid, scale)},
-		Energy:     []float32{unitOscillatorEnergy},
-		Mass:       []float32{unitCarrierMass},
-		Heat:       []float32{0},
-		Pos:        []float32{x, y, z},
-		Vel:        []float32{0, 0, 0},
-		Clamped:    []bool{false},
-		Dark:       []bool{false},
-	}
+	state, _ := sensorium.StatePool.Get().(*sensorium.State)
+
+	state.Bytes[0] = int64(token)
+	state.Seqs[0] = int64(seq)
+	state.TokenIDs[0] = int64(token)
+	state.ContentIDs[0] = int64(orderHash(entry.order))
+	state.Phase[0] = orderPhase(queueRank, sidePositive)
+	state.Omega[0] = orderOmega(price, mid, scale)
+	state.Energy[0] = unitOscillatorEnergy
+	state.Mass[0] = unitCarrierMass
+	state.Heat[0] = 0
+	state.Pos[0] = x
+	state.Pos[1] = y
+	state.Pos[2] = z
+	state.Vel[0] = 0
+	state.Vel[1] = 0
+	state.Vel[2] = 0
+	state.Clamped[0] = false
+	state.Dark[0] = false
+
+	return state
 }
 
 func packToken(symbolIndex uint32, sidePositive int) uint32 {
@@ -440,12 +445,18 @@ func queueRanks(entries []orderEntry) []int {
 	})
 
 	ranks := make([]int, len(entries))
-	sideRanks := map[mgrbook.BookDirection]int{}
+	askRank := 0
+	bidRank := 0
 
 	for _, index := range indices {
 		side := entries[index].side
-		ranks[index] = sideRanks[side]
-		sideRanks[side]++
+		if side == mgrbook.Ask {
+			ranks[index] = askRank
+			askRank++
+		} else {
+			ranks[index] = bidRank
+			bidRank++
+		}
 	}
 
 	return ranks

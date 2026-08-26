@@ -1,8 +1,7 @@
-package cmd
+package ui
 
 import (
 	"context"
-	goruntime "runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,57 +9,47 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/telemetry"
-	wireT "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+eventually polls a condition with a deadline so the test does not rely on a
+single fixed sleep and cannot pass spuriously on a slow CI machine.
+*/
+func eventually(t *testing.T, condition func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Fatal("condition never became true within deadline")
+}
+
 func TestDiagnosticsPublishing(t *testing.T) {
-	Convey("Given a Crypto diagnostics collector", t, func() {
+	Convey("Given a diagnostics collector on a live workspace", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		bus := runtime.NewWorkspace(ctx)
 		defer bus.Close()
 
-		crypto := &Crypto{
-			ctx:         ctx,
-			cancel:      cancel,
-			bus:         bus,
-			diagnostics: &Diagnostics{started: time.Now()},
-		}
-		// Forward each heartbeat to the dashboard frame exactly as
-		// bindDiagnostics does, so the test observes the side-effect path
-		// without assembling the whole broker stack.
-		bus.Wire(types.ChannelDiagnostics, "", func(value any) any {
-			diag, ok := value.(StreamDiagnostics)
-
-			if !ok {
-				return nil
-			}
-
-			wireFrame := diag.Wire()
-
-			bus.Publish(types.ChannelFluid, types.FluidFrame{
-				Channel: types.DiagnosticsChannel,
-				Payload: telemetry.Encode(&wireT.FrameT{
-					Type:  wireT.FrameDiagnosticsFrame,
-					Value: wireFrame,
-				}),
-			})
-			bus.Publish(types.ChannelUI, &types.UIFrame{
-				Type:  wireT.FrameDiagnosticsFrame,
-				Value: wireFrame,
-			})
-
-			return nil
-		})
+		collector := NewDiagnostics(ctx, bus)
+		defer collector.Close()
 
 		var receivedUI atomic.Int64
 		var receivedFluid atomic.Int64
 
 		bus.Wire(types.ChannelUI, "", func(value any) any {
 			frame, ok := value.(*types.UIFrame)
-			if ok && frame != nil && frame.Type == wireT.FrameDiagnosticsFrame {
+			if ok && frame != nil && frame.Type == wire.FrameDiagnosticsFrame {
 				receivedUI.Add(1)
 			}
 
@@ -76,29 +65,26 @@ func TestDiagnosticsPublishing(t *testing.T) {
 			return nil
 		})
 
-		go crypto.publishDiagnostics()
+		collector.publish()
 
-		Convey("When diagnostics publish loop runs", func() {
-			deadline := time.Now().Add(time.Second)
-			for (receivedUI.Load() == 0 || receivedFluid.Load() == 0) && time.Now().Before(deadline) {
-				time.Sleep(10 * time.Millisecond)
-			}
-
-			Convey("Both UI and Fluid channels should receive diagnostics frames", func() {
-				So(receivedUI.Load(), ShouldBeGreaterThan, 0)
-				So(receivedFluid.Load(), ShouldBeGreaterThan, 0)
+		Convey("Both the dashboard UI stream and the fluid WebRTC channel should receive a diagnostics frame", func() {
+			eventually(t, func() bool {
+				return receivedUI.Load() > 0 && receivedFluid.Load() > 0
 			})
+
+			So(receivedUI.Load(), ShouldBeGreaterThan, 0)
+			So(receivedFluid.Load(), ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
 /*
 TestDiagnosticsEndToEndDelivery is an adversarial exact-input/exact-output test.
-It drives the real production wiring (bindDiagnostics), publishes a heartbeat
-exactly as publishDiagnostics does, and decodes the FlatBuffer payload a browser
-would receive, asserting exact names, kinds, wiring, ring capacity, and stage
-timing rather than "non-empty" or "greater than zero". If the forwarder, the
-encode step, the fan-out, or any queue entry is altered or removed, this fails.
+It drives the real production publish path, decodes the FlatBuffer payload a
+browser would receive, and asserts exact names, kinds, wiring, ring capacity,
+and stage timing rather than "non-empty" or "greater than zero". If the
+forwarder, the encode step, the fan-out, or any queue entry is altered or
+removed, this fails.
 */
 func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 	Convey("Given a fully wired diagnostics pipeline", t, func() {
@@ -108,15 +94,8 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 		bus := runtime.NewWorkspace(ctx)
 		defer bus.Close()
 
-		crypto := &Crypto{
-			ctx:         ctx,
-			cancel:      cancel,
-			bus:         bus,
-			diagnostics: &Diagnostics{started: time.Now()},
-			api:         nil,
-		}
-
-		crypto.bindDiagnostics()
+		collector := NewDiagnostics(ctx, bus)
+		defer collector.Close()
 
 		Convey("A heartbeat must reconstruct the exact 15-queue topology, byte-for-byte", func() {
 			var received atomic.Value
@@ -126,10 +105,11 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 				if ok && frame.Channel == types.DiagnosticsChannel {
 					received.Store(frame)
 				}
+
 				return nil
 			})
 
-			bus.Publish(types.ChannelDiagnostics, crypto.Diagnostics())
+			collector.publish()
 
 			eventually(t, func() bool { return received.Load() != nil })
 
@@ -138,7 +118,7 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 			envelope, err := telemetry.Decode(frame.Payload)
 			So(err, ShouldBeNil)
 
-			diag, ok := envelope.Frame.Value.(*wireT.DiagnosticsFrameT)
+			diag, ok := envelope.Frame.Value.(*wire.DiagnosticsFrameT)
 			So(ok, ShouldBeTrue)
 			So(diag.Status, ShouldEqual, "flowing")
 			So(diag.Enabled, ShouldBeTrue)
@@ -194,12 +174,13 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 				So(queue.HighWater, ShouldEqual, 0)
 
 				// Exactly one subscriber is registered by this test (the fluid
-				// capture wire on topic "fluid"), so only the ui.manifold queue
-				// — which reads topic "fluid" — reports that subscriber's lane
-				// count; every other queue has zero registered lanes.
+				// capture wire on topic "fluid"), and unkeyed wires run a single
+				// handler lane, so only the ui.manifold queue — which reads
+				// topic "fluid" — reports that lane; every other queue has zero
+				// registered lanes.
 				expectedLanes := uint64(0)
 				if expected.name == "ui.manifold" {
-					expectedLanes = uint64(goruntime.GOMAXPROCS(0))
+					expectedLanes = 1
 				}
 
 				So(queue.Symbols, ShouldEqual, expectedLanes)
@@ -207,10 +188,10 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 		})
 
 		Convey("ObserveModule must surface a stage with the exact summed nanoseconds", func() {
-			crypto.diagnostics.applyModule("correlation", 150*time.Microsecond)
-			crypto.diagnostics.applyModule("correlation", 250*time.Microsecond)
+			collector.applyModule("correlation", 150*time.Microsecond)
+			collector.applyModule("correlation", 250*time.Microsecond)
 
-			snapshot := crypto.Diagnostics()
+			snapshot := collector.Snapshot()
 
 			found := false
 
@@ -222,43 +203,26 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 				found = true
 				So(stage.Count, ShouldEqual, 2)
 				So(stage.TotalNs, ShouldEqual, 400000)
+				So(stage.LastNs, ShouldEqual, 250000)
+				So(stage.MaxNs, ShouldEqual, 250000)
 			}
 
 			So(found, ShouldBeTrue)
 		})
 
 		Convey("Disabling collection must produce the exact disabled frame", func() {
-			crypto.diagnostics.Disable()
+			collector.SetDiagnosticsEnabled(false)
 
-			frame := crypto.Diagnostics()
+			frame := collector.Snapshot()
 			So(frame.Enabled, ShouldBeFalse)
 			So(frame.Status, ShouldEqual, "disabled")
 			So(len(frame.Stages), ShouldEqual, 0)
 			So(len(frame.Queues), ShouldEqual, 0)
 
-			crypto.diagnostics.Enable()
+			collector.SetDiagnosticsEnabled(true)
+			So(collector.DiagnosticsEnabled(), ShouldBeTrue)
 		})
 	})
-}
-
-/*
-eventually polls a condition with a deadline so the test does not rely on a
-single fixed sleep and cannot pass spuriously on a slow CI machine.
-*/
-func eventually(t *testing.T, condition func() bool) {
-	t.Helper()
-
-	deadline := time.Now().Add(2 * time.Second)
-
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-
-		time.Sleep(time.Millisecond)
-	}
-
-	t.Fatal("condition never became true within deadline")
 }
 
 func BenchmarkDiagnosticsWire(b *testing.B) {
@@ -268,17 +232,13 @@ func BenchmarkDiagnosticsWire(b *testing.B) {
 	bus := runtime.NewWorkspace(ctx)
 	defer bus.Close()
 
-	crypto := &Crypto{
-		ctx:         ctx,
-		cancel:      cancel,
-		bus:         bus,
-		diagnostics: &Diagnostics{started: time.Now()},
-	}
+	collector := NewDiagnostics(ctx, bus)
+	defer collector.Close()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = crypto.Diagnostics().Wire()
+		_ = collector.Snapshot().Wire()
 	}
 }

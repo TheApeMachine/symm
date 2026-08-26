@@ -34,22 +34,22 @@ The transition never sees future observations, and simulated MCTS states
 never enter its fit.
 */
 type TransitionModel struct {
-	Target   VariableID
-	SelfLag  time.Duration
-	Parents  []AllowedParent
+	Target  VariableID
+	SelfLag time.Duration
+	Parents []AllowedParent
 	// ExcludedParents are schema-authorized parent directions with no
 	// currently defined Relation (and therefore no measured lag); they are
 	// recorded for provenance, not silently activated with a fallback lag.
 	ExcludedParents []AllowedParent
 
-	Intercept         float64
-	SelfCoefficient   float64
+	Intercept          float64
+	SelfCoefficient    float64
 	ParentCoefficients []float64
-	ResidualVariance  float64
-	EffectiveSupport  float64
-	Maturity          float64
-	FitAt             time.Time
-	Status            IdentificationStatus
+	ResidualVariance   float64
+	EffectiveSupport   float64
+	Maturity           float64
+	FitAt              time.Time
+	Status             IdentificationStatus
 }
 
 /*

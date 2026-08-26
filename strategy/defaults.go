@@ -44,8 +44,8 @@ var defaultMarketCatalog = []MarketCoordinateSpec{
 	{Selector: relation.Selector{Source: "derivatives", Metric: "basis_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "correlation", Metric: "signed_correlation"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "leadlag", Metric: "best_lag_correlation"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "exhaust", Metric: "book_imbalance_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "exhaust", Metric: "spread_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
+	{Selector: relation.Selector{Source: "exhaustion", Metric: "book_imbalance_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
+	{Selector: relation.Selector{Source: "exhaustion", Metric: "spread_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "sentiment", Metric: "advance_count"}, Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "pumpdump", Metric: "relative_spread"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 }

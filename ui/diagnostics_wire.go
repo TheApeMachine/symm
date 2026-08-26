@@ -1,6 +1,8 @@
-package cmd
+package ui
 
-import wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+import (
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+)
 
 /*
 Wire projects the diagnostics snapshot into its explicit binary schema.
@@ -12,7 +14,6 @@ func (diagnostics StreamDiagnostics) Wire() *wire.DiagnosticsFrameT {
 		stages[index] = &wire.DiagnosticClockT{
 			Name: stage.Name, Count: stage.Count, TotalNs: stage.TotalNs,
 			LastNs: stage.LastNs, MaxNs: stage.MaxNs, LastAtNs: stage.LastAtNs,
-			Active: stage.Active, StartedNs: stage.StartedNs,
 		}
 	}
 
@@ -62,7 +63,8 @@ func (diagnostics StreamDiagnostics) Wire() *wire.DiagnosticsFrameT {
 		Queues:    queues,
 		Errors:    errors,
 		Pass: &wire.DiagnosticPassT{
-			State: diagnostics.Pass.State, InFlightNs: diagnostics.Pass.InFlightNs,
+			State:       diagnostics.Pass.State,
+			InFlightNs:  diagnostics.Pass.InFlightNs,
 			LastPassNs:  diagnostics.Pass.LastPassNs,
 			SinceLastNs: diagnostics.Pass.SinceLastNs,
 		},

@@ -80,17 +80,33 @@ func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
 	}
 
 	if bus != nil {
-		bus.Wire(types.ChannelMeasurements, types.ChannelCategories, func(value any) any {
-			if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
-				return solver.Step(m)
-			}
+		runtime.WireKeyed(
+			bus,
+			types.ChannelMeasurements,
+			types.ChannelCategories,
+			func(value any) string {
+				if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
+					return m.Symbol
+				}
 
-			if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-				return solver.Step(m.ToTypesMeasurement())
-			}
+				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+					return m.Symbol()
+				}
 
-			return nil
-		})
+				return ""
+			},
+			func(value any) any {
+				if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
+					return solver.Step(m)
+				}
+
+				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+					return solver.Step(m.ToTypesMeasurement())
+				}
+
+				return nil
+			},
+		)
 	}
 
 	return solver

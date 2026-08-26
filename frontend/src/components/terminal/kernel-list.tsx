@@ -6,6 +6,15 @@ import {
 	measurementStore,
 	type RingBuffer,
 } from "#/collections/app";
+import {
+	kernelCopy,
+	kernelSparkPaths,
+	kernelStatusMeta,
+	kernelStatusVariant,
+	sourceHeadline,
+	type SignalHealthStatus,
+} from "#/components/terminal/kernel-meta";
+import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui";
 import { cn } from "#/lib/utils";
 import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
@@ -13,36 +22,12 @@ import { Metric } from "#/providers/telemetry/telemetry/metric";
 
 const metricObj = new Metric();
 
-const computeSparkline = (
-	points: number[],
-	width = 60,
-	height = 14,
-	padding = 1,
-): string => {
-	if (points.length < 2) return "";
-
-	let min = points[0];
-	let max = points[0];
-	for (let i = 1; i < points.length; i++) {
-		if (points[i] < min) min = points[i];
-		if (points[i] > max) max = points[i];
-	}
-
-	const range = max - min || 1;
-	const count = points.length;
-	let d = "";
-
-	for (let i = 0; i < count; i++) {
-		const x = (i / (count - 1)) * width;
-		const y =
-			height - padding - ((points[i] - min) / range) * (height - padding * 2);
-		d += `${(i === 0 ? "M " : " L ") + x.toFixed(1)},${y.toFixed(1)}`;
-	}
-
-	return d;
-};
-
-const getKernelMetrics = (
+/*
+getKernelReadings walks the focused symbol's ring for a kernel and collects the
+headline signal value per row. Rows that carry no usable metric are skipped, so
+a sparse row never injects a zero into the trace.
+*/
+const getKernelReadings = (
 	measurement: Record<string, Record<string, RingBuffer<Measurement>>>,
 	kernel: string,
 	symbol: string,
@@ -54,6 +39,7 @@ const getKernelMetrics = (
 
 	const len = foundSymbol.getBufferLength();
 	const points: number[] = [];
+	const headline = sourceHeadline(kernel);
 
 	for (let i = 0; i < len; i++) {
 		const row = foundSymbol.get(i);
@@ -62,11 +48,27 @@ const getKernelMetrics = (
 		const count = row.metricsLength();
 		let foundValue: number | null = null;
 
-		for (let j = 0; j < count; j++) {
-			const metric = row.metrics(j, metricObj);
-			if (!metric) continue;
-			const name = metric.name();
-			if (name === "snr" || name === "score" || name === "normalized") {
+		/*
+		Prefer the kernel's own headline metric — the reading the producer leads
+		with — before the generic score names, so a trace plots the kernel's
+		vocabulary even when another generic metric appears earlier in the row.
+		*/
+		if (headline !== null) {
+			for (let j = 0; j < count; j++) {
+				const metric = row.metrics(j, metricObj);
+				if (!metric) continue;
+				if (metric.name() !== headline) continue;
+				foundValue = metric.hasNormalized() ? metric.normalized() : metric.raw();
+				break;
+			}
+		}
+
+		if (foundValue === null) {
+			for (let j = 0; j < count; j++) {
+				const metric = row.metrics(j, metricObj);
+				if (!metric) continue;
+				const name = metric.name();
+				if (name !== "snr" && name !== "score" && name !== "normalized") continue;
 				foundValue = metric.hasNormalized() ? metric.normalized() : metric.raw();
 				break;
 			}
@@ -88,6 +90,14 @@ const getKernelMetrics = (
 	return { points, latest };
 };
 
+/*
+kernelStatus resolves a kernel row's health from what the focused symbol's ring
+actually holds: a usable reading means the kernel is measuring, anything else
+stays on standby until the first reading lands.
+*/
+const kernelStatus = (latest: number | null): SignalHealthStatus =>
+	latest === null ? "waiting" : "measured";
+
 export type KernelListProps = {
 	sources?: string[];
 	compact?: boolean;
@@ -103,12 +113,19 @@ export const KernelList = ({
 	return (
 		<div className={cn("min-h-0 overflow-auto", compact && "text-[10px]")}>
 			{sources.map((source) => {
-				const { points, latest } = getKernelMetrics(
+				const { points, latest } = getKernelReadings(
 					measurements,
 					source,
 					focusSymbol,
 				);
-				const sparklinePath = computeSparkline(points);
+				const copy = kernelCopy(source, "");
+				const status = kernelStatus(latest);
+				const badge = kernelStatusMeta(status);
+				const paths = kernelSparkPaths(points, status);
+				const confidence =
+					latest !== null && Number.isFinite(latest)
+						? Math.min(1, Math.max(0, latest))
+						: 0;
 
 				return (
 					<button
@@ -119,42 +136,50 @@ export const KernelList = ({
 						className="block w-full cursor-pointer border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
 					>
 						<Flex.Row align="center" justify="between" gap={2}>
-							<span className={cn("truncate font-semibold text-(--f1)")}>
-								{source}
+							<span className="truncate font-semibold text-(--f1)">
+								{copy.name}
 							</span>
-							<span
-								data-k="symbol"
-								className="font-mono text-[9.5px] text-(--f4)"
-							>
-								{latest !== null ? focusSymbol : ""}
-							</span>
+							<Badge
+								label={badge.label}
+								variant={kernelStatusVariant(status)}
+								size="xxs"
+							/>
 						</Flex.Row>
-						<Flex.Row
-							align="center"
-							justify="between"
-							gap={2}
-							className="mt-0.5 font-mono text-[9.5px] text-(--f4)"
+						<div className="mt-0.5 truncate font-mono text-[9px] text-(--f4)">
+							{copy.sub}
+						</div>
+						<svg
+							viewBox="0 0 150 30"
+							preserveAspectRatio="none"
+							className="mt-1.5 block h-6.5 w-full"
 						>
-							<span data-k="snr1" className="text-(--acc)">
-								{latest !== null ? latest.toFixed(1) : "—"}
-							</span>
-							<svg
-								viewBox="0 0 60 14"
-								className="h-3.5 w-15 shrink-0 overflow-visible"
-								preserveAspectRatio="none"
-							>
-								<title>sparkline</title>
-								<path
-									data-k="sparkline"
-									d={sparklinePath}
-									fill="none"
-									stroke="var(--acc)"
-									strokeWidth="1.5"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									vectorEffect="non-scaling-stroke"
+							<title>{`${copy.name} sparkline`}</title>
+							<polyline points={paths.area} fill={paths.fill} stroke="none" />
+							<polyline
+								points={paths.spark}
+								fill="none"
+								stroke={paths.line}
+								strokeWidth="1.4"
+								vectorEffect="non-scaling-stroke"
+							/>
+						</svg>
+						<Flex.Row align="center" gap={2} className="mt-1.5">
+							<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
+								<div
+									data-k="conf"
+									className="h-full transition-[width,background-color] duration-300 ease-out"
+									style={{
+										width: `${(confidence * 100).toFixed(1)}%`,
+										background: paths.line,
+									}}
 								/>
-							</svg>
+							</div>
+							<span
+								data-k="snr1"
+								className="w-9 shrink-0 text-right font-mono text-[9px] tabular-nums text-(--f2)"
+							>
+								{latest !== null ? `${(confidence * 100).toFixed(0)}%` : "—"}
+							</span>
 						</Flex.Row>
 					</button>
 				);

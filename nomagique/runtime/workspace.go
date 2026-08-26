@@ -135,6 +135,7 @@ type SubscriberWire struct {
 	OutTopic string
 	Class    ServiceClass
 	Delivery DeliveryPolicy
+	Keyed    bool
 
 	keyFunc  func(any) string
 	step     func(any) any
@@ -564,6 +565,7 @@ func WireKeyed[T any, U any](
 		OutTopic: outTopic,
 		Class:    ServiceAnalytics,
 		Delivery: DeliveryObservationalFIFO,
+		Keyed:    true,
 		keyFunc:  func(input any) string { return keyFunc(input.(T)) },
 		step:     func(input any) any { return step(input.(T)) },
 		stepKind: kindStep,
@@ -593,6 +595,8 @@ func (workspace *Workspace) WireWithKey(
 	keyFunc func(any) string,
 	step func(any) any,
 ) {
+	isKeyed := keyFunc != nil
+
 	if keyFunc == nil {
 		keyFunc = func(any) string { return globalKey }
 	}
@@ -602,6 +606,7 @@ func (workspace *Workspace) WireWithKey(
 		OutTopic: outTopic,
 		Class:    ServiceAnalytics,
 		Delivery: DeliveryObservationalFIFO,
+		Keyed:    isKeyed,
 		keyFunc:  keyFunc,
 		step:     step,
 		stepKind: kindStep,
@@ -620,6 +625,8 @@ func (workspace *Workspace) WireClass(
 	keyFunc func(any) string,
 	step func(any) any,
 ) {
+	isKeyed := keyFunc != nil
+
 	if keyFunc == nil {
 		keyFunc = func(any) string { return globalKey }
 	}
@@ -629,6 +636,7 @@ func (workspace *Workspace) WireClass(
 		OutTopic: outTopic,
 		Class:    class,
 		Delivery: delivery,
+		Keyed:    isKeyed,
 		keyFunc:  keyFunc,
 		step:     step,
 		stepKind: kindStep,
@@ -647,6 +655,8 @@ func (workspace *Workspace) WireClassStepFunc(
 	keyFunc func(any) string,
 	step func(any) error,
 ) {
+	isKeyed := keyFunc != nil
+
 	if keyFunc == nil {
 		keyFunc = func(any) string { return globalKey }
 	}
@@ -656,10 +666,49 @@ func (workspace *Workspace) WireClassStepFunc(
 		OutTopic: outTopic,
 		Class:    class,
 		Delivery: delivery,
+		Keyed:    isKeyed,
 		keyFunc:  keyFunc,
 		descStep: step,
 		stepKind: kindStepFunc,
 	})
+}
+
+/*
+AdaptiveWaitStrategy provides low-latency spin during active traffic and backoff
+sleep during idle periods, preventing CPU saturation across subscriber rings.
+*/
+type AdaptiveWaitStrategy struct{}
+
+func (AdaptiveWaitStrategy) Gate(count int64) {
+	if count < 100 {
+		runtime.Gosched()
+		return
+	}
+
+	time.Sleep(10 * time.Microsecond)
+}
+
+func (AdaptiveWaitStrategy) Idle(count int64) {
+	if count < 100 {
+		runtime.Gosched()
+		return
+	}
+
+	if count < 1000 {
+		time.Sleep(20 * time.Microsecond)
+		return
+	}
+
+	time.Sleep(100 * time.Microsecond)
+}
+
+func (AdaptiveWaitStrategy) Reserve(count int64) {
+	if count < 50 {
+		runtime.Gosched()
+		return
+	}
+
+	time.Sleep(10 * time.Microsecond)
 }
 
 /*
@@ -669,10 +718,13 @@ place a Disruptor is created; a subscriber never gets more than one.
 */
 func (workspace *Workspace) register(wire SubscriberWire) *Subscriber {
 	handlerCount := workspace.handlerCount
-	if wire.Delivery == DeliveryLatestByKey {
+
+	if wire.Delivery == DeliveryLatestByKey || !wire.Keyed {
 		// Latest-state consumers render per key and coalesce, so a single
 		// consumer sequence is sufficient and avoids fanning one render across
 		// keyed handlers that would still need to be serialized per key.
+		// Unkeyed / single-lane subscribers also only use a single handler
+		// because all events route to lane 0.
 		handlerCount = 1
 	}
 
@@ -692,6 +744,7 @@ func (workspace *Workspace) register(wire SubscriberWire) *Subscriber {
 	disruptorInstance, err := disruptor.New(
 		disruptor.Options.BufferCapacity(subscriberCapacity),
 		disruptor.Options.WriterCount(64),
+		disruptor.Options.WaitStrategy(AdaptiveWaitStrategy{}),
 		disruptor.Options.NewHandlerGroup(group...),
 	)
 

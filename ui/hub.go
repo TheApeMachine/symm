@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -42,6 +43,7 @@ type Hub struct {
 	maxMessageBytes int
 	maxBatchFrames  int
 	clients         *sync.Map
+	clientCount     atomic.Int64
 	ObserveModule   func(string, time.Duration)
 }
 
@@ -166,9 +168,11 @@ func NewHub(
 			done:     make(chan struct{}),
 		}
 		hub.clients.Store(key, client)
+		hub.clientCount.Add(1)
 
 		defer func() {
 			hub.clients.Delete(key)
+			hub.clientCount.Add(-1)
 			close(client.done)
 			_ = conn.Conn.Close()
 		}()
@@ -229,6 +233,10 @@ func NewHub(
 }
 
 func (hub *Hub) Step(msg any) any {
+	if hub.clientCount.Load() == 0 {
+		return nil
+	}
+
 	started := time.Now()
 	defer func() {
 		if hub.ObserveModule != nil {

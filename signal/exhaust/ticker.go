@@ -498,7 +498,7 @@ func (ticker *Ticker) Step(trade kraken.TickerData) *data.Measurement[float64] {
 
 	return ticker.projector.Project(
 		trade.Symbol,
-		"exhaust",
+		"exhaustion",
 		trade.Timestamp,
 		trade.Timestamp,
 		ticker.number.Step(trade.Symbol, input),

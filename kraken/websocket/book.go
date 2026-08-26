@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -363,30 +364,33 @@ func (book *Book) apply(
 		}
 
 		payload.Data[index] = data
-		if data.Checksum != 0 {
-			checksum := symbolBook.L3Checksum(strconv.FormatUint(
-				uint64(data.Checksum),
-				10,
-			))
 
-			if !checksum.Match {
-				// Kraken's checksum is the authority for Level 3 state, so a
-				// mismatch means this venue book has silently diverged from the
-				// exchange. Recovery is to re-run the existing whole-universe
-				// level3 subscribe, not to tear down every trading system that
-				// happens to read this one symbol. Leave the frame applied but
-				// mark the book needing a resync and request one.
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf(
-						"level3 checksum mismatch for %s: local %s, server %s; scheduling recovery",
-						data.Symbol,
-						checksum.LocalChecksum,
-						checksum.ServerChecksum,
-					),
-					nil,
+		if data.Checksum != 0 {
+			if !fastL3Checksum(symbolBook, data.Checksum) {
+				checksum := symbolBook.L3Checksum(strconv.FormatUint(
+					uint64(data.Checksum),
+					10,
 				))
-				book.resync()
+
+				if !checksum.Match {
+					// Kraken's checksum is the authority for Level 3 state, so a
+					// mismatch means this venue book has silently diverged from the
+					// exchange. Recovery is to re-run the existing whole-universe
+					// level3 subscribe, not to tear down every trading system that
+					// happens to read this one symbol. Leave the frame applied but
+					// mark the book needing a resync and request one.
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf(
+							"level3 checksum mismatch for %s: local %s, server %s; scheduling recovery",
+							data.Symbol,
+							checksum.LocalChecksum,
+							checksum.ServerChecksum,
+						),
+						nil,
+					))
+					book.resync()
+				}
 			}
 		}
 
@@ -394,6 +398,65 @@ func (book *Book) apply(
 	}
 
 	return accepted, nil
+}
+
+func fastL3Checksum(symbolBook *spotbook.Book, serverChecksum uint32) bool {
+	if symbolBook == nil {
+		return false
+	}
+
+	hasher := crc32.NewIEEE()
+	var numBuf [64]byte
+
+	cursor := symbolBook.BestAsk()
+
+	for askCount := 0; askCount < 10 && cursor != nil; askCount++ {
+		for _, order := range cursor.Queue() {
+			if order.LimitPrice != nil {
+				priceInt := order.LimitPrice.RawBigInt()
+
+				if priceInt != nil {
+					hasher.Write(priceInt.Append(numBuf[:0], 10))
+				}
+			}
+
+			if order.Quantity != nil {
+				qtyInt := order.Quantity.RawBigInt()
+
+				if qtyInt != nil {
+					hasher.Write(qtyInt.Append(numBuf[:0], 10))
+				}
+			}
+		}
+
+		cursor = cursor.Higher
+	}
+
+	cursor = symbolBook.BestBid()
+
+	for bidCount := 0; bidCount < 10 && cursor != nil; bidCount++ {
+		for _, order := range cursor.Queue() {
+			if order.LimitPrice != nil {
+				priceInt := order.LimitPrice.RawBigInt()
+
+				if priceInt != nil {
+					hasher.Write(priceInt.Append(numBuf[:0], 10))
+				}
+			}
+
+			if order.Quantity != nil {
+				qtyInt := order.Quantity.RawBigInt()
+
+				if qtyInt != nil {
+					hasher.Write(qtyInt.Append(numBuf[:0], 10))
+				}
+			}
+		}
+
+		cursor = cursor.Lower
+	}
+
+	return hasher.Sum32() == serverChecksum
 }
 
 func (book *Book) pruneNilLevels(symbolBook *spotbook.Book) {

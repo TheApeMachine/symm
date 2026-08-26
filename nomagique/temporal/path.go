@@ -242,6 +242,17 @@ func (series Series) CopyFrom(dst *types.Frame, src *types.Frame) {
 Count reports how many observations the series retains in frame.
 */
 func (series Series) Count(frame types.Frame) int {
+	return series.CountPtr(&frame)
+}
+
+/*
+CountPtr reports how many observations the series retains in pointer frame.
+*/
+func (series Series) CountPtr(frame *types.Frame) int {
+	if frame == nil {
+		return 0
+	}
+
 	count, found := frame.Get(series.CountSymbol)
 
 	if !found {
@@ -255,6 +266,17 @@ func (series Series) Count(frame types.Frame) int {
 Head reports the physical ring head of the series in frame.
 */
 func (series Series) Head(frame types.Frame) int {
+	return series.HeadPtr(&frame)
+}
+
+/*
+HeadPtr reports the physical ring head of the series in pointer frame.
+*/
+func (series Series) HeadPtr(frame *types.Frame) int {
+	if frame == nil {
+		return 0
+	}
+
 	head, found := frame.Get(series.HeadSymbol)
 
 	if !found {
@@ -272,19 +294,26 @@ func (series Series) Sample(frame *types.Frame, index int) (int64, float64, bool
 		return 0, 0, false
 	}
 
-	count := series.Count(*frame)
-	capacity, found := frame.Get(series.CapacitySymbol)
+	countValue, foundCount := frame.Get(series.CountSymbol)
 
-	if !found || index < 0 || index >= count {
+	if !foundCount {
 		return 0, 0, false
 	}
 
-	physicalIndex := (series.Head(*frame) + index) % int(capacity)
+	count := int(countValue)
+	capacity, foundCapacity := frame.Get(series.CapacitySymbol)
+
+	if !foundCapacity || index < 0 || index >= count {
+		return 0, 0, false
+	}
+
+	headValue, _ := frame.Get(series.HeadSymbol)
+	physicalIndex := (int(headValue) + index) % int(capacity)
 	timestampBits, hasTimestamp := frame.Get(
-		series.SampleSymbol(physicalIndex*pathSampleWidth),
+		series.SampleSymbol(physicalIndex * pathSampleWidth),
 	)
 	value, hasValue := frame.Get(
-		series.SampleSymbol(physicalIndex*pathSampleWidth+1),
+		series.SampleSymbol(physicalIndex*pathSampleWidth + 1),
 	)
 
 	if !hasTimestamp || !hasValue {
