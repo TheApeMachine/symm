@@ -1,37 +1,96 @@
+import { useRef } from "react";
+import { positionStore } from "#/collections/app";
+import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { Flex } from "@/components/ui/flex";
-import { positionsStore, useSubscribe } from "#/providers/ws-stores";
+import { Holding } from "#/providers/telemetry/telemetry/holding";
+import { Position } from "#/providers/telemetry/telemetry/position";
+import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 
 const fmt = (value: unknown, digits: number): string =>
-	typeof value === "number" ? value.toFixed(digits) : String(value ?? "—");
+	typeof value === "number"
+		? value.toFixed(digits)
+		: typeof value === "string" && value !== "" && Number.isFinite(Number(value))
+			? Number(value).toFixed(digits)
+			: String(value ?? "—");
+
+type QueryEntry = {
+	floor: HTMLElement | null;
+	peak: HTMLElement | null;
+	profit: HTMLElement | null;
+	arm: HTMLElement | null;
+	lock: HTMLElement | null;
+	surge: HTMLElement | null;
+	momentum: HTMLElement | null;
+	lastmove: HTMLElement | null;
+	trigger: HTMLElement | null;
+	locked: HTMLElement | null;
+	threshold: HTMLElement | null;
+	stopstatus: HTMLElement | null;
+};
+
+const queryCache: Record<string, QueryEntry> = {};
+const posObj = new Position();
+const holdingObj = new Holding();
+const stoplossObj = new Stoploss();
 
 /*
 Floor and Peak bound the live stop interval, mapped onto the card's own domain.
 */
 export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
-	const root = useSubscribe(positionsStore, (state) => {
-		const position = state.positions[symbol]?.latest();
+	const root = useRef<HTMLDivElement>(null);
 
-		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
+	positionStore.subscribe((state) => {
+		if (!root.current) return;
+		const last = state.getLast();
+		if (!last) return;
 
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
+		let targetHolding: Holding | null = null;
+
+		for (let i = 0; i < last.rowsLength(); i++) {
+			const pos = last.rows(i, posObj);
+			if (!pos) continue;
+			const h = pos.holding(holdingObj);
+			if (h && h.symbol() === symbol) {
+				targetHolding = h;
+				break;
 			}
-		};
+		}
 
-		set("floor", fmt(position?.holding.stoploss?.floor, 6));
-		set("peak", fmt(position?.holding.stoploss?.peak, 6));
-		set("profit", fmt(position?.holding.stoploss?.profit_line, 6));
-		set("arm", fmt(position?.holding.stoploss?.arm_at, 6));
-		set("lock", fmt(position?.holding.stoploss?.lock_floor, 6));
-		set("surge", String(position?.holding.stoploss?.surge_armed ?? false));
-		set("momentum", fmt(position?.holding.stoploss?.momentum_floor, 6));
-		set("lastmove", fmt(position?.holding.stoploss?.last_move, 6));
-		set("trigger", position?.holding.stoploss?.trigger_reason ?? "—");
-		set("locked", String(position?.holding.stoploss?.locked ?? false));
-		set("threshold", fmt(position?.holding.profit_threshold, 6));
-		set("stopstatus", position?.holding.stoploss?.status ?? "—");
+		if (!targetHolding) return;
+
+		const stoploss = targetHolding.stoploss(stoplossObj);
+
+		let element = queryCache[symbol];
+		if (!element) {
+			element = {
+				floor: root.current.querySelector<HTMLElement>('[data-f="floor"]'),
+				peak: root.current.querySelector<HTMLElement>('[data-f="peak"]'),
+				profit: root.current.querySelector<HTMLElement>('[data-f="profit"]'),
+				arm: root.current.querySelector<HTMLElement>('[data-f="arm"]'),
+				lock: root.current.querySelector<HTMLElement>('[data-f="lock"]'),
+				surge: root.current.querySelector<HTMLElement>('[data-f="surge"]'),
+				momentum: root.current.querySelector<HTMLElement>('[data-f="momentum"]'),
+				lastmove: root.current.querySelector<HTMLElement>('[data-f="lastmove"]'),
+				trigger: root.current.querySelector<HTMLElement>('[data-f="trigger"]'),
+				locked: root.current.querySelector<HTMLElement>('[data-f="locked"]'),
+				threshold: root.current.querySelector<HTMLElement>('[data-f="threshold"]'),
+				stopstatus: root.current.querySelector<HTMLElement>('[data-f="stopstatus"]'),
+			};
+			queryCache[symbol] = element;
+		}
+
+		if (element.floor) element.floor.textContent = fmt(stoploss?.floor(), 6);
+		if (element.peak) element.peak.textContent = fmt(stoploss?.peak(), 6);
+		if (element.profit) element.profit.textContent = fmt(stoploss?.profitLine(), 6);
+		if (element.arm) element.arm.textContent = fmt(stoploss?.armAt(), 6);
+		if (element.lock) element.lock.textContent = fmt(stoploss?.lockFloor(), 6);
+		if (element.surge) element.surge.textContent = String(stoploss?.surgeArmed() ?? false);
+		if (element.momentum) element.momentum.textContent = fmt(stoploss?.momentumFloor(), 6);
+		if (element.lastmove) element.lastmove.textContent = fmt(stoploss?.lastMove(), 6);
+		if (element.trigger) element.trigger.textContent = stoploss?.triggerReason() ?? "—";
+		if (element.locked) element.locked.textContent = String(stoploss?.locked() ?? false);
+		if (element.threshold) element.threshold.textContent = fmt(targetHolding.profitThreshold(), 6);
+		if (element.stopstatus) element.stopstatus.textContent = stoploss?.status() ?? "—";
 	});
 
 	return (
@@ -68,3 +127,5 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 		</div>
 	);
 };
+
+

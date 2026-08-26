@@ -1,28 +1,43 @@
+import { useRef } from "react";
+import { causalStore } from "#/collections/app";
 import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
-import { Panel } from "@/components/ui/panel";
-import { causalStore, useSubscribe } from "#/providers/ws-stores";
+import { Panel } from "#/components/ui/panel";
+import { Causal } from "#/providers/telemetry/telemetry/causal";
+
+const causalObj = new Causal();
 
 export const LiveDecisionsEntryLine = () => {
 	const scope = useDecisionsScopeSymbol();
+	const root = useRef<HTMLDivElement>(null);
 
-	const root = useSubscribe(causalStore, (frames) => {
-		const row = (frames ?? []).find((frame) => frame.symbol === scope) ?? null;
+	causalStore.subscribe((frames) => {
+		if (!root.current) return;
+		const lastFrame = frames.getLast();
+		if (!lastFrame) return;
+
+		let targetRow: Causal | null = null;
+		for (let i = 0; i < lastFrame.rowsLength(); i++) {
+			const row = lastFrame.rows(i, causalObj);
+			if (row && row.symbol() === scope) {
+				targetRow = row;
+				break;
+			}
+		}
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		const f6 = (v: number | undefined) => (v === undefined ? "—" : v.toFixed(6));
-		const pct = (v: number | undefined) => (v === undefined ? "—" : `${(v * 100).toFixed(1)}%`);
+		const f6 = (v: number | undefined) => (v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(6));
+		const pct = (v: number | undefined) => (v === undefined || !Number.isFinite(v) ? "—" : `${(v * 100).toFixed(1)}%`);
 
-		set("baseline", f6(row?.entry_baseline));
-		set("strength", f6(row?.strength));
-		set("confidence", pct(row?.confidence));
-	}, [scope]);
+		if (!targetRow) return;
+
+		set("baseline", f6(targetRow.entryBaseline()));
+		set("strength", f6(targetRow.strength()));
+		set("confidence", pct(targetRow.confidence()));
+	});
 
 	if (scope === undefined) {
 		return null;
@@ -55,3 +70,4 @@ export const LiveDecisionsEntryLine = () => {
 		</div>
 	);
 };
+

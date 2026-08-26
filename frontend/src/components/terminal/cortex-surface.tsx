@@ -1,26 +1,36 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
-import { cognitionStore, useSubscribe } from "#/providers/ws-stores";
+import { useRef } from "react";
+import { cognitionStore, focusStore } from "#/collections/app";
+import { Cognition } from "#/providers/telemetry/telemetry/cognition";
 import { CortexCanvas } from "./cortex-canvas";
 import { CortexPanelsShell } from "./cortex-panels-shell";
 
+const cogObj = new Cognition();
+
 export const CortexSurface = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const root = useRef<HTMLDivElement>(null);
 
-	const root = useSubscribe(cognitionStore, (state) => {
-		const row = state.cognition[focusSymbol]?.latest();
+	cognitionStore.subscribe((state) => {
+		if (!root.current) return;
+		const last = state.getLast();
+		if (!last) return;
 
-		const winner = root.current?.querySelector<HTMLElement>("[data-winner]");
-		const sequence = root.current?.querySelector<HTMLElement>("[data-sequence]");
-
-		if (winner instanceof HTMLElement) {
-			winner.textContent = String(row?.winner ?? "—");
+		let targetRow: Cognition | null = null;
+		for (let i = 0; i < last.rowsLength(); i++) {
+			const row = last.rows(i, cogObj);
+			if (row && row.symbol() === focusSymbol) {
+				targetRow = row;
+				break;
+			}
 		}
 
-		if (sequence instanceof HTMLElement) {
-			sequence.textContent = String(row?.sequence ?? "—");
-		}
-	}, [focusSymbol]);
+		const winner = root.current.querySelector<HTMLElement>("[data-winner]");
+		const sequence = root.current.querySelector<HTMLElement>("[data-sequence]");
+
+		if (winner) winner.textContent = targetRow?.winner() ?? "—";
+		if (sequence) sequence.textContent = targetRow?.sequence() ?? "—";
+	});
 
 	return (
 		<div ref={root} className="flex h-full min-w-285 flex-col">
@@ -63,3 +73,4 @@ export const CortexSurface = () => {
 		</div>
 	);
 };
+

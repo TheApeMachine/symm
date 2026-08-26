@@ -98,7 +98,7 @@ func (peer *fluidPeer) enqueue(channel string, payload []byte) error {
 	peer.mutex.RUnlock()
 
 	if writer == nil {
-		return fmt.Errorf("webrtc: required channel %s is unavailable", channel)
+		return nil
 	}
 
 	return writer.enqueue(payload)
@@ -204,8 +204,11 @@ func (channel *fluidChannel) failSend(err error) {
 		return
 	}
 
-	channel.fail(fluidError("unable to send record", err))
-	channel.cancel()
+	if channel.fail != nil {
+		channel.fail(fluidError("unable to send record", err))
+	}
+
+	channel.close()
 }
 
 func (channel *fluidChannel) send(payload []byte) error {

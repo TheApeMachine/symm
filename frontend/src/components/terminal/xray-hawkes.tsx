@@ -1,46 +1,48 @@
-import { createRef, useEffect } from "react";
+import { useRef } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
-import { registerStreamCanvas, unregisterStreamCanvas } from "#/providers/stream-canvas";
+import { focusStore, measurementStore } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
-import { measurementsStore, useSubscribe } from "#/providers/ws-stores";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
 
-const hawkesCanvasRef = createRef<HTMLCanvasElement>();
-
-const streamDataset = (focusSymbol: string) => ({
-	streamFilter: `source=hawkes,symbol=${focusSymbol}`,
-	streamId: "at",
-	streamTime: "at",
-	streamValue: "metrics.conditional_intensity:buy.raw",
-	streamBaseline: "metrics.background_rate:buy.raw",
-	streamDecay: "metrics.excitation_decay:buy_from_buy.raw",
-	streamWindow: "120",
-	streamRug: "",
-	appendLimit: "512",
-});
+const metricObj = new Metric();
 
 export const XrayHawkesPanel = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
 
-	const root = useSubscribe(measurementsStore, (state) => {
-		const row = state.measurements[`hawkes\u0000${focusSymbol}`]?.latest();
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const root = useRef<HTMLDivElement>(null);
+	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
+
+	measurementStore.subscribe((state) => {
+		if (!root.current) return;
+		const ring = state.hawkes?.[focusSymbol];
+		const row = ring?.getLast();
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		set("events", (row?.metrics?.event_count?.raw ?? 0).toFixed(0));
-		set("lambda", `${(row?.metrics?.["conditional_intensity:buy"]?.raw ?? 0).toFixed(4)} /s`);
-		set("mu", `${(row?.metrics?.["background_rate:buy"]?.raw ?? 0).toFixed(4)} /s`);
-		set("sells", (row?.metrics?.["event_count:sell"]?.raw ?? 0).toFixed(0));
-		set("eta", (row?.metrics?.spectral_radius?.raw ?? 0).toFixed(3));
+		const metricsMap: Record<string, { raw: number; normalized: number }> = {};
+		if (row) {
+			for (let j = 0; j < row.metricsLength(); j++) {
+				const m = row.metrics(j, metricObj);
+				if (m) {
+					metricsMap[m.name() ?? ""] = {
+						raw: m.raw(),
+						normalized: m.normalized(),
+					};
+				}
+			}
+		}
 
-		const etaBar = root.current?.querySelector<HTMLElement>("[data-eta-bar]");
-		const eta = row?.metrics?.spectral_radius?.raw;
+		set("events", (metricsMap.event_count?.raw ?? 0).toFixed(0));
+		set("lambda", `${(metricsMap["conditional_intensity:buy"]?.raw ?? 0).toFixed(4)} /s`);
+		set("mu", `${(metricsMap["background_rate:buy"]?.raw ?? 0).toFixed(4)} /s`);
+		set("sells", (metricsMap["event_count:sell"]?.raw ?? 0).toFixed(0));
+		set("eta", (metricsMap.spectral_radius?.raw ?? 0).toFixed(3));
+
+		const etaBar = root.current.querySelector<HTMLElement>("[data-eta-bar]");
+		const eta = metricsMap.spectral_radius?.raw;
 
 		if (etaBar instanceof HTMLElement) {
 			if (typeof eta === "number") {
@@ -49,19 +51,40 @@ export const XrayHawkesPanel = () => {
 				etaBar.style.width = "0%";
 			}
 		}
-	}, [focusSymbol]);
 
-	useEffect(() => {
 		const canvas = hawkesCanvasRef.current;
+		if (canvas && ring && ring.getSize() > 1) {
+			const ctx = canvas.getContext("2d");
+			if (ctx) {
+				const w = canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+				const h = canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+				ctx.clearRect(0, 0, w, h);
+				ctx.strokeStyle = "rgba(235, 140, 50, 0.7)";
+				ctx.lineWidth = 1.5;
+				ctx.beginPath();
 
-		if (canvas === null) {
-			return;
+				const count = ring.getSize();
+				for (let i = 0; i < count; i++) {
+					const r = ring.get(i);
+					if (!r) continue;
+					let intensity = 0;
+					for (let j = 0; j < r.metricsLength(); j++) {
+						const m = r.metrics(j, metricObj);
+						if (m && m.name() === "conditional_intensity:buy") {
+							intensity = m.raw();
+							break;
+						}
+					}
+					const x = (i / Math.max(1, count - 1)) * w;
+					const y = h - (Math.min(1, Math.max(0, intensity / 10))) * (h - 20) - 10;
+					if (i === 0) ctx.moveTo(x, y);
+					else ctx.lineTo(x, y);
+				}
+				ctx.stroke();
+			}
 		}
+	});
 
-		registerStreamCanvas(canvas, streamDataset(focusSymbol));
-
-		return () => unregisterStreamCanvas(canvas);
-	}, [focusSymbol]);
 
 	return (
 		<div ref={root} className="relative flex min-h-52.5 flex-1 flex-col border-(--line) border-t">
@@ -89,3 +112,4 @@ export const XrayHawkesPanel = () => {
 		</div>
 	);
 };
+

@@ -1,29 +1,41 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
+import { useRef } from "react";
+import { cognitionStore, focusStore } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
-import { cognitionStore, useSubscribe } from "#/providers/ws-stores";
+import { Cognition } from "#/providers/telemetry/telemetry/cognition";
+
+const cogObj = new Cognition();
 
 export const XrayFactsPanel = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const root = useRef<HTMLDivElement>(null);
 
-	const root = useSubscribe(cognitionStore, (state) => {
-		const row = state.cognition[focusSymbol]?.latest() ?? null;
+	cognitionStore.subscribe((state) => {
+		if (!root.current) return;
+		const last = state.getLast();
+		if (!last) return;
+
+		let targetRow: Cognition | null = null;
+		for (let i = 0; i < last.rowsLength(); i++) {
+			const row = last.rows(i, cogObj);
+			if (row && row.symbol() === focusSymbol) {
+				targetRow = row;
+				break;
+			}
+		}
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		set("winner", row?.winner === undefined || row.winner === "" ? "none named" : String(row.winner));
-		set("confidence", row?.confidence === undefined ? "—" : `${(row.confidence * 100).toFixed(1)}%`);
-		set("contrast", row?.contrast === undefined ? "—" : row.contrast.toFixed(3));
-		set("entropy", row?.entropyBits === undefined ? "—" : row.entropyBits.toFixed(3));
-		set("ambiguous", row?.ambiguous === undefined ? "—" : String(row.ambiguous));
-		set("sequence", row?.sequence === undefined || row.sequence === "" ? "none" : String(row.sequence));
-	}, [focusSymbol]);
+		set("winner", targetRow?.winner() || "none named");
+		set("confidence", targetRow ? `${(targetRow.confidence() * 100).toFixed(1)}%` : "—");
+		set("contrast", targetRow ? targetRow.contrast().toFixed(3) : "—");
+		set("entropy", targetRow ? targetRow.entropyBits().toFixed(3) : "—");
+		set("ambiguous", targetRow ? String(targetRow.ambiguous()) : "—");
+		set("sequence", targetRow?.sequence() || "none");
+	});
 
 	return (
 		<div ref={root} className="flex h-full flex-col">
@@ -56,3 +68,4 @@ export const XrayFactsPanel = () => {
 		</div>
 	);
 };
+

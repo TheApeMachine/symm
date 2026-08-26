@@ -5,6 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/pion/webrtc/v4"
+	"github.com/theapemachine/errnie"
 )
 
 type fluidOffer struct {
@@ -39,6 +40,11 @@ func (hub *Hub) registerFluidWebRTC() {
 		})
 
 		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"failed to answer fluid WebRTC offer",
+				err,
+			))
 			return fiber.NewError(
 				fiber.StatusInternalServerError,
 				fmt.Sprintf("failed to answer fluid WebRTC offer: %v", err),

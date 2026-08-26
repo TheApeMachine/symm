@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
-import { appStore } from "#/collections/app";
+import { useEffect, useState } from "react";
+import { focusStore, resonanceStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
@@ -12,86 +12,73 @@ import {
 	XrayLatentPanel,
 	XrayManifoldPanel,
 } from "#/components/terminal/xray-panels";
-import { resonanceStore } from "#/providers/ws-stores";
+import { Resonance } from "#/providers/telemetry/telemetry/resonance";
 
-const resonanceRows = () =>
-	Object.values(resonanceStore.state.resonance).flatMap((buffer) => {
-		const latest = buffer.latest();
-
-		return latest === undefined ? [] : [latest];
-	});
+const resObj = new Resonance();
 
 const XrayPaintBridge = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const latestResonance = useRef<ReturnType<typeof resonanceRows> | null>(null);
+	const focusSymbol = useSelector(focusStore, (state) => state);
 
-	useLayoutEffect(() => {
-		const paint = (updates: ReturnType<typeof resonanceRows>) => {
-			latestResonance.current = updates;
-			paintXrayHierarchy(updates, focusSymbol);
-			paintXrayLatent(updates, focusSymbol);
-		};
-
-		const unregister = resonanceStore.subscribe(() => {
-			paint(resonanceRows());
+	useEffect(() => {
+		const unregister = resonanceStore.subscribe((state) => {
+			const last = state.getLast();
+			if (!last) return;
+			const rows: any[] = [];
+			for (let i = 0; i < last.rowsLength(); i++) {
+				const row = last.rows(i, resObj);
+				if (row) rows.push(row);
+			}
+			paintXrayHierarchy(rows, focusSymbol);
+			paintXrayLatent(rows, focusSymbol);
 		});
-
-		const seed = latestResonance.current ?? resonanceRows();
-
-		if (seed.length > 0) {
-			paint(seed);
-		}
 
 		return () => {
 			unregister.unsubscribe();
 		};
 	}, [focusSymbol]);
 
+
 	return null;
 };
 
 const XrayCarrierBar = () => {
-	const rowsCache = useRef<{ version: number; rows: ReturnType<typeof resonanceRows> }>({
-		version: -1,
-		rows: [],
+	const [symbols, setSymbols] = useState<string[]>([]);
+
+	resonanceStore.subscribe((state) => {
+		const last = state.getLast();
+		if (!last) return;
+
+		const currentSymbols: string[] = [];
+		for (let i = 0; i < last.rowsLength(); i++) {
+			const row = last.rows(i, resObj);
+			const sym = row?.symbol();
+			if (sym) currentSymbols.push(sym);
+		}
+
+		if (currentSymbols.join(",") !== symbols.join(",")) {
+			setSymbols(currentSymbols);
+		}
 	});
-
-	const rows = useSyncExternalStore(
-		(onStoreChange) => {
-			const subscription = resonanceStore.subscribe(onStoreChange);
-			return () => subscription.unsubscribe();
-		},
-		() => {
-			const version = resonanceStore.state.version;
-
-			if (rowsCache.current.version !== version) {
-				rowsCache.current = { version, rows: resonanceRows() };
-			}
-
-			return rowsCache.current.rows;
-		},
-		() => rowsCache.current.rows,
-	);
 
 	return (
 		<div className="flex h-11.5 shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
 			<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 				Inspect symbol
 			</span>
-			{rows.length === 0 ? (
+			{symbols.length === 0 ? (
 				<span className="font-mono text-[10px] text-(--f4)">waiting for resonance carriers</span>
 			) : null}
-			{rows.map((row) => (
+			{symbols.map((sym) => (
 				<button
-					key={row.symbol}
+					key={sym}
 					type="button"
 					onClick={() => {
-						appStore.actions.updateFocusSymbol(row.symbol);
-						terminalStore.actions.selectFocusSymbol(row.symbol);
+						focusStore.setState(() => sym);
+						terminalStore.actions.selectFocusSymbol(sym);
 					}}
 					className="shrink-0 cursor-pointer rounded-[3px] border border-(--line2) bg-transparent px-2.75 py-1 font-medium font-mono text-[11px] text-(--f3) hover:border-(--acc)"
 				>
-					{row.symbol}
+					{sym}
 				</button>
 			))}
 		</div>

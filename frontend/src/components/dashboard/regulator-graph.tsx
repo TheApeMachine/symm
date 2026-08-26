@@ -1,115 +1,17 @@
-import { useSelector } from "@tanstack/react-store";
-import { Panel } from "#/components/ui/panel";
+import { useRef } from "react";
+import { regulatorStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
-import { cn } from "@/lib/utils";
-import { regulatorStore, useSubscribe } from "#/providers/ws-stores";
-
-type RegulatorSubsystem = {
-	name: string;
-	label: string;
-	health: string;
-	direction: string;
-	valueText: string;
-	explanation: string;
-	value: number;
-};
-
-type RegulatorFrame = {
-	status?: string;
-	subsystems?: RegulatorSubsystem[];
-	sparkline?: number[];
-	lastMarkSurgeArmed?: boolean;
-	[x: string]: unknown;
-};
-
-const HEALTH_TONE: Record<string, { dot: string; text: string; border: string }> = {
-	healthy: { dot: "bg-(--up)", text: "text-(--up)", border: "border-(--up)/30" },
-	adapting: { dot: "bg-(--warn)", text: "text-(--warn)", border: "border-(--warn)/30" },
-	observing: { dot: "bg-(--acc)", text: "text-(--acc)", border: "border-(--acc)/30" },
-	strained: { dot: "bg-(--down)", text: "text-(--down)", border: "border-(--down)/30" },
-};
+import { Panel } from "#/components/ui/panel";
+import { computeSparklinePath } from "#/components/ui/sparkline";
+import { cn } from "#/lib/utils";
+import { Subsystem } from "#/providers/telemetry/telemetry/subsystem";
 
 const STATUS_LABEL: Record<string, string> = {
+
 	healthy: "Predictive / Optimizing",
 	adapting: "Identifying / Exploring",
 	observing: "Observing / Resolving",
 	strained: "Adverse Return Forecast",
-};
-
-const VerdictTile = ({
-	title,
-	value,
-	health = "observing",
-	children,
-}: {
-	title: string;
-	value: React.ReactNode;
-	health?: string;
-	children?: React.ReactNode;
-}) => {
-	const tone = HEALTH_TONE[health] ?? HEALTH_TONE.observing;
-
-	return (
-		<div className={cn("flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2")}>
-			<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">{title}</div>
-			<div className="flex items-baseline gap-2">
-				<span className={cn("size-1.5 shrink-0 self-center rounded-full", tone.dot)} />
-				<span className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">{value}</span>
-			</div>
-			{children}
-		</div>
-	);
-};
-
-const ScalarMetric = ({ label, which, tone = "text-(--f1)" }: { label: string; which: string; tone?: string }) => (
-	<div className="bg-[#0a0907] px-2 py-1.5">
-		<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">{label}</div>
-		<div data-r={which} className={cn("mt-0.5 font-mono text-[11px] tabular-nums", tone)}>—</div>
-	</div>
-);
-
-const ControlNode = ({ subsystem }: { subsystem: RegulatorSubsystem }) => {
-	const tone = HEALTH_TONE[subsystem.health] ?? HEALTH_TONE.observing;
-	const isChanged = !["configured", "resolving", "validated"].includes(subsystem.direction);
-
-	return (
-		<div className={cn("flex flex-col gap-2 rounded-md border bg-(--surface) p-3 transition-colors hover:border-(--line2)", tone.border)}>
-			<div className="flex items-center justify-between">
-				<span className="font-semibold font-mono text-[11px] text-(--f3) uppercase tracking-wider">{subsystem.label}</span>
-				<span className={cn("px-2 py-0.5 rounded font-mono text-[10px] font-medium border uppercase", tone.text, tone.border)}>{subsystem.health}</span>
-			</div>
-			<div className="flex items-baseline gap-2">
-				<span className="text-2xl font-bold font-mono text-(--f1)">{subsystem.valueText}</span>
-				<span className={cn("font-mono text-[11px] font-semibold", isChanged ? "text-(--warn)" : "text-(--f4)")}>● {subsystem.direction}</span>
-			</div>
-			<p className="font-mono text-[11px] text-(--f4) leading-snug">{subsystem.explanation}</p>
-		</div>
-	);
-};
-
-const SparklineSVG = ({ points }: { points: number[] }) => {
-	if (points.length < 2) {
-		return null;
-	}
-
-	const max = Math.max(...points, 0.1);
-	const min = Math.min(...points, 0);
-	const range = max - min || 1;
-	const width = 300;
-	const height = 40;
-	const coords = points.map((val, idx) => {
-		const x = (idx / (points.length - 1)) * width;
-		const y = height - ((val - min) / range) * (height - 8) - 4;
-		return `${x.toFixed(1)},${y.toFixed(1)}`;
-	});
-	const pathD = `M ${coords.join(" L ")}`;
-
-	return (
-		<svg width={width} height={height} className="overflow-visible">
-			<title>Recent predictive-coding reconstruction error</title>
-			<path d={pathD} fill="none" stroke="var(--acc)" strokeWidth="2" strokeLinecap="round" />
-		</svg>
-	);
 };
 
 const METRICS = [
@@ -126,48 +28,132 @@ const METRICS = [
 ] as const;
 
 const num = (value: unknown, digits: number): string =>
-	typeof value === "number" ? value.toFixed(digits) : "—";
+	typeof value === "number"
+		? value.toFixed(digits)
+		: typeof value === "bigint"
+			? String(value)
+			: "—";
+
+const ScalarMetric = ({
+	label,
+	which,
+	tone = "text-(--f1)",
+}: {
+	label: string;
+	which: string;
+	tone?: string;
+}) => (
+	<div className="bg-[#0a0907] px-2 py-1.5">
+		<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">{label}</div>
+		<div data-r={which} className={cn("mt-0.5 font-mono text-[11px] tabular-nums", tone)}>—</div>
+	</div>
+);
+
+type QueryEntry = {
+	elements: Record<string, HTMLElement | null>;
+	gate: HTMLElement | null;
+	sparkline: SVGPathElement | null;
+	subElements: Record<string, { val: HTMLElement | null; dir: HTMLElement | null; hlth: HTMLElement | null }>;
+};
+
+let queryCache: QueryEntry | null = null;
+const subObj = new Subsystem();
 
 export const RegulatorPredictiveCoding = () => {
-	const root = useSubscribe(regulatorStore, (state) => {
-		const frame = (state ?? {}) as RegulatorFrame;
+	const root = useRef<HTMLDivElement>(null);
 
-		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-r="${q}"]`);
+	regulatorStore.subscribe((state) => {
+		if (!root.current) return;
+		const frame = state.getLast();
+		if (!frame) return;
 
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
+		if (!queryCache) {
+			const elements: Record<string, HTMLElement | null> = {};
+			const metricKeys = [
+				"surprise", "energy", "predictedReturn", "predictionScale",
+				"predictedActive", "activityScale", "samples", "markSamples",
+				"intervalMarks", "lastMarkReturn", "lastMarkDrawdown",
+				"lastMarkFloorDistance", "status", "lastSymbol", "lastAt", "surge",
+			];
+			for (const k of metricKeys) {
+				elements[k] = root.current.querySelector<HTMLElement>(`[data-r="${k}"]`);
 			}
-		};
 
-		set("surprise", num(frame.surprise, 4));
-		set("energy", num(frame.energy, 3));
+			const subElements: Record<string, { val: HTMLElement | null; dir: HTMLElement | null; hlth: HTMLElement | null }> = {};
+			const subsContainer = root.current.querySelector<HTMLElement>("[data-subs]");
+			if (subsContainer) {
+				for (const name of ["risk", "timing", "alpha", "liquidity", "toxicity", "inventory"]) {
+					subElements[name] = {
+						val: subsContainer.querySelector<HTMLElement>(`[data-sub-val="${name}"]`),
+						dir: subsContainer.querySelector<HTMLElement>(`[data-sub-dir="${name}"]`),
+						hlth: subsContainer.querySelector<HTMLElement>(`[data-sub-hlth="${name}"]`),
+					};
+				}
+			}
 
-		for (const metric of METRICS) {
-			set(metric.which, num(frame[metric.which], metric.digits));
+			queryCache = {
+				elements,
+				gate: root.current.querySelector<HTMLElement>("[data-gate]"),
+				sparkline: root.current.querySelector<SVGPathElement>("[data-k=regulator-sparkline]"),
+				subElements,
+			};
 		}
 
-		set("status", STATUS_LABEL[frame.status ?? "observing"] ?? frame.status ?? "Observing / Resolving");
-		set("lastSymbol", String(frame.lastMarkSymbol ?? "—"));
-		set("lastAt", String(frame.lastMarkAt ?? "—"));
-		set("surge", String(frame.lastMarkSurgeArmed ?? false));
+		const set = (q: string, value: string) => {
+			const el = queryCache?.elements[q];
+			if (el) el.textContent = value;
+		};
 
-		const gate = root.current?.querySelector<HTMLElement>("[data-gate]");
-		if (gate instanceof HTMLElement) {
-			gate.className = cn("size-1.5 shrink-0 self-center rounded-full", frame.status === "healthy" ? "bg-(--up)" : "bg-(--warn)");
+		set("surprise", num(frame.surprise(), 4));
+		set("energy", num(frame.energy(), 3));
+		set("predictedReturn", num(frame.predictedReturn(), 3));
+		set("predictionScale", num(frame.predictionScale(), 3));
+		set("predictedActive", num(frame.predictedActive(), 3));
+		set("activityScale", num(frame.activityScale(), 3));
+		set("samples", num(frame.samples(), 0));
+		set("markSamples", num(frame.markSamples(), 0));
+		set("intervalMarks", num(frame.intervalMarks(), 0));
+		set("lastMarkReturn", num(frame.lastMarkReturn(), 3));
+		set("lastMarkDrawdown", num(frame.lastMarkDrawdown(), 3));
+		set("lastMarkFloorDistance", num(frame.lastMarkFloorDistance(), 3));
+
+		const statusStr = frame.status() ?? "observing";
+		set("status", STATUS_LABEL[statusStr] ?? statusStr);
+		set("lastSymbol", String(frame.lastMarkSymbol() ?? "—"));
+		set("lastAt", String(frame.lastMarkAt() ?? "—"));
+		set("surge", String(frame.lastMarkSurgeArmed()));
+
+		if (queryCache.gate) {
+			queryCache.gate.className = cn(
+				"size-1.5 shrink-0 self-center rounded-full",
+				statusStr === "healthy" ? "bg-(--up)" : "bg-(--warn)",
+			);
+		}
+
+		if (queryCache.sparkline) {
+			const pts: number[] = [];
+			for (let i = 0; i < frame.sparklineLength(); i++) {
+				const pt = frame.sparkline(i);
+				if (pt !== null) pts.push(pt);
+			}
+			if (pts.length > 1) {
+				queryCache.sparkline.setAttribute("d", computeSparklinePath(pts, 300, 40, 4));
+			}
+		}
+
+		for (let i = 0; i < frame.subsystemsLength(); i++) {
+			const sub = frame.subsystems(i, subObj);
+			if (!sub) continue;
+			const name = sub.name() ?? "";
+			const subEntry = queryCache.subElements[name];
+			if (!subEntry) continue;
+
+			if (subEntry.val) subEntry.val.textContent = sub.valueText() ?? "—";
+			if (subEntry.dir) subEntry.dir.textContent = `● ${sub.direction() ?? "—"}`;
+			if (subEntry.hlth) subEntry.hlth.textContent = sub.health() ?? "—";
 		}
 	});
 
-	const subsystems = useSelector(
-		regulatorStore,
-		(state) => ((state ?? {}) as RegulatorFrame).subsystems ?? [],
-	);
-	const sparkline = useSelector(
-		regulatorStore,
-		(state) => ((state ?? {}) as RegulatorFrame).sparkline ?? [],
-	);
-	const status = ((regulatorStore.state ?? {}) as RegulatorFrame).status;
-	const verdictHealth = status === "healthy" || status === "strained" ? status : "observing";
 
 	return (
 		<div ref={root} className="flex h-full min-w-275 flex-col overflow-auto bg-(--bg) p-5 gap-5">
@@ -175,20 +161,20 @@ export const RegulatorPredictiveCoding = () => {
 				Global Predictive-Coding Regulator
 			</div>
 			<Panel className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)">
-				<VerdictTile
-					title="residual model"
-					health={verdictHealth}
-					value={
-						<span data-r="surprise" className="mt-0.5 truncate font-mono text-[11px] text-(--warning)">—</span>
-					}
-				/>
-				<VerdictTile
-					title="direction skill"
-					health={verdictHealth}
-					value={
-						<span data-r="energy" className="mt-0.5 truncate font-mono text-[11px] text-(--info)">—</span>
-					}
-				/>
+				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">residual model</div>
+					<div className="flex items-baseline gap-2">
+						<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
+						<span data-r="surprise" className="truncate font-mono text-[13px] uppercase tracking-wide text-(--warning)">—</span>
+					</div>
+				</div>
+				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">direction skill</div>
+					<div className="flex items-baseline gap-2">
+						<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
+						<span data-r="energy" className="truncate font-mono text-[13px] uppercase tracking-wide text-(--info)">—</span>
+					</div>
+				</div>
 				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">entry gate</div>
 					<div className="flex items-baseline gap-2">
@@ -219,20 +205,39 @@ export const RegulatorPredictiveCoding = () => {
 				</Flex.Row>
 			</Panel>
 
-			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-				{subsystems.map((sub) => (
-					<ControlNode key={sub.name} subsystem={sub} />
+			<div data-subs className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+				{[
+					{ name: "risk", label: "Risk & Position Sizing" },
+					{ name: "timing", label: "Execution Timing" },
+					{ name: "alpha", label: "Alpha Signal Weight" },
+					{ name: "liquidity", label: "Liquidity Capture" },
+					{ name: "toxicity", label: "Orderflow Toxicity" },
+					{ name: "inventory", label: "Inventory Skew" },
+				].map((sub) => (
+					<div
+						key={sub.name}
+						className="flex flex-col gap-2 rounded-md border border-(--line) bg-(--surface) p-3 transition-colors hover:border-(--line2)"
+					>
+						<div className="flex items-center justify-between">
+							<span className="font-semibold font-mono text-[11px] text-(--f3) uppercase tracking-wider">{sub.label}</span>
+							<span data-sub-hlth={sub.name} className="px-2 py-0.5 rounded font-mono text-[10px] font-medium border border-(--line) text-(--f3) uppercase">observing</span>
+						</div>
+						<div className="flex items-baseline gap-2">
+							<span data-sub-val={sub.name} className="text-2xl font-bold font-mono text-(--f1)">—</span>
+							<span data-sub-dir={sub.name} className="font-mono text-[11px] font-semibold text-(--f4)">● configured</span>
+						</div>
+					</div>
 				))}
 			</div>
 
-			{sparkline.length > 1 ? (
-				<Panel className="p-4 border border-(--line) bg-(--surface) rounded-md">
-					<Flex.Row align="center" gap={2}>
-						<span className="text-[10px] uppercase tracking-wider text-(--f4)">Recent Surprisal Trend</span>
-						<SparklineSVG points={sparkline} />
-					</Flex.Row>
-				</Panel>
-			) : null}
+			<Panel className="p-4 border border-(--line) bg-(--surface) rounded-md">
+				<Flex.Row align="center" gap={4}>
+					<span className="text-[10px] uppercase tracking-wider text-(--f4)">Recent Surprisal Trend</span>
+					<svg width={300} height={40} className="overflow-visible">
+						<path data-k="regulator-sparkline" d="" fill="none" stroke="var(--acc)" strokeWidth="2" strokeLinecap="round" />
+					</svg>
+				</Flex.Row>
+			</Panel>
 
 			<Panel className="p-4 border border-(--line) bg-(--surface)/50 rounded-md font-mono text-[11px] text-(--f4) flex flex-col gap-1.5">
 				<span className="font-semibold text-(--f3) uppercase tracking-wider text-[10px]">How to Interpret the Regulator</span>

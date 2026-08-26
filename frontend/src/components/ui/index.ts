@@ -70,6 +70,7 @@ export {
 } from "./overlay";
 export type { JSONPrimitive, JSONSerializable, Paint } from "./paint";
 export { Panel, type PanelProps, panelVariants } from "./panel";
+export { Readout, type ReadoutProps } from "./readout";
 export { Scanlines, type ScanlinesProps, scanlinesVariants } from "./scanlines";
 export {
 	Section,
@@ -78,6 +79,11 @@ export {
 	sectionHeaderVariants,
 	sectionVariants,
 } from "./section";
+export {
+	computeSparklinePath,
+	Sparkline,
+	type SparklineProps,
+} from "./sparkline";
 export { Spinner, type SpinnerProps } from "./spinner";
 export { Stat, type StatProps, statVariants } from "./stat";
 export { Toolbar, type ToolbarProps, toolbarVariants } from "./toolbar";

@@ -1,46 +1,78 @@
-import { strategyStore, useDecisions, useSubscribe } from "#/providers/ws-stores";
+import { useRef, useState } from "react";
+import { strategyStore } from "#/collections/app";
+import { Decision } from "#/providers/telemetry/telemetry/decision";
 import { num } from "./number";
 
+type CandidateEntry = {
+	id: string;
+	symbol: string;
+};
+
+type QueryEntry = {
+	symbol: HTMLElement | null;
+	conf: HTMLElement | null;
+	thesisScore: HTMLElement | null;
+	action: HTMLElement | null;
+	haircut: HTMLElement | null;
+	cls: HTMLElement | null;
+	notional: HTMLElement | null;
+};
+
+const queryCache: Record<string, QueryEntry> = {};
+const decObj = new Decision();
+
 export const AllocationMain = () => {
-	const decisions = useDecisions();
+	const root = useRef<HTMLDivElement>(null);
+	const [candidates, setCandidates] = useState<CandidateEntry[]>([]);
 
-	const root = useSubscribe(strategyStore, (state) => {
-		const frameDecisions = state?.decisions ?? [];
+	strategyStore.subscribe((state) => {
+		if (!root.current) return;
+		const last = state.getLast();
+		if (!last) return;
 
-		for (let index = 0; index < frameDecisions.length; index += 1) {
-			const decision = frameDecisions[index];
+		const currentCandidates: CandidateEntry[] = [];
 
-			if (decision === undefined) {
-				continue;
+		for (let index = 0; index < last.decisionsLength(); index += 1) {
+			const decision = last.decisions(index, decObj);
+			if (!decision) continue;
+
+			const id = decision.id() ?? "";
+			const symbol = decision.symbol() ?? "";
+			if (!id) continue;
+
+			currentCandidates.push({ id, symbol });
+
+			let element = queryCache[id];
+			if (!element) {
+				const row = root.current.querySelector<HTMLElement>(`[data-id="${id}"]`);
+				if (!row) continue;
+
+				element = {
+					symbol: row.querySelector<HTMLElement>('[data-f="symbol"]'),
+					conf: row.querySelector<HTMLElement>("[data-conf]"),
+					thesisScore: row.querySelector<HTMLElement>('[data-f="thesisScore"]'),
+					action: row.querySelector<HTMLElement>('[data-f="action"]'),
+					haircut: row.querySelector<HTMLElement>('[data-f="haircut"]'),
+					cls: row.querySelector<HTMLElement>('[data-f="class"]'),
+					notional: row.querySelector<HTMLElement>('[data-f="notional"]'),
+				};
+				queryCache[id] = element;
 			}
 
-			const row = root.current?.querySelector<HTMLElement>(`[data-i="${index}"]`);
-
-			if (row === null || row === undefined) {
-				continue;
+			if (element.symbol) element.symbol.textContent = symbol;
+			if (element.thesisScore) element.thesisScore.textContent = decision.thesisScore().toFixed(5);
+			if (element.action) element.action.textContent = decision.action() ?? "—";
+			if (element.haircut) element.haircut.textContent = `${(decision.allocationHaircut() * 100).toFixed(1)}%`;
+			if (element.cls) element.cls.textContent = decision.allocationClass() || "—";
+			if (element.notional) element.notional.textContent = num(decision.proposedNotional(), 2);
+			if (element.conf) {
+				const v = decision.confidence();
+				element.conf.style.width = `clamp(0%, calc(${typeof v === "number" ? v : 0} * 100%), 100%)`;
 			}
+		}
 
-			const set = (which: string, value: string) => {
-				const el = row.querySelector<HTMLElement>(`[data-f=${which}]`);
-
-				if (el instanceof HTMLElement) {
-					el.textContent = value;
-				}
-			};
-
-			set("symbol", decision.symbol);
-			set("thesisScore", decision.thesisScore.toFixed(5));
-			set("action", decision.action);
-			set("haircut", `${(decision.allocation_haircut * 100).toFixed(1)}%`);
-			set("class", decision.allocationClass || "—");
-			set("notional", num(decision.proposedNotional, 2));
-
-			const bar = row.querySelector<HTMLElement>("[data-conf]");
-
-			if (bar instanceof HTMLElement) {
-				const v = decision.confidence;
-				bar.style.width = `clamp(0%, calc(${typeof v === "number" ? v : 0} * 100%), 100%)`;
-			}
+		if (currentCandidates.map((c) => c.id).join(",") !== candidates.map((c) => c.id).join(",")) {
+			setCandidates(currentCandidates);
 		}
 	});
 
@@ -50,7 +82,7 @@ export const AllocationMain = () => {
 				<span className="text-(--f3)">cross-section</span>
 				<span className="text-(--f4)">
 					candidates{" "}
-					<span className="text-(--f2)">{decisions.length}</span>
+					<span className="text-(--f2)">{candidates.length}</span>
 				</span>
 				<span className="ml-auto text-(--f4)">
 					sized from current asks · ranked by structural thesis
@@ -66,15 +98,15 @@ export const AllocationMain = () => {
 			</div>
 
 			<div className="flex flex-col">
-				{decisions.length === 0 ? (
+				{candidates.length === 0 ? (
 					<div className="py-24 text-center font-mono text-[11px] text-(--f4)">
 						waiting for backend decision frames
 					</div>
 				) : (
-					decisions.map((decision, index) => (
+					candidates.map((candidate) => (
 						<div
-							key={decision.id}
-							data-i={index}
+							key={candidate.id}
+							data-id={candidate.id}
 							className="flex items-center gap-2.25 border-(--line) border-b py-1.75 font-mono text-[10px]"
 						>
 							<span data-f="symbol" className="w-14.5 shrink-0 truncate font-semibold text-(--f1)" />

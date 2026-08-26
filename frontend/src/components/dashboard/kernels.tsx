@@ -1,56 +1,72 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
+import { useRef } from "react";
+import {
+	DEFAULT_KERNELS,
+	focusStore,
+	measurementStore,
+} from "#/collections/app";
+import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import { measurementsStore, useSubscribe, measurementIdentity } from "#/providers/ws-stores";
-import { Flex } from "@/components/ui/flex";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
+
+const metricObj = new Metric();
+
+type QueryEntry = {
+	status: HTMLElement | null;
+	readout: HTMLElement | null;
+};
+
+const queryCache: Record<string, QueryEntry> = {};
 
 export const KernelList = () => {
-	const kernels = useSelector(appStore, (state) => state.kernels);
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const root = useRef<HTMLDivElement>(null);
 
-	const root = useSubscribe(
-		measurementsStore,
-		(state) => {
-			for (const kernel of kernels) {
-				const row =
-					state.measurements[
-						measurementIdentity({ source: kernel, symbol: focusSymbol })
-					]?.latest();
+	measurementStore.subscribe((state) => {
+		if (!root.current) return;
 
-				if (row === undefined || row === null || typeof row !== "object") {
-					continue;
-				}
+		for (const kernel of DEFAULT_KERNELS) {
+			const ring = state[kernel]?.[focusSymbol];
+			if (!ring) continue;
 
-				const cell = root.current?.querySelector<HTMLElement>(
-					`[data-kernel="${kernel}"]`,
-				);
+			const last = ring.getLast();
+			if (!last) continue;
 
-				if (cell === null || cell === undefined) {
-					continue;
-				}
+			let element = queryCache[kernel];
+			if (!element) {
+				const cell = root.current.querySelector<HTMLElement>(`[data-kernel="${kernel}"]`);
+				if (!cell) continue;
 
-				const set = (q: string, value: string) => {
-					const el = cell.querySelector<HTMLElement>(`[data-k="${q}"]`);
-
-					if (el instanceof HTMLElement) {
-						el.textContent = value;
-					}
+				element = {
+					status: cell.querySelector<HTMLElement>('[data-k="status"]'),
+					readout: cell.querySelector<HTMLElement>('[data-k="readout"]'),
 				};
-
-				const record = row as Record<string, unknown>;
-				set("source", String(record.source ?? ""));
-				set("status", String(record.status ?? "STANDBY"));
-				set("readout", String(record.readout ?? "waiting"));
-				set("age", String(record.age ?? ""));
+				queryCache[kernel] = element;
 			}
-		},
-		[kernels, focusSymbol],
-	);
+
+			if (element.status) {
+				element.status.textContent = "ONLINE";
+			}
+
+
+			if (element.readout) {
+				let snrVal: number | null = null;
+				for (let j = 0; j < last.metricsLength(); j++) {
+					const m = last.metrics(j, metricObj);
+					if (m && m.name() === "snr") {
+						snrVal = m.raw();
+						break;
+					}
+				}
+				element.readout.textContent = snrVal !== null ? `snr: ${snrVal.toFixed(2)}` : "active";
+			}
+		}
+	});
 
 	return (
 		<List ref={root} className="min-h-0 flex-1 border-(--line) border-b">
-			{kernels.map((kernel) => (
+			{DEFAULT_KERNELS.map((kernel) => (
 				<List.Item
 					key={kernel}
 					data-kernel={kernel}
@@ -84,3 +100,5 @@ export const KernelList = () => {
 		</List>
 	);
 };
+
+

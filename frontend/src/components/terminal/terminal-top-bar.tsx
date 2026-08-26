@@ -1,16 +1,20 @@
-import { BacktestControls } from "./backtest-controls";
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
+import {
+	focusStore,
+	onlineStore,
+	tickStore,
+} from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { Balance } from "@/components/balance";
-import { Count } from "@/components/count";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
-import { Key } from "@/components/ui/key";
-import { Toolbar } from "@/components/ui/toolbar";
-import { Flex, Typography } from "../ui";
-import { tickStore, useSubscribe } from "#/providers/ws-stores";
+import { Balance } from "#/components/balance";
+import { Count } from "#/components/count";
+import { Badge } from "#/components/ui/badge";
+import { Button } from "#/components/ui/button";
+import { Flex } from "#/components/ui/flex";
+import { Icon } from "#/components/ui/icon";
+import { Key } from "#/components/ui/key";
+import { Toolbar } from "#/components/ui/toolbar";
+import { Typography } from "#/components/ui/typography";
+import { BacktestControls } from "./backtest-controls";
 
 const SymmLogo = () => (
 	<svg
@@ -33,31 +37,26 @@ const SymmLogo = () => (
 );
 
 const TickCounter = () => {
-	const root = useSubscribe(tickStore, (state) => {
-		const el = root.current?.querySelector<HTMLElement>("[data-tick]");
-
-		if (el instanceof HTMLElement) {
-			el.textContent = String(state?.count ?? "—");
-		}
-	});
+	const last = useSelector(tickStore, (state) => state.getLast());
 
 	return (
-		<Flex.Row ref={root} align="center" gap={6}>
+		<Flex.Row align="center" gap={6}>
 			<Flex.Column className="items-end gap-px">
 				<Typography.Label size="s" tone="f4" weight="normal">
 					Tick
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					—
+					{String(last?.count() ?? "—")}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>
 	);
 };
 
+
 export const TerminalTopBar = () => {
-	const online = useSelector(appStore, (state) => state.online);
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const online = useSelector(onlineStore, (state) => state === "ONLINE");
+	const focusSymbol = useSelector(focusStore, (state) => state);
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
 
 	return (

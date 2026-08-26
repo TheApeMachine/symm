@@ -54,5 +54,9 @@ func TestSolverStep(t *testing.T) {
 				So(solver.Name(), ShouldEqual, "manifold")
 			})
 		})
+
+		Convey("When measurement is nil", func() {
+			So(solver.Step(nil), ShouldBeNil)
+		})
 	})
 }

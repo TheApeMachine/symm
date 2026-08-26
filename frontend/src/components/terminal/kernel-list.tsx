@@ -1,76 +1,164 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore, DEFAULT_KERNELS } from "#/collections/app";
-import { terminalStore } from "#/collections/terminal";
+import {
+	DEFAULT_KERNELS,
+	focusStore,
+	kernelDetailStore,
+	measurementStore,
+	type RingBuffer,
+} from "#/collections/app";
+import { Flex } from "#/components/ui";
 import { cn } from "#/lib/utils";
-import { measurementsStore, useSubscribe } from "#/providers/ws-stores";
+import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
 
-const interactive = (compact: boolean, source: string) => {
-	if (compact) {
-		return () => {
-			terminalStore.actions.selectSource(source);
-		};
+const metricObj = new Metric();
+
+const computeSparkline = (
+	points: number[],
+	width = 60,
+	height = 14,
+	padding = 1,
+): string => {
+	if (points.length < 2) return "";
+
+	let min = points[0];
+	let max = points[0];
+	for (let i = 1; i < points.length; i++) {
+		if (points[i] < min) min = points[i];
+		if (points[i] > max) max = points[i];
 	}
 
-	return () => {
-		terminalStore.actions.inspectSource(source);
-	};
+	const range = max - min || 1;
+	const count = points.length;
+	let d = "";
+
+	for (let i = 0; i < count; i++) {
+		const x = (i / (count - 1)) * width;
+		const y =
+			height - padding - ((points[i] - min) / range) * (height - padding * 2);
+		d += `${(i === 0 ? "M " : " L ") + x.toFixed(1)},${y.toFixed(1)}`;
+	}
+
+	return d;
+};
+
+const getKernelMetrics = (
+	measurement: Record<string, Record<string, RingBuffer<Measurement>>>,
+	kernel: string,
+	symbol: string,
+) => {
+	const foundKernel = measurement[kernel];
+	if (!foundKernel) return { points: [], latest: null };
+	const foundSymbol = foundKernel[symbol];
+	if (!foundSymbol) return { points: [], latest: null };
+
+	const len = foundSymbol.getBufferLength();
+	const points: number[] = [];
+
+	for (let i = 0; i < len; i++) {
+		const row = foundSymbol.get(i);
+		if (!row) continue;
+
+		const count = row.metricsLength();
+		let foundValue: number | null = null;
+
+		for (let j = 0; j < count; j++) {
+			const metric = row.metrics(j, metricObj);
+			if (!metric) continue;
+			const name = metric.name();
+			if (name === "snr" || name === "score" || name === "normalized") {
+				foundValue = metric.hasNormalized() ? metric.normalized() : metric.raw();
+				break;
+			}
+		}
+
+		if (foundValue === null && count > 0) {
+			const first = row.metrics(0, metricObj);
+			if (first) {
+				foundValue = first.hasNormalized() ? first.normalized() : first.raw();
+			}
+		}
+
+		if (foundValue !== null && Number.isFinite(foundValue)) {
+			points.push(foundValue);
+		}
+	}
+
+	const latest = points.length > 0 ? points[points.length - 1] : null;
+	return { points, latest };
+};
+
+export type KernelListProps = {
+	sources?: string[];
+	compact?: boolean;
 };
 
 export const KernelList = ({
-	compact = false,
 	sources = DEFAULT_KERNELS,
-}: {
-	compact?: boolean;
-	sources?: string[];
-}) => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const sourcesKey = sources.join("\u0000");
-
-	const root = useSubscribe(measurementsStore, (state) => {
-		for (const source of sources) {
-			const row = state.measurements[`${source}\u0000${focusSymbol}`]?.latest();
-			const cell = root.current?.querySelector<HTMLElement>(`[data-kernel="${source}"]`);
-
-			if (cell === null || cell === undefined) {
-				continue;
-			}
-
-			const snr = row?.metrics?.snr?.raw;
-
-			const set = (q: string, value: string) => {
-				const el = cell.querySelector<HTMLElement>(`[data-k="${q}"]`);
-
-				if (el instanceof HTMLElement) {
-					el.textContent = value;
-				}
-			};
-
-			set("snr1", snr === undefined ? "" : snr.toFixed(1));
-			set("symbol", row?.symbol ?? "");
-		}
-	}, [focusSymbol, sourcesKey]);
+	compact = false,
+}: KernelListProps = {}) => {
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const measurements = useSelector(measurementStore, (state) => state);
 
 	return (
-		<div ref={root} className="min-h-0 overflow-auto">
-			{sources.map((source) => (
-				<button
-					key={source}
-					type="button"
-					data-kernel={source}
-					onClick={interactive(compact, source)}
-					className="block w-full cursor-pointer border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
-				>
-					<div className="flex items-center justify-between gap-2">
-						<span className={cn("truncate font-semibold text-(--f1)", compact ? "text-xs" : "text-[12.5px]")}>
-							{source}
-						</span>
-						<span data-k="symbol" className="font-mono text-[9.5px] text-(--f4)" />
-					</div>
-					<div className="mt-0.5 flex items-baseline gap-1.5 truncate font-mono text-[9.5px] text-(--f4)">
-						<span data-k="snr1" className="text-(--acc)" />
-					</div>
-				</button>
-			))}
+		<div className={cn("min-h-0 overflow-auto", compact && "text-[10px]")}>
+			{sources.map((source) => {
+				const { points, latest } = getKernelMetrics(
+					measurements,
+					source,
+					focusSymbol,
+				);
+				const sparklinePath = computeSparkline(points);
+
+				return (
+					<button
+						key={source}
+						type="button"
+						data-kernel={source}
+						onClick={() => kernelDetailStore.setState(() => source)}
+						className="block w-full cursor-pointer border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
+					>
+						<Flex.Row align="center" justify="between" gap={2}>
+							<span className={cn("truncate font-semibold text-(--f1)")}>
+								{source}
+							</span>
+							<span
+								data-k="symbol"
+								className="font-mono text-[9.5px] text-(--f4)"
+							>
+								{latest !== null ? focusSymbol : ""}
+							</span>
+						</Flex.Row>
+						<Flex.Row
+							align="center"
+							justify="between"
+							gap={2}
+							className="mt-0.5 font-mono text-[9.5px] text-(--f4)"
+						>
+							<span data-k="snr1" className="text-(--acc)">
+								{latest !== null ? latest.toFixed(1) : "—"}
+							</span>
+							<svg
+								viewBox="0 0 60 14"
+								className="h-3.5 w-15 shrink-0 overflow-visible"
+								preserveAspectRatio="none"
+							>
+								<title>sparkline</title>
+								<path
+									data-k="sparkline"
+									d={sparklinePath}
+									fill="none"
+									stroke="var(--acc)"
+									strokeWidth="1.5"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									vectorEffect="non-scaling-stroke"
+								/>
+							</svg>
+						</Flex.Row>
+					</button>
+				);
+			})}
 		</div>
 	);
 };

@@ -191,20 +191,21 @@ export const FluidInspector = () => {
 				setParticleCount(particles.count);
 			},
 			onPhase: (frame) => {
+				const unpacked = frame.unpack() as unknown as Record<string, unknown>;
 				paintPhaseDial({
-					wave: terminalWaveModesFromFrame(frame),
-					scan: terminalPhaseScanFromFrame(frame),
-					status: terminalPhaseStatusFromFrame(frame),
+					wave: terminalWaveModesFromFrame(unpacked),
+					scan: terminalPhaseScanFromFrame(unpacked),
+					status: terminalPhaseStatusFromFrame(unpacked),
 				});
 
-				const hydrodynamics = frame.hydrodynamics as
+				const hydrodynamics = unpacked.hydrodynamics as
 					| Record<string, number>
 					| undefined;
 
 				if (hydrodynamics !== undefined) {
 					setHydro(hydrodynamics);
 					setKuramotoProps({
-						oscillators: kuramotoFromWave(frame),
+						oscillators: kuramotoFromWave(unpacked),
 						kuramotoR: finiteNumber(hydrodynamics.kuramotoR) ?? 0,
 						kuramotoPsi: finiteNumber(hydrodynamics.kuramotoPsi) ?? 0,
 					});
@@ -213,6 +214,7 @@ export const FluidInspector = () => {
 						hydrodynamics.divergence,
 						hydrodynamics.pressureGradNorm,
 					);
+
 
 					if (point !== null) {
 						const history = phaseHistoryRef.current;

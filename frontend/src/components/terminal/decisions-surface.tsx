@@ -1,19 +1,36 @@
-import { useSyncExternalStore } from "react";
+import { useState } from "react";
+import { strategyStore } from "#/collections/app";
 import { DecisionChain } from "#/components/terminal/decision-chain";
 import { DecisionSideRail } from "#/components/terminal/decision-side-rail";
 import { LiveDecisionsEntryLine } from "#/components/terminal/decisions-entry-line";
-import { Panel } from "@/components/ui/panel";
-import { strategyStore } from "#/providers/ws-stores";
+import { Panel } from "#/components/ui/panel";
+import { Decision } from "#/providers/telemetry/telemetry/decision";
+
+type DecisionKey = {
+	id: string;
+	index: number;
+};
+
+const decObj = new Decision();
 
 export const DecisionsSurface = () => {
-	const decisions = useSyncExternalStore(
-		(onStoreChange) => {
-			const subscription = strategyStore.subscribe(onStoreChange);
-			return () => subscription.unsubscribe();
-		},
-		() => strategyStore.state?.decisions ?? [],
-		() => strategyStore.state?.decisions ?? [],
-	);
+	const [decisionKeys, setDecisionKeys] = useState<DecisionKey[]>([]);
+
+	strategyStore.subscribe((state) => {
+		const last = state.getLast();
+		if (!last) return;
+
+		const currentKeys: DecisionKey[] = [];
+		for (let i = 0; i < last.decisionsLength(); i++) {
+			const dec = last.decisions(i, decObj);
+			const id = dec?.id() ?? String(i);
+			currentKeys.push({ id, index: i });
+		}
+
+		if (currentKeys.map((k) => k.id).join(",") !== decisionKeys.map((k) => k.id).join(",")) {
+			setDecisionKeys(currentKeys);
+		}
+	});
 
 	return (
 		<div className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(640px,1fr)_332px]">
@@ -30,13 +47,13 @@ export const DecisionsSurface = () => {
 				</div>
 
 				<div className="flex flex-col gap-1.75">
-					{decisions.length === 0 ? (
+					{decisionKeys.length === 0 ? (
 						<Panel variant="surface" size="bare" className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
 							waiting for backend decision frames
 						</Panel>
 					) : (
-						decisions.map((decision, index) => (
-							<DecisionChain key={decision.id} index={index} />
+						decisionKeys.map((key) => (
+							<DecisionChain key={key.id} index={key.index} />
 						))
 					)}
 				</div>
@@ -48,3 +65,4 @@ export const DecisionsSurface = () => {
 		</div>
 	);
 };
+

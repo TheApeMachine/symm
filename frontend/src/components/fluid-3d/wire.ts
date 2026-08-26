@@ -1,4 +1,6 @@
-import { decodeTelemetryFrame } from "#/providers/ws-flatbuffers";
+import * as flatbuffers from "flatbuffers";
+import { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
+
 
 const SLAB_HEADER_BYTES = 64;
 const SLAB_VERSION = 1;
@@ -126,16 +128,11 @@ const requireFloatRange = (
 	}
 };
 
-export const decodePhase = (bytes: Uint8Array): Record<string, unknown> => {
-	const frame = decodeTelemetryFrame(bytes);
-	const phase = frame.fluidPhase;
-
-	if (phase === null || typeof phase !== "object" || Array.isArray(phase)) {
-		throw new Error("fluid phase must be an object");
-	}
-
-	return phase as Record<string, unknown>;
+export const decodePhase = (bytes: Uint8Array): FluidPhaseFrame => {
+	const buffer = new flatbuffers.ByteBuffer(bytes);
+	return FluidPhaseFrame.getRootAsFluidPhaseFrame(buffer);
 };
+
 
 export const decodeFields = (bytes: Uint8Array): FluidFields => {
 	const view = header(bytes, FIELD_MAGIC);

@@ -1,15 +1,13 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
+import { useRef } from "react";
+import { cognitionStore, focusStore } from "#/collections/app";
 import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
-import { Typography } from "@/components/ui/typography";
-import { meterTrackVariants } from "@/components/ui/meter";
-import { Panel } from "@/components/ui/panel";
-import { cognitionStore, useSubscribe } from "#/providers/ws-stores";
+import { meterTrackVariants } from "#/components/ui/meter";
+import { Panel } from "#/components/ui/panel";
+import { Typography } from "#/components/ui/typography";
+import { Cognition } from "#/providers/telemetry/telemetry/cognition";
 
 import type { CognitiveReading } from "#/collections/types";
-
-const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
-	symbol !== undefined && symbol !== "" && symbol !== "stream";
 
 export const cognitiveScopes = (readings: CognitiveReading[]): string[] =>
 	[
@@ -37,51 +35,67 @@ export const cognitiveReadingFor = (
 		: (rows.find((reading) => reading.symbol === scope) ?? null);
 };
 
+const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
+	symbol !== undefined && symbol !== "" && symbol !== "stream";
+
 const METERS = [
-	{ key: "confidence", label: "Class confidence", path: "confidence", variant: "info" },
-	{ key: "lookahead", label: "Lookahead beam", path: "lookaheadScore", variant: "warning" },
-	{ key: "contrast", label: "Class contrast", path: "contrast", variant: "success" },
+	{ key: "confidence", label: "Class confidence", getter: (c: Cognition) => c.confidence(), variant: "info" },
+	{ key: "lookahead", label: "Lookahead beam", getter: (c: Cognition) => c.lookaheadScore(), variant: "warning" },
+	{ key: "contrast", label: "Class contrast", getter: (c: Cognition) => c.contrast(), variant: "success" },
 ] as const;
+
+const cogObj = new Cognition();
+
 
 export const CognitiveBeam = () => {
 	const scope = useDecisionsScopeSymbol();
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(focusStore, (state) => state);
 	const symbol = isConcreteSymbol(scope) ? scope : focusSymbol;
+	const root = useRef<HTMLDivElement>(null);
 
-	const root = useSubscribe(cognitionStore, (state) => {
-		const row = state.cognition[symbol]?.latest() ?? null;
+	cognitionStore.subscribe((state) => {
+		if (!root.current) return;
+		const last = state.getLast();
+		if (!last) return;
+
+		let targetRow: Cognition | null = null;
+		for (let i = 0; i < last.rowsLength(); i++) {
+			const row = last.rows(i, cogObj);
+			if (row && row.symbol() === symbol) {
+				targetRow = row;
+				break;
+			}
+		}
 
 		const set = (q: string, value: string) => {
 			const els = root.current?.querySelectorAll<HTMLElement>(`[data-f=${q}]`);
-
 			els?.forEach((el) => {
-				if (el instanceof HTMLElement) {
-					el.textContent = value;
-				}
+				if (el) el.textContent = value;
 			});
 		};
 
-		set("cohort", row?.cohort === undefined ? "—" : String(row.cohort));
-		set("sequence", row?.sequence === undefined || row.sequence === "" ? "no sequence yet" : String(row.sequence));
-		set("entropy", row?.entropyBits === undefined ? "—" : row.entropyBits.toFixed(3));
-		set("paths", row?.lookaheadPaths === undefined ? "—" : String(row.lookaheadPaths));
-		set("winner", row?.winner === undefined ? "pending" : String(row.winner));
-		set("candidate", row?.candidateWinner === undefined ? "pending" : String(row.candidateWinner));
-		set("held", row?.stateHeld === undefined ? "false" : String(row.stateHeld));
-		set("switchConf", row?.switchConfidence === undefined ? "—" : `${(row.switchConfidence * 100).toFixed(1)}%`);
-		set("switchThresh", row?.switchThreshold === undefined ? "—" : `${(row.switchThreshold * 100).toFixed(1)}%`);
+		if (!targetRow) return;
+
+		set("cohort", String(targetRow.cohort()));
+		set("sequence", targetRow.sequence() || "no sequence yet");
+		set("entropy", targetRow.entropyBits().toFixed(3));
+		set("paths", String(targetRow.lookaheadPaths()));
+		set("winner", targetRow.winner() || "pending");
+		set("candidate", targetRow.candidateWinner() || "pending");
+		set("held", String(targetRow.stateHeld()));
+		set("switchConf", `${(targetRow.switchConfidence() * 100).toFixed(1)}%`);
+		set("switchThresh", `${(targetRow.switchThreshold() * 100).toFixed(1)}%`);
 
 		for (const meter of METERS) {
-			const value = row?.[meter.path as keyof typeof row] as number | undefined;
-			set(meter.key, value === undefined ? "—" : value.toFixed(3));
+			const value = meter.getter(targetRow);
+			set(meter.key, Number.isFinite(value) ? value.toFixed(3) : "—");
 
-			const bar = root.current?.querySelector<HTMLElement>(`[data-meter="${meter.key}"]`);
-
+			const bar = root.current.querySelector<HTMLElement>(`[data-meter="${meter.key}"]`);
 			if (bar instanceof HTMLElement && typeof value === "number") {
 				bar.style.width = `clamp(0%, calc(${Math.min(1, Math.max(0, value))} * 100%), 100%)`;
 			}
 		}
-	}, [symbol]);
+	});
 
 	if (!isConcreteSymbol(symbol)) {
 		return (

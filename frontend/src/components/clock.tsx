@@ -1,41 +1,38 @@
+import { useSelector } from "@tanstack/react-store";
+import { strategyStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
-import { strategyStore, useSubscribe } from "#/providers/ws-stores";
 
 const fmtTime = (instant: Date): string => instant.toISOString().slice(11, 19);
 const fmtDate = (instant: Date): string => instant.toISOString().slice(0, 10);
 
 export const Clock = () => {
-	const root = useSubscribe(strategyStore, (state) => {
-		const time = root.current?.querySelector<HTMLElement>("[data-time]");
-		const date = root.current?.querySelector<HTMLElement>("[data-date]");
+	const last = useSelector(strategyStore, (state) => state.getLast());
 
-		const envelope =
-			state !== null && typeof state === "object" && !Array.isArray(state)
-				? (state as { decisions?: unknown })
-				: null;
-		const first = (Array.isArray(envelope?.decisions) ? envelope.decisions[0] : undefined) as
-			| { at?: string }
-			| undefined;
-		const instant = first?.at === undefined ? null : new Date(first.at);
-		const valid = instant !== null && Number.isFinite(instant.getTime());
+	const decisionsLen = last ? last.decisionsLength() : 0;
+	let instant: Date | null = null;
 
-		if (time instanceof HTMLElement) {
-			time.textContent = valid ? `${fmtTime(instant)} UTC` : "—";
+	if (decisionsLen > 0) {
+		const dec = last?.decisions(0);
+		const at = dec?.at();
+		if (at) {
+			instant = new Date(Number(at));
 		}
+	}
 
-		if (date instanceof HTMLElement) {
-			date.textContent = valid ? `${fmtDate(instant)} engine clock` : "—";
-		}
-	});
+	if (!instant || !Number.isFinite(instant.getTime())) {
+		instant = new Date();
+	}
 
 	return (
-		<Flex.Column ref={root}>
+		<Flex.Column>
 			<Flex>
-				<span data-time>—</span>
+				<span data-time>{`${fmtTime(instant)} UTC`}</span>
 			</Flex>
 			<Flex className="text-(--f4)">
-				<span data-date>engine clock</span>
+				<span data-date>{`${fmtDate(instant)} engine clock`}</span>
 			</Flex>
 		</Flex.Column>
 	);
 };
+
+

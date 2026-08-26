@@ -1,25 +1,27 @@
+import { useRef } from "react";
+import { causalStore } from "#/collections/app";
 import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
-import { Typography } from "@/components/ui/typography";
-import { Panel } from "@/components/ui/panel";
-import type { Variant } from "@/components/ui/types";
-import { causalStore, useSubscribe } from "#/providers/ws-stores";
+import { Panel } from "#/components/ui/panel";
+import type { Variant } from "#/components/ui/types";
+import { Typography } from "#/components/ui/typography";
+import { Causal } from "#/providers/telemetry/telemetry/causal";
 
-type Rung = { rung: number; name: string; desc: string; path: string; variant: Variant };
+type Rung = { rung: number; name: string; desc: string; getter: (c: Causal) => number; variant: Variant; path: string };
 
 const RUNGS: Rung[] = [
-	{ rung: 1, name: "Association", desc: "ρ(treatment, target)", path: "association", variant: "info" },
-	{ rung: 2, name: "Intervention expectation", desc: "E[target | do(treatment)]", path: "doExpectation", variant: "info" },
-	{ rung: 3, name: "Counterfactual target", desc: "structural target under alternate treatment + abducted residual", path: "counterfactual", variant: "warning" },
-	{ rung: 4, name: "Condition context", desc: "resonance energy supplied as causal context", path: "condition", variant: "success" },
-	{ rung: 5, name: "Intervention uplift", desc: "counterfactual target − observed target", path: "uplift", variant: "success" },
-	{ rung: 6, name: "Abducted residual", desc: "observed target − fitted structural target", path: "noise", variant: "disabled" },
+	{ rung: 1, name: "Association", desc: "ρ(treatment, target)", path: "association", getter: (c) => c.association(), variant: "info" },
+	{ rung: 2, name: "Intervention expectation", desc: "E[target | do(treatment)]", path: "doExpectation", getter: (c) => c.doExpectation(), variant: "info" },
+	{ rung: 3, name: "Counterfactual target", desc: "structural target under alternate treatment + abducted residual", path: "counterfactual", getter: (c) => c.counterfactual(), variant: "warning" },
+	{ rung: 4, name: "Condition context", desc: "resonance energy supplied as causal context", path: "condition", getter: (c) => c.condition(), variant: "success" },
+	{ rung: 5, name: "Intervention uplift", desc: "counterfactual target − observed target", path: "uplift", getter: (c) => c.uplift(), variant: "success" },
+	{ rung: 6, name: "Abducted residual", desc: "observed target − fitted structural target", path: "noise", getter: (c) => c.noise(), variant: "disabled" },
 ];
 
 const FOOTER_FIELDS = [
-	{ label: "standardized uplift", path: "upliftScore" },
-	{ label: "standardized residual", path: "noiseScore" },
-	{ label: "runner-up share", path: "entry_baseline" },
-	{ label: "context surprise", path: "contagion" },
+	{ label: "standardized uplift", path: "upliftScore", getter: (c: Causal) => c.upliftScore() },
+	{ label: "standardized residual", path: "noiseScore", getter: (c: Causal) => c.noiseScore() },
+	{ label: "runner-up share", path: "entry_baseline", getter: (c: Causal) => c.entryBaseline() },
+	{ label: "context surprise", path: "contagion", getter: (c: Causal) => c.contagion() },
 ] as const;
 
 const rungTone = (variant: Variant): string => {
@@ -29,32 +31,45 @@ const rungTone = (variant: Variant): string => {
 	return "text-(--info)";
 };
 
+const causalObj = new Causal();
+
 export const CausalLadder = () => {
 	const scope = useDecisionsScopeSymbol();
+	const root = useRef<HTMLDivElement>(null);
 
-	const root = useSubscribe(causalStore, (frames) => {
-		const row = (frames ?? []).find((frame) => frame.symbol === scope) ?? null;
+	causalStore.subscribe((frames) => {
+		if (!root.current) return;
+		const lastFrame = frames.getLast();
+		if (!lastFrame) return;
+
+		let targetRow: Causal | null = null;
+		for (let i = 0; i < lastFrame.rowsLength(); i++) {
+			const row = lastFrame.rows(i, causalObj);
+			if (row && row.symbol() === scope) {
+				targetRow = row;
+				break;
+			}
+		}
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		set("category", String(row?.category ?? "—"));
+		if (!targetRow) return;
+
+		set("category", String(targetRow.category()));
 
 		for (const rung of RUNGS) {
-			const value = row?.[rung.path as keyof typeof row] as number | undefined;
-			set(rung.path, value === undefined ? "—" : value.toFixed(6));
+			const value = rung.getter(targetRow);
+			set(rung.path, Number.isFinite(value) ? value.toFixed(6) : "—");
 		}
 
 		for (const field of FOOTER_FIELDS) {
-			const value = row?.[field.path as keyof typeof row] as number | undefined;
-			set(field.path, value === undefined ? "—" : value.toFixed(4));
+			const value = field.getter(targetRow);
+			set(field.path, Number.isFinite(value) ? value.toFixed(4) : "—");
 		}
-	}, [scope]);
+	});
 
 	if (scope === undefined) {
 		return (
@@ -93,3 +108,4 @@ export const CausalLadder = () => {
 		</Panel>
 	);
 };
+

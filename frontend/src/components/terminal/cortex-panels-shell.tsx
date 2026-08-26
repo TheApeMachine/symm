@@ -1,58 +1,68 @@
-import { Badge } from "@/components/ui/badge";
-import { meterTrackVariants } from "@/components/ui/meter";
-import { Panel } from "@/components/ui/panel";
-import { Stat } from "@/components/ui/stat";
-import { Typography } from "@/components/ui/typography";
-import { cognitionStore, useSubscribe } from "#/providers/ws-stores";
+import { useRef } from "react";
+import { cognitionStore } from "#/collections/app";
+import { Badge } from "#/components/ui/badge";
+import { meterTrackVariants } from "#/components/ui/meter";
+import { Panel } from "#/components/ui/panel";
+import { Stat } from "#/components/ui/stat";
+import { Typography } from "#/components/ui/typography";
+import { Cognition } from "#/providers/telemetry/telemetry/cognition";
+
+const cogObj = new Cognition();
 
 export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
-	const root = useSubscribe(cognitionStore, (state) => {
-		const row = state.cognition[symbol]?.latest() ?? null;
+	const root = useRef<HTMLDivElement>(null);
+
+	cognitionStore.subscribe((state) => {
+		if (!root.current) return;
+		const last = state.getLast();
+		if (!last) return;
+
+		let targetRow: Cognition | null = null;
+		for (let i = 0; i < last.rowsLength(); i++) {
+			const row = last.rows(i, cogObj);
+			if (row && row.symbol() === symbol) {
+				targetRow = row;
+				break;
+			}
+		}
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		set("winner", String(row?.winner ?? "—"));
-		set("confidence", row?.confidence === undefined ? "—" : `${(row.confidence * 100).toFixed(1)}%`);
-		set("contrast", row?.contrast === undefined ? "—" : row.contrast.toFixed(3));
-		set("entropy", row?.entropyBits === undefined ? "—" : row.entropyBits.toFixed(3));
-		set("ambiguous", row?.ambiguous === undefined ? "—" : String(row.ambiguous));
-		set("remFrom", row?.remFrom === undefined ? "—" : String(row.remFrom));
-		set("remThrough", row?.remThrough === undefined ? "—" : String(row.remThrough));
-		set("remReplays", String(row?.remReplays ?? "—"));
+		set("winner", targetRow?.winner() ?? "—");
+		set("confidence", targetRow ? `${(targetRow.confidence() * 100).toFixed(1)}%` : "—");
+		set("contrast", targetRow ? targetRow.contrast().toFixed(3) : "—");
+		set("entropy", targetRow ? targetRow.entropyBits().toFixed(3) : "—");
+		set("ambiguous", targetRow ? String(targetRow.ambiguous()) : "—");
+		set("remFrom", targetRow ? String(targetRow.remFrom()) : "—");
+		set("remThrough", targetRow ? String(targetRow.remThrough()) : "—");
+		set("remReplays", targetRow ? String(targetRow.remReplays()) : "—");
 
-		const replays = root.current?.querySelector<HTMLElement>("[data-replays]");
-
-		if (replays instanceof HTMLElement) {
-			replays.textContent = String(row?.remReplays ?? "—");
+		const replays = root.current.querySelector<HTMLElement>("[data-replays]");
+		if (replays) {
+			replays.textContent = targetRow ? String(targetRow.remReplays()) : "—";
 		}
 
-		const basin = root.current?.querySelector<HTMLElement>("[data-basin]");
-
+		const basin = root.current.querySelector<HTMLElement>("[data-basin]");
 		if (basin instanceof HTMLElement) {
-			const value = row?.confidence;
+			const value = targetRow?.confidence();
 			basin.style.width =
 				typeof value === "number"
 					? `${Math.min(100, Math.max(0, value * 100)).toFixed(1)}%`
 					: "0%";
 		}
 
-		const entropy = root.current?.querySelector<HTMLElement>("[data-entropy]");
-
+		const entropy = root.current.querySelector<HTMLElement>("[data-entropy]");
 		if (entropy instanceof HTMLElement) {
-			const value = row?.entropyBits;
+			const value = targetRow?.entropyBits();
 			entropy.style.width =
 				typeof value === "number"
 					? `${Math.min(100, Math.max(0, value * 100)).toFixed(1)}%`
 					: "0%";
 		}
-
-	}, [symbol]);
+	});
 
 	return (
 		<div ref={root} className="flex flex-col gap-3.5">

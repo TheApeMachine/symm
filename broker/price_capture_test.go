@@ -51,6 +51,26 @@ func TestPriceCaptureFeeProfiles(t *testing.T) {
 			So(frame.Payload.Data[0].Maker.Fee.String(), ShouldEqual, "0.16")
 		})
 	})
+
+	Convey("Given a sink-only audit recorder", t, func() {
+		var writtenPayload []byte
+		recorder := &audit.Recorder{
+			EventSink: func(kind string, payload []byte) error {
+				writtenPayload = payload
+				return nil
+			},
+		}
+		taker := kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.26)}
+		maker := kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.16)}
+		price := newTradeVolumePrice(t, &kraken.TradeVolumeResult{
+			Fees:      map[string]kraken.TradeVolumeFee{"XXBTZUSD": taker},
+			FeesMaker: map[string]kraken.TradeVolumeFee{"XXBTZUSD": maker},
+		})
+		price.capture = recorder
+
+		So(price.GetFees([]string{"BTC/USD"}), ShouldBeNil)
+		So(writtenPayload, ShouldNotBeEmpty)
+	})
 }
 
 func BenchmarkPriceCaptureFeeProfiles(b *testing.B) {

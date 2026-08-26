@@ -81,9 +81,7 @@ func NewFluidRTC(
 				return nil
 			}
 
-			if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
-				fluidTransport.fail(err)
-			}
+			_ = fluidTransport.publish(frame.Channel, frame.Payload)
 
 			return nil
 		})
@@ -113,25 +111,6 @@ queue fills, publication applies backpressure until the reliable channel drains.
 func (fluidTransport *FluidRTC) Run() error {
 	if err := fluidTransport.Error(); err != nil {
 		return err
-	}
-
-	if fluidTransport.bus != nil {
-		fluidTransport.bus.Wire(types.ChannelFluid, "", func(value any) any {
-			frame, ok := value.(types.FluidFrame)
-			if !ok {
-				return nil
-			}
-
-			if !fluidTransport.HasChannel(frame.Channel) {
-				return nil
-			}
-
-			if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
-				fluidTransport.fail(err)
-			}
-
-			return nil
-		})
 	}
 
 	<-fluidTransport.ctx.Done()
@@ -189,14 +168,16 @@ func (fluidTransport *FluidRTC) Answer(
 
 	peer := newFluidPeer(
 		fluidTransport.ctx,
-		fluidTransport.fail,
+		func(err error) {
+			fluidTransport.remove(peerConnection)
+		},
 		fluidTransport.queueLimit,
 		fluidTransport.bufferedLimit,
 	)
 	fluidTransport.add(peerConnection, peer)
 	peerConnection.OnDataChannel(peer.attach)
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
+		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateDisconnected {
 			fluidTransport.remove(peerConnection)
 		}
 	})
@@ -256,21 +237,6 @@ func (fluidTransport *FluidRTC) Close() error {
 	return err
 }
 
-func (fluidTransport *FluidRTC) fail(err error) {
-	if err == nil {
-		return
-	}
-
-	fluidTransport.errMutex.Lock()
-
-	if fluidTransport.err == nil {
-		fluidTransport.err = fluidError("publication transport failed", err)
-	}
-
-	fluidTransport.errMutex.Unlock()
-	fluidTransport.cancel()
-}
-
 func (fluidTransport *FluidRTC) add(
 	peerConnection *webrtc.PeerConnection,
 	peer *fluidPeer,
@@ -290,7 +256,9 @@ func (fluidTransport *FluidRTC) remove(peerConnection *webrtc.PeerConnection) {
 		peer.close()
 	}
 
-	_ = peerConnection.Close()
+	if peerConnection != nil {
+		_ = peerConnection.Close()
+	}
 }
 
 func (fluidTransport *FluidRTC) publish(channel string, payload []byte) error {
@@ -302,16 +270,18 @@ func (fluidTransport *FluidRTC) publish(channel string, payload []byte) error {
 	}()
 
 	fluidTransport.peersMutex.RLock()
-	defer fluidTransport.peersMutex.RUnlock()
-
+	peers := make([]*fluidPeer, 0, len(fluidTransport.peers))
 	for _, peer := range fluidTransport.peers {
+		peers = append(peers, peer)
+	}
+	fluidTransport.peersMutex.RUnlock()
+
+	for _, peer := range peers {
 		if !peer.has(channel) {
 			continue
 		}
 
-		if err := peer.enqueue(channel, payload); err != nil && !errors.Is(err, context.Canceled) {
-			return err
-		}
+		_ = peer.enqueue(channel, payload)
 	}
 
 	return nil

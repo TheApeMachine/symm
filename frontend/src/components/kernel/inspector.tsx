@@ -1,54 +1,49 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
+import { useRef } from "react";
+import { focusStore, measurementStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { MeasurementInspection } from "#/components/kernel/measurement-inspection";
 import {
 	kernelCopy,
 	sourceHeadlineMetric,
 } from "#/components/terminal/kernel-meta";
-import { Button } from "@/components/ui/button";
-import { Flex } from "@/components/ui/flex";
-import { Modal } from "@/components/ui/modal";
-import { Typography } from "@/components/ui/typography";
-import { measurementsStore, useSubscribe } from "#/providers/ws-stores";
+import { Button } from "#/components/ui/button";
+import { Flex } from "#/components/ui/flex";
+import { Modal } from "#/components/ui/modal";
+import { Typography } from "#/components/ui/typography";
 
 export const KernelInspector = () => {
 	const navigate = useNavigate();
 	const source = useSelector(terminalStore, (state) => state.inspectorSource);
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(focusStore, (state) => state);
 	const { closeInspect, selectSource } = terminalStore.actions;
+	const root = useRef<HTMLDivElement>(null);
 
 	const active = source !== null && source !== "";
 	const headline = active
 		? sourceHeadlineMetric(source).slice("metrics.".length)
 		: "";
 
-	const root = useSubscribe(measurementsStore, (state) => {
-		const row = active
-			? state.measurements[`${source}\u0000${focusSymbol}`]?.latest()
-			: undefined;
+	measurementStore.subscribe((state) => {
+		if (!root.current) return;
+		const ring = active ? state[source]?.[focusSymbol] : undefined;
+		const row = ring?.getLast();
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		set("unit", headline === "" ? "" : row?.metrics?.[headline]?.unit ?? "");
-		set("symbol", row?.symbol ?? "");
-		set("at", row?.at === undefined ? "" : new Date(row.at).toISOString().slice(11, 19));
-	}, [source, focusSymbol, headline]);
+		set("unit", headline === "" ? "" : headline);
+		set("symbol", row?.symbol() ?? focusSymbol);
+		set("at", row?.at() === undefined ? "" : new Date(Number(row.at())).toISOString().slice(11, 19));
+	});
 
 	if (!active) {
 		return null;
 	}
 
 	const copy = kernelCopy(source, "");
-	const measurement =
-		measurementsStore.state.measurements[`${source}\u0000${focusSymbol}`]?.latest() ?? null;
 
 	const openInSignalInsight = () => {
 		selectSource(source);
@@ -77,8 +72,6 @@ export const KernelInspector = () => {
 					<Typography.Paragraph className="text-[11px] text-(--f3) leading-relaxed">
 						{copy.blurb}
 					</Typography.Paragraph>
-
-					<MeasurementInspection measurement={measurement} />
 				</Modal.Body>
 
 				<Modal.Footer>
@@ -100,3 +93,5 @@ export const KernelInspector = () => {
 		</Modal>
 	);
 };
+
+

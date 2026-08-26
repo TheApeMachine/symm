@@ -1,9 +1,10 @@
-import { Badge } from "@/components/ui/badge";
-import { Flex } from "@/components/ui/flex";
-import { Panel } from "@/components/ui/panel";
+import { useRef } from "react";
+import { tickStore } from "#/collections/app";
 import type { Measurement } from "#/collections/types";
 import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
-import { tickStore, useSubscribe } from "#/providers/ws-stores";
+import { Badge } from "#/components/ui/badge";
+import { Flex } from "#/components/ui/flex";
+import { Panel } from "#/components/ui/panel";
 
 export type TerminalHealth = {
 	firing: number;
@@ -81,11 +82,14 @@ export const terminalHealthSummary = (
 };
 
 export const HealthPanel = () => {
-	const root = useSubscribe(tickStore, (state) => {
-		const el = root.current?.querySelector<HTMLElement>("[data-tick]");
+	const root = useRef<HTMLDivElement>(null);
 
-		if (el instanceof HTMLElement) {
-			el.textContent = String(state?.count ?? "—");
+	tickStore.subscribe((state) => {
+		if (!root.current) return;
+		const el = root.current.querySelector<HTMLElement>("[data-tick]");
+		const last = state.getLast();
+		if (el) {
+			el.textContent = String(last?.count() ?? "—");
 		}
 	});
 
@@ -106,3 +110,5 @@ export const HealthPanel = () => {
 		</Panel>
 	);
 };
+
+

@@ -1,14 +1,143 @@
+import * as flatbuffers from "flatbuffers";
+import type {
+	ClockSnapshot,
+	DiagnosticsFrame as DiagnosticsFrameType,
+	ErrorSnapshot,
+	GoroutineOwner,
+	HopSnapshot,
+	QueueSnapshot,
+} from "#/collections/types";
 import { FluidRecordReader } from "#/components/fluid-3d/record";
-import type { DiagnosticsFrame } from "#/collections/types";
-import { decodeTelemetryFrame } from "#/providers/ws-flatbuffers";
+import { DiagnosticClock } from "#/providers/telemetry/telemetry/diagnostic-clock";
+import { DiagnosticError } from "#/providers/telemetry/telemetry/diagnostic-error";
+import { DiagnosticGoroutine } from "#/providers/telemetry/telemetry/diagnostic-goroutine";
+import { DiagnosticHop } from "#/providers/telemetry/telemetry/diagnostic-hop";
+import { DiagnosticPass } from "#/providers/telemetry/telemetry/diagnostic-pass";
+import { DiagnosticQueue } from "#/providers/telemetry/telemetry/diagnostic-queue";
+import { DiagnosticsFrame } from "#/providers/telemetry/telemetry/diagnostics-frame";
+import { Envelope } from "#/providers/telemetry/telemetry/envelope";
 
 const diagnosticsChannel = "diagnostics";
 
+const clockObj = new DiagnosticClock();
+const hopObj = new DiagnosticHop();
+const queueObj = new DiagnosticQueue();
+const errorObj = new DiagnosticError();
+const passObj = new DiagnosticPass();
+const goroutineObj = new DiagnosticGoroutine();
+
+export const diagnosticsFrameFromFlatBuffer = (
+	frame: DiagnosticsFrame,
+): DiagnosticsFrameType => {
+	const stages: ClockSnapshot[] = [];
+	for (let i = 0; i < frame.stagesLength(); i++) {
+		const s = frame.stages(i, clockObj);
+		if (!s) continue;
+		stages.push({
+			name: s.name() ?? "",
+			count: Number(s.count()),
+			total_ns: Number(s.totalNs()),
+			last_ns: Number(s.lastNs()),
+			max_ns: Number(s.maxNs()),
+			last_at_ns: Number(s.lastAtNs()),
+			active: Number(s.active()),
+		});
+	}
+
+	const hops: HopSnapshot[] = [];
+	for (let i = 0; i < frame.hopsLength(); i++) {
+		const h = frame.hops(i, hopObj);
+		if (!h) continue;
+		hops.push({
+			from: h.from() ?? "",
+			to: h.to() ?? "",
+			count: Number(h.count()),
+			total_ns: Number(h.totalNs()),
+			last_ns: Number(h.lastNs()),
+			max_ns: Number(h.maxNs()),
+		});
+	}
+
+	const queues: QueueSnapshot[] = [];
+	for (let i = 0; i < frame.queuesLength(); i++) {
+		const q = frame.queues(i, queueObj);
+		if (!q) continue;
+		const writers: string[] = [];
+		for (let w = 0; w < q.writersLength(); w++) {
+			const writer = q.writers(w);
+			if (writer) writers.push(writer);
+		}
+		const readers: string[] = [];
+		for (let r = 0; r < q.readersLength(); r++) {
+			const reader = q.readers(r);
+			if (reader) readers.push(reader);
+		}
+		queues.push({
+			name: q.name() ?? "",
+			kind: (q.kind() as QueueSnapshot["kind"]) ?? "rail",
+			writers,
+			readers,
+			depth: Number(q.depth()),
+			cap: Number(q.capacity()),
+			high_water: Number(q.highWater()),
+			symbols: Number(q.symbols()),
+		});
+	}
+
+	const errors: ErrorSnapshot[] = [];
+	for (let i = 0; i < frame.errorsLength(); i++) {
+		const e = frame.errors(i, errorObj);
+		if (!e) continue;
+		errors.push({
+			source: e.source() ?? "",
+			message: e.message() ?? "",
+			caller: e.caller() ?? undefined,
+			at_ns: Number(e.atNs()),
+		});
+	}
+
+	const goroutines: GoroutineOwner[] = [];
+	for (let i = 0; i < frame.goroutinesLength(); i++) {
+		const g = frame.goroutines(i, goroutineObj);
+		if (!g) continue;
+		goroutines.push({
+			owner: g.owner() ?? "",
+			count: Number(g.count()),
+			state: g.state() ?? undefined,
+		});
+	}
+
+	const pass = frame.pass(passObj);
+
+	return {
+		status: (frame.status() as DiagnosticsFrameType["status"]) ?? "flowing",
+		enabled: frame.enabled(),
+		at_ns: Number(frame.atNs()),
+		started_ns: Number(frame.startedNs()),
+		stages,
+		hops,
+		queues,
+		errors,
+		goroutines,
+		pass: pass
+			? {
+					state: (pass.state() as "idle" | "running" | "blocked") ?? "idle",
+					in_flight_ns: Number(pass.inFlightNs()),
+					last_pass_ns: Number(pass.lastPassNs()),
+					since_last_ns: Number(pass.sinceLastNs()),
+				}
+			: { state: "idle" },
+	};
+};
+
+
 export type DiagnosticsFeedHandlers = {
-	onFrame: (frame: DiagnosticsFrame) => void;
+	onFrame: (frame: DiagnosticsFrameType) => void;
 	onState: (state: RTCPeerConnectionState | "connecting") => void;
 	onError: (error: Error) => void;
 };
+
+
 
 const signalingURL = () =>
 	import.meta.env.VITE_SYMM_WEBRTC_URL?.trim() ||
@@ -74,20 +203,17 @@ export class DiagnosticsWebRTCFeed {
 				const record = reader.push(event.data);
 
 				if (record !== null) {
-					const frame = decodeTelemetryFrame(
-						new Uint8Array(record),
-					).diagnostics;
+					const buffer = new flatbuffers.ByteBuffer(new Uint8Array(record));
+					if (Envelope.bufferHasIdentifier(buffer)) {
+						const envelope = Envelope.getRootAsEnvelope(buffer);
+						const frame = envelope.frame(new DiagnosticsFrame());
+						if (frame) {
+							this.handlers.onFrame(diagnosticsFrameFromFlatBuffer(frame));
+						}
 
-					if (
-						frame === null ||
-						typeof frame !== "object" ||
-						Array.isArray(frame)
-					) {
-						throw new Error("diagnostics FlatBuffer has no diagnostics frame");
 					}
-
-					this.handlers.onFrame(frame as DiagnosticsFrame);
 				}
+
 			} catch (error) {
 				this.handlers.onError(errorValue(error));
 			}

@@ -67,6 +67,25 @@ func TestRecorderWrite(t *testing.T) {
 			So(rows, ShouldEqual, 1000)
 		})
 	})
+
+	Convey("Given a sink-only recorder", t, func() {
+		var writtenKind string
+		var writtenPayload []byte
+		recorder := &Recorder{
+			EventSink: func(kind string, payload []byte) error {
+				writtenKind = kind
+				writtenPayload = payload
+				return nil
+			},
+		}
+
+		Convey("Write should route directly to EventSink", func() {
+			err := recorder.Write(map[string]string{"foo": "bar"})
+			So(err, ShouldBeNil)
+			So(writtenKind, ShouldEqual, "metadata")
+			So(string(writtenPayload), ShouldEqual, `{"foo":"bar"}`)
+		})
+	})
 }
 
 func TestRecorderClose(t *testing.T) {
@@ -79,6 +98,21 @@ func TestRecorderClose(t *testing.T) {
 		var closed types.ClosedError
 
 		Convey("It should reject writes after the close boundary", func() {
+			So(errors.As(err, &closed), ShouldBeTrue)
+		})
+	})
+
+	Convey("Given a sink-only recorder", t, func() {
+		recorder := &Recorder{
+			EventSink: func(kind string, payload []byte) error {
+				return nil
+			},
+		}
+
+		Convey("Close should succeed idempotently and reject subsequent writes", func() {
+			So(recorder.Close(), ShouldBeNil)
+			err := recorder.Write(map[string]string{"foo": "bar"})
+			var closed types.ClosedError
 			So(errors.As(err, &closed), ShouldBeTrue)
 		})
 	})

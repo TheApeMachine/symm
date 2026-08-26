@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
+import { graphStore, strategyStore, tickStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { ModelScope } from "#/components/graph/component";
 import {
@@ -9,11 +10,13 @@ import {
 } from "#/components/terminal/graph-surface-store";
 import { MCTSTreeVisualizer } from "#/components/terminal/mcts-tree-visualizer";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
-import { Typography } from "@/components/ui/typography";
-import { graphStore, strategyStore, tickStore, useSubscribe } from "#/providers/ws-stores";
+import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
+import { Decision } from "#/providers/telemetry/telemetry/decision";
 
 export type ModalViewMode = "mcts" | "graph3d";
+
+const decObj = new Decision();
 
 /*
 ThesisModal is the carrier for one symbol's thesis and its full decision breakdown.
@@ -24,14 +27,27 @@ It provides a comprehensive inspection window featuring:
 - Live arbitration & entry decision snapshot rail
 */
 const ThesisActionBadge = ({ symbol }: { symbol: string }) => {
-	const root = useSubscribe(strategyStore, (state) => {
-		const decision = (state?.decisions ?? []).find((entry) => entry.symbol === symbol);
-		const el = root.current?.querySelector<HTMLElement>("[data-action]");
+	const root = useRef<HTMLSpanElement>(null);
 
-		if (el instanceof HTMLElement) {
-			el.textContent = decision?.action ?? "";
+	strategyStore.subscribe((state) => {
+		if (!root.current) return;
+		const last = state.getLast();
+		if (!last) return;
+
+		let targetDecision: Decision | null = null;
+		for (let i = 0; i < last.decisionsLength(); i++) {
+			const dec = last.decisions(i, decObj);
+			if (dec && dec.symbol() === symbol) {
+				targetDecision = dec;
+				break;
+			}
 		}
-	}, [symbol]);
+
+		const el = root.current.querySelector<HTMLElement>("[data-action]");
+		if (el) {
+			el.textContent = targetDecision?.action() ?? "";
+		}
+	});
 
 	return (
 		<span ref={root} className="contents">
@@ -41,11 +57,14 @@ const ThesisActionBadge = ({ symbol }: { symbol: string }) => {
 };
 
 const ThesisTickCounter = () => {
-	const root = useSubscribe(tickStore, (state) => {
-		const el = root.current?.querySelector<HTMLElement>("[data-tick]");
+	const root = useRef<HTMLDivElement>(null);
 
-		if (el instanceof HTMLElement) {
-			el.textContent = String(state?.count ?? "—");
+	tickStore.subscribe((state) => {
+		if (!root.current) return;
+		const el = root.current.querySelector<HTMLElement>("[data-tick]");
+		const last = state.getLast();
+		if (el) {
+			el.textContent = String(last?.count() ?? "—");
 		}
 	});
 
@@ -71,13 +90,15 @@ export const ThesisModal = () => {
 	const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
 
 	useEffect(() => {
-		if (graphStore.state) {
-			paintGraphSurface(graphStore.state);
+		const last = graphStore.state.getLast();
+		if (last) {
+			paintGraphSurface(last);
 		}
 
-		const { unsubscribe: unregisterStore } = graphStore.subscribe((state) => {
-			if (state) {
-				paintGraphSurface(state);
+		const unregisterStore = graphStore.subscribe((state) => {
+			const l = state.getLast();
+			if (l) {
+				paintGraphSurface(l);
 			}
 		});
 
@@ -86,9 +107,10 @@ export const ThesisModal = () => {
 		});
 
 		return () => {
-			unregisterStore();
+			unregisterStore.unsubscribe();
 			unregisterSurface();
 		};
+
 	}, []);
 
 	if (symbol === null || symbol === "") {

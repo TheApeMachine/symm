@@ -1,8 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
-import { Flex } from "@/components/ui/flex";
-import { Panel } from "@/components/ui/panel";
-import { measurementsStore, useSubscribe } from "#/providers/ws-stores";
+import { useRef } from "react";
+import { focusStore, measurementStore } from "#/collections/app";
+import { Flex } from "#/components/ui/flex";
+import { Panel } from "#/components/ui/panel";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
+
+const metricObj = new Metric();
 
 const radarAxes = [
 	{ label: "volatility", source: "hawkes", metric: "spectral_radius", x: 0, y: -1 },
@@ -13,19 +16,33 @@ const radarAxes = [
 ];
 
 export const RadarPanel = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const root = useRef<HTMLDivElement>(null);
 
-	const root = useSubscribe(measurementsStore, (state) => {
+	measurementStore.subscribe((state) => {
+		if (!root.current) return;
+
 		for (const axis of radarAxes) {
-			const row = state.measurements[`${axis.source}\u0000${focusSymbol}`]?.latest();
-			const value = row?.metrics?.[axis.metric]?.normalized ?? 0;
-			const arm = root.current?.querySelector<SVGElement>(`[data-axis="${axis.label}"]`);
+			const ring = state[axis.source]?.[focusSymbol];
+			const row = ring?.getLast();
+			let normalized = 0;
 
+			if (row) {
+				for (let j = 0; j < row.metricsLength(); j++) {
+					const m = row.metrics(j, metricObj);
+					if (m && m.name() === axis.metric) {
+						normalized = m.normalized();
+						break;
+					}
+				}
+			}
+
+			const arm = root.current.querySelector<SVGElement>(`[data-axis="${axis.label}"]`);
 			if (arm instanceof SVGElement) {
-				arm.style.setProperty("--axis", String(Math.min(1, Math.max(0, value))));
+				arm.style.setProperty("--axis", String(Math.min(1, Math.max(0, normalized))));
 			}
 		}
-	}, [focusSymbol]);
+	});
 
 	return (
 		<div ref={root} className="flex h-full flex-col">
@@ -60,3 +77,5 @@ export const RadarPanel = () => {
 		</div>
 	);
 };
+
+

@@ -1,15 +1,13 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
-import { Panel } from "@/components/ui/panel";
-import { measurementsStore, useSubscribe } from "#/providers/ws-stores";
+import { useRef } from "react";
+import { focusStore, measurementStore } from "#/collections/app";
+import { Panel } from "#/components/ui/panel";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
+
+const metricObj = new Metric();
 
 const fmt = (value: unknown, digits: number): string =>
 	typeof value === "number" ? value.toFixed(digits) : "—";
-
-const metric = (
-	row: { metrics?: Record<string, { raw: number; normalized?: number | null }> } | undefined,
-	name: string,
-): number | undefined => row?.metrics?.[name]?.raw;
 
 const STATS = [
 	{ label: "med notional", name: "reported_volume_notional_median", align: "text-left" },
@@ -18,38 +16,51 @@ const STATS = [
 ] as const;
 
 export const CrossSectionPanel = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const root = useRef<HTMLDivElement>(null);
 
-	const root = useSubscribe(measurementsStore, (state) => {
-		const row = state.measurements[`liquidity\u0000${focusSymbol}`]?.latest();
+	measurementStore.subscribe((state) => {
+		if (!root.current) return;
+		const ring = state.liquidity?.[focusSymbol];
+		const row = ring?.getLast();
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		set("scarcity", fmt(metric(row, "scarcity_score"), 3));
+		const metricsMap: Record<string, { raw: number; normalized: number }> = {};
+		if (row) {
+			for (let j = 0; j < row.metricsLength(); j++) {
+				const m = row.metrics(j, metricObj);
+				if (m) {
+					metricsMap[m.name() ?? ""] = {
+						raw: m.raw(),
+						normalized: m.normalized(),
+					};
+				}
+			}
+		}
+
+		set("scarcity", fmt(metricsMap.scarcity_score?.raw, 3));
 		set("symbol", focusSymbol.length === 0 ? "no focus" : focusSymbol);
-		set("rel", fmt(metric(row, "relative_touch_depth"), 3));
+		set("rel", fmt(metricsMap.relative_touch_depth?.raw, 3));
 		set("at", (() => {
-			if (row?.at === undefined) return "—";
-			const parsed = new Date(row.at);
+			if (row?.at() === undefined) return "—";
+			const parsed = new Date(Number(row.at()));
 			return Number.isNaN(parsed.getTime()) ? "—" : parsed.toISOString().slice(11, 19);
 		})());
-		set("norm", fmt(row?.metrics?.executable_touch_depth?.normalized, 2));
+		set("norm", fmt(metricsMap.executable_touch_depth?.normalized, 2));
 
 		for (const stat of STATS) {
-			set(stat.name, fmt(metric(row, stat.name), 0));
+			set(stat.name, fmt(metricsMap[stat.name]?.raw, 0));
 		}
 
 		// depth bar
-		const depth = metric(row, "executable_touch_depth");
-		const median = metric(row, "executable_touch_depth_median");
-		const bar = root.current?.querySelector<HTMLElement>("[data-depth-bar]");
-		const progressbar = root.current?.querySelector<HTMLElement>('[role="progressbar"]');
+		const depth = metricsMap.executable_touch_depth?.raw;
+		const median = metricsMap.executable_touch_depth_median?.raw;
+		const bar = root.current.querySelector<HTMLElement>("[data-depth-bar]");
+		const progressbar = root.current.querySelector<HTMLElement>('[role="progressbar"]');
 
 		if (bar instanceof HTMLElement) {
 			if (depth !== undefined && median !== undefined && median > 0) {
@@ -61,7 +72,7 @@ export const CrossSectionPanel = () => {
 				progressbar?.setAttribute("aria-valuenow", "0");
 			}
 		}
-	}, [focusSymbol]);
+	});
 
 	return (
 		<Panel ref={root} size="lg">
@@ -98,3 +109,4 @@ export const CrossSectionPanel = () => {
 		</Panel>
 	);
 };
+

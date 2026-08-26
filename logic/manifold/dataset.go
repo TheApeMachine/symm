@@ -113,12 +113,6 @@ func (dataset *Dataset) Generate() iter.Seq[*sensorium.State] {
 		shared, found := dataset.workspace.Shared("books")
 
 		if !found {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"manifold: shared book manager not found",
-				nil,
-			))
-
 			return
 		}
 

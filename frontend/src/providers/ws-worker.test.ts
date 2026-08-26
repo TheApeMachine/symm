@@ -99,43 +99,51 @@ describe("ws-worker", () => {
 		MockWebSocket.latest = null;
 	});
 
-	it("advances ingestion while presenting only the newest state", async () => {
+	it("emits STATUS online on open and forwards binary batches to the main thread", async () => {
 		const { scope, socket } = await connectWorker();
 
-		await socket.emit("message", encodeFrameBatch([1]));
-		await socket.emit("message", encodeFrameBatch([2]));
-		await socket.emit("message", encodeFrameBatch([3]));
+		// Initial READY from worker instantiation
+		expect(scope.messages).toContainEqual({ type: "READY" });
 
-		expect(scope.messages).toEqual([
-			{ type: "READY" },
-			{ type: "DRAW_BATCH", frames: [{ tick: { count: 1 } }] },
-		]);
-		// No per-batch ACK is sent back to the backend; the writer relies on the
-		// WebSocket's own TCP backpressure instead of an ACK-gated window.
-		expect(socket.sent).toEqual([]);
+		// Open socket: must notify main thread of ONLINE
+		await socket.emit("open", {});
+		expect(scope.messages).toContainEqual({ type: "STATUS", status: "ONLINE" });
 
-		await scope.emit("message", { type: "PAINTED", acknowledgeBackend: false });
-		expect(scope.messages.at(-1)).toEqual({
-			type: "DRAW_BATCH",
-			frames: [{ tick: { count: 3 } }],
-		});
+		// Inbound batch: must transfer binary buffer to main thread via postMessage
+		const batchBuffer = encodeFrameBatch([1, 2, 3]);
+		await socket.emit("message", batchBuffer);
 
-		await scope.emit("message", { type: "PAINTED", acknowledgeBackend: false });
-		expect(scope.messages).toHaveLength(3);
-		expect(socket.sent).toEqual([]);
+		const batchMsg = scope.messages.find(
+			(m: any) => m.type === "BATCH" && m.buffer instanceof ArrayBuffer,
+		) as { type: "BATCH"; buffer: ArrayBuffer } | undefined;
+
+		expect(batchMsg).toBeDefined();
+		expect(batchMsg?.buffer.byteLength).toBe(batchBuffer.byteLength);
+
+		// Close socket: must notify main thread of OFFLINE
+		await socket.emit("close", {});
+		expect(scope.messages).toContainEqual({ type: "STATUS", status: "OFFLINE" });
 	});
 
-	it("coalesces repeated state tables from one backend batch", async () => {
+	it("dispatches main thread commands to the backend websocket", async () => {
 		const { scope, socket } = await connectWorker();
+		await socket.emit("open", {});
 
-		await socket.emit("message", encodeFrameBatch([1, 2, 3]));
-		expect(scope.messages).toEqual([
-			{ type: "READY" },
-			{
-				type: "DRAW_BATCH",
-				frames: [{ tick: { count: 3 } }],
-			},
-		]);
-		expect(socket.sent).toEqual([]);
+		await scope.emit("message", { type: "FOCUS", symbol: "SOL/USD" });
+		expect(socket.sent).toContainEqual(
+			JSON.stringify({ type: "focus", symbol: "SOL/USD" }),
+		);
+
+		await scope.emit("message", { type: "POSITION_EXIT", symbol: "ETH/USD" });
+		expect(socket.sent).toContainEqual(
+			JSON.stringify({ type: "position.exit", symbol: "ETH/USD" }),
+		);
+
+		await scope.emit("message", { type: "BACKTEST", action: "play", captureId: 42 });
+		expect(socket.sent).toContainEqual(
+			JSON.stringify({ type: "backtest.play", captureId: 42 }),
+		);
 	});
 });
+
+

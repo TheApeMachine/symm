@@ -219,6 +219,8 @@ func NewHub(
 
 			hub.handleCommand(payload)
 		}
+	}, websocket.Config{
+		Origins: []string{"*"},
 	}))
 
 	hub.registerFluidWebRTC()
@@ -365,7 +367,18 @@ func (hub *Hub) Run() error {
 		return hub.err
 	}
 
-	return hub.app.Listen(hub.listenAddr)
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- hub.app.Listen(hub.listenAddr)
+	}()
+
+	select {
+	case <-hub.ctx.Done():
+		_ = hub.app.Shutdown()
+		return hub.ctx.Err()
+	case err := <-errChan:
+		return err
+	}
 }
 
 /*

@@ -1,5 +1,8 @@
 import { createStore } from "@tanstack/store";
 import { Graph as RenderGraph } from "#/components/graph/core/graph";
+import { GraphEdge } from "#/providers/telemetry/telemetry/graph-edge";
+import { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
+import { GraphNode } from "#/providers/telemetry/telemetry/graph-node";
 
 export type MarketGraphNode = {
 	id: string;
@@ -44,31 +47,51 @@ const graphSurfaceStore = createStore<GraphSurfaceState>({
 	pendingStructureKey: "",
 });
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	value !== null && typeof value === "object";
+const nodeObj = new GraphNode();
+const edgeObj = new GraphEdge();
 
-const isMarketGraphFrame = (value: unknown): value is MarketGraphFrame => {
-	if (!isRecord(value)) {
-		return false;
+export const graphFrameFromFlatBuffer = (fb: GraphFrame | null): MarketGraphFrame | null => {
+	if (!fb) return null;
+
+	const nodes: Record<string, MarketGraphNode> = {};
+	for (let i = 0; i < fb.nodesLength(); i++) {
+		const n = fb.nodes(i, nodeObj);
+		if (n && n.id()) {
+			const id = n.id()!;
+			nodes[id] = {
+				id,
+				symbol: n.symbol() ?? undefined,
+				source: n.source() ?? undefined,
+				kind: n.kind() ?? undefined,
+				value: n.value(),
+				strength: n.strength(),
+				confidence: n.confidence(),
+				at: String(n.at()),
+			};
+		}
 	}
 
-	return isRecord(value.nodes) && Array.isArray(value.edges);
-};
-
-const graphFrames = (value: unknown): MarketGraphFrame[] => {
-	if (Array.isArray(value)) {
-		return value.filter(isMarketGraphFrame);
+	const edges: MarketGraphEdge[] = [];
+	for (let i = 0; i < fb.edgesLength(); i++) {
+		const e = fb.edges(i, edgeObj);
+		if (e && e.from() && e.to()) {
+			edges.push({
+				from: e.from()!,
+				to: e.to()!,
+				relation: e.relation() ?? undefined,
+				weight: e.weight(),
+				confidence: e.confidence(),
+				at: String(e.at()),
+				reason: e.reason() ?? undefined,
+			});
+		}
 	}
 
-	if (isMarketGraphFrame(value)) {
-		return [value];
-	}
-
-	if (!isRecord(value)) {
-		return [];
-	}
-
-	return Object.values(value).filter(isMarketGraphFrame);
+	return {
+		at: String(fb.at()),
+		nodes,
+		edges,
+	};
 };
 
 export const adaptGraph = (frame: MarketGraphFrame): RenderGraph => {
@@ -214,20 +237,27 @@ paintGraphSurface refreshes inspection data on every frame but replaces the GPU
 graph only on initial load. Structural changes wait for explicit user sync.
 */
 export const paintGraphSurface = (value: unknown): void => {
-	const frame = graphFrames(value).at(-1) ?? null;
+	let frame: MarketGraphFrame | null = null;
+	if (value instanceof GraphFrame) {
+		frame = graphFrameFromFlatBuffer(value);
+	} else if (value && typeof value === "object" && "getLast" in value && typeof (value as any).getLast === "function") {
+		frame = graphFrameFromFlatBuffer((value as any).getLast());
+	} else if (value && typeof value === "object" && "nodes" in value && "edges" in value) {
+		frame = value as MarketGraphFrame;
+	}
 
 	if (frame === null) {
 		return;
 	}
 
 	graphSurfaceStore.setState((state) => {
-		const structureKey = graphStructureKey(frame);
-		const plan = graphFramePlan(state.displayedStructureKey, frame);
+		const structureKey = graphStructureKey(frame!);
+		const plan = graphFramePlan(state.displayedStructureKey, frame!);
 
 		if (plan === "initialize") {
 			return {
 				frame,
-				graph: adaptGraph(frame),
+				graph: adaptGraph(frame!),
 				displayedStructureKey: structureKey,
 				pendingStructureKey: "",
 			};
@@ -243,3 +273,4 @@ export const paintGraphSurface = (value: unknown): void => {
 		};
 	});
 };
+

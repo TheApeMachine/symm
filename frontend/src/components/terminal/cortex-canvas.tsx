@@ -1,24 +1,75 @@
 import { useEffect, useRef } from "react";
-import type { CognitiveReading } from "#/collections/types";
+import { cognitionStore } from "#/collections/app";
 import {
 	CortexLeafRoster,
 	drawCortexTree,
 } from "#/components/terminal/cortex-draw";
 import { cortexTreeFromReading } from "#/components/terminal/cortex-tree";
-import { cognitionStore } from "#/providers/ws-stores";
+import { Cognition } from "#/providers/telemetry/telemetry/cognition";
+import { CognitionBeam } from "#/providers/telemetry/telemetry/cognition-beam";
+import { CognitionBranch } from "#/providers/telemetry/telemetry/cognition-branch";
+import { CognitionClass } from "#/providers/telemetry/telemetry/cognition-class";
+
+const cogObj = new Cognition();
+const branchObj = new CognitionBranch();
+const beamObj = new CognitionBeam();
+const classObj = new CognitionClass();
+
+const cognitionToRecord = (cog: Cognition | null): Record<string, unknown> | null => {
+	if (!cog) return null;
+
+	const branches: any[] = [];
+	for (let i = 0; i < cog.branchesLength(); i++) {
+		const b = cog.branches(i, branchObj);
+		if (b) {
+			branches.push({
+				id: Number(b.id()),
+				parentId: Number(b.parentId()),
+				token: b.token() ?? "node",
+				prefix: b.prefix() ?? "",
+				key: b.key() ?? "",
+				depth: Number(b.depth()),
+				probability: b.probability(),
+				count: Number(b.count()),
+			});
+		}
+	}
+
+	const beams: any[] = [];
+	for (let i = 0; i < cog.beamsLength(); i++) {
+		const b = cog.beams(i, beamObj);
+		if (b) {
+			beams.push({
+				sequence: b.sequence() ?? "",
+				key: b.key() ?? "",
+				score: b.score(),
+			});
+		}
+	}
+
+	const classes: any[] = [];
+	for (let i = 0; i < cog.classesLength(); i++) {
+		const c = cog.classes(i, classObj);
+		if (c) {
+			classes.push({
+				name: c.name() ?? "",
+				probability: c.probability(),
+			});
+		}
+	}
+
+	return {
+		beamWidth: Number(cog.beamWidth()),
+		maxHops: Number(cog.maxHops()),
+		nodeCount: Number(cog.nodeCount()),
+		branches,
+		beams,
+		classes,
+	};
+};
 
 /*
 CortexCanvas draws the sensory prefix tree.
-
-This is the one cognition reading that is not a value: it is a graph, and a
-graph has to be laid out before it can be shown. data-paint writes a value into
-a node, which is exactly the wrong shape for it, so the canvas registers its own
-painter — the same arrangement the market graph already uses. What it draws is
-still only what the classifier published: the branches, their probabilities, and
-the beam path through them.
-
-The leaf roster is retained across frames so a tree that gains a branch grows
-into the space it already occupied rather than reshuffling every leaf.
 */
 export const CortexCanvas = ({
 	symbol,
@@ -34,10 +85,7 @@ export const CortexCanvas = ({
 	useEffect(() => {
 		const draw = () => {
 			const canvas = canvasRef.current;
-
-			if (canvas === null) {
-				return;
-			}
+			if (canvas === null) return;
 
 			const width = Math.max(1, canvas.clientWidth);
 			const height = Math.max(1, canvas.clientHeight);
@@ -54,9 +102,7 @@ export const CortexCanvas = ({
 			const context = canvas.getContext("2d");
 			const tree = cortexTreeFromReading(readingRef.current);
 
-			if (context === null) {
-				return;
-			}
+			if (context === null) return;
 
 			context.setTransform(ratio, 0, 0, ratio, 0, 0);
 
@@ -68,24 +114,26 @@ export const CortexCanvas = ({
 			drawCortexTree(context, width, height, tree, rosterRef.current);
 		};
 
-		/*
-			Cognition is published as a symbol-keyed map and only carries the symbols
-			re-read this tick, so a frame that omits this one leaves the last tree on
-			screen instead of blanking it.
-		*/
-		const paint = (reading: CognitiveReading): void => {
-			readingRef.current = reading as unknown as Record<string, unknown>;
+		const paint = (record: Record<string, unknown> | null): void => {
+			readingRef.current = record;
 			draw();
 		};
 
 		const subscription = cognitionStore.subscribe((state) => {
-			const reading = state.cognition?.[symbol]?.latest();
+			const last = state.getLast();
+			if (!last) return;
 
-			if (reading === undefined) {
-				return;
+			let targetRow: Cognition | null = null;
+			for (let i = 0; i < last.rowsLength(); i++) {
+				const row = last.rows(i, cogObj);
+				if (row && row.symbol() === symbol) {
+					targetRow = row;
+					break;
+				}
 			}
 
-			paint(reading);
+			if (!targetRow) return;
+			paint(cognitionToRecord(targetRow));
 		});
 
 		const observer = new ResizeObserver(draw);
@@ -95,25 +143,13 @@ export const CortexCanvas = ({
 			observer.observe(canvas);
 		}
 
-		/*
-			A fresh mount has an empty `readingRef` even when cognition is
-			already flowing — routing tears the previous instance's ref down.
-			Replaying the retained last frame is what makes revisiting this
-			page show its tree immediately instead of sitting blank until the
-			classifier's next tick.
-		*/
-		const seed = cognitionStore.state.cognition?.[symbol]?.latest();
-
-		if (seed !== undefined) {
-			paint(seed);
-		} else {
-			draw();
-		}
+		draw();
 
 		return () => {
 			subscription.unsubscribe();
 			observer.disconnect();
 		};
+
 	}, [symbol]);
 
 	return <canvas ref={canvasRef} className={className} />;

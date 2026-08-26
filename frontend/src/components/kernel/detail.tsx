@@ -1,57 +1,64 @@
 import { useSelector } from "@tanstack/react-store";
-import { appStore } from "#/collections/app";
-import { terminalStore } from "#/collections/terminal";
+import { useRef } from "react";
+import {
+	focusStore,
+	kernelDetailStore,
+	measurementStore,
+	symbolsStore,
+} from "#/collections/app";
 import {
 	kernelCopy,
 	metricLabel,
-	sourceHeadlineMetric,
 	sourceMetrics,
 } from "#/components/terminal/kernel-meta";
 import { Flex } from "#/components/ui/flex";
-import { Typography } from "@/components/ui/typography";
-import { measurementsStore, useSubscribe } from "#/providers/ws-stores";
+import { Typography } from "#/components/ui/typography";
+import { Metric } from "#/providers/telemetry/telemetry/metric";
+
+const metricObj = new Metric();
 
 export const SignalDetail = () => {
-	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
-	const kernels = useSelector(appStore, (state) => state.kernels);
-	const symbols = useSelector(appStore, (state) => state.symbols);
-	const selected = useSelector(terminalStore, (state) => state.selectedSource);
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const selected = useSelector(kernelDetailStore, (state) => state);
+	const symbols = useSelector(symbolsStore, (state) => state);
+	const root = useRef<HTMLDivElement>(null);
 
-	const source = selected || kernels[0] || "";
+	const source = selected || "cvd";
 	const copy = source === "" ? { name: "Signal detail", sub: "", blurb: "" } : kernelCopy(source, "");
 	const metrics = source === "" ? [] : sourceMetrics(source);
-	const headline = source === "" ? "" : sourceHeadlineMetric(source);
 
-	const root = useSubscribe(measurementsStore, (state) => {
-		const row = source === "" ? undefined : state.measurements[`${source}\u0000${focusSymbol}`]?.latest();
+	measurementStore.subscribe((state) => {
+		if (!root.current) return;
+		const ring = source === "" ? undefined : state[source]?.[focusSymbol];
+		const row = ring?.getLast();
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		set("symbol", row?.symbol ?? "");
-		set("at", row?.at === undefined ? "—" : new Date(row.at).toISOString().slice(11, 19));
-		set("unit", row?.metrics?.[headline.slice("metrics.".length)]?.unit ?? "");
-		set("maturity", row?.maturity === undefined ? "—" : row.maturity.toFixed(3));
-		set("peer", row?.peer ?? "—");
-		set("epoch", String(Object.keys(state.measurements).length));
+		set("symbol", row?.symbol() ?? focusSymbol);
+		set("at", row?.at() === undefined ? "—" : new Date(Number(row.at())).toISOString().slice(11, 19));
+		set("maturity", row?.maturity() === undefined ? "—" : row.maturity().toFixed(3));
+		set("peer", row?.peer() ?? "—");
+		set("epoch", String(Object.keys(state).length));
 
-		for (const metric of metrics) {
-			const value = row?.metrics?.[metric]?.raw;
-			set(`m:${metric}`, value === undefined ? "—" : value.toFixed(4));
+		if (row) {
+			for (let j = 0; j < row.metricsLength(); j++) {
+				const m = row.metrics(j, metricObj);
+				if (!m) continue;
+				const name = m.name() ?? "";
+				const raw = m.raw();
+				const normalized = m.normalized();
 
-			const bar = root.current?.querySelector<HTMLElement>(`[data-mbar="${metric}"]`);
-			const normalized = row?.metrics?.[metric]?.normalized;
-
-			if (bar instanceof HTMLElement && typeof normalized === "number") {
-				bar.style.width = `calc(clamp(0, ${Math.min(1, Math.max(0, normalized))}, 1) * 100%)`;
+				set(`m:${name}`, raw.toFixed(4));
+				const bar = root.current?.querySelector<HTMLElement>(`[data-mbar="${name}"]`);
+				if (bar instanceof HTMLElement) {
+					bar.style.width = `calc(clamp(0, ${Math.min(1, Math.max(0, normalized))}, 1) * 100%)`;
+				}
 			}
 		}
-	}, [source, focusSymbol, metrics]);
+	});
 
 	if (source === "") {
 		return (
@@ -94,7 +101,6 @@ export const SignalDetail = () => {
 			<div className="mt-5 grid grid-cols-2 gap-x-5.5 gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs">
 				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Symbol</Typography.Label><span data-f="symbol" className="text-(--f1)" /></div>
 				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Observed</Typography.Label><span data-f="at" className="text-(--f1)" /></div>
-				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Unit</Typography.Label><span data-f="unit" className="text-(--f1)" /></div>
 				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Maturity</Typography.Label><span data-f="maturity" className="text-(--f1)" /></div>
 				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Peer</Typography.Label><span data-f="peer" className="text-(--f1)" /></div>
 			</div>

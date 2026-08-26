@@ -1,4 +1,33 @@
 import { createStore } from "@tanstack/react-store";
+import type { RingBuffer as RingBufferType } from "ring-buffer-ts";
+import ringBufferPkg from "ring-buffer-ts";
+
+// biome-ignore lint/suspicious/noExplicitAny: Because I'm Batman.
+const RingBuffer = ((ringBufferPkg as any).RingBuffer ??
+	// biome-ignore lint/suspicious/noExplicitAny: Because I'm Batman.
+	(ringBufferPkg as any).default?.RingBuffer ??
+	ringBufferPkg) as typeof RingBufferType;
+type RingBuffer<T> = RingBufferType<T>;
+export { RingBuffer };
+
+import type { FluidFields } from "#/components/fluid-3d/wire";
+import type { BacktestFrame } from "#/providers/telemetry/telemetry/backtest-frame";
+import type { BalancesFrame } from "#/providers/telemetry/telemetry/balances-frame";
+import type { CausalFrame } from "#/providers/telemetry/telemetry/causal-frame";
+import type { CognitionFrame } from "#/providers/telemetry/telemetry/cognition-frame";
+import type { DiagnosticQueue } from "#/providers/telemetry/telemetry/diagnostic-queue";
+import type { DiagnosticsFrame } from "#/providers/telemetry/telemetry/diagnostics-frame";
+import type { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
+import type { ErrorFrame } from "#/providers/telemetry/telemetry/error-frame";
+import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
+import type { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
+import type { HindsightFrame } from "#/providers/telemetry/telemetry/hindsight-frame";
+import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
+import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
+import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
+import type { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
+import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
+import type { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
 
 export const DEFAULT_KERNELS = [
 	"correlation",
@@ -148,6 +177,158 @@ export type BacktestState = {
 	hindsight: HindsightReport | null;
 };
 
+export interface FrameBuffer<T> {
+	version: number;
+	getLast(): T | undefined;
+	getFirst(): T | undefined;
+	get(index: number): T | undefined;
+	getFirstN(n: number): T[];
+	getLastN(n: number): T[];
+	findLast(predicate: (item: T) => boolean): T | undefined;
+	toArray(): T[];
+	getSize(): number;
+	getBufferLength(): number;
+	isFull(): boolean;
+	isEmpty(): boolean;
+	clear(): void;
+	add(...items: T[]): void;
+}
+
+export const createFrameStore = <T>(capacity = 50) => {
+	const buffer = new RingBuffer<T>(capacity);
+
+	const state: FrameBuffer<T> = {
+		version: 0,
+		getLast: () => buffer.getLast(),
+		getFirst: () => buffer.getFirst(),
+		get: (index: number) => buffer.get(index),
+		getFirstN: (n: number) => buffer.getFirstN(n),
+		getLastN: (n: number) => buffer.getLastN(n),
+		findLast: (predicate: (item: T) => boolean) => {
+			const len = buffer.getBufferLength();
+			for (let i = len - 1; i >= 0; i--) {
+				const item = buffer.get(i);
+				if (item !== undefined && predicate(item)) {
+					return item;
+				}
+			}
+			return undefined;
+		},
+		toArray: () => buffer.toArray(),
+		getSize: () => buffer.getSize(),
+		getBufferLength: () => buffer.getBufferLength(),
+		isFull: () => buffer.isFull(),
+		isEmpty: () => buffer.isEmpty(),
+		clear: () => buffer.clear(),
+		add: (...items: T[]) => buffer.add(...items),
+	};
+
+	return createStore(
+		state,
+		({ setState }) => ({
+			add: (frame: T) => {
+				buffer.add(frame);
+				setState((prev) => ({ ...prev, version: prev.version + 1 }));
+			},
+			reset: () => {
+				buffer.clear();
+				setState((prev) => ({ ...prev, version: 0 }));
+			},
+		}),
+	);
+};
+
+/*
+Single-value Atomic Stores
+*/
+export const focusStore = createStore<string>(DEFAULT_FOCUS_SYMBOL);
+export const onlineStore = createStore<"ONLINE" | "OFFLINE" | "CONNECTING">(
+	"OFFLINE",
+);
+export const errorStore = createStore<
+	Event | Error | Record<string, unknown> | null
+>(null);
+export const kernelDetailStore = createStore<string>("");
+export const queryStore = createStore<string>("");
+export const symbolsStore = createStore<string[]>([]);
+export const observedSourcesStore = createStore<Set<string>>(new Set<string>());
+export const startedAtMsStore = createStore<number | null>(null);
+export const backtestStateStore = createStore<BacktestState>({
+	captureId: null,
+	playing: false,
+	position: null,
+	startedAt: null,
+	endedAt: null,
+	rebooting: false,
+	captures: [],
+	hindsight: null,
+});
+
+/*
+Typed FlatBuffer Frame Stores (RingBuffer instances with TanStack Store actions)
+*/
+const measurements: Record<string, Record<string, RingBuffer<Measurement>>> = {};
+
+export const measurementStore = createStore(
+	measurements,
+	({ setState }) => ({
+		addMeasurement: (source: string, symbol: string, row: Measurement) => {
+			if (!measurements[source]) measurements[source] = {};
+			if (!measurements[source][symbol])
+				measurements[source][symbol] = new RingBuffer(50);
+			measurements[source][symbol].add(row);
+			setState((prev) => ({ ...prev }));
+		},
+	}),
+);
+
+export const tickStore = createFrameStore<TickFrame>(50);
+export const regulatorStore = createFrameStore<RegulatorFrame>(50);
+export const resonanceStore = createFrameStore<ResonanceFrame>(50);
+export const cognitionStore = createFrameStore<CognitionFrame>(50);
+export const causalStore = createFrameStore<CausalFrame>(50);
+export const graphStore = createFrameStore<GraphFrame>(50);
+export const strategyStore = createFrameStore<StrategyFrame>(50);
+export const positionStore = createFrameStore<PositionsFrame>(50);
+export const balanceStore = createFrameStore<BalancesFrame>(50);
+export const equityStore = createFrameStore<EquityFrame>(50);
+export const diagnosticsFrameStore = createFrameStore<DiagnosticsFrame>(50);
+
+const diagnosticQueues: Record<string, RingBuffer<DiagnosticQueue>> = {};
+
+export const diagnosticStore = createStore(
+	diagnosticQueues,
+	({ setState }) => ({
+		updateQueue: (name: string, row: DiagnosticQueue) => {
+			if (!diagnosticQueues[name])
+				diagnosticQueues[name] = new RingBuffer(1);
+			diagnosticQueues[name].add(row);
+			setState((prev) => ({ ...prev }));
+		},
+	}),
+);
+
+const fluidPhases: Record<string, RingBuffer<FluidFields>> = {};
+
+export const fluidPhaseStore = createStore(
+	fluidPhases,
+	({ setState }) => ({
+		updatePhase: (name: string, fields: FluidFields) => {
+			if (!fluidPhases[name]) fluidPhases[name] = new RingBuffer(50);
+			fluidPhases[name].add(fields);
+			setState((prev) => ({ ...prev }));
+		},
+	}),
+);
+
+export const fluidFrameStore = createFrameStore<FluidPhaseFrame>(50);
+export const errorFrameStore = createFrameStore<ErrorFrame>(50);
+export const backtestStore = createFrameStore<BacktestFrame>(50);
+export const hindsightStore = createFrameStore<HindsightFrame>(50);
+
+/*
+Backward compatibility appStore
+*/
 export const appStore = createStore(
 	{
 		online: false,
@@ -156,13 +337,6 @@ export const appStore = createStore(
 		query: "",
 		kernels: DEFAULT_KERNELS,
 		observedSources: new Set<string>(),
-		/*
-			The symbols the engine has actually said something about this run. It is
-			not a list the backend publishes — no instruments key reaches the wire —
-			so it accumulates from the frames that name a symbol. The command palette
-			searches it, which is the only place a symbol the user has not already
-			focused can be reached.
-		*/
 		symbols: [] as string[],
 		startedAtMs: null as number | null,
 		backtest: {
@@ -177,43 +351,57 @@ export const appStore = createStore(
 		} as BacktestState,
 	},
 	({ setState }) => ({
-		updateBacktest: (frame: Partial<BacktestState>) =>
+		updateBacktest: (frame: Partial<BacktestState>) => {
 			setState((prev) => ({
 				...prev,
 				backtest: { ...prev.backtest, ...frame },
-			})),
-		setBacktestCaptures: (captures: BacktestCapture[]) =>
+			}));
+			backtestStateStore.setState((prev) => ({ ...prev, ...frame }));
+		},
+		setBacktestCaptures: (captures: BacktestCapture[]) => {
 			setState((prev) => ({
 				...prev,
 				backtest: { ...prev.backtest, captures },
-			})),
-		updateOnline: (online: boolean) =>
+			}));
+			backtestStateStore.setState((prev) => ({ ...prev, captures }));
+		},
+		updateOnline: (online: boolean) => {
 			setState((prev) => ({
 				...prev,
 				online,
 				startedAtMs: online ? (prev.startedAtMs ?? Date.now()) : null,
-			})),
-		updateError: (err: Record<string, unknown>) =>
+			}));
+			onlineStore.setState(() => (online ? "ONLINE" : "OFFLINE"));
+		},
+		updateError: (err: Record<string, unknown>) => {
 			setState((prev) => ({
 				...prev,
 				error: err,
-			})),
-		clearError: () =>
+			}));
+			errorStore.setState(() => err);
+		},
+		clearError: () => {
 			setState((prev) => ({
 				...prev,
 				error: null,
-			})),
-		updateFocusSymbol: (symbol: string) =>
+			}));
+			errorStore.setState(() => null);
+		},
+		updateFocusSymbol: (symbol: string) => {
 			setState((prev) => ({
 				...prev,
 				focusSymbol: symbol,
-			})),
-		updateQuery: (query: string) =>
+			}));
+			focusStore.setState(() => symbol);
+		},
+		updateQuery: (query: string) => {
 			setState((prev) => ({
 				...prev,
-				query: query,
-			})),
-		observeSymbols: (symbols: Iterable<string>) =>
+				query,
+			}));
+			queryStore.setState(() => query);
+		},
+		observeSymbols: (symbols: Iterable<string>) => {
 			setState((prev) => {
 				const merged = new Set(prev.symbols);
 				let changed = false;
@@ -225,9 +413,16 @@ export const appStore = createStore(
 					}
 				}
 
-				return changed ? { ...prev, symbols: [...merged].sort() } : prev;
-			}),
-		observeSources: (sources: Set<string>) =>
+				if (changed) {
+					const nextList = [...merged].sort();
+					symbolsStore.setState(() => nextList);
+					return { ...prev, symbols: nextList };
+				}
+
+				return prev;
+			});
+		},
+		observeSources: (sources: Set<string>) => {
 			setState((prev) => {
 				if (sources.size === 0) {
 					return prev;
@@ -247,13 +442,11 @@ export const appStore = createStore(
 					return prev;
 				}
 
-				const kernels = [...new Set([...DEFAULT_KERNELS, ...merged])];
-
 				return {
 					...prev,
 					observedSources: merged,
-					kernels,
 				};
-			}),
+			});
+		},
 	}),
 );

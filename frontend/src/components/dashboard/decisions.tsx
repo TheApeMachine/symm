@@ -1,41 +1,46 @@
 import { useSelector } from "@tanstack/react-store";
+import { strategyStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	setDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
 } from "#/components/terminal/decision-side";
+import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import { Flex } from "@/components/ui/flex";
-import { strategyStore, useSubscribe } from "#/providers/ws-stores";
+import { Decision } from "#/providers/telemetry/telemetry/decision";
+
+const decObj = new Decision();
 
 export const Decisions = () => {
-	const root = useSubscribe(strategyStore, (state) => {
-		const decisions = state?.decisions ?? [];
+	const last = useSelector(strategyStore, (state) =>
+		state.findLast((f) => f.decisionsLength() > 0),
+	);
 
-		for (const decision of decisions) {
-			const cell = root.current?.querySelector<HTMLElement>(`[data-decision-id="${decision.id}"]`);
+	const decisions: Array<{
+		id: string;
+		symbol: string;
+		thesisScore: number;
+		action: string;
+		reason: string;
+	}> = [];
 
-			if (cell === null || cell === undefined) {
-				continue;
-			}
-
-			const set = (q: string, value: string) => {
-				const el = cell.querySelector<HTMLElement>(`[data-df="${q}"]`);
-
-				if (el instanceof HTMLElement) {
-					el.textContent = value;
-				}
-			};
-
-			set("symbol", decision.symbol);
-			set("thesisScore", typeof decision.thesisScore === "number" ? decision.thesisScore.toFixed(4) : "—");
-			set("action", decision.action);
-			set("reason", decision.reason ?? "No rejection reason published");
+	if (last) {
+		for (let i = 0; i < last.decisionsLength(); i++) {
+			const dec = last.decisions(i, decObj);
+			if (!dec) continue;
+			const id = dec.id() ?? `dec-${i}`;
+			const symbol = dec.symbol() ?? "";
+			if (!id) continue;
+			decisions.push({
+				id,
+				symbol,
+				thesisScore: dec.thesisScore(),
+				action: dec.action() ?? "—",
+				reason: dec.reason() ?? "No rejection reason published",
+			});
 		}
-	});
-
-	const decisions = useSelector(strategyStore, (state) => state?.decisions ?? []);
+	}
 
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);
@@ -44,7 +49,7 @@ export const Decisions = () => {
 	};
 
 	return (
-		<Flex.Column ref={root} className="h-full min-h-0 gap-0">
+		<Flex.Column className="h-full min-h-0 gap-0">
 			<Flex.Row
 				align="baseline"
 				justify="between"
@@ -61,24 +66,32 @@ export const Decisions = () => {
 						waiting for backend decision frames
 					</List.Item>
 				) : (
-					decisions.map((decision) => (
+					decisions.map((dec) => (
 						<List.Item
-							key={decision.id}
+							key={dec.id}
 							className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0 rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-1.5 transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)] hover:bg-(--raised)"
 							data-decision-card="true"
-							data-decision-id={decision.id}
-							onClick={() => inspectDecision(decision.symbol)}
+							data-decision-id={dec.id}
+							onClick={() => inspectDecision(dec.symbol)}
 							title="Inspect MCTS / Pearl decision tree"
 						>
-							<Typography.Span data-df="symbol" className="truncate font-semibold text-[11px] text-(--f1)" />
+							<Typography.Span className="truncate font-semibold text-[11px] text-(--f1)">
+								{dec.symbol}
+							</Typography.Span>
 							<Flex.Row className="items-center gap-2">
 								<Typography.Span className="text-[8.5px] text-(--f4)">
 									t=
-									<span data-df="thesisScore" className="tabular-nums text-(--f2)" />
+									<span className="tabular-nums text-(--f2)">
+										{dec.thesisScore.toFixed(4)}
+									</span>
 								</Typography.Span>
-								<Typography.Span data-df="action" className="rounded-[2px] border border-(--line) px-1.5 py-px text-[8.5px] uppercase" />
+								<Typography.Span className="rounded-[2px] border border-(--line) px-1.5 py-px text-[8.5px] uppercase">
+									{dec.action}
+								</Typography.Span>
 							</Flex.Row>
-							<Typography.Span data-df="reason" className="col-span-2 mt-0.5 line-clamp-2 min-w-0 break-words text-[9px] leading-[1.25] text-(--f4)" />
+							<Typography.Span className="col-span-2 mt-0.5 line-clamp-2 min-w-0 break-words text-[9px] leading-[1.25] text-(--f4)">
+								{dec.reason}
+							</Typography.Span>
 						</List.Item>
 					))
 				)}
@@ -86,3 +99,5 @@ export const Decisions = () => {
 		</Flex.Column>
 	);
 };
+
+

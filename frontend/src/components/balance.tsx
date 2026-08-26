@@ -1,6 +1,7 @@
+import { useSelector } from "@tanstack/react-store";
+import { equityStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { equityStore, useSubscribe } from "#/providers/ws-stores";
 
 const fmt = (value: unknown): string =>
 	typeof value === "number"
@@ -14,40 +15,60 @@ const Reading = ({
 	tone,
 	weight,
 	which,
+	value,
 }: {
 	label: string;
 	tone: "f1" | "f2" | "accent";
 	weight: "medium" | "semibold";
 	which: string;
+	value: string;
 }) => (
 	<Flex.Column className="items-end gap-px">
 		<Typography.Label size="s" tone="f4" weight="normal">
 			{label}
 		</Typography.Label>
 		<Typography.Mono size="lg" tone={tone} weight={weight} data-balance={which}>
-			—
+			{value}
 		</Typography.Mono>
 	</Flex.Column>
 );
 
 export const Balance = () => {
-	const root = useSubscribe(equityStore, (state) => {
-		for (const which of ["cash", "unrealized", "equity"] as const) {
-			const el = root.current?.querySelector<HTMLElement>(
-				`[data-balance="${which}"]`,
-			);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = fmt(state?.[which]);
-			}
-		}
-	});
+	const lastWithCash = useSelector(equityStore, (state) =>
+		state.findLast((f) => f.cash() !== null && f.cash() !== ""),
+	);
+	const lastWithUnrealized = useSelector(equityStore, (state) =>
+		state.findLast((f) => f.unrealized() !== null && f.unrealized() !== ""),
+	);
+	const lastWithEquity = useSelector(equityStore, (state) =>
+		state.findLast((f) => f.equity() !== null && f.equity() !== ""),
+	);
 
 	return (
-		<Flex.Row ref={root} align="center" gap={6}>
-			<Reading label="Cash" tone="f1" weight="medium" which="cash" />
-			<Reading label="Unrealized" tone="f2" weight="medium" which="unrealized" />
-			<Reading label="Equity" tone="accent" weight="semibold" which="equity" />
+		<Flex.Row align="center" gap={6}>
+			<Reading
+				label="Cash"
+				tone="f1"
+				weight="medium"
+				which="cash"
+				value={fmt(lastWithCash?.cash())}
+			/>
+			<Reading
+				label="Unrealized"
+				tone="f2"
+				weight="medium"
+				which="unrealized"
+				value={fmt(lastWithUnrealized?.unrealized())}
+			/>
+			<Reading
+				label="Equity"
+				tone="accent"
+				weight="semibold"
+				which="equity"
+				value={fmt(lastWithEquity?.equity())}
+			/>
 		</Flex.Row>
 	);
 };
+
+

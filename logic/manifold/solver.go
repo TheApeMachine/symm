@@ -81,7 +81,7 @@ Step advances the resident field once. It is fired by a Hawkes measurement:
 Hawkes is the forcing term, so each observation triggers a load-and-step of the
 resident domain.
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *sensorium.State {
+func (solver *Solver) Step(measurement *data.Measurement[float64]) *State {
 	if measurement == nil || solver.physics == nil {
 		return nil
 	}
@@ -101,14 +101,16 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *sensorium.St
 		return nil
 	}
 
-	state, err := solver.physics.Step(nil)
-	solver.err = err
+	state := solver.physics.State()
 
-	if err != nil {
+	if state == nil || state.N == 0 {
 		return nil
 	}
 
-	return state
+	return &State{
+		State:   *state,
+		Reading: solver.physics.Reading(),
+	}
 }
 
 func (solver *Solver) Close() error {

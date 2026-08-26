@@ -136,7 +136,25 @@ can count loss without hot-path logging. A closing gate rejects new writes once
 Close begins so accepted producers finish before drain quiesces.
 */
 func (recorder *Recorder) Write(event any) error {
-	if recorder == nil || recorder.ring == nil || recorder.closing.Load() {
+	if recorder == nil {
+		return types.ClosedError{Component: "audit"}
+	}
+
+	if recorder.EventSink != nil && recorder.ring == nil {
+		if recorder.closing.Load() {
+			return types.ClosedError{Component: "audit"}
+		}
+
+		payload, err := sonic.Marshal(event)
+
+		if err != nil {
+			return fmt.Errorf("audit: marshal: %w", err)
+		}
+
+		return recorder.EventSink("metadata", payload)
+	}
+
+	if recorder.ring == nil || recorder.closing.Load() {
 		return types.ClosedError{Component: "audit"}
 	}
 
@@ -296,6 +314,12 @@ Idempotent and safe under concurrent Close.
 func (recorder *Recorder) Close() error {
 	if recorder == nil {
 		return types.ClosedError{Component: "audit"}
+	}
+
+	if recorder.EventSink != nil && recorder.ring == nil {
+		recorder.closing.Store(true)
+		recorder.closed.Store(true)
+		return nil
 	}
 
 	recorder.closeMu.Lock()

@@ -1,14 +1,20 @@
-import { cn } from "#/lib/utils";
-import { Flex } from "@/components/ui/flex";
-import { Typography } from "@/components/ui/typography";
-import { Panel } from "@/components/ui/panel";
+import { useRef } from "react";
 import {
 	causalStore,
 	cognitionStore,
-	positionsStore,
+	positionStore,
 	strategyStore,
-	useSubscribe,
-} from "#/providers/ws-stores";
+} from "#/collections/app";
+import { Flex } from "#/components/ui/flex";
+import { Panel } from "#/components/ui/panel";
+import { Typography } from "#/components/ui/typography";
+import { cn } from "#/lib/utils";
+import { Causal } from "#/providers/telemetry/telemetry/causal";
+import { Cognition } from "#/providers/telemetry/telemetry/cognition";
+import { Decision } from "#/providers/telemetry/telemetry/decision";
+import { Holding } from "#/providers/telemetry/telemetry/holding";
+import { Position } from "#/providers/telemetry/telemetry/position";
+import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 
 const fmt = (value: unknown, digits?: number): string => {
 	if (typeof value === "number") {
@@ -63,154 +69,148 @@ const Card = ({
 	</Panel>
 );
 
+const posObj = new Position();
+const holdObj = new Holding();
+const stopObj = new Stoploss();
+const decObj = new Decision();
+const causalObj = new Causal();
+const cogObj = new Cognition();
+
 export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
-	const positionRef = useSubscribe(positionsStore, (state) => {
-		const row = state.positions[symbol]?.latest() ?? null;
-		const holding = row?.holding;
-		const stoploss = holding?.stoploss;
+	const positionRef = useRef<HTMLDivElement>(null);
+	const arbitrationRef = useRef<HTMLDivElement>(null);
+	const causalRef = useRef<HTMLDivElement>(null);
+	const cognitionRef = useRef<HTMLDivElement>(null);
+
+	positionStore.subscribe((state) => {
+		if (!positionRef.current) return;
+		const last = state.getLast();
+		if (!last) return;
+
+		let targetPos: Position | null = null;
+		let targetHolding: Holding | null = null;
+		for (let i = 0; i < last.rowsLength(); i++) {
+			const pos = last.rows(i, posObj);
+			if (!pos) continue;
+			const h = pos.holding(holdObj);
+			if (h && h.symbol() === symbol) {
+				targetPos = pos;
+				targetHolding = h;
+				break;
+			}
+		}
+
+		const holding = targetHolding;
+		const stoploss = holding?.stoploss(stopObj);
+
 
 		const set = (q: string, value: string) => {
-			const el = positionRef.current?.querySelector<HTMLElement>(
-				`[data-row="${q}"]`,
-			);
-			if (el instanceof HTMLElement) el.textContent = value;
+			const el = positionRef.current?.querySelector<HTMLElement>(`[data-row="${q}"]`);
+			if (el) el.textContent = value;
 		};
 
-		set("status", holding?.status ?? row?.status ?? "—");
-		set("qty", fmt(holding?.qty));
-		set("entry", fmt(holding?.entry_price));
-		set("mark", fmt(holding?.mark));
-		set("pnl", fmt(holding?.pnl));
+		set("status", holding?.status() ?? targetPos?.status() ?? "—");
+		set("qty", holding ? fmt(holding.qty()) : "—");
+		set("entry", holding ? fmt(holding.entryPrice()) : "—");
+		set("mark", holding ? fmt(holding.mark()) : "—");
+		set("pnl", holding ? fmt(holding.pnl()) : "—");
 		set(
 			"return",
-			holding?.return_pct !== undefined && Number.isFinite(holding.return_pct)
-				? `${(holding.return_pct * 100).toFixed(2)}%`
+			holding && Number.isFinite(holding.returnPct())
+				? `${(holding.returnPct() * 100).toFixed(2)}%`
 				: "—",
 		);
-		set("stop floor", fmt(stoploss?.floor));
-		set("peak", fmt(stoploss?.peak));
-		set("profit line", fmt(stoploss?.profit_line));
-		set("stop status", stoploss?.status ?? "—");
-	}, [symbol]);
+		set("stop floor", stoploss ? fmt(stoploss.floor()) : "—");
+		set("peak", stoploss ? fmt(stoploss.peak()) : "—");
+		set("profit line", stoploss ? fmt(stoploss.profitLine()) : "—");
+		set("stop status", stoploss?.status() ?? "—");
+	});
 
-	const arbitrationRef = useSubscribe(
-		[positionsStore, strategyStore],
-		([pState, sState]) => {
-			const position = pState.positions[symbol]?.latest() ?? null;
-			const liveDecision =
-				(sState?.decisions ?? []).find((entry) => entry.symbol === symbol) ??
-				null;
+	strategyStore.subscribe((state) => {
+		if (!arbitrationRef.current) return;
+		const last = state.getLast();
+		if (!last) return;
 
-			// Prefer the originating entry decision snapshot that created this position,
-			// or fallback to the live strategy decision.
-			const decision = position?.decision ?? liveDecision;
-
-			const set = (q: string, value: string) => {
-				const el = arbitrationRef.current?.querySelector<HTMLElement>(
-					`[data-row="${q}"]`,
-				);
-				if (el instanceof HTMLElement) el.textContent = value;
-			};
-
-			const isOriginating = Boolean(
-				position?.decision && position.decision.id !== "",
-			);
-			const sourceBadge = arbitrationRef.current?.querySelector<HTMLElement>(
-				"[data-decision-source]",
-			);
-			if (sourceBadge instanceof HTMLElement) {
-				sourceBadge.textContent = isOriginating ? "ENTRY SNAPSHOT" : "LIVE TICK";
+		let liveDecision: Decision | null = null;
+		for (let i = 0; i < last.decisionsLength(); i++) {
+			const dec = last.decisions(i, decObj);
+			if (dec && dec.symbol() === symbol) {
+				liveDecision = dec;
+				break;
 			}
+		}
 
-			set("action", decision?.action ?? "—");
-			set(
-				"thesis score",
-				decision?.thesisScore !== undefined
-					? decision.thesisScore.toFixed(4)
-					: "—",
-			);
-			set(
-				"confidence",
-				decision?.thesisConfidence !== undefined
-					? `${(decision.thesisConfidence * 100).toFixed(1)}%`
-					: "—",
-			);
-			set(
-				"graph score",
-				decision?.graphScore !== undefined
-					? decision.graphScore.toFixed(4)
-					: "—",
-			);
-			set(
-				"utility",
-				decision?.utility !== undefined ? decision.utility.toFixed(4) : "—",
-			);
-			set(
-				"margin",
-				decision?.opportunityMargin !== undefined
-					? decision.opportunityMargin.toFixed(4)
-					: "—",
-			);
-			set("cause", decision?.cause ?? "—");
-			set("reason", decision?.reason ?? "—");
-			set(
-				"at",
-				decision?.at
-					? new Date(decision.at).toISOString().slice(11, 19)
-					: "—",
-			);
-			set("proposed notional", fmt(decision?.proposedNotional));
-			set("proposed qty", fmt(decision?.proposedQuantity));
-		},
-		[symbol],
-	);
-
-	const causalRef = useSubscribe(causalStore, (frames) => {
-		const row = (frames ?? []).find((frame) => frame.symbol === symbol) ?? null;
 		const set = (q: string, value: string) => {
-			const el = causalRef.current?.querySelector<HTMLElement>(
-				`[data-row="${q}"]`,
-			);
-			if (el instanceof HTMLElement) el.textContent = value;
+			const el = arbitrationRef.current?.querySelector<HTMLElement>(`[data-row="${q}"]`);
+			if (el) el.textContent = value;
 		};
 
-		set(
-			"association",
-			row?.association === undefined ? "—" : row.association.toFixed(4),
-		);
-		set(
-			"confidence",
-			row?.confidence === undefined ? "—" : row.confidence.toFixed(4),
-		);
-		set(
-			"strength",
-			row?.strength === undefined ? "—" : row.strength.toFixed(4),
-		);
-	}, [symbol]);
+		const sourceBadge = arbitrationRef.current.querySelector<HTMLElement>("[data-decision-source]");
+		if (sourceBadge) {
+			sourceBadge.textContent = "LIVE TICK";
+		}
 
-	const cognitionRef = useSubscribe(cognitionStore, (state) => {
-		const row = state.cognition[symbol]?.latest() ?? null;
+		set("action", liveDecision?.action() ?? "—");
+		set("thesis score", liveDecision ? liveDecision.thesisScore().toFixed(4) : "—");
+		set("confidence", liveDecision ? `${(liveDecision.confidence() * 100).toFixed(1)}%` : "—");
+		set("graph score", liveDecision ? liveDecision.graphScore().toFixed(4) : "—");
+		set("utility", liveDecision ? liveDecision.utility().toFixed(4) : "—");
+		set("margin", liveDecision ? liveDecision.opportunityMargin().toFixed(4) : "—");
+		set("cause", liveDecision?.reason() ?? "—");
+		set("reason", liveDecision?.reason() ?? "—");
+		set("at", liveDecision?.at() ? new Date(Number(liveDecision.at())).toISOString().slice(11, 19) : "—");
+		set("proposed notional", liveDecision ? fmt(liveDecision.proposedNotional()) : "—");
+		set("proposed qty", liveDecision ? fmt(liveDecision.proposedQuantity()) : "—");
+	});
+
+	causalStore.subscribe((frames) => {
+		if (!causalRef.current) return;
+		const lastFrame = frames.getLast();
+		if (!lastFrame) return;
+
+		let targetRow: Causal | null = null;
+		for (let i = 0; i < lastFrame.rowsLength(); i++) {
+			const row = lastFrame.rows(i, causalObj);
+			if (row && row.symbol() === symbol) {
+				targetRow = row;
+				break;
+			}
+		}
+
 		const set = (q: string, value: string) => {
-			const el = cognitionRef.current?.querySelector<HTMLElement>(
-				`[data-row="${q}"]`,
-			);
-			if (el instanceof HTMLElement) el.textContent = value;
+			const el = causalRef.current?.querySelector<HTMLElement>(`[data-row="${q}"]`);
+			if (el) el.textContent = value;
 		};
 
-		set("winner", row?.winner === undefined ? "—" : String(row.winner));
-		set(
-			"contrast",
-			row?.contrast === undefined ? "—" : row.contrast.toFixed(3),
-		);
-		set(
-			"entropy",
-			row?.entropyBits === undefined ? "—" : row.entropyBits.toFixed(3),
-		);
-		set(
-			"paths",
-			row?.lookaheadPaths === undefined ? "—" : String(row.lookaheadPaths),
-		);
-	}, [symbol]);
+		set("association", targetRow ? targetRow.association().toFixed(4) : "—");
+		set("confidence", targetRow ? targetRow.confidence().toFixed(4) : "—");
+		set("strength", targetRow ? targetRow.strength().toFixed(4) : "—");
+	});
+
+	cognitionStore.subscribe((state) => {
+		if (!cognitionRef.current) return;
+		const last = state.getLast();
+		if (!last) return;
+
+		let targetRow: Cognition | null = null;
+		for (let i = 0; i < last.rowsLength(); i++) {
+			const row = last.rows(i, cogObj);
+			if (row && row.symbol() === symbol) {
+				targetRow = row;
+				break;
+			}
+		}
+
+		const set = (q: string, value: string) => {
+			const el = cognitionRef.current?.querySelector<HTMLElement>(`[data-row="${q}"]`);
+			if (el) el.textContent = value;
+		};
+
+		set("winner", targetRow?.winner() ?? "—");
+		set("contrast", targetRow ? targetRow.contrast().toFixed(3) : "—");
+		set("entropy", targetRow ? targetRow.entropyBits().toFixed(3) : "—");
+		set("paths", targetRow ? String(targetRow.lookaheadPaths()) : "—");
+	});
 
 	return (
 		<div className="flex min-h-0 flex-col gap-2 overflow-auto pr-1">
@@ -274,3 +274,4 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 		</div>
 	);
 };
+

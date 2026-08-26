@@ -14,7 +14,6 @@ window held in the generic sample slots:
 	observed association (causal.Association)
 	-> kernel backdoor-adjusted effect (causal.BackdoorEffect)
 	-> dispersion scales (causal.EffectScales)
-	-> intervention percentile (causal.Percentile)
 	-> do-expectation (causal.DoExpectationFrame)
 	-> abductive counterfactual (causal.CounterfactualFrame)
 
@@ -37,7 +36,6 @@ func Pearl() types.Primitive {
 		causal.Association,
 		causal.BackdoorEffect,
 		causal.EffectScales,
-		causal.Percentile,
 		causal.DoExpectationFrame,
 		causal.CounterfactualFrame,
 		probability.Softmax(),

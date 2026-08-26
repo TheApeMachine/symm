@@ -1,5 +1,5 @@
 import { type MouseEvent, useRef } from "react";
-import { useSelector } from "@tanstack/react-store";
+import { strategyStore } from "#/collections/app";
 import {
 	EvidenceStage,
 	ExecutionStage,
@@ -10,7 +10,7 @@ import {
 	setDecisionsScopeSymbol,
 } from "#/components/terminal/decision-side";
 import { Typography } from "#/components/ui/typography";
-import { strategyStore, useSubscribe } from "#/providers/ws-stores";
+import { Decision } from "#/providers/telemetry/telemetry/decision";
 
 const selectRow = (row: HTMLElement, symbol: string): void => {
 	setDecisionsScopeSymbol(symbol);
@@ -22,51 +22,68 @@ const selectRow = (row: HTMLElement, symbol: string): void => {
 	}
 };
 
+const decObj = new Decision();
+
+const decisionToThesis = (d: Decision) => ({
+	id: d.id() ?? "",
+	action: d.action() ?? "",
+	symbol: d.symbol() ?? "",
+	direction: Number(d.direction()),
+	thesisScore: d.thesisScore(),
+	thesisConfidence: d.thesisConfidence(),
+	thesisSupport: d.thesisSupport(),
+	thesisContradiction: d.thesisContradiction(),
+	thesisConditions: d.thesisConditions(),
+	predictiveStatus: "",
+	taskSkill: d.taskSkill(),
+	forecastHorizon: Number(d.forecastHorizon()),
+	graphScore: d.graphScore(),
+	confidence: d.confidence(),
+	reason: d.reason() ?? "",
+	cause: d.reason() ?? "",
+});
+
+
 export const DecisionChain = ({ index }: { index: number }) => {
+
 	const rowRef = useRef<HTMLButtonElement>(null);
 
-	const decisions = useSelector(strategyStore, (state) => state?.decisions);
-	const decision = decisions?.[index];
+	strategyStore.subscribe((state) => {
+		const last = state.getLast();
+		if (!last || index >= last.decisionsLength()) return;
 
-	useSubscribe(strategyStore, (state) => {
-		const current = state?.decisions[index];
-
-		if (current === undefined) {
-			return;
-		}
+		const current = last.decisions(index, decObj);
+		if (!current) return;
 
 		const row = rowRef.current;
-
-		if (row === null) {
-			return;
-		}
+		if (!row) return;
 
 		const set = (q: string, value: string) => {
 			const el = row.querySelector<HTMLElement>(`[data-df="${q}"]`);
-
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			if (el) el.textContent = value;
 		};
 
-		set("symbol", current.symbol);
-		set("reason", current.reason ?? "");
-		set("thesisScore", current.thesisScore.toFixed(4));
-		set("thesisConfidence", `${(current.thesisConfidence * 100).toFixed(1)}%`);
-		set("graphScore", current.graphScore.toFixed(5));
-		set("action", current.action);
-		set("cause", current.cause ?? "pending");
-		set("recommended", current.trace?.mcts?.recommendedAction ?? "");
-		set("round", current.arbitrationRound === undefined ? "" : String(current.arbitrationRound));
-	}, [index]);
+		set("symbol", current.symbol() ?? "");
+		set("reason", current.reason() ?? "");
+		set("thesisScore", current.thesisScore().toFixed(4));
+		set("thesisConfidence", `${(current.confidence() * 100).toFixed(1)}%`);
+		set("graphScore", current.graphScore().toFixed(5));
+		set("action", current.action() ?? "—");
+		set("cause", current.reason() ?? "pending");
+	});
 
-	if (decision === undefined) {
+	const last = strategyStore.state.getLast();
+	const decision = last && index < last.decisionsLength() ? last.decisions(index, new Decision()) : null;
+
+	if (!decision) {
 		return null;
 	}
 
 	const selectDecision = (event: MouseEvent<HTMLButtonElement>): void => {
-		selectRow(event.currentTarget, decision.symbol);
+		selectRow(event.currentTarget, decision.symbol() ?? "");
 	};
+
+	const thesisDec = decisionToThesis(decision);
 
 	return (
 		<button
@@ -100,11 +117,12 @@ export const DecisionChain = ({ index }: { index: number }) => {
 			</div>
 
 			<div className="hidden grid-cols-4 gap-1.5 p-2 font-mono text-[8.5px] group-data-[selected=true]:grid">
-				<StructuralStage decision={decision} />
-				<EvidenceStage decision={decision} />
-				<DecisionMCTSStage decision={decision} />
-				<ExecutionStage decision={decision} />
+				<StructuralStage decision={thesisDec as any} />
+				<EvidenceStage decision={thesisDec as any} />
+				<DecisionMCTSStage decision={thesisDec as any} />
+				<ExecutionStage decision={thesisDec as any} />
 			</div>
+
 
 			<div className="hidden items-center gap-4 border-(--line) border-t px-3 py-1.5 font-mono text-[8.5px] text-(--f4) group-data-[selected=true]:flex">
 				<span>selected root</span>

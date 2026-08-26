@@ -9,9 +9,10 @@ import {
 	readGraphSurface,
 	subscribeGraphSurface,
 } from "#/components/terminal/graph-surface-store";
+import { graphStore } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
-import { graphStore } from "#/providers/ws-stores";
 import { Button } from "@/components/ui/button";
+
 import { Chip } from "@/components/ui/chip";
 import { Flex } from "@/components/ui/flex";
 import { Input } from "@/components/ui/input";

@@ -1,15 +1,18 @@
 import { useMemo, useState } from "react";
-import { useSelector } from "@tanstack/react-store";
-import { decisionStore } from "#/collections/decisions";
-import { positionsStore } from "#/providers/ws-stores";
-import type { Decision, DecisionMCTSTreeNode } from "#/types/thesis";
+import { strategyStore } from "#/collections/app";
+import type { DecisionMCTSTreeNode } from "#/types/thesis";
 import { Input } from "@/components/ui/input";
 import { Typography } from "@/components/ui/typography";
+import { Decision } from "#/providers/telemetry/telemetry/decision";
+
+const decObj = new Decision();
+
 
 type MCTSTreeVisualizerProps = {
 	symbol: string;
 	className?: string;
 };
+
 
 const finite = (value: number | undefined, digits = 4): string => {
 	if (value === undefined || !Number.isFinite(value)) {
@@ -223,25 +226,22 @@ export const MCTSTreeVisualizer = ({ symbol, className }: MCTSTreeVisualizerProp
 	const [filterQuery, setFilterQuery] = useState("");
 	const [expandedMap, setExpandedMap] = useState<Map<string, boolean>>(new Map());
 
-	// Retrieve decision snapshot: prioritize position's originating decision, then live decisionStore
-	const position = useSelector(positionsStore, (state) => state.positions[symbol]?.latest() ?? null);
+	const lastStrategy = strategyStore.state.getLast();
+	let liveDecision: Decision | null = null;
+	if (lastStrategy) {
+		for (let i = 0; i < lastStrategy.decisionsLength(); i++) {
+			const d = lastStrategy.decisions(i, decObj);
+			if (d && d.symbol() === symbol) {
+				liveDecision = d;
+				break;
+			}
+		}
+	}
 
-	const liveDecisions = useSelector(decisionStore, (state) => {
-		const storeState = state as unknown as { decisions?: Record<string, { values: () => unknown[] }> };
-		return storeState.decisions?.[symbol]?.values() ?? [];
-	});
-
-	const latestStrategyDecision = (liveDecisions && liveDecisions.length > 0
-		? liveDecisions[liveDecisions.length - 1]
-		: null) as Decision | null;
-
-	const targetDecision = (position?.decision?.trace?.mcts?.tree
-		? position.decision
-		: latestStrategyDecision ?? position?.decision) as { trace?: { mcts?: { tree?: DecisionMCTSTreeNode; iterations?: number; maxDepth?: number; totalNodes?: number; recommendedAction?: string } } } | null;
-
-	const trace = targetDecision?.trace;
+	const trace = (liveDecision as any)?.trace;
 	const mcts = trace?.mcts;
 	const treeRoot = mcts?.tree;
+
 
 	// Build breadcrumb trail of the optimal selected path
 	const selectedPath = useMemo(() => {

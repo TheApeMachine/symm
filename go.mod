@@ -85,7 +85,7 @@ require (
 )
 
 require (
-	github.com/fasthttp/websocket v1.5.12
+	github.com/fasthttp/websocket v1.5.12 // indirect
 	github.com/gofiber/contrib/v3/websocket v1.2.0
 	github.com/gofiber/fiber/v3 v3.3.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

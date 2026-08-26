@@ -1,18 +1,23 @@
-import { Typography } from "@/components/ui/typography";
-import { equityStore, useSubscribe } from "#/providers/ws-stores";
-import { num } from "./number";
+import { useRef } from "react";
+import { equityStore } from "#/collections/app";
+import { Typography } from "#/components/ui/typography";
 import { AllocationMain } from "./allocation-main";
 import { AllocationSidePanel } from "./allocation-side-panel";
+import { num } from "./number";
 
 export const AllocationSurface = () => {
-	const root = useSubscribe(equityStore, (state) => {
-		for (const which of ["cash", "unrealized", "equity"] as const) {
-			const el = root.current?.querySelector<HTMLElement>(`[data-eq=${which}]`);
+	const root = useRef<HTMLDivElement>(null);
 
-			if (el instanceof HTMLElement) {
-				el.textContent = state === null ? "—" : num(state[which], 2);
-			}
-		}
+	equityStore.subscribe((state) => {
+		if (!root.current) return;
+		const last = state.getLast();
+		const cashEl = root.current.querySelector<HTMLElement>('[data-eq="cash"]');
+		const unrealizedEl = root.current.querySelector<HTMLElement>('[data-eq="unrealized"]');
+		const equityEl = root.current.querySelector<HTMLElement>('[data-eq="equity"]');
+
+		if (cashEl) cashEl.textContent = last ? num(last.cash(), 2) : "—";
+		if (unrealizedEl) unrealizedEl.textContent = last ? num(last.unrealized(), 2) : "—";
+		if (equityEl) equityEl.textContent = last ? num(last.equity(), 2) : "—";
 	});
 
 	return (
@@ -51,3 +56,4 @@ export const AllocationSurface = () => {
 		</div>
 	);
 };
+

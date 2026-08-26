@@ -1,3 +1,4 @@
+import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
 import { FluidRecordReader } from "./record";
 import {
 	decodeFields,
@@ -14,10 +15,11 @@ const phaseChannel = "fluid-phase";
 export type FluidFeedHandlers = {
 	onFields: (fields: FluidFields) => void;
 	onParticles: (particles: FluidParticleFrame) => void;
-	onPhase: (frame: Record<string, unknown>) => void;
+	onPhase: (frame: FluidPhaseFrame) => void;
 	onState: (state: RTCPeerConnectionState | "connecting") => void;
 	onError: (error: Error) => void;
 };
+
 
 const signalingURL = () =>
 	import.meta.env.VITE_SYMM_WEBRTC_URL?.trim() ||
