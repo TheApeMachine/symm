@@ -96,6 +96,36 @@ func (manifold *Manifold) Grid() (gridX, gridY, gridZ int, spacing float64) {
 	return grid.GridX, grid.GridY, grid.GridZ, grid.GridSpacing()
 }
 
+/*
+SpectralModes returns the resident ω-lattice mode spectrum: the aggregated
+spectral-head coefficients (meanHeads output) paired with each mode's lattice
+frequency and gate linewidth. Copies are returned so callers can render the
+spectrum without aliasing the GPU-backed buffers.
+*/
+func (manifold *Manifold) SpectralModes() (omega, real, imag, linewidth []float32) {
+	if manifold == nil || manifold.work == nil {
+		return nil, nil, nil, nil
+	}
+
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+
+	manifold.work.engine.Synchronize()
+	modes := int(manifold.work.domain.MaxModes)
+
+	omega = make([]float32, modes)
+	real = make([]float32, modes)
+	imag = make([]float32, modes)
+	linewidth = make([]float32, modes)
+
+	copy(omega, manifold.work.omegaLattice.Float32Slice())
+	copy(real, manifold.work.psiModeReal.Float32Slice())
+	copy(imag, manifold.work.psiModeImag.Float32Slice())
+	copy(linewidth, manifold.work.gateWidth.Float32Slice())
+
+	return omega, real, imag, linewidth
+}
+
 func (manifold *Manifold) DomainExtent() (x, y, z float64) {
 	if manifold == nil || manifold.work == nil {
 		return 0, 0, 0
@@ -199,6 +229,7 @@ func (manifold *Manifold) merge(incoming *State) {
 	copy(manifold.state.Energy, incoming.Energy)
 	copy(manifold.state.Mass, incoming.Mass)
 	copy(manifold.state.Heat, incoming.Heat)
+	copy(manifold.state.Amp, incoming.Amp)
 	copy(manifold.state.Pos, incoming.Pos)
 	copy(manifold.state.Vel, incoming.Vel)
 	copy(manifold.state.Clamped, incoming.Clamped)

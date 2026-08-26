@@ -70,6 +70,7 @@ export class FluidParticles {
 							{ shaderLocation: 3, offset: 28, format: "float32" },
 							{ shaderLocation: 4, offset: 32, format: "float32" },
 							{ shaderLocation: 5, offset: 36, format: "float32" },
+							{ shaderLocation: 6, offset: 44, format: "float32" },
 						],
 					},
 				],
@@ -148,6 +149,7 @@ export class FluidParticles {
 		data[23] = this.frame?.heatScale ?? 0;
 		data[24] = this.frame?.energyScale ?? 0;
 		data[25] = this.frame?.massScale ?? 0;
+		data[26] = this.frame?.amplitudeScale ?? 0;
 		this.gpu.device.queue.writeBuffer(this.uniformBuffer, 0, data);
 	}
 

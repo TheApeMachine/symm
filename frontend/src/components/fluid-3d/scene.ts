@@ -1,4 +1,5 @@
 import { OrbitCamera } from "./camera";
+import { PhaseCurrent } from "./current";
 import { lineShader } from "./field-shaders";
 import { type FluidFieldOptions, FluidFieldView } from "./fields";
 import {
@@ -12,6 +13,7 @@ import type { FluidFields, FluidParticle, FluidParticleFrame } from "./wire";
 
 export type FluidSceneOptions = FluidFieldOptions & {
 	particles: boolean;
+	current: boolean;
 };
 
 type Vec3 = [number, number, number];
@@ -90,6 +92,7 @@ export class FluidScene {
 	private gpu: FluidGPU | null = null;
 	private fields: FluidFieldView | null = null;
 	private particles: FluidParticles | null = null;
+	private current: PhaseCurrent | null = null;
 	private boundaryBuffer: GPUBuffer | null = null;
 	private boundaryPipeline: GPURenderPipeline | null = null;
 	private boundaryBindGroup: GPUBindGroup | null = null;
@@ -101,6 +104,7 @@ export class FluidScene {
 	private reportedGpuError = false;
 	private options: FluidSceneOptions = {
 		particles: true,
+		current: true,
 		gas: true,
 		wave: true,
 		volume: true,
@@ -136,6 +140,7 @@ export class FluidScene {
 		this.queuedFields = fields;
 		this.fields?.update(fields);
 		this.particles?.setGridSpacing(fields.grid.spacing);
+		this.current?.update(fields);
 		this.invalidate();
 	}
 
@@ -151,6 +156,10 @@ export class FluidScene {
 
 		if (this.particles !== null) {
 			this.particles.visible = options.particles;
+		}
+
+		if (this.current !== null) {
+			this.current.visible = options.current;
 		}
 
 		this.invalidate();
@@ -172,6 +181,7 @@ export class FluidScene {
 		this.camera.detach();
 		this.fields?.dispose();
 		this.particles?.dispose();
+		this.current?.dispose();
 		this.boundaryBuffer?.destroy();
 		this.depthTexture?.destroy();
 		this.gpu?.device.destroy();
@@ -193,13 +203,16 @@ export class FluidScene {
 			this.canvasHeight = 0;
 			this.fields = new FluidFieldView(gpu);
 			this.particles = new FluidParticles(gpu);
+			this.current = new PhaseCurrent(gpu, this.fields.uniformBuffer);
 			this.fields.setOptions(this.options);
 			this.particles.visible = this.options.particles;
+			this.current.visible = this.options.current;
 			this.createBoundary(gpu);
 
 			if (this.queuedFields !== null) {
 				this.fields.update(this.queuedFields);
 				this.particles.setGridSpacing(this.queuedFields.grid.spacing);
+				this.current.update(this.queuedFields);
 			}
 
 			if (this.queuedParticles !== null) {
@@ -381,6 +394,7 @@ export class FluidScene {
 		});
 		fields.encode(pass);
 		particles.encode(pass);
+		this.current?.stepAndEncode(pass);
 
 		if (
 			this.boundaryPipeline !== null &&

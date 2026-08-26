@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -36,6 +37,16 @@ type Solver struct {
 	workspace     *runtime.Workspace
 	physics       *sensorium.Manifold
 	ObserveModule func(string, time.Duration)
+
+	// sequence numbers the fluid slabs; it advances under mu on each publish.
+	sequence uint64
+
+	// fieldBuffers are reused across publishes so the 4 Hz field slab does not
+	// churn a few megabytes of floats per tick.
+	fieldMomRho   []float32
+	fieldEnergy   []float32
+	fieldWaveReal []float32
+	fieldWaveImag []float32
 }
 
 func NewSolver(
@@ -68,6 +79,17 @@ func NewSolver(
 			},
 		)
 	}
+
+	if solver.physics != nil {
+		gridX, gridY, gridZ, _ := solver.physics.Grid()
+		cells := gridX * gridY * gridZ
+		solver.fieldMomRho = make([]float32, cells*4)
+		solver.fieldEnergy = make([]float32, cells)
+		solver.fieldWaveReal = make([]float32, cells)
+		solver.fieldWaveImag = make([]float32, cells)
+	}
+
+	go solver.publishLoop()
 
 	return solver
 }
@@ -111,6 +133,118 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *State {
 		State:   *state,
 		Reading: solver.physics.Reading(),
 	}
+}
+
+/*
+fluidPublishInterval is the cadence of the fluid WebRTC publication loop.
+*/
+const fluidPublishInterval = 250 * time.Millisecond
+
+/*
+publishLoop streams the resident domain to the fluid channels on a fixed
+cadence, independent of the Hawkes forcing cadence: the physics state persists
+between steps, so the viewer stays live even when the forcing is sparse.
+*/
+func (solver *Solver) publishLoop() {
+	ticker := time.NewTicker(fluidPublishInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-solver.ctx.Done():
+			return
+		case <-ticker.C:
+			solver.publishFluid()
+		}
+	}
+}
+
+/*
+publishFluid ships the latest resident state as three slabs: the Eulerian
+fields, the oscillator gas, and the phase reading with its spectral modes.
+The FluidRTC wire drops the frames when no viewer owns the channel, so the
+encoding cost is only paid by viewers, never by the trading hot path.
+*/
+func (solver *Solver) publishFluid() {
+	if solver.workspace == nil || solver.physics == nil {
+		return
+	}
+
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	state := solver.physics.State()
+
+	if state == nil || state.N == 0 {
+		return
+	}
+
+	solver.sequence++
+	sequence := solver.sequence
+
+	gridX, gridY, gridZ, gridSpacing := solver.physics.Grid()
+	density, momentum, energyPeak, wave := solver.physics.PackFields(
+		solver.fieldMomRho,
+		solver.fieldEnergy,
+		solver.fieldWaveReal,
+		solver.fieldWaveImag,
+	)
+
+	fieldsSlab := encodeFieldsSlab(
+		sequence,
+		gridX, gridY, gridZ,
+		float32(gridSpacing),
+		density, momentum, energyPeak, wave,
+		solver.fieldMomRho,
+		solver.fieldEnergy,
+		solver.fieldWaveReal,
+		solver.fieldWaveImag,
+	)
+
+	heatScale := maxAbs32(state.Heat)
+	energyScale := maxAbs32(state.Energy)
+	massScale := maxAbs32(state.Mass)
+
+	particlesSlab := encodeParticlesSlab(
+		sequence,
+		state,
+		heatScale, energyScale, massScale,
+	)
+
+	modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
+	phaseSlab := encodePhaseSlab(
+		sequence,
+		solver.physics.Reading(),
+		state,
+		modeOmega, modeReal, modeImag, modeLinewidth,
+	)
+
+	solver.workspace.Publish(types.ChannelFluid, types.FluidFrame{
+		Channel: types.FluidFieldsChannel,
+		Payload: fieldsSlab,
+	})
+	solver.workspace.Publish(types.ChannelFluid, types.FluidFrame{
+		Channel: types.FluidParticlesChannel,
+		Payload: particlesSlab,
+	})
+	solver.workspace.Publish(types.ChannelFluid, types.FluidFrame{
+		Channel: types.FluidPhaseChannel,
+		Payload: phaseSlab,
+	})
+}
+
+func maxAbs32(values []float32) float32 {
+	var peak float32
+
+	for _, value := range values {
+		abs := float32(math.Abs(float64(value)))
+
+		if abs > peak {
+			peak = abs
+		}
+	}
+
+	return peak
 }
 
 func (solver *Solver) Close() error {

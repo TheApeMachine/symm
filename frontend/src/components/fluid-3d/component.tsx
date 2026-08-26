@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { paintPhaseDial } from "#/components/charts/phase-dial";
-import {
-	TerminalPhaseDialChart,
-	terminalPhaseScanFromFrame,
-	terminalPhaseStatusFromFrame,
-	terminalWaveModesFromFrame,
-} from "#/components/terminal/charts";
-import { finiteNumber } from "#/components/terminal/charts-frame";
+import { TerminalPhaseDialChart } from "#/components/terminal/charts";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Canvas } from "#/components/ui/canvas";
@@ -26,6 +20,7 @@ import type { FluidGrid, FluidParticle } from "./wire";
 
 const initialOptions: FluidSceneOptions = {
 	particles: true,
+	current: true,
 	gas: true,
 	wave: true,
 	volume: true,
@@ -37,24 +32,6 @@ const initialOptions: FluidSceneOptions = {
 // structure into visibility, so exposure only needs a modest ceiling to
 // avoid blowing out dense regions.
 const maximumVisualExposure = 4;
-
-const kuramotoFromWave = (frame: Record<string, unknown>) => {
-	const wave = terminalWaveModesFromFrame(frame);
-	let peak = 0;
-	const phasors = wave.map((mode) => {
-		const magnitude = Math.hypot(mode.real, mode.imaginary);
-		peak = Math.max(peak, magnitude);
-		return {
-			phase: Math.atan2(mode.imaginary, mode.real),
-			heat: magnitude,
-		};
-	});
-
-	return phasors.map((phasor) => ({
-		phase: phasor.phase,
-		heat: peak > 0 ? phasor.heat / peak : 0,
-	}));
-};
 
 const Toggle = ({
 	active,
@@ -190,42 +167,79 @@ export const FluidInspector = () => {
 				scene.updateParticles(particles);
 				setParticleCount(particles.count);
 			},
-			onPhase: (frame) => {
-				const unpacked = frame.unpack() as unknown as Record<string, unknown>;
-				paintPhaseDial({
-					wave: terminalWaveModesFromFrame(unpacked),
-					scan: terminalPhaseScanFromFrame(unpacked),
-					status: terminalPhaseStatusFromFrame(unpacked),
+			onPhase: (phase) => {
+				const { reading, oscillators, modes } = phase;
+
+				// The kernel can report a transient non-finite reading while the
+				// gas is degenerate; keep the panel sane instead of painting NaN.
+				const finite = (value: number): number =>
+					Number.isFinite(value) ? value : 0;
+
+				// Hydrodynamic panel: the live scalar reading from the kernel.
+				setHydro({
+					viscosityProxy: finite(reading.viscosityProxy),
+					guidanceSpeed: finite(reading.guidanceSpeed),
+					coherenceMag2: finite(reading.coherenceMag2),
 				});
 
-				const hydrodynamics = unpacked.hydrodynamics as
-					| Record<string, number>
-					| undefined;
+				// Kuramoto ring: the resident oscillator phases, synchronized
+				// with the kernel's own coherence reading and mean phase.
+				let meanSin = 0;
+				let meanCos = 0;
+				let maxOmega = 0;
 
-				if (hydrodynamics !== undefined) {
-					setHydro(hydrodynamics);
-					setKuramotoProps({
-						oscillators: kuramotoFromWave(unpacked),
-						kuramotoR: finiteNumber(hydrodynamics.kuramotoR) ?? 0,
-						kuramotoPsi: finiteNumber(hydrodynamics.kuramotoPsi) ?? 0,
-					});
+				for (const oscillator of oscillators) {
+					meanSin += Math.sin(oscillator.phase);
+					meanCos += Math.cos(oscillator.phase);
+					maxOmega = Math.max(maxOmega, Math.abs(oscillator.omega));
+				}
 
-					const point = finitePortraitPoint(
-						hydrodynamics.divergence,
-						hydrodynamics.pressureGradNorm,
-					);
+				const count = oscillators.length;
+				const kuramotoPsi =
+					count > 0 ? Math.atan2(meanSin / count, meanCos / count) : 0;
 
+				setKuramotoProps({
+					oscillators: oscillators.map((oscillator) => ({
+						phase: oscillator.phase,
+						heat:
+							maxOmega > 0
+								? Math.min(1, Math.abs(oscillator.omega) / maxOmega)
+								: 0,
+					})),
+					kuramotoR: finite(reading.kuramotoR),
+					kuramotoPsi,
+				});
 
-					if (point !== null) {
-						const history = phaseHistoryRef.current;
-						history.push(point);
+				// Phase dial: the resident spectral mode lattice.
+				paintPhaseDial({
+					wave: modes.map((mode) => ({
+						omega: mode.omega,
+						real: mode.real,
+						imaginary: mode.imaginary,
+						linewidth: mode.linewidth,
+					})),
+					scan: [],
+					status: {
+						ready: modes.length > 0,
+						reason: "live mode spectrum",
+					},
+				});
 
-						if (history.length > 200) {
-							history.splice(0, history.length - 200);
-						}
+				// Phase portrait: divergence vs pressure gradient.
+				const point = finitePortraitPoint(
+					reading.divergence,
+					reading.pressureGradNorm,
+				);
 
-						setPhasePortrait({ history: [...history], current: point });
+				if (point !== null) {
+					const history = phaseHistoryRef.current;
+					history.push(point);
+
+					if (history.length > 200) {
+						history.splice(0, history.length - 200);
 					}
+
+					setPhasePortrait({ history: [...history], current: point });
 				}
 			},
 			onState: setState,
@@ -291,6 +305,9 @@ export const FluidInspector = () => {
 						onClick={() => toggle("particles")}
 					>
 						particles
+					</Toggle>
+					<Toggle active={options.current} onClick={() => toggle("current")}>
+						current
 					</Toggle>
 					<Toggle active={options.gas} onClick={() => toggle("gas")}>
 						gas

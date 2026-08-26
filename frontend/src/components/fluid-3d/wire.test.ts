@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeFields, decodeParticles } from "./wire";
+import { decodeFields, decodeParticles, decodePhase } from "./wire";
 
 const header = (magic: string, byteLength: number) => {
 	const buffer = new ArrayBuffer(byteLength);
@@ -64,6 +64,7 @@ describe("decodeParticles", () => {
 		const particles = decodeParticles(new Uint8Array(buffer));
 
 		expect(particles.values.buffer).toBe(buffer);
+		expect(particles.amplitudeScale).toBe(9);
 		expect(particles.particle(0)).toEqual({
 			Position: { X: values[0], Y: values[1], Z: values[2] },
 			Velocity: { X: 1, Y: 2, Z: 3 },
@@ -74,5 +75,63 @@ describe("decodeParticles", () => {
 			Omega: 8,
 			Amplitude: 9,
 		});
+	});
+});
+
+describe("decodePhase", () => {
+	it("reads the reading, downsample oscillators, and spectral modes from one SPH1 slab", () => {
+		const oscillatorCount = 2;
+		const modeCount = 2;
+		const modesOffset = 64 + oscillatorCount * 8;
+		const byteLength =
+			modesOffset + modeCount * 16;
+		const { buffer, view } = header("SPH1", byteLength);
+		view.setFloat32(16, 1.5, true);
+		view.setFloat32(20, 2.5, true);
+		view.setFloat32(24, 3.5, true);
+		view.setFloat32(28, 4.5, true);
+		view.setFloat32(32, 5.5, true);
+		view.setFloat32(36, 0.75, true);
+		view.setUint32(40, oscillatorCount, true);
+		view.setUint32(44, modeCount, true);
+		view.setUint32(48, byteLength, true);
+		const phases = new Float32Array(buffer, 64, oscillatorCount);
+		const omegas = new Float32Array(buffer, 64 + oscillatorCount * 4, oscillatorCount);
+		const modeOmega = new Float32Array(buffer, modesOffset, modeCount);
+		const modeReal = new Float32Array(buffer, modesOffset + modeCount * 4, modeCount);
+		const modeImag = new Float32Array(buffer, modesOffset + modeCount * 8, modeCount);
+		const modeLinewidth = new Float32Array(buffer, modesOffset + modeCount * 12, modeCount);
+		phases.set([0.1, 0.2]);
+		omegas.set([1, 2]);
+		modeOmega.set([-2, 2]);
+		modeReal.set([0.5, -0.5]);
+		modeImag.set([0.25, -0.25]);
+		modeLinewidth.set([0.3, 0.3]);
+
+		const phase = decodePhase(new Uint8Array(buffer));
+
+		expect(phase.sequence).toBe(7n);
+		expect(phase.reading).toEqual({
+			divergence: 1.5,
+			guidanceSpeed: 2.5,
+			coherenceMag2: 3.5,
+			pressureGradNorm: 4.5,
+			viscosityProxy: 5.5,
+			kuramotoR: 0.75,
+		});
+		expect(phase.oscillators).toHaveLength(2);
+		expect(phase.oscillators[0].phase).toBeCloseTo(0.1, 5);
+		expect(phase.oscillators[0].omega).toBe(1);
+		expect(phase.oscillators[1].phase).toBeCloseTo(0.2, 5);
+		expect(phase.oscillators[1].omega).toBe(2);
+		expect(phase.modes).toHaveLength(2);
+		expect(phase.modes[0].omega).toBe(-2);
+		expect(phase.modes[0].real).toBe(0.5);
+		expect(phase.modes[0].imaginary).toBe(0.25);
+		expect(phase.modes[0].linewidth).toBeCloseTo(0.3, 5);
+		expect(phase.modes[1].omega).toBe(2);
+		expect(phase.modes[1].real).toBe(-0.5);
+		expect(phase.modes[1].imaginary).toBe(-0.25);
+		expect(phase.modes[1].linewidth).toBeCloseTo(0.3, 5);
 	});
 });

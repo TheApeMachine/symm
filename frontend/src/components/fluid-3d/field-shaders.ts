@@ -171,8 +171,8 @@ export const particleShader = /* wgsl */ `
 		heatScale: f32,
 		energyScale: f32,
 		massScale: f32,
+		amplitudeScale: f32,
 		_pad0: f32,
-		_pad1: f32,
 	};
 	@group(0) @binding(0) var<uniform> uniforms: ParticleUniforms;
 
@@ -181,7 +181,7 @@ export const particleShader = /* wgsl */ `
 		@location(0) uv: vec2<f32>,
 		@location(1) heat: f32,
 		@location(2) energy: f32,
-		@location(3) phase: f32,
+		@location(3) amp: f32,
 	};
 
 	@vertex
@@ -192,10 +192,12 @@ export const particleShader = /* wgsl */ `
 		@location(3) heat: f32,
 		@location(4) energy: f32,
 		@location(5) phase: f32,
+		@location(6) amp: f32,
 	) -> ParticleOut {
 		let energyScale = 0.8 + 0.5 * clamp(energy, 0.0, 1.0);
 		let massScale = 0.8 + 0.6 * clamp(mass * uniforms.massScale, 0.0, 1.0);
-		let size = energyScale * massScale * uniforms.pointDiameter;
+		let ampScale = 0.8 + 0.8 * clamp(amp * uniforms.amplitudeScale, 0.0, 1.0);
+		let size = energyScale * massScale * ampScale * uniforms.pointDiameter;
 		let world = particlePos
 			+ uniforms.cameraRight * corner.x * size
 			+ uniforms.cameraUp * corner.y * size;
@@ -204,7 +206,7 @@ export const particleShader = /* wgsl */ `
 		output.uv = corner + vec2<f32>(0.5);
 		output.heat = heat * uniforms.heatScale;
 		output.energy = energy * uniforms.energyScale;
-		output.phase = phase;
+		output.amp = amp * uniforms.amplitudeScale;
 		return output;
 	}
 
@@ -219,23 +221,27 @@ export const particleShader = /* wgsl */ `
 		let glow = smoothstep(0.5, 0.0, radius);
 		let core = smoothstep(0.3, 0.0, radius);
 		let heat = clamp(input.heat, 0.0, 1.0);
-		let cold = vec3<f32>(0.1, 0.45, 0.9);
+		// Thermal identity only: the oscillator's matter state. The wave field
+		// owns the rainbow phase hue; particles never borrow it.
+		let cold = vec3<f32>(0.12, 0.42, 0.95);
 		let warm = vec3<f32>(1.0, 0.45, 0.08);
-		let hot = vec3<f32>(1.0, 0.95, 0.8);
+		let hot = vec3<f32>(1.0, 0.97, 0.85);
 		let thermoColor = select(
 			mix(cold, warm, heat * 2.0),
 			mix(warm, hot, (heat - 0.5) * 2.0),
 			heat >= 0.5
 		);
-		let offsets = vec3<f32>(0.0, 2.094395102, 4.188790205);
-		let waveColor = 0.5 + 0.5 * cos(input.phase + offsets);
-		let color = mix(waveColor, thermoColor, core);
+		// The oscillator's wave amplitude reads as a cool halo around the
+		// thermal core — its wave-side character, kept out of the wave's hue.
+		let amp = clamp(input.amp, 0.0, 1.0);
+		let ampHalo = glow * amp * 0.5;
 		let energyRing = smoothstep(0.48, 0.38, radius)
 			* smoothstep(0.28, 0.38, radius)
 			* clamp(input.energy, 0.0, 1.0);
 		let brightness = mix(0.75, 1.4, pow(heat, 2.0)) * glow * 0.25;
+		let halo = vec3<f32>(0.45, 0.75, 1.0);
 		return vec4<f32>(
-			color * brightness + waveColor * energyRing * 1.5,
+			thermoColor * brightness + halo * (ampHalo + energyRing * 1.5),
 			glow * 0.9 + core * 0.1
 		);
 	}
@@ -255,5 +261,36 @@ export const lineShader = /* wgsl */ `
 	@fragment
 	fn fs_main() -> @location(0) vec4<f32> {
 		return vec4<f32>(0.33, 0.302, 0.263, 0.7);
+	}
+`;
+
+/*
+currentShader draws the phase-current stream markers: short bright streaks
+that flow along j = ψRe·∇ψIm − ψIm·∇ψRe, the pilot-wave guidance current.
+*/
+export const currentShader = /* wgsl */ `
+	struct CurrentUniforms {
+		viewProj: mat4x4<f32>,
+	};
+	@group(0) @binding(0) var<uniform> uniforms: CurrentUniforms;
+
+	struct CurrentOut {
+		@builtin(position) position: vec4<f32>,
+		@location(0) t: f32,
+	};
+
+	@vertex
+	fn vs_main(@location(0) position: vec3<f32>, @location(1) tail: f32) -> CurrentOut {
+		var output: CurrentOut;
+		output.position = uniforms.viewProj * vec4<f32>(position, 1.0);
+		output.t = tail;
+		return output;
+	}
+
+	@fragment
+	fn fs_main(input: CurrentOut) -> @location(0) vec4<f32> {
+		// Head brighter than tail; the streak reads as flowing along j.
+		let brightness = 0.35 + 0.65 * input.t;
+		return vec4<f32>(0.45, 0.8, 1.0, brightness * 0.6);
 	}
 `;

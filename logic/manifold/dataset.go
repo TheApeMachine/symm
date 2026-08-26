@@ -269,6 +269,7 @@ func orderState(
 	state.Energy[0] = unitOscillatorEnergy
 	state.Mass[0] = unitCarrierMass
 	state.Heat[0] = 0
+	state.Amp[0] = float32(math.Sqrt(float64(unitOscillatorEnergy)))
 	state.Pos[0] = x
 	state.Pos[1] = y
 	state.Pos[2] = z

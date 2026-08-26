@@ -1,4 +1,3 @@
-import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
 import { FluidRecordReader } from "./record";
 import {
 	decodeFields,
@@ -6,6 +5,7 @@ import {
 	decodePhase,
 	type FluidFields,
 	type FluidParticleFrame,
+	type FluidPhase,
 } from "./wire";
 
 const fieldsChannel = "fluid-fields";
@@ -15,7 +15,7 @@ const phaseChannel = "fluid-phase";
 export type FluidFeedHandlers = {
 	onFields: (fields: FluidFields) => void;
 	onParticles: (particles: FluidParticleFrame) => void;
-	onPhase: (frame: FluidPhaseFrame) => void;
+	onPhase: (phase: FluidPhase) => void;
 	onState: (state: RTCPeerConnectionState | "connecting") => void;
 	onError: (error: Error) => void;
 };

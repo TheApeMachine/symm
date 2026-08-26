@@ -323,6 +323,7 @@ func (fluid *workspace) loadState(state *State) {
 		}
 
 		amp[index] = float32(math.Sqrt(float64(energy)))
+		state.Amp[index] = amp[index]
 	}
 }
 
@@ -350,6 +351,7 @@ func (fluid *workspace) storeState(state *State) {
 	copy(state.Energy, fluid.oscEnergy.Float32Slice())
 	copy(state.Phase, fluid.phase.Float32Slice())
 	copy(state.Omega, fluid.omega.Float32Slice())
+	copy(state.Amp, fluid.amp.Float32Slice())
 }
 
 func (fluid *workspace) packFields(momRho, energy, waveReal, waveImag []float32) fieldScale {

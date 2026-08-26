@@ -16,10 +16,14 @@ type State struct {
 	Energy     []float32
 	Mass       []float32
 	Heat       []float32
-	Pos        []float32
-	Vel        []float32
-	Clamped    []bool
-	Dark       []bool
+	// Amp is the oscillator's wave amplitude, the square root of its energy.
+	// It is derived from Energy on every load and carried back out on store so
+	// observers can render the true amplitude without re-deriving it.
+	Amp     []float32
+	Pos     []float32
+	Vel     []float32
+	Clamped []bool
+	Dark    []bool
 }
 
 func newState(count int) *State {
@@ -38,6 +42,7 @@ func newStateWithCapacity(count, capacity int) *State {
 		Energy:     make([]float32, count, capacity),
 		Mass:       make([]float32, count, capacity),
 		Heat:       make([]float32, count, capacity),
+		Amp:        make([]float32, count, capacity),
 		Pos:        make([]float32, count*3, capacity*3),
 		Vel:        make([]float32, count*3, capacity*3),
 		Clamped:    make([]bool, count, capacity),

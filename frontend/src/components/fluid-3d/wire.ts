@@ -1,11 +1,8 @@
-import * as flatbuffers from "flatbuffers";
-import { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
-
-
 const SLAB_HEADER_BYTES = 64;
 const SLAB_VERSION = 1;
 const FIELD_MAGIC = "SFF1";
 const PARTICLE_MAGIC = "SPF1";
+const PHASE_MAGIC = "SPH1";
 const PARTICLE_STRIDE_FLOATS = 12;
 
 export type FluidGrid = {
@@ -53,6 +50,7 @@ export class FluidParticleFrame {
 		readonly heatScale: number,
 		readonly energyScale: number,
 		readonly massScale: number,
+		readonly amplitudeScale: number,
 		readonly values: Float32Array,
 	) {}
 
@@ -128,9 +126,92 @@ const requireFloatRange = (
 	}
 };
 
-export const decodePhase = (bytes: Uint8Array): FluidPhaseFrame => {
-	const buffer = new flatbuffers.ByteBuffer(bytes);
-	return FluidPhaseFrame.getRootAsFluidPhaseFrame(buffer);
+/*
+The phase slab carries the resident phase reading, the spectral mode lattice,
+and a downsampled oscillator phase sample, all taken from the live sensorium
+domain after one step.
+*/
+export type FluidPhaseReading = {
+	divergence: number;
+	guidanceSpeed: number;
+	coherenceMag2: number;
+	pressureGradNorm: number;
+	viscosityProxy: number;
+	kuramotoR: number;
+};
+
+export type FluidWaveMode = {
+	omega: number;
+	real: number;
+	imaginary: number;
+	linewidth: number;
+};
+
+export type FluidOscillator = {
+	phase: number;
+	omega: number;
+};
+
+export type FluidPhase = {
+	sequence: bigint;
+	reading: FluidPhaseReading;
+	oscillators: FluidOscillator[];
+	modes: FluidWaveMode[];
+};
+
+export const decodePhase = (bytes: Uint8Array): FluidPhase => {
+	const view = header(bytes, PHASE_MAGIC);
+	const sequence = view.getBigUint64(8, true);
+	const reading = {
+		divergence: view.getFloat32(16, true),
+		guidanceSpeed: view.getFloat32(20, true),
+		coherenceMag2: view.getFloat32(24, true),
+		pressureGradNorm: view.getFloat32(28, true),
+		viscosityProxy: view.getFloat32(32, true),
+		kuramotoR: view.getFloat32(36, true),
+	};
+	const oscillatorCount = view.getUint32(40, true);
+	const modeCount = view.getUint32(44, true);
+	const byteLength = view.getUint32(48, true);
+
+	if (byteLength !== bytes.byteLength) {
+		throw new Error("SPH1 slab byte length does not match its header");
+	}
+
+	const phases = floatView(bytes, 64, oscillatorCount);
+	const omegas = floatView(bytes, 64 + oscillatorCount * 4, oscillatorCount);
+	const modesOffset = 64 + oscillatorCount * 8;
+	const modeOmega = floatView(bytes, modesOffset, modeCount);
+	const modeReal = floatView(bytes, modesOffset + modeCount * 4, modeCount);
+	const modeImag = floatView(
+		bytes,
+		modesOffset + modeCount * 8,
+		modeCount,
+	);
+	const modeLinewidth = floatView(
+		bytes,
+		modesOffset + modeCount * 12,
+		modeCount,
+	);
+
+	const oscillators: FluidOscillator[] = [];
+
+	for (let index = 0; index < oscillatorCount; index++) {
+		oscillators.push({ phase: phases[index], omega: omegas[index] });
+	}
+
+	const modes: FluidWaveMode[] = [];
+
+	for (let index = 0; index < modeCount; index++) {
+		modes.push({
+			omega: modeOmega[index],
+			real: modeReal[index],
+			imaginary: modeImag[index],
+			linewidth: modeLinewidth[index],
+		});
+	}
+
+	return { sequence, reading, oscillators, modes };
 };
 
 
@@ -192,6 +273,17 @@ export const decodeParticles = (bytes: Uint8Array): FluidParticleFrame => {
 
 	requireFloatRange(bytes, SLAB_HEADER_BYTES, count * stride, "SPF1 particles");
 
+	const values = floatView(bytes, SLAB_HEADER_BYTES, count * stride);
+
+	let amplitudeScale = 0;
+
+	for (let index = 11; index < values.length; index += stride) {
+		const amplitude = Math.abs(values[index]);
+		if (amplitude > amplitudeScale) {
+			amplitudeScale = amplitude;
+		}
+	}
+
 	return new FluidParticleFrame(
 		view.getBigUint64(8, true),
 		count,
@@ -199,6 +291,7 @@ export const decodeParticles = (bytes: Uint8Array): FluidParticleFrame => {
 		view.getFloat32(24, true),
 		view.getFloat32(28, true),
 		view.getFloat32(32, true),
-		floatView(bytes, SLAB_HEADER_BYTES, count * stride),
+		amplitudeScale,
+		values,
 	);
 };

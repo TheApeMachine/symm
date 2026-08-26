@@ -79,6 +79,7 @@ func appendState(accumulated, state *State) {
 	accumulated.Energy = append(accumulated.Energy, state.Energy...)
 	accumulated.Mass = append(accumulated.Mass, state.Mass...)
 	accumulated.Heat = append(accumulated.Heat, state.Heat...)
+	accumulated.Amp = append(accumulated.Amp, state.Amp...)
 	accumulated.Pos = append(accumulated.Pos, state.Pos...)
 	accumulated.Vel = append(accumulated.Vel, state.Vel...)
 	accumulated.Clamped = append(accumulated.Clamped, state.Clamped...)
